@@ -162,6 +162,11 @@ export const dashboardNav: NavGroup[] = [
     title: "Dashboard",
     items: [
       {
+        title: "Generate",
+        href: "/dashboard/generate",
+        icon: Image,
+      },
+      {
         title: "Dashboard",
         href: "/dashboard",
         icon: LayoutDashboard,

@@ -34,10 +34,8 @@ export const imageGenerateInputSchema = z
     style: z.string().optional(),
     count: z.number().int().positive().optional(),
     generationId: z.string().optional(),
-    /** 后端组偏好 */
-    backendGroupId: z.string().optional(),
-    /** 不透明扩展参数（edit/chat 模式附加字段） */
-    extra: z.record(z.string(), z.unknown()).optional(),
+    /** 本次请求明确选中的平台生图分组；服务端仍会再次授权。 */
+    backendGroupId: z.string().trim().min(1).max(128).optional(),
   })
   .strict();
 
@@ -60,7 +58,7 @@ defineOperation({
       z.object({
         url: z.string(),
         revisedPrompt: z.string().optional(),
-      }),
+      })
     ),
     creditsUsed: z.number().optional(),
     model: z.string().optional(),
@@ -244,9 +242,7 @@ defineOperation({
     userId: z.string(),
     page: z.number().int().positive().optional(),
     pageSize: z.number().int().positive().optional(),
-    status: z
-      .enum(["pending", "processing", "completed", "failed"])
-      .optional(),
+    status: z.enum(["pending", "processing", "completed", "failed"]).optional(),
   }),
   output: z.object({
     generations: z.array(
@@ -257,7 +253,7 @@ defineOperation({
         model: z.string().optional(),
         imageUrl: z.string().optional(),
         createdAt: z.string(),
-      }),
+      })
     ),
     total: z.number(),
     page: z.number(),
@@ -326,7 +322,7 @@ defineOperation({
         model: z.string().optional(),
         imageUrl: z.string().optional(),
         createdAt: z.string(),
-      }),
+      })
     ),
   }),
   access: { kind: "protected" },
@@ -407,7 +403,7 @@ defineOperation({
           date: z.string(),
           count: z.number(),
           creditsUsed: z.number(),
-        }),
+        })
       )
       .optional(),
   }),

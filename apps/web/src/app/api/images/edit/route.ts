@@ -12,6 +12,7 @@ import {
   firstBatchError,
   runBatchImageGeneration,
 } from "@/features/image-generation/batch-runner";
+import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
 import { runImageGenerationForUser } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
@@ -20,6 +21,7 @@ import {
   VALID_IMAGE_BACKGROUNDS,
   VALID_OUTPUT_FORMATS,
 } from "@/features/image-generation/output-format";
+import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
 import {
   deleteTemporaryImages,
   filesToImageInputs,
@@ -27,6 +29,7 @@ import {
   getTotalUploadSize,
   uploadTemporaryImageUrls,
   validateImageFile,
+  validateMaskMatchesSourceImage,
 } from "@/features/image-generation/request-utils";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
@@ -58,6 +61,7 @@ const VALID_THINKING = new Set<ThinkingLevel>([
   "xhigh",
 ]);
 const PROMPT_IMAGE_REFERENCE_PATTERN = /@(?:第)?\d+轮图\d+|@图\d+/;
+const IMAGE_EDIT_ERROR_FALLBACK = "Image editing failed. Please retry shortly.";
 
 function errorResponse(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
@@ -143,6 +147,23 @@ function getImageFiles(formData: FormData) {
   return images;
 }
 
+/** 将管线正常返回的失败结果收敛为可安全回传的接口结果。 */
+function sanitizeGenerationResult(
+  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  source: string
+) {
+  if (!result.error) return result;
+
+  return {
+    ...result,
+    error: toClientErrorMessage(
+      result.error,
+      { source, generationId: result.generationId },
+      IMAGE_EDIT_ERROR_FALLBACK
+    ),
+  };
+}
+
 export const POST = withApiLogging(async (request: NextRequest) => {
   const session = await auth.api.getSession({
     headers: request.headers,
@@ -150,6 +171,10 @@ export const POST = withApiLogging(async (request: NextRequest) => {
 
   if (!session?.user) {
     return errorResponse("Unauthorized", 401);
+  }
+
+  if (!hasTrustedImageGenerationOrigin(request)) {
+    return errorResponse("Forbidden", 403);
   }
 
   const plan = await getUserPlan(session.user.id);
@@ -188,6 +213,13 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     getText(formData, "generationId") || getText(formData, "generation_id");
   if (requestedGenerationId.length > 128) {
     return errorResponse("generationId is too long.");
+  }
+  const backendGroupId =
+    getText(formData, "backendGroupId") ||
+    getText(formData, "backend_group_id") ||
+    undefined;
+  if (backendGroupId && backendGroupId.length > 128) {
+    return errorResponse("backendGroupId is too long.");
   }
   const mixWebFirst = getOptionalBoolean(
     formData,
@@ -333,6 +365,13 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         413
       );
     }
+    if (maskFile instanceof File) {
+      const firstSourceFile = sourceFiles[0];
+      if (!firstSourceFile) {
+        return errorResponse("At least one source image is required.");
+      }
+      await validateMaskMatchesSourceImage(firstSourceFile, maskFile);
+    }
 
     const batchId = randomUUID();
     const sourceImageUrls = await uploadTemporaryImageUrls(
@@ -364,6 +403,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
           userId: session.user.id,
           generationId,
           backendRequestKind: "image_edit" as const,
+          backendGroupId,
           prompt,
           apiPrompt,
           promptOptimization,
@@ -394,52 +434,69 @@ export const POST = withApiLogging(async (request: NextRequest) => {
 
     try {
       if (useStreamResponse) {
-        return createImageStreamResponse(async (emit) => {
-          try {
-            await runBatchImageGeneration({
-              count,
-              concurrency: planLimits.imageGenerationConcurrency,
-              generationIds:
-                requestedGenerationIds ||
-                (count === 1 && requestedGenerationId
-                  ? [requestedGenerationId]
-                  : undefined),
-              run: runEdit,
-              callbacks: (index) => ({
-                onPartialImage: async (image) => {
-                  await emit({
-                    type: "partial_image",
-                    index,
-                    partial_image_index: image.partialImageIndex,
-                    b64_json: image.imageBase64,
-                    url: image.imageUrl,
-                  });
+        return createImageStreamResponse(
+          async (emit) => {
+            try {
+              await runBatchImageGeneration({
+                count,
+                concurrency: planLimits.imageGenerationConcurrency,
+                generationIds:
+                  requestedGenerationIds ||
+                  (count === 1 && requestedGenerationId
+                    ? [requestedGenerationId]
+                    : undefined),
+                run: runEdit,
+                callbacks: (index) => ({
+                  onPartialImage: async (image) => {
+                    await emit({
+                      type: "partial_image",
+                      index,
+                      partial_image_index: image.partialImageIndex,
+                      b64_json: image.imageBase64,
+                      url: image.imageUrl,
+                    });
+                  },
+                }),
+                onResult: async (result) => {
+                  const safeResult = sanitizeGenerationResult(
+                    result,
+                    "image-edit-stream-result"
+                  );
+                  if (safeResult.error) {
+                    await emit({
+                      type: "error",
+                      error: safeResult.error,
+                      generationId: safeResult.generationId,
+                      creditsConsumed: safeResult.creditsConsumed,
+                    });
+                    return;
+                  }
+
+                  await emit({ type: "completed", ...safeResult });
                 },
-              }),
-              onResult: async (result) => {
-                if (result.error) {
-                  await emit({
-                    type: "error",
-                    error: result.error,
-                    generationId: result.generationId,
-                    creditsConsumed: result.creditsConsumed,
-                  });
-                  return;
-                }
+              });
 
-                await emit({ type: "completed", ...result });
-              },
-            });
-
-            return null;
-          } finally {
-            await deleteTemporaryImages(maskImageUrls);
+              return null;
+            } finally {
+              await deleteTemporaryImages(maskImageUrls);
+            }
+          },
+          {
+            formatError: (error) =>
+              toClientErrorMessage(
+                error,
+                { source: "image-edit-stream" },
+                IMAGE_EDIT_ERROR_FALLBACK
+              ),
           }
-        });
+        );
       }
 
       if (count === 1) {
-        const result = await runEdit(requestedGenerationId || randomUUID());
+        const result = sanitizeGenerationResult(
+          await runEdit(requestedGenerationId || randomUUID()),
+          "image-edit-response"
+        );
         return NextResponse.json(result);
       }
 
@@ -454,9 +511,13 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         run: runEdit,
       });
 
+      const safeResults = results.map((result) =>
+        sanitizeGenerationResult(result, "image-edit-batch-response")
+      );
+
       return NextResponse.json({
-        results,
-        error: firstBatchError(results)?.error,
+        results: safeResults,
+        error: firstBatchError(safeResults)?.error,
       });
     } finally {
       if (!useStreamResponse) {
@@ -465,7 +526,11 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     }
   } catch (error) {
     return errorResponse(
-      error instanceof Error ? error.message : "Failed to edit image."
+      toClientErrorMessage(
+        error,
+        { source: "image-edit-route" },
+        IMAGE_EDIT_ERROR_FALLBACK
+      )
     );
   }
 });

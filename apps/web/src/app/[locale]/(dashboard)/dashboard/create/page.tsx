@@ -10,10 +10,12 @@ import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
-import { getEffectiveDefaultImageBackendGroup } from "@/features/image-backend-pool/service";
+import {
+  getEffectiveDefaultImageBackendGroup,
+  getImageGenerationModelCatalogForPlan,
+} from "@/features/image-backend-pool/service";
 import { CreatePageClient } from "@/features/image-generation/components/create-page-client";
 import {
-  getRuntimeImageBaseCreditPricing,
   getRuntimeImageModelCreditPricing,
   getRuntimeImageModerationCreditPricing,
 } from "@/features/image-generation/pricing-settings";
@@ -35,15 +37,19 @@ export default async function CreatePage() {
     getUserPlan(user.id),
     getUserTimeZone(user.id),
   ]);
-  const [uploadLimits, activeBackendGroup, moderationEnabled] =
-    await Promise.all([
-      getPlanUploadLimits(plan.plan),
-      getEffectiveDefaultImageBackendGroup(plan.plan),
-      isContentModerationEnabled(),
-    ]);
+  const [
+    uploadLimits,
+    activeBackendGroup,
+    imageGenerationModelCatalog,
+    moderationEnabled,
+  ] = await Promise.all([
+    getPlanUploadLimits(plan.plan),
+    getEffectiveDefaultImageBackendGroup(plan.plan),
+    getImageGenerationModelCatalogForPlan(plan.plan),
+    isContentModerationEnabled(),
+  ]);
   const [
     capabilities,
-    imageBasePricing,
     imageModelPricing,
     imageModerationPricing,
     forceWebMinPixels,
@@ -51,7 +57,6 @@ export default async function CreatePage() {
     videoPricing,
   ] = await Promise.all([
     getPlanCapabilitySnapshot(plan.plan),
-    getRuntimeImageBaseCreditPricing(),
     getRuntimeImageModelCreditPricing(),
     getRuntimeImageModerationCreditPricing(),
     getRuntimeSettingNumber(
@@ -95,9 +100,8 @@ export default async function CreatePage() {
       uploadLimits={uploadLimits}
       backendGroups={activeBackendGroup ? [activeBackendGroup] : []}
       selectedBackendGroupId={activeBackendGroup?.id ?? null}
-      customApiActive={false}
+      imageGenerationModelCatalog={imageGenerationModelCatalog}
       moderationEnabled={moderationEnabled}
-      imageBasePricing={imageBasePricing}
       imageModelPricing={imageModelPricing}
       imageModerationPricing={imageModerationPricing}
       forceWebPixelRange={forceWebPixelRange}

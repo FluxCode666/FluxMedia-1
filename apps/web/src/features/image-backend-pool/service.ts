@@ -89,6 +89,13 @@ import {
   checkImageBackendApiHealth,
   type ImageApiHealthResult,
 } from "./health-check";
+import {
+  buildImageGenerationCatalogMemberGroupMap,
+  buildImageGenerationModelCatalog,
+  type ImageGenerationCatalogMember,
+  type ImageGenerationModelCatalog,
+  isImageGenerationCatalogMemberAvailable,
+} from "./image-generation-model-catalog";
 import { parseImportTokensText } from "./import-token-parser";
 import type {
   ChatCompletionsUpstreamMode,
@@ -143,6 +150,12 @@ type BackendLeaseAcquireResult = "acquired" | "full" | "stale";
 type ResolveBackendOptions = {
   userId: string;
   apiKeyId?: string;
+  // 页面单次明确选择的分组。外部 API Key 绑定分组优先于它；未提供时沿用用户偏好/默认组。
+  backendGroupId?: string;
+  // 仅可信服务端在同一请求的重解析（例如换号重试、蒙版外绘）时传入：固定首次命中的
+  // 隐式默认分组，避免管理员切换默认组后同一次请求跨组路由和错价。它不是用户输入，
+  // 不能替代 backendGroupId，也不会触发手选分组的套餐或 isUserSelectable 校验。
+  pinnedImplicitGroupId?: string;
   requestKind: ImageBackendRequestKind;
   // 请求的模型 ID。firefly-* 会将候选收敛到 Adobe 语义的后端；普通图像模型仍可由
   // API、账号与 Adobe 共同调度。标记 adobeSourced 的 API 后端也可参与 Firefly 请求。
@@ -159,6 +172,8 @@ type ResolveBackendOptions = {
   // 强制走 adobe（firefly）后端：与 requestedModel 为 firefly-* 前缀等价地把候选收敛到
   // 仅 adobe。供 force_firefly 请求标志使用（用户可对任意模型强制改用 adobe 出图）。
   forceFirefly?: boolean;
+  // 蒙版不会被 Adobe 编辑适配器下传。为真时，候选集必须排除 pool-adobe。
+  requiresMask?: boolean;
   allowAnyResponsesBackend?: boolean;
   // 跨组选真 web 账号(忽略 apiKeyId/用户偏好的分组作用域):PPT/PSD 可编辑文件生成必须用
   // ChatGPT 网页(付费)账号,而付费 web 账号集中在专用分组(如 Pro-Web),外部 API key 绑定
@@ -2234,21 +2249,108 @@ async function getDefaultGroupId() {
   return firstGroup?.id ?? null;
 }
 
+type ResolvedRequestedGroup = {
+  groupId: string | null;
+  explicit: boolean;
+  pinnedImplicit: boolean;
+};
+
+/**
+ * 判断本次解析是否可使用服务端固定的隐式默认分组。
+ *
+ * @param options - 调度入参，可能同时带 API Key 或用户显式分组。
+ * @returns 候选固定组 ID；绑定分组的 API Key 会在读取绑定后覆盖该候选值。
+ * @remarks 该值只由服务端从同一次请求的首次解析结果派生，绝不能透传客户端请求。
+ */
+function getPinnedImplicitGroupId(options: ResolveBackendOptions) {
+  if (options.backendGroupId?.trim()) return null;
+  return options.pinnedImplicitGroupId?.trim() || null;
+}
+
+/**
+ * 解析本次请求的目标分组及其路由语义。
+ *
+ * @param options - 调度入参。
+ * @param plan - 当前用户套餐，用于验证用户显式分组及组的最低套餐。
+ * @returns 目标分组、是否为用户/API Key 显式路由、是否为服务端固定的隐式路由。
+ * @remarks 固定隐式路由仍需在后续 ensureGroupUsable 中检查启用和套餐资格，但不能被
+ * 手选分组能力或 isUserSelectable 限制影响。
+ */
 async function resolveRequestedGroup(
   options: ResolveBackendOptions,
   plan: SubscriptionPlan
-): Promise<{ groupId: string | null; explicit: boolean }> {
+): Promise<ResolvedRequestedGroup> {
   if (options.apiKeyId) {
     const [key] = await db
       .select({ groupId: externalApiKey.generationGroupId })
       .from(externalApiKey)
       .where(eq(externalApiKey.id, options.apiKeyId))
       .limit(1);
-    if (key?.groupId) return { groupId: key.groupId, explicit: true };
-    return { groupId: await getDefaultGroupId(), explicit: false };
+    if (key?.groupId) {
+      return {
+        groupId: key.groupId,
+        explicit: true,
+        pinnedImplicit: false,
+      };
+    }
+    const pinnedImplicitGroupId = getPinnedImplicitGroupId(options);
+    if (pinnedImplicitGroupId) {
+      return {
+        groupId: pinnedImplicitGroupId,
+        explicit: false,
+        pinnedImplicit: true,
+      };
+    }
+    return {
+      groupId: await getDefaultGroupId(),
+      explicit: false,
+      pinnedImplicit: false,
+    };
   }
 
-  return { groupId: await getDefaultGroupId(), explicit: false };
+  const backendGroupId = options.backendGroupId?.trim();
+  if (backendGroupId) {
+    if (!(await canUsePlanCapability(plan, "backendGroups.select"))) {
+      throw new ImageBackendPoolUnavailableError(
+        "当前套餐不支持手动选择生图分组"
+      );
+    }
+
+    const group = await ensureGroupUsable(backendGroupId, plan);
+    // WHY: 前端目录仅用于展示；请求到达调度器时必须按当前启用状态、套餐与可选资格
+    // 重新校验，避免旧页面、篡改请求或管理员刚调整配置后静默路由到其他分组。
+    if (
+      !group ||
+      group.id !== backendGroupId ||
+      !group.isEnabled ||
+      !group.isUserSelectable
+    ) {
+      throw new ImageBackendPoolUnavailableError(
+        "所选生图分组不可用、不可手动选择或当前套餐不可用"
+      );
+    }
+
+    return {
+      groupId: group.id,
+      explicit: true,
+      pinnedImplicit: false,
+    };
+  }
+
+  const pinnedImplicitGroupId = getPinnedImplicitGroupId(options);
+  if (pinnedImplicitGroupId) {
+    return {
+      groupId: pinnedImplicitGroupId,
+      explicit: false,
+      pinnedImplicit: true,
+    };
+  }
+
+  return {
+    groupId: await getDefaultGroupId(),
+    explicit: false,
+    pinnedImplicit: false,
+  };
 }
 
 async function ensureGroupUsable(
@@ -2342,6 +2444,7 @@ async function selectPoolMember(
   accountBackendPreferenceMode?: ImageBackendPreferenceMode,
   requestedModel?: string,
   forceFirefly = false,
+  requiresMask = false,
   staleRetryCount = 0,
   capacityWaitCount = 0,
   accountPlanFilter: ImageBackendAccountPlanFilter = "any"
@@ -2770,6 +2873,8 @@ async function selectPoolMember(
       return (
         // fireflyOnly（force_firefly、firefly-* 或 Veo/Kling 视频模型）时只走 Adobe，账号不参与。
         !fireflyOnly &&
+        // Web 编辑适配器同样不会下传 mask，局部编辑只保留支持蒙版的 Responses 账号。
+        (!requiresMask || backend !== "web") &&
         // 裸 nano-banana* 仍保持 API-only 语义，排除普通 Web/Codex 账号。
         !apiOnlyCustomImageModel &&
         // 账号的"车道"由其自身 implementationMode（web / responses）天然决定:web 账号属 web
@@ -2833,6 +2938,8 @@ async function selectPoolMember(
         (!apiOnlyCustomImageModel ||
           isAdobeImageFamilyModelId(requestedModel) ||
           isFireflyVideoModelId(requestedModel)) &&
+        // Adobe 编辑适配器不会把 mask 发给上游；局部编辑不能降级为整图编辑。
+        !requiresMask &&
         (effectiveRequestKind === "image_generation" ||
           effectiveRequestKind === "image_edit") &&
         canAdobeBackendServeModel({
@@ -3043,6 +3150,7 @@ async function selectPoolMember(
       accountBackendPreferenceMode,
       requestedModel,
       forceFirefly,
+      requiresMask,
       staleRetryCount + 1,
       capacityWaitCount,
       accountPlanFilter
@@ -3073,6 +3181,7 @@ async function selectPoolMember(
       accountBackendPreferenceMode,
       requestedModel,
       forceFirefly,
+      requiresMask,
       staleRetryCount,
       capacityWaitCount + 1,
       accountPlanFilter
@@ -3158,7 +3267,9 @@ function toResolvedPoolConfig(
           groupBackendType,
           userId: options.userId,
           apiKeyId: options.apiKeyId,
+          requestedBackendGroupId: options.backendGroupId,
           requestKind: options.requestKind,
+          requiresMask: options.requiresMask,
           apiInterfaceMode: member.interfaceMode,
           chatCompletionsUpstreamMode: member.chatCompletionsUpstreamMode,
           imagesUpstreamMode: member.imagesUpstreamMode,
@@ -3196,7 +3307,9 @@ function toResolvedPoolConfig(
           groupBackendType,
           userId: options.userId,
           apiKeyId: options.apiKeyId,
+          requestedBackendGroupId: options.backendGroupId,
           requestKind: options.requestKind,
+          requiresMask: options.requiresMask,
           adobeMode: member.mode === "direct" ? "direct" : "gateway",
           adobeEnabledModels: member.enabledModels,
           adobeDefaultRatio: member.defaultRatio,
@@ -3251,7 +3364,9 @@ function toResolvedPoolConfig(
         groupBackendType,
         userId: options.userId,
         apiKeyId: options.apiKeyId,
+        requestedBackendGroupId: options.backendGroupId,
         requestKind: options.requestKind,
+        requiresMask: options.requiresMask,
         accountBackend: implementationMode,
         billingGroupId: fallbackGroupId,
         imageCreditOverrides,
@@ -3275,12 +3390,19 @@ async function resolvePoolMember(
 ) {
   const userPlan = await getUserPlan(options.userId);
   // PPT/PSD:跨组直取付费 web,绕过 apiKeyId/偏好的分组作用域(像站内 UI 一样命中付费 web)。
-  if (options.spanGroupsForWeb) {
+  // 固定隐式组的重解析绝不能走跨组 web 车道，否则会重新引入跨组路由与计费错配。
+  const hasPinnedImplicitGroup = Boolean(getPinnedImplicitGroupId(options));
+  if (options.spanGroupsForWeb && !hasPinnedImplicitGroup) {
     return await resolveAnyWebPoolMember(options, userPlan.plan);
   }
   const requestedGroup = await resolveRequestedGroup(options, userPlan.plan);
+  if (options.spanGroupsForWeb && !requestedGroup.pinnedImplicit) {
+    return await resolveAnyWebPoolMember(options, userPlan.plan);
+  }
   const canFallbackToAnyResponses =
-    options.allowAnyResponsesBackend && options.requestKind === "responses";
+    !requestedGroup.pinnedImplicit &&
+    options.allowAnyResponsesBackend &&
+    options.requestKind === "responses";
   const resolveAnyResponsesMember = async () => {
     if (!canFallbackToAnyResponses) return null;
     return await resolveAnyResponsesPoolMember(options, userPlan.plan);
@@ -3339,6 +3461,7 @@ async function resolvePoolMember(
     options.accountBackendPreferenceMode,
     options.requestedModel,
     options.forceFirefly,
+    options.requiresMask,
     0,
     0,
     options.accountPlanFilter ?? "any"
@@ -3393,6 +3516,7 @@ async function resolveAnyWebPoolMember(
       options.accountBackendPreferenceMode,
       options.requestedModel,
       options.forceFirefly,
+      options.requiresMask,
       0,
       0,
       options.accountPlanFilter ?? "any"
@@ -3451,6 +3575,7 @@ async function resolveAnyResponsesPoolMember(
       options.accountBackendPreferenceMode,
       options.requestedModel,
       options.forceFirefly,
+      options.requiresMask,
       0,
       0,
       options.accountPlanFilter ?? "any"
@@ -3982,6 +4107,227 @@ export async function getEffectiveDefaultImageBackendGroup(
     contentSafetyEnabled: group.contentSafetyEnabled,
     imageCreditOverrides: getGroupImageCreditOverrides(group.metadata),
   };
+}
+
+/**
+ * 获取创作页可安全展示的分组与模型目录。
+ *
+ * @param plan - 当前套餐，用于过滤无权使用的分组和手动选择能力。
+ * @returns 不含凭据的分组模型目录；不可手选的有效默认组以隐式路由方式保留。
+ * @remarks 目录只提供展示和前端预检，提交时仍必须在调度器重新授权。
+ */
+export async function getImageGenerationModelCatalogForPlan(
+  plan: SubscriptionPlan
+): Promise<ImageGenerationModelCatalog> {
+  const [allGroups, effectiveGroup, canSelectGroups] = await Promise.all([
+    listImageBackendGroupOptions({ plan }),
+    getEffectiveDefaultImageBackendGroup(plan),
+    canUsePlanCapability(plan, "backendGroups.select"),
+  ]);
+  const groupsById = new Map(allGroups.map((group) => [group.id, group]));
+  const selectableGroupIds = new Set(
+    canSelectGroups
+      ? allGroups
+          .filter((group) => group.isUserSelectable)
+          .map((group) => group.id)
+      : []
+  );
+  const catalogGroupIds = new Set<string>();
+  if (effectiveGroup) catalogGroupIds.add(effectiveGroup.id);
+  for (const groupId of selectableGroupIds) catalogGroupIds.add(groupId);
+
+  const groups = Array.from(catalogGroupIds)
+    .map((groupId) => groupsById.get(groupId))
+    .filter((group): group is NonNullable<ReturnType<typeof groupsById.get>> =>
+      Boolean(group)
+    )
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      isDefault: group.isDefault,
+      imageCreditOverrides: group.imageCreditOverrides,
+      routingMode: selectableGroupIds.has(group.id)
+        ? ("explicit-selectable" as const)
+        : ("implicit-default" as const),
+    }));
+  if (!groups.length) return { groups: [] };
+
+  const catalogMemberGroupMap = buildImageGenerationCatalogMemberGroupMap({
+    catalogGroupIds: groups.map((group) => group.id),
+    groups: allGroups.map((group) => ({
+      id: group.id,
+      backendType: group.backendType,
+      childGroupIds: group.childGroupIds,
+    })),
+  });
+  const memberLookupGroupIds = Array.from(catalogMemberGroupMap.keys());
+  const enabledNonTerminalMember = <
+    T extends {
+      isEnabled: unknown;
+      status: unknown;
+    },
+  >(
+    table: T
+  ) =>
+    and(
+      eq(table.isEnabled as never, true),
+      sql`${table.status as never} <> 'error'`
+    );
+  const now = new Date();
+  const [apiRows, accountRows, adobeRows] = await Promise.all([
+    db
+      .select({
+        matchedGroupId: imageBackendApiGroup.groupId,
+        groupId: imageBackendApi.groupId,
+        model: imageBackendApi.model,
+        supportedModelIds: imageBackendApi.supportedModelIds,
+        interfaceMode: imageBackendApi.interfaceMode,
+        imageUpstreamMode: imageBackendApi.imageUpstreamMode,
+        adobeSourced: imageBackendApi.adobeSourced,
+        isEnabled: imageBackendApi.isEnabled,
+        alwaysActive: imageBackendApi.alwaysActive,
+        status: imageBackendApi.status,
+        cooldownUntil: imageBackendApi.cooldownUntil,
+      })
+      .from(imageBackendApi)
+      .leftJoin(
+        imageBackendApiGroup,
+        eq(imageBackendApiGroup.apiId, imageBackendApi.id)
+      )
+      .where(
+        and(
+          enabledNonTerminalMember(imageBackendApi),
+          or(
+            inArray(imageBackendApiGroup.groupId, memberLookupGroupIds),
+            inArray(imageBackendApi.groupId, memberLookupGroupIds)
+          )
+        )
+      ),
+    db
+      .select({
+        matchedGroupId: imageBackendAccountGroup.groupId,
+        groupId: imageBackendAccount.groupId,
+        implementationMode: imageBackendAccount.implementationMode,
+        isEnabled: imageBackendAccount.isEnabled,
+        alwaysActive: imageBackendAccount.alwaysActive,
+        status: imageBackendAccount.status,
+        cooldownUntil: imageBackendAccount.cooldownUntil,
+      })
+      .from(imageBackendAccount)
+      .leftJoin(
+        imageBackendAccountGroup,
+        eq(imageBackendAccountGroup.accountId, imageBackendAccount.id)
+      )
+      .where(
+        and(
+          enabledNonTerminalMember(imageBackendAccount),
+          or(
+            inArray(imageBackendAccountGroup.groupId, memberLookupGroupIds),
+            inArray(imageBackendAccount.groupId, memberLookupGroupIds)
+          )
+        )
+      ),
+    db
+      .select({
+        matchedGroupId: imageBackendAdobeGroup.groupId,
+        groupId: imageBackendAdobe.groupId,
+        enabledModels: imageBackendAdobe.enabledModels,
+        isEnabled: imageBackendAdobe.isEnabled,
+        alwaysActive: imageBackendAdobe.alwaysActive,
+        status: imageBackendAdobe.status,
+        cooldownUntil: imageBackendAdobe.cooldownUntil,
+      })
+      .from(imageBackendAdobe)
+      .leftJoin(
+        imageBackendAdobeGroup,
+        eq(imageBackendAdobeGroup.adobeId, imageBackendAdobe.id)
+      )
+      .where(
+        and(
+          enabledNonTerminalMember(imageBackendAdobe),
+          or(
+            inArray(imageBackendAdobeGroup.groupId, memberLookupGroupIds),
+            inArray(imageBackendAdobe.groupId, memberLookupGroupIds)
+          )
+        )
+      ),
+  ]);
+  const resolveCatalogGroupIds = (
+    matchedGroupId: string | null,
+    groupId: string | null
+  ) => {
+    const resolvedGroupIds = new Set<string>();
+    for (const memberGroupId of [matchedGroupId, groupId]) {
+      if (!memberGroupId) continue;
+      for (const catalogGroupId of catalogMemberGroupMap.get(memberGroupId) ||
+        []) {
+        resolvedGroupIds.add(catalogGroupId);
+      }
+    }
+    return Array.from(resolvedGroupIds);
+  };
+  const members: ImageGenerationCatalogMember[] = [];
+
+  for (const row of apiRows) {
+    if (!isImageGenerationCatalogMemberAvailable(row, now)) continue;
+    const edit = imageBackendApiInterfaceAllowsRequest(
+      row.interfaceMode,
+      "image_edit",
+      row.imageUpstreamMode
+    );
+    for (const groupId of resolveCatalogGroupIds(
+      row.matchedGroupId,
+      row.groupId
+    )) {
+      members.push({
+        groupId,
+        type: "api",
+        adobeSourced: row.adobeSourced,
+        defaultModel: row.model,
+        supportedModelIds: row.supportedModelIds,
+        capabilities: {
+          generate: imageBackendApiInterfaceAllowsRequest(
+            row.interfaceMode,
+            "image_generation",
+            row.imageUpstreamMode
+          ),
+          edit,
+          mask: edit,
+        },
+      });
+    }
+  }
+  for (const row of accountRows) {
+    if (!isImageGenerationCatalogMemberAvailable(row, now)) continue;
+    for (const groupId of resolveCatalogGroupIds(
+      row.matchedGroupId,
+      row.groupId
+    )) {
+      members.push({
+        groupId,
+        type: "account",
+        // account.model 是对话顶层模型；统一页面选择 default 后不传 model，由图像管线
+        // 决定 gpt-image 默认项，避免把 gpt-* 对话模型送入图片接口。
+        accountBackend: normalizeAccountBackend(row.implementationMode),
+      });
+    }
+  }
+  for (const row of adobeRows) {
+    if (!isImageGenerationCatalogMemberAvailable(row, now)) continue;
+    for (const groupId of resolveCatalogGroupIds(
+      row.matchedGroupId,
+      row.groupId
+    )) {
+      members.push({
+        groupId,
+        type: "adobe",
+        enabledModels: row.enabledModels,
+        capabilities: { generate: true, edit: true, mask: false },
+      });
+    }
+  }
+
+  return buildImageGenerationModelCatalog({ groups, members });
 }
 
 type UpsertGroupInput = {

@@ -13,8 +13,8 @@
  *   滑动露出的空位填黑。硬拼不叠加两版 → 不重影（线性羽化会把两版轻微错位内容糊成重影）。
  *
  * 为什么能无缝且尺寸稳：① 1K tile —— codex/api 后端尊重 1K 尺寸（2K/4K 才不尊重，见 #19175）；
- *   ② mask —— web 后端不发 mask，故必须路由到 codex/responses/标准 API（它们把 mask 发给上游，
- *   标准 images/edits 支持局部重绘）。见 operations.ts 的路由（requiresResponsesBackend）。
+ *   ② mask —— Web 与 Adobe 后端不发 mask，故每块都按 image_edit + requiresMask 重新选择
+ *   Codex/Responses 或标准 API（它们把 mask 发给上游，标准 images/edits 支持局部重绘）。
  *
  * 设计（职责分离，便于单测）：切块几何与每块保留区是纯函数（planOutpaintTiles / tileKeepInset），
  *   单独单测；编排 maskedOutpaintImage 用 sharp 做缩放/切块/合成，用注入的 editWithMask 回调重绘

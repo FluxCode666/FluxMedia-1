@@ -11,11 +11,13 @@ import {
   firstBatchError,
   runBatchImageGeneration,
 } from "@/features/image-generation/batch-runner";
+import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
 import { runImageGenerationForUser } from "@/features/image-generation/operations";
 import {
   normalizeOutputCompression,
   normalizeOutputFormat,
 } from "@/features/image-generation/output-format";
+import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
 import {
   DEFAULT_IMAGE_SIZE,
   IMAGE_PROMPT_MAX_CHARACTERS,
@@ -23,6 +25,9 @@ import {
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import { createImageStreamResponse } from "@/features/image-generation/streaming";
+
+const IMAGE_GENERATION_ERROR_FALLBACK =
+  "Image generation failed. Please retry shortly.";
 
 const generateImageSchema = z.object({
   prompt: z
@@ -42,6 +47,8 @@ const generateImageSchema = z.object({
       message: "Invalid image size",
     }),
   model: z.string().optional(),
+  backendGroupId: z.string().trim().min(1).max(128).optional(),
+  backend_group_id: z.string().trim().min(1).max(128).optional(),
   gptModel: z.string().optional(),
   gpt_model: z.string().optional(),
   thinking: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
@@ -84,8 +91,29 @@ function wantsStreamResponse(request: NextRequest, stream?: boolean) {
 
 function generationErrorResponse(error: unknown) {
   return errorResponse(
-    error instanceof Error ? error.message : "Failed to generate image."
+    toClientErrorMessage(
+      error,
+      { source: "image-generate-route" },
+      IMAGE_GENERATION_ERROR_FALLBACK
+    )
   );
+}
+
+/** 将管线正常返回的失败结果收敛为可安全回传的接口结果。 */
+function sanitizeGenerationResult(
+  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  source: string
+) {
+  if (!result.error) return result;
+
+  return {
+    ...result,
+    error: toClientErrorMessage(
+      result.error,
+      { source, generationId: result.generationId },
+      IMAGE_GENERATION_ERROR_FALLBACK
+    ),
+  };
 }
 
 export const POST = withApiLogging(async (request: NextRequest) => {
@@ -95,6 +123,10 @@ export const POST = withApiLogging(async (request: NextRequest) => {
 
   if (!session?.user) {
     return errorResponse("Unauthorized", 401);
+  }
+
+  if (!hasTrustedImageGenerationOrigin(request)) {
+    return errorResponse("Forbidden", 403);
   }
 
   let body: unknown;
@@ -136,6 +168,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     promptOptimization: parsed.data.promptOptimization,
     size: parsed.data.size || DEFAULT_IMAGE_SIZE,
     model: parsed.data.model,
+    backendGroupId: parsed.data.backendGroupId ?? parsed.data.backend_group_id,
     gptModel: parsed.data.gptModel || parsed.data.gpt_model,
     thinking: parsed.data.thinking,
     quality: parsed.data.quality || "auto",
@@ -179,50 +212,66 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     const useStreamResponse = wantsStreamResponse(request, parsed.data.stream);
 
     if (useStreamResponse) {
-      return createImageStreamResponse(async (emit) => {
-        await runBatchImageGeneration({
-          count,
-          concurrency: planLimits.imageGenerationConcurrency,
-          generationIds: batchGenerationIds,
-          run: (generationId, callbacks) =>
-            runImageGenerationForUser({ ...input, generationId }, callbacks),
-          callbacks: (index) => ({
-            onPartialImage: async (image) => {
-              await emit({
-                type: "partial_image",
-                index,
-                partial_image_index: image.partialImageIndex,
-                b64_json: image.imageBase64,
-                url: image.imageUrl,
-              });
+      return createImageStreamResponse(
+        async (emit) => {
+          await runBatchImageGeneration({
+            count,
+            concurrency: planLimits.imageGenerationConcurrency,
+            generationIds: batchGenerationIds,
+            run: (generationId, callbacks) =>
+              runImageGenerationForUser({ ...input, generationId }, callbacks),
+            callbacks: (index) => ({
+              onPartialImage: async (image) => {
+                await emit({
+                  type: "partial_image",
+                  index,
+                  partial_image_index: image.partialImageIndex,
+                  b64_json: image.imageBase64,
+                  url: image.imageUrl,
+                });
+              },
+            }),
+            onResult: async (result) => {
+              const safeResult = sanitizeGenerationResult(
+                result,
+                "image-generate-stream-result"
+              );
+              if (safeResult.error) {
+                await emit({
+                  type: "error",
+                  error: safeResult.error,
+                  generationId: safeResult.generationId,
+                  creditsConsumed: safeResult.creditsConsumed,
+                });
+                return;
+              }
+              await emit({ type: "completed", ...safeResult });
             },
-          }),
-          onResult: async (result) => {
-            if (result.error) {
-              await emit({
-                type: "error",
-                error: result.error,
-                generationId: result.generationId,
-                creditsConsumed: result.creditsConsumed,
-              });
-              return;
-            }
-            await emit({ type: "completed", ...result });
-          },
-          stopOnError: true,
-        });
+            stopOnError: true,
+          });
 
-        return null;
-      });
+          return null;
+        },
+        {
+          formatError: (error) =>
+            toClientErrorMessage(
+              error,
+              { source: "image-generate-stream" },
+              IMAGE_GENERATION_ERROR_FALLBACK
+            ),
+        }
+      );
     }
 
     if (count === 1) {
-      return NextResponse.json(
+      const result = sanitizeGenerationResult(
         await runImageGenerationForUser({
           ...input,
           generationId: requestedGenerationId,
-        })
+        }),
+        "image-generate-response"
       );
+      return NextResponse.json(result);
     }
 
     const results = await runBatchImageGeneration({
@@ -233,9 +282,13 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         runImageGenerationForUser({ ...input, generationId }),
     });
 
+    const safeResults = results.map((result) =>
+      sanitizeGenerationResult(result, "image-generate-batch-response")
+    );
+
     return NextResponse.json({
-      results,
-      error: firstBatchError(results)?.error,
+      results: safeResults,
+      error: firstBatchError(safeResults)?.error,
     });
   } catch (error) {
     return generationErrorResponse(error);

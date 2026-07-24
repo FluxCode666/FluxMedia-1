@@ -1,7 +1,9 @@
 import {
-  applyRequestParameterMappings,
-  normalizeRequestParameterMappings,
-} from "@repo/shared/image-backend/request-parameter-mapping";
+  buildAdobeImageRequestBody,
+  canAdobeBackendServeModel,
+  isAdobeImageFamilyModelId,
+  parseAdobeMediaResult,
+} from "@repo/shared/adobe";
 import {
   GPT52_CHAT_MODEL,
   GPT54_CHAT_MODEL,
@@ -10,11 +12,9 @@ import {
   RESPONSES_IMAGE_MODELS,
 } from "@repo/shared/config/subscription-plan";
 import {
-  buildAdobeImageRequestBody,
-  canAdobeBackendServeModel,
-  isAdobeImageFamilyModelId,
-  parseAdobeMediaResult,
-} from "@repo/shared/adobe";
+  applyRequestParameterMappings,
+  normalizeRequestParameterMappings,
+} from "@repo/shared/image-backend/request-parameter-mapping";
 import { logError, logWarn } from "@repo/shared/logger";
 import {
   getRuntimeSettingBoolean,
@@ -1177,6 +1177,10 @@ async function retryPoolBackendResult(
     accountBackendPreference?: ImageBackendAccountBackend;
     accountBackendPreferenceMode?: ImageBackendPreferenceMode;
     allowAnyResponsesBackend?: boolean;
+    backendGroupId?: string;
+    requiresMask?: boolean;
+    requestedModel?: string;
+    requestKind?: ImageBackendRequestKind;
   }
 ) {
   // 仅"不需要上报"的后端直接跑一次返回。pool-adobe 等带 reportResult 的池后端必须进入
@@ -1187,7 +1191,19 @@ async function retryPoolBackendResult(
     return run(config);
   }
 
-  const requestKind = config.backend.requestKind;
+  const requestKind = options?.requestKind ?? config.backend.requestKind;
+  // 选中的主分组可能与当前成员所在的子分组不同；重试必须使用原始选择重新解析。
+  const backendGroupId =
+    options?.backendGroupId ?? config.backend.requestedBackendGroupId;
+  // 未显式选组时，默认组可能在重试间发生切换。只将首次解析得到的计费组作为可信的
+  // 隐式 pin，绝不把它伪装成用户显式选择以绕过分组权限校验；绑定 API Key 时由底层
+  // 解析器优先处理其分组约束并忽略本 pin。
+  const pinnedImplicitGroupId = !backendGroupId?.trim()
+    ? config.backend.billingGroupId || undefined
+    : undefined;
+  const requiresMask =
+    options?.requiresMask === true || config.backend.requiresMask === true;
+  const requestedModel = options?.requestedModel;
   // firefly 意图(解析时盖在 config 上,反映请求口径而非后端类型)。换号 re-resolve 时强制
   // forceFirefly 以保持「只走 Adobe」,并对换号结果做不变量校验兜底。
   const fireflyRequest = config.backend.fireflyOnly === true;
@@ -1217,12 +1233,16 @@ async function retryPoolBackendResult(
       return await resolveImageBackendPoolConfig({
         userId: config.backend?.userId || "",
         apiKeyId: config.backend?.apiKeyId,
+        backendGroupId,
+        pinnedImplicitGroupId,
         requestKind: requestKind as ImageBackendRequestKind,
         excludedMemberKeys: Array.from(excluded),
         accountBackendPreference,
         accountBackendPreferenceMode: options?.accountBackendPreferenceMode,
         allowAnyResponsesBackend: options?.allowAnyResponsesBackend,
         forceFirefly: fireflyRequest,
+        requiresMask,
+        requestedModel,
       });
     } catch (fallbackError) {
       if (fallbackError instanceof ImageBackendPoolUnavailableError) {
@@ -1320,12 +1340,16 @@ async function retryPoolBackendResult(
       next = await resolveImageBackendPoolConfig({
         userId: config.backend.userId,
         apiKeyId: config.backend.apiKeyId,
+        backendGroupId,
+        pinnedImplicitGroupId,
         requestKind,
         excludedMemberKeys: Array.from(excluded),
         accountBackendPreference,
         accountBackendPreferenceMode: options?.accountBackendPreferenceMode,
         allowAnyResponsesBackend: options?.allowAnyResponsesBackend,
         forceFirefly: fireflyRequest,
+        requiresMask,
+        requestedModel,
       });
     } catch (error) {
       if (error instanceof ImageBackendPoolUnavailableError) {
@@ -3834,6 +3858,9 @@ async function parseImageResponse(
 export async function getEffectiveConfig(options?: {
   userId?: string;
   apiKeyId?: string;
+  backendGroupId?: string;
+  /** 仅隐式默认组重试使用的服务端可信分组固定值，不代表用户显式选择。 */
+  pinnedImplicitGroupId?: string;
   requestKind?: ImageBackendRequestKind;
   requestedModel?: string;
   preferredMemberId?: string;
@@ -3844,6 +3871,8 @@ export async function getEffectiveConfig(options?: {
   accountBackendPreferenceMode?: ImageBackendPreferenceMode;
   // force_firefly：强制把候选收敛到 adobe（firefly）后端，对任意模型生效。
   forceFirefly?: boolean;
+  // 当前请求带蒙版时，解析与重试都必须排除不会传递 mask 的 Adobe 适配器。
+  requiresMask?: boolean;
   allowAnyResponsesBackend?: boolean;
 }): Promise<{
   config: ApiConfig;
@@ -3855,6 +3884,8 @@ export async function getEffectiveConfig(options?: {
       poolConfig = await resolveImageBackendPoolConfig({
         userId: options.userId,
         apiKeyId: options.apiKeyId,
+        backendGroupId: options.backendGroupId,
+        pinnedImplicitGroupId: options.pinnedImplicitGroupId,
         requestKind: options.requestKind,
         requestedModel: options.requestedModel,
         preferredMemberId: options.preferredMemberId,
@@ -3864,6 +3895,7 @@ export async function getEffectiveConfig(options?: {
         accountBackendPreference: options.accountBackendPreference,
         accountBackendPreferenceMode: options.accountBackendPreferenceMode,
         forceFirefly: options.forceFirefly,
+        requiresMask: options.requiresMask,
         allowAnyResponsesBackend: options.allowAnyResponsesBackend,
       });
     } catch (error) {
@@ -4085,6 +4117,8 @@ export async function generateImage(
         accountBackendPreferenceMode: params.forceWebBackend
           ? "mixed-only"
           : undefined,
+        requestedModel: params.model,
+        requestKind: "image_generation",
       }
     );
   }
@@ -4234,6 +4268,27 @@ export async function editImage(
   params: EditImageParams,
   callbacks?: ImageGenerationCallbacks
 ): Promise<GenerateImageResult> {
+  // Adobe 与网页账号适配器不会把 mask 传给上游。这里必须 fail-closed，避免局部编辑
+  // 被静默降级为整图编辑；正常路径会在 operations 中先重选 image_edit 候选。
+  if (
+    params.mask &&
+    (config.backend?.type === "pool-adobe" ||
+      isPoolAccountBackend(config, "web"))
+  ) {
+    // 该分支发生在重试包装器之前；调度器已为初始成员获取的租约必须在拒绝前归还。
+    const backend = config.backend;
+    if (backend?.reportResult) {
+      await releaseImageBackendInflightLease({
+        memberType: poolBackendMemberType(backend.type),
+        memberId: backend.id,
+        leaseId: backend.inflightLeaseId,
+        leasePersisted: backend.inflightLeasePersisted,
+      });
+      backend.inflightLease = false;
+    }
+    return { error: "当前生图后端不支持蒙版编辑，已阻止请求发送。" };
+  }
+
   if (config.backend?.reportResult) {
     return retryPoolBackendResult(
       config,
@@ -4248,6 +4303,9 @@ export async function editImage(
         accountBackendPreferenceMode: params.forceWebBackend
           ? "mixed-only"
           : undefined,
+        requiresMask: Boolean(params.mask),
+        requestedModel: params.model,
+        requestKind: "image_edit",
       }
     );
   }
@@ -4499,6 +4557,7 @@ export async function generateChatImage(
         accountBackendPreference: params.requiresResponsesBackend
           ? "responses"
           : undefined,
+        requestedModel: params.imageModel,
       }
     );
   }

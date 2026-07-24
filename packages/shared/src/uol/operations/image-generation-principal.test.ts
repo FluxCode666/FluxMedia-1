@@ -12,7 +12,10 @@ import { imageGenerateInputSchema } from "./image-generation";
 describe("image.generate principal-bound contract", () => {
   it("accepts generation parameters without a client identity", () => {
     expect(
-      imageGenerateInputSchema.safeParse({ prompt: "a test image" }).success
+      imageGenerateInputSchema.safeParse({
+        prompt: "a test image",
+        backendGroupId: "group-a",
+      }).success
     ).toBe(true);
   });
 
@@ -22,6 +25,7 @@ describe("image.generate principal-bound contract", () => {
     "relay_only",
     "moderationBlockRiskLevel",
     "userModerationBlockRiskLevel",
+    "extra",
   ])("rejects client-controlled field %s", (field) => {
     expect(
       imageGenerateInputSchema.safeParse({

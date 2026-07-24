@@ -565,6 +565,7 @@
     "nav": {
       "dashboard": "控制台",
       "create": "创作",
+      "generate": "简易生图",
       "gallery": "图库",
       "history": "历史记录",
       "backendHelp": "系统文档",

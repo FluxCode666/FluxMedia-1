@@ -104,6 +104,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   const getNavTitle = (title: string): string => {
     const titleMap: Record<string, string> = {
       Create: t("nav.create"),
+      Generate: t("nav.generate"),
       Dashboard: t("nav.dashboard"),
       Gallery: t("nav.gallery"),
       "Usage records": t("nav.history"),

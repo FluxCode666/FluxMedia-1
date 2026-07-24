@@ -78,7 +78,6 @@ import {
   getImageModel,
   getImageSizePixels,
   type ImageBaseCreditPricing,
-  type ResolvedImageModerationCreditPricing,
   type ImageQualityLevel,
   type ImageThinkingLevel,
   isFireflyModel,
@@ -86,6 +85,7 @@ import {
   isImageSizeWithinPixelRange,
   normalizeImageSize,
   parseImageSize,
+  type ResolvedImageModerationCreditPricing,
   roundCreditAmount,
   roundUpCreditAmount,
 } from "./resolution";
@@ -125,6 +125,7 @@ type RunImageGenerationInput =
       userId: string;
       generationId?: string;
       apiKeyId?: string;
+      backendGroupId?: string;
       backendRequestKind?: ImageBackendRequestKind;
       preferredBackendMemberId?: string;
       preferredBackendMemberType?: "api" | "account" | "adobe";
@@ -140,6 +141,7 @@ type RunImageGenerationInput =
       userId: string;
       generationId?: string;
       apiKeyId?: string;
+      backendGroupId?: string;
       backendRequestKind?: ImageBackendRequestKind;
       preferredBackendMemberId?: string;
       preferredBackendMemberType?: "api" | "account" | "adobe";
@@ -155,6 +157,7 @@ type RunImageGenerationInput =
       userId: string;
       generationId?: string;
       apiKeyId?: string;
+      backendGroupId?: string;
       backendRequestKind?: ImageBackendRequestKind;
       preferredBackendMemberId?: string;
       preferredBackendMemberType?: "api" | "account" | "adobe";
@@ -947,7 +950,9 @@ async function storeGeneratedImageOutput(params: {
       if (target && maskOutpaint) {
         // 掩码顺序外绘（留黑真外绘）:在目标尺寸上切 1K 重叠块,逐块把待补区留黑、
         // 只留已提交邻块的边,让模型「从边缘往黑区外绘」,并严格照整幅原图参考还原该处内容。
-        // 路由 codex(会发 mask、尊重 1K)。首块(i=0,无邻居)按原图内容整块重绘作种子。
+        // 每块都单独解析支持 image_edit + mask 的后端，不能复用主生图配置：主配置可能是
+        // Web/Adobe 或仅支持 image_generation 的成员，它们会静默忽略蒙版。每块重新解析也让
+        // 租约与实际一次上游调用一一对应，避免复用已释放的 lease。
         // 诊断日志(临时):开始/每块失败/完成都打点,便于确认外绘是否跑、每块成败(见 tileref 复盘)。
         logWarn("掩码外绘开始", {
           generationId: params.generationId,
@@ -958,8 +963,25 @@ async function storeGeneratedImageOutput(params: {
             imageBuffer,
             Math.max(target.width, target.height),
             async (tileCanvas, mask, pos, w, h, i) => {
+              let maskEditConfig: ApiConfig | null = null;
               try {
-                const edited = await editImage(params.config, {
+                const backend = params.config.backend;
+                const resolvedMaskEditConfig = await getEffectiveConfig({
+                  userId: params.userId,
+                  apiKeyId: backend?.apiKeyId,
+                  // 显式选择仍要重新执行用户授权；隐式默认组则固定首次实际计费分组，
+                  // 以免管理员在分块期间切换默认组后发生跨组路由或计费漂移。
+                  backendGroupId: backend?.requestedBackendGroupId,
+                  pinnedImplicitGroupId:
+                    backend?.requestedBackendGroupId?.trim()
+                      ? undefined
+                      : (backend?.billingGroupId ?? undefined),
+                  requestKind: "image_edit",
+                  requestedModel: DEFAULT_IMAGE_MODEL,
+                  requiresMask: true,
+                });
+                maskEditConfig = resolvedMaskEditConfig.config;
+                const edited = await editImage(maskEditConfig, {
                   // 自主拓展:按块方位给位置提示词(「根据四周已渲染内容补出该方位」),
                   // 不喂原图/参考。首块=修复种子;其余=从已提交边缘往黑区补该方位。
                   prompt: buildOutpaintPrompt(pos),
@@ -971,7 +993,6 @@ async function storeGeneratedImageOutput(params: {
                   size: `${w}x${h}`,
                   model: DEFAULT_IMAGE_MODEL,
                   outputFormat: "png",
-                  requiresResponsesBackend: true,
                 });
                 if (edited.error || !edited.imageBase64) {
                   throw new Error(edited.error || "该块无输出");
@@ -990,6 +1011,8 @@ async function storeGeneratedImageOutput(params: {
                       : String(tileError),
                 });
                 throw tileError;
+              } finally {
+                await releasePoolBackendConfigLease(maskEditConfig);
               }
             },
             superResolve
@@ -1450,6 +1473,8 @@ export async function runImageGenerationForUser(
       : input.mode === "edit"
         ? "image_edit"
         : "chat");
+  // 仅以实际存在的蒙版文件作为调度条件，不能信任客户端额外声明的能力字段。
+  const requiresMask = input.mode === "edit" && Boolean(input.mask);
   const moderationContext = await createGenerationModerationContext(
     input.userId
   );
@@ -1470,6 +1495,7 @@ export async function runImageGenerationForUser(
               effectiveConfig = await getEffectiveConfig({
                 userId: input.userId,
                 apiKeyId: input.apiKeyId,
+                backendGroupId: input.backendGroupId,
                 requestKind: backendRequestKind,
                 requestedModel: getRequestedModelForBackendSelection(input),
                 preferredMemberId: input.preferredBackendMemberId,
@@ -1485,6 +1511,7 @@ export async function runImageGenerationForUser(
                   ? "mixed-only"
                   : undefined,
                 forceFirefly: input.forceFirefly,
+                requiresMask,
               });
             } catch (error) {
               if (
@@ -1496,6 +1523,7 @@ export async function runImageGenerationForUser(
               effectiveConfig = await getEffectiveConfig({
                 userId: input.userId,
                 apiKeyId: input.apiKeyId,
+                backendGroupId: input.backendGroupId,
                 requestKind: backendRequestKind,
                 requestedModel: getRequestedModelForBackendSelection(input),
                 preferredMemberId: input.preferredBackendMemberId,
@@ -1507,6 +1535,7 @@ export async function runImageGenerationForUser(
                   ? "mixed-only"
                   : undefined,
                 forceFirefly: input.forceFirefly,
+                requiresMask,
               });
             }
           } catch (error) {
@@ -1590,8 +1619,8 @@ export async function runImageGenerationForUser(
           const moderationImageCount = moderationEnabled
             ? inputImages.length
             : 0;
-          // WHY: 先解析实际图像模型，再按“所选分组覆盖 → 全局模型价 → 通用档位价”
-          // 合并完整价格，保证 Chat 顶层文本模型不会误选生图价格。
+          // WHY: 先解析实际图像模型，再按“所选分组覆盖 → 全局模型价”合并完整
+          // 价格，保证 Chat 顶层文本模型不会误选生图价格。
           const {
             basePricing: imageBasePricing,
             moderationPricing: imageModerationPricing,
@@ -2735,9 +2764,7 @@ async function runQueuedImageGenerationForUser({
           kind: "tool",
           status: index === imageOutputs.length - 1 ? "completed" : "running",
           title:
-            index === imageOutputs.length - 1
-              ? "图片保存完成"
-              : "保存生成图片",
+            index === imageOutputs.length - 1 ? "图片保存完成" : "保存生成图片",
           detail: `已保存 ${index + 1}/${imageOutputs.length} 张图片`,
           toolType: "image_storage",
         });

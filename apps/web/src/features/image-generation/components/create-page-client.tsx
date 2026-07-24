@@ -11,6 +11,11 @@ import {
   type SubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
 import { formatCredits } from "@repo/shared/credits/format";
+import {
+  type ImageCreditOverrides,
+  resolveImageCreditPricing,
+} from "@repo/shared/image-backend/group-image-pricing";
+import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
 import type { PlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { Button } from "@repo/ui/components/button";
 import { Checkbox } from "@repo/ui/components/checkbox";
@@ -19,7 +24,9 @@ import { Input } from "@repo/ui/components/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
@@ -28,17 +35,17 @@ import { Textarea } from "@repo/ui/components/textarea";
 import {
   Brush,
   Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   Coins,
-  Info,
-  ChevronDown,
   Download,
   Eraser,
   Eye,
-  ChevronLeft,
-  ChevronRight,
-  ImagePlus,
   FileText,
+  ImagePlus,
+  Info,
   Loader2,
   Maximize2,
   MessageSquare,
@@ -52,14 +59,19 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
+import { nanoid } from "nanoid";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useLocale } from "next-intl";
-import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-
+import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
+import type { ImageBackendGroupBackendType } from "@/features/image-backend-pool/types";
+import {
+  hasSeenWaterfallFirstTimeWarning,
+  WaterfallWarningPopup,
+  type WaterfallWarningType,
+} from "@/features/image-generation/components/waterfall-warning-popup";
 import {
   useCreateRuntimeAccessor,
   useCreateRuntimeRef,
@@ -67,35 +79,35 @@ import {
   useResetCreateRuntimeKeys,
 } from "@/features/image-generation/create-runtime-store";
 import {
-  hasSeenWaterfallFirstTimeWarning,
-  WaterfallWarningPopup,
-  type WaterfallWarningType,
-} from "@/features/image-generation/components/waterfall-warning-popup";
-import {
   consumePendingReferenceHandoff,
   normalizeReferenceFetchUrl,
   type ReferenceHandoffMode,
 } from "@/features/image-generation/reference-handoff";
-import type { ImageBackendGroupBackendType } from "@/features/image-backend-pool/types";
+import {
+  canModelServeUnifiedImageGeneration,
+  createUnifiedModelSelectionValue,
+  getRequiredUnifiedModelCapability,
+  getUnifiedImageGenerationMode,
+  parseUnifiedModelSelectionValue,
+} from "@/features/image-generation/unified-image-generation-state";
 import { useRouter as useIntlRouter } from "@/i18n/routing";
 import {
+  type AgentTaskCard,
   agentEventToImageUrl,
   appendAgentRunEvent,
   buildAgentRoundCards,
   createOptimisticAgentRoundEvents,
   normalizeAgentEvent,
-  type AgentTaskCard,
 } from "../agent-round-cards";
 import {
   AUTO_IMAGE_SIZE,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_SIZE,
   getImageCreditCost,
-  type ImageBaseCreditPricing,
-  type ImageQualityLevel,
-  type ImageThinkingLevel,
   IMAGE_1K_BASE_EDGE,
   IMAGE_DIMENSION_STEP,
+  type ImageQualityLevel,
+  type ImageThinkingLevel,
   isFireflyModel,
   isImageSizeWithinPixelRange,
   MAX_IMAGE_DIMENSION,
@@ -105,10 +117,6 @@ import {
   validateImageSize,
 } from "../resolution";
 import type { VideoPricingInfo } from "../video-operations";
-import {
-  type ImageCreditOverrides,
-  resolveImageCreditPricing,
-} from "@repo/shared/image-backend/group-image-pricing";
 import { ImageLightbox, type LightboxGeneration } from "./image-lightbox";
 import { VideoCreatePanel } from "./video-create-panel";
 
@@ -177,6 +185,18 @@ type ImageApiResult = {
 
 type GenerationRequestError = Error & {
   creditsConsumed?: number;
+};
+
+/** 合并表单覆写旧文生图/图生图提交器时传递的本次请求选择。 */
+type ImageGenerationRequestOverride = {
+  prompt?: string;
+  model?: string;
+  backendGroupId?: string;
+  /**
+   * 仅用于页面侧余额预检的分组价格覆盖。
+   * 服务端仍会根据 backendGroupId 重新解析并结算，不能将这个字段视为计费授权。
+   */
+  pricingGroup?: { imageCreditOverrides?: ImageCreditOverrides };
 };
 
 type AgentRunEvent = {
@@ -956,10 +976,7 @@ function ImageSizeDialog({
               />
               <span>
                 <span className="block text-sm font-medium text-foreground">
-                  {copy(
-                    "Mixed group Web-first routing",
-                    "混合分组优先走 Web"
-                  )}
+                  {copy("Mixed group Web-first routing", "混合分组优先走 Web")}
                 </span>
                 <span className="mt-1 block">
                   {copy(
@@ -1010,10 +1027,8 @@ const shouldBypassImageOptimization = (imageUrl: string | undefined) =>
 // WHY:这些位置常以很小尺寸展示(最近面板 80px、变体 40px),但原本直接加载全分辨率原图
 // (单张可达 1.3MB),一屏多图严重拖卡前端;next/image 优化器对带签名 query 的本地图会 400,
 // 故沿用全站既有方案——直连 /w/ 路径段缩略图(CF/磁盘可缓存),非存储图原样返回。
-const thumbSrc = (
-  imageUrl: string | null | undefined,
-  width: number
-): string => buildStorageThumbnailUrl(imageUrl, width) || imageUrl || "";
+const thumbSrc = (imageUrl: string | null | undefined, width: number): string =>
+  buildStorageThumbnailUrl(imageUrl, width) || imageUrl || "";
 
 const DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MAX_EDIT_REQUEST_BYTES = 75 * 1024 * 1024;
@@ -1149,7 +1164,10 @@ function ConcurrencyNumberInput({
         disabled={disabled}
         onChange={(event) =>
           onChange(
-            Math.min(max, Math.max(1, Math.floor(Number(event.target.value) || 1)))
+            Math.min(
+              max,
+              Math.max(1, Math.floor(Number(event.target.value) || 1))
+            )
           )
         }
         className="w-full"
@@ -1210,21 +1228,20 @@ const CHAT_PERSIST_DEBOUNCE_MS = 300;
 const PROMPT_IMAGE_REFERENCE_PATTERN = /@(?:第)?\d+轮图\d+|@图\d+/;
 
 function readStoredCreateActiveMode(): ActiveMode {
-  if (typeof window === "undefined") return "text";
+  if (typeof window === "undefined") return "image";
   try {
     const value = window.localStorage.getItem(CREATE_ACTIVE_MODE_STORAGE_KEY);
-    // 白名单须与 ActiveMode 全量同步,漏项会导致该模式刷新后回落 text
-    return value === "text" ||
-      value === "image" ||
-      value === "chat" ||
+    // 旧版的 text/image 两个入口已合并，历史 text 值无缝迁移到统一图片创作。
+    if (value === "text" || value === "image") return "image";
+    return value === "chat" ||
       value === "chat-web" ||
       value === "agent" ||
       value === "waterfall" ||
       value === "video"
       ? value
-      : "text";
+      : "image";
   } catch {
-    return "text";
+    return "image";
   }
 }
 
@@ -1239,9 +1256,8 @@ interface CreatePageClientProps {
   };
   backendGroups: BackendGroupOption[];
   selectedBackendGroupId: string | null;
-  customApiActive: boolean;
+  imageGenerationModelCatalog: ImageGenerationModelCatalog;
   moderationEnabled: boolean;
-  imageBasePricing: Required<ImageBaseCreditPricing>;
   imageModelPricing: ImageCreditOverrides;
   imageModerationPricing: Required<
     NonNullable<
@@ -1617,9 +1633,7 @@ function sanitizeChatMessages(value: unknown): ChatMessage[] {
         role: item.role,
         text: messageText,
         mode:
-          item.mode === "agent" ||
-          item.mode === "chat" ||
-          item.mode === "web"
+          item.mode === "agent" || item.mode === "chat" || item.mode === "web"
             ? item.mode
             : undefined,
         attachments: item.attachments,
@@ -1984,7 +1998,6 @@ async function readKeepAliveJson(response: Response): Promise<{
   return JSON.parse(text.slice(start));
 }
 
-
 export function CreatePageClient({
   balance: initialBalance,
   recentGenerations: initialRecent,
@@ -1992,9 +2005,8 @@ export function CreatePageClient({
   uploadLimits,
   backendGroups,
   selectedBackendGroupId,
-  customApiActive,
+  imageGenerationModelCatalog,
   moderationEnabled,
-  imageBasePricing,
   imageModelPricing,
   imageModerationPricing,
   forceWebPixelRange,
@@ -2007,6 +2019,8 @@ export function CreatePageClient({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const isZh = locale === "zh";
+  const isSimpleImageGenerationPage =
+    pathname.replace(/^\/[a-z]{2}(?=\/)/, "") === "/dashboard/generate";
   const copy = useCallback(
     (en: string, zh: string) => (isZh ? zh : en),
     [isZh]
@@ -2019,21 +2033,24 @@ export function CreatePageClient({
   const getPricedImageCreditCost = (
     model: string,
     requestedSize?: string | null,
-    options: Parameters<typeof getImageCreditCost>[1] = {}
+    options: Parameters<typeof getImageCreditCost>[1] = {},
+    pricingGroup?: { imageCreditOverrides?: ImageCreditOverrides } | null
   ) =>
     getImageCreditCost(requestedSize, {
       ...options,
       basePricing: resolveImageCreditPricing({
         model: model === "default" ? DEFAULT_IMAGE_MODEL : model,
-        fallback: imageBasePricing,
         global: imageModelPricing,
-        group: selectedBackendGroup?.imageCreditOverrides,
+        // 传入目录分组时，即使该组没有覆盖价，也必须回落全局价；不能误取默认组覆盖。
+        group: pricingGroup
+          ? pricingGroup.imageCreditOverrides
+          : selectedBackendGroup?.imageCreditOverrides,
       }),
       moderationPricing: imageModerationPricing,
-      quality: (options.quality ??
-        quality) as ImageQualityLevel | undefined,
-      thinking: (options.thinking ??
-        chatThinking) as ImageThinkingLevel | undefined,
+      quality: (options.quality ?? quality) as ImageQualityLevel | undefined,
+      thinking: (options.thinking ?? chatThinking) as
+        | ImageThinkingLevel
+        | undefined,
     });
   const activeBackendType = selectedBackendGroup?.backendType || "mixed";
   const isWebOnlyBackend = activeBackendType === "web";
@@ -2203,17 +2220,27 @@ export function CreatePageClient({
   // 并按套餐能力校正,避免恢复到锁定/不可用模式。
   const [activeMode, setActiveMode] = useCreateRuntimeState<ActiveMode>(
     "activeMode",
-    "text"
+    "image"
   );
   // 三个高频提示词输入已下沉到 PromptTextareaField(独立订阅,击键只重渲
   // 小组件)。父组件改用非订阅访问器:getXxx() 在事件处理器里读最新值,
   // setXxx 各调用点(发送后清空、mention 插入等)签名不变。render 路径
   // 依赖的"非空/含 @ 引用"改订阅派生布尔(仅翻转时重渲本组件)。
   const [getPrompt] = useCreateRuntimeAccessor("prompt", "");
-  const [promptHasText] = useCreateRuntimeState(
-    "promptHasText",
-    () => Boolean(getPrompt().trim())
+  const [promptHasText] = useCreateRuntimeState("promptHasText", () =>
+    Boolean(getPrompt().trim())
   );
+  // 合并表单使用独立提示词键，避免旧文生图、图生图和聊天输入互相覆盖。
+  const [getUnifiedImagePrompt] = useCreateRuntimeAccessor(
+    "unifiedImagePrompt",
+    ""
+  );
+  const [unifiedImagePromptHasText] = useCreateRuntimeState(
+    "unifiedImagePromptHasText",
+    () => Boolean(getUnifiedImagePrompt().trim())
+  );
+  const [unifiedModelSelection, setUnifiedModelSelection] =
+    useCreateRuntimeState("unifiedModelSelection", "");
   const [textMode, setTextMode] = useCreateRuntimeState<TextGenerationMode>(
     "textMode",
     "single"
@@ -2226,9 +2253,8 @@ export function CreatePageClient({
     "editPrompt",
     ""
   );
-  const [editPromptHasText] = useCreateRuntimeState(
-    "editPromptHasText",
-    () => Boolean(getEditPrompt().trim())
+  const [editPromptHasText] = useCreateRuntimeState("editPromptHasText", () =>
+    Boolean(getEditPrompt().trim())
   );
   const [editHasImageReference] = useCreateRuntimeState(
     "editPromptHasRef",
@@ -2242,9 +2268,8 @@ export function CreatePageClient({
     "chatPrompt",
     ""
   );
-  const [chatPromptHasText] = useCreateRuntimeState(
-    "chatPromptHasText",
-    () => Boolean(getChatPrompt().trim())
+  const [chatPromptHasText] = useCreateRuntimeState("chatPromptHasText", () =>
+    Boolean(getChatPrompt().trim())
   );
   const [chatHasImageReference] = useCreateRuntimeState(
     "chatPromptHasRef",
@@ -2478,7 +2503,9 @@ export function CreatePageClient({
     setLineBatchRepeatCount((value) => Math.min(value, batchCountMax));
     setEditBatchCount((value) => Math.min(value, batchCountMax));
     // 瀑布流 tier 也钳制到当前套餐允许上限(套餐切换/管理员调整并发时收紧)
-    setWaterfallTier((value) => Math.max(1, Math.min(value, waterfallTierLimit)));
+    setWaterfallTier((value) =>
+      Math.max(1, Math.min(value, waterfallTierLimit))
+    );
   }, [batchCountMax, waterfallTierLimit]);
 
   useEffect(() => {
@@ -2607,22 +2634,18 @@ export function CreatePageClient({
           return;
         }
 
+        // 合并表单只有一张主参考图；跨页交接也必须替换而非累积旧图。
         setEditImages((prev) => {
-          if (prev.some((image) => image.sourceId === reference.sourceId)) {
-            revokePreview(item.previewUrl);
-            return prev;
+          for (const current of prev) {
+            revokePreview(current.previewUrl);
           }
-          if (prev.length >= maxEditImages) {
-            revokePreview(item.previewUrl);
-            toast.error(
-              copy(
-                `Upload up to ${maxEditImages} source images`,
-                `最多可上传 ${maxEditImages} 张源图片`
-              )
-            );
-            return prev;
-          }
-          return [...prev, item];
+          return [item];
+        });
+        setMaskEditorOpen(false);
+        setMaskPoints([]);
+        setMaskFile((prev) => {
+          if (prev) revokePreview(prev.previewUrl);
+          return null;
         });
         setActiveMode("image");
         toast.success(copy("Reference image selected", "参考图片已选择"));
@@ -2654,7 +2677,6 @@ export function CreatePageClient({
     chatAllowed,
     copy,
     maxChatImages,
-    maxEditImages,
     pathname,
     router,
     searchParams,
@@ -2760,6 +2782,7 @@ export function CreatePageClient({
     string | null
   >("selectedRecentId", null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const unifiedImageInputRef = useRef<HTMLInputElement | null>(null);
   const chatImageInputRef = useRef<HTMLInputElement | null>(null);
   const batchImageInputRef = useRef<HTMLInputElement | null>(null);
   const editPromptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2800,7 +2823,10 @@ export function CreatePageClient({
     Map<string, AbortController>
   >("batchAbortControllersRef", () => new Map());
   // 里程碑警告期间阻塞自动续批；用户确认后解除并恢复生成
-  const warningBlockRef = useCreateRuntimeRef("waterfallWarningBlockRef", false);
+  const warningBlockRef = useCreateRuntimeRef(
+    "waterfallWarningBlockRef",
+    false
+  );
   // 本会话累计“已发起”的瀑布流张数，用于跨越里程碑阈值判断
   const sessionCountRef = useCreateRuntimeRef("waterfallSessionCountRef", 0);
   // 已展示过的里程碑阈值集合，避免同一阈值重复弹窗
@@ -2818,7 +2844,9 @@ export function CreatePageClient({
     ((options?: { retryCardId?: string }) => Promise<void>) | null
   >(null);
   const maskInputRef = useRef<HTMLInputElement | null>(null);
+  const unifiedMaskInputRef = useRef<HTMLInputElement | null>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const unifiedMaskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const isDrawingRef = useRef(false);
   const lastMaskPointRef = useRef<{ x: number; y: number } | null>(null);
   const chatImageAttachmentCount = chatAttachments.filter(
@@ -2831,6 +2859,15 @@ export function CreatePageClient({
       isCreatePageMountedRef.current = false;
     };
   }, []);
+  // 旧版允许多图编辑；合并页只保留第一张主参考图，并回收其余预览 URL。
+  useEffect(() => {
+    setEditImages((prev) => {
+      if (prev.length <= 1) return prev;
+      for (const item of prev.slice(1)) revokePreview(item.previewUrl);
+      const [firstReference] = prev;
+      return firstReference ? [firstReference] : [];
+    });
+  }, [setEditImages]);
   // 首次进入瀑布流模式且从未看过提示时，弹出 first-time 额度消耗警告。
   // 用 activeMode 作触发条件(瀑布流是 Tab 之一而非独立页面)，避免打扰其它模式用户。
   // 已弹窗(waterfallWarning 非空)或已看过(localStorage)时早退，不会重复弹。
@@ -2943,8 +2980,7 @@ export function CreatePageClient({
   const chatCustomEditSize = useAutoChatEditSize
     ? AUTO_IMAGE_SIZE
     : manualChatCustomEditSize;
-  const canUseMixWebFirstRouting =
-    activeBackendType === "mixed" && !customApiActive;
+  const canUseMixWebFirstRouting = activeBackendType === "mixed";
   const firstImageOriginalSize = useMemo(
     () =>
       firstImageSize
@@ -3039,6 +3075,13 @@ export function CreatePageClient({
       setActiveMode(stored);
     }
   }, [chatAllowed, effectiveAgentAllowed, waterfallAllowed, setActiveMode]);
+  useEffect(() => {
+    if (isSimpleImageGenerationPage && activeMode !== "image") {
+      setActiveMode("image");
+    }
+  }, [activeMode, isSimpleImageGenerationPage, setActiveMode]);
+  const isUnifiedImageWorkspace =
+    isSimpleImageGenerationPage || activeMode === "image";
   const currentModeMixWebFirstActive =
     activeMode === "image"
       ? editMixWebFirstActive
@@ -3164,8 +3207,8 @@ export function CreatePageClient({
       )
     : editHasImageReference
       ? copy(
-          "This request contains @ references and will use Codex/Responses, even if custom API or Mixed Web-first routing is enabled.",
-          "本次请求包含 @ 引用，将走 Codex/Responses；即使自填 API 或 Mixed Web-first 已开启也不会走这些路线。"
+          "This request contains @ references and will use Codex/Responses, bypassing Mixed Web-first routing.",
+          "本次请求包含 @ 引用，将走 Codex/Responses，并绕过 Mixed Web-first 路由。"
         )
       : copy(
           "Type @ to choose a source image. Using @ references routes this request to Codex/Responses so the backend can attach the selected image as real input.",
@@ -3178,17 +3221,13 @@ export function CreatePageClient({
       )
     : chatHasImageReference
       ? copy(
-          "This message contains @ references and will use Codex/Responses, bypassing custom API and Web-first routing. Agent normally carries image context, but @ pins the exact attachment or draft.",
-          "本条消息包含 @ 引用，将走 Codex/Responses，并绕过自填 API 和 Web-first。Agent 通常会带图片上下文，但 @ 会明确钉住指定附件或草稿。"
+          "This message contains @ references and will use Codex/Responses, bypassing Web-first routing. Agent normally carries image context, but @ pins the exact attachment or draft.",
+          "本条消息包含 @ 引用，将走 Codex/Responses，并绕过 Web-first。Agent 通常会带图片上下文，但 @ 会明确钉住指定附件或草稿。"
         )
       : copy(
           "Type @ to choose current attachments or generated history images. In Mixed groups, @ references bypass Web-first routing and use Codex/Responses. Agent already carries image context, but @ is useful when you need one exact draft or round.",
           "输入 @ 可选择当前附件或历史生成图。Mixed 分组中，使用 @ 引用会跳过 Web-first 并走 Codex/Responses。Agent 默认会带图片上下文，但 @ 适合在多图、多轮草稿中明确指定某一张。"
         );
-  const customApiBillingLabel = copy(
-    "Custom API active, no site credits",
-    "自填 API 已启用，不消耗本站积分"
-  );
   const sizeCheck = useMemo(() => validateImageSize(size), [size]);
   const customEditSizeCheck = useMemo(
     () => validateImageSize(customEditSize),
@@ -3204,12 +3243,6 @@ export function CreatePageClient({
       : mode === "text-single"
         ? isTextSingleGenerating
         : isTextLinesGenerating;
-  const hasActiveRuntimeTask =
-    isEditing ||
-    isTextSingleGenerating ||
-    isTextLinesGenerating ||
-    isChatGenerating ||
-    isBatchActive;
   const setVisualModeLoading = (
     mode: VisualOutputMode,
     value: { size: string } | null
@@ -3217,10 +3250,9 @@ export function CreatePageClient({
     setVisualLoading((prev) => ({ ...prev, [mode]: value }));
   };
   useEffect(() => {
-    if (hasActiveRuntimeTask) return;
     setBalance(initialBalance);
     setRecent(initialRecent);
-  }, [hasActiveRuntimeTask, initialBalance, initialRecent]);
+  }, [initialBalance, initialRecent, setBalance, setRecent]);
   useEffect(() => {
     if (activeMode !== "agent" || effectiveAgentAllowed) return;
     setActiveMode("chat");
@@ -3231,6 +3263,90 @@ export function CreatePageClient({
   const firstPreviewUrl = editImages[0]?.previewUrl || null;
   const chatFirstPreviewUrl =
     chatAttachments.find((item) => item.kind === "image")?.previewUrl || null;
+  /** 将目录中相同模型名的不同分组保留为不同选择，避免客户端串组。 */
+  const unifiedCatalogSelections = useMemo(
+    () =>
+      imageGenerationModelCatalog.groups.flatMap((group) =>
+        group.models.map((model) => ({
+          group,
+          model,
+          value: createUnifiedModelSelectionValue(group.id, model.id),
+        }))
+      ),
+    [imageGenerationModelCatalog.groups]
+  );
+  const selectedUnifiedModelSelection = useMemo(() => {
+    const parsed = parseUnifiedModelSelectionValue(unifiedModelSelection);
+    if (!parsed) return null;
+    return (
+      unifiedCatalogSelections.find(
+        (selection) =>
+          selection.group.id === parsed.groupId &&
+          selection.model.id === parsed.modelId
+      ) || null
+    );
+  }, [unifiedCatalogSelections, unifiedModelSelection]);
+  const fallbackUnifiedModelSelection =
+    unifiedCatalogSelections.find(
+      (selection) => selection.model.capabilities.generate
+    ) || null;
+  const activeUnifiedModelSelection =
+    selectedUnifiedModelSelection || fallbackUnifiedModelSelection;
+  const unifiedImageGenerationMode = getUnifiedImageGenerationMode({
+    hasReference: editImages.length > 0,
+    hasMask: Boolean(maskFile),
+  });
+  const unifiedRequiredModelCapability = getRequiredUnifiedModelCapability(
+    unifiedImageGenerationMode
+  );
+  const unifiedModelCanServeRequest = canModelServeUnifiedImageGeneration(
+    activeUnifiedModelSelection?.model || null,
+    unifiedImageGenerationMode
+  );
+  const unifiedSelectedModelId = activeUnifiedModelSelection?.model.id;
+  const unifiedBackendGroupId =
+    activeUnifiedModelSelection?.group.routingMode === "explicit-selectable"
+      ? activeUnifiedModelSelection.group.id
+      : undefined;
+  const unifiedModelSelectionValue = activeUnifiedModelSelection?.value || "";
+  const unifiedHasReference = editImages.length > 0;
+  const unifiedOutputSize = unifiedHasReference ? effectiveEditSize : size;
+  const unifiedBatchCount = unifiedHasReference ? editBatchCount : batchCount;
+  const unifiedIsGenerating =
+    isTextSingleGenerating ||
+    isEditing ||
+    Boolean(visualLoading["text-single"]);
+  const unifiedMaskSupported = Boolean(
+    activeUnifiedModelSelection?.model.capabilities.mask
+  );
+  const unifiedCreditCost = unifiedOutputSize
+    ? getPricedImageCreditCost(
+        unifiedSelectedModelId || "default",
+        unifiedOutputSize,
+        unifiedHasReference
+          ? getModerationCostOptions(editImages.length)
+          : moderationCostOptions,
+        activeUnifiedModelSelection?.group
+      ) * unifiedBatchCount
+    : 0;
+  const unifiedRatioDimensions =
+    parseImageSize(unifiedOutputSize || size) || defaultDimensions;
+
+  // 目录刷新、套餐变化或旧 localStorage 值都可能使选项失效；回落到第一条可生成模型。
+  useEffect(() => {
+    if (
+      !activeUnifiedModelSelection ||
+      unifiedModelSelection === unifiedModelSelectionValue
+    ) {
+      return;
+    }
+    setUnifiedModelSelection(unifiedModelSelectionValue);
+  }, [
+    activeUnifiedModelSelection,
+    setUnifiedModelSelection,
+    unifiedModelSelection,
+    unifiedModelSelectionValue,
+  ]);
   const autoSizeLabel = copy("Auto", "自动");
   const editDisplaySize =
     effectiveEditSize === AUTO_IMAGE_SIZE
@@ -4602,17 +4718,22 @@ export function CreatePageClient({
   }, [chatFirstPreviewUrl]);
 
   useEffect(() => {
-    const canvas = maskCanvasRef.current;
-    if (!canvas || !firstImageSize) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    if (!firstImageSize) return;
+    for (const canvas of [
+      maskCanvasRef.current,
+      unifiedMaskCanvasRef.current,
+    ]) {
+      if (!canvas) continue;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "rgba(220, 38, 38, 0.46)";
-    for (const point of maskPoints) {
-      ctx.beginPath();
-      ctx.arc(point.x, point.y, point.size, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(220, 38, 38, 0.46)";
+      for (const point of maskPoints) {
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, point.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }, [maskPoints, firstImageSize]);
 
@@ -5658,172 +5779,166 @@ export function CreatePageClient({
 
         {!chatWebFileMode && (
           <>
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          {renderGptModelSelect({
-            id: "chat-gpt-model",
-            value: chatModel,
-            onChange: (value) => {
-              if (value !== "default") setChatModel(value);
-            },
-            disabled: isChatGenerating,
-            compact: true,
-          })}
-          {showImageModelControls && (
-            <div
-              className={chatMixWebFirstActive ? "opacity-55" : ""}
-              title={
-                chatMixWebFirstActive ? responsesOnlyDisabledReason : undefined
-              }
-            >
-              {renderImageModelSelect({
-                id: "chat-image-model",
-                value: chatImageModel,
-                onChange: setChatImageModel,
-                disabled: isChatGenerating || chatMixWebFirstActive,
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              {renderGptModelSelect({
+                id: "chat-gpt-model",
+                value: chatModel,
+                onChange: (value) => {
+                  if (value !== "default") setChatModel(value);
+                },
+                disabled: isChatGenerating,
                 compact: true,
               })}
-            </div>
-          )}
-          {showThinkingControls &&
-            renderThinkingSelect({
-              id: "chat-thinking",
-              value: chatThinking,
-              onChange: setChatThinking,
-              disabled: isChatGenerating,
-              compact: true,
-            })}
-          {!isWebOnlyBackend && (
-            <div
-              className={chatMixWebFirstActive ? "opacity-55" : ""}
-              title={
-                chatMixWebFirstActive
-                  ? responsesOnlyDisabledReason
-                  : backgroundHelpText
-              }
-            >
-              {renderBackgroundSelect({
-                id: "chat-background",
-                disabled: isChatGenerating || chatMixWebFirstActive,
-                compact: true,
+              {showImageModelControls && (
+                <div
+                  className={chatMixWebFirstActive ? "opacity-55" : ""}
+                  title={
+                    chatMixWebFirstActive
+                      ? responsesOnlyDisabledReason
+                      : undefined
+                  }
+                >
+                  {renderImageModelSelect({
+                    id: "chat-image-model",
+                    value: chatImageModel,
+                    onChange: setChatImageModel,
+                    disabled: isChatGenerating || chatMixWebFirstActive,
+                    compact: true,
+                  })}
+                </div>
+              )}
+              {showThinkingControls &&
+                renderThinkingSelect({
+                  id: "chat-thinking",
+                  value: chatThinking,
+                  onChange: setChatThinking,
+                  disabled: isChatGenerating,
+                  compact: true,
+                })}
+              {!isWebOnlyBackend && (
+                <div
+                  className={chatMixWebFirstActive ? "opacity-55" : ""}
+                  title={
+                    chatMixWebFirstActive
+                      ? responsesOnlyDisabledReason
+                      : backgroundHelpText
+                  }
+                >
+                  {renderBackgroundSelect({
+                    id: "chat-background",
+                    disabled: isChatGenerating || chatMixWebFirstActive,
+                    compact: true,
+                  })}
+                </div>
+              )}
+              {!isWebOnlyBackend &&
+                activeMode !== "agent" &&
+                renderTransparentMatteToggle({
+                  id: "chat-transparent-matte",
+                  disabled: isChatGenerating || chatMixWebFirstActive,
+                })}
+              {renderHdRepairToggle({
+                id: "chat-hd-repair",
+                disabled: isChatGenerating,
               })}
-            </div>
-          )}
-          {!isWebOnlyBackend &&
-            activeMode !== "agent" &&
-            renderTransparentMatteToggle({
-              id: "chat-transparent-matte",
-              disabled: isChatGenerating || chatMixWebFirstActive,
-            })}
-          {renderHdRepairToggle({
-            id: "chat-hd-repair",
-            disabled: isChatGenerating,
-          })}
-          {renderBlockRepairToggle({
-            id: "chat-block-repair",
-            disabled: isChatGenerating,
-          })}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setChatSizeDialogOpen(true)}
-            disabled={isChatGenerating}
-            className="h-8 rounded-full px-3 text-xs"
-            title={resolutionHelpText}
-          >
-            {copy("Size", "尺寸")} ·{" "}
-            {activeChatSize === AUTO_IMAGE_SIZE
-              ? autoSizeLabel
-              : activeChatSize}
-          </Button>
-          {activeMode === "agent" && (
-            <div className="flex items-center gap-2 rounded-full border border-border bg-background px-2 py-1">
-              <label
-                htmlFor="agent-force-rounds"
-                className="flex items-center gap-1.5 text-xs text-foreground"
-                title={copy(
-                  "When enabled, Agent runs all selected rounds instead of stopping when the model does not request continue_generation.",
-                  "开启后，Agent 会跑满所选轮数，而不是在模型未请求 continue_generation 时提前停止。"
-                )}
-              >
-                <Checkbox
-                  id="agent-force-rounds"
-                  checked={agentForceRounds}
-                  onCheckedChange={(checked) =>
-                    setAgentForceRounds(checked === true)
-                  }
-                  disabled={isChatGenerating}
-                />
-                {copy("Force", "强制")}
-              </label>
-              <label
-                htmlFor="layered-generation"
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
-                  layeredGeneration
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-primary/40 bg-primary/5 text-foreground"
-                }`}
-                title={copy(
-                  "Split into PSD layers: the agent first creates the full image, then decomposes it into editable layers (background + each element) for PSD export.",
-                  "打散元素生成 PSD:先出整图,再把整图打散成可编辑图层(背景 + 每个元素各一层),完成后可导出分层 PSD。"
-                )}
-              >
-                <Checkbox
-                  id="layered-generation"
-                  checked={layeredGeneration}
-                  onCheckedChange={(checked) =>
-                    setLayeredGeneration(checked === true)
-                  }
-                  disabled={isChatGenerating}
-                />
-                {copy("Split into PSD layers", "打散元素生成 PSD")}
-              </label>
-              <Select
-                value={String(agentMaxRounds)}
-                onValueChange={(value) =>
-                  setAgentMaxRounds(Math.min(8, Math.max(1, Number(value))))
-                }
+              {renderBlockRepairToggle({
+                id: "chat-block-repair",
+                disabled: isChatGenerating,
+              })}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setChatSizeDialogOpen(true)}
                 disabled={isChatGenerating}
+                className="h-8 rounded-full px-3 text-xs"
+                title={resolutionHelpText}
               >
-                <SelectTrigger className="h-7 w-[86px] border-0 px-2 text-xs shadow-none">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((round) => (
-                    <SelectItem key={round} value={String(round)}>
-                      {copy(`${round} rounds`, `${round} 轮`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          {helpMarker(copy("Resolution", "分辨率"), resolutionHelpText)}
-          {isEditChat && chatFirstImageOriginalSize && (
-            <span className="text-xs text-muted-foreground">
-              {copy("Reference", "参考图")} {chatFirstImageOriginalSize}
-            </span>
-          )}
-          <span className="ml-auto text-xs text-muted-foreground">
-            {customApiActive && !chatHasImageReference ? (
-              <span className="font-medium text-foreground">
-                {customApiBillingLabel}
-              </span>
-            ) : (
-              <>
+                {copy("Size", "尺寸")} ·{" "}
+                {activeChatSize === AUTO_IMAGE_SIZE
+                  ? autoSizeLabel
+                  : activeChatSize}
+              </Button>
+              {activeMode === "agent" && (
+                <div className="flex items-center gap-2 rounded-full border border-border bg-background px-2 py-1">
+                  <label
+                    htmlFor="agent-force-rounds"
+                    className="flex items-center gap-1.5 text-xs text-foreground"
+                    title={copy(
+                      "When enabled, Agent runs all selected rounds instead of stopping when the model does not request continue_generation.",
+                      "开启后，Agent 会跑满所选轮数，而不是在模型未请求 continue_generation 时提前停止。"
+                    )}
+                  >
+                    <Checkbox
+                      id="agent-force-rounds"
+                      checked={agentForceRounds}
+                      onCheckedChange={(checked) =>
+                        setAgentForceRounds(checked === true)
+                      }
+                      disabled={isChatGenerating}
+                    />
+                    {copy("Force", "强制")}
+                  </label>
+                  <label
+                    htmlFor="layered-generation"
+                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+                      layeredGeneration
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-primary/40 bg-primary/5 text-foreground"
+                    }`}
+                    title={copy(
+                      "Split into PSD layers: the agent first creates the full image, then decomposes it into editable layers (background + each element) for PSD export.",
+                      "打散元素生成 PSD:先出整图,再把整图打散成可编辑图层(背景 + 每个元素各一层),完成后可导出分层 PSD。"
+                    )}
+                  >
+                    <Checkbox
+                      id="layered-generation"
+                      checked={layeredGeneration}
+                      onCheckedChange={(checked) =>
+                        setLayeredGeneration(checked === true)
+                      }
+                      disabled={isChatGenerating}
+                    />
+                    {copy("Split into PSD layers", "打散元素生成 PSD")}
+                  </label>
+                  <Select
+                    value={String(agentMaxRounds)}
+                    onValueChange={(value) =>
+                      setAgentMaxRounds(Math.min(8, Math.max(1, Number(value))))
+                    }
+                    disabled={isChatGenerating}
+                  >
+                    <SelectTrigger className="h-7 w-[86px] border-0 px-2 text-xs shadow-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((round) => (
+                        <SelectItem key={round} value={String(round)}>
+                          {copy(`${round} rounds`, `${round} 轮`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {helpMarker(copy("Resolution", "分辨率"), resolutionHelpText)}
+              {isEditChat && chatFirstImageOriginalSize && (
+                <span className="text-xs text-muted-foreground">
+                  {copy("Reference", "参考图")} {chatFirstImageOriginalSize}
+                </span>
+              )}
+              <span className="ml-auto text-xs text-muted-foreground">
                 {copy("Cost", "费用")}{" "}
                 <span className="font-medium text-foreground">
                   {formattedChatSingleCreditCost}
                 </span>
-              </>
-            )}
-          </span>
-        </div>
-        <div className="mb-2">
-          {promptOptimizationField(
-            "chat-prompt-optimization",
-            isChatGenerating
-          )}
-        </div>
+              </span>
+            </div>
+            <div className="mb-2">
+              {promptOptimizationField(
+                "chat-prompt-optimization",
+                isChatGenerating
+              )}
+            </div>
           </>
         )}
 
@@ -6348,9 +6463,7 @@ export function CreatePageClient({
       params;
     const imageFiles = attachments.filter((item) => item.kind === "image");
     if (kind === "psd" && imageFiles.length === 0) {
-      toast.error(
-        copy("PSD needs a reference image", "生成 PSD 需要参考图")
-      );
+      toast.error(copy("PSD needs a reference image", "生成 PSD 需要参考图"));
       return;
     }
 
@@ -6737,14 +6850,24 @@ export function CreatePageClient({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (
+    e: React.FormEvent,
+    override: ImageGenerationRequestOverride = {}
+  ) => {
     e.preventDefault();
-    const currentPrompt = getPrompt().trim();
+    const currentPrompt = (override.prompt ?? getPrompt()).trim();
     if (!currentPrompt) {
       toast.error(copy("Please enter a prompt", "请输入提示词"));
       return;
     }
-    if (!customApiActive && balance < textBatchCreditCost) {
+    const requestedTextBatchCreditCost =
+      getPricedImageCreditCost(
+        override.model ?? textModel,
+        size,
+        moderationCostOptions,
+        override.pricingGroup
+      ) * batchCount;
+    if (balance < requestedTextBatchCreditCost) {
       showGenerationError("Insufficient credits");
       return;
     }
@@ -6770,6 +6893,8 @@ export function CreatePageClient({
         stream: true,
         previewMode,
         generationIds,
+        model: override.model,
+        backendGroupId: override.backendGroupId,
       });
 
       const generatedCount = addSuccessfulResults(data, currentPrompt, size, {
@@ -6808,6 +6933,8 @@ export function CreatePageClient({
     stream?: boolean;
     previewMode?: VisualOutputMode;
     generationIds?: string[];
+    model?: string;
+    backendGroupId?: string;
   }) => {
     const response = await fetch("/api/images/generate", {
       method: "POST",
@@ -6836,8 +6963,11 @@ export function CreatePageClient({
         ...(outputFormat !== "png"
           ? { output_compression: outputCompression }
           : {}),
-        ...(showImageModelControls && textModel !== "default"
-          ? { model: textModel }
+        ...((params.model ?? textModel) !== "default"
+          ? { model: params.model ?? textModel }
+          : {}),
+        ...(params.backendGroupId
+          ? { backendGroupId: params.backendGroupId }
           : {}),
         ...(imageGptModel !== "default" ? { gptModel: imageGptModel } : {}),
         ...(showThinkingControls ? { thinking: imageThinking } : {}),
@@ -6874,7 +7004,7 @@ export function CreatePageClient({
       );
       return;
     }
-    if (!customApiActive && balance < lineBatchCreditCost) {
+    if (balance < lineBatchCreditCost) {
       showGenerationError("Insufficient credits");
       return;
     }
@@ -6945,9 +7075,12 @@ export function CreatePageClient({
     }
   };
 
-  const handleEditSubmit = async (e: React.FormEvent) => {
+  const handleEditSubmit = async (
+    e: React.FormEvent,
+    override: ImageGenerationRequestOverride = {}
+  ) => {
     e.preventDefault();
-    const currentEditPrompt = getEditPrompt().trim();
+    const currentEditPrompt = (override.prompt ?? getEditPrompt()).trim();
     if (!currentEditPrompt) {
       toast.error(copy("Please enter an edit prompt", "请输入编辑提示词"));
       return;
@@ -6979,10 +7112,14 @@ export function CreatePageClient({
     }
     const editRequiresResponsesForReference =
       hasPromptImageReference(currentEditPrompt);
-    if (
-      (!customApiActive || editRequiresResponsesForReference) &&
-      balance < editBatchCreditCost
-    ) {
+    const requestedEditBatchCreditCost =
+      getPricedImageCreditCost(
+        override.model ?? editModel,
+        effectiveEditSize,
+        getModerationCostOptions(editImages.length),
+        override.pricingGroup
+      ) * editBatchCount;
+    if (balance < requestedEditBatchCreditCost) {
       showGenerationError("Insufficient credits");
       return;
     }
@@ -7022,8 +7159,11 @@ export function CreatePageClient({
     if (outputFormat !== "png") {
       formData.append("output_compression", String(outputCompression));
     }
-    if (showImageModelControls && editModel !== "default") {
-      formData.append("model", editModel);
+    if ((override.model ?? editModel) !== "default") {
+      formData.append("model", override.model ?? editModel);
+    }
+    if (override.backendGroupId) {
+      formData.append("backendGroupId", override.backendGroupId);
     }
     if (imageGptModel !== "default") {
       formData.append("gptModel", imageGptModel);
@@ -7107,6 +7247,49 @@ export function CreatePageClient({
     }
   };
 
+  /**
+   * 合并表单的唯一提交入口。
+   *
+   * 以是否存在主参考图选择既有文生图或图生图管线，避免复制审核、扣费和流式处理。
+   * 目录能力只用于尽早反馈；分组与模型的最终授权仍由服务端校验。
+   */
+  const handleUnifiedImageSubmit = async (event: React.FormEvent) => {
+    const currentPrompt = getUnifiedImagePrompt().trim();
+    if (!currentPrompt) {
+      event.preventDefault();
+      toast.error(copy("Please enter a prompt", "请输入文字描述"));
+      return;
+    }
+    if (!unifiedModelCanServeRequest) {
+      event.preventDefault();
+      toast.error(copy("Selected model is incompatible", "所选模型不兼容"), {
+        description: copy(
+          `Choose a model that supports ${unifiedRequiredModelCapability}.`,
+          `请选择支持当前${
+            unifiedRequiredModelCapability === "mask"
+              ? "蒙版编辑"
+              : unifiedRequiredModelCapability === "edit"
+                ? "图生图"
+                : "文生图"
+          }的模型。`
+        ),
+      });
+      return;
+    }
+
+    const override: ImageGenerationRequestOverride = {
+      prompt: currentPrompt,
+      model: unifiedSelectedModelId,
+      backendGroupId: unifiedBackendGroupId,
+      pricingGroup: activeUnifiedModelSelection?.group,
+    };
+    if (editImages.length > 0) {
+      await handleEditSubmit(event, override);
+      return;
+    }
+    await handleSubmit(event, override);
+  };
+
   const addImages = (files: FileList | File[] | null) => {
     const imageFiles = Array.from(files || []);
     if (!imageFiles.length) return;
@@ -7165,6 +7348,49 @@ export function CreatePageClient({
     });
   };
 
+  /**
+   * 为合并表单设置唯一主参考图。
+   *
+   * @param files - 本地文件选择器返回的文件集合，仅消费第一张有效图片。
+   * @returns 无返回值；失败时保留当前主图并给出提示。
+   * @remarks 替换主图必须主动清除蒙版，避免其尺寸或编辑区域错绑到新图片。
+   */
+  const replaceUnifiedReference = (files: FileList | File[] | null) => {
+    const file = Array.from(files || [])[0];
+    if (!file) return;
+    if (!isImageFile(file)) {
+      toast.error(copy("Unsupported file type", "不支持的文件类型"), {
+        description: copy(
+          "Use PNG, JPEG, or WebP images.",
+          "请使用 PNG、JPEG 或 WebP 图片。"
+        ),
+      });
+      return;
+    }
+    if (file.size > maxImageBytes) {
+      toast.error(copy("File too large", "文件过大"), {
+        description: copy(
+          `${file.name} exceeds ${formatMegabytes(maxImageBytes)}.`,
+          `${file.name} 超过 ${formatMegabytes(maxImageBytes)}。`
+        ),
+      });
+      return;
+    }
+
+    const nextReference: EditImageFile = {
+      file,
+      previewUrl: URL.createObjectURL(file),
+    };
+    setEditImages((prev) => {
+      for (const item of prev) revokePreview(item.previewUrl);
+      return [nextReference];
+    });
+    setMaskEditorOpen(false);
+    setMaskPoints([]);
+    clearMask();
+    setActiveMode("image");
+  };
+
   const handleImagePaste = (event: React.ClipboardEvent) => {
     if (activeMode !== "image" || isEditing) return;
 
@@ -7175,7 +7401,8 @@ export function CreatePageClient({
 
     if (!files.length) return;
     event.preventDefault();
-    addImages(files);
+    // 粘贴与文件选择走同一替换路径，避免旧多图编辑逻辑向合并表单泄漏。
+    replaceUnifiedReference(files);
   };
 
   const removeImage = (index: number) => {
@@ -7274,7 +7501,7 @@ export function CreatePageClient({
       | React.MouseEvent<HTMLCanvasElement>
       | React.TouchEvent<HTMLCanvasElement>
   ) => {
-    const canvas = maskCanvasRef.current;
+    const canvas = unifiedMaskCanvasRef.current || maskCanvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const point =
@@ -7371,57 +7598,9 @@ export function CreatePageClient({
     }, "image/png");
   };
 
-  const applyResultAsReference = async (sourceResult = result) => {
-    if (!sourceResult?.imageUrl) return;
-
-    try {
-      const item = await urlToEditImageFile(
-        sourceResult.imageUrl,
-        `fluxmedia-${sourceResult.generationId}`,
-        sourceResult.generationId
-      );
-      clearEditImages();
-      setEditImages([item]);
-      setActiveMode("image");
-      setEditPrompt("");
-      toast.success(
-        copy("Result added as reference image", "结果已作为参考图片")
-      );
-    } catch (error) {
-      toast.error(
-        copy("Failed to use result as reference", "设置参考图片失败"),
-        {
-          description:
-            error instanceof Error
-              ? error.message
-              : copy("Could not load image.", "无法加载图片。"),
-        }
-      );
-    }
-  };
-
   const selectRecentAsReference = async (generation: RecentGeneration) => {
     if (!generation.imageUrl) {
       toast.error(copy("This image is not available yet", "这张图片暂不可用"));
-      return;
-    }
-
-    const existingIndex = editImages.findIndex(
-      (item) => item.sourceId === generation.id
-    );
-    if (existingIndex >= 0) {
-      removeImage(existingIndex);
-      toast.success(copy("Reference image removed", "参考图片已移除"));
-      return;
-    }
-
-    if (editImages.length >= maxEditImages) {
-      toast.error(
-        copy(
-          `Upload up to ${maxEditImages} source images`,
-          `最多可上传 ${maxEditImages} 张源图片`
-        )
-      );
       return;
     }
 
@@ -7431,8 +7610,15 @@ export function CreatePageClient({
         `fluxmedia-${generation.id}`,
         generation.id
       );
-      setEditImages((prev) => [...prev, item]);
-      toast.success(copy("Reference image selected", "参考图片已选择"));
+      setEditImages((prev) => {
+        for (const current of prev) revokePreview(current.previewUrl);
+        return [item];
+      });
+      setMaskEditorOpen(false);
+      setMaskPoints([]);
+      clearMask();
+      setActiveMode("image");
+      toast.success(copy("Reference image selected", "已设为参考图"));
     } catch (error) {
       toast.error(
         copy("Failed to use image as reference", "设置参考图片失败"),
@@ -7455,6 +7641,11 @@ export function CreatePageClient({
   };
 
   const handleRecentClick = (generation: RecentGeneration) => {
+    if (isUnifiedImageWorkspace) {
+      void selectRecentAsReference(generation);
+      return;
+    }
+
     if (isConversationMode(activeMode)) {
       if (!generation.imageUrl) {
         toast.error(
@@ -7470,10 +7661,6 @@ export function CreatePageClient({
       return;
     }
 
-    if (activeMode === "image") {
-      void selectRecentAsReference(generation);
-      return;
-    }
     openRecentPreview(generation);
   };
 
@@ -7742,7 +7929,11 @@ export function CreatePageClient({
                     onValueChange={(value) =>
                       setOutputFormat(value as ImageOutputFormat)
                     }
-                    disabled={modeBusy || disableResponsesOnlyControls || textFireflyActive}
+                    disabled={
+                      modeBusy ||
+                      disableResponsesOnlyControls ||
+                      textFireflyActive
+                    }
                   >
                     <SelectTrigger
                       id={`image-output-format-${mode}`}
@@ -7786,7 +7977,11 @@ export function CreatePageClient({
                           )
                         )
                       }
-                      disabled={modeBusy || disableResponsesOnlyControls || textFireflyActive}
+                      disabled={
+                        modeBusy ||
+                        disableResponsesOnlyControls ||
+                        textFireflyActive
+                      }
                       title={outputCompressionHelpText}
                     />
                   </div>
@@ -7822,7 +8017,11 @@ export function CreatePageClient({
                     onValueChange={(value) =>
                       setModeration(value as ImageModeration)
                     }
-                    disabled={modeBusy || disableResponsesOnlyControls || textFireflyActive}
+                    disabled={
+                      modeBusy ||
+                      disableResponsesOnlyControls ||
+                      textFireflyActive
+                    }
                   >
                     <SelectTrigger
                       id={`image-oai-moderation-${mode}`}
@@ -7850,23 +8049,17 @@ export function CreatePageClient({
 
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground lg:justify-end">
             <Coins className="h-3.5 w-3.5" />
-            {customApiActive ? (
+            <span>
+              {copy("Balance", "余额")}:{" "}
               <span className="font-medium text-foreground">
-                {customApiBillingLabel}
+                {formattedBalance}
+              </span>{" "}
+              · {copy("Cost", "费用")}:{" "}
+              <span className="font-medium text-foreground">
+                {formattedCost}
               </span>
-            ) : (
-              <span>
-                {copy("Balance", "余额")}:{" "}
-                <span className="font-medium text-foreground">
-                  {formattedBalance}
-                </span>{" "}
-                · {copy("Cost", "费用")}:{" "}
-                <span className="font-medium text-foreground">
-                  {formattedCost}
-                </span>
-                {costSuffix}
-              </span>
-            )}
+              {costSuffix}
+            </span>
           </div>
         </div>
         {!sizeCheck.valid && (
@@ -7875,6 +8068,520 @@ export function CreatePageClient({
           </p>
         )}
       </div>
+    );
+  };
+
+  /**
+   * 渲染无 Tab 的统一页面生图表单。
+   *
+   * 输入区是唯一的创作起点：无主图提交文生图，有主图改走图生图，蒙版只附着在
+   * 该主图行内。设置紧随输入区，避免用户在两个页面间判断该从哪里开始。
+   */
+  const renderUnifiedImageForm = () => {
+    const selectedModelName = activeUnifiedModelSelection?.model.id;
+    const selectedGroupName = activeUnifiedModelSelection?.group.name;
+    const outputSizeLabel = unifiedOutputSize || copy("Loading", "读取中");
+    const modeLabel =
+      unifiedImageGenerationMode === "masked-edit"
+        ? copy("Masked edit", "局部编辑")
+        : unifiedImageGenerationMode === "image-to-image"
+          ? copy("Image to image", "图生图")
+          : copy("Text to image", "文生图");
+    const submitLabel =
+      unifiedImageGenerationMode === "masked-edit"
+        ? copy("Generate edit", "生成局部编辑")
+        : unifiedImageGenerationMode === "image-to-image"
+          ? copy("Generate variation", "生成图生图")
+          : copy("Generate", "生成图片");
+    const submitDisabled =
+      unifiedIsGenerating ||
+      !unifiedImagePromptHasText ||
+      !unifiedModelCanServeRequest ||
+      (unifiedHasReference && !unifiedOutputSize);
+
+    return (
+      <form
+        onSubmit={handleUnifiedImageSubmit}
+        onPaste={handleImagePaste}
+        className="space-y-5"
+      >
+        <section className="overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
+          <div className="space-y-3 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                htmlFor="unified-image-prompt"
+                className="text-sm font-semibold text-foreground"
+              >
+                {copy("Describe", "文字描述")}
+              </label>
+              <span className="rounded-full border border-border bg-muted/45 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                {modeLabel}
+              </span>
+            </div>
+            <PromptTextareaField
+              id="unified-image-prompt"
+              promptKey="unifiedImagePrompt"
+              placeholder={copy(
+                "Describe the image you want to create. Add a reference image when you want to transform one.",
+                "描述你想生成的画面；添加参考图后即可基于它继续创作。"
+              )}
+              rows={5}
+              disabled={unifiedIsGenerating}
+              className="min-h-32 resize-y rounded-xl border-input bg-muted/15 px-3 py-3 text-base leading-relaxed shadow-none focus-visible:bg-background"
+            />
+
+            <div className="flex min-h-12 flex-wrap items-center gap-2 border-t border-border/70 pt-3">
+              {!unifiedHasReference ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full border-dashed bg-muted/20 px-3.5 hover:bg-muted/50"
+                    onClick={() => unifiedImageInputRef.current?.click()}
+                    disabled={unifiedIsGenerating}
+                  >
+                    <ImagePlus className="mr-1.5 h-4 w-4" />
+                    {copy("Add reference image", "添加参考图")}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {copy(
+                      "Optional. Adding one switches this form to image-to-image.",
+                      "可选。添加后会在原位切换为图生图。"
+                    )}
+                  </span>
+                </>
+              ) : (
+                <div className="flex w-full flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/20 p-1.5 pr-2.5">
+                    <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border bg-muted">
+                      {firstPreviewUrl && (
+                        <Image
+                          src={firstPreviewUrl}
+                          alt={copy("Reference image", "主参考图")}
+                          fill
+                          sizes="40px"
+                          className="object-cover"
+                          unoptimized
+                        />
+                      )}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground">
+                        {copy("Reference image", "主参考图")}
+                      </span>
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {firstImageSize
+                          ? `${firstImageSize.width} × ${firstImageSize.height}`
+                          : copy("Reading dimensions…", "正在读取尺寸…")}
+                      </span>
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => unifiedImageInputRef.current?.click()}
+                    disabled={unifiedIsGenerating}
+                  >
+                    <Upload className="mr-1.5 h-3.5 w-3.5" />
+                    {copy("Replace", "更换")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearEditImages}
+                    disabled={unifiedIsGenerating}
+                  >
+                    <X className="mr-1.5 h-3.5 w-3.5" />
+                    {copy("Remove", "移除")}
+                  </Button>
+                  <span className="h-5 w-px bg-border" aria-hidden="true" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full"
+                    onClick={() => setMaskEditorOpen((value) => !value)}
+                    disabled={
+                      unifiedIsGenerating ||
+                      !firstImageSize ||
+                      !unifiedMaskSupported
+                    }
+                    title={
+                      unifiedMaskSupported
+                        ? copy(
+                            "Draw transparent areas to edit",
+                            "绘制需要编辑的透明区域"
+                          )
+                        : copy(
+                            "The selected model does not support mask editing",
+                            "所选模型不支持蒙版编辑"
+                          )
+                    }
+                  >
+                    <Brush className="mr-1.5 h-3.5 w-3.5" />
+                    {maskFile
+                      ? copy("Edit mask", "编辑蒙版")
+                      : copy("Add mask", "添加蒙版")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => unifiedMaskInputRef.current?.click()}
+                    disabled={
+                      unifiedIsGenerating ||
+                      !firstImageSize ||
+                      !unifiedMaskSupported
+                    }
+                  >
+                    <Upload className="mr-1.5 h-3.5 w-3.5" />
+                    {copy("Upload mask", "上传蒙版")}
+                  </Button>
+                  {maskFile && (
+                    <div className="ml-auto flex items-center gap-1.5 rounded-lg border border-border bg-muted/25 p-1 pr-2">
+                      <span className="relative h-7 w-7 overflow-hidden rounded border bg-background">
+                        <Image
+                          src={maskFile.previewUrl}
+                          alt={copy("Mask preview", "蒙版预览")}
+                          fill
+                          sizes="28px"
+                          className="object-contain"
+                          unoptimized
+                        />
+                      </span>
+                      <span className="text-[11px] font-medium text-foreground">
+                        {copy("Mask added", "已添加蒙版")}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={clearMask}
+                        disabled={unifiedIsGenerating}
+                        title={copy("Remove mask", "移除蒙版")}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <input
+                ref={unifiedImageInputRef}
+                type="file"
+                accept={IMAGE_ACCEPT}
+                className="sr-only"
+                onChange={(event) => {
+                  replaceUnifiedReference(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+              <input
+                ref={unifiedMaskInputRef}
+                type="file"
+                accept="image/png"
+                className="sr-only"
+                onChange={(event) => {
+                  setMask(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </div>
+
+            {unifiedHasReference && !unifiedMaskSupported && (
+              <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                {copy(
+                  "This model can use a reference image but cannot apply a mask. Choose another model to use masked editing.",
+                  "当前模型可使用参考图，但不支持蒙版编辑；如需局部编辑，请选择其他模型。"
+                )}
+              </p>
+            )}
+
+            {maskEditorOpen && firstPreviewUrl && firstImageSize && (
+              <div className="space-y-3 rounded-xl border border-border bg-muted/15 p-3">
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {copy(
+                    "Paint the area to change, then save. The painted area becomes transparent in the PNG mask and is the area the model edits.",
+                    "涂抹需要修改的区域后保存。涂抹区域会在 PNG 蒙版中变为透明，模型将编辑透明区域。"
+                  )}
+                </p>
+                <div
+                  className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-lg border bg-muted"
+                  style={{
+                    aspectRatio: `${firstImageSize.width} / ${firstImageSize.height}`,
+                  }}
+                >
+                  <Image
+                    src={firstPreviewUrl}
+                    alt={copy(
+                      "Source image for mask editing",
+                      "用于绘制蒙版的参考图"
+                    )}
+                    fill
+                    sizes="(max-width: 1024px) 100vw, 640px"
+                    className="object-contain"
+                    unoptimized
+                  />
+                  <canvas
+                    ref={unifiedMaskCanvasRef}
+                    width={firstImageSize.width}
+                    height={firstImageSize.height}
+                    className="absolute inset-0 h-full w-full cursor-crosshair touch-none"
+                    onMouseDown={startMaskDrawing}
+                    onMouseMove={drawMaskLine}
+                    onMouseUp={stopMaskDrawing}
+                    onMouseLeave={stopMaskDrawing}
+                    onTouchStart={startMaskDrawing}
+                    onTouchMove={drawMaskLine}
+                    onTouchEnd={stopMaskDrawing}
+                  />
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <label
+                    htmlFor="unified-mask-brush-size"
+                    className="flex items-center gap-2 text-xs font-medium text-muted-foreground"
+                  >
+                    {copy("Brush", "画笔")} {maskBrushSize}px
+                    <input
+                      id="unified-mask-brush-size"
+                      type="range"
+                      min={4}
+                      max={128}
+                      step={1}
+                      value={maskBrushSize}
+                      onChange={(event) =>
+                        setMaskBrushSize(Number(event.target.value))
+                      }
+                      className="w-40 accent-primary"
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={clearDrawnMask}
+                      disabled={unifiedIsGenerating}
+                    >
+                      <Eraser className="mr-1.5 h-3.5 w-3.5" />
+                      {copy("Clear", "清除")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={saveDrawnMask}
+                      disabled={unifiedIsGenerating || maskPoints.length === 0}
+                    >
+                      <Save className="mr-1.5 h-3.5 w-3.5" />
+                      {copy("Save mask", "保存蒙版")}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-border bg-muted/20 p-4 sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">
+                  {copy("Generation settings", "生成设置")}
+                </h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {copy(
+                    "Choose a permitted model, composition, size, and quantity.",
+                    "选择可用模型、构图比例、尺寸与生成数量。"
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="space-y-1.5 sm:col-span-2">
+                <label
+                  htmlFor="unified-image-model"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  {copy("Group and model", "分组与模型")}
+                </label>
+                {unifiedCatalogSelections.length > 0 ? (
+                  <Select
+                    value={unifiedModelSelectionValue}
+                    onValueChange={setUnifiedModelSelection}
+                    disabled={unifiedIsGenerating}
+                  >
+                    <SelectTrigger
+                      id="unified-image-model"
+                      className="w-full bg-background"
+                      title={imageModelHelpText}
+                    >
+                      <SelectValue
+                        placeholder={copy("Choose a model", "选择生图模型")}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {imageGenerationModelCatalog.groups.map((group) => (
+                        <SelectGroup key={group.id}>
+                          <SelectLabel>
+                            {group.name}
+                            {group.routingMode === "implicit-default"
+                              ? ` · ${copy("default", "默认")}`
+                              : ""}
+                          </SelectLabel>
+                          {group.models.map((model) => (
+                            <SelectItem
+                              key={createUnifiedModelSelectionValue(
+                                group.id,
+                                model.id
+                              )}
+                              value={createUnifiedModelSelectionValue(
+                                group.id,
+                                model.id
+                              )}
+                              disabled={!model.capabilities.generate}
+                            >
+                              {model.id}
+                              {model.modelListState === "undeclared"
+                                ? ` · ${copy("compatible", "兼容")}`
+                                : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex h-9 items-center rounded-md border border-destructive/40 bg-background px-3 text-sm text-destructive">
+                    {copy(
+                      "No image generation model is available for this plan.",
+                      "当前套餐没有可用的生图模型。"
+                    )}
+                  </div>
+                )}
+                {selectedModelName && selectedGroupName && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {copy("Using", "当前使用")} {selectedGroupName} ·{" "}
+                    {selectedModelName}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {copy("Composition", "画面比例")}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start bg-background"
+                  onClick={() =>
+                    unifiedHasReference
+                      ? setEditSizeDialogOpen(true)
+                      : setTextSizeDialogOpen(true)
+                  }
+                  disabled={
+                    unifiedIsGenerating ||
+                    (unifiedHasReference && !firstImageSize)
+                  }
+                  title={resolutionHelpText}
+                >
+                  <SizeRatioIcon ratio={unifiedRatioDimensions} />
+                  <span className="ml-2 truncate">{outputSizeLabel}</span>
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  {copy(
+                    "The icon previews the output frame.",
+                    "图形预览当前画幅比例。"
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="unified-image-count"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  {copy("Quantity", "生成数量")}
+                </label>
+                <ConcurrencyNumberInput
+                  id="unified-image-count"
+                  value={unifiedBatchCount}
+                  max={batchCountMax}
+                  disabled={unifiedIsGenerating}
+                  onChange={(value) => {
+                    if (unifiedHasReference) {
+                      setEditBatchCount(value);
+                      return;
+                    }
+                    setBatchCount(value);
+                  }}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {copy(
+                    `Up to ${batchCountMax} images per request.`,
+                    `单次最多生成 ${batchCountMax} 张。`
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {!unifiedModelCanServeRequest && (
+              <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {copy(
+                  `The selected model does not support ${unifiedRequiredModelCapability}.`,
+                  `所选模型不支持当前所需的${
+                    unifiedRequiredModelCapability === "mask"
+                      ? "蒙版编辑"
+                      : unifiedRequiredModelCapability === "edit"
+                        ? "图生图"
+                        : "文生图"
+                  }能力。`
+                )}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Coins className="h-3.5 w-3.5" />
+              <span>
+                {copy("Balance", "余额")}:{" "}
+                <span className="font-medium text-foreground">
+                  {formattedBalance}
+                </span>
+                {unifiedOutputSize && (
+                  <>
+                    {" "}
+                    · {copy("Estimated", "预计")}:{" "}
+                    <span className="font-medium text-foreground">
+                      {formatCredits(unifiedCreditCost)}
+                    </span>
+                  </>
+                )}
+              </span>
+            </div>
+            <Button
+              type="submit"
+              disabled={submitDisabled}
+              className="min-w-30"
+            >
+              {unifiedIsGenerating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {copy("Generating", "生成中")}
+                </>
+              ) : (
+                <>
+                  <Wand2 className="mr-2 h-4 w-4" />
+                  {submitLabel}
+                </>
+              )}
+            </Button>
+          </div>
+        </section>
+      </form>
     );
   };
 
@@ -7920,84 +8627,12 @@ export function CreatePageClient({
         )}
 
         {modeResult && !loading && (
-          <section className="mt-8 mb-10 space-y-4 animate-in fade-in zoom-in-95 duration-400 motion-reduce:animate-none">
-            <button
-              type="button"
-              onClick={() => setSelectedRecentId(modeResult.generationId)}
-              className="group relative mx-auto block w-full max-w-2xl overflow-hidden rounded-lg border bg-muted"
-              style={{
-                aspectRatio: `${parseImageSize(modeResult.size)?.width || defaultDimensions.width} / ${
-                  parseImageSize(modeResult.size)?.height ||
-                  defaultDimensions.height
-                }`,
-              }}
-              title={copy("Open image preview", "打开图片预览")}
-            >
-              <Image
-                src={thumbSrc(modeResult.imageUrl, 1024)}
-                alt={modeResult.prompt}
-                fill
-                sizes="(max-width: 1024px) 100vw, 768px"
-                className="object-contain"
-                unoptimized={shouldBypassImageOptimization(modeResult.imageUrl)}
-              />
-              <span className="absolute right-2 top-2 rounded bg-background/90 px-2 py-1 text-xs font-medium text-foreground opacity-0 shadow-sm transition-opacity hover:opacity-100 focus:opacity-100 group-hover:opacity-100">
-                <Eye className="mr-1 inline h-3.5 w-3.5" />
-                {copy("Preview", "预览")}
-              </span>
-            </button>
-            <div className="mx-auto max-w-2xl space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {modeResult.prompt}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {copy("Model", "模型")}:{" "}
-                <span className="font-medium text-foreground">
-                  {modeResult.model}
-                </span>{" "}
-                · {copy("Resolution", "分辨率")}:{" "}
-                <span className="font-medium text-foreground">
-                  {modeResult.size}
-                </span>
-              </p>
-              {modeResult.revisedPrompt &&
-                modeResult.revisedPrompt !== modeResult.prompt && (
-                  <p className="text-xs italic text-muted-foreground">
-                    {copy("Revised", "优化提示词")}: {modeResult.revisedPrompt}
-                  </p>
-                )}
-              {modeResult.promptRepairNotice && (
-                <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                  {copy(
-                    "The original prompt was rejected by safety checks, so the system made additional adjustments before generating this result.",
-                    "原提示词因审核被拒，系统已进行更多修改后生成本次结果。"
-                  )}
-                </p>
-              )}
-              <div className="flex gap-2">
-                <Button asChild variant="outline" size="sm">
-                  <a
-                    href={modeResult.imageUrl}
-                    download
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    {copy("Download", "下载")}
-                  </a>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => applyResultAsReference(modeResult)}
-                >
-                  <RefreshCcw className="mr-2 h-4 w-4" />
-                  {copy("Edit this", "编辑这张")}
-                </Button>
-              </div>
-            </div>
-          </section>
+          <p className="sr-only" role="status">
+            {copy(
+              "Image generated and added to recent creations.",
+              "图片已生成并添加到近期生图。"
+            )}
+          </p>
         )}
       </>
     );
@@ -8007,15 +8642,29 @@ export function CreatePageClient({
     <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-12">
       <header className="mb-10 space-y-2.5">
         <h1 className="font-serif text-3xl font-semibold tracking-tight md:text-4xl">
-          {copy("Create", "创作")}
+          {isSimpleImageGenerationPage
+            ? copy("Image generation", "简易生图")
+            : copy("Create", "创作")}
         </h1>
         <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          {copy(
-            "Generate a new image from text, or transform uploaded images with a prompt.",
-            "用文字生成新图片，或通过提示词改造上传的图片。"
-          )}
+          {isSimpleImageGenerationPage
+            ? copy(
+                "Generate from text or transform one reference image in a single workspace.",
+                "在一个工作区中完成文生图与单参考图图生图。"
+              )
+            : copy(
+                "Generate a new image from text, or transform uploaded images with a prompt.",
+                "用文字生成新图片，或通过提示词改造上传的图片。"
+              )}
         </p>
       </header>
+
+      {isSimpleImageGenerationPage && (
+        <section className="mb-10 space-y-4">
+          {renderUnifiedImageForm()}
+          {renderVisualOutput(unifiedHasReference ? "image" : "text-single")}
+        </section>
+      )}
 
       <Tabs
         value={activeMode}
@@ -8045,16 +8694,12 @@ export function CreatePageClient({
           }
           setActiveMode(value as ActiveMode);
         }}
-        className="mb-10"
+        className={isSimpleImageGenerationPage ? "hidden" : "mb-10"}
       >
         <TabsList className="mb-6 h-auto flex-wrap justify-start gap-1 rounded-full border border-border bg-muted/40 p-1">
-          <TabsTrigger value="text" className="gap-1.5 rounded-full px-4">
-            <Wand2 className="h-4 w-4" />
-            {copy("Text to image", "文生图")}
-          </TabsTrigger>
           <TabsTrigger value="image" className="gap-1.5 rounded-full px-4">
             <ImagePlus className="h-4 w-4" />
-            {copy("Image to image", "图生图")}
+            {copy("Image studio", "图片创作")}
           </TabsTrigger>
           <TabsTrigger
             value="chat"
@@ -8232,6 +8877,17 @@ export function CreatePageClient({
         </div>
 
         <div role="tabpanel" hidden={activeMode !== "image"} className="mt-0">
+          {!isSimpleImageGenerationPage && (
+            <>
+              {renderUnifiedImageForm()}
+              {renderVisualOutput(
+                unifiedHasReference ? "image" : "text-single"
+              )}
+            </>
+          )}
+        </div>
+
+        <div role="tabpanel" hidden={activeMode !== "text"} className="mt-0">
           <form
             onSubmit={handleEditSubmit}
             onPaste={handleImagePaste}
@@ -8552,7 +9208,9 @@ export function CreatePageClient({
                     <Select
                       value={editModel}
                       onValueChange={setEditModel}
-                      disabled={isEditing || editMixWebFirstActive || editFireflyActive}
+                      disabled={
+                        isEditing || editMixWebFirstActive || editFireflyActive
+                      }
                     >
                       <SelectTrigger
                         id="edit-model"
@@ -8681,7 +9339,11 @@ export function CreatePageClient({
                         onValueChange={(value) =>
                           setOutputFormat(value as ImageOutputFormat)
                         }
-                        disabled={isEditing || editMixWebFirstActive || editFireflyActive}
+                        disabled={
+                          isEditing ||
+                          editMixWebFirstActive ||
+                          editFireflyActive
+                        }
                       >
                         <SelectTrigger
                           id="edit-output-format"
@@ -8735,7 +9397,11 @@ export function CreatePageClient({
                               )
                             )
                           }
-                          disabled={isEditing || editMixWebFirstActive || editFireflyActive}
+                          disabled={
+                            isEditing ||
+                            editMixWebFirstActive ||
+                            editFireflyActive
+                          }
                           title={outputCompressionHelpText}
                         />
                       </div>
@@ -8791,7 +9457,11 @@ export function CreatePageClient({
                         onValueChange={(value) =>
                           setModeration(value as ImageModeration)
                         }
-                        disabled={isEditing || editMixWebFirstActive || editFireflyActive}
+                        disabled={
+                          isEditing ||
+                          editMixWebFirstActive ||
+                          editFireflyActive
+                        }
                       >
                         <SelectTrigger
                           id="edit-oai-moderation"
@@ -8915,19 +9585,11 @@ export function CreatePageClient({
                     <p className="mt-1">{editReferenceSizeNote}</p>
                   )}
                   <p className="mt-1">
-                    {customApiActive && !editHasImageReference ? (
-                      <span className="font-medium text-foreground">
-                        {customApiBillingLabel}
-                      </span>
-                    ) : (
-                      <>
-                        {copy("Cost", "费用")}:{" "}
-                        <span className="font-medium text-foreground">
-                          {formattedEditBatchCreditCost}
-                        </span>
-                        {batchCostSuffix(editBatchCount)}
-                      </>
-                    )}
+                    {copy("Cost", "费用")}:{" "}
+                    <span className="font-medium text-foreground">
+                      {formattedEditBatchCreditCost}
+                    </span>
+                    {batchCostSuffix(editBatchCount)}
                   </p>
                 </div>
               </div>
@@ -9384,7 +10046,10 @@ export function CreatePageClient({
                                           )}
                                         >
                                           <Image
-                                            src={thumbSrc(variant.imageUrl, 256)}
+                                            src={thumbSrc(
+                                              variant.imageUrl,
+                                              256
+                                            )}
                                             alt={variant.prompt}
                                             fill
                                             sizes="40px"
@@ -9589,33 +10254,27 @@ export function CreatePageClient({
                   isBatchActive
                 )}
                 <div className="text-xs text-muted-foreground">
-                  {customApiActive ? (
+                  <>
+                    {copy("Per image", "单张预计")}{" "}
                     <span className="font-medium text-foreground">
-                      {customApiBillingLabel}
+                      {formattedBatchSingleCreditCost}
                     </span>
-                  ) : (
-                    <>
-                      {copy("Per image", "单张预计")}{" "}
-                      <span className="font-medium text-foreground">
-                        {formattedBatchSingleCreditCost}
-                      </span>
-                      {isBatchActive && (
-                        <>
-                          {" "}
-                          <span className="text-muted-foreground">/</span>{" "}
-                          {copy("Used", "已用")}{" "}
-                          <span className="font-medium text-foreground">
-                            {formattedWaterfallCreditsConsumed}
-                          </span>
-                        </>
-                      )}{" "}
-                      <span className="text-muted-foreground">/</span>{" "}
-                      {copy("Balance", "余额")}{" "}
-                      <span className="font-medium text-foreground">
-                        {formattedBalance}
-                      </span>{" "}
-                    </>
-                  )}
+                    {isBatchActive && (
+                      <>
+                        {" "}
+                        <span className="text-muted-foreground">/</span>{" "}
+                        {copy("Used", "已用")}{" "}
+                        <span className="font-medium text-foreground">
+                          {formattedWaterfallCreditsConsumed}
+                        </span>
+                      </>
+                    )}{" "}
+                    <span className="text-muted-foreground">/</span>{" "}
+                    {copy("Balance", "余额")}{" "}
+                    <span className="font-medium text-foreground">
+                      {formattedBalance}
+                    </span>{" "}
+                  </>
                 </div>
               </div>
             </div>
@@ -9953,22 +10612,22 @@ export function CreatePageClient({
         </div>
       </Tabs>
 
-      {recent.length > 0 && (
+      {(recent.length > 0 || isUnifiedImageWorkspace) && (
         <section className="space-y-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <h2 className="font-serif text-xl font-semibold tracking-tight">
               {copy("Recent", "最近生成")}
             </h2>
             <p className="text-xs text-muted-foreground">
-              {isConversationMode(activeMode)
+              {isUnifiedImageWorkspace
                 ? copy(
-                    "Click an image to attach it as the next reference.",
-                    "点击图片可作为下一次参考图。"
+                    "Hover or focus an image to use it as the next reference.",
+                    "悬停或聚焦图片即可将它设为下一次参考图。"
                   )
-                : activeMode === "image"
+                : isConversationMode(activeMode)
                   ? copy(
-                      "Click an image to add or remove it as a reference.",
-                      "点击图片可添加或移除为参考图。"
+                      "Click an image to attach it as the next reference.",
+                      "点击图片可作为下一次参考图。"
                     )
                   : copy(
                       "Click an image to open the full preview.",
@@ -9976,73 +10635,74 @@ export function CreatePageClient({
                     )}
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
-            {recent.map((g) => {
-              const selectedForEdit = editImages.some(
-                (item) => item.sourceId === g.id
-              );
-              return (
-                <button
-                  key={g.id}
-                  type="button"
-                  className={`group relative aspect-square overflow-hidden rounded-md border bg-muted text-left transition duration-150 disabled:cursor-not-allowed disabled:opacity-60 ${
-                    selectedForEdit && activeMode === "image"
-                      ? "border-primary ring-2 ring-primary/50"
-                      : "hover:border-foreground/40"
-                  }`}
-                  title={
-                    isConversationMode(activeMode)
-                      ? copy("Attach as reference", "添加为参考")
-                      : activeMode === "image"
+          {recent.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+              {recent.map((g) => {
+                const selectedForEdit = editImages[0]?.sourceId === g.id;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={`group relative aspect-square overflow-hidden rounded-md border bg-muted text-left transition duration-150 disabled:cursor-not-allowed disabled:opacity-60 ${
+                      selectedForEdit && isUnifiedImageWorkspace
+                        ? "border-primary ring-2 ring-primary/50"
+                        : "hover:border-foreground/40"
+                    }`}
+                    title={
+                      isUnifiedImageWorkspace
                         ? copy("Use as reference image", "作为参考图片")
-                        : copy("Open image preview", "打开图片预览")
-                  }
-                  onClick={() => handleRecentClick(g)}
-                  disabled={!g.imageUrl}
-                >
-                  {g.imageUrl ? (
-                    <Image
-                      src={thumbSrc(g.imageUrl, 320)}
-                      alt={g.prompt}
-                      fill
-                      sizes="80px"
-                      className="object-contain transition-[scale,filter] duration-150 group-hover:scale-105 group-hover:brightness-105"
-                      unoptimized={shouldBypassImageOptimization(g.imageUrl)}
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-                      <ImagePlus className="h-6 w-6" />
-                    </div>
-                  )}
-                  <span className="absolute inset-x-0 bottom-0 flex items-center justify-center bg-background/90 px-2 py-1 text-[11px] font-medium text-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
-                    {isConversationMode(activeMode) ? (
-                      <>
-                        <MessageSquare className="mr-1 h-3 w-3" />
-                        {copy("Attach", "添加参考")}
-                      </>
-                    ) : activeMode === "image" ? (
-                      selectedForEdit ? (
-                        <>
-                          <Check className="mr-1 h-3 w-3" />
-                          {copy("Selected", "已选择")}
-                        </>
-                      ) : (
+                        : isConversationMode(activeMode)
+                          ? copy("Attach as reference", "添加为参考")
+                          : copy("Open image preview", "打开图片预览")
+                    }
+                    onClick={() => handleRecentClick(g)}
+                    disabled={!g.imageUrl}
+                  >
+                    {g.imageUrl ? (
+                      <Image
+                        src={thumbSrc(g.imageUrl, 320)}
+                        alt={g.prompt}
+                        fill
+                        sizes="80px"
+                        className="object-contain transition-[scale,filter] duration-150 group-hover:scale-105 group-hover:brightness-105"
+                        unoptimized={shouldBypassImageOptimization(g.imageUrl)}
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                        <ImagePlus className="h-6 w-6" />
+                      </div>
+                    )}
+                    <span className="absolute inset-x-0 bottom-0 flex items-center justify-center bg-background/90 px-2 py-1 text-[11px] font-medium text-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                      {isUnifiedImageWorkspace ? (
                         <>
                           <ImagePlus className="mr-1 h-3 w-3" />
                           {copy("Use as reference", "作为参考图")}
                         </>
-                      )
-                    ) : (
-                      <>
-                        <Eye className="mr-1 h-3 w-3" />
-                        {copy("Preview", "预览")}
-                      </>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                      ) : isConversationMode(activeMode) ? (
+                        <>
+                          <MessageSquare className="mr-1 h-3 w-3" />
+                          {copy("Attach", "添加参考")}
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="mr-1 h-3 w-3" />
+                          {copy("Preview", "预览")}
+                        </>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/15 px-4 text-center text-sm text-muted-foreground">
+              <ImagePlus className="mb-2 h-5 w-5" />
+              {copy(
+                "Your new images will appear here first, ready to reuse as references.",
+                "新生成的图片会优先出现在这里，可直接作为下一次参考图。"
+              )}
+            </div>
+          )}
         </section>
       )}
 

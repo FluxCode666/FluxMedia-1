@@ -101,10 +101,33 @@ export type ImageStreamEvent =
       type: "done";
     };
 
+/**
+ * SSE 响应的可选安全策略。
+ *
+ * `formatError` 由 Cookie 页面接口传入，用于把未捕获的上游异常收敛为安全文案；
+ * 保持可选以免改变其他现有 SSE 调用方的错误语义。
+ */
+export type ImageStreamResponseOptions = {
+  formatError?: (error: unknown) => string;
+};
+
+/** 将流执行器异常转换为可以写入 SSE 的稳定文案。 */
+function getStreamErrorMessage(
+  error: unknown,
+  options: ImageStreamResponseOptions | undefined
+) {
+  try {
+    return options?.formatError?.(error) || "Streaming failed";
+  } catch {
+    return "Streaming failed";
+  }
+}
+
 export function createImageStreamResponse(
   run: (
     emit: (event: ImageStreamEvent) => Promise<void>
-  ) => Promise<ImageStreamEvent | null | undefined>
+  ) => Promise<ImageStreamEvent | null | undefined>,
+  options?: ImageStreamResponseOptions
 ) {
   const encoder = new TextEncoder();
   const keepAliveMs = 5_000;
@@ -150,7 +173,7 @@ export function createImageStreamResponse(
         } catch (error) {
           await emit({
             type: "error",
-            error: error instanceof Error ? error.message : "Streaming failed",
+            error: getStreamErrorMessage(error, options),
           });
         } finally {
           if (keepAlive) {

@@ -39,18 +39,19 @@ import {
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import type { RequestParameterMapping } from "@repo/shared/image-backend/request-parameter-mapping";
 import {
-  moderateContent,
-  type ModerationImageInput,
-} from "@repo/shared/moderation";
-import {
   type AdminHistoryListOutput,
   adminHistoryListOutputSchema,
   type HistoryListOutput,
   historyListOutputSchema,
 } from "@repo/shared/image-generation/history-contract";
+import {
+  type ModerationImageInput,
+  moderateContent,
+} from "@repo/shared/moderation";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { purchasablePlansOutputSchema } from "@repo/shared/subscription/purchase-contract";
+import type { SubscriptionCheckoutInput } from "@repo/shared/subscription/checkout-contract";
 import { subscriptionCheckoutOutputSchema } from "@repo/shared/subscription/checkout-contract";
+import { purchasablePlansOutputSchema } from "@repo/shared/subscription/purchase-contract";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
@@ -103,22 +104,19 @@ import {
   getCreditTopUpOptions,
   getCreditTopUpOrderStatus,
 } from "@/features/payment/credit-top-up";
-import { loadSubscriptionPurchaseOptions } from "@/features/payment/subscription-purchase-options";
 import {
   createSubscriptionCheckout,
-  selectTrustedSubscriptionCheckoutInput,
   SubscriptionCheckoutError,
+  selectTrustedSubscriptionCheckoutInput,
 } from "@/features/payment/subscription-checkout";
-import type { SubscriptionCheckoutInput } from "@repo/shared/subscription/checkout-contract";
+import { loadSubscriptionPurchaseOptions } from "@/features/payment/subscription-purchase-options";
 import { databaseUsageLogRepository } from "@/features/usage-log/repository";
 import {
   loadUsageEventDetail,
   loadUsageEvents,
   UsageLogServiceError,
 } from "@/features/usage-log/service";
-import {
-  bindPlatformModelCatalogOperation,
-} from "@/server/platform-model-catalog-binding";
+import { bindPlatformModelCatalogOperation } from "@/server/platform-model-catalog-binding";
 
 // ---------------------------------------------------------------------------
 // image-generation 域
@@ -145,12 +143,16 @@ bindExecute(
     _ctx: OperationContext
   ) => {
     const images = input.images
-      ?.map((image): ModerationImageInput => ({
-        data: image.data ? Buffer.from(image.data, "base64") : Buffer.alloc(0),
-        type: image.type || "image/png",
-        ...(image.name ? { name: image.name } : {}),
-        ...(image.url ? { url: image.url } : {}),
-      }))
+      ?.map(
+        (image): ModerationImageInput => ({
+          data: image.data
+            ? Buffer.from(image.data, "base64")
+            : Buffer.alloc(0),
+          type: image.type || "image/png",
+          ...(image.name ? { name: image.name } : {}),
+          ...(image.url ? { url: image.url } : {}),
+        })
+      )
       .filter((image) => image.data.length > 0 || Boolean(image.url));
     return moderateContent({
       prompt: input.prompt,
@@ -172,7 +174,6 @@ bindExecute(
   "image.generate",
   async (
     input: {
-      userId: string;
       prompt: string;
       negativePrompt?: string;
       model?: string;
@@ -182,7 +183,6 @@ bindExecute(
       count?: number;
       generationId?: string;
       backendGroupId?: string;
-      extra?: Record<string, unknown>;
     },
     principal: Principal,
     _ctx: OperationContext
@@ -201,6 +201,7 @@ bindExecute(
       quality: input.quality as ImageQuality | undefined,
       n: input.count,
       generationId: input.generationId,
+      backendGroupId: input.backendGroupId,
     });
 
     if (result.error) {

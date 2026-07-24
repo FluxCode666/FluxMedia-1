@@ -1,6 +1,7 @@
+import { logWarn } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { getRuntimeSettingString } from "@repo/shared/system-settings";
-import { logWarn } from "@repo/shared/logger";
+import sharp from "sharp";
 import type { ImageInputFile } from "./types";
 
 export const DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -15,6 +16,11 @@ export type TemporaryUploadedImage = {
   bucket: string;
   key: string;
   url: string;
+};
+
+type ImageDimensions = {
+  width: number;
+  height: number;
 };
 
 export async function getImagePublicBaseUrl() {
@@ -77,6 +83,69 @@ export function getTotalUploadSize(files: File[], maskFile?: File) {
   return (
     files.reduce((total, file) => total + file.size, 0) + (maskFile?.size || 0)
   );
+}
+
+/**
+ * 解码上传图片并返回其原始像素尺寸。
+ *
+ * 只依赖 MIME 类型会允许伪造文件进入对象存储；读取元数据后再生成 1px 缩略图，
+ * 既能取得原始尺寸，也会实际解码图像数据而不为尺寸校验分配整张图片的像素缓冲。
+ *
+ * @throws 当文件不能被安全解码，或图片未包含有效尺寸时抛出面向用户的错误。
+ */
+async function decodeImageDimensions(
+  file: File,
+  label: string
+): Promise<ImageDimensions> {
+  try {
+    const input = Buffer.from(await file.arrayBuffer());
+    const metadata = await sharp(input, { failOn: "warning" }).metadata();
+    const width = metadata.width;
+    const height = metadata.height;
+
+    if (!width || !height) {
+      throw new Error("Image dimensions are unavailable.");
+    }
+
+    await sharp(input, { failOn: "warning" })
+      .resize({
+        width: 1,
+        height: 1,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .raw()
+      .toBuffer();
+
+    return { width, height };
+  } catch {
+    throw new Error(`${label} must be a decodable image file.`);
+  }
+}
+
+/**
+ * 校验局部重绘蒙版与第一张源图使用同一像素坐标系。
+ *
+ * 编辑接口允许历史多图编辑，因此只在调用方实际携带蒙版时比较第一张源图；
+ * 其余源图不增加尺寸限制，维持既有多图编辑语义。
+ *
+ * @throws 当源图或蒙版不能解码，或二者宽高不一致时抛出错误。
+ */
+export async function validateMaskMatchesSourceImage(
+  sourceFile: File,
+  maskFile: File
+) {
+  const [sourceDimensions, maskDimensions] = await Promise.all([
+    decodeImageDimensions(sourceFile, "First source image"),
+    decodeImageDimensions(maskFile, "Mask"),
+  ]);
+
+  if (
+    sourceDimensions.width !== maskDimensions.width ||
+    sourceDimensions.height !== maskDimensions.height
+  ) {
+    throw new Error("Mask dimensions must match the first source image.");
+  }
 }
 
 export async function toImageInput(

@@ -174,11 +174,11 @@ const dbMock = vi.hoisted(() => {
     accounts: [] as Row[],
     apis: [] as Row[],
     adobes: [] as Row[],
-    userPreferences: [] as Row[],
     externalApiKeys: [] as Row[],
     stickyBindings: [] as Row[],
     schedulerMetrics: [] as Row[],
     leases: [] as Row[],
+    filterGroupSelects: false,
     lockedLastAcquiredAtById: new Map<string, Date | null>(),
     limitCalls: [] as { tableName: string; limit: number }[],
     updates: [] as { tableName: string; values: Row }[],
@@ -209,8 +209,6 @@ const dbMock = vi.hoisted(() => {
         return state.schedulerMetrics;
       case "image_backend_inflight_lease":
         return state.leases;
-      case "user_image_backend_preference":
-        return state.userPreferences;
       default:
         return [];
     }
@@ -287,16 +285,27 @@ const dbMock = vi.hoisted(() => {
       reject?: (reason: unknown) => unknown
     ) => {
       let rows = rowsForTable(tableName);
-      if (options?.filterByWhere) {
+      const shouldFilterByWhere =
+        options?.filterByWhere ||
+        (state.filterGroupSelects && tableName === "image_backend_group");
+      if (shouldFilterByWhere) {
         const id = findPredicateValue(wherePredicate, "id");
         const memberType = findPredicateValue(wherePredicate, "memberType");
         const memberId = findPredicateValue(wherePredicate, "memberId");
+        const isEnabled = findPredicateValue(wherePredicate, "isEnabled");
+        const isDefault = findPredicateValue(wherePredicate, "isDefault");
         rows = rows.filter((row) => {
           if (id !== undefined && row.id !== id) return false;
           if (memberType !== undefined && row.memberType !== memberType) {
             return false;
           }
           if (memberId !== undefined && row.memberId !== memberId) {
+            return false;
+          }
+          if (isEnabled !== undefined && row.isEnabled !== isEnabled) {
+            return false;
+          }
+          if (isDefault !== undefined && row.isDefault !== isDefault) {
             return false;
           }
           return true;
@@ -481,6 +490,8 @@ vi.mock("@/features/image-generation/chatgpt-web", () => ({
   getChatGptWebAccountInfo: vi.fn(),
 }));
 
+import { isPlanAtLeast } from "@repo/shared/config/subscription-plan";
+import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getRuntimeSettingBoolean } from "@repo/shared/system-settings";
 import {
   reportImageBackendResult,
@@ -560,6 +571,113 @@ function makeAdobe(index: number, overrides: Row = {}) {
   };
 }
 
+/**
+ * 验证同一请求的隐式默认分组在默认配置切换后仍被可信固定。
+ *
+ * @param apiKeyId - 可选的未绑定 generationGroupId 的 API Key。
+ * @returns 默认 A 的首次解析和固定重解析均会断言成功。
+ * @remarks 测试同时验证固定组不是用户手选分组，因而不应调用手选能力校验。
+ */
+async function expectPinnedImplicitDefaultGroupToSurviveDefaultSwitch(
+  apiKeyId?: string
+) {
+  const groupAImageCreditOverrides = {
+    version: 1,
+    byModel: { "gpt-image-2": { base2kCredits: 6 } },
+  };
+  dbMock.state.groups = [
+    {
+      id: "group-a",
+      name: "Default A",
+      description: null,
+      isEnabled: true,
+      isDefault: true,
+      // 默认组并不要求用户可手选；重试固定它时也必须保持这一语义。
+      isUserSelectable: false,
+      contentSafetyEnabled: null,
+      priority: 1,
+      metadata: {
+        backendType: "responses",
+        imageCreditOverrides: groupAImageCreditOverrides,
+      },
+      createdAt: new Date(2026, 0, 1),
+      updatedAt: new Date(2026, 0, 1),
+    },
+    {
+      id: "group-b",
+      name: "Default B",
+      description: null,
+      isEnabled: true,
+      isDefault: false,
+      isUserSelectable: true,
+      contentSafetyEnabled: null,
+      priority: 2,
+      metadata: {
+        backendType: "responses",
+        imageCreditOverrides: {
+          version: 1,
+          byModel: { "gpt-image-2": { base2kCredits: 99 } },
+        },
+      },
+      createdAt: new Date(2026, 0, 2),
+      updatedAt: new Date(2026, 0, 2),
+    },
+  ];
+  dbMock.state.accounts = [
+    {
+      ...makeAccount(1),
+      matchedGroupId: "group-a",
+      groupId: "group-a",
+    },
+  ];
+  dbMock.state.externalApiKeys = apiKeyId
+    ? [{ id: apiKeyId, generationGroupId: null }]
+    : [];
+  // 此测试需让分组查询遵守 where 条件，以确保移除 pin 后会实际命中新的默认 B。
+  dbMock.state.filterGroupSelects = true;
+
+  const initial = await resolveImageBackendPoolConfig({
+    userId: "user-a",
+    requestKind: "image_generation",
+    ...(apiKeyId ? { apiKeyId } : {}),
+  });
+
+  expect(initial?.config.backend?.apiKeyId).toBe(apiKeyId);
+  expect(initial?.config.backend?.billingGroupId).toBe("group-a");
+  expect(initial?.config.backend?.imageCreditOverrides).toEqual(
+    groupAImageCreditOverrides
+  );
+
+  // 模拟首次候选失败期间管理员将默认分组改为 B。固定重解析必须继续路由 A，
+  // 而非把 A 当作用户手选分组重新授权。
+  resetImageBackendInflightForTests();
+  dbMock.state.leases = [];
+  const [groupA, groupB] = dbMock.state.groups;
+  if (!groupA || !groupB) throw new Error("缺少默认分组切换测试数据");
+  dbMock.state.groups = [
+    { ...groupB, isDefault: true },
+    { ...groupA, isDefault: false },
+  ];
+  vi.clearAllMocks();
+  vi.mocked(canUsePlanCapability).mockResolvedValue(false);
+
+  const retried = await resolveImageBackendPoolConfig({
+    userId: "user-a",
+    requestKind: "image_generation",
+    ...(apiKeyId ? { apiKeyId } : {}),
+    pinnedImplicitGroupId: "group-a",
+  });
+
+  expect(retried?.groupId).toBe("group-a");
+  expect(retried?.config.backend?.apiKeyId).toBe(apiKeyId);
+  expect(retried?.config.backend?.billingGroupId).toBe("group-a");
+  expect(retried?.config.backend?.imageCreditOverrides).toEqual(
+    groupAImageCreditOverrides
+  );
+  expect(retried?.config.backend?.requestedBackendGroupId).toBeUndefined();
+  expect(canUsePlanCapability).not.toHaveBeenCalled();
+}
+
 describe("image backend pool scheduler selection", () => {
   beforeEach(() => {
     resetImageBackendInflightForTests();
@@ -583,17 +701,19 @@ describe("image backend pool scheduler selection", () => {
     );
     dbMock.state.apis = [];
     dbMock.state.adobes = [];
-    dbMock.state.userPreferences = [];
     dbMock.state.externalApiKeys = [];
     dbMock.state.stickyBindings = [];
     dbMock.state.schedulerMetrics = [];
     dbMock.state.leases = [];
+    dbMock.state.filterGroupSelects = false;
     dbMock.state.lockedLastAcquiredAtById.clear();
     dbMock.state.limitCalls = [];
     dbMock.state.updates = [];
     dbMock.state.inserts = [];
     dbMock.state.executeCalls = [];
     vi.clearAllMocks();
+    vi.mocked(isPlanAtLeast).mockReturnValue(true);
+    vi.mocked(canUsePlanCapability).mockResolvedValue(true);
     vi.mocked(getRuntimeSettingBoolean).mockImplementation(
       async (_key: string, fallback = false) => fallback
     );
@@ -634,6 +754,14 @@ describe("image backend pool scheduler selection", () => {
       version: 1,
       byModel: { "gpt-image-2": { base2kCredits: 6 } },
     });
+  });
+
+  it("默认组切换后，可信固定隐式分组仍保留原组与其图像计费覆盖", async () => {
+    await expectPinnedImplicitDefaultGroupToSurviveDefaultSwitch();
+  });
+
+  it("未绑定分组的 API Key 在默认组切换后仍保留可信固定隐式分组", async () => {
+    await expectPinnedImplicitDefaultGroupToSurviveDefaultSwitch("key-unbound");
   });
 
   it("reserves backend capacity during selection and skips saturated members", async () => {
@@ -884,7 +1012,109 @@ describe("image backend pool scheduler selection", () => {
     expect(result?.memberId).toBe("acct-2");
   });
 
-  it("uses the platform default group for API keys without an explicit group", async () => {
+  it("重新授权显式选择的分组，并将其保留到解析配置", async () => {
+    dbMock.state.groups = [
+      {
+        id: "group-selected",
+        name: "Selected",
+        description: null,
+        isEnabled: true,
+        isDefault: false,
+        isUserSelectable: true,
+        contentSafetyEnabled: null,
+        priority: 1,
+        metadata: { backendType: "responses" },
+        createdAt: new Date(2026, 0, 1),
+        updatedAt: new Date(2026, 0, 1),
+      },
+      {
+        id: "default-group",
+        name: "Default",
+        description: null,
+        isEnabled: true,
+        isDefault: true,
+        isUserSelectable: true,
+        contentSafetyEnabled: null,
+        priority: 2,
+        metadata: { backendType: "responses" },
+        createdAt: new Date(2026, 0, 2),
+        updatedAt: new Date(2026, 0, 2),
+      },
+    ];
+    dbMock.state.accounts = [
+      {
+        ...makeAccount(1),
+        matchedGroupId: "group-selected",
+        groupId: "group-selected",
+      },
+    ];
+
+    const result = await resolveImageBackendPoolConfig({
+      userId: "user-a",
+      backendGroupId: "group-selected",
+      requestKind: "image_generation",
+    });
+
+    expect(result?.groupId).toBe("group-selected");
+    expect(result?.config.backend?.requestedBackendGroupId).toBe(
+      "group-selected"
+    );
+  });
+
+  it("拒绝不可选择、禁用或当前套餐无权的显式分组", async () => {
+    dbMock.state.groups[0] = {
+      ...dbMock.state.groups[0],
+      isUserSelectable: false,
+    };
+
+    await expect(
+      resolveImageBackendPoolConfig({
+        userId: "user-a",
+        backendGroupId: "group-a",
+        requestKind: "image_generation",
+      })
+    ).rejects.toThrow("所选生图分组不可用、不可手动选择或当前套餐不可用");
+
+    dbMock.state.groups[0] = {
+      ...dbMock.state.groups[0],
+      isUserSelectable: true,
+      isEnabled: false,
+    };
+
+    await expect(
+      resolveImageBackendPoolConfig({
+        userId: "user-a",
+        backendGroupId: "group-a",
+        requestKind: "image_generation",
+      })
+    ).rejects.toThrow("所选生图分组不可用、不可手动选择或当前套餐不可用");
+
+    dbMock.state.groups[0] = {
+      ...dbMock.state.groups[0],
+      isEnabled: true,
+    };
+    vi.mocked(canUsePlanCapability).mockResolvedValueOnce(false);
+
+    await expect(
+      resolveImageBackendPoolConfig({
+        userId: "user-a",
+        backendGroupId: "group-a",
+        requestKind: "image_generation",
+      })
+    ).rejects.toThrow("当前套餐不支持手动选择生图分组");
+
+    vi.mocked(isPlanAtLeast).mockReturnValueOnce(false);
+
+    await expect(
+      resolveImageBackendPoolConfig({
+        userId: "user-a",
+        backendGroupId: "group-a",
+        requestKind: "image_generation",
+      })
+    ).rejects.toThrow("所选生图分组不可用、不可手动选择或当前套餐不可用");
+  });
+
+  it("API Key 路由优先于页面显式分组，未绑定时仍使用平台默认组", async () => {
     dbMock.state.groups = [
       {
         id: "default-group",
@@ -914,7 +1144,6 @@ describe("image backend pool scheduler selection", () => {
       },
     ];
     dbMock.state.externalApiKeys = [{ id: "key-a", generationGroupId: null }];
-    dbMock.state.userPreferences = [{ userId: "user-a", groupId: "api-group" }];
     dbMock.state.accounts = [
       {
         ...makeAccount(1),
@@ -926,53 +1155,7 @@ describe("image backend pool scheduler selection", () => {
     const result = await resolveImageBackendPoolConfig({
       userId: "user-a",
       apiKeyId: "key-a",
-      requestKind: "image_generation",
-    });
-
-    expect(result?.groupId).toBe("default-group");
-    expect(result?.config.backend?.billingGroupId).toBe("default-group");
-  });
-
-  it("ignores stale user preferences that point to non-selectable groups", async () => {
-    dbMock.state.groups = [
-      {
-        id: "default-group",
-        name: "Default",
-        description: null,
-        isEnabled: true,
-        isDefault: true,
-        isUserSelectable: true,
-        contentSafetyEnabled: null,
-        priority: 1,
-        metadata: { backendType: "responses" },
-        createdAt: new Date(2026, 0, 1),
-        updatedAt: new Date(2026, 0, 1),
-      },
-      {
-        id: "api-group",
-        name: "API",
-        description: null,
-        isEnabled: true,
-        isDefault: false,
-        isUserSelectable: false,
-        contentSafetyEnabled: true,
-        priority: 10,
-        metadata: { backendType: "mixed" },
-        createdAt: new Date(2026, 0, 2),
-        updatedAt: new Date(2026, 0, 2),
-      },
-    ];
-    dbMock.state.userPreferences = [{ userId: "user-a", groupId: "api-group" }];
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        matchedGroupId: "default-group",
-        groupId: "default-group",
-      },
-    ];
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
+      backendGroupId: "api-group",
       requestKind: "image_generation",
     });
 
@@ -1514,6 +1697,35 @@ describe("image backend pool scheduler selection", () => {
       // account 并发饱和后,低优先级 adobe 兜底入选。
       expect(second?.memberType).toBe("adobe");
       expect(second?.memberId).toBe("adobe-1");
+    });
+
+    it("带蒙版编辑排除 Adobe 与 Web account，只选择可传递蒙版的后端", async () => {
+      const group = dbMock.state.groups[0];
+      if (!group) throw new Error("缺少默认测试分组");
+      group.metadata = { backendType: "mixed" };
+      dbMock.state.accounts = [
+        {
+          ...makeAccount(1),
+          implementationMode: "web",
+          priority: 2,
+        },
+        {
+          ...makeAccount(2),
+          implementationMode: "responses",
+          priority: 3,
+        },
+      ];
+      dbMock.state.adobes = [makeAdobe(1, { priority: 1 })];
+
+      const result = await resolveImageBackendPoolConfig({
+        userId: "user-a",
+        requestKind: "image_edit",
+        requiresMask: true,
+      });
+
+      expect(result?.memberType).toBe("account");
+      expect(result?.memberId).toBe("acct-2");
+      expect(result?.config.backend?.requiresMask).toBe(true);
     });
 
     it("force_firefly 时只有 adobe 是候选(account 被排除)", async () => {

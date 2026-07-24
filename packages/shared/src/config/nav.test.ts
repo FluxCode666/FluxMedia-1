@@ -1,12 +1,13 @@
 /**
- * 营销导航配置契约测试。
+ * 站点导航配置契约测试。
  *
- * 使用方：Header、移动端 Sheet、Products 菜单与营销 Footer。
+ * 使用方：Header、移动端 Sheet、Products 菜单、营销 Footer 与控制台侧边栏。
  * 关键依赖：`nav.ts` 的单一导航事实源；测试保持 DB-free。
  */
 import { describe, expect, it } from "vitest";
 
 import {
+  dashboardNav,
   footerNav,
   getMarketingHeaderNavigation,
   mainNav,
@@ -95,5 +96,25 @@ describe("营销导航契约", () => {
       expect(FORBIDDEN_HREFS.has(item.href)).toBe(false);
       expect(item.href.trim()).not.toBe("");
     }
+  });
+});
+
+describe("控制台导航契约", () => {
+  it("提供独立简易生图入口，同时不重新暴露旧创作页入口", () => {
+    const dashboardItems = dashboardNav.flatMap((group) => group.items);
+
+    expect(dashboardItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "Generate",
+          href: "/dashboard/generate",
+        }),
+      ])
+    );
+    expect(dashboardItems).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ href: "/dashboard/create" }),
+      ])
+    );
   });
 });

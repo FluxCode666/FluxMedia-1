@@ -307,7 +307,12 @@ export interface ApiConfig {
     groupBackendType?: "web" | "responses" | "mixed";
     userId?: string;
     apiKeyId?: string;
+    // 页面本次显式选中的分组。member 的 groupId 可能是混合组下的子组，重试必须保留
+    // 原始选择，而不能回退到用户偏好或默认分组。
+    requestedBackendGroupId?: string;
     requestKind?: "image_generation" | "image_edit" | "chat" | "responses";
+    // 蒙版不会透传到 Adobe 适配器；首次解析和换号重试均据此排除该路径。
+    requiresMask?: boolean;
     accountBackend?: "web" | "responses";
     apiInterfaceMode?: "images" | "responses" | "mixed";
     chatCompletionsUpstreamMode?: "responses" | "chat_completions";

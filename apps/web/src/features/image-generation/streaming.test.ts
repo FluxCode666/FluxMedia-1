@@ -14,9 +14,7 @@ describe("image stream response", () => {
   it("sets no-buffer headers for proxied SSE", async () => {
     const response = createImageStreamResponse(async () => null);
 
-    expect(response.headers.get("content-type")).toContain(
-      "text/event-stream"
-    );
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
     expect(response.headers.get("cache-control")).toContain("no-transform");
     expect(response.headers.get("cdn-cache-control")).toBe("no-store");
     expect(response.headers.get("cloudflare-cdn-cache-control")).toBe(
@@ -31,6 +29,19 @@ describe("image stream response", () => {
 
     expect(firstChunk).toContain(": open");
     expect(firstChunk.length).toBeGreaterThan(1024);
+  });
+
+  it("允许页面接口为未捕获异常提供安全的错误文案", async () => {
+    const response = createImageStreamResponse(
+      async () => {
+        throw new Error("Upstream Images API returned HTTP 401: Bearer secret");
+      },
+      { formatError: () => "图片服务暂时不可用，请稍后重试" }
+    );
+    const body = await response.text();
+
+    expect(body).toContain("图片服务暂时不可用，请稍后重试");
+    expect(body).not.toContain("Bearer secret");
   });
 
   it("keeps the route work running after the client closes the stream", async () => {
