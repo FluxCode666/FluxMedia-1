@@ -259,7 +259,11 @@ type VideoOperationStatus =
   | "failed";
 
 /** 将持久视频状态映射为稳定 UOL 状态。 */
-function toVideoOperationStatus(status: string): VideoOperationStatus {
+function toVideoOperationStatus(
+  status: string,
+  stage?: string
+): VideoOperationStatus {
+  if (stage === "submitting") return "submitting";
   switch (status) {
     case "completed":
       return "completed";
@@ -353,7 +357,7 @@ bindExecute(
       assertVideoRequestFingerprint(existing, requestFingerprint);
       return {
         taskId,
-        status: toVideoOperationStatus(existing.status),
+        status: toVideoOperationStatus(existing.status, existing.stage),
       };
     }
 
@@ -391,10 +395,14 @@ bindExecute(
             }
           : {}),
       });
+      const persisted = await getVideoGenerationById(taskId);
       return {
         taskId,
-        status:
-          "error" in result ? ("failed" as const) : ("completed" as const),
+        status: persisted
+          ? toVideoOperationStatus(persisted.status, persisted.stage)
+          : "error" in result
+            ? ("failed" as const)
+            : ("processing" as const),
       };
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个
@@ -405,7 +413,7 @@ bindExecute(
       assertVideoRequestFingerprint(raced, requestFingerprint);
       return {
         taskId,
-        status: toVideoOperationStatus(raced.status),
+        status: toVideoOperationStatus(raced.status, raced.stage),
       };
     }
   }
@@ -432,7 +440,7 @@ bindExecute(
       : null;
     return {
       taskId: row.id,
-      status: toVideoOperationStatus(row.status),
+      status: toVideoOperationStatus(row.status, row.stage),
       ...(videoUrl ? { videoUrl } : {}),
       ...(row.error ? { error: row.error } : {}),
       createdAt: row.createdAt.toISOString(),

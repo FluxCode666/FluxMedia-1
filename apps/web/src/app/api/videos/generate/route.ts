@@ -104,27 +104,36 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       principal,
       { requestId: request.headers.get("x-request-id") ?? undefined }
     );
-    const status = await invokeOperation<{
-      taskId: string;
-      status: "pending" | "submitting" | "processing" | "completed" | "failed";
-      videoUrl?: string;
-      error?: string;
-    }>("video.getStatus", { taskId: result.taskId }, principal);
-
-    if (status.status === "failed") {
-      await emit({
-        type: "error",
-        error: status.error ?? "视频生成失败",
-        generationId: result.taskId,
-      });
-      return null;
+    for (;;) {
+      if (request.signal.aborted) return null;
+      const status = await invokeOperation<{
+        taskId: string;
+        status:
+          | "pending"
+          | "submitting"
+          | "processing"
+          | "completed"
+          | "failed";
+        videoUrl?: string;
+        error?: string;
+      }>("video.getStatus", { taskId: result.taskId }, principal);
+      if (status.status === "failed") {
+        await emit({
+          type: "error",
+          error: status.error ?? "视频生成失败",
+          generationId: result.taskId,
+        });
+        return null;
+      }
+      if (status.status === "completed" && status.videoUrl) {
+        await emit({
+          type: "completed",
+          videoGenerationId: result.taskId,
+          videoUrl: status.videoUrl,
+        });
+        return null;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
     }
-
-    await emit({
-      type: "completed",
-      videoGenerationId: result.taskId,
-      videoUrl: status.videoUrl,
-    });
-    return null;
   });
 });

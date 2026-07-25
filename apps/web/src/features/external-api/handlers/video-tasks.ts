@@ -1,23 +1,16 @@
 /**
- * GET /v1/videos/{id} —— 按 id 查询一次视频生成（外部 API）。
+ * 外部视频状态查询的 UOL 薄适配器。
  *
- * 先查进程内异步任务存储（async=true 返回的 task_...,临时态);未命中再按 generation_id
- * 从 DB 持久取回 video_generation（同步请求也可用此方式复查,跨重启/多实例都稳)。
- * getVideoGenerationById 不带归属过滤,handler 内显式校验 userId 防越权(IDOR)。
+ * 职责：认证 API Key、构造包含精确 apiKeyId 的 Principal 并委托 video.getStatus。
+ * 任务归属由 operation 以 userId + apiKeyId fail closed 校验，不读取进程内任务状态。
  */
 
 import { withApiLogging } from "@repo/shared/api-logger";
-import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
+import { invokeOperation, OperationError } from "@repo/shared/uol";
 import type { NextRequest } from "next/server";
-import {
-  getAsyncImageTask,
-  toAsyncImageTaskResponse,
-  toVideoGenerationTaskResponse,
-} from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { openAIImageError } from "@/features/external-api/images";
-import { getVideoGenerationById } from "@/features/image-generation/video-operations";
+import { ensureUolInitialized } from "@/server/uol-init";
 
 export const getExternalVideoTask = withApiLogging(
   async (
@@ -32,39 +25,51 @@ export const getExternalVideoTask = withApiLogging(
         "invalid_api_key"
       );
     }
-
     const { taskId } = await params;
     if (!taskId || taskId.length > 128) {
       return openAIImageError("Invalid task_id.");
     }
-
-    // 1. 内存异步任务(async=true 创建,按 task_<uuid> 为键)。
-    const task = getAsyncImageTask(taskId);
-    if (
-      task &&
-      task.userId === auth.userId &&
-      (!task.apiKeyId || task.apiKeyId === auth.apiKeyId)
-    ) {
-      return Response.json(toAsyncImageTaskResponse(task), {
-        headers: { "Cache-Control": "no-store" },
-      });
+    try {
+      await ensureUolInitialized();
+      const result = await invokeOperation<{
+        taskId: string;
+        status: "pending" | "submitting" | "processing" | "completed" | "failed";
+        videoUrl?: string;
+        error?: string;
+        createdAt: string;
+        completedAt?: string;
+      }>(
+        "video.getStatus",
+        { taskId },
+        {
+          type: "apiKey",
+          userId: auth.userId,
+          apiKeyId: auth.apiKeyId,
+          plan: auth.plan,
+        },
+        { requestId: request.headers.get("x-request-id") ?? undefined }
+      );
+      return Response.json(
+        {
+          object: "video.task",
+          id: result.taskId,
+          task_id: result.taskId,
+          generation_id: result.taskId,
+          status: result.status,
+          ...(result.videoUrl
+            ? { video_url: result.videoUrl, data: [{ url: result.videoUrl }] }
+            : {}),
+          ...(result.error ? { error: { message: result.error } } : {}),
+          created_at: result.createdAt,
+          ...(result.completedAt ? { completed_at: result.completedAt } : {}),
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    } catch (error) {
+      if (error instanceof OperationError) {
+        return openAIImageError(error.message, error.httpStatus, error.code);
+      }
+      throw error;
     }
-
-    // 2. 按 generation_id 从 video_generation 持久取回(归属校验防越权)。
-    const row = await getVideoGenerationById(taskId);
-    if (row && row.userId === auth.userId) {
-      const bucket =
-        (await getRuntimeSettingString(
-          "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-        )) || "generations";
-      const videoUrl = row.storageKey
-        ? buildSignedStorageImageUrl(row.storageKey, bucket)
-        : null;
-      return Response.json(toVideoGenerationTaskResponse(row, videoUrl), {
-        headers: { "Cache-Control": "no-store" },
-      });
-    }
-
-    return openAIImageError("Video task not found or expired.", 404);
   }
 );
