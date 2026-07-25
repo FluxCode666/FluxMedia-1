@@ -4,7 +4,7 @@
  * 使用方：Vitest；通过注入式仓储验证显式字段映射、空目录和事实源失败传播，
  * 无需连接数据库，也不会把凭据、地址、内部 ID 或健康错误带入输出。
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@repo/database", () => ({ db: {} }));
@@ -110,13 +110,23 @@ describe("loadPlatformModelCatalog", () => {
 });
 
 describe("platform model catalog UOL binding", () => {
-  it("经真实 bindExecute 和 invokeOperation 返回严格白名单 DTO", async () => {
+  let invokeOperation: typeof import("@repo/shared/uol").invokeOperation;
+  let bindPlatformModelCatalogOperation: typeof import("@/server/platform-model-catalog-binding").bindPlatformModelCatalogOperation;
+
+  // UOL 全量注册会触发较大的冷启动模块图；放入 suite hook 后，测试的 5 秒预算
+  // 只衡量绑定与网关调用本身，避免 CI transform 速度污染业务断言。
+  beforeAll(async () => {
     await import("@repo/shared/uol/operations");
-    const [{ invokeOperation }, { bindPlatformModelCatalogOperation }] =
-      await Promise.all([
-        import("@repo/shared/uol"),
-        import("@/server/platform-model-catalog-binding"),
-      ]);
+    const [uol, binding] = await Promise.all([
+      import("@repo/shared/uol"),
+      import("@/server/platform-model-catalog-binding"),
+    ]);
+    invokeOperation = uol.invokeOperation;
+    bindPlatformModelCatalogOperation =
+      binding.bindPlatformModelCatalogOperation;
+  }, 20_000);
+
+  it("经真实 bindExecute 和 invokeOperation 返回严格白名单 DTO", async () => {
     const internalCatalog = {
       image: [
         {
@@ -150,12 +160,6 @@ describe("platform model catalog UOL binding", () => {
   });
 
   it("既有启动入口同时绑定 SLA 统计且每次调用都实时读取", async () => {
-    await import("@repo/shared/uol/operations");
-    const [{ invokeOperation }, { bindPlatformModelCatalogOperation }] =
-      await Promise.all([
-        import("@repo/shared/uol"),
-        import("@/server/platform-model-catalog-binding"),
-      ]);
     const stats = {
       sampleSize: 100,
       completed: 96,
