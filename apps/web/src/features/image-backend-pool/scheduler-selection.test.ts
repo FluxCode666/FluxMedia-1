@@ -15,33 +15,6 @@ const schemaMock = vi.hoisted(() => {
 
   return {
     externalApiKey: table("external_api_key", ["id", "generationGroupId"]),
-    imageBackendAccount: table("image_backend_account", [
-      "id",
-      "groupId",
-      "name",
-      "accessToken",
-      "model",
-      "implementationMode",
-      "contentSafetyEnabled",
-      "isEnabled",
-      "priority",
-      "concurrency",
-      "successCount",
-      "failCount",
-      "status",
-      "lastUsedAt",
-      "lastAcquiredAt",
-      "cooldownUntil",
-      "lastError",
-      "lastErrorAt",
-      "metadata",
-      "createdAt",
-      "updatedAt",
-    ]),
-    imageBackendAccountGroup: table("image_backend_account_group", [
-      "accountId",
-      "groupId",
-    ]),
     imageBackendApiGroup: table("image_backend_api_group", [
       "apiId",
       "groupId",
@@ -171,7 +144,6 @@ const schemaMock = vi.hoisted(() => {
 const dbMock = vi.hoisted(() => {
   const state = {
     groups: [] as Row[],
-    accounts: [] as Row[],
     apis: [] as Row[],
     adobes: [] as Row[],
     externalApiKeys: [] as Row[],
@@ -195,8 +167,6 @@ const dbMock = vi.hoisted(() => {
     switch (tableName) {
       case "external_api_key":
         return state.externalApiKeys;
-      case "image_backend_account":
-        return state.accounts;
       case "image_backend_api":
         return state.apis;
       case "image_backend_adobe":
@@ -312,8 +282,7 @@ const dbMock = vi.hoisted(() => {
         });
         if (
           id !== undefined &&
-          (tableName === "image_backend_account" ||
-            tableName === "image_backend_api") &&
+          tableName === "image_backend_api" &&
           state.lockedLastAcquiredAtById.has(String(id))
         ) {
           const lockedLastAcquiredAt = state.lockedLastAcquiredAtById.get(
@@ -486,10 +455,6 @@ vi.mock("@repo/shared/system-settings", () => ({
   getRuntimeSettingString: vi.fn(async () => ""),
 }));
 
-vi.mock("@/features/image-generation/chatgpt-web", () => ({
-  getChatGptWebAccountInfo: vi.fn(),
-}));
-
 import { isPlanAtLeast } from "@repo/shared/config/subscription-plan";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getRuntimeSettingBoolean } from "@repo/shared/system-settings";
@@ -498,25 +463,6 @@ import {
   resetImageBackendInflightForTests,
   resolveImageBackendPoolConfig,
 } from "./service";
-
-function makeAccount(index: number) {
-  return {
-    matchedGroupId: "group-a",
-    id: `acct-${index}`,
-    groupId: null,
-    name: `Account ${index}`,
-    accessToken: `token-${index}`,
-    model: null,
-    implementationMode: "responses",
-    contentSafetyEnabled: true,
-    priority: 10,
-    concurrency: 1,
-    lastUsedAt: null,
-    lastAcquiredAt: null,
-    createdAt: new Date(2026, 0, index),
-    metadata: null,
-  };
-}
 
 /** 构造可被池调度器选择的 API 后端测试行。 */
 function makeApi(index: number, overrides: Row = {}) {
@@ -623,9 +569,9 @@ async function expectPinnedImplicitDefaultGroupToSurviveDefaultSwitch(
       updatedAt: new Date(2026, 0, 2),
     },
   ];
-  dbMock.state.accounts = [
+  dbMock.state.apis = [
     {
-      ...makeAccount(1),
+      ...makeApi(1),
       matchedGroupId: "group-a",
       groupId: "group-a",
     },
@@ -696,10 +642,7 @@ describe("image backend pool scheduler selection", () => {
         updatedAt: new Date(2026, 0, 1),
       },
     ];
-    dbMock.state.accounts = Array.from({ length: 55 }, (_, index) =>
-      makeAccount(index + 1)
-    );
-    dbMock.state.apis = [];
+    dbMock.state.apis = [makeApi(1)];
     dbMock.state.adobes = [];
     dbMock.state.externalApiKeys = [];
     dbMock.state.stickyBindings = [];
@@ -719,25 +662,10 @@ describe("image backend pool scheduler selection", () => {
     );
   });
 
-  it("does not truncate runtime backend candidates at 50", async () => {
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "image_generation",
-      excludedMemberKeys: Array.from(
-        { length: 50 },
-        (_, index) => `account:acct-${index + 1}`
-      ),
-    });
-
-    expect(result?.memberType).toBe("account");
-    expect(result?.memberId).toBe("acct-51");
-    expect(dbMock.state.limitCalls.filter((call) => call.limit === 50)).toEqual(
-      []
-    );
-  });
-
   it("carries the selected billing group's model price overrides into config", async () => {
-    dbMock.state.groups[0]!.metadata = {
+    const group = dbMock.state.groups[0];
+    if (!group) throw new Error("缺少默认测试分组");
+    group.metadata = {
       backendType: "responses",
       imageCreditOverrides: {
         version: 1,
@@ -768,29 +696,7 @@ describe("image backend pool scheduler selection", () => {
     await expectPinnedImplicitDefaultGroupToSurviveDefaultSwitch("key-unbound");
   });
 
-  it("reserves backend capacity during selection and skips saturated members", async () => {
-    dbMock.state.accounts = [makeAccount(1), makeAccount(2)];
-
-    const first = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "image_generation",
-    });
-    const second = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "image_generation",
-    });
-    const third = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "image_generation",
-    });
-
-    expect(first?.memberId).toBe("acct-1");
-    expect(second?.memberId).toBe("acct-2");
-    expect(third).toBeNull();
-  });
-
   it("respects the configured API concurrency instead of a hardcoded 1", async () => {
-    dbMock.state.accounts = [];
     dbMock.state.apis = [
       {
         id: "api-cc",
@@ -825,197 +731,6 @@ describe("image backend pool scheduler selection", () => {
     expect(picks).toEqual(["api-cc", "api-cc", "api-cc", undefined]);
   });
 
-  it("round-robins across equal healthy accounts instead of filling high-concurrency accounts first", async () => {
-    dbMock.state.accounts = Array.from({ length: 10 }, (_, index) => ({
-      ...makeAccount(index + 1),
-      concurrency: 50,
-    }));
-
-    const selected: string[] = [];
-    for (let index = 0; index < 10; index += 1) {
-      const result = await resolveImageBackendPoolConfig({
-        userId: "user-a",
-        requestKind: "image_generation",
-      });
-      if (result?.memberId) selected.push(result.memberId);
-    }
-
-    expect(new Set(selected).size).toBe(10);
-    expect(selected).toEqual([
-      "acct-1",
-      "acct-2",
-      "acct-3",
-      "acct-4",
-      "acct-5",
-      "acct-6",
-      "acct-7",
-      "acct-8",
-      "acct-9",
-      "acct-10",
-    ]);
-  });
-
-  it("skips a candidate when its last acquired time changed before row lock", async () => {
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        concurrency: 50,
-        lastAcquiredAt: null,
-      },
-      {
-        ...makeAccount(2),
-        concurrency: 50,
-        lastAcquiredAt: new Date(2026, 0, 1, 0, 0, 0),
-      },
-    ];
-    dbMock.state.lockedLastAcquiredAtById.set(
-      "acct-1",
-      new Date(2026, 0, 1, 0, 0, 1)
-    );
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "image_generation",
-    });
-
-    expect(result?.memberId).toBe("acct-2");
-  });
-
-  it("reselects when every candidate in the first snapshot is stale", async () => {
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        concurrency: 50,
-        lastAcquiredAt: null,
-      },
-      {
-        ...makeAccount(2),
-        concurrency: 50,
-        lastAcquiredAt: null,
-      },
-    ];
-    dbMock.state.lockedLastAcquiredAtById.set(
-      "acct-1",
-      new Date(2026, 0, 1, 0, 0, 1)
-    );
-    dbMock.state.lockedLastAcquiredAtById.set(
-      "acct-2",
-      new Date(2026, 0, 1, 0, 0, 2)
-    );
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "image_generation",
-    });
-
-    expect(result?.memberId).toBe("acct-1");
-  });
-
-  it("tries the sticky previous-response backend before normal scheduling", async () => {
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        priority: 1,
-        createdAt: new Date(2026, 0, 1),
-      },
-      {
-        ...makeAccount(2),
-        priority: 99,
-        createdAt: new Date(2026, 0, 2),
-      },
-    ];
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "responses",
-      preferredMemberId: "acct-2",
-      preferredMemberType: "account",
-    });
-
-    expect(result?.memberType).toBe("account");
-    expect(result?.memberId).toBe("acct-2");
-  });
-
-  it("uses persisted previous-response sticky bindings before request preferences", async () => {
-    dbMock.state.accounts = [makeAccount(1), makeAccount(2)];
-    dbMock.state.stickyBindings = [
-      {
-        memberType: "account",
-        memberId: "acct-2",
-        groupId: "group-a",
-        accountBackend: "responses",
-      },
-    ];
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "responses",
-      stickyPreviousResponseId: "resp-a",
-      preferredMemberId: "acct-1",
-      preferredMemberType: "account",
-    });
-
-    expect(result?.memberType).toBe("account");
-    expect(result?.memberId).toBe("acct-2");
-    expect(result?.schedulerLayer).toBe("previous_response_id");
-  });
-
-  it("records scheduler selection metrics", async () => {
-    dbMock.state.accounts = [makeAccount(1)];
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "responses",
-    });
-
-    expect(result?.memberId).toBe("acct-1");
-    const metricInsert = dbMock.state.inserts.find(
-      (item) => item.tableName === "image_backend_scheduler_metric"
-    );
-    expect(metricInsert?.values).toMatchObject({
-      requestKind: "responses",
-      selectedLayer: "load_balance",
-      memberType: "account",
-      memberId: "acct-1",
-      selectCount: 1,
-    });
-  });
-
-  it("uses scheduler health metadata to demote unhealthy peers at the same priority", async () => {
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        priority: 10,
-        metadata: {
-          scheduler: {
-            errorEwma: 0.9,
-            durationMsEwma: 180_000,
-            failStreak: 5,
-          },
-        },
-      },
-      {
-        ...makeAccount(2),
-        priority: 10,
-        metadata: {
-          scheduler: {
-            errorEwma: 0.05,
-            durationMsEwma: 20_000,
-            successStreak: 3,
-          },
-        },
-      },
-    ];
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "responses",
-    });
-
-    expect(result?.memberType).toBe("account");
-    expect(result?.memberId).toBe("acct-2");
-  });
-
   it("重新授权显式选择的分组，并将其保留到解析配置", async () => {
     dbMock.state.groups = [
       {
@@ -1045,9 +760,9 @@ describe("image backend pool scheduler selection", () => {
         updatedAt: new Date(2026, 0, 2),
       },
     ];
-    dbMock.state.accounts = [
+    dbMock.state.apis = [
       {
-        ...makeAccount(1),
+        ...makeApi(1),
         matchedGroupId: "group-selected",
         groupId: "group-selected",
       },
@@ -1148,9 +863,9 @@ describe("image backend pool scheduler selection", () => {
       },
     ];
     dbMock.state.externalApiKeys = [{ id: "key-a", generationGroupId: null }];
-    dbMock.state.accounts = [
+    dbMock.state.apis = [
       {
-        ...makeAccount(1),
+        ...makeApi(1),
         matchedGroupId: "default-group",
         groupId: "default-group",
       },
@@ -1184,7 +899,6 @@ describe("image backend pool scheduler selection", () => {
       lastUsedAt: null,
       createdAt: new Date(2026, 0, 1),
     };
-    dbMock.state.accounts = [];
     dbMock.state.apis = [{ ...baseApi, imageUpstreamMode: "images" }];
 
     await expect(
@@ -1206,172 +920,6 @@ describe("image backend pool scheduler selection", () => {
       apiInterfaceMode: "responses",
       imagesUpstreamMode: "responses",
     });
-  });
-
-  it("can borrow any Responses backend when the requested group is Web-only", async () => {
-    dbMock.state.groups = [
-      {
-        id: "web-group",
-        name: "Web only",
-        description: null,
-        isEnabled: true,
-        isDefault: true,
-        isUserSelectable: true,
-        contentSafetyEnabled: null,
-        priority: 1,
-        metadata: { backendType: "web" },
-        createdAt: new Date(2026, 0, 1),
-        updatedAt: new Date(2026, 0, 1),
-      },
-      {
-        id: "codex-group",
-        name: "Codex repair",
-        description: null,
-        isEnabled: true,
-        isDefault: false,
-        isUserSelectable: true,
-        contentSafetyEnabled: null,
-        priority: 2,
-        metadata: { backendType: "responses" },
-        createdAt: new Date(2026, 0, 2),
-        updatedAt: new Date(2026, 0, 2),
-      },
-    ];
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        matchedGroupId: "codex-group",
-        groupId: "codex-group",
-      },
-    ];
-
-    await expect(
-      resolveImageBackendPoolConfig({
-        userId: "user-a",
-        requestKind: "responses",
-      })
-    ).resolves.toBeNull();
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "responses",
-      accountBackendPreference: "responses",
-      allowAnyResponsesBackend: true,
-    });
-
-    expect(result?.memberType).toBe("account");
-    expect(result?.memberId).toBe("acct-1");
-    expect(result?.groupId).toBe("codex-group");
-  });
-
-  it("reactivates limited accounts after a successful retry", async () => {
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        status: "limited",
-        cooldownUntil: new Date(2026, 0, 1),
-      },
-    ];
-
-    await reportImageBackendResult({
-      memberType: "account",
-      memberId: "acct-1",
-      success: true,
-    });
-
-    const update = dbMock.state.updates.find(
-      (item) => item.tableName === "image_backend_account"
-    );
-    expect(update?.values).toMatchObject({
-      status: "active",
-      cooldownUntil: null,
-      lastError: null,
-      lastErrorAt: null,
-      metadata: expect.objectContaining({
-        scheduler: expect.objectContaining({
-          errorEwma: 0,
-          successStreak: 1,
-          failStreak: 0,
-        }),
-      }),
-    });
-  });
-
-  it("updates scheduler EWMA metadata after failures", async () => {
-    dbMock.state.accounts = [
-      {
-        ...makeAccount(1),
-        metadata: {
-          source: "sub2api_postgres",
-          scheduler: {
-            errorEwma: 0.25,
-            durationMsEwma: 10_000,
-            successStreak: 2,
-          },
-        },
-      },
-    ];
-
-    await reportImageBackendResult({
-      memberType: "account",
-      memberId: "acct-1",
-      success: false,
-      error: "HTTP 500 upstream error",
-      durationMs: 20_000,
-    });
-
-    const update = dbMock.state.updates.find(
-      (item) => item.tableName === "image_backend_account"
-    );
-    expect(update?.values.metadata).toMatchObject({
-      source: "sub2api_postgres",
-      scheduler: {
-        // EWMA alpha=0.4:0.25*0.6 + 1*0.4 = 0.55;10000*0.6 + 20000*0.4 = 14000。
-        errorEwma: 0.55,
-        durationMsEwma: 14_000,
-        successStreak: 0,
-        failStreak: 1,
-        lastObservedAt: expect.any(String),
-      },
-    });
-  });
-
-  it("健康惩罚按 lastObservedAt 时间衰减:久未观测的旧故障号让位给刚失败的号之外、并随时间淡出复探", async () => {
-    const now = Date.now();
-    dbMock.state.accounts = [
-      {
-        // 刚刚失败(惩罚全额)→ 应被降级。
-        ...makeAccount(1),
-        priority: 10,
-        metadata: {
-          scheduler: {
-            errorEwma: 0.9,
-            failStreak: 5,
-            lastObservedAt: new Date(now).toISOString(),
-          },
-        },
-      },
-      {
-        // 同样的高错误率,但一小时前才观测到 → 惩罚已指数衰减趋 0 → 应被优先复探。
-        ...makeAccount(2),
-        priority: 10,
-        metadata: {
-          scheduler: {
-            errorEwma: 0.9,
-            failStreak: 5,
-            lastObservedAt: new Date(now - 60 * 60_000).toISOString(),
-          },
-        },
-      },
-    ];
-
-    const result = await resolveImageBackendPoolConfig({
-      userId: "user-a",
-      requestKind: "responses",
-    });
-
-    expect(result?.memberType).toBe("account");
-    expect(result?.memberId).toBe("acct-2");
   });
 
   it("reactivates limited API backends after a successful retry", async () => {
@@ -1554,7 +1102,6 @@ describe("image backend pool scheduler selection", () => {
         updatedAt: new Date(2026, 0, 2),
       },
     ];
-    dbMock.state.accounts = [];
     const baseApi = {
       id: "api-default",
       groupId: "group-a",
@@ -1586,51 +1133,7 @@ describe("image backend pool scheduler selection", () => {
     expect(fromGroupA?.groupId).toBe("group-a");
   });
 
-  it("keeps account backend cooldown behavior unchanged", async () => {
-    await reportImageBackendResult({
-      memberType: "account",
-      memberId: "acct-1",
-      success: false,
-      error: "HTTP 429 Too many requests",
-      retryAfterSeconds: 60,
-    });
-
-    const update = dbMock.state.updates.find(
-      (item) => item.tableName === "image_backend_account"
-    );
-    expect(update?.values).toMatchObject({
-      status: "active",
-      cooldownUntil: expect.any(Date),
-      lastError: "HTTP 429 Too many requests",
-      lastErrorAt: expect.any(Date),
-    });
-  });
-
-  it("always_active account does not cooldown or change status on failure", async () => {
-    dbMock.state.accounts = [{ ...makeAccount(1), alwaysActive: true }];
-
-    await reportImageBackendResult({
-      memberType: "account",
-      memberId: "acct-1",
-      success: false,
-      error: "HTTP 429 Too many requests",
-      retryAfterSeconds: 60,
-    });
-
-    const update = dbMock.state.updates.find(
-      (item) => item.tableName === "image_backend_account"
-    );
-    // 常驻账号:失败只记 failCount/lastError,不改 status、不进冷却。
-    expect(update?.values).not.toHaveProperty("status");
-    expect(update?.values).not.toHaveProperty("cooldownUntil");
-    expect(update?.values).toMatchObject({
-      lastError: "HTTP 429 Too many requests",
-      lastErrorAt: expect.any(Date),
-    });
-  });
-
   it("仅把已声明支持请求模型的 API 后端纳入调度", async () => {
-    dbMock.state.accounts = [];
     dbMock.state.adobes = [];
     dbMock.state.apis = [
       makeApi(1, {
@@ -1653,17 +1156,14 @@ describe("image backend pool scheduler selection", () => {
     expect(result?.memberId).toBe("api-2");
   });
 
-  // adobe 作为特殊 firefly account 成员参与分组调度的路由语义。
+  // Adobe 与 API 成员参与分组调度的路由语义。
   describe("adobe firefly group-based routing", () => {
     beforeEach(() => {
-      // 用 responses 分组：responses 账号与 adobe 同组,普通 image_generation 请求两者皆候选。
-      dbMock.state.accounts = [makeAccount(1)];
+      dbMock.state.apis = [makeApi(1)];
       dbMock.state.adobes = [makeAdobe(1)];
     });
 
-    it("普通图像请求同组含 adobe 与 account 时,二者都是候选(adobe 不被排除)", async () => {
-      // account priority=10、adobe priority=10 同层；两者同 createdAt 排序,account 在前
-      // (apiMembers→accountMembers→adobeMembers 拼接顺序),故首选 account,但 adobe 仍在候选池。
+    it("普通图像请求同组含 Adobe 与 API 时二者都是候选", async () => {
       const first = await resolveImageBackendPoolConfig({
         userId: "user-a",
         requestKind: "image_generation",
@@ -1676,15 +1176,12 @@ describe("image backend pool scheduler selection", () => {
       const picked = [first, second].map(
         (r) => `${r?.memberType}:${r?.memberId}`
       );
-      // 两个候选都被选中(并发各 1),证明 adobe 与 account 同池参与,adobe 未被排除。
-      expect(picked).toContain("account:acct-1");
+      expect(picked).toContain("api:api-1");
       expect(picked).toContain("adobe:adobe-1");
     });
 
-    it("低优先级 adobe 仅作兜底:account 优先,account 饱和后才落 adobe", async () => {
-      dbMock.state.accounts = [
-        { ...makeAccount(1), priority: 1, concurrency: 1 },
-      ];
+    it("低优先级 Adobe 仅在 API 饱和后兜底", async () => {
+      dbMock.state.apis = [makeApi(1, { priority: 1, concurrency: 1 })];
       dbMock.state.adobes = [makeAdobe(1, { priority: 50 })];
 
       const first = await resolveImageBackendPoolConfig({
@@ -1696,29 +1193,17 @@ describe("image backend pool scheduler selection", () => {
         requestKind: "image_generation",
       });
 
-      expect(first?.memberType).toBe("account");
-      expect(first?.memberId).toBe("acct-1");
-      // account 并发饱和后,低优先级 adobe 兜底入选。
+      expect(first?.memberType).toBe("api");
+      expect(first?.memberId).toBe("api-1");
       expect(second?.memberType).toBe("adobe");
       expect(second?.memberId).toBe("adobe-1");
     });
 
-    it("带蒙版编辑排除 Adobe 与 Web account，只选择可传递蒙版的后端", async () => {
+    it("带蒙版编辑排除 Adobe，只选择可传递蒙版的 API", async () => {
       const group = dbMock.state.groups[0];
       if (!group) throw new Error("缺少默认测试分组");
       group.metadata = { backendType: "mixed" };
-      dbMock.state.accounts = [
-        {
-          ...makeAccount(1),
-          implementationMode: "web",
-          priority: 2,
-        },
-        {
-          ...makeAccount(2),
-          implementationMode: "responses",
-          priority: 3,
-        },
-      ];
+      dbMock.state.apis = [makeApi(2, { priority: 3 })];
       dbMock.state.adobes = [makeAdobe(1, { priority: 1 })];
 
       const result = await resolveImageBackendPoolConfig({
@@ -1727,13 +1212,12 @@ describe("image backend pool scheduler selection", () => {
         requiresMask: true,
       });
 
-      expect(result?.memberType).toBe("account");
-      expect(result?.memberId).toBe("acct-2");
+      expect(result?.memberType).toBe("api");
+      expect(result?.memberId).toBe("api-2");
       expect(result?.config.backend?.requiresMask).toBe(true);
     });
 
-    it("force_firefly 时只有 adobe 是候选(account 被排除)", async () => {
-      dbMock.state.accounts = [{ ...makeAccount(1), priority: 1 }];
+    it("force_firefly 时只有 Adobe 语义后端是候选", async () => {
       dbMock.state.adobes = [makeAdobe(1, { priority: 50 })];
 
       const result = await resolveImageBackendPoolConfig({
@@ -1746,8 +1230,7 @@ describe("image backend pool scheduler selection", () => {
       expect(result?.memberId).toBe("adobe-1");
     });
 
-    it("force_firefly 但同组无 adobe 时无可用后端(不回落 account)", async () => {
-      dbMock.state.accounts = [makeAccount(1)];
+    it("force_firefly 但同组无 Adobe 时无可用后端", async () => {
       dbMock.state.adobes = [];
 
       await expect(
@@ -1759,8 +1242,7 @@ describe("image backend pool scheduler selection", () => {
       ).resolves.toBeNull();
     });
 
-    it("firefly-* 模型仅保留 Adobe 语义候选(account 被排除)", async () => {
-      dbMock.state.accounts = [{ ...makeAccount(1), priority: 1 }];
+    it("firefly-* 模型仅保留 Adobe 语义候选", async () => {
       dbMock.state.adobes = [makeAdobe(1, { priority: 50 })];
 
       const result = await resolveImageBackendPoolConfig({
@@ -1774,7 +1256,6 @@ describe("image backend pool scheduler selection", () => {
     });
 
     it("仅将请求模型已被开放的 Adobe 后端纳入候选", async () => {
-      dbMock.state.accounts = [];
       dbMock.state.adobes = [
         makeAdobe(1, {
           priority: 1,
@@ -1797,7 +1278,6 @@ describe("image backend pool scheduler selection", () => {
     });
 
     it("视频模型只会命中启用 supportsVideo 的 Adobe 直连后端", async () => {
-      dbMock.state.accounts = [];
       dbMock.state.adobes = [
         makeAdobe(1, {
           priority: 1,
@@ -1822,7 +1302,6 @@ describe("image backend pool scheduler selection", () => {
     });
 
     it("裸 Veo/Kling 模型只进入 Adobe direct，普通 API 不会抢占视频租约", async () => {
-      dbMock.state.accounts = [makeAccount(1)];
       dbMock.state.apis = [makeApi(1, { priority: 1 })];
       dbMock.state.adobes = [
         makeAdobe(1, {
@@ -1844,7 +1323,6 @@ describe("image backend pool scheduler selection", () => {
     });
 
     it("firefly-* 排除普通 API，但 Adobe 来源 API 仍按优先级参与", async () => {
-      dbMock.state.accounts = [{ ...makeAccount(1), priority: 1 }];
       dbMock.state.apis = [
         makeApi(1, {
           priority: 1,
@@ -1868,8 +1346,7 @@ describe("image backend pool scheduler selection", () => {
       expect(result?.memberId).toBe("api-2");
     });
 
-    it("裸 nano-banana* 让 pool-api 与 pool-adobe 按 priority 同池竞争并排除普通账号", async () => {
-      dbMock.state.accounts = [{ ...makeAccount(1), priority: 1 }];
+    it("裸 nano-banana* 让 pool-api 与 pool-adobe 按 priority 同池竞争", async () => {
       dbMock.state.apis = [
         makeApi(1, {
           priority: 20,
@@ -1889,13 +1366,12 @@ describe("image backend pool scheduler selection", () => {
         requestedModel: "nano-banana-pro",
       });
 
-      // 普通账号不能透传裸自定义模型；Adobe 优先级更高，故先选 Adobe。
+      // Adobe 优先级更高，故先选 Adobe。
       expect(result?.memberType).toBe("adobe");
       expect(result?.memberId).toBe("adobe-1");
     });
 
     it("裸 nano-banana* 的 API priority 更高时优先选择 pool-api", async () => {
-      dbMock.state.accounts = [];
       dbMock.state.apis = [
         makeApi(1, {
           priority: 10,
@@ -1920,7 +1396,6 @@ describe("image backend pool scheduler selection", () => {
     });
 
     it("把 fireflyOnly 盖在解析结果 config 上(供换号重试保持只走 Adobe)", async () => {
-      dbMock.state.accounts = [{ ...makeAccount(1), priority: 1 }];
       dbMock.state.adobes = [makeAdobe(1, { priority: 50 })];
 
       // firefly-* 模型:fireflyOnly 盖 true,且只选到 adobe。
@@ -1941,7 +1416,7 @@ describe("image backend pool scheduler selection", () => {
       expect(forced?.config.backend?.fireflyOnly).toBe(true);
 
       // 普通请求不盖(undefined/false)。
-      dbMock.state.accounts = [makeAccount(1)];
+      dbMock.state.apis = [makeApi(1)];
       dbMock.state.adobes = [];
       const normal = await resolveImageBackendPoolConfig({
         userId: "user-a",
