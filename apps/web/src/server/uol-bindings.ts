@@ -41,15 +41,18 @@ import {
   type HistoryListOutput,
   historyListOutputSchema,
 } from "@repo/shared/image-generation/history-contract";
+import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
 import {
   type ModerationImageInput,
   moderateContent,
 } from "@repo/shared/moderation";
 import { checkRateLimit } from "@repo/shared/rate-limit";
+import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import type { SubscriptionCheckoutInput } from "@repo/shared/subscription/checkout-contract";
 import { subscriptionCheckoutOutputSchema } from "@repo/shared/subscription/checkout-contract";
 import { purchasablePlansOutputSchema } from "@repo/shared/subscription/purchase-contract";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
+import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
@@ -98,8 +101,17 @@ import {
   HistoryServiceError,
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
+import { loadMediaInputs } from "@/features/image-generation/media-input-loader";
 import { runImageGenerationForUser } from "@/features/image-generation/operations";
 import type { ImageQuality } from "@/features/image-generation/types";
+import {
+  getVideoGenerationById,
+  runAdobeVideoGenerationForUser,
+} from "@/features/image-generation/video-operations";
+import {
+  createVideoRequestFingerprint,
+  createVideoTaskId,
+} from "@/features/image-generation/video-task-identity";
 import {
   createCreditTopUpCheckout,
   fulfillAlipayCreditTopUp,
@@ -235,6 +247,198 @@ bindExecute(
       images,
       creditsUsed: result.creditsConsumed,
       model: result.model,
+    };
+  }
+);
+
+type VideoOperationStatus =
+  | "pending"
+  | "submitting"
+  | "processing"
+  | "completed"
+  | "failed";
+
+/** 将持久视频状态映射为稳定 UOL 状态。 */
+function toVideoOperationStatus(status: string): VideoOperationStatus {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "submitting":
+      return "submitting";
+    case "running":
+    case "processing":
+      return "processing";
+    default:
+      return "pending";
+  }
+}
+
+/** 从任务 metadata 取一个非空字符串，非法历史值按缺失处理。 */
+function readVideoMetadataString(
+  metadata: Record<string, unknown> | null,
+  key: string
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/**
+ * 校验视频任务与当前 Principal 完全同域。
+ *
+ * API Key 任务不会因共享 userId 而被另一把 Key 或站内会话命中。
+ */
+function assertVideoTaskPrincipal(
+  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>,
+  principal: Principal,
+  ctx: OperationContext
+): void {
+  if (principal.type !== "user" && principal.type !== "apiKey") {
+    throw new OperationError("unauthenticated", "User identity required");
+  }
+  const expectedApiKeyId =
+    principal.type === "apiKey" ? principal.apiKeyId : null;
+  if (row.userId !== principal.userId || row.apiKeyId !== expectedApiKeyId) {
+    throw new OperationError("not_found", "Video task not found");
+  }
+  ctx.assertOwnership("video task", row.userId);
+}
+
+/** 校验幂等重放的请求内容没有发生变化。 */
+function assertVideoRequestFingerprint(
+  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>,
+  requestFingerprint: string
+): void {
+  if (
+    readVideoMetadataString(row.metadata, "requestFingerprint") !==
+    requestFingerprint
+  ) {
+    throw new OperationError(
+      "idempotency_conflict",
+      "clientRequestId was already used with different video input"
+    );
+  }
+}
+
+/** video.generate - Principal 作用域幂等地执行统一视频管线。 */
+bindExecute(
+  "video.generate",
+  async (
+    input: {
+      clientRequestId: string;
+      prompt: string;
+      negativePrompt?: string;
+      model: string;
+      backendGroupId?: string;
+      inputImages?: MediaInputReference[];
+    },
+    principal: Principal,
+    ctx: OperationContext
+  ) => {
+    if (principal.type !== "user" && principal.type !== "apiKey") {
+      throw new OperationError("unauthenticated", "User identity required");
+    }
+    const apiKeyId =
+      principal.type === "apiKey" ? principal.apiKeyId : undefined;
+    const taskId = createVideoTaskId({
+      userId: principal.userId,
+      ...(apiKeyId ? { apiKeyId } : {}),
+      clientRequestId: input.clientRequestId,
+    });
+    const requestFingerprint = createVideoRequestFingerprint(input);
+    const existing = await getVideoGenerationById(taskId);
+    if (existing) {
+      assertVideoTaskPrincipal(existing, principal, ctx);
+      assertVideoRequestFingerprint(existing, requestFingerprint);
+      return {
+        taskId,
+        status: toVideoOperationStatus(existing.status),
+      };
+    }
+
+    const inputImages = input.inputImages
+      ? await loadMediaInputs({
+          userId: principal.userId,
+          references: input.inputImages,
+        })
+      : undefined;
+    try {
+      const result = await runAdobeVideoGenerationForUser({
+        userId: principal.userId,
+        ...(apiKeyId ? { apiKeyId } : {}),
+        videoGenerationId: taskId,
+        clientRequestId: input.clientRequestId,
+        requestFingerprint,
+        prompt: input.prompt,
+        model: input.model,
+        ...(input.negativePrompt
+          ? { negativePrompt: input.negativePrompt }
+          : {}),
+        ...(input.backendGroupId
+          ? { backendGroupId: input.backendGroupId }
+          : {}),
+        ...(inputImages?.length ? { inputImages } : {}),
+        ...(input.inputImages?.some(
+          (reference) => reference.source === "storage"
+        )
+          ? {
+              inputImageRefs: input.inputImages.flatMap((reference) =>
+                reference.source === "storage"
+                  ? [{ storageKey: reference.storageKey }]
+                  : []
+              ),
+            }
+          : {}),
+      });
+      return {
+        taskId,
+        status:
+          "error" in result ? ("failed" as const) : ("completed" as const),
+      };
+    } catch (error) {
+      // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个
+      // insert 失败。只有已存在且指纹一致时才把它视为幂等命中。
+      const raced = await getVideoGenerationById(taskId);
+      if (!raced) throw error;
+      assertVideoTaskPrincipal(raced, principal, ctx);
+      assertVideoRequestFingerprint(raced, requestFingerprint);
+      return {
+        taskId,
+        status: toVideoOperationStatus(raced.status),
+      };
+    }
+  }
+);
+
+/** video.getStatus - 只返回当前 Principal 同域的持久视频任务。 */
+bindExecute(
+  "video.getStatus",
+  async (
+    input: { taskId: string },
+    principal: Principal,
+    ctx: OperationContext
+  ) => {
+    const row = await getVideoGenerationById(input.taskId);
+    if (!row) {
+      throw new OperationError("not_found", "Video task not found");
+    }
+    assertVideoTaskPrincipal(row, principal, ctx);
+    const bucket =
+      (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
+      "generations";
+    const videoUrl = row.storageKey
+      ? buildSignedStorageImageUrl(row.storageKey, bucket)
+      : null;
+    return {
+      taskId: row.id,
+      status: toVideoOperationStatus(row.status),
+      ...(videoUrl ? { videoUrl } : {}),
+      ...(row.error ? { error: row.error } : {}),
+      createdAt: row.createdAt.toISOString(),
+      ...(row.completedAt
+        ? { completedAt: row.completedAt.toISOString() }
+        : {}),
     };
   }
 );

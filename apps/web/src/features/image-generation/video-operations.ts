@@ -47,6 +47,10 @@ export type VideoGenerationInput = {
    * generation_id 与落库行 id 一致,便于后续按 id 持久查询;不传则内部生成。
    */
   videoGenerationId?: string;
+  /** UOL Principal 作用域内的原始幂等键，只写任务 metadata。 */
+  clientRequestId?: string;
+  /** 用于拒绝同幂等键却载荷不同的重放。 */
+  requestFingerprint?: string;
   /** Firefly 或裸 Veo/Kling 视频 model id（<family>-<dur>s-<ratio>[-<res>]）。 */
   model: string;
   /** 经过传输层校验的可选统一后端分组。 */
@@ -170,6 +174,18 @@ export async function runAdobeVideoGenerationForUser(
     resolution: conf.outputResolution,
     status: "pending",
     creditsConsumed: 0,
+    ...(input.clientRequestId || input.requestFingerprint
+      ? {
+          metadata: {
+            ...(input.clientRequestId
+              ? { clientRequestId: input.clientRequestId }
+              : {}),
+            ...(input.requestFingerprint
+              ? { requestFingerprint: input.requestFingerprint }
+              : {}),
+          },
+        }
+      : {}),
     ...(input.inputImageRefs?.length
       ? { inputImageRefs: input.inputImageRefs }
       : {}),

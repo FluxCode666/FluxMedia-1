@@ -1,23 +1,24 @@
 /**
- * Adobe Firefly 视频生成路由（创作页用）。
+ * 站内视频生成的 UOL 薄传输路由。
  *
- * 视频是长任务（最长 ~600s），普通阻塞请求会被反代/Cloudflare 掐断，故复用图像生成的
- * SSE 机制（createImageStreamResponse）：keep-alive 撑住连接，operation 跑完后推 completed
- * 事件（含产物 video URL）或 error。鉴权 → 解析 → runAdobeVideoGenerationForUser。
+ * 职责：校验 session 与受信 Origin，把 data URL 转成 JSON-safe 媒体引用，
+ * 构造真实 Principal 并调用 video.generate / video.getStatus。调度、幂等、
+ * 计费、归属与存储均由 operation 执行层负责。
  */
 
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
-import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
+import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { invokeOperation, type Principal } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
 } from "@/features/image-generation/resolution";
 import { createImageStreamResponse } from "@/features/image-generation/streaming";
-import { runAdobeVideoGenerationForUser } from "@/features/image-generation/video-operations";
+import { ensureUolInitialized } from "@/server/uol-init";
 
 // 输入图：base64 data URL（图生视频首帧/尾帧/参考），最多 3 张。
 const inputImageSchema = z
@@ -26,42 +27,43 @@ const inputImageSchema = z
   .max(20_000_000)
   .regex(/^data:image\/[a-zA-Z.+-]+;base64,/, "Invalid image data URL");
 
-const generateVideoSchema = z.object({
-  prompt: z
-    .string()
-    .min(1)
-    .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-  model: z.string().trim().min(1).max(120),
-  negativePrompt: z.string().max(8000).optional(),
-  inputImages: z.array(inputImageSchema).max(3).optional(),
-  inputImageRefs: z
-    .array(
-      z.object({
-        generationId: z.string().trim().max(128).optional(),
-        storageKey: z.string().trim().max(256).optional(),
-        role: z.string().trim().max(32).optional(),
-      })
-    )
-    .max(3)
-    .optional(),
-});
+const generateVideoSchema = z
+  .object({
+    clientRequestId: z.string().trim().min(1).max(128),
+    prompt: z
+      .string()
+      .min(1)
+      .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
+    model: z.string().trim().min(1).max(120),
+    negativePrompt: z.string().max(8000).optional(),
+    inputImages: z.array(inputImageSchema).max(3).optional(),
+  })
+  .strict();
 
 function errorResponse(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-// data URL → { data, type }。
-function decodeImageDataUrl(value: string): { data: Buffer; type: string } {
+/** data URL 转为 UOL JSON-safe 媒体引用。 */
+function decodeImageDataUrl(value: string) {
   const match = value.match(/^data:(image\/[a-zA-Z.+-]+);base64,(.*)$/);
-  const type = match?.[1] || "image/png";
+  const mimeType = match?.[1] || "image/png";
   const base64 = match?.[2] || "";
-  return { data: Buffer.from(base64, "base64"), type };
+  return {
+    source: "data" as const,
+    mimeType,
+    base64,
+    byteLength: Buffer.from(base64, "base64").byteLength,
+  };
 }
 
 export const POST = withApiLogging(async (request: NextRequest) => {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) {
     return errorResponse("Unauthorized", 401);
+  }
+  if (!hasTrustedImageGenerationOrigin(request)) {
+    return errorResponse("Forbidden", 403);
   }
 
   let body: unknown;
@@ -76,44 +78,52 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse(parsed.error.issues[0]?.message || "Invalid request");
   }
 
-  const userId = session.user.id;
   const inputImages = parsed.data.inputImages?.map(decodeImageDataUrl);
-  const bucket =
-    (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-    "generations";
+  const principal: Principal = {
+    type: "user",
+    userId: session.user.id,
+    role: await getUserRoleById(session.user.id),
+  };
+  await ensureUolInitialized();
 
   return createImageStreamResponse(async (emit) => {
-    const result = await runAdobeVideoGenerationForUser({
-      userId,
-      prompt: parsed.data.prompt,
-      model: parsed.data.model,
-      ...(parsed.data.negativePrompt
-        ? { negativePrompt: parsed.data.negativePrompt }
-        : {}),
-      ...(inputImages?.length ? { inputImages } : {}),
-      ...(parsed.data.inputImageRefs?.length
-        ? { inputImageRefs: parsed.data.inputImageRefs }
-        : {}),
-      signal: request.signal,
-    });
+    const result = await invokeOperation<{
+      taskId: string;
+      status: "pending" | "submitting" | "processing" | "completed" | "failed";
+    }>(
+      "video.generate",
+      {
+        clientRequestId: parsed.data.clientRequestId,
+        prompt: parsed.data.prompt,
+        model: parsed.data.model,
+        ...(parsed.data.negativePrompt
+          ? { negativePrompt: parsed.data.negativePrompt }
+          : {}),
+        ...(inputImages?.length ? { inputImages } : {}),
+      },
+      principal,
+      { requestId: request.headers.get("x-request-id") ?? undefined }
+    );
+    const status = await invokeOperation<{
+      taskId: string;
+      status: "pending" | "submitting" | "processing" | "completed" | "failed";
+      videoUrl?: string;
+      error?: string;
+    }>("video.getStatus", { taskId: result.taskId }, principal);
 
-    if ("error" in result) {
+    if (status.status === "failed") {
       await emit({
         type: "error",
-        error: result.error,
-        ...(result.videoGenerationId
-          ? { generationId: result.videoGenerationId }
-          : {}),
+        error: status.error ?? "视频生成失败",
+        generationId: result.taskId,
       });
       return null;
     }
 
     await emit({
       type: "completed",
-      videoGenerationId: result.videoGenerationId,
-      videoUrl:
-        buildSignedStorageImageUrl(result.storageKey, bucket) ?? undefined,
-      creditsConsumed: result.creditsConsumed,
+      videoGenerationId: result.taskId,
+      videoUrl: status.videoUrl,
     });
     return null;
   });

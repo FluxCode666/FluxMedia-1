@@ -18,7 +18,7 @@ export const videoGenerateInputSchema = z
     negativePrompt: z.string().max(100_000).optional(),
     model: z.string().trim().min(1).max(120),
     backendGroupId: z.string().trim().min(1).max(128).optional(),
-    inputImages: mediaInputReferencesSchema.optional(),
+    inputImages: mediaInputReferencesSchema.max(3).optional(),
   })
   .strict();
 

@@ -176,6 +176,7 @@ export function VideoCreatePanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          clientRequestId: crypto.randomUUID(),
           prompt: prompt.trim(),
           model,
           ...(inputImage ? { inputImages: [inputImage] } : {}),

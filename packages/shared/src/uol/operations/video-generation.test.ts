@@ -31,6 +31,23 @@ describe("video generation operations", () => {
     ).toBe(false);
   });
 
+  it("限制视频输入图最多三张", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    expect(
+      videoGenerateInputSchema.safeParse({
+        prompt: "海边日落",
+        model: "firefly-sora2-4s-16x9",
+        clientRequestId: "request-1",
+        inputImages: [image, image, image, image],
+      }).success
+    ).toBe(false);
+  });
+
   it.each([
     "memberType",
     "adobeId",
