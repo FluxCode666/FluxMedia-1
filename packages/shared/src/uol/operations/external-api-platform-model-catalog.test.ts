@@ -4,7 +4,12 @@
  * 使用方：Vitest；固定 system-only、human-only、只读元数据和严格公开输出边界，
  * 防止平台级营销目录被误投影到 MCP 或混入内部后端字段。
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  process.env.DATABASE_URL ||=
+    "postgres://test:test@127.0.0.1:5432/fluxmedia_test";
+});
 
 import { invokeOperation } from "../invoke";
 import type { Principal } from "../principal";
@@ -49,7 +54,6 @@ describe("externalApi.getPlatformModelCatalog", () => {
     bindExecute("externalApi.getPlatformModelCatalog", async () => ({
       image: [{ id: "gpt-image-2" }],
       video: [],
-      conversation: [{ id: "gpt-5.4" }],
     }));
 
     await expect(
@@ -61,7 +65,6 @@ describe("externalApi.getPlatformModelCatalog", () => {
     ).resolves.toEqual({
       image: [{ id: "gpt-image-2" }],
       video: [],
-      conversation: [{ id: "gpt-5.4" }],
     });
   });
 });
@@ -72,9 +75,8 @@ describe("platformModelCatalogOutputSchema", () => {
       platformModelCatalogOutputSchema.parse({
         image: [],
         video: [],
-        conversation: [],
       })
-    ).toEqual({ image: [], video: [], conversation: [] });
+    ).toEqual({ image: [], video: [] });
   });
 
   it("拒绝根对象和嵌套模型上的额外字段", () => {
@@ -82,7 +84,6 @@ describe("platformModelCatalogOutputSchema", () => {
       platformModelCatalogOutputSchema.parse({
         image: [],
         video: [],
-        conversation: [],
         apiKey: "canary-secret",
       })
     ).toThrow();
@@ -95,7 +96,6 @@ describe("platformModelCatalogOutputSchema", () => {
           },
         ],
         video: [],
-        conversation: [],
       })
     ).toThrow();
   });

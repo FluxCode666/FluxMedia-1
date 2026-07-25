@@ -25,7 +25,6 @@ export const platformModelCatalogOutputSchema = z
   .object({
     image: z.array(platformModelCatalogItemSchema),
     video: z.array(platformModelCatalogItemSchema),
-    conversation: z.array(platformModelCatalogItemSchema),
   })
   .strict();
 

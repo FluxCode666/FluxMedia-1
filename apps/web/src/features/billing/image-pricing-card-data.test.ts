@@ -32,7 +32,6 @@ const mocks = vi.hoisted(() => ({
     })
   ),
   getPlanCapabilitySnapshot: vi.fn(async () => ({
-    billing: { agentRoundCredits: 3, chatRoundCredits: 2 },
     features: { "moderation.blocking": true },
     limits: { monthlyCredits: 800 },
   })),
@@ -116,8 +115,6 @@ describe("loadImagePricingCardData", () => {
 
     expect(result).toMatchObject({
       billing: {
-        agentRoundCredits: 3,
-        chatRoundCredits: 2,
         groupName: "专业池",
         moderationBlockingEnabled: true,
         monthlyCredits: 800,

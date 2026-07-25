@@ -348,20 +348,6 @@ export function ImagePricingChartCard({
       )} ${copy("credits / month", "积分/月")}`,
     },
     {
-      label: copy("Chat round", "Chat 轮次"),
-      value: `${formatCredits(billing.chatRoundCredits)} ${copy(
-        "credits / round",
-        "积分/轮"
-      )}`,
-    },
-    {
-      label: copy("Agent round", "Agent 轮次"),
-      value: `${formatCredits(billing.agentRoundCredits)} ${copy(
-        "credits / round",
-        "积分/轮"
-      )}`,
-    },
-    {
       label: copy("Backend group", "后端分组"),
       value: billing.groupName || copy("Default group", "默认分组"),
     },
@@ -698,8 +684,8 @@ export function ImagePricingChartCard({
         <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
           <p>
             {copy(
-              "The curve shows the default image model's global fixed prices. Group prices follow the priority above; review and Chat/Agent round charges are added separately.",
-              "曲线展示默认图像模型的全局固定价格；分组价格按上述优先级生效，审核及 Chat/Agent 轮次费用另行叠加。"
+              "The curve shows the default image model's global fixed prices. Group prices follow the priority above, and review charges are added separately.",
+              "曲线展示默认图像模型的全局固定价格；分组价格按上述优先级生效，审核费用另行叠加。"
             )}
           </p>
           <p>

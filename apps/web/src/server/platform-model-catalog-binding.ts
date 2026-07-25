@@ -60,7 +60,6 @@ export function bindHomepageReadOperations(
       return platformModelCatalogOutputSchema.parse({
         image: catalog.image.map((model) => ({ id: model.id })),
         video: catalog.video.map((model) => ({ id: model.id })),
-        conversation: catalog.conversation.map((model) => ({ id: model.id })),
       });
     }
   );

@@ -18,7 +18,6 @@
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
 
-import type { adobeEnabledModelIdsSchema } from "@repo/shared/adobe/enabled-models";
 import {
   usageSummaryOutputSchema,
   usageTrendsInputSchema,
@@ -60,7 +59,6 @@ import {
   getPrincipalUserId,
   OperationError,
 } from "@repo/shared/uol";
-import type { z } from "zod";
 import {
   type AnalyticsReadModelState,
   loadOutputUsageSummary,
@@ -72,14 +70,12 @@ import {
   ExternalApiKeyManagementError,
   externalApiKeyManagementService,
 } from "@/features/external-api/key-management-service";
-import { getExternalModelsForUser } from "@/features/external-api/models";
+import { getExternalModelsForApiKey } from "@/features/external-api/models";
 import {
   deleteImageBackendParameterMappingTemplate,
   fromSafetyOverride,
   listAdminImageBackendPool,
   listImageBackendParameterMappingTemplates,
-  upsertImageBackendAdobe,
-  upsertImageBackendApi,
   upsertImageBackendGroup,
   upsertImageBackendParameterMappingTemplate,
 } from "@/features/image-backend-pool/service";
@@ -88,8 +84,6 @@ import {
   AdminHistoryServiceError,
   loadAdminHistoryRecords,
 } from "@/features/image-generation/admin-history-service";
-import { createEditableFileCreditOperation } from "@/features/image-generation/credit-operation-context";
-import { runEditableFileForUser } from "@/features/image-generation/editable-file-operations";
 import { databaseHistoryRepository } from "@/features/image-generation/history-repository";
 import {
   HistoryServiceError,
@@ -324,7 +318,11 @@ bindExecute(
         "External API model listing is not enabled for this plan."
       );
     }
-    return getExternalModelsForUser(principal.userId);
+    return getExternalModelsForApiKey(
+      principal.userId,
+      principal.apiKeyId,
+      plan
+    );
   }
 );
 
@@ -653,87 +651,6 @@ bindExecute(
   ) => fulfillAlipayCreditTopUp(input)
 );
 
-/**
- * pool.saveApi - 保存第三方 API 后端。
- *
- * 源：apps/web/src/features/image-backend-pool/service.ts。
- * WHY：server action 与 MCP 都通过同一 UOL 网关调用，避免参数映射等权限和校验
- * 逻辑在不同传输层漂移。
- */
-bindExecute(
-  "pool.saveApi",
-  async (
-    input: {
-      id?: string;
-      groupId?: string | null;
-      groupIds?: string[];
-      name: string;
-      baseUrl: string;
-      apiKey?: string;
-      model?: string;
-      supportedModelIds?: string[];
-      interfaceMode: "images" | "responses" | "mixed";
-      chatCompletionsUpstreamMode: "responses" | "chat_completions";
-      imagesUpstreamMode: "images" | "responses";
-      parameterMappings: RequestParameterMapping[];
-      useStream: boolean;
-      contentSafetyEnabled: boolean;
-      isEnabled: boolean;
-      alwaysActive: boolean;
-      failureCooldownEnabled: boolean;
-      priority: number;
-      concurrency: number;
-      adobeSourced: boolean;
-      status: string;
-    },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({
-    id: await upsertImageBackendApi({
-      ...input,
-      model: input.model || null,
-    }),
-  })
-);
-
-/**
- * pool.saveAdobe - 保存 Adobe 后端及开放模型白名单。
- *
- * 源：apps/web/src/features/image-backend-pool/service.ts。
- * WHY：后台表单与未来 MCP 调用必须共用同一个白名单校验与管理员权限入口，避免绕过
- * 调度器依赖的 enabledModels 配置。
- */
-bindExecute(
-  "pool.saveAdobe",
-  async (
-    input: {
-      id?: string;
-      groupId?: string | null;
-      groupIds?: string[];
-      name: string;
-      mode: "gateway" | "direct";
-      baseUrl: string;
-      apiKey?: string;
-      enabledModels?: z.infer<typeof adobeEnabledModelIdsSchema>;
-      defaultRatio: string;
-      defaultResolution: string;
-      gptImageQuality: "low" | "medium" | "high";
-      supportsVideo: boolean;
-      contentSafetyEnabled: boolean;
-      isEnabled: boolean;
-      alwaysActive: boolean;
-      failureCooldownEnabled: boolean;
-      priority: number;
-      concurrency: number;
-      status: string;
-    },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({
-    id: await upsertImageBackendAdobe(input),
-  })
-);
-
 /** pool.listParameterMappingTemplates - 读取可复用的参数映射模板。 */
 bindExecute(
   "pool.listParameterMappingTemplates",
@@ -774,51 +691,6 @@ bindExecute(
     return { success: true };
   }
 );
-
-/**
- * file.generatePpt / file.generatePsd - 可编辑文件(PPT/PSD)生成
- * 源: apps/web/src/features/image-generation/editable-file-operations.ts
- * clientRequestId 作计费幂等键(sourceRef=editable-file:{clientRequestId});PSD 强校验非空图。
- */
-function bindEditableFile(name: "file.generatePpt" | "file.generatePsd") {
-  const kind = name === "file.generatePsd" ? "psd" : "ppt";
-  bindExecute(
-    name,
-    async (
-      input: {
-        userId: string;
-        clientRequestId: string;
-        prompt: string;
-        base64Images?: string[];
-      },
-      _principal: Principal,
-      _ctx: OperationContext
-    ) => {
-      const creditOperation = createEditableFileCreditOperation(
-        kind,
-        input.clientRequestId,
-        new Date()
-      );
-      const result = await runEditableFileForUser({
-        userId: input.userId,
-        kind,
-        prompt: input.prompt,
-        base64Images: input.base64Images ?? [],
-        taskId: input.clientRequestId,
-        operation: creditOperation,
-      });
-      return {
-        taskId: input.clientRequestId,
-        conversationId: result.conversationId,
-        primaryUrl: result.primaryUrl,
-        zipUrl: result.zipUrl,
-        creditsUsed: result.creditsCharged,
-      };
-    }
-  );
-}
-bindEditableFile("file.generatePpt");
-bindEditableFile("file.generatePsd");
 
 // TODO: image.generateAction - 委托 image.generate
 // TODO: image.delete - deleteGenerationAction 逻辑
@@ -1056,9 +928,6 @@ bindExecute(
 
 // TODO: externalApi.handleImageGenerations - image-generations handler 逻辑
 // TODO: externalApi.handleImageEdits - image-edits handler 逻辑
-// TODO: externalApi.handleChatCompletions - chat-completions handler 逻辑
-// TODO: externalApi.handleResponses - responses handler 逻辑
-// TODO: externalApi.handleAgentImages - agent-images handler 逻辑
 
 // ---------------------------------------------------------------------------
 // support 域

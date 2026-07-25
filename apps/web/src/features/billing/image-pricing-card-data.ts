@@ -24,8 +24,6 @@ import type { ResolvedImageModerationCreditPricing } from "@/features/image-gene
 
 export type ImagePricingCardData = {
   billing: {
-    agentRoundCredits: number;
-    chatRoundCredits: number;
     groupName: string | null;
     moderationBlockingEnabled: boolean;
     monthlyCredits: number;
@@ -65,8 +63,6 @@ export async function loadImagePricingCardData(
 
   return {
     billing: {
-      agentRoundCredits: capabilities.billing.agentRoundCredits,
-      chatRoundCredits: capabilities.billing.chatRoundCredits,
       groupName: activeBackendGroup?.name ?? null,
       moderationBlockingEnabled:
         moderationSystemEnabled &&
