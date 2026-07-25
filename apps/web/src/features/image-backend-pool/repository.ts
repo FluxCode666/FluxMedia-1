@@ -1,0 +1,479 @@
+/**
+ * 统一媒体后端号池的 PostgreSQL 仓储。
+ *
+ * 职责：在单一事务中读取调度策略、清理过期租约、锁定并排序合格成员、创建租约，
+ * 并通过 owner token 的比较交换语义完成续租、接管和释放。
+ * 使用方：统一号池 scheduler；单元测试通过事务端口注入验证 SQL 与并发边界。
+ * 关键依赖：Drizzle 参数化 SQL、共享 scheduling-policy、Zod 数据库行校验。
+ */
+import {
+  type BackendSchedulingStrategy,
+  normalizeBackendSchedulingStrategy,
+  sortBackendSchedulingCandidates,
+} from "@repo/shared/image-backend/scheduling-policy";
+import { type SQL, sql } from "drizzle-orm";
+import { z } from "zod";
+
+import type { BackendAcquireCandidate } from "./scheduler";
+
+/** 调度策略在 system_setting 中的唯一键名。 */
+export const IMAGE_BACKEND_SCHEDULING_STRATEGY_SETTING_KEY =
+  "IMAGE_BACKEND_SCHEDULING_STRATEGY";
+
+/** 当前统一成员状态中不可再参与调度的终态。 */
+export const TERMINAL_BACKEND_MEMBER_STATUSES = ["error"] as const;
+
+const identifierSchema = z.string().trim().min(1).max(128);
+const ownerTokenSchema = z.string().trim().min(1).max(512);
+
+const strategyRowSchema = z.object({ value: z.unknown() });
+
+const lockedMemberRowSchema = z.object({
+  id: identifierSchema,
+  type: z.enum(["api", "adobe"]),
+  name: z.string().min(1).max(120),
+  supported_model_ids: z.array(z.string().trim().min(1)).min(1),
+  content_safety_enabled: z.boolean(),
+  is_enabled: z.boolean(),
+  priority: z.coerce.number().int().min(0),
+  concurrency: z.coerce.number().int().positive(),
+  lease_acquired_count: z.coerce.number().int().min(0),
+  status: z.string().min(1).max(80),
+  health_status: z.enum(["healthy", "degraded", "unhealthy"]),
+  last_acquired_at: z.coerce.date().nullable(),
+  last_used_at: z.coerce.date().nullable(),
+  cooldown_until: z.coerce.date().nullable(),
+});
+
+const activeLeaseCountRowSchema = z.object({
+  member_id: identifierSchema,
+  inflight_count: z.coerce.number().int().min(0),
+});
+
+const leaseRowSchema = z.object({
+  id: identifierSchema,
+  member_id: identifierSchema,
+  owner_token: ownerTokenSchema,
+  expires_at: z.coerce.date(),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
+});
+
+const mutationIdRowSchema = z.object({ id: identifierSchema });
+
+const acquireLeaseInputSchema = z
+  .object({
+    groupId: identifierSchema,
+    requestedModel: z.string().trim().min(1).max(240),
+    excludedMemberIds: z.array(identifierSchema).max(1_000).default([]),
+    requiresContentSafety: z.boolean().default(false),
+    leaseId: identifierSchema,
+    ownerToken: ownerTokenSchema,
+    now: z.date(),
+    expiresAt: z.date(),
+  })
+  .strict()
+  .refine((input) => input.expiresAt.getTime() > input.now.getTime(), {
+    message: "Lease expiration must be later than acquisition time",
+    path: ["expiresAt"],
+  });
+
+const renewLeaseInputSchema = z
+  .object({
+    leaseId: identifierSchema,
+    ownerToken: ownerTokenSchema,
+    now: z.date(),
+    expiresAt: z.date(),
+  })
+  .strict()
+  .refine((input) => input.expiresAt.getTime() > input.now.getTime(), {
+    message: "Lease expiration must be later than renewal time",
+    path: ["expiresAt"],
+  });
+
+const takeoverLeaseInputSchema = z
+  .object({
+    leaseId: identifierSchema,
+    currentOwnerToken: ownerTokenSchema,
+    nextOwnerToken: ownerTokenSchema,
+    now: z.date(),
+    expiresAt: z.date(),
+  })
+  .strict()
+  .refine((input) => input.currentOwnerToken !== input.nextOwnerToken, {
+    message: "Lease takeover requires a different owner token",
+    path: ["nextOwnerToken"],
+  })
+  .refine((input) => input.expiresAt.getTime() > input.now.getTime(), {
+    message: "Lease expiration must be later than takeover time",
+    path: ["expiresAt"],
+  });
+
+const releaseLeaseInputSchema = z
+  .object({
+    leaseId: identifierSchema,
+    ownerToken: ownerTokenSchema,
+  })
+  .strict();
+
+/** 统一成员在获租事务中的完整候选快照。 */
+export interface LockedBackendMemberCandidate extends BackendAcquireCandidate {
+  type: "api" | "adobe";
+  name: string;
+  status: string;
+  healthStatus: "healthy" | "degraded" | "unhealthy";
+}
+
+/** 数据库中的统一成员租约。 */
+export interface BackendMemberLease {
+  id: string;
+  memberId: string;
+  ownerToken: string;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** 一次原子获租返回的策略、成员和租约快照。 */
+export interface AcquiredBackendMemberLease {
+  strategy: BackendSchedulingStrategy;
+  member: LockedBackendMemberCandidate;
+  lease: BackendMemberLease;
+  eligibleCandidateCount: number;
+}
+
+/** 原子获租输入；ID、owner token 与时钟由 scheduler 显式提供，便于跨 worker 交接。 */
+export type AcquireBackendMemberLeaseInput = z.input<
+  typeof acquireLeaseInputSchema
+>;
+
+/** 同一 owner 对仍有效租约续期的输入。 */
+export type RenewBackendMemberLeaseInput = z.input<
+  typeof renewLeaseInputSchema
+>;
+
+/** 通过 owner token 比较交换把仍有效租约交给新 worker。 */
+export type TakeoverBackendMemberLeaseInput = z.input<
+  typeof takeoverLeaseInputSchema
+>;
+
+/** 仅允许当前 owner 删除租约的输入。 */
+export type ReleaseBackendMemberLeaseInput = z.input<
+  typeof releaseLeaseInputSchema
+>;
+
+/** scheduler 使用的统一号池仓储端口。 */
+export interface BackendPoolRepository {
+  acquireLease(
+    input: AcquireBackendMemberLeaseInput
+  ): Promise<AcquiredBackendMemberLease | null>;
+  renewLease(
+    input: RenewBackendMemberLeaseInput
+  ): Promise<BackendMemberLease | null>;
+  takeoverLease(
+    input: TakeoverBackendMemberLeaseInput
+  ): Promise<BackendMemberLease | null>;
+  releaseLease(input: ReleaseBackendMemberLeaseInput): Promise<boolean>;
+}
+
+/** 仅暴露参数化 SQL 执行能力的事务端口。 */
+export interface BackendPoolTransaction {
+  execute(query: SQL): Promise<unknown>;
+}
+
+/** 标准 PostgreSQL 与 Neon 都能适配的最小事务入口。 */
+export interface BackendPoolDatabase {
+  transaction<T>(
+    work: (transaction: BackendPoolTransaction) => Promise<T>
+  ): Promise<T>;
+}
+
+/**
+ * 从 node-postgres 与 Neon 的不同 execute 返回形态中提取行数组。
+ *
+ * @param result Drizzle execute 的不可信返回值。
+ * @returns 待 Zod 校验的数据库行数组。
+ */
+function extractRows(result: unknown): unknown[] {
+  if (Array.isArray(result)) return result;
+  if (result && typeof result === "object" && "rows" in result) {
+    const rows = (result as { rows: unknown }).rows;
+    return Array.isArray(rows) ? rows : [];
+  }
+  return [];
+}
+
+/** 将数据库租约行映射为仓储端口类型。 */
+function parseLeaseRow(value: unknown): BackendMemberLease {
+  const row = leaseRowSchema.parse(value);
+  return {
+    id: row.id,
+    memberId: row.member_id,
+    ownerToken: row.owner_token,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** 校验 RETURNING 确实命中一行，防止事务内静默丢失成员。 */
+function assertMutationReturnedId(result: unknown, resource: string): void {
+  const rows = z.array(mutationIdRowSchema).parse(extractRows(result));
+  if (rows.length > 0) return;
+  throw new Error(`${resource} disappeared during the locked transaction`);
+}
+
+/** 构造排除成员的参数化谓词；空集合直接返回 true。 */
+function buildExcludedMemberPredicate(
+  excludedMemberIds: readonly string[]
+): SQL {
+  if (excludedMemberIds.length === 0) return sql`true`;
+  const parameters = excludedMemberIds.map((id) => sql`${id}`);
+  return sql`m.id not in (${sql.join(parameters, sql`, `)})`;
+}
+
+/**
+ * 创建统一号池 PostgreSQL 仓储。
+ *
+ * @param database 支持事务的 PostgreSQL/Neon 端口。
+ * @returns 不带任何进程内降级路径的仓储实现。
+ */
+export function createPostgresBackendPoolRepository(
+  database: BackendPoolDatabase
+): BackendPoolRepository {
+  return {
+    async acquireLease(rawInput) {
+      const input = acquireLeaseInputSchema.parse(rawInput);
+      return database.transaction(async (transaction) => {
+        const strategyRows = z.array(strategyRowSchema).parse(
+          extractRows(
+            await transaction.execute(sql`
+                select value
+                from system_setting
+                where key = ${IMAGE_BACKEND_SCHEDULING_STRATEGY_SETTING_KEY}
+                limit 1
+              `)
+          )
+        );
+        const strategy = normalizeBackendSchedulingStrategy(
+          strategyRows[0]?.value
+        );
+
+        // WHY：先清理过期行，随后所有容量聚合只读取当前事务时间点的有效租约。
+        await transaction.execute(sql`
+          delete from image_backend_member_lease
+          where expires_at <= ${input.now}
+        `);
+
+        // WHY：稳定 ID 顺序加锁让并发事务以相同次序等待，避免不同策略排序制造死锁。
+        const lockedRows = z.array(lockedMemberRowSchema).parse(
+          extractRows(
+            await transaction.execute(sql`
+                select
+                  m.id,
+                  m.type,
+                  m.name,
+                  m.supported_model_ids,
+                  m.content_safety_enabled,
+                  m.is_enabled,
+                  m.priority,
+                  m.concurrency,
+                  m.lease_acquired_count,
+                  m.status,
+                  m.health_status,
+                  m.last_acquired_at,
+                  m.last_used_at,
+                  m.cooldown_until
+                from image_backend_member as m
+                inner join image_backend_member_group as membership
+                  on membership.member_id = m.id
+                where membership.group_id = ${input.groupId}
+                  and m.is_enabled = true
+                  and (m.cooldown_until is null or m.cooldown_until <= ${input.now})
+                  and m.status not in (${sql.join(
+                    TERMINAL_BACKEND_MEMBER_STATUSES.map(
+                      (status) => sql`${status}`
+                    ),
+                    sql`, `
+                  )})
+                  and exists (
+                    select 1
+                    from json_array_elements_text(m.supported_model_ids)
+                      as supported_model(model_id)
+                    where lower(trim(supported_model.model_id)) =
+                      lower(${input.requestedModel})
+                  )
+                  and (
+                    ${input.requiresContentSafety} = false
+                    or m.content_safety_enabled = true
+                  )
+                  and ${buildExcludedMemberPredicate(input.excludedMemberIds)}
+                order by m.id asc
+                for update of m
+              `)
+          )
+        );
+
+        if (lockedRows.length === 0) return null;
+
+        const memberIds = lockedRows.map((row) => row.id);
+        const activeLeaseRows = z.array(activeLeaseCountRowSchema).parse(
+          extractRows(
+            await transaction.execute(sql`
+                select
+                  member_id,
+                  count(*)::integer as inflight_count
+                from image_backend_member_lease
+                where expires_at > ${input.now}
+                  and member_id in (${sql.join(
+                    memberIds.map((memberId) => sql`${memberId}`),
+                    sql`, `
+                  )})
+                group by member_id
+              `)
+          )
+        );
+        const inflightByMemberId = new Map(
+          activeLeaseRows.map((row) => [row.member_id, row.inflight_count])
+        );
+
+        const candidates: LockedBackendMemberCandidate[] = lockedRows
+          .map((row) => ({
+            id: row.id,
+            type: row.type,
+            name: row.name,
+            groupIds: [input.groupId],
+            supportedModelIds: row.supported_model_ids,
+            contentSafetyEnabled: row.content_safety_enabled,
+            isEnabled: row.is_enabled,
+            cooldownUntil: row.cooldown_until,
+            hasTerminalError: row.status === "error",
+            priority: row.priority,
+            concurrency: row.concurrency,
+            leaseAcquiredCount: row.lease_acquired_count,
+            status: row.status,
+            healthStatus: row.health_status,
+            isHealthy:
+              row.status === "active" && row.health_status === "healthy",
+            inflightCount: inflightByMemberId.get(row.id) ?? 0,
+            lastAcquiredAt: row.last_acquired_at,
+            lastUsedAt: row.last_used_at,
+          }))
+          .filter(
+            (candidate) => candidate.inflightCount < candidate.concurrency
+          );
+        const selected = sortBackendSchedulingCandidates(
+          candidates,
+          strategy
+        )[0];
+        if (!selected) return null;
+
+        const leaseResult = await transaction.execute(sql`
+          insert into image_backend_member_lease (
+            id,
+            member_id,
+            owner_token,
+            expires_at,
+            created_at,
+            updated_at
+          ) values (
+            ${input.leaseId},
+            ${selected.id},
+            ${input.ownerToken},
+            ${input.expiresAt},
+            ${input.now},
+            ${input.now}
+          )
+          returning id, member_id, owner_token, expires_at, created_at, updated_at
+        `);
+        const leaseRawRow = extractRows(leaseResult)[0];
+        if (!leaseRawRow) {
+          throw new Error("backend member lease was not created");
+        }
+        const lease = parseLeaseRow(leaseRawRow);
+
+        const memberUpdateResult = await transaction.execute(sql`
+          update image_backend_member
+          set lease_acquired_count = lease_acquired_count + 1,
+              last_acquired_at = ${input.now},
+              updated_at = ${input.now}
+          where id = ${selected.id}
+          returning id
+        `);
+        assertMutationReturnedId(memberUpdateResult, "backend member");
+
+        return {
+          strategy,
+          member: {
+            ...selected,
+            inflightCount: selected.inflightCount + 1,
+            leaseAcquiredCount: selected.leaseAcquiredCount + 1,
+            lastAcquiredAt: input.now,
+          },
+          lease,
+          eligibleCandidateCount: candidates.length,
+        };
+      });
+    },
+
+    async renewLease(rawInput) {
+      const input = renewLeaseInputSchema.parse(rawInput);
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute(sql`
+          update image_backend_member_lease
+          set expires_at = ${input.expiresAt},
+              updated_at = ${input.now}
+          where id = ${input.leaseId}
+            and owner_token = ${input.ownerToken}
+            and expires_at > ${input.now}
+          returning id, member_id, owner_token, expires_at, created_at, updated_at
+        `);
+        const row = extractRows(result)[0];
+        return row ? parseLeaseRow(row) : null;
+      });
+    },
+
+    async takeoverLease(rawInput) {
+      const input = takeoverLeaseInputSchema.parse(rawInput);
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute(sql`
+          update image_backend_member_lease
+          set owner_token = ${input.nextOwnerToken},
+              expires_at = ${input.expiresAt},
+              updated_at = ${input.now}
+          where id = ${input.leaseId}
+            and owner_token = ${input.currentOwnerToken}
+            and expires_at > ${input.now}
+          returning id, member_id, owner_token, expires_at, created_at, updated_at
+        `);
+        const row = extractRows(result)[0];
+        return row ? parseLeaseRow(row) : null;
+      });
+    },
+
+    async releaseLease(rawInput) {
+      const input = releaseLeaseInputSchema.parse(rawInput);
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute(sql`
+          delete from image_backend_member_lease
+          where id = ${input.leaseId}
+            and owner_token = ${input.ownerToken}
+          returning id
+        `);
+        const rows = z.array(mutationIdRowSchema).parse(extractRows(result));
+        return rows.length > 0;
+      });
+    },
+  };
+}
+
+/** 默认生产仓储；数据库不可用或事务失败时错误直接上抛。 */
+export const defaultBackendPoolRepository: BackendPoolRepository =
+  createPostgresBackendPoolRepository({
+    async transaction(work) {
+      const { db } = await import("@repo/database");
+      return db.transaction(async (transaction) =>
+        work({ execute: (query) => transaction.execute(query) })
+      );
+    },
+  });
