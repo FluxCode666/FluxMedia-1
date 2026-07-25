@@ -23,6 +23,7 @@ import {
 import {
   AdobeAcceptedVideoError,
   AdobeFireflyClient,
+  AdobeVideoSubmissionUncertainError,
   AuthError,
   decodeJwtExp,
   decodeJwtPayload,
@@ -368,7 +369,7 @@ async function runWithAdobeTokenRotation<T>(
   memberId: string,
   transport: FireflyTransport,
   signal: AbortSignal | undefined,
-  run: (token: string) => Promise<T>
+  run: (token: string, tokenId: string) => Promise<T>
 ): Promise<
   | { ok: true; value: T }
   | {
@@ -377,6 +378,7 @@ async function runWithAdobeTokenRotation<T>(
       switchable: boolean;
       upstreamAccepted: boolean;
       terminal: boolean;
+      submissionUncertain: boolean;
     }
 > {
   const triedTokenIds = new Set<string>();
@@ -393,7 +395,10 @@ async function runWithAdobeTokenRotation<T>(
     triedTokenIds.add(acquired.id);
     if (acquired.accountId) triedAccountIds.add(acquired.accountId);
     try {
-      return { ok: true, value: await run(acquired.value) };
+      return {
+        ok: true,
+        value: await run(acquired.value, acquired.id),
+      };
     } catch (error) {
       // 配额耗尽/鉴权失效是持久态，落库标记便于后续请求跳过；429 等临时态不改 token 状态，
       // 仅本次排除（lastUsedAt 已更新，下次自然排到队尾）。
@@ -415,12 +420,15 @@ async function runWithAdobeTokenRotation<T>(
       }
       logError(error, { source: "adobe-direct-rotate", memberId, attempt });
       const upstreamAccepted = error instanceof AdobeAcceptedVideoError;
+      const submissionUncertain =
+        error instanceof AdobeVideoSubmissionUncertainError;
       return {
         ok: false,
         error: lastError,
         switchable: false,
         upstreamAccepted,
-        terminal: !upstreamAccepted,
+        terminal: !upstreamAccepted && !submissionUncertain,
+        submissionUncertain,
       };
     }
   }
@@ -430,6 +438,7 @@ async function runWithAdobeTokenRotation<T>(
     switchable: !signal?.aborted,
     upstreamAccepted: false,
     terminal: Boolean(signal?.aborted),
+    submissionUncertain: false,
   };
 }
 
@@ -567,7 +576,226 @@ export type AdobeVideoResult =
       switchable: boolean;
       upstreamAccepted: boolean;
       terminal: boolean;
+      submissionUncertain?: boolean;
     };
+
+/** Adobe 视频提交成功后供持久状态机保存的固定上游身份。 */
+export type AdobeVideoSubmission = {
+  memberId: string;
+  tokenId: string;
+  pollUrl: string;
+  upstreamJobId: string | null;
+  raw: Record<string, unknown>;
+};
+
+/** Adobe 视频单次轮询结果，不在适配器内等待或重投。 */
+export type AdobeVideoPollResult =
+  | { status: "pending"; raw: Record<string, unknown> }
+  | {
+      status: "completed";
+      videoUrl: string;
+      raw: Record<string, unknown>;
+    };
+
+/** 适配器失败结果，供状态机区分切换、人工核对与固定任务恢复。 */
+export type AdobeVideoStageError = {
+  error: string;
+  switchable: boolean;
+  upstreamAccepted: boolean;
+  terminal: boolean;
+  submissionUncertain: boolean;
+};
+
+/**
+ * 校验 direct 视频模型并构造分阶段客户端。
+ *
+ * @param config 已获租 Adobe direct 成员配置。
+ * @param model 公开 Firefly 视频模型 ID。
+ * @returns 固定成员、模型配置与客户端；失败时返回可安全展示的错误。
+ */
+async function createAdobeVideoStageClient(
+  config: ApiConfig,
+  model: string
+): Promise<
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      memberId: string;
+      conf: NonNullable<ReturnType<typeof resolveFireflyVideoModel>>;
+      size: { width: number; height: number };
+      apiTransport: FireflyTransport;
+      client: AdobeFireflyClient;
+    }
+> {
+  const memberId = config.backend?.id;
+  if (!memberId) return { ok: false, error: "Adobe 直连成员缺少 id" };
+  if (
+    !canAdobeBackendServeModel({
+      enabledModels: config.backend?.adobeEnabledModels,
+      supportsVideo: config.backend?.adobeSupportsVideo ?? false,
+      requestedModel: model,
+    })
+  ) {
+    return { ok: false, error: "此 Adobe 后端未开放所请求的模型" };
+  }
+  const conf = resolveFireflyVideoModel(model);
+  if (!conf) {
+    return {
+      ok: false,
+      error: `Adobe 直连不支持的视频模型: ${model}`,
+    };
+  }
+  const size = fireflyVideoSize(conf.outputResolution, conf.aspectRatio);
+  if (!size) {
+    return {
+      ok: false,
+      error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
+    };
+  }
+  const transports = await buildAdobeTransports(`adobe-member-${memberId}`);
+  return {
+    ok: true,
+    memberId,
+    conf,
+    size,
+    apiTransport: transports.apiTransport,
+    client: new AdobeFireflyClient({
+      transport: transports.apiTransport,
+      downloadTransport: transports.downloadTransport,
+    }),
+  };
+}
+
+/**
+ * 提交一次 Adobe 视频任务并返回持久恢复身份。
+ *
+ * 只有明确未接受的账号级错误会在当前成员内换 token；提交响应不确定时立即停止，
+ * 防止向同一成员或其他成员重投并重复消耗上游额度。
+ */
+export async function submitAdobeDirectVideoRequest(
+  config: ApiConfig,
+  params: {
+    prompt: string;
+    model: string;
+    inputImages?: Array<{ data: Buffer; type?: string | null }>;
+    negativePrompt?: string | null;
+    signal?: AbortSignal;
+  }
+): Promise<AdobeVideoSubmission | AdobeVideoStageError> {
+  const prepared = await createAdobeVideoStageClient(config, params.model);
+  if (!prepared.ok) {
+    return {
+      error: prepared.error,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+      submissionUncertain: false,
+    };
+  }
+
+  const result = await runWithAdobeTokenRotation(
+    prepared.memberId,
+    prepared.apiTransport,
+    params.signal,
+    async (token, tokenId) => {
+      let sourceImageIds: string[] | undefined;
+      if (params.inputImages && params.inputImages.length > 0) {
+        sourceImageIds = [];
+        for (const image of params.inputImages) {
+          sourceImageIds.push(
+            await prepared.client.uploadImage(
+              token,
+              image.data,
+              image.type || "image/png",
+              params.signal
+            )
+          );
+        }
+      }
+      const submitted = await prepared.client.submitVideo({
+        token,
+        prompt: params.prompt,
+        upstreamModel: prepared.conf.upstreamModel,
+        upstreamModelId: prepared.conf.upstreamModelId,
+        upstreamModelVersion: prepared.conf.upstreamModelVersion,
+        engine: prepared.conf.engine,
+        duration: prepared.conf.duration,
+        size: prepared.size,
+        generateAudio: prepared.conf.generateAudio,
+        ...(prepared.conf.referenceMode
+          ? { referenceMode: prepared.conf.referenceMode }
+          : {}),
+        ...(params.negativePrompt != null
+          ? { negativePrompt: params.negativePrompt }
+          : {}),
+        ...(sourceImageIds ? { sourceImageIds } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
+      });
+      return {
+        memberId: prepared.memberId,
+        tokenId,
+        ...submitted,
+      };
+    }
+  );
+  return result.ok ? result.value : result;
+}
+
+/**
+ * 使用持久化的原成员和原 token 轮询一次已接受任务。
+ *
+ * token 不存在或不属于该成员时 fail closed；绝不选择替代 token。
+ */
+export async function pollAdobeDirectVideoRequest(input: {
+  memberId: string;
+  tokenId: string;
+  pollUrl: string;
+  signal?: AbortSignal;
+}): Promise<AdobeVideoPollResult> {
+  const [token] = await db
+    .select({ value: adobeToken.value, memberId: adobeToken.memberId })
+    .from(adobeToken)
+    .where(
+      and(
+        eq(adobeToken.id, input.tokenId),
+        eq(adobeToken.memberId, input.memberId)
+      )
+    )
+    .limit(1);
+  if (!token || token.memberId !== input.memberId) {
+    throw new AdobeAcceptedVideoError("Adobe 视频恢复 token 与原成员不匹配", {
+      errorType: "status",
+    });
+  }
+  const { apiTransport, downloadTransport } = await buildAdobeTransports(
+    `adobe-member-${input.memberId}`
+  );
+  const client = new AdobeFireflyClient({
+    transport: apiTransport,
+    downloadTransport,
+  });
+  return client.pollVideo({
+    token: token.value,
+    pollUrl: input.pollUrl,
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+}
+
+/** 下载已完成视频；存储键和最终落库由状态机负责。 */
+export async function downloadAdobeDirectVideoRequest(input: {
+  memberId: string;
+  videoUrl: string;
+  signal?: AbortSignal;
+}): Promise<Buffer> {
+  const { apiTransport, downloadTransport } = await buildAdobeTransports(
+    `adobe-member-${input.memberId}`
+  );
+  const client = new AdobeFireflyClient({
+    transport: apiTransport,
+    downloadTransport,
+  });
+  return client.downloadVideo(input.videoUrl, input.signal);
+}
 
 /**
  * mode=direct 的 adobe 视频派发：解析视频模型 → 选 token → 图生视频先上传输入图 →

@@ -17,6 +17,8 @@ export {
   type GenerateImageOutput,
   type GenerateVideoInput,
   type GenerateVideoOutput,
+  type PollVideoOutput,
+  type SubmitVideoOutput,
 } from "./client";
 export * from "./errors";
 export * from "./payloads";
