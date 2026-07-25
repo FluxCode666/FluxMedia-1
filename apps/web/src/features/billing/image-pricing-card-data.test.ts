@@ -80,7 +80,7 @@ vi.mock("@repo/shared/subscription/services/user-plan", () => ({
   getUserPlan: mocks.getUserPlan,
 }));
 
-vi.mock("@/features/image-backend-pool/service", () => ({
+vi.mock("@/features/image-backend-pool/catalog-service", () => ({
   getEffectiveDefaultImageBackendGroup:
     mocks.getEffectiveDefaultImageBackendGroup,
 }));

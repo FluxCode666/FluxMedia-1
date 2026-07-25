@@ -23,12 +23,7 @@
 import { isPostgresTimeoutError } from "@repo/database/pool";
 import { nanoid } from "nanoid";
 import { isSubscriptionPlan } from "../config/subscription-plan";
-import {
-  canUsePlanCapability,
-  PLAN_CAPABILITY_KEYS,
-  type PlanCapabilityKey,
-} from "../subscription/services/plan-capabilities";
-import { getUserPlanType } from "../subscription/services/user-plan";
+import type { PlanCapabilityKey } from "../subscription/services/plan-capabilities";
 import { assertAccess } from "./access";
 import { OperationError } from "./errors";
 import type { Principal } from "./principal";
@@ -43,9 +38,12 @@ export interface InvokeOptions {
   callbacks?: Record<string, unknown>;
 }
 
-/** 判断 operation 声明是否引用现行套餐能力键。 */
-function isPlanCapabilityKey(value: string): value is PlanCapabilityKey {
-  return (PLAN_CAPABILITY_KEYS as readonly string[]).includes(value);
+/** 判断 operation 声明是否引用运行时加载的现行套餐能力键。 */
+function isPlanCapabilityKey(
+  value: string,
+  capabilityKeys: readonly string[]
+): value is PlanCapabilityKey {
+  return capabilityKeys.includes(value);
 }
 
 /**
@@ -74,9 +72,16 @@ async function assertCapabilities(
     ),
   ];
   if (capabilities.length === 0) return;
+  // WHY：无能力声明的 operation 必须保持 DB-free；只有实际执行能力门禁时才加载
+  // 运行时设置和用户套餐服务，避免纯契约测试在模块初始化阶段要求数据库。
+  const { canUsePlanCapability, PLAN_CAPABILITY_KEYS } = await import(
+    "../subscription/services/plan-capabilities"
+  );
   const plan =
     principal.type === "user"
-      ? await getUserPlanType(principal.userId)
+      ? await import("../subscription/services/user-plan").then(
+          ({ getUserPlanType }) => getUserPlanType(principal.userId)
+        )
       : principal.type === "apiKey" && isSubscriptionPlan(principal.plan)
         ? principal.plan
         : null;
@@ -84,7 +89,7 @@ async function assertCapabilities(
   for (const capability of capabilities) {
     if (
       plan &&
-      isPlanCapabilityKey(capability) &&
+      isPlanCapabilityKey(capability, PLAN_CAPABILITY_KEYS) &&
       (await canUsePlanCapability(plan, capability))
     ) {
       continue;

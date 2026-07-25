@@ -218,17 +218,24 @@ describe("MCP tool factories", () => {
     bindExecute("image.generate", async () => ({ ok: true }));
 
     const [tool] = buildUserMcpTools(apiKeyPrincipal);
-    const properties = tool?.inputSchema.properties as
-      | Record<string, unknown>
+    const variants = tool?.inputSchema.anyOf as
+      | Array<Record<string, unknown>>
       | undefined;
 
-    expect(properties).toBeDefined();
-    expect(Object.hasOwn(properties ?? {}, "userId")).toBe(false);
-    expect(Object.hasOwn(properties ?? {}, "relayOnly")).toBe(false);
-    expect(Object.hasOwn(properties ?? {}, "relay_only")).toBe(false);
-    expect(Object.hasOwn(properties ?? {}, "moderationBlockRiskLevel")).toBe(
-      false
-    );
+    expect(variants).toHaveLength(3);
+    for (const variant of variants ?? []) {
+      const properties = variant.properties as
+        | Record<string, unknown>
+        | undefined;
+      expect(properties).toBeDefined();
+      expect(Object.hasOwn(properties ?? {}, "operation")).toBe(true);
+      expect(Object.hasOwn(properties ?? {}, "userId")).toBe(false);
+      expect(Object.hasOwn(properties ?? {}, "relayOnly")).toBe(false);
+      expect(Object.hasOwn(properties ?? {}, "relay_only")).toBe(false);
+      expect(Object.hasOwn(properties ?? {}, "moderationBlockRiskLevel")).toBe(
+        false
+      );
+    }
   });
 
   it.each([
