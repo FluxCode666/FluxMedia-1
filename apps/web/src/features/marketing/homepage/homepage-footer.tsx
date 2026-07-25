@@ -37,7 +37,7 @@ export function HomepageFooter({
   ctaHref,
   copy,
 }: {
-  ctaHref: "/dashboard/create" | "/sign-up";
+  ctaHref: "/dashboard/generate" | "/sign-up";
   copy: HomepageFooterCopy;
 }) {
   return (

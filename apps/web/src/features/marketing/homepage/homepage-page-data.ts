@@ -55,7 +55,7 @@ export type HomepageReliabilityState = {
 export type HomepagePageData = {
   catalog: HomepageModelCatalogState;
   reliability: HomepageReliabilityState;
-  ctaHref: "/dashboard/create" | "/sign-up";
+  ctaHref: "/dashboard/generate" | "/sign-up";
   canToggleSlaStatus: boolean;
 };
 
@@ -352,7 +352,7 @@ export async function loadHomepagePageData(
   if (sessionResult.status === "fulfilled") {
     const userId = parseSessionUserId(sessionResult.value);
     if (userId) {
-      ctaHref = "/dashboard/create";
+      ctaHref = "/dashboard/generate";
       try {
         const role = await loaders.loadRole(userId);
         if (typeof role === "string") {

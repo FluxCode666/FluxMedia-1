@@ -261,7 +261,7 @@ describe("loadHomepagePageData", () => {
 
     const result = await resultPromise;
     expect(loadRole).toHaveBeenCalledWith("user-1");
-    expect(result.ctaHref).toBe("/dashboard/create");
+    expect(result.ctaHref).toBe("/dashboard/generate");
     expect(result.canToggleSlaStatus).toBe(true);
   });
 
@@ -350,7 +350,7 @@ describe("loadHomepagePageData", () => {
       session: { user: { id: "admin-1" } },
       roleResult: "admin",
       roleFailure: false,
-      href: "/dashboard/create",
+      href: "/dashboard/generate",
       canToggle: true,
     },
     {
@@ -358,7 +358,7 @@ describe("loadHomepagePageData", () => {
       session: { user: { id: "user-1" } },
       roleResult: "user",
       roleFailure: true,
-      href: "/dashboard/create",
+      href: "/dashboard/generate",
       canToggle: false,
     },
     {
@@ -486,7 +486,7 @@ function createRenderablePageData(
       visibility: "enabled",
       stats: { status: "ready", data: READY_SLA_STATS },
     },
-    ctaHref: "/dashboard/create",
+    ctaHref: "/dashboard/generate",
     canToggleSlaStatus: false,
     ...overrides,
   };
@@ -528,7 +528,8 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).toContain("96.00%");
     expect(html).toContain("为什么有时看不到可靠性百分比？");
     expect(html).toContain("首页只展示统计服务可验证的结果");
-    expect(html.match(/href="\/dashboard\/create"/g)?.length).toBe(2);
+    expect(html.match(/href="\/dashboard\/generate"/g)?.length).toBe(2);
+    expect(html).not.toContain("浏览作品");
     expect(html).toContain("<footer");
     expect(html).toContain("© 2026 FluxMedia. 保留所有权利。");
     expect(html).not.toMatch(/Pricing|订阅|额外积分包|twitter|github|discord/i);
