@@ -14,6 +14,7 @@ const runtime = vi.hoisted(() => ({
 }));
 
 const database = vi.hoisted(() => {
+  let transactionActive = false;
   const selectBuilder = {
     from: vi.fn(),
     where: vi.fn(),
@@ -34,9 +35,17 @@ const database = vi.hoisted(() => {
     insert: vi.fn(() => insertBuilder),
   };
   return {
+    insert: vi.fn(() => insertBuilder),
+    isTransactionActive: () => transactionActive,
     transaction: vi.fn(
-      async (callback: (transaction: typeof tx) => Promise<unknown>) =>
-        callback(tx)
+      async (callback: (transaction: typeof tx) => Promise<unknown>) => {
+        transactionActive = true;
+        try {
+          return await callback(tx);
+        } finally {
+          transactionActive = false;
+        }
+      }
     ),
   };
 });
@@ -152,5 +161,18 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(55_000);
 
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(2);
+  });
+
+  it("在 advisory lock 事务提交后才执行视频恢复 I/O", async () => {
+    runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", true);
+    runtime.videoRecovery.mockImplementationOnce(async () => {
+      expect(database.isTransactionActive()).toBe(false);
+    });
+    const current = await importFreshScheduler();
+    await current.startInternalJobScheduler();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(runtime.videoRecovery).toHaveBeenCalledTimes(1);
   });
 });

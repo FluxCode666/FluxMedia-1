@@ -162,7 +162,48 @@ function readLastStartedAt(value: unknown) {
 }
 
 /**
- * 在事务级 advisory lock 下执行任务并记录状态。
+ * 写入任务持久状态；实际 job I/O 已在锁事务外执行。
+ *
+ * @param job 任务定义。
+ * @param status 终态及开始、结束时间。
+ * @returns 状态写入完成后的 Promise。
+ */
+async function writeJobState(
+  job: InternalJob,
+  status: {
+    value: "success" | "error";
+    startedAt: Date;
+    finishedAt: Date;
+    error?: string;
+  }
+): Promise<void> {
+  const stateValue = {
+    job: job.name,
+    status: status.value,
+    lastStartedAt: status.startedAt.toISOString(),
+    lastFinishedAt: status.finishedAt.toISOString(),
+    ...(status.error ? { error: status.error } : {}),
+  };
+  await db
+    .insert(systemSetting)
+    .values({
+      key: getJobStateKey(job),
+      value: stateValue,
+      isSecret: false,
+      updatedAt: status.finishedAt,
+    })
+    .onConflictDoUpdate({
+      target: systemSetting.key,
+      set: {
+        value: stateValue,
+        isSecret: false,
+        updatedAt: status.finishedAt,
+      },
+    });
+}
+
+/**
+ * 在短事务中抢占执行频率，提交后再执行可能包含外部 I/O 的任务。
  *
  * @param job - 任务定义
  * @param intervalMs - 当前动态间隔，用于跨实例频率校验
@@ -175,7 +216,7 @@ async function withJobLock<T>(
   intervalMs: number,
   run: () => Promise<T>
 ) {
-  return await db.transaction(async (tx) => {
+  const claim = await db.transaction(async (tx) => {
     const lockResult = await tx.execute(
       sql`select pg_try_advisory_xact_lock(${LOCK_NAMESPACE}, ${job.lockKey}) as locked`
     );
@@ -226,75 +267,27 @@ async function withJobLock<T>(
           updatedAt: now,
         },
       });
-
-    try {
-      const result = await run();
-      const finishedAt = new Date();
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: stateKey,
-          value: {
-            job: job.name,
-            status: "success",
-            lastStartedAt: now.toISOString(),
-            lastFinishedAt: finishedAt.toISOString(),
-          },
-          isSecret: false,
-          updatedAt: finishedAt,
-        })
-        .onConflictDoUpdate({
-          target: systemSetting.key,
-          set: {
-            value: {
-              job: job.name,
-              status: "success",
-              lastStartedAt: now.toISOString(),
-              lastFinishedAt: finishedAt.toISOString(),
-            },
-            isSecret: false,
-            updatedAt: finishedAt,
-          },
-        });
-
-      return {
-        locked: true as const,
-        skipped: false as const,
-        result,
-      };
-    } catch (error) {
-      const finishedAt = new Date();
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: stateKey,
-          value: {
-            job: job.name,
-            status: "error",
-            lastStartedAt: now.toISOString(),
-            lastFinishedAt: finishedAt.toISOString(),
-            error: error instanceof Error ? error.message : "Unknown error",
-          },
-          isSecret: false,
-          updatedAt: finishedAt,
-        })
-        .onConflictDoUpdate({
-          target: systemSetting.key,
-          set: {
-            value: {
-              job: job.name,
-              status: "error",
-              lastStartedAt: now.toISOString(),
-              lastFinishedAt: finishedAt.toISOString(),
-              error: error instanceof Error ? error.message : "Unknown error",
-            },
-            isSecret: false,
-            updatedAt: finishedAt,
-          },
-        });
-      throw error;
-    }
+    return { locked: true as const, skipped: false as const, startedAt: now };
   });
+  if (!claim.locked || claim.skipped) return claim;
+
+  try {
+    const result = await run();
+    await writeJobState(job, {
+      value: "success",
+      startedAt: claim.startedAt,
+      finishedAt: new Date(),
+    });
+    return { locked: true as const, skipped: false as const, result };
+  } catch (error) {
+    await writeJobState(job, {
+      value: "error",
+      startedAt: claim.startedAt,
+      finishedAt: new Date(),
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    throw error;
+  }
 }
 
 /**
