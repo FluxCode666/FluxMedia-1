@@ -74,6 +74,21 @@ export class AdobeAcceptedVideoError extends AdobeRequestError {
   }
 }
 
+/**
+ * Adobe 视频提交可能已被接受，但调用方没有取得可恢复任务标识。
+ *
+ * 这类错误不得换 token 或成员重投；后台只能保留诊断状态，等待人工或供应商侧核对。
+ */
+export class AdobeVideoSubmissionUncertainError extends AdobeRequestError {
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; errorType?: string }
+  ) {
+    super(message, opts);
+    this.name = "AdobeVideoSubmissionUncertainError";
+  }
+}
+
 export function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 451 || status >= 500;
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AdobeFireflyClient, extractResultLink } from "./client";
 import {
   AdobeAcceptedVideoError,
+  AdobeVideoSubmissionUncertainError,
   AuthError,
   QuotaExhaustedError,
 } from "./errors";
@@ -210,11 +211,16 @@ describe("AdobeFireflyClient.generateVideo", () => {
         return jsonResponse(
           200,
           {},
-          { "x-override-status-link": "https://poll/video-1" }
+          {
+            "x-override-status-link":
+              "https://firefly-3p.ff.adobe.io/v2/status/video-1",
+          }
         );
       }
       if (index === 1) {
-        expect(req.url).toBe("https://poll/video-1");
+        expect(req.url).toBe(
+          "https://firefly-3p.ff.adobe.io/v2/status/video-1"
+        );
         return jsonResponse(503, { error: "temporary" });
       }
       return jsonResponse(200, {
@@ -241,7 +247,10 @@ describe("AdobeFireflyClient.generateVideo", () => {
         ? jsonResponse(
             200,
             {},
-            { "x-override-status-link": "https://poll/video-2" }
+            {
+              "x-override-status-link":
+                "https://firefly-3p.ff.adobe.io/v2/status/video-2",
+            }
           )
         : jsonResponse(401, {})
     );
@@ -251,5 +260,74 @@ describe("AdobeFireflyClient.generateVideo", () => {
       AdobeAcceptedVideoError
     );
     expect(api.calls.filter((call) => call.method === "POST")).toHaveLength(1);
+  });
+
+  it("提交、单次轮询和下载可作为独立恢复阶段调用", async () => {
+    const videoBytes = Buffer.from("RECOVERED-MP4");
+    const pollUrl = "https://firefly-3p.ff.adobe.io/v2/status/video-3";
+    const api = new MockTransport((_req, index) => {
+      if (index === 0) {
+        return jsonResponse(
+          200,
+          { id: "job-video-3" },
+          { "x-override-status-link": pollUrl }
+        );
+      }
+      return index === 1
+        ? jsonResponse(200, { status: "RUNNING" })
+        : jsonResponse(200, {
+            status: "COMPLETED",
+            outputs: [
+              { video: { presignedUrl: "https://cdn.example/video-3.mp4" } },
+            ],
+          });
+    });
+    const download = new MockTransport(() => bytesResponse(200, videoBytes));
+    const client = new AdobeFireflyClient({
+      transport: api,
+      downloadTransport: download,
+    });
+
+    const submitted = await client.submitVideo(videoInput);
+    expect(submitted).toMatchObject({ pollUrl, upstreamJobId: "job-video-3" });
+    await expect(
+      client.pollVideo({ token: FAKE_TOKEN, pollUrl })
+    ).resolves.toMatchObject({ status: "pending" });
+    const completed = await client.pollVideo({ token: FAKE_TOKEN, pollUrl });
+    expect(completed).toMatchObject({
+      status: "completed",
+      videoUrl: "https://cdn.example/video-3.mp4",
+    });
+    if (completed.status !== "completed") {
+      throw new Error("测试夹具必须返回 completed");
+    }
+    await expect(client.downloadVideo(completed.videoUrl)).resolves.toEqual(
+      videoBytes
+    );
+  });
+
+  it("已返回成功但缺少轮询地址时标记提交结果不确定", async () => {
+    const client = new AdobeFireflyClient({
+      transport: new MockTransport(() => jsonResponse(200, { id: "job" })),
+    });
+
+    await expect(client.submitVideo(videoInput)).rejects.toBeInstanceOf(
+      AdobeVideoSubmissionUncertainError
+    );
+  });
+
+  it("持久轮询地址只接受 Adobe HTTPS 精确主机", async () => {
+    const client = new AdobeFireflyClient({
+      transport: new MockTransport(() =>
+        jsonResponse(200, { status: "RUNNING" })
+      ),
+    });
+
+    await expect(
+      client.pollVideo({
+        token: FAKE_TOKEN,
+        pollUrl: "https://firefly-3p.ff.adobe.io.evil.test/status/1",
+      })
+    ).rejects.toThrow("Adobe 视频轮询地址不受信任");
   });
 });
