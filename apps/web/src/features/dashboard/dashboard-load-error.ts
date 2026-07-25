@@ -8,7 +8,7 @@ import {
   isAuthSessionQueryUnavailableError,
   isDatabaseQueryTimeoutError,
 } from "@repo/shared/database-errors";
-import { OperationError } from "@repo/shared/uol";
+import { OperationError } from "@repo/shared/uol/errors";
 
 export type DashboardLoadFailureReason =
   | "not_ready"

@@ -10,8 +10,6 @@ import {
   type DashboardSupportConfig,
   DEFAULT_DASHBOARD_SUPPORT_CONFIG,
 } from "@repo/shared/support/dashboard-config";
-import { invokeOperation } from "@repo/shared/uol";
-
 import { ensureUolInitialized } from "@/server/uol-init";
 
 /** Dashboard 右侧公告卡所需的最小只读字段。 */
@@ -46,6 +44,7 @@ async function loadConfigurationThroughUol(input: {
   userId: string;
   role: AppUserRole;
 }): Promise<DashboardSupportConfig> {
+  const { invokeOperation } = await import("@repo/shared/uol");
   return invokeOperation<DashboardSupportConfig>(
     "support.getDashboardConfiguration",
     {},
@@ -58,6 +57,7 @@ async function loadAnnouncementsThroughUol(input: {
   userId: string;
   role: AppUserRole;
 }): Promise<DashboardAnnouncement[]> {
+  const { invokeOperation } = await import("@repo/shared/uol");
   const result = await invokeOperation<{
     announcements: DashboardAnnouncement[];
   }>(
