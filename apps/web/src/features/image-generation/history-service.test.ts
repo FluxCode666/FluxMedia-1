@@ -30,7 +30,6 @@ function imageRow(id: string, createdAt: string): HistoryListRow {
     creditDetails: null,
     promptRepairNotice: null,
     referenceImages: [],
-    isLayered: false,
     rawError: null,
     imageUrl: `/image/${id}`,
     createdAt,

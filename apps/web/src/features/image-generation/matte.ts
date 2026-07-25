@@ -2,7 +2,7 @@
  * 服务端抠图(背景移除)。
  *
  * 职责:用 ISNet 显著性分割模型把图片主体从背景分离,输出带 alpha 的 PNG(背景透明、主体保留)。
- * 使用方:PSD 导出编排——主体层=对底图抠图;元素层=不透明生成后抠图。
+ * 使用方：透明背景生成兜底；当上游只返回不透明图时移除背景。
  *
  * 模型来源/许可:ISNet(IS-Net,Highly Accurate Dichotomous Image Segmentation),
  *   Xuebin Qin 等,https://github.com/xuebinqin/DIS,MIT 许可,可商用。

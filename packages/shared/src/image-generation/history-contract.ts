@@ -142,7 +142,6 @@ export const imageHistoryRecordSchema = historyRecordCommonSchema
     creditDetails: historyCreditDetailsSchema.nullable(),
     promptRepairNotice: z.string().nullable(),
     referenceImages: z.array(historyReferenceImageSchema).max(50),
-    isLayered: z.boolean(),
     imageUrl: z.string().nullable(),
   })
   .strict();

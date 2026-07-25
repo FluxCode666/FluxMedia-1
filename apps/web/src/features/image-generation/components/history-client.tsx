@@ -70,7 +70,6 @@ type HistoryRecordBase = {
 export type HistoryImageRecord = HistoryRecordBase & {
   creditDetails: GenerationCreditDetails | null;
   imageUrl: string | null;
-  isLayered?: boolean;
   kind: "image";
   promptRepairNotice?: string | null;
   referenceImages?: LightboxReferenceImage[];
@@ -166,7 +165,6 @@ function toLightboxGeneration(record: HistoryImageRecord): LightboxGeneration {
     creditsConsumed: record.creditsConsumed,
     error: record.error,
     id: record.id,
-    isLayered: record.isLayered,
     model: record.model,
     prompt: record.prompt,
     promptRepairNotice: record.promptRepairNotice,

@@ -95,7 +95,6 @@ describe("history contract", () => {
           creditDetails: null,
           promptRepairNotice: null,
           referenceImages: [],
-          isLayered: false,
           imageUrl: "/api/storage/generations/user/output.png",
         },
         {
@@ -144,7 +143,6 @@ describe("history contract", () => {
       creditDetails: null,
       promptRepairNotice: null,
       referenceImages: [],
-      isLayered: false,
       error: null,
       imageUrl: null,
       createdAt: "2026-07-22T01:00:00.000Z",

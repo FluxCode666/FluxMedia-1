@@ -23,7 +23,6 @@ import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { deleteGenerationAction } from "@/features/image-generation/actions";
 import type { GenerationCreditDetails } from "@/features/image-generation/credit-calculation-details";
-import { ExportPsdDialog } from "@/features/psd-export/components/export-psd-dialog";
 import { generateDownloadFilename } from "@/lib/download-filename";
 
 export interface LightboxReferenceImage {
@@ -53,10 +52,8 @@ export interface LightboxGeneration {
   status: "pending" | "completed" | "failed";
   error?: string | null;
   createdAt: string;
-  outputRole?: "final" | "agent_draft" | "upload";
+  outputRole?: "final" | "upload";
   referenceImages?: LightboxReferenceImage[];
-  /** 是否为"生成即分层"产物:为 true 才展示导出分层 PSD 入口。 */
-  isLayered?: boolean;
 }
 
 export interface ImageLightboxProps {
@@ -227,9 +224,7 @@ export function ImageLightbox({
   const currentImageLabel =
     generation.outputRole === "upload"
       ? copy("Upload", "上传")
-      : generation.outputRole === "agent_draft"
-        ? copy("Draft", "中间图")
-        : copy("Output", "成品");
+      : copy("Output", "成品");
   const [detailsWidth, setDetailsWidth] = useState(44);
   const dragState = useRef<{
     startX: number;
@@ -637,13 +632,6 @@ export function ImageLightbox({
                       {copy("Download", "下载")}
                     </a>
                   </Button>
-                  {generation.isLayered && (
-                    <ExportPsdDialog
-                      generationId={generation.id}
-                      prompt={generation.prompt}
-                      createdAt={generation.createdAt}
-                    />
-                  )}
                 </>
               )}
               {onDelete && (

@@ -41,49 +41,16 @@ export function getImageOutputs(metadata: unknown, bucket: string | null) {
         generationId,
         imageUrl,
         imageFileId: stringValue(output.imageFileId),
-        webImageMessageId: stringValue(output.webImageMessageId),
-        webImageGroupId: stringValue(output.webImageGroupId),
         size: stringValue(output.size),
         revisedPrompt: stringValue(output.revisedPrompt),
         upstreamRevisedPrompt: stringValue(output.upstreamRevisedPrompt),
         promptRepairNotice,
         index,
         outputRole:
-          output.role === "agent_draft" ||
-          output.role === "choice" ||
-          output.role === "final"
+          output.role === "choice" || output.role === "final"
             ? output.role
             : undefined,
       },
     ];
   });
-}
-
-export function getResponseOutput(metadata: unknown) {
-  const output = asRecord(asRecord(metadata).responseOutput);
-  return {
-    responseText: stringValue(output.responseText),
-    responseThinking: stringValue(output.responseThinking),
-    responseAgent: stringValue(output.responseAgent),
-    agentEvents: Array.isArray(output.agentEvents)
-      ? output.agentEvents
-      : undefined,
-    agentRoundCount:
-      typeof output.agentRoundCount === "number"
-        ? output.agentRoundCount
-        : undefined,
-    webConversation:
-      output.webConversation && typeof output.webConversation === "object"
-        ? output.webConversation
-        : undefined,
-    backendMember:
-      output.backendMember && typeof output.backendMember === "object"
-        ? output.backendMember
-        : undefined,
-    responsesPreviousResponse:
-      output.responsesPreviousResponse &&
-      typeof output.responsesPreviousResponse === "object"
-        ? output.responsesPreviousResponse
-        : undefined,
-  };
 }

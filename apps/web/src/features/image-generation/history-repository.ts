@@ -13,7 +13,6 @@ import {
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { hasLayeredMeta } from "@/features/psd-export/layered-meta";
 import { extractGenerationCreditDetails } from "./credit-calculation-details";
 import {
   extractGenerationReferenceImages,
@@ -325,7 +324,6 @@ export const databaseHistoryRepository: HistoryRepository = {
                 ...safe
               }) => safe
             ),
-          isLayered: hasLayeredMeta(row.metadata),
           imageUrl: buildSignedStorageImageUrl(
             row.storage_key,
             row.storage_bucket

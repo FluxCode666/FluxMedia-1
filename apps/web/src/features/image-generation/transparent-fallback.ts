@@ -26,7 +26,7 @@ function stripDataUri(base64: string): string {
  * 懒加载 matte(onnxruntime 原生):只在透明回退真触发时才载入,避免拖垮核心管线启动。
  */
 async function matteBase64(base64: string): Promise<string> {
-  const { removeBackground } = await import("@/features/psd-export/matte");
+  const { removeBackground } = await import("./matte");
   const input = Buffer.from(stripDataUri(base64), "base64");
   const out = await removeBackground(input);
   return out.toString("base64");

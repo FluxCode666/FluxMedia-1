@@ -18,7 +18,6 @@ import { invokeOperation } from "@repo/shared/uol";
 import { and, desc, eq } from "drizzle-orm";
 
 import type { RecentCreation } from "@/features/image-generation/components/recent-creations-client";
-import { hasLayeredMeta } from "@/features/psd-export/layered-meta";
 import { ensureUolInitialized } from "@/server/uol-init";
 
 export type DashboardSnapshot = {
@@ -56,7 +55,6 @@ export async function loadRecentDashboardCreations(
       creditsConsumed: generation.creditsConsumed,
       storageKey: generation.storageKey,
       storageBucket: generation.storageBucket,
-      metadata: generation.metadata,
       createdAt: generation.createdAt,
     })
     .from(generation)
@@ -77,7 +75,6 @@ export async function loadRecentDashboardCreations(
     storageKey: row.storageKey,
     storageBucket: row.storageBucket,
     imageUrl: buildSignedStorageImageUrl(row.storageKey, row.storageBucket),
-    isLayered: hasLayeredMeta(row.metadata),
     createdAt: row.createdAt.toISOString(),
   }));
 }

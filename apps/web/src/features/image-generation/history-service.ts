@@ -83,7 +83,6 @@ export interface ImageHistoryRow extends HistoryRowCommon {
   creditDetails: HistoryCreditDetails | null;
   promptRepairNotice: string | null;
   referenceImages: HistoryReferenceImage[];
-  isLayered: boolean;
   imageUrl: string | null;
 }
 

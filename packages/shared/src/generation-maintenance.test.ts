@@ -71,18 +71,8 @@ describe("generation photo retention helpers", () => {
               storageKey: "user/final.png",
               imageUrl: "/api/storage/generations/user/final.png",
               imageFileId: "file-1",
-              webImageMessageId: "msg-1",
               size: "1024x1024",
               primary: true,
-            },
-          ],
-        },
-        responseOutput: {
-          agentEvents: [
-            {
-              type: "image_generation_call",
-              imageUrl: "/api/storage/generations/user/final.png",
-              status: "completed",
             },
           ],
         },
@@ -113,16 +103,6 @@ describe("generation photo retention helpers", () => {
       generationId: "gen-1",
       size: "1024x1024",
       primary: true,
-    });
-    expect(
-      (
-        metadata.responseOutput as {
-          agentEvents: Array<Record<string, unknown>>;
-        }
-      ).agentEvents[0]
-    ).toEqual({
-      type: "image_generation_call",
-      status: "completed",
     });
     expect(
       (
@@ -241,14 +221,18 @@ describe("shouldRunMaxCountCleanupOnSettingsChange", () => {
   it("triggers only when the retention mode was changed to count", async () => {
     const { shouldRunMaxCountCleanupOnSettingsChange } = await loadHelpers();
     const MODE = "GENERATION_IMAGE_RETENTION_MODE";
-    expect(shouldRunMaxCountCleanupOnSettingsChange([MODE], "count")).toBe(true);
+    expect(shouldRunMaxCountCleanupOnSettingsChange([MODE], "count")).toBe(
+      true
+    );
   });
 
   it("does not trigger for non-count values, clears, or unchanged mode", async () => {
     const { shouldRunMaxCountCleanupOnSettingsChange } = await loadHelpers();
     const MODE = "GENERATION_IMAGE_RETENTION_MODE";
     // 切到其他模式不触发。
-    expect(shouldRunMaxCountCleanupOnSettingsChange([MODE], "time")).toBe(false);
+    expect(shouldRunMaxCountCleanupOnSettingsChange([MODE], "time")).toBe(
+      false
+    );
     expect(shouldRunMaxCountCleanupOnSettingsChange([MODE], "off")).toBe(false);
     // 清空（回退默认）传 undefined，不误判为启用。
     expect(shouldRunMaxCountCleanupOnSettingsChange([MODE], undefined)).toBe(

@@ -23,7 +23,7 @@ export type ImageStreamEvent =
         revisedPrompt?: string;
         upstreamRevisedPrompt?: string;
         index?: number;
-        outputRole?: "final" | "agent_draft" | "choice";
+        outputRole?: "final" | "choice";
       }>;
       // Adobe Firefly 视频产物（视频生成路径专用，图像路径不设）。
       videoGenerationId?: string;

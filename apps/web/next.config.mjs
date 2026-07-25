@@ -63,12 +63,8 @@ const nextConfig = {
     "ioredis",
     // 原生模块（存储路由的按需缩略图缩放）：保持外置，避免被打进 server bundle。
     "sharp",
-    // PSD 导出组装库:仅被 server action 经 use server 引用,Next 默认未把它 trace 进
-    // standalone(运行时会 Cannot find module 'ag-psd')。外置后 Next 会把它及其依赖
-    // (base64-js/pako)一并拷入 standalone node_modules。
-    "ag-psd",
-    // PSD 导出抠图引擎(原生模块,自带各平台预编译 .node):同理外置,避免被打进
-    // server bundle;Next 会把它拷入 standalone node_modules。
+    // 透明背景兜底使用的原生抠图引擎；外置以避免打进 server bundle，
+    // Next 会把各平台预编译模块复制到 standalone node_modules。
     "onnxruntime-node",
   ],
 };

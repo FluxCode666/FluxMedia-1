@@ -15,8 +15,10 @@ import {
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-
-import { hasLayeredMeta } from "@/features/psd-export/layered-meta";
+import type {
+  AdminHistoryListQuery,
+  AdminHistoryRepository,
+} from "./admin-history-service";
 import {
   extractGenerationCreditDetails,
   type GenerationCreditDetails,
@@ -25,10 +27,6 @@ import {
   extractGenerationReferenceImages,
   extractPromptRepairNotice,
 } from "./generation-metadata";
-import type {
-  AdminHistoryListQuery,
-  AdminHistoryRepository,
-} from "./admin-history-service";
 
 const adminHistoryListRowSchema = z.object({
   record_kind: historyRecordTypeSchema,
@@ -379,7 +377,6 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
                 ...safe
               }) => safe
             ),
-          isLayered: hasLayeredMeta(row.metadata),
           imageUrl: buildSignedStorageImageUrl(
             row.storage_key,
             row.storage_bucket

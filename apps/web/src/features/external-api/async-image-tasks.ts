@@ -9,7 +9,7 @@ type AsyncImageTaskStatus = "processing" | "completed" | "failed";
 
 export type AsyncImageTask = {
   id: string;
-  object: "image.generation" | "image" | "editable_file_task";
+  object: "image.generation" | "image";
   userId: string;
   apiKeyId?: string;
   model?: string;
@@ -33,9 +33,6 @@ type CreateAsyncImageTaskParams = {
 type CompleteAsyncImageTaskParams = {
   result?: unknown;
   error?: unknown;
-  // 完成后的 object 类型。图像任务从 image.generation 转为 image(默认);可编辑文件任务
-  // 传 "editable_file_task" 以保持类型不变(不被误标成 image)。
-  completedObject?: AsyncImageTask["object"];
 };
 
 const TASK_TTL_MS = 30 * 60 * 1000;
@@ -72,46 +69,6 @@ export function createAsyncImageTask(params: CreateAsyncImageTaskParams) {
             generationIds,
           }
         : {}),
-  };
-  asyncImageTasks.set(id, task);
-  const timeout = setTimeout(() => asyncImageTasks.delete(id), TASK_TTL_MS);
-  if (
-    typeof timeout === "object" &&
-    "unref" in timeout &&
-    typeof timeout.unref === "function"
-  ) {
-    timeout.unref();
-  }
-  return task;
-}
-
-type CreateAsyncEditableFileTaskParams = {
-  userId: string;
-  apiKeyId?: string;
-  kind: "ppt" | "psd";
-  clientTaskId?: string;
-};
-
-/**
- * 创建一个可编辑文件(PPT/PSD)异步任务(与图像任务同一内存存储/TTL/回调基础设施)。
- * object=editable_file_task;返回 task_<uuid> 立即回给客户端,后台跑完再 completeAsyncImageTask
- * (completedObject 传 editable_file_task 保持类型)。可编辑文件无 DB generation 行,故只走内存态。
- */
-export function createAsyncEditableFileTask(
-  params: CreateAsyncEditableFileTaskParams
-) {
-  const id = `task_${randomUUID().replace(/-/g, "")}`;
-  const now = new Date();
-  const task: AsyncImageTask = {
-    id,
-    object: "editable_file_task",
-    userId: params.userId,
-    apiKeyId: params.apiKeyId,
-    kind: params.kind,
-    ...(params.clientTaskId ? { client_task_id: params.clientTaskId } : {}),
-    status: "processing",
-    created: Math.floor(now.getTime() / 1000),
-    created_at: now.toISOString(),
   };
   asyncImageTasks.set(id, task);
   const timeout = setTimeout(() => asyncImageTasks.delete(id), TASK_TTL_MS);
@@ -175,9 +132,7 @@ export function toGenerationImageTaskResponse(
     status,
     created: Math.floor(row.createdAt.getTime() / 1000),
     created_at: row.createdAt.toISOString(),
-    ...(row.completedAt
-      ? { completed_at: row.completedAt.toISOString() }
-      : {}),
+    ...(row.completedAt ? { completed_at: row.completedAt.toISOString() } : {}),
     generation_id: row.id,
     generationId: row.id,
     ...(status === "completed" && imageUrl
@@ -271,7 +226,7 @@ export function completeAsyncImageTask(
   const task: AsyncImageTask = {
     ...existing,
     ...payloadFields,
-    object: params.completedObject ?? "image",
+    object: "image",
     status: params.error ? "failed" : "completed",
     completed: Math.floor(now.getTime() / 1000),
     completed_at: completedAt,

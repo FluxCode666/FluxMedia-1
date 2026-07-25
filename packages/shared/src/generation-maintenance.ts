@@ -5,10 +5,9 @@
  * 原计费操作上下文，避免从 sourceRef 或退款发生时间猜测业务归属。
  */
 
-import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
-
 import { db } from "@repo/database";
 import { generation } from "@repo/database/schema";
+import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
 import { grantCredits } from "./credits/core";
 import type { CreditOperationContext } from "./credits/usage-read-model";
 import { getFailedGenerationTargetCreditsFromMetadata } from "./generation-settlement";
@@ -17,11 +16,13 @@ import { getStorageProvider } from "./storage/providers";
 import { getRuntimeSettingNumber } from "./system-settings";
 
 export const IMAGE_GENERATION_PENDING_TIMEOUT_MS = 20 * 60 * 1000;
+
 // 超时文案/标记/选择器抽到 db-free 的 ./generation-timeout（纯分类器 sla-classification
 // 也要用，不能经本模块的 `import { db }` 把数据库连接拖进纯路径）。本模块 pending 清扫
 // 用 resolveImageGenerationTimeoutError，同时重导出以保持
 // `@repo/shared/generation-maintenance` 的既有公开面不变。
 import { resolveImageGenerationTimeoutError } from "./generation-timeout";
+
 export {
   IMAGE_GENERATION_TIMEOUT_ERROR,
   IMAGE_GENERATION_WEB_TIMEOUT_ERROR,
@@ -219,8 +220,6 @@ export function stripDestroyedGenerationImageReferences(
       delete nextOutput.storageKey;
       delete nextOutput.imageUrl;
       delete nextOutput.imageFileId;
-      delete nextOutput.webImageMessageId;
-      delete nextOutput.webImageGroupId;
       return nextOutput;
     });
   }
@@ -252,19 +251,6 @@ export function stripDestroyedGenerationImageReferences(
       storageObjectsDeleted: params.storageObjectsDeleted,
     };
     nextMetadata.inputImages = inputImages;
-  }
-
-  const responseOutput = isRecord(nextMetadata.responseOutput)
-    ? { ...nextMetadata.responseOutput }
-    : null;
-  if (responseOutput && Array.isArray(responseOutput.agentEvents)) {
-    responseOutput.agentEvents = responseOutput.agentEvents.map((event) => {
-      if (!isRecord(event)) return event;
-      const nextEvent = { ...event };
-      delete nextEvent.imageUrl;
-      return nextEvent;
-    });
-    nextMetadata.responseOutput = responseOutput;
   }
 
   return nextMetadata;
