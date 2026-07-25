@@ -81,41 +81,25 @@
         "title": "Designers & Artists",
         "subtitle": "Visual Ideation",
         "description": "Sketch concepts, explore styles, and generate reference images to accelerate your creative process.",
-        "examples": [
-          "Mood boards",
-          "Concept art",
-          "Style exploration"
-        ]
+        "examples": ["Mood boards", "Concept art", "Style exploration"]
       },
       "marketers": {
         "title": "Marketers",
         "subtitle": "Content at Scale",
         "description": "Produce on-brand visuals for campaigns, social posts, and blog headers without waiting on stock photos or design queues.",
-        "examples": [
-          "Social graphics",
-          "Ad creative",
-          "Blog images"
-        ]
+        "examples": ["Social graphics", "Ad creative", "Blog images"]
       },
       "creators": {
         "title": "Creators & Storytellers",
         "subtitle": "Visual Narratives",
         "description": "Illustrate stories, build worlds, and visualize characters. Turn ideas into imagery that draws your audience in.",
-        "examples": [
-          "Story illustrations",
-          "Character art",
-          "World-building"
-        ]
+        "examples": ["Story illustrations", "Character art", "World-building"]
       },
       "developers": {
         "title": "Developers",
         "subtitle": "Automated Workflows",
         "description": "Integrate image generation into your applications and workflows. Build product features that leverage AI visuals natively.",
-        "examples": [
-          "App integrations",
-          "Automated pipelines",
-          "Custom tools"
-        ]
+        "examples": ["App integrations", "Automated pipelines", "Custom tools"]
       }
     }
   },
