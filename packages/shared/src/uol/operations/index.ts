@@ -10,8 +10,8 @@
 
 // 图像生成域
 import "./image-generation";
-// 可编辑文件(PPT/PSD)生成(归 image-generation 域)
-import "./editable-file";
+// 视频生成与查询（与图片共享 image-generation 域）
+import "./video-generation";
 // 积分域
 import "./credits";
 // 订阅域
@@ -30,7 +30,7 @@ import "./homepage-reliability";
 import "./storage";
 // 内容审核域
 import "./moderation";
-// 外部 API 域
+// 外部 API 辅助域（媒体生成统一使用 image/video operation）
 import "./external-api";
 // 首页平台公开模型目录（system-only，不改变外接 API Key 授权语义）
 import "./external-api-platform-model-catalog";

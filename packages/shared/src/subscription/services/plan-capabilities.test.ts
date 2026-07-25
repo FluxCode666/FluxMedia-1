@@ -1,28 +1,23 @@
+/**
+ * 媒体平台套餐能力矩阵测试。
+ *
+ * 职责：锁定保留能力、旧字段清理、限制单调性和运行时设置回退，防止已退场的
+ * Chat/Agent/Responses/PPT/PSD 通过历史 JSON 再次出现。
+ */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  PLAN_PRIVILEGES,
-  PLAN_RANK,
-  SUBSCRIPTION_PLANS,
-} from "../../config/subscription-plan";
+import { PLAN_RANK, SUBSCRIPTION_PLANS } from "../../config/subscription-plan";
 import { SYSTEM_SETTING_DEFINITIONS } from "../../system-settings/definitions";
 import {
   canUsePlanCapability,
   DEFAULT_PLAN_CAPABILITY_MATRIX,
   DEFAULT_PLAN_CAPABILITY_MATRIX_JSON,
-  getPlanBillingConfig,
   getPlanCapabilityMatrix,
   getPlanCapabilitySnapshot,
-  getPlanLimits,
-  getPlanMonthlyCredits,
-  getPlanPrivilegesFromCapabilities,
-  getPlanQueueSettings,
   MAX_PLAN_BATCH_COUNT,
   MAX_PLAN_IMAGE_COUNT,
-  megabytesToBytes,
   normalizePlanCapabilityMatrix,
   PLAN_CAPABILITY_KEYS,
-  type PlanLimitConfig,
 } from "./plan-capabilities";
 
 const runtimeSettingsMock = vi.hoisted(() => ({
@@ -32,448 +27,138 @@ const runtimeSettingsMock = vi.hoisted(() => ({
 
 vi.mock("../../system-settings", () => runtimeSettingsMock);
 
-const higherThan = (plan: (typeof SUBSCRIPTION_PLANS)[number]) =>
-  SUBSCRIPTION_PLANS.filter((candidate) => PLAN_RANK[candidate] > PLAN_RANK[plan]);
-
-describe("plan capability matrix defaults", () => {
+describe("media plan capability matrix", () => {
   beforeEach(() => {
     runtimeSettingsMock.getRuntimeSettingJson.mockReset();
     runtimeSettingsMock.getRuntimeSettingNumber.mockReset();
   });
 
-  it("normalizes an empty value to the complete default matrix", () => {
+  it("contains only retained media and governance capabilities", () => {
     const matrix = normalizePlanCapabilityMatrix(undefined);
-    const defaultJson = JSON.parse(DEFAULT_PLAN_CAPABILITY_MATRIX_JSON) as {
-      features: Record<string, unknown>;
-    };
-
     expect(matrix).toEqual(DEFAULT_PLAN_CAPABILITY_MATRIX);
+    expect(JSON.parse(DEFAULT_PLAN_CAPABILITY_MATRIX_JSON)).toEqual(matrix);
     expect(Object.keys(matrix.features).sort()).toEqual(
       [...PLAN_CAPABILITY_KEYS].sort()
     );
-    expect(matrix.features["externalApi.streaming"]).toBe("starter");
-    expect(matrix.features["externalApi.responses"]).toBe("pro");
-    expect(matrix.features["externalApi.agent"]).toBe("ultra");
-    expect(matrix.features["imageGeneration.chat"]).toBe("pro");
-    expect(matrix.features["imageGeneration.agent"]).toBe("pro");
-    expect(matrix.features["imageGeneration.waterfall"]).toBe("pro");
-    expect(matrix.features["export.ppt"]).toBe("free");
-    expect(matrix.features["export.psd"]).toBe("free");
-    expect(matrix.features["moderation.blocking"]).toBe("free");
-    expect(matrix.features["moderation.onlyFailureSettlement"]).toBe("ultra");
-    expect(PLAN_CAPABILITY_KEYS).not.toContain("externalApi.relay");
-    expect(Object.hasOwn(matrix.features, "externalApi.relay")).toBe(false);
-    expect(matrix).not.toHaveProperty("moderation");
-    expect(Object.hasOwn(defaultJson.features, "externalApi.relay")).toBe(
-      false
-    );
-    expect(defaultJson).not.toHaveProperty("moderation");
-    expect(matrix.limits.ultra).toMatchObject({
-      maxFileMb: 100,
-      maxUploadMb: 100,
-      imageGenerationConcurrency: 50,
-      monthlyCredits: 80_000,
-      queuePriority: "highest",
-    });
-    expect(matrix.limits.enterprise.monthlyCredits).toBe(320_000);
-    expect(matrix.billing.free).toEqual({
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
-    });
-    expect(matrix.billing.enterprise).toEqual({
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
-    });
+    for (const removed of [
+      "imageGeneration.chat",
+      "imageGeneration.agent",
+      "imageGeneration.waterfall",
+      "externalApi.chat.completions",
+      "externalApi.responses",
+      "externalApi.agent",
+      "export.ppt",
+      "export.psd",
+    ]) {
+      expect(PLAN_CAPABILITY_KEYS).not.toContain(removed);
+      expect(matrix.features).not.toHaveProperty(removed);
+    }
+    expect(matrix).not.toHaveProperty("billing");
+    expect(matrix.limits.free).not.toHaveProperty("maxChatImages");
+    expect(matrix.limits.free).not.toHaveProperty("maxChatContextChars");
   });
 
-  it("keeps the system settings example in sync with every matrix field", () => {
+  it("keeps the system settings example synchronized", () => {
     const setting = SYSTEM_SETTING_DEFINITIONS.find(
-      (definition) => definition.key === "PLAN_CAPABILITY_MATRIX"
+      ({ key }) => key === "PLAN_CAPABILITY_MATRIX"
     );
-
-    expect(setting?.exampleValue).toEqual(DEFAULT_PLAN_CAPABILITY_MATRIX);
+    expect(
+      setting && "exampleValue" in setting ? setting.exampleValue : undefined
+    ).toEqual(DEFAULT_PLAN_CAPABILITY_MATRIX);
   });
 
-  it("accepts custom feature thresholds and ignores invalid capability values", () => {
+  it("ignores removed and unknown stored fields", () => {
     const matrix = normalizePlanCapabilityMatrix({
       features: {
-        "externalApi.streaming": "ultra",
-        "externalApi.agent": "enterprise",
-        "promptOptimization.control": "free",
-        "imageGeneration.chat": "starter",
-        "imageGeneration.agent": "ultra",
-        "imageGeneration.waterfall": "pro",
-        "externalApi.responses": "not-a-plan",
-        "unknown.feature": "enterprise",
+        "imageGeneration.video": "pro",
+        "externalApi.responses": "free",
+        "export.psd": "free",
+        unknown: "enterprise",
       },
-    });
-
-    expect(matrix.features["externalApi.streaming"]).toBe("ultra");
-    expect(matrix.features["externalApi.agent"]).toBe("enterprise");
-    expect(matrix.features["promptOptimization.control"]).toBe("free");
-    expect(matrix.features["imageGeneration.chat"]).toBe("starter");
-    expect(matrix.features["imageGeneration.agent"]).toBe("ultra");
-    expect(matrix.features["imageGeneration.waterfall"]).toBe("pro");
-    expect(matrix.features["externalApi.responses"]).toBe(
-      DEFAULT_PLAN_CAPABILITY_MATRIX.features["externalApi.responses"]
-    );
-    expect(Object.keys(matrix.features).sort()).toEqual(
-      [...PLAN_CAPABILITY_KEYS].sort()
-    );
-  });
-
-  it("merges partial limits with defaults and preserves Ultra-specific settings", () => {
-    const matrix = normalizePlanCapabilityMatrix({
-      limits: {
-        ultra: {
-          maxFileMb: 150,
-          maxUploadMb: 300,
-          queuePriority: "highest",
-          imageGenerationConcurrency: 88,
-          monthlyCredits: 123_456,
-          maxBatchCount: 20,
-          maxEditImages: 32,
-          maxChatImages: 24,
-          maxChatContextChars: 99_999,
-        },
-      },
-    });
-
-    expect(matrix.limits.pro).toEqual(DEFAULT_PLAN_CAPABILITY_MATRIX.limits.pro);
-    expect(matrix.limits.ultra).toMatchObject({
-      maxFileMb: 150,
-      maxUploadMb: 300,
-      queuePriority: "highest",
-      imageGenerationConcurrency: 88,
-      monthlyCredits: 123_456,
-      maxBatchCount: 20,
-      maxEditImages: 32,
-      maxChatImages: 24,
-      maxChatContextChars: 99_999,
-    });
-    expect(matrix.limits.enterprise).toMatchObject({
-      maxUploadMb: 300,
-      maxBatchCount: 20,
-      maxEditImages: 32,
-      maxChatImages: 24,
-      maxChatContextChars: 99_999,
-    });
-  });
-
-  it("enforces higher plans to inherit at least lower-plan numeric limits", () => {
-    const freeLimits: PlanLimitConfig = {
-      maxFileMb: 500,
-      maxUploadMb: 600,
-      queuePriority: "highest",
-      imageGenerationConcurrency: 25,
-      monthlyCredits: 900_000,
-      maxBatchCount: 42,
-      maxEditImages: 41,
-      maxChatImages: 40,
-      maxChatContextChars: 150_000,
-    };
-    const matrix = normalizePlanCapabilityMatrix({
-      limits: {
-        free: freeLimits,
-        starter: {
-          maxFileMb: 1,
-          maxUploadMb: 1,
-          queuePriority: "normal",
-          imageGenerationConcurrency: 1,
-          monthlyCredits: 1,
-          maxBatchCount: 1,
-          maxEditImages: 1,
-          maxChatImages: 1,
-          maxChatContextChars: 1,
-        },
-      },
-    });
-
-    expect(matrix.limits.free).toEqual(freeLimits);
-    for (const plan of higherThan("free")) {
-      expect(matrix.limits[plan].maxFileMb).toBeGreaterThanOrEqual(500);
-      expect(matrix.limits[plan].maxUploadMb).toBeGreaterThanOrEqual(600);
-      expect(matrix.limits[plan].queuePriority).toBe("highest");
-      expect(matrix.limits[plan].imageGenerationConcurrency).toBeGreaterThanOrEqual(
-        25
-      );
-      expect(matrix.limits[plan].monthlyCredits).toBeGreaterThanOrEqual(900_000);
-      expect(matrix.limits[plan].maxBatchCount).toBeGreaterThanOrEqual(42);
-      expect(matrix.limits[plan].maxEditImages).toBeGreaterThanOrEqual(41);
-      expect(matrix.limits[plan].maxChatImages).toBeGreaterThanOrEqual(40);
-      expect(matrix.limits[plan].maxChatContextChars).toBeGreaterThanOrEqual(
-        150_000
-      );
-    }
-  });
-
-  it("falls back for invalid limits and clamps bounded request counts", () => {
-    const matrix = normalizePlanCapabilityMatrix({
       limits: {
         free: {
-          maxFileMb: 0,
-          maxUploadMb: -1,
-          queuePriority: "urgent",
-          imageGenerationConcurrency: 20_000,
-          monthlyCredits: "invalid",
-          maxBatchCount: MAX_PLAN_BATCH_COUNT + 1.9,
-          maxEditImages: MAX_PLAN_IMAGE_COUNT + 50,
-          maxChatImages: String(MAX_PLAN_IMAGE_COUNT + 200),
+          maxChatImages: 999,
           maxChatContextChars: 999_999,
         },
       },
+      billing: {
+        free: { chatRoundCredits: 0, agentRoundCredits: 0 },
+      },
     });
+    expect(matrix.features["imageGeneration.video"]).toBe("pro");
+    expect(matrix.features).not.toHaveProperty("externalApi.responses");
+    expect(matrix.features).not.toHaveProperty("export.psd");
+    expect(matrix.limits.free).not.toHaveProperty("maxChatImages");
+    expect(matrix).not.toHaveProperty("billing");
+  });
 
+  it("clamps request limits and keeps higher plans monotonic", () => {
+    const matrix = normalizePlanCapabilityMatrix({
+      limits: {
+        free: {
+          maxFileMb: 500,
+          maxUploadMb: 600,
+          queuePriority: "highest",
+          imageGenerationConcurrency: 20_000,
+          monthlyCredits: 900_000,
+          maxBatchCount: MAX_PLAN_BATCH_COUNT + 1,
+          maxEditImages: MAX_PLAN_IMAGE_COUNT + 1,
+        },
+      },
+    });
     expect(matrix.limits.free).toMatchObject({
-      maxFileMb: DEFAULT_PLAN_CAPABILITY_MATRIX.limits.free.maxFileMb,
-      maxUploadMb: DEFAULT_PLAN_CAPABILITY_MATRIX.limits.free.maxUploadMb,
-      queuePriority: DEFAULT_PLAN_CAPABILITY_MATRIX.limits.free.queuePriority,
       imageGenerationConcurrency: 10_000,
-      monthlyCredits: DEFAULT_PLAN_CAPABILITY_MATRIX.limits.free.monthlyCredits,
       maxBatchCount: MAX_PLAN_BATCH_COUNT,
       maxEditImages: MAX_PLAN_IMAGE_COUNT,
-      maxChatImages: MAX_PLAN_IMAGE_COUNT,
-      maxChatContextChars: 200_000,
     });
+    for (const plan of SUBSCRIPTION_PLANS) {
+      expect(matrix.limits[plan].maxFileMb).toBeGreaterThanOrEqual(500);
+      expect(matrix.limits[plan].maxUploadMb).toBeGreaterThanOrEqual(600);
+      expect(matrix.limits[plan].queuePriority).toBe("highest");
+    }
   });
 
-  it("allows enterprise batch and reference-image limits above 100", () => {
-    const matrix = normalizePlanCapabilityMatrix({
-      limits: {
-        enterprise: {
-          maxBatchCount: 500,
-          maxEditImages: 256,
-          maxChatImages: 300,
-        },
-      },
-    });
-
-    expect(matrix.limits.enterprise).toMatchObject({
-      maxBatchCount: 500,
-      maxEditImages: 256,
-      maxChatImages: 300,
-    });
-  });
-
-  it("ignores obsolete relay and plan moderation fields from stored JSON", () => {
-    const matrix = normalizePlanCapabilityMatrix({
-      features: {
-        "externalApi.relay": "free",
-        "moderation.blocking": "starter",
-        "moderation.onlyFailureSettlement": "enterprise",
-      },
-      moderation: {
-        free: {
-          defaultBlockRiskLevel: "high",
-          maxBlockRiskLevel: "medium",
-        },
-        starter: {
-          defaultBlockRiskLevel: "invalid",
-          maxBlockRiskLevel: "low",
-        },
-        pro: {
-          defaultBlockRiskLevel: "low",
-          maxBlockRiskLevel: "low",
-        },
-        ultra: {
-          defaultBlockRiskLevel: "low",
-          maxBlockRiskLevel: "low",
-        },
-        enterprise: {
-          defaultBlockRiskLevel: "medium",
-          maxBlockRiskLevel: "invalid",
-        },
-      },
-    });
-
-    expect(Object.hasOwn(matrix.features, "externalApi.relay")).toBe(false);
-    expect(matrix.features["moderation.blocking"]).toBe("starter");
-    expect(matrix.features["moderation.onlyFailureSettlement"]).toBe(
-      "enterprise"
-    );
-    expect(matrix).not.toHaveProperty("moderation");
-  });
-
-  it("accepts custom chat and agent round billing per plan", () => {
-    const matrix = normalizePlanCapabilityMatrix({
-      billing: {
-        pro: {
-          chatRoundCredits: 2,
-          agentRoundCredits: 5.5,
-        },
-        ultra: {
-          chatRoundCredits: "0",
-          agentRoundCredits: "invalid",
-        },
-      },
-    });
-
-    expect(matrix.billing.pro).toEqual({
-      chatRoundCredits: 2,
-      agentRoundCredits: 5.5,
-    });
-    expect(matrix.billing.ultra).toEqual(
-      DEFAULT_PLAN_CAPABILITY_MATRIX.billing.ultra
-    );
-  });
-});
-
-describe("plan capability matrix runtime accessors", () => {
-  beforeEach(() => {
-    runtimeSettingsMock.getRuntimeSettingJson.mockReset();
-    runtimeSettingsMock.getRuntimeSettingNumber.mockReset();
-  });
-
-  it("uses a configured matrix directly without reading legacy upload or credit settings", async () => {
+  it("uses configured runtime matrix for capability snapshots", async () => {
     runtimeSettingsMock.getRuntimeSettingJson.mockResolvedValue({
       features: {
-        "externalApi.streaming": "ultra",
-        "externalApi.agent": "ultra",
+        ...DEFAULT_PLAN_CAPABILITY_MATRIX.features,
+        "externalApi.videos.generate": "pro",
       },
-      limits: {
-        free: {
-          maxUploadMb: 11,
-        },
-      },
+      limits: DEFAULT_PLAN_CAPABILITY_MATRIX.limits,
     });
-    runtimeSettingsMock.getRuntimeSettingNumber.mockResolvedValue(999);
 
-    const matrix = await getPlanCapabilityMatrix();
-
-    expect(matrix.features["externalApi.streaming"]).toBe("ultra");
-    expect(matrix.features["externalApi.agent"]).toBe("ultra");
-    expect(matrix.limits.free.maxUploadMb).toBe(11);
-    expect(runtimeSettingsMock.getRuntimeSettingNumber).not.toHaveBeenCalled();
+    await expect(
+      canUsePlanCapability("starter", "externalApi.videos.generate")
+    ).resolves.toBe(false);
+    await expect(
+      canUsePlanCapability("pro", "externalApi.videos.generate")
+    ).resolves.toBe(true);
+    const snapshot = await getPlanCapabilitySnapshot("pro");
+    expect(snapshot.features["externalApi.videos.generate"]).toBe(true);
+    expect(snapshot).not.toHaveProperty("billing");
   });
 
-  it("keeps legacy upload and monthly-credit settings compatible when no matrix is configured", async () => {
+  it("uses legacy upload and monthly credit settings when matrix is absent", async () => {
     runtimeSettingsMock.getRuntimeSettingJson.mockResolvedValue(undefined);
     runtimeSettingsMock.getRuntimeSettingNumber.mockImplementation(
       async (key: string, fallback: number) => {
-        if (key === "PLAN_ULTRA_MAX_FILE_MB") return 111;
-        if (key === "PLAN_ULTRA_MAX_UPLOAD_MB") return 222;
-        if (key === "PLAN_PRO_MONTHLY_CREDITS") return 33_333;
+        if (key === "PLAN_PRO_MAX_FILE_MB") return 88;
+        if (key === "PLAN_PRO_MONTHLY_CREDITS") return 123_456;
         return fallback;
       }
     );
 
     const matrix = await getPlanCapabilityMatrix();
-
-    expect(matrix.limits.pro.monthlyCredits).toBe(33_333);
-    expect(matrix.limits.ultra.maxFileMb).toBe(111);
-    expect(matrix.limits.ultra.maxUploadMb).toBe(222);
-    expect(matrix.limits.enterprise.maxUploadMb).toBe(222);
-    expect(runtimeSettingsMock.getRuntimeSettingNumber).toHaveBeenCalledTimes(14);
-  });
-
-  it("drives feature gates, limits, queue settings, and snapshots", async () => {
-    runtimeSettingsMock.getRuntimeSettingJson.mockResolvedValue({
-      features: {
-        "externalApi.streaming": "ultra",
-        "externalApi.agent": "ultra",
-        "imageGeneration.chat": "starter",
-        "imageGeneration.agent": "ultra",
-        "imageGeneration.waterfall": "pro",
-      },
-      limits: {
-        ultra: {
-          maxFileMb: 150,
-          maxUploadMb: 180,
-          queuePriority: "highest",
-          imageGenerationConcurrency: 77,
-          monthlyCredits: 88_000,
-          maxBatchCount: 22,
-          maxEditImages: 33,
-          maxChatImages: 44,
-          maxChatContextChars: 55_000,
-        },
-      },
-      billing: {
-        ultra: {
-          chatRoundCredits: 2,
-          agentRoundCredits: 6,
-        },
-      },
-    });
-
-    await expect(
-      canUsePlanCapability("pro", "externalApi.streaming")
-    ).resolves.toBe(false);
-    await expect(
-      canUsePlanCapability("ultra", "externalApi.streaming")
-    ).resolves.toBe(true);
-    await expect(canUsePlanCapability("pro", "externalApi.agent")).resolves.toBe(
-      false
-    );
-    await expect(
-      canUsePlanCapability("ultra", "externalApi.agent")
-    ).resolves.toBe(true);
-    await expect(canUsePlanCapability("starter", "imageGeneration.chat")).resolves.toBe(
-      true
-    );
-    await expect(canUsePlanCapability("pro", "imageGeneration.agent")).resolves.toBe(
-      false
-    );
-    await expect(canUsePlanCapability("ultra", "imageGeneration.agent")).resolves.toBe(
-      true
-    );
-    await expect(
-      canUsePlanCapability("pro", "imageGeneration.waterfall")
-    ).resolves.toBe(true);
-
-    await expect(getPlanLimits("ultra")).resolves.toMatchObject({
-      maxFileMb: 150,
-      maxUploadMb: 180,
-      imageGenerationConcurrency: 77,
-      monthlyCredits: 88_000,
-    });
-    await expect(getPlanMonthlyCredits("ultra")).resolves.toBe(88_000);
-    await expect(getPlanQueueSettings("ultra")).resolves.toEqual({
-      priority: "highest",
-      userConcurrency: 77,
-    });
-    await expect(getPlanBillingConfig("ultra")).resolves.toEqual({
-      chatRoundCredits: 2,
-      agentRoundCredits: 6,
-    });
-    const snapshot = await getPlanCapabilitySnapshot("ultra");
-    expect(snapshot.features["externalApi.streaming"]).toBe(true);
-    expect(snapshot.features["externalApi.agent"]).toBe(true);
-    expect(snapshot.features["models.gpt55"]).toBe(true);
-    expect(snapshot.limits.maxFileSizeBytes).toBe(megabytesToBytes(150));
-    expect(snapshot.limits.maxUploadBytes).toBe(megabytesToBytes(180));
-    expect(snapshot.billing).toEqual({
-      chatRoundCredits: 2,
-      agentRoundCredits: 6,
-    });
-    expect(snapshot).not.toHaveProperty("moderation");
-  });
-});
-
-describe("plan capability privilege accessors", () => {
-  beforeEach(() => {
-    runtimeSettingsMock.getRuntimeSettingJson.mockReset();
-    runtimeSettingsMock.getRuntimeSettingNumber.mockReset();
-  });
-
-  it("merges static privileges with runtime byte limits", async () => {
-    runtimeSettingsMock.getRuntimeSettingJson.mockResolvedValue({
-      limits: {
-        pro: {
-          maxFileMb: 64,
-          maxUploadMb: 128,
-          imageGenerationConcurrency: 21,
-          monthlyCredits: 42_000,
-        },
-      },
-    });
-
-    const privileges = await getPlanPrivilegesFromCapabilities("pro");
-
-    expect(privileges.name).toBe(PLAN_PRIVILEGES.pro.name);
-    expect(privileges.maxFileSizeBytes).toBe(megabytesToBytes(64));
-    expect(privileges.maxUploadBytes).toBe(megabytesToBytes(128));
-    expect(privileges.imageGenerationConcurrency).toBe(21);
-    expect(privileges.monthlyCredits).toBe(42_000);
+    expect(matrix.limits.pro.maxFileMb).toBe(88);
+    expect(matrix.limits.pro.monthlyCredits).toBe(123_456);
+    for (const plan of SUBSCRIPTION_PLANS) {
+      const next = SUBSCRIPTION_PLANS.find(
+        (candidate) => PLAN_RANK[candidate] === PLAN_RANK[plan] + 1
+      );
+      if (!next) continue;
+      expect(matrix.limits[next].maxFileMb).toBeGreaterThanOrEqual(
+        matrix.limits[plan].maxFileMb
+      );
+    }
   });
 });

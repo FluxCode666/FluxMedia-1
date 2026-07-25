@@ -1,12 +1,12 @@
 /**
  * UOL Operations - External API 领域
  *
- * 职责：注册所有外部 API (v1) 相关操作，包括：
- * - 图像生成/编辑/Agent 图像端点
- * - Chat completions / Responses 端点
- * - 积分查询、任务查询、模型列表（只读端点）
+ * 职责：注册媒体平台保留的外部 API 辅助操作，包括：
+ * - 积分查询、图片任务查询、媒体模型列表（只读端点）
  * - API Key 管理（CRUD、配额、分组）
  * - 管理员 Key 状态设置
+ * 图片与视频生成/编辑统一调用 image.generate、video.generate 与 video.getStatus，
+ * 本域不再注册 Chat、Responses、Agent 或平行媒体生成操作。
  *
  * 使用方：UOL invoke 网关、MCP 适配器、内置 Agent
  * 关键依赖：../registry（defineOperation）、zod（schema 校验）
@@ -16,229 +16,6 @@
 import { z } from "zod";
 
 import { defineOperation } from "../registry";
-
-// ---------------------------------------------------------------------------
-// 1. externalApi.generateImages - /v1/images/generations (apiKey)
-// ---------------------------------------------------------------------------
-export const generateImages = defineOperation({
-  name: "externalApi.generateImages",
-  domain: "external-api",
-  title: "Generate Images",
-  description:
-    "通过 /v1/images/generations 端点生成图像。需要有效 API Key。",
-  input: z.object({
-    model: z.string().describe("图像生成模型标识"),
-    prompt: z.string().describe("图像生成提示词"),
-    n: z.number().int().positive().optional().describe("生成数量"),
-    size: z.string().optional().describe("图像尺寸，如 1024x1024"),
-    quality: z.string().optional().describe("图像质量"),
-    style: z.string().optional().describe("图像风格"),
-    response_format: z
-      .enum(["url", "b64_json"])
-      .optional()
-      .describe("响应格式"),
-  }),
-  output: z.object({
-    created: z.number().describe("创建时间戳"),
-    data: z.array(
-      z.object({
-        url: z.string().optional(),
-        b64_json: z.string().optional(),
-        revised_prompt: z.string().optional(),
-      }),
-    ),
-    taskId: z.string().optional().describe("异步任务 ID"),
-  }),
-  access: { kind: "apiKey" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["billing", "external-call", "storage"],
-  async execute() {
-    throw new Error("Not yet wired: externalApi.generateImages");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 2. externalApi.editImages - /v1/images/edits (apiKey)
-// ---------------------------------------------------------------------------
-export const editImages = defineOperation({
-  name: "externalApi.editImages",
-  domain: "external-api",
-  title: "Edit Images",
-  description:
-    "通过 /v1/images/edits 端点编辑图像。需要有效 API Key。",
-  input: z.object({
-    model: z.string().describe("图像编辑模型标识"),
-    prompt: z.string().describe("编辑指令"),
-    image: z.string().describe("原始图像（base64 或 URL）"),
-    mask: z.string().optional().describe("遮罩图像（base64 或 URL）"),
-    n: z.number().int().positive().optional().describe("生成数量"),
-    size: z.string().optional().describe("输出尺寸"),
-    response_format: z
-      .enum(["url", "b64_json"])
-      .optional()
-      .describe("响应格式"),
-  }),
-  output: z.object({
-    created: z.number().describe("创建时间戳"),
-    data: z.array(
-      z.object({
-        url: z.string().optional(),
-        b64_json: z.string().optional(),
-        revised_prompt: z.string().optional(),
-      }),
-    ),
-    taskId: z.string().optional().describe("异步任务 ID"),
-  }),
-  access: { kind: "apiKey" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["billing", "external-call", "storage"],
-  async execute() {
-    throw new Error("Not yet wired: externalApi.editImages");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 3. externalApi.chatCompletions - /v1/chat/completions (apiKey)
-// ---------------------------------------------------------------------------
-export const chatCompletions = defineOperation({
-  name: "externalApi.chatCompletions",
-  domain: "external-api",
-  title: "Chat Completions",
-  description:
-    "通过 /v1/chat/completions 端点进行对话补全。需要有效 API Key。",
-  input: z.object({
-    model: z.string().describe("模型标识"),
-    messages: z.array(
-      z.object({
-        role: z.enum(["system", "user", "assistant"]),
-        content: z.union([
-          z.string(),
-          z.array(z.record(z.string(), z.unknown())),
-        ]),
-      }),
-    ),
-    temperature: z.number().optional(),
-    max_tokens: z.number().int().positive().optional(),
-    stream: z.boolean().optional(),
-  }),
-  output: z.object({
-    id: z.string(),
-    object: z.string(),
-    created: z.number(),
-    model: z.string(),
-    choices: z.array(z.record(z.string(), z.unknown())),
-    usage: z
-      .object({
-        prompt_tokens: z.number(),
-        completion_tokens: z.number(),
-        total_tokens: z.number(),
-      })
-      .optional(),
-  }),
-  access: { kind: "apiKey" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["billing", "external-call"],
-  async execute() {
-    throw new Error("Not yet wired: externalApi.chatCompletions");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 4. externalApi.responses - /v1/responses (apiKey, Pro+)
-// ---------------------------------------------------------------------------
-export const responses = defineOperation({
-  name: "externalApi.responses",
-  domain: "external-api",
-  title: "Responses",
-  description:
-    "通过 /v1/responses 端点获取模型响应。需要有效 API Key，Pro 及以上套餐。",
-  input: z.object({
-    model: z.string().describe("模型标识"),
-    input: z.union([
-      z.string(),
-      z.array(z.record(z.string(), z.unknown())),
-    ]).describe("输入内容"),
-    instructions: z.string().optional().describe("系统指令"),
-    temperature: z.number().optional(),
-    max_output_tokens: z.number().int().positive().optional(),
-    stream: z.boolean().optional(),
-  }),
-  output: z.object({
-    id: z.string(),
-    object: z.string(),
-    created_at: z.number(),
-    model: z.string(),
-    output: z.array(z.record(z.string(), z.unknown())),
-    usage: z
-      .object({
-        input_tokens: z.number(),
-        output_tokens: z.number(),
-        total_tokens: z.number(),
-      })
-      .optional(),
-  }),
-  access: { kind: "apiKey", planCapability: "pro" },
-  capabilities: [{ capability: "pro" }],
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["billing", "external-call"],
-  async execute() {
-    throw new Error("Not yet wired: externalApi.responses");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 5. externalApi.agentImages - /v1/agents/images (apiKey, Ultra+)
-// ---------------------------------------------------------------------------
-export const agentImages = defineOperation({
-  name: "externalApi.agentImages",
-  domain: "external-api",
-  title: "Agent Images",
-  description:
-    "通过 /v1/agents/images 端点进行 Agent 图像生成。需要有效 API Key，Ultra 及以上套餐。",
-  input: z.object({
-    model: z.string().describe("图像生成模型标识"),
-    prompt: z.string().describe("图像生成提示词"),
-    agent_config: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe("Agent 配置参数"),
-    n: z.number().int().positive().optional().describe("生成数量"),
-    size: z.string().optional().describe("图像尺寸"),
-    quality: z.string().optional().describe("图像质量"),
-    response_format: z
-      .enum(["url", "b64_json"])
-      .optional()
-      .describe("响应格式"),
-  }),
-  output: z.object({
-    created: z.number().describe("创建时间戳"),
-    data: z.array(
-      z.object({
-        url: z.string().optional(),
-        b64_json: z.string().optional(),
-        revised_prompt: z.string().optional(),
-      }),
-    ),
-    taskId: z.string().optional().describe("异步任务 ID"),
-  }),
-  access: { kind: "apiKey", planCapability: "ultra" },
-  capabilities: [{ capability: "ultra" }],
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["billing", "external-call", "storage"],
-  async execute() {
-    throw new Error("Not yet wired: externalApi.agentImages");
-  },
-});
 
 // ---------------------------------------------------------------------------
 // 6. externalApi.getCredits - /v1/credits (apiKey, read)
@@ -310,8 +87,7 @@ export const getModels = defineOperation({
   name: "externalApi.getModels",
   domain: "external-api",
   title: "Get Models",
-  description:
-    "通过 /v1/models 端点获取可用模型列表。只读操作。",
+  description: "通过 /v1/models 端点获取可用模型列表。只读操作。",
   input: z.object({}),
   output: z.object({
     object: z.literal("list"),
@@ -321,7 +97,7 @@ export const getModels = defineOperation({
         object: z.literal("model"),
         created: z.number(),
         owned_by: z.string(),
-      }),
+      })
     ),
   }),
   access: { kind: "apiKey" },
@@ -555,9 +331,7 @@ export const adminSetKeyStatus = defineOperation({
     "管理员设置外部 API Key 状态（启用/禁用/撤销）。需要管理员权限。",
   input: z.object({
     keyId: z.string().describe("Key ID"),
-    status: z
-      .enum(["active", "disabled", "revoked"])
-      .describe("目标状态"),
+    status: z.enum(["active", "disabled", "revoked"]).describe("目标状态"),
     reason: z.string().optional().describe("状态变更原因"),
   }),
   output: z.object({

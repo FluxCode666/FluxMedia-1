@@ -23,7 +23,7 @@ import {
   getPlanCapabilityMatrix,
   getPlanCapabilitySnapshot,
   getPlanLimits,
-  type PlanCapabilityKey,
+  PLAN_CAPABILITY_KEYS,
 } from "../../subscription/services/plan-capabilities";
 import {
   checkFileSizePrivilege,
@@ -87,8 +87,7 @@ defineOperation({
   name: "subscription.getUpgradeQuote",
   domain: "subscription",
   title: "Get Upgrade Quote",
-  description:
-    "获取升级订阅的报价信息（按比例计算差价/剩余天数抵扣等）",
+  description: "获取升级订阅的报价信息（按比例计算差价/剩余天数抵扣等）",
   access: { kind: "protected" },
   input: z.object({
     targetPriceId: z.string().describe("目标升级套餐的价格 ID"),
@@ -108,9 +107,7 @@ defineOperation({
   sideEffects: [],
   // Bound at app level - see apps/web/src/server/uol-bindings.ts
   execute: async () => {
-    throw new Error(
-      "subscription.getUpgradeQuote must be bound at app level",
-    );
+    throw new Error("subscription.getUpgradeQuote must be bound at app level");
   },
 });
 
@@ -144,9 +141,7 @@ defineOperation({
   sideEffects: ["external-call"],
   // Bound at app level - see apps/web/src/server/uol-bindings.ts
   execute: async () => {
-    throw new Error(
-      "subscription.cancel must be bound at app level",
-    );
+    throw new Error("subscription.cancel must be bound at app level");
   },
 });
 
@@ -172,9 +167,7 @@ defineOperation({
   sideEffects: ["external-call"],
   // Bound at app level - see apps/web/src/server/uol-bindings.ts
   execute: async () => {
-    throw new Error(
-      "subscription.getPortal must be bound at app level",
-    );
+    throw new Error("subscription.getPortal must be bound at app level");
   },
 });
 
@@ -192,7 +185,9 @@ defineOperation({
     userId: z.string().describe("目标用户 ID"),
   }),
   output: z.object({
-    plan: z.string().describe("计划类型: free | starter | pro | ultra | enterprise"),
+    plan: z
+      .string()
+      .describe("计划类型: free | starter | pro | ultra | enterprise"),
     planName: z.string().describe("计划显示名称"),
     hasActiveSubscription: z.boolean(),
     subscriptionStatus: z.string().nullable(),
@@ -256,8 +251,7 @@ defineOperation({
   name: "subscription.getMyPlan",
   domain: "subscription",
   title: "Get My Plan",
-  description:
-    "获取当前用户的订阅计划及能力快照（plan + capabilities）",
+  description: "获取当前用户的订阅计划及能力快照（plan + capabilities）",
   access: { kind: "protected" },
   input: z.object({}),
   output: z.object({
@@ -305,7 +299,9 @@ defineOperation({
     userId: z.string().describe("目标用户 ID"),
   }),
   output: z.object({
-    plan: z.string().describe("计划类型: free | starter | pro | ultra | enterprise"),
+    plan: z
+      .string()
+      .describe("计划类型: free | starter | pro | ultra | enterprise"),
   }),
   readOnly: true,
   destructive: false,
@@ -343,7 +339,7 @@ defineOperation({
   execute: async (input) => {
     const result = await checkFileSizePrivilege(
       input.userId,
-      input.fileSizeBytes,
+      input.fileSizeBytes
     );
     return {
       allowed: result.allowed,
@@ -361,7 +357,7 @@ defineOperation({
   name: "subscription.getCapabilitySnapshot",
   domain: "subscription",
   title: "Get Capability Snapshot",
-  description: "获取指定计划的完整能力快照（features/limits/billing）",
+  description: "获取指定计划的完整媒体能力快照（features/limits）",
   access: { kind: "protected" },
   input: z.object({
     plan: z
@@ -382,16 +378,8 @@ defineOperation({
         monthlyCredits: z.number(),
         maxBatchCount: z.number(),
         maxEditImages: z.number(),
-        maxChatImages: z.number(),
-        maxChatContextChars: z.number(),
       })
       .describe("计划限制"),
-    billing: z
-      .object({
-        chatRoundCredits: z.number(),
-        agentRoundCredits: z.number(),
-      })
-      .describe("计费配置"),
   }),
   readOnly: true,
   destructive: false,
@@ -399,7 +387,7 @@ defineOperation({
   sideEffects: [],
   execute: async (input) => {
     const snapshot = await getPlanCapabilitySnapshot(
-      input.plan as SubscriptionPlan,
+      input.plan as SubscriptionPlan
     );
     return {
       plan: snapshot.plan,
@@ -410,17 +398,10 @@ defineOperation({
         maxFileSizeBytes: snapshot.limits.maxFileSizeBytes,
         maxUploadBytes: snapshot.limits.maxUploadBytes,
         queuePriority: snapshot.limits.queuePriority,
-        imageGenerationConcurrency:
-          snapshot.limits.imageGenerationConcurrency,
+        imageGenerationConcurrency: snapshot.limits.imageGenerationConcurrency,
         monthlyCredits: snapshot.limits.monthlyCredits,
         maxBatchCount: snapshot.limits.maxBatchCount,
         maxEditImages: snapshot.limits.maxEditImages,
-        maxChatImages: snapshot.limits.maxChatImages,
-        maxChatContextChars: snapshot.limits.maxChatContextChars,
-      },
-      billing: {
-        chatRoundCredits: snapshot.billing.chatRoundCredits,
-        agentRoundCredits: snapshot.billing.agentRoundCredits,
       },
     };
   },
@@ -440,14 +421,13 @@ defineOperation({
     plan: z
       .enum(["free", "starter", "pro", "ultra", "enterprise"])
       .describe("用户计划"),
-    capability: z.string().describe("能力位键名（如 imageGeneration.chat）"),
+    capability: z
+      .enum(PLAN_CAPABILITY_KEYS)
+      .describe("媒体平台能力位键名（如 imageGeneration.video）"),
   }),
   output: z.object({
     allowed: z.boolean().describe("是否允许使用该能力"),
-    requiredPlan: z
-      .string()
-      .optional()
-      .describe("如不允许，所需最低计划"),
+    requiredPlan: z.string().optional().describe("如不允许，所需最低计划"),
   }),
   readOnly: true,
   destructive: false,
@@ -456,15 +436,14 @@ defineOperation({
   execute: async (input) => {
     const allowed = await canUsePlanCapability(
       input.plan as SubscriptionPlan,
-      input.capability as PlanCapabilityKey,
+      input.capability
     );
     if (allowed) {
       return { allowed: true };
     }
     // 查找所需最低计划：从能力矩阵获取该能力位要求的最低 plan
     const matrix = await getPlanCapabilityMatrix();
-    const requiredPlan =
-      matrix.features[input.capability as PlanCapabilityKey];
+    const requiredPlan = matrix.features[input.capability];
     return {
       allowed: false,
       requiredPlan: requiredPlan ?? undefined,
@@ -495,28 +474,21 @@ defineOperation({
     monthlyCredits: z.number(),
     maxBatchCount: z.number(),
     maxEditImages: z.number(),
-    maxChatImages: z.number(),
-    maxChatContextChars: z.number(),
   }),
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
   sideEffects: [],
   execute: async (input) => {
-    const limits = await getPlanLimits(
-      input.plan as SubscriptionPlan,
-    );
+    const limits = await getPlanLimits(input.plan as SubscriptionPlan);
     return {
       maxFileMb: limits.maxFileMb,
       maxUploadMb: limits.maxUploadMb,
       queuePriority: limits.queuePriority,
-      imageGenerationConcurrency:
-        limits.imageGenerationConcurrency,
+      imageGenerationConcurrency: limits.imageGenerationConcurrency,
       monthlyCredits: limits.monthlyCredits,
       maxBatchCount: limits.maxBatchCount,
       maxEditImages: limits.maxEditImages,
-      maxChatImages: limits.maxChatImages,
-      maxChatContextChars: limits.maxChatContextChars,
     };
   },
 });
@@ -529,8 +501,7 @@ defineOperation({
   name: "subscription.webhookCreem",
   domain: "subscription",
   title: "Handle Creem Webhook",
-  description:
-    "处理 Creem 支付平台的 Webhook 回调（签名验证 + 订阅状态同步）",
+  description: "处理 Creem 支付平台的 Webhook 回调（签名验证 + 订阅状态同步）",
   access: { kind: "webhook", provider: "creem" },
   input: z.object({
     headers: z.record(z.string(), z.string()).describe("请求头（含签名）"),
@@ -546,9 +517,7 @@ defineOperation({
   sideEffects: ["billing"],
   // Bound at app level - see apps/web/src/server/uol-bindings.ts
   execute: async () => {
-    throw new Error(
-      "subscription.webhookCreem must be bound at app level",
-    );
+    throw new Error("subscription.webhookCreem must be bound at app level");
   },
 });
 
@@ -560,8 +529,7 @@ defineOperation({
   name: "subscription.webhookEpay",
   domain: "subscription",
   title: "Handle Epay Webhook",
-  description:
-    "处理易支付（Epay）的异步通知回调（签名验证 + 订单状态同步）",
+  description: "处理易支付（Epay）的异步通知回调（签名验证 + 订单状态同步）",
   access: { kind: "webhook", provider: "epay" },
   input: z.object({
     params: z.record(z.string(), z.string()).describe("通知参数（含签名字段）"),
@@ -577,9 +545,7 @@ defineOperation({
   sideEffects: ["billing"],
   // Bound at app level - see apps/web/src/server/uol-bindings.ts
   execute: async () => {
-    throw new Error(
-      "subscription.webhookEpay must be bound at app level",
-    );
+    throw new Error("subscription.webhookEpay must be bound at app level");
   },
 });
 
@@ -591,8 +557,7 @@ defineOperation({
   name: "subscription.fulfillEpay",
   domain: "subscription",
   title: "Fulfill Epay Payment",
-  description:
-    "履约已成功的 Epay 支付订单（激活订阅/发放积分等）",
+  description: "履约已成功的 Epay 支付订单（激活订阅/发放积分等）",
   access: { kind: "system" },
   input: z.object({
     outTradeNo: z.string().describe("商户订单号"),
@@ -613,8 +578,6 @@ defineOperation({
   sideEffects: ["billing"],
   // Bound at app level - see apps/web/src/server/uol-bindings.ts
   execute: async () => {
-    throw new Error(
-      "subscription.fulfillEpay must be bound at app level",
-    );
+    throw new Error("subscription.fulfillEpay must be bound at app level");
   },
 });

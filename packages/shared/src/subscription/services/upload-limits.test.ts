@@ -28,8 +28,6 @@ const limitsFor = (maxFileMb: number, maxUploadMb: number) => ({
   monthlyCredits: 1,
   maxBatchCount: 1,
   maxEditImages: 1,
-  maxChatImages: 1,
-  maxChatContextChars: 1,
 });
 
 describe("getPlanUploadLimits", () => {

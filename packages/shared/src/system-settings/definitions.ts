@@ -124,6 +124,7 @@ export type SettingKey =
   | "CHATGPT_WEB_PROXY_SECRET"
   | "CHATGPT_WEB_ACCOUNT_REFRESH_STALE_MINUTES"
   | "CHATGPT_WEB_ACCOUNT_REFRESH_LIMIT"
+  | "IMAGE_BACKEND_SCHEDULING_STRATEGY"
   | "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_RATE_LIMIT_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_TOOL_RATE_LIMIT_COOLDOWN_MINUTES"
@@ -235,22 +236,18 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
   features: {
     "imageGeneration.text": "free",
     "imageGeneration.edit": "free",
-    "imageGeneration.chat": "pro",
-    "imageGeneration.agent": "pro",
-    "imageGeneration.waterfall": "pro",
+    "imageGeneration.mask": "free",
+    "imageGeneration.video": "free",
     "imageGeneration.batch": "free",
-    "export.ppt": "free",
-    "export.psd": "free",
     "promptOptimization.control": "pro",
-    "models.gpt55": "ultra",
     "backendGroups.select": "free",
     "externalApi.keys.manage": "starter",
     "externalApi.models.list": "starter",
-    "externalApi.chat.completions": "starter",
     "externalApi.images.generate": "starter",
     "externalApi.images.edit": "starter",
-    "externalApi.responses": "pro",
-    "externalApi.agent": "ultra",
+    "externalApi.images.mask": "starter",
+    "externalApi.images.batch": "starter",
+    "externalApi.videos.generate": "starter",
     "externalApi.streaming": "starter",
     "moderation.blocking": "free",
     "moderation.onlyFailureSettlement": "ultra",
@@ -264,8 +261,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       monthlyCredits: 100,
       maxBatchCount: 10,
       maxEditImages: 16,
-      maxChatImages: 16,
-      maxChatContextChars: 30000,
     },
     starter: {
       maxFileMb: 20,
@@ -275,8 +270,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       monthlyCredits: 5000,
       maxBatchCount: 10,
       maxEditImages: 16,
-      maxChatImages: 16,
-      maxChatContextChars: 30000,
     },
     pro: {
       maxFileMb: 50,
@@ -286,8 +279,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       monthlyCredits: 20000,
       maxBatchCount: 10,
       maxEditImages: 16,
-      maxChatImages: 16,
-      maxChatContextChars: 30000,
     },
     ultra: {
       maxFileMb: 100,
@@ -297,8 +288,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       monthlyCredits: 80000,
       maxBatchCount: 10,
       maxEditImages: 16,
-      maxChatImages: 16,
-      maxChatContextChars: 30000,
     },
     enterprise: {
       maxFileMb: 200,
@@ -308,30 +297,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       monthlyCredits: 320000,
       maxBatchCount: 10,
       maxEditImages: 16,
-      maxChatImages: 16,
-      maxChatContextChars: 30000,
-    },
-  },
-  billing: {
-    free: {
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
-    },
-    starter: {
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
-    },
-    pro: {
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
-    },
-    ultra: {
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
-    },
-    enterprise: {
-      chatRoundCredits: 1,
-      agentRoundCredits: 3,
     },
   },
 };
@@ -675,7 +640,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "PLAN_CAPABILITY_MATRIX",
     label: "套餐能力矩阵",
     description:
-      "统一控制套餐功能门槛、积分配额、上传限制、批量数量、并发、队列优先级和 Chat/Agent 每轮计费。后台以矩阵表格编辑，保存后仍写入同一个 JSON 配置。功能门槛按最低套餐生效，高级套餐自动包含低级套餐能力。留空时使用代码默认矩阵，并兼容旧上传/月积分配置。",
+      "统一控制图片、视频与外部媒体 API 的套餐门槛，以及积分配额、上传限制、批量数量、并发和队列优先级。后台以矩阵表格编辑，保存后仍写入同一个 JSON 配置。功能门槛按最低套餐生效，高级套餐自动包含低级套餐能力。留空时使用代码默认矩阵，并兼容旧上传/月积分配置。",
     category: "plans",
     valueType: "json",
     exampleValue: PLAN_CAPABILITY_MATRIX_EXAMPLE,
@@ -1115,6 +1080,20 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "models",
     valueType: "number",
     defaultValue: 20,
+  },
+  {
+    key: "IMAGE_BACKEND_SCHEDULING_STRATEGY",
+    label: "媒体后端调度策略",
+    description:
+      "控制统一号池的新获租请求排序。切换后无需重启；缺失或非法值安全回退为按优先级。",
+    category: "models",
+    valueType: "select",
+    options: [
+      { label: "按优先级", value: "priority" },
+      { label: "按最少调用", value: "least_acquired" },
+      { label: "按最小负载", value: "least_load" },
+    ],
+    defaultValue: "priority",
   },
   {
     key: "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES",

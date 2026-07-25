@@ -446,10 +446,9 @@ describe("system setting default initialization", () => {
         version: 1,
         features: {
           ...DEFAULT_PLAN_CAPABILITY_MATRIX.features,
-          "imageGeneration.chat": "starter",
+          "imageGeneration.video": "starter",
         },
         limits: DEFAULT_PLAN_CAPABILITY_MATRIX.limits,
-        billing: DEFAULT_PLAN_CAPABILITY_MATRIX.billing,
       },
     });
 
@@ -462,7 +461,7 @@ describe("system setting default initialization", () => {
       (
         store.get("PLAN_CAPABILITY_MATRIX")
           ?.value as typeof DEFAULT_PLAN_CAPABILITY_MATRIX
-      ).features["imageGeneration.chat"]
+      ).features["imageGeneration.video"]
     ).toBe("starter");
   });
 

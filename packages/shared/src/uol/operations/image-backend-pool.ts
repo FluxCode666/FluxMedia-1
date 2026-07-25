@@ -1,37 +1,117 @@
 /**
- * UOL 操作注册 - image-backend-pool 域
+ * UOL 操作注册 - 统一媒体后端号池。
  *
- * 职责：注册图像后端池管理相关的所有操作定义（组/账号/API/Sub2API 同步/CRON 等）。
- * 使用方：UOL 注册表（进程启动时自动注册）、invokeOperation 网关。
- * 关键依赖：../registry（defineOperation）、zod（schema）。
- *
- * execute 函数默认是 stub；已接线操作会在 apps/web 的 uol-bindings.ts 启动时替换。
+ * 职责：只暴露分组、统一成员、Adobe direct 子账号和 API Images 参数模板四类能力。
+ * Web/Codex 账号、Sub2API、注册机、旧 API/Adobe 双模型和定时同步均不属于现行契约。
+ * 真实实现由 apps/web 的 UOL binding 注入。
  */
 import { z } from "zod";
 
-import { adobeEnabledModelIdsSchema } from "../../adobe/enabled-models";
 import { videoModelCreditsPerSecondMapSchema } from "../../adobe/video-pricing";
 import { imageCreditOverridesSchema } from "../../image-backend/group-image-pricing";
+import { backendMemberInputSchema } from "../../image-backend/member-contract";
 import { requestParameterMappingsSchema } from "../../image-backend/request-parameter-mapping";
-import { supportedModelIdsSchema } from "../../image-backend/supported-models";
 import { defineOperation } from "../registry";
+import type { AccessRequirement } from "../types";
 
-// ---------------------------------------------------------------------------
-// 3. pool.getGroupOptions - 获取后端组选项列表
-// ---------------------------------------------------------------------------
+const poolWriteAccess: AccessRequirement = {
+  kind: "roles",
+  roles: ["admin", "super_admin"],
+};
+
+/** 统一分组保存输入；分组不再按 Web/Responses 类型预分流。 */
+export const backendGroupInputSchema = z
+  .object({
+    id: z.string().trim().min(1).max(128).optional(),
+    name: z.string().trim().min(1).max(80),
+    description: z.string().trim().max(500).optional(),
+    isEnabled: z.boolean(),
+    isDefault: z.boolean(),
+    isUserSelectable: z.boolean(),
+    contentSafety: z.enum(["inherit", "enabled", "disabled"]),
+    minPlan: z.enum(["free", "starter", "pro", "ultra", "enterprise"]),
+    imageCreditOverrides: imageCreditOverridesSchema,
+    videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
+    childGroupIds: z.array(z.string().trim().min(1).max(128)).max(100),
+    priority: z.number().int().min(0).max(10_000),
+  })
+  .strict();
+
+const backendGroupSummarySchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string().nullable(),
+    isEnabled: z.boolean(),
+    isDefault: z.boolean(),
+    isUserSelectable: z.boolean(),
+    contentSafety: z.enum(["inherit", "enabled", "disabled"]),
+    minPlan: z.enum(["free", "starter", "pro", "ultra", "enterprise"]),
+    priority: z.number().int(),
+  })
+  .strict();
+
+const redactedApiConfigSchema = z
+  .object({
+    baseUrl: z.string().url(),
+    hasApiKey: z.boolean(),
+    parameterMappings: requestParameterMappingsSchema,
+  })
+  .strict();
+
+const redactedAdobeConfigSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("gateway"),
+      baseUrl: z.string().url(),
+      hasApiKey: z.boolean(),
+      defaultRatio: z.string(),
+      defaultResolution: z.string(),
+      gptImageQuality: z.enum(["low", "medium", "high"]),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("direct"),
+      defaultRatio: z.string(),
+      defaultResolution: z.string(),
+      gptImageQuality: z.enum(["low", "medium", "high"]),
+    })
+    .strict(),
+]);
+
+const backendMemberSummarySchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    type: z.enum(["api", "adobe"]),
+    groupIds: z.array(z.string()),
+    supportedModelIds: z.array(z.string()).min(1),
+    contentSafetyEnabled: z.boolean(),
+    isEnabled: z.boolean(),
+    alwaysActive: z.boolean(),
+    failureCooldownEnabled: z.boolean(),
+    priority: z.number().int(),
+    concurrency: z.number().int().positive(),
+    status: z.string(),
+    healthStatus: z.string(),
+    inflightCount: z.number().int().nonnegative(),
+    leaseAcquiredCount: z.number().int().nonnegative(),
+    lastAcquiredAt: z.string().nullable(),
+    lastUsedAt: z.string().nullable(),
+    config: z.union([redactedApiConfigSchema, redactedAdobeConfigSchema]),
+  })
+  .strict();
+
+/** 获取用户或表单可选择的统一后端分组。 */
 export const getGroupOptions = defineOperation({
   name: "pool.getGroupOptions",
   domain: "image-backend-pool",
-  title: "获取后端组选项",
-  description: "获取图像后端组选项列表（用于表单选择器等场景）。",
-  input: z.object({}),
+  title: "获取媒体后端组选项",
+  description: "获取可选择的媒体后端分组，不暴露成员凭据。",
+  input: z.object({}).strict(),
   output: z.object({
-    options: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-      })
-    ),
+    options: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
   }),
   access: { kind: "protected" },
   readOnly: true,
@@ -43,18 +123,19 @@ export const getGroupOptions = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 4. pool.getAdminPool - 管理后台获取池总览
-// ---------------------------------------------------------------------------
+/** 获取统一号池管理快照；所有 secret 仅返回存在性标记。 */
 export const getAdminPool = defineOperation({
   name: "pool.getAdminPool",
   domain: "image-backend-pool",
-  title: "获取管理后台池总览",
-  description:
-    "获取图像后端池管理总览数据（组、账号、API 及状态统计），" +
-    "供管理后台池管理页面使用。",
-  input: z.object({}),
-  output: z.record(z.string(), z.unknown()),
+  title: "获取统一媒体后端号池",
+  description: "读取分组、统一成员和调度指标的脱敏管理快照。",
+  input: z.object({}).strict(),
+  output: z
+    .object({
+      groups: z.array(backendGroupSummarySchema),
+      members: z.array(backendMemberSummarySchema),
+    })
+    .strict(),
   access: { kind: "imageBackendPoolViewer" },
   readOnly: true,
   destructive: false,
@@ -65,34 +146,15 @@ export const getAdminPool = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 5. pool.saveGroup - 保存（新建/更新）后端组
-// ---------------------------------------------------------------------------
+/** 新建或更新统一媒体后端分组。 */
 export const saveGroup = defineOperation({
   name: "pool.saveGroup",
   domain: "image-backend-pool",
-  title: "保存后端组",
-  description:
-    "新建或更新图像后端组（含子组、图像模型固定价格覆盖与默认组互斥逻辑）。",
-  input: z.object({
-    id: z.string().trim().min(1).optional(),
-    name: z.string().trim().min(1).max(80),
-    description: z.string().trim().max(500).optional(),
-    isEnabled: z.boolean(),
-    isDefault: z.boolean(),
-    isUserSelectable: z.boolean(),
-    contentSafety: z.enum(["inherit", "enabled", "disabled"]),
-    backendType: z.enum(["mixed", "web", "responses"]),
-    minPlan: z.enum(["free", "starter", "pro", "ultra", "enterprise"]),
-    imageCreditOverrides: imageCreditOverridesSchema,
-    videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
-    childGroupIds: z.array(z.string().trim().min(1)).max(100),
-    priority: z.number().int().min(0).max(10_000),
-  }),
-  output: z.object({
-    id: z.string(),
-  }),
-  access: { kind: "admin" },
+  title: "保存媒体后端分组",
+  description: "保存统一分组、套餐门槛、内容安全和媒体积分覆盖。",
+  input: backendGroupInputSchema,
+  output: z.object({ id: z.string() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: false,
   idempotency: { kind: "none" },
@@ -102,21 +164,15 @@ export const saveGroup = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 6. pool.deleteGroup - 删除后端组
-// ---------------------------------------------------------------------------
+/** 删除空分组并解除其关系；成员本身不随分组删除。 */
 export const deleteGroup = defineOperation({
   name: "pool.deleteGroup",
   domain: "image-backend-pool",
-  title: "删除后端组",
-  description: "删除指定图像后端组并解绑其下成员。",
-  input: z.object({
-    id: z.string(),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "admin" },
+  title: "删除媒体后端分组",
+  description: "删除指定分组；默认分组或仍被任务使用时由实现层拒绝。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: true,
   idempotency: { kind: "natural" },
@@ -126,103 +182,33 @@ export const deleteGroup = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 7. pool.saveAccount - 保存（新建/更新）后端账号
-// ---------------------------------------------------------------------------
-export const saveAccount = defineOperation({
-  name: "pool.saveAccount",
+/** 以 `api | adobe` 单一入口新建或更新媒体后端成员。 */
+export const saveMember = defineOperation({
+  name: "pool.saveMember",
   domain: "image-backend-pool",
-  title: "保存后端账号",
-  description:
-    "新建或更新图像后端账号（含 OAuth RT 换 AT 外呼、hash 去重）。" +
-    "拒绝修改 Sub2API 托管的 RT。",
-  input: z.object({
-    id: z.string().optional(),
-    groupId: z.string().nullable().optional(),
-    accountType: z.string(),
-    refreshToken: z.string().optional(),
-    accessToken: z.string().optional(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
-  }),
-  output: z.object({
-    id: z.string(),
-  }),
-  access: { kind: "admin" },
+  title: "保存媒体后端成员",
+  description: "按互斥成员类型保存公共调度字段、显式模型能力和类型专属配置。",
+  input: backendMemberInputSchema,
+  output: z.object({ id: z.string() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: false,
   idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.saveAccount");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 8. pool.bulkUpdateAccounts - 批量更新后端账号
-// ---------------------------------------------------------------------------
-export const bulkUpdateAccounts = defineOperation({
-  name: "pool.bulkUpdateAccounts",
-  domain: "image-backend-pool",
-  title: "批量更新后端账号",
-  description: "批量更新图像后端账号属性（含 resetAvailability 清除冷却）。",
-  input: z.object({
-    ids: z.array(z.string()),
-    updates: z.record(z.string(), z.unknown()),
-    resetAvailability: z.boolean().optional(),
-  }),
-  output: z.object({
-    updatedCount: z.number(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
   sideEffects: ["audit"],
   execute: async () => {
-    throw new Error("Not yet wired: pool.bulkUpdateAccounts");
+    throw new Error("Not yet wired: pool.saveMember");
   },
 });
 
-// ---------------------------------------------------------------------------
-// 9. pool.bulkDeleteAccounts - 批量删除后端账号
-// ---------------------------------------------------------------------------
-export const bulkDeleteAccounts = defineOperation({
-  name: "pool.bulkDeleteAccounts",
-  domain: "image-backend-pool",
-  title: "批量删除后端账号",
-  description: "分批删除指定的图像后端账号。",
-  input: z.object({
-    ids: z.array(z.string()),
-  }),
-  output: z.object({
-    deletedCount: z.number(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.bulkDeleteAccounts");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 10. pool.deleteMember - 删除单个后端成员（账号或 API）
-// ---------------------------------------------------------------------------
+/** 删除统一成员；有效租约或非终态视频任务存在时实现层必须拒绝。 */
 export const deleteMember = defineOperation({
   name: "pool.deleteMember",
   domain: "image-backend-pool",
-  title: "删除后端成员",
-  description: "删除单个图像后端成员（账号或第三方 API）。",
-  input: z.object({
-    id: z.string(),
-    memberType: z.enum(["account", "api"]),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "admin" },
+  title: "删除媒体后端成员",
+  description: "只按统一成员 ID 删除；不可由客户端再传成员类型决定表。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: true,
   idempotency: { kind: "natural" },
@@ -232,114 +218,122 @@ export const deleteMember = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 11. pool.saveApi - 保存（新建/更新）第三方 API
-// ---------------------------------------------------------------------------
-export const saveApi = defineOperation({
-  name: "pool.saveApi",
-  domain: "image-backend-pool",
-  title: "保存第三方 API",
-  description: "新建或更新图像后端第三方 API 配置（新建时 apiKey 必填）。",
-  input: z.object({
-    id: z.string().optional(),
-    groupId: z.string().nullable().optional(),
-    groupIds: z.array(z.string()).optional(),
-    name: z.string().min(1),
-    baseUrl: z.string().url(),
-    apiKey: z.string().optional(),
-    model: z.string().optional(),
-    supportedModelIds: supportedModelIdsSchema.optional(),
-    interfaceMode: z.enum(["images", "responses", "mixed"]),
-    chatCompletionsUpstreamMode: z.enum(["responses", "chat_completions"]),
-    imagesUpstreamMode: z.enum(["images", "responses"]),
-    parameterMappings: requestParameterMappingsSchema,
-    useStream: z.boolean(),
-    contentSafetyEnabled: z.boolean(),
-    isEnabled: z.boolean(),
-    alwaysActive: z.boolean(),
-    failureCooldownEnabled: z.boolean(),
-    priority: z.number().int().min(0).max(10000),
-    concurrency: z.number().int().min(1).max(10000),
-    adobeSourced: z.boolean(),
-    status: z.string().min(1).max(80),
-  }),
-  output: z.object({
+const adobeAccountSummarySchema = z
+  .object({
     id: z.string(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
+    name: z.string().nullable(),
+    displayName: z.string().nullable(),
+    email: z.string().nullable(),
+    isEnabled: z.boolean(),
+    status: z.string(),
+    lastRefreshAt: z.string().nullable(),
+    lastRefreshError: z.string().nullable(),
+    consecutiveFailures: z.number().int().nonnegative(),
+    creditsTotal: z.number().nullable(),
+    creditsUsed: z.number().nullable(),
+    creditsAvailable: z.number().nullable(),
+  })
+  .strict();
+
+/** 列出 Adobe direct 成员内部账号，不返回 cookie 或 token。 */
+export const listAdobeAccounts = defineOperation({
+  name: "pool.listAdobeAccounts",
+  domain: "image-backend-pool",
+  title: "列出 Adobe direct 账号",
+  description: "读取指定 Adobe direct 成员的脱敏账号与额度状态。",
+  input: z.object({ memberId: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ accounts: z.array(adobeAccountSummarySchema) }).strict(),
+  access: { kind: "imageBackendPoolViewer" },
+  readOnly: true,
   destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["audit"],
+  idempotency: { kind: "natural" },
+  sideEffects: [],
   execute: async () => {
-    throw new Error("Not yet wired: pool.saveApi");
+    throw new Error("Not yet wired: pool.listAdobeAccounts");
   },
 });
 
-// ---------------------------------------------------------------------------
-// 12. pool.saveAdobe - 保存 Adobe 后端及其开放图像模型白名单
-// ---------------------------------------------------------------------------
-export const saveAdobe = defineOperation({
-  name: "pool.saveAdobe",
+/** 导入一个 Adobe Cookie，并由实现层换取和保存短期 token。 */
+export const importAdobeAccount = defineOperation({
+  name: "pool.importAdobeAccount",
   domain: "image-backend-pool",
-  title: "保存 Adobe 后端",
+  title: "导入 Adobe direct 账号",
   description:
-    "新建或更新 Adobe Firefly 后端；保存开放图像模型白名单、视频能力与调度配置。",
+    "向 Adobe direct 成员导入一个 Cookie；凭据不得出现在输出或日志。",
   input: z
     .object({
-      id: z.string().optional(),
-      groupId: z.string().nullable().optional(),
-      groupIds: z.array(z.string()).max(100).optional(),
-      name: z.string().trim().min(1).max(120),
-      mode: z.enum(["gateway", "direct"]),
-      baseUrl: z.string().trim(),
-      apiKey: z.string().trim().optional(),
-      enabledModels: adobeEnabledModelIdsSchema.optional(),
-      defaultRatio: z.string().trim().min(1).max(20),
-      defaultResolution: z.string().trim().min(1).max(10),
-      gptImageQuality: z.enum(["low", "medium", "high"]),
-      supportsVideo: z.boolean(),
-      contentSafetyEnabled: z.boolean(),
-      isEnabled: z.boolean(),
-      alwaysActive: z.boolean(),
-      failureCooldownEnabled: z.boolean(),
-      priority: z.number().int().min(0).max(10000),
-      concurrency: z.number().int().min(1).max(10000),
-      status: z.string().trim().min(1).max(80),
+      memberId: z.string().trim().min(1).max(128),
+      cookie: z.string().trim().min(1).max(64_000),
+      name: z.string().trim().min(1).max(120).optional(),
     })
-    .refine(
-      (value) => value.mode === "direct" || /^https?:\/\//i.test(value.baseUrl),
-      { message: "baseUrl must be a valid URL", path: ["baseUrl"] }
-    ),
-  output: z.object({ id: z.string() }),
-  access: { kind: "admin" },
+    .strict(),
+  output: z.object({ id: z.string() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: false,
   idempotency: { kind: "none" },
-  sideEffects: ["audit"],
+  sideEffects: ["external-call", "audit"],
   execute: async () => {
-    throw new Error("Not yet wired: pool.saveAdobe");
+    throw new Error("Not yet wired: pool.importAdobeAccount");
   },
 });
 
-// ---------------------------------------------------------------------------
-// 13. pool.listParameterMappingTemplates - 列出 API 参数映射模板
-// ---------------------------------------------------------------------------
+/** 删除 Adobe direct 内部账号与其短期 token。 */
+export const deleteAdobeAccount = defineOperation({
+  name: "pool.deleteAdobeAccount",
+  domain: "image-backend-pool",
+  title: "删除 Adobe direct 账号",
+  description: "删除指定子账号；不会删除顶层统一成员。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
+  readOnly: false,
+  destructive: true,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.deleteAdobeAccount");
+  },
+});
+
+/** 启停 Adobe direct 内部账号。 */
+export const setAdobeAccountEnabled = defineOperation({
+  name: "pool.setAdobeAccountEnabled",
+  domain: "image-backend-pool",
+  title: "启停 Adobe direct 账号",
+  description: "更新指定子账号启用状态。",
+  input: z
+    .object({ id: z.string().trim().min(1).max(128), isEnabled: z.boolean() })
+    .strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.setAdobeAccountEnabled");
+  },
+});
+
+const parameterMappingTemplateSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    parameterMappings: requestParameterMappingsSchema,
+  })
+  .strict();
+
+/** 列出 API Images 参数映射模板。 */
 export const listParameterMappingTemplates = defineOperation({
   name: "pool.listParameterMappingTemplates",
   domain: "image-backend-pool",
-  title: "列出参数映射模板",
-  description: "列出管理员可复用的 API 后端请求参数映射模板。",
-  input: z.object({}),
-  output: z.object({
-    templates: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        parameterMappings: requestParameterMappingsSchema,
-      })
-    ),
-  }),
+  title: "列出 API 参数映射模板",
+  description: "列出可供 API Images 成员复用的请求参数映射模板。",
+  input: z.object({}).strict(),
+  output: z
+    .object({ templates: z.array(parameterMappingTemplateSchema) })
+    .strict(),
   access: { kind: "imageBackendPoolViewer" },
   readOnly: true,
   destructive: false,
@@ -350,21 +344,21 @@ export const listParameterMappingTemplates = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 13. pool.saveParameterMappingTemplate - 保存 API 参数映射模板
-// ---------------------------------------------------------------------------
+/** 新建或更新 API Images 参数映射模板。 */
 export const saveParameterMappingTemplate = defineOperation({
   name: "pool.saveParameterMappingTemplate",
   domain: "image-backend-pool",
-  title: "保存参数映射模板",
-  description: "新建或更新可复用的 API 后端请求参数映射模板。",
-  input: z.object({
-    id: z.string().optional(),
-    name: z.string().trim().min(1).max(80),
-    parameterMappings: requestParameterMappingsSchema,
-  }),
-  output: z.object({ id: z.string() }),
-  access: { kind: "admin" },
+  title: "保存 API 参数映射模板",
+  description: "保存严格、无 Responses/Chat 语义的参数映射模板。",
+  input: z
+    .object({
+      id: z.string().trim().min(1).max(128).optional(),
+      name: z.string().trim().min(1).max(80),
+      parameterMappings: requestParameterMappingsSchema,
+    })
+    .strict(),
+  output: z.object({ id: z.string() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: false,
   idempotency: { kind: "none" },
@@ -374,452 +368,20 @@ export const saveParameterMappingTemplate = defineOperation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 14. pool.deleteParameterMappingTemplate - 删除 API 参数映射模板
-// ---------------------------------------------------------------------------
+/** 删除 API Images 参数映射模板。 */
 export const deleteParameterMappingTemplate = defineOperation({
   name: "pool.deleteParameterMappingTemplate",
   domain: "image-backend-pool",
-  title: "删除参数映射模板",
-  description: "删除一个未被 API 后端引用的参数映射模板快照。",
-  input: z.object({ id: z.string().min(1) }),
-  output: z.object({ success: z.boolean() }),
-  access: { kind: "admin" },
+  title: "删除 API 参数映射模板",
+  description: "删除未被成员引用的参数映射模板。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
   readOnly: false,
   destructive: true,
   idempotency: { kind: "natural" },
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.deleteParameterMappingTemplate");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 15. pool.importFromRefreshTokens - 从 RT 批量导入账号
-// ---------------------------------------------------------------------------
-export const importFromRefreshTokens = defineOperation({
-  name: "pool.importFromRefreshTokens",
-  domain: "image-backend-pool",
-  title: "从 RT 导入账号",
-  description:
-    "通过 Refresh Token 列表批量创建账号（逐条 OAuth 换 AT + " +
-    "hash 去重，支持 startIndex 续传）。",
-  input: z.object({
-    groupId: z.string().nullable().optional(),
-    refreshTokens: z.array(z.string()),
-    startIndex: z.number().optional(),
-  }),
-  output: z.object({
-    imported: z.number(),
-    skipped: z.number(),
-    errors: z.array(
-      z.object({
-        index: z.number(),
-        message: z.string(),
-      })
-    ),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.importFromRefreshTokens");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 13. pool.importWebFromAccessTokens - 从 AT 批量导入 Web 账号
-// ---------------------------------------------------------------------------
-export const importWebFromAccessTokens = defineOperation({
-  name: "pool.importWebFromAccessTokens",
-  domain: "image-backend-pool",
-  title: "从 AT 导入 Web 账号",
-  description: "通过 Access Token 列表批量创建 Web 类型账号（hash 去重）。",
-  input: z.object({
-    groupId: z.string().nullable().optional(),
-    accessTokens: z.array(z.string()),
-  }),
-  output: z.object({
-    imported: z.number(),
-    skipped: z.number(),
-    errors: z.array(
-      z.object({
-        index: z.number(),
-        message: z.string(),
-      })
-    ),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.importWebFromAccessTokens");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 14. pool.refreshAccountInfo - 刷新单个账号信息
-// ---------------------------------------------------------------------------
-export const refreshAccountInfo = defineOperation({
-  name: "pool.refreshAccountInfo",
-  domain: "image-backend-pool",
-  title: "刷新单个账号信息",
-  description: "拉取远端最新信息更新单个后端账号的 metadata 与 status。",
-  input: z.object({
-    accountId: z.string(),
-  }),
-  output: z.object({
-    success: z.boolean(),
-    metadata: z.record(z.string(), z.unknown()).optional(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.refreshAccountInfo");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 15. pool.refreshAccountsInfo - 批量刷新账号信息
-// ---------------------------------------------------------------------------
-export const refreshAccountsInfo = defineOperation({
-  name: "pool.refreshAccountsInfo",
-  domain: "image-backend-pool",
-  title: "批量刷新账号信息",
-  description:
-    "并发（10 并发限制）拉取远端信息批量更新后端账号 metadata 与 status。",
-  input: z.object({
-    accountIds: z.array(z.string()),
-  }),
-  output: z.object({
-    successCount: z.number(),
-    failedCount: z.number(),
-    errors: z.array(
-      z.object({
-        accountId: z.string(),
-        message: z.string(),
-      })
-    ),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.refreshAccountsInfo");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 16. pool.getSub2ApiStatus - 获取 Sub2API 同步状态
-// ---------------------------------------------------------------------------
-export const getSub2ApiStatus = defineOperation({
-  name: "pool.getSub2ApiStatus",
-  domain: "image-backend-pool",
-  title: "获取 Sub2API 同步状态",
-  description: "探测 Sub2API 外部数据库连接状态。",
-  input: z.object({}),
-  output: z.object({
-    connected: z.boolean(),
-    message: z.string().optional(),
-  }),
-  access: { kind: "admin" },
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["external-call"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.getSub2ApiStatus");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 17. pool.getSub2ApiSourceGroups - 获取 Sub2API 源分组
-// ---------------------------------------------------------------------------
-export const getSub2ApiSourceGroups = defineOperation({
-  name: "pool.getSub2ApiSourceGroups",
-  domain: "image-backend-pool",
-  title: "获取 Sub2API 源分组",
-  description: "从 Sub2API 外部数据库读取可用的源账号分组列表。",
-  input: z.object({}),
-  output: z.object({
-    groups: z.array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        accountCount: z.number().optional(),
-      })
-    ),
-  }),
-  access: { kind: "admin" },
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["external-call"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.getSub2ApiSourceGroups");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 18. pool.getSub2ApiAutoSyncTasks - 获取自动同步任务列表
-// ---------------------------------------------------------------------------
-export const getSub2ApiAutoSyncTasks = defineOperation({
-  name: "pool.getSub2ApiAutoSyncTasks",
-  domain: "image-backend-pool",
-  title: "获取自动同步任务列表",
-  description: "读取 system-settings KV 中存储的 Sub2API 自动同步任务配置。",
-  input: z.object({}),
-  output: z.object({
-    tasks: z.array(z.record(z.string(), z.unknown())),
-  }),
-  access: { kind: "admin" },
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: [],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.getSub2ApiAutoSyncTasks");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 19. pool.syncSub2ApiAccounts - 同步 Sub2API 账号到池
-// ---------------------------------------------------------------------------
-export const syncSub2ApiAccounts = defineOperation({
-  name: "pool.syncSub2ApiAccounts",
-  domain: "image-backend-pool",
-  title: "同步 Sub2API 账号",
-  description:
-    "从 Sub2API 外部数据库读取账号并批量 upsert 到本地池（hash 去重）。",
-  input: z.object({
-    sourceGroupId: z.string().optional(),
-    targetGroupId: z.string().nullable().optional(),
-    overwriteLocalUnavailableState: z.boolean().optional(),
-  }),
-  output: z.object({
-    imported: z.number(),
-    updated: z.number(),
-    removed: z.number(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.syncSub2ApiAccounts");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 20. pool.runSub2ApiManualSync - 手动执行 Sub2API 同步
-// ---------------------------------------------------------------------------
-export const runSub2ApiManualSync = defineOperation({
-  name: "pool.runSub2ApiManualSync",
-  domain: "image-backend-pool",
-  title: "手动 Sub2API 同步",
-  description:
-    "手动触发一次 Sub2API 同步（同 syncSub2ApiAccounts + 落任务记录）。",
-  input: z.object({
-    sourceGroupId: z.string().optional(),
-    targetGroupId: z.string().nullable().optional(),
-    overwriteLocalUnavailableState: z.boolean().optional(),
-  }),
-  output: z.object({
-    imported: z.number(),
-    updated: z.number(),
-    removed: z.number(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.runSub2ApiManualSync");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 21. pool.runSub2ApiAutoSyncNow - 立即执行指定自动同步任务
-// ---------------------------------------------------------------------------
-export const runSub2ApiAutoSyncNow = defineOperation({
-  name: "pool.runSub2ApiAutoSyncNow",
-  domain: "image-backend-pool",
-  title: "立即执行自动同步任务",
-  description: "立即执行指定的 Sub2API 自动同步任务并更新任务最后执行结果。",
-  input: z.object({
-    taskId: z.string(),
-  }),
-  output: z.object({
-    imported: z.number(),
-    updated: z.number(),
-    removed: z.number(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.runSub2ApiAutoSyncNow");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 22. pool.setSub2ApiTaskEnabled - 启停自动同步任务
-// ---------------------------------------------------------------------------
-export const setSub2ApiTaskEnabled = defineOperation({
-  name: "pool.setSub2ApiTaskEnabled",
-  domain: "image-backend-pool",
-  title: "启停自动同步任务",
-  description: "设置 Sub2API 自动同步任务的 enabled 状态。",
-  input: z.object({
-    taskId: z.string(),
-    enabled: z.boolean(),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.setSub2ApiTaskEnabled");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 23. pool.setSub2ApiTaskOverwrite - 设置任务覆盖本地不可用状态
-// ---------------------------------------------------------------------------
-export const setSub2ApiTaskOverwrite = defineOperation({
-  name: "pool.setSub2ApiTaskOverwrite",
-  domain: "image-backend-pool",
-  title: "设置任务覆盖本地不可用状态",
-  description:
-    "设置 Sub2API 自动同步任务的 overwriteLocalUnavailableState 选项。",
-  input: z.object({
-    taskId: z.string(),
-    overwriteLocalUnavailableState: z.boolean(),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.setSub2ApiTaskOverwrite");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 24. pool.updateSub2ApiTaskOptions - 更新自动同步任务配置
-// ---------------------------------------------------------------------------
-export const updateSub2ApiTaskOptions = defineOperation({
-  name: "pool.updateSub2ApiTaskOptions",
-  domain: "image-backend-pool",
-  title: "更新自动同步任务配置",
-  description: "覆盖指定 Sub2API 自动同步任务的配置选项。",
-  input: z.object({
-    taskId: z.string(),
-    options: z.record(z.string(), z.unknown()),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.updateSub2ApiTaskOptions");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 25. pool.deleteSub2ApiTask - 删除自动同步任务
-// ---------------------------------------------------------------------------
-export const deleteSub2ApiTask = defineOperation({
-  name: "pool.deleteSub2ApiTask",
-  domain: "image-backend-pool",
-  title: "删除自动同步任务",
-  description: "从 system-settings KV 中移除指定的自动同步任务。",
-  input: z.object({
-    taskId: z.string(),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "admin" },
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.deleteSub2ApiTask");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 26. pool.cronSub2ApiSync - CRON 周期性 Sub2API 同步
-// ---------------------------------------------------------------------------
-export const cronSub2ApiSync = defineOperation({
-  name: "pool.cronSub2ApiSync",
-  domain: "image-backend-pool",
-  title: "CRON Sub2API 周期同步",
-  description:
-    "定时任务：遍历所有 enabled 的自动同步任务执行同步，" +
-    "按 interval/force 策略跳过或执行。",
-  input: z.object({}),
-  output: z.object({
-    tasksExecuted: z.number(),
-    tasksSkipped: z.number(),
-  }),
-  access: { kind: "cron" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.cronSub2ApiSync");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 27. pool.cronRefreshStale - CRON 刷新陈旧 Web 账号
-// ---------------------------------------------------------------------------
-export const cronRefreshStale = defineOperation({
-  name: "pool.cronRefreshStale",
-  domain: "image-backend-pool",
-  title: "CRON 刷新陈旧 Web 账号",
-  description:
-    "定时任务：拉取远端信息刷新超过 staleMinutes 未更新的 Web 账号。",
-  input: z.object({}),
-  output: z.object({
-    refreshedCount: z.number(),
-    failedCount: z.number(),
-  }),
-  access: { kind: "cron" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.cronRefreshStale");
   },
 });

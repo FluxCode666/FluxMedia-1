@@ -92,19 +92,14 @@ const FEATURE_ROWS = [
     description: "上传参考图、编辑图片",
   },
   {
-    key: "imageGeneration.chat",
-    label: "普通对话",
-    description: "页面 Chat：连续对话式生图，不默认注入 Agent 工具",
+    key: "imageGeneration.mask",
+    label: "蒙版编辑",
+    description: "页面使用蒙版进行局部重绘与编辑",
   },
   {
-    key: "imageGeneration.agent",
-    label: "Agent 模式",
-    description: "页面 Agent：联网、工具调用、附件上下文和自动迭代",
-  },
-  {
-    key: "imageGeneration.waterfall",
-    label: "瀑布流",
-    description: "页面 Waterfall：同一提示词连续生成多张",
+    key: "imageGeneration.video",
+    label: "视频生成",
+    description: "页面生成视频并查询任务结果",
   },
   {
     key: "imageGeneration.batch",
@@ -112,24 +107,9 @@ const FEATURE_ROWS = [
     description: "一次请求生成多张",
   },
   {
-    key: "export.ppt",
-    label: "导出 PPT",
-    description: "对话式生成可编辑 PPT 文件（gpt-5-5-thinking + 代码解释器）",
-  },
-  {
-    key: "export.psd",
-    label: "导出 PSD",
-    description: "对话式生成可编辑 PSD 文件（gpt-5-5-thinking + 代码解释器）",
-  },
-  {
     key: "promptOptimization.control",
     label: "关闭提示词优化",
     description: "允许用户控制 prompt_optimization",
-  },
-  {
-    key: "models.gpt55",
-    label: "GPT-5.5",
-    description: "允许选择旗舰模型",
   },
   {
     key: "backendGroups.select",
@@ -147,11 +127,6 @@ const FEATURE_ROWS = [
     description: "允许模型列表接口",
   },
   {
-    key: "externalApi.chat.completions",
-    label: "外接 Chat",
-    description: "允许 /v1/chat/completions",
-  },
-  {
     key: "externalApi.images.generate",
     label: "外接文生图",
     description: "允许 /v1/images/generations",
@@ -162,14 +137,19 @@ const FEATURE_ROWS = [
     description: "允许 /v1/images/edits",
   },
   {
-    key: "externalApi.responses",
-    label: "外接 Responses",
-    description: "允许 /v1/responses，通常要求 Pro+",
+    key: "externalApi.images.mask",
+    label: "外接蒙版编辑",
+    description: "允许 /v1/images/edits 携带 mask",
   },
   {
-    key: "externalApi.agent",
-    label: "外接 Agent 生图",
-    description: "允许 /v1/agents/images，默认要求 Ultra+",
+    key: "externalApi.images.batch",
+    label: "外接批量图片",
+    description: "允许外接图片接口一次生成多张",
+  },
+  {
+    key: "externalApi.videos.generate",
+    label: "外接视频生成",
+    description: "允许外部媒体 API 创建和查询视频任务",
   },
   {
     key: "externalApi.streaming",
@@ -226,35 +206,10 @@ const LIMIT_ROWS = [
     inputMode: "numeric",
   },
   {
-    key: "maxChatImages",
-    label: "对话参考图数",
-    description: "对话生图最多参考图数量",
-    inputMode: "numeric",
-  },
-  {
-    key: "maxChatContextChars",
-    label: "对话上下文字符",
-    description: "对话历史和当前输入的字符上限",
-    inputMode: "numeric",
-  },
-  {
     key: "queuePriority",
     label: "队列优先级",
     description: "调度队列优先级",
     inputMode: "select",
-  },
-] as const;
-
-const BILLING_ROWS = [
-  {
-    key: "chatRoundCredits",
-    label: "Chat 每轮积分",
-    description: "页面普通对话每次请求/每轮基础积分，不含图片输出积分",
-  },
-  {
-    key: "agentRoundCredits",
-    label: "Agent 每轮积分",
-    description: "页面 Agent 自动迭代每轮基础积分，不含图片输出积分",
   },
 ] as const;
 
@@ -263,13 +218,11 @@ type PlanRequirementValue = (typeof PLAN_REQUIREMENT_OPTIONS)[number]["value"];
 type QueuePriorityValue = (typeof QUEUE_PRIORITY_OPTIONS)[number]["value"];
 type FeatureKey = (typeof FEATURE_ROWS)[number]["key"];
 type LimitKey = (typeof LIMIT_ROWS)[number]["key"];
-type BillingKey = (typeof BILLING_ROWS)[number]["key"];
 
 type CapabilityMatrixDraft = {
   version: 1;
   features: Record<FeatureKey, PlanValue>;
   limits: Record<PlanValue, Record<LimitKey, string | number>>;
-  billing: Record<PlanValue, Record<BillingKey, number>>;
 };
 
 type CreditPackageDraft = {
@@ -498,8 +451,6 @@ function normalizeCapabilityMatrixDraft(
   const fallbackFeatures = isRecord(fallback.features) ? fallback.features : {};
   const rawLimits = isRecord(raw.limits) ? raw.limits : {};
   const fallbackLimits = isRecord(fallback.limits) ? fallback.limits : {};
-  const rawBilling = isRecord(raw.billing) ? raw.billing : {};
-  const fallbackBilling = isRecord(fallback.billing) ? fallback.billing : {};
 
   const features = Object.fromEntries(
     FEATURE_ROWS.map((row) => [
@@ -537,34 +488,10 @@ function normalizeCapabilityMatrixDraft(
     })
   ) as CapabilityMatrixDraft["limits"];
 
-  const billing = Object.fromEntries(
-    PLAN_OPTIONS.map((plan) => {
-      const rawPlanBilling = recordValue(rawBilling, plan.value);
-      const fallbackPlanBilling = recordValue(fallbackBilling, plan.value);
-
-      return [
-        plan.value,
-        Object.fromEntries(
-          BILLING_ROWS.map((row) => [
-            row.key,
-            numberValue(
-              rawPlanBilling[row.key],
-              numberValue(
-                fallbackPlanBilling[row.key],
-                row.key === "agentRoundCredits" ? 3 : 1
-              )
-            ),
-          ])
-        ),
-      ] as const;
-    })
-  ) as CapabilityMatrixDraft["billing"];
-
   return {
     version: 1,
     features,
     limits,
-    billing,
   };
 }
 
@@ -944,29 +871,11 @@ function PlanCapabilityMatrixInput({
     });
   };
 
-  const updateBilling = (
-    plan: PlanValue,
-    key: BillingKey,
-    nextValue: string
-  ) => {
-    updateMatrix({
-      ...matrix,
-      billing: {
-        ...matrix.billing,
-        [plan]: {
-          ...matrix.billing[plan],
-          [key]: Number(nextValue),
-        },
-      },
-    });
-  };
-
   return (
     <div className="space-y-5">
       <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
         按最低套餐配置功能门槛；Starter/Pro/Ultra/Enterprise
-        自动包含更低套餐能力。并发、上传大小、月积分、批量张数、参考图数量和
-        Chat/Agent 每轮计费都在这里统一配置。
+        自动包含更低套餐能力。并发、上传大小、月积分、批量张数和参考图数量在这里统一配置。
       </div>
 
       <section className="space-y-2">
@@ -1006,62 +915,6 @@ function PlanCapabilityMatrixInput({
                       }
                     />
                   </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <div>
-          <h4 className="text-[11px] uppercase tracking-widest text-muted-foreground font-medium">
-            对话计费
-          </h4>
-          <p className="text-xs text-muted-foreground">
-            配置页面 Chat/Agent
-            的每轮基础积分；生成图片时还会按实际成品图尺寸和数量追加图片积分。
-          </p>
-        </div>
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full min-w-[860px] text-sm">
-            <thead className="border-b border-border/60 text-[11px] uppercase tracking-widest text-muted-foreground">
-              <tr>
-                <th className="w-52 px-3 py-2 text-left font-medium">计费项</th>
-                {PLAN_OPTIONS.map((plan) => (
-                  <th
-                    key={plan.value}
-                    className="w-36 px-3 py-2 text-left font-medium"
-                  >
-                    {plan.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {BILLING_ROWS.map((row) => (
-                <tr key={row.key}>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{row.label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {row.description}
-                    </div>
-                  </td>
-                  {PLAN_OPTIONS.map((plan) => (
-                    <td key={plan.value} className="px-3 py-2 align-top">
-                      <Input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={String(matrix.billing[plan.value][row.key])}
-                        disabled={disabled}
-                        className="h-9 min-w-28"
-                        onChange={(event) =>
-                          updateBilling(plan.value, row.key, event.target.value)
-                        }
-                      />
-                    </td>
-                  ))}
                 </tr>
               ))}
             </tbody>

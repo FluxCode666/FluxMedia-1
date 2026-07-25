@@ -21,23 +21,83 @@ import {
   historyListInputSchema,
   historyListOutputSchema,
 } from "../../image-generation/history-contract";
+import {
+  mediaInputReferenceSchema,
+  mediaInputReferencesSchema,
+} from "../../image-generation/media-contract";
+import type { Principal } from "../principal";
 import { defineOperation } from "../registry";
 
-/** image.generate 的传输无关输入契约；身份和治理策略均不由客户端提供。 */
-export const imageGenerateInputSchema = z
+const imageGenerateCommonFields = {
+  prompt: z.string().trim().min(1).max(100_000),
+  negativePrompt: z.string().max(100_000).optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+  size: z.string().trim().min(1).max(40).optional(),
+  quality: z.string().trim().min(1).max(40).optional(),
+  style: z.string().trim().min(1).max(80).optional(),
+  count: z.number().int().positive().max(10_000).optional(),
+  generationId: z.string().trim().min(1).max(128).optional(),
+  /** 本次请求明确选中的平台媒体后端分组；服务端仍会再次授权。 */
+  backendGroupId: z.string().trim().min(1).max(128).optional(),
+};
+
+const textImageGenerateInputSchema = z
   .object({
-    prompt: z.string(),
-    negativePrompt: z.string().optional(),
-    model: z.string().optional(),
-    size: z.string().optional(),
-    quality: z.string().optional(),
-    style: z.string().optional(),
-    count: z.number().int().positive().optional(),
-    generationId: z.string().optional(),
-    /** 本次请求明确选中的平台生图分组；服务端仍会再次授权。 */
-    backendGroupId: z.string().trim().min(1).max(128).optional(),
+    ...imageGenerateCommonFields,
+    operation: z.literal("generate"),
   })
   .strict();
+
+const imageEditInputSchema = z
+  .object({
+    ...imageGenerateCommonFields,
+    operation: z.literal("edit"),
+    images: mediaInputReferencesSchema,
+  })
+  .strict();
+
+const maskedImageEditInputSchema = z
+  .object({
+    ...imageGenerateCommonFields,
+    operation: z.literal("mask"),
+    images: mediaInputReferencesSchema,
+    mask: mediaInputReferenceSchema,
+  })
+  .strict();
+
+/** image.generate 的传输无关联合契约；身份和治理策略均不由客户端提供。 */
+export const imageGenerateInputSchema = z.discriminatedUnion("operation", [
+  textImageGenerateInputSchema,
+  imageEditInputSchema,
+  maskedImageEditInputSchema,
+]);
+
+/** 根据媒体变体和 Principal 推导站内或外部 API 套餐能力。 */
+function deriveImageCapabilities(
+  input: z.infer<typeof imageGenerateInputSchema>,
+  principal: Principal
+): string[] {
+  const external = principal.type === "apiKey";
+  const capabilities = [
+    input.operation === "generate"
+      ? external
+        ? "externalApi.images.generate"
+        : "imageGeneration.text"
+      : input.operation === "mask"
+        ? external
+          ? "externalApi.images.mask"
+          : "imageGeneration.mask"
+        : external
+          ? "externalApi.images.edit"
+          : "imageGeneration.edit",
+  ];
+  if ((input.count ?? 1) > 1) {
+    capabilities.push(
+      external ? "externalApi.images.batch" : "imageGeneration.batch"
+    );
+  }
+  return capabilities;
+}
 
 // ---------------------------------------------------------------------------
 // 1. image.generate - 统一管线核心（runImageGenerationForUser）
@@ -66,16 +126,14 @@ defineOperation({
   access: { kind: "protected" },
   capabilities: [
     {
-      derive: (input: unknown) => {
-        const caps: string[] = [];
-        const i = input as Record<string, unknown>;
-        if (typeof i.count === "number" && i.count > 1) {
-          caps.push("imageGeneration.batch");
-        }
-        return caps;
-      },
+      derive: (input, principal) =>
+        deriveImageCapabilities(
+          input as z.infer<typeof imageGenerateInputSchema>,
+          principal
+        ),
     },
   ],
+  allowSystemCapabilityBypass: true,
   readOnly: false,
   destructive: false,
   idempotency: {
@@ -450,65 +508,5 @@ defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: image.getEffectiveConfig");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 12. image.selectWebCandidate - Web 候选图选定（selectChatGptWebImageCandidate）
-// 强耦合 ChatGPT Web，外呼 + DB 写 metadata，无扣费
-// ---------------------------------------------------------------------------
-defineOperation({
-  name: "image.selectWebCandidate",
-  domain: "image-generation",
-  title: "选定 Web 候选图",
-  description:
-    "选定 ChatGPT Web 模式生成的候选图像，触发外呼 ChatGPT Web 获取最终图并更新 DB metadata。" +
-    "幂等（无扣费），但每次外呼 Web。需资源归属校验 + web 账号验证。",
-  input: z.object({
-    generationId: z.string(),
-    candidateIndex: z.number().int().min(0),
-    webAccountId: z.string().optional(),
-  }),
-  output: z.object({
-    imageUrl: z.string(),
-    generationId: z.string(),
-    success: z.boolean(),
-  }),
-  access: { kind: "owner", resource: "generation" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["external-call"],
-  execute: async () => {
-    throw new Error("Not yet wired: image.selectWebCandidate");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 13. image.exportPsd - 导出分层 PSD（把"生成即分层"的产物组装成可编辑分层 PSD）
-// 不生成新图、不扣费;逐元素 ISNet 抠白底转透明 + ag-psd 组装。仅分层生成产物可导出。异步。
-// ---------------------------------------------------------------------------
-defineOperation({
-  name: "image.exportPsd",
-  domain: "image-generation",
-  title: "导出分层 PSD",
-  description:
-    "把一次分层生成的产物(整图/背景/各元素)组装成可编辑分层 .psd 并存储、返回签名下载链接。" +
-    "不生成新图、不扣费;CPU 数十秒,异步执行(action 立即返回签名 URL,前端轮询)。",
-  input: z.object({
-    generationId: z.string(),
-  }),
-  output: z.object({
-    psdSignedUrl: z.string(),
-  }),
-  access: { kind: "owner", resource: "generation" },
-  readOnly: false,
-  destructive: false,
-  // 异步触发、非安全重放:与 image.generateAction 一致用 none,由 UI 防重复提交。
-  idempotency: { kind: "none" },
-  sideEffects: ["storage", "external-call"],
-  processLocalState: true,
-  execute: async () => {
-    throw new Error("Not yet wired: image.exportPsd");
   },
 });
