@@ -117,4 +117,17 @@ describe("控制台导航契约", () => {
       ])
     );
   });
+
+  it("生图入口紧跟图库，方便从作品浏览继续创建", () => {
+    const dashboardItems = dashboardNav.flatMap((group) => group.items);
+    const galleryIndex = dashboardItems.findIndex(
+      (item) => item.href === "/dashboard/gallery"
+    );
+    const generateIndex = dashboardItems.findIndex(
+      (item) => item.href === "/dashboard/generate"
+    );
+
+    expect(galleryIndex).toBeGreaterThanOrEqual(0);
+    expect(generateIndex).toBe(galleryIndex + 1);
+  });
 });
