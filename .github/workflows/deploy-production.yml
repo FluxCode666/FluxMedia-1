@@ -81,6 +81,9 @@ jobs:
       - name: Test deployment environment parser
         run: bash deploy/read-env-value.test.sh
 
+      - name: Test deployment database backup
+        run: bash deploy/create-database-backup.test.sh
+
       - name: Generate Fumadocs source
         run: pnpm --filter @repo/web exec fumadocs-mdx
 
@@ -286,6 +289,7 @@ jobs:
             -o PubkeyAuthentication=no \
             -P "${DEPLOY_PORT}" \
             deploy/docker-compose.yml \
+            deploy/create-database-backup.sh \
             deploy/read-env-value.sh \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
 
@@ -340,6 +344,10 @@ jobs:
             echo "目标服务器缺少部署 dotenv 读取器。" >&2
             exit 1
           fi
+          if [ ! -f create-database-backup.sh ]; then
+            echo "目标服务器缺少数据库备份脚本。" >&2
+            exit 1
+          fi
 
           # 用受测解析器读取单行 dotenv。
           # 不会 source/eval 配置或打印其他值。
@@ -382,78 +390,6 @@ jobs:
             fi
           }
 
-          # 在独立子 shell 中创建备份，任何退出路径都会清除明文和本地密文。
-          create_encrypted_backup() (
-            set -euo pipefail
-            database_url="$1"
-            backup_bucket="$2"
-            backup_prefix="$3"
-            age_recipient="$4"
-            retention_days="$5"
-
-            backup_dir="$(mktemp -d)"
-            backup_plain="${backup_dir}/fluxmedia.dump"
-            backup_cipher="${backup_plain}.age"
-            backup_timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-            backup_key="${backup_prefix}/${image_tag}/${backup_timestamp}-${git_sha}.dump.age"
-
-            # backup_dir 由本函数内 mktemp 创建，EXIT 时精确删除该目录。
-            cleanup_backup_files() {
-              rm -rf "${backup_dir}"
-            }
-            trap cleanup_backup_files EXIT
-
-            umask 077
-            PGDATABASE="${database_url}" pg_dump \
-              --format=custom \
-              --no-acl \
-              --no-owner \
-              --file "${backup_plain}"
-            pg_restore --list "${backup_plain}" >/dev/null
-            age --recipient "${age_recipient}" \
-              --output "${backup_cipher}" "${backup_plain}"
-            rm -f "${backup_plain}"
-
-            backup_sha256="$(sha256sum "${backup_cipher}" | awk '{print $1}')"
-            version_id="$(
-              aws s3api put-object \
-                --bucket "${backup_bucket}" \
-                --key "${backup_key}" \
-                --body "${backup_cipher}" \
-                --metadata "sha256=${backup_sha256},git-sha=${git_sha}" \
-                --server-side-encryption AES256 \
-                --query VersionId \
-                --output text
-            )"
-            if [ -z "${version_id}" ] || [ "${version_id}" = "None" ]; then
-              echo "备份存储未返回版本 ID，拒绝继续迁移。" >&2
-              return 1
-            fi
-
-            remote_sha256="$(
-              aws s3api head-object \
-                --bucket "${backup_bucket}" \
-                --key "${backup_key}" \
-                --version-id "${version_id}" \
-                --query 'Metadata.sha256' \
-                --output text
-            )"
-            if [ "${remote_sha256}" != "${backup_sha256}" ]; then
-              echo "备份上传后的 SHA-256 元数据校验失败。" >&2
-              return 1
-            fi
-
-            backup_delete_after="$(
-              date -u -d "+${retention_days} days" +%Y-%m-%dT%H:%M:%SZ
-            )"
-            printf 'backup_artifact_id=s3://%s/%s?versionId=%s\n' \
-              "${backup_bucket}" "${backup_key}" "${version_id}"
-            printf 'backup_ciphertext_sha256=%s\n' "${backup_sha256}"
-            printf 'backup_delete_after=%s\n' "${backup_delete_after}"
-            printf 'backup_archive_manifest_verified=true\n'
-            printf 'backup_object_metadata_verified=true\n'
-          )
-
           previous_image="$(read_env_value FLUXMEDIA_IMAGE)"
           previous_migrate_image="$(read_env_value FLUXMEDIA_MIGRATE_IMAGE)"
           previous_tag="$(read_env_value FLUXMEDIA_TAG)"
@@ -464,59 +400,10 @@ jobs:
           else
             printf 'previous_release=unknown\n'
           fi
-          database_url="$(read_env_value DATABASE_URL)"
-          backup_bucket="$(read_env_value DEPLOY_BACKUP_S3_BUCKET)"
-          backup_prefix="$(read_env_value DEPLOY_BACKUP_S3_PREFIX)"
-          backup_age_recipient="$(read_env_value DEPLOY_BACKUP_AGE_RECIPIENT)"
-          backup_retention_days="$(read_env_value DEPLOY_BACKUP_RETENTION_DAYS)"
-          backup_aws_profile="$(read_env_value DEPLOY_BACKUP_AWS_PROFILE)"
-          backup_prefix="${backup_prefix:-fluxmedia-production}"
-          backup_retention_days="${backup_retention_days:-7}"
-
-          : "${database_url:?DATABASE_URL 必填}"
-          : "${backup_bucket:?DEPLOY_BACKUP_S3_BUCKET 必填}"
-          : "${backup_age_recipient:?DEPLOY_BACKUP_AGE_RECIPIENT 必填}"
-          if [[ ! "${backup_bucket}" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
-            echo "DEPLOY_BACKUP_S3_BUCKET 不是有效的 S3 bucket 名称。" >&2
-            exit 1
-          fi
-          if [[ ! "${backup_prefix}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-            echo "DEPLOY_BACKUP_S3_PREFIX 只能包含安全路径字符。" >&2
-            exit 1
-          fi
-          if [[ ! "${backup_age_recipient}" =~ ^age1[0-9a-z]+$ ]]; then
-            echo "DEPLOY_BACKUP_AGE_RECIPIENT 必须是标准 age 公钥。" >&2
-            exit 1
-          fi
-          if [[ ! "${backup_retention_days}" =~ ^[0-9]+$ ]] \
-            || (( backup_retention_days < 1 || backup_retention_days > 30 )); then
-            echo "DEPLOY_BACKUP_RETENTION_DAYS 必须位于 1 到 30。" >&2
-            exit 1
-          fi
-          if [ -n "${backup_aws_profile}" ]; then
-            if [[ ! "${backup_aws_profile}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-              echo "DEPLOY_BACKUP_AWS_PROFILE 不是安全的 profile 名称。" >&2
-              exit 1
-            fi
-            export AWS_PROFILE="${backup_aws_profile}"
-          fi
-
-          for command_name in age aws date pg_dump pg_restore sha256sum; do
-            if ! command -v "${command_name}" >/dev/null 2>&1; then
-              echo "目标服务器缺少生产备份工具：${command_name}。" >&2
-              exit 1
-            fi
-          done
-          bucket_versioning="$(
-            aws s3api get-bucket-versioning \
-              --bucket "${backup_bucket}" \
-              --query Status \
-              --output text
-          )"
-          if [ "${bucket_versioning}" != "Enabled" ]; then
-            echo "生产备份 bucket 必须启用版本控制。" >&2
-            exit 1
-          fi
+          # 停服前先确认当前配置能创建恢复点。未配置 S3 时，备份脚本会使用
+          # deploy-path/backups 下的持久化本地目录，不会跳过数据库备份。
+          bash ./create-database-backup.sh \
+            preflight .env "${deploy_path}" "${image_tag}" "${git_sha}"
 
           web_stopped=false
           migration_started=false
@@ -576,13 +463,9 @@ jobs:
           run_release_gate drain
           run_release_gate preflight
 
-          echo "创建迁移前加密备份并校验受控存储版本。"
-          create_encrypted_backup \
-            "${database_url}" \
-            "${backup_bucket}" \
-            "${backup_prefix}" \
-            "${backup_age_recipient}" \
-            "${backup_retention_days}"
+          echo "创建迁移前数据库备份并校验最终存储。"
+          bash ./create-database-backup.sh \
+            create .env "${deploy_path}" "${image_tag}" "${git_sha}"
 
           echo "执行数据库迁移。"
           migration_started=true
@@ -657,25 +540,28 @@ jobs:
           }
 
           relay_count="$(extract_evidence relay_only_true_count)"
+          backup_storage="$(extract_evidence backup_storage)"
           backup_artifact_id="$(extract_evidence backup_artifact_id)"
-          backup_ciphertext_sha256="$(
-            extract_evidence backup_ciphertext_sha256
+          backup_artifact_sha256="$(
+            extract_evidence backup_artifact_sha256
           )"
           backup_delete_after="$(extract_evidence backup_delete_after)"
           backup_archive_manifest_verified="$(
             extract_evidence backup_archive_manifest_verified
           )"
-          backup_object_metadata_verified="$(
-            extract_evidence backup_object_metadata_verified
+          backup_storage_verified="$(
+            extract_evidence backup_storage_verified
           )"
           deployment_completed="$(extract_evidence deployment_completed)"
           previous_release="$(extract_evidence previous_release)"
           if [ "${relay_count}" != "0" ] \
+            || { [ "${backup_storage}" != "local" ] \
+              && [ "${backup_storage}" != "s3" ]; } \
             || [ -z "${backup_artifact_id}" ] \
-            || [[ ! "${backup_ciphertext_sha256}" =~ ^[a-f0-9]{64}$ ]] \
+            || [[ ! "${backup_artifact_sha256}" =~ ^[a-f0-9]{64}$ ]] \
             || [ -z "${backup_delete_after}" ] \
             || [ "${backup_archive_manifest_verified}" != "true" ] \
-            || [ "${backup_object_metadata_verified}" != "true" ] \
+            || [ "${backup_storage_verified}" != "true" ] \
             || [ "${deployment_completed}" != "true" ]; then
             echo "::error::部署完成但安全证据不完整。"
             exit 1
@@ -683,13 +569,14 @@ jobs:
 
           {
             echo "relay_count=${relay_count}"
+            echo "backup_storage=${backup_storage}"
             echo "backup_artifact_id=${backup_artifact_id}"
-            echo "backup_ciphertext_sha256=${backup_ciphertext_sha256}"
+            echo "backup_artifact_sha256=${backup_artifact_sha256}"
             echo "backup_delete_after=${backup_delete_after}"
             printf 'backup_archive_manifest_verified=%s\n' \
               "${backup_archive_manifest_verified}"
-            printf 'backup_object_metadata_verified=%s\n' \
-              "${backup_object_metadata_verified}"
+            printf 'backup_storage_verified=%s\n' \
+              "${backup_storage_verified}"
             echo "previous_release=${previous_release}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -706,13 +593,14 @@ jobs:
             echo "- 迁移前版本：\`${{ steps.deploy.outputs.previous_release }}\`"
             echo "- 服务：\`web\`（未启动注册机）"
             echo "- 纯中转预检：\`${{ steps.deploy.outputs.relay_count }}\`"
+            echo "- 备份存储：\`${{ steps.deploy.outputs.backup_storage }}\`"
             echo "- 备份 artifact：\`${{ steps.deploy.outputs.backup_artifact_id }}\`"
-            echo "- 备份密文 SHA-256：\`${{ steps.deploy.outputs.backup_ciphertext_sha256 }}\`"
+            echo "- 备份 artifact SHA-256：\`${{ steps.deploy.outputs.backup_artifact_sha256 }}\`"
             echo "- 备份销毁截止：\`${{ steps.deploy.outputs.backup_delete_after }}\`"
-            echo "- 上传前 archive manifest 校验：" \
+            echo "- archive manifest 校验：" \
               "\`${{ steps.deploy.outputs.backup_archive_manifest_verified }}\`"
-            echo "- S3 指定版本元数据校验：" \
-              "\`${{ steps.deploy.outputs.backup_object_metadata_verified }}\`"
+            echo "- 最终存储摘要校验：" \
+              "\`${{ steps.deploy.outputs.backup_storage_verified }}\`"
             echo "- 操作者：\`${GITHUB_ACTOR}\`"
             echo "- 回滚边界：迁移后失败保持维护状态，不自动启动旧镜像"
           } >> "${GITHUB_STEP_SUMMARY}"

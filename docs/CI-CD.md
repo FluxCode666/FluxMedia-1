@@ -44,13 +44,13 @@
 - 发布前执行文档镜像、全仓 lint、typecheck、DB-free test、临时 PostgreSQL 迁移与审核
   事务集成测试、Web production build，随后构建 `linux/amd64` 的 `fluxmedia-web` 与
   `fluxmedia-migrate` 镜像并推送不可变版本 tag 与 `latest` 到 GHCR。
-- 使用 SSH 账号密码连接目标机，同步 `deploy/docker-compose.yml` 与受测的 dotenv
-  读取器；SSH 参数与 FluxCode 一致，不校验主机指纹。连接后先拉取新镜像，再停止旧
-  Web、排空 `fluxmedia-web` 数据库连接、执行只读迁移预检、创建加密版本化备份，最后
-  迁移并只启动新 Web，不会启动注册机。
-- 目标机的真实 `.env` 不离开服务器；流水线只输出不含数据的预检计数、备份 artifact ID、
-  密文 SHA-256 与销毁截止时间。迁移开始后的任何失败都保持维护状态，不自动启动旧 schema
-  镜像。完整初始化见 `deploy/README.md`，破坏性迁移手册见
+- 使用 SSH 账号密码连接目标机，同步 `deploy/docker-compose.yml`、数据库备份脚本与受测
+  dotenv 读取器；SSH 参数与 FluxCode 一致，不校验主机指纹。连接后先拉取新镜像，再停止
+  旧 Web、排空 `fluxmedia-web` 数据库连接、执行只读迁移预检、创建本地或加密版本化备份，
+  最后迁移并只启动新 Web，不会启动注册机。
+- 目标机的真实 `.env` 不离开服务器；流水线只输出不含数据的预检计数、备份存储类型、
+  artifact ID、SHA-256 与销毁截止时间。迁移开始后的任何失败都保持维护状态，不自动启动
+  旧 schema 镜像。完整初始化见 `deploy/README.md`，破坏性迁移手册见
   `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
 
 ## 生产部署配置清单
@@ -113,19 +113,25 @@ Workflow runner 会自动安装 `sshpass`，不会将密码写入文件或命令
 
 ### 生产迁移备份配置
 
-目标机必须安装与数据库主版本兼容的 PostgreSQL 客户端、age 和 AWS CLI v2。备份 bucket
-必须启用版本控制；age 私钥只放在批准的离线恢复介质，服务器仅保存公钥。
+目标机必须安装与数据库主版本兼容的 PostgreSQL 客户端。`DEPLOY_BACKUP_S3_BUCKET`
+留空时，Workflow 将备份写入 `${DEPLOY_PATH}/backups/<version>/`，目录权限为 `0700`、
+文件权限为 `0600`，并复核 custom-format manifest 与最终文件 SHA-256。这是同机恢复点，
+不能替代异地灾备。
+
+填写 `DEPLOY_BACKUP_S3_BUCKET` 后才启用远端模式；此时目标机必须安装 age 和 AWS CLI v2，
+bucket 必须启用版本控制，age 私钥只放在批准的离线恢复介质，服务器仅保存公钥。S3 预检、
+权限或上传校验失败会拒绝迁移，不会静默回退到本地。
 
 | 名称 | 必填 | 默认值 | 用途与要求 |
 |---|---|---|---|
-| `DEPLOY_BACKUP_S3_BUCKET` | 是 | 无 | 专用版本化备份 bucket；不得与公开静态资源共用。 |
+| `DEPLOY_BACKUP_S3_BUCKET` | 否 | 空 | 配置后使用专用版本化备份 bucket；不得与公开静态资源共用；留空使用本地备份。 |
 | `DEPLOY_BACKUP_S3_PREFIX` | 否 | `fluxmedia-production` | 部署身份被授权写入的最小对象前缀。 |
-| `DEPLOY_BACKUP_AGE_RECIPIENT` | 是 | 无 | 标准 `age1...` 公钥；对应私钥不得进入目标机或 GitHub。 |
+| `DEPLOY_BACKUP_AGE_RECIPIENT` | 条件 | 无 | S3 模式必填的标准 `age1...` 公钥；对应私钥不得进入目标机或 GitHub。 |
 | `DEPLOY_BACKUP_RETENTION_DAYS` | 否 | `7` | 回滚窗口，允许 1 至 30 天；摘要会计算并记录销毁截止时间。 |
 | `DEPLOY_BACKUP_AWS_PROFILE` | 否 | 空 | 目标机专用 profile；使用实例角色时留空。 |
 
-优先使用目标机实例角色；否则 profile 凭据只存目标机标准 AWS 凭据文件。部署身份仅授予
-指定前缀的 `s3:GetBucketVersioning`、`s3:PutObject`、`s3:GetObjectVersion`；
+S3 模式优先使用目标机实例角色；否则 profile 凭据只存目标机标准 AWS 凭据文件。部署身份
+仅授予指定前缀的 `s3:GetBucketVersioning`、`s3:PutObject`、`s3:GetObjectVersion`；
 `s3:DeleteObjectVersion` 由独立值班销毁身份持有。
 
 ### 流水线托管的镜像变量
@@ -199,12 +205,15 @@ cd /root/flux-media
 chmod 600 .env
 docker compose --profile maintenance config --quiet
 docker compose --profile maintenance pull migrate web
-command -v age aws pg_dump pg_restore sha256sum
-aws s3api get-bucket-versioning \
-  --bucket '<DEPLOY_BACKUP_S3_BUCKET>' \
-  --query Status \
-  --output text
+command -v pg_dump pg_restore sha256sum
+bash ./create-database-backup.sh preflight \
+  .env /root/flux-media '<IMAGE_TAG>' '<GIT_SHA>'
 ```
+
+如果配置了 `DEPLOY_BACKUP_S3_BUCKET`，预检命令还会检查 `age`、AWS CLI 和 bucket 版本控制；
+如果留空，则只创建本地备份目录并检查 PostgreSQL 客户端。S3 模式的 artifact 是带
+`versionId` 的对象 URI；本地模式的 artifact 是 `file:///root/flux-media/backups/...`
+路径。两种模式都必须完成备份后才允许迁移。
 
 检查展开配置时不要执行不带 `--quiet` 的 `docker compose config` 并复制输出到工单或
 日志，因为完整输出会包含 `DATABASE_URL`、认证密钥和第三方凭据。

@@ -18,14 +18,15 @@ ChatGPT Web 代理均不启动。宿主机 Nginx 负责 TLS 终止并反向
 
 ## 首次配置服务器
 
-目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot、PostgreSQL 客户端、
-`age` 和 AWS CLI v2。生产 Workflow 会在停止旧 Web 后用 `pg_dump` 创建一致性备份，
-用离线保管私钥对应的 age 公钥加密，再上传到启用版本控制的 S3 bucket。先准备部署目录和
-真实环境变量：
+目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot，以及与数据库主版本兼容的
+PostgreSQL 客户端。生产 Workflow 会在停止旧 Web 后用 `pg_dump` 创建一致性备份；配置了
+S3 bucket 时使用 age 公钥加密并上传到启用版本控制的 bucket，未配置时持久化到部署目录的
+`backups/`。先准备部署目录和真实环境变量：
 
 ```bash
 sudo install -d -m 750 /root/flux-media
 sudo cp deploy/docker-compose.yml /root/flux-media/docker-compose.yml
+sudo cp deploy/create-database-backup.sh deploy/read-env-value.sh /root/flux-media/
 sudo cp deploy/.env.example /root/flux-media/.env
 sudo chmod 600 /root/flux-media/.env
 sudo editor /root/flux-media/.env
@@ -33,10 +34,17 @@ sudo editor /root/flux-media/.env
 
 至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
 `REDIS_PASSWORD`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和 `FLUXMEDIA_SUPER_ADMIN_PASSWORD`；
-同时配置 `DEPLOY_BACKUP_S3_BUCKET`、`DEPLOY_BACKUP_AGE_RECIPIENT` 和备份保留期；
 `REDIS_USERNAME` 可选。数据库必须已创建；外部 Redis 必须可从 Web 容器访问。Redis 连接
 参数通过独立变量传递，密码不需要 URL 编码；系统设置缓存默认使用逻辑库 4。迁移由部署
 流水线在切换 `web` 前执行。本 Compose 不启动 PostgreSQL 或 Redis。
+
+`DEPLOY_BACKUP_S3_BUCKET` 留空时无需安装 `age` 或 AWS CLI，流水线把权限为 `0600` 的
+custom-format 数据库备份写入 `${DEPLOY_PATH}/backups/<version>/`，并在迁移前复核
+archive manifest 与最终文件 SHA-256。该回退只能应对数据库迁移失败，不能防止目标机磁盘
+损坏、主机丢失或主机权限失陷。生产环境仍建议配置独立版本化 S3 bucket；一旦填写 bucket，
+`DEPLOY_BACKUP_AGE_RECIPIENT`、`age`、AWS CLI 和可用的目标机 AWS 身份会同时成为必需项，
+任何 S3 预检或上传失败都会拒绝迁移，不会静默降级到本地。
+
 配置完成后先验证默认服务：
 
 ```bash
@@ -58,7 +66,7 @@ docker compose up -d web
 默认的交互输入，迁移容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
 
 自动部署先拉取新镜像，再停止旧 Web、确认 `fluxmedia-web` 数据库连接已排空，并执行只读
-预检。预检通过后才创建加密备份和执行迁移。迁移一旦开始，任何迁移、后置校验、启动或
+预检。预检通过后才创建本地或 S3 备份并执行迁移。迁移一旦开始，任何迁移、后置校验、启动或
 健康检查失败都会保持 Web 停止，绝不自动启动旧 schema 镜像。恢复只能由值班人员选择
 前向修复，或先恢复 Workflow 记录的迁移前数据库备份，再恢复旧镜像。完整步骤见
 `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
@@ -93,11 +101,11 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 - `GHCR_PAT`：仅用于目标机拉取私有镜像，至少需要 `read:packages`；PAT 创建者必须与
   `GHCR_USERNAME` 一致。
 
-生产备份身份不放在 GitHub Secrets。优先给目标机绑定只允许指定前缀的实例角色；否则在
-目标机配置专用 AWS profile，并把 profile 名写入 `DEPLOY_BACKUP_AWS_PROFILE`。部署身份
-只需 `s3:GetBucketVersioning`、`s3:PutObject`、`s3:GetObjectVersion`，备份销毁使用独立
-值班身份的 `s3:DeleteObjectVersion`。bucket 必须启用版本控制；age 私钥只放离线恢复
-环境。
+启用 S3 模式时，生产备份身份不放在 GitHub Secrets。优先给目标机绑定只允许指定前缀的
+实例角色；否则在目标机配置专用 AWS profile，并把 profile 名写入
+`DEPLOY_BACKUP_AWS_PROFILE`。部署身份只需 `s3:GetBucketVersioning`、`s3:PutObject`、
+`s3:GetObjectVersion`，备份销毁使用独立值班身份的 `s3:DeleteObjectVersion`。bucket
+必须启用版本控制；age 私钥只放离线恢复环境。
 
 可选 Repository Variable `GHCR_USERNAME` 指定创建 `GHCR_PAT` 的 GitHub 用户名，默认
 使用 Workflow 触发者。建议固定配置该值，避免其他用户触发时登录用户名与 PAT 所属账号
@@ -111,8 +119,8 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 如果部署账号不是 `root`，必须将 `DEPLOY_PATH` 改为该账号可写的绝对路径。
 
 可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/flux-media`。服务器
-上的真实 `.env` 由运维持久维护；流水线只同步 `docker-compose.yml` 和
-`read-env-value.sh`，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
+上的真实 `.env` 由运维持久维护；流水线只同步 `docker-compose.yml`、
+`create-database-backup.sh` 和 `read-env-value.sh`，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
 `FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web 并排空数据库连接后，
 通过 `maintenance` profile 执行只读门禁、备份、迁移和后置校验，再启动新 `web`，不会
 启动注册机。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env` 与基础设施负责，
@@ -120,5 +128,5 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 
 生产部署从 Actions 手动触发，可选择 `main`，也可选择与输入版本完全一致的 Git tag；
 版本号必须符合 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。tag 与输入版本不一致时
-流水线会拒绝部署。新容器未通过健康检查时，流水线保持维护状态并记录备份 artifact、
-密文 SHA-256 和销毁截止时间；不会恢复先前镜像或启动旧 Web。
+流水线会拒绝部署。新容器未通过健康检查时，流水线保持维护状态并记录备份存储类型、
+artifact、SHA-256 和销毁截止时间；不会恢复先前镜像或启动旧 Web。
