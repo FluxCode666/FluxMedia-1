@@ -66,11 +66,10 @@ export type RedactedAdobeMemberConfig =
       gptImageQuality: "low" | "medium" | "high";
     };
 
-/** 管理后台统一成员列表项。 */
-export interface BackendMemberAdminSummary {
+/** 管理后台统一成员列表项的公共字段。 */
+interface BackendMemberAdminSummaryBase {
   id: string;
   name: string;
-  type: "api" | "adobe";
   groupIds: string[];
   supportedModelIds: string[];
   contentSafetyEnabled: boolean;
@@ -85,8 +84,14 @@ export interface BackendMemberAdminSummary {
   leaseAcquiredCount: number;
   lastAcquiredAt: string | null;
   lastUsedAt: string | null;
-  config: RedactedApiMemberConfig | RedactedAdobeMemberConfig;
 }
+
+/** 管理后台统一成员列表项；类型与专属配置保持可判别关联。 */
+export type BackendMemberAdminSummary = BackendMemberAdminSummaryBase &
+  (
+    | { type: "api"; config: RedactedApiMemberConfig }
+    | { type: "adobe"; config: RedactedAdobeMemberConfig }
+  );
 
 /** 原子保存仓储返回的稳定结果。 */
 export type SaveBackendMemberRepositoryResult =

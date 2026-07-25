@@ -87,6 +87,12 @@ import {
   AdminHistoryServiceError,
   loadAdminHistoryRecords,
 } from "@/features/image-generation/admin-history-service";
+import {
+  deleteAdobeAccount,
+  importAdobeAccount,
+  listAdobeAccounts,
+  setAdobeAccountEnabled,
+} from "@/features/image-generation/adobe-direct";
 import { databaseHistoryRepository } from "@/features/image-generation/history-repository";
 import {
   HistoryServiceError,
@@ -813,6 +819,70 @@ bindExecute(
     } catch (error) {
       throwBackendPoolOperationError(error);
     }
+  }
+);
+
+/** pool.listAdobeAccounts - 读取 Adobe direct 成员内部的脱敏账号。 */
+bindExecute(
+  "pool.listAdobeAccounts",
+  async (
+    input: { memberId: string },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => ({
+    accounts: (await listAdobeAccounts(input.memberId)).map((account) => ({
+      id: account.id,
+      name: account.name,
+      displayName: account.displayName,
+      email: account.email,
+      isEnabled: account.isEnabled,
+      status: account.status,
+      lastRefreshAt: account.lastRefreshAt?.toISOString() ?? null,
+      lastRefreshError: account.lastRefreshError,
+      consecutiveFailures: account.consecutiveFailures,
+      creditsTotal: account.creditsTotal,
+      creditsUsed: account.creditsUsed,
+      creditsAvailable: account.creditsAvailable,
+    })),
+  })
+);
+
+/** pool.importAdobeAccount - 导入并验证一个 Adobe direct Cookie。 */
+bindExecute(
+  "pool.importAdobeAccount",
+  async (
+    input: { memberId: string; cookie: string; name?: string },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    const account = await importAdobeAccount(input);
+    return { id: account.id };
+  }
+);
+
+/** pool.deleteAdobeAccount - 删除 Adobe direct 子账号及其级联 token。 */
+bindExecute(
+  "pool.deleteAdobeAccount",
+  async (
+    input: { id: string },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    await deleteAdobeAccount(input.id);
+    return { success: true };
+  }
+);
+
+/** pool.setAdobeAccountEnabled - 更新 Adobe direct 子账号启用状态。 */
+bindExecute(
+  "pool.setAdobeAccountEnabled",
+  async (
+    input: { id: string; isEnabled: boolean },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    await setAdobeAccountEnabled(input.id, input.isEnabled);
+    return { success: true };
   }
 );
 
