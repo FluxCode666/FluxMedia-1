@@ -101,6 +101,11 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
         run: pnpm --filter @repo/database db:migrate
 
+      - name: Test generation time migration with PostgreSQL
+        env:
+          GENERATION_TIME_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: pnpm --filter @repo/integration-tests test:generation-time-migration
+
       - name: Test moderation with PostgreSQL
         env:
           MODERATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test

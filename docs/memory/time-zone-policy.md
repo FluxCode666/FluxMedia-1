@@ -6,6 +6,15 @@
 - 数据库时间字段按 UTC 语义写入和读取；外部 API 只返回 Unix epoch 或带 `Z` 的 ISO 8601。
 - `APP_TIME_ZONE` 只存在于部署环境，不属于系统设置，不得从 `system_setting` 覆盖进程环境。
 
+## generation 历史迁移
+
+- `0052` 不得使用迁移连接的 `TimeZone` 推断历史写入口径，因为 drizzle-kit 连接固定为 UTC。
+- 历史候选只使用已取证的 `Asia/Shanghai`；其他旧时区不猜测，证据不足时迁移整体失败。
+- 优先使用服务端生成的 `metadata.upstreamStream.startedAt` UTC ISO 锚点；缺失时仅允许用
+  `completed_at` 的 45 分钟运行窗口判断。两类证据冲突、锚点非法或无证据均拒绝更新。
+- 迁移只更新逐行证明为旧口径的记录，并核对实际影响行数；`generation.created_at` 的数据库
+  默认值与 ORM schema 均固定为 `CURRENT_TIMESTAMP AT TIME ZONE 'UTC'`。
+
 ## 站内展示优先级
 
 ```text

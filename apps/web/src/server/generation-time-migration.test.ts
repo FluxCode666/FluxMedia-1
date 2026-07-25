@@ -1,8 +1,8 @@
 /**
  * generation 历史时间迁移的部署安全契约测试。
  *
- * 迁移必须在旧 Web 仍可能写入时阻断并发 INSERT，拒绝不明确的混合时间口径，最后把
- * 数据库默认值切到 UTC；测试直接约束迁移文本，避免后续机械改写丢失这些边界。
+ * 迁移必须在旧 Web 仍可能写入时阻断并发 INSERT，按服务端 UTC 锚点逐行分类，只更新
+ * 明确的旧口径记录，最后把数据库默认值切到 UTC。
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -22,7 +22,7 @@ describe("generation UTC migration contract", () => {
     const lockPosition = migrationSql.indexOf(
       'LOCK TABLE "generation" IN ACCESS EXCLUSIVE MODE'
     );
-    const inspectionPosition = migrationSql.indexOf('FROM "generation";');
+    const inspectionPosition = migrationSql.indexOf('FROM "generation"');
     const updatePosition = migrationSql.indexOf('UPDATE "generation"');
 
     expect(lockPosition).toBeGreaterThanOrEqual(0);
@@ -30,12 +30,19 @@ describe("generation UTC migration contract", () => {
     expect(updatePosition).toBeGreaterThan(inspectionPosition);
   });
 
-  it("rejects ambiguous data and makes future defaults session-independent", () => {
+  it("uses server evidence instead of the migration session time zone", () => {
+    expect(migrationSql).not.toContain("current_setting('TimeZone')");
     expect(migrationSql).toContain(
-      "legacy_time_zone text := current_setting('TimeZone')"
+      '"metadata" #>> \'{upstreamStream,startedAt}\''
     );
-    expect(migrationSql).toContain("completed_count = 0");
-    expect(migrationSql).toContain("检测到混合或不明确");
+    expect(migrationSql).toContain("pg_input_is_valid");
+    expect(migrationSql).toContain("AT TIME ZONE 'Asia/Shanghai'");
+  });
+
+  it("rejects ambiguous rows and verifies the exact update count", () => {
+    expect(migrationSql).toContain("无法逐行判断 generation 时间口径");
+    expect(migrationSql).toContain("GET DIAGNOSTICS updated_count = ROW_COUNT");
+    expect(migrationSql).toContain("updated_count <> legacy_count");
     expect(migrationSql).toContain(
       "SET DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"
     );

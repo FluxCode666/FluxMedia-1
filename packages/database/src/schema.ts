@@ -1727,7 +1727,9 @@ export const generation = pgTable(
       .default(0),
     error: text("error"),
     metadata: json("metadata").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: timestamp("created_at")
+      .notNull()
+      .default(sql`(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')`),
     completedAt: timestamp("completed_at"),
   },
   (table) => [
