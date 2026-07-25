@@ -364,6 +364,7 @@
     "nav": {
       "dashboard": "Dashboard",
       "create": "Create",
+      "generate": "Image generation",
       "gallery": "Gallery",
       "history": "Usage records",
       "apiDocs": "API Docs",
