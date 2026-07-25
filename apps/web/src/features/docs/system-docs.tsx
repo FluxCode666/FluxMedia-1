@@ -150,7 +150,7 @@ const sections = {
           "创作页文生图",
           "/api/images/generate",
           "image_generation",
-          "可命中用户自接 API、Web 账号、Codex/Responses 账号或外接 API 后端。",
+          "按选中的平台后端分组调度 Web 账号、Codex/Responses 账号或外接 API 后端。",
         ],
         [
           "创作页图生图",
@@ -319,8 +319,8 @@ const sections = {
         "平台内容审核级别由管理员集中管理：用户覆盖优先，否则使用全站默认值，缺失或非法值回退到 high。调用方不能通过 API 密钥或请求字段修改；low、medium、high 只改变 Aliyun 审核阈值，OpenAI 审核提供方不随这三档变化。",
         "response_format 控制返回 URL 或 base64；output_format 才控制图片文件格式，二者不是同一个字段。",
         "错误响应采用 OpenAI 风格 error 对象；本站可能额外返回 generation_id、generationId、credits_consumed 方便排查和对账。",
-        "API 密钥绑定的后端分组优先；未绑定时使用平台默认分组，再回退默认启用分组。页面创作才使用用户选择的默认分组。",
-        "图片按实际输出像素归入 1024、1K、2K、4K 固定档位；价格依次读取所选分组的模型覆盖、全局模型价格和通用档位价格，再加运行时审核费。图片和视频均不使用分组倍率。",
+        "API 密钥绑定的后端分组优先；未绑定时使用平台默认分组，再回退默认启用分组。页面创作可在本次请求中选择已授权分组。",
+        "图片按实际输出像素归入 1024、1K、2K、4K 固定档位；价格依次读取所选分组的模型覆盖和全局模型价格，再加运行时审核费。视频同样按分组每秒价格覆盖、全局每秒价格的顺序计费；图片和视频均不使用分组倍率。",
         "API 密钥可设置独立积分限额；GET /v1/credits 可查询密钥限额、已用额度和账户余额。",
         "所有页面和外接 API 请求都使用平台后端池，并按平台积分与 API 密钥额度结算。",
         "image 接口的 web_first / webFirst / force_web / forceWeb（chat 对应 mix_web_first）是 Web-first 优先路由，不是硬性只走 Web，且默认开启。开启时（不传或显式 true）按 Web-first 像素区间（IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS，默认 0.66MP-2MP）判定：尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）则走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。该路由只对 mixed 后端分组生效（纯 Web / 纯 Codex-Responses 分组无此概念）；agent 始终走 Codex/Responses，不受此项影响。",
@@ -1762,7 +1762,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
           notes: [
             "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/generations 是同一 handler 的别名。",
             "视频生成是长任务：同步模式用 keep-alive 撑住连接直到出片或失败（请把客户端读超时设足够长）；长视频强烈建议异步（async:true）——立即拿 task_...，用 GET /v1/videos/{id} 轮询（task_... 为内存态、30 分钟过期，或用响应里的 generation_id 持久查），或用 callback_url 完成回调，避免连接被中途掐断丢产物。",
-            "计费 = 当前视频模型族每秒积分 × 时长（秒），最终结果按积分精度向上取整；时长由 model id 中的 <dur> 决定，每秒价格可在 admin『Adobe 后端』tab 配置，未配置模型族时回退通用视频每秒价格。",
+            "计费 = 当前视频模型族每秒积分 × 时长（秒），最终结果按积分精度向上取整；时长由 model id 中的 <dur> 决定。每秒价格按分组模型覆盖 → 全局模型计费配置解析，分组未配置时继承全局价格。",
             "默认需要 externalApi.images.generate 能力（入门版及以上），可在套餐能力矩阵中调整。",
           ],
         },
@@ -2564,7 +2564,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       groups: [
         "API key bound group first",
         "Unbound API keys use the platform default group",
-        "Page creation is the only path that uses the user's selected image backend group",
+        "Page creation can use an authorized backend group selected for the current request",
         "Group checks plan access, enabled state, and content safety setting",
       ],
       backends: [
@@ -2611,7 +2611,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "Create page generation",
           "/api/images/generate",
           "image_generation",
-          "Can route to user custom API, Web account, Codex/Responses account, or external API backend.",
+          "Routes through the selected platform backend group to a Web account, Codex/Responses account, or external API backend.",
         ],
         [
           "Create page edit",
@@ -2780,8 +2780,8 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "Platform content-moderation levels are centrally managed by administrators: a user override wins, otherwise the global default applies, and missing or invalid values fall back to high. Callers cannot change this policy through an API key or request field. low, medium, and high only change Aliyun thresholds; the OpenAI moderation provider is unchanged by these levels.",
         "response_format controls URL vs base64; output_format controls the image file format. They are different fields.",
         "Error responses use an OpenAI-style error object. FluxMedia may also return generation_id, generationId, and credits_consumed for debugging and reconciliation.",
-        "A backend group bound to the API key wins first. Otherwise the platform default group is used, then the enabled fallback group. Page creation still uses the user's selected default group.",
-        "Images use fixed 1024, 1K, 2K, and 4K tiers selected from actual output pixels. Pricing resolves the selected group's model override, then the global model price, then the generic tier price, and finally adds runtime review fees. Videos use a fixed per-second price for each model family. Neither path uses group multipliers.",
+        "A backend group bound to the API key wins first. Otherwise the platform default group is used, then the enabled fallback group. Page creation can select an authorized group for the current request.",
+        "Images use fixed 1024, 1K, 2K, and 4K tiers selected from actual output pixels. Pricing resolves the selected group's model override, then the required global model price, and finally adds runtime review fees. Videos resolve each model family's per-second price from the group override and then the required global price. Neither path uses group multipliers.",
         "API keys can have independent credit limits. GET /v1/credits returns key quota, used credits, and account balance.",
         "All page and external API requests use the platform backend pool and settle through platform credits and API key quotas.",
         "Image endpoint web_first / webFirst / force_web / forceWeb (chat: mix_web_first) is a Web-first preference route, not hard Web-only, and is on by default. When on (omitted or explicit true) it uses the Web-first pixel range (IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS, default 0.66MP-2MP): only sizes inside the range prefer Web (fall back to Codex/Responses on failure), sizes outside (e.g. 4K) use normal scheduling, auto or unparseable sizes may prefer Web; explicit false disables it. It only applies to mixed backend groups (no effect for Web-only / Codex-Responses-only groups); agent always uses Codex/Responses and is unaffected.",

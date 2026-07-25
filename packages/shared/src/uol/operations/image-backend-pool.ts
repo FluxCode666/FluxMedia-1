@@ -10,15 +10,11 @@
 import { z } from "zod";
 
 import { adobeEnabledModelIdsSchema } from "../../adobe/enabled-models";
+import { videoModelCreditsPerSecondMapSchema } from "../../adobe/video-pricing";
 import { imageCreditOverridesSchema } from "../../image-backend/group-image-pricing";
 import { requestParameterMappingsSchema } from "../../image-backend/request-parameter-mapping";
 import { supportedModelIdsSchema } from "../../image-backend/supported-models";
 import { defineOperation } from "../registry";
-
-const videoModelCreditsPerSecondMapSchema = z.record(
-  z.string().trim().min(1).max(120),
-  z.number().finite().positive().max(100_000)
-);
 
 // ---------------------------------------------------------------------------
 // 3. pool.getGroupOptions - 获取后端组选项列表

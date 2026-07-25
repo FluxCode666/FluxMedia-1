@@ -69,7 +69,10 @@ export default async function CreatePage() {
       DEFAULT_FORCE_WEB_MAX_PIXELS,
       { positive: true }
     ),
-    getVideoPricingForUser({ userId: user.id }),
+    getVideoPricingForUser({
+      userId: user.id,
+      group: activeBackendGroup?.videoCreditOverrides,
+    }),
   ]);
   const forceWebPixelRange = {
     minPixels: Math.min(forceWebMinPixels, forceWebMaxPixels),

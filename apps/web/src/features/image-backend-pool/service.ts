@@ -4106,6 +4106,7 @@ export async function getEffectiveDefaultImageBackendGroup(
     backendType: getGroupBackendType(group.metadata),
     contentSafetyEnabled: group.contentSafetyEnabled,
     imageCreditOverrides: getGroupImageCreditOverrides(group.metadata),
+    videoCreditOverrides: getGroupVideoCreditOverrides(group.metadata),
   };
 }
 

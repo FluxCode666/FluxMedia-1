@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getEffectiveImageBackendGroupForUser: vi.fn(
+  getEffectiveDefaultImageBackendGroup: vi.fn(
     async (): Promise<{
       id: string;
       imageCreditOverrides: {
@@ -37,15 +37,15 @@ const mocks = vi.hoisted(() => ({
     limits: { monthlyCredits: 800 },
   })),
   isContentModerationEnabled: vi.fn(async () => true),
-  getRuntimeImageBaseCreditPricing: vi.fn(async () => ({
-    base1024Credits: 1.1,
-    base1kCredits: 2.1,
-    base2kCredits: 5.1,
-    base4kCredits: 10.1,
-  })),
   getRuntimeImageModelCreditPricing: vi.fn(async () => ({
     version: 1 as const,
     byModel: {
+      default: {
+        base1024Credits: 1.1,
+        base1kCredits: 2.1,
+        base2kCredits: 5.1,
+        base4kCredits: 10.1,
+      },
       "gpt-image-2": {
         base1024Credits: 1.5,
         base1kCredits: 2.5,
@@ -82,12 +82,11 @@ vi.mock("@repo/shared/subscription/services/user-plan", () => ({
 }));
 
 vi.mock("@/features/image-backend-pool/service", () => ({
-  getEffectiveImageBackendGroupForUser:
-    mocks.getEffectiveImageBackendGroupForUser,
+  getEffectiveDefaultImageBackendGroup:
+    mocks.getEffectiveDefaultImageBackendGroup,
 }));
 
 vi.mock("@/features/image-generation/pricing-settings", () => ({
-  getRuntimeImageBaseCreditPricing: mocks.getRuntimeImageBaseCreditPricing,
   getRuntimeImageModelCreditPricing: mocks.getRuntimeImageModelCreditPricing,
   getRuntimeImageModerationCreditPricing:
     mocks.getRuntimeImageModerationCreditPricing,
@@ -98,7 +97,7 @@ import { loadImagePricingCardData } from "./image-pricing-card-data";
 describe("loadImagePricingCardData", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getEffectiveImageBackendGroupForUser.mockResolvedValue({
+    mocks.getEffectiveDefaultImageBackendGroup.mockResolvedValue({
       id: "group-selected",
       contentSafetyEnabled: true,
       imageCreditOverrides: {
@@ -112,7 +111,7 @@ describe("loadImagePricingCardData", () => {
     });
   });
 
-  it("返回运行时四档、全局模型价、所选分组覆盖和审核费", async () => {
+  it("返回运行时四档、全局模型价、默认分组覆盖和审核费", async () => {
     const result = await loadImagePricingCardData("user-1");
 
     expect(result).toMatchObject({
@@ -124,7 +123,7 @@ describe("loadImagePricingCardData", () => {
         monthlyCredits: 800,
         planName: "Pro",
       },
-      fallbackPricing: {
+      defaultModelPricing: {
         base1024Credits: 1.1,
         base1kCredits: 2.1,
         base2kCredits: 5.1,
@@ -133,6 +132,7 @@ describe("loadImagePricingCardData", () => {
       globalModelPricing: {
         version: 1,
         byModel: {
+          default: { base4kCredits: 10.1 },
           "gpt-image-2": { base4kCredits: 10.5 },
         },
       },
@@ -148,14 +148,13 @@ describe("loadImagePricingCardData", () => {
       },
     });
     expect("groupMultiplier" in result.billing).toBe(false);
-    expect(mocks.getEffectiveImageBackendGroupForUser).toHaveBeenCalledWith(
-      "user-1",
+    expect(mocks.getEffectiveDefaultImageBackendGroup).toHaveBeenCalledWith(
       "pro"
     );
   });
 
   it("无可用分组时返回空覆盖契约", async () => {
-    mocks.getEffectiveImageBackendGroupForUser.mockResolvedValue(null);
+    mocks.getEffectiveDefaultImageBackendGroup.mockResolvedValue(null);
 
     const result = await loadImagePricingCardData("user-1");
 

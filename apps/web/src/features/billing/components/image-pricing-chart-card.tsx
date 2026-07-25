@@ -9,12 +9,13 @@
 
 import { formatCredits } from "@repo/shared/credits/format";
 import {
+  GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
   getImageModelCreditPricing,
-  resolveImageCreditPricing,
   type ImageCreditOverrides,
   type ImageCreditPriceField,
   type ImageCreditPricing,
   type ResolvedImageCreditPricing,
+  resolveImageCreditPricing,
 } from "@repo/shared/image-backend/group-image-pricing";
 import {
   Card,
@@ -148,7 +149,7 @@ const PRICING_POINTS = [
 /**
  * 根据完整的四档价格生成图表点。
  *
- * @param pricing 管理员配置的通用四档价格。
+ * @param pricing 已按模型和分组解析完成的四档价格。
  * @returns 保留尺寸信息并补齐固定价格的图表数据；无副作用。
  */
 function buildChartData(pricing: ResolvedImageCreditPricing): PricingPoint[] {
@@ -245,13 +246,11 @@ function getExampleFormula(
 /**
  * 构造全局模型价与当前分组覆盖关系的展示行。
  *
- * @param fallbackPricing 未配置模型时使用的通用四档价格。
  * @param globalModelPricing 管理员配置的全局模型稀疏价格。
  * @param groupModelOverrides 当前分组的模型逐档覆盖。
  * @returns 按模型名排序的全局、生效与显式覆盖价格；不修改输入对象。
  */
 export function buildModelPricingRows(
-  fallbackPricing: ResolvedImageCreditPricing,
   globalModelPricing: ImageCreditOverrides,
   groupModelOverrides: ImageCreditOverrides
 ): ModelPricingRow[] {
@@ -265,13 +264,11 @@ export function buildModelPricingRows(
     .map((model) => ({
       effectivePricing: resolveImageCreditPricing({
         model,
-        fallback: fallbackPricing,
         global: globalModelPricing,
         group: groupModelOverrides,
       }),
       globalPricing: resolveImageCreditPricing({
         model,
-        fallback: fallbackPricing,
         global: globalModelPricing,
       }),
       globalOverrides: getImageModelCreditPricing(
@@ -322,13 +319,13 @@ function useElementWidth() {
  */
 export function ImagePricingChartCard({
   billing,
-  fallbackPricing,
+  defaultModelPricing,
   globalModelPricing,
   groupModelOverrides,
   isZh,
   moderationPricing,
 }: ImagePricingChartCardProps) {
-  const data = buildChartData(fallbackPricing);
+  const data = buildChartData(defaultModelPricing);
   const chartXTicks = [
     1024,
     IMAGE_1K_BASE_EDGE,
@@ -338,7 +335,6 @@ export function ImagePricingChartCard({
   const copy = (en: string, zh: string) => (isZh ? zh : en);
   const { ref: chartContainerRef, width: chartWidth } = useElementWidth();
   const modelPricingRows = buildModelPricingRows(
-    fallbackPricing,
     globalModelPricing,
     groupModelOverrides
   );
@@ -394,21 +390,21 @@ export function ImagePricingChartCard({
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {copy(
-            `Fallback image pricing uses four fixed tiers: 1024 ${formatPrice(
-              fallbackPricing.base1024Credits
+            `The default image model uses four global fixed tiers: 1024 ${formatPrice(
+              defaultModelPricing.base1024Credits
             )}, 1K ${formatPrice(
-              fallbackPricing.base1kCredits
+              defaultModelPricing.base1kCredits
             )}, 2K ${formatPrice(
-              fallbackPricing.base2kCredits
-            )}, and 4K ${formatPrice(fallbackPricing.base4kCredits)}.`,
-            `通用生图价格采用四个固定档位：1024 ${formatPrice(
-              fallbackPricing.base1024Credits
+              defaultModelPricing.base2kCredits
+            )}, and 4K ${formatPrice(defaultModelPricing.base4kCredits)}.`,
+            `默认图像模型采用四个全局固定档位：1024 ${formatPrice(
+              defaultModelPricing.base1024Credits
             )}、1K ${formatPrice(
-              fallbackPricing.base1kCredits
+              defaultModelPricing.base1kCredits
             )}、2K ${formatPrice(
-              fallbackPricing.base2kCredits
+              defaultModelPricing.base2kCredits
             )}、4K ${formatPrice(
-              fallbackPricing.base4kCredits
+              defaultModelPricing.base4kCredits
             )}；按输出最长边归档。`
           )}
         </p>
@@ -421,7 +417,7 @@ export function ImagePricingChartCard({
                 {tier.label}
               </div>
               <div className="mt-1.5 text-lg font-medium text-foreground">
-                {formatPrice(fallbackPricing[tier.field])}{" "}
+                {formatPrice(defaultModelPricing[tier.field])}{" "}
                 <span className="text-xs font-normal text-muted-foreground">
                   {copy("credits", "积分")}
                 </span>
@@ -559,7 +555,9 @@ export function ImagePricingChartCard({
                   {modelPricingRows.map((row) => (
                     <tr className="border-b last:border-b-0" key={row.model}>
                       <td className="px-2 py-2 font-mono text-foreground">
-                        {row.model}
+                        {row.model === GLOBAL_DEFAULT_IMAGE_PRICING_MODEL
+                          ? copy("Other/custom models", "其他或自定义模型")
+                          : row.model}
                       </td>
                       {PRICE_TIERS.map((tier) => {
                         const globalOverride = row.globalOverrides[tier.field];
@@ -570,7 +568,7 @@ export function ImagePricingChartCard({
                               {formatPrice(row.globalPricing[tier.field])}{" "}
                               <span className="font-normal text-muted-foreground">
                                 {globalOverride === undefined
-                                  ? copy("fallback", "通用回退")
+                                  ? copy("global default", "全局默认")
                                   : copy("global", "全局")}
                               </span>
                             </div>
@@ -600,8 +598,8 @@ export function ImagePricingChartCard({
           ) : (
             <p className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">
               {copy(
-                "No model-specific price is configured. All models use the fallback tiers above.",
-                "尚未配置模型专属价格，所有模型均使用上方通用四档价格。"
+                "All models inherit the required global default prices.",
+                "所有模型均继承必填的全局默认价格。"
               )}
             </p>
           )}
@@ -626,14 +624,14 @@ export function ImagePricingChartCard({
               {PRICE_TIERS.map((tier) => (
                 <p key={tier.field}>
                   {tier.range(formatLongestEdge)} · {tier.label} ={" "}
-                  {formatPrice(fallbackPricing[tier.field])}{" "}
-                  {copy("fallback credits", "通用积分")}
+                  {formatPrice(defaultModelPricing[tier.field])}{" "}
+                  {copy("global credits", "全局积分")}
                 </p>
               ))}
               <p className="pt-1 text-foreground">
                 {copy(
-                  "Priority: current group override > global model price > fallback tier price.",
-                  "优先级：当前分组覆盖 > 全局模型价 > 通用档位价。"
+                  "Priority: current group override > global model price.",
+                  "优先级：当前分组覆盖 > 全局模型价。"
                 )}
               </p>
             </div>
@@ -671,7 +669,7 @@ export function ImagePricingChartCard({
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {examplePoints.map((point) => {
-                const example = getExampleFormula(point, fallbackPricing);
+                const example = getExampleFormula(point, defaultModelPricing);
                 return (
                   <div
                     className="rounded-md border bg-background p-2"
@@ -699,8 +697,8 @@ export function ImagePricingChartCard({
         <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
           <p>
             {copy(
-              "The curve shows fallback image credits only. Model and group prices follow the priority above; review and Chat/Agent round charges are added separately.",
-              "曲线仅展示通用生图积分；模型与分组价格按上述优先级生效，审核及 Chat/Agent 轮次费用另行叠加。"
+              "The curve shows the default image model's global fixed prices. Group prices follow the priority above; review and Chat/Agent round charges are added separately.",
+              "曲线展示默认图像模型的全局固定价格；分组价格按上述优先级生效，审核及 Chat/Agent 轮次费用另行叠加。"
             )}
           </p>
           <p>

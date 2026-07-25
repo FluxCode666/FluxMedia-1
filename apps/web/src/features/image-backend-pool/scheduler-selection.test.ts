@@ -736,13 +736,14 @@ describe("image backend pool scheduler selection", () => {
     );
   });
 
-  it("carries the selected billing group's image price overrides into config", async () => {
+  it("carries the selected billing group's model price overrides into config", async () => {
     dbMock.state.groups[0]!.metadata = {
       backendType: "responses",
       imageCreditOverrides: {
         version: 1,
         byModel: { "gpt-image-2": { base2kCredits: 6 } },
       },
+      videoCreditOverrides: { sora2: 42 },
     };
 
     const result = await resolveImageBackendPoolConfig({
@@ -753,6 +754,9 @@ describe("image backend pool scheduler selection", () => {
     expect(result?.config.backend?.imageCreditOverrides).toEqual({
       version: 1,
       byModel: { "gpt-image-2": { base2kCredits: 6 } },
+    });
+    expect(result?.config.backend?.videoCreditOverrides).toEqual({
+      sora2: 42,
     });
   });
 
