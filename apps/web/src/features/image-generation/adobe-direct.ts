@@ -21,6 +21,7 @@ import {
   resolveAdobeImageModelId,
 } from "@repo/shared/adobe";
 import {
+  AdobeAcceptedVideoError,
   AdobeFireflyClient,
   AuthError,
   decodeJwtExp,
@@ -368,7 +369,16 @@ async function runWithAdobeTokenRotation<T>(
   transport: FireflyTransport,
   signal: AbortSignal | undefined,
   run: (token: string) => Promise<T>
-): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; value: T }
+  | {
+      ok: false;
+      error: string;
+      switchable: boolean;
+      upstreamAccepted: boolean;
+      terminal: boolean;
+    }
+> {
   const triedTokenIds = new Set<string>();
   const triedAccountIds = new Set<string>();
   let lastError =
@@ -404,10 +414,23 @@ async function runWithAdobeTokenRotation<T>(
         continue;
       }
       logError(error, { source: "adobe-direct-rotate", memberId, attempt });
-      return { ok: false, error: lastError };
+      const upstreamAccepted = error instanceof AdobeAcceptedVideoError;
+      return {
+        ok: false,
+        error: lastError,
+        switchable: false,
+        upstreamAccepted,
+        terminal: !upstreamAccepted,
+      };
     }
   }
-  return { ok: false, error: lastError };
+  return {
+    ok: false,
+    error: lastError,
+    switchable: !signal?.aborted,
+    upstreamAccepted: false,
+    terminal: Boolean(signal?.aborted),
+  };
 }
 
 const ALLOWED_FAMILIES: AdobeImageFamily[] = [
@@ -539,7 +562,12 @@ export async function runAdobeDirectImageRequest(
 
 export type AdobeVideoResult =
   | { bytes: Buffer; contentType: string; raw: Record<string, unknown> }
-  | { error: string };
+  | {
+      error: string;
+      switchable: boolean;
+      upstreamAccepted: boolean;
+      terminal: boolean;
+    };
 
 /**
  * mode=direct 的 adobe 视频派发：解析视频模型 → 选 token → 图生视频先上传输入图 →
@@ -557,7 +585,14 @@ export async function runAdobeDirectVideoRequest(
   }
 ): Promise<AdobeVideoResult> {
   const memberId = config.backend?.id;
-  if (!memberId) return { error: "Adobe 直连成员缺少 id" };
+  if (!memberId) {
+    return {
+      error: "Adobe 直连成员缺少 id",
+      switchable: true,
+      upstreamAccepted: false,
+      terminal: false,
+    };
+  }
   if (
     !canAdobeBackendServeModel({
       enabledModels: config.backend?.adobeEnabledModels,
@@ -565,17 +600,30 @@ export async function runAdobeDirectVideoRequest(
       requestedModel: params.model,
     })
   ) {
-    return { error: "此 Adobe 后端未开放所请求的模型" };
+    return {
+      error: "此 Adobe 后端未开放所请求的模型",
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+    };
   }
 
   const conf = resolveFireflyVideoModel(params.model);
   if (!conf) {
-    return { error: `Adobe 直连不支持的视频模型: ${params.model}` };
+    return {
+      error: `Adobe 直连不支持的视频模型: ${params.model}`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+    };
   }
   const size = fireflyVideoSize(conf.outputResolution, conf.aspectRatio);
   if (!size) {
     return {
       error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
     };
   }
 
@@ -633,7 +681,7 @@ export async function runAdobeDirectVideoRequest(
       };
     }
   );
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return result;
   return result.value;
 }
 

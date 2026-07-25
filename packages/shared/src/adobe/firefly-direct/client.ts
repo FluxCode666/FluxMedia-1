@@ -12,6 +12,7 @@
  */
 
 import {
+  AdobeAcceptedVideoError,
   AdobeRequestError,
   AuthError,
   isRetryableStatus,
@@ -356,9 +357,7 @@ export class AdobeFireflyClient {
       ...(input.negativePrompt != null
         ? { negativePrompt: input.negativePrompt }
         : {}),
-      ...(input.sourceImageIds
-        ? { sourceImageIds: input.sourceImageIds }
-        : {}),
+      ...(input.sourceImageIds ? { sourceImageIds: input.sourceImageIds } : {}),
     });
 
     const submitResp = await this.transport.request({
@@ -409,28 +408,65 @@ export class AdobeFireflyClient {
     const start = Date.now();
 
     for (;;) {
-      const pollResp = await this.transport.request({
-        method: "GET",
-        url: pollUrl,
-        headers: this.pollHeaders(input.token),
-        signal: input.signal,
-        timeoutMs: 60_000,
-      });
+      let pollResp: FireflyTransportResponse;
+      try {
+        pollResp = await this.transport.request({
+          method: "GET",
+          url: pollUrl,
+          headers: this.pollHeaders(input.token),
+          signal: input.signal,
+          timeoutMs: 60_000,
+        });
+      } catch {
+        if (input.signal?.aborted) {
+          throw new AdobeAcceptedVideoError(
+            "video polling aborted after submission",
+            { errorType: "network" }
+          );
+        }
+        if (Date.now() - start > timeoutMs) {
+          throw new AdobeAcceptedVideoError(
+            "video generation timed out after submission",
+            { errorType: "timeout" }
+          );
+        }
+        await sleep(pollIntervalMs, input.signal).catch(() => {
+          throw new AdobeAcceptedVideoError(
+            "video polling aborted after submission",
+            { errorType: "network" }
+          );
+        });
+        continue;
+      }
       if (pollResp.status !== 200) {
         const body = (await pollResp.text().catch(() => "")).slice(0, 300);
         if (pollResp.status === 401 || pollResp.status === 403) {
-          throw new AuthError("Token invalid or expired", {
-            statusCode: pollResp.status,
-          });
-        }
-        if (isRetryableStatus(pollResp.status)) {
-          throw new UpstreamTemporaryError(
-            `video poll failed: ${pollResp.status} ${body}`,
-            { statusCode: pollResp.status, errorType: "status" }
+          throw new AdobeAcceptedVideoError(
+            "video polling authorization failed after submission",
+            {
+              statusCode: pollResp.status,
+              errorType: "status",
+            }
           );
         }
-        throw new AdobeRequestError(
-          `video poll failed: ${pollResp.status} ${body}`
+        if (isRetryableStatus(pollResp.status)) {
+          if (Date.now() - start > timeoutMs) {
+            throw new AdobeAcceptedVideoError(
+              `video polling timed out after HTTP ${pollResp.status}`,
+              { statusCode: pollResp.status, errorType: "timeout" }
+            );
+          }
+          await sleep(pollIntervalMs, input.signal).catch(() => {
+            throw new AdobeAcceptedVideoError(
+              "video polling aborted after submission",
+              { errorType: "network" }
+            );
+          });
+          continue;
+        }
+        throw new AdobeAcceptedVideoError(
+          `video poll failed after submission: ${pollResp.status} ${body}`,
+          { statusCode: pollResp.status, errorType: "status" }
         );
       }
 
@@ -451,8 +487,17 @@ export class AdobeFireflyClient {
         if (!videoUrl || typeof videoUrl !== "string") {
           throw new AdobeRequestError("video job finished without video url");
         }
-        const bytes = await this.download(videoUrl, input.signal);
-        return { bytes, raw: latest };
+        try {
+          const bytes = await this.download(videoUrl, input.signal);
+          return { bytes, raw: latest };
+        } catch (error) {
+          throw new AdobeAcceptedVideoError(
+            error instanceof Error
+              ? `video download failed after submission: ${error.message}`
+              : "video download failed after submission",
+            { errorType: "network" }
+          );
+        }
       }
 
       if (
@@ -460,15 +505,24 @@ export class AdobeFireflyClient {
         statusVal === "CANCELLED" ||
         statusVal === "ERROR"
       ) {
-        throw new AdobeRequestError(
-          `video job failed: ${JSON.stringify(latest).slice(0, 300)}`
+        throw new AdobeAcceptedVideoError(
+          `video job failed after submission: ${JSON.stringify(latest).slice(0, 300)}`,
+          { errorType: "status" }
         );
       }
 
       if (Date.now() - start > timeoutMs) {
-        throw new AdobeRequestError("video generation timed out");
+        throw new AdobeAcceptedVideoError(
+          "video generation timed out after submission",
+          { errorType: "timeout" }
+        );
       }
-      await sleep(pollIntervalMs, input.signal);
+      await sleep(pollIntervalMs, input.signal).catch(() => {
+        throw new AdobeAcceptedVideoError(
+          "video polling aborted after submission",
+          { errorType: "network" }
+        );
+      });
     }
   }
 

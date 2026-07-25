@@ -58,6 +58,22 @@ export class UpstreamTemporaryError extends AdobeRequestError {
   }
 }
 
+/**
+ * Adobe 已接受视频任务后的轮询、下载或超时错误。
+ *
+ * WHY：这类错误发生时上游任务可能仍在执行，不能按普通可轮换错误
+ * 换 token 或换成员重新提交，否则会生成重复视频并重复消耗上游额度。
+ */
+export class AdobeAcceptedVideoError extends AdobeRequestError {
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; errorType?: string }
+  ) {
+    super(message, opts);
+    this.name = "AdobeAcceptedVideoError";
+  }
+}
+
 export function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 451 || status >= 500;
 }

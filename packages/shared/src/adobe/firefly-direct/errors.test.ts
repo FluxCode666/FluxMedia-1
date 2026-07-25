@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AdobeAcceptedVideoError,
   AdobeRequestError,
   AuthError,
   isAdobeRotatableError,
@@ -37,5 +38,10 @@ describe("isAdobeRotatableError", () => {
     expect(isAdobeRotatableError(null)).toBe(false);
     // 仅按错误类型判定，不按消息字符串——传字符串不应被当作可轮换。
     expect(isAdobeRotatableError("submit failed: 429")).toBe(false);
+    expect(
+      isAdobeRotatableError(
+        new AdobeAcceptedVideoError("poll failed after submission")
+      )
+    ).toBe(false);
   });
 });

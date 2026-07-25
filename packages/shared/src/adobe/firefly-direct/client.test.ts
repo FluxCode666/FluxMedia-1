@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { AdobeFireflyClient, extractResultLink } from "./client";
-import { AuthError, QuotaExhaustedError } from "./errors";
+import {
+  AdobeAcceptedVideoError,
+  AuthError,
+  QuotaExhaustedError,
+} from "./errors";
 import type {
   FireflyTransport,
   FireflyTransportRequest,
@@ -181,5 +185,71 @@ describe("AdobeFireflyClient.generateImage", () => {
     // 现在 gpt-image 图生图只有一个 referenceBlobs 候选,一次 submit 即可。
     const submits = api.calls.filter((c) => c.url.includes("generate-async"));
     expect(submits.length).toBe(1);
+  });
+});
+
+describe("AdobeFireflyClient.generateVideo", () => {
+  const videoInput = {
+    token: FAKE_TOKEN,
+    prompt: "a moving cat",
+    upstreamModel: "sora2",
+    upstreamModelId: "sora2",
+    upstreamModelVersion: "1",
+    engine: "sora2",
+    duration: 8,
+    size: { width: 1280, height: 720 },
+    generateAudio: false,
+    pollIntervalMs: 1,
+  };
+
+  it("上游接受后轮询临时失败只重试原任务，不重复提交", async () => {
+    const videoBytes = Buffer.from("MP4DATA");
+    const api = new MockTransport((req, index) => {
+      if (index === 0) {
+        expect(req.url).toContain("/v2/3p-videos/generate-async");
+        return jsonResponse(
+          200,
+          {},
+          { "x-override-status-link": "https://poll/video-1" }
+        );
+      }
+      if (index === 1) {
+        expect(req.url).toBe("https://poll/video-1");
+        return jsonResponse(503, { error: "temporary" });
+      }
+      return jsonResponse(200, {
+        status: "COMPLETED",
+        outputs: [{ video: { presignedUrl: "https://cdn/video.mp4" } }],
+      });
+    });
+    const download = new MockTransport(() => bytesResponse(200, videoBytes));
+    const client = new AdobeFireflyClient({
+      transport: api,
+      downloadTransport: download,
+    });
+
+    const output = await client.generateVideo(videoInput);
+
+    expect(output.bytes).toEqual(videoBytes);
+    expect(api.calls.filter((call) => call.method === "POST")).toHaveLength(1);
+    expect(api.calls.filter((call) => call.method === "GET")).toHaveLength(2);
+  });
+
+  it("上游接受后的授权失败带明确阶段标记", async () => {
+    const api = new MockTransport((_req, index) =>
+      index === 0
+        ? jsonResponse(
+            200,
+            {},
+            { "x-override-status-link": "https://poll/video-2" }
+          )
+        : jsonResponse(401, {})
+    );
+    const client = new AdobeFireflyClient({ transport: api });
+
+    await expect(client.generateVideo(videoInput)).rejects.toBeInstanceOf(
+      AdobeAcceptedVideoError
+    );
+    expect(api.calls.filter((call) => call.method === "POST")).toHaveLength(1);
   });
 });
