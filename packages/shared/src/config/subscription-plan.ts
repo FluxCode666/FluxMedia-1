@@ -49,27 +49,6 @@ export function compareSubscriptionPlans(
   return difference < 0 ? "downgrade" : "upgrade";
 }
 
-/**
- * 对话模式旗舰模型
- */
-export const GPT54_CHAT_MODEL = "gpt-5.4";
-export const GPT54_MINI_CHAT_MODEL = "gpt-5.4-mini";
-export const GPT52_CHAT_MODEL = "gpt-5.2";
-export const GPT53_CODEX_CHAT_MODEL = "gpt-5.3-codex";
-export const GPT53_CODEX_SPARK_CHAT_MODEL = "gpt-5.3-codex-spark";
-export const GPT55_CHAT_MODEL = "gpt-5.5";
-
-export const RESPONSES_IMAGE_MODELS = [
-  GPT54_CHAT_MODEL,
-  GPT54_MINI_CHAT_MODEL,
-  GPT52_CHAT_MODEL,
-  GPT53_CODEX_CHAT_MODEL,
-  GPT53_CODEX_SPARK_CHAT_MODEL,
-  GPT55_CHAT_MODEL,
-] as const;
-
-export type ResponsesImageModel = (typeof RESPONSES_IMAGE_MODELS)[number];
-
 export type UploadLimitSettingKey =
   | "PLAN_FREE_MAX_FILE_MB"
   | "PLAN_FREE_MAX_UPLOAD_MB"
@@ -95,7 +74,7 @@ export interface PlanPrivileges {
   name: string;
   /** 单文件大小上限 (bytes) */
   maxFileSizeBytes: number;
-  /** 单次图片编辑/对话上传总大小上限 (bytes) */
+  /** 单次图片编辑上传总大小上限 (bytes) */
   maxUploadBytes: number;
   /** 队列优先级 */
   queuePriority: QueuePriority;
@@ -291,33 +270,10 @@ export function canUseExternalApi(plan: SubscriptionPlan): boolean {
 }
 
 /**
- * 是否允许使用对话生图
- */
-export function canUseChat(plan: SubscriptionPlan): boolean {
-  return isPlanAtLeast(plan, "pro");
-}
-
-/**
- * 是否允许外接 Responses 生图接口
- */
-export function canUseExternalResponsesImageApi(
-  plan: SubscriptionPlan
-): boolean {
-  return isPlanAtLeast(plan, "pro");
-}
-
-/**
  * 是否允许自定义提示词优化开关
  */
 export function canUsePromptOptimization(plan: SubscriptionPlan): boolean {
   return isPlanAtLeast(plan, "pro");
-}
-
-/**
- * 是否允许对话生图使用 GPT-5.5
- */
-export function canUseGpt55Chat(plan: SubscriptionPlan): boolean {
-  return isPlanAtLeast(plan, "ultra");
 }
 
 /**
