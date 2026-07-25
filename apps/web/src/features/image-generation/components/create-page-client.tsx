@@ -91,6 +91,7 @@ import {
   getRequiredUnifiedModelCapability,
   getUnifiedImageGenerationMode,
   parseUnifiedModelSelectionValue,
+  resolvePageMixWebFirstPreference,
 } from "@/features/image-generation/unified-image-generation-state";
 import { useRouter as useIntlRouter } from "@/i18n/routing";
 import {
@@ -3027,11 +3028,15 @@ export function CreatePageClient({
   const chatSingleCreditCost =
     activeMode === "agent" ? agentRoundCreditCost : chatRoundCreditCost;
   const batchFallbackSize = hasChatImageAttachments ? chatCustomEditSize : size;
+  // 简易生图页不提供混合分组 Web-first 设置；即使 Dashboard 级运行时状态保留了旧创作页
+  // 的 true，也不能让它置灰控件或影响本页请求。请求载荷在提交处再显式传 false。
   const textMixWebFirstActive =
+    !isSimpleImageGenerationPage &&
     canUseMixWebFirstRouting &&
     textMixWebFirst &&
     isWithinForceWebPixelRange(size, forceWebPixelRange);
   const editMixWebFirstActive =
+    !isSimpleImageGenerationPage &&
     canUseMixWebFirstRouting &&
     editMixWebFirst &&
     Boolean(effectiveEditSize) &&
@@ -3040,6 +3045,7 @@ export function CreatePageClient({
   const textFireflyActive = isFireflyModel(textModel);
   const editFireflyActive = isFireflyModel(editModel);
   const chatMixWebFirstActive =
+    !isSimpleImageGenerationPage &&
     canUseMixWebFirstRouting &&
     chatMixWebFirst &&
     isWithinForceWebPixelRange(
@@ -6951,6 +6957,10 @@ export function CreatePageClient({
     model?: string;
     backendGroupId?: string;
   }) => {
+    const mixWebFirstPreference = resolvePageMixWebFirstPreference(
+      isSimpleImageGenerationPage,
+      textMixWebFirstActive
+    );
     const response = await fetch("/api/images/generate", {
       method: "POST",
       headers: {
@@ -6987,7 +6997,9 @@ export function CreatePageClient({
         ...(imageGptModel !== "default" ? { gptModel: imageGptModel } : {}),
         ...(showThinkingControls ? { thinking: imageThinking } : {}),
         ...(promptOptimizationAllowed ? { promptOptimization } : {}),
-        ...(textMixWebFirstActive ? { mix_web_first: true } : {}),
+        ...(mixWebFirstPreference === undefined
+          ? {}
+          : { mix_web_first: mixWebFirstPreference }),
         hd_repair: hdRepair,
         block_repair: blockRepair,
         ...(blockRepair && repairPrompt.trim()
@@ -7204,9 +7216,16 @@ export function CreatePageClient({
     if (promptOptimizationAllowed) {
       formData.append("prompt_optimization", String(promptOptimization));
     }
+    const mixWebFirstPreference = resolvePageMixWebFirstPreference(
+      isSimpleImageGenerationPage,
+      editMixWebFirstActive
+    );
+    if (mixWebFirstPreference === false) {
+      formData.append("mix_web_first", "false");
+    }
     if (editRequiresResponsesForReference) {
       formData.append("requires_responses_backend", "true");
-    } else if (editMixWebFirstActive) {
+    } else if (mixWebFirstPreference === true) {
       formData.append("mix_web_first", "true");
     }
 
@@ -10738,7 +10757,9 @@ export function CreatePageClient({
         value={textSizeDialogValue}
         copy={copy}
         validationMessage={validationMessage}
-        showMixRouting={canUseMixWebFirstRouting}
+        showMixRouting={
+          canUseMixWebFirstRouting && !isSimpleImageGenerationPage
+        }
         mixRoutingPixelRange={forceWebPixelRange}
         onConfirm={(next) => {
           setUseAutoSize(next.auto);
@@ -10756,7 +10777,9 @@ export function CreatePageClient({
         value={editSizeDialogValue}
         copy={copy}
         validationMessage={validationMessage}
-        showMixRouting={canUseMixWebFirstRouting}
+        showMixRouting={
+          canUseMixWebFirstRouting && !isSimpleImageGenerationPage
+        }
         mixRoutingPixelRange={forceWebPixelRange}
         onConfirm={(next) => {
           setUseEditFirstImageSize(false);
@@ -10775,7 +10798,9 @@ export function CreatePageClient({
         value={chatSizeDialogValue}
         copy={copy}
         validationMessage={validationMessage}
-        showMixRouting={canUseMixWebFirstRouting}
+        showMixRouting={
+          canUseMixWebFirstRouting && !isSimpleImageGenerationPage
+        }
         mixRoutingPixelRange={forceWebPixelRange}
         onConfirm={(next) => {
           setChatMixWebFirst(next.mixWebFirst);

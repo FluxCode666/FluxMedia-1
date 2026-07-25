@@ -16,6 +16,7 @@ import {
   getUnifiedImageGenerationMode,
   isHiddenUnifiedImageGenerationModel,
   parseUnifiedModelSelectionValue,
+  resolvePageMixWebFirstPreference,
 } from "./unified-image-generation-state";
 
 const fullyCapableModel: ImageGenerationCatalogModel = {
@@ -68,6 +69,13 @@ describe("合并式页面生图状态", () => {
         models: [fullyCapableModel],
       },
     ]);
+  });
+
+  it("简易生图页显式关闭混合分组 Web-first 路由", () => {
+    expect(resolvePageMixWebFirstPreference(true, true)).toBe(false);
+    expect(resolvePageMixWebFirstPreference(true, false)).toBe(false);
+    expect(resolvePageMixWebFirstPreference(false, true)).toBe(true);
+    expect(resolvePageMixWebFirstPreference(false, false)).toBeUndefined();
   });
 
   it("以主参考图与蒙版唯一决定请求模式", () => {

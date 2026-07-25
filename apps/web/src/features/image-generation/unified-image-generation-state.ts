@@ -55,6 +55,23 @@ export function getVisibleSimpleImageGenerationCatalogGroups(
 }
 
 /**
+ * 解析页面请求应携带的混合分组 Web-first 偏好。
+ *
+ * @param isSimpleImageGenerationPage - 当前是否为无高级路由设置的简易生图页。
+ * @param legacyMixWebFirstActive - 旧创作页当前尺寸与分组下是否启用了 Web-first。
+ * @returns 简易生图页始终显式返回 false；旧创作页仅在已启用时返回 true，否则省略字段。
+ * @remarks 服务端为兼容外部 API 将省略的该字段视作 true。因此简易页必须显式传 false，
+ * 不能只隐藏尺寸弹窗里的开关；旧创作页保留原有尺寸范围与用户偏好行为。
+ */
+export function resolvePageMixWebFirstPreference(
+  isSimpleImageGenerationPage: boolean,
+  legacyMixWebFirstActive: boolean
+): boolean | undefined {
+  if (isSimpleImageGenerationPage) return false;
+  return legacyMixWebFirstActive ? true : undefined;
+}
+
+/**
  * 根据附件状态得出唯一的生成模式。
  *
  * @param hasReference - 是否已有一张主参考图。
