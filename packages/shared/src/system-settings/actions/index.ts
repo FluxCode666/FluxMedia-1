@@ -14,11 +14,6 @@ import { z } from "zod";
 
 import type { AppUserRole } from "../../auth/roles";
 import {
-  destroyGenerationPhotosByMaxCount,
-  shouldRunMaxCountCleanupOnSettingsChange,
-} from "../../generation-maintenance";
-import { logError } from "../../logger";
-import {
   moderationBlockRiskLevelSchema,
   type ResolvedModerationPolicyValues,
 } from "../../moderation/policy-contract";
@@ -36,11 +31,10 @@ import {
   globalImageCreditOverridesSchema,
   type ImageCreditOverrides,
 } from "../../image-backend/group-image-pricing";
+import type { getAdminSystemSettingsSnapshot } from "../index";
 import {
-  getAdminSystemSettingsSnapshot,
   importSystemSettingsFromEnv,
   initializeMissingSystemSettingsDefaults,
-  setSystemSettings,
 } from "../index";
 
 const globalModerationPolicyInputSchema = z
@@ -89,9 +83,16 @@ const settingUpdateSchema = z.object({
 
 export const getSystemSettingsAction = superAdminAction
   .metadata({ action: "system-settings.get" })
-  .action(async () => {
-    const settings = await getAdminSystemSettingsSnapshot();
-    return { settings };
+  .action(async ({ ctx }) => {
+    const result = await invokeOperation<{
+      settings: Awaited<ReturnType<typeof getAdminSystemSettingsSnapshot>>;
+      timestamp: string;
+    }>(
+      "settings.getSnapshot",
+      {},
+      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
+    );
+    return { settings: result.settings };
   });
 
 const globalModelPricingInputSchema = z
@@ -201,37 +202,18 @@ export const updateSystemSettingsAction = superAdminAction
     })
   )
   .action(async ({ parsedInput, ctx }) => {
-    const changedKeys = await setSystemSettings(
-      parsedInput.settings.map((setting) => ({
-        key: setting.key,
-        value: setting.value,
-        ...(setting.clear !== undefined ? { clear: setting.clear } : {}),
-      })),
-      ctx.userId
+    const result = await invokeOperation<{
+      success: boolean;
+      changedKeys: string[];
+    }>(
+      "settings.update",
+      { updates: parsedInput.settings },
+      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
     );
-    // 启用"按最大张数"清理时立即后台执行一次（需求）。判定单点在 shared 纯谓词，
-    // 与 UOL 写入口共用以保证行为一致。清空（回退默认）时传 undefined，不误判为启用。
-    const modeEntry = parsedInput.settings.find(
-      (setting) => setting.key === "GENERATION_IMAGE_RETENTION_MODE"
-    );
-    const newModeValue =
-      modeEntry?.clear === true ? undefined : modeEntry?.value;
-
-    if (shouldRunMaxCountCleanupOnSettingsChange(changedKeys, newModeValue)) {
-      // WHY: 清理会删存储对象并扫描，耗时不可控，不能 await 阻塞保存响应（避免
-      // server action 超时）。后台 fire-and-forget + 显式 catch 记日志，杜绝未处理
-      // 的 promise 拒绝。批量上限与幂等 WHERE 由清理函数自身兜底，与定时任务并发
-      // 安全（deleteObject 幂等 + UPDATE 守卫）。超出单批的部分由后续定时任务收敛。
-      void destroyGenerationPhotosByMaxCount().catch((error) => {
-        logError(error, {
-          source: "system-settings.enable-max-count-cleanup",
-        });
-      });
-    }
 
     return {
-      success: true,
-      changedKeys,
+      success: result.success,
+      changedKeys: result.changedKeys,
       message: "系统设置已保存",
     };
   });
