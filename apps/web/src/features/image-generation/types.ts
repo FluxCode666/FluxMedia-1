@@ -18,9 +18,6 @@ export interface GenerateImageParams {
   outputFormat?: ImageOutputFormat;
   outputCompression?: number;
   background?: ImageBackground;
-  mixWebFirst?: boolean;
-  forceWebBackend?: boolean;
-  requiresResponsesBackend?: boolean;
   /** 透明背景抠图回退(显式开关,issue #27):仅 true 且 background=transparent 时,后端不支持
    * 透明则"不透明重生成 + 服务端 ISNet 抠图"得到透明结果;不开则透明直接透传、不支持即返回真实错误。 */
   transparentMatte?: boolean;
@@ -54,15 +51,13 @@ export interface GeneratedImageOutput {
   imageBase64?: string;
   imageUrl?: string;
   imageFileId?: string;
-  webImageMessageId?: string;
-  webImageGroupId?: string;
   generationId?: string;
   size?: string;
   revisedPrompt?: string;
   upstreamRevisedPrompt?: string;
   promptRepairNotice?: string;
   index?: number;
-  outputRole?: "final" | "agent_draft" | "choice";
+  outputRole?: "final" | "choice";
 }
 
 export interface PartialImageResult {
@@ -116,9 +111,6 @@ export interface EditImageParams {
   outputFormat?: ImageOutputFormat;
   outputCompression?: number;
   background?: ImageBackground;
-  mixWebFirst?: boolean;
-  forceWebBackend?: boolean;
-  requiresResponsesBackend?: boolean;
   /** 透明背景抠图回退(显式开关,issue #27):仅 true 且 background=transparent 时,后端不支持
    * 透明则"不透明重生成 + 服务端 ISNet 抠图"得到透明结果;不开则透明直接透传、不支持即返回真实错误。 */
   transparentMatte?: boolean;
@@ -146,31 +138,10 @@ export interface ApiConfig {
     type: "platform" | "pool-api" | "pool-adobe";
     id?: string;
     groupId?: string | null;
-    // 解析到的【目标分组】backendType。供换号重试循环判定是否为混合分组——web→codex
-    // 回退仅在 mixed 分组生效(纯 web / 纯 codex 分组各自闭环,不跨车道回退)。
-    groupBackendType?: "web" | "responses" | "mixed";
     userId?: string;
     apiKeyId?: string;
-    // 页面本次显式选中的分组。member 的 groupId 可能是混合组下的子组，重试必须保留
-    // 原始选择，而不能回退到用户偏好或默认分组。
-    requestedBackendGroupId?: string;
-    requestKind?: "image_generation" | "image_edit" | "chat" | "responses";
-    // 蒙版不会透传到 Adobe 适配器；首次解析和换号重试均据此排除该路径。
-    requiresMask?: boolean;
-    accountBackend?: "web" | "responses";
-    apiInterfaceMode?: "images" | "responses" | "mixed";
-    chatCompletionsUpstreamMode?: "responses" | "chat_completions";
-    imagesUpstreamMode?: "images" | "responses";
     // 仅 pool-api 使用：发送前把标准请求字段复制或重命名为上游字段。
     parameterMappings?: RequestParameterMapping[];
-    apiForceResponsesEndpoint?: boolean;
-    // pool-api 专属：该 api 后端上游实为 Adobe（adobe-sourced）。为真时 firefly-* 请求
-    // 经反向转换（截家族名 + 推 size）后由本后端服务；计费仍使用模型固定价格。
-    adobeSourced?: boolean;
-    // 本次请求是否为 firefly 意图（firefly-* 模型或 force_firefly）。解析时按请求口径盖在
-    // config 上，使后端失败换号重试能保持「只走 Adobe（pool-adobe / adobe_sourced api）」，
-    // 避免 firefly/按-Adobe-计费 的请求被重试到非 Adobe 后端（计费/产物错配）。
-    fireflyOnly?: boolean;
     // adobe（pool-adobe）专属：暴露的 Firefly 模型家族、默认宽高比/分辨率、是否支持
     // 视频。供 image-generation 派发 adobe 请求时选择 family 与映射缺省值。
     // gateway：调外部 adobe2api；direct：本仓库直连 Firefly（adobe_account/token + 旁路）。
@@ -185,10 +156,6 @@ export interface ApiConfig {
     imageCreditOverrides?: ImageCreditOverrides;
     /** 所选计费分组的稀疏视频模型族每秒积分覆盖。 */
     videoCreditOverrides?: Record<string, number>;
-    reportResult?: boolean;
-    inflightLease?: boolean;
-    inflightLeaseId?: string | null;
-    inflightLeasePersisted?: boolean;
   };
 }
 

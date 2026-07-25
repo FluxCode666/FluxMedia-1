@@ -81,10 +81,10 @@ import {
   backendMemberService,
 } from "@/features/image-backend-pool/member-service";
 import {
-  deleteImageBackendParameterMappingTemplate,
-  listImageBackendParameterMappingTemplates,
-  upsertImageBackendParameterMappingTemplate,
-} from "@/features/image-backend-pool/service";
+  deleteBackendParameterMappingTemplate,
+  listBackendParameterMappingTemplates,
+  saveBackendParameterMappingTemplate,
+} from "@/features/image-backend-pool/parameter-mapping-service";
 import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
 import {
   AdminHistoryServiceError,
@@ -872,7 +872,7 @@ bindExecute(
     _principal: Principal,
     _ctx: OperationContext
   ) => ({
-    templates: await listImageBackendParameterMappingTemplates(),
+    templates: await listBackendParameterMappingTemplates(),
   })
 );
 
@@ -888,7 +888,7 @@ bindExecute(
     _principal: Principal,
     _ctx: OperationContext
   ) => ({
-    id: await upsertImageBackendParameterMappingTemplate(input),
+    id: await saveBackendParameterMappingTemplate(input),
   })
 );
 
@@ -900,7 +900,7 @@ bindExecute(
     _principal: Principal,
     _ctx: OperationContext
   ) => {
-    await deleteImageBackendParameterMappingTemplate(input.id);
+    await deleteBackendParameterMappingTemplate(input.id);
     return { success: true };
   }
 );

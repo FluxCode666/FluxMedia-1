@@ -175,11 +175,8 @@ export function getExternalFinalImageOutputs(
   const finals = outputs.filter((output) => output.outputRole === "final");
   if (finals.length > 0) return finals;
 
-  const nonDrafts = outputs.filter(
-    (output) => output.outputRole !== "agent_draft"
-  );
-  if (nonDrafts.length > 0) {
-    const last = nonDrafts.at(-1);
+  if (outputs.length > 0) {
+    const last = outputs.at(-1);
     if (!last) return [];
     return [{ ...last, outputRole: last.outputRole || "final" }];
   }
@@ -194,12 +191,6 @@ export function getExternalFinalImageOutputs(
         outputRole: "final",
       },
     ];
-  }
-
-  if (outputs.length > 0) {
-    const last = outputs.at(-1);
-    if (!last) return [];
-    return [{ ...last, outputRole: "final" }];
   }
 
   return [];

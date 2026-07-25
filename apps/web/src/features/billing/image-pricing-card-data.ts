@@ -15,7 +15,7 @@ import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 
-import { getEffectiveDefaultImageBackendGroup } from "@/features/image-backend-pool/service";
+import { getEffectiveDefaultImageBackendGroup } from "@/features/image-backend-pool/catalog-service";
 import {
   getRuntimeImageModelCreditPricing,
   getRuntimeImageModerationCreditPricing,

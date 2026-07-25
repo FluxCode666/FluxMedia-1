@@ -10,7 +10,7 @@ import { getLocale } from "next-intl/server";
 import {
   getEffectiveDefaultImageBackendGroup,
   getImageGenerationModelCatalogForPlan,
-} from "@/features/image-backend-pool/service";
+} from "@/features/image-backend-pool/catalog-service";
 import { CreatePageClient } from "@/features/image-generation/components/create-page-client";
 import {
   getRuntimeImageModelCreditPricing,

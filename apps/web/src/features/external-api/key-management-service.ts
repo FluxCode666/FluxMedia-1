@@ -797,13 +797,10 @@ export const externalApiKeyManagementService =
      * @remarks 动态加载分组服务并执行只读查询。
      */
     async listSelectableGroups(plan) {
-      const { listImageBackendGroupOptions } = await import(
-        "@/features/image-backend-pool/service"
+      const { listSelectableImageBackendGroups } = await import(
+        "@/features/image-backend-pool/catalog-service"
       );
-      return listImageBackendGroupOptions({
-        userSelectableOnly: true,
-        plan,
-      });
+      return listSelectableImageBackendGroups(plan);
     },
     /**
      * 按 ID 读取密钥当前引用的后端分组。

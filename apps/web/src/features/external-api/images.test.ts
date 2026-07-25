@@ -115,7 +115,7 @@ describe("external generation usage payload", () => {
 });
 
 describe("external final image selection", () => {
-  it("returns final outputs instead of agent drafts", async () => {
+  it("prefers explicitly final outputs", async () => {
     const request = new Request("https://example.com/v1/images/generations");
 
     const payload = await toOpenAIImagesResponse(
@@ -128,9 +128,8 @@ describe("external final image selection", () => {
           creditsConsumed: 1,
           imageOutputs: [
             {
-              imageUrl: "/api/storage/generations/draft.png",
-              revisedPrompt: "draft prompt",
-              outputRole: "agent_draft",
+              imageUrl: "/api/storage/generations/unclassified.png",
+              revisedPrompt: "unclassified prompt",
             },
             {
               imageUrl: "/api/storage/generations/final.png",
@@ -184,18 +183,13 @@ describe("external final image selection", () => {
     );
   });
 
-  it("falls back to the stored primary image when only draft outputs exist", () => {
+  it("falls back to the stored primary image when outputs are empty", () => {
     expect(
       getExternalFinalImageOutputs({
         generationId: "gen_1",
         imageUrl: "/api/storage/generations/final.png",
         revisedPrompt: "final prompt",
-        imageOutputs: [
-          {
-            imageUrl: "/api/storage/generations/draft.png",
-            outputRole: "agent_draft",
-          },
-        ],
+        imageOutputs: [],
       })
     ).toEqual([
       {
@@ -477,5 +471,4 @@ describe("external API error classification", () => {
       status: 503,
     });
   });
-
 });

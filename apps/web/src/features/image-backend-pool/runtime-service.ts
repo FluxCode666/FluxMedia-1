@@ -250,21 +250,11 @@ async function loadRuntimeBackendLease(
   const commonBackend = {
     id: row.member_id,
     groupId: group.id,
-    requestedBackendGroupId: group.id,
-    requestKind:
-      input.requestKind === "video"
-        ? ("image_generation" as const)
-        : input.imageOperation === "edit"
-          ? ("image_edit" as const)
-          : ("image_generation" as const),
-    requiresMask: input.requiresMask ?? false,
     userId: input.userId,
     apiKeyId: input.apiKeyId,
     billingGroupId: group.id,
     imageCreditOverrides: group.imageCreditOverrides,
     videoCreditOverrides: group.videoCreditOverrides,
-    reportResult: false,
-    inflightLease: false,
   };
   const contentSafetyEnabled =
     group.contentSafetyEnabled ?? row.member_content_safety_enabled;
@@ -288,8 +278,6 @@ async function loadRuntimeBackendLease(
         backend: {
           ...commonBackend,
           type: "pool-api",
-          apiInterfaceMode: "images",
-          imagesUpstreamMode: "images",
           parameterMappings: requestParameterMappingsSchema.parse(
             row.parameter_mappings ?? []
           ),

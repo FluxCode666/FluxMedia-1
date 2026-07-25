@@ -115,9 +115,7 @@ type RunImageGenerationInput =
 
 type ImageCreditCostBreakdown = ReturnType<typeof getImageCreditCostBreakdown>;
 
-function resolveOutputRole(params: {
-  outputRole?: "final" | "agent_draft" | "choice";
-}) {
+function resolveOutputRole(params: { outputRole?: "final" | "choice" }) {
   if (params.outputRole === "choice") return "choice";
   return "final";
 }
@@ -170,8 +168,6 @@ type StoredGeneratedImageOutput = {
   /** 可选的内联图片数据。 */
   imageBase64?: string;
   imageFileId?: string;
-  webImageMessageId?: string;
-  webImageGroupId?: string;
   storageKey: string;
   fileSize: number;
   size: string;
@@ -180,7 +176,7 @@ type StoredGeneratedImageOutput = {
   actualSizeDetected: boolean;
   actualOutputFormat: string | null;
   actualOutputFormatDetected: boolean;
-  outputRole?: "final" | "agent_draft" | "choice";
+  outputRole?: "final" | "choice";
 };
 
 function resolveStoredImageFormat(buffer: Buffer, requestedFormat?: string) {
@@ -525,11 +521,9 @@ async function storeGeneratedImageOutput(params: {
     imageBase64?: string;
     imageUrl?: string;
     imageFileId?: string;
-    webImageMessageId?: string;
-    webImageGroupId?: string;
     revisedPrompt?: string;
     upstreamRevisedPrompt?: string;
-    outputRole?: "final" | "agent_draft" | "choice";
+    outputRole?: "final" | "choice";
   };
   userId: string;
   generationId: string;
@@ -715,8 +709,6 @@ async function storeGeneratedImageOutput(params: {
     generationId: params.generationId,
     imageUrl: await getStoredImageUrl(params.bucket, storageKey),
     imageFileId: params.output.imageFileId,
-    webImageMessageId: params.output.webImageMessageId,
-    webImageGroupId: params.output.webImageGroupId,
     storageKey,
     fileSize: imageBuffer.length,
     size: actualSize,
@@ -776,11 +768,6 @@ function buildBackendExecutionMetadata(params: {
       type: backend.type,
       id: backend.id,
       groupId: backend.groupId,
-      requestKind: backend.requestKind,
-      accountBackend: backend.accountBackend,
-      apiInterfaceMode: backend.apiInterfaceMode,
-      imagesUpstreamMode: backend.imagesUpstreamMode,
-      apiForceResponsesEndpoint: backend.apiForceResponsesEndpoint,
       useCredits: params.useCredits,
       baseUrl: params.config.baseUrl,
       model: params.config.model,
@@ -1932,8 +1919,6 @@ async function runQueuedImageGenerationForUser({
               generationId: output.generationId,
               imageUrl: output.imageUrl,
               imageFileId: output.imageFileId,
-              webImageMessageId: output.webImageMessageId,
-              webImageGroupId: output.webImageGroupId,
               storageKey: output.storageKey,
               size: output.size,
               revisedPrompt: output.revisedPrompt,
@@ -1963,8 +1948,6 @@ async function runQueuedImageGenerationForUser({
       imageUrl: output.imageUrl,
       imageBase64: output.imageBase64,
       imageFileId: output.imageFileId,
-      webImageMessageId: output.webImageMessageId,
-      webImageGroupId: output.webImageGroupId,
       size: output.size,
       revisedPrompt: output.revisedPrompt,
       upstreamRevisedPrompt: output.upstreamRevisedPrompt,
