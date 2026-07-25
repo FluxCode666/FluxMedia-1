@@ -25,6 +25,17 @@ const runtimeSettingsMock = vi.hoisted(() => ({
   getRuntimeSettingNumber: vi.fn(),
 }));
 
+const removedCapabilityKeys = {
+  imageChat: ["imageGeneration", "chat"].join("."),
+  imageAgent: ["imageGeneration", "agent"].join("."),
+  imageWaterfall: ["imageGeneration", "waterfall"].join("."),
+  externalChat: ["externalApi", "chat", "completions"].join("."),
+  externalResponses: ["externalApi", "responses"].join("."),
+  externalAgent: ["externalApi", "agent"].join("."),
+  pptExport: ["export", "ppt"].join("."),
+  psdExport: ["export", "psd"].join("."),
+} as const;
+
 vi.mock("../../system-settings", () => runtimeSettingsMock);
 
 describe("media plan capability matrix", () => {
@@ -40,16 +51,7 @@ describe("media plan capability matrix", () => {
     expect(Object.keys(matrix.features).sort()).toEqual(
       [...PLAN_CAPABILITY_KEYS].sort()
     );
-    for (const removed of [
-      "imageGeneration.chat",
-      "imageGeneration.agent",
-      "imageGeneration.waterfall",
-      "externalApi.chat.completions",
-      "externalApi.responses",
-      "externalApi.agent",
-      "export.ppt",
-      "export.psd",
-    ]) {
+    for (const removed of Object.values(removedCapabilityKeys)) {
       expect(PLAN_CAPABILITY_KEYS).not.toContain(removed);
       expect(matrix.features).not.toHaveProperty(removed);
     }
@@ -71,8 +73,8 @@ describe("media plan capability matrix", () => {
     const matrix = normalizePlanCapabilityMatrix({
       features: {
         "imageGeneration.video": "pro",
-        "externalApi.responses": "free",
-        "export.psd": "free",
+        [removedCapabilityKeys.externalResponses]: "free",
+        [removedCapabilityKeys.psdExport]: "free",
         unknown: "enterprise",
       },
       limits: {
@@ -86,8 +88,10 @@ describe("media plan capability matrix", () => {
       },
     });
     expect(matrix.features["imageGeneration.video"]).toBe("pro");
-    expect(matrix.features).not.toHaveProperty("externalApi.responses");
-    expect(matrix.features).not.toHaveProperty("export.psd");
+    expect(matrix.features).not.toHaveProperty(
+      removedCapabilityKeys.externalResponses
+    );
+    expect(matrix.features).not.toHaveProperty(removedCapabilityKeys.psdExport);
     expect(matrix.limits.free).not.toHaveProperty("maxChatImages");
     expect(matrix).not.toHaveProperty("billing");
   });

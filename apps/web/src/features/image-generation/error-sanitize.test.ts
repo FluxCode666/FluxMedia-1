@@ -21,8 +21,8 @@ beforeEach(() => {
 // Drizzle 池查询失败的真实形态（issue #35）：message 以 "Failed query:" 开头。
 function drizzleError(): Error {
   return new Error(
-    'Failed query: select "image_backend_api"."api_key" from "image_backend_api" ' +
-      'inner join "image_backend_api_group" ... params: true,true,active'
+    'Failed query: select "media_backend_member"."credential" ' +
+      'from "media_backend_member" ... params: true,true,active'
   );
 }
 

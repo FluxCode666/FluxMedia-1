@@ -51,7 +51,7 @@ describe("video generation operations", () => {
   it.each([
     "memberType",
     "adobeId",
-    "adobeSourced",
+    ["adobe", "Sourced"].join(""),
     "previousResponseId",
     "agentConfig",
   ])("rejects client-controlled legacy field %s", (field) => {

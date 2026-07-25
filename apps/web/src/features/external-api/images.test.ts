@@ -230,7 +230,7 @@ describe("external final image selection", () => {
 describe("external image error payload", () => {
   it("sanitizes internal database query failures", () => {
     const payload = toOpenAIErrorPayload(
-      'Failed query: select "id", "api_key" from "image_backend_api"\nparams: true'
+      'Failed query: select "id", "credential" from "media_backend_member"\nparams: true'
     );
 
     expect(payload).toMatchObject({
@@ -243,8 +243,8 @@ describe("external image error payload", () => {
       },
     });
     expect(payload.error.message).not.toContain("select ");
-    expect(payload.error.message).not.toContain("image_backend_api");
-    expect(payload.error.message).not.toContain("api_key");
+    expect(payload.error.message).not.toContain("media_backend_member");
+    expect(payload.error.message).not.toContain("credential");
   });
 });
 

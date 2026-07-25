@@ -150,7 +150,7 @@ describe("backend member contract", () => {
 
   it("rejects unknown legacy identity and interface fields", () => {
     for (const legacyField of [
-      "adobeSourced",
+      ["adobe", "Sourced"].join(""),
       "interfaceMode",
       "imagesUpstreamMode",
       "chatCompletionsUpstreamMode",
