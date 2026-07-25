@@ -191,6 +191,7 @@ async function failUnchargedVideo(
     values: {
       status: "failed",
       stage: "failed",
+      creditsConsumed: 0,
       error: message.slice(0, 1_000),
       claimToken: null,
       claimExpiresAt: null,
@@ -482,6 +483,7 @@ export async function runAdobeVideoGenerationForUser(
       if (!retryable) throw new Error("视频成员切换发生并发冲突");
       row = retryable;
     } catch (error) {
+      await backendSession.close();
       const message =
         error instanceof Error ? error.message : "无可用 Adobe 视频后端";
       const refunding = await moveVideoToRefunding(row, message);
