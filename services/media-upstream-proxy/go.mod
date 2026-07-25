@@ -1,4 +1,4 @@
-module github.com/example/gpt2image-pro/services/chatgpt-web-proxy
+module github.com/example/gpt2image-pro/services/media-upstream-proxy
 
 go 1.24.1
 

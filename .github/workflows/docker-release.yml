@@ -28,13 +28,9 @@ jobs:
             image: gpt2image-pro-migrate
             dockerfile: Dockerfile.web
             target: migrator
-          - name: chatgpt-web-proxy
-            image: gpt2image-pro-chatgpt-web-proxy
-            dockerfile: Dockerfile.chatgpt-web-proxy
-            target: runner
-          - name: chatgpt-register
-            image: gpt2image-pro-chatgpt-register
-            dockerfile: Dockerfile.chatgpt-register
+          - name: media-upstream-proxy
+            image: gpt2image-pro-media-upstream-proxy
+            dockerfile: Dockerfile.media-upstream-proxy
             target: runner
           - name: ab-shadow-relay
             image: gpt2image-pro-ab-shadow-relay

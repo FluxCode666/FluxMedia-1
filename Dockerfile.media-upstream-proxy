@@ -1,0 +1,23 @@
+# Adobe direct 专用 TLS 转发 sidecar。
+# 使用方：docker-compose 与 docker-release workflow；构建物只包含静态 Go 二进制，
+# 运行时 secret 必须由部署环境注入，不写入镜像层。
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /src
+
+COPY services/media-upstream-proxy/go.mod services/media-upstream-proxy/go.sum ./
+RUN go mod download
+
+COPY services/media-upstream-proxy/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/media-upstream-proxy .
+
+FROM alpine:3.22 AS runner
+
+RUN addgroup -S app && adduser -S app -G app
+
+COPY --from=builder /out/media-upstream-proxy /usr/local/bin/media-upstream-proxy
+
+USER app
+EXPOSE 3021
+
+ENTRYPOINT ["media-upstream-proxy"]
