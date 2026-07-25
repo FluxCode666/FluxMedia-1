@@ -87,6 +87,7 @@ import {
 import {
   canModelServeUnifiedImageGeneration,
   createUnifiedModelSelectionValue,
+  getVisibleSimpleImageGenerationCatalogGroups,
   getRequiredUnifiedModelCapability,
   getUnifiedImageGenerationMode,
   parseUnifiedModelSelectionValue,
@@ -3264,17 +3265,30 @@ export function CreatePageClient({
   const firstPreviewUrl = editImages[0]?.previewUrl || null;
   const chatFirstPreviewUrl =
     chatAttachments.find((item) => item.kind === "image")?.previewUrl || null;
+  /**
+   * 简易生图页不展示 Adobe GPT Image 2 同族，避免与普通 GPT Image 2 在同一分组中同名。
+   * 原始目录、调度和计费数据保持完整，旧选择值会在下方 effect 中安全回退；旧创作页
+   * 保留完整目录，以免这项临时展示规则意外改变既有页面行为。
+   */
+  const visibleUnifiedCatalogGroups = useMemo(() => {
+    if (!isSimpleImageGenerationPage) {
+      return imageGenerationModelCatalog.groups;
+    }
+    return getVisibleSimpleImageGenerationCatalogGroups(
+      imageGenerationModelCatalog.groups
+    );
+  }, [imageGenerationModelCatalog.groups, isSimpleImageGenerationPage]);
   /** 将目录中相同模型名的不同分组保留为不同选择，避免客户端串组。 */
   const unifiedCatalogSelections = useMemo(
     () =>
-      imageGenerationModelCatalog.groups.flatMap((group) =>
+      visibleUnifiedCatalogGroups.flatMap((group) =>
         group.models.map((model) => ({
           group,
           model,
           value: createUnifiedModelSelectionValue(group.id, model.id),
         }))
       ),
-    [imageGenerationModelCatalog.groups]
+    [visibleUnifiedCatalogGroups]
   );
   const selectedUnifiedModelSelection = useMemo(() => {
     const parsed = parseUnifiedModelSelectionValue(unifiedModelSelection);
@@ -8414,7 +8428,7 @@ export function CreatePageClient({
                       />
                     </SelectTrigger>
                     <SelectContent>
-                      {imageGenerationModelCatalog.groups.map((group) => (
+                      {visibleUnifiedCatalogGroups.map((group) => (
                         <SelectGroup key={group.id}>
                           <SelectLabel>
                             {group.name}

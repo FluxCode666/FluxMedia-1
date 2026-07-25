@@ -5,6 +5,7 @@
  * 单一生图状态。关键依赖：不依赖 React 或网络，使参考图替换和模型兼容性可独立测试。
  */
 import type {
+  ImageGenerationCatalogGroup,
   ImageGenerationCatalogModel,
   ImageGenerationModelCapabilities,
 } from "@/features/image-backend-pool/image-generation-model-catalog";
@@ -17,6 +18,41 @@ export type UnifiedImageGenerationMode =
 
 /** 目录模型在合并表单中需要满足的能力。 */
 export type UnifiedModelRequirement = keyof ImageGenerationModelCapabilities;
+
+const HIDDEN_UNIFIED_ADOBE_GPT_IMAGE_2_FAMILY = /^firefly-gpt-image-2(?:-|$)/i;
+
+/**
+ * 判断目录模型是否应从合并式生图选择器隐藏。
+ *
+ * @param modelId - 目录返回的原始模型 ID。
+ * @returns Adobe GPT Image 2 同族模型时返回 true；普通 GPT Image 2 和其他 Adobe 模型返回 false。
+ * @remarks 临时用于消除当前账号池同时暴露普通与 Adobe GPT Image 2 时的同名项；后续改造
+ * 账号池的模型目录来源时，应删除本规则及对应测试，并从目录层消除重复来源。此规则不能
+ * 用于调度、计费、白名单或历史记录过滤。
+ */
+export function isHiddenUnifiedImageGenerationModel(modelId: string): boolean {
+  return HIDDEN_UNIFIED_ADOBE_GPT_IMAGE_2_FAMILY.test(modelId.trim());
+}
+
+/**
+ * 过滤简易生图页实际可展示的分组目录。
+ *
+ * @param groups - 已完成套餐与后端可用性校验的原始分组目录。
+ * @returns 去除 Adobe GPT Image 2 同族项及空分组后的新目录。
+ * @remarks 只供简易生图页调用；后续改造账号池的模型目录来源时，应连同同族判断和测试一并删除。
+ */
+export function getVisibleSimpleImageGenerationCatalogGroups(
+  groups: readonly ImageGenerationCatalogGroup[]
+): ImageGenerationCatalogGroup[] {
+  return groups
+    .map((group) => ({
+      ...group,
+      models: group.models.filter(
+        (model) => !isHiddenUnifiedImageGenerationModel(model.id)
+      ),
+    }))
+    .filter((group) => group.models.length > 0);
+}
 
 /**
  * 根据附件状态得出唯一的生成模式。
