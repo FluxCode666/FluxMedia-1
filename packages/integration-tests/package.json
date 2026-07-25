@@ -7,6 +7,7 @@
     "test:generation-time-migration": "vitest run --config vitest.config.ts src/generation-time-migration.test.ts",
     "test:moderation": "vitest run --config vitest.config.ts src/moderation-policy-service.test.ts",
     "test:release-governance": "vitest run --config vitest.config.ts src/release-governance-gate.test.ts",
+    "test:video-generation-recovery": "vitest run --config vitest.config.ts src/video-generation-recovery.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
