@@ -60,7 +60,6 @@ const VALID_THINKING = new Set<ThinkingLevel>([
   "high",
   "xhigh",
 ]);
-const PROMPT_IMAGE_REFERENCE_PATTERN = /@(?:第)?\d+轮图\d+|@图\d+/;
 const IMAGE_EDIT_ERROR_FALLBACK = "Image editing failed. Please retry shortly.";
 
 function errorResponse(message: string, status = 400) {
@@ -121,10 +120,6 @@ function getGenerationIds(formData: FormData, count: number) {
     throw new Error("generationIds contains an ID that is too long.");
   }
   return directValues;
-}
-
-function hasPromptImageReference(text: string | undefined) {
-  return Boolean(text && PROMPT_IMAGE_REFERENCE_PATTERN.test(text));
 }
 
 function wantsStreamResponse(request: NextRequest, formData: FormData) {
@@ -221,20 +216,6 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   if (backendGroupId && backendGroupId.length > 128) {
     return errorResponse("backendGroupId is too long.");
   }
-  const mixWebFirst = getOptionalBoolean(
-    formData,
-    "mixWebFirst",
-    "mix_web_first"
-  );
-  const requiresResponsesBackend =
-    getOptionalBoolean(
-      formData,
-      "requiresResponsesBackend",
-      "requires_responses_backend"
-    ) === true ||
-    hasPromptImageReference(prompt) ||
-    hasPromptImageReference(apiPrompt);
-
   const size = getText(formData, "size") || undefined;
   if (size) {
     const sizeCheck = validateImageSize(size);
@@ -319,10 +300,6 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   }
 
   const model = getText(formData, "model") || undefined;
-  const gptModel =
-    getText(formData, "gptModel") ||
-    getText(formData, "gpt_model") ||
-    undefined;
   const thinkingValue = getText(formData, "thinking") || undefined;
   if (thinkingValue && !VALID_THINKING.has(thinkingValue as ThinkingLevel)) {
     return errorResponse("Invalid thinking level.");
@@ -402,14 +379,12 @@ export const POST = withApiLogging(async (request: NextRequest) => {
           mode: "edit",
           userId: session.user.id,
           generationId,
-          backendRequestKind: "image_edit" as const,
           backendGroupId,
           prompt,
           apiPrompt,
           promptOptimization,
           size: displaySize || size,
           model,
-          gptModel,
           thinking,
           quality,
           moderation,
@@ -421,8 +396,6 @@ export const POST = withApiLogging(async (request: NextRequest) => {
           blockRepair,
           repairPrompt,
           n: 1,
-          mixWebFirst: requiresResponsesBackend ? false : mixWebFirst,
-          requiresResponsesBackend,
           images: await filesToImageInputs(sourceFiles, sourceImageUrls),
           mask:
             maskFile instanceof File

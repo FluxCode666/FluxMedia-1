@@ -676,9 +676,9 @@ export const setImageBackendAdobeAlwaysActiveAction =
 export const listAdobeAccountsAction = withImageBackendPoolAdminAction(
   "listAdobeAccounts"
 )
-  .schema(z.object({ adobeId: z.string().trim().min(1) }))
+  .schema(z.object({ memberId: z.string().trim().min(1) }))
   .action(async ({ parsedInput }) => {
-    const accounts = await listAdobeAccounts(parsedInput.adobeId);
+    const accounts = await listAdobeAccounts(parsedInput.memberId);
     return { success: true, accounts };
   });
 
@@ -687,7 +687,7 @@ export const importAdobeAccountAction = withImageBackendPoolAdminAction(
 )
   .schema(
     z.object({
-      adobeId: z.string().trim().min(1),
+      memberId: z.string().trim().min(1),
       name: z.string().trim().max(120).optional(),
       cookie: z.string().trim().min(1),
       scope: z.string().trim().max(2000).optional(),
@@ -695,7 +695,7 @@ export const importAdobeAccountAction = withImageBackendPoolAdminAction(
   )
   .action(async ({ parsedInput }) => {
     const account = await importAdobeAccount({
-      adobeId: parsedInput.adobeId,
+      memberId: parsedInput.memberId,
       name: parsedInput.name,
       cookie: parsedInput.cookie,
       scope: parsedInput.scope ?? null,
@@ -708,7 +708,7 @@ export const importAdobeAccountsAction = withImageBackendPoolAdminAction(
 )
   .schema(
     z.object({
-      adobeId: z.string().trim().min(1),
+      memberId: z.string().trim().min(1),
       cookiesText: z.string().trim().min(1),
       namePrefix: z.string().trim().max(120).optional(),
       scope: z.string().trim().max(2000).optional(),
@@ -716,7 +716,7 @@ export const importAdobeAccountsAction = withImageBackendPoolAdminAction(
   )
   .action(async ({ parsedInput }) => {
     const result = await importAdobeAccountsBatch({
-      adobeId: parsedInput.adobeId,
+      memberId: parsedInput.memberId,
       cookiesText: parsedInput.cookiesText,
       namePrefix: parsedInput.namePrefix,
       scope: parsedInput.scope ?? null,

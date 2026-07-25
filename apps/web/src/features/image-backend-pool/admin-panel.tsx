@@ -1836,7 +1836,7 @@ export function ImageBackendPoolAdminPanel({
       toast.success("Adobe 账号已导入并验证");
       setAdobeCookieInput("");
       setAdobeAccountName("");
-      if (adobeForm.id) loadAdobeAccounts({ adobeId: adobeForm.id });
+      if (adobeForm.id) loadAdobeAccounts({ memberId: adobeForm.id });
     },
     onError: ({ error }) =>
       toast.error(error.serverError || "导入 Adobe 账号失败"),
@@ -1864,7 +1864,7 @@ export function ImageBackendPoolAdminPanel({
         setAdobeCookieInput("");
         setAdobeAccountName("");
       }
-      if (adobeForm.id) loadAdobeAccounts({ adobeId: adobeForm.id });
+      if (adobeForm.id) loadAdobeAccounts({ memberId: adobeForm.id });
     },
     onError: ({ error }) =>
       toast.error(error.serverError || "批量导入 Adobe 账号失败"),
@@ -1875,7 +1875,7 @@ export function ImageBackendPoolAdminPanel({
     {
       onSuccess: () => {
         toast.success("账号已删除");
-        if (adobeForm.id) loadAdobeAccounts({ adobeId: adobeForm.id });
+        if (adobeForm.id) loadAdobeAccounts({ memberId: adobeForm.id });
       },
       onError: ({ error }) => toast.error(error.serverError || "删除账号失败"),
     }
@@ -1885,7 +1885,7 @@ export function ImageBackendPoolAdminPanel({
     setAdobeAccountEnabledAction,
     {
       onSuccess: () => {
-        if (adobeForm.id) loadAdobeAccounts({ adobeId: adobeForm.id });
+        if (adobeForm.id) loadAdobeAccounts({ memberId: adobeForm.id });
       },
       onError: ({ error }) =>
         toast.error(error.serverError || "更新账号状态失败"),
@@ -1894,7 +1894,7 @@ export function ImageBackendPoolAdminPanel({
 
   useEffect(() => {
     if (adobeForm.id && adobeForm.mode === "direct") {
-      loadAdobeAccounts({ adobeId: adobeForm.id });
+      loadAdobeAccounts({ memberId: adobeForm.id });
     } else {
       setAdobeAccounts([]);
     }
@@ -4962,7 +4962,7 @@ export function ImageBackendPoolAdminPanel({
                           }
                           onClick={() =>
                             importAdobeAccountExec({
-                              adobeId: adobeForm.id,
+                              memberId: adobeForm.id,
                               name: adobeAccountName.trim() || undefined,
                               cookie: adobeCookieInput.trim(),
                             })
@@ -4981,7 +4981,7 @@ export function ImageBackendPoolAdminPanel({
                           }
                           onClick={() =>
                             importAdobeAccountsExec({
-                              adobeId: adobeForm.id,
+                              memberId: adobeForm.id,
                               cookiesText: adobeCookieInput,
                               namePrefix: adobeAccountName.trim() || undefined,
                             })

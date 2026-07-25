@@ -157,7 +157,9 @@ describe("external final image selection", () => {
     });
     expect("data" in payload).toBe(true);
     if (!("data" in payload)) throw new Error("expected image response data");
-    const url = new URL(payload.data[0]!.url!);
+    const firstImage = payload.data[0];
+    if (!firstImage?.url) throw new Error("expected image response URL");
+    const url = new URL(firstImage.url);
     expect(url.origin).toBe("https://example.com");
     expect(url.pathname).toBe("/api/storage/generations/final.png");
     expect(url.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
@@ -173,7 +175,8 @@ describe("external final image selection", () => {
       "https://example.com/api/storage/generations/user/out.png"
     );
 
-    const url = new URL(publicUrl!);
+    if (!publicUrl) throw new Error("expected signed public URL");
+    const url = new URL(publicUrl);
     expect(url.origin).toBe("https://example.com");
     expect(url.pathname).toBe("/api/storage/generations/user/out.png");
     expect(url.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
@@ -213,7 +216,6 @@ describe("external final image selection", () => {
       [
         {
           generationId: "gen_text",
-          responseText: "The upstream refused to generate this image.",
           creditsConsumed: 0,
         },
       ],
@@ -223,7 +225,7 @@ describe("external final image selection", () => {
 
     expect(payload).toMatchObject({
       error: {
-        message: "The upstream refused to generate this image.",
+        message: "Image generation completed without an image output",
         code: "image_generation_failed",
       },
       generation_id: "gen_text",

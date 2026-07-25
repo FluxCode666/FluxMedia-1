@@ -46,59 +46,49 @@ import {
 } from "@/features/image-generation/resolution";
 import type { PartialImageResult } from "@/features/image-generation/types";
 
-const externalImageGenerationSchema = z.object({
-  prompt: z
-    .string()
-    .min(1)
-    .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-  promptOptimization: z.boolean().optional(),
-  prompt_optimization: z.boolean().optional(),
-  // 审核改写重试开关(issue #24):传 false 时,审核拦截后不自动改写提示词重试,直接返回真实错误。
-  promptRepair: z.boolean().optional(),
-  prompt_repair: z.boolean().optional(),
-  model: z.string().optional(),
-  gptModel: z.string().optional(),
-  gpt_model: z.string().optional(),
-  thinking: z
-    .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
-    .optional(),
-  n: z.number().int().min(1).max(MAX_PLAN_BATCH_COUNT).optional(),
-  size: z
-    .string()
-    .optional()
-    .refine((value) => !value || validateImageSize(value).valid, {
-      message: "Invalid image size",
-    }),
-  quality: z.enum(["auto", "low", "medium", "high"]).optional(),
-  moderation: z.enum(["auto", "low"]).optional(),
-  response_format: z.enum(["url", "b64_json"]).optional(),
-  output_format: z.enum(["png", "jpeg", "webp"]).optional(),
-  output_compression: z.number().int().min(0).max(100).optional(),
-  background: z.enum(["transparent", "opaque", "auto"]).optional(),
-  // 透明背景抠图回退显式开关(issue #27):true 且 background=transparent 时,后端不支持透明则
-  // 服务端 ISNet 抠图得到透明结果;不传则透明直接透传、不支持即返回真实错误。
-  transparentMatte: z.boolean().optional(),
-  transparent_matte: z.boolean().optional(),
-  force_web: z.boolean().optional(),
-  forceWeb: z.boolean().optional(),
-  web_first: z.boolean().optional(),
-  webFirst: z.boolean().optional(),
-  // force_firefly：强制把本次请求路由到 adobe（firefly）后端，对任意模型生效。
-  force_firefly: z.boolean().optional(),
-  forceFirefly: z.boolean().optional(),
-  // 高清修复:上游图偏小需超分时选模型。默认(含省略)=SwinIR(文字/结构复原最佳,较慢);
-  // 显式 false=general-x4v3(轻量快)。仅在超分主开关开且触发超分时生效。
-  hdRepair: z.boolean().optional(),
-  hd_repair: z.boolean().optional(),
-  // 分块修复:切成 2×2 web 块逐块 gpt-image-2 重绘再拼接超分;逐块单独计费。默认关。
-  blockRepair: z.boolean().optional(),
-  block_repair: z.boolean().optional(),
-  repairPrompt: z.string().max(8000).optional(),
-  repair_prompt: z.string().max(8000).optional(),
-  stream: z.boolean().optional(),
-  async: z.boolean().optional(),
-  callback_url: z.string().url().optional(),
-});
+const externalImageGenerationSchema = z
+  .object({
+    prompt: z
+      .string()
+      .min(1)
+      .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
+    promptOptimization: z.boolean().optional(),
+    prompt_optimization: z.boolean().optional(),
+    model: z.string().optional(),
+    thinking: z
+      .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
+      .optional(),
+    n: z.number().int().min(1).max(MAX_PLAN_BATCH_COUNT).optional(),
+    size: z
+      .string()
+      .optional()
+      .refine((value) => !value || validateImageSize(value).valid, {
+        message: "Invalid image size",
+      }),
+    quality: z.enum(["auto", "low", "medium", "high"]).optional(),
+    moderation: z.enum(["auto", "low"]).optional(),
+    response_format: z.enum(["url", "b64_json"]).optional(),
+    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
+    output_compression: z.number().int().min(0).max(100).optional(),
+    background: z.enum(["transparent", "opaque", "auto"]).optional(),
+    // 透明背景抠图回退显式开关(issue #27):true 且 background=transparent 时,后端不支持透明则
+    // 服务端 ISNet 抠图得到透明结果;不传则透明直接透传、不支持即返回真实错误。
+    transparentMatte: z.boolean().optional(),
+    transparent_matte: z.boolean().optional(),
+    // 高清修复:上游图偏小需超分时选模型。默认(含省略)=SwinIR(文字/结构复原最佳,较慢);
+    // 显式 false=general-x4v3(轻量快)。仅在超分主开关开且触发超分时生效。
+    hdRepair: z.boolean().optional(),
+    hd_repair: z.boolean().optional(),
+    // 分块修复:切成 2×2 web 块逐块 gpt-image-2 重绘再拼接超分;逐块单独计费。默认关。
+    blockRepair: z.boolean().optional(),
+    block_repair: z.boolean().optional(),
+    repairPrompt: z.string().max(8000).optional(),
+    repair_prompt: z.string().max(8000).optional(),
+    stream: z.boolean().optional(),
+    async: z.boolean().optional(),
+    callback_url: z.string().url().optional(),
+  })
+  .strict();
 
 async function toStreamCompletedPayload(
   request: Request,
@@ -259,15 +249,11 @@ export const postExternalImageGenerations = withApiLogging(
       mode: "generate" as const,
       userId: auth.userId,
       apiKeyId: auth.apiKeyId,
-      backendRequestKind: "image_generation" as const,
       prompt: parsed.data.prompt,
       promptOptimization:
         parsed.data.promptOptimization ?? parsed.data.prompt_optimization,
-      moderationPromptRepair:
-        parsed.data.promptRepair ?? parsed.data.prompt_repair,
       size: parsed.data.size || DEFAULT_IMAGE_SIZE,
       model: imageModel,
-      gptModel: parsed.data.gptModel || parsed.data.gpt_model,
       thinking: parsed.data.thinking,
       quality: parsed.data.quality,
       moderation: parsed.data.moderation || "auto",
@@ -277,12 +263,6 @@ export const postExternalImageGenerations = withApiLogging(
       ),
       background,
       transparentMatte,
-      forceWebBackend:
-        parsed.data.web_first ??
-        parsed.data.webFirst ??
-        parsed.data.force_web ??
-        parsed.data.forceWeb,
-      forceFirefly: parsed.data.forceFirefly ?? parsed.data.force_firefly,
       hdRepair: parsed.data.hdRepair ?? parsed.data.hd_repair,
       blockRepair: parsed.data.blockRepair ?? parsed.data.block_repair,
       repairPrompt: parsed.data.repairPrompt ?? parsed.data.repair_prompt,

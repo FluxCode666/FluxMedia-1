@@ -39,7 +39,6 @@ import {
   resolveFireflyVideoModel,
 } from "@repo/shared/adobe/firefly-direct";
 import { logError, logWarn } from "@repo/shared/logger";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import { nanoid } from "nanoid";
@@ -49,36 +48,29 @@ import type { ApiConfig, GenerateImageResult } from "./types";
 // IMS access_token 距过期多久内视为需要刷新（秒）。
 const TOKEN_REFRESH_SKEW_SECONDS = 120;
 
-/** 读取 Firefly 旁路代理配置：优先 FIREFLY_PROXY_*，回落到 chatgpt-web 旁路（同一 Go 服务）。 */
-async function getFireflyProxyConfig(): Promise<{
+/** 读取 Adobe direct 专用代理配置；缺失时显式失败，禁止绕过固定出口直连。 */
+function getAdobeDirectProxyConfig(): {
   url: string;
   secret: string;
-} | null> {
-  // 复用 chatgpt-web 旁路（同一个 Go TLS 服务）；FIREFLY_PROXY_* 仅作 env 覆盖。
-  const rawUrl =
-    process.env.FIREFLY_PROXY_URL?.trim() ||
-    (await getRuntimeSettingString("CHATGPT_WEB_PROXY_URL")) ||
-    process.env.CHATGPT_WEB_PROXY_URL?.trim();
+} {
+  const rawUrl = process.env.ADOBE_DIRECT_PROXY_URL?.trim();
   const url = rawUrl?.replace(/\/+$/, "");
-  if (!url) return null;
-  const secret =
-    process.env.FIREFLY_PROXY_SECRET?.trim() ||
-    (await getRuntimeSettingString("CHATGPT_WEB_PROXY_SECRET")) ||
-    process.env.CHATGPT_WEB_PROXY_SECRET?.trim() ||
-    "";
+  const secret = process.env.ADOBE_DIRECT_PROXY_SECRET?.trim();
+  if (!url || !secret) {
+    throw new Error(
+      "Adobe direct 需要配置 ADOBE_DIRECT_PROXY_URL 和 ADOBE_DIRECT_PROXY_SECRET"
+    );
+  }
   return { url, secret };
 }
 
-/** 构造 API/下载传输：API 走旁路（无则回落直连），产物下载走直连。 */
+/** 构造 API/下载传输：Adobe API 固定走专用旁路，产物下载走直连。 */
 async function buildAdobeTransports(sessionKey: string): Promise<{
   apiTransport: FireflyTransport;
   downloadTransport: FireflyTransport;
 }> {
-  const proxy = await getFireflyProxyConfig();
+  const proxy = getAdobeDirectProxyConfig();
   const downloadTransport = new FetchFireflyTransport();
-  if (!proxy) {
-    return { apiTransport: new FetchFireflyTransport(), downloadTransport };
-  }
   return {
     apiTransport: new ProxyFireflyTransport({
       proxyUrl: proxy.url,
@@ -117,7 +109,7 @@ function assertLoggedInAdobeCookie(
  * auto_refresh token）。同时回写账号信息/状态。
  */
 async function refreshAccountToken(
-  adobeId: string,
+  memberId: string,
   account: { id: string; cookie: string; scope: string | null },
   transport: FireflyTransport,
   signal?: AbortSignal
@@ -184,7 +176,7 @@ async function refreshAccountToken(
       tokenId = nanoid();
       await db.insert(adobeToken).values({
         id: tokenId,
-        adobeId,
+        memberId,
         accountId: account.id,
         value: result.accessToken,
         accountUserId: accountUserId || null,
@@ -200,7 +192,7 @@ async function refreshAccountToken(
       result.accessToken,
       signal
     ).catch((error) =>
-      logError(error, { source: "adobe-credits-balance", adobeId })
+      logError(error, { source: "adobe-credits-balance", memberId })
     );
     return { id: tokenId, value: result.accessToken };
   } catch (error) {
@@ -214,7 +206,7 @@ async function refreshAccountToken(
         updatedAt: new Date(),
       })
       .where(eq(adobeAccount.id, account.id));
-    logError(error, { source: "adobe-direct-refresh", adobeId });
+    logError(error, { source: "adobe-direct-refresh", memberId });
     return null;
   }
 }
@@ -266,7 +258,7 @@ async function storeTokenCredits(
  * 2. 否则用某个 enabled 账号的 cookie 刷新出新 token。
  */
 async function acquireToken(
-  adobeId: string,
+  memberId: string,
   transport: FireflyTransport,
   signal?: AbortSignal,
   // 换号重试用：跳过本次已试过的 token / 账号（被 429 等限流的账号本次不再重选）。
@@ -281,7 +273,7 @@ async function acquireToken(
     })
     .from(adobeToken)
     .where(
-      and(eq(adobeToken.adobeId, adobeId), eq(adobeToken.status, "active"))
+      and(eq(adobeToken.memberId, memberId), eq(adobeToken.status, "active"))
     )
     .orderBy(asc(adobeToken.lastUsedAt), asc(adobeToken.createdAt));
 
@@ -315,14 +307,14 @@ async function acquireToken(
     })
     .from(adobeAccount)
     .where(
-      and(eq(adobeAccount.adobeId, adobeId), eq(adobeAccount.isEnabled, true))
+      and(eq(adobeAccount.memberId, memberId), eq(adobeAccount.isEnabled, true))
     )
     .orderBy(asc(adobeAccount.lastRefreshAt), asc(adobeAccount.createdAt));
 
   for (const account of accounts) {
     if (exclude?.accountIds?.has(account.id)) continue;
     const refreshed = await refreshAccountToken(
-      adobeId,
+      memberId,
       account,
       transport,
       signal
@@ -372,7 +364,7 @@ const MAX_ADOBE_TOKEN_ROTATION = 24;
  * 非可轮换错误（请求本身 4xx、内容拒绝、模型不支持等）换号无用，立即上抛。
  */
 async function runWithAdobeTokenRotation<T>(
-  adobeId: string,
+  memberId: string,
   transport: FireflyTransport,
   signal: AbortSignal | undefined,
   run: (token: string) => Promise<T>
@@ -383,7 +375,7 @@ async function runWithAdobeTokenRotation<T>(
     "Adobe 直连无可用账号/token（请在 admin 导入 Adobe cookie 账号）";
   for (let attempt = 1; attempt <= MAX_ADOBE_TOKEN_ROTATION; attempt++) {
     if (signal?.aborted) break;
-    const acquired = await acquireToken(adobeId, transport, signal, {
+    const acquired = await acquireToken(memberId, transport, signal, {
       tokenIds: triedTokenIds,
       accountIds: triedAccountIds,
     });
@@ -404,14 +396,14 @@ async function runWithAdobeTokenRotation<T>(
       if (isAdobeRotatableError(error) && !signal?.aborted) {
         logWarn("Adobe 直连账号失败，换下一个账号重试", {
           source: "adobe-direct-rotate",
-          adobeId,
+          memberId,
           attempt,
           triedAccounts: triedAccountIds.size,
           error: lastError.slice(0, 160),
         });
         continue;
       }
-      logError(error, { source: "adobe-direct-rotate", adobeId, attempt });
+      logError(error, { source: "adobe-direct-rotate", memberId, attempt });
       return { ok: false, error: lastError };
     }
   }
@@ -456,8 +448,8 @@ export async function runAdobeDirectImageRequest(
     signal?: AbortSignal;
   }
 ): Promise<GenerateImageResult> {
-  const adobeId = config.backend?.id;
-  if (!adobeId) return { error: "Adobe 直连后端缺少 id" };
+  const memberId = config.backend?.id;
+  if (!memberId) return { error: "Adobe 直连成员缺少 id" };
   if (
     !canAdobeBackendServeModel({
       enabledModels: config.backend?.adobeEnabledModels,
@@ -468,7 +460,7 @@ export async function runAdobeDirectImageRequest(
     return { error: "此 Adobe 后端未开放所请求的模型" };
   }
 
-  const sessionKey = `adobe-${adobeId}`;
+  const sessionKey = `adobe-member-${memberId}`;
   const { apiTransport, downloadTransport } =
     await buildAdobeTransports(sessionKey);
 
@@ -501,7 +493,7 @@ export async function runAdobeDirectImageRequest(
 
   // 伪账号内换号重试：撞 429/配额/鉴权就换本后端下一个账号，轮完才上抛（交外层切后端）。
   const result = await runWithAdobeTokenRotation(
-    adobeId,
+    memberId,
     apiTransport,
     params.signal,
     async (token) => {
@@ -564,8 +556,8 @@ export async function runAdobeDirectVideoRequest(
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoResult> {
-  const adobeId = config.backend?.id;
-  if (!adobeId) return { error: "Adobe 直连后端缺少 id" };
+  const memberId = config.backend?.id;
+  if (!memberId) return { error: "Adobe 直连成员缺少 id" };
   if (
     !canAdobeBackendServeModel({
       enabledModels: config.backend?.adobeEnabledModels,
@@ -587,7 +579,7 @@ export async function runAdobeDirectVideoRequest(
     };
   }
 
-  const sessionKey = `adobe-${adobeId}`;
+  const sessionKey = `adobe-member-${memberId}`;
   const { apiTransport, downloadTransport } =
     await buildAdobeTransports(sessionKey);
   const client = new AdobeFireflyClient({
@@ -597,7 +589,7 @@ export async function runAdobeDirectVideoRequest(
 
   // 伪账号内换号重试：撞 429/配额/鉴权就换本后端下一个账号，轮完才上抛（交外层切后端）。
   const result = await runWithAdobeTokenRotation(
-    adobeId,
+    memberId,
     apiTransport,
     params.signal,
     async (token) => {
@@ -654,13 +646,15 @@ type AdobeCookieValidation = Awaited<
 >;
 
 // 验证一个 Adobe cookie：刷新一次拿 access_token + 账号信息，并断言为已登录（非 guest）。
-// sessionKey 沿用 `adobe-<adobeId>`（与历史单条导入一致；只影响代理出口会话路由）。
+// sessionKey 只用于代理出口会话路由，以统一成员 ID 隔离不同 direct 成员。
 async function validateAdobeCookie(
-  adobeId: string,
+  memberId: string,
   cookie: string,
   scope?: string | null
 ): Promise<AdobeCookieValidation> {
-  const { apiTransport } = await buildAdobeTransports(`adobe-${adobeId}`);
+  const { apiTransport } = await buildAdobeTransports(
+    `adobe-member-${memberId}`
+  );
   const result = await refreshAccessTokenFromCookie(apiTransport, cookie, {
     scope: scope ?? undefined,
     fetchAccount: true,
@@ -673,7 +667,7 @@ async function validateAdobeCookie(
 // 额外回传 accountUserId（IMS 稳定身份），供批量导入去重使用。
 async function persistAdobeAccount(
   input: {
-    adobeId: string;
+    memberId: string;
     name?: string;
     cookie: string;
     scope?: string | null;
@@ -691,7 +685,7 @@ async function persistAdobeAccount(
 
   await db.insert(adobeAccount).values({
     id,
-    adobeId: input.adobeId,
+    memberId: input.memberId,
     name: input.name?.trim() || account?.displayName || account?.email || id,
     cookie: input.cookie,
     scope: input.scope ?? null,
@@ -705,7 +699,7 @@ async function persistAdobeAccount(
 
   await db.insert(adobeToken).values({
     id: nanoid(),
-    adobeId: input.adobeId,
+    memberId: input.memberId,
     accountId: id,
     value: validated.accessToken,
     accountUserId: account?.userId || null,
@@ -723,13 +717,13 @@ async function persistAdobeAccount(
 }
 
 export async function importAdobeAccount(input: {
-  adobeId: string;
+  memberId: string;
   name?: string;
   cookie: string;
   scope?: string | null;
 }): Promise<{ id: string; displayName: string; email: string }> {
   const validated = await validateAdobeCookie(
-    input.adobeId,
+    input.memberId,
     input.cookie,
     input.scope
   );
@@ -768,7 +762,7 @@ export type AdobeAccountBatchImportResult = {
  * 事务），因此即便整体请求中途超时也不丢已导入数据，重新粘贴会按身份自动跳过已导入项。
  */
 export async function importAdobeAccountsBatch(input: {
-  adobeId: string;
+  memberId: string;
   cookiesText: string;
   namePrefix?: string;
   scope?: string | null;
@@ -785,7 +779,7 @@ export async function importAdobeAccountsBatch(input: {
       email: adobeAccount.email,
     })
     .from(adobeAccount)
-    .where(eq(adobeAccount.adobeId, input.adobeId));
+    .where(eq(adobeAccount.memberId, input.memberId));
   const seenUserIds = new Set<string>();
   const seenEmails = new Set<string>();
   for (const row of existing) {
@@ -807,7 +801,7 @@ export async function importAdobeAccountsBatch(input: {
     const name = entry.name?.trim() || fallbackName;
     try {
       const validated = await validateAdobeCookie(
-        input.adobeId,
+        input.memberId,
         entry.cookie,
         scope
       );
@@ -828,7 +822,7 @@ export async function importAdobeAccountsBatch(input: {
         continue;
       }
       const persisted = await persistAdobeAccount(
-        { adobeId: input.adobeId, name, cookie: entry.cookie, scope },
+        { memberId: input.memberId, name, cookie: entry.cookie, scope },
         validated
       );
       if (userId) seenUserIds.add(userId);
@@ -848,7 +842,7 @@ export async function importAdobeAccountsBatch(input: {
       results.push({ index, status: "failed", reason });
       logError(error, {
         source: "adobe-direct-batch-import",
-        adobeId: input.adobeId,
+        memberId: input.memberId,
         index,
       });
     }
@@ -864,8 +858,8 @@ export async function importAdobeAccountsBatch(input: {
   };
 }
 
-/** 列出某 adobe 后端的账号（admin 用）。不返回 cookie 明文。 */
-export async function listAdobeAccounts(adobeId: string): Promise<
+/** 列出某 Adobe direct 成员的账号（admin 用）。不返回 cookie 明文。 */
+export async function listAdobeAccounts(memberId: string): Promise<
   Array<{
     id: string;
     name: string;
@@ -909,7 +903,7 @@ export async function listAdobeAccounts(adobeId: string): Promise<
         eq(adobeToken.source, "auto_refresh")
       )
     )
-    .where(eq(adobeAccount.adobeId, adobeId))
+    .where(eq(adobeAccount.memberId, memberId))
     .orderBy(asc(adobeAccount.createdAt));
 }
 

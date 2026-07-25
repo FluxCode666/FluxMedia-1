@@ -164,8 +164,6 @@ export function getExternalFinalImageOutputs(
     | "revisedPrompt"
     | "promptRepairNotice"
     | "generationId"
-    | "responseText"
-    | "responseAgent"
   >
 ): ExternalFinalImageOutput[] {
   const outputs = (result.imageOutputs || []).filter(
@@ -233,10 +231,7 @@ export async function toOpenAIImagesResponse(
     }
     const outputs = getExternalFinalImageOutputs(result);
     if (outputs.length === 0) {
-      const message =
-        result.responseText?.trim() ||
-        result.responseAgent?.trim() ||
-        "Image generation completed without an image output";
+      const message = "Image generation completed without an image output";
       const options = {
         generationId: result.generationId,
         creditsConsumed: result.creditsConsumed,

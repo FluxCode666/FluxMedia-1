@@ -86,8 +86,6 @@ const JSON_SCALAR_FIELDS = [
   "prompt",
   "promptOptimization",
   "prompt_optimization",
-  "promptRepair",
-  "prompt_repair",
   "size",
   "quality",
   "moderation",
@@ -99,15 +97,7 @@ const JSON_SCALAR_FIELDS = [
   "n",
   "response_format",
   "model",
-  "gptModel",
-  "gpt_model",
   "thinking",
-  "force_web",
-  "forceWeb",
-  "web_first",
-  "webFirst",
-  "force_firefly",
-  "forceFirefly",
   "stream",
   "async",
   "callback_url",
@@ -595,13 +585,6 @@ export const postExternalImageEdits = withApiLogging(
       "promptOptimization",
       "prompt_optimization"
     );
-    // 审核改写重试开关(issue #24):传 false 时,审核拦截后不自动改写提示词重试,直接返回真实错误。
-    const moderationPromptRepair = getOptionalBoolean(
-      formData,
-      "promptRepair",
-      "prompt_repair"
-    );
-
     const size = getText(formData, "size") || undefined;
     if (size) {
       const sizeCheck = validateImageSize(size);
@@ -684,28 +667,11 @@ export const postExternalImageEdits = withApiLogging(
     // 不在传输层硬编码模型前缀：最终选中 pool-api 时可透传任意管理员配置的
     // 上游模型，其他后端仍由统一图像管线执行既有白名单校验。
     const model = getText(formData, "model") || undefined;
-    const gptModel =
-      getText(formData, "gptModel") ||
-      getText(formData, "gpt_model") ||
-      undefined;
     const thinkingValue = getText(formData, "thinking") || undefined;
     if (thinkingValue && !VALID_THINKING.has(thinkingValue as ThinkingLevel)) {
       return openAIImageError("Invalid thinking level.");
     }
     const thinking = thinkingValue as ThinkingLevel | undefined;
-    const forceWebBackend = getOptionalBoolean(
-      formData,
-      "web_first",
-      "webFirst",
-      "force_web",
-      "forceWeb"
-    );
-    // force_firefly：强制把本次编辑请求路由到 adobe（firefly）后端，对任意模型生效。
-    const forceFirefly = getOptionalBoolean(
-      formData,
-      "force_firefly",
-      "forceFirefly"
-    );
     if (imageReferences.length === 0) {
       return openAIImageError("At least one source image is required.");
     }
@@ -793,13 +759,10 @@ export const postExternalImageEdits = withApiLogging(
             userId: auth.userId,
             generationId,
             apiKeyId: auth.apiKeyId,
-            backendRequestKind: "image_edit" as const,
             prompt,
             promptOptimization,
-            moderationPromptRepair,
             size,
             model,
-            gptModel,
             thinking,
             quality,
             moderation,
@@ -811,8 +774,6 @@ export const postExternalImageEdits = withApiLogging(
             blockRepair,
             repairPrompt,
             n: 1,
-            forceWebBackend,
-            forceFirefly,
             images: await buildImages(),
             mask: await buildMask(),
           },
