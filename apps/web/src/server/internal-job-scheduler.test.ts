@@ -10,6 +10,7 @@ const runtime = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   imageMaintenance: vi.fn(async () => undefined),
   creditsExpire: vi.fn(async () => undefined),
+  videoRecovery: vi.fn(async () => undefined),
 }));
 
 const database = vi.hoisted(() => {
@@ -70,6 +71,7 @@ vi.mock("@repo/shared/system-settings", () => ({
 vi.mock("./scheduled-jobs", () => ({
   runImageMaintenanceJob: runtime.imageMaintenance,
   runCreditsExpireJob: runtime.creditsExpire,
+  runVideoRecoveryJob: runtime.videoRecovery,
 }));
 
 type SchedulerModule = typeof import("./internal-job-scheduler");
@@ -96,6 +98,7 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.settings.clear();
     runtime.imageMaintenance.mockClear();
     runtime.creditsExpire.mockClear();
+    runtime.videoRecovery.mockClear();
     database.transaction.mockClear();
     vi.useFakeTimers();
     vi.stubEnv("NODE_ENV", "production");
@@ -124,6 +127,7 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(1);
+    expect(runtime.videoRecovery).toHaveBeenCalled();
 
     runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", false);
     await vi.advanceTimersByTimeAsync(5_000);

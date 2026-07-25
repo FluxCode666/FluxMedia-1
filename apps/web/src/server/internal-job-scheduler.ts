@@ -13,12 +13,16 @@ import {
 } from "@repo/shared/system-settings";
 import { eq, sql } from "drizzle-orm";
 
-import { runCreditsExpireJob, runImageMaintenanceJob } from "./scheduled-jobs";
+import {
+  runCreditsExpireJob,
+  runImageMaintenanceJob,
+  runVideoRecoveryJob,
+} from "./scheduled-jobs";
 
 type InternalJob = {
   name: string;
   lockKey: number;
-  intervalSettingKey:
+  intervalSettingKey?:
     | "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES"
     | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES";
   defaultIntervalMinutes: number;
@@ -60,6 +64,13 @@ const schedulerGlobal = globalThis as SchedulerGlobal;
 let lastRuntimeConfig: SchedulerRuntimeConfig | undefined;
 
 const jobs: InternalJob[] = [
+  {
+    name: "video-recovery",
+    lockKey: 3,
+    defaultIntervalMinutes: 1,
+    initialDelayMs: 10_000,
+    run: runVideoRecoveryJob,
+  },
   {
     name: "images-maintenance",
     lockKey: 1,
@@ -343,11 +354,13 @@ async function getSchedulerRuntimeConfig(): Promise<SchedulerRuntimeConfig> {
       getRuntimeSettingBoolean("INTERNAL_JOB_SCHEDULER_ENABLED", true),
       Promise.all(
         jobs.map((job) =>
-          getRuntimeSettingNumber(
-            job.intervalSettingKey,
-            job.defaultIntervalMinutes,
-            { positive: true }
-          )
+          job.intervalSettingKey
+            ? getRuntimeSettingNumber(
+                job.intervalSettingKey,
+                job.defaultIntervalMinutes,
+                { positive: true }
+              )
+            : Promise.resolve(job.defaultIntervalMinutes)
         )
       ),
     ]);

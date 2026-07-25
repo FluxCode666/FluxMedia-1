@@ -5,6 +5,7 @@ import {
   expireStalePendingGenerations,
 } from "@repo/shared/generation-maintenance";
 import { getRuntimeSettingSelect } from "@repo/shared/system-settings";
+import { runVideoRecoveryJob as recoverVideoGenerations } from "@/features/image-generation/video-operations";
 import {
   buildCreditsExpireResponse,
   summarizeExpiredPendingGenerations,
@@ -67,4 +68,14 @@ export async function runCreditsExpireJob() {
     ...buildCreditsExpireResponse(results),
     timestamp: new Date().toISOString(),
   };
+}
+
+/**
+ * 认领并恢复一批 Adobe 视频任务。
+ *
+ * @returns 本轮认领、恢复与隔离失败数量。
+ */
+export async function runVideoRecoveryJob() {
+  const result = await recoverVideoGenerations();
+  return { success: true, ...result, timestamp: new Date().toISOString() };
 }
