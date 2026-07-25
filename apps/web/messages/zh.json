@@ -364,7 +364,7 @@
     "nav": {
       "dashboard": "控制台",
       "create": "创作",
-      "generate": "简易生图",
+      "generate": "生图",
       "gallery": "图库",
       "history": "使用记录",
       "apiDocs": "接入文档",
@@ -387,7 +387,7 @@
     "pages": {
       "dashboard": "控制台",
       "create": "创作",
-      "generate": "生成",
+      "generate": "生图",
       "gallery": "图库",
       "history": "使用记录",
       "tasks": "任务",

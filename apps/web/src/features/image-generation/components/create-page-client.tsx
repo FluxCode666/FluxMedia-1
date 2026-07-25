@@ -8291,15 +8291,6 @@ export function CreatePageClient({
               />
             </div>
 
-            {unifiedHasReference && !unifiedMaskSupported && (
-              <p className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                {copy(
-                  "This model can use a reference image but cannot apply a mask. Choose another model to use masked editing.",
-                  "当前模型可使用参考图，但不支持蒙版编辑；如需局部编辑，请选择其他模型。"
-                )}
-              </p>
-            )}
-
             {maskEditorOpen && firstPreviewUrl && firstImageSize && (
               <div className="space-y-3 rounded-xl border border-border bg-muted/15 p-3">
                 <p className="text-xs leading-relaxed text-muted-foreground">
@@ -8640,24 +8631,19 @@ export function CreatePageClient({
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8 md:px-6 md:py-12">
-      <header className="mb-10 space-y-2.5">
-        <h1 className="font-serif text-3xl font-semibold tracking-tight md:text-4xl">
-          {isSimpleImageGenerationPage
-            ? copy("Image generation", "简易生图")
-            : copy("Create", "创作")}
-        </h1>
-        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          {isSimpleImageGenerationPage
-            ? copy(
-                "Generate from text or transform one reference image in a single workspace.",
-                "在一个工作区中完成文生图与单参考图图生图。"
-              )
-            : copy(
-                "Generate a new image from text, or transform uploaded images with a prompt.",
-                "用文字生成新图片，或通过提示词改造上传的图片。"
-              )}
-        </p>
-      </header>
+      {!isSimpleImageGenerationPage && (
+        <header className="mb-10 space-y-2.5">
+          <h1 className="font-serif text-3xl font-semibold tracking-tight md:text-4xl">
+            {copy("Create", "创作")}
+          </h1>
+          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            {copy(
+              "Generate a new image from text, or transform uploaded images with a prompt.",
+              "用文字生成新图片，或通过提示词改造上传的图片。"
+            )}
+          </p>
+        </header>
+      )}
 
       {isSimpleImageGenerationPage && (
         <section className="mb-10 space-y-4">
