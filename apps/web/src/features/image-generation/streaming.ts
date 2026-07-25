@@ -1,5 +1,3 @@
-import type { AgentRunEvent } from "./types";
-
 export type ImageStreamEvent =
   | {
       type: "partial_image";
@@ -10,26 +8,6 @@ export type ImageStreamEvent =
       final?: boolean;
     }
   | {
-      type: "text_delta";
-      index?: number;
-      delta: string;
-    }
-  | {
-      type: "thinking_delta";
-      index?: number;
-      delta: string;
-    }
-  | {
-      type: "agent_delta";
-      index?: number;
-      delta: string;
-    }
-  | {
-      type: "agent_event";
-      index?: number;
-      event: AgentRunEvent;
-    }
-  | {
       type: "completed";
       generationId?: string;
       imageUrl?: string;
@@ -37,48 +15,10 @@ export type ImageStreamEvent =
       model?: string;
       size?: string;
       revisedPrompt?: string;
-      responseText?: string;
-      responseThinking?: string;
-      responseAgent?: string;
-      agentEvents?: AgentRunEvent[];
-      agentRoundCount?: number;
-      webConversation?: {
-        conversationId: string;
-        parentMessageId: string;
-        accountId?: string;
-        apiKeyId?: string;
-        selectionMessageId?: string;
-        selectedImageMessageId?: string;
-      };
-      backendMember?: {
-        type: "api" | "account" | "adobe";
-        id: string;
-        groupId?: string | null;
-        accountBackend?: "web" | "responses";
-      };
-      responsesUsage?: {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-        cachedInputTokens?: number;
-      };
-      responsesPreviousResponse?: {
-        responseId: string;
-        backendMember: {
-          type: "api" | "account" | "adobe";
-          id: string;
-          groupId?: string | null;
-          accountBackend?: "web" | "responses";
-        };
-        store: true;
-        createdAt?: string;
-      };
       imageOutputs?: Array<{
         generationId?: string;
         imageUrl?: string;
         imageFileId?: string;
-        webImageMessageId?: string;
-        webImageGroupId?: string;
         size?: string;
         revisedPrompt?: string;
         upstreamRevisedPrompt?: string;

@@ -12,7 +12,6 @@ import {
   GripVertical,
   ImageIcon,
   Loader2,
-  MessageSquare,
   Send,
   Trash2,
 } from "lucide-react";
@@ -24,7 +23,6 @@ import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { deleteGenerationAction } from "@/features/image-generation/actions";
 import type { GenerationCreditDetails } from "@/features/image-generation/credit-calculation-details";
-import { writePendingReferenceHandoff } from "@/features/image-generation/reference-handoff";
 import { ExportPsdDialog } from "@/features/psd-export/components/export-psd-dialog";
 import { generateDownloadFilename } from "@/lib/download-filename";
 
@@ -243,10 +241,10 @@ export function ImageLightbox({
     setActivePreviewId(imageUrl ? "output" : firstReferenceId || "output");
     setConfirmDelete(false);
   }, [imageUrl, firstReferenceId]);
-  const createReferenceHref = (mode: "image" | "chat", intent: string) => {
+  const createReferenceHref = (intent: string) => {
     if (!previewImageUrl) return `/${locale}/dashboard/create`;
     const params = new URLSearchParams({
-      mode,
+      mode: "image",
       ref: previewImageUrl,
       sourceId: generation.id,
       sourceName: activeReference?.name || `fluxmedia-${generation.id}`,
@@ -263,17 +261,10 @@ export function ImageLightbox({
     return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   };
 
-  const handleSendReference = (mode: "image" | "chat") => {
+  const handleSendReference = () => {
     if (!previewImageUrl) return;
     const intent = createReferenceIntent();
-    writePendingReferenceHandoff({
-      id: intent,
-      mode,
-      imageUrl: previewImageUrl,
-      sourceId: generation.id,
-      sourceName: activeReference?.name || `fluxmedia-${generation.id}`,
-    });
-    router.push(createReferenceHref(mode, intent));
+    router.push(createReferenceHref(intent));
     onClose();
   };
 
@@ -623,19 +614,10 @@ export function ImageLightbox({
                   <Button
                     type="button"
                     className="w-full justify-center"
-                    onClick={() => handleSendReference("image")}
+                    onClick={handleSendReference}
                   >
                     <Send className="mr-2 h-4 w-4" />
                     {copy("Send to image edit", "发送到图生图")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full justify-center"
-                    onClick={() => handleSendReference("chat")}
-                  >
-                    <MessageSquare className="mr-2 h-4 w-4" />
-                    {copy("Send to chat", "发送到 Chat")}
                   </Button>
                   <Button
                     asChild

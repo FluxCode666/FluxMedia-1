@@ -1,20 +1,19 @@
 /**
  * 生成类计费操作上下文的 DB-free 契约测试。
  *
- * 确保图片、视频与可编辑文件在初扣、补扣、轮次费和退款间
+ * 确保图片与视频在初扣、补扣和退款间
  * 复用同一稳定操作身份，不依赖 sourceRef 后缀。
  */
 
 import { describe, expect, it } from "vitest";
 
 import {
-  createEditableFileCreditOperation,
   createImageCreditOperation,
   createVideoCreditOperation,
 } from "./credit-operation-context";
 
 describe("generation credit operation context", () => {
-  it("uses one parent image operation for generate, edit, chat, agent, and repair contributions", () => {
+  it("uses one parent image operation for generate, edit, and repair contributions", () => {
     const createdAt = new Date("2026-07-21T01:00:00.000Z");
     const initial = createImageCreditOperation("generation-1", createdAt);
     const settlement = createImageCreditOperation("generation-1", createdAt);
@@ -36,26 +35,5 @@ describe("generation credit operation context", () => {
       operationId: "video-1",
       operationCreatedAt: createdAt,
     });
-  });
-
-  it("shares one editable-file operation between generation and chat round", () => {
-    const createdAt = new Date("2026-07-21T03:00:00.000Z");
-    const generation = createEditableFileCreditOperation(
-      "ppt",
-      "task-1",
-      createdAt
-    );
-    const chatRound = createEditableFileCreditOperation(
-      "ppt",
-      "task-1",
-      createdAt
-    );
-
-    expect(generation).toEqual({
-      operationType: "editable_file_ppt",
-      operationId: "task-1",
-      operationCreatedAt: createdAt,
-    });
-    expect(chatRound).toEqual(generation);
   });
 });

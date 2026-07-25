@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NO_WEB_ACCOUNT_ERROR } from "@/features/image-generation/editable-file-util";
 import {
   createExternalImageStreamResponse,
   createJsonKeepAliveResponse,
@@ -479,11 +478,4 @@ describe("external API error classification", () => {
     });
   });
 
-  it("maps editable-file no-web-account error to 503 (not retryable 502)", () => {
-    // 用户后端只有 api/codex、无 web 账号时的报错须归 503,而非 502 upstream_error。
-    expect(toOpenAIErrorPayload(NO_WEB_ACCOUNT_ERROR).error).toMatchObject({
-      code: "no_available_image_backend",
-      status: 503,
-    });
-  });
 });

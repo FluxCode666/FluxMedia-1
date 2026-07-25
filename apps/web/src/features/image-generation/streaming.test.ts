@@ -52,7 +52,7 @@ describe("image stream response", () => {
     let completed = false;
 
     const response = createImageStreamResponse(async (emit) => {
-      await emit({ type: "text_delta", delta: "started" });
+      await emit({ type: "partial_image", b64_json: "c3RhcnRlZA==" });
       await runReleased;
       completed = true;
       return { type: "completed", generationId: "gen_1" };
