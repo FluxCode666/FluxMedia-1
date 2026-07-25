@@ -7,8 +7,11 @@
  */
 import { z } from "zod";
 
-import { videoModelCreditsPerSecondMapSchema } from "../../adobe/video-pricing";
-import { imageCreditOverridesSchema } from "../../image-backend/group-image-pricing";
+import {
+  backendGroupInputSchema,
+  backendGroupOptionSchema,
+  backendGroupSummarySchema,
+} from "../../image-backend/group-contract";
 import { backendMemberInputSchema } from "../../image-backend/member-contract";
 import { requestParameterMappingsSchema } from "../../image-backend/request-parameter-mapping";
 import { defineOperation } from "../registry";
@@ -19,37 +22,7 @@ const poolWriteAccess: AccessRequirement = {
   roles: ["admin", "super_admin"],
 };
 
-/** 统一分组保存输入；分组不再按 Web/Responses 类型预分流。 */
-export const backendGroupInputSchema = z
-  .object({
-    id: z.string().trim().min(1).max(128).optional(),
-    name: z.string().trim().min(1).max(80),
-    description: z.string().trim().max(500).optional(),
-    isEnabled: z.boolean(),
-    isDefault: z.boolean(),
-    isUserSelectable: z.boolean(),
-    contentSafety: z.enum(["inherit", "enabled", "disabled"]),
-    minPlan: z.enum(["free", "starter", "pro", "ultra", "enterprise"]),
-    imageCreditOverrides: imageCreditOverridesSchema,
-    videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
-    childGroupIds: z.array(z.string().trim().min(1).max(128)).max(100),
-    priority: z.number().int().min(0).max(10_000),
-  })
-  .strict();
-
-const backendGroupSummarySchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    description: z.string().nullable(),
-    isEnabled: z.boolean(),
-    isDefault: z.boolean(),
-    isUserSelectable: z.boolean(),
-    contentSafety: z.enum(["inherit", "enabled", "disabled"]),
-    minPlan: z.enum(["free", "starter", "pro", "ultra", "enterprise"]),
-    priority: z.number().int(),
-  })
-  .strict();
+export { backendGroupInputSchema };
 
 const redactedApiConfigSchema = z
   .object({
@@ -111,7 +84,7 @@ export const getGroupOptions = defineOperation({
   description: "获取可选择的媒体后端分组，不暴露成员凭据。",
   input: z.object({}).strict(),
   output: z.object({
-    options: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
+    options: z.array(backendGroupOptionSchema),
   }),
   access: { kind: "protected" },
   readOnly: true,

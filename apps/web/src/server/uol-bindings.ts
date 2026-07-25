@@ -25,17 +25,15 @@ import {
 } from "@repo/shared/analytics/contracts";
 import { resolveUsageTimeRange } from "@repo/shared/analytics/range";
 import { getAnalyticsMetricUnit } from "@repo/shared/analytics/series";
-import {
-  normalizeSubscriptionPlan,
-  type SubscriptionPlan,
-} from "@repo/shared/config/subscription-plan";
+import { normalizeSubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import {
   type UsageEvent,
   type UsageEventDetail,
   usageEventDetailSchema,
   usageEventListOutputSchema,
 } from "@repo/shared/credits/usage-log-contract";
-import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
+import type { BackendGroupInput } from "@repo/shared/image-backend/group-contract";
+import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import type { RequestParameterMapping } from "@repo/shared/image-backend/request-parameter-mapping";
 import {
   type AdminHistoryListOutput,
@@ -72,11 +70,16 @@ import {
 } from "@/features/external-api/key-management-service";
 import { getExternalModelsForApiKey } from "@/features/external-api/models";
 import {
+  BackendGroupServiceError,
+  backendGroupService,
+} from "@/features/image-backend-pool/group-service";
+import {
+  BackendMemberServiceError,
+  backendMemberService,
+} from "@/features/image-backend-pool/member-service";
+import {
   deleteImageBackendParameterMappingTemplate,
-  fromSafetyOverride,
-  listAdminImageBackendPool,
   listImageBackendParameterMappingTemplates,
-  upsertImageBackendGroup,
   upsertImageBackendParameterMappingTemplate,
 } from "@/features/image-backend-pool/service";
 import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
@@ -708,9 +711,32 @@ bindExecute(
 // ---------------------------------------------------------------------------
 
 /**
- * pool.getAdminPool - 管理后台池总览
- * 源: apps/web/src/features/image-backend-pool/service.ts
+ * 将统一号池领域错误映射为 UOL 错误。
+ *
+ * @param error 分组或成员服务抛出的未知错误。
+ * @throws 始终抛出可由传输层稳定编码的错误；未知错误保持原样上抛。
  */
+function throwBackendPoolOperationError(error: unknown): never {
+  if (
+    error instanceof BackendGroupServiceError ||
+    error instanceof BackendMemberServiceError
+  ) {
+    throw new OperationError(error.code, error.message);
+  }
+  throw error;
+}
+
+/** pool.getGroupOptions - 获取用户可选择的启用分组。 */
+bindExecute(
+  "pool.getGroupOptions",
+  async (
+    _input: Record<string, never>,
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => ({ options: await backendGroupService.listGroupOptions() })
+);
+
+/** pool.getAdminPool - 读取统一分组和统一成员的脱敏管理快照。 */
 bindExecute(
   "pool.getAdminPool",
   async (
@@ -718,76 +744,77 @@ bindExecute(
     _principal: Principal,
     _ctx: OperationContext
   ) => {
-    const pool = await listAdminImageBackendPool();
-    return pool;
+    const [groups, members] = await Promise.all([
+      backendGroupService.listGroups(),
+      backendMemberService.listMembers(),
+    ]);
+    return { groups, members };
   }
 );
 
-/**
- * pool.saveGroup - 保存后端分组和图像模型固定价格覆盖
- * 源: apps/web/src/features/image-backend-pool/service.ts
- */
+/** pool.saveGroup - 保存统一分组及其计费、套餐和层级配置。 */
 bindExecute(
   "pool.saveGroup",
   async (
-    input: {
-      id?: string;
-      name: string;
-      description?: string;
-      isEnabled: boolean;
-      isDefault: boolean;
-      isUserSelectable: boolean;
-      contentSafety: "inherit" | "enabled" | "disabled";
-      backendType: "mixed" | "web" | "responses";
-      minPlan: SubscriptionPlan;
-      imageCreditOverrides: ImageCreditOverrides;
-      videoCreditOverrides: Record<string, number>;
-      childGroupIds: string[];
-      priority: number;
-    },
+    input: BackendGroupInput,
     _principal: Principal,
     _ctx: OperationContext
-  ) => ({
-    id: await upsertImageBackendGroup({
-      id: input.id,
-      name: input.name,
-      description: input.description ?? null,
-      isEnabled: input.isEnabled,
-      isDefault: input.isDefault,
-      isUserSelectable: input.isUserSelectable,
-      contentSafetyEnabled: fromSafetyOverride(input.contentSafety),
-      backendType: input.backendType,
-      minPlan: input.minPlan,
-      imageCreditOverrides: input.imageCreditOverrides,
-      videoCreditOverrides: input.videoCreditOverrides,
-      childGroupIds: input.childGroupIds,
-      priority: input.priority,
-    }),
-  })
+  ) => {
+    try {
+      return await backendGroupService.saveGroup(input);
+    } catch (error) {
+      throwBackendPoolOperationError(error);
+    }
+  }
 );
 
-// TODO: pool.getGroupOptions - getImageBackendGroupOptionsAction 逻辑
-// TODO: pool.deleteGroup - deleteImageBackendGroupAction 逻辑
-// TODO: pool.saveAccount - saveImageBackendAccountAction 逻辑
-// TODO: pool.bulkUpdateAccounts - bulkUpdateImageBackendAccountsAction 逻辑
-// TODO: pool.bulkDeleteAccounts - bulkDeleteImageBackendAccountsAction 逻辑
-// TODO: pool.deleteMember - deleteImageBackendMemberAction 逻辑
-// TODO: pool.importFromRefreshTokens - importImageBackendAccountsFromRefreshTokensAction
-// TODO: pool.importWebFromAccessTokens - importImageBackendWebAccountsFromAccessTokensAction
-// TODO: pool.refreshAccountInfo - refreshImageBackendAccountInfoAction 逻辑
-// TODO: pool.refreshAccountsInfo - refreshImageBackendAccountsInfoAction 逻辑
-// TODO: pool.getSub2ApiStatus - getSub2ApiSyncStatusAction 逻辑
-// TODO: pool.getSub2ApiSourceGroups - getSub2ApiSourceGroupsAction 逻辑
-// TODO: pool.getSub2ApiAutoSyncTasks - getSub2ApiAutoSyncTasksAction 逻辑
-// TODO: pool.syncSub2ApiAccounts - syncImageBackendAccountsFromSub2ApiAction
-// TODO: pool.runSub2ApiManualSync - runSub2ApiManualSyncAction 逻辑
-// TODO: pool.runSub2ApiAutoSyncNow - runSub2ApiAutoSyncTaskNowAction 逻辑
-// TODO: pool.setSub2ApiTaskEnabled - setSub2ApiAutoSyncTaskEnabledAction
-// TODO: pool.setSub2ApiTaskOverwrite - setSub2ApiAutoSyncTaskOverwriteLocalUnavailableStateAction
-// TODO: pool.updateSub2ApiTaskOptions - updateSub2ApiAutoSyncTaskOptionsAction
-// TODO: pool.deleteSub2ApiTask - deleteSub2ApiAutoSyncTaskAction
-// TODO: pool.cronSub2ApiSync - cron 调度逻辑
-// TODO: pool.cronRefreshStale - cron 调度逻辑
+/** pool.deleteGroup - 删除不再被成员或层级关系使用的非默认分组。 */
+bindExecute(
+  "pool.deleteGroup",
+  async (
+    input: { id: string },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    try {
+      return await backendGroupService.deleteGroup(input.id);
+    } catch (error) {
+      throwBackendPoolOperationError(error);
+    }
+  }
+);
+
+/** pool.saveMember - 保存 `api | adobe` 统一成员及类型专属配置。 */
+bindExecute(
+  "pool.saveMember",
+  async (
+    input: BackendMemberInput,
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    try {
+      return await backendMemberService.saveMember(input);
+    } catch (error) {
+      throwBackendPoolOperationError(error);
+    }
+  }
+);
+
+/** pool.deleteMember - 按统一成员 ID 执行运行中任务保护删除。 */
+bindExecute(
+  "pool.deleteMember",
+  async (
+    input: { id: string },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    try {
+      return await backendMemberService.deleteMember(input.id);
+    } catch (error) {
+      throwBackendPoolOperationError(error);
+    }
+  }
+);
 
 // ---------------------------------------------------------------------------
 // user-auth 域

@@ -187,10 +187,17 @@ export function createBackendMemberService(
     async saveMember(rawInput) {
       const input = backendMemberInputSchema.parse(rawInput);
       assertUniqueGroupIds(input.groupIds);
-      if (input.type === "api") {
-        await validateUpstreamUrl(input.config.baseUrl);
-      } else if (input.config.mode === "gateway") {
-        await validateUpstreamUrl(input.config.baseUrl);
+      try {
+        if (input.type === "api") {
+          await validateUpstreamUrl(input.config.baseUrl);
+        } else if (input.config.mode === "gateway") {
+          await validateUpstreamUrl(input.config.baseUrl);
+        }
+      } catch {
+        throw new BackendMemberServiceError(
+          "validation_error",
+          "媒体上游地址不符合安全策略"
+        );
       }
 
       const result = await dependencies.repository.saveMember(

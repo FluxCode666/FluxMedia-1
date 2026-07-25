@@ -50,6 +50,7 @@
     "./image-generation/media-contract": "./src/image-generation/media-contract.ts",
     "./image-backend/nested-groups": "./src/image-backend/nested-groups.ts",
     "./image-backend/group-image-pricing": "./src/image-backend/group-image-pricing.ts",
+    "./image-backend/group-contract": "./src/image-backend/group-contract.ts",
     "./image-backend/request-parameter-mapping": "./src/image-backend/request-parameter-mapping.ts",
     "./image-backend/member-contract": "./src/image-backend/member-contract.ts",
     "./image-backend/scheduling-policy": "./src/image-backend/scheduling-policy.ts",

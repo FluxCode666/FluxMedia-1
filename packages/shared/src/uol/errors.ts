@@ -24,6 +24,7 @@ export type OperationErrorCode =
   | "account_frozen"
   | "quota_exceeded"
   | "validation_error"
+  | "conflict"
   | "idempotency_conflict"
   | "rate_limited"
   | "timeout"
@@ -74,6 +75,7 @@ const CODE_TO_STATUS: Record<OperationErrorCode, number> = {
   account_frozen: 403,
   quota_exceeded: 429,
   validation_error: 400,
+  conflict: 409,
   idempotency_conflict: 409,
   rate_limited: 429,
   timeout: 504,
