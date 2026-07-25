@@ -27,7 +27,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
-import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
@@ -35,6 +34,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { saveImageBackendMemberAction } from "./actions";
+import { BackendBooleanSetting } from "./boolean-setting";
 import type { BackendMemberAdminSummary } from "./member-service";
 
 /** 把模型文本解析为保持首次出现顺序的唯一模型 ID。 */
@@ -83,31 +83,6 @@ function parseParameterMappings(
     mappings.push({ mode, source, target });
   }
   return mappings;
-}
-
-/** 可复用的成员布尔调度设置。 */
-function MemberSwitch({
-  id,
-  label,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  id: string;
-  label: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-md border p-3">
-      <div className="space-y-0.5">
-        <Label htmlFor={id}>{label}</Label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
-  );
 }
 
 /** 渲染 API 或 Adobe 统一成员的新增/编辑弹窗。 */
@@ -387,28 +362,28 @@ export function BackendMemberFormDialog({
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <MemberSwitch
+            <BackendBooleanSetting
               id="member-enabled"
               label="启用成员"
               description="停用后不再获得新租约。"
               checked={isEnabled}
               onCheckedChange={setIsEnabled}
             />
-            <MemberSwitch
+            <BackendBooleanSetting
               id="member-safety"
               label="成员内容安全"
               description="分组选择继承时使用此值。"
               checked={contentSafetyEnabled}
               onCheckedChange={setContentSafetyEnabled}
             />
-            <MemberSwitch
+            <BackendBooleanSetting
               id="member-always-active"
               label="始终活跃"
               description="仅显式运维场景使用，不因普通失败自动排除。"
               checked={alwaysActive}
               onCheckedChange={setAlwaysActive}
             />
-            <MemberSwitch
+            <BackendBooleanSetting
               id="member-cooldown"
               label="失败冷却"
               description="可切换失败后暂时退出候选。"

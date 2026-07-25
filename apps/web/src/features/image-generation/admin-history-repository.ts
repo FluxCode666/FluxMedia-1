@@ -15,6 +15,7 @@ import {
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
+import { extractExecuteRows } from "@/server/database-result";
 import type {
   AdminHistoryListQuery,
   AdminHistoryRepository,
@@ -59,16 +60,6 @@ const userOptionRowSchema = z.object({
   id: z.string().min(1).max(512),
   email: adminHistoryUserEmailSchema,
 });
-
-/** Drizzle PostgreSQL execute 在 node/neon driver 下分别返回 rows 或数组。 */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
-}
 
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
@@ -341,7 +332,9 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
   async readRecords(query) {
     const rows = z
       .array(adminHistoryListRowSchema)
-      .parse(extractRows(await db.execute(buildAdminHistoryListSql(query))));
+      .parse(
+        extractExecuteRows(await db.execute(buildAdminHistoryListSql(query)))
+      );
     return rows.map((row) => {
       const common = {
         id: row.id,
@@ -407,7 +400,9 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
     return z
       .array(modelOptionRowSchema)
       .parse(
-        extractRows(await db.execute(buildAdminHistoryModelOptionsSql(input)))
+        extractExecuteRows(
+          await db.execute(buildAdminHistoryModelOptionsSql(input))
+        )
       )
       .map((row) => row.model);
   },
@@ -416,7 +411,9 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
     return z
       .array(userOptionRowSchema)
       .parse(
-        extractRows(await db.execute(buildAdminHistoryUserOptionsSql(input)))
+        extractExecuteRows(
+          await db.execute(buildAdminHistoryUserOptionsSql(input))
+        )
       );
   },
 };

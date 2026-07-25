@@ -89,10 +89,6 @@ export async function getImageGenerationModelCatalogForPlan(
       name: group.name,
       isDefault: group.id === effectiveDefault?.id,
       imageCreditOverrides: group.imageCreditOverrides,
-      routingMode:
-        canSelectGroups && group.isUserSelectable
-          ? "explicit-selectable"
-          : "implicit-default",
     })),
     members: members
       .filter(

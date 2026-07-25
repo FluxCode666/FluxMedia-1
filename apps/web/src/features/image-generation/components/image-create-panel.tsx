@@ -186,11 +186,7 @@ export function ImageCreatePanel({
   const availableModels = useMemo(
     () =>
       (selectedGroup?.models ?? []).filter((model) =>
-        mode === "generate"
-          ? model.capabilities.generate
-          : mode === "mask"
-            ? model.capabilities.mask
-            : model.capabilities.edit
+        Boolean(model.capabilities[mode])
       ),
     [mode, selectedGroup]
   );

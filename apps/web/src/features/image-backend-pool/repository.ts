@@ -14,6 +14,8 @@ import {
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { extractExecuteRows } from "@/server/database-result";
+
 import type { BackendAcquireCandidate } from "./scheduler";
 
 /** 调度策略在 system_setting 中的唯一键名。 */
@@ -202,21 +204,6 @@ export interface BackendPoolDatabase {
   ): Promise<T>;
 }
 
-/**
- * 从 node-postgres 与 Neon 的不同 execute 返回形态中提取行数组。
- *
- * @param result Drizzle execute 的不可信返回值。
- * @returns 待 Zod 校验的数据库行数组。
- */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
-}
-
 /** 将数据库租约行映射为仓储端口类型。 */
 function parseLeaseRow(value: unknown): BackendMemberLease {
   const row = leaseRowSchema.parse(value);
@@ -232,7 +219,7 @@ function parseLeaseRow(value: unknown): BackendMemberLease {
 
 /** 校验 RETURNING 确实命中一行，防止事务内静默丢失成员。 */
 function assertMutationReturnedId(result: unknown, resource: string): void {
-  const rows = z.array(mutationIdRowSchema).parse(extractRows(result));
+  const rows = z.array(mutationIdRowSchema).parse(extractExecuteRows(result));
   if (rows.length > 0) return;
   throw new Error(`${resource} disappeared during the locked transaction`);
 }
@@ -260,7 +247,7 @@ export function createPostgresBackendPoolRepository(
       const input = acquireLeaseInputSchema.parse(rawInput);
       return database.transaction(async (transaction) => {
         const strategyRows = z.array(strategyRowSchema).parse(
-          extractRows(
+          extractExecuteRows(
             await transaction.execute(sql`
                 select value
                 from system_setting
@@ -281,7 +268,7 @@ export function createPostgresBackendPoolRepository(
 
         // WHY：稳定 ID 顺序加锁让并发事务以相同次序等待，避免不同策略排序制造死锁。
         const lockedRows = z.array(lockedMemberRowSchema).parse(
-          extractRows(
+          extractExecuteRows(
             await transaction.execute(sql`
                 select
                   m.id,
@@ -338,7 +325,7 @@ export function createPostgresBackendPoolRepository(
 
         const memberIds = lockedRows.map((row) => row.id);
         const activeLeaseRows = z.array(activeLeaseCountRowSchema).parse(
-          extractRows(
+          extractExecuteRows(
             await transaction.execute(sql`
                 select
                   member_id,
@@ -412,7 +399,7 @@ export function createPostgresBackendPoolRepository(
           )
           returning id, member_id, owner_token, expires_at, created_at, updated_at
         `);
-        const leaseRawRow = extractRows(leaseResult)[0];
+        const leaseRawRow = extractExecuteRows(leaseResult)[0];
         if (!leaseRawRow) {
           throw new Error("backend member lease was not created");
         }
@@ -457,7 +444,7 @@ export function createPostgresBackendPoolRepository(
             and expires_at > ${input.now}
           returning id, member_id, owner_token, expires_at, created_at, updated_at
         `);
-        const row = extractRows(result)[0];
+        const row = extractExecuteRows(result)[0];
         return row ? parseLeaseRow(row) : null;
       });
     },
@@ -475,7 +462,7 @@ export function createPostgresBackendPoolRepository(
             and expires_at > ${input.now}
           returning id, member_id, owner_token, expires_at, created_at, updated_at
         `);
-        const row = extractRows(result)[0];
+        const row = extractExecuteRows(result)[0];
         return row ? parseLeaseRow(row) : null;
       });
     },
@@ -489,7 +476,9 @@ export function createPostgresBackendPoolRepository(
             and owner_token = ${input.ownerToken}
           returning id
         `);
-        const rows = z.array(mutationIdRowSchema).parse(extractRows(result));
+        const rows = z
+          .array(mutationIdRowSchema)
+          .parse(extractExecuteRows(result));
         return rows.length > 0;
       });
     },

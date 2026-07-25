@@ -405,7 +405,6 @@ async function runAuxiliaryImageEdit(input: {
     pinnedGroupId: input.pinnedGroupId,
     modelId: input.modelId,
     requestKind: "image",
-    imageOperation: "edit",
     requiresContentSafety: input.requiresContentSafety,
     requiresMask: Boolean(input.params.mask),
   });
@@ -892,7 +891,6 @@ export async function runImageGenerationForUser(
               requestedGroupId: input.backendGroupId,
               modelId: imageModel,
               requestKind: "image",
-              imageOperation: input.mode,
               requiresContentSafety: moderationRequired,
               requiresMask,
             });

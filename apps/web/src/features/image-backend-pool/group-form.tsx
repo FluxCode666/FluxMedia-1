@@ -28,7 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
-import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
@@ -36,6 +35,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { saveImageBackendGroupAction } from "./actions";
+import { BackendBooleanSetting } from "./boolean-setting";
 import {
   type ImageCreditPricingDraft,
   ImageCreditPricingEditor,
@@ -58,31 +58,6 @@ const PLAN_OPTIONS = [
   ["ultra", "Ultra"],
   ["enterprise", "Enterprise"],
 ] as const;
-
-/** 可复用的布尔设置行。 */
-function BooleanSetting({
-  id,
-  label,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  id: string;
-  label: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-md border p-3">
-      <div className="space-y-0.5">
-        <Label htmlFor={id}>{label}</Label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
-    </div>
-  );
-}
 
 /** 渲染新增或编辑分组的受控弹窗。 */
 export function BackendGroupFormDialog({
@@ -270,21 +245,21 @@ export function BackendGroupFormDialog({
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
-            <BooleanSetting
+            <BackendBooleanSetting
               id="group-enabled"
               label="启用分组"
               description="停用后新请求不会选择此组。"
               checked={isEnabled}
               onCheckedChange={setIsEnabled}
             />
-            <BooleanSetting
+            <BackendBooleanSetting
               id="group-default"
               label="默认分组"
               description="保存后自动取消其他默认组。"
               checked={isDefault}
               onCheckedChange={setIsDefault}
             />
-            <BooleanSetting
+            <BackendBooleanSetting
               id="group-selectable"
               label="用户可选择"
               description="允许具备套餐能力的用户手动选择。"

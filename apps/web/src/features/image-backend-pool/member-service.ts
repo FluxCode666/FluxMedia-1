@@ -12,6 +12,8 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
+import { extractExecuteRows } from "@/server/database-result";
+
 import { assertSafeMediaUpstreamUrl } from "./outbound-url-security";
 
 /** 成员服务可稳定映射到 UOL 的错误码。 */
@@ -272,16 +274,6 @@ const memberListRowSchema = z.object({
   gpt_image_quality: z.enum(["low", "medium", "high"]).nullable(),
 });
 
-/** 归一 node-postgres 与 Neon 的 execute 返回形态。 */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
-}
-
 /** 把数据库成员行映射为不含 secret 的管理 DTO。 */
 function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
   const row = memberListRowSchema.parse(value);
@@ -374,7 +366,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       imageBackendMemberGroup,
     } = await import("@repo/database");
     return db.transaction(async (transaction) => {
-      const existingRows = extractRows(
+      const existingRows = extractExecuteRows(
         await transaction.execute(sql`
           select id, type
           from image_backend_member
@@ -531,7 +523,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
 
   async listMembers(now) {
     const { db } = await import("@repo/database");
-    const rows = extractRows(
+    const rows = extractExecuteRows(
       await db.execute(sql`
         select
           member.id,
@@ -587,7 +579,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
   async deleteMember(memberId, now) {
     const { db, imageBackendMember } = await import("@repo/database");
     return db.transaction(async (transaction) => {
-      const existing = extractRows(
+      const existing = extractExecuteRows(
         await transaction.execute(sql`
           select id
           from image_backend_member
@@ -596,7 +588,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
         `)
       )[0];
       if (!existing) return "not_found";
-      const busyRows = extractRows(
+      const busyRows = extractExecuteRows(
         await transaction.execute(sql`
           select 1
           where exists (

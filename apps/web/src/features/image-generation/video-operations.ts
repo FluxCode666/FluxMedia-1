@@ -33,6 +33,7 @@ import { nanoid } from "nanoid";
 import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
 import { defaultBackendPoolRepository } from "@/features/image-backend-pool/repository";
 import { createRuntimeBackendSession } from "@/features/image-backend-pool/runtime-service";
+import { extractExecuteRows } from "@/server/database-result";
 import {
   downloadAdobeDirectVideoRequest,
   pollAdobeDirectVideoRequest,
@@ -96,16 +97,6 @@ export type VideoPricingInfo = {
 type VideoGenerationRow = NonNullable<
   Awaited<ReturnType<typeof getVideoGenerationById>>
 >;
-
-/** 归一 node-postgres、Neon 与 Drizzle 的 execute 返回形态。 */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
-}
 
 /** 读取必填全局视频模型价格；历史脏值回退开发默认值。 */
 async function getRuntimeGlobalVideoPricing(): Promise<Record<string, number>> {
@@ -516,7 +507,7 @@ async function claimDueVideoJobs(
     where task.id = candidates.id
     returning task.id
   `);
-  return extractRows(result).flatMap((value) => {
+  return extractExecuteRows(result).flatMap((value) => {
     if (!value || typeof value !== "object" || !("id" in value)) return [];
     const id = (value as { id: unknown }).id;
     return typeof id === "string" ? [{ id, claimToken }] : [];

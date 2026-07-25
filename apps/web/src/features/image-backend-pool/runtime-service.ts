@@ -17,6 +17,7 @@ import {
   type ImageCreditOverrides,
 } from "@repo/shared/image-backend/group-image-pricing";
 import { requestParameterMappingsSchema } from "@repo/shared/image-backend/request-parameter-mapping";
+import type { BackendSchedulingStrategy } from "@repo/shared/image-backend/scheduling-policy";
 import { logWarn } from "@repo/shared/logger";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
@@ -25,6 +26,7 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 
 import type { ApiConfig } from "@/features/image-generation/types";
+import { extractExecuteRows } from "@/server/database-result";
 
 import { assertSafeMediaUpstreamUrl } from "./outbound-url-security";
 import {
@@ -78,7 +80,6 @@ export interface RuntimeBackendLease {
   memberId: string;
   memberType: "api" | "adobe";
   adobeMode: "gateway" | "direct" | null;
-  supportedModelIds: string[];
 }
 
 /** 调度指标允许记录的稳定结果。 */
@@ -97,7 +98,6 @@ export interface CreateRuntimeBackendSessionInput {
   pinnedGroupId?: string;
   modelId: string;
   requestKind: "image" | "video";
-  imageOperation?: "generate" | "edit";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
 }
@@ -105,8 +105,7 @@ export interface CreateRuntimeBackendSessionInput {
 /** 运行时会话只暴露获租、结果上报和关闭，避免调用方直接操作租约行。 */
 export interface RuntimeBackendSession {
   readonly group: RuntimeBackendGroup;
-  readonly excludedMemberIds: ReadonlySet<string>;
-  current: RuntimeBackendLease | null;
+  readonly current: RuntimeBackendLease | null;
   acquireNext(): Promise<RuntimeBackendLease>;
   switchAfterFailure(
     error: string,
@@ -119,16 +118,6 @@ export interface RuntimeBackendSession {
     terminal?: boolean;
   }): Promise<void>;
   close(): Promise<void>;
-}
-
-/** 归一 node-postgres、Neon 与 Drizzle 的 execute 返回形态。 */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
 }
 
 /** 将错误压缩为可观测但不含堆栈和凭据的成员状态文本。 */
@@ -154,7 +143,7 @@ async function resolveRuntimeBackendGroup(
   }
   const targetGroupId = input.requestedGroupId ?? input.pinnedGroupId;
   const rows = z.array(groupRowSchema).parse(
-    extractRows(
+    extractExecuteRows(
       await db.execute(sql`
         select
           id,
@@ -220,7 +209,7 @@ async function loadRuntimeBackendLease(
 ): Promise<RuntimeBackendLease> {
   const { db } = await import("@repo/database");
   const rows = z.array(runtimeConfigRowSchema).parse(
-    extractRows(
+    extractExecuteRows(
       await db.execute(sql`
         select
           member.id as member_id,
@@ -271,7 +260,6 @@ async function loadRuntimeBackendLease(
       memberId: row.member_id,
       memberType: "api",
       adobeMode: null,
-      supportedModelIds: row.supported_model_ids,
       config: {
         baseUrl: row.api_base_url.replace(/\/+$/, ""),
         apiKey: row.api_key,
@@ -308,7 +296,6 @@ async function loadRuntimeBackendLease(
     memberId: row.member_id,
     memberType: "adobe",
     adobeMode: row.adobe_mode,
-    supportedModelIds: row.supported_model_ids,
     config: {
       baseUrl:
         row.adobe_mode === "gateway"
@@ -334,7 +321,7 @@ async function loadRuntimeBackendLease(
 /** 以 best-effort 方式记录不含业务载荷的调度指标。 */
 async function recordSchedulerMetric(input: {
   sessionInput: CreateRuntimeBackendSessionInput;
-  strategy: "priority" | "least_acquired" | "least_load";
+  strategy: BackendSchedulingStrategy;
   outcome: RuntimeBackendOutcome;
   durationMs: number;
   groupId: string;
@@ -345,19 +332,40 @@ async function recordSchedulerMetric(input: {
     const { db, imageBackendMemberSchedulerMetric } = await import(
       "@repo/database"
     );
-    await db.insert(imageBackendMemberSchedulerMetric).values({
-      id: nanoid(),
-      bucketStartedAt: new Date(),
-      requestKind: input.sessionInput.requestKind,
-      strategy: input.strategy,
-      outcome: input.outcome,
-      memberType: input.lease?.memberType ?? null,
-      memberId: input.lease?.memberId ?? null,
-      groupId: input.groupId,
-      eventCount: 1,
-      candidateCountTotal: input.candidateCount,
-      latencyMsTotal: Math.max(0, Math.round(input.durationMs)),
-    });
+    const now = new Date();
+    const latencyMs = Math.max(0, Math.round(input.durationMs));
+    await db
+      .insert(imageBackendMemberSchedulerMetric)
+      .values({
+        id: nanoid(),
+        bucketStartedAt: new Date(Math.floor(now.getTime() / 60_000) * 60_000),
+        requestKind: input.sessionInput.requestKind,
+        strategy: input.strategy,
+        outcome: input.outcome,
+        memberType: input.lease?.memberType ?? null,
+        memberId: input.lease?.memberId ?? null,
+        groupId: input.groupId,
+        eventCount: 1,
+        candidateCountTotal: input.candidateCount,
+        latencyMsTotal: latencyMs,
+      })
+      .onConflictDoUpdate({
+        target: [
+          imageBackendMemberSchedulerMetric.bucketStartedAt,
+          imageBackendMemberSchedulerMetric.requestKind,
+          imageBackendMemberSchedulerMetric.strategy,
+          imageBackendMemberSchedulerMetric.outcome,
+          imageBackendMemberSchedulerMetric.memberType,
+          imageBackendMemberSchedulerMetric.memberId,
+          imageBackendMemberSchedulerMetric.groupId,
+        ],
+        set: {
+          eventCount: sql`${imageBackendMemberSchedulerMetric.eventCount} + 1`,
+          candidateCountTotal: sql`${imageBackendMemberSchedulerMetric.candidateCountTotal} + ${input.candidateCount}`,
+          latencyMsTotal: sql`${imageBackendMemberSchedulerMetric.latencyMsTotal} + ${latencyMs}`,
+          updatedAt: now,
+        },
+      });
   } catch (error) {
     logWarn("统一媒体调度指标写入失败", {
       memberId: input.lease?.memberId ?? null,
@@ -460,7 +468,6 @@ export async function createRuntimeBackendSession(
   let current: RuntimeBackendLease | null = null;
   let acquisitionCount = 0;
 
-  let session: RuntimeBackendSession;
   const acquireNext = async (): Promise<RuntimeBackendLease> => {
     const now = new Date();
     const startedAt = Date.now();
@@ -526,7 +533,6 @@ export async function createRuntimeBackendSession(
     }
 
     current = lease;
-    session.current = lease;
     await recordSchedulerMetric({
       sessionInput: normalizedInput,
       strategy: acquisition.strategy,
@@ -540,10 +546,11 @@ export async function createRuntimeBackendSession(
     return lease;
   };
 
-  session = {
+  const session: RuntimeBackendSession = {
     group,
-    excludedMemberIds,
-    current,
+    get current() {
+      return current;
+    },
     acquireNext,
 
     async switchAfterFailure(error, durationMs) {
@@ -559,7 +566,6 @@ export async function createRuntimeBackendSession(
       });
       await releaseRuntimeLease(lease);
       current = null;
-      session.current = null;
       return acquireNext();
     },
 
@@ -586,7 +592,6 @@ export async function createRuntimeBackendSession(
       }
       await releaseRuntimeLease(lease);
       current = null;
-      session.current = null;
     },
 
     async close() {
@@ -594,7 +599,6 @@ export async function createRuntimeBackendSession(
       if (!lease) return;
       await releaseRuntimeLease(lease);
       current = null;
-      session.current = null;
     },
   };
 

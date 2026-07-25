@@ -7,11 +7,6 @@
 import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 
-/** 页面是否应显式提交分组 ID。 */
-export type ImageGenerationCatalogRoutingMode =
-  | "implicit-default"
-  | "explicit-selectable";
-
 /** 单个模型可由当前分组执行的图片动作。 */
 export interface ImageGenerationModelCapabilities {
   generate: boolean;
@@ -19,14 +14,10 @@ export interface ImageGenerationModelCapabilities {
   mask: boolean;
 }
 
-/** 统一成员必须显式声明模型，因此目录始终是 declared。 */
-export type ImageGenerationModelListState = "declared";
-
 /** 创作页可选的图片模型。 */
 export interface ImageGenerationCatalogModel {
   id: string;
   capabilities: ImageGenerationModelCapabilities;
-  modelListState: ImageGenerationModelListState;
 }
 
 /** 一个可达分组的图片目录。 */
@@ -35,7 +26,6 @@ export interface ImageGenerationCatalogGroup {
   name: string;
   isDefault: boolean;
   imageCreditOverrides?: ImageCreditOverrides;
-  routingMode: ImageGenerationCatalogRoutingMode;
   models: ImageGenerationCatalogModel[];
 }
 
@@ -58,7 +48,6 @@ export interface ImageGenerationCatalogSource {
     name: string;
     isDefault: boolean;
     imageCreditOverrides?: ImageCreditOverrides;
-    routingMode: ImageGenerationCatalogRoutingMode;
   }>;
   members: ImageGenerationCatalogMember[];
 }
@@ -121,7 +110,6 @@ export function buildImageGenerationModelCatalog(
             models.set(normalizedId, {
               id: modelId,
               capabilities: { ...capabilities },
-              modelListState: "declared",
             });
           }
         }

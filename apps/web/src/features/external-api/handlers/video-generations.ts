@@ -17,13 +17,11 @@ import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
 } from "@/features/image-generation/resolution";
+import {
+  toVideoMediaInputReference,
+  videoInputImageDataUrlSchema,
+} from "@/features/image-generation/video-transport-input";
 import { ensureUolInitialized } from "@/server/uol-init";
-
-const inputImageSchema = z
-  .string()
-  .min(1)
-  .max(20_000_000)
-  .regex(/^data:image\/[a-zA-Z.+-]+;base64,/, "Invalid image data URL");
 
 const externalVideoSchema = z
   .object({
@@ -36,7 +34,7 @@ const externalVideoSchema = z
     model: z.string().trim().min(1).max(120),
     negativePrompt: z.string().max(8_000).optional(),
     negative_prompt: z.string().max(8_000).optional(),
-    image: z.array(inputImageSchema).max(3).optional(),
+    image: z.array(videoInputImageDataUrlSchema).max(3).optional(),
     async: z.boolean().optional(),
     callback_url: z.string().url().max(2_048).optional(),
     callbackUrl: z.string().url().max(2_048).optional(),
@@ -46,19 +44,6 @@ const externalVideoSchema = z
     (value) => Boolean(value.clientRequestId ?? value.client_request_id),
     { message: "clientRequestId is required", path: ["clientRequestId"] }
   );
-
-/** 将受校验 data URL 转为 UOL JSON-safe 媒体引用。 */
-function decodeImageDataUrl(value: string) {
-  const match = value.match(/^data:(image\/[a-zA-Z.+-]+);base64,(.*)$/);
-  const mimeType = match?.[1] || "image/png";
-  const base64 = match?.[2] || "";
-  return {
-    source: "data" as const,
-    mimeType,
-    base64,
-    byteLength: Buffer.from(base64, "base64").byteLength,
-  };
-}
 
 /** 将 UOL 错误转换为稳定 OpenAI 风格错误。 */
 function operationErrorResponse(error: OperationError) {
@@ -96,7 +81,7 @@ export const postExternalVideoGenerations = withApiLogging(
       return openAIImageError("clientRequestId is required");
     const negativePrompt =
       parsed.data.negativePrompt ?? parsed.data.negative_prompt;
-    const inputImages = parsed.data.image?.map(decodeImageDataUrl);
+    const inputImages = parsed.data.image?.map(toVideoMediaInputReference);
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url || parsed.data.callbackUrl) {
       try {

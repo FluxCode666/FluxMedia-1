@@ -432,11 +432,13 @@ bindExecute(
       throw new OperationError("not_found", "Video task not found");
     }
     assertVideoTaskPrincipal(row, principal, ctx);
-    const bucket =
-      (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-      "generations";
     const videoUrl = row.storageKey
-      ? buildSignedStorageImageUrl(row.storageKey, bucket)
+      ? buildSignedStorageImageUrl(
+          row.storageKey,
+          (await getRuntimeSettingString(
+            "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+          )) || "generations"
+        )
       : null;
     return {
       taskId: row.id,

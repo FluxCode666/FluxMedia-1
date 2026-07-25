@@ -11,7 +11,6 @@ const group = {
   id: "group-main",
   name: "主分组",
   isDefault: true,
-  routingMode: "implicit-default" as const,
 };
 
 describe("buildImageGenerationModelCatalog", () => {
@@ -36,7 +35,6 @@ describe("buildImageGenerationModelCatalog", () => {
       {
         id: "gpt-image-2",
         capabilities: { generate: true, edit: true, mask: true },
-        modelListState: "declared",
       },
     ]);
   });
@@ -57,7 +55,6 @@ describe("buildImageGenerationModelCatalog", () => {
       {
         id: "firefly-gpt-image-2",
         capabilities: { generate: true, edit: true, mask: true },
-        modelListState: "declared",
       },
     ]);
   });

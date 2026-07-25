@@ -72,24 +72,39 @@ export const imageGenerateInputSchema = z.discriminatedUnion("operation", [
   maskedImageEditInputSchema,
 ]);
 
+type ImageGenerateOperation = z.infer<
+  typeof imageGenerateInputSchema
+>["operation"];
+
+/** 各图片动作对应的站内、外部 API 套餐能力。 */
+const IMAGE_CAPABILITIES_BY_OPERATION: Record<
+  ImageGenerateOperation,
+  { internal: string; external: string }
+> = {
+  generate: {
+    internal: "imageGeneration.text",
+    external: "externalApi.images.generate",
+  },
+  edit: {
+    internal: "imageGeneration.edit",
+    external: "externalApi.images.edit",
+  },
+  mask: {
+    internal: "imageGeneration.mask",
+    external: "externalApi.images.mask",
+  },
+};
+
 /** 根据媒体变体和 Principal 推导站内或外部 API 套餐能力。 */
 function deriveImageCapabilities(
   input: z.infer<typeof imageGenerateInputSchema>,
   principal: Principal
 ): string[] {
   const external = principal.type === "apiKey";
+  const operationCapabilities =
+    IMAGE_CAPABILITIES_BY_OPERATION[input.operation];
   const capabilities = [
-    input.operation === "generate"
-      ? external
-        ? "externalApi.images.generate"
-        : "imageGeneration.text"
-      : input.operation === "mask"
-        ? external
-          ? "externalApi.images.mask"
-          : "imageGeneration.mask"
-        : external
-          ? "externalApi.images.edit"
-          : "imageGeneration.edit",
+    external ? operationCapabilities.external : operationCapabilities.internal,
   ];
   if ((input.count ?? 1) > 1) {
     capabilities.push(

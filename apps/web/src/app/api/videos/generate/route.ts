@@ -18,14 +18,11 @@ import {
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
 } from "@/features/image-generation/resolution";
 import { createImageStreamResponse } from "@/features/image-generation/streaming";
+import {
+  toVideoMediaInputReference,
+  videoInputImageDataUrlSchema,
+} from "@/features/image-generation/video-transport-input";
 import { ensureUolInitialized } from "@/server/uol-init";
-
-// 输入图：base64 data URL（图生视频首帧/尾帧/参考），最多 3 张。
-const inputImageSchema = z
-  .string()
-  .min(1)
-  .max(20_000_000)
-  .regex(/^data:image\/[a-zA-Z.+-]+;base64,/, "Invalid image data URL");
 
 const generateVideoSchema = z
   .object({
@@ -36,25 +33,12 @@ const generateVideoSchema = z
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
     model: z.string().trim().min(1).max(120),
     negativePrompt: z.string().max(8000).optional(),
-    inputImages: z.array(inputImageSchema).max(3).optional(),
+    inputImages: z.array(videoInputImageDataUrlSchema).max(3).optional(),
   })
   .strict();
 
 function errorResponse(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
-}
-
-/** data URL 转为 UOL JSON-safe 媒体引用。 */
-function decodeImageDataUrl(value: string) {
-  const match = value.match(/^data:(image\/[a-zA-Z.+-]+);base64,(.*)$/);
-  const mimeType = match?.[1] || "image/png";
-  const base64 = match?.[2] || "";
-  return {
-    source: "data" as const,
-    mimeType,
-    base64,
-    byteLength: Buffer.from(base64, "base64").byteLength,
-  };
 }
 
 export const POST = withApiLogging(async (request: NextRequest) => {
@@ -78,7 +62,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse(parsed.error.issues[0]?.message || "Invalid request");
   }
 
-  const inputImages = parsed.data.inputImages?.map(decodeImageDataUrl);
+  const inputImages = parsed.data.inputImages?.map(toVideoMediaInputReference);
   const principal: Principal = {
     type: "user",
     userId: session.user.id,

@@ -123,23 +123,20 @@ export function buildPlatformModelCatalog(
     }
     if (reachablePlans.size === 0) continue;
 
+    const plans = Array.from(reachablePlans);
+    const canGenerateImages = plans.some((plan) =>
+      isPlanAtLeast(plan, source.capabilityMinimums.externalImagesGenerate)
+    );
+    const canGenerateVideos = plans.some((plan) =>
+      isPlanAtLeast(plan, source.capabilityMinimums.externalVideosGenerate)
+    );
+
     for (const modelId of member.supportedModelIds) {
       if (isFireflyVideoModelId(modelId)) {
-        if (
-          Array.from(reachablePlans).some((plan) =>
-            isPlanAtLeast(
-              plan,
-              source.capabilityMinimums.externalVideosGenerate
-            )
-          )
-        ) {
+        if (canGenerateVideos) {
           addModel(videoModels, modelId);
         }
-      } else if (
-        Array.from(reachablePlans).some((plan) =>
-          isPlanAtLeast(plan, source.capabilityMinimums.externalImagesGenerate)
-        )
-      ) {
+      } else if (canGenerateImages) {
         addModel(imageModels, modelId);
       }
     }
