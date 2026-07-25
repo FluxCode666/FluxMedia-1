@@ -5,7 +5,7 @@
  * 文档流组合各区块。全部核心内容默认可见，不依赖固定画布、长滚动或客户端脚本。
  */
 import { Button } from "@repo/ui/components/button";
-import { ArrowDown, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import Image from "next/image";
 import { getTranslations } from "next-intl/server";
 
@@ -90,17 +90,6 @@ export async function HomepageContent({
                   <Link href={data.ctaHref}>
                     {t("hero.cta")}
                     <ArrowUpRight className="size-4" />
-                  </Link>
-                </Button>
-                <Button
-                  asChild
-                  className="rounded-full px-6"
-                  size="lg"
-                  variant="outline"
-                >
-                  <Link href="/#work">
-                    {t("hero.workLink")}
-                    <ArrowDown className="size-4" />
                   </Link>
                 </Button>
               </div>
