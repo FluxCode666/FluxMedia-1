@@ -19,9 +19,7 @@ import {
   globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
 } from "@repo/shared/adobe";
-import {
-  resolveFireflyVideoModel,
-} from "@repo/shared/adobe/firefly-direct";
+import { resolveFireflyVideoModel } from "@repo/shared/adobe/firefly-direct";
 import { consumeCredits } from "@repo/shared/credits/core";
 import { refundGenerationCredits } from "@repo/shared/generation-maintenance";
 import { logError } from "@repo/shared/logger";
@@ -162,6 +160,9 @@ async function compareAndSetVideoStage(input: {
   expectedStages: VideoStage[];
   values: Partial<typeof videoGeneration.$inferInsert>;
 }): Promise<VideoGenerationRow | null> {
+  const claimCondition = input.row.claimToken
+    ? eq(videoGeneration.claimToken, input.row.claimToken)
+    : undefined;
   const [updated] = await db
     .update(videoGeneration)
     .set({
@@ -173,7 +174,8 @@ async function compareAndSetVideoStage(input: {
       and(
         eq(videoGeneration.id, input.row.id),
         eq(videoGeneration.stateVersion, input.row.stateVersion),
-        inArray(videoGeneration.stage, input.expectedStages)
+        inArray(videoGeneration.stage, input.expectedStages),
+        claimCondition
       )
     )
     .returning();
@@ -383,10 +385,7 @@ export async function runAdobeVideoGenerationForUser(
   for (;;) {
     const lease = backendSession.current;
     if (!lease) {
-      const refunding = await moveVideoToRefunding(
-        row,
-        "视频后端租约已失效"
-      );
+      const refunding = await moveVideoToRefunding(row, "视频后端租约已失效");
       if (refunding) await refundClaimedVideo(refunding);
       return { error: "视频后端租约已失效", videoGenerationId: videoId };
     }
@@ -494,7 +493,9 @@ export async function runAdobeVideoGenerationForUser(
 }
 
 /** 原子认领到期恢复任务，多实例通过 SKIP LOCKED 和 claim expiry 去重。 */
-async function claimDueVideoJobs(now: Date): Promise<string[]> {
+async function claimDueVideoJobs(
+  now: Date
+): Promise<Array<{ id: string; claimToken: string }>> {
   const claimToken = randomUUID();
   const result = await db.execute(sql`
     with candidates as (
@@ -518,7 +519,7 @@ async function claimDueVideoJobs(now: Date): Promise<string[]> {
   return extractRows(result).flatMap((value) => {
     if (!value || typeof value !== "object" || !("id" in value)) return [];
     const id = (value as { id: unknown }).id;
-    return typeof id === "string" ? [id] : [];
+    return typeof id === "string" ? [{ id, claimToken }] : [];
   });
 }
 
@@ -560,10 +561,10 @@ async function retryClaimedVideo(
     row,
     expectedStages: [row.stage as VideoStage],
     values: {
-      error: (error instanceof Error ? error.message : "视频恢复暂时失败").slice(
-        0,
-        1_000
-      ),
+      error: (error instanceof Error
+        ? error.message
+        : "视频恢复暂时失败"
+      ).slice(0, 1_000),
       nextPollAt: new Date(Date.now() + VIDEO_RETRY_DELAY_MS),
       claimToken: null,
       claimExpiresAt: null,
@@ -715,27 +716,33 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     });
     await releaseVideoLease(completed ?? row);
   } catch (error) {
-    logError(error, { source: "adobe-video-recovery-download", videoId: row.id });
+    logError(error, {
+      source: "adobe-video-recovery-download",
+      videoId: row.id,
+    });
     await retryClaimedVideo(row, error);
   }
 }
 
 /** 执行一批视频恢复；单任务失败被隔离并保留下一次重试机会。 */
 export async function runVideoRecoveryJob() {
-  const ids = await claimDueVideoJobs(new Date());
+  const claims = await claimDueVideoJobs(new Date());
   let recovered = 0;
   let failed = 0;
-  for (const id of ids) {
-    const row = await getVideoGenerationById(id);
-    if (!row?.claimToken) continue;
+  for (const claim of claims) {
+    const row = await getVideoGenerationById(claim.id);
+    if (row?.claimToken !== claim.claimToken) continue;
     try {
       await recoverClaimedVideo(row);
       recovered += 1;
     } catch (error) {
       failed += 1;
-      logError(error, { source: "adobe-video-recovery", videoId: id });
+      logError(error, {
+        source: "adobe-video-recovery",
+        videoId: claim.id,
+      });
       await retryClaimedVideo(row, error).catch(() => undefined);
     }
   }
-  return { claimed: ids.length, recovered, failed };
+  return { claimed: claims.length, recovered, failed };
 }

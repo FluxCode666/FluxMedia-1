@@ -9,8 +9,8 @@ import { withApiLogging } from "@repo/shared/api-logger";
 import { invokeOperation, OperationError } from "@repo/shared/uol";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
+import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { createDeprecatedGovernanceFieldResponse } from "@/features/external-api/deprecated-governance-fields";
 import { openAIImageError } from "@/features/external-api/images";
 import {
@@ -92,7 +92,8 @@ export const postExternalVideoGenerations = withApiLogging(
 
     const clientRequestId =
       parsed.data.clientRequestId ?? parsed.data.client_request_id;
-    if (!clientRequestId) return openAIImageError("clientRequestId is required");
+    if (!clientRequestId)
+      return openAIImageError("clientRequestId is required");
     const negativePrompt =
       parsed.data.negativePrompt ?? parsed.data.negative_prompt;
     const inputImages = parsed.data.image?.map(decodeImageDataUrl);
@@ -112,7 +113,12 @@ export const postExternalVideoGenerations = withApiLogging(
       await ensureUolInitialized();
       const result = await invokeOperation<{
         taskId: string;
-        status: "pending" | "submitting" | "processing" | "completed" | "failed";
+        status:
+          | "pending"
+          | "submitting"
+          | "processing"
+          | "completed"
+          | "failed";
       }>(
         "video.generate",
         {
