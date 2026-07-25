@@ -1,5 +1,6 @@
 "use client";
 
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
@@ -540,7 +541,7 @@ export function ImageLightbox({
                       {copy("Model", "模型")}
                     </dt>
                     <dd className="mt-0.5 font-mono text-xs text-foreground">
-                      {generation.model}
+                      {formatAdobeModelIdForDisplay(generation.model)}
                     </dd>
                   </div>
                   <div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
@@ -73,6 +74,7 @@ export function ImageCard({
   // (而非 ?w= 查询参数),以绕过 Cloudflare 忽略 query 的边缘缓存键——否则会命中并下回
   // 整张原图、挤占 HTTP/2 连接带宽、饿死导航请求。非存储图(外链回退)保持原样。
   const thumbnailUrl = buildStorageThumbnailUrl(imageUrl, 640);
+  const displayModel = formatAdobeModelIdForDisplay(model);
 
   // 多选模式下点击整张卡片触发选中切换,并传递鼠标事件以支持 Shift 范围选;
   // 非多选模式走原有 onClick
@@ -172,9 +174,9 @@ export function ImageCard({
           <Badge
             variant="outline"
             className="min-w-0 w-auto flex-1 justify-start rounded-full border-border font-normal text-[10px] uppercase tracking-wide"
-            title={model}
+            title={displayModel}
           >
-            <span className="min-w-0 truncate">{model}</span>
+            <span className="min-w-0 truncate">{displayModel}</span>
           </Badge>
           <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
             <Clock className="h-3 w-3 shrink-0" />

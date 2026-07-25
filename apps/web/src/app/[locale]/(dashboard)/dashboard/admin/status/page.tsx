@@ -35,6 +35,7 @@ import {
   user,
   videoGeneration,
 } from "@repo/database/schema";
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewImageBackendPool } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
@@ -1459,7 +1460,11 @@ function HistoricalErrorsCard({
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        <div className="font-medium">{item.model || "-"}</div>
+                        <div className="font-medium">
+                          {item.model
+                            ? formatAdobeModelIdForDisplay(item.model)
+                            : "-"}
+                        </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {item.size || "-"} ·{" "}
                           {formatCredits(item.creditsConsumed)}

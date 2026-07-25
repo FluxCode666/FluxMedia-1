@@ -3,6 +3,7 @@
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  formatAdobeModelIdForDisplay,
 } from "@repo/shared/adobe";
 import {
   ADOBE_IMAGE_MODEL_IDS,
@@ -4478,7 +4479,9 @@ export function ImageBackendPoolAdminPanel({
                     <p className="mt-1 text-xs text-muted-foreground">
                       支持模型：
                       {api.supportedModelIds.length
-                        ? api.supportedModelIds.join(", ")
+                        ? api.supportedModelIds
+                            .map(formatAdobeModelIdForDisplay)
+                            .join(", ")
                         : "未声明（兼容不限模型）"}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -4687,7 +4690,9 @@ export function ImageBackendPoolAdminPanel({
                             toggleAdobeFormModel(modelId, Boolean(checked))
                           }
                         />
-                        <span className="truncate">{modelId}</span>
+                        <span className="truncate">
+                          {formatAdobeModelIdForDisplay(modelId)}
+                        </span>
                       </Label>
                     ))}
                   </div>
@@ -5105,7 +5110,9 @@ export function ImageBackendPoolAdminPanel({
                   <p className="text-xs text-muted-foreground">
                     模型：
                     {adobe.enabledModels?.length
-                      ? adobe.enabledModels.join(", ")
+                      ? adobe.enabledModels
+                          .map(formatAdobeModelIdForDisplay)
+                          .join(", ")
                       : "不限"}
                     {" · 默认 "}
                     {adobe.defaultResolution}/{adobe.defaultRatio}

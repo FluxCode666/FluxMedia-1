@@ -11,6 +11,7 @@ import {
   type SubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
 import { formatCredits } from "@repo/shared/credits/format";
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import {
   type ImageCreditOverrides,
   resolveImageCreditPricing,
@@ -1039,11 +1040,11 @@ const CHAT_ATTACHMENT_ACCEPT = `${IMAGE_ACCEPT},${CHAT_FILE_ACCEPT}`;
 // Adobe Firefly 模型族（按前缀自动路由到 adobe 后端；尺寸由后端按宽高比/分辨率映射）。
 // 选中 Firefly 模型时创作页隐藏 gpt 专属选项、改用 Firefly 宽高比预设。
 const FIREFLY_MODEL_OPTIONS = [
-  { value: "firefly-nano-banana-pro", label: "Firefly · Nano Banana Pro" },
-  { value: "firefly-nano-banana", label: "Firefly · Nano Banana" },
-  { value: "firefly-nano-banana2", label: "Firefly · Nano Banana 2" },
-  { value: "firefly-gpt-image-2", label: "Firefly · GPT Image 2" },
-  { value: "firefly-gpt-image-1.5", label: "Firefly · GPT Image 1.5" },
+  { value: "firefly-nano-banana-pro", label: "Nano Banana Pro" },
+  { value: "firefly-nano-banana", label: "Nano Banana" },
+  { value: "firefly-nano-banana2", label: "Nano Banana 2" },
+  { value: "firefly-gpt-image-2", label: "GPT Image 2" },
+  { value: "firefly-gpt-image-1.5", label: "GPT Image 1.5" },
 ] as const;
 const TEXT_MODEL_OPTIONS = [
   { value: "default", label: "Default" },
@@ -8433,7 +8434,7 @@ export function CreatePageClient({
                               )}
                               disabled={!model.capabilities.generate}
                             >
-                              {model.id}
+                              {formatAdobeModelIdForDisplay(model.id)}
                               {model.modelListState === "undeclared"
                                 ? ` · ${copy("compatible", "兼容")}`
                                 : ""}
@@ -8454,7 +8455,7 @@ export function CreatePageClient({
                 {selectedModelName && selectedGroupName && (
                   <p className="text-[11px] text-muted-foreground">
                     {copy("Using", "当前使用")} {selectedGroupName} ·{" "}
-                    {selectedModelName}
+                    {formatAdobeModelIdForDisplay(selectedModelName)}
                   </p>
                 )}
               </div>

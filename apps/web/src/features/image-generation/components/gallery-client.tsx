@@ -1,5 +1,6 @@
 "use client";
 
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Tabs, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
@@ -433,7 +434,7 @@ export function GalleryClient({
                   {item.prompt}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {item.model}
+                  {formatAdobeModelIdForDisplay(item.model)}
                 </p>
               </div>
             </div>

@@ -9,6 +9,7 @@
  */
 
 import {
+  formatAdobeModelIdForDisplay,
   getVideoCreditCost,
   resolveVideoCreditsPerSecond,
 } from "@repo/shared/adobe";
@@ -393,7 +394,9 @@ export function VideoCreatePanel({
         <span className="text-xs text-muted-foreground">
           {duration}s × {creditsPerSecond}/秒
         </span>
-        <span className="text-xs text-muted-foreground">{model}</span>
+        <span className="text-xs text-muted-foreground">
+          {formatAdobeModelIdForDisplay(model)}
+        </span>
       </div>
 
       <details open className="text-xs text-muted-foreground">

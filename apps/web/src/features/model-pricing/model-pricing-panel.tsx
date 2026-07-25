@@ -3,6 +3,7 @@
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  formatAdobeModelIdForDisplay,
   globalVideoModelCreditsPerSecondSchema,
 } from "@repo/shared/adobe";
 /**
@@ -165,7 +166,7 @@ export function ModelPricingPanel() {
               getModelLabel={(model) =>
                 model === GLOBAL_DEFAULT_IMAGE_PRICING_MODEL
                   ? "其他或自定义图像模型（全局默认）"
-                  : model
+                  : formatAdobeModelIdForDisplay(model)
               }
               resolveInheritedPricing={() => ({
                 base1024Credits: 1.27,

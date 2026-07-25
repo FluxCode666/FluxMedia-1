@@ -6,6 +6,7 @@
  * 使用方：生图后端池的全局模型价格卡与分组覆盖表单。空输入代表继承调用方提供的
  * 回退价格，组件不自行持久化或执行扣费。
  */
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import {
   IMAGE_CREDIT_PRICE_FIELDS,
   type ImageCreditOverrides,
@@ -113,7 +114,7 @@ export function ImageCreditPricingEditor({
           <div key={model} className="space-y-2 rounded-md border p-3">
             <div>
               <p className="truncate text-sm font-medium">
-                {getModelLabel?.(model) ?? model}
+                {formatAdobeModelIdForDisplay(getModelLabel?.(model) ?? model)}
               </p>
               <p className="text-xs text-muted-foreground">
                 留空时{inheritanceLabel}

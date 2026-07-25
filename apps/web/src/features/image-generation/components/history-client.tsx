@@ -7,6 +7,7 @@
  * 数据读取与用户归属校验由服务端 UOL 查询完成。
  */
 
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
 import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
@@ -396,7 +397,7 @@ export function HistoryClient({
                             </span>
                             <span>·</span>
                             <span className="break-all font-mono">
-                              {item.model}
+                              {formatAdobeModelIdForDisplay(item.model)}
                             </span>
                             <span>·</span>
                             <span>{formatRecordSpecification(item)}</span>
@@ -425,9 +426,9 @@ export function HistoryClient({
                         </div>
                         <div
                           className="hidden min-w-0 truncate font-mono text-xs text-foreground lg:block"
-                          title={item.model}
+                          title={formatAdobeModelIdForDisplay(item.model)}
                         >
-                          {item.model}
+                          {formatAdobeModelIdForDisplay(item.model)}
                         </div>
                         <div className="hidden font-mono text-xs text-foreground lg:block">
                           {formatRecordSpecification(item)}

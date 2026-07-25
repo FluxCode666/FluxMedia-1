@@ -4,4 +4,5 @@
 export * from "./firefly-request";
 export * from "./firefly-response";
 export * from "./enabled-models";
+export * from "./model-display";
 export * from "./video-pricing";

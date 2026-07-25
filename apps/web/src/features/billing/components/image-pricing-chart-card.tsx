@@ -7,6 +7,7 @@
 
 "use client";
 
+import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
 import {
   GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
@@ -557,7 +558,7 @@ export function ImagePricingChartCard({
                       <td className="px-2 py-2 font-mono text-foreground">
                         {row.model === GLOBAL_DEFAULT_IMAGE_PRICING_MODEL
                           ? copy("Other/custom models", "其他或自定义模型")
-                          : row.model}
+                          : formatAdobeModelIdForDisplay(row.model)}
                       </td>
                       {PRICE_TIERS.map((tier) => {
                         const globalOverride = row.globalOverrides[tier.field];
