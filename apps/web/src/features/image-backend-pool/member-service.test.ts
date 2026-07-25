@@ -4,7 +4,7 @@
  * 职责：以 DB-free 仓储端口锁定新增/编辑、类型不可变、secret 保留、URL 安全、
  * 分组关系与运行中任务删除保护；数据库事务细节由集成测试覆盖。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import {
   type BackendMemberAdminSummary,
@@ -55,11 +55,13 @@ function apiInput(overrides: Record<string, unknown> = {}) {
 
 describe("backend member service", () => {
   let repository: ReturnType<typeof createRepository>;
-  let validateUpstreamUrl: ReturnType<typeof vi.fn>;
+  let validateUpstreamUrl: Mock<(url: string) => Promise<unknown>>;
 
   beforeEach(() => {
     repository = createRepository();
-    validateUpstreamUrl = vi.fn(async () => new URL("https://example.com"));
+    validateUpstreamUrl = vi.fn(
+      async (_url: string) => new URL("https://example.com")
+    );
   });
 
   it("新增 API 成员前校验 URL 并补齐服务端 ID", async () => {
