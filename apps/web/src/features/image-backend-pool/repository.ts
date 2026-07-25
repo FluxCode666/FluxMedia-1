@@ -142,6 +142,20 @@ export interface AcquiredBackendMemberLease {
   eligibleCandidateCount: number;
 }
 
+/** 获租结果同时保留无候选与容量拒绝，供运行时写入稳定调度指标。 */
+export type AcquireBackendMemberLeaseResult =
+  | { status: "acquired"; acquisition: AcquiredBackendMemberLease }
+  | {
+      status: "no_candidate";
+      strategy: BackendSchedulingStrategy;
+      eligibleCandidateCount: 0;
+    }
+  | {
+      status: "capacity_rejected";
+      strategy: BackendSchedulingStrategy;
+      eligibleCandidateCount: number;
+    };
+
 /** 原子获租输入；ID、owner token 与时钟由 scheduler 显式提供，便于跨 worker 交接。 */
 export type AcquireBackendMemberLeaseInput = z.input<
   typeof acquireLeaseInputSchema
@@ -166,7 +180,7 @@ export type ReleaseBackendMemberLeaseInput = z.input<
 export interface BackendPoolRepository {
   acquireLease(
     input: AcquireBackendMemberLeaseInput
-  ): Promise<AcquiredBackendMemberLease | null>;
+  ): Promise<AcquireBackendMemberLeaseResult>;
   renewLease(
     input: RenewBackendMemberLeaseInput
   ): Promise<BackendMemberLease | null>;
@@ -314,7 +328,13 @@ export function createPostgresBackendPoolRepository(
           )
         );
 
-        if (lockedRows.length === 0) return null;
+        if (lockedRows.length === 0) {
+          return {
+            status: "no_candidate" as const,
+            strategy,
+            eligibleCandidateCount: 0 as const,
+          };
+        }
 
         const memberIds = lockedRows.map((row) => row.id);
         const activeLeaseRows = z.array(activeLeaseCountRowSchema).parse(
@@ -366,7 +386,13 @@ export function createPostgresBackendPoolRepository(
           candidates,
           strategy
         )[0];
-        if (!selected) return null;
+        if (!selected) {
+          return {
+            status: "capacity_rejected" as const,
+            strategy,
+            eligibleCandidateCount: lockedRows.length,
+          };
+        }
 
         const leaseResult = await transaction.execute(sql`
           insert into image_backend_member_lease (
@@ -403,15 +429,18 @@ export function createPostgresBackendPoolRepository(
         assertMutationReturnedId(memberUpdateResult, "backend member");
 
         return {
-          strategy,
-          member: {
-            ...selected,
-            inflightCount: selected.inflightCount + 1,
-            leaseAcquiredCount: selected.leaseAcquiredCount + 1,
-            lastAcquiredAt: input.now,
+          status: "acquired" as const,
+          acquisition: {
+            strategy,
+            member: {
+              ...selected,
+              inflightCount: selected.inflightCount + 1,
+              leaseAcquiredCount: selected.leaseAcquiredCount + 1,
+              lastAcquiredAt: input.now,
+            },
+            lease,
+            eligibleCandidateCount: candidates.length,
           },
-          lease,
-          eligibleCandidateCount: candidates.length,
         };
       });
     },

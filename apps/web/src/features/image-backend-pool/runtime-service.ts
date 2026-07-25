@@ -84,6 +84,8 @@ export interface RuntimeBackendLease {
 /** 调度指标允许记录的稳定结果。 */
 export type RuntimeBackendOutcome =
   | "acquired"
+  | "capacity_rejected"
+  | "no_candidate"
   | "switched"
   | "terminal_failure";
 
@@ -332,9 +334,12 @@ async function loadRuntimeBackendLease(
 /** 以 best-effort 方式记录不含业务载荷的调度指标。 */
 async function recordSchedulerMetric(input: {
   sessionInput: CreateRuntimeBackendSessionInput;
-  lease: RuntimeBackendLease;
+  strategy: "priority" | "least_acquired" | "least_load";
   outcome: RuntimeBackendOutcome;
   durationMs: number;
+  groupId: string;
+  candidateCount: number;
+  lease?: RuntimeBackendLease;
 }): Promise<void> {
   try {
     const { db, imageBackendMemberSchedulerMetric } = await import(
@@ -344,18 +349,18 @@ async function recordSchedulerMetric(input: {
       id: nanoid(),
       bucketStartedAt: new Date(),
       requestKind: input.sessionInput.requestKind,
-      strategy: input.lease.acquisition.strategy,
+      strategy: input.strategy,
       outcome: input.outcome,
-      memberType: input.lease.memberType,
-      memberId: input.lease.memberId,
-      groupId: input.lease.config.backend?.billingGroupId ?? null,
+      memberType: input.lease?.memberType ?? null,
+      memberId: input.lease?.memberId ?? null,
+      groupId: input.groupId,
       eventCount: 1,
-      candidateCountTotal: input.lease.acquisition.eligibleCandidateCount,
+      candidateCountTotal: input.candidateCount,
       latencyMsTotal: Math.max(0, Math.round(input.durationMs)),
     });
   } catch (error) {
     logWarn("统一媒体调度指标写入失败", {
-      memberId: input.lease.memberId,
+      memberId: input.lease?.memberId ?? null,
       outcome: input.outcome,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -458,7 +463,8 @@ export async function createRuntimeBackendSession(
   let session: RuntimeBackendSession;
   const acquireNext = async (): Promise<RuntimeBackendLease> => {
     const now = new Date();
-    const acquisition = await defaultBackendPoolRepository.acquireLease({
+    const startedAt = Date.now();
+    const acquisitionResult = await defaultBackendPoolRepository.acquireLease({
       groupId: group.id,
       requestedModel: modelId,
       excludedMemberIds: Array.from(excludedMemberIds),
@@ -470,12 +476,23 @@ export async function createRuntimeBackendSession(
       now,
       expiresAt: new Date(now.getTime() + IMAGE_LEASE_TTL_MS),
     });
-    if (!acquisition) {
+    if (acquisitionResult.status !== "acquired") {
+      await recordSchedulerMetric({
+        sessionInput: normalizedInput,
+        strategy: acquisitionResult.strategy,
+        outcome: acquisitionResult.status,
+        durationMs: Date.now() - startedAt,
+        groupId: group.id,
+        candidateCount: acquisitionResult.eligibleCandidateCount,
+      });
       throw new BackendSchedulerError(
         "no_eligible_member",
-        "当前分组没有可用于该模型的媒体后端"
+        acquisitionResult.status === "capacity_rejected"
+          ? "当前分组的媒体后端容量已满"
+          : "当前分组没有可用于该模型的媒体后端"
       );
     }
+    const acquisition = acquisitionResult.acquisition;
 
     let lease: RuntimeBackendLease;
     try {
@@ -512,9 +529,12 @@ export async function createRuntimeBackendSession(
     session.current = lease;
     await recordSchedulerMetric({
       sessionInput: normalizedInput,
+      strategy: acquisition.strategy,
       lease,
       outcome: acquisitionCount > 0 ? "switched" : "acquired",
-      durationMs: 0,
+      durationMs: Date.now() - startedAt,
+      groupId: group.id,
+      candidateCount: acquisition.eligibleCandidateCount,
     });
     acquisitionCount += 1;
     return lease;
@@ -556,9 +576,12 @@ export async function createRuntimeBackendSession(
       if (!result.success && result.terminal) {
         await recordSchedulerMetric({
           sessionInput: normalizedInput,
+          strategy: lease.acquisition.strategy,
           lease,
           outcome: "terminal_failure",
           durationMs: result.durationMs,
+          groupId: group.id,
+          candidateCount: lease.acquisition.eligibleCandidateCount,
         });
       }
       await releaseRuntimeLease(lease);

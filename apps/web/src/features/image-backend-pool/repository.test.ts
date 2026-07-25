@@ -141,19 +141,22 @@ describe("backend pool PostgreSQL repository", () => {
 
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
-      strategy: "least_load",
-      member: {
-        id: "member-low-load",
-        inflightCount: 3,
-        leaseAcquiredCount: 4,
-        lastAcquiredAt: NOW,
+      status: "acquired",
+      acquisition: {
+        strategy: "least_load",
+        member: {
+          id: "member-low-load",
+          inflightCount: 3,
+          leaseAcquiredCount: 4,
+          lastAcquiredAt: NOW,
+        },
+        lease: {
+          id: "lease-1",
+          memberId: "member-low-load",
+          ownerToken: "owner-new",
+        },
+        eligibleCandidateCount: 2,
       },
-      lease: {
-        id: "lease-1",
-        memberId: "member-low-load",
-        ownerToken: "owner-new",
-      },
-      eligibleCandidateCount: 2,
     });
     expect(queries).toHaveLength(6);
     expect(queries[0]?.sql).toContain("from system_setting");
@@ -205,12 +208,15 @@ describe("backend pool PostgreSQL repository", () => {
     const result = await repository.acquireLease(acquireInput());
 
     expect(result).toMatchObject({
-      strategy: "priority",
-      member: { id: "priority-first" },
+      status: "acquired",
+      acquisition: {
+        strategy: "priority",
+        member: { id: "priority-first" },
+      },
     });
   });
 
-  it("returns null without writing when no locked candidate exists", async () => {
+  it("returns no_candidate without writing when no locked candidate exists", async () => {
     const { database, queries } = createDatabase([
       { rows: [] },
       { rowCount: 0 },
@@ -218,8 +224,32 @@ describe("backend pool PostgreSQL repository", () => {
     ]);
     const repository = createPostgresBackendPoolRepository(database);
 
-    await expect(repository.acquireLease(acquireInput())).resolves.toBeNull();
+    await expect(repository.acquireLease(acquireInput())).resolves.toEqual({
+      status: "no_candidate",
+      strategy: "priority",
+      eligibleCandidateCount: 0,
+    });
     expect(queries).toHaveLength(3);
+    expect(queries.every((query) => !query.sql.includes("insert into"))).toBe(
+      true
+    );
+  });
+
+  it("returns capacity_rejected when every eligible member is full", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "least_load" }] },
+      { rowCount: 0 },
+      { rows: [memberRow("member-full", { concurrency: 1 })] },
+      { rows: [{ member_id: "member-full", inflight_count: "1" }] },
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await expect(repository.acquireLease(acquireInput())).resolves.toEqual({
+      status: "capacity_rejected",
+      strategy: "least_load",
+      eligibleCandidateCount: 1,
+    });
+    expect(queries).toHaveLength(4);
     expect(queries.every((query) => !query.sql.includes("insert into"))).toBe(
       true
     );
