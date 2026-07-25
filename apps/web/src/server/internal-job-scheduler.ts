@@ -7,30 +7,20 @@
  */
 
 import { db, systemSetting } from "@repo/database";
-import { eq, sql } from "drizzle-orm";
-
 import {
   getRuntimeSettingBoolean,
   getRuntimeSettingNumber,
 } from "@repo/shared/system-settings";
+import { eq, sql } from "drizzle-orm";
 
-import {
-  runCreditsExpireJob,
-  runImageMaintenanceJob,
-  runSub2ApiSyncJob,
-  runWebAccountsRefreshJob,
-  runWebAccountsReplenishJob,
-} from "./scheduled-jobs";
+import { runCreditsExpireJob, runImageMaintenanceJob } from "./scheduled-jobs";
 
 type InternalJob = {
   name: string;
   lockKey: number;
   intervalSettingKey:
     | "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES";
+    | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES";
   defaultIntervalMinutes: number;
   initialDelayMs: number;
   run: () => Promise<unknown>;
@@ -85,30 +75,6 @@ const jobs: InternalJob[] = [
     defaultIntervalMinutes: 24 * 60,
     initialDelayMs: 60_000,
     run: runCreditsExpireJob,
-  },
-  {
-    name: "web-accounts-refresh",
-    lockKey: 3,
-    intervalSettingKey: "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES",
-    defaultIntervalMinutes: 10,
-    initialDelayMs: 90_000,
-    run: runWebAccountsRefreshJob,
-  },
-  {
-    name: "sub2api-sync",
-    lockKey: 4,
-    intervalSettingKey: "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES",
-    defaultIntervalMinutes: 10,
-    initialDelayMs: 120_000,
-    run: () => runSub2ApiSyncJob(),
-  },
-  {
-    name: "web-accounts-replenish",
-    lockKey: 5,
-    intervalSettingKey: "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES",
-    defaultIntervalMinutes: 15,
-    initialDelayMs: 150_000,
-    run: runWebAccountsReplenishJob,
   },
 ];
 

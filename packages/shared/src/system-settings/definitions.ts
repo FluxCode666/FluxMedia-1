@@ -110,20 +110,7 @@ export type SettingKey =
   | "ALIYUN_MODERATION_IMAGE_APP_ID"
   | "OPENAI_MODERATION_API_KEY"
   | "OPENAI_MODERATION_MODEL"
-  | "IMAGE_MODERATION_PROMPT_REPAIR_ENABLED"
-  | "IMAGE_MODERATION_PROMPT_REPAIR_MAX_RETRIES"
-  | "PLATFORM_RESPONSES_MODEL"
-  | "PLATFORM_CHAT_MODEL"
   | "IMAGE_GENERATION_GLOBAL_CONCURRENCY"
-  | "IMAGE_AGENT_MAX_ROUNDS"
-  | "IMAGE_AGENT_FORCE_MAX_ROUNDS"
-  | "IMAGE_RESPONSES_PREVIOUS_RESPONSE_ENABLED"
-  | "IMAGE_FORCE_WEB_MIN_PIXELS"
-  | "IMAGE_FORCE_WEB_MAX_PIXELS"
-  | "CHATGPT_WEB_PROXY_URL"
-  | "CHATGPT_WEB_PROXY_SECRET"
-  | "CHATGPT_WEB_ACCOUNT_REFRESH_STALE_MINUTES"
-  | "CHATGPT_WEB_ACCOUNT_REFRESH_LIMIT"
   | "IMAGE_BACKEND_SCHEDULING_STRATEGY"
   | "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_RATE_LIMIT_COOLDOWN_MINUTES"
@@ -133,9 +120,6 @@ export type SettingKey =
   | "IMAGE_BACKEND_UNSUPPORTED_MODEL_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_TEMPORARY_ERROR_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_UNRECOVERABLE_ERROR_KEYWORDS"
-  | "SUB2API_POSTGRES_URL"
-  | "SUB2API_POSTGRES_SYNC_LIMIT"
-  | "SUB2API_AUTO_SYNC_TASKS"
   | "STORAGE_ACCESS_KEY_ID"
   | "STORAGE_SECRET_ACCESS_KEY"
   | "STORAGE_ENDPOINT"
@@ -170,8 +154,6 @@ export type SettingKey =
   | "IMAGE_RESTORATION_ENABLED"
   | "IMAGE_BLOCK_REPAIR_ENABLED"
   | "IMAGE_MASK_OUTPAINT_ENABLED"
-  | "EDITABLE_FILE_PPT_CREDITS"
-  | "EDITABLE_FILE_PSD_CREDITS"
   | "VIDEO_BASE_CREDITS_PER_SECOND"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
   | "NEXT_PUBLIC_GA_ID"
@@ -182,9 +164,6 @@ export type SettingKey =
   | "INTERNAL_JOB_SCHEDULER_ENABLED"
   | "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES"
   | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES"
-  | "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES"
-  | "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES"
-  | "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES"
   | "UPSTASH_REDIS_REST_URL"
   | "UPSTASH_REDIS_REST_TOKEN"
   | "RATE_LIMIT_GLOBAL_REQUESTS_PER_MINUTE"
@@ -192,22 +171,7 @@ export type SettingKey =
   | "RATE_LIMIT_AI_REQUESTS_PER_MINUTE"
   | "RATE_LIMIT_PAYMENT_REQUESTS_PER_MINUTE"
   | "RATE_LIMIT_UPLOAD_REQUESTS_PER_MINUTE"
-  | "RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE"
-  | "CHATGPT_REGISTER_MOEMAIL_API_KEY"
-  | "CHATGPT_REGISTER_MOEMAIL_BASE_URL"
-  | "CHATGPT_REGISTER_MOEMAIL_DOMAIN"
-  | "CHATGPT_REGISTER_DOMAINS"
-  | "CHATGPT_REGISTER_DOMAIN_ROTATION_ENABLED"
-  | "CHATGPT_REGISTER_PROXY"
-  | "CHATGPT_REGISTER_PROXY_DISABLED"
-  | "CHATGPT_REGISTER_REFRESH_URL"
-  | "CHATGPT_REGISTER_REFRESH_MIN_INTERVAL_SECONDS"
-  | "CHATGPT_REGISTER_REFRESH_MIN_ATTEMPTS"
-  | "CHATGPT_REGISTER_POOL_MAINTAIN_ENABLED"
-  | "CHATGPT_REGISTER_POOL_MAINTAIN_GROUP_ID"
-  | "CHATGPT_REGISTER_POOL_MAINTAIN_TARGET"
-  | "CHATGPT_REGISTER_POOL_MAINTAIN_MAX_PER_RUN"
-  | "CHATGPT_REGISTER_POOL_MAINTAIN_CONCURRENCY";
+  | "RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE";
 
 export interface SettingDefinition {
   key: SettingKey;
@@ -964,38 +928,6 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     defaultValue: "omni-moderation-latest",
   },
   {
-    key: "IMAGE_MODERATION_PROMPT_REPAIR_ENABLED",
-    label: "审核失败自动修剪重试",
-    description:
-      "检测到审核拦截后，使用可用的 Codex/Responses 账号或外接 /responses API 修剪提示词，并在同一任务内重新发起请求。",
-    category: "moderation",
-    valueType: "boolean",
-    defaultValue: true,
-  },
-  {
-    key: "IMAGE_MODERATION_PROMPT_REPAIR_MAX_RETRIES",
-    label: "审核修剪最大重试轮数",
-    description:
-      "每个生图任务因审核失败触发提示词修剪并重试的最大次数。0 表示关闭，建议 1-3。",
-    category: "moderation",
-    valueType: "number",
-    defaultValue: 1,
-  },
-  {
-    key: "PLATFORM_RESPONSES_MODEL",
-    label: "默认对话模型",
-    description: "对话生图使用的 Responses 模型。",
-    category: "models",
-    valueType: "string",
-  },
-  {
-    key: "PLATFORM_CHAT_MODEL",
-    label: "备用对话模型",
-    description: "兼容旧配置。",
-    category: "models",
-    valueType: "string",
-  },
-  {
     key: "IMAGE_GENERATION_GLOBAL_CONCURRENCY",
     label: "全局生图并发",
     description:
@@ -1003,83 +935,6 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "models",
     valueType: "number",
     defaultValue: 500,
-  },
-  {
-    key: "IMAGE_AGENT_MAX_ROUNDS",
-    label: "Agent 最大自动迭代轮数",
-    description:
-      "页面 Agent 模式单次请求内最多执行多少轮 Responses 调用。每轮可继续联网、分析附件或生成下一版图片，用于模拟 Codex 式自发迭代。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 3,
-  },
-  {
-    key: "IMAGE_AGENT_FORCE_MAX_ROUNDS",
-    label: "Agent 强制跑满迭代轮数",
-    description:
-      "默认关闭，由模型 continue_generation 工具和本站自检逻辑决定是否继续。开启后，只要本轮未失败且未达到最大轮数，就继续执行下一轮。",
-    category: "models",
-    valueType: "boolean",
-    defaultValue: false,
-  },
-  {
-    key: "IMAGE_RESPONSES_PREVIOUS_RESPONSE_ENABLED",
-    label: "Responses previous_response_id 续接",
-    description:
-      "关闭时沿用本站手动历史重建。开启后，内部 Chat/Agent 的 Codex/Responses 会保存 response；命中同一后端账号时用 previous_response_id 续接，失败则回退手动历史。",
-    category: "models",
-    valueType: "boolean",
-    defaultValue: false,
-  },
-  {
-    key: "IMAGE_FORCE_WEB_MIN_PIXELS",
-    label: "Web-first 最小像素数",
-    description:
-      "外接 image API 传入 web_first / webFirst / force_web / forceWeb，或页面开启 mixed Web-first 时，只有请求尺寸总像素大于等于该值才会优先调度 Web 账号。默认 660000，约 0.66MP；Web 不可用或失败会降级 Codex/Responses。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 660000,
-  },
-  {
-    key: "IMAGE_FORCE_WEB_MAX_PIXELS",
-    label: "Web-first 最大像素数",
-    description:
-      "外接 image API 传入 web_first / webFirst / force_web / forceWeb，或页面开启 mixed Web-first 时，只有请求尺寸总像素小于等于该值才会优先调度 Web 账号。默认 2000000，约 2MP；4K 请求默认不会优先 Web。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 2000000,
-  },
-  {
-    key: "CHATGPT_WEB_PROXY_URL",
-    label: "ChatGPT Web TLS 代理地址",
-    description:
-      "可选。配置后 Web 账号请求会经 Go tls-client sidecar 转发，例如 http://chatgpt-web-proxy:3021。",
-    category: "models",
-    valueType: "string",
-  },
-  {
-    key: "CHATGPT_WEB_PROXY_SECRET",
-    label: "ChatGPT Web TLS 代理密钥",
-    description: "可选。请求 sidecar 时写入 X-Proxy-Secret。",
-    category: "models",
-    valueType: "string",
-    secret: true,
-  },
-  {
-    key: "CHATGPT_WEB_ACCOUNT_REFRESH_STALE_MINUTES",
-    label: "Web 账号刷新间隔分钟",
-    description: "后台任务刷新超过该时间未同步额度的 Web 账号。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 30,
-  },
-  {
-    key: "CHATGPT_WEB_ACCOUNT_REFRESH_LIMIT",
-    label: "Web 账号单次刷新数量",
-    description: "后台任务每次最多刷新多少个 Web 账号。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 20,
   },
   {
     key: "IMAGE_BACKEND_SCHEDULING_STRATEGY",
@@ -1167,23 +1022,6 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     valueType: "string",
     defaultValue:
       "refresh token, invalid refresh token, invalid_grant, authentication, account deactivated, deactivated account",
-  },
-  {
-    key: "SUB2API_POSTGRES_URL",
-    label: "Sub2API Postgres 地址",
-    description:
-      "连接 Sub2API 数据库，用于读取当前 AT/RT，并在 Web AT 刷新后回写最新 refresh_token。需要 accounts.credentials 更新权限。",
-    category: "models",
-    valueType: "string",
-    secret: true,
-  },
-  {
-    key: "SUB2API_POSTGRES_SYNC_LIMIT",
-    label: "Sub2API 单次同步账号数",
-    description: "从 Sub2API 数据库单次最多读取多少个 OpenAI OAuth 账号。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 100,
   },
   {
     key: "STORAGE_ACCESS_KEY_ID",
@@ -1449,7 +1287,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "IMAGE_BLOCK_REPAIR_ENABLED",
     label: "出图生成式修复（gpt-image-2 整图重绘）",
     description:
-      "开启后，用户勾选「生成式修复」的最终图会缩到 web 甜点分辨率（约 1280），一次性用 gpt-image-2 img2img 整图重绘（重点修文字/细节、保持构图与内容不变），再超分补足到目标分辨率。整图一次重绘无接缝（不再切块，避免重叠重影）；单独调用一次后端并计费。替代自动超分。修复提示词有内置默认，用户/API 可用 repair_prompt 覆盖，无需在此配置。需用户手动勾选、仅对最终图触发；默认关闭。与「掩码外绘」互斥，后者优先。",
+      "开启后，用户勾选「生成式修复」的最终图会缩到约 1280 像素，一次性用 gpt-image-2 img2img 整图重绘（重点修文字/细节、保持构图与内容不变），再超分补足到目标分辨率。整图一次重绘无接缝；单独从统一号池获租并计费。替代自动超分。修复提示词有内置默认，用户/API 可用 repair_prompt 覆盖。需用户手动勾选、仅对最终图触发；默认关闭。与「掩码外绘」互斥，后者优先。",
     category: "models",
     valueType: "boolean",
     defaultValue: false,
@@ -1458,32 +1296,10 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "IMAGE_MASK_OUTPAINT_ENABLED",
     label: "出图掩码外绘修复（gpt-image-2 无缝分块）",
     description:
-      "开启后（优先于「生成式修复」），用户勾选「生成式修复」的最终图在目标分辨率上切成 1K 重叠块，按顺序逐块用 gpt-image-2 带 mask 编辑：锁住与已完成邻块的重叠区、只重绘新区域，让相邻块无缝衔接（消除切块重影）。路由到会发送 mask 且尊重 1K 尺寸的 codex 后端（web 不发 mask）。每块单独调用后端并单独计费（最后加和），比整图重绘更慢更贵。需用户手动勾选、仅对最终图触发；默认关闭。实验性。",
+      "开启后（优先于「生成式修复」），用户勾选「生成式修复」的最终图在目标分辨率上切成 1K 重叠块，按顺序逐块用 gpt-image-2 带 mask 编辑：锁住与已完成邻块的重叠区、只重绘新区域，让相邻块无缝衔接。每块独立从统一号池获得支持蒙版的成员并单独计费，比整图重绘更慢更贵。需用户手动勾选、仅对最终图触发；默认关闭。",
     category: "models",
     valueType: "boolean",
     defaultValue: false,
-  },
-  {
-    key: "EDITABLE_FILE_PPT_CREDITS",
-    label: "生成 PPT 扣积分",
-    description:
-      "对话式生成可编辑 PPT 文件每次扣的积分(按任务固定价)。默认 25;设 0 则不扣费。",
-    category: "credits",
-    valueType: "number",
-    min: 0,
-    max: 100_000,
-    defaultValue: 25,
-  },
-  {
-    key: "EDITABLE_FILE_PSD_CREDITS",
-    label: "生成 PSD 扣积分",
-    description:
-      "对话式生成可编辑 PSD 文件每次扣的积分(按任务固定价)。默认 25;设 0 则不扣费。",
-    category: "credits",
-    valueType: "number",
-    min: 0,
-    max: 100_000,
-    defaultValue: 25,
   },
   {
     key: "IMAGE_MODEL_CREDIT_PRICES",
@@ -1603,7 +1419,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "INTERNAL_JOB_SCHEDULER_ENABLED",
     label: "内置定时任务",
     description:
-      "启用后 Web 进程会自动执行 pending 超时、照片清理、积分过期、Web 账号刷新和 Sub2API 同步任务；多实例会用数据库锁避免重复执行。",
+      "启用后 Web 进程会自动执行 pending 超时、照片清理和积分过期任务；多实例会用数据库锁避免重复执行。",
     category: "general",
     valueType: "boolean",
     defaultValue: true,
@@ -1623,23 +1439,6 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "general",
     valueType: "number",
     defaultValue: 1440,
-  },
-  {
-    key: "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES",
-    label: "Web 账号刷新任务间隔（分钟）",
-    description: "ChatGPT Web 账号状态刷新的内置执行间隔。",
-    category: "general",
-    valueType: "number",
-    defaultValue: 10,
-  },
-  {
-    key: "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES",
-    label: "Sub2API 同步检查间隔（分钟）",
-    description:
-      "内置调度器检查 Sub2API 自动同步任务的间隔；实际是否同步仍受 Sub2API 自动同步任务自身间隔控制。",
-    category: "general",
-    valueType: "number",
-    defaultValue: 10,
   },
   {
     key: "UPSTASH_REDIS_REST_URL",
@@ -1706,138 +1505,6 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "general",
     valueType: "number",
     defaultValue: 3,
-  },
-  {
-    key: "CHATGPT_REGISTER_MOEMAIL_API_KEY",
-    label: "注册机 Moemail API Key",
-    description: "ChatGPT 账号注册机使用的 Moemail 临时邮箱服务 API Key。",
-    category: "models",
-    valueType: "string",
-    secret: true,
-  },
-  {
-    key: "CHATGPT_REGISTER_MOEMAIL_BASE_URL",
-    label: "注册机 Moemail 服务地址",
-    description:
-      "Moemail 临时邮箱服务的 API 地址，默认 https://mail.52ai.org。",
-    category: "models",
-    valueType: "string",
-    defaultValue: "https://mail.52ai.org",
-  },
-  {
-    key: "CHATGPT_REGISTER_MOEMAIL_DOMAIN",
-    label: "注册机邮箱域名",
-    description: "注册时使用的临时邮箱域名，例如 pt.sanyela.shop。",
-    category: "models",
-    valueType: "string",
-  },
-  {
-    key: "CHATGPT_REGISTER_DOMAINS",
-    label: "注册机可用域名列表",
-    description:
-      "点「查询可用域名」时自动保存的 moemail 可用域名（逗号分隔），供「轮换域名」使用。",
-    category: "models",
-    valueType: "string",
-  },
-  {
-    key: "CHATGPT_REGISTER_DOMAIN_ROTATION_ENABLED",
-    label: "注册机轮换域名",
-    description:
-      "开启后每一轮注册从已保存的域名列表中轮换取一个不同域名，避免单域名被拉黑。需先查询并保存域名列表。",
-    category: "models",
-    valueType: "boolean",
-    defaultValue: false,
-  },
-  {
-    key: "CHATGPT_REGISTER_PROXY",
-    label: "注册机代理地址",
-    description: "注册机 HTTP 代理，格式 http://user:pass@host:port。",
-    category: "models",
-    valueType: "string",
-    secret: true,
-  },
-  {
-    key: "CHATGPT_REGISTER_PROXY_DISABLED",
-    label: "注册机禁用代理（直连本机 IP）",
-    description:
-      "开启后注册机不走代理、直连本机 IP（同时跳过 IP 刷新）。代理地址保留不动，仅本开关控制是否启用。",
-    category: "models",
-    valueType: "boolean",
-    defaultValue: false,
-  },
-  {
-    key: "CHATGPT_REGISTER_REFRESH_URL",
-    label: "注册机代理 IP 刷新地址",
-    description: "动态代理 IP 刷新端点（GET 请求即换 IP）。留空则不刷新。",
-    category: "models",
-    valueType: "string",
-    secret: true,
-  },
-  {
-    key: "CHATGPT_REGISTER_REFRESH_MIN_INTERVAL_SECONDS",
-    label: "注册机 IP 刷新最小间隔（秒）",
-    description:
-      "两次 IP 刷新之间的最小时间间隔。实际刷新取本项与「最小尝试数」的慢者。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 60,
-  },
-  {
-    key: "CHATGPT_REGISTER_REFRESH_MIN_ATTEMPTS",
-    label: "注册机 IP 刷新最小尝试数",
-    description:
-      "两次 IP 刷新之间至少累计的注册尝试数。实际刷新取本项与「最小间隔」的慢者。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 100,
-  },
-  {
-    key: "CHATGPT_REGISTER_POOL_MAINTAIN_ENABLED",
-    label: "号池自动维持开关",
-    description:
-      "开启后，定时任务会在目标分组可用 web 账号数低于目标值时自动注册补号。",
-    category: "models",
-    valueType: "boolean",
-    defaultValue: false,
-  },
-  {
-    key: "CHATGPT_REGISTER_POOL_MAINTAIN_GROUP_ID",
-    label: "号池维持目标分组",
-    description: "自动维持可用数的目标分组 ID；新注册账号也导入该分组。",
-    category: "models",
-    valueType: "string",
-  },
-  {
-    key: "CHATGPT_REGISTER_POOL_MAINTAIN_TARGET",
-    label: "号池维持目标可用数",
-    description: "目标分组要维持的可用 web 账号数量。低于此值时自动补号。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 0,
-  },
-  {
-    key: "CHATGPT_REGISTER_POOL_MAINTAIN_MAX_PER_RUN",
-    label: "号池维持每轮最多注册数",
-    description: "单次维持任务最多发起的注册数量，避免一次性突发过多。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 10,
-  },
-  {
-    key: "CHATGPT_REGISTER_POOL_MAINTAIN_CONCURRENCY",
-    label: "号池维持注册并发",
-    description: "自动补号时传给注册机的并发数。",
-    category: "models",
-    valueType: "number",
-    defaultValue: 5,
-  },
-  {
-    key: "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES",
-    label: "号池维持任务间隔（分钟）",
-    description: "号池自动维持（补号）任务的内置执行间隔。",
-    category: "general",
-    valueType: "number",
-    defaultValue: 15,
   },
 ] as const satisfies readonly SettingDefinition[];
 

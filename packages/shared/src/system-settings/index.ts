@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { db } from "@repo/database";
 import { systemSetting } from "@repo/database/schema";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -372,7 +370,6 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
 }) {
   const now = new Date();
   await migrateLegacyModerationSettings(now, options?.updatedBy);
-  await migrateLegacySub2ApiAutoSyncSettings(now, options?.updatedBy);
   await migrateLegacyVideoModelPricing(now, options?.updatedBy);
   await migrateLegacyGlobalModelPricing(now, options?.updatedBy);
 
@@ -677,141 +674,6 @@ async function migrateLegacyModerationSettings(now: Date, updatedBy?: string) {
   });
 
   await invalidateSystemSettingsCache();
-}
-
-async function migrateLegacySub2ApiAutoSyncSettings(
-  now: Date,
-  updatedBy?: string
-) {
-  const legacyKeys = [
-    "SUB2API_AUTO_SYNC_ENABLED",
-    "SUB2API_AUTO_SYNC_INTERVAL_MINUTES",
-    "SUB2API_AUTO_SYNC_SOURCE_GROUP_ID",
-    "SUB2API_AUTO_SYNC_MODE",
-    "SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT",
-    "SUB2API_AUTO_SYNC_PLAN_FILTER",
-  ];
-  const rows = await db
-    .select({
-      key: systemSetting.key,
-      value: systemSetting.value,
-    })
-    .from(systemSetting)
-    .where(
-      inArray(systemSetting.key, ["SUB2API_AUTO_SYNC_TASKS", ...legacyKeys])
-    );
-
-  const stored = new Map(
-    rows
-      .map((row) => [row.key, normalizeStoredValue(row.value)] as const)
-      .filter(([, value]) => value !== undefined)
-  );
-  const hasTasks = stored.has("SUB2API_AUTO_SYNC_TASKS");
-  const hasLegacyConfig = legacyKeys.some((key) => stored.has(key));
-
-  await db.transaction(async (tx) => {
-    if (!hasTasks && hasLegacyConfig) {
-      const enabled = parseBooleanLike(
-        stored.get("SUB2API_AUTO_SYNC_ENABLED"),
-        true
-      );
-      const allowMobileRtImport = parseBooleanLike(
-        stored.get("SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT"),
-        false
-      );
-      const syncMode = allowMobileRtImport
-        ? parseSyncMode(stored.get("SUB2API_AUTO_SYNC_MODE"))
-        : "responses";
-      const sourceGroupId = parseOptionalString(
-        stored.get("SUB2API_AUTO_SYNC_SOURCE_GROUP_ID")
-      );
-      const planFilter = parseSub2ApiPlanFilter(
-        stored.get("SUB2API_AUTO_SYNC_PLAN_FILTER")
-      );
-      const intervalMinutes = parsePositiveInteger(
-        stored.get("SUB2API_AUTO_SYNC_INTERVAL_MINUTES"),
-        720
-      );
-      const taskKey = [
-        sourceGroupId || "all",
-        allowMobileRtImport ? syncMode : "responses",
-        allowMobileRtImport ? "mobile-allowed" : "codex-only",
-        planFilter,
-      ].join("|");
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: "SUB2API_AUTO_SYNC_TASKS",
-          value: [
-            {
-              id: `sub2api-${createHash("sha256").update(taskKey).digest("hex").slice(0, 16)}`,
-              enabled,
-              sourceGroupId,
-              sourceGroupName: null,
-              webGroupId: null,
-              responsesGroupId: null,
-              syncMode,
-              allowMobileRtImport,
-              contentSafetyEnabled: true,
-              overwriteLocalUnavailableState: true,
-              planFilter,
-              intervalMinutes,
-              createdAt: now.toISOString(),
-              updatedAt: now.toISOString(),
-            },
-          ],
-          isSecret: false,
-          ...(updatedBy ? { updatedBy } : {}),
-          updatedAt: now,
-        })
-        .onConflictDoNothing({
-          target: systemSetting.key,
-        });
-    }
-
-    await tx
-      .delete(systemSetting)
-      .where(inArray(systemSetting.key, legacyKeys));
-  });
-
-  await invalidateSystemSettingsCache();
-}
-
-function parseOptionalString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function parseBooleanLike(value: unknown, fallback: boolean) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string" && value.trim()) {
-    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-  }
-  return fallback;
-}
-
-function parsePositiveInteger(value: unknown, fallback: number) {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value)
-        : Number.NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
-}
-
-function parseSyncMode(value: unknown) {
-  return value === "web" || value === "both" ? value : "responses";
-}
-
-function parseSub2ApiPlanFilter(value: unknown) {
-  return value === "all" ||
-    value === "free" ||
-    value === "plus" ||
-    value === "pro" ||
-    value === "non_free"
-    ? value
-    : "non_free";
 }
 
 export async function importMissingSystemSettingsFromEnv(updatedBy?: string) {

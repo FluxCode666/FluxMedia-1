@@ -10,9 +10,6 @@ const runtime = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   imageMaintenance: vi.fn(async () => undefined),
   creditsExpire: vi.fn(async () => undefined),
-  webAccountsRefresh: vi.fn(async () => undefined),
-  webAccountsReplenish: vi.fn(async () => undefined),
-  sub2ApiSync: vi.fn(async () => undefined),
 }));
 
 const database = vi.hoisted(() => {
@@ -73,9 +70,6 @@ vi.mock("@repo/shared/system-settings", () => ({
 vi.mock("./scheduled-jobs", () => ({
   runImageMaintenanceJob: runtime.imageMaintenance,
   runCreditsExpireJob: runtime.creditsExpire,
-  runWebAccountsRefreshJob: runtime.webAccountsRefresh,
-  runWebAccountsReplenishJob: runtime.webAccountsReplenish,
-  runSub2ApiSyncJob: runtime.sub2ApiSync,
 }));
 
 type SchedulerModule = typeof import("./internal-job-scheduler");
@@ -102,9 +96,6 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.settings.clear();
     runtime.imageMaintenance.mockClear();
     runtime.creditsExpire.mockClear();
-    runtime.webAccountsRefresh.mockClear();
-    runtime.webAccountsReplenish.mockClear();
-    runtime.sub2ApiSync.mockClear();
     database.transaction.mockClear();
     vi.useFakeTimers();
     vi.stubEnv("NODE_ENV", "production");

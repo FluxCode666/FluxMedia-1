@@ -11,8 +11,6 @@ const DEFAULT_ENV_FILE_PATHS = [
   "/home/user1/GPT2Image-Pro/apps/web/.env.local",
 ];
 
-const MANAGED_INTERNAL_ENV_KEYS = new Set<string>(["SUB2API_AUTO_SYNC_TASKS"]);
-
 // 托管块的哨兵标记。BEGIN..END 之间的内容由本模块独占管理，
 // 下次同步会被整块替换，因此哨兵字符串绝不能出现在任何托管值里，
 // 否则朴素的 BEGIN..END 提取会提前判定块结束并截断 .env.local（见 S-M9）。
@@ -31,7 +29,6 @@ const MANAGED_BLOCK_REGEX = new RegExp(
  * @returns 普通已注册键或内部白名单键返回 true；专用 operation 键返回 false。
  */
 export function shouldSyncSettingToEnvFile(key: string) {
-  if (MANAGED_INTERNAL_ENV_KEYS.has(key)) return true;
   const definition = SETTING_DEFINITION_BY_KEY.get(key as SettingKey);
   return Boolean(definition && !definition.managedByDedicatedOperation);
 }
