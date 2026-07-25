@@ -226,7 +226,10 @@ create_local_backup() (
     return 1
   fi
   chmod 600 "${backup_plain}"
-  PGDATABASE="${database_url}" pg_dump \
+  # PGDATABASE 只按数据库名解释 URI，可能退回本机 socket；显式 --dbname
+  # 才会让 libpq 按连接串解析服务器、凭据与 SSL 参数。
+  pg_dump \
+    --dbname="${database_url}" \
     --format=custom \
     --no-acl \
     --no-owner \
@@ -279,7 +282,10 @@ create_s3_backup() (
   trap cleanup_s3_staging EXIT
 
   umask 077
-  PGDATABASE="${database_url}" pg_dump \
+  # 与本地备份保持同一连接方式，避免远端模式因 URI 被当作数据库名而误连
+  # 本机 PostgreSQL socket。
+  pg_dump \
+    --dbname="${database_url}" \
     --format=custom \
     --no-acl \
     --no-owner \

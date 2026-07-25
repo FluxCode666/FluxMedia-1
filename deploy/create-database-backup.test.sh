@@ -61,10 +61,22 @@ assert_rejected() {
 
 write_fake_command "pg_dump" '#!/usr/bin/env bash
 set -euo pipefail
-: "${PGDATABASE:?测试必须传入数据库连接串}"
+if [ -n "${PGDATABASE:-}" ]; then
+  printf "测试禁止通过 PGDATABASE 传入 URI 连接串\n" >&2
+  exit 1
+fi
+database_url=""
 output=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --dbname)
+      database_url="$2"
+      shift 2
+      ;;
+    --dbname=*)
+      database_url="${1#--dbname=}"
+      shift
+      ;;
     --file)
       output="$2"
       shift 2
@@ -74,6 +86,8 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+: "${database_url:?pg_dump 缺少 --dbname}"
+[ "${database_url}" = "postgresql://flux:secret@db:5432/flux" ]
 : "${output:?pg_dump 缺少 --file}"
 printf "fake-custom-dump" >"${output}"'
 
