@@ -1,5 +1,5 @@
-# FluxMedia 生产 Compose：仅运行 Next.js 主服务。
-# PostgreSQL、Redis 与可选上游均为外部依赖；注册机和 ChatGPT Web 代理不在此编排中。
+# FluxMedia 生产 Compose：运行 Next.js 主服务与 Adobe direct 专用代理。
+# PostgreSQL、Redis 与其他可选上游均为外部依赖。
 name: fluxmedia
 
 services:
@@ -30,13 +30,17 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://media.flux-code.cc}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://media.flux-code.cc}
       LOCAL_STORAGE_PATH: /app/storage
-      # 强制禁用注册机，即使服务器旧 .env 中仍残留配置也不会误连。
-      CHATGPT_REGISTER_URL: ""
-      CHATGPT_REGISTER_SECRET: ""
+      ADOBE_DIRECT_PROXY_URL: ${ADOBE_DIRECT_PROXY_URL:-http://media-upstream-proxy:3021}
+      ADOBE_DIRECT_PROXY_SECRET: ${ADOBE_DIRECT_PROXY_SECRET:?ADOBE_DIRECT_PROXY_SECRET 必填}
+      ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS: ${ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS:-300}
+      ADOBE_DIRECT_PROXY_MAX_BODY_MB: ${ADOBE_DIRECT_PROXY_MAX_BODY_MB:-64}
     ports:
       - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     volumes:
       - app-storage:/app/storage
+    depends_on:
+      media-upstream-proxy:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -56,6 +60,35 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  media-upstream-proxy:
+    image: ${FLUXMEDIA_PROXY_IMAGE:-ghcr.io/fluxcode666/fluxmedia-media-upstream-proxy}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    restart: unless-stopped
+    init: true
+    networks:
+      - flux-code
+    environment:
+      ADOBE_DIRECT_PROXY_SECRET: ${ADOBE_DIRECT_PROXY_SECRET:?ADOBE_DIRECT_PROXY_SECRET 必填}
+      ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS: ${ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS:-300}
+      ADOBE_DIRECT_PROXY_MAX_BODY_MB: ${ADOBE_DIRECT_PROXY_MAX_BODY_MB:-64}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- --header='X-Proxy-Secret: '$${ADOBE_DIRECT_PROXY_SECRET} http://127.0.0.1:3021/healthz >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
     logging:
       driver: json-file
       options:

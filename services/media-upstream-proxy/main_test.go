@@ -129,12 +129,29 @@ func TestHealthAndErrorsDoNotExposeSecret(t *testing.T) {
 	}
 
 	healthRecorder := httptest.NewRecorder()
+	healthRequest := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthRequest.Header.Set("X-Proxy-Secret", secret)
 	server.handleHealth(
 		healthRecorder,
-		httptest.NewRequest(http.MethodGet, "/healthz", nil),
+		healthRequest,
 	)
+	if healthRecorder.Code != http.StatusOK {
+		t.Fatalf("有效密钥健康检查应返回 200，实际为 %d", healthRecorder.Code)
+	}
 	if strings.Contains(healthRecorder.Body.String(), secret) {
 		t.Fatal("就绪响应不得输出 secret")
+	}
+
+	unauthorizedHealthRecorder := httptest.NewRecorder()
+	server.handleHealth(
+		unauthorizedHealthRecorder,
+		httptest.NewRequest(http.MethodGet, "/healthz", nil),
+	)
+	if unauthorizedHealthRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"缺少健康检查密钥应返回 401，实际为 %d",
+			unauthorizedHealthRecorder.Code,
+		)
 	}
 
 	errorRecorder := httptest.NewRecorder()

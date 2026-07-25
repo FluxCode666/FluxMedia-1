@@ -217,8 +217,15 @@ func newProxyServer(config proxyConfig) (*proxyServer, error) {
 	return &proxyServer{config: config, client: client}, nil
 }
 
-// handleHealth 返回不包含配置、目标或密钥的就绪状态。
-func (s *proxyServer) handleHealth(w http.ResponseWriter, _ *http.Request) {
+// handleHealth 只有在调用方持有与请求接口相同的密钥时返回就绪。
+func (s *proxyServer) handleHealth(w http.ResponseWriter, request *http.Request) {
+	if !constantTimeSecretEqual(
+		request.Header.Get("X-Proxy-Secret"),
+		s.config.secret,
+	) {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 

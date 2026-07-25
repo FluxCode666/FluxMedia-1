@@ -91,7 +91,7 @@ services:
       migrate:
         condition: service_completed_successfully
       media-upstream-proxy:
-        condition: service_started
+        condition: service_healthy
 
   # Adobe direct 专用 TLS 转发器：只允许精确 Adobe HTTPS 主机，不持有数据库凭据。
   media-upstream-proxy:
@@ -101,6 +101,16 @@ services:
       ADOBE_DIRECT_PROXY_SECRET: ${ADOBE_DIRECT_PROXY_SECRET:?ADOBE_DIRECT_PROXY_SECRET is required}
       ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS: ${ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS:-300}
       ADOBE_DIRECT_PROXY_MAX_BODY_MB: ${ADOBE_DIRECT_PROXY_MAX_BODY_MB:-64}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- --header='X-Proxy-Secret: '$${ADOBE_DIRECT_PROXY_SECRET} http://127.0.0.1:3021/healthz >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # 影子流量 relay 默认不启动。启用后，调用方把明确允许的内网 JSON 请求发给它；
   # relay 同步转发生产端，异步投递 A/B 评估端。两个目标与密钥均由部署环境固定配置。
