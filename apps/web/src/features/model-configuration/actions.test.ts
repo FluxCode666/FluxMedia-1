@@ -20,7 +20,7 @@ vi.mock("@repo/shared/safe-action", () => {
     metadata: () => builder,
     action: (handler: AdminActionHandler) => handler,
   };
-  return { adminAction: builder };
+  return { imageBackendPoolViewerAction: builder };
 });
 
 vi.mock("@repo/shared/uol", () => ({

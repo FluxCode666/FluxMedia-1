@@ -1,0 +1,265 @@
+/**
+ * 模型配置编辑草稿的 DB-free 单测。
+ *
+ * 覆盖 DTO 转换、价格收窄、严格 FormData、幂等 UUID 生命周期和 revision 冲突重放；
+ * 不发请求、不读取文件字节，也不触达 UOL。
+ */
+import type { ModelConfigurationEntry } from "@repo/shared/model-marketplace";
+import { describe, expect, it } from "vitest";
+
+import {
+  buildModelConfigurationFormData,
+  createModelConfigurationDraft,
+  ModelConfigurationDraftError,
+  parseModelConfigurationPrice,
+  rebaseModelConfigurationDraft,
+  renewModelConfigurationDraftRequestId,
+} from "./model-configuration-draft";
+
+const IMAGE_ENTRY: Extract<ModelConfigurationEntry, { category: "image" }> = {
+  category: "image",
+  configKey: "gpt-image-2",
+  displayName: "GPT Image 2",
+  iconKey: "openai",
+  revision: 2,
+  marketplaceApplicable: true,
+  visible: true,
+  description: "精细图像生成",
+  coverUrl: "/model-marketplace/default-image.webp",
+  usesDefaultCover: true,
+  minimumCredits: 1.27,
+  pricingSource: "fallback",
+  fallbackPricingRevision: 4,
+  pricing: {
+    base1024Credits: 1.27,
+    base1kCredits: 1.27,
+    base2kCredits: 5.07,
+    base4kCredits: 10,
+  },
+};
+
+const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
+  category: "video",
+  configKey: "veo31",
+  displayName: "Veo 3.1",
+  iconKey: "google",
+  revision: 5,
+  marketplaceApplicable: true,
+  visible: false,
+  description: "视频模型",
+  coverUrl: "/model-marketplace/default-video.webp",
+  usesDefaultCover: true,
+  minimumCredits: 45,
+  creditsPerSecond: 45,
+};
+
+const FALLBACK_ENTRY: Extract<
+  ModelConfigurationEntry,
+  { category: "fallback" }
+> = {
+  category: "fallback",
+  configKey: "default",
+  displayName: "其他或自定义图像模型",
+  iconKey: "generic",
+  revision: 7,
+  marketplaceApplicable: false,
+  minimumCredits: 1,
+  pricing: {
+    base1024Credits: 1,
+    base1kCredits: 2,
+    base2kCredits: 3,
+    base4kCredits: 4,
+  },
+};
+
+/** 把 FormData 的标量项转为便于断言的对象，文件保留原实例。 */
+function collectFormData(
+  formData: FormData
+): Record<string, FormDataEntryValue> {
+  return Object.fromEntries(formData.entries());
+}
+
+describe("模型配置草稿", () => {
+  it("按图像、视频和 default 条件创建隔离草稿", () => {
+    const image = createModelConfigurationDraft(IMAGE_ENTRY, () => "image-id");
+    const video = createModelConfigurationDraft(VIDEO_ENTRY, () => "video-id");
+    const fallback = createModelConfigurationDraft(
+      FALLBACK_ENTRY,
+      () => "fallback-id"
+    );
+
+    expect(image).toMatchObject({
+      category: "image",
+      clientRequestId: "image-id",
+      expectedRevision: 2,
+      expectedFallbackRevision: 4,
+      pricing: { base4kCredits: "10" },
+      cover: { action: "keep", file: null },
+    });
+    expect(video).toMatchObject({
+      category: "video",
+      clientRequestId: "video-id",
+      creditsPerSecond: "45",
+      visible: false,
+    });
+    expect(fallback).toEqual({
+      category: "fallback",
+      configKey: "default",
+      expectedRevision: 7,
+      clientRequestId: "fallback-id",
+      pricing: {
+        base1024Credits: "1",
+        base1kCredits: "2",
+        base2kCredits: "3",
+        base4kCredits: "4",
+      },
+    });
+  });
+
+  it.each([
+    ["1.27", 1.27],
+    [" 10 ", 10],
+    ["0.0001", 0.0001],
+  ])("解析合法价格 %s", (input, expected) => {
+    expect(parseModelConfigurationPrice(input)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    "0",
+    "-1",
+    "+1",
+    "1e3",
+    "NaN",
+    "Infinity",
+    "1,2",
+  ])("拒绝非法价格 %s", (input) => {
+    expect(() => parseModelConfigurationPrice(input)).toThrow(
+      ModelConfigurationDraftError
+    );
+  });
+
+  it("图像 FormData 只包含当前联合分支字段", () => {
+    const draft = createModelConfigurationDraft(IMAGE_ENTRY, () => "image-id");
+    const values = collectFormData(buildModelConfigurationFormData(draft));
+
+    expect(values).toEqual({
+      category: "image",
+      configKey: "gpt-image-2",
+      expectedRevision: "2",
+      clientRequestId: "image-id",
+      visible: "true",
+      description: "精细图像生成",
+      coverChange: "keep",
+      pricingSource: "fallback",
+      expectedFallbackRevision: "4",
+      base1024Credits: "1.27",
+      base1kCredits: "1.27",
+      base2kCredits: "5.07",
+      base4kCredits: "10",
+    });
+  });
+
+  it("视频 replace 引用唯一文件且 default 不携带展示字段", () => {
+    const file = new File([new Uint8Array([1, 2])], "cover.png", {
+      type: "image/png",
+    });
+    const video = createModelConfigurationDraft(VIDEO_ENTRY, () => "video-id");
+    if (video.category !== "video") throw new Error("预期视频草稿");
+    const videoValues = collectFormData(
+      buildModelConfigurationFormData({
+        ...video,
+        cover: { action: "replace", file },
+      })
+    );
+    const fallbackValues = collectFormData(
+      buildModelConfigurationFormData(
+        createModelConfigurationDraft(FALLBACK_ENTRY, () => "fallback-id")
+      )
+    );
+
+    expect(videoValues.cover).toBe(file);
+    expect(videoValues.coverChange).toBe("replace");
+    expect(videoValues.creditsPerSecond).toBe("45");
+    expect(fallbackValues).not.toHaveProperty("visible");
+    expect(fallbackValues).not.toHaveProperty("description");
+    expect(fallbackValues).not.toHaveProperty("coverChange");
+  });
+
+  it("网络重试复用 UUID，修改草稿才生成新 UUID", () => {
+    const original = createModelConfigurationDraft(IMAGE_ENTRY, () => "id-1");
+    expect(
+      buildModelConfigurationFormData(original).get("clientRequestId")
+    ).toBe("id-1");
+    expect(
+      buildModelConfigurationFormData(original).get("clientRequestId")
+    ).toBe("id-1");
+
+    const changed = renewModelConfigurationDraftRequestId(
+      original,
+      () => "id-2"
+    );
+    expect(changed.clientRequestId).toBe("id-2");
+    expect(original.clientRequestId).toBe("id-1");
+  });
+
+  it("冲突重放保留草稿并更新两级 revision 与 UUID", () => {
+    const original = createModelConfigurationDraft(IMAGE_ENTRY, () => "id-1");
+    if (original.category !== "image") throw new Error("预期图像草稿");
+    const changed = {
+      ...original,
+      description: "本地尚未保存的简介",
+      pricing: { ...original.pricing, base4kCredits: "12" },
+      cover: { action: "remove", file: null } as const,
+    };
+    const latest: typeof IMAGE_ENTRY = {
+      ...IMAGE_ENTRY,
+      revision: 9,
+      fallbackPricingRevision: 10,
+    };
+
+    const rebased = rebaseModelConfigurationDraft(
+      changed,
+      latest,
+      () => "id-2"
+    );
+
+    expect(rebased).toMatchObject({
+      expectedRevision: 9,
+      expectedFallbackRevision: 10,
+      clientRequestId: "id-2",
+      description: "本地尚未保存的简介",
+      pricing: { base4kCredits: "12" },
+      cover: { action: "remove" },
+    });
+  });
+
+  it("拒绝把冲突草稿串到另一模型", () => {
+    const draft = createModelConfigurationDraft(IMAGE_ENTRY, () => "id-1");
+    expect(() =>
+      rebaseModelConfigurationDraft(
+        draft,
+        { ...IMAGE_ENTRY, configKey: "nano-banana" },
+        () => "id-2"
+      )
+    ).toThrow("无法把草稿合并到其他模型");
+  });
+
+  it("最新条目已显式定价时移除过期的 default revision 依赖", () => {
+    const draft = createModelConfigurationDraft(IMAGE_ENTRY, () => "id-1");
+    const latest: Extract<ModelConfigurationEntry, { category: "image" }> = {
+      ...IMAGE_ENTRY,
+      revision: 8,
+      pricingSource: "explicit",
+      pricing: { ...IMAGE_ENTRY.pricing },
+    };
+
+    expect(
+      rebaseModelConfigurationDraft(draft, latest, () => "id-2")
+    ).toMatchObject({
+      pricingSource: "explicit",
+      expectedFallbackRevision: null,
+      expectedRevision: 8,
+    });
+  });
+});
