@@ -252,7 +252,8 @@ export function createS3StorageProvider(
       key: string,
       bucket: string,
       data: Buffer,
-      contentType: string
+      contentType: string,
+      options?: { signal?: AbortSignal }
     ): Promise<void> {
       const client = getS3Client(config);
       const command = new PutObjectCommand({
@@ -261,7 +262,10 @@ export function createS3StorageProvider(
         Body: data,
         ContentType: contentType,
       });
-      await client.send(command);
+      await client.send(
+        command,
+        options?.signal ? { abortSignal: options.signal } : {}
+      );
     },
   };
 }
@@ -288,9 +292,9 @@ export const s3Provider: StorageProvider = {
     const provider = await getDynamicS3Provider();
     return provider.getObject(key, bucket, options);
   },
-  async putObject(key, bucket, data, contentType) {
+  async putObject(key, bucket, data, contentType, options) {
     const provider = await getDynamicS3Provider();
-    return provider.putObject(key, bucket, data, contentType);
+    return provider.putObject(key, bucket, data, contentType, options);
   },
 };
 

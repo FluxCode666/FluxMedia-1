@@ -66,7 +66,7 @@ describe("isInternalDatabaseError", () => {
     ).toBe(true);
     expect(
       isSensitiveUpstreamError(
-        "ChatGPT Web prepare failed: https://upstream.example.test/v1"
+        "Upstream Images API failed: https://upstream.example.test/v1"
       )
     ).toBe(true);
     expect(isSensitiveUpstreamError("Insufficient credits")).toBe(false);

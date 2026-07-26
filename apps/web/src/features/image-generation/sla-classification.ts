@@ -1,5 +1,3 @@
-import { IMAGE_GENERATION_WEB_TIMEOUT_MODERATION_MARKER } from "@repo/shared/generation-timeout";
-
 export type GenerationErrorCategory =
   | "platform"
   | "moderation"
@@ -242,11 +240,6 @@ export function isContentSafetyRejection(error: string | null | undefined) {
 
 export function classifyGenerationError(error: string | null | undefined) {
   const normalized = normalizeErrorText(error);
-  // Web 超时补充的"疑似审核"标记：显式归 moderation。Web 上游对违规内容常静默挂住直至
-  // 超时（无审核码、无拒绝文本），这类隐性审核此前被淹没在平台超时里，故按标记单独归因。
-  if (normalized.includes(IMAGE_GENERATION_WEB_TIMEOUT_MODERATION_MARKER)) {
-    return "moderation" satisfies GenerationErrorCategory;
-  }
   if (isModerationServiceFailure(normalized)) {
     return "platform" satisfies GenerationErrorCategory;
   }

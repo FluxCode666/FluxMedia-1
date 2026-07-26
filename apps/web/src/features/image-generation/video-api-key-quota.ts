@@ -169,7 +169,24 @@ export function createPostgresVideoApiKeyQuotaRepository(
           returning id
         `);
         if (extractExecuteRows(keyResult).length !== 1) {
-          throw new Error("视频任务引用的 API Key 不存在，无法归还配额");
+          const remainingKeyResult = await transaction.execute(sql`
+            select user_id as "userId"
+            from external_api_key
+            where id = ${task.apiKeyId}
+            limit 1
+          `);
+          const remainingKey = extractExecuteRows(remainingKeyResult)[0];
+          if (remainingKey) {
+            const owner = z
+              .object({ userId: identifierSchema })
+              .parse(remainingKey);
+            if (owner.userId !== task.userId) {
+              throw new Error("视频任务引用了其他用户的 API Key");
+            }
+            throw new Error("视频 API Key 配额归还发生并发冲突");
+          }
+          // Key 已被用户删除时，其 credits_used 行也已消失；清零任务事实即可完成
+          // 补偿，不能让不存在的配额行永久毒化最高优先级退款队列。
         }
         const taskResult = await transaction.execute(sql`
           update video_generation

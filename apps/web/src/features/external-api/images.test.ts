@@ -346,7 +346,7 @@ describe("external API error classification", () => {
   it("maps upstream rate limits to rate limit errors", () => {
     expect(
       toOpenAIErrorPayload(
-        "ChatGPT Web conversation failed: HTTP 429 Too many requests"
+        "Upstream Images API returned HTTP 429: Too many requests"
       ).error
     ).toMatchObject({
       type: "rate_limit_error",
@@ -380,7 +380,7 @@ describe("external API error classification", () => {
   it("preserves upstream HTTP error status and metadata", () => {
     expect(
       toOpenAIErrorPayload(
-        "Upstream Responses API returned HTTP 400: Input must be a list | invalid_request_error | invalid_request_error"
+        "Upstream Images API returned HTTP 400: Input must be a list | invalid_request_error | invalid_request_error"
       ).error
     ).toMatchObject({
       type: "invalid_request_error",
@@ -390,7 +390,7 @@ describe("external API error classification", () => {
 
     expect(
       toOpenAIErrorPayload(
-        "Upstream Responses API returned HTTP 429: The usage limit has been reached | usage_limit_reached"
+        "Upstream Images API returned HTTP 429: The usage limit has been reached | usage_limit_reached"
       ).error
     ).toMatchObject({
       type: "rate_limit_error",
@@ -401,7 +401,7 @@ describe("external API error classification", () => {
 
   it("uses classified status and type for streamed error events", () => {
     const message =
-      "Upstream Responses API returned HTTP 400: Transparent background is not supported for this model. | invalid_value | image_generation_user_error";
+      "Upstream Images API returned HTTP 400: Transparent background is not supported for this model. | invalid_value | image_generation_user_error";
     const payload = toOpenAIErrorPayload(message, {
       generationId: "gen_1",
       creditsConsumed: 0,
@@ -435,7 +435,7 @@ describe("external API error classification", () => {
 
     expect(
       toOpenAIErrorPayload(
-        "Upstream Responses API returned HTTP 400: Your request was rejected by the safety system. safety_violations=[sexual]."
+        "Upstream Images API returned HTTP 400: Your request was rejected by the safety system. safety_violations=[sexual]."
       ).error
     ).toMatchObject({
       type: "invalid_request_error",

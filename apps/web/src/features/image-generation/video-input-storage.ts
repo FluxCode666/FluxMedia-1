@@ -11,12 +11,19 @@ import {
   mediaInputReferencesSchema,
 } from "@repo/shared/image-generation/media-contract";
 import { getStorageRuntimeSnapshot } from "@repo/shared/storage/providers";
+import {
+  enqueueVideoInputCleanup,
+  parseVideoInputCleanupObjects,
+  type VideoInputCleanupObject,
+} from "./video-input-cleanup-queue";
+import { VIDEO_STAGING_RESERVATION_TTL_MS } from "./video-task-admission";
+
+const VIDEO_INPUT_UPLOAD_COMPLETION_GRACE_MS = 5 * 60_000;
+export const VIDEO_INPUT_UPLOAD_TIMEOUT_MS =
+  VIDEO_STAGING_RESERVATION_TTL_MS - VIDEO_INPUT_UPLOAD_COMPLETION_GRACE_MS;
 
 /** 本轮创建请求实际上传的临时对象。 */
-export interface StagedVideoInputObject {
-  storageKey: string;
-  storageBucket: string;
-}
+export type StagedVideoInputObject = VideoInputCleanupObject;
 
 /** data 引用持久化结果。 */
 export interface StagedVideoInputReferences {
@@ -35,23 +42,12 @@ function getMediaExtension(mimeType: MediaInputReference["mimeType"]): string {
 function createTemporaryVideoInputKey(input: {
   userId: string;
   videoId: string;
+  attemptId: string;
   index: number;
   digest: string;
   extension: string;
 }): string {
-  return `${input.userId}/video-inputs/${input.videoId}/${input.index}-${input.digest}.${input.extension}`;
-}
-
-/** 判断一个引用是否是本任务创建的临时输入，而非用户已有对象。 */
-function isTemporaryVideoInputReference(
-  reference: MediaInputReference,
-  userId: string,
-  videoId: string
-): reference is Extract<MediaInputReference, { source: "storage" }> {
-  return (
-    reference.source === "storage" &&
-    reference.storageKey.startsWith(`${userId}/video-inputs/${videoId}/`)
-  );
+  return `${input.userId}/video-inputs/${input.videoId}/${input.attemptId}/${input.index}-${input.digest}.${input.extension}`;
 }
 
 /** 删除指定对象；全部删除成功才视为清理完成，便于调用方保留重试事实。 */
@@ -59,10 +55,16 @@ async function deleteStagedObjects(
   objects: StagedVideoInputObject[]
 ): Promise<void> {
   if (objects.length === 0) return;
-  const { provider } = await getStorageRuntimeSnapshot();
+  // WHY：删除前先刷新持久意图；即使进程在对象存储响应前退出，created 任务仍受
+  // 保护，已经读入内存或未被任务引用的对象则由队列继续幂等删除。
+  await enqueueVideoInputCleanup(objects);
+  const snapshot = await getStorageRuntimeSnapshot();
+  if (objects.some((object) => object.storageBucket !== snapshot.bucketName)) {
+    throw new Error("视频输入清理对象不属于当前存储 bucket");
+  }
   await Promise.all(
     objects.map((object) =>
-      provider.deleteObject(object.storageKey, object.storageBucket)
+      snapshot.provider.deleteObject(object.storageKey, object.storageBucket)
     )
   );
 }
@@ -75,18 +77,46 @@ async function deleteStagedObjects(
 export async function stageVideoInputReferences(input: {
   userId: string;
   videoId: string;
+  attemptId: string;
   references: MediaInputReference[];
 }): Promise<StagedVideoInputReferences> {
+  if (
+    !input.attemptId ||
+    input.attemptId.length > 128 ||
+    input.attemptId.includes("/") ||
+    input.attemptId.includes("..")
+  ) {
+    throw new Error("视频输入转存 attemptId 无效");
+  }
   const parsed = mediaInputReferencesSchema.max(3).parse(input.references);
-  if (!parsed.some((reference) => reference.source === "data")) {
+  if (
+    !parsed.some(
+      (reference) =>
+        reference.source === "data" || reference.source === "storage"
+    )
+  ) {
     return { references: parsed, objects: [] };
   }
 
   const snapshot = await getStorageRuntimeSnapshot();
   const objects: StagedVideoInputObject[] = [];
   const references: MediaInputReference[] = [];
+  // WHY：所有对象共用同一个绝对 deadline；若逐对象重置 10 分钟，三张串行上传仍
+  // 可能跨过 15 分钟 reservation TTL，让清理 worker 与迟到写入重新产生竞态。
+  const uploadSignal = AbortSignal.timeout(VIDEO_INPUT_UPLOAD_TIMEOUT_MS);
   try {
     for (const [index, reference] of parsed.entries()) {
+      if (reference.source === "storage") {
+        const bucket = reference.storageBucket ?? snapshot.bucketName;
+        if (
+          bucket !== snapshot.bucketName ||
+          !reference.storageKey.startsWith(`${input.userId}/`)
+        ) {
+          throw new Error("视频输入存储引用不属于当前用户或 bucket");
+        }
+        references.push({ ...reference, storageBucket: snapshot.bucketName });
+        continue;
+      }
       if (reference.source !== "data") {
         references.push(reference);
         continue;
@@ -102,20 +132,29 @@ export async function stageVideoInputReferences(input: {
       const storageKey = createTemporaryVideoInputKey({
         userId: input.userId,
         videoId: input.videoId,
+        attemptId: input.attemptId,
         index,
         digest,
         extension: getMediaExtension(reference.mimeType),
       });
+      const object = {
+        userId: input.userId,
+        videoId: input.videoId,
+        attemptId: input.attemptId,
+        storageKey,
+        storageBucket: snapshot.bucketName,
+      };
+      // WHY：清理意图必须先于对象写入持久化；进程在 putObject 返回前后退出时，
+      // worker 都能在任务事务未接管该对象的情况下最终清理。
+      await enqueueVideoInputCleanup([object]);
       await snapshot.provider.putObject(
         storageKey,
         snapshot.bucketName,
         bytes,
-        reference.mimeType
+        reference.mimeType,
+        { signal: uploadSignal }
       );
-      objects.push({
-        storageKey,
-        storageBucket: snapshot.bucketName,
-      });
+      objects.push(object);
       references.push({
         source: "storage",
         mimeType: reference.mimeType,
@@ -129,7 +168,14 @@ export async function stageVideoInputReferences(input: {
       objects,
     };
   } catch (error) {
-    await deleteStagedObjects(objects).catch(() => undefined);
+    try {
+      await deleteStagedObjects(objects);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "视频输入转存失败且即时清理未完成"
+      );
+    }
     throw error;
   }
 }
@@ -158,21 +204,16 @@ export async function cleanupUnusedStagedVideoInputs(input: {
 export async function cleanupPersistedVideoInputs(input: {
   userId: string;
   videoId: string;
-  references: MediaInputReference[];
+  objects: unknown;
 }): Promise<void> {
-  const objects = input.references
-    .filter((reference) =>
-      isTemporaryVideoInputReference(reference, input.userId, input.videoId)
+  const objects = parseVideoInputCleanupObjects(input.objects);
+  if (
+    objects.some(
+      (object) =>
+        object.userId !== input.userId || object.videoId !== input.videoId
     )
-    .map((reference) => ({
-      storageKey: reference.storageKey,
-      storageBucket: reference.storageBucket ?? "",
-    }));
-  if (objects.some((object) => !object.storageBucket)) {
-    const snapshot = await getStorageRuntimeSnapshot();
-    for (const object of objects) {
-      object.storageBucket ||= snapshot.bucketName;
-    }
+  ) {
+    throw new Error("视频输入清理对象与任务归属不一致");
   }
   await deleteStagedObjects(objects);
 }

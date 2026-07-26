@@ -16,12 +16,19 @@ import {
   type VideoApiKeyQuotaDatabase,
 } from "../../../apps/web/src/features/image-generation/video-api-key-quota";
 import {
+  assertVideoInputCleanupAvailableForPersistence,
+  createPostgresVideoInputCleanupRepository,
+  type VideoInputCleanupDatabase,
+} from "../../../apps/web/src/features/image-generation/video-input-cleanup-queue";
+import {
   createPostgresVideoRecoveryRepository,
   VIDEO_SUBMISSION_RECOVERY_GRACE_MS,
   type VideoRecoveryDatabase,
 } from "../../../apps/web/src/features/image-generation/video-recovery-repository";
 import {
   admitVideoTaskCreation,
+  consumeVideoTaskStagingReservation,
+  reserveVideoTaskStaging,
   VideoActiveTaskLimitError,
 } from "../../../apps/web/src/features/image-generation/video-task-admission";
 import { requireDedicatedTestDatabaseUrl } from "./test-database-url";
@@ -43,6 +50,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       user_id text not null default 'user-1',
       api_key_id text,
       api_key_credits_reserved numeric(18, 2) not null default 0,
+      staged_input_objects json,
       principal_scope text not null default 'user:user-1',
       stage text not null,
       state_version integer not null default 0,
@@ -65,6 +73,30 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       task_id text not null,
       kind text not null,
       primary key (task_id, kind)
+    );
+    create table video_input_cleanup (
+      id text primary key,
+      user_id text not null,
+      video_id text not null,
+      attempt_id text not null,
+      storage_key text not null,
+      storage_bucket text not null,
+      attempt_count integer not null default 0,
+      next_attempt_at timestamp not null default now(),
+      claim_token text,
+      claim_expires_at timestamp,
+      last_error text,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+    create table video_task_staging_reservation (
+      task_id text primary key,
+      reservation_token text not null unique,
+      user_id text not null,
+      principal_scope text not null,
+      expires_at timestamp not null,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
     )
   `);
   return schemaName;
@@ -110,6 +142,16 @@ function createQuotaDatabase(client: PoolClient): VideoApiKeyQuotaDatabase {
   return createRecoveryDatabase(client);
 }
 
+/** 将 pg client 适配为持久对象清理队列的单语句执行端口。 */
+function createCleanupDatabase(client: PoolClient): VideoInputCleanupDatabase {
+  return {
+    async execute(query) {
+      const compiled = new PgDialect().sqlToQuery(query);
+      return client.query(compiled.sql, compiled.params);
+    },
+  };
+}
+
 beforeAll(() => {
   pool = new Pool({
     application_name: "fluxmedia-video-recovery-integration",
@@ -125,6 +167,306 @@ afterAll(async () => {
 });
 
 describe("video recovery PostgreSQL concurrency", () => {
+  it("并发清理 worker 只认领同一临时对象一次", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const repository = createPostgresVideoInputCleanupRepository(
+        createCleanupDatabase(owner)
+      );
+      await repository.enqueue([
+        {
+          userId: "user-1",
+          videoId: "video-1",
+          attemptId: "reservation-1",
+          storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
+          storageBucket: "uploads",
+        },
+      ]);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await Promise.all([
+          first.query(`set search_path to "${schemaName}", public`),
+          second.query(`set search_path to "${schemaName}", public`),
+        ]);
+        const now = new Date();
+        const claims = await Promise.all([
+          createPostgresVideoInputCleanupRepository(
+            createCleanupDatabase(first)
+          ).claimNext({
+            claimToken: "cleanup-worker-1",
+            now,
+            claimExpiresAt: new Date(now.getTime() + 60_000),
+          }),
+          createPostgresVideoInputCleanupRepository(
+            createCleanupDatabase(second)
+          ).claimNext({
+            claimToken: "cleanup-worker-2",
+            now,
+            claimExpiresAt: new Date(now.getTime() + 60_000),
+          }),
+        ]);
+        const claimed = claims.filter((claim) => claim !== null);
+        expect(claimed).toHaveLength(1);
+        if (!claimed[0]) throw new Error("清理对象未被认领");
+        await repository.complete({
+          id: claimed[0].id,
+          claimToken: claimed[0].claimToken,
+        });
+        const remaining = await owner.query<{ count: string }>(
+          "select count(*)::text as count from video_input_cleanup"
+        );
+        expect(remaining.rows[0]?.count).toBe("0");
+      } finally {
+        first.release();
+        second.release();
+      }
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("reservation 与 created 保护输入，submit_uncertain 后允许清理", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const object = {
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "reservation-1",
+        storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
+        storageBucket: "uploads",
+      };
+      const repository = createPostgresVideoInputCleanupRepository(
+        createCleanupDatabase(owner)
+      );
+      await repository.enqueue([object]);
+      const reservationNow = new Date();
+      await reserveVideoTaskStaging(
+        createQuotaDatabase(owner),
+        {
+          taskId: "video-1",
+          userId: "user-1",
+          principalScope: "external:user-1:key-1",
+        },
+        {
+          now: reservationNow,
+          expiresAt: new Date(reservationNow.getTime() + 60_000),
+          reservationToken: object.attemptId,
+        }
+      );
+
+      await expect(
+        repository.claimNext({
+          claimToken: "cleanup-worker-reservation",
+          now: new Date(),
+          claimExpiresAt: new Date(Date.now() + 60_000),
+        })
+      ).resolves.toBeNull();
+
+      await createQuotaDatabase(owner).transaction(async (transaction) => {
+        const admission = await admitVideoTaskCreation(transaction, {
+          taskId: "video-1",
+          userId: "user-1",
+          principalScope: "external:user-1:key-1",
+        });
+        expect(admission).toBe("admitted");
+        await assertVideoInputCleanupAvailableForPersistence(transaction, [
+          object,
+        ]);
+        await consumeVideoTaskStagingReservation(transaction, {
+          taskId: "video-1",
+          userId: "user-1",
+          reservationToken: object.attemptId,
+          required: true,
+        });
+        await transaction.execute(sql`
+          insert into video_generation (
+            id,
+            user_id,
+            principal_scope,
+            stage,
+            staged_input_objects
+          )
+          values (
+            'video-1',
+            'user-1',
+            'external:user-1:key-1',
+            'created',
+            ${JSON.stringify([object])}::json
+          )
+        `);
+      });
+
+      const now = new Date();
+      await expect(
+        repository.claimNext({
+          claimToken: "cleanup-worker-1",
+          now,
+          claimExpiresAt: new Date(now.getTime() + 60_000),
+        })
+      ).resolves.toBeNull();
+
+      await owner.query(`
+        update video_generation
+        set stage = 'submit_uncertain'
+        where id = 'video-1'
+      `);
+      await expect(
+        repository.claimNext({
+          claimToken: "cleanup-worker-2",
+          now: new Date(),
+          claimExpiresAt: new Date(Date.now() + 60_000),
+        })
+      ).resolves.toMatchObject({ id: expect.any(String), videoId: "video-1" });
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("旧 attempt 的迟到清理不会认领新 reservation 对象", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const expiredObject = {
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "expired-reservation",
+        storageKey: "user-1/video-inputs/video-1/expired-reservation/input.png",
+        storageBucket: "uploads",
+      };
+      const currentObject = {
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "current-reservation",
+        storageKey: "user-1/video-inputs/video-1/current-reservation/input.png",
+        storageBucket: "uploads",
+      };
+      const repository = createPostgresVideoInputCleanupRepository(
+        createCleanupDatabase(owner)
+      );
+      await repository.enqueue([expiredObject, currentObject]);
+      const now = new Date();
+      await reserveVideoTaskStaging(
+        createQuotaDatabase(owner),
+        {
+          taskId: "video-1",
+          userId: "user-1",
+          principalScope: "external:user-1:key-1",
+        },
+        {
+          now,
+          expiresAt: new Date(now.getTime() + 60_000),
+          reservationToken: currentObject.attemptId,
+        }
+      );
+
+      const expiredClaim = await repository.claimNext({
+        claimToken: "cleanup-worker-expired",
+        now: new Date(),
+        claimExpiresAt: new Date(Date.now() + 60_000),
+      });
+      expect(expiredClaim).toMatchObject({
+        attemptId: expiredObject.attemptId,
+        storageKey: expiredObject.storageKey,
+      });
+      if (!expiredClaim) throw new Error("旧 attempt 清理对象未被认领");
+      await repository.complete({
+        id: expiredClaim.id,
+        claimToken: expiredClaim.claimToken,
+      });
+      await expect(
+        repository.claimNext({
+          claimToken: "cleanup-worker-current",
+          now: new Date(),
+          claimExpiresAt: new Date(Date.now() + 60_000),
+        })
+      ).resolves.toBeNull();
+      const remaining = await owner.query<{
+        attempt_id: string;
+        storage_key: string;
+      }>(`
+        select attempt_id, storage_key
+        from video_input_cleanup
+      `);
+      expect(remaining.rows).toEqual([
+        {
+          attempt_id: currentObject.attemptId,
+          storage_key: currentObject.storageKey,
+        },
+      ]);
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("清理 worker 已先认领时任务事务拒绝持久化对象引用", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const object = {
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "reservation-1",
+        storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
+        storageBucket: "uploads",
+      };
+      const repository = createPostgresVideoInputCleanupRepository(
+        createCleanupDatabase(owner)
+      );
+      await repository.enqueue([object]);
+      const now = new Date();
+      await expect(
+        repository.claimNext({
+          claimToken: "cleanup-worker-1",
+          now,
+          claimExpiresAt: new Date(now.getTime() + 60_000),
+        })
+      ).resolves.toMatchObject({ claimToken: "cleanup-worker-1" });
+
+      await expect(
+        createQuotaDatabase(owner).transaction(async (transaction) => {
+          const admission = await admitVideoTaskCreation(transaction, {
+            taskId: "video-1",
+            userId: "user-1",
+            principalScope: "external:user-1:key-1",
+          });
+          expect(admission).toBe("admitted");
+          await assertVideoInputCleanupAvailableForPersistence(transaction, [
+            object,
+          ]);
+        })
+      ).rejects.toThrow("已被 worker 认领");
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
   it("并发 worker 只认领同一到期任务一次", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const owner = await pool.connect();
@@ -363,6 +705,42 @@ describe("video recovery PostgreSQL concurrency", () => {
     }
   });
 
+  it("API Key 被物理删除后仍能完成任务级配额退款", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      await owner.query(`
+        insert into external_api_key
+          (id, user_id, credit_limit, credits_used)
+        values ('deleted-key', 'user-1', 10, 4);
+        insert into video_generation
+          (id, user_id, api_key_id, api_key_credits_reserved, stage)
+        values ('video-deleted-key', 'user-1', 'deleted-key', 4, 'refunding');
+        delete from external_api_key where id = 'deleted-key'
+      `);
+
+      await expect(
+        createPostgresVideoApiKeyQuotaRepository(
+          createQuotaDatabase(owner)
+        ).refund({ videoId: "video-deleted-key" })
+      ).resolves.toBe(4);
+      const task = await owner.query<{ api_key_credits_reserved: string }>(`
+        select api_key_credits_reserved::text
+        from video_generation
+        where id = 'video-deleted-key'
+      `);
+      expect(task.rows[0]?.api_key_credits_reserved).toBe("0.00");
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
   it("Principal 活跃任务上限在并发创建下只放行一个事务", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const owner = await pool.connect();
@@ -381,8 +759,10 @@ describe("video recovery PostgreSQL concurrency", () => {
           createQuotaDatabase(client).transaction(async (transaction) => {
             const admission = await admitVideoTaskCreation(transaction, {
               taskId,
+              userId: "user-1",
               principalScope: "external:user-1:key-1",
-              maxActiveTasks: 1,
+              maxPrincipalActiveTasks: 1,
+              maxUserActiveTasks: 10,
             });
             if (admission === "admitted") {
               await transaction.execute(sql`
@@ -409,6 +789,147 @@ describe("video recovery PostgreSQL concurrency", () => {
           select count(*)::text as count
           from video_generation
           where principal_scope = 'external:user-1:key-1'
+        `);
+        expect(count.rows[0]?.count).toBe("1");
+      } finally {
+        first.release();
+        second.release();
+      }
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("并发大媒体请求在上传前只能占用用户允许的 reservation 数", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await Promise.all([
+          first.query(`set search_path to "${schemaName}", public`),
+          second.query(`set search_path to "${schemaName}", public`),
+        ]);
+        const now = new Date();
+        /** 每个请求只有拿到持久 reservation 后才会进入对象存储转存。 */
+        const reserve = (
+          client: PoolClient,
+          taskId: string,
+          principalScope: string
+        ) =>
+          reserveVideoTaskStaging(
+            createQuotaDatabase(client),
+            {
+              taskId,
+              userId: "user-1",
+              principalScope,
+              maxPrincipalActiveTasks: 5,
+              maxUserActiveTasks: 1,
+            },
+            {
+              now,
+              expiresAt: new Date(now.getTime() + 60_000),
+              reservationToken: `${taskId}-token`,
+            }
+          );
+
+        const results = await Promise.allSettled([
+          reserve(first, "staging-1", "external:user-1:key-1"),
+          reserve(second, "staging-2", "external:user-1:key-2"),
+        ]);
+        expect(
+          results.filter((result) => result.status === "fulfilled")
+        ).toHaveLength(1);
+        expect(
+          results.find((result) => result.status === "rejected")
+        ).toMatchObject({
+          status: "rejected",
+          reason: expect.objectContaining({ limitKind: "user" }),
+        });
+        const count = await owner.query<{ count: string }>(`
+          select count(*)::text as count
+          from video_task_staging_reservation
+          where user_id = 'user-1'
+        `);
+        expect(count.rows[0]?.count).toBe("1");
+      } finally {
+        first.release();
+        second.release();
+      }
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("不同 API Key 并发创建也只能占用同一用户总上限", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await Promise.all([
+          first.query(`set search_path to "${schemaName}", public`),
+          second.query(`set search_path to "${schemaName}", public`),
+        ]);
+        /** 用不同 Principal 竞争同一 userId 的最后一个用户级槽位。 */
+        const createTask = async (
+          client: PoolClient,
+          taskId: string,
+          principalScope: string
+        ) =>
+          createQuotaDatabase(client).transaction(async (transaction) => {
+            const admission = await admitVideoTaskCreation(transaction, {
+              taskId,
+              userId: "user-1",
+              principalScope,
+              maxPrincipalActiveTasks: 5,
+              maxUserActiveTasks: 1,
+            });
+            if (admission === "admitted") {
+              await transaction.execute(sql`
+                insert into video_generation (
+                  id,
+                  user_id,
+                  principal_scope,
+                  stage
+                )
+                values (${taskId}, 'user-1', ${principalScope}, 'created')
+              `);
+            }
+            return admission;
+          });
+
+        const results = await Promise.allSettled([
+          createTask(first, "user-admission-1", "external:user-1:key-1"),
+          createTask(second, "user-admission-2", "external:user-1:key-2"),
+        ]);
+        expect(
+          results.filter((result) => result.status === "fulfilled")
+        ).toHaveLength(1);
+        expect(
+          results.find((result) => result.status === "rejected")
+        ).toMatchObject({
+          status: "rejected",
+          reason: expect.objectContaining({ limitKind: "user" }),
+        });
+        const count = await owner.query<{ count: string }>(`
+          select count(*)::text as count
+          from video_generation
+          where user_id = 'user-1'
         `);
         expect(count.rows[0]?.count).toBe("1");
       } finally {

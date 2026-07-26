@@ -103,7 +103,7 @@ type ProxyResponsePayload = {
   bodyBase64?: string;
 };
 
-/** Go 旁路代理传输（TLS 伪装），协议与 chatgpt-web-proxy 一致。 */
+/** Go 媒体上游旁路代理传输（TLS 伪装）。 */
 export class ProxyFireflyTransport implements FireflyTransport {
   constructor(
     private readonly opts: {

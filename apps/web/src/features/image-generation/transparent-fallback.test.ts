@@ -6,7 +6,7 @@ describe("isTransparentUnsupportedError", () => {
     expect(
       isTransparentUnsupportedError(
         new Error(
-          "Upstream Responses API returned HTTP 400: Transparent background is not supported for this model. | invalid_value"
+          "Upstream Images API returned HTTP 400: Transparent background is not supported for this model. | invalid_value"
         )
       )
     ).toBe(true);

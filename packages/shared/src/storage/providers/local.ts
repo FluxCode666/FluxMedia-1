@@ -169,14 +169,19 @@ export function createLocalStorageProvider(
       key: string,
       bucket: string,
       data: Buffer,
-      _contentType: string
+      _contentType: string,
+      options?: { signal?: AbortSignal }
     ): Promise<void> {
       const filePath = await safePath(configuredBaseDir, bucket, key);
       const fs = await getFs();
       const path = await getPath();
       const dir = path.dirname(filePath);
       await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(filePath, data);
+      await fs.writeFile(
+        filePath,
+        data,
+        options?.signal ? { signal: options.signal } : {}
+      );
     },
   };
 }
@@ -204,9 +209,9 @@ export const localProvider: StorageProvider = {
     const provider = await getDynamicLocalProvider();
     return provider.getObject(key, bucket, options);
   },
-  async putObject(key, bucket, data, contentType) {
+  async putObject(key, bucket, data, contentType, options) {
     const provider = await getDynamicLocalProvider();
-    return provider.putObject(key, bucket, data, contentType);
+    return provider.putObject(key, bucket, data, contentType, options);
   },
 };
 

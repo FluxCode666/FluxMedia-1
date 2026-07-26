@@ -110,10 +110,7 @@ import {
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
-import {
-  cleanupUnusedStagedVideoInputs,
-  stageVideoInputReferences,
-} from "@/features/image-generation/video-input-storage";
+import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/video-input-storage";
 import {
   getVideoGenerationById,
   reconcileUncertainVideoSubmission,
@@ -121,12 +118,17 @@ import {
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
 import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
-import { VideoActiveTaskLimitError } from "@/features/image-generation/video-task-admission";
+import {
+  releaseVideoTaskStagingReservation,
+  VideoActiveTaskLimitError,
+  VideoTaskStagingInProgressError,
+} from "@/features/image-generation/video-task-admission";
 import {
   createVideoPrincipalScope,
   createVideoRequestFingerprint,
   createVideoTaskId,
 } from "@/features/image-generation/video-task-identity";
+import { prepareVideoTaskInputReferences } from "@/features/image-generation/video-task-preparation";
 import {
   createCreditTopUpCheckout,
   fulfillAlipayCreditTopUp,
@@ -350,29 +352,53 @@ bindExecute(
       };
     }
 
-    let stagedInput: Awaited<ReturnType<typeof stageVideoInputReferences>> = {
-      references: input.inputImages ?? [],
-      objects: [],
-    };
-    if (input.inputImages?.length) {
-      try {
-        stagedInput = await stageVideoInputReferences({
-          userId: principal.userId,
-          videoId: taskId,
-          references: input.inputImages,
-        });
-      } catch (error) {
-        logError(error, {
-          source: "video-input-storage",
+    let preparation: Awaited<
+      ReturnType<typeof prepareVideoTaskInputReferences>
+    >;
+    try {
+      preparation = await prepareVideoTaskInputReferences({
+        taskId,
+        userId: principal.userId,
+        principalScope,
+        references: input.inputImages ?? [],
+      });
+      if (preparation.admission === "existing") {
+        const raced = await getVideoGenerationById(taskId);
+        if (!raced) {
+          throw new OperationError(
+            "not_ready",
+            "视频任务正在创建，请使用同一 clientRequestId 稍后重试"
+          );
+        }
+        assertVideoTaskPrincipal(raced, principal, ctx);
+        assertVideoRequestFingerprint(raced, requestFingerprint);
+        await assertVideoCallbackFingerprint(taskId, callbackUrl);
+        return {
           taskId,
-          userId: principal.userId,
-        });
-        throw new OperationError(
-          "not_ready",
-          "视频输入暂时无法写入持久存储，请稍后重试"
-        );
+          status: toVideoOperationStatus(raced.status, raced.stage),
+        };
       }
+    } catch (error) {
+      if (error instanceof VideoActiveTaskLimitError) {
+        throw new OperationError("rate_limited", error.message, {
+          limitKind: error.limitKind,
+          maxActiveTasks: error.maxActiveTasks,
+        });
+      }
+      if (error instanceof VideoTaskStagingInProgressError) {
+        throw new OperationError("not_ready", error.message);
+      }
+      logError(error, {
+        source: "video-input-preparation",
+        taskId,
+        userId: principal.userId,
+      });
+      throw new OperationError(
+        "not_ready",
+        "视频任务暂时无法完成准入或输入转存，请稍后重试"
+      );
     }
+    const stagedInput = preparation.stagedInput;
 
     try {
       const result = await runAdobeVideoGenerationForUser(
@@ -380,6 +406,7 @@ bindExecute(
           userId: principal.userId,
           ...(apiKeyId ? { apiKeyId } : {}),
           principalScope,
+          stagingReservationToken: preparation.reservationToken,
           videoGenerationId: taskId,
           clientRequestId: input.clientRequestId,
           requestFingerprint,
@@ -393,6 +420,9 @@ bindExecute(
             : {}),
           ...(stagedInput.references.length
             ? { inputImages: stagedInput.references }
+            : {}),
+          ...(stagedInput.objects.length
+            ? { stagedInputObjects: stagedInput.objects }
             : {}),
         },
         callbackUrl ? { callbackUrl } : undefined
@@ -418,6 +448,17 @@ bindExecute(
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个
       // insert 失败。只有已存在且指纹一致时才把它视为幂等命中。
+      await releaseVideoTaskStagingReservation({
+        taskId,
+        userId: principal.userId,
+        reservationToken: preparation.reservationToken,
+      }).catch((releaseError) =>
+        logError(releaseError, {
+          source: "video-staging-reservation-release",
+          taskId,
+          userId: principal.userId,
+        })
+      );
       const raced = await getVideoGenerationById(taskId);
       await cleanupUnusedStagedVideoInputs({
         objects: stagedInput.objects,
@@ -432,6 +473,7 @@ bindExecute(
       if (!raced) {
         if (error instanceof VideoActiveTaskLimitError) {
           throw new OperationError("rate_limited", error.message, {
+            limitKind: error.limitKind,
             maxActiveTasks: error.maxActiveTasks,
           });
         }

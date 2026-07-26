@@ -107,4 +107,21 @@ describe("video API key quota repository", () => {
     await expect(repository.refund({ videoId: "video-1" })).resolves.toBe(0);
     expect(queries).toHaveLength(1);
   });
+
+  it("Key 已删除时清零任务预留而不毒化退款队列", async () => {
+    const { database, queries } = createDatabase([
+      [{ userId: "user-1", apiKeyId: "deleted-key", reserved: "4" }],
+      [],
+      [],
+      [{ id: "video-1" }],
+    ]);
+    const repository = createPostgresVideoApiKeyQuotaRepository(database);
+
+    await expect(repository.refund({ videoId: "video-1" })).resolves.toBe(4);
+    const compiled = queries.map(
+      (query) => new PgDialect().sqlToQuery(query).sql
+    );
+    expect(compiled[2]).toContain("from external_api_key");
+    expect(compiled[3]).toContain("api_key_credits_reserved = 0");
+  });
 });

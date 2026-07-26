@@ -2,8 +2,7 @@
  * 单张图片上游适配与后端池重试服务。
  *
  * 使用方：`operations.ts` 的统一图片管线、账号池测活与 Adobe 视频配置解析。
- * 本文件只保留 Images API、Adobe gateway/direct、输入图转存和通用图片 SSE 解析；
- * 对话、Agent、Responses 工具循环与可编辑文件运行时不在此层。
+ * 本文件保留 Images API、Adobe gateway/direct、输入图转存和通用图片 SSE 解析。
  */
 import {
   buildAdobeImageRequestBody,
@@ -123,8 +122,8 @@ function getHeaders(
 /**
  * 将 API 池后端保存的字段映射应用到 JSON 请求体。
  *
- * 只有管理员配置的 pool-api 可使用映射；平台、用户自配 API 与 OAuth 账号始终发送
- * 原始标准请求，避免任何配置越过其既有协议与安全边界。
+ * 只有管理员配置的 pool-api 可使用映射；平台配置始终发送原始标准请求，避免成员
+ * 配置越过其既有协议与安全边界。
  *
  * @param config - 当前选中的上游配置。
  * @param requestBody - 已完成标准化、即将序列化的 JSON 请求体。
@@ -971,7 +970,7 @@ async function parseImageResponse(
 /**
  * api 后端（pool-api）分发前的输入图 re-host 守卫。
  *
- * 仅在最终选定的后端为 pool-api 且已知 userId 时生效（account 后端不受影响）：
+ * 仅在最终选定的后端为 pool-api 且已知 userId 时生效：
  * 把待发送给上游的输入图和 mask 逐张确保转存到我方对象存储，避免把第三方
  * 外链交给上游（上游下载外链会被图床限流返回 "failed download file 429"）。
  *

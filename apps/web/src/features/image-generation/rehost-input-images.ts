@@ -1,7 +1,7 @@
 /**
  * 输入图 re-host（转存）到我方对象存储。
  *
- * 职责：在确定走 api 后端（pool-api）后、构造 chat/responses 请求之前，确保每张
+ * 职责：在确定走 api 后端（pool-api）后、构造 Images API 请求之前，确保每张
  * 输入图都是"我方可控的 URL"，避免把第三方外链交给上游——上游下载外链会被图床
  * 限流返回 "failed download file 429" 导致整单失败。
  *

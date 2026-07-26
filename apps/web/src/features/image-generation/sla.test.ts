@@ -1,7 +1,4 @@
-import {
-  IMAGE_GENERATION_TIMEOUT_ERROR,
-  IMAGE_GENERATION_WEB_TIMEOUT_ERROR,
-} from "@repo/shared/generation-timeout";
+import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import { describe, expect, it } from "vitest";
 import {
   classifyGenerationError,
@@ -45,7 +42,7 @@ describe("generation SLA error classification", () => {
     expect(classifyGenerationError("insufficient_quota")).toBe("platform");
     expect(
       classifyGenerationError(
-        "Upstream Responses API returned HTTP 401: Unauthorized"
+        "Upstream Images API returned HTTP 401: Unauthorized"
       )
     ).toBe("platform");
   });
@@ -142,22 +139,14 @@ describe("generation SLA error classification", () => {
     for (const error of [
       "Upstream Images API returned HTTP 429: Upstream rate limit exceeded, please retry later | rate_limit_error",
       "Upstream Images API returned HTTP 429: Concurrency limit exceeded for account, please retry later | rate_limit_error",
-      "ChatGPT Web conversation failed: HTTP 429 Too many requests",
+      "Upstream Images API returned HTTP 429: Too many requests",
     ]) {
       expect(classifyGenerationError(error)).not.toBe("user_request");
     }
   });
 
-  it("attributes Web backend timeouts to moderation (suspected silent refusal)", () => {
-    // Web 上游对违规内容常静默挂住直至超时（无审核码/拒绝文本），补"疑似审核"标记后归
-    // moderation，避免隐性审核淹没在平台超时里。
-    expect(classifyGenerationError(IMAGE_GENERATION_WEB_TIMEOUT_ERROR)).toBe(
-      "moderation"
-    );
-  });
-
-  it("keeps non-Web (generic) timeouts as platform errors", () => {
-    // 通用超时（codex/responses 账号、外接 API、Adobe）仍算平台，不误归审核。
+  it("keeps generic timeouts as platform errors", () => {
+    // 无明确审核拒绝证据的超时算平台错误，避免把容量或网络故障误归审核。
     expect(classifyGenerationError(IMAGE_GENERATION_TIMEOUT_ERROR)).toBe(
       "platform"
     );
@@ -171,8 +160,8 @@ describe("generation SLA error classification", () => {
       "Content moderation failed",
       "aliyun: Aliyun moderation failed: 401",
       "aliyun: socket hang upPOST https://green-cip.ap-southeast-1.aliyuncs.com/ failed.",
-      "Upstream Responses API returned HTTP 400: Error while downloading http://example.test/api/storage/generations/id/moderation/file.png. Upstream status code: 400. | invalid_value | invalid_request_error",
-      "Upstream Responses API returned HTTP 400: Timeout while downloading http://example.test/api/storage/generations/id/moderation/file.png. | invalid_value | invalid_request_error",
+      "Upstream Images API returned HTTP 400: Error while downloading http://example.test/api/storage/generations/id/moderation/file.png. Upstream status code: 400. | invalid_value | invalid_request_error",
+      "Upstream Images API returned HTTP 400: Timeout while downloading http://example.test/api/storage/generations/id/moderation/file.png. | invalid_value | invalid_request_error",
     ];
 
     for (const error of platformErrors) {

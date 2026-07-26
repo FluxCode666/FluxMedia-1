@@ -1422,6 +1422,15 @@ type PersistedVideoInputReference =
       byteLength: number;
     };
 
+/** 仅由服务端 data 转存创建、可在终态安全删除的对象身份。 */
+type PersistedVideoInputObject = {
+  userId: string;
+  videoId: string;
+  attemptId: string;
+  storageKey: string;
+  storageBucket: string;
+};
+
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
 // 状态机、轮询恢复、按模型族每秒固定积分×时长计费。提交后置 running 并保存 pollUrl，
 // 定时/请求侧轮询到完成再 re-host 到对象存储。financially 真相仍在 credits_transaction，
@@ -1467,6 +1476,10 @@ export const videoGeneration = pgTable(
     // 图生视频输入：引用历史生成（@ 历史图）或上传图的 storageKey / generationId。
     inputImageRefs:
       json("input_image_refs").$type<PersistedVideoInputReference[]>(),
+    // 与客户端 storage 引用分离的可信清理集合，禁止仅凭 key 前缀推断删除权限。
+    stagedInputObjects: json("staged_input_objects").$type<
+      PersistedVideoInputObject[]
+    >(),
     // 完成后 re-host 到对象存储的 key；videoUrl 为上游 presigned（短期）。
     storageKey: text("storage_key"),
     videoUrl: text("video_url"),
@@ -1477,7 +1490,8 @@ export const videoGeneration = pgTable(
     })
       .notNull()
       .default(0),
-    // 外部 API Key 的任务级幂等配额金额；成功任务保留，退款事务归零。
+    // 外部 API Key 的任务级幂等配额金额；成功终态清零标记但保留 key 累计用量，
+    // 失败退款事务同时清零标记并归还 key 用量。
     apiKeyCreditsReserved: numeric("api_key_credits_reserved", {
       precision: 18,
       scale: 2,
@@ -1521,6 +1535,92 @@ export const videoGeneration = pgTable(
     check(
       "video_generation_recovery_counts_check",
       sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
+    ),
+  ]
+);
+
+// ============================================
+// 视频输入转存准入预留
+// ============================================
+
+/**
+ * 视频输入 staging reservation。
+ *
+ * 在任何 data URL 解码/上传前先按用户锁占用槽位；最终任务事务以 token 消费该行，
+ * 崩溃遗留行按 expiresAt 由后续准入或输入清理 worker 回收，消除预检与任务插入间
+ * 的资源放大窗口。
+ */
+export const videoTaskStagingReservation = pgTable(
+  "video_task_staging_reservation",
+  {
+    taskId: text("task_id").primaryKey(),
+    reservationToken: text("reservation_token").notNull(),
+    userId: text("user_id").notNull(),
+    principalScope: text("principal_scope").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("video_staging_reservation_token_unique").on(
+      table.reservationToken
+    ),
+    index("video_staging_reservation_user_expiry_idx").on(
+      table.userId,
+      table.expiresAt
+    ),
+    index("video_staging_reservation_principal_expiry_idx").on(
+      table.principalScope,
+      table.expiresAt
+    ),
+    index("video_staging_reservation_expiry_idx").on(table.expiresAt),
+    check(
+      "video_staging_reservation_identity_nonempty_check",
+      sql`length(btrim(${table.reservationToken})) > 0 AND length(btrim(${table.userId})) > 0 AND length(btrim(${table.principalScope})) > 0`
+    ),
+  ]
+);
+
+// ============================================
+// 视频临时输入持久清理队列
+// ============================================
+
+/**
+ * 视频输入对象清理队列。
+ *
+ * 对象存储删除与数据库任务创建无法组成同一事务；准入竞争或终态清理失败时，本表
+ * 保留稳定对象身份与 claim；created 任务保护仍需读取的输入，后续阶段可由多实例
+ * worker 最终重试删除而不会留下孤儿大对象。
+ */
+export const videoInputCleanup = pgTable(
+  "video_input_cleanup",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    videoId: text("video_id").notNull(),
+    attemptId: text("attempt_id").notNull(),
+    storageKey: text("storage_key").notNull(),
+    storageBucket: text("storage_bucket").notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("video_input_cleanup_recovery_idx").on(
+      table.nextAttemptAt,
+      table.claimExpiresAt
+    ),
+    check(
+      "video_input_cleanup_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "video_input_cleanup_identity_nonempty_check",
+      sql`length(btrim(${table.userId})) > 0 AND length(btrim(${table.videoId})) > 0 AND length(btrim(${table.attemptId})) > 0 AND length(btrim(${table.storageKey})) > 0 AND length(btrim(${table.storageBucket})) > 0`
     ),
   ]
 );

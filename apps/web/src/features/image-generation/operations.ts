@@ -13,8 +13,8 @@ import type { CreditOperationContext } from "@repo/shared/credits/usage-read-mod
 import {
   IMAGE_GENERATION_PENDING_TIMEOUT_MS,
   refundGenerationCredits,
-  resolveImageGenerationTimeoutError,
 } from "@repo/shared/generation-maintenance";
+import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
@@ -558,7 +558,7 @@ async function storeGeneratedImageOutput(params: {
     }
     // 生成式修复（手动 blockRepair）：两种技术二选一，由管理端主开关决定，均自带到目标分辨率
     // （启用成功时替代下面独立超分）、逐块/次计费(chargeTile)、失败回退不阻断：
-    //  - IMAGE_MASK_OUTPAINT_ENABLED：掩码顺序外绘（1K tile + mask，路由 codex，无缝，见 masked-outpaint.ts）
+    //  - IMAGE_MASK_OUTPAINT_ENABLED：掩码顺序外绘（1K tile + mask，见 masked-outpaint.ts）
     //  - IMAGE_BLOCK_REPAIR_ENABLED ：整图一次重绘 + general 超分（见 generative-repair.ts）
     let blockRepaired = false;
     if (params.blockRepair === true) {
@@ -1286,7 +1286,7 @@ async function runQueuedImageGenerationForUser({
         .update(generation)
         .set({
           status: "failed",
-          error: resolveImageGenerationTimeoutError(activeConfig.backend),
+          error: IMAGE_GENERATION_TIMEOUT_ERROR,
           creditsConsumed: chargedCredits,
           completedAt: new Date(),
           metadata: sql`COALESCE(${generation.metadata}, '{}'::json)::jsonb || ${JSON.stringify(
@@ -1337,7 +1337,7 @@ async function runQueuedImageGenerationForUser({
       }
 
       return {
-        error: resolveImageGenerationTimeoutError(activeConfig.backend),
+        error: IMAGE_GENERATION_TIMEOUT_ERROR,
         generationId,
         creditsConsumed: chargedCredits,
       };

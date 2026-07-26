@@ -94,8 +94,8 @@ export function getImageModel(model?: string | null, fallback?: string | null) {
 /**
  * 解析 API 池后端的图像模型。
  *
- * API 池是管理员明确配置的受信任上游转发边界，不能用平台/Web/Codex 账号的
- * `gpt-image-*` 白名单限制它。此函数仅负责模型标识透传，不代表该上游一定支持
+ * API 池是管理员明确配置的受信任上游转发边界，不能用平台模型白名单限制它。
+ * 此函数仅负责模型标识透传，不代表该上游一定支持
  * 此模型；实际兼容性由后端测活与上游响应决定。
  *
  * @param model - 调用方显式请求的模型。
