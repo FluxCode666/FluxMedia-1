@@ -1409,12 +1409,6 @@ export const adobeToken = pgTable(
 /** 视频 worker 可跨进程恢复的 JSON-safe 图片引用。 */
 type PersistedVideoInputReference =
   | {
-      source: "data";
-      mimeType: "image/png" | "image/jpeg" | "image/webp";
-      base64: string;
-      byteLength: number;
-    }
-  | {
       source: "storage";
       mimeType: "image/png" | "image/jpeg" | "image/webp";
       storageKey: string;
@@ -1483,6 +1477,14 @@ export const videoGeneration = pgTable(
     })
       .notNull()
       .default(0),
+    // 外部 API Key 的任务级幂等配额金额；成功任务保留，退款事务归零。
+    apiKeyCreditsReserved: numeric("api_key_credits_reserved", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
     // 异步轮询恢复用。
     pollUrl: text("poll_url"),
     upstreamJobId: text("upstream_job_id"),
@@ -1503,6 +1505,10 @@ export const videoGeneration = pgTable(
     index("video_generation_backend_member_idx").on(table.backendMemberId),
     index("video_generation_adobe_token_idx").on(table.adobeTokenId),
     index("video_generation_member_lease_idx").on(table.memberLeaseId),
+    index("video_generation_principal_stage_idx").on(
+      table.principalScope,
+      table.stage
+    ),
     index("video_generation_recovery_idx").on(
       table.stage,
       table.nextPollAt,
@@ -1514,7 +1520,7 @@ export const videoGeneration = pgTable(
     ),
     check(
       "video_generation_recovery_counts_check",
-      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0`
+      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
     ),
   ]
 );

@@ -282,7 +282,7 @@ async function assertMediaPreflight(pool) {
   });
 }
 
-/** 验证 0060-0063 后统一号池、视频回调和可恢复租约身份不变量。 */
+/** 验证 0060-0064 后统一号池、视频恢复身份和 API Key 配额不变量。 */
 async function assertMediaPostMigrationState(pool) {
   await inReadOnlyTransaction(pool, async (client) => {
     const result = await client.query(
@@ -314,6 +314,9 @@ async function assertMediaPostMigrationState(pool) {
                   and column_name = 'member_id' and is_nullable = 'NO')
                 or (table_name = 'video_generation'
                   and column_name = 'principal_scope' and is_nullable = 'NO')
+                or (table_name = 'video_generation'
+                  and column_name = 'api_key_credits_reserved'
+                  and is_nullable = 'NO')
                 or (table_name = 'video_generation_callback_delivery'
                   and column_name = 'callback_url' and is_nullable = 'NO')
               )
@@ -358,6 +361,7 @@ async function assertMediaPostMigrationState(pool) {
                 'adobe_account_member_idx',
                 'adobe_token_member_idx',
                 'adobe_token_member_status_idx',
+                'video_generation_principal_stage_idx',
                 'video_generation_recovery_idx',
                 'video_callback_delivery_video_unique',
                 'video_callback_delivery_recovery_idx'
@@ -464,10 +468,10 @@ async function assertMediaPostMigrationState(pool) {
       requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
       legacyTableCount !== 0 ||
       oldColumnCount !== 0 ||
-      requiredColumnCount !== 4 ||
+      requiredColumnCount !== 5 ||
       requiredConstraintCount !== 10 ||
       recoveryLeaseForeignKeyCount !== 0 ||
-      requiredIndexCount !== 14 ||
+      requiredIndexCount !== 15 ||
       removedSettingCount !== 0 ||
       obsoletePlanCount !== 0
     ) {

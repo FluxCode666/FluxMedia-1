@@ -51,15 +51,18 @@ import {
 } from "./adobe-direct";
 import { createVideoCreditOperation } from "./credit-operation-context";
 import { loadMediaInputs } from "./media-input-loader";
+import { defaultVideoApiKeyQuotaRepository } from "./video-api-key-quota";
 import {
   createVideoCallbackDeliveryValues,
   runVideoCallbackDeliveryJob,
 } from "./video-callback-delivery";
+import { cleanupPersistedVideoInputs } from "./video-input-storage";
 import {
   createVideoStorageKey,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
 import { defaultVideoRecoveryRepository } from "./video-recovery-repository";
+import { admitVideoTaskCreation } from "./video-task-admission";
 
 const VIDEO_POLL_DELAY_MS = 15_000;
 const VIDEO_RETRY_DELAY_MS = 60_000;
@@ -142,6 +145,10 @@ export type VideoPricingInfo = {
 type VideoGenerationRow = NonNullable<
   Awaited<ReturnType<typeof getVideoGenerationById>>
 >;
+type PersistableVideoInputReference = Exclude<
+  MediaInputReference,
+  { source: "data" }
+>;
 
 /** 读取必填全局视频模型价格；历史脏值回退开发默认值。 */
 async function getRuntimeGlobalVideoPricing(): Promise<Record<string, number>> {
@@ -223,7 +230,7 @@ async function failUnchargedVideo(
   row: VideoGenerationRow,
   message: string
 ): Promise<void> {
-  await compareAndSetVideoStage({
+  const failed = await compareAndSetVideoStage({
     row,
     expectedStages: [row.stage as VideoStage],
     values: {
@@ -234,9 +241,9 @@ async function failUnchargedVideo(
       claimToken: null,
       claimExpiresAt: null,
       nextPollAt: null,
-      inputImageRefs: null,
     },
   });
+  if (failed) await attemptVideoInputCleanup(failed);
 }
 
 /** 释放任务持有的成员租约；owner 已被接管时旧 worker 无法误释放。 */
@@ -279,6 +286,7 @@ async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
     description: `Adobe 视频生成失败退款 ${row.model}`,
     operation: createVideoCreditOperation(row.id, row.createdAt),
   });
+  await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
   const failed = await compareAndSetVideoStage({
     row,
     expectedStages: ["refunding"],
@@ -289,9 +297,9 @@ async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
       claimToken: null,
       claimExpiresAt: null,
       nextPollAt: null,
-      inputImageRefs: null,
     },
   });
+  if (failed) await attemptVideoInputCleanup(failed);
   await releaseVideoLease(failed ?? row);
 }
 
@@ -314,6 +322,7 @@ export async function reconcileUncertainVideoSubmission(
 
   if (input.outcome === "not_accepted") {
     if (row.stage === "failed") {
+      await attemptVideoInputCleanup(row);
       return { taskId: row.id, status: "failed" };
     }
     if (row.stage === "refunding") {
@@ -361,6 +370,7 @@ export async function reconcileUncertainVideoSubmission(
         "任务已用不同的 Adobe 恢复身份完成核对"
       );
     }
+    await attemptVideoInputCleanup(row);
     return {
       taskId: row.id,
       status: row.stage === "completed" ? "completed" : "processing",
@@ -409,6 +419,7 @@ export async function reconcileUncertainVideoSubmission(
       "视频任务状态已被其他操作修改"
     );
   }
+  await attemptVideoInputCleanup(polling);
   return { taskId: row.id, status: "processing" };
 }
 
@@ -431,10 +442,52 @@ function parsePersistedVideoInputImages(
 ): MediaInputReference[] | undefined {
   if (!row.inputImageRefs) return undefined;
   const parsed = mediaInputReferencesSchema.safeParse(row.inputImageRefs);
-  if (!parsed.success || parsed.data.length > 3) {
+  if (
+    !parsed.success ||
+    parsed.data.length > 3 ||
+    parsed.data.some((reference) => reference.source === "data")
+  ) {
     throw new Error("视频任务的输入图片引用无效");
   }
   return parsed.data;
+}
+
+/** 任务表只接受稳定 storage/remote 引用，禁止任何调用方绕过 UOL 写入 base64。 */
+function assertPersistableVideoInputImages(
+  references: MediaInputReference[] | undefined
+): asserts references is PersistableVideoInputReference[] | undefined {
+  if (references?.some((reference) => reference.source === "data")) {
+    throw new Error("视频 data 输入必须先持久化为 storage 引用");
+  }
+}
+
+/** 删除任务临时输入后才清空持久引用；失败时保留引用供后续 worker 重试。 */
+async function cleanupVideoInputObjects(
+  row: VideoGenerationRow
+): Promise<void> {
+  const references = parsePersistedVideoInputImages(row);
+  if (!references?.length) return;
+  await cleanupPersistedVideoInputs({
+    userId: row.userId,
+    videoId: row.id,
+    references,
+  });
+  await db
+    .update(videoGeneration)
+    .set({ inputImageRefs: null })
+    .where(eq(videoGeneration.id, row.id));
+}
+
+/** 临时输入清理失败不阻断已接受任务，并保留引用供后续恢复轮次重试。 */
+async function attemptVideoInputCleanup(
+  row: VideoGenerationRow
+): Promise<void> {
+  await cleanupVideoInputObjects(row).catch((error) =>
+    logError(error, {
+      source: "adobe-video-input-cleanup",
+      videoId: row.id,
+    })
+  );
 }
 
 /**
@@ -449,10 +502,17 @@ export async function runAdobeVideoGenerationForUser(
 ): Promise<VideoGenerationResult> {
   const conf = resolveFireflyVideoModel(input.model);
   if (!conf) return { error: `不支持的视频模型: ${input.model}` };
+  const persistedInputImages = input.inputImages;
+  assertPersistableVideoInputImages(persistedInputImages);
 
   const videoId = input.videoGenerationId || nanoid();
   const createdAt = new Date();
   await db.transaction(async (transaction) => {
+    const admission = await admitVideoTaskCreation(
+      { execute: (query) => transaction.execute(query) },
+      { taskId: videoId, principalScope: input.principalScope }
+    );
+    if (admission === "existing") return;
     await transaction.insert(videoGeneration).values({
       id: videoId,
       userId: input.userId,
@@ -490,8 +550,8 @@ export async function runAdobeVideoGenerationForUser(
             },
           }
         : {}),
-      ...(input.inputImages?.length
-        ? { inputImageRefs: input.inputImages }
+      ...(persistedInputImages?.length
+        ? { inputImageRefs: persistedInputImages }
         : {}),
       createdAt,
       updatedAt: createdAt,
@@ -618,6 +678,10 @@ async function submitClaimedCreatedVideo(
   row = charged;
 
   try {
+    await defaultVideoApiKeyQuotaRepository.reserve({
+      videoId: row.id,
+      amount: billedCost,
+    });
     await consumeCredits({
       userId: row.userId,
       amount: billedCost,
@@ -634,6 +698,7 @@ async function submitClaimedCreatedVideo(
     });
   } catch (error) {
     await backendSession.close();
+    await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
     await failUnchargedVideo(
       row,
       error instanceof Error ? error.message : "积分不足"
@@ -687,11 +752,11 @@ async function submitClaimedCreatedVideo(
           nextPollAt: new Date(),
           claimToken: null,
           claimExpiresAt: null,
-          inputImageRefs: null,
           error: null,
         },
       });
       if (!polling) throw new Error("Adobe 接受结果持久化发生并发冲突");
+      await attemptVideoInputCleanup(polling);
       return {
         videoGenerationId: row.id,
         status: "processing",
@@ -709,13 +774,13 @@ async function submitClaimedCreatedVideo(
           nextPollAt: null,
           claimToken: null,
           claimExpiresAt: null,
-          inputImageRefs: null,
         },
       });
       await backendSession.close();
       if (!uncertain) {
         throw new Error("Adobe 提交不确定状态持久化发生并发冲突");
       }
+      await attemptVideoInputCleanup(uncertain);
       return {
         error: "Adobe 视频提交结果不确定，任务已保留待核对",
         videoGenerationId: row.id,
@@ -888,6 +953,10 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
   }
   if (row.stage === "charged") {
     try {
+      await defaultVideoApiKeyQuotaRepository.reserve({
+        videoId: row.id,
+        amount: row.creditsConsumed,
+      });
       await consumeCredits({
         userId: row.userId,
         amount: row.creditsConsumed,
@@ -903,6 +972,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
       );
       if (refunding) await refundClaimedVideo(refunding);
     } catch (error) {
+      await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
       await failUnchargedVideo(
         row,
         error instanceof Error ? error.message : "视频扣费未完成"
@@ -912,7 +982,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     return;
   }
   if (row.stage === "submitting") {
-    await compareAndSetVideoStage({
+    const uncertain = await compareAndSetVideoStage({
       row,
       expectedStages: ["submitting"],
       values: {
@@ -923,7 +993,11 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
         claimExpiresAt: null,
       },
     });
+    if (uncertain) await attemptVideoInputCleanup(uncertain);
     return;
+  }
+  if (["polling", "downloading", "refunding"].includes(row.stage)) {
+    await attemptVideoInputCleanup(row);
   }
   if (row.stage === "refunding") {
     await refundClaimedVideo(row);

@@ -95,6 +95,14 @@ export function createPostgresVideoRecoveryRepository(
                 or claim_expires_at <= ${input.now}
               )
             order by
+              case stage
+                when 'refunding' then 0
+                when 'downloading' then 1
+                when 'polling' then 2
+                when 'submitting' then 3
+                when 'charged' then 3
+                else 4
+              end,
               coalesce(
                 next_poll_at,
                 submit_started_at,

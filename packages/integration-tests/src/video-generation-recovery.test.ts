@@ -7,15 +7,23 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { SQL } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createPostgresVideoApiKeyQuotaRepository,
+  type VideoApiKeyQuotaDatabase,
+} from "../../../apps/web/src/features/image-generation/video-api-key-quota";
 import {
   createPostgresVideoRecoveryRepository,
   VIDEO_SUBMISSION_RECOVERY_GRACE_MS,
   type VideoRecoveryDatabase,
 } from "../../../apps/web/src/features/image-generation/video-recovery-repository";
+import {
+  admitVideoTaskCreation,
+  VideoActiveTaskLimitError,
+} from "../../../apps/web/src/features/image-generation/video-task-admission";
 import { requireDedicatedTestDatabaseUrl } from "./test-database-url";
 
 interface IdRow {
@@ -32,6 +40,10 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
   await client.query(`
     create table video_generation (
       id text primary key,
+      user_id text not null default 'user-1',
+      api_key_id text,
+      api_key_credits_reserved numeric(18, 2) not null default 0,
+      principal_scope text not null default 'user:user-1',
       stage text not null,
       state_version integer not null default 0,
       next_poll_at timestamp,
@@ -39,6 +51,14 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       claim_expires_at timestamp,
       submit_started_at timestamp,
       created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+    create table external_api_key (
+      id text primary key,
+      user_id text not null,
+      credit_limit numeric(18, 2),
+      credits_used numeric(18, 2) not null default 0,
+      is_active boolean not null default true,
       updated_at timestamp not null default now()
     );
     create table terminal_effect (
@@ -83,6 +103,11 @@ function createRecoveryDatabase(client: PoolClient): VideoRecoveryDatabase {
       }
     },
   };
+}
+
+/** 复用同一事务适配器执行任务级 API Key 配额 SQL。 */
+function createQuotaDatabase(client: PoolClient): VideoApiKeyQuotaDatabase {
+  return createRecoveryDatabase(client);
 }
 
 beforeAll(() => {
@@ -254,6 +279,147 @@ describe("video recovery PostgreSQL concurrency", () => {
         if (schemaName) await dropFixtureSchema(client, schemaName);
       } finally {
         client.release();
+      }
+    }
+  });
+
+  it("并发重放只预留并归还一次 API Key 配额", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      await owner.query(`
+        insert into external_api_key
+          (id, user_id, credit_limit, credits_used)
+        values ('key-1', 'user-1', 10, 0);
+        insert into video_generation
+          (id, api_key_id, stage)
+        values ('video-quota-1', 'key-1', 'charged')
+      `);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await Promise.all([
+          first.query(`set search_path to "${schemaName}", public`),
+          second.query(`set search_path to "${schemaName}", public`),
+        ]);
+        const firstRepository = createPostgresVideoApiKeyQuotaRepository(
+          createQuotaDatabase(first)
+        );
+        const secondRepository = createPostgresVideoApiKeyQuotaRepository(
+          createQuotaDatabase(second)
+        );
+
+        await expect(
+          Promise.all([
+            firstRepository.reserve({ videoId: "video-quota-1", amount: 4 }),
+            secondRepository.reserve({ videoId: "video-quota-1", amount: 4 }),
+          ])
+        ).resolves.toEqual([4, 4]);
+        const reserved = await owner.query<{
+          credits_used: string;
+          api_key_credits_reserved: string;
+        }>(`
+          select key.credits_used::text, task.api_key_credits_reserved::text
+          from external_api_key key
+          join video_generation task on task.api_key_id = key.id
+          where task.id = 'video-quota-1'
+        `);
+        expect(reserved.rows[0]).toEqual({
+          credits_used: "4.00",
+          api_key_credits_reserved: "4.00",
+        });
+
+        await expect(
+          Promise.all([
+            firstRepository.refund({ videoId: "video-quota-1" }),
+            secondRepository.refund({ videoId: "video-quota-1" }),
+          ])
+        ).resolves.toEqual(expect.arrayContaining([0, 4]));
+        const refunded = await owner.query<{
+          credits_used: string;
+          api_key_credits_reserved: string;
+        }>(`
+          select key.credits_used::text, task.api_key_credits_reserved::text
+          from external_api_key key
+          join video_generation task on task.api_key_id = key.id
+          where task.id = 'video-quota-1'
+        `);
+        expect(refunded.rows[0]).toEqual({
+          credits_used: "0.00",
+          api_key_credits_reserved: "0.00",
+        });
+      } finally {
+        first.release();
+        second.release();
+      }
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("Principal 活跃任务上限在并发创建下只放行一个事务", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await Promise.all([
+          first.query(`set search_path to "${schemaName}", public`),
+          second.query(`set search_path to "${schemaName}", public`),
+        ]);
+        /** 在独立连接事务内执行生产准入并紧接着插入任务。 */
+        const createTask = async (client: PoolClient, taskId: string) =>
+          createQuotaDatabase(client).transaction(async (transaction) => {
+            const admission = await admitVideoTaskCreation(transaction, {
+              taskId,
+              principalScope: "external:user-1:key-1",
+              maxActiveTasks: 1,
+            });
+            if (admission === "admitted") {
+              await transaction.execute(sql`
+                insert into video_generation (id, principal_scope, stage)
+                values (${taskId}, 'external:user-1:key-1', 'created')
+              `);
+            }
+            return admission;
+          });
+
+        const results = await Promise.allSettled([
+          createTask(first, "admission-1"),
+          createTask(second, "admission-2"),
+        ]);
+        expect(
+          results.filter((result) => result.status === "fulfilled")
+        ).toHaveLength(1);
+        const rejected = results.find((result) => result.status === "rejected");
+        expect(rejected).toMatchObject({
+          status: "rejected",
+          reason: expect.any(VideoActiveTaskLimitError),
+        });
+        const count = await owner.query<{ count: string }>(`
+          select count(*)::text as count
+          from video_generation
+          where principal_scope = 'external:user-1:key-1'
+        `);
+        expect(count.rows[0]?.count).toBe("1");
+      } finally {
+        first.release();
+        second.release();
+      }
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
       }
     }
   });

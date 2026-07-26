@@ -65,6 +65,10 @@ describe("video recovery repository", () => {
     expect(compiled.sql).toContain("'refunding'");
     expect(compiled.sql).toContain("state_version = state_version + 1");
     expect(compiled.sql).toContain("submit_started_at");
+    expect(compiled.sql).toContain("when 'refunding' then 0");
+    expect(compiled.sql).toContain("when 'downloading' then 1");
+    expect(compiled.sql).toContain("when 'polling' then 2");
+    expect(compiled.sql).toContain("else 4");
   });
 
   it("没有到期任务时返回 null", async () => {
