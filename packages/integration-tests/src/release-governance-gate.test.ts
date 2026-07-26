@@ -238,6 +238,10 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
     `alter table "user"
        drop column if exists moderation_block_risk_level`
   );
+  await client.query(`
+    alter table image_backend_member_api_config
+      add column if not exists use_stream boolean not null default false
+  `);
   await client.query(
     "drop table if exists image_backend_account, image_backend_api"
   );
@@ -370,6 +374,45 @@ describe("release governance gate PostgreSQL integration", () => {
     );
   });
 
+  it("非法模型元素与 Responses API 配置拒绝统一号池迁移前检查", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(
+      `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
+    );
+    await pool.query(`
+      create table image_backend_api (
+        id text primary key,
+        interface_mode text not null,
+        image_upstream_mode text not null,
+        supported_model_ids json not null
+      )
+    `);
+    await pool.query(`
+      insert into image_backend_api (
+        id,
+        interface_mode,
+        image_upstream_mode,
+        supported_model_ids
+      ) values (
+        'invalid-api',
+        'responses',
+        'responses',
+        '[1, ""]'::json
+      )
+    `);
+
+    const result = await runReleaseGate("preflight", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("legacy_media_invalid_api_model_count=1\n");
+    expect(result.stdout).toContain(
+      "legacy_media_incompatible_api_protocol_count=1\n"
+    );
+    expect(result.stdout).toContain("legacy_media_blocker_total_count=2\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: unified media preflight failed: 2 non-migratable rows found"
+    );
+  });
+
   it("首次 postcheck 拒绝残留覆盖，后续 postcheck 允许合法覆盖", async () => {
     if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
     await seedUser(pool, overrideUserId, "low");
@@ -405,6 +448,21 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(result.stderr).toContain("release governance gate failed:");
     expect(result.stderr).toContain(
       'column "moderation_block_risk_level_override" does not exist'
+    );
+  });
+
+  it("后续 postcheck 在 API Images 流式配置列缺失时拒绝发布", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(`
+      alter table image_backend_member_api_config
+        drop column use_stream
+    `);
+
+    const result = await runReleaseGate("postcheck", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("required_media_column_count=5\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: post-migration unified media invariants failed"
     );
   });
 

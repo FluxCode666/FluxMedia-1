@@ -44,6 +44,7 @@ export type PersistedBackendMemberInput = BackendMemberInput & {
 export interface RedactedApiMemberConfig {
   baseUrl: string;
   hasApiKey: boolean;
+  useStream: boolean;
   parameterMappings: Array<{
     source: string;
     target: string;
@@ -265,6 +266,7 @@ const memberListRowSchema = z.object({
   last_used_at: z.coerce.date().nullable(),
   api_base_url: z.string().nullable(),
   api_has_key: z.boolean(),
+  api_use_stream: z.boolean().nullable(),
   parameter_mappings: z.unknown().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
@@ -306,6 +308,7 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
       config: {
         baseUrl: row.api_base_url,
         hasApiKey: row.api_has_key,
+        useStream: row.api_use_stream ?? false,
         parameterMappings: requestParameterMappingsSchema.parse(
           row.parameter_mappings ?? []
         ),
@@ -460,6 +463,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             memberId: input.id,
             baseUrl: input.config.baseUrl,
             apiKey,
+            useStream: input.config.useStream,
             parameterMappings: input.config.parameterMappings,
             createdAt: now,
             updatedAt: now,
@@ -469,6 +473,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             set: {
               baseUrl: input.config.baseUrl,
               apiKey,
+              useStream: input.config.useStream,
               parameterMappings: input.config.parameterMappings,
               updatedAt: now,
             },
@@ -552,6 +557,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           member.last_used_at,
           api.base_url as api_base_url,
           (api.api_key is not null) as api_has_key,
+          api.use_stream as api_use_stream,
           api.parameter_mappings,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,

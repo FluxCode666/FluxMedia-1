@@ -1151,6 +1151,7 @@ export const imageBackendMemberApiConfig = pgTable(
       .references(() => imageBackendMember.id, { onDelete: "cascade" }),
     baseUrl: text("base_url").notNull(),
     apiKey: text("api_key"),
+    useStream: boolean("use_stream").notNull().default(false),
     parameterMappings: json("parameter_mappings")
       .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
       .notNull()

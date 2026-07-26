@@ -31,6 +31,7 @@ export const apiBackendMemberConfigSchema = z
         message: "API baseUrl must use HTTPS",
       }),
     apiKey: z.string().trim().min(1).max(8_192).optional(),
+    useStream: z.boolean().default(false),
     parameterMappings: requestParameterMappingsSchema,
   })
   .strict();

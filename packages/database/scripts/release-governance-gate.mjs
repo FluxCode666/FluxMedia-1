@@ -230,6 +230,7 @@ async function assertMediaPreflight(pool) {
       printEvidence("legacy_media_active_video_count", 0);
       printEvidence("legacy_media_member_id_collision_count", 0);
       printEvidence("legacy_media_invalid_api_model_count", 0);
+      printEvidence("legacy_media_incompatible_api_protocol_count", 0);
       printEvidence("legacy_media_invalid_adobe_config_count", 0);
       printEvidence("legacy_media_invalid_member_state_count", 0);
       printEvidence("legacy_media_blocker_total_count", 0);
@@ -349,13 +350,44 @@ async function assertMediaPreflight(pool) {
         ? await client.query(`
           select count(*)::text as count
           from image_backend_api
-          where json_typeof(supported_model_ids) <> 'array'
-            or json_array_length(supported_model_ids) = 0
+          where case
+            when json_typeof(supported_model_ids) <> 'array' then true
+            when json_array_length(supported_model_ids) not between 1 and 200
+              then true
+            else exists (
+              select 1
+              from json_array_elements(supported_model_ids) as model(value)
+              where json_typeof(model.value) <> 'string'
+                or char_length(btrim(model.value #>> '{}')) not between 1 and 120
+                or lower(btrim(model.value #>> '{}')) ~
+                  '^(firefly-sora2(-pro)?-(4|8|12)s-(9x16|16x9)|(firefly-)?veo31(-ref|-fast)?-(4|6|8)s-(16x9|9x16)-(1080p|720p)|(firefly-)?kling-o3-(5|15)s-(16x9|9x16)|(firefly-)?kling3-(5|10|15)s-(16x9|9x16))$'
+            )
+          end
         `)
         : { rows: [{ count: "0" }] };
     const invalidApiModelCount = parseCount(
       invalidApiModelResult.rows[0]?.count,
       "invalid legacy API models"
+    );
+    const apiProtocolColumnResult = await client.query(`
+      select count(*)::integer as count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'image_backend_api'
+        and column_name in ('interface_mode', 'image_upstream_mode')
+    `);
+    const incompatibleApiProtocolResult =
+      apiProtocolColumnResult.rows[0]?.count === 2
+        ? await client.query(`
+            select count(*)::text as count
+            from image_backend_api
+            where interface_mode not in ('images', 'mixed')
+              or image_upstream_mode <> 'images'
+          `)
+        : { rows: [{ count: "0" }] };
+    const incompatibleApiProtocolCount = parseCount(
+      incompatibleApiProtocolResult.rows[0]?.count,
+      "incompatible legacy API protocols"
     );
     const adobeConfigColumnResult = await client.query(`
       select count(*)::integer as count
@@ -369,12 +401,25 @@ async function assertMediaPreflight(pool) {
         ? await client.query(`
             select count(*)::text as count
             from image_backend_adobe
-            where mode not in ('gateway', 'direct')
-              or (mode = 'gateway' and nullif(btrim(base_url), '') is null)
-              or (
-                enabled_models is not null
-                and json_typeof(enabled_models) <> 'array'
+            where case
+              when mode not in ('gateway', 'direct') then true
+              when mode = 'gateway' and nullif(btrim(base_url), '') is null
+                then true
+              when enabled_models is null then false
+              when json_typeof(enabled_models) <> 'array' then true
+              when json_array_length(enabled_models) > 200 then true
+              else exists (
+                select 1
+                from json_array_elements(enabled_models) as model(value)
+                where json_typeof(model.value) <> 'string'
+                  or char_length(btrim(model.value #>> '{}')) not between 1 and 120
+                  or (
+                    image_backend_adobe.mode = 'gateway'
+                    and lower(btrim(model.value #>> '{}')) ~
+                      '^(firefly-sora2(-pro)?-(4|8|12)s-(9x16|16x9)|(firefly-)?veo31(-ref|-fast)?-(4|6|8)s-(16x9|9x16)-(1080p|720p)|(firefly-)?kling-o3-(5|15)s-(16x9|9x16)|(firefly-)?kling3-(5|10|15)s-(16x9|9x16))$'
+                  )
               )
+            end
           `)
         : { rows: [{ count: "0" }] };
     const invalidAdobeConfigCount = parseCount(
@@ -451,6 +496,7 @@ async function assertMediaPreflight(pool) {
       activeVideoCount +
       memberIdCollisionCount +
       invalidApiModelCount +
+      incompatibleApiProtocolCount +
       invalidAdobeConfigCount +
       invalidMemberStateCount;
 
@@ -462,6 +508,10 @@ async function assertMediaPreflight(pool) {
       memberIdCollisionCount
     );
     printEvidence("legacy_media_invalid_api_model_count", invalidApiModelCount);
+    printEvidence(
+      "legacy_media_incompatible_api_protocol_count",
+      incompatibleApiProtocolCount
+    );
     printEvidence(
       "legacy_media_invalid_adobe_config_count",
       invalidAdobeConfigCount
@@ -516,6 +566,8 @@ async function assertMediaPostMigrationState(pool) {
                   and is_nullable = 'NO')
                 or (table_name = 'video_generation_callback_delivery'
                   and column_name = 'callback_url' and is_nullable = 'NO')
+                or (table_name = 'image_backend_member_api_config'
+                  and column_name = 'use_stream' and is_nullable = 'NO')
               )
           ) as required_column_count,
           (
@@ -665,7 +717,7 @@ async function assertMediaPostMigrationState(pool) {
       requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
       legacyTableCount !== 0 ||
       oldColumnCount !== 0 ||
-      requiredColumnCount !== 5 ||
+      requiredColumnCount !== 6 ||
       requiredConstraintCount !== 10 ||
       recoveryLeaseForeignKeyCount !== 0 ||
       requiredIndexCount !== 15 ||

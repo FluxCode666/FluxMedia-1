@@ -60,6 +60,7 @@ const runtimeConfigRowSchema = z.object({
   member_content_safety_enabled: z.boolean(),
   api_base_url: z.string().nullable(),
   api_key: z.string().nullable(),
+  api_use_stream: z.boolean().nullable(),
   parameter_mappings: z.unknown().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
@@ -243,6 +244,7 @@ async function loadRuntimeBackendLease(
           member.content_safety_enabled as member_content_safety_enabled,
           api.base_url as api_base_url,
           api.api_key,
+          api.use_stream as api_use_stream,
           api.parameter_mappings,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
@@ -289,6 +291,7 @@ async function loadRuntimeBackendLease(
         baseUrl: row.api_base_url.replace(/\/+$/, ""),
         apiKey: row.api_key,
         model: input.modelId,
+        useStream: row.api_use_stream ?? false,
         contentSafetyEnabled,
         backend: {
           ...commonBackend,

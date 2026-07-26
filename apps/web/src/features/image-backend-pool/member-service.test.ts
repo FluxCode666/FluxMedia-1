@@ -47,6 +47,7 @@ function apiInput(overrides: Record<string, unknown> = {}) {
     config: {
       baseUrl: "https://images.example.com/v1",
       apiKey: "secret-api-key",
+      useStream: true,
       parameterMappings: [],
     },
     ...overrides,
@@ -84,6 +85,7 @@ describe("backend member service", () => {
         isCreate: true,
         type: "api",
         supportedModelIds: ["gpt-image-2"],
+        config: expect.objectContaining({ useStream: true }),
       }),
       NOW
     );
@@ -236,6 +238,7 @@ describe("backend member service", () => {
       config: {
         baseUrl: "https://images.example.com/v1",
         hasApiKey: true,
+        useStream: false,
         parameterMappings: [],
       },
     };

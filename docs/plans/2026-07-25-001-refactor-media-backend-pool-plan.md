@@ -38,8 +38,8 @@ Adobe 身份也由独立 Adobe 成员和 API 成员上的 `adobeSourced` 标记�
 
 ### Key Decisions
 
-- **采用真正统一的后端成员模型。** (session-settled: user-approved — chosen over 仅统一调度投影: 线上没有存量数据，继续保留两套内部模型只会隐藏重复职责。) Governs R5-R8。
-- **旧号池能力一次性彻底退场。** (session-settled: user-directed — chosen over 停用保留或先导出: 线上没有旧数据，不需要兼容层或回滚读取路径。) Governs R1-R3。
+- **采用真正统一的后端成员模型。** (session-settled: user-approved — chosen over 仅统一调度投影: API/Adobe 存量可迁入单一模型，继续保留两套内部模型只会隐藏重复职责。) Governs R5-R8。
+- **旧 Web 号池能力一次性彻底退场。** (session-settled: user-directed — chosen over 停用保留或先导出: 线上只有旧 Web 账号确认无数据；API/Adobe 数据必须迁移，不需要为 Web 保留兼容层或回滚读取路径。) Governs R1-R3。
 - **Adobe 身份只由成员类型表达。** (session-settled: user-directed — chosen over `api` 类型叠加 Adobe 来源标记: 单一身份来源可消除调度分支，同时保留 Adobe 网关与直连能力。) Governs R5-R7、R10-R11。
 - **模型能力而非类型或前缀决定候选。** (session-settled: user-directed — chosen over 组内盲试或按模型前缀分流: 账号显式声明支持模型可以跨类型公平调度并避免无效调用。) Governs R9-R13。
 - **调度策略使用全局动态配置。** (session-settled: user-directed — chosen over 分组覆盖或仅分组配置: 当前业务只需要一个可运行时切换的系统级策略。) Governs R14-R19。
@@ -164,7 +164,7 @@ flowchart TB
 
 ### Dependencies / Assumptions
 
-- 目标环境没有需要保留的 Web/Codex、Sub2API、注册机或旧 API/Adobe 号池数据，因此可以使用一次性破坏性迁移；执行前仍需以只读检查确认目标表为空。
+- 目标环境没有需要保留的 Web/Codex、Sub2API 或注册机数据，因此这些结构可以一次性删除；旧 API/Adobe 号池存在数据，必须在同一事务内保留并转换，执行前以只读 preflight 验证可迁移性。
 - 生图继续汇入 `runImageGenerationForUser`，不得新建平行图片管线。
 - 财务真相继续位于 `credits_transaction`；视频扣费和退款继续使用同一服务端 operation context 与幂等 `sourceRef`。
 - 调度容量以现有租约机制为并发事实来源；规划必须保证最小负载在多副本环境下使用一致口径。
@@ -208,13 +208,13 @@ flowchart TB
 - KTD2. **`supportedModelIds` 是唯一候选能力权威。** (session-settled: user-directed — chosen over 空列表代表全支持或按前缀推断: 显式能力才能让不同类型成员在同一集合中安全调度。) 统一成员保存时要求至少一个公开模型 ID，API、Adobe gateway 和 Adobe direct 使用同一字段；0060 将 Adobe 图片家族的旧 `firefly-*` 标识规范为与 API 相同的公开 ID，原始列表只保留在迁移元数据。旧 `enabledModels`、`supportsVideo`、`adobeSourced` 与空列表全支持语义全部删除。Covers R7、R9-R13。
 - KTD3. **策略排序与获租在同一 PostgreSQL 事务内完成。** 三种策略共享一次资格查询，事务以稳定顺序锁定候选成员、清理过期租约、聚合有效在飞数、重新排序、插入租约，并原子更新 `leaseAcquiredCount` 与 `lastAcquiredAt`；生产环境不得退回进程内租约 Map。Covers R14-R19、R22。
 - KTD4. **调度策略复用系统设置 UOL，获租事务读取数据库快照。** (session-settled: user-directed — chosen over 分组配置或静态代码常量: 当前业务只需要全局运行时策略。) 新键 `IMAGE_BACKEND_SCHEDULING_STRATEGY` 使用 `priority | least_acquired | least_load` 严格枚举和 `priority` 默认值；系统设置 Server Action 调用补齐面板语义的 `settings.getSnapshot` / `settings.update` operation。每次获租事务直接读取并归一化数据库设置，保证保存返回后的新请求不受其他副本本地缓存滞后影响。Covers R14、R22。
-- KTD5. **调度器只选成员，类型适配器只翻译协议。** 调度器不解析 `firefly-*`、Veo、Kling 或供应商家族；命中后由 API images、Adobe gateway 或 Adobe direct 适配器解析同一个公开模型 ID 并构造上游请求。旧 API 即使带有 `adobeSourced` 也继续按 API Images 协议迁移，只删除该供应商提示标记；真正 Adobe gateway 仅来自旧 Adobe 顶层成员。API 适配器不再包含 Responses/Mixed 模式。Covers R7、R9-R13。
+- KTD5. **调度器只选成员，类型适配器只翻译协议。** 调度器不解析 `firefly-*`、Veo、Kling 或供应商家族；命中后由 API images、Adobe gateway 或 Adobe direct 适配器解析同一个公开模型 ID 并构造上游请求。旧 API 即使带有 `adobeSourced` 也继续按 API Images 协议迁移，只删除该供应商提示标记；真正 Adobe gateway 仅来自旧 Adobe 顶层成员。API 适配器不再包含 Responses/Mixed 模式，但保留 Images 上游的 `useStream` 能力。Covers R7、R9-R13。
 - KTD6. **图片和视频共享无粘性的失败排除协议，视频按阶段判定是否可切换。** (session-settled: user-directed — chosen over 保留 Responses 会话粘性或按旧成员类型限制重试: 普通媒体任务不需要会话状态。) 每次编排维护请求局部的成员 ID 排除集合；确认上游未接受请求的可切换失败释放租约并以原分组、原模型、原策略重选，终态用户错误和审核拒绝不切换。视频一旦取得上游任务标识，只在同一任务上恢复轮询和下载；提交结果不确定且上游无幂等键时不得自动重投。删除 `image_backend_sticky_binding` 及 previous-response/session-hash 路径。Covers R15、R19、R21。
 - KTD7. **保留媒体传输全部收敛到 UOL。** 扩展 `image.generate` 的严格输入以承载 generate/edit/mask 变体并继续唯一委托 `runImageGenerationForUser`；新增 `video.generate` 与 `video.getStatus`，Web 与两棵 v1 路由只负责解析、构造 Principal、调用 `invokeOperation` 和编码响应。网关补齐 operation capability 执行，资源归属由视频查询 binding 校验。Covers R1、R4、R20。
 - KTD8. **视频请求键以 Principal 所有者为幂等权威。** `video.generate` 必须接收 `clientRequestId`；session 使用用户作用域，外部调用使用 `(userId, apiKeyId, clientRequestId)`，并由该作用域稳定派生任务和扣费 `sourceRef`。重放再次校验所存所有者后返回既有任务，不跨 API Key 命中，也不重复派发、扣费或退款。视频失败重选发生在同一任务和同一财务 operation context 内。Covers R4、R19-R20。
 - KTD9. **旧产品面一次性从类型到部署资产删除。** (session-settled: user-directed — chosen over 停用开关或兼容路由: 旧 Web 账号无存量，隐藏实现仍会继续污染调度和产品边界；API/Adobe 存量由 0060 迁移而非删除。) 删除 account/Sub2API/register、Chat/Agent/waterfall/Responses、editable-file/PSD export 的路由、operation、能力位、设置、任务、UI、模型目录和测试；账本读取仍可保留不可调用的历史 operation label。Covers R1-R4、R12、R20。
 - KTD10. **TLS sidecar 收窄为 Adobe allowlist 代理。** 将 `services/chatgpt-web-proxy`、Dockerfile、Compose 服务和环境变量重命名为 Adobe direct 语义，删除 chatgpt.com 默认目标、Cloudflare clearance、ChatGPT cookie/session 行为，只允许 Adobe HTTPS 主机并保持 secret 鉴权、请求体上限和超时。Covers R3、R6。
-- KTD11. **0060 使用维护窗口执行原子数据切换。** 手写 `0060_unified_media_backend_pool.sql` 并登记 `_journal.json`；SQL 首段只阻断旧 Web 数据、有效租约/粘性绑定、无法恢复的运行中视频、成员 ID 冲突和非法配置。随后以原 ID 迁移 API/Adobe 成员、类型配置、分组、Adobe account/token、过期租约、历史指标和终态视频引用，清理旧设置与套餐 JSON 后删除旧表；旧实例必须先排空，迁移后禁止自动回滚旧镜像。Covers R1-R7、R14、R19-R20。
+- KTD11. **0060 使用维护窗口执行原子数据切换。** 手写 `0060_unified_media_backend_pool.sql` 并登记 `_journal.json`；SQL 首段只阻断旧 Web 数据、有效租约/粘性绑定、无法恢复的运行中视频、成员 ID 冲突、Responses 型 API 和非法配置。随后以原 ID 迁移 API/Adobe 顶层成员、类型配置、Adobe account/token、过期租约、历史指标和终态视频引用；API/Adobe 关系 ID 增加类型前缀后合并，Images `use_stream` 原样保留。最后清理旧设置与套餐 JSON 并删除旧表；旧实例必须先排空，迁移后禁止自动回滚旧镜像。Covers R1-R7、R14、R19-R20。
 - KTD12. **调度观测记录策略和结果，不记录业务载荷。** 聚合指标增加 `strategy` 与 `outcome`，区分获租、容量拒绝、切换、终态失败和无候选；保留成员类型快照、成员 ID、分组和候选数，不存 prompt、媒体、Cookie、token 或 API key。Covers R21-R22。
 
 ### High-Level Technical Design
@@ -731,8 +731,8 @@ flowchart LR
   - `docs/MEMORY.md`
   - `docs/TODO.md`
 - **Approach:**
-  1. 0060 第一段断言旧 Web account、有效租约/sticky、无法恢复的运行中视频、成员 ID 冲突和非法模型/Adobe 配置均为空；任一不满足即抛异常并完整回滚。
-  2. 在同一事务创建统一约束/索引，以原 ID 复制 API/Adobe 成员及关系，重建 Adobe 子池归属，迁移过期租约与历史指标，并把终态视频 `adobe_id` 写入 `backend_member_id`；随后清理旧 system_setting 和 PLAN_CAPABILITY_MATRIX 节点，再删除旧表、旧视频外键列、enum-like 字段与 sticky 表。
+  1. 0060 第一段断言旧 Web account、有效租约/sticky、无法恢复的运行中视频、成员 ID 冲突、Responses 型 API 和非法模型/Adobe 配置均为空；任一不满足即抛异常并完整回滚。
+  2. 在同一事务创建统一约束/索引，以原 ID 复制 API/Adobe 顶层成员并保留 Images `use_stream`，给两类旧关系 ID 增加类型前缀后合并，重建 Adobe 子池归属，迁移过期租约与历史指标，并把终态视频 `adobe_id` 写入 `backend_member_id`；随后清理旧 system_setting 和 PLAN_CAPABILITY_MATRIX 节点，再删除旧表、旧视频外键列、enum-like 字段与 sticky 表。
   3. 手动登记 journal idx 60，不运行 `drizzle-kit generate`；在空白数据库和从 0059 升级的专用数据库验证 schema、SQL、journal 和 Drizzle 类型一致。
   4. 部署工作流进入维护状态、停止旧 Web/worker、确认连接与租约排空、创建受控数据库备份、执行 0060、启动新 Web 与 Adobe proxy，并禁止失败时自动拉起旧镜像。
   5. 运行三种策略的真实并发测试、图片 generate/edit/mask、视频 generate/query/replay/failover、积分/退款/存储/用量 smoke，以及删除路径的 404 检查。
@@ -740,7 +740,7 @@ flowchart LR
   7. 在 375px 与 1440px 验收创作页、统一号池和系统策略页；运行全仓门禁、Web build、Go test、Compose config 和 Docker 目标构建。
   8. 更新现行文档、MEMORY 和 TODO；发布后观察无候选、容量拒绝、策略回退、切换、财务退款和 Adobe proxy 指标，确认无旧 job 或 endpoint 流量。
 - **Test Scenarios:**
-  - 旧 Web 表有数据、任一有效旧租约/sticky、运行中旧 Adobe 视频、成员 ID 冲突或非法配置存在时，0060 在写入前失败且 schema 未部分改变。
+  - 旧 Web 表有数据、任一有效旧租约/sticky、运行中旧 Adobe 视频、成员 ID 冲突、Responses 型 API 或非法配置存在时，0060 在写入前失败且 schema 未部分改变。
   - 空白库和含 API/Adobe、关系、账号/token、过期租约、指标及终态视频的 0059 升级库迁移成功，业务数据保持、旧表/设置/能力位不存在，统一约束和索引齐全。
   - 两个应用连接并发使用 least-load/least-acquired 时排序、容量和计数符合 R17-R18。
   - 图片三路径和视频生成/查询在成员切换时各只产生一次业务任务和一次净扣费。

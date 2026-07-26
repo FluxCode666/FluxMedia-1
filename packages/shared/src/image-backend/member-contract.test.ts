@@ -22,17 +22,33 @@ const commonMember = {
 
 describe("backend member contract", () => {
   it("accepts strict API Images configuration", () => {
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
-        type: "api",
-        config: {
-          baseUrl: "https://images.example.com/v1",
-          apiKey: "secret",
-          parameterMappings: [],
-        },
-      }).success
-    ).toBe(true);
+    const parsed = backendMemberInputSchema.safeParse({
+      ...commonMember,
+      type: "api",
+      config: {
+        baseUrl: "https://images.example.com/v1",
+        apiKey: "secret",
+        useStream: true,
+        parameterMappings: [],
+      },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === "api") {
+      expect(parsed.data.config.useStream).toBe(true);
+    }
+  });
+
+  it("defaults API Images streaming to disabled", () => {
+    const parsed = backendMemberInputSchema.parse({
+      ...commonMember,
+      type: "api",
+      config: {
+        baseUrl: "https://images.example.com/v1",
+        parameterMappings: [],
+      },
+    });
+    expect(parsed.type).toBe("api");
+    if (parsed.type === "api") expect(parsed.config.useStream).toBe(false);
   });
 
   it.each([

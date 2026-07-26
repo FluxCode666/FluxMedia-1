@@ -28,6 +28,7 @@ const redactedApiConfigSchema = z
   .object({
     baseUrl: z.string().url(),
     hasApiKey: z.boolean(),
+    useStream: z.boolean(),
     parameterMappings: requestParameterMappingsSchema,
   })
   .strict();

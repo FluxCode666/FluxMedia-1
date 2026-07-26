@@ -111,6 +111,7 @@ export function BackendMemberFormDialog({
   const [concurrency, setConcurrency] = useState("10");
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiUseStream, setApiUseStream] = useState(false);
   const [parameterMappingsText, setParameterMappingsText] = useState("");
   const [adobeMode, setAdobeMode] = useState<"gateway" | "direct">("gateway");
   const [adobeBaseUrl, setAdobeBaseUrl] = useState("");
@@ -136,11 +137,13 @@ export function BackendMemberFormDialog({
     setConcurrency(String(member?.concurrency ?? 10));
     if (member?.type === "api") {
       setApiBaseUrl(member.config.baseUrl);
+      setApiUseStream(member.config.useStream);
       setParameterMappingsText(
         formatParameterMappings(member.config.parameterMappings)
       );
     } else {
       setApiBaseUrl("");
+      setApiUseStream(false);
       setParameterMappingsText("");
     }
     setApiKey("");
@@ -220,6 +223,7 @@ export function BackendMemberFormDialog({
         config: {
           baseUrl: apiBaseUrl,
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          useStream: apiUseStream,
           parameterMappings,
         },
       });
@@ -422,6 +426,13 @@ export function BackendMemberFormDialog({
                   required={!member}
                 />
               </div>
+              <BackendBooleanSetting
+                id="api-use-stream"
+                label="Images 流式响应"
+                description="向兼容的 Images 上游发送 stream 与 partial_images 参数。"
+                checked={apiUseStream}
+                onCheckedChange={setApiUseStream}
+              />
               <div className="space-y-2">
                 <Label htmlFor="parameter-mappings">请求参数映射</Label>
                 <Textarea

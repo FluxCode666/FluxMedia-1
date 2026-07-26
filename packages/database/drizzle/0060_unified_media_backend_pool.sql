@@ -11,6 +11,7 @@ DECLARE
   unrecoverable_video_count bigint;
   member_id_collision_count bigint;
   invalid_api_model_count bigint;
+  incompatible_api_protocol_count bigint;
   invalid_adobe_config_count bigint;
   invalid_member_state_count bigint;
 BEGIN
@@ -38,17 +39,44 @@ BEGIN
   SELECT count(*)
   INTO invalid_api_model_count
   FROM "image_backend_api"
-  WHERE json_typeof("supported_model_ids") <> 'array'
-    OR json_array_length("supported_model_ids") = 0;
+  WHERE CASE
+    WHEN json_typeof("supported_model_ids") <> 'array' THEN true
+    WHEN json_array_length("supported_model_ids") NOT BETWEEN 1 AND 200 THEN true
+    ELSE EXISTS (
+      SELECT 1
+      FROM json_array_elements("supported_model_ids") AS model("value")
+      WHERE json_typeof(model."value") <> 'string'
+        OR char_length(btrim(model."value" #>> '{}')) NOT BETWEEN 1 AND 120
+        OR lower(btrim(model."value" #>> '{}')) ~
+          '^(firefly-sora2(-pro)?-(4|8|12)s-(9x16|16x9)|(firefly-)?veo31(-ref|-fast)?-(4|6|8)s-(16x9|9x16)-(1080p|720p)|(firefly-)?kling-o3-(5|15)s-(16x9|9x16)|(firefly-)?kling3-(5|10|15)s-(16x9|9x16))$'
+    )
+  END;
+  SELECT count(*)
+  INTO incompatible_api_protocol_count
+  FROM "image_backend_api"
+  WHERE "interface_mode" NOT IN ('images', 'mixed')
+    OR "image_upstream_mode" <> 'images';
   SELECT count(*)
   INTO invalid_adobe_config_count
   FROM "image_backend_adobe"
-  WHERE "mode" NOT IN ('gateway', 'direct')
-    OR ("mode" = 'gateway' AND nullif(btrim("base_url"), '') IS NULL)
-    OR (
-      "enabled_models" IS NOT NULL
-      AND json_typeof("enabled_models") <> 'array'
-    );
+  WHERE CASE
+    WHEN "mode" NOT IN ('gateway', 'direct') THEN true
+    WHEN "mode" = 'gateway' AND nullif(btrim("base_url"), '') IS NULL THEN true
+    WHEN "enabled_models" IS NULL THEN false
+    WHEN json_typeof("enabled_models") <> 'array' THEN true
+    WHEN json_array_length("enabled_models") > 200 THEN true
+    ELSE EXISTS (
+      SELECT 1
+      FROM json_array_elements("enabled_models") AS model("value")
+      WHERE json_typeof(model."value") <> 'string'
+        OR char_length(btrim(model."value" #>> '{}')) NOT BETWEEN 1 AND 120
+        OR (
+          "image_backend_adobe"."mode" = 'gateway'
+          AND lower(btrim(model."value" #>> '{}')) ~
+            '^(firefly-sora2(-pro)?-(4|8|12)s-(9x16|16x9)|(firefly-)?veo31(-ref|-fast)?-(4|6|8)s-(16x9|9x16)-(1080p|720p)|(firefly-)?kling-o3-(5|15)s-(16x9|9x16)|(firefly-)?kling3-(5|10|15)s-(16x9|9x16))$'
+        )
+    )
+  END;
   SELECT sum(invalid_count)
   INTO invalid_member_state_count
   FROM (
@@ -82,11 +110,12 @@ BEGIN
     OR unrecoverable_video_count <> 0
     OR member_id_collision_count <> 0
     OR invalid_api_model_count <> 0
+    OR incompatible_api_protocol_count <> 0
     OR invalid_adobe_config_count <> 0
     OR invalid_member_state_count <> 0
   THEN
     RAISE EXCEPTION
-      '0060 blocked: non-migratable media state remains (web_account=%, web_account_group=%, active_lease=%, active_sticky=%, active_video=%, member_id_collision=%, invalid_api_models=%, invalid_adobe_config=%, invalid_member_state=%)',
+      '0060 blocked: non-migratable media state remains (web_account=%, web_account_group=%, active_lease=%, active_sticky=%, active_video=%, member_id_collision=%, invalid_api_models=%, incompatible_api_protocol=%, invalid_adobe_config=%, invalid_member_state=%)',
       web_account_count,
       web_account_group_count,
       active_lease_count,
@@ -94,6 +123,7 @@ BEGIN
       unrecoverable_video_count,
       member_id_collision_count,
       invalid_api_model_count,
+      incompatible_api_protocol_count,
       invalid_adobe_config_count,
       invalid_member_state_count;
   END IF;
@@ -171,6 +201,7 @@ CREATE TABLE "image_backend_member_api_config" (
   "member_id" text PRIMARY KEY NOT NULL,
   "base_url" text NOT NULL,
   "api_key" text,
+  "use_stream" boolean DEFAULT false NOT NULL,
   "parameter_mappings" json DEFAULT '[]'::json NOT NULL,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL,
@@ -335,7 +366,21 @@ SELECT
   "id",
   'api',
   "name",
-  "supported_model_ids",
+  (
+    SELECT jsonb_agg(
+      CASE model."id"
+        WHEN 'firefly-gpt-image-2' THEN 'gpt-image-2'
+        WHEN 'firefly-gpt-image-1.5' THEN 'gpt-image-1.5'
+        WHEN 'firefly-nano-banana' THEN 'nano-banana'
+        WHEN 'firefly-nano-banana2' THEN 'nano-banana2'
+        WHEN 'firefly-nano-banana-pro' THEN 'nano-banana-pro'
+        ELSE model."id"
+      END
+      ORDER BY model."ordinality"
+    )
+    FROM jsonb_array_elements_text("supported_model_ids"::jsonb)
+      WITH ORDINALITY AS model("id", "ordinality")
+  ),
   "content_safety_enabled",
   "is_enabled",
   "always_active",
@@ -379,6 +424,7 @@ INSERT INTO "image_backend_member_api_config" (
   "member_id",
   "base_url",
   "api_key",
+  "use_stream",
   "parameter_mappings",
   "created_at",
   "updated_at"
@@ -387,6 +433,7 @@ SELECT
   "id",
   "base_url",
   "api_key",
+  "use_stream",
   "parameter_mappings",
   "created_at",
   "updated_at"
@@ -571,17 +618,18 @@ SELECT
   "updated_at"
 FROM "image_backend_adobe";
 --> statement-breakpoint
--- 多对多关系优先复用旧关系 ID；旧单列 group_id 仅在关系表缺失时补齐。
+-- 旧 API/Adobe 关系表拥有独立主键命名空间；加类型前缀后再合并，避免合法同名 ID
+-- 在统一关系表产生主键冲突。旧单列 group_id 仅在关系表缺失时补齐。
 INSERT INTO "image_backend_member_group" (
   "id",
   "member_id",
   "group_id",
   "created_at"
 )
-SELECT "id", "api_id", "group_id", "created_at"
+SELECT 'legacy-api-relation:' || "id", "api_id", "group_id", "created_at"
 FROM "image_backend_api_group"
 UNION ALL
-SELECT "id", "adobe_id", "group_id", "created_at"
+SELECT 'legacy-adobe-relation:' || "id", "adobe_id", "group_id", "created_at"
 FROM "image_backend_adobe_group";
 --> statement-breakpoint
 INSERT INTO "image_backend_member_group" (

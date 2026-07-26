@@ -412,6 +412,7 @@ describe("0060-0063 unified media backend pool migrations", () => {
           api_key,
           supported_model_ids,
           parameter_mappings,
+          use_stream,
           always_active,
           success_count,
           fail_count,
@@ -424,6 +425,7 @@ describe("0060-0063 unified media backend pool migrations", () => {
           'api-secret',
           '["gpt-image-2"]'::json,
           '[{"source":"size","target":"image_size","mode":"move"}]'::json,
+          true,
           true,
           5,
           2,
@@ -605,8 +607,9 @@ describe("0060-0063 unified media backend pool migrations", () => {
         api_key: string;
         base_url: string;
         parameter_mappings: Array<Record<string, string>>;
+        use_stream: boolean;
       }>(`
-        select base_url, api_key, parameter_mappings
+        select base_url, api_key, parameter_mappings, use_stream
         from image_backend_member_api_config
         where member_id = 'legacy-api'
       `);
@@ -616,6 +619,7 @@ describe("0060-0063 unified media backend pool migrations", () => {
         parameter_mappings: [
           { mode: "move", source: "size", target: "image_size" },
         ],
+        use_stream: true,
       });
       const adobeConfig = await client.query<{
         api_key: string | null;
@@ -706,6 +710,133 @@ describe("0060-0063 unified media backend pool migrations", () => {
       ).resolves.toBe(false);
       await expect(
         tableExists(client, schemaName, "image_backend_adobe")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("API 与 Adobe 关系使用相同旧 ID 时仍完整迁移", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await client.query(
+        "insert into image_backend_group (id) values ('shared-group')"
+      );
+      await client.query(`
+        insert into image_backend_api (
+          id,
+          group_id,
+          name,
+          base_url,
+          api_key,
+          supported_model_ids
+        ) values (
+          'api-member',
+          'shared-group',
+          'API member',
+          'https://api.example.test/v1',
+          'api-secret',
+          '["gpt-image-2"]'::json
+        )
+      `);
+      await client.query(`
+        insert into image_backend_adobe (
+          id,
+          group_id,
+          name,
+          base_url,
+          api_key,
+          mode
+        ) values (
+          'adobe-member',
+          'shared-group',
+          'Adobe member',
+          'https://adobe.example.test/v1',
+          'adobe-secret',
+          'gateway'
+        )
+      `);
+      await client.query(`
+        insert into image_backend_api_group (id, api_id, group_id)
+        values ('shared-relation-id', 'api-member', 'shared-group')
+      `);
+      await client.query(`
+        insert into image_backend_adobe_group (id, adobe_id, group_id)
+        values ('shared-relation-id', 'adobe-member', 'shared-group')
+      `);
+
+      await executeMigrations(client, schemaName);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const relations = await client.query<{
+        id: string;
+        member_id: string;
+      }>(`
+        select id, member_id
+        from image_backend_member_group
+        order by member_id
+      `);
+      expect(relations.rows).toEqual([
+        {
+          id: "legacy-adobe-relation:shared-relation-id",
+          member_id: "adobe-member",
+        },
+        {
+          id: "legacy-api-relation:shared-relation-id",
+          member_id: "api-member",
+        },
+      ]);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("非法模型元素与 Responses API 配置阻断迁移", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await client.query(`
+        insert into image_backend_api (
+          id,
+          name,
+          base_url,
+          api_key,
+          interface_mode,
+          image_upstream_mode,
+          supported_model_ids
+        ) values (
+          'invalid-api',
+          'Invalid API',
+          'https://api.example.test/v1',
+          'api-secret',
+          'responses',
+          'responses',
+          '[1, ""]'::json
+        )
+      `);
+
+      await expect(executeMigrations(client, schemaName)).rejects.toThrow(
+        /invalid_api_models=1.*incompatible_api_protocol=1/u
+      );
+      await expect(
+        tableExists(client, schemaName, "image_backend_api")
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(client, schemaName, "image_backend_member")
       ).resolves.toBe(false);
     } finally {
       try {

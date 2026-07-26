@@ -12,6 +12,8 @@
 
 - 顶层成员类型只有 `api | adobe`；Adobe 内部模式只有 `gateway | direct`。
 - `supportedModelIds` 是候选能力的唯一权威，模型名称不承担调度语义。
+- API 成员只使用 OpenAI Images 协议；`useStream` 属于保留的图片上游能力，
+  Responses/Mixed-to-Responses 配置不得迁入统一号池。
 - 全局调度策略为 `priority | least_acquired | least_load`，缺失或非法时回退
   `priority`。
 - 调度排序、容量检查、获租与计数更新必须在同一个 PostgreSQL 事务中完成。
@@ -40,8 +42,9 @@
 
 - Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。
 - 统一号池迁移 `0060` 只允许在维护窗口执行；API/Adobe 旧成员、分组、Adobe 子池、
-  历史指标和终态视频引用必须原子迁移，只有旧 Web 数据、有效租约/粘性绑定或无法
-  恢复的运行中视频状态才阻断。
+  历史指标和终态视频引用必须原子迁移，只有旧 Web 数据、有效租约/粘性绑定、无法
+  恢复的运行中视频状态、不兼容协议或非法配置才阻断。API/Adobe 关系 ID 在合并时
+  增加类型前缀，顶层成员仍保留原 ID。
 - Adobe direct 只通过 `services/media-upstream-proxy` 访问代码内允许的 Adobe HTTPS
   主机；代理与 Web 共享必填 secret。
 - 生产部署顺序和恢复边界见 [CI-CD.md](CI-CD.md)。
