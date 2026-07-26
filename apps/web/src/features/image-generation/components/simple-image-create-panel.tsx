@@ -34,6 +34,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
+import { getRecentImageDisplayUrl } from "@/features/image-generation/recent-image-display";
 import { DEFAULT_IMAGE_MODEL } from "@/features/image-generation/resolution";
 
 import { ImageMaskEditor } from "./image-mask-editor";
@@ -616,7 +617,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 title="添加为参考图"
               >
                 <Image
-                  src={item.imageUrl}
+                  src={getRecentImageDisplayUrl(item.imageUrl)}
                   alt={item.prompt}
                   fill
                   sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, 160px"
