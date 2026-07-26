@@ -17,6 +17,7 @@
 
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
+import "@/server/uol-bindings/image-generation";
 
 import {
   usageSummaryOutputSchema,
@@ -57,7 +58,7 @@ import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
-  getPrincipalUserId,
+  isExternalApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
 import {
@@ -102,8 +103,6 @@ import {
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
 import { loadMediaInputs } from "@/features/image-generation/media-input-loader";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
-import type { ImageQuality } from "@/features/image-generation/types";
 import {
   getVideoGenerationById,
   runAdobeVideoGenerationForUser,
@@ -181,76 +180,6 @@ bindExecute(
   }
 );
 
-/**
- * image.generate - 统一管线核心
- * 源: apps/web/src/features/image-generation/operations.ts
- */
-bindExecute(
-  "image.generate",
-  async (
-    input: {
-      prompt: string;
-      negativePrompt?: string;
-      model?: string;
-      size?: string;
-      quality?: string;
-      style?: string;
-      count?: number;
-      generationId?: string;
-      backendGroupId?: string;
-    },
-    principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    const userId = getPrincipalUserId(principal);
-    if (!userId) {
-      throw new OperationError("forbidden", "User identity required");
-    }
-
-    const result = await runImageGenerationForUser({
-      mode: "generate",
-      userId,
-      prompt: input.prompt,
-      model: input.model,
-      size: input.size,
-      quality: input.quality as ImageQuality | undefined,
-      n: input.count,
-      generationId: input.generationId,
-      backendGroupId: input.backendGroupId,
-    });
-
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    // 将 ImageGenerationOperationResult 映射到 UOL output schema
-    const images: { url: string; revisedPrompt?: string }[] = [];
-    if (result.imageUrl) {
-      images.push({
-        url: result.imageUrl,
-        revisedPrompt: result.revisedPrompt,
-      });
-    }
-    if (result.imageOutputs) {
-      for (const output of result.imageOutputs) {
-        if (output.imageUrl) {
-          images.push({
-            url: output.imageUrl,
-            revisedPrompt: output.revisedPrompt,
-          });
-        }
-      }
-    }
-
-    return {
-      generationId: result.generationId ?? input.generationId ?? "",
-      images,
-      creditsUsed: result.creditsConsumed,
-      model: result.model,
-    };
-  }
-);
-
 type VideoOperationStatus =
   | "pending"
   | "submitting"
@@ -302,7 +231,7 @@ function assertVideoTaskPrincipal(
     throw new OperationError("unauthenticated", "User identity required");
   }
   const expectedApiKeyId =
-    principal.type === "apiKey" ? principal.apiKeyId : null;
+    isExternalApiKeyPrincipal(principal) ? principal.apiKeyId : null;
   if (row.userId !== principal.userId || row.apiKeyId !== expectedApiKeyId) {
     throw new OperationError("not_found", "Video task not found");
   }
@@ -343,8 +272,9 @@ bindExecute(
     if (principal.type !== "user" && principal.type !== "apiKey") {
       throw new OperationError("unauthenticated", "User identity required");
     }
-    const apiKeyId =
-      principal.type === "apiKey" ? principal.apiKeyId : undefined;
+    const apiKeyId = isExternalApiKeyPrincipal(principal)
+      ? principal.apiKeyId
+      : undefined;
     const taskId = createVideoTaskId({
       userId: principal.userId,
       ...(apiKeyId ? { apiKeyId } : {}),
@@ -528,7 +458,7 @@ bindExecute(
     principal: Principal,
     _ctx: OperationContext
   ) => {
-    if (principal.type !== "apiKey") {
+    if (!isExternalApiKeyPrincipal(principal)) {
       throw new OperationError(
         "unauthenticated",
         "API key authentication required"

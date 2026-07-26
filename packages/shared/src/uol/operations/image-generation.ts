@@ -25,7 +25,10 @@ import {
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
-import type { Principal } from "../principal";
+import {
+  isExternalApiKeyPrincipal,
+  type Principal,
+} from "../principal";
 import { defineOperation } from "../registry";
 
 const imageGenerateCommonFields = {
@@ -72,6 +75,29 @@ export const imageGenerateInputSchema = z.discriminatedUnion("operation", [
   maskedImageEditInputSchema,
 ]);
 
+/** image.generate 的严格联合输入类型。 */
+export type ImageGenerateOperationInput = z.infer<
+  typeof imageGenerateInputSchema
+>;
+
+/** image.generate 的稳定媒体结果契约。 */
+export const imageGenerateOutputSchema = z.object({
+  generationId: z.string(),
+  images: z.array(
+    z.object({
+      url: z.string(),
+      revisedPrompt: z.string().optional(),
+    })
+  ),
+  creditsUsed: z.number().optional(),
+  model: z.string().optional(),
+});
+
+/** image.generate 的稳定媒体结果类型。 */
+export type ImageGenerateOperationOutput = z.infer<
+  typeof imageGenerateOutputSchema
+>;
+
 type ImageGenerateOperation = z.infer<
   typeof imageGenerateInputSchema
 >["operation"];
@@ -100,7 +126,7 @@ function deriveImageCapabilities(
   input: z.infer<typeof imageGenerateInputSchema>,
   principal: Principal
 ): string[] {
-  const external = principal.type === "apiKey";
+  const external = isExternalApiKeyPrincipal(principal);
   const operationCapabilities =
     IMAGE_CAPABILITIES_BY_OPERATION[input.operation];
   const capabilities = [
@@ -118,7 +144,10 @@ function deriveImageCapabilities(
 // 1. image.generate - 统一管线核心（runImageGenerationForUser）
 // 5 个 v1 handler + 3 个 web 路由汇入的单一生图入口
 // ---------------------------------------------------------------------------
-defineOperation({
+export const imageGenerate = defineOperation<
+  ImageGenerateOperationInput,
+  ImageGenerateOperationOutput
+>({
   name: "image.generate",
   domain: "image-generation",
   title: "图像生成（统一管线）",
@@ -127,25 +156,12 @@ defineOperation({
     "存储结果、审核。所有传输层（v1 API / Server Action / Web 路由）" +
     "最终汇入此操作。",
   input: imageGenerateInputSchema,
-  output: z.object({
-    generationId: z.string(),
-    images: z.array(
-      z.object({
-        url: z.string(),
-        revisedPrompt: z.string().optional(),
-      })
-    ),
-    creditsUsed: z.number().optional(),
-    model: z.string().optional(),
-  }),
+  output: imageGenerateOutputSchema,
   access: { kind: "protected" },
   capabilities: [
     {
       derive: (input, principal) =>
-        deriveImageCapabilities(
-          input as z.infer<typeof imageGenerateInputSchema>,
-          principal
-        ),
+        deriveImageCapabilities(input as ImageGenerateOperationInput, principal),
     },
   ],
   allowSystemCapabilityBypass: true,

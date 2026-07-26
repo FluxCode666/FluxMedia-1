@@ -103,6 +103,35 @@ export function bindExecute<TInput, TOutput>(
 }
 
 /**
+ * 以强类型 operation definition 延迟绑定真实执行体。
+ *
+ * @param definition defineOperation 返回且已注册的同一对象。
+ * @param execute 从 definition 输入输出类型推导的真实执行函数。
+ * @throws definition 未注册或同名对象已被替换时拒绝绑定。
+ */
+export function bindOperationExecute<TInput, TOutput>(
+  definition: OperationDefinition<TInput, TOutput>,
+  execute: (
+    input: TInput,
+    principal: Principal,
+    ctx: OperationContext
+  ) => Promise<TOutput>
+): void {
+  const registered = REGISTRY.get(definition.name);
+  if (!registered) {
+    throw new Error(
+      `[UOL] Cannot bind unknown operation: ${definition.name}`
+    );
+  }
+  if (registered !== definition) {
+    throw new Error(
+      `[UOL] Cannot bind mismatched operation definition: ${definition.name}`
+    );
+  }
+  definition.execute = execute;
+}
+
+/**
  * 检测操作是否已绑定真实实现（非 stub）。
  *
  * 通过检查 execute 函数源码中是否包含 "Not yet wired" 判定。

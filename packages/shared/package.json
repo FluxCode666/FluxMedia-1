@@ -107,6 +107,8 @@
     "./uol/errors": "./src/uol/errors.ts",
     "./uol/principal": "./src/uol/principal.ts",
     "./uol/operations": "./src/uol/operations/index.ts",
+    "./uol/operations/image-generation": "./src/uol/operations/image-generation.ts",
+    "./uol/operations/video-generation": "./src/uol/operations/video-generation.ts",
     "./mcp": "./src/mcp/index.ts",
     "./mcp/user-config": "./src/mcp/user-config.ts",
     "./mcp/user-auth": "./src/mcp/user-auth.ts",

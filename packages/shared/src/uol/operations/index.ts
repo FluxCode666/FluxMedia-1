@@ -36,6 +36,8 @@ import "./external-api";
 import "./external-api-platform-model-catalog";
 
 export type { ExternalApiKeySummary } from "./external-api";
+export { imageGenerate } from "./image-generation";
+export { videoGenerate, videoGetStatus } from "./video-generation";
 export {
   type PlatformModelCatalogOutput,
   platformModelCatalogItemSchema,
