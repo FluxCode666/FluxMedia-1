@@ -117,6 +117,7 @@ export function GeneratePageClient({
         imageModelPricing={imageModelPricing}
         imageModerationPricing={imageModerationPricing}
         maxFileSizeBytes={uploadLimits.maxFileSizeBytes}
+        maxUploadBytes={uploadLimits.maxUploadBytes}
         moderationEnabled={moderationEnabled}
         onCreditsConsumed={consumeDisplayedCredits}
         recent={recentGenerations}

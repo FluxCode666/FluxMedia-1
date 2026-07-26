@@ -8,7 +8,6 @@
 "use client";
 
 import { formatCredits } from "@repo/shared/credits/format";
-import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -22,6 +21,7 @@ import {
 } from "@repo/ui/components/select";
 import { Textarea } from "@repo/ui/components/textarea";
 import {
+  Brush,
   Coins,
   ImageIcon,
   ImagePlus,
@@ -34,10 +34,10 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
-import {
-  DEFAULT_IMAGE_MODEL,
-  IMAGE_RESOLUTION_PRESETS,
-} from "@/features/image-generation/resolution";
+import { DEFAULT_IMAGE_MODEL } from "@/features/image-generation/resolution";
+
+import { ImageMaskEditor } from "./image-mask-editor";
+import { ImageSizePicker } from "./image-size-picker";
 
 type ImageCreateMode = "generate" | "edit" | "mask";
 
@@ -45,7 +45,6 @@ type RecentImage = {
   id: string;
   imageUrl: string | null;
   prompt: string;
-  status: string;
 };
 
 type SimpleImageCreatePanelProps = {
@@ -58,13 +57,15 @@ type SimpleImageCreatePanelProps = {
   groupId: string;
   hasAvailableModel: boolean;
   mask: File | null;
+  maskAvailable: boolean;
   mode: ImageCreateMode;
   model: string;
   onBackgroundChange: (value: string) => void;
-  onMaskChange: (file: File | null) => void;
+  onMaskChange: (file: File | null) => void | Promise<void>;
   onModelSelectionChange: (groupId: string, modelId: string) => void;
   onPromptChange: (value: string) => void;
   onQualityChange: (value: string) => void;
+  onRecentReferenceSelect: (image: RecentImage) => Promise<boolean>;
   onRemoveReference: () => void;
   onSizeChange: (value: string) => void;
   onSourceImagesChange: (files: FileList | null) => void;
@@ -72,6 +73,7 @@ type SimpleImageCreatePanelProps = {
   prompt: string;
   quality: string;
   recent: readonly RecentImage[];
+  referenceLoadingId: string | null;
   resultUrls: readonly string[];
   size: string;
   sourceImages: readonly File[];
@@ -94,25 +96,6 @@ function getSubmitLabel(mode: ImageCreateMode): string {
   if (mode === "mask") return "生成局部编辑";
   if (mode === "edit") return "生成图生图";
   return "生成图片";
-}
-
-/** 按尺寸方向绘制旧版设置区中的简洁画幅图标。 */
-function SizeRatioIcon({ size }: { size: string }) {
-  const dimensions = size.split("x").map(Number);
-  const width = dimensions[0] ?? 1;
-  const height = dimensions[1] ?? 1;
-  const frameClass =
-    Number.isFinite(width) && Number.isFinite(height) && width !== height
-      ? width > height
-        ? "h-3 w-5"
-        : "h-5 w-3"
-      : "size-5";
-  return (
-    <span
-      aria-hidden="true"
-      className={`${frameClass} shrink-0 rounded-[3px] border border-current opacity-60`}
-    />
-  );
 }
 
 /** 为浏览器本地参考图建立可撤销的预览 URL，文件变化和卸载时立即释放。 */
@@ -141,9 +124,11 @@ function useSourcePreview(file: File | undefined): string | null {
  * @failure 父组件交付的错误会以 `role=alert` 呈现，空目录会阻止提交。
  */
 export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
+  const formRef = useRef<HTMLFormElement | null>(null);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const maskInputRef = useRef<HTMLInputElement | null>(null);
   const sourcePreviewUrl = useSourcePreview(props.sourceImages[0]);
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false);
   const selections = useMemo(
     () =>
       props.catalog.groups.flatMap((group) =>
@@ -162,6 +147,21 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const submitLabel = getSubmitLabel(props.mode);
   const submitDisabled =
     props.busy || !props.prompt.trim() || !props.hasAvailableModel;
+  const recentImages = useMemo(
+    () =>
+      props.recent
+        .filter((item): item is RecentImage & { imageUrl: string } =>
+          Boolean(item.imageUrl)
+        )
+        .slice(0, 6),
+    [props.recent]
+  );
+
+  useEffect(() => {
+    if (props.sourceImages.length === 0 || !props.maskAvailable) {
+      setMaskEditorOpen(false);
+    }
+  }, [props.maskAvailable, props.sourceImages.length]);
 
   /** 只接受当前授权目录生成的下拉值，未知值不会改变父组件状态。 */
   function changeModelSelection(value: string): void {
@@ -176,9 +176,16 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     void props.onSubmit();
   }
 
+  /** 将近期成品设为参考图，成功后返回统一输入卡片方便继续编辑。 */
+  async function selectRecentReference(image: RecentImage): Promise<void> {
+    const selected = await props.onRecentReferenceSelect(image);
+    if (!selected) return;
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <div className="space-y-8">
-      <form className="space-y-5" onSubmit={handleSubmit}>
+      <form ref={formRef} className="space-y-5" onSubmit={handleSubmit}>
         <section className="overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
           <div className="space-y-3 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -265,7 +272,10 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={props.onRemoveReference}
+                    onClick={() => {
+                      setMaskEditorOpen(false);
+                      props.onRemoveReference();
+                    }}
                     disabled={props.busy}
                   >
                     <X className="mr-1.5 size-3.5" />
@@ -277,22 +287,46 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     variant="outline"
                     size="sm"
                     className="rounded-full"
+                    onClick={() => setMaskEditorOpen((current) => !current)}
+                    disabled={props.busy || !props.maskAvailable}
+                    title={
+                      props.maskAvailable
+                        ? "在主参考图上涂抹需要编辑的区域"
+                        : "当前套餐没有支持蒙版编辑的模型"
+                    }
+                  >
+                    <Brush className="mr-1.5 size-3.5" />
+                    {maskEditorOpen ? "收起蒙版" : "绘制蒙版"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full"
                     onClick={() => maskInputRef.current?.click()}
-                    disabled={props.busy}
+                    disabled={props.busy || !props.maskAvailable}
+                    title={
+                      props.maskAvailable
+                        ? "上传与主参考图尺寸一致的 PNG 蒙版"
+                        : "当前套餐没有支持蒙版编辑的模型"
+                    }
                   >
                     <Upload className="mr-1.5 size-3.5" />
                     {props.mask ? "更换蒙版" : "上传蒙版"}
                   </Button>
                   {props.mask ? (
                     <div className="ml-auto flex items-center gap-1.5 rounded-lg border border-border bg-muted/25 p-1 pl-2">
-                      <span className="max-w-40 truncate text-[11px] font-medium text-foreground">
+                      <span
+                        className="max-w-40 truncate text-[11px] font-medium text-foreground"
+                        title="PNG 透明区域将作为模型编辑区域"
+                      >
                         {props.mask.name}
                       </span>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon-xs"
-                        onClick={() => props.onMaskChange(null)}
+                        onClick={() => void props.onMaskChange(null)}
                         disabled={props.busy}
                         aria-label="移除蒙版"
                       >
@@ -319,11 +353,21 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 accept="image/png"
                 className="sr-only"
                 onChange={(event) => {
-                  props.onMaskChange(event.target.files?.[0] ?? null);
+                  setMaskEditorOpen(false);
+                  void props.onMaskChange(event.target.files?.[0] ?? null);
                   event.target.value = "";
                 }}
               />
             </div>
+            {maskEditorOpen && sourcePreviewUrl ? (
+              <ImageMaskEditor
+                open={maskEditorOpen}
+                sourcePreviewUrl={sourcePreviewUrl}
+                disabled={props.busy}
+                onClose={() => setMaskEditorOpen(false)}
+                onSave={props.onMaskChange}
+              />
+            ) : null}
           </div>
 
           <div className="border-t border-border bg-muted/20 p-4 sm:p-5">
@@ -399,28 +443,11 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 >
                   画面比例
                 </Label>
-                <Select
-                  value={props.size}
-                  onValueChange={props.onSizeChange}
+                <ImageSizePicker
+                  size={props.size}
+                  onChange={props.onSizeChange}
                   disabled={props.busy}
-                >
-                  <SelectTrigger
-                    id="simple-image-size"
-                    className="w-full bg-background"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <SizeRatioIcon size={props.size} />
-                      <SelectValue />
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {IMAGE_RESOLUTION_PRESETS.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label} · {item.detail}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
 
               <div className="space-y-1.5">
@@ -442,12 +469,14 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {([
-                      ["auto", "自动"],
-                      ["low", "低"],
-                      ["medium", "中"],
-                      ["high", "高"],
-                    ] as const).map(([value, label]) => (
+                    {(
+                      [
+                        ["auto", "自动"],
+                        ["low", "低"],
+                        ["medium", "中"],
+                        ["high", "高"],
+                      ] as const
+                    ).map(([value, label]) => (
                       <SelectItem key={value} value={value}>
                         {label}
                       </SelectItem>
@@ -566,44 +595,44 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
             最近图片
           </h2>
           <span className="text-xs text-muted-foreground">
-            最近 {Math.min(props.recent.length, 6)} 条
+            点击图片即可添加为参考图
           </span>
         </div>
-        {props.recent.length === 0 ? (
+        {recentImages.length === 0 ? (
           <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
             <ImageIcon className="mb-2 size-7" />
-            暂无图片记录
+            暂无可用图片
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {props.recent.slice(0, 6).map((item) => (
-              <article
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
+            {recentImages.map((item) => (
+              <button
                 key={item.id}
-                className="flex min-w-0 items-center gap-3 rounded-lg border bg-background p-2.5"
+                type="button"
+                className="group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                onClick={() => void selectRecentReference(item)}
+                disabled={props.busy || props.referenceLoadingId !== null}
+                aria-label={`将最近图片添加为参考图：${item.prompt}`}
+                title="添加为参考图"
               >
-                {item.imageUrl ? (
-                  <Image
-                    src={item.imageUrl}
-                    alt={item.prompt}
-                    width={64}
-                    height={64}
-                    unoptimized
-                    className="size-16 shrink-0 rounded-md border object-cover"
-                  />
-                ) : (
-                  <div className="flex size-16 shrink-0 items-center justify-center rounded-md border bg-muted">
-                    <ImageIcon className="size-5 text-muted-foreground" />
+                <Image
+                  src={item.imageUrl}
+                  alt={item.prompt}
+                  fill
+                  sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, 160px"
+                  unoptimized
+                  className="object-contain transition duration-200 group-hover:scale-[1.02]"
+                />
+                {props.referenceLoadingId === item.id ? (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center bg-background/70"
+                    role="status"
+                  >
+                    <Loader2 className="size-5 animate-spin" />
+                    <span className="sr-only">正在添加参考图</span>
                   </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-xs leading-relaxed text-foreground">
-                    {item.prompt}
-                  </p>
-                  <Badge variant="secondary" className="mt-1.5">
-                    {item.status}
-                  </Badge>
-                </div>
-              </article>
+                ) : null}
+              </button>
             ))}
           </div>
         )}
