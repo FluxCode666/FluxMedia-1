@@ -1,6 +1,6 @@
 # 模型广场与模型配置设计
 
-状态：设计已确认，待书面规格审阅
+状态：设计与书面规格已确认，待实施
 日期：2026-07-26
 范围：`apps/web`、`packages/shared`，复用现有 `system_setting` 与存储 Provider
 
@@ -58,6 +58,8 @@ firefly-veo31-4s-16x9-1080p
 ### 4.3 价格展示
 
 - 图像卡片最低价格为四个固定价格档位的最小值，单位为 `Credits / 张起`。
+- 运行时额外图像模型没有显式价格时使用 `default` 四档兜底；管理员首次保存该模型时会
+  在 fallback revision 未冲突的前提下固化为显式模型价格。
 - 视频卡片展示该模型族每秒积分，单位为 `Credits / 秒`。
 - 图像详情弹窗展示 1024×1024、1K、2K、4K 四档价格。
 - 视频详情弹窗展示每秒积分，以及支持的时长、比例与分辨率。
@@ -79,6 +81,8 @@ firefly-veo31-4s-16x9-1080p
 - 复用 `@repo/ui` 的 Button、Dialog、Tooltip、Input、Textarea、Switch 等组件；
 - 使用当前系统的语义颜色、字体、间距、圆角、边框和阴影 token；
 - 不照搬参考图或草图的配色、字体和装饰风格。
+- 已知模型族使用项目内置、来源与许可可追溯的真实品牌图标；无法可靠识别品牌的
+  自定义模型使用系统中性模型图标，禁止冒用其他品牌。
 
 ## 5. 架构
 
@@ -168,7 +172,7 @@ type ModelMarketplaceConfig = {
 - `description` 去除首尾空白，最大 200 字。
 - `bucket` 和 `key` 只由服务端生成；管理端输入 schema 不接受这两个字段。
 - `default` 不进入 `imageByModel`；其价格并发修订号使用 `fallbackImagePricingRevision`。
-- `writeReceipts` 的键是 `actorUserId` 与 `clientRequestId` 的服务端哈希，
+- `writeReceipts` 的键是稳定 JSON 数组编码后的 `actorUserId` 与 `clientRequestId` 的服务端哈希，
   不直接保存用户 ID 或原始请求键；回执只保存重放所需的载荷哈希与最小结果。
 - 写回执最多保留 256 条且最长保留 24 小时，每次成功保存时在同一事务内按
   `completedAt` 清理过期和超量项；回执过期后的旧请求会因 revision 不匹配而拒绝，
@@ -197,11 +201,15 @@ type ModelMarketplaceConfig = {
 - Agent 暴露：`human-only`。
 - 只读、自然幂等、无副作用。
 - 返回已经规范化的模型列表 DTO，不向客户端暴露存储 bucket/key：
+  - `canEdit`，只对真实 super_admin 为 true；
+  - `runtimeCatalogStatus`，区分 ready 与 unavailable 降级清单；
   - category；
   - configKey；
   - displayName；
   - iconKey；
   - revision；
+  - `pricingSource`；额外图像模型继承 default 时还返回
+    `fallbackPricingRevision`；
   - visible；
   - description；
   - coverUrl 与是否使用默认封面；
@@ -213,7 +221,8 @@ type ModelMarketplaceConfig = {
 
 `settings.updateModelConfigurationEntry`
 
-- 权限：真实 `super_admin` 用户；`human-only`。
+- 权限：`{ kind: "roles", roles: ["super_admin"] }`，只允许真实
+  `super_admin` 用户 Principal，不允许 system Principal 代写；`human-only`。
 - 写操作；保守声明为破坏性，因为同一操作可替换或移除旧封面。
 - 幂等声明为
   `{ kind: "required", keyField: "clientRequestId", scope: "per-user" }`；
@@ -222,7 +231,8 @@ type ModelMarketplaceConfig = {
   `sideEffects: ["storage", "cache", "audit"]`；数据库配置更新由 execute 负责，
   不伪造 UOL 中不存在的副作用标签。
 - 输入：`clientRequestId`、category、configKey、expectedRevision、visible、description，
-  以及图像四档价格或视频每秒价格；`clientRequestId` 必须为 UUID。
+  以及图像四档价格或视频每秒价格；图像价格来自 default 时还必须提交
+  `expectedFallbackRevision`；`clientRequestId` 必须为 UUID。
 - 封面变更使用严格联合：`keep`、`remove` 或 `replace`；只有 `replace` 接受 multipart 适配器解析出的图片字节。
 - `default` 只接受图像价格与 expectedRevision，不接受展示字段。
 
@@ -230,20 +240,26 @@ type ModelMarketplaceConfig = {
 
 1. 校验模型属于当前可配置清单，拒绝任意未知 ID。
 2. `replace` 时先在内存中安全处理图片、生成最终 WebP 与内容哈希；此时不写存储。
-   服务端对除 `clientRequestId` 外的全部规范化输入与最终图片哈希计算稳定的
-   `requestHash`，其中包含 expectedRevision，避免同一请求键被复用于不同基线。
+  服务端对除 `clientRequestId` 外的全部规范化输入与最终图片哈希计算稳定的
+  `requestHash`，其中包含 expectedRevision，避免同一请求键被复用于不同基线。
 3. 在数据库事务内按固定顺序锁定展示设置行与目标价格设置行。
-4. 用当前用户和 `clientRequestId` 查找写回执：载荷哈希相同则直接返回已记录的
+4. 用稳定 JSON 数组编码当前用户与 `clientRequestId` 后计算回执键并查找写回执，避免
+   裸字符串拼接歧义；载荷哈希相同则直接返回已记录的
    category、configKey 与 resultingRevision，即使 expectedRevision 已变化也不重复副作用；
    请求键相同但载荷不同则返回 `idempotency_conflict`。
-5. 首次请求对比目标条目 revision；不一致返回可定位的并发冲突，不覆盖新值。
+5. 首次请求对比目标条目 revision；额外图像模型继承 default 时还要对比
+   fallbackImagePricingRevision，避免 default 并发变化后旧 Dialog 把旧兜底价静默固化；
+   任一不一致都返回可定位的并发冲突，不覆盖新值。
 6. `replace` 在锁内把已处理图片写入内容哈希对象；`keep` 和 `remove` 不写新对象。
 7. 只替换目标模型价格、展示文本、开关和请求指定的封面状态，保留其他模型。
 8. 对合并后的完整图像或视频价格再次执行现有全局财务 schema，并递增目标 revision。
 9. 原子写入对应价格键、`MODEL_MARKETPLACE_CONFIG` 和写回执，并清理过期回执；
    提交后统一失效设置缓存。
-10. 存储写入或数据库保存失败时回滚配置，并仅在无引用时清理本次内容哈希对象；
-    提交成功后再清理已无引用的旧对象。
+10. `remove` 遇到已有自定义封面时，先在配置锁内确认旧对象可读取或已明确不存在；
+    存储基础设施错误回滚并保留旧引用，数据库提交后再 best-effort 删除旧对象。
+11. 数据库失败后的新对象清理，以及提交后的旧对象清理，都在短清理事务中重新锁定
+    展示配置行、复核全局引用，并在删除期间保持该锁，防止并发保存刚引用同一内容哈希
+    后被误删。
 
 底层 service 自行开启事务，调用方不得再包外层事务。
 
@@ -253,7 +269,7 @@ type ModelMarketplaceConfig = {
 - 在触达存储前校验权限、模型、字节数和图片内容。
 - 用 Sharp 限制解码像素、自动旋转、裁为 3:2、去元数据并输出 WebP。
 - 对 category、规范模型键和最终内容分别取哈希，生成不可路径穿越且内容不可变的对象键。
-- 提交成功后，仅在旧对象没有被任何模型引用时删除旧对象。
+- 提交成功后，仅在锁内确认旧对象没有被任何模型引用时删除旧对象。
 - 旧对象清理失败时记录结构化日志并保留新引用，不回滚成断图状态。
 
 传输层使用超级管理员 multipart API 薄适配器：只解析字段和文件字节、构造真实 Principal、调用该 UOL 并编码响应，不包含价格、存储、并发或错误映射业务逻辑。没有新封面时也可使用同一适配器，避免两条保存语义漂移。
@@ -279,18 +295,30 @@ type ModelMarketplaceConfig = {
 - minimumCredits 与价格单位；
 - 图像完整价格或视频每秒价格；
 - 视频支持的时长、比例和分辨率；
-- 创作页预选参数。
+- 创作页预选参数，固定为 category 与服务端选出的 defaultModelId，页面不自行推断完整 ID。
 
 ## 8. 存储设计
 
 新增公共模型资产桶设置，例如 `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`，默认 `model-marketplace`。对象本身仍通过当前 Local/S3 Provider 读写；公开只表示第一方读取路由允许匿名获取该专用桶中的对象，不要求 S3 桶开放公共 ACL。
 
-读取路由增加该桶白名单，并使用内容哈希键对应的长期 immutable 缓存。该桶只允许图片格式，不与 generations 私有桶或 avatars 用户资产混用。
+模型资产 bucket 必须非空且与 avatars、generations bucket 互不相同。写入服务和读取路由
+每次使用运行时设置交叉校验；冲突或非法配置时 fail-closed，不写对象、不把匿名模型资产
+规则应用到任何 bucket，尤其不能扩大 generations 私有访问。
+
+读取路由增加该桶白名单，并使用内容哈希键对应的长期 immutable 缓存。该桶只接受
+`category/configHash/contentHash.webp` 形式的内容哈希键，不与 generations 私有桶或
+avatars 用户资产混用。
+
+内置资产与公开 DTO 同步落地：默认图像/视频封面是项目拥有或已获许可的 3:2 WebP；
+品牌 iconKey 固定为 `openai | google | kling | xai | generic` 并映射到本地 SVG。已知模型
+按真实厂商映射，未知自定义模型只使用 generic。所有来源、版本和许可记录到
+`docs/model-marketplace-assets.md`，不使用第三方 CDN。
 
 如果模型资产存储未配置或不可用：
 
-- 上传、替换和移除返回友好、可定位的错误；
-- 已保存封面引用不被清空；
+- 上传、替换，以及移除时的存储可用性预检返回友好、可定位的错误；
+- 预检失败时已保存封面引用不被清空；提交后的物理删除失败只留下无引用孤儿并记录
+  结构化告警，不把已切换到默认封面的配置回滚成断图引用；
 - 没有自定义封面的模型继续使用本地默认封面；
 - 公开模型目录仍可展示默认封面。
 
@@ -307,7 +335,7 @@ type ModelMarketplaceConfig = {
 - 最低价格；
 - 编辑操作。
 
-列表支持按 ID 搜索和按图像、视频筛选。`default` 作为单独的“计费兜底”行，广场状态显示“不适用”。
+列表支持按 ID 搜索和按图像、视频筛选。`default` 作为单独的“计费兜底”行，广场状态显示“不适用”。真实 super_admin 显示“编辑”；其他可读管理员显示“查看”。
 
 ### 9.2 编辑弹窗
 
@@ -327,6 +355,9 @@ type ModelMarketplaceConfig = {
 
 `default` 弹窗只展示四档价格，不显示封面、简介和展示开关。
 
+管理读取返回 canEdit=false 时 Dialog 全部只读，不显示保存、上传或移除操作，避免普通管理员
+在提交后才发现无权限。
+
 ## 10. 模型广场交互
 
 ### 10.1 页面
@@ -336,7 +367,12 @@ type ModelMarketplaceConfig = {
 - 营销主导航的 Models 从首页锚点改为 `/models`；
 - 页面使用现有营销 Header、Footer 和本地化路由；
 - Server Component 通过 UOL 读取公开 DTO；
+- 页面强制动态渲染，禁止 Full Route Cache 固化运行时目录或展示开关；
 - 客户端组件只处理搜索、类型筛选、复制反馈和详情弹窗。
+
+页面 metadata 提供中英文 canonical 与 alternates；中英文 `ModelMarketplace` key 树必须
+一致。普通 Footer、首页 Footer 与 sitemap 同步增加 `/models`，站内 Footer 链接使用
+i18n routing 的 Link。
 
 桌面为筛选侧栏加三列卡片；中等宽度收为两列；移动端为单列，筛选收进现有 Sheet 模式。
 
@@ -352,6 +388,9 @@ type ModelMarketplaceConfig = {
 
 长 ID 使用文本省略；Tooltip 展示完整 ID。复制按钮始终复制完整 ID，拥有可读的 `aria-label`，成功后短暂切换确认图标并用 toast 与屏幕阅读器播报。复制按钮不触发卡片详情操作。
 
+封面容器固定为 3:2；自定义封面 404 或解码失败时只回退一次对应类别的本地默认封面，
+不修改持久化配置、不无限重试。
+
 ### 10.3 详情弹窗
 
 Dialog 展示：
@@ -366,7 +405,16 @@ Dialog 展示：
 
 移动端使用全屏 Sheet 或等价的项目现有响应式 Dialog 形态。打开后转移并限制焦点，Esc 可关闭，关闭后焦点回到来源卡片。
 
-“立即使用”进入现有创作页并携带 category 和模型预选参数。创作页必须根据当前用户套餐与运行时目录重新校验，禁止把营销目录当作授权来源；预选模型不可用时给出友好提示并回退安全默认值。
+“立即使用”进入现有创作页并携带 category 和模型预选参数。图像创作页必须根据当前用户
+套餐与授权目录重新校验；视频页先校验静态支持目录，最终调用仍由服务端重新执行用户、
+后端和模型校验。禁止把营销目录当作授权来源；预选模型不可用时给出友好提示并回退安全
+默认值。category/model 只消费一次，移除它们时保留 ref、mode 等其他查询参数。
+
+未登录用户访问受保护创作 URL 时，proxy 把 pathname 与 query 一起放进 callbackUrl。
+登录和注册页只接受无 locale 或当前 locale 前缀下 `/dashboard` 开头的站内路径，并统一
+输出带当前 locale 前缀的路径；拒绝绝对 URL、协议相对 URL、错误 locale、反斜杠、控制
+字符和其他路径。邮箱与 Google 流程以及登录/注册互链都保留同一安全 callback，非法值
+统一回退当前 locale 的 dashboard。
 
 ## 11. 首页集成
 
@@ -408,6 +456,9 @@ Dialog 展示：
 ## 13. 安全
 
 - 所有管理输入使用 Zod；文件内容额外由 Sharp 实际解码验证。
+- multipart 路由在读取正文前完成可信 Origin 和真实 `super_admin` 预检；对真实流式正文
+  逐块累计并执行 6 MiB 总上限，再对有界副本调用 `formData()`，不能只信任
+  `Content-Length` 或先无界缓冲。
 - 拒绝 SVG、GIF、HTML、伪 MIME、损坏图、超限文件与像素炸弹。
 - category、configKey 必须属于服务端构建的可配置模型清单。
 - 客户端永远不能提交 bucket、key、URL、任意路径或 Content-Type 作为存储真相。
@@ -459,10 +510,13 @@ Dialog 展示：
 - 伪 MIME、SVG、GIF、损坏图、超 5 MB、超像素限制全部拒绝且不写存储。
 - 对象键不包含原模型 ID、文件名或路径控制字符。
 - Local 与 S3 Provider 都通过 server-side `putObject` 工作。
-- put 失败不改配置；配置失败清理新对象；旧对象删除失败记录日志但保留新引用。
+- put 失败不改配置；配置失败在配置锁内清理无引用新对象；旧对象删除失败记录日志并
+  保持新的配置真相。
 - 替换与移除的并发 revision 测试。
-- 共享封面引用只有在无其他引用时删除。
+- 共享封面引用只有在持有展示配置锁且确认无其他引用时删除。
+- multipart 覆盖缺失或非法长度、伪造偏小长度、chunked 输入及总正文超限。
 - 公共读取路由只开放专用模型资产桶，不扩大 generations 私有桶访问。
+- 模型资产 bucket 与 avatars/generations 冲突时写入和匿名读取都 fail-closed。
 
 ### 15.4 公开目录
 
