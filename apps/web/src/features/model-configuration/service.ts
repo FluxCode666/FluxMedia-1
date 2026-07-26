@@ -27,6 +27,11 @@ import {
 import type { Principal } from "@repo/shared/uol";
 
 import { loadPlatformModelCatalog } from "@/features/external-api/platform-model-catalog-service";
+import {
+  assertModelMarketplaceCoverReference,
+  buildModelMarketplaceCoverUrl,
+  parseModelMarketplaceAssetBucketName,
+} from "@/features/model-marketplace/asset-reference";
 
 import type {
   ModelConfigurationCoverUrl,
@@ -188,16 +193,18 @@ async function loadBucketConfig(
     loadSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
     loadSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
   ]);
-  const assetBucket = assetRaw?.trim() ?? "";
+  let assetBucket: string;
+  try {
+    assetBucket = parseModelMarketplaceAssetBucketName(assetRaw);
+  } catch {
+    throw new ModelConfigurationServiceError(
+      "invalid_dependency_result",
+      "模型资产存储桶未配置或名称无效"
+    );
+  }
   const avatarsBucket = avatarsRaw?.trim() || DEFAULT_AVATARS_BUCKET;
   const generationsBucket =
     generationsRaw?.trim() || DEFAULT_GENERATIONS_BUCKET;
-  if (!assetBucket) {
-    throw new ModelConfigurationServiceError(
-      "invalid_dependency_result",
-      "模型资产存储桶未配置"
-    );
-  }
   if (assetBucket === avatarsBucket || assetBucket === generationsBucket) {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
@@ -221,12 +228,15 @@ function parseMarketplaceConfigForAssetBucket(
   assetBucket: string
 ): ModelMarketplaceConfig {
   const config = parseModelMarketplaceConfig(value);
-  const entries = [
-    ...Object.values(config.imageByModel),
-    ...Object.values(config.videoByFamily),
-  ];
-  for (const entry of entries) {
+  for (const entry of Object.values(config.imageByModel)) {
+    if (!entry.cover) continue;
     assertModelConfigurationCoverBucket(entry.cover, assetBucket);
+    assertModelMarketplaceCoverReference("image", entry.cover, assetBucket);
+  }
+  for (const entry of Object.values(config.videoByFamily)) {
+    if (!entry.cover) continue;
+    assertModelConfigurationCoverBucket(entry.cover, assetBucket);
+    assertModelMarketplaceCoverReference("video", entry.cover, assetBucket);
   }
   return config;
 }
@@ -241,18 +251,14 @@ function parseMarketplaceConfigForAssetBucket(
  * @failure 防御性拒绝跨 bucket 引用；调用前已执行完整配置的全量 bucket 校验。
  */
 function buildCoverUrl(
+  category: "image" | "video",
   assetBucket: string,
   cover: ModelMarketplaceCoverRef | null
 ): ModelConfigurationCoverUrl {
   if (!cover) return { coverUrl: null, usesDefaultCover: true };
   assertModelConfigurationCoverBucket(cover, assetBucket);
-  const encodedBucket = encodeURIComponent(cover.bucket);
-  const encodedKey = cover.key
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
   return {
-    coverUrl: `/api/storage/${encodedBucket}/${encodedKey}`,
+    coverUrl: buildModelMarketplaceCoverUrl(category, cover, assetBucket),
     usesDefaultCover: false,
   };
 }
@@ -282,10 +288,10 @@ function createReadDependencies(
       ),
     loadRuntimeCatalog: dependencies.loadRuntimeCatalog,
     buildCoverUrl: (
-      _category: "image" | "video",
+      category: "image" | "video",
       _configKey: string,
       cover: ModelMarketplaceCoverRef | null
-    ) => buildCoverUrl(bucketConfig.assetBucket, cover),
+    ) => buildCoverUrl(category, bucketConfig.assetBucket, cover),
   };
 }
 

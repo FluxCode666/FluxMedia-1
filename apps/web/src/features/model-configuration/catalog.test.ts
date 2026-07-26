@@ -193,7 +193,10 @@ describe("buildModelConfigurationSnapshot", () => {
           revision: 3,
           visible: false,
           description: "适合精细文字渲染",
-          cover: { bucket: "models", key: "gpt-image-2/cover.webp" },
+          cover: {
+            bucket: "models",
+            key: `image/${"a".repeat(64)}/${"b".repeat(64)}.webp`,
+          },
         },
       },
     };

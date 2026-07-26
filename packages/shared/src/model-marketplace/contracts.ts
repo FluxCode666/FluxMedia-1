@@ -36,6 +36,14 @@ const descriptionSchema = z
 const sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/i);
 const completedAtSchema = z.string().datetime({ offset: true });
 
+/** 服务端内容寻址封面的固定对象 key，不允许任意历史路径进入存储或公开 URL。 */
+export const modelMarketplaceCoverObjectKeySchema = z
+  .string()
+  .regex(
+    /^(image|video)\/[a-f0-9]{64}\/[a-f0-9]{64}\.webp$/,
+    "模型封面对象 key 必须使用内容寻址格式"
+  );
+
 /** 图像模型四档完整价格；复用现有财务字段及单价上限。 */
 export const modelMarketplaceImagePricingSchema =
   imageCreditPricingSchema.required();
@@ -63,7 +71,7 @@ export const modelMarketplaceIconKeySchema = z.enum([
 export const modelMarketplaceCoverRefSchema = z
   .object({
     bucket: z.string().trim().min(1).max(255),
-    key: z.string().trim().min(1).max(1024),
+    key: modelMarketplaceCoverObjectKeySchema,
   })
   .strict();
 
@@ -111,7 +119,25 @@ export const modelMarketplaceConfigSchema = z
     videoByFamily: marketplaceEntryRecordSchema,
     writeReceipts: writeReceiptRecordSchema.default(() => ({})),
   })
-  .strict();
+  .strict()
+  .superRefine((config, context) => {
+    for (const [configKey, entry] of Object.entries(config.imageByModel)) {
+      if (!entry.cover || entry.cover.key.startsWith("image/")) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["imageByModel", configKey, "cover", "key"],
+        message: "图像模型封面必须位于 image 命名空间",
+      });
+    }
+    for (const [configKey, entry] of Object.entries(config.videoByFamily)) {
+      if (!entry.cover || entry.cover.key.startsWith("video/")) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["videoByFamily", configKey, "cover", "key"],
+        message: "视频模型封面必须位于 video 命名空间",
+      });
+    }
+  });
 
 /**
  * 创建相互隔离的版本 1 空配置。

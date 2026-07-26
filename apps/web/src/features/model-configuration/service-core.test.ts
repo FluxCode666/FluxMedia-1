@@ -40,6 +40,8 @@ const ACTOR_USER_ID = "user-super-admin";
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 const NOW = new Date("2026-07-26T08:00:00.000Z");
 const ASSET_BUCKET = "model-marketplace";
+const OLD_COVER_KEY = `image/${"d".repeat(64)}/${"e".repeat(64)}.webp`;
+const SHARED_COVER_KEY = `image/${"f".repeat(64)}/${"1".repeat(64)}.webp`;
 
 type AuditEvent = Parameters<
   ModelConfigurationServiceDependencies["audit"]["record"]
@@ -478,7 +480,7 @@ describe("模型配置保存内核", () => {
   });
 
   it("keep、remove 与 replace 分别保留、清空和替换封面引用", async () => {
-    const oldCover = { bucket: ASSET_BUCKET, key: "image/old/old.webp" };
+    const oldCover = { bucket: ASSET_BUCKET, key: OLD_COVER_KEY };
     const config = createDefaultModelMarketplaceConfig();
     config.imageByModel["gpt-image-2"] = {
       revision: 1,
@@ -538,7 +540,7 @@ describe("模型配置保存内核", () => {
   });
 
   it("remove 的存储预检失败时回滚并保留旧引用", async () => {
-    const oldCover = { bucket: ASSET_BUCKET, key: "image/old/old.webp" };
+    const oldCover = { bucket: ASSET_BUCKET, key: OLD_COVER_KEY };
     const config = createDefaultModelMarketplaceConfig();
     config.imageByModel["gpt-image-2"] = {
       revision: 0,
@@ -566,7 +568,7 @@ describe("模型配置保存内核", () => {
   it("持久化封面引用跨越模型资产桶时 fail-closed 且不触达存储", async () => {
     const foreignCover = {
       bucket: "generations",
-      key: "private/user-output.webp",
+      key: OLD_COVER_KEY,
     };
     const config = createDefaultModelMarketplaceConfig();
     config.imageByModel["gpt-image-2"] = {
@@ -667,7 +669,7 @@ describe("模型配置保存内核", () => {
   it("清理前复核全局引用，不删除被其他模型共享的旧封面", async () => {
     const sharedCover = {
       bucket: ASSET_BUCKET,
-      key: "image/shared/shared.webp",
+      key: SHARED_COVER_KEY,
     };
     const config = createDefaultModelMarketplaceConfig();
     config.imageByModel["gpt-image-2"] = {
@@ -702,7 +704,7 @@ describe("模型配置保存内核", () => {
   });
 
   it("缓存与旧对象清理失败只记录结构化告警，不回滚已提交配置", async () => {
-    const oldCover = { bucket: ASSET_BUCKET, key: "image/old/old.webp" };
+    const oldCover = { bucket: ASSET_BUCKET, key: OLD_COVER_KEY };
     const config = createDefaultModelMarketplaceConfig();
     config.imageByModel["gpt-image-2"] = {
       revision: 0,

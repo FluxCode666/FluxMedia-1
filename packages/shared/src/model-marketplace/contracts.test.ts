@@ -23,6 +23,8 @@ const IMAGE_PRICING = {
   base2kCredits: 5.07,
   base4kCredits: 10,
 };
+const IMAGE_COVER_KEY = `image/${"a".repeat(64)}/${"b".repeat(64)}.webp`;
+const VIDEO_COVER_KEY = `video/${"a".repeat(64)}/${"b".repeat(64)}.webp`;
 
 /** 构造一条满足公开图像 DTO 的基准数据，供字段边界测试按需覆盖。 */
 function createPublicImageItem(): Record<string, unknown> {
@@ -76,7 +78,7 @@ describe("modelMarketplaceConfigSchema", () => {
           description: `  ${"模".repeat(200)}  `,
           cover: {
             bucket: "model-marketplace",
-            key: "image/config/content.webp",
+            key: IMAGE_COVER_KEY,
           },
         },
       },
@@ -126,6 +128,35 @@ describe("modelMarketplaceConfigSchema", () => {
         modelMarketplaceConfigSchema.safeParse({
           ...base,
           fallbackImagePricingRevision: revision,
+        }).success
+      ).toBe(false);
+    }
+  });
+
+  it("只接受内容寻址封面 key 并保持图像与视频命名空间隔离", () => {
+    const createEntry = (key: string) => ({
+      revision: 0,
+      visible: true,
+      description: "",
+      cover: { bucket: "model-marketplace", key },
+    });
+
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...createDefaultModelMarketplaceConfig(),
+        imageByModel: { image: createEntry(IMAGE_COVER_KEY) },
+        videoByFamily: { video: createEntry(VIDEO_COVER_KEY) },
+      }).success
+    ).toBe(true);
+    for (const key of [
+      "image/../generations/private.webp",
+      "image/custom/cover.webp",
+      VIDEO_COVER_KEY,
+    ]) {
+      expect(
+        modelMarketplaceConfigSchema.safeParse({
+          ...createDefaultModelMarketplaceConfig(),
+          imageByModel: { image: createEntry(key) },
         }).success
       ).toBe(false);
     }
