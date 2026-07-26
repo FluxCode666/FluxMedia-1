@@ -1,3 +1,4 @@
+import { MissingGlobalImagePricingError } from "@repo/shared/image-backend/group-image-pricing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -98,6 +99,17 @@ describe("toClientErrorMessage", () => {
     expect(
       toClientErrorMessage(new Error("Insufficient credits"), ctx, "fallback")
     ).toBe("Insufficient credits");
+  });
+
+  it("未配置模型价格返回稳定提示且不暴露模型标识", () => {
+    const message = toClientErrorMessage(
+      new MissingGlobalImagePricingError("private-model-id"),
+      ctx,
+      "fallback"
+    );
+
+    expect(message).toBe("该模型尚未配置价格，请联系管理员");
+    expect(message).not.toContain("private-model-id");
   });
 
   it("上游错误改为 fallback，不回显令牌或上游地址", () => {

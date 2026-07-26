@@ -13,6 +13,7 @@
  * 使用方：image-generation/operations.ts 的兜底 catch。
  */
 
+import { MissingGlobalImagePricingError } from "@repo/shared/image-backend/group-image-pricing";
 import { logError } from "@repo/shared/logger";
 
 /** 从 Error 或既有结果对象中提取可检查的错误文案。 */
@@ -73,6 +74,9 @@ export function toClientErrorMessage(
   context: { source: string; generationId?: string },
   fallback: string
 ): string {
+  if (error instanceof MissingGlobalImagePricingError) {
+    return "该模型尚未配置价格，请联系管理员";
+  }
   if (isInternalDatabaseError(error)) {
     // Drizzle 会把 SQL 与 params 拼进 Error.message；params 可能包含用户凭据，
     // 因此日志也不能保留原始异常，只留下可关联的稳定事件和请求上下文。
