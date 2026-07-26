@@ -168,16 +168,14 @@ describe("resolveAuthorizedImageSelection", () => {
 describe("removePreselectionParams", () => {
   it("只移除 category/model 并保留 ref、sendRef、mode、编码值与 hash", () => {
     const currentUrl = new URL(
-      "https://flux.example/zh/dashboard/create?category=video&ref=gallery%2F1&model=firefly-veo31-6s-9x16-1080p&sendRef=asset-2&mode=edit#workspace"
+      "https://flux.example/zh/dashboard/generate?category=image&ref=gallery%2F1&model=gpt-image-2&sendRef=asset-2&mode=edit#workspace"
     );
 
     expect(removePreselectionParams(currentUrl)).toBe(
-      "/zh/dashboard/create?ref=gallery%2F1&sendRef=asset-2&mode=edit#workspace"
+      "/zh/dashboard/generate?ref=gallery%2F1&sendRef=asset-2&mode=edit#workspace"
     );
-    expect(currentUrl.searchParams.get("category")).toBe("video");
-    expect(currentUrl.searchParams.get("model")).toBe(
-      "firefly-veo31-6s-9x16-1080p"
-    );
+    expect(currentUrl.searchParams.get("category")).toBe("image");
+    expect(currentUrl.searchParams.get("model")).toBe("gpt-image-2");
   });
 
   it("清理后再次解析为空，刷新不会重复应用旧意图", () => {

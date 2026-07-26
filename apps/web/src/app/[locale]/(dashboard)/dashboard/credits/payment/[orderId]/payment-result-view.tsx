@@ -393,7 +393,7 @@ export function CreditPaymentResultView({
               <Button
                 type="button"
                 className="w-full"
-                onClick={() => router.push("/dashboard/create")}
+                onClick={() => router.push("/dashboard/generate")}
               >
                 {copy("Start creating", "立即创作")}
               </Button>

@@ -21,10 +21,10 @@ describe("resolveSafeAuthCallbackUrl", () => {
   it("保留当前 locale 下的完整视频模型预选查询", () => {
     expect(
       resolveSafeAuthCallbackUrl(
-        "/en/dashboard/create?category=video&model=firefly-sora2-4s-16x9",
+        "/en/dashboard/generate?category=image&model=gpt-image-2",
         "en"
       )
-    ).toBe("/en/dashboard/create?category=video&model=firefly-sora2-4s-16x9");
+    ).toBe("/en/dashboard/generate?category=image&model=gpt-image-2");
   });
 
   it.each([

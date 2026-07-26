@@ -207,7 +207,7 @@ export function GalleryClient({
     setConfirmBatchDelete(false);
   }, [items, selectedIds.size]);
 
-  const createHref = `/${locale}/dashboard/create`;
+  const createHref = `/${locale}/dashboard/generate`;
   const galleryHref = (tab: GalleryClientProps["activeTab"], nextPage = 1) =>
     `/${locale}/dashboard/gallery?tab=${tab}&page=${nextPage}`;
   const nextPageHref = galleryHref(activeTab, page + 1);

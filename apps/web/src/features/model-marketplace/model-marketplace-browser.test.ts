@@ -104,12 +104,12 @@ describe("copyModelMarketplaceId", () => {
 });
 
 describe("getModelMarketplaceUsageHref", () => {
-  it("图片和视频进入不同创作页并保留编码后的完整模型 ID", () => {
+  it("图片进入简易生图并预选模型，视频进入 API 文档", () => {
     expect(getModelMarketplaceUsageHref(IMAGE_MODEL)).toBe(
       "/dashboard/generate?category=image&model=gpt-image-2"
     );
     expect(getModelMarketplaceUsageHref(VIDEO_MODEL)).toBe(
-      "/dashboard/create?category=video&model=firefly-veo31-6s-9x16-1080p"
+      "/dashboard/api-docs"
     );
   });
 });

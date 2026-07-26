@@ -237,7 +237,7 @@ export function ImageLightbox({
     setConfirmDelete(false);
   }, [imageUrl, firstReferenceId]);
   const createReferenceHref = (intent: string) => {
-    if (!previewImageUrl) return `/${locale}/dashboard/create`;
+    if (!previewImageUrl) return `/${locale}/dashboard/generate`;
     const params = new URLSearchParams({
       mode: "image",
       ref: previewImageUrl,
@@ -246,7 +246,7 @@ export function ImageLightbox({
       intent,
       sendRef: intent,
     });
-    return `/${locale}/dashboard/create?${params.toString()}`;
+    return `/${locale}/dashboard/generate?${params.toString()}`;
   };
 
   const createReferenceIntent = () => {

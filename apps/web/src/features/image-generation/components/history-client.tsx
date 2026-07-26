@@ -271,7 +271,7 @@ export function HistoryClient({
           </p>
           {!hasActiveHistoryFilters(queryState) ? (
             <Button asChild className="mt-8" variant="outline">
-              <Link href="/dashboard/create">
+              <Link href="/dashboard/generate">
                 {copy("Start creating", "开始创作")}
               </Link>
             </Button>

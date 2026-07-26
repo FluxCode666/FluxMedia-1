@@ -75,18 +75,17 @@ export async function copyModelMarketplaceId(
  * 构建模型广场“立即使用”站内路径。
  *
  * @param model - 公开目录已验证的图片或视频模型。
- * @returns 图片进入简易生图，视频进入旧创作页视频标签；完整模型 ID 经过 URL 编码。
+ * @returns 图片进入简易生图并携带完整模型 ID；视频在页面移除后进入 API 文档。
  * @sideEffects 无。
  * @failure DTO 已限制模型 ID 非空且有界，函数不会抛错。
  */
 export function getModelMarketplaceUsageHref(
   model: ModelMarketplacePublicItem
 ): string {
-  const pathname =
-    model.category === "image" ? "/dashboard/generate" : "/dashboard/create";
+  if (model.category === "video") return "/dashboard/api-docs";
   const searchParams = new URLSearchParams({
     category: model.category,
     model: model.defaultModelId,
   });
-  return `${pathname}?${searchParams.toString()}`;
+  return `/dashboard/generate?${searchParams.toString()}`;
 }

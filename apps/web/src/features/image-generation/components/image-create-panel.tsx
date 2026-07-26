@@ -1,38 +1,15 @@
 /**
- * 媒体创作页的图片生成与编辑面板。
+ * 简易生图页的图片生成与编辑状态容器。
  *
  * 职责：展示当前分组显式声明的图片模型，收集文生图、图生图和蒙版编辑输入，
  * 调用站内媒体 API，并展示本次产物。对话、Agent、waterfall 和可编辑文件能力不在
- * 本组件表达。使用方仅为 `CreatePageClient`。
+ * 本组件表达。使用方仅为 `GeneratePageClient`。
  */
 
 "use client";
 
-import { formatCredits } from "@repo/shared/credits/format";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { resolveImageCreditPricing } from "@repo/shared/image-backend/group-image-pricing";
-import { Badge } from "@repo/ui/components/badge";
-import { Button } from "@repo/ui/components/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@repo/ui/components/card";
-import { Input } from "@repo/ui/components/input";
-import { Label } from "@repo/ui/components/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@repo/ui/components/select";
-import { Tabs, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
-import { Textarea } from "@repo/ui/components/textarea";
-import { ImageIcon, Loader2, Upload, WandSparkles } from "lucide-react";
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
@@ -41,8 +18,9 @@ import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_SIZE,
   getImageCreditCost,
-  IMAGE_RESOLUTION_PRESETS,
 } from "@/features/image-generation/resolution";
+
+import { SimpleImageCreatePanel } from "./simple-image-create-panel";
 
 type ImageCreateMode = "generate" | "edit" | "mask";
 
@@ -162,10 +140,10 @@ function validateImageFile(file: File, maxFileSizeBytes: number): void {
 }
 
 /**
- * 渲染媒体专用图片面板。
+ * 渲染简易生图状态容器。
  *
  * @param props 分组模型目录、计价、上传限制和近期图片。
- * @returns 文生图、图生图与蒙版编辑表单及结果区域。
+ * @returns 旧版统一视觉下的文生图、图生图与蒙版编辑表单及结果区域。
  */
 export function ImageCreatePanel({
   balance,
@@ -228,25 +206,20 @@ export function ImageCreatePanel({
       moderationEnabled && mode !== "generate" ? sourceImages.length : 0,
   });
 
-  /** 切换媒体动作并清除不再适用的蒙版输入。 */
-  const changeMode = (value: string) => {
-    const nextMode = z.enum(["generate", "edit", "mask"]).safeParse(value);
-    if (!nextMode.success) return;
-    setMode(nextMode.data);
-    if (nextMode.data !== "mask") setMask(null);
-    setError(null);
-  };
-
-  /** 接收来源图片并在客户端执行基础类型和大小校验。 */
+  /** 接收来源图片并在客户端校验，成功后原位切换到图生图。 */
   const changeSourceImages = (files: FileList | null) => {
     if (!files) return;
     try {
       const nextFiles = Array.from(files);
       for (const file of nextFiles) validateImageFile(file, maxFileSizeBytes);
       setSourceImages(nextFiles);
+      setMask(null);
+      setMode(nextFiles.length > 0 ? "edit" : "generate");
       setError(null);
     } catch (caught) {
       setSourceImages([]);
+      setMask(null);
+      setMode("generate");
       setError(caught instanceof Error ? caught.message : "图片校验失败");
     }
   };
@@ -255,17 +228,35 @@ export function ImageCreatePanel({
   const changeMask = (file: File | null) => {
     if (!file) {
       setMask(null);
+      setMode(sourceImages.length > 0 ? "edit" : "generate");
       return;
     }
     try {
       if (file.type !== "image/png") throw new Error("蒙版必须为 PNG 图片");
       validateImageFile(file, maxFileSizeBytes);
       setMask(file);
+      setMode("mask");
       setError(null);
     } catch (caught) {
       setMask(null);
+      setMode(sourceImages.length > 0 ? "edit" : "generate");
       setError(caught instanceof Error ? caught.message : "蒙版校验失败");
     }
+  };
+
+  /** 同时切换授权分组和模型，避免两个独立下拉产生短暂非法组合。 */
+  const selectModelGroup = (nextGroupId: string, modelId: string) => {
+    setGroupId(nextGroupId);
+    setModel(modelId);
+    setError(null);
+  };
+
+  /** 移除来源图及其蒙版，并把统一表单恢复为文生图。 */
+  const removeReference = () => {
+    setSourceImages([]);
+    setMask(null);
+    setMode("generate");
+    setError(null);
   };
 
   /** 提交文生图或编辑请求；成功后只保留站内返回的媒体 URL。 */
@@ -336,261 +327,33 @@ export function ImageCreatePanel({
   };
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <Card>
-        <CardHeader>
-          <CardTitle>图片创作</CardTitle>
-          <CardDescription>
-            使用同一媒体号池完成文生图、图生图和蒙版编辑。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <Tabs value={mode} onValueChange={changeMode}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="generate">文生图</TabsTrigger>
-              <TabsTrigger value="edit">图生图</TabsTrigger>
-              <TabsTrigger value="mask">蒙版编辑</TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>后端分组</Label>
-              <Select
-                value={groupId}
-                onValueChange={setGroupId}
-                disabled={busy}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="选择分组" />
-                </SelectTrigger>
-                <SelectContent>
-                  {catalog.groups.map((group) => (
-                    <SelectItem key={group.id} value={group.id}>
-                      {group.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>模型</Label>
-              <Select value={model} onValueChange={setModel} disabled={busy}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择模型" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableModels.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.id === "default" ? DEFAULT_IMAGE_MODEL : item.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="image-prompt">图片描述</Label>
-            <Textarea
-              id="image-prompt"
-              rows={6}
-              maxLength={32_000}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder="描述画面、构图、光线和风格"
-              disabled={busy}
-            />
-            <p className="text-right text-xs text-muted-foreground">
-              {prompt.length}/32000
-            </p>
-          </div>
-
-          {mode !== "generate" && (
-            <div className="space-y-3 rounded-lg border border-dashed p-4">
-              <Label
-                htmlFor="source-images"
-                className="flex items-center gap-2"
-              >
-                <Upload className="size-4" /> 来源图片
-              </Label>
-              <Input
-                id="source-images"
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                multiple
-                disabled={busy}
-                onChange={(event) => changeSourceImages(event.target.files)}
-              />
-              {sourceImages.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  已选择 {sourceImages.length} 张：
-                  {sourceImages.map((file) => file.name).join("、")}
-                </p>
-              )}
-              {mode === "mask" && (
-                <div className="space-y-2 pt-2">
-                  <Label htmlFor="mask-image">PNG 蒙版</Label>
-                  <Input
-                    id="mask-image"
-                    type="file"
-                    accept="image/png"
-                    disabled={busy}
-                    onChange={(event) =>
-                      changeMask(event.target.files?.[0] ?? null)
-                    }
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-2">
-              <Label>尺寸</Label>
-              <Select value={size} onValueChange={setSize} disabled={busy}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {IMAGE_RESOLUTION_PRESETS.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label} · {item.detail}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>质量</Label>
-              <Select
-                value={quality}
-                onValueChange={setQuality}
-                disabled={busy}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["auto", "low", "medium", "high"].map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {value}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>背景</Label>
-              <Select
-                value={background}
-                onValueChange={setBackground}
-                disabled={busy}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">自动</SelectItem>
-                  <SelectItem value="opaque">不透明</SelectItem>
-                  <SelectItem value="transparent">透明</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {error && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-            <div className="text-sm text-muted-foreground">
-              预计 {formatCredits(estimatedCredits)} 积分 · 余额{" "}
-              {formatCredits(balance)}
-            </div>
-            <Button
-              onClick={submit}
-              disabled={busy || availableModels.length === 0}
-            >
-              {busy ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <WandSparkles className="mr-2 size-4" />
-              )}
-              {busy ? "生成中" : "开始创作"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">本次结果</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {resultUrls.length === 0 ? (
-              <div className="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-                <ImageIcon className="mb-2 size-8" />
-                生成结果会显示在这里
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                {resultUrls.map((url) => (
-                  <a key={url} href={url} target="_blank" rel="noreferrer">
-                    <Image
-                      src={url}
-                      alt="生成图片"
-                      width={640}
-                      height={640}
-                      unoptimized
-                      className="h-auto w-full rounded-lg border object-cover"
-                    />
-                  </a>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">最近图片</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {recent.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无图片记录</p>
-            ) : (
-              recent.slice(0, 6).map((item) => (
-                <div key={item.id} className="flex items-center gap-3">
-                  {item.imageUrl ? (
-                    <Image
-                      src={item.imageUrl}
-                      alt={item.prompt}
-                      width={56}
-                      height={56}
-                      unoptimized
-                      className="size-14 rounded-md border object-cover"
-                    />
-                  ) : (
-                    <div className="flex size-14 items-center justify-center rounded-md border bg-muted">
-                      <ImageIcon className="size-5 text-muted-foreground" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm">{item.prompt}</p>
-                    <Badge variant="secondary" className="mt-1">
-                      {item.status}
-                    </Badge>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+    <SimpleImageCreatePanel
+      balance={balance}
+      background={background}
+      busy={busy}
+      catalog={catalog}
+      error={error}
+      estimatedCredits={estimatedCredits}
+      groupId={groupId}
+      hasAvailableModel={availableModels.length > 0}
+      mask={mask}
+      mode={mode}
+      model={model}
+      onBackgroundChange={setBackground}
+      onMaskChange={changeMask}
+      onModelSelectionChange={selectModelGroup}
+      onPromptChange={setPrompt}
+      onQualityChange={setQuality}
+      onRemoveReference={removeReference}
+      onSizeChange={setSize}
+      onSourceImagesChange={changeSourceImages}
+      onSubmit={submit}
+      prompt={prompt}
+      quality={quality}
+      recent={recent}
+      resultUrls={resultUrls}
+      size={size}
+      sourceImages={sourceImages}
+    />
   );
 }
