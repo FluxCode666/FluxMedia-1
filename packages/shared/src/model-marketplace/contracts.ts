@@ -9,7 +9,7 @@ import { z } from "zod";
 import { MAX_VIDEO_CREDITS_PER_SECOND } from "../adobe/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
 
-export const MODEL_MARKETPLACE_CONFIG_VERSION = 1 as const;
+export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
 export const MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH = 120;
 export const MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS = 256;
@@ -26,8 +26,8 @@ const configKeySchema = z
   .min(1)
   .max(MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH);
 const realModelConfigKeySchema = configKeySchema.refine(
-  (configKey) => configKey !== "default",
-  "default 不是可展示模型"
+  (configKey) => configKey.toLowerCase() !== "default",
+  "default 不是可配置模型"
 );
 const descriptionSchema = z
   .string()
@@ -48,11 +48,10 @@ export const modelMarketplaceCoverObjectKeySchema = z
 export const modelMarketplaceImagePricingSchema =
   imageCreditPricingSchema.required();
 
-/** 模型广场支持的持久化条目类别，fallback 仅代表图像价格兜底项。 */
+/** 模型广场支持的真实模型类别。 */
 export const modelMarketplaceConfigurationCategorySchema = z.enum([
   "image",
   "video",
-  "fallback",
 ]);
 
 /** 公开模型只允许图像与视频，不允许计费兜底项。 */
@@ -90,14 +89,14 @@ export const modelMarketplaceWriteReceiptSchema = z
   .object({
     requestHash: sha256HexSchema,
     category: modelMarketplaceConfigurationCategorySchema,
-    configKey: configKeySchema,
+    configKey: realModelConfigKeySchema,
     resultingRevision: safeRevisionSchema,
     completedAt: completedAtSchema,
   })
   .strict();
 
 const marketplaceEntryRecordSchema = z
-  .record(configKeySchema, modelMarketplaceEntrySchema)
+  .record(realModelConfigKeySchema, modelMarketplaceEntrySchema)
   .refine(
     (entries) => !Object.hasOwn(entries, "default"),
     "default 不能持久化展示设置"
@@ -110,44 +109,89 @@ const writeReceiptRecordSchema = z
     `写回执最多保留 ${MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS} 条`
   );
 
-/** 版本化模型广场配置；缺失 writeReceipts 兼容第一版配置初始化过程。 */
+/** 旧版 v1 写回执只用于读取迁移，fallback 回执在迁移时直接丢弃。 */
+const legacyModelMarketplaceWriteReceiptSchema = z
+  .object({
+    requestHash: sha256HexSchema,
+    category: z.enum(["image", "video", "fallback"]),
+    configKey: configKeySchema,
+    resultingRevision: safeRevisionSchema,
+    completedAt: completedAtSchema,
+  })
+  .strict();
+const legacyWriteReceiptRecordSchema = z
+  .record(sha256HexSchema, legacyModelMarketplaceWriteReceiptSchema)
+  .refine(
+    (receipts) =>
+      Object.keys(receipts).length <= MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS,
+    `写回执最多保留 ${MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS} 条`
+  );
+
+type MarketplaceEntriesWithCovers = {
+  imageByModel: Record<string, ModelMarketplaceEntry>;
+  videoByFamily: Record<string, ModelMarketplaceEntry>;
+};
+
+/**
+ * 校验图像与视频封面对象 key 的命名空间。
+ *
+ * @param config - 已完成基础结构解析的模型展示记录。
+ * @param context - Zod 精细校验上下文；发现跨类别 key 时追加错误。
+ * @returns 无返回值；只通过上下文报告错误，不修改输入。
+ */
+function addCoverNamespaceIssues(
+  config: MarketplaceEntriesWithCovers,
+  context: z.RefinementCtx
+): void {
+  for (const [configKey, entry] of Object.entries(config.imageByModel)) {
+    if (!entry.cover || entry.cover.key.startsWith("image/")) continue;
+    context.addIssue({
+      code: "custom",
+      path: ["imageByModel", configKey, "cover", "key"],
+      message: "图像模型封面必须位于 image 命名空间",
+    });
+  }
+  for (const [configKey, entry] of Object.entries(config.videoByFamily)) {
+    if (!entry.cover || entry.cover.key.startsWith("video/")) continue;
+    context.addIssue({
+      code: "custom",
+      path: ["videoByFamily", configKey, "cover", "key"],
+      message: "视频模型封面必须位于 video 命名空间",
+    });
+  }
+}
+
+/** 当前版本模型广场配置；只持久化真实模型条目与真实模型写回执。 */
 export const modelMarketplaceConfigSchema = z
   .object({
     version: z.literal(MODEL_MARKETPLACE_CONFIG_VERSION),
-    fallbackImagePricingRevision: safeRevisionSchema,
     imageByModel: marketplaceEntryRecordSchema,
     videoByFamily: marketplaceEntryRecordSchema,
     writeReceipts: writeReceiptRecordSchema.default(() => ({})),
   })
   .strict()
-  .superRefine((config, context) => {
-    for (const [configKey, entry] of Object.entries(config.imageByModel)) {
-      if (!entry.cover || entry.cover.key.startsWith("image/")) continue;
-      context.addIssue({
-        code: "custom",
-        path: ["imageByModel", configKey, "cover", "key"],
-        message: "图像模型封面必须位于 image 命名空间",
-      });
-    }
-    for (const [configKey, entry] of Object.entries(config.videoByFamily)) {
-      if (!entry.cover || entry.cover.key.startsWith("video/")) continue;
-      context.addIssue({
-        code: "custom",
-        path: ["videoByFamily", configKey, "cover", "key"],
-        message: "视频模型封面必须位于 video 命名空间",
-      });
-    }
-  });
+  .superRefine(addCoverNamespaceIssues);
+
+/** 仅供读取迁移的 v1 配置，保留已删除的 default 价格修订号与 fallback 回执。 */
+const legacyModelMarketplaceConfigSchema = z
+  .object({
+    version: z.literal(1),
+    fallbackImagePricingRevision: safeRevisionSchema,
+    imageByModel: marketplaceEntryRecordSchema,
+    videoByFamily: marketplaceEntryRecordSchema,
+    writeReceipts: legacyWriteReceiptRecordSchema.default(() => ({})),
+  })
+  .strict()
+  .superRefine(addCoverNamespaceIssues);
 
 /**
- * 创建相互隔离的版本 1 空配置。
+ * 创建相互隔离的当前版本空配置。
  *
  * @returns 所有记录均为新对象的默认配置，真实模型缺少条目时由目录规则解释为默认展示。
  */
 export function createDefaultModelMarketplaceConfig(): ModelMarketplaceConfig {
   return {
     version: MODEL_MARKETPLACE_CONFIG_VERSION,
-    fallbackImagePricingRevision: 0,
     imageByModel: {},
     videoByFamily: {},
     writeReceipts: {},
@@ -158,8 +202,8 @@ export function createDefaultModelMarketplaceConfig(): ModelMarketplaceConfig {
  * 收窄系统设置中的模型广场配置。
  *
  * @param value - 数据库读取出的未知 JSON；null 或 undefined 代表设置尚未初始化。
- * @returns 缺失时返回新的默认配置，存在时必须完整通过严格 schema。
- * @throws ZodError - 已存在的配置是脏值时显式失败，避免静默放开展示范围。
+ * @returns 缺失时返回默认配置；v1 配置会升级并丢弃 default 修订号和 fallback 回执。
+ * @throws ZodError - 配置不属于当前版本或合法 v1 时显式失败，避免静默放宽边界。
  */
 export function parseModelMarketplaceConfig(
   value: unknown
@@ -167,7 +211,32 @@ export function parseModelMarketplaceConfig(
   if (value === null || value === undefined) {
     return createDefaultModelMarketplaceConfig();
   }
-  return modelMarketplaceConfigSchema.parse(value);
+  if (
+    typeof value !== "object" ||
+    !("version" in value) ||
+    value.version !== 1
+  ) {
+    return modelMarketplaceConfigSchema.parse(value);
+  }
+
+  const legacy = legacyModelMarketplaceConfigSchema.parse(value);
+  const migratedReceipts = Object.fromEntries(
+    Object.entries(legacy.writeReceipts).flatMap(([key, receipt]) => {
+      if (
+        receipt.category === "fallback" ||
+        receipt.configKey.toLowerCase() === "default"
+      ) {
+        return [];
+      }
+      return [[key, receipt]];
+    })
+  );
+  return modelMarketplaceConfigSchema.parse({
+    version: MODEL_MARKETPLACE_CONFIG_VERSION,
+    imageByModel: legacy.imageByModel,
+    videoByFamily: legacy.videoByFamily,
+    writeReceipts: migratedReceipts,
+  });
 }
 
 /** 判断 URL 文本是否包含反斜杠或 ASCII 控制字符。 */
@@ -196,7 +265,6 @@ const managementCommonShape = {
   displayName: z.string().trim().min(1).max(160),
   iconKey: modelMarketplaceIconKeySchema,
   revision: safeRevisionSchema,
-  minimumCredits: z.number().finite().positive(),
 };
 const managementMarketplaceShape = {
   ...managementCommonShape,
@@ -213,22 +281,22 @@ const explicitImageConfigurationEntrySchema = z
     ...managementMarketplaceShape,
     category: z.literal("image"),
     pricingSource: z.literal("explicit"),
+    minimumCredits: z.number().finite().positive(),
     pricing: modelMarketplaceImagePricingSchema,
   })
   .strict();
-const fallbackPricedImageConfigurationEntrySchema = z
+const unconfiguredImageConfigurationEntrySchema = z
   .object({
     ...managementMarketplaceShape,
     category: z.literal("image"),
-    pricingSource: z.literal("fallback"),
-    fallbackPricingRevision: safeRevisionSchema,
-    pricing: modelMarketplaceImagePricingSchema,
+    pricingSource: z.literal("unconfigured"),
   })
   .strict();
 const videoConfigurationEntrySchema = z
   .object({
     ...managementMarketplaceShape,
     category: z.literal("video"),
+    minimumCredits: z.number().finite().positive(),
     creditsPerSecond: z
       .number()
       .finite()
@@ -236,22 +304,12 @@ const videoConfigurationEntrySchema = z
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
   })
   .strict();
-const fallbackImageConfigurationEntrySchema = z
-  .object({
-    ...managementCommonShape,
-    category: z.literal("fallback"),
-    configKey: z.literal("default"),
-    marketplaceApplicable: z.literal(false),
-    pricing: modelMarketplaceImagePricingSchema,
-  })
-  .strict();
 
 /** 管理列表中的单条模型配置 DTO，不包含 bucket 或对象 key。 */
 export const modelConfigurationEntrySchema = z.union([
   explicitImageConfigurationEntrySchema,
-  fallbackPricedImageConfigurationEntrySchema,
+  unconfiguredImageConfigurationEntrySchema,
   videoConfigurationEntrySchema,
-  fallbackImageConfigurationEntrySchema,
 ]);
 
 /** 管理端完整读取快照，权限由服务端按真实 Principal 计算。 */
@@ -326,7 +384,7 @@ export const modelMarketplaceCoverChangeSchema = z.discriminatedUnion(
 
 const updateCommonShape = {
   clientRequestId: z.string().uuid(),
-  configKey: configKeySchema,
+  configKey: realModelConfigKeySchema,
   expectedRevision: safeRevisionSchema,
 };
 const updateMarketplaceShape = {
@@ -337,20 +395,10 @@ const updateMarketplaceShape = {
   coverChange: modelMarketplaceCoverChangeSchema,
 };
 
-const updateExplicitImageConfigurationInputSchema = z
+const updateImageConfigurationInputSchema = z
   .object({
     ...updateMarketplaceShape,
     category: z.literal("image"),
-    pricingSource: z.literal("explicit"),
-    pricing: modelMarketplaceImagePricingSchema,
-  })
-  .strict();
-const updateFallbackPricedImageConfigurationInputSchema = z
-  .object({
-    ...updateMarketplaceShape,
-    category: z.literal("image"),
-    pricingSource: z.literal("fallback"),
-    expectedFallbackRevision: safeRevisionSchema,
     pricing: modelMarketplaceImagePricingSchema,
   })
   .strict();
@@ -358,7 +406,6 @@ const updateVideoConfigurationInputSchema = z
   .object({
     ...updateCommonShape,
     category: z.literal("video"),
-    configKey: realModelConfigKeySchema,
     visible: z.boolean(),
     description: descriptionSchema,
     coverChange: modelMarketplaceCoverChangeSchema,
@@ -369,28 +416,18 @@ const updateVideoConfigurationInputSchema = z
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
   })
   .strict();
-const updateFallbackImagePricingInputSchema = z
-  .object({
-    ...updateCommonShape,
-    category: z.literal("fallback"),
-    configKey: z.literal("default"),
-    pricing: modelMarketplaceImagePricingSchema,
-  })
-  .strict();
 
-/** 单模型配置保存输入；联合分支保证 default 和显式价格不接收无关展示字段。 */
+/** 单模型配置保存输入；图像写入必须一次提交完整四档显式价格。 */
 export const updateModelConfigurationEntryInputSchema = z.union([
-  updateExplicitImageConfigurationInputSchema,
-  updateFallbackPricedImageConfigurationInputSchema,
+  updateImageConfigurationInputSchema,
   updateVideoConfigurationInputSchema,
-  updateFallbackImagePricingInputSchema,
 ]);
 
 /** 单模型保存的最小输出，客户端须重新读取快照获得完整派生字段。 */
 export const updateModelConfigurationEntryOutputSchema = z
   .object({
     category: modelMarketplaceConfigurationCategorySchema,
-    configKey: configKeySchema,
+    configKey: realModelConfigKeySchema,
     revision: safeRevisionSchema,
   })
   .strict();

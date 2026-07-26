@@ -66,7 +66,6 @@ const VALID_IMAGE_UPDATE = {
   visible: true,
   description: "",
   coverChange: { action: "keep" },
-  pricingSource: "explicit",
   pricing: IMAGE_PRICING,
 };
 

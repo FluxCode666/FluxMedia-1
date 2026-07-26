@@ -106,9 +106,6 @@ describe("目录展示与价格规则", () => {
     expect(isModelMarketplaceEntryVisible(undefined, "image", "default")).toBe(
       false
     );
-    expect(
-      isModelMarketplaceEntryVisible(undefined, "fallback", "default")
-    ).toBe(false);
   });
 
   it("稳定排序并去重视频支持参数", () => {

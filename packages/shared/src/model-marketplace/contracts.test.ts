@@ -43,13 +43,12 @@ function createPublicImageItem(): Record<string, unknown> {
 }
 
 describe("modelMarketplaceConfigSchema", () => {
-  it("创建相互隔离的版本 1 默认配置", () => {
+  it("创建相互隔离的当前版本默认配置", () => {
     const first = createDefaultModelMarketplaceConfig();
     const second = createDefaultModelMarketplaceConfig();
 
     expect(first).toEqual({
-      version: MODEL_MARKETPLACE_CONFIG_VERSION,
-      fallbackImagePricingRevision: 0,
+      version: 2,
       imageByModel: {},
       videoByFamily: {},
       writeReceipts: {},
@@ -58,19 +57,19 @@ describe("modelMarketplaceConfigSchema", () => {
     expect(first.imageByModel).not.toBe(second.imageByModel);
     expect(first.videoByFamily).not.toBe(second.videoByFamily);
     expect(first.writeReceipts).not.toBe(second.writeReceipts);
+    expect(MODEL_MARKETPLACE_CONFIG_VERSION).toBe(2);
   });
 
   it("只在持久化值缺失时回退默认配置", () => {
     expect(parseModelMarketplaceConfig(undefined)).toEqual(
       createDefaultModelMarketplaceConfig()
     );
-    expect(() => parseModelMarketplaceConfig({ version: 2 })).toThrow();
+    expect(() => parseModelMarketplaceConfig({ version: 3 })).toThrow();
   });
 
-  it("为历史缺键补空记录并裁剪简介首尾空白", () => {
+  it("为当前版本缺键补空记录并裁剪简介首尾空白", () => {
     const parsed = modelMarketplaceConfigSchema.parse({
-      version: 1,
-      fallbackImagePricingRevision: 3,
+      version: MODEL_MARKETPLACE_CONFIG_VERSION,
       imageByModel: {
         "gpt-image-2": {
           revision: 2,
@@ -87,6 +86,54 @@ describe("modelMarketplaceConfigSchema", () => {
 
     expect(parsed.imageByModel["gpt-image-2"]?.description).toHaveLength(200);
     expect(parsed.writeReceipts).toEqual({});
+  });
+
+  it("读取旧版 v1 时丢弃 default revision 与 fallback 写回执", () => {
+    const imageReceiptKey = "c".repeat(64);
+    const fallbackReceiptKey = "d".repeat(64);
+    const parsed = parseModelMarketplaceConfig({
+      version: 1,
+      fallbackImagePricingRevision: 7,
+      imageByModel: {},
+      videoByFamily: {},
+      writeReceipts: {
+        [imageReceiptKey]: {
+          requestHash: "a".repeat(64),
+          category: "image",
+          configKey: "gpt-image-2",
+          resultingRevision: 2,
+          completedAt: "2026-07-26T08:00:00.000Z",
+        },
+        [fallbackReceiptKey]: {
+          requestHash: "b".repeat(64),
+          category: "fallback",
+          configKey: "default",
+          resultingRevision: 8,
+          completedAt: "2026-07-26T09:00:00.000Z",
+        },
+      },
+    });
+
+    expect(parsed).toEqual({
+      version: MODEL_MARKETPLACE_CONFIG_VERSION,
+      imageByModel: {},
+      videoByFamily: {},
+      writeReceipts: {
+        [imageReceiptKey]: {
+          requestHash: "a".repeat(64),
+          category: "image",
+          configKey: "gpt-image-2",
+          resultingRevision: 2,
+          completedAt: "2026-07-26T08:00:00.000Z",
+        },
+      },
+    });
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...parsed,
+        fallbackImagePricingRevision: 7,
+      }).success
+    ).toBe(false);
   });
 
   it("拒绝 default 展示条目、超长键、未知字段和非法 revision", () => {
@@ -127,7 +174,14 @@ describe("modelMarketplaceConfigSchema", () => {
       expect(
         modelMarketplaceConfigSchema.safeParse({
           ...base,
-          fallbackImagePricingRevision: revision,
+          imageByModel: {
+            image: {
+              revision,
+              visible: true,
+              description: "",
+              cover: null,
+            },
+          },
         }).success
       ).toBe(false);
     }
@@ -180,6 +234,22 @@ describe("modelMarketplaceConfigSchema", () => {
       modelMarketplaceConfigSchema.safeParse({
         ...valid,
         writeReceipts: {
+          ["b".repeat(64)]: { ...receipt, category: "fallback" },
+        },
+      }).success
+    ).toBe(false);
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...valid,
+        writeReceipts: {
+          ["b".repeat(64)]: { ...receipt, configKey: "default" },
+        },
+      }).success
+    ).toBe(false);
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...valid,
+        writeReceipts: {
           ["b".repeat(64)]: { ...receipt, requestHash: "not-a-hash" },
         },
       }).success
@@ -205,7 +275,7 @@ describe("modelMarketplaceConfigSchema", () => {
 });
 
 describe("管理与公开 DTO", () => {
-  it("管理快照携带真实权限、运行时状态和图像价格来源", () => {
+  it("管理快照区分显式价格与尚未配置价格的图像模型", () => {
     const snapshot = modelConfigurationSnapshotSchema.parse({
       canEdit: true,
       runtimeCatalogStatus: "ready",
@@ -221,18 +291,46 @@ describe("管理与公开 DTO", () => {
           description: "",
           coverUrl: "/images/model-default.webp",
           usesDefaultCover: true,
-          pricingSource: "fallback",
-          fallbackPricingRevision: 4,
+          pricingSource: "explicit",
           pricing: IMAGE_PRICING,
           minimumCredits: 1.27,
+        },
+        {
+          category: "image",
+          configKey: "new-image-model",
+          displayName: "New Image Model",
+          iconKey: "generic",
+          revision: 0,
+          marketplaceApplicable: true,
+          visible: false,
+          description: "",
+          coverUrl: "/images/model-default.webp",
+          usesDefaultCover: true,
+          pricingSource: "unconfigured",
         },
       ],
     });
 
     expect(snapshot.entries[0]).toMatchObject({
-      pricingSource: "fallback",
-      fallbackPricingRevision: 4,
+      pricingSource: "explicit",
+      pricing: IMAGE_PRICING,
     });
+    expect(snapshot.entries[1]).toMatchObject({
+      pricingSource: "unconfigured",
+    });
+    expect(snapshot.entries[1]).not.toHaveProperty("pricing");
+    expect(snapshot.entries[1]).not.toHaveProperty("minimumCredits");
+    expect(
+      modelConfigurationSnapshotSchema.safeParse({
+        ...snapshot,
+        entries: [
+          {
+            ...snapshot.entries[1],
+            pricing: IMAGE_PRICING,
+          },
+        ],
+      }).success
+    ).toBe(false);
   });
 
   it("公开 DTO 仅接受第一方相对封面 URL 并拒绝存储引用", () => {
@@ -298,44 +396,45 @@ describe("updateModelConfigurationEntryInputSchema", () => {
     pricing: IMAGE_PRICING,
   };
 
-  it("要求继承 default 的图像保存携带 fallback revision", () => {
+  it("图像保存统一写入显式四档价格", () => {
     const parsed = updateModelConfigurationEntryInputSchema.parse({
       ...common,
       category: "image",
-      pricingSource: "fallback",
-      expectedFallbackRevision: 5,
     });
 
-    if (parsed.category !== "image" || parsed.pricingSource !== "fallback") {
-      throw new Error("应解析为继承 default 的图像配置输入");
+    if (parsed.category !== "image") {
+      throw new Error("应解析为图像配置输入");
     }
     expect(parsed.description).toBe("新简介");
-    expect(parsed.expectedFallbackRevision).toBe(5);
+    expect(parsed.pricing).toEqual(IMAGE_PRICING);
     expect(
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
         category: "image",
-        pricingSource: "fallback",
+        pricing: undefined,
       }).success
     ).toBe(false);
   });
 
-  it("显式价格图像不接受无关 fallback revision", () => {
+  it("图像输入不接受已删除的价格来源与 fallback revision", () => {
     expect(
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
         category: "image",
-        pricingSource: "explicit",
       }).success
     ).toBe(true);
-    expect(
-      updateModelConfigurationEntryInputSchema.safeParse({
-        ...common,
-        category: "image",
-        pricingSource: "explicit",
-        expectedFallbackRevision: 5,
-      }).success
-    ).toBe(false);
+    for (const extra of [
+      { pricingSource: "explicit" },
+      { expectedFallbackRevision: 5 },
+    ]) {
+      expect(
+        updateModelConfigurationEntryInputSchema.safeParse({
+          ...common,
+          category: "image",
+          ...extra,
+        }).success
+      ).toBe(false);
+    }
   });
 
   it("封面替换只接受字节并拒绝 URL、bucket、key 与未知字段", () => {
@@ -343,7 +442,6 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
         category: "image",
-        pricingSource: "explicit",
         coverChange: {
           action: "replace",
           bytes: new Uint8Array([1, 2, 3]),
@@ -356,7 +454,6 @@ describe("updateModelConfigurationEntryInputSchema", () => {
         updateModelConfigurationEntryInputSchema.safeParse({
           ...common,
           category: "image",
-          pricingSource: "explicit",
           coverChange: {
             action: "replace",
             bytes: new Uint8Array([1]),
@@ -367,22 +464,12 @@ describe("updateModelConfigurationEntryInputSchema", () => {
     }
   });
 
-  it("default 只接受图像价格与并发 revision", () => {
-    const valid = {
-      clientRequestId: common.clientRequestId,
-      category: "fallback",
-      configKey: "default",
-      expectedRevision: 3,
-      pricing: IMAGE_PRICING,
-    };
-
-    expect(
-      updateModelConfigurationEntryInputSchema.safeParse(valid).success
-    ).toBe(true);
+  it("拒绝 fallback 类别与 default 模型键", () => {
     expect(
       updateModelConfigurationEntryInputSchema.safeParse({
-        ...valid,
-        visible: true,
+        ...common,
+        category: "fallback",
+        configKey: "default",
       }).success
     ).toBe(false);
     expect(
@@ -390,7 +477,6 @@ describe("updateModelConfigurationEntryInputSchema", () => {
         ...common,
         category: "image",
         configKey: "default",
-        pricingSource: "explicit",
       }).success
     ).toBe(false);
   });
@@ -400,7 +486,6 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
         category: "image",
-        pricingSource: "explicit",
         clientRequestId: "retry-1",
       }).success
     ).toBe(false);
@@ -408,7 +493,6 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
         category: "image",
-        pricingSource: "explicit",
         description: "模".repeat(201),
       }).success
     ).toBe(false);
@@ -416,7 +500,6 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       updateModelConfigurationEntryInputSchema.safeParse({
         ...common,
         category: "image",
-        pricingSource: "explicit",
         expectedRevision: Number.MAX_SAFE_INTEGER + 1,
       }).success
     ).toBe(false);
@@ -438,6 +521,13 @@ describe("updateModelConfigurationEntryOutputSchema", () => {
       updateModelConfigurationEntryOutputSchema.safeParse({
         ...output,
         coverUrl: "/unexpected.webp",
+      }).success
+    ).toBe(false);
+    expect(
+      updateModelConfigurationEntryOutputSchema.safeParse({
+        category: "fallback",
+        configKey: "default",
+        revision: 1,
       }).success
     ).toBe(false);
   });

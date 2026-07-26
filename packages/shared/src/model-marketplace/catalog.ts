@@ -1,7 +1,7 @@
 /**
  * 模型广场的 DB-free 目录规则。
  *
- * 使用方包括管理清单装配、公开目录和保存服务。本模块统一处理模型身份、默认条目、
+ * 使用方包括管理清单装配、公开目录和保存服务。本模块统一处理模型身份、初始条目、
  * 最低价、视频默认完整 ID、能力排序与写回执裁剪，不读取运行时设置或数据库。
  */
 import {
@@ -193,16 +193,16 @@ export function resolveModelMarketplaceEntry(
  * 判断条目是否允许进入公开模型目录。
  *
  * @param entry - 可选的显式展示配置。
- * @param category - 模型配置类别。
+ * @param _category - 模型配置类别；保留参数以约束调用方只能传真实模型类别。
  * @param configKey - 规范模型键。
- * @returns fallback 或 default 始终为 false；其余模型缺配置时默认 true。
+ * @returns default 始终为 false；其余真实模型缺配置时默认 true。
  */
 export function isModelMarketplaceEntryVisible(
   entry: ModelMarketplaceEntry | undefined,
-  category: ModelMarketplaceConfigurationCategory,
+  _category: ModelMarketplaceConfigurationCategory,
   configKey: string
 ): boolean {
-  if (category === "fallback" || configKey === "default") return false;
+  if (configKey.toLowerCase() === "default") return false;
   return entry?.visible ?? true;
 }
 
