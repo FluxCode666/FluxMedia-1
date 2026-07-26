@@ -1,10 +1,20 @@
+/**
+ * 图片领域抠图回归测试。
+ *
+ * 使用方：Vitest；通过 Sharp 合成确定性 PNG，并验证 removeBackground 输出的尺寸、
+ * alpha 通道与前景保留边界。关键依赖：Sharp 与本地抠图模型，测试不访问网络。
+ */
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { removeBackground } from "./matte";
 
-// 合成测试图：纯蓝背景 + 中心红色实心圆。验证抠图输出带 alpha、背景透明、前景保留。
-// 注:纯色块上 saliency 模型边缘会有少量噪点,故阈值取宽松值。
-function testImage(size: number) {
+/**
+ * 合成纯蓝背景和中心红色圆形的 PNG 测试图。
+ *
+ * @param size 正方形边长；无效尺寸由 Sharp 拒绝。
+ * @returns Sharp 异步编码得到的 PNG Buffer，不产生文件或网络副作用。
+ */
+function testImage(size: number): Promise<Buffer> {
   const svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#2244aa"/><circle cx="${size / 2}" cy="${size / 2}" r="${size / 3}" fill="#dd3322"/></svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
