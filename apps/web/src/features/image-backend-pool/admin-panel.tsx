@@ -4,8 +4,8 @@
  * 统一媒体后端号池管理面板。
  *
  * 职责：在单一页面加载和展示分组及 `api | adobe` 统一成员，打开对应编辑表单、
- * 执行安全删除，并只在 Adobe direct 成员上暴露内部账号子池。注册机、Sub2API、
- * Web/Codex 账号和旧三池分页不再进入此组件。
+ * 执行安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、Sub2API、
+ * Web/Codex 账号、子号池和旧三池分页不再进入此组件。
  */
 import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
@@ -23,7 +23,6 @@ import {
   Activity,
   Boxes,
   Database,
-  KeyRound,
   Loader2,
   Pencil,
   Plus,
@@ -40,7 +39,6 @@ import {
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
 } from "./actions";
-import { AdobeAccountDialog } from "./adobe-account-dialog";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
 import type { BackendMemberAdminSummary } from "./member-service";
@@ -63,7 +61,7 @@ function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
   return member.config.mode === "direct" ? "Adobe Direct" : "Adobe Gateway";
 }
 
-/** 判断统一成员是否具备 Adobe direct 子账号管理能力。 */
+/** 判断统一成员是否为 Adobe direct 顶层账号。 */
 function isAdobeDirectMember(member: BackendMemberAdminSummary): boolean {
   return member.type === "adobe" && member.config.mode === "direct";
 }
@@ -117,13 +115,10 @@ export function ImageBackendPoolAdminPanel({
   const [members, setMembers] = useState<BackendMemberAdminSummary[]>([]);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
-  const [adobeDialogOpen, setAdobeDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<BackendGroupSummary | null>(
     null
   );
   const [editingMember, setEditingMember] =
-    useState<BackendMemberAdminSummary | null>(null);
-  const [adobeMember, setAdobeMember] =
     useState<BackendMemberAdminSummary | null>(null);
 
   const { execute: loadPool, isPending: isLoading } = useAction(
@@ -204,12 +199,6 @@ export function ImageBackendPoolAdminPanel({
     setMemberDialogOpen(true);
   }
 
-  /** 打开 Adobe direct 子账号面板。 */
-  function openAdobeAccounts(member: BackendMemberAdminSummary): void {
-    setAdobeMember(member);
-    setAdobeDialogOpen(true);
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -251,7 +240,7 @@ export function ImageBackendPoolAdminPanel({
 
       {readOnly && (
         <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          当前为只读视图。只有管理员可以修改分组、成员和 Adobe 子账号。
+          当前为只读视图。只有管理员可以修改分组和成员。
         </div>
       )}
 
@@ -277,7 +266,7 @@ export function ImageBackendPoolAdminPanel({
         <PoolStatCard
           title="Adobe Direct"
           value={adobeDirectCount}
-          description="具备内部账号与 token 子池"
+          description="一名成员对应一个 Adobe 账号"
           icon={Users}
         />
       </div>
@@ -391,17 +380,6 @@ export function ImageBackendPoolAdminPanel({
                     .join("、")}
                 </CardDescription>
                 <CardAction className="flex gap-1">
-                  {isAdobeDirectMember(member) && (
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => openAdobeAccounts(member)}
-                    >
-                      <KeyRound className="size-4" />
-                      <span className="sr-only">Adobe 账号</span>
-                    </Button>
-                  )}
                   {!readOnly && (
                     <>
                       <Button
@@ -469,8 +447,25 @@ export function ImageBackendPoolAdminPanel({
                         ? member.config.hasApiKey
                           ? "已配置"
                           : "缺失"
-                        : "内部子池"}
+                        : member.config.hasCookie
+                          ? "已配置"
+                          : "缺失"}
                   </span>
+                  {member.type === "adobe" &&
+                    member.config.mode === "direct" && (
+                      <>
+                        <span>Adobe 状态：{member.config.credentialStatus}</span>
+                        <span>
+                          Adobe 账号：
+                          {member.config.displayName ||
+                            member.config.email ||
+                            "未识别"}
+                        </span>
+                        <span>
+                          可用额度：{member.config.creditsAvailable ?? "—"}
+                        </span>
+                      </>
+                    )}
                   <span>
                     失败冷却：{member.failureCooldownEnabled ? "开" : "关"}
                   </span>
@@ -501,12 +496,6 @@ export function ImageBackendPoolAdminPanel({
         member={editingMember}
         groups={groups}
         onSaved={loadPool}
-      />
-      <AdobeAccountDialog
-        open={adobeDialogOpen}
-        onOpenChange={setAdobeDialogOpen}
-        member={adobeMember}
-        readOnly={readOnly}
       />
     </div>
   );

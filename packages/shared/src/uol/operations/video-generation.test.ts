@@ -136,7 +136,6 @@ describe("video generation operations", () => {
       videoReconcileSubmissionInputSchema.safeParse({
         outcome: "accepted",
         taskId: "video-1",
-        tokenId: "token-1",
         pollUrl: "https://firefly.adobe.io/jobs/upstream-1",
         upstreamJobId: "upstream-1",
       }).success
@@ -145,7 +144,6 @@ describe("video generation operations", () => {
       videoReconcileSubmissionInputSchema.safeParse({
         outcome: "accepted",
         taskId: "video-1",
-        tokenId: "token-1",
         pollUrl: "https://firefly.adobe.io/jobs/upstream-1",
       }).success
     ).toBe(false);

@@ -21,7 +21,6 @@
 | 号池 | `pool.getAdminPool` | 管理员 | 读取统一分组、成员与调度状态 |
 | 号池 | `pool.saveGroup`、`pool.deleteGroup` | 管理员 | 管理分组及其授权范围 |
 | 号池 | `pool.saveMember`、`pool.deleteMember` | 管理员 | 管理 `api | adobe` 统一成员及显式模型能力 |
-| Adobe 子池 | `pool.listAdobeAccounts` 等 | 管理员 | 只管理 Adobe direct 成员内部账号，不参与顶层调度 |
 | 系统设置 | `settings.getSnapshot`、`settings.update` | 管理员 | 读取或动态更新全局调度策略等配置 |
 
 ## 支撑域

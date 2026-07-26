@@ -1,7 +1,7 @@
 /**
  * UOL 操作注册 - 统一媒体后端号池。
  *
- * 职责：只暴露分组、统一成员、Adobe direct 子账号和 API Images 参数模板四类能力。
+ * 职责：只暴露分组、统一成员和 API Images 参数模板三类能力。
  * Web/Codex 账号、Sub2API、注册机、旧 API/Adobe 双模型和定时同步均不属于现行契约。
  * 真实实现由 apps/web 的 UOL binding 注入。
  */
@@ -47,6 +47,16 @@ const redactedAdobeConfigSchema = z.discriminatedUnion("mode", [
   z
     .object({
       mode: z.literal("direct"),
+      hasCookie: z.boolean(),
+      displayName: z.string().nullable(),
+      email: z.string().nullable(),
+      credentialStatus: z.enum(["active", "error", "exhausted", "invalid"]),
+      lastRefreshAt: z.string().nullable(),
+      lastRefreshError: z.string().nullable(),
+      consecutiveFailures: z.number().int().nonnegative(),
+      creditsTotal: z.number().int().nullable(),
+      creditsUsed: z.number().int().nullable(),
+      creditsAvailable: z.number().int().nullable(),
       defaultRatio: z.string(),
       defaultResolution: z.string(),
       gptImageQuality: z.enum(["low", "medium", "high"]),
@@ -189,104 +199,6 @@ export const deleteMember = defineOperation({
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.deleteMember");
-  },
-});
-
-const adobeAccountSummarySchema = z
-  .object({
-    id: z.string(),
-    name: z.string().nullable(),
-    displayName: z.string().nullable(),
-    email: z.string().nullable(),
-    isEnabled: z.boolean(),
-    status: z.string(),
-    lastRefreshAt: z.string().nullable(),
-    lastRefreshError: z.string().nullable(),
-    consecutiveFailures: z.number().int().nonnegative(),
-    creditsTotal: z.number().nullable(),
-    creditsUsed: z.number().nullable(),
-    creditsAvailable: z.number().nullable(),
-  })
-  .strict();
-
-/** 列出 Adobe direct 成员内部账号，不返回 cookie 或 token。 */
-export const listAdobeAccounts = defineOperation({
-  name: "pool.listAdobeAccounts",
-  domain: "image-backend-pool",
-  title: "列出 Adobe direct 账号",
-  description: "读取指定 Adobe direct 成员的脱敏账号与额度状态。",
-  input: z.object({ memberId: z.string().trim().min(1).max(128) }).strict(),
-  output: z.object({ accounts: z.array(adobeAccountSummarySchema) }).strict(),
-  access: { kind: "imageBackendPoolViewer" },
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: [],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.listAdobeAccounts");
-  },
-});
-
-/** 导入一个 Adobe Cookie，并由实现层换取和保存短期 token。 */
-export const importAdobeAccount = defineOperation({
-  name: "pool.importAdobeAccount",
-  domain: "image-backend-pool",
-  title: "导入 Adobe direct 账号",
-  description:
-    "向 Adobe direct 成员导入一个 Cookie；凭据不得出现在输出或日志。",
-  input: z
-    .object({
-      memberId: z.string().trim().min(1).max(128),
-      cookie: z.string().trim().min(1).max(64_000),
-      name: z.string().trim().min(1).max(120).optional(),
-    })
-    .strict(),
-  output: z.object({ id: z.string() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["external-call", "audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.importAdobeAccount");
-  },
-});
-
-/** 删除 Adobe direct 内部账号与其短期 token。 */
-export const deleteAdobeAccount = defineOperation({
-  name: "pool.deleteAdobeAccount",
-  domain: "image-backend-pool",
-  title: "删除 Adobe direct 账号",
-  description: "删除指定子账号；不会删除顶层统一成员。",
-  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
-  output: z.object({ success: z.boolean() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.deleteAdobeAccount");
-  },
-});
-
-/** 启停 Adobe direct 内部账号。 */
-export const setAdobeAccountEnabled = defineOperation({
-  name: "pool.setAdobeAccountEnabled",
-  domain: "image-backend-pool",
-  title: "启停 Adobe direct 账号",
-  description: "更新指定子账号启用状态。",
-  input: z
-    .object({ id: z.string().trim().min(1).max(128), isEnabled: z.boolean() })
-    .strict(),
-  output: z.object({ success: z.boolean() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.setAdobeAccountEnabled");
   },
 });
 

@@ -5,7 +5,7 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
  * 统一媒体后端号池 Server Actions。
  *
  * 职责：校验浏览器输入、构造当前 session Principal、调用 pool.* UOL operation
- * 并刷新管理页面。数据库、凭据、分组不变量和 Adobe 子账号逻辑全部由 operation
+ * 并刷新管理页面。数据库、凭据和分组不变量全部由 operation
  * binding 后的领域服务负责。
  */
 import {
@@ -43,22 +43,6 @@ export interface BackendPoolAdminSnapshot {
   members: BackendMemberAdminSummary[];
 }
 
-/** Adobe direct 子账号脱敏摘要。 */
-export interface AdobeAccountAdminSummary {
-  id: string;
-  name: string | null;
-  displayName: string | null;
-  email: string | null;
-  isEnabled: boolean;
-  status: string;
-  lastRefreshAt: string | null;
-  lastRefreshError: string | null;
-  consecutiveFailures: number;
-  creditsTotal: number | null;
-  creditsUsed: number | null;
-  creditsAvailable: number | null;
-}
-
 /** API Images 参数映射模板。 */
 export interface BackendParameterMappingTemplate {
   id: string;
@@ -76,10 +60,6 @@ type PoolOperationOutputs = {
   "pool.deleteGroup": { success: boolean };
   "pool.saveMember": { id: string };
   "pool.deleteMember": { success: boolean };
-  "pool.listAdobeAccounts": { accounts: AdobeAccountAdminSummary[] };
-  "pool.importAdobeAccount": { id: string };
-  "pool.deleteAdobeAccount": { success: boolean };
-  "pool.setAdobeAccountEnabled": { success: boolean };
   "pool.listParameterMappingTemplates": {
     templates: BackendParameterMappingTemplate[];
   };
@@ -96,14 +76,6 @@ const parameterMappingTemplateInputSchema = z
     id: z.string().trim().min(1).max(128).optional(),
     name: z.string().trim().min(1).max(80),
     parameterMappings: requestParameterMappingsSchema,
-  })
-  .strict();
-
-const adobeAccountImportSchema = z
-  .object({
-    memberId: z.string().trim().min(1).max(128),
-    cookie: z.string().trim().min(1).max(64_000),
-    name: z.string().trim().min(1).max(120).optional(),
   })
   .strict();
 
@@ -213,67 +185,6 @@ export const getImageBackendGroupOptionsAction = protectedAction
         role: await getUserRoleById(ctx.userId),
       }
     );
-  });
-
-/** 读取 Adobe direct 成员内部的脱敏账号列表。 */
-export const listAdobeAccountsAction = imageBackendPoolViewerAction
-  .metadata({ action: "imageBackendPool.listAdobeAccounts" })
-  .schema(z.object({ memberId: z.string().trim().min(1).max(128) }).strict())
-  .action(async ({ parsedInput, ctx }) => {
-    return invokePoolOperation("pool.listAdobeAccounts", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
-  });
-
-/** 向 Adobe direct 成员导入并验证一个 Cookie。 */
-export const importAdobeAccountAction = adminAction
-  .metadata({ action: "imageBackendPool.importAdobeAccount" })
-  .schema(adobeAccountImportSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.importAdobeAccount",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return { success: true, id: result.id };
-  });
-
-/** 删除 Adobe direct 子账号及其 token。 */
-export const deleteAdobeAccountAction = adminAction
-  .metadata({ action: "imageBackendPool.deleteAdobeAccount" })
-  .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation("pool.deleteAdobeAccount", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
-    revalidateBackendPoolPage();
-    return { success: true };
-  });
-
-/** 启停 Adobe direct 子账号。 */
-export const setAdobeAccountEnabledAction = adminAction
-  .metadata({ action: "imageBackendPool.setAdobeAccountEnabled" })
-  .schema(
-    z
-      .object({
-        id: z.string().trim().min(1).max(128),
-        isEnabled: z.boolean(),
-      })
-      .strict()
-  )
-  .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation("pool.setAdobeAccountEnabled", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    });
-    revalidateBackendPoolPage();
-    return { success: true };
   });
 
 /** 读取 API Images 参数映射模板。 */

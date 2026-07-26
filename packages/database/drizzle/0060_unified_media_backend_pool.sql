@@ -1,6 +1,6 @@
 -- 统一媒体后端数据模型的一次性切换。
 -- 发布方必须先停止旧 Web/worker、排空数据库连接并创建受控备份。API、Adobe
--- 成员及其账号、token、分组和历史指标会在事务内迁移；只有已下线的 Web 账号、
+-- 成员及其 direct 账号凭据、分组和历史指标会在事务内迁移；只有已下线的 Web 账号、
 -- 仍在运行的旧租约/粘性绑定和无法恢复的旧视频任务会阻断。任一失败都会回滚。
 DO $$
 DECLARE
@@ -14,6 +14,8 @@ DECLARE
   incompatible_api_protocol_count bigint;
   invalid_adobe_config_count bigint;
   invalid_member_state_count bigint;
+  invalid_direct_credential_count bigint;
+  direct_member_id_collision_count bigint;
 BEGIN
   SELECT count(*) INTO web_account_count FROM "image_backend_account";
   SELECT count(*)
@@ -102,6 +104,94 @@ BEGIN
       OR "fail_count" < 0
       OR "gpt_image_quality" NOT IN ('low', 'medium', 'high')
   ) AS invalid_member_state;
+  SELECT count(*)
+  INTO invalid_direct_credential_count
+  FROM "image_backend_adobe" AS adobe
+  WHERE (
+      adobe."mode" = 'gateway'
+      AND (
+        EXISTS (
+          SELECT 1 FROM "adobe_account" AS account
+          WHERE account."adobe_id" = adobe."id"
+        )
+        OR EXISTS (
+          SELECT 1 FROM "adobe_token" AS token
+          WHERE token."adobe_id" = adobe."id"
+        )
+      )
+    ) OR (
+      adobe."mode" = 'direct'
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM "adobe_account" AS account
+          WHERE account."adobe_id" = adobe."id"
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM "adobe_account" AS account
+          WHERE account."adobe_id" = adobe."id"
+            AND (
+              account."status" NOT IN ('active', 'error', 'disabled')
+              OR char_length(btrim(account."cookie")) NOT BETWEEN 1 AND 64000
+              OR (
+                account."scope" IS NOT NULL
+                AND char_length(btrim(account."scope")) NOT BETWEEN 1 AND 4096
+              )
+              OR account."consecutive_failures" < 0
+              OR (
+                SELECT count(*)
+                FROM "adobe_token" AS token
+                WHERE token."adobe_id" = adobe."id"
+                  AND token."account_id" = account."id"
+                  AND token."source" = 'auto_refresh'
+              ) <> 1
+            )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM "adobe_token" AS token
+          LEFT JOIN "adobe_account" AS account
+            ON account."id" = token."account_id"
+            AND account."adobe_id" = adobe."id"
+          WHERE token."adobe_id" = adobe."id"
+            AND (
+              token."account_id" IS NULL
+              OR token."source" <> 'auto_refresh'
+              OR token."status" NOT IN ('active', 'error', 'exhausted', 'invalid')
+              OR char_length(btrim(token."value")) < 1
+              OR token."fails" < 0
+              OR account."id" IS NULL
+            )
+        )
+      )
+    );
+  WITH ranked_direct_accounts AS (
+    SELECT
+      account."id",
+      row_number() OVER (
+        PARTITION BY account."adobe_id"
+        ORDER BY account."created_at", account."id"
+      ) AS ordinal
+    FROM "adobe_account" AS account
+    INNER JOIN "image_backend_adobe" AS adobe
+      ON adobe."id" = account."adobe_id"
+      AND adobe."mode" = 'direct'
+  )
+  SELECT count(*)
+  INTO direct_member_id_collision_count
+  FROM ranked_direct_accounts AS account
+  WHERE account.ordinal > 1
+    AND (
+      char_length('adobe-direct:' || account."id") > 128
+      OR EXISTS (
+        SELECT 1 FROM "image_backend_api" AS api
+        WHERE api."id" = 'adobe-direct:' || account."id"
+      )
+      OR EXISTS (
+        SELECT 1 FROM "image_backend_adobe" AS adobe
+        WHERE adobe."id" = 'adobe-direct:' || account."id"
+      )
+    );
 
   IF web_account_count <> 0
     OR web_account_group_count <> 0
@@ -113,9 +203,11 @@ BEGIN
     OR incompatible_api_protocol_count <> 0
     OR invalid_adobe_config_count <> 0
     OR invalid_member_state_count <> 0
+    OR invalid_direct_credential_count <> 0
+    OR direct_member_id_collision_count <> 0
   THEN
     RAISE EXCEPTION
-      '0060 blocked: non-migratable media state remains (web_account=%, web_account_group=%, active_lease=%, active_sticky=%, active_video=%, member_id_collision=%, invalid_api_models=%, incompatible_api_protocol=%, invalid_adobe_config=%, invalid_member_state=%)',
+      '0060 blocked: non-migratable media state remains (web_account=%, web_account_group=%, active_lease=%, active_sticky=%, active_video=%, member_id_collision=%, invalid_api_models=%, incompatible_api_protocol=%, invalid_adobe_config=%, invalid_member_state=%, invalid_direct_credential=%, direct_member_id_collision=%)',
       web_account_count,
       web_account_group_count,
       active_lease_count,
@@ -125,7 +217,9 @@ BEGIN
       invalid_api_model_count,
       incompatible_api_protocol_count,
       invalid_adobe_config_count,
-      invalid_member_state_count;
+      invalid_member_state_count,
+      invalid_direct_credential_count,
+      direct_member_id_collision_count;
   END IF;
 END $$;
 --> statement-breakpoint
@@ -217,6 +311,24 @@ CREATE TABLE "image_backend_member_adobe_config" (
   "mode" text NOT NULL,
   "base_url" text,
   "api_key" text,
+  "cookie" text,
+  "scope" text,
+  "access_token" text,
+  "account_user_id" text,
+  "display_name" text,
+  "email" text,
+  "credential_status" text,
+  "token_expires_at" timestamp,
+  "token_fails" integer DEFAULT 0 NOT NULL,
+  "last_refresh_at" timestamp,
+  "last_refresh_error" text,
+  "next_refresh_at" timestamp,
+  "consecutive_failures" integer DEFAULT 0 NOT NULL,
+  "credits_total" integer,
+  "credits_used" integer,
+  "credits_available" integer,
+  "credits_updated_at" timestamp,
+  "credits_error" text,
   "default_ratio" text DEFAULT '1x1' NOT NULL,
   "default_resolution" text DEFAULT '2k' NOT NULL,
   "gpt_image_quality" text DEFAULT 'high' NOT NULL,
@@ -233,6 +345,49 @@ CREATE TABLE "image_backend_member_adobe_config" (
         AND "api_key" IS NULL
       )
     ),
+  CONSTRAINT "image_backend_member_adobe_config_credential_shape_check"
+    CHECK (
+      (
+        "mode" = 'gateway'
+        AND "cookie" IS NULL
+        AND "scope" IS NULL
+        AND "access_token" IS NULL
+        AND "account_user_id" IS NULL
+        AND "display_name" IS NULL
+        AND "email" IS NULL
+        AND "credential_status" IS NULL
+        AND "token_expires_at" IS NULL
+        AND "token_fails" = 0
+        AND "last_refresh_at" IS NULL
+        AND "last_refresh_error" IS NULL
+        AND "next_refresh_at" IS NULL
+        AND "consecutive_failures" = 0
+        AND "credits_total" IS NULL
+        AND "credits_used" IS NULL
+        AND "credits_available" IS NULL
+        AND "credits_updated_at" IS NULL
+        AND "credits_error" IS NULL
+      )
+      OR (
+        "mode" = 'direct'
+        AND "cookie" IS NOT NULL
+        AND char_length(btrim("cookie")) BETWEEN 1 AND 64000
+        AND (
+          "scope" IS NULL
+          OR char_length(btrim("scope")) BETWEEN 1 AND 4096
+        )
+        AND "access_token" IS NOT NULL
+        AND char_length(btrim("access_token")) >= 1
+        AND "credential_status" IS NOT NULL
+      )
+    ),
+  CONSTRAINT "image_backend_member_adobe_config_credential_status_check"
+    CHECK (
+      "credential_status" IS NULL
+      OR "credential_status" IN ('active', 'error', 'exhausted', 'invalid')
+    ),
+  CONSTRAINT "image_backend_member_adobe_config_failure_counts_check"
+    CHECK ("token_fails" >= 0 AND "consecutive_failures" >= 0),
   CONSTRAINT "image_backend_member_adobe_config_quality_check"
     CHECK ("gpt_image_quality" IN ('low', 'medium', 'high')),
   CONSTRAINT "image_backend_member_adobe_config_member_id_image_backend_member_id_fk"
@@ -468,7 +623,16 @@ INSERT INTO "image_backend_member" (
 SELECT
   "id",
   'adobe',
-  "name",
+  CASE
+    WHEN "mode" = 'direct' THEN (
+      SELECT account."name"
+      FROM "adobe_account" AS account
+      WHERE account."adobe_id" = "image_backend_adobe"."id"
+      ORDER BY account."created_at", account."id"
+      LIMIT 1
+    )
+    ELSE "name"
+  END,
   (
     CASE
       WHEN "enabled_models" IS NOT NULL
@@ -561,7 +725,16 @@ SELECT
     END
   )::json,
   "content_safety_enabled",
-  "is_enabled",
+  "is_enabled" AND (
+    "mode" = 'gateway'
+    OR coalesce((
+      SELECT account."is_enabled"
+      FROM "adobe_account" AS account
+      WHERE account."adobe_id" = "image_backend_adobe"."id"
+      ORDER BY account."created_at", account."id"
+      LIMIT 1
+    ), false)
+  ),
   "always_active",
   "failure_cooldown_enabled",
   "priority",
@@ -569,10 +742,27 @@ SELECT
   "success_count" + "fail_count",
   "success_count",
   "fail_count",
-  "status",
-  CASE "status"
-    WHEN 'error' THEN 'unhealthy'
-    WHEN 'limited' THEN 'degraded'
+  CASE
+    WHEN "status" = 'error' THEN 'error'
+    WHEN "mode" = 'direct' AND (
+      SELECT account."status"
+      FROM "adobe_account" AS account
+      WHERE account."adobe_id" = "image_backend_adobe"."id"
+      ORDER BY account."created_at", account."id"
+      LIMIT 1
+    ) = 'error' THEN 'error'
+    ELSE "status"
+  END,
+  CASE
+    WHEN "status" = 'error' THEN 'unhealthy'
+    WHEN "mode" = 'direct' AND (
+      SELECT account."status"
+      FROM "adobe_account" AS account
+      WHERE account."adobe_id" = "image_backend_adobe"."id"
+      ORDER BY account."created_at", account."id"
+      LIMIT 1
+    ) = 'error' THEN 'unhealthy'
+    WHEN "status" = 'limited' THEN 'degraded'
     ELSE 'healthy'
   END,
   coalesce("last_error_at", "last_used_at", "last_acquired_at"),
@@ -595,6 +785,103 @@ SELECT
   "updated_at"
 FROM "image_backend_adobe";
 --> statement-breakpoint
+-- Direct 旧父成员的第一个账号沿用原成员 ID；其余账号提升为新的顶层成员。
+WITH ranked_direct_accounts AS (
+  SELECT
+    account.*,
+    row_number() OVER (
+      PARTITION BY account."adobe_id"
+      ORDER BY account."created_at", account."id"
+    ) AS ordinal
+  FROM "adobe_account" AS account
+  INNER JOIN "image_backend_adobe" AS adobe
+    ON adobe."id" = account."adobe_id"
+    AND adobe."mode" = 'direct'
+)
+INSERT INTO "image_backend_member" (
+  "id",
+  "type",
+  "name",
+  "supported_model_ids",
+  "content_safety_enabled",
+  "is_enabled",
+  "always_active",
+  "failure_cooldown_enabled",
+  "priority",
+  "concurrency",
+  "lease_acquired_count",
+  "success_count",
+  "fail_count",
+  "status",
+  "health_status",
+  "last_observed_at",
+  "last_used_at",
+  "last_acquired_at",
+  "cooldown_until",
+  "last_error",
+  "last_error_at",
+  "metadata",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  'adobe-direct:' || account."id",
+  'adobe',
+  account."name",
+  parent."supported_model_ids",
+  parent."content_safety_enabled",
+  adobe."is_enabled" AND account."is_enabled",
+  parent."always_active",
+  parent."failure_cooldown_enabled",
+  parent."priority",
+  parent."concurrency",
+  0,
+  0,
+  0,
+  CASE
+    WHEN adobe."status" = 'error' OR account."status" = 'error' THEN 'error'
+    ELSE adobe."status"
+  END,
+  CASE
+    WHEN adobe."status" = 'error' OR account."status" = 'error'
+      THEN 'unhealthy'
+    WHEN adobe."status" = 'limited' THEN 'degraded'
+    ELSE 'healthy'
+  END,
+  coalesce(account."last_refresh_at", parent."last_observed_at"),
+  token."last_used_at",
+  NULL,
+  parent."cooldown_until",
+  coalesce(account."last_refresh_error", parent."last_error"),
+  CASE
+    WHEN account."last_refresh_error" IS NOT NULL
+      THEN account."updated_at"
+    ELSE parent."last_error_at"
+  END,
+  (
+    coalesce(parent."metadata"::jsonb, '{}'::jsonb)
+    || jsonb_build_object(
+      'legacyAdobeDirect',
+      jsonb_build_object(
+        'parentMemberId', account."adobe_id",
+        'accountId', account."id",
+        'promoted', true
+      )
+    )
+  )::json,
+  account."created_at",
+  greatest(parent."updated_at", account."updated_at", token."updated_at")
+FROM ranked_direct_accounts AS account
+INNER JOIN "image_backend_member" AS parent
+  ON parent."id" = account."adobe_id"
+INNER JOIN "image_backend_adobe" AS adobe
+  ON adobe."id" = account."adobe_id"
+INNER JOIN "adobe_token" AS token
+  ON token."account_id" = account."id"
+  AND token."source" = 'auto_refresh'
+WHERE account.ordinal > 1;
+--> statement-breakpoint
+-- Gateway 没有 Adobe Cookie；其凭据仍是成员级 API Key。
 INSERT INTO "image_backend_member_adobe_config" (
   "member_id",
   "mode",
@@ -616,7 +903,91 @@ SELECT
   "gpt_image_quality",
   "created_at",
   "updated_at"
-FROM "image_backend_adobe";
+FROM "image_backend_adobe"
+WHERE "mode" = 'gateway';
+--> statement-breakpoint
+-- 每个 Direct 顶层成员保存恰好一个旧账号及其 auto_refresh token 快照。
+WITH ranked_direct_accounts AS (
+  SELECT
+    account.*,
+    row_number() OVER (
+      PARTITION BY account."adobe_id"
+      ORDER BY account."created_at", account."id"
+    ) AS ordinal
+  FROM "adobe_account" AS account
+  INNER JOIN "image_backend_adobe" AS adobe
+    ON adobe."id" = account."adobe_id"
+    AND adobe."mode" = 'direct'
+)
+INSERT INTO "image_backend_member_adobe_config" (
+  "member_id",
+  "mode",
+  "base_url",
+  "api_key",
+  "cookie",
+  "scope",
+  "access_token",
+  "account_user_id",
+  "display_name",
+  "email",
+  "credential_status",
+  "token_expires_at",
+  "token_fails",
+  "last_refresh_at",
+  "last_refresh_error",
+  "next_refresh_at",
+  "consecutive_failures",
+  "credits_total",
+  "credits_used",
+  "credits_available",
+  "credits_updated_at",
+  "credits_error",
+  "default_ratio",
+  "default_resolution",
+  "gpt_image_quality",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  CASE
+    WHEN account.ordinal = 1 THEN account."adobe_id"
+    ELSE 'adobe-direct:' || account."id"
+  END,
+  'direct',
+  NULL,
+  NULL,
+  account."cookie",
+  account."scope",
+  token."value",
+  coalesce(token."account_user_id", account."account_user_id"),
+  account."display_name",
+  account."email",
+  CASE
+    WHEN account."status" = 'error' THEN 'error'
+    ELSE token."status"
+  END,
+  token."expires_at",
+  token."fails",
+  account."last_refresh_at",
+  account."last_refresh_error",
+  account."next_refresh_at",
+  account."consecutive_failures",
+  token."credits_total",
+  token."credits_used",
+  token."credits_available",
+  token."credits_updated_at",
+  token."credits_error",
+  adobe."default_ratio",
+  adobe."default_resolution",
+  adobe."gpt_image_quality",
+  least(adobe."created_at", account."created_at", token."created_at"),
+  greatest(adobe."updated_at", account."updated_at", token."updated_at")
+FROM ranked_direct_accounts AS account
+INNER JOIN "image_backend_adobe" AS adobe
+  ON adobe."id" = account."adobe_id"
+INNER JOIN "adobe_token" AS token
+  ON token."account_id" = account."id"
+  AND token."source" = 'auto_refresh';
 --> statement-breakpoint
 -- 旧 API/Adobe 关系表拥有独立主键命名空间；加类型前缀后再合并，避免合法同名 ID
 -- 在统一关系表产生主键冲突。旧单列 group_id 仅在关系表缺失时补齐。
@@ -665,6 +1036,36 @@ WHERE adobe."group_id" IS NOT NULL
     WHERE relation."member_id" = adobe."id"
       AND relation."group_id" = adobe."group_id"
   );
+--> statement-breakpoint
+-- 提升出的 Direct 成员继承原父成员全部分组，保持相同业务调度范围。
+WITH ranked_direct_accounts AS (
+  SELECT
+    account."id",
+    account."adobe_id",
+    row_number() OVER (
+      PARTITION BY account."adobe_id"
+      ORDER BY account."created_at", account."id"
+    ) AS ordinal
+  FROM "adobe_account" AS account
+  INNER JOIN "image_backend_adobe" AS adobe
+    ON adobe."id" = account."adobe_id"
+    AND adobe."mode" = 'direct'
+)
+INSERT INTO "image_backend_member_group" (
+  "id",
+  "member_id",
+  "group_id",
+  "created_at"
+)
+SELECT
+  'legacy-adobe-account:' || account."id" || ':' || relation."group_id",
+  'adobe-direct:' || account."id",
+  relation."group_id",
+  relation."created_at"
+FROM ranked_direct_accounts AS account
+INNER JOIN "image_backend_member_group" AS relation
+  ON relation."member_id" = account."adobe_id"
+WHERE account.ordinal > 1;
 --> statement-breakpoint
 -- 维护窗口拒绝未过期租约；已过期租约保留原 ID，等待统一清理器回收。
 INSERT INTO "image_backend_member_lease" (
@@ -800,57 +1201,9 @@ SELECT
   "updated_at"
 FROM aggregated_legacy_metric;
 --> statement-breakpoint
-ALTER TABLE "adobe_account"
-  DROP CONSTRAINT IF EXISTS "adobe_account_backend_owner_check",
-  ADD COLUMN "member_id" text;
---> statement-breakpoint
-UPDATE "adobe_account"
-SET "member_id" = "adobe_id";
---> statement-breakpoint
-ALTER TABLE "adobe_account"
-  ALTER COLUMN "member_id" SET NOT NULL,
-  ADD CONSTRAINT "adobe_account_member_id_image_backend_member_id_fk"
-    FOREIGN KEY ("member_id") REFERENCES "image_backend_member"("id")
-    ON DELETE cascade ON UPDATE no action;
---> statement-breakpoint
-ALTER TABLE "adobe_token"
-  DROP CONSTRAINT IF EXISTS "adobe_token_backend_owner_check",
-  ADD COLUMN "member_id" text;
---> statement-breakpoint
-UPDATE "adobe_token"
-SET "member_id" = "adobe_id";
---> statement-breakpoint
-ALTER TABLE "adobe_token"
-  ALTER COLUMN "member_id" SET NOT NULL,
-  ADD CONSTRAINT "adobe_token_member_id_image_backend_member_id_fk"
-    FOREIGN KEY ("member_id") REFERENCES "image_backend_member"("id")
-    ON DELETE cascade ON UPDATE no action;
---> statement-breakpoint
-DROP INDEX "adobe_account_adobe_idx";
---> statement-breakpoint
-DROP INDEX "adobe_token_adobe_idx";
---> statement-breakpoint
-DROP INDEX "adobe_token_adobe_status_idx";
---> statement-breakpoint
-ALTER TABLE "adobe_account"
-  DROP CONSTRAINT "adobe_account_adobe_id_image_backend_adobe_id_fk",
-  DROP COLUMN "adobe_id";
---> statement-breakpoint
-ALTER TABLE "adobe_token"
-  DROP CONSTRAINT "adobe_token_adobe_id_image_backend_adobe_id_fk",
-  DROP COLUMN "adobe_id";
---> statement-breakpoint
-CREATE INDEX "adobe_account_member_idx" ON "adobe_account" ("member_id");
---> statement-breakpoint
-CREATE INDEX "adobe_token_member_idx" ON "adobe_token" ("member_id");
---> statement-breakpoint
-CREATE INDEX "adobe_token_member_status_idx"
-  ON "adobe_token" ("member_id", "status");
---> statement-breakpoint
 ALTER TABLE "video_generation"
   ADD COLUMN "backend_member_id" text,
   ADD COLUMN "stage" text DEFAULT 'created' NOT NULL,
-  ADD COLUMN "adobe_token_id" text,
   ADD COLUMN "member_lease_id" text,
   ADD COLUMN "member_lease_owner_token" text,
   ADD COLUMN "state_version" integer DEFAULT 0 NOT NULL,
@@ -874,9 +1227,6 @@ SET
 ALTER TABLE "video_generation"
   ADD CONSTRAINT "video_generation_backend_member_id_image_backend_member_id_fk"
     FOREIGN KEY ("backend_member_id") REFERENCES "image_backend_member"("id")
-    ON DELETE set null ON UPDATE no action,
-  ADD CONSTRAINT "video_generation_adobe_token_id_adobe_token_id_fk"
-    FOREIGN KEY ("adobe_token_id") REFERENCES "adobe_token"("id")
     ON DELETE set null ON UPDATE no action,
   ADD CONSTRAINT "video_generation_member_lease_id_image_backend_member_lease_id_fk"
     FOREIGN KEY ("member_lease_id") REFERENCES "image_backend_member_lease"("id")
@@ -905,9 +1255,6 @@ ALTER TABLE "video_generation"
 CREATE INDEX "video_generation_backend_member_idx"
   ON "video_generation" ("backend_member_id");
 --> statement-breakpoint
-CREATE INDEX "video_generation_adobe_token_idx"
-  ON "video_generation" ("adobe_token_id");
---> statement-breakpoint
 CREATE INDEX "video_generation_member_lease_idx"
   ON "video_generation" ("member_lease_id");
 --> statement-breakpoint
@@ -923,6 +1270,10 @@ DROP TABLE "image_backend_adobe_group";
 DROP TABLE "image_backend_account";
 --> statement-breakpoint
 DROP TABLE "image_backend_api";
+--> statement-breakpoint
+DROP TABLE "adobe_token";
+--> statement-breakpoint
+DROP TABLE "adobe_account";
 --> statement-breakpoint
 DROP TABLE "image_backend_adobe";
 --> statement-breakpoint

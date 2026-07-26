@@ -116,6 +116,8 @@ export function BackendMemberFormDialog({
   const [adobeMode, setAdobeMode] = useState<"gateway" | "direct">("gateway");
   const [adobeBaseUrl, setAdobeBaseUrl] = useState("");
   const [adobeApiKey, setAdobeApiKey] = useState("");
+  const [adobeCookie, setAdobeCookie] = useState("");
+  const [adobeScope, setAdobeScope] = useState("");
   const [defaultRatio, setDefaultRatio] = useState("1x1");
   const [defaultResolution, setDefaultResolution] = useState("2k");
   const [gptImageQuality, setGptImageQuality] = useState<
@@ -163,6 +165,8 @@ export function BackendMemberFormDialog({
       setGptImageQuality("high");
     }
     setAdobeApiKey("");
+    setAdobeCookie("");
+    setAdobeScope("");
   }, [groups, member, open]);
 
   const { execute: saveMember, isPending } = useAction(
@@ -245,6 +249,10 @@ export function BackendMemberFormDialog({
             }
           : {
               mode: "direct",
+              ...(adobeCookie.trim()
+                ? { cookie: adobeCookie.trim() }
+                : {}),
+              ...(adobeScope.trim() ? { scope: adobeScope.trim() } : {}),
               defaultRatio,
               defaultResolution,
               gptImageQuality,
@@ -454,8 +462,8 @@ export function BackendMemberFormDialog({
               <div>
                 <h3 className="font-medium">Adobe 配置</h3>
                 <p className="text-xs text-muted-foreground">
-                  Gateway 使用外部兼容接口；Direct 使用内部 Adobe 账号与 token
-                  子池。
+                  Gateway 使用外部兼容接口；Direct 成员自身就是一个 Adobe
+                  账号，不再包含内部子号池。
                 </p>
               </div>
               <div className="space-y-2">
@@ -496,6 +504,42 @@ export function BackendMemberFormDialog({
                       onChange={(event) => setAdobeApiKey(event.target.value)}
                       placeholder={member ? "留空保留现有凭据" : "必填"}
                       required={!member}
+                    />
+                  </div>
+                </>
+              )}
+              {adobeMode === "direct" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-cookie">Adobe Cookie</Label>
+                    <Textarea
+                      id="adobe-cookie"
+                      rows={5}
+                      value={adobeCookie}
+                      onChange={(event) => setAdobeCookie(event.target.value)}
+                      placeholder={
+                        member?.type === "adobe" &&
+                        member.config.mode === "direct"
+                          ? "留空保留现有 Cookie"
+                          : "粘贴已登录 Adobe 账号的完整 Cookie"
+                      }
+                      required={
+                        !member ||
+                        (member.type === "adobe" &&
+                          member.config.mode !== "direct")
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      保存时会立即验证账号并换取短期 Token；明文不会返回浏览器。
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-scope">IMS Scope</Label>
+                    <Input
+                      id="adobe-scope"
+                      value={adobeScope}
+                      onChange={(event) => setAdobeScope(event.target.value)}
+                      placeholder="留空使用默认 Scope"
                     />
                   </div>
                 </>

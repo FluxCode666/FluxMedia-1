@@ -5,14 +5,13 @@
  * 轮询、下载、完成或退款。使用方是 UOL binding 与定时任务。
  * 关键依赖：video_generation CAS、Adobe 分阶段适配器、成员租约、credits 与 storage。
  *
- * 不变量：Adobe 接受后固定 member/token；HTTP 与对象存储 I/O 不进入数据库事务；
+ * 不变量：Adobe 接受后固定顶层成员；HTTP 与对象存储 I/O 不进入数据库事务；
  * submit 不确定不重投不退款；所有终态通过持久阶段和幂等财务键收敛。
  */
 
 import { randomUUID } from "node:crypto";
 import { db } from "@repo/database";
 import {
-  adobeToken,
   creditsTransaction,
   videoGeneration,
   videoGenerationCallbackDelivery,
@@ -133,7 +132,6 @@ export type VideoSubmissionReconciliation =
   | {
       outcome: "accepted";
       taskId: string;
-      tokenId: string;
       pollUrl: string;
       upstreamJobId: string;
     }
@@ -440,7 +438,6 @@ export async function reconcileUncertainVideoSubmission(
 
   if (["polling", "downloading", "completed"].includes(row.stage)) {
     if (
-      row.adobeTokenId !== input.tokenId ||
       row.pollUrl !== pollUrl ||
       row.upstreamJobId !== input.upstreamJobId
     ) {
@@ -461,28 +458,11 @@ export async function reconcileUncertainVideoSubmission(
       "当前视频任务不能恢复 Adobe 轮询"
     );
   }
-  const [matchingToken] = await db
-    .select({ id: adobeToken.id })
-    .from(adobeToken)
-    .where(
-      and(
-        eq(adobeToken.id, input.tokenId),
-        eq(adobeToken.memberId, row.backendMemberId)
-      )
-    )
-    .limit(1);
-  if (!matchingToken) {
-    throw new VideoSubmissionReconciliationError(
-      "validation_error",
-      "Adobe token 不存在或不属于原提交成员"
-    );
-  }
   const polling = await compareAndSetVideoStage({
     row,
     expectedStages: ["submit_uncertain"],
     values: {
       stage: "polling",
-      adobeTokenId: input.tokenId,
       pollUrl,
       upstreamJobId: input.upstreamJobId,
       upstreamAcceptedAt: new Date(),
@@ -874,7 +854,6 @@ async function submitClaimedCreatedVideo(
         expectedStages: ["submitting"],
         values: {
           stage: "polling",
-          adobeTokenId: submitted.tokenId,
           pollUrl: submitted.pollUrl,
           upstreamJobId: submitted.upstreamJobId,
           upstreamAcceptedAt: new Date(),
@@ -1150,7 +1129,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
   row = leased;
 
   if (row.stage === "polling") {
-    if (!row.backendMemberId || !row.adobeTokenId || !row.pollUrl) {
+    if (!row.backendMemberId || !row.pollUrl) {
       const refunding = await moveVideoToRefunding(
         row,
         "已接受视频任务缺少恢复身份"
@@ -1161,7 +1140,6 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     try {
       const polled = await pollAdobeDirectVideoRequest({
         memberId: row.backendMemberId,
-        tokenId: row.adobeTokenId,
         pollUrl: row.pollUrl,
       });
       if (polled.status === "pending") {

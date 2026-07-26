@@ -4,13 +4,12 @@
  * 不依赖外部 adobe2api 进程。
  *
  * 职责：
- * - 账号/token 池（adobe_account / adobe_token）：cookie → IMS access_token 刷新、
- *   token 轮换选取、失效/配额错误标记。
- * - 出图：选 token → 选模型族/尺寸 → 图生图先 uploadImage → generateImage → 返回 base64。
+ * - 一对一凭据：每个 Adobe direct 顶层成员持有一个 cookie 与短期 IMS token。
+ * - 出图：取成员 token → 选模型族/尺寸 → 图生图先 uploadImage → generateImage。
  */
 
 import { db } from "@repo/database";
-import { adobeAccount, adobeToken } from "@repo/database/schema";
+import { imageBackendMemberAdobeConfig } from "@repo/database/schema";
 import {
   type AdobeImageResolution,
   type AdobeRatio,
@@ -29,10 +28,9 @@ import {
   type FireflyTransport,
   type FireflyTransportRequest,
   type FireflyTransportResponse,
-  fetchAccountInfo,
   fetchCreditsBalance,
   fireflyVideoSize,
-  isAdobeRotatableError,
+  isAdobeMemberSwitchableError,
   isTokenExpired,
   ProxyFireflyTransport,
   QuotaExhaustedError,
@@ -41,17 +39,14 @@ import {
   resolveFireflyVideoModel,
 } from "@repo/shared/adobe/firefly-direct";
 import { logError, logWarn } from "@repo/shared/logger";
-import { and, asc, eq, sql } from "drizzle-orm";
-
-import { nanoid } from "nanoid";
+import { and, eq, sql } from "drizzle-orm";
 import {
   fetchMediaUpstreamDownload,
   MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
-import { parseAdobeCookieEntries } from "./adobe-cookie-parser";
 import type { ApiConfig, GenerateImageResult } from "./types";
-import { requireOriginalAcceptedVideoToken } from "./video-recovery-policy";
+import { requireAcceptedVideoCredential } from "./video-recovery-policy";
 
 // IMS access_token 距过期多久内视为需要刷新（秒）。
 const TOKEN_REFRESH_SKEW_SECONDS = 120;
@@ -154,33 +149,31 @@ function assertLoggedInAdobeCookie(
   }
 }
 
-/**
- * 用某账号的 cookie 刷新出 access_token，并 upsert 到 adobe_token（一个账号一行
- * auto_refresh token）。同时回写账号信息/状态。
- */
-async function refreshAccountToken(
+/** 使用 direct 成员自己的 Cookie 刷新并回写其一对一短期凭据。 */
+async function refreshMemberCredential(
   memberId: string,
-  account: { id: string; cookie: string; scope: string | null },
+  credential: { cookie: string; scope: string | null },
   transport: FireflyTransport,
   signal?: AbortSignal
-): Promise<{ id: string; value: string } | null> {
+): Promise<{ value: string } | null> {
   try {
     const result = await refreshAccessTokenFromCookie(
       transport,
-      account.cookie,
+      credential.cookie,
       {
-        scope: account.scope ?? undefined,
+        scope: credential.scope ?? undefined,
         signal,
         fetchAccount: true,
       }
     );
     const now = new Date();
-    const accountUserId = result.account?.userId || "";
-
     await db
-      .update(adobeAccount)
+      .update(imageBackendMemberAdobeConfig)
       .set({
-        status: "active",
+        accessToken: result.accessToken,
+        tokenExpiresAt: tokenExpiresAt(result.accessToken),
+        credentialStatus: "active",
+        tokenFails: 0,
         lastRefreshAt: now,
         lastRefreshError: null,
         consecutiveFailures: 0,
@@ -193,79 +186,37 @@ async function refreshAccountToken(
           : {}),
         updatedAt: now,
       })
-      .where(eq(adobeAccount.id, account.id));
-
-    // 该账号已有的 auto_refresh token？有则更新，无则插入。
-    const existing = await db
-      .select({ id: adobeToken.id })
-      .from(adobeToken)
-      .where(
-        and(
-          eq(adobeToken.accountId, account.id),
-          eq(adobeToken.source, "auto_refresh")
-        )
-      )
-      .limit(1);
-
-    const expiresAt = tokenExpiresAt(result.accessToken);
-    let tokenId: string;
-    if (existing[0]) {
-      await db
-        .update(adobeToken)
-        .set({
-          value: result.accessToken,
-          accountUserId: accountUserId || null,
-          status: "active",
-          fails: 0,
-          expiresAt,
-          updatedAt: now,
-        })
-        .where(eq(adobeToken.id, existing[0].id));
-      tokenId = existing[0].id;
-    } else {
-      tokenId = nanoid();
-      await db.insert(adobeToken).values({
-        id: tokenId,
-        memberId,
-        accountId: account.id,
-        value: result.accessToken,
-        accountUserId: accountUserId || null,
-        status: "active",
-        source: "auto_refresh",
-        expiresAt,
-      });
-    }
-    // best-effort 拉 Firefly 余额写入 token（失败不影响刷新结果）。
-    await storeTokenCredits(
+      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
+    await storeMemberCredits(
       transport,
-      tokenId,
+      memberId,
       result.accessToken,
       signal
     ).catch((error) =>
       logError(error, { source: "adobe-credits-balance", memberId })
     );
-    return { id: tokenId, value: result.accessToken };
+    return { value: result.accessToken };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await db
-      .update(adobeAccount)
+      .update(imageBackendMemberAdobeConfig)
       .set({
-        status: "error",
+        credentialStatus: "error",
         lastRefreshError: message.slice(0, 500),
-        consecutiveFailures: sql`${adobeAccount.consecutiveFailures} + 1`,
+        consecutiveFailures: sql`${imageBackendMemberAdobeConfig.consecutiveFailures} + 1`,
         updatedAt: new Date(),
       })
-      .where(eq(adobeAccount.id, account.id));
+      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
     logError(error, { source: "adobe-direct-refresh", memberId });
     return null;
   }
 }
 
-// best-effort 拉取 Firefly 余额并写入 adobe_token 的 credits 列；失败只记 creditsError,
+// best-effort 拉取 Firefly 余额并写入成员配置；失败只记 creditsError，
 // 不抛出（余额是运营展示用，不应影响刷新/生成主流程）。
-async function storeTokenCredits(
+async function storeMemberCredits(
   transport: FireflyTransport,
-  tokenId: string,
+  memberId: string,
   accessToken: string,
   signal?: AbortSignal
 ): Promise<void> {
@@ -276,7 +227,7 @@ async function storeTokenCredits(
   try {
     const balance = await fetchCreditsBalance(transport, accessToken, signal);
     await db
-      .update(adobeToken)
+      .update(imageBackendMemberAdobeConfig)
       .set({
         creditsTotal: toInt(balance.total),
         creditsUsed: toInt(balance.used),
@@ -285,10 +236,10 @@ async function storeTokenCredits(
         creditsError: null,
         updatedAt: new Date(),
       })
-      .where(eq(adobeToken.id, tokenId));
+      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
   } catch (error) {
     await db
-      .update(adobeToken)
+      .update(imageBackendMemberAdobeConfig)
       .set({
         creditsError: (error instanceof Error
           ? error.message
@@ -297,127 +248,80 @@ async function storeTokenCredits(
         creditsUpdatedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(adobeToken.id, tokenId))
-      .catch(() => {});
+      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId))
+      .catch((persistError) =>
+        logError(persistError, {
+          source: "adobe-credits-balance-persist-error",
+          memberId,
+        })
+      );
   }
 }
 
 /**
- * 为某 adobe 后端取一个可用 access_token：
- * 1. 现有 active 且未过期的 token → 轮换选取（lastUsedAt 最旧优先）。
- * 2. 否则用某个 enabled 账号的 cookie 刷新出新 token。
+ * 读取 direct 成员唯一凭据；短期 token 不可用时只刷新这个成员自己的 Cookie。
  */
-async function acquireToken(
+async function acquireMemberCredential(
   memberId: string,
   transport: FireflyTransport,
-  signal?: AbortSignal,
-  // 换号重试用：跳过本次已试过的 token / 账号（被 429 等限流的账号本次不再重选）。
-  exclude?: { tokenIds?: Set<string>; accountIds?: Set<string> }
-): Promise<{ id: string; value: string; accountId: string | null } | null> {
-  const candidates = await db
+  signal?: AbortSignal
+): Promise<{ value: string } | null> {
+  const [credential] = await db
     .select({
-      id: adobeToken.id,
-      value: adobeToken.value,
-      expiresAt: adobeToken.expiresAt,
-      accountId: adobeToken.accountId,
+      cookie: imageBackendMemberAdobeConfig.cookie,
+      scope: imageBackendMemberAdobeConfig.scope,
+      value: imageBackendMemberAdobeConfig.accessToken,
+      status: imageBackendMemberAdobeConfig.credentialStatus,
+      expiresAt: imageBackendMemberAdobeConfig.tokenExpiresAt,
     })
-    .from(adobeToken)
+    .from(imageBackendMemberAdobeConfig)
     .where(
-      and(eq(adobeToken.memberId, memberId), eq(adobeToken.status, "active"))
+      and(
+        eq(imageBackendMemberAdobeConfig.memberId, memberId),
+        eq(imageBackendMemberAdobeConfig.mode, "direct")
+      )
     )
-    .orderBy(asc(adobeToken.lastUsedAt), asc(adobeToken.createdAt));
-
-  for (const candidate of candidates) {
-    if (exclude?.tokenIds?.has(candidate.id)) continue;
-    if (candidate.accountId && exclude?.accountIds?.has(candidate.accountId)) {
-      continue;
-    }
-    const expired = candidate.expiresAt
-      ? candidate.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
-        Date.now()
-      : isTokenExpired(candidate.value, TOKEN_REFRESH_SKEW_SECONDS);
-    if (expired) continue;
-    await db
-      .update(adobeToken)
-      .set({ lastUsedAt: new Date() })
-      .where(eq(adobeToken.id, candidate.id));
-    return {
-      id: candidate.id,
-      value: candidate.value,
-      accountId: candidate.accountId,
-    };
+    .limit(1);
+  if (!credential?.cookie || !credential.value) return null;
+  const expired = credential.expiresAt
+    ? credential.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
+      Date.now()
+    : isTokenExpired(credential.value, TOKEN_REFRESH_SKEW_SECONDS);
+  if (credential.status === "active" && !expired) {
+    return { value: credential.value };
   }
-
-  // 没有可用 token：用一个 enabled 账号刷新（同样跳过本次已试过的账号）。
-  const accounts = await db
-    .select({
-      id: adobeAccount.id,
-      cookie: adobeAccount.cookie,
-      scope: adobeAccount.scope,
-    })
-    .from(adobeAccount)
-    .where(
-      and(eq(adobeAccount.memberId, memberId), eq(adobeAccount.isEnabled, true))
-    )
-    .orderBy(asc(adobeAccount.lastRefreshAt), asc(adobeAccount.createdAt));
-
-  for (const account of accounts) {
-    if (exclude?.accountIds?.has(account.id)) continue;
-    const refreshed = await refreshAccountToken(
-      memberId,
-      account,
-      transport,
-      signal
-    );
-    if (refreshed) {
-      await db
-        .update(adobeToken)
-        .set({ lastUsedAt: new Date() })
-        .where(eq(adobeToken.id, refreshed.id));
-      return {
-        id: refreshed.id,
-        value: refreshed.value,
-        accountId: account.id,
-      };
-    }
-  }
-  return null;
+  return refreshMemberCredential(
+    memberId,
+    { cookie: credential.cookie, scope: credential.scope },
+    transport,
+    signal
+  );
 }
 
-async function markTokenStatus(
-  tokenId: string,
+/** 将成员唯一短期凭据标记为不可用，由统一顶层调度切换成员。 */
+async function markCredentialStatus(
+  memberId: string,
   status: "error" | "exhausted" | "invalid"
 ): Promise<void> {
   await db
-    .update(adobeToken)
+    .update(imageBackendMemberAdobeConfig)
     .set({
-      status,
-      fails: sql`${adobeToken.fails} + 1`,
+      credentialStatus: status,
+      tokenFails: sql`${imageBackendMemberAdobeConfig.tokenFails} + 1`,
       updatedAt: new Date(),
     })
-    .where(eq(adobeToken.id, tokenId));
+    .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
 }
 
-// 单个 Adobe 后端（伪账号）内换号重试的账号数上限。实际收口由「本后端可用账号数」与
-// 「整单 signal（20 分钟）」共同决定；此常数仅作防御性兜底，避免账号池极大时空转过久。
-const MAX_ADOBE_TOKEN_ROTATION = 24;
-
 /**
- * 在一个 Adobe 后端（伪账号）内带 token/账号轮换地执行一次直连调用。
- * - 每次取一个本次未试过的可用账号 token，执行 run（用该 token 完成上传+生成）；
- * - 遇「可轮换错误」（429/5xx 上游临时、配额耗尽、鉴权失效）就标记当前 token、把该
- *   token+账号本次排除，换下一个账号重试；
- * - 直到成功、本后端内已无更多可用账号、或 signal 取消。
- * WHY：池层换号是「整个 Adobe 后端」粒度——一旦本后端被排除就轮到下一个后端。故必须先在
- * 本后端内把所有可用账号都试完（重试完毕）才返回错误上抛，才能满足
- * 「伪账号内部重试完毕 → 再由外层切换其它 Adobe 后端继续轮换」的两级语义。
- * 非可轮换错误（请求本身 4xx、内容拒绝、模型不支持等）换号无用，立即上抛。
+ * 使用一个 direct 顶层成员的一对一凭据执行一次调用。
+ * 可切换错误直接交还统一调度器，禁止在成员内部再次选账号。
  */
-async function runWithAdobeTokenRotation<T>(
+async function runWithAdobeCredential<T>(
   memberId: string,
   transport: FireflyTransport,
   signal: AbortSignal | undefined,
-  run: (token: string, tokenId: string) => Promise<T>
+  run: (token: string) => Promise<T>
 ): Promise<
   | { ok: true; value: T }
   | {
@@ -429,69 +333,66 @@ async function runWithAdobeTokenRotation<T>(
       submissionUncertain: boolean;
     }
 > {
-  const triedTokenIds = new Set<string>();
-  const triedAccountIds = new Set<string>();
-  let lastError =
-    "Adobe 直连无可用账号/token（请在 admin 导入 Adobe cookie 账号）";
-  for (let attempt = 1; attempt <= MAX_ADOBE_TOKEN_ROTATION; attempt++) {
-    if (signal?.aborted) break;
-    const acquired = await acquireToken(memberId, transport, signal, {
-      tokenIds: triedTokenIds,
-      accountIds: triedAccountIds,
-    });
-    if (!acquired) break; // 本后端内已无更多未试过的可用账号
-    triedTokenIds.add(acquired.id);
-    if (acquired.accountId) triedAccountIds.add(acquired.accountId);
-    try {
-      return {
-        ok: true,
-        value: await run(acquired.value, acquired.id),
-      };
-    } catch (error) {
-      // 配额耗尽/鉴权失效是持久态，落库标记便于后续请求跳过；429 等临时态不改 token 状态，
-      // 仅本次排除（lastUsedAt 已更新，下次自然排到队尾）。
-      if (error instanceof QuotaExhaustedError) {
-        await markTokenStatus(acquired.id, "exhausted").catch(() => {});
-      } else if (error instanceof AuthError) {
-        await markTokenStatus(acquired.id, "invalid").catch(() => {});
-      }
-      lastError = error instanceof Error ? error.message : "Adobe 直连生成失败";
-      if (isAdobeRotatableError(error) && !signal?.aborted) {
-        logWarn("Adobe 直连账号失败，换下一个账号重试", {
-          source: "adobe-direct-rotate",
-          memberId,
-          attempt,
-          triedAccounts: triedAccountIds.size,
-          error: lastError.slice(0, 160),
-        });
-        continue;
-      }
-      logError(error, { source: "adobe-direct-rotate", memberId, attempt });
-      const upstreamAccepted = error instanceof AdobeAcceptedVideoError;
-      const submissionUncertain =
-        error instanceof AdobeVideoSubmissionUncertainError;
-      return {
-        ok: false,
-        error: lastError,
-        switchable: false,
-        upstreamAccepted,
-        terminal: !upstreamAccepted && !submissionUncertain,
-        submissionUncertain,
-      };
-    }
+  const acquired = await acquireMemberCredential(memberId, transport, signal);
+  if (!acquired) {
+    return {
+      ok: false,
+      error: "Adobe 直连成员没有可用凭据",
+      switchable: !signal?.aborted,
+      upstreamAccepted: false,
+      terminal: Boolean(signal?.aborted),
+      submissionUncertain: false,
+    };
   }
-  return {
-    ok: false,
-    error: lastError,
-    switchable: !signal?.aborted,
-    upstreamAccepted: false,
-    terminal: Boolean(signal?.aborted),
-    submissionUncertain: false,
-  };
+  try {
+    return { ok: true, value: await run(acquired.value) };
+  } catch (error) {
+    if (error instanceof QuotaExhaustedError) {
+      await markCredentialStatus(memberId, "exhausted").catch((persistError) =>
+        logError(persistError, {
+          source: "adobe-direct-credential-status",
+          memberId,
+        })
+      );
+    } else if (error instanceof AuthError) {
+      await markCredentialStatus(memberId, "invalid").catch((persistError) =>
+        logError(persistError, {
+          source: "adobe-direct-credential-status",
+          memberId,
+        })
+      );
+    }
+    const message =
+      error instanceof Error ? error.message : "Adobe 直连生成失败";
+    const upstreamAccepted = error instanceof AdobeAcceptedVideoError;
+    const submissionUncertain =
+      error instanceof AdobeVideoSubmissionUncertainError;
+    const switchable =
+      isAdobeMemberSwitchableError(error) &&
+      !signal?.aborted &&
+      !upstreamAccepted;
+    if (switchable) {
+      logWarn("Adobe 直连成员失败，交由统一号池切换", {
+        source: "adobe-direct-switch",
+        memberId,
+        error: message.slice(0, 160),
+      });
+    } else {
+      logError(error, { source: "adobe-direct", memberId });
+    }
+    return {
+      ok: false,
+      error: message,
+      switchable,
+      upstreamAccepted,
+      terminal: !switchable && !upstreamAccepted && !submissionUncertain,
+      submissionUncertain,
+    };
+  }
 }
 
 /**
- * mode=direct 的 adobe 派发：选 token → 选模型族/尺寸 → 图生图先上传 → generateImage。
+ * mode=direct 的 adobe 派发：读取成员凭据 → 选模型族/尺寸 → 图生图先上传 → generateImage。
  * 出错返回 { error }，由上层管线统一处理（含池上报）。
  */
 export async function runAdobeDirectImageRequest(
@@ -519,7 +420,7 @@ export async function runAdobeDirectImageRequest(
 
   const { apiTransport, downloadTransport } = await buildAdobeTransports();
 
-  // 模型族 + 宽高比/分辨率（与 token 无关，放轮换外只算一次）：family 优先取请求 model
+  // 模型族 + 宽高比/分辨率与凭据无关，只需计算一次：family 优先取请求 model
   // （创作页/接口选的 Firefly 或裸 Nano Banana 模型），普通/未知模型落 gpt-image-2；
   // ratio/res 由 size 映射，缺省走后端默认。
   const family = resolveAdobeImageFamily(params.model);
@@ -546,13 +447,12 @@ export async function runAdobeDirectImageRequest(
     downloadTransport,
   });
 
-  // 伪账号内换号重试：撞 429/配额/鉴权就换本后端下一个账号，轮完才上抛（交外层切后端）。
-  const result = await runWithAdobeTokenRotation(
+  const result = await runWithAdobeCredential(
     memberId,
     apiTransport,
     params.signal,
     async (token) => {
-      // 图生图：先上传输入图拿 Adobe image id（与 token 绑定，故放轮换内、每次换号重传）。
+      // 图生图上传与生成必须使用同一次成员凭据，确保 Adobe image id 归属一致。
       let sourceImageIds: string[] | undefined;
       if (params.images && params.images.length > 0) {
         sourceImageIds = [];
@@ -605,7 +505,6 @@ export type AdobeVideoResult =
 /** Adobe 视频提交成功后供持久状态机保存的固定上游身份。 */
 export type AdobeVideoSubmission = {
   memberId: string;
-  tokenId: string;
   pollUrl: string;
   upstreamJobId: string | null;
   raw: Record<string, unknown>;
@@ -692,8 +591,7 @@ async function createAdobeVideoStageClient(
 /**
  * 提交一次 Adobe 视频任务并返回持久恢复身份。
  *
- * 只有明确未接受的账号级错误会在当前成员内换 token；提交响应不确定时立即停止，
- * 防止向同一成员或其他成员重投并重复消耗上游额度。
+ * 明确未接受的账号级错误交由统一号池切换成员；提交响应不确定时立即停止，防止重投。
  */
 export async function submitAdobeDirectVideoRequest(
   config: ApiConfig,
@@ -716,11 +614,11 @@ export async function submitAdobeDirectVideoRequest(
     };
   }
 
-  const result = await runWithAdobeTokenRotation(
+  const result = await runWithAdobeCredential(
     prepared.memberId,
     prepared.apiTransport,
     params.signal,
-    async (token, tokenId) => {
+    async (token) => {
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
         sourceImageIds = [];
@@ -756,7 +654,6 @@ export async function submitAdobeDirectVideoRequest(
       });
       return {
         memberId: prepared.memberId,
-        tokenId,
         ...submitted,
       };
     }
@@ -765,87 +662,60 @@ export async function submitAdobeDirectVideoRequest(
 }
 
 /**
- * 使用持久化的原成员和原 token 轮询一次已接受任务。
+ * 使用持久化的原成员及其一对一凭据轮询一次已接受任务。
  *
- * token 不存在或不属于该成员时 fail closed；绝不选择替代 token。
+ * 成员凭据不存在时 fail closed；绝不选择替代成员。
  */
 export async function pollAdobeDirectVideoRequest(input: {
   memberId: string;
-  tokenId: string;
   pollUrl: string;
   signal?: AbortSignal;
 }): Promise<AdobeVideoPollResult> {
-  const [token] = await db
+  const [credential] = await db
     .select({
-      value: adobeToken.value,
-      memberId: adobeToken.memberId,
-      accountId: adobeToken.accountId,
-      expiresAt: adobeToken.expiresAt,
-      source: adobeToken.source,
+      cookie: imageBackendMemberAdobeConfig.cookie,
+      scope: imageBackendMemberAdobeConfig.scope,
+      value: imageBackendMemberAdobeConfig.accessToken,
+      expiresAt: imageBackendMemberAdobeConfig.tokenExpiresAt,
     })
-    .from(adobeToken)
+    .from(imageBackendMemberAdobeConfig)
     .where(
       and(
-        eq(adobeToken.id, input.tokenId),
-        eq(adobeToken.memberId, input.memberId)
+        eq(imageBackendMemberAdobeConfig.memberId, input.memberId),
+        eq(imageBackendMemberAdobeConfig.mode, "direct")
       )
     )
     .limit(1);
-  if (!token || token.memberId !== input.memberId) {
-    throw new AdobeAcceptedVideoError("Adobe 视频恢复 token 与原成员不匹配", {
+  if (!credential?.cookie || !credential.value) {
+    throw new AdobeAcceptedVideoError("Adobe 视频恢复成员缺少凭据", {
       errorType: "status",
     });
   }
+  const cookie = credential.cookie;
   const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
     transport: apiTransport,
     downloadTransport,
   });
-  let tokenValue = token.value;
+  let tokenValue = credential.value;
 
-  /** 只刷新原 token 绑定的原账号，绝不选择另一个账号或 token。 */
-  const refreshOriginalToken = async (): Promise<string> => {
-    if (!token.accountId || token.source !== "auto_refresh") {
-      throw new AdobeAcceptedVideoError(
-        "Adobe 视频恢复 token 无法由原账号刷新，任务将保留重试",
-        { errorType: "network" }
-      );
-    }
-    const [account] = await db
-      .select({
-        id: adobeAccount.id,
-        cookie: adobeAccount.cookie,
-        scope: adobeAccount.scope,
-      })
-      .from(adobeAccount)
-      .where(
-        and(
-          eq(adobeAccount.id, token.accountId),
-          eq(adobeAccount.memberId, input.memberId),
-          eq(adobeAccount.isEnabled, true)
-        )
-      )
-      .limit(1);
-    const refreshed = account
-      ? await refreshAccountToken(
-          input.memberId,
-          account,
-          apiTransport,
-          input.signal
-        )
-      : null;
-    tokenValue = requireOriginalAcceptedVideoToken({
-      tokenId: input.tokenId,
-      refreshed,
-    });
+  /** 只刷新持久化的原成员，绝不选择另一个顶层成员。 */
+  const refreshOriginalMember = async (): Promise<string> => {
+    const refreshed = await refreshMemberCredential(
+      input.memberId,
+      { cookie, scope: credential.scope },
+      apiTransport,
+      input.signal
+    );
+    tokenValue = requireAcceptedVideoCredential(refreshed);
     return tokenValue;
   };
 
-  const expired = token.expiresAt
-    ? token.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
+  const expired = credential.expiresAt
+    ? credential.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
       Date.now()
-    : isTokenExpired(token.value, TOKEN_REFRESH_SKEW_SECONDS);
-  if (expired) await refreshOriginalToken();
+    : isTokenExpired(credential.value, TOKEN_REFRESH_SKEW_SECONDS);
+  if (expired) await refreshOriginalMember();
 
   try {
     return await client.pollVideo({
@@ -858,7 +728,7 @@ export async function pollAdobeDirectVideoRequest(input: {
       error instanceof AdobeAcceptedVideoError &&
       (error.statusCode === 401 || error.statusCode === 403)
     ) {
-      await refreshOriginalToken();
+      await refreshOriginalMember();
       return client.pollVideo({
         token: tokenValue,
         pollUrl: input.pollUrl,
@@ -886,9 +756,9 @@ export async function downloadAdobeDirectVideoRequest(input: {
 }
 
 /**
- * mode=direct 的 adobe 视频派发：解析视频模型 → 选 token → 图生视频先上传输入图 →
+ * mode=direct 的 adobe 视频派发：解析视频模型 → 读取成员凭据 → 图生视频先上传输入图 →
  * generateVideo（submit→轮询→下载）→ 返回视频字节。产物持久化（video_generation 落库、
- * re-host、扣费）由调用方完成。出错返回 { error }，token 级错误标记 token 状态便于轮换。
+ * re-host、扣费）由调用方完成。凭据级错误会标记成员状态，并交由统一调度切换成员。
  */
 export async function runAdobeDirectVideoRequest(
   config: ApiConfig,
@@ -951,13 +821,12 @@ export async function runAdobeDirectVideoRequest(
     downloadTransport,
   });
 
-  // 伪账号内换号重试：撞 429/配额/鉴权就换本后端下一个账号，轮完才上抛（交外层切后端）。
-  const result = await runWithAdobeTokenRotation(
+  const result = await runWithAdobeCredential(
     memberId,
     apiTransport,
     params.signal,
     async (token) => {
-      // 图生视频：先上传输入图拿 id（与 token 绑定，故放轮换内、每次换号重传）。
+      // 图生视频上传与提交必须使用同一次成员凭据，确保 Adobe image id 归属一致。
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
         sourceImageIds = [];
@@ -1002,283 +871,31 @@ export async function runAdobeDirectVideoRequest(
 }
 
 /**
- * 供 admin 调用：导入一个 Adobe cookie 账号并立即刷新一次（验证 cookie 有效）。
- * 返回账号信息或抛错。
+ * 校验一个 Adobe direct Cookie，并返回成员服务可持久化的一对一凭据。
+ *
+ * Cookie 和 token 只在服务端内存与成员配置中流转；失败时不写数据库。
  */
-type AdobeCookieValidation = Awaited<
-  ReturnType<typeof refreshAccessTokenFromCookie>
->;
-
-// 验证一个 Adobe cookie：刷新一次拿 access_token + 账号信息，并断言为已登录（非 guest）。
-async function validateAdobeCookie(
+export async function prepareAdobeDirectCredential(
   cookie: string,
-  scope?: string | null
-): Promise<AdobeCookieValidation> {
+  scope?: string
+): Promise<{
+  accessToken: string;
+  accountUserId: string | null;
+  displayName: string | null;
+  email: string | null;
+  expiresAt: Date | null;
+}> {
   const { apiTransport } = await buildAdobeTransports();
   const result = await refreshAccessTokenFromCookie(apiTransport, cookie, {
-    scope: scope ?? undefined,
+    scope,
     fetchAccount: true,
   });
   assertLoggedInAdobeCookie(result.accessToken, result.account);
-  return result;
-}
-
-// 持久化一个已验证的 Adobe 账号：写 adobeAccount + 初始 auto_refresh adobeToken。
-// 额外回传 accountUserId（IMS 稳定身份），供批量导入去重使用。
-async function persistAdobeAccount(
-  input: {
-    memberId: string;
-    name?: string;
-    cookie: string;
-    scope?: string | null;
-  },
-  validated: AdobeCookieValidation
-): Promise<{
-  id: string;
-  displayName: string;
-  email: string;
-  accountUserId: string | null;
-}> {
-  const id = nanoid();
-  const account = validated.account;
-  const now = new Date();
-
-  await db.insert(adobeAccount).values({
-    id,
-    memberId: input.memberId,
-    name: input.name?.trim() || account?.displayName || account?.email || id,
-    cookie: input.cookie,
-    scope: input.scope ?? null,
-    isEnabled: true,
-    displayName: account?.displayName || null,
-    email: account?.email || null,
-    accountUserId: account?.userId || null,
-    status: "active",
-    lastRefreshAt: now,
-  });
-
-  await db.insert(adobeToken).values({
-    id: nanoid(),
-    memberId: input.memberId,
-    accountId: id,
-    value: validated.accessToken,
-    accountUserId: account?.userId || null,
-    status: "active",
-    source: "auto_refresh",
-    expiresAt: tokenExpiresAt(validated.accessToken),
-  });
-
   return {
-    id,
-    displayName: account?.displayName || "",
-    email: account?.email || "",
-    accountUserId: account?.userId || null,
+    accessToken: result.accessToken,
+    accountUserId: result.account?.userId || null,
+    displayName: result.account?.displayName || null,
+    email: result.account?.email || null,
+    expiresAt: tokenExpiresAt(result.accessToken),
   };
 }
-
-export async function importAdobeAccount(input: {
-  memberId: string;
-  name?: string;
-  cookie: string;
-  scope?: string | null;
-}): Promise<{ id: string; displayName: string; email: string }> {
-  const validated = await validateAdobeCookie(input.cookie, input.scope);
-  const { id, displayName, email } = await persistAdobeAccount(
-    input,
-    validated
-  );
-  return { id, displayName, email };
-}
-
-export type AdobeAccountImportOutcome = {
-  index: number;
-  status: "imported" | "skipped" | "failed";
-  accountId?: string;
-  displayName?: string;
-  email?: string;
-  reason?: string;
-};
-
-export type AdobeAccountBatchImportResult = {
-  total: number;
-  imported: number;
-  skipped: number;
-  failed: number;
-  results: AdobeAccountImportOutcome[];
-  firstError?: string;
-};
-
-/**
- * 供 admin 调用：在某个 Adobe 后端（伪账号）下批量导入真实 Adobe 账号。
- * - 解析 cookie 文本（每行一个 / JSON 数组，见 adobe-cookie-parser）。
- * - 逐条刷新验证（best-effort）：单条失败不影响其余，逐条回报原因。
- * - 去重：同一 Adobe 用户（accountUserId，IMS 稳定身份；cookie 会轮换）或同邮箱已存在则
- *   跳过——既防重复粘贴，也防同一批内重复。
- * 串行执行：避免对 Adobe IMS 造成突发压力，并保证去重集一致。每条成功即落库（非单一大
- * 事务），因此即便整体请求中途超时也不丢已导入数据，重新粘贴会按身份自动跳过已导入项。
- */
-export async function importAdobeAccountsBatch(input: {
-  memberId: string;
-  cookiesText: string;
-  namePrefix?: string;
-  scope?: string | null;
-}): Promise<AdobeAccountBatchImportResult> {
-  const entries = parseAdobeCookieEntries(input.cookiesText);
-  if (entries.length === 0) {
-    return { total: 0, imported: 0, skipped: 0, failed: 0, results: [] };
-  }
-
-  // 预取该后端已存在账号的稳定身份，用于跨次/批内去重。
-  const existing = await db
-    .select({
-      accountUserId: adobeAccount.accountUserId,
-      email: adobeAccount.email,
-    })
-    .from(adobeAccount)
-    .where(eq(adobeAccount.memberId, input.memberId));
-  const seenUserIds = new Set<string>();
-  const seenEmails = new Set<string>();
-  for (const row of existing) {
-    if (row.accountUserId) seenUserIds.add(row.accountUserId);
-    if (row.email) seenEmails.add(row.email.toLowerCase());
-  }
-
-  const results: AdobeAccountImportOutcome[] = [];
-  let imported = 0;
-  let skipped = 0;
-  let failed = 0;
-  let firstError: string | undefined;
-
-  for (const [index, entry] of entries.entries()) {
-    const scope = entry.scope ?? input.scope ?? null;
-    const fallbackName = input.namePrefix?.trim()
-      ? `${input.namePrefix.trim()}-${index + 1}`
-      : undefined;
-    const name = entry.name?.trim() || fallbackName;
-    try {
-      const validated = await validateAdobeCookie(entry.cookie, scope);
-      const userId = validated.account?.userId || null;
-      const email = validated.account?.email?.toLowerCase() || null;
-      if (
-        (userId && seenUserIds.has(userId)) ||
-        (email && seenEmails.has(email))
-      ) {
-        skipped++;
-        results.push({
-          index,
-          status: "skipped",
-          reason: "已存在相同 Adobe 账号，已跳过",
-          displayName: validated.account?.displayName || undefined,
-          email: validated.account?.email || undefined,
-        });
-        continue;
-      }
-      const persisted = await persistAdobeAccount(
-        { memberId: input.memberId, name, cookie: entry.cookie, scope },
-        validated
-      );
-      if (userId) seenUserIds.add(userId);
-      if (email) seenEmails.add(email);
-      imported++;
-      results.push({
-        index,
-        status: "imported",
-        accountId: persisted.id,
-        displayName: persisted.displayName || undefined,
-        email: persisted.email || undefined,
-      });
-    } catch (error) {
-      failed++;
-      const reason = error instanceof Error ? error.message : "导入失败";
-      if (!firstError) firstError = reason;
-      results.push({ index, status: "failed", reason });
-      logError(error, {
-        source: "adobe-direct-batch-import",
-        memberId: input.memberId,
-        index,
-      });
-    }
-  }
-
-  return {
-    total: entries.length,
-    imported,
-    skipped,
-    failed,
-    results,
-    ...(firstError ? { firstError } : {}),
-  };
-}
-
-/** 列出某 Adobe direct 成员的账号（admin 用）。不返回 cookie 明文。 */
-export async function listAdobeAccounts(memberId: string): Promise<
-  Array<{
-    id: string;
-    name: string;
-    displayName: string | null;
-    email: string | null;
-    isEnabled: boolean;
-    status: string;
-    lastRefreshAt: Date | null;
-    lastRefreshError: string | null;
-    consecutiveFailures: number;
-    creditsTotal: number | null;
-    creditsUsed: number | null;
-    creditsAvailable: number | null;
-    creditsUpdatedAt: Date | null;
-    creditsError: string | null;
-  }>
-> {
-  // 左连账号的 auto_refresh token，带出最新的 Firefly 余额（运营展示）。
-  return db
-    .select({
-      id: adobeAccount.id,
-      name: adobeAccount.name,
-      displayName: adobeAccount.displayName,
-      email: adobeAccount.email,
-      isEnabled: adobeAccount.isEnabled,
-      status: adobeAccount.status,
-      lastRefreshAt: adobeAccount.lastRefreshAt,
-      lastRefreshError: adobeAccount.lastRefreshError,
-      consecutiveFailures: adobeAccount.consecutiveFailures,
-      creditsTotal: adobeToken.creditsTotal,
-      creditsUsed: adobeToken.creditsUsed,
-      creditsAvailable: adobeToken.creditsAvailable,
-      creditsUpdatedAt: adobeToken.creditsUpdatedAt,
-      creditsError: adobeToken.creditsError,
-    })
-    .from(adobeAccount)
-    .leftJoin(
-      adobeToken,
-      and(
-        eq(adobeToken.accountId, adobeAccount.id),
-        eq(adobeToken.source, "auto_refresh")
-      )
-    )
-    .where(eq(adobeAccount.memberId, memberId))
-    .orderBy(asc(adobeAccount.createdAt));
-}
-
-/** 删除一个 Adobe 账号（其 token 经 FK cascade 一并删除）。 */
-export async function deleteAdobeAccount(id: string): Promise<void> {
-  await db.delete(adobeAccount).where(eq(adobeAccount.id, id));
-}
-
-/** 启用/停用一个 Adobe 账号。停用即不再参与刷新/出图。 */
-export async function setAdobeAccountEnabled(
-  id: string,
-  isEnabled: boolean
-): Promise<void> {
-  await db
-    .update(adobeAccount)
-    .set({
-      isEnabled,
-      ...(isEnabled
-        ? { status: "active", lastRefreshError: null, consecutiveFailures: 0 }
-        : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(adobeAccount.id, id));
-}
-
-export { fetchAccountInfo };

@@ -133,6 +133,7 @@ describe("image backend pool pricing operations", () => {
         concurrency: 1,
         config: {
           mode: "direct",
+          cookie: "cookie-secret",
           defaultRatio: "1x1",
           defaultResolution: "2k",
           gptImageQuality: "high",
@@ -171,6 +172,10 @@ describe("image backend pool pricing operations", () => {
     "pool.saveAccount",
     "pool.saveApi",
     "pool.saveAdobe",
+    "pool.listAdobeAccounts",
+    "pool.importAdobeAccount",
+    "pool.deleteAdobeAccount",
+    "pool.setAdobeAccountEnabled",
     "pool.importFromRefreshTokens",
     "pool.getSub2ApiStatus",
     "pool.syncSub2ApiAccounts",

@@ -1167,7 +1167,7 @@ export const imageBackendMemberApiConfig = pgTable(
   ]
 );
 
-/** Adobe 成员的一对一 gateway/direct 协议配置。 */
+/** Adobe 成员的一对一 gateway/direct 协议、凭据与运行状态配置。 */
 export const imageBackendMemberAdobeConfig = pgTable(
   "image_backend_member_adobe_config",
   {
@@ -1177,6 +1177,25 @@ export const imageBackendMemberAdobeConfig = pgTable(
     mode: text("mode").notNull(),
     baseUrl: text("base_url"),
     apiKey: text("api_key"),
+    // Direct 模式下一个顶层成员恰好对应一个 Adobe 账号，不再有内部账号池。
+    cookie: text("cookie"),
+    scope: text("scope"),
+    accessToken: text("access_token"),
+    accountUserId: text("account_user_id"),
+    displayName: text("display_name"),
+    email: text("email"),
+    credentialStatus: text("credential_status"),
+    tokenExpiresAt: timestamp("token_expires_at"),
+    tokenFails: integer("token_fails").notNull().default(0),
+    lastRefreshAt: timestamp("last_refresh_at"),
+    lastRefreshError: text("last_refresh_error"),
+    nextRefreshAt: timestamp("next_refresh_at"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    creditsTotal: integer("credits_total"),
+    creditsUsed: integer("credits_used"),
+    creditsAvailable: integer("credits_available"),
+    creditsUpdatedAt: timestamp("credits_updated_at"),
+    creditsError: text("credits_error"),
     defaultRatio: text("default_ratio").notNull().default("1x1"),
     defaultResolution: text("default_resolution").notNull().default("2k"),
     gptImageQuality: text("gpt_image_quality").notNull().default("high"),
@@ -1191,6 +1210,18 @@ export const imageBackendMemberAdobeConfig = pgTable(
     check(
       "image_backend_member_adobe_config_shape_check",
       sql`(${table.mode} = 'gateway' AND ${table.baseUrl} IS NOT NULL) OR (${table.mode} = 'direct' AND ${table.baseUrl} IS NULL AND ${table.apiKey} IS NULL)`
+    ),
+    check(
+      "image_backend_member_adobe_config_credential_shape_check",
+      sql`(${table.mode} = 'gateway' AND ${table.cookie} IS NULL AND ${table.scope} IS NULL AND ${table.accessToken} IS NULL AND ${table.accountUserId} IS NULL AND ${table.displayName} IS NULL AND ${table.email} IS NULL AND ${table.credentialStatus} IS NULL AND ${table.tokenExpiresAt} IS NULL AND ${table.tokenFails} = 0 AND ${table.lastRefreshAt} IS NULL AND ${table.lastRefreshError} IS NULL AND ${table.nextRefreshAt} IS NULL AND ${table.consecutiveFailures} = 0 AND ${table.creditsTotal} IS NULL AND ${table.creditsUsed} IS NULL AND ${table.creditsAvailable} IS NULL AND ${table.creditsUpdatedAt} IS NULL AND ${table.creditsError} IS NULL) OR (${table.mode} = 'direct' AND ${table.cookie} IS NOT NULL AND char_length(btrim(${table.cookie})) BETWEEN 1 AND 64000 AND (${table.scope} IS NULL OR char_length(btrim(${table.scope})) BETWEEN 1 AND 4096) AND ${table.accessToken} IS NOT NULL AND char_length(btrim(${table.accessToken})) >= 1 AND ${table.credentialStatus} IS NOT NULL)`
+    ),
+    check(
+      "image_backend_member_adobe_config_credential_status_check",
+      sql`${table.credentialStatus} IS NULL OR ${table.credentialStatus} IN ('active', 'error', 'exhausted', 'invalid')`
+    ),
+    check(
+      "image_backend_member_adobe_config_failure_counts_check",
+      sql`${table.tokenFails} >= 0 AND ${table.consecutiveFailures} >= 0`
     ),
     check(
       "image_backend_member_adobe_config_quality_check",
@@ -1336,77 +1367,6 @@ export const imageBackendParameterMappingTemplate = pgTable(
   ]
 );
 
-// Adobe 账号（直连模式）：一行 = 一个 Adobe 账号的刷新档案，镜像 adobe2api 的
-// refresh_profile.json。持有 cookie，用于换取短期 IMS access_token（写入 adobe_token）。
-// 归属某个统一 Adobe direct 成员。直连模式专用；网关模式不需要。
-export const adobeAccount = pgTable(
-  "adobe_account",
-  {
-    id: text("id").primaryKey(),
-    memberId: text("member_id")
-      .notNull()
-      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    // Adobe 浏览器 cookie（IMS 刷新凭据）。无加密基建，按明文存（与 apiKey 一致）。
-    cookie: text("cookie").notNull(),
-    // 覆盖默认 IMS scope（为空用默认）。
-    scope: text("scope"),
-    isEnabled: boolean("is_enabled").notNull().default(true),
-    // IMS profile 拉到的账号信息。
-    displayName: text("display_name"),
-    email: text("email"),
-    accountUserId: text("account_user_id"),
-    // active / error / disabled。
-    status: text("status").notNull().default("active"),
-    lastRefreshAt: timestamp("last_refresh_at"),
-    lastRefreshError: text("last_refresh_error"),
-    nextRefreshAt: timestamp("next_refresh_at"),
-    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
-    metadata: json("metadata").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [index("adobe_account_member_idx").on(table.memberId)]
-);
-
-// Adobe IMS access_token（直连模式）：短期 Bearer，由 adobe_account 的 cookie 刷新得到，
-// 镜像 adobe2api 的 tokens.json。调度命中后端后在其 token 池里按策略轮换选取。
-export const adobeToken = pgTable(
-  "adobe_token",
-  {
-    id: text("id").primaryKey(),
-    memberId: text("member_id")
-      .notNull()
-      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
-    // 手动导入的 token 可无关联账号。
-    accountId: text("account_id").references(() => adobeAccount.id, {
-      onDelete: "cascade",
-    }),
-    // IMS access_token（明文，与 apiKey 一致）。
-    value: text("value").notNull(),
-    // 从 JWT 解出的 user_id（per-account 粘性 / entities 同账号约束用）。
-    accountUserId: text("account_user_id"),
-    // active / error / exhausted / invalid。
-    status: text("status").notNull().default("active"),
-    fails: integer("fails").notNull().default(0),
-    source: text("source").notNull().default("auto_refresh"),
-    expiresAt: timestamp("expires_at"),
-    creditsTotal: integer("credits_total"),
-    creditsUsed: integer("credits_used"),
-    creditsAvailable: integer("credits_available"),
-    creditsUpdatedAt: timestamp("credits_updated_at"),
-    creditsError: text("credits_error"),
-    lastUsedAt: timestamp("last_used_at"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    index("adobe_token_member_idx").on(table.memberId),
-    index("adobe_token_account_idx").on(table.accountId),
-    index("adobe_token_member_status_idx").on(table.memberId, table.status),
-  ]
-);
-
 /** 视频 worker 可跨进程恢复的 JSON-safe 图片引用。 */
 type PersistedVideoInputReference =
   | {
@@ -1454,10 +1414,7 @@ export const videoGeneration = pgTable(
       () => imageBackendMember.id,
       { onDelete: "set null" }
     ),
-    // Adobe direct token 与成员租约是 accepted 后恢复同一上游任务的持久身份。
-    adobeTokenId: text("adobe_token_id").references(() => adobeToken.id, {
-      onDelete: "set null",
-    }),
+    // Adobe direct 成员与成员租约是 accepted 后恢复同一上游任务的持久身份。
     // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
     memberLeaseId: text("member_lease_id"),
     memberLeaseOwnerToken: text("member_lease_owner_token"),
@@ -1518,7 +1475,6 @@ export const videoGeneration = pgTable(
     index("video_generation_user_idx").on(table.userId, table.createdAt),
     index("video_generation_status_idx").on(table.status, table.createdAt),
     index("video_generation_backend_member_idx").on(table.backendMemberId),
-    index("video_generation_adobe_token_idx").on(table.adobeTokenId),
     index("video_generation_member_lease_idx").on(table.memberLeaseId),
     index("video_generation_principal_stage_idx").on(
       table.principalScope,

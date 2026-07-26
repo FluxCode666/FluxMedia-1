@@ -54,10 +54,12 @@ export const adobeGatewayMemberConfigSchema = z
   })
   .strict();
 
-/** Adobe direct 成员配置；凭据仍由其内部账号/token 子池管理。 */
+/** Adobe direct 成员配置；一个顶层成员恰好持有一个 Adobe Cookie。 */
 export const adobeDirectMemberConfigSchema = z
   .object({
     mode: z.literal("direct"),
+    cookie: z.string().trim().min(1).max(64_000).optional(),
+    scope: z.string().trim().min(1).max(4_096).optional(),
     defaultRatio: z.string().trim().min(1).max(20),
     defaultResolution: z.string().trim().min(1).max(20),
     gptImageQuality: z.enum(["low", "medium", "high"]),
@@ -116,6 +118,18 @@ export const backendMemberInputSchema = z
     adobeBackendMemberInputSchema,
   ])
   .superRefine((member, context) => {
+    if (
+      member.type === "adobe" &&
+      member.config.mode === "direct" &&
+      member.id === undefined &&
+      member.config.cookie === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["config", "cookie"],
+        message: "A new Adobe direct member requires a Cookie",
+      });
+    }
     if (member.type === "adobe" && member.config.mode === "direct") {
       return;
     }

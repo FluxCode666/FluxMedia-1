@@ -8,7 +8,7 @@ import { AdobeAcceptedVideoError } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it } from "vitest";
 import {
   createVideoStorageKey,
-  requireOriginalAcceptedVideoToken,
+  requireAcceptedVideoCredential,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
 
@@ -40,25 +40,13 @@ describe("video recovery policies", () => {
     ).toBe(true);
   });
 
-  it("已接受任务刷新时禁止切换 token 身份", () => {
+  it("已接受任务只接受原成员刷新出的有效凭据", () => {
     expect(
-      requireOriginalAcceptedVideoToken({
-        tokenId: "token-1",
-        refreshed: { id: "token-1", value: "fresh-token" },
-      })
+      requireAcceptedVideoCredential({ value: "fresh-token" })
     ).toBe("fresh-token");
     expect(() =>
-      requireOriginalAcceptedVideoToken({
-        tokenId: "token-1",
-        refreshed: { id: "token-2", value: "other-token" },
-      })
-    ).toThrow("原账号刷新失败");
-    expect(() =>
-      requireOriginalAcceptedVideoToken({
-        tokenId: "token-1",
-        refreshed: null,
-      })
-    ).toThrow("原账号刷新失败");
+      requireAcceptedVideoCredential(null)
+    ).toThrow("原成员凭据刷新失败");
   });
 
   it("已接受任务的明确 4xx 和普通错误不进入轮询重试", () => {

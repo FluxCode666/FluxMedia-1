@@ -34,10 +34,20 @@ export class BackendMemberServiceError extends Error {
   }
 }
 
-/** 已补齐稳定 ID 的统一成员保存输入。 */
+/** Adobe direct Cookie 验证后可安全持久化的一对一凭据。 */
+export interface PreparedAdobeDirectCredential {
+  accessToken: string;
+  accountUserId: string | null;
+  displayName: string | null;
+  email: string | null;
+  expiresAt: Date | null;
+}
+
+/** 已补齐稳定 ID 和可选直连凭据的统一成员保存输入。 */
 export type PersistedBackendMemberInput = BackendMemberInput & {
   id: string;
   isCreate: boolean;
+  directCredential?: PreparedAdobeDirectCredential;
 };
 
 /** 脱敏 API Images 配置。 */
@@ -64,6 +74,16 @@ export type RedactedAdobeMemberConfig =
     }
   | {
       mode: "direct";
+      hasCookie: boolean;
+      displayName: string | null;
+      email: string | null;
+      credentialStatus: "active" | "error" | "exhausted" | "invalid";
+      lastRefreshAt: string | null;
+      lastRefreshError: string | null;
+      consecutiveFailures: number;
+      creditsTotal: number | null;
+      creditsUsed: number | null;
+      creditsAvailable: number | null;
       defaultRatio: string;
       defaultResolution: string;
       gptImageQuality: "low" | "medium" | "high";
@@ -130,6 +150,10 @@ export interface BackendMemberServiceDependencies {
   createId?: () => string;
   now?: () => Date;
   validateUpstreamUrl?: (url: string) => Promise<unknown>;
+  prepareAdobeDirectCredential?: (
+    cookie: string,
+    scope?: string
+  ) => Promise<PreparedAdobeDirectCredential>;
 }
 
 /** 统一成员服务公开接口。 */
@@ -190,6 +214,12 @@ export function createBackendMemberService(
   const now = dependencies.now ?? (() => new Date());
   const validateUpstreamUrl =
     dependencies.validateUpstreamUrl ?? assertSafeMediaUpstreamUrl;
+  const prepareAdobeDirectCredential =
+    dependencies.prepareAdobeDirectCredential ??
+    (async (cookie: string, scope?: string) => {
+      const direct = await import("@/features/image-generation/adobe-direct");
+      return direct.prepareAdobeDirectCredential(cookie, scope);
+    });
 
   return {
     async saveMember(rawInput) {
@@ -208,11 +238,30 @@ export function createBackendMemberService(
         );
       }
 
+      let directCredential: PreparedAdobeDirectCredential | undefined;
+      if (
+        input.type === "adobe" &&
+        input.config.mode === "direct" &&
+        input.config.cookie
+      ) {
+        try {
+          directCredential = await prepareAdobeDirectCredential(
+            input.config.cookie,
+            input.config.scope
+          );
+        } catch {
+          throw new BackendMemberServiceError(
+            "validation_error",
+            "Adobe Cookie 无法通过账号校验"
+          );
+        }
+      }
       const result = await dependencies.repository.saveMember(
         {
           ...input,
           id: input.id ?? createId(),
           isCreate: input.id === undefined,
+          ...(directCredential ? { directCredential } : {}),
         },
         now()
       );
@@ -271,6 +320,18 @@ const memberListRowSchema = z.object({
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
   adobe_has_key: z.boolean(),
+  adobe_has_cookie: z.boolean(),
+  adobe_display_name: z.string().nullable(),
+  adobe_email: z.string().nullable(),
+  adobe_credential_status: z
+    .enum(["active", "error", "exhausted", "invalid"])
+    .nullable(),
+  adobe_last_refresh_at: z.coerce.date().nullable(),
+  adobe_last_refresh_error: z.string().nullable(),
+  adobe_consecutive_failures: z.coerce.number().int().nonnegative(),
+  adobe_credits_total: z.coerce.number().int().nullable(),
+  adobe_credits_used: z.coerce.number().int().nullable(),
+  adobe_credits_available: z.coerce.number().int().nullable(),
   default_ratio: z.string().nullable(),
   default_resolution: z.string().nullable(),
   gpt_image_quality: z.enum(["low", "medium", "high"]).nullable(),
@@ -324,11 +385,24 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
     throw new Error("Adobe member is missing its type config");
   }
   if (row.adobe_mode === "direct") {
+    if (!row.adobe_has_cookie || !row.adobe_credential_status) {
+      throw new Error("Adobe direct member is missing its credential");
+    }
     return {
       ...common,
       type: "adobe",
       config: {
         mode: "direct",
+        hasCookie: row.adobe_has_cookie,
+        displayName: row.adobe_display_name,
+        email: row.adobe_email,
+        credentialStatus: row.adobe_credential_status,
+        lastRefreshAt: row.adobe_last_refresh_at?.toISOString() ?? null,
+        lastRefreshError: row.adobe_last_refresh_error,
+        consecutiveFailures: row.adobe_consecutive_failures,
+        creditsTotal: row.adobe_credits_total,
+        creditsUsed: row.adobe_credits_used,
+        creditsAvailable: row.adobe_credits_available,
         defaultRatio: row.default_ratio,
         defaultResolution: row.default_resolution,
         gptImageQuality: row.gpt_image_quality,
@@ -429,6 +503,88 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
         if (!adobeApiKey) return { status: "missing_secret" } as const;
       }
 
+      let directCredentialValues: {
+        cookie: string;
+        scope: string | null;
+        accessToken: string;
+        accountUserId: string | null;
+        displayName: string | null;
+        email: string | null;
+        credentialStatus: string;
+        tokenExpiresAt: Date | null;
+        tokenFails: number;
+        lastRefreshAt: Date | null;
+        lastRefreshError: string | null;
+        nextRefreshAt: Date | null;
+        consecutiveFailures: number;
+        creditsTotal: number | null;
+        creditsUsed: number | null;
+        creditsAvailable: number | null;
+        creditsUpdatedAt: Date | null;
+        creditsError: string | null;
+      } | null = null;
+      if (input.type === "adobe" && input.config.mode === "direct") {
+        if (input.directCredential && input.config.cookie) {
+          directCredentialValues = {
+            cookie: input.config.cookie,
+            scope: input.config.scope ?? null,
+            accessToken: input.directCredential.accessToken,
+            accountUserId: input.directCredential.accountUserId,
+            displayName: input.directCredential.displayName,
+            email: input.directCredential.email,
+            credentialStatus: "active",
+            tokenExpiresAt: input.directCredential.expiresAt,
+            tokenFails: 0,
+            lastRefreshAt: now,
+            lastRefreshError: null,
+            nextRefreshAt: null,
+            consecutiveFailures: 0,
+            creditsTotal: null,
+            creditsUsed: null,
+            creditsAvailable: null,
+            creditsUpdatedAt: null,
+            creditsError: null,
+          };
+        } else if (existing) {
+          const [row] = await transaction
+            .select({
+              cookie: imageBackendMemberAdobeConfig.cookie,
+              scope: imageBackendMemberAdobeConfig.scope,
+              accessToken: imageBackendMemberAdobeConfig.accessToken,
+              accountUserId: imageBackendMemberAdobeConfig.accountUserId,
+              displayName: imageBackendMemberAdobeConfig.displayName,
+              email: imageBackendMemberAdobeConfig.email,
+              credentialStatus: imageBackendMemberAdobeConfig.credentialStatus,
+              tokenExpiresAt: imageBackendMemberAdobeConfig.tokenExpiresAt,
+              tokenFails: imageBackendMemberAdobeConfig.tokenFails,
+              lastRefreshAt: imageBackendMemberAdobeConfig.lastRefreshAt,
+              lastRefreshError: imageBackendMemberAdobeConfig.lastRefreshError,
+              nextRefreshAt: imageBackendMemberAdobeConfig.nextRefreshAt,
+              consecutiveFailures:
+                imageBackendMemberAdobeConfig.consecutiveFailures,
+              creditsTotal: imageBackendMemberAdobeConfig.creditsTotal,
+              creditsUsed: imageBackendMemberAdobeConfig.creditsUsed,
+              creditsAvailable: imageBackendMemberAdobeConfig.creditsAvailable,
+              creditsUpdatedAt: imageBackendMemberAdobeConfig.creditsUpdatedAt,
+              creditsError: imageBackendMemberAdobeConfig.creditsError,
+            })
+            .from(imageBackendMemberAdobeConfig)
+            .where(eq(imageBackendMemberAdobeConfig.memberId, input.id))
+            .limit(1);
+          if (row?.cookie && row.accessToken && row.credentialStatus) {
+            directCredentialValues = {
+              ...row,
+              cookie: row.cookie,
+              accessToken: row.accessToken,
+              credentialStatus: row.credentialStatus,
+            };
+          }
+        }
+        if (!directCredentialValues) {
+          return { status: "missing_secret" } as const;
+        }
+      }
+
       const commonValues = {
         name: input.name,
         supportedModelIds: input.supportedModelIds,
@@ -490,6 +646,25 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             baseUrl:
               input.config.mode === "gateway" ? input.config.baseUrl : null,
             apiKey: input.config.mode === "gateway" ? adobeApiKey : null,
+            cookie: directCredentialValues?.cookie ?? null,
+            scope: directCredentialValues?.scope ?? null,
+            accessToken: directCredentialValues?.accessToken ?? null,
+            accountUserId: directCredentialValues?.accountUserId ?? null,
+            displayName: directCredentialValues?.displayName ?? null,
+            email: directCredentialValues?.email ?? null,
+            credentialStatus: directCredentialValues?.credentialStatus ?? null,
+            tokenExpiresAt: directCredentialValues?.tokenExpiresAt ?? null,
+            tokenFails: directCredentialValues?.tokenFails ?? 0,
+            lastRefreshAt: directCredentialValues?.lastRefreshAt ?? null,
+            lastRefreshError: directCredentialValues?.lastRefreshError ?? null,
+            nextRefreshAt: directCredentialValues?.nextRefreshAt ?? null,
+            consecutiveFailures:
+              directCredentialValues?.consecutiveFailures ?? 0,
+            creditsTotal: directCredentialValues?.creditsTotal ?? null,
+            creditsUsed: directCredentialValues?.creditsUsed ?? null,
+            creditsAvailable: directCredentialValues?.creditsAvailable ?? null,
+            creditsUpdatedAt: directCredentialValues?.creditsUpdatedAt ?? null,
+            creditsError: directCredentialValues?.creditsError ?? null,
             defaultRatio: input.config.defaultRatio,
             defaultResolution: input.config.defaultResolution,
             gptImageQuality: input.config.gptImageQuality,
@@ -503,6 +678,29 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
               baseUrl:
                 input.config.mode === "gateway" ? input.config.baseUrl : null,
               apiKey: input.config.mode === "gateway" ? adobeApiKey : null,
+              cookie: directCredentialValues?.cookie ?? null,
+              scope: directCredentialValues?.scope ?? null,
+              accessToken: directCredentialValues?.accessToken ?? null,
+              accountUserId: directCredentialValues?.accountUserId ?? null,
+              displayName: directCredentialValues?.displayName ?? null,
+              email: directCredentialValues?.email ?? null,
+              credentialStatus:
+                directCredentialValues?.credentialStatus ?? null,
+              tokenExpiresAt: directCredentialValues?.tokenExpiresAt ?? null,
+              tokenFails: directCredentialValues?.tokenFails ?? 0,
+              lastRefreshAt: directCredentialValues?.lastRefreshAt ?? null,
+              lastRefreshError:
+                directCredentialValues?.lastRefreshError ?? null,
+              nextRefreshAt: directCredentialValues?.nextRefreshAt ?? null,
+              consecutiveFailures:
+                directCredentialValues?.consecutiveFailures ?? 0,
+              creditsTotal: directCredentialValues?.creditsTotal ?? null,
+              creditsUsed: directCredentialValues?.creditsUsed ?? null,
+              creditsAvailable:
+                directCredentialValues?.creditsAvailable ?? null,
+              creditsUpdatedAt:
+                directCredentialValues?.creditsUpdatedAt ?? null,
+              creditsError: directCredentialValues?.creditsError ?? null,
               defaultRatio: input.config.defaultRatio,
               defaultResolution: input.config.defaultResolution,
               gptImageQuality: input.config.gptImageQuality,
@@ -562,6 +760,16 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
           (adobe.api_key is not null) as adobe_has_key,
+          (adobe.cookie is not null) as adobe_has_cookie,
+          adobe.display_name as adobe_display_name,
+          adobe.email as adobe_email,
+          adobe.credential_status as adobe_credential_status,
+          adobe.last_refresh_at as adobe_last_refresh_at,
+          adobe.last_refresh_error as adobe_last_refresh_error,
+          adobe.consecutive_failures as adobe_consecutive_failures,
+          adobe.credits_total as adobe_credits_total,
+          adobe.credits_used as adobe_credits_used,
+          adobe.credits_available as adobe_credits_available,
           adobe.default_ratio,
           adobe.default_resolution,
           adobe.gpt_image_quality

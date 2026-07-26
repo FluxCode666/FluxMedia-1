@@ -233,6 +233,8 @@ async function assertMediaPreflight(pool) {
       printEvidence("legacy_media_incompatible_api_protocol_count", 0);
       printEvidence("legacy_media_invalid_adobe_config_count", 0);
       printEvidence("legacy_media_invalid_member_state_count", 0);
+      printEvidence("legacy_media_invalid_direct_credential_count", 0);
+      printEvidence("legacy_media_direct_member_id_collision_count", 0);
       printEvidence("legacy_media_blocker_total_count", 0);
       return;
     }
@@ -488,6 +490,118 @@ async function assertMediaPreflight(pool) {
       invalidMemberStateResult.rows[0]?.count,
       "invalid legacy member state"
     );
+    const directCredentialTablesPresent =
+      presentTables.has("image_backend_adobe") &&
+      presentTables.has("adobe_account") &&
+      presentTables.has("adobe_token");
+    const invalidDirectCredentialResult = directCredentialTablesPresent
+      ? await client.query(`
+          select count(*)::text as count
+          from image_backend_adobe as adobe
+          where (
+              adobe.mode = 'gateway'
+              and (
+                exists (
+                  select 1 from adobe_account as account
+                  where account.adobe_id = adobe.id
+                )
+                or exists (
+                  select 1 from adobe_token as token
+                  where token.adobe_id = adobe.id
+                )
+              )
+            ) or (
+              adobe.mode = 'direct'
+              and (
+                not exists (
+                  select 1 from adobe_account as account
+                  where account.adobe_id = adobe.id
+                )
+                or exists (
+                  select 1
+                  from adobe_account as account
+                  where account.adobe_id = adobe.id
+                    and (
+                      account.status not in ('active', 'error', 'disabled')
+                      or char_length(btrim(account.cookie)) not between 1 and 64000
+                      or (
+                        account.scope is not null
+                        and char_length(btrim(account.scope)) not between 1 and 4096
+                      )
+                      or account.consecutive_failures < 0
+                      or (
+                        select count(*)
+                        from adobe_token as token
+                        where token.adobe_id = adobe.id
+                          and token.account_id = account.id
+                          and token.source = 'auto_refresh'
+                      ) <> 1
+                    )
+                )
+                or exists (
+                  select 1
+                  from adobe_token as token
+                  left join adobe_account as account
+                    on account.id = token.account_id
+                    and account.adobe_id = adobe.id
+                  where token.adobe_id = adobe.id
+                    and (
+                      token.account_id is null
+                      or token.source <> 'auto_refresh'
+                      or token.status not in (
+                        'active',
+                        'error',
+                        'exhausted',
+                        'invalid'
+                      )
+                      or char_length(btrim(token.value)) < 1
+                      or token.fails < 0
+                      or account.id is null
+                    )
+                )
+              )
+            )
+        `)
+      : { rows: [{ count: "0" }] };
+    const invalidDirectCredentialCount = parseCount(
+      invalidDirectCredentialResult.rows[0]?.count,
+      "invalid legacy Adobe direct credentials"
+    );
+    const directMemberIdCollisionResult =
+      directCredentialTablesPresent && presentTables.has("image_backend_api")
+        ? await client.query(`
+          with ranked_direct_accounts as (
+            select
+              account.id,
+              row_number() over (
+                partition by account.adobe_id
+                order by account.created_at, account.id
+              ) as ordinal
+            from adobe_account as account
+            inner join image_backend_adobe as adobe
+              on adobe.id = account.adobe_id
+              and adobe.mode = 'direct'
+          )
+          select count(*)::text as count
+          from ranked_direct_accounts as account
+          where account.ordinal > 1
+            and (
+              char_length('adobe-direct:' || account.id) > 128
+              or exists (
+                select 1 from image_backend_api as api
+                where api.id = 'adobe-direct:' || account.id
+              )
+              or exists (
+                select 1 from image_backend_adobe as adobe
+                where adobe.id = 'adobe-direct:' || account.id
+              )
+            )
+          `)
+        : { rows: [{ count: "0" }] };
+    const directMemberIdCollisionCount = parseCount(
+      directMemberIdCollisionResult.rows[0]?.count,
+      "legacy Adobe direct member ID collisions"
+    );
     const blockerTotal =
       (tableCounts.get("image_backend_account") ?? 0) +
       (tableCounts.get("image_backend_account_group") ?? 0) +
@@ -498,7 +612,9 @@ async function assertMediaPreflight(pool) {
       invalidApiModelCount +
       incompatibleApiProtocolCount +
       invalidAdobeConfigCount +
-      invalidMemberStateCount;
+      invalidMemberStateCount +
+      invalidDirectCredentialCount +
+      directMemberIdCollisionCount;
 
     printEvidence("legacy_media_active_lease_count", activeLeaseCount);
     printEvidence("legacy_media_active_sticky_count", activeStickyCount);
@@ -519,6 +635,14 @@ async function assertMediaPreflight(pool) {
     printEvidence(
       "legacy_media_invalid_member_state_count",
       invalidMemberStateCount
+    );
+    printEvidence(
+      "legacy_media_invalid_direct_credential_count",
+      invalidDirectCredentialCount
+    );
+    printEvidence(
+      "legacy_media_direct_member_id_collision_count",
+      directMemberIdCollisionCount
     );
     printEvidence("legacy_media_blocker_total_count", blockerTotal);
     if (blockerTotal !== 0) {
@@ -549,17 +673,15 @@ async function assertMediaPostMigrationState(pool) {
             select count(*)::text
             from information_schema.columns
             where table_schema = 'public'
-              and table_name in ('adobe_account', 'adobe_token', 'video_generation')
-              and column_name = 'adobe_id'
+              and table_name = 'video_generation'
+              and column_name in ('adobe_id', 'adobe_token_id')
           ) as old_column_count,
           (
             select count(*)::text
             from information_schema.columns
             where table_schema = 'public'
               and (
-                (table_name in ('adobe_account', 'adobe_token')
-                  and column_name = 'member_id' and is_nullable = 'NO')
-                or (table_name = 'video_generation'
+                (table_name = 'video_generation'
                   and column_name = 'principal_scope' and is_nullable = 'NO')
                 or (table_name = 'video_generation'
                   and column_name = 'api_key_credits_reserved'
@@ -568,6 +690,27 @@ async function assertMediaPostMigrationState(pool) {
                   and column_name = 'callback_url' and is_nullable = 'NO')
                 or (table_name = 'image_backend_member_api_config'
                   and column_name = 'use_stream' and is_nullable = 'NO')
+                or (table_name = 'image_backend_member_adobe_config'
+                  and column_name in (
+                    'cookie',
+                    'scope',
+                    'access_token',
+                    'account_user_id',
+                    'display_name',
+                    'email',
+                    'credential_status',
+                    'token_expires_at',
+                    'token_fails',
+                    'last_refresh_at',
+                    'last_refresh_error',
+                    'next_refresh_at',
+                    'consecutive_failures',
+                    'credits_total',
+                    'credits_used',
+                    'credits_available',
+                    'credits_updated_at',
+                    'credits_error'
+                  ))
               )
           ) as required_column_count,
           (
@@ -575,16 +718,16 @@ async function assertMediaPostMigrationState(pool) {
             from pg_constraint
             where connamespace = 'public'::regnamespace
               and conname in (
-              'adobe_account_member_id_image_backend_member_id_fk',
-              'adobe_token_member_id_image_backend_member_id_fk',
               'video_generation_backend_member_id_image_backend_member_id_fk',
-              'video_generation_adobe_token_id_adobe_token_id_fk',
               'video_generation_stage_check',
               'video_generation_recovery_counts_check',
               'video_generation_callback_delivery_video_generation_id_video_generation_id_fk',
               'video_callback_delivery_status_check',
               'video_callback_delivery_attempt_count_check',
-              'video_generation_principal_scope_check'
+              'video_generation_principal_scope_check',
+              'image_backend_member_adobe_config_credential_shape_check',
+              'image_backend_member_adobe_config_credential_status_check',
+              'image_backend_member_adobe_config_failure_counts_check'
             )
           ) as required_constraint_count,
           (
@@ -607,9 +750,6 @@ async function assertMediaPostMigrationState(pool) {
                 'image_backend_member_lease_expires_idx',
                 'image_backend_member_scheduler_metric_bucket_unique',
                 'image_backend_member_scheduler_metric_bucket_idx',
-                'adobe_account_member_idx',
-                'adobe_token_member_idx',
-                'adobe_token_member_status_idx',
                 'video_generation_principal_stage_idx',
                 'video_generation_recovery_idx',
                 'video_callback_delivery_video_unique',
@@ -653,9 +793,7 @@ async function assertMediaPostMigrationState(pool) {
       `,
       [
         REQUIRED_MEDIA_TABLES,
-        LEGACY_MEDIA_TABLES.filter(
-          (tableName) => !["adobe_account", "adobe_token"].includes(tableName)
-        ),
+        LEGACY_MEDIA_TABLES,
         REMOVED_MEDIA_SETTING_KEYS,
         PLAN_MATRIX_SETTING_KEY,
         REMOVED_PLAN_FEATURES,
@@ -717,10 +855,10 @@ async function assertMediaPostMigrationState(pool) {
       requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
       legacyTableCount !== 0 ||
       oldColumnCount !== 0 ||
-      requiredColumnCount !== 6 ||
+      requiredColumnCount !== 22 ||
       requiredConstraintCount !== 10 ||
       recoveryLeaseForeignKeyCount !== 0 ||
-      requiredIndexCount !== 15 ||
+      requiredIndexCount !== 12 ||
       removedSettingCount !== 0 ||
       obsoletePlanCount !== 0
     ) {

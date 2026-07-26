@@ -45,7 +45,6 @@ export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
       .object({
         outcome: z.literal("accepted"),
         taskId: z.string().trim().min(1).max(128),
-        tokenId: z.string().trim().min(1).max(128),
         pollUrl: z.string().url().max(2_048),
         upstreamJobId: z.string().trim().min(1).max(512),
       })

@@ -1,7 +1,7 @@
 /**
  * 单张图片上游适配与后端池重试服务。
  *
- * 使用方：`operations.ts` 的统一图片管线、账号池测活与 Adobe 视频配置解析。
+ * 使用方：`operations.ts` 的统一图片管线、后端测活与 Adobe 视频配置解析。
  * 本文件保留 Images API、Adobe gateway/direct、输入图转存和通用图片 SSE 解析。
  */
 import {

@@ -1,8 +1,9 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063 SQL，验证 API/Adobe 旧号池可原子迁移、Web 或运行中
- * 状态会阻断且完整回滚，同时锁定设置清理、回调投递和视频 Principal 作用域。
+ * 职责：直接执行 0060-0063 SQL，验证 API/Adobe 旧号池可原子迁移、Adobe
+ * direct 子账号可提升为顶层成员、Web 或运行中状态会阻断且完整回滚，同时
+ * 锁定设置清理、回调投递和视频 Principal 作用域。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
@@ -341,10 +342,10 @@ describe("0060-0063 unified media backend pool migrations", () => {
         tableExists(client, schemaName, "image_backend_api")
       ).resolves.toBe(false);
       await expect(
-        columnExists(client, schemaName, "adobe_account", "member_id")
-      ).resolves.toBe(true);
+        tableExists(client, schemaName, "adobe_account")
+      ).resolves.toBe(false);
       await expect(
-        columnExists(client, schemaName, "adobe_account", "adobe_id")
+        tableExists(client, schemaName, "adobe_token")
       ).resolves.toBe(false);
       await expect(
         columnExists(client, schemaName, "video_generation", "stage")
@@ -394,14 +395,14 @@ describe("0060-0063 unified media backend pool migrations", () => {
     }
   });
 
-  it("保留并转换 API、Adobe、分组、账号、token、指标与终态视频", async () => {
+  it("保留 API/Adobe 数据并将每个 direct 账号提升为顶层成员", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
     let schemaName: string | null = null;
     try {
       schemaName = await createLegacySchema(client);
       await client.query(
-        "insert into image_backend_group (id) values ('group-1')"
+        "insert into image_backend_group (id) values ('group-1'), ('group-2')"
       );
       await client.query(`
         insert into image_backend_api (
@@ -471,7 +472,9 @@ describe("0060-0063 unified media backend pool migrations", () => {
       `);
       await client.query(`
         insert into image_backend_adobe_group (id, adobe_id, group_id)
-        values ('adobe-relation', 'legacy-adobe', 'group-1')
+        values
+          ('adobe-relation-1', 'legacy-adobe', 'group-1'),
+          ('adobe-relation-2', 'legacy-adobe', 'group-2')
       `);
       await client.query(`
         insert into adobe_account (
@@ -479,13 +482,48 @@ describe("0060-0063 unified media backend pool migrations", () => {
           adobe_id,
           name,
           cookie,
-          account_user_id
+          scope,
+          display_name,
+          email,
+          account_user_id,
+          consecutive_failures,
+          created_at
         ) values (
           'adobe-account-1',
           'legacy-adobe',
           'Account 1',
           'cookie-secret',
-          'adobe-user-1'
+          'scope-1',
+          'Display 1',
+          'account-1@example.test',
+          'adobe-user-1',
+          2,
+          '2026-01-01 00:00:00'
+        )
+      `);
+      await client.query(`
+        insert into adobe_account (
+          id,
+          adobe_id,
+          name,
+          cookie,
+          scope,
+          display_name,
+          email,
+          account_user_id,
+          consecutive_failures,
+          created_at
+        ) values (
+          'adobe-account-2',
+          'legacy-adobe',
+          'Account 2',
+          'cookie-secret-2',
+          'scope-2',
+          'Display 2',
+          'account-2@example.test',
+          'adobe-user-2',
+          3,
+          '2026-01-02 00:00:00'
         )
       `);
       await client.query(`
@@ -495,6 +533,10 @@ describe("0060-0063 unified media backend pool migrations", () => {
           account_id,
           value,
           account_user_id,
+          fails,
+          expires_at,
+          credits_total,
+          credits_used,
           credits_available
         ) values (
           'adobe-token-1',
@@ -502,7 +544,36 @@ describe("0060-0063 unified media backend pool migrations", () => {
           'adobe-account-1',
           'token-secret',
           'adobe-user-1',
+          1,
+          '2026-08-01 00:00:00',
+          100,
+          58,
           42
+        )
+      `);
+      await client.query(`
+        insert into adobe_token (
+          id,
+          adobe_id,
+          account_id,
+          value,
+          account_user_id,
+          fails,
+          expires_at,
+          credits_total,
+          credits_used,
+          credits_available
+        ) values (
+          'adobe-token-2',
+          'legacy-adobe',
+          'adobe-account-2',
+          'token-secret-2',
+          'adobe-user-2',
+          4,
+          '2026-09-01 00:00:00',
+          200,
+          125,
+          75
         )
       `);
       await client.query(`
@@ -557,16 +628,17 @@ describe("0060-0063 unified media backend pool migrations", () => {
 
       const members = await client.query<{
         id: string;
+        name: string;
         lease_acquired_count: number;
         metadata: { legacyUnifiedPool?: Record<string, unknown> };
         supported_model_ids: string[];
         type: string;
       }>(`
-        select id, type, supported_model_ids, lease_acquired_count, metadata
+        select id, type, name, supported_model_ids, lease_acquired_count, metadata
         from image_backend_member
         order by id
       `);
-      expect(members.rows).toHaveLength(2);
+      expect(members.rows).toHaveLength(3);
       expect(members.rows).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -584,10 +656,28 @@ describe("0060-0063 unified media backend pool migrations", () => {
           expect.objectContaining({
             id: "legacy-adobe",
             lease_acquired_count: 7,
+            name: "Account 1",
             metadata: expect.objectContaining({
               legacyUnifiedPool: expect.objectContaining({
                 supportsVideo: true,
               }),
+            }),
+            type: "adobe",
+            supported_model_ids: expect.arrayContaining([
+              "gpt-image-2",
+              "firefly-sora2-4s-9x16",
+            ]),
+          }),
+          expect.objectContaining({
+            id: "adobe-direct:adobe-account-2",
+            lease_acquired_count: 0,
+            name: "Account 2",
+            metadata: expect.objectContaining({
+              legacyAdobeDirect: {
+                accountId: "adobe-account-2",
+                parentMemberId: "legacy-adobe",
+                promoted: true,
+              },
             }),
             type: "adobe",
             supported_model_ids: expect.arrayContaining([
@@ -621,48 +711,113 @@ describe("0060-0063 unified media backend pool migrations", () => {
         ],
         use_stream: true,
       });
-      const adobeConfig = await client.query<{
+      const adobeConfigs = await client.query<{
+        access_token: string | null;
+        account_user_id: string | null;
         api_key: string | null;
         base_url: string | null;
+        consecutive_failures: number;
+        cookie: string | null;
+        credential_status: string | null;
+        credits_available: number | null;
+        credits_total: number | null;
+        credits_used: number | null;
+        display_name: string | null;
+        email: string | null;
         gpt_image_quality: string;
+        member_id: string;
         mode: string;
-      }>(`
-        select mode, base_url, api_key, gpt_image_quality
-        from image_backend_member_adobe_config
-        where member_id = 'legacy-adobe'
-      `);
-      expect(adobeConfig.rows[0]).toEqual({
-        api_key: null,
-        base_url: null,
-        gpt_image_quality: "medium",
-        mode: "direct",
-      });
-      const adobeOwner = await client.query<{
-        account_member_id: string;
-        cookie: string;
-        token_member_id: string;
-        value: string;
+        scope: string | null;
+        token_fails: number;
       }>(`
         select
-          account.member_id as account_member_id,
-          account.cookie,
-          token.member_id as token_member_id,
-          token.value
-        from adobe_account as account
-        inner join adobe_token as token on token.account_id = account.id
-        where account.id = 'adobe-account-1'
+          member_id,
+          mode,
+          base_url,
+          api_key,
+          cookie,
+          scope,
+          access_token,
+          account_user_id,
+          display_name,
+          email,
+          credential_status,
+          token_fails,
+          consecutive_failures,
+          credits_total,
+          credits_used,
+          credits_available,
+          gpt_image_quality
+        from image_backend_member_adobe_config
+        order by member_id
       `);
-      expect(adobeOwner.rows[0]).toEqual({
-        account_member_id: "legacy-adobe",
-        cookie: "cookie-secret",
-        token_member_id: "legacy-adobe",
-        value: "token-secret",
-      });
-      const relationCount = await client.query<{ count: number }>(`
-        select count(*)::integer as count
+      expect(adobeConfigs.rows).toEqual([
+        {
+          access_token: "token-secret-2",
+          account_user_id: "adobe-user-2",
+          api_key: null,
+          base_url: null,
+          consecutive_failures: 3,
+          cookie: "cookie-secret-2",
+          credential_status: "active",
+          credits_available: 75,
+          credits_total: 200,
+          credits_used: 125,
+          display_name: "Display 2",
+          email: "account-2@example.test",
+          gpt_image_quality: "medium",
+          member_id: "adobe-direct:adobe-account-2",
+          mode: "direct",
+          scope: "scope-2",
+          token_fails: 4,
+        },
+        {
+          access_token: "token-secret",
+          account_user_id: "adobe-user-1",
+          api_key: null,
+          base_url: null,
+          consecutive_failures: 2,
+          cookie: "cookie-secret",
+          credential_status: "active",
+          credits_available: 42,
+          credits_total: 100,
+          credits_used: 58,
+          display_name: "Display 1",
+          email: "account-1@example.test",
+          gpt_image_quality: "medium",
+          member_id: "legacy-adobe",
+          mode: "direct",
+          scope: "scope-1",
+          token_fails: 1,
+        },
+      ]);
+      await expect(
+        tableExists(client, schemaName, "adobe_account")
+      ).resolves.toBe(false);
+      await expect(
+        tableExists(client, schemaName, "adobe_token")
+      ).resolves.toBe(false);
+      const relations = await client.query<{
+        group_id: string;
+        member_id: string;
+      }>(`
+        select member_id, group_id
         from image_backend_member_group
+        order by member_id, group_id
       `);
-      expect(relationCount.rows[0]?.count).toBe(2);
+      expect(relations.rows).toEqual([
+        {
+          group_id: "group-1",
+          member_id: "adobe-direct:adobe-account-2",
+        },
+        {
+          group_id: "group-2",
+          member_id: "adobe-direct:adobe-account-2",
+        },
+        { group_id: "group-1", member_id: "legacy-adobe" },
+        { group_id: "group-2", member_id: "legacy-adobe" },
+        { group_id: "group-1", member_id: "legacy-api" },
+      ]);
       const lease = await client.query<{
         id: string;
         member_id: string;
@@ -834,6 +989,112 @@ describe("0060-0063 unified media backend pool migrations", () => {
       );
       await expect(
         tableExists(client, schemaName, "image_backend_api")
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(client, schemaName, "image_backend_member")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("Adobe direct 账号缺少唯一自动刷新 token 时阻断迁移", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await client.query(`
+        insert into image_backend_adobe (
+          id,
+          name,
+          base_url,
+          api_key,
+          mode
+        ) values (
+          'direct-without-token',
+          'Direct without token',
+          '',
+          '',
+          'direct'
+        )
+      `);
+      await client.query(`
+        insert into adobe_account (
+          id,
+          adobe_id,
+          name,
+          cookie
+        ) values (
+          'account-without-token',
+          'direct-without-token',
+          'Account without token',
+          'cookie-secret'
+        )
+      `);
+
+      await expect(executeMigrations(client, schemaName)).rejects.toThrow(
+        /invalid_direct_credential=1/u
+      );
+      await expect(
+        tableExists(client, schemaName, "adobe_account")
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(client, schemaName, "image_backend_member")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("Adobe direct 游离 token 时阻断迁移", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await client.query(`
+        insert into image_backend_adobe (
+          id,
+          name,
+          base_url,
+          api_key,
+          mode
+        ) values (
+          'direct-with-orphan',
+          'Direct with orphan',
+          '',
+          '',
+          'direct'
+        )
+      `);
+      await client.query(`
+        insert into adobe_token (
+          id,
+          adobe_id,
+          value,
+          source
+        ) values (
+          'orphan-token',
+          'direct-with-orphan',
+          'token-secret',
+          'auto_refresh'
+        )
+      `);
+
+      await expect(executeMigrations(client, schemaName)).rejects.toThrow(
+        /invalid_direct_credential=1/u
+      );
+      await expect(
+        tableExists(client, schemaName, "adobe_token")
       ).resolves.toBe(true);
       await expect(
         tableExists(client, schemaName, "image_backend_member")

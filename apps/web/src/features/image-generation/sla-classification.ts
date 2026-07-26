@@ -108,7 +108,7 @@ export const CONTENT_SAFETY_REJECTION_PATTERNS = [
   "disallowed content",
   "unsafe content",
   // 上游(中转/Web)对违规图像返回的代码标记 image_unsafe:归审核(用户内容拒绝),
-  // 而非平台故障——不可换号(换后端也救不了)、不罚后端、不计入平台 SLA 分母。
+  // 而非平台故障——切换后端也无法恢复、不罚后端、不计入平台 SLA 分母。
   "image_unsafe",
   "not allowed to generate",
   "targeted abusive text",

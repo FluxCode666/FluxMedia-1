@@ -460,7 +460,7 @@ describe("release governance gate PostgreSQL integration", () => {
 
     const result = await runReleaseGate("postcheck", testDatabaseUrl);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("required_media_column_count=5\n");
+    expect(result.stdout).toContain("required_media_column_count=21\n");
     expect(result.stderr).toContain(
       "release governance gate failed: post-migration unified media invariants failed"
     );

@@ -16,7 +16,7 @@ deepened: 2026-07-26
 
 - **Objective:** 将 FluxMedia 收敛为只承载图片生成、图片编辑和视频生成的媒体平台，并以单一后端号池统一 API 与 Adobe 成员的管理和调度。
 - **Product authority:** 本文固定媒体能力边界、统一号池语义、模型能力筛选、全局调度策略及旧链路的彻底退场；统一接口层、单一生图管线和财务不变量继续作为项目级约束。
-- **Open blockers:** 无；旧 Web 账号无数据，现存 API/Adobe 号池及其子池必须原子迁移，删除范围无需运行时兼容期。
+- **Open blockers:** 模型能力下拉需等待模型广场分支合并；旧 Web 账号无数据，现存 API/Adobe 号池及 Adobe 直连账号凭据必须原子迁移，删除范围无需运行时兼容期。
 - **Execution profile:** Deep；跨数据库、UOL、调度器、图片与视频编排、管理后台、部署资产和公开 API 的单次破坏性切换。
 - **Stop conditions:** 旧 Web 数据或运行中旧状态未排空、API/Adobe 数据无法无损映射、统一租约无法提供跨副本一致性、删除链路会破坏媒体账本或保留能力时立即停止，不以兼容分支绕过。
 - **Tail ownership:** U8 负责维护窗口、迁移、全仓门禁、浏览器验收和发布后 smoke；前序单元不得单独部署到旧 schema。
@@ -41,6 +41,7 @@ Adobe 身份也由独立 Adobe 成员和 API 成员上的 `adobeSourced` 标记�
 - **采用真正统一的后端成员模型。** (session-settled: user-approved — chosen over 仅统一调度投影: API/Adobe 存量可迁入单一模型，继续保留两套内部模型只会隐藏重复职责。) Governs R5-R8。
 - **旧 Web 号池能力一次性彻底退场。** (session-settled: user-directed — chosen over 停用保留或先导出: 线上只有旧 Web 账号确认无数据；API/Adobe 数据必须迁移，不需要为 Web 保留兼容层或回滚读取路径。) Governs R1-R3。
 - **Adobe 身份只由成员类型表达。** (session-settled: user-directed — chosen over `api` 类型叠加 Adobe 来源标记: 单一身份来源可消除调度分支，同时保留 Adobe 网关与直连能力。) Governs R5-R7、R10-R11。
+- **Adobe direct 账号提升为顶层成员。** (session-settled: user-directed — chosen over 在 Adobe 成员内部继续维护账号/token 子池: 统一调度器应直接调度每个账号，避免成员内外两级切换和重复状态。) Governs R5-R8、R19。
 - **模型能力而非类型或前缀决定候选。** (session-settled: user-directed — chosen over 组内盲试或按模型前缀分流: 账号显式声明支持模型可以跨类型公平调度并避免无效调用。) Governs R9-R13。
 - **调度策略使用全局动态配置。** (session-settled: user-directed — chosen over 分组覆盖或仅分组配置: 当前业务只需要一个可运行时切换的系统级策略。) Governs R14-R19。
 - **平台只保留媒体任务。** (session-settled: user-directed — chosen over 保留内部 Responses 生图适配或隐藏对话实现: 对话、Agent、Codex 和 Responses 均不属于目标业务。) Governs R1-R4、R12-R13。
@@ -88,7 +89,7 @@ flowchart TB
 **统一号池与后台管理**
 
 - R5. 系统必须只有一个顶层后端成员模型，并以 `api | adobe` 作为互斥的成员类型；分组关系、模型能力、启停、健康、冷却、优先级、并发、获租计数和调度指标使用统一语义。
-- R6. `adobe` 类型必须保留 `gateway | direct` 两种模式；直连模式继续管理其内部 Adobe 账号与短期 token 子池，网关模式继续支持外部 Adobe 兼容网关。
+- R6. `adobe` 类型必须保留 `gateway | direct` 两种模式；每个 direct 顶层成员必须恰好保存一个 Adobe 账号的 Cookie、短期 token、刷新状态和余额，不得再有内部账号/token 子池；gateway 模式继续支持外部 Adobe 兼容网关。
 - R7. API 后端原有 `adobeSourced` 身份开关必须删除，其承载的 Adobe 网关能力归入 `adobe` 类型；不得同时用成员类型和布尔标记表达 Adobe 身份。
 - R8. 管理后台必须提供一个号池页面和一个新增入口，统一展示公共状态与调度字段，并按所选成员类型展示和校验专属配置。
 
@@ -160,7 +161,7 @@ flowchart TB
 - 本次不新增通用 API 视频协议；未来若 API 成员需要承接视频，必须另行定义协议、能力和财务边界。
 - 本次不创建新的供应商无关模型别名，也不重命名现有公开模型 ID。
 - 本次不增加分组级调度策略覆盖、加权随机、延迟感知、失败率加权或自动策略切换。
-- 本次不新增第三种后端成员类型，也不把 Adobe 直连账号/token 子池提升为顶层调度成员。
+- 本次不新增第三种后端成员类型；旧 Adobe direct 子池中的每个账号提升为一个 `adobe` 顶层成员，账号间切换只由统一调度器负责。
 
 ### Dependencies / Assumptions
 
@@ -204,7 +205,7 @@ flowchart TB
 
 ### Key Technical Decisions
 
-- KTD1. **一个顶层成员表承载所有调度事实。** (session-settled: user-approved — chosen over 仅统一调度投影: API/Adobe 存量可保持原 ID 迁入统一模型，两套顶层模型只会继续制造身份和调度分支。) 建立 `image_backend_member` 与统一成员-分组关系，公共状态、能力、计数和健康字段只存在一份；API 与 Adobe 的凭据和协议字段使用一对一类型配置表，Adobe 账号/token 仍是 direct 成员的子池。Covers R5-R8。
+- KTD1. **一个顶层成员表承载所有调度事实。** (session-settled: user-approved — chosen over 仅统一调度投影: API/Adobe 存量可保持原 ID 迁入统一模型，两套顶层模型和 Adobe 内部子池只会继续制造身份与调度分支。) 建立 `image_backend_member` 与统一成员-分组关系，公共状态、能力、计数和健康字段只存在一份；API 与 Adobe gateway 使用一对一协议配置，Adobe direct 的 Cookie、短期 token、刷新状态和余额直接保存在该成员的一对一配置中。Covers R5-R8。
 - KTD2. **`supportedModelIds` 是唯一候选能力权威。** (session-settled: user-directed — chosen over 空列表代表全支持或按前缀推断: 显式能力才能让不同类型成员在同一集合中安全调度。) 统一成员保存时要求至少一个公开模型 ID，API、Adobe gateway 和 Adobe direct 使用同一字段；0060 将 Adobe 图片家族的旧 `firefly-*` 标识规范为与 API 相同的公开 ID，原始列表只保留在迁移元数据。旧 `enabledModels`、`supportsVideo`、`adobeSourced` 与空列表全支持语义全部删除。Covers R7、R9-R13。
 - KTD3. **策略排序与获租在同一 PostgreSQL 事务内完成。** 三种策略共享一次资格查询，事务以稳定顺序锁定候选成员、清理过期租约、聚合有效在飞数、重新排序、插入租约，并原子更新 `leaseAcquiredCount` 与 `lastAcquiredAt`；生产环境不得退回进程内租约 Map。Covers R14-R19、R22。
 - KTD4. **调度策略复用系统设置 UOL，获租事务读取数据库快照。** (session-settled: user-directed — chosen over 分组配置或静态代码常量: 当前业务只需要全局运行时策略。) 新键 `IMAGE_BACKEND_SCHEDULING_STRATEGY` 使用 `priority | least_acquired | least_load` 严格枚举和 `priority` 默认值；系统设置 Server Action 调用补齐面板语义的 `settings.getSnapshot` / `settings.update` operation。每次获租事务直接读取并归一化数据库设置，保证保存返回后的新请求不受其他副本本地缓存滞后影响。Covers R14、R22。
@@ -214,7 +215,7 @@ flowchart TB
 - KTD8. **视频请求键以 Principal 所有者为幂等权威。** `video.generate` 必须接收 `clientRequestId`；session 使用用户作用域，外部调用使用 `(userId, apiKeyId, clientRequestId)`，并由该作用域稳定派生任务和扣费 `sourceRef`。重放再次校验所存所有者后返回既有任务，不跨 API Key 命中，也不重复派发、扣费或退款。视频失败重选发生在同一任务和同一财务 operation context 内。Covers R4、R19-R20。
 - KTD9. **旧产品面一次性从类型到部署资产删除。** (session-settled: user-directed — chosen over 停用开关或兼容路由: 旧 Web 账号无存量，隐藏实现仍会继续污染调度和产品边界；API/Adobe 存量由 0060 迁移而非删除。) 删除 account/Sub2API/register、Chat/Agent/waterfall/Responses、editable-file/PSD export 的路由、operation、能力位、设置、任务、UI、模型目录和测试；账本读取仍可保留不可调用的历史 operation label。Covers R1-R4、R12、R20。
 - KTD10. **TLS sidecar 收窄为 Adobe allowlist 代理。** 将 `services/chatgpt-web-proxy`、Dockerfile、Compose 服务和环境变量重命名为 Adobe direct 语义，删除 chatgpt.com 默认目标、Cloudflare clearance、ChatGPT cookie/session 行为，只允许 Adobe HTTPS 主机并保持 secret 鉴权、请求体上限和超时。Covers R3、R6。
-- KTD11. **0060 使用维护窗口执行原子数据切换。** 手写 `0060_unified_media_backend_pool.sql` 并登记 `_journal.json`；SQL 首段只阻断旧 Web 数据、有效租约/粘性绑定、无法恢复的运行中视频、成员 ID 冲突、Responses 型 API 和非法配置。随后以原 ID 迁移 API/Adobe 顶层成员、类型配置、Adobe account/token、过期租约、历史指标和终态视频引用；API/Adobe 关系 ID 增加类型前缀后合并，Images `use_stream` 原样保留。最后清理旧设置与套餐 JSON 并删除旧表；旧实例必须先排空，迁移后禁止自动回滚旧镜像。Covers R1-R7、R14、R19-R20。
+- KTD11. **0060 使用维护窗口执行原子数据切换。** 手写 `0060_unified_media_backend_pool.sql` 并登记 `_journal.json`；SQL 首段只阻断旧 Web 数据、有效租约/粘性绑定、无法恢复的运行中视频、成员 ID 冲突、Responses 型 API 和非法配置。随后以原 ID 迁移 API/Adobe 顶层成员；direct 父成员的首个账号沿用父 ID，其余账号提升为继承分组和调度配置的新顶层成员，并把账号/token 状态折叠到一对一 Adobe 配置。API/Adobe 关系 ID 增加类型前缀后合并，Images `use_stream` 原样保留；最后删除 `adobe_account`、`adobe_token` 及其他旧表。旧实例必须先排空，迁移后禁止自动回滚旧镜像。Covers R1-R7、R14、R19-R20。
 - KTD12. **调度观测记录策略和结果，不记录业务载荷。** 聚合指标增加 `strategy` 与 `outcome`，区分获租、容量拒绝、切换、终态失败和无候选；保留成员类型快照、成员 ID、分组和候选数，不存 prompt、媒体、Cookie、token 或 API key。Covers R21-R22。
 
 ### High-Level Technical Design
@@ -241,7 +242,7 @@ flowchart TB
   subgraph Data["PostgreSQL"]
     Member["image_backend_member + 类型配置"]
     Lease["inflight lease + scheduler metric"]
-    AdobeSubpool["adobe_account / adobe_token"]
+    AdobeDirect["Adobe direct 一对一凭据"]
     MediaHistory["generation / video_generation / credits_transaction"]
   end
   Web --> ImageOp
@@ -255,7 +256,7 @@ flowchart TB
   Scheduler --> Member
   Scheduler --> Lease
   Scheduler --> Adapters
-  Adapters --> AdobeSubpool
+  Adapters --> AdobeDirect
   ImagePipe --> MediaHistory
   VideoPipe --> MediaHistory
 ```
@@ -312,7 +313,7 @@ flowchart LR
 
 ### Assumptions
 
-- 线上旧 Web 账号为空；API/Adobe 成员、关系、Adobe 子池和历史指标存在且必须迁移。0060 仍以 SQL 断言不可迁移状态，而不是会话结论作为执行门。
+- 线上旧 Web 账号为空；API/Adobe 成员、关系、Adobe direct 账号凭据和历史指标可能存在且必须迁移。0060 仍以 SQL 断言不可迁移状态，而不是会话结论作为执行门。
 - 当前不要求多版本滚动兼容；迁移、应用和 Adobe 专用代理在同一维护窗口切换。
 - API 参数映射模板仍服务保留的图片 API 成员，因此保留模板 CRUD，但模板不得再表达 Responses 或 Chat 协议。
 - `generation`、`video_generation`、`credits_transaction` 与用量读模型中的历史分类是审计数据，不因运行时能力退场而删除。
@@ -392,7 +393,7 @@ flowchart LR
   - `packages/shared/src/system-settings/components/system-settings-panel.tsx`
 - **Approach:**
   1. 定义 `BackendMemberType`、API/Adobe 配置的 discriminated union、非空 `supportedModelIds`、公共调度字段和三种策略枚举；任何未知字段、非法类型组合、gateway 视频模型或空能力都拒绝。
-  2. 将池管理 operation 收敛为 group、member、Adobe direct 子账号和 API 参数模板四组真实能力；新增 `pool.saveMember`，让 `pool.deleteMember` 只接收统一 ID，删除 account/Sub2API/cron 等 operation 定义。
+  2. 将池管理 operation 收敛为 group、member 和 API 参数模板三组真实能力；新增 `pool.saveMember`，让 `pool.deleteMember` 只接收统一 ID，删除 Adobe 子账号、旧 account、Sub2API 和 cron 等 operation 定义。
   3. 扩展 `image.generate` 为 generate/edit/mask 严格联合输入，保留 `generationId` per-user 幂等；图片与蒙版使用 JSON-safe 的 `data | storage | remote` 媒体引用联合类型，限制 MIME、数量、单项和总字节。multipart 传输只负责归一化为该 DTO，远程抓取、SSRF 防护和媒体校验仍在 operation 内完成，使 MCP JSON Schema 与 Web/v1 共享同一契约。
   4. 新增 `video.generate` 与 `video.getStatus`，前者要求 `clientRequestId`；session 与 API Key 分别使用用户和 API Key 所有者作用域。
   5. 在 `invokeOperation` 实际执行可读取已校验 input 与 Principal 的 `capabilities` 声明：API Key 使用 Principal plan，session user 读取服务端 plan，并分别映射站内与外部 images generate/edit/mask、stream、batch 和 video 能力；失败统一为 `capability_required`，system 仅在 operation 明确允许时绕过。
@@ -429,7 +430,7 @@ flowchart LR
   - `packages/integration-tests/package.json`
 - **Approach:**
   1. 增加统一成员、API 配置、Adobe 配置和成员-分组表；公共表保存能力、状态、冷却、优先级、并发、成功/失败数、`leaseAcquiredCount`、健康与使用时间，类型配置表只保存协议和凭据。
-  2. 将 Adobe account/token 外键和 `video_generation` 的成员引用准备为统一 member ID；lease 表移除 memberType，sticky 表标记为最终删除，metric 增加 strategy/outcome。
+  2. 将每个 Adobe direct 账号提升为统一成员并把凭据状态折叠到一对一 Adobe 配置；`video_generation` 只保留统一 member ID，lease 表移除 memberType，sticky 表标记为最终删除，metric 增加 strategy/outcome。
   3. 抽出 DB-free 排序器：priority 使用优先级、健康桶、最久未获租、最久未使用、稳定 ID；least-acquired 以累计获租数开头；least-load 用交叉相乘比较有效在飞数/并发上限，避免浮点漂移。
   4. repository 在单事务直接读取并归一化当前策略，再锁定合格成员、删除过期租约、聚合每个成员有效租约、再次检查排除集合和容量、应用该策略快照、插入租约并原子自增获租计数；调度正确性不依赖进程 L1 或 Redis 设置缓存。
   5. 租约支持以 lease ID 与 owner token 条件续期，供长视频任务在 worker 交接时保持并发占用；续期、接管和释放均在数据库中校验，旧 worker 不能释放新 owner 的租约。
@@ -471,7 +472,7 @@ flowchart LR
   - `packages/shared/src/uol/operations/image-backend-pool.test.ts`
 - **Approach:**
   1. member service 以事务保存公共成员行、恰好一个类型配置行和全部分组关系；更新时禁止原地跨类型，要求删除重建，避免遗留另一类型凭据。成员存在有效租约或非终态视频任务时只允许停用以阻止新获租，不允许删除凭据；所有任务终态后才允许删除并让历史引用 `SET NULL`。
-  2. API 表单只保留 images base URL、API key、默认上游模型、stream 和参数映射；Adobe 表单按 gateway/direct 展示对应字段，direct 子账号管理只对 direct 成员开放。新增态可选类型；编辑态锁定顶层类型并解释“删除后重建”的转换路径，避免用户填完凭据才收到拒绝。
+  2. API 表单只保留 images base URL、API key、stream 和参数映射；Adobe 表单按 gateway/direct 展示对应字段，direct 配置直接填写该成员唯一的 Cookie 与可选 IMS scope。新增态可选类型；编辑态锁定顶层类型并解释“删除后重建”的转换路径，避免用户填完凭据才收到拒绝。
   3. 管理列表统一显示类型、Adobe mode、分组、显式模型能力、健康、优先级、并发、有效在飞、累计获租和最近错误；所有 secret 只在写入出现，不回显。
   4. Actions 仅以真实会话构造 Principal 并调用 pool operations；observer 只读，admin/super_admin 可管成员，策略设置继续只允许 super_admin。
   5. 先升级设置 operation：`settings.update` 接受严格的 `{ key, value?, clear? }[]`，`settings.getSnapshot` 返回面板需要的 category、options、secret 状态、默认/环境/数据库来源等完整脱敏定义；再让两个 Actions 调用 operation，保留值归一、清空回退默认、secret 留空保持旧值和缓存失效。
@@ -480,7 +481,7 @@ flowchart LR
 - **Test Scenarios:**
   - 新增 API、Adobe gateway、Adobe direct 都只创建一个顶层成员；跨类型更新被拒绝且旧配置不变。
   - 编辑成员时类型只读并展示删除重建说明；新增时仍可选择三种合法配置形态。
-  - direct 可管理 account/token，gateway 和 API 调用该 operation 返回 validation error。
+  - direct 新建必须校验 Cookie 并保存唯一凭据；编辑留空沿用原凭据，gateway 与 API 不接受 direct 凭据字段。
   - 有有效租约或非终态视频的成员删除返回 conflict，停用成功且不影响原任务恢复；任务终态后删除成功并保留历史。
   - observer 看不到保存、启停、删除和 secret 控件；admin 不能修改全局策略。
   - 新建 secret 必填，编辑留空保持旧 secret，列表和 UOL output 永不返回 secret。
@@ -732,7 +733,7 @@ flowchart LR
   - `docs/TODO.md`
 - **Approach:**
   1. 0060 第一段断言旧 Web account、有效租约/sticky、无法恢复的运行中视频、成员 ID 冲突、Responses 型 API 和非法模型/Adobe 配置均为空；任一不满足即抛异常并完整回滚。
-  2. 在同一事务创建统一约束/索引，以原 ID 复制 API/Adobe 顶层成员并保留 Images `use_stream`，给两类旧关系 ID 增加类型前缀后合并，重建 Adobe 子池归属，迁移过期租约与历史指标，并把终态视频 `adobe_id` 写入 `backend_member_id`；随后清理旧 system_setting 和 PLAN_CAPABILITY_MATRIX 节点，再删除旧表、旧视频外键列、enum-like 字段与 sticky 表。
+  2. 在同一事务创建统一约束/索引，以原 ID 复制 API/Adobe 顶层成员并保留 Images `use_stream`，给两类旧关系 ID 增加类型前缀后合并；每个旧 direct 账号形成一个顶层成员并继承父成员分组，凭据和余额迁入一对一 Adobe 配置。迁移过期租约、历史指标和终态视频成员引用后，清理旧设置与能力节点，再删除 `adobe_account`、`adobe_token`、其他旧表、旧视频外键列、enum-like 字段与 sticky 表。
   3. 手动登记 journal idx 60，不运行 `drizzle-kit generate`；在空白数据库和从 0059 升级的专用数据库验证 schema、SQL、journal 和 Drizzle 类型一致。
   4. 部署工作流进入维护状态、停止旧 Web/worker、确认连接与租约排空、创建受控数据库备份、执行 0060、启动新 Web 与 Adobe proxy，并禁止失败时自动拉起旧镜像。
   5. 运行三种策略的真实并发测试、图片 generate/edit/mask、视频 generate/query/replay/failover、积分/退款/存储/用量 smoke，以及删除路径的 404 检查。
@@ -784,7 +785,7 @@ flowchart LR
 
 ### Database and Migration Gates
 
-- 维护窗口前以只读 SQL 分别记录旧三类成员、全部关系、Adobe 子池、有效租约、sticky、metric 和非空 `video_generation.adobe_id` 数量；任何非预期值非零即取消发布。
+- 维护窗口前以只读 SQL 分别记录旧三类成员、全部关系、Adobe direct 账号/token 形状、有效租约、sticky、metric 和非空 `video_generation.adobe_id` 数量；任何不可迁移形状或非预期状态存在即取消发布。
 - 0060 必须在一个 PostgreSQL 事务内失败回滚，手写 SQL 与 `_journal.json` idx 60 同步，不生成新 snapshot。
 - 空白数据库与 0059 升级数据库都验证：统一成员/配置/关系约束、能力非空、计数非负、租约 FK/索引、视频历史 `SET NULL`、sticky/旧表不存在、旧设置和能力 JSON 清理。
 - 真实并发测试至少使用两个连接，覆盖稳定锁顺序、最小负载、最少调用、容量上限、过期租约清理、排除集合和重复释放。
@@ -847,7 +848,7 @@ flowchart LR
 
 - **U1:** 共享成员/策略 schema、JSON-safe 媒体 DTO、出站 URL 策略、图片/视频/池 operation 和 Principal 感知的 capability enforcement 有严格输入与 registry 测试。
 - **U2:** 统一 schema、事务内数据库策略快照、三策略纯排序器、跨副本事务租约、累计获租计数、指标和真实 PostgreSQL 并发证据齐全。
-- **U3:** 空库首次配置、编辑态类型锁定、单页号池、统一 CRUD、Adobe direct 子池、完整设置 UOL、动态策略恢复动作和角色权限均通过验收。
+- **U3:** 空库首次配置、编辑态类型锁定、单页号池、统一 CRUD、Adobe direct 一对一凭据、完整设置 UOL、动态策略恢复动作和角色权限均通过验收。
 - **U4:** generate/edit/mask 不按模型前缀或成员类型预分流，三个适配器、Cookie Origin 校验、出站 SSRF 复验和失败排除协议不破坏图片财务闭环。
 - **U5:** 视频任务以 Principal 所有者作用域的 clientRequestId 幂等，提交前失败可切换、接受后原任务可跨进程恢复，查询归属、退款和存储只有一个终态。
 - **U6:** Web/Codex/Sub2API/register 已从应用、jobs、settings、env、Compose、镜像和 release workflow 删除，Adobe proxy 只允许目标域且 secret 缺失或不匹配时不能 ready。

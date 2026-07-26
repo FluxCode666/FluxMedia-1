@@ -57,12 +57,31 @@ function apiInput(overrides: Record<string, unknown> = {}) {
 describe("backend member service", () => {
   let repository: ReturnType<typeof createRepository>;
   let validateUpstreamUrl: Mock<(url: string) => Promise<unknown>>;
+  let prepareAdobeDirectCredential: Mock<
+    (
+      cookie: string,
+      scope?: string
+    ) => Promise<{
+      accessToken: string;
+      accountUserId: string | null;
+      displayName: string | null;
+      email: string | null;
+      expiresAt: Date | null;
+    }>
+  >;
 
   beforeEach(() => {
     repository = createRepository();
     validateUpstreamUrl = vi.fn(
       async (_url: string) => new URL("https://example.com")
     );
+    prepareAdobeDirectCredential = vi.fn(async () => ({
+      accessToken: "access-token",
+      accountUserId: "adobe-user-1",
+      displayName: "Adobe User",
+      email: "user@example.com",
+      expiresAt: new Date("2026-07-26T01:00:00.000Z"),
+    }));
   });
 
   it("新增 API 成员前校验 URL 并补齐服务端 ID", async () => {
@@ -117,12 +136,13 @@ describe("backend member service", () => {
     );
   });
 
-  it("Adobe direct 不解析可配置 URL 且可声明视频模型", async () => {
+  it("Adobe direct 新增时校验单一 Cookie 并把凭据交给一对一配置仓储", async () => {
     const service = createBackendMemberService({
       repository,
       createId: () => "adobe-direct",
       now: () => NOW,
       validateUpstreamUrl,
+      prepareAdobeDirectCredential,
     });
 
     await service.saveMember({
@@ -138,6 +158,8 @@ describe("backend member service", () => {
       concurrency: 2,
       config: {
         mode: "direct",
+        cookie: "cookie-secret",
+        scope: "openid,AdobeID",
         defaultRatio: "1x1",
         defaultResolution: "2k",
         gptImageQuality: "high",
@@ -145,9 +167,105 @@ describe("backend member service", () => {
     });
 
     expect(validateUpstreamUrl).not.toHaveBeenCalled();
+    expect(prepareAdobeDirectCredential).toHaveBeenCalledWith(
+      "cookie-secret",
+      "openid,AdobeID"
+    );
     expect(repository.saveMember).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "adobe-direct", type: "adobe" }),
+      expect.objectContaining({
+        id: "adobe-direct",
+        type: "adobe",
+        config: expect.objectContaining({
+          mode: "direct",
+          cookie: "cookie-secret",
+        }),
+        directCredential: expect.objectContaining({
+          accessToken: "access-token",
+          accountUserId: "adobe-user-1",
+        }),
+      }),
       NOW
+    );
+  });
+
+  it("Adobe direct Cookie 校验失败时不写入成员", async () => {
+    prepareAdobeDirectCredential.mockRejectedValue(
+      new Error("upstream rejected cookie")
+    );
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "adobe-direct",
+      validateUpstreamUrl,
+      prepareAdobeDirectCredential,
+    });
+
+    const error = await service
+      .saveMember({
+        type: "adobe",
+        name: "Adobe Direct",
+        groupIds: ["group-a"],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: true,
+        priority: 10,
+        concurrency: 2,
+        config: {
+          mode: "direct",
+          cookie: "invalid-cookie",
+          defaultRatio: "1x1",
+          defaultResolution: "2k",
+          gptImageQuality: "high",
+        },
+      })
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "validation_error",
+      message: "Adobe Cookie 无法通过账号校验",
+    });
+    expect(repository.saveMember).not.toHaveBeenCalled();
+  });
+
+  it("Adobe direct 编辑未更新 Cookie 时不访问 Adobe 且沿用既有凭据", async () => {
+    const service = createBackendMemberService({
+      repository,
+      now: () => NOW,
+      validateUpstreamUrl,
+      prepareAdobeDirectCredential,
+    });
+
+    await service.saveMember({
+      id: "adobe-direct",
+      type: "adobe",
+      name: "Adobe Direct",
+      groupIds: ["group-a"],
+      supportedModelIds: ["gpt-image-2"],
+      contentSafetyEnabled: true,
+      isEnabled: true,
+      alwaysActive: false,
+      failureCooldownEnabled: true,
+      priority: 10,
+      concurrency: 2,
+      config: {
+        mode: "direct",
+        defaultRatio: "1x1",
+        defaultResolution: "2k",
+        gptImageQuality: "high",
+      },
+    });
+
+    expect(prepareAdobeDirectCredential).not.toHaveBeenCalled();
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "adobe-direct",
+        isCreate: false,
+      }),
+      NOW
+    );
+    expect(repository.saveMember.mock.calls[0]?.[0]).not.toHaveProperty(
+      "directCredential"
     );
   });
 

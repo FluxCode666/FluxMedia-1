@@ -67,6 +67,7 @@ describe("backend member contract", () => {
           }
         : {
             mode,
+            cookie: "cookie-secret",
             defaultRatio: "1:1",
             defaultResolution: "2k",
             gptImageQuality: "high" as const,
@@ -77,6 +78,30 @@ describe("backend member contract", () => {
         ...commonMember,
         type: "adobe",
         config,
+      }).success
+    ).toBe(true);
+  });
+
+  it("requires one direct credential on creation and allows an omitted secret on edit", () => {
+    const directConfig = {
+      mode: "direct" as const,
+      defaultRatio: "1:1",
+      defaultResolution: "2k",
+      gptImageQuality: "high" as const,
+    };
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "adobe",
+        config: directConfig,
+      }).success
+    ).toBe(false);
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        id: "direct-existing",
+        type: "adobe",
+        config: directConfig,
       }).success
     ).toBe(true);
   });
@@ -112,6 +137,7 @@ describe("backend member contract", () => {
         type: "adobe",
         config: {
           mode: "direct",
+          cookie: "cookie-secret",
           parameterMappings: [],
           defaultRatio: "1:1",
           defaultResolution: "2k",
@@ -133,6 +159,7 @@ describe("backend member contract", () => {
         type: "adobe",
         config: {
           mode: "direct",
+          cookie: "cookie-secret",
           defaultRatio: "16:9",
           defaultResolution: "720p",
           gptImageQuality: "high",
