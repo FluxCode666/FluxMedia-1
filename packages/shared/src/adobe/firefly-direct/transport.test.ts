@@ -15,8 +15,9 @@ afterEach(() => {
 
 describe("ProxyFireflyTransport", () => {
   it("发送 Go 代理接受的无状态严格信封", async () => {
-    const fetchMock = vi.fn(async () =>
-      Response.json({ status: 200, headers: {}, bodyBase64: "" })
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        Response.json({ status: 200, headers: {}, bodyBase64: "" })
     );
     vi.stubGlobal("fetch", fetchMock);
     const transport = new ProxyFireflyTransport({
