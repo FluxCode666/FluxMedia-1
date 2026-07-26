@@ -1,64 +1,101 @@
--- 统一媒体后端数据模型的一次性破坏性切换。
--- 发布方必须先停止旧 Web/worker、排空数据库连接并创建受控备份。Drizzle 在单个
--- PostgreSQL 事务中执行本文件；任一预检、约束或 DDL 失败都会回滚全部变更。
+-- 统一媒体后端数据模型的一次性切换。
+-- 发布方必须先停止旧 Web/worker、排空数据库连接并创建受控备份。API、Adobe
+-- 成员及其账号、token、分组和历史指标会在事务内迁移；只有已下线的 Web 账号、
+-- 仍在运行的旧租约/粘性绑定和无法恢复的旧视频任务会阻断。任一失败都会回滚。
 DO $$
 DECLARE
-  old_account_count bigint;
-  old_account_group_count bigint;
-  old_api_count bigint;
-  old_api_group_count bigint;
-  old_adobe_count bigint;
-  old_adobe_group_count bigint;
-  adobe_account_count bigint;
-  adobe_token_count bigint;
-  old_inflight_lease_count bigint;
-  old_sticky_binding_count bigint;
-  old_scheduler_metric_count bigint;
-  video_adobe_reference_count bigint;
+  web_account_count bigint;
+  web_account_group_count bigint;
+  active_lease_count bigint;
+  active_sticky_binding_count bigint;
+  unrecoverable_video_count bigint;
+  member_id_collision_count bigint;
+  invalid_api_model_count bigint;
+  invalid_adobe_config_count bigint;
+  invalid_member_state_count bigint;
 BEGIN
-  SELECT count(*) INTO old_account_count FROM "image_backend_account";
-  SELECT count(*) INTO old_account_group_count FROM "image_backend_account_group";
-  SELECT count(*) INTO old_api_count FROM "image_backend_api";
-  SELECT count(*) INTO old_api_group_count FROM "image_backend_api_group";
-  SELECT count(*) INTO old_adobe_count FROM "image_backend_adobe";
-  SELECT count(*) INTO old_adobe_group_count FROM "image_backend_adobe_group";
-  SELECT count(*) INTO adobe_account_count FROM "adobe_account";
-  SELECT count(*) INTO adobe_token_count FROM "adobe_token";
-  SELECT count(*) INTO old_inflight_lease_count FROM "image_backend_inflight_lease";
-  SELECT count(*) INTO old_sticky_binding_count FROM "image_backend_sticky_binding";
-  SELECT count(*) INTO old_scheduler_metric_count FROM "image_backend_scheduler_metric";
+  SELECT count(*) INTO web_account_count FROM "image_backend_account";
   SELECT count(*)
-  INTO video_adobe_reference_count
+  INTO web_account_group_count
+  FROM "image_backend_account_group";
+  SELECT count(*)
+  INTO active_lease_count
+  FROM "image_backend_inflight_lease"
+  WHERE "expires_at" > now();
+  SELECT count(*)
+  INTO active_sticky_binding_count
+  FROM "image_backend_sticky_binding"
+  WHERE "expires_at" > now();
+  SELECT count(*)
+  INTO unrecoverable_video_count
   FROM "video_generation"
-  WHERE "adobe_id" IS NOT NULL;
+  WHERE "adobe_id" IS NOT NULL
+    AND "status" NOT IN ('completed', 'failed');
+  SELECT count(*)
+  INTO member_id_collision_count
+  FROM "image_backend_api" AS api
+  INNER JOIN "image_backend_adobe" AS adobe ON adobe."id" = api."id";
+  SELECT count(*)
+  INTO invalid_api_model_count
+  FROM "image_backend_api"
+  WHERE json_typeof("supported_model_ids") <> 'array'
+    OR json_array_length("supported_model_ids") = 0;
+  SELECT count(*)
+  INTO invalid_adobe_config_count
+  FROM "image_backend_adobe"
+  WHERE "mode" NOT IN ('gateway', 'direct')
+    OR ("mode" = 'gateway' AND nullif(btrim("base_url"), '') IS NULL)
+    OR (
+      "enabled_models" IS NOT NULL
+      AND json_typeof("enabled_models") <> 'array'
+    );
+  SELECT sum(invalid_count)
+  INTO invalid_member_state_count
+  FROM (
+    SELECT count(*) AS invalid_count
+    FROM "image_backend_api"
+    WHERE "status" NOT IN ('active', 'limited', 'error')
+      OR "priority" < 0
+      OR "priority" > 10000
+      OR "concurrency" < 1
+      OR "concurrency" > 10000
+      OR "success_count" < 0
+      OR "fail_count" < 0
+      OR json_typeof("parameter_mappings") <> 'array'
+    UNION ALL
+    SELECT count(*) AS invalid_count
+    FROM "image_backend_adobe"
+    WHERE "status" NOT IN ('active', 'limited', 'error')
+      OR "priority" < 0
+      OR "priority" > 10000
+      OR "concurrency" < 1
+      OR "concurrency" > 10000
+      OR "success_count" < 0
+      OR "fail_count" < 0
+      OR "gpt_image_quality" NOT IN ('low', 'medium', 'high')
+  ) AS invalid_member_state;
 
-  IF old_account_count <> 0
-    OR old_account_group_count <> 0
-    OR old_api_count <> 0
-    OR old_api_group_count <> 0
-    OR old_adobe_count <> 0
-    OR old_adobe_group_count <> 0
-    OR adobe_account_count <> 0
-    OR adobe_token_count <> 0
-    OR old_inflight_lease_count <> 0
-    OR old_sticky_binding_count <> 0
-    OR old_scheduler_metric_count <> 0
-    OR video_adobe_reference_count <> 0
+  IF web_account_count <> 0
+    OR web_account_group_count <> 0
+    OR active_lease_count <> 0
+    OR active_sticky_binding_count <> 0
+    OR unrecoverable_video_count <> 0
+    OR member_id_collision_count <> 0
+    OR invalid_api_model_count <> 0
+    OR invalid_adobe_config_count <> 0
+    OR invalid_member_state_count <> 0
   THEN
     RAISE EXCEPTION
-      '0060 blocked: legacy media data remains (account=%, account_group=%, api=%, api_group=%, adobe=%, adobe_group=%, adobe_account=%, adobe_token=%, inflight_lease=%, sticky=%, scheduler_metric=%, video_adobe_ref=%)',
-      old_account_count,
-      old_account_group_count,
-      old_api_count,
-      old_api_group_count,
-      old_adobe_count,
-      old_adobe_group_count,
-      adobe_account_count,
-      adobe_token_count,
-      old_inflight_lease_count,
-      old_sticky_binding_count,
-      old_scheduler_metric_count,
-      video_adobe_reference_count;
+      '0060 blocked: non-migratable media state remains (web_account=%, web_account_group=%, active_lease=%, active_sticky=%, active_video=%, member_id_collision=%, invalid_api_models=%, invalid_adobe_config=%, invalid_member_state=%)',
+      web_account_count,
+      web_account_group_count,
+      active_lease_count,
+      active_sticky_binding_count,
+      unrecoverable_video_count,
+      member_id_collision_count,
+      invalid_api_model_count,
+      invalid_adobe_config_count,
+      invalid_member_state_count;
   END IF;
 END $$;
 --> statement-breakpoint
@@ -265,9 +302,462 @@ CREATE INDEX "image_backend_member_scheduler_metric_bucket_idx"
     "outcome"
   );
 --> statement-breakpoint
+-- API 与 Adobe 使用原主键进入同一成员表，避免外部引用和审计记录失去身份连续性。
+-- 旧调度器的 EWMA/连续成功失败值仍保留在 metadata.scheduler；新列从下一次调用开始
+-- 重新采样，防止异常历史 JSON 通过强制类型转换中断整个迁移。
+INSERT INTO "image_backend_member" (
+  "id",
+  "type",
+  "name",
+  "supported_model_ids",
+  "content_safety_enabled",
+  "is_enabled",
+  "always_active",
+  "failure_cooldown_enabled",
+  "priority",
+  "concurrency",
+  "lease_acquired_count",
+  "success_count",
+  "fail_count",
+  "status",
+  "health_status",
+  "last_observed_at",
+  "last_used_at",
+  "last_acquired_at",
+  "cooldown_until",
+  "last_error",
+  "last_error_at",
+  "metadata",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  "id",
+  'api',
+  "name",
+  "supported_model_ids",
+  "content_safety_enabled",
+  "is_enabled",
+  "always_active",
+  "failure_cooldown_enabled",
+  "priority",
+  "concurrency",
+  "success_count" + "fail_count",
+  "success_count",
+  "fail_count",
+  "status",
+  CASE "status"
+    WHEN 'error' THEN 'unhealthy'
+    WHEN 'limited' THEN 'degraded'
+    ELSE 'healthy'
+  END,
+  coalesce("last_error_at", "last_used_at", "last_acquired_at"),
+  "last_used_at",
+  "last_acquired_at",
+  "cooldown_until",
+  "last_error",
+  "last_error_at",
+  jsonb_set(
+    coalesce("metadata"::jsonb, '{}'::jsonb),
+    '{legacyUnifiedPool}',
+    jsonb_build_object(
+      'model', "model",
+      'interfaceMode', "interface_mode",
+      'useStream', "use_stream",
+      'chatCompletionsUpstreamMode', "chat_completions_upstream_mode",
+      'imageUpstreamMode', "image_upstream_mode",
+      'adobeSourced', "adobe_sourced",
+      'billingMultiplier', "billing_multiplier"
+    ),
+    true
+  )::json,
+  "created_at",
+  "updated_at"
+FROM "image_backend_api";
+--> statement-breakpoint
+INSERT INTO "image_backend_member_api_config" (
+  "member_id",
+  "base_url",
+  "api_key",
+  "parameter_mappings",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  "id",
+  "base_url",
+  "api_key",
+  "parameter_mappings",
+  "created_at",
+  "updated_at"
+FROM "image_backend_api";
+--> statement-breakpoint
+INSERT INTO "image_backend_member" (
+  "id",
+  "type",
+  "name",
+  "supported_model_ids",
+  "content_safety_enabled",
+  "is_enabled",
+  "always_active",
+  "failure_cooldown_enabled",
+  "priority",
+  "concurrency",
+  "lease_acquired_count",
+  "success_count",
+  "fail_count",
+  "status",
+  "health_status",
+  "last_observed_at",
+  "last_used_at",
+  "last_acquired_at",
+  "cooldown_until",
+  "last_error",
+  "last_error_at",
+  "metadata",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  "id",
+  'adobe',
+  "name",
+  (
+    CASE
+      WHEN "enabled_models" IS NOT NULL
+        AND json_array_length("enabled_models") > 0
+        THEN (
+          SELECT jsonb_agg(
+            CASE model."id"
+              WHEN 'firefly-gpt-image-2' THEN 'gpt-image-2'
+              WHEN 'firefly-gpt-image-1.5' THEN 'gpt-image-1.5'
+              WHEN 'firefly-nano-banana' THEN 'nano-banana'
+              WHEN 'firefly-nano-banana2' THEN 'nano-banana2'
+              WHEN 'firefly-nano-banana-pro' THEN 'nano-banana-pro'
+              ELSE model."id"
+            END
+            ORDER BY model."ordinality"
+          )
+          FROM jsonb_array_elements_text("enabled_models"::jsonb)
+            WITH ORDINALITY AS model("id", "ordinality")
+        )
+      ELSE jsonb_build_array(
+        'gpt-image-2',
+        'gpt-image-1.5',
+        'nano-banana',
+        'nano-banana2',
+        'nano-banana-pro'
+      )
+    END
+    || CASE
+      WHEN "supports_video" AND "mode" = 'direct' THEN jsonb_build_array(
+        'firefly-sora2-4s-9x16',
+        'firefly-sora2-4s-16x9',
+        'firefly-sora2-8s-9x16',
+        'firefly-sora2-8s-16x9',
+        'firefly-sora2-12s-9x16',
+        'firefly-sora2-12s-16x9',
+        'firefly-sora2-pro-4s-9x16',
+        'firefly-sora2-pro-4s-16x9',
+        'firefly-sora2-pro-8s-9x16',
+        'firefly-sora2-pro-8s-16x9',
+        'firefly-sora2-pro-12s-9x16',
+        'firefly-sora2-pro-12s-16x9',
+        'firefly-veo31-4s-16x9-1080p',
+        'firefly-veo31-4s-16x9-720p',
+        'firefly-veo31-4s-9x16-1080p',
+        'firefly-veo31-4s-9x16-720p',
+        'firefly-veo31-6s-16x9-1080p',
+        'firefly-veo31-6s-16x9-720p',
+        'firefly-veo31-6s-9x16-1080p',
+        'firefly-veo31-6s-9x16-720p',
+        'firefly-veo31-8s-16x9-1080p',
+        'firefly-veo31-8s-16x9-720p',
+        'firefly-veo31-8s-9x16-1080p',
+        'firefly-veo31-8s-9x16-720p',
+        'firefly-veo31-ref-4s-16x9-1080p',
+        'firefly-veo31-ref-4s-16x9-720p',
+        'firefly-veo31-ref-4s-9x16-1080p',
+        'firefly-veo31-ref-4s-9x16-720p',
+        'firefly-veo31-ref-6s-16x9-1080p',
+        'firefly-veo31-ref-6s-16x9-720p',
+        'firefly-veo31-ref-6s-9x16-1080p',
+        'firefly-veo31-ref-6s-9x16-720p',
+        'firefly-veo31-ref-8s-16x9-1080p',
+        'firefly-veo31-ref-8s-16x9-720p',
+        'firefly-veo31-ref-8s-9x16-1080p',
+        'firefly-veo31-ref-8s-9x16-720p',
+        'firefly-veo31-fast-4s-16x9-1080p',
+        'firefly-veo31-fast-4s-16x9-720p',
+        'firefly-veo31-fast-4s-9x16-1080p',
+        'firefly-veo31-fast-4s-9x16-720p',
+        'firefly-veo31-fast-6s-16x9-1080p',
+        'firefly-veo31-fast-6s-16x9-720p',
+        'firefly-veo31-fast-6s-9x16-1080p',
+        'firefly-veo31-fast-6s-9x16-720p',
+        'firefly-veo31-fast-8s-16x9-1080p',
+        'firefly-veo31-fast-8s-16x9-720p',
+        'firefly-veo31-fast-8s-9x16-1080p',
+        'firefly-veo31-fast-8s-9x16-720p',
+        'firefly-kling-o3-5s-16x9',
+        'firefly-kling-o3-5s-9x16',
+        'firefly-kling-o3-15s-16x9',
+        'firefly-kling-o3-15s-9x16',
+        'firefly-kling3-5s-16x9',
+        'firefly-kling3-5s-9x16',
+        'firefly-kling3-10s-16x9',
+        'firefly-kling3-10s-9x16',
+        'firefly-kling3-15s-16x9',
+        'firefly-kling3-15s-9x16'
+      )
+      ELSE '[]'::jsonb
+    END
+  )::json,
+  "content_safety_enabled",
+  "is_enabled",
+  "always_active",
+  "failure_cooldown_enabled",
+  "priority",
+  "concurrency",
+  "success_count" + "fail_count",
+  "success_count",
+  "fail_count",
+  "status",
+  CASE "status"
+    WHEN 'error' THEN 'unhealthy'
+    WHEN 'limited' THEN 'degraded'
+    ELSE 'healthy'
+  END,
+  coalesce("last_error_at", "last_used_at", "last_acquired_at"),
+  "last_used_at",
+  "last_acquired_at",
+  "cooldown_until",
+  "last_error",
+  "last_error_at",
+  jsonb_set(
+    coalesce("metadata"::jsonb, '{}'::jsonb),
+    '{legacyUnifiedPool}',
+    jsonb_build_object(
+      'enabledModels', "enabled_models",
+      'supportsVideo', "supports_video",
+      'billingMultiplier', "billing_multiplier"
+    ),
+    true
+  )::json,
+  "created_at",
+  "updated_at"
+FROM "image_backend_adobe";
+--> statement-breakpoint
+INSERT INTO "image_backend_member_adobe_config" (
+  "member_id",
+  "mode",
+  "base_url",
+  "api_key",
+  "default_ratio",
+  "default_resolution",
+  "gpt_image_quality",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  "id",
+  "mode",
+  CASE WHEN "mode" = 'gateway' THEN "base_url" ELSE NULL END,
+  CASE WHEN "mode" = 'gateway' THEN "api_key" ELSE NULL END,
+  "default_ratio",
+  "default_resolution",
+  "gpt_image_quality",
+  "created_at",
+  "updated_at"
+FROM "image_backend_adobe";
+--> statement-breakpoint
+-- 多对多关系优先复用旧关系 ID；旧单列 group_id 仅在关系表缺失时补齐。
+INSERT INTO "image_backend_member_group" (
+  "id",
+  "member_id",
+  "group_id",
+  "created_at"
+)
+SELECT "id", "api_id", "group_id", "created_at"
+FROM "image_backend_api_group"
+UNION ALL
+SELECT "id", "adobe_id", "group_id", "created_at"
+FROM "image_backend_adobe_group";
+--> statement-breakpoint
+INSERT INTO "image_backend_member_group" (
+  "id",
+  "member_id",
+  "group_id",
+  "created_at"
+)
+SELECT
+  'legacy-api:' || api."id" || ':' || api."group_id",
+  api."id",
+  api."group_id",
+  api."created_at"
+FROM "image_backend_api" AS api
+WHERE api."group_id" IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "image_backend_member_group" AS relation
+    WHERE relation."member_id" = api."id"
+      AND relation."group_id" = api."group_id"
+  )
+UNION ALL
+SELECT
+  'legacy-adobe:' || adobe."id" || ':' || adobe."group_id",
+  adobe."id",
+  adobe."group_id",
+  adobe."created_at"
+FROM "image_backend_adobe" AS adobe
+WHERE adobe."group_id" IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "image_backend_member_group" AS relation
+    WHERE relation."member_id" = adobe."id"
+      AND relation."group_id" = adobe."group_id"
+  );
+--> statement-breakpoint
+-- 维护窗口拒绝未过期租约；已过期租约保留原 ID，等待统一清理器回收。
+INSERT INTO "image_backend_member_lease" (
+  "id",
+  "member_id",
+  "owner_token",
+  "expires_at",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  lease."id",
+  lease."member_id",
+  'legacy-migration:' || lease."id",
+  lease."expires_at",
+  lease."created_at",
+  lease."created_at"
+FROM "image_backend_inflight_lease" AS lease
+WHERE lease."member_type" IN ('api', 'adobe')
+  AND EXISTS (
+    SELECT 1
+    FROM "image_backend_member" AS member
+    WHERE member."id" = lease."member_id"
+      AND member."type" = lease."member_type"
+  );
+--> statement-breakpoint
+-- 新旧指标维度不同。顶层字段生成兼容聚合供新看板读取，原行及全部旧计数完整封装在
+-- metadata.legacyRows，避免伪造逐次新策略事实或静默丢弃历史观测。
+WITH normalized_legacy_metric AS (
+  SELECT
+    metric."id",
+    metric."bucket_started_at",
+    CASE
+      WHEN metric."request_kind" LIKE '%video%' THEN 'video'
+      ELSE 'image'
+    END AS "request_kind",
+    'least_load' AS "strategy",
+    CASE
+      WHEN metric."selected_layer" = 'switch'
+        OR metric."switch_count" > 0
+        THEN 'switched'
+      ELSE 'acquired'
+    END AS "outcome",
+    CASE
+      WHEN metric."member_type" IN ('api', 'adobe')
+        THEN metric."member_type"
+      ELSE NULL
+    END AS "member_type",
+    metric."member_id",
+    metric."group_id",
+    greatest(metric."select_count", 0)
+      + greatest(metric."switch_count", 0) AS "event_count",
+    greatest(metric."candidate_count_total", 0) AS "candidate_count_total",
+    greatest(metric."latency_ms_total", 0) AS "latency_ms_total",
+    jsonb_build_object(
+      'id', metric."id",
+      'selectedLayer', metric."selected_layer",
+      'requestKind', metric."request_kind",
+      'memberType', metric."member_type",
+      'memberId', metric."member_id",
+      'groupId', metric."group_id",
+      'selectCount', metric."select_count",
+      'stickyPreviousHitCount', metric."sticky_previous_hit_count",
+      'stickySessionHitCount', metric."sticky_session_hit_count",
+      'loadBalanceCount', metric."load_balance_count",
+      'switchCount', metric."switch_count",
+      'candidateCountTotal', metric."candidate_count_total",
+      'latencyMsTotal', metric."latency_ms_total",
+      'metadata', metric."metadata"
+    ) AS "legacy_row",
+    metric."created_at",
+    metric."updated_at"
+  FROM "image_backend_scheduler_metric" AS metric
+), aggregated_legacy_metric AS (
+  SELECT
+    min("id") AS "id",
+    "bucket_started_at",
+    "request_kind",
+    "strategy",
+    "outcome",
+    "member_type",
+    "member_id",
+    "group_id",
+    sum("event_count")::integer AS "event_count",
+    sum("candidate_count_total")::integer AS "candidate_count_total",
+    sum("latency_ms_total")::integer AS "latency_ms_total",
+    jsonb_build_object(
+      'source', 'legacy_scheduler_metric',
+      'legacyRows', jsonb_agg("legacy_row" ORDER BY "id")
+    )::json AS "metadata",
+    min("created_at") AS "created_at",
+    max("updated_at") AS "updated_at"
+  FROM normalized_legacy_metric
+  GROUP BY
+    "bucket_started_at",
+    "request_kind",
+    "strategy",
+    "outcome",
+    "member_type",
+    "member_id",
+    "group_id"
+)
+INSERT INTO "image_backend_member_scheduler_metric" (
+  "id",
+  "bucket_started_at",
+  "request_kind",
+  "strategy",
+  "outcome",
+  "member_type",
+  "member_id",
+  "group_id",
+  "event_count",
+  "candidate_count_total",
+  "latency_ms_total",
+  "metadata",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  "id",
+  "bucket_started_at",
+  "request_kind",
+  "strategy",
+  "outcome",
+  "member_type",
+  "member_id",
+  "group_id",
+  "event_count",
+  "candidate_count_total",
+  "latency_ms_total",
+  "metadata",
+  "created_at",
+  "updated_at"
+FROM aggregated_legacy_metric;
+--> statement-breakpoint
 ALTER TABLE "adobe_account"
   DROP CONSTRAINT IF EXISTS "adobe_account_backend_owner_check",
   ADD COLUMN "member_id" text;
+--> statement-breakpoint
+UPDATE "adobe_account"
+SET "member_id" = "adobe_id";
 --> statement-breakpoint
 ALTER TABLE "adobe_account"
   ALTER COLUMN "member_id" SET NOT NULL,
@@ -278,6 +768,9 @@ ALTER TABLE "adobe_account"
 ALTER TABLE "adobe_token"
   DROP CONSTRAINT IF EXISTS "adobe_token_backend_owner_check",
   ADD COLUMN "member_id" text;
+--> statement-breakpoint
+UPDATE "adobe_token"
+SET "member_id" = "adobe_id";
 --> statement-breakpoint
 ALTER TABLE "adobe_token"
   ALTER COLUMN "member_id" SET NOT NULL,
@@ -321,12 +814,14 @@ ALTER TABLE "video_generation"
   ADD COLUMN "attempt_count" integer DEFAULT 0 NOT NULL;
 --> statement-breakpoint
 UPDATE "video_generation"
-SET "stage" = CASE "status"
-  WHEN 'completed' THEN 'completed'
-  WHEN 'failed' THEN 'failed'
-  WHEN 'running' THEN 'polling'
-  ELSE 'created'
-END;
+SET
+  "backend_member_id" = "adobe_id",
+  "stage" = CASE "status"
+    WHEN 'completed' THEN 'completed'
+    WHEN 'failed' THEN 'failed'
+    WHEN 'running' THEN 'polling'
+    ELSE 'created'
+  END;
 --> statement-breakpoint
 ALTER TABLE "video_generation"
   ADD CONSTRAINT "video_generation_backend_member_id_image_backend_member_id_fk"

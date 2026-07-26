@@ -39,7 +39,9 @@
 ## 部署与迁移
 
 - Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。
-- 统一号池迁移 `0060` 只允许在维护窗口执行；旧成员或旧视频引用非空时必须停止。
+- 统一号池迁移 `0060` 只允许在维护窗口执行；API/Adobe 旧成员、分组、Adobe 子池、
+  历史指标和终态视频引用必须原子迁移，只有旧 Web 数据、有效租约/粘性绑定或无法
+  恢复的运行中视频状态才阻断。
 - Adobe direct 只通过 `services/media-upstream-proxy` 访问代码内允许的 Adobe HTTPS
   主机；代理与 Web 共享必填 secret。
 - 生产部署顺序和恢复边界见 [CI-CD.md](CI-CD.md)。

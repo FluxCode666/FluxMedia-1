@@ -238,7 +238,9 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
     `alter table "user"
        drop column if exists moderation_block_risk_level`
   );
-  await client.query("drop table if exists image_backend_api");
+  await client.query(
+    "drop table if exists image_backend_account, image_backend_api"
+  );
   const mediaMarkerResult = await client.query<{
     hidden: boolean;
     visible: boolean;
@@ -327,7 +329,7 @@ describe("release governance gate PostgreSQL integration", () => {
     );
   });
 
-  it("旧媒体表残留数据时拒绝统一号池迁移前检查", async () => {
+  it("旧 API 数据可迁移时允许统一号池迁移前检查", async () => {
     if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
     await pool.query(
       `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
@@ -338,11 +340,33 @@ describe("release governance gate PostgreSQL integration", () => {
     );
 
     const result = await runReleaseGate("preflight", testDatabaseUrl);
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("legacy_media_image_backend_api_count=1\n");
     expect(result.stdout).toContain("legacy_media_total_count=1\n");
+    expect(result.stdout).toContain("legacy_media_blocker_total_count=0\n");
+    expect(result.stderr).toBe("");
+  });
+
+  it("旧 Web 账号数据仍存在时拒绝统一号池迁移前检查", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(
+      `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
+    );
+    await pool.query(
+      "create table image_backend_account (id text primary key)"
+    );
+    await pool.query(
+      "insert into image_backend_account (id) values ('legacy-web-account')"
+    );
+
+    const result = await runReleaseGate("preflight", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain(
+      "legacy_media_image_backend_account_count=1\n"
+    );
+    expect(result.stdout).toContain("legacy_media_blocker_total_count=1\n");
     expect(result.stderr).toContain(
-      "release governance gate failed: unified media preflight failed: 1 rows found"
+      "release governance gate failed: unified media preflight failed: 1 non-migratable rows found"
     );
   });
 
