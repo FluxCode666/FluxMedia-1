@@ -81,19 +81,33 @@ function toImageGenerateOutput(
   input: ImageGenerateInput,
   result: Awaited<ReturnType<typeof runImageGenerationForUser>>
 ): ImageGenerateOutput {
-  if (result.error) throw new Error(result.error);
-  const images: { url: string; revisedPrompt?: string }[] = [];
-  if (result.imageUrl) {
-    images.push({
-      url: result.imageUrl,
-      ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
-    });
-  }
-  for (const output of result.imageOutputs ?? []) {
+  if (result.error) throw new OperationError("upstream_error", result.error);
+  const sourceOutputs =
+    result.imageOutputs?.length &&
+    result.imageOutputs.some((item) => item.imageUrl)
+      ? result.imageOutputs
+      : result.imageUrl
+        ? [
+            {
+              imageUrl: result.imageUrl,
+              revisedPrompt: result.revisedPrompt,
+              size: result.size,
+              promptRepairNotice: result.promptRepairNotice,
+            },
+          ]
+        : [];
+  const images: ImageGenerateOutput["images"] = [];
+  for (const output of sourceOutputs) {
     if (!output.imageUrl) continue;
     images.push({
       url: output.imageUrl,
       ...(output.revisedPrompt ? { revisedPrompt: output.revisedPrompt } : {}),
+      ...(output.size ? { size: output.size } : {}),
+      ...(output.promptRepairNotice
+        ? { promptRepairNotice: output.promptRepairNotice }
+        : {}),
+      ...(output.index !== undefined ? { index: output.index } : {}),
+      ...(output.outputRole ? { outputRole: output.outputRole } : {}),
     });
   }
   return {
@@ -103,6 +117,11 @@ function toImageGenerateOutput(
       ? { creditsUsed: result.creditsConsumed }
       : {}),
     ...(result.model ? { model: result.model } : {}),
+    ...(result.size ? { size: result.size } : {}),
+    ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
+    ...(result.promptRepairNotice
+      ? { promptRepairNotice: result.promptRepairNotice }
+      : {}),
   };
 }
 
@@ -132,9 +151,21 @@ export async function executeImageGenerateBinding(
     userId,
     ...(apiKeyId ? { apiKeyId } : {}),
     prompt: input.prompt,
+    apiPrompt: input.apiPrompt,
+    promptOptimization: input.promptOptimization,
     model: input.model,
     size: input.size,
     quality: input.quality as ImageQuality | undefined,
+    thinking: input.thinking,
+    moderation: input.moderation,
+    outputFormat: input.outputFormat,
+    outputCompression: input.outputCompression,
+    background: input.background,
+    transparentMatte: input.transparentMatte,
+    moderationPromptRepair: input.moderationPromptRepair,
+    hdRepair: input.hdRepair,
+    blockRepair: input.blockRepair,
+    repairPrompt: input.repairPrompt,
     n: input.count,
     generationId: input.generationId,
     backendGroupId: input.backendGroupId,

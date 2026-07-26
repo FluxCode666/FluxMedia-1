@@ -10,9 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
+  getUserRoleById: vi.fn(),
   getPlanUploadLimits: vi.fn(),
   getUserPlan: vi.fn(),
-  runImageGenerationForUser: vi.fn(),
+  invokeImageGenerationOperation: vi.fn(),
 }));
 
 vi.mock("@repo/shared/api-logger", () => ({
@@ -20,6 +21,9 @@ vi.mock("@repo/shared/api-logger", () => ({
 }));
 vi.mock("@repo/shared/auth", () => ({
   auth: { api: { getSession: mocks.getSession } },
+}));
+vi.mock("@repo/shared/auth/role-server", () => ({
+  getUserRoleById: mocks.getUserRoleById,
 }));
 vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
   canUsePlanCapability: vi.fn(),
@@ -35,12 +39,12 @@ vi.mock("@/features/image-generation/batch-runner", () => ({
   firstBatchError: vi.fn(),
   runBatchImageGeneration: vi.fn(),
 }));
-vi.mock("@/features/image-generation/operations", () => ({
-  runImageGenerationForUser: mocks.runImageGenerationForUser,
+vi.mock("@/features/image-generation/uol-client", () => ({
+  invokeImageGenerationOperation: mocks.invokeImageGenerationOperation,
 }));
 vi.mock("@/features/image-generation/request-utils", () => ({
   deleteTemporaryImages: vi.fn(),
-  filesToImageInputs: vi.fn(),
+  filesToMediaInputReferences: vi.fn(),
   formatMegabytes: vi.fn(),
   getTotalUploadSize: vi.fn(),
   uploadTemporaryImageUrls: vi.fn(),
@@ -63,7 +67,7 @@ describe("POST /api/images/edit", () => {
     mocks.getSession.mockReset();
     mocks.getPlanUploadLimits.mockReset();
     mocks.getUserPlan.mockReset();
-    mocks.runImageGenerationForUser.mockReset();
+    mocks.invokeImageGenerationOperation.mockReset();
     mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
     vi.stubEnv("BETTER_AUTH_URL", "https://app.example.test");
   });
@@ -79,6 +83,6 @@ describe("POST /api/images/edit", () => {
     expect(await response.json()).toEqual({ error: "Forbidden" });
     expect(mocks.getPlanUploadLimits).not.toHaveBeenCalled();
     expect(mocks.getUserPlan).not.toHaveBeenCalled();
-    expect(mocks.runImageGenerationForUser).not.toHaveBeenCalled();
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 });

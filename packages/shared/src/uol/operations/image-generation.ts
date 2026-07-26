@@ -31,10 +31,24 @@ import { defineOperation } from "../registry";
 const imageGenerateCommonFields = {
   prompt: z.string().trim().min(1).max(100_000),
   negativePrompt: z.string().max(100_000).optional(),
+  apiPrompt: z.string().trim().min(1).max(8_000).optional(),
+  promptOptimization: z.boolean().optional(),
   model: z.string().trim().min(1).max(120).optional(),
   size: z.string().trim().min(1).max(40).optional(),
   quality: z.string().trim().min(1).max(40).optional(),
   style: z.string().trim().min(1).max(80).optional(),
+  thinking: z
+    .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
+    .optional(),
+  moderation: z.enum(["auto", "low"]).optional(),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
+  outputCompression: z.number().int().min(0).max(100).optional(),
+  background: z.enum(["transparent", "opaque", "auto"]).optional(),
+  transparentMatte: z.boolean().optional(),
+  moderationPromptRepair: z.boolean().optional(),
+  hdRepair: z.boolean().optional(),
+  blockRepair: z.boolean().optional(),
+  repairPrompt: z.string().max(8_000).optional(),
   count: z.number().int().positive().max(10_000).optional(),
   generationId: z.string().trim().min(1).max(128),
   /** 本次请求明确选中的平台媒体后端分组；服务端仍会再次授权。 */
@@ -84,10 +98,17 @@ export const imageGenerateOutputSchema = z.object({
     z.object({
       url: z.string(),
       revisedPrompt: z.string().optional(),
+      size: z.string().optional(),
+      promptRepairNotice: z.string().optional(),
+      index: z.number().int().nonnegative().optional(),
+      outputRole: z.enum(["final", "choice"]).optional(),
     })
   ),
   creditsUsed: z.number().optional(),
   model: z.string().optional(),
+  size: z.string().optional(),
+  revisedPrompt: z.string().optional(),
+  promptRepairNotice: z.string().optional(),
 });
 
 /** image.generate 的稳定媒体结果类型。 */

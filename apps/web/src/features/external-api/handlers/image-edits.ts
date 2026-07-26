@@ -38,7 +38,7 @@ import {
   readResponseBytesWithLimit,
 } from "@/features/external-api/safe-image-fetch";
 import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
+import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
   normalizeOutputCompression,
@@ -47,7 +47,7 @@ import {
 } from "@/features/image-generation/output-format";
 import {
   DEFAULT_MAX_IMAGE_BYTES,
-  filesToImageInputs,
+  filesToMediaInputReferences,
   formatMegabytes,
   getTotalUploadSize,
   uploadModerationImages,
@@ -65,6 +65,7 @@ import type {
   PartialImageResult,
   ThinkingLevel,
 } from "@/features/image-generation/types";
+import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
 
 const VALID_QUALITIES = new Set<ImageQuality>([
   "auto",
@@ -455,7 +456,7 @@ async function resolveMaskReference(
 
 async function toStreamCompletedPayload(
   request: Request,
-  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  result: ImageGenerationOperationResult,
   responseFormat: "url" | "b64_json",
   index: number
 ) {
@@ -743,42 +744,54 @@ export const postExternalImageEdits = withApiLogging(
         sourceFiles
       );
 
-      const buildImages = async () =>
-        await filesToImageInputs(sourceFiles, moderationImages);
-
-      const buildMask = async () =>
-        maskFile ? (await filesToImageInputs([maskFile]))[0] : undefined;
+      const images = await filesToMediaInputReferences(
+        sourceFiles,
+        moderationImages
+      );
+      const mask = maskFile
+        ? (await filesToMediaInputReferences([maskFile]))[0]
+        : undefined;
+      const principal = {
+        type: "apiKey" as const,
+        credentialKind: "external" as const,
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+        plan: auth.plan,
+      };
+      const requestId = request.headers.get("x-request-id") ?? undefined;
 
       const runEdit = async (
         generationId: string,
-        onPartialImage?: Parameters<typeof runImageGenerationForUser>[1]
-      ) =>
-        await runImageGenerationForUser(
-          {
-            mode: "edit",
-            userId: auth.userId,
-            generationId,
-            apiKeyId: auth.apiKeyId,
-            prompt,
-            promptOptimization,
-            size,
-            model,
-            thinking,
-            quality,
-            moderation,
-            outputFormat,
-            outputCompression,
-            background,
-            transparentMatte,
-            hdRepair,
-            blockRepair,
-            repairPrompt,
-            n: 1,
-            images: await buildImages(),
-            mask: await buildMask(),
-          },
-          onPartialImage
+        onPartialImage?: Parameters<typeof invokeImageGenerationOperation>[2]
+      ) => {
+        const common = {
+          generationId,
+          prompt,
+          promptOptimization,
+          size,
+          model,
+          thinking,
+          quality,
+          moderation,
+          outputFormat,
+          outputCompression,
+          background,
+          transparentMatte,
+          hdRepair,
+          blockRepair,
+          repairPrompt,
+          count: 1,
+          images,
+        };
+        return invokeImageGenerationOperation(
+          mask
+            ? { operation: "mask", ...common, mask }
+            : { operation: "edit", ...common },
+          principal,
+          onPartialImage,
+          requestId
         );
+      };
 
       if (useStreamResponse) {
         return createExternalImageStreamResponse(async (emit) => {

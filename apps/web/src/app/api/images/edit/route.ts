@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
+import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -13,7 +14,7 @@ import {
   runBatchImageGeneration,
 } from "@/features/image-generation/batch-runner";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
+import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
   normalizeOutputCompression,
@@ -24,7 +25,7 @@ import {
 import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
 import {
   deleteTemporaryImages,
-  filesToImageInputs,
+  filesToMediaInputReferences,
   formatMegabytes,
   getTotalUploadSize,
   uploadTemporaryImageUrls,
@@ -45,6 +46,7 @@ import type {
   ImageQuality,
   ThinkingLevel,
 } from "@/features/image-generation/types";
+import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
 
 const VALID_QUALITIES = new Set<ImageQuality>([
   "auto",
@@ -144,7 +146,7 @@ function getImageFiles(formData: FormData) {
 
 /** 将管线正常返回的失败结果收敛为可安全回传的接口结果。 */
 function sanitizeGenerationResult(
-  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  result: ImageGenerationOperationResult,
   source: string
 ) {
   if (!result.error) return result;
@@ -173,6 +175,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   }
 
   const plan = await getUserPlan(session.user.id);
+  const role = await getUserRoleById(session.user.id);
   const planLimits = await getPlanLimits(plan.plan);
   const uploadLimits = await getPlanUploadLimits(plan.plan);
   const maxImageBytes = uploadLimits.maxFileSizeBytes;
@@ -369,41 +372,55 @@ export const POST = withApiLogging(async (request: NextRequest) => {
           )
         : undefined;
     const useStreamResponse = wantsStreamResponse(request, formData);
+    const images = await filesToMediaInputReferences(
+      sourceFiles,
+      sourceImageUrls
+    );
+    const mask =
+      maskFile instanceof File
+        ? (await filesToMediaInputReferences([maskFile], maskImageUrls))[0]
+        : undefined;
+    const principal = {
+      type: "user" as const,
+      userId: session.user.id,
+      role,
+    };
+    const requestId = request.headers.get("x-request-id") ?? undefined;
 
     const runEdit = async (
       generationId: string,
-      onPartialImage?: Parameters<typeof runImageGenerationForUser>[1]
-    ) =>
-      await runImageGenerationForUser(
-        {
-          mode: "edit",
-          userId: session.user.id,
-          generationId,
-          backendGroupId,
-          prompt,
-          apiPrompt,
-          promptOptimization,
-          size: displaySize || size,
-          model,
-          thinking,
-          quality,
-          moderation,
-          outputFormat,
-          outputCompression,
-          background,
-          transparentMatte,
-          hdRepair,
-          blockRepair,
-          repairPrompt,
-          n: 1,
-          images: await filesToImageInputs(sourceFiles, sourceImageUrls),
-          mask:
-            maskFile instanceof File
-              ? (await filesToImageInputs([maskFile], maskImageUrls))[0]
-              : undefined,
-        },
-        onPartialImage
+      onPartialImage?: Parameters<typeof invokeImageGenerationOperation>[2]
+    ) => {
+      const common = {
+        generationId,
+        backendGroupId,
+        prompt,
+        apiPrompt,
+        promptOptimization,
+        size: displaySize || size,
+        model,
+        thinking,
+        quality,
+        moderation,
+        outputFormat,
+        outputCompression,
+        background,
+        transparentMatte,
+        hdRepair,
+        blockRepair,
+        repairPrompt,
+        count: 1,
+        images,
+      };
+      return invokeImageGenerationOperation(
+        mask
+          ? { operation: "mask", ...common, mask }
+          : { operation: "edit", ...common },
+        principal,
+        onPartialImage,
+        requestId
       );
+    };
 
     try {
       if (useStreamResponse) {

@@ -1,7 +1,9 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { db } from "@repo/database";
 import { generation } from "@repo/database/schema";
+import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   collectGenerationImageStorageReferences,
   type GenerationImageStorageReference,
@@ -10,13 +12,13 @@ import { protectedAction } from "@repo/shared/safe-action";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
 import { z } from "zod";
-import { runImageGenerationForUser } from "./operations";
 import {
   DEFAULT_IMAGE_SIZE,
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
   validateImageSize,
 } from "./resolution";
+import { invokeImageGenerationOperation } from "./uol-client";
 
 const generateImageSchema = z.object({
   prompt: z
@@ -40,13 +42,20 @@ export const generateImageAction = protectedAction
   .metadata({ action: "image-generation.generate" })
   .schema(generateImageSchema)
   .action(async ({ parsedInput, ctx }) => {
-    return await runImageGenerationForUser({
-      mode: "generate",
-      userId: ctx.userId,
-      prompt: parsedInput.prompt,
-      size: parsedInput.size || DEFAULT_IMAGE_SIZE,
-      model: parsedInput.model,
-    });
+    return invokeImageGenerationOperation(
+      {
+        operation: "generate",
+        generationId: randomUUID(),
+        prompt: parsedInput.prompt,
+        size: parsedInput.size || DEFAULT_IMAGE_SIZE,
+        model: parsedInput.model,
+      },
+      {
+        type: "user",
+        userId: ctx.userId,
+        role: await getUserRoleById(ctx.userId),
+      }
+    );
   });
 
 export const deleteGenerationAction = protectedAction
@@ -175,9 +184,7 @@ export const batchDeleteGenerationAction = protectedAction
           )
         );
       for (const other of otherGenerations) {
-        for (const ref of collectGenerationImageStorageReferences(
-          other
-        )) {
+        for (const ref of collectGenerationImageStorageReferences(other)) {
           uniqueRefKeys.delete(referenceKey(ref));
         }
       }
@@ -197,9 +204,7 @@ export const batchDeleteGenerationAction = protectedAction
     }
 
     // 批量删除 DB 记录
-    await db
-      .delete(generation)
-      .where(inArray(generation.id, idsToDelete));
+    await db.delete(generation).where(inArray(generation.id, idsToDelete));
 
     return { success: true, deletedCount: idsToDelete.length };
   });

@@ -1,3 +1,7 @@
+import {
+  type MediaInputReference,
+  mediaInputReferenceSchema,
+} from "@repo/shared/image-generation/media-contract";
 import { logWarn } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { getRuntimeSettingString } from "@repo/shared/system-settings";
@@ -249,5 +253,38 @@ export async function filesToImageInputs(
         storageKey: uploadedImages?.[index]?.key,
       })
     )
+  );
+}
+
+/**
+ * 将已校验上传文件转换为 UOL JSON-safe 引用。
+ *
+ * 已上传临时对象优先使用 storage 引用，避免再次 base64 编解码并保留历史引用元数据；
+ * 存储降级时才内联 data 引用。返回值再次经过共享 schema 校验。
+ */
+export async function filesToMediaInputReferences(
+  files: File[],
+  uploadedImages?: TemporaryUploadedImage[]
+): Promise<MediaInputReference[]> {
+  return Promise.all(
+    files.map(async (file, index) => {
+      const uploaded = uploadedImages?.[index];
+      if (uploaded) {
+        return mediaInputReferenceSchema.parse({
+          source: "storage",
+          mimeType: file.type || "image/png",
+          storageKey: uploaded.key,
+          storageBucket: uploaded.bucket,
+          byteLength: file.size,
+        });
+      }
+      const data = Buffer.from(await file.arrayBuffer());
+      return mediaInputReferenceSchema.parse({
+        source: "data",
+        mimeType: file.type || "image/png",
+        base64: data.toString("base64"),
+        byteLength: data.byteLength,
+      });
+    })
   );
 }

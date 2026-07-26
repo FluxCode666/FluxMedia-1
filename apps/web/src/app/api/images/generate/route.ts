@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
+import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -12,7 +14,7 @@ import {
   runBatchImageGeneration,
 } from "@/features/image-generation/batch-runner";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
+import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeOutputCompression,
   normalizeOutputFormat,
@@ -25,6 +27,7 @@ import {
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import { createImageStreamResponse } from "@/features/image-generation/streaming";
+import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
 
 const IMAGE_GENERATION_ERROR_FALLBACK =
   "Image generation failed. Please retry shortly.";
@@ -94,7 +97,7 @@ function generationErrorResponse(error: unknown) {
 
 /** 将管线正常返回的失败结果收敛为可安全回传的接口结果。 */
 function sanitizeGenerationResult(
-  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  result: ImageGenerationOperationResult,
   source: string
 ) {
   if (!result.error) return result;
@@ -135,6 +138,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   }
 
   const plan = await getUserPlan(session.user.id);
+  const role = await getUserRoleById(session.user.id);
   const planLimits = await getPlanLimits(plan.plan);
   const count = parsed.data.count || 1;
   if (
@@ -153,8 +157,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   }
 
   const input = {
-    mode: "generate" as const,
-    userId: session.user.id,
+    operation: "generate" as const,
     prompt: parsed.data.prompt,
     apiPrompt: parsed.data.apiPrompt,
     promptOptimization: parsed.data.promptOptimization,
@@ -189,6 +192,22 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       : count === 1 && requestedGenerationId
         ? [requestedGenerationId]
         : undefined;
+  const principal = {
+    type: "user" as const,
+    userId: session.user.id,
+    role,
+  };
+  const requestId = request.headers.get("x-request-id") ?? undefined;
+  const runGeneration = (
+    generationId: string,
+    callbacks?: Parameters<typeof invokeImageGenerationOperation>[2]
+  ) =>
+    invokeImageGenerationOperation(
+      { ...input, generationId },
+      principal,
+      callbacks,
+      requestId
+    );
 
   try {
     const useStreamResponse = wantsStreamResponse(request, parsed.data.stream);
@@ -200,8 +219,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
             count,
             concurrency: planLimits.imageGenerationConcurrency,
             generationIds: batchGenerationIds,
-            run: (generationId, callbacks) =>
-              runImageGenerationForUser({ ...input, generationId }, callbacks),
+            run: runGeneration,
             callbacks: (index) => ({
               onPartialImage: async (image) => {
                 await emit({
@@ -247,10 +265,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
 
     if (count === 1) {
       const result = sanitizeGenerationResult(
-        await runImageGenerationForUser({
-          ...input,
-          generationId: requestedGenerationId,
-        }),
+        await runGeneration(requestedGenerationId ?? randomUUID()),
         "image-generate-response"
       );
       return NextResponse.json(result);
@@ -260,8 +275,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       count,
       concurrency: planLimits.imageGenerationConcurrency,
       generationIds: batchGenerationIds,
-      run: (generationId) =>
-        runImageGenerationForUser({ ...input, generationId }),
+      run: (generationId) => runGeneration(generationId),
     });
 
     const safeResults = results.map((result) =>

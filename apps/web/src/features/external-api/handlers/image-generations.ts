@@ -33,7 +33,7 @@ import {
   wantsImageStreamResponse,
 } from "@/features/external-api/images";
 import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
+import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeOutputCompression,
   normalizeOutputFormat,
@@ -45,6 +45,7 @@ import {
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import type { PartialImageResult } from "@/features/image-generation/types";
+import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
 
 const externalImageGenerationSchema = z
   .object({
@@ -92,7 +93,7 @@ const externalImageGenerationSchema = z
 
 async function toStreamCompletedPayload(
   request: Request,
-  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  result: ImageGenerationOperationResult,
   responseFormat: "url" | "b64_json",
   index: number
 ) {
@@ -246,9 +247,7 @@ export const postExternalImageGenerations = withApiLogging(
       parsed.data.transparentMatte ?? parsed.data.transparent_matte;
 
     const input = {
-      mode: "generate" as const,
-      userId: auth.userId,
-      apiKeyId: auth.apiKeyId,
+      operation: "generate" as const,
       prompt: parsed.data.prompt,
       promptOptimization:
         parsed.data.promptOptimization ?? parsed.data.prompt_optimization,
@@ -268,14 +267,31 @@ export const postExternalImageGenerations = withApiLogging(
       repairPrompt: parsed.data.repairPrompt ?? parsed.data.repair_prompt,
     };
     const responseFormat = parsed.data.response_format || "b64_json";
+    const principal = {
+      type: "apiKey" as const,
+      credentialKind: "external" as const,
+      userId: auth.userId,
+      apiKeyId: auth.apiKeyId,
+      plan: auth.plan,
+    };
+    const requestId = request.headers.get("x-request-id") ?? undefined;
+    const runGeneration = (
+      generationId: string,
+      callbacks?: Parameters<typeof invokeImageGenerationOperation>[2]
+    ) =>
+      invokeImageGenerationOperation(
+        { ...input, generationId },
+        principal,
+        callbacks,
+        requestId
+      );
 
     if (useStreamResponse) {
       return createExternalImageStreamResponse(async (emit) => {
         await runBatchImageGeneration({
           count,
           concurrency: limits.imageGenerationConcurrency,
-          run: (generationId, callbacks) =>
-            runImageGenerationForUser({ ...input, generationId }, callbacks),
+          run: runGeneration,
           callbacks: (index) => ({
             onPartialImage: async (image) => {
               await emit({
@@ -336,8 +352,7 @@ export const postExternalImageGenerations = withApiLogging(
           count,
           concurrency: limits.imageGenerationConcurrency,
           generationIds,
-          run: (generationId) =>
-            runImageGenerationForUser({ ...input, generationId }),
+          run: (generationId) => runGeneration(generationId),
         });
         const resultPayload = await toOpenAIImagesResponse(
           request,
@@ -387,7 +402,7 @@ export const postExternalImageGenerations = withApiLogging(
         const results = await runBatchImageGeneration({
           count,
           concurrency: limits.imageGenerationConcurrency,
-          run: () => runImageGenerationForUser(input),
+          run: (generationId) => runGeneration(generationId),
         });
         return await toOpenAIImagesResponse(
           request,
