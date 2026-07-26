@@ -11,7 +11,11 @@
 
 import { randomUUID } from "node:crypto";
 import { db } from "@repo/database";
-import { videoGeneration } from "@repo/database/schema";
+import {
+  adobeToken,
+  videoGeneration,
+  videoGenerationCallbackDelivery,
+} from "@repo/database/schema";
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
@@ -19,7 +23,10 @@ import {
   globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
 } from "@repo/shared/adobe";
-import { resolveFireflyVideoModel } from "@repo/shared/adobe/firefly-direct";
+import {
+  assertAdobeVideoPollUrl,
+  resolveFireflyVideoModel,
+} from "@repo/shared/adobe/firefly-direct";
 import { consumeCredits } from "@repo/shared/credits/core";
 import { refundGenerationCredits } from "@repo/shared/generation-maintenance";
 import { logError } from "@repo/shared/logger";
@@ -28,12 +35,11 @@ import {
   getRuntimeSettingJson,
   getRuntimeSettingString,
 } from "@repo/shared/system-settings";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
 import { defaultBackendPoolRepository } from "@/features/image-backend-pool/repository";
 import { createRuntimeBackendSession } from "@/features/image-backend-pool/runtime-service";
-import { extractExecuteRows } from "@/server/database-result";
 import {
   downloadAdobeDirectVideoRequest,
   pollAdobeDirectVideoRequest,
@@ -41,15 +47,23 @@ import {
 } from "./adobe-direct";
 import { createVideoCreditOperation } from "./credit-operation-context";
 import {
+  createVideoCallbackDeliveryValues,
+  runVideoCallbackDeliveryJob,
+} from "./video-callback-delivery";
+import {
   createVideoStorageKey,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
+import { defaultVideoRecoveryRepository } from "./video-recovery-repository";
 
 const VIDEO_POLL_DELAY_MS = 15_000;
 const VIDEO_RETRY_DELAY_MS = 60_000;
-const VIDEO_CLAIM_TTL_MS = 2 * 60_000;
 const VIDEO_LEASE_TTL_MS = 21 * 60_000;
+const VIDEO_CLAIM_TTL_MS = VIDEO_LEASE_TTL_MS;
+const VIDEO_SUBMISSION_TIMEOUT_MS = 20 * 60_000;
 const VIDEO_RECOVERY_BATCH_LIMIT = 25;
+const VIDEO_RECOVERY_WORKER_COUNT = 4;
+const VIDEO_IO_HEARTBEAT_MS = 5 * 60_000;
 
 type VideoStage =
   | "created"
@@ -65,6 +79,7 @@ type VideoStage =
 export type VideoGenerationInput = {
   userId: string;
   apiKeyId?: string | null;
+  principalScope: string;
   prompt: string;
   videoGenerationId?: string;
   clientRequestId?: string;
@@ -81,6 +96,11 @@ export type VideoGenerationInput = {
   signal?: AbortSignal;
 };
 
+/** 仅由受信 OperationContext 构造的非领域执行选项。 */
+export type VideoGenerationExecutionOptions = {
+  callbackUrl?: string;
+};
+
 export type VideoGenerationResult =
   | {
       videoGenerationId: string;
@@ -88,6 +108,32 @@ export type VideoGenerationResult =
       creditsConsumed: number;
     }
   | { error: string; videoGenerationId?: string };
+
+/** 管理员对 Adobe 提交不确定任务的核对结论。 */
+export type VideoSubmissionReconciliation =
+  | {
+      outcome: "accepted";
+      taskId: string;
+      tokenId: string;
+      pollUrl: string;
+      upstreamJobId: string;
+    }
+  | {
+      outcome: "not_accepted";
+      taskId: string;
+      reason: string;
+    };
+
+/** 视频提交核对失败的稳定领域错误。 */
+export class VideoSubmissionReconciliationError extends Error {
+  constructor(
+    readonly code: "not_found" | "conflict" | "validation_error",
+    message: string
+  ) {
+    super(message);
+    this.name = "VideoSubmissionReconciliationError";
+  }
+}
 
 /** 创作页视频价格预估所需的定价输入。 */
 export type VideoPricingInfo = {
@@ -153,7 +199,7 @@ async function compareAndSetVideoStage(input: {
 }): Promise<VideoGenerationRow | null> {
   const claimCondition = input.row.claimToken
     ? eq(videoGeneration.claimToken, input.row.claimToken)
-    : undefined;
+    : isNull(videoGeneration.claimToken);
   const [updated] = await db
     .update(videoGeneration)
     .set({
@@ -249,49 +295,185 @@ async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
 }
 
 /**
+ * 人工收敛 submit_uncertain 视频任务。
+ *
+ * 接受结论必须绑定原成员下仍存在的 token 和受信 Adobe poll URL；未接受结论才会
+ * 进入幂等退款。重复提交相同接受身份或已完成退款时返回当前结果，不产生新副作用。
+ */
+export async function reconcileUncertainVideoSubmission(
+  input: VideoSubmissionReconciliation
+): Promise<{
+  taskId: string;
+  status: "processing" | "completed" | "failed";
+}> {
+  const row = await getVideoGenerationById(input.taskId);
+  if (!row) {
+    throw new VideoSubmissionReconciliationError("not_found", "视频任务不存在");
+  }
+
+  if (input.outcome === "not_accepted") {
+    if (row.stage === "failed") {
+      return { taskId: row.id, status: "failed" };
+    }
+    if (row.stage === "refunding") {
+      await refundClaimedVideo(row);
+      return { taskId: row.id, status: "failed" };
+    }
+    if (row.stage !== "submit_uncertain") {
+      throw new VideoSubmissionReconciliationError(
+        "conflict",
+        "只有提交结果不确定的任务可以确认未接受"
+      );
+    }
+    const refunding = await moveVideoToRefunding(
+      row,
+      `人工核对确认 Adobe 未接受提交：${input.reason}`
+    );
+    if (!refunding) {
+      throw new VideoSubmissionReconciliationError(
+        "conflict",
+        "视频任务状态已被其他操作修改"
+      );
+    }
+    await refundClaimedVideo(refunding);
+    return { taskId: row.id, status: "failed" };
+  }
+
+  let pollUrl: string;
+  try {
+    pollUrl = assertAdobeVideoPollUrl(input.pollUrl);
+  } catch (error) {
+    throw new VideoSubmissionReconciliationError(
+      "validation_error",
+      error instanceof Error ? error.message : "Adobe 视频轮询地址不受信任"
+    );
+  }
+
+  if (["polling", "downloading", "completed"].includes(row.stage)) {
+    if (
+      row.adobeTokenId !== input.tokenId ||
+      row.pollUrl !== pollUrl ||
+      row.upstreamJobId !== input.upstreamJobId
+    ) {
+      throw new VideoSubmissionReconciliationError(
+        "conflict",
+        "任务已用不同的 Adobe 恢复身份完成核对"
+      );
+    }
+    return {
+      taskId: row.id,
+      status: row.stage === "completed" ? "completed" : "processing",
+    };
+  }
+  if (row.stage !== "submit_uncertain" || !row.backendMemberId) {
+    throw new VideoSubmissionReconciliationError(
+      "conflict",
+      "当前视频任务不能恢复 Adobe 轮询"
+    );
+  }
+  const [matchingToken] = await db
+    .select({ id: adobeToken.id })
+    .from(adobeToken)
+    .where(
+      and(
+        eq(adobeToken.id, input.tokenId),
+        eq(adobeToken.memberId, row.backendMemberId)
+      )
+    )
+    .limit(1);
+  if (!matchingToken) {
+    throw new VideoSubmissionReconciliationError(
+      "validation_error",
+      "Adobe token 不存在或不属于原提交成员"
+    );
+  }
+  const polling = await compareAndSetVideoStage({
+    row,
+    expectedStages: ["submit_uncertain"],
+    values: {
+      stage: "polling",
+      adobeTokenId: input.tokenId,
+      pollUrl,
+      upstreamJobId: input.upstreamJobId,
+      upstreamAcceptedAt: new Date(),
+      nextPollAt: new Date(),
+      claimToken: null,
+      claimExpiresAt: null,
+      error: null,
+    },
+  });
+  if (!polling) {
+    throw new VideoSubmissionReconciliationError(
+      "conflict",
+      "视频任务状态已被其他操作修改"
+    );
+  }
+  return { taskId: row.id, status: "processing" };
+}
+
+/**
  * 创建任务、扣费并只执行 Adobe submit 阶段。
  *
  * 成功提交后立即返回 processing；轮询、下载和完成由恢复 worker 执行。
  */
 export async function runAdobeVideoGenerationForUser(
-  input: VideoGenerationInput
+  input: VideoGenerationInput,
+  executionOptions?: VideoGenerationExecutionOptions
 ): Promise<VideoGenerationResult> {
   const conf = resolveFireflyVideoModel(input.model);
   if (!conf) return { error: `不支持的视频模型: ${input.model}` };
 
   const videoId = input.videoGenerationId || nanoid();
   const createdAt = new Date();
-  await db.insert(videoGeneration).values({
-    id: videoId,
-    userId: input.userId,
-    apiKeyId: input.apiKeyId ?? null,
-    usageLogVisible: true,
-    model: input.model,
-    family: conf.family,
-    prompt: input.prompt,
-    durationSeconds: conf.duration,
-    aspectRatio: conf.aspectRatio,
-    resolution: conf.outputResolution,
-    status: "pending",
-    stage: "created",
-    creditsConsumed: 0,
-    ...(input.clientRequestId || input.requestFingerprint
-      ? {
-          metadata: {
-            ...(input.clientRequestId
-              ? { clientRequestId: input.clientRequestId }
-              : {}),
-            ...(input.requestFingerprint
-              ? { requestFingerprint: input.requestFingerprint }
-              : {}),
-          },
-        }
-      : {}),
-    ...(input.inputImageRefs?.length
-      ? { inputImageRefs: input.inputImageRefs }
-      : {}),
-    createdAt,
-    updatedAt: createdAt,
+  const submissionTimeoutSignal = AbortSignal.timeout(
+    VIDEO_SUBMISSION_TIMEOUT_MS
+  );
+  const submissionSignal = input.signal
+    ? AbortSignal.any([input.signal, submissionTimeoutSignal])
+    : submissionTimeoutSignal;
+  await db.transaction(async (transaction) => {
+    await transaction.insert(videoGeneration).values({
+      id: videoId,
+      userId: input.userId,
+      apiKeyId: input.apiKeyId ?? null,
+      principalScope: input.principalScope,
+      usageLogVisible: true,
+      model: input.model,
+      family: conf.family,
+      prompt: input.prompt,
+      durationSeconds: conf.duration,
+      aspectRatio: conf.aspectRatio,
+      resolution: conf.outputResolution,
+      status: "pending",
+      stage: "created",
+      creditsConsumed: 0,
+      ...(input.clientRequestId || input.requestFingerprint
+        ? {
+            metadata: {
+              ...(input.clientRequestId
+                ? { clientRequestId: input.clientRequestId }
+                : {}),
+              ...(input.requestFingerprint
+                ? { requestFingerprint: input.requestFingerprint }
+                : {}),
+            },
+          }
+        : {}),
+      ...(input.inputImageRefs?.length
+        ? { inputImageRefs: input.inputImageRefs }
+        : {}),
+      createdAt,
+      updatedAt: createdAt,
+    });
+    if (executionOptions?.callbackUrl) {
+      await transaction.insert(videoGenerationCallbackDelivery).values(
+        createVideoCallbackDeliveryValues({
+          videoGenerationId: videoId,
+          callbackUrl: executionOptions.callbackUrl,
+          now: createdAt,
+        })
+      );
+    }
   });
   let row = await getVideoGenerationById(videoId);
   if (!row) throw new Error("视频任务创建后不可见");
@@ -328,6 +510,8 @@ export async function runAdobeVideoGenerationForUser(
   });
   const initialLease = backendSession.current;
   if (!initialLease) throw new Error("视频后端租约在扣费前丢失");
+  const liveClaimToken = randomUUID();
+  const chargedAt = new Date();
   const charged = await compareAndSetVideoStage({
     row,
     expectedStages: ["created"],
@@ -338,6 +522,8 @@ export async function runAdobeVideoGenerationForUser(
       backendMemberId: initialLease.memberId,
       memberLeaseId: initialLease.acquisition.lease.id,
       memberLeaseOwnerToken: initialLease.acquisition.lease.ownerToken,
+      claimToken: liveClaimToken,
+      claimExpiresAt: new Date(chargedAt.getTime() + VIDEO_CLAIM_TTL_MS),
     },
   });
   if (!charged) {
@@ -403,7 +589,7 @@ export async function runAdobeVideoGenerationForUser(
       ...(input.negativePrompt != null
         ? { negativePrompt: input.negativePrompt }
         : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
+      signal: submissionSignal,
     });
     if (!("error" in submitted)) {
       const polling = await compareAndSetVideoStage({
@@ -416,6 +602,8 @@ export async function runAdobeVideoGenerationForUser(
           upstreamJobId: submitted.upstreamJobId,
           upstreamAcceptedAt: new Date(),
           nextPollAt: new Date(),
+          claimToken: null,
+          claimExpiresAt: null,
           error: null,
         },
       });
@@ -428,15 +616,21 @@ export async function runAdobeVideoGenerationForUser(
     }
 
     if (submitted.submissionUncertain) {
-      await compareAndSetVideoStage({
+      const uncertain = await compareAndSetVideoStage({
         row,
         expectedStages: ["submitting"],
         values: {
           stage: "submit_uncertain",
           error: submitted.error.slice(0, 1_000),
           nextPollAt: null,
+          claimToken: null,
+          claimExpiresAt: null,
         },
       });
+      await backendSession.close();
+      if (!uncertain) {
+        throw new Error("Adobe 提交不确定状态持久化发生并发冲突");
+      }
       return {
         error: "Adobe 视频提交结果不确定，任务已保留待核对",
         videoGenerationId: videoId,
@@ -483,46 +677,22 @@ export async function runAdobeVideoGenerationForUser(
   }
 }
 
-/** 原子认领到期恢复任务，多实例通过 SKIP LOCKED 和 claim expiry 去重。 */
-async function claimDueVideoJobs(
-  now: Date
-): Promise<Array<{ id: string; claimToken: string }>> {
-  const claimToken = randomUUID();
-  const result = await db.execute(sql`
-    with candidates as (
-      select id
-      from video_generation
-      where stage in ('charged', 'submitting', 'polling', 'downloading', 'refunding')
-        and (next_poll_at is null or next_poll_at <= ${now})
-        and (claim_expires_at is null or claim_expires_at <= ${now})
-      order by coalesce(next_poll_at, created_at), created_at
-      limit ${VIDEO_RECOVERY_BATCH_LIMIT}
-      for update skip locked
-    )
-    update video_generation as task
-    set claim_token = ${claimToken},
-        claim_expires_at = ${new Date(now.getTime() + VIDEO_CLAIM_TTL_MS)},
-        updated_at = ${now}
-    from candidates
-    where task.id = candidates.id
-    returning task.id
-  `);
-  return extractExecuteRows(result).flatMap((value) => {
-    if (!value || typeof value !== "object" || !("id" in value)) return [];
-    const id = (value as { id: unknown }).id;
-    return typeof id === "string" ? [{ id, claimToken }] : [];
-  });
-}
-
 /** 接管并续期原成员租约；失败时不轮询，避免绕开统一并发容量。 */
 async function takeoverVideoLease(
   row: VideoGenerationRow
 ): Promise<VideoGenerationRow | null> {
-  if (!row.memberLeaseId || !row.memberLeaseOwnerToken) return null;
+  if (
+    !row.backendMemberId ||
+    !row.memberLeaseId ||
+    !row.memberLeaseOwnerToken
+  ) {
+    return null;
+  }
   const nextOwnerToken = randomUUID();
   const now = new Date();
   const lease = await defaultBackendPoolRepository.takeoverLease({
     leaseId: row.memberLeaseId,
+    memberId: row.backendMemberId,
     currentOwnerToken: row.memberLeaseOwnerToken,
     nextOwnerToken,
     now,
@@ -541,6 +711,67 @@ async function takeoverVideoLease(
     });
   }
   return updated;
+}
+
+/** 同时续期当前 worker 的任务 claim 与成员容量租约。 */
+async function renewClaimedVideoExecution(
+  row: VideoGenerationRow
+): Promise<VideoGenerationRow | null> {
+  if (!row.claimToken || !row.memberLeaseId || !row.memberLeaseOwnerToken) {
+    return null;
+  }
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + VIDEO_LEASE_TTL_MS);
+  const lease = await defaultBackendPoolRepository.renewLease({
+    leaseId: row.memberLeaseId,
+    ownerToken: row.memberLeaseOwnerToken,
+    now,
+    expiresAt,
+  });
+  if (!lease) return null;
+  return compareAndSetVideoStage({
+    row,
+    expectedStages: [row.stage as VideoStage],
+    values: { claimExpiresAt: expiresAt },
+  });
+}
+
+/**
+ * 在下载与对象存储长 I/O 期间周期续租。
+ *
+ * state.row 会同步为最新 CAS 版本；即使 I/O 抛错，调用方也能用最新版本安全释放
+ * claim，而不会因心跳递增 stateVersion 后拿旧快照重试失败。
+ */
+async function runWithVideoExecutionHeartbeat<T>(
+  state: { row: VideoGenerationRow },
+  work: () => Promise<T>
+): Promise<T> {
+  const firstRenewal = await renewClaimedVideoExecution(state.row);
+  if (!firstRenewal) throw new Error("视频长任务租约无法续期");
+  state.row = firstRenewal;
+  let renewalError: unknown;
+  let pendingRenewal = Promise.resolve();
+  const timer = setInterval(() => {
+    pendingRenewal = pendingRenewal
+      .then(async () => {
+        if (renewalError) return;
+        const renewed = await renewClaimedVideoExecution(state.row);
+        if (!renewed) throw new Error("视频长任务租约心跳丢失");
+        state.row = renewed;
+      })
+      .catch((error: unknown) => {
+        renewalError = error;
+      });
+  }, VIDEO_IO_HEARTBEAT_MS);
+  if (typeof timer === "object" && "unref" in timer) timer.unref();
+  try {
+    const result = await work();
+    await pendingRenewal;
+    if (renewalError) throw renewalError;
+    return result;
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 /** 暂时失败后释放 claim 并安排重试，不改变已接受任务的 member/token。 */
@@ -597,7 +828,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
       expectedStages: ["submitting"],
       values: {
         stage: "submit_uncertain",
-        error: "进程在 Adobe 提交期间中断，未自动重投",
+        error: "进程在 Adobe 提交期间中断，未自动重投或退款",
         nextPollAt: null,
         claimToken: null,
         claimExpiresAt: null,
@@ -678,19 +909,27 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     if (refunding) await refundClaimedVideo(refunding);
     return;
   }
+  const backendMemberId = row.backendMemberId;
+  const videoUrl = row.videoUrl;
+  const storageKey = row.storageKey;
+  const leaseState = { row };
   try {
-    const bytes = await downloadAdobeDirectVideoRequest({
-      memberId: row.backendMemberId,
-      videoUrl: row.videoUrl,
+    await runWithVideoExecutionHeartbeat(leaseState, async () => {
+      const bytes = await downloadAdobeDirectVideoRequest({
+        memberId: backendMemberId,
+        videoUrl,
+      });
+      const bucket =
+        (await getRuntimeSettingString(
+          "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+        )) || "generations";
+      const storage = await getStorageProvider();
+      await storage.putObject(storageKey, bucket, bytes, "video/mp4");
     });
-    const bucket =
-      (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-      "generations";
-    const storage = await getStorageProvider();
-    await storage.putObject(row.storageKey, bucket, bytes, "video/mp4");
+    row = leaseState.row;
     await completeVideoGenerationWithUsage({
       videoGenerationId: row.id,
-      storageKey: row.storageKey,
+      storageKey,
       completedAt: new Date(),
     });
     const completed = await compareAndSetVideoStage({
@@ -707,6 +946,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     });
     await releaseVideoLease(completed ?? row);
   } catch (error) {
+    row = leaseState.row;
     logError(error, {
       source: "adobe-video-recovery-download",
       videoId: row.id,
@@ -715,25 +955,62 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
   }
 }
 
-/** 执行一批视频恢复；单任务失败被隔离并保留下一次重试机会。 */
+/**
+ * 执行一批视频恢复。
+ *
+ * 少量 worker 每次处理前即时认领一条任务，避免批量 claim 在本地队列中提前过期。
+ * 单任务失败被隔离并保留下一次重试机会。
+ */
 export async function runVideoRecoveryJob() {
-  const claims = await claimDueVideoJobs(new Date());
+  let reservations = 0;
+  let claimed = 0;
   let recovered = 0;
   let failed = 0;
-  for (const claim of claims) {
-    const row = await getVideoGenerationById(claim.id);
-    if (row?.claimToken !== claim.claimToken) continue;
-    try {
-      await recoverClaimedVideo(row);
-      recovered += 1;
-    } catch (error) {
-      failed += 1;
-      logError(error, {
-        source: "adobe-video-recovery",
-        videoId: claim.id,
+
+  /** 同步预留批次槽位；JavaScript 单线程保证不会超过全局批次上限。 */
+  const reserveBatchSlot = (): boolean => {
+    if (reservations >= VIDEO_RECOVERY_BATCH_LIMIT) return false;
+    reservations += 1;
+    return true;
+  };
+
+  /** 单个 worker 即时 claim 并处理，直到无到期任务或批次槽位耗尽。 */
+  const runWorker = async (): Promise<void> => {
+    while (reserveBatchSlot()) {
+      const now = new Date();
+      const claim = await defaultVideoRecoveryRepository.claimNext({
+        claimToken: randomUUID(),
+        now,
+        claimExpiresAt: new Date(now.getTime() + VIDEO_CLAIM_TTL_MS),
       });
-      await retryClaimedVideo(row, error).catch(() => undefined);
+      if (!claim) return;
+      claimed += 1;
+      const row = await getVideoGenerationById(claim.id);
+      if (row?.claimToken !== claim.claimToken) continue;
+      try {
+        await recoverClaimedVideo(row);
+        recovered += 1;
+      } catch (error) {
+        failed += 1;
+        logError(error, {
+          source: "adobe-video-recovery",
+          videoId: claim.id,
+        });
+        try {
+          await retryClaimedVideo(row, error);
+        } catch (retryError) {
+          logError(retryError, {
+            source: "adobe-video-recovery-release-claim",
+            videoId: claim.id,
+          });
+        }
+      }
     }
-  }
-  return { claimed: claims.length, recovered, failed };
+  };
+
+  await Promise.all(
+    Array.from({ length: VIDEO_RECOVERY_WORKER_COUNT }, () => runWorker())
+  );
+  const callbackDelivery = await runVideoCallbackDeliveryJob();
+  return { claimed, recovered, failed, callbackDelivery };
 }

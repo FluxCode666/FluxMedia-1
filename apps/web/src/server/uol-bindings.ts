@@ -58,15 +58,19 @@ import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
+  bindOperationExecute,
   isExternalApiKeyPrincipal,
+  isMcpApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
+import { videoReconcileSubmission } from "@repo/shared/uol/operations/video-generation";
 import {
   type AnalyticsReadModelState,
   loadOutputUsageSummary,
   loadOutputUsageTrends,
   readAnalyticsReadModelStates,
 } from "@/features/dashboard/analytics-service";
+import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import {
   type CreateExternalApiKeyInput,
   ExternalApiKeyManagementError,
@@ -103,11 +107,15 @@ import {
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
 import { loadMediaInputs } from "@/features/image-generation/media-input-loader";
+import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
 import {
   getVideoGenerationById,
+  reconcileUncertainVideoSubmission,
   runAdobeVideoGenerationForUser,
+  VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
 import {
+  createVideoPrincipalScope,
   createVideoRequestFingerprint,
   createVideoTaskId,
 } from "@/features/image-generation/video-task-identity";
@@ -184,6 +192,7 @@ type VideoOperationStatus =
   | "pending"
   | "submitting"
   | "processing"
+  | "needs_attention"
   | "completed"
   | "failed";
 
@@ -193,6 +202,7 @@ function toVideoOperationStatus(
   stage?: string
 ): VideoOperationStatus {
   if (stage === "submitting") return "submitting";
+  if (stage === "submit_uncertain") return "needs_attention";
   switch (status) {
     case "completed":
       return "completed";
@@ -233,7 +243,11 @@ function assertVideoTaskPrincipal(
   const expectedApiKeyId = isExternalApiKeyPrincipal(principal)
     ? principal.apiKeyId
     : null;
-  if (row.userId !== principal.userId || row.apiKeyId !== expectedApiKeyId) {
+  if (
+    row.userId !== principal.userId ||
+    row.apiKeyId !== expectedApiKeyId ||
+    row.principalScope !== createVideoPrincipalScope(principal)
+  ) {
     throw new OperationError("not_found", "Video task not found");
   }
   ctx.assertOwnership("video task", row.userId);
@@ -253,6 +267,40 @@ function assertVideoRequestFingerprint(
       "clientRequestId was already used with different video input"
     );
   }
+}
+
+/** 从受信执行上下文读取并再次校验视频完成回调地址。 */
+async function getTrustedVideoCompletionUrl(
+  ctx: OperationContext
+): Promise<string | undefined> {
+  const value = ctx.callbacks?.videoCompletionUrl;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new OperationError(
+      "validation_error",
+      "videoCompletionUrl callback must be a string"
+    );
+  }
+  try {
+    return await validateCallbackUrl(value);
+  } catch (error) {
+    throw new OperationError(
+      "validation_error",
+      error instanceof Error ? error.message : "Invalid video callback URL"
+    );
+  }
+}
+
+/** 校验幂等视频请求没有更换或追加回调目的地。 */
+async function assertVideoCallbackFingerprint(
+  taskId: string,
+  callbackUrl: string | undefined
+): Promise<void> {
+  if (await doesVideoCallbackDeliveryMatch(taskId, callbackUrl)) return;
+  throw new OperationError(
+    "idempotency_conflict",
+    "clientRequestId was already used with a different callback URL"
+  );
 }
 
 /** video.generate - Principal 作用域幂等地执行统一视频管线。 */
@@ -276,9 +324,10 @@ bindExecute(
     const apiKeyId = isExternalApiKeyPrincipal(principal)
       ? principal.apiKeyId
       : undefined;
+    const callbackUrl = await getTrustedVideoCompletionUrl(ctx);
+    const principalScope = createVideoPrincipalScope(principal);
     const taskId = createVideoTaskId({
-      userId: principal.userId,
-      ...(apiKeyId ? { apiKeyId } : {}),
+      principalScope,
       clientRequestId: input.clientRequestId,
     });
     const requestFingerprint = createVideoRequestFingerprint(input);
@@ -286,6 +335,7 @@ bindExecute(
     if (existing) {
       assertVideoTaskPrincipal(existing, principal, ctx);
       assertVideoRequestFingerprint(existing, requestFingerprint);
+      await assertVideoCallbackFingerprint(taskId, callbackUrl);
       return {
         taskId,
         status: toVideoOperationStatus(existing.status, existing.stage),
@@ -299,33 +349,37 @@ bindExecute(
         })
       : undefined;
     try {
-      const result = await runAdobeVideoGenerationForUser({
-        userId: principal.userId,
-        ...(apiKeyId ? { apiKeyId } : {}),
-        videoGenerationId: taskId,
-        clientRequestId: input.clientRequestId,
-        requestFingerprint,
-        prompt: input.prompt,
-        model: input.model,
-        ...(input.negativePrompt
-          ? { negativePrompt: input.negativePrompt }
-          : {}),
-        ...(input.backendGroupId
-          ? { backendGroupId: input.backendGroupId }
-          : {}),
-        ...(inputImages?.length ? { inputImages } : {}),
-        ...(input.inputImages?.some(
-          (reference) => reference.source === "storage"
-        )
-          ? {
-              inputImageRefs: input.inputImages.flatMap((reference) =>
-                reference.source === "storage"
-                  ? [{ storageKey: reference.storageKey }]
-                  : []
-              ),
-            }
-          : {}),
-      });
+      const result = await runAdobeVideoGenerationForUser(
+        {
+          userId: principal.userId,
+          ...(apiKeyId ? { apiKeyId } : {}),
+          principalScope,
+          videoGenerationId: taskId,
+          clientRequestId: input.clientRequestId,
+          requestFingerprint,
+          prompt: input.prompt,
+          model: input.model,
+          ...(input.negativePrompt
+            ? { negativePrompt: input.negativePrompt }
+            : {}),
+          ...(input.backendGroupId
+            ? { backendGroupId: input.backendGroupId }
+            : {}),
+          ...(inputImages?.length ? { inputImages } : {}),
+          ...(input.inputImages?.some(
+            (reference) => reference.source === "storage"
+          )
+            ? {
+                inputImageRefs: input.inputImages.flatMap((reference) =>
+                  reference.source === "storage"
+                    ? [{ storageKey: reference.storageKey }]
+                    : []
+                ),
+              }
+            : {}),
+        },
+        callbackUrl ? { callbackUrl } : undefined
+      );
       const persisted = await getVideoGenerationById(taskId);
       return {
         taskId,
@@ -342,6 +396,7 @@ bindExecute(
       if (!raced) throw error;
       assertVideoTaskPrincipal(raced, principal, ctx);
       assertVideoRequestFingerprint(raced, requestFingerprint);
+      await assertVideoCallbackFingerprint(taskId, callbackUrl);
       return {
         taskId,
         status: toVideoOperationStatus(raced.status, raced.stage),
@@ -384,14 +439,26 @@ bindExecute(
   }
 );
 
-/** 绑定本人统一生成历史；Principal 是唯一身份来源，API key 不得读取站内完整历史。 */
+/** video.reconcileSubmission - 管理员人工收敛 Adobe 提交不确定任务。 */
+bindOperationExecute(videoReconcileSubmission, async (input) => {
+  try {
+    return await reconcileUncertainVideoSubmission(input);
+  } catch (error) {
+    if (error instanceof VideoSubmissionReconciliationError) {
+      throw new OperationError(error.code, error.message);
+    }
+    throw error;
+  }
+});
+
+/** 绑定本人统一生成历史；站内会话和 User MCP 可读，外部 API Key 继续隔离。 */
 bindExecute(
   "image.listMyHistoryRecords",
   async (input: unknown, principal: Principal): Promise<HistoryListOutput> => {
-    if (principal.type !== "user") {
+    if (principal.type !== "user" && !isMcpApiKeyPrincipal(principal)) {
       throw new OperationError(
         "unauthenticated",
-        "User session authentication required"
+        "User session or MCP authentication required"
       );
     }
     try {
@@ -855,7 +922,6 @@ bindExecute(
 // TODO: image.getGenerationById - 单条查询
 // TODO: image.getGenerationStats - 管理员统计
 // TODO: image.getEffectiveConfig - getEffectiveConfig 逻辑
-// TODO: image.selectWebCandidate - selectChatGptWebImageCandidate 逻辑
 
 // ---------------------------------------------------------------------------
 // image-backend-pool 域

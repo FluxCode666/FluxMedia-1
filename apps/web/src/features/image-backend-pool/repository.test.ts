@@ -311,6 +311,7 @@ describe("backend pool PostgreSQL repository", () => {
 
     const takeover = await repository.takeoverLease({
       leaseId: "lease-1",
+      memberId: "member-1",
       currentOwnerToken: "owner-current",
       nextOwnerToken: "owner-next",
       now: NOW,
@@ -323,8 +324,16 @@ describe("backend pool PostgreSQL repository", () => {
 
     expect(takeover).toMatchObject({ ownerToken: "owner-next" });
     expect(staleRelease).toBe(false);
+    expect(queries[0]?.sql).not.toContain("expires_at >");
+    expect(queries[0]?.sql).toContain("on conflict do nothing");
     expect(queries[0]?.params).toEqual(
-      expect.arrayContaining(["lease-1", "owner-current", "owner-next", NOW])
+      expect.arrayContaining([
+        "lease-1",
+        "member-1",
+        "owner-current",
+        "owner-next",
+        NOW,
+      ])
     );
     expect(queries[1]?.params).toEqual(["lease-1", "owner-current"]);
   });

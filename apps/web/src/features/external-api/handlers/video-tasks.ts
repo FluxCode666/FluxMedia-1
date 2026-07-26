@@ -37,6 +37,7 @@ export const getExternalVideoTask = withApiLogging(
           | "pending"
           | "submitting"
           | "processing"
+          | "needs_attention"
           | "completed"
           | "failed";
         videoUrl?: string;

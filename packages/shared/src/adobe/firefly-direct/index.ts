@@ -12,6 +12,7 @@ export * from "./catalog";
 export {
   AdobeFireflyClient,
   type AdobeFireflyClientConfig,
+  assertAdobeVideoPollUrl,
   extractResultLink,
   type GenerateImageInput,
   type GenerateImageOutput,
@@ -23,5 +24,5 @@ export {
 export * from "./errors";
 export * from "./payloads";
 export * from "./signing";
-export * from "./video-catalog";
 export * from "./transport";
+export * from "./video-catalog";

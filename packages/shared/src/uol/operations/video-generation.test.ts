@@ -11,7 +11,10 @@ import { getOperation } from "../registry";
 import {
   videoGenerate,
   videoGenerateInputSchema,
+  videoGetStatus,
   videoGetStatusInputSchema,
+  videoReconcileSubmission,
+  videoReconcileSubmissionInputSchema,
 } from "./video-generation";
 
 describe("video generation operations", () => {
@@ -78,6 +81,52 @@ describe("video generation operations", () => {
       kind: "owner",
       resource: "video task",
     });
+  });
+
+  it("公开区分需要人工核对的提交不确定状态", () => {
+    expect(
+      videoGenerate.output.safeParse({
+        taskId: "video-1",
+        status: "needs_attention",
+      }).success
+    ).toBe(true);
+    expect(
+      videoGetStatus.output.safeParse({
+        taskId: "video-1",
+        status: "needs_attention",
+        error: "提交结果待核对",
+        createdAt: "2026-07-26T00:00:00.000Z",
+      }).success
+    ).toBe(true);
+  });
+
+  it("只允许管理员显式提交完整的人工核对结论", () => {
+    expect(videoReconcileSubmission.access).toEqual({ kind: "admin" });
+    expect(videoReconcileSubmission.agentExposure).toBe("human-only");
+    expect(
+      videoReconcileSubmissionInputSchema.safeParse({
+        outcome: "accepted",
+        taskId: "video-1",
+        tokenId: "token-1",
+        pollUrl: "https://firefly.adobe.io/jobs/upstream-1",
+        upstreamJobId: "upstream-1",
+      }).success
+    ).toBe(true);
+    expect(
+      videoReconcileSubmissionInputSchema.safeParse({
+        outcome: "accepted",
+        taskId: "video-1",
+        tokenId: "token-1",
+        pollUrl: "https://firefly.adobe.io/jobs/upstream-1",
+      }).success
+    ).toBe(false);
+    expect(
+      videoReconcileSubmissionInputSchema.safeParse({
+        outcome: "not_accepted",
+        taskId: "video-1",
+        reason: "Adobe 控制台确认未创建任务",
+      }).success
+    ).toBe(true);
   });
 
   it("按凭据来源区分外部 API 与 MCP 的视频能力", () => {

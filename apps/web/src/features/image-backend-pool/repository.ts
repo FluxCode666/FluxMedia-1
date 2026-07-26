@@ -96,6 +96,7 @@ const renewLeaseInputSchema = z
 const takeoverLeaseInputSchema = z
   .object({
     leaseId: identifierSchema,
+    memberId: identifierSchema,
     currentOwnerToken: ownerTokenSchema,
     nextOwnerToken: ownerTokenSchema,
     now: z.date(),
@@ -168,7 +169,12 @@ export type RenewBackendMemberLeaseInput = z.input<
   typeof renewLeaseInputSchema
 >;
 
-/** 通过 owner token 比较交换把仍有效租约交给新 worker。 */
+/**
+ * 通过 owner token 比较交换恢复租约。
+ *
+ * 已过期租约可由持久任务原 owner 接管；若清理任务已删除该行，则以同一 ID 和成员
+ * 重建。其他 owner 已先接管时两条路径都不会命中。
+ */
 export type TakeoverBackendMemberLeaseInput = z.input<
   typeof takeoverLeaseInputSchema
 >;
@@ -453,14 +459,38 @@ export function createPostgresBackendPoolRepository(
       const input = takeoverLeaseInputSchema.parse(rawInput);
       return database.transaction(async (transaction) => {
         const result = await transaction.execute(sql`
-          update image_backend_member_lease
-          set owner_token = ${input.nextOwnerToken},
-              expires_at = ${input.expiresAt},
-              updated_at = ${input.now}
-          where id = ${input.leaseId}
-            and owner_token = ${input.currentOwnerToken}
-            and expires_at > ${input.now}
-          returning id, member_id, owner_token, expires_at, created_at, updated_at
+          with recovered as (
+            update image_backend_member_lease
+            set owner_token = ${input.nextOwnerToken},
+                expires_at = ${input.expiresAt},
+                updated_at = ${input.now}
+            where id = ${input.leaseId}
+              and member_id = ${input.memberId}
+              and owner_token = ${input.currentOwnerToken}
+            returning id, member_id, owner_token, expires_at, created_at, updated_at
+          ), recreated as (
+            insert into image_backend_member_lease (
+              id,
+              member_id,
+              owner_token,
+              expires_at,
+              created_at,
+              updated_at
+            )
+            select
+              ${input.leaseId},
+              ${input.memberId},
+              ${input.nextOwnerToken},
+              ${input.expiresAt},
+              ${input.now},
+              ${input.now}
+            where not exists (select 1 from recovered)
+            on conflict do nothing
+            returning id, member_id, owner_token, expires_at, created_at, updated_at
+          )
+          select * from recovered
+          union all
+          select * from recreated
         `);
         const row = extractExecuteRows(result)[0];
         return row ? parseLeaseRow(row) : null;

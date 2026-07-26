@@ -29,6 +29,29 @@ export const videoGetStatusInputSchema = z
   })
   .strict();
 
+/** video.reconcileSubmission 的人工核对输入契约。 */
+export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
+  "outcome",
+  [
+    z
+      .object({
+        outcome: z.literal("accepted"),
+        taskId: z.string().trim().min(1).max(128),
+        tokenId: z.string().trim().min(1).max(128),
+        pollUrl: z.string().url().max(2_048),
+        upstreamJobId: z.string().trim().min(1).max(512),
+      })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("not_accepted"),
+        taskId: z.string().trim().min(1).max(128),
+        reason: z.string().trim().min(1).max(1_000),
+      })
+      .strict(),
+  ]
+);
+
 /** 根据 Principal 推导站内或外部视频能力。 */
 function deriveVideoCapability(principal: Principal): string[] {
   return [
@@ -52,6 +75,7 @@ export const videoGenerate = defineOperation({
       "pending",
       "submitting",
       "processing",
+      "needs_attention",
       "completed",
       "failed",
     ]),
@@ -88,6 +112,7 @@ export const videoGetStatus = defineOperation({
       "pending",
       "submitting",
       "processing",
+      "needs_attention",
       "completed",
       "failed",
     ]),
@@ -108,5 +133,33 @@ export const videoGetStatus = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: video.getStatus");
+  },
+});
+
+/**
+ * 人工核对 Adobe 提交不确定任务。
+ *
+ * 只有确认上游接受后才能恢复原任务轮询；确认未接受后才触发幂等退款。
+ */
+export const videoReconcileSubmission = defineOperation({
+  name: "video.reconcileSubmission",
+  domain: "image-generation",
+  title: "核对视频提交结果",
+  description:
+    "管理员人工核对 submit_uncertain 任务；确认接受时恢复原上游任务，确认未接受时幂等退款。",
+  input: videoReconcileSubmissionInputSchema,
+  output: z.object({
+    taskId: z.string(),
+    status: z.enum(["processing", "completed", "failed"]),
+  }),
+  access: { kind: "admin" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: { kind: "natural" },
+  sideEffects: ["billing", "queue", "audit"],
+  hasMaintenanceWrite: true,
+  execute: async () => {
+    throw new Error("Not yet wired: video.reconcileSubmission");
   },
 });

@@ -1,10 +1,10 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060 SQL，验证空旧号池可原子切换、遗留数据会阻断且完整回滚，
- * 同时锁定旧设置与套餐 JSON 清理结果。
+ * 职责：直接执行 0060-0062 SQL，验证空旧号池可原子切换、遗留数据会阻断且完整
+ * 回滚，同时锁定旧设置、套餐 JSON、回调投递表和视频 Principal 作用域。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
- * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与 0060 SQL。
+ * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
 
 import { randomUUID } from "node:crypto";
@@ -25,11 +25,12 @@ interface JsonValueRow {
 
 let pool: Pool | null = null;
 
-const migrationPath = fileURLToPath(
-  new URL(
-    "../../database/drizzle/0060_unified_media_backend_pool.sql",
-    import.meta.url
-  )
+const migrationPaths = [
+  "0060_unified_media_backend_pool.sql",
+  "0061_video_callback_delivery.sql",
+  "0062_video_principal_scope.sql",
+].map((filename) =>
+  fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
 
 /** 验证随机 schema 名并返回安全的双引号标识符。 */
@@ -80,6 +81,8 @@ async function createLegacySchema(client: PoolClient): Promise<string> {
     create index adobe_token_adobe_status_idx on adobe_token(adobe_id, status);
     create table video_generation (
       id text primary key,
+      user_id text not null,
+      api_key_id text,
       status text not null default 'pending',
       adobe_id text,
       constraint video_generation_adobe_id_image_backend_adobe_id_fk
@@ -98,16 +101,20 @@ async function dropLegacySchema(
   await client.query(`drop schema ${quoteSchemaName(schemaName)} cascade`);
 }
 
-/** 按 Drizzle statement breakpoint 执行真实 0060，并确保失败时整体回滚。 */
-async function executeMigration(
+/** 按 Drizzle statement breakpoint 执行真实连续迁移，并确保失败时整体回滚。 */
+async function executeMigrations(
   client: PoolClient,
   schemaName: string
 ): Promise<void> {
-  const migrationSql = await readFile(migrationPath, "utf8");
-  const statements = migrationSql
-    .split("--> statement-breakpoint")
-    .map((statement) => statement.trim())
-    .filter((statement) => statement.length > 0);
+  const migrations = await Promise.all(
+    migrationPaths.map((migrationPath) => readFile(migrationPath, "utf8"))
+  );
+  const statements = migrations.flatMap((migrationSql) =>
+    migrationSql
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0)
+  );
   await client.query("begin");
   try {
     await client.query(
@@ -168,7 +175,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060 unified media backend pool migration", () => {
+describe("0060-0062 unified media backend pool migrations", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -184,8 +191,12 @@ describe("0060 unified media backend pool migration", () => {
           '{"billing":{"free":{"chatRoundCredits":1}},"features":{"imageGeneration.chat":"free","imageGeneration.video":"pro"},"limits":{"free":{"maxChatImages":9,"maxFileMb":20}}}'::json
         )`
       );
+      await client.query(
+        `insert into video_generation (id, user_id, status)
+         values ('legacy-video', 'user-1', 'pending')`
+      );
 
-      await executeMigration(client, schemaName);
+      await executeMigrations(client, schemaName);
       await client.query(
         `set search_path to ${quoteSchemaName(schemaName)}, public`
       );
@@ -211,6 +222,18 @@ describe("0060 unified media backend pool migration", () => {
       await expect(
         columnExists(client, schemaName, "video_generation", "adobe_id")
       ).resolves.toBe(false);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "principal_scope")
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(client, schemaName, "video_generation_callback_delivery")
+      ).resolves.toBe(true);
+      const principalScope = await client.query<{ principal_scope: string }>(
+        `select principal_scope
+         from video_generation
+         where id = 'legacy-video'`
+      );
+      expect(principalScope.rows[0]?.principal_scope).toBe("user:user-1");
 
       const removedSetting = await client.query<{ count: number }>(
         "select count(*)::integer as count from system_setting where key = 'PLATFORM_CHAT_MODEL'"
@@ -242,7 +265,7 @@ describe("0060 unified media backend pool migration", () => {
         "insert into image_backend_api (id) values ('legacy-api')"
       );
 
-      await expect(executeMigration(client, schemaName)).rejects.toThrow(
+      await expect(executeMigrations(client, schemaName)).rejects.toThrow(
         /0060 blocked: legacy media data remains/u
       );
 

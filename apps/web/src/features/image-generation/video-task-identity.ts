@@ -7,22 +7,29 @@
 
 import { createHash } from "node:crypto";
 
+import type { Principal } from "@repo/shared/uol";
+
+/** 为站内会话、外部 API Key 与 MCP Key 生成互不重叠的所有者作用域。 */
+export function createVideoPrincipalScope(principal: Principal): string {
+  if (principal.type === "user") return `user:${principal.userId}`;
+  if (principal.type === "apiKey") {
+    return `${principal.credentialKind}:${principal.userId}:${principal.apiKeyId}`;
+  }
+  throw new Error("视频任务要求用户或 API Key Principal");
+}
+
 /**
  * 为一次 Principal 作用域内的客户端请求生成稳定任务 ID。
  *
- * @param input 用户 ID、API Key ID（站内请求为空）和已校验请求键。
+ * @param input 已持久化 Principal 作用域和已校验请求键。
  * @returns 不暴露原始所有者或请求键的稳定视频任务 ID。
  */
 export function createVideoTaskId(input: {
-  userId: string;
-  apiKeyId?: string;
+  principalScope: string;
   clientRequestId: string;
 }): string {
-  const ownerScope = input.apiKeyId
-    ? `api-key:${input.userId}:${input.apiKeyId}`
-    : `user:${input.userId}`;
   const digest = createHash("sha256")
-    .update(`${ownerScope.length}:${ownerScope}`)
+    .update(`${input.principalScope.length}:${input.principalScope}`)
     .update(`:${input.clientRequestId.length}:${input.clientRequestId}`)
     .digest("hex")
     .slice(0, 40);

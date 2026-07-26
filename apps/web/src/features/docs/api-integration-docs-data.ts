@@ -458,7 +458,8 @@ const zhContent = {
         { name: "object", description: "任务对象类型。" },
         {
           name: "status",
-          description: "processing、completed 或 failed。",
+          description:
+            "processing、needs_attention、completed 或 failed。",
         },
         {
           name: "data[].b64_json / data[].url",
@@ -515,7 +516,8 @@ const zhContent = {
         { name: "object", description: "任务对象类型。" },
         {
           name: "status",
-          description: "processing、completed 或 failed。",
+          description:
+            "processing、needs_attention、completed 或 failed。",
         },
         {
           name: "data[].url",
@@ -853,7 +855,11 @@ const enContent = {
       responses: [
         { name: "id", description: "Image task ID." },
         { name: "object", description: "Task object type." },
-        { name: "status", description: "processing, completed, or failed." },
+        {
+          name: "status",
+          description:
+            "processing, needs_attention, completed, or failed.",
+        },
         {
           name: "data[].b64_json / data[].url",
           description: "Image results returned after completion.",
@@ -890,7 +896,11 @@ const enContent = {
       responses: [
         { name: "id", description: "Video task ID." },
         { name: "object", description: "Task object type." },
-        { name: "status", description: "processing, completed, or failed." },
+        {
+          name: "status",
+          description:
+            "processing, needs_attention, completed, or failed.",
+        },
         {
           name: "data[].url",
           description: "Video URL returned after completion.",

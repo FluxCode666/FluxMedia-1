@@ -24,6 +24,7 @@ const overrideUserId = `${runPrefix}-override-user`;
 const seededUserIds = [relayUserId, overrideUserId] as const;
 const hiddenOverrideColumn =
   "moderation_block_risk_level_override_release_gate_test";
+const hiddenMediaMarkerTable = "image_backend_member_release_gate_test";
 
 type ReleaseGateCommand = "postcheck" | "postcheck-initial" | "preflight";
 
@@ -237,6 +238,24 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
     `alter table "user"
        drop column if exists moderation_block_risk_level`
   );
+  await client.query("drop table if exists image_backend_api");
+  const mediaMarkerResult = await client.query<{
+    hidden: boolean;
+    visible: boolean;
+  }>(`
+    select
+      to_regclass('public.${hiddenMediaMarkerTable}') is not null as hidden,
+      to_regclass('public.image_backend_member') is not null as visible
+  `);
+  const mediaMarker = mediaMarkerResult.rows[0];
+  if (mediaMarker?.hidden && mediaMarker.visible) {
+    throw new Error("测试恢复失败：统一媒体成员表与隐藏表同时存在");
+  }
+  if (mediaMarker?.hidden) {
+    await client.query(
+      `alter table ${hiddenMediaMarkerTable} rename to image_backend_member`
+    );
+  }
 }
 
 beforeAll(async () => {
@@ -305,6 +324,25 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(result.stdout).toContain("relay_only_true_count=1\n");
     expect(result.stderr).toContain(
       "release governance gate failed: relay-only preflight failed: 1 rows found"
+    );
+  });
+
+  it("旧媒体表残留数据时拒绝统一号池迁移前检查", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(
+      `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
+    );
+    await pool.query("create table image_backend_api (id text primary key)");
+    await pool.query(
+      "insert into image_backend_api (id) values ('legacy-api')"
+    );
+
+    const result = await runReleaseGate("preflight", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("legacy_media_image_backend_api_count=1\n");
+    expect(result.stdout).toContain("legacy_media_total_count=1\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: unified media preflight failed: 1 rows found"
     );
   });
 

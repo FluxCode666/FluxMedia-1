@@ -51,7 +51,11 @@ export {
 } from "./homepage-reliability";
 export { imageGenerate } from "./image-generation";
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
-export { videoGenerate, videoGetStatus } from "./video-generation";
+export {
+  videoGenerate,
+  videoGetStatus,
+  videoReconcileSubmission,
+} from "./video-generation";
 
 // 客服支持域
 import "./support";

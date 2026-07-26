@@ -102,6 +102,7 @@ export const postExternalVideoGenerations = withApiLogging(
           | "pending"
           | "submitting"
           | "processing"
+          | "needs_attention"
           | "completed"
           | "failed";
       }>(

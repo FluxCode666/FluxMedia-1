@@ -2,8 +2,8 @@
  * 站内视频生成的 UOL 薄传输路由。
  *
  * 职责：校验 session 与受信 Origin，把 data URL 转成 JSON-safe 媒体引用，
- * 构造真实 Principal 并调用 video.generate / video.getStatus。调度、幂等、
- * 计费、归属与存储均由 operation 执行层负责。
+ * 构造真实 Principal 并调用 video.generate，随后立即返回 accepted/taskId。调度、
+ * 计费、恢复、归属与状态查询均由 operation 及独立状态路由负责。
  */
 
 import { withApiLogging } from "@repo/shared/api-logger";
@@ -17,7 +17,6 @@ import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
 } from "@/features/image-generation/resolution";
-import { createImageStreamResponse } from "@/features/image-generation/streaming";
 import {
   toVideoMediaInputReference,
   videoInputImageDataUrlSchema,
@@ -70,54 +69,31 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   };
   await ensureUolInitialized();
 
-  return createImageStreamResponse(async (emit) => {
-    const result = await invokeOperation<{
-      taskId: string;
-      status: "pending" | "submitting" | "processing" | "completed" | "failed";
-    }>(
-      "video.generate",
-      {
-        clientRequestId: parsed.data.clientRequestId,
-        prompt: parsed.data.prompt,
-        model: parsed.data.model,
-        ...(parsed.data.negativePrompt
-          ? { negativePrompt: parsed.data.negativePrompt }
-          : {}),
-        ...(inputImages?.length ? { inputImages } : {}),
-      },
-      principal,
-      { requestId: request.headers.get("x-request-id") ?? undefined }
-    );
-    for (;;) {
-      if (request.signal.aborted) return null;
-      const status = await invokeOperation<{
-        taskId: string;
-        status:
-          | "pending"
-          | "submitting"
-          | "processing"
-          | "completed"
-          | "failed";
-        videoUrl?: string;
-        error?: string;
-      }>("video.getStatus", { taskId: result.taskId }, principal);
-      if (status.status === "failed") {
-        await emit({
-          type: "error",
-          error: status.error ?? "视频生成失败",
-          generationId: result.taskId,
-        });
-        return null;
-      }
-      if (status.status === "completed" && status.videoUrl) {
-        await emit({
-          type: "completed",
-          videoGenerationId: result.taskId,
-          videoUrl: status.videoUrl,
-        });
-        return null;
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 3_000));
-    }
+  const result = await invokeOperation<{
+    taskId: string;
+    status:
+      | "pending"
+      | "submitting"
+      | "processing"
+      | "needs_attention"
+      | "completed"
+      | "failed";
+  }>(
+    "video.generate",
+    {
+      clientRequestId: parsed.data.clientRequestId,
+      prompt: parsed.data.prompt,
+      model: parsed.data.model,
+      ...(parsed.data.negativePrompt
+        ? { negativePrompt: parsed.data.negativePrompt }
+        : {}),
+      ...(inputImages?.length ? { inputImages } : {}),
+    },
+    principal,
+    { requestId: request.headers.get("x-request-id") ?? undefined }
+  );
+  return NextResponse.json(result, {
+    status: 202,
+    headers: { "Cache-Control": "no-store" },
   });
 });

@@ -1419,6 +1419,8 @@ export const videoGeneration = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     // 外部 API key（站内创作页为空）。
     apiKeyId: text("api_key_id"),
+    // 站内、外部 API Key 与每把 MCP Key 的稳定隔离域。
+    principalScope: text("principal_scope").notNull(),
     // 新请求写 true；历史 API 行为空时必须 fail closed，不能按当前 key 状态回推。
     usageLogVisible: boolean("usage_log_visible"),
     // 统一后端成员引用；成员删除后保留历史任务与产物。
@@ -1495,6 +1497,54 @@ export const videoGeneration = pgTable(
     check(
       "video_generation_recovery_counts_check",
       sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0`
+    ),
+  ]
+);
+
+// ============================================
+// 视频终态回调可靠投递
+// ============================================
+
+/**
+ * 视频回调投递表。
+ *
+ * callback URL 只从受信 OperationContext 注册，不写入视频任务 metadata；稳定投递 ID
+ * 作为接收方幂等键，claim 字段保证多副本 worker 不并发投递同一条记录。
+ */
+export const videoGenerationCallbackDelivery = pgTable(
+  "video_generation_callback_delivery",
+  {
+    id: text("id").primaryKey(),
+    videoGenerationId: text("video_generation_id")
+      .notNull()
+      .references(() => videoGeneration.id, { onDelete: "cascade" }),
+    callbackUrl: text("callback_url").notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    lastError: text("last_error"),
+    deliveredAt: timestamp("delivered_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("video_callback_delivery_video_unique").on(
+      table.videoGenerationId
+    ),
+    index("video_callback_delivery_recovery_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.claimExpiresAt
+    ),
+    check(
+      "video_callback_delivery_status_check",
+      sql`${table.status} IN ('pending', 'delivering', 'delivered', 'dead')`
+    ),
+    check(
+      "video_callback_delivery_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
     ),
   ]
 );

@@ -8,34 +8,52 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createVideoPrincipalScope,
   createVideoRequestFingerprint,
   createVideoTaskId,
 } from "./video-task-identity";
 
 describe("createVideoTaskId", () => {
   it("同一 Principal 和请求键稳定命中", () => {
-    const input = { userId: "user-1", clientRequestId: "request-1" };
+    const input = {
+      principalScope: "user:user-1",
+      clientRequestId: "request-1",
+    };
     expect(createVideoTaskId(input)).toBe(createVideoTaskId(input));
   });
 
-  it("站内与不同 API Key 的所有者作用域互相隔离", () => {
+  it("站内、外部 API Key 与每把 MCP Key 的所有者作用域互相隔离", () => {
     const sessionTask = createVideoTaskId({
-      userId: "user-1",
+      principalScope: "user:user-1",
       clientRequestId: "same-request",
     });
     const keyATask = createVideoTaskId({
-      userId: "user-1",
-      apiKeyId: "key-a",
+      principalScope: "external:user-1:key-a",
       clientRequestId: "same-request",
     });
     const keyBTask = createVideoTaskId({
-      userId: "user-1",
-      apiKeyId: "key-b",
+      principalScope: "mcp:user-1:key-b",
+      clientRequestId: "same-request",
+    });
+    const keyCTask = createVideoTaskId({
+      principalScope: "mcp:user-1:key-c",
       clientRequestId: "same-request",
     });
 
-    expect(new Set([sessionTask, keyATask, keyBTask]).size).toBe(3);
+    expect(new Set([sessionTask, keyATask, keyBTask, keyCTask]).size).toBe(4);
     expect(sessionTask).toMatch(/^video_[a-f0-9]{40}$/);
+  });
+
+  it("从 Principal 准确派生凭据类型和 key 作用域", () => {
+    expect(
+      createVideoPrincipalScope({
+        type: "apiKey",
+        credentialKind: "mcp",
+        userId: "user-1",
+        apiKeyId: "mcp-key-1",
+        plan: "pro",
+      })
+    ).toBe("mcp:user-1:mcp-key-1");
   });
 
   it("同键重放可检测内容冲突", () => {

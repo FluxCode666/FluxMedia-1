@@ -11,6 +11,78 @@ import pg from "pg";
 const { Pool } = pg;
 const GLOBAL_SETTING_KEY = "CONTENT_MODERATION_BLOCK_RISK_LEVEL";
 const PLAN_MATRIX_SETTING_KEY = "PLAN_CAPABILITY_MATRIX";
+const LEGACY_MEDIA_TABLES = [
+  "image_backend_account",
+  "image_backend_account_group",
+  "image_backend_api",
+  "image_backend_api_group",
+  "image_backend_adobe",
+  "image_backend_adobe_group",
+  "adobe_account",
+  "adobe_token",
+  "image_backend_inflight_lease",
+  "image_backend_sticky_binding",
+  "image_backend_scheduler_metric",
+];
+const REQUIRED_MEDIA_TABLES = [
+  "image_backend_member",
+  "image_backend_member_api_config",
+  "image_backend_member_adobe_config",
+  "image_backend_member_group",
+  "image_backend_member_lease",
+  "image_backend_member_scheduler_metric",
+  "video_generation_callback_delivery",
+];
+const REMOVED_MEDIA_SETTING_KEYS = [
+  "IMAGE_MODERATION_PROMPT_REPAIR_ENABLED",
+  "IMAGE_MODERATION_PROMPT_REPAIR_MAX_RETRIES",
+  "PLATFORM_RESPONSES_MODEL",
+  "PLATFORM_CHAT_MODEL",
+  "IMAGE_AGENT_MAX_ROUNDS",
+  "IMAGE_AGENT_FORCE_MAX_ROUNDS",
+  "IMAGE_RESPONSES_PREVIOUS_RESPONSE_ENABLED",
+  "IMAGE_FORCE_WEB_MIN_PIXELS",
+  "IMAGE_FORCE_WEB_MAX_PIXELS",
+  "CHATGPT_WEB_PROXY_URL",
+  "CHATGPT_WEB_PROXY_SECRET",
+  "CHATGPT_WEB_ACCOUNT_REFRESH_STALE_MINUTES",
+  "CHATGPT_WEB_ACCOUNT_REFRESH_LIMIT",
+  "SUB2API_POSTGRES_URL",
+  "SUB2API_POSTGRES_SYNC_LIMIT",
+  "SUB2API_AUTO_SYNC_TASKS",
+  "EDITABLE_FILE_PPT_CREDITS",
+  "EDITABLE_FILE_PSD_CREDITS",
+  "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES",
+  "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES",
+  "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES",
+  "CHATGPT_REGISTER_MOEMAIL_API_KEY",
+  "CHATGPT_REGISTER_MOEMAIL_BASE_URL",
+  "CHATGPT_REGISTER_MOEMAIL_DOMAIN",
+  "CHATGPT_REGISTER_DOMAINS",
+  "CHATGPT_REGISTER_DOMAIN_ROTATION_ENABLED",
+  "CHATGPT_REGISTER_PROXY",
+  "CHATGPT_REGISTER_PROXY_DISABLED",
+  "CHATGPT_REGISTER_REFRESH_URL",
+  "CHATGPT_REGISTER_REFRESH_MIN_INTERVAL_SECONDS",
+  "CHATGPT_REGISTER_REFRESH_MIN_ATTEMPTS",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_ENABLED",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_GROUP_ID",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_TARGET",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_MAX_PER_RUN",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_CONCURRENCY",
+];
+const REMOVED_PLAN_FEATURES = [
+  "imageGeneration.chat",
+  "imageGeneration.agent",
+  "imageGeneration.waterfall",
+  "export.ppt",
+  "export.psd",
+  "models.gpt55",
+  "externalApi.chat.completions",
+  "externalApi.responses",
+  "externalApi.agent",
+];
+const REMOVED_PLAN_LIMITS = ["maxChatImages", "maxChatContextChars"];
 
 /**
  * 将 PostgreSQL bigint 文本计数收窄为 JavaScript 安全整数。
@@ -134,6 +206,257 @@ async function assertRelayPreflight(pool) {
     printEvidence("relay_only_true_count", count);
     if (count !== 0) {
       throw new Error(`relay-only preflight failed: ${count} rows found`);
+    }
+  });
+}
+
+/**
+ * 验证 0060 破坏性切换前的十二个旧媒体数据来源全部为空。
+ * 已完成迁移后旧表或 adobe_id 列不存在，按后续发布的零行状态处理。
+ */
+async function assertMediaPreflight(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const markerResult = await client.query(
+      "select to_regclass('public.image_backend_member') is not null as applied"
+    );
+    if (markerResult.rows[0]?.applied === true) {
+      for (const tableName of LEGACY_MEDIA_TABLES) {
+        printEvidence(`legacy_media_${tableName}_count`, 0);
+      }
+      printEvidence("legacy_media_video_adobe_reference_count", 0);
+      printEvidence("legacy_media_total_count", 0);
+      return;
+    }
+    let remaining = 0;
+    for (const tableName of LEGACY_MEDIA_TABLES) {
+      const existsResult = await client.query(
+        "select to_regclass(format('public.%I', $1::text)) is not null as present",
+        [tableName]
+      );
+      let count = 0;
+      if (existsResult.rows[0]?.present === true) {
+        if (!/^[a-z_]+$/u.test(tableName)) {
+          throw new Error("legacy media table name is invalid");
+        }
+        const countResult = await client.query(
+          `select count(*)::text as count from "${tableName}"`
+        );
+        count = parseCount(countResult.rows[0]?.count, tableName);
+      }
+      printEvidence(`legacy_media_${tableName}_count`, count);
+      remaining += count;
+    }
+
+    const adobeColumnResult = await client.query(`
+      select exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'video_generation'
+          and column_name = 'adobe_id'
+      ) as present
+    `);
+    let videoReferenceCount = 0;
+    if (adobeColumnResult.rows[0]?.present === true) {
+      const countResult = await client.query(`
+        select count(*)::text as count
+        from video_generation
+        where adobe_id is not null
+      `);
+      videoReferenceCount = parseCount(
+        countResult.rows[0]?.count,
+        "video_generation adobe references"
+      );
+    }
+    printEvidence(
+      "legacy_media_video_adobe_reference_count",
+      videoReferenceCount
+    );
+    remaining += videoReferenceCount;
+    printEvidence("legacy_media_total_count", remaining);
+    if (remaining !== 0) {
+      throw new Error(
+        `unified media preflight failed: ${remaining} rows found`
+      );
+    }
+  });
+}
+
+/** 验证 0060-0062 后统一号池、视频回调和 Principal 作用域不变量。 */
+async function assertMediaPostMigrationState(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const result = await client.query(
+      `
+        select
+          (
+            select count(*)::text
+            from unnest($1::text[]) as required(table_name)
+            where to_regclass(format('public.%I', table_name)) is not null
+          ) as required_table_count,
+          (
+            select count(*)::text
+            from unnest($2::text[]) as legacy(table_name)
+            where to_regclass(format('public.%I', table_name)) is not null
+          ) as legacy_table_count,
+          (
+            select count(*)::text
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name in ('adobe_account', 'adobe_token', 'video_generation')
+              and column_name = 'adobe_id'
+          ) as old_column_count,
+          (
+            select count(*)::text
+            from information_schema.columns
+            where table_schema = 'public'
+              and (
+                (table_name in ('adobe_account', 'adobe_token')
+                  and column_name = 'member_id' and is_nullable = 'NO')
+                or (table_name = 'video_generation'
+                  and column_name = 'principal_scope' and is_nullable = 'NO')
+                or (table_name = 'video_generation_callback_delivery'
+                  and column_name = 'callback_url' and is_nullable = 'NO')
+              )
+          ) as required_column_count,
+          (
+            select count(*)::text
+            from pg_constraint
+            where connamespace = 'public'::regnamespace
+              and conname in (
+              'adobe_account_member_id_image_backend_member_id_fk',
+              'adobe_token_member_id_image_backend_member_id_fk',
+              'video_generation_backend_member_id_image_backend_member_id_fk',
+              'video_generation_adobe_token_id_adobe_token_id_fk',
+              'video_generation_member_lease_id_image_backend_member_lease_id_fk',
+              'video_generation_stage_check',
+              'video_generation_recovery_counts_check',
+              'video_generation_callback_delivery_video_generation_id_video_generation_id_fk',
+              'video_callback_delivery_status_check',
+              'video_callback_delivery_attempt_count_check',
+              'video_generation_principal_scope_check'
+            )
+          ) as required_constraint_count,
+          (
+            select count(*)::text
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname in (
+                'image_backend_member_eligibility_idx',
+                'image_backend_member_cooldown_idx',
+                'image_backend_member_group_member_group_unique',
+                'image_backend_member_group_group_idx',
+                'image_backend_member_lease_member_expires_idx',
+                'image_backend_member_lease_expires_idx',
+                'image_backend_member_scheduler_metric_bucket_unique',
+                'image_backend_member_scheduler_metric_bucket_idx',
+                'adobe_account_member_idx',
+                'adobe_token_member_idx',
+                'adobe_token_member_status_idx',
+                'video_generation_recovery_idx',
+                'video_callback_delivery_video_unique',
+                'video_callback_delivery_recovery_idx'
+              )
+          ) as required_index_count,
+          (
+            select count(*)::text
+            from system_setting
+            where key = any($3::text[])
+          ) as removed_setting_count,
+          (
+            select count(*)::text
+            from system_setting
+            where key = $4
+              and (
+                value::jsonb ? 'billing'
+                or exists (
+                  select 1
+                  from jsonb_object_keys(
+                    coalesce(value::jsonb -> 'features', '{}'::jsonb)
+                  ) as feature(key)
+                  where feature.key = any($5::text[])
+                )
+                or exists (
+                  select 1
+                  from jsonb_each(
+                    coalesce(value::jsonb -> 'limits', '{}'::jsonb)
+                  ) as plan(plan_name, limits)
+                  cross join lateral jsonb_object_keys(
+                    case
+                      when jsonb_typeof(plan.limits) = 'object'
+                        then plan.limits
+                      else '{}'::jsonb
+                    end
+                  ) as limit_key(key)
+                  where limit_key.key = any($6::text[])
+                )
+              )
+          ) as obsolete_plan_count
+      `,
+      [
+        REQUIRED_MEDIA_TABLES,
+        LEGACY_MEDIA_TABLES.filter(
+          (tableName) => !["adobe_account", "adobe_token"].includes(tableName)
+        ),
+        REMOVED_MEDIA_SETTING_KEYS,
+        PLAN_MATRIX_SETTING_KEY,
+        REMOVED_PLAN_FEATURES,
+        REMOVED_PLAN_LIMITS,
+      ]
+    );
+    const row = result.rows[0] ?? {};
+    const requiredTableCount = parseCount(
+      row.required_table_count,
+      "required media tables"
+    );
+    const legacyTableCount = parseCount(
+      row.legacy_table_count,
+      "legacy media tables"
+    );
+    const oldColumnCount = parseCount(
+      row.old_column_count,
+      "old media columns"
+    );
+    const requiredColumnCount = parseCount(
+      row.required_column_count,
+      "required media columns"
+    );
+    const requiredConstraintCount = parseCount(
+      row.required_constraint_count,
+      "required media constraints"
+    );
+    const requiredIndexCount = parseCount(
+      row.required_index_count,
+      "required media indexes"
+    );
+    const removedSettingCount = parseCount(
+      row.removed_setting_count,
+      "removed media settings"
+    );
+    const obsoletePlanCount = parseCount(
+      row.obsolete_plan_count,
+      "obsolete media plan nodes"
+    );
+
+    printEvidence("required_media_table_count", requiredTableCount);
+    printEvidence("legacy_media_table_count", legacyTableCount);
+    printEvidence("old_media_column_count", oldColumnCount);
+    printEvidence("required_media_column_count", requiredColumnCount);
+    printEvidence("required_media_constraint_count", requiredConstraintCount);
+    printEvidence("required_media_index_count", requiredIndexCount);
+    printEvidence("removed_media_setting_count", removedSettingCount);
+    printEvidence("obsolete_media_plan_count", obsoletePlanCount);
+
+    if (
+      requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
+      legacyTableCount !== 0 ||
+      oldColumnCount !== 0 ||
+      requiredColumnCount !== 4 ||
+      requiredConstraintCount !== 11 ||
+      requiredIndexCount !== 14 ||
+      removedSettingCount !== 0 ||
+      obsoletePlanCount !== 0
+    ) {
+      throw new Error("post-migration unified media invariants failed");
     }
   });
 }
@@ -312,10 +635,12 @@ async function main() {
     }
     if (command === "preflight") {
       await assertRelayPreflight(pool);
+      await assertMediaPreflight(pool);
       return;
     }
     if (command === "postcheck" || command === "postcheck-initial") {
       await assertPostMigrationState(pool, command === "postcheck-initial");
+      await assertMediaPostMigrationState(pool);
       return;
     }
     throw new Error(

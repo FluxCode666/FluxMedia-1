@@ -7,8 +7,15 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  createPostgresVideoRecoveryRepository,
+  VIDEO_SUBMISSION_RECOVERY_GRACE_MS,
+  type VideoRecoveryDatabase,
+} from "../../../apps/web/src/features/image-generation/video-recovery-repository";
 import { requireDedicatedTestDatabaseUrl } from "./test-database-url";
 
 interface IdRow {
@@ -30,6 +37,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       next_poll_at timestamp,
       claim_token text,
       claim_expires_at timestamp,
+      submit_started_at timestamp,
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
     );
@@ -51,29 +59,30 @@ async function dropFixtureSchema(
   await client.query(`drop schema "${schemaName}" cascade`);
 }
 
-/** 执行与生产 worker 等价的单行原子 claim。 */
-async function claimOne(client: PoolClient, token: string): Promise<IdRow[]> {
-  const result = await client.query<IdRow>(
-    `with candidates as (
-       select id
-       from video_generation
-       where stage in ('polling', 'downloading', 'refunding')
-         and (next_poll_at is null or next_poll_at <= now())
-         and (claim_expires_at is null or claim_expires_at <= now())
-       order by created_at
-       limit 1
-       for update skip locked
-     )
-     update video_generation as task
-     set claim_token = $1,
-         claim_expires_at = now() + interval '2 minutes',
-         updated_at = now()
-     from candidates
-     where task.id = candidates.id
-     returning task.id`,
-    [token]
-  );
-  return result.rows;
+/** 将 pg client 适配为生产 claim 仓储使用的事务与 SQL 执行端口。 */
+function createRecoveryDatabase(client: PoolClient): VideoRecoveryDatabase {
+  return {
+    async transaction<T>(
+      work: (transaction: {
+        execute(query: SQL): Promise<unknown>;
+      }) => Promise<T>
+    ): Promise<T> {
+      await client.query("begin");
+      try {
+        const result = await work({
+          async execute(query) {
+            const compiled = new PgDialect().sqlToQuery(query);
+            return client.query(compiled.sql, compiled.params);
+          },
+        });
+        await client.query("commit");
+        return result;
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      }
+    },
+  };
 }
 
 beforeAll(() => {
@@ -107,12 +116,25 @@ describe("video recovery PostgreSQL concurrency", () => {
           first.query(`set search_path to "${schemaName}", public`),
           second.query(`set search_path to "${schemaName}", public`),
         ]);
+        const now = new Date();
+        const claimExpiresAt = new Date(now.getTime() + 21 * 60_000);
         const claims = await Promise.all([
-          claimOne(first, "worker-a"),
-          claimOne(second, "worker-b"),
+          createPostgresVideoRecoveryRepository(
+            createRecoveryDatabase(first)
+          ).claimNext({ claimToken: "worker-1", now, claimExpiresAt }),
+          createPostgresVideoRecoveryRepository(
+            createRecoveryDatabase(second)
+          ).claimNext({ claimToken: "worker-2", now, claimExpiresAt }),
         ]);
-        expect(claims.flat()).toHaveLength(1);
-        expect(claims.flat()[0]?.id).toBe("video-1");
+        const claimedJobs = claims.filter((claim) => claim !== null);
+        expect(claimedJobs).toHaveLength(1);
+        expect(claimedJobs[0]?.id).toBe("video-1");
+        const claimed = (
+          await owner.query<{ state_version: number }>(
+            "select state_version from video_generation where id = 'video-1'"
+          )
+        ).rows[0];
+        expect(claimed?.state_version).toBe(1);
       } finally {
         first.release();
         second.release();
@@ -122,6 +144,77 @@ describe("video recovery PostgreSQL concurrency", () => {
         if (schemaName) await dropFixtureSchema(owner, schemaName);
       } finally {
         owner.release();
+      }
+    }
+  });
+
+  it("不抢占活跃提交，只认领过期提交和到期轮询任务", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(client);
+      const now = new Date("2026-07-26T00:30:00.000Z");
+      const staleAt = new Date(
+        now.getTime() - VIDEO_SUBMISSION_RECOVERY_GRACE_MS - 1
+      );
+      const activeClaimExpiresAt = new Date(now.getTime() + 60_000);
+      const expiredClaimAt = new Date(now.getTime() - 1);
+      await client.query(
+        `insert into video_generation
+          (id, stage, next_poll_at, claim_token, claim_expires_at,
+           submit_started_at, updated_at)
+         values
+          ('active-charged', 'charged', null, 'live-1', $2, null, $1),
+          ('active-submitting', 'submitting', null, 'live-2', $2, $1, $1),
+          ('stale-charged', 'charged', null, 'dead-1', $3, null, $4),
+          ('stale-submitting', 'submitting', null, 'dead-2', $3, $4, $4),
+          ('legacy-uncertain', 'submit_uncertain', null, null, null, $1, $1),
+          ('due-polling', 'polling', $1, null, null, null, $1)`,
+        [now, activeClaimExpiresAt, expiredClaimAt, staleAt]
+      );
+
+      const repository = createPostgresVideoRecoveryRepository(
+        createRecoveryDatabase(client)
+      );
+      const claims = [];
+      for (let index = 0; index < 4; index += 1) {
+        const claim = await repository.claimNext({
+          claimToken: `worker-${index}`,
+          now,
+          claimExpiresAt: new Date(now.getTime() + 21 * 60_000),
+        });
+        if (!claim) break;
+        claims.push(claim);
+      }
+
+      expect(claims.map((claim) => claim.id).sort()).toEqual([
+        "due-polling",
+        "stale-charged",
+        "stale-submitting",
+      ]);
+      const active = await client.query<IdRow>(
+        `select id
+         from video_generation
+         where id in ('active-charged', 'active-submitting')
+           and claim_token like 'live-%'
+         order by id`
+      );
+      expect(active.rows.map((row) => row.id)).toEqual([
+        "active-charged",
+        "active-submitting",
+      ]);
+      const uncertain = await client.query<IdRow>(
+        `select id
+         from video_generation
+         where stage = 'submit_uncertain' and claim_token is null`
+      );
+      expect(uncertain.rows).toEqual([{ id: "legacy-uncertain" }]);
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(client, schemaName);
+      } finally {
+        client.release();
       }
     }
   });
