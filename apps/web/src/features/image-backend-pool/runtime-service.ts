@@ -33,6 +33,7 @@ import {
   type AcquiredBackendMemberLease,
   defaultBackendPoolRepository,
 } from "./repository";
+import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
 import { BackendSchedulerError } from "./scheduler";
 
 const IMAGE_LEASE_TTL_MS = 21 * 60 * 1000;
@@ -46,6 +47,10 @@ const groupRowSchema = z.object({
   is_user_selectable: z.boolean(),
   content_safety_enabled: z.boolean().nullable(),
   metadata: z.record(z.string(), z.unknown()).nullable(),
+});
+
+const apiKeyGroupBindingRowSchema = z.object({
+  generation_group_id: z.string().trim().min(1).nullable(),
 });
 
 const runtimeConfigRowSchema = z.object({
@@ -130,18 +135,38 @@ function getGroupMinimumPlan(metadata: Record<string, unknown> | null) {
   return normalizeSubscriptionPlan(metadata?.minPlan, "free");
 }
 
+/** 从数据库加载 API Key 绑定后，委托纯函数完成可信分组选择。 */
+async function resolveTrustedRuntimeGroupTarget(
+  input: CreateRuntimeBackendSessionInput
+): Promise<{ targetGroupId: string | undefined; isUserRequested: boolean }> {
+  if (!input.apiKeyId) return selectTrustedRuntimeGroupTarget(input);
+  const { db } = await import("@repo/database");
+  const rows = z.array(apiKeyGroupBindingRowSchema).parse(
+    extractExecuteRows(
+      await db.execute(sql`
+        select generation_group_id
+        from external_api_key
+        where id = ${input.apiKeyId}
+          and user_id = ${input.userId}
+          and is_active = true
+        limit 1
+      `)
+    )
+  );
+  const key = rows[0];
+  return selectTrustedRuntimeGroupTarget(
+    input,
+    key ? { groupId: key.generation_group_id } : undefined
+  );
+}
+
 /** 解析用户本次允许使用的统一分组；显式非默认分组需要套餐选择能力。 */
 async function resolveRuntimeBackendGroup(
   input: CreateRuntimeBackendSessionInput
 ): Promise<RuntimeBackendGroup> {
   const { db } = await import("@repo/database");
-  if (input.requestedGroupId && input.pinnedGroupId) {
-    throw new BackendSchedulerError(
-      "no_eligible_member",
-      "媒体后端分组不能同时显式选择并由服务端固定"
-    );
-  }
-  const targetGroupId = input.requestedGroupId ?? input.pinnedGroupId;
+  const { targetGroupId, isUserRequested } =
+    await resolveTrustedRuntimeGroupTarget(input);
   const rows = z.array(groupRowSchema).parse(
     extractExecuteRows(
       await db.execute(sql`
@@ -181,7 +206,7 @@ async function resolveRuntimeBackendGroup(
     );
   }
   if (
-    input.requestedGroupId &&
+    isUserRequested &&
     !group.is_default &&
     (!group.is_user_selectable ||
       !(await canUsePlanCapability(userPlan.plan, "backendGroups.select")))
@@ -392,6 +417,11 @@ async function reportMemberResult(input: {
           success_streak = success_streak + 1,
           fail_streak = 0,
           health_status = 'healthy',
+          status = case when status = 'limited' then 'active' else status end,
+          cooldown_until = case
+            when status = 'limited' then null
+            else cooldown_until
+          end,
           error_ewma = error_ewma * 0.8,
           duration_ms_ewma = case
             when duration_ms_ewma is null then ${Math.max(0, input.durationMs)}
