@@ -463,6 +463,13 @@
       "when": 1785024005000,
       "tag": "0065_video_staging_and_input_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1785024006000,
+      "tag": "0066_flatten_legacy_adobe_subpool",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,10 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063 SQL，验证 API/Adobe 旧号池可原子迁移、Adobe
- * direct 子账号可提升为顶层成员、Web 或运行中状态会阻断且完整回滚，同时
- * 锁定设置清理、回调投递和视频 Principal 作用域。
+ * 职责：直接执行 0060-0063 与 0066 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
+ * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
+ * 作用域。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
@@ -32,9 +33,11 @@ const migrationPaths = [
   "0061_video_callback_delivery.sql",
   "0062_video_principal_scope.sql",
   "0063_video_recovery_lease_identity.sql",
+  "0066_flatten_legacy_adobe_subpool.sql",
 ].map((filename) =>
   fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
+const compatibilityMigrationPath = migrationPaths.at(-1);
 
 /** 验证随机 schema 名并返回安全的双引号标识符。 */
 function quoteSchemaName(schemaName: string): string {
@@ -223,6 +226,146 @@ async function createLegacySchema(client: PoolClient): Promise<string> {
   return schemaName;
 }
 
+/**
+ * 创建旧版 0060 已落库后的最小统一号池，用于验证 0066 的兼容升级路径。
+ *
+ * @param client 专用测试数据库连接。
+ * @returns 随机隔离 schema 名。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ * @sideEffect 创建随机 schema 及旧 Adobe 内部账号池表。
+ * @boundary 只包含 0066 读取或修改的列，不模拟无关业务表。
+ */
+async function createLegacyUnifiedAdobeSchema(
+  client: PoolClient
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_group (id text primary key);
+    create table image_backend_member (
+      id text primary key,
+      type text not null,
+      name text not null,
+      supported_model_ids json not null,
+      content_safety_enabled boolean not null default true,
+      is_enabled boolean not null default true,
+      always_active boolean not null default false,
+      failure_cooldown_enabled boolean not null default false,
+      priority integer not null default 50,
+      concurrency integer not null default 10,
+      lease_acquired_count integer not null default 0,
+      success_count integer not null default 0,
+      fail_count integer not null default 0,
+      status text not null default 'active',
+      health_status text not null default 'healthy',
+      error_ewma numeric(8, 7) not null default 0,
+      duration_ms_ewma numeric(18, 2),
+      success_streak integer not null default 0,
+      fail_streak integer not null default 0,
+      last_observed_at timestamp,
+      last_used_at timestamp,
+      last_acquired_at timestamp,
+      cooldown_until timestamp,
+      last_error text,
+      last_error_at timestamp,
+      metadata json,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+    create table image_backend_member_adobe_config (
+      member_id text primary key references image_backend_member(id)
+        on delete cascade,
+      mode text not null,
+      base_url text,
+      api_key text,
+      default_ratio text not null default '1x1',
+      default_resolution text not null default '2k',
+      gpt_image_quality text not null default 'high',
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now(),
+      constraint image_backend_member_adobe_config_shape_check
+        check (
+          (mode = 'gateway' and base_url is not null)
+          or (mode = 'direct' and base_url is null and api_key is null)
+        )
+    );
+    create table image_backend_member_group (
+      id text primary key,
+      member_id text not null references image_backend_member(id)
+        on delete cascade,
+      group_id text not null references image_backend_group(id)
+        on delete cascade,
+      created_at timestamp not null default now(),
+      unique (member_id, group_id)
+    );
+    create table image_backend_member_lease (
+      id text primary key,
+      member_id text not null references image_backend_member(id)
+        on delete cascade,
+      owner_token text not null,
+      expires_at timestamp not null,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+    create table adobe_account (
+      id text primary key,
+      name text not null,
+      cookie text not null,
+      scope text,
+      is_enabled boolean not null default true,
+      display_name text,
+      email text,
+      account_user_id text,
+      status text not null default 'active',
+      last_refresh_at timestamp,
+      last_refresh_error text,
+      next_refresh_at timestamp,
+      consecutive_failures integer not null default 0,
+      metadata json,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now(),
+      member_id text not null references image_backend_member(id)
+        on delete cascade
+    );
+    create table adobe_token (
+      id text primary key,
+      account_id text references adobe_account(id) on delete cascade,
+      value text not null,
+      account_user_id text,
+      status text not null default 'active',
+      fails integer not null default 0,
+      source text not null default 'auto_refresh',
+      expires_at timestamp,
+      credits_total integer,
+      credits_used integer,
+      credits_available integer,
+      credits_updated_at timestamp,
+      credits_error text,
+      last_used_at timestamp,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now(),
+      member_id text not null references image_backend_member(id)
+        on delete cascade
+    );
+    create table video_generation (
+      id text primary key,
+      status text not null default 'pending',
+      backend_member_id text references image_backend_member(id)
+        on delete set null,
+      stage text not null default 'created',
+      adobe_token_id text references adobe_token(id) on delete set null
+    );
+    alter table video_generation
+      rename constraint video_generation_adobe_token_id_fkey
+      to video_generation_adobe_token_id_adobe_token_id_fk;
+    create index video_generation_adobe_token_idx
+      on video_generation(adobe_token_id);
+  `);
+  return schemaName;
+}
+
 /** 删除当前测试创建的随机 schema。 */
 async function dropLegacySchema(
   client: PoolClient,
@@ -232,13 +375,26 @@ async function dropLegacySchema(
   await client.query(`drop schema ${quoteSchemaName(schemaName)} cascade`);
 }
 
-/** 按 Drizzle statement breakpoint 执行真实连续迁移，并确保失败时整体回滚。 */
+/**
+ * 按 Drizzle statement breakpoint 执行真实连续迁移，并确保失败时整体回滚。
+ *
+ * @param client 专用测试数据库连接。
+ * @param schemaName 随机隔离 schema。
+ * @param selectedMigrationPaths 本次要执行的迁移文件，默认执行完整媒体迁移链。
+ * @returns 全部语句提交后完成。
+ * @throws 任一 SQL 失败时回滚并原样抛出。
+ * @sideEffect 在隔离 schema 内执行迁移 DDL 与 DML。
+ * @boundary 每个迁移文件按 Drizzle breakpoint 拆分，0066 单一 DO 块保持原子。
+ */
 async function executeMigrations(
   client: PoolClient,
-  schemaName: string
+  schemaName: string,
+  selectedMigrationPaths: readonly string[] = migrationPaths
 ): Promise<void> {
   const migrations = await Promise.all(
-    migrationPaths.map((migrationPath) => readFile(migrationPath, "utf8"))
+    selectedMigrationPaths.map((migrationPath) =>
+      readFile(migrationPath, "utf8")
+    )
   );
   const statements = migrations.flatMap((migrationSql) =>
     migrationSql
@@ -306,7 +462,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060-0063 unified media backend pool migrations", () => {
+describe("0060-0063 and 0066 unified media backend pool migrations", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -865,6 +1021,372 @@ describe("0060-0063 unified media backend pool migrations", () => {
       ).resolves.toBe(false);
       await expect(
         tableExists(client, schemaName, "image_backend_adobe")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("已应用旧版 0060 时由 0066 保留数据并移除 Adobe 子号池", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    if (!compatibilityMigrationPath) {
+      throw new Error("0066 兼容迁移路径缺失");
+    }
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacyUnifiedAdobeSchema(client);
+      await client.query(`
+        insert into image_backend_group (id)
+        values ('group-1'), ('group-2');
+        insert into image_backend_member (
+          id,
+          type,
+          name,
+          supported_model_ids,
+          lease_acquired_count,
+          success_count,
+          fail_count,
+          priority,
+          concurrency,
+          metadata
+        ) values
+          (
+            'api-existing',
+            'api',
+            'API existing',
+            '["gpt-image-2"]'::json,
+            9,
+            8,
+            1,
+            10,
+            4,
+            '{"source":"api"}'::json
+          ),
+          (
+            'adobe-parent',
+            'adobe',
+            'Legacy Adobe pool',
+            '["gpt-image-2","firefly-video"]'::json,
+            7,
+            5,
+            2,
+            60,
+            3,
+            '{"source":"adobe"}'::json
+          );
+        insert into image_backend_member_adobe_config (
+          member_id,
+          mode,
+          base_url,
+          api_key,
+          default_ratio,
+          default_resolution,
+          gpt_image_quality
+        ) values (
+          'adobe-parent',
+          'direct',
+          null,
+          null,
+          '16x9',
+          '2k',
+          'medium'
+        );
+        insert into image_backend_member_group (id, member_id, group_id)
+        values
+          ('relation-1', 'adobe-parent', 'group-1'),
+          ('relation-2', 'adobe-parent', 'group-2');
+        insert into adobe_account (
+          id,
+          member_id,
+          name,
+          cookie,
+          scope,
+          display_name,
+          email,
+          account_user_id,
+          created_at
+        ) values
+          (
+            'account-1',
+            'adobe-parent',
+            'Account 1',
+            'cookie-1',
+            'scope-1',
+            'Display 1',
+            'account-1@example.test',
+            'user-1',
+            '2026-01-01 00:00:00'
+          ),
+          (
+            'account-2',
+            'adobe-parent',
+            'Account 2',
+            'cookie-2',
+            'scope-2',
+            'Display 2',
+            'account-2@example.test',
+            'user-2',
+            '2026-01-02 00:00:00'
+          );
+        insert into adobe_token (
+          id,
+          member_id,
+          account_id,
+          value,
+          account_user_id,
+          fails,
+          credits_total,
+          credits_used,
+          credits_available
+        ) values
+          (
+            'token-1',
+            'adobe-parent',
+            'account-1',
+            'access-token-1',
+            'user-1',
+            1,
+            100,
+            40,
+            60
+          ),
+          (
+            'token-2',
+            'adobe-parent',
+            'account-2',
+            'access-token-2',
+            'user-2',
+            2,
+            200,
+            125,
+            75
+          );
+        insert into video_generation (
+          id,
+          status,
+          backend_member_id,
+          stage,
+          adobe_token_id
+        ) values
+          (
+            'video-1',
+            'completed',
+            'adobe-parent',
+            'completed',
+            'token-1'
+          ),
+          (
+            'video-2',
+            'completed',
+            'adobe-parent',
+            'completed',
+            'token-2'
+          );
+      `);
+
+      await executeMigrations(client, schemaName, [compatibilityMigrationPath]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const members = await client.query<{
+        id: string;
+        lease_acquired_count: number;
+        name: string;
+        type: string;
+      }>(`
+        select id, type, name, lease_acquired_count
+        from image_backend_member
+        order by id
+      `);
+      expect(members.rows).toEqual([
+        {
+          id: "adobe-direct:account-2",
+          lease_acquired_count: 0,
+          name: "Account 2",
+          type: "adobe",
+        },
+        {
+          id: "adobe-parent",
+          lease_acquired_count: 7,
+          name: "Account 1",
+          type: "adobe",
+        },
+        {
+          id: "api-existing",
+          lease_acquired_count: 9,
+          name: "API existing",
+          type: "api",
+        },
+      ]);
+      const configs = await client.query<{
+        access_token: string;
+        cookie: string;
+        credits_available: number;
+        member_id: string;
+        mode: string;
+      }>(`
+        select member_id, mode, cookie, access_token, credits_available
+        from image_backend_member_adobe_config
+        order by member_id
+      `);
+      expect(configs.rows).toEqual([
+        {
+          access_token: "access-token-2",
+          cookie: "cookie-2",
+          credits_available: 75,
+          member_id: "adobe-direct:account-2",
+          mode: "direct",
+        },
+        {
+          access_token: "access-token-1",
+          cookie: "cookie-1",
+          credits_available: 60,
+          member_id: "adobe-parent",
+          mode: "direct",
+        },
+      ]);
+      const relations = await client.query<{
+        group_id: string;
+        member_id: string;
+      }>(`
+        select member_id, group_id
+        from image_backend_member_group
+        order by member_id, group_id
+      `);
+      expect(relations.rows).toEqual([
+        { group_id: "group-1", member_id: "adobe-direct:account-2" },
+        { group_id: "group-2", member_id: "adobe-direct:account-2" },
+        { group_id: "group-1", member_id: "adobe-parent" },
+        { group_id: "group-2", member_id: "adobe-parent" },
+      ]);
+      const videos = await client.query<{
+        backend_member_id: string;
+        id: string;
+      }>(`
+        select id, backend_member_id
+        from video_generation
+        order by id
+      `);
+      expect(videos.rows).toEqual([
+        { backend_member_id: "adobe-parent", id: "video-1" },
+        { backend_member_id: "adobe-direct:account-2", id: "video-2" },
+      ]);
+      await expect(
+        tableExists(client, schemaName, "adobe_account")
+      ).resolves.toBe(false);
+      await expect(
+        tableExists(client, schemaName, "adobe_token")
+      ).resolves.toBe(false);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "adobe_token_id")
+      ).resolves.toBe(false);
+      const credentialConstraintCount = await client.query<{ count: number }>(
+        `select count(*)::integer as count
+         from pg_constraint
+         where connamespace = $1::regnamespace
+           and conname in (
+             'image_backend_member_adobe_config_credential_shape_check',
+             'image_backend_member_adobe_config_credential_status_check',
+             'image_backend_member_adobe_config_failure_counts_check'
+           )`,
+        [schemaName]
+      );
+      expect(credentialConstraintCount.rows[0]?.count).toBe(3);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("0066 遇到运行中的 Adobe 视频时阻断并完整回滚", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    if (!compatibilityMigrationPath) {
+      throw new Error("0066 兼容迁移路径缺失");
+    }
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacyUnifiedAdobeSchema(client);
+      await client.query(`
+        insert into image_backend_member (
+          id,
+          type,
+          name,
+          supported_model_ids
+        ) values (
+          'adobe-parent',
+          'adobe',
+          'Legacy Adobe pool',
+          '["gpt-image-2"]'::json
+        );
+        insert into image_backend_member_adobe_config (
+          member_id,
+          mode,
+          base_url,
+          api_key
+        ) values ('adobe-parent', 'direct', null, null);
+        insert into adobe_account (
+          id,
+          member_id,
+          name,
+          cookie
+        ) values (
+          'account-1',
+          'adobe-parent',
+          'Account 1',
+          'cookie-1'
+        );
+        insert into adobe_token (
+          id,
+          member_id,
+          account_id,
+          value
+        ) values (
+          'token-1',
+          'adobe-parent',
+          'account-1',
+          'access-token-1'
+        );
+        insert into video_generation (
+          id,
+          status,
+          backend_member_id,
+          stage,
+          adobe_token_id
+        ) values (
+          'video-active',
+          'running',
+          'adobe-parent',
+          'polling',
+          'token-1'
+        );
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [compatibilityMigrationPath])
+      ).rejects.toThrow(/0066 blocked/u);
+      await expect(
+        tableExists(client, schemaName, "adobe_account")
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(client, schemaName, "adobe_token")
+      ).resolves.toBe(true);
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_adobe_config",
+          "cookie"
+        )
       ).resolves.toBe(false);
     } finally {
       try {

@@ -220,22 +220,236 @@ async function assertMediaPreflight(pool) {
       "select to_regclass('public.image_backend_member') is not null as applied"
     );
     if (markerResult.rows[0]?.applied === true) {
-      for (const tableName of LEGACY_MEDIA_TABLES) {
-        printEvidence(`legacy_media_${tableName}_count`, 0);
+      const legacySubpoolTableResult = await client.query(`
+        select
+          to_regclass('public.adobe_account') is not null as account_present,
+          to_regclass('public.adobe_token') is not null as token_present
+      `);
+      const legacySubpoolTables = legacySubpoolTableResult.rows[0] ?? {};
+      const accountPresent = legacySubpoolTables.account_present === true;
+      const tokenPresent = legacySubpoolTables.token_present === true;
+      if (accountPresent !== tokenPresent) {
+        throw new Error(
+          "unified media preflight failed: legacy Adobe subpool is incomplete"
+        );
       }
-      printEvidence("legacy_media_video_adobe_reference_count", 0);
-      printEvidence("legacy_media_total_count", 0);
-      printEvidence("legacy_media_active_lease_count", 0);
+
+      if (!accountPresent) {
+        for (const tableName of LEGACY_MEDIA_TABLES) {
+          printEvidence(`legacy_media_${tableName}_count`, 0);
+        }
+        printEvidence("legacy_media_video_adobe_reference_count", 0);
+        printEvidence("legacy_media_total_count", 0);
+        printEvidence("legacy_media_active_lease_count", 0);
+        printEvidence("legacy_media_active_sticky_count", 0);
+        printEvidence("legacy_media_active_video_count", 0);
+        printEvidence("legacy_media_member_id_collision_count", 0);
+        printEvidence("legacy_media_invalid_api_model_count", 0);
+        printEvidence("legacy_media_incompatible_api_protocol_count", 0);
+        printEvidence("legacy_media_invalid_adobe_config_count", 0);
+        printEvidence("legacy_media_invalid_member_state_count", 0);
+        printEvidence("legacy_media_invalid_direct_credential_count", 0);
+        printEvidence("legacy_media_direct_member_id_collision_count", 0);
+        printEvidence("legacy_media_blocker_total_count", 0);
+        return;
+      }
+
+      const legacySubpoolResult = await client.query(`
+        select
+          (select count(*)::text from adobe_account) as account_count,
+          (select count(*)::text from adobe_token) as token_count,
+          (
+            select count(*)::text
+            from video_generation
+            where adobe_token_id is not null
+          ) as video_reference_count,
+          (
+            select count(*)::text
+            from image_backend_member_lease as lease
+            inner join image_backend_member_adobe_config as adobe
+              on adobe.member_id = lease.member_id
+              and adobe.mode = 'direct'
+            where lease.expires_at > now()
+          ) as active_lease_count,
+          (
+            select count(*)::text
+            from video_generation as video
+            inner join image_backend_member_adobe_config as adobe
+              on adobe.member_id = video.backend_member_id
+              and adobe.mode = 'direct'
+            where video.stage not in ('completed', 'failed')
+          ) as active_video_count,
+          (
+            select count(*)::text
+            from image_backend_member_adobe_config as adobe
+            where (
+                adobe.mode = 'gateway'
+                and (
+                  exists (
+                    select 1
+                    from adobe_account as account
+                    where account.member_id = adobe.member_id
+                  )
+                  or exists (
+                    select 1
+                    from adobe_token as token
+                    where token.member_id = adobe.member_id
+                  )
+                )
+              ) or (
+                adobe.mode = 'direct'
+                and (
+                  not exists (
+                    select 1
+                    from adobe_account as account
+                    where account.member_id = adobe.member_id
+                  )
+                  or exists (
+                    select 1
+                    from adobe_account as account
+                    where account.member_id = adobe.member_id
+                      and (
+                        account.status not in ('active', 'error', 'disabled')
+                        or char_length(btrim(account.cookie))
+                          not between 1 and 64000
+                        or (
+                          account.scope is not null
+                          and char_length(btrim(account.scope))
+                            not between 1 and 4096
+                        )
+                        or account.consecutive_failures < 0
+                        or (
+                          select count(*)
+                          from adobe_token as token
+                          where token.member_id = adobe.member_id
+                            and token.account_id = account.id
+                            and token.source = 'auto_refresh'
+                        ) <> 1
+                      )
+                  )
+                  or exists (
+                    select 1
+                    from adobe_token as token
+                    left join adobe_account as account
+                      on account.id = token.account_id
+                      and account.member_id = adobe.member_id
+                    where token.member_id = adobe.member_id
+                      and (
+                        token.account_id is null
+                        or token.source <> 'auto_refresh'
+                        or token.status not in (
+                          'active',
+                          'error',
+                          'exhausted',
+                          'invalid'
+                        )
+                        or char_length(btrim(token.value)) < 1
+                        or token.fails < 0
+                        or account.id is null
+                      )
+                  )
+                )
+              )
+          ) as invalid_direct_credential_count,
+          (
+            with ranked_direct_accounts as (
+              select
+                account.id,
+                row_number() over (
+                  partition by account.member_id
+                  order by account.created_at, account.id
+                ) as ordinal
+              from adobe_account as account
+              inner join image_backend_member_adobe_config as adobe
+                on adobe.member_id = account.member_id
+                and adobe.mode = 'direct'
+            )
+            select count(*)::text
+            from ranked_direct_accounts as account
+            where account.ordinal > 1
+              and (
+                char_length('adobe-direct:' || account.id) > 128
+                or exists (
+                  select 1
+                  from image_backend_member as member
+                  where member.id = 'adobe-direct:' || account.id
+                )
+              )
+          ) as direct_member_id_collision_count
+      `);
+      const legacySubpool = legacySubpoolResult.rows[0] ?? {};
+      const accountCount = parseCount(
+        legacySubpool.account_count,
+        "legacy unified Adobe accounts"
+      );
+      const tokenCount = parseCount(
+        legacySubpool.token_count,
+        "legacy unified Adobe tokens"
+      );
+      const videoReferenceCount = parseCount(
+        legacySubpool.video_reference_count,
+        "legacy unified Adobe video token references"
+      );
+      const activeLeaseCount = parseCount(
+        legacySubpool.active_lease_count,
+        "legacy unified Adobe active leases"
+      );
+      const activeVideoCount = parseCount(
+        legacySubpool.active_video_count,
+        "legacy unified Adobe active videos"
+      );
+      const invalidDirectCredentialCount = parseCount(
+        legacySubpool.invalid_direct_credential_count,
+        "legacy unified Adobe direct credentials"
+      );
+      const directMemberIdCollisionCount = parseCount(
+        legacySubpool.direct_member_id_collision_count,
+        "legacy unified Adobe member ID collisions"
+      );
+      for (const tableName of LEGACY_MEDIA_TABLES) {
+        const count =
+          tableName === "adobe_account"
+            ? accountCount
+            : tableName === "adobe_token"
+              ? tokenCount
+              : 0;
+        printEvidence(`legacy_media_${tableName}_count`, count);
+      }
+      printEvidence(
+        "legacy_media_video_adobe_reference_count",
+        videoReferenceCount
+      );
+      printEvidence(
+        "legacy_media_total_count",
+        accountCount + tokenCount + videoReferenceCount
+      );
+      printEvidence("legacy_media_active_lease_count", activeLeaseCount);
       printEvidence("legacy_media_active_sticky_count", 0);
-      printEvidence("legacy_media_active_video_count", 0);
+      printEvidence("legacy_media_active_video_count", activeVideoCount);
       printEvidence("legacy_media_member_id_collision_count", 0);
       printEvidence("legacy_media_invalid_api_model_count", 0);
       printEvidence("legacy_media_incompatible_api_protocol_count", 0);
       printEvidence("legacy_media_invalid_adobe_config_count", 0);
       printEvidence("legacy_media_invalid_member_state_count", 0);
-      printEvidence("legacy_media_invalid_direct_credential_count", 0);
-      printEvidence("legacy_media_direct_member_id_collision_count", 0);
-      printEvidence("legacy_media_blocker_total_count", 0);
+      printEvidence(
+        "legacy_media_invalid_direct_credential_count",
+        invalidDirectCredentialCount
+      );
+      printEvidence(
+        "legacy_media_direct_member_id_collision_count",
+        directMemberIdCollisionCount
+      );
+      const blockerTotal =
+        activeLeaseCount +
+        activeVideoCount +
+        invalidDirectCredentialCount +
+        directMemberIdCollisionCount;
+      printEvidence("legacy_media_blocker_total_count", blockerTotal);
+      if (blockerTotal !== 0) {
+        throw new Error(
+          `unified media preflight failed: ${blockerTotal} non-migratable legacy Adobe rows found`
+        );
+      }
       return;
     }
     const tableCounts = new Map();
