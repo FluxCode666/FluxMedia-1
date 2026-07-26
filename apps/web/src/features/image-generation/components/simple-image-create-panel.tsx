@@ -37,6 +37,7 @@ import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/
 import { getRecentImageDisplayUrl } from "@/features/image-generation/recent-image-display";
 import { DEFAULT_IMAGE_MODEL } from "@/features/image-generation/resolution";
 
+import { ImageGenerationResultGallery } from "./image-generation-result-gallery";
 import { ImageMaskEditor } from "./image-mask-editor";
 import { ImageSizePicker } from "./image-size-picker";
 
@@ -371,6 +372,11 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
             ) : null}
           </div>
 
+          <ImageGenerationResultGallery
+            busy={props.busy}
+            resultUrls={props.resultUrls}
+          />
+
           <div className="border-t border-border bg-muted/20 p-4 sm:p-5">
             <div className="mb-3">
               <h2 className="text-sm font-semibold text-foreground">
@@ -551,41 +557,6 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
           </div>
         </section>
       </form>
-
-      {props.busy && props.resultUrls.length === 0 ? (
-        <div
-          role="status"
-          className="flex min-h-64 max-w-2xl items-center justify-center rounded-lg border border-dashed bg-muted/30 text-sm text-muted-foreground"
-        >
-          <Loader2 className="mr-2 size-5 animate-spin" />
-          正在生成图片…
-        </div>
-      ) : null}
-
-      {props.resultUrls.length > 0 ? (
-        <section aria-labelledby="simple-image-results-title">
-          <h2
-            id="simple-image-results-title"
-            className="mb-3 text-sm font-semibold text-foreground"
-          >
-            本次结果
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {props.resultUrls.map((url) => (
-              <a key={url} href={url} target="_blank" rel="noreferrer">
-                <Image
-                  src={url}
-                  alt="生成图片"
-                  width={768}
-                  height={768}
-                  unoptimized
-                  className="h-auto w-full rounded-lg border object-contain"
-                />
-              </a>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
       <section aria-labelledby="simple-recent-images-title">
         <div className="mb-3 flex items-center justify-between gap-3">
