@@ -67,7 +67,7 @@ function getAdobeDirectProxyConfig(): {
 }
 
 /** 构造 API/下载传输：Adobe API 固定走专用旁路，产物下载走直连。 */
-async function buildAdobeTransports(sessionKey: string): Promise<{
+async function buildAdobeTransports(): Promise<{
   apiTransport: FireflyTransport;
   downloadTransport: FireflyTransport;
 }> {
@@ -77,7 +77,6 @@ async function buildAdobeTransports(sessionKey: string): Promise<{
     apiTransport: new ProxyFireflyTransport({
       proxyUrl: proxy.url,
       secret: proxy.secret,
-      sessionKey,
     }),
     downloadTransport,
   };
@@ -492,9 +491,7 @@ export async function runAdobeDirectImageRequest(
     return { error: "此 Adobe 后端未开放所请求的模型" };
   }
 
-  const sessionKey = `adobe-member-${memberId}`;
-  const { apiTransport, downloadTransport } =
-    await buildAdobeTransports(sessionKey);
+  const { apiTransport, downloadTransport } = await buildAdobeTransports();
 
   // 模型族 + 宽高比/分辨率（与 token 无关，放轮换外只算一次）：family 优先取请求 model
   // （创作页/接口选的 Firefly 或裸 Nano Banana 模型），普通/未知模型落 gpt-image-2；
@@ -652,7 +649,7 @@ async function createAdobeVideoStageClient(
       error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
     };
   }
-  const transports = await buildAdobeTransports(`adobe-member-${memberId}`);
+  const transports = await buildAdobeTransports();
   return {
     ok: true,
     memberId,
@@ -767,9 +764,7 @@ export async function pollAdobeDirectVideoRequest(input: {
       errorType: "status",
     });
   }
-  const { apiTransport, downloadTransport } = await buildAdobeTransports(
-    `adobe-member-${input.memberId}`
-  );
+  const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
     transport: apiTransport,
     downloadTransport,
@@ -787,9 +782,7 @@ export async function downloadAdobeDirectVideoRequest(input: {
   videoUrl: string;
   signal?: AbortSignal;
 }): Promise<Buffer> {
-  const { apiTransport, downloadTransport } = await buildAdobeTransports(
-    `adobe-member-${input.memberId}`
-  );
+  const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
     transport: apiTransport,
     downloadTransport,
@@ -855,9 +848,7 @@ export async function runAdobeDirectVideoRequest(
     };
   }
 
-  const sessionKey = `adobe-member-${memberId}`;
-  const { apiTransport, downloadTransport } =
-    await buildAdobeTransports(sessionKey);
+  const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
     transport: apiTransport,
     downloadTransport,
@@ -922,15 +913,11 @@ type AdobeCookieValidation = Awaited<
 >;
 
 // 验证一个 Adobe cookie：刷新一次拿 access_token + 账号信息，并断言为已登录（非 guest）。
-// sessionKey 只用于代理出口会话路由，以统一成员 ID 隔离不同 direct 成员。
 async function validateAdobeCookie(
-  memberId: string,
   cookie: string,
   scope?: string | null
 ): Promise<AdobeCookieValidation> {
-  const { apiTransport } = await buildAdobeTransports(
-    `adobe-member-${memberId}`
-  );
+  const { apiTransport } = await buildAdobeTransports();
   const result = await refreshAccessTokenFromCookie(apiTransport, cookie, {
     scope: scope ?? undefined,
     fetchAccount: true,
@@ -999,7 +986,6 @@ export async function importAdobeAccount(input: {
   scope?: string | null;
 }): Promise<{ id: string; displayName: string; email: string }> {
   const validated = await validateAdobeCookie(
-    input.memberId,
     input.cookie,
     input.scope
   );
@@ -1077,7 +1063,6 @@ export async function importAdobeAccountsBatch(input: {
     const name = entry.name?.trim() || fallbackName;
     try {
       const validated = await validateAdobeCookie(
-        input.memberId,
         entry.cookie,
         scope
       );

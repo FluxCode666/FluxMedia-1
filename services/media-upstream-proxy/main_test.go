@@ -190,18 +190,18 @@ func TestHandleRequestForwardsAdobeRequestWithoutProxySecret(t *testing.T) {
 		}, nil
 	}}
 	server := &proxyServer{config: testConfig(), client: client}
-	payload := requestPayload{
-		Method:    http.MethodGet,
-		TargetURL: "https://firefly.adobe.io/v1/credits/balance",
-		Headers: map[string]string{
-			"Authorization":  "Bearer adobe-token",
-			"X-Proxy-Secret": "must-not-forward",
+	// WHY：使用 TypeScript ProxyFireflyTransport 的真实 JSON 字段，而不是序列化
+	// Go 自身结构，确保严格解码能捕获两端契约漂移。
+	encodedPayload := []byte(`{
+		"method":"GET",
+		"targetUrl":"https://firefly.adobe.io/v1/credits/balance",
+		"headers":{
+			"Authorization":"Bearer adobe-token",
+			"X-Proxy-Secret":"must-not-forward"
 		},
-	}
-	encodedPayload, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("编码请求失败：%v", err)
-	}
+		"headerOrder":["Authorization","X-Proxy-Secret"],
+		"bodyBase64":""
+	}`)
 
 	request := httptest.NewRequest(
 		http.MethodPost,

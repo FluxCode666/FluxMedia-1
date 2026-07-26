@@ -1,13 +1,11 @@
 /**
  * Firefly 直连的 HTTP 传输抽象。
  *
- * ⚠️ TLS 指纹：adobe2api 用 curl_cffi `impersonate=chrome124` 伪造浏览器 TLS/JA3 指纹来过
- * firefly-3p.ff.adobe.io 的风控。Node 原生 fetch 无法伪造 TLS 指纹，**直连可能在 TLS
- * 握手就被拦**。本仓库既有的解法是 Go 旁路代理 `services/chatgpt-web-proxy`
- * （bogdanfinn/tls-client + utls），见 image-generation/chatgpt-web.ts 的 fetchChatGptWeb。
+ * Adobe API 使用 Go 旁路代理 `services/media-upstream-proxy` 提供浏览器 TLS 指纹；
+ * Node 原生 fetch 只用于产物下载。代理是无会话状态的单请求中转。
  *
- * 故传输层抽象成两种实现，与 chatgpt-web 一致的协议复用同一个 Go 旁路：
- * - ProxyFireflyTransport：POST {proxyUrl}/request，body `{sessionKey, method, targetUrl,
+ * 传输层提供两种实现：
+ * - ProxyFireflyTransport：POST {proxyUrl}/request，body `{method, targetUrl,
  *   headers, headerOrder, bodyBase64}` → `{status, headers, bodyBase64}`（带 TLS 伪装）。
  * - FetchFireflyTransport：原生 fetch（无 TLS 伪装，用于产物下载/本地联调/未配代理回落）。
  */
@@ -111,7 +109,6 @@ export class ProxyFireflyTransport implements FireflyTransport {
     private readonly opts: {
       proxyUrl: string;
       secret?: string;
-      sessionKey: string;
     }
   ) {}
 
@@ -139,7 +136,6 @@ export class ProxyFireflyTransport implements FireflyTransport {
           ...(this.opts.secret ? { "X-Proxy-Secret": this.opts.secret } : {}),
         },
         body: JSON.stringify({
-          sessionKey: this.opts.sessionKey,
           method: req.method,
           targetUrl: req.url,
           headers: req.headers,
