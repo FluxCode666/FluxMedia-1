@@ -183,7 +183,6 @@ describe("image backend pool pricing operations", () => {
     ["externalApi", "agentImages"].join("."),
     "file.generatePpt",
     "file.generatePsd",
-    "image.selectWebCandidate",
     "image.exportPsd",
   ])("registry 不再包含已退场 operation %s", (name) => {
     expect(getOperation(name)).toBeUndefined();

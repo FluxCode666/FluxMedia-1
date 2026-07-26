@@ -1,8 +1,8 @@
 /**
- * User MCP 钱包与使用日志隔离测试。
+ * User MCP 媒体白名单隔离测试。
  *
- * 通过真实 JSON-RPC route 验证 tools/list 不暴露 session-only 钱包操作，且
- * tools/call 对绕过列表的直接调用返回统一 method-not-found、不会触发 UOL。
+ * 通过真实 JSON-RPC route 验证 tools/list 只返回工厂提供的媒体操作，且
+ * tools/call 对旧白名单或人工会话操作的直接调用稳定拒绝。
  */
 
 import type { NextRequest } from "next/server";
@@ -73,19 +73,19 @@ function createRpcRequest(
   }) as NextRequest;
 }
 
-describe("POST /api/mcp/user wallet isolation", () => {
+describe("POST /api/mcp/user media allowlist isolation", () => {
   beforeEach(() => {
     mocks.authenticateMcpUserKey.mockReset().mockResolvedValue(principal);
     mocks.buildUserMcpTools.mockReset().mockReturnValue([
       {
-        name: "externalApi.getModels",
-        description: "models",
+        name: "image.listMyHistoryRecords",
+        description: "history",
         inputSchema: { type: "object" },
         annotations: {
           readOnly: true,
           destructive: false,
           sideEffects: [],
-          domain: "external-api",
+          domain: "image-generation",
         },
       },
     ]);
@@ -108,22 +108,34 @@ describe("POST /api/mcp/user wallet isolation", () => {
       );
   });
 
-  it("omits session-only wallet and usage operations from tools/list", async () => {
+  it("returns only the current media tools supplied by the factory", async () => {
     const response = await POST(createRpcRequest("tools/list"));
     const body = await response.json();
     const names = body.result.tools.map((tool: { name: string }) => tool.name);
 
     expect(response.status).toBe(200);
-    expect(names).toEqual(["externalApi.getModels"]);
+    expect(names).toEqual(["image.listMyHistoryRecords"]);
     expect(names).not.toContain("externalApi.getPlatformModelCatalog");
     expect(names).not.toEqual(
       expect.arrayContaining([
+        "image.getStatus",
+        "image.getUserGenerations",
+        "image.getUserGenerationCount",
+        "externalApi.getCredits",
+        "externalApi.getModels",
         "externalApi.createKey",
+        "credits.getBalance",
+        "credits.getMyActiveBatches",
+        "credits.getMyTransactions",
         "credits.getMyBalance",
         "credits.listMyUsageEvents",
         "credits.getMyUsageEventDetail",
+        "subscription.getMyPlan",
+        "subscription.canUseCapability",
         "subscription.listMyPurchasablePlans",
         "subscription.createCheckout",
+        "analytics.getMyUsageSummary",
+        "analytics.getMyUsageTrends",
       ])
     );
   });
@@ -186,11 +198,23 @@ describe("POST /api/mcp/user wallet isolation", () => {
   });
 
   it.each([
+    "image.getStatus",
+    "image.getUserGenerations",
+    "image.getUserGenerationCount",
+    "externalApi.getCredits",
+    "externalApi.getModels",
+    "credits.getBalance",
+    "credits.getMyActiveBatches",
+    "credits.getMyTransactions",
     "credits.getMyBalance",
     "credits.listMyUsageEvents",
     "credits.getMyUsageEventDetail",
+    "subscription.getMyPlan",
+    "subscription.canUseCapability",
     "subscription.listMyPurchasablePlans",
     "subscription.createCheckout",
+    "analytics.getMyUsageSummary",
+    "analytics.getMyUsageTrends",
   ])("returns method-not-found without invoking %s", async (name) => {
     const response = await POST(
       createRpcRequest("tools/call", { name, arguments: {} })

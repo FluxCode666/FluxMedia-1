@@ -1,7 +1,8 @@
 /**
  * 统一生成历史 UOL 注册测试。
  *
- * 证明操作仅允许会话用户、拒绝调用方 userId，并保持只读、无副作用且不暴露内部字段。
+ * 证明操作仅使用 Principal 用户身份、拒绝调用方 userId，并保持
+ * 只读、无副作用且不暴露内部字段。
  */
 
 import { describe, expect, it } from "vitest";
@@ -9,10 +10,10 @@ import { getOperation } from "../registry";
 import "./image-generation";
 
 describe("image history UOL contract", () => {
-  it("registers a session-only natural read without caller identity", () => {
+  it("registers a principal-scoped natural read without caller identity", () => {
     const operation = getOperation("image.listMyHistoryRecords");
     expect(operation).toMatchObject({
-      access: { kind: "user" },
+      access: { kind: "protected" },
       readOnly: true,
       destructive: false,
       idempotency: { kind: "natural" },

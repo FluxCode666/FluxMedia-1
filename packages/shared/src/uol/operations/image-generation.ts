@@ -283,7 +283,7 @@ defineOperation({
     "身份只来自 Principal，返回安全详情、真实模型选项与双向 keyset cursor。",
   input: historyListInputSchema,
   output: historyListOutputSchema,
-  access: { kind: "user" },
+  access: { kind: "protected" },
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
