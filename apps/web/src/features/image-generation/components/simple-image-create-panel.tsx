@@ -623,6 +623,9 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                   unoptimized
                   className="object-contain transition duration-200 group-hover:scale-[1.02]"
                 />
+                <span className="absolute inset-x-0 bottom-0 bg-background/90 px-2 py-1 text-center text-[11px] font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                  作为参考图
+                </span>
                 {props.referenceLoadingId === item.id ? (
                   <div
                     className="absolute inset-0 flex items-center justify-center bg-background/70"
