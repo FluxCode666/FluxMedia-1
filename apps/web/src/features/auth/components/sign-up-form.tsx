@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * 注册表单与安全回跳消费组件。
+ *
+ * 使用方是本地化注册页；服务端先收窄 callbackUrl，本组件再让邮箱与 Google 注册共用
+ * 同一回跳目标，并在返回登录的所有入口中保留模型预选意图。
+ */
+
 import {
   resendVerificationEmail,
   sendRegistrationVerificationCode,
@@ -72,7 +79,9 @@ function isEmailDomainError(error: unknown) {
   const code = getAuthErrorCode(error);
   const message = getErrorMessage(error).toLowerCase();
 
-  return code === "EMAIL_DOMAIN_NOT_ALLOWED" || message.includes("email domain");
+  return (
+    code === "EMAIL_DOMAIN_NOT_ALLOWED" || message.includes("email domain")
+  );
 }
 
 function isVerificationCodeError(error: unknown) {
@@ -84,19 +93,24 @@ function isVerificationCodeError(error: unknown) {
   );
 }
 
-/**
- * 注册表单组件
- *
- * 功能:
- * - Google OAuth 注册
- * - GitHub OAuth 注册
- * - 邮箱密码注册
- */
+/** 注册表单服务端下发的安全配置。 */
 interface SignUpFormProps {
   googleAuthEnabled?: boolean;
+  callbackUrl: string;
 }
 
-export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
+/**
+ * 渲染邮箱与 Google 注册表单。
+ *
+ * @param props - Google 开关与服务端已经收窄的站内 callbackUrl。
+ * @returns 可交互的客户端注册表单或邮件验证提示。
+ * @sideEffects 用户操作会调用 Better Auth、验证码接口并维护倒计时；带 token 成功时导航。
+ * @failure 认证与验证码失败展示本地化错误；callbackUrl 的安全性由服务端页面边界保证。
+ */
+export function SignUpForm({
+  googleAuthEnabled = false,
+  callbackUrl,
+}: SignUpFormProps) {
   const locale = useLocale();
   const t = useTranslations("Auth.signUp");
   const tCommon = useTranslations("Auth.common");
@@ -204,14 +218,12 @@ export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
     }
   };
 
-  /**
-   * 处理 Google 注册
-   */
+  /** 使用与邮箱流程相同的安全回跳目标启动 Google OAuth 注册。 */
   const handleGoogleSignUp = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      await signInWithGoogle();
+      await signInWithGoogle(callbackUrl);
     } catch {
       setError(t("errors.google"));
     } finally {
@@ -219,9 +231,7 @@ export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
     }
   };
 
-  /**
-   * 处理邮箱密码注册
-   */
+  /** 校验注册字段并提交邮箱注册，已建立会话时导航到安全回跳目标。 */
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -262,8 +272,8 @@ export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
             : isVerificationCodeError(result.error)
               ? t("errors.invalidVerificationCode")
               : isEmailAlreadyRegistered(result.error)
-            ? t("errors.emailAlreadyRegistered")
-            : t("errors.emailInUse")
+                ? t("errors.emailAlreadyRegistered")
+                : t("errors.emailInUse")
         );
         setIsLoading(false);
         return;
@@ -272,7 +282,7 @@ export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
       // 注册成功，显示验证邮件提示
       if (result.data?.token) {
         toast.success(tCommon("success"));
-        window.location.href = `/${locale}/dashboard`;
+        window.location.href = callbackUrl;
         return;
       }
 
@@ -320,7 +330,7 @@ export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
               : t("verifyEmail.resend")}
           </Button>
           <Link
-            href={`/${locale}/sign-in`}
+            href={`/${locale}/sign-in?callbackUrl=${encodeURIComponent(callbackUrl)}`}
             className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground transition-colors duration-150"
           >
             {t("verifyEmail.backToSignIn")}
@@ -505,7 +515,7 @@ export function SignUpForm({ googleAuthEnabled = false }: SignUpFormProps) {
       <p className="text-center text-sm text-muted-foreground">
         {t("haveAccount")}{" "}
         <Link
-          href={`/${locale}/sign-in`}
+          href={`/${locale}/sign-in?callbackUrl=${encodeURIComponent(callbackUrl)}`}
           className="font-medium text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 hover:decoration-foreground"
         >
           {t("signInLink")}

@@ -29,7 +29,6 @@ import {
   getSystemSettingValue,
   importSystemSettingsFromEnv,
   initializeMissingSystemSettingsDefaults,
-  setGlobalModelPricing,
   setSystemSettings,
 } from "../../system-settings/index";
 import { getPrincipalUserId } from "../principal";
@@ -195,14 +194,12 @@ export const settingsUpdate = defineOperation({
   },
 });
 
-const globalModelPricingInputSchema = z
+const globalModelPricingOutputSchema = z
   .object({
     image: globalImageCreditOverridesSchema,
     videoCreditsPerSecond: globalVideoModelCreditsPerSecondSchema,
   })
   .strict();
-
-const globalModelPricingOutputSchema = globalModelPricingInputSchema;
 
 /**
  * settings.getModelPricing - 读取全局模型计费配置。
@@ -239,36 +236,6 @@ export const settingsGetModelPricing = defineOperation({
         ? video.data
         : { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
     };
-  },
-});
-
-/**
- * settings.updateModelPricing - 更新全局模型计费配置。
- *
- * 输入 schema 强制每个内置模型填满全部价格；分组覆盖不在此操作写入，避免破坏“分组 >
- * 全局”的单一职责边界。
- */
-export const settingsUpdateModelPricing = defineOperation({
-  name: "settings.updateModelPricing",
-  domain: "system-settings",
-  title: "更新全局模型计费配置",
-  description:
-    "保存必填的图像模型四档固定价格与视频模型族每秒价格，并使运行时缓存立即失效。",
-  input: globalModelPricingInputSchema,
-  output: z.object({ success: z.boolean() }),
-  access: { kind: "superAdmin" },
-  agentExposure: "human-only",
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["cache", "audit"],
-  execute: async (input, principal) => {
-    await setGlobalModelPricing({
-      image: input.image,
-      videoCreditsPerSecond: input.videoCreditsPerSecond,
-      updatedBy: getPrincipalUserId(principal) ?? "system",
-    });
-    return { success: true };
   },
 });
 

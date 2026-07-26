@@ -2,7 +2,7 @@
  * 首页快速集成的纯数据与安全示例构建器。
  *
  * 使用方：首页服务端组件与 Vitest。关键依赖：公开 API 文档的最小共享契约；本模块
- * 不读取请求 Host、转发头或 API Key，只接受已配置的 origin 和 U1 公开模型 DTO。
+ * 不读取请求 Host、转发头或 API Key，只接受已配置的 origin 和模型广场公开图像投影。
  */
 import { getApiIntegrationHomepageContract } from "@/features/docs/api-integration-docs-data";
 import { isConcretePlatformImageModelId } from "@/features/external-api/platform-model-catalog";
@@ -169,7 +169,7 @@ function findFirstConcreteImageModel(
   for (const model of models) {
     if (typeof model.id !== "string") continue;
     const id = model.id.trim();
-    if (id.length <= 120 && isConcretePlatformImageModelId(id)) {
+    if (id.length <= 255 && isConcretePlatformImageModelId(id)) {
       return id;
     }
   }
@@ -179,7 +179,7 @@ function findFirstConcreteImageModel(
 /**
  * 构建首页首次图片 API 请求。
  *
- * @param input - 配置 origin、运行环境与已收窄的平台模型目录状态。
+ * @param input - 配置 origin、运行环境与模型广场公开图像目录状态。
  * @returns 可安全复制的 cURL，或不携带 cURL 的显式 unavailable 状态。
  * @sideEffects 无。
  * @failure 目录失败、无具体模型或 origin 不可信时返回对应原因，不插入未验证值。
@@ -277,7 +277,7 @@ export function getHomepageIntegrationContent(
       unavailableTitle: "示例暂不可用",
       unavailableMessages: {
         catalog_unavailable:
-          "当前无法读取平台模型目录。你仍可查看 API 文档或管理 API Key。",
+          "当前无法读取公开模型目录。你仍可查看 API 文档或管理 API Key。",
         no_image_model:
           "当前目录没有可用于示例的具体图像模型。请以 API Key 的 GET /v1/models 响应为准。",
         unsafe_origin:
@@ -317,7 +317,7 @@ export function getHomepageIntegrationContent(
     unavailableTitle: "Example temporarily unavailable",
     unavailableMessages: {
       catalog_unavailable:
-        "The platform model catalog is unavailable. You can still read the API Docs or manage API Keys.",
+        "The public model catalog is unavailable. You can still read the API Docs or manage API Keys.",
       no_image_model:
         "No concrete image model is available for this example. Use GET /v1/models with your API Key as the source of truth.",
       unsafe_origin:

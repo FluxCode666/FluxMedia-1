@@ -23,6 +23,18 @@
 | 号池 | `pool.saveMember`、`pool.deleteMember` | 管理员 | 管理 `api | adobe` 统一成员及显式模型能力 |
 | 系统设置 | `settings.getSnapshot`、`settings.update` | 管理员 | 读取或动态更新全局调度策略等配置 |
 
+## 模型配置与模型广场 operation
+
+| Operation | Principal | 幂等与副作用 | 传输与边界 |
+| --- | --- | --- | --- |
+| `settings.getModelConfiguration` | `observer_admin`、`admin`、`super_admin` 用户 | 只读、自然幂等、无副作用 | 管理端 Server Action；返回规范化配置清单，只有真实 `super_admin` 的 `canEdit` 为 `true` |
+| `settings.updateModelConfigurationEntry` | 仅真实 `super_admin` 用户 | `clientRequestId` 按用户必填幂等；破坏性；声明 `storage`、`cache`、`audit` 副作用 | `POST /api/admin/model-configuration` multipart 薄适配器；价格、展示配置、封面引用、回执与审计在底层单事务收敛 |
+| `modelMarketplace.listPublicModels` | 仅站内 `system` | 只读、自然幂等、无副作用 | `/models` 与首页 Server Component 进程内调用；不提供匿名 API，也不投影到 Admin/User MCP |
+
+三个 operation 均为 `human-only`。展示开关只控制 `/models` 与首页公开模型区，不参与
+`/v1/models`、创作目录、套餐能力、后端调度或实际计费。详细运行与存储边界见
+[model-marketplace-operations.md](../model-marketplace-operations.md)。
+
 ## 支撑域
 
 | 域 | 示例 operation | 关键不变量 |
@@ -44,6 +56,9 @@
 | `/v1` 与 `/api/v1` 视频路由 | 同一视频 operation 与 handler |
 | 号池管理页 Server Action | `pool.*` |
 | 系统设置页 Server Action | `settings.getSnapshot`、`settings.update` |
+| 模型配置管理读取 | `settings.getModelConfiguration` |
+| 模型配置 multipart 保存 | `settings.updateModelConfigurationEntry` |
+| `/models` 与首页公开模型区 | `modelMarketplace.listPublicModels` |
 
 任何新媒体入口都必须复用这些 operation，不得直接调用调度仓储、积分 service 或存储
 service 建立旁路。

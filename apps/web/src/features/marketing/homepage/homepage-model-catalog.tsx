@@ -1,10 +1,10 @@
 /**
  * 官网首页图像模型目录。
  *
- * 使用方：首页连续内容；把完整运行时目录投影为官网当前公开的图像模型，并以编辑式
- * 大卡片展示。视频、对话与 Firefly 前缀只在展示层隐藏，不修改系统运行时配置。
+ * 使用方：首页连续内容；把模型广场已公开的完整图像目录截取为首页视觉预览，并以
+ * 编辑式大卡片展示。展示截断不修改传给快速集成的完整目录。
  */
-import { isFireflyModel } from "@/features/image-generation/resolution";
+import { Link } from "@/i18n/routing";
 
 import type {
   HomepageModelCatalogState,
@@ -25,6 +25,7 @@ export type HomepageModelCatalogCopy = {
   countLabel: string;
   unavailable: string;
   supportedLabel: string;
+  viewAll: string;
   image: {
     label: string;
     description: string;
@@ -32,11 +33,14 @@ export type HomepageModelCatalogCopy = {
   };
 };
 
+/** 首页模型区的最大视觉卡片数，不影响快速集成的完整图像目录。 */
+export const HOMEPAGE_MODEL_PREVIEW_LIMIT = 6;
+
 /**
- * 将完整运行时目录投影为官网可见图像目录。
+ * 将模型广场完整图像目录截取为官网视觉预览。
  *
  * @param catalog - 已由首页数据层校验的完整运行时目录。
- * @returns 仅含非 Firefly 图像模型的目录；依赖失败状态原样保留。
+ * @returns 最多六个公开图像模型；依赖失败状态原样保留。
  * @sideEffects 无；不会修改传入数组或底层运行时配置。
  */
 export function getHomepageVisibleModelCatalog(
@@ -48,7 +52,27 @@ export function getHomepageVisibleModelCatalog(
     status: "ready",
     image: catalog.image
       .map((model) => ({ id: model.id.trim() }))
-      .filter((model) => model.id && !isFireflyModel(model.id)),
+      .filter((model) => model.id)
+      .slice(0, HOMEPAGE_MODEL_PREVIEW_LIMIT),
+  };
+}
+
+/**
+ * 为首页视觉预览和快速集成拆分同一公开目录的两个消费视图。
+ *
+ * @param catalog - 页面数据层交付的完整公开图像目录。
+ * @returns 预览使用截断副本，快速集成保留原完整状态和稳定顺序。
+ * @sideEffects 无；不会修改或排序输入目录。
+ */
+export function getHomepageModelCatalogConsumers(
+  catalog: HomepageModelCatalogState
+): {
+  preview: HomepageVisibleModelCatalogState;
+  integration: HomepageModelCatalogState;
+} {
+  return {
+    preview: getHomepageVisibleModelCatalog(catalog),
+    integration: catalog,
   };
 }
 
@@ -98,9 +122,17 @@ export function HomepageModelCatalog({
               {models === null ? "—" : `${models.length} ${copy.countLabel}`}
             </span>
           </div>
-          <p className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:block">
-            {copy.previewLabel}
-          </p>
+          <div className="flex items-center gap-4">
+            <p className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground sm:block">
+              {copy.previewLabel}
+            </p>
+            <Link
+              className="text-sm font-medium underline decoration-border underline-offset-4 transition-colors hover:decoration-foreground"
+              href="/models"
+            >
+              {copy.viewAll}
+            </Link>
+          </div>
         </div>
 
         <article

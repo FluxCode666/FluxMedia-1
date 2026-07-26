@@ -3,6 +3,7 @@
  *
  * 提供本地/S3 存储桶中图像的 HTTP 读取。
  * - avatars 桶：公开访问，无需鉴权。
+ * - 模型广场资产桶：仅严格内容寻址 WebP 允许匿名读取，禁止缩略图转换。
  * - generations 桶：需要有效的短时签名 URL（sig + exp 查询参数）。
  *   签名验证使用 HMAC-SHA256 + 常量时间比较，防止时序攻击。
  *   v1 API 消费者通过签名 URL 参数获取授权（无 cookie）。
@@ -22,10 +23,15 @@ import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
+import {
+  assertModelMarketplaceCoverReference,
+  parseModelMarketplaceAssetBucketName,
+} from "@/features/model-marketplace/asset-reference";
 
 type StorageBucketConfig = {
   avatars: string;
   generations: string;
+  modelMarketplaceAssets: string;
 };
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -45,6 +51,34 @@ const GENERATION_CACHE_CONTROL =
   "public, max-age=86400, s-maxage=2592000, stale-while-revalidate=604800, immutable";
 const PUBLIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const NO_STORE_CACHE_CONTROL = "no-store";
+const DEFAULT_AVATARS_BUCKET = "avatars";
+const DEFAULT_GENERATIONS_BUCKET = "generations";
+
+/** 三项运行时 bucket 缺失、为空或安全域重叠时使用的内部稳定错误。 */
+class StorageBucketConfigurationError extends Error {
+  /** 创建不包含原始设置值的配置错误。 */
+  constructor() {
+    super("Storage bucket configuration invalid");
+    this.name = "StorageBucketConfigurationError";
+  }
+}
+
+/**
+ * 解析允许使用历史默认值的头像或生成内容 bucket。
+ *
+ * @param value - 运行时设置值；undefined 代表历史环境尚无对应设置行。
+ * @param fallback - 仅设置缺失时使用的项目兼容默认值。
+ * @returns 去除首尾空白后的非空 bucket。
+ * @throws StorageBucketConfigurationError - 已存在设置为空白时 fail-closed。
+ */
+function parseProtectedBucketName(
+  value: string | undefined,
+  fallback: string
+): string {
+  const bucket = value === undefined ? fallback : value.trim();
+  if (!bucket) throw new StorageBucketConfigurationError();
+  return bucket;
+}
 
 /**
  * 读取当前允许访问的存储桶配置。
@@ -53,17 +87,33 @@ const NO_STORE_CACHE_CONTROL = "no-store";
  * `NEXT_PUBLIC_*` 环境变量，预构建镜像会把默认桶固化进白名单，导致图片已写入
  * 自定义 MinIO 桶、读取时却在触达 MinIO 前返回 `Bucket not allowed`。
  *
- * @returns 头像桶与生成图片桶；未配置时回退项目默认值。
- * @throws 系统设置存储不可用时透传异常，避免静默使用错误的安全白名单。
+ * @returns 头像、生成图片与模型广场资产三个互不相同的非空桶。
+ * @throws 设置读取失败、模型资产桶非法或任意两个安全域重叠时显式失败。
  */
 async function getStorageBucketConfig(): Promise<StorageBucketConfig> {
-  const avatars =
-    (await getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME")) ||
-    "avatars";
-  const generations =
-    (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-    "generations";
-  return { avatars, generations };
+  const [avatarsRaw, generationsRaw, modelMarketplaceAssetsRaw] =
+    await Promise.all([
+      getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
+      getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
+      getRuntimeSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
+    ]);
+  const avatars = parseProtectedBucketName(avatarsRaw, DEFAULT_AVATARS_BUCKET);
+  const generations = parseProtectedBucketName(
+    generationsRaw,
+    DEFAULT_GENERATIONS_BUCKET
+  );
+  let modelMarketplaceAssets: string;
+  try {
+    modelMarketplaceAssets = parseModelMarketplaceAssetBucketName(
+      modelMarketplaceAssetsRaw
+    );
+  } catch {
+    throw new StorageBucketConfigurationError();
+  }
+  if (new Set([avatars, generations, modelMarketplaceAssets]).size !== 3) {
+    throw new StorageBucketConfigurationError();
+  }
+  return { avatars, generations, modelMarketplaceAssets };
 }
 
 // ============================================
@@ -225,7 +275,7 @@ function isObjectNotFoundError(error: unknown): boolean {
 
 /**
  * 验证 generations 桶的签名 URL。
- * 公开桶跳过验证；非公开桶需要有效的 sig + exp 查询参数。
+ * avatars 与已严格校验 key 的模型资产桶跳过验证；非公开桶需要有效的 sig + exp。
  *
  * @returns null 表示验证通过，否则返回错误 Response
  */
@@ -258,10 +308,11 @@ async function verifyBucketAccess(
   request: NextRequest,
   bucket: string,
   fileKey: string,
-  avatarsBucket: string
+  avatarsBucket: string,
+  modelMarketplaceAssetsBucket: string
 ): Promise<NextResponse | null> {
   // 公开桶无需签名
-  if (bucket === avatarsBucket) {
+  if (bucket === avatarsBucket || bucket === modelMarketplaceAssetsBucket) {
     return null;
   }
 
@@ -318,7 +369,30 @@ export async function GET(
   { params }: { params: Promise<{ bucket: string; key: string[] }> }
 ) {
   const { bucket, key } = await params;
-  const bucketConfig = await getStorageBucketConfig();
+  let bucketConfig: StorageBucketConfig;
+  try {
+    bucketConfig = await getStorageBucketConfig();
+  } catch (error) {
+    logError(error, { source: "storage-bucket-config" });
+    return NextResponse.json(
+      { error: "Storage bucket configuration invalid" },
+      {
+        status: 503,
+        headers: { "Cache-Control": NO_STORE_CACHE_CONTROL },
+      }
+    );
+  }
+  const isModelMarketplaceAsset =
+    bucket === bucketConfig.modelMarketplaceAssets;
+  if (
+    isModelMarketplaceAsset &&
+    (request.nextUrl.searchParams.has("w") || /^w\d+$/.test(key[0] ?? ""))
+  ) {
+    return NextResponse.json(
+      { error: "Model marketplace thumbnails are not allowed" },
+      { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
+    );
+  }
   // 缩略图宽度可经"路径段"传入:/api/storage/<bucket>/w<width>/<key>。这是为绕过
   // 线上 Cloudflare 忽略 query 的边缘缓存键(见 signed-url.buildStorageThumbnailUrl
   // 的 WHY):用查询参数 ?w= 会命中被缓存的整张原图。宽度段不参与签名,这里在验签前
@@ -332,7 +406,11 @@ export async function GET(
   }
   const fileKey = keySegments.join("/");
 
-  if (bucket !== bucketConfig.avatars && bucket !== bucketConfig.generations) {
+  if (
+    bucket !== bucketConfig.avatars &&
+    bucket !== bucketConfig.generations &&
+    !isModelMarketplaceAsset
+  ) {
     return NextResponse.json({ error: "Bucket not allowed" }, { status: 403 });
   }
 
@@ -345,12 +423,35 @@ export async function GET(
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
+  if (isModelMarketplaceAsset) {
+    const category = keySegments[0];
+    if (category !== "image" && category !== "video") {
+      return NextResponse.json(
+        { error: "Invalid model marketplace asset key" },
+        { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
+      );
+    }
+    try {
+      assertModelMarketplaceCoverReference(
+        category,
+        { bucket, key: fileKey },
+        bucketConfig.modelMarketplaceAssets
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid model marketplace asset key" },
+        { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
+      );
+    }
+  }
+
   // 签名验证：generations 桶需要有效签名(或第一方会话归属),avatars 桶公开访问。
   const accessError = await verifyBucketAccess(
     request,
     bucket,
     fileKey,
-    bucketConfig.avatars
+    bucketConfig.avatars,
+    bucketConfig.modelMarketplaceAssets
   );
   if (accessError) {
     return accessError;
@@ -358,7 +459,9 @@ export async function GET(
 
   const ext = path.extname(fileKey).toLowerCase();
   const mappedContentType = CONTENT_TYPES[ext];
-  const contentType = mappedContentType || "application/octet-stream";
+  const contentType = isModelMarketplaceAsset
+    ? "image/webp"
+    : mappedContentType || "application/octet-stream";
   const cacheControl =
     bucket === bucketConfig.generations
       ? GENERATION_CACHE_CONTROL

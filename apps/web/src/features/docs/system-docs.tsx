@@ -2,7 +2,7 @@
  * 当前媒体系统文档。
  *
  * 使用方：公开文档页与管理员后端帮助页。职责是只描述现行图片、视频、统一号池、
- * 计费与恢复链路；内容必须与实际路由和运行时契约同步。
+ * 模型配置、计费与恢复链路；内容必须与实际路由和运行时契约同步。
  */
 
 import { Badge } from "@repo/ui/components/badge";
@@ -85,6 +85,19 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "取得 pollUrl 后只使用持久化的原成员和原 token。",
           "提交结果不确定时保留诊断状态，不自动重投或退款。",
           "对象存储键、扣费键和退款键稳定，重复 worker 只能收敛到一个终态。",
+        ],
+      },
+      {
+        id: "model-configuration",
+        title: "模型配置与模型广场",
+        description:
+          "管理员以列表查看模型配置并在编辑弹窗中保存单个模型；公开目录只展示运行时可达且已开启的模型。",
+        items: [
+          "模型配置统一管理图像四档价格、视频每秒价格、展示开关、简介与 3:2 封面。",
+          "图像模型必须配置完整四档价格；未配置时不能计费，也不会进入模型广场。",
+          "展示开关只影响 /models 与首页，不改变 /v1/models、创作目录、调度、权限或扣费。",
+          "自定义封面只接受静态 JPEG、PNG 或 WebP，并由服务端去除元数据后重编码。",
+          "公开目录只允许站内 system Principal 调用，不向 Admin 或 User MCP 暴露。",
         ],
       },
       {
@@ -183,6 +196,19 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "After pollUrl is stored, only the original member and token are used.",
           "An uncertain submission is retained for diagnosis without automatic retry or refund.",
           "Stable storage and ledger keys make repeated workers converge on one terminal state.",
+        ],
+      },
+      {
+        id: "model-configuration",
+        title: "Model configuration and marketplace",
+        description:
+          "Administrators review model configuration in a list and save one model per edit dialog. The public catalog only includes reachable models that are enabled for display.",
+        items: [
+          "Model configuration manages four image price tiers, per-second video pricing, visibility, descriptions, and 3:2 covers.",
+          "Image models require all four explicit price tiers. Unpriced models cannot be billed or published in the marketplace.",
+          "Visibility only affects /models and the homepage, not /v1/models, creation catalogs, scheduling, authorization, or billing.",
+          "Custom covers accept static JPEG, PNG, or WebP input and are re-encoded without metadata on the server.",
+          "The public catalog is available only to an in-process system Principal and is not exposed through Admin or User MCP.",
         ],
       },
       {

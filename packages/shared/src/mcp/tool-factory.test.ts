@@ -125,18 +125,16 @@ describe("MCP tool factories", () => {
     expect(buildUserMcpTools(apiKeyPrincipal)).toHaveLength(0);
   });
 
-  it("never projects the system-only platform catalog to Admin or User MCP", () => {
+  it("never projects the system-only public marketplace to Admin or User MCP", () => {
     registerOperation({
-      name: "externalApi.getPlatformModelCatalog",
+      name: "modelMarketplace.listPublicModels",
       domain: "external-api",
       access: { kind: "system" },
       agentExposure: "human-only",
       readOnly: true,
     });
-    bindExecute("externalApi.getPlatformModelCatalog", async () => ({
-      image: [],
-      video: [],
-      conversation: [],
+    bindExecute("modelMarketplace.listPublicModels", async () => ({
+      items: [],
     }));
 
     expect(buildAdminMcpTools(adminPrincipal)).toHaveLength(0);

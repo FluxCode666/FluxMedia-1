@@ -102,10 +102,42 @@ import {
   loadHomepagePageData,
 } from "./homepage-page-data";
 
+const PUBLIC_IMAGE_MODEL = {
+  category: "image" as const,
+  configKey: "gpt-image-2",
+  defaultModelId: "gpt-image-2",
+  displayName: "GPT Image 2",
+  iconKey: "openai" as const,
+  description: "Image generation",
+  coverUrl: "/model-marketplace/default-image.webp",
+  minimumCredits: 1.27,
+  priceUnit: "per_image" as const,
+  pricing: {
+    base1024Credits: 1.27,
+    base1kCredits: 1.5,
+    base2kCredits: 2.5,
+    base4kCredits: 5,
+  },
+};
+
+const PUBLIC_VIDEO_MODEL = {
+  category: "video" as const,
+  configKey: "veo31",
+  defaultModelId: "firefly-veo31-6s-16x9-1080p",
+  displayName: "Veo 3.1",
+  iconKey: "google" as const,
+  description: "Video generation",
+  coverUrl: "/model-marketplace/default-video.webp",
+  minimumCredits: 3,
+  priceUnit: "per_second" as const,
+  creditsPerSecond: 3,
+  supportedDurations: [4, 6, 8],
+  supportedAspectRatios: ["16:9", "9:16"],
+  supportedResolutions: ["720p", "1080p"],
+};
+
 const READY_CATALOG = {
-  image: [{ id: "image-alpha" }],
-  video: [{ id: "video-alpha" }],
-  conversation: [{ id: "chat-alpha" }],
+  items: [PUBLIC_IMAGE_MODEL, PUBLIC_VIDEO_MODEL],
 };
 
 const READY_SLA_STATS = {
@@ -149,7 +181,7 @@ describe("loadHomepagePageData", () => {
     runtimeMocks.ensureUolInitialized.mockResolvedValue(undefined);
     runtimeMocks.invokeOperation.mockImplementation(
       async (operationName: string) => {
-        if (operationName === "externalApi.getPlatformModelCatalog") {
+        if (operationName === "modelMarketplace.listPublicModels") {
           return READY_CATALOG;
         }
         if (operationName === "settings.getHomepageSlaVisibility") {
@@ -167,9 +199,9 @@ describe("loadHomepagePageData", () => {
 
     expect(runtimeMocks.ensureUolInitialized).toHaveBeenCalledTimes(3);
     expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
-      "externalApi.getPlatformModelCatalog",
+      "modelMarketplace.listPublicModels",
       {},
-      { type: "system", reason: "homepage-platform-model-catalog" },
+      { type: "system", reason: "homepage-model-marketplace" },
       { requestId: expect.any(String) }
     );
     expect(runtimeMocks.invokeOperation).toHaveBeenCalledWith(
@@ -191,7 +223,10 @@ describe("loadHomepagePageData", () => {
       runtimeMocks.invokeOperation.mock.invocationCallOrder[0] ?? 0
     );
     expect(runtimeMocks.getUserRoleById).not.toHaveBeenCalled();
-    expect(result.catalog).toEqual({ status: "ready", ...READY_CATALOG });
+    expect(result.catalog).toEqual({
+      status: "ready",
+      image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+    });
     expect(result.reliability).toEqual({
       visibility: "enabled",
       stats: { status: "ready", data: READY_SLA_STATS },
@@ -261,7 +296,7 @@ describe("loadHomepagePageData", () => {
 
     const result = await resultPromise;
     expect(loadRole).toHaveBeenCalledWith("user-1");
-    expect(result.ctaHref).toBe("/dashboard/create");
+    expect(result.ctaHref).toBe("/dashboard/generate");
     expect(result.canToggleSlaStatus).toBe(true);
   });
 
@@ -304,9 +339,7 @@ describe("loadHomepagePageData", () => {
     const empty = await loadHomepagePageData(
       createLoaders({
         loadCatalog: vi.fn().mockResolvedValue({
-          image: [],
-          video: [],
-          conversation: [],
+          items: [],
         }),
       })
     );
@@ -319,8 +352,6 @@ describe("loadHomepagePageData", () => {
     expect(empty.catalog).toEqual({
       status: "ready",
       image: [],
-      video: [],
-      conversation: [],
     });
     expect(failed.catalog).toEqual({ status: "unavailable" });
   });
@@ -350,7 +381,7 @@ describe("loadHomepagePageData", () => {
       session: { user: { id: "admin-1" } },
       roleResult: "admin",
       roleFailure: false,
-      href: "/dashboard/create",
+      href: "/dashboard/generate",
       canToggle: true,
     },
     {
@@ -358,7 +389,7 @@ describe("loadHomepagePageData", () => {
       session: { user: { id: "user-1" } },
       roleResult: "user",
       roleFailure: true,
-      href: "/dashboard/create",
+      href: "/dashboard/generate",
       canToggle: false,
     },
     {
@@ -405,18 +436,15 @@ describe("loadHomepagePageData", () => {
     expect(loadRole).not.toHaveBeenCalled();
   });
 
-  it("客户端可消费结果只保留公开模型、数字、CTA 与管理员布尔值", async () => {
+  it("畸形公开模型载荷失败关闭且客户端结果不包含内部字段", async () => {
     const catalogWithCanaries = {
-      ...READY_CATALOG,
-      image: [
+      items: [
         {
-          id: "image-alpha",
+          ...PUBLIC_IMAGE_MODEL,
           apiKey: "api-key-canary",
           baseUrl: "https://user:password@example.test",
         },
       ],
-      principal: { type: "system", reason: "principal-canary" },
-      internalRows: [{ id: "database-row-canary" }],
     };
     const result = await loadHomepagePageData(
       createLoaders({
@@ -434,10 +462,7 @@ describe("loadHomepagePageData", () => {
     const serialized = JSON.stringify(result);
 
     expect(result.catalog).toEqual({
-      status: "ready",
-      image: [{ id: "image-alpha" }],
-      video: [{ id: "video-alpha" }],
-      conversation: [{ id: "chat-alpha" }],
+      status: "unavailable",
     });
     expect(serialized).not.toMatch(
       /api-key-canary|password@example|principal-canary|database-row-canary|stack-canary|session-email-canary|session-token-canary/
@@ -481,19 +506,22 @@ function createRenderablePageData(
   overrides: Partial<HomepagePageData> = {}
 ): HomepagePageData {
   return {
-    catalog: { status: "ready", ...READY_CATALOG },
+    catalog: {
+      status: "ready",
+      image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+    },
     reliability: {
       visibility: "enabled",
       stats: { status: "ready", data: READY_SLA_STATS },
     },
-    ctaHref: "/dashboard/create",
+    ctaHref: "/dashboard/generate",
     canToggleSlaStatus: false,
     ...overrides,
   };
 }
 
 describe("HomepageContent 服务端完成态", () => {
-  it("首页只输出非 Firefly 图像目录，并用过滤后的首个模型生成集成示例", async () => {
+  it("首页预览模型广场图像目录且不再隐藏 Firefly", async () => {
     const element = await HomepageContent({
       locale: "zh",
       data: createRenderablePageData({
@@ -501,34 +529,38 @@ describe("HomepageContent 服务端完成态", () => {
           status: "ready",
           image: [
             { id: " firefly-image-4-ultra " },
-            { id: "FIREFLY-image-3" },
             { id: "gpt-image-2" },
             { id: "imagen-4" },
+            { id: "gpt-image-1.5" },
+            { id: "nano-banana-pro" },
+            { id: "nano-banana" },
+            { id: "preview-overflow-canary" },
           ],
-          video: [{ id: "video-model-canary" }],
-          conversation: [{ id: "conversation-model-canary" }],
         },
       }),
     });
     const html = renderToStaticMarkup(element);
 
     expect(html).toContain('data-model-category="image"');
-    expect(html).not.toContain('data-model-category="video"');
-    expect(html).not.toContain('data-model-category="conversation"');
+    expect(html).toContain('id="models"');
     expect(html).not.toMatch(/role="(?:tab|tablist|tabpanel)"/);
-    expect(html).not.toMatch(/firefly-/i);
+    expect(html).toContain("firefly-image-4-ultra");
     expect(html).toContain("gpt-image-2");
     expect(html).toContain("imagen-4");
-    expect(html).not.toContain("video-model-canary");
-    expect(html).not.toContain("conversation-model-canary");
+    expect(html).not.toContain("preview-overflow-canary");
+    expect(html).toContain('href="/models"');
+    expect(html).toContain("查看全部模型");
     expect(html).toContain("快速集成");
     expect(html).toContain("/v1/images/generations");
-    expect(html).toContain("&quot;model&quot;:&quot;gpt-image-2&quot;");
+    expect(html).toContain(
+      "&quot;model&quot;:&quot;firefly-image-4-ultra&quot;"
+    );
     expect(html).toContain("%2Fcinema%2Fwall%2Fw01.webp");
     expect(html).toContain("96.00%");
     expect(html).toContain("为什么有时看不到可靠性百分比？");
     expect(html).toContain("首页只展示统计服务可验证的结果");
-    expect(html.match(/href="\/dashboard\/create"/g)?.length).toBe(2);
+    expect(html.match(/href="\/dashboard\/generate"/g)?.length).toBe(2);
+    expect(html).not.toContain("浏览作品");
     expect(html).toContain("<footer");
     expect(html).toContain("© 2026 FluxMedia. 保留所有权利。");
     expect(html).not.toMatch(/Pricing|订阅|额外积分包|twitter|github|discord/i);
@@ -542,8 +574,6 @@ describe("HomepageContent 服务端完成态", () => {
         catalog: {
           status: "ready",
           image: [],
-          video: [],
-          conversation: [],
         },
         reliability: {
           visibility: "enabled",
@@ -555,34 +585,28 @@ describe("HomepageContent 服务端完成态", () => {
     const html = renderToStaticMarkup(element);
 
     expect(html).toContain("No public image model is currently available");
-    expect(html).not.toContain("No public video model is currently available");
-    expect(html).not.toContain(
-      "No public conversation model is currently available"
-    );
     expect(html).toContain("Reliability statistics are currently unavailable");
     expect(html).toContain(
       "East Asian ink artwork of pale bamboo shadows and open space"
     );
     expect(html.match(/href="\/sign-up"/g)?.length).toBe(2);
     expect(html).toContain("© 2026 FluxMedia. All rights reserved.");
-    expect(html).not.toMatch(/subscription|pricing|credit pack/i);
+    expect(html).not.toMatch(/subscription|credit pack/i);
   });
 
   it.each([
     {
-      name: "所有图像都被 Firefly 前缀过滤",
+      name: "公开图像目录为空",
       catalog: {
         status: "ready" as const,
-        image: [{ id: " firefly-image-4 " }, { id: "FIREFLY-image-3" }],
-        video: [{ id: "video-model-canary" }],
-        conversation: [{ id: "conversation-model-canary" }],
+        image: [],
       },
       unavailableMessage: "当前没有公开可展示的图像模型",
     },
     {
       name: "运行时目录不可用",
       catalog: { status: "unavailable" as const },
-      unavailableMessage: "当前无法读取运行时模型目录",
+      unavailableMessage: "当前无法读取公开模型目录",
     },
   ])("$name 时不生成 cURL 并保持诚实降级", async ({
     catalog,
@@ -597,9 +621,6 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).toContain(unavailableMessage);
     expect(html).toContain("示例暂不可用");
     expect(html).not.toContain("curl ");
-    expect(html).not.toMatch(
-      /firefly-|video-model-canary|conversation-model-canary/i
-    );
   });
 
   it("统计关闭时访客不见百分比，管理员仍得到服务端管理入口", async () => {

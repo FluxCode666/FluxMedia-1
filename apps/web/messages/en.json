@@ -8,7 +8,6 @@
       "promptLabel": "Prompt",
       "prompt": "Distant mountains unfolding through mist, drawn from language into ink.",
       "cta": "Start Creating",
-      "workLink": "Explore the Work",
       "mainAlt": "FluxMedia-generated artwork of a bold ink circle on open rice paper",
       "draftAlt": "A pale ink draft from the generation process of the same artwork",
       "depthAlt": "Close detail of ink fibers and dry-brush texture",
@@ -17,28 +16,19 @@
       "artworkFormat": "AI GENERATED"
     },
     "models": {
-      "previewLabel": "Current runtime models",
+      "previewLabel": "Marketplace selection",
       "eyebrow": "MODEL CATALOG",
-      "title": "Image models available now.",
-      "description": "This catalog comes from the running configuration and only shows public image models the platform can currently serve. For any account, the models callable by an API Key are always determined by its GET /v1/models response.",
+      "title": "Public image models available now.",
+      "description": "This preview shares the model marketplace's public display configuration and features a selection of image models. Models callable by an API Key are always determined by its GET /v1/models response.",
       "countLabel": "models",
-      "unavailable": "The runtime model catalog is currently unavailable. Please try again later.",
+      "unavailable": "The public model catalog is currently unavailable. Please try again later.",
       "supportedLabel": "Connected",
+      "viewAll": "View all models",
       "categories": {
         "image": {
           "label": "Image",
-          "description": "For text-to-image, conversational image creation, and supported image workflows.",
+          "description": "For text-to-image, image editing, and supported image workflows.",
           "empty": "No public image model is currently available to display."
-        },
-        "video": {
-          "label": "Video",
-          "description": "For video generation paths currently connected to the system.",
-          "empty": "No public video model is currently available to display."
-        },
-        "conversation": {
-          "label": "Conversation",
-          "description": "Current models for conversation and Responses capabilities.",
-          "empty": "No public conversation model is currently available to display."
         }
       }
     },
@@ -83,11 +73,11 @@
       "items": [
         {
           "question": "Which models does FluxMedia currently support?",
-          "answer": "The homepage catalog reads the current runtime image configuration. Configuration changes appear on following requests. Models callable by a specific account still come from GET /v1/models with that API Key."
+          "answer": "The model marketplace shows the image and video models currently listed for public display, while the homepage previews image models from the same catalog. Models callable by a specific account still come from GET /v1/models with that API Key."
         },
         {
-          "question": "Why does the homepage only show image models?",
-          "answer": "The public site currently focuses on image generation, so both the model catalog and quick integration example only use runtime image models available for public display."
+          "question": "Where can I see every public model?",
+          "answer": "Open the model marketplace to browse every publicly listed image and video model, detailed model information, and supported parameters."
         },
         {
           "question": "How do I integrate image generation through the API?",
@@ -111,12 +101,76 @@
       "brandDescription": "From language to work, making models reliable creative infrastructure.",
       "siteLabel": "Site",
       "legalLabel": "Legal",
+      "models": "Models",
       "docs": "Docs",
       "contact": "Contact",
       "terms": "Terms of Service",
       "privacy": "Privacy Policy",
       "cookie": "Cookie Policy",
       "copyright": "© 2026 FluxMedia. All rights reserved."
+    }
+  },
+  "ModelMarketplace": {
+    "eyebrow": "MODEL MARKETPLACE",
+    "title": "Choose the right model for what comes next.",
+    "description": "Explore the image and video models currently available, compare starting credit prices and complete pricing, then carry your choice directly into the creation workspace.",
+    "resultCount": "{count} results",
+    "categories": {
+      "image": "Image",
+      "video": "Video"
+    },
+    "filters": {
+      "title": "Filter models",
+      "description": "Narrow the public catalog by media type.",
+      "type": "Model type",
+      "all": "All models",
+      "searchLabel": "Search models",
+      "searchPlaceholder": "Search by name or model ID",
+      "open": "Filters",
+      "clear": "Clear filters"
+    },
+    "price": {
+      "startingAt": "Starting at",
+      "credits": "credits",
+      "perImage": "per image",
+      "perSecond": "per second"
+    },
+    "card": {
+      "noDescription": "No public description has been configured for this model."
+    },
+    "actions": {
+      "copy": "Copy model ID",
+      "copyModelId": "Copy model ID: {modelId}",
+      "copySuccess": "Model ID copied",
+      "copyFailure": "Copy failed. Please copy the model ID manually.",
+      "viewDetails": "View details",
+      "useModel": "Use this model"
+    },
+    "detail": {
+      "description": "Model overview",
+      "pricing": "Complete pricing and capabilities",
+      "videoRate": "Base video generation rate",
+      "supportedDurations": "Durations",
+      "supportedAspectRatios": "Aspect ratios",
+      "supportedResolutions": "Resolutions",
+      "imageTiers": {
+        "base1024": "1024 tier",
+        "base1k": "1K tier",
+        "base2k": "2K tier",
+        "base4k": "4K tier"
+      }
+    },
+    "filteredEmpty": {
+      "title": "No matching models",
+      "description": "Try another keyword or media type to explore the rest of the public catalog."
+    },
+    "empty": {
+      "title": "Models are being prepared",
+      "description": "There are no publicly listed models right now. Please check back soon."
+    },
+    "unavailable": {
+      "title": "The model marketplace is unavailable",
+      "description": "The public model catalog cannot be loaded right now. Please try again later."
     }
   },
   "Auth": {

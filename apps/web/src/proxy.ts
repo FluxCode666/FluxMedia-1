@@ -166,8 +166,11 @@ export async function proxy(request: NextRequest) {
   // 如果访问受保护路由但未登录，重定向到登录页
   if (isProtectedRoute && !sessionToken) {
     const signInUrl = new URL(`/${locale}/sign-in`, request.url);
-    // 保存原始 URL，登录后可以重定向回来
-    signInUrl.searchParams.set("callbackUrl", pathname);
+    // 查询参数包含模型广场的一次性预选意图，必须与路径一起进入服务端安全收窄边界。
+    signInUrl.searchParams.set(
+      "callbackUrl",
+      `${pathname}${request.nextUrl.search}`
+    );
     return setPrivateNoStore(NextResponse.redirect(signInUrl));
   }
 

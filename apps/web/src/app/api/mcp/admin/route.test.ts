@@ -81,7 +81,7 @@ describe("POST /api/mcp/admin human-only isolation", () => {
     expect(response.status).toBe(200);
     expect(names).toEqual(["support_listTickets"]);
     expect(names).not.toContain("moderation_setGlobalRiskLevel");
-    expect(names).not.toContain("externalApi_getPlatformModelCatalog");
+    expect(names).not.toContain("modelMarketplace_listPublicModels");
   });
 
   it("rejects direct calls to a human-only operation", async () => {

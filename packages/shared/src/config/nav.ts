@@ -106,7 +106,7 @@ export const productsNav: ProductNavGroup[] = [
  * 主导航链接 (Header)
  */
 export const mainNav: NavItem[] = [
-  { title: "Models", href: "/#models" },
+  { title: "Models", href: "/models" },
   { title: "Quick Integration", href: "/#integration" },
   { title: "Work", href: "/#work" },
   { title: "Start Creating", href: "/#create" },
@@ -138,8 +138,13 @@ export function getMarketingHeaderNavigation(
 export const footerNav = {
   /** 产品 (Product) */
   product: [
+    { title: "Models", href: "/models" },
     { title: "Docs", href: "/api-docs" },
-    { title: "Contact Us", href: "mailto:support@media.flux-code.cc" },
+    {
+      title: "Contact Us",
+      href: "mailto:support@media.flux-code.cc",
+      external: true,
+    },
   ] as NavItem[],
 
   /** 法律 (Legal) */

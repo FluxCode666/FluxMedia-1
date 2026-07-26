@@ -10,6 +10,7 @@ import {
   createDefaultGlobalImageCreditOverrides,
   DEFAULT_IMAGE_CREDIT_PRICING,
   globalImageCreditOverridesSchema,
+  imageCreditPricingSchema,
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
 import { dashboardSupportConfigSchema } from "../support/dashboard-config";
@@ -522,9 +523,32 @@ async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
   );
   const imageRaw = stored.get(imageKey);
   const videoRaw = stored.get(videoKey);
+  const legacyImagePricingByModel =
+    imageRaw && typeof imageRaw === "object" && "byModel" in imageRaw
+      ? imageRaw.byModel
+      : null;
+  const legacyDefaultPricingValue =
+    legacyImagePricingByModel && typeof legacyImagePricingByModel === "object"
+      ? Object.entries(legacyImagePricingByModel).find(
+          ([model]) => model.trim().toLowerCase() === "default"
+        )?.[1]
+      : undefined;
+  const legacyDefaultPricingResult =
+    legacyDefaultPricingValue !== undefined
+      ? imageCreditPricingSchema.safeParse(legacyDefaultPricingValue)
+      : null;
+  const legacyDefaultPricing = legacyDefaultPricingResult?.success
+    ? legacyDefaultPricingResult.data
+    : null;
+  const hasLegacyDefaultPricing = legacyImagePricingByModel
+    ? Object.keys(legacyImagePricingByModel).some(
+        (model) => model.trim().toLowerCase() === "default"
+      )
+    : false;
   const imageNeedsMigration =
     imageRaw !== undefined &&
-    !globalImageCreditOverridesSchema.safeParse(imageRaw).success;
+    (hasLegacyDefaultPricing ||
+      !globalImageCreditOverridesSchema.safeParse(imageRaw).success);
   const videoNeedsMigration =
     videoRaw !== undefined &&
     !globalVideoModelCreditsPerSecondSchema.safeParse(videoRaw).success;
@@ -537,22 +561,30 @@ async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
       : fallback;
   };
   const imageFallback = {
-    base1024Credits: readPositive(
-      "IMAGE_BASE_CREDITS_1024",
-      DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits
-    ),
-    base1kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_1K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits
-    ),
-    base2kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_2K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits
-    ),
-    base4kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_4K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits
-    ),
+    base1024Credits:
+      legacyDefaultPricing?.base1024Credits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_1024",
+        DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits
+      ),
+    base1kCredits:
+      legacyDefaultPricing?.base1kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_1K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits
+      ),
+    base2kCredits:
+      legacyDefaultPricing?.base2kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_2K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits
+      ),
+    base4kCredits:
+      legacyDefaultPricing?.base4kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_4K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits
+      ),
   };
   const image = createDefaultGlobalImageCreditOverrides();
   for (const model of Object.keys(image.byModel)) {
@@ -751,57 +783,6 @@ export async function setSystemSettings(
 
   await invalidateSystemSettingsCache();
   return changedKeys;
-}
-
-/**
- * 通过独立模型计费入口原子保存全局图像与视频价格。
- *
- * @param input.image - 覆盖全部内置图像模型与四个档位的完整价格矩阵。
- * @param input.videoCreditsPerSecond - 覆盖全部内置视频模型族的每秒价格。
- * @param input.updatedBy - 发起修改的超级管理员用户 ID。
- * @returns 无返回值；校验失败或数据库写入失败时抛出异常，两个价格键不会部分保存。
- */
-export async function setGlobalModelPricing(input: {
-  image: unknown;
-  videoCreditsPerSecond: unknown;
-  updatedBy: string;
-}): Promise<void> {
-  const image = globalImageCreditOverridesSchema.parse(input.image);
-  const videoCreditsPerSecond = globalVideoModelCreditsPerSecondSchema.parse(
-    input.videoCreditsPerSecond
-  );
-  const now = new Date();
-
-  await db.transaction(async (tx) => {
-    for (const entry of [
-      { key: "IMAGE_MODEL_CREDIT_PRICES", value: image },
-      {
-        key: "VIDEO_MODEL_CREDITS_PER_SECOND",
-        value: videoCreditsPerSecond,
-      },
-    ] as const) {
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: entry.key,
-          value: entry.value,
-          isSecret: false,
-          updatedBy: input.updatedBy,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: systemSetting.key,
-          set: {
-            value: entry.value,
-            isSecret: false,
-            updatedBy: input.updatedBy,
-            updatedAt: now,
-          },
-        });
-    }
-  });
-
-  await invalidateSystemSettingsCache();
 }
 
 export async function getAdminSystemSettingsSnapshot() {

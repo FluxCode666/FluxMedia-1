@@ -30,13 +30,30 @@ export const DEFAULT_IMAGE_CREDIT_PRICING: ResolvedImageCreditPricing = {
   base4kCredits: 10,
 };
 
-/** 未列入内置目录的 API 图像模型统一继承此全局必填价格。 */
-export const GLOBAL_DEFAULT_IMAGE_PRICING_MODEL = "default";
+/** 仅用于读取历史 JSON；该保留键不会进入规范结果或运行时价格匹配。 */
+const LEGACY_DEFAULT_IMAGE_PRICING_MODEL = "default";
 
-const REQUIRED_GLOBAL_IMAGE_PRICING_MODELS = [
-  GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
-  ...ADOBE_IMAGE_MODEL_IDS.map((model) => model.slice("firefly-".length)),
-];
+const REQUIRED_GLOBAL_IMAGE_PRICING_MODELS = ADOBE_IMAGE_MODEL_IDS.map(
+  (model) => model.slice("firefly-".length)
+);
+
+/** 缺少完整显式全局模型价格时抛出的稳定 fail-closed 错误。 */
+export class MissingGlobalImagePricingError extends Error {
+  /**
+   * 创建不携带价格配置内容的计费错误。
+   *
+   * @param model - 已规范化的请求模型；空请求保留为 null。
+   * @sideEffects 无。
+   */
+  constructor(readonly model: string | null) {
+    super(
+      model
+        ? `Missing complete global image pricing for model: ${model}`
+        : "Missing complete global image pricing for the requested model"
+    );
+    this.name = "MissingGlobalImagePricingError";
+  }
+}
 
 export const DEFAULT_IMAGE_MODERATION_CREDIT_PRICING = {
   textModerationCredits: 0.04,
@@ -122,6 +139,12 @@ export const globalImageCreditOverridesSchema = imageCreditOverridesSchema
       }
     }
     for (const [model, pricing] of Object.entries(value.byModel)) {
+      if (
+        normalizeImagePricingModelId(model) ===
+        LEGACY_DEFAULT_IMAGE_PRICING_MODEL
+      ) {
+        continue;
+      }
       for (const field of IMAGE_CREDIT_PRICE_FIELDS) {
         if (typeof pricing[field] === "number") continue;
         ctx.addIssue({
@@ -174,7 +197,12 @@ export function parseImageCreditOverrides(
   const byModel: ImageModelCreditPricingMap = {};
   for (const [model, pricing] of Object.entries(parsed.data.byModel)) {
     const normalizedModel = normalizeImagePricingModelId(model);
-    if (normalizedModel) byModel[normalizedModel] = pricing;
+    if (
+      normalizedModel &&
+      normalizedModel !== LEGACY_DEFAULT_IMAGE_PRICING_MODEL
+    ) {
+      byModel[normalizedModel] = pricing;
+    }
   }
   return { version: 1, byModel };
 }
@@ -214,15 +242,21 @@ export function getImageModelCreditPricing(
   pricingByModel: ImageModelCreditPricingMap
 ): ImageCreditPricing {
   const normalizedModel = normalizeImagePricingModelId(model);
-  if (!normalizedModel) return {};
+  if (
+    !normalizedModel ||
+    normalizedModel === LEGACY_DEFAULT_IMAGE_PRICING_MODEL
+  ) {
+    return {};
+  }
 
   const matchingEntry = Object.entries(pricingByModel)
     .map(([key, pricing]) => ({
       key: normalizeImagePricingModelId(key),
       pricing,
     }))
-    .filter((entry): entry is { key: string; pricing: ImageCreditPricing } =>
-      Boolean(entry.key)
+    .filter(
+      (entry): entry is { key: string; pricing: ImageCreditPricing } =>
+        Boolean(entry.key) && entry.key !== LEGACY_DEFAULT_IMAGE_PRICING_MODEL
     )
     .sort((left, right) => right.key.length - left.key.length)
     .find(
@@ -233,19 +267,33 @@ export function getImageModelCreditPricing(
 }
 
 /**
+ * 判断模型价格是否包含四个可安全计费的正有限档位。
+ *
+ * @param pricing - 最长前缀匹配得到的稀疏模型价格。
+ * @returns 四档均为正有限数时收窄为完整价格。
+ * @sideEffects 无。
+ */
+function isResolvedImageCreditPricing(
+  pricing: ImageCreditPricing
+): pricing is ResolvedImageCreditPricing {
+  return IMAGE_CREDIT_PRICE_FIELDS.every((field) => {
+    const value = pricing[field];
+    return typeof value === "number" && Number.isFinite(value) && value > 0;
+  });
+}
+
+/**
  * 合并全局模型价格和分组模型覆盖。
  *
  * @param input.model - 实际生图模型。
  * @param input.global - 全局模型价格配置。
  * @param input.group - 用户所选分组的稀疏覆盖配置。
- * @returns 完整四档价格，优先级为分组、全局模型。仅历史脏数据才回落代码默认值。
+ * @returns 完整四档价格，优先级为具体模型的分组覆盖、显式全局价格。
+ * @throws MissingGlobalImagePricingError - 请求模型缺失或没有完整显式全局价格时失败；分组
+ * 覆盖不能替代全局价格真相。
  */
 export function resolveImageCreditPricing(input: {
   model: string | null | undefined;
-  /**
-   * 仅用于兼容尚未完成迁移的旧调用方；运行时不会读取该值，不能形成第三层价格。
-   */
-  fallback?: ResolvedImageCreditPricing;
   global: ImageCreditOverrides;
   group?: ImageCreditOverrides | null;
 }): ResolvedImageCreditPricing {
@@ -253,32 +301,19 @@ export function resolveImageCreditPricing(input: {
     input.model,
     input.global.byModel
   );
-  const globalDefaultPricing =
-    input.global.byModel[GLOBAL_DEFAULT_IMAGE_PRICING_MODEL] ?? {};
+  const normalizedModel = normalizeImagePricingModelId(input.model);
+  if (!isResolvedImageCreditPricing(globalPricing)) {
+    throw new MissingGlobalImagePricingError(normalizedModel);
+  }
   const groupPricing = getImageModelCreditPricing(
     input.model,
     input.group?.byModel ?? {}
   );
   return {
     base1024Credits:
-      groupPricing.base1024Credits ??
-      globalPricing.base1024Credits ??
-      globalDefaultPricing.base1024Credits ??
-      DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits,
-    base1kCredits:
-      groupPricing.base1kCredits ??
-      globalPricing.base1kCredits ??
-      globalDefaultPricing.base1kCredits ??
-      DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits,
-    base2kCredits:
-      groupPricing.base2kCredits ??
-      globalPricing.base2kCredits ??
-      globalDefaultPricing.base2kCredits ??
-      DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits,
-    base4kCredits:
-      groupPricing.base4kCredits ??
-      globalPricing.base4kCredits ??
-      globalDefaultPricing.base4kCredits ??
-      DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits,
+      groupPricing.base1024Credits ?? globalPricing.base1024Credits,
+    base1kCredits: groupPricing.base1kCredits ?? globalPricing.base1kCredits,
+    base2kCredits: groupPricing.base2kCredits ?? globalPricing.base2kCredits,
+    base4kCredits: groupPricing.base4kCredits ?? globalPricing.base4kCredits,
   };
 }

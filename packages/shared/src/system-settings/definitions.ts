@@ -1,5 +1,6 @@
 import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "../adobe/video-pricing";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
+import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 
 export type SettingCategory =
@@ -125,6 +126,7 @@ export type SettingKey =
   | "STORAGE_ENDPOINT"
   | "STORAGE_REGION"
   | "STORAGE_BUCKET_NAME"
+  | "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
   | "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
   | "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
   | "GENERATION_IMAGE_RETENTION_HOURS"
@@ -148,6 +150,7 @@ export type SettingKey =
   | "IMAGE_BASE_CREDITS_2K"
   | "IMAGE_BASE_CREDITS_4K"
   | "IMAGE_MODEL_CREDIT_PRICES"
+  | "MODEL_MARKETPLACE_CONFIG"
   | "IMAGE_TEXT_MODERATION_CREDITS"
   | "IMAGE_INPUT_MODERATION_CREDITS"
   | "IMAGE_SUPER_RESOLUTION_ENABLED"
@@ -1061,6 +1064,15 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     valueType: "string",
   },
   {
+    key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+    label: "模型广场资产 Bucket",
+    description:
+      "模型广场自定义封面的专用 bucket，必须与头像和生成内容 bucket 隔离。",
+    category: "storage",
+    valueType: "string",
+    defaultValue: "model-marketplace",
+  },
+  {
     key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME",
     label: "头像 Bucket",
     description: "头像文件 bucket。",
@@ -1305,10 +1317,20 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "IMAGE_MODEL_CREDIT_PRICES",
     label: "图像模型固定价格",
     description:
-      "按模型配置必填的 1024、1K、2K、4K 固定基础积分。分组可以逐档覆盖；未覆盖时始终使用本全局模型价格。请在独立的“模型计费”页签编辑。",
+      "按模型配置必填的 1024、1K、2K、4K 固定基础积分。分组可以逐档覆盖；未覆盖时始终使用本全局模型价格。请在独立的“模型配置”页签编辑。",
     category: "credits",
     valueType: "json",
     defaultValue: createDefaultGlobalImageCreditOverrides(),
+    managedByDedicatedOperation: true,
+  },
+  {
+    key: "MODEL_MARKETPLACE_CONFIG",
+    label: "模型广场配置",
+    description:
+      "保存模型广场展示开关、简介、封面引用和并发修订号；只能通过独立的模型配置入口修改。",
+    category: "models",
+    valueType: "json",
+    defaultValue: createDefaultModelMarketplaceConfig(),
     managedByDedicatedOperation: true,
   },
   {
@@ -1349,7 +1371,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "VIDEO_MODEL_CREDITS_PER_SECOND",
     label: "视频模型族每秒积分",
     description:
-      "按视频模型族设置必填的每秒积分。分组可为模型族设置覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型计费”页签编辑。",
+      "按视频模型族设置必填的每秒积分。分组可为模型族设置覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型配置”页签编辑。",
     category: "credits",
     valueType: "json",
     defaultValue: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },

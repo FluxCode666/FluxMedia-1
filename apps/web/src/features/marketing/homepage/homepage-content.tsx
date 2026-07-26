@@ -5,7 +5,7 @@
  * 文档流组合各区块。全部核心内容默认可见，不依赖固定画布、长滚动或客户端脚本。
  */
 import { Button } from "@repo/ui/components/button";
-import { ArrowDown, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import Image from "next/image";
 import { getTranslations } from "next-intl/server";
 
@@ -20,7 +20,7 @@ import {
 import { HomepageFooter } from "./homepage-footer";
 import { HomepageIntegration } from "./homepage-integration";
 import {
-  getHomepageVisibleModelCatalog,
+  getHomepageModelCatalogConsumers,
   HomepageModelCatalog,
 } from "./homepage-model-catalog";
 import { HomepageMotion } from "./homepage-motion";
@@ -44,7 +44,7 @@ export async function HomepageContent({
 }) {
   const t = await getTranslations({ locale, namespace: "Homepage" });
   const visibleFaqItems = faqItems ?? parseHomepageFaqItems(t.raw("faq.items"));
-  const visibleCatalog = getHomepageVisibleModelCatalog(data.catalog);
+  const modelCatalogs = getHomepageModelCatalogConsumers(data.catalog);
 
   return (
     <HomepageMotion>
@@ -90,17 +90,6 @@ export async function HomepageContent({
                   <Link href={data.ctaHref}>
                     {t("hero.cta")}
                     <ArrowUpRight className="size-4" />
-                  </Link>
-                </Button>
-                <Button
-                  asChild
-                  className="rounded-full px-6"
-                  size="lg"
-                  variant="outline"
-                >
-                  <Link href="/#work">
-                    {t("hero.workLink")}
-                    <ArrowDown className="size-4" />
                   </Link>
                 </Button>
               </div>
@@ -150,7 +139,7 @@ export async function HomepageContent({
 
       <div data-homepage-motion="model">
         <HomepageModelCatalog
-          catalog={visibleCatalog}
+          catalog={modelCatalogs.preview}
           copy={{
             eyebrow: t("models.eyebrow"),
             title: t("models.title"),
@@ -159,6 +148,7 @@ export async function HomepageContent({
             countLabel: t("models.countLabel"),
             unavailable: t("models.unavailable"),
             supportedLabel: t("models.supportedLabel"),
+            viewAll: t("models.viewAll"),
             image: {
               label: t("models.categories.image.label"),
               description: t("models.categories.image.description"),
@@ -169,7 +159,10 @@ export async function HomepageContent({
       </div>
 
       <div data-homepage-motion="reveal">
-        <HomepageIntegration catalog={visibleCatalog} locale={locale} />
+        <HomepageIntegration
+          catalog={modelCatalogs.integration}
+          locale={locale}
+        />
       </div>
 
       <section
@@ -252,6 +245,7 @@ export async function HomepageContent({
           brandDescription: t("footer.brandDescription"),
           siteLabel: t("footer.siteLabel"),
           legalLabel: t("footer.legalLabel"),
+          models: t("footer.models"),
           docs: t("footer.docs"),
           contact: t("footer.contact"),
           terms: t("footer.terms"),

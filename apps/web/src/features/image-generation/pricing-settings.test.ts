@@ -4,7 +4,10 @@
  * 验证系统设置键不会在并行读取和结构化返回时串到错误的价格档位。
  */
 
-import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
+import {
+  createDefaultGlobalImageCreditOverrides,
+  MissingGlobalImagePricingError,
+} from "@repo/shared/image-backend/group-image-pricing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -24,10 +27,7 @@ vi.mock("@repo/shared/system-settings", () => ({
   getRuntimeSettingNumber: mocks.getRuntimeSettingNumber,
 }));
 
-import {
-  getRuntimeImageBaseCreditPricing,
-  getRuntimeImageCreditPricing,
-} from "./pricing-settings";
+import { getRuntimeImageCreditPricing } from "./pricing-settings";
 
 describe("runtime image model credit pricing", () => {
   beforeEach(() => {
@@ -81,19 +81,15 @@ describe("runtime image model credit pricing", () => {
     );
   });
 
-  it("旧 base pricing 读取入口返回全局默认模型价格", async () => {
+  it("未显式配置价格的运行时模型拒绝计费", async () => {
     const globalPricing = createDefaultGlobalImageCreditOverrides();
-    globalPricing.byModel.default = {
-      base1024Credits: 2,
-      base1kCredits: 3,
-      base2kCredits: 6,
-      base4kCredits: 11,
-    };
     mocks.getRuntimeSettingJson.mockResolvedValue(globalPricing);
-
-    await expect(getRuntimeImageBaseCreditPricing()).resolves.toEqual(
-      globalPricing.byModel.default
+    mocks.getRuntimeSettingNumber.mockImplementation(
+      async (_key, fallback) => fallback
     );
-    expect(mocks.getRuntimeSettingNumber).not.toHaveBeenCalled();
+
+    await expect(
+      getRuntimeImageCreditPricing("vendor-custom-image")
+    ).rejects.toBeInstanceOf(MissingGlobalImagePricingError);
   });
 });
