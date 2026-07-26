@@ -82,7 +82,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function getModel(config: ApiConfig, model?: string) {
+function getModel(config: ApiConfig, model: string) {
   if (config.backend?.type === "pool-api") {
     return getImageBackendApiModel(model, config.model);
   }
@@ -631,7 +631,7 @@ function appendImageParams(
   config: ApiConfig,
   params: {
     prompt: string;
-    model?: string;
+    model: string;
     n?: number;
     size?: string;
     quality?: ImageQuality;

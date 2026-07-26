@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
+  getPlanLimits: vi.fn(),
   getUserRoleById: vi.fn(),
   getPlanUploadLimits: vi.fn(),
   getUserPlan: vi.fn(),
@@ -27,7 +28,7 @@ vi.mock("@repo/shared/auth/role-server", () => ({
 }));
 vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
   canUsePlanCapability: vi.fn(),
-  getPlanLimits: vi.fn(),
+  getPlanLimits: mocks.getPlanLimits,
 }));
 vi.mock("@repo/shared/subscription/services/upload-limits", () => ({
   getPlanUploadLimits: mocks.getPlanUploadLimits,
@@ -62,13 +63,34 @@ function createRequest(origin: string): NextRequest {
   }) as NextRequest;
 }
 
+/** 构造同源 multipart 图生图请求；model 由调用方决定是否写入。 */
+function createFormRequest(formData: FormData): NextRequest {
+  return new Request("https://app.example.test/api/images/edit", {
+    method: "POST",
+    headers: { origin: "https://app.example.test" },
+    body: formData,
+  }) as NextRequest;
+}
+
 describe("POST /api/images/edit", () => {
   beforeEach(() => {
     mocks.getSession.mockReset();
+    mocks.getPlanLimits.mockReset();
+    mocks.getUserRoleById.mockReset();
     mocks.getPlanUploadLimits.mockReset();
     mocks.getUserPlan.mockReset();
     mocks.invokeImageGenerationOperation.mockReset();
     mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.getUserPlan.mockResolvedValue({ plan: "free" });
+    mocks.getUserRoleById.mockResolvedValue("user");
+    mocks.getPlanLimits.mockResolvedValue({
+      maxBatchCount: 1,
+      maxEditImages: 1,
+    });
+    mocks.getPlanUploadLimits.mockResolvedValue({
+      maxFileSizeBytes: 10 * 1024 * 1024,
+      maxUploadBytes: 20 * 1024 * 1024,
+    });
     vi.stubEnv("BETTER_AUTH_URL", "https://app.example.test");
   });
 
@@ -83,6 +105,17 @@ describe("POST /api/images/edit", () => {
     expect(await response.json()).toEqual({ error: "Forbidden" });
     expect(mocks.getPlanUploadLimits).not.toHaveBeenCalled();
     expect(mocks.getUserPlan).not.toHaveBeenCalled();
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it("同源请求缺少 model 时返回 400", async () => {
+    const formData = new FormData();
+    formData.set("prompt", "test prompt");
+
+    const response = await POST(createFormRequest(formData));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "model is required" });
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 });

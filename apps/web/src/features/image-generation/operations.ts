@@ -14,8 +14,8 @@ import {
   IMAGE_GENERATION_PENDING_TIMEOUT_MS,
   refundGenerationCredits,
 } from "@repo/shared/generation-maintenance";
-import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
+import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import { logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { getStorageProvider } from "@repo/shared/storage/providers";
@@ -377,10 +377,10 @@ function hasImageOutput(result: GenerateImageResult) {
   );
 }
 
-/** 将空值与公开 `default` 别名收敛到平台默认图片模型能力键。 */
-function resolveRequestedImageModel(model: string | null | undefined): string {
-  const requestedModel = model?.trim();
-  if (!requestedModel || requestedModel.toLowerCase() === "default") {
+/** 将显式传入的公开 `default` 别名收敛到平台默认图片模型能力键。 */
+function resolveRequestedImageModel(model: string): string {
+  const requestedModel = model.trim();
+  if (requestedModel.toLowerCase() === "default") {
     return DEFAULT_IMAGE_MODEL;
   }
   return requestedModel;

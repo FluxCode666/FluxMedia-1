@@ -54,6 +54,7 @@ describe("invokeImageGenerationOperation", () => {
       {
         operation: "generate",
         prompt: "海边日落",
+        model: "gpt-image-2",
         generationId: "generation-1",
       },
       principal,

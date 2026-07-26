@@ -8,6 +8,7 @@ import {
   collectGenerationImageStorageReferences,
   type GenerationImageStorageReference,
 } from "@repo/shared/generation-maintenance";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import { protectedAction } from "@repo/shared/safe-action";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
@@ -31,7 +32,7 @@ const generateImageSchema = z.object({
     .refine((value) => !value || validateImageSize(value).valid, {
       message: "Invalid image size",
     }),
-  model: z.string().optional(),
+  model: imageModelIdSchema,
 });
 
 function referenceKey(ref: GenerationImageStorageReference) {

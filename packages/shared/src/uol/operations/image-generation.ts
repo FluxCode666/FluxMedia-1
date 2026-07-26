@@ -25,6 +25,7 @@ import {
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
+import { imageModelIdSchema } from "../../image-generation/model-contract";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
@@ -33,7 +34,7 @@ const imageGenerateCommonFields = {
   negativePrompt: z.string().max(100_000).optional(),
   apiPrompt: z.string().trim().min(1).max(8_000).optional(),
   promptOptimization: z.boolean().optional(),
-  model: z.string().trim().min(1).max(120).optional(),
+  model: imageModelIdSchema,
   size: z.string().trim().min(1).max(40).optional(),
   quality: z.string().trim().min(1).max(40).optional(),
   style: z.string().trim().min(1).max(80).optional(),
@@ -213,7 +214,7 @@ defineOperation({
     "底层委托统一管线 runImageGenerationForUser。",
   input: z.object({
     prompt: z.string().min(1),
-    model: z.string().optional(),
+    model: imageModelIdSchema,
     size: z.string().optional(),
     quality: z.string().optional(),
     style: z.string().optional(),

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -302,7 +303,13 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     );
   }
 
-  const model = getText(formData, "model") || undefined;
+  const parsedModel = imageModelIdSchema.safeParse(getText(formData, "model"));
+  if (!parsedModel.success) {
+    return errorResponse(
+      parsedModel.error.issues[0]?.message || "Invalid model."
+    );
+  }
+  const model = parsedModel.data;
   const thinkingValue = getText(formData, "thinking") || undefined;
   if (thinkingValue && !VALID_THINKING.has(thinkingValue as ThinkingLevel)) {
     return errorResponse("Invalid thinking level.");

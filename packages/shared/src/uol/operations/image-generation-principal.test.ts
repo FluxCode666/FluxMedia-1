@@ -11,11 +11,12 @@ import { getOperation } from "../registry";
 import { imageGenerate, imageGenerateInputSchema } from "./image-generation";
 
 describe("image.generate principal-bound contract", () => {
-  it("要求与幂等声明一致的 generationId 且不接收客户端身份", () => {
+  it("要求 model、generationId 且不接收客户端身份", () => {
     expect(
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "a test image",
+        model: "gpt-image-2",
         generationId: "generation-1",
         backendGroupId: "group-a",
       }).success
@@ -24,6 +25,14 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "a test image",
+        model: "gpt-image-2",
+      }).success
+    ).toBe(false);
+    expect(
+      imageGenerateInputSchema.safeParse({
+        operation: "generate",
+        prompt: "a test image",
+        generationId: "generation-1",
       }).success
     ).toBe(false);
   });
@@ -40,6 +49,7 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "a test image",
+        model: "gpt-image-2",
         generationId: "generation-1",
         [field]: field === "userId" ? "another-user" : "low",
       }).success
@@ -60,6 +70,7 @@ describe("image.generate principal-bound contract", () => {
     const input = {
       operation: "generate" as const,
       prompt: "a test image",
+      model: "gpt-image-2",
       generationId: "generation-1",
     };
     const externalPrincipal = {
@@ -96,6 +107,7 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "new image",
+        model: "gpt-image-2",
         generationId: "generation-1",
       }).success
     ).toBe(true);
@@ -103,6 +115,7 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "edit",
         prompt: "edit image",
+        model: "gpt-image-2",
         generationId: "generation-2",
         images: [image],
       }).success
@@ -111,6 +124,7 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "mask",
         prompt: "mask edit",
+        model: "gpt-image-2",
         generationId: "generation-3",
         images: [image],
         mask: image,

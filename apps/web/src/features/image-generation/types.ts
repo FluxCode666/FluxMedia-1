@@ -3,13 +3,13 @@ import type { RequestParameterMapping } from "@repo/shared/image-backend/request
 
 export interface GenerateImageParams {
   prompt: string;
+  model: string;
   apiPrompt?: string;
   promptOptimization?: boolean;
   signal?: AbortSignal;
   size?: string;
   width?: number;
   height?: number;
-  model?: string;
   gptModel?: string;
   thinking?: ThinkingLevel;
   n?: number;
@@ -96,13 +96,13 @@ export type ThinkingLevel =
 
 export interface EditImageParams {
   prompt: string;
+  model: string;
   apiPrompt?: string;
   promptOptimization?: boolean;
   signal?: AbortSignal;
   images: ImageInputFile[];
   mask?: ImageInputFile;
   size?: string;
-  model?: string;
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;

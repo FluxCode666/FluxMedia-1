@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { withApiLogging } from "@repo/shared/api-logger";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -667,7 +668,15 @@ export const postExternalImageEdits = withApiLogging(
       getText(formData, "response_format") === "url" ? "url" : "b64_json";
     // 不在传输层硬编码模型前缀：最终选中 pool-api 时可透传任意管理员配置的
     // 上游模型，其他后端仍由统一图像管线执行既有白名单校验。
-    const model = getText(formData, "model") || undefined;
+    const parsedModel = imageModelIdSchema.safeParse(
+      getText(formData, "model")
+    );
+    if (!parsedModel.success) {
+      return openAIImageError(
+        parsedModel.error.issues[0]?.message || "Invalid model."
+      );
+    }
+    const model = parsedModel.data;
     const thinkingValue = getText(formData, "thinking") || undefined;
     if (thinkingValue && !VALID_THINKING.has(thinkingValue as ThinkingLevel)) {
       return openAIImageError("Invalid thinking level.");

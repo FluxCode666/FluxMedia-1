@@ -122,6 +122,7 @@ describe("executeImageGenerateBinding", () => {
       {
         operation: "edit",
         prompt: "改成夜景",
+        model: "gpt-image-2",
         generationId: "generation-2",
         images: [dataReference],
       },
@@ -154,6 +155,7 @@ describe("executeImageGenerateBinding", () => {
       {
         operation: "generate",
         prompt: "一只猫",
+        model: "gpt-image-2",
         generationId: "generation-3",
       },
       mcpPrincipal,
@@ -178,6 +180,7 @@ describe("executeImageGenerateBinding", () => {
       {
         operation: "mask",
         prompt: "只替换蒙版区域",
+        model: "gpt-image-2",
         generationId: "generation-4",
         images: [dataReference],
         mask: maskReference,

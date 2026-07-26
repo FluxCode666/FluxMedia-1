@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -50,7 +51,7 @@ const generateImageSchema = z
       .refine((value) => !value || validateImageSize(value).valid, {
         message: "Invalid image size",
       }),
-    model: z.string().optional(),
+    model: imageModelIdSchema,
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     backend_group_id: z.string().trim().min(1).max(128).optional(),
     thinking: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),

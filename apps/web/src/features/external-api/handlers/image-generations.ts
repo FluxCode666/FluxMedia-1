@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -55,7 +56,7 @@ const externalImageGenerationSchema = z
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
     promptOptimization: z.boolean().optional(),
     prompt_optimization: z.boolean().optional(),
-    model: z.string().optional(),
+    model: imageModelIdSchema,
     thinking: z
       .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
       .optional(),
@@ -189,10 +190,9 @@ export const postExternalImageGenerations = withApiLogging(
       );
     }
 
-    // 图像模型的最终校验依赖实际选中的后端：pool-api 允许管理员配置的任意
-    // 上游模型（如 nano-banana-*、grok-*），OAuth/平台后端仍会在管线内保持白名单。
-    // 此处保留 undefined，才能让 API 后端配置的默认模型生效。
-    const imageModel = parsed.data.model?.trim() || undefined;
+    // 图像模型的最终能力校验依赖实际选中的后端：pool-api 允许管理员配置的任意
+    // 上游模型（如 nano-banana-*、grok-*），OAuth/平台后端仍在管线内保持白名单。
+    const imageModel = parsed.data.model;
 
     const plan = await getUserPlan(auth.userId);
     const limits = await getPlanLimits(plan.plan);

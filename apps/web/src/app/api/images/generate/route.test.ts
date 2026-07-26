@@ -41,15 +41,18 @@ vi.mock("@/features/image-generation/uol-client", () => ({
 
 import { POST } from "./route";
 
-/** 构造带可选 Origin 的页面生图 JSON 请求。 */
-function createRequest(origin: string): NextRequest {
+/** 构造页面生图 JSON 请求；可覆盖请求体以验证参数边界。 */
+function createRequest(
+  origin: string,
+  body: Record<string, unknown> = { prompt: "test prompt" }
+): NextRequest {
   return new Request("https://app.example.test/api/images/generate", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       origin,
     },
-    body: JSON.stringify({ prompt: "test prompt" }),
+    body: JSON.stringify(body),
   }) as NextRequest;
 }
 
@@ -71,6 +74,15 @@ describe("POST /api/images/generate", () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.getUserPlan).not.toHaveBeenCalled();
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it("同源请求缺少 model 时返回 400", async () => {
+    const response = await POST(createRequest("https://app.example.test"));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "model is required" });
     expect(mocks.getUserPlan).not.toHaveBeenCalled();
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
