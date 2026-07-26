@@ -32,8 +32,8 @@
 - 管理端“模型配置”以单条目保存价格、展示开关、简介和封面；公开目录由
   `modelMarketplace.listPublicModels` 提供，接口与运维边界见
   [model-marketplace-operations.md](model-marketplace-operations.md)。
-- 模型广场是运行时可达模型与 `visible` 配置的交集；新模型默认展示，`default` 仅为
-  图像价格兜底，永不成为公开模型。
+- 模型广场中的图像模型必须同时运行时可达、已显式配置完整四档价格且 `visible` 为
+  `true`；未定价图像在管理端标记为“未配置价格”，不能计费或公开。
 - 展示开关只影响 `/models` 与首页，不影响 `/v1/models`、创作目录、套餐能力、调度或
   实际计费。
 - 自定义封面使用独立模型资产 bucket；该 bucket 必须与 avatars、generations 互异，

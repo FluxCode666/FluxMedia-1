@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import {
   clearSystemSettingsCache,
@@ -400,13 +401,7 @@ describe("setSystemSettings", () => {
   });
 
   it("拒绝通过通用入口写入或清空模型广场配置", async () => {
-    const existing = {
-      version: 1,
-      fallbackImagePricingRevision: 0,
-      imageByModel: {},
-      videoByFamily: {},
-      writeReceipts: {},
-    };
+    const existing = createDefaultModelMarketplaceConfig();
     store.set("MODEL_MARKETPLACE_CONFIG", {
       key: "MODEL_MARKETPLACE_CONFIG",
       value: existing,
@@ -491,12 +486,12 @@ describe("importSystemSettingsFromEnv", () => {
   });
 
   it("绝不从环境变量覆盖模型广场展示配置", async () => {
-    const existing = {
-      version: 1,
-      fallbackImagePricingRevision: 3,
-      imageByModel: {},
-      videoByFamily: {},
-      writeReceipts: {},
+    const existing = createDefaultModelMarketplaceConfig();
+    existing.imageByModel["gpt-image-2"] = {
+      revision: 3,
+      visible: true,
+      description: "数据库真相",
+      cover: null,
     };
     store.set("MODEL_MARKETPLACE_CONFIG", {
       key: "MODEL_MARKETPLACE_CONFIG",
@@ -504,7 +499,16 @@ describe("importSystemSettingsFromEnv", () => {
     });
     vi.stubEnv(
       "MODEL_MARKETPLACE_CONFIG",
-      JSON.stringify({ ...existing, fallbackImagePricingRevision: 9 })
+      JSON.stringify({
+        ...existing,
+        imageByModel: {
+          ...existing.imageByModel,
+          "gpt-image-2": {
+            ...existing.imageByModel["gpt-image-2"],
+            revision: 9,
+          },
+        },
+      })
     );
 
     await importSystemSettingsFromEnv({ overwrite: true });

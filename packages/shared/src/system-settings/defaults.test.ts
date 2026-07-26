@@ -226,9 +226,12 @@ describe("system setting default initialization", () => {
   });
 
   it("不覆盖已经存在的模型广场展示配置", async () => {
-    const existing = {
-      ...createDefaultModelMarketplaceConfig(),
-      fallbackImagePricingRevision: 7,
+    const existing = createDefaultModelMarketplaceConfig();
+    existing.imageByModel["gpt-image-2"] = {
+      revision: 7,
+      visible: false,
+      description: "保留现有配置",
+      cover: null,
     };
     store.set("MODEL_MARKETPLACE_CONFIG", {
       key: "MODEL_MARKETPLACE_CONFIG",

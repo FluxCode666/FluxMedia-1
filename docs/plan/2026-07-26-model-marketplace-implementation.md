@@ -68,7 +68,7 @@ pnpm --filter @repo/web typecheck
 
 `contracts.ts` 是配置、管理 DTO、公开 DTO 和单条目更新输入的唯一 schema 来源：
 
-- `MODEL_MARKETPLACE_CONFIG_VERSION = 1`；
+- `MODEL_MARKETPLACE_CONFIG_VERSION = 2`；
 - `modelMarketplaceConfigSchema` 与缺键默认工厂；
 - `ModelMarketplaceEntry`、`ModelMarketplaceCoverRef`、写回执；
 - `ModelConfigurationEntry` 管理端 DTO；
@@ -78,8 +78,7 @@ pnpm --filter @repo/web typecheck
 - 公开 DTO 的预选字段固定为 `category + defaultModelId`，页面不再根据 family 自行推断
   完整调用 ID；
 - `updateModelConfigurationEntryInputSchema`，含 `clientRequestId`、
-  `expectedRevision`、图像价格来源、继承 default 时必填的 `expectedFallbackRevision`，以及
-  `keep/remove/replace` 封面联合；
+  `expectedRevision`、图像完整四档价格或视频每秒价格，以及 `keep/remove/replace` 封面联合；
 - `updateModelConfigurationEntryOutputSchema`，只返回 category、configKey、revision；
 - 写入输入严格拒绝 bucket、key、URL、任意额外字段和对 `default` 的展示字段；
 - 持久化配置只接受服务端生成的 bucket/key；管理和公开读取 DTO 只接受第一方
@@ -140,13 +139,14 @@ feat(models): 定义模型广场共享契约
 
 在 `SettingKey` 与 `SYSTEM_SETTING_DEFINITIONS` 中增加：
 
-- `MODEL_MARKETPLACE_CONFIG`：`json`、版本 1 空配置默认值、
+- `MODEL_MARKETPLACE_CONFIG`：`json`、版本 2 空配置默认值、
   `managedByDedicatedOperation: true`；
 - `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`：`string`，默认 `model-marketplace`，归入
   storage 分类。
 
-默认初始化只插入缺失行，不覆盖历史值，因此无需手写 SQL 迁移。通用 settings 更新与 env
-同步继续拒绝 `MODEL_MARKETPLACE_CONFIG`。
+默认初始化插入缺失行，并迁移旧图像 `default` 价格键；模型广场 v1 JSON 由严格解析器兼容
+升级为 v2，因此无需手写 SQL 迁移。通用 settings 更新与 env 同步继续拒绝
+`MODEL_MARKETPLACE_CONFIG`。
 
 **UOL 注册项**
 
@@ -237,9 +237,8 @@ feat(settings): 注册模型广场配置接口
 - 配置 JSON 或完整价格矩阵脏值时显式失败，不用默认值静默覆盖；
 - 资产 bucket 非法或与 avatars/generations 冲突时显式失败，不执行任何存储写入；
 - 保存校验复用同一清单构建器，不能把公开目录的 `not_ready` 策略用于管理写入。
-- 运行时额外图像模型没有显式价格时，DTO 标记 `pricingSource: "fallback"` 并携带
-  fallbackImagePricingRevision；保存这类模型时同时比较 entry 与 fallback revision，避免
-  管理员修改 default 后，另一个旧 Dialog 又把旧兜底价静默固化为显式价格。
+- 运行时额外图像模型没有显式价格时，DTO 标记 `pricingSource: "unconfigured"`，不携带
+  价格或 minimumCredits；管理员必须填写完整四档价格后才能保存为可计费模型。
 
 `service-core.ts` 只依赖可注入端口，保持 DB-free：
 
@@ -258,8 +257,7 @@ feat(settings): 注册模型广场配置接口
 4. 查找回执；
 5. 同键同 requestHash 返回原 category/configKey/resultingRevision，不再写存储或审计；
 6. 同键不同载荷抛 `idempotency_conflict`；
-7. 首次请求校验 expectedRevision；图像价格来源为 fallback 时还必须校验
-   expectedFallbackRevision 与当前 fallbackImagePricingRevision；任一冲突都不覆盖；
+7. 首次请求校验 expectedRevision；冲突时不覆盖；
 8. `replace` 才写内容哈希对象；`remove` 若存在旧封面，先在锁内确认旧对象可读取或已
    明确不存在，存储基础设施错误则回滚并保留旧引用；随后合并目标条目并重新执行完整
    财务 schema；
@@ -277,11 +275,11 @@ feat(settings): 注册模型广场配置接口
 
 1. 覆盖三种封面操作、非法格式、伪 MIME、损坏图片、5 MB、像素炸弹与 WebP 输出。
 2. 使用内存 repository/storage 覆盖：
-   - 图像、视频、default 单条更新不修改其他项；
+   - 图像、视频单条更新不修改其他项；
    - 管理清单正常合并以及运行时目录失败时降级为内置与已持久化条目；
    - 完整财务 schema 再校验；
    - revision 冲突；
-   - default 与继承该价格的额外图像模型并发编辑时，旧 fallback revision 冲突；
+   - 未定价图像首次保存后成为显式价格，revision 冲突仍不覆盖；
    - 同请求重放；
    - 请求键复用不同载荷；
    - put 失败、remove 存储预检失败、事务失败、新旧对象清理失败；
@@ -343,8 +341,7 @@ feat(models): 实现模型配置事务与封面存储
 `catalog.ts` 纯构建器完成：
 
 - 运行时模型与 visible 配置取交集；
-- 图像按规范 configKey 读取四档价格；没有显式条目时使用 `default` 四档兜底并保留
-  `pricingSource: "fallback"` 语义，不因自定义运行时模型缺少显式价而进入 unavailable；
+- 图像按规范 configKey 读取四档价格；没有显式条目时标记为未配置并从公开目录排除；
 - 视频完整 ID 按 family 聚合为一张卡，稳定选择一个真实存在的完整 ID；
 - 从真实完整 ID 归纳支持时长、比例和分辨率；
 - 计算最低价格，不持久化派生值；
@@ -513,8 +510,8 @@ feat(admin): 接入模型配置安全传输层
 
 - 3:2 封面缩略图；
 - 品牌图标与模型 ID；
-- 图像、视频或计费兜底类型；
-- 已展示、已隐藏或不适用；
+- 图像或视频类型；
+- 已展示、已隐藏或未配置价格；
 - 实时计算的最低价格；
 - “编辑”按钮。
 
@@ -522,14 +519,14 @@ feat(admin): 接入模型配置安全传输层
 上传或移除操作；只有真实 super_admin 显示“编辑”。
 
 支持 ID 搜索和图像/视频筛选；运行时目录不可用时展示提示，但仍列出内置模型和已持久化
-价格模型。`default` 单独显示为“计费兜底”。
+价格模型。运行时新发现但未定价的图像模型仍进入管理列表，并显示“未配置价格”。
 
 **编辑 Dialog**
 
 - 品牌图标和模型 ID 只读；
 - 图像显示四档价格，视频显示每秒价格；
-- 真实模型显示 Switch、最多 200 字简介、字符计数和封面选择/移除；
-- `default` 不渲染封面、简介和 Switch；
+- 所有真实模型显示 Switch、最多 200 字简介、字符计数和封面选择/移除；
+- 未定价图像价格输入初始为空，保存时必须一次提交完整四档正数价格；
 - 本地预览只保留到保存或取消，并及时 `URL.revokeObjectURL`；
 - 保存时组装 FormData 请求 Task 5 Route；
 - revision 冲突保留草稿并提供“重新加载”；
@@ -544,7 +541,7 @@ feat(admin): 接入模型配置安全传输层
 **测试步骤**
 
 1. 纯函数测试草稿创建、价格解析、最低价格、FormData 字段、请求 UUID 生命周期和冲突合并。
-2. 用纯 view-model 测试列表搜索、类型筛选、稳定排序、default 不适用、canEdit 只读分支、
+2. 用纯 view-model 测试列表搜索、类型筛选、稳定排序、未配置价格、canEdit 只读分支、
    Dialog 字段条件和封面失败回退；Web Vitest 是 Node 环境，不留下“若环境支持”的不确定
    分支。
 3. 执行：
@@ -934,7 +931,7 @@ git diff --check
 模型广场、详情、导航、Footer 和首页在中文与英文各验证一次；管理后台沿用项目当前中文
 界面，只需验证一次。全部流程检查控制台无错误：
 
-1. 管理列表：搜索、图像/视频筛选、default 不适用、真实品牌图标、最低价格。
+1. 管理列表：搜索、图像/视频筛选、未配置价格、真实品牌图标、最低价格。
 2. 编辑 Dialog：四档/每秒价格、简介 200 字、Switch、封面预览、替换、移除、取消。
 3. 并发：两个会话编辑同一模型，后保存者收到冲突且草稿保留。
 4. 幂等：模拟保存响应丢失后复用同一 `clientRequestId`，不重复审计或存储副作用。

@@ -94,7 +94,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "管理员以列表查看模型配置并在编辑弹窗中保存单个模型；公开目录只展示运行时可达且已开启的模型。",
         items: [
           "模型配置统一管理图像四档价格、视频每秒价格、展示开关、简介与 3:2 封面。",
-          "default 只为额外图像模型提供计费兜底，不是模型广场条目。",
+          "图像模型必须配置完整四档价格；未配置时不能计费，也不会进入模型广场。",
           "展示开关只影响 /models 与首页，不改变 /v1/models、创作目录、调度、权限或扣费。",
           "自定义封面只接受静态 JPEG、PNG 或 WebP，并由服务端去除元数据后重编码。",
           "公开目录只允许站内 system Principal 调用，不向 Admin 或 User MCP 暴露。",
@@ -205,7 +205,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "Administrators review model configuration in a list and save one model per edit dialog. The public catalog only includes reachable models that are enabled for display.",
         items: [
           "Model configuration manages four image price tiers, per-second video pricing, visibility, descriptions, and 3:2 covers.",
-          "The default row is only a billing fallback for additional image models and is never a marketplace item.",
+          "Image models require all four explicit price tiers. Unpriced models cannot be billed or published in the marketplace.",
           "Visibility only affects /models and the homepage, not /v1/models, creation catalogs, scheduling, authorization, or billing.",
           "Custom covers accept static JPEG, PNG, or WebP input and are re-encoded without metadata on the server.",
           "The public catalog is available only to an in-process system Principal and is not exposed through Admin or User MCP.",

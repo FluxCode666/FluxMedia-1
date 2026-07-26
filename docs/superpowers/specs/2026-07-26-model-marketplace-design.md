@@ -40,8 +40,8 @@
 - 模型广场仅包含图像模型与视频模型族。
 - 管理员关闭开关后，模型从 `/models` 与首页公开模型区隐藏。
 - 展示开关不影响 `/v1/models`、创作页、调用、调度与计费。
-- 现有与后续新模型默认展示；只有管理员显式关闭时隐藏。
-- `default` 是未知或自定义图像模型的价格兜底，不是真实模型，永远不进入模型广场，也没有封面、简介或展示开关。
+- 现有与后续新模型默认开启展示；图像模型还必须先显式配置完整四档价格。
+- `default` 模型与价格兜底已删除，未知或自定义图像模型未定价时 fail-closed。
 
 ### 4.2 视频聚合
 
@@ -58,8 +58,8 @@ firefly-veo31-4s-16x9-1080p
 ### 4.3 价格展示
 
 - 图像卡片最低价格为四个固定价格档位的最小值，单位为 `Credits / 张起`。
-- 运行时额外图像模型没有显式价格时使用 `default` 四档兜底；管理员首次保存该模型时会
-  在 fallback revision 未冲突的前提下固化为显式模型价格。
+- 运行时额外图像模型没有显式价格时标记为“未配置价格”，管理员填写完整四档并保存前
+  不能计费，也不会进入公开模型目录。
 - 视频卡片展示该模型族每秒积分，单位为 `Credits / 秒`。
 - 图像详情弹窗展示 1024×1024、1K、2K、4K 四档价格。
 - 视频详情弹窗展示每秒积分，以及支持的时长、比例与分辨率。
@@ -143,7 +143,7 @@ type ModelMarketplaceCoverRef = {
 
 type ModelMarketplaceWriteReceipt = {
   requestHash: string;
-  category: "image" | "video" | "fallback";
+  category: "image" | "video";
   configKey: string;
   resultingRevision: number;
   completedAt: string;
@@ -157,8 +157,7 @@ type ModelMarketplaceEntry = {
 };
 
 type ModelMarketplaceConfig = {
-  version: 1;
-  fallbackImagePricingRevision: number;
+  version: 2;
   imageByModel: Record<string, ModelMarketplaceEntry>;
   videoByFamily: Record<string, ModelMarketplaceEntry>;
   writeReceipts: Record<string, ModelMarketplaceWriteReceipt>;
@@ -167,17 +166,18 @@ type ModelMarketplaceConfig = {
 
 约束：
 
-- `revision` 与 `fallbackImagePricingRevision` 是非负安全整数，用于单条目乐观并发控制。
+- `revision` 是非负安全整数，用于单条目乐观并发控制。
 - 模型键经现有图像规范化或视频 family 解析规则处理，长度不超过 120。
 - `description` 去除首尾空白，最大 200 字。
 - `bucket` 和 `key` 只由服务端生成；管理端输入 schema 不接受这两个字段。
-- `default` 不进入 `imageByModel`；其价格并发修订号使用 `fallbackImagePricingRevision`。
+- `default` 不是模型配置键，也不进入价格、展示配置或新写回执。
 - `writeReceipts` 的键是稳定 JSON 数组编码后的 `actorUserId` 与 `clientRequestId` 的服务端哈希，
   不直接保存用户 ID 或原始请求键；回执只保存重放所需的载荷哈希与最小结果。
 - 写回执最多保留 256 条且最长保留 24 小时，每次成功保存时在同一事务内按
   `completedAt` 清理过期和超量项；回执过期后的旧请求会因 revision 不匹配而拒绝，
   不会再次执行替换或移除。
-- 历史数据库缺少此键时，解析器返回版本 1 默认配置，不需要数据库表迁移。
+- 历史数据库缺少此键时，解析器返回版本 2 默认配置；合法 v1 JSON 会在读取时迁移，
+  丢弃旧 fallback revision 与 fallback/default 写回执，不需要数据库表迁移。
 - 新模型缺少显式条目时，解析为 `revision: 0`、`visible: true`、空简介和空封面，
   再由内置简介与默认封面补齐展示；缺少 `writeReceipts` 时解析为空记录。
 
@@ -208,14 +208,12 @@ type ModelMarketplaceConfig = {
   - displayName；
   - iconKey；
   - revision；
-  - `pricingSource`；额外图像模型继承 default 时还返回
-    `fallbackPricingRevision`；
+  - 图像 `pricingSource` 为 `explicit` 或 `unconfigured`；
   - visible；
   - description；
   - coverUrl 与是否使用默认封面；
-  - 完整价格；
-  - minimumCredits；
-  - `default` 条目的 `marketplaceApplicable: false`。
+  - 已定价图像的完整价格与 minimumCredits；
+  - 未定价图像的 `pricingSource: "unconfigured"`，不伪造价格或 minimumCredits。
 
 ### 7.2 单模型保存
 
@@ -231,10 +229,9 @@ type ModelMarketplaceConfig = {
   `sideEffects: ["storage", "cache", "audit"]`；数据库配置更新由 execute 负责，
   不伪造 UOL 中不存在的副作用标签。
 - 输入：`clientRequestId`、category、configKey、expectedRevision、visible、description，
-  以及图像四档价格或视频每秒价格；图像价格来自 default 时还必须提交
-  `expectedFallbackRevision`；`clientRequestId` 必须为 UUID。
+  以及图像完整四档价格或视频每秒价格；`clientRequestId` 必须为 UUID。
 - 封面变更使用严格联合：`keep`、`remove` 或 `replace`；只有 `replace` 接受 multipart 适配器解析出的图片字节。
-- `default` 只接受图像价格与 expectedRevision，不接受展示字段。
+- `default` 在共享输入 schema 与 Route 中均被拒绝。
 
 执行步骤：
 
@@ -247,9 +244,7 @@ type ModelMarketplaceConfig = {
    裸字符串拼接歧义；载荷哈希相同则直接返回已记录的
    category、configKey 与 resultingRevision，即使 expectedRevision 已变化也不重复副作用；
    请求键相同但载荷不同则返回 `idempotency_conflict`。
-5. 首次请求对比目标条目 revision；额外图像模型继承 default 时还要对比
-   fallbackImagePricingRevision，避免 default 并发变化后旧 Dialog 把旧兜底价静默固化；
-   任一不一致都返回可定位的并发冲突，不覆盖新值。
+5. 首次请求对比目标条目 revision；不一致时返回可定位的并发冲突，不覆盖新值。
 6. `replace` 在锁内把已处理图片写入内容哈希对象；`keep` 和 `remove` 不写新对象。
 7. 只替换目标模型价格、展示文本、开关和请求指定的封面状态，保留其他模型。
 8. 对合并后的完整图像或视频价格再次执行现有全局财务 schema，并递增目标 revision。
@@ -335,7 +330,9 @@ avatars 用户资产混用。
 - 最低价格；
 - 编辑操作。
 
-列表支持按 ID 搜索和按图像、视频筛选。`default` 作为单独的“计费兜底”行，广场状态显示“不适用”。真实 super_admin 显示“编辑”；其他可读管理员显示“查看”。
+列表支持按 ID 搜索和按图像、视频筛选。未定价图像显示“未配置价格”，完整填写四档
+价格并保存前不能计费或进入模型广场。真实 super_admin 显示“编辑”；其他可读管理员
+显示“查看”。
 
 ### 9.2 编辑弹窗
 
@@ -353,7 +350,7 @@ avatars 用户资产混用。
 一个 UUID `clientRequestId`，自动重试复用该值，用户修改草稿或再次主动保存时生成新值。
 保存冲突时保留用户草稿，提示配置已被他人更新并允许重新加载。
 
-`default` 弹窗只展示四档价格，不显示封面、简介和展示开关。
+未定价图像弹窗显示空的四档价格输入，并继续提供该真实模型的简介、封面和展示开关。
 
 管理读取返回 canEdit=false 时 Dialog 全部只读，不显示保存、上传或移除操作，避免普通管理员
 在提交后才发现无权限。
@@ -433,8 +430,9 @@ Dialog 展示：
 
 ### 12.1 默认与兼容
 
-- 缺少 `MODEL_MARKETPLACE_CONFIG`：使用版本 1 默认配置，全部模型默认展示。
-- 新增模型没有显式条目：默认展示、内置简介、默认封面、revision 0。
+- 缺少 `MODEL_MARKETPLACE_CONFIG`：使用版本 2 默认配置。
+- 新增模型没有显式展示条目：默认开启展示、使用内置简介和默认封面、revision 0；新增
+  图像还必须先配置完整四档价格，未定价时不公开。
 - 历史额外价格模型：保留价格并出现在管理清单；如果运行时不可达，不出现在公开模型广场。
 - 配置 JSON 存在但无法通过严格 schema：公开模型广场与首页模型区进入 unavailable，不绕过管理员意图；管理端显示可定位错误，不静默覆盖脏值。
 
@@ -561,12 +559,12 @@ Dialog 展示：
 
 ## 17. 验收标准
 
-1. 超级管理员能在列表中找到每个图像模型、视频模型族和 `default` 兜底项。
+1. 超级管理员能在列表中找到每个图像模型和视频模型族；未定价图像明确显示“未配置价格”。
 2. 点击编辑能保存单模型价格、简介、展示开关和封面；并发冲突不会静默覆盖。
-3. `/models` 只展示运行时可达且已开启的模型，首页遵循相同开关。
+3. `/models` 只展示运行时可达、已开启且已显式定价的图像模型，首页遵循相同规则。
 4. 卡片采用已确认布局并贴合当前系统主题，复制按钮为紧跟模型 ID 的仅图标按钮。
 5. 卡片只展示最低价格，详情弹窗展示完整价格、简介、参数和立即使用入口。
 6. 视频每个 family 只展示一张卡片，复制的是稳定、完整、可调用的默认 ID。
 7. 封面上传安全、可替换、可移除，失败不会产生断图引用；缺失时使用本地默认封面。
-8. `/v1/models`、创作页、调度、套餐权限和实际计费行为保持不变。
+8. `/v1/models`、创作页、调度和套餐权限保持不变；未显式定价的图像模型拒绝计费。
 9. 中英文、响应式、无障碍和全量质量门通过。

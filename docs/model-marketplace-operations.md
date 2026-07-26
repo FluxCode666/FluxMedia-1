@@ -13,29 +13,31 @@
 
 管理读取中的 `canEdit` 由真实 Principal 计算，不能从 operation 的管理员读取权限推断。
 单模型保存使用 `expectedRevision` 防止并发覆盖，网络重试必须复用同一
-`clientRequestId`；额外图像模型继承 `default` 价格时还要校验 fallback revision，避免
-旧弹窗把已变化的兜底价格固化。底层服务自行开启数据库事务，传输层和 binding 不再
-嵌套事务。
+`clientRequestId`。图像模型保存必须一次提交完整四档显式价格；底层服务自行开启
+数据库事务，传输层和 binding 不再嵌套事务。
 
 ## 配置事实与展示边界
 
 - `IMAGE_MODEL_CREDIT_PRICES` 保存图像四档价格；
 - `VIDEO_MODEL_CREDITS_PER_SECOND` 保存视频模型族每秒价格；
-- `MODEL_MARKETPLACE_CONFIG` 是版本 1 的专用 JSON 真相，独立保存展示开关、简介、
+- `MODEL_MARKETPLACE_CONFIG` 是版本 2 的专用 JSON 真相，独立保存展示开关、简介、
   封面引用、revision 和幂等回执；
 - `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME` 保存自定义封面的专用 bucket 名称，默认
   `model-marketplace`。
 
-设置初始化只补缺失行，无需数据库迁移。`.env.example` 中的同名 bucket 变量是首次部署
-种子，运行时以数据库系统设置为真相。通用系统设置写入口不能修改
+设置初始化会识别历史 `IMAGE_MODEL_CREDIT_PRICES.byModel.default`：先用旧四档价格补齐
+已经存在的稀疏真实模型价格，再删除该键；运行时不会继续使用它。合法的模型广场 v1
+JSON 会在读取时转换为 v2，并在下一次单模型保存时写回当前结构，无需数据库表迁移。
+`.env.example` 中的同名 bucket 变量是首次部署种子，运行时以数据库系统设置为真相。
+通用系统设置写入口不能修改
 `MODEL_MARKETPLACE_CONFIG`，必须经过单条目 Operation 的并发、幂等与审计边界。
 幂等回执随成功保存原子落库，最长保留 24 小时且最多保留 256 条；回执过期后的旧请求
 仍会被 revision 拒绝，不会重复执行存储或审计副作用。
 
-公开目录只包含“运行时可达且 `visible` 为 `true`”的图像模型和视频模型族。未配置的新
-模型默认展示；`default` 仅为额外图像模型提供价格兜底，不是公开模型。展示开关只控制
-`/models` 与首页公开模型区，不影响 `/v1/models`、创作目录、套餐能力、调度、调用或
-实际扣费。
+公开目录只包含“运行时可达、已显式定价且 `visible` 为 `true`”的图像模型，以及运行时
+可达且开启展示的视频模型族。新发现但未定价的图像模型会在管理端显示“未配置价格”，
+保存完整四档价格前不能调用计费，也不会公开。展示开关只控制 `/models` 与首页公开
+模型区，不影响 `/v1/models`、创作目录、套餐能力、调度或权限。
 
 ## 封面处理与存储
 
