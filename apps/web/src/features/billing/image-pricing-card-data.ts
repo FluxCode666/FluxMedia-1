@@ -6,7 +6,6 @@
  */
 
 import {
-  GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
   type ImageCreditOverrides,
   type ResolvedImageCreditPricing,
   resolveImageCreditPricing,
@@ -29,7 +28,10 @@ export type ImagePricingCardData = {
     monthlyCredits: number;
     planName: string;
   };
-  defaultModelPricing: ResolvedImageCreditPricing;
+  referenceModel: {
+    id: string;
+    pricing: ResolvedImageCreditPricing;
+  };
   globalModelPricing: ImageCreditOverrides;
   groupModelOverrides: ImageCreditOverrides;
   moderationPricing: ResolvedImageModerationCreditPricing;
@@ -60,6 +62,10 @@ export async function loadImagePricingCardData(
     getPlanCapabilitySnapshot(userPlanInfo.plan),
     getEffectiveDefaultImageBackendGroup(userPlanInfo.plan),
   ]);
+  const referenceModelId = Object.keys(globalModelPricing.byModel).sort()[0];
+  if (!referenceModelId) {
+    throw new Error("没有已配置价格的图像模型");
+  }
 
   return {
     billing: {
@@ -71,10 +77,13 @@ export async function loadImagePricingCardData(
       monthlyCredits: capabilities.limits.monthlyCredits,
       planName: userPlanInfo.planName,
     },
-    defaultModelPricing: resolveImageCreditPricing({
-      model: GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
-      global: globalModelPricing,
-    }),
+    referenceModel: {
+      id: referenceModelId,
+      pricing: resolveImageCreditPricing({
+        model: referenceModelId,
+        global: globalModelPricing,
+      }),
+    },
     globalModelPricing,
     groupModelOverrides: activeBackendGroup?.imageCreditOverrides ?? {
       version: 1,

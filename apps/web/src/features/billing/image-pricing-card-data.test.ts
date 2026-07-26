@@ -39,12 +39,6 @@ const mocks = vi.hoisted(() => ({
   getRuntimeImageModelCreditPricing: vi.fn(async () => ({
     version: 1 as const,
     byModel: {
-      default: {
-        base1024Credits: 1.1,
-        base1kCredits: 2.1,
-        base2kCredits: 5.1,
-        base4kCredits: 10.1,
-      },
       "gpt-image-2": {
         base1024Credits: 1.5,
         base1kCredits: 2.5,
@@ -120,16 +114,18 @@ describe("loadImagePricingCardData", () => {
         monthlyCredits: 800,
         planName: "Pro",
       },
-      defaultModelPricing: {
-        base1024Credits: 1.1,
-        base1kCredits: 2.1,
-        base2kCredits: 5.1,
-        base4kCredits: 10.1,
+      referenceModel: {
+        id: "gpt-image-2",
+        pricing: {
+          base1024Credits: 1.5,
+          base1kCredits: 2.5,
+          base2kCredits: 5.5,
+          base4kCredits: 10.5,
+        },
       },
       globalModelPricing: {
         version: 1,
         byModel: {
-          default: { base4kCredits: 10.1 },
           "gpt-image-2": { base4kCredits: 10.5 },
         },
       },
