@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 
+import { isFireflyVideoModelId } from "../../adobe/firefly-direct/video-catalog";
 import { mediaInputReferencesSchema } from "../../image-generation/media-contract";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
@@ -16,7 +17,14 @@ export const videoGenerateInputSchema = z
     clientRequestId: z.string().trim().min(1).max(128),
     prompt: z.string().trim().min(1).max(100_000),
     negativePrompt: z.string().max(100_000).optional(),
-    model: z.string().trim().min(1).max(120),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .refine((modelId) => isFireflyVideoModelId(modelId), {
+        message: "Unsupported video model",
+      }),
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     inputImages: mediaInputReferencesSchema.max(3).optional(),
   })
@@ -152,7 +160,7 @@ export const videoReconcileSubmission = defineOperation({
     taskId: z.string(),
     status: z.enum(["processing", "completed", "failed"]),
   }),
-  access: { kind: "admin" },
+  access: { kind: "roles", roles: ["admin", "super_admin"] },
   agentExposure: "human-only",
   readOnly: false,
   destructive: true,

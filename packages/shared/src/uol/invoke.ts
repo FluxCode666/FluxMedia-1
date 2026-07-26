@@ -199,7 +199,17 @@ export async function invokeOperation<TOutput = unknown>(
   // 7. 执行业务逻辑
   try {
     const output = await def.execute(input, principal, ctx);
-    return output as TOutput;
+    const outputResult = def.output.safeParse(output);
+    if (!outputResult.success) {
+      // WHY：执行结果可能包含数据库脏值或 binding 漂移。只暴露 operation 名称，
+      // 不把输出值或 Zod issues 带入外部错误，避免意外泄露业务数据。
+      throw new OperationError(
+        "internal_error",
+        "Operation output validation failed",
+        { operation: name }
+      );
+    }
+    return outputResult.data as TOutput;
   } catch (e) {
     // OperationError 直接透传
     if (e instanceof OperationError) throw e;

@@ -179,6 +179,7 @@ describe("POST /api/mcp/user media allowlist isolation", () => {
         arguments: {
           userId: "another-user",
           prompt: "a test image",
+          generationId: "generation-1",
           relayOnly: true,
           moderationBlockRiskLevel: "low",
         },
@@ -190,6 +191,7 @@ describe("POST /api/mcp/user media allowlist isolation", () => {
       "image.generate",
       {
         prompt: "a test image",
+        generationId: "generation-1",
         relayOnly: true,
         moderationBlockRiskLevel: "low",
       },

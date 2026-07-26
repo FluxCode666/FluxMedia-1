@@ -206,6 +206,10 @@ describe("MCP tool factories", () => {
         | undefined;
       expect(properties).toBeDefined();
       expect(Object.hasOwn(properties ?? {}, "operation")).toBe(true);
+      expect(Object.hasOwn(properties ?? {}, "generationId")).toBe(true);
+      expect(variant.required).toEqual(
+        expect.arrayContaining(["operation", "prompt", "generationId"])
+      );
       expect(Object.hasOwn(properties ?? {}, "userId")).toBe(false);
       expect(Object.hasOwn(properties ?? {}, "relayOnly")).toBe(false);
       expect(Object.hasOwn(properties ?? {}, "relay_only")).toBe(false);

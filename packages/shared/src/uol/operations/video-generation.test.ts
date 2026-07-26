@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { assertAccess } from "../access";
 import type { Principal } from "../principal";
 import { getOperation } from "../registry";
 import {
@@ -33,6 +34,16 @@ describe("video generation operations", () => {
     expect(
       videoGenerateInputSchema.safeParse({ ...base, clientRequestId: " " })
         .success
+    ).toBe(false);
+  });
+
+  it("在创建任务前拒绝目录外的视频模型", () => {
+    expect(
+      videoGenerateInputSchema.safeParse({
+        clientRequestId: "request-1",
+        prompt: "海边日落",
+        model: "unknown-video-model",
+      }).success
     ).toBe(false);
   });
 
@@ -101,8 +112,25 @@ describe("video generation operations", () => {
   });
 
   it("只允许管理员显式提交完整的人工核对结论", () => {
-    expect(videoReconcileSubmission.access).toEqual({ kind: "admin" });
+    expect(videoReconcileSubmission.access).toEqual({
+      kind: "roles",
+      roles: ["admin", "super_admin"],
+    });
     expect(videoReconcileSubmission.agentExposure).toBe("human-only");
+    expect(() =>
+      assertAccess(videoReconcileSubmission.access, {
+        type: "user",
+        userId: "observer-1",
+        role: "observer_admin",
+      })
+    ).toThrow();
+    expect(() =>
+      assertAccess(videoReconcileSubmission.access, {
+        type: "user",
+        userId: "admin-1",
+        role: "admin",
+      })
+    ).not.toThrow();
     expect(
       videoReconcileSubmissionInputSchema.safeParse({
         outcome: "accepted",

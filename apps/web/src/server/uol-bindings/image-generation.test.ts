@@ -122,6 +122,7 @@ describe("executeImageGenerateBinding", () => {
       {
         operation: "edit",
         prompt: "改成夜景",
+        generationId: "generation-2",
         images: [dataReference],
       },
       userPrincipal,
@@ -153,6 +154,7 @@ describe("executeImageGenerateBinding", () => {
       {
         operation: "generate",
         prompt: "一只猫",
+        generationId: "generation-3",
       },
       mcpPrincipal,
       operationContext(),
@@ -176,6 +178,7 @@ describe("executeImageGenerateBinding", () => {
       {
         operation: "mask",
         prompt: "只替换蒙版区域",
+        generationId: "generation-4",
         images: [dataReference],
         mask: maskReference,
       },

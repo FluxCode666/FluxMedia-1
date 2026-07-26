@@ -36,7 +36,7 @@ const imageGenerateCommonFields = {
   quality: z.string().trim().min(1).max(40).optional(),
   style: z.string().trim().min(1).max(80).optional(),
   count: z.number().int().positive().max(10_000).optional(),
-  generationId: z.string().trim().min(1).max(128).optional(),
+  generationId: z.string().trim().min(1).max(128),
   /** 本次请求明确选中的平台媒体后端分组；服务端仍会再次授权。 */
   backendGroupId: z.string().trim().min(1).max(128).optional(),
 };

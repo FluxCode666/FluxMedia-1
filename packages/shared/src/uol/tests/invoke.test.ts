@@ -207,6 +207,19 @@ describe("UOL Invoke Gateway", () => {
       expect(result).toEqual({ sum: 30 });
     });
 
+    it("拒绝不符合 operation output schema 的执行结果", async () => {
+      const operation = registerAddOp();
+      operation.execute = async () => ({ sum: "not-a-number" }) as never;
+
+      await expect(
+        invokeOperation("math.add", { a: 10, b: 20 }, userPrincipal)
+      ).rejects.toMatchObject({
+        code: "internal_error",
+        message: "Operation output validation failed",
+        details: { operation: "math.add" },
+      });
+    });
+
     it("provides requestId in context", async () => {
       let capturedCtx: OperationContext | undefined;
 

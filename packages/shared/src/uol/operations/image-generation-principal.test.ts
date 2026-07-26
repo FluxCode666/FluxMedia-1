@@ -11,14 +11,21 @@ import { getOperation } from "../registry";
 import { imageGenerate, imageGenerateInputSchema } from "./image-generation";
 
 describe("image.generate principal-bound contract", () => {
-  it("accepts generation parameters without a client identity", () => {
+  it("要求与幂等声明一致的 generationId 且不接收客户端身份", () => {
     expect(
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "a test image",
+        generationId: "generation-1",
         backendGroupId: "group-a",
       }).success
     ).toBe(true);
+    expect(
+      imageGenerateInputSchema.safeParse({
+        operation: "generate",
+        prompt: "a test image",
+      }).success
+    ).toBe(false);
   });
 
   it.each([
@@ -33,6 +40,7 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "a test image",
+        generationId: "generation-1",
         [field]: field === "userId" ? "another-user" : "low",
       }).success
     ).toBe(false);
@@ -49,7 +57,11 @@ describe("image.generate principal-bound contract", () => {
     if (!requirement || !("derive" in requirement)) {
       throw new Error("image.generate 缺少动态套餐能力声明");
     }
-    const input = { operation: "generate" as const, prompt: "a test image" };
+    const input = {
+      operation: "generate" as const,
+      prompt: "a test image",
+      generationId: "generation-1",
+    };
     const externalPrincipal = {
       type: "apiKey",
       credentialKind: "external",
@@ -84,12 +96,14 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "generate",
         prompt: "new image",
+        generationId: "generation-1",
       }).success
     ).toBe(true);
     expect(
       imageGenerateInputSchema.safeParse({
         operation: "edit",
         prompt: "edit image",
+        generationId: "generation-2",
         images: [image],
       }).success
     ).toBe(true);
@@ -97,6 +111,7 @@ describe("image.generate principal-bound contract", () => {
       imageGenerateInputSchema.safeParse({
         operation: "mask",
         prompt: "mask edit",
+        generationId: "generation-3",
         images: [image],
         mask: image,
       }).success

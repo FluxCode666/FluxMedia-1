@@ -48,7 +48,6 @@ import {
   moderateContent,
 } from "@repo/shared/moderation";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import type { SubscriptionCheckoutInput } from "@repo/shared/subscription/checkout-contract";
 import { subscriptionCheckoutOutputSchema } from "@repo/shared/subscription/checkout-contract";
 import { purchasablePlansOutputSchema } from "@repo/shared/subscription/purchase-contract";
@@ -114,6 +113,7 @@ import {
   runAdobeVideoGenerationForUser,
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
+import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
 import {
   createVideoPrincipalScope,
   createVideoRequestFingerprint,
@@ -419,12 +419,16 @@ bindExecute(
     }
     assertVideoTaskPrincipal(row, principal, ctx);
     const videoUrl = row.storageKey
-      ? buildSignedStorageImageUrl(
-          row.storageKey,
-          (await getRuntimeSettingString(
-            "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-          )) || "generations"
-        )
+      ? buildPublicVideoStatusUrl({
+          storageKey: row.storageKey,
+          bucket:
+            (await getRuntimeSettingString(
+              "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+            )) || "generations",
+          publicBaseUrl:
+            (await getRuntimeSettingString("NEXT_PUBLIC_APP_URL")) ||
+            (await getRuntimeSettingString("BETTER_AUTH_URL")),
+        })
       : null;
     return {
       taskId: row.id,
