@@ -1,5 +1,5 @@
 /**
- * 平台媒体模型目录运行时服务与 UOL binding 测试。
+ * 平台媒体模型目录运行时服务与首页可靠性 UOL binding 测试。
  *
  * 职责：验证运行时事实注入、失败透传和 strict DTO 白名单，不连接数据库。
  */
@@ -67,45 +67,21 @@ describe("loadPlatformModelCatalog", () => {
   });
 });
 
-describe("platform model catalog UOL binding", () => {
+describe("homepage reliability UOL binding", () => {
   let invokeOperation: typeof import("@repo/shared/uol").invokeOperation;
-  let bindPlatformModelCatalogOperation: typeof import("@/server/platform-model-catalog-binding").bindPlatformModelCatalogOperation;
+  let bindHomepageReliabilityOperation: typeof import("@/server/homepage-reliability-binding").bindHomepageReliabilityOperation;
 
   beforeAll(async () => {
     await import("@repo/shared/uol/operations");
     const [uol, binding] = await Promise.all([
       import("@repo/shared/uol"),
-      import("@/server/platform-model-catalog-binding"),
+      import("@/server/homepage-reliability-binding"),
     ]);
     invokeOperation = uol.invokeOperation;
-    bindPlatformModelCatalogOperation =
-      binding.bindPlatformModelCatalogOperation;
+    bindHomepageReliabilityOperation = binding.bindHomepageReliabilityOperation;
   }, 20_000);
 
-  it("经真实网关返回严格 image/video 白名单 DTO", async () => {
-    bindPlatformModelCatalogOperation({
-      loadCatalog: async () => ({
-        image: [
-          {
-            id: "gpt-image-2",
-            apiKey: "binding-canary",
-          },
-        ],
-        video: [],
-        internalGroupId: "group-canary",
-      }),
-    });
-
-    const output = await invokeOperation(
-      "externalApi.getPlatformModelCatalog",
-      {},
-      { type: "system", reason: "homepage-platform-model-catalog" }
-    );
-    expect(output).toEqual({ image: [{ id: "gpt-image-2" }], video: [] });
-    expect(JSON.stringify(output)).not.toMatch(/binding-canary|group-canary/);
-  });
-
-  it("既有启动入口继续实时绑定 SLA 统计", async () => {
+  it("经真实网关实时读取并严格校验 SLA 统计", async () => {
     const stats = {
       sampleSize: 100,
       completed: 96,
@@ -116,7 +92,7 @@ describe("platform model catalog UOL binding", () => {
       userRequestErrors: 0,
     };
     const loadGenerationSlaStats = vi.fn().mockResolvedValue(stats);
-    bindPlatformModelCatalogOperation({ loadGenerationSlaStats });
+    bindHomepageReliabilityOperation({ loadGenerationSlaStats });
 
     await expect(
       invokeOperation(

@@ -148,8 +148,8 @@ import {
   loadUsageEvents,
   UsageLogServiceError,
 } from "@/features/usage-log/service";
+import { bindHomepageReliabilityOperation } from "@/server/homepage-reliability-binding";
 import { bindModelMarketplaceOperations } from "@/server/model-marketplace-binding";
-import { bindPlatformModelCatalogOperation } from "@/server/platform-model-catalog-binding";
 
 // ---------------------------------------------------------------------------
 // image-generation 域
@@ -668,8 +668,8 @@ bindExecute(
   }
 );
 
-// 首页平台目录使用独立 binding 保持 strict DTO 映射可被聚焦集成测试复用。
-bindPlatformModelCatalogOperation();
+// 首页生成 SLA 使用独立 binding，固定统计窗口并保持 strict DTO 边界。
+bindHomepageReliabilityOperation();
 // 管理模型配置与公开模型广场共用专用 binding，保持错误和 DTO 边界单点收敛。
 bindModelMarketplaceOperations();
 

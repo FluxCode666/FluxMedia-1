@@ -115,7 +115,7 @@ describe("POST /api/mcp/user media allowlist isolation", () => {
 
     expect(response.status).toBe(200);
     expect(names).toEqual(["image.listMyHistoryRecords"]);
-    expect(names).not.toContain("externalApi.getPlatformModelCatalog");
+    expect(names).not.toContain("modelMarketplace.listPublicModels");
     expect(names).not.toEqual(
       expect.arrayContaining([
         "image.getStatus",
