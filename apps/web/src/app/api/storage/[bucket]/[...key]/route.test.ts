@@ -1,8 +1,8 @@
 /**
  * 存储对象读取路由的 DB-free 单测
  *
- * 覆盖：桶白名单、路径穿越拒绝、正常读取、404/502 错误映���、
- * 签名验证（generations 桶需要 sig+exp，avatars 桶公开访问）。
+ * 覆盖：桶白名单、路径穿越拒绝、正常读取、404/502 错误映射、
+ * 签名验证（generations 桶需要 sig+exp，avatars 与严格模型资产桶公开访问）。
  */
 
 import type { NextRequest } from "next/server";
@@ -20,11 +20,15 @@ vi.mock("@repo/shared/logger", () => ({ logError }));
 
 // 第一方会话回退鉴权的依赖:getCurrentUser(会话)与 db(按 storage_key 查归属)。
 // 保持 DB-free:getCurrentUser/db 均被 mock;正常签名校验通过的用例不会触达它们。
-const { getCurrentUser, dbState, runtimeSettings } = vi.hoisted(() => ({
-  getCurrentUser: vi.fn(),
-  dbState: { rows: [] as Array<{ userId: string | null }> },
-  runtimeSettings: new Map<string, string>(),
-}));
+const { getCurrentUser, dbState, runtimeSettings, getRuntimeSettingString } =
+  vi.hoisted(() => ({
+    getCurrentUser: vi.fn(),
+    dbState: { rows: [] as Array<{ userId: string | null }> },
+    runtimeSettings: new Map<string, string>(),
+    getRuntimeSettingString: vi.fn(async (key: string) =>
+      runtimeSettings.get(key)
+    ),
+  }));
 vi.mock("@repo/shared/auth/server", () => ({ getCurrentUser }));
 vi.mock("@repo/database", () => ({
   db: {
@@ -39,15 +43,17 @@ vi.mock("@repo/database/schema", () => ({
   generation: { userId: "userId", storageKey: "storageKey" },
 }));
 vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingString: vi.fn(async (key: string) =>
-    runtimeSettings.get(key)
-  ),
+  getRuntimeSettingString,
 }));
 
 import { generateSignedImageParams } from "@repo/shared/storage/signed-url";
 import { GET } from "./route";
 
 const TEST_SECRET = "test-secret-for-storage-route-tests";
+const MODEL_ASSET_BUCKET = "model-marketplace";
+const MODEL_CONFIG_HASH = "a".repeat(64);
+const MODEL_CONTENT_HASH = "b".repeat(64);
+const MODEL_IMAGE_KEY = `image/${MODEL_CONFIG_HASH}/${MODEL_CONTENT_HASH}.webp`;
 
 // 构造 Next.js App Router 动态路由约定的 params Promise。
 function makeParams(bucket: string, key: string[]) {
@@ -90,6 +96,13 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     getCurrentUser.mockResolvedValue(null);
     dbState.rows = [];
     runtimeSettings.clear();
+    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", "avatars");
+    runtimeSettings.set("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME", "generations");
+    runtimeSettings.set(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      MODEL_ASSET_BUCKET
+    );
+    getRuntimeSettingString.mockClear();
   });
 
   afterAll(() => {
@@ -260,6 +273,113 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       signal: expect.anything(),
     });
     expect(res.headers.get("Content-Type")).toBe("image/jpeg");
+  });
+
+  it("模型资产桶无需签名即可读取严格内容寻址 WebP", async () => {
+    getObject.mockResolvedValue(Buffer.from("model-cover"));
+
+    const res = await GET(
+      makeRequest(),
+      makeParams(MODEL_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
+    );
+
+    expect(res.status).toBe(200);
+    expect(getObject).toHaveBeenCalledWith(
+      MODEL_IMAGE_KEY,
+      MODEL_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
+    expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(res.headers.get("Content-Type")).toBe("image/webp");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=31536000, immutable"
+    );
+    expect(res.headers.get("CDN-Cache-Control")).toBe(
+      "public, max-age=31536000, immutable"
+    );
+    expect(res.headers.get("Content-Disposition")).toBeNull();
+  });
+
+  it("每次读取同时加载头像、生成内容与模型资产三项 bucket 设置", async () => {
+    getObject.mockResolvedValue(Buffer.from("avatar"));
+
+    await GET(makeRequest(), makeParams("avatars", ["user", "avatar.jpg"]));
+
+    expect(getRuntimeSettingString).toHaveBeenCalledTimes(3);
+    expect(getRuntimeSettingString).toHaveBeenCalledWith(
+      "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
+    );
+    expect(getRuntimeSettingString).toHaveBeenCalledWith(
+      "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+    );
+    expect(getRuntimeSettingString).toHaveBeenCalledWith(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
+    );
+  });
+
+  it.each([
+    ["非 WebP", `image/${MODEL_CONFIG_HASH}/${MODEL_CONTENT_HASH}.png`],
+    ["非哈希", "image/custom/cover.webp"],
+    ["额外层级", `${MODEL_IMAGE_KEY}/extra`],
+    [
+      "大写哈希",
+      `image/${MODEL_CONFIG_HASH.toUpperCase()}/${MODEL_CONTENT_HASH}.webp`,
+    ],
+    ["未知类别", `audio/${MODEL_CONFIG_HASH}/${MODEL_CONTENT_HASH}.webp`],
+  ])("模型资产桶拒绝%s key", async (_label, fileKey) => {
+    const res = await GET(
+      makeRequest(),
+      makeParams(MODEL_ASSET_BUCKET, fileKey.split("/"))
+    );
+
+    expect(res.status).toBe(400);
+    expect(getObject).not.toHaveBeenCalled();
+  });
+
+  it("模型资产桶拒绝路径段与查询参数两种缩略图请求", async () => {
+    const pathResponse = await GET(
+      makeRequest(),
+      makeParams(MODEL_ASSET_BUCKET, ["w128", ...MODEL_IMAGE_KEY.split("/")])
+    );
+    const queryResponse = await GET(
+      makeRequest({ w: "128" }),
+      makeParams(MODEL_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
+    );
+
+    expect(pathResponse.status).toBe(400);
+    expect(queryResponse.status).toBe(400);
+    expect(getObject).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["头像桶为空", "", "generations", MODEL_ASSET_BUCKET],
+    ["生成内容桶为空", "avatars", "", MODEL_ASSET_BUCKET],
+    ["模型资产桶为空", "avatars", "generations", ""],
+    ["模型资产桶含路径", "avatars", "generations", "../models"],
+    ["头像与生成内容冲突", "shared", "shared", MODEL_ASSET_BUCKET],
+    ["模型资产与头像冲突", "avatars", "generations", "avatars"],
+    ["模型资产与生成内容冲突", "avatars", "generations", "generations"],
+  ])("%s时稳定返回配置错误且不触达存储", async (_label, avatars, generations, modelAssets) => {
+    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", avatars);
+    runtimeSettings.set("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME", generations);
+    runtimeSettings.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", modelAssets);
+
+    const res = await GET(
+      makeRequest(),
+      makeParams(generations, ["user", "private.png"])
+    );
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "Storage bucket configuration invalid",
+    });
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(logError).toHaveBeenCalledWith(expect.any(Error), {
+      source: "storage-bucket-config",
+    });
+    expect(getObject).not.toHaveBeenCalled();
+    expect(getCurrentUser).not.toHaveBeenCalled();
   });
 
   it("未知扩展回退 octet-stream 并以附件下载（防内容嗅探/存储型 XSS）", async () => {
