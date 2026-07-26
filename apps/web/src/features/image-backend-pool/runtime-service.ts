@@ -34,7 +34,7 @@ import {
   defaultBackendPoolRepository,
 } from "./repository";
 import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
-import { BackendSchedulerError } from "./scheduler";
+import { BackendSchedulerError } from "./scheduler-error";
 
 const IMAGE_LEASE_TTL_MS = 21 * 60 * 1000;
 const MAX_MEMBER_ERROR_LENGTH = 1_000;

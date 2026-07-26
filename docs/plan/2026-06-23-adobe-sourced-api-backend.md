@@ -117,7 +117,7 @@ api 成员参与候选的条件： (!fireflyOnly || row.adobeSourced) && (其余
 当**被选中的后端是「Adobe 来源」api** 且**请求模型以 `firefly-` 开头**时，在 api 派发前改写出站请求：
 
 - **出站 model**：从 firefly id 截取家族名，复用现有
-  `pickAdobeFamilyFromModel`（按最长前缀从 `firefly-` 后截，避免 `nano-banana`
+  `pickExplicitAdobeImageFamily`（按最长前缀从 `firefly-` 后截，避免 `nano-banana`
   误吞 `nano-banana-pro`/`nano-banana2`）。截得的家族即 gpt 侧模型名：
   `gpt-image-2` / `gpt-image-1.5` / `nano-banana` / `nano-banana2` / `nano-banana-pro`。
   - **可选覆盖**：若该后端 `image_backend_api.model` 非空，则用它（兼容个别 provider 用不同模型名）；否则用截取值。

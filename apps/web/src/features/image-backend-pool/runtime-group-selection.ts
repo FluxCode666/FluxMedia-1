@@ -5,7 +5,7 @@
  * 或身份不一致；数据库加载由 runtime-service 负责。
  * 使用方：图片与视频统一运行时会话及其单元测试。
  */
-import { BackendSchedulerError } from "./scheduler";
+import { BackendSchedulerError } from "./scheduler-error";
 
 /** 分组选择所需的最小运行时身份事实。 */
 export interface RuntimeGroupSelectionInput {

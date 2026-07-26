@@ -421,8 +421,8 @@ flowchart LR
 - **Files:**
   - `packages/database/src/schema.ts`
   - `apps/web/src/features/image-backend-pool/repository.ts`（新增）
-  - `apps/web/src/features/image-backend-pool/scheduler.ts`（新增）
-  - `apps/web/src/features/image-backend-pool/scheduler.test.ts`（新增）
+  - `apps/web/src/features/image-backend-pool/repository.test.ts`（新增）
+  - `apps/web/src/features/image-backend-pool/scheduler-error.ts`（新增）
   - `apps/web/src/features/image-backend-pool/service.ts`
   - `apps/web/src/features/image-backend-pool/scheduler-selection.test.ts`
   - `packages/integration-tests/src/image-backend-pool-scheduler.test.ts`（新增）
@@ -445,7 +445,8 @@ flowchart LR
   - 两个应用副本分别预热旧策略缓存后保存新策略，保存返回后的两边下一次获租都读取数据库新值。
   - 数据库事务不可用时不创建本地租约，不调用上游。
 - **Verification:**
-  - `pnpm --filter @repo/web exec vitest run src/features/image-backend-pool/scheduler.test.ts src/features/image-backend-pool/scheduler-selection.test.ts`
+  - `pnpm --filter @repo/shared exec vitest run --config vitest.config.ts src/image-backend/scheduling-policy.test.ts`
+  - `pnpm --filter @repo/web exec vitest run src/features/image-backend-pool/repository.test.ts src/features/image-backend-pool/scheduler-selection.test.ts`
   - `pnpm --filter @repo/integration-tests test:image-backend-pool`
   - `pnpm --filter @repo/web typecheck`
 
@@ -775,7 +776,7 @@ flowchart LR
 ### Automated Gates
 
 - **Focused shared:** `pnpm --filter @repo/shared exec vitest run --config vitest.config.ts src/image-backend/member-contract.test.ts src/image-backend/scheduling-policy.test.ts src/uol/tests/invoke-capabilities.test.ts src/uol/operations/image-backend-pool.test.ts src/uol/operations/image-generation-principal.test.ts src/uol/operations/video-generation.test.ts src/uol/operations/system-settings.test.ts src/subscription/services/plan-capabilities.test.ts src/system-settings/defaults.test.ts src/mcp/tool-factory.test.ts`
-- **Focused web:** `pnpm --filter @repo/web exec vitest run src/features/image-backend-pool/scheduler.test.ts src/features/image-backend-pool/repository.test.ts src/features/image-backend-pool/member-service.test.ts src/features/image-backend-pool/outbound-url-security.test.ts src/features/image-backend-pool/image-generation-model-catalog.test.ts src/features/image-generation/request-security.test.ts src/features/image-generation/video-operations.test.ts src/features/image-generation/transparent-fallback.test.ts src/features/image-generation/masked-outpaint.test.ts src/features/external-api/images.test.ts src/features/external-api/handlers/models.test.ts src/features/external-api/platform-model-catalog.test.ts src/server/internal-job-scheduler.test.ts`
+- **Focused web:** `pnpm --filter @repo/web exec vitest run src/features/image-backend-pool/repository.test.ts src/features/image-backend-pool/scheduler-selection.test.ts src/features/image-backend-pool/member-service.test.ts src/features/image-backend-pool/outbound-url-security.test.ts src/features/image-backend-pool/image-generation-model-catalog.test.ts src/features/image-generation/request-security.test.ts src/features/image-generation/video-operations.test.ts src/features/image-generation/transparent-fallback.test.ts src/features/image-generation/masked-outpaint.test.ts src/features/external-api/images.test.ts src/features/external-api/handlers/models.test.ts src/features/external-api/platform-model-catalog.test.ts src/server/internal-job-scheduler.test.ts`
 - **PostgreSQL integration:** `pnpm --filter @repo/integration-tests test:image-backend-pool`、`pnpm --filter @repo/integration-tests test:video-generation-recovery` and `pnpm --filter @repo/integration-tests test:media-backend-pool-migration`。
 - **Full repository:** `pnpm turbo typecheck`、`pnpm turbo lint`、`pnpm turbo test`、`pnpm --filter @repo/web build`。
 - **Sidecar/deploy:** `(cd services/media-upstream-proxy && go test ./...)` and `docker compose config`。
