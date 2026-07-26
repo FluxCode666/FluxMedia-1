@@ -20,7 +20,7 @@ import {
 /**
  * 渲染三步服务端集成说明、安全 cURL 示例和固定开发者入口。
  *
- * @param props - 当前语言与已由页面数据层收窄的平台图像模型目录状态。
+ * @param props - 当前语言与已由模型广场公开 DTO 投影的完整图像目录状态。
  * @returns 无 JavaScript 也可阅读的三步说明；复制交互由共享 CodeBlock 渐进增强。
  * @sideEffects 无；不读取请求头、不发起目录请求，也不接收或渲染真实 API Key。
  * @failure 目录或 origin 不可用时显示对应说明，仍保留 API Docs 与 API Key 入口。

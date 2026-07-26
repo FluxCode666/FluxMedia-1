@@ -16,28 +16,19 @@
       "artworkFormat": "AI GENERATED"
     },
     "models": {
-      "previewLabel": "当前运行时模型",
+      "previewLabel": "模型广场精选",
       "eyebrow": "MODEL CATALOG",
-      "title": "当前系统支持的图像模型",
-      "description": "目录来自正在运行的配置，此处只展示平台当前可承接的公开图像模型。实际账号经 API Key 可调用的模型，请始终以 GET /v1/models 的响应为准。",
+      "title": "当前公开的图像模型",
+      "description": "这里与模型广场共享同一套公开展示配置，并预览部分图像模型。实际账号经 API Key 可调用的模型，始终以 GET /v1/models 的响应为准。",
       "countLabel": "个模型",
-      "unavailable": "当前无法读取运行时模型目录，请稍后再试。",
+      "unavailable": "当前无法读取公开模型目录，请稍后再试。",
       "supportedLabel": "已接入",
+      "viewAll": "查看全部模型",
       "categories": {
         "image": {
           "label": "图像",
-          "description": "用于文字生图、对话生图及支持的图像工作流。",
+          "description": "用于文字生图、图像编辑及支持的图像工作流。",
           "empty": "当前没有公开可展示的图像模型。"
-        },
-        "video": {
-          "label": "视频",
-          "description": "用于系统当前已接入的视频生成路径。",
-          "empty": "当前没有公开可展示的视频模型。"
-        },
-        "conversation": {
-          "label": "对话",
-          "description": "用于对话与 Responses 能力的当前模型。",
-          "empty": "当前没有公开可展示的对话模型。"
         }
       }
     },
@@ -82,11 +73,11 @@
       "items": [
         {
           "question": "FluxMedia 当前支持哪些模型？",
-          "answer": "首页模型目录直接读取当前运行时图像配置。配置变化会在后续请求中反映出来；具体账号通过 API 可调用的模型仍以该 API Key 请求 GET /v1/models 的结果为准。"
+          "answer": "模型广场展示当前公开的图像与视频模型，首页从同一公开目录预览部分图像模型。具体账号通过 API 可调用的模型仍以该 API Key 请求 GET /v1/models 的结果为准。"
         },
         {
-          "question": "为什么首页只展示图像模型？",
-          "answer": "当前官网聚焦已经对外开放的图像生成能力，因此模型展示与快速集成示例都只使用运行时可公开的图像模型。"
+          "question": "在哪里查看全部公开模型？",
+          "answer": "前往模型广场可以查看当前公开的全部图像与视频模型、最低价格、完整计费方式和支持参数。"
         },
         {
           "question": "如何通过 API 接入图片生成？",

@@ -225,7 +225,7 @@ describe("HomepageIntegration", () => {
     expect(html.match(/<li/g)).toHaveLength(3);
     expect(html).toContain('href="/api-docs"');
     expect(html).toContain('href="/dashboard/external-api"');
-    expect(html).toContain("当前无法读取平台模型目录");
+    expect(html).toContain("当前无法读取公开模型目录");
     expect(html).not.toContain("curl &#x27;");
   });
 });
