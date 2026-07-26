@@ -1317,7 +1317,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "IMAGE_MODEL_CREDIT_PRICES",
     label: "图像模型固定价格",
     description:
-      "按模型配置必填的 1024、1K、2K、4K 固定基础积分。分组可以逐档覆盖；未覆盖时始终使用本全局模型价格。请在独立的“模型计费”页签编辑。",
+      "按模型配置必填的 1024、1K、2K、4K 固定基础积分。分组可以逐档覆盖；未覆盖时始终使用本全局模型价格。请在独立的“模型配置”页签编辑。",
     category: "credits",
     valueType: "json",
     defaultValue: createDefaultGlobalImageCreditOverrides(),
@@ -1371,7 +1371,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "VIDEO_MODEL_CREDITS_PER_SECOND",
     label: "视频模型族每秒积分",
     description:
-      "按视频模型族设置必填的每秒积分。分组可为模型族设置覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型计费”页签编辑。",
+      "按视频模型族设置必填的每秒积分。分组可为模型族设置覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型配置”页签编辑。",
     category: "credits",
     valueType: "json",
     defaultValue: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },

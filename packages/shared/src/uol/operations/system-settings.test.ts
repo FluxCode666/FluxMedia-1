@@ -33,7 +33,6 @@ vi.mock("../../system-settings/index", () => ({
   getSystemSettingValue: vi.fn(),
   importSystemSettingsFromEnv: vi.fn(),
   initializeMissingSystemSettingsDefaults: vi.fn(),
-  setGlobalModelPricing: vi.fn(),
   setSystemSettings: mocks.setSystemSettings,
 }));
 

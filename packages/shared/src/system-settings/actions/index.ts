@@ -26,11 +26,7 @@ import {
 import { invokeOperation, OperationError, type Principal } from "../../uol";
 import "../../uol/operations/moderation";
 import "../../uol/operations/system-settings";
-import { globalVideoModelCreditsPerSecondSchema } from "../../adobe/video-pricing";
-import {
-  globalImageCreditOverridesSchema,
-  type ImageCreditOverrides,
-} from "../../image-backend/group-image-pricing";
+import type { ImageCreditOverrides } from "../../image-backend/group-image-pricing";
 import type { getAdminSystemSettingsSnapshot } from "../index";
 import {
   importSystemSettingsFromEnv,
@@ -95,14 +91,7 @@ export const getSystemSettingsAction = superAdminAction
     return { settings: result.settings };
   });
 
-const globalModelPricingInputSchema = z
-  .object({
-    image: globalImageCreditOverridesSchema,
-    videoCreditsPerSecond: globalVideoModelCreditsPerSecondSchema,
-  })
-  .strict();
-
-/** 读取独立模型计费页签所需的完整全局价格矩阵。 */
+/** 读取后端池等只读消费者所需的完整全局价格矩阵。 */
 export const getGlobalModelPricingAction = adminAction
   .metadata({ action: "system-settings.model-pricing.get" })
   .action(async ({ ctx }) => {
@@ -112,18 +101,6 @@ export const getGlobalModelPricingAction = adminAction
     }>(
       "settings.getModelPricing",
       {},
-      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
-    );
-  });
-
-/** 保存独立模型计费页签的必填全局价格矩阵。 */
-export const updateGlobalModelPricingAction = superAdminAction
-  .metadata({ action: "system-settings.model-pricing.update" })
-  .schema(globalModelPricingInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    return await invokeOperation<{ success: boolean }>(
-      "settings.updateModelPricing",
-      parsedInput,
       createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
     );
   });
