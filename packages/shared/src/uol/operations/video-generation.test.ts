@@ -14,6 +14,7 @@ import {
   videoGenerateInputSchema,
   videoGetStatus,
   videoGetStatusInputSchema,
+  videoListUncertainSubmissions,
   videoReconcileSubmission,
   videoReconcileSubmissionInputSchema,
 } from "./video-generation";
@@ -153,6 +154,36 @@ describe("video generation operations", () => {
         outcome: "not_accepted",
         taskId: "video-1",
         reason: "Adobe 控制台确认未创建任务",
+      }).success
+    ).toBe(true);
+  });
+
+  it("待核对列表同样只允许真实管理员且不暴露敏感字段", () => {
+    expect(videoListUncertainSubmissions.access).toEqual({
+      kind: "roles",
+      roles: ["admin", "super_admin"],
+    });
+    expect(videoListUncertainSubmissions.agentExposure).toBe("human-only");
+    expect(() =>
+      assertAccess(videoListUncertainSubmissions.access, {
+        type: "user",
+        userId: "observer-1",
+        role: "observer_admin",
+      })
+    ).toThrow();
+    expect(
+      videoListUncertainSubmissions.output.safeParse({
+        items: [
+          {
+            taskId: "video-1",
+            model: "firefly-sora2-4s-16x9",
+            backendMemberId: "member-1",
+            error: "提交响应丢失",
+            submitStartedAt: "2026-07-26T00:00:00.000Z",
+            createdAt: "2026-07-26T00:00:00.000Z",
+            updatedAt: "2026-07-26T00:01:00.000Z",
+          },
+        ],
       }).success
     ).toBe(true);
   });

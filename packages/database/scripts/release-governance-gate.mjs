@@ -282,7 +282,7 @@ async function assertMediaPreflight(pool) {
   });
 }
 
-/** 验证 0060-0062 后统一号池、视频回调和 Principal 作用域不变量。 */
+/** 验证 0060-0063 后统一号池、视频回调和可恢复租约身份不变量。 */
 async function assertMediaPostMigrationState(pool) {
   await inReadOnlyTransaction(pool, async (client) => {
     const result = await client.query(
@@ -327,7 +327,6 @@ async function assertMediaPostMigrationState(pool) {
               'adobe_token_member_id_image_backend_member_id_fk',
               'video_generation_backend_member_id_image_backend_member_id_fk',
               'video_generation_adobe_token_id_adobe_token_id_fk',
-              'video_generation_member_lease_id_image_backend_member_lease_id_fk',
               'video_generation_stage_check',
               'video_generation_recovery_counts_check',
               'video_generation_callback_delivery_video_generation_id_video_generation_id_fk',
@@ -336,6 +335,13 @@ async function assertMediaPostMigrationState(pool) {
               'video_generation_principal_scope_check'
             )
           ) as required_constraint_count,
+          (
+            select count(*)::text
+            from pg_constraint
+            where connamespace = 'public'::regnamespace
+              and conname =
+                'video_generation_member_lease_id_image_backend_member_lease_id_fk'
+          ) as recovery_lease_fk_count,
           (
             select count(*)::text
             from pg_indexes
@@ -428,6 +434,10 @@ async function assertMediaPostMigrationState(pool) {
       row.required_index_count,
       "required media indexes"
     );
+    const recoveryLeaseForeignKeyCount = parseCount(
+      row.recovery_lease_fk_count,
+      "video recovery lease foreign key"
+    );
     const removedSettingCount = parseCount(
       row.removed_setting_count,
       "removed media settings"
@@ -442,6 +452,10 @@ async function assertMediaPostMigrationState(pool) {
     printEvidence("old_media_column_count", oldColumnCount);
     printEvidence("required_media_column_count", requiredColumnCount);
     printEvidence("required_media_constraint_count", requiredConstraintCount);
+    printEvidence(
+      "video_recovery_lease_foreign_key_count",
+      recoveryLeaseForeignKeyCount
+    );
     printEvidence("required_media_index_count", requiredIndexCount);
     printEvidence("removed_media_setting_count", removedSettingCount);
     printEvidence("obsolete_media_plan_count", obsoletePlanCount);
@@ -451,7 +465,8 @@ async function assertMediaPostMigrationState(pool) {
       legacyTableCount !== 0 ||
       oldColumnCount !== 0 ||
       requiredColumnCount !== 4 ||
-      requiredConstraintCount !== 11 ||
+      requiredConstraintCount !== 10 ||
+      recoveryLeaseForeignKeyCount !== 0 ||
       requiredIndexCount !== 14 ||
       removedSettingCount !== 0 ||
       obsoletePlanCount !== 0

@@ -11,6 +11,8 @@ import {
   canAdobeBackendServeModel,
   collectAdvertisedAdobeImageModelIds,
   normalizeAdobeEnabledModelIds,
+  pickExplicitAdobeImageFamily,
+  resolveAdobeImageFamily,
   resolveAdobeImageModelId,
 } from "./enabled-models";
 
@@ -83,6 +85,29 @@ describe("Adobe 后端开放模型", () => {
         requestedModel: "nano-banana-pro",
       })
     ).toBe(true);
+  });
+
+  it("按最长模型族匹配 Adobe 图片家族", () => {
+    expect(resolveAdobeImageFamily("gpt-image-1")).toBe("gpt-image-2");
+    expect(resolveAdobeImageFamily("firefly-gpt-image-1.5-2k")).toBe(
+      "gpt-image-1.5"
+    );
+    expect(resolveAdobeImageFamily("firefly-nano-banana-pro-2k-16x9")).toBe(
+      "nano-banana-pro"
+    );
+    expect(resolveAdobeImageFamily("firefly-nano-banana2-2k-1x1")).toBe(
+      "nano-banana2"
+    );
+  });
+
+  it("只把显式 Adobe 模型请求识别为指定家族", () => {
+    expect(pickExplicitAdobeImageFamily("gpt-image-1")).toBeNull();
+    expect(pickExplicitAdobeImageFamily("firefly-gpt-image-1.5")).toBe(
+      "gpt-image-1.5"
+    );
+    expect(pickExplicitAdobeImageFamily("nano-banana-pro")).toBe(
+      "nano-banana-pro"
+    );
   });
 
   it("空白名单保持历史不限图像模型语义，视频仍须显式开启", () => {

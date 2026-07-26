@@ -442,6 +442,13 @@
       "when": 1785024002000,
       "tag": "0062_video_principal_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1785024003000,
+      "tag": "0063_video_recovery_lease_identity",
+      "breakpoints": true
     }
   ]
 }

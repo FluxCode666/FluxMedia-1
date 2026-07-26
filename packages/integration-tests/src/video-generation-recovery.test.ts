@@ -165,6 +165,7 @@ describe("video recovery PostgreSQL concurrency", () => {
           (id, stage, next_poll_at, claim_token, claim_expires_at,
            submit_started_at, updated_at)
          values
+          ('ready-created', 'created', $1, null, null, null, $1),
           ('active-charged', 'charged', null, 'live-1', $2, null, $1),
           ('active-submitting', 'submitting', null, 'live-2', $2, $1, $1),
           ('stale-charged', 'charged', null, 'dead-1', $3, null, $4),
@@ -178,7 +179,7 @@ describe("video recovery PostgreSQL concurrency", () => {
         createRecoveryDatabase(client)
       );
       const claims = [];
-      for (let index = 0; index < 4; index += 1) {
+      for (let index = 0; index < 5; index += 1) {
         const claim = await repository.claimNext({
           claimToken: `worker-${index}`,
           now,
@@ -190,6 +191,7 @@ describe("video recovery PostgreSQL concurrency", () => {
 
       expect(claims.map((claim) => claim.id).sort()).toEqual([
         "due-polling",
+        "ready-created",
         "stale-charged",
         "stale-submitting",
       ]);

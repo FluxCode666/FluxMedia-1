@@ -74,7 +74,7 @@ export function createPostgresVideoRecoveryRepository(
             from video_generation
             where (
                 (
-                  stage in ('polling', 'downloading', 'refunding')
+                  stage in ('created', 'polling', 'downloading', 'refunding')
                   and (next_poll_at is null or next_poll_at <= ${input.now})
                 )
                 or (

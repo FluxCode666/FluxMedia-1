@@ -1,7 +1,7 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0062 SQL，验证空旧号池可原子切换、遗留数据会阻断且完整
+ * 职责：直接执行 0060-0063 SQL，验证空旧号池可原子切换、遗留数据会阻断且完整
  * 回滚，同时锁定旧设置、套餐 JSON、回调投递表和视频 Principal 作用域。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
@@ -29,6 +29,7 @@ const migrationPaths = [
   "0060_unified_media_backend_pool.sql",
   "0061_video_callback_delivery.sql",
   "0062_video_principal_scope.sql",
+  "0063_video_recovery_lease_identity.sql",
 ].map((filename) =>
   fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
@@ -175,7 +176,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060-0062 unified media backend pool migrations", () => {
+describe("0060-0063 unified media backend pool migrations", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -234,6 +235,15 @@ describe("0060-0062 unified media backend pool migrations", () => {
          where id = 'legacy-video'`
       );
       expect(principalScope.rows[0]?.principal_scope).toBe("user:user-1");
+      const leaseForeignKey = await client.query<{ count: number }>(
+        `select count(*)::integer as count
+         from pg_constraint
+         where connamespace = $1::regnamespace
+           and conname =
+             'video_generation_member_lease_id_image_backend_member_lease_id_fk'`,
+        [schemaName]
+      );
+      expect(leaseForeignKey.rows[0]?.count).toBe(0);
 
       const removedSetting = await client.query<{ count: number }>(
         "select count(*)::integer as count from system_setting where key = 'PLATFORM_CHAT_MODEL'"

@@ -359,4 +359,70 @@ describe("backend pool PostgreSQL concurrency", () => {
       }
     }
   });
+
+  it("接管过期租约时遵守容量，仍有效的原租约可在满载时换 owner", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      await insertMember(owner, { id: "member-a", concurrency: 1 });
+      const now = new Date("2026-07-26T01:00:00.000Z");
+      const expiresAt = new Date(now.getTime() + 21 * 60_000);
+      await owner.query(
+        `insert into image_backend_member_lease
+          (id, member_id, owner_token, expires_at)
+         values
+          ('recovering', 'member-a', 'owner-old', $1),
+          ('active', 'member-a', 'owner-active', $2)`,
+        [new Date(now.getTime() - 1), expiresAt]
+      );
+      const repository = createRepository(pool, schemaName);
+
+      await expect(
+        repository.takeoverLease({
+          leaseId: "recovering",
+          memberId: "member-a",
+          currentOwnerToken: "owner-old",
+          nextOwnerToken: "owner-next",
+          now,
+          expiresAt,
+        })
+      ).resolves.toBeNull();
+
+      await owner.query(
+        "delete from image_backend_member_lease where id = 'active'"
+      );
+      const recovered = await repository.takeoverLease({
+        leaseId: "recovering",
+        memberId: "member-a",
+        currentOwnerToken: "owner-old",
+        nextOwnerToken: "owner-next",
+        now,
+        expiresAt,
+      });
+      expect(recovered).toMatchObject({ ownerToken: "owner-next" });
+
+      const handedOff = await repository.takeoverLease({
+        leaseId: "recovering",
+        memberId: "member-a",
+        currentOwnerToken: "owner-next",
+        nextOwnerToken: "owner-final",
+        now,
+        expiresAt,
+      });
+      expect(handedOff).toMatchObject({ ownerToken: "owner-final" });
+      const activeCount = await owner.query<{ count: number }>(
+        "select count(*)::integer as count from image_backend_member_lease where expires_at > $1",
+        [now]
+      );
+      expect(activeCount.rows[0]?.count).toBe(1);
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
 });

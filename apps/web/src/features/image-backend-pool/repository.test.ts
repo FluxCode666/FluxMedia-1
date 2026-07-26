@@ -324,7 +324,9 @@ describe("backend pool PostgreSQL repository", () => {
 
     expect(takeover).toMatchObject({ ownerToken: "owner-next" });
     expect(staleRelease).toBe(false);
-    expect(queries[0]?.sql).not.toContain("expires_at >");
+    expect(queries[0]?.sql).toContain("from image_backend_member");
+    expect(queries[0]?.sql).toContain("for update");
+    expect(queries[0]?.sql).toContain("inflight_count <");
     expect(queries[0]?.sql).toContain("on conflict do nothing");
     expect(queries[0]?.params).toEqual(
       expect.arrayContaining([

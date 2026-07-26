@@ -12,13 +12,12 @@
 import { db } from "@repo/database";
 import { adobeAccount, adobeToken } from "@repo/database/schema";
 import {
-  type AdobeImageFamily,
   type AdobeImageResolution,
   type AdobeRatio,
   canAdobeBackendServeModel,
   composeAdobeImageModelId,
   mapSizeToAdobe,
-  resolveAdobeImageModelId,
+  resolveAdobeImageFamily,
 } from "@repo/shared/adobe";
 import {
   AdobeAcceptedVideoError,
@@ -46,6 +45,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { parseAdobeCookieEntries } from "./adobe-cookie-parser";
 import type { ApiConfig, GenerateImageResult } from "./types";
+import { requireOriginalAcceptedVideoToken } from "./video-recovery-policy";
 
 // IMS access_token 距过期多久内视为需要刷新（秒）。
 const TOKEN_REFRESH_SKEW_SECONDS = 120;
@@ -441,29 +441,6 @@ async function runWithAdobeTokenRotation<T>(
   };
 }
 
-const ALLOWED_FAMILIES: AdobeImageFamily[] = [
-  "gpt-image-2",
-  "gpt-image-1.5",
-  "nano-banana",
-  "nano-banana2",
-  "nano-banana-pro",
-];
-
-// 从请求 model（firefly-<family> 或裸 <family>，均可带 res/ratio 后缀）解析模型族；
-// 用户在创作页/接口选的具体 Firefly 模型优先，按共享规范化规则匹配，避免 nano-banana
-// 误吞 nano-banana-pro / nano-banana2。普通 gpt-image、未知模型仍落到 gpt-image-2。
-export function resolveAdobeFamilyFromModel(
-  model: string | null | undefined,
-  _enabled?: string[] | null | undefined
-): AdobeImageFamily {
-  const normalizedModelId = resolveAdobeImageModelId(model);
-  const family = normalizedModelId.slice("firefly-".length);
-  if ((ALLOWED_FAMILIES as readonly string[]).includes(family)) {
-    return family as AdobeImageFamily;
-  }
-  return "gpt-image-2";
-}
-
 /**
  * mode=direct 的 adobe 派发：选 token → 选模型族/尺寸 → 图生图先上传 → generateImage。
  * 出错返回 { error }，由上层管线统一处理（含池上报）。
@@ -496,7 +473,7 @@ export async function runAdobeDirectImageRequest(
   // 模型族 + 宽高比/分辨率（与 token 无关，放轮换外只算一次）：family 优先取请求 model
   // （创作页/接口选的 Firefly 或裸 Nano Banana 模型），普通/未知模型落 gpt-image-2；
   // ratio/res 由 size 映射，缺省走后端默认。
-  const family = resolveAdobeFamilyFromModel(params.model);
+  const family = resolveAdobeImageFamily(params.model);
   const fallbackRatio = (config.backend?.adobeDefaultRatio ||
     "1x1") as AdobeRatio;
   const fallbackResolution = (config.backend?.adobeDefaultResolution ||
@@ -750,7 +727,13 @@ export async function pollAdobeDirectVideoRequest(input: {
   signal?: AbortSignal;
 }): Promise<AdobeVideoPollResult> {
   const [token] = await db
-    .select({ value: adobeToken.value, memberId: adobeToken.memberId })
+    .select({
+      value: adobeToken.value,
+      memberId: adobeToken.memberId,
+      accountId: adobeToken.accountId,
+      expiresAt: adobeToken.expiresAt,
+      source: adobeToken.source,
+    })
     .from(adobeToken)
     .where(
       and(
@@ -769,11 +752,72 @@ export async function pollAdobeDirectVideoRequest(input: {
     transport: apiTransport,
     downloadTransport,
   });
-  return client.pollVideo({
-    token: token.value,
-    pollUrl: input.pollUrl,
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
+  let tokenValue = token.value;
+
+  /** 只刷新原 token 绑定的原账号，绝不选择另一个账号或 token。 */
+  const refreshOriginalToken = async (): Promise<string> => {
+    if (!token.accountId || token.source !== "auto_refresh") {
+      throw new AdobeAcceptedVideoError(
+        "Adobe 视频恢复 token 无法由原账号刷新，任务将保留重试",
+        { errorType: "network" }
+      );
+    }
+    const [account] = await db
+      .select({
+        id: adobeAccount.id,
+        cookie: adobeAccount.cookie,
+        scope: adobeAccount.scope,
+      })
+      .from(adobeAccount)
+      .where(
+        and(
+          eq(adobeAccount.id, token.accountId),
+          eq(adobeAccount.memberId, input.memberId),
+          eq(adobeAccount.isEnabled, true)
+        )
+      )
+      .limit(1);
+    const refreshed = account
+      ? await refreshAccountToken(
+          input.memberId,
+          account,
+          apiTransport,
+          input.signal
+        )
+      : null;
+    tokenValue = requireOriginalAcceptedVideoToken({
+      tokenId: input.tokenId,
+      refreshed,
+    });
+    return tokenValue;
+  };
+
+  const expired = token.expiresAt
+    ? token.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
+      Date.now()
+    : isTokenExpired(token.value, TOKEN_REFRESH_SKEW_SECONDS);
+  if (expired) await refreshOriginalToken();
+
+  try {
+    return await client.pollVideo({
+      token: tokenValue,
+      pollUrl: input.pollUrl,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  } catch (error) {
+    if (
+      error instanceof AdobeAcceptedVideoError &&
+      (error.statusCode === 401 || error.statusCode === 403)
+    ) {
+      await refreshOriginalToken();
+      return client.pollVideo({
+        token: tokenValue,
+        pollUrl: input.pollUrl,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+    }
+    throw error;
+  }
 }
 
 /** 下载已完成视频；存储键和最终落库由状态机负责。 */
@@ -985,10 +1029,7 @@ export async function importAdobeAccount(input: {
   cookie: string;
   scope?: string | null;
 }): Promise<{ id: string; displayName: string; email: string }> {
-  const validated = await validateAdobeCookie(
-    input.cookie,
-    input.scope
-  );
+  const validated = await validateAdobeCookie(input.cookie, input.scope);
   const { id, displayName, email } = await persistAdobeAccount(
     input,
     validated
@@ -1062,10 +1103,7 @@ export async function importAdobeAccountsBatch(input: {
       : undefined;
     const name = entry.name?.trim() || fallbackName;
     try {
-      const validated = await validateAdobeCookie(
-        entry.cookie,
-        scope
-      );
+      const validated = await validateAdobeCookie(entry.cookie, scope);
       const userId = validated.account?.userId || null;
       const email = validated.account?.email?.toLowerCase() || null;
       if (

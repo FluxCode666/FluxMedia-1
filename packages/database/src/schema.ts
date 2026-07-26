@@ -1406,6 +1406,28 @@ export const adobeToken = pgTable(
   ]
 );
 
+/** 视频 worker 可跨进程恢复的 JSON-safe 图片引用。 */
+type PersistedVideoInputReference =
+  | {
+      source: "data";
+      mimeType: "image/png" | "image/jpeg" | "image/webp";
+      base64: string;
+      byteLength: number;
+    }
+  | {
+      source: "storage";
+      mimeType: "image/png" | "image/jpeg" | "image/webp";
+      storageKey: string;
+      storageBucket?: string;
+      byteLength: number;
+    }
+  | {
+      source: "remote";
+      mimeType: "image/png" | "image/jpeg" | "image/webp";
+      url: string;
+      byteLength: number;
+    };
+
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
 // 状态机、轮询恢复、按模型族每秒固定积分×时长计费。提交后置 running 并保存 pollUrl，
 // 定时/请求侧轮询到完成再 re-host 到对象存储。financially 真相仍在 credits_transaction，
@@ -1432,10 +1454,8 @@ export const videoGeneration = pgTable(
     adobeTokenId: text("adobe_token_id").references(() => adobeToken.id, {
       onDelete: "set null",
     }),
-    memberLeaseId: text("member_lease_id").references(
-      () => imageBackendMemberLease.id,
-      { onDelete: "set null" }
-    ),
+    // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
+    memberLeaseId: text("member_lease_id"),
     memberLeaseOwnerToken: text("member_lease_owner_token"),
     // 完整 Firefly 视频 model id（firefly-<family>-<dur>s-<ratio>[-<res>]）。
     model: text("model").notNull(),
@@ -1452,9 +1472,7 @@ export const videoGeneration = pgTable(
     attemptCount: integer("attempt_count").notNull().default(0),
     // 图生视频输入：引用历史生成（@ 历史图）或上传图的 storageKey / generationId。
     inputImageRefs:
-      json("input_image_refs").$type<
-        Array<{ generationId?: string; storageKey?: string; role?: string }>
-      >(),
+      json("input_image_refs").$type<PersistedVideoInputReference[]>(),
     // 完成后 re-host 到对象存储的 key；videoUrl 为上游 presigned（短期）。
     storageKey: text("storage_key"),
     videoUrl: text("video_url"),

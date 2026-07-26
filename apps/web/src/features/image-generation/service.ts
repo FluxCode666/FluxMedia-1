@@ -10,6 +10,7 @@ import {
   canAdobeBackendServeModel,
   isAdobeImageFamilyModelId,
   parseAdobeMediaResult,
+  pickExplicitAdobeImageFamily,
 } from "@repo/shared/adobe";
 import {
   applyRequestParameterMappings,
@@ -17,7 +18,6 @@ import {
 } from "@repo/shared/image-backend/request-parameter-mapping";
 import { logError } from "@repo/shared/logger";
 import { runAdobeDirectImageRequest } from "./adobe-direct";
-import { pickAdobeFamilyFromModel } from "./adobe-model-family";
 import { appendImagesUpstreamNonce } from "./images-upstream-nonce";
 import {
   normalizeImageBackground,
@@ -1047,7 +1047,7 @@ async function runAdobeImageRequest(
   }
   // 网关模式：family 优先取请求 model 的族（支持 firefly-* 与裸 Nano Banana）；普通或未知
   // 模型（如普通 gpt-image 经 force_firefly 强制路由到 adobe）落 gpt-image-2。
-  const family = pickAdobeFamilyFromModel(params.model) ?? "gpt-image-2";
+  const family = pickExplicitAdobeImageFamily(params.model) ?? "gpt-image-2";
   const body = buildAdobeImageRequestBody({
     family,
     prompt: params.prompt,

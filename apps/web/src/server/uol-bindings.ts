@@ -62,7 +62,10 @@ import {
   isMcpApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
-import { videoReconcileSubmission } from "@repo/shared/uol/operations/video-generation";
+import {
+  videoListUncertainSubmissions,
+  videoReconcileSubmission,
+} from "@repo/shared/uol/operations/video-generation";
 import {
   type AnalyticsReadModelState,
   loadOutputUsageSummary,
@@ -105,7 +108,6 @@ import {
   HistoryServiceError,
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
-import { loadMediaInputs } from "@/features/image-generation/media-input-loader";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
 import {
   getVideoGenerationById,
@@ -342,12 +344,6 @@ bindExecute(
       };
     }
 
-    const inputImages = input.inputImages
-      ? await loadMediaInputs({
-          userId: principal.userId,
-          references: input.inputImages,
-        })
-      : undefined;
     try {
       const result = await runAdobeVideoGenerationForUser(
         {
@@ -365,17 +361,8 @@ bindExecute(
           ...(input.backendGroupId
             ? { backendGroupId: input.backendGroupId }
             : {}),
-          ...(inputImages?.length ? { inputImages } : {}),
-          ...(input.inputImages?.some(
-            (reference) => reference.source === "storage"
-          )
-            ? {
-                inputImageRefs: input.inputImages.flatMap((reference) =>
-                  reference.source === "storage"
-                    ? [{ storageKey: reference.storageKey }]
-                    : []
-                ),
-              }
+          ...(input.inputImages?.length
+            ? { inputImages: input.inputImages }
             : {}),
         },
         callbackUrl ? { callbackUrl } : undefined
@@ -387,7 +374,7 @@ bindExecute(
           ? toVideoOperationStatus(persisted.status, persisted.stage)
           : "error" in result
             ? ("failed" as const)
-            : ("processing" as const),
+            : ("pending" as const),
       };
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个
@@ -442,6 +429,37 @@ bindExecute(
     };
   }
 );
+
+/** video.listUncertainSubmissions - 管理员读取安全的待核对任务列表。 */
+bindOperationExecute(videoListUncertainSubmissions, async (input) => {
+  const [{ db }, { videoGeneration }, { desc, eq }] = await Promise.all([
+    import("@repo/database"),
+    import("@repo/database/schema"),
+    import("drizzle-orm"),
+  ]);
+  const rows = await db
+    .select({
+      taskId: videoGeneration.id,
+      model: videoGeneration.model,
+      backendMemberId: videoGeneration.backendMemberId,
+      error: videoGeneration.error,
+      submitStartedAt: videoGeneration.submitStartedAt,
+      createdAt: videoGeneration.createdAt,
+      updatedAt: videoGeneration.updatedAt,
+    })
+    .from(videoGeneration)
+    .where(eq(videoGeneration.stage, "submit_uncertain"))
+    .orderBy(desc(videoGeneration.updatedAt), desc(videoGeneration.id))
+    .limit(input.limit);
+  return {
+    items: rows.map((row) => ({
+      ...row,
+      submitStartedAt: row.submitStartedAt?.toISOString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    })),
+  };
+});
 
 /** video.reconcileSubmission - 管理员人工收敛 Adobe 提交不确定任务。 */
 bindOperationExecute(videoReconcileSubmission, async (input) => {

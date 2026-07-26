@@ -60,6 +60,13 @@ export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
   ]
 );
 
+/** 待人工核对视频任务列表的受限输入。 */
+export const videoListUncertainSubmissionsInputSchema = z
+  .object({
+    limit: z.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+
 /** 根据 Principal 推导站内或外部视频能力。 */
 function deriveVideoCapability(principal: Principal): string[] {
   return [
@@ -169,5 +176,37 @@ export const videoReconcileSubmission = defineOperation({
   hasMaintenanceWrite: true,
   execute: async () => {
     throw new Error("Not yet wired: video.reconcileSubmission");
+  },
+});
+
+/** 管理员读取待人工核对任务；不返回 prompt、token 值、Cookie 或回调地址。 */
+export const videoListUncertainSubmissions = defineOperation({
+  name: "video.listUncertainSubmissions",
+  domain: "image-generation",
+  title: "列出待核对视频提交",
+  description:
+    "列出 submit_uncertain 视频任务的安全诊断字段，供管理员调查后提交核对结论。",
+  input: videoListUncertainSubmissionsInputSchema,
+  output: z.object({
+    items: z.array(
+      z.object({
+        taskId: z.string(),
+        model: z.string(),
+        backendMemberId: z.string().nullable(),
+        error: z.string().nullable(),
+        submitStartedAt: z.string().nullable(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      })
+    ),
+  }),
+  access: { kind: "roles", roles: ["admin", "super_admin"] },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: video.listUncertainSubmissions");
   },
 });

@@ -56,6 +56,7 @@ describe("video recovery repository", () => {
     const compiled = new PgDialect().sqlToQuery(queries[0] as SQL);
     expect(compiled.sql).toContain("limit 1");
     expect(compiled.sql).toContain("for update skip locked");
+    expect(compiled.sql).toContain("'created'");
     expect(compiled.sql).toContain("'charged'");
     expect(compiled.sql).toContain("'submitting'");
     expect(compiled.sql).not.toContain("'submit_uncertain'");

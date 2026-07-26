@@ -3,10 +3,11 @@
  *
  * 职责：在单一事务中读取调度策略、清理过期租约、锁定并排序合格成员、创建租约，
  * 并通过 owner token 的比较交换语义完成续租、接管和释放。
- * 使用方：统一号池 scheduler；单元测试通过事务端口注入验证 SQL 与并发边界。
+ * 使用方：统一号池 runtime-service；单元测试通过事务端口注入验证 SQL 与并发边界。
  * 关键依赖：Drizzle 参数化 SQL、共享 scheduling-policy、Zod 数据库行校验。
  */
 import {
+  type BackendSchedulingCandidate,
   type BackendSchedulingStrategy,
   normalizeBackendSchedulingStrategy,
   sortBackendSchedulingCandidates,
@@ -15,8 +16,6 @@ import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
-
-import type { BackendAcquireCandidate } from "./scheduler";
 
 /** 调度策略在 system_setting 中的唯一键名。 */
 export const IMAGE_BACKEND_SCHEDULING_STRATEGY_SETTING_KEY =
@@ -119,6 +118,16 @@ const releaseLeaseInputSchema = z
   })
   .strict();
 
+/** 仓储在锁定事务中排序所需的统一成员事实。 */
+interface BackendAcquireCandidate extends BackendSchedulingCandidate {
+  groupIds: readonly string[];
+  supportedModelIds: readonly string[];
+  isEnabled: boolean;
+  contentSafetyEnabled: boolean;
+  cooldownUntil: Date | null;
+  hasTerminalError: boolean;
+}
+
 /** 统一成员在获租事务中的完整候选快照。 */
 export interface LockedBackendMemberCandidate extends BackendAcquireCandidate {
   type: "api" | "adobe";
@@ -173,7 +182,8 @@ export type RenewBackendMemberLeaseInput = z.input<
  * 通过 owner token 比较交换恢复租约。
  *
  * 已过期租约可由持久任务原 owner 接管；若清理任务已删除该行，则以同一 ID 和成员
- * 重建。其他 owner 已先接管时两条路径都不会命中。
+ * 重建。重新占位前锁定成员并检查实时容量；仍有效的原租约已计入容量，可直接换 owner。
+ * 其他 owner 已先接管或成员容量已满时两条路径都不会命中。
  */
 export type TakeoverBackendMemberLeaseInput = z.input<
   typeof takeoverLeaseInputSchema
@@ -184,7 +194,7 @@ export type ReleaseBackendMemberLeaseInput = z.input<
   typeof releaseLeaseInputSchema
 >;
 
-/** scheduler 使用的统一号池仓储端口。 */
+/** runtime-service 使用的统一号池仓储端口。 */
 export interface BackendPoolRepository {
   acquireLease(
     input: AcquireBackendMemberLeaseInput
@@ -459,7 +469,33 @@ export function createPostgresBackendPoolRepository(
       const input = takeoverLeaseInputSchema.parse(rawInput);
       return database.transaction(async (transaction) => {
         const result = await transaction.execute(sql`
-          with recovered as (
+          with locked_member as materialized (
+            select id, concurrency
+            from image_backend_member
+            where id = ${input.memberId}
+            for update
+          ), current_lease as materialized (
+            select id, expires_at
+            from image_backend_member_lease
+            where id = ${input.leaseId}
+              and member_id = ${input.memberId}
+              and owner_token = ${input.currentOwnerToken}
+            for update
+          ), active_capacity as (
+            select count(*)::integer as inflight_count
+            from image_backend_member_lease
+            where member_id = ${input.memberId}
+              and expires_at > ${input.now}
+          ), eligible as (
+            select locked_member.id
+            from locked_member, active_capacity
+            where exists (
+                select 1
+                from current_lease
+                where expires_at > ${input.now}
+              )
+              or active_capacity.inflight_count < locked_member.concurrency
+          ), recovered as (
             update image_backend_member_lease
             set owner_token = ${input.nextOwnerToken},
                 expires_at = ${input.expiresAt},
@@ -467,6 +503,7 @@ export function createPostgresBackendPoolRepository(
             where id = ${input.leaseId}
               and member_id = ${input.memberId}
               and owner_token = ${input.currentOwnerToken}
+              and exists (select 1 from eligible)
             returning id, member_id, owner_token, expires_at, created_at, updated_at
           ), recreated as (
             insert into image_backend_member_lease (
@@ -484,7 +521,9 @@ export function createPostgresBackendPoolRepository(
               ${input.expiresAt},
               ${input.now},
               ${input.now}
-            where not exists (select 1 from recovered)
+            where exists (select 1 from eligible)
+              and not exists (select 1 from current_lease)
+              and not exists (select 1 from recovered)
             on conflict do nothing
             returning id, member_id, owner_token, expires_at, created_at, updated_at
           )
