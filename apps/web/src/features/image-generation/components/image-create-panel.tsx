@@ -66,6 +66,10 @@ type ImageCreatePanelProps = {
   onCreditsConsumed: (credits: number) => void;
   recent: RecentImage[];
   selectedBackendGroupId: string | null;
+  initialSelection?: {
+    groupId: string;
+    modelId: string;
+  } | null;
 };
 
 const imageOutputSchema = z
@@ -173,8 +177,10 @@ export function ImageCreatePanel({
   onCreditsConsumed,
   recent,
   selectedBackendGroupId,
+  initialSelection = null,
 }: ImageCreatePanelProps) {
   const initialGroup =
+    catalog.groups.find((group) => group.id === initialSelection?.groupId) ??
     catalog.groups.find((group) => group.id === selectedBackendGroupId) ??
     catalog.groups.find((group) => group.isDefault) ??
     catalog.groups[0] ??
@@ -191,7 +197,7 @@ export function ImageCreatePanel({
     [mode, selectedGroup]
   );
   const [model, setModel] = useState(
-    availableModels[0]?.id ?? DEFAULT_IMAGE_MODEL
+    initialSelection?.modelId ?? availableModels[0]?.id ?? DEFAULT_IMAGE_MODEL
   );
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState(DEFAULT_IMAGE_SIZE);

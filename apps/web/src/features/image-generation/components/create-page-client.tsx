@@ -23,9 +23,17 @@ import {
   TabsTrigger,
 } from "@repo/ui/components/tabs";
 import { Images, Video } from "lucide-react";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
+import {
+  parseModelPreselectionIntent,
+  removePreselectionParams,
+  resolveAuthorizedImageSelection,
+  resolveVideoInitialSelection,
+} from "@/features/image-generation/model-preselection";
 import type { VideoPricingInfo } from "@/features/image-generation/video-operations";
 
 import { ImageCreatePanel } from "./image-create-panel";
@@ -56,6 +64,8 @@ interface CreatePageClientProps {
   videoPricing: VideoPricingInfo;
 }
 
+type CreateMediaMode = "image" | "video";
+
 /**
  * 渲染只包含图片和视频的创作页。
  *
@@ -73,12 +83,68 @@ export function CreatePageClient({
   imageModerationPricing,
   videoPricing,
 }: CreatePageClientProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [balance, setBalance] = useState(initialBalance);
+  const [initialPreselection] = useState(() => {
+    const intent = parseModelPreselectionIntent(searchParams);
+    return {
+      hasQueryParams:
+        searchParams.getAll("category").length > 0 ||
+        searchParams.getAll("model").length > 0,
+      intent,
+      imageSelection:
+        intent?.category === "image"
+          ? resolveAuthorizedImageSelection({
+              catalog: imageGenerationModelCatalog,
+              currentGroupId: selectedBackendGroupId,
+              modelId: intent.modelId,
+            })
+          : null,
+      videoSelection:
+        intent?.category === "video"
+          ? resolveVideoInitialSelection(intent.modelId)
+          : null,
+    };
+  });
+  const [activeMode, setActiveMode] = useState<CreateMediaMode>(
+    initialPreselection.intent?.category === "video" ? "video" : "image"
+  );
+  const hasConsumedPreselection = useRef(false);
+
+  useEffect(() => {
+    if (
+      hasConsumedPreselection.current ||
+      !initialPreselection.hasQueryParams
+    ) {
+      return;
+    }
+    hasConsumedPreselection.current = true;
+
+    const selectionIsAvailable =
+      initialPreselection.intent?.category === "image"
+        ? initialPreselection.imageSelection !== null
+        : initialPreselection.intent?.category === "video"
+          ? initialPreselection.videoSelection !== null
+          : false;
+    if (!selectionIsAvailable) {
+      toast.error("该模型当前不可用，已保留安全默认模型");
+    }
+
+    router.replace(removePreselectionParams(new URL(window.location.href)), {
+      scroll: false,
+    });
+  }, [initialPreselection, router]);
 
   /** 按服务端返回的实际扣费更新页面余额，不允许显示负数。 */
   const consumeDisplayedCredits = (credits: number) => {
     if (!Number.isFinite(credits) || credits <= 0) return;
     setBalance((current) => Math.max(0, current - credits));
+  };
+
+  /** 收窄媒体标签切换，忽略组件交付的未知值。 */
+  const changeActiveMode = (value: string) => {
+    if (value === "image" || value === "video") setActiveMode(value);
   };
 
   return (
@@ -97,7 +163,11 @@ export function CreatePageClient({
         </CardHeader>
       </Card>
 
-      <Tabs defaultValue="image" className="space-y-6">
+      <Tabs
+        value={activeMode}
+        onValueChange={changeActiveMode}
+        className="space-y-6"
+      >
         <TabsList className="grid w-full max-w-sm grid-cols-2">
           <TabsTrigger value="image" className="gap-2">
             <Images className="size-4" />
@@ -120,6 +190,7 @@ export function CreatePageClient({
             onCreditsConsumed={consumeDisplayedCredits}
             recent={recentGenerations}
             selectedBackendGroupId={selectedBackendGroupId}
+            initialSelection={initialPreselection.imageSelection}
           />
         </TabsContent>
 
@@ -127,6 +198,7 @@ export function CreatePageClient({
           <Card>
             <CardContent className="pt-6">
               <VideoCreatePanel
+                initialSelection={initialPreselection.videoSelection}
                 recent={recentGenerations}
                 pricing={videoPricing}
               />

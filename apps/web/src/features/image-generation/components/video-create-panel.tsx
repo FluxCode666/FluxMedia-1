@@ -28,6 +28,14 @@ import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { VideoPricingInfo } from "../video-operations";
 
+/** 经静态视频目录验证后，可安全用于面板一次性初始化的模型选项。 */
+export type VideoCreateInitialSelection = {
+  familyId: string;
+  duration: number;
+  ratio: string;
+  resolution: string;
+};
+
 type VideoStatus = "idle" | "running" | "done" | "error";
 
 type VideoTaskResponse = {
@@ -127,22 +135,31 @@ type VideoHistoryItem = {
 };
 
 export function VideoCreatePanel({
+  initialSelection = null,
   recent = [],
   pricing,
 }: {
+  initialSelection?: VideoCreateInitialSelection | null;
   recent?: VideoHistoryItem[];
   pricing: VideoPricingInfo;
 }) {
   const families = FIREFLY_VIDEO_FAMILIES;
-  const [familyId, setFamilyId] = useState(families[0]?.family ?? "sora2");
+  const initialFamily =
+    families.find((item) => item.family === initialSelection?.familyId) ??
+    families[0];
+  const [familyId, setFamilyId] = useState(initialFamily?.family ?? "sora2");
   const family = useMemo(
     () => families.find((item) => item.family === familyId) ?? families[0],
     [familyId]
   );
-  const [duration, setDuration] = useState<number>(family?.durations[0] ?? 8);
-  const [ratio, setRatio] = useState<string>(family?.ratios[0] ?? "16:9");
+  const [duration, setDuration] = useState<number>(
+    initialSelection?.duration ?? initialFamily?.durations[0] ?? 8
+  );
+  const [ratio, setRatio] = useState<string>(
+    initialSelection?.ratio ?? initialFamily?.ratios[0] ?? "16:9"
+  );
   const [resolution, setResolution] = useState<string>(
-    family?.resolutions[0] ?? "720p"
+    initialSelection?.resolution ?? initialFamily?.resolutions[0] ?? "720p"
   );
   const [prompt, setPrompt] = useState("");
   const [inputImage, setInputImage] = useState<string | null>(null);
