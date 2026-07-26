@@ -36,8 +36,6 @@ import "./external-api";
 import "./external-api-platform-model-catalog";
 
 export type { ExternalApiKeySummary } from "./external-api";
-export { imageGenerate } from "./image-generation";
-export { videoGenerate, videoGetStatus } from "./video-generation";
 export {
   type PlatformModelCatalogOutput,
   platformModelCatalogItemSchema,
@@ -51,7 +49,9 @@ export {
   homepageGenerationSlaStatsOutputSchema,
   homepageSlaVisibilityOutputSchema,
 } from "./homepage-reliability";
+export { imageGenerate } from "./image-generation";
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
+export { videoGenerate, videoGetStatus } from "./video-generation";
 
 // 客服支持域
 import "./support";

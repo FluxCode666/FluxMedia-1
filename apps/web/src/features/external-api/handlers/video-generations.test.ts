@@ -71,7 +71,9 @@ describe("postExternalVideoGenerations", () => {
       plan: "pro",
     });
     mocks.ensureInitialized.mockResolvedValue(undefined);
-    mocks.validateCallbackUrl.mockImplementation(async (value: string) => value);
+    mocks.validateCallbackUrl.mockImplementation(
+      async (value: string) => value
+    );
     mocks.invokeOperation.mockResolvedValue({
       taskId: "video-1",
       status: "processing",
@@ -107,6 +109,7 @@ describe("postExternalVideoGenerations", () => {
       },
       {
         type: "apiKey",
+        credentialKind: "external",
         userId: "user-1",
         apiKeyId: "key-a",
         plan: "pro",

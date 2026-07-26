@@ -76,6 +76,7 @@ describe("getExternalVideoTask", () => {
       { taskId: "video-1" },
       {
         type: "apiKey",
+        credentialKind: "external",
         userId: "user-1",
         apiKeyId: "key-a",
         plan: "pro",

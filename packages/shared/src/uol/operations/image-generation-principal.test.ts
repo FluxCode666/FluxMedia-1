@@ -6,8 +6,9 @@
  */
 import { describe, expect, it } from "vitest";
 
+import type { Principal } from "../principal";
 import { getOperation } from "../registry";
-import { imageGenerateInputSchema } from "./image-generation";
+import { imageGenerate, imageGenerateInputSchema } from "./image-generation";
 
 describe("image.generate principal-bound contract", () => {
   it("accepts generation parameters without a client identity", () => {
@@ -41,6 +42,35 @@ describe("image.generate principal-bound contract", () => {
     expect(getOperation("image.generate")?.input).toBe(
       imageGenerateInputSchema
     );
+  });
+
+  it("按凭据来源区分外部 API 与 MCP 的套餐能力", () => {
+    const requirement = imageGenerate.capabilities?.[0];
+    if (!requirement || !("derive" in requirement)) {
+      throw new Error("image.generate 缺少动态套餐能力声明");
+    }
+    const input = { operation: "generate" as const, prompt: "a test image" };
+    const externalPrincipal = {
+      type: "apiKey",
+      credentialKind: "external",
+      userId: "user-1",
+      apiKeyId: "external-key-1",
+      plan: "pro",
+    } satisfies Principal;
+    const mcpPrincipal = {
+      type: "apiKey",
+      credentialKind: "mcp",
+      userId: "user-1",
+      apiKeyId: "mcp-key-1",
+      plan: "pro",
+    } satisfies Principal;
+
+    expect(requirement.derive(input, externalPrincipal)).toEqual([
+      "externalApi.images.generate",
+    ]);
+    expect(requirement.derive(input, mcpPrincipal)).toEqual([
+      "imageGeneration.text",
+    ]);
   });
 
   it("accepts generate, edit and mask variants with JSON-safe media", () => {

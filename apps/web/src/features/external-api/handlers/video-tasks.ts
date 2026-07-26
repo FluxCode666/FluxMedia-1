@@ -48,6 +48,7 @@ export const getExternalVideoTask = withApiLogging(
         { taskId },
         {
           type: "apiKey",
+          credentialKind: "external",
           userId: auth.userId,
           apiKeyId: auth.apiKeyId,
           plan: auth.plan,

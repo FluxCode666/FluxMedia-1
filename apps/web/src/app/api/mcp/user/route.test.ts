@@ -52,6 +52,7 @@ import { POST } from "./route";
 
 const principal = {
   type: "apiKey" as const,
+  credentialKind: "mcp" as const,
   userId: "user-1",
   apiKeyId: "mcp-key-1",
   plan: "pro",

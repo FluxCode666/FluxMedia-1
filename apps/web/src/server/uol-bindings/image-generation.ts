@@ -5,11 +5,7 @@
  * `runImageGenerationForUser`，身份只从 Principal 获取。
  * 使用方：根 uol-bindings 聚合器；默认依赖动态加载以保持本模块单测 DB-free。
  */
-import {
-  imageGenerate,
-  type ImageGenerateOperationInput,
-  type ImageGenerateOperationOutput,
-} from "@repo/shared/uol/operations/image-generation";
+
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindOperationExecute,
@@ -17,6 +13,11 @@ import {
   isExternalApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
+import {
+  type ImageGenerateOperationInput,
+  type ImageGenerateOperationOutput,
+  imageGenerate,
+} from "@repo/shared/uol/operations/image-generation";
 
 import type { loadMediaInputs } from "@/features/image-generation/media-input-loader";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
@@ -37,12 +38,14 @@ export interface ImageGenerationBindingDependencies {
 
 const defaultDependencies: ImageGenerationBindingDependencies = {
   async loadMediaInputs(input) {
-    return (await import("@/features/image-generation/media-input-loader"))
-      .loadMediaInputs(input);
+    return (
+      await import("@/features/image-generation/media-input-loader")
+    ).loadMediaInputs(input);
   },
   async runImageGenerationForUser(input, callbacks) {
-    return (await import("@/features/image-generation/operations"))
-      .runImageGenerationForUser(input, callbacks);
+    return (
+      await import("@/features/image-generation/operations")
+    ).runImageGenerationForUser(input, callbacks);
   },
 };
 
@@ -83,18 +86,14 @@ function toImageGenerateOutput(
   if (result.imageUrl) {
     images.push({
       url: result.imageUrl,
-      ...(result.revisedPrompt
-        ? { revisedPrompt: result.revisedPrompt }
-        : {}),
+      ...(result.revisedPrompt ? { revisedPrompt: result.revisedPrompt } : {}),
     });
   }
   for (const output of result.imageOutputs ?? []) {
     if (!output.imageUrl) continue;
     images.push({
       url: output.imageUrl,
-      ...(output.revisedPrompt
-        ? { revisedPrompt: output.revisedPrompt }
-        : {}),
+      ...(output.revisedPrompt ? { revisedPrompt: output.revisedPrompt } : {}),
     });
   }
   return {

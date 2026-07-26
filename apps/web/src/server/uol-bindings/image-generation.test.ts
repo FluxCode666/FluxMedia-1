@@ -5,9 +5,9 @@
  * 流回调真实透传到唯一图片管线。
  * 使用方：apps/web Vitest 门禁；所有 I/O 通过依赖注入替换。
  */
-import { describe, expect, it, vi } from "vitest";
 
 import type { OperationContext, Principal } from "@repo/shared/uol";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   executeImageGenerateBinding,
@@ -167,7 +167,11 @@ describe("executeImageGenerateBinding", () => {
 
   it("mask 在一次总量校验中加载图片与蒙版并正确拆分", async () => {
     const deps = dependencies();
-    const maskReference = { ...dataReference, base64: "bWFzaw==", byteLength: 4 };
+    const maskReference = {
+      ...dataReference,
+      base64: "bWFzaw==",
+      byteLength: 4,
+    };
     await executeImageGenerateBinding(
       {
         operation: "mask",

@@ -95,6 +95,7 @@ describe("external models handler", () => {
       {},
       {
         type: "apiKey",
+        credentialKind: "external",
         userId: "user_1",
         apiKeyId: "key_1",
         plan: "starter",

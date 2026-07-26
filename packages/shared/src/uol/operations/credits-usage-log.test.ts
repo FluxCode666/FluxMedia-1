@@ -98,6 +98,7 @@ describe("wallet and usage log UOL contracts", () => {
   )("rejects apiKey Principal before executing %s", async (name) => {
     const apiKeyPrincipal = {
       type: "apiKey",
+      credentialKind: "external",
       userId: "user-1",
       apiKeyId: "key-1",
       plan: "pro",

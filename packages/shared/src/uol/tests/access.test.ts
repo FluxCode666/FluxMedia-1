@@ -35,6 +35,7 @@ const principals = {
   } as Principal,
   apiKey: {
     type: "apiKey",
+    credentialKind: "external",
     userId: "u5",
     apiKeyId: "k1",
     plan: "pro",

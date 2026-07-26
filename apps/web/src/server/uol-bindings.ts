@@ -230,8 +230,9 @@ function assertVideoTaskPrincipal(
   if (principal.type !== "user" && principal.type !== "apiKey") {
     throw new OperationError("unauthenticated", "User identity required");
   }
-  const expectedApiKeyId =
-    isExternalApiKeyPrincipal(principal) ? principal.apiKeyId : null;
+  const expectedApiKeyId = isExternalApiKeyPrincipal(principal)
+    ? principal.apiKeyId
+    : null;
   if (row.userId !== principal.userId || row.apiKeyId !== expectedApiKeyId) {
     throw new OperationError("not_found", "Video task not found");
   }

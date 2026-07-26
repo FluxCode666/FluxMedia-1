@@ -38,6 +38,7 @@ const userPrincipal: Principal = {
 
 const apiKeyPrincipal: Principal = {
   type: "apiKey",
+  credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
   plan: "starter",
@@ -58,7 +59,8 @@ function registerMediaOperation(options?: { allowSystemBypass?: boolean }) {
         derive: (input, principal) => {
           const mediaInput = input as { mode: "generate" | "edit" };
           const prefix =
-            principal.type === "apiKey"
+            principal.type === "apiKey" &&
+            principal.credentialKind === "external"
               ? "externalApi.images"
               : "imageGeneration";
           return [

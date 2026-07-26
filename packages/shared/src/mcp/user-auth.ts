@@ -32,11 +32,11 @@ export class McpAuthError extends Error {
  * MCP User 鉴权函数签名。
  *
  * @param authHeader - 完整的 Authorization 头值（如 "Bearer mcp_xxx..."）
- * @returns Principal（type: "apiKey"，不携带客户端可控治理字段）
+ * @returns MCP 来源 Principal，不携带客户端可控治理字段。
  * @throws McpAuthError 鉴权失败时
  */
 export type AuthenticateMcpUserKeyFn = (
-  authHeader: string,
+  authHeader: string
 ) => Promise<Principal>;
 
 /**
@@ -46,7 +46,7 @@ export type AuthenticateMcpUserKeyFn = (
 let _authenticateFn: AuthenticateMcpUserKeyFn = async () => {
   throw new McpAuthError(
     "MCP User auth not configured. Call bindMcpUserAuth() at startup.",
-    500,
+    500
   );
 };
 
@@ -69,11 +69,11 @@ export function bindMcpUserAuth(fn: AuthenticateMcpUserKeyFn): void {
  * 验证 key 有效性与用户状态，返回 Principal。
  *
  * @param authHeader - 完整的 Authorization 头值
- * @returns Principal { type: "apiKey", userId, apiKeyId, plan }
+ * @returns Principal { type: "apiKey", credentialKind: "mcp", userId, apiKeyId, plan }
  * @throws McpAuthError 无效 token / key 已禁用 / 用户被封禁
  */
 export async function authenticateMcpUserKey(
-  authHeader: string,
+  authHeader: string
 ): Promise<Principal> {
   return _authenticateFn(authHeader);
 }

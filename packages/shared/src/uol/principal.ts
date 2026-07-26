@@ -13,7 +13,7 @@ import type { AppUserRole } from "../auth/roles";
  * Principal 联合类型 - 代表操作的调用者身份。
  *
  * - user: 通过会话登录的用户（含角色信息）
- * - apiKey: 通过 API key 鉴权的调用者（含套餐）
+ * - apiKey: 通过外部 API key 或 User MCP key 鉴权的调用者（含套餐）
  * - system: 系统内部调用（如初始化、后台任务）
  * - cron: 定时任务调用
  * - webhook: 外部 webhook 回调（支付平台等）
@@ -23,6 +23,7 @@ export type Principal =
   | { type: "user"; userId: string; role: AppUserRole }
   | {
       type: "apiKey";
+      credentialKind: "external" | "mcp";
       userId: string;
       apiKeyId: string;
       plan: string;
@@ -47,15 +48,32 @@ export function getPrincipalUserId(p: Principal): string | null {
   }
 }
 
+/** 判断 Principal 是否来自可绑定号池分组的外部 API Key。 */
+export function isExternalApiKeyPrincipal(p: Principal): p is Extract<
+  Principal,
+  { type: "apiKey" }
+> & {
+  credentialKind: "external";
+} {
+  return p.type === "apiKey" && p.credentialKind === "external";
+}
+
+/** 判断 Principal 是否来自独立的 User MCP Key。 */
+export function isMcpApiKeyPrincipal(p: Principal): p is Extract<
+  Principal,
+  { type: "apiKey" }
+> & {
+  credentialKind: "mcp";
+} {
+  return p.type === "apiKey" && p.credentialKind === "mcp";
+}
+
 /**
  * 判断 Principal 是否为管理员（admin 或 super_admin）。
  * 仅 user 类型可能为管理员。
  */
 export function isPrincipalAdmin(p: Principal): boolean {
-  return (
-    p.type === "user" &&
-    (p.role === "admin" || p.role === "super_admin")
-  );
+  return p.type === "user" && (p.role === "admin" || p.role === "super_admin");
 }
 
 /**

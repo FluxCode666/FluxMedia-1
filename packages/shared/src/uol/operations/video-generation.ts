@@ -7,7 +7,7 @@
 import { z } from "zod";
 
 import { mediaInputReferencesSchema } from "../../image-generation/media-contract";
-import type { Principal } from "../principal";
+import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
 /** video.generate 的传输无关输入契约。 */
@@ -32,7 +32,7 @@ export const videoGetStatusInputSchema = z
 /** 根据 Principal 推导站内或外部视频能力。 */
 function deriveVideoCapability(principal: Principal): string[] {
   return [
-    principal.type === "apiKey"
+    isExternalApiKeyPrincipal(principal)
       ? "externalApi.videos.generate"
       : "imageGeneration.video",
   ];

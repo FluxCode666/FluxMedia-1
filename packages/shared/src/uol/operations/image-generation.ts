@@ -25,10 +25,7 @@ import {
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
-import {
-  isExternalApiKeyPrincipal,
-  type Principal,
-} from "../principal";
+import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
 const imageGenerateCommonFields = {
@@ -161,7 +158,10 @@ export const imageGenerate = defineOperation<
   capabilities: [
     {
       derive: (input, principal) =>
-        deriveImageCapabilities(input as ImageGenerateOperationInput, principal),
+        deriveImageCapabilities(
+          input as ImageGenerateOperationInput,
+          principal
+        ),
     },
   ],
   allowSystemCapabilityBypass: true,
