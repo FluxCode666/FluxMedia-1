@@ -34,6 +34,7 @@ import { useAction } from "next-safe-action/hooks";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { getModelConfigurationAction } from "@/features/model-configuration/actions";
 import {
   deleteImageBackendGroupAction,
   deleteImageBackendMemberAction,
@@ -41,6 +42,11 @@ import {
 } from "./actions";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
+import {
+  type BackendMemberModelOption,
+  buildBackendMemberModelOptions,
+} from "./member-model-options";
+import type { BackendMemberModelOptionStatus } from "./member-model-select";
 import type { BackendMemberAdminSummary } from "./member-service";
 
 /** 格式化后台时间，非法或空值显示短横线。 */
@@ -113,6 +119,11 @@ export function ImageBackendPoolAdminPanel({
 }) {
   const [groups, setGroups] = useState<BackendGroupSummary[]>([]);
   const [members, setMembers] = useState<BackendMemberAdminSummary[]>([]);
+  const [modelOptions, setModelOptions] = useState<BackendMemberModelOption[]>(
+    []
+  );
+  const [modelOptionStatus, setModelOptionStatus] =
+    useState<BackendMemberModelOptionStatus>("loading");
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<BackendGroupSummary | null>(
@@ -132,6 +143,25 @@ export function ImageBackendPoolAdminPanel({
         toast.error(error.serverError || "加载统一号池失败"),
     }
   );
+  const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
+    useAction(getModelConfigurationAction, {
+      onSuccess: ({ data }) => {
+        if (!data) {
+          setModelOptions([]);
+          setModelOptionStatus("unavailable");
+          return;
+        }
+        setModelOptions(buildBackendMemberModelOptions(data));
+        setModelOptionStatus(
+          data.runtimeCatalogStatus === "ready" ? "ready" : "degraded"
+        );
+      },
+      onError: ({ error }) => {
+        setModelOptions([]);
+        setModelOptionStatus("unavailable");
+        toast.error(error.serverError || "加载模型配置失败");
+      },
+    });
   const { execute: deleteGroup, isPending: isDeletingGroup } = useAction(
     deleteImageBackendGroupAction,
     {
@@ -155,7 +185,8 @@ export function ImageBackendPoolAdminPanel({
 
   useEffect(() => {
     loadPool();
-  }, [loadPool]);
+    loadModelOptions();
+  }, [loadModelOptions, loadPool]);
 
   const groupNameById = useMemo(
     () => new Map(groups.map((group) => [group.id, group.name])),
@@ -195,6 +226,17 @@ export function ImageBackendPoolAdminPanel({
       toast.error("请先创建至少一个媒体后端分组");
       return;
     }
+    if (
+      modelOptionStatus === "loading" ||
+      modelOptionStatus === "unavailable"
+    ) {
+      toast.error("模型配置尚未就绪，请刷新后重试");
+      return;
+    }
+    if (modelOptions.length === 0) {
+      toast.error("模型配置中暂无可供成员选择的模型");
+      return;
+    }
     setEditingMember(null);
     setMemberDialogOpen(true);
   }
@@ -213,10 +255,14 @@ export function ImageBackendPoolAdminPanel({
           <Button
             type="button"
             variant="outline"
-            disabled={isLoading}
-            onClick={() => loadPool()}
+            disabled={isLoading || isLoadingModelOptions}
+            onClick={() => {
+              setModelOptionStatus("loading");
+              loadPool();
+              loadModelOptions();
+            }}
           >
-            {isLoading ? (
+            {isLoading || isLoadingModelOptions ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <RefreshCw className="size-4" />
@@ -454,7 +500,9 @@ export function ImageBackendPoolAdminPanel({
                   {member.type === "adobe" &&
                     member.config.mode === "direct" && (
                       <>
-                        <span>Adobe 状态：{member.config.credentialStatus}</span>
+                        <span>
+                          Adobe 状态：{member.config.credentialStatus}
+                        </span>
                         <span>
                           Adobe 账号：
                           {member.config.displayName ||
@@ -495,6 +543,8 @@ export function ImageBackendPoolAdminPanel({
         onOpenChange={setMemberDialogOpen}
         member={editingMember}
         groups={groups}
+        modelOptions={modelOptions}
+        modelOptionStatus={modelOptionStatus}
         onSaved={loadPool}
       />
     </div>

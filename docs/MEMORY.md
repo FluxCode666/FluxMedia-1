@@ -12,6 +12,8 @@
 
 - 顶层成员类型只有 `api | adobe`；Adobe 内部模式只有 `gateway | direct`。
 - `supportedModelIds` 是候选能力的唯一权威，模型名称不承担调度语义。
+- 成员模型选项来自管理端模型配置快照；图像使用配置键，视频族展开为可执行完整
+  ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关不得过滤调度能力。
 - API 成员只使用 OpenAI Images 协议；`useStream` 属于保留的图片上游能力，
   Responses/Mixed-to-Responses 配置不得迁入统一号池。
 - 全局调度策略为 `priority | least_acquired | least_load`，缺失或非法时回退

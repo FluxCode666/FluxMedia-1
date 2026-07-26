@@ -44,6 +44,7 @@ import {
 } from "@repo/shared/image-generation/history-contract";
 import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
+import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
 import {
   type ModerationImageInput,
   moderateContent,
@@ -85,6 +86,10 @@ import {
   backendGroupService,
 } from "@/features/image-backend-pool/group-service";
 import {
+  buildBackendMemberModelOptions,
+  findUnavailableBackendMemberModelIds,
+} from "@/features/image-backend-pool/member-model-options";
+import {
   BackendMemberServiceError,
   backendMemberService,
 } from "@/features/image-backend-pool/member-service";
@@ -123,6 +128,7 @@ import {
   createVideoTaskId,
 } from "@/features/image-generation/video-task-identity";
 import { prepareVideoTaskInputReferences } from "@/features/image-generation/video-task-preparation";
+import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import {
   createCreditTopUpCheckout,
   fulfillAlipayCreditTopUp,
@@ -1060,6 +1066,57 @@ function throwBackendPoolOperationError(error: unknown): never {
   throw error;
 }
 
+/**
+ * 校验成员能力只引用模型配置目录中的模型 ID。
+ *
+ * @param input 已通过统一成员输入 schema 的新增或编辑请求。
+ * @param principal UOL 网关验证后的真实管理员身份，用于读取同权限模型配置快照。
+ * @returns 校验成功时无返回值。
+ * @sideEffects 读取最新模型配置；编辑时额外读取当前成员以允许原样保留迁移历史 ID。
+ * @failure 模型配置不可读时返回 not_ready；新增的未知 ID 或不支持视频的成员选择视频
+ * 时返回 validation_error，不进入成员保存事务。
+ */
+async function assertBackendMemberModelsComeFromConfiguration(
+  input: BackendMemberInput,
+  principal: Principal
+): Promise<void> {
+  let modelConfiguration: ModelConfigurationSnapshot;
+  try {
+    modelConfiguration =
+      await productionModelConfigurationService.read(principal);
+  } catch (error) {
+    logError(error, {
+      source: "image-backend-pool",
+      operation: "validate-member-model-options",
+    });
+    throw new OperationError(
+      "not_ready",
+      "模型配置暂不可用，无法校验成员支持的模型"
+    );
+  }
+
+  const existingModelIds = input.id
+    ? ((await backendMemberService.listMembers()).find(
+        (member) => member.id === input.id
+      )?.supportedModelIds ?? [])
+    : [];
+  const unavailableModelIds = findUnavailableBackendMemberModelIds(
+    input,
+    buildBackendMemberModelOptions(modelConfiguration),
+    existingModelIds
+  );
+  if (unavailableModelIds.length === 0) return;
+
+  const displayedIds = unavailableModelIds.slice(0, 3).join("、");
+  const remainingCount = unavailableModelIds.length - 3;
+  throw new OperationError(
+    "validation_error",
+    `以下模型不在当前模型配置可选范围：${displayedIds}${
+      remainingCount > 0 ? ` 等 ${unavailableModelIds.length} 个` : ""
+    }`
+  );
+}
+
 /** pool.getGroupOptions - 获取用户可选择的启用分组。 */
 bindExecute(
   "pool.getGroupOptions",
@@ -1123,10 +1180,11 @@ bindExecute(
   "pool.saveMember",
   async (
     input: BackendMemberInput,
-    _principal: Principal,
+    principal: Principal,
     _ctx: OperationContext
   ) => {
     try {
+      await assertBackendMemberModelsComeFromConfiguration(input, principal);
       return await backendMemberService.saveMember(input);
     } catch (error) {
       throwBackendPoolOperationError(error);

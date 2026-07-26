@@ -6,8 +6,10 @@
  * 职责：以 `api | adobe` 单一入口编辑公共调度字段、显式模型能力和类型专属
  * 配置。成员类型在编辑时不可原地切换，secret 留空由服务端保留既有值。
  */
+import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import type { BackendMemberType } from "@repo/shared/image-backend/member-contract";
+import { normalizeSupportedModelIds } from "@repo/shared/image-backend/supported-models";
 import { Button } from "@repo/ui/components/button";
 import { Checkbox } from "@repo/ui/components/checkbox";
 import {
@@ -30,25 +32,20 @@ import {
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { saveImageBackendMemberAction } from "./actions";
 import { BackendBooleanSetting } from "./boolean-setting";
+import {
+  type BackendMemberModelOption,
+  createExistingMemberModelOption,
+} from "./member-model-options";
+import {
+  type BackendMemberModelOptionStatus,
+  BackendMemberModelSelect,
+} from "./member-model-select";
 import type { BackendMemberAdminSummary } from "./member-service";
-
-/** 把模型文本解析为保持首次出现顺序的唯一模型 ID。 */
-function parseModelIds(value: string): string[] {
-  const seen = new Set<string>();
-  const modelIds: string[] = [];
-  for (const item of value.split(/[\n,]/)) {
-    const modelId = item.trim().toLowerCase();
-    if (!modelId || seen.has(modelId)) continue;
-    seen.add(modelId);
-    modelIds.push(modelId);
-  }
-  return modelIds;
-}
 
 /** 把参数映射显示为每行 `copy|move source target` 的可编辑文本。 */
 function formatParameterMappings(
@@ -91,18 +88,22 @@ export function BackendMemberFormDialog({
   onOpenChange,
   member,
   groups,
+  modelOptions,
+  modelOptionStatus,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   member: BackendMemberAdminSummary | null;
   groups: BackendGroupSummary[];
+  modelOptions: readonly BackendMemberModelOption[];
+  modelOptionStatus: BackendMemberModelOptionStatus;
   onSaved: () => void;
 }) {
   const [type, setType] = useState<BackendMemberType>("api");
   const [name, setName] = useState("");
   const [groupIds, setGroupIds] = useState<string[]>([]);
-  const [modelIdsText, setModelIdsText] = useState("");
+  const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const [contentSafetyEnabled, setContentSafetyEnabled] = useState(true);
   const [isEnabled, setIsEnabled] = useState(true);
   const [alwaysActive, setAlwaysActive] = useState(false);
@@ -130,7 +131,7 @@ export function BackendMemberFormDialog({
     setType(nextType);
     setName(member?.name ?? "");
     setGroupIds(member?.groupIds ?? (groups[0] ? [groups[0].id] : []));
-    setModelIdsText(member?.supportedModelIds.join("\n") ?? "");
+    setSelectedModelIds(member?.supportedModelIds ?? []);
     setContentSafetyEnabled(member?.contentSafetyEnabled ?? true);
     setIsEnabled(member?.isEnabled ?? true);
     setAlwaysActive(member?.alwaysActive ?? false);
@@ -169,6 +170,32 @@ export function BackendMemberFormDialog({
     setAdobeScope("");
   }, [groups, member, open]);
 
+  const acceptsVideo = type === "adobe" && adobeMode === "direct";
+  const selectableModelOptions = useMemo(() => {
+    const configuredOptions = modelOptions.filter(
+      (option) => option.category === "image" || acceptsVideo
+    );
+    const knownIds = new Set(
+      configuredOptions.map((option) => option.id.trim().toLowerCase())
+    );
+    const existingOptions = selectedModelIds.flatMap((modelId) => {
+      const normalizedId = modelId.trim().toLowerCase();
+      if (!normalizedId || knownIds.has(normalizedId)) return [];
+      const category = isFireflyVideoModelId(modelId) ? "video" : "image";
+      if (category === "video" && !acceptsVideo) return [];
+      knownIds.add(normalizedId);
+      return [createExistingMemberModelOption(modelId, category)];
+    });
+    return [...configuredOptions, ...existingOptions];
+  }, [acceptsVideo, modelOptions, selectedModelIds]);
+
+  useEffect(() => {
+    if (acceptsVideo) return;
+    setSelectedModelIds((current) =>
+      current.filter((modelId) => !isFireflyVideoModelId(modelId))
+    );
+  }, [acceptsVideo]);
+
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
     {
@@ -193,7 +220,7 @@ export function BackendMemberFormDialog({
   /** 校验客户端草稿并提交严格的类型专属成员输入。 */
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    const supportedModelIds = parseModelIds(modelIdsText);
+    const supportedModelIds = normalizeSupportedModelIds(selectedModelIds);
     if (groupIds.length === 0) {
       toast.error("至少选择一个分组");
       return;
@@ -249,9 +276,7 @@ export function BackendMemberFormDialog({
             }
           : {
               mode: "direct",
-              ...(adobeCookie.trim()
-                ? { cookie: adobeCookie.trim() }
-                : {}),
+              ...(adobeCookie.trim() ? { cookie: adobeCookie.trim() } : {}),
               ...(adobeScope.trim() ? { scope: adobeScope.trim() } : {}),
               defaultRatio,
               defaultResolution,
@@ -297,6 +322,7 @@ export function BackendMemberFormDialog({
               <Label htmlFor="member-name">名称</Label>
               <Input
                 id="member-name"
+                autoComplete="off"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 required
@@ -332,17 +358,17 @@ export function BackendMemberFormDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="member-models">支持的模型 ID</Label>
-            <Textarea
-              id="member-models"
-              rows={5}
-              value={modelIdsText}
-              onChange={(event) => setModelIdsText(event.target.value)}
-              placeholder={"gpt-image-2\nfirefly-nano-banana-pro"}
-              required
+            <Label htmlFor="member-models">支持的模型</Label>
+            <BackendMemberModelSelect
+              options={selectableModelOptions}
+              value={selectedModelIds}
+              onChange={setSelectedModelIds}
+              status={modelOptionStatus}
+              disabled={isPending}
             />
             <p className="text-xs text-muted-foreground">
-              每行一个或用逗号分隔。未声明的模型不会进入该成员候选集。
+              选项来自模型配置；未选择的模型不会进入该成员候选集。只有 Adobe
+              Direct 可以声明视频模型。
             </p>
           </div>
 
@@ -428,6 +454,7 @@ export function BackendMemberFormDialog({
                 <Input
                   id="api-key"
                   type="password"
+                  autoComplete="new-password"
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
                   placeholder={member ? "留空保留现有凭据" : "必填"}
@@ -500,6 +527,7 @@ export function BackendMemberFormDialog({
                     <Input
                       id="adobe-api-key"
                       type="password"
+                      autoComplete="new-password"
                       value={adobeApiKey}
                       onChange={(event) => setAdobeApiKey(event.target.value)}
                       placeholder={member ? "留空保留现有凭据" : "必填"}
@@ -515,6 +543,7 @@ export function BackendMemberFormDialog({
                     <Textarea
                       id="adobe-cookie"
                       rows={5}
+                      autoComplete="off"
                       value={adobeCookie}
                       onChange={(event) => setAdobeCookie(event.target.value)}
                       placeholder={

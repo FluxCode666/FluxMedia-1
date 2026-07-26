@@ -171,7 +171,8 @@ export const saveMember = defineOperation({
   name: "pool.saveMember",
   domain: "image-backend-pool",
   title: "保存媒体后端成员",
-  description: "按互斥成员类型保存公共调度字段、显式模型能力和类型专属配置。",
+  description:
+    "按互斥成员类型保存公共调度字段、模型配置目录中的显式能力和类型专属配置。",
   input: backendMemberInputSchema,
   output: z.object({ id: z.string() }).strict(),
   access: poolWriteAccess,
