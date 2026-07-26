@@ -1,7 +1,7 @@
 /**
  * 管理端模型配置目录构建器测试。
  *
- * 使用方是模型配置读取与保存服务；测试确保多事实源合并、价格继承、展示配置和严格
+ * 使用方是模型配置读取与保存服务；测试确保多事实源合并、未配置价格、展示配置和严格
  * 数据校验始终生成共享契约允许的稳定快照，且不连接数据库或运行时服务。
  */
 import {
@@ -105,21 +105,17 @@ describe("buildModelConfigurationSnapshot", () => {
       "image:z-persisted",
       ...builtInVideos,
       "video:custom-video",
-      "fallback:default",
     ]);
     expect(new Set(identities).size).toBe(identities.length);
     expect(snapshot.runtimeCatalogStatus).toBe("ready");
   });
 
-  it("运行时额外图像缺少显式价格时复制 default 并标记兜底来源", () => {
+  it("运行时额外图像缺少显式价格时标记为未配置", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
-    const marketplaceConfig = createDefaultModelMarketplaceConfig();
-    marketplaceConfig.fallbackImagePricingRevision = 7;
 
     const snapshot = buildModelConfigurationSnapshot(
       createInput({
         imagePricing,
-        marketplaceConfig,
         runtimeCatalog: {
           status: "ready",
           catalog: {
@@ -135,14 +131,10 @@ describe("buildModelConfigurationSnapshot", () => {
 
     expect(entry).toMatchObject({
       category: "image",
-      pricingSource: "fallback",
-      fallbackPricingRevision: 7,
-      pricing: imagePricing.byModel.default,
+      pricingSource: "unconfigured",
     });
-    if (entry?.category !== "image") {
-      throw new Error("运行时额外图像条目缺失");
-    }
-    expect(entry.pricing).not.toBe(imagePricing.byModel.default);
+    expect(entry).not.toHaveProperty("pricing");
+    expect(entry).not.toHaveProperty("minimumCredits");
   });
 
   it("持久化额外图像保持显式价格且不携带兜底 revision", () => {
@@ -165,24 +157,17 @@ describe("buildModelConfigurationSnapshot", () => {
     expect(entry).not.toHaveProperty("fallbackPricingRevision");
   });
 
-  it("default 独立输出为不可展示的 fallback 条目", () => {
-    const marketplaceConfig = createDefaultModelMarketplaceConfig();
-    marketplaceConfig.fallbackImagePricingRevision = 9;
+  it("兼容读取旧 default 价格但不输出模型条目", () => {
+    const imagePricing = createDefaultGlobalImageCreditOverrides();
+    imagePricing.byModel.default = { ...EXTRA_IMAGE_PRICING };
 
     const snapshot = buildModelConfigurationSnapshot(
-      createInput({ marketplaceConfig })
+      createInput({ imagePricing })
     );
-    const entry = snapshot.entries.at(-1);
 
-    expect(entry).toMatchObject({
-      category: "fallback",
-      configKey: "default",
-      marketplaceApplicable: false,
-      revision: 9,
-    });
-    expect(entry).not.toHaveProperty("visible");
-    expect(entry).not.toHaveProperty("description");
-    expect(entry).not.toHaveProperty("coverUrl");
+    expect(snapshot.entries).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ configKey: "default" })])
+    );
   });
 
   it("缺失展示配置默认展示，显式配置则透传描述和封面结果", () => {
@@ -264,7 +249,7 @@ describe("buildModelConfigurationSnapshot", () => {
     expect(() =>
       buildModelConfigurationSnapshot(
         createInput({
-          marketplaceConfig: { ...validMarketplace, version: 2 },
+          marketplaceConfig: { ...validMarketplace, version: 99 },
         })
       )
     ).toThrow();
@@ -275,7 +260,7 @@ describe("buildModelConfigurationSnapshot", () => {
             ...validImagePricing,
             byModel: {
               ...validImagePricing.byModel,
-              default: { base1024Credits: 1 },
+              "vendor-image": { base1024Credits: 1 },
             },
           },
         })

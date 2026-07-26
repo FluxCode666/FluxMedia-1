@@ -1,7 +1,7 @@
 /**
  * 模型配置管理视图模型的 DB-free 单测。
  *
- * 覆盖搜索、筛选、稳定顺序、default 不适用、只读 Dialog 和封面单次回退。
+ * 覆盖搜索、筛选、稳定顺序、未配置价格、只读 Dialog 和封面单次回退。
  */
 import type { ModelConfigurationEntry } from "@repo/shared/model-marketplace";
 import { describe, expect, it } from "vitest";
@@ -52,19 +52,17 @@ const ENTRIES: ModelConfigurationEntry[] = [
     creditsPerSecond: 45,
   },
   {
-    category: "fallback",
-    configKey: "default",
-    displayName: "其他或自定义图像模型",
+    category: "image",
+    configKey: "vendor-canvas",
+    displayName: "Vendor Canvas",
     iconKey: "generic",
     revision: 2,
-    marketplaceApplicable: false,
-    minimumCredits: 1,
-    pricing: {
-      base1024Credits: 1,
-      base1kCredits: 2,
-      base2kCredits: 3,
-      base4kCredits: 4,
-    },
+    marketplaceApplicable: true,
+    visible: true,
+    description: "",
+    coverUrl: "/model-marketplace/default-image.webp",
+    usesDefaultCover: true,
+    pricingSource: "unconfigured",
   },
 ];
 
@@ -81,7 +79,7 @@ describe("模型配置视图模型", () => {
       filterModelConfigurationEntries(ENTRIES, "", "all").map(
         (entry) => entry.configKey
       )
-    ).toEqual(["gpt-image-2", "veo31", "default"]);
+    ).toEqual(["gpt-image-2", "veo31", "vendor-canvas"]);
     expect(
       filterModelConfigurationEntries(ENTRIES, " IMAGE ", "all").map(
         (entry) => entry.configKey
@@ -94,12 +92,12 @@ describe("模型配置视图模型", () => {
     ).toEqual(["veo31"]);
   });
 
-  it("图像与视频筛选排除 default", () => {
+  it("图像与视频筛选保留对应真实模型", () => {
     expect(
       filterModelConfigurationEntries(ENTRIES, "", "image").map(
         (entry) => entry.category
       )
-    ).toEqual(["image"]);
+    ).toEqual(["image", "image"]);
     expect(
       filterModelConfigurationEntries(ENTRIES, "", "video").map(
         (entry) => entry.category
@@ -111,17 +109,17 @@ describe("模型配置视图模型", () => {
     expect(ENTRIES.map(getModelConfigurationCategoryLabel)).toEqual([
       "图像",
       "视频",
-      "计费兜底",
+      "图像",
     ]);
     expect(ENTRIES.map(getModelConfigurationVisibilityLabel)).toEqual([
       "已展示",
       "已隐藏",
-      "不适用",
+      "未配置价格",
     ]);
     expect(formatModelConfigurationMinimumCredits(1.2700001)).toBe("1.27 积分");
   });
 
-  it("只读权限隐藏保存和封面动作，default 不显示展示字段", () => {
+  it("只读权限隐藏保存和封面动作，未配置图像仍显示完整字段", () => {
     expect(getModelConfigurationDialogFields(getEntry(0), false)).toEqual({
       canSave: false,
       showMarketplaceFields: true,
@@ -131,10 +129,10 @@ describe("模型配置视图模型", () => {
     });
     expect(getModelConfigurationDialogFields(getEntry(2), true)).toEqual({
       canSave: true,
-      showMarketplaceFields: false,
+      showMarketplaceFields: true,
       showImagePricing: true,
       showVideoPricing: false,
-      showCoverActions: false,
+      showCoverActions: true,
     });
   });
 
@@ -142,7 +140,9 @@ describe("模型配置视图模型", () => {
     expect(getModelConfigurationCoverSource(getEntry(0))).toBe(
       "/custom/image.webp"
     );
-    expect(getModelConfigurationCoverSource(getEntry(2))).toBeNull();
+    expect(getModelConfigurationCoverSource(getEntry(2))).toBe(
+      "/model-marketplace/default-image.webp"
+    );
     expect(
       resolveModelConfigurationCoverAfterError("/custom/image.webp", "image")
     ).toBe("/model-marketplace/default-image.webp");

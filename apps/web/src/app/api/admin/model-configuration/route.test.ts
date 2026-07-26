@@ -82,7 +82,6 @@ function explicitImageFields(): Record<string, string> {
     visible: "true",
     description: "公开图像模型",
     coverChange: "keep",
-    pricingSource: "explicit",
     ...imagePricingFields(),
   };
 }
@@ -309,7 +308,6 @@ describe("POST /api/admin/model-configuration", () => {
     const input = invokedInput();
     expect(input).toMatchObject({
       category: "image",
-      pricingSource: "explicit",
       coverChange: { action: "replace" },
     });
     if (input.category !== "image" || input.coverChange.action !== "replace") {
@@ -318,14 +316,13 @@ describe("POST /api/admin/model-configuration", () => {
     expect(input.coverChange.bytes).toEqual(new Uint8Array([1, 2, 3]));
   });
 
-  it("正确构造图像 explicit 与 fallback 联合分支", async () => {
+  it("正确构造图像显式价格并拒绝旧价格来源字段", async () => {
     const explicitResponse = await POST(
       createMultipartRequest(createFormData(explicitImageFields()))
     );
     expect(explicitResponse.status).toBe(200);
     expect(invokedInput()).toMatchObject({
       category: "image",
-      pricingSource: "explicit",
       pricing: {
         base1024Credits: 1.27,
         base1kCredits: 1.27,
@@ -335,24 +332,19 @@ describe("POST /api/admin/model-configuration", () => {
     });
 
     mocks.invokeOperation.mockClear();
-    const fallbackResponse = await POST(
+    const legacyResponse = await POST(
       createMultipartRequest(
         createFormData({
           ...explicitImageFields(),
-          pricingSource: "fallback",
-          expectedFallbackRevision: "4",
+          pricingSource: "explicit",
         })
       )
     );
-    expect(fallbackResponse.status).toBe(200);
-    expect(invokedInput()).toMatchObject({
-      category: "image",
-      pricingSource: "fallback",
-      expectedFallbackRevision: 4,
-    });
+    expect(legacyResponse.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
-  it("正确构造视频与 default 计费兜底联合分支", async () => {
+  it("正确构造视频并拒绝已删除的 default 类别", async () => {
     mocks.invokeOperation.mockResolvedValue({
       category: "video",
       configKey: "veo31",
@@ -382,12 +374,7 @@ describe("POST /api/admin/model-configuration", () => {
     });
 
     mocks.invokeOperation.mockClear();
-    mocks.invokeOperation.mockResolvedValue({
-      category: "fallback",
-      configKey: "default",
-      revision: 7,
-    });
-    const fallbackResponse = await POST(
+    const defaultResponse = await POST(
       createMultipartRequest(
         createFormData({
           category: "fallback",
@@ -398,19 +385,8 @@ describe("POST /api/admin/model-configuration", () => {
         })
       )
     );
-    expect(fallbackResponse.status).toBe(200);
-    expect(invokedInput()).toEqual({
-      category: "fallback",
-      configKey: "default",
-      expectedRevision: 6,
-      clientRequestId: CLIENT_REQUEST_ID,
-      pricing: {
-        base1024Credits: 1.27,
-        base1kCredits: 1.27,
-        base2kCredits: 5.07,
-        base4kCredits: 10,
-      },
-    });
+    expect(defaultResponse.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
   it("用真实会话构造 Principal，并先初始化再调用 UOL", async () => {

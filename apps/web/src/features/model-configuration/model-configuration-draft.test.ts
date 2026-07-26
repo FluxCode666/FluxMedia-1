@@ -28,14 +28,30 @@ const IMAGE_ENTRY: Extract<ModelConfigurationEntry, { category: "image" }> = {
   coverUrl: "/model-marketplace/default-image.webp",
   usesDefaultCover: true,
   minimumCredits: 1.27,
-  pricingSource: "fallback",
-  fallbackPricingRevision: 4,
+  pricingSource: "explicit",
   pricing: {
     base1024Credits: 1.27,
     base1kCredits: 1.27,
     base2kCredits: 5.07,
     base4kCredits: 10,
   },
+};
+
+const UNCONFIGURED_IMAGE_ENTRY: Extract<
+  ModelConfigurationEntry,
+  { category: "image"; pricingSource: "unconfigured" }
+> = {
+  category: "image",
+  configKey: "vendor-image",
+  displayName: "Vendor Image",
+  iconKey: "generic",
+  revision: 0,
+  marketplaceApplicable: true,
+  visible: true,
+  description: "",
+  coverUrl: "/model-marketplace/default-image.webp",
+  usesDefaultCover: true,
+  pricingSource: "unconfigured",
 };
 
 const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
@@ -53,25 +69,6 @@ const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
   creditsPerSecond: 45,
 };
 
-const FALLBACK_ENTRY: Extract<
-  ModelConfigurationEntry,
-  { category: "fallback" }
-> = {
-  category: "fallback",
-  configKey: "default",
-  displayName: "其他或自定义图像模型",
-  iconKey: "generic",
-  revision: 7,
-  marketplaceApplicable: false,
-  minimumCredits: 1,
-  pricing: {
-    base1024Credits: 1,
-    base1kCredits: 2,
-    base2kCredits: 3,
-    base4kCredits: 4,
-  },
-};
-
 /** 把 FormData 的标量项转为便于断言的对象，文件保留原实例。 */
 function collectFormData(
   formData: FormData
@@ -80,39 +77,36 @@ function collectFormData(
 }
 
 describe("模型配置草稿", () => {
-  it("按图像、视频和 default 条件创建隔离草稿", () => {
+  it("按已定价图像、未配置图像和视频创建隔离草稿", () => {
     const image = createModelConfigurationDraft(IMAGE_ENTRY, () => "image-id");
-    const video = createModelConfigurationDraft(VIDEO_ENTRY, () => "video-id");
-    const fallback = createModelConfigurationDraft(
-      FALLBACK_ENTRY,
-      () => "fallback-id"
+    const unconfigured = createModelConfigurationDraft(
+      UNCONFIGURED_IMAGE_ENTRY,
+      () => "unconfigured-id"
     );
+    const video = createModelConfigurationDraft(VIDEO_ENTRY, () => "video-id");
 
     expect(image).toMatchObject({
       category: "image",
       clientRequestId: "image-id",
       expectedRevision: 2,
-      expectedFallbackRevision: 4,
       pricing: { base4kCredits: "10" },
       cover: { action: "keep", file: null },
+    });
+    expect(unconfigured).toMatchObject({
+      category: "image",
+      clientRequestId: "unconfigured-id",
+      pricing: {
+        base1024Credits: "",
+        base1kCredits: "",
+        base2kCredits: "",
+        base4kCredits: "",
+      },
     });
     expect(video).toMatchObject({
       category: "video",
       clientRequestId: "video-id",
       creditsPerSecond: "45",
       visible: false,
-    });
-    expect(fallback).toEqual({
-      category: "fallback",
-      configKey: "default",
-      expectedRevision: 7,
-      clientRequestId: "fallback-id",
-      pricing: {
-        base1024Credits: "1",
-        base1kCredits: "2",
-        base2kCredits: "3",
-        base4kCredits: "4",
-      },
     });
   });
 
@@ -151,8 +145,6 @@ describe("模型配置草稿", () => {
       visible: "true",
       description: "精细图像生成",
       coverChange: "keep",
-      pricingSource: "fallback",
-      expectedFallbackRevision: "4",
       base1024Credits: "1.27",
       base1kCredits: "1.27",
       base2kCredits: "5.07",
@@ -160,7 +152,7 @@ describe("模型配置草稿", () => {
     });
   });
 
-  it("视频 replace 引用唯一文件且 default 不携带展示字段", () => {
+  it("视频 replace 引用唯一文件", () => {
     const file = new File([new Uint8Array([1, 2])], "cover.png", {
       type: "image/png",
     });
@@ -172,18 +164,9 @@ describe("模型配置草稿", () => {
         cover: { action: "replace", file },
       })
     );
-    const fallbackValues = collectFormData(
-      buildModelConfigurationFormData(
-        createModelConfigurationDraft(FALLBACK_ENTRY, () => "fallback-id")
-      )
-    );
-
     expect(videoValues.cover).toBe(file);
     expect(videoValues.coverChange).toBe("replace");
     expect(videoValues.creditsPerSecond).toBe("45");
-    expect(fallbackValues).not.toHaveProperty("visible");
-    expect(fallbackValues).not.toHaveProperty("description");
-    expect(fallbackValues).not.toHaveProperty("coverChange");
   });
 
   it("网络重试复用 UUID，修改草稿才生成新 UUID", () => {
@@ -203,7 +186,7 @@ describe("模型配置草稿", () => {
     expect(original.clientRequestId).toBe("id-1");
   });
 
-  it("冲突重放保留草稿并更新两级 revision 与 UUID", () => {
+  it("冲突重放保留草稿并更新 revision 与 UUID", () => {
     const original = createModelConfigurationDraft(IMAGE_ENTRY, () => "id-1");
     if (original.category !== "image") throw new Error("预期图像草稿");
     const changed = {
@@ -215,7 +198,6 @@ describe("模型配置草稿", () => {
     const latest: typeof IMAGE_ENTRY = {
       ...IMAGE_ENTRY,
       revision: 9,
-      fallbackPricingRevision: 10,
     };
 
     const rebased = rebaseModelConfigurationDraft(
@@ -226,7 +208,6 @@ describe("模型配置草稿", () => {
 
     expect(rebased).toMatchObject({
       expectedRevision: 9,
-      expectedFallbackRevision: 10,
       clientRequestId: "id-2",
       description: "本地尚未保存的简介",
       pricing: { base4kCredits: "12" },
@@ -245,21 +226,30 @@ describe("模型配置草稿", () => {
     ).toThrow("无法把草稿合并到其他模型");
   });
 
-  it("最新条目已显式定价时移除过期的 default revision 依赖", () => {
-    const draft = createModelConfigurationDraft(IMAGE_ENTRY, () => "id-1");
-    const latest: Extract<ModelConfigurationEntry, { category: "image" }> = {
+  it("未配置价格草稿在冲突重放后仍保留本地空价格", () => {
+    const draft = createModelConfigurationDraft(
+      UNCONFIGURED_IMAGE_ENTRY,
+      () => "id-1"
+    );
+    const latest: Extract<
+      ModelConfigurationEntry,
+      { category: "image"; pricingSource: "explicit" }
+    > = {
       ...IMAGE_ENTRY,
+      configKey: "vendor-image",
       revision: 8,
-      pricingSource: "explicit",
-      pricing: { ...IMAGE_ENTRY.pricing },
     };
 
     expect(
       rebaseModelConfigurationDraft(draft, latest, () => "id-2")
     ).toMatchObject({
-      pricingSource: "explicit",
-      expectedFallbackRevision: null,
       expectedRevision: 8,
+      pricing: {
+        base1024Credits: "",
+        base1kCredits: "",
+        base2kCredits: "",
+        base4kCredits: "",
+      },
     });
   });
 });

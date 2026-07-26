@@ -1,8 +1,8 @@
 /**
  * 公开模型广场 DB-free 目录构建器测试。
  *
- * 使用方是公开目录生产服务；测试确保只投影真实可达且允许展示的模型，并严格处理价格
- * 继承、视频族聚合、默认调用 ID、内置简介、品牌与第一方封面，不连接数据库或运行时服务。
+ * 使用方是公开目录生产服务；测试确保只投影真实可达、显式定价且允许展示的模型，并
+ * 严格处理视频族聚合、默认调用 ID、内置简介、品牌与第一方封面。
  */
 import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
@@ -46,15 +46,9 @@ function createInput(
 }
 
 describe("buildModelMarketplaceCatalog", () => {
-  it("仅从真实图像 ID 生成卡片，并区分显式价格与 default 四档兜底", () => {
+  it("仅从真实且显式定价的图像 ID 生成卡片", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
     imagePricing.byModel["gpt-image-2"] = { ...EXPLICIT_IMAGE_PRICING };
-    imagePricing.byModel.default = {
-      base1024Credits: 1,
-      base1kCredits: 2,
-      base2kCredits: 3,
-      base4kCredits: 4,
-    };
 
     const items = buildModelMarketplaceCatalog(
       createInput({
@@ -75,15 +69,6 @@ describe("buildModelMarketplaceCatalog", () => {
         description: expect.stringMatching(/图像|文字/),
         pricing: EXPLICIT_IMAGE_PRICING,
         minimumCredits: 2,
-        priceUnit: "per_image",
-      }),
-      expect.objectContaining({
-        category: "image",
-        configKey: "vendor-image",
-        defaultModelId: "vendor-image",
-        iconKey: "generic",
-        pricing: imagePricing.byModel.default,
-        minimumCredits: 1,
         priceUnit: "per_image",
       }),
     ]);
@@ -109,6 +94,9 @@ describe("buildModelMarketplaceCatalog", () => {
   it("应用展示开关，缺失配置默认展示且配置或价格不能凭空新增模型", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
     imagePricing.byModel["priced-but-unreachable"] = {
+      ...EXPLICIT_IMAGE_PRICING,
+    };
+    imagePricing.byModel["runtime-default-visible"] = {
       ...EXPLICIT_IMAGE_PRICING,
     };
     const marketplaceConfig = createDefaultModelMarketplaceConfig();
@@ -179,8 +167,12 @@ describe("buildModelMarketplaceCatalog", () => {
   });
 
   it("按已知供应商映射品牌，未知自定义图像保持 generic", () => {
+    const imagePricing = createDefaultGlobalImageCreditOverrides();
+    imagePricing.byModel["grok-imagine"] = { ...EXPLICIT_IMAGE_PRICING };
+    imagePricing.byModel["private-renderer"] = { ...EXPLICIT_IMAGE_PRICING };
     const items = buildModelMarketplaceCatalog(
       createInput({
+        imagePricing,
         runtimeCatalog: {
           image: [
             { id: "firefly-gpt-image-2" },
@@ -307,7 +299,7 @@ describe("buildModelMarketplaceCatalog", () => {
       {
         marketplaceConfig: {
           ...createDefaultModelMarketplaceConfig(),
-          version: 2,
+          version: 99,
         },
       },
     ],

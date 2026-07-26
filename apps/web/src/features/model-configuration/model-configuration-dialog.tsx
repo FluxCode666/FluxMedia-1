@@ -289,8 +289,17 @@ export function ModelConfigurationDialog({
                   : "图像按最终输出像素命中对应档位计费。"}
               </p>
             </div>
+            {entry.category === "image" &&
+            entry.pricingSource === "unconfigured" ? (
+              <p
+                role="status"
+                className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-foreground"
+              >
+                该模型尚未配置价格，当前不会进入模型广场，也不能执行计费。请填写完整四档价格后保存。
+              </p>
+            ) : null}
             {fields.showImagePricing &&
-            (draft.category === "image" || draft.category === "fallback") ? (
+            draft.category === "image" ? (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {IMAGE_PRICE_FIELDS.map(([field, label]) => (
                   <PricingInput
@@ -301,12 +310,7 @@ export function ModelConfigurationDialog({
                     disabled={disabled}
                     onChange={(value) =>
                       updateDraft((current) => {
-                        if (
-                          current.category !== "image" &&
-                          current.category !== "fallback"
-                        ) {
-                          return current;
-                        }
+                        if (current.category !== "image") return current;
                         return {
                           ...current,
                           pricing: { ...current.pricing, [field]: value },
@@ -336,9 +340,7 @@ export function ModelConfigurationDialog({
             ) : null}
           </section>
 
-          {fields.showMarketplaceFields &&
-          entry.marketplaceApplicable &&
-          draft.category !== "fallback" ? (
+          {fields.showMarketplaceFields && entry.marketplaceApplicable ? (
             <section className="grid gap-5 rounded-lg border p-4 md:grid-cols-[minmax(0,1fr)_280px]">
               <div className="space-y-5">
                 <div className="flex items-center justify-between gap-4 rounded-lg bg-muted/40 p-3">
@@ -355,11 +357,7 @@ export function ModelConfigurationDialog({
                     checked={draft.visible}
                     disabled={disabled}
                     onCheckedChange={(visible) =>
-                      updateDraft((current) =>
-                        current.category === "fallback"
-                          ? current
-                          : { ...current, visible }
-                      )
+                      updateDraft((current) => ({ ...current, visible }))
                     }
                   />
                 </div>
@@ -381,11 +379,10 @@ export function ModelConfigurationDialog({
                     rows={5}
                     placeholder="说明该模型适合的任务和主要特点"
                     onChange={(event) =>
-                      updateDraft((current) =>
-                        current.category === "fallback"
-                          ? current
-                          : { ...current, description: event.target.value }
-                      )
+                      updateDraft((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))
                     }
                   />
                 </div>
@@ -397,11 +394,7 @@ export function ModelConfigurationDialog({
                 value={draft.cover}
                 disabled={!fields.showCoverActions || isSaving || isReloading}
                 onChange={(cover) =>
-                  updateDraft((current) =>
-                    current.category === "fallback"
-                      ? current
-                      : { ...current, cover }
-                  )
+                  updateDraft((current) => ({ ...current, cover }))
                 }
               />
             </section>

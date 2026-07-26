@@ -36,7 +36,7 @@ export const settingsGetModelConfiguration = defineOperation({
   name: "settings.getModelConfiguration",
   domain: "system-settings",
   title: "读取模型配置",
-  description: "读取图像、视频和图像计费兜底项的规范化管理快照。",
+  description: "读取图像、视频及未配置价格状态的规范化管理快照。",
   input: z.object({}).strict(),
   output: modelConfigurationSnapshotSchema,
   access: { kind: "admin" },
@@ -51,7 +51,7 @@ export const settingsGetModelConfiguration = defineOperation({
 });
 
 /**
- * 更新单个模型或图像计费兜底项。
+ * 更新单个真实模型的价格与展示配置。
  *
  * `roles` 权限只接受真实 super_admin 用户并拒绝 system Principal；clientRequestId 负责
  * 网络重试幂等，expectedRevision 由后续事务服务负责乐观并发控制。

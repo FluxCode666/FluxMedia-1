@@ -36,7 +36,6 @@ const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 export type ModelConfigurationServiceErrorCode =
   | "not_configurable"
   | "revision_conflict"
-  | "fallback_revision_conflict"
   | "idempotency_conflict"
   | "revision_exhausted"
   | "invalid_dependency_result";
@@ -158,7 +157,7 @@ export interface ModelConfigurationAuditEvent {
   configKey: string;
   previousRevision: number;
   resultingRevision: number;
-  coverAction: "keep" | "remove" | "replace" | "not_applicable";
+  coverAction: "keep" | "remove" | "replace";
   occurredAt: string;
 }
 
@@ -228,7 +227,7 @@ export interface ModelConfigurationServiceDependencies {
 /** 保存服务的单一公开写入口。 */
 export interface ModelConfigurationService {
   /**
-   * 保存一个模型或 default 价格项。
+   * 保存一个真实模型的价格与展示配置。
    *
    * @param command.actorUserId - 真实超级管理员用户 ID，用于审计和用户级回执键。
    * @param command.input - 未信任 UOL 输入，由共享严格联合 schema 收窄。
@@ -290,13 +289,12 @@ function assertSha256(value: string, source: string): string {
  * 把输入模型键规范化为保存和回执使用的唯一键。
  *
  * @param input - 已通过共享联合 schema 的保存输入。
- * @returns 保留联合分支且 configKey 已规范化的新输入；default 原样返回。
+ * @returns 保留联合分支且 configKey 已规范化的新输入。
  * @throws 图像键规范化为空时抛出 not_configurable。
  */
 function normalizeConfigurationInput(
   input: UpdateModelConfigurationEntryInput
 ): UpdateModelConfigurationEntryInput {
-  if (input.category === "fallback") return input;
   const normalized =
     input.category === "image"
       ? normalizeImagePricingModelId(input.configKey)
@@ -328,17 +326,15 @@ function incrementRevision(revision: number): number {
 }
 
 /**
- * 返回输入指定的封面动作，default 没有展示封面。
+ * 返回输入指定的封面动作。
  *
  * @param input - 规范保存输入。
- * @returns 审计使用的封面动作；default 返回 not_applicable。
+ * @returns 审计使用的封面动作。
  */
 function getCoverAction(
   input: UpdateModelConfigurationEntryInput
 ): ModelConfigurationAuditEvent["coverAction"] {
-  return input.category === "fallback"
-    ? "not_applicable"
-    : input.coverChange.action;
+  return input.coverChange.action;
 }
 
 /**
@@ -352,15 +348,6 @@ function serializeRequestPayload(
   input: UpdateModelConfigurationEntryInput,
   replacementContentHash: string | null
 ): string {
-  if (input.category === "fallback") {
-    return JSON.stringify({
-      category: input.category,
-      configKey: input.configKey,
-      expectedRevision: input.expectedRevision,
-      pricing: input.pricing,
-    });
-  }
-
   const common = {
     category: input.category,
     configKey: input.configKey,
@@ -380,10 +367,6 @@ function serializeRequestPayload(
   }
   return JSON.stringify({
     ...common,
-    pricingSource: input.pricingSource,
-    ...(input.pricingSource === "fallback"
-      ? { expectedFallbackRevision: input.expectedFallbackRevision }
-      : {}),
     pricing: input.pricing,
   });
 }
@@ -528,16 +511,13 @@ export function createModelConfigurationService(
    * 处理 replace 字节并构造不含原模型 ID 的内容寻址对象引用。
    *
    * @param input - 已验证目录成员的规范保存输入。
-   * @returns replace 的可信 WebP 与对象引用；keep、remove、default 返回 null。
+   * @returns replace 的可信 WebP 与对象引用；keep、remove 返回 null。
    * @throws 图片解码或哈希端口失败时显式上抛，且不会写对象存储。
    */
   async function prepareCoverReplacement(
     input: UpdateModelConfigurationEntryInput
   ): Promise<PreparedCoverReplacement | null> {
-    if (
-      input.category === "fallback" ||
-      input.coverChange.action !== "replace"
-    ) {
+    if (input.coverChange.action !== "replace") {
       return null;
     }
     const processed = await dependencies.coverImageProcessor.process(
@@ -618,7 +598,7 @@ export function createModelConfigurationService(
             );
             assertCoverBuckets(config, assetBucket);
             const imagePricing =
-              input.category === "image" || input.category === "fallback"
+              input.category === "image"
                 ? globalImageCreditOverridesSchema.parse(
                     await transaction.lockImagePricing()
                   )
@@ -654,37 +634,19 @@ export function createModelConfigurationService(
                 ? resolveModelMarketplaceEntry(
                     config.imageByModel[input.configKey]
                   )
-                : input.category === "video"
-                  ? resolveModelMarketplaceEntry(
-                      config.videoByFamily[input.configKey]
-                    )
-                  : null;
-            const currentRevision =
-              input.category === "fallback"
-                ? config.fallbackImagePricingRevision
-                : (currentEntry?.revision ?? 0);
+                : resolveModelMarketplaceEntry(
+                    config.videoByFamily[input.configKey]
+                  );
+            const currentRevision = currentEntry.revision;
             if (currentRevision !== input.expectedRevision) {
               throw new ModelConfigurationServiceError(
                 "revision_conflict",
                 "模型配置已被其他管理员更新"
               );
             }
-            if (
-              input.category === "image" &&
-              input.pricingSource === "fallback" &&
-              config.fallbackImagePricingRevision !==
-                input.expectedFallbackRevision
-            ) {
-              throw new ModelConfigurationServiceError(
-                "fallback_revision_conflict",
-                "默认图像价格已更新，请重新加载模型配置"
-              );
-            }
-
             const resultingRevision = incrementRevision(currentRevision);
-            const oldCover = currentEntry?.cover ?? null;
+            const oldCover = currentEntry.cover;
             if (
-              input.category !== "fallback" &&
               input.coverChange.action === "remove" &&
               oldCover
             ) {
@@ -700,7 +662,19 @@ export function createModelConfigurationService(
             }
 
             const nextConfig: ModelMarketplaceConfig = structuredClone(config);
-            if (input.category === "fallback") {
+            const nextCover =
+              input.coverChange.action === "keep"
+                ? oldCover
+                : input.coverChange.action === "remove"
+                  ? null
+                  : (replacement?.reference ?? null);
+            const nextEntry = {
+              revision: resultingRevision,
+              visible: input.visible,
+              description: input.description,
+              cover: nextCover,
+            };
+            if (input.category === "image") {
               if (!imagePricing) {
                 throw new ModelConfigurationServiceError(
                   "invalid_dependency_result",
@@ -711,72 +685,32 @@ export function createModelConfigurationService(
                 ...imagePricing,
                 byModel: {
                   ...imagePricing.byModel,
-                  default: modelMarketplaceImagePricingSchema.parse(
-                    input.pricing
-                  ),
+                  [input.configKey]:
+                    modelMarketplaceImagePricingSchema.parse(input.pricing),
                 },
               });
-              nextConfig.fallbackImagePricingRevision = resultingRevision;
-              await transaction.saveImagePricing(nextImagePricing, actorUserId);
+              nextConfig.imageByModel[input.configKey] = nextEntry;
+              await transaction.saveImagePricing(
+                nextImagePricing,
+                actorUserId
+              );
             } else {
-              if (!currentEntry) {
+              if (!videoPricing) {
                 throw new ModelConfigurationServiceError(
                   "invalid_dependency_result",
-                  "模型展示条目未初始化"
+                  "视频价格事务未初始化"
                 );
               }
-              const nextCover =
-                input.coverChange.action === "keep"
-                  ? oldCover
-                  : input.coverChange.action === "remove"
-                    ? null
-                    : (replacement?.reference ?? null);
-              const nextEntry = {
-                revision: resultingRevision,
-                visible: input.visible,
-                description: input.description,
-                cover: nextCover,
-              };
-              if (input.category === "image") {
-                if (!imagePricing) {
-                  throw new ModelConfigurationServiceError(
-                    "invalid_dependency_result",
-                    "图像价格事务未初始化"
-                  );
-                }
-                const nextImagePricing = globalImageCreditOverridesSchema.parse(
-                  {
-                    ...imagePricing,
-                    byModel: {
-                      ...imagePricing.byModel,
-                      [input.configKey]:
-                        modelMarketplaceImagePricingSchema.parse(input.pricing),
-                    },
-                  }
-                );
-                nextConfig.imageByModel[input.configKey] = nextEntry;
-                await transaction.saveImagePricing(
-                  nextImagePricing,
-                  actorUserId
-                );
-              } else {
-                if (!videoPricing) {
-                  throw new ModelConfigurationServiceError(
-                    "invalid_dependency_result",
-                    "视频价格事务未初始化"
-                  );
-                }
-                const nextVideoPricing =
-                  globalVideoModelCreditsPerSecondSchema.parse({
-                    ...videoPricing,
-                    [input.configKey]: input.creditsPerSecond,
-                  });
-                nextConfig.videoByFamily[input.configKey] = nextEntry;
-                await transaction.saveVideoPricing(
-                  nextVideoPricing,
-                  actorUserId
-                );
-              }
+              const nextVideoPricing =
+                globalVideoModelCreditsPerSecondSchema.parse({
+                  ...videoPricing,
+                  [input.configKey]: input.creditsPerSecond,
+                });
+              nextConfig.videoByFamily[input.configKey] = nextEntry;
+              await transaction.saveVideoPricing(
+                nextVideoPricing,
+                actorUserId
+              );
             }
 
             const receipt: ModelMarketplaceWriteReceipt = {
@@ -843,20 +777,16 @@ export function createModelConfigurationService(
 
       const oldCover = transactionResult.oldCover;
       const activeCover =
-        input.category === "fallback"
-          ? null
-          : input.coverChange.action === "keep"
-            ? oldCover
-            : input.coverChange.action === "replace"
-              ? (replacement?.reference ?? null)
-              : null;
+        input.coverChange.action === "keep"
+          ? oldCover
+          : input.coverChange.action === "replace"
+            ? (replacement?.reference ?? null)
+            : null;
       if (oldCover && !coversEqual(oldCover, activeCover)) {
         await cleanupCoverIfUnreferenced(
           oldCover,
           input,
-          input.category !== "fallback" && input.coverChange.action === "remove"
-            ? "removed"
-            : "replaced"
+          input.coverChange.action === "remove" ? "removed" : "replaced"
         );
       }
       return transactionResult.output;

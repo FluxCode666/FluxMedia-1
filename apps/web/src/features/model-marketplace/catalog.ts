@@ -201,9 +201,11 @@ export function buildModelMarketplaceCatalog(
   const items: ModelMarketplacePublicItem[] = [];
 
   for (const entry of snapshot.entries) {
-    if (!entry.marketplaceApplicable || !entry.visible) continue;
+    if (!entry.visible) continue;
 
     if (entry.category === "image") {
+      // WHY：展示开关不能把未定价模型公开；价格缺失必须先由管理员显式配置。
+      if (entry.pricingSource === "unconfigured") continue;
       const defaultModelId = runtimeImageModelIds.get(entry.configKey);
       if (!defaultModelId) continue;
       const persistedEntry = marketplaceConfig.imageByModel[entry.configKey];

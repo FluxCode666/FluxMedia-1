@@ -30,12 +30,6 @@ const IMAGE_PRICING = {
   base2kCredits: 4,
   base4kCredits: 5,
 };
-const OTHER_IMAGE_PRICING = {
-  base1024Credits: 6,
-  base1kCredits: 7,
-  base2kCredits: 8,
-  base4kCredits: 9,
-};
 const ACTOR_USER_ID = "user-super-admin";
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
 const NOW = new Date("2026-07-26T08:00:00.000Z");
@@ -61,7 +55,7 @@ interface MemoryAuditContext {
 /**
  * 创建覆盖保存测试所需模型身份的严格管理目录快照。
  *
- * @returns 可直接由 catalogLoader 返回的图像、视频与 default 条目集合。
+ * @returns 可直接由 catalogLoader 返回的图像与视频条目集合。
  */
 function createCatalogSnapshot(): ModelConfigurationSnapshot {
   const imageEntries = ["gpt-image-2", "custom-image", "other-image"].map(
@@ -98,20 +92,7 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
   return {
     canEdit: true,
     runtimeCatalogStatus: "ready",
-    entries: [
-      ...imageEntries,
-      ...videoEntries,
-      {
-        category: "fallback",
-        configKey: "default",
-        displayName: "默认图像价格",
-        iconKey: "generic",
-        revision: 0,
-        minimumCredits: 2,
-        marketplaceApplicable: false,
-        pricing: { ...IMAGE_PRICING },
-      },
-    ],
+    entries: [...imageEntries, ...videoEntries],
   };
 }
 
@@ -294,7 +275,6 @@ function imageInput(
     visible: true,
     description: "新的图像模型",
     coverChange: { action: "keep" as const },
-    pricingSource: "explicit" as const,
     pricing: IMAGE_PRICING,
     ...overrides,
   };
@@ -340,7 +320,7 @@ describe("模型配置保存内核", () => {
     expect(harness.invalidate).toHaveBeenCalledOnce();
   });
 
-  it("分别更新视频族和 default，且不创建 default 展示条目", async () => {
+  it("只更新目标视频族且不创建 default 条目", async () => {
     const harness = createHarness();
 
     await harness.service.updateEntry({
@@ -356,17 +336,6 @@ describe("模型配置保存内核", () => {
         creditsPerSecond: 88,
       },
     });
-    await harness.service.updateEntry({
-      actorUserId: ACTOR_USER_ID,
-      input: {
-        clientRequestId: "22222222-2222-4222-8222-222222222222",
-        category: "fallback",
-        configKey: "default",
-        expectedRevision: 0,
-        pricing: OTHER_IMAGE_PRICING,
-      },
-    });
-
     const state = harness.repository.read();
     expect(state.videoPricing.sora2).toBe(88);
     expect(state.videoPricing.veo31).toBe(
@@ -376,14 +345,12 @@ describe("模型配置保存内核", () => {
       revision: 1,
       visible: false,
     });
-    expect(state.imagePricing.byModel.default).toEqual(OTHER_IMAGE_PRICING);
-    expect(state.config.fallbackImagePricingRevision).toBe(1);
+    expect(state.imagePricing.byModel).not.toHaveProperty("default");
     expect(state.config.imageByModel).not.toHaveProperty("default");
   });
 
-  it("拒绝条目 revision 与继承价格 fallback revision 冲突", async () => {
+  it("拒绝条目 revision 冲突", async () => {
     const config = createDefaultModelMarketplaceConfig();
-    config.fallbackImagePricingRevision = 2;
     config.imageByModel["custom-image"] = {
       revision: 3,
       visible: true,
@@ -401,43 +368,24 @@ describe("模型配置保存内核", () => {
         }),
       })
     ).rejects.toMatchObject({ code: "revision_conflict" });
-    await expect(
-      harness.service.updateEntry({
-        actorUserId: ACTOR_USER_ID,
-        input: {
-          ...imageInput({
-            configKey: "custom-image",
-            expectedRevision: 3,
-          }),
-          pricingSource: "fallback",
-          expectedFallbackRevision: 1,
-        },
-      })
-    ).rejects.toMatchObject({ code: "fallback_revision_conflict" });
     expect(harness.repository.read().auditEvents).toHaveLength(0);
   });
 
-  it("继承 default 的额外图像模型在双 revision 一致时固化显式价格", async () => {
-    const config = createDefaultModelMarketplaceConfig();
-    config.fallbackImagePricingRevision = 2;
-    const harness = createHarness({ config });
+  it("未配置价格的额外图像模型首次保存时写入显式价格", async () => {
+    const harness = createHarness();
 
     const result = await harness.service.updateEntry({
       actorUserId: ACTOR_USER_ID,
-      input: {
-        ...imageInput({ configKey: "custom-image" }),
-        pricingSource: "fallback",
-        expectedFallbackRevision: 2,
-      },
+      input: imageInput({ configKey: "custom-image" }),
     });
 
     expect(result).toMatchObject({ configKey: "custom-image", revision: 1 });
     expect(
       harness.repository.read().imagePricing.byModel["custom-image"]
     ).toEqual(IMAGE_PRICING);
-    expect(harness.repository.read().config.fallbackImagePricingRevision).toBe(
-      2
-    );
+    expect(
+      harness.repository.read().config.imageByModel["custom-image"]
+    ).toMatchObject({ revision: 1 });
   });
 
   it("同请求同载荷只重放结果，不重复存储、审计或缓存副作用", async () => {
@@ -784,7 +732,7 @@ describe("模型配置保存内核", () => {
 
   it("完整财务 schema 脏值与未知目录模型都在任何存储写入前失败", async () => {
     const invalidImagePricing = createDefaultGlobalImageCreditOverrides();
-    delete invalidImagePricing.byModel.default;
+    delete invalidImagePricing.byModel["gpt-image-2"];
     const invalidHarness = createHarness({ imagePricing: invalidImagePricing });
 
     await expect(

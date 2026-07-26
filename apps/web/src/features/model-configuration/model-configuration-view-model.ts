@@ -8,7 +8,7 @@ import type { ModelConfigurationEntry } from "@repo/shared/model-marketplace";
 
 import { getDefaultModelMarketplaceCoverPath } from "@/features/model-marketplace/assets";
 
-/** 管理列表支持的媒体筛选值。fallback 仅在全部中展示。 */
+/** 管理列表支持的媒体筛选值。 */
 export type ModelConfigurationCategoryFilter = "all" | "image" | "video";
 
 /** 编辑弹窗根据条目类型与权限显示的字段能力。 */
@@ -24,7 +24,7 @@ export type ModelConfigurationDialogFields = {
  * 取得列表类别中文标签。
  *
  * @param entry - 管理快照中的规范条目。
- * @returns 图像、视频或计费兜底。
+ * @returns 图像或视频。
  * @sideEffects 无。
  * @failure 判别联合穷尽，不抛错。
  */
@@ -32,22 +32,23 @@ export function getModelConfigurationCategoryLabel(
   entry: ModelConfigurationEntry
 ): string {
   if (entry.category === "image") return "图像";
-  if (entry.category === "video") return "视频";
-  return "计费兜底";
+  return "视频";
 }
 
 /**
  * 取得模型广场展示状态中文标签。
  *
  * @param entry - 管理快照中的规范条目。
- * @returns default 为不适用，真实模型按 visible 返回已展示或已隐藏。
+ * @returns 未定价图像返回未配置价格，其余模型按 visible 返回已展示或已隐藏。
  * @sideEffects 无。
  * @failure 判别联合穷尽，不抛错。
  */
 export function getModelConfigurationVisibilityLabel(
   entry: ModelConfigurationEntry
-): "已展示" | "已隐藏" | "不适用" {
-  if (!entry.marketplaceApplicable) return "不适用";
+): "已展示" | "已隐藏" | "未配置价格" {
+  if (entry.category === "image" && entry.pricingSource === "unconfigured") {
+    return "未配置价格";
+  }
   return entry.visible ? "已展示" : "已隐藏";
 }
 
@@ -71,7 +72,7 @@ export function formatModelConfigurationMinimumCredits(
  * @param entries - 管理快照原始顺序的条目。
  * @param query - 管理员输入的 ID 或名称片段。
  * @param category - all、image 或 video。
- * @returns 新数组；all 中 default 保持原位置，媒体筛选排除 default。
+ * @returns 保持服务端顺序的新数组。
  * @sideEffects 无。
  * @failure 不抛错；空白查询按未搜索处理。
  */
@@ -95,8 +96,7 @@ export function filterModelConfigurationEntries(
  *
  * @param entry - 当前选中的管理条目。
  * @param canEdit - 服务端按真实 Principal 计算的快照权限。
- * @returns default 只显示图像价格；真实图像/视频显示对应价格与展示字段；只读时无保存和
- * 封面操作。
+ * @returns 图像/视频显示对应价格与展示字段；只读时无保存和封面操作。
  * @sideEffects 无。
  * @failure 不抛错。
  */
@@ -106,11 +106,10 @@ export function getModelConfigurationDialogFields(
 ): ModelConfigurationDialogFields {
   return {
     canSave: canEdit,
-    showMarketplaceFields: entry.marketplaceApplicable,
-    showImagePricing:
-      entry.category === "image" || entry.category === "fallback",
+    showMarketplaceFields: true,
+    showImagePricing: entry.category === "image",
     showVideoPricing: entry.category === "video",
-    showCoverActions: canEdit && entry.marketplaceApplicable,
+    showCoverActions: canEdit,
   };
 }
 
@@ -118,14 +117,14 @@ export function getModelConfigurationDialogFields(
  * 取得列表或 Dialog 封面的初始来源。
  *
  * @param entry - 当前条目。
- * @returns 真实模型的服务端封面 URL；default 返回 null。
+ * @returns 服务端交付的封面 URL。
  * @sideEffects 无。
  * @failure DTO 保证真实模型 coverUrl 非空；防御性保留 null。
  */
 export function getModelConfigurationCoverSource(
   entry: ModelConfigurationEntry
 ): string | null {
-  return entry.marketplaceApplicable ? entry.coverUrl : null;
+  return entry.coverUrl;
 }
 
 /**

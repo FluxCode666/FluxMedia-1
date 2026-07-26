@@ -33,7 +33,7 @@ export type ModelConfigurationTableProps = {
  * 渲染固定 3:2 缩略图，并在自定义图失败时只回退一次本地默认图。
  *
  * @param entry - 当前管理条目。
- * @returns 真实模型图片或 default 占位；两种形态尺寸完全一致。
+ * @returns 模型图片或占位；两种形态尺寸完全一致。
  * @sideEffects 浏览器读取第一方图片；解码失败只更新本地 src。
  * @failure 默认封面也失败时停止渲染 img，避免无限 onError。
  */
@@ -47,7 +47,7 @@ function ModelCoverThumbnail({ entry }: { entry: ModelConfigurationEntry }) {
 
   /** 执行一次类别默认封面回退。 */
   const handleError = (): void => {
-    if (!source || entry.category === "fallback") return;
+    if (!source) return;
     setSource(resolveModelConfigurationCoverAfterError(source, entry.category));
   };
 
@@ -199,7 +199,12 @@ export function ModelConfigurationTable({
                 <VisibilityBadge entry={entry} />
               </td>
               <td className="px-4 py-3 tabular-nums">
-                {formatModelConfigurationMinimumCredits(entry.minimumCredits)}
+                {entry.category === "image" &&
+                entry.pricingSource === "unconfigured"
+                  ? "未配置"
+                  : formatModelConfigurationMinimumCredits(
+                      entry.minimumCredits
+                    )}
                 {entry.category === "video" ? (
                   <span className="text-muted-foreground"> / 秒</span>
                 ) : null}

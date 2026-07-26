@@ -37,8 +37,6 @@ export type ModelConfigurationDraft =
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
-      pricingSource: "explicit" | "fallback";
-      expectedFallbackRevision: number | null;
       pricing: ModelConfigurationImagePricingDraft;
     } & MarketplaceDraftFields)
   | ({
@@ -47,14 +45,7 @@ export type ModelConfigurationDraft =
       expectedRevision: number;
       clientRequestId: string;
       creditsPerSecond: string;
-    } & MarketplaceDraftFields)
-  | {
-      category: "fallback";
-      configKey: "default";
-      expectedRevision: number;
-      clientRequestId: string;
-      pricing: ModelConfigurationImagePricingDraft;
-    };
+    } & MarketplaceDraftFields);
 
 /** 草稿字段不能安全提交时使用的客户端稳定错误。 */
 export class ModelConfigurationDraftError extends Error {
@@ -84,22 +75,26 @@ function formatPricingValue(value: number): string {
 /**
  * 创建四档图像价格草稿。
  *
- * @param pricing - 管理 DTO 中的四档价格。
- * @returns 与输入对象隔离的字符串字段。
+ * @param pricing - 已配置模型的四档价格；未配置模型传 null。
+ * @returns 与输入对象隔离的字符串字段；未配置模型返回四个空输入。
  * @sideEffects 无。
  * @failure DTO 类型边界保证四档齐全，不抛错。
  */
 function createImagePricingDraft(
-  pricing: Extract<
-    ModelConfigurationEntry,
-    { category: "image" | "fallback" }
-  >["pricing"]
+  pricing:
+    | Extract<
+        ModelConfigurationEntry,
+        { category: "image"; pricingSource: "explicit" }
+      >["pricing"]
+    | null
 ): ModelConfigurationImagePricingDraft {
   return {
-    base1024Credits: formatPricingValue(pricing.base1024Credits),
-    base1kCredits: formatPricingValue(pricing.base1kCredits),
-    base2kCredits: formatPricingValue(pricing.base2kCredits),
-    base4kCredits: formatPricingValue(pricing.base4kCredits),
+    base1024Credits: pricing
+      ? formatPricingValue(pricing.base1024Credits)
+      : "",
+    base1kCredits: pricing ? formatPricingValue(pricing.base1kCredits) : "",
+    base2kCredits: pricing ? formatPricingValue(pricing.base2kCredits) : "",
+    base4kCredits: pricing ? formatPricingValue(pricing.base4kCredits) : "",
   };
 }
 
@@ -121,14 +116,6 @@ export function createModelConfigurationDraft(
     expectedRevision: entry.revision,
     clientRequestId: createRequestId(),
   };
-  if (entry.category === "fallback") {
-    return {
-      ...common,
-      category: "fallback",
-      configKey: "default",
-      pricing: createImagePricingDraft(entry.pricing),
-    };
-  }
   const marketplace = {
     visible: entry.visible,
     description: entry.description,
@@ -139,12 +126,9 @@ export function createModelConfigurationDraft(
       ...common,
       ...marketplace,
       category: "image",
-      pricingSource: entry.pricingSource,
-      expectedFallbackRevision:
-        entry.pricingSource === "fallback"
-          ? entry.fallbackPricingRevision
-          : null,
-      pricing: createImagePricingDraft(entry.pricing),
+      pricing: createImagePricingDraft(
+        entry.pricingSource === "explicit" ? entry.pricing : null
+      ),
     };
   }
   return {
@@ -178,7 +162,7 @@ export function renewModelConfigurationDraftRequestId<
  * @param draft - 需要保留的未保存草稿。
  * @param latestEntry - 重新读取后的同一模型 DTO。
  * @param createRequestId - 下一次主动保存使用的新 UUID 工厂。
- * @returns 保留价格、展示与封面动作，只更新 revision/兜底 revision/幂等键的草稿。
+ * @returns 保留价格、展示与封面动作，只更新 revision 和幂等键的草稿。
  * @sideEffects 默认工厂读取浏览器加密随机源一次。
  * @failure 最新条目身份或类别不同则抛错，禁止把草稿串到其他模型。
  */
@@ -193,27 +177,10 @@ export function rebaseModelConfigurationDraft(
   ) {
     throw new ModelConfigurationDraftError("无法把草稿合并到其他模型");
   }
-  const rebased = {
+  return {
     ...draft,
     expectedRevision: latestEntry.revision,
     clientRequestId: createRequestId(),
-  };
-  if (rebased.category !== "image" || latestEntry.category !== "image") {
-    return rebased;
-  }
-  if (latestEntry.pricingSource === "explicit") {
-    return {
-      ...rebased,
-      pricingSource: "explicit",
-      expectedFallbackRevision: null,
-    };
-  }
-  return {
-    ...rebased,
-    expectedFallbackRevision:
-      rebased.pricingSource === "fallback"
-        ? latestEntry.fallbackPricingRevision
-        : rebased.expectedFallbackRevision,
   };
 }
 
@@ -314,10 +281,6 @@ export function buildModelConfigurationFormData(
   formData.append("expectedRevision", String(draft.expectedRevision));
   formData.append("clientRequestId", draft.clientRequestId);
 
-  if (draft.category === "fallback") {
-    appendImagePricing(formData, draft.pricing);
-    return formData;
-  }
   appendMarketplaceFields(formData, draft);
   if (draft.category === "video") {
     formData.append(
@@ -325,16 +288,6 @@ export function buildModelConfigurationFormData(
       String(parseModelConfigurationPrice(draft.creditsPerSecond))
     );
     return formData;
-  }
-  formData.append("pricingSource", draft.pricingSource);
-  if (
-    draft.pricingSource === "fallback" &&
-    draft.expectedFallbackRevision !== null
-  ) {
-    formData.append(
-      "expectedFallbackRevision",
-      String(draft.expectedFallbackRevision)
-    );
   }
   appendImagePricing(formData, draft.pricing);
   return formData;

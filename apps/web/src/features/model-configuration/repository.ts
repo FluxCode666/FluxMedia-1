@@ -48,7 +48,7 @@ const auditEventSchema = z.object({
   id: z.string().trim().min(1).max(255),
   actorUserId: actorUserIdSchema,
   action: z.literal("model_configuration.update"),
-  category: z.enum(["image", "video", "fallback"]),
+  category: z.enum(["image", "video"]),
   configKey: z
     .string()
     .trim()
@@ -56,7 +56,7 @@ const auditEventSchema = z.object({
     .max(MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH),
   previousRevision: safeRevisionSchema,
   resultingRevision: safeRevisionSchema,
-  coverAction: z.enum(["keep", "remove", "replace", "not_applicable"]),
+  coverAction: z.enum(["keep", "remove", "replace"]),
   occurredAt: z.string().datetime({ offset: true }),
 });
 

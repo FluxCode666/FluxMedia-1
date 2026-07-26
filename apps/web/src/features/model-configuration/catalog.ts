@@ -9,10 +9,7 @@ import {
   globalVideoModelCreditsPerSecondSchema,
 } from "@repo/shared/adobe";
 import { ADOBE_IMAGE_MODEL_IDS } from "@repo/shared/adobe/enabled-models";
-import {
-  GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
-  globalImageCreditOverridesSchema,
-} from "@repo/shared/image-backend/group-image-pricing";
+import { globalImageCreditOverridesSchema } from "@repo/shared/image-backend/group-image-pricing";
 import {
   getMinimumImageCredits,
   type ModelConfigurationEntry,
@@ -209,7 +206,7 @@ function collectImageConfigKeys(
     const configKey = normalizeModelMarketplaceImageConfigKey(modelId);
     if (
       !configKey ||
-      configKey === GLOBAL_DEFAULT_IMAGE_PRICING_MODEL ||
+      configKey === "default" ||
       builtInSet.has(configKey)
     ) {
       continue;
@@ -255,7 +252,7 @@ function collectVideoConfigKeys(
  * 从严格事实源构建完整管理端模型配置快照。
  *
  * @param input - 完整价格、展示配置、运行时目录状态、权限与封面 URL 构建器。
- * @returns 通过共享 schema 复核的稳定 DTO，default 固定在最后。
+ * @returns 通过共享 schema 复核的稳定 DTO；缺少显式价格的运行时图像标记为未配置。
  * @sideEffects 仅同步调用注入的封面 URL 构建器，不读取或写入外部状态。
  * @failure 价格、展示配置、封面 URL 或最终 DTO 非法时显式抛出 ZodError；运行时不可用
  * 由输入状态表达，不导致构建失败。
@@ -272,9 +269,6 @@ export function buildModelConfigurationSnapshot(
   const marketplaceConfig = parseModelMarketplaceConfig(
     input.marketplaceConfig
   );
-  const fallbackPricing = modelMarketplaceImagePricingSchema.parse(
-    imagePricing.byModel[GLOBAL_DEFAULT_IMAGE_PRICING_MODEL]
-  );
   const entries: ModelConfigurationEntry[] = [];
 
   const imageConfigKeys = collectImageConfigKeys(
@@ -283,9 +277,6 @@ export function buildModelConfigurationSnapshot(
   );
   for (const configKey of imageConfigKeys) {
     const explicitPricing = imagePricing.byModel[configKey];
-    const pricing = explicitPricing
-      ? modelMarketplaceImagePricingSchema.parse(explicitPricing)
-      : { ...fallbackPricing };
     const common = buildMarketplaceFields(
       "image",
       configKey,
@@ -294,6 +285,7 @@ export function buildModelConfigurationSnapshot(
     );
 
     if (explicitPricing) {
+      const pricing = modelMarketplaceImagePricingSchema.parse(explicitPricing);
       entries.push({
         ...common,
         category: "image",
@@ -305,10 +297,7 @@ export function buildModelConfigurationSnapshot(
       entries.push({
         ...common,
         category: "image",
-        pricingSource: "fallback",
-        fallbackPricingRevision: marketplaceConfig.fallbackImagePricingRevision,
-        pricing,
-        minimumCredits: getMinimumImageCredits(pricing),
+        pricingSource: "unconfigured",
       });
     }
   }
@@ -332,17 +321,6 @@ export function buildModelConfigurationSnapshot(
       minimumCredits: creditsPerSecond,
     });
   }
-
-  entries.push({
-    category: "fallback",
-    configKey: GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
-    displayName: "默认图像价格",
-    iconKey: "generic",
-    revision: marketplaceConfig.fallbackImagePricingRevision,
-    minimumCredits: getMinimumImageCredits(fallbackPricing),
-    marketplaceApplicable: false,
-    pricing: fallbackPricing,
-  });
 
   return modelConfigurationSnapshotSchema.parse({
     canEdit: input.canEdit,

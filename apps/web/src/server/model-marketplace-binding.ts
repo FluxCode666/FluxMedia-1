@@ -60,7 +60,6 @@ function throwModelConfigurationOperationError(error: unknown): never {
   const code: ModelConfigurationServiceErrorCode = error.code;
   switch (code) {
     case "revision_conflict":
-    case "fallback_revision_conflict":
       throw new OperationError("conflict", error.message, {
         reason: code,
       });

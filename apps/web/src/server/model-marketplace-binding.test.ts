@@ -50,7 +50,6 @@ const UPDATE_INPUT = {
   visible: true,
   description: "适合精细文字渲染",
   coverChange: { action: "keep" },
-  pricingSource: "explicit",
   pricing: IMAGE_PRICING,
 };
 
@@ -224,7 +223,6 @@ describe("模型配置与模型广场 UOL binding", () => {
 
   it.each([
     ["revision_conflict", "conflict"],
-    ["fallback_revision_conflict", "conflict"],
     ["idempotency_conflict", "idempotency_conflict"],
     ["not_configurable", "validation_error"],
     ["invalid_dependency_result", "internal_error"],

@@ -43,8 +43,6 @@ const KNOWN_FORM_FIELDS = new Set([
   "configKey",
   "expectedRevision",
   "clientRequestId",
-  "pricingSource",
-  "expectedFallbackRevision",
   "visible",
   "description",
   "coverChange",
@@ -163,7 +161,7 @@ function requireScalar(
  * 拒绝当前联合分支不接受的已知标量字段。
  *
  * @param scalars - 已去重的标量映射。
- * @param allowedFields - 当前 category/pricingSource 允许的字段集合。
+ * @param allowedFields - 当前模型类别允许的字段集合。
  * @throws ModelConfigurationFormError - 出现跨分支字段时失败，避免静默忽略输入。
  */
 function assertOnlyAllowedScalars(
@@ -281,21 +279,17 @@ async function parseCoverChange(
  * 解析图像模型表单分支。
  *
  * @param data - 已严格收集的表单数据。
- * @returns explicit 或 fallback 图像保存输入。
- * @throws ModelConfigurationFormError - 分支字段、价格来源或封面组合非法时失败。
+ * @returns 只包含真实图像模型完整价格与展示字段的保存输入。
+ * @throws ModelConfigurationFormError - 字段或封面组合非法时失败。
  */
 async function parseImageInput(
   data: CollectedFormData
 ): Promise<UpdateModelConfigurationEntryInput> {
-  const pricingSource = requireScalar(data.scalars, "pricingSource");
-  const branchFields = new Set([
-    ...MARKETPLACE_SCALAR_FIELDS,
-    "pricingSource",
-    ...IMAGE_PRICE_FIELDS,
-    ...(pricingSource === "fallback" ? ["expectedFallbackRevision"] : []),
-  ]);
-  assertOnlyAllowedScalars(data.scalars, branchFields);
-  const common = {
+  assertOnlyAllowedScalars(
+    data.scalars,
+    new Set([...MARKETPLACE_SCALAR_FIELDS, ...IMAGE_PRICE_FIELDS])
+  );
+  return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
     expectedRevision: parseRevision(
@@ -309,23 +303,7 @@ async function parseImageInput(
       data.covers
     ),
     pricing: parseImagePricing(data.scalars),
-  };
-  if (pricingSource === "explicit") {
-    return updateModelConfigurationEntryInputSchema.parse({
-      ...common,
-      pricingSource,
-    });
-  }
-  if (pricingSource === "fallback") {
-    return updateModelConfigurationEntryInputSchema.parse({
-      ...common,
-      pricingSource,
-      expectedFallbackRevision: parseRevision(
-        requireScalar(data.scalars, "expectedFallbackRevision")
-      ),
-    });
-  }
-  throw new ModelConfigurationFormError("图像价格来源无效");
+  });
 }
 
 /**
@@ -362,34 +340,6 @@ async function parseVideoInput(
 }
 
 /**
- * 解析 default 图像计费兜底分支。
- *
- * @param data - 已严格收集的表单数据。
- * @returns 不含展示或封面字段的 fallback 保存输入。
- * @throws ModelConfigurationFormError - 出现文件、展示字段或价格非法时失败。
- */
-function parseFallbackInput(
-  data: CollectedFormData
-): UpdateModelConfigurationEntryInput {
-  assertOnlyAllowedScalars(
-    data.scalars,
-    new Set([...COMMON_SCALAR_FIELDS, ...IMAGE_PRICE_FIELDS])
-  );
-  if (data.covers.length !== 0) {
-    throw new ModelConfigurationFormError("计费兜底项不接受封面文件");
-  }
-  return updateModelConfigurationEntryInputSchema.parse({
-    category: "fallback",
-    configKey: requireScalar(data.scalars, "configKey"),
-    expectedRevision: parseRevision(
-      requireScalar(data.scalars, "expectedRevision")
-    ),
-    clientRequestId: requireScalar(data.scalars, "clientRequestId"),
-    pricing: parseImagePricing(data.scalars),
-  });
-}
-
-/**
  * 将严格 FormData 转为共享判别联合输入。
  *
  * @param formData - 有界平台解析结果。
@@ -404,7 +354,6 @@ async function parseModelConfigurationInput(
   const category = requireScalar(data.scalars, "category");
   if (category === "image") return parseImageInput(data);
   if (category === "video") return parseVideoInput(data);
-  if (category === "fallback") return parseFallbackInput(data);
   throw new ModelConfigurationFormError("模型配置类别无效");
 }
 
