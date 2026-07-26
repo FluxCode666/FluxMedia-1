@@ -241,6 +241,7 @@ export async function HomepageContent({
           brandDescription: t("footer.brandDescription"),
           siteLabel: t("footer.siteLabel"),
           legalLabel: t("footer.legalLabel"),
+          models: t("footer.models"),
           docs: t("footer.docs"),
           contact: t("footer.contact"),
           terms: t("footer.terms"),

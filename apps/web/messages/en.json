@@ -110,12 +110,76 @@
       "brandDescription": "From language to work, making models reliable creative infrastructure.",
       "siteLabel": "Site",
       "legalLabel": "Legal",
+      "models": "Models",
       "docs": "Docs",
       "contact": "Contact",
       "terms": "Terms of Service",
       "privacy": "Privacy Policy",
       "cookie": "Cookie Policy",
       "copyright": "© 2026 FluxMedia. All rights reserved."
+    }
+  },
+  "ModelMarketplace": {
+    "eyebrow": "MODEL MARKETPLACE",
+    "title": "Choose the right model for what comes next.",
+    "description": "Explore the image and video models currently available, compare starting credit prices and complete pricing, then carry your choice directly into the creation workspace.",
+    "resultCount": "{count} results",
+    "categories": {
+      "image": "Image",
+      "video": "Video"
+    },
+    "filters": {
+      "title": "Filter models",
+      "description": "Narrow the public catalog by media type.",
+      "type": "Model type",
+      "all": "All models",
+      "searchLabel": "Search models",
+      "searchPlaceholder": "Search by name or model ID",
+      "open": "Filters",
+      "clear": "Clear filters"
+    },
+    "price": {
+      "startingAt": "Starting at",
+      "credits": "credits",
+      "perImage": "per image",
+      "perSecond": "per second"
+    },
+    "card": {
+      "noDescription": "No public description has been configured for this model."
+    },
+    "actions": {
+      "copy": "Copy model ID",
+      "copyModelId": "Copy model ID: {modelId}",
+      "copySuccess": "Model ID copied",
+      "copyFailure": "Copy failed. Please copy the model ID manually.",
+      "viewDetails": "View details",
+      "useModel": "Use this model"
+    },
+    "detail": {
+      "description": "Model overview",
+      "pricing": "Complete pricing and capabilities",
+      "videoRate": "Base video generation rate",
+      "supportedDurations": "Durations",
+      "supportedAspectRatios": "Aspect ratios",
+      "supportedResolutions": "Resolutions",
+      "imageTiers": {
+        "base1024": "1024 tier",
+        "base1k": "1K tier",
+        "base2k": "2K tier",
+        "base4k": "4K tier"
+      }
+    },
+    "filteredEmpty": {
+      "title": "No matching models",
+      "description": "Try another keyword or media type to explore the rest of the public catalog."
+    },
+    "empty": {
+      "title": "Models are being prepared",
+      "description": "There are no publicly listed models right now. Please check back soon."
+    },
+    "unavailable": {
+      "title": "The model marketplace is unavailable",
+      "description": "The public model catalog cannot be loaded right now. Please try again later."
     }
   },
   "Auth": {

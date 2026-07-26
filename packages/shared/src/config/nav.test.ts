@@ -44,7 +44,7 @@ describe("营销导航契约", () => {
     const navigation = getMarketingHeaderNavigation("home");
 
     expect(navigation.items.map((item) => [item.title, item.href])).toEqual([
-      ["Models", "/#models"],
+      ["Models", "/models"],
       ["Quick Integration", "/#integration"],
       ["Work", "/#work"],
       ["Start Creating", "/#create"],
@@ -77,12 +77,7 @@ describe("营销导航契约", () => {
       .map((item) => item.href)
       .filter((href) => href.startsWith("/#"));
 
-    expect(homepageAnchors).toEqual([
-      "/#models",
-      "/#integration",
-      "/#work",
-      "/#create",
-    ]);
+    expect(homepageAnchors).toEqual(["/#integration", "/#work", "/#create"]);
     for (const href of homepageAnchors) {
       expect(href).not.toMatch(/^\/(?:en|zh)(?:\/|#)/);
     }
@@ -96,6 +91,19 @@ describe("营销导航契约", () => {
       expect(FORBIDDEN_HREFS.has(item.href)).toBe(false);
       expect(item.href.trim()).not.toBe("");
     }
+  });
+
+  it("Header 与 Footer 共同暴露 locale-neutral 模型广场入口", () => {
+    expect(mainNav).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "Models", href: "/models" }),
+      ])
+    );
+    expect(footerNav.product).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "Models", href: "/models" }),
+      ])
+    );
   });
 });
 

@@ -19,6 +19,7 @@ export type HomepageFooterCopy = {
   brandDescription: string;
   siteLabel: string;
   legalLabel: string;
+  models: string;
   docs: string;
   contact: string;
   terms: string;
@@ -96,6 +97,14 @@ export function HomepageFooter({
               {copy.siteLabel}
             </h3>
             <ul className="mt-4 space-y-3 text-sm">
+              <li>
+                <Link
+                  className="text-[#f6f1e7]/65 transition-colors hover:text-white"
+                  href="/models"
+                >
+                  {copy.models}
+                </Link>
+              </li>
               <li>
                 <Link
                   className="text-[#f6f1e7]/65 transition-colors hover:text-white"

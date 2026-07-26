@@ -1,9 +1,11 @@
 import { footerNav, siteConfig } from "@repo/shared/config";
-import Link from "next/link";
 import { getLocale } from "next-intl/server";
+
+import { Link } from "@/i18n/routing";
 
 const footerTitleMap = {
   product: {
+    Models: "模型广场",
     Docs: "文档",
     "Contact Us": "联系我们",
   },
@@ -28,12 +30,22 @@ function getFooterLinkTitle(
 }
 
 /**
- * Marketing 页面底部
+ * 判断 Footer 链接是否必须绕过本地化站内 Link。
  *
- * 功能:
- * - 品牌信息 + 产品描述
- * - 产品、法律链接
- * - 版权信息
+ * @param href - 共享导航交付的链接。
+ * @returns mailto、http、https 等非根路径协议为 true，站内根路径为 false。
+ * @sideEffects 无。
+ */
+export function isExternalFooterHref(href: string): boolean {
+  return !href.startsWith("/");
+}
+
+/**
+ * 渲染普通营销页面 Footer。
+ *
+ * @returns 本地化品牌说明、模型广场/文档/联系与法律链接。
+ * @sideEffects 读取当前请求 locale；不读取会话或运行时模型目录。
+ * @failure 未识别语言按英文展示；未知链接标题原样返回。
  */
 export async function Footer() {
   const isZh = (await getLocale()) === "zh";
@@ -49,8 +61,8 @@ export async function Footer() {
             </Link>
             <p className="text-sm text-muted-foreground">
               {isZh
-                ? "AI 驱动的对话生图平台。"
-                : "AI-powered chat-to-image generation platform."}
+                ? "面向图像与视频创作的 AI 生成平台。"
+                : "An AI generation platform for image and video creation."}
             </p>
           </div>
 
@@ -65,15 +77,21 @@ export async function Footer() {
               <ul className="space-y-3">
                 {footerNav.product.map((link) => (
                   <li key={link.href}>
-                    <Link
-                      href={link.href}
-                      {...(link.external
-                        ? { target: "_blank", rel: "noopener noreferrer" }
-                        : {})}
-                      className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {getFooterLinkTitle(link.title, "product", isZh)}
-                    </Link>
+                    {isExternalFooterHref(link.href) ? (
+                      <a
+                        className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        href={link.href}
+                      >
+                        {getFooterLinkTitle(link.title, "product", isZh)}
+                      </a>
+                    ) : (
+                      <Link
+                        className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        href={link.href}
+                      >
+                        {getFooterLinkTitle(link.title, "product", isZh)}
+                      </Link>
+                    )}
                   </li>
                 ))}
               </ul>
