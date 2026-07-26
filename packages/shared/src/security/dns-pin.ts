@@ -25,6 +25,7 @@ import { resolve4, resolve6 } from "node:dns/promises";
 import type { IncomingMessage, RequestOptions } from "node:http";
 import http from "node:http";
 import https from "node:https";
+import { isIP } from "node:net";
 import { isBlockedIP } from "./ip-validation";
 
 /**
@@ -44,12 +45,72 @@ export interface DnsPinFetchOptions {
   method?: string;
   /** 额外请求头（Host 头由内部设置，不应在此传入） */
   headers?: Record<string, string>;
-  /** 请求正文 */
-  body?: string | Buffer;
+  /** 请求正文；FormData 会在连接前序列化并自动补 multipart Content-Type。 */
+  body?:
+    | string
+    | Buffer
+    | FormData
+    | URLSearchParams
+    | Uint8Array
+    | ArrayBuffer;
   /** 超时毫秒数，默认 10000（10秒） */
   timeoutMs?: number;
   /** AbortSignal 用于外部取消 */
   signal?: AbortSignal;
+  /** 实际响应体上限；超限时销毁连接并让读取方失败。 */
+  maxResponseBytes?: number;
+  /**
+   * 仅供部署级私网上游策略注入的例外判断；默认不存在，所有私网/保留地址仍拒绝。
+   * 调用方必须先校验 URL 协议、主机和凭据，不能把用户输入直接变成例外。
+   */
+  allowBlockedAddress?: (input: {
+    hostname: string;
+    address: string;
+  }) => boolean;
+}
+
+type SerializedRequestBody = {
+  body: string | Buffer | undefined;
+  headers: Record<string, string>;
+};
+
+/** 判断调用方是否已显式设置某个请求头，忽略大小写。 */
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const normalizedName = name.toLowerCase();
+  return Object.keys(headers).some(
+    (headerName) => headerName.toLowerCase() === normalizedName
+  );
+}
+
+/** 将 fetch 风格正文变为 node:http 可写字节并补齐自动生成的 Content-Type。 */
+async function serializeRequestBody(
+  body: DnsPinFetchOptions["body"],
+  inputHeaders: Record<string, string>
+): Promise<SerializedRequestBody> {
+  const headers = { ...inputHeaders };
+  if (body === undefined) return { body: undefined, headers };
+  if (typeof body === "string" || Buffer.isBuffer(body)) {
+    return { body, headers };
+  }
+  if (body instanceof Uint8Array) {
+    return { body: Buffer.from(body), headers };
+  }
+  if (body instanceof ArrayBuffer) {
+    return { body: Buffer.from(new Uint8Array(body)), headers };
+  }
+
+  const request = new Request("https://dns-pin.invalid/body", {
+    method: "POST",
+    body,
+  });
+  if (!hasHeader(headers, "content-type")) {
+    const contentType = request.headers.get("content-type");
+    if (contentType) headers["content-type"] = contentType;
+  }
+  return {
+    body: Buffer.from(await request.arrayBuffer()),
+    headers,
+  };
 }
 
 /**
@@ -60,24 +121,23 @@ export interface DnsPinFetchOptions {
  * @throws SsrfBlockedError 若任一 IP 为私有/保留地址
  * @throws Error 若 DNS 解析失败或无结果
  */
-async function resolveAndValidate(hostname: string): Promise<string> {
-  let addresses: string[] = [];
-
-  try {
-    const ipv4 = await resolve4(hostname);
-    addresses = addresses.concat(ipv4);
-  } catch {
-    // IPv4 解析失败，尝试 IPv6
-  }
-
-  if (addresses.length === 0) {
-    try {
-      const ipv6 = await resolve6(hostname);
-      addresses = addresses.concat(ipv6);
-    } catch {
-      // IPv6 也失败
-    }
-  }
+async function resolveAndValidate(
+  hostname: string,
+  allowBlockedAddress?: DnsPinFetchOptions["allowBlockedAddress"]
+): Promise<string> {
+  const [ipv4Result, ipv6Result] = await Promise.allSettled([
+    resolve4(hostname),
+    resolve6(hostname),
+  ]);
+  const ipv4 =
+    ipv4Result.status === "fulfilled" && Array.isArray(ipv4Result.value)
+      ? ipv4Result.value
+      : [];
+  const ipv6 =
+    ipv6Result.status === "fulfilled" && Array.isArray(ipv6Result.value)
+      ? ipv6Result.value
+      : [];
+  const addresses = [...ipv4, ...ipv6];
 
   if (addresses.length === 0) {
     throw new SsrfBlockedError(
@@ -87,15 +147,21 @@ async function resolveAndValidate(hostname: string): Promise<string> {
 
   // 校验所有解析出的 IP 均为公网地址（ANY 内网即阻断）
   for (const ip of addresses) {
-    if (isBlockedIP(ip)) {
+    if (isBlockedIP(ip) && !allowBlockedAddress?.({ hostname, address: ip })) {
       throw new SsrfBlockedError(
         "Image URL resolved to a private/reserved IP address."
       );
     }
   }
 
-  // 返回第一个合法 IPv4（优先）用于 pin
-  return addresses[0]!;
+  // 前面已确认数组非空；显式分支避免用非空断言掩盖运行时不变量。
+  const pinnedAddress = addresses[0];
+  if (!pinnedAddress) {
+    throw new SsrfBlockedError(
+      `DNS resolution failed for hostname: ${hostname}`
+    );
+  }
+  return pinnedAddress;
 }
 
 /**
@@ -119,36 +185,41 @@ export async function fetchWithDnsPin(
 ): Promise<Response> {
   const parsed = typeof url === "string" ? new URL(url) : new URL(url.href);
   const isHttps = parsed.protocol === "https:";
-  const hostname = parsed.hostname;
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
   const timeoutMs = init?.timeoutMs ?? 10_000;
 
   // 若 URL 已是 IP 字面量，直接校验
-  const isLiteralIP =
-    /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":");
+  const isLiteralIP = isIP(hostname) !== 0;
 
   let pinnedIP: string;
   if (isLiteralIP) {
-    if (isBlockedIP(hostname)) {
+    if (
+      isBlockedIP(hostname) &&
+      !init?.allowBlockedAddress?.({ hostname, address: hostname })
+    ) {
       throw new SsrfBlockedError(
         "Image URL resolved to a private/reserved IP address."
       );
     }
     pinnedIP = hostname;
   } else {
-    pinnedIP = await resolveAndValidate(hostname);
+    pinnedIP = await resolveAndValidate(hostname, init?.allowBlockedAddress);
   }
 
-  // 构造请求选项，将 host 替换为 pinned IP
-  const port = parsed.port
-    ? Number(parsed.port)
-    : isHttps
-      ? 443
-      : 80;
+  const serialized = await serializeRequestBody(
+    init?.body,
+    init?.headers ?? {}
+  );
 
-  const headers: Record<string, string> = {
-    ...(init?.headers ?? {}),
-    Host: parsed.port ? `${hostname}:${parsed.port}` : hostname,
-  };
+  // 构造请求选项，将 host 替换为 pinned IP
+  const port = parsed.port ? Number(parsed.port) : isHttps ? 443 : 80;
+
+  const headers = Object.fromEntries(
+    Object.entries(serialized.headers).filter(
+      ([headerName]) => headerName.toLowerCase() !== "host"
+    )
+  );
+  headers.Host = parsed.port ? `${hostname}:${parsed.port}` : hostname;
 
   const requestOptions: RequestOptions = {
     hostname: pinnedIP,
@@ -160,7 +231,7 @@ export async function fetchWithDnsPin(
   };
 
   // HTTPS: 设置 servername 以通过 TLS 证书校验（SNI）
-  if (isHttps) {
+  if (isHttps && !isLiteralIP) {
     (requestOptions as https.RequestOptions).servername = hostname;
     // 禁止 TLS session 复用到不同主机（防止绕过 pin）
     requestOptions.agent = new https.Agent({
@@ -178,45 +249,72 @@ export async function fetchWithDnsPin(
       return;
     }
 
-    const req = transport.request(
-      requestOptions,
-      (res: IncomingMessage) => {
-        const chunks: Buffer[] = [];
+    const req = transport.request(requestOptions, (res: IncomingMessage) => {
+      const responseHeaders = new Headers();
 
-        res.on("data", (chunk: Buffer) => {
-          chunks.push(chunk);
-        });
-
-        res.on("end", () => {
-          const body = Buffer.concat(chunks);
-          const responseHeaders = new Headers();
-
-          // 转换 Node.js 响应头到 Web Headers
-          for (const [key, value] of Object.entries(res.headers)) {
-            if (value === undefined) continue;
-            if (Array.isArray(value)) {
-              for (const v of value) {
-                responseHeaders.append(key, v);
-              }
-            } else {
-              responseHeaders.set(key, value);
-            }
+      // 转换 Node.js 响应头到 Web Headers。
+      for (const [key, value] of Object.entries(res.headers)) {
+        if (value === undefined) continue;
+        if (Array.isArray(value)) {
+          for (const headerValue of value) {
+            responseHeaders.append(key, headerValue);
           }
-
-          resolve(
-            new Response(body, {
-              status: res.statusCode ?? 200,
-              statusText: res.statusMessage ?? "",
-              headers: responseHeaders,
-            })
-          );
-        });
-
-        res.on("error", (err: Error) => {
-          reject(err);
-        });
+        } else {
+          responseHeaders.set(key, value);
+        }
       }
-    );
+
+      const status = res.statusCode ?? 200;
+      const hasNoResponseBody =
+        status === 101 || status === 204 || status === 205 || status === 304;
+      if (hasNoResponseBody && typeof res.resume === "function") res.resume();
+      const body = hasNoResponseBody
+        ? null
+        : new ReadableStream<Uint8Array>({
+            start(controller) {
+              let total = 0;
+              let finished = false;
+              const fail = (error: Error) => {
+                if (finished) return;
+                finished = true;
+                controller.error(error);
+              };
+              res.on("data", (chunk: Buffer) => {
+                if (finished) return;
+                total += chunk.byteLength;
+                if (
+                  init?.maxResponseBytes !== undefined &&
+                  total > init.maxResponseBytes
+                ) {
+                  const error = new Error(
+                    `DNS pin response exceeded ${init.maxResponseBytes} bytes`
+                  );
+                  fail(error);
+                  if (typeof res.destroy === "function") res.destroy(error);
+                  return;
+                }
+                controller.enqueue(new Uint8Array(chunk));
+              });
+              res.on("end", () => {
+                if (finished) return;
+                finished = true;
+                controller.close();
+              });
+              res.on("error", (error: Error) => fail(error));
+            },
+            cancel() {
+              if (typeof res.destroy === "function") res.destroy();
+            },
+          });
+
+      resolve(
+        new Response(body, {
+          status,
+          statusText: res.statusMessage ?? "",
+          headers: responseHeaders,
+        })
+      );
+    });
 
     req.on("timeout", () => {
       req.destroy();
@@ -240,8 +338,8 @@ export async function fetchWithDnsPin(
     }
 
     // 写入请求正文
-    if (init?.body) {
-      req.write(init.body);
+    if (serialized.body !== undefined) {
+      req.write(serialized.body);
     }
     req.end();
   });

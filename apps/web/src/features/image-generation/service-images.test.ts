@@ -5,6 +5,16 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  fetchMediaUpstream: vi.fn(),
+  fetchMediaUpstreamDownload: vi.fn(),
+}));
+
+vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
+  fetchMediaUpstream: mocks.fetchMediaUpstream,
+  fetchMediaUpstreamDownload: mocks.fetchMediaUpstreamDownload,
+}));
+
 /** 构造一段符合 Images API 约定的 SSE 事件。 */
 function sseBlock(event: string, data: Record<string, unknown>) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -17,14 +27,14 @@ function prepareTestEnvironment() {
 
 describe("Images API service", () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.clearAllMocks();
   });
 
   it("解析 content-type 错误的 Images SSE 响应", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
     const imageBase64 = Buffer.from("image-result").toString("base64");
-    const fetchMock = vi.fn(
+    const fetchMock = mocks.fetchMediaUpstream.mockImplementation(
       async () =>
         new Response(
           sseBlock("image_generation.completed", {
@@ -35,8 +45,6 @@ describe("Images API service", () => {
           { status: 200, headers: { "Content-Type": "text/plain" } }
         )
     );
-    vi.stubGlobal("fetch", fetchMock);
-
     const result = await generateImage(
       {
         baseUrl: "https://api.example.test/v1",
@@ -62,22 +70,18 @@ describe("Images API service", () => {
     const partialBase64 = Buffer.from("partial-image").toString("base64");
     const finalBase64 = Buffer.from("final-image").toString("base64");
     const partials: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            sseBlock("image_generation.partial_image", {
-              type: "image_generation.partial_image",
-              b64_json: partialBase64,
-              partial_image_index: 0,
-            }) +
-              sseBlock("image_generation.completed", {
-                type: "image_generation.completed",
-                b64_json: finalBase64,
-              }),
-            { status: 200, headers: { "Content-Type": "text/event-stream" } }
-          )
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      new Response(
+        sseBlock("image_generation.partial_image", {
+          type: "image_generation.partial_image",
+          b64_json: partialBase64,
+          partial_image_index: 0,
+        }) +
+          sseBlock("image_generation.completed", {
+            type: "image_generation.completed",
+            b64_json: finalBase64,
+          }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
       )
     );
 
@@ -102,19 +106,15 @@ describe("Images API service", () => {
   it("保留 Images SSE 中的结构化错误", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              error: {
-                message: "The quota has been exceeded.",
-                code: "quota_exceeded",
-              },
-            }),
-            { status: 200, headers: { "Content-Type": "text/event-stream" } }
-          )
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "The quota has been exceeded.",
+            code: "quota_exceeded",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
       )
     );
 
@@ -131,24 +131,26 @@ describe("Images API service", () => {
     prepareTestEnvironment();
     const { editImage } = await import("./service");
     const imageBase64 = Buffer.from("edited-image").toString("base64");
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const formData = init?.body;
-      expect(formData).toBeInstanceOf(FormData);
-      if (!(formData instanceof FormData)) throw new Error("missing FormData");
-      expect(formData.get("image")).toBeInstanceOf(Blob);
-      expect(formData.get("mask")).toBeInstanceOf(Blob);
-      expect(String(formData.get("prompt"))).toContain(
-        '<ref id="edit-reference-1" prompt="source &amp;&quot;.png" />'
-      );
-      return new Response(
-        JSON.stringify({ data: [{ b64_json: imageBase64 }] }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = mocks.fetchMediaUpstream.mockImplementation(
+      async (_url: string, init?: { body?: unknown }) => {
+        const formData = init?.body;
+        expect(formData).toBeInstanceOf(FormData);
+        if (!(formData instanceof FormData))
+          throw new Error("missing FormData");
+        expect(formData.get("image")).toBeInstanceOf(Blob);
+        expect(formData.get("mask")).toBeInstanceOf(Blob);
+        expect(String(formData.get("prompt"))).toContain(
+          '<ref id="edit-reference-1" prompt="source &amp;&quot;.png" />'
+        );
+        return new Response(
+          JSON.stringify({ data: [{ b64_json: imageBase64 }] }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+    );
 
     const result = await editImage(
       { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },

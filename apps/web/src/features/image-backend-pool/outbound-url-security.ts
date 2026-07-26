@@ -73,6 +73,25 @@ function isPrivateTargetAllowed(
   return cidrs.check(address, family === 4 ? "ipv4" : "ipv6");
 }
 
+/**
+ * 连接层 DNS pin 对已阻断地址的部署级例外判断。
+ *
+ * 仅精确主机或 CIDR allowlist 可放行；元数据主机永远拒绝。调用方必须同时执行完整
+ * URL 校验，不能单独用本函数批准一个目标。
+ */
+export function isMediaUpstreamBlockedAddressAllowed(input: {
+  hostname: string;
+  address: string;
+}): boolean {
+  const hostname = input.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!hostname || METADATA_HOSTNAMES.has(hostname)) return false;
+  return isPrivateTargetAllowed(
+    hostname,
+    input.address,
+    getConfiguredPrivateAllowlist()
+  );
+}
+
 /** 构造稳定且不回显目标凭据的安全错误。 */
 function unsafeTarget(reason: string): Error {
   return new Error(`Unsafe media upstream URL: ${reason}`);

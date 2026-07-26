@@ -36,6 +36,7 @@ import {
   refundExternalApiKeyCredits,
   reserveExternalApiKeyCredits,
 } from "@/features/external-api/quota";
+import { fetchMediaUpstreamDownload } from "@/features/image-backend-pool/media-upstream-fetch";
 import {
   createRuntimeBackendSession,
   type RuntimeBackendSession,
@@ -154,7 +155,7 @@ async function toImageBuffer(result: {
     throw new Error("Missing image data");
   }
 
-  const response = await fetch(result.imageUrl);
+  const response = await fetchMediaUpstreamDownload(result.imageUrl);
   if (!response.ok) {
     throw new Error(`Failed to download image: ${response.status}`);
   }

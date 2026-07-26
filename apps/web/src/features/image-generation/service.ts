@@ -17,6 +17,10 @@ import {
   normalizeRequestParameterMappings,
 } from "@repo/shared/image-backend/request-parameter-mapping";
 import { logError } from "@repo/shared/logger";
+import {
+  fetchMediaUpstream,
+  fetchMediaUpstreamDownload,
+} from "@/features/image-backend-pool/media-upstream-fetch";
 import { runAdobeDirectImageRequest } from "./adobe-direct";
 import { appendImagesUpstreamNonce } from "./images-upstream-nonce";
 import {
@@ -53,6 +57,7 @@ const VALID_QUALITIES = new Set<ImageQuality>([
   "high",
 ]);
 const VALID_MODERATION = new Set<ImageModeration>(["auto", "low"]);
+const MAX_MEDIA_API_RESPONSE_BYTES = 128 * 1024 * 1024;
 
 type ImageOutput = {
   b64_json?: string;
@@ -1056,14 +1061,14 @@ async function runAdobeImageRequest(
       ? { images: params.images }
       : {}),
   });
-  const response = await fetch(
+  const response = await fetchMediaUpstream(
     `${stripTrailingSlash(config.baseUrl)}/v1/chat/completions`,
     {
       method: "POST",
-      redirect: "manual",
       signal: params.signal,
       headers: getHeaders(config, { "Content-Type": "application/json" }),
       body: JSON.stringify(body),
+      maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
     }
   );
   if (!response.ok) {
@@ -1075,7 +1080,9 @@ async function runAdobeImageRequest(
   const json = (await response.json().catch(() => null)) as unknown;
   const parsed = parseAdobeMediaResult(json, config.baseUrl);
   if ("error" in parsed) return { error: parsed.error };
-  const mediaResponse = await fetch(parsed.url, { signal: params.signal });
+  const mediaResponse = await fetchMediaUpstreamDownload(parsed.url, {
+    signal: params.signal,
+  });
   if (!mediaResponse.ok) {
     return {
       error: `Adobe Firefly 媒体下载失败 HTTP ${mediaResponse.status}`,
@@ -1109,46 +1116,50 @@ export async function generateImage(
     const size = params.size || DEFAULT_IMAGE_SIZE;
     const dimensions = parseImageSize(size);
     const background = normalizeImageBackground(params.background);
-    const response = await fetch(`${config.baseUrl}/images/generations`, {
-      method: "POST",
-      redirect: "manual",
-      signal: params.signal,
-      headers: getHeaders(config, {
-        "Content-Type": "application/json",
-      }),
-      body: JSON.stringify(
-        applyApiBackendRequestMappings(config, {
-          model,
-          // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
-          // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
-          prompt: appendImagesUpstreamNonce(prompt),
-          n: params.n || 1,
-          size,
-          ...(dimensions
-            ? { width: dimensions.width, height: dimensions.height }
-            : {}),
-          ...(normalizeQuality(params.quality)
-            ? { quality: normalizeQuality(params.quality) }
-            : {}),
-          ...(normalizeModeration(params.moderation)
-            ? { moderation: normalizeModeration(params.moderation) }
-            : {}),
-          ...(normalizeOutputFormat(params.outputFormat)
-            ? { output_format: normalizeOutputFormat(params.outputFormat) }
-            : {}),
-          ...(normalizeOutputCompression(params.outputCompression) !== undefined
-            ? {
-                output_compression: normalizeOutputCompression(
-                  params.outputCompression
-                ),
-              }
-            : {}),
-          ...(background ? { background } : {}),
-          ...(config.useStream ? { stream: true, partial_images: 2 } : {}),
-          response_format: "b64_json",
-        })
-      ),
-    });
+    const response = await fetchMediaUpstream(
+      `${config.baseUrl}/images/generations`,
+      {
+        method: "POST",
+        signal: params.signal,
+        headers: getHeaders(config, {
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify(
+          applyApiBackendRequestMappings(config, {
+            model,
+            // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
+            // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
+            prompt: appendImagesUpstreamNonce(prompt),
+            n: params.n || 1,
+            size,
+            ...(dimensions
+              ? { width: dimensions.width, height: dimensions.height }
+              : {}),
+            ...(normalizeQuality(params.quality)
+              ? { quality: normalizeQuality(params.quality) }
+              : {}),
+            ...(normalizeModeration(params.moderation)
+              ? { moderation: normalizeModeration(params.moderation) }
+              : {}),
+            ...(normalizeOutputFormat(params.outputFormat)
+              ? { output_format: normalizeOutputFormat(params.outputFormat) }
+              : {}),
+            ...(normalizeOutputCompression(params.outputCompression) !==
+            undefined
+              ? {
+                  output_compression: normalizeOutputCompression(
+                    params.outputCompression
+                  ),
+                }
+              : {}),
+            ...(background ? { background } : {}),
+            ...(config.useStream ? { stream: true, partial_images: 2 } : {}),
+            response_format: "b64_json",
+          })
+        ),
+        maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+      }
+    );
 
     return requireImageOutput(
       applyPromptOptimizationResultVisibility(
@@ -1263,13 +1274,16 @@ export async function editImage(
       );
     }
 
-    const response = await fetch(`${config.baseUrl}/images/edits`, {
-      method: "POST",
-      redirect: "manual",
-      signal: params.signal,
-      headers: getHeaders(config, {}),
-      body: applyApiBackendFormDataMappings(config, formData),
-    });
+    const response = await fetchMediaUpstream(
+      `${config.baseUrl}/images/edits`,
+      {
+        method: "POST",
+        signal: params.signal,
+        headers: getHeaders(config, {}),
+        body: applyApiBackendFormDataMappings(config, formData),
+        maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+      }
+    );
 
     return requireImageOutput(
       applyPromptOptimizationResultVisibility(

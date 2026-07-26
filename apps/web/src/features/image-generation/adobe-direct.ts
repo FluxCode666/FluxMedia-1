@@ -26,8 +26,9 @@ import {
   AuthError,
   decodeJwtExp,
   decodeJwtPayload,
-  FetchFireflyTransport,
   type FireflyTransport,
+  type FireflyTransportRequest,
+  type FireflyTransportResponse,
   fetchAccountInfo,
   fetchCreditsBalance,
   fireflyVideoSize,
@@ -43,6 +44,11 @@ import { logError, logWarn } from "@repo/shared/logger";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import { nanoid } from "nanoid";
+import {
+  fetchMediaUpstreamDownload,
+  MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES,
+  MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
+} from "@/features/image-backend-pool/media-upstream-fetch";
 import { parseAdobeCookieEntries } from "./adobe-cookie-parser";
 import type { ApiConfig, GenerateImageResult } from "./types";
 import { requireOriginalAcceptedVideoToken } from "./video-recovery-policy";
@@ -66,13 +72,56 @@ function getAdobeDirectProxyConfig(): {
   return { url, secret };
 }
 
-/** 构造 API/下载传输：Adobe API 固定走专用旁路，产物下载走直连。 */
-async function buildAdobeTransports(): Promise<{
+/** 把安全下载响应适配为 Firefly client 使用的惰性字节响应。 */
+function toFireflyTransportResponse(
+  response: Response
+): FireflyTransportResponse {
+  const headers: Record<string, string> = {};
+  response.headers.forEach((value, key) => {
+    headers[key.toLowerCase()] = value;
+  });
+  let cached: Buffer | null = null;
+  const readBytes = async (): Promise<Buffer> => {
+    cached ??= Buffer.from(await response.arrayBuffer());
+    return cached;
+  };
+  return {
+    status: response.status,
+    headers,
+    bytes: readBytes,
+    text: async () => (await readBytes()).toString("utf-8"),
+    json: async () => JSON.parse((await readBytes()).toString("utf-8")),
+  };
+}
+
+/** Adobe 产物下载传输；逐跳 DNS pin 且按媒体类型限制真实响应字节。 */
+class SecureAdobeDownloadTransport implements FireflyTransport {
+  constructor(private readonly maxResponseBytes: number) {}
+
+  async request(
+    request: FireflyTransportRequest
+  ): Promise<FireflyTransportResponse> {
+    if (request.method !== "GET" || request.body !== undefined) {
+      throw new Error("Adobe 安全下载传输只允许无正文 GET 请求");
+    }
+    const response = await fetchMediaUpstreamDownload(request.url, {
+      ...(request.signal ? { signal: request.signal } : {}),
+      ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
+      maxResponseBytes: this.maxResponseBytes,
+    });
+    return toFireflyTransportResponse(response);
+  }
+}
+
+/** 构造 API/下载传输：Adobe API 固定走专用旁路，产物下载安全直连。 */
+async function buildAdobeTransports(
+  maxDownloadBytes = MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES
+): Promise<{
   apiTransport: FireflyTransport;
   downloadTransport: FireflyTransport;
 }> {
   const proxy = getAdobeDirectProxyConfig();
-  const downloadTransport = new FetchFireflyTransport();
+  const downloadTransport = new SecureAdobeDownloadTransport(maxDownloadBytes);
   return {
     apiTransport: new ProxyFireflyTransport({
       proxyUrl: proxy.url,
@@ -826,7 +875,9 @@ export async function downloadAdobeDirectVideoRequest(input: {
   videoUrl: string;
   signal?: AbortSignal;
 }): Promise<Buffer> {
-  const { apiTransport, downloadTransport } = await buildAdobeTransports();
+  const { apiTransport, downloadTransport } = await buildAdobeTransports(
+    MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
+  );
   const client = new AdobeFireflyClient({
     transport: apiTransport,
     downloadTransport,
@@ -892,7 +943,9 @@ export async function runAdobeDirectVideoRequest(
     };
   }
 
-  const { apiTransport, downloadTransport } = await buildAdobeTransports();
+  const { apiTransport, downloadTransport } = await buildAdobeTransports(
+    MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
+  );
   const client = new AdobeFireflyClient({
     transport: apiTransport,
     downloadTransport,
