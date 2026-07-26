@@ -339,6 +339,40 @@ describe("system setting default initialization", () => {
     expect(store.get("IMAGE_MODEL_CREDIT_PRICES")?.value).toEqual(expected);
   });
 
+  it("删除旧 default 并将其价格一次性固化到历史稀疏真实模型", async () => {
+    const legacyDefaultPricing = {
+      base1024Credits: 2,
+      base1kCredits: 3,
+      base2kCredits: 6,
+      base4kCredits: 11,
+    };
+    store.set("IMAGE_MODEL_CREDIT_PRICES", {
+      key: "IMAGE_MODEL_CREDIT_PRICES",
+      value: {
+        version: 1,
+        byModel: {
+          default: legacyDefaultPricing,
+          "vendor-custom-image": { base2kCredits: 8 },
+        },
+      },
+    });
+
+    await initializeMissingSystemSettingsDefaults({ updatedBy: "admin-1" });
+
+    const storedPricing = store.get("IMAGE_MODEL_CREDIT_PRICES")?.value as {
+      version: 1;
+      byModel: Record<string, Record<string, number>>;
+    };
+    expect(storedPricing.byModel).not.toHaveProperty("default");
+    expect(storedPricing.byModel["vendor-custom-image"]).toEqual({
+      ...legacyDefaultPricing,
+      base2kCredits: 8,
+    });
+    for (const model of Object.keys(createDefaultGlobalImageCreditOverrides().byModel)) {
+      expect(storedPricing.byModel[model]).toEqual(legacyDefaultPricing);
+    }
+  });
+
   it("migrates legacy moderation public URL and removes legacy Aliyun controls", async () => {
     store.set("ALIYUN_MODERATION_PUBLIC_BASE_URL", {
       key: "ALIYUN_MODERATION_PUBLIC_BASE_URL",

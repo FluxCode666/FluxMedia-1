@@ -10,6 +10,7 @@ import {
   createDefaultGlobalImageCreditOverrides,
   DEFAULT_IMAGE_CREDIT_PRICING,
   globalImageCreditOverridesSchema,
+  imageCreditPricingSchema,
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
 import { dashboardSupportConfigSchema } from "../support/dashboard-config";
@@ -522,9 +523,32 @@ async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
   );
   const imageRaw = stored.get(imageKey);
   const videoRaw = stored.get(videoKey);
+  const legacyImagePricingByModel =
+    imageRaw && typeof imageRaw === "object" && "byModel" in imageRaw
+      ? imageRaw.byModel
+      : null;
+  const legacyDefaultPricingValue =
+    legacyImagePricingByModel && typeof legacyImagePricingByModel === "object"
+      ? Object.entries(legacyImagePricingByModel).find(
+          ([model]) => model.trim().toLowerCase() === "default"
+        )?.[1]
+      : undefined;
+  const legacyDefaultPricingResult =
+    legacyDefaultPricingValue !== undefined
+      ? imageCreditPricingSchema.safeParse(legacyDefaultPricingValue)
+      : null;
+  const legacyDefaultPricing = legacyDefaultPricingResult?.success
+    ? legacyDefaultPricingResult.data
+    : null;
+  const hasLegacyDefaultPricing = legacyImagePricingByModel
+    ? Object.keys(legacyImagePricingByModel).some(
+        (model) => model.trim().toLowerCase() === "default"
+      )
+    : false;
   const imageNeedsMigration =
     imageRaw !== undefined &&
-    !globalImageCreditOverridesSchema.safeParse(imageRaw).success;
+    (hasLegacyDefaultPricing ||
+      !globalImageCreditOverridesSchema.safeParse(imageRaw).success);
   const videoNeedsMigration =
     videoRaw !== undefined &&
     !globalVideoModelCreditsPerSecondSchema.safeParse(videoRaw).success;
@@ -537,22 +561,30 @@ async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
       : fallback;
   };
   const imageFallback = {
-    base1024Credits: readPositive(
-      "IMAGE_BASE_CREDITS_1024",
-      DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits
-    ),
-    base1kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_1K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits
-    ),
-    base2kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_2K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits
-    ),
-    base4kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_4K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits
-    ),
+    base1024Credits:
+      legacyDefaultPricing?.base1024Credits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_1024",
+        DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits
+      ),
+    base1kCredits:
+      legacyDefaultPricing?.base1kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_1K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits
+      ),
+    base2kCredits:
+      legacyDefaultPricing?.base2kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_2K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits
+      ),
+    base4kCredits:
+      legacyDefaultPricing?.base4kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_4K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits
+      ),
   };
   const image = createDefaultGlobalImageCreditOverrides();
   for (const model of Object.keys(image.byModel)) {
