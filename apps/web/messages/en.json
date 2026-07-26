@@ -77,7 +77,7 @@
         },
         {
           "question": "Where can I see every public model?",
-          "answer": "Open the model marketplace to browse every publicly listed image and video model, starting prices, complete pricing, and supported parameters."
+          "answer": "Open the model marketplace to browse every publicly listed image and video model, detailed model information, and supported parameters."
         },
         {
           "question": "How do I integrate image generation through the API?",
