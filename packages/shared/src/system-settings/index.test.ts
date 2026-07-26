@@ -402,6 +402,34 @@ describe("setSystemSettings", () => {
     );
   });
 
+  it("拒绝通过通用入口写入或清空模型广场配置", async () => {
+    const existing = {
+      version: 1,
+      fallbackImagePricingRevision: 0,
+      imageByModel: {},
+      videoByFamily: {},
+      writeReceipts: {},
+    };
+    store.set("MODEL_MARKETPLACE_CONFIG", {
+      key: "MODEL_MARKETPLACE_CONFIG",
+      value: existing,
+    });
+
+    await expect(
+      setSystemSettings(
+        [{ key: "MODEL_MARKETPLACE_CONFIG", value: { ...existing } }],
+        "admin"
+      )
+    ).rejects.toThrow(/专用配置入口/);
+    await expect(
+      setSystemSettings(
+        [{ key: "MODEL_MARKETPLACE_CONFIG", value: "", clear: true }],
+        "admin"
+      )
+    ).rejects.toThrow(/专用配置入口/);
+    expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(existing);
+  });
+
   it("通过专用入口原子保存完整的全局模型价格", async () => {
     const image = createDefaultGlobalImageCreditOverrides();
     const videoCreditsPerSecond = {
@@ -486,6 +514,45 @@ describe("importSystemSettingsFromEnv", () => {
 
     expect(store.get("CONTENT_MODERATION_BLOCK_RISK_LEVEL")?.value).toBe(
       "high"
+    );
+  });
+
+  it("绝不从环境变量覆盖模型广场展示配置", async () => {
+    const existing = {
+      version: 1,
+      fallbackImagePricingRevision: 3,
+      imageByModel: {},
+      videoByFamily: {},
+      writeReceipts: {},
+    };
+    store.set("MODEL_MARKETPLACE_CONFIG", {
+      key: "MODEL_MARKETPLACE_CONFIG",
+      value: existing,
+    });
+    vi.stubEnv(
+      "MODEL_MARKETPLACE_CONFIG",
+      JSON.stringify({ ...existing, fallbackImagePricingRevision: 9 })
+    );
+
+    await importSystemSettingsFromEnv({ overwrite: true });
+
+    expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(existing);
+  });
+
+  it("允许把模型广场资产 bucket 作为普通部署设置导入", async () => {
+    store.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", {
+      key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      value: "old-model-assets",
+    });
+    vi.stubEnv(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      "production-model-assets"
+    );
+
+    await importSystemSettingsFromEnv({ overwrite: true });
+
+    expect(store.get("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")?.value).toBe(
+      "production-model-assets"
     );
   });
 });

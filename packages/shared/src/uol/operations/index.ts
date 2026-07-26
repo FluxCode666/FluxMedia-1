@@ -34,6 +34,8 @@ import "./moderation";
 import "./external-api";
 // 首页平台公开模型目录（system-only，不改变外接 API Key 授权语义）
 import "./external-api-platform-model-catalog";
+// 模型配置与模型广场（人工管理写入、system-only 公开读取）
+import "./model-marketplace";
 
 export type { ExternalApiKeySummary } from "./external-api";
 export {
@@ -50,6 +52,13 @@ export {
   homepageSlaVisibilityOutputSchema,
 } from "./homepage-reliability";
 export { imageGenerate } from "./image-generation";
+export {
+  type ModelMarketplacePublicCatalogOutput,
+  modelMarketplaceListPublicModels,
+  modelMarketplacePublicCatalogOutputSchema,
+  settingsGetModelConfiguration,
+  settingsUpdateModelConfigurationEntry,
+} from "./model-marketplace";
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {
   videoGenerate,
