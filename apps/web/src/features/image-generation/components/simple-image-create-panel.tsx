@@ -148,7 +148,10 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const modeLabel = getModeLabel(props.mode);
   const submitLabel = getSubmitLabel(props.mode);
   const submitDisabled =
-    props.busy || !props.prompt.trim() || !props.hasAvailableModel;
+    props.busy ||
+    Boolean(props.referenceLoadingId) ||
+    !props.prompt.trim() ||
+    !props.hasAvailableModel;
   const recentImages = useMemo(
     () =>
       props.recent
@@ -225,7 +228,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     size="sm"
                     className="rounded-full border-dashed bg-muted/20 px-3.5 hover:bg-muted/50"
                     onClick={() => sourceInputRef.current?.click()}
-                    disabled={props.busy}
+                    disabled={props.busy || Boolean(props.referenceLoadingId)}
                   >
                     <ImagePlus className="mr-1.5 size-4" />
                     添加参考图
@@ -265,7 +268,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     variant="ghost"
                     size="sm"
                     onClick={() => sourceInputRef.current?.click()}
-                    disabled={props.busy}
+                    disabled={props.busy || Boolean(props.referenceLoadingId)}
                   >
                     <Upload className="mr-1.5 size-3.5" />
                     更换
@@ -346,6 +349,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
                 multiple
+                disabled={props.busy || Boolean(props.referenceLoadingId)}
                 className="sr-only"
                 onChange={(event) => {
                   props.onSourceImagesChange(event.target.files);
