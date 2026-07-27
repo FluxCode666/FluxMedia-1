@@ -283,12 +283,15 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     <X className="mr-1.5 size-3.5" />
                     移除
                   </Button>
-                  <span className="h-5 w-px bg-border" aria-hidden="true" />
+                  <span
+                    className="hidden h-5 w-px bg-border"
+                    aria-hidden="true"
+                  />
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="rounded-full"
+                    className="hidden rounded-full"
                     onClick={() => setMaskEditorOpen((current) => !current)}
                     disabled={props.busy || !props.maskAvailable}
                     title={
@@ -304,7 +307,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="rounded-full"
+                    className="hidden rounded-full"
                     onClick={() => maskInputRef.current?.click()}
                     disabled={props.busy || !props.maskAvailable}
                     title={
