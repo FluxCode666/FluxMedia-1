@@ -152,6 +152,23 @@ function createCleanupDatabase(client: PoolClient): VideoInputCleanupDatabase {
   };
 }
 
+/**
+ * 将当前夹具 schema 中的清理对象固定为已到期。
+ *
+ * @param client - 已切换到本轮随机 schema 的 PostgreSQL 连接。
+ * @returns 所有清理对象更新时间写入完成后结束。
+ * @throws PostgreSQL 更新失败时显式抛出；不吞掉夹具错误。
+ *
+ * WHY：enqueue 使用 PostgreSQL 微秒时间，测试传入的 Date 只有毫秒精度。若两次
+ * 操作落在同一毫秒，Date 可能早于 next_attempt_at，导致本应可认领的行偶发返回空。
+ */
+async function markCleanupObjectsDue(client: PoolClient): Promise<void> {
+  await client.query(`
+    update video_input_cleanup
+    set next_attempt_at = timestamp '2000-01-01 00:00:00'
+  `);
+}
+
 beforeAll(() => {
   pool = new Pool({
     application_name: "fluxmedia-video-recovery-integration",
@@ -185,6 +202,7 @@ describe("video recovery PostgreSQL concurrency", () => {
           storageBucket: "uploads",
         },
       ]);
+      await markCleanupObjectsDue(owner);
       const first = await pool.connect();
       const second = await pool.connect();
       try {
@@ -250,6 +268,7 @@ describe("video recovery PostgreSQL concurrency", () => {
         createCleanupDatabase(owner)
       );
       await repository.enqueue([object]);
+      await markCleanupObjectsDue(owner);
       const reservationNow = new Date();
       await reserveVideoTaskStaging(
         createQuotaDatabase(owner),
@@ -361,6 +380,7 @@ describe("video recovery PostgreSQL concurrency", () => {
         createCleanupDatabase(owner)
       );
       await repository.enqueue([expiredObject, currentObject]);
+      await markCleanupObjectsDue(owner);
       const now = new Date();
       await reserveVideoTaskStaging(
         createQuotaDatabase(owner),
@@ -436,6 +456,7 @@ describe("video recovery PostgreSQL concurrency", () => {
         createCleanupDatabase(owner)
       );
       await repository.enqueue([object]);
+      await markCleanupObjectsDue(owner);
       const now = new Date();
       await expect(
         repository.claimNext({
