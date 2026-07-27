@@ -20,20 +20,20 @@ import { CalendarDays, CircleDollarSign, ReceiptText } from "lucide-react";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 
+import { getAdminPaymentOverviewAction } from "@/features/payment/admin/actions";
+import { formatPaymentAmount } from "@/features/payment/admin/admin-payment-format";
 import {
-  buildAdminPaymentOverviewHref,
   type AdminPaymentSearchParams,
+  buildAdminPaymentOverviewHref,
   parseAdminPaymentMonth,
 } from "@/features/payment/admin/admin-payment-query";
-import { formatPaymentAmount } from "@/features/payment/admin/admin-payment-format";
-import { getAdminPaymentOverviewAction } from "@/features/payment/admin/actions";
 import { PaymentMonthNavigator } from "@/features/payment/admin/payment-month-navigator";
 import { PaymentOverviewChartLazy } from "@/features/payment/admin/payment-overview-chart-lazy";
 import { Link } from "@/i18n/routing";
 
 export const metadata = {
   title: "Payment overview | FluxMedia",
-  description: "Review fulfilled credit top-up revenue and order volume.",
+  description: "Review credit top-up revenue and created order volume.",
 };
 
 type AdminPaymentOverviewPageProps = {
@@ -141,16 +141,16 @@ export default async function AdminPaymentOverviewPage({
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
                 <CardTitle className="text-sm font-medium">
-                  {t("successfulOrders")}
+                  {t("rechargeOrders")}
                 </CardTitle>
                 <ReceiptText className="size-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <p className="font-serif text-2xl font-medium tabular-nums">
-                  {overview.successfulOrderCount.toLocaleString(locale)}
+                  {overview.rechargeOrderCount.toLocaleString(locale)}
                 </p>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {t("successfulOrdersHint")}
+                  {t("rechargeOrdersHint")}
                 </p>
               </CardContent>
             </Card>
@@ -164,7 +164,7 @@ export default async function AdminPaymentOverviewPage({
               </CardHeader>
               <CardContent>
                 <p className="font-serif text-2xl font-medium tabular-nums">
-                  {overview.activeDayCount.toLocaleString(locale)}
+                  {overview.revenueDayCount.toLocaleString(locale)}
                 </p>
                 <p className="mt-2 text-xs text-muted-foreground">
                   {t("activeDaysHint", { days: overview.daily.length })}

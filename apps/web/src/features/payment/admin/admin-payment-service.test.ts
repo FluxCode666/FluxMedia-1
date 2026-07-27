@@ -48,7 +48,8 @@ function makeRepository(
   overrides: Partial<AdminPaymentRepository> = {}
 ): AdminPaymentRepository {
   return {
-    readOverviewAggregates: async () => [],
+    readOverviewRevenue: async () => [],
+    readOverviewOrderCounts: async () => [],
     readOrders: async () => [],
     searchUsers: async () => [],
     ...overrides,
@@ -56,9 +57,40 @@ function makeRepository(
 }
 
 describe("admin payment overview", () => {
+  it("counts all created recharge orders even when none are fulfilled", async () => {
+    const repository = makeRepository({
+      readOverviewOrderCounts: async () => [
+        {
+          date: "2026-07-20",
+          orderCount: 4,
+        },
+      ],
+    });
+
+    const output = await loadAdminPaymentOverview(
+      {
+        timeZone: "Asia/Shanghai",
+        input: { month: "2026-07" },
+        now: new Date("2026-07-28T00:00:00.000Z"),
+      },
+      { repository }
+    );
+
+    expect(output).toMatchObject({
+      rechargeOrderCount: 4,
+      revenueDayCount: 0,
+      revenueTotals: [],
+    });
+    expect(output.daily[19]).toMatchObject({
+      date: "2026-07-20",
+      orderCount: 4,
+      revenue: [],
+    });
+  });
+
   it("uses the full app-time-zone natural month and keeps currencies separate", async () => {
     const repository = makeRepository({
-      readOverviewAggregates: async (input) => {
+      readOverviewRevenue: async (input) => {
         expect(input.start.toISOString()).toBe("2026-06-30T16:00:00.000Z");
         expect(input.end.toISOString()).toBe("2026-07-31T16:00:00.000Z");
         expect(input.timeZone).toBe("Asia/Shanghai");
@@ -67,22 +99,23 @@ describe("admin payment overview", () => {
             date: "2026-07-01",
             currency: "CNY",
             amountMinor: 2500,
-            orderCount: 2,
           },
           {
             date: "2026-07-01",
             currency: "USD",
             amountMinor: 999,
-            orderCount: 1,
           },
           {
             date: "2026-07-03",
             currency: "CNY",
             amountMinor: 500,
-            orderCount: 1,
           },
         ];
       },
+      readOverviewOrderCounts: async () => [
+        { date: "2026-07-01", orderCount: 4 },
+        { date: "2026-07-03", orderCount: 2 },
+      ],
     });
 
     const output = await loadAdminPaymentOverview(
@@ -96,8 +129,8 @@ describe("admin payment overview", () => {
 
     expect(output.month).toBe("2026-07");
     expect(output.daily).toHaveLength(31);
-    expect(output.successfulOrderCount).toBe(4);
-    expect(output.activeDayCount).toBe(2);
+    expect(output.rechargeOrderCount).toBe(6);
+    expect(output.revenueDayCount).toBe(2);
     expect(output.revenueTotals).toEqual([
       { currency: "CNY", amountMinor: 3000 },
       { currency: "USD", amountMinor: 999 },
@@ -124,19 +157,36 @@ describe("admin payment overview", () => {
 
   it("rejects duplicate date and currency aggregates", async () => {
     const repository = makeRepository({
-      readOverviewAggregates: async () => [
+      readOverviewRevenue: async () => [
         {
           date: "2026-07-01",
           currency: "CNY",
           amountMinor: 100,
-          orderCount: 1,
         },
         {
           date: "2026-07-01",
           currency: "CNY",
           amountMinor: 200,
-          orderCount: 1,
         },
+      ],
+    });
+    await expect(
+      loadAdminPaymentOverview(
+        {
+          timeZone: "UTC",
+          input: { month: "2026-07" },
+          now: new Date("2026-07-28T00:00:00.000Z"),
+        },
+        { repository }
+      )
+    ).rejects.toThrow(AdminPaymentServiceError);
+  });
+
+  it("rejects duplicate order-count date aggregates", async () => {
+    const repository = makeRepository({
+      readOverviewOrderCounts: async () => [
+        { date: "2026-07-01", orderCount: 1 },
+        { date: "2026-07-01", orderCount: 2 },
       ],
     });
     await expect(

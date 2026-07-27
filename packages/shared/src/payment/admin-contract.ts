@@ -63,8 +63,8 @@ export const adminPaymentOverviewOutputSchema = z
     timeZone: z.string().min(1).max(100),
     rangeStart: isoDateTimeSchema,
     rangeEnd: isoDateTimeSchema,
-    successfulOrderCount: nonnegativeSafeIntegerSchema,
-    activeDayCount: nonnegativeSafeIntegerSchema,
+    rechargeOrderCount: nonnegativeSafeIntegerSchema,
+    revenueDayCount: nonnegativeSafeIntegerSchema,
     revenueTotals: z.array(currencyAmountSchema).max(32),
     daily: z.array(adminPaymentDailyPointSchema).min(28).max(31),
   })

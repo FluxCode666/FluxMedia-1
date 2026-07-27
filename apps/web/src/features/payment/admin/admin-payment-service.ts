@@ -54,10 +54,14 @@ const paymentCursorPayloadSchema = z
   })
   .strict();
 
-export type AdminPaymentOverviewAggregateRow = {
+export type AdminPaymentOverviewRevenueRow = {
   date: string;
   currency: string;
   amountMinor: number;
+};
+
+export type AdminPaymentOverviewOrderCountRow = {
+  date: string;
   orderCount: number;
 };
 
@@ -86,11 +90,16 @@ export type AdminPaymentOrderQuery = {
 
 /** 支付管理仓储端口；所有实现必须只读取充值用途订单。 */
 export interface AdminPaymentRepository {
-  readOverviewAggregates(input: {
+  readOverviewRevenue(input: {
     start: Date;
     end: Date;
     timeZone: string;
-  }): Promise<AdminPaymentOverviewAggregateRow[]>;
+  }): Promise<AdminPaymentOverviewRevenueRow[]>;
+  readOverviewOrderCounts(input: {
+    start: Date;
+    end: Date;
+    timeZone: string;
+  }): Promise<AdminPaymentOverviewOrderCountRow[]>;
   readOrders(input: AdminPaymentOrderQuery): Promise<AdminPaymentOrderRow[]>;
   searchUsers(input: {
     query: string;
@@ -317,10 +326,10 @@ function adaptPaymentOrderRow(row: AdminPaymentOrderRow): AdminPaymentOrder {
 }
 
 /**
- * 读取并补齐指定自然月的每日收入与成交订单数。
+ * 读取并补齐指定自然月的每日收入与充值订单数。
  *
- * WHY：收入按最小单位和币种分别累加，绝不跨币种合并；仓储重复桶或越界桶会失败，
- * 防止 SQL 漂移静默制造错误财务报表。
+ * WHY：收入按 fulfilled_at 统计已履约订单，订单量按 created_at 统计全部状态。两种
+ * 时间口径不可从同一 SQL 分桶推导，否则待支付和失败订单会从订单趋势中消失。
  */
 export async function loadAdminPaymentOverview(
   request: {
@@ -336,18 +345,25 @@ export async function loadAdminPaymentOverview(
     timeZone: request.timeZone,
     asOf: request.now ?? new Date(),
   });
-  const rows = await dependencies.repository.readOverviewAggregates({
-    start: range.start,
-    end: range.end,
-    timeZone: request.timeZone,
-  });
+  const [revenueRows, orderCountRows] = await Promise.all([
+    dependencies.repository.readOverviewRevenue({
+      start: range.start,
+      end: range.end,
+      timeZone: request.timeZone,
+    }),
+    dependencies.repository.readOverviewOrderCounts({
+      start: range.start,
+      end: range.end,
+      timeZone: request.timeZone,
+    }),
+  ]);
   const knownDates = new Set(range.dates);
   const bucketAmounts = new Map<string, number>();
   const dailyCounts = new Map<string, number>();
   const totals = new Map<string, number>();
   const currencies = new Set<string>();
 
-  for (const row of rows) {
+  for (const row of revenueRows) {
     const currency = row.currency.trim().toUpperCase();
     const bucketKey = `${row.date}\0${currency}`;
     if (
@@ -355,19 +371,25 @@ export async function loadAdminPaymentOverview(
       !/^[A-Z]{3}$/.test(currency) ||
       !Number.isSafeInteger(row.amountMinor) ||
       row.amountMinor < 0 ||
-      !Number.isSafeInteger(row.orderCount) ||
-      row.orderCount < 0 ||
       bucketAmounts.has(bucketKey)
     ) {
       throw new AdminPaymentServiceError();
     }
     bucketAmounts.set(bucketKey, row.amountMinor);
-    dailyCounts.set(
-      row.date,
-      (dailyCounts.get(row.date) ?? 0) + row.orderCount
-    );
     totals.set(currency, (totals.get(currency) ?? 0) + row.amountMinor);
     currencies.add(currency);
+  }
+
+  for (const row of orderCountRows) {
+    if (
+      !knownDates.has(row.date) ||
+      !Number.isSafeInteger(row.orderCount) ||
+      row.orderCount < 0 ||
+      dailyCounts.has(row.date)
+    ) {
+      throw new AdminPaymentServiceError();
+    }
+    dailyCounts.set(row.date, row.orderCount);
   }
 
   const sortedCurrencies = [...currencies].sort();
@@ -384,11 +406,10 @@ export async function loadAdminPaymentOverview(
     timeZone: request.timeZone,
     rangeStart: range.start.toISOString(),
     rangeEnd: range.end.toISOString(),
-    successfulOrderCount: daily.reduce(
-      (sum, point) => sum + point.orderCount,
-      0
-    ),
-    activeDayCount: daily.filter((point) => point.orderCount > 0).length,
+    rechargeOrderCount: daily.reduce((sum, point) => sum + point.orderCount, 0),
+    revenueDayCount: daily.filter((point) =>
+      point.revenue.some((item) => item.amountMinor > 0)
+    ).length,
     revenueTotals: sortedCurrencies.map((currency) => ({
       currency,
       amountMinor: totals.get(currency) ?? 0,

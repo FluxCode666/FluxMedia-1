@@ -1,13 +1,13 @@
+/**
+ * 支付概览自然日收入与充值订单折线图。
+ *
+ * 使用方：payment-overview-chart-lazy。收入按完成日和币种绘制在左轴，全部状态充值
+ * 订单按创建日绘制在右轴；完整文字图例与隐藏数据表确保信息不只依赖颜色表达。
+ */
 "use client";
 
-/**
- * 支付概览自然日收入与成交订单折线图。
- *
- * 使用方：payment-overview-chart-lazy。收入按币种分别绘制在左轴，成功订单数绘制在
- * 右轴；完整文字图例与隐藏数据表确保信息不只依赖颜色表达。
- */
-import type { AdminPaymentOverviewOutput } from "@repo/shared/payment/admin-contract";
 import { amountMinorToMajor } from "@repo/shared/credits/top-up";
+import type { AdminPaymentOverviewOutput } from "@repo/shared/payment/admin-contract";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -59,13 +59,13 @@ function useElementWidth() {
   return { ref, width };
 }
 
-/** 渲染连续自然日的多币种收入线与成功订单数量线。 */
+/** 渲染连续自然日的多币种收入线与全部充值订单数量线。 */
 export function PaymentOverviewChart({ overview }: PaymentOverviewChartProps) {
   const locale = useLocale();
   const t = useTranslations("AdminPayments.overview");
   const { ref, width } = useElementWidth();
   const currencies = overview.revenueTotals.map((item) => item.currency);
-  const orderLabel = t("successfulOrders");
+  const orderLabel = t("rechargeOrders");
   const data = overview.daily.map((point) => {
     const row: Record<string, string | number> = {
       date: point.date,

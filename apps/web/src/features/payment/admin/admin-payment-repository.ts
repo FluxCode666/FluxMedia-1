@@ -26,15 +26,22 @@ import { z } from "zod";
 import type {
   AdminPaymentOrderQuery,
   AdminPaymentOrderRow,
-  AdminPaymentOverviewAggregateRow,
+  AdminPaymentOverviewOrderCountRow,
+  AdminPaymentOverviewRevenueRow,
   AdminPaymentRepository,
 } from "./admin-payment-service";
 
-const overviewRowSchema = z
+const overviewRevenueRowSchema = z
   .object({
     date: z.string().date(),
     currency: z.string().trim().length(3),
     amountMinor: z.coerce.number().int().nonnegative().safe(),
+  })
+  .strict();
+
+const overviewOrderCountRowSchema = z
+  .object({
+    date: z.string().date(),
     orderCount: z.coerce.number().int().nonnegative().safe(),
   })
   .strict();
@@ -100,11 +107,11 @@ function escapeLikePattern(value: string): string {
 }
 
 /** 按报告时区自然日与币种聚合已履约订单最小单位金额。 */
-async function readOverviewAggregates(input: {
+async function readOverviewRevenue(input: {
   start: Date;
   end: Date;
   timeZone: string;
-}): Promise<AdminPaymentOverviewAggregateRow[]> {
+}): Promise<AdminPaymentOverviewRevenueRow[]> {
   // fulfilled_at 是 UTC 瞬间的 timestamp without time zone；先按 UTC 解释，再转换为
   // 报告时区，避免数据库 session timezone 改变收入自然日归属。
   const date = sql<string>`to_char((${paymentOrder.fulfilledAt} at time zone 'UTC') at time zone ${input.timeZone}, 'YYYY-MM-DD')`;
@@ -116,7 +123,6 @@ async function readOverviewAggregates(input: {
         sql<number>`coalesce(sum(${paymentOrder.amountMinor}), 0)`.mapWith(
           Number
         ),
-      orderCount: sql<number>`count(*)`.mapWith(Number),
     })
     .from(paymentOrder)
     .where(
@@ -131,7 +137,34 @@ async function readOverviewAggregates(input: {
     // 按投影序号分组可避免同一时区参数在 SELECT/GROUP BY 被 Drizzle 编成不同编号。
     .groupBy(sql.raw("1"), paymentOrder.currency)
     .orderBy(sql.raw("1"), paymentOrder.currency);
-  return rows.map((row) => overviewRowSchema.parse(row));
+  return rows.map((row) => overviewRevenueRowSchema.parse(row));
+}
+
+/** 按报告时区创建自然日聚合全部状态的充值订单数量。 */
+async function readOverviewOrderCounts(input: {
+  start: Date;
+  end: Date;
+  timeZone: string;
+}): Promise<AdminPaymentOverviewOrderCountRow[]> {
+  // created_at 与 fulfilled_at 相同，都是承载 UTC 墙上值的 timestamp without time
+  // zone；显式按 UTC 解释，确保数据库 session timezone 不改变订单自然日归属。
+  const date = sql<string>`to_char((${paymentOrder.createdAt} at time zone 'UTC') at time zone ${input.timeZone}, 'YYYY-MM-DD')`;
+  const rows = await db
+    .select({
+      date,
+      orderCount: sql<number>`count(*)`.mapWith(Number),
+    })
+    .from(paymentOrder)
+    .where(
+      and(
+        buildRechargePurposePredicate(),
+        gte(paymentOrder.createdAt, input.start),
+        lt(paymentOrder.createdAt, input.end)
+      )
+    )
+    .groupBy(sql.raw("1"))
+    .orderBy(sql.raw("1"));
+  return rows.map((row) => overviewOrderCountRowSchema.parse(row));
 }
 
 /** 读取一页全局充值订单；previous 查询升序取最近一页，服务层再反转为展示降序。 */
@@ -203,7 +236,8 @@ async function searchUsers(input: {
 
 /** 生产数据库仓储；所有方法都执行有界、参数化只读查询。 */
 export const databaseAdminPaymentRepository: AdminPaymentRepository = {
-  readOverviewAggregates,
+  readOverviewRevenue,
+  readOverviewOrderCounts,
   readOrders,
   searchUsers,
 };

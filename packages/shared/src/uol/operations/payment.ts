@@ -14,13 +14,13 @@ import {
 } from "../../payment/admin-contract";
 import { defineOperation } from "../registry";
 
-/** 读取指定自然月的已履约充值收入与订单数趋势。 */
+/** 读取指定自然月的已履约充值收入与全部充值订单数趋势。 */
 export const getAdminPaymentOverview = defineOperation({
   name: "payment.getAdminOverview",
   domain: "payment",
   title: "获取支付概览",
   description:
-    "按管理员时区读取指定自然月的已履约充值订单，按自然日和币种返回收入最小单位金额与订单数量。",
+    "按管理员时区读取指定自然月的充值订单，收入按完成时间和币种统计，订单数量按创建时间统计全部支付状态。",
   input: adminPaymentOverviewInputSchema,
   output: adminPaymentOverviewOutputSchema,
   access: { kind: "roles", roles: ["admin", "super_admin"] },
