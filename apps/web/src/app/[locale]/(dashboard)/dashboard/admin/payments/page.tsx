@@ -1,7 +1,7 @@
 /**
  * 管理端支付概览页。
  *
- * 页面只解析自然月 URL、复查人工管理员角色并调用支付 UOL Action；收入定义、币种
+ * 页面只解析日期范围 URL、复查人工管理员角色并调用支付 UOL Action；收入定义、币种
  * 隔离、自然日补零和数据库查询全部位于统一接口层及其绑定中。
  */
 import { getUserRoleById } from "@repo/shared/auth/role-server";
@@ -25,10 +25,11 @@ import { formatPaymentAmount } from "@/features/payment/admin/admin-payment-form
 import {
   type AdminPaymentSearchParams,
   buildAdminPaymentOverviewHref,
-  parseAdminPaymentMonth,
+  buildCalendarMonthRange,
+  parseAdminPaymentDateRange,
 } from "@/features/payment/admin/admin-payment-query";
-import { PaymentMonthNavigator } from "@/features/payment/admin/payment-month-navigator";
 import { PaymentOverviewChartLazy } from "@/features/payment/admin/payment-overview-chart-lazy";
+import { PaymentOverviewDateRangePicker } from "@/features/payment/admin/payment-overview-date-range-picker";
 import { Link } from "@/i18n/routing";
 
 export const metadata = {
@@ -40,7 +41,7 @@ type AdminPaymentOverviewPageProps = {
   searchParams: Promise<AdminPaymentSearchParams>;
 };
 
-/** 渲染按部署时区自然月统计的充值支付概览。 */
+/** 渲染按部署时区日期范围统计的充值支付概览。 */
 export default async function AdminPaymentOverviewPage({
   searchParams,
 }: AdminPaymentOverviewPageProps) {
@@ -54,17 +55,12 @@ export default async function AdminPaymentOverviewPage({
   const role = await getUserRoleById(session.user.id);
   if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
 
-  const requestedMonth = parseAdminPaymentMonth(rawSearchParams);
   const appTimeZone = getAppTimeZone();
-  const maxMonth = formatDateInputInTimeZone(new Date(), appTimeZone).slice(
-    0,
-    7
-  );
-  const result = await getAdminPaymentOverviewAction({
-    month: requestedMonth ?? undefined,
-  });
+  const today = formatDateInputInTimeZone(new Date(), appTimeZone);
+  const currentMonthRange = buildCalendarMonthRange(today);
+  const requestedRange = parseAdminPaymentDateRange(rawSearchParams);
+  const result = await getAdminPaymentOverviewAction(requestedRange ?? {});
   const overview = result?.data;
-  const retryMonth = requestedMonth ?? maxMonth;
 
   return (
     <div className="container mx-auto space-y-6 px-4 py-6 md:px-6">
@@ -93,16 +89,25 @@ export default async function AdminPaymentOverviewPage({
           <section className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs font-medium text-muted-foreground">
-                {t("reportMonth")}
+                {t("reportRange")}
               </p>
               <p className="mt-1 font-serif text-lg font-medium">
-                {t("monthValue", { month: overview.month })}
+                {t("rangeValue", {
+                  startDate: overview.startDate,
+                  endDate: overview.endDate,
+                })}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {t("timeZone", { timeZone: overview.timeZone })}
               </p>
             </div>
-            <PaymentMonthNavigator maxMonth={maxMonth} month={overview.month} />
+            <PaymentOverviewDateRangePicker
+              currentMonthEndDate={currentMonthRange.endDate}
+              currentMonthStartDate={currentMonthRange.startDate}
+              endDate={overview.endDate}
+              startDate={overview.startDate}
+              today={today}
+            />
           </section>
 
           <section className="grid gap-4 md:grid-cols-3">
@@ -202,7 +207,7 @@ export default async function AdminPaymentOverviewPage({
             {t("loadErrorDescription")}
           </p>
           <Button asChild className="mt-4" variant="outline">
-            <Link href={buildAdminPaymentOverviewHref(retryMonth)}>
+            <Link href={buildAdminPaymentOverviewHref(currentMonthRange)}>
               {t("retry")}
             </Link>
           </Button>

@@ -1,8 +1,8 @@
 /**
  * 支付概览路由加载骨架。
  *
- * 使用方：Next.js 软导航边界。保持页头、月份选择、摘要卡和图表高度，避免切月时
- * 页面布局跳动。
+ * 使用方：Next.js 软导航边界。保持页头、日期范围选择、摘要卡和图表高度，避免
+ * 切换范围时页面布局跳动。
  */
 export default function AdminPaymentsLoading() {
   return (

@@ -1,12 +1,13 @@
 /**
  * 管理端充值支付 DB-free 应用服务。
  *
- * 使用方：支付 UOL binding。职责是解析管理员自然月、补齐每日零值、校验财务聚合、
- * 签发绑定管理员与筛选条件的 keyset cursor，并把仓储窄行收敛为稳定安全 DTO。
+ * 使用方：支付 UOL binding。职责是解析管理员日期范围、补齐每日零值、校验财务
+ * 聚合、签发绑定管理员与筛选条件的 keyset cursor，并收敛为稳定安全 DTO。
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import {
+  ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
   type AdminPaymentOrder,
   type AdminPaymentOrderListOutput,
   type AdminPaymentOverviewOutput,
@@ -127,40 +128,76 @@ function toIsoDateTime(value: Date | string): string {
   return date.toISOString();
 }
 
-/** 计算 YYYY-MM 对应的下一自然月，不依赖服务器本地时区。 */
-function getNextMonth(month: string): string {
-  const [year, monthNumber] = month.split("-").map(Number);
-  if (!year || !monthNumber) throw new AdminPaymentServiceError();
-  const next = new Date(Date.UTC(year, monthNumber, 1));
-  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(
-    2,
-    "0"
-  )}`;
+/** 将 YYYY-MM-DD 严格解析为 UTC 日历日期，拒绝自动进位的非法日期。 */
+function parseCalendarDateAsUtc(value: string): Date {
+  if (!/^20\d{2}-\d{2}-\d{2}$/.test(value)) {
+    throw new AdminPaymentServiceError();
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== (month ?? 0) - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new AdminPaymentServiceError();
+  }
+  return date;
 }
 
-/** 枚举自然月内所有 YYYY-MM-DD，用于完整补零和未来日期占位。 */
-function listMonthDates(month: string): string[] {
-  const [year, monthNumber] = month.split("-").map(Number);
-  if (!year || !monthNumber) throw new AdminPaymentServiceError();
-  const dayCount = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-  return Array.from(
-    { length: dayCount },
-    (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`
+/** 将 UTC 日历日期格式化为 YYYY-MM-DD。 */
+function formatUtcCalendarDate(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+    2,
+    "0"
+  )}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** 在纯日历日期上增加天数，不依赖服务器本地时区或 DST。 */
+function addCalendarDays(value: string, days: number): string {
+  const date = parseCalendarDateAsUtc(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatUtcCalendarDate(date);
+}
+
+/** 计算给定日历日期所在自然月的最后一天。 */
+function getCalendarMonthEnd(value: string): string {
+  const date = parseCalendarDateAsUtc(value);
+  return formatUtcCalendarDate(
+    new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0))
   );
 }
 
+/** 枚举闭区间内所有日期，并以最大报表天数作为资源上限。 */
+function listCalendarDates(startDate: string, endDate: string): string[] {
+  parseCalendarDateAsUtc(startDate);
+  parseCalendarDateAsUtc(endDate);
+  const dates: string[] = [];
+  let current = startDate;
+  while (current <= endDate) {
+    dates.push(current);
+    if (dates.length > ADMIN_PAYMENT_OVERVIEW_MAX_DAYS) {
+      throw new AdminPaymentServiceError("Payment date range is too large");
+    }
+    current = addCalendarDays(current, 1);
+  }
+  return dates;
+}
+
 /**
- * 将可选月份解析为管理员时区中的完整自然月 UTC 半开范围。
+ * 将可选日历日期解析为管理员时区中的 UTC 半开范围。
  *
- * @param input 已通过 UOL schema 的月份、管理员时区与查询时刻。
- * @returns 月份、连续日期和 UTC 边界；未来月份失败关闭。
+ * @param input 已通过 UOL schema 的起止日期、管理员时区与查询时刻。
+ * @returns 闭区间日历日期及其 UTC 半开边界；默认当前完整自然月。
  */
-export function resolveAdminPaymentMonth(input: {
-  month?: string;
+export function resolveAdminPaymentDateRange(input: {
+  startDate?: string;
+  endDate?: string;
   timeZone: string;
   asOf: Date;
 }): {
-  month: string;
+  startDate: string;
+  endDate: string;
   dates: string[];
   start: Date;
   end: Date;
@@ -168,22 +205,26 @@ export function resolveAdminPaymentMonth(input: {
   if (Number.isNaN(input.asOf.getTime())) {
     throw new AdminPaymentServiceError();
   }
-  const currentMonth = formatDateInputInTimeZone(
-    input.asOf,
-    input.timeZone
-  ).slice(0, 7);
-  const month = input.month ?? currentMonth;
-  if (month > currentMonth) {
-    throw new AdminPaymentServiceError("Future payment months are not allowed");
+  if (Boolean(input.startDate) !== Boolean(input.endDate)) {
+    throw new AdminPaymentServiceError();
   }
-  const start = parseDateInputInTimeZone(`${month}-01`, {
+  const today = formatDateInputInTimeZone(input.asOf, input.timeZone);
+  const defaultStartDate = `${today.slice(0, 7)}-01`;
+  const defaultEndDate = getCalendarMonthEnd(today);
+  const startDate = input.startDate ?? defaultStartDate;
+  const endDate = input.endDate ?? defaultEndDate;
+  const dates = listCalendarDates(startDate, endDate);
+  if (dates.length === 0 || startDate > today || endDate > defaultEndDate) {
+    throw new AdminPaymentServiceError("Future payment ranges are not allowed");
+  }
+  const start = parseDateInputInTimeZone(startDate, {
     timeZone: input.timeZone,
   });
-  const end = parseDateInputInTimeZone(`${getNextMonth(month)}-01`, {
+  const end = parseDateInputInTimeZone(addCalendarDays(endDate, 1), {
     timeZone: input.timeZone,
   });
   if (!start || !end || start >= end) throw new AdminPaymentServiceError();
-  return { month, dates: listMonthDates(month), start, end };
+  return { startDate, endDate, dates, start, end };
 }
 
 /** 解析或测试注入签名密钥；缺失时不得签发可伪造 cursor。 */
@@ -326,7 +367,7 @@ function adaptPaymentOrderRow(row: AdminPaymentOrderRow): AdminPaymentOrder {
 }
 
 /**
- * 读取并补齐指定自然月的每日收入与充值订单数。
+ * 读取并补齐指定日期范围的每日收入与充值订单数。
  *
  * WHY：收入按 fulfilled_at 统计已履约订单，订单量按 created_at 统计全部状态。两种
  * 时间口径不可从同一 SQL 分桶推导，否则待支付和失败订单会从订单趋势中消失。
@@ -340,20 +381,25 @@ export async function loadAdminPaymentOverview(
   dependencies: { repository: AdminPaymentRepository }
 ): Promise<AdminPaymentOverviewOutput> {
   const parsed = adminPaymentOverviewInputSchema.parse(request.input);
-  const range = resolveAdminPaymentMonth({
-    month: parsed.month,
+  const now = request.now ?? new Date();
+  const range = resolveAdminPaymentDateRange({
+    startDate: parsed.startDate,
+    endDate: parsed.endDate,
     timeZone: request.timeZone,
-    asOf: request.now ?? new Date(),
+    asOf: now,
   });
+  // 请求范围可以覆盖当前自然月尚未发生的日期，但仓储只能读取查询时刻之前的事实，
+  // 防止时钟漂移或异常未来时间戳进入财务报表。
+  const queryEnd = range.end < now ? range.end : now;
   const [revenueRows, orderCountRows] = await Promise.all([
     dependencies.repository.readOverviewRevenue({
       start: range.start,
-      end: range.end,
+      end: queryEnd,
       timeZone: request.timeZone,
     }),
     dependencies.repository.readOverviewOrderCounts({
       start: range.start,
-      end: range.end,
+      end: queryEnd,
       timeZone: request.timeZone,
     }),
   ]);
@@ -402,7 +448,8 @@ export async function loadAdminPaymentOverview(
     })),
   }));
   return adminPaymentOverviewOutputSchema.parse({
-    month: range.month,
+    startDate: range.startDate,
+    endDate: range.endDate,
     timeZone: request.timeZone,
     rangeStart: range.start.toISOString(),
     rangeEnd: range.end.toISOString(),

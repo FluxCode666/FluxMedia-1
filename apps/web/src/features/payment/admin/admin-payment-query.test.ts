@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAdminPaymentOrdersHref,
-  parseAdminPaymentMonth,
+  buildAdminPaymentOverviewHref,
+  buildCalendarMonthRange,
+  parseAdminPaymentDateRange,
   parseAdminPaymentOrderQuery,
 } from "./admin-payment-query";
 
@@ -53,9 +55,49 @@ describe("admin payment query", () => {
     );
   });
 
-  it("accepts only bounded calendar months", () => {
-    expect(parseAdminPaymentMonth({ month: "2026-07" })).toBe("2026-07");
-    expect(parseAdminPaymentMonth({ month: "2026-13" })).toBeNull();
-    expect(parseAdminPaymentMonth({ month: ["2026-07"] })).toBeNull();
+  it("accepts only complete bounded calendar date ranges", () => {
+    expect(
+      parseAdminPaymentDateRange({
+        startDate: "2026-06-20",
+        endDate: "2026-07-20",
+      })
+    ).toEqual({ startDate: "2026-06-20", endDate: "2026-07-20" });
+    expect(
+      parseAdminPaymentDateRange({
+        startDate: "2026-07-20",
+        endDate: "2026-07-01",
+      })
+    ).toBeNull();
+    expect(parseAdminPaymentDateRange({ startDate: "2026-07-01" })).toBeNull();
+    expect(
+      parseAdminPaymentDateRange({
+        startDate: ["2026-07-01"],
+        endDate: ["2026-07-31"],
+      })
+    ).toBeNull();
+    expect(
+      parseAdminPaymentDateRange({
+        startDate: "2026-02-30",
+        endDate: "2026-03-01",
+      })
+    ).toBeNull();
+    expect(
+      parseAdminPaymentDateRange({
+        startDate: "2025-01-01",
+        endDate: "2026-01-02",
+      })
+    ).toBeNull();
+    expect(parseAdminPaymentDateRange({ month: "2026-07" })).toBeNull();
+  });
+
+  it("builds overview range URLs and full calendar month defaults", () => {
+    const range = buildCalendarMonthRange("2028-02-15");
+    expect(range).toEqual({
+      startDate: "2028-02-01",
+      endDate: "2028-02-29",
+    });
+    expect(buildAdminPaymentOverviewHref(range)).toBe(
+      "/dashboard/admin/payments?startDate=2028-02-01&endDate=2028-02-29"
+    );
   });
 });

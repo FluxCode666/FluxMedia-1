@@ -19,7 +19,7 @@ import { invokeOperation } from "@repo/shared/uol";
 
 import { ensureUolInitialized } from "@/server/uol-init";
 
-/** 读取指定或当前自然月的充值支付概览。 */
+/** 读取指定日期范围或默认当前自然月的充值支付概览。 */
 export const getAdminPaymentOverviewAction = adminAction
   .metadata({ action: "payment.getAdminOverview" })
   .schema(adminPaymentOverviewInputSchema)

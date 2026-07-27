@@ -6,6 +6,7 @@
  */
 import {
   ADMIN_PAYMENT_ORDER_STATUSES,
+  ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
   type AdminPaymentOrderStatus,
 } from "@repo/shared/payment/admin-contract";
 
@@ -19,6 +20,11 @@ export type AdminPaymentOrderQueryState = {
   orderId: string | null;
   status: AdminPaymentOrderStatus | null;
   userEmail: string | null;
+};
+
+export type AdminPaymentOverviewRange = {
+  startDate: string;
+  endDate: string;
 };
 
 const MAX_CURSOR_LENGTH = 4096;
@@ -52,17 +58,72 @@ function isEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-/** 解析支付概览的可选 YYYY-MM；非法或数组值回退当前月。 */
-export function parseAdminPaymentMonth(
-  searchParams: AdminPaymentSearchParams
-): string | null {
-  const month = readScalar(searchParams.month, 7);
-  return month && /^20\d{2}-(0[1-9]|1[0-2])$/.test(month) ? month : null;
+/** 将 YYYY-MM-DD 校验并转换为 UTC 日历日序号。 */
+function getCalendarDayNumber(value: string): number | null {
+  if (!/^20\d{2}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const time = Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0);
+  const date = new Date(time);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === (month ?? 0) - 1 &&
+    date.getUTCDate() === day
+    ? Math.floor(time / 86_400_000)
+    : null;
 }
 
-/** 将自然月构造成支付概览 URL。 */
-export function buildAdminPaymentOverviewHref(month: string): string {
-  return `/dashboard/admin/payments?month=${encodeURIComponent(month)}`;
+/** 解析支付概览的成对日期范围；非法、缺失一端或超限时回退默认范围。 */
+export function parseAdminPaymentDateRange(
+  searchParams: AdminPaymentSearchParams
+): AdminPaymentOverviewRange | null {
+  const startDate = readScalar(searchParams.startDate, 10);
+  const endDate = readScalar(searchParams.endDate, 10);
+  if (!startDate || !endDate) return null;
+  const startDay = getCalendarDayNumber(startDate);
+  const endDay = getCalendarDayNumber(endDate);
+  if (
+    startDay === null ||
+    endDay === null ||
+    startDay > endDay ||
+    endDay - startDay + 1 > ADMIN_PAYMENT_OVERVIEW_MAX_DAYS
+  ) {
+    return null;
+  }
+  return { startDate, endDate };
+}
+
+/** 将日期范围构造成不含语言前缀的支付概览 URL。 */
+export function buildAdminPaymentOverviewHref(
+  range: AdminPaymentOverviewRange
+): string {
+  const searchParams = new URLSearchParams({
+    startDate: range.startDate,
+    endDate: range.endDate,
+  });
+  return `/dashboard/admin/payments?${searchParams.toString()}`;
+}
+
+/** 根据任一合法日历日期构造其完整自然月范围。 */
+export function buildCalendarMonthRange(
+  calendarDate: string
+): AdminPaymentOverviewRange {
+  if (!/^20\d{2}-\d{2}-\d{2}$/.test(calendarDate)) {
+    throw new RangeError("Invalid calendar date");
+  }
+  const [year, month, day] = calendarDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== (month ?? 0) - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new RangeError("Invalid calendar date");
+  }
+  const monthPrefix = calendarDate.slice(0, 7);
+  const monthEnd = new Date(Date.UTC(year ?? 0, month ?? 0, 0));
+  return {
+    startDate: `${monthPrefix}-01`,
+    endDate: `${monthPrefix}-${String(monthEnd.getUTCDate()).padStart(2, "0")}`,
+  };
 }
 
 /** 将订单列表 URL 参数收窄为稳定筛选和 cursor 状态。 */

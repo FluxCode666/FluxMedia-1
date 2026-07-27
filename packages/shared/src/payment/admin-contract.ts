@@ -14,6 +14,8 @@ export const ADMIN_PAYMENT_ORDER_STATUSES = [
   "failed",
 ] as const;
 
+export const ADMIN_PAYMENT_OVERVIEW_MAX_DAYS = 366;
+
 export const adminPaymentOrderStatusSchema = z.enum(
   ADMIN_PAYMENT_ORDER_STATUSES
 );
@@ -29,9 +31,10 @@ export const adminPaymentOrderProviderSchema = z.enum([
   "epay",
 ]);
 
-const calendarMonthSchema = z
+const calendarDateSchema = z
   .string()
-  .regex(/^20\d{2}-(0[1-9]|1[0-2])$/, "月份格式必须为 YYYY-MM");
+  .regex(/^20\d{2}-\d{2}-\d{2}$/, "日期必须位于 2000 至 2099 年")
+  .date();
 const emailSchema = z.string().trim().email().max(320);
 const cursorSchema = z.string().min(1).max(4096);
 const currencySchema = z.string().trim().length(3);
@@ -39,8 +42,39 @@ const isoDateTimeSchema = z.string().datetime({ offset: true });
 const nonnegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
 
 export const adminPaymentOverviewInputSchema = z
-  .object({ month: calendarMonthSchema.optional() })
-  .strict();
+  .object({
+    startDate: calendarDateSchema.optional(),
+    endDate: calendarDateSchema.optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (Boolean(input.startDate) !== Boolean(input.endDate)) {
+      context.addIssue({
+        code: "custom",
+        message: "开始日期和结束日期必须同时提供",
+      });
+      return;
+    }
+    if (!input.startDate || !input.endDate) return;
+    if (input.startDate > input.endDate) {
+      context.addIssue({
+        code: "custom",
+        message: "结束日期不能早于开始日期",
+        path: ["endDate"],
+      });
+      return;
+    }
+    const startTime = Date.parse(`${input.startDate}T00:00:00.000Z`);
+    const endTime = Date.parse(`${input.endDate}T00:00:00.000Z`);
+    const dayCount = Math.floor((endTime - startTime) / 86_400_000) + 1;
+    if (dayCount > ADMIN_PAYMENT_OVERVIEW_MAX_DAYS) {
+      context.addIssue({
+        code: "custom",
+        message: `日期范围不能超过 ${ADMIN_PAYMENT_OVERVIEW_MAX_DAYS} 天`,
+        path: ["endDate"],
+      });
+    }
+  });
 
 const currencyAmountSchema = z
   .object({
@@ -59,14 +93,18 @@ const adminPaymentDailyPointSchema = z
 
 export const adminPaymentOverviewOutputSchema = z
   .object({
-    month: calendarMonthSchema,
+    startDate: calendarDateSchema,
+    endDate: calendarDateSchema,
     timeZone: z.string().min(1).max(100),
     rangeStart: isoDateTimeSchema,
     rangeEnd: isoDateTimeSchema,
     rechargeOrderCount: nonnegativeSafeIntegerSchema,
     revenueDayCount: nonnegativeSafeIntegerSchema,
     revenueTotals: z.array(currencyAmountSchema).max(32),
-    daily: z.array(adminPaymentDailyPointSchema).min(28).max(31),
+    daily: z
+      .array(adminPaymentDailyPointSchema)
+      .min(1)
+      .max(ADMIN_PAYMENT_OVERVIEW_MAX_DAYS),
   })
   .strict();
 

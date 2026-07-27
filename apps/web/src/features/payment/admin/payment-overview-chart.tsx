@@ -37,6 +37,21 @@ type PaymentOverviewChartProps = {
   overview: AdminPaymentOverviewOutput;
 };
 
+/** 根据范围跨度选择不歧义且紧凑的 X 轴日期格式。 */
+function formatChartDateTick(
+  value: string,
+  startDate: string,
+  endDate: string
+): string {
+  if (startDate.slice(0, 4) !== endDate.slice(0, 4)) {
+    return value.slice(2).replaceAll("-", "/");
+  }
+  if (startDate.slice(0, 7) !== endDate.slice(0, 7)) {
+    return value.slice(5).replace("-", "/");
+  }
+  return value.slice(8);
+}
+
 /** 观察图表容器宽度，避免 Recharts 首次渲染得到零宽。 */
 function useElementWidth() {
   const ref = useRef<HTMLDivElement>(null);
@@ -101,7 +116,13 @@ export function PaymentOverviewChart({ overview }: PaymentOverviewChartProps) {
               dataKey="date"
               minTickGap={18}
               tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
-              tickFormatter={(value) => String(value).slice(8)}
+              tickFormatter={(value) =>
+                formatChartDateTick(
+                  String(value),
+                  overview.startDate,
+                  overview.endDate
+                )
+              }
               tickLine={false}
             />
             <YAxis

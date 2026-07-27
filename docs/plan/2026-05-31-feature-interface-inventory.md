@@ -50,7 +50,7 @@
 
 | Operation | Principal | 口径与传输边界 |
 | --- | --- | --- |
-| `payment.getAdminOverview` | `admin`、`super_admin` 用户 | 人工会话只读；按部署时区自然月读取已履约积分充值收入，并按 `created_at` 读取全部状态的充值订单数 |
+| `payment.getAdminOverview` | `admin`、`super_admin` 用户 | 人工会话只读；按部署时区日期范围读取已履约积分充值收入，并按 `created_at` 读取全部状态的充值订单数；默认当前自然月 |
 | `payment.listAdminOrders` | `admin`、`super_admin` 用户 | 人工会话只读；按邮箱、精确本地订单号、持久状态查询，使用绑定管理员与筛选的签名 keyset cursor |
 | `payment.searchAdminOrderUsers` | `admin`、`super_admin` 用户 | 人工会话只读；服务端有界搜索存在充值订单的用户邮箱 |
 

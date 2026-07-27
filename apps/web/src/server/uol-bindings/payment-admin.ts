@@ -2,7 +2,7 @@
  * 管理端支付 UOL 真实执行绑定。
  *
  * 使用方：uol-bindings.ts 启动副作用导入。统一使用部署级 APP_TIME_ZONE 作为财务
- * 报表时区，确保不同管理员看到相同的自然日和自然月边界。
+ * 报表时区，确保不同管理员看到相同的自然日与默认自然月边界。
  */
 import {
   adminPaymentOrderListOutputSchema,
@@ -39,7 +39,7 @@ async function invokeAdminPaymentService<T>(
   }
 }
 
-/** 绑定自然月支付概览；报告时区固定为部署配置。 */
+/** 绑定日期范围支付概览；报告时区固定为部署配置。 */
 bindOperationExecute(getAdminPaymentOverview, async (input) =>
   adminPaymentOverviewOutputSchema.parse(
     await invokeAdminPaymentService(() =>

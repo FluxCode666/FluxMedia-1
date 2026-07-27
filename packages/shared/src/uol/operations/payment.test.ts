@@ -9,6 +9,25 @@ import { getOperation } from "../registry";
 import "./payment";
 
 describe("admin payment UOL contract", () => {
+  it("validates complete overview date ranges with a 366-day limit", () => {
+    const operation = getOperation("payment.getAdminOverview");
+    expect(
+      operation?.input.safeParse({
+        startDate: "2024-01-01",
+        endDate: "2024-12-31",
+      }).success
+    ).toBe(true);
+    expect(
+      operation?.input.safeParse({
+        startDate: "2024-01-01",
+        endDate: "2025-01-01",
+      }).success
+    ).toBe(false);
+    expect(
+      operation?.input.safeParse({ startDate: "2026-07-01" }).success
+    ).toBe(false);
+  });
+
   it.each([
     "payment.getAdminOverview",
     "payment.listAdminOrders",

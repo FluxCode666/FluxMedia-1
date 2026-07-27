@@ -1,7 +1,7 @@
 /**
  * 管理端支付应用服务测试。
  *
- * 覆盖自然月时区边界、多币种补零、签名 cursor 的前后页语义及篡改/跨筛选拒绝。
+ * 覆盖日期范围时区边界、多币种补零、签名 cursor 的前后页语义及篡改/跨筛选拒绝。
  * 测试通过仓储端口注入数据，不连接数据库。
  */
 import { describe, expect, it } from "vitest";
@@ -15,7 +15,7 @@ import {
   AdminPaymentServiceError,
   loadAdminPaymentOrders,
   loadAdminPaymentOverview,
-  resolveAdminPaymentMonth,
+  resolveAdminPaymentDateRange,
 } from "./admin-payment-service";
 
 /** 创建最小合法订单行，允许测试覆盖排序键和业务字段。 */
@@ -70,7 +70,7 @@ describe("admin payment overview", () => {
     const output = await loadAdminPaymentOverview(
       {
         timeZone: "Asia/Shanghai",
-        input: { month: "2026-07" },
+        input: { startDate: "2026-07-01", endDate: "2026-07-31" },
         now: new Date("2026-07-28T00:00:00.000Z"),
       },
       { repository }
@@ -88,11 +88,11 @@ describe("admin payment overview", () => {
     });
   });
 
-  it("uses the full app-time-zone natural month and keeps currencies separate", async () => {
+  it("defaults to the full app-time-zone natural month and keeps currencies separate", async () => {
     const repository = makeRepository({
       readOverviewRevenue: async (input) => {
         expect(input.start.toISOString()).toBe("2026-06-30T16:00:00.000Z");
-        expect(input.end.toISOString()).toBe("2026-07-31T16:00:00.000Z");
+        expect(input.end.toISOString()).toBe("2026-07-15T16:00:00.000Z");
         expect(input.timeZone).toBe("Asia/Shanghai");
         return [
           {
@@ -112,10 +112,15 @@ describe("admin payment overview", () => {
           },
         ];
       },
-      readOverviewOrderCounts: async () => [
-        { date: "2026-07-01", orderCount: 4 },
-        { date: "2026-07-03", orderCount: 2 },
-      ],
+      readOverviewOrderCounts: async (input) => {
+        expect(input.start.toISOString()).toBe("2026-06-30T16:00:00.000Z");
+        expect(input.end.toISOString()).toBe("2026-07-15T16:00:00.000Z");
+        expect(input.timeZone).toBe("Asia/Shanghai");
+        return [
+          { date: "2026-07-01", orderCount: 4 },
+          { date: "2026-07-03", orderCount: 2 },
+        ];
+      },
     });
 
     const output = await loadAdminPaymentOverview(
@@ -127,7 +132,10 @@ describe("admin payment overview", () => {
       { repository }
     );
 
-    expect(output.month).toBe("2026-07");
+    expect(output.startDate).toBe("2026-07-01");
+    expect(output.endDate).toBe("2026-07-31");
+    expect(output.rangeStart).toBe("2026-06-30T16:00:00.000Z");
+    expect(output.rangeEnd).toBe("2026-07-31T16:00:00.000Z");
     expect(output.daily).toHaveLength(31);
     expect(output.rechargeOrderCount).toBe(6);
     expect(output.revenueDayCount).toBe(2);
@@ -145,10 +153,85 @@ describe("admin payment overview", () => {
     });
   });
 
-  it("rejects future reporting months", () => {
+  it("clamps future end queries to asOf while preserving future zero buckets", async () => {
+    const queryEnds: string[] = [];
+    const repository = makeRepository({
+      readOverviewRevenue: async (input) => {
+        queryEnds.push(input.end.toISOString());
+        return [];
+      },
+      readOverviewOrderCounts: async (input) => {
+        queryEnds.push(input.end.toISOString());
+        return [{ date: "2026-07-28", orderCount: 1 }];
+      },
+    });
+    const output = await loadAdminPaymentOverview(
+      {
+        timeZone: "UTC",
+        input: { startDate: "2026-07-28", endDate: "2026-07-31" },
+        now: new Date("2026-07-28T12:00:00.000Z"),
+      },
+      { repository }
+    );
+
+    expect(queryEnds).toEqual([
+      "2026-07-28T12:00:00.000Z",
+      "2026-07-28T12:00:00.000Z",
+    ]);
+    expect(output.rangeEnd).toBe("2026-08-01T00:00:00.000Z");
+    expect(output.daily).toHaveLength(4);
+    expect(output.daily.at(-1)).toEqual({
+      date: "2026-07-31",
+      orderCount: 0,
+      revenue: [],
+    });
+  });
+
+  it("supports single-day ranges and DST-changing half-open boundaries", async () => {
+    const singleDay = await loadAdminPaymentOverview(
+      {
+        timeZone: "UTC",
+        input: { startDate: "2026-07-20", endDate: "2026-07-20" },
+        now: new Date("2026-07-28T00:00:00.000Z"),
+      },
+      { repository: makeRepository() }
+    );
+    expect(singleDay.daily).toHaveLength(1);
+
+    const dstRange = resolveAdminPaymentDateRange({
+      startDate: "2026-03-07",
+      endDate: "2026-03-09",
+      timeZone: "America/New_York",
+      asOf: new Date("2026-07-28T00:00:00.000Z"),
+    });
+    expect(dstRange.start.toISOString()).toBe("2026-03-07T05:00:00.000Z");
+    expect(dstRange.end.toISOString()).toBe("2026-03-10T04:00:00.000Z");
+  });
+
+  it("rejects future starts and ranges beyond the current natural month", () => {
     expect(() =>
-      resolveAdminPaymentMonth({
-        month: "2026-08",
+      resolveAdminPaymentDateRange({
+        startDate: "2026-07-29",
+        endDate: "2026-07-31",
+        timeZone: "UTC",
+        asOf: new Date("2026-07-28T00:00:00.000Z"),
+      })
+    ).toThrow(AdminPaymentServiceError);
+    expect(
+      resolveAdminPaymentDateRange({
+        startDate: "2026-07-20",
+        endDate: "2026-07-31",
+        timeZone: "UTC",
+        asOf: new Date("2026-07-28T00:00:00.000Z"),
+      })
+    ).toMatchObject({
+      startDate: "2026-07-20",
+      endDate: "2026-07-31",
+    });
+    expect(() =>
+      resolveAdminPaymentDateRange({
+        startDate: "2026-07-20",
+        endDate: "2026-08-01",
         timeZone: "UTC",
         asOf: new Date("2026-07-28T00:00:00.000Z"),
       })
@@ -174,7 +257,7 @@ describe("admin payment overview", () => {
       loadAdminPaymentOverview(
         {
           timeZone: "UTC",
-          input: { month: "2026-07" },
+          input: { startDate: "2026-07-01", endDate: "2026-07-31" },
           now: new Date("2026-07-28T00:00:00.000Z"),
         },
         { repository }
@@ -193,7 +276,7 @@ describe("admin payment overview", () => {
       loadAdminPaymentOverview(
         {
           timeZone: "UTC",
-          input: { month: "2026-07" },
+          input: { startDate: "2026-07-01", endDate: "2026-07-31" },
           now: new Date("2026-07-28T00:00:00.000Z"),
         },
         { repository }
