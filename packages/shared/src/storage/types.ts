@@ -67,11 +67,21 @@ export interface StorageProvider {
     options?: { signal?: AbortSignal }
   ): Promise<Buffer>;
 
+  /**
+   * 写入文件。
+   *
+   * @param key 文件键名。
+   * @param bucket 存储桶名称。
+   * @param data 文件字节。
+   * @param contentType 文件 MIME 类型。
+   * @param options 可选取消信号；取消后 provider 必须尽快终止底层写入。
+   */
   putObject(
     key: string,
     bucket: string,
     data: Buffer,
-    contentType: string
+    contentType: string,
+    options?: { signal?: AbortSignal }
   ): Promise<void>;
 }
 

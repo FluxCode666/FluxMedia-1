@@ -228,7 +228,7 @@ export function getPricingPlansFromConfig(config: PaymentConfig): Plan[] {
     plans.push({
       ...config.plans.pro,
       name: "Pro",
-      description: "Adds chat-to-image and Responses image API",
+      description: "Adds higher media limits and priority generation",
       features: [
         "20,000 credits / month",
         "Text-to-image and image editing",

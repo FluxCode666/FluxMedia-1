@@ -1,51 +1,75 @@
-# MEMORY — 实时关键记忆索引
+# FluxMedia 持久事实索引
 
-> 项目长期记忆索引。详细记忆见 `docs/memory/`，计划见 `docs/plan/`，待办见 `docs/TODO.md`。
-> 这是所有贡献者 Agent 的共享长期记忆，请保持精简，每条一行。
+本文件只记录后续开发必须复用的现行不变量，详细设计放在对应文档或计划中。
 
-## 安全
+## 媒体边界
 
-- [2026-05 安全审计](security-audit-2026-05.md) — 6 维度并发安全审查；高危经济/入侵口子已在 dev 修复（2beb0e0/b69c10b/14a88d8/07d7a18）
-- [2026-05-31 对抗式审计报告](plan/2026-05-31-audit-report.md) — 12子系统x3镜头确认128条(critical1/high27/medium58/low39/info3)
-- **2026-05-31 修复 workflow 完成**：先修 S-C1(03cc6bd)/S-H5(edbc0d6)/S-H1+H2(f1216df)；再经 15 单元并行修复 workflow 共修 94 条、未修 23 条、defer 4 个上帝组件；dev 9 主题提交 0babd1f..01906e0(封禁会话/回调SSRF/存储越权/限流fail-open/moderate恒定时间/注册冷却/external-api+支付+订阅+生成覆盖)；终验 typecheck+test 全绿(shared235+web257=492)。未修与 defer backlog 见 [测试重构计划](plan/2026-05-31-audit-test-refactor.md)
-- **2026-05-31 安全修复 workflow 二轮（遗留项）**：7 单元对抗复核后保留 5 条(dev 提交 4208681..6f48522)——S-L2 webhook 不吞异常 / S-L1 consumeCredits 按 userId 归属+迁移0029 / S-M8 设置范围校验 / M-H5 admin 集中守卫 / v1 per-key 限流；S-M11 仅 detect-only 软门闩(默认不拒)。**回退 2 条**：U3 S-L7 generations 桶 cookie 鉴权(破坏 v1 API 默认 url 返回的无 cookie 拉取，须改签名 URL)；U7 SSRF pin(Next16 patchFetch 致生产不走 pin+假绿灯)。详见 [测试重构计划](plan/2026-05-31-audit-test-refactor.md)
-- **#1/#15/#16 浏览器实测通过**（api2 隔离测试栈 2026-05-31，未发现真实 Bug；积分首屏短暂0为异步发放假象自愈）
-- **2026-05-31 安全修复三轮（全部遗留项）**：4 条并行修复+对抗复核，dev 提交 cfb3861..06e4709——S-L7 签名 URL 替代 cookie 鉴权 / S-M11 Creem 纯函数抽离+369 行单测 / SSRF 无条件 DNS pin(node:http/https 不经 Next patch) / COST quality+thinking 积分倍率。288 web + shared 全绿。残留：裸 fetch 路径(operations.ts toImageBuffer/images.ts getImageBase64)未接 pin，见 TODO。
-- [待办清单](TODO.md) — 仍存在的代码层问题 + 部署前必做
+- 产品只承载图片生成、图片编辑、蒙版编辑、视频生成与结果查询。
+- 五个外部 v1 图片 handler 最终汇入 `runImageGenerationForUser`，不得建立平行图片管线。
+- 图片与视频均不使用会话粘性；视频被上游接受后固定成员、Adobe token 与轮询地址。
 
-## 架构
+## 统一媒体号池
 
-- [Agent 集成架构](plan/2026-05-31-agent-integration-architecture.md) — 统一接口层(UOL)优先；MCP 适配器默认关闭+管理秘钥；内置 agent 直连接口层；配套盘点表 plan/2026-05-31-feature-interface-inventory.md。**开发新功能前必读**（CLAUDE.md 已立约束）
-- [系统设置动态配置与 Redis 缓存](memory/system-settings-runtime-cache.md) — PostgreSQL 真相源、L1+Redis L2（默认 DB 4）、写后失效、故障降级及邮件/存储/限流/调度热切换语义。
-- [时间与时区策略](memory/time-zone-policy.md) — 数据库与外部 API 固定 UTC；用户 IANA 时区优先，部署 `APP_TIME_ZONE` 兜底；时区不再属于系统设置。
-- **UOL Phase 0+1 已实现**（分支 `feat/uol-phase0-phase1`，已推送）：脚手架 7 核心模块 + 144 个操作注册(10 域) + 3 测试文件(registry/access/invoke)全绿。execute 均为 stub("Not yet wired")，待 Phase 2 委托对接。合并 dev 前须经 CI。
+- 顶层成员类型只有 `api | adobe`；Adobe 内部模式只有 `gateway | direct`。
+- `supportedModelIds` 是候选能力的唯一权威，模型名称不承担调度语义。
+- 成员模型选项来自管理端模型配置快照；图像使用配置键，视频族展开为可执行完整
+  ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关不得过滤调度能力。
+- API 成员只使用 OpenAI Images 协议；`useStream` 属于保留的图片上游能力，
+  Responses/Mixed-to-Responses 配置不得迁入统一号池。
+- 全局调度策略为 `priority | least_acquired | least_load`，缺失或非法时回退
+  `priority`。
+- 调度排序、容量检查、获租与计数更新必须在同一个 PostgreSQL 事务中完成。
+- 调度指标不得记录 prompt、媒体、Cookie、token 或 API Key。
 
-- [图像后端池调度策略](image-backend-pool-scheduling.md) — 车道模型(web/codex/mixed × mixed-only)、候选资格(account 靠 implementationMode、api/adobe 靠分组车道)、mixed 分组 web 先行→回退 codex、满并发短等、冷却=已尝试;**常驻 alwaysActive 与换号判断正交**(只动持久化状态,不影响要不要换/换到谁/回退)
-- [A/B 影子流量 Relay](memory/ab-shadow-relay.md) — 默认关闭的内网 sidecar：生产响应优先、A/B 最佳努力异步投递、固定目标与最小请求头；严禁复制有副作用请求。
+详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)。
 
-## 功能
+## 统一接口层
 
-- [API 文档访问边界](memory/api-docs-access-policy.md) — `/api-docs` 公开三个图像端点，`/dashboard/api-docs` 为登录用户控制台镜像；视频文档暂时隐藏；`/docs`、控制台系统文档与搜索索引仅 admin/super_admin。
-- [控制台账户与支持区](memory/dashboard-account-support.md) — Your Account 使用当前会话；Official Support 与 Service & Support 通过版本化双语配置、专用系统设置表单和只读 UOL operation 动态展示。
-- [API 密钥管理与审核治理](plans/2026-07-23-001-feat-api-key-management-moderation-plan.md) — API 密钥统一走普通持久化路径；审核级别使用全站 `high` 默认与管理员用户覆盖，用户不可自行控制。
-- [积分充值与 Adobe 模型开放范围](plan/2026-07-18-credits-top-up-and-adobe-models.md) — 按金额充值、兑换比例、多币种配置、支付宝当面付及 Adobe 后端模型限制的实施与验证约束。
-- [统一积分支付结果流程](memory/credit-payment-result-flow.md) — 三类积分支付共用服务端订单状态页；浏览器回跳不履约，Creem / 易支付套餐订单与积分账本双重幂等。
-- **Issue #1/#15/#16 修复**（dev: a2dd4dc/10d0bc8/c8e9118，详见 [TODO.md](TODO.md)）— #1 管理员建号/改密改邮箱(superAdminAction+better-auth hashPassword)；#15 瀑布流 tier/参数/3警告对齐原项目；#16 数量控件改数字输入+滚轮、上限与服务端 count 校验统一挂 `imageGenerationConcurrency`（**语义变化**：单次张数上限不再用 maxBatchCount）。待 UI 实测。
+- 新功能先在 `packages/shared/src/uol/` 注册 `defineOperation()`，传输层只做解析、
+  Principal 构造、调用与编码。
+- 图片、视频、号池和系统设置的现行 operation 见
+  [feature-interface-inventory.md](plan/2026-05-31-feature-interface-inventory.md)。
+- MCP 与站内调用共享 registry、Principal、权限、幂等与审计网关。
 
-## 工程 / CI
+## 模型配置与公开目录
 
-- [CI/CD 流水线](CI-CD.md) — ci.yml 6 门禁 + docker-release(tag) + FluxMedia 手动生产部署（GHCR → SSH → migrate profile → web Compose，失败回滚应用但不回退数据库）+ dependabot
-- lint 门禁**仅 PR、仅改动文件**用 `biome lint --changed`（非 `biome ci`——全仓历史未 biome 格式化；对齐团队 `turbo lint` 约定）；typecheck/test/build 全仓 push+PR 双跑
-- typecheck job 必须先 `pnpm --filter @repo/web exec fumadocs-mdx` 生成 `.source`（gitignore 忽略、独立 tsc 不自生成），否则连锁 any 报错
-- CLAUDE.md ≡ AGENTS.md 为镜像文件，CI `docs-mirror` job 强制逐字一致；改一个必须同步另一个
-- **分支保护已启用**（dev+main，5 required checks，strict）；远端仓库已迁移至 `MeowFree/GPT2Image-Pro`（旧 `MoYeRanqianzhi/...` 会重定向）
-- 第三方 GitHub Action 全部钉 40 位 SHA（dependabot 维护）；第三方 action major 升级是单独人工决策
-- Dependabot 已忽略 semver-major（npm + actions）；major 升级人工评估
-- **kysely 被 pnpm override 钉在 0.28.17**（根 package.json）：better-auth 1.6 放宽 peer 让 kysely 浮到 0.29，而 0.29 把迁移导出迁到 `kysely/migration` 子路径、随 better-auth 打包的 kysely-adapter 仍从根导入 → next build 编译炸。待上游修复后移除（见 docs/TODO.md）
+- 管理端“模型配置”以单条目保存价格、展示开关、简介和封面；公开目录由
+  `modelMarketplace.listPublicModels` 提供，接口与运维边界见
+  [model-marketplace-operations.md](model-marketplace-operations.md)。
+- 模型广场中的图像模型必须同时运行时可达、已显式配置完整四档价格且 `visible` 为
+  `true`；未定价图像在管理端标记为“未配置价格”，不能计费或公开。
+- 展示开关只影响 `/models` 与首页，不影响 `/v1/models`、创作目录、套餐能力、调度或
+  实际计费。
+- 自定义封面使用独立模型资产 bucket；该 bucket 必须与 avatars、generations 互异，
+  匿名读取只接受严格内容寻址的静态 WebP，不能扩大 generations 的访问权限。
+- 默认封面与品牌图标的来源、完整性和许可见
+  [model-marketplace-assets.md](model-marketplace-assets.md)。
 
-## 关键架构事实
+## 财务、存储与恢复
 
-- 5 个 v1 handler 最终汇入 `apps/web/src/features/image-generation/operations.ts` 同一管线（`runImageGenerationForUser`）
-- 财务真相在 `credits_transaction`（双重记账），不在 `generation` 行；`generation` 仅历史/画廊展示
-- 扣费幂等键：`consumeCredits(sourceRef)` + `credits_transaction (type, source_ref)` 偏唯一索引（opt-in，不传则行为不变）
-- 发放/退款幂等键：`credits_batch (source_type, source_ref)` 偏唯一索引
+- 财务真相位于 `credits_transaction`，`generation` 只用于历史与画廊。
+- 扣费幂等键为 `(user_id, type, source_ref)`；发放与退款幂等键位于
+  `credits_batch(source_type, source_ref)`。
+- 视频请求以 Principal 所有者和 `clientRequestId` 派生稳定任务、扣费与存储键。
+- 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
+  退款或覆盖新 worker 的状态。
+
+## 生图并发
+
+- 用户套餐并发与全站生图并发使用必填标准 Redis 原子槽位；Redis 缺失时 Web 不启动，
+  运行中不可用时失败关闭，不得回退进程内计数。
+- 号池成员并发仍以 PostgreSQL `image_backend_member_lease` 为唯一事实；Redis 用户槽位
+  不得成为号池成员负载的第二口径。
+
+详见 [image-generation-concurrency.md](image-generation-concurrency.md)。
+
+## 部署与迁移
+
+- Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。
+- 统一号池迁移 `0060` 只允许在维护窗口执行；API/Adobe 旧成员、分组、Adobe 子池、
+  历史指标和终态视频引用必须原子迁移，只有旧 Web 数据、有效租约/粘性绑定、无法
+  恢复的运行中视频状态、不兼容协议或非法配置才阻断。API/Adobe 关系 ID 在合并时
+  增加类型前缀，顶层成员仍保留原 ID。
+- Adobe direct 只通过 `services/media-upstream-proxy` 访问代码内允许的 Adobe HTTPS
+  主机；代理与 Web 共享必填 secret。
+- 生产部署顺序和恢复边界见 [CI-CD.md](CI-CD.md)。

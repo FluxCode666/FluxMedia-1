@@ -158,7 +158,6 @@ describe("API integration docs data", () => {
         .map((parameter) => [parameter.name, parameter.defaultValue])
     );
     const commonDefaults = {
-      model: "后端默认（兜底 gpt-image-2）",
       n: "1",
       size: "1024x1024",
       quality: "auto",

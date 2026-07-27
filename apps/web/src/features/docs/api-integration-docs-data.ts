@@ -136,8 +136,7 @@ const zhContent = {
         },
         {
           name: "model",
-          requirement: "可选",
-          defaultValue: "后端默认（兜底 gpt-image-2）",
+          requirement: "必填",
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
         },
         {
@@ -272,8 +271,7 @@ const zhContent = {
         },
         {
           name: "model",
-          requirement: "可选",
-          defaultValue: "后端默认（兜底 gpt-image-2）",
+          requirement: "必填",
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
         },
         {
@@ -458,7 +456,7 @@ const zhContent = {
         { name: "object", description: "任务对象类型。" },
         {
           name: "status",
-          description: "processing、completed 或 failed。",
+          description: "processing、needs_attention、completed 或 failed。",
         },
         {
           name: "data[].b64_json / data[].url",
@@ -515,7 +513,7 @@ const zhContent = {
         { name: "object", description: "任务对象类型。" },
         {
           name: "status",
-          description: "processing、completed 或 failed。",
+          description: "processing、needs_attention、completed 或 failed。",
         },
         {
           name: "data[].url",
@@ -584,8 +582,7 @@ const enContent = {
         },
         {
           name: "model",
-          requirement: "Optional",
-          defaultValue: "Backend default (fallback: gpt-image-2)",
+          requirement: "Required",
           description: "Image model ID available to the current API key.",
         },
         {
@@ -703,8 +700,7 @@ const enContent = {
         },
         {
           name: "model",
-          requirement: "Optional",
-          defaultValue: "Backend default (fallback: gpt-image-2)",
+          requirement: "Required",
           description: "Image model ID available to the current API key.",
         },
         {
@@ -853,7 +849,10 @@ const enContent = {
       responses: [
         { name: "id", description: "Image task ID." },
         { name: "object", description: "Task object type." },
-        { name: "status", description: "processing, completed, or failed." },
+        {
+          name: "status",
+          description: "processing, needs_attention, completed, or failed.",
+        },
         {
           name: "data[].b64_json / data[].url",
           description: "Image results returned after completion.",
@@ -890,7 +889,10 @@ const enContent = {
       responses: [
         { name: "id", description: "Video task ID." },
         { name: "object", description: "Task object type." },
-        { name: "status", description: "processing, completed, or failed." },
+        {
+          name: "status",
+          description: "processing, needs_attention, completed, or failed.",
+        },
         {
           name: "data[].url",
           description: "Video URL returned after completion.",

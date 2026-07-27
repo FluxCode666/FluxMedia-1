@@ -11,13 +11,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   type AdminHistoryListOutput,
   type AdminHistoryRecord,
-  type HistoryCreditDetails,
-  type HistoryRecordStatus,
-  type HistoryReferenceImage,
   adminHistoryCursorFiltersSchema,
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
   adminHistoryRecordSchema,
+  type HistoryCreditDetails,
+  type HistoryRecordStatus,
+  type HistoryReferenceImage,
 } from "@repo/shared/image-generation/history-contract";
 import { z } from "zod";
 
@@ -91,7 +91,6 @@ export interface AdminImageHistoryRow extends AdminHistoryRowCommon {
   creditDetails: HistoryCreditDetails | null;
   promptRepairNotice: string | null;
   referenceImages: HistoryReferenceImage[];
-  isLayered: boolean;
   imageUrl: string | null;
 }
 

@@ -11,11 +11,10 @@ import type { AppUserRole } from "@repo/shared/auth/roles";
 import { logger } from "@repo/shared/logger";
 import { ActionUserError, protectedAction } from "@repo/shared/safe-action";
 import {
-  invokeOperation,
   OperationError,
   type OperationErrorCode,
-  type Principal,
-} from "@repo/shared/uol";
+} from "@repo/shared/uol/errors";
+import type { Principal } from "@repo/shared/uol/principal";
 import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
 
@@ -48,8 +47,14 @@ export type MarketingSlaVisibilityUpdateDependencies = {
 const defaultDependencies: MarketingSlaVisibilityUpdateDependencies = {
   initializeUol: ensureUolInitialized,
   loadRole: getUserRoleById,
-  invokeVisibilityOperation: (name, input, principal) =>
-    invokeOperation<MarketingSlaVisibilityUpdateOutput>(name, input, principal),
+  invokeVisibilityOperation: async (name, input, principal) => {
+    const { invokeOperation } = await import("@repo/shared/uol");
+    return invokeOperation<MarketingSlaVisibilityUpdateOutput>(
+      name,
+      input,
+      principal
+    );
+  },
   reportFailure: (event) => {
     logger.error(event, "Homepage SLA visibility update failed");
   },

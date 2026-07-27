@@ -7,10 +7,7 @@
 "use client";
 
 import { ModeToggle } from "@repo/shared/components";
-import {
-  getMarketingHeaderNavigation,
-  type MarketingHeaderVariant,
-} from "@repo/shared/config/nav";
+import { mainNav } from "@repo/shared/config/nav";
 import {
   Avatar,
   AvatarFallback,
@@ -18,7 +15,7 @@ import {
 } from "@repo/ui/components/avatar";
 import { Button } from "@repo/ui/components/button";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/components/sheet";
-import { ChevronDown, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -29,36 +26,18 @@ import { Link } from "@/i18n/routing";
 import { NavMenu } from "./nav-menu";
 
 /**
- * Products 下拉菜单翻译映射 key (移动端复用)
- */
-const productsTitleMap: Record<string, string> = {
-  "Core features": "productsMenu.core.title",
-  "Chat to Image": "productsMenu.core.chatToImage",
-  Gallery: "productsMenu.core.gallery",
-  "Batch Generation": "productsMenu.core.batch",
-};
-
-/**
  * Marketing 页面顶部导航栏。
  *
- * @param variant - `home` 使用首页直达导航并隐藏 Products 下拉；其他页面
- * 使用 `marketing` 变体保留有效产品入口。
  * @returns 复用认证、语言、主题与移动 Sheet 行为的 Header。
- * @sideEffects 读取当前会话，并管理移动 Sheet 与 Products 展开状态。
+ * @sideEffects 读取当前会话，并管理移动 Sheet 展开状态。
  */
-export function Header({
-  variant = "marketing",
-}: {
-  variant?: MarketingHeaderVariant;
-}) {
+export function Header() {
   // 获取当前用户会话状态
   const { data: session, isPending } = useCurrentSession();
   const user = session?.user;
   const t = useTranslations("Header");
   const tNav = useTranslations("Navigation");
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [productsExpanded, setProductsExpanded] = useState(false);
-  const navigation = getMarketingHeaderNavigation(variant);
 
   /**
    * 获取用户名首字母作为头像回退
@@ -76,13 +55,8 @@ export function Header({
    * 导航项标题翻译映射
    */
   const navTitleMap: Record<string, string> = {
-    Products: tNav("products"),
     Models: tNav("models"),
-    "Quick Integration": tNav("integration"),
-    Work: tNav("work"),
-    "Start Creating": tNav("create"),
     Docs: tNav("docs"),
-    Blog: tNav("blog"),
   };
 
   return (
@@ -108,7 +82,7 @@ export function Header({
 
           {/* 导航菜单 (桌面端) */}
           <div className="hidden xl:flex">
-            <NavMenu navigation={navigation} />
+            <NavMenu items={mainNav} />
           </div>
         </div>
 
@@ -182,53 +156,9 @@ export function Header({
               id="mobile-navigation"
               className="flex-1 overflow-y-auto px-4 pt-12"
             >
-              {/* Products 可折叠区域 */}
-              {navigation.productGroups.length > 0 && (
-                <div className="space-y-1">
-                  <button
-                    type="button"
-                    onClick={() => setProductsExpanded(!productsExpanded)}
-                    aria-expanded={productsExpanded}
-                    className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm font-medium text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
-                  >
-                    {navTitleMap.Products}
-                    <ChevronDown
-                      className={`h-4 w-4 transition-transform duration-200 ${productsExpanded ? "rotate-180" : ""}`}
-                    />
-                  </button>
-                  {productsExpanded && (
-                    <div className="ml-3 space-y-1 border-l border-border pl-3">
-                      {navigation.productGroups.map((group) => (
-                        <div key={group.title} className="py-1">
-                          <div className="px-3 py-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                            {tNav(productsTitleMap[group.title] || group.title)}
-                          </div>
-                          {group.items.map((item) => {
-                            const Icon = item.icon;
-                            return (
-                              <Link
-                                key={item.title}
-                                href={item.href}
-                                onClick={() => setMobileOpen(false)}
-                                className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
-                              >
-                                <Icon className="h-3.5 w-3.5 text-foreground" />
-                                {tNav(
-                                  productsTitleMap[item.title] || item.title
-                                )}
-                              </Link>
-                            );
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
               {/* 主导航链接 */}
               <div className="space-y-1">
-                {navigation.items.map((item) => (
+                {mainNav.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}

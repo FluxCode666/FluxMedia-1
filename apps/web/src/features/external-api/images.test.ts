@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NO_WEB_ACCOUNT_ERROR } from "@/features/image-generation/editable-file-util";
 import {
   createExternalImageStreamResponse,
   createJsonKeepAliveResponse,
@@ -116,7 +115,7 @@ describe("external generation usage payload", () => {
 });
 
 describe("external final image selection", () => {
-  it("returns final outputs instead of agent drafts", async () => {
+  it("prefers explicitly final outputs", async () => {
     const request = new Request("https://example.com/v1/images/generations");
 
     const payload = await toOpenAIImagesResponse(
@@ -129,9 +128,8 @@ describe("external final image selection", () => {
           creditsConsumed: 1,
           imageOutputs: [
             {
-              imageUrl: "/api/storage/generations/draft.png",
-              revisedPrompt: "draft prompt",
-              outputRole: "agent_draft",
+              imageUrl: "/api/storage/generations/unclassified.png",
+              revisedPrompt: "unclassified prompt",
             },
             {
               imageUrl: "/api/storage/generations/final.png",
@@ -157,7 +155,9 @@ describe("external final image selection", () => {
     });
     expect("data" in payload).toBe(true);
     if (!("data" in payload)) throw new Error("expected image response data");
-    const url = new URL(payload.data[0]!.url!);
+    const firstImage = payload.data[0];
+    if (!firstImage?.url) throw new Error("expected image response URL");
+    const url = new URL(firstImage.url);
     expect(url.origin).toBe("https://example.com");
     expect(url.pathname).toBe("/api/storage/generations/final.png");
     expect(url.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
@@ -173,7 +173,8 @@ describe("external final image selection", () => {
       "https://example.com/api/storage/generations/user/out.png"
     );
 
-    const url = new URL(publicUrl!);
+    if (!publicUrl) throw new Error("expected signed public URL");
+    const url = new URL(publicUrl);
     expect(url.origin).toBe("https://example.com");
     expect(url.pathname).toBe("/api/storage/generations/user/out.png");
     expect(url.searchParams.get("sig")).toMatch(/^[a-f0-9]{64}$/);
@@ -182,18 +183,13 @@ describe("external final image selection", () => {
     );
   });
 
-  it("falls back to the stored primary image when only draft outputs exist", () => {
+  it("falls back to the stored primary image when outputs are empty", () => {
     expect(
       getExternalFinalImageOutputs({
         generationId: "gen_1",
         imageUrl: "/api/storage/generations/final.png",
         revisedPrompt: "final prompt",
-        imageOutputs: [
-          {
-            imageUrl: "/api/storage/generations/draft.png",
-            outputRole: "agent_draft",
-          },
-        ],
+        imageOutputs: [],
       })
     ).toEqual([
       {
@@ -213,7 +209,6 @@ describe("external final image selection", () => {
       [
         {
           generationId: "gen_text",
-          responseText: "The upstream refused to generate this image.",
           creditsConsumed: 0,
         },
       ],
@@ -223,7 +218,7 @@ describe("external final image selection", () => {
 
     expect(payload).toMatchObject({
       error: {
-        message: "The upstream refused to generate this image.",
+        message: "Image generation completed without an image output",
         code: "image_generation_failed",
       },
       generation_id: "gen_text",
@@ -235,7 +230,7 @@ describe("external final image selection", () => {
 describe("external image error payload", () => {
   it("sanitizes internal database query failures", () => {
     const payload = toOpenAIErrorPayload(
-      'Failed query: select "id", "api_key" from "image_backend_api"\nparams: true'
+      'Failed query: select "id", "credential" from "media_backend_member"\nparams: true'
     );
 
     expect(payload).toMatchObject({
@@ -248,8 +243,8 @@ describe("external image error payload", () => {
       },
     });
     expect(payload.error.message).not.toContain("select ");
-    expect(payload.error.message).not.toContain("image_backend_api");
-    expect(payload.error.message).not.toContain("api_key");
+    expect(payload.error.message).not.toContain("media_backend_member");
+    expect(payload.error.message).not.toContain("credential");
   });
 });
 
@@ -351,7 +346,7 @@ describe("external API error classification", () => {
   it("maps upstream rate limits to rate limit errors", () => {
     expect(
       toOpenAIErrorPayload(
-        "ChatGPT Web conversation failed: HTTP 429 Too many requests"
+        "Upstream Images API returned HTTP 429: Too many requests"
       ).error
     ).toMatchObject({
       type: "rate_limit_error",
@@ -385,7 +380,7 @@ describe("external API error classification", () => {
   it("preserves upstream HTTP error status and metadata", () => {
     expect(
       toOpenAIErrorPayload(
-        "Upstream Responses API returned HTTP 400: Input must be a list | invalid_request_error | invalid_request_error"
+        "Upstream Images API returned HTTP 400: Input must be a list | invalid_request_error | invalid_request_error"
       ).error
     ).toMatchObject({
       type: "invalid_request_error",
@@ -395,7 +390,7 @@ describe("external API error classification", () => {
 
     expect(
       toOpenAIErrorPayload(
-        "Upstream Responses API returned HTTP 429: The usage limit has been reached | usage_limit_reached"
+        "Upstream Images API returned HTTP 429: The usage limit has been reached | usage_limit_reached"
       ).error
     ).toMatchObject({
       type: "rate_limit_error",
@@ -406,7 +401,7 @@ describe("external API error classification", () => {
 
   it("uses classified status and type for streamed error events", () => {
     const message =
-      "Upstream Responses API returned HTTP 400: Transparent background is not supported for this model. | invalid_value | image_generation_user_error";
+      "Upstream Images API returned HTTP 400: Transparent background is not supported for this model. | invalid_value | image_generation_user_error";
     const payload = toOpenAIErrorPayload(message, {
       generationId: "gen_1",
       creditsConsumed: 0,
@@ -440,7 +435,7 @@ describe("external API error classification", () => {
 
     expect(
       toOpenAIErrorPayload(
-        "Upstream Responses API returned HTTP 400: Your request was rejected by the safety system. safety_violations=[sexual]."
+        "Upstream Images API returned HTTP 400: Your request was rejected by the safety system. safety_violations=[sexual]."
       ).error
     ).toMatchObject({
       type: "invalid_request_error",
@@ -472,14 +467,6 @@ describe("external API error classification", () => {
       toOpenAIErrorPayload("当前生图后端分组没有可用账号或 API").error
     ).toMatchObject({
       type: "server_error",
-      code: "no_available_image_backend",
-      status: 503,
-    });
-  });
-
-  it("maps editable-file no-web-account error to 503 (not retryable 502)", () => {
-    // 用户后端只有 api/codex、无 web 账号时的报错须归 503,而非 502 upstream_error。
-    expect(toOpenAIErrorPayload(NO_WEB_ACCOUNT_ERROR).error).toMatchObject({
       code: "no_available_image_backend",
       status: 503,
     });

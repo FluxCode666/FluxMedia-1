@@ -5,7 +5,7 @@
  * 筛选出用户可通过 MCP 访问的操作子集，并转化为 MCP Tool 描述。
  *
  * 筛选规则：
- * - 仅暴露预定义的白名单操作（image-generation / external-api / credits / subscription 域的特定只读+生图操作）
+ * - 仅暴露已接线的图片、视频与本人统一历史操作
  * - 绝不暴露管理员操作
  * - 操作可用性受套餐能力位约束
  *
@@ -44,35 +44,14 @@ export interface McpToolDescriptor {
  * 仅列出终端用户通过 MCP 协议应可调用的操作名称。
  * 管理员操作、内部操作、危险操作一律不在此列。
  *
- * 分类：
- * - image-generation: 生成核心 + 状态查询 + 历史
- * - external-api (read-only): 余额、模型列表
- * - credits (read-only): 余额、活跃批次、交易记录
- * - subscription (read-only): 当前套餐、能力位查询
+ * 这是传输层显式边界：即使 registry 中存在并已绑定其他终端用户操作，
+ * User MCP 也不得自动扩权。
  */
 const USER_MCP_ALLOWED_OPERATIONS: readonly string[] = [
-  // 图像生成核心
   "image.generate",
-  "image.getStatus",
-  "image.getUserGenerations",
-  "image.getUserGenerationCount",
-
-  // 外部 API 只读端点
-  "externalApi.getCredits",
-  "externalApi.getModels",
-
-  // 积分只读端点
-  "credits.getBalance",
-  "credits.getMyActiveBatches",
-  "credits.getMyTransactions",
-
-  // 订阅只读端点
-  "subscription.getMyPlan",
-  "subscription.canUseCapability",
-
-  // 控制台统计只读端点
-  "analytics.getMyUsageSummary",
-  "analytics.getMyUsageTrends",
+  "video.generate",
+  "video.getStatus",
+  "image.listMyHistoryRecords",
 ] as const;
 
 /**

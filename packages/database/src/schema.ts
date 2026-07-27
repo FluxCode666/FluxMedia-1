@@ -12,6 +12,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -1050,33 +1051,49 @@ export const imageBackendGroup = pgTable("image_backend_group", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const imageBackendAccount = pgTable(
-  "image_backend_account",
+/**
+ * 统一媒体后端成员。
+ *
+ * 调度器只读取本表的公共能力、健康与容量事实；协议和凭据分别保存在一对一配置表。
+ * 本表是媒体后端成员的唯一顶层真相，API 与 Adobe 不再拥有并行成员表。
+ */
+export const imageBackendMember = pgTable(
+  "image_backend_member",
   {
     id: text("id").primaryKey(),
-    groupId: text("group_id").references(() => imageBackendGroup.id, {
-      onDelete: "set null",
-    }),
+    type: text("type").notNull(),
     name: text("name").notNull(),
-    email: text("email"),
-    credentialHash: text("credential_hash").notNull(),
-    accessToken: text("access_token").notNull(),
-    refreshToken: text("refresh_token"),
-    implementationMode: text("interface_mode").notNull().default("web"),
-    model: text("model"),
+    supportedModelIds: json("supported_model_ids").$type<string[]>().notNull(),
     contentSafetyEnabled: boolean("content_safety_enabled")
       .notNull()
       .default(true),
     isEnabled: boolean("is_enabled").notNull().default(true),
-    // 遇错也始终可用：与 isEnabled 同时为真时，该账号永不进入冷却、不因失败被
-    // 调度器置 error 排除（失败仍记录 lastError/failCount，但始终留在候选里）。
-    // 与 imageBackendApi.alwaysActive 语义一致。
     alwaysActive: boolean("always_active").notNull().default(false),
+    failureCooldownEnabled: boolean("failure_cooldown_enabled")
+      .notNull()
+      .default(false),
     priority: integer("priority").notNull().default(50),
-    concurrency: integer("concurrency").notNull().default(1),
+    concurrency: integer("concurrency").notNull().default(10),
+    leaseAcquiredCount: integer("lease_acquired_count").notNull().default(0),
     successCount: integer("success_count").notNull().default(0),
     failCount: integer("fail_count").notNull().default(0),
     status: text("status").notNull().default("active"),
+    healthStatus: text("health_status").notNull().default("healthy"),
+    errorEwma: numeric("error_ewma", {
+      precision: 8,
+      scale: 7,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    durationMsEwma: numeric("duration_ms_ewma", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    }),
+    successStreak: integer("success_streak").notNull().default(0),
+    failStreak: integer("fail_streak").notNull().default(0),
+    lastObservedAt: timestamp("last_observed_at"),
     lastUsedAt: timestamp("last_used_at"),
     lastAcquiredAt: timestamp("last_acquired_at"),
     cooldownUntil: timestamp("cooldown_until"),
@@ -1087,93 +1104,247 @@ export const imageBackendAccount = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("image_backend_account_interface_credential_hash_unique").on(
-      table.implementationMode,
-      table.credentialHash
+    check(
+      "image_backend_member_type_check",
+      sql`${table.type} IN ('api', 'adobe')`
+    ),
+    check(
+      "image_backend_member_supported_models_check",
+      sql`CASE WHEN json_typeof(${table.supportedModelIds}) = 'array' THEN json_array_length(${table.supportedModelIds}) > 0 ELSE false END`
+    ),
+    check(
+      "image_backend_member_priority_check",
+      sql`${table.priority} >= 0 AND ${table.priority} <= 10000`
+    ),
+    check(
+      "image_backend_member_concurrency_check",
+      sql`${table.concurrency} >= 1 AND ${table.concurrency} <= 10000`
+    ),
+    check(
+      "image_backend_member_counts_check",
+      sql`${table.leaseAcquiredCount} >= 0 AND ${table.successCount} >= 0 AND ${table.failCount} >= 0 AND ${table.successStreak} >= 0 AND ${table.failStreak} >= 0`
+    ),
+    check(
+      "image_backend_member_status_check",
+      sql`${table.status} IN ('active', 'limited', 'error')`
+    ),
+    check(
+      "image_backend_member_health_check",
+      sql`${table.healthStatus} IN ('healthy', 'degraded', 'unhealthy') AND ${table.errorEwma} >= 0 AND ${table.errorEwma} <= 1 AND (${table.durationMsEwma} IS NULL OR ${table.durationMsEwma} >= 0)`
+    ),
+    index("image_backend_member_eligibility_idx").on(
+      table.isEnabled,
+      table.status,
+      table.priority,
+      table.id
+    ),
+    index("image_backend_member_cooldown_idx").on(table.cooldownUntil),
+  ]
+);
+
+/** API 成员的一对一 OpenAI Images 协议配置。 */
+export const imageBackendMemberApiConfig = pgTable(
+  "image_backend_member_api_config",
+  {
+    memberId: text("member_id")
+      .primaryKey()
+      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
+    baseUrl: text("base_url").notNull(),
+    apiKey: text("api_key"),
+    useStream: boolean("use_stream").notNull().default(false),
+    parameterMappings: json("parameter_mappings")
+      .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
+      .notNull()
+      .default([]),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "image_backend_member_api_config_mappings_check",
+      sql`json_typeof(${table.parameterMappings}) = 'array'`
     ),
   ]
 );
 
-export const imageBackendAccountGroup = pgTable(
-  "image_backend_account_group",
+/** Adobe 成员的一对一 gateway/direct 协议、凭据与运行状态配置。 */
+export const imageBackendMemberAdobeConfig = pgTable(
+  "image_backend_member_adobe_config",
+  {
+    memberId: text("member_id")
+      .primaryKey()
+      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
+    mode: text("mode").notNull(),
+    baseUrl: text("base_url"),
+    apiKey: text("api_key"),
+    // Direct 模式下一个顶层成员恰好对应一个 Adobe 账号，不再有内部账号池。
+    cookie: text("cookie"),
+    scope: text("scope"),
+    accessToken: text("access_token"),
+    accountUserId: text("account_user_id"),
+    displayName: text("display_name"),
+    email: text("email"),
+    credentialStatus: text("credential_status"),
+    tokenExpiresAt: timestamp("token_expires_at"),
+    tokenFails: integer("token_fails").notNull().default(0),
+    lastRefreshAt: timestamp("last_refresh_at"),
+    lastRefreshError: text("last_refresh_error"),
+    nextRefreshAt: timestamp("next_refresh_at"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    creditsTotal: integer("credits_total"),
+    creditsUsed: integer("credits_used"),
+    creditsAvailable: integer("credits_available"),
+    creditsUpdatedAt: timestamp("credits_updated_at"),
+    creditsError: text("credits_error"),
+    defaultRatio: text("default_ratio").notNull().default("1x1"),
+    defaultResolution: text("default_resolution").notNull().default("2k"),
+    gptImageQuality: text("gpt_image_quality").notNull().default("high"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "image_backend_member_adobe_config_mode_check",
+      sql`${table.mode} IN ('gateway', 'direct')`
+    ),
+    check(
+      "image_backend_member_adobe_config_shape_check",
+      sql`(${table.mode} = 'gateway' AND ${table.baseUrl} IS NOT NULL) OR (${table.mode} = 'direct' AND ${table.baseUrl} IS NULL AND ${table.apiKey} IS NULL)`
+    ),
+    check(
+      "image_backend_member_adobe_config_credential_shape_check",
+      sql`(${table.mode} = 'gateway' AND ${table.cookie} IS NULL AND ${table.scope} IS NULL AND ${table.accessToken} IS NULL AND ${table.accountUserId} IS NULL AND ${table.displayName} IS NULL AND ${table.email} IS NULL AND ${table.credentialStatus} IS NULL AND ${table.tokenExpiresAt} IS NULL AND ${table.tokenFails} = 0 AND ${table.lastRefreshAt} IS NULL AND ${table.lastRefreshError} IS NULL AND ${table.nextRefreshAt} IS NULL AND ${table.consecutiveFailures} = 0 AND ${table.creditsTotal} IS NULL AND ${table.creditsUsed} IS NULL AND ${table.creditsAvailable} IS NULL AND ${table.creditsUpdatedAt} IS NULL AND ${table.creditsError} IS NULL) OR (${table.mode} = 'direct' AND ${table.cookie} IS NOT NULL AND char_length(btrim(${table.cookie})) BETWEEN 1 AND 64000 AND (${table.scope} IS NULL OR char_length(btrim(${table.scope})) BETWEEN 1 AND 4096) AND ${table.accessToken} IS NOT NULL AND char_length(btrim(${table.accessToken})) >= 1 AND ${table.credentialStatus} IS NOT NULL)`
+    ),
+    check(
+      "image_backend_member_adobe_config_credential_status_check",
+      sql`${table.credentialStatus} IS NULL OR ${table.credentialStatus} IN ('active', 'error', 'exhausted', 'invalid')`
+    ),
+    check(
+      "image_backend_member_adobe_config_failure_counts_check",
+      sql`${table.tokenFails} >= 0 AND ${table.consecutiveFailures} >= 0`
+    ),
+    check(
+      "image_backend_member_adobe_config_quality_check",
+      sql`${table.gptImageQuality} IN ('low', 'medium', 'high')`
+    ),
+  ]
+);
+
+/** 统一成员与既有媒体后端分组的多对多关系。 */
+export const imageBackendMemberGroup = pgTable(
+  "image_backend_member_group",
   {
     id: text("id").primaryKey(),
-    accountId: text("account_id")
+    memberId: text("member_id")
       .notNull()
-      .references(() => imageBackendAccount.id, { onDelete: "cascade" }),
+      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
     groupId: text("group_id")
       .notNull()
       .references(() => imageBackendGroup.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("image_backend_account_group_account_group_unique").on(
-      table.accountId,
+    uniqueIndex("image_backend_member_group_member_group_unique").on(
+      table.memberId,
       table.groupId
     ),
-    index("image_backend_account_group_group_idx").on(table.groupId),
+    index("image_backend_member_group_group_idx").on(
+      table.groupId,
+      table.memberId
+    ),
   ]
 );
 
-export const imageBackendApi = pgTable("image_backend_api", {
-  id: text("id").primaryKey(),
-  groupId: text("group_id").references(() => imageBackendGroup.id, {
-    onDelete: "set null",
-  }),
-  name: text("name").notNull(),
-  baseUrl: text("base_url").notNull(),
-  apiKey: text("api_key").notNull(),
-  model: text("model"),
-  // 供应商明确支持、可对外公布的模型 ID。空数组代表旧配置未声明能力，运行时保持
-  // 不限模型兼容；一旦配置非空，调度器只向该 API 后端发送列表内模型。
-  supportedModelIds: json("supported_model_ids")
-    .$type<string[]>()
-    .notNull()
-    .default([]),
-  interfaceMode: text("interface_mode").notNull().default("images"),
-  useStream: boolean("use_stream").notNull().default(false),
-  chatCompletionsUpstreamMode: text("chat_completions_upstream_mode")
-    .notNull()
-    .default("responses"),
-  imageUpstreamMode: text("image_upstream_mode").notNull().default("images"),
-  // API 后端可把本站标准请求字段映射为上游字段。配置是每个后端的快照，模板变更
-  // 不会隐式影响已上线的后端；运行时仍会在应用边界用 Zod 重新收窄此 JSON。
-  parameterMappings: json("parameter_mappings")
-    .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
-    .notNull()
-    .default([]),
-  // Adobe 来源：此 api 后端虽是 OpenAI/gpt 格式，但上游实际来自 Adobe。开启后参与
-  // firefly 候选（含 force_firefly 与显式 firefly-* 模型，后者经反向转换成 gpt 请求后
-  // 由本后端处理）。图片和视频价格均由模型固定价格配置决定。
-  adobeSourced: boolean("adobe_sourced").notNull().default(false),
-  contentSafetyEnabled: boolean("content_safety_enabled")
-    .notNull()
-    .default(true),
-  isEnabled: boolean("is_enabled").notNull().default(true),
-  // 遇错也始终可用：与 isEnabled 同时为真时，该 API 永不进入冷却、不因失败被
-  // 调度器置 error 排除（失败仍记录 lastError，但始终留在候选里）。
-  alwaysActive: boolean("always_active").notNull().default(false),
-  priority: integer("priority").notNull().default(50),
-  // 单后端最大在飞并发（与账号一致）。默认 10：API 中转通常可并发，过低会在高
-  // 并发下把请求挡成"无可用账号或 API"。
-  concurrency: integer("concurrency").notNull().default(10),
-  // 失败是否进入冷却（每后端独立，取代旧的全局 IMAGE_BACKEND_API_FAILURE_COOLDOWN_ENABLED）。
-  // 关闭（默认）时：瞬时/可恢复失败不冷却也不改状态；仅确定性错误置 error 踢出。
-  failureCooldownEnabled: boolean("failure_cooldown_enabled")
-    .notNull()
-    .default(false),
-  successCount: integer("success_count").notNull().default(0),
-  failCount: integer("fail_count").notNull().default(0),
-  status: text("status").notNull().default("active"),
-  lastUsedAt: timestamp("last_used_at"),
-  lastAcquiredAt: timestamp("last_acquired_at"),
-  cooldownUntil: timestamp("cooldown_until"),
-  lastError: text("last_error"),
-  lastErrorAt: timestamp("last_error_at"),
-  metadata: json("metadata").$type<Record<string, unknown>>(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+/**
+ * 跨应用副本共享的统一成员租约。
+ *
+ * ownerToken 是续期、接管和释放的并发令牌；服务层必须同时匹配租约 ID 与当前令牌，
+ * 防止旧 worker 释放已经移交给新 owner 的租约。
+ */
+export const imageBackendMemberLease = pgTable(
+  "image_backend_member_lease",
+  {
+    id: text("id").primaryKey(),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
+    ownerToken: text("owner_token").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("image_backend_member_lease_member_expires_idx").on(
+      table.memberId,
+      table.expiresAt
+    ),
+    index("image_backend_member_lease_expires_idx").on(table.expiresAt),
+  ]
+);
+
+/**
+ * 统一成员调度聚合指标。
+ *
+ * 仅保存策略、结果、候选数量和延迟等调度事实；成员类型是历史快照，故不设置成员
+ * 外键，避免删除成员时破坏指标。不得在 metadata 中写入 prompt、媒体或凭据。
+ */
+export const imageBackendMemberSchedulerMetric = pgTable(
+  "image_backend_member_scheduler_metric",
+  {
+    id: text("id").primaryKey(),
+    bucketStartedAt: timestamp("bucket_started_at").notNull(),
+    requestKind: text("request_kind").notNull(),
+    strategy: text("strategy").notNull(),
+    outcome: text("outcome").notNull(),
+    memberType: text("member_type"),
+    memberId: text("member_id"),
+    groupId: text("group_id"),
+    eventCount: integer("event_count").notNull().default(0),
+    candidateCountTotal: integer("candidate_count_total").notNull().default(0),
+    latencyMsTotal: integer("latency_ms_total").notNull().default(0),
+    metadata: json("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "image_backend_member_scheduler_metric_request_kind_check",
+      sql`${table.requestKind} IN ('image', 'video')`
+    ),
+    check(
+      "image_backend_member_scheduler_metric_strategy_check",
+      sql`${table.strategy} IN ('priority', 'least_acquired', 'least_load')`
+    ),
+    check(
+      "image_backend_member_scheduler_metric_outcome_check",
+      sql`${table.outcome} IN ('acquired', 'capacity_rejected', 'switched', 'terminal_failure', 'no_candidate')`
+    ),
+    check(
+      "image_backend_member_scheduler_metric_member_type_check",
+      sql`${table.memberType} IS NULL OR ${table.memberType} IN ('api', 'adobe')`
+    ),
+    check(
+      "image_backend_member_scheduler_metric_counts_check",
+      sql`${table.eventCount} >= 0 AND ${table.candidateCountTotal} >= 0 AND ${table.latencyMsTotal} >= 0`
+    ),
+    unique("image_backend_member_scheduler_metric_bucket_unique")
+      .on(
+        table.bucketStartedAt,
+        table.requestKind,
+        table.strategy,
+        table.outcome,
+        table.memberType,
+        table.memberId,
+        table.groupId
+      )
+      .nullsNotDistinct(),
+    index("image_backend_member_scheduler_metric_bucket_idx").on(
+      table.bucketStartedAt,
+      table.strategy,
+      table.outcome
+    ),
+  ]
+);
 
 // API 后端参数映射模板。模板仅用于管理端复用，保存到具体后端时复制为独立快照，
 // 避免编辑或删除模板悄然改变正在服务的上游协议。
@@ -1196,172 +1367,30 @@ export const imageBackendParameterMappingTemplate = pgTable(
   ]
 );
 
-// 外接 API 后端与分组的多对多关系（镜像 imageBackendAccountGroup）。
-// imageBackendApi.groupId 保留为主分组/向后兼容；本表承载全部分组成员关系，
-// 让同一个 API 后端可同时被多个分组调度。
-export const imageBackendApiGroup = pgTable(
-  "image_backend_api_group",
-  {
-    id: text("id").primaryKey(),
-    apiId: text("api_id")
-      .notNull()
-      .references(() => imageBackendApi.id, { onDelete: "cascade" }),
-    groupId: text("group_id")
-      .notNull()
-      .references(() => imageBackendGroup.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("image_backend_api_group_api_group_unique").on(
-      table.apiId,
-      table.groupId
-    ),
-    index("image_backend_api_group_group_idx").on(table.groupId),
-  ]
-);
+/** 视频 worker 可跨进程恢复的 JSON-safe 图片引用。 */
+type PersistedVideoInputReference =
+  | {
+      source: "storage";
+      mimeType: "image/png" | "image/jpeg" | "image/webp";
+      storageKey: string;
+      storageBucket?: string;
+      byteLength: number;
+    }
+  | {
+      source: "remote";
+      mimeType: "image/png" | "image/jpeg" | "image/webp";
+      url: string;
+      byteLength: number;
+    };
 
-// Adobe Firefly（adobe2api）后端：OpenAI 兼容网关，但模型/尺寸/视频形态与通用
-// pool-api 不同（model id 编码宽高比+分辨率+时长、宽高比枚举、entities、视频），故
-// 独立成表。调度字段（status/cooldown/并发/always_active/优先级）语义与 imageBackendApi
-// 一致，复用同一套调度机制（租约/粘性/SLA 指标）。账号-token 池由 adobe2api 侧自管，
-// 本表只持有 baseUrl + apiKey。
-export const imageBackendAdobe = pgTable("image_backend_adobe", {
-  id: text("id").primaryKey(),
-  groupId: text("group_id").references(() => imageBackendGroup.id, {
-    onDelete: "set null",
-  }),
-  name: text("name").notNull(),
-  // gateway：调外部 adobe2api（OpenAI 兼容，用 baseUrl+apiKey）。
-  // direct：本仓库直连 Adobe Firefly（用 adobe_account/adobe_token + Go TLS 旁路）。
-  mode: text("mode").notNull().default("gateway"),
-  baseUrl: text("base_url").notNull(),
-  apiKey: text("api_key").notNull(),
-  // 本后端暴露的 Firefly 图像模型家族（如 ["gpt-image","nano-banana-pro"]）；
-  // 为空表示不限制。
-  enabledModels: json("enabled_models").$type<string[]>(),
-  // 站内 WxH 映射不出确定值时的默认宽高比/分辨率。
-  defaultRatio: text("default_ratio").notNull().default("1x1"),
-  defaultResolution: text("default_resolution").notNull().default("2k"),
-  // 用户 GPT Image 质量选 auto/未指定时映射到的质量（low/medium/high）；默认 high。
-  gptImageQuality: text("gpt_image_quality").notNull().default("high"),
-  // 是否允许走视频模型（Phase 3）；默认关闭。
-  supportsVideo: boolean("supports_video").notNull().default(false),
-  contentSafetyEnabled: boolean("content_safety_enabled")
-    .notNull()
-    .default(true),
-  isEnabled: boolean("is_enabled").notNull().default(true),
-  // 与 imageBackendApi 同义：遇错也始终可用（终态错误除外，见调度器）。
-  alwaysActive: boolean("always_active").notNull().default(false),
-  priority: integer("priority").notNull().default(50),
-  concurrency: integer("concurrency").notNull().default(10),
-  failureCooldownEnabled: boolean("failure_cooldown_enabled")
-    .notNull()
-    .default(false),
-  successCount: integer("success_count").notNull().default(0),
-  failCount: integer("fail_count").notNull().default(0),
-  status: text("status").notNull().default("active"),
-  lastUsedAt: timestamp("last_used_at"),
-  lastAcquiredAt: timestamp("last_acquired_at"),
-  cooldownUntil: timestamp("cooldown_until"),
-  lastError: text("last_error"),
-  lastErrorAt: timestamp("last_error_at"),
-  metadata: json("metadata").$type<Record<string, unknown>>(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// Adobe 后端与分组的多对多关系（镜像 imageBackendApiGroup）。
-export const imageBackendAdobeGroup = pgTable(
-  "image_backend_adobe_group",
-  {
-    id: text("id").primaryKey(),
-    adobeId: text("adobe_id")
-      .notNull()
-      .references(() => imageBackendAdobe.id, { onDelete: "cascade" }),
-    groupId: text("group_id")
-      .notNull()
-      .references(() => imageBackendGroup.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("image_backend_adobe_group_adobe_group_unique").on(
-      table.adobeId,
-      table.groupId
-    ),
-    index("image_backend_adobe_group_group_idx").on(table.groupId),
-  ]
-);
-
-// Adobe 账号（直连模式）：一行 = 一个 Adobe 账号的刷新档案，镜像 adobe2api 的
-// refresh_profile.json。持有 cookie，用于换取短期 IMS access_token（写入 adobe_token）。
-// 归属某个 imageBackendAdobe 后端（其账号池）。直连模式专用；网关模式不需要。
-export const adobeAccount = pgTable(
-  "adobe_account",
-  {
-    id: text("id").primaryKey(),
-    adobeId: text("adobe_id")
-      .notNull()
-      .references(() => imageBackendAdobe.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    // Adobe 浏览器 cookie（IMS 刷新凭据）。无加密基建，按明文存（与 apiKey 一致）。
-    cookie: text("cookie").notNull(),
-    // 覆盖默认 IMS scope（为空用默认）。
-    scope: text("scope"),
-    isEnabled: boolean("is_enabled").notNull().default(true),
-    // IMS profile 拉到的账号信息。
-    displayName: text("display_name"),
-    email: text("email"),
-    accountUserId: text("account_user_id"),
-    // active / error / disabled。
-    status: text("status").notNull().default("active"),
-    lastRefreshAt: timestamp("last_refresh_at"),
-    lastRefreshError: text("last_refresh_error"),
-    nextRefreshAt: timestamp("next_refresh_at"),
-    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
-    metadata: json("metadata").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [index("adobe_account_adobe_idx").on(table.adobeId)]
-);
-
-// Adobe IMS access_token（直连模式）：短期 Bearer，由 adobe_account 的 cookie 刷新得到，
-// 镜像 adobe2api 的 tokens.json。调度命中后端后在其 token 池里按策略轮换选取。
-export const adobeToken = pgTable(
-  "adobe_token",
-  {
-    id: text("id").primaryKey(),
-    adobeId: text("adobe_id")
-      .notNull()
-      .references(() => imageBackendAdobe.id, { onDelete: "cascade" }),
-    // 手动导入的 token 可无关联账号。
-    accountId: text("account_id").references(() => adobeAccount.id, {
-      onDelete: "cascade",
-    }),
-    // IMS access_token（明文，与 apiKey 一致）。
-    value: text("value").notNull(),
-    // 从 JWT 解出的 user_id（per-account 粘性 / entities 同账号约束用）。
-    accountUserId: text("account_user_id"),
-    // active / error / exhausted / invalid。
-    status: text("status").notNull().default("active"),
-    fails: integer("fails").notNull().default(0),
-    source: text("source").notNull().default("auto_refresh"),
-    expiresAt: timestamp("expires_at"),
-    creditsTotal: integer("credits_total"),
-    creditsUsed: integer("credits_used"),
-    creditsAvailable: integer("credits_available"),
-    creditsUpdatedAt: timestamp("credits_updated_at"),
-    creditsError: text("credits_error"),
-    lastUsedAt: timestamp("last_used_at"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    index("adobe_token_adobe_idx").on(table.adobeId),
-    index("adobe_token_account_idx").on(table.accountId),
-    index("adobe_token_adobe_status_idx").on(table.adobeId, table.status),
-  ]
-);
+/** 仅由服务端 data 转存创建、可在终态安全删除的对象身份。 */
+type PersistedVideoInputObject = {
+  userId: string;
+  videoId: string;
+  attemptId: string;
+  storageKey: string;
+  storageBucket: string;
+};
 
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
 // 状态机、轮询恢复、按模型族每秒固定积分×时长计费。提交后置 running 并保存 pollUrl，
@@ -1376,12 +1405,19 @@ export const videoGeneration = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     // 外部 API key（站内创作页为空）。
     apiKeyId: text("api_key_id"),
+    // 站内、外部 API Key 与每把 MCP Key 的稳定隔离域。
+    principalScope: text("principal_scope").notNull(),
     // 新请求写 true；历史 API 行为空时必须 fail closed，不能按当前 key 状态回推。
     usageLogVisible: boolean("usage_log_visible"),
-    // 命中的 adobe 后端（删后端不删历史）。
-    adobeId: text("adobe_id").references(() => imageBackendAdobe.id, {
-      onDelete: "set null",
-    }),
+    // 统一后端成员引用；成员删除后保留历史任务与产物。
+    backendMemberId: text("backend_member_id").references(
+      () => imageBackendMember.id,
+      { onDelete: "set null" }
+    ),
+    // Adobe direct 成员与成员租约是 accepted 后恢复同一上游任务的持久身份。
+    // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
+    memberLeaseId: text("member_lease_id"),
+    memberLeaseOwnerToken: text("member_lease_owner_token"),
     // 完整 Firefly 视频 model id（firefly-<family>-<dur>s-<ratio>[-<res>]）。
     model: text("model").notNull(),
     family: text("family").notNull(),
@@ -1391,11 +1427,17 @@ export const videoGeneration = pgTable(
     resolution: text("resolution").notNull(),
     // pending / running / completed / failed。
     status: text("status").notNull().default("pending"),
+    // 可恢复执行阶段；status 保留为面向查询方的稳定粗粒度状态。
+    stage: text("stage").notNull().default("created"),
+    stateVersion: integer("state_version").notNull().default(0),
+    attemptCount: integer("attempt_count").notNull().default(0),
     // 图生视频输入：引用历史生成（@ 历史图）或上传图的 storageKey / generationId。
     inputImageRefs:
-      json("input_image_refs").$type<
-        Array<{ generationId?: string; storageKey?: string; role?: string }>
-      >(),
+      json("input_image_refs").$type<PersistedVideoInputReference[]>(),
+    // 与客户端 storage 引用分离的可信清理集合，禁止仅凭 key 前缀推断删除权限。
+    stagedInputObjects: json("staged_input_objects").$type<
+      PersistedVideoInputObject[]
+    >(),
     // 完成后 re-host 到对象存储的 key；videoUrl 为上游 presigned（短期）。
     storageKey: text("storage_key"),
     videoUrl: text("video_url"),
@@ -1406,9 +1448,23 @@ export const videoGeneration = pgTable(
     })
       .notNull()
       .default(0),
+    // 外部 API Key 的任务级幂等配额金额；成功终态清零标记但保留 key 累计用量，
+    // 失败退款事务同时清零标记并归还 key 用量。
+    apiKeyCreditsReserved: numeric("api_key_credits_reserved", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
     // 异步轮询恢复用。
     pollUrl: text("poll_url"),
     upstreamJobId: text("upstream_job_id"),
+    nextPollAt: timestamp("next_poll_at"),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    submitStartedAt: timestamp("submit_started_at"),
+    upstreamAcceptedAt: timestamp("upstream_accepted_at"),
     error: text("error"),
     metadata: json("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -1418,6 +1474,159 @@ export const videoGeneration = pgTable(
   (table) => [
     index("video_generation_user_idx").on(table.userId, table.createdAt),
     index("video_generation_status_idx").on(table.status, table.createdAt),
+    index("video_generation_backend_member_idx").on(table.backendMemberId),
+    index("video_generation_member_lease_idx").on(table.memberLeaseId),
+    index("video_generation_principal_stage_idx").on(
+      table.principalScope,
+      table.stage
+    ),
+    index("video_generation_recovery_idx").on(
+      table.stage,
+      table.nextPollAt,
+      table.claimExpiresAt
+    ),
+    check(
+      "video_generation_stage_check",
+      sql`${table.stage} IN ('created', 'charged', 'submitting', 'submit_uncertain', 'polling', 'downloading', 'refunding', 'completed', 'failed')`
+    ),
+    check(
+      "video_generation_recovery_counts_check",
+      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
+    ),
+  ]
+);
+
+// ============================================
+// 视频输入转存准入预留
+// ============================================
+
+/**
+ * 视频输入 staging reservation。
+ *
+ * 在任何 data URL 解码/上传前先按用户锁占用槽位；最终任务事务以 token 消费该行，
+ * 崩溃遗留行按 expiresAt 由后续准入或输入清理 worker 回收，消除预检与任务插入间
+ * 的资源放大窗口。
+ */
+export const videoTaskStagingReservation = pgTable(
+  "video_task_staging_reservation",
+  {
+    taskId: text("task_id").primaryKey(),
+    reservationToken: text("reservation_token").notNull(),
+    userId: text("user_id").notNull(),
+    principalScope: text("principal_scope").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("video_staging_reservation_token_unique").on(
+      table.reservationToken
+    ),
+    index("video_staging_reservation_user_expiry_idx").on(
+      table.userId,
+      table.expiresAt
+    ),
+    index("video_staging_reservation_principal_expiry_idx").on(
+      table.principalScope,
+      table.expiresAt
+    ),
+    index("video_staging_reservation_expiry_idx").on(table.expiresAt),
+    check(
+      "video_staging_reservation_identity_nonempty_check",
+      sql`length(btrim(${table.reservationToken})) > 0 AND length(btrim(${table.userId})) > 0 AND length(btrim(${table.principalScope})) > 0`
+    ),
+  ]
+);
+
+// ============================================
+// 视频临时输入持久清理队列
+// ============================================
+
+/**
+ * 视频输入对象清理队列。
+ *
+ * 对象存储删除与数据库任务创建无法组成同一事务；准入竞争或终态清理失败时，本表
+ * 保留稳定对象身份与 claim；created 任务保护仍需读取的输入，后续阶段可由多实例
+ * worker 最终重试删除而不会留下孤儿大对象。
+ */
+export const videoInputCleanup = pgTable(
+  "video_input_cleanup",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    videoId: text("video_id").notNull(),
+    attemptId: text("attempt_id").notNull(),
+    storageKey: text("storage_key").notNull(),
+    storageBucket: text("storage_bucket").notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("video_input_cleanup_recovery_idx").on(
+      table.nextAttemptAt,
+      table.claimExpiresAt
+    ),
+    check(
+      "video_input_cleanup_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "video_input_cleanup_identity_nonempty_check",
+      sql`length(btrim(${table.userId})) > 0 AND length(btrim(${table.videoId})) > 0 AND length(btrim(${table.attemptId})) > 0 AND length(btrim(${table.storageKey})) > 0 AND length(btrim(${table.storageBucket})) > 0`
+    ),
+  ]
+);
+
+// ============================================
+// 视频终态回调可靠投递
+// ============================================
+
+/**
+ * 视频回调投递表。
+ *
+ * callback URL 只从受信 OperationContext 注册，不写入视频任务 metadata；稳定投递 ID
+ * 作为接收方幂等键，claim 字段保证多副本 worker 不并发投递同一条记录。
+ */
+export const videoGenerationCallbackDelivery = pgTable(
+  "video_generation_callback_delivery",
+  {
+    id: text("id").primaryKey(),
+    videoGenerationId: text("video_generation_id")
+      .notNull()
+      .references(() => videoGeneration.id, { onDelete: "cascade" }),
+    callbackUrl: text("callback_url").notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    lastError: text("last_error"),
+    deliveredAt: timestamp("delivered_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("video_callback_delivery_video_unique").on(
+      table.videoGenerationId
+    ),
+    index("video_callback_delivery_recovery_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.claimExpiresAt
+    ),
+    check(
+      "video_callback_delivery_status_check",
+      sql`${table.status} IN ('pending', 'delivering', 'delivered', 'dead')`
+    ),
+    check(
+      "video_callback_delivery_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
   ]
 );
 
@@ -1537,122 +1746,34 @@ export const analyticsReadModelState = pgTable("analytics_read_model_state", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const imageBackendInflightLease = pgTable(
-  "image_backend_inflight_lease",
-  {
-    id: text("id").primaryKey(),
-    memberType: text("member_type").notNull(),
-    memberId: text("member_id").notNull(),
-    expiresAt: timestamp("expires_at").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    index("image_backend_inflight_lease_member_idx").on(
-      table.memberType,
-      table.memberId
-    ),
-    index("image_backend_inflight_lease_expires_at_idx").on(table.expiresAt),
-  ]
-);
-
-export const imageBackendStickyBinding = pgTable(
-  "image_backend_sticky_binding",
-  {
-    id: text("id").primaryKey(),
-    scope: text("scope").notNull(),
-    bindingKey: text("binding_key").notNull(),
-    memberType: text("member_type").notNull(),
-    memberId: text("member_id").notNull(),
-    groupId: text("group_id"),
-    accountBackend: text("account_backend"),
-    expiresAt: timestamp("expires_at").notNull(),
-    lastHitAt: timestamp("last_hit_at"),
-    hitCount: integer("hit_count").notNull().default(0),
-    metadata: json("metadata").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("image_backend_sticky_binding_scope_key_unique").on(
-      table.scope,
-      table.bindingKey
-    ),
-    index("image_backend_sticky_binding_member_idx").on(
-      table.memberType,
-      table.memberId
-    ),
-    index("image_backend_sticky_binding_expires_at_idx").on(table.expiresAt),
-  ]
-);
-
-export const imageBackendSchedulerMetric = pgTable(
-  "image_backend_scheduler_metric",
-  {
-    id: text("id").primaryKey(),
-    bucketStartedAt: timestamp("bucket_started_at").notNull(),
-    requestKind: text("request_kind").notNull(),
-    selectedLayer: text("selected_layer").notNull(),
-    memberType: text("member_type"),
-    memberId: text("member_id"),
-    groupId: text("group_id"),
-    selectCount: integer("select_count").notNull().default(0),
-    stickyPreviousHitCount: integer("sticky_previous_hit_count")
-      .notNull()
-      .default(0),
-    stickySessionHitCount: integer("sticky_session_hit_count")
-      .notNull()
-      .default(0),
-    loadBalanceCount: integer("load_balance_count").notNull().default(0),
-    switchCount: integer("switch_count").notNull().default(0),
-    candidateCountTotal: integer("candidate_count_total").notNull().default(0),
-    latencyMsTotal: integer("latency_ms_total").notNull().default(0),
-    metadata: json("metadata").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("image_backend_scheduler_metric_bucket_unique").on(
-      table.bucketStartedAt,
-      table.requestKind,
-      table.selectedLayer,
-      table.memberType,
-      table.memberId,
-      table.groupId
-    ),
-    index("image_backend_scheduler_metric_bucket_idx").on(
-      table.bucketStartedAt
-    ),
-  ]
-);
-
 export type ImageBackendGroup = typeof imageBackendGroup.$inferSelect;
 export type NewImageBackendGroup = typeof imageBackendGroup.$inferInsert;
-export type ImageBackendAccount = typeof imageBackendAccount.$inferSelect;
-export type NewImageBackendAccount = typeof imageBackendAccount.$inferInsert;
-export type ImageBackendAccountGroup =
-  typeof imageBackendAccountGroup.$inferSelect;
-export type NewImageBackendAccountGroup =
-  typeof imageBackendAccountGroup.$inferInsert;
+export type ImageBackendMember = typeof imageBackendMember.$inferSelect;
+export type NewImageBackendMember = typeof imageBackendMember.$inferInsert;
+export type ImageBackendMemberApiConfig =
+  typeof imageBackendMemberApiConfig.$inferSelect;
+export type NewImageBackendMemberApiConfig =
+  typeof imageBackendMemberApiConfig.$inferInsert;
+export type ImageBackendMemberAdobeConfig =
+  typeof imageBackendMemberAdobeConfig.$inferSelect;
+export type NewImageBackendMemberAdobeConfig =
+  typeof imageBackendMemberAdobeConfig.$inferInsert;
+export type ImageBackendMemberGroup =
+  typeof imageBackendMemberGroup.$inferSelect;
+export type NewImageBackendMemberGroup =
+  typeof imageBackendMemberGroup.$inferInsert;
+export type ImageBackendMemberLease =
+  typeof imageBackendMemberLease.$inferSelect;
+export type NewImageBackendMemberLease =
+  typeof imageBackendMemberLease.$inferInsert;
+export type ImageBackendMemberSchedulerMetric =
+  typeof imageBackendMemberSchedulerMetric.$inferSelect;
+export type NewImageBackendMemberSchedulerMetric =
+  typeof imageBackendMemberSchedulerMetric.$inferInsert;
 export type ImageBackendParameterMappingTemplate =
   typeof imageBackendParameterMappingTemplate.$inferSelect;
 export type NewImageBackendParameterMappingTemplate =
   typeof imageBackendParameterMappingTemplate.$inferInsert;
-export type ImageBackendApi = typeof imageBackendApi.$inferSelect;
-export type NewImageBackendApi = typeof imageBackendApi.$inferInsert;
-export type ImageBackendApiGroup = typeof imageBackendApiGroup.$inferSelect;
-export type NewImageBackendApiGroup = typeof imageBackendApiGroup.$inferInsert;
-export type ImageBackendInflightLease =
-  typeof imageBackendInflightLease.$inferSelect;
-export type NewImageBackendInflightLease =
-  typeof imageBackendInflightLease.$inferInsert;
-export type ImageBackendStickyBinding =
-  typeof imageBackendStickyBinding.$inferSelect;
-export type NewImageBackendStickyBinding =
-  typeof imageBackendStickyBinding.$inferInsert;
-export type ImageBackendSchedulerMetric =
-  typeof imageBackendSchedulerMetric.$inferSelect;
-export type NewImageBackendSchedulerMetric =
-  typeof imageBackendSchedulerMetric.$inferInsert;
 // ============================================
 // External API Keys
 // ============================================

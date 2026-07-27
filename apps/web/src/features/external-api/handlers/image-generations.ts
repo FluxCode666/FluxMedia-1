@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -33,7 +34,7 @@ import {
   wantsImageStreamResponse,
 } from "@/features/external-api/images";
 import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
+import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeOutputCompression,
   normalizeOutputFormat,
@@ -45,64 +46,55 @@ import {
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import type { PartialImageResult } from "@/features/image-generation/types";
+import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
 
-const externalImageGenerationSchema = z.object({
-  prompt: z
-    .string()
-    .min(1)
-    .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-  promptOptimization: z.boolean().optional(),
-  prompt_optimization: z.boolean().optional(),
-  // 审核改写重试开关(issue #24):传 false 时,审核拦截后不自动改写提示词重试,直接返回真实错误。
-  promptRepair: z.boolean().optional(),
-  prompt_repair: z.boolean().optional(),
-  model: z.string().optional(),
-  gptModel: z.string().optional(),
-  gpt_model: z.string().optional(),
-  thinking: z
-    .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
-    .optional(),
-  n: z.number().int().min(1).max(MAX_PLAN_BATCH_COUNT).optional(),
-  size: z
-    .string()
-    .optional()
-    .refine((value) => !value || validateImageSize(value).valid, {
-      message: "Invalid image size",
-    }),
-  quality: z.enum(["auto", "low", "medium", "high"]).optional(),
-  moderation: z.enum(["auto", "low"]).optional(),
-  response_format: z.enum(["url", "b64_json"]).optional(),
-  output_format: z.enum(["png", "jpeg", "webp"]).optional(),
-  output_compression: z.number().int().min(0).max(100).optional(),
-  background: z.enum(["transparent", "opaque", "auto"]).optional(),
-  // 透明背景抠图回退显式开关(issue #27):true 且 background=transparent 时,后端不支持透明则
-  // 服务端 ISNet 抠图得到透明结果;不传则透明直接透传、不支持即返回真实错误。
-  transparentMatte: z.boolean().optional(),
-  transparent_matte: z.boolean().optional(),
-  force_web: z.boolean().optional(),
-  forceWeb: z.boolean().optional(),
-  web_first: z.boolean().optional(),
-  webFirst: z.boolean().optional(),
-  // force_firefly：强制把本次请求路由到 adobe（firefly）后端，对任意模型生效。
-  force_firefly: z.boolean().optional(),
-  forceFirefly: z.boolean().optional(),
-  // 高清修复:上游图偏小需超分时选模型。默认(含省略)=SwinIR(文字/结构复原最佳,较慢);
-  // 显式 false=general-x4v3(轻量快)。仅在超分主开关开且触发超分时生效。
-  hdRepair: z.boolean().optional(),
-  hd_repair: z.boolean().optional(),
-  // 分块修复:切成 2×2 web 块逐块 gpt-image-2 重绘再拼接超分;逐块单独计费。默认关。
-  blockRepair: z.boolean().optional(),
-  block_repair: z.boolean().optional(),
-  repairPrompt: z.string().max(8000).optional(),
-  repair_prompt: z.string().max(8000).optional(),
-  stream: z.boolean().optional(),
-  async: z.boolean().optional(),
-  callback_url: z.string().url().optional(),
-});
+const externalImageGenerationSchema = z
+  .object({
+    prompt: z
+      .string()
+      .min(1)
+      .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
+    promptOptimization: z.boolean().optional(),
+    prompt_optimization: z.boolean().optional(),
+    model: imageModelIdSchema,
+    thinking: z
+      .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
+      .optional(),
+    n: z.number().int().min(1).max(MAX_PLAN_BATCH_COUNT).optional(),
+    size: z
+      .string()
+      .optional()
+      .refine((value) => !value || validateImageSize(value).valid, {
+        message: "Invalid image size",
+      }),
+    quality: z.enum(["auto", "low", "medium", "high"]).optional(),
+    moderation: z.enum(["auto", "low"]).optional(),
+    response_format: z.enum(["url", "b64_json"]).optional(),
+    output_format: z.enum(["png", "jpeg", "webp"]).optional(),
+    output_compression: z.number().int().min(0).max(100).optional(),
+    background: z.enum(["transparent", "opaque", "auto"]).optional(),
+    // 透明背景抠图回退显式开关(issue #27):true 且 background=transparent 时,后端不支持透明则
+    // 服务端 ISNet 抠图得到透明结果;不传则透明直接透传、不支持即返回真实错误。
+    transparentMatte: z.boolean().optional(),
+    transparent_matte: z.boolean().optional(),
+    // 高清修复:上游图偏小需超分时选模型。默认(含省略)=SwinIR(文字/结构复原最佳,较慢);
+    // 显式 false=general-x4v3(轻量快)。仅在超分主开关开且触发超分时生效。
+    hdRepair: z.boolean().optional(),
+    hd_repair: z.boolean().optional(),
+    // 分块修复:切成 2×2 web 块逐块 gpt-image-2 重绘再拼接超分;逐块单独计费。默认关。
+    blockRepair: z.boolean().optional(),
+    block_repair: z.boolean().optional(),
+    repairPrompt: z.string().max(8000).optional(),
+    repair_prompt: z.string().max(8000).optional(),
+    stream: z.boolean().optional(),
+    async: z.boolean().optional(),
+    callback_url: z.string().url().optional(),
+  })
+  .strict();
 
 async function toStreamCompletedPayload(
   request: Request,
-  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  result: ImageGenerationOperationResult,
   responseFormat: "url" | "b64_json",
   index: number
 ) {
@@ -198,10 +190,9 @@ export const postExternalImageGenerations = withApiLogging(
       );
     }
 
-    // 图像模型的最终校验依赖实际选中的后端：pool-api 允许管理员配置的任意
-    // 上游模型（如 nano-banana-*、grok-*），OAuth/平台后端仍会在管线内保持白名单。
-    // 此处保留 undefined，才能让 API 后端配置的默认模型生效。
-    const imageModel = parsed.data.model?.trim() || undefined;
+    // 图像模型的最终能力校验依赖实际选中的后端：pool-api 允许管理员配置的任意
+    // 上游模型（如 nano-banana-*、grok-*），OAuth/平台后端仍在管线内保持白名单。
+    const imageModel = parsed.data.model;
 
     const plan = await getUserPlan(auth.userId);
     const limits = await getPlanLimits(plan.plan);
@@ -256,18 +247,12 @@ export const postExternalImageGenerations = withApiLogging(
       parsed.data.transparentMatte ?? parsed.data.transparent_matte;
 
     const input = {
-      mode: "generate" as const,
-      userId: auth.userId,
-      apiKeyId: auth.apiKeyId,
-      backendRequestKind: "image_generation" as const,
+      operation: "generate" as const,
       prompt: parsed.data.prompt,
       promptOptimization:
         parsed.data.promptOptimization ?? parsed.data.prompt_optimization,
-      moderationPromptRepair:
-        parsed.data.promptRepair ?? parsed.data.prompt_repair,
       size: parsed.data.size || DEFAULT_IMAGE_SIZE,
       model: imageModel,
-      gptModel: parsed.data.gptModel || parsed.data.gpt_model,
       thinking: parsed.data.thinking,
       quality: parsed.data.quality,
       moderation: parsed.data.moderation || "auto",
@@ -277,25 +262,36 @@ export const postExternalImageGenerations = withApiLogging(
       ),
       background,
       transparentMatte,
-      forceWebBackend:
-        parsed.data.web_first ??
-        parsed.data.webFirst ??
-        parsed.data.force_web ??
-        parsed.data.forceWeb,
-      forceFirefly: parsed.data.forceFirefly ?? parsed.data.force_firefly,
       hdRepair: parsed.data.hdRepair ?? parsed.data.hd_repair,
       blockRepair: parsed.data.blockRepair ?? parsed.data.block_repair,
       repairPrompt: parsed.data.repairPrompt ?? parsed.data.repair_prompt,
     };
     const responseFormat = parsed.data.response_format || "b64_json";
+    const principal = {
+      type: "apiKey" as const,
+      credentialKind: "external" as const,
+      userId: auth.userId,
+      apiKeyId: auth.apiKeyId,
+      plan: auth.plan,
+    };
+    const requestId = request.headers.get("x-request-id") ?? undefined;
+    const runGeneration = (
+      generationId: string,
+      callbacks?: Parameters<typeof invokeImageGenerationOperation>[2]
+    ) =>
+      invokeImageGenerationOperation(
+        { ...input, generationId },
+        principal,
+        callbacks,
+        requestId
+      );
 
     if (useStreamResponse) {
       return createExternalImageStreamResponse(async (emit) => {
         await runBatchImageGeneration({
           count,
           concurrency: limits.imageGenerationConcurrency,
-          run: (generationId, callbacks) =>
-            runImageGenerationForUser({ ...input, generationId }, callbacks),
+          run: runGeneration,
           callbacks: (index) => ({
             onPartialImage: async (image) => {
               await emit({
@@ -356,8 +352,7 @@ export const postExternalImageGenerations = withApiLogging(
           count,
           concurrency: limits.imageGenerationConcurrency,
           generationIds,
-          run: (generationId) =>
-            runImageGenerationForUser({ ...input, generationId }),
+          run: (generationId) => runGeneration(generationId),
         });
         const resultPayload = await toOpenAIImagesResponse(
           request,
@@ -407,7 +402,7 @@ export const postExternalImageGenerations = withApiLogging(
         const results = await runBatchImageGeneration({
           count,
           concurrency: limits.imageGenerationConcurrency,
-          run: () => runImageGenerationForUser(input),
+          run: (generationId) => runGeneration(generationId),
         });
         return await toOpenAIImagesResponse(
           request,

@@ -10,12 +10,11 @@ const runtime = vi.hoisted(() => ({
   settings: new Map<string, unknown>(),
   imageMaintenance: vi.fn(async () => undefined),
   creditsExpire: vi.fn(async () => undefined),
-  webAccountsRefresh: vi.fn(async () => undefined),
-  webAccountsReplenish: vi.fn(async () => undefined),
-  sub2ApiSync: vi.fn(async () => undefined),
+  videoRecovery: vi.fn(async () => undefined),
 }));
 
 const database = vi.hoisted(() => {
+  let transactionActive = false;
   const selectBuilder = {
     from: vi.fn(),
     where: vi.fn(),
@@ -36,9 +35,17 @@ const database = vi.hoisted(() => {
     insert: vi.fn(() => insertBuilder),
   };
   return {
+    insert: vi.fn(() => insertBuilder),
+    isTransactionActive: () => transactionActive,
     transaction: vi.fn(
-      async (callback: (transaction: typeof tx) => Promise<unknown>) =>
-        callback(tx)
+      async (callback: (transaction: typeof tx) => Promise<unknown>) => {
+        transactionActive = true;
+        try {
+          return await callback(tx);
+        } finally {
+          transactionActive = false;
+        }
+      }
     ),
   };
 });
@@ -73,9 +80,7 @@ vi.mock("@repo/shared/system-settings", () => ({
 vi.mock("./scheduled-jobs", () => ({
   runImageMaintenanceJob: runtime.imageMaintenance,
   runCreditsExpireJob: runtime.creditsExpire,
-  runWebAccountsRefreshJob: runtime.webAccountsRefresh,
-  runWebAccountsReplenishJob: runtime.webAccountsReplenish,
-  runSub2ApiSyncJob: runtime.sub2ApiSync,
+  runVideoRecoveryJob: runtime.videoRecovery,
 }));
 
 type SchedulerModule = typeof import("./internal-job-scheduler");
@@ -102,9 +107,7 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.settings.clear();
     runtime.imageMaintenance.mockClear();
     runtime.creditsExpire.mockClear();
-    runtime.webAccountsRefresh.mockClear();
-    runtime.webAccountsReplenish.mockClear();
-    runtime.sub2ApiSync.mockClear();
+    runtime.videoRecovery.mockClear();
     database.transaction.mockClear();
     vi.useFakeTimers();
     vi.stubEnv("NODE_ENV", "production");
@@ -133,6 +136,7 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(1);
+    expect(runtime.videoRecovery).toHaveBeenCalled();
 
     runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", false);
     await vi.advanceTimersByTimeAsync(5_000);
@@ -157,5 +161,18 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(55_000);
 
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(2);
+  });
+
+  it("在 advisory lock 事务提交后才执行视频恢复 I/O", async () => {
+    runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", true);
+    runtime.videoRecovery.mockImplementationOnce(async () => {
+      expect(database.isTransactionActive()).toBe(false);
+    });
+    const current = await importFreshScheduler();
+    await current.startInternalJobScheduler();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(runtime.videoRecovery).toHaveBeenCalledTimes(1);
   });
 });

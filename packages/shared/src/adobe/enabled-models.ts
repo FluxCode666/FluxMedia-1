@@ -9,9 +9,19 @@ import { z } from "zod";
 
 import { FIREFLY_IMAGE_FAMILY_MODEL_IDS } from "./firefly-direct/catalog";
 import { isFireflyVideoModelId } from "./firefly-direct/video-catalog";
+import type { AdobeImageFamily } from "./firefly-request";
 
 /** Adobe 后端可配置的图像模型族 ID，顺序同时作为管理端展示顺序。 */
 export const ADOBE_IMAGE_MODEL_IDS = [...FIREFLY_IMAGE_FAMILY_MODEL_IDS];
+
+/** Adobe 图片适配器支持的上游家族，顺序与公开模型目录一致。 */
+export const ADOBE_IMAGE_FAMILIES: AdobeImageFamily[] = [
+  "gpt-image-2",
+  "gpt-image-1.5",
+  "nano-banana",
+  "nano-banana2",
+  "nano-banana-pro",
+];
 
 const ADOBE_IMAGE_MODEL_ID_SET = new Set(
   ADOBE_IMAGE_MODEL_IDS.map((modelId) => modelId.toLowerCase())
@@ -142,6 +152,36 @@ export function resolveAdobeImageModelId(
     }
   }
   return "firefly-gpt-image-2";
+}
+
+/** 将任意公开模型 ID 收敛为 Adobe 适配器实际使用的图片家族。 */
+export function resolveAdobeImageFamily(
+  requestedModel: string | null | undefined
+): AdobeImageFamily {
+  const family = resolveAdobeImageModelId(requestedModel).slice(
+    "firefly-".length
+  );
+  return (
+    ADOBE_IMAGE_FAMILIES.find((candidate) => candidate === family) ??
+    "gpt-image-2"
+  );
+}
+
+/**
+ * 仅在调用方明确请求 Firefly 或裸 Nano Banana 能力时返回 Adobe 家族。
+ * 普通裸 `gpt-image-*` 仍返回 null，由统一调度决定成员后再使用默认 Adobe 家族。
+ */
+export function pickExplicitAdobeImageFamily(
+  requestedModel: string | null | undefined
+): AdobeImageFamily | null {
+  const normalized = String(requestedModel ?? "")
+    .trim()
+    .toLowerCase();
+  const explicit =
+    normalized.startsWith("firefly-") ||
+    (normalized.startsWith("nano-banana") &&
+      isAdobeImageFamilyModelId(normalized));
+  return explicit ? resolveAdobeImageFamily(normalized) : null;
 }
 
 /**

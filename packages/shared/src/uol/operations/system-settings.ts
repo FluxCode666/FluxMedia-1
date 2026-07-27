@@ -29,11 +29,80 @@ import {
   getSystemSettingValue,
   importSystemSettingsFromEnv,
   initializeMissingSystemSettingsDefaults,
-  setGlobalModelPricing,
   setSystemSettings,
 } from "../../system-settings/index";
 import { getPrincipalUserId } from "../principal";
 import { defineOperation } from "../registry";
+
+/** 管理设置快照中的可选下拉项。 */
+const settingOptionSchema = z
+  .object({
+    label: z.string(),
+    value: z.string(),
+  })
+  .strict();
+
+/** 管理设置快照项；secret 的 value 始终由 service 脱敏为空字符串。 */
+const adminSettingSnapshotSchema = z
+  .object({
+    key: z.string(),
+    label: z.string(),
+    description: z.string(),
+    category: z.enum([
+      "general",
+      "support",
+      "auth",
+      "payment",
+      "plans",
+      "moderation",
+      "models",
+      "storage",
+      "mail",
+      "credits",
+      "analytics",
+    ]),
+    valueType: z.enum(["string", "number", "boolean", "select", "json"]),
+    value: z.string(),
+    configured: z.boolean(),
+    stored: z.boolean(),
+    fromEnv: z.boolean(),
+    updatedAt: z.string().nullable(),
+    secret: z.boolean().optional(),
+    requiresRestart: z.boolean().optional(),
+    requiresRebuild: z.boolean().optional(),
+    options: z.array(settingOptionSchema).optional(),
+    min: z.number().optional(),
+    max: z.number().optional(),
+    defaultValue: z.unknown().optional(),
+    exampleValue: z.unknown().optional(),
+    managedByDedicatedOperation: z.boolean().optional(),
+  })
+  .strict();
+
+/** 通用设置写入项；clear 与 value 不能同时生效。 */
+const settingUpdateSchema = z
+  .object({
+    key: z.string().trim().min(1),
+    value: z.unknown().optional(),
+    clear: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    if (input.clear === true && input.value !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "清空设置时不能同时提交 value",
+        path: ["value"],
+      });
+    }
+    if (input.clear !== true && input.value === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "设置更新必须提供 value 或 clear=true",
+        path: ["value"],
+      });
+    }
+  });
 
 /**
  * settings.getSnapshot - 获取管理后台设置快照
@@ -49,7 +118,7 @@ export const settingsGetSnapshot = defineOperation({
     "获取当前所有系统设置的完整快照，供超级管理员在管理面板查看与审计。",
   input: z.object({}),
   output: z.object({
-    settings: z.record(z.string(), z.unknown()),
+    settings: z.array(adminSettingSnapshotSchema),
     timestamp: z.string(),
   }),
   access: { kind: "superAdmin" },
@@ -59,12 +128,8 @@ export const settingsGetSnapshot = defineOperation({
   sideEffects: [],
   execute: async (_input, _principal, _ctx) => {
     const snapshot = await getAdminSystemSettingsSnapshot();
-    const settings: Record<string, unknown> = {};
-    for (const item of snapshot) {
-      settings[item.key] = item.value;
-    }
     return {
-      settings,
+      settings: snapshot,
       timestamp: new Date().toISOString(),
     };
   },
@@ -82,11 +147,11 @@ export const settingsUpdate = defineOperation({
   title: "Update System Settings",
   description: "超级管理员更新系统设置项（如站点名称、功能开关、限额等）。",
   input: z.object({
-    updates: z.record(z.string(), z.unknown()),
+    updates: z.array(settingUpdateSchema).min(1),
   }),
   output: z.object({
     success: z.boolean(),
-    updatedKeys: z.array(z.string()),
+    changedKeys: z.array(z.string()),
   }),
   access: { kind: "superAdmin" },
   readOnly: false,
@@ -95,19 +160,24 @@ export const settingsUpdate = defineOperation({
   sideEffects: ["cache"],
   execute: async (input, principal, _ctx) => {
     const userId = getPrincipalUserId(principal) ?? "system";
-    const entries = Object.entries(input.updates).map(([key, value]) => ({
-      key,
-      value,
-    }));
-    const updatedKeys = await setSystemSettings(entries, userId);
+    const changedKeys = await setSystemSettings(
+      input.updates.map(({ key, value, clear }) => ({
+        key,
+        value,
+        ...(clear !== undefined ? { clear } : {}),
+      })),
+      userId
+    );
 
     // 启用"按最大张数"清理时立即后台执行一次，与 server action 行为一致（共用谓词）。
     // WHY: fire-and-forget + catch 记日志，不阻塞 operation 返回；批量上限与幂等
     // WHERE 由清理函数自身兜底，与定时任务并发安全。
     if (
       shouldRunMaxCountCleanupOnSettingsChange(
-        updatedKeys,
-        input.updates.GENERATION_IMAGE_RETENTION_MODE
+        changedKeys,
+        input.updates.find(
+          ({ key }) => key === "GENERATION_IMAGE_RETENTION_MODE"
+        )?.value
       )
     ) {
       void destroyGenerationPhotosByMaxCount().catch((error) => {
@@ -119,19 +189,17 @@ export const settingsUpdate = defineOperation({
 
     return {
       success: true,
-      updatedKeys,
+      changedKeys,
     };
   },
 });
 
-const globalModelPricingInputSchema = z
+const globalModelPricingOutputSchema = z
   .object({
     image: globalImageCreditOverridesSchema,
     videoCreditsPerSecond: globalVideoModelCreditsPerSecondSchema,
   })
   .strict();
-
-const globalModelPricingOutputSchema = globalModelPricingInputSchema;
 
 /**
  * settings.getModelPricing - 读取全局模型计费配置。
@@ -168,36 +236,6 @@ export const settingsGetModelPricing = defineOperation({
         ? video.data
         : { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
     };
-  },
-});
-
-/**
- * settings.updateModelPricing - 更新全局模型计费配置。
- *
- * 输入 schema 强制每个内置模型填满全部价格；分组覆盖不在此操作写入，避免破坏“分组 >
- * 全局”的单一职责边界。
- */
-export const settingsUpdateModelPricing = defineOperation({
-  name: "settings.updateModelPricing",
-  domain: "system-settings",
-  title: "更新全局模型计费配置",
-  description:
-    "保存必填的图像模型四档固定价格与视频模型族每秒价格，并使运行时缓存立即失效。",
-  input: globalModelPricingInputSchema,
-  output: z.object({ success: z.boolean() }),
-  access: { kind: "superAdmin" },
-  agentExposure: "human-only",
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: ["cache", "audit"],
-  execute: async (input, principal) => {
-    await setGlobalModelPricing({
-      image: input.image,
-      videoCreditsPerSecond: input.videoCreditsPerSecond,
-      updatedBy: getPrincipalUserId(principal) ?? "system",
-    });
-    return { success: true };
   },
 });
 

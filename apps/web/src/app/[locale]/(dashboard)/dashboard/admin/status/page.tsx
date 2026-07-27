@@ -1,36 +1,17 @@
-import { unstable_cache } from "next/cache";
-import { getLocale } from "next-intl/server";
-import { redirect } from "next/navigation";
-import {
-  Activity,
-  AlertTriangle,
-  Coins,
-  ImageIcon,
-  Server,
-  Video,
-} from "lucide-react";
-import {
-  and,
-  count,
-  desc,
-  eq,
-  gte,
-  inArray,
-  lte,
-  sql,
-  type SQL,
-} from "drizzle-orm";
-
+/**
+ * 管理后台全局状态页。
+ *
+ * 职责：只读聚合生成、财务、用户、工单以及统一媒体成员和调度指标，并以响应式卡片展示。
+ * 使用方：具备后端池查看权限的管理员；本页不执行任何号池写操作。
+ */
 import { db } from "@repo/database";
 import {
   creditsBalance,
   creditsBatch,
   creditsTransaction,
   generation,
-  imageBackendAccount,
-  imageBackendAdobe,
-  imageBackendApi,
-  imageBackendSchedulerMetric,
+  imageBackendMember,
+  imageBackendMemberSchedulerMetric,
   ticket,
   user,
   videoGeneration,
@@ -41,8 +22,8 @@ import { canViewImageBackendPool } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { formatCredits } from "@repo/shared/credits/format";
 import {
-  formatDateInTimeZone,
   formatDateInputInTimeZone,
+  formatDateInTimeZone,
   parseDateInputInTimeZone,
 } from "@repo/shared/time-zone";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
@@ -56,6 +37,28 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import { Progress } from "@repo/ui/components/progress";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  lte,
+  type SQL,
+  sql,
+} from "drizzle-orm";
+import {
+  Activity,
+  AlertTriangle,
+  Coins,
+  ImageIcon,
+  Server,
+  Video,
+} from "lucide-react";
+import { unstable_cache } from "next/cache";
+import { redirect } from "next/navigation";
+import { getLocale } from "next-intl/server";
 import {
   AUTO_IMAGE_SIZE,
   IMAGE_1K_BASE_EDGE,
@@ -92,7 +95,7 @@ type GenerationMetricRow = {
 };
 
 const RESOLUTION_DURATION_BUCKETS = ["4k", "2k", "1k", "custom"] as const;
-const BACKEND_DURATION_BUCKETS = ["web", "codex", "images", "adobe"] as const;
+const BACKEND_DURATION_BUCKETS = ["api", "adobe"] as const;
 
 type ResolutionDurationBucket = (typeof RESOLUTION_DURATION_BUCKETS)[number];
 type BackendDurationBucket = (typeof BACKEND_DURATION_BUCKETS)[number];
@@ -146,19 +149,29 @@ type BackendHealthStats = {
   disabled: number;
   successCount: number;
   failCount: number;
-  modes: Array<{ mode: string; count: number }>;
+  healthStates: Array<{ health: string; count: number }>;
 };
 
 type SchedulerMetricStats = {
-  selectCount: number;
-  stickyPreviousHits: number;
-  stickySessionHits: number;
-  stickyHitRate: number;
-  loadBalanceCount: number;
+  acquiredCount: number;
   switchCount: number;
+  noCandidateCount: number;
+  capacityRejectedCount: number;
+  terminalFailureCount: number;
   avgCandidateCount: number | null;
   avgLatencyMs: number | null;
-  byLayer: Array<{ layer: string; count: number }>;
+  byOutcome: Array<{ key: string; count: number }>;
+  byStrategy: Array<{ key: string; count: number }>;
+  byRequestKind: Array<{ key: string; count: number }>;
+};
+
+type SchedulerMetricRow = {
+  requestKind: string;
+  strategy: string;
+  outcome: string;
+  eventCount: number;
+  candidateCountTotal: number;
+  latencyMsTotal: number;
 };
 
 // 视频生成(Adobe Firefly)是独立管线,记录落在 video_generation 表(非 generation),
@@ -492,12 +505,10 @@ function emptyDurationBucketStats(): DurationBucketStats {
   return { count: 0, avgSeconds: null, p95Seconds: null };
 }
 
-// 全 4x4(分辨率 x 后端)空格子;SQL 分组只回非空组,其余保持空(展示侧渲染"暂无样本")。
+// 全 4x2（分辨率 x 统一后端类型）空格子；SQL 只回非空组，其余展示“暂无样本”。
 function emptyDurationBreakdown(): DurationBreakdown {
   const makeRow = () => ({
-    web: emptyDurationBucketStats(),
-    codex: emptyDurationBucketStats(),
-    images: emptyDurationBucketStats(),
+    api: emptyDurationBucketStats(),
     adobe: emptyDurationBucketStats(),
   });
   return {
@@ -524,13 +535,12 @@ async function loadGenerationWindowStats(
   // 完成耗时(秒):clamp 非负 + round,对齐 JS 侧 Math.max(0, Math.round(...))。
   const durationExpr = sql`round(greatest(0, extract(epoch from (${generation.completedAt} - ${generation.createdAt}))))`;
   const completedDurationFilter = sql`filter (where ${generation.status} = 'completed' and ${generation.completedAt} is not null)`;
-  // 后端桶:先按 backend.type=pool-adobe 识别 Adobe,否则取 accountBackend ??
-  // imagesUpstreamMode ?? apiInterfaceMode 映射 web / responses->codex / images。
-  const backendBucketExpr = sql`(case when ${metaJson} #>> '{backend,type}' = 'pool-adobe' then 'adobe' else (case coalesce(${metaJson} #>> '{backend,accountBackend}', ${metaJson} #>> '{backend,imagesUpstreamMode}', ${metaJson} #>> '{backend,apiInterfaceMode}') when 'web' then 'web' when 'responses' then 'codex' when 'images' then 'images' else null end) end)`;
+  // 历史图片耗时只读取当前生成记录的适配器类型，不再解释旧账号或接口模式字段。
+  const backendBucketExpr = sql`(case ${metaJson} #>> '{backend,type}' when 'pool-api' then 'api' when 'pool-adobe' then 'adobe' else null end)`;
   // 请求尺寸:requestedSize -> actualSize -> size 列,统一 lower(trim())。
   const sizeValueExpr = sql`lower(btrim(coalesce(nullif(${metaJson} #>> '{outputImage,requestedSize}', ''), nullif(${metaJson} #>> '{outputImage,actualSize}', ''), ${generation.size})))`;
-  // 分辨率桶:web 统一 1k;空 / auto -> custom;否则匹配预设集,余 custom。
-  const resolutionBucketExpr = sql`(case when ${backendBucketExpr} = 'web' then '1k' when ${sizeValueExpr} = '' or ${sizeValueExpr} = ${AUTO_IMAGE_SIZE} then 'custom' when ${inArray(sizeValueExpr, [...RESOLUTION_PRESET_SIZES["4k"]])} then '4k' when ${inArray(sizeValueExpr, [...RESOLUTION_PRESET_SIZES["2k"]])} then '2k' when ${inArray(sizeValueExpr, [...RESOLUTION_PRESET_SIZES["1k"]])} then '1k' else 'custom' end)`;
+  // 空 / auto -> custom；否则匹配预设集，剩余尺寸归 custom。
+  const resolutionBucketExpr = sql`(case when ${sizeValueExpr} = '' or ${sizeValueExpr} = ${AUTO_IMAGE_SIZE} then 'custom' when ${inArray(sizeValueExpr, [...RESOLUTION_PRESET_SIZES["4k"]])} then '4k' when ${inArray(sizeValueExpr, [...RESOLUTION_PRESET_SIZES["2k"]])} then '2k' when ${inArray(sizeValueExpr, [...RESOLUTION_PRESET_SIZES["1k"]])} then '1k' else 'custom' end)`;
 
   const [aggregateRows, failedRows, durationBreakdownRows, repairRows] =
     await Promise.all([
@@ -702,18 +712,19 @@ function topErrors(rows: GenerationMetricRow[]) {
     .slice(0, 8);
 }
 
+/** 按统一成员类型汇总启用、健康、冷却和累计成功失败状态。 */
 function summarizeBackendRows(
   rows: Array<{
     status: string;
+    healthStatus: string;
     isEnabled: boolean;
     cooldownUntil: Date | null;
     successCount: number;
     failCount: number;
-    mode: string;
   }>
 ): BackendHealthStats {
   const now = Date.now();
-  const modes = new Map<string, number>();
+  const healthStates = new Map<string, number>();
   const stats: BackendHealthStats = {
     total: rows.length,
     enabled: 0,
@@ -724,13 +735,13 @@ function summarizeBackendRows(
     disabled: 0,
     successCount: 0,
     failCount: 0,
-    modes: [],
+    healthStates: [],
   };
 
   for (const row of rows) {
-    modes.set(
-      row.mode || "unknown",
-      (modes.get(row.mode || "unknown") ?? 0) + 1
+    healthStates.set(
+      row.healthStatus || "unknown",
+      (healthStates.get(row.healthStatus || "unknown") ?? 0) + 1
     );
     stats.successCount += row.successCount || 0;
     stats.failCount += row.failCount || 0;
@@ -746,65 +757,74 @@ function summarizeBackendRows(
     if (row.status === "error") stats.error += 1;
   }
 
-  stats.modes = [...modes.entries()]
-    .map(([mode, modeCount]) => ({ mode, count: modeCount }))
+  stats.healthStates = [...healthStates.entries()]
+    .map(([health, healthCount]) => ({ health, count: healthCount }))
     .sort((a, b) => b.count - a.count);
   return stats;
 }
 
+/** 将统一调度指标折叠为 24 小时摘要和 7 天分布所需的稳定统计。 */
 function summarizeSchedulerMetrics(
-  rows: Array<{
-    selectedLayer: string;
-    selectCount: number;
-    stickyPreviousHitCount: number;
-    stickySessionHitCount: number;
-    loadBalanceCount: number;
-    switchCount: number;
-    candidateCountTotal: number;
-    latencyMsTotal: number;
-  }>
+  rows: SchedulerMetricRow[]
 ): SchedulerMetricStats {
-  const byLayer = new Map<string, number>();
+  const byOutcome = new Map<string, number>();
+  const byStrategy = new Map<string, number>();
+  const byRequestKind = new Map<string, number>();
   const stats: SchedulerMetricStats = {
-    selectCount: 0,
-    stickyPreviousHits: 0,
-    stickySessionHits: 0,
-    stickyHitRate: 0,
-    loadBalanceCount: 0,
+    acquiredCount: 0,
     switchCount: 0,
+    noCandidateCount: 0,
+    capacityRejectedCount: 0,
+    terminalFailureCount: 0,
     avgCandidateCount: null,
     avgLatencyMs: null,
-    byLayer: [],
+    byOutcome: [],
+    byStrategy: [],
+    byRequestKind: [],
   };
+  let selectionCount = 0;
   let candidateTotal = 0;
   let latencyTotal = 0;
 
   for (const row of rows) {
-    stats.selectCount += row.selectCount;
-    stats.stickyPreviousHits += row.stickyPreviousHitCount;
-    stats.stickySessionHits += row.stickySessionHitCount;
-    stats.loadBalanceCount += row.loadBalanceCount;
-    stats.switchCount += row.switchCount;
-    candidateTotal += row.candidateCountTotal;
-    latencyTotal += row.latencyMsTotal;
-    if (row.selectCount > 0) {
-      byLayer.set(
-        row.selectedLayer,
-        (byLayer.get(row.selectedLayer) || 0) + row.selectCount
-      );
+    const eventCount = Math.max(0, row.eventCount);
+    byOutcome.set(row.outcome, (byOutcome.get(row.outcome) ?? 0) + eventCount);
+    byStrategy.set(
+      row.strategy,
+      (byStrategy.get(row.strategy) ?? 0) + eventCount
+    );
+    byRequestKind.set(
+      row.requestKind,
+      (byRequestKind.get(row.requestKind) ?? 0) + eventCount
+    );
+    if (row.outcome === "acquired") stats.acquiredCount += eventCount;
+    if (row.outcome === "switched") stats.switchCount += eventCount;
+    if (row.outcome === "no_candidate") stats.noCandidateCount += eventCount;
+    if (row.outcome === "capacity_rejected") {
+      stats.capacityRejectedCount += eventCount;
+    }
+    if (row.outcome === "terminal_failure") {
+      stats.terminalFailureCount += eventCount;
+    }
+    // 候选数量和调度耗时只对成功获租事件求平均，避免混入上游执行耗时。
+    if (row.outcome === "acquired" || row.outcome === "switched") {
+      selectionCount += eventCount;
+      candidateTotal += row.candidateCountTotal;
+      latencyTotal += row.latencyMsTotal;
     }
   }
 
-  const stickyHits = stats.stickyPreviousHits + stats.stickySessionHits;
-  stats.stickyHitRate =
-    stats.selectCount > 0 ? stickyHits / stats.selectCount : 0;
   stats.avgCandidateCount =
-    stats.selectCount > 0 ? candidateTotal / stats.selectCount : null;
+    selectionCount > 0 ? candidateTotal / selectionCount : null;
   stats.avgLatencyMs =
-    stats.selectCount > 0 ? latencyTotal / stats.selectCount : null;
-  stats.byLayer = Array.from(byLayer.entries())
-    .map(([layer, count]) => ({ layer, count }))
-    .sort((left, right) => right.count - left.count);
+    selectionCount > 0 ? latencyTotal / selectionCount : null;
+  const toDistribution = (values: Map<string, number>) =>
+    Array.from(values.entries())
+      .map(([key, count]) => ({ key, count }))
+      .sort((left, right) => right.count - left.count);
+  stats.byOutcome = toDistribution(byOutcome);
+  stats.byStrategy = toDistribution(byStrategy);
+  stats.byRequestKind = toDistribution(byRequestKind);
   return stats;
 }
 
@@ -1071,37 +1091,17 @@ function resolutionDurationLabel(
 }
 
 function backendDurationLabel(bucket: BackendDurationBucket) {
-  if (bucket === "web") return "Web";
-  if (bucket === "images") return "Images";
   if (bucket === "adobe") return "Adobe";
-  return "Codex";
-}
-
-function isDurationBucketApplicable(
-  resolutionBucket: ResolutionDurationBucket,
-  backendBucket: BackendDurationBucket
-) {
-  // Web 仅 1K(统一计入 1K);Codex/Images 走真实分辨率,各档都适用。
-  return backendBucket !== "web" || resolutionBucket === "1k";
+  return "API Images";
 }
 
 function DurationBucketCell({
   stats,
   locale,
-  applicable = true,
 }: {
   stats: DurationBucketStats;
   locale: string;
-  applicable?: boolean;
 }) {
-  if (!applicable) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        {copy(locale, "N/A", "不适用")}
-      </span>
-    );
-  }
-
   if (stats.count === 0) {
     return (
       <span className="text-xs text-muted-foreground">
@@ -1140,8 +1140,8 @@ function DurationBreakdownTable({
         <span className="text-xs text-muted-foreground">
           {copy(
             locale,
-            "Completed only. Web is counted as 1K.",
-            "仅统计完成记录；Web 统一计入 1K。"
+            "Completed records grouped by the unified API or Adobe adapter.",
+            "仅统计完成记录，并按统一 API 或 Adobe 适配器分组。"
           )}
         </span>
       </div>
@@ -1173,7 +1173,6 @@ function DurationBreakdownTable({
                     <DurationBucketCell
                       stats={breakdown[bucket][backend]}
                       locale={locale}
-                      applicable={isDurationBucketApplicable(bucket, backend)}
                     />
                   </td>
                 ))}
@@ -1197,6 +1196,55 @@ function MiniStat({ label, value }: { label: string; value: string }) {
       </div>
     </div>
   );
+}
+
+/** 将调度指标枚举转换为管理页可读标签，未知新值保持原样以便发现协议扩展。 */
+function schedulerMetricKeyLabel(
+  category: "outcome" | "strategy" | "requestKind",
+  key: string,
+  locale: string
+) {
+  if (category === "outcome") {
+    const labels: Record<string, [string, string]> = {
+      acquired: ["Acquired", "获租"],
+      switched: ["Switched", "切换"],
+      no_candidate: ["No candidate", "无候选"],
+      capacity_rejected: ["Capacity rejected", "容量拒绝"],
+      terminal_failure: ["Terminal failure", "终态失败"],
+    };
+    const label = labels[key];
+    return label ? copy(locale, label[0], label[1]) : key;
+  }
+  if (category === "strategy") {
+    const labels: Record<string, [string, string]> = {
+      priority: ["Priority", "优先级"],
+      least_acquired: ["Least acquired", "最少获租"],
+      least_load: ["Least load", "最低负载"],
+    };
+    const label = labels[key];
+    return label ? copy(locale, label[0], label[1]) : key;
+  }
+  if (key === "image") return copy(locale, "Image", "图片");
+  if (key === "video") return copy(locale, "Video", "视频");
+  return key;
+}
+
+/** 将 7 天指标分布压缩为适合卡片展示的一行文本。 */
+function formatSchedulerDistribution(
+  values: Array<{ key: string; count: number }>,
+  category: "outcome" | "strategy" | "requestKind",
+  locale: string
+) {
+  if (values.length === 0) return copy(locale, "No sample", "暂无样本");
+  return values
+    .map(
+      (item) =>
+        `${schedulerMetricKeyLabel(category, item.key, locale)} ${formatNumber(
+          item.count,
+          locale
+        )}`
+    )
+    .join(" · ");
 }
 
 async function loadHistoricalGenerationErrors(filters: HistoricalErrorFilters) {
@@ -1531,9 +1579,7 @@ async function loadStatusData() {
     creditBatchRows,
     userRows,
     ticketRows,
-    accountRows,
-    apiRows,
-    adobeRows,
+    memberRows,
     schedulerRows24h,
     schedulerRows7d,
     videoRows7d,
@@ -1706,104 +1752,65 @@ async function loadStatusData() {
       .from(ticket),
     db
       .select({
-        status: imageBackendAccount.status,
-        isEnabled: imageBackendAccount.isEnabled,
-        cooldownUntil: imageBackendAccount.cooldownUntil,
-        successCount: imageBackendAccount.successCount,
-        failCount: imageBackendAccount.failCount,
-        mode: imageBackendAccount.implementationMode,
+        type: imageBackendMember.type,
+        status: imageBackendMember.status,
+        healthStatus: imageBackendMember.healthStatus,
+        isEnabled: imageBackendMember.isEnabled,
+        cooldownUntil: imageBackendMember.cooldownUntil,
+        successCount: imageBackendMember.successCount,
+        failCount: imageBackendMember.failCount,
       })
-      .from(imageBackendAccount),
+      .from(imageBackendMember),
     db
       .select({
-        status: imageBackendApi.status,
-        isEnabled: imageBackendApi.isEnabled,
-        cooldownUntil: imageBackendApi.cooldownUntil,
-        successCount: imageBackendApi.successCount,
-        failCount: imageBackendApi.failCount,
-        mode: imageBackendApi.interfaceMode,
-      })
-      .from(imageBackendApi),
-    db
-      .select({
-        status: imageBackendAdobe.status,
-        isEnabled: imageBackendAdobe.isEnabled,
-        cooldownUntil: imageBackendAdobe.cooldownUntil,
-        successCount: imageBackendAdobe.successCount,
-        failCount: imageBackendAdobe.failCount,
-        mode: imageBackendAdobe.mode,
-      })
-      .from(imageBackendAdobe),
-    db
-      .select({
-        selectedLayer: imageBackendSchedulerMetric.selectedLayer,
-        selectCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.selectCount}), 0)`.mapWith(
-            Number
-          ),
-        stickyPreviousHitCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.stickyPreviousHitCount}), 0)`.mapWith(
-            Number
-          ),
-        stickySessionHitCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.stickySessionHitCount}), 0)`.mapWith(
-            Number
-          ),
-        loadBalanceCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.loadBalanceCount}), 0)`.mapWith(
-            Number
-          ),
-        switchCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.switchCount}), 0)`.mapWith(
+        requestKind: imageBackendMemberSchedulerMetric.requestKind,
+        strategy: imageBackendMemberSchedulerMetric.strategy,
+        outcome: imageBackendMemberSchedulerMetric.outcome,
+        eventCount:
+          sql<number>`coalesce(sum(${imageBackendMemberSchedulerMetric.eventCount}), 0)`.mapWith(
             Number
           ),
         candidateCountTotal:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.candidateCountTotal}), 0)`.mapWith(
+          sql<number>`coalesce(sum(${imageBackendMemberSchedulerMetric.candidateCountTotal}), 0)`.mapWith(
             Number
           ),
         latencyMsTotal:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.latencyMsTotal}), 0)`.mapWith(
+          sql<number>`coalesce(sum(${imageBackendMemberSchedulerMetric.latencyMsTotal}), 0)`.mapWith(
             Number
           ),
       })
-      .from(imageBackendSchedulerMetric)
-      .where(gte(imageBackendSchedulerMetric.bucketStartedAt, last24h))
-      .groupBy(imageBackendSchedulerMetric.selectedLayer),
+      .from(imageBackendMemberSchedulerMetric)
+      .where(gte(imageBackendMemberSchedulerMetric.bucketStartedAt, last24h))
+      .groupBy(
+        imageBackendMemberSchedulerMetric.requestKind,
+        imageBackendMemberSchedulerMetric.strategy,
+        imageBackendMemberSchedulerMetric.outcome
+      ),
     db
       .select({
-        selectedLayer: imageBackendSchedulerMetric.selectedLayer,
-        selectCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.selectCount}), 0)`.mapWith(
-            Number
-          ),
-        stickyPreviousHitCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.stickyPreviousHitCount}), 0)`.mapWith(
-            Number
-          ),
-        stickySessionHitCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.stickySessionHitCount}), 0)`.mapWith(
-            Number
-          ),
-        loadBalanceCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.loadBalanceCount}), 0)`.mapWith(
-            Number
-          ),
-        switchCount:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.switchCount}), 0)`.mapWith(
+        requestKind: imageBackendMemberSchedulerMetric.requestKind,
+        strategy: imageBackendMemberSchedulerMetric.strategy,
+        outcome: imageBackendMemberSchedulerMetric.outcome,
+        eventCount:
+          sql<number>`coalesce(sum(${imageBackendMemberSchedulerMetric.eventCount}), 0)`.mapWith(
             Number
           ),
         candidateCountTotal:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.candidateCountTotal}), 0)`.mapWith(
+          sql<number>`coalesce(sum(${imageBackendMemberSchedulerMetric.candidateCountTotal}), 0)`.mapWith(
             Number
           ),
         latencyMsTotal:
-          sql<number>`coalesce(sum(${imageBackendSchedulerMetric.latencyMsTotal}), 0)`.mapWith(
+          sql<number>`coalesce(sum(${imageBackendMemberSchedulerMetric.latencyMsTotal}), 0)`.mapWith(
             Number
           ),
       })
-      .from(imageBackendSchedulerMetric)
-      .where(gte(imageBackendSchedulerMetric.bucketStartedAt, last7d))
-      .groupBy(imageBackendSchedulerMetric.selectedLayer),
+      .from(imageBackendMemberSchedulerMetric)
+      .where(gte(imageBackendMemberSchedulerMetric.bucketStartedAt, last7d))
+      .groupBy(
+        imageBackendMemberSchedulerMetric.requestKind,
+        imageBackendMemberSchedulerMetric.strategy,
+        imageBackendMemberSchedulerMetric.outcome
+      ),
     // 视频生成(Adobe Firefly)独立管线,与 generation 无关。按 (family, status) 分组,
     // 与近期 SLA 一致取最近 7 天窗口(createdAt >= last7d)。
     // 积分/时长/耗时仅对完成记录(completed)累加;latencyCount 用于计算平均生成耗时。
@@ -1902,9 +1909,14 @@ async function loadStatusData() {
       unresolved: 0,
       new24h: 0,
     },
-    accounts: summarizeBackendRows(accountRows),
-    apis: summarizeBackendRows(apiRows),
-    adobe: summarizeBackendRows(adobeRows),
+    backend: {
+      api: summarizeBackendRows(
+        memberRows.filter((member) => member.type === "api")
+      ),
+      adobe: summarizeBackendRows(
+        memberRows.filter((member) => member.type === "adobe")
+      ),
+    },
     scheduler24h: summarizeSchedulerMetrics(schedulerRows24h),
     scheduler7d: summarizeSchedulerMetrics(schedulerRows7d),
     video7d: summarizeVideoGenerationRows(videoRows7d),
@@ -1947,11 +1959,9 @@ export default async function GlobalStatusPage({
   ]);
   const generationTotals = data.generationTotals;
   const creditBalance = data.credits.balance;
-  const backendTotal = data.accounts.total + data.apis.total + data.adobe.total;
-  const backendCooling =
-    data.accounts.cooling + data.apis.cooling + data.adobe.cooling;
-  const backendErrors =
-    data.accounts.error + data.apis.error + data.adobe.error;
+  const backendTotal = data.backend.api.total + data.backend.adobe.total;
+  const backendCooling = data.backend.api.cooling + data.backend.adobe.cooling;
+  const backendErrors = data.backend.api.error + data.backend.adobe.error;
 
   return (
     <div className="container mx-auto space-y-8 px-4 py-6 md:px-6">
@@ -2068,19 +2078,30 @@ export default async function GlobalStatusPage({
           <CardDescription>
             {copy(
               locale,
-              "Sticky routing, backend switches, and scheduler latency. Full backend queues are not used; saturated accounts are skipped.",
-              "粘性路由、后端切换和调度耗时。账号满不排队，会跳过并切换其他账号。"
+              "Unified member acquisition, switching, rejection outcomes, and scheduler efficiency.",
+              "统一成员获租、失败切换、拒绝结果与调度效率。"
             )}
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <MiniStat
-            label={copy(locale, "24h sticky hit rate", "24小时粘性命中率")}
-            value={formatPercent(data.scheduler24h.stickyHitRate, locale)}
+            label={copy(locale, "24h acquisitions", "24小时获租")}
+            value={formatNumber(data.scheduler24h.acquiredCount, locale)}
           />
           <MiniStat
             label={copy(locale, "24h backend switches", "24小时后端切换")}
             value={formatNumber(data.scheduler24h.switchCount, locale)}
+          />
+          <MiniStat
+            label={copy(locale, "24h no candidate", "24小时无候选")}
+            value={formatNumber(data.scheduler24h.noCandidateCount, locale)}
+          />
+          <MiniStat
+            label={copy(locale, "24h capacity rejected", "24小时容量拒绝")}
+            value={formatNumber(
+              data.scheduler24h.capacityRejectedCount,
+              locale
+            )}
           />
           <MiniStat
             label={copy(locale, "24h avg candidates", "24小时平均候选")}
@@ -2103,20 +2124,28 @@ export default async function GlobalStatusPage({
             }
           />
           <MiniStat
-            label={copy(locale, "7d previous-response hits", "7天强粘性命中")}
-            value={formatNumber(data.scheduler7d.stickyPreviousHits, locale)}
+            label={copy(locale, "7d outcome distribution", "7天结果分布")}
+            value={formatSchedulerDistribution(
+              data.scheduler7d.byOutcome,
+              "outcome",
+              locale
+            )}
           />
           <MiniStat
-            label={copy(locale, "7d session hits", "7天弱粘性命中")}
-            value={formatNumber(data.scheduler7d.stickySessionHits, locale)}
+            label={copy(locale, "7d strategy distribution", "7天策略分布")}
+            value={formatSchedulerDistribution(
+              data.scheduler7d.byStrategy,
+              "strategy",
+              locale
+            )}
           />
           <MiniStat
-            label={copy(locale, "7d load-balance picks", "7天负载选择")}
-            value={formatNumber(data.scheduler7d.loadBalanceCount, locale)}
-          />
-          <MiniStat
-            label={copy(locale, "7d selections", "7天调度次数")}
-            value={formatNumber(data.scheduler7d.selectCount, locale)}
+            label={copy(locale, "7d request distribution", "7天请求分布")}
+            value={formatSchedulerDistribution(
+              data.scheduler7d.byRequestKind,
+              "requestKind",
+              locale
+            )}
           />
         </CardContent>
       </Card>
@@ -2280,26 +2309,21 @@ export default async function GlobalStatusPage({
             <CardDescription>
               {copy(
                 locale,
-                "Platform accounts and external upstream APIs.",
-                "平台账号和外接上游 API。"
+                "Unified API and Adobe members with shared health semantics.",
+                "统一 API 与 Adobe 成员的共享健康状态。"
               )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <BackendHealthBlock
-                title={copy(locale, "Accounts", "账号池")}
-                stats={data.accounts}
+                title={copy(locale, "API members", "API 成员")}
+                stats={data.backend.api}
                 locale={locale}
               />
               <BackendHealthBlock
-                title={copy(locale, "External APIs", "外接 API")}
-                stats={data.apis}
-                locale={locale}
-              />
-              <BackendHealthBlock
-                title={copy(locale, "Adobe Firefly", "Adobe Firefly")}
-                stats={data.adobe}
+                title={copy(locale, "Adobe members", "Adobe 成员")}
+                stats={data.backend.adobe}
                 locale={locale}
               />
             </div>
@@ -2517,9 +2541,15 @@ function BackendHealthBlock({
 }) {
   const availability =
     stats.enabled > 0 ? Math.max(0, stats.active / stats.enabled) : 1;
-  const modeText = stats.modes
+  const healthText = stats.healthStates
     .slice(0, 4)
-    .map((item) => `${item.mode} ${item.count}`)
+    .map(
+      (item) =>
+        `${backendHealthLabel(item.health, locale)} ${formatNumber(
+          item.count,
+          locale
+        )}`
+    )
     .join(" · ");
   return (
     <div className="space-y-3 rounded-md border bg-muted/20 p-4">
@@ -2543,8 +2573,16 @@ function BackendHealthBlock({
           {copy(locale, "Success", "成功")} {stats.successCount} ·{" "}
           {copy(locale, "Failed", "失败")} {stats.failCount}
         </span>
-        {modeText && <span>{modeText}</span>}
+        {healthText && <span>{healthText}</span>}
       </div>
     </div>
   );
+}
+
+/** 将统一成员健康枚举翻译为状态页标签，未知值原样展示以便运维发现。 */
+function backendHealthLabel(health: string, locale: string) {
+  if (health === "healthy") return copy(locale, "Healthy", "健康");
+  if (health === "degraded") return copy(locale, "Degraded", "降级");
+  if (health === "unhealthy") return copy(locale, "Unhealthy", "不健康");
+  return health;
 }

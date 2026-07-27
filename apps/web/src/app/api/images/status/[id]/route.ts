@@ -8,7 +8,6 @@ import {
   buildStorageUrl,
   getImageOutputs,
   getPromptRepairNotice,
-  getResponseOutput,
 } from "../status-output";
 
 function jsonError(message: string, status = 400) {
@@ -36,7 +35,6 @@ export const GET = withApiLogging(
 
     const imageUrl = buildStorageUrl(row.storageBucket, row.storageKey);
     const imageOutputs = getImageOutputs(row.metadata, row.storageBucket);
-    const responseOutput = getResponseOutput(row.metadata);
 
     return NextResponse.json({
       generationId: row.id,
@@ -50,7 +48,6 @@ export const GET = withApiLogging(
       creditsConsumed: row.creditsConsumed,
       imageUrl,
       imageOutputs,
-      ...responseOutput,
       createdAt: row.createdAt.toISOString(),
       completedAt: row.completedAt?.toISOString(),
     });

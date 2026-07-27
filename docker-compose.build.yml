@@ -33,14 +33,8 @@ services:
         NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
 
-  chatgpt-web-proxy:
-    image: gpt2image-pro-chatgpt-web-proxy:local
+  media-upstream-proxy:
+    image: gpt2image-pro-media-upstream-proxy:local
     build:
       context: .
-      dockerfile: Dockerfile.chatgpt-web-proxy
-
-  chatgpt-register:
-    image: gpt2image-pro-chatgpt-register:local
-    build:
-      context: .
-      dockerfile: Dockerfile.chatgpt-register
+      dockerfile: Dockerfile.media-upstream-proxy

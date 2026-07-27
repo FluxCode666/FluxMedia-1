@@ -55,7 +55,7 @@ import "@repo/shared/uol/operations";
  * 绑定 MCP User 鉴权的真实实现（含 DB 访问）。
  *
  * 查询 mcp_api_key 表，校验 key 有效性与用户状态，
- * 返回 Principal { type: "apiKey" }。
+ * 返回 Principal { type: "apiKey", credentialKind: "mcp" }。
  */
 bindMcpUserAuth(async (authHeader: string): Promise<Principal> => {
   if (!authHeader.startsWith("Bearer ")) {
@@ -103,6 +103,7 @@ bindMcpUserAuth(async (authHeader: string): Promise<Principal> => {
 
   return {
     type: "apiKey",
+    credentialKind: "mcp",
     userId: record.userId,
     apiKeyId: record.id,
     plan: plan.plan,

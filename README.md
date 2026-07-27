@@ -1,15 +1,66 @@
 # FluxMedia
 
-<p align="center">
-  <strong>面向生图业务的 SaaS 平台</strong><br />
-  套餐能力矩阵、Web + Codex 智能路由、4K Agent 生图和 OpenAI 兼容 API。
-</p>
+FluxMedia 是面向图片与视频生成业务的全栈平台。项目使用 Turborepo、Next.js、
+React、TypeScript、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI 风格的媒体 API。
 
-<p align="center">
-  <a href="https://github.com/MeowFree/GPT2Image-Pro/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/MeowFree/GPT2Image-Pro?style=social" /></a>
-  <a href="https://github.com/MeowFree/GPT2Image-Pro/blob/dev/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-AGPL--3.0-green" /></a>
-  <a href="https://github.com/MeowFree/GPT2Image-Pro/releases"><img alt="Release" src="https://img.shields.io/badge/Release-v0.6.0-blue" /></a>
-  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" />
-  <img alt="Docker" src="https://img.shields.io/badge/Docker-GHCR-2496ED?logo=docker&logoColor=white" />
-</p>
+## 核心能力
+
+- 图片生成、图片编辑与蒙版编辑统一进入 `runImageGenerationForUser`。
+- 视频生成使用持久状态机、数据库认领租约与幂等请求键完成跨进程恢复。
+- 单一媒体号池管理 `api` 与 `adobe` 两类成员；Adobe 成员内部支持
+  `gateway` 与 `direct` 模式。
+- 成员通过显式模型 ID 声明能力，不根据模型名称或前缀决定成员类型。
+- 全局调度策略可动态选择 `priority`、`least_acquired` 或 `least_load`。
+- 统一接口层负责权限、能力、审计与幂等，HTTP 路由只做薄适配。
+
+## 仓库结构
+
+```text
+apps/web/                       Next.js 主应用、管理后台与媒体路由
+packages/database/              Drizzle schema、迁移与数据库连接
+packages/shared/                UOL、积分、存储、审核等共享业务逻辑
+packages/ui/                    共享 UI 组件
+services/media-upstream-proxy/  Adobe direct 专用上游代理
+deploy/                         生产 Compose、Nginx 与部署脚本
+```
+
+## 本地开发
+
+需要 Node.js 20+、pnpm 10、PostgreSQL 16。复制 `.env.example` 为
+`.env.local`，至少配置 `DATABASE_URL`、`BETTER_AUTH_SECRET` 与
+`BETTER_AUTH_URL`，然后执行：
+
+```bash
+pnpm install
+pnpm --filter @repo/database db:push
+pnpm dev
+```
+
+常用质量门：
+
+```bash
+pnpm turbo typecheck
+pnpm turbo lint
+pnpm turbo test
+pnpm --filter @repo/web build
+(cd services/media-upstream-proxy && go test ./...)
+```
+
+## 容器与生产部署
+
+根目录 `docker-compose.yml` 提供包含 PostgreSQL、Redis、迁移、Web 与 Adobe
+上游代理的自托管组合。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
+由外部基础设施提供，迁移只在维护 profile 中运行。
+
+```bash
+GPT2IMAGE_ENV_FILE=.env.docker.example docker compose config --quiet
+docker compose up -d
+```
+
+生产部署、维护窗口和备份要求见 [docs/CI-CD.md](docs/CI-CD.md) 与
+[deploy/README.md](deploy/README.md)。统一号池调度契约见
+[docs/image-backend-pool-scheduling.md](docs/image-backend-pool-scheduling.md)。
+
+## 许可证
+
+AGPL-3.0-only。

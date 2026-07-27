@@ -5,9 +5,9 @@
  * 覆盖：公网 IP 放行、私有 IP 阻断、混合结果阻断、DNS 失败、Host 头设置。
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { RequestOptions } from "node:http";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // mock node:dns/promises
 vi.mock("node:dns/promises", () => ({
@@ -48,10 +48,7 @@ function setupMockTransport(
   responseHeaders: Record<string, string> = {}
 ) {
   mock.mockImplementation(
-    (
-      _opts: unknown,
-      callback: (res: EventEmitter) => void
-    ) => {
+    (_opts: unknown, callback: (res: EventEmitter) => void) => {
       const req = new EventEmitter() as EventEmitter & {
         write: ReturnType<typeof vi.fn>;
         end: ReturnType<typeof vi.fn>;
@@ -111,6 +108,79 @@ describe("fetchWithDnsPin", () => {
     ).rejects.toBeInstanceOf(SsrfBlockedError);
   });
 
+  it("only pins a blocked address when the caller explicitly allows it", async () => {
+    mockResolve4.mockResolvedValue(["10.0.0.8"]);
+    setupMockTransport(httpsRequestMock, 200, "ok");
+
+    const response = await fetchWithDnsPin(
+      "https://trusted.internal/image.png",
+      {
+        allowBlockedAddress: ({ hostname, address }) =>
+          hostname === "trusted.internal" && address === "10.0.0.8",
+      }
+    );
+
+    expect(await response.text()).toBe("ok");
+  });
+
+  it("fails while streaming when the actual response exceeds the byte limit", async () => {
+    mockResolve4.mockResolvedValue(["8.8.8.8"]);
+    setupMockTransport(httpRequestMock, 200, "too-large");
+
+    const response = await fetchWithDnsPin("http://example.com/image.png", {
+      maxResponseBytes: 4,
+    });
+
+    await expect(response.arrayBuffer()).rejects.toThrow(
+      "response exceeded 4 bytes"
+    );
+  });
+
+  it("serializes FormData before writing to the pinned request", async () => {
+    mockResolve4.mockResolvedValue(["8.8.8.8"]);
+    let capturedOptions: RequestOptions | undefined;
+    let requestBody: Buffer | undefined;
+    httpRequestMock.mockImplementation(
+      (opts: unknown, callback: (res: EventEmitter) => void) => {
+        capturedOptions = opts as RequestOptions;
+        const req = new EventEmitter() as EventEmitter & {
+          write: (body: Buffer) => void;
+          end: () => void;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+        req.write = (body) => {
+          requestBody = body;
+        };
+        req.end = () => {
+          const res = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            statusMessage: string;
+            headers: Record<string, string>;
+          };
+          res.statusCode = 200;
+          res.statusMessage = "OK";
+          res.headers = {};
+          callback(res);
+          queueMicrotask(() => res.emit("end"));
+        };
+        req.destroy = vi.fn();
+        return req;
+      }
+    );
+    const form = new FormData();
+    form.set("prompt", "test");
+
+    await fetchWithDnsPin("http://example.com/images/edits", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(
+      (capturedOptions?.headers as Record<string, string>)["content-type"]
+    ).toMatch(/^multipart\/form-data; boundary=/);
+    expect(requestBody?.toString()).toContain('name="prompt"');
+  });
+
   it("blocks loopback address (127.0.0.1)", async () => {
     mockResolve4.mockResolvedValue(["127.0.0.1"]);
 
@@ -144,6 +214,16 @@ describe("fetchWithDnsPin", () => {
     ).rejects.toBeInstanceOf(SsrfBlockedError);
   });
 
+  it("blocks a private IPv6 result even when the IPv4 result is public", async () => {
+    mockResolve4.mockResolvedValue(["8.8.8.8"]);
+    mockResolve6.mockResolvedValue(["fd00::1"]);
+
+    await expect(
+      fetchWithDnsPin("https://dual-stack.example/image.png")
+    ).rejects.toBeInstanceOf(SsrfBlockedError);
+    expect(httpsRequestMock).not.toHaveBeenCalled();
+  });
+
   it("throws SsrfBlockedError when DNS resolution fails entirely", async () => {
     mockResolve4.mockRejectedValue(new Error("ENOTFOUND"));
     mockResolve6.mockRejectedValue(new Error("ENOTFOUND"));
@@ -161,10 +241,7 @@ describe("fetchWithDnsPin", () => {
 
     let capturedOptions: RequestOptions | undefined;
     httpRequestMock.mockImplementation(
-      (
-        opts: unknown,
-        callback: (res: EventEmitter) => void
-      ) => {
+      (opts: unknown, callback: (res: EventEmitter) => void) => {
         capturedOptions = opts as RequestOptions;
         const req = new EventEmitter() as EventEmitter & {
           write: ReturnType<typeof vi.fn>;
@@ -197,9 +274,9 @@ describe("fetchWithDnsPin", () => {
     // hostname 被替换为 pinned IP
     expect(capturedOptions?.hostname).toBe("93.184.216.34");
     // Host 头保留原始主机名:端口
-    expect(
-      (capturedOptions?.headers as Record<string, string>)?.Host
-    ).toBe("example.com:8080");
+    expect((capturedOptions?.headers as Record<string, string>)?.Host).toBe(
+      "example.com:8080"
+    );
     // path 保留完整
     expect(capturedOptions?.path).toBe("/path?q=1");
     expect(capturedOptions?.port).toBe(8080);
@@ -210,10 +287,7 @@ describe("fetchWithDnsPin", () => {
 
     let capturedOptions: RequestOptions | undefined;
     httpsRequestMock.mockImplementation(
-      (
-        opts: unknown,
-        callback: (res: EventEmitter) => void
-      ) => {
+      (opts: unknown, callback: (res: EventEmitter) => void) => {
         capturedOptions = opts as RequestOptions;
         const req = new EventEmitter() as EventEmitter & {
           write: ReturnType<typeof vi.fn>;
@@ -243,9 +317,9 @@ describe("fetchWithDnsPin", () => {
 
     await fetchWithDnsPin("https://secure.example.com/img.png");
 
-    expect(
-      (capturedOptions as Record<string, unknown>)?.servername
-    ).toBe("secure.example.com");
+    expect((capturedOptions as Record<string, unknown>)?.servername).toBe(
+      "secure.example.com"
+    );
     expect(capturedOptions?.hostname).toBe("93.184.216.34");
     expect(capturedOptions?.port).toBe(443);
   });
@@ -266,31 +340,39 @@ describe("fetchWithDnsPin", () => {
     expect(mockResolve4).not.toHaveBeenCalled();
   });
 
+  it("blocks a bracketed private IPv6 literal without DNS lookup", async () => {
+    await expect(
+      fetchWithDnsPin("https://[::1]/secret")
+    ).rejects.toBeInstanceOf(SsrfBlockedError);
+    expect(mockResolve4).not.toHaveBeenCalled();
+    expect(mockResolve6).not.toHaveBeenCalled();
+  });
+
   it("blocks 10.x.x.x range", async () => {
     mockResolve4.mockResolvedValue(["10.255.255.1"]);
-    await expect(
-      fetchWithDnsPin("http://evil.com/x")
-    ).rejects.toBeInstanceOf(SsrfBlockedError);
+    await expect(fetchWithDnsPin("http://evil.com/x")).rejects.toBeInstanceOf(
+      SsrfBlockedError
+    );
   });
 
   it("blocks 0.0.0.0/8 range", async () => {
     mockResolve4.mockResolvedValue(["0.0.0.1"]);
-    await expect(
-      fetchWithDnsPin("http://evil.com/x")
-    ).rejects.toBeInstanceOf(SsrfBlockedError);
+    await expect(fetchWithDnsPin("http://evil.com/x")).rejects.toBeInstanceOf(
+      SsrfBlockedError
+    );
   });
 
   it("blocks 172.16.0.0/12 range", async () => {
     mockResolve4.mockResolvedValue(["172.20.10.1"]);
-    await expect(
-      fetchWithDnsPin("http://evil.com/x")
-    ).rejects.toBeInstanceOf(SsrfBlockedError);
+    await expect(fetchWithDnsPin("http://evil.com/x")).rejects.toBeInstanceOf(
+      SsrfBlockedError
+    );
   });
 
   it("blocks CGNAT 100.64.0.0/10 range", async () => {
     mockResolve4.mockResolvedValue(["100.100.100.1"]);
-    await expect(
-      fetchWithDnsPin("http://evil.com/x")
-    ).rejects.toBeInstanceOf(SsrfBlockedError);
+    await expect(fetchWithDnsPin("http://evil.com/x")).rejects.toBeInstanceOf(
+      SsrfBlockedError
+    );
   });
 });

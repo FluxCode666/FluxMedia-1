@@ -421,6 +421,55 @@
       "when": 1784851203000,
       "tag": "0059_remove_user_api_config",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1785024000000,
+      "tag": "0060_unified_media_backend_pool",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1785024001000,
+      "tag": "0061_video_callback_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1785024002000,
+      "tag": "0062_video_principal_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1785024003000,
+      "tag": "0063_video_recovery_lease_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1785024004000,
+      "tag": "0064_video_api_key_quota",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1785024005000,
+      "tag": "0065_video_staging_and_input_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1785024006000,
+      "tag": "0066_flatten_legacy_adobe_subpool",
+      "breakpoints": true
     }
   ]
 }

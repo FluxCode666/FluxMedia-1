@@ -10,6 +10,7 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isAdminRole } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { logger } from "@repo/shared/logger";
+import { modelMarketplacePublicItemSchema } from "@repo/shared/model-marketplace";
 import {
   invokeOperation,
   OperationError,
@@ -18,7 +19,6 @@ import {
 import type {
   HomepageGenerationSlaStatsOutput,
   HomepageSlaVisibilityOutput,
-  PlatformModelCatalogOutput,
 } from "@repo/shared/uol/operations";
 
 import { ensureUolInitialized } from "@/server/uol-init";
@@ -31,8 +31,6 @@ export type HomepageModelCatalogState =
   | {
       status: "ready";
       image: HomepageModelItem[];
-      video: HomepageModelItem[];
-      conversation: HomepageModelItem[];
     }
   | { status: "unavailable" };
 
@@ -99,27 +97,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 把单个模型收窄为只含 ID 的公开 DTO。 */
-function parseModelItems(value: unknown): HomepageModelItem[] | null {
-  if (!Array.isArray(value)) return null;
-  const items: HomepageModelItem[] = [];
-  for (const item of value) {
-    if (!isRecord(item) || typeof item.id !== "string") return null;
-    const id = item.id.trim();
-    if (!id || id.length > 120) return null;
-    items.push({ id });
-  }
-  return items;
-}
-
-/** 把 UOL 或注入结果再次收窄为三类公开目录，丢弃所有额外字段。 */
+/** 把模型广场公开 DTO 再次收窄为首页所需的完整图像 ID 列表。 */
 function parseCatalog(value: unknown): HomepageModelCatalogState | null {
-  if (!isRecord(value)) return null;
-  const image = parseModelItems(value.image);
-  const video = parseModelItems(value.video);
-  const conversation = parseModelItems(value.conversation);
-  if (!image || !video || !conversation) return null;
-  return { status: "ready", image, video, conversation };
+  if (!isRecord(value) || !Array.isArray(value.items)) return null;
+  const image: HomepageModelItem[] = [];
+  for (const candidate of value.items) {
+    const parsed = modelMarketplacePublicItemSchema.safeParse(candidate);
+    if (!parsed.success) return null;
+    if (parsed.data.category === "image") {
+      image.push({ id: parsed.data.defaultModelId });
+    }
+  }
+  return { status: "ready", image };
 }
 
 /** 判断统计计数是否为有限非负整数。 */
@@ -221,15 +210,13 @@ function reportHomepageFailure(event: HomepageFailureEvent): void {
   logger.error(event, "Homepage dependency unavailable");
 }
 
-/** 通过 system-only UOL operation 读取运行时模型目录。 */
-async function loadCatalogThroughUol(
-  requestId: string
-): Promise<PlatformModelCatalogOutput> {
+/** 通过 system-only UOL operation 读取模型广场公开目录。 */
+async function loadCatalogThroughUol(requestId: string): Promise<unknown> {
   await ensureUolInitialized();
-  return invokeOperation<PlatformModelCatalogOutput>(
-    "externalApi.getPlatformModelCatalog",
+  return invokeOperation(
+    "modelMarketplace.listPublicModels",
     {},
-    { type: "system", reason: "homepage-platform-model-catalog" },
+    { type: "system", reason: "homepage-model-marketplace" },
     { requestId }
   );
 }

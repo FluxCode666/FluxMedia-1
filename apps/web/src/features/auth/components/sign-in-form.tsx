@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * 登录表单与安全回跳消费组件。
+ *
+ * 使用方是本地化登录页；服务端先收窄 callbackUrl，本组件再让邮箱与 Google 登录共用
+ * 同一回跳目标，并在登录、注册互链中继续保留模型预选意图。
+ */
+
 import {
   resendVerificationEmail,
   signInWithEmail,
@@ -19,18 +26,24 @@ import { toast } from "sonner";
 import { AuthErrorAlert } from "./auth-error-alert";
 import { AuthLogo } from "./auth-logo";
 
-/**
- * 登录表单组件
- *
- * 功能:
- * - Google OAuth 登录
- * - 邮箱密码登录
- */
+/** 登录表单服务端下发的安全配置。 */
 interface SignInFormProps {
   googleAuthEnabled?: boolean;
+  callbackUrl: string;
 }
 
-export function SignInForm({ googleAuthEnabled = false }: SignInFormProps) {
+/**
+ * 渲染邮箱与 Google 登录表单。
+ *
+ * @param props - Google 开关与服务端已经收窄的站内 callbackUrl。
+ * @returns 可交互的客户端登录表单。
+ * @sideEffects 用户提交时调用 Better Auth；成功后导航到 callbackUrl，失败时只更新本地状态。
+ * @failure 认证失败展示本地化错误；callbackUrl 的安全性由服务端页面边界保证。
+ */
+export function SignInForm({
+  googleAuthEnabled = false,
+  callbackUrl,
+}: SignInFormProps) {
   const locale = useLocale();
   const t = useTranslations("Auth.signIn");
   const tCommon = useTranslations("Auth.common");
@@ -67,14 +80,12 @@ export function SignInForm({ googleAuthEnabled = false }: SignInFormProps) {
     }
   };
 
-  /**
-   * 处理 Google 登录
-   */
+  /** 使用与邮箱流程相同的安全回跳目标启动 Google OAuth。 */
   const handleGoogleSignIn = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      await signInWithGoogle();
+      await signInWithGoogle(callbackUrl);
     } catch {
       setError(t("errors.google"));
     } finally {
@@ -82,9 +93,7 @@ export function SignInForm({ googleAuthEnabled = false }: SignInFormProps) {
     }
   };
 
-  /**
-   * 处理邮箱密码登录
-   */
+  /** 校验本地必填项并执行邮箱登录，成功后导航到服务端收窄的回跳目标。 */
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -96,7 +105,7 @@ export function SignInForm({ googleAuthEnabled = false }: SignInFormProps) {
     try {
       setIsLoading(true);
       setError(null);
-      const result = await signInWithEmail(email, password);
+      const result = await signInWithEmail(email, password, callbackUrl);
 
       if (result.error) {
         if (result.error.code === "EMAIL_NOT_VERIFIED") {
@@ -112,7 +121,7 @@ export function SignInForm({ googleAuthEnabled = false }: SignInFormProps) {
 
       // 登录成功，提示并跳转
       toast.success(t("success"));
-      window.location.href = `/${locale}/dashboard`;
+      window.location.href = callbackUrl;
     } catch {
       setError(t("errors.invalidCredentials"));
       setIsLoading(false);
@@ -243,7 +252,7 @@ export function SignInForm({ googleAuthEnabled = false }: SignInFormProps) {
       <p className="text-center text-sm text-muted-foreground">
         {t("noAccount")}{" "}
         <Link
-          href={`/${locale}/sign-up`}
+          href={`/${locale}/sign-up?callbackUrl=${encodeURIComponent(callbackUrl)}`}
           className="font-medium text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 hover:decoration-foreground"
         >
           {t("signUpLink")}

@@ -13,7 +13,6 @@ function getPageTitleKey(pathname: string): string {
   const path = pathname.replace(/^\/[a-z]{2}\//, "/");
   const keyMap: Record<string, string> = {
     "/dashboard": "dashboard",
-    "/dashboard/create": "create",
     "/dashboard/gallery": "gallery",
     "/dashboard/history": "history",
     "/dashboard/generate": "generate",

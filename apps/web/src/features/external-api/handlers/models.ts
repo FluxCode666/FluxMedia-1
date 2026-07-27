@@ -32,6 +32,7 @@ export const getExternalModels = withApiLogging(
         {},
         {
           type: "apiKey",
+          credentialKind: "external",
           userId: auth.userId,
           apiKeyId: auth.apiKeyId,
           plan: auth.plan,

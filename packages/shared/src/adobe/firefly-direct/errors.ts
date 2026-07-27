@@ -58,17 +58,47 @@ export class UpstreamTemporaryError extends AdobeRequestError {
   }
 }
 
+/**
+ * Adobe 已接受视频任务后的轮询、下载或超时错误。
+ *
+ * WHY：这类错误发生时上游任务可能仍在执行，不能因凭据故障切换成员重新提交，
+ * 否则会生成重复视频并重复消耗上游额度。
+ */
+export class AdobeAcceptedVideoError extends AdobeRequestError {
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; errorType?: string }
+  ) {
+    super(message, opts);
+    this.name = "AdobeAcceptedVideoError";
+  }
+}
+
+/**
+ * Adobe 视频提交可能已被接受，但调用方没有取得可恢复任务标识。
+ *
+ * 这类错误不得切换成员重投；后台只能保留诊断状态，等待人工或供应商侧核对。
+ */
+export class AdobeVideoSubmissionUncertainError extends AdobeRequestError {
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; errorType?: string }
+  ) {
+    super(message, opts);
+    this.name = "AdobeVideoSubmissionUncertainError";
+  }
+}
+
 export function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 451 || status >= 500;
 }
 
 /**
- * 是否属于"换 token/账号重试"类错误：429/451/5xx 上游临时错误、账号配额耗尽、token
- * 鉴权失效。这些都是账号/凭据级问题——同一 Adobe 后端（伪账号）下换一个账号可能成功，
- * 故 Adobe 直连应在后端内轮换所有可用账号后才上抛。非此类（请求本身 4xx、内容拒绝、
- * 模型不支持等）换号也无用，直接上抛。
+ * 是否属于可切换顶层成员的错误：429/451/5xx 上游临时错误、账号配额耗尽、token
+ * 鉴权失效。统一调度可在提交尚未被接受时切换另一个 Adobe direct 成员；请求本身 4xx、
+ * 内容拒绝和模型不支持等终态错误切换成员也无效。
  */
-export function isAdobeRotatableError(error: unknown): boolean {
+export function isAdobeMemberSwitchableError(error: unknown): boolean {
   return (
     error instanceof UpstreamTemporaryError ||
     error instanceof QuotaExhaustedError ||

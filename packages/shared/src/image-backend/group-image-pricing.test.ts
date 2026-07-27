@@ -7,7 +7,9 @@ import {
   createDefaultGlobalImageCreditOverrides,
   getGroupImageCreditOverrides,
   getImageModelCreditPricing,
+  globalImageCreditOverridesSchema,
   imageCreditOverridesSchema,
+  MissingGlobalImagePricingError,
   parseImageCreditOverrides,
   resolveImageCreditPricing,
 } from "./group-image-pricing";
@@ -58,13 +60,47 @@ describe("group image pricing", () => {
     ).toEqual({ base1024Credits: 2.5 });
   });
 
-  it("自定义 API 模型按分组覆盖、全局默认价格逐档继承", () => {
+  it("新建全局配置只包含真实内置模型", () => {
     const global = createDefaultGlobalImageCreditOverrides();
-    global.byModel.default = {
-      base1024Credits: 2,
-      base1kCredits: 3,
-      base2kCredits: 6,
-      base4kCredits: 11,
+
+    expect(global.byModel).not.toHaveProperty("default");
+    expect(Object.keys(global.byModel).length).toBeGreaterThan(0);
+  });
+
+  it("兼容读取旧 default 键但从规范结果和价格匹配中忽略", () => {
+    const legacy = {
+      ...createDefaultGlobalImageCreditOverrides(),
+      byModel: {
+        ...createDefaultGlobalImageCreditOverrides().byModel,
+        default: {
+          base1024Credits: 2,
+          base1kCredits: 3,
+          base2kCredits: 6,
+          base4kCredits: 11,
+        },
+      },
+    };
+
+    expect(
+      globalImageCreditOverridesSchema.parse(legacy).byModel
+    ).not.toHaveProperty("default");
+    expect(parseImageCreditOverrides(legacy).byModel).not.toHaveProperty(
+      "default"
+    );
+    expect(getImageModelCreditPricing("default", legacy.byModel)).toEqual({});
+  });
+
+  it("自定义 API 模型只按分组覆盖和显式全局模型价格逐档继承", () => {
+    const global = {
+      version: 1 as const,
+      byModel: {
+        "vendor-custom-image-v3": {
+          base1024Credits: 2,
+          base1kCredits: 3,
+          base2kCredits: 6,
+          base4kCredits: 11,
+        },
+      },
     };
 
     expect(
@@ -84,6 +120,49 @@ describe("group image pricing", () => {
       base2kCredits: 4.5,
       base4kCredits: 11,
     });
+  });
+
+  it("缺少完整显式全局模型价格时 fail-closed", () => {
+    const legacyDefault = {
+      version: 1 as const,
+      byModel: {
+        default: {
+          base1024Credits: 2,
+          base1kCredits: 3,
+          base2kCredits: 6,
+          base4kCredits: 11,
+        },
+      },
+    };
+
+    for (const global of [
+      legacyDefault,
+      {
+        version: 1 as const,
+        byModel: {
+          "vendor-custom-image-v3": {
+            base1024Credits: 2,
+            base1kCredits: 3,
+          },
+        },
+      },
+    ]) {
+      expect(() =>
+        resolveImageCreditPricing({
+          model: "vendor-custom-image-v3",
+          global,
+          group: {
+            version: 1,
+            byModel: {
+              "vendor-custom-image-v3": {
+                base2kCredits: 4.5,
+                base4kCredits: 9,
+              },
+            },
+          },
+        })
+      ).toThrow(MissingGlobalImagePricingError);
+    }
   });
 
   it("拒绝零、负数、超大价格和空模型配置", () => {

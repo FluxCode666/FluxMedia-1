@@ -12,7 +12,9 @@
  */
 
 import {
+  AdobeAcceptedVideoError,
   AdobeRequestError,
+  AdobeVideoSubmissionUncertainError,
   AuthError,
   isRetryableStatus,
   QuotaExhaustedError,
@@ -95,6 +97,62 @@ export type GenerateVideoOutput = {
   bytes: Buffer;
   raw: Record<string, unknown>;
 };
+
+/** 视频提交成功后持久化所需的恢复上下文。 */
+export type SubmitVideoOutput = {
+  pollUrl: string;
+  upstreamJobId: string | null;
+  raw: Record<string, unknown>;
+};
+
+/** 单次视频轮询结果；pending 由持久 worker 决定下次执行时间。 */
+export type PollVideoOutput =
+  | { status: "pending"; raw: Record<string, unknown> }
+  | {
+      status: "completed";
+      videoUrl: string;
+      raw: Record<string, unknown>;
+    };
+
+const ADOBE_VIDEO_POLL_HOSTS = new Set([
+  "firefly-3p.ff.adobe.io",
+  "firefly.adobe.io",
+  "firefly.adobe.com",
+]);
+
+/**
+ * 校验将被持久化和重复调用的视频轮询地址。
+ *
+ * 只接受代码内 Adobe 精确主机和 HTTPS 默认端口，阻断相似域、用户信息与协议降级。
+ */
+export function assertAdobeVideoPollUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new AdobeRequestError("Adobe 视频轮询地址不受信任");
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (
+    url.protocol !== "https:" ||
+    (url.port !== "" && url.port !== "443") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    !ADOBE_VIDEO_POLL_HOSTS.has(hostname)
+  ) {
+    throw new AdobeRequestError("Adobe 视频轮询地址不受信任");
+  }
+  return url.toString();
+}
+
+/** 从 Adobe 提交响应提取不含凭据的任务标识。 */
+function extractVideoJobId(data: Record<string, unknown>): string | null {
+  for (const key of ["id", "jobId", "taskId"] as const) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -341,8 +399,8 @@ export class AdobeFireflyClient {
     }
   }
 
-  /** 文生视频/图生视频：提交→轮询→下载（视频路径，同构图像）。 */
-  async generateVideo(input: GenerateVideoInput): Promise<GenerateVideoOutput> {
+  /** 提交一次视频任务；网络/5xx/缺少 poll URL 均按结果不确定处理，禁止自动重投。 */
+  async submitVideo(input: GenerateVideoInput): Promise<SubmitVideoOutput> {
     const payload: FireflyVideoPayload = buildFireflyVideoPayload({
       prompt: input.prompt,
       upstreamModel: input.upstreamModel,
@@ -356,19 +414,27 @@ export class AdobeFireflyClient {
       ...(input.negativePrompt != null
         ? { negativePrompt: input.negativePrompt }
         : {}),
-      ...(input.sourceImageIds
-        ? { sourceImageIds: input.sourceImageIds }
-        : {}),
+      ...(input.sourceImageIds ? { sourceImageIds: input.sourceImageIds } : {}),
     });
 
-    const submitResp = await this.transport.request({
-      method: "POST",
-      url: VIDEO_SUBMIT_URL,
-      headers: this.submitHeaders(input.token, input.prompt),
-      body: JSON.stringify(payload),
-      signal: input.signal,
-      timeoutMs: 60_000,
-    });
+    let submitResp: FireflyTransportResponse;
+    try {
+      submitResp = await this.transport.request({
+        method: "POST",
+        url: VIDEO_SUBMIT_URL,
+        headers: this.submitHeaders(input.token, input.prompt),
+        body: JSON.stringify(payload),
+        signal: input.signal,
+        timeoutMs: 60_000,
+      });
+    } catch (error) {
+      throw new AdobeVideoSubmissionUncertainError(
+        error instanceof Error
+          ? `video submit response was not observed: ${error.message}`
+          : "video submit response was not observed",
+        { errorType: "network" }
+      );
+    }
 
     if (submitResp.status === 401 || submitResp.status === 403) {
       const accessError = submitResp.headers["x-access-error"];
@@ -381,6 +447,12 @@ export class AdobeFireflyClient {
     }
     if (submitResp.status !== 200) {
       const body = (await submitResp.text().catch(() => "")).slice(0, 300);
+      if (submitResp.status >= 500) {
+        throw new AdobeVideoSubmissionUncertainError(
+          `video submit returned uncertain HTTP ${submitResp.status}: ${body}`,
+          { statusCode: submitResp.status, errorType: "status" }
+        );
+      }
       if (isRetryableStatus(submitResp.status)) {
         throw new UpstreamTemporaryError(
           `video submit failed: ${submitResp.status} ${body}`,
@@ -396,12 +468,107 @@ export class AdobeFireflyClient {
       string,
       unknown
     >;
-    const pollUrl = extractResultLink(submitResp.headers, submitData);
-    if (!pollUrl) {
-      throw new AdobeRequestError(
+    const rawPollUrl = extractResultLink(submitResp.headers, submitData);
+    if (!rawPollUrl) {
+      throw new AdobeVideoSubmissionUncertainError(
         "video submit succeeded but no poll url returned"
       );
     }
+    let pollUrl: string;
+    try {
+      pollUrl = assertAdobeVideoPollUrl(rawPollUrl);
+    } catch (error) {
+      throw new AdobeVideoSubmissionUncertainError(
+        error instanceof Error ? error.message : "Adobe 视频轮询地址不受信任",
+        { errorType: "status" }
+      );
+    }
+    return {
+      pollUrl,
+      upstreamJobId: extractVideoJobId(submitData),
+      raw: submitData,
+    };
+  }
+
+  /** 对已接受的原视频任务执行一次轮询，不在本方法内睡眠或重新提交。 */
+  async pollVideo(input: {
+    token: string;
+    pollUrl: string;
+    signal?: AbortSignal;
+  }): Promise<PollVideoOutput> {
+    const pollUrl = assertAdobeVideoPollUrl(input.pollUrl);
+    let pollResp: FireflyTransportResponse;
+    try {
+      pollResp = await this.transport.request({
+        method: "GET",
+        url: pollUrl,
+        headers: this.pollHeaders(input.token),
+        signal: input.signal,
+        timeoutMs: 60_000,
+      });
+    } catch (error) {
+      throw new AdobeAcceptedVideoError(
+        error instanceof Error
+          ? `video polling failed after submission: ${error.message}`
+          : "video polling failed after submission",
+        { errorType: "network" }
+      );
+    }
+    if (pollResp.status !== 200) {
+      const body = (await pollResp.text().catch(() => "")).slice(0, 300);
+      throw new AdobeAcceptedVideoError(
+        `video poll failed after submission: ${pollResp.status} ${body}`,
+        { statusCode: pollResp.status, errorType: "status" }
+      );
+    }
+
+    const latest = (await pollResp.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
+    const statusHeader = String(
+      pollResp.headers["x-task-status"] || ""
+    ).toUpperCase();
+    const statusValue =
+      String(latest.status || "").toUpperCase() || statusHeader;
+    const outputs = (latest.outputs as Array<Record<string, unknown>>) || [];
+    if (outputs.length > 0) {
+      const video = outputs[0]?.video as Record<string, unknown> | undefined;
+      const videoUrl = video?.presignedUrl;
+      if (!videoUrl || typeof videoUrl !== "string") {
+        throw new AdobeAcceptedVideoError(
+          "video job finished without video url",
+          { errorType: "status" }
+        );
+      }
+      return { status: "completed", videoUrl, raw: latest };
+    }
+    if (
+      statusValue === "FAILED" ||
+      statusValue === "CANCELLED" ||
+      statusValue === "ERROR"
+    ) {
+      throw new AdobeAcceptedVideoError(
+        `video job failed after submission: ${JSON.stringify(latest).slice(0, 300)}`,
+        { errorType: "status" }
+      );
+    }
+    if (statusValue === "COMPLETED" || statusValue === "SUCCEEDED") {
+      throw new AdobeAcceptedVideoError("video job completed without output", {
+        errorType: "status",
+      });
+    }
+    return { status: "pending", raw: latest };
+  }
+
+  /** 下载已完成视频的短期上游 URL；调用方负责持久化到本站存储。 */
+  async downloadVideo(url: string, signal?: AbortSignal): Promise<Buffer> {
+    return this.download(url, signal);
+  }
+
+  /** 文生视频/图生视频兼容闭环；新恢复状态机应直接调用三个独立阶段。 */
+  async generateVideo(input: GenerateVideoInput): Promise<GenerateVideoOutput> {
+    const submitted = await this.submitVideo(input);
 
     // 视频生成耗时较长，默认 600s 超时、3s 轮询（移植视频规格）。
     const timeoutMs = input.timeoutMs ?? 600_000;
@@ -409,66 +576,69 @@ export class AdobeFireflyClient {
     const start = Date.now();
 
     for (;;) {
-      const pollResp = await this.transport.request({
-        method: "GET",
-        url: pollUrl,
-        headers: this.pollHeaders(input.token),
-        signal: input.signal,
-        timeoutMs: 60_000,
-      });
-      if (pollResp.status !== 200) {
-        const body = (await pollResp.text().catch(() => "")).slice(0, 300);
-        if (pollResp.status === 401 || pollResp.status === 403) {
-          throw new AuthError("Token invalid or expired", {
-            statusCode: pollResp.status,
-          });
+      try {
+        const polled = await this.pollVideo({
+          token: input.token,
+          pollUrl: submitted.pollUrl,
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (polled.status === "completed") {
+          try {
+            const bytes = await this.downloadVideo(
+              polled.videoUrl,
+              input.signal
+            );
+            return { bytes, raw: polled.raw };
+          } catch (error) {
+            throw new AdobeAcceptedVideoError(
+              error instanceof Error
+                ? `video download failed after submission: ${error.message}`
+                : "video download failed after submission",
+              { errorType: "network" }
+            );
+          }
         }
-        if (isRetryableStatus(pollResp.status)) {
-          throw new UpstreamTemporaryError(
-            `video poll failed: ${pollResp.status} ${body}`,
-            { statusCode: pollResp.status, errorType: "status" }
+      } catch (error) {
+        if (error instanceof AdobeAcceptedVideoError) {
+          if (
+            error.statusCode !== undefined &&
+            !isRetryableStatus(error.statusCode)
+          ) {
+            throw error;
+          }
+        }
+        if (input.signal?.aborted) {
+          throw new AdobeAcceptedVideoError(
+            "video polling aborted after submission",
+            { errorType: "network" }
           );
         }
-        throw new AdobeRequestError(
-          `video poll failed: ${pollResp.status} ${body}`
-        );
-      }
-
-      const latest = (await pollResp.json().catch(() => ({}))) as Record<
-        string,
-        unknown
-      >;
-      const statusHeader = String(
-        pollResp.headers["x-task-status"] || ""
-      ).toUpperCase();
-      const statusVal =
-        String(latest.status || "").toUpperCase() || statusHeader;
-
-      const outputs = (latest.outputs as Array<Record<string, unknown>>) || [];
-      if (outputs.length > 0) {
-        const video = outputs[0]?.video as Record<string, unknown> | undefined;
-        const videoUrl = video?.presignedUrl;
-        if (!videoUrl || typeof videoUrl !== "string") {
-          throw new AdobeRequestError("video job finished without video url");
+        if (Date.now() - start > timeoutMs) {
+          throw new AdobeAcceptedVideoError(
+            "video generation timed out after submission",
+            { errorType: "timeout" }
+          );
         }
-        const bytes = await this.download(videoUrl, input.signal);
-        return { bytes, raw: latest };
+        await sleep(pollIntervalMs, input.signal).catch(() => {
+          throw new AdobeAcceptedVideoError(
+            "video polling aborted after submission",
+            { errorType: "network" }
+          );
+        });
+        continue;
       }
-
-      if (
-        statusVal === "FAILED" ||
-        statusVal === "CANCELLED" ||
-        statusVal === "ERROR"
-      ) {
-        throw new AdobeRequestError(
-          `video job failed: ${JSON.stringify(latest).slice(0, 300)}`
+      if (Date.now() - start > timeoutMs) {
+        throw new AdobeAcceptedVideoError(
+          "video generation timed out after submission",
+          { errorType: "timeout" }
         );
       }
-
-      if (Date.now() - start > timeoutMs) {
-        throw new AdobeRequestError("video generation timed out");
-      }
-      await sleep(pollIntervalMs, input.signal);
+      await sleep(pollIntervalMs, input.signal).catch(() => {
+        throw new AdobeAcceptedVideoError(
+          "video polling aborted after submission",
+          { errorType: "network" }
+        );
+      });
     }
   }
 

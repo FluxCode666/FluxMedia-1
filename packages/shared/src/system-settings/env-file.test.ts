@@ -21,20 +21,18 @@ const BEGIN = "# BEGIN GPT2IMAGE ADMIN SETTINGS";
 const END = "# END GPT2IMAGE ADMIN SETTINGS";
 
 describe("system settings env file sync", () => {
-  it("only writes public settings and explicitly managed internal keys", () => {
+  it("only writes registered settings not owned by dedicated operations", () => {
     expect(shouldSyncSettingToEnvFile("NEXT_PUBLIC_APP_URL")).toBe(true);
-    expect(shouldSyncSettingToEnvFile("SUB2API_AUTO_SYNC_TASKS")).toBe(true);
+    expect(
+      shouldSyncSettingToEnvFile("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")
+    ).toBe(true);
     expect(shouldSyncSettingToEnvFile("APP_TIME_ZONE")).toBe(false);
     expect(
       shouldSyncSettingToEnvFile("CONTENT_MODERATION_BLOCK_RISK_LEVEL")
     ).toBe(false);
+    expect(shouldSyncSettingToEnvFile("MODEL_MARKETPLACE_CONFIG")).toBe(false);
 
-    expect(
-      shouldSyncSettingToEnvFile("__internal_job_scheduler:sub2api-sync")
-    ).toBe(false);
-    expect(
-      shouldSyncSettingToEnvFile("SUB2API_AUTO_SYNC_INTERVAL_MINUTES")
-    ).toBe(false);
+    expect(shouldSyncSettingToEnvFile("UNKNOWN_INTERNAL_SETTING")).toBe(false);
   });
 });
 

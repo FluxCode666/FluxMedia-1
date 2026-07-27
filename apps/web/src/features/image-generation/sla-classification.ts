@@ -1,5 +1,3 @@
-import { IMAGE_GENERATION_WEB_TIMEOUT_MODERATION_MARKER } from "@repo/shared/generation-timeout";
-
 export type GenerationErrorCategory =
   | "platform"
   | "moderation"
@@ -110,7 +108,7 @@ export const CONTENT_SAFETY_REJECTION_PATTERNS = [
   "disallowed content",
   "unsafe content",
   // 上游(中转/Web)对违规图像返回的代码标记 image_unsafe:归审核(用户内容拒绝),
-  // 而非平台故障——不可换号(换后端也救不了)、不罚后端、不计入平台 SLA 分母。
+  // 而非平台故障——切换后端也无法恢复、不罚后端、不计入平台 SLA 分母。
   "image_unsafe",
   "not allowed to generate",
   "targeted abusive text",
@@ -242,11 +240,6 @@ export function isContentSafetyRejection(error: string | null | undefined) {
 
 export function classifyGenerationError(error: string | null | undefined) {
   const normalized = normalizeErrorText(error);
-  // Web 超时补充的"疑似审核"标记：显式归 moderation。Web 上游对违规内容常静默挂住直至
-  // 超时（无审核码、无拒绝文本），这类隐性审核此前被淹没在平台超时里，故按标记单独归因。
-  if (normalized.includes(IMAGE_GENERATION_WEB_TIMEOUT_MODERATION_MARKER)) {
-    return "moderation" satisfies GenerationErrorCategory;
-  }
   if (isModerationServiceFailure(normalized)) {
     return "platform" satisfies GenerationErrorCategory;
   }

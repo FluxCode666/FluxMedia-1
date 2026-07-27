@@ -21,7 +21,7 @@ export default function HomeLayout({
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <Header variant="home" />
+      <Header />
       <main className="flex-1">{children}</main>
     </div>
   );

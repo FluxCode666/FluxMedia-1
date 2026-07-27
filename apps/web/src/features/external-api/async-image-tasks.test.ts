@@ -13,14 +13,13 @@ vi.mock("@repo/shared/security/dns-pin", () => ({
 import { fetchWithDnsPin } from "@repo/shared/security/dns-pin";
 import {
   completeAsyncImageTask,
-  createAsyncEditableFileTask,
   createAsyncImageTask,
   type GenerationTaskRow,
   postAsyncImageCallback,
   toAsyncImageTaskResponse,
   toGenerationImageTaskResponse,
-  type VideoTaskRow,
   toVideoGenerationTaskResponse,
+  type VideoTaskRow,
   validateCallbackUrl,
 } from "./async-image-tasks";
 
@@ -78,44 +77,6 @@ describe("external async image tasks", () => {
     });
   });
 
-  it("creates + completes an editable file task keeping object=editable_file_task", () => {
-    const task = createAsyncEditableFileTask({
-      userId: "user_1",
-      apiKeyId: "key_1",
-      kind: "ppt",
-      clientTaskId: "ct_1",
-    });
-    expect(task).toMatchObject({
-      object: "editable_file_task",
-      status: "processing",
-      kind: "ppt",
-      client_task_id: "ct_1",
-    });
-    expect(task.id.startsWith("task_")).toBe(true);
-
-    const completed = completeAsyncImageTask(task.id, {
-      completedObject: "editable_file_task",
-      result: {
-        kind: "ppt",
-        result: { primary_url: "/api/storage/x.pptx", zip_url: null },
-        credits_charged: 25,
-      },
-    });
-    const publicTask = completed && toAsyncImageTaskResponse(completed);
-    expect(publicTask).toMatchObject({
-      id: task.id,
-      // 完成后仍是 editable_file_task(不被误标成 image)
-      object: "editable_file_task",
-      status: "completed",
-      kind: "ppt",
-      result: { primary_url: "/api/storage/x.pptx", zip_url: null },
-      credits_charged: 25,
-    });
-    // 归属字段被剥离,不外泄
-    expect(publicTask && "userId" in publicTask).toBe(false);
-    expect(publicTask && "apiKeyId" in publicTask).toBe(false);
-  });
-
   it("maps a completed generation row to a task response with url + image_url", () => {
     const row: GenerationTaskRow = {
       id: "gen_abc",
@@ -127,7 +88,10 @@ describe("external async image tasks", () => {
       createdAt: new Date("2026-06-22T00:00:00Z"),
       completedAt: new Date("2026-06-22T00:01:00Z"),
     };
-    const res = toGenerationImageTaskResponse(row, "/api/storage/generations/k?sig=x");
+    const res = toGenerationImageTaskResponse(
+      row,
+      "/api/storage/generations/k?sig=x"
+    );
     expect(res).toMatchObject({
       id: "gen_abc",
       object: "image",
@@ -135,7 +99,9 @@ describe("external async image tasks", () => {
       generation_id: "gen_abc",
       generationId: "gen_abc",
       image_url: "/api/storage/generations/k?sig=x",
-      data: [{ url: "/api/storage/generations/k?sig=x", revised_prompt: "a cat" }],
+      data: [
+        { url: "/api/storage/generations/k?sig=x", revised_prompt: "a cat" },
+      ],
       credits_consumed: 3.15, // numeric 字符串转 number
       completed_at: "2026-06-22T00:01:00.000Z",
     });
@@ -153,7 +119,10 @@ describe("external async image tasks", () => {
       completedAt: null,
     };
     const pending = toGenerationImageTaskResponse(base, null);
-    expect(pending).toMatchObject({ status: "processing", object: "image.generation" });
+    expect(pending).toMatchObject({
+      status: "processing",
+      object: "image.generation",
+    });
     expect(pending).not.toHaveProperty("data");
     expect(pending).not.toHaveProperty("image_url");
 
@@ -161,7 +130,10 @@ describe("external async image tasks", () => {
       { ...base, id: "gen_f", status: "failed", error: "boom" },
       null
     );
-    expect(failed).toMatchObject({ status: "failed", error: { message: "boom" } });
+    expect(failed).toMatchObject({
+      status: "failed",
+      error: { message: "boom" },
+    });
     expect(failed).not.toHaveProperty("data");
   });
 
@@ -176,7 +148,10 @@ describe("external async image tasks", () => {
       createdAt: new Date("2026-06-22T00:00:00Z"),
       updatedAt: new Date("2026-06-22T00:03:00Z"),
     };
-    const res = toVideoGenerationTaskResponse(row, "/api/storage/generations/v?sig=x");
+    const res = toVideoGenerationTaskResponse(
+      row,
+      "/api/storage/generations/v?sig=x"
+    );
     expect(res).toMatchObject({
       id: "vid_1",
       object: "video",
@@ -202,7 +177,10 @@ describe("external async image tasks", () => {
       updatedAt: null,
     };
     const running = toVideoGenerationTaskResponse(base, null);
-    expect(running).toMatchObject({ status: "processing", object: "video.generation" });
+    expect(running).toMatchObject({
+      status: "processing",
+      object: "video.generation",
+    });
     expect(running).not.toHaveProperty("video_url");
     expect(running).not.toHaveProperty("data");
 
@@ -210,7 +188,10 @@ describe("external async image tasks", () => {
       { ...base, id: "vid_f", status: "failed", error: "upstream 500" },
       null
     );
-    expect(failed).toMatchObject({ status: "failed", error: { message: "upstream 500" } });
+    expect(failed).toMatchObject({
+      status: "failed",
+      error: { message: "upstream 500" },
+    });
   });
 
   it("rejects private callback URLs", async () => {

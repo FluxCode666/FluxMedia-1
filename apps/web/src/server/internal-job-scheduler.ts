@@ -7,30 +7,24 @@
  */
 
 import { db, systemSetting } from "@repo/database";
-import { eq, sql } from "drizzle-orm";
-
 import {
   getRuntimeSettingBoolean,
   getRuntimeSettingNumber,
 } from "@repo/shared/system-settings";
+import { eq, sql } from "drizzle-orm";
 
 import {
   runCreditsExpireJob,
   runImageMaintenanceJob,
-  runSub2ApiSyncJob,
-  runWebAccountsRefreshJob,
-  runWebAccountsReplenishJob,
+  runVideoRecoveryJob,
 } from "./scheduled-jobs";
 
 type InternalJob = {
   name: string;
   lockKey: number;
-  intervalSettingKey:
+  intervalSettingKey?:
     | "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES";
+    | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES";
   defaultIntervalMinutes: number;
   initialDelayMs: number;
   run: () => Promise<unknown>;
@@ -71,6 +65,13 @@ let lastRuntimeConfig: SchedulerRuntimeConfig | undefined;
 
 const jobs: InternalJob[] = [
   {
+    name: "video-recovery",
+    lockKey: 3,
+    defaultIntervalMinutes: 1,
+    initialDelayMs: 10_000,
+    run: runVideoRecoveryJob,
+  },
+  {
     name: "images-maintenance",
     lockKey: 1,
     intervalSettingKey: "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES",
@@ -85,30 +86,6 @@ const jobs: InternalJob[] = [
     defaultIntervalMinutes: 24 * 60,
     initialDelayMs: 60_000,
     run: runCreditsExpireJob,
-  },
-  {
-    name: "web-accounts-refresh",
-    lockKey: 3,
-    intervalSettingKey: "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES",
-    defaultIntervalMinutes: 10,
-    initialDelayMs: 90_000,
-    run: runWebAccountsRefreshJob,
-  },
-  {
-    name: "sub2api-sync",
-    lockKey: 4,
-    intervalSettingKey: "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES",
-    defaultIntervalMinutes: 10,
-    initialDelayMs: 120_000,
-    run: () => runSub2ApiSyncJob(),
-  },
-  {
-    name: "web-accounts-replenish",
-    lockKey: 5,
-    intervalSettingKey: "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES",
-    defaultIntervalMinutes: 15,
-    initialDelayMs: 150_000,
-    run: runWebAccountsReplenishJob,
   },
 ];
 
@@ -185,7 +162,48 @@ function readLastStartedAt(value: unknown) {
 }
 
 /**
- * 在事务级 advisory lock 下执行任务并记录状态。
+ * 写入任务持久状态；实际 job I/O 已在锁事务外执行。
+ *
+ * @param job 任务定义。
+ * @param status 终态及开始、结束时间。
+ * @returns 状态写入完成后的 Promise。
+ */
+async function writeJobState(
+  job: InternalJob,
+  status: {
+    value: "success" | "error";
+    startedAt: Date;
+    finishedAt: Date;
+    error?: string;
+  }
+): Promise<void> {
+  const stateValue = {
+    job: job.name,
+    status: status.value,
+    lastStartedAt: status.startedAt.toISOString(),
+    lastFinishedAt: status.finishedAt.toISOString(),
+    ...(status.error ? { error: status.error } : {}),
+  };
+  await db
+    .insert(systemSetting)
+    .values({
+      key: getJobStateKey(job),
+      value: stateValue,
+      isSecret: false,
+      updatedAt: status.finishedAt,
+    })
+    .onConflictDoUpdate({
+      target: systemSetting.key,
+      set: {
+        value: stateValue,
+        isSecret: false,
+        updatedAt: status.finishedAt,
+      },
+    });
+}
+
+/**
+ * 在短事务中抢占执行频率，提交后再执行可能包含外部 I/O 的任务。
  *
  * @param job - 任务定义
  * @param intervalMs - 当前动态间隔，用于跨实例频率校验
@@ -198,7 +216,7 @@ async function withJobLock<T>(
   intervalMs: number,
   run: () => Promise<T>
 ) {
-  return await db.transaction(async (tx) => {
+  const claim = await db.transaction(async (tx) => {
     const lockResult = await tx.execute(
       sql`select pg_try_advisory_xact_lock(${LOCK_NAMESPACE}, ${job.lockKey}) as locked`
     );
@@ -249,75 +267,27 @@ async function withJobLock<T>(
           updatedAt: now,
         },
       });
-
-    try {
-      const result = await run();
-      const finishedAt = new Date();
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: stateKey,
-          value: {
-            job: job.name,
-            status: "success",
-            lastStartedAt: now.toISOString(),
-            lastFinishedAt: finishedAt.toISOString(),
-          },
-          isSecret: false,
-          updatedAt: finishedAt,
-        })
-        .onConflictDoUpdate({
-          target: systemSetting.key,
-          set: {
-            value: {
-              job: job.name,
-              status: "success",
-              lastStartedAt: now.toISOString(),
-              lastFinishedAt: finishedAt.toISOString(),
-            },
-            isSecret: false,
-            updatedAt: finishedAt,
-          },
-        });
-
-      return {
-        locked: true as const,
-        skipped: false as const,
-        result,
-      };
-    } catch (error) {
-      const finishedAt = new Date();
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: stateKey,
-          value: {
-            job: job.name,
-            status: "error",
-            lastStartedAt: now.toISOString(),
-            lastFinishedAt: finishedAt.toISOString(),
-            error: error instanceof Error ? error.message : "Unknown error",
-          },
-          isSecret: false,
-          updatedAt: finishedAt,
-        })
-        .onConflictDoUpdate({
-          target: systemSetting.key,
-          set: {
-            value: {
-              job: job.name,
-              status: "error",
-              lastStartedAt: now.toISOString(),
-              lastFinishedAt: finishedAt.toISOString(),
-              error: error instanceof Error ? error.message : "Unknown error",
-            },
-            isSecret: false,
-            updatedAt: finishedAt,
-          },
-        });
-      throw error;
-    }
+    return { locked: true as const, skipped: false as const, startedAt: now };
   });
+  if (!claim.locked || claim.skipped) return claim;
+
+  try {
+    const result = await run();
+    await writeJobState(job, {
+      value: "success",
+      startedAt: claim.startedAt,
+      finishedAt: new Date(),
+    });
+    return { locked: true as const, skipped: false as const, result };
+  } catch (error) {
+    await writeJobState(job, {
+      value: "error",
+      startedAt: claim.startedAt,
+      finishedAt: new Date(),
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+    throw error;
+  }
 }
 
 /**
@@ -377,11 +347,13 @@ async function getSchedulerRuntimeConfig(): Promise<SchedulerRuntimeConfig> {
       getRuntimeSettingBoolean("INTERNAL_JOB_SCHEDULER_ENABLED", true),
       Promise.all(
         jobs.map((job) =>
-          getRuntimeSettingNumber(
-            job.intervalSettingKey,
-            job.defaultIntervalMinutes,
-            { positive: true }
-          )
+          job.intervalSettingKey
+            ? getRuntimeSettingNumber(
+                job.intervalSettingKey,
+                job.defaultIntervalMinutes,
+                { positive: true }
+              )
+            : Promise.resolve(job.defaultIntervalMinutes)
         )
       ),
     ]);

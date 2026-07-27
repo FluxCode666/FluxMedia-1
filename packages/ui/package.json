@@ -32,6 +32,7 @@
     "./components/sheet": "./src/components/sheet.tsx",
     "./components/switch": "./src/components/switch.tsx",
     "./components/tabs": "./src/components/tabs.tsx",
+    "./components/tooltip": "./src/components/tooltip.tsx",
     "./components/textarea": "./src/components/textarea.tsx"
   },
   "scripts": {

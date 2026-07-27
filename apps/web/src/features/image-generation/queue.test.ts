@@ -4,14 +4,64 @@ const runtimeSettings = vi.hoisted(() => ({
   globalConcurrency: 500,
 }));
 
+const redisSlots = vi.hoisted(() => {
+  let nextToken = 1;
+  const leases = new Map<string, string>();
+  return {
+    acquireGate: undefined as Promise<void> | undefined,
+    failAcquire: false,
+    acquire: vi.fn(
+      async (input: {
+        userId: string;
+        globalConcurrency: number;
+        userConcurrency: number;
+      }) => {
+        if (redisSlots.failAcquire) throw new Error("redis unavailable");
+        if (redisSlots.acquireGate) await redisSlots.acquireGate;
+        if (leases.size >= input.globalConcurrency) {
+          return { status: "blocked" as const, reason: "global" as const };
+        }
+        const userRunning = [...leases.values()].filter(
+          (userId) => userId === input.userId
+        ).length;
+        if (userRunning >= input.userConcurrency) {
+          return { status: "blocked" as const, reason: "user" as const };
+        }
+        const token = `lease-${nextToken++}`;
+        leases.set(token, input.userId);
+        return {
+          status: "acquired" as const,
+          lease: { token, userKey: `user:${input.userId}` },
+        };
+      }
+    ),
+    release: vi.fn(async (lease: { token: string }) => {
+      leases.delete(lease.token);
+    }),
+    reset() {
+      nextToken = 1;
+      leases.clear();
+      redisSlots.acquireGate = undefined;
+      redisSlots.failAcquire = false;
+      redisSlots.acquire.mockClear();
+      redisSlots.release.mockClear();
+    },
+  };
+});
+
 vi.mock("@repo/shared/system-settings", () => ({
   getRuntimeSettingNumber: vi.fn(async () => runtimeSettings.globalConcurrency),
 }));
 
+vi.mock("./redis-image-generation-slots", () => ({
+  acquireImageGenerationSlot: redisSlots.acquire,
+  releaseImageGenerationSlot: redisSlots.release,
+}));
+
 import { withImageGenerationQueue } from "./queue";
 
-// 队列模块持有进程级单例状态（running/queue/runningByUser）。为避免用例之间互相
-// 污染调度状态，需要新鲜实例的用例通过 vi.resetModules + 动态 import 取得隔离副本。
+// 队列模块持有进程级等待任务与调度定时器。为避免用例之间互相污染本地回调状态，
+// 需要新鲜实例的用例通过 vi.resetModules + 动态 import 取得隔离副本。
 async function importFreshQueue() {
   vi.resetModules();
   return await import("./queue");
@@ -34,6 +84,41 @@ async function flushTasks() {
 describe("withImageGenerationQueue", () => {
   beforeEach(() => {
     runtimeSettings.globalConcurrency = 500;
+    redisSlots.reset();
+  });
+
+  it("Redis 不可用时拒绝请求且不回退进程内槽位", async () => {
+    const { withImageGenerationQueue: queue } = await importFreshQueue();
+    const run = vi.fn(async () => "should-not-run");
+    redisSlots.failAcquire = true;
+
+    await expect(
+      queue({ userId: "user-a", priority: "normal", userConcurrency: 1 }, run)
+    ).rejects.toThrow("redis unavailable");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("Redis 获槽响应晚于排队超时时释放迟到租约且不执行任务", async () => {
+    const { withImageGenerationQueue: queue } = await importFreshQueue();
+    const acquisition = deferred<void>();
+    const run = vi.fn(async () => "should-not-run");
+    redisSlots.acquireGate = acquisition.promise;
+
+    const queued = queue(
+      {
+        userId: "user-a",
+        priority: "normal",
+        userConcurrency: 1,
+        timeoutMs: 5,
+      },
+      run
+    );
+    await expect(queued).rejects.toThrow(/queue is busy/i);
+
+    acquisition.resolve();
+    await flushTasks();
+    expect(run).not.toHaveBeenCalled();
+    expect(redisSlots.release).toHaveBeenCalledTimes(1);
   });
 
   it("limits running tasks by the configured global concurrency", async () => {
@@ -181,6 +266,27 @@ describe("withImageGenerationQueue", () => {
     );
 
     expect(started).toEqual(["a1", "a2"]);
+  });
+
+  it("任务失败时仍释放 Redis 槽位", async () => {
+    const { withImageGenerationQueue: queue } = await importFreshQueue();
+
+    await expect(
+      queue(
+        { userId: "user-a", priority: "normal", userConcurrency: 1 },
+        async () => {
+          throw new Error("upstream failed");
+        }
+      )
+    ).rejects.toThrow("upstream failed");
+
+    expect(redisSlots.release).toHaveBeenCalledTimes(1);
+    await expect(
+      queue(
+        { userId: "user-a", priority: "normal", userConcurrency: 1 },
+        async () => "second"
+      )
+    ).resolves.toBe("second");
   });
 
   it("rejects queued task after timeout with concurrency-limit message when user at limit", async () => {

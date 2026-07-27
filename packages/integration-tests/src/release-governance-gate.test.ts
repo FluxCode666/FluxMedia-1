@@ -24,6 +24,7 @@ const overrideUserId = `${runPrefix}-override-user`;
 const seededUserIds = [relayUserId, overrideUserId] as const;
 const hiddenOverrideColumn =
   "moderation_block_risk_level_override_release_gate_test";
+const hiddenMediaMarkerTable = "image_backend_member_release_gate_test";
 
 type ReleaseGateCommand = "postcheck" | "postcheck-initial" | "preflight";
 
@@ -237,6 +238,30 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
     `alter table "user"
        drop column if exists moderation_block_risk_level`
   );
+  await client.query(`
+    alter table image_backend_member_api_config
+      add column if not exists use_stream boolean not null default false
+  `);
+  await client.query(
+    "drop table if exists image_backend_account, image_backend_api"
+  );
+  const mediaMarkerResult = await client.query<{
+    hidden: boolean;
+    visible: boolean;
+  }>(`
+    select
+      to_regclass('public.${hiddenMediaMarkerTable}') is not null as hidden,
+      to_regclass('public.image_backend_member') is not null as visible
+  `);
+  const mediaMarker = mediaMarkerResult.rows[0];
+  if (mediaMarker?.hidden && mediaMarker.visible) {
+    throw new Error("测试恢复失败：统一媒体成员表与隐藏表同时存在");
+  }
+  if (mediaMarker?.hidden) {
+    await client.query(
+      `alter table ${hiddenMediaMarkerTable} rename to image_backend_member`
+    );
+  }
 }
 
 beforeAll(async () => {
@@ -308,6 +333,86 @@ describe("release governance gate PostgreSQL integration", () => {
     );
   });
 
+  it("旧 API 数据可迁移时允许统一号池迁移前检查", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(
+      `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
+    );
+    await pool.query("create table image_backend_api (id text primary key)");
+    await pool.query(
+      "insert into image_backend_api (id) values ('legacy-api')"
+    );
+
+    const result = await runReleaseGate("preflight", testDatabaseUrl);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("legacy_media_image_backend_api_count=1\n");
+    expect(result.stdout).toContain("legacy_media_total_count=1\n");
+    expect(result.stdout).toContain("legacy_media_blocker_total_count=0\n");
+    expect(result.stderr).toBe("");
+  });
+
+  it("旧 Web 账号数据仍存在时拒绝统一号池迁移前检查", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(
+      `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
+    );
+    await pool.query(
+      "create table image_backend_account (id text primary key)"
+    );
+    await pool.query(
+      "insert into image_backend_account (id) values ('legacy-web-account')"
+    );
+
+    const result = await runReleaseGate("preflight", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain(
+      "legacy_media_image_backend_account_count=1\n"
+    );
+    expect(result.stdout).toContain("legacy_media_blocker_total_count=1\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: unified media preflight failed: 1 non-migratable rows found"
+    );
+  });
+
+  it("非法模型元素与 Responses API 配置拒绝统一号池迁移前检查", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(
+      `alter table image_backend_member rename to ${hiddenMediaMarkerTable}`
+    );
+    await pool.query(`
+      create table image_backend_api (
+        id text primary key,
+        interface_mode text not null,
+        image_upstream_mode text not null,
+        supported_model_ids json not null
+      )
+    `);
+    await pool.query(`
+      insert into image_backend_api (
+        id,
+        interface_mode,
+        image_upstream_mode,
+        supported_model_ids
+      ) values (
+        'invalid-api',
+        'responses',
+        'responses',
+        '[1, ""]'::json
+      )
+    `);
+
+    const result = await runReleaseGate("preflight", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("legacy_media_invalid_api_model_count=1\n");
+    expect(result.stdout).toContain(
+      "legacy_media_incompatible_api_protocol_count=1\n"
+    );
+    expect(result.stdout).toContain("legacy_media_blocker_total_count=2\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: unified media preflight failed: 2 non-migratable rows found"
+    );
+  });
+
   it("首次 postcheck 拒绝残留覆盖，后续 postcheck 允许合法覆盖", async () => {
     if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
     await seedUser(pool, overrideUserId, "low");
@@ -343,6 +448,21 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(result.stderr).toContain("release governance gate failed:");
     expect(result.stderr).toContain(
       'column "moderation_block_risk_level_override" does not exist'
+    );
+  });
+
+  it("后续 postcheck 在 API Images 流式配置列缺失时拒绝发布", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(`
+      alter table image_backend_member_api_config
+        drop column use_stream
+    `);
+
+    const result = await runReleaseGate("postcheck", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("required_media_column_count=21\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: post-migration unified media invariants failed"
     );
   });
 

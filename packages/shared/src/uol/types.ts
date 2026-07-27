@@ -62,7 +62,9 @@ export type AccessRequirement =
  */
 export type CapabilityRequirement =
   | { capability: string }
-  | { derive: (input: unknown) => string[] };
+  | {
+      derive: (input: unknown, principal: Principal) => string[];
+    };
 
 /**
  * 幂等规格 - 声明操作的幂等性要求。
@@ -75,7 +77,11 @@ export type CapabilityRequirement =
 export type IdempotencySpec =
   | { kind: "natural" }
   | { kind: "none" }
-  | { kind: "required"; keyField: string; scope: "per-user" | "global" };
+  | {
+      kind: "required";
+      keyField: string;
+      scope: "per-user" | "per-principal" | "global";
+    };
 
 /**
  * 副作用标签 - 声明操作可能触发的副作用类型。
@@ -136,6 +142,8 @@ export interface OperationDefinition<TInput = unknown, TOutput = unknown> {
   access: AccessRequirement;
   agentExposure?: "human-only";
   capabilities?: CapabilityRequirement[];
+  /** system Principal 是否可显式绕过本操作的套餐能力门禁。 */
+  allowSystemCapabilityBypass?: boolean;
   readOnly: boolean;
   destructive: boolean;
   idempotency: IdempotencySpec;

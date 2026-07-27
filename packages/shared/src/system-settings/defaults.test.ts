@@ -6,6 +6,7 @@ import {
   getRuntimeCreditPackages,
 } from "../credits/packages";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
+import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_PLAN_CAPABILITY_MATRIX } from "../subscription/services/plan-capabilities";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import {
@@ -142,6 +143,8 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_2K");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_4K");
     expect(initializedKeys).toContain("IMAGE_MODEL_CREDIT_PRICES");
+    expect(initializedKeys).toContain("MODEL_MARKETPLACE_CONFIG");
+    expect(initializedKeys).toContain("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME");
     expect(initializedKeys).toContain("IMAGE_TEXT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("IMAGE_INPUT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("CONTENT_MODERATION_BLOCK_RISK_LEVEL");
@@ -184,6 +187,12 @@ describe("system setting default initialization", () => {
     expect(store.get("VIDEO_MODEL_CREDITS_PER_SECOND")?.value).toEqual(
       DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND
     );
+    expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(
+      createDefaultModelMarketplaceConfig()
+    );
+    expect(store.get("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")?.value).toBe(
+      "model-marketplace"
+    );
     expect(store.get("IMAGE_TEXT_MODERATION_CREDITS")?.value).toBe(0.04);
     expect(store.get("IMAGE_INPUT_MODERATION_CREDITS")?.value).toBe(0.06);
     expect(store.get("CONTENT_MODERATION_BLOCK_RISK_LEVEL")?.value).toBe(
@@ -214,6 +223,25 @@ describe("system setting default initialization", () => {
     expect(store.get("CONTENT_MODERATION_BLOCK_RISK_LEVEL")?.value).toBe(
       "medium"
     );
+  });
+
+  it("不覆盖已经存在的模型广场展示配置", async () => {
+    const existing = createDefaultModelMarketplaceConfig();
+    existing.imageByModel["gpt-image-2"] = {
+      revision: 7,
+      visible: false,
+      description: "保留现有配置",
+      cover: null,
+    };
+    store.set("MODEL_MARKETPLACE_CONFIG", {
+      key: "MODEL_MARKETPLACE_CONFIG",
+      value: existing,
+    });
+
+    const initializedKeys = await initializeMissingSystemSettingsDefaults();
+
+    expect(initializedKeys).not.toContain("MODEL_MARKETPLACE_CONFIG");
+    expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(existing);
   });
 
   it("migrates video model multipliers to fixed per-second prices", async () => {
@@ -314,6 +342,40 @@ describe("system setting default initialization", () => {
     expect(store.get("IMAGE_MODEL_CREDIT_PRICES")?.value).toEqual(expected);
   });
 
+  it("删除旧 default 并将其价格一次性固化到历史稀疏真实模型", async () => {
+    const legacyDefaultPricing = {
+      base1024Credits: 2,
+      base1kCredits: 3,
+      base2kCredits: 6,
+      base4kCredits: 11,
+    };
+    store.set("IMAGE_MODEL_CREDIT_PRICES", {
+      key: "IMAGE_MODEL_CREDIT_PRICES",
+      value: {
+        version: 1,
+        byModel: {
+          default: legacyDefaultPricing,
+          "vendor-custom-image": { base2kCredits: 8 },
+        },
+      },
+    });
+
+    await initializeMissingSystemSettingsDefaults({ updatedBy: "admin-1" });
+
+    const storedPricing = store.get("IMAGE_MODEL_CREDIT_PRICES")?.value as {
+      version: 1;
+      byModel: Record<string, Record<string, number>>;
+    };
+    expect(storedPricing.byModel).not.toHaveProperty("default");
+    expect(storedPricing.byModel["vendor-custom-image"]).toEqual({
+      ...legacyDefaultPricing,
+      base2kCredits: 8,
+    });
+    for (const model of Object.keys(createDefaultGlobalImageCreditOverrides().byModel)) {
+      expect(storedPricing.byModel[model]).toEqual(legacyDefaultPricing);
+    }
+  });
+
   it("migrates legacy moderation public URL and removes legacy Aliyun controls", async () => {
     store.set("ALIYUN_MODERATION_PUBLIC_BASE_URL", {
       key: "ALIYUN_MODERATION_PUBLIC_BASE_URL",
@@ -333,108 +395,6 @@ describe("system setting default initialization", () => {
     expect(store.get("ALIYUN_MODERATION_BLOCK_RISK_LEVEL")).toBeUndefined();
   });
 
-  it("migrates legacy Sub2API auto-sync settings into a managed task", async () => {
-    store.set("SUB2API_AUTO_SYNC_ENABLED", {
-      key: "SUB2API_AUTO_SYNC_ENABLED",
-      value: true,
-    });
-    store.set("SUB2API_AUTO_SYNC_INTERVAL_MINUTES", {
-      key: "SUB2API_AUTO_SYNC_INTERVAL_MINUTES",
-      value: 60,
-    });
-    store.set("SUB2API_AUTO_SYNC_SOURCE_GROUP_ID", {
-      key: "SUB2API_AUTO_SYNC_SOURCE_GROUP_ID",
-      value: "team",
-    });
-    store.set("SUB2API_AUTO_SYNC_MODE", {
-      key: "SUB2API_AUTO_SYNC_MODE",
-      value: "both",
-    });
-    store.set("SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT", {
-      key: "SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT",
-      value: true,
-    });
-    store.set("SUB2API_AUTO_SYNC_PLAN_FILTER", {
-      key: "SUB2API_AUTO_SYNC_PLAN_FILTER",
-      value: "non_free",
-    });
-
-    await initializeMissingSystemSettingsDefaults();
-
-    const tasks = store.get("SUB2API_AUTO_SYNC_TASKS")?.value as Array<{
-      enabled: boolean;
-      intervalMinutes: number;
-      sourceGroupId: string | null;
-      syncMode: string;
-      allowMobileRtImport: boolean;
-      planFilter: string;
-    }>;
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({
-      enabled: true,
-      intervalMinutes: 60,
-      sourceGroupId: "team",
-      syncMode: "both",
-      allowMobileRtImport: true,
-      planFilter: "non_free",
-    });
-    expect(store.get("SUB2API_AUTO_SYNC_INTERVAL_MINUTES")).toBeUndefined();
-    expect(store.get("SUB2API_AUTO_SYNC_SOURCE_GROUP_ID")).toBeUndefined();
-    expect(store.get("SUB2API_AUTO_SYNC_MODE")).toBeUndefined();
-    expect(store.get("SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT")).toBeUndefined();
-    expect(store.get("SUB2API_AUTO_SYNC_PLAN_FILTER")).toBeUndefined();
-  });
-
-  it("forces Sub2API syncMode=responses when mobile RT import is disabled even if legacy mode=both (C-L28)", async () => {
-    store.set("SUB2API_AUTO_SYNC_MODE", {
-      key: "SUB2API_AUTO_SYNC_MODE",
-      value: "both",
-    });
-    store.set("SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT", {
-      key: "SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT",
-      value: false,
-    });
-
-    await initializeMissingSystemSettingsDefaults();
-
-    const tasks = store.get("SUB2API_AUTO_SYNC_TASKS")?.value as Array<{
-      syncMode: string;
-      allowMobileRtImport: boolean;
-    }>;
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({
-      syncMode: "responses",
-      allowMobileRtImport: false,
-    });
-  });
-
-  it("falls back invalid Sub2API legacy interval/plan filter to defaults (C-L28)", async () => {
-    store.set("SUB2API_AUTO_SYNC_ENABLED", {
-      key: "SUB2API_AUTO_SYNC_ENABLED",
-      value: true,
-    });
-    store.set("SUB2API_AUTO_SYNC_INTERVAL_MINUTES", {
-      key: "SUB2API_AUTO_SYNC_INTERVAL_MINUTES",
-      value: "not-a-number",
-    });
-    store.set("SUB2API_AUTO_SYNC_PLAN_FILTER", {
-      key: "SUB2API_AUTO_SYNC_PLAN_FILTER",
-      value: "bogus-filter",
-    });
-
-    await initializeMissingSystemSettingsDefaults();
-
-    const tasks = store.get("SUB2API_AUTO_SYNC_TASKS")?.value as Array<{
-      intervalMinutes: number;
-      planFilter: string;
-    }>;
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({
-      intervalMinutes: 720,
-      planFilter: "non_free",
-    });
-  });
-
   it("does not overwrite existing stored settings", async () => {
     store.set("PLAN_STARTER_MONTHLY_AMOUNT", {
       key: "PLAN_STARTER_MONTHLY_AMOUNT",
@@ -446,10 +406,9 @@ describe("system setting default initialization", () => {
         version: 1,
         features: {
           ...DEFAULT_PLAN_CAPABILITY_MATRIX.features,
-          "imageGeneration.chat": "starter",
+          "imageGeneration.video": "starter",
         },
         limits: DEFAULT_PLAN_CAPABILITY_MATRIX.limits,
-        billing: DEFAULT_PLAN_CAPABILITY_MATRIX.billing,
       },
     });
 
@@ -462,7 +421,7 @@ describe("system setting default initialization", () => {
       (
         store.get("PLAN_CAPABILITY_MATRIX")
           ?.value as typeof DEFAULT_PLAN_CAPABILITY_MATRIX
-      ).features["imageGeneration.chat"]
+      ).features["imageGeneration.video"]
     ).toBe("starter");
   });
 

@@ -1,8 +1,8 @@
 /**
- * 平台公开模型目录纯构建器测试。
+ * 平台媒体模型目录纯构建器测试。
  *
- * 使用方：首页运行时目录服务；覆盖套餐并集、分组可达性、成员终态、权威分类、
- * 大小写无关去重、稳定排序和快速集成所需的具体图像模型判断。
+ * 职责：覆盖显式模型能力、套餐/分组可达性、媒体分类、终态过滤、稳定去重与
+ * 快速集成模型判断；旧 conversation 分类不得重新出现。
  */
 import { describe, expect, it } from "vitest";
 
@@ -12,14 +12,8 @@ import {
   type PlatformModelCatalogSource,
 } from "./platform-model-catalog";
 
-/**
- * 构造包含动态套餐能力门槛的最小目录事实。
- *
- * @param overrides - 需要替换的顶层目录事实。
- * @returns 可直接传给纯构建器的完整输入。
- * @remarks 纯函数，无副作用；顶层覆盖不会深合并，测试需提供完整替代字段。
- */
-function createSource(
+/** 构造默认可达的统一媒体目录事实。 */
+function source(
   overrides: Partial<PlatformModelCatalogSource> = {}
 ): PlatformModelCatalogSource {
   return {
@@ -27,9 +21,7 @@ function createSource(
       backendGroupsSelect: "starter",
       externalModelsList: "starter",
       externalImagesGenerate: "starter",
-      externalChatCompletions: "starter",
-      externalResponses: "pro",
-      gpt55: "ultra",
+      externalVideosGenerate: "starter",
     },
     groups: [
       {
@@ -38,21 +30,14 @@ function createSource(
         isDefault: true,
         isUserSelectable: false,
         minPlan: "free",
-        backendType: "mixed",
-        childGroupIds: [],
       },
     ],
     members: [
       {
-        type: "api",
         groupIds: ["default-group"],
+        supportedModelIds: ["gpt-image-2", "firefly-sora2-8s-16x9"],
         isEnabled: true,
         status: "active",
-        interfaceMode: "images",
-        imageUpstreamMode: "images",
-        model: "gpt-image-2",
-        supportedModelIds: [],
-        adobeSourced: false,
       },
     ],
     ...overrides,
@@ -60,388 +45,101 @@ function createSource(
 }
 
 describe("buildPlatformModelCatalog", () => {
-  it("将普通 API 后端声明的 gpt-image 模型归入图像分类", () => {
-    expect(buildPlatformModelCatalog(createSource()).image).toEqual([
-      { id: "gpt-image-2" },
-    ]);
+  it("仅按统一成员显式能力输出图片与视频分类", () => {
+    expect(buildPlatformModelCatalog(source())).toEqual({
+      image: [{ id: "gpt-image-2" }],
+      video: [{ id: "firefly-sora2-8s-16x9" }],
+    });
   });
 
-  it("按大小写无关方式稳定去重和排序，并在最后一个承接成员停用后移除模型", () => {
-    const source = createSource({
-      groups: [
-        ...createSource().groups,
-        {
-          id: "selectable-group",
-          isEnabled: true,
-          isDefault: false,
-          isUserSelectable: true,
-          minPlan: "starter",
-          backendType: "web",
-          childGroupIds: [],
-        },
-      ],
-      members: [
-        {
-          type: "api",
-          groupIds: ["default-group"],
-          isEnabled: true,
-          status: "active",
-          interfaceMode: "images",
-          imageUpstreamMode: "images",
-          model: "Zeta-Image",
-          supportedModelIds: ["Zeta-Image", "beta-image"],
-          adobeSourced: false,
-        },
-        {
-          type: "api",
-          groupIds: ["selectable-group"],
-          isEnabled: true,
-          status: "limited",
-          interfaceMode: "images",
-          imageUpstreamMode: "images",
-          model: "zeta-image",
-          supportedModelIds: ["zeta-image", "Alpha-Image"],
-          adobeSourced: false,
-        },
-      ],
-    });
+  it("稳定去重并排除停用、终态和不可达组成员", () => {
+    const catalog = buildPlatformModelCatalog(
+      source({
+        groups: [
+          ...source().groups,
+          {
+            id: "selectable-group",
+            isEnabled: true,
+            isDefault: false,
+            isUserSelectable: true,
+            minPlan: "starter",
+          },
+          {
+            id: "hidden-group",
+            isEnabled: true,
+            isDefault: false,
+            isUserSelectable: false,
+            minPlan: "free",
+          },
+        ],
+        members: [
+          {
+            groupIds: ["default-group"],
+            supportedModelIds: ["Zeta-Image", "alpha-image"],
+            isEnabled: true,
+            status: "limited",
+          },
+          {
+            groupIds: ["selectable-group"],
+            supportedModelIds: ["zeta-image", "beta-image"],
+            isEnabled: true,
+            status: "active",
+          },
+          {
+            groupIds: ["hidden-group"],
+            supportedModelIds: ["hidden-image"],
+            isEnabled: true,
+            status: "active",
+          },
+          {
+            groupIds: ["default-group"],
+            supportedModelIds: ["terminal-image"],
+            isEnabled: true,
+            status: "error",
+          },
+        ],
+      })
+    );
 
-    expect(buildPlatformModelCatalog(source).image).toEqual([
-      { id: "Alpha-Image" },
+    expect(catalog.image).toEqual([
+      { id: "alpha-image" },
       { id: "beta-image" },
       { id: "Zeta-Image" },
     ]);
+  });
 
+  it("停用的默认分组不会贡献静态兜底模型", () => {
     expect(
-      buildPlatformModelCatalog({
-        ...source,
-        members: source.members.map((member) => ({
-          ...member,
-          isEnabled: false,
-        })),
-      }).image
-    ).toEqual([]);
-  });
-
-  it("对三个分类都返回合法空数组", () => {
-    expect(buildPlatformModelCatalog(createSource({ members: [] }))).toEqual({
-      image: [],
-      video: [],
-      conversation: [],
-    });
-  });
-
-  it("仅纳入有效默认或可选组，并只展开一层有效 mixed child", () => {
-    const source = createSource({
-      groups: [
-        {
-          id: "mixed-parent",
-          isEnabled: true,
-          isDefault: true,
-          isUserSelectable: false,
-          minPlan: "starter",
-          backendType: "mixed",
-          childGroupIds: [
-            "valid-child",
-            "disabled-child",
-            "mixed-child",
-            "nested-child",
-            "missing-child",
+      buildPlatformModelCatalog(
+        source({
+          groups: [
+            {
+              id: "default-group",
+              isEnabled: false,
+              isDefault: true,
+              isUserSelectable: false,
+              minPlan: "free",
+            },
           ],
-        },
-        {
-          id: "valid-child",
-          isEnabled: true,
-          isDefault: false,
-          isUserSelectable: false,
-          minPlan: "starter",
-          backendType: "responses",
-          childGroupIds: [],
-        },
-        {
-          id: "disabled-child",
-          isEnabled: false,
-          isDefault: false,
-          isUserSelectable: false,
-          minPlan: "starter",
-          backendType: "web",
-          childGroupIds: [],
-        },
-        {
-          id: "mixed-child",
-          isEnabled: true,
-          isDefault: false,
-          isUserSelectable: false,
-          minPlan: "starter",
-          backendType: "mixed",
-          childGroupIds: [],
-        },
-        {
-          id: "nested-child",
-          isEnabled: true,
-          isDefault: false,
-          isUserSelectable: false,
-          minPlan: "starter",
-          backendType: "web",
-          childGroupIds: ["nested-grandchild"],
-        },
-        {
-          id: "orphan-group",
-          isEnabled: true,
-          isDefault: false,
-          isUserSelectable: false,
-          minPlan: "free",
-          backendType: "web",
-          childGroupIds: [],
-        },
-      ],
-      members: [
-        ...(
-          [
-            ["valid-child", "valid-image"],
-            ["disabled-child", "disabled-image"],
-            ["mixed-child", "mixed-image"],
-            ["nested-child", "nested-image"],
-            ["orphan-group", "orphan-image"],
-          ] satisfies Array<[string, string]>
-        ).map(([groupId, model]) => ({
-          type: "api" as const,
-          groupIds: [groupId],
-          isEnabled: true,
-          status: "active",
-          interfaceMode: "images",
-          imageUpstreamMode: "images",
-          model,
-          supportedModelIds: [],
-          adobeSourced: false,
-        })),
-        {
-          type: "api",
-          groupIds: ["valid-child"],
-          isEnabled: true,
-          status: "active",
-          interfaceMode: "responses",
-          imageUpstreamMode: "images",
-          model: "wrong-interface-image",
-          supportedModelIds: [],
-          adobeSourced: false,
-        },
-      ],
-    });
-
-    expect(buildPlatformModelCatalog(source).image).toEqual([
-      { id: "valid-image" },
-    ]);
+        })
+      )
+    ).toEqual({ image: [], video: [] });
   });
 
-  it("排除终态 error，同时保留 cooldown 和 limited 所表达的平台支持", () => {
-    const shared = {
-      type: "api" as const,
-      groupIds: ["default-group"],
-      isEnabled: true,
-      interfaceMode: "images",
-      imageUpstreamMode: "images",
-      supportedModelIds: [],
-      adobeSourced: false,
-    };
-    const catalog = buildPlatformModelCatalog(
-      createSource({
-        members: [
-          { ...shared, status: "error", model: "terminal-model" },
-          {
-            ...shared,
-            status: "active",
-            cooldownUntil: "2026-07-24T00:00:00.000Z",
-            model: "cooldown-model",
-          },
-          { ...shared, status: "limited", model: "limited-model" },
-        ],
-      })
-    );
-
-    expect(catalog.image).toEqual([
-      { id: "cooldown-model" },
-      { id: "limited-model" },
-    ]);
-  });
-
-  it("按 Adobe 视频、对话常量和图像后端声明的权威来源分类", () => {
-    const catalog = buildPlatformModelCatalog(
-      createSource({
-        members: [
-          {
-            type: "adobe",
-            groupIds: ["default-group"],
-            isEnabled: true,
-            status: "active",
-            mode: "direct",
-            enabledModels: ["gpt-image-2"],
-            supportsVideo: true,
-          },
-          {
-            type: "account",
-            groupIds: ["default-group"],
-            isEnabled: true,
-            status: "active",
-            implementationMode: "responses",
-          },
-          {
-            type: "api",
-            groupIds: ["default-group"],
-            isEnabled: true,
-            status: "active",
-            interfaceMode: "images",
-            imageUpstreamMode: "images",
-            model: "vendor-unknown-image",
-            supportedModelIds: [],
-            adobeSourced: false,
-          },
-          {
-            type: "api",
-            groupIds: ["default-group"],
-            isEnabled: true,
-            status: "active",
-            interfaceMode: "images",
-            imageUpstreamMode: "images",
-            model: "gpt-5.4",
-            supportedModelIds: [],
-            adobeSourced: false,
-          },
-        ],
-      })
-    );
-
-    expect(catalog.image).toEqual([
-      { id: "firefly-gpt-image-2" },
-      { id: "gpt-image-2" },
-      { id: "vendor-unknown-image" },
-    ]);
-    expect(catalog.video.length).toBeGreaterThan(0);
-    expect(catalog.video[0]?.id.startsWith("firefly-")).toBe(true);
-    expect(catalog.conversation).toEqual(
-      expect.arrayContaining([{ id: "gpt-5.4" }, { id: "gpt-5.4-mini" }])
-    );
-    expect(catalog.image).not.toContainEqual({ id: "gpt-5.4" });
-  });
-
-  it("排除 adobeSourced API 视频并仅由 Adobe direct 保留视频目录", () => {
-    const fireflyVideoModelId = "firefly-sora2-4s-16x9";
-    const apiMember = {
-      type: "api" as const,
-      groupIds: ["default-group"],
-      isEnabled: true,
-      status: "active",
-      interfaceMode: "images",
-      imageUpstreamMode: "images",
-      model: fireflyVideoModelId,
-      supportedModelIds: [],
-      adobeSourced: true,
-    };
-
-    expect(
-      buildPlatformModelCatalog(createSource({ members: [apiMember] })).video
-    ).toEqual([]);
-
-    const catalog = buildPlatformModelCatalog(
-      createSource({
-        members: [
-          apiMember,
-          {
-            type: "adobe",
-            groupIds: ["default-group"],
-            isEnabled: true,
-            status: "active",
-            mode: "direct",
-            enabledModels: [],
-            supportsVideo: true,
-          },
-        ],
-      })
-    );
-
-    expect(catalog.video).toContainEqual({ id: fireflyVideoModelId });
-  });
-
-  it("排除 responses 账号从 web 分组贡献的模型", () => {
-    const source = createSource({
-      groups: createSource().groups.map((group) => ({
-        ...group,
-        backendType: "web" as const,
-      })),
-      members: [
-        {
-          type: "account",
-          groupIds: ["default-group"],
-          isEnabled: true,
-          status: "active",
-          implementationMode: "responses",
-        },
-      ],
-    });
-
-    expect(buildPlatformModelCatalog(source)).toEqual({
+  it("无成员时返回两个合法空分类", () => {
+    expect(buildPlatformModelCatalog(source({ members: [] }))).toEqual({
       image: [],
       video: [],
-      conversation: [],
     });
-  });
-
-  it("排除 web 账号从 responses 分组贡献的模型", () => {
-    const source = createSource({
-      groups: createSource().groups.map((group) => ({
-        ...group,
-        backendType: "responses" as const,
-      })),
-      members: [
-        {
-          type: "account",
-          groupIds: ["default-group"],
-          isEnabled: true,
-          status: "active",
-          implementationMode: "web",
-        },
-      ],
-    });
-
-    expect(buildPlatformModelCatalog(source)).toEqual({
-      image: [],
-      video: [],
-      conversation: [],
-    });
-  });
-
-  it("允许账号从 mixed 分组贡献模型", () => {
-    const catalog = buildPlatformModelCatalog(
-      createSource({
-        members: [
-          {
-            type: "account",
-            groupIds: ["default-group"],
-            isEnabled: true,
-            status: "active",
-            implementationMode: "responses",
-          },
-        ],
-      })
-    );
-
-    expect(catalog.image).toContainEqual({ id: "gpt-image-2" });
-    expect(catalog.conversation.length).toBeGreaterThan(0);
   });
 });
 
 describe("isConcretePlatformImageModelId", () => {
-  it.each([
-    "",
-    "   ",
-    "default",
-    "unknown",
-    "auto",
-  ])("将占位模型 %j 判定为不可执行", (modelId) => {
-    expect(isConcretePlatformImageModelId(modelId)).toBe(false);
+  it.each(["", "auto", "default", "unknown"])("拒绝占位模型 %s", (id) => {
+    expect(isConcretePlatformImageModelId(id)).toBe(false);
   });
 
-  it("接受运行时声明的具体图像模型", () => {
+  it("接受真实图片模型", () => {
     expect(isConcretePlatformImageModelId("gpt-image-2")).toBe(true);
   });
 });

@@ -9,7 +9,6 @@ import {
   createDefaultGlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,
   type ImageCreditOverrides,
-  type ResolvedImageCreditPricing,
   resolveImageCreditPricing,
 } from "@repo/shared/image-backend/group-image-pricing";
 import {
@@ -48,17 +47,6 @@ export async function getRuntimeImageModelCreditPricing(): Promise<ImageCreditOv
   return parsed.success
     ? parsed.data
     : createDefaultGlobalImageCreditOverrides();
-}
-
-/**
- * 为尚未迁移的展示调用方返回全局默认模型四档价格。
- *
- * WHY: 旧调用方仍使用“base pricing”命名，但这里不再读取历史通用价格键；返回值直接
- * 来自必填全局模型矩阵，因此不会形成“分组 > 全局 > 通用价格”的第三层回退。
- */
-export async function getRuntimeImageBaseCreditPricing(): Promise<ResolvedImageCreditPricing> {
-  const global = await getRuntimeImageModelCreditPricing();
-  return resolveImageCreditPricing({ model: "default", global });
 }
 
 /**

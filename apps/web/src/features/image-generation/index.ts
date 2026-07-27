@@ -6,7 +6,7 @@ export {
   getUserGenerationsCount,
   getUserRecentGenerations,
 } from "./queries";
-export { generateImage, getEffectiveConfig } from "./service";
+export { generateImage } from "./service";
 export type {
   ApiConfig,
   GenerateImageParams,

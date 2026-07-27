@@ -4,8 +4,8 @@
  * Adobe Firefly 视频创作面板（自包含）。
  *
  * 选模型族(7族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
- * model id → POST /api/videos/generate（SSE，长任务 keep-alive）→ 解析 completed/error →
- * 播放产物视频。可选上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页独立 tab。
+ * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
+ * 产物视频。可选上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页独立 tab。
  */
 
 import {
@@ -28,7 +28,66 @@ import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { VideoPricingInfo } from "../video-operations";
 
+/** 经静态视频目录验证后，可安全用于面板一次性初始化的模型选项。 */
+export type VideoCreateInitialSelection = {
+  familyId: string;
+  duration: number;
+  ratio: string;
+  resolution: string;
+};
+
 type VideoStatus = "idle" | "running" | "done" | "error";
+
+type VideoTaskResponse = {
+  taskId: string;
+  status:
+    | "pending"
+    | "submitting"
+    | "processing"
+    | "needs_attention"
+    | "completed"
+    | "failed";
+  videoUrl?: string;
+  error?: string;
+};
+
+const VIDEO_STATUS_INITIAL_POLL_MS = 60_000;
+const VIDEO_STATUS_MAX_POLL_MS = 120_000;
+
+/** 等待下一轮状态查询；间隔不低于后端视频 worker 的一分钟周期。 */
+function waitForVideoPoll(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+/** 收窄站内状态响应；非法或漂移的服务端负载显式失败。 */
+function parseVideoTaskResponse(value: unknown): VideoTaskResponse {
+  if (!value || typeof value !== "object") {
+    throw new Error("视频任务响应格式无效");
+  }
+  const record = value as Record<string, unknown>;
+  const statuses: VideoTaskResponse["status"][] = [
+    "pending",
+    "submitting",
+    "processing",
+    "needs_attention",
+    "completed",
+    "failed",
+  ];
+  if (
+    typeof record.taskId !== "string" ||
+    !statuses.includes(record.status as VideoTaskResponse["status"])
+  ) {
+    throw new Error("视频任务响应格式无效");
+  }
+  return {
+    taskId: record.taskId,
+    status: record.status as VideoTaskResponse["status"],
+    ...(typeof record.videoUrl === "string"
+      ? { videoUrl: record.videoUrl }
+      : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+  };
+}
 
 function ratioSuffix(ratio: string): string {
   return ratio.replace(":", "x");
@@ -76,22 +135,31 @@ type VideoHistoryItem = {
 };
 
 export function VideoCreatePanel({
+  initialSelection = null,
   recent = [],
   pricing,
 }: {
+  initialSelection?: VideoCreateInitialSelection | null;
   recent?: VideoHistoryItem[];
   pricing: VideoPricingInfo;
 }) {
   const families = FIREFLY_VIDEO_FAMILIES;
-  const [familyId, setFamilyId] = useState(families[0]?.family ?? "sora2");
+  const initialFamily =
+    families.find((item) => item.family === initialSelection?.familyId) ??
+    families[0];
+  const [familyId, setFamilyId] = useState(initialFamily?.family ?? "sora2");
   const family = useMemo(
     () => families.find((item) => item.family === familyId) ?? families[0],
-    [families, familyId]
+    [familyId]
   );
-  const [duration, setDuration] = useState<number>(family?.durations[0] ?? 8);
-  const [ratio, setRatio] = useState<string>(family?.ratios[0] ?? "16:9");
+  const [duration, setDuration] = useState<number>(
+    initialSelection?.duration ?? initialFamily?.durations[0] ?? 8
+  );
+  const [ratio, setRatio] = useState<string>(
+    initialSelection?.ratio ?? initialFamily?.ratios[0] ?? "16:9"
+  );
   const [resolution, setResolution] = useState<string>(
-    family?.resolutions[0] ?? "720p"
+    initialSelection?.resolution ?? initialFamily?.resolutions[0] ?? "720p"
   );
   const [prompt, setPrompt] = useState("");
   const [inputImage, setInputImage] = useState<string | null>(null);
@@ -176,54 +244,46 @@ export function VideoCreatePanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          clientRequestId: crypto.randomUUID(),
           prompt: prompt.trim(),
           model,
           ...(inputImage ? { inputImages: [inputImage] } : {}),
         }),
       });
-      if (!response.ok || !response.body) {
+      if (!response.ok) {
         const text = await response.text().catch(() => "");
         throw new Error(text || `请求失败 HTTP ${response.status}`);
       }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let settled = false;
+      let task = parseVideoTaskResponse(await response.json());
+      let pollDelayMs = VIDEO_STATUS_INITIAL_POLL_MS;
       for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const payload = trimmed.slice("data:".length).trim();
-          if (!payload) continue;
-          let event: Record<string, unknown>;
-          try {
-            event = JSON.parse(payload) as Record<string, unknown>;
-          } catch {
-            continue;
-          }
-          if (event.type === "completed") {
-            settled = true;
-            setVideoUrl(
-              typeof event.videoUrl === "string" ? event.videoUrl : null
-            );
-            setStatus("done");
-          } else if (event.type === "error") {
-            settled = true;
-            setError(
-              typeof event.error === "string" ? event.error : "视频生成失败"
-            );
-            setStatus("error");
-          }
+        if (task.status === "completed" && task.videoUrl) {
+          setVideoUrl(task.videoUrl);
+          setStatus("done");
+          return;
         }
-      }
-      if (!settled) {
-        setError("连接中断，请稍后在历史中查看");
-        setStatus("error");
+        if (task.status === "failed" || task.status === "needs_attention") {
+          throw new Error(
+            task.error ??
+              (task.status === "needs_attention"
+                ? "视频提交结果需要人工核对"
+                : "视频生成失败")
+          );
+        }
+        await waitForVideoPoll(pollDelayMs);
+        const statusResponse = await fetch(
+          `/api/videos/${encodeURIComponent(task.taskId)}`,
+          { cache: "no-store" }
+        );
+        if (!statusResponse.ok) {
+          const text = await statusResponse.text().catch(() => "");
+          throw new Error(text || `状态查询失败 HTTP ${statusResponse.status}`);
+        }
+        task = parseVideoTaskResponse(await statusResponse.json());
+        pollDelayMs = Math.min(
+          Math.round(pollDelayMs * 1.5),
+          VIDEO_STATUS_MAX_POLL_MS
+        );
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "视频生成失败");
@@ -347,7 +407,8 @@ export function VideoCreatePanel({
                     : "border-border hover:border-foreground/40"
                 }`}
               >
-                {/* 历史缩略图(本站已生成图)。biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
+                {/* 历史缩略图使用本站已生成图。 */}
+                {/* biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
                 <img
                   src={item.imageUrl ?? ""}
                   alt=""

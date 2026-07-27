@@ -32,7 +32,6 @@ const mocks = vi.hoisted(() => ({
     })
   ),
   getPlanCapabilitySnapshot: vi.fn(async () => ({
-    billing: { agentRoundCredits: 3, chatRoundCredits: 2 },
     features: { "moderation.blocking": true },
     limits: { monthlyCredits: 800 },
   })),
@@ -40,12 +39,6 @@ const mocks = vi.hoisted(() => ({
   getRuntimeImageModelCreditPricing: vi.fn(async () => ({
     version: 1 as const,
     byModel: {
-      default: {
-        base1024Credits: 1.1,
-        base1kCredits: 2.1,
-        base2kCredits: 5.1,
-        base4kCredits: 10.1,
-      },
       "gpt-image-2": {
         base1024Credits: 1.5,
         base1kCredits: 2.5,
@@ -81,7 +74,7 @@ vi.mock("@repo/shared/subscription/services/user-plan", () => ({
   getUserPlan: mocks.getUserPlan,
 }));
 
-vi.mock("@/features/image-backend-pool/service", () => ({
+vi.mock("@/features/image-backend-pool/catalog-service", () => ({
   getEffectiveDefaultImageBackendGroup:
     mocks.getEffectiveDefaultImageBackendGroup,
 }));
@@ -116,23 +109,23 @@ describe("loadImagePricingCardData", () => {
 
     expect(result).toMatchObject({
       billing: {
-        agentRoundCredits: 3,
-        chatRoundCredits: 2,
         groupName: "专业池",
         moderationBlockingEnabled: true,
         monthlyCredits: 800,
         planName: "Pro",
       },
-      defaultModelPricing: {
-        base1024Credits: 1.1,
-        base1kCredits: 2.1,
-        base2kCredits: 5.1,
-        base4kCredits: 10.1,
+      referenceModel: {
+        id: "gpt-image-2",
+        pricing: {
+          base1024Credits: 1.5,
+          base1kCredits: 2.5,
+          base2kCredits: 5.5,
+          base4kCredits: 10.5,
+        },
       },
       globalModelPricing: {
         version: 1,
         byModel: {
-          default: { base4kCredits: 10.1 },
           "gpt-image-2": { base4kCredits: 10.5 },
         },
       },

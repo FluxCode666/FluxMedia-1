@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "../adobe/video-pricing";
-import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
+import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import {
   clearSystemSettingsCache,
@@ -13,7 +12,6 @@ import {
   importSystemSettingsFromEnv,
   resetBootstrappedProcessSettingsForTests,
   setBootstrappedProcessSetting,
-  setGlobalModelPricing,
   setSystemSettings,
 } from "./index";
 
@@ -402,28 +400,26 @@ describe("setSystemSettings", () => {
     );
   });
 
-  it("通过专用入口原子保存完整的全局模型价格", async () => {
-    const image = createDefaultGlobalImageCreditOverrides();
-    const videoCreditsPerSecond = {
-      ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-    };
-
-    await setGlobalModelPricing({
-      image,
-      videoCreditsPerSecond,
-      updatedBy: "super-admin-1",
+  it("拒绝通过通用入口写入或清空模型广场配置", async () => {
+    const existing = createDefaultModelMarketplaceConfig();
+    store.set("MODEL_MARKETPLACE_CONFIG", {
+      key: "MODEL_MARKETPLACE_CONFIG",
+      value: existing,
     });
 
-    expect(store.get("IMAGE_MODEL_CREDIT_PRICES")).toMatchObject({
-      value: image,
-      isSecret: false,
-      updatedBy: "super-admin-1",
-    });
-    expect(store.get("VIDEO_MODEL_CREDITS_PER_SECOND")).toMatchObject({
-      value: videoCreditsPerSecond,
-      isSecret: false,
-      updatedBy: "super-admin-1",
-    });
+    await expect(
+      setSystemSettings(
+        [{ key: "MODEL_MARKETPLACE_CONFIG", value: { ...existing } }],
+        "admin"
+      )
+    ).rejects.toThrow(/专用配置入口/);
+    await expect(
+      setSystemSettings(
+        [{ key: "MODEL_MARKETPLACE_CONFIG", value: "", clear: true }],
+        "admin"
+      )
+    ).rejects.toThrow(/专用配置入口/);
+    expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(existing);
   });
 });
 
@@ -486,6 +482,54 @@ describe("importSystemSettingsFromEnv", () => {
 
     expect(store.get("CONTENT_MODERATION_BLOCK_RISK_LEVEL")?.value).toBe(
       "high"
+    );
+  });
+
+  it("绝不从环境变量覆盖模型广场展示配置", async () => {
+    const existing = createDefaultModelMarketplaceConfig();
+    existing.imageByModel["gpt-image-2"] = {
+      revision: 3,
+      visible: true,
+      description: "数据库真相",
+      cover: null,
+    };
+    store.set("MODEL_MARKETPLACE_CONFIG", {
+      key: "MODEL_MARKETPLACE_CONFIG",
+      value: existing,
+    });
+    vi.stubEnv(
+      "MODEL_MARKETPLACE_CONFIG",
+      JSON.stringify({
+        ...existing,
+        imageByModel: {
+          ...existing.imageByModel,
+          "gpt-image-2": {
+            ...existing.imageByModel["gpt-image-2"],
+            revision: 9,
+          },
+        },
+      })
+    );
+
+    await importSystemSettingsFromEnv({ overwrite: true });
+
+    expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(existing);
+  });
+
+  it("允许把模型广场资产 bucket 作为普通部署设置导入", async () => {
+    store.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", {
+      key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      value: "old-model-assets",
+    });
+    vi.stubEnv(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      "production-model-assets"
+    );
+
+    await importSystemSettingsFromEnv({ overwrite: true });
+
+    expect(store.get("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")?.value).toBe(
+      "production-model-assets"
     );
   });
 });

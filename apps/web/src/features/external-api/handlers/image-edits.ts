@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { withApiLogging } from "@repo/shared/api-logger";
+import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import {
   canUsePlanCapability,
   getPlanLimits,
@@ -38,7 +39,7 @@ import {
   readResponseBytesWithLimit,
 } from "@/features/external-api/safe-image-fetch";
 import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
-import { runImageGenerationForUser } from "@/features/image-generation/operations";
+import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
   normalizeOutputCompression,
@@ -47,7 +48,7 @@ import {
 } from "@/features/image-generation/output-format";
 import {
   DEFAULT_MAX_IMAGE_BYTES,
-  filesToImageInputs,
+  filesToMediaInputReferences,
   formatMegabytes,
   getTotalUploadSize,
   uploadModerationImages,
@@ -65,6 +66,7 @@ import type {
   PartialImageResult,
   ThinkingLevel,
 } from "@/features/image-generation/types";
+import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
 
 const VALID_QUALITIES = new Set<ImageQuality>([
   "auto",
@@ -86,8 +88,6 @@ const JSON_SCALAR_FIELDS = [
   "prompt",
   "promptOptimization",
   "prompt_optimization",
-  "promptRepair",
-  "prompt_repair",
   "size",
   "quality",
   "moderation",
@@ -99,15 +99,7 @@ const JSON_SCALAR_FIELDS = [
   "n",
   "response_format",
   "model",
-  "gptModel",
-  "gpt_model",
   "thinking",
-  "force_web",
-  "forceWeb",
-  "web_first",
-  "webFirst",
-  "force_firefly",
-  "forceFirefly",
   "stream",
   "async",
   "callback_url",
@@ -465,7 +457,7 @@ async function resolveMaskReference(
 
 async function toStreamCompletedPayload(
   request: Request,
-  result: Awaited<ReturnType<typeof runImageGenerationForUser>>,
+  result: ImageGenerationOperationResult,
   responseFormat: "url" | "b64_json",
   index: number
 ) {
@@ -595,13 +587,6 @@ export const postExternalImageEdits = withApiLogging(
       "promptOptimization",
       "prompt_optimization"
     );
-    // 审核改写重试开关(issue #24):传 false 时,审核拦截后不自动改写提示词重试,直接返回真实错误。
-    const moderationPromptRepair = getOptionalBoolean(
-      formData,
-      "promptRepair",
-      "prompt_repair"
-    );
-
     const size = getText(formData, "size") || undefined;
     if (size) {
       const sizeCheck = validateImageSize(size);
@@ -683,29 +668,20 @@ export const postExternalImageEdits = withApiLogging(
       getText(formData, "response_format") === "url" ? "url" : "b64_json";
     // 不在传输层硬编码模型前缀：最终选中 pool-api 时可透传任意管理员配置的
     // 上游模型，其他后端仍由统一图像管线执行既有白名单校验。
-    const model = getText(formData, "model") || undefined;
-    const gptModel =
-      getText(formData, "gptModel") ||
-      getText(formData, "gpt_model") ||
-      undefined;
+    const parsedModel = imageModelIdSchema.safeParse(
+      getText(formData, "model")
+    );
+    if (!parsedModel.success) {
+      return openAIImageError(
+        parsedModel.error.issues[0]?.message || "Invalid model."
+      );
+    }
+    const model = parsedModel.data;
     const thinkingValue = getText(formData, "thinking") || undefined;
     if (thinkingValue && !VALID_THINKING.has(thinkingValue as ThinkingLevel)) {
       return openAIImageError("Invalid thinking level.");
     }
     const thinking = thinkingValue as ThinkingLevel | undefined;
-    const forceWebBackend = getOptionalBoolean(
-      formData,
-      "web_first",
-      "webFirst",
-      "force_web",
-      "forceWeb"
-    );
-    // force_firefly：强制把本次编辑请求路由到 adobe（firefly）后端，对任意模型生效。
-    const forceFirefly = getOptionalBoolean(
-      formData,
-      "force_firefly",
-      "forceFirefly"
-    );
     if (imageReferences.length === 0) {
       return openAIImageError("At least one source image is required.");
     }
@@ -777,47 +753,54 @@ export const postExternalImageEdits = withApiLogging(
         sourceFiles
       );
 
-      const buildImages = async () =>
-        await filesToImageInputs(sourceFiles, moderationImages);
-
-      const buildMask = async () =>
-        maskFile ? (await filesToImageInputs([maskFile]))[0] : undefined;
+      const images = await filesToMediaInputReferences(
+        sourceFiles,
+        moderationImages
+      );
+      const mask = maskFile
+        ? (await filesToMediaInputReferences([maskFile]))[0]
+        : undefined;
+      const principal = {
+        type: "apiKey" as const,
+        credentialKind: "external" as const,
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+        plan: auth.plan,
+      };
+      const requestId = request.headers.get("x-request-id") ?? undefined;
 
       const runEdit = async (
         generationId: string,
-        onPartialImage?: Parameters<typeof runImageGenerationForUser>[1]
-      ) =>
-        await runImageGenerationForUser(
-          {
-            mode: "edit",
-            userId: auth.userId,
-            generationId,
-            apiKeyId: auth.apiKeyId,
-            backendRequestKind: "image_edit" as const,
-            prompt,
-            promptOptimization,
-            moderationPromptRepair,
-            size,
-            model,
-            gptModel,
-            thinking,
-            quality,
-            moderation,
-            outputFormat,
-            outputCompression,
-            background,
-            transparentMatte,
-            hdRepair,
-            blockRepair,
-            repairPrompt,
-            n: 1,
-            forceWebBackend,
-            forceFirefly,
-            images: await buildImages(),
-            mask: await buildMask(),
-          },
-          onPartialImage
+        onPartialImage?: Parameters<typeof invokeImageGenerationOperation>[2]
+      ) => {
+        const common = {
+          generationId,
+          prompt,
+          promptOptimization,
+          size,
+          model,
+          thinking,
+          quality,
+          moderation,
+          outputFormat,
+          outputCompression,
+          background,
+          transparentMatte,
+          hdRepair,
+          blockRepair,
+          repairPrompt,
+          count: 1,
+          images,
+        };
+        return invokeImageGenerationOperation(
+          mask
+            ? { operation: "mask", ...common, mask }
+            : { operation: "edit", ...common },
+          principal,
+          onPartialImage,
+          requestId
         );
+      };
 
       if (useStreamResponse) {
         return createExternalImageStreamResponse(async (emit) => {

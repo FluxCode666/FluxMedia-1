@@ -1,0 +1,4 @@
+<!-- 项目自制的中性几何兼容标识，用于未知或无品牌模型。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="m12 3 4.5 4.5L12 12 7.5 7.5 12 3Zm0 9 4.5 4.5L12 21l-4.5-4.5L12 12ZM3 12l4.5-4.5L12 12l-4.5 4.5L3 12Zm18 0-4.5-4.5L12 12l4.5 4.5L21 12Z" fill="#475569"/>
+</svg>

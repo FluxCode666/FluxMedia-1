@@ -12,12 +12,13 @@
  * - 注册时查重：防止意外覆盖导致行为不确定
  * - DB-free：注册表纯内存，不依赖任何外部状态
  */
+
+import type { Principal } from "./principal";
 import type {
   OperationContext,
   OperationDefinition,
   OperationDomain,
 } from "./types";
-import type { Principal } from "./principal";
 
 /** 全局操作注册表 */
 const REGISTRY = new Map<string, OperationDefinition>();
@@ -30,12 +31,10 @@ const REGISTRY = new Map<string, OperationDefinition>();
  * @throws 如果 name 已被注册则抛出错误（防止静默覆盖）
  */
 export function defineOperation<TInput, TOutput>(
-  def: OperationDefinition<TInput, TOutput>,
+  def: OperationDefinition<TInput, TOutput>
 ): OperationDefinition<TInput, TOutput> {
   if (REGISTRY.has(def.name)) {
-    throw new Error(
-      `[UOL] Duplicate operation registration: ${def.name}`,
-    );
+    throw new Error(`[UOL] Duplicate operation registration: ${def.name}`);
   }
   REGISTRY.set(def.name, def as OperationDefinition);
   return def;
@@ -45,9 +44,7 @@ export function defineOperation<TInput, TOutput>(
  * 按名称获取操作定义。
  * 未找到返回 undefined（调用方需处理不存在的情况）。
  */
-export function getOperation(
-  name: string,
-): OperationDefinition | undefined {
+export function getOperation(name: string): OperationDefinition | undefined {
   return REGISTRY.get(name);
 }
 
@@ -92,14 +89,41 @@ export function bindExecute<TInput, TOutput>(
   execute: (
     input: TInput,
     principal: Principal,
-    ctx: OperationContext,
-  ) => Promise<TOutput>,
+    ctx: OperationContext
+  ) => Promise<TOutput>
 ): void {
   const def = REGISTRY.get(name);
   if (!def) {
     throw new Error(`[UOL] Cannot bind unknown operation: ${name}`);
   }
   (def as { execute: typeof execute }).execute = execute;
+}
+
+/**
+ * 以强类型 operation definition 延迟绑定真实执行体。
+ *
+ * @param definition defineOperation 返回且已注册的同一对象。
+ * @param execute 从 definition 输入输出类型推导的真实执行函数。
+ * @throws definition 未注册或同名对象已被替换时拒绝绑定。
+ */
+export function bindOperationExecute<TInput, TOutput>(
+  definition: OperationDefinition<TInput, TOutput>,
+  execute: (
+    input: TInput,
+    principal: Principal,
+    ctx: OperationContext
+  ) => Promise<TOutput>
+): void {
+  const registered = REGISTRY.get(definition.name);
+  if (!registered) {
+    throw new Error(`[UOL] Cannot bind unknown operation: ${definition.name}`);
+  }
+  if (registered !== definition) {
+    throw new Error(
+      `[UOL] Cannot bind mismatched operation definition: ${definition.name}`
+    );
+  }
+  definition.execute = execute;
 }
 
 /**

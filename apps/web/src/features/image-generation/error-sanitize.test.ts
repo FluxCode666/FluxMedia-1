@@ -1,3 +1,4 @@
+import { MissingGlobalImagePricingError } from "@repo/shared/image-backend/group-image-pricing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -21,8 +22,8 @@ beforeEach(() => {
 // Drizzle 池查询失败的真实形态（issue #35）：message 以 "Failed query:" 开头。
 function drizzleError(): Error {
   return new Error(
-    'Failed query: select "image_backend_api"."api_key" from "image_backend_api" ' +
-      'inner join "image_backend_api_group" ... params: true,true,active'
+    'Failed query: select "media_backend_member"."credential" ' +
+      'from "media_backend_member" ... params: true,true,active'
   );
 }
 
@@ -66,7 +67,7 @@ describe("isInternalDatabaseError", () => {
     ).toBe(true);
     expect(
       isSensitiveUpstreamError(
-        "ChatGPT Web prepare failed: https://upstream.example.test/v1"
+        "Upstream Images API failed: https://upstream.example.test/v1"
       )
     ).toBe(true);
     expect(isSensitiveUpstreamError("Insufficient credits")).toBe(false);
@@ -98,6 +99,17 @@ describe("toClientErrorMessage", () => {
     expect(
       toClientErrorMessage(new Error("Insufficient credits"), ctx, "fallback")
     ).toBe("Insufficient credits");
+  });
+
+  it("未配置模型价格返回稳定提示且不暴露模型标识", () => {
+    const message = toClientErrorMessage(
+      new MissingGlobalImagePricingError("private-model-id"),
+      ctx,
+      "fallback"
+    );
+
+    expect(message).toBe("该模型尚未配置价格，请联系管理员");
+    expect(message).not.toContain("private-model-id");
   });
 
   it("上游错误改为 fallback，不回显令牌或上游地址", () => {

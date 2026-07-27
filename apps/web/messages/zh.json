@@ -16,28 +16,19 @@
       "artworkFormat": "AI GENERATED"
     },
     "models": {
-      "previewLabel": "当前运行时模型",
+      "previewLabel": "模型广场精选",
       "eyebrow": "MODEL CATALOG",
-      "title": "当前系统支持的图像模型",
-      "description": "目录来自正在运行的配置，此处只展示平台当前可承接的公开图像模型。实际账号经 API Key 可调用的模型，请始终以 GET /v1/models 的响应为准。",
+      "title": "当前公开的图像模型",
+      "description": "这里与模型广场共享同一套公开展示配置，并预览部分图像模型。实际账号经 API Key 可调用的模型，始终以 GET /v1/models 的响应为准。",
       "countLabel": "个模型",
-      "unavailable": "当前无法读取运行时模型目录，请稍后再试。",
+      "unavailable": "当前无法读取公开模型目录，请稍后再试。",
       "supportedLabel": "已接入",
+      "viewAll": "查看全部模型",
       "categories": {
         "image": {
           "label": "图像",
-          "description": "用于文字生图、对话生图及支持的图像工作流。",
+          "description": "用于文字生图、图像编辑及支持的图像工作流。",
           "empty": "当前没有公开可展示的图像模型。"
-        },
-        "video": {
-          "label": "视频",
-          "description": "用于系统当前已接入的视频生成路径。",
-          "empty": "当前没有公开可展示的视频模型。"
-        },
-        "conversation": {
-          "label": "对话",
-          "description": "用于对话与 Responses 能力的当前模型。",
-          "empty": "当前没有公开可展示的对话模型。"
         }
       }
     },
@@ -82,11 +73,11 @@
       "items": [
         {
           "question": "FluxMedia 当前支持哪些模型？",
-          "answer": "首页模型目录直接读取当前运行时图像配置。配置变化会在后续请求中反映出来；具体账号通过 API 可调用的模型仍以该 API Key 请求 GET /v1/models 的结果为准。"
+          "answer": "模型广场展示当前公开的图像与视频模型，首页从同一公开目录预览部分图像模型。具体账号通过 API 可调用的模型仍以该 API Key 请求 GET /v1/models 的结果为准。"
         },
         {
-          "question": "为什么首页只展示图像模型？",
-          "answer": "当前官网聚焦已经对外开放的图像生成能力，因此模型展示与快速集成示例都只使用运行时可公开的图像模型。"
+          "question": "在哪里查看全部公开模型？",
+          "answer": "前往模型广场可以查看当前公开的全部图像与视频模型、最低价格、完整计费方式和支持参数。"
         },
         {
           "question": "如何通过 API 接入图片生成？",
@@ -110,12 +101,79 @@
       "brandDescription": "从语言到作品，让模型成为稳定的创作基础设施。",
       "siteLabel": "站点",
       "legalLabel": "法律",
+      "models": "模型广场",
       "docs": "文档",
       "contact": "联系我们",
       "terms": "服务条款",
       "privacy": "隐私政策",
       "cookie": "Cookie 政策",
       "copyright": "© 2026 FluxMedia. 保留所有权利。"
+    }
+  },
+  "ModelMarketplace": {
+    "eyebrow": "MODEL MARKETPLACE",
+    "title": "为下一次创作，选择合适的模型。",
+    "description": "浏览当前公开可用的图像与视频模型，比较最低积分价格与完整计费方式，并把模型直接带入创作页。",
+    "resultCount": "{count} 个结果",
+    "categories": {
+      "image": "图像",
+      "video": "视频"
+    },
+    "filters": {
+      "title": "筛选模型",
+      "description": "按媒体类型与模型厂商缩小当前公开模型目录。",
+      "type": "模型类型",
+      "provider": "模型厂商",
+      "all": "全部模型",
+      "allProviders": "全部厂商",
+      "otherProvider": "其他厂商",
+      "searchLabel": "搜索模型",
+      "searchPlaceholder": "搜索名称或模型 ID",
+      "open": "筛选",
+      "clear": "清除筛选"
+    },
+    "price": {
+      "startingAt": "最低价格",
+      "credits": "积分",
+      "perImage": "每张",
+      "perSecond": "每秒"
+    },
+    "card": {
+      "noDescription": "该模型暂未配置公开简介。"
+    },
+    "actions": {
+      "copy": "复制模型 ID",
+      "copyModelId": "复制模型 ID：{modelId}",
+      "copySuccess": "模型 ID 已复制",
+      "copyFailure": "复制失败，请手动复制模型 ID",
+      "viewDetails": "查看详情",
+      "useModel": "立即使用此模型"
+    },
+    "detail": {
+      "description": "模型简介",
+      "pricing": "完整定价与能力",
+      "videoRate": "视频生成基础价格",
+      "supportedDurations": "支持时长",
+      "supportedAspectRatios": "支持比例",
+      "supportedResolutions": "支持分辨率",
+      "imageTiers": {
+        "base1024": "1024 档",
+        "base1k": "1K 档",
+        "base2k": "2K 档",
+        "base4k": "4K 档"
+      }
+    },
+    "filteredEmpty": {
+      "title": "没有匹配的模型",
+      "description": "尝试更换关键词、模型类型或厂商，查看当前公开目录中的其他模型。"
+    },
+    "empty": {
+      "title": "模型正在准备中",
+      "description": "当前没有公开展示的模型，请稍后再来查看。"
+    },
+    "unavailable": {
+      "title": "模型广场暂时不可用",
+      "description": "当前无法读取公开模型目录，请稍后重试。"
     }
   },
   "Auth": {
@@ -296,24 +354,8 @@
   },
   "Navigation": {
     "menu": "导航",
-    "products": "功能",
-    "models": "模型",
-    "integration": "快速集成",
-    "work": "作品",
-    "create": "开始创作",
-    "docs": "文档",
-    "blog": "博客",
-    "productsMenu": {
-      "core": {
-        "title": "生成能力",
-        "chatToImage": "对话生图",
-        "chatToImageDesc": "通过自然对话生成图片",
-        "gallery": "视觉画廊",
-        "galleryDesc": "浏览、整理并回看所有作品",
-        "batch": "批量生成",
-        "batchDesc": "一次请求产出多个变体"
-      }
-    }
+    "models": "模型广场",
+    "docs": "API 文档"
   },
   "Toggle": {
     "theme": "切换主题",
@@ -367,6 +409,7 @@
       "gallery": "图库",
       "history": "使用记录",
       "apiDocs": "接入文档",
+      "models": "模型广场",
       "backendHelp": "系统文档",
       "externalApi": "API 密钥",
       "wallet": "钱包",

@@ -6,7 +6,6 @@
  */
 
 import {
-  GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
   type ImageCreditOverrides,
   type ResolvedImageCreditPricing,
   resolveImageCreditPricing,
@@ -15,7 +14,7 @@ import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 
-import { getEffectiveDefaultImageBackendGroup } from "@/features/image-backend-pool/service";
+import { getEffectiveDefaultImageBackendGroup } from "@/features/image-backend-pool/catalog-service";
 import {
   getRuntimeImageModelCreditPricing,
   getRuntimeImageModerationCreditPricing,
@@ -24,14 +23,15 @@ import type { ResolvedImageModerationCreditPricing } from "@/features/image-gene
 
 export type ImagePricingCardData = {
   billing: {
-    agentRoundCredits: number;
-    chatRoundCredits: number;
     groupName: string | null;
     moderationBlockingEnabled: boolean;
     monthlyCredits: number;
     planName: string;
   };
-  defaultModelPricing: ResolvedImageCreditPricing;
+  referenceModel: {
+    id: string;
+    pricing: ResolvedImageCreditPricing;
+  };
   globalModelPricing: ImageCreditOverrides;
   groupModelOverrides: ImageCreditOverrides;
   moderationPricing: ResolvedImageModerationCreditPricing;
@@ -62,11 +62,13 @@ export async function loadImagePricingCardData(
     getPlanCapabilitySnapshot(userPlanInfo.plan),
     getEffectiveDefaultImageBackendGroup(userPlanInfo.plan),
   ]);
+  const referenceModelId = Object.keys(globalModelPricing.byModel).sort()[0];
+  if (!referenceModelId) {
+    throw new Error("没有已配置价格的图像模型");
+  }
 
   return {
     billing: {
-      agentRoundCredits: capabilities.billing.agentRoundCredits,
-      chatRoundCredits: capabilities.billing.chatRoundCredits,
       groupName: activeBackendGroup?.name ?? null,
       moderationBlockingEnabled:
         moderationSystemEnabled &&
@@ -75,10 +77,13 @@ export async function loadImagePricingCardData(
       monthlyCredits: capabilities.limits.monthlyCredits,
       planName: userPlanInfo.planName,
     },
-    defaultModelPricing: resolveImageCreditPricing({
-      model: GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
-      global: globalModelPricing,
-    }),
+    referenceModel: {
+      id: referenceModelId,
+      pricing: resolveImageCreditPricing({
+        model: referenceModelId,
+        global: globalModelPricing,
+      }),
+    },
     globalModelPricing,
     groupModelOverrides: activeBackendGroup?.imageCreditOverrides ?? {
       version: 1,

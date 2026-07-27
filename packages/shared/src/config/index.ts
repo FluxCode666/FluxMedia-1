@@ -8,18 +8,12 @@ export {
   // Dashboard 配置
   dashboardNav,
   footerNav,
-  getMarketingHeaderNavigation,
-  type MarketingHeaderNavigation,
-  type MarketingHeaderVariant,
   // Marketing 配置
   mainNav,
   marketingConfig,
   type NavGroup,
   // 类型
   type NavItem,
-  type ProductNavGroup,
-  type ProductNavItem,
-  productsNav,
 } from "./nav";
 export {
   findPlanByPriceId,

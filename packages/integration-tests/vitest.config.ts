@@ -5,9 +5,15 @@
  * 使用方：发布前专用数据库门禁。
  * 关键依赖：Vitest；测试文件自行验证专用数据库 URL 与迁移状态。
  */
+import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": resolve(import.meta.dirname, "../../apps/web/src"),
+    },
+  },
   test: {
     environment: "node",
     fileParallelism: false,

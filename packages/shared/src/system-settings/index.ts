@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { db } from "@repo/database";
 import { systemSetting } from "@repo/database/schema";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -12,6 +10,7 @@ import {
   createDefaultGlobalImageCreditOverrides,
   DEFAULT_IMAGE_CREDIT_PRICING,
   globalImageCreditOverridesSchema,
+  imageCreditPricingSchema,
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
 import { dashboardSupportConfigSchema } from "../support/dashboard-config";
@@ -372,7 +371,6 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
 }) {
   const now = new Date();
   await migrateLegacyModerationSettings(now, options?.updatedBy);
-  await migrateLegacySub2ApiAutoSyncSettings(now, options?.updatedBy);
   await migrateLegacyVideoModelPricing(now, options?.updatedBy);
   await migrateLegacyGlobalModelPricing(now, options?.updatedBy);
 
@@ -525,9 +523,32 @@ async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
   );
   const imageRaw = stored.get(imageKey);
   const videoRaw = stored.get(videoKey);
+  const legacyImagePricingByModel =
+    imageRaw && typeof imageRaw === "object" && "byModel" in imageRaw
+      ? imageRaw.byModel
+      : null;
+  const legacyDefaultPricingValue =
+    legacyImagePricingByModel && typeof legacyImagePricingByModel === "object"
+      ? Object.entries(legacyImagePricingByModel).find(
+          ([model]) => model.trim().toLowerCase() === "default"
+        )?.[1]
+      : undefined;
+  const legacyDefaultPricingResult =
+    legacyDefaultPricingValue !== undefined
+      ? imageCreditPricingSchema.safeParse(legacyDefaultPricingValue)
+      : null;
+  const legacyDefaultPricing = legacyDefaultPricingResult?.success
+    ? legacyDefaultPricingResult.data
+    : null;
+  const hasLegacyDefaultPricing = legacyImagePricingByModel
+    ? Object.keys(legacyImagePricingByModel).some(
+        (model) => model.trim().toLowerCase() === "default"
+      )
+    : false;
   const imageNeedsMigration =
     imageRaw !== undefined &&
-    !globalImageCreditOverridesSchema.safeParse(imageRaw).success;
+    (hasLegacyDefaultPricing ||
+      !globalImageCreditOverridesSchema.safeParse(imageRaw).success);
   const videoNeedsMigration =
     videoRaw !== undefined &&
     !globalVideoModelCreditsPerSecondSchema.safeParse(videoRaw).success;
@@ -540,22 +561,30 @@ async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
       : fallback;
   };
   const imageFallback = {
-    base1024Credits: readPositive(
-      "IMAGE_BASE_CREDITS_1024",
-      DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits
-    ),
-    base1kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_1K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits
-    ),
-    base2kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_2K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits
-    ),
-    base4kCredits: readPositive(
-      "IMAGE_BASE_CREDITS_4K",
-      DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits
-    ),
+    base1024Credits:
+      legacyDefaultPricing?.base1024Credits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_1024",
+        DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits
+      ),
+    base1kCredits:
+      legacyDefaultPricing?.base1kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_1K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base1kCredits
+      ),
+    base2kCredits:
+      legacyDefaultPricing?.base2kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_2K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base2kCredits
+      ),
+    base4kCredits:
+      legacyDefaultPricing?.base4kCredits ??
+      readPositive(
+        "IMAGE_BASE_CREDITS_4K",
+        DEFAULT_IMAGE_CREDIT_PRICING.base4kCredits
+      ),
   };
   const image = createDefaultGlobalImageCreditOverrides();
   for (const model of Object.keys(image.byModel)) {
@@ -679,141 +708,6 @@ async function migrateLegacyModerationSettings(now: Date, updatedBy?: string) {
   await invalidateSystemSettingsCache();
 }
 
-async function migrateLegacySub2ApiAutoSyncSettings(
-  now: Date,
-  updatedBy?: string
-) {
-  const legacyKeys = [
-    "SUB2API_AUTO_SYNC_ENABLED",
-    "SUB2API_AUTO_SYNC_INTERVAL_MINUTES",
-    "SUB2API_AUTO_SYNC_SOURCE_GROUP_ID",
-    "SUB2API_AUTO_SYNC_MODE",
-    "SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT",
-    "SUB2API_AUTO_SYNC_PLAN_FILTER",
-  ];
-  const rows = await db
-    .select({
-      key: systemSetting.key,
-      value: systemSetting.value,
-    })
-    .from(systemSetting)
-    .where(
-      inArray(systemSetting.key, ["SUB2API_AUTO_SYNC_TASKS", ...legacyKeys])
-    );
-
-  const stored = new Map(
-    rows
-      .map((row) => [row.key, normalizeStoredValue(row.value)] as const)
-      .filter(([, value]) => value !== undefined)
-  );
-  const hasTasks = stored.has("SUB2API_AUTO_SYNC_TASKS");
-  const hasLegacyConfig = legacyKeys.some((key) => stored.has(key));
-
-  await db.transaction(async (tx) => {
-    if (!hasTasks && hasLegacyConfig) {
-      const enabled = parseBooleanLike(
-        stored.get("SUB2API_AUTO_SYNC_ENABLED"),
-        true
-      );
-      const allowMobileRtImport = parseBooleanLike(
-        stored.get("SUB2API_AUTO_SYNC_ALLOW_MOBILE_RT"),
-        false
-      );
-      const syncMode = allowMobileRtImport
-        ? parseSyncMode(stored.get("SUB2API_AUTO_SYNC_MODE"))
-        : "responses";
-      const sourceGroupId = parseOptionalString(
-        stored.get("SUB2API_AUTO_SYNC_SOURCE_GROUP_ID")
-      );
-      const planFilter = parseSub2ApiPlanFilter(
-        stored.get("SUB2API_AUTO_SYNC_PLAN_FILTER")
-      );
-      const intervalMinutes = parsePositiveInteger(
-        stored.get("SUB2API_AUTO_SYNC_INTERVAL_MINUTES"),
-        720
-      );
-      const taskKey = [
-        sourceGroupId || "all",
-        allowMobileRtImport ? syncMode : "responses",
-        allowMobileRtImport ? "mobile-allowed" : "codex-only",
-        planFilter,
-      ].join("|");
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: "SUB2API_AUTO_SYNC_TASKS",
-          value: [
-            {
-              id: `sub2api-${createHash("sha256").update(taskKey).digest("hex").slice(0, 16)}`,
-              enabled,
-              sourceGroupId,
-              sourceGroupName: null,
-              webGroupId: null,
-              responsesGroupId: null,
-              syncMode,
-              allowMobileRtImport,
-              contentSafetyEnabled: true,
-              overwriteLocalUnavailableState: true,
-              planFilter,
-              intervalMinutes,
-              createdAt: now.toISOString(),
-              updatedAt: now.toISOString(),
-            },
-          ],
-          isSecret: false,
-          ...(updatedBy ? { updatedBy } : {}),
-          updatedAt: now,
-        })
-        .onConflictDoNothing({
-          target: systemSetting.key,
-        });
-    }
-
-    await tx
-      .delete(systemSetting)
-      .where(inArray(systemSetting.key, legacyKeys));
-  });
-
-  await invalidateSystemSettingsCache();
-}
-
-function parseOptionalString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function parseBooleanLike(value: unknown, fallback: boolean) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string" && value.trim()) {
-    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-  }
-  return fallback;
-}
-
-function parsePositiveInteger(value: unknown, fallback: number) {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number(value)
-        : Number.NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
-}
-
-function parseSyncMode(value: unknown) {
-  return value === "web" || value === "both" ? value : "responses";
-}
-
-function parseSub2ApiPlanFilter(value: unknown) {
-  return value === "all" ||
-    value === "free" ||
-    value === "plus" ||
-    value === "pro" ||
-    value === "non_free"
-    ? value
-    : "non_free";
-}
-
 export async function importMissingSystemSettingsFromEnv(updatedBy?: string) {
   return importSystemSettingsFromEnv(
     updatedBy === undefined ? undefined : { updatedBy }
@@ -889,57 +783,6 @@ export async function setSystemSettings(
 
   await invalidateSystemSettingsCache();
   return changedKeys;
-}
-
-/**
- * 通过独立模型计费入口原子保存全局图像与视频价格。
- *
- * @param input.image - 覆盖全部内置图像模型与四个档位的完整价格矩阵。
- * @param input.videoCreditsPerSecond - 覆盖全部内置视频模型族的每秒价格。
- * @param input.updatedBy - 发起修改的超级管理员用户 ID。
- * @returns 无返回值；校验失败或数据库写入失败时抛出异常，两个价格键不会部分保存。
- */
-export async function setGlobalModelPricing(input: {
-  image: unknown;
-  videoCreditsPerSecond: unknown;
-  updatedBy: string;
-}): Promise<void> {
-  const image = globalImageCreditOverridesSchema.parse(input.image);
-  const videoCreditsPerSecond = globalVideoModelCreditsPerSecondSchema.parse(
-    input.videoCreditsPerSecond
-  );
-  const now = new Date();
-
-  await db.transaction(async (tx) => {
-    for (const entry of [
-      { key: "IMAGE_MODEL_CREDIT_PRICES", value: image },
-      {
-        key: "VIDEO_MODEL_CREDITS_PER_SECOND",
-        value: videoCreditsPerSecond,
-      },
-    ] as const) {
-      await tx
-        .insert(systemSetting)
-        .values({
-          key: entry.key,
-          value: entry.value,
-          isSecret: false,
-          updatedBy: input.updatedBy,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: systemSetting.key,
-          set: {
-            value: entry.value,
-            isSecret: false,
-            updatedBy: input.updatedBy,
-            updatedAt: now,
-          },
-        });
-    }
-  });
-
-  await invalidateSystemSettingsCache();
 }
 
 export async function getAdminSystemSettingsSnapshot() {

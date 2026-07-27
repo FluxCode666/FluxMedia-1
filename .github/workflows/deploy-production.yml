@@ -75,6 +75,10 @@ jobs:
 
       - uses: ./.github/actions/setup
 
+      - name: Test media upstream proxy
+        working-directory: services/media-upstream-proxy
+        run: go test ./...
+
       - name: Assert documentation mirror
         run: diff -q --strip-trailing-cr CLAUDE.md AGENTS.md
 
@@ -116,6 +120,18 @@ jobs:
           RELEASE_GATE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
         run: pnpm --filter @repo/integration-tests test:release-governance
 
+      - name: Test unified media pool with PostgreSQL
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          IMAGE_BACKEND_POOL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          VIDEO_GENERATION_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+        run: |
+          set -euo pipefail
+          pnpm --filter @repo/integration-tests test:image-backend-pool
+          pnpm --filter @repo/integration-tests test:video-generation-recovery
+          pnpm --filter @repo/integration-tests test:media-backend-pool-migration
+
       - name: Verify release database gates
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
@@ -139,12 +155,13 @@ jobs:
         run: pnpm --filter @repo/web build
 
   build-and-push:
-    name: Build and push web and migrate images
+    name: Build and push web, migrate, and proxy images
     needs: quality
     runs-on: ubuntu-latest
     outputs:
       web_image: ${{ steps.meta.outputs.web_image }}
       migrate_image: ${{ steps.meta.outputs.migrate_image }}
+      proxy_image: ${{ steps.meta.outputs.proxy_image }}
       tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
@@ -159,6 +176,7 @@ jobs:
           owner_lower="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           echo "web_image=${REGISTRY}/${owner_lower}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "migrate_image=${REGISTRY}/${owner_lower}/fluxmedia-migrate" >> "${GITHUB_OUTPUT}"
+          echo "proxy_image=${REGISTRY}/${owner_lower}/fluxmedia-media-upstream-proxy" >> "${GITHUB_OUTPUT}"
           echo "tag=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
@@ -212,6 +230,23 @@ jobs:
           cache-from: type=gha,scope=fluxmedia-migrate
           cache-to: type=gha,mode=max,scope=fluxmedia-migrate
 
+      - name: Build and push media upstream proxy image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.media-upstream-proxy
+          target: runner
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.proxy_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.proxy_image }}:latest
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=fluxmedia-media-upstream-proxy
+          cache-to: type=gha,mode=max,scope=fluxmedia-media-upstream-proxy
+
   deploy:
     name: Migrate database and deploy web with Docker Compose
     needs: build-and-push
@@ -228,6 +263,7 @@ jobs:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
       WEB_IMAGE: ${{ needs.build-and-push.outputs.web_image }}
       MIGRATE_IMAGE: ${{ needs.build-and-push.outputs.migrate_image }}
+      PROXY_IMAGE: ${{ needs.build-and-push.outputs.proxy_image }}
       IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
     steps:
       - name: Checkout deployment files
@@ -329,6 +365,7 @@ jobs:
             bash -s -- \
               "${WEB_IMAGE}" \
               "${MIGRATE_IMAGE}" \
+              "${PROXY_IMAGE}" \
               "${IMAGE_TAG}" \
               "${DEPLOY_PATH}" \
               "${GITHUB_SHA}" <<'REMOTE_SCRIPT' | tee "${result_file}"
@@ -336,9 +373,10 @@ jobs:
 
           web_image="$1"
           migrate_image="$2"
-          image_tag="$3"
-          deploy_path="$4"
-          git_sha="$5"
+          proxy_image="$3"
+          image_tag="$4"
+          deploy_path="$5"
+          git_sha="$6"
           cd "${deploy_path}"
 
           if [ ! -f .env ]; then
@@ -390,6 +428,9 @@ jobs:
             if [ -n "${previous_migrate_image}" ]; then
               set_env_value FLUXMEDIA_MIGRATE_IMAGE "${previous_migrate_image}"
             fi
+            if [ -n "${previous_proxy_image}" ]; then
+              set_env_value FLUXMEDIA_PROXY_IMAGE "${previous_proxy_image}"
+            fi
             if [ -n "${previous_tag}" ]; then
               set_env_value FLUXMEDIA_TAG "${previous_tag}"
             fi
@@ -397,6 +438,7 @@ jobs:
 
           previous_image="$(read_env_value FLUXMEDIA_IMAGE)"
           previous_migrate_image="$(read_env_value FLUXMEDIA_MIGRATE_IMAGE)"
+          previous_proxy_image="$(read_env_value FLUXMEDIA_PROXY_IMAGE)"
           previous_tag="$(read_env_value FLUXMEDIA_TAG)"
           if [[ "${previous_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
             && [[ "${previous_tag}" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -440,10 +482,11 @@ jobs:
 
           set_env_value FLUXMEDIA_IMAGE "${web_image}"
           set_env_value FLUXMEDIA_MIGRATE_IMAGE "${migrate_image}"
+          set_env_value FLUXMEDIA_PROXY_IMAGE "${proxy_image}"
           set_env_value FLUXMEDIA_TAG "${image_tag}"
           docker compose --profile maintenance config --quiet
 
-          if ! docker compose --profile maintenance pull migrate web; then
+          if ! docker compose --profile maintenance pull migrate media-upstream-proxy web; then
             exit 1
           fi
 
@@ -488,9 +531,9 @@ jobs:
             run_release_gate postcheck
           fi
 
-          echo "启动 web 服务。"
-          if ! docker compose up -d --remove-orphans web; then
-            echo "新 Web 启动失败，保持维护状态。" >&2
+          echo "启动 Adobe 代理和 web 服务。"
+          if ! docker compose up -d --remove-orphans media-upstream-proxy web; then
+            echo "新 Adobe 代理或 Web 启动失败，保持维护状态。" >&2
             exit 1
           fi
 

@@ -13,7 +13,7 @@ import {
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { hasLayeredMeta } from "@/features/psd-export/layered-meta";
+import { extractExecuteRows } from "@/server/database-result";
 import { extractGenerationCreditDetails } from "./credit-calculation-details";
 import {
   extractGenerationReferenceImages,
@@ -45,16 +45,6 @@ const historyListRowSchema = z.object({
 const modelOptionRowSchema = z.object({
   model: z.string().trim().min(1).max(240),
 });
-
-/** Drizzle PostgreSQL execute 在 node/neon driver 下分别返回 rows 或数组。 */
-function extractRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === "object" && "rows" in result) {
-    const rows = (result as { rows: unknown }).rows;
-    return Array.isArray(rows) ? rows : [];
-  }
-  return [];
-}
 
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
@@ -292,7 +282,7 @@ export const databaseHistoryRepository: HistoryRepository = {
   async readRecords(query) {
     const rows = z
       .array(historyListRowSchema)
-      .parse(extractRows(await db.execute(buildHistoryListSql(query))));
+      .parse(extractExecuteRows(await db.execute(buildHistoryListSql(query))));
     return rows.map((row) => {
       const common = {
         id: row.id,
@@ -325,7 +315,6 @@ export const databaseHistoryRepository: HistoryRepository = {
                 ...safe
               }) => safe
             ),
-          isLayered: hasLayeredMeta(row.metadata),
           imageUrl: buildSignedStorageImageUrl(
             row.storage_key,
             row.storage_bucket
@@ -355,7 +344,9 @@ export const databaseHistoryRepository: HistoryRepository = {
   async readModelOptions(input) {
     return z
       .array(modelOptionRowSchema)
-      .parse(extractRows(await db.execute(buildHistoryModelOptionsSql(input))))
+      .parse(
+        extractExecuteRows(await db.execute(buildHistoryModelOptionsSql(input)))
+      )
       .map((row) => row.model);
   },
 };

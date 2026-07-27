@@ -5,7 +5,6 @@
  *   guest_allowed + scope；headers 带 Cookie）→ 拿短期 access_token（IMS Bearer）。
  * - 账号信息：用 access_token 查 IMS profile/v1。
  * - 余额：查 firefly.adobe.io/v1/credits/balance。
- * - token 轮换：round_robin / random 的纯函数选择。
  * 这些请求同样经传输层（生产走 Go TLS 旁路；主机白名单含 .adobe.com/.adobelogin.com/.adobe.io）。
  */
 
@@ -236,35 +235,4 @@ export async function fetchCreditsBalance(
     available: (quota.available as number) ?? null,
     availableUntil: total.availableUntil ?? null,
   };
-}
-
-export type AdobeTokenLike = { value: string; status?: string };
-
-/**
- * token 轮换选择（纯函数）。移植 _pick_active_token：从 active/error 状态里按策略选一个。
- * 返回所选索引（便于调用方推进 round-robin 游标），无可用返回 -1。
- */
-export function pickAdobeToken<T extends AdobeTokenLike>(
-  tokens: T[],
-  opts: { strategy?: "round_robin" | "random"; rrIndex?: number }
-): { index: number; token: T | null } {
-  const active = tokens.filter(
-    (t) =>
-      t.status === "active" || t.status === "error" || t.status === undefined
-  );
-  if (active.length === 0) return { index: -1, token: null };
-  const strategy = opts.strategy === "random" ? "random" : "round_robin";
-  if (strategy === "random") {
-    const i = Math.floor(Math.random() * active.length);
-    const chosen = active[i];
-    return chosen
-      ? { index: tokens.indexOf(chosen), token: chosen }
-      : { index: -1, token: null };
-  }
-  const rr =
-    (((opts.rrIndex ?? 0) % active.length) + active.length) % active.length;
-  const chosen = active[rr];
-  return chosen
-    ? { index: tokens.indexOf(chosen), token: chosen }
-    : { index: -1, token: null };
 }

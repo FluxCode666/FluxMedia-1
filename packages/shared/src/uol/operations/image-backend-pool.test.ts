@@ -10,8 +10,11 @@ import {
   createDefaultGlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,
 } from "../../image-backend/group-image-pricing";
+import { getOperation } from "../registry";
 
-import { saveAdobe, saveApi, saveGroup } from "./image-backend-pool";
+import { deleteMember, saveGroup, saveMember } from "./image-backend-pool";
+import "./external-api";
+import "./image-generation";
 
 const validGroup = {
   name: "默认组",
@@ -19,7 +22,6 @@ const validGroup = {
   isDefault: true,
   isUserSelectable: true,
   contentSafety: "inherit" as const,
-  backendType: "mixed" as const,
   minPlan: "free" as const,
   imageCreditOverrides: { version: 1 as const, byModel: {} },
   videoCreditOverrides: {},
@@ -93,55 +95,101 @@ describe("image backend pool pricing operations", () => {
 
   it("不再将历史倍率作为分组或后端保存契约", () => {
     expect(
-      Object.hasOwn(
-        saveGroup.input.parse({ ...validGroup, videoBillingMultiplier: 2 }),
-        "videoBillingMultiplier"
-      )
+      saveGroup.input.safeParse({
+        ...validGroup,
+        videoBillingMultiplier: 2,
+      }).success
     ).toBe(false);
     expect(
-      Object.hasOwn(
-        saveApi.input.parse({
-          name: "API",
+      saveMember.input.safeParse({
+        type: "api",
+        name: "API",
+        groupIds: ["group-a"],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: false,
+        priority: 0,
+        concurrency: 1,
+        config: {
           baseUrl: "https://example.com",
-          interfaceMode: "images",
-          chatCompletionsUpstreamMode: "responses",
-          imagesUpstreamMode: "images",
           parameterMappings: [],
-          useStream: false,
-          contentSafetyEnabled: true,
-          isEnabled: true,
-          alwaysActive: false,
-          failureCooldownEnabled: false,
-          priority: 0,
-          concurrency: 1,
-          adobeSourced: false,
-          status: "active",
-          billingMultiplier: 2,
-        }),
-        "billingMultiplier"
-      )
+        },
+        billingMultiplier: 2,
+      }).success
     ).toBe(false);
     expect(
-      Object.hasOwn(
-        saveAdobe.input.parse({
-          name: "Adobe",
+      saveMember.input.safeParse({
+        type: "adobe",
+        name: "Adobe",
+        groupIds: ["group-a"],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: false,
+        priority: 0,
+        concurrency: 1,
+        config: {
           mode: "direct",
-          baseUrl: "",
+          cookie: "cookie-secret",
           defaultRatio: "1x1",
           defaultResolution: "2k",
           gptImageQuality: "high",
-          supportsVideo: true,
-          contentSafetyEnabled: true,
-          isEnabled: true,
-          alwaysActive: false,
-          failureCooldownEnabled: false,
-          priority: 0,
-          concurrency: 1,
-          status: "active",
-          billingMultiplier: 2,
-        }),
-        "billingMultiplier"
-      )
+        },
+        billingMultiplier: 2,
+      }).success
     ).toBe(false);
+  });
+
+  it("统一成员保存和删除不再接受旧类型分流字段", () => {
+    expect(
+      saveMember.input.safeParse({
+        type: "api",
+        name: "API",
+        groupIds: ["group-a"],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: true,
+        priority: 0,
+        concurrency: 1,
+        config: {
+          baseUrl: "https://example.com",
+          parameterMappings: [],
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      deleteMember.input.safeParse({ id: "member-a", memberType: "api" })
+        .success
+    ).toBe(false);
+  });
+
+  it.each([
+    "pool.saveAccount",
+    "pool.saveApi",
+    "pool.saveAdobe",
+    "pool.listAdobeAccounts",
+    "pool.importAdobeAccount",
+    "pool.deleteAdobeAccount",
+    "pool.setAdobeAccountEnabled",
+    "pool.importFromRefreshTokens",
+    "pool.getSub2ApiStatus",
+    "pool.syncSub2ApiAccounts",
+    "pool.cronSub2ApiSync",
+    "pool.cronRefreshStale",
+    "externalApi.generateImages",
+    "externalApi.editImages",
+    "externalApi.chatCompletions",
+    ["externalApi", "responses"].join("."),
+    ["externalApi", "agentImages"].join("."),
+    "file.generatePpt",
+    "file.generatePsd",
+    "image.exportPsd",
+  ])("registry 不再包含已退场 operation %s", (name) => {
+    expect(getOperation(name)).toBeUndefined();
   });
 });

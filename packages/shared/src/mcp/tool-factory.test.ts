@@ -7,7 +7,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { usageTrendsInputSchema } from "../analytics/contracts";
 import { imageGenerateInputSchema } from "../uol/operations/image-generation";
 import type { Principal } from "../uol/principal";
 import { bindExecute, clearRegistry, defineOperation } from "../uol/registry";
@@ -22,6 +21,7 @@ type TestOperationDefinition = OperationDefinition & {
 
 const apiKeyPrincipal = {
   type: "apiKey",
+  credentialKind: "mcp",
   userId: "user-1",
   apiKeyId: "key-1",
   plan: "pro",
@@ -125,69 +125,44 @@ describe("MCP tool factories", () => {
     expect(buildUserMcpTools(apiKeyPrincipal)).toHaveLength(0);
   });
 
-  it("never projects the system-only platform catalog to Admin or User MCP", () => {
+  it("never projects the system-only public marketplace to Admin or User MCP", () => {
     registerOperation({
-      name: "externalApi.getPlatformModelCatalog",
+      name: "modelMarketplace.listPublicModels",
       domain: "external-api",
       access: { kind: "system" },
       agentExposure: "human-only",
       readOnly: true,
     });
-    bindExecute("externalApi.getPlatformModelCatalog", async () => ({
-      image: [],
-      video: [],
-      conversation: [],
+    bindExecute("modelMarketplace.listPublicModels", async () => ({
+      items: [],
     }));
 
     expect(buildAdminMcpTools(adminPrincipal)).toHaveLength(0);
     expect(buildUserMcpTools(apiKeyPrincipal)).toHaveLength(0);
   });
 
-  it("preserves analytics unions, enums, defaults, and user-only exposure", () => {
-    registerOperation({
-      name: "analytics.getMyUsageTrends",
-      domain: "analytics",
-      access: { kind: "protected" },
-      input: usageTrendsInputSchema,
-      readOnly: true,
-    });
-    bindExecute("analytics.getMyUsageTrends", async () => ({ ok: true }));
-
-    const [tool] = buildUserMcpTools(apiKeyPrincipal);
-    expect(tool?.inputSchema).toMatchObject({
-      anyOf: expect.arrayContaining([
-        expect.objectContaining({
-          type: "object",
-          properties: expect.objectContaining({
-            granularity: { const: "hour" },
-            metric: {
-              type: "string",
-              enum: ["imageCount", "videoSeconds"],
-              default: "imageCount",
-            },
-          }),
-          required: expect.not.arrayContaining(["metric"]),
-        }),
-      ]),
-    });
-    expect(buildAdminMcpTools(adminPrincipal)).toHaveLength(0);
-  });
-
-  it("keeps analytics identity principal-only and overrides legacy userId", () => {
+  it("keeps all allowed media operation identities principal-only", () => {
     expect(
       enrichUserMcpToolArguments(
-        "analytics.getMyUsageSummary",
-        { userId: "another-user" },
+        "video.generate",
+        { userId: "another-user", clientRequestId: "request-1" },
         apiKeyPrincipal
       )
-    ).toEqual({});
+    ).toEqual({ clientRequestId: "request-1" });
     expect(
       enrichUserMcpToolArguments(
-        "image.getUserGenerations",
-        { userId: "another-user", page: 2 },
+        "video.getStatus",
+        { userId: "another-user", taskId: "video-1" },
         apiKeyPrincipal
       )
-    ).toEqual({ userId: "user-1", page: 2 });
+    ).toEqual({ taskId: "video-1" });
+    expect(
+      enrichUserMcpToolArguments(
+        "image.listMyHistoryRecords",
+        { userId: "another-user", limit: 20 },
+        apiKeyPrincipal
+      )
+    ).toEqual({ limit: 20 });
   });
 
   it("keeps image.generate identity principal-only without dropping governance fields", () => {
@@ -218,34 +193,67 @@ describe("MCP tool factories", () => {
     bindExecute("image.generate", async () => ({ ok: true }));
 
     const [tool] = buildUserMcpTools(apiKeyPrincipal);
-    const properties = tool?.inputSchema.properties as
-      | Record<string, unknown>
+    const variants = tool?.inputSchema.anyOf as
+      | Array<Record<string, unknown>>
       | undefined;
 
-    expect(properties).toBeDefined();
-    expect(Object.hasOwn(properties ?? {}, "userId")).toBe(false);
-    expect(Object.hasOwn(properties ?? {}, "relayOnly")).toBe(false);
-    expect(Object.hasOwn(properties ?? {}, "relay_only")).toBe(false);
-    expect(Object.hasOwn(properties ?? {}, "moderationBlockRiskLevel")).toBe(
-      false
-    );
+    expect(variants).toHaveLength(3);
+    for (const variant of variants ?? []) {
+      const properties = variant.properties as
+        | Record<string, unknown>
+        | undefined;
+      expect(properties).toBeDefined();
+      expect(Object.hasOwn(properties ?? {}, "operation")).toBe(true);
+      expect(Object.hasOwn(properties ?? {}, "generationId")).toBe(true);
+      expect(variant.required).toEqual(
+        expect.arrayContaining(["operation", "prompt", "generationId"])
+      );
+      expect(Object.hasOwn(properties ?? {}, "userId")).toBe(false);
+      expect(Object.hasOwn(properties ?? {}, "relayOnly")).toBe(false);
+      expect(Object.hasOwn(properties ?? {}, "relay_only")).toBe(false);
+      expect(Object.hasOwn(properties ?? {}, "moderationBlockRiskLevel")).toBe(
+        false
+      );
+    }
   });
 
-  it.each([
-    "credits.getMyBalance",
-    "credits.listMyUsageEvents",
-    "credits.getMyUsageEventDetail",
-    "subscription.listMyPurchasablePlans",
-    "subscription.createCheckout",
-  ])("does not add wallet operation %s to the User MCP allowlist", (name) => {
-    registerOperation({
-      name,
-      domain: name.startsWith("credits.") ? "credits" : "subscription",
-      access: { kind: "protected" },
-      readOnly: true,
-    });
-    bindExecute(name, async () => ({ ok: true }));
+  it("only projects bound image, video and own-history operations", () => {
+    const allowed = [
+      "image.generate",
+      "video.generate",
+      "video.getStatus",
+      "image.listMyHistoryRecords",
+    ] as const;
+    const removed = [
+      "image.getStatus",
+      "image.getUserGenerations",
+      "image.getUserGenerationCount",
+      "externalApi.getCredits",
+      "externalApi.getModels",
+      "credits.getBalance",
+      "credits.getMyActiveBatches",
+      "credits.getMyTransactions",
+      "subscription.getMyPlan",
+      "subscription.canUseCapability",
+      "analytics.getMyUsageSummary",
+      "analytics.getMyUsageTrends",
+    ] as const;
 
-    expect(buildUserMcpTools(apiKeyPrincipal)).toHaveLength(0);
+    for (const name of [...allowed, ...removed]) {
+      registerOperation({
+        name,
+        access:
+          name === "video.getStatus"
+            ? { kind: "owner", resource: "video task" }
+            : { kind: "protected" },
+        readOnly:
+          name === "video.getStatus" || name === "image.listMyHistoryRecords",
+      });
+      bindExecute(name, async () => ({ ok: true }));
+    }
+
+    expect(buildUserMcpTools(apiKeyPrincipal).map((tool) => tool.name)).toEqual(
+      allowed
+    );
   });
 });

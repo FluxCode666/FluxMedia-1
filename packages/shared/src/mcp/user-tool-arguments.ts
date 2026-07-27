@@ -1,10 +1,9 @@
 /**
  * User MCP 工具参数的身份收口规则。
  *
- * 旧 UOL 操作仍可能声明 userId，因此传输层需强制覆盖为当前 Principal；Analytics
- * 与 image.generate 等本人操作刻意不接收 userId，只能由 execute 从 Principal 派生，
- * 避免身份字段进入 JSON Schema 或被客户端伪造。治理字段不在此处静默删除，交给
- * strict operation schema 稳定拒绝。
+ * 媒体 User MCP 操作刻意不接收 userId，只能由 execute 从 Principal 派生，
+ * 避免身份字段进入 JSON Schema 或被客户端伪造。其他非身份字段不在此处
+ * 静默删除，交给 strict operation schema 稳定拒绝。
  */
 import type { Principal } from "../uol/principal";
 
@@ -17,7 +16,9 @@ export function enrichUserMcpToolArguments(
   if (principal.type !== "apiKey" && principal.type !== "user") return args;
   if (
     operationName === "image.generate" ||
-    operationName.startsWith("analytics.")
+    operationName === "video.generate" ||
+    operationName === "video.getStatus" ||
+    operationName === "image.listMyHistoryRecords"
   ) {
     const { userId: _discardedUserId, ...identityFreeArgs } = args;
     return identityFreeArgs;

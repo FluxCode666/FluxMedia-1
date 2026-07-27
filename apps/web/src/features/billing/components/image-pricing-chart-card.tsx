@@ -10,7 +10,6 @@
 import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
 import {
-  GLOBAL_DEFAULT_IMAGE_PRICING_MODEL,
   getImageModelCreditPricing,
   type ImageCreditOverrides,
   type ImageCreditPriceField,
@@ -61,7 +60,6 @@ type PricingPoint = {
 
 type ModelPricingRow = {
   effectivePricing: ResolvedImageCreditPricing;
-  globalOverrides: ImageCreditPricing;
   globalPricing: ResolvedImageCreditPricing;
   groupOverrides: ImageCreditPricing;
   model: string;
@@ -255,12 +253,9 @@ export function buildModelPricingRows(
   globalModelPricing: ImageCreditOverrides,
   groupModelOverrides: ImageCreditOverrides
 ): ModelPricingRow[] {
-  const models = new Set([
-    ...Object.keys(globalModelPricing.byModel),
-    ...Object.keys(groupModelOverrides.byModel),
-  ]);
+  const models = Object.keys(globalModelPricing.byModel);
 
-  return [...models]
+  return models
     .sort((left, right) => left.localeCompare(right))
     .map((model) => ({
       effectivePricing: resolveImageCreditPricing({
@@ -272,10 +267,6 @@ export function buildModelPricingRows(
         model,
         global: globalModelPricing,
       }),
-      globalOverrides: getImageModelCreditPricing(
-        model,
-        globalModelPricing.byModel
-      ),
       groupOverrides: getImageModelCreditPricing(
         model,
         groupModelOverrides.byModel
@@ -320,13 +311,14 @@ function useElementWidth() {
  */
 export function ImagePricingChartCard({
   billing,
-  defaultModelPricing,
+  referenceModel,
   globalModelPricing,
   groupModelOverrides,
   isZh,
   moderationPricing,
 }: ImagePricingChartCardProps) {
-  const data = buildChartData(defaultModelPricing);
+  const data = buildChartData(referenceModel.pricing);
+  const referenceModelName = formatAdobeModelIdForDisplay(referenceModel.id);
   const chartXTicks = [
     1024,
     IMAGE_1K_BASE_EDGE,
@@ -346,20 +338,6 @@ export function ImagePricingChartCard({
       value: `${billing.planName} · ${formatCredits(
         billing.monthlyCredits
       )} ${copy("credits / month", "积分/月")}`,
-    },
-    {
-      label: copy("Chat round", "Chat 轮次"),
-      value: `${formatCredits(billing.chatRoundCredits)} ${copy(
-        "credits / round",
-        "积分/轮"
-      )}`,
-    },
-    {
-      label: copy("Agent round", "Agent 轮次"),
-      value: `${formatCredits(billing.agentRoundCredits)} ${copy(
-        "credits / round",
-        "积分/轮"
-      )}`,
     },
     {
       label: copy("Backend group", "后端分组"),
@@ -391,21 +369,21 @@ export function ImagePricingChartCard({
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           {copy(
-            `The default image model uses four global fixed tiers: 1024 ${formatPrice(
-              defaultModelPricing.base1024Credits
+            `Reference model ${referenceModelName} uses four global fixed tiers: 1024 ${formatPrice(
+              referenceModel.pricing.base1024Credits
             )}, 1K ${formatPrice(
-              defaultModelPricing.base1kCredits
+              referenceModel.pricing.base1kCredits
             )}, 2K ${formatPrice(
-              defaultModelPricing.base2kCredits
-            )}, and 4K ${formatPrice(defaultModelPricing.base4kCredits)}.`,
-            `默认图像模型采用四个全局固定档位：1024 ${formatPrice(
-              defaultModelPricing.base1024Credits
+              referenceModel.pricing.base2kCredits
+            )}, and 4K ${formatPrice(referenceModel.pricing.base4kCredits)}.`,
+            `参考模型 ${referenceModelName} 采用四个全局固定档位：1024 ${formatPrice(
+              referenceModel.pricing.base1024Credits
             )}、1K ${formatPrice(
-              defaultModelPricing.base1kCredits
+              referenceModel.pricing.base1kCredits
             )}、2K ${formatPrice(
-              defaultModelPricing.base2kCredits
+              referenceModel.pricing.base2kCredits
             )}、4K ${formatPrice(
-              defaultModelPricing.base4kCredits
+              referenceModel.pricing.base4kCredits
             )}；按输出最长边归档。`
           )}
         </p>
@@ -418,7 +396,7 @@ export function ImagePricingChartCard({
                 {tier.label}
               </div>
               <div className="mt-1.5 text-lg font-medium text-foreground">
-                {formatPrice(defaultModelPricing[tier.field])}{" "}
+                {formatPrice(referenceModel.pricing[tier.field])}{" "}
                 <span className="text-xs font-normal text-muted-foreground">
                   {copy("credits", "积分")}
                 </span>
@@ -556,21 +534,16 @@ export function ImagePricingChartCard({
                   {modelPricingRows.map((row) => (
                     <tr className="border-b last:border-b-0" key={row.model}>
                       <td className="px-2 py-2 font-mono text-foreground">
-                        {row.model === GLOBAL_DEFAULT_IMAGE_PRICING_MODEL
-                          ? copy("Other/custom models", "其他或自定义模型")
-                          : formatAdobeModelIdForDisplay(row.model)}
+                        {formatAdobeModelIdForDisplay(row.model)}
                       </td>
                       {PRICE_TIERS.map((tier) => {
-                        const globalOverride = row.globalOverrides[tier.field];
                         const override = row.groupOverrides[tier.field];
                         return (
                           <td className="px-2 py-2" key={tier.field}>
                             <div className="font-medium text-foreground">
                               {formatPrice(row.globalPricing[tier.field])}{" "}
                               <span className="font-normal text-muted-foreground">
-                                {globalOverride === undefined
-                                  ? copy("global default", "全局默认")
-                                  : copy("global", "全局")}
+                                {copy("global", "全局")}
                               </span>
                             </div>
                             <div className="mt-0.5 text-muted-foreground">
@@ -599,8 +572,8 @@ export function ImagePricingChartCard({
           ) : (
             <p className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">
               {copy(
-                "All models inherit the required global default prices.",
-                "所有模型均继承必填的全局默认价格。"
+                "No explicitly priced image models are available.",
+                "暂无已显式配置价格的图像模型。"
               )}
             </p>
           )}
@@ -625,7 +598,7 @@ export function ImagePricingChartCard({
               {PRICE_TIERS.map((tier) => (
                 <p key={tier.field}>
                   {tier.range(formatLongestEdge)} · {tier.label} ={" "}
-                  {formatPrice(defaultModelPricing[tier.field])}{" "}
+                  {formatPrice(referenceModel.pricing[tier.field])}{" "}
                   {copy("global credits", "全局积分")}
                 </p>
               ))}
@@ -670,7 +643,7 @@ export function ImagePricingChartCard({
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {examplePoints.map((point) => {
-                const example = getExampleFormula(point, defaultModelPricing);
+                const example = getExampleFormula(point, referenceModel.pricing);
                 return (
                   <div
                     className="rounded-md border bg-background p-2"
@@ -698,8 +671,8 @@ export function ImagePricingChartCard({
         <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
           <p>
             {copy(
-              "The curve shows the default image model's global fixed prices. Group prices follow the priority above; review and Chat/Agent round charges are added separately.",
-              "曲线展示默认图像模型的全局固定价格；分组价格按上述优先级生效，审核及 Chat/Agent 轮次费用另行叠加。"
+              `The curve shows ${referenceModelName}'s global fixed prices. Group prices follow the priority above, and review charges are added separately.`,
+              `曲线展示参考模型 ${referenceModelName} 的全局固定价格；分组价格按上述优先级生效，审核费用另行叠加。`
             )}
           </p>
           <p>

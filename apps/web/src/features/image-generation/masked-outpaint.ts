@@ -12,9 +12,9 @@
  *   差最小的偏移(=最佳叠加位置)，再把新区写为对齐后的 edited、重叠区保持 committed 不动、
  *   滑动露出的空位填黑。硬拼不叠加两版 → 不重影（线性羽化会把两版轻微错位内容糊成重影）。
  *
- * 为什么能无缝且尺寸稳：① 1K tile —— codex/api 后端尊重 1K 尺寸（2K/4K 才不尊重，见 #19175）；
- *   ② mask —— Web 与 Adobe 后端不发 mask，故每块都按 image_edit + requiresMask 重新选择
- *   Codex/Responses 或标准 API（它们把 mask 发给上游，标准 images/edits 支持局部重绘）。
+ * 为什么能无缝且尺寸稳：① 1K tile —— API 后端通常能稳定遵循该尺寸；
+ *   ② mask —— Adobe 后端不发 mask，故每块都按 image_edit + requiresMask 重新选择
+ *   支持标准 Images edits 协议的 API 成员。
  *
  * 设计（职责分离，便于单测）：切块几何与每块保留区是纯函数（planOutpaintTiles / tileKeepInset），
  *   单独单测；编排 maskedOutpaintImage 用 sharp 做缩放/切块/合成，用注入的 editWithMask 回调重绘
@@ -22,7 +22,7 @@
  */
 import sharp from "sharp";
 
-// 单块边长：web/codex 都稳的 1K。
+// 单块边长：标准 Images edits 上游普遍稳定支持的 1K。
 export const OUTPAINT_TILE = 1024;
 // 步进占块边比例：仅用于 axisCount 决定块数；2×2 时实际重叠由 OUTPAINT_MAX_WORKING 决定。
 export const OUTPAINT_STEP_FRACTION = 0.75;
@@ -160,7 +160,7 @@ export const OUTPAINT_MAX_WORKING =
  * @param targetLongEdge 期望最终较长边
  * @param editTile 注入回调：输入(块画布 PNG, mask PNG, 块位置 pos, 宽, 高, 块序号)，返回带 mask 编辑后的块。
  *   不再喂原图/参考——改「自主拓展」：由 operations.ts 按 pos 生成位置提示词(「根据四周已渲染内容补出
- *   [某方位]」)，让模型只从已提交的边缘往黑区补该方位。images=[块]+mask、路由 codex/api、逐块计费。
+ *   [某方位]」)，让模型只从已提交的边缘往黑区补该方位。images=[块]+mask、逐块计费。
  * @param superResolve 注入的 4 倍超分（Real-ESRGAN general）；把外绘后的工作图放大补足到目标。
  * @returns { buffer, tilesRepaired, tilesTotal }：拼接(+超分)后的图、成功块数、总块数（供计费/诊断）
  *

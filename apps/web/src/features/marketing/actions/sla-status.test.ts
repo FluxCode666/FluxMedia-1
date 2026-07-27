@@ -19,10 +19,9 @@ vi.mock("@repo/shared/auth/role-server", () => ({
 vi.mock("@repo/shared/logger", () => ({
   logger: { error: runtimeMocks.loggerError },
 }));
-vi.mock("@repo/shared/uol", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@repo/shared/uol")>();
-  return { ...actual, invokeOperation: runtimeMocks.invokeOperation };
-});
+vi.mock("@repo/shared/uol", () => ({
+  invokeOperation: runtimeMocks.invokeOperation,
+}));
 vi.mock("@repo/shared/safe-action", () => {
   class ActionUserError extends Error {
     /** 构造可断言的测试用户错误。 */
@@ -48,7 +47,7 @@ vi.mock("@/server/uol-init", () => ({
   ensureUolInitialized: runtimeMocks.ensureUolInitialized,
 }));
 
-import { OperationError } from "@repo/shared/uol";
+import { OperationError } from "@repo/shared/uol/errors";
 import { runMarketingSlaVisibilityUpdate } from "./sla-status";
 
 describe("runMarketingSlaVisibilityUpdate", () => {

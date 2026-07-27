@@ -1,6 +1,5 @@
-import type { MetadataRoute } from "next";
-
 import { siteConfig } from "@repo/shared/config";
+import type { MetadataRoute } from "next";
 import { getAllPseoParams } from "@/features/pseo/lib/pseo-data";
 import { getAllBlogSlugs, getAllLegalSlugs } from "@/lib/source";
 
@@ -30,6 +29,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   // Static pages that exist for each locale
   const staticPaths = [
     "", // homepage
+    "/models",
     "/blog",
     "/pseo",
   ];

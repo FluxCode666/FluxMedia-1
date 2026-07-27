@@ -11,6 +11,78 @@ import pg from "pg";
 const { Pool } = pg;
 const GLOBAL_SETTING_KEY = "CONTENT_MODERATION_BLOCK_RISK_LEVEL";
 const PLAN_MATRIX_SETTING_KEY = "PLAN_CAPABILITY_MATRIX";
+const LEGACY_MEDIA_TABLES = [
+  "image_backend_account",
+  "image_backend_account_group",
+  "image_backend_api",
+  "image_backend_api_group",
+  "image_backend_adobe",
+  "image_backend_adobe_group",
+  "adobe_account",
+  "adobe_token",
+  "image_backend_inflight_lease",
+  "image_backend_sticky_binding",
+  "image_backend_scheduler_metric",
+];
+const REQUIRED_MEDIA_TABLES = [
+  "image_backend_member",
+  "image_backend_member_api_config",
+  "image_backend_member_adobe_config",
+  "image_backend_member_group",
+  "image_backend_member_lease",
+  "image_backend_member_scheduler_metric",
+  "video_generation_callback_delivery",
+];
+const REMOVED_MEDIA_SETTING_KEYS = [
+  "IMAGE_MODERATION_PROMPT_REPAIR_ENABLED",
+  "IMAGE_MODERATION_PROMPT_REPAIR_MAX_RETRIES",
+  "PLATFORM_RESPONSES_MODEL",
+  "PLATFORM_CHAT_MODEL",
+  "IMAGE_AGENT_MAX_ROUNDS",
+  "IMAGE_AGENT_FORCE_MAX_ROUNDS",
+  "IMAGE_RESPONSES_PREVIOUS_RESPONSE_ENABLED",
+  "IMAGE_FORCE_WEB_MIN_PIXELS",
+  "IMAGE_FORCE_WEB_MAX_PIXELS",
+  "CHATGPT_WEB_PROXY_URL",
+  "CHATGPT_WEB_PROXY_SECRET",
+  "CHATGPT_WEB_ACCOUNT_REFRESH_STALE_MINUTES",
+  "CHATGPT_WEB_ACCOUNT_REFRESH_LIMIT",
+  "SUB2API_POSTGRES_URL",
+  "SUB2API_POSTGRES_SYNC_LIMIT",
+  "SUB2API_AUTO_SYNC_TASKS",
+  "EDITABLE_FILE_PPT_CREDITS",
+  "EDITABLE_FILE_PSD_CREDITS",
+  "INTERNAL_JOB_WEB_ACCOUNTS_REFRESH_INTERVAL_MINUTES",
+  "INTERNAL_JOB_WEB_ACCOUNTS_REPLENISH_INTERVAL_MINUTES",
+  "INTERNAL_JOB_SUB2API_SYNC_INTERVAL_MINUTES",
+  "CHATGPT_REGISTER_MOEMAIL_API_KEY",
+  "CHATGPT_REGISTER_MOEMAIL_BASE_URL",
+  "CHATGPT_REGISTER_MOEMAIL_DOMAIN",
+  "CHATGPT_REGISTER_DOMAINS",
+  "CHATGPT_REGISTER_DOMAIN_ROTATION_ENABLED",
+  "CHATGPT_REGISTER_PROXY",
+  "CHATGPT_REGISTER_PROXY_DISABLED",
+  "CHATGPT_REGISTER_REFRESH_URL",
+  "CHATGPT_REGISTER_REFRESH_MIN_INTERVAL_SECONDS",
+  "CHATGPT_REGISTER_REFRESH_MIN_ATTEMPTS",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_ENABLED",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_GROUP_ID",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_TARGET",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_MAX_PER_RUN",
+  "CHATGPT_REGISTER_POOL_MAINTAIN_CONCURRENCY",
+];
+const REMOVED_PLAN_FEATURES = [
+  "imageGeneration.chat",
+  "imageGeneration.agent",
+  "imageGeneration.waterfall",
+  "export.ppt",
+  "export.psd",
+  "models.gpt55",
+  "externalApi.chat.completions",
+  "externalApi.responses",
+  "externalApi.agent",
+];
+const REMOVED_PLAN_LIMITS = ["maxChatImages", "maxChatContextChars"];
 
 /**
  * 将 PostgreSQL bigint 文本计数收窄为 JavaScript 安全整数。
@@ -134,6 +206,877 @@ async function assertRelayPreflight(pool) {
     printEvidence("relay_only_true_count", count);
     if (count !== 0) {
       throw new Error(`relay-only preflight failed: ${count} rows found`);
+    }
+  });
+}
+
+/**
+ * 验证 0060 切换前只有可迁移的 API/Adobe 数据，且旧 Web 与运行中状态已排空。
+ * 已完成迁移后旧表或 adobe_id 列不存在，按后续发布的零行状态处理。
+ */
+async function assertMediaPreflight(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const markerResult = await client.query(
+      "select to_regclass('public.image_backend_member') is not null as applied"
+    );
+    if (markerResult.rows[0]?.applied === true) {
+      const legacySubpoolTableResult = await client.query(`
+        select
+          to_regclass('public.adobe_account') is not null as account_present,
+          to_regclass('public.adobe_token') is not null as token_present
+      `);
+      const legacySubpoolTables = legacySubpoolTableResult.rows[0] ?? {};
+      const accountPresent = legacySubpoolTables.account_present === true;
+      const tokenPresent = legacySubpoolTables.token_present === true;
+      if (accountPresent !== tokenPresent) {
+        throw new Error(
+          "unified media preflight failed: legacy Adobe subpool is incomplete"
+        );
+      }
+
+      if (!accountPresent) {
+        for (const tableName of LEGACY_MEDIA_TABLES) {
+          printEvidence(`legacy_media_${tableName}_count`, 0);
+        }
+        printEvidence("legacy_media_video_adobe_reference_count", 0);
+        printEvidence("legacy_media_total_count", 0);
+        printEvidence("legacy_media_active_lease_count", 0);
+        printEvidence("legacy_media_active_sticky_count", 0);
+        printEvidence("legacy_media_active_video_count", 0);
+        printEvidence("legacy_media_member_id_collision_count", 0);
+        printEvidence("legacy_media_invalid_api_model_count", 0);
+        printEvidence("legacy_media_incompatible_api_protocol_count", 0);
+        printEvidence("legacy_media_invalid_adobe_config_count", 0);
+        printEvidence("legacy_media_invalid_member_state_count", 0);
+        printEvidence("legacy_media_invalid_direct_credential_count", 0);
+        printEvidence("legacy_media_direct_member_id_collision_count", 0);
+        printEvidence("legacy_media_blocker_total_count", 0);
+        return;
+      }
+
+      const legacySubpoolResult = await client.query(`
+        select
+          (select count(*)::text from adobe_account) as account_count,
+          (select count(*)::text from adobe_token) as token_count,
+          (
+            select count(*)::text
+            from video_generation
+            where adobe_token_id is not null
+          ) as video_reference_count,
+          (
+            select count(*)::text
+            from image_backend_member_lease as lease
+            inner join image_backend_member_adobe_config as adobe
+              on adobe.member_id = lease.member_id
+              and adobe.mode = 'direct'
+            where lease.expires_at > now()
+          ) as active_lease_count,
+          (
+            select count(*)::text
+            from video_generation as video
+            inner join image_backend_member_adobe_config as adobe
+              on adobe.member_id = video.backend_member_id
+              and adobe.mode = 'direct'
+            where video.stage not in ('completed', 'failed')
+          ) as active_video_count,
+          (
+            select count(*)::text
+            from image_backend_member_adobe_config as adobe
+            where (
+                adobe.mode = 'gateway'
+                and (
+                  exists (
+                    select 1
+                    from adobe_account as account
+                    where account.member_id = adobe.member_id
+                  )
+                  or exists (
+                    select 1
+                    from adobe_token as token
+                    where token.member_id = adobe.member_id
+                  )
+                )
+              ) or (
+                adobe.mode = 'direct'
+                and (
+                  not exists (
+                    select 1
+                    from adobe_account as account
+                    where account.member_id = adobe.member_id
+                  )
+                  or exists (
+                    select 1
+                    from adobe_account as account
+                    where account.member_id = adobe.member_id
+                      and (
+                        account.status not in ('active', 'error', 'disabled')
+                        or char_length(btrim(account.cookie))
+                          not between 1 and 64000
+                        or (
+                          account.scope is not null
+                          and char_length(btrim(account.scope))
+                            not between 1 and 4096
+                        )
+                        or account.consecutive_failures < 0
+                        or (
+                          select count(*)
+                          from adobe_token as token
+                          where token.member_id = adobe.member_id
+                            and token.account_id = account.id
+                            and token.source = 'auto_refresh'
+                        ) <> 1
+                      )
+                  )
+                  or exists (
+                    select 1
+                    from adobe_token as token
+                    left join adobe_account as account
+                      on account.id = token.account_id
+                      and account.member_id = adobe.member_id
+                    where token.member_id = adobe.member_id
+                      and (
+                        token.account_id is null
+                        or token.source <> 'auto_refresh'
+                        or token.status not in (
+                          'active',
+                          'error',
+                          'exhausted',
+                          'invalid'
+                        )
+                        or char_length(btrim(token.value)) < 1
+                        or token.fails < 0
+                        or account.id is null
+                      )
+                  )
+                )
+              )
+          ) as invalid_direct_credential_count,
+          (
+            with ranked_direct_accounts as (
+              select
+                account.id,
+                row_number() over (
+                  partition by account.member_id
+                  order by account.created_at, account.id
+                ) as ordinal
+              from adobe_account as account
+              inner join image_backend_member_adobe_config as adobe
+                on adobe.member_id = account.member_id
+                and adobe.mode = 'direct'
+            )
+            select count(*)::text
+            from ranked_direct_accounts as account
+            where account.ordinal > 1
+              and (
+                char_length('adobe-direct:' || account.id) > 128
+                or exists (
+                  select 1
+                  from image_backend_member as member
+                  where member.id = 'adobe-direct:' || account.id
+                )
+              )
+          ) as direct_member_id_collision_count
+      `);
+      const legacySubpool = legacySubpoolResult.rows[0] ?? {};
+      const accountCount = parseCount(
+        legacySubpool.account_count,
+        "legacy unified Adobe accounts"
+      );
+      const tokenCount = parseCount(
+        legacySubpool.token_count,
+        "legacy unified Adobe tokens"
+      );
+      const videoReferenceCount = parseCount(
+        legacySubpool.video_reference_count,
+        "legacy unified Adobe video token references"
+      );
+      const activeLeaseCount = parseCount(
+        legacySubpool.active_lease_count,
+        "legacy unified Adobe active leases"
+      );
+      const activeVideoCount = parseCount(
+        legacySubpool.active_video_count,
+        "legacy unified Adobe active videos"
+      );
+      const invalidDirectCredentialCount = parseCount(
+        legacySubpool.invalid_direct_credential_count,
+        "legacy unified Adobe direct credentials"
+      );
+      const directMemberIdCollisionCount = parseCount(
+        legacySubpool.direct_member_id_collision_count,
+        "legacy unified Adobe member ID collisions"
+      );
+      for (const tableName of LEGACY_MEDIA_TABLES) {
+        const count =
+          tableName === "adobe_account"
+            ? accountCount
+            : tableName === "adobe_token"
+              ? tokenCount
+              : 0;
+        printEvidence(`legacy_media_${tableName}_count`, count);
+      }
+      printEvidence(
+        "legacy_media_video_adobe_reference_count",
+        videoReferenceCount
+      );
+      printEvidence(
+        "legacy_media_total_count",
+        accountCount + tokenCount + videoReferenceCount
+      );
+      printEvidence("legacy_media_active_lease_count", activeLeaseCount);
+      printEvidence("legacy_media_active_sticky_count", 0);
+      printEvidence("legacy_media_active_video_count", activeVideoCount);
+      printEvidence("legacy_media_member_id_collision_count", 0);
+      printEvidence("legacy_media_invalid_api_model_count", 0);
+      printEvidence("legacy_media_incompatible_api_protocol_count", 0);
+      printEvidence("legacy_media_invalid_adobe_config_count", 0);
+      printEvidence("legacy_media_invalid_member_state_count", 0);
+      printEvidence(
+        "legacy_media_invalid_direct_credential_count",
+        invalidDirectCredentialCount
+      );
+      printEvidence(
+        "legacy_media_direct_member_id_collision_count",
+        directMemberIdCollisionCount
+      );
+      const blockerTotal =
+        activeLeaseCount +
+        activeVideoCount +
+        invalidDirectCredentialCount +
+        directMemberIdCollisionCount;
+      printEvidence("legacy_media_blocker_total_count", blockerTotal);
+      if (blockerTotal !== 0) {
+        throw new Error(
+          `unified media preflight failed: ${blockerTotal} non-migratable legacy Adobe rows found`
+        );
+      }
+      return;
+    }
+    const tableCounts = new Map();
+    const presentTables = new Set();
+    let legacyTotal = 0;
+    for (const tableName of LEGACY_MEDIA_TABLES) {
+      const existsResult = await client.query(
+        "select to_regclass(format('public.%I', $1::text)) is not null as present",
+        [tableName]
+      );
+      let count = 0;
+      if (existsResult.rows[0]?.present === true) {
+        presentTables.add(tableName);
+        if (!/^[a-z_]+$/u.test(tableName)) {
+          throw new Error("legacy media table name is invalid");
+        }
+        const countResult = await client.query(
+          `select count(*)::text as count from "${tableName}"`
+        );
+        count = parseCount(countResult.rows[0]?.count, tableName);
+      }
+      printEvidence(`legacy_media_${tableName}_count`, count);
+      tableCounts.set(tableName, count);
+      legacyTotal += count;
+    }
+
+    const adobeColumnResult = await client.query(`
+      select exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'video_generation'
+          and column_name = 'adobe_id'
+      ) as present
+    `);
+    let videoReferenceCount = 0;
+    if (adobeColumnResult.rows[0]?.present === true) {
+      const countResult = await client.query(`
+        select count(*)::text as count
+        from video_generation
+        where adobe_id is not null
+      `);
+      videoReferenceCount = parseCount(
+        countResult.rows[0]?.count,
+        "video_generation adobe references"
+      );
+    }
+    printEvidence(
+      "legacy_media_video_adobe_reference_count",
+      videoReferenceCount
+    );
+    legacyTotal += videoReferenceCount;
+    printEvidence("legacy_media_total_count", legacyTotal);
+
+    const activeLeaseResult = presentTables.has("image_backend_inflight_lease")
+      ? await client.query(`
+          select count(*)::text as count
+          from image_backend_inflight_lease
+          where expires_at > now()
+        `)
+      : { rows: [{ count: "0" }] };
+    const activeLeaseCount = parseCount(
+      activeLeaseResult.rows[0]?.count,
+      "active legacy media leases"
+    );
+    const activeStickyResult = presentTables.has("image_backend_sticky_binding")
+      ? await client.query(`
+          select count(*)::text as count
+          from image_backend_sticky_binding
+          where expires_at > now()
+        `)
+      : { rows: [{ count: "0" }] };
+    const activeStickyCount = parseCount(
+      activeStickyResult.rows[0]?.count,
+      "active legacy sticky bindings"
+    );
+    const activeVideoResult =
+      adobeColumnResult.rows[0]?.present === true
+        ? await client.query(`
+          select count(*)::text as count
+          from video_generation
+          where adobe_id is not null
+            and status not in ('completed', 'failed')
+        `)
+        : { rows: [{ count: "0" }] };
+    const activeVideoCount = parseCount(
+      activeVideoResult.rows[0]?.count,
+      "active legacy Adobe videos"
+    );
+    const memberCollisionResult =
+      presentTables.has("image_backend_api") &&
+      presentTables.has("image_backend_adobe")
+        ? await client.query(`
+            select count(*)::text as count
+            from image_backend_api as api
+            inner join image_backend_adobe as adobe on adobe.id = api.id
+          `)
+        : { rows: [{ count: "0" }] };
+    const memberIdCollisionCount = parseCount(
+      memberCollisionResult.rows[0]?.count,
+      "legacy member ID collisions"
+    );
+    const apiModelColumnResult = await client.query(`
+      select exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'image_backend_api'
+          and column_name = 'supported_model_ids'
+      ) as present
+    `);
+    const invalidApiModelResult =
+      apiModelColumnResult.rows[0]?.present === true
+        ? await client.query(`
+          select count(*)::text as count
+          from image_backend_api
+          where case
+            when json_typeof(supported_model_ids) <> 'array' then true
+            when json_array_length(supported_model_ids) not between 1 and 200
+              then true
+            else exists (
+              select 1
+              from json_array_elements(supported_model_ids) as model(value)
+              where json_typeof(model.value) <> 'string'
+                or char_length(btrim(model.value #>> '{}')) not between 1 and 120
+                or lower(btrim(model.value #>> '{}')) ~
+                  '^(firefly-sora2(-pro)?-(4|8|12)s-(9x16|16x9)|(firefly-)?veo31(-ref|-fast)?-(4|6|8)s-(16x9|9x16)-(1080p|720p)|(firefly-)?kling-o3-(5|15)s-(16x9|9x16)|(firefly-)?kling3-(5|10|15)s-(16x9|9x16))$'
+            )
+          end
+        `)
+        : { rows: [{ count: "0" }] };
+    const invalidApiModelCount = parseCount(
+      invalidApiModelResult.rows[0]?.count,
+      "invalid legacy API models"
+    );
+    const apiProtocolColumnResult = await client.query(`
+      select count(*)::integer as count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'image_backend_api'
+        and column_name in ('interface_mode', 'image_upstream_mode')
+    `);
+    const incompatibleApiProtocolResult =
+      apiProtocolColumnResult.rows[0]?.count === 2
+        ? await client.query(`
+            select count(*)::text as count
+            from image_backend_api
+            where interface_mode not in ('images', 'mixed')
+              or image_upstream_mode <> 'images'
+          `)
+        : { rows: [{ count: "0" }] };
+    const incompatibleApiProtocolCount = parseCount(
+      incompatibleApiProtocolResult.rows[0]?.count,
+      "incompatible legacy API protocols"
+    );
+    const adobeConfigColumnResult = await client.query(`
+      select count(*)::integer as count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'image_backend_adobe'
+        and column_name in ('mode', 'base_url', 'enabled_models')
+    `);
+    const invalidAdobeConfigResult =
+      adobeConfigColumnResult.rows[0]?.count === 3
+        ? await client.query(`
+            select count(*)::text as count
+            from image_backend_adobe
+            where case
+              when mode not in ('gateway', 'direct') then true
+              when mode = 'gateway' and nullif(btrim(base_url), '') is null
+                then true
+              when enabled_models is null then false
+              when json_typeof(enabled_models) <> 'array' then true
+              when json_array_length(enabled_models) > 200 then true
+              else exists (
+                select 1
+                from json_array_elements(enabled_models) as model(value)
+                where json_typeof(model.value) <> 'string'
+                  or char_length(btrim(model.value #>> '{}')) not between 1 and 120
+                  or (
+                    image_backend_adobe.mode = 'gateway'
+                    and lower(btrim(model.value #>> '{}')) ~
+                      '^(firefly-sora2(-pro)?-(4|8|12)s-(9x16|16x9)|(firefly-)?veo31(-ref|-fast)?-(4|6|8)s-(16x9|9x16)-(1080p|720p)|(firefly-)?kling-o3-(5|15)s-(16x9|9x16)|(firefly-)?kling3-(5|10|15)s-(16x9|9x16))$'
+                  )
+              )
+            end
+          `)
+        : { rows: [{ count: "0" }] };
+    const invalidAdobeConfigCount = parseCount(
+      invalidAdobeConfigResult.rows[0]?.count,
+      "invalid legacy Adobe configs"
+    );
+    const memberStateColumnResult = await client.query(`
+      select
+        count(*) filter (
+          where table_name = 'image_backend_api'
+            and column_name in (
+              'status',
+              'priority',
+              'concurrency',
+              'success_count',
+              'fail_count',
+              'parameter_mappings'
+            )
+        )::integer as api_count,
+        count(*) filter (
+          where table_name = 'image_backend_adobe'
+            and column_name in (
+              'status',
+              'priority',
+              'concurrency',
+              'success_count',
+              'fail_count',
+              'gpt_image_quality'
+            )
+        )::integer as adobe_count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name in ('image_backend_api', 'image_backend_adobe')
+    `);
+    const memberStateColumns = memberStateColumnResult.rows[0] ?? {};
+    const invalidMemberStateResult =
+      memberStateColumns.api_count === 6 && memberStateColumns.adobe_count === 6
+        ? await client.query(`
+            select sum(invalid_count)::text as count
+            from (
+              select count(*) as invalid_count
+              from image_backend_api
+              where status not in ('active', 'limited', 'error')
+                or priority < 0
+                or priority > 10000
+                or concurrency < 1
+                or concurrency > 10000
+                or success_count < 0
+                or fail_count < 0
+                or json_typeof(parameter_mappings) <> 'array'
+              union all
+              select count(*) as invalid_count
+              from image_backend_adobe
+              where status not in ('active', 'limited', 'error')
+                or priority < 0
+                or priority > 10000
+                or concurrency < 1
+                or concurrency > 10000
+                or success_count < 0
+                or fail_count < 0
+                or gpt_image_quality not in ('low', 'medium', 'high')
+            ) as invalid_member_state
+          `)
+        : { rows: [{ count: "0" }] };
+    const invalidMemberStateCount = parseCount(
+      invalidMemberStateResult.rows[0]?.count,
+      "invalid legacy member state"
+    );
+    const directCredentialTablesPresent =
+      presentTables.has("image_backend_adobe") &&
+      presentTables.has("adobe_account") &&
+      presentTables.has("adobe_token");
+    const invalidDirectCredentialResult = directCredentialTablesPresent
+      ? await client.query(`
+          select count(*)::text as count
+          from image_backend_adobe as adobe
+          where (
+              adobe.mode = 'gateway'
+              and (
+                exists (
+                  select 1 from adobe_account as account
+                  where account.adobe_id = adobe.id
+                )
+                or exists (
+                  select 1 from adobe_token as token
+                  where token.adobe_id = adobe.id
+                )
+              )
+            ) or (
+              adobe.mode = 'direct'
+              and (
+                not exists (
+                  select 1 from adobe_account as account
+                  where account.adobe_id = adobe.id
+                )
+                or exists (
+                  select 1
+                  from adobe_account as account
+                  where account.adobe_id = adobe.id
+                    and (
+                      account.status not in ('active', 'error', 'disabled')
+                      or char_length(btrim(account.cookie)) not between 1 and 64000
+                      or (
+                        account.scope is not null
+                        and char_length(btrim(account.scope)) not between 1 and 4096
+                      )
+                      or account.consecutive_failures < 0
+                      or (
+                        select count(*)
+                        from adobe_token as token
+                        where token.adobe_id = adobe.id
+                          and token.account_id = account.id
+                          and token.source = 'auto_refresh'
+                      ) <> 1
+                    )
+                )
+                or exists (
+                  select 1
+                  from adobe_token as token
+                  left join adobe_account as account
+                    on account.id = token.account_id
+                    and account.adobe_id = adobe.id
+                  where token.adobe_id = adobe.id
+                    and (
+                      token.account_id is null
+                      or token.source <> 'auto_refresh'
+                      or token.status not in (
+                        'active',
+                        'error',
+                        'exhausted',
+                        'invalid'
+                      )
+                      or char_length(btrim(token.value)) < 1
+                      or token.fails < 0
+                      or account.id is null
+                    )
+                )
+              )
+            )
+        `)
+      : { rows: [{ count: "0" }] };
+    const invalidDirectCredentialCount = parseCount(
+      invalidDirectCredentialResult.rows[0]?.count,
+      "invalid legacy Adobe direct credentials"
+    );
+    const directMemberIdCollisionResult =
+      directCredentialTablesPresent && presentTables.has("image_backend_api")
+        ? await client.query(`
+          with ranked_direct_accounts as (
+            select
+              account.id,
+              row_number() over (
+                partition by account.adobe_id
+                order by account.created_at, account.id
+              ) as ordinal
+            from adobe_account as account
+            inner join image_backend_adobe as adobe
+              on adobe.id = account.adobe_id
+              and adobe.mode = 'direct'
+          )
+          select count(*)::text as count
+          from ranked_direct_accounts as account
+          where account.ordinal > 1
+            and (
+              char_length('adobe-direct:' || account.id) > 128
+              or exists (
+                select 1 from image_backend_api as api
+                where api.id = 'adobe-direct:' || account.id
+              )
+              or exists (
+                select 1 from image_backend_adobe as adobe
+                where adobe.id = 'adobe-direct:' || account.id
+              )
+            )
+          `)
+        : { rows: [{ count: "0" }] };
+    const directMemberIdCollisionCount = parseCount(
+      directMemberIdCollisionResult.rows[0]?.count,
+      "legacy Adobe direct member ID collisions"
+    );
+    const blockerTotal =
+      (tableCounts.get("image_backend_account") ?? 0) +
+      (tableCounts.get("image_backend_account_group") ?? 0) +
+      activeLeaseCount +
+      activeStickyCount +
+      activeVideoCount +
+      memberIdCollisionCount +
+      invalidApiModelCount +
+      incompatibleApiProtocolCount +
+      invalidAdobeConfigCount +
+      invalidMemberStateCount +
+      invalidDirectCredentialCount +
+      directMemberIdCollisionCount;
+
+    printEvidence("legacy_media_active_lease_count", activeLeaseCount);
+    printEvidence("legacy_media_active_sticky_count", activeStickyCount);
+    printEvidence("legacy_media_active_video_count", activeVideoCount);
+    printEvidence(
+      "legacy_media_member_id_collision_count",
+      memberIdCollisionCount
+    );
+    printEvidence("legacy_media_invalid_api_model_count", invalidApiModelCount);
+    printEvidence(
+      "legacy_media_incompatible_api_protocol_count",
+      incompatibleApiProtocolCount
+    );
+    printEvidence(
+      "legacy_media_invalid_adobe_config_count",
+      invalidAdobeConfigCount
+    );
+    printEvidence(
+      "legacy_media_invalid_member_state_count",
+      invalidMemberStateCount
+    );
+    printEvidence(
+      "legacy_media_invalid_direct_credential_count",
+      invalidDirectCredentialCount
+    );
+    printEvidence(
+      "legacy_media_direct_member_id_collision_count",
+      directMemberIdCollisionCount
+    );
+    printEvidence("legacy_media_blocker_total_count", blockerTotal);
+    if (blockerTotal !== 0) {
+      throw new Error(
+        `unified media preflight failed: ${blockerTotal} non-migratable rows found`
+      );
+    }
+  });
+}
+
+/** 验证 0060-0064 后统一号池、视频恢复身份和 API Key 配额不变量。 */
+async function assertMediaPostMigrationState(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const result = await client.query(
+      `
+        select
+          (
+            select count(*)::text
+            from unnest($1::text[]) as required(table_name)
+            where to_regclass(format('public.%I', table_name)) is not null
+          ) as required_table_count,
+          (
+            select count(*)::text
+            from unnest($2::text[]) as legacy(table_name)
+            where to_regclass(format('public.%I', table_name)) is not null
+          ) as legacy_table_count,
+          (
+            select count(*)::text
+            from information_schema.columns
+            where table_schema = 'public'
+              and table_name = 'video_generation'
+              and column_name in ('adobe_id', 'adobe_token_id')
+          ) as old_column_count,
+          (
+            select count(*)::text
+            from information_schema.columns
+            where table_schema = 'public'
+              and (
+                (table_name = 'video_generation'
+                  and column_name = 'principal_scope' and is_nullable = 'NO')
+                or (table_name = 'video_generation'
+                  and column_name = 'api_key_credits_reserved'
+                  and is_nullable = 'NO')
+                or (table_name = 'video_generation_callback_delivery'
+                  and column_name = 'callback_url' and is_nullable = 'NO')
+                or (table_name = 'image_backend_member_api_config'
+                  and column_name = 'use_stream' and is_nullable = 'NO')
+                or (table_name = 'image_backend_member_adobe_config'
+                  and column_name in (
+                    'cookie',
+                    'scope',
+                    'access_token',
+                    'account_user_id',
+                    'display_name',
+                    'email',
+                    'credential_status',
+                    'token_expires_at',
+                    'token_fails',
+                    'last_refresh_at',
+                    'last_refresh_error',
+                    'next_refresh_at',
+                    'consecutive_failures',
+                    'credits_total',
+                    'credits_used',
+                    'credits_available',
+                    'credits_updated_at',
+                    'credits_error'
+                  ))
+              )
+          ) as required_column_count,
+          (
+            select count(*)::text
+            from pg_constraint
+            where connamespace = 'public'::regnamespace
+              and conname in (
+              'video_generation_backend_member_id_image_backend_member_id_fk',
+              'video_generation_stage_check',
+              'video_generation_recovery_counts_check',
+              'video_generation_callback_delivery_video_generation_id_video_generation_id_fk',
+              'video_callback_delivery_status_check',
+              'video_callback_delivery_attempt_count_check',
+              'video_generation_principal_scope_check',
+              'image_backend_member_adobe_config_credential_shape_check',
+              'image_backend_member_adobe_config_credential_status_check',
+              'image_backend_member_adobe_config_failure_counts_check'
+            )
+          ) as required_constraint_count,
+          (
+            select count(*)::text
+            from pg_constraint
+            where connamespace = 'public'::regnamespace
+              and conname =
+                'video_generation_member_lease_id_image_backend_member_lease_id_fk'
+          ) as recovery_lease_fk_count,
+          (
+            select count(*)::text
+            from pg_indexes
+            where schemaname = 'public'
+              and indexname in (
+                'image_backend_member_eligibility_idx',
+                'image_backend_member_cooldown_idx',
+                'image_backend_member_group_member_group_unique',
+                'image_backend_member_group_group_idx',
+                'image_backend_member_lease_member_expires_idx',
+                'image_backend_member_lease_expires_idx',
+                'image_backend_member_scheduler_metric_bucket_unique',
+                'image_backend_member_scheduler_metric_bucket_idx',
+                'video_generation_principal_stage_idx',
+                'video_generation_recovery_idx',
+                'video_callback_delivery_video_unique',
+                'video_callback_delivery_recovery_idx'
+              )
+          ) as required_index_count,
+          (
+            select count(*)::text
+            from system_setting
+            where key = any($3::text[])
+          ) as removed_setting_count,
+          (
+            select count(*)::text
+            from system_setting
+            where key = $4
+              and (
+                value::jsonb ? 'billing'
+                or exists (
+                  select 1
+                  from jsonb_object_keys(
+                    coalesce(value::jsonb -> 'features', '{}'::jsonb)
+                  ) as feature(key)
+                  where feature.key = any($5::text[])
+                )
+                or exists (
+                  select 1
+                  from jsonb_each(
+                    coalesce(value::jsonb -> 'limits', '{}'::jsonb)
+                  ) as plan(plan_name, limits)
+                  cross join lateral jsonb_object_keys(
+                    case
+                      when jsonb_typeof(plan.limits) = 'object'
+                        then plan.limits
+                      else '{}'::jsonb
+                    end
+                  ) as limit_key(key)
+                  where limit_key.key = any($6::text[])
+                )
+              )
+          ) as obsolete_plan_count
+      `,
+      [
+        REQUIRED_MEDIA_TABLES,
+        LEGACY_MEDIA_TABLES,
+        REMOVED_MEDIA_SETTING_KEYS,
+        PLAN_MATRIX_SETTING_KEY,
+        REMOVED_PLAN_FEATURES,
+        REMOVED_PLAN_LIMITS,
+      ]
+    );
+    const row = result.rows[0] ?? {};
+    const requiredTableCount = parseCount(
+      row.required_table_count,
+      "required media tables"
+    );
+    const legacyTableCount = parseCount(
+      row.legacy_table_count,
+      "legacy media tables"
+    );
+    const oldColumnCount = parseCount(
+      row.old_column_count,
+      "old media columns"
+    );
+    const requiredColumnCount = parseCount(
+      row.required_column_count,
+      "required media columns"
+    );
+    const requiredConstraintCount = parseCount(
+      row.required_constraint_count,
+      "required media constraints"
+    );
+    const requiredIndexCount = parseCount(
+      row.required_index_count,
+      "required media indexes"
+    );
+    const recoveryLeaseForeignKeyCount = parseCount(
+      row.recovery_lease_fk_count,
+      "video recovery lease foreign key"
+    );
+    const removedSettingCount = parseCount(
+      row.removed_setting_count,
+      "removed media settings"
+    );
+    const obsoletePlanCount = parseCount(
+      row.obsolete_plan_count,
+      "obsolete media plan nodes"
+    );
+
+    printEvidence("required_media_table_count", requiredTableCount);
+    printEvidence("legacy_media_table_count", legacyTableCount);
+    printEvidence("old_media_column_count", oldColumnCount);
+    printEvidence("required_media_column_count", requiredColumnCount);
+    printEvidence("required_media_constraint_count", requiredConstraintCount);
+    printEvidence(
+      "video_recovery_lease_foreign_key_count",
+      recoveryLeaseForeignKeyCount
+    );
+    printEvidence("required_media_index_count", requiredIndexCount);
+    printEvidence("removed_media_setting_count", removedSettingCount);
+    printEvidence("obsolete_media_plan_count", obsoletePlanCount);
+
+    if (
+      requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
+      legacyTableCount !== 0 ||
+      oldColumnCount !== 0 ||
+      requiredColumnCount !== 22 ||
+      requiredConstraintCount !== 10 ||
+      recoveryLeaseForeignKeyCount !== 0 ||
+      requiredIndexCount !== 12 ||
+      removedSettingCount !== 0 ||
+      obsoletePlanCount !== 0
+    ) {
+      throw new Error("post-migration unified media invariants failed");
     }
   });
 }
@@ -312,10 +1255,12 @@ async function main() {
     }
     if (command === "preflight") {
       await assertRelayPreflight(pool);
+      await assertMediaPreflight(pool);
       return;
     }
     if (command === "postcheck" || command === "postcheck-initial") {
       await assertPostMigrationState(pool, command === "postcheck-initial");
+      await assertMediaPostMigrationState(pool);
       return;
     }
     throw new Error(
