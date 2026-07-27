@@ -14,6 +14,7 @@ export {
   type AdobeFireflyClientConfig,
   assertAdobeVideoPollUrl,
   extractResultLink,
+  normalizeVideoPollUrl,
   type GenerateImageInput,
   type GenerateImageOutput,
   type GenerateVideoInput,

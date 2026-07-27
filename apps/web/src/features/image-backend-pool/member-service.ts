@@ -5,6 +5,7 @@
  * 恰好一个类型配置及全部分组关系，并提供脱敏管理快照与安全删除。
  * 使用方：UOL pool operations 与管理后台；secret 永不出现在读取 DTO 中。
  */
+import { normalizeCookieString } from "@repo/shared/adobe/firefly-direct";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import { backendMemberInputSchema } from "@repo/shared/image-backend/member-contract";
 import { requestParameterMappingsSchema } from "@repo/shared/image-backend/request-parameter-mapping";
@@ -172,6 +173,21 @@ function assertUniqueGroupIds(groupIds: readonly string[]): void {
   );
 }
 
+/**
+ * 归一化管理端粘贴的 Adobe Cookie。
+ *
+ * 导出扩展会生成 `{ cookie, headers }` JSON；成员表只持久化 IMS 刷新需要的
+ * Cookie，避免把 Express 会话辅助字段误写入 Cookie 列，导致后续自动刷新失效。
+ */
+function normalizeAdobeDirectCookie(cookie: string): string {
+  const normalized = normalizeCookieString(cookie);
+  if (normalized) return normalized;
+  throw new BackendMemberServiceError(
+    "validation_error",
+    "Adobe Cookie 导入内容不包含有效 Cookie"
+  );
+}
+
 /** 将仓储保存结果映射为稳定领域错误。 */
 function assertMemberSaved(
   result: SaveBackendMemberRepositoryResult
@@ -223,7 +239,20 @@ export function createBackendMemberService(
 
   return {
     async saveMember(rawInput) {
-      const input = backendMemberInputSchema.parse(rawInput);
+      let input = backendMemberInputSchema.parse(rawInput);
+      if (
+        input.type === "adobe" &&
+        input.config.mode === "direct" &&
+        input.config.cookie !== undefined
+      ) {
+        input = {
+          ...input,
+          config: {
+            ...input.config,
+            cookie: normalizeAdobeDirectCookie(input.config.cookie),
+          },
+        };
+      }
       assertUniqueGroupIds(input.groupIds);
       try {
         if (input.type === "api") {
