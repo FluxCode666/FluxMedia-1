@@ -9,7 +9,7 @@
 
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
@@ -18,6 +18,11 @@ import {
   removePreselectionParams,
   resolveAuthorizedImageSelection,
 } from "@/features/image-generation/model-preselection";
+import {
+  hasReferenceHandoffParams,
+  parseReferenceHandoffIntent,
+  removeReferenceHandoffParams,
+} from "@/features/image-generation/reference-handoff";
 
 import { ImageCreatePanel } from "./image-create-panel";
 
@@ -81,27 +86,54 @@ export function GeneratePageClient({
               modelId: intent.modelId,
             })
           : null,
+      hasReferenceQuery: hasReferenceHandoffParams(searchParams),
+      reference: parseReferenceHandoffIntent(searchParams),
     };
   });
-  const hasConsumedPreselection = useRef(false);
+  const hasProcessedInitialQueries = useRef(false);
 
   useEffect(() => {
+    if (hasProcessedInitialQueries.current) return;
+    hasProcessedInitialQueries.current = true;
+
+    let currentUrl = new URL(window.location.href);
+    let shouldReplaceUrl = false;
+    if (initialPreselection.hasQueryParams) {
+      if (!initialPreselection.imageSelection) {
+        toast.error("该图片模型当前不可用，已保留安全默认模型");
+      }
+      currentUrl = new URL(
+        removePreselectionParams(currentUrl),
+        currentUrl.origin
+      );
+      shouldReplaceUrl = true;
+    }
     if (
-      hasConsumedPreselection.current ||
-      !initialPreselection.hasQueryParams
+      initialPreselection.hasReferenceQuery &&
+      !initialPreselection.reference
     ) {
-      return;
+      toast.error("图库参考图参数无效，请返回图库后重试");
+      currentUrl = new URL(
+        removeReferenceHandoffParams(currentUrl),
+        currentUrl.origin
+      );
+      shouldReplaceUrl = true;
     }
-    hasConsumedPreselection.current = true;
 
-    if (!initialPreselection.imageSelection) {
-      toast.error("该图片模型当前不可用，已保留安全默认模型");
-    }
-
-    router.replace(removePreselectionParams(new URL(window.location.href)), {
-      scroll: false,
-    });
+    if (!shouldReplaceUrl) return;
+    router.replace(
+      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+      { scroll: false }
+    );
   }, [initialPreselection, router]);
+
+  /** 在图片面板完成加载尝试后清理一次性交接参数，避免刷新时重复添加。 */
+  const consumeInitialReference = useCallback(() => {
+    router.replace(
+      removeReferenceHandoffParams(new URL(window.location.href)),
+      { scroll: false }
+    );
+  }, [router]);
 
   /** 按服务端返回的实际扣费更新页面余额，不允许显示负数。 */
   const consumeDisplayedCredits = (credits: number) => {
@@ -123,6 +155,8 @@ export function GeneratePageClient({
         recent={recentGenerations}
         selectedBackendGroupId={selectedBackendGroupId}
         initialSelection={initialPreselection.imageSelection}
+        initialReference={initialPreselection.reference}
+        onInitialReferenceConsumed={consumeInitialReference}
       />
     </div>
   );
