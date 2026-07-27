@@ -46,6 +46,19 @@
 | 用户与套餐 | `user.*`、订阅与能力查询 | 套餐能力唯一来源是 `plan-capabilities.ts` |
 | 管理与作业 | 用户管理、支付、分析、维护 operation | 管理权限和副作用必须显式声明 |
 
+## 管理端支付 operation
+
+| Operation | Principal | 口径与传输边界 |
+| --- | --- | --- |
+| `payment.getAdminOverview` | `admin`、`super_admin` 用户 | 人工会话只读；按部署时区自然月、`fulfilled_at` 和币种读取已履约积分充值收入与订单数 |
+| `payment.listAdminOrders` | `admin`、`super_admin` 用户 | 人工会话只读；按邮箱、精确本地订单号、持久状态查询，使用绑定管理员与筛选的签名 keyset cursor |
+| `payment.searchAdminOrderUsers` | `admin`、`super_admin` 用户 | 人工会话只读；服务端有界搜索存在充值订单的用户邮箱 |
+
+三个 operation 均为 `human-only`，由管理端 Server Action 薄适配器调用。其收入范围只
+覆盖 `payment_order` 中的 `credit_top_up | credit_package`，不包含订阅、手续费、拒付、
+退款净额或统一支付订单上线前的历史数据。详细设计见
+[admin-payment-management.md](2026-07-28-admin-payment-management.md)。
+
 ## 媒体传输映射
 
 | 传输 | operation |

@@ -24,9 +24,11 @@ import {
   Activity,
   BookOpen,
   ChevronsUpDown,
+  CreditCard,
   History,
   LogOut,
   Megaphone,
+  ReceiptText,
   Server,
   Settings,
   Shield,
@@ -123,6 +125,8 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "New Ticket": t("nav.newTicket"),
       "User Management": t("nav.userManagement"),
       "Global Usage Records": t("nav.globalUsageRecords"),
+      "Payment Overview": t("nav.paymentOverview"),
+      "Order Management": t("nav.orderManagement"),
       Administration: t("nav.administration"),
       User: t("nav.user"),
     };
@@ -194,6 +198,16 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             title: "Global Usage Records",
             href: "/dashboard/admin/history",
             icon: History,
+          },
+          {
+            title: "Payment Overview",
+            href: "/dashboard/admin/payments",
+            icon: CreditCard,
+          },
+          {
+            title: "Order Management",
+            href: "/dashboard/admin/payments/orders",
+            icon: ReceiptText,
           },
           {
             title: "Announcement Management",

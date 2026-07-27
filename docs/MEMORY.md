@@ -53,6 +53,10 @@
 - 视频请求以 Principal 所有者和 `clientRequestId` 派生稳定任务、扣费与存储键。
 - 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
   退款或覆盖新 worker 的状态。
+- 管理端“支付概览/订单管理”只统计统一 `payment_order` 中的积分充值订单；收入按
+  `fulfilled_at`、部署级 `APP_TIME_ZONE` 和币种分别汇总，不代表订阅或渠道净收入。
+
+详见 [admin-payment-management.md](plan/2026-07-28-admin-payment-management.md)。
 
 ## 生图并发
 
