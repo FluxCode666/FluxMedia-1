@@ -25,19 +25,7 @@ pnpm --filter @repo/web build
 cmp -s CLAUDE.md AGENTS.md
 ```
 
-## 通用镜像发布
-
-`.github/workflows/docker-release.yml` 由版本 tag 或手动触发，构建并推送四个镜像：
-
-- `gpt2image-pro-web`
-- `gpt2image-pro-migrate`
-- `gpt2image-pro-media-upstream-proxy`
-- `gpt2image-pro-ab-shadow-relay`
-
-版本 tag 同时创建包含 Compose 模板的 draft GitHub Release。正式 tag 使用
-`v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
-
-## 生产部署
+## 镜像发布与生产部署
 
 `.github/workflows/deploy-production.yml` 是 `media.flux-code.cc` 的生产发布入口。
 它先运行 Web 质量门、数据库迁移测试、代理 Go 测试与 Compose 校验，再构建：
@@ -45,6 +33,10 @@ cmp -s CLAUDE.md AGENTS.md
 - `fluxmedia-web`
 - `fluxmedia-migrate`
 - `fluxmedia-media-upstream-proxy`
+
+该工作流是唯一镜像发布链路；版本 tag 不再触发另一套旧镜像或 draft Release。
+发布时从 `main` 或与输入版本一致的 tag 手动触发，版本必须符合
+`v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
 
 部署阶段将 `deploy/docker-compose.yml` 与维护脚本同步到目标机，并更新
 `FLUXMEDIA_IMAGE`、`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_PROXY_IMAGE` 和
