@@ -12,7 +12,12 @@ import {
 } from "../../image-backend/group-image-pricing";
 import { getOperation } from "../registry";
 
-import { deleteMember, saveGroup, saveMember } from "./image-backend-pool";
+import {
+  deleteMember,
+  getAdminPool,
+  saveGroup,
+  saveMember,
+} from "./image-backend-pool";
 import "./external-api";
 import "./image-generation";
 
@@ -166,6 +171,55 @@ describe("image backend pool pricing operations", () => {
       deleteMember.input.safeParse({ id: "member-a", memberType: "api" })
         .success
     ).toBe(false);
+  });
+
+  it("Adobe direct 管理快照保留余额、刷新错误和运行错误", () => {
+    expect(
+      getAdminPool.output.safeParse({
+        groups: [],
+        members: [
+          {
+            id: "adobe-direct",
+            name: "Adobe Direct",
+            type: "adobe",
+            groupIds: ["group-a"],
+            supportedModelIds: ["gpt-image-2"],
+            contentSafetyEnabled: true,
+            isEnabled: true,
+            alwaysActive: false,
+            failureCooldownEnabled: true,
+            priority: 10,
+            concurrency: 2,
+            status: "error",
+            healthStatus: "unhealthy",
+            inflightCount: 0,
+            leaseAcquiredCount: 3,
+            lastAcquiredAt: "2026-07-27T01:00:00.000Z",
+            lastUsedAt: "2026-07-27T01:01:00.000Z",
+            lastError: "Adobe upstream unavailable",
+            lastErrorAt: "2026-07-27T01:02:00.000Z",
+            config: {
+              mode: "direct",
+              hasCookie: true,
+              displayName: "Adobe User",
+              email: "user@example.com",
+              credentialStatus: "active",
+              lastRefreshAt: "2026-07-27T00:00:00.000Z",
+              lastRefreshError: null,
+              consecutiveFailures: 0,
+              creditsTotal: 4_000,
+              creditsUsed: 1_500,
+              creditsAvailable: 2_500,
+              creditsUpdatedAt: "2026-07-27T00:00:01.000Z",
+              creditsError: null,
+              defaultRatio: "1x1",
+              defaultResolution: "2k",
+              gptImageQuality: "high",
+            },
+          },
+        ],
+      }).success
+    ).toBe(true);
   });
 
   it.each([

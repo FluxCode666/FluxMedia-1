@@ -47,7 +47,7 @@ export class AuthError extends AdobeRequestError {
   }
 }
 
-/** 上游临时错误（429/451/5xx 或网络层），可重试。 */
+/** 上游临时错误（408/429/451/5xx 或网络层），可重试。 */
 export class UpstreamTemporaryError extends AdobeRequestError {
   constructor(
     message: string,
@@ -89,12 +89,19 @@ export class AdobeVideoSubmissionUncertainError extends AdobeRequestError {
   }
 }
 
+/**
+ * 判断 Adobe 在任务尚未确认接受前返回的 HTTP 状态是否允许切换成员。
+ *
+ * @param status Adobe 上游 HTTP 状态码。
+ * @returns 仅 408、429、451 与 5xx 返回 true；本函数无副作用。已接受视频任务
+ * 必须继续通过 AdobeAcceptedVideoError 恢复原任务，不能据此切换成员重投。
+ */
 export function isRetryableStatus(status: number): boolean {
-  return status === 429 || status === 451 || status >= 500;
+  return status === 408 || status === 429 || status === 451 || status >= 500;
 }
 
 /**
- * 是否属于可切换顶层成员的错误：429/451/5xx 上游临时错误、账号配额耗尽、token
+ * 是否属于可切换顶层成员的错误：408/429/451/5xx 上游临时错误、账号配额耗尽、token
  * 鉴权失效。统一调度可在提交尚未被接受时切换另一个 Adobe direct 成员；请求本身 4xx、
  * 内容拒绝和模型不支持等终态错误切换成员也无效。
  */

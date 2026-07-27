@@ -5,6 +5,7 @@
  * 恰好一个类型配置及全部分组关系，并提供脱敏管理快照与安全删除。
  * 使用方：UOL pool operations 与管理后台；secret 永不出现在读取 DTO 中。
  */
+import { normalizeCookieString } from "@repo/shared/adobe/firefly-direct";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import { backendMemberInputSchema } from "@repo/shared/image-backend/member-contract";
 import { requestParameterMappingsSchema } from "@repo/shared/image-backend/request-parameter-mapping";
@@ -34,13 +35,18 @@ export class BackendMemberServiceError extends Error {
   }
 }
 
-/** Adobe direct Cookie 验证后可安全持久化的一对一凭据。 */
+/** Adobe direct Cookie 验证后可安全持久化的一对一凭据与余额快照。 */
 export interface PreparedAdobeDirectCredential {
   accessToken: string;
   accountUserId: string | null;
   displayName: string | null;
   email: string | null;
   expiresAt: Date | null;
+  creditsTotal: number | null;
+  creditsUsed: number | null;
+  creditsAvailable: number | null;
+  creditsUpdatedAt: Date;
+  creditsError: string | null;
 }
 
 /** 已补齐稳定 ID 和可选直连凭据的统一成员保存输入。 */
@@ -84,6 +90,8 @@ export type RedactedAdobeMemberConfig =
       creditsTotal: number | null;
       creditsUsed: number | null;
       creditsAvailable: number | null;
+      creditsUpdatedAt: string | null;
+      creditsError: string | null;
       defaultRatio: string;
       defaultResolution: string;
       gptImageQuality: "low" | "medium" | "high";
@@ -107,6 +115,8 @@ interface BackendMemberAdminSummaryBase {
   leaseAcquiredCount: number;
   lastAcquiredAt: string | null;
   lastUsedAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
 }
 
 /** 管理后台统一成员列表项；类型与专属配置保持可判别关联。 */
@@ -172,6 +182,21 @@ function assertUniqueGroupIds(groupIds: readonly string[]): void {
   );
 }
 
+/**
+ * 归一化管理端粘贴的 Adobe Cookie。
+ *
+ * 导出扩展会生成 `{ cookie, headers }` JSON；成员表只持久化 IMS 刷新需要的
+ * Cookie，避免把 Express 会话辅助字段误写入 Cookie 列，导致后续自动刷新失效。
+ */
+function normalizeAdobeDirectCookie(cookie: string): string {
+  const normalized = normalizeCookieString(cookie);
+  if (normalized) return normalized;
+  throw new BackendMemberServiceError(
+    "validation_error",
+    "Adobe Cookie 导入内容不包含有效 Cookie"
+  );
+}
+
 /** 将仓储保存结果映射为稳定领域错误。 */
 function assertMemberSaved(
   result: SaveBackendMemberRepositoryResult
@@ -223,7 +248,20 @@ export function createBackendMemberService(
 
   return {
     async saveMember(rawInput) {
-      const input = backendMemberInputSchema.parse(rawInput);
+      let input = backendMemberInputSchema.parse(rawInput);
+      if (
+        input.type === "adobe" &&
+        input.config.mode === "direct" &&
+        input.config.cookie !== undefined
+      ) {
+        input = {
+          ...input,
+          config: {
+            ...input.config,
+            cookie: normalizeAdobeDirectCookie(input.config.cookie),
+          },
+        };
+      }
       assertUniqueGroupIds(input.groupIds);
       try {
         if (input.type === "api") {
@@ -313,6 +351,8 @@ const memberListRowSchema = z.object({
   lease_acquired_count: z.coerce.number().int().nonnegative(),
   last_acquired_at: z.coerce.date().nullable(),
   last_used_at: z.coerce.date().nullable(),
+  last_error: z.string().nullable(),
+  last_error_at: z.coerce.date().nullable(),
   api_base_url: z.string().nullable(),
   api_has_key: z.boolean(),
   api_use_stream: z.boolean().nullable(),
@@ -332,6 +372,8 @@ const memberListRowSchema = z.object({
   adobe_credits_total: z.coerce.number().int().nullable(),
   adobe_credits_used: z.coerce.number().int().nullable(),
   adobe_credits_available: z.coerce.number().int().nullable(),
+  adobe_credits_updated_at: z.coerce.date().nullable(),
+  adobe_credits_error: z.string().nullable(),
   default_ratio: z.string().nullable(),
   default_resolution: z.string().nullable(),
   gpt_image_quality: z.enum(["low", "medium", "high"]).nullable(),
@@ -358,6 +400,8 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
     leaseAcquiredCount: row.lease_acquired_count,
     lastAcquiredAt: row.last_acquired_at?.toISOString() ?? null,
     lastUsedAt: row.last_used_at?.toISOString() ?? null,
+    lastError: row.last_error,
+    lastErrorAt: row.last_error_at?.toISOString() ?? null,
   };
   if (row.type === "api") {
     if (!row.api_base_url) {
@@ -403,6 +447,8 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         creditsTotal: row.adobe_credits_total,
         creditsUsed: row.adobe_credits_used,
         creditsAvailable: row.adobe_credits_available,
+        creditsUpdatedAt: row.adobe_credits_updated_at?.toISOString() ?? null,
+        creditsError: row.adobe_credits_error,
         defaultRatio: row.default_ratio,
         defaultResolution: row.default_resolution,
         gptImageQuality: row.gpt_image_quality,
@@ -539,11 +585,11 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             lastRefreshError: null,
             nextRefreshAt: null,
             consecutiveFailures: 0,
-            creditsTotal: null,
-            creditsUsed: null,
-            creditsAvailable: null,
-            creditsUpdatedAt: null,
-            creditsError: null,
+            creditsTotal: input.directCredential.creditsTotal,
+            creditsUsed: input.directCredential.creditsUsed,
+            creditsAvailable: input.directCredential.creditsAvailable,
+            creditsUpdatedAt: input.directCredential.creditsUpdatedAt,
+            creditsError: input.directCredential.creditsError,
           };
         } else if (existing) {
           const [row] = await transaction
@@ -753,6 +799,8 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           member.lease_acquired_count,
           member.last_acquired_at,
           member.last_used_at,
+          member.last_error,
+          member.last_error_at,
           api.base_url as api_base_url,
           (api.api_key is not null) as api_has_key,
           api.use_stream as api_use_stream,
@@ -770,6 +818,8 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           adobe.credits_total as adobe_credits_total,
           adobe.credits_used as adobe_credits_used,
           adobe.credits_available as adobe_credits_available,
+          adobe.credits_updated_at as adobe_credits_updated_at,
+          adobe.credits_error as adobe_credits_error,
           adobe.default_ratio,
           adobe.default_resolution,
           adobe.gpt_image_quality

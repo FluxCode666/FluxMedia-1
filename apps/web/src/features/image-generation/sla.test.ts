@@ -70,6 +70,21 @@ describe("generation SLA error classification", () => {
     ).toBe("user_request");
   });
 
+  it("classifies undecodable images and unsupported image modes as user errors", () => {
+    // 这些错误由同一份上传输入触发。operations 仅对 platform 分类切换成员，因此该断言
+    // 同时防止坏图在多个后端间无效重试。
+    const userErrors = [
+      "Upstream Images API returned HTTP 400: Invalid image file or mode for image 1, please check your image file.",
+      "Upstream Images API returned HTTP 400: Unable to decode image.",
+      "Upstream Images API returned HTTP 400: Unsupported image mode: CMYK.",
+      "Upstream Images API returned HTTP 400: invalid_mask_image_format",
+    ];
+
+    for (const error of userErrors) {
+      expect(classifyGenerationError(error)).toBe("user_request");
+    }
+  });
+
   it("keeps safety refusals as moderation even when tagged image_generation_user_error", () => {
     // 审核拒绝同样带 image_generation_user_error 后缀标签;用户错标签判定必须排在审核判定
     // 之后,否则会把安全拦截误归 user_request、污染审核统计。这是顺序回归守卫。
@@ -150,6 +165,12 @@ describe("generation SLA error classification", () => {
     expect(classifyGenerationError(IMAGE_GENERATION_TIMEOUT_ERROR)).toBe(
       "platform"
     );
+    // 历史 Web 超时文案曾带“疑似审核”标记；没有明确拒绝证据时仍必须按平台故障处理。
+    expect(
+      classifyGenerationError(
+        "Image generation timed out after 20 minutes (suspected upstream content moderation rejection; 可能为上游内容审核拒绝). The image generation fee was refunded."
+      )
+    ).toBe("platform");
   });
 
   it("keeps apology-only platform failures as platform errors", () => {

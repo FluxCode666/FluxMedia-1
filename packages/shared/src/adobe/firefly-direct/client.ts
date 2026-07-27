@@ -26,7 +26,6 @@ import {
   type FireflyImagePayload,
   type FireflyVideoPayload,
 } from "./payloads";
-import { buildArpSessionId, buildSubmitNonce } from "./signing";
 import {
   FetchFireflyTransport,
   type FireflyTransport,
@@ -38,7 +37,7 @@ const VIDEO_SUBMIT_URL =
   "https://firefly-3p.ff.adobe.io/v2/3p-videos/generate-async";
 const UPLOAD_URL = "https://firefly-3p.ff.adobe.io/v2/storage/image";
 
-const DEFAULT_API_KEY = "clio-playground-web";
+const DEFAULT_API_KEY = "projectx_webapp";
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 const DEFAULT_SEC_CH_UA =
@@ -82,6 +81,7 @@ export type GenerateVideoInput = {
   upstreamModelVersion: string;
   engine: string;
   duration: number;
+  aspectRatio: string;
   size: { width: number; height: number };
   generateAudio: boolean;
   referenceMode?: "image";
@@ -114,11 +114,109 @@ export type PollVideoOutput =
       raw: Record<string, unknown>;
     };
 
-const ADOBE_VIDEO_POLL_HOSTS = new Set([
+const ADOBE_STATIC_POLL_HOSTS = new Set([
   "firefly-3p.ff.adobe.io",
   "firefly.adobe.io",
   "firefly.adobe.com",
 ]);
+const ADOBE_FIREFLY_EPO_HOST_PATTERN =
+  /^firefly-epo(\d{4})(?:\d{2})?(?:-prod)?\.adobe\.io$/;
+const ADOBE_BKS_EPO_HOST_PATTERN = /^bks-epo(\d{4})\.adobe\.io$/;
+const ADOBE_EPO_JOB_PATH_PATTERN =
+  /^\/(?:v2\/)?(?:jobs(?:\/result)?|status)\/([^/]+)$/;
+const ADOBE_BKS_JOB_PATH_PATTERN = /^\/v2\/jobs\/result\/([^/]+)$/;
+
+/**
+ * 解析并校验 Adobe 轮询 URL 的通用 HTTPS 安全边界。
+ *
+ * @param value Adobe 提交响应返回或数据库恢复的轮询地址。
+ * @returns 已完成协议、端口、凭据与 fragment 校验的 URL。
+ * @throws 地址非法或可能跨越 Adobe 主机边界时抛出 AdobeRequestError。
+ */
+function parseSecureAdobePollUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new AdobeRequestError("Adobe 轮询地址不受信任");
+  }
+  if (
+    url.protocol !== "https:" ||
+    (url.port !== "" && url.port !== "443") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.hash !== ""
+  ) {
+    throw new AdobeRequestError("Adobe 轮询地址不受信任");
+  }
+  return url;
+}
+
+/**
+ * 提取受支持 Firefly EPO 主机对应的四位 BKS 分片号。
+ *
+ * @param hostname 已转为小写的目标主机名。
+ * @returns 合法四位或六位 EPO 主机的前四位分片号，否则为 null。
+ */
+function getFireflyEpoShard(hostname: string): string | null {
+  return hostname.match(ADOBE_FIREFLY_EPO_HOST_PATTERN)?.[1] ?? null;
+}
+
+/**
+ * 从 Adobe 支持的 EPO 轮询路径提取单段任务 ID。
+ *
+ * @param pathname URL 解析器规范化后的路径。
+ * @returns 合法 jobs、jobs/result 或 status 路径中的任务 ID，否则为 null。
+ */
+function getAdobeEpoJobId(pathname: string): string | null {
+  const jobId = pathname.match(ADOBE_EPO_JOB_PATH_PATTERN)?.[1];
+  return jobId && jobId !== "result" ? jobId : null;
+}
+
+/**
+ * 校验或规范化 Adobe 提交响应中的轮询地址。
+ *
+ * Adobe 会返回动态 `firefly-epo` 主机；浏览器实际通过同分片 `bks-epo`
+ * 端点查询任务。这里只接受四位或六位数字加可选 prod 后缀的 EPO 形态，并验证
+ * BKS 查询中的 host 与分片一致，避免重新放宽到任意 adobe.io 子域。
+ *
+ * @param value Adobe 返回或持久化的轮询地址。
+ * @returns 可安全交给 API 代理调用的规范化地址。
+ * @throws 非 Adobe 主机、相似域或分片不一致时抛出 AdobeRequestError。
+ */
+function normalizeAdobePollUrl(value: string): string {
+  const url = parseSecureAdobePollUrl(value);
+  const hostname = url.hostname.toLowerCase();
+  if (ADOBE_STATIC_POLL_HOSTS.has(hostname)) return url.toString();
+
+  const fireflyShard = getFireflyEpoShard(hostname);
+  if (fireflyShard) {
+    const jobId = getAdobeEpoJobId(url.pathname);
+    if (!jobId) {
+      throw new AdobeRequestError("Adobe 轮询地址不受信任");
+    }
+    return `https://bks-epo${fireflyShard}.adobe.io/v2/jobs/result/${jobId}?host=${hostname}/`;
+  }
+
+  const bksShard = hostname.match(ADOBE_BKS_EPO_HOST_PATTERN)?.[1];
+  if (bksShard) {
+    const hostValues = url.searchParams.getAll("host");
+    const upstreamHost = hostValues[0]?.replace(/\/$/, "").toLowerCase();
+    const queryKeys = [...url.searchParams.keys()];
+    if (
+      hostValues.length !== 1 ||
+      queryKeys.length !== 1 ||
+      !upstreamHost ||
+      getFireflyEpoShard(upstreamHost) !== bksShard ||
+      !ADOBE_BKS_JOB_PATH_PATTERN.test(url.pathname)
+    ) {
+      throw new AdobeRequestError("Adobe 轮询地址不受信任");
+    }
+    return `${url.origin}${url.pathname}?host=${upstreamHost}/`;
+  }
+
+  throw new AdobeRequestError("Adobe 轮询地址不受信任");
+}
 
 /**
  * 校验将被持久化和重复调用的视频轮询地址。
@@ -126,23 +224,11 @@ const ADOBE_VIDEO_POLL_HOSTS = new Set([
  * 只接受代码内 Adobe 精确主机和 HTTPS 默认端口，阻断相似域、用户信息与协议降级。
  */
 export function assertAdobeVideoPollUrl(value: string): string {
-  let url: URL;
   try {
-    url = new URL(value);
+    return normalizeAdobePollUrl(value);
   } catch {
     throw new AdobeRequestError("Adobe 视频轮询地址不受信任");
   }
-  const hostname = url.hostname.toLowerCase();
-  if (
-    url.protocol !== "https:" ||
-    (url.port !== "" && url.port !== "443") ||
-    url.username !== "" ||
-    url.password !== "" ||
-    !ADOBE_VIDEO_POLL_HOSTS.has(hostname)
-  ) {
-    throw new AdobeRequestError("Adobe 视频轮询地址不受信任");
-  }
-  return url.toString();
 }
 
 /** 从 Adobe 提交响应提取不含凭据的任务标识。 */
@@ -195,39 +281,37 @@ export class AdobeFireflyClient {
   private browserHeaders(): Record<string, string> {
     return {
       "user-agent": this.userAgent,
-      origin: "https://firefly.adobe.com",
-      referer: "https://firefly.adobe.com/",
+      origin: "https://new.express.adobe.com",
+      referer: "https://new.express.adobe.com/",
       "accept-language": "en-US,en;q=0.9",
       "sec-ch-ua": this.secChUa,
       "sec-ch-ua-mobile": "?0",
       "sec-ch-ua-platform": '"Windows"',
-      "sec-fetch-site": "same-site",
+      "sec-fetch-site": "cross-site",
       "sec-fetch-mode": "cors",
       "sec-fetch-dest": "empty",
     };
   }
 
-  private submitHeaders(token: string, prompt: string): Record<string, string> {
-    const headers: Record<string, string> = {
+  private submitHeaders(token: string): Record<string, string> {
+    return {
       ...this.browserHeaders(),
       Authorization: `Bearer ${token}`,
       "x-api-key": this.apiKey,
       "content-type": "application/json",
       accept: "*/*",
     };
-    const nonce = buildSubmitNonce(token, prompt);
-    if (nonce) headers["x-nonce"] = nonce;
-    headers["x-arp-session-id"] = buildArpSessionId();
-    return headers;
   }
 
   private pollHeaders(token: string): Record<string, string> {
     return {
       Authorization: `Bearer ${token}`,
       accept: "*/*",
-      referer: "https://firefly.adobe.com/",
-      origin: "https://firefly.adobe.com",
+      referer: "https://new.express.adobe.com/",
+      origin: "https://new.express.adobe.com",
       "user-agent": this.userAgent,
+      "x-api-key": this.apiKey,
+      "content-type": "application/json",
     };
   }
 
@@ -288,7 +372,7 @@ export class AdobeFireflyClient {
       submitResp = await this.transport.request({
         method: "POST",
         url: SUBMIT_URL,
-        headers: this.submitHeaders(input.token, input.prompt),
+        headers: this.submitHeaders(input.token),
         body: JSON.stringify(payload as FireflyImagePayload),
         signal: input.signal,
         timeoutMs: 60_000,
@@ -328,10 +412,11 @@ export class AdobeFireflyClient {
       string,
       unknown
     >;
-    const pollUrl = extractResultLink(submitResp.headers, submitData);
-    if (!pollUrl) {
+    const rawPollUrl = extractResultLink(submitResp.headers, submitData);
+    if (!rawPollUrl) {
       throw new AdobeRequestError("submit succeeded but no poll url returned");
     }
+    const pollUrl = normalizeAdobePollUrl(rawPollUrl);
 
     const timeoutMs = input.timeoutMs ?? 180_000;
     const pollIntervalMs = input.pollIntervalMs ?? 3_000;
@@ -408,6 +493,7 @@ export class AdobeFireflyClient {
       upstreamModelVersion: input.upstreamModelVersion,
       engine: input.engine,
       duration: input.duration,
+      aspectRatio: input.aspectRatio,
       size: input.size,
       generateAudio: input.generateAudio,
       ...(input.referenceMode ? { referenceMode: input.referenceMode } : {}),
@@ -422,7 +508,7 @@ export class AdobeFireflyClient {
       submitResp = await this.transport.request({
         method: "POST",
         url: VIDEO_SUBMIT_URL,
-        headers: this.submitHeaders(input.token, input.prompt),
+        headers: this.submitHeaders(input.token),
         body: JSON.stringify(payload),
         signal: input.signal,
         timeoutMs: 60_000,
@@ -497,11 +583,29 @@ export class AdobeFireflyClient {
     signal?: AbortSignal;
   }): Promise<PollVideoOutput> {
     const pollUrl = assertAdobeVideoPollUrl(input.pollUrl);
+    return this.pollValidatedVideo({
+      token: input.token,
+      pollUrl,
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  }
+
+  /**
+   * 对已经过信任边界校验的视频地址执行一次轮询。
+   *
+   * @param input 令牌、规范化轮询地址及可选取消信号。
+   * @returns 当前任务状态；上游请求或结果异常时抛出已接受任务错误。
+   */
+  private async pollValidatedVideo(input: {
+    token: string;
+    pollUrl: string;
+    signal?: AbortSignal;
+  }): Promise<PollVideoOutput> {
     let pollResp: FireflyTransportResponse;
     try {
       pollResp = await this.transport.request({
         method: "GET",
-        url: pollUrl,
+        url: input.pollUrl,
         headers: this.pollHeaders(input.token),
         signal: input.signal,
         timeoutMs: 60_000,
@@ -577,7 +681,7 @@ export class AdobeFireflyClient {
 
     for (;;) {
       try {
-        const polled = await this.pollVideo({
+        const polled = await this.pollValidatedVideo({
           token: input.token,
           pollUrl: submitted.pollUrl,
           ...(input.signal ? { signal: input.signal } : {}),
@@ -696,4 +800,20 @@ export function extractResultLink(
     return String((resultLink as Record<string, unknown>).href || "").trim();
   }
   return "";
+}
+
+/** 将 Firefly 分片返回的 firefly-epo 任务地址转换为 bks-epo 查询地址。 */
+export function normalizeVideoPollUrl(rawUrl: string): string {
+  if (!rawUrl) return rawUrl;
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    const match = /^firefly-epo(\d{4})-prod\.adobe\.io$/.exec(hostname);
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    const jobId = pathParts.at(-1);
+    if (!match || !jobId || parsed.port) return rawUrl;
+    return `https://bks-epo${match[1]}.adobe.io/v2/jobs/result/${jobId}?host=${hostname}/`;
+  } catch {
+    return rawUrl;
+  }
 }

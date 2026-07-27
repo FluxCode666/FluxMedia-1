@@ -67,6 +67,11 @@ describe("backend member service", () => {
       displayName: string | null;
       email: string | null;
       expiresAt: Date | null;
+      creditsTotal: number | null;
+      creditsUsed: number | null;
+      creditsAvailable: number | null;
+      creditsUpdatedAt: Date;
+      creditsError: string | null;
     }>
   >;
 
@@ -81,6 +86,11 @@ describe("backend member service", () => {
       displayName: "Adobe User",
       email: "user@example.com",
       expiresAt: new Date("2026-07-26T01:00:00.000Z"),
+      creditsTotal: 4_000,
+      creditsUsed: 1_500,
+      creditsAvailable: 2_500,
+      creditsUpdatedAt: NOW,
+      creditsError: null,
     }));
   });
 
@@ -182,6 +192,56 @@ describe("backend member service", () => {
         directCredential: expect.objectContaining({
           accessToken: "access-token",
           accountUserId: "adobe-user-1",
+          creditsTotal: 4_000,
+          creditsUsed: 1_500,
+          creditsAvailable: 2_500,
+          creditsError: null,
+        }),
+      }),
+      NOW
+    );
+  });
+
+  it("Adobe direct 导入扩展 JSON 时仅持久化其中的 Cookie", async () => {
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "adobe-direct-json",
+      now: () => NOW,
+      validateUpstreamUrl,
+      prepareAdobeDirectCredential,
+    });
+
+    await service.saveMember({
+      type: "adobe",
+      name: "Adobe Direct",
+      groupIds: ["group-a"],
+      supportedModelIds: ["gpt-image-2"],
+      contentSafetyEnabled: true,
+      isEnabled: true,
+      alwaysActive: false,
+      failureCooldownEnabled: true,
+      priority: 10,
+      concurrency: 2,
+      config: {
+        mode: "direct",
+        cookie: JSON.stringify({
+          cookie: "aux_sid=abc; ims=def",
+          headers: { "x-arp-session-id": "session-value" },
+        }),
+        defaultRatio: "1x1",
+        defaultResolution: "2k",
+        gptImageQuality: "high",
+      },
+    });
+
+    expect(prepareAdobeDirectCredential).toHaveBeenCalledWith(
+      "aux_sid=abc; ims=def",
+      undefined
+    );
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          cookie: "aux_sid=abc; ims=def",
         }),
       }),
       NOW
@@ -353,6 +413,8 @@ describe("backend member service", () => {
       leaseAcquiredCount: 4,
       lastAcquiredAt: null,
       lastUsedAt: null,
+      lastError: null,
+      lastErrorAt: null,
       config: {
         baseUrl: "https://images.example.com/v1",
         hasApiKey: true,

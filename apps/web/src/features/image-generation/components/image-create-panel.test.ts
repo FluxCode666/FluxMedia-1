@@ -19,6 +19,7 @@ type CapturedSimplePanelProps = {
   onSourceImagesChange?: (files: FileList | null) => void;
   onSubmit?: () => Promise<void>;
   referenceLoadingId?: string | null;
+  size?: string;
   sourceImages?: readonly File[];
 };
 
@@ -113,7 +114,8 @@ function mountImageCreatePanel(
   limits: {
     maxFileSizeBytes?: number;
     maxUploadBytes?: number;
-  } = {}
+  } = {},
+  reference: typeof initialReference | null = initialReference
 ): void {
   container = document.createElement("div");
   document.body.append(container);
@@ -147,7 +149,7 @@ function mountImageCreatePanel(
           onCreditsConsumed: vi.fn(),
           recent: [],
           selectedBackendGroupId: "group-1",
-          initialReference,
+          initialReference: reference,
           onInitialReferenceConsumed,
         })
       )
@@ -186,6 +188,12 @@ afterEach(() => {
 });
 
 describe("ImageCreatePanel initial reference", () => {
+  it("首屏默认使用 auto 尺寸", () => {
+    mountImageCreatePanel(vi.fn(), {}, null);
+
+    expect(testHarness.panelProps?.size).toBe("auto");
+  });
+
   it("只下载一次图库图片并将其设为图生图来源", async () => {
     const fetchMock = vi
       .fn()

@@ -15,11 +15,9 @@ export const IMS_REFRESH_URL =
   "https://adobeid-na1.services.adobe.com/ims/check/v6/token?jslVersion=v2-v0.48.0-1-g1e322cb";
 
 export const IMS_DEFAULT_SCOPE =
-  "AdobeID,firefly_api,openid,pps.read,pps.write,additional_info.projectedProductContext," +
-  "additional_info.ownerOrg,uds_read,uds_write,ab.manage,read_organizations," +
-  "additional_info.roles,account_cluster.read,creative_production,profile";
+  "AdobeID,firefly_api,openid";
 
-const IMS_CLIENT_ID = "clio-playground-web";
+const IMS_CLIENT_ID = "projectx_webapp";
 
 export type AdobeAccountInfo = {
   displayName: string;
@@ -40,6 +38,15 @@ export function normalizeCookieString(input: unknown): string {
     let text = input.trim();
     if (text.toLowerCase().startsWith("cookie:")) {
       text = text.slice(text.indexOf(":") + 1).trim();
+    }
+    // 管理后台允许直接粘贴导出扩展生成的 JSON。只读取其中的 cookie，
+    // 避免把 headers 等不应作为 Cookie 转发的字段混入 IMS 请求。
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        return normalizeCookieString(JSON.parse(text) as unknown);
+      } catch {
+        // 原始 Cookie 允许包含任意字符；不是 JSON 时保持既有字符串语义。
+      }
     }
     return text;
   }
@@ -75,12 +82,7 @@ function refreshFormBody(scope: string): string {
   const form = new URLSearchParams();
   form.set("client_id", IMS_CLIENT_ID);
   form.set("guest_allowed", "true");
-  const parts = scope
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (!parts.includes("profile")) parts.push("profile");
-  form.set("scope", parts.join(","));
+  form.set("scope", scope);
   return form.toString();
 }
 
@@ -102,8 +104,8 @@ export async function refreshAccessTokenFromCookie(
       "Accept-Language": "en-US,en;q=0.9",
       "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
       Cookie: cookie,
-      Origin: "https://firefly.adobe.com",
-      Referer: "https://firefly.adobe.com/",
+      Origin: "https://new.express.adobe.com",
+      Referer: "https://new.express.adobe.com/",
       "User-Agent": "Mozilla/5.0",
     },
     body: refreshFormBody(scope),
@@ -214,6 +216,8 @@ export async function fetchCreditsBalance(
       Authorization: `Bearer ${token}`,
       "x-api-key": "SunbreakWebUI1",
       "x-account-id": accountId,
+      Origin: "https://new.express.adobe.com",
+      Referer: "https://new.express.adobe.com/",
       Accept: "application/json",
       "Content-Type": "application/json",
     },

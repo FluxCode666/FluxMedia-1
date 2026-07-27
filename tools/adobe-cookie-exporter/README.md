@@ -6,9 +6,16 @@ Chrome / Edge 浏览器扩展，用于导出 Adobe / Firefly 登录 cookie，供
 
 ```json
 {
-  "cookie": "k1=v1; k2=v2"
+  "cookie": "k1=v1; k2=v2",
+  "headers": {
+    "x-arp-session-id": "base64-json-value"
+  }
 }
 ```
+
+`headers.x-arp-session-id` 仅在当前活动标签已加载 Firefly 页面并存在会话数据时导出。
+FluxMedia 导入时仅持久化 `cookie` 并使用 Express IMS 身份刷新 token；该辅助字段不会被
+作为 Cookie 或请求凭据转发。
 
 ## 安装
 
@@ -19,7 +26,7 @@ Chrome / Edge 浏览器扩展，用于导出 Adobe / Firefly 登录 cookie，供
 
 ## 使用
 
-1. 在浏览器登录 `https://firefly.adobe.com`（或任意 Adobe 站点）
+1. 在浏览器登录 Adobe，并打开 `https://firefly.adobe.com/generate/image`
 2. 点击扩展图标
 3. 选择导出范围：
    - `Adobe domains (recommended)`（推荐）
