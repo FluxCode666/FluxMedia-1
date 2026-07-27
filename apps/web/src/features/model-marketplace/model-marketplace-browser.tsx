@@ -231,6 +231,7 @@ export function ModelMarketplaceBrowser({
 
       <ModelDetailDialog
         model={selectedModel}
+        onCopy={(modelId) => void handleCopy(modelId)}
         onOpenChange={setDetailsOpen}
         open={detailsOpen}
       />
