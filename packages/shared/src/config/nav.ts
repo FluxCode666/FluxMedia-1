@@ -12,6 +12,7 @@ import {
   Headset,
   Image,
   KeyRound,
+  Layers,
   LayoutDashboard,
   type LucideIcon,
   Megaphone,
@@ -111,6 +112,11 @@ export const dashboardNav: NavGroup[] = [
         title: "API Docs",
         href: "/dashboard/api-docs",
         icon: BookOpen,
+      },
+      {
+        title: "Models",
+        href: "/models",
+        icon: Layers,
       },
       {
         title: "API Keys",
