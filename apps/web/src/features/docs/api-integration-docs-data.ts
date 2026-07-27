@@ -409,7 +409,7 @@ const zhContent = {
           name: "generate_audio / generateAudio",
           requirement: "可选",
           description:
-            "是否生成声音。Seedance 2.0 默认关闭，Kling 3.0 默认开启；不支持音频的模型不能传 true。",
+            "是否生成声音。Seedance 2.0（含 Fast）默认关闭，Kling 3.0 默认开启；不支持音频的模型不能传 true。",
         },
         {
           name: "image",
@@ -832,7 +832,7 @@ const enContent = {
           name: "generate_audio / generateAudio",
           requirement: "Optional",
           description:
-            "Whether to generate audio. Seedance 2.0 defaults to false and Kling 3.0 defaults to true; models without audio support cannot accept true.",
+            "Whether to generate audio. Seedance 2.0, including Fast, defaults to false and Kling 3.0 defaults to true; models without audio support cannot accept true.",
         },
         {
           name: "image",

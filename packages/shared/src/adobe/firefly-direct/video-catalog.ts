@@ -213,6 +213,21 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     sourceImageMode: "original",
     label: "Seedance 2.0",
   },
+  {
+    family: "seedance2-fast",
+    prefix: "firefly-seedance2-fast",
+    upstreamModel: "",
+    upstreamModelId: "seedance",
+    upstreamModelVersion: "seedance_2.0_fast",
+    engine: "seedance2",
+    durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["720p", "480p"],
+    resolutionInId: true,
+    supportsAudio: true,
+    sourceImageMode: "original",
+    label: "Seedance 2.0 Fast",
+  },
 ];
 
 // Veo/Kling/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
@@ -223,6 +238,7 @@ const BARE_VIDEO_FAMILY_NAMES = new Set([
   "kling-o3",
   "kling3",
   "seedance2",
+  "seedance2-fast",
 ]);
 
 function registerVideoFamily(spec: VideoFamilySpec): void {

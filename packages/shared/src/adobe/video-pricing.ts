@@ -19,6 +19,7 @@ export const ADOBE_VIDEO_PRICING_FAMILIES = [
   "kling-o3",
   "kling3",
   "seedance2",
+  "seedance2-fast",
 ] as const;
 
 /** 全局模型价格的开发默认值；所有模型族均有明确每秒价格。 */
@@ -31,6 +32,7 @@ export const DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND: Record<string, number> = {
   "kling-o3": 30,
   kling3: 30,
   seedance2: 30,
+  "seedance2-fast": 30,
 };
 
 const videoCreditsPerSecondSchema = z

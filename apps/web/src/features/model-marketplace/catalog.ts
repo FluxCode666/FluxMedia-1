@@ -48,6 +48,7 @@ const BUILTIN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "kling-o3": "适合强调动作表现、镜头运动与参考一致性的视频生成。",
   kling3: "适合多场景视频创作与稳定的运动表现。",
   seedance2: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
+  "seedance2-fast": "适合更快生成多画幅视频并保持参考图视觉风格一致。",
 };
 
 /** 公开目录构建器需要的完整事实输入。 */

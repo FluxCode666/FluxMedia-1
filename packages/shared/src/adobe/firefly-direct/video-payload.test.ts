@@ -63,6 +63,32 @@ describe("buildFireflyVideoPayload", () => {
     expect(payload.generateAudio).toBe(true);
   });
 
+  it("Seedance 2.0 Fast 只替换 modelVersion 并复用 Seedance 提交结构", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0_fast",
+      engine: "seedance2",
+      duration: 15,
+      aspectRatio: "21:9",
+      size: { width: 1680, height: 720 },
+      sourceImageIds: ["reference-image"],
+    });
+
+    expect(payload).toMatchObject({
+      modelId: "seedance",
+      modelVersion: "seedance_2.0_fast",
+      size: { width: 1680, height: 720 },
+      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+      duration: 15,
+      generateAudio: false,
+      generationSettings: { aspectRatio: "21:9" },
+    });
+    expect(payload).not.toHaveProperty("model");
+    expect(payload).not.toHaveProperty("engine");
+  });
+
   it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
     const payload = buildFireflyVideoPayload({
       ...base,

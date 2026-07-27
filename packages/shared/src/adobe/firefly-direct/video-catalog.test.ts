@@ -9,7 +9,7 @@ import {
 } from "./video-catalog";
 
 describe("firefly video catalog", () => {
-  it("注册 8 个视频族", () => {
+  it("注册 9 个视频族", () => {
     expect(FIREFLY_VIDEO_FAMILIES.map((f) => f.family)).toEqual([
       "sora2",
       "sora2-pro",
@@ -19,6 +19,7 @@ describe("firefly video catalog", () => {
       "kling-o3",
       "kling3",
       "seedance2",
+      "seedance2-fast",
     ]);
   });
 
@@ -126,6 +127,49 @@ describe("firefly video catalog", () => {
     ).toBeNull();
   });
 
+  it("Seedance 2.0 Fast 复用完整参数矩阵但只开放 480p 和 720p", () => {
+    const family = FIREFLY_VIDEO_FAMILIES.find(
+      (item) => item.family === "seedance2-fast"
+    );
+    expect(family).toEqual({
+      family: "seedance2-fast",
+      label: "Seedance 2.0 Fast",
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+      resolutions: ["720p", "480p"],
+      resolutionInId: true,
+      generateAudio: false,
+      supportsAudio: true,
+    });
+    expect(
+      Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
+        (item) => item.family === "seedance2-fast"
+      )
+    ).toHaveLength(144);
+
+    const conf = resolveFireflyVideoModel("firefly-seedance2-fast-4s-4x3-480p");
+    expect(conf).toMatchObject({
+      family: "seedance2-fast",
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0_fast",
+      engine: "seedance2",
+      duration: 4,
+      aspectRatio: "4:3",
+      outputResolution: "480p",
+      size: { width: 640, height: 480 },
+      generateAudio: false,
+      supportsAudio: true,
+      sourceImageMode: "original",
+    });
+    expect(resolveFireflyVideoModel("seedance2-fast-4s-4x3-480p")).toEqual(
+      conf
+    );
+    expect(
+      resolveFireflyVideoModel("firefly-seedance2-fast-4s-4x3-1080p")
+    ).toBeNull();
+  });
+
   it("非法/未知 model id 返回 null", () => {
     expect(resolveFireflyVideoModel("firefly-sora2-3s-16x9")).toBeNull();
     expect(resolveFireflyVideoModel("firefly-gpt-image-2-2k-1x1")).toBeNull();
@@ -201,10 +245,14 @@ describe("firefly video catalog", () => {
     const seedance = resolveFireflyVideoModel(
       "firefly-seedance2-15s-9x16-480p"
     );
+    const seedanceFast = resolveFireflyVideoModel(
+      "firefly-seedance2-fast-15s-9x16-480p"
+    );
     expect(sora && fireflyVideoMaxInputImages(sora)).toBe(1);
     expect(veo && fireflyVideoMaxInputImages(veo)).toBe(2);
     expect(veoRef && fireflyVideoMaxInputImages(veoRef)).toBe(3);
     expect(kling && fireflyVideoMaxInputImages(kling)).toBe(2);
     expect(seedance && fireflyVideoMaxInputImages(seedance)).toBe(1);
+    expect(seedanceFast && fireflyVideoMaxInputImages(seedanceFast)).toBe(1);
   });
 });

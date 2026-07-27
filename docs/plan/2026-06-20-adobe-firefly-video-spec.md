@@ -21,10 +21,11 @@ model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
 | kling-o3 | `firefly-kling-o3-{d}s-{ratio}` | 5,15 | 16:9,9:16 | 1080p 固定 | `kling:firefly:colligo:o3` | `kling` | `kling_o3_pro_reference_to_video` | `kling-o3` |
 | kling3 | `firefly-kling3-{d}s-{ratio}` | 5,10,15 | 16:9,9:16 | 720p 固定 | `kling:firefly:colligo:3.0` | `kling` | `kling_v3_standard_i2v` | `kling3` + 默认有声 |
 | seedance2 | `firefly-seedance2-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p,1080p | 不发送 | `seedance` | `seedance_2.0` | `seedance2` + 默认无声 + 单图 style |
+| seedance2-fast | `firefly-seedance2-fast-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p | 不发送 | `seedance` | `seedance_2.0_fast` | `seedance2` + 默认无声 + 单图 style |
 
 表中的 `firefly-*` 是规范模型 ID；入口同时兼容不带前缀的 `veo31*`、`veo31-ref*`、
-`veo31-fast*`、`kling-o3*`、`kling3*`、`seedance2*` 裸模型，内部统一归一化后按
-同一目录派发。
+`veo31-fast*`、`kling-o3*`、`kling3*`、`seedance2*`、`seedance2-fast*`
+裸模型，内部统一归一化后按同一目录派发。
 
 ## 2. Adobe Firefly 上游视频 API（host `https://firefly-3p.ff.adobe.io`）
 
@@ -60,7 +61,7 @@ IMS token 与图像路径同源（`ims/check/v6/token`，`client_id=clio-playgro
 `transparentBackground`、`locale`、`camera`、`jobMode:"standard"`、
 `generationMetadata:{module:"text2video"|"image2video"}`、`referenceBlobs`、`referenceFrames`、`output`。
 
-`generateAudio` 是请求级开关。Seedance 2.0 默认 `false`、Kling 3.0 默认 `true`；
+`generateAudio` 是请求级开关。Seedance 2.0（含 Fast）默认 `false`、Kling 3.0 默认 `true`；
 调用方可以逐次覆盖。其他目录模型当前不声明音频能力，传 `true` 会在统一接口层拒绝，
 传 `false` 可兼容统一客户端。
 
@@ -119,7 +120,6 @@ Adobe 的分辨率标签以画幅短边为基准。4:3 基准尺寸由网页选�
 - 生成用 `x-api-key` 具体值（config 驱动）；
 - `generationMetadata.module` 在非 Kling 引擎、有输入帧时是否翻成 `image2video`（Kling 已确认，其余条件性）。
 - Seedance 2.0 纯文生视频和首尾帧模式。
-- Seedance 2.0 Fast 的 modelVersion、尺寸映射和参考图 usage。
 
 ## 6. 本仓库落地计划（firefly-direct 视频）
 1. `firefly-direct/video-catalog.ts`：上表的纯数据 catalog + `resolveFireflyVideoModel(id)`。
