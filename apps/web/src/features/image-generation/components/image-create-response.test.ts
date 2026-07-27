@@ -22,19 +22,17 @@ describe("image create response", () => {
     });
   });
 
-  it("接受 SSE 完成事件中的站内存储地址", async () => {
+  it("接受 SSE 完成事件中带部署桶名的站内存储地址", async () => {
     const imageUrl =
-      "/api/storage/media/user/image.png?sig=deadbeef&exp=1785123869";
+      "/api/storage/fluxmedia-generations/user/image.png?sig=deadbeef&exp=1785123869";
     const response = new Response(
-      `: open 1785120042799\n\n: ping 1785120047799\n\ndata: ${JSON.stringify(
-        {
-          type: "completed",
-          generationId: "generation-relative-url",
-          imageUrl,
-          imageOutputs: [{ imageUrl, outputRole: "final" }],
-          creditsConsumed: 1.27,
-        }
-      )}\n\ndata: {"type":"done"}\n\n`,
+      `: open 1785120042799\n\n: ping 1785120047799\n\ndata: ${JSON.stringify({
+        type: "completed",
+        generationId: "generation-relative-url",
+        imageUrl,
+        imageOutputs: [{ imageUrl, outputRole: "final" }],
+        creditsConsumed: 1.27,
+      })}\n\ndata: {"type":"done"}\n\n`,
       { headers: { "Content-Type": "text/event-stream" } }
     );
 
@@ -49,6 +47,22 @@ describe("image create response", () => {
   it("拒绝 SSE 完成事件中的非图片协议地址", async () => {
     const response = new Response(
       'data: {"type":"completed","imageUrl":"javascript:alert(1)"}\n\n',
+      { headers: { "Content-Type": "text/event-stream" } }
+    );
+
+    await expect(readGenerationResponse(response)).rejects.toThrow(
+      "图片服务返回了无效流事件"
+    );
+  });
+
+  it.each([
+    "/api/storage/../dashboard/generate",
+    "/api/storage/%2e%2e/dashboard/generate",
+    "//local.invalid/api/storage/user/image.png",
+    "/\\local.invalid/api/storage/user/image.png",
+  ])("拒绝非站内存储相对地址：%s", async (imageUrl) => {
+    const response = new Response(
+      `data: ${JSON.stringify({ type: "completed", imageUrl })}\n\n`,
       { headers: { "Content-Type": "text/event-stream" } }
     );
 
