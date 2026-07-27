@@ -23,6 +23,7 @@ import { cn } from "@repo/ui/utils";
 import {
   Activity,
   BookOpen,
+  ChevronRight,
   ChevronsUpDown,
   CreditCard,
   History,
@@ -34,6 +35,7 @@ import {
   Shield,
   Users,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -45,6 +47,21 @@ import {
   useCurrentSession,
 } from "@/features/auth/hooks/use-current-session";
 import { useSidebar } from "@/features/dashboard/context";
+
+type SidebarLeafItem = {
+  title: string;
+  href: string;
+  icon?: LucideIcon;
+};
+
+type SidebarNavItem = SidebarLeafItem & {
+  items?: SidebarLeafItem[];
+};
+
+type SidebarNavGroup = {
+  title: string;
+  items: SidebarNavItem[];
+};
 
 /**
  * Dashboard 侧边栏组件
@@ -77,6 +94,9 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
 
   // Popover 开关状态
   const [open, setOpen] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const { execute: fetchUnreadTickets, result: unreadTicketsResult } =
     useAction(getMyUnreadTicketCountAction);
@@ -176,7 +196,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
    * WHY：管理员在处理系统状态、用户和公告时不必穿过个人菜单；普通用户仍完整保持
    * dashboardConfig 的原有分组和顺序。观察管理员只显示其已获授权的管理功能。
    */
-  const navigationGroups = (() => {
+  const navigationGroups: SidebarNavGroup[] = (() => {
     const adminItems = isAdmin
       ? [
           {
@@ -200,14 +220,21 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             icon: History,
           },
           {
-            title: "Payment Overview",
-            href: "/dashboard/admin/payments",
-            icon: CreditCard,
-          },
-          {
             title: "Order Management",
-            href: "/dashboard/admin/payments/orders",
+            href: "/dashboard/admin/payments",
             icon: ReceiptText,
+            items: [
+              {
+                title: "Payment Overview",
+                href: "/dashboard/admin/payments",
+                icon: CreditCard,
+              },
+              {
+                title: "Order Management",
+                href: "/dashboard/admin/payments/orders",
+                icon: ReceiptText,
+              },
+            ],
           },
           {
             title: "Announcement Management",
@@ -245,6 +272,34 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       },
     ];
   })();
+
+  /** 在同级候选中选择最长匹配路径，避免父路径与更深子路径同时激活。 */
+  const findMostSpecificActiveHref = (
+    items: readonly SidebarLeafItem[]
+  ): string | null => {
+    const normalizedPath = pathname.replace(/^\/[a-z]{2}\//, "/");
+    return (
+      items
+        .filter(
+          (item) =>
+            normalizedPath === item.href ||
+            (item.href !== "/dashboard" &&
+              normalizedPath.startsWith(`${item.href}/`))
+        )
+        .sort((left, right) => right.href.length - left.href.length)[0]?.href ??
+      null
+    );
+  };
+
+  /** 切换一级菜单展开状态；当前子路由激活时由渲染逻辑强制保持展开。 */
+  const toggleExpandedMenu = (title: string): void => {
+    setExpandedMenus((current) => {
+      const next = new Set(current);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+  };
 
   /**
    * 渲染侧边栏内容（桌面和移动端共用）
@@ -303,9 +358,14 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                 {group.items.map((item) => {
                   // 去掉 locale 前缀后比较路径
                   const normalizedPath = pathname.replace(/^\/[a-z]{2}\//, "/");
+                  const activeChildHref = item.items
+                    ? findMostSpecificActiveHref(item.items)
+                    : null;
                   const isActive =
+                    Boolean(activeChildHref) ||
                     normalizedPath === item.href ||
-                    (item.href !== "/dashboard" &&
+                    (!item.items &&
+                      item.href !== "/dashboard" &&
                       normalizedPath.startsWith(`${item.href}/`));
                   const Icon = item.icon;
                   const translatedTitle = getNavTitle(item.title);
@@ -318,6 +378,99 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                         ? unreadTicketCount
                         : 0;
                   const showUnread = unreadCount > 0;
+
+                  if (item.items) {
+                    const isExpanded =
+                      Boolean(activeChildHref) || expandedMenus.has(item.title);
+                    return (
+                      <div key={item.title}>
+                        <button
+                          aria-expanded={!collapsed && isExpanded}
+                          className={cn(
+                            "relative flex w-full items-center gap-3 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors duration-150",
+                            isActive
+                              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                              : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                            collapsed && "justify-center px-0"
+                          )}
+                          onClick={() => {
+                            if (collapsed && !mobile) {
+                              toggleSidebar();
+                              setExpandedMenus((current) =>
+                                new Set(current).add(item.title)
+                              );
+                              return;
+                            }
+                            toggleExpandedMenu(item.title);
+                          }}
+                          title={collapsed ? translatedTitle : undefined}
+                          type="button"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-foreground transition-[opacity,scale] duration-200",
+                              isActive
+                                ? "scale-y-100 opacity-100"
+                                : "scale-y-50 opacity-0"
+                            )}
+                          />
+                          {Icon ? <Icon className="h-4 w-4 shrink-0" /> : null}
+                          {!collapsed ? (
+                            <>
+                              <span className="flex-1 text-left">
+                                {translatedTitle}
+                              </span>
+                              <ChevronRight
+                                className={cn(
+                                  "size-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                                  isExpanded && "rotate-90"
+                                )}
+                              />
+                            </>
+                          ) : null}
+                        </button>
+
+                        {!collapsed && isExpanded ? (
+                          <div className="ml-[18px] mt-1 space-y-0.5 border-l border-sidebar-border/70 pl-3">
+                            {item.items.map((child) => {
+                              const ChildIcon = child.icon;
+                              const childActive =
+                                child.href === activeChildHref;
+                              return (
+                                <Link
+                                  className={cn(
+                                    "relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150",
+                                    childActive
+                                      ? "bg-sidebar-accent/80 font-medium text-sidebar-accent-foreground"
+                                      : "text-sidebar-foreground/60 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                                  )}
+                                  href={localizedHref(child.href)}
+                                  key={child.href}
+                                  onClick={() => mobile && setMobileOpen(false)}
+                                  prefetch={false}
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    className={cn(
+                                      "absolute -left-[14px] size-1.5 rounded-full border border-sidebar-border bg-sidebar transition-colors",
+                                      childActive &&
+                                        "border-foreground bg-foreground"
+                                    )}
+                                  />
+                                  {ChildIcon ? (
+                                    <ChildIcon className="size-3.5 shrink-0" />
+                                  ) : null}
+                                  <span>{getNavTitle(child.title)}</span>
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  }
+
                   return (
                     <Link
                       key={item.href}
