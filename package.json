@@ -3,7 +3,7 @@
   "version": "0.8.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/with-root-env.mjs ./node_modules/turbo/bin/turbo dev --env-mode=loose",
+    "dev": "node scripts/with-root-env.mjs scripts/dev.mjs",
     "build": "turbo build",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
