@@ -8,7 +8,8 @@
 
 ## 1. 视频模型目录
 
-model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀 `1:1→1x1, 16:9→16x9, 9:16→9x16`。
+model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
+`1:1→1x1, 4:3→4x3, 3:4→3x4, 16:9→16x9, 9:16→9x16, 21:9→21x9`。
 
 | family | model-id 格式 | 时长(s) | 比例 | 分辨率 | upstream `model` | `modelId` | `modelVersion` | engine/flags |
 |---|---|---|---|---|---|---|---|---|
@@ -18,8 +19,8 @@ model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀 `1:1�
 | veo31-ref | `firefly-veo31-ref-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31` | `veo` | `3.1-generate` | `veo31-standard` + `reference_mode:"image"` |
 | veo31-fast | `firefly-veo31-fast-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31-fast` | `veo` | `3.1-fast-generate` | `veo31-fast` |
 | kling-o3 | `firefly-kling-o3-{d}s-{ratio}` | 5,15 | 16:9,9:16 | 1080p 固定 | `kling:firefly:colligo:o3` | `kling` | `kling_o3_pro_reference_to_video` | `kling-o3` |
-| kling3 | `firefly-kling3-{d}s-{ratio}` | 5,10,15 | 16:9,9:16 | 720p 固定 | `kling:firefly:colligo:3.0` | `kling` | `kling_v3_standard_i2v` | `kling3` + `generate_audio:true` |
-| seedance2 | `firefly-seedance2-15s-9x16-720p` | 15（当前已验证） | 9:16（当前已验证） | UI 720p，提交 480×854 | 不发送 | `seedance` | `seedance_2.0` | `seedance2` + 无声 + 单图 style |
+| kling3 | `firefly-kling3-{d}s-{ratio}` | 5,10,15 | 16:9,9:16 | 720p 固定 | `kling:firefly:colligo:3.0` | `kling` | `kling_v3_standard_i2v` | `kling3` + 默认有声 |
+| seedance2 | `firefly-seedance2-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p,1080p | 不发送 | `seedance` | `seedance_2.0` | `seedance2` + 默认无声 + 单图 style |
 
 表中的 `firefly-*` 是规范模型 ID；入口同时兼容不带前缀的 `veo31*`、`veo31-ref*`、
 `veo31-fast*`、`kling-o3*`、`kling3*`、`seedance2*` 裸模型，内部统一归一化后按
@@ -59,10 +60,22 @@ IMS token 与图像路径同源（`ims/check/v6/token`，`client_id=clio-playgro
 `transparentBackground`、`locale`、`camera`、`jobMode:"standard"`、
 `generationMetadata:{module:"text2video"|"image2video"}`、`referenceBlobs`、`referenceFrames`、`output`。
 
-### size 映射
-720p：16:9→1280×720，9:16→720×1280；1080p：16:9→1920×1080，9:16→1080×1920。
+`generateAudio` 是请求级开关。Seedance 2.0 默认 `false`、Kling 3.0 默认 `true`；
+调用方可以逐次覆盖。其他目录模型当前不声明音频能力，传 `true` 会在统一接口层拒绝，
+传 `false` 可兼容统一客户端。
 
-Seedance 2.0 是例外：已验证的 UI `720p / 9:16 / 15s` 实际提交
+### size 映射
+
+Adobe 的分辨率标签以画幅短边为基准。4:3 基准尺寸由网页选项确认，其余比例按同一
+短边规则推导；16:9 的 480p 长边取相邻偶数 854。
+
+| 分辨率 | 1:1 | 4:3 | 3:4 | 16:9 | 9:16 | 21:9 |
+|---|---|---|---|---|---|---|
+| 480p | 480×480 | 640×480 | 480×640 | 854×480 | 480×854 | 1120×480 |
+| 720p | 720×720 | 960×720 | 720×960 | 1280×720 | 720×1280 | 1680×720 |
+| 1080p | 1080×1080 | 1440×1080 | 1080×1440 | 1920×1080 | 1080×1920 | 2520×1080 |
+
+本次 Seedance 2.0 HAR 的真实选项是 `480p / 9:16 / 15s`，提交尺寸为
 `size:{width:480,height:854}`；最终媒体元数据为 496×864、24 FPS、361 帧。
 
 ### Seedance 2.0 已验证提交体
@@ -105,7 +118,7 @@ Seedance 2.0 是例外：已验证的 UI `720p / 9:16 / 15s` 实际提交
 - base-sora2 vs sora2-pro 的 upstream `model` 串；
 - 生成用 `x-api-key` 具体值（config 驱动）；
 - `generationMetadata.module` 在非 Kling 引擎、有输入帧时是否翻成 `image2video`（Kling 已确认，其余条件性）。
-- Seedance 2.0 的其他时长、比例、480p/1080p、音频开启、纯文生视频和首尾帧模式。
+- Seedance 2.0 纯文生视频和首尾帧模式。
 - Seedance 2.0 Fast 的 modelVersion、尺寸映射和参考图 usage。
 
 ## 6. 本仓库落地计划（firefly-direct 视频）

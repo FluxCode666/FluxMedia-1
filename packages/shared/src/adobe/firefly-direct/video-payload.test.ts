@@ -47,6 +47,22 @@ describe("buildFireflyVideoPayload", () => {
     });
   });
 
+  it("Seedance 2.0 将开启声音原样映射为 generateAudio=true", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0",
+      engine: "seedance2",
+      duration: 4,
+      aspectRatio: "4:3",
+      size: { width: 640, height: 480 },
+      generateAudio: true,
+    });
+
+    expect(payload.generateAudio).toBe(true);
+  });
+
   it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
     const payload = buildFireflyVideoPayload({
       ...base,

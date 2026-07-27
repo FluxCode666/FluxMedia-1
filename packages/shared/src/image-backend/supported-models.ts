@@ -6,10 +6,13 @@
  */
 import { z } from "zod";
 
-/** 单个 API 后端最多声明 200 个模型，防止配置和模型列表被异常放大。 */
+/** 单个媒体后端最多声明的完整模型 ID 数量；容纳组合式视频目录并限制 JSON 体积。 */
+export const MAX_SUPPORTED_MODEL_IDS = 1_000;
+
+/** 后端模型能力数组的共享边界。 */
 export const supportedModelIdsSchema = z
   .array(z.string().trim().min(1).max(120))
-  .max(200);
+  .max(MAX_SUPPORTED_MODEL_IDS);
 
 /**
  * 标准化模型 ID 列表，去除空白和大小写重复项，同时保留首次配置的原始展示形式。
@@ -31,7 +34,7 @@ export function normalizeSupportedModelIds(value: unknown): string[] {
     seen.add(key);
     ids.push(modelId);
   }
-  return ids.slice(0, 200);
+  return ids.slice(0, MAX_SUPPORTED_MODEL_IDS);
 }
 
 /**

@@ -3,7 +3,7 @@
 /**
  * Adobe Firefly 视频创作面板（自包含）。
  *
- * 选模型族(7族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
+ * 选模型族(8族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
  * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
  * 产物视频。可选上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页独立 tab。
  */
@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
+import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -161,6 +162,9 @@ export function VideoCreatePanel({
   const [resolution, setResolution] = useState<string>(
     initialSelection?.resolution ?? initialFamily?.resolutions[0] ?? "720p"
   );
+  const [generateAudio, setGenerateAudio] = useState(
+    initialFamily?.generateAudio ?? false
+  );
   const [prompt, setPrompt] = useState("");
   const [inputImage, setInputImage] = useState<string | null>(null);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(
@@ -181,6 +185,7 @@ export function VideoCreatePanel({
       setDuration(next.durations[0] ?? duration);
       setRatio(next.ratios[0] ?? ratio);
       setResolution(next.resolutions[0] ?? resolution);
+      setGenerateAudio(next.generateAudio);
     }
   };
 
@@ -247,6 +252,7 @@ export function VideoCreatePanel({
           clientRequestId: crypto.randomUUID(),
           prompt: prompt.trim(),
           model,
+          ...(family.supportsAudio ? { generateAudio } : {}),
           ...(inputImage ? { inputImages: [inputImage] } : {}),
         }),
       });
@@ -371,6 +377,18 @@ export function VideoCreatePanel({
           </div>
         )}
       </div>
+
+      {family.supportsAudio && (
+        <div className="flex items-center gap-2">
+          <Switch
+            id="video-generate-audio"
+            checked={generateAudio}
+            onCheckedChange={setGenerateAudio}
+            disabled={busy}
+          />
+          <Label htmlFor="video-generate-audio">生成声音</Label>
+        </div>
+      )}
 
       <Textarea
         placeholder="描述要生成的视频…"

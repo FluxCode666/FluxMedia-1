@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   collectAdvertisedModelIds,
+  MAX_SUPPORTED_MODEL_IDS,
   normalizeSupportedModelIds,
+  supportedModelIdsSchema,
   supportsRequestedModel,
 } from "./supported-models";
 
@@ -32,6 +34,23 @@ describe("API 后端支持模型列表", () => {
     expect(
       supportsRequestedModel(["nano-banana-pro"], "grok-imagine-image")
     ).toBe(false);
+  });
+
+  it("允许完整视频目录并在共享上限处同时约束 schema 与标准化", () => {
+    const values = Array.from(
+      { length: MAX_SUPPORTED_MODEL_IDS + 1 },
+      (_, index) => `model-${index}`
+    );
+
+    expect(
+      supportedModelIdsSchema.safeParse(
+        values.slice(0, MAX_SUPPORTED_MODEL_IDS)
+      ).success
+    ).toBe(true);
+    expect(supportedModelIdsSchema.safeParse(values).success).toBe(false);
+    expect(normalizeSupportedModelIds(values)).toHaveLength(
+      MAX_SUPPORTED_MODEL_IDS
+    );
   });
 
   it("优先公布显式列表，并为旧后端回退到默认模型", () => {

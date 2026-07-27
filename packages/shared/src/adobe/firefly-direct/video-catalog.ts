@@ -7,26 +7,46 @@
  * 分辨率 + 音频/参考标志。纯数据 + 纯函数，DB-free，可单测。
  */
 
-export type FireflyVideoResolution = "720p" | "1080p";
+export type FireflyVideoResolution = "480p" | "720p" | "1080p";
 export type FireflyVideoSourceImageMode = "original" | "target-cover";
 
 const RATIO_SUFFIX_MAP: Record<string, string> = {
+  "1:1": "1x1",
+  "4:3": "4x3",
+  "3:4": "3x4",
   "16:9": "16x9",
   "9:16": "9x16",
+  "21:9": "21x9",
 };
 
-// 720p/1080p × 16:9/9:16 → 像素宽高（移植 _video_size）。
+// Adobe 视频标签以短边像素命名；非整除结果向上取偶数，故 480p 16:9 为 854×480。
 const VIDEO_SIZE_MAP: Record<
   FireflyVideoResolution,
   Record<string, { width: number; height: number }>
 > = {
+  "480p": {
+    "1:1": { width: 480, height: 480 },
+    "4:3": { width: 640, height: 480 },
+    "3:4": { width: 480, height: 640 },
+    "16:9": { width: 854, height: 480 },
+    "9:16": { width: 480, height: 854 },
+    "21:9": { width: 1120, height: 480 },
+  },
   "720p": {
+    "1:1": { width: 720, height: 720 },
+    "4:3": { width: 960, height: 720 },
+    "3:4": { width: 720, height: 960 },
     "16:9": { width: 1280, height: 720 },
     "9:16": { width: 720, height: 1280 },
+    "21:9": { width: 1680, height: 720 },
   },
   "1080p": {
+    "1:1": { width: 1080, height: 1080 },
+    "4:3": { width: 1440, height: 1080 },
+    "3:4": { width: 1080, height: 1440 },
     "16:9": { width: 1920, height: 1080 },
     "9:16": { width: 1080, height: 1920 },
+    "21:9": { width: 2520, height: 1080 },
   },
 };
 
@@ -49,6 +69,8 @@ export type FireflyVideoModelConf = {
   size: { width: number; height: number };
   /** 是否生成音频（kling3 默认开）。 */
   generateAudio: boolean;
+  /** 是否允许调用方覆盖 generateAudio。 */
+  supportsAudio: boolean;
   /** 上传参考图前保留原图，或按目标尺寸 cover 裁剪。 */
   sourceImageMode: FireflyVideoSourceImageMode;
   /** veo31-ref 参考模式：reference_mode="image"。 */
@@ -72,16 +94,10 @@ type VideoFamilySpec = {
   durations: number[];
   ratios: string[];
   resolutions: FireflyVideoResolution[];
-  /** 少数网页模型的标签分辨率不等于提交像素尺寸。 */
-  sizeOverrides?: Partial<
-    Record<
-      FireflyVideoResolution,
-      Partial<Record<string, { width: number; height: number }>>
-    >
-  >;
   /** 分辨率是否拼进 model id（veo31 系列拼，sora/kling 固定不拼）。 */
   resolutionInId: boolean;
   generateAudio?: boolean;
+  supportsAudio?: boolean;
   sourceImageMode?: FireflyVideoSourceImageMode;
   referenceMode?: "image";
   label: string;
@@ -179,6 +195,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     resolutions: ["720p"],
     resolutionInId: false,
     generateAudio: true,
+    supportsAudio: true,
     label: "Kling 3.0",
   },
   {
@@ -188,15 +205,11 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     upstreamModelId: "seedance",
     upstreamModelVersion: "seedance_2.0",
     engine: "seedance2",
-    durations: [15],
-    ratios: ["9:16"],
-    resolutions: ["720p"],
-    sizeOverrides: {
-      "720p": {
-        "9:16": { width: 480, height: 854 },
-      },
-    },
+    durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["1080p", "720p", "480p"],
     resolutionInId: true,
+    supportsAudio: true,
     sourceImageMode: "original",
     label: "Seedance 2.0",
   },
@@ -218,9 +231,7 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
       const suffix = RATIO_SUFFIX_MAP[ratio];
       if (!suffix) continue;
       for (const resolution of spec.resolutions) {
-        const size =
-          spec.sizeOverrides?.[resolution]?.[ratio] ??
-          VIDEO_SIZE_MAP[resolution]?.[ratio];
+        const size = VIDEO_SIZE_MAP[resolution]?.[ratio];
         if (!size) continue;
         const id = spec.resolutionInId
           ? `${spec.prefix}-${duration}s-${suffix}-${resolution}`
@@ -236,6 +247,7 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           outputResolution: resolution,
           size: { ...size },
           generateAudio: spec.generateAudio ?? false,
+          supportsAudio: spec.supportsAudio ?? false,
           sourceImageMode: spec.sourceImageMode ?? "target-cover",
           ...(spec.referenceMode ? { referenceMode: spec.referenceMode } : {}),
           description: `${spec.label} (${duration}s ${ratio} ${resolution})`,
@@ -267,6 +279,8 @@ export const FIREFLY_VIDEO_FAMILIES = VIDEO_FAMILY_SPECS.map((spec) => ({
   ratios: spec.ratios,
   resolutions: spec.resolutions,
   resolutionInId: spec.resolutionInId,
+  generateAudio: spec.generateAudio ?? false,
+  supportsAudio: spec.supportsAudio ?? false,
 }));
 
 /** 解析 Firefly 或兼容裸视频 model id → 配置；解析不到返回 null。 */

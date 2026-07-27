@@ -6,7 +6,10 @@
  */
 import { z } from "zod";
 
-import { isFireflyVideoModelId } from "../../adobe/firefly-direct/video-catalog";
+import {
+  isFireflyVideoModelId,
+  resolveFireflyVideoModel,
+} from "../../adobe/firefly-direct/video-catalog";
 import { mediaInputReferencesSchema } from "../../image-generation/media-contract";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
@@ -17,6 +20,7 @@ export const videoGenerateInputSchema = z
     clientRequestId: z.string().trim().min(1).max(128),
     prompt: z.string().trim().min(1).max(100_000),
     negativePrompt: z.string().max(100_000).optional(),
+    generateAudio: z.boolean().optional(),
     model: z
       .string()
       .trim()
@@ -28,7 +32,17 @@ export const videoGenerateInputSchema = z
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     inputImages: mediaInputReferencesSchema.max(3).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    const model = resolveFireflyVideoModel(input.model);
+    if (input.generateAudio === true && model && !model.supportsAudio) {
+      context.addIssue({
+        code: "custom",
+        message: "This video model does not support audio generation",
+        path: ["generateAudio"],
+      });
+    }
+  });
 
 /** video.getStatus 的归属查询输入契约。 */
 export const videoGetStatusInputSchema = z

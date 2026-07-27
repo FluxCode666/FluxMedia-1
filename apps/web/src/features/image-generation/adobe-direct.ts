@@ -599,6 +599,7 @@ export async function submitAdobeDirectVideoRequest(
     model: string;
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
+    generateAudio?: boolean;
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoSubmission | AdobeVideoStageError> {
@@ -606,6 +607,15 @@ export async function submitAdobeDirectVideoRequest(
   if (!prepared.ok) {
     return {
       error: prepared.error,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+      submissionUncertain: false,
+    };
+  }
+  if (params.generateAudio === true && !prepared.conf.supportsAudio) {
+    return {
+      error: "该视频模型不支持音频开关",
       switchable: false,
       upstreamAccepted: false,
       terminal: true,
@@ -648,7 +658,7 @@ export async function submitAdobeDirectVideoRequest(
         duration: prepared.conf.duration,
         aspectRatio: prepared.conf.aspectRatio,
         size: prepared.size,
-        generateAudio: prepared.conf.generateAudio,
+        generateAudio: params.generateAudio ?? prepared.conf.generateAudio,
         ...(prepared.conf.referenceMode
           ? { referenceMode: prepared.conf.referenceMode }
           : {}),
@@ -773,6 +783,7 @@ export async function runAdobeDirectVideoRequest(
     model: string;
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
+    generateAudio?: boolean;
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoResult> {
@@ -804,6 +815,14 @@ export async function runAdobeDirectVideoRequest(
   if (!conf) {
     return {
       error: `Adobe 直连不支持的视频模型: ${params.model}`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+    };
+  }
+  if (params.generateAudio === true && !conf.supportsAudio) {
+    return {
+      error: "该视频模型不支持音频开关",
       switchable: false,
       upstreamAccepted: false,
       terminal: true,
@@ -856,7 +875,7 @@ export async function runAdobeDirectVideoRequest(
         duration: conf.duration,
         aspectRatio: conf.aspectRatio,
         size,
-        generateAudio: conf.generateAudio,
+        generateAudio: params.generateAudio ?? conf.generateAudio,
         ...(conf.referenceMode ? { referenceMode: conf.referenceMode } : {}),
         ...(params.negativePrompt != null
           ? { negativePrompt: params.negativePrompt }

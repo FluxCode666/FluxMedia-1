@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FIREFLY_VIDEO_FAMILIES,
+  FIREFLY_VIDEO_MODEL_CATALOG,
   fireflyVideoMaxInputImages,
   fireflyVideoSize,
   isFireflyVideoModelId,
@@ -81,8 +82,27 @@ describe("firefly video catalog", () => {
     ).toBe("1080p");
   });
 
-  it("Seedance 2.0 只开放已抓包验证的精确组合", () => {
-    const conf = resolveFireflyVideoModel("firefly-seedance2-15s-9x16-720p");
+  it("Seedance 2.0 开放 4 至 15 秒、三档分辨率和六种比例", () => {
+    const family = FIREFLY_VIDEO_FAMILIES.find(
+      (item) => item.family === "seedance2"
+    );
+    expect(family).toEqual({
+      family: "seedance2",
+      label: "Seedance 2.0",
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+      resolutions: ["1080p", "720p", "480p"],
+      resolutionInId: true,
+      generateAudio: false,
+      supportsAudio: true,
+    });
+    expect(
+      Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
+        (item) => item.family === "seedance2"
+      )
+    ).toHaveLength(216);
+
+    const conf = resolveFireflyVideoModel("firefly-seedance2-15s-9x16-480p");
     expect(conf).toMatchObject({
       family: "seedance2",
       upstreamModel: "",
@@ -91,17 +111,18 @@ describe("firefly video catalog", () => {
       engine: "seedance2",
       duration: 15,
       aspectRatio: "9:16",
-      outputResolution: "720p",
+      outputResolution: "480p",
       size: { width: 480, height: 854 },
       generateAudio: false,
+      supportsAudio: true,
       sourceImageMode: "original",
     });
-    expect(resolveFireflyVideoModel("seedance2-15s-9x16-720p")).toEqual(conf);
+    expect(resolveFireflyVideoModel("seedance2-15s-9x16-480p")).toEqual(conf);
     expect(
-      resolveFireflyVideoModel("firefly-seedance2-10s-9x16-720p")
+      resolveFireflyVideoModel("firefly-seedance2-3s-9x16-480p")
     ).toBeNull();
     expect(
-      resolveFireflyVideoModel("firefly-seedance2-15s-16x9-720p")
+      resolveFireflyVideoModel("firefly-seedance2-16s-9x16-480p")
     ).toBeNull();
   });
 
@@ -113,7 +134,43 @@ describe("firefly video catalog", () => {
     expect(isFireflyVideoModelId("sora2-8s-16x9")).toBe(false);
   });
 
-  it("size 映射", () => {
+  it("Seedance 尺寸以短边分辨率映射全部比例", () => {
+    const expected = {
+      "480p": {
+        "1:1": { width: 480, height: 480 },
+        "4:3": { width: 640, height: 480 },
+        "3:4": { width: 480, height: 640 },
+        "16:9": { width: 854, height: 480 },
+        "9:16": { width: 480, height: 854 },
+        "21:9": { width: 1120, height: 480 },
+      },
+      "720p": {
+        "1:1": { width: 720, height: 720 },
+        "4:3": { width: 960, height: 720 },
+        "3:4": { width: 720, height: 960 },
+        "16:9": { width: 1280, height: 720 },
+        "9:16": { width: 720, height: 1280 },
+        "21:9": { width: 1680, height: 720 },
+      },
+      "1080p": {
+        "1:1": { width: 1080, height: 1080 },
+        "4:3": { width: 1440, height: 1080 },
+        "3:4": { width: 1080, height: 1440 },
+        "16:9": { width: 1920, height: 1080 },
+        "9:16": { width: 1080, height: 1920 },
+        "21:9": { width: 2520, height: 1080 },
+      },
+    } as const;
+
+    for (const [resolution, ratios] of Object.entries(expected)) {
+      for (const [ratio, size] of Object.entries(ratios)) {
+        expect(
+          resolveFireflyVideoModel(
+            `firefly-seedance2-4s-${ratio.replace(":", "x")}-${resolution}`
+          )?.size
+        ).toEqual(size);
+      }
+    }
     expect(fireflyVideoSize("720p", "16:9")).toEqual({
       width: 1280,
       height: 720,
@@ -122,9 +179,13 @@ describe("firefly video catalog", () => {
       width: 1080,
       height: 1920,
     });
-    expect(fireflyVideoSize("720p", "1:1")).toBeNull();
+    expect(fireflyVideoSize("480p", "4:3")).toEqual({
+      width: 640,
+      height: 480,
+    });
+    expect(fireflyVideoSize("720p", "2:1")).toBeNull();
     const seedance = resolveFireflyVideoModel(
-      "firefly-seedance2-15s-9x16-720p"
+      "firefly-seedance2-15s-9x16-480p"
     );
     expect(seedance && fireflyVideoSize(seedance)).toEqual({
       width: 480,
@@ -138,7 +199,7 @@ describe("firefly video catalog", () => {
     const veoRef = resolveFireflyVideoModel("firefly-veo31-ref-6s-16x9-1080p");
     const kling = resolveFireflyVideoModel("firefly-kling3-10s-16x9");
     const seedance = resolveFireflyVideoModel(
-      "firefly-seedance2-15s-9x16-720p"
+      "firefly-seedance2-15s-9x16-480p"
     );
     expect(sora && fireflyVideoMaxInputImages(sora)).toBe(1);
     expect(veo && fireflyVideoMaxInputImages(veo)).toBe(2);

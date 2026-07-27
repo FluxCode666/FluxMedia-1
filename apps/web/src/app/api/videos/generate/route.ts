@@ -32,6 +32,7 @@ const generateVideoSchema = z
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
     model: z.string().trim().min(1).max(120),
     negativePrompt: z.string().max(8000).optional(),
+    generateAudio: z.boolean().optional(),
     inputImages: z.array(videoInputImageDataUrlSchema).max(3).optional(),
   })
   .strict();
@@ -86,6 +87,9 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       model: parsed.data.model,
       ...(parsed.data.negativePrompt
         ? { negativePrompt: parsed.data.negativePrompt }
+        : {}),
+      ...(parsed.data.generateAudio !== undefined
+        ? { generateAudio: parsed.data.generateAudio }
         : {}),
       ...(inputImages?.length ? { inputImages } : {}),
     },

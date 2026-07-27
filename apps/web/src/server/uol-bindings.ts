@@ -322,6 +322,7 @@ bindExecute(
       clientRequestId: string;
       prompt: string;
       negativePrompt?: string;
+      generateAudio?: boolean;
       model: string;
       backendGroupId?: string;
       inputImages?: MediaInputReference[];
@@ -415,6 +416,9 @@ bindExecute(
           model: input.model,
           ...(input.negativePrompt
             ? { negativePrompt: input.negativePrompt }
+            : {}),
+          ...(input.generateAudio !== undefined
+            ? { generateAudio: input.generateAudio }
             : {}),
           ...(input.backendGroupId
             ? { backendGroupId: input.backendGroupId }
