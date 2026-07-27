@@ -22,6 +22,41 @@ describe("image create response", () => {
     });
   });
 
+  it("接受 SSE 完成事件中的站内存储地址", async () => {
+    const imageUrl =
+      "/api/storage/media/user/image.png?sig=deadbeef&exp=1785123869";
+    const response = new Response(
+      `: open 1785120042799\n\n: ping 1785120047799\n\ndata: ${JSON.stringify(
+        {
+          type: "completed",
+          generationId: "generation-relative-url",
+          imageUrl,
+          imageOutputs: [{ imageUrl, outputRole: "final" }],
+          creditsConsumed: 1.27,
+        }
+      )}\n\ndata: {"type":"done"}\n\n`,
+      { headers: { "Content-Type": "text/event-stream" } }
+    );
+
+    await expect(readGenerationResponse(response)).resolves.toMatchObject({
+      generationId: "generation-relative-url",
+      imageUrl,
+      imageOutputs: [{ imageUrl }],
+      creditsConsumed: 1.27,
+    });
+  });
+
+  it("拒绝 SSE 完成事件中的非图片协议地址", async () => {
+    const response = new Response(
+      'data: {"type":"completed","imageUrl":"javascript:alert(1)"}\n\n',
+      { headers: { "Content-Type": "text/event-stream" } }
+    );
+
+    await expect(readGenerationResponse(response)).rejects.toThrow(
+      "图片服务返回了无效流事件"
+    );
+  });
+
   it("保留 SSE 结构化错误", async () => {
     const response = new Response(
       'data: {"type":"error","error":"upstream failed","generationId":"generation-2"}\n\ndata: {"type":"done"}\n\n',

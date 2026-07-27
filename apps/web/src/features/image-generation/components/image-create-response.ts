@@ -7,9 +7,28 @@
 
 import { z } from "zod";
 
+/**
+ * 判断图片结果地址是否可交给浏览器展示。
+ *
+ * 站内存储接口返回同源相对地址；外部兼容路径只接受 HTTP(S)，避免把任意协议
+ * 或任意相对路径注入图片元素。
+ */
+function isSupportedImageUrl(value: string) {
+  if (value.startsWith("/api/storage/media/")) return true;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const imageUrlSchema = z.string().refine(isSupportedImageUrl);
+
 const imageOutputSchema = z
   .object({
-    imageUrl: z.string().url().optional(),
+    imageUrl: imageUrlSchema.optional(),
   })
   .passthrough();
 
@@ -17,7 +36,7 @@ const generationResultSchema = z
   .object({
     error: z.string().optional(),
     generationId: z.string().optional(),
-    imageUrl: z.string().url().optional(),
+    imageUrl: imageUrlSchema.optional(),
     imageOutputs: z.array(imageOutputSchema).optional(),
     creditsConsumed: z.number().nonnegative().optional(),
   })
