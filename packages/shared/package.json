@@ -19,6 +19,7 @@
     "./database-error-messages": "./src/database-error-messages.ts",
     "./logger": "./src/logger/index.ts",
     "./rate-limit": "./src/rate-limit/index.ts",
+    "./redis/required-client": "./src/redis/required-client.ts",
     "./api-logger": "./src/api-logger.ts",
     "./adobe": "./src/adobe/index.ts",
     "./adobe/enabled-models": "./src/adobe/enabled-models.ts",

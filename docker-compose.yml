@@ -20,7 +20,8 @@ services:
       timeout: 5s
       retries: 10
 
-  # Redis 只承载可重建缓存，不开启持久化，避免系统设置中的密钥落盘。
+  # Redis 承载共享缓存和带 TTL 的生图并发槽；Web 启动前必须通过健康检查。
+  # 生产应使用高可用 Redis，避免服务重启期间丢失尚未到期的临时槽位租约。
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
@@ -87,6 +88,8 @@ services:
       - app-storage:/app/storage
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully

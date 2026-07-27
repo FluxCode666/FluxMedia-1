@@ -54,6 +54,15 @@
 - 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
   退款或覆盖新 worker 的状态。
 
+## 生图并发
+
+- 用户套餐并发与全站生图并发使用必填标准 Redis 原子槽位；Redis 缺失时 Web 不启动，
+  运行中不可用时失败关闭，不得回退进程内计数。
+- 号池成员并发仍以 PostgreSQL `image_backend_member_lease` 为唯一事实；Redis 用户槽位
+  不得成为号池成员负载的第二口径。
+
+详见 [image-generation-concurrency.md](image-generation-concurrency.md)。
+
 ## 部署与迁移
 
 - Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。

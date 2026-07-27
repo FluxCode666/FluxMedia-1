@@ -8,6 +8,10 @@
 export async function register() {
   // 服务端初始化
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { ensureRequiredRedisReady } = await import(
+      "@repo/shared/redis/required-client"
+    );
+    await ensureRequiredRedisReady();
     const { bootstrapSystemSettingsEnv } = await import(
       "@repo/shared/system-settings/bootstrap"
     );
