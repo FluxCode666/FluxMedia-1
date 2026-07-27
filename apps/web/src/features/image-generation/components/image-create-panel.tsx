@@ -14,8 +14,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import {
+  AUTO_IMAGE_SIZE,
   DEFAULT_IMAGE_MODEL,
-  DEFAULT_IMAGE_SIZE,
   getImageCreditCost,
 } from "@/features/image-generation/resolution";
 
@@ -136,7 +136,7 @@ export function ImageCreatePanel({
     initialSelection?.modelId ?? availableModels[0]?.id ?? DEFAULT_IMAGE_MODEL
   );
   const [prompt, setPrompt] = useState("");
-  const [size, setSize] = useState(DEFAULT_IMAGE_SIZE);
+  const [size, setSize] = useState(AUTO_IMAGE_SIZE);
   const [quality, setQuality] = useState("auto");
   const [background, setBackground] = useState("auto");
   const [sourceImages, setSourceImages] = useState<File[]>([]);
