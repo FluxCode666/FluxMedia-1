@@ -9,6 +9,7 @@
 
 export type FireflyVideoResolution = "480p" | "720p" | "1080p";
 export type FireflyVideoSourceImageMode = "original" | "target-cover";
+export type FireflyVideoWebApp = "express" | "firefly";
 
 const RATIO_SUFFIX_MAP: Record<string, string> = {
   "1:1": "1x1",
@@ -71,6 +72,8 @@ export type FireflyVideoModelConf = {
   generateAudio: boolean;
   /** 是否允许调用方覆盖 generateAudio。 */
   supportsAudio: boolean;
+  /** 提交所模拟的 Adobe 网页应用，决定 Origin、Referer 与公开网页 API Key。 */
+  webApp: FireflyVideoWebApp;
   /** 上传参考图前保留原图，或按目标尺寸 cover 裁剪。 */
   sourceImageMode: FireflyVideoSourceImageMode;
   /** veo31-ref 参考模式：reference_mode="image"。 */
@@ -98,6 +101,7 @@ type VideoFamilySpec = {
   resolutionInId: boolean;
   generateAudio?: boolean;
   supportsAudio?: boolean;
+  webApp?: FireflyVideoWebApp;
   sourceImageMode?: FireflyVideoSourceImageMode;
   referenceMode?: "image";
   label: string;
@@ -199,6 +203,22 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     label: "Kling 3.0",
   },
   {
+    family: "kling3-omni",
+    prefix: "firefly-kling3-omni",
+    upstreamModel: "",
+    upstreamModelId: "kling",
+    upstreamModelVersion: "kling_o3_standard_t2v",
+    engine: "kling3-omni",
+    durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    ratios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+    supportsAudio: true,
+    webApp: "firefly",
+    sourceImageMode: "original",
+    label: "Kling 3.0 Omni",
+  },
+  {
     family: "seedance2",
     prefix: "firefly-seedance2",
     upstreamModel: "",
@@ -237,6 +257,7 @@ const BARE_VIDEO_FAMILY_NAMES = new Set([
   "veo31-fast",
   "kling-o3",
   "kling3",
+  "kling3-omni",
   "seedance2",
   "seedance2-fast",
 ]);
@@ -264,6 +285,7 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           size: { ...size },
           generateAudio: spec.generateAudio ?? false,
           supportsAudio: spec.supportsAudio ?? false,
+          webApp: spec.webApp ?? "express",
           sourceImageMode: spec.sourceImageMode ?? "target-cover",
           ...(spec.referenceMode ? { referenceMode: spec.referenceMode } : {}),
           description: `${spec.label} (${duration}s ${ratio} ${resolution})`,

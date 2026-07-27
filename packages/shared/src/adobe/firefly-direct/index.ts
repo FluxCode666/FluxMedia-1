@@ -11,6 +11,7 @@ export * from "./auth";
 export * from "./catalog";
 export {
   AdobeFireflyClient,
+  type AdobeFireflyWebApp,
   type AdobeFireflyClientConfig,
   assertAdobeVideoPollUrl,
   extractResultLink,

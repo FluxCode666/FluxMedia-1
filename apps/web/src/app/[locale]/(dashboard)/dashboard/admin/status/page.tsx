@@ -16,7 +16,10 @@ import {
   user,
   videoGeneration,
 } from "@repo/database/schema";
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import {
+  ADOBE_VIDEO_PRICING_FAMILIES,
+  formatAdobeModelIdForDisplay,
+} from "@repo/shared/adobe";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewImageBackendPool } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
@@ -176,16 +179,8 @@ type SchedulerMetricRow = {
 
 // 视频生成(Adobe Firefly)是独立管线,记录落在 video_generation 表(非 generation),
 // 监控其他区块全部读 generation,因此视频在原有面板里完全不可见。此处单独聚合并展示。
-// 模型族顺序固定,与创作页/后端配置一致(sora2 / sora2-pro / veo31 系列 / kling 系列)。
-const VIDEO_FAMILIES = [
-  "sora2",
-  "sora2-pro",
-  "veo31",
-  "veo31-ref",
-  "veo31-fast",
-  "kling-o3",
-  "kling3",
-] as const;
+// 模型族顺序复用唯一计价目录，避免新增模型后管理状态页遗漏。
+const VIDEO_FAMILIES = ADOBE_VIDEO_PRICING_FAMILIES;
 
 type VideoFamilyStats = {
   family: string;

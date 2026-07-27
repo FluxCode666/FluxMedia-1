@@ -18,6 +18,7 @@ export const ADOBE_VIDEO_PRICING_FAMILIES = [
   "veo31-fast",
   "kling-o3",
   "kling3",
+  "kling3-omni",
   "seedance2",
   "seedance2-fast",
 ] as const;
@@ -31,6 +32,7 @@ export const DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND: Record<string, number> = {
   "veo31-fast": 30,
   "kling-o3": 30,
   kling3: 30,
+  "kling3-omni": 30,
   seedance2: 30,
   "seedance2-fast": 30,
 };

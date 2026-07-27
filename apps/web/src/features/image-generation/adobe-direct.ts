@@ -581,6 +581,7 @@ async function createAdobeVideoStageClient(
     size,
     apiTransport: transports.apiTransport,
     client: new AdobeFireflyClient({
+      webApp: conf.webApp,
       transport: transports.apiTransport,
       downloadTransport: transports.downloadTransport,
     }),
@@ -685,8 +686,16 @@ export async function submitAdobeDirectVideoRequest(
 export async function pollAdobeDirectVideoRequest(input: {
   memberId: string;
   pollUrl: string;
+  model: string;
   signal?: AbortSignal;
 }): Promise<AdobeVideoPollResult> {
+  const conf = resolveFireflyVideoModel(input.model);
+  if (!conf) {
+    throw new AdobeAcceptedVideoError(
+      `Adobe 视频恢复模型不受支持: ${input.model}`,
+      { errorType: "status" }
+    );
+  }
   const [credential] = await db
     .select({
       cookie: imageBackendMemberAdobeConfig.cookie,
@@ -710,6 +719,7 @@ export async function pollAdobeDirectVideoRequest(input: {
   const cookie = credential.cookie;
   const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
+    webApp: conf.webApp,
     transport: apiTransport,
     downloadTransport,
   });
@@ -834,6 +844,7 @@ export async function runAdobeDirectVideoRequest(
     MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
   );
   const client = new AdobeFireflyClient({
+    webApp: conf.webApp,
     transport: apiTransport,
     downloadTransport,
   });

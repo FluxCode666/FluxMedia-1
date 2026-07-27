@@ -89,6 +89,55 @@ describe("buildFireflyVideoPayload", () => {
     expect(payload).not.toHaveProperty("engine");
   });
 
+  it("Kling 3.0 Omni 使用 Firefly 网页端已验证的文本提交字段", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      duration: 10,
+      aspectRatio: "16:9",
+      size: { width: 1280, height: 720 },
+    });
+
+    expect(payload).toEqual({
+      n: 1,
+      seeds: [expect.any(Number)],
+      modelId: "kling",
+      modelVersion: "kling_o3_standard_t2v",
+      output: { storeInputs: true },
+      duration: 10,
+      prompt: "a cat surfing",
+      size: { width: 1280, height: 720 },
+      generateAudio: false,
+      generationMetadata: { module: "text2video" },
+      generationSettings: { aspectRatio: "16:9" },
+      referenceBlobs: [],
+    });
+  });
+
+  it("Kling 3.0 Omni 复用单张 style 参考图并透传音频开关", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      duration: 3,
+      aspectRatio: "9:16",
+      size: { width: 720, height: 1280 },
+      generateAudio: true,
+      sourceImageIds: ["reference-image", "ignored"],
+    });
+
+    expect(payload).toMatchObject({
+      generateAudio: true,
+      generationMetadata: { module: "text2video" },
+      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+    });
+  });
+
   it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
     const payload = buildFireflyVideoPayload({
       ...base,

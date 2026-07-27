@@ -333,6 +333,26 @@ export function buildFireflyVideoPayload(params: {
     };
   }
 
+  if (params.engine === "kling3-omni") {
+    return {
+      n: 1,
+      seeds: [seed],
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      output: { storeInputs: true },
+      duration: params.duration,
+      prompt: params.prompt,
+      size,
+      generateAudio: params.generateAudio,
+      generationMetadata: { module: "text2video" },
+      generationSettings: { aspectRatio: params.aspectRatio },
+      referenceBlobs: ids.slice(0, 1).map((id) => ({
+        id,
+        usage: "style",
+      })),
+    };
+  }
+
   if (params.engine === "veo31-fast" || params.engine === "veo31-standard") {
     const payload: FireflyVideoPayload = {
       n: 1,

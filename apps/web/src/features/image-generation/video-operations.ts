@@ -1161,6 +1161,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
       const polled = await pollAdobeDirectVideoRequest({
         memberId: row.backendMemberId,
         pollUrl: row.pollUrl,
+        model: row.model,
       });
       if (polled.status === "pending") {
         await compareAndSetVideoStage({

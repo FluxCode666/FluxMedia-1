@@ -9,7 +9,7 @@ import {
 } from "./video-catalog";
 
 describe("firefly video catalog", () => {
-  it("注册 9 个视频族", () => {
+  it("注册 10 个视频族", () => {
     expect(FIREFLY_VIDEO_FAMILIES.map((f) => f.family)).toEqual([
       "sora2",
       "sora2-pro",
@@ -18,6 +18,7 @@ describe("firefly video catalog", () => {
       "veo31-fast",
       "kling-o3",
       "kling3",
+      "kling3-omni",
       "seedance2",
       "seedance2-fast",
     ]);
@@ -81,6 +82,56 @@ describe("firefly video catalog", () => {
     expect(
       resolveFireflyVideoModel("firefly-kling-o3-15s-9x16")?.outputResolution
     ).toBe("1080p");
+  });
+
+  it("Kling 3.0 Omni 开放 3 至 15 秒、两档分辨率和横竖两种比例", () => {
+    const family = FIREFLY_VIDEO_FAMILIES.find(
+      (item) => item.family === "kling3-omni"
+    );
+    expect(family).toEqual({
+      family: "kling3-omni",
+      label: "Kling 3.0 Omni",
+      durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      ratios: ["16:9", "9:16"],
+      resolutions: ["1080p", "720p"],
+      resolutionInId: true,
+      generateAudio: false,
+      supportsAudio: true,
+    });
+    expect(
+      Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
+        (item) => item.family === "kling3-omni"
+      )
+    ).toHaveLength(52);
+
+    const conf = resolveFireflyVideoModel("firefly-kling3-omni-15s-9x16-1080p");
+    expect(conf).toMatchObject({
+      family: "kling3-omni",
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      duration: 15,
+      aspectRatio: "9:16",
+      outputResolution: "1080p",
+      size: { width: 1080, height: 1920 },
+      generateAudio: false,
+      supportsAudio: true,
+      webApp: "firefly",
+      sourceImageMode: "original",
+    });
+    expect(resolveFireflyVideoModel("kling3-omni-15s-9x16-1080p")).toEqual(
+      conf
+    );
+    expect(
+      resolveFireflyVideoModel("firefly-kling3-omni-2s-9x16-1080p")
+    ).toBeNull();
+    expect(
+      resolveFireflyVideoModel("firefly-kling3-omni-16s-9x16-1080p")
+    ).toBeNull();
+    expect(
+      resolveFireflyVideoModel("firefly-kling3-omni-3s-9x16-480p")
+    ).toBeNull();
   });
 
   it("Seedance 2.0 开放 4 至 15 秒、三档分辨率和六种比例", () => {
@@ -242,6 +293,9 @@ describe("firefly video catalog", () => {
     const veo = resolveFireflyVideoModel("firefly-veo31-6s-16x9-1080p");
     const veoRef = resolveFireflyVideoModel("firefly-veo31-ref-6s-16x9-1080p");
     const kling = resolveFireflyVideoModel("firefly-kling3-10s-16x9");
+    const klingOmni = resolveFireflyVideoModel(
+      "firefly-kling3-omni-3s-16x9-1080p"
+    );
     const seedance = resolveFireflyVideoModel(
       "firefly-seedance2-15s-9x16-480p"
     );
@@ -252,6 +306,7 @@ describe("firefly video catalog", () => {
     expect(veo && fireflyVideoMaxInputImages(veo)).toBe(2);
     expect(veoRef && fireflyVideoMaxInputImages(veoRef)).toBe(3);
     expect(kling && fireflyVideoMaxInputImages(kling)).toBe(2);
+    expect(klingOmni && fireflyVideoMaxInputImages(klingOmni)).toBe(1);
     expect(seedance && fireflyVideoMaxInputImages(seedance)).toBe(1);
     expect(seedanceFast && fireflyVideoMaxInputImages(seedanceFast)).toBe(1);
   });

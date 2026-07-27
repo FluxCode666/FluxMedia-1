@@ -550,4 +550,58 @@ describe("AdobeFireflyClient.generateVideo", () => {
     expect(api.calls[1]?.headers["x-arp-session-id"]).toBeUndefined();
     expect(api.calls[1]?.headers["x-nonce"]).toBeUndefined();
   });
+
+  it("Kling 3.0 Omni 的上传、提交和轮询均使用 Firefly 网页 Profile", async () => {
+    const api = new MockTransport((req, index) => {
+      if (index === 0) {
+        expect(req.url).toContain("/v2/storage/image");
+        return jsonResponse(200, { images: [{ id: "reference-image" }] });
+      }
+      if (index === 1) {
+        expect(req.url).toContain("/v2/3p-videos/generate-async");
+        expect(JSON.parse(String(req.body))).toMatchObject({
+          modelId: "kling",
+          modelVersion: "kling_o3_standard_t2v",
+          referenceBlobs: [{ id: "reference-image", usage: "style" }],
+        });
+        return jsonResponse(
+          200,
+          {},
+          {
+            "x-override-status-link":
+              "https://firefly-epo1234-prod.adobe.io/v2/status/video-firefly-profile",
+          }
+        );
+      }
+      return jsonResponse(200, { status: "RUNNING" });
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    const imageId = await client.uploadImage(
+      FAKE_TOKEN,
+      Buffer.from("reference")
+    );
+    const submitted = await client.submitVideo({
+      ...videoInput,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      sourceImageIds: [imageId],
+    });
+    await client.pollVideo({
+      token: FAKE_TOKEN,
+      pollUrl: submitted.pollUrl,
+    });
+
+    expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
+    for (const call of api.calls.slice(1)) {
+      expect(call.headers.origin).toBe("https://firefly.adobe.com");
+      expect(call.headers.referer).toBe("https://firefly.adobe.com/");
+      expect(call.headers["x-api-key"]).toBe("clio-playground-web");
+    }
+  });
 });
