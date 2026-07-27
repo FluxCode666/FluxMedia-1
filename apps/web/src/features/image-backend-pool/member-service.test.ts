@@ -188,6 +188,52 @@ describe("backend member service", () => {
     );
   });
 
+  it("Adobe direct 导入扩展 JSON 时仅持久化其中的 Cookie", async () => {
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "adobe-direct-json",
+      now: () => NOW,
+      validateUpstreamUrl,
+      prepareAdobeDirectCredential,
+    });
+
+    await service.saveMember({
+      type: "adobe",
+      name: "Adobe Direct",
+      groupIds: ["group-a"],
+      supportedModelIds: ["gpt-image-2"],
+      contentSafetyEnabled: true,
+      isEnabled: true,
+      alwaysActive: false,
+      failureCooldownEnabled: true,
+      priority: 10,
+      concurrency: 2,
+      config: {
+        mode: "direct",
+        cookie: JSON.stringify({
+          cookie: "aux_sid=abc; ims=def",
+          headers: { "x-arp-session-id": "session-value" },
+        }),
+        defaultRatio: "1x1",
+        defaultResolution: "2k",
+        gptImageQuality: "high",
+      },
+    });
+
+    expect(prepareAdobeDirectCredential).toHaveBeenCalledWith(
+      "aux_sid=abc; ims=def",
+      undefined
+    );
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          cookie: "aux_sid=abc; ims=def",
+        }),
+      }),
+      NOW
+    );
+  });
+
   it("Adobe direct Cookie 校验失败时不写入成员", async () => {
     prepareAdobeDirectCredential.mockRejectedValue(
       new Error("upstream rejected cookie")

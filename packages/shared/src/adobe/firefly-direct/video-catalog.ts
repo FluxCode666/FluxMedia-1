@@ -248,6 +248,24 @@ export function isFireflyVideoModelId(modelId?: string | null): boolean {
   return resolveFireflyVideoModel(modelId) !== null;
 }
 
+/** 返回各 Firefly 视频模型允许的输入图数量上限。 */
+export function fireflyVideoMaxInputImages(
+  config: FireflyVideoModelConf
+): number {
+  if (config.engine === "veo31-standard" && config.referenceMode === "image") {
+    return 3;
+  }
+  if (
+    config.engine === "veo31-fast" ||
+    config.engine === "veo31-standard" ||
+    config.engine === "kling-o3" ||
+    config.engine === "kling3"
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
 /** 按分辨率 + 宽高比取像素宽高。 */
 export function fireflyVideoSize(
   resolution: FireflyVideoResolution,

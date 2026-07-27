@@ -29,6 +29,7 @@ import {
   type FireflyTransportRequest,
   type FireflyTransportResponse,
   fetchCreditsBalance,
+  fireflyVideoMaxInputImages,
   fireflyVideoSize,
   isAdobeMemberSwitchableError,
   isTokenExpired,
@@ -46,6 +47,7 @@ import {
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import type { ApiConfig, GenerateImageResult } from "./types";
+import { prepareAdobeVideoSourceImage } from "./adobe-video-source";
 import { requireAcceptedVideoCredential } from "./video-recovery-policy";
 
 // IMS access_token 距过期多久内视为需要刷新（秒）。
@@ -139,7 +141,7 @@ function assertLoggedInAdobeCookie(
   const sub = String(decodeJwtPayload(accessToken).sub || "").trim();
   if (sub.includes("@GuestID")) {
     throw new Error(
-      "Cookie 对应 Firefly 访客会话（GuestID），不是已登录 Adobe 账号。请在已登录 firefly.adobe.com 的标签页用 tools/adobe-cookie-exporter 重新导出（需含 HttpOnly 会话 cookie，例如 aux_sid）。"
+      "Cookie 对应 Firefly 访客会话（GuestID），不是已登录 Adobe 账号。请在已登录 new.express.adobe.com 的标签页用 tools/adobe-cookie-exporter 重新导出（需含 HttpOnly 会话 cookie，例如 aux_sid）。"
     );
   }
   if (!account?.userId && !account?.email && !account?.displayName) {
@@ -622,12 +624,17 @@ export async function submitAdobeDirectVideoRequest(
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
         sourceImageIds = [];
-        for (const image of params.inputImages) {
+        const maxInputs = fireflyVideoMaxInputImages(prepared.conf);
+        for (const image of params.inputImages.slice(0, maxInputs)) {
+          const preparedImage = await prepareAdobeVideoSourceImage(
+            image.data,
+            prepared.size
+          );
           sourceImageIds.push(
             await prepared.client.uploadImage(
               token,
-              image.data,
-              image.type || "image/png",
+              preparedImage.data,
+              preparedImage.type,
               params.signal
             )
           );
@@ -641,6 +648,7 @@ export async function submitAdobeDirectVideoRequest(
         upstreamModelVersion: prepared.conf.upstreamModelVersion,
         engine: prepared.conf.engine,
         duration: prepared.conf.duration,
+        aspectRatio: prepared.conf.aspectRatio,
         size: prepared.size,
         generateAudio: prepared.conf.generateAudio,
         ...(prepared.conf.referenceMode
@@ -830,12 +838,17 @@ export async function runAdobeDirectVideoRequest(
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
         sourceImageIds = [];
-        for (const image of params.inputImages) {
+        const maxInputs = fireflyVideoMaxInputImages(conf);
+        for (const image of params.inputImages.slice(0, maxInputs)) {
+          const preparedImage = await prepareAdobeVideoSourceImage(
+            image.data,
+            size
+          );
           sourceImageIds.push(
             await client.uploadImage(
               token,
-              image.data,
-              image.type || "image/png",
+              preparedImage.data,
+              preparedImage.type,
               params.signal
             )
           );
@@ -850,6 +863,7 @@ export async function runAdobeDirectVideoRequest(
         upstreamModelVersion: conf.upstreamModelVersion,
         engine: conf.engine,
         duration: conf.duration,
+        aspectRatio: conf.aspectRatio,
         size,
         generateAudio: conf.generateAudio,
         ...(conf.referenceMode ? { referenceMode: conf.referenceMode } : {}),
@@ -873,7 +887,8 @@ export async function runAdobeDirectVideoRequest(
 /**
  * 校验一个 Adobe direct Cookie，并返回成员服务可持久化的一对一凭据。
  *
- * Cookie 和 token 只在服务端内存与成员配置中流转；失败时不写数据库。
+ * Cookie 和 token 只在服务端内存与成员配置中流转；失败时不写数据库。传入值可为
+ * Cookie 字符串或导出扩展 JSON，实际持久化前由成员服务归一化为 Cookie 字符串。
  */
 export async function prepareAdobeDirectCredential(
   cookie: string,

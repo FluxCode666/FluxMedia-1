@@ -10,8 +10,7 @@ export type GenerationErrorCategory =
 // quota exceeded/invalid or missing api key 等)匹配。
 // 用户输入超限类(提示词过长 / 参考图超数 / 输入图过大)。切后端也救不了 → 算用户错:不重试、
 // 直接报告;SLA 不计平台。这些码来自上游中转、未必稳定,故同时匹配中英文案兜底。由本文件
-// classifyGenerationError 与后端调度侧 isUserRequestBackendError(image-backend-pool/service.ts)
-// 共用同一份,避免两处分类器漂移。注意:勿混入 rate limit / concurrency / too many requests 等
+// classifyGenerationError 是后端切换前的唯一归因入口，避免 SLA 与调度决策漂移。注意:勿混入 rate limit / concurrency / too many requests 等
 // 限流(那是瞬时、可切换的,要重试)。
 export const USER_INPUT_LIMIT_PATTERNS = [
   // 提示词 / 输入上下文过长
@@ -29,8 +28,30 @@ export const USER_INPUT_LIMIT_PATTERNS = [
   "decompression bomb",
 ];
 
+// 用户上传的源图或蒙版无法被上游识别。它们是确定的请求错误：切换成员不能修复同一份
+// 输入，因此既不计入平台 SLA，也不能触发后端切换重试。保持为精确的图片语义短语，避免
+// 将无关的解码或模式故障误归为用户错误。
+export const USER_INVALID_IMAGE_PATTERNS = [
+  "the image data you provided does not represent a valid image",
+  "not a valid image",
+  "invalid image data",
+  "invalid image file",
+  "invalid image format",
+  "unsupported image format",
+  "invalid image mode",
+  "unsupported image mode",
+  "unable to decode image",
+  "unable to decode the image",
+  "failed to decode image",
+  "could not decode image",
+  "cannot decode image",
+  "image decode failed",
+  "invalid_mask_image_format",
+];
+
 const USER_REQUEST_PATTERNS = [
   ...USER_INPUT_LIMIT_PATTERNS,
+  ...USER_INVALID_IMAGE_PATTERNS,
   "积分不足",
   "insufficient credits",
   "insufficient_credits",

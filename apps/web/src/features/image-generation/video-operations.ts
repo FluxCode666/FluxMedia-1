@@ -25,6 +25,7 @@ import {
 } from "@repo/shared/adobe";
 import {
   assertAdobeVideoPollUrl,
+  fireflyVideoMaxInputImages,
   resolveFireflyVideoModel,
 } from "@repo/shared/adobe/firefly-direct";
 import {
@@ -562,6 +563,10 @@ export async function runAdobeVideoGenerationForUser(
 ): Promise<VideoGenerationResult> {
   const conf = resolveFireflyVideoModel(input.model);
   if (!conf) return { error: `不支持的视频模型: ${input.model}` };
+  const maxInputImages = fireflyVideoMaxInputImages(conf);
+  if ((input.inputImages?.length ?? 0) > maxInputImages) {
+    return { error: `该视频模型最多支持 ${maxInputImages} 张输入图` };
+  }
   const persistedInputImages = input.inputImages;
   assertPersistableVideoInputImages(persistedInputImages);
 

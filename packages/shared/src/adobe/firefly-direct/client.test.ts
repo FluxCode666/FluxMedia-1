@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { AdobeFireflyClient, extractResultLink } from "./client";
+import {
+  AdobeFireflyClient,
+  extractResultLink,
+  normalizeVideoPollUrl,
+} from "./client";
 import {
   AdobeAcceptedVideoError,
   AdobeVideoSubmissionUncertainError,
@@ -87,8 +91,12 @@ describe("AdobeFireflyClient.generateImage", () => {
       if (index === 0) {
         // submit
         expect(req.url).toContain("/v2/3p-images/generate-async");
-        expect(req.headers["x-arp-session-id"]).toBeTruthy();
-        expect(req.headers["x-nonce"]).toBeTruthy();
+        expect(req.headers.origin).toBe("https://new.express.adobe.com");
+        expect(req.headers.referer).toBe("https://new.express.adobe.com/");
+        expect(req.headers["sec-fetch-site"]).toBe("cross-site");
+        expect(req.headers["x-api-key"]).toBe("projectx_webapp");
+        expect(req.headers["x-arp-session-id"]).toBeUndefined();
+        expect(req.headers["x-nonce"]).toBeUndefined();
         return jsonResponse(
           200,
           { links: { result: "https://poll/abc" } },
@@ -198,6 +206,7 @@ describe("AdobeFireflyClient.generateVideo", () => {
     upstreamModelVersion: "1",
     engine: "sora2",
     duration: 8,
+    aspectRatio: "16:9",
     size: { width: 1280, height: 720 },
     generateAudio: false,
     pollIntervalMs: 1,
@@ -329,5 +338,92 @@ describe("AdobeFireflyClient.generateVideo", () => {
         pollUrl: "https://firefly-3p.ff.adobe.io.evil.test/status/1",
       })
     ).rejects.toThrow("Adobe 视频轮询地址不受信任");
+  });
+
+  it("将 firefly 分片轮询地址规范化为 bks 地址", () => {
+    expect(
+      normalizeVideoPollUrl(
+        "https://firefly-epo1234-prod.adobe.io/v2/status/job-1"
+      )
+    ).toBe(
+      "https://bks-epo1234.adobe.io/v2/jobs/result/job-1?host=firefly-epo1234-prod.adobe.io/"
+    );
+    expect(
+      normalizeVideoPollUrl("https://bks-epo1234.adobe.io/v2/status/job-1")
+    ).toBe("https://bks-epo1234.adobe.io/v2/status/job-1");
+    expect(normalizeVideoPollUrl("not a url")).toBe("not a url");
+  });
+
+  it("视频生成实际轮询时使用规范化后的 bks 地址", async () => {
+    const api = new MockTransport((req, index) => {
+      if (index === 0) {
+        return jsonResponse(
+          200,
+          {},
+          {
+            "x-override-status-link":
+              "https://firefly-epo5678-prod.adobe.io/jobs/video-job-2",
+          }
+        );
+      }
+      expect(req.url).toBe(
+        "https://bks-epo5678.adobe.io/v2/jobs/result/video-job-2?host=firefly-epo5678-prod.adobe.io/"
+      );
+      return jsonResponse(200, {
+        status: "COMPLETED",
+        outputs: [{ video: { presignedUrl: "https://cdn/video.mp4" } }],
+      });
+    });
+    const download = new MockTransport(() =>
+      bytesResponse(200, Buffer.from("MP4DATA"))
+    );
+    const client = new AdobeFireflyClient({
+      transport: api,
+      downloadTransport: download,
+    });
+
+    const output = await client.generateVideo({
+      ...videoInput,
+      upstreamModel: "openai:firefly:colligo:sora2",
+      upstreamModelId: "sora",
+      upstreamModelVersion: "sora-2",
+    });
+
+    expect(output.bytes.toString("utf-8")).toBe("MP4DATA");
+    expect(download.calls[0]?.url).toBe("https://cdn/video.mp4");
+  });
+
+  it("视频提交和轮询均发送 Express 请求头", async () => {
+    const api = new MockTransport((_req, index) =>
+      index === 0
+        ? jsonResponse(
+            200,
+            {},
+            {
+              "x-override-status-link":
+                "https://bks-epo1234.adobe.io/v2/status/video-headers",
+            }
+          )
+        : jsonResponse(200, { status: "RUNNING" })
+    );
+    const client = new AdobeFireflyClient({ transport: api });
+
+    await client.submitVideo(videoInput);
+    await client.pollVideo({
+      token: FAKE_TOKEN,
+      pollUrl: "https://bks-epo1234.adobe.io/v2/status/video-headers",
+    });
+
+    expect(api.calls[0]?.headers.origin).toBe(
+      "https://new.express.adobe.com"
+    );
+    expect(api.calls[0]?.headers.referer).toBe(
+      "https://new.express.adobe.com/"
+    );
+    expect(api.calls[0]?.headers["sec-fetch-site"]).toBe("cross-site");
+    expect(api.calls[0]?.headers["x-api-key"]).toBe("projectx_webapp");
+    expect(api.calls[1]?.headers.origin).toBe(
+      "https://new.express.adobe.com"
+    );
   });
 });
