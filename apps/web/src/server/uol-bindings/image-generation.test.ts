@@ -149,6 +149,50 @@ describe("executeImageGenerateBinding", () => {
     );
   });
 
+  it("edit 保留可信存储引用，避免图片管线再次转存", async () => {
+    const deps = dependencies();
+    deps.load.mockResolvedValueOnce([
+      {
+        data: Buffer.from("stored-image"),
+        type: "image/png",
+        storageKey: "user-1/requests/input.png",
+        storageBucket: "generations",
+      },
+    ]);
+    const storageReference = {
+      source: "storage" as const,
+      mimeType: "image/png" as const,
+      storageKey: "user-1/requests/input.png",
+      storageBucket: "generations",
+      byteLength: 12,
+    };
+
+    await executeImageGenerateBinding(
+      {
+        operation: "edit",
+        prompt: "改成夜景",
+        model: "gpt-image-2",
+        generationId: "generation-storage",
+        images: [storageReference],
+      },
+      userPrincipal,
+      operationContext(),
+      deps.value
+    );
+
+    expect(deps.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        images: [
+          expect.objectContaining({
+            storageKey: "user-1/requests/input.png",
+            storageBucket: "generations",
+          }),
+        ],
+      }),
+      undefined
+    );
+  });
+
   it("MCP Key 不冒充外部 API Key 进入号池绑定分组", async () => {
     const deps = dependencies();
     await executeImageGenerateBinding(

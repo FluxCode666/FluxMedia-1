@@ -11,7 +11,6 @@
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { resolveImageCreditPricing } from "@repo/shared/image-backend/group-image-pricing";
 import { useEffect, useMemo, useState } from "react";
-import { z } from "zod";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import {
@@ -20,6 +19,17 @@ import {
   getImageCreditCost,
 } from "@/features/image-generation/resolution";
 
+import {
+  buildImageEditRequestBody,
+  buildImageGenerateRequestBody,
+  IMAGE_CREATE_REQUEST_HEADERS,
+} from "./image-create-request";
+import {
+  collectImageUrls,
+  getConsumedCredits,
+  getResponseError,
+  readGenerationResponse,
+} from "./image-create-response";
 import { SimpleImageCreatePanel } from "./simple-image-create-panel";
 
 type ImageCreateMode = "generate" | "edit" | "mask";
@@ -50,83 +60,9 @@ type ImageCreatePanelProps = {
   } | null;
 };
 
-const imageOutputSchema = z
-  .object({
-    imageUrl: z.string().url().optional(),
-  })
-  .passthrough();
-
-const generationResultSchema = z
-  .object({
-    error: z.string().optional(),
-    generationId: z.string().optional(),
-    imageUrl: z.string().url().optional(),
-    imageOutputs: z.array(imageOutputSchema).optional(),
-    creditsConsumed: z.number().nonnegative().optional(),
-  })
-  .passthrough();
-
-const generationResponseSchema = generationResultSchema.extend({
-  results: z.array(generationResultSchema).optional(),
-});
-
 /** 将字节数格式化为面向用户的 MB 限制。 */
 function formatMegabytes(bytes: number): string {
   return `${Math.max(1, Math.floor(bytes / (1024 * 1024)))} MB`;
-}
-
-/** 从单次或批量响应中提取所有成功图片 URL。 */
-function collectImageUrls(
-  response: z.infer<typeof generationResponseSchema>
-): string[] {
-  const results = response.results ?? [response];
-  const urls = results.flatMap((result) => [
-    ...(result.imageUrl ? [result.imageUrl] : []),
-    ...(result.imageOutputs ?? []).flatMap((output) =>
-      output.imageUrl ? [output.imageUrl] : []
-    ),
-  ]);
-  return Array.from(new Set(urls));
-}
-
-/** 从响应中返回首个稳定错误消息。 */
-function getResponseError(
-  response: z.infer<typeof generationResponseSchema>
-): string | null {
-  const results = response.results ?? [response];
-  return results.find((result) => result.error)?.error ?? null;
-}
-
-/** 合计本次响应实际消耗的积分。 */
-function getConsumedCredits(
-  response: z.infer<typeof generationResponseSchema>
-): number {
-  const results = response.results ?? [response];
-  return results.reduce(
-    (total, result) => total + (result.creditsConsumed ?? 0),
-    0
-  );
-}
-
-/** 读取并校验站内媒体 API 的 JSON 响应。 */
-async function readGenerationResponse(
-  response: Response
-): Promise<z.infer<typeof generationResponseSchema>> {
-  const payload: unknown = await response.json().catch(() => null);
-  const parsed = generationResponseSchema.safeParse(payload);
-  if (!parsed.success) {
-    throw new Error(
-      response.ok
-        ? "图片服务返回了无效响应"
-        : `请求失败 HTTP ${response.status}`
-    );
-  }
-  if (!response.ok) {
-    throw new Error(
-      getResponseError(parsed.data) ?? `请求失败 HTTP ${response.status}`
-    );
-  }
-  return parsed.data;
 }
 
 /** 检查上传文件是否为允许的图片且未超过套餐单文件限制。 */
@@ -382,32 +318,35 @@ export function ImageCreatePanel({
     setResultUrls([]);
     try {
       let response: Response;
+      const requestFields = {
+        generationId: crypto.randomUUID(),
+        prompt: prompt.trim(),
+        size,
+        model,
+        backendGroupId: selectedGroup.id,
+        quality,
+        background,
+      };
       if (mode === "generate") {
         response = await fetch("/api/images/generate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            generationId: crypto.randomUUID(),
-            prompt: prompt.trim(),
-            size,
-            model,
-            backendGroupId: selectedGroup.id,
-            quality,
-            background,
-          }),
+          headers: {
+            ...IMAGE_CREATE_REQUEST_HEADERS,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildImageGenerateRequestBody(requestFields)),
         });
       } else {
-        const body = new FormData();
-        body.set("generationId", crypto.randomUUID());
-        body.set("prompt", prompt.trim());
-        body.set("size", size);
-        body.set("model", model);
-        body.set("backendGroupId", selectedGroup.id);
-        body.set("quality", quality);
-        body.set("background", background);
-        for (const image of sourceImages) body.append("image[]", image);
-        if (mask) body.set("mask", mask);
-        response = await fetch("/api/images/edit", { method: "POST", body });
+        const body = buildImageEditRequestBody({
+          ...requestFields,
+          images: sourceImages,
+          mask,
+        });
+        response = await fetch("/api/images/edit", {
+          method: "POST",
+          headers: IMAGE_CREATE_REQUEST_HEADERS,
+          body,
+        });
       }
 
       const payload = await readGenerationResponse(response);

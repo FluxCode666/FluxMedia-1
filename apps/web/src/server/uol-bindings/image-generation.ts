@@ -19,7 +19,10 @@ import {
   imageGenerate,
 } from "@repo/shared/uol/operations/image-generation";
 
-import type { loadMediaInputs } from "@/features/image-generation/media-input-loader";
+import type {
+  LoadedMediaInput,
+  loadMediaInputs,
+} from "@/features/image-generation/media-input-loader";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
 import type {
   ImageGenerationCallbacks,
@@ -51,7 +54,7 @@ const defaultDependencies: ImageGenerationBindingDependencies = {
 
 /** 将已校验字节映射为图片管线文件，名称只用于上游 multipart 元数据。 */
 function toImageInputFile(
-  input: { data: Buffer; type: string },
+  input: LoadedMediaInput,
   index: number,
   prefix: string
 ): ImageInputFile {
@@ -60,6 +63,8 @@ function toImageInputFile(
     data: input.data,
     type: input.type,
     name: `${prefix}-${index + 1}.${extension}`,
+    ...(input.storageKey ? { storageKey: input.storageKey } : {}),
+    ...(input.storageBucket ? { storageBucket: input.storageBucket } : {}),
   };
 }
 

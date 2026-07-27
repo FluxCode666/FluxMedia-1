@@ -18,6 +18,7 @@ import {
 } from "./outbound-url-security";
 
 const MAX_MEDIA_REDIRECTS = 3;
+export const MEDIA_UPSTREAM_TIMEOUT_MS = 20 * 60 * 1000;
 export const MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 export const MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES = 512 * 1024 * 1024;
 
@@ -51,6 +52,9 @@ export async function fetchMediaUpstream(
   try {
     return await fetchWithDnsPin(target.toString(), {
       ...init,
+      // 生图首个响应块通常超过通用 SSRF fetch 的 10 秒默认值；业务总时限仍由
+      // 调用方的 AbortSignal 控制，这里只避免连接层过早截断正常媒体任务。
+      timeoutMs: init.timeoutMs ?? MEDIA_UPSTREAM_TIMEOUT_MS,
       allowBlockedAddress: isMediaUpstreamBlockedAddressAllowed,
     });
   } catch (error) {

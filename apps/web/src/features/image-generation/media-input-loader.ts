@@ -23,6 +23,8 @@ import {
 export interface LoadedMediaInput {
   data: Buffer;
   type: string;
+  storageKey?: string;
+  storageBucket?: string;
 }
 
 /** 校验实际 MIME，防止宣称为图片的 HTML 或其他载荷进入上游。 */
@@ -51,12 +53,16 @@ export async function loadMediaInputs(input: {
     | Awaited<ReturnType<typeof getStorageRuntimeSnapshot>>
     | undefined;
 
-  const addLoaded = (data: Buffer, type: string): void => {
+  const addLoaded = (
+    data: Buffer,
+    type: string,
+    storage?: Pick<LoadedMediaInput, "storageKey" | "storageBucket">
+  ): void => {
     totalBytes += data.byteLength;
     if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
       throw new SafeImageFetchError("Media input exceeds the byte limit.");
     }
-    loaded.push({ data, type });
+    loaded.push({ data, type, ...storage });
   };
 
   for (const reference of input.references) {
@@ -85,7 +91,10 @@ export async function loadMediaInputs(input: {
         bucket,
         input.signal ? { signal: input.signal } : undefined
       );
-      addLoaded(data, reference.mimeType);
+      addLoaded(data, reference.mimeType, {
+        storageKey: reference.storageKey,
+        storageBucket: bucket,
+      });
       continue;
     }
 

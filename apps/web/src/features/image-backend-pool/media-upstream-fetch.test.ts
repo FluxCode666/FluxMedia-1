@@ -42,8 +42,22 @@ describe("media upstream fetch", () => {
         headers: { Authorization: "Bearer provider-key" },
         body: "{}",
         maxResponseBytes: 1024,
+        timeoutMs: 20 * 60 * 1000,
         allowBlockedAddress: expect.any(Function),
       })
+    );
+  });
+
+  it("preserves an explicit shorter caller timeout", async () => {
+    mocks.fetchWithDnsPin.mockResolvedValue(new Response("ok"));
+
+    await fetchMediaUpstream("https://8.8.8.8/v1/images/generations", {
+      timeoutMs: 45_000,
+    });
+
+    expect(mocks.fetchWithDnsPin).toHaveBeenCalledWith(
+      "https://8.8.8.8/v1/images/generations",
+      expect.objectContaining({ timeoutMs: 45_000 })
     );
   });
 

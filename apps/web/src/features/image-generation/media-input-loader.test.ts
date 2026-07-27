@@ -77,7 +77,12 @@ describe("loadMediaInputs", () => {
         ],
       })
     ).resolves.toEqual([
-      { data: Buffer.from("stored-image"), type: "image/png" },
+      {
+        data: Buffer.from("stored-image"),
+        type: "image/png",
+        storageKey: "user-1/input.png",
+        storageBucket: "generations",
+      },
     ]);
   });
 });
