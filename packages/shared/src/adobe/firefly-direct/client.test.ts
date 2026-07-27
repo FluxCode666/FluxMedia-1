@@ -5,6 +5,7 @@ import {
   AdobeVideoSubmissionUncertainError,
   AuthError,
   QuotaExhaustedError,
+  UpstreamTemporaryError,
 } from "./errors";
 import type {
   FireflyTransport,
@@ -91,11 +92,22 @@ describe("AdobeFireflyClient.generateImage", () => {
         expect(req.headers["x-nonce"]).toBeTruthy();
         return jsonResponse(
           200,
-          { links: { result: "https://poll/abc" } },
-          { "x-override-status-link": "https://poll/abc" }
+          {
+            links: {
+              result:
+                "https://firefly-epo855232.adobe.io/jobs/result/image-abc",
+            },
+          },
+          {
+            "x-override-status-link":
+              "https://firefly-epo855232.adobe.io/jobs/result/image-abc",
+          }
         );
       }
       // poll
+      expect(req.url).toBe(
+        "https://bks-epo8552.adobe.io/v2/jobs/result/image-abc?host=firefly-epo855232.adobe.io/"
+      );
       return jsonResponse(200, {
         status: "COMPLETED",
         outputs: [{ image: { presignedUrl: "https://cdn/img.png" } }],
@@ -152,13 +164,60 @@ describe("AdobeFireflyClient.generateImage", () => {
     ).rejects.toBeInstanceOf(AuthError);
   });
 
+  it("408 system under load → UpstreamTemporaryError", async () => {
+    const api = new MockTransport(() =>
+      jsonResponse(408, {
+        error_code: "timeout_error",
+        message: "system under load",
+      })
+    );
+    const client = new AdobeFireflyClient({ transport: api });
+    await expect(
+      client.generateImage({
+        token: FAKE_TOKEN,
+        prompt: "x",
+        aspectRatio: "1:1",
+        outputResolution: "2K",
+        upstreamModelId: "gpt-image",
+        upstreamModelVersion: "2",
+      })
+    ).rejects.toBeInstanceOf(UpstreamTemporaryError);
+  });
+
+  it("拒绝上游返回的非 Adobe 轮询地址", async () => {
+    const api = new MockTransport(() =>
+      jsonResponse(
+        200,
+        {},
+        {
+          "x-override-status-link":
+            "https://firefly-epo855232.adobe.io.evil.test/jobs/result/1",
+        }
+      )
+    );
+    const client = new AdobeFireflyClient({ transport: api });
+    await expect(
+      client.generateImage({
+        token: FAKE_TOKEN,
+        prompt: "x",
+        aspectRatio: "1:1",
+        outputResolution: "2K",
+        upstreamModelId: "gpt-image",
+        upstreamModelVersion: "2",
+      })
+    ).rejects.toThrow("Adobe 轮询地址不受信任");
+  });
+
   it("gpt-image 图生图：单候选 referenceBlobs 提交成功", async () => {
     const api = new MockTransport((req) => {
       if (req.url.includes("generate-async")) {
         return jsonResponse(
           200,
           {},
-          { "x-override-status-link": "https://poll/x" }
+          {
+            "x-override-status-link":
+              "https://firefly-3p.ff.adobe.io/v2/status/image-x",
+          }
         );
       }
       return jsonResponse(200, {
@@ -203,7 +262,7 @@ describe("AdobeFireflyClient.generateVideo", () => {
     pollIntervalMs: 1,
   };
 
-  it("上游接受后轮询临时失败只重试原任务，不重复提交", async () => {
+  it("上游接受后轮询 408 只重试原任务，不重复提交", async () => {
     const videoBytes = Buffer.from("MP4DATA");
     const api = new MockTransport((req, index) => {
       if (index === 0) {
@@ -221,7 +280,10 @@ describe("AdobeFireflyClient.generateVideo", () => {
         expect(req.url).toBe(
           "https://firefly-3p.ff.adobe.io/v2/status/video-1"
         );
-        return jsonResponse(503, { error: "temporary" });
+        return jsonResponse(408, {
+          error_code: "timeout_error",
+          message: "system under load",
+        });
       }
       return jsonResponse(200, {
         status: "COMPLETED",
@@ -262,17 +324,56 @@ describe("AdobeFireflyClient.generateVideo", () => {
     expect(api.calls.filter((call) => call.method === "POST")).toHaveLength(1);
   });
 
+  it("视频提交 408 在任务未接受前按临时错误返回", async () => {
+    const client = new AdobeFireflyClient({
+      transport: new MockTransport(() =>
+        jsonResponse(408, {
+          error_code: "timeout_error",
+          message: "system under load",
+        })
+      ),
+    });
+
+    await expect(client.submitVideo(videoInput)).rejects.toBeInstanceOf(
+      UpstreamTemporaryError
+    );
+  });
+
+  it("视频提交接受无 v2 前缀的 EPO jobs 轮询地址", async () => {
+    const client = new AdobeFireflyClient({
+      transport: new MockTransport(() =>
+        jsonResponse(
+          200,
+          { id: "job-video-legacy-path" },
+          {
+            "x-override-status-link":
+              "https://firefly-epo5678-prod.adobe.io/jobs/video-legacy-path",
+          }
+        )
+      ),
+    });
+
+    await expect(client.submitVideo(videoInput)).resolves.toMatchObject({
+      pollUrl:
+        "https://bks-epo5678.adobe.io/v2/jobs/result/video-legacy-path?host=firefly-epo5678-prod.adobe.io/",
+      upstreamJobId: "job-video-legacy-path",
+    });
+  });
+
   it("提交、单次轮询和下载可作为独立恢复阶段调用", async () => {
     const videoBytes = Buffer.from("RECOVERED-MP4");
-    const pollUrl = "https://firefly-3p.ff.adobe.io/v2/status/video-3";
-    const api = new MockTransport((_req, index) => {
+    const rawPollUrl = "https://firefly-epo1234-prod.adobe.io/v2/jobs/video-3";
+    const pollUrl =
+      "https://bks-epo1234.adobe.io/v2/jobs/result/video-3?host=firefly-epo1234-prod.adobe.io/";
+    const api = new MockTransport((req, index) => {
       if (index === 0) {
         return jsonResponse(
           200,
           { id: "job-video-3" },
-          { "x-override-status-link": pollUrl }
+          { "x-override-status-link": rawPollUrl }
         );
       }
+      expect(req.url).toBe(pollUrl);
       return index === 1
         ? jsonResponse(200, { status: "RUNNING" })
         : jsonResponse(200, {
@@ -316,18 +417,28 @@ describe("AdobeFireflyClient.generateVideo", () => {
     );
   });
 
-  it("持久轮询地址只接受 Adobe HTTPS 精确主机", async () => {
+  it("持久轮询地址拒绝不可信主机、端口、凭据和 BKS 篡改", async () => {
     const client = new AdobeFireflyClient({
       transport: new MockTransport(() =>
         jsonResponse(200, { status: "RUNNING" })
       ),
     });
 
-    await expect(
-      client.pollVideo({
-        token: FAKE_TOKEN,
-        pollUrl: "https://firefly-3p.ff.adobe.io.evil.test/status/1",
-      })
-    ).rejects.toThrow("Adobe 视频轮询地址不受信任");
+    const blocked = [
+      "http://firefly-epo1234.adobe.io/jobs/1",
+      "https://user:password@firefly-epo1234.adobe.io/jobs/1",
+      "https://firefly-epo1234.adobe.io:444/jobs/1",
+      "https://firefly-epo1234.adobe.io/jobs/1#fragment",
+      "https://firefly-3p.ff.adobe.io.evil.test/status/1",
+      "https://bks-epo1234.adobe.io/v2/jobs/result/1?host=evil.test",
+      "https://bks-epo1234.adobe.io/v2/jobs/result/1?host=firefly-epo9999.adobe.io",
+      "https://bks-epo1234.adobe.io/v2/jobs/result/1?host=firefly-epo1234.adobe.io&extra=1",
+      "https://bks-epo1234.adobe.io/v2/jobs/result/1/extra?host=firefly-epo1234.adobe.io",
+    ];
+    for (const pollUrl of blocked) {
+      await expect(
+        client.pollVideo({ token: FAKE_TOKEN, pollUrl })
+      ).rejects.toThrow("Adobe 视频轮询地址不受信任");
+    }
   });
 });

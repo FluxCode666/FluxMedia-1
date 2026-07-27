@@ -10,10 +10,10 @@ import {
 } from "./errors";
 
 describe("isAdobeMemberSwitchableError", () => {
-  it("switches members on 429/5xx upstream-temporary errors", () => {
+  it("switches members on 408/429/5xx upstream-temporary errors", () => {
     const err = new UpstreamTemporaryError(
-      'submit failed: 429 {"error":"rate limited"}',
-      { statusCode: 429, errorType: "status" }
+      'submit failed: 408 {"message":"system under load"}',
+      { statusCode: 408, errorType: "status" }
     );
     expect(isAdobeMemberSwitchableError(err)).toBe(true);
   });

@@ -85,10 +85,15 @@ func TestLoadProxyConfigRejectsInvalidBounds(t *testing.T) {
 	}
 }
 
-// TestBuildAdobeTargetURL 验证只允许精确 Adobe HTTPS 主机。
+// TestBuildAdobeTargetURL 验证只允许精确 Adobe HTTPS 主机与受支持的动态轮询路径。
 func TestBuildAdobeTargetURL(t *testing.T) {
 	allowed := []string{
 		"https://firefly-3p.ff.adobe.io/v2/3p-images/generate-async",
+		"https://firefly-epo855232.adobe.io/jobs/result/image-job-1",
+		"https://firefly-epo5678-prod.adobe.io/jobs/video-job-legacy",
+		"https://firefly-epo1234-prod.adobe.io/v2/jobs/video-job-1",
+		"https://bks-epo8552.adobe.io/v2/jobs/result/image-job-1?host=firefly-epo855232.adobe.io/",
+		"https://bks-epo1234.adobe.io/v2/jobs/result/video-job-1?host=firefly-epo1234-prod.adobe.io/",
 		"https://firefly.adobe.io/v1/credits/balance",
 		"https://ims-na1.adobelogin.com/ims/profile/v1",
 		"https://adobeid-na1.services.adobe.com/ims/check/v6/token?x=1",
@@ -104,6 +109,14 @@ func TestBuildAdobeTargetURL(t *testing.T) {
 		"http://firefly.adobe.io/v1/credits/balance",
 		"https://evil-firefly.adobe.io.example.com/path",
 		"https://sub.firefly.adobe.io/path",
+		"https://firefly-epoabcd.adobe.io/jobs/result/1",
+		"https://firefly-epo855232.adobe.io.evil.test/jobs/result/1",
+		"https://bks-epo8552.adobe.io/v2/jobs/result/1?host=evil.test",
+		"https://bks-epo8552.adobe.io/v2/jobs/result/1?host=firefly-epo999932.adobe.io",
+		"https://firefly-epo855232.adobe.io/unknown/1",
+		"https://firefly-epo855232.adobe.io/jobs/1?extra=1",
+		"https://bks-epo8552.adobe.io/v2/jobs/result/1/extra?host=firefly-epo855232.adobe.io",
+		"https://bks-epo8552.adobe.io/v2/jobs/result/1?host=firefly-epo855232.adobe.io&extra=1",
 		"https://firefly.adobe.io.evil.example/path",
 		"https://user:password@firefly.adobe.io/path",
 		"https://firefly.adobe.io:444/path",

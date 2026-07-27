@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -51,6 +52,15 @@ var allowedAdobeHosts = map[string]struct{}{
 	"firefly.adobe.io":               {},
 	"ims-na1.adobelogin.com":         {},
 }
+
+var fireflyEPOHostPattern = regexp.MustCompile(
+	`^firefly-epo([0-9]{4})(?:[0-9]{2})?(?:-prod)?\.adobe\.io$`,
+)
+var bksEPOHostPattern = regexp.MustCompile(`^bks-epo([0-9]{4})\.adobe\.io$`)
+var adobeEPOJobPathPattern = regexp.MustCompile(
+	`^/(?:v2/)?(?:jobs(?:/result)?|status)/([^/]+)$`,
+)
+var adobeBKSJobPathPattern = regexp.MustCompile(`^/v2/jobs/result/([^/]+)$`)
 
 // proxyConfig 是启动时完成校验的不可变配置。
 type proxyConfig struct {
@@ -330,7 +340,57 @@ func (s *proxyServer) forward(
 	}, nil
 }
 
-// buildAdobeTargetURL 校验绝对 HTTPS URL 与精确 Adobe 主机白名单。
+// fireflyEPOShard 从动态 EPO 主机提取四位 BKS 分片号；输入不符合受支持的
+// 四位或六位数字及可选 prod 形态时返回空值和 false，不修改外部状态。
+func fireflyEPOShard(host string) (string, bool) {
+	matches := fireflyEPOHostPattern.FindStringSubmatch(host)
+	if len(matches) != 2 {
+		return "", false
+	}
+	return matches[1], true
+}
+
+// isAllowedAdobeEPOPath 只接受 jobs、jobs/result 或 status 下的单段任务 ID；
+// 空 ID、额外路径和把 result 当作任务 ID 的路径均返回 false，无外部副作用。
+func isAllowedAdobeEPOPath(path string) bool {
+	matches := adobeEPOJobPathPattern.FindStringSubmatch(path)
+	return len(matches) == 2 && matches[1] != "result"
+}
+
+// isAllowedAdobeTarget 校验解析后的目标是否属于固定 Adobe 主机，或属于结构严格且
+// host 查询参数与 BKS 分片一致的动态轮询主机；不修改 URL 或外部状态。
+func isAllowedAdobeTarget(parsed *url.URL) bool {
+	host := strings.ToLower(parsed.Hostname())
+	if _, allowed := allowedAdobeHosts[host]; allowed {
+		return true
+	}
+	if _, allowed := fireflyEPOShard(host); allowed {
+		return parsed.RawQuery == "" && isAllowedAdobeEPOPath(parsed.Path)
+	}
+
+	bksMatches := bksEPOHostPattern.FindStringSubmatch(host)
+	if len(bksMatches) != 2 {
+		return false
+	}
+	pathMatches := adobeBKSJobPathPattern.FindStringSubmatch(parsed.Path)
+	if len(pathMatches) != 2 {
+		return false
+	}
+	query := parsed.Query()
+	hostValues := query["host"]
+	if len(query) != 1 || len(hostValues) != 1 {
+		return false
+	}
+	upstreamHost := strings.ToLower(strings.TrimSuffix(
+		strings.TrimSpace(hostValues[0]),
+		"/",
+	))
+	upstreamShard, allowed := fireflyEPOShard(upstreamHost)
+	return allowed && upstreamShard == bksMatches[1]
+}
+
+// buildAdobeTargetURL 校验原始目标是无凭据、无 fragment、默认端口的绝对 HTTPS
+// URL，并限制到固定或严格同分片 Adobe 主机；成功返回规范 URL，失败返回拒绝原因。
 func buildAdobeTargetURL(rawURL string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -346,8 +406,7 @@ func buildAdobeTargetURL(rawURL string) (string, error) {
 		return "", errors.New("targetUrl must use the default HTTPS port")
 	}
 
-	host := strings.ToLower(parsed.Hostname())
-	if _, allowed := allowedAdobeHosts[host]; !allowed {
+	if !isAllowedAdobeTarget(parsed) {
 		return "", errors.New("targetUrl host is not allowlisted")
 	}
 	return parsed.String(), nil
