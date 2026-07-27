@@ -46,12 +46,19 @@ import {
   MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
-import type { ApiConfig, GenerateImageResult } from "./types";
 import { prepareAdobeVideoSourceImage } from "./adobe-video-source";
+import type { ApiConfig, GenerateImageResult } from "./types";
 import { requireAcceptedVideoCredential } from "./video-recovery-policy";
 
 // IMS access_token 距过期多久内视为需要刷新（秒）。
 const TOKEN_REFRESH_SKEW_SECONDS = 120;
+
+/** 将 Adobe 余额数值收敛为数据库可持久化的整数，非法值保留为空。 */
+function normalizeAdobeCreditValue(value: number | null): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(value)
+    : null;
+}
 
 /** 读取 Adobe direct 专用代理配置；缺失时显式失败，禁止绕过固定出口直连。 */
 function getAdobeDirectProxyConfig(): {
@@ -222,18 +229,14 @@ async function storeMemberCredits(
   accessToken: string,
   signal?: AbortSignal
 ): Promise<void> {
-  const toInt = (value: number | null) =>
-    typeof value === "number" && Number.isFinite(value)
-      ? Math.round(value)
-      : null;
   try {
     const balance = await fetchCreditsBalance(transport, accessToken, signal);
     await db
       .update(imageBackendMemberAdobeConfig)
       .set({
-        creditsTotal: toInt(balance.total),
-        creditsUsed: toInt(balance.used),
-        creditsAvailable: toInt(balance.available),
+        creditsTotal: normalizeAdobeCreditValue(balance.total),
+        creditsUsed: normalizeAdobeCreditValue(balance.used),
+        creditsAvailable: normalizeAdobeCreditValue(balance.available),
         creditsUpdatedAt: new Date(),
         creditsError: null,
         updatedAt: new Date(),
@@ -885,10 +888,11 @@ export async function runAdobeDirectVideoRequest(
 }
 
 /**
- * 校验一个 Adobe direct Cookie，并返回成员服务可持久化的一对一凭据。
+ * 校验一个 Adobe direct Cookie，并返回成员服务可持久化的一对一凭据与余额快照。
  *
- * Cookie 和 token 只在服务端内存与成员配置中流转；失败时不写数据库。传入值可为
- * Cookie 字符串或导出扩展 JSON，实际持久化前由成员服务归一化为 Cookie 字符串。
+ * Cookie 和 token 只在服务端内存与成员配置中流转；身份校验失败时不写数据库。
+ * 余额读取为 best-effort，失败原因随凭据持久化供管理员排查，不阻断有效账号导入。
+ * 传入值可为 Cookie 字符串或导出扩展 JSON，实际持久化前由成员服务归一化。
  */
 export async function prepareAdobeDirectCredential(
   cookie: string,
@@ -899,6 +903,11 @@ export async function prepareAdobeDirectCredential(
   displayName: string | null;
   email: string | null;
   expiresAt: Date | null;
+  creditsTotal: number | null;
+  creditsUsed: number | null;
+  creditsAvailable: number | null;
+  creditsUpdatedAt: Date;
+  creditsError: string | null;
 }> {
   const { apiTransport } = await buildAdobeTransports();
   const result = await refreshAccessTokenFromCookie(apiTransport, cookie, {
@@ -906,11 +915,31 @@ export async function prepareAdobeDirectCredential(
     fetchAccount: true,
   });
   assertLoggedInAdobeCookie(result.accessToken, result.account);
+  let creditsTotal: number | null = null;
+  let creditsUsed: number | null = null;
+  let creditsAvailable: number | null = null;
+  let creditsError: string | null = null;
+  try {
+    const balance = await fetchCreditsBalance(apiTransport, result.accessToken);
+    creditsTotal = normalizeAdobeCreditValue(balance.total);
+    creditsUsed = normalizeAdobeCreditValue(balance.used);
+    creditsAvailable = normalizeAdobeCreditValue(balance.available);
+  } catch (error) {
+    creditsError = (
+      error instanceof Error ? error.message : String(error)
+    ).slice(0, 300);
+  }
+  const creditsUpdatedAt = new Date();
   return {
     accessToken: result.accessToken,
     accountUserId: result.account?.userId || null,
     displayName: result.account?.displayName || null,
     email: result.account?.email || null,
     expiresAt: tokenExpiresAt(result.accessToken),
+    creditsTotal,
+    creditsUsed,
+    creditsAvailable,
+    creditsUpdatedAt,
+    creditsError,
   };
 }

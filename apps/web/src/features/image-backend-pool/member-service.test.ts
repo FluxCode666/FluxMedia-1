@@ -67,6 +67,11 @@ describe("backend member service", () => {
       displayName: string | null;
       email: string | null;
       expiresAt: Date | null;
+      creditsTotal: number | null;
+      creditsUsed: number | null;
+      creditsAvailable: number | null;
+      creditsUpdatedAt: Date;
+      creditsError: string | null;
     }>
   >;
 
@@ -81,6 +86,11 @@ describe("backend member service", () => {
       displayName: "Adobe User",
       email: "user@example.com",
       expiresAt: new Date("2026-07-26T01:00:00.000Z"),
+      creditsTotal: 4_000,
+      creditsUsed: 1_500,
+      creditsAvailable: 2_500,
+      creditsUpdatedAt: NOW,
+      creditsError: null,
     }));
   });
 
@@ -182,6 +192,10 @@ describe("backend member service", () => {
         directCredential: expect.objectContaining({
           accessToken: "access-token",
           accountUserId: "adobe-user-1",
+          creditsTotal: 4_000,
+          creditsUsed: 1_500,
+          creditsAvailable: 2_500,
+          creditsError: null,
         }),
       }),
       NOW
@@ -399,6 +413,8 @@ describe("backend member service", () => {
       leaseAcquiredCount: 4,
       lastAcquiredAt: null,
       lastUsedAt: null,
+      lastError: null,
+      lastErrorAt: null,
       config: {
         baseUrl: "https://images.example.com/v1",
         hasApiKey: true,

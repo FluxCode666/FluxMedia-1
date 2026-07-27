@@ -57,6 +57,8 @@ const redactedAdobeConfigSchema = z.discriminatedUnion("mode", [
       creditsTotal: z.number().int().nullable(),
       creditsUsed: z.number().int().nullable(),
       creditsAvailable: z.number().int().nullable(),
+      creditsUpdatedAt: z.string().nullable(),
+      creditsError: z.string().nullable(),
       defaultRatio: z.string(),
       defaultResolution: z.string(),
       gptImageQuality: z.enum(["low", "medium", "high"]),
@@ -83,6 +85,8 @@ const backendMemberSummarySchema = z
     leaseAcquiredCount: z.number().int().nonnegative(),
     lastAcquiredAt: z.string().nullable(),
     lastUsedAt: z.string().nullable(),
+    lastError: z.string().nullable(),
+    lastErrorAt: z.string().nullable(),
     config: z.union([redactedApiConfigSchema, redactedAdobeConfigSchema]),
   })
   .strict();

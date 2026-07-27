@@ -47,7 +47,15 @@ import {
   buildBackendMemberModelOptions,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
-import type { BackendMemberAdminSummary } from "./member-service";
+import type {
+  BackendMemberAdminSummary,
+  RedactedAdobeMemberConfig,
+} from "./member-service";
+
+type RedactedAdobeDirectConfig = Extract<
+  RedactedAdobeMemberConfig,
+  { mode: "direct" }
+>;
 
 /** 格式化后台时间，非法或空值显示短横线。 */
 function formatAdminTime(value: string | null, timeZone: string): string {
@@ -106,6 +114,47 @@ function PoolStatCard({
         {description}
       </CardContent>
     </Card>
+  );
+}
+
+/** 展示 Adobe direct 账号身份、Firefly 余额与凭据错误，不暴露任何 secret。 */
+function AdobeDirectAccountFacts({
+  config,
+  timeZone,
+}: {
+  config: RedactedAdobeDirectConfig;
+  timeZone: string;
+}) {
+  const hasKnownBalance =
+    config.creditsAvailable !== null || config.creditsTotal !== null;
+  return (
+    <>
+      <span>Adobe 状态：{config.credentialStatus}</span>
+      <span>Adobe 账号：{config.displayName || config.email || "未识别"}</span>
+      <span>
+        {config.creditsError
+          ? "Firefly 余额：读取失败"
+          : hasKnownBalance
+            ? `Firefly 余额：${config.creditsAvailable ?? "?"} / ${config.creditsTotal ?? "?"}`
+            : "Firefly 余额：未知（刷新后获取）"}
+      </span>
+      {config.creditsUsed !== null && (
+        <span>Firefly 已用：{config.creditsUsed}</span>
+      )}
+      <span>
+        余额更新：{formatAdminTime(config.creditsUpdatedAt, timeZone)}
+      </span>
+      {config.lastRefreshError && (
+        <span className="basis-full break-words text-destructive">
+          凭据刷新错误：{config.lastRefreshError}
+        </span>
+      )}
+      {config.creditsError && (
+        <span className="basis-full break-words text-destructive">
+          余额读取失败：{config.creditsError}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -499,26 +548,25 @@ export function ImageBackendPoolAdminPanel({
                   </span>
                   {member.type === "adobe" &&
                     member.config.mode === "direct" && (
-                      <>
-                        <span>
-                          Adobe 状态：{member.config.credentialStatus}
-                        </span>
-                        <span>
-                          Adobe 账号：
-                          {member.config.displayName ||
-                            member.config.email ||
-                            "未识别"}
-                        </span>
-                        <span>
-                          可用额度：{member.config.creditsAvailable ?? "—"}
-                        </span>
-                      </>
+                      <AdobeDirectAccountFacts
+                        config={member.config}
+                        timeZone={timeZone}
+                      />
                     )}
                   <span>
                     失败冷却：{member.failureCooldownEnabled ? "开" : "关"}
                   </span>
                   <span>始终活跃：{member.alwaysActive ? "开" : "关"}</span>
                 </div>
+                {member.lastError && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                    <p className="break-words">最近错误：{member.lastError}</p>
+                    <p className="mt-1 text-muted-foreground">
+                      发生时间：
+                      {formatAdminTime(member.lastErrorAt, timeZone)}
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
