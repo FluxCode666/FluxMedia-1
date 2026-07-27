@@ -1,8 +1,8 @@
 /**
  * 公开模型广场的客户端浏览器。
  *
- * 使用方是 `/models` Server Component；本组件只对公开 DTO 做本地搜索、类别筛选、
- * Clipboard 反馈和详情 Dialog 编排，不重新请求目录或解释展示配置。
+ * 使用方是 `/models` Server Component；本组件只对公开 DTO 做本地搜索、类别与厂商
+ * 筛选、Clipboard 反馈和详情 Dialog 编排，不重新请求目录或解释展示配置。
  */
 "use client";
 
@@ -10,7 +10,6 @@ import type { ModelMarketplacePublicItem } from "@repo/shared/model-marketplace"
 import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
-import { RadioGroup, RadioGroupItem } from "@repo/ui/components/radio-group";
 import {
   Sheet,
   SheetContent,
@@ -25,68 +24,14 @@ import { toast } from "sonner";
 
 import { ModelMarketplaceCard } from "./model-card";
 import { ModelDetailDialog } from "./model-detail-dialog";
+import { ModelMarketplaceFilterControls } from "./model-marketplace-filter-controls";
 import {
   copyModelMarketplaceId,
   filterModelMarketplaceModels,
+  getAvailableModelMarketplaceProviders,
   type ModelMarketplaceCategoryFilter,
-  parseModelMarketplaceCategoryFilter,
+  type ModelMarketplaceProviderFilter,
 } from "./model-marketplace-view-model";
-
-/** 类别筛选控件共享的本地化选项。 */
-type CategoryFilterProps = {
-  idPrefix: string;
-  value: ModelMarketplaceCategoryFilter;
-  onValueChange: (value: ModelMarketplaceCategoryFilter) => void;
-};
-
-/**
- * 渲染桌面侧栏与移动 Sheet 共用的类别筛选。
- *
- * @param props - 当前筛选和收窄后的变更回调。
- * @returns 带可见标签的三项 RadioGroup。
- * @sideEffects 用户选择时调用父组件回调。
- */
-function CategoryFilter({
-  idPrefix,
-  value,
-  onValueChange,
-}: CategoryFilterProps) {
-  const t = useTranslations("ModelMarketplace");
-  const options = [
-    { value: "all" as const, label: t("filters.all") },
-    { value: "image" as const, label: t("categories.image") },
-    { value: "video" as const, label: t("categories.video") },
-  ];
-
-  return (
-    <div>
-      <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-        {t("filters.type")}
-      </p>
-      <RadioGroup
-        className="mt-3 gap-1.5"
-        onValueChange={(nextValue) =>
-          onValueChange(parseModelMarketplaceCategoryFilter(nextValue))
-        }
-        value={value}
-      >
-        {options.map((option) => (
-          <Label
-            className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:bg-accent has-[[data-state=checked]]:font-medium"
-            htmlFor={`${idPrefix}-model-filter-${option.value}`}
-            key={option.value}
-          >
-            <RadioGroupItem
-              id={`${idPrefix}-model-filter-${option.value}`}
-              value={option.value}
-            />
-            {option.label}
-          </Label>
-        ))}
-      </RadioGroup>
-    </div>
-  );
-}
 
 /**
  * 渲染可搜索、可筛选的模型卡片目录。
@@ -105,13 +50,19 @@ export function ModelMarketplaceBrowser({
   const [query, setQuery] = useState("");
   const [category, setCategory] =
     useState<ModelMarketplaceCategoryFilter>("all");
+  const [provider, setProvider] =
+    useState<ModelMarketplaceProviderFilter>("all");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedModel, setSelectedModel] =
     useState<ModelMarketplacePublicItem | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const availableProviders = useMemo(
+    () => getAvailableModelMarketplaceProviders(models),
+    [models]
+  );
   const filteredModels = useMemo(
-    () => filterModelMarketplaceModels(models, query, category),
-    [category, models, query]
+    () => filterModelMarketplaceModels(models, query, category, provider),
+    [category, models, provider, query]
   );
 
   /** 写入完整 ID 并显示不会泄露异常细节的成功或失败反馈。 */
@@ -166,10 +117,13 @@ export function ModelMarketplaceBrowser({
 
         <div className="grid items-start gap-8 lg:grid-cols-[14rem_minmax(0,1fr)]">
           <aside className="sticky top-24 hidden rounded-xl border bg-card p-4 lg:block">
-            <CategoryFilter
+            <ModelMarketplaceFilterControls
+              availableProviders={availableProviders}
+              category={category}
               idPrefix="desktop"
-              value={category}
-              onValueChange={setCategory}
+              onCategoryChange={setCategory}
+              onProviderChange={setProvider}
+              provider={provider}
             />
           </aside>
 
@@ -199,6 +153,7 @@ export function ModelMarketplaceBrowser({
                   onClick={() => {
                     setQuery("");
                     setCategory("all");
+                    setProvider("all");
                   }}
                   variant="outline"
                 >
@@ -217,13 +172,19 @@ export function ModelMarketplaceBrowser({
             <SheetDescription>{t("filters.description")}</SheetDescription>
           </SheetHeader>
           <div className="mt-7">
-            <CategoryFilter
+            <ModelMarketplaceFilterControls
+              availableProviders={availableProviders}
+              category={category}
               idPrefix="mobile"
-              value={category}
-              onValueChange={(value) => {
+              onCategoryChange={(value) => {
                 setCategory(value);
                 setFiltersOpen(false);
               }}
+              onProviderChange={(value) => {
+                setProvider(value);
+                setFiltersOpen(false);
+              }}
+              provider={provider}
             />
           </div>
         </SheetContent>

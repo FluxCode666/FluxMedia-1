@@ -121,9 +121,12 @@
     },
     "filters": {
       "title": "Filter models",
-      "description": "Narrow the public catalog by media type.",
+      "description": "Narrow the public catalog by media type and provider.",
       "type": "Model type",
+      "provider": "Model provider",
       "all": "All models",
+      "allProviders": "All providers",
+      "otherProvider": "Other providers",
       "searchLabel": "Search models",
       "searchPlaceholder": "Search by name or model ID",
       "open": "Filters",
@@ -162,7 +165,7 @@
     },
     "filteredEmpty": {
       "title": "No matching models",
-      "description": "Try another keyword or media type to explore the rest of the public catalog."
+      "description": "Try another keyword, media type, or provider to explore the rest of the public catalog."
     },
     "empty": {
       "title": "Models are being prepared",
@@ -289,24 +292,8 @@
   },
   "Navigation": {
     "menu": "Navigation",
-    "products": "Features",
-    "models": "Models",
-    "integration": "Quick Integration",
-    "work": "Work",
-    "create": "Start Creating",
-    "docs": "Docs",
-    "blog": "Blog",
-    "productsMenu": {
-      "core": {
-        "title": "Generation",
-        "chatToImage": "Chat-to-Image",
-        "chatToImageDesc": "Generate images through natural conversation",
-        "gallery": "Visual Gallery",
-        "galleryDesc": "Browse, organize, and revisit your creations",
-        "batch": "Batch Generation",
-        "batchDesc": "Produce multiple variations in one request"
-      }
-    }
+    "models": "Model Marketplace",
+    "docs": "API Docs"
   },
   "Common": {
     "getStarted": "Get Started",

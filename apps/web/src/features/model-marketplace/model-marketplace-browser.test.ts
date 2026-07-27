@@ -1,7 +1,7 @@
 /**
  * 模型广场客户端纯交互测试。
  *
- * 使用方是 Vitest；锁定搜索、类别筛选、完整 ID 复制结果和“立即使用”查询契约，
+ * 使用方是 Vitest；锁定搜索、类别与厂商筛选、完整 ID 复制结果和“立即使用”查询契约，
  * 不依赖浏览器 DOM 或真实 Clipboard。
  */
 import type { ModelMarketplacePublicItem } from "@repo/shared/model-marketplace";
@@ -9,8 +9,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   copyModelMarketplaceId,
   filterModelMarketplaceModels,
+  getAvailableModelMarketplaceProviders,
   getModelMarketplaceUsageHref,
   parseModelMarketplaceCategoryFilter,
+  parseModelMarketplaceProviderFilter,
 } from "./model-marketplace-view-model";
 
 const IMAGE_MODEL: ModelMarketplacePublicItem = {
@@ -51,33 +53,46 @@ describe("filterModelMarketplaceModels", () => {
   it("按完整 ID、展示名、配置键或简介搜索并保持服务端顺序", () => {
     const models = [IMAGE_MODEL, VIDEO_MODEL];
 
-    expect(filterModelMarketplaceModels(models, "veo31-6s", "all")).toEqual([
-      VIDEO_MODEL,
-    ]);
-    expect(filterModelMarketplaceModels(models, "GPT IMAGE", "all")).toEqual([
-      IMAGE_MODEL,
-    ]);
     expect(
-      filterModelMarketplaceModels(models, "reference-aware", "all")
+      filterModelMarketplaceModels(models, "veo31-6s", "all", "all")
     ).toEqual([VIDEO_MODEL]);
-    expect(filterModelMarketplaceModels(models, "", "all")).toEqual(models);
+    expect(
+      filterModelMarketplaceModels(models, "GPT IMAGE", "all", "all")
+    ).toEqual([IMAGE_MODEL]);
+    expect(
+      filterModelMarketplaceModels(models, "reference-aware", "all", "all")
+    ).toEqual([VIDEO_MODEL]);
+    expect(filterModelMarketplaceModels(models, "", "all", "all")).toEqual(
+      models
+    );
   });
 
-  it("类别筛选与查询同时生效", () => {
+  it("类别、厂商与查询同时生效", () => {
     const models = [IMAGE_MODEL, VIDEO_MODEL];
 
-    expect(filterModelMarketplaceModels(models, "generation", "image")).toEqual(
-      [IMAGE_MODEL]
-    );
-    expect(filterModelMarketplaceModels(models, "generation", "video")).toEqual(
-      [VIDEO_MODEL]
-    );
+    expect(
+      filterModelMarketplaceModels(models, "generation", "image", "openai")
+    ).toEqual([IMAGE_MODEL]);
+    expect(
+      filterModelMarketplaceModels(models, "generation", "video", "google")
+    ).toEqual([VIDEO_MODEL]);
+    expect(
+      filterModelMarketplaceModels(models, "generation", "image", "google")
+    ).toEqual([]);
   });
 
   it("把未知类别值安全回退为 all", () => {
     expect(parseModelMarketplaceCategoryFilter("image")).toBe("image");
     expect(parseModelMarketplaceCategoryFilter("video")).toBe("video");
     expect(parseModelMarketplaceCategoryFilter("conversation")).toBe("all");
+  });
+
+  it("从真实目录提取厂商并安全收窄未知值", () => {
+    expect(
+      getAvailableModelMarketplaceProviders([VIDEO_MODEL, IMAGE_MODEL])
+    ).toEqual(["openai", "google"]);
+    expect(parseModelMarketplaceProviderFilter("google")).toBe("google");
+    expect(parseModelMarketplaceProviderFilter("unknown-vendor")).toBe("all");
   });
 });
 

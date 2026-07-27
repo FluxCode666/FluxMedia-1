@@ -1,5 +1,5 @@
 /**
- * 全站导航配置与营销 Header 变体契约。
+ * 全站导航配置与营销 Header 契约。
  *
  * 使用方：营销 Header、移动端 Sheet、Footer、Dashboard 与 Admin 侧栏。
  * 关键依赖：Lucide 图标；营销链接保持 locale-neutral，由应用层 i18n Link
@@ -12,7 +12,6 @@ import {
   Headset,
   Image,
   KeyRound,
-  Layers,
   LayoutDashboard,
   type LucideIcon,
   Megaphone,
@@ -42,95 +41,17 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/**
- * Products 下拉菜单项类型
- */
-export interface ProductNavItem {
-  title: string;
-  href: string;
-  description: string;
-  icon: LucideIcon;
-}
-
-/**
- * Products 下拉菜单分组类型
- */
-export interface ProductNavGroup {
-  title: string;
-  items: ProductNavItem[];
-}
-
-/** Marketing Header 支持的显式页面变体。 */
-export type MarketingHeaderVariant = "home" | "marketing";
-
-/** 桌面与移动端共同消费的营销 Header 导航快照。 */
-export interface MarketingHeaderNavigation {
-  items: readonly NavItem[];
-  productGroups: readonly ProductNavGroup[];
-}
-
 // ============================================
 // Marketing 导航配置
 // ============================================
-
-/**
- * Products 下拉菜单内容
- */
-export const productsNav: ProductNavGroup[] = [
-  {
-    title: "Core features",
-    items: [
-      {
-        title: "Chat to Image",
-        href: "/dashboard",
-        description: "Generate images from natural language",
-        icon: Image,
-      },
-      {
-        title: "Gallery",
-        href: "/dashboard",
-        description: "Browse and manage your creations",
-        icon: GalleryHorizontalEnd,
-      },
-      {
-        title: "Batch Generation",
-        href: "/dashboard",
-        description: "Generate multiple images at once",
-        icon: Layers,
-      },
-    ],
-  },
-];
 
 /**
  * 主导航链接 (Header)
  */
 export const mainNav: NavItem[] = [
   { title: "Models", href: "/models" },
-  { title: "Quick Integration", href: "/#integration" },
-  { title: "Work", href: "/#work" },
-  { title: "Start Creating", href: "/#create" },
   { title: "Docs", href: "/api-docs" },
-  { title: "Blog", href: "/blog" },
 ];
-
-const emptyProductNav: readonly ProductNavGroup[] = [];
-
-/**
- * 为指定页面变体返回营销 Header 的单一导航事实源。
- *
- * @param variant - 首页隐藏 Products 下拉，其他营销页面保留有效产品入口。
- * @returns 桌面 NavMenu 与移动 Sheet 必须共同使用的导航项和产品分组。
- * @sideEffects 无。
- */
-export function getMarketingHeaderNavigation(
-  variant: MarketingHeaderVariant
-): MarketingHeaderNavigation {
-  return {
-    items: mainNav,
-    productGroups: variant === "home" ? emptyProductNav : productsNav,
-  };
-}
 
 /**
  * Footer 导航配置

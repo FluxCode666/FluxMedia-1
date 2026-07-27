@@ -121,9 +121,12 @@
     },
     "filters": {
       "title": "筛选模型",
-      "description": "按媒体类型缩小当前公开模型目录。",
+      "description": "按媒体类型与模型厂商缩小当前公开模型目录。",
       "type": "模型类型",
+      "provider": "模型厂商",
       "all": "全部模型",
+      "allProviders": "全部厂商",
+      "otherProvider": "其他厂商",
       "searchLabel": "搜索模型",
       "searchPlaceholder": "搜索名称或模型 ID",
       "open": "筛选",
@@ -162,7 +165,7 @@
     },
     "filteredEmpty": {
       "title": "没有匹配的模型",
-      "description": "尝试更换关键词或模型类型，查看当前公开目录中的其他模型。"
+      "description": "尝试更换关键词、模型类型或厂商，查看当前公开目录中的其他模型。"
     },
     "empty": {
       "title": "模型正在准备中",
@@ -351,24 +354,8 @@
   },
   "Navigation": {
     "menu": "导航",
-    "products": "功能",
-    "models": "模型",
-    "integration": "快速集成",
-    "work": "作品",
-    "create": "开始创作",
-    "docs": "文档",
-    "blog": "博客",
-    "productsMenu": {
-      "core": {
-        "title": "生成能力",
-        "chatToImage": "对话生图",
-        "chatToImageDesc": "通过自然对话生成图片",
-        "gallery": "视觉画廊",
-        "galleryDesc": "浏览、整理并回看所有作品",
-        "batch": "批量生成",
-        "batchDesc": "一次请求产出多个变体"
-      }
-    }
+    "models": "模型广场",
+    "docs": "API 文档"
   },
   "Toggle": {
     "theme": "切换主题",
