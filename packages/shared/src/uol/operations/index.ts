@@ -63,3 +63,5 @@ export {
 import "./support";
 // 用户控制台统计
 import "./analytics";
+// 管理端支付概览与充值订单
+import "./payment";

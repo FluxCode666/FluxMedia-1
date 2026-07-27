@@ -390,6 +390,20 @@ export const paymentOrder = pgTable(
       table.createdAt
     ),
     index("payment_order_status_idx").on(table.status),
+    index("payment_order_admin_created_id_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    index("payment_order_admin_status_created_id_idx").on(
+      table.status,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    index("payment_order_admin_fulfilled_at_idx")
+      .on(table.fulfilledAt.desc())
+      .where(
+        sql`${table.status} = 'fulfilled' and ${table.purpose} in ('credit_top_up', 'credit_package') and ${table.fulfilledAt} is not null`
+      ),
   ]
 );
 
