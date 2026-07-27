@@ -10,13 +10,20 @@ import { z } from "zod";
 /**
  * 判断图片结果地址是否可交给浏览器展示。
  *
- * 站内存储接口返回同源相对地址；外部兼容路径只接受 HTTP(S)，避免把任意协议
- * 或任意相对路径注入图片元素。
+ * 站内存储接口会按部署桶名返回同源相对地址；外部兼容路径只接受 HTTP(S)，
+ * 避免把任意协议或非存储相对路径注入图片元素。
  */
 function isSupportedImageUrl(value: string) {
-  if (value.startsWith("/api/storage/media/")) return true;
-
   try {
+    if (value.startsWith("/")) {
+      if (!value.startsWith("/api/storage/")) return false;
+      const localOrigin = "http://local.invalid";
+      const url = new URL(value, localOrigin);
+      return (
+        url.origin === localOrigin && url.pathname.startsWith("/api/storage/")
+      );
+    }
+
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
@@ -73,9 +80,7 @@ export function getResponseError(
 }
 
 /** 合计本次响应实际消耗的积分。 */
-export function getConsumedCredits(
-  response: ImageGenerationResponse
-): number {
+export function getConsumedCredits(response: ImageGenerationResponse): number {
   const results = response.results ?? [response];
   return results.reduce(
     (total, result) => total + (result.creditsConsumed ?? 0),
