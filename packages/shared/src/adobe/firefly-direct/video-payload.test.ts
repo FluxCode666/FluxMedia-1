@@ -14,6 +14,39 @@ const base = {
 };
 
 describe("buildFireflyVideoPayload", () => {
+  it("Seedance 2.0 使用网页抓包中的最小字段集和 style 参考图", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0",
+      engine: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      size: { width: 480, height: 854 },
+      negativePrompt: "blurry",
+      sourceImageIds: ["reference-image", "ignored"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "seedance",
+      modelVersion: "seedance_2.0",
+      size: { width: 480, height: 854 },
+      seeds: [expect.any(Number)],
+      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 15,
+      generateAudio: false,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      generationSettings: { aspectRatio: "9:16" },
+      output: { storeInputs: true },
+    });
+  });
+
   it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
     const payload = buildFireflyVideoPayload({
       ...base,

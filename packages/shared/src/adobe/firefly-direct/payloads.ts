@@ -310,6 +310,29 @@ export function buildFireflyVideoPayload(params: {
   const hasFrames = ids.length > 0;
   const size = { width: params.size.width, height: params.size.height };
 
+  if (params.engine === "seedance2") {
+    return {
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      size,
+      seeds: [seed],
+      referenceBlobs: ids.slice(0, 1).map((id) => ({
+        id,
+        usage: "style",
+      })),
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt ?? "",
+      duration: params.duration,
+      generateAudio: params.generateAudio,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      generationSettings: { aspectRatio: params.aspectRatio },
+      output: { storeInputs: true },
+    };
+  }
+
   if (params.engine === "veo31-fast" || params.engine === "veo31-standard") {
     const payload: FireflyVideoPayload = {
       n: 1,

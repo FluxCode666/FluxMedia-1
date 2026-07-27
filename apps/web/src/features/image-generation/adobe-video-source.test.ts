@@ -29,6 +29,28 @@ describe("prepareAdobeVideoSourceImage", () => {
     expect(metadata.hasAlpha).toBe(false);
   });
 
+  it("Seedance 原图模式只校验格式并保持上传字节不变", async () => {
+    const source = await sharp({
+      create: {
+        width: 1254,
+        height: 1254,
+        channels: 3,
+        background: { r: 20, g: 80, b: 160 },
+      },
+    })
+      .png()
+      .toBuffer();
+
+    const result = await prepareAdobeVideoSourceImage(
+      source,
+      { width: 480, height: 854 },
+      "original"
+    );
+
+    expect(result.type).toBe("image/png");
+    expect(result.data).toEqual(source);
+  });
+
   it("拒绝空图片", async () => {
     await expect(
       prepareAdobeVideoSourceImage(Buffer.alloc(0), {

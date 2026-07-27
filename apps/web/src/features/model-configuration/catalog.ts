@@ -72,6 +72,7 @@ const VIDEO_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   "veo31-fast": "Veo 3.1 Fast",
   "kling-o3": "Kling O3",
   kling3: "Kling 3.0",
+  seedance2: "Seedance 2.0",
 };
 
 /**

@@ -384,7 +384,20 @@ describe("AdobeFireflyClient.generateVideo", () => {
       }
       expect(req.url).toBe(pollUrl);
       return index === 1
-        ? jsonResponse(200, { status: "RUNNING" })
+        ? jsonResponse(
+            200,
+            {
+              progress: 80,
+              outputs: [
+                {
+                  video: {
+                    presignedUrl: "https://cdn.example/video-early.mp4",
+                  },
+                },
+              ],
+            },
+            { "x-task-status": "IN_PROGRESS" }
+          )
         : jsonResponse(200, {
             status: "COMPLETED",
             outputs: [
@@ -525,16 +538,16 @@ describe("AdobeFireflyClient.generateVideo", () => {
       pollUrl: submitted.pollUrl,
     });
 
-    expect(api.calls[0]?.headers.origin).toBe(
-      "https://new.express.adobe.com"
-    );
+    expect(api.calls[0]?.headers.origin).toBe("https://new.express.adobe.com");
     expect(api.calls[0]?.headers.referer).toBe(
       "https://new.express.adobe.com/"
     );
     expect(api.calls[0]?.headers["sec-fetch-site"]).toBe("cross-site");
     expect(api.calls[0]?.headers["x-api-key"]).toBe("projectx_webapp");
-    expect(api.calls[1]?.headers.origin).toBe(
-      "https://new.express.adobe.com"
-    );
+    expect(api.calls[0]?.headers["x-arp-session-id"]).toBeTruthy();
+    expect(api.calls[0]?.headers["x-nonce"]).toMatch(/^[a-f0-9]{64}$/);
+    expect(api.calls[1]?.headers.origin).toBe("https://new.express.adobe.com");
+    expect(api.calls[1]?.headers["x-arp-session-id"]).toBeUndefined();
+    expect(api.calls[1]?.headers["x-nonce"]).toBeUndefined();
   });
 });

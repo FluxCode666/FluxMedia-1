@@ -572,13 +572,7 @@ async function createAdobeVideoStageClient(
       error: `Adobe 直连不支持的视频模型: ${model}`,
     };
   }
-  const size = fireflyVideoSize(conf.outputResolution, conf.aspectRatio);
-  if (!size) {
-    return {
-      ok: false,
-      error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
-    };
-  }
+  const size = fireflyVideoSize(conf);
   const transports = await buildAdobeTransports();
   return {
     ok: true,
@@ -631,7 +625,8 @@ export async function submitAdobeDirectVideoRequest(
         for (const image of params.inputImages.slice(0, maxInputs)) {
           const preparedImage = await prepareAdobeVideoSourceImage(
             image.data,
-            prepared.size
+            prepared.size,
+            prepared.conf.sourceImageMode
           );
           sourceImageIds.push(
             await prepared.client.uploadImage(
@@ -814,15 +809,7 @@ export async function runAdobeDirectVideoRequest(
       terminal: true,
     };
   }
-  const size = fireflyVideoSize(conf.outputResolution, conf.aspectRatio);
-  if (!size) {
-    return {
-      error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: true,
-    };
-  }
+  const size = fireflyVideoSize(conf);
 
   const { apiTransport, downloadTransport } = await buildAdobeTransports(
     MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
@@ -845,7 +832,8 @@ export async function runAdobeDirectVideoRequest(
         for (const image of params.inputImages.slice(0, maxInputs)) {
           const preparedImage = await prepareAdobeVideoSourceImage(
             image.data,
-            size
+            size,
+            conf.sourceImageMode
           );
           sourceImageIds.push(
             await client.uploadImage(

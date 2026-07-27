@@ -8,7 +8,7 @@ import {
 } from "./video-catalog";
 
 describe("firefly video catalog", () => {
-  it("注册 7 个视频族", () => {
+  it("注册 8 个视频族", () => {
     expect(FIREFLY_VIDEO_FAMILIES.map((f) => f.family)).toEqual([
       "sora2",
       "sora2-pro",
@@ -17,6 +17,7 @@ describe("firefly video catalog", () => {
       "veo31-fast",
       "kling-o3",
       "kling3",
+      "seedance2",
     ]);
   });
 
@@ -80,6 +81,30 @@ describe("firefly video catalog", () => {
     ).toBe("1080p");
   });
 
+  it("Seedance 2.0 只开放已抓包验证的精确组合", () => {
+    const conf = resolveFireflyVideoModel("firefly-seedance2-15s-9x16-720p");
+    expect(conf).toMatchObject({
+      family: "seedance2",
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0",
+      engine: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      outputResolution: "720p",
+      size: { width: 480, height: 854 },
+      generateAudio: false,
+      sourceImageMode: "original",
+    });
+    expect(resolveFireflyVideoModel("seedance2-15s-9x16-720p")).toEqual(conf);
+    expect(
+      resolveFireflyVideoModel("firefly-seedance2-10s-9x16-720p")
+    ).toBeNull();
+    expect(
+      resolveFireflyVideoModel("firefly-seedance2-15s-16x9-720p")
+    ).toBeNull();
+  });
+
   it("非法/未知 model id 返回 null", () => {
     expect(resolveFireflyVideoModel("firefly-sora2-3s-16x9")).toBeNull();
     expect(resolveFireflyVideoModel("firefly-gpt-image-2-2k-1x1")).toBeNull();
@@ -98,18 +123,27 @@ describe("firefly video catalog", () => {
       height: 1920,
     });
     expect(fireflyVideoSize("720p", "1:1")).toBeNull();
+    const seedance = resolveFireflyVideoModel(
+      "firefly-seedance2-15s-9x16-720p"
+    );
+    expect(seedance && fireflyVideoSize(seedance)).toEqual({
+      width: 480,
+      height: 854,
+    });
   });
 
   it("按模型限制输入图数量", () => {
     const sora = resolveFireflyVideoModel("firefly-sora2-8s-16x9");
     const veo = resolveFireflyVideoModel("firefly-veo31-6s-16x9-1080p");
-    const veoRef = resolveFireflyVideoModel(
-      "firefly-veo31-ref-6s-16x9-1080p"
-    );
+    const veoRef = resolveFireflyVideoModel("firefly-veo31-ref-6s-16x9-1080p");
     const kling = resolveFireflyVideoModel("firefly-kling3-10s-16x9");
+    const seedance = resolveFireflyVideoModel(
+      "firefly-seedance2-15s-9x16-720p"
+    );
     expect(sora && fireflyVideoMaxInputImages(sora)).toBe(1);
     expect(veo && fireflyVideoMaxInputImages(veo)).toBe(2);
     expect(veoRef && fireflyVideoMaxInputImages(veoRef)).toBe(3);
     expect(kling && fireflyVideoMaxInputImages(kling)).toBe(2);
+    expect(seedance && fireflyVideoMaxInputImages(seedance)).toBe(1);
   });
 });

@@ -8,6 +8,7 @@
  */
 
 export type FireflyVideoResolution = "720p" | "1080p";
+export type FireflyVideoSourceImageMode = "original" | "target-cover";
 
 const RATIO_SUFFIX_MAP: Record<string, string> = {
   "16:9": "16x9",
@@ -44,8 +45,12 @@ export type FireflyVideoModelConf = {
   duration: number;
   aspectRatio: string;
   outputResolution: FireflyVideoResolution;
+  /** 该模型真实提交体使用的像素尺寸。 */
+  size: { width: number; height: number };
   /** 是否生成音频（kling3 默认开）。 */
   generateAudio: boolean;
+  /** 上传参考图前保留原图，或按目标尺寸 cover 裁剪。 */
+  sourceImageMode: FireflyVideoSourceImageMode;
   /** veo31-ref 参考模式：reference_mode="image"。 */
   referenceMode?: "image";
   description: string;
@@ -67,9 +72,17 @@ type VideoFamilySpec = {
   durations: number[];
   ratios: string[];
   resolutions: FireflyVideoResolution[];
+  /** 少数网页模型的标签分辨率不等于提交像素尺寸。 */
+  sizeOverrides?: Partial<
+    Record<
+      FireflyVideoResolution,
+      Partial<Record<string, { width: number; height: number }>>
+    >
+  >;
   /** 分辨率是否拼进 model id（veo31 系列拼，sora/kling 固定不拼）。 */
   resolutionInId: boolean;
   generateAudio?: boolean;
+  sourceImageMode?: FireflyVideoSourceImageMode;
   referenceMode?: "image";
   label: string;
 };
@@ -168,15 +181,35 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     generateAudio: true,
     label: "Kling 3.0",
   },
+  {
+    family: "seedance2",
+    prefix: "firefly-seedance2",
+    upstreamModel: "",
+    upstreamModelId: "seedance",
+    upstreamModelVersion: "seedance_2.0",
+    engine: "seedance2",
+    durations: [15],
+    ratios: ["9:16"],
+    resolutions: ["720p"],
+    sizeOverrides: {
+      "720p": {
+        "9:16": { width: 480, height: 854 },
+      },
+    },
+    resolutionInId: true,
+    sourceImageMode: "original",
+    label: "Seedance 2.0",
+  },
 ];
 
-// Veo/Kling 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀的历史接口语义。
+// Veo/Kling/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
 const BARE_VIDEO_FAMILY_NAMES = new Set([
   "veo31",
   "veo31-ref",
   "veo31-fast",
   "kling-o3",
   "kling3",
+  "seedance2",
 ]);
 
 function registerVideoFamily(spec: VideoFamilySpec): void {
@@ -185,6 +218,10 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
       const suffix = RATIO_SUFFIX_MAP[ratio];
       if (!suffix) continue;
       for (const resolution of spec.resolutions) {
+        const size =
+          spec.sizeOverrides?.[resolution]?.[ratio] ??
+          VIDEO_SIZE_MAP[resolution]?.[ratio];
+        if (!size) continue;
         const id = spec.resolutionInId
           ? `${spec.prefix}-${duration}s-${suffix}-${resolution}`
           : `${spec.prefix}-${duration}s-${suffix}`;
@@ -197,7 +234,9 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           duration,
           aspectRatio: ratio,
           outputResolution: resolution,
+          size: { ...size },
           generateAudio: spec.generateAudio ?? false,
+          sourceImageMode: spec.sourceImageMode ?? "target-cover",
           ...(spec.referenceMode ? { referenceMode: spec.referenceMode } : {}),
           description: `${spec.label} (${duration}s ${ratio} ${resolution})`,
         };
@@ -210,7 +249,7 @@ for (const spec of VIDEO_FAMILY_SPECS) {
   registerVideoFamily(spec);
 }
 
-/** 将裸 Veo/Kling 视频模型规范化为目录使用的 Firefly 完整 ID。 */
+/** 将裸 Veo/Kling/Seedance 视频模型规范化为目录使用的 Firefly 完整 ID。 */
 function normalizeFireflyVideoModelId(modelId: string): string {
   if (modelId.startsWith("firefly-")) return modelId;
 
@@ -230,7 +269,7 @@ export const FIREFLY_VIDEO_FAMILIES = VIDEO_FAMILY_SPECS.map((spec) => ({
   resolutionInId: spec.resolutionInId,
 }));
 
-/** 解析 Firefly 或裸 Veo/Kling video model id → 配置；解析不到返回 null。 */
+/** 解析 Firefly 或兼容裸视频 model id → 配置；解析不到返回 null。 */
 export function resolveFireflyVideoModel(
   modelId?: string | null
 ): FireflyVideoModelConf | null {
@@ -243,7 +282,7 @@ export function resolveFireflyVideoModel(
   return FIREFLY_VIDEO_MODEL_CATALOG[id] ?? null;
 }
 
-/** 是否为目录支持的 Firefly 或裸 Veo/Kling 视频 model id。 */
+/** 是否为目录支持的 Firefly 或兼容裸视频 model id。 */
 export function isFireflyVideoModelId(modelId?: string | null): boolean {
   return resolveFireflyVideoModel(modelId) !== null;
 }
@@ -266,10 +305,34 @@ export function fireflyVideoMaxInputImages(
   return 1;
 }
 
-/** 按分辨率 + 宽高比取像素宽高。 */
+/** 按已解析模型配置取真实提交像素宽高。 */
+export function fireflyVideoSize(config: FireflyVideoModelConf): {
+  width: number;
+  height: number;
+};
+
+/** 按通用分辨率 + 宽高比取像素宽高，供旧调用方兼容使用。 */
 export function fireflyVideoSize(
   resolution: FireflyVideoResolution,
   aspectRatio: string
+): { width: number; height: number } | null;
+
+/**
+ * 解析 Adobe 视频提交尺寸。
+ *
+ * @param configOrResolution 已解析模型配置，或通用分辨率标签。
+ * @param aspectRatio 仅通用分辨率调用形态需要的宽高比。
+ * @returns 独立尺寸对象；通用映射不存在时返回 null。
+ * @sideEffects 无。
+ * @failure 不抛错，未知通用组合返回 null。
+ */
+export function fireflyVideoSize(
+  configOrResolution: FireflyVideoModelConf | FireflyVideoResolution,
+  aspectRatio?: string
 ): { width: number; height: number } | null {
-  return VIDEO_SIZE_MAP[resolution]?.[aspectRatio] ?? null;
+  if (typeof configOrResolution === "object") {
+    return { ...configOrResolution.size };
+  }
+  const size = VIDEO_SIZE_MAP[configOrResolution]?.[aspectRatio ?? ""];
+  return size ? { ...size } : null;
 }

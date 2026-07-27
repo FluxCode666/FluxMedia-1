@@ -26,6 +26,7 @@ import {
   type FireflyImagePayload,
   type FireflyVideoPayload,
 } from "./payloads";
+import { buildArpSessionId, buildSubmitNonce } from "./signing";
 import {
   FetchFireflyTransport,
   type FireflyTransport,
@@ -303,6 +304,27 @@ export class AdobeFireflyClient {
     };
   }
 
+  /**
+   * 构造 Adobe Express 视频提交请求头。
+   *
+   * @param token 当前成员的短期 IMS Token。
+   * @param prompt 本次提交提示词，最多前 256 字符参与 nonce。
+   * @returns 浏览器基础头、Bearer、API Key、ARP 会话及可生成时的 nonce。
+   * @sideEffects 每次调用都会生成新的随机 ARP 会话标识。
+   * @failure Token 无账号 claim 时省略 nonce，由上游返回明确鉴权错误。
+   */
+  private videoSubmitHeaders(
+    token: string,
+    prompt: string
+  ): Record<string, string> {
+    const nonce = buildSubmitNonce(token, prompt);
+    return {
+      ...this.submitHeaders(token),
+      "x-arp-session-id": buildArpSessionId(),
+      ...(nonce ? { "x-nonce": nonce } : {}),
+    };
+  }
+
   private pollHeaders(token: string): Record<string, string> {
     return {
       Authorization: `Bearer ${token}`,
@@ -508,7 +530,7 @@ export class AdobeFireflyClient {
       submitResp = await this.transport.request({
         method: "POST",
         url: VIDEO_SUBMIT_URL,
-        headers: this.submitHeaders(input.token),
+        headers: this.videoSubmitHeaders(input.token, input.prompt),
         body: JSON.stringify(payload),
         signal: input.signal,
         timeoutMs: 60_000,
@@ -636,17 +658,8 @@ export class AdobeFireflyClient {
     const statusValue =
       String(latest.status || "").toUpperCase() || statusHeader;
     const outputs = (latest.outputs as Array<Record<string, unknown>>) || [];
-    if (outputs.length > 0) {
-      const video = outputs[0]?.video as Record<string, unknown> | undefined;
-      const videoUrl = video?.presignedUrl;
-      if (!videoUrl || typeof videoUrl !== "string") {
-        throw new AdobeAcceptedVideoError(
-          "video job finished without video url",
-          { errorType: "status" }
-        );
-      }
-      return { status: "completed", videoUrl, raw: latest };
-    }
+    const video = outputs[0]?.video as Record<string, unknown> | undefined;
+    const videoUrl = video?.presignedUrl;
     if (
       statusValue === "FAILED" ||
       statusValue === "CANCELLED" ||
@@ -658,9 +671,16 @@ export class AdobeFireflyClient {
       );
     }
     if (statusValue === "COMPLETED" || statusValue === "SUCCEEDED") {
-      throw new AdobeAcceptedVideoError("video job completed without output", {
-        errorType: "status",
-      });
+      if (!videoUrl || typeof videoUrl !== "string") {
+        throw new AdobeAcceptedVideoError(
+          "video job completed without output",
+          { errorType: "status" }
+        );
+      }
+      return { status: "completed", videoUrl, raw: latest };
+    }
+    if (!statusValue && typeof videoUrl === "string") {
+      return { status: "completed", videoUrl, raw: latest };
     }
     return { status: "pending", raw: latest };
   }
