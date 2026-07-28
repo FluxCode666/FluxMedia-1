@@ -1,7 +1,7 @@
 /**
  * 首页模型目录消费边界测试。
  *
- * 使用方是 Vitest；锁定首页视觉预览最多六项，而快速集成继续收到完整公开图像目录。
+ * 使用方是 Vitest；锁定首页按优先级混排且最多六项，快速集成继续收到完整图像目录。
  */
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -20,13 +20,29 @@ describe("getHomepageModelCatalogConsumers", () => {
       image: Array.from({ length: 8 }, (_, index) => ({
         id: `image-model-${index + 1}`,
       })),
+      homepage: [
+        { id: "image-five", category: "image" as const, priority: 5 },
+        { id: "video-two", category: "video" as const, priority: 2 },
+        { id: "image-two", category: "image" as const, priority: 2 },
+        { id: "video-one", category: "video" as const, priority: 1 },
+        { id: "image-six", category: "image" as const, priority: 6 },
+        { id: "video-seven", category: "video" as const, priority: 7 },
+        { id: "overflow", category: "video" as const, priority: 8 },
+      ],
     };
 
     const consumers = getHomepageModelCatalogConsumers(catalog);
 
     expect(consumers.preview).toEqual({
       status: "ready",
-      image: catalog.image.slice(0, 6),
+      models: [
+        { id: "video-one", category: "video", priority: 1 },
+        { id: "video-two", category: "video", priority: 2 },
+        { id: "image-two", category: "image", priority: 2 },
+        { id: "image-five", category: "image", priority: 5 },
+        { id: "image-six", category: "image", priority: 6 },
+        { id: "video-seven", category: "video", priority: 7 },
+      ],
     });
     expect(consumers.integration).toBe(catalog);
     expect(consumers.integration.status === "ready").toBe(true);

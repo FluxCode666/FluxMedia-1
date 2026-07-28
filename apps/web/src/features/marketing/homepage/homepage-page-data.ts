@@ -23,14 +23,19 @@ import type {
 
 import { ensureUolInitialized } from "@/server/uol-init";
 
-/** 首页可公开的单个模型字段。 */
-export type HomepageModelItem = { id: string };
+/** 首页视觉模型格子所需的最小公开字段。 */
+export type HomepageModelItem = {
+  id: string;
+  category: "image" | "video";
+  priority: number;
+};
 
 /** 模型目录成功空值与依赖失败保持不同状态。 */
 export type HomepageModelCatalogState =
   | {
       status: "ready";
-      image: HomepageModelItem[];
+      image: Array<{ id: string }>;
+      homepage: HomepageModelItem[];
     }
   | { status: "unavailable" };
 
@@ -97,18 +102,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 把模型广场公开 DTO 再次收窄为首页所需的完整图像 ID 列表。 */
+/** 把公开 DTO 收窄为快速集成图像目录和可参与首页排序的图像/视频列表。 */
 function parseCatalog(value: unknown): HomepageModelCatalogState | null {
   if (!isRecord(value) || !Array.isArray(value.items)) return null;
-  const image: HomepageModelItem[] = [];
+  const image: Array<{ id: string }> = [];
+  const homepage: HomepageModelItem[] = [];
   for (const candidate of value.items) {
     const parsed = modelMarketplacePublicItemSchema.safeParse(candidate);
     if (!parsed.success) return null;
     if (parsed.data.category === "image") {
       image.push({ id: parsed.data.defaultModelId });
     }
+    if (parsed.data.homepageVisible) {
+      homepage.push({
+        id: parsed.data.defaultModelId,
+        category: parsed.data.category,
+        priority: parsed.data.homepagePriority,
+      });
+    }
   }
-  return { status: "ready", image };
+  return { status: "ready", image, homepage };
 }
 
 /** 判断统计计数是否为有限非负整数。 */

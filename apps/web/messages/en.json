@@ -18,17 +18,22 @@
     "models": {
       "previewLabel": "Marketplace selection",
       "eyebrow": "MODEL CATALOG",
-      "title": "Public image models available now.",
-      "description": "This preview shares the model marketplace's public display configuration and features a selection of image models. Models callable by an API Key are always determined by its GET /v1/models response.",
+      "title": "Public generation models available now.",
+      "description": "This preview shares the model marketplace's public display configuration and ranks selected image and video models by their admin priority. Models callable by an API Key are always determined by its GET /v1/models response.",
       "countLabel": "models",
       "unavailable": "The public model catalog is currently unavailable. Please try again later.",
       "supportedLabel": "Connected",
       "viewAll": "View all models",
+      "label": "Featured models",
+      "empty": "No model is currently enabled for homepage display.",
       "categories": {
         "image": {
           "label": "Image",
-          "description": "For text-to-image, image editing, and supported image workflows.",
-          "empty": "No public image model is currently available to display."
+          "description": "For text-to-image, image editing, and supported image workflows."
+        },
+        "video": {
+          "label": "Video",
+          "description": "For text-to-video, reference-frame generation, and supported video workflows."
         }
       }
     },

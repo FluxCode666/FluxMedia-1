@@ -149,10 +149,17 @@ export async function HomepageContent({
             unavailable: t("models.unavailable"),
             supportedLabel: t("models.supportedLabel"),
             viewAll: t("models.viewAll"),
-            image: {
-              label: t("models.categories.image.label"),
-              description: t("models.categories.image.description"),
-              empty: t("models.categories.image.empty"),
+            label: t("models.label"),
+            empty: t("models.empty"),
+            categories: {
+              image: {
+                label: t("models.categories.image.label"),
+                description: t("models.categories.image.description"),
+              },
+              video: {
+                label: t("models.categories.video.label"),
+                description: t("models.categories.video.description"),
+              },
             },
           }}
         />

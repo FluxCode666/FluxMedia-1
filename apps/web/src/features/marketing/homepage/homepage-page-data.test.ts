@@ -111,6 +111,8 @@ const PUBLIC_IMAGE_MODEL = {
   description: "Image generation",
   coverUrl: "/model-marketplace/default-image.webp",
   minimumCredits: 1.27,
+  homepageVisible: true,
+  homepagePriority: 5,
   priceUnit: "per_image" as const,
   pricing: {
     base1024Credits: 1.27,
@@ -129,6 +131,8 @@ const PUBLIC_VIDEO_MODEL = {
   description: "Video generation",
   coverUrl: "/model-marketplace/default-video.webp",
   minimumCredits: 3,
+  homepageVisible: true,
+  homepagePriority: 2,
   priceUnit: "per_second" as const,
   creditsPerSecond: 3,
   supportedDurations: [4, 6, 8],
@@ -226,6 +230,18 @@ describe("loadHomepagePageData", () => {
     expect(result.catalog).toEqual({
       status: "ready",
       image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+      homepage: [
+        {
+          id: PUBLIC_IMAGE_MODEL.defaultModelId,
+          category: "image",
+          priority: 5,
+        },
+        {
+          id: PUBLIC_VIDEO_MODEL.defaultModelId,
+          category: "video",
+          priority: 2,
+        },
+      ],
     });
     expect(result.reliability).toEqual({
       visibility: "enabled",
@@ -352,8 +368,34 @@ describe("loadHomepagePageData", () => {
     expect(empty.catalog).toEqual({
       status: "ready",
       image: [],
+      homepage: [],
     });
     expect(failed.catalog).toEqual({ status: "unavailable" });
+  });
+
+  it("首页开关只筛选视觉候选，不移除快速集成使用的完整图像目录", async () => {
+    const result = await loadHomepagePageData(
+      createLoaders({
+        loadCatalog: vi.fn().mockResolvedValue({
+          items: [
+            { ...PUBLIC_IMAGE_MODEL, homepageVisible: false },
+            PUBLIC_VIDEO_MODEL,
+          ],
+        }),
+      })
+    );
+
+    expect(result.catalog).toEqual({
+      status: "ready",
+      image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+      homepage: [
+        {
+          id: PUBLIC_VIDEO_MODEL.defaultModelId,
+          category: "video",
+          priority: PUBLIC_VIDEO_MODEL.homepagePriority,
+        },
+      ],
+    });
   });
 
   it("把零样本收窄为不足，关闭展示时保留真实统计但不伪造百分比", async () => {
@@ -509,6 +551,13 @@ function createRenderablePageData(
     catalog: {
       status: "ready",
       image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+      homepage: [
+        {
+          id: PUBLIC_IMAGE_MODEL.defaultModelId,
+          category: "image",
+          priority: 5,
+        },
+      ],
     },
     reliability: {
       visibility: "enabled",
@@ -521,7 +570,7 @@ function createRenderablePageData(
 }
 
 describe("HomepageContent 服务端完成态", () => {
-  it("首页预览模型广场图像目录且不再隐藏 Firefly", async () => {
+  it("首页按优先级混排图像与视频并在六个格子后截断", async () => {
     const element = await HomepageContent({
       locale: "zh",
       data: createRenderablePageData({
@@ -536,17 +585,28 @@ describe("HomepageContent 服务端完成态", () => {
             { id: "nano-banana" },
             { id: "preview-overflow-canary" },
           ],
+          homepage: [
+            { id: " image-4-ultra ", category: "image", priority: 5 },
+            { id: "veo31-4s-16x9-1080p", category: "video", priority: 1 },
+            { id: "gpt-image-2", category: "image", priority: 2 },
+            { id: "imagen-4", category: "image", priority: 3 },
+            { id: "gpt-image-1.5", category: "image", priority: 4 },
+            { id: "nano-banana-pro", category: "image", priority: 5 },
+            { id: "preview-overflow-canary", category: "video", priority: 9 },
+          ],
         },
       }),
     });
     const html = renderToStaticMarkup(element);
 
-    expect(html).toContain('data-model-category="image"');
+    expect(html).toContain('data-model-category="mixed"');
     expect(html).toContain('id="models"');
     expect(html).not.toMatch(/role="(?:tab|tablist|tabpanel)"/);
     expect(html).toContain("image-4-ultra");
     expect(html).toContain("gpt-image-2");
     expect(html).toContain("imagen-4");
+    expect(html).toContain("veo31-4s-16x9-1080p");
+    expect(html).toContain("视频");
     expect(html).not.toContain("preview-overflow-canary");
     expect(html).toContain('href="/models"');
     expect(html).toContain("查看全部模型");
@@ -565,13 +625,14 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).not.toContain("把模型、作品和下一步放在一起");
   });
 
-  it("英文空目录完成态只保留图像空状态、双语 alt、注册 CTA 和诚实状态", async () => {
+  it("英文空目录完成态保留混合模型空状态、双语 alt、注册 CTA 和诚实状态", async () => {
     const element = await HomepageContent({
       locale: "en",
       data: createRenderablePageData({
         catalog: {
           status: "ready",
           image: [],
+          homepage: [],
         },
         reliability: {
           visibility: "enabled",
@@ -582,7 +643,9 @@ describe("HomepageContent 服务端完成态", () => {
     });
     const html = renderToStaticMarkup(element);
 
-    expect(html).toContain("No public image model is currently available");
+    expect(html).toContain(
+      "No model is currently enabled for homepage display"
+    );
     expect(html).toContain("Reliability statistics are currently unavailable");
     expect(html).toContain(
       "East Asian ink artwork of pale bamboo shadows and open space"
@@ -598,8 +661,9 @@ describe("HomepageContent 服务端完成态", () => {
       catalog: {
         status: "ready" as const,
         image: [],
+        homepage: [],
       },
-      unavailableMessage: "当前没有公开可展示的图像模型",
+      unavailableMessage: "当前没有允许在官网首页展示的模型",
     },
     {
       name: "运行时目录不可用",
