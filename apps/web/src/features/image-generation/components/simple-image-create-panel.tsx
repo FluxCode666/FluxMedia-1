@@ -61,6 +61,8 @@ type SimpleImageCreatePanelProps = {
   hasAvailableModel: boolean;
   mask: File | null;
   maskAvailable: boolean;
+  maxEditImages: number;
+  maxUploadBytes: number;
   mode: ImageCreateMode;
   model: string;
   onBackgroundChange: (value: string) => void;
@@ -70,6 +72,7 @@ type SimpleImageCreatePanelProps = {
   onQualityChange: (value: string) => void;
   onRecentReferenceSelect: (image: RecentImage) => Promise<boolean>;
   onRemoveReference: () => void;
+  onRemoveSourceImage: (index: number) => void;
   onSizeChange: (value: string) => void;
   onSourceImagesChange: (files: FileList | null) => void;
   onSubmit: () => Promise<void>;
@@ -102,20 +105,26 @@ function getSubmitLabel(mode: ImageCreateMode): string {
 }
 
 /** 为浏览器本地参考图建立可撤销的预览 URL，文件变化和卸载时立即释放。 */
-function useSourcePreview(file: File | undefined): string | null {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+function useSourcePreviews(files: readonly File[]): readonly string[] {
+  const [previewUrls, setPreviewUrls] = useState<readonly string[]>([]);
 
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl(null);
-      return;
-    }
-    const nextUrl = URL.createObjectURL(file);
-    setPreviewUrl(nextUrl);
-    return () => URL.revokeObjectURL(nextUrl);
-  }, [file]);
+    const nextUrls = files.map((file) => URL.createObjectURL(file));
+    setPreviewUrls(nextUrls);
+    return () => {
+      for (const url of nextUrls) URL.revokeObjectURL(url);
+    };
+  }, [files]);
 
-  return previewUrl;
+  return previewUrls;
+}
+
+/** 将上传字节数格式化为紧凑的 KB 或 MB 文案。 */
+function formatUploadBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 }
 
 /**
@@ -131,7 +140,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const maskInputRef = useRef<HTMLInputElement | null>(null);
   const dragEnterDepthRef = useRef(0);
-  const sourcePreviewUrl = useSourcePreview(props.sourceImages[0]);
+  const sourcePreviewUrls = useSourcePreviews(props.sourceImages);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
   const [isDraggingReference, setIsDraggingReference] = useState(false);
   const selections = useMemo(
@@ -155,8 +164,16 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     Boolean(props.referenceLoadingId) ||
     !props.prompt.trim() ||
     !props.hasAvailableModel;
-  const referenceUploadDisabled =
+  const referenceInteractionLocked =
     props.busy || Boolean(props.referenceLoadingId);
+  const referenceLimitReached =
+    props.sourceImages.length >= props.maxEditImages;
+  const referenceUploadDisabled =
+    referenceInteractionLocked || referenceLimitReached;
+  const selectedUploadBytes = props.sourceImages.reduce(
+    (total, file) => total + file.size,
+    0
+  );
   const recentImages = useMemo(
     () =>
       props.recent
@@ -191,7 +208,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     if (!Array.from(event.dataTransfer.types).includes("Files")) return;
     event.preventDefault();
     dragEnterDepthRef.current += 1;
-    if (!referenceUploadDisabled) setIsDraggingReference(true);
+    if (!referenceInteractionLocked) setIsDraggingReference(true);
   }
 
   /** 允许浏览器把文件投放到卡片；禁用状态仍阻止浏览器直接打开图片。 */
@@ -231,7 +248,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     <div className="space-y-8">
       <form ref={formRef} className="space-y-5" onSubmit={handleSubmit}>
         <section
-          aria-busy={referenceUploadDisabled}
+          aria-busy={referenceInteractionLocked}
           aria-label="参考图拖拽上传区域"
           className={cn(
             "relative overflow-hidden rounded-2xl border border-border bg-background shadow-sm transition-[border-color,box-shadow]",
@@ -252,12 +269,16 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 <Upload className="size-5" />
               </span>
               <span className="text-sm font-semibold text-foreground">
-                {props.sourceImages.length > 0
-                  ? "松开即可更换参考图"
-                  : "松开即可添加参考图"}
+                {referenceLimitReached
+                  ? `已达到 ${props.maxEditImages} 张参考图上限`
+                  : props.sourceImages.length > 0
+                    ? "松开即可继续添加参考图"
+                    : "松开即可添加参考图"}
               </span>
               <span className="mt-1 text-xs text-muted-foreground">
-                支持 PNG、JPEG 和 WebP，可一次拖入多张
+                {referenceLimitReached
+                  ? "请先移除一张参考图再继续添加"
+                  : "支持 PNG、JPEG 和 WebP，可一次拖入多张"}
               </span>
             </div>
           ) : null}
@@ -303,114 +324,141 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     添加参考图
                   </Button>
                   <span className="text-xs text-muted-foreground">
-                    可选。点击选择或拖拽到输入卡片，添加后自动切换为图生图。
+                    可选。点击选择或拖拽到输入卡片，最多添加{" "}
+                    {props.maxEditImages} 张。
                   </span>
                 </>
               ) : (
-                <div className="flex w-full flex-wrap items-center gap-2">
-                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/20 p-1.5 pr-2.5">
-                    <span className="relative size-10 shrink-0 overflow-hidden rounded-md border bg-muted">
-                      {sourcePreviewUrl ? (
-                        <Image
-                          src={sourcePreviewUrl}
-                          alt="主参考图"
-                          fill
-                          sizes="40px"
-                          className="object-cover"
-                          unoptimized
-                        />
-                      ) : null}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-foreground">
-                        主参考图
-                      </span>
-                      <span className="block max-w-48 truncate text-[11px] text-muted-foreground">
-                        {props.sourceImages.length > 1
-                          ? `已选择 ${props.sourceImages.length} 张图片`
-                          : props.sourceImages[0]?.name}
-                      </span>
-                    </span>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => sourceInputRef.current?.click()}
-                    disabled={referenceUploadDisabled}
-                  >
-                    <Upload className="mr-1.5 size-3.5" />
-                    更换
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setMaskEditorOpen(false);
-                      props.onRemoveReference();
-                    }}
-                    disabled={props.busy}
-                  >
-                    <X className="mr-1.5 size-3.5" />
-                    移除
-                  </Button>
-                  <span
-                    className="hidden h-5 w-px bg-border"
-                    aria-hidden="true"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="hidden rounded-full"
-                    onClick={() => setMaskEditorOpen((current) => !current)}
-                    disabled={props.busy || !props.maskAvailable}
-                    title={
-                      props.maskAvailable
-                        ? "在主参考图上涂抹需要编辑的区域"
-                        : "当前套餐没有支持蒙版编辑的模型"
-                    }
-                  >
-                    <Brush className="mr-1.5 size-3.5" />
-                    {maskEditorOpen ? "收起蒙版" : "绘制蒙版"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="hidden rounded-full"
-                    onClick={() => maskInputRef.current?.click()}
-                    disabled={props.busy || !props.maskAvailable}
-                    title={
-                      props.maskAvailable
-                        ? "上传与主参考图尺寸一致的 PNG 蒙版"
-                        : "当前套餐没有支持蒙版编辑的模型"
-                    }
-                  >
-                    <Upload className="mr-1.5 size-3.5" />
-                    {props.mask ? "更换蒙版" : "上传蒙版"}
-                  </Button>
-                  {props.mask ? (
-                    <div className="ml-auto flex items-center gap-1.5 rounded-lg border border-border bg-muted/25 p-1 pl-2">
-                      <span
-                        className="max-w-40 truncate text-[11px] font-medium text-foreground"
-                        title="PNG 透明区域将作为模型编辑区域"
-                      >
-                        {props.mask.name}
-                      </span>
-                      <Button
+                <div className="w-full space-y-2.5">
+                  <div className="flex flex-wrap gap-2">
+                    {props.sourceImages.map((file, index) => {
+                      const previewUrl = sourcePreviewUrls[index];
+                      return (
+                        <div
+                          className="group relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted shadow-sm"
+                          key={`${file.name}-${file.size}-${file.type}-${file.lastModified}`}
+                          title={file.name}
+                        >
+                          {previewUrl ? (
+                            <Image
+                              alt={
+                                index === 0 ? "主参考图" : `参考图 ${index + 1}`
+                              }
+                              className="object-cover"
+                              fill
+                              sizes="64px"
+                              src={previewUrl}
+                              unoptimized
+                            />
+                          ) : null}
+                          <span className="absolute inset-x-0 bottom-0 truncate bg-background/88 px-1.5 py-0.5 text-center text-[10px] font-medium text-foreground backdrop-blur-sm">
+                            {index === 0 ? "主图" : index + 1}
+                          </span>
+                          <Button
+                            aria-label={`移除参考图 ${index + 1}：${file.name}`}
+                            className="absolute top-1 right-1 size-5 rounded-full border bg-background/92 p-0 opacity-100 shadow-sm sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                            disabled={referenceInteractionLocked}
+                            onClick={() => props.onRemoveSourceImage(index)}
+                            size="icon-xs"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <X className="size-3" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                    {!referenceLimitReached ? (
+                      <button
+                        aria-label={`继续添加参考图，最多 ${props.maxEditImages} 张`}
+                        className="flex size-16 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-muted/15 text-[10px] text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={referenceInteractionLocked}
+                        onClick={() => sourceInputRef.current?.click()}
                         type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={() => void props.onMaskChange(null)}
-                        disabled={props.busy}
-                        aria-label="移除蒙版"
                       >
-                        <X className="size-3.5" />
-                      </Button>
-                    </div>
-                  ) : null}
+                        <ImagePlus className="size-4" />
+                        继续添加
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span>
+                      已添加 {props.sourceImages.length}/{props.maxEditImages}{" "}
+                      张 · {formatUploadBytes(selectedUploadBytes)} /{" "}
+                      {formatUploadBytes(props.maxUploadBytes)}
+                      {props.sourceImages.length > 1
+                        ? " · 第一张为主参考图"
+                        : ""}
+                    </span>
+                    <Button
+                      disabled={referenceInteractionLocked}
+                      onClick={() => {
+                        setMaskEditorOpen(false);
+                        props.onRemoveReference();
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      清空全部
+                    </Button>
+                  </div>
+
+                  <div className="hidden flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => setMaskEditorOpen((current) => !current)}
+                      disabled={props.busy || !props.maskAvailable}
+                      title={
+                        props.maskAvailable
+                          ? "在主参考图上涂抹需要编辑的区域"
+                          : "当前套餐没有支持蒙版编辑的模型"
+                      }
+                    >
+                      <Brush className="mr-1.5 size-3.5" />
+                      {maskEditorOpen ? "收起蒙版" : "绘制蒙版"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full"
+                      onClick={() => maskInputRef.current?.click()}
+                      disabled={props.busy || !props.maskAvailable}
+                      title={
+                        props.maskAvailable
+                          ? "上传与主参考图尺寸一致的 PNG 蒙版"
+                          : "当前套餐没有支持蒙版编辑的模型"
+                      }
+                    >
+                      <Upload className="mr-1.5 size-3.5" />
+                      {props.mask ? "更换蒙版" : "上传蒙版"}
+                    </Button>
+                    {props.mask ? (
+                      <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted/25 p-1 pl-2">
+                        <span
+                          className="max-w-40 truncate text-[11px] font-medium text-foreground"
+                          title="PNG 透明区域将作为模型编辑区域"
+                        >
+                          {props.mask.name}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => void props.onMaskChange(null)}
+                          disabled={props.busy}
+                          aria-label="移除蒙版"
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               )}
               <input
@@ -437,10 +485,10 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 }}
               />
             </div>
-            {maskEditorOpen && sourcePreviewUrl ? (
+            {maskEditorOpen && sourcePreviewUrls[0] ? (
               <ImageMaskEditor
                 open={maskEditorOpen}
-                sourcePreviewUrl={sourcePreviewUrl}
+                sourcePreviewUrl={sourcePreviewUrls[0]}
                 disabled={props.busy}
                 onClose={() => setMaskEditorOpen(false)}
                 onSave={props.onMaskChange}
@@ -657,11 +705,19 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
               <button
                 key={item.id}
                 type="button"
-                className="group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => void selectRecentReference(item)}
-                disabled={props.busy || props.referenceLoadingId !== null}
+                disabled={
+                  props.busy ||
+                  props.referenceLoadingId !== null ||
+                  referenceLimitReached
+                }
                 aria-label={`将最近图片添加为参考图：${item.prompt}`}
-                title="添加为参考图"
+                title={
+                  referenceLimitReached
+                    ? `最多添加 ${props.maxEditImages} 张参考图`
+                    : "添加为参考图"
+                }
               >
                 <Image
                   src={getRecentImageDisplayUrl(item.imageUrl)}

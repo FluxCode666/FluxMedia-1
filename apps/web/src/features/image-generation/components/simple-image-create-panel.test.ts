@@ -8,7 +8,7 @@
 
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 
@@ -75,6 +75,8 @@ function mountPanel(input: {
         hasAvailableModel: true,
         mask: null,
         maskAvailable: false,
+        maxEditImages: 16,
+        maxUploadBytes: 20 * 1024 * 1024,
         mode: "generate",
         model: "gpt-image-2",
         onBackgroundChange: vi.fn(),
@@ -84,6 +86,7 @@ function mountPanel(input: {
         onQualityChange: vi.fn(),
         onRecentReferenceSelect: vi.fn().mockResolvedValue(true),
         onRemoveReference: vi.fn(),
+        onRemoveSourceImage: vi.fn(),
         onSizeChange: vi.fn(),
         onSourceImagesChange: input.onSourceImagesChange,
         onSubmit: vi.fn().mockResolvedValue(undefined),
@@ -103,6 +106,10 @@ function mountPanel(input: {
   if (!dropZone) throw new Error("参考图拖拽区域未渲染");
   return dropZone;
 }
+
+beforeEach(() => {
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+});
 
 afterEach(() => {
   if (root) act(() => root?.unmount());
