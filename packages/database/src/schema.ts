@@ -1447,7 +1447,7 @@ export const videoGeneration = pgTable(
     // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
     memberLeaseId: text("member_lease_id"),
     memberLeaseOwnerToken: text("member_lease_owner_token"),
-    // 完整 Firefly 视频 model id（firefly-<family>-<dur>s-<ratio>[-<res>]）。
+    // 平台规范裸视频 model id（<family>-<dur>s-<ratio>[-<res>]）。
     model: text("model").notNull(),
     // 请求头 Profile 与 IMS Token Profile 相互独立；视频 Bearer Token 固定复用 Express。
     adobeRequestProfile: text("adobe_request_profile")

@@ -1,7 +1,7 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068-0072 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0073 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
  * 作用域。
@@ -72,6 +72,12 @@ const KLING3_CANONICAL_VIDEO_MODEL_IDS = [
   ),
 ];
 
+/** 0073 完成后统一成员应保存的平台规范裸视频能力键。 */
+const PLATFORM_DIRECT_VIDEO_MODEL_IDS = [
+  ...LEGACY_DIRECT_VIDEO_MODEL_IDS,
+  ...KLING3_CANONICAL_VIDEO_MODEL_IDS,
+].map((modelId) => modelId.slice("firefly-".length));
+
 let pool: Pool | null = null;
 
 const migrationPaths = [
@@ -85,6 +91,7 @@ const migrationPaths = [
   "0070_video_express_auth_profile.sql",
   "0071_video_matching_auth_profile.sql",
   "0072_kling3_video_protocol.sql",
+  "0073_remove_firefly_model_prefix.sql",
 ].map((filename) =>
   fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
@@ -94,9 +101,11 @@ const compatibilityUpgradePaths = migrationPaths.slice(4);
 const videoAuthRepairMigrationPath = migrationPaths.at(7);
 const matchingVideoAuthMigrationPath = migrationPaths.at(8);
 const kling3VideoProtocolMigrationPath = migrationPaths.at(9);
+const removeFireflyModelPrefixMigrationPath = migrationPaths.at(10);
 const migrationsBeforeVideoAuthRepair = migrationPaths.slice(0, 7);
 const migrationsBeforeMatchingVideoAuth = migrationPaths.slice(0, 8);
 const migrationsBeforeKling3VideoProtocol = migrationPaths.slice(0, 9);
+const migrationsBeforeRemoveFireflyModelPrefix = migrationPaths.slice(0, 10);
 
 /** 验证随机 schema 名并返回安全的双引号标识符。 */
 function quoteSchemaName(schemaName: string): string {
@@ -279,9 +288,14 @@ async function createLegacySchema(client: PoolClient): Promise<string> {
       model text not null default 'firefly-sora2-4s-16x9',
       family text not null default 'sora2',
       status text not null default 'pending',
+      updated_at timestamp not null default now(),
       adobe_id text,
       constraint video_generation_adobe_id_image_backend_adobe_id_fk
         foreign key (adobe_id) references image_backend_adobe(id)
+    );
+    create table generation (
+      id text primary key,
+      model text not null
     )
   `);
   return schemaName;
@@ -415,6 +429,7 @@ async function createLegacyUnifiedAdobeSchema(
       model text not null default 'firefly-sora2-4s-16x9',
       family text not null default 'sora2',
       status text not null default 'pending',
+      updated_at timestamp not null default now(),
       backend_member_id text references image_backend_member(id)
         on delete set null,
       stage text not null default 'created',
@@ -425,6 +440,10 @@ async function createLegacyUnifiedAdobeSchema(
       to video_generation_adobe_token_id_adobe_token_id_fk;
     create index video_generation_adobe_token_idx
       on video_generation(adobe_token_id);
+    create table generation (
+      id text primary key,
+      model text not null
+    );
   `);
   return schemaName;
 }
@@ -525,7 +544,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060-0063、0066、0068-0072 统一媒体号池迁移", () => {
+describe("0060-0063、0066、0068-0073 统一媒体号池迁移", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -931,7 +950,7 @@ describe("0060-0063、0066、0068-0072 统一媒体号池迁移", () => {
             type: "adobe",
             supported_model_ids: expect.arrayContaining([
               "gpt-image-2",
-              "firefly-sora2-4s-9x16",
+              "sora2-4s-9x16",
             ]),
           }),
           expect.objectContaining({
@@ -948,7 +967,7 @@ describe("0060-0063、0066、0068-0072 统一媒体号池迁移", () => {
             type: "adobe",
             supported_model_ids: expect.arrayContaining([
               "gpt-image-2",
-              "firefly-sora2-4s-9x16",
+              "sora2-4s-9x16",
             ]),
           }),
         ])
@@ -959,8 +978,7 @@ describe("0060-0063、0066、0068-0072 统一媒体号池迁移", () => {
       expect(new Set(migratedAdobeMember?.supported_model_ids)).toEqual(
         new Set([
           "gpt-image-2",
-          ...LEGACY_DIRECT_VIDEO_MODEL_IDS,
-          ...KLING3_CANONICAL_VIDEO_MODEL_IDS,
+          ...PLATFORM_DIRECT_VIDEO_MODEL_IDS,
         ])
       );
       const apiConfig = await client.query<{
@@ -1785,6 +1803,99 @@ describe("0060-0063、0066、0068-0072 统一媒体号池迁移", () => {
           adobe_request_profile: "firefly",
           adobe_auth_profile: "express",
         },
+      ]);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("0073 将成员能力与历史任务幂等迁移为裸模型 ID", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    if (!removeFireflyModelPrefixMigrationPath) {
+      throw new Error("0073 模型 ID 规范化迁移路径缺失");
+    }
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await executeMigrations(
+        client,
+        schemaName,
+        migrationsBeforeRemoveFireflyModelPrefix
+      );
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await client.query(`
+        insert into image_backend_member (
+          id, type, name, supported_model_ids
+        ) values (
+          'prefixed-model-member',
+          'api',
+          'Prefixed model member',
+          '["firefly-gpt-image-2","gpt-image-2","firefly-sora2-4s-16x9","sora2-4s-16x9","vendor-image"]'::json
+        );
+        insert into generation (id, model) values
+          ('prefixed-image', 'FIREFLY-GPT-IMAGE-2'),
+          ('bare-image', 'gpt-image-2');
+        insert into video_generation (
+          id, user_id, model, family, status,
+          principal_scope, adobe_request_profile, adobe_auth_profile, stage
+        ) values
+          (
+            'prefixed-video', 'user-1',
+            'firefly-seedance2-15s-9x16-480p', 'seedance2', 'pending',
+            'user:user-1', 'firefly', 'firefly', 'created'
+          ),
+          (
+            'bare-video', 'user-1',
+            'seedance2-15s-9x16-480p', 'seedance2', 'pending',
+            'user:user-1', 'firefly', 'firefly', 'created'
+          );
+      `);
+
+      await executeMigrations(client, schemaName, [
+        removeFireflyModelPrefixMigrationPath,
+      ]);
+      await executeMigrations(client, schemaName, [
+        removeFireflyModelPrefixMigrationPath,
+      ]);
+
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'prefixed-model-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual([
+        "gpt-image-2",
+        "sora2-4s-16x9",
+        "vendor-image",
+      ]);
+
+      const images = await client.query<{ id: string; model: string }>(`
+        select id, model
+        from generation
+        where id in ('prefixed-image', 'bare-image')
+        order by id
+      `);
+      expect(images.rows).toEqual([
+        { id: "bare-image", model: "gpt-image-2" },
+        { id: "prefixed-image", model: "GPT-IMAGE-2" },
+      ]);
+
+      const videos = await client.query<{ id: string; model: string }>(`
+        select id, model
+        from video_generation
+        where id in ('prefixed-video', 'bare-video')
+        order by id
+      `);
+      expect(videos.rows).toEqual([
+        { id: "bare-video", model: "seedance2-15s-9x16-480p" },
+        { id: "prefixed-video", model: "seedance2-15s-9x16-480p" },
       ]);
     } finally {
       try {
