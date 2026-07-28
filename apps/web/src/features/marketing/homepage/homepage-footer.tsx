@@ -81,7 +81,7 @@ export function HomepageFooter({
               <Image
                 alt="FluxMedia"
                 height={28}
-                src="/assets/icon.png"
+                src="/assets/icon.svg"
                 width={28}
               />
               <span className="font-serif text-xl font-medium">FluxMedia</span>

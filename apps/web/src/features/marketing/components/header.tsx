@@ -70,7 +70,7 @@ export function Header() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2">
             <Image
-              src="/assets/icon.png"
+              src="/assets/icon.svg"
               alt="FluxMedia"
               width={28}
               height={28}

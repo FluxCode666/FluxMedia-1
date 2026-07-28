@@ -327,7 +327,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             }}
           >
             <Image
-              src="/assets/icon.png"
+              src="/assets/icon.svg"
               alt="FluxMedia"
               width={24}
               height={24}
