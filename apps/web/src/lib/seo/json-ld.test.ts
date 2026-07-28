@@ -4,6 +4,8 @@
  * 使用方：Vitest；验证可见 FAQ 与 FAQPage 共用同一问答、软件结构无报价、
  * 空社媒配置不产生占位，并锁定 script 闭合攻击的安全转义。
  */
+
+import { siteConfig } from "@repo/shared/config";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -91,6 +93,7 @@ describe("首页产品与组织结构化数据", () => {
     const schema = generateOrganizationSchema();
     const serialized = JSON.stringify(schema);
 
+    expect(schema.logo).toBe(`${siteConfig.url}${siteConfig.logo}`);
     expect(schema).not.toHaveProperty("sameAs");
     expect(serialized).not.toMatch(/twitter|github|discord/i);
     expect(serialized).not.toContain('"sameAs":[]');

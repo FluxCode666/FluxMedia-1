@@ -54,7 +54,7 @@ export function generateOrganizationSchema() {
     "@type": "Organization",
     name: siteConfig.name,
     url: getBaseUrl(),
-    logo: `${getBaseUrl()}/logo.png`,
+    logo: `${getBaseUrl()}${siteConfig.logo}`,
     ...(sameAs.length > 0 ? { sameAs } : {}),
     contactPoint: {
       "@type": "ContactPoint",
@@ -116,7 +116,7 @@ export function generateArticleSchema(input: ArticleSchemaInput) {
       name: siteConfig.name,
       logo: {
         "@type": "ImageObject",
-        url: `${getBaseUrl()}/logo.png`,
+        url: `${getBaseUrl()}${siteConfig.logo}`,
       },
     },
     ...(image && {

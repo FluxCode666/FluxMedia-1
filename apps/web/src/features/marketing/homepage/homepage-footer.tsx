@@ -80,7 +80,6 @@ export function HomepageFooter({
             <Link className="inline-flex items-center gap-2" href="/">
               <Image
                 alt="FluxMedia"
-                className="brightness-0 invert"
                 height={28}
                 src="/assets/icon.png"
                 width={28}

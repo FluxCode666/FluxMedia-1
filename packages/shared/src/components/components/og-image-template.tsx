@@ -59,35 +59,19 @@ export function createOgImageResponse(): ImageResponse {
           marginBottom: 40,
         }}
       >
-        <div
+        {/* biome-ignore lint/performance/noImgElement: ImageResponse 不支持 next/image，需直接读取公开品牌资源。 */}
+        <img
+          alt={siteConfig.name}
+          height="96"
+          src={`${siteConfig.url}${siteConfig.icon}`}
           style={{
-            width: 80,
-            height: 80,
-            background: "#ffffff",
-            borderRadius: 20,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            width: 96,
+            height: 96,
             marginRight: 24,
-            boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+            objectFit: "contain",
           }}
-        >
-          <svg
-            aria-hidden="true"
-            width="48"
-            height="48"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#1a1a1a"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
-          </svg>
-        </div>
+          width="96"
+        />
         <span
           style={{
             fontSize: 64,
