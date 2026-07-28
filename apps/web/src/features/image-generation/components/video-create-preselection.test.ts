@@ -40,6 +40,17 @@ describe("resolveVideoInitialSelection", () => {
     });
   });
 
+  it("对 Kling 3.0 预选逐秒时长、竖屏和 1080p", () => {
+    expect(
+      resolveVideoInitialSelection("firefly-kling3-7s-9x16-1080p")
+    ).toEqual({
+      familyId: "kling3",
+      duration: 7,
+      ratio: "9:16",
+      resolution: "1080p",
+    });
+  });
+
   it("对 Ray 3.14 预选 ID 中的时长、比例和 4k 分辨率", () => {
     expect(resolveVideoInitialSelection("firefly-ray314-10s-21x9-4k")).toEqual({
       familyId: "ray314",

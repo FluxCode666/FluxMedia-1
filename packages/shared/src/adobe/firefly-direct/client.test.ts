@@ -552,6 +552,79 @@ describe("AdobeFireflyClient.generateVideo", () => {
     expect(api.calls[1]?.headers["x-nonce"]).toBeUndefined();
   });
 
+  it("Kling 3.0 的上传、提交和轮询均使用 Firefly 网页 Profile", async () => {
+    const api = new MockTransport((req, index) => {
+      if (index < 2) {
+        expect(req.url).toContain("/v2/storage/image");
+        return jsonResponse(200, {
+          images: [{ id: index === 0 ? "first-frame" : "last-frame" }],
+        });
+      }
+      if (index === 2) {
+        expect(req.url).toContain("/v2/3p-videos/generate-async");
+        expect(JSON.parse(String(req.body))).toMatchObject({
+          modelId: "kling",
+          modelVersion: "kling_v3",
+          duration: 3,
+          size: { width: 1920, height: 1080 },
+          generateAudio: true,
+          generationMetadata: { module: "image2video" },
+          referenceBlobs: [
+            { id: "first-frame", usage: "frame", order: 1 },
+            { id: "last-frame", usage: "frame", order: 2 },
+          ],
+        });
+        return jsonResponse(
+          200,
+          {},
+          {
+            "x-override-status-link":
+              "https://firefly-epo1234-prod.adobe.io/v2/status/video-kling3-profile",
+          }
+        );
+      }
+      return jsonResponse(200, { status: "RUNNING" });
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    const firstFrameId = await client.uploadImage(
+      FAKE_TOKEN,
+      Buffer.from("first-frame")
+    );
+    const lastFrameId = await client.uploadImage(
+      FAKE_TOKEN,
+      Buffer.from("last-frame")
+    );
+    const submitted = await client.submitVideo({
+      ...videoInput,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_v3",
+      engine: "kling3",
+      duration: 3,
+      outputResolution: "1080p",
+      size: { width: 1920, height: 1080 },
+      generateAudio: true,
+      sourceImageIds: [firstFrameId, lastFrameId],
+    });
+    await client.pollVideo({
+      token: FAKE_TOKEN,
+      pollUrl: submitted.pollUrl,
+    });
+
+    for (const call of api.calls) {
+      expect(call.headers.origin).toBe("https://firefly.adobe.com");
+      expect(call.headers.referer).toBe("https://firefly.adobe.com/");
+      expect(call.headers["x-api-key"]).toBe("clio-playground-web");
+      expect(call.headers.Authorization ?? call.headers.authorization).toBe(
+        `Bearer ${FAKE_TOKEN}`
+      );
+    }
+  });
+
   it("Kling 3.0 Omni 的上传、提交和轮询均使用 Firefly 网页 Profile", async () => {
     const api = new MockTransport((req, index) => {
       if (index === 0) {
