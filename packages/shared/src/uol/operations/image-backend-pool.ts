@@ -54,6 +54,12 @@ const redactedAdobeConfigSchema = z.discriminatedUnion("mode", [
       lastRefreshAt: z.string().nullable(),
       lastRefreshError: z.string().nullable(),
       consecutiveFailures: z.number().int().nonnegative(),
+      fireflyCredentialStatus: z
+        .enum(["active", "error", "exhausted", "invalid"])
+        .nullable(),
+      fireflyLastRefreshAt: z.string().nullable(),
+      fireflyLastRefreshError: z.string().nullable(),
+      fireflyConsecutiveFailures: z.number().int().nonnegative(),
       creditsTotal: z.number().int().nullable(),
       creditsUsed: z.number().int().nullable(),
       creditsAvailable: z.number().int().nullable(),
