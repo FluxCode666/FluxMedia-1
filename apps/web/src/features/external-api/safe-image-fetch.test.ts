@@ -152,8 +152,8 @@ describe("assertPublicCallbackUrl", () => {
   });
 
   it("accepts a public https callback URL", async () => {
-    const url = await assertPublicCallbackUrl("https://example.com/callback");
-    expect(url.href).toBe("https://example.com/callback");
+    const url = await assertPublicCallbackUrl("https://1.1.1.1/callback");
+    expect(url.href).toBe("https://1.1.1.1/callback");
   });
 });
 

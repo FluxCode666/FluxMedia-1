@@ -211,10 +211,10 @@ describe("external async image tasks", () => {
     mockFetchWithDnsPin.mockResolvedValueOnce(new Response("ok"));
     const task = createAsyncImageTask({ userId: "user_1" });
 
-    await postAsyncImageCallback("https://example.com/callback", task);
+    await postAsyncImageCallback("https://1.1.1.1/callback", task);
 
     expect(mockFetchWithDnsPin).toHaveBeenCalledWith(
-      expect.stringContaining("https://example.com/callback"),
+      expect.stringContaining("https://1.1.1.1/callback"),
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -234,7 +234,7 @@ describe("external async image tasks", () => {
     );
     const task = createAsyncImageTask({ userId: "user_1" });
 
-    await postAsyncImageCallback("https://example.com/callback", task);
+    await postAsyncImageCallback("https://1.1.1.1/callback", task);
 
     expect(mockFetchWithDnsPin).toHaveBeenCalledTimes(1);
   });
