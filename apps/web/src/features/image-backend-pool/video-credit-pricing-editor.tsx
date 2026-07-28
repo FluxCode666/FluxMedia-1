@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * 视频模型族每秒积分编辑器。
+ * 后端分组视频模型族每秒积分覆盖编辑器。
  *
- * 使用方：独立全局模型计费页签与后端分组价格覆盖表。组件只转换、展示草稿；调用方负责
- * 校验全局必填或分组可空的业务规则以及持久化。
+ * 使用方：后端分组价格覆盖表。组件保留旧版 family 级稀疏覆盖；全局模型配置改由模型
+ * 配置弹窗按分辨率编辑，运行时仍允许 metadata 直接提供 family@resolution 精确覆盖。
  */
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";

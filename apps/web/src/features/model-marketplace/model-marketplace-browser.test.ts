@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   copyModelMarketplaceId,
   filterModelMarketplaceModels,
+  formatSupportedVideoDurations,
   getAvailableModelMarketplaceProviders,
   getModelMarketplaceUsageHref,
   parseModelMarketplaceCategoryFilter,
@@ -48,6 +49,7 @@ const VIDEO_MODEL: ModelMarketplacePublicItem = {
   homepagePriority: 2,
   priceUnit: "per_second",
   creditsPerSecond: 3,
+  creditsPerSecondByResolution: { "720p": 3, "1080p": 5 },
   supportedDurations: [4, 6, 8],
   supportedAspectRatios: ["16:9", "9:16"],
   supportedResolutions: ["720p", "1080p"],
@@ -130,5 +132,21 @@ describe("getModelMarketplaceUsageHref", () => {
     expect(getModelMarketplaceUsageHref(VIDEO_MODEL)).toBe(
       "/dashboard/api-docs"
     );
+  });
+});
+
+describe("formatSupportedVideoDurations", () => {
+  it("连续逐秒时长压缩为区间", () => {
+    expect(
+      formatSupportedVideoDurations([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    ).toEqual(["4–15s"]);
+  });
+
+  it("非连续时长保持逐项展示", () => {
+    expect(formatSupportedVideoDurations([5, 8, 10])).toEqual([
+      "5s",
+      "8s",
+      "10s",
+    ]);
   });
 });

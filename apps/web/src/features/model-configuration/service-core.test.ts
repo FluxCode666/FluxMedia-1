@@ -5,7 +5,11 @@
  * 不连接 PostgreSQL，也不依赖具体 Drizzle 仓储实现。
  */
 
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  getVideoPricingResolutionKey,
+  getVideoPricingResolutions,
+} from "@repo/shared/adobe";
 import {
   createDefaultGlobalImageCreditOverrides,
   type GlobalImageCreditOverrides,
@@ -77,22 +81,29 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
       pricing: { ...IMAGE_PRICING },
     })
   );
-  const videoEntries = ["sora2", "veo31"].map((configKey) => ({
-    category: "video" as const,
-    configKey,
-    displayName: configKey,
-    iconKey: "generic" as const,
-    revision: 0,
-    minimumCredits: 30,
-    marketplaceApplicable: true as const,
-    visible: true,
-    homepageVisible: false,
-    homepagePriority: 5,
-    description: "",
-    coverUrl: null,
-    usesDefaultCover: true,
-    creditsPerSecond: 30,
-  }));
+  const videoEntries = ["sora2", "veo31"].map((configKey) => {
+    const supportedResolutions = getVideoPricingResolutions(configKey);
+    return {
+      category: "video" as const,
+      configKey,
+      displayName: configKey,
+      iconKey: "generic" as const,
+      revision: 0,
+      minimumCredits: 30,
+      marketplaceApplicable: true as const,
+      visible: true,
+      homepageVisible: false,
+      homepagePriority: 5,
+      description: "",
+      coverUrl: null,
+      usesDefaultCover: true,
+      creditsPerSecond: 30,
+      creditsPerSecondByResolution: Object.fromEntries(
+        supportedResolutions.map((resolution) => [resolution, 30])
+      ),
+      supportedResolutions,
+    };
+  });
   return {
     canEdit: true,
     runtimeCatalogStatus: "ready",
@@ -328,7 +339,7 @@ describe("模型配置保存内核", () => {
     expect(harness.invalidate).toHaveBeenCalledOnce();
   });
 
-  it("只更新目标视频族且不创建 default 条目", async () => {
+  it("按分辨率更新目标视频族，并用最高单价维护旧版兜底键", async () => {
     const harness = createHarness();
 
     await harness.service.updateEntry({
@@ -336,22 +347,28 @@ describe("模型配置保存内核", () => {
       input: {
         clientRequestId: REQUEST_ID,
         category: "video",
-        configKey: "sora2",
+        configKey: "veo31",
         expectedRevision: 0,
         visible: false,
         homepageVisible: false,
         homepagePriority: 5,
         description: "视频模型",
         coverChange: { action: "keep" },
-        creditsPerSecond: 88,
+        creditsPerSecondByResolution: { "1080p": 88, "720p": 36 },
       },
     });
     const state = harness.repository.read();
-    expect(state.videoPricing.sora2).toBe(88);
-    expect(state.videoPricing.veo31).toBe(
-      DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31
+    expect(state.videoPricing.veo31).toBe(88);
+    expect(
+      state.videoPricing[getVideoPricingResolutionKey("veo31", "720p")]
+    ).toBe(36);
+    expect(
+      state.videoPricing[getVideoPricingResolutionKey("veo31", "1080p")]
+    ).toBe(88);
+    expect(state.videoPricing.sora2).toBe(
+      DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.sora2
     );
-    expect(state.config.videoByFamily.sora2).toMatchObject({
+    expect(state.config.videoByFamily.veo31).toMatchObject({
       revision: 1,
       visible: false,
       homepageVisible: false,
@@ -359,6 +376,37 @@ describe("模型配置保存内核", () => {
     });
     expect(state.imagePricing.byModel).not.toHaveProperty("default");
     expect(state.config.imageByModel).not.toHaveProperty("default");
+  });
+
+  it("拒绝缺少或增加目录分辨率档位的视频价格", async () => {
+    const harness = createHarness();
+    const commonInput = {
+      clientRequestId: REQUEST_ID,
+      category: "video" as const,
+      configKey: "veo31",
+      expectedRevision: 0,
+      visible: true,
+      homepageVisible: false,
+      homepagePriority: 5,
+      description: "视频模型",
+      coverChange: { action: "keep" as const },
+    };
+
+    for (const creditsPerSecondByResolution of [
+      { "720p": 36 },
+      { "720p": 36, "1080p": 88, "4k": 120 },
+    ]) {
+      await expect(
+        harness.service.updateEntry({
+          actorUserId: ACTOR_USER_ID,
+          input: { ...commonInput, creditsPerSecondByResolution },
+        })
+      ).rejects.toMatchObject({
+        code: "not_configurable",
+        message: "视频分辨率价格与当前模型目录不一致",
+      });
+    }
+    expect(harness.repository.read().auditEvents).toHaveLength(0);
   });
 
   it("拒绝条目 revision 冲突", async () => {

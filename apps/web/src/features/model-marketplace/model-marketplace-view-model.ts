@@ -71,6 +71,37 @@ export function getAvailableModelMarketplaceProviders(
 }
 
 /**
+ * 把视频支持时长转换为详情页紧凑标签。
+ *
+ * @param durations - 公开 DTO 提供的正整数秒数。
+ * @returns 全部取值逐秒连续时压缩为单个区间，否则返回逐项秒数标签。
+ * @sideEffects 无。
+ * @failure 非法值会被丢弃；空输入返回空数组。
+ */
+export function formatSupportedVideoDurations(
+  durations: readonly number[]
+): string[] {
+  const sorted = [
+    ...new Set(
+      durations.filter(
+        (duration) =>
+          Number.isFinite(duration) &&
+          Number.isInteger(duration) &&
+          duration > 0
+      )
+    ),
+  ].sort((left, right) => left - right);
+  if (sorted.length > 1) {
+    const isContinuous = sorted.every(
+      (duration, index) =>
+        index === 0 || duration === (sorted[index - 1] ?? Number.NaN) + 1
+    );
+    if (isContinuous) return [`${sorted[0]}–${sorted.at(-1)}s`];
+  }
+  return sorted.map((duration) => `${duration}s`);
+}
+
+/**
  * 按类别、厂商和自然语言查询过滤公开模型。
  *
  * @param models - 服务端公开 operation 返回的严格 DTO。

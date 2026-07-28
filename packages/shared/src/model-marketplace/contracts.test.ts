@@ -376,11 +376,15 @@ describe("管理与公开 DTO", () => {
       iconKey: "google",
       description: "适合高质量视频生成。",
       coverUrl: "/images/video-default.webp",
-      minimumCredits: 45,
+      minimumCredits: 3,
       homepageVisible: true,
       homepagePriority: 2,
       priceUnit: "per_second",
-      creditsPerSecond: 45,
+      creditsPerSecond: 3,
+      creditsPerSecondByResolution: {
+        "720p": 3,
+        "1080p": 5,
+      },
       supportedDurations: [4, 6, 8],
       supportedAspectRatios: ["16:9", "9:16"],
       supportedResolutions: ["720p", "1080p"],
@@ -530,6 +534,38 @@ describe("updateModelConfigurationEntryInputSchema", () => {
           ...common,
           category: "image",
           homepagePriority,
+        }).success
+      ).toBe(false);
+    }
+  });
+
+  it("视频保存输入要求至少一个合法分辨率每秒价格", () => {
+    const videoCommon = {
+      clientRequestId: common.clientRequestId,
+      configKey: "veo31",
+      expectedRevision: 2,
+      visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
+      description: "视频模型",
+      coverChange: { action: "keep" as const },
+      category: "video" as const,
+    };
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...videoCommon,
+        creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+      }).success
+    ).toBe(true);
+    for (const creditsPerSecondByResolution of [
+      {},
+      { "720p": 0 },
+      { "720p": Number.POSITIVE_INFINITY },
+    ]) {
+      expect(
+        updateModelConfigurationEntryInputSchema.safeParse({
+          ...videoCommon,
+          creditsPerSecondByResolution,
         }).success
       ).toBe(false);
     }

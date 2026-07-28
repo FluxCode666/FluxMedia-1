@@ -135,6 +135,10 @@ const PUBLIC_VIDEO_MODEL = {
   homepagePriority: 2,
   priceUnit: "per_second" as const,
   creditsPerSecond: 3,
+  creditsPerSecondByResolution: {
+    "720p": 3,
+    "1080p": 5,
+  },
   supportedDurations: [4, 6, 8],
   supportedAspectRatios: ["16:9", "9:16"],
   supportedResolutions: ["720p", "1080p"],

@@ -18,8 +18,10 @@ import {
 } from "@repo/database/schema";
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
-  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  createDefaultVideoModelCreditsPerSecond,
   getVideoCreditCost,
+  getVideoPricingResolutionKey,
+  getVideoPricingResolutions,
   globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
 } from "@repo/shared/adobe";
@@ -178,7 +180,7 @@ async function getRuntimeGlobalVideoPricing(): Promise<Record<string, number>> {
   );
   return parsed.success
     ? parsed.data
-    : { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+    : createDefaultVideoModelCreditsPerSecond();
 }
 
 /** 读取视频价格，保证展示和实扣共用同一解析口径。 */
@@ -190,17 +192,30 @@ export async function getVideoPricingForUser(input: {
   void input.userId;
   void input.apiKeyId;
   const global = await getRuntimeGlobalVideoPricing();
-  return {
-    creditsPerSecond: Object.fromEntries(
-      ADOBE_VIDEO_PRICING_FAMILIES.map((family) => [
+  const entries = ADOBE_VIDEO_PRICING_FAMILIES.flatMap((family) => [
+    [
+      family,
+      resolveEffectiveVideoCreditsPerSecond({
         family,
-        resolveEffectiveVideoCreditsPerSecond({
-          family,
-          global,
-          group: input.group,
-        }),
-      ])
+        global,
+        group: input.group,
+      }),
+    ] as const,
+    ...getVideoPricingResolutions(family).map(
+      (resolution) =>
+        [
+          getVideoPricingResolutionKey(family, resolution),
+          resolveEffectiveVideoCreditsPerSecond({
+            family,
+            resolution,
+            global,
+            group: input.group,
+          }),
+        ] as const
     ),
+  ]);
+  return {
+    creditsPerSecond: Object.fromEntries(entries),
   };
 }
 
@@ -786,6 +801,7 @@ async function submitClaimedCreatedVideo(
     durationSeconds: conf.duration,
     creditsPerSecond: resolveEffectiveVideoCreditsPerSecond({
       family: conf.family,
+      resolution: conf.outputResolution,
       global: globalPricing,
       group: backendSession.group.videoCreditOverrides,
     }),

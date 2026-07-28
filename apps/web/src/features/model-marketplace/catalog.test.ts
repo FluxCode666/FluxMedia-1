@@ -4,7 +4,10 @@
  * 使用方是公开目录生产服务；测试确保只投影真实可达、显式定价且允许展示的模型，并
  * 严格处理视频族聚合、默认调用 ID、内置简介、品牌与第一方封面。
  */
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  getVideoPricingResolutionKey,
+} from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import {
   createDefaultModelMarketplaceConfig,
@@ -160,6 +163,16 @@ describe("buildModelMarketplaceCatalog", () => {
         iconKey: "google",
         priceUnit: "per_second",
         creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
+        creditsPerSecondByResolution: {
+          "720p":
+            DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+              getVideoPricingResolutionKey("veo31", "720p")
+            ],
+          "1080p":
+            DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+              getVideoPricingResolutionKey("veo31", "1080p")
+            ],
+        },
         minimumCredits: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
         homepageVisible: false,
         homepagePriority: 5,
@@ -168,6 +181,44 @@ describe("buildModelMarketplaceCatalog", () => {
         supportedResolutions: ["720p", "1080p"],
       }),
     ]);
+  });
+
+  it("Seedance 2.0 的全部变体只生成一个模型族条目", () => {
+    const durations = Array.from({ length: 12 }, (_, index) => index + 4);
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        videoPricing: {
+          ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+          seedance2: 45,
+          [getVideoPricingResolutionKey("seedance2", "480p")]: 12,
+          [getVideoPricingResolutionKey("seedance2", "720p")]: 24,
+          [getVideoPricingResolutionKey("seedance2", "1080p")]: 45,
+        },
+        runtimeCatalog: {
+          image: [],
+          video: durations.flatMap((duration) => [
+            { id: `seedance2-${duration}s-16x9-480p` },
+            { id: `seedance2-${duration}s-9x16-720p` },
+            { id: `seedance2-${duration}s-16x9-1080p` },
+          ]),
+        },
+      })
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      category: "video",
+      configKey: "seedance2",
+      creditsPerSecond: 12,
+      minimumCredits: 12,
+      supportedDurations: durations,
+      supportedResolutions: ["480p", "720p", "1080p"],
+      creditsPerSecondByResolution: {
+        "480p": 12,
+        "720p": 24,
+        "1080p": 45,
+      },
+    });
   });
 
   it("聚合 Kling 3.0 Omni 的逐秒时长、横竖比例和两档分辨率", () => {

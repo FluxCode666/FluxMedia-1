@@ -33,7 +33,10 @@ import { Link } from "@/i18n/routing";
 
 import { getModelMarketplaceIconPath } from "./assets";
 import { ModelMarketplaceCover } from "./model-card";
-import { getModelMarketplaceUsageHref } from "./model-marketplace-view-model";
+import {
+  formatSupportedVideoDurations,
+  getModelMarketplaceUsageHref,
+} from "./model-marketplace-view-model";
 
 /** 详情弹窗的受控状态与模型。 */
 export type ModelDetailDialogProps = {
@@ -99,7 +102,7 @@ function VideoPricingDetails({
   const groups = [
     {
       label: t("detail.supportedDurations"),
-      values: model.supportedDurations.map((duration) => `${duration}s`),
+      values: formatSupportedVideoDurations(model.supportedDurations),
     },
     {
       label: t("detail.supportedAspectRatios"),
@@ -113,14 +116,28 @@ function VideoPricingDetails({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between rounded-lg border bg-muted/30 p-4">
-        <p className="text-sm text-muted-foreground">{t("detail.videoRate")}</p>
-        <p className="font-mono text-xl font-semibold tabular-nums">
-          {formatCredits(model.creditsPerSecond)}
-          <span className="ml-1.5 font-sans text-xs font-normal text-muted-foreground">
-            {t("price.credits")} · {t("price.perSecond")}
-          </span>
+      <div>
+        <p className="mb-2 text-sm text-muted-foreground">
+          {t("detail.videoRate")}
         </p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {model.supportedResolutions.map((resolution) => (
+            <div className="rounded-lg border bg-muted/30 p-4" key={resolution}>
+              <p className="text-xs font-medium text-muted-foreground">
+                {resolution}
+              </p>
+              <p className="mt-2 font-mono text-xl font-semibold tabular-nums">
+                {formatCredits(
+                  model.creditsPerSecondByResolution[resolution] ??
+                    model.creditsPerSecond
+                )}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t("price.credits")} · {t("price.perSecond")}
+              </p>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {groups.map((group) => (

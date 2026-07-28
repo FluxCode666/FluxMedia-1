@@ -218,9 +218,9 @@ export function getGroupImageCreditOverrides(
 }
 
 /**
- * 从后端组 metadata 读取视频模型族每秒价格覆盖。
+ * 从后端组 metadata 读取视频模型族或分辨率每秒价格覆盖。
  *
- * 分组视频价格与图像价格一样保持稀疏：没有该模型族的条目就由调用方回退全局价格。
+ * 分组视频价格与图像价格一样保持稀疏：分辨率键缺失时依次回退本组模型族与全局价格。
  */
 export function getGroupVideoCreditOverrides(
   metadata: Record<string, unknown> | null | undefined

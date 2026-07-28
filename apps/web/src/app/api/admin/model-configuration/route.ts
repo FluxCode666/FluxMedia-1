@@ -5,6 +5,7 @@
  * 传输输入交给 UOL；不直接访问数据库、存储服务或模型配置领域服务。
  */
 
+import { videoCreditsPerSecondByResolutionSchema } from "@repo/shared/adobe";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isSuperAdminRole } from "@repo/shared/auth/roles";
@@ -49,7 +50,7 @@ const KNOWN_FORM_FIELDS = new Set([
   "description",
   "coverChange",
   "cover",
-  "creditsPerSecond",
+  "creditsPerSecondByResolution",
   ...IMAGE_PRICE_FIELDS,
 ]);
 
@@ -262,6 +263,24 @@ function parseImagePricing(
 }
 
 /**
+ * 解析视频分辨率价格 JSON。
+ *
+ * @param value - multipart 中唯一的 JSON 标量。
+ * @returns 通过共享财务 schema 的分辨率每秒价格。
+ * @throws ModelConfigurationFormError - JSON 语法非法时失败；结构错误由 Zod 报告。
+ * @sideEffects 无。
+ */
+function parseVideoPricing(value: string): Record<string, number> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ModelConfigurationFormError("视频分辨率价格格式无效");
+  }
+  return videoCreditsPerSecondByResolutionSchema.parse(parsed);
+}
+
+/**
  * 校验封面动作并在 replace 时读取实际文件字节。
  *
  * @param action - keep、remove 或 replace。
@@ -343,7 +362,7 @@ async function parseVideoInput(
 ): Promise<UpdateModelConfigurationEntryInput> {
   assertOnlyAllowedScalars(
     data.scalars,
-    new Set([...MARKETPLACE_SCALAR_FIELDS, "creditsPerSecond"])
+    new Set([...MARKETPLACE_SCALAR_FIELDS, "creditsPerSecondByResolution"])
   );
   return updateModelConfigurationEntryInputSchema.parse({
     category: "video",
@@ -364,8 +383,8 @@ async function parseVideoInput(
       requireScalar(data.scalars, "coverChange"),
       data.covers
     ),
-    creditsPerSecond: parseFiniteNumber(
-      requireScalar(data.scalars, "creditsPerSecond")
+    creditsPerSecondByResolution: parseVideoPricing(
+      requireScalar(data.scalars, "creditsPerSecondByResolution")
     ),
   });
 }

@@ -501,9 +501,9 @@ async function migrateLegacyVideoModelPricing(now: Date, updatedBy?: string) {
 /**
  * 把历史稀疏模型价格补齐为全局必填矩阵。
  *
- * 旧版允许图像价格逐档缺失、视频模型族缺失并回退到通用基价。新规则只允许“分组 >
- * 全局”，因此迁移将历史显式值保留，并用原通用档位/开发默认值补齐缺失价格。迁移只在
- * 当前全局配置不满足完整契约时写入，避免每次启动重复改写管理员配置。
+ * 旧版允许图像价格逐档缺失、视频模型族缺失并回退到通用基价。新规则只允许分组与全局
+ * 两层显式定价，因此迁移将历史显式值保留，并用原通用档位或开发默认值补齐缺失价格。
+ * 视频仅含 family 的旧配置由价格 schema 在读取时补齐分辨率，不触发重复持久化。
  */
 async function migrateLegacyGlobalModelPricing(now: Date, updatedBy?: string) {
   const imageKey = "IMAGE_MODEL_CREDIT_PRICES";

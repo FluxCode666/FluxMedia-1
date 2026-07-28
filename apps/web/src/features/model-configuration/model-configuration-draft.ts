@@ -5,9 +5,9 @@
  * 的幂等 UUID，并生成 Task 5 Route 接受的严格 FormData，不发请求、不访问存储。
  */
 import {
-  MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   MAX_MODEL_MARKETPLACE_COVER_BYTES,
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
+  MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   type ModelConfigurationEntry,
 } from "@repo/shared/model-marketplace";
 
@@ -47,7 +47,7 @@ export type ModelConfigurationDraft =
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
-      creditsPerSecond: string;
+      creditsPerSecondByResolution: Record<string, string>;
     } & MarketplaceDraftFields);
 
 /** 草稿字段不能安全提交时使用的客户端稳定错误。 */
@@ -138,7 +138,12 @@ export function createModelConfigurationDraft(
     ...common,
     ...marketplace,
     category: "video",
-    creditsPerSecond: formatPricingValue(entry.creditsPerSecond),
+    creditsPerSecondByResolution: Object.fromEntries(
+      entry.supportedResolutions.map((resolution) => [
+        resolution,
+        formatPricingValue(entry.creditsPerSecondByResolution[resolution] ?? 0),
+      ])
+    ),
   };
 }
 
@@ -316,9 +321,17 @@ export function buildModelConfigurationFormData(
 
   appendMarketplaceFields(formData, draft);
   if (draft.category === "video") {
+    const creditsPerSecondByResolution = Object.fromEntries(
+      Object.entries(draft.creditsPerSecondByResolution)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([resolution, value]) => [
+          resolution,
+          parseModelConfigurationPrice(value),
+        ])
+    );
     formData.append(
-      "creditsPerSecond",
-      String(parseModelConfigurationPrice(draft.creditsPerSecond))
+      "creditsPerSecondByResolution",
+      JSON.stringify(creditsPerSecondByResolution)
     );
     return formData;
   }

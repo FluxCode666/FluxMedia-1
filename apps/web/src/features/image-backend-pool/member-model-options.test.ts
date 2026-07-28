@@ -49,6 +49,8 @@ const entries: ModelConfigurationEntry[] = [
     iconKey: "google",
     minimumCredits: 45,
     creditsPerSecond: 45,
+    creditsPerSecondByResolution: { "720p": 45, "1080p": 45 },
+    supportedResolutions: ["720p", "1080p"],
   },
 ];
 
@@ -141,6 +143,8 @@ describe("buildBackendMemberModelOptions", () => {
         iconKey: "generic",
         minimumCredits: 30,
         creditsPerSecond: 30,
+        creditsPerSecondByResolution: { "720p": 30 },
+        supportedResolutions: ["720p"],
       }));
     const options = buildBackendMemberModelOptions({
       ...snapshot,

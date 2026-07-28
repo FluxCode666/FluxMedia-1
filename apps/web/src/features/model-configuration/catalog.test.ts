@@ -7,6 +7,7 @@
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  getVideoPricingResolutionKey,
 } from "@repo/shared/adobe";
 import { ADOBE_IMAGE_MODEL_IDS } from "@repo/shared/adobe/enabled-models";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
@@ -163,6 +164,28 @@ describe("buildModelConfigurationSnapshot", () => {
     });
     expect(entry).not.toHaveProperty("pricing");
     expect(entry).not.toHaveProperty("minimumCredits");
+  });
+
+  it("管理快照按视频分辨率返回价格，并用最低价兼容旧列表字段", () => {
+    const videoPricing = {
+      ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+      [getVideoPricingResolutionKey("veo31", "720p")]: 12,
+      [getVideoPricingResolutionKey("veo31", "1080p")]: 28,
+      veo31: 28,
+    };
+    const snapshot = buildModelConfigurationSnapshot(
+      createInput({ videoPricing })
+    );
+    expect(
+      snapshot.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "veo31"
+      )
+    ).toMatchObject({
+      creditsPerSecond: 12,
+      minimumCredits: 12,
+      creditsPerSecondByResolution: { "720p": 12, "1080p": 28 },
+      supportedResolutions: ["1080p", "720p"],
+    });
   });
 
   it("持久化额外图像保持显式价格且不携带兜底 revision", () => {

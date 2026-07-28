@@ -1381,9 +1381,9 @@ export const SYSTEM_SETTING_DEFINITIONS = [
   },
   {
     key: "VIDEO_MODEL_CREDITS_PER_SECOND",
-    label: "视频模型族每秒积分",
+    label: "视频模型分辨率每秒积分",
     description:
-      "按视频模型族设置必填的每秒积分。分组可为模型族设置覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型配置”页签编辑。",
+      "按视频模型族与输出分辨率设置必填的每秒积分。分组可设置模型族或分辨率覆盖价格；未覆盖时使用本全局模型价格。请在独立的“模型配置”页签编辑。",
     category: "credits",
     valueType: "json",
     defaultValue: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },

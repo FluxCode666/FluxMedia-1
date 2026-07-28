@@ -7,8 +7,8 @@
  * revision、幂等、价格、封面处理和审计仍由 UOL 服务端最终裁决。
  */
 import {
-  MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
+  MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   type ModelConfigurationEntry,
 } from "@repo/shared/model-marketplace";
 import { Badge } from "@repo/ui/components/badge";
@@ -286,7 +286,7 @@ export function ModelConfigurationDialog({
               <h3 className="text-sm font-medium">计费价格</h3>
               <p className="text-xs text-muted-foreground">
                 {entry.category === "video"
-                  ? "视频按实际生成时长乘以每秒积分计费。"
+                  ? "视频按输出分辨率对应的每秒积分乘以实际生成时长计费。"
                   : "图像按最终输出像素命中对应档位计费。"}
               </p>
             </div>
@@ -299,8 +299,7 @@ export function ModelConfigurationDialog({
                 该模型尚未配置价格，当前不会进入模型广场，也不能执行计费。请填写完整四档价格后保存。
               </p>
             ) : null}
-            {fields.showImagePricing &&
-            draft.category === "image" ? (
+            {fields.showImagePricing && draft.category === "image" ? (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {IMAGE_PRICE_FIELDS.map(([field, label]) => (
                   <PricingInput
@@ -323,20 +322,33 @@ export function ModelConfigurationDialog({
               </div>
             ) : null}
             {fields.showVideoPricing && draft.category === "video" ? (
-              <div className="max-w-xs">
-                <PricingInput
-                  id={`${entry.configKey}-credits-per-second`}
-                  label="每秒积分"
-                  value={draft.creditsPerSecond}
-                  disabled={disabled}
-                  onChange={(value) =>
-                    updateDraft((current) =>
-                      current.category === "video"
-                        ? { ...current, creditsPerSecond: value }
-                        : current
-                    )
-                  }
-                />
+              <div className="grid gap-3 sm:grid-cols-3">
+                {entry.category === "video"
+                  ? entry.supportedResolutions.map((resolution) => (
+                      <PricingInput
+                        key={resolution}
+                        id={`${entry.configKey}-${resolution}-credits-per-second`}
+                        label={`${resolution} 每秒积分`}
+                        value={
+                          draft.creditsPerSecondByResolution[resolution] ?? ""
+                        }
+                        disabled={disabled}
+                        onChange={(value) =>
+                          updateDraft((current) =>
+                            current.category === "video"
+                              ? {
+                                  ...current,
+                                  creditsPerSecondByResolution: {
+                                    ...current.creditsPerSecondByResolution,
+                                    [resolution]: value,
+                                  },
+                                }
+                              : current
+                          )
+                        }
+                      />
+                    ))
+                  : null}
               </div>
             ) : null}
           </section>

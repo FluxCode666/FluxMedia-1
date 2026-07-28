@@ -235,7 +235,7 @@ export const settingsGetModelPricing = defineOperation({
   domain: "system-settings",
   title: "读取全局模型计费配置",
   description:
-    "读取图像模型四档固定价格与视频模型族每秒价格，供管理员查看继承价格。",
+    "读取图像模型四档固定价格与视频模型分辨率每秒价格，供管理员查看继承价格。",
   input: z.object({}),
   output: globalModelPricingOutputSchema,
   access: { kind: "admin" },

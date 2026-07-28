@@ -55,6 +55,8 @@ const ENTRIES: ModelConfigurationEntry[] = [
     usesDefaultCover: false,
     minimumCredits: 45,
     creditsPerSecond: 45,
+    creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+    supportedResolutions: ["720p", "1080p"],
   },
   {
     category: "image",

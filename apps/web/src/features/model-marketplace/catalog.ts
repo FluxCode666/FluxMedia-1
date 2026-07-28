@@ -248,6 +248,19 @@ export function buildModelMarketplaceCatalog(
       );
       if (!defaultModelId) continue;
       const persistedEntry = marketplaceConfig.videoByFamily[entry.configKey];
+      const supportedResolutions = sortUniqueVideoResolutions(
+        candidates.map((candidate) => candidate.outputResolution)
+      );
+      const creditsPerSecondByResolution = Object.fromEntries(
+        supportedResolutions.map((resolution) => [
+          resolution,
+          entry.creditsPerSecondByResolution[resolution] ??
+            entry.creditsPerSecond,
+        ])
+      );
+      const minimumCredits = Math.min(
+        ...Object.values(creditsPerSecondByResolution)
+      );
       items.push(
         modelMarketplacePublicItemSchema.parse({
           category: "video",
@@ -261,20 +274,19 @@ export function buildModelMarketplaceCatalog(
             persistedEntry?.description
           ),
           coverUrl: entry.coverUrl,
-          minimumCredits: entry.minimumCredits,
+          minimumCredits,
           homepageVisible: entry.homepageVisible,
           homepagePriority: entry.homepagePriority,
           priceUnit: "per_second",
-          creditsPerSecond: entry.creditsPerSecond,
+          creditsPerSecond: minimumCredits,
+          creditsPerSecondByResolution,
           supportedDurations: sortUniqueDurations(
             candidates.map((candidate) => candidate.duration)
           ),
           supportedAspectRatios: sortUniqueAspectRatios(
             candidates.map((candidate) => candidate.aspectRatio)
           ),
-          supportedResolutions: sortUniqueVideoResolutions(
-            candidates.map((candidate) => candidate.outputResolution)
-          ),
+          supportedResolutions,
         })
       );
     }

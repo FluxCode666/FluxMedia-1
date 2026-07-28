@@ -6,7 +6,10 @@
  */
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
+  getVideoPricingResolutions,
   globalVideoModelCreditsPerSecondSchema,
+  isVideoPricingResolutionKey,
+  resolveVideoCreditsPerSecondByResolution,
 } from "@repo/shared/adobe";
 import { ADOBE_IMAGE_MODEL_IDS } from "@repo/shared/adobe/enabled-models";
 import { globalImageCreditOverridesSchema } from "@repo/shared/image-backend/group-image-pricing";
@@ -238,6 +241,7 @@ function collectVideoConfigKeys(
   const additionalKeys = new Set<string>();
 
   for (const candidate of persistedConfigKeys) {
+    if (isVideoPricingResolutionKey(candidate)) continue;
     const configKey = normalizeVideoConfigKey(candidate);
     if (configKey && !builtInSet.has(configKey)) {
       additionalKeys.add(configKey);
@@ -313,6 +317,24 @@ export function buildModelConfigurationSnapshot(
   for (const configKey of videoConfigKeys) {
     const creditsPerSecond = videoPricing[configKey];
     if (creditsPerSecond === undefined) continue;
+    const supportedResolutions =
+      getVideoPricingResolutions(configKey).length > 0
+        ? getVideoPricingResolutions(configKey)
+        : ["default"];
+    const creditsPerSecondByResolution = Object.fromEntries(
+      supportedResolutions.map((resolution) => [
+        resolution,
+        resolveVideoCreditsPerSecondByResolution(
+          configKey,
+          resolution,
+          videoPricing,
+          creditsPerSecond
+        ),
+      ])
+    );
+    const minimumCredits = Math.min(
+      ...Object.values(creditsPerSecondByResolution)
+    );
     entries.push({
       ...buildMarketplaceFields(
         "video",
@@ -321,8 +343,10 @@ export function buildModelConfigurationSnapshot(
         input.buildCoverUrl
       ),
       category: "video",
-      creditsPerSecond,
-      minimumCredits: creditsPerSecond,
+      creditsPerSecond: minimumCredits,
+      creditsPerSecondByResolution,
+      supportedResolutions,
+      minimumCredits,
     });
   }
 

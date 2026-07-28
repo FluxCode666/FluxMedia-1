@@ -383,7 +383,10 @@ describe("POST /api/admin/model-configuration", () => {
           homepagePriority: "8",
           description: "视频模型",
           coverChange: "remove",
-          creditsPerSecond: "45",
+          creditsPerSecondByResolution: JSON.stringify({
+            "720p": 30,
+            "1080p": 45,
+          }),
         })
       )
     );
@@ -394,7 +397,7 @@ describe("POST /api/admin/model-configuration", () => {
       visible: false,
       homepageVisible: false,
       homepagePriority: 8,
-      creditsPerSecond: 45,
+      creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
       coverChange: { action: "remove" },
     });
 
@@ -411,6 +414,34 @@ describe("POST /api/admin/model-configuration", () => {
       )
     );
     expect(defaultResponse.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
+  it("拒绝非法或非正数的视频分辨率价格 JSON", async () => {
+    for (const creditsPerSecondByResolution of [
+      "not-json",
+      JSON.stringify({ "720p": 0 }),
+      JSON.stringify({ "720p": "30" }),
+      JSON.stringify({}),
+    ]) {
+      const response = await POST(
+        createMultipartRequest(
+          createFormData({
+            category: "video",
+            configKey: "veo31",
+            expectedRevision: "5",
+            clientRequestId: CLIENT_REQUEST_ID,
+            visible: "true",
+            homepageVisible: "false",
+            homepagePriority: "5",
+            description: "视频模型",
+            coverChange: "keep",
+            creditsPerSecondByResolution,
+          })
+        )
+      );
+      expect(response.status).toBe(400);
+    }
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 

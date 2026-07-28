@@ -12,7 +12,7 @@
 import {
   formatAdobeModelIdForDisplay,
   getVideoCreditCost,
-  resolveVideoCreditsPerSecond,
+  resolveVideoCreditsPerSecondByResolution,
 } from "@repo/shared/adobe";
 import { FIREFLY_VIDEO_FAMILIES } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import { Button } from "@repo/ui/components/button";
@@ -194,11 +194,12 @@ export function VideoCreatePanel({
     }
   };
 
-  // 预估积分：与扣费侧（video-operations）同口径——模型族每秒价格 × 时长。
+  // 预估积分：与扣费侧同口径——模型族分辨率每秒价格 × 时长。
   // 纯函数复用，确保展示价 = 实扣价。必须在任何 early return
   // 之前无条件调用（React hooks 规则），故对 family 用可选链兜底。
-  const creditsPerSecond = resolveVideoCreditsPerSecond(
+  const creditsPerSecond = resolveVideoCreditsPerSecondByResolution(
     family?.family,
+    resolution,
     pricing.creditsPerSecond
   );
   const estimatedCredits = useMemo(() => {
@@ -208,27 +209,33 @@ export function VideoCreatePanel({
     });
   }, [creditsPerSecond, duration]);
 
-  // 各视频模型(族 × 时长)的积分消耗对照表:与上方预估、与扣费侧同口径
-  // （模型族每秒价格 × 时长）,用户选模型前即可比价。
+  // 各视频模型（族 × 分辨率 × 时长）的积分消耗对照表与上方预估、扣费侧同口径，
+  // 用户选模型前即可比价。
   // 必须在 early return 之前无条件调用(hooks 规则)。
   const pricingTable = useMemo(
     () =>
       families.map((item) => {
-        const creditsPerSecond = resolveVideoCreditsPerSecond(
-          item.family,
-          pricing.creditsPerSecond
-        );
         return {
           family: item.family,
           label: item.label,
-          creditsPerSecond,
-          rows: item.durations.map((seconds) => ({
-            seconds,
-            credits: getVideoCreditCost({
-              durationSeconds: seconds,
+          resolutionRows: item.resolutions.map((outputResolution) => {
+            const creditsPerSecond = resolveVideoCreditsPerSecondByResolution(
+              item.family,
+              outputResolution,
+              pricing.creditsPerSecond
+            );
+            return {
+              outputResolution,
               creditsPerSecond,
-            }),
-          })),
+              durations: item.durations.map((seconds) => ({
+                seconds,
+                credits: getVideoCreditCost({
+                  durationSeconds: seconds,
+                  creditsPerSecond,
+                }),
+              })),
+            };
+          }),
         };
       }),
     [pricing]
@@ -555,22 +562,30 @@ export function VideoCreatePanel({
             <tbody>
               {pricingTable.map((item) => (
                 <tr key={item.family} className="border-b border-border/30">
-                  <td className="whitespace-nowrap py-1 pr-4">
-                    {item.label}
-                    {`（${item.creditsPerSecond} 积分/秒）`}
-                  </td>
+                  <td className="whitespace-nowrap py-1 pr-4">{item.label}</td>
                   <td className="py-1">
-                    {item.rows
-                      .map((row) => `${row.seconds}s = ${row.credits}`)
-                      .join("　·　")}
+                    <div className="space-y-1">
+                      {item.resolutionRows.map((row) => (
+                        <p key={row.outputResolution}>
+                          {`${row.outputResolution}（${row.creditsPerSecond} 积分/秒）：`}
+                          {row.durations
+                            .map(
+                              (durationRow) =>
+                                `${durationRow.seconds}s = ${durationRow.credits}`
+                            )
+                            .join("　·　")}
+                        </p>
+                      ))}
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="mt-1">
-            计费口径：模型族每秒积分 × 时长；未配置分组覆盖时继承全局模型价格，
-            与实际扣费一致；比例 / 分辨率不影响积分。
+            计费口径：模型族对应分辨率的每秒积分 ×
+            时长；未配置分组覆盖时继承全局模型价格，
+            与实际扣费一致；比例不影响积分。
           </p>
         </div>
       </details>

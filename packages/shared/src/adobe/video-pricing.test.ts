@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoCreditCost,
+  getVideoPricingResolutionKey,
+  globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
   resolveVideoCreditsPerSecond,
+  resolveVideoCreditsPerSecondByResolution,
 } from "./video-pricing";
 
 describe("resolveVideoCreditsPerSecond", () => {
@@ -15,6 +18,16 @@ describe("resolveVideoCreditsPerSecond", () => {
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["ray314-hdr"]).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.seedance2).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["seedance2-fast"]).toBe(30);
+    expect(
+      DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+        getVideoPricingResolutionKey("seedance2", "480p")
+      ]
+    ).toBe(30);
+    expect(
+      DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+        getVideoPricingResolutionKey("seedance2", "1080p")
+      ]
+    ).toBe(30);
   });
 
   it("读取模型族配置的每秒积分", () => {
@@ -36,6 +49,49 @@ describe("resolveVideoCreditsPerSecond", () => {
   });
 });
 
+describe("resolveVideoCreditsPerSecondByResolution", () => {
+  it("优先读取模型族对应分辨率的每秒价格", () => {
+    const prices = {
+      seedance2: 60,
+      [getVideoPricingResolutionKey("seedance2", "480p")]: 20,
+      [getVideoPricingResolutionKey("seedance2", "720p")]: 35,
+      [getVideoPricingResolutionKey("seedance2", "1080p")]: 60,
+    };
+
+    expect(
+      resolveVideoCreditsPerSecondByResolution("seedance2", "480p", prices)
+    ).toBe(20);
+    expect(
+      resolveVideoCreditsPerSecondByResolution("seedance2", "1080p", prices)
+    ).toBe(60);
+  });
+
+  it("旧模型族价格兼容全部分辨率", () => {
+    expect(
+      resolveVideoCreditsPerSecondByResolution("seedance2", "4k", {
+        seedance2: 42,
+      })
+    ).toBe(42);
+  });
+
+  it("旧全局配置会补齐内置模型的全部分辨率价格", () => {
+    const parsed = globalVideoModelCreditsPerSecondSchema.parse(
+      Object.fromEntries(
+        Object.entries(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND).filter(
+          ([key]) => !key.includes("@")
+        )
+      )
+    );
+
+    expect(parsed[getVideoPricingResolutionKey("seedance2", "480p")]).toBe(
+      parsed.seedance2
+    );
+    expect(parsed[getVideoPricingResolutionKey("seedance2", "1080p")]).toBe(
+      parsed.seedance2
+    );
+  });
+});
+
 describe("resolveEffectiveVideoCreditsPerSecond", () => {
   it("分组覆盖优先于全局模型每秒价格", () => {
     expect(
@@ -52,6 +108,42 @@ describe("resolveEffectiveVideoCreditsPerSecond", () => {
         group: {},
       })
     ).toBe(30);
+  });
+
+  it("按分组分辨率、分组模型族、全局分辨率的顺序解析", () => {
+    const global = {
+      seedance2: 60,
+      [getVideoPricingResolutionKey("seedance2", "480p")]: 20,
+      [getVideoPricingResolutionKey("seedance2", "1080p")]: 60,
+    };
+
+    expect(
+      resolveEffectiveVideoCreditsPerSecond({
+        family: "seedance2",
+        resolution: "480p",
+        global,
+        group: {
+          seedance2: 50,
+          [getVideoPricingResolutionKey("seedance2", "480p")]: 15,
+        },
+      })
+    ).toBe(15);
+    expect(
+      resolveEffectiveVideoCreditsPerSecond({
+        family: "seedance2",
+        resolution: "1080p",
+        global,
+        group: { seedance2: 50 },
+      })
+    ).toBe(50);
+    expect(
+      resolveEffectiveVideoCreditsPerSecond({
+        family: "seedance2",
+        resolution: "1080p",
+        global,
+        group: {},
+      })
+    ).toBe(60);
   });
 });
 

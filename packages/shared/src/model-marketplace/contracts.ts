@@ -6,7 +6,10 @@
  */
 import { z } from "zod";
 
-import { MAX_VIDEO_CREDITS_PER_SECOND } from "../adobe/video-pricing";
+import {
+  MAX_VIDEO_CREDITS_PER_SECOND,
+  videoCreditsPerSecondByResolutionSchema,
+} from "../adobe/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
 import { normalizeSupportedModelId } from "../image-backend/supported-models";
 
@@ -303,6 +306,36 @@ const managementMarketplaceShape = {
   usesDefaultCover: z.boolean(),
 };
 
+/**
+ * 校验声明支持的分辨率与价格矩阵键完全一致。
+ *
+ * @param value - 管理或公开视频 DTO 的最小分辨率字段。
+ * @param context - Zod 精细校验上下文。
+ * @sideEffects 不修改输入；集合不一致时追加字段错误。
+ * @failure 不抛错，由 Zod 汇总错误。
+ */
+function addVideoResolutionPricingIssues(
+  value: {
+    supportedResolutions: string[];
+    creditsPerSecondByResolution: Record<string, number>;
+  },
+  context: z.RefinementCtx
+): void {
+  const supported = [...new Set(value.supportedResolutions)].sort();
+  const priced = Object.keys(value.creditsPerSecondByResolution).sort();
+  if (
+    supported.length === priced.length &&
+    supported.every((resolution, index) => resolution === priced[index])
+  ) {
+    return;
+  }
+  context.addIssue({
+    code: "custom",
+    path: ["creditsPerSecondByResolution"],
+    message: "视频分辨率价格必须完整覆盖支持的分辨率",
+  });
+}
+
 const explicitImageConfigurationEntrySchema = z
   .object({
     ...managementMarketplaceShape,
@@ -329,8 +362,14 @@ const videoConfigurationEntrySchema = z
       .finite()
       .positive()
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
+    creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
+    supportedResolutions: z
+      .array(z.string().trim().min(1).max(32))
+      .min(1)
+      .max(20),
   })
-  .strict();
+  .strict()
+  .superRefine(addVideoResolutionPricingIssues);
 
 /** 管理列表中的单条模型配置 DTO，不包含 bucket 或对象 key。 */
 export const modelConfigurationEntrySchema = z.union([
@@ -383,11 +422,13 @@ const publicVideoItemSchema = z
       .finite()
       .positive()
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
+    creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
     supportedDurations: z.array(z.number().int().positive()).max(100),
     supportedAspectRatios: z.array(z.string().trim().min(1).max(32)).max(100),
     supportedResolutions: z.array(z.string().trim().min(1).max(32)).max(100),
   })
-  .strict();
+  .strict()
+  .superRefine(addVideoResolutionPricingIssues);
 
 /** 公开模型广场的图像或视频判别联合 DTO。 */
 export const modelMarketplacePublicItemSchema = z.discriminatedUnion(
@@ -451,11 +492,7 @@ const updateVideoConfigurationInputSchema = z
   .object({
     ...updateMarketplaceShape,
     category: z.literal("video"),
-    creditsPerSecond: z
-      .number()
-      .finite()
-      .positive()
-      .max(MAX_VIDEO_CREDITS_PER_SECOND),
+    creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
   })
   .strict()
   .superRefine((input, context) => {

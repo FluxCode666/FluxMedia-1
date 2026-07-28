@@ -6,7 +6,10 @@
  * 自身不导入数据库或具体存储 Provider。
  */
 
-import { globalVideoModelCreditsPerSecondSchema } from "@repo/shared/adobe";
+import {
+  getVideoPricingResolutionKey,
+  globalVideoModelCreditsPerSecondSchema,
+} from "@repo/shared/adobe";
 import {
   type GlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,
@@ -364,7 +367,11 @@ function serializeRequestPayload(
   if (input.category === "video") {
     return JSON.stringify({
       ...common,
-      creditsPerSecond: input.creditsPerSecond,
+      creditsPerSecondByResolution: Object.fromEntries(
+        Object.entries(input.creditsPerSecondByResolution).sort(
+          ([left], [right]) => left.localeCompare(right)
+        )
+      ),
     });
   }
   return JSON.stringify({
@@ -559,16 +566,35 @@ export function createModelConfigurationService(
       const catalog = modelConfigurationSnapshotSchema.parse(
         await dependencies.catalogLoader.load()
       );
-      const isConfigurable = catalog.entries.some(
+      const catalogEntry = catalog.entries.find(
         (entry) =>
           entry.category === input.category &&
           entry.configKey === input.configKey
       );
-      if (!isConfigurable) {
+      if (!catalogEntry) {
         throw new ModelConfigurationServiceError(
           "not_configurable",
           "模型不在当前可配置清单中"
         );
+      }
+      if (input.category === "video" && catalogEntry.category === "video") {
+        const expectedResolutions = [
+          ...catalogEntry.supportedResolutions,
+        ].sort();
+        const submittedResolutions = Object.keys(
+          input.creditsPerSecondByResolution
+        ).sort();
+        if (
+          expectedResolutions.length !== submittedResolutions.length ||
+          expectedResolutions.some(
+            (resolution, index) => resolution !== submittedResolutions[index]
+          )
+        ) {
+          throw new ModelConfigurationServiceError(
+            "not_configurable",
+            "视频分辨率价格与当前模型目录不一致"
+          );
+        }
       }
 
       const replacement = await prepareCoverReplacement(input);
@@ -650,10 +676,7 @@ export function createModelConfigurationService(
             }
             const resultingRevision = incrementRevision(currentRevision);
             const oldCover = currentEntry.cover;
-            if (
-              input.coverChange.action === "remove" &&
-              oldCover
-            ) {
+            if (input.coverChange.action === "remove" && oldCover) {
               await dependencies.storage.getObject(oldCover);
             }
             if (replacement) {
@@ -691,15 +714,13 @@ export function createModelConfigurationService(
                 ...imagePricing,
                 byModel: {
                   ...imagePricing.byModel,
-                  [input.configKey]:
-                    modelMarketplaceImagePricingSchema.parse(input.pricing),
+                  [input.configKey]: modelMarketplaceImagePricingSchema.parse(
+                    input.pricing
+                  ),
                 },
               });
               nextConfig.imageByModel[input.configKey] = nextEntry;
-              await transaction.saveImagePricing(
-                nextImagePricing,
-                actorUserId
-              );
+              await transaction.saveImagePricing(nextImagePricing, actorUserId);
             } else {
               if (!videoPricing) {
                 throw new ModelConfigurationServiceError(
@@ -709,14 +730,28 @@ export function createModelConfigurationService(
               }
               const nextVideoPricing =
                 globalVideoModelCreditsPerSecondSchema.parse({
-                  ...videoPricing,
-                  [input.configKey]: input.creditsPerSecond,
+                  ...Object.fromEntries(
+                    Object.entries(videoPricing).filter(
+                      ([key]) => !key.startsWith(`${input.configKey}@`)
+                    )
+                  ),
+                  [input.configKey]: Math.max(
+                    ...Object.values(input.creditsPerSecondByResolution)
+                  ),
+                  ...Object.fromEntries(
+                    Object.entries(input.creditsPerSecondByResolution).map(
+                      ([resolution, price]) => [
+                        getVideoPricingResolutionKey(
+                          input.configKey,
+                          resolution
+                        ),
+                        price,
+                      ]
+                    )
+                  ),
                 });
               nextConfig.videoByFamily[input.configKey] = nextEntry;
-              await transaction.saveVideoPricing(
-                nextVideoPricing,
-                actorUserId
-              );
+              await transaction.saveVideoPricing(nextVideoPricing, actorUserId);
             }
 
             const receipt: ModelMarketplaceWriteReceipt = {
