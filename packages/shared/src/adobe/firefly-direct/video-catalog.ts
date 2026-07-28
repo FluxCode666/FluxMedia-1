@@ -72,6 +72,8 @@ export type FireflyVideoModelConf = {
   generateAudio: boolean;
   /** 是否允许调用方覆盖 generateAudio。 */
   supportsAudio: boolean;
+  /** 已验证并允许提交的输入图数量上限；0 表示当前只开放文生视频。 */
+  maxInputImages: number;
   /** 提交所模拟的 Adobe 网页应用，决定 Origin、Referer 与公开网页 API Key。 */
   webApp: FireflyVideoWebApp;
   /** 上传参考图前保留原图，或按目标尺寸 cover 裁剪。 */
@@ -101,6 +103,7 @@ type VideoFamilySpec = {
   resolutionInId: boolean;
   generateAudio?: boolean;
   supportsAudio?: boolean;
+  maxInputImages?: number;
   webApp?: FireflyVideoWebApp;
   sourceImageMode?: FireflyVideoSourceImageMode;
   referenceMode?: "image";
@@ -219,6 +222,21 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     label: "Kling 3.0 Omni",
   },
   {
+    family: "runway-gen45",
+    prefix: "firefly-runway-gen45",
+    upstreamModel: "",
+    upstreamModelId: "runway",
+    upstreamModelVersion: "gen4.5",
+    engine: "runway-gen45",
+    durations: [5, 8, 10],
+    ratios: ["16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+    maxInputImages: 0,
+    webApp: "firefly",
+    label: "Runway Gen-4.5",
+  },
+  {
     family: "seedance2",
     prefix: "firefly-seedance2",
     upstreamModel: "",
@@ -250,7 +268,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
 ];
 
-// Veo/Kling/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
+// Veo/Kling/Runway/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
 const BARE_VIDEO_FAMILY_NAMES = new Set([
   "veo31",
   "veo31-ref",
@@ -258,11 +276,37 @@ const BARE_VIDEO_FAMILY_NAMES = new Set([
   "kling-o3",
   "kling3",
   "kling3-omni",
+  "runway-gen45",
   "seedance2",
   "seedance2-fast",
 ]);
 
+/**
+ * 解析模型族已验证的输入图数量上限。
+ *
+ * @param spec 模型族静态规格。
+ * @returns 显式上限，或按既有引擎协议推导出的兼容上限。
+ * @sideEffects 无。
+ * @failure 不抛错；未知引擎保持历史单图能力。
+ */
+function resolveVideoFamilyMaxInputImages(spec: VideoFamilySpec): number {
+  if (spec.maxInputImages !== undefined) return spec.maxInputImages;
+  if (spec.engine === "veo31-standard" && spec.referenceMode === "image") {
+    return 3;
+  }
+  if (
+    spec.engine === "veo31-fast" ||
+    spec.engine === "veo31-standard" ||
+    spec.engine === "kling-o3" ||
+    spec.engine === "kling3"
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
 function registerVideoFamily(spec: VideoFamilySpec): void {
+  const maxInputImages = resolveVideoFamilyMaxInputImages(spec);
   for (const duration of spec.durations) {
     for (const ratio of spec.ratios) {
       const suffix = RATIO_SUFFIX_MAP[ratio];
@@ -285,6 +329,7 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           size: { ...size },
           generateAudio: spec.generateAudio ?? false,
           supportsAudio: spec.supportsAudio ?? false,
+          maxInputImages,
           webApp: spec.webApp ?? "express",
           sourceImageMode: spec.sourceImageMode ?? "target-cover",
           ...(spec.referenceMode ? { referenceMode: spec.referenceMode } : {}),
@@ -299,7 +344,7 @@ for (const spec of VIDEO_FAMILY_SPECS) {
   registerVideoFamily(spec);
 }
 
-/** 将裸 Veo/Kling/Seedance 视频模型规范化为目录使用的 Firefly 完整 ID。 */
+/** 将兼容裸视频模型规范化为目录使用的 Firefly 完整 ID。 */
 function normalizeFireflyVideoModelId(modelId: string): string {
   if (modelId.startsWith("firefly-")) return modelId;
 
@@ -319,6 +364,7 @@ export const FIREFLY_VIDEO_FAMILIES = VIDEO_FAMILY_SPECS.map((spec) => ({
   resolutionInId: spec.resolutionInId,
   generateAudio: spec.generateAudio ?? false,
   supportsAudio: spec.supportsAudio ?? false,
+  maxInputImages: resolveVideoFamilyMaxInputImages(spec),
 }));
 
 /** 解析 Firefly 或兼容裸视频 model id → 配置；解析不到返回 null。 */
@@ -343,18 +389,7 @@ export function isFireflyVideoModelId(modelId?: string | null): boolean {
 export function fireflyVideoMaxInputImages(
   config: FireflyVideoModelConf
 ): number {
-  if (config.engine === "veo31-standard" && config.referenceMode === "image") {
-    return 3;
-  }
-  if (
-    config.engine === "veo31-fast" ||
-    config.engine === "veo31-standard" ||
-    config.engine === "kling-o3" ||
-    config.engine === "kling3"
-  ) {
-    return 2;
-  }
-  return 1;
+  return config.maxInputImages;
 }
 
 /** 按已解析模型配置取真实提交像素宽高。 */

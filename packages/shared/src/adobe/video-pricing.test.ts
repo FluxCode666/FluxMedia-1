@@ -10,6 +10,7 @@ import {
 describe("resolveVideoCreditsPerSecond", () => {
   it("新增视频族提供可由系统设置覆盖的默认每秒价格", () => {
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["kling3-omni"]).toBe(30);
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["runway-gen45"]).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.seedance2).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["seedance2-fast"]).toBe(30);
   });

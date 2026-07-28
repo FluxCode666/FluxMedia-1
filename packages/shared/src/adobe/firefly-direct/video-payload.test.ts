@@ -138,6 +138,47 @@ describe("buildFireflyVideoPayload", () => {
     });
   });
 
+  it("Runway Gen-4.5 使用 Firefly 网页端已验证的纯文本字段", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "runway",
+      upstreamModelVersion: "gen4.5",
+      engine: "runway-gen45",
+      duration: 5,
+      aspectRatio: "16:9",
+      size: { width: 1280, height: 720 },
+      negativePrompt: "blurry",
+      generateAudio: true,
+      sourceImageIds: ["ignored-reference-image"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "runway",
+      modelVersion: "gen4.5",
+      size: { width: 1280, height: 720 },
+      seeds: [expect.any(Number)],
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 5,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      output: { storeInputs: true },
+    });
+    for (const absentField of [
+      "generateAudio",
+      "n",
+      "referenceBlobs",
+      "generationSettings",
+      "model",
+      "engine",
+    ]) {
+      expect(payload).not.toHaveProperty(absentField);
+    }
+  });
+
   it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
     const payload = buildFireflyVideoPayload({
       ...base,

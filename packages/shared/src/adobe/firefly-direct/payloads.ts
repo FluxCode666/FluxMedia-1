@@ -353,6 +353,23 @@ export function buildFireflyVideoPayload(params: {
     };
   }
 
+  if (params.engine === "runway-gen45") {
+    return {
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      size,
+      seeds: [seed],
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt ?? "",
+      duration: params.duration,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      output: { storeInputs: true },
+    };
+  }
+
   if (params.engine === "veo31-fast" || params.engine === "veo31-standard") {
     const payload: FireflyVideoPayload = {
       n: 1,

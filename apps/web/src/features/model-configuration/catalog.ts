@@ -73,6 +73,7 @@ const VIDEO_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   "kling-o3": "Kling O3",
   kling3: "Kling 3.0",
   "kling3-omni": "Kling 3.0 Omni",
+  "runway-gen45": "Runway Gen-4.5",
   seedance2: "Seedance 2.0",
   "seedance2-fast": "Seedance 2.0 Fast",
 };

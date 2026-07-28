@@ -9,7 +9,7 @@ import {
 } from "./video-catalog";
 
 describe("firefly video catalog", () => {
-  it("注册 10 个视频族", () => {
+  it("注册 11 个视频族", () => {
     expect(FIREFLY_VIDEO_FAMILIES.map((f) => f.family)).toEqual([
       "sora2",
       "sora2-pro",
@@ -19,9 +19,11 @@ describe("firefly video catalog", () => {
       "kling-o3",
       "kling3",
       "kling3-omni",
+      "runway-gen45",
       "seedance2",
       "seedance2-fast",
     ]);
+    expect(Object.keys(FIREFLY_VIDEO_MODEL_CATALOG)).toHaveLength(473);
   });
 
   it("sora2 不拼分辨率,固定 720p,带 sora 上游", () => {
@@ -97,6 +99,7 @@ describe("firefly video catalog", () => {
       resolutionInId: true,
       generateAudio: false,
       supportsAudio: true,
+      maxInputImages: 1,
     });
     expect(
       Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
@@ -117,6 +120,7 @@ describe("firefly video catalog", () => {
       size: { width: 1080, height: 1920 },
       generateAudio: false,
       supportsAudio: true,
+      maxInputImages: 1,
       webApp: "firefly",
       sourceImageMode: "original",
     });
@@ -134,6 +138,54 @@ describe("firefly video catalog", () => {
     ).toBeNull();
   });
 
+  it("Runway Gen-4.5 仅开放 720p 横屏和 5、8、10 秒文本模型", () => {
+    const family = FIREFLY_VIDEO_FAMILIES.find(
+      (item) => item.family === "runway-gen45"
+    );
+    expect(family).toEqual({
+      family: "runway-gen45",
+      label: "Runway Gen-4.5",
+      durations: [5, 8, 10],
+      ratios: ["16:9"],
+      resolutions: ["720p"],
+      resolutionInId: false,
+      generateAudio: false,
+      supportsAudio: false,
+      maxInputImages: 0,
+    });
+    expect(
+      Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
+        (item) => item.family === "runway-gen45"
+      )
+    ).toHaveLength(3);
+
+    const conf = resolveFireflyVideoModel("firefly-runway-gen45-8s-16x9");
+    expect(conf).toMatchObject({
+      family: "runway-gen45",
+      upstreamModel: "",
+      upstreamModelId: "runway",
+      upstreamModelVersion: "gen4.5",
+      engine: "runway-gen45",
+      duration: 8,
+      aspectRatio: "16:9",
+      outputResolution: "720p",
+      size: { width: 1280, height: 720 },
+      generateAudio: false,
+      supportsAudio: false,
+      maxInputImages: 0,
+      webApp: "firefly",
+    });
+    expect(resolveFireflyVideoModel("runway-gen45-8s-16x9")).toEqual(conf);
+    expect(resolveFireflyVideoModel("firefly-runway-gen45-6s-16x9")).toBeNull();
+    expect(resolveFireflyVideoModel("firefly-runway-gen45-5s-9x16")).toBeNull();
+    expect(
+      resolveFireflyVideoModel("firefly-runway-gen45-5s-16x9-720p")
+    ).toBeNull();
+    expect(
+      resolveFireflyVideoModel("firefly-runway-gen45-5s-16x9-1080p")
+    ).toBeNull();
+  });
+
   it("Seedance 2.0 开放 4 至 15 秒、三档分辨率和六种比例", () => {
     const family = FIREFLY_VIDEO_FAMILIES.find(
       (item) => item.family === "seedance2"
@@ -147,6 +199,7 @@ describe("firefly video catalog", () => {
       resolutionInId: true,
       generateAudio: false,
       supportsAudio: true,
+      maxInputImages: 1,
     });
     expect(
       Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
@@ -167,6 +220,7 @@ describe("firefly video catalog", () => {
       size: { width: 480, height: 854 },
       generateAudio: false,
       supportsAudio: true,
+      maxInputImages: 1,
       sourceImageMode: "original",
     });
     expect(resolveFireflyVideoModel("seedance2-15s-9x16-480p")).toEqual(conf);
@@ -191,6 +245,7 @@ describe("firefly video catalog", () => {
       resolutionInId: true,
       generateAudio: false,
       supportsAudio: true,
+      maxInputImages: 1,
     });
     expect(
       Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
@@ -211,6 +266,7 @@ describe("firefly video catalog", () => {
       size: { width: 640, height: 480 },
       generateAudio: false,
       supportsAudio: true,
+      maxInputImages: 1,
       sourceImageMode: "original",
     });
     expect(resolveFireflyVideoModel("seedance2-fast-4s-4x3-480p")).toEqual(
@@ -296,6 +352,7 @@ describe("firefly video catalog", () => {
     const klingOmni = resolveFireflyVideoModel(
       "firefly-kling3-omni-3s-16x9-1080p"
     );
+    const runway = resolveFireflyVideoModel("firefly-runway-gen45-5s-16x9");
     const seedance = resolveFireflyVideoModel(
       "firefly-seedance2-15s-9x16-480p"
     );
@@ -307,6 +364,7 @@ describe("firefly video catalog", () => {
     expect(veoRef && fireflyVideoMaxInputImages(veoRef)).toBe(3);
     expect(kling && fireflyVideoMaxInputImages(kling)).toBe(2);
     expect(klingOmni && fireflyVideoMaxInputImages(klingOmni)).toBe(1);
+    expect(runway && fireflyVideoMaxInputImages(runway)).toBe(0);
     expect(seedance && fireflyVideoMaxInputImages(seedance)).toBe(1);
     expect(seedanceFast && fireflyVideoMaxInputImages(seedanceFast)).toBe(1);
   });

@@ -195,6 +195,36 @@ describe("buildModelMarketplaceCatalog", () => {
     ]);
   });
 
+  it("聚合 Runway Gen-4.5 的三档时长与固定 720p 横屏能力", () => {
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        runtimeCatalog: {
+          image: [],
+          video: [
+            { id: "firefly-runway-gen45-10s-16x9" },
+            { id: "firefly-runway-gen45-5s-16x9" },
+            { id: "firefly-runway-gen45-8s-16x9" },
+          ],
+        },
+      })
+    );
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        category: "video",
+        configKey: "runway-gen45",
+        displayName: "Runway Gen-4.5",
+        defaultModelId: "firefly-runway-gen45-5s-16x9",
+        iconKey: "generic",
+        description: expect.stringContaining("16:9"),
+        creditsPerSecond: 30,
+        supportedDurations: [5, 8, 10],
+        supportedAspectRatios: ["16:9"],
+        supportedResolutions: ["720p"],
+      }),
+    ]);
+  });
+
   it("运行时视频目录复用后端完整模型 ID 上限", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({

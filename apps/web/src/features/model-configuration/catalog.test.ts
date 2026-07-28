@@ -115,6 +115,13 @@ describe("buildModelConfigurationSnapshot", () => {
       displayName: "Kling 3.0 Omni",
       creditsPerSecond: 30,
     });
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "runway-gen45")
+    ).toMatchObject({
+      category: "video",
+      displayName: "Runway Gen-4.5",
+      creditsPerSecond: 30,
+    });
   });
 
   it("运行时额外图像缺少显式价格时标记为未配置", () => {

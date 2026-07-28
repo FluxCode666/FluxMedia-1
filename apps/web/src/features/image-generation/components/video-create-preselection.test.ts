@@ -29,6 +29,17 @@ describe("resolveVideoInitialSelection", () => {
     });
   });
 
+  it("对 Runway Gen-4.5 预选固定 720p 横屏和 ID 中的时长", () => {
+    expect(
+      resolveVideoInitialSelection("firefly-runway-gen45-8s-16x9")
+    ).toEqual({
+      familyId: "runway-gen45",
+      duration: 8,
+      ratio: "16:9",
+      resolution: "720p",
+    });
+  });
+
   it.each([
     "",
     "firefly-veo31-5s-16x9-1080p",

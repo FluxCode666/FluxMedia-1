@@ -49,6 +49,7 @@ const BUILTIN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "kling-o3": "适合强调动作表现、镜头运动与参考一致性的视频生成。",
   kling3: "适合多场景视频创作与稳定的运动表现。",
   "kling3-omni": "适合逐秒控制时长，并生成横屏或竖屏的高分辨率视频。",
+  "runway-gen45": "适合生成 16:9 横屏电影感视频，并提供多档短时长选择。",
   seedance2: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
   "seedance2-fast": "适合更快生成多画幅视频并保持参考图视觉风格一致。",
 };

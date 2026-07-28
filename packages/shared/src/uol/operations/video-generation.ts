@@ -7,6 +7,7 @@
 import { z } from "zod";
 
 import {
+  fireflyVideoMaxInputImages,
   isFireflyVideoModelId,
   resolveFireflyVideoModel,
 } from "../../adobe/firefly-direct/video-catalog";
@@ -40,6 +41,14 @@ export const videoGenerateInputSchema = z
         code: "custom",
         message: "This video model does not support audio generation",
         path: ["generateAudio"],
+      });
+    }
+    const maxInputImages = model ? fireflyVideoMaxInputImages(model) : 3;
+    if ((input.inputImages?.length ?? 0) > maxInputImages) {
+      context.addIssue({
+        code: "custom",
+        message: `This video model supports at most ${maxInputImages} input images`,
+        path: ["inputImages"],
       });
     }
   });

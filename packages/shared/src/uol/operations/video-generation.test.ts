@@ -83,6 +83,33 @@ describe("video generation operations", () => {
     ).toBe(false);
   });
 
+  it("Runway Gen-4.5 拒绝声音和输入图，但允许显式关闭声音", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    const base = {
+      clientRequestId: "runway-request-1",
+      prompt: "海边日落",
+      model: "firefly-runway-gen45-5s-16x9",
+    };
+
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
+        .success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
+        .success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, inputImages: [image] })
+        .success
+    ).toBe(false);
+  });
+
   it("限制视频输入图最多三张", () => {
     const image = {
       source: "data" as const,
