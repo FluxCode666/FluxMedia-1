@@ -4,6 +4,7 @@
  * 提供本地/S3 存储桶中图像的 HTTP 读取。
  * - avatars 桶：公开访问，无需鉴权。
  * - 模型广场资产桶：仅严格内容寻址 WebP 允许匿名读取，禁止缩略图转换。
+ * - 网站资产桶：仅严格内容寻址 PNG、SVG、ICO Logo 允许匿名读取，禁止缩略图转换。
  * - generations 桶：需要有效的短时签名 URL（sig + exp 查询参数）。
  *   签名验证使用 HMAC-SHA256 + 常量时间比较，防止时序攻击。
  *   v1 API 消费者通过签名 URL 参数获取授权（无 cookie）。
@@ -27,11 +28,16 @@ import {
   assertModelMarketplaceCoverReference,
   parseModelMarketplaceAssetBucketName,
 } from "@/features/model-marketplace/asset-reference";
+import {
+  assertSiteLogoAssetReference,
+  parseSiteAssetsBucketName,
+} from "@/features/site-branding/asset-reference";
 
 type StorageBucketConfig = {
   avatars: string;
   generations: string;
   modelMarketplaceAssets: string;
+  siteAssets: string;
 };
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -54,7 +60,7 @@ const NO_STORE_CACHE_CONTROL = "no-store";
 const DEFAULT_AVATARS_BUCKET = "avatars";
 const DEFAULT_GENERATIONS_BUCKET = "generations";
 
-/** 三项运行时 bucket 缺失、为空或安全域重叠时使用的内部稳定错误。 */
+/** 四项运行时 bucket 缺失、为空或安全域重叠时使用的内部稳定错误。 */
 class StorageBucketConfigurationError extends Error {
   /** 创建不包含原始设置值的配置错误。 */
   constructor() {
@@ -87,15 +93,16 @@ function parseProtectedBucketName(
  * `NEXT_PUBLIC_*` 环境变量，预构建镜像会把默认桶固化进白名单，导致图片已写入
  * 自定义 MinIO 桶、读取时却在触达 MinIO 前返回 `Bucket not allowed`。
  *
- * @returns 头像、生成图片与模型广场资产三个互不相同的非空桶。
- * @throws 设置读取失败、模型资产桶非法或任意两个安全域重叠时显式失败。
+ * @returns 头像、生成图片、模型广场资产与网站资产四个互不相同的非空桶。
+ * @throws 设置读取失败、任一专用资产桶非法或任意两个安全域重叠时显式失败。
  */
 async function getStorageBucketConfig(): Promise<StorageBucketConfig> {
-  const [avatarsRaw, generationsRaw, modelMarketplaceAssetsRaw] =
+  const [avatarsRaw, generationsRaw, modelMarketplaceAssetsRaw, siteAssetsRaw] =
     await Promise.all([
       getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
       getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
       getRuntimeSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
+      getRuntimeSettingString("SITE_ASSETS_BUCKET_NAME"),
     ]);
   const avatars = parseProtectedBucketName(avatarsRaw, DEFAULT_AVATARS_BUCKET);
   const generations = parseProtectedBucketName(
@@ -103,17 +110,22 @@ async function getStorageBucketConfig(): Promise<StorageBucketConfig> {
     DEFAULT_GENERATIONS_BUCKET
   );
   let modelMarketplaceAssets: string;
+  let siteAssets: string;
   try {
     modelMarketplaceAssets = parseModelMarketplaceAssetBucketName(
       modelMarketplaceAssetsRaw
     );
+    siteAssets = parseSiteAssetsBucketName(siteAssetsRaw);
   } catch {
     throw new StorageBucketConfigurationError();
   }
-  if (new Set([avatars, generations, modelMarketplaceAssets]).size !== 3) {
+  if (
+    new Set([avatars, generations, modelMarketplaceAssets, siteAssets]).size !==
+    4
+  ) {
     throw new StorageBucketConfigurationError();
   }
-  return { avatars, generations, modelMarketplaceAssets };
+  return { avatars, generations, modelMarketplaceAssets, siteAssets };
 }
 
 // ============================================
@@ -309,10 +321,15 @@ async function verifyBucketAccess(
   bucket: string,
   fileKey: string,
   avatarsBucket: string,
-  modelMarketplaceAssetsBucket: string
+  modelMarketplaceAssetsBucket: string,
+  siteAssetsBucket: string
 ): Promise<NextResponse | null> {
   // 公开桶无需签名
-  if (bucket === avatarsBucket || bucket === modelMarketplaceAssetsBucket) {
+  if (
+    bucket === avatarsBucket ||
+    bucket === modelMarketplaceAssetsBucket ||
+    bucket === siteAssetsBucket
+  ) {
     return null;
   }
 
@@ -384,12 +401,17 @@ export async function GET(
   }
   const isModelMarketplaceAsset =
     bucket === bucketConfig.modelMarketplaceAssets;
+  const isSiteAsset = bucket === bucketConfig.siteAssets;
   if (
-    isModelMarketplaceAsset &&
+    (isModelMarketplaceAsset || isSiteAsset) &&
     (request.nextUrl.searchParams.has("w") || /^w\d+$/.test(key[0] ?? ""))
   ) {
     return NextResponse.json(
-      { error: "Model marketplace thumbnails are not allowed" },
+      {
+        error: isSiteAsset
+          ? "Site logo thumbnails are not allowed"
+          : "Model marketplace thumbnails are not allowed",
+      },
       { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
     );
   }
@@ -409,7 +431,8 @@ export async function GET(
   if (
     bucket !== bucketConfig.avatars &&
     bucket !== bucketConfig.generations &&
-    !isModelMarketplaceAsset
+    !isModelMarketplaceAsset &&
+    !isSiteAsset
   ) {
     return NextResponse.json({ error: "Bucket not allowed" }, { status: 403 });
   }
@@ -445,13 +468,29 @@ export async function GET(
     }
   }
 
-  // 签名验证：generations 桶需要有效签名(或第一方会话归属),avatars 桶公开访问。
+  if (isSiteAsset) {
+    try {
+      assertSiteLogoAssetReference(
+        { bucket, key: fileKey },
+        bucketConfig.siteAssets
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid site logo asset key" },
+        { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
+      );
+    }
+  }
+
+  // 签名验证：generations 桶需要有效签名（或第一方会话归属），三个专用公共域
+  // 只在其严格 key 校验通过后匿名访问。
   const accessError = await verifyBucketAccess(
     request,
     bucket,
     fileKey,
     bucketConfig.avatars,
-    bucketConfig.modelMarketplaceAssets
+    bucketConfig.modelMarketplaceAssets,
+    bucketConfig.siteAssets
   );
   if (accessError) {
     return accessError;
@@ -459,9 +498,19 @@ export async function GET(
 
   const ext = path.extname(fileKey).toLowerCase();
   const mappedContentType = CONTENT_TYPES[ext];
+  const siteAssetContentType =
+    ext === ".png"
+      ? "image/png"
+      : ext === ".svg"
+        ? "image/svg+xml"
+        : ext === ".ico"
+          ? "image/x-icon"
+          : null;
   const contentType = isModelMarketplaceAsset
     ? "image/webp"
-    : mappedContentType || "application/octet-stream";
+    : isSiteAsset
+      ? (siteAssetContentType ?? "application/octet-stream")
+      : mappedContentType || "application/octet-stream";
   const cacheControl =
     bucket === bucketConfig.generations
       ? GENERATION_CACHE_CONTROL
@@ -578,8 +627,11 @@ export async function GET(
     "Content-Length": String(data.length),
   };
   // 非图片白名单扩展强制以附件下载，避免在同源下被当作 HTML/SVG 渲染（存储型 XSS）。
-  if (!mappedContentType) {
+  if (!mappedContentType && !isSiteAsset) {
     headers["Content-Disposition"] = "attachment";
+  }
+  if (isSiteAsset && siteAssetContentType === "image/svg+xml") {
+    headers["Content-Security-Policy"] = "default-src 'none'; sandbox";
   }
 
   return new NextResponse(new Uint8Array(data), { headers });

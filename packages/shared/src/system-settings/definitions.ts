@@ -29,6 +29,7 @@ export type SettingKey =
   | "NEXT_PUBLIC_APP_NAME"
   | "NEXT_PUBLIC_ASSET_PREFIX"
   | "SITE_LOGO_URL"
+  | "SITE_ASSETS_BUCKET_NAME"
   | "PAGINATION_PAGE_SIZE_OPTIONS"
   | "MARKETING_SLA_STATUS_ENABLED"
   | "DASHBOARD_SUPPORT_CONFIG"
@@ -1094,6 +1095,15 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "storage",
     valueType: "string",
     defaultValue: "model-marketplace",
+  },
+  {
+    key: "SITE_ASSETS_BUCKET_NAME",
+    label: "网站品牌资产 Bucket",
+    description:
+      "网站 Logo 等公开品牌资产的专用 bucket，必须与头像、生成内容和模型广场资产 bucket 隔离。",
+    category: "storage",
+    valueType: "string",
+    defaultValue: "site-assets",
   },
   {
     key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME",

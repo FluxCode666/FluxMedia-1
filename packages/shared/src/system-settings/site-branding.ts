@@ -13,6 +13,17 @@ export const DEFAULT_SITE_LOGO_URL = "/assets/icon.svg";
 /** 前台统一引用的动态 Logo 路由；配置值不能再次指向本路由。 */
 export const SITE_LOGO_ROUTE_PATH = "/api/site-logo";
 
+/** 管理员单次上传 Logo 的原始文件上限；multipart 额外开销由 Route 单独预留。 */
+export const MAX_SITE_LOGO_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+/** 管理员上传声明可使用的 MIME；真实格式仍由服务端检查文件魔数。 */
+export const SITE_LOGO_UPLOAD_MIME_TYPES = [
+  "image/png",
+  "image/svg+xml",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+] as const;
+
 /**
  * 添加统一的 Logo 地址校验错误。
  *
@@ -120,6 +131,40 @@ export const siteBrandingSchema = z
     logoUrl: siteLogoUrlSchema,
   })
   .strict();
+
+/** 管理员 Logo 上传的传输无关输入；文件名和 MIME 只用于前置反馈，不作为格式真相。 */
+export const siteLogoUploadInputSchema = z
+  .object({
+    clientRequestId: z.string().uuid("上传请求标识无效"),
+    fileName: z
+      .string()
+      .trim()
+      .min(1, "Logo 文件名不能为空")
+      .max(255, "Logo 文件名最多 255 个字符"),
+    contentType: z.string().trim().max(100, "Logo MIME 类型过长"),
+    bytes: z
+      .custom<Uint8Array>(
+        (value) => value instanceof Uint8Array,
+        "Logo 文件字节无效"
+      )
+      .refine((value) => value.byteLength > 0, "Logo 文件不能为空")
+      .refine(
+        (value) => value.byteLength <= MAX_SITE_LOGO_UPLOAD_BYTES,
+        "Logo 文件不能超过 5 MB"
+      ),
+  })
+  .strict();
+
+/** 管理员 Logo 上传的严格输入类型。 */
+export type SiteLogoUploadInput = z.infer<typeof siteLogoUploadInputSchema>;
+
+/** 上传成功输出；文件保持原格式，replayed 表示命中已持久化的幂等回执。 */
+export const siteLogoUploadOutputSchema = siteBrandingSchema
+  .extend({ replayed: z.boolean() })
+  .strict();
+
+/** 管理员 Logo 上传的严格输出类型。 */
+export type SiteLogoUploadOutput = z.infer<typeof siteLogoUploadOutputSchema>;
 
 /** 公开站点品牌 DTO 类型。 */
 export type SiteBranding = z.infer<typeof siteBrandingSchema>;

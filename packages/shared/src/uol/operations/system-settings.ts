@@ -35,7 +35,11 @@ import {
   setSiteLogoUrl,
   setSystemSettings,
 } from "../../system-settings/index";
-import { siteBrandingSchema } from "../../system-settings/site-branding";
+import {
+  siteBrandingSchema,
+  siteLogoUploadInputSchema,
+  siteLogoUploadOutputSchema,
+} from "../../system-settings/site-branding";
 import { getPrincipalUserId } from "../principal";
 import { defineOperation } from "../registry";
 
@@ -179,6 +183,34 @@ export const settingsSetSiteLogo = defineOperation({
       throw new Error("网站 Logo 写入缺少可审计的管理员身份");
     }
     return setSiteLogoUrl(input.logoUrl, userId);
+  },
+});
+
+/**
+ * settings.uploadSiteLogo - 上传并启用网站 Logo 文件。
+ *
+ * Shared 只声明严格契约；图片解码、对象存储和持久幂等由 Web late binding 实现。
+ */
+export const settingsUploadSiteLogo = defineOperation({
+  name: "settings.uploadSiteLogo",
+  domain: "system-settings",
+  title: "Upload Site Logo",
+  description:
+    "超级管理员上传 PNG、SVG 或 ICO，并启用通过安全校验的原始站点 Logo。",
+  input: siteLogoUploadInputSchema,
+  output: siteLogoUploadOutputSchema,
+  access: { kind: "roles", roles: ["super_admin"] },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: {
+    kind: "required",
+    keyField: "clientRequestId",
+    scope: "per-user",
+  },
+  sideEffects: ["storage", "cache", "audit"],
+  async execute(_input, _principal, _ctx) {
+    throw new Error("Not yet wired: settings.uploadSiteLogo");
   },
 });
 

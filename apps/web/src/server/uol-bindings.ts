@@ -20,6 +20,7 @@ import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
+import "@/server/site-branding-binding";
 
 import type { FireflyVideoInputImageRole } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import {

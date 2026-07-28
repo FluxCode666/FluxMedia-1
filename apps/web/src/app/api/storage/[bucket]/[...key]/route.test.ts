@@ -2,7 +2,7 @@
  * 存储对象读取路由的 DB-free 单测
  *
  * 覆盖：桶白名单、路径穿越拒绝、正常读取、404/502 错误映射、
- * 签名验证（generations 桶需要 sig+exp，avatars 与严格模型资产桶公开访问）。
+ * 签名验证（generations 桶需要 sig+exp，三个严格公共资产域允许匿名访问）。
  */
 
 import type { NextRequest } from "next/server";
@@ -54,6 +54,9 @@ const MODEL_ASSET_BUCKET = "model-marketplace";
 const MODEL_CONFIG_HASH = "a".repeat(64);
 const MODEL_CONTENT_HASH = "b".repeat(64);
 const MODEL_IMAGE_KEY = `image/${MODEL_CONFIG_HASH}/${MODEL_CONTENT_HASH}.webp`;
+const SITE_ASSET_BUCKET = "site-assets";
+const SITE_LOGO_HASH = "c".repeat(64);
+const SITE_LOGO_KEY = `logo/${SITE_LOGO_HASH}.png`;
 
 // 构造 Next.js App Router 动态路由约定的 params Promise。
 function makeParams(bucket: string, key: string[]) {
@@ -102,6 +105,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
       MODEL_ASSET_BUCKET
     );
+    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", SITE_ASSET_BUCKET);
     getRuntimeSettingString.mockClear();
   });
 
@@ -301,12 +305,12 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     expect(res.headers.get("Content-Disposition")).toBeNull();
   });
 
-  it("每次读取同时加载头像、生成内容与模型资产三项 bucket 设置", async () => {
+  it("每次读取同时加载四项隔离 bucket 设置", async () => {
     getObject.mockResolvedValue(Buffer.from("avatar"));
 
     await GET(makeRequest(), makeParams("avatars", ["user", "avatar.jpg"]));
 
-    expect(getRuntimeSettingString).toHaveBeenCalledTimes(3);
+    expect(getRuntimeSettingString).toHaveBeenCalledTimes(4);
     expect(getRuntimeSettingString).toHaveBeenCalledWith(
       "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
     );
@@ -315,6 +319,9 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     );
     expect(getRuntimeSettingString).toHaveBeenCalledWith(
       "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
+    );
+    expect(getRuntimeSettingString).toHaveBeenCalledWith(
+      "SITE_ASSETS_BUCKET_NAME"
     );
   });
 
@@ -352,18 +359,164 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     expect(getObject).not.toHaveBeenCalled();
   });
 
+  it("网站资产设置缺失时从默认 bucket 匿名读取严格 Logo PNG", async () => {
+    runtimeSettings.delete("SITE_ASSETS_BUCKET_NAME");
+    getObject.mockResolvedValue(Buffer.from("site-logo"));
+
+    const res = await GET(
+      makeRequest(),
+      makeParams(SITE_ASSET_BUCKET, SITE_LOGO_KEY.split("/"))
+    );
+
+    expect(res.status).toBe(200);
+    expect(getObject).toHaveBeenCalledWith(SITE_LOGO_KEY, SITE_ASSET_BUCKET, {
+      signal: expect.anything(),
+    });
+    expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(res.headers.get("Content-Type")).toBe("image/png");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Cache-Control")).toBe(
+      "public, max-age=31536000, immutable"
+    );
+    expect(res.headers.get("Content-Disposition")).toBeNull();
+  });
+
+  it("网站资产桶支持运行时自定义名称", async () => {
+    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", "brand-assets");
+    getObject.mockResolvedValue(Buffer.from("site-logo"));
+
+    const res = await GET(
+      makeRequest(),
+      makeParams("brand-assets", SITE_LOGO_KEY.split("/"))
+    );
+
+    expect(res.status).toBe(200);
+    expect(getObject).toHaveBeenCalledWith(SITE_LOGO_KEY, "brand-assets", {
+      signal: expect.anything(),
+    });
+    expect(res.headers.get("Content-Type")).toBe("image/png");
+  });
+
   it.each([
-    ["头像桶为空", "", "generations", MODEL_ASSET_BUCKET],
-    ["生成内容桶为空", "avatars", "", MODEL_ASSET_BUCKET],
-    ["模型资产桶为空", "avatars", "generations", ""],
-    ["模型资产桶含路径", "avatars", "generations", "../models"],
-    ["头像与生成内容冲突", "shared", "shared", MODEL_ASSET_BUCKET],
-    ["模型资产与头像冲突", "avatars", "generations", "avatars"],
-    ["模型资产与生成内容冲突", "avatars", "generations", "generations"],
-  ])("%s时稳定返回配置错误且不触达存储", async (_label, avatars, generations, modelAssets) => {
+    ["svg", "image/svg+xml", true],
+    ["ico", "image/x-icon", false],
+  ])("网站资产桶按原扩展名返回 %s", async (extension, contentType, isSvg) => {
+    const fileKey = `logo/${SITE_LOGO_HASH}.${extension}`;
+    getObject.mockResolvedValue(Buffer.from("site-logo"));
+
+    const res = await GET(
+      makeRequest(),
+      makeParams(SITE_ASSET_BUCKET, fileKey.split("/"))
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe(contentType);
+    expect(res.headers.get("Content-Disposition")).toBeNull();
+    expect(res.headers.get("Content-Security-Policy")).toBe(
+      isSvg ? "default-src 'none'; sandbox" : null
+    );
+  });
+
+  it.each([
+    ["非 PNG", `logo/${SITE_LOGO_HASH}.webp`],
+    ["大写哈希", `logo/${SITE_LOGO_HASH.toUpperCase()}.png`],
+    ["非哈希", "logo/current.png"],
+    ["错误目录", `${SITE_LOGO_HASH}.png`],
+    ["额外层级", `logo/archive/${SITE_LOGO_HASH}.png`],
+    ["路径穿越", `logo/../${SITE_LOGO_HASH}.png`],
+  ])("网站资产桶拒绝%s key", async (_label, fileKey) => {
+    const res = await GET(
+      makeRequest(),
+      makeParams(SITE_ASSET_BUCKET, fileKey.split("/"))
+    );
+
+    expect(res.status).toBe(400);
+    expect(getObject).not.toHaveBeenCalled();
+  });
+
+  it("网站资产桶拒绝路径段与查询参数两种缩略图请求", async () => {
+    const pathResponse = await GET(
+      makeRequest(),
+      makeParams(SITE_ASSET_BUCKET, ["w128", ...SITE_LOGO_KEY.split("/")])
+    );
+    const queryResponse = await GET(
+      makeRequest({ w: "128" }),
+      makeParams(SITE_ASSET_BUCKET, SITE_LOGO_KEY.split("/"))
+    );
+
+    expect(pathResponse.status).toBe(400);
+    expect(queryResponse.status).toBe(400);
+    expect(pathResponse.headers.get("Cache-Control")).toBe("no-store");
+    expect(queryResponse.headers.get("Cache-Control")).toBe("no-store");
+    expect(getObject).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["头像桶为空", "", "generations", MODEL_ASSET_BUCKET, SITE_ASSET_BUCKET],
+    ["生成内容桶为空", "avatars", "", MODEL_ASSET_BUCKET, SITE_ASSET_BUCKET],
+    ["模型资产桶为空", "avatars", "generations", "", SITE_ASSET_BUCKET],
+    [
+      "模型资产桶含路径",
+      "avatars",
+      "generations",
+      "../models",
+      SITE_ASSET_BUCKET,
+    ],
+    ["网站资产桶为空", "avatars", "generations", MODEL_ASSET_BUCKET, ""],
+    [
+      "网站资产桶含路径",
+      "avatars",
+      "generations",
+      MODEL_ASSET_BUCKET,
+      "../site-assets",
+    ],
+    [
+      "头像与生成内容冲突",
+      "shared",
+      "shared",
+      MODEL_ASSET_BUCKET,
+      SITE_ASSET_BUCKET,
+    ],
+    [
+      "模型资产与头像冲突",
+      "avatars",
+      "generations",
+      "avatars",
+      SITE_ASSET_BUCKET,
+    ],
+    [
+      "模型资产与生成内容冲突",
+      "avatars",
+      "generations",
+      "generations",
+      SITE_ASSET_BUCKET,
+    ],
+    [
+      "网站资产与头像冲突",
+      "avatars",
+      "generations",
+      MODEL_ASSET_BUCKET,
+      "avatars",
+    ],
+    [
+      "网站资产与生成内容冲突",
+      "avatars",
+      "generations",
+      MODEL_ASSET_BUCKET,
+      "generations",
+    ],
+    [
+      "网站资产与模型资产冲突",
+      "avatars",
+      "generations",
+      MODEL_ASSET_BUCKET,
+      MODEL_ASSET_BUCKET,
+    ],
+  ])("%s时稳定返回配置错误且不触达存储", async (_label, avatars, generations, modelAssets, siteAssets) => {
     runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", avatars);
     runtimeSettings.set("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME", generations);
     runtimeSettings.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", modelAssets);
+    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", siteAssets);
 
     const res = await GET(
       makeRequest(),

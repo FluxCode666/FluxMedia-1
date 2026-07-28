@@ -56,6 +56,7 @@ export {
   settingsGetPaginationConfig,
   settingsGetSiteBranding,
   settingsSetSiteLogo,
+  settingsUploadSiteLogo,
 } from "./system-settings";
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {

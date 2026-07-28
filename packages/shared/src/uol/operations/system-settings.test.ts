@@ -50,6 +50,7 @@ import {
   settingsGetSnapshot,
   settingsSetSiteLogo,
   settingsUpdate,
+  settingsUploadSiteLogo,
 } from "./system-settings";
 
 const superAdmin = {
@@ -238,6 +239,51 @@ describe("通用系统设置 UOL", () => {
         injected: true,
       }).success
     ).toBe(false);
+  });
+
+  it("Logo 文件上传 operation 强制超管、幂等键和存储审计副作用", () => {
+    const validInput = {
+      clientRequestId: "6b7d1204-3f43-4da7-b2b5-b7540927e462",
+      fileName: "logo.ico",
+      contentType: "image/x-icon",
+      bytes: new Uint8Array([0, 0, 1, 0]),
+    };
+    expect(settingsUploadSiteLogo.input.safeParse(validInput).success).toBe(
+      true
+    );
+    expect(
+      settingsUploadSiteLogo.input.safeParse({
+        ...validInput,
+        bytes: new Uint8Array(),
+      }).success
+    ).toBe(false);
+    expect(settingsUploadSiteLogo.idempotency).toEqual({
+      kind: "required",
+      keyField: "clientRequestId",
+      scope: "per-user",
+    });
+    expect(settingsUploadSiteLogo.sideEffects).toEqual([
+      "storage",
+      "cache",
+      "audit",
+    ]);
+    expect(settingsUploadSiteLogo.destructive).toBe(true);
+    expect(() =>
+      assertAccess(settingsUploadSiteLogo.access, superAdmin)
+    ).not.toThrow();
+    expect(() =>
+      assertAccess(settingsUploadSiteLogo.access, {
+        type: "system",
+        reason: "must-not-bypass",
+      })
+    ).toThrow();
+    expect(() =>
+      assertAccess(settingsUploadSiteLogo.access, {
+        type: "user",
+        userId: "admin-1",
+        role: "admin",
+      })
+    ).toThrow();
   });
 
   it("以数组写入值与清空指令并保留清空回退语义", async () => {

@@ -7,6 +7,7 @@
  * 使用方：营销 Header、首页页脚、认证页与 Dashboard 侧栏。
  * 关键依赖：Next Image；使用 unoptimized 让浏览器直接跟随动态 307 重定向。
  */
+import { cn } from "@repo/ui/utils";
 import Image from "next/image";
 
 /**
@@ -33,7 +34,7 @@ export function SiteLogo({
       alt={alt}
       width={size}
       height={size}
-      className={className}
+      className={cn("object-contain", className)}
       referrerPolicy="no-referrer"
       unoptimized
     />
