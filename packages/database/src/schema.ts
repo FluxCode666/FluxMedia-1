@@ -1449,7 +1449,7 @@ export const videoGeneration = pgTable(
     memberLeaseOwnerToken: text("member_lease_owner_token"),
     // 完整 Firefly 视频 model id（firefly-<family>-<dur>s-<ratio>[-<res>]）。
     model: text("model").notNull(),
-    // 请求头 Profile 与 IMS Token Profile；历史任务允许不同，修复后的新任务两者相同。
+    // 请求头 Profile 与 IMS Token Profile 相互独立；视频 Bearer Token 固定复用 Express。
     adobeRequestProfile: text("adobe_request_profile")
       .$type<"express" | "firefly">()
       .notNull(),

@@ -4,7 +4,8 @@
  * 不依赖外部 adobe2api 进程。
  *
  * 职责：
- * - 一对一账号：每个 Adobe direct 顶层成员持有一个 Cookie，并隔离 Express/Firefly Token。
+ * - 一对一账号：每个 Adobe direct 顶层成员持有一个 Cookie；现行媒体请求统一使用
+ *   Express Token，历史已接受任务仍可按持久 Profile 恢复。
  * - 出图：取成员 token → 选模型族/尺寸 → 图生图先 uploadImage → generateImage。
  */
 
@@ -21,6 +22,7 @@ import {
 import {
   AdobeAcceptedVideoError,
   AdobeFireflyClient,
+  type AdobeFireflyWebApp,
   AdobeVideoSubmissionUncertainError,
   AuthError,
   decodeJwtExp,
@@ -28,7 +30,6 @@ import {
   type FireflyTransport,
   type FireflyTransportRequest,
   type FireflyTransportResponse,
-  type AdobeFireflyWebApp,
   fetchCreditsBalance,
   fireflyVideoMaxInputImages,
   fireflyVideoSize,
@@ -47,8 +48,8 @@ import {
   MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
-import { prepareAdobeVideoSourceImage } from "./adobe-video-source";
 import { runAdobeBeforeAcceptanceWithAuthRetry } from "./adobe-auth-retry";
+import { prepareAdobeVideoSourceImage } from "./adobe-video-source";
 import type { ApiConfig, GenerateImageResult } from "./types";
 import { requireAcceptedVideoCredential } from "./video-recovery-policy";
 
@@ -1082,7 +1083,7 @@ export async function runAdobeDirectVideoRequest(
 
   const result = await runWithAdobeCredential(
     memberId,
-    conf.webApp,
+    conf.authProfile,
     apiTransport,
     params.signal,
     true,

@@ -1,8 +1,8 @@
 /**
  * 视频恢复状态机的 DB-free 纯策略。
  *
- * 职责：生成稳定对象存储键、约束原成员凭据刷新，并分类已接受 Adobe 任务的
- * 可重试错误。
+ * 职责：生成稳定对象存储键、约束原成员凭据刷新、保留安全的切换失败根因，并分类
+ * 已接受 Adobe 任务的可重试错误。
  * 使用方：video-operations 与 Vitest；不得导入数据库或 Web 运行时。
  */
 
@@ -32,6 +32,29 @@ export function requireAcceptedVideoCredential(
     );
   }
   return refreshed.value;
+}
+
+/**
+ * 当前成员失败且没有替代成员时，保留已知安全的账号级根因。
+ *
+ * @param upstreamError Adobe 适配器返回的已分类错误。
+ * @returns 不泄露上游正文、URL 或凭据的用户可见错误。
+ * @sideEffects 无。
+ * @failure 未知上游错误统一回落为无可用后端，避免响应正文穿透。
+ */
+export function resolveVideoBackendExhaustionError(
+  upstreamError: string
+): string {
+  switch (upstreamError) {
+    case "Token invalid or expired":
+      return "Adobe 视频凭据无效或已过期，且当前分组没有其他可切换的媒体后端";
+    case "Adobe 直连成员没有可用凭据":
+      return "Adobe 视频成员没有可用凭据，且当前分组没有其他可切换的媒体后端";
+    case "Adobe quota exhausted for this account":
+      return "Adobe 视频账号额度已耗尽，且当前分组没有其他可切换的媒体后端";
+    default:
+      return "当前分组没有可用于该模型的媒体后端";
+  }
 }
 
 /**

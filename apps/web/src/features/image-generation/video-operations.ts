@@ -49,6 +49,7 @@ import { nanoid } from "nanoid";
 import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
 import { defaultBackendPoolRepository } from "@/features/image-backend-pool/repository";
 import { createRuntimeBackendSession } from "@/features/image-backend-pool/runtime-service";
+import { BackendSchedulerError } from "@/features/image-backend-pool/scheduler-error";
 import {
   downloadAdobeDirectVideoRequest,
   pollAdobeDirectVideoRequest,
@@ -71,6 +72,7 @@ import {
 import { cleanupPersistedVideoInputs } from "./video-input-storage";
 import {
   createVideoStorageKey,
+  resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
 import { defaultVideoRecoveryRepository } from "./video-recovery-repository";
@@ -635,7 +637,7 @@ export async function runAdobeVideoGenerationForUser(
       usageLogVisible: true,
       model: input.model,
       adobeRequestProfile: conf.webApp,
-      adobeAuthProfile: conf.webApp,
+      adobeAuthProfile: conf.authProfile,
       family: conf.family,
       prompt: input.prompt,
       durationSeconds: conf.duration,
@@ -951,7 +953,12 @@ async function submitClaimedCreatedVideo(
     } catch (error) {
       await backendSession.close();
       const message =
-        error instanceof Error ? error.message : "无可用 Adobe 视频后端";
+        error instanceof BackendSchedulerError &&
+        error.code === "no_eligible_member"
+          ? resolveVideoBackendExhaustionError(submitted.error)
+          : error instanceof Error
+            ? error.message
+            : "无可用 Adobe 视频后端";
       const refunding = await moveVideoToRefunding(row, message);
       if (refunding) await refundClaimedVideoOrRetry(refunding);
       return { error: message, videoGenerationId: row.id };

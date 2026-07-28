@@ -46,7 +46,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "传输层校验请求并构造用户或 API Key Principal。",
           "UOL 网关统一执行权限、套餐能力和资源归属校验。",
           "图片生成、图片编辑与蒙版编辑共用单一图片管线。",
-          "视频提交成功后固定原成员及请求/鉴权 Profile，轮询只刷新对应 Profile Token，不得跨成员重投。",
+          "视频请求头按模型选择 Express 或 Firefly 网页入口，Bearer Token 统一复用 Express 凭据；提交成功后固定原成员恢复。",
           "最终产物写入本站存储，再返回受控签名 URL。",
         ],
       },
@@ -59,7 +59,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "同一号池页面管理分组、成员、模型能力、优先级、并发和健康状态。",
           "模型 ID 是显式能力键，调度器不从模型名称前缀推断成员类型。",
           "一次请求在指定分组的全部合格成员中选择候选，图片和视频都不使用粘性会话。",
-          "一个 Adobe direct 成员只对应一个 Cookie/账号，并分别维护 Express 与 Firefly 短期 Token。",
+          "一个 Adobe direct 成员只对应一个 Cookie/账号；图片与视频统一复用原有 Express 短期 Token。",
         ],
       },
       {
@@ -82,7 +82,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
         items: [
           "同一用户下不同 API Key 的相同请求键互不命中。",
           "提交前明确失败可以排除当前成员并重选。",
-          "取得 pollUrl 后只使用持久化的原成员及请求/鉴权 Profile。",
+          "取得 pollUrl 后只使用持久化的原成员和请求 Profile，并刷新该成员的 Express Token。",
           "提交结果不确定时保留诊断状态，不自动重投或退款。",
           "对象存储键、扣费键和退款键稳定，重复 worker 只能收敛到一个终态。",
         ],

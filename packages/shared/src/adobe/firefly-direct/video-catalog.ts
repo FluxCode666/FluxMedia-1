@@ -84,6 +84,8 @@ export type FireflyVideoModelConf = {
   maxInputImages: number;
   /** 提交所模拟的 Adobe 网页应用，决定 Origin、Referer 与公开网页 API Key。 */
   webApp: FireflyVideoWebApp;
+  /** Bearer Token 来源；所有视频复用原有 Express IMS 凭据。 */
+  authProfile: "express";
   /** 上传参考图前保留原图，或按目标尺寸 cover 裁剪。 */
   sourceImageMode: FireflyVideoSourceImageMode;
   /** veo31-ref 参考模式：reference_mode="image"。 */
@@ -373,6 +375,7 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           supportsAudio: spec.supportsAudio ?? false,
           maxInputImages,
           webApp: spec.webApp ?? "express",
+          authProfile: "express",
           sourceImageMode: spec.sourceImageMode ?? "target-cover",
           ...(spec.referenceMode ? { referenceMode: spec.referenceMode } : {}),
           description: `${spec.label} (${duration}s ${ratio} ${resolution})`,

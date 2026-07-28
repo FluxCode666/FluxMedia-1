@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   createVideoStorageKey,
   requireAcceptedVideoCredential,
+  resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
 
@@ -41,12 +42,12 @@ describe("video recovery policies", () => {
   });
 
   it("已接受任务只接受原成员刷新出的有效凭据", () => {
-    expect(
-      requireAcceptedVideoCredential({ value: "fresh-token" })
-    ).toBe("fresh-token");
-    expect(() =>
-      requireAcceptedVideoCredential(null)
-    ).toThrow("原成员凭据刷新失败");
+    expect(requireAcceptedVideoCredential({ value: "fresh-token" })).toBe(
+      "fresh-token"
+    );
+    expect(() => requireAcceptedVideoCredential(null)).toThrow(
+      "原成员凭据刷新失败"
+    );
   });
 
   it("已接受任务的明确 4xx 和普通错误不进入轮询重试", () => {
@@ -58,5 +59,16 @@ describe("video recovery policies", () => {
     expect(shouldRetryAcceptedVideoError(new Error("unclassified"))).toBe(
       false
     );
+  });
+
+  it("切换耗尽时保留安全的鉴权根因并隐藏未知上游正文", () => {
+    expect(resolveVideoBackendExhaustionError("Token invalid or expired")).toBe(
+      "Adobe 视频凭据无效或已过期，且当前分组没有其他可切换的媒体后端"
+    );
+    expect(
+      resolveVideoBackendExhaustionError(
+        "video submit failed: 500 https://internal.example/token=secret"
+      )
+    ).toBe("当前分组没有可用于该模型的媒体后端");
   });
 });

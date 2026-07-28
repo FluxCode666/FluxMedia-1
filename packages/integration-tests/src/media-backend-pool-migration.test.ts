@@ -1,7 +1,7 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068 与 0069 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0070 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
  * 作用域。
@@ -70,12 +70,15 @@ const migrationPaths = [
   "0066_flatten_legacy_adobe_subpool.sql",
   "0068_adobe_direct_auth_profiles.sql",
   "0069_video_adobe_profiles.sql",
+  "0070_video_express_auth_profile.sql",
 ].map((filename) =>
   fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
 const compatibilityMigrationPath = migrationPaths.at(4);
 const profileMigrationPaths = migrationPaths.slice(5);
 const compatibilityUpgradePaths = migrationPaths.slice(4);
+const videoAuthRepairMigrationPath = migrationPaths.at(7);
+const migrationsBeforeVideoAuthRepair = migrationPaths.slice(0, 7);
 
 /** 验证随机 schema 名并返回安全的双引号标识符。 */
 function quoteSchemaName(schemaName: string): string {
@@ -504,7 +507,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060-0063、0066、0068 与 0069 统一媒体号池迁移", () => {
+describe("0060-0063、0066、0068-0070 统一媒体号池迁移", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -1507,6 +1510,75 @@ describe("0060-0063、0066、0068 与 0069 统一媒体号池迁移", () => {
       await expect(
         tableExists(client, schemaName, "adobe_account")
       ).resolves.toBe(true);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("0070 只修正尚未提交任务的鉴权 Profile", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    if (!videoAuthRepairMigrationPath) {
+      throw new Error("0070 视频鉴权修复迁移路径缺失");
+    }
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await client.query(`
+        insert into video_generation (id, user_id, status)
+        values ('profile-repair-video', 'user-1', 'pending')
+      `);
+      await executeMigrations(
+        client,
+        schemaName,
+        migrationsBeforeVideoAuthRepair
+      );
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await client.query(`
+        update video_generation
+        set adobe_request_profile = 'firefly',
+            adobe_auth_profile = 'firefly',
+            stage = 'created'
+        where id = 'profile-repair-video'
+      `);
+
+      await executeMigrations(client, schemaName, [
+        videoAuthRepairMigrationPath,
+      ]);
+      const repaired = await client.query<{
+        adobe_auth_profile: string;
+        adobe_request_profile: string;
+      }>(`
+        select adobe_request_profile, adobe_auth_profile
+        from video_generation
+        where id = 'profile-repair-video'
+      `);
+      expect(repaired.rows[0]).toEqual({
+        adobe_auth_profile: "express",
+        adobe_request_profile: "firefly",
+      });
+
+      await client.query(`
+        update video_generation
+        set adobe_auth_profile = 'firefly',
+            stage = 'polling'
+        where id = 'profile-repair-video'
+      `);
+      await executeMigrations(client, schemaName, [
+        videoAuthRepairMigrationPath,
+      ]);
+      const accepted = await client.query<{ adobe_auth_profile: string }>(`
+        select adobe_auth_profile
+        from video_generation
+        where id = 'profile-repair-video'
+      `);
+      expect(accepted.rows[0]?.adobe_auth_profile).toBe("firefly");
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

@@ -88,13 +88,14 @@ describe("firefly video catalog", () => {
     ).toBe("1080p");
   });
 
-  it("Seedance 2.0 与 Fast 使用 Firefly Profile", () => {
+  it("新视频模型使用 Firefly 请求 Profile 和 Express 鉴权 Profile", () => {
     expect(
       resolveFireflyVideoModel("firefly-seedance2-15s-9x16-480p")
     ).toMatchObject({
       family: "seedance2",
       upstreamModelVersion: "seedance_2.0",
       webApp: "firefly",
+      authProfile: "express",
     });
     expect(
       resolveFireflyVideoModel("firefly-seedance2-fast-10s-16x9-720p")
@@ -102,7 +103,20 @@ describe("firefly video catalog", () => {
       family: "seedance2-fast",
       upstreamModelVersion: "seedance_2.0_fast",
       webApp: "firefly",
+      authProfile: "express",
     });
+    expect(
+      resolveFireflyVideoModel("firefly-kling3-omni-10s-16x9-720p")
+    ).toMatchObject({ webApp: "firefly", authProfile: "express" });
+    expect(
+      resolveFireflyVideoModel("firefly-runway-gen45-5s-16x9")
+    ).toMatchObject({ webApp: "firefly", authProfile: "express" });
+    expect(resolveFireflyVideoModel("firefly-ray314-5s-16x9-4k")).toMatchObject(
+      { webApp: "firefly", authProfile: "express" }
+    );
+    expect(
+      resolveFireflyVideoModel("firefly-ray314-hdr-5s-16x9-4k")
+    ).toMatchObject({ webApp: "firefly", authProfile: "express" });
   });
 
   it("Kling 3.0 Omni 开放 3 至 15 秒、两档分辨率和横竖两种比例", () => {

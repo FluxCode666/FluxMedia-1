@@ -129,15 +129,17 @@ function AdobeDirectAccountFacts({
     config.creditsAvailable !== null || config.creditsTotal !== null;
   return (
     <>
-      <span>Express 凭据：{config.credentialStatus}</span>
-      <span>Firefly 凭据：{config.fireflyCredentialStatus ?? "未初始化"}</span>
-      <span>
-        Express 刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}
-      </span>
-      <span>
-        Firefly 刷新：
-        {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
-      </span>
+      <span>Adobe 凭据：{config.credentialStatus}</span>
+      <span>凭据刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}</span>
+      {config.fireflyCredentialStatus && (
+        <span>历史 Firefly 凭据：{config.fireflyCredentialStatus}</span>
+      )}
+      {config.fireflyLastRefreshAt && (
+        <span>
+          历史 Firefly 刷新：
+          {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
+        </span>
+      )}
       <span>Adobe 账号：{config.displayName || config.email || "未识别"}</span>
       <span>
         {config.creditsError
@@ -159,7 +161,7 @@ function AdobeDirectAccountFacts({
       )}
       {config.fireflyLastRefreshError && (
         <span className="basis-full break-words text-destructive">
-          Firefly 凭据刷新错误：{config.fireflyLastRefreshError}
+          历史 Firefly 凭据刷新错误：{config.fireflyLastRefreshError}
         </span>
       )}
       {config.creditsError && (

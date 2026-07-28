@@ -64,10 +64,11 @@ Runway Gen-4.5、Ray 3.14、Ray 3.14 HDR、Seedance 2.0 与 Seedance 2.0 Fast �
 提交明确携带 `x-arp-session-id` 和
 `x-nonce`。Chrome sanitized HAR 会移除敏感鉴权头，因此不能根据 HAR 中未显示
 `Authorization` 推断真实请求不需要 Bearer Token。
-IMS Token 必须与网页 Profile 绑定：Express 使用 `client_id=projectx_webapp`，Firefly
-使用 `client_id=clio-playground-web`。同一 Cookie 分别持久化两套短期 Token；上传、
-提交和轮询使用任务保存的同一请求/鉴权 Profile。明确 401/403 时只刷新该 Profile 并
-安全重试一次，网络异常、5xx 或提交结果不确定时不得自动重投。
+视频请求头 Profile 与 Bearer Token 来源相互独立。所有视频模型复用原有
+`client_id=projectx_webapp` 的 Express IMS Token；Firefly Profile 只决定
+`Origin`、`Referer` 与 `x-api-key=clio-playground-web`。上传、提交和轮询均使用任务
+保存的请求 Profile 与同一成员的 Express Token。明确 401/403 时只刷新 Express Token
+并安全重试一次，网络异常、5xx 或提交结果不确定时不得自动重投。
 
 ### 提交体（关键字段）
 `n`、`seeds:[seed]`、`seed:str`、`modelId`、`model`(upstream)、`modelVersion`、`size:{width,height}`、
