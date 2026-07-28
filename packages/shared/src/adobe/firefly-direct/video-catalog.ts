@@ -84,8 +84,8 @@ export type FireflyVideoModelConf = {
   maxInputImages: number;
   /** 提交所模拟的 Adobe 网页应用，决定 Origin、Referer 与公开网页 API Key。 */
   webApp: FireflyVideoWebApp;
-  /** Bearer Token 来源；所有视频复用原有 Express IMS 凭据。 */
-  authProfile: "express";
+  /** Bearer Token 来源；必须与目标 Adobe 网页接口的 IMS client_id 对齐。 */
+  authProfile: FireflyVideoWebApp;
   /** 上传参考图前保留原图，或按目标尺寸 cover 裁剪。 */
   sourceImageMode: FireflyVideoSourceImageMode;
   /** veo31-ref 参考模式：reference_mode="image"。 */
@@ -203,16 +203,18 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   {
     family: "kling3",
     prefix: "firefly-kling3",
-    upstreamModel: "kling:firefly:colligo:3.0",
+    upstreamModel: "",
     upstreamModelId: "kling",
-    upstreamModelVersion: "kling_v3_standard_i2v",
+    upstreamModelVersion: "kling_v3",
     engine: "kling3",
-    durations: [5, 10, 15],
+    durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     ratios: ["16:9", "9:16"],
-    resolutions: ["720p"],
-    resolutionInId: false,
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
     generateAudio: true,
     supportsAudio: true,
+    webApp: "firefly",
+    sourceImageMode: "original",
     label: "Kling 3.0",
   },
   {
@@ -375,7 +377,7 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           supportsAudio: spec.supportsAudio ?? false,
           maxInputImages,
           webApp: spec.webApp ?? "express",
-          authProfile: "express",
+          authProfile: spec.webApp ?? "express",
           sourceImageMode: spec.sourceImageMode ?? "target-cover",
           ...(spec.referenceMode ? { referenceMode: spec.referenceMode } : {}),
           description: `${spec.label} (${duration}s ${ratio} ${resolution})`,
@@ -388,6 +390,21 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
 for (const spec of VIDEO_FAMILY_SPECS) {
   registerVideoFamily(spec);
 }
+
+/**
+ * Kling 3.0 历史无分辨率 ID 的兼容映射。
+ *
+ * @remarks 旧 ID 只解析为 720p，不进入运行时目录，避免管理端重复展示。
+ */
+const LEGACY_VIDEO_MODEL_ALIASES: Readonly<Record<string, string>> =
+  Object.fromEntries(
+    [5, 10, 15].flatMap((duration) =>
+      ["16x9", "9x16"].map((aspectRatio) => {
+        const legacyId = `firefly-kling3-${duration}s-${aspectRatio}`;
+        return [legacyId, `${legacyId}-720p`];
+      })
+    )
+  );
 
 /** 将兼容裸视频模型规范化为目录使用的 Firefly 完整 ID。 */
 function normalizeFireflyVideoModelId(modelId: string): string {
@@ -422,7 +439,8 @@ export function resolveFireflyVideoModel(
       .toLowerCase()
   );
   if (!id) return null;
-  return FIREFLY_VIDEO_MODEL_CATALOG[id] ?? null;
+  const canonicalId = LEGACY_VIDEO_MODEL_ALIASES[id] ?? id;
+  return FIREFLY_VIDEO_MODEL_CATALOG[canonicalId] ?? null;
 }
 
 /** 是否为目录支持的 Firefly 或兼容裸视频 model id。 */
