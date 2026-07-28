@@ -1,14 +1,33 @@
 /**
- * 管理端支付 UOL 注册契约测试。
+ * 支付 UOL 注册契约测试。
  *
- * 证明三项财务读取只允许真实管理员人工会话、保持只读且拒绝伪造用户身份字段。
+ * 证明用户查询只允许本人会话，管理端查询只允许真实管理员人工会话；所有读取均拒绝
+ * 客户端伪造用户身份字段。
  */
 import { describe, expect, it } from "vitest";
 
 import { getOperation } from "../registry";
 import "./payment";
 
-describe("admin payment UOL contract", () => {
+describe("payment UOL contract", () => {
+  it("registers recent orders as a bounded current-user read", () => {
+    const operation = getOperation("payment.listMyRecentOrders");
+    expect(operation).toMatchObject({
+      domain: "payment",
+      access: { kind: "user" },
+      readOnly: true,
+      destructive: false,
+      idempotency: { kind: "natural" },
+      sideEffects: [],
+    });
+    expect(operation?.input.parse({})).toEqual({ limit: 8 });
+    expect(operation?.input.safeParse({ limit: 20 }).success).toBe(true);
+    expect(operation?.input.safeParse({ limit: 21 }).success).toBe(false);
+    expect(operation?.input.safeParse({ userId: "forged-user" }).success).toBe(
+      false
+    );
+  });
+
   it("validates complete overview date ranges with a 366-day limit", () => {
     const operation = getOperation("payment.getAdminOverview");
     expect(

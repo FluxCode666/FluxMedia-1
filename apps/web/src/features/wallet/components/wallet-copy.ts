@@ -43,6 +43,37 @@ export function createWalletCopy(isZh: boolean) {
       "Unable to start subscription checkout",
       "无法发起订阅支付"
     ),
+    recentOrdersTitle: copy("Recent top-up orders", "最近充值订单"),
+    recentOrdersDescription: copy(
+      "Review your latest credit top-ups and payment status.",
+      "查看最近的积分充值记录和支付状态。"
+    ),
+    recentOrdersError: copy(
+      "Recent top-up orders are temporarily unavailable.",
+      "最近充值订单暂时不可用。"
+    ),
+    recentOrdersEmpty: copy(
+      "Your recent top-up orders will appear here.",
+      "最近充值后，订单记录会显示在这里。"
+    ),
+    orderAmount: copy("Amount", "金额"),
+    orderCredits: copy("Credits", "积分"),
+    topUpOrder: copy("Pay as you go", "按量充值"),
+    packageOrder: copy("Credit package", "积分套餐"),
+    provider: copy("Provider", "支付渠道"),
+    providerLabels: {
+      alipay_f2f: copy("Alipay", "支付宝"),
+      creem: "Creem",
+      epay: copy("Epay", "易支付"),
+    },
+    orderStatus: {
+      waiting_payment: copy("Waiting for payment", "待支付"),
+      payment_confirmed: copy("Processing", "处理中"),
+      fulfilled: copy("Completed", "已到账"),
+      failed: copy("Failed", "失败"),
+      expired: copy("Expired", "已过期"),
+    },
+    viewOrder: copy("View order", "查看订单"),
     unavailable: copy("Currently unavailable", "当前不可购买"),
     currentPlan: copy("Current plan", "当前套餐"),
     popular: copy("Popular", "推荐"),

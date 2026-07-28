@@ -59,6 +59,16 @@
 退款净额或统一支付订单上线前的历史数据。详细设计见
 [admin-payment-management.md](2026-07-28-admin-payment-management.md)。
 
+## 用户钱包支付 operation
+
+| Operation | Principal | 口径与传输边界 |
+| --- | --- | --- |
+| `payment.listMyRecentOrders` | 当前登录用户 | 只读最近 8 笔、最多 20 笔统一积分充值订单；身份仅从 Principal 派生，不返回用户 ID、渠道交易号或支付快照 |
+
+钱包页由 Server Action 薄适配器将该 operation 与余额、充值能力、订阅能力并行聚合。
+订单范围只包含 `payment_order` 中的 `credit_top_up | credit_package`，按
+`created_at DESC, id DESC` 稳定排序；面向用户的状态与统一支付结果页保持一致。
+
 ## 媒体传输映射
 
 | 传输 | operation |

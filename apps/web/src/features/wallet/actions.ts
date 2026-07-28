@@ -3,10 +3,11 @@
 /**
  * 钱包 Server Action 薄传输适配器。
  *
- * 使用方：钱包页面。三个 Action 只初始化 UOL、从 session 构造本人 Principal
+ * 使用方：钱包页面。各 Action 只初始化 UOL、从 session 构造本人 Principal
  * 并调用 operation；不读取数据库、不合并错误，也不接受 userId。
  */
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import type { UserPaymentOrderListOutput } from "@repo/shared/payment/user-order-contract";
 import { protectedAction } from "@repo/shared/safe-action";
 import type { SubscriptionPurchaseOptions } from "@repo/shared/subscription/purchase-contract";
 import { invokeOperation, type Principal } from "@repo/shared/uol";
@@ -20,6 +21,7 @@ import { loadWalletPageData } from "./wallet-page-data";
 type WalletOperationOutputs = {
   "credits.getMyBalance": WalletBalanceSnapshot;
   "credits.getTopUpOptions": WalletTopUpOptions;
+  "payment.listMyRecentOrders": UserPaymentOrderListOutput;
   "subscription.listMyPurchasablePlans": SubscriptionPurchaseOptions;
 };
 type WalletOperationName = keyof WalletOperationOutputs;
@@ -61,6 +63,13 @@ export const getMyWalletTopUpOptionsAction = protectedAction
     invokeMyWalletOperation("credits.getTopUpOptions", ctx.userId)
   );
 
+/** 读取当前用户最近创建的积分充值订单。 */
+export const getMyWalletRecentPaymentOrdersAction = protectedAction
+  .metadata({ action: "payment.listMyRecentOrders" })
+  .action(async ({ ctx }) =>
+    invokeMyWalletOperation("payment.listMyRecentOrders", ctx.userId)
+  );
+
 /** 读取当前用户有效订阅套餐与资格。 */
 export const getMyWalletSubscriptionOptionsAction = protectedAction
   .metadata({ action: "subscription.listMyPurchasablePlans" })
@@ -69,7 +78,7 @@ export const getMyWalletSubscriptionOptionsAction = protectedAction
   );
 
 /**
- * 一次鉴权并行加载钱包三块数据，供首屏使用。
+ * 一次鉴权并行加载钱包四块数据，供首屏使用。
  *
  * 单块 UOL 失败由聚合器转换为独立 error 状态；不会把读取异常伪装成关闭。
  */
@@ -80,6 +89,8 @@ export const getMyWalletPageDataAction = protectedAction
     return loadWalletPageData({
       loadBalance: () =>
         invokeWalletOperation("credits.getMyBalance", principal),
+      loadRecentOrders: () =>
+        invokeWalletOperation("payment.listMyRecentOrders", principal),
       loadTopUp: () =>
         invokeWalletOperation("credits.getTopUpOptions", principal),
       loadSubscription: () =>

@@ -55,8 +55,11 @@
   退款或覆盖新 worker 的状态。
 - 管理端“支付概览/订单管理”只统计统一 `payment_order` 中的积分充值订单；收入按
   `fulfilled_at`、部署级 `APP_TIME_ZONE` 和币种分别汇总，不代表订阅或渠道净收入。
+- 用户钱包最近充值订单只读取本人 `payment_order` 中的 `credit_top_up` 与
+  `credit_package`，用户身份必须从 Principal 派生，不能接受客户端 `userId`。
 
-详见 [admin-payment-management.md](plan/2026-07-28-admin-payment-management.md)。
+详见 [admin-payment-management.md](plan/2026-07-28-admin-payment-management.md) 与
+[credit-payment-result-flow.md](memory/credit-payment-result-flow.md)。
 
 ## 生图并发
 

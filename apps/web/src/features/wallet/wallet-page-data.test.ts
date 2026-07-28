@@ -1,7 +1,8 @@
 /**
  * 钱包页面数据聚合测试。
  *
- * 证明余额、充值与订阅能力并行读取且独立失败，主动关闭不会被误判为读取异常。
+ * 证明余额、最近订单、充值与订阅能力并行读取且独立失败，主动关闭不会被误判为
+ * 读取异常。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -20,6 +21,11 @@ const BALANCE = {
 function createLoaders(topUpEnabled: boolean, subscriptionEnabled: boolean) {
   return {
     loadBalance: vi.fn().mockResolvedValue(BALANCE),
+    loadRecentOrders: vi.fn().mockResolvedValue({
+      asOf: "2026-07-22T01:00:00.000Z",
+      timeZone: "UTC",
+      records: [],
+    }),
     loadTopUp: vi.fn().mockResolvedValue({
       enabled: topUpEnabled,
       defaultCurrency: "CNY",
@@ -54,6 +60,14 @@ describe("loadWalletPageData", () => {
     const result = await loadWalletPageData(createLoaders(topUp, subscription));
 
     expect(result.balance).toEqual({ status: "ready", data: BALANCE });
+    expect(result.recentOrders).toEqual({
+      status: "ready",
+      data: {
+        asOf: "2026-07-22T01:00:00.000Z",
+        timeZone: "UTC",
+        records: [],
+      },
+    });
     expect(result.topUp).toMatchObject({
       status: "ready",
       data: { enabled: topUp },
@@ -67,11 +81,15 @@ describe("loadWalletPageData", () => {
   it("隔离余额与购买能力失败，不把异常伪装为关闭或零余额", async () => {
     const loaders = createLoaders(false, true);
     loaders.loadBalance.mockRejectedValue(new Error("balance unavailable"));
+    loaders.loadRecentOrders.mockRejectedValue(
+      new Error("recent orders unavailable")
+    );
     loaders.loadTopUp.mockRejectedValue(new Error("top-up unavailable"));
 
     const result = await loadWalletPageData(loaders);
 
     expect(result.balance).toEqual({ status: "error" });
+    expect(result.recentOrders).toEqual({ status: "error" });
     expect(result.topUp).toEqual({ status: "error" });
     expect(result.subscription).toMatchObject({
       status: "ready",
@@ -91,6 +109,7 @@ describe("loadWalletPageData", () => {
       status: "ready",
       data: { enabled: false },
     });
+    expect(result.recentOrders).toMatchObject({ status: "ready" });
     expect(result.subscription).toEqual({ status: "error" });
   });
 });

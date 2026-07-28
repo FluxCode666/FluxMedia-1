@@ -1,8 +1,8 @@
 /**
  * 钱包页面。
  *
- * 使用方：用户侧独立资产与购买入口。页面通过单次本人 UOL 聚合读取余额、充值和
- * 订阅能力；不展示交易记录、退款记录或价格趋势，也不在页面层处理支付履约。
+ * 使用方：用户侧独立资产与购买入口。页面通过单次本人 UOL 聚合读取余额、最近充值
+ * 订单、充值和订阅能力；不展示退款记录或价格趋势，也不在页面层处理支付履约。
  */
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
@@ -13,6 +13,7 @@ import { createWalletCopy } from "@/features/wallet/components/wallet-copy";
 import { WalletOverview } from "@/features/wallet/components/wallet-overview";
 import { WalletPaymentNotice } from "@/features/wallet/components/wallet-payment-notice";
 import { WalletPurchaseSection } from "@/features/wallet/components/wallet-purchase-section";
+import { WalletRecentOrders } from "@/features/wallet/components/wallet-recent-orders";
 import { isWalletPaymentResultStatus } from "@/features/wallet/redirects";
 import type { WalletPageData } from "@/features/wallet/wallet-page-data";
 
@@ -33,6 +34,7 @@ type WalletPageProps = {
 function createUnavailableWalletPageData(): WalletPageData {
   return {
     balance: { status: "error" },
+    recentOrders: { status: "error" },
     subscription: { status: "error" },
     topUp: { status: "error" },
   };
@@ -78,6 +80,11 @@ export default async function WalletPage({ searchParams }: WalletPageProps) {
         locale={locale}
         subscription={pageData.subscription}
         topUp={pageData.topUp}
+      />
+      <WalletRecentOrders
+        copy={copy}
+        locale={locale}
+        recentOrders={pageData.recentOrders}
       />
     </div>
   );

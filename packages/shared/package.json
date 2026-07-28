@@ -98,6 +98,7 @@
     "./payment/epay": "./src/payment/epay.ts",
     "./payment/provider-policy": "./src/payment/provider-policy.ts",
     "./payment/admin-contract": "./src/payment/admin-contract.ts",
+    "./payment/user-order-contract": "./src/payment/user-order-contract.ts",
     "./payment/alipay-f2f": "./src/payment/alipay-f2f.ts",
     "./payment/types": "./src/payment/types.ts",
     "./monitoring": "./src/monitoring/index.ts",

@@ -1,4 +1,4 @@
-/** 钱包路由加载骨架，仅占位资产卡与购买区，不包含虚构金额或交易数据。 */
+/** 钱包路由加载骨架，仅占位资产卡、购买区与订单列表，不包含虚构财务数据。 */
 export default function Loading() {
   return (
     <div className="mx-auto max-w-6xl animate-pulse space-y-8">
@@ -11,6 +11,7 @@ export default function Loading() {
         <div className="h-36 rounded-xl bg-muted" />
       </div>
       <div className="h-72 rounded-xl bg-muted" />
+      <div className="h-64 rounded-xl bg-muted" />
     </div>
   );
 }

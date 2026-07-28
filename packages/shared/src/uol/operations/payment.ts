@@ -1,8 +1,8 @@
 /**
- * 管理端支付查询 UOL 操作定义。
+ * 支付查询 UOL 操作定义。
  *
- * 使用方：支付管理页面的 Server Action。数据库实现由 apps/web 延迟绑定；操作仅允许
- * 真实 admin / super_admin 人工会话读取，避免财务数据投影到 MCP 或内置 Agent。
+ * 使用方：用户钱包与支付管理页面的 Server Action。数据库实现由 apps/web 延迟绑定；
+ * 用户查询只读取本人订单，管理端查询只允许真实 admin / super_admin 人工会话。
  */
 import {
   adminPaymentOrderListInputSchema,
@@ -12,7 +12,30 @@ import {
   adminPaymentUserSearchInputSchema,
   adminPaymentUserSearchOutputSchema,
 } from "../../payment/admin-contract";
+import {
+  userPaymentOrderListInputSchema,
+  userPaymentOrderListOutputSchema,
+} from "../../payment/user-order-contract";
 import { defineOperation } from "../registry";
+
+/** 读取当前用户最近创建的积分充值订单。 */
+export const listMyRecentPaymentOrders = defineOperation({
+  name: "payment.listMyRecentOrders",
+  domain: "payment",
+  title: "查询我的最近充值订单",
+  description:
+    "按创建时间倒序读取当前登录用户的最近积分充值订单。用户身份仅从 Principal 派生，返回值不包含渠道交易号或其他用户信息。",
+  input: userPaymentOrderListInputSchema,
+  output: userPaymentOrderListOutputSchema,
+  access: { kind: "user" },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: payment.listMyRecentOrders");
+  },
+});
 
 /** 读取指定日期范围的已履约充值收入与全部充值订单数趋势。 */
 export const getAdminPaymentOverview = defineOperation({
