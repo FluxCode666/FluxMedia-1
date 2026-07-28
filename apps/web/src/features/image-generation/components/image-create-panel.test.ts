@@ -16,6 +16,7 @@ type CapturedSimplePanelProps = {
   error?: string | null;
   mode?: string;
   onPromptChange?: (value: string) => void;
+  onRemoveSourceImage?: (index: number) => void;
   onSourceImagesChange?: (files: FileList | null) => void;
   onSubmit?: () => Promise<void>;
   referenceLoadingId?: string | null;
@@ -112,6 +113,7 @@ function createFileList(...files: File[]): FileList {
 function mountImageCreatePanel(
   onInitialReferenceConsumed: () => void,
   limits: {
+    maxEditImages?: number;
     maxFileSizeBytes?: number;
     maxUploadBytes?: number;
   } = {},
@@ -145,6 +147,7 @@ function mountImageCreatePanel(
           },
           maxFileSizeBytes: limits.maxFileSizeBytes ?? 10 * 1024 * 1024,
           maxUploadBytes: limits.maxUploadBytes ?? 20 * 1024 * 1024,
+          maxEditImages: limits.maxEditImages ?? 16,
           moderationEnabled: false,
           onCreditsConsumed: vi.fn(),
           recent: [],
@@ -218,6 +221,50 @@ describe("ImageCreatePanel initial reference", () => {
     expect(sourceImage?.type).toBe("image/png");
     expect(sourceImage?.size).toBe(3);
     expect(onInitialReferenceConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("支持分批追加参考图并逐张移除", () => {
+    mountImageCreatePanel(vi.fn(), {}, null);
+    const first = new File([new Uint8Array([1])], "first.png", {
+      type: "image/png",
+    });
+    const second = new File([new Uint8Array([2])], "second.webp", {
+      type: "image/webp",
+    });
+
+    act(() =>
+      testHarness.panelProps?.onSourceImagesChange?.(createFileList(first))
+    );
+    act(() =>
+      testHarness.panelProps?.onSourceImagesChange?.(createFileList(second))
+    );
+
+    expect(testHarness.panelProps?.sourceImages).toEqual([first, second]);
+    expect(testHarness.panelProps?.mode).toBe("edit");
+
+    act(() => testHarness.panelProps?.onRemoveSourceImage?.(0));
+    expect(testHarness.panelProps?.sourceImages).toEqual([second]);
+    expect(testHarness.panelProps?.mode).toBe("edit");
+  });
+
+  it("超过套餐图片数量时保留已经选择的参考图", () => {
+    mountImageCreatePanel(vi.fn(), { maxEditImages: 1 }, null);
+    const first = new File([new Uint8Array([1])], "first.png", {
+      type: "image/png",
+    });
+    const second = new File([new Uint8Array([2])], "second.png", {
+      type: "image/png",
+    });
+
+    act(() =>
+      testHarness.panelProps?.onSourceImagesChange?.(createFileList(first))
+    );
+    act(() =>
+      testHarness.panelProps?.onSourceImagesChange?.(createFileList(second))
+    );
+
+    expect(testHarness.panelProps?.sourceImages).toEqual([first]);
+    expect(testHarness.panelProps?.error).toBe("参考图最多可添加 1 张");
   });
 
   it("下载失败时给出可执行恢复提示并结束一次性交接", async () => {

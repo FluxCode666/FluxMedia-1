@@ -11,6 +11,7 @@ import { assertAccess } from "../access";
 const mocks = vi.hoisted(() => ({
   destroyGenerationPhotosByMaxCount: vi.fn(),
   getAdminSystemSettingsSnapshot: vi.fn(),
+  getPaginationConfig: vi.fn(),
   setSystemSettings: vi.fn(),
   shouldRunMaxCountCleanupOnSettingsChange: vi.fn(),
 }));
@@ -21,6 +22,9 @@ vi.mock("../../generation-maintenance", () => ({
     mocks.shouldRunMaxCountCleanupOnSettingsChange,
 }));
 vi.mock("../../logger", () => ({ logError: vi.fn() }));
+vi.mock("../../pagination/server", () => ({
+  getPaginationConfig: mocks.getPaginationConfig,
+}));
 vi.mock("../../system-settings/bootstrap", () => ({
   bootstrapSystemSettingsEnv: vi.fn(),
 }));
@@ -36,7 +40,11 @@ vi.mock("../../system-settings/index", () => ({
   setSystemSettings: mocks.setSystemSettings,
 }));
 
-import { settingsGetSnapshot, settingsUpdate } from "./system-settings";
+import {
+  settingsGetPaginationConfig,
+  settingsGetSnapshot,
+  settingsUpdate,
+} from "./system-settings";
 
 const superAdmin = {
   type: "user" as const,
@@ -53,9 +61,14 @@ describe("通用系统设置 UOL", () => {
   beforeEach(() => {
     mocks.destroyGenerationPhotosByMaxCount.mockReset();
     mocks.getAdminSystemSettingsSnapshot.mockReset();
+    mocks.getPaginationConfig.mockReset();
     mocks.setSystemSettings.mockReset();
     mocks.shouldRunMaxCountCleanupOnSettingsChange.mockReset();
     mocks.setSystemSettings.mockResolvedValue([]);
+    mocks.getPaginationConfig.mockResolvedValue({
+      defaultPageSize: 20,
+      pageSizeOptions: [10, 20, 50],
+    });
     mocks.shouldRunMaxCountCleanupOnSettingsChange.mockReturnValue(false);
   });
 
@@ -104,6 +117,31 @@ describe("通用系统设置 UOL", () => {
     expect(result.settings).toEqual(settings);
     expect(settingsGetSnapshot.output.parse(result)).toEqual(result);
     expect(result.settings[1]?.value).toBe("");
+  });
+
+  it("通过 system-only operation 返回分页配置", async () => {
+    const systemPrincipal = {
+      type: "system" as const,
+      reason: "test-pagination",
+    };
+    const result = await settingsGetPaginationConfig.execute(
+      {},
+      systemPrincipal,
+      operationContext
+    );
+
+    expect(result).toEqual({
+      defaultPageSize: 20,
+      pageSizeOptions: [10, 20, 50],
+    });
+    expect(settingsGetPaginationConfig.output.parse(result)).toEqual(result);
+    expect(settingsGetPaginationConfig.agentExposure).toBe("human-only");
+    expect(() =>
+      assertAccess(settingsGetPaginationConfig.access, systemPrincipal)
+    ).not.toThrow();
+    expect(() =>
+      assertAccess(settingsGetPaginationConfig.access, superAdmin)
+    ).toThrow();
   });
 
   it("以数组写入值与清空指令并保留清空回退语义", async () => {

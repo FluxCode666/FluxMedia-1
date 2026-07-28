@@ -13,13 +13,12 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import {
+  type DayButton,
   DayPicker,
   getDefaultClassNames,
-  type DayButton,
 } from "react-day-picker";
-
-import { type Button, buttonVariants } from "./button";
 import { cn } from "../utils";
+import { type Button, buttonVariants } from "./button";
 
 /**
  * 渲染 shadcn/ui 风格的日历。
@@ -181,12 +180,8 @@ function Calendar({
         ),
         ...components,
       }}
-      formatters={{
-        formatMonthDropdown: (date) =>
-          date.toLocaleString("default", { month: "short" }),
-        ...formatters,
-      }}
       showOutsideDays={showOutsideDays}
+      {...(formatters ? { formatters } : {})}
       {...props}
     />
   );
@@ -236,4 +231,8 @@ function CalendarDayButton({
   );
 }
 
+export {
+  enUS as calendarEnUS,
+  zhCN as calendarZhCN,
+} from "react-day-picker/locale";
 export { Calendar, CalendarDayButton };

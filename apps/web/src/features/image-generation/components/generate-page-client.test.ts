@@ -14,6 +14,7 @@ import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/
 
 type CapturedImageCreatePanelProps = {
   initialReference?: unknown;
+  maxEditImages?: number;
   onInitialReferenceConsumed?: () => void;
 };
 
@@ -90,6 +91,7 @@ function mountGeneratePageClient(): Root {
           uploadLimits: {
             maxFileSizeBytes: 10 * 1024 * 1024,
             maxUploadBytes: 20 * 1024 * 1024,
+            maxEditImages: 16,
           },
           selectedBackendGroupId: "group-1",
           imageGenerationModelCatalog: catalog,
@@ -145,6 +147,7 @@ describe("GeneratePageClient reference handoff", () => {
       sourceId: "generation-1",
       sourceName: "gallery.png",
     });
+    expect(testHarness.panelProps?.maxEditImages).toBe(16);
 
     const consume = testHarness.panelProps?.onInitialReferenceConsumed;
     expect(consume).toBeTypeOf("function");

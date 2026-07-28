@@ -59,6 +59,7 @@ type ImageCreatePanelProps = {
   };
   maxFileSizeBytes: number;
   maxUploadBytes: number;
+  maxEditImages: number;
   moderationEnabled: boolean;
   onCreditsConsumed: (credits: number) => void;
   recent: RecentImage[];
@@ -87,6 +88,11 @@ type InitialReferenceLoad = {
 /** 将字节数格式化为面向用户的 MB 限制。 */
 function formatMegabytes(bytes: number): string {
   return `${Math.max(1, Math.floor(bytes / (1024 * 1024)))} MB`;
+}
+
+/** 构造浏览器会话内稳定的文件指纹，用于避免误重复添加同一参考图。 */
+function getReferenceFileFingerprint(file: File): string {
+  return `${file.name}\u0000${file.size}\u0000${file.type}\u0000${file.lastModified}`;
 }
 
 /** 将浏览器或文件元数据中的 MIME 字符串收窄为支持的图片类型。 */
@@ -295,6 +301,7 @@ export function ImageCreatePanel({
   imageModerationPricing,
   maxFileSizeBytes,
   maxUploadBytes,
+  maxEditImages,
   moderationEnabled,
   onCreditsConsumed,
   recent,
@@ -490,25 +497,51 @@ export function ImageCreatePanel({
     selectModelForMode,
   ]);
 
-  /** 接收来源图片并在客户端校验，成功后原位切换到图生图。 */
+  /** 追加来源图片并在客户端校验，失败时保留已经选择的参考图。 */
   const changeSourceImages = (files: FileList | null) => {
-    if (!files) return;
+    if (!files || files.length === 0) return;
     invalidateInitialReferenceLoad();
     try {
-      const nextFiles = Array.from(files);
-      for (const file of nextFiles) validateImageFile(file, maxFileSizeBytes);
+      const knownFiles = new Set(sourceImages.map(getReferenceFileFingerprint));
+      const addedFiles = Array.from(files).filter((file) => {
+        const fingerprint = getReferenceFileFingerprint(file);
+        if (knownFiles.has(fingerprint)) return false;
+        knownFiles.add(fingerprint);
+        return true;
+      });
+      if (addedFiles.length === 0) {
+        throw new Error("所选图片已在参考图中");
+      }
+      const nextFiles = [...sourceImages, ...addedFiles];
+      if (nextFiles.length > maxEditImages) {
+        throw new Error(`参考图最多可添加 ${maxEditImages} 张`);
+      }
+      for (const file of addedFiles) validateImageFile(file, maxFileSizeBytes);
       validateTotalUploadSize(nextFiles, null, maxUploadBytes);
       setSourceImages(nextFiles);
       setMask(null);
-      setMode(nextFiles.length > 0 ? "edit" : "generate");
-      selectModelForMode(nextFiles.length > 0 ? "edit" : "generate");
+      setMode("edit");
+      selectModelForMode("edit");
       setError(null);
     } catch (caught) {
-      setSourceImages([]);
-      setMask(null);
-      setMode("generate");
       setError(caught instanceof Error ? caught.message : "图片校验失败");
     }
+  };
+
+  /** 删除单张参考图；移除主参考图时同时清理与其像素坐标绑定的蒙版。 */
+  const removeSourceImage = (index: number) => {
+    if (busy || index < 0 || index >= sourceImages.length) return;
+    const nextFiles = sourceImages.filter(
+      (_file, candidateIndex) => candidateIndex !== index
+    );
+    const nextMask = index === 0 ? null : mask;
+    setSourceImages(nextFiles);
+    setMask(nextMask);
+    const nextMode =
+      nextFiles.length === 0 ? "generate" : nextMask ? "mask" : "edit";
+    setMode(nextMode);
+    selectModelForMode(nextMode);
+    setError(null);
   };
 
   /** 接收单个 PNG 蒙版并校验基础边界，尺寸一致性由服务端复验。 */
@@ -565,6 +598,10 @@ export function ImageCreatePanel({
    */
   const selectRecentReference = async (image: RecentImage) => {
     if (busy || referenceLoadingId || !image.imageUrl) return false;
+    if (sourceImages.length >= maxEditImages) {
+      setError(`参考图最多可添加 ${maxEditImages} 张`);
+      return false;
+    }
     setReferenceLoadingId(image.id);
     setError(null);
     try {
@@ -579,7 +616,12 @@ export function ImageCreatePanel({
         maxFileSizeBytes,
         maxUploadBytes
       );
-      setSourceImages([file]);
+      const nextFiles = [...sourceImages, file];
+      if (nextFiles.length > maxEditImages) {
+        throw new Error(`参考图最多可添加 ${maxEditImages} 张`);
+      }
+      validateTotalUploadSize(nextFiles, null, maxUploadBytes);
+      setSourceImages(nextFiles);
       setMask(null);
       setMode("edit");
       selectModelForMode("edit");
@@ -674,6 +716,8 @@ export function ImageCreatePanel({
       hasAvailableModel={availableModels.length > 0}
       mask={mask}
       maskAvailable={maskAvailable}
+      maxEditImages={maxEditImages}
+      maxUploadBytes={maxUploadBytes}
       mode={mode}
       model={model}
       onBackgroundChange={setBackground}
@@ -683,6 +727,7 @@ export function ImageCreatePanel({
       onQualityChange={setQuality}
       onRecentReferenceSelect={selectRecentReference}
       onRemoveReference={removeReference}
+      onRemoveSourceImage={removeSourceImage}
       onSizeChange={setSize}
       onSourceImagesChange={changeSourceImages}
       onSubmit={submit}

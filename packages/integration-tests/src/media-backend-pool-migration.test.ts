@@ -12,7 +12,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { FIREFLY_VIDEO_MODEL_CATALOG } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -25,6 +24,41 @@ interface ExistsRow {
 interface JsonValueRow {
   value: Record<string, unknown>;
 }
+
+/**
+ * 0060 发布时硬编码的 Adobe direct 视频模型快照。
+ *
+ * 历史迁移不能随运行时 catalog 扩张而变化；测试固定该快照，避免新增模型让已发布
+ * 迁移产生伪失败，同时继续验证 PostgreSQL 实际迁移结果没有遗漏或额外模型。
+ */
+const LEGACY_DIRECT_VIDEO_MODEL_IDS = [
+  ...[4, 8, 12].flatMap((duration) =>
+    ["9x16", "16x9"].flatMap((aspectRatio) => [
+      `firefly-sora2-${duration}s-${aspectRatio}`,
+      `firefly-sora2-pro-${duration}s-${aspectRatio}`,
+    ])
+  ),
+  ...["", "-ref", "-fast"].flatMap((variant) =>
+    [4, 6, 8].flatMap((duration) =>
+      ["16x9", "9x16"].flatMap((aspectRatio) =>
+        ["1080p", "720p"].map(
+          (resolution) =>
+            `firefly-veo31${variant}-${duration}s-${aspectRatio}-${resolution}`
+        )
+      )
+    )
+  ),
+  ...[5, 15].flatMap((duration) =>
+    ["16x9", "9x16"].map(
+      (aspectRatio) => `firefly-kling-o3-${duration}s-${aspectRatio}`
+    )
+  ),
+  ...[5, 10, 15].flatMap((duration) =>
+    ["16x9", "9x16"].map(
+      (aspectRatio) => `firefly-kling3-${duration}s-${aspectRatio}`
+    )
+  ),
+];
 
 let pool: Pool | null = null;
 
@@ -847,7 +881,7 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         (member) => member.id === "legacy-adobe"
       );
       expect(new Set(migratedAdobeMember?.supported_model_ids)).toEqual(
-        new Set(["gpt-image-2", ...Object.keys(FIREFLY_VIDEO_MODEL_CATALOG)])
+        new Set(["gpt-image-2", ...LEGACY_DIRECT_VIDEO_MODEL_IDS])
       );
       const apiConfig = await client.query<{
         api_key: string;

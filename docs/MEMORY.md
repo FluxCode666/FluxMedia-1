@@ -30,6 +30,9 @@
 - 图片、视频、号池和系统设置的现行 operation 见
   [feature-interface-inventory.md](plan/2026-05-31-feature-interface-inventory.md)。
 - MCP 与站内调用共享 registry、Principal、权限、幂等与审计网关。
+- 所有可见分页列表默认每页 20 条；可选大小由系统设置
+  `PAGINATION_PAGE_SIZE_OPTIONS` 统一配置，必须包含 20，默认 `[10, 20, 50]`。
+  页面通过 `settings.getPaginationConfig` 读取，切换大小时必须重置页码或签名 cursor。
 
 ## 模型配置与公开目录
 
@@ -53,6 +56,17 @@
 - 视频请求以 Principal 所有者和 `clientRequestId` 派生稳定任务、扣费与存储键。
 - 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
   退款或覆盖新 worker 的状态。
+- 管理端“支付概览/订单管理”只统计统一 `payment_order` 中的积分充值订单；收入按
+  `fulfilled_at`、部署级 `APP_TIME_ZONE` 和币种分别汇总，不代表订阅或渠道净收入。
+- 支付概览图表左轴为收入金额、右轴为充值订单数；订单币种与已履约收入币种取并集，
+  即使某币种收入为 0 也必须保留零值金额线，且禁止跨币种相加。
+- 管理端订单管理按 `payment_order.created_at` 和部署级 `APP_TIME_ZONE` 筛选，默认今天
+  及前 6 天；结束日期使用次日零点 UTC 半开边界，签名 cursor 必须绑定原日期范围。
+- 用户钱包最近充值订单只读取本人 `payment_order` 中的 `credit_top_up` 与
+  `credit_package`，用户身份必须从 Principal 派生，不能接受客户端 `userId`。
+
+详见 [admin-payment-management.md](plan/2026-07-28-admin-payment-management.md) 与
+[credit-payment-result-flow.md](memory/credit-payment-result-flow.md)。
 
 ## 生图并发
 

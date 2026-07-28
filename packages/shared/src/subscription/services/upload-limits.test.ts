@@ -1,3 +1,8 @@
+/**
+ * 套餐媒体上传限制服务测试。
+ *
+ * 验证 MB 到字节的转换，以及参考图数量上限在单套餐与全套餐读取中的透传。
+ */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SUBSCRIPTION_PLANS } from "../../config/subscription-plan";
@@ -44,6 +49,7 @@ describe("getPlanUploadLimits", () => {
     expect(limits).toEqual({
       maxFileSizeBytes: megabytesToBytes(20),
       maxUploadBytes: megabytesToBytes(75),
+      maxEditImages: 1,
     });
   });
 });
@@ -67,6 +73,7 @@ describe("getAllPlanUploadLimits", () => {
       expect(all[plan]).toEqual({
         maxFileSizeBytes: megabytesToBytes(10),
         maxUploadBytes: megabytesToBytes(30),
+        maxEditImages: 1,
       });
     }
   });

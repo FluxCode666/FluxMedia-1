@@ -133,6 +133,7 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).not.toContain("APP_TIME_ZONE");
     expect(initializedKeys).toContain("MARKETING_SLA_STATUS_ENABLED");
     expect(initializedKeys).toContain("DASHBOARD_SUPPORT_CONFIG");
+    expect(initializedKeys).toContain("PAGINATION_PAGE_SIZE_OPTIONS");
     expect(initializedKeys).toContain("SELF_USE_MODE_ENABLED");
     expect(initializedKeys).toContain("GENERATION_IMAGE_RETENTION_HOURS");
     expect(initializedKeys).toContain("GENERATION_IMAGE_RETENTION_MODE");
@@ -170,6 +171,9 @@ describe("system setting default initialization", () => {
     expect(store.get("DASHBOARD_SUPPORT_CONFIG")?.value).toEqual(
       DEFAULT_DASHBOARD_SUPPORT_CONFIG
     );
+    expect(store.get("PAGINATION_PAGE_SIZE_OPTIONS")?.value).toEqual([
+      10, 20, 50,
+    ]);
     expect(store.get("SELF_USE_MODE_ENABLED")?.value).toBe(true);
     expect(store.get("GENERATION_IMAGE_RETENTION_HOURS")?.value).toBe(0);
     // 默认清理模式 off=永久保存（fail-safe）；最大张数默认 10000。
@@ -371,7 +375,9 @@ describe("system setting default initialization", () => {
       ...legacyDefaultPricing,
       base2kCredits: 8,
     });
-    for (const model of Object.keys(createDefaultGlobalImageCreditOverrides().byModel)) {
+    for (const model of Object.keys(
+      createDefaultGlobalImageCreditOverrides().byModel
+    )) {
       expect(storedPricing.byModel[model]).toEqual(legacyDefaultPricing);
     }
   });

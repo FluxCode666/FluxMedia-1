@@ -18,6 +18,8 @@
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/image-generation";
+import "@/server/uol-bindings/payment-admin";
+import "@/server/uol-bindings/payment-user";
 
 import {
   usageSummaryOutputSchema,

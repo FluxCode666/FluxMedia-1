@@ -39,6 +39,7 @@ interface GeneratePageClientProps {
   uploadLimits: {
     maxFileSizeBytes: number;
     maxUploadBytes: number;
+    maxEditImages: number;
   };
   selectedBackendGroupId: string | null;
   imageGenerationModelCatalog: ImageGenerationModelCatalog;
@@ -150,6 +151,7 @@ export function GeneratePageClient({
         imageModerationPricing={imageModerationPricing}
         maxFileSizeBytes={uploadLimits.maxFileSizeBytes}
         maxUploadBytes={uploadLimits.maxUploadBytes}
+        maxEditImages={uploadLimits.maxEditImages}
         moderationEnabled={moderationEnabled}
         onCreditsConsumed={consumeDisplayedCredits}
         recent={recentGenerations}

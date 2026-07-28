@@ -45,6 +45,7 @@ import type {
 import { SETTING_CATEGORIES } from "../definitions";
 import { DashboardSupportConfigInput } from "./dashboard-support-config-input";
 import { ModerationPolicyCard } from "./moderation-policy-card";
+import { PaginationPageSizeOptionsInput } from "./pagination-page-size-options-input";
 
 type SettingSnapshotItem = SettingDefinition & {
   value: string;
@@ -635,6 +636,9 @@ function compactCreditPackageMatrixDraft(matrix: CreditPackageMatrixDraft) {
 }
 
 function getJsonSettingHint(key: string) {
+  if (key === "PAGINATION_PAGE_SIZE_OPTIONS") {
+    return "默认允许每页 10、20、50 条；固定默认值 20 必须保留。保存后所有列表的新请求动态生效。";
+  }
   if (key === "PLAN_CAPABILITY_MATRIX") {
     return "留空表示使用代码默认矩阵，并继续兼容旧上传/月积分配置。后台矩阵保存后会写入 JSON；功能门槛按最低套餐生效，高级套餐自动包含低级套餐能力。";
   }
@@ -689,6 +693,16 @@ function SettingInput({
   disabled: boolean;
   onChange: (value: DraftValue) => void;
 }) {
+  if (setting.key === "PAGINATION_PAGE_SIZE_OPTIONS") {
+    return (
+      <PaginationPageSizeOptionsInput
+        disabled={disabled}
+        onChange={onChange}
+        value={value}
+      />
+    );
+  }
+
   if (setting.key === "DASHBOARD_SUPPORT_CONFIG") {
     return (
       <DashboardSupportConfigInput
@@ -1787,7 +1801,8 @@ export function SystemSettingsPanel({ timeZone }: { timeZone: string }) {
                       setting.key === "PLAN_CAPABILITY_MATRIX" ||
                       setting.key === "CREDIT_PACKAGE_MATRIX" ||
                       setting.key === "CREDIT_TOP_UP_CONFIG" ||
-                      setting.key === "DASHBOARD_SUPPORT_CONFIG"
+                      setting.key === "DASHBOARD_SUPPORT_CONFIG" ||
+                      setting.key === "PAGINATION_PAGE_SIZE_OPTIONS"
                         ? "rounded-lg lg:col-span-2"
                         : "rounded-lg"
                     }

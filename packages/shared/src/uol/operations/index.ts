@@ -52,6 +52,7 @@ export {
   settingsGetModelConfiguration,
   settingsUpdateModelConfigurationEntry,
 } from "./model-marketplace";
+export { settingsGetPaginationConfig } from "./system-settings";
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {
   videoGenerate,
@@ -63,3 +64,5 @@ export {
 import "./support";
 // 用户控制台统计
 import "./analytics";
+// 管理端支付概览与充值订单
+import "./payment";

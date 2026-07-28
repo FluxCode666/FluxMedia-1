@@ -18,6 +18,7 @@ import type { Principal } from "./principal";
  */
 export type OperationDomain =
   | "analytics"
+  | "payment"
   | "image-generation"
   | "credits"
   | "subscription"

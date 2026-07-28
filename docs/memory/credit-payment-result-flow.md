@@ -1,6 +1,6 @@
 # 统一积分支付结果流程
 
-最后更新：2026-07-20
+最后更新：2026-07-28
 
 ## 目标
 
@@ -31,5 +31,9 @@
 ## 接口
 
 - UOL operation：`credits.getPaymentStatus`。
+- 钱包最近充值订单 UOL operation：`payment.listMyRecentOrders`，默认读取最近 8 笔，
+  最多 20 笔。
 - Server Action：`getCreditPaymentStatusAction`。
 - 查询必须按当前 `userId` 过滤，未命中统一返回“积分支付订单不存在”，防止 IDOR 枚举。
+- 最近订单列表同样只从 Principal 派生 `userId`，仅返回本地订单号、通道、充值类型、
+  用户态状态、金额、积分和时间，不返回渠道交易号或支付快照。
