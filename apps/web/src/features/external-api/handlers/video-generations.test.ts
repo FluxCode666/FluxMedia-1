@@ -161,4 +161,32 @@ describe("postExternalVideoGenerations", () => {
     expect(response.status).toBe(400);
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
+
+  it("接受 input_image_role 并映射为 UOL 参考图角色", async () => {
+    const image = `data:image/png;base64,${Buffer.from("image").toString(
+      "base64"
+    )}`;
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        client_request_id: "client-reference",
+        prompt: "角色在城市中行走",
+        model: "firefly-kling3-omni-8s-16x9-1080p",
+        input_image_role: "reference",
+        image: [image],
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        inputImageRole: "reference",
+        inputImages: [
+          expect.objectContaining({ source: "data", byteLength: 5 }),
+        ],
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
 });

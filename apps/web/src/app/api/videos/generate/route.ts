@@ -34,6 +34,7 @@ const generateVideoSchema = z
     negativePrompt: z.string().max(8000).optional(),
     generateAudio: z.boolean().optional(),
     inputImages: z.array(videoInputImageDataUrlSchema).max(3).optional(),
+    inputImageRole: z.enum(["frame", "reference"]).optional(),
   })
   .strict();
 
@@ -92,6 +93,9 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         ? { generateAudio: parsed.data.generateAudio }
         : {}),
       ...(inputImages?.length ? { inputImages } : {}),
+      ...(parsed.data.inputImageRole
+        ? { inputImageRole: parsed.data.inputImageRole }
+        : {}),
     },
     principal,
     { requestId: request.headers.get("x-request-id") ?? undefined }

@@ -30,6 +30,7 @@ import {
   type FireflyTransport,
   type FireflyTransportRequest,
   type FireflyTransportResponse,
+  type FireflyVideoInputImageRole,
   fetchCreditsBalance,
   fireflyVideoMaxInputImages,
   fireflyVideoSize,
@@ -803,6 +804,7 @@ export async function submitAdobeDirectVideoRequest(
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
     generateAudio?: boolean;
+    inputImageRole?: FireflyVideoInputImageRole;
     requestProfile: AdobeCredentialProfile;
     authProfile: AdobeCredentialProfile;
     signal?: AbortSignal;
@@ -831,6 +833,26 @@ export async function submitAdobeDirectVideoRequest(
       submissionUncertain: false,
     };
   }
+  const inputImageRole = params.inputImageRole ?? "frame";
+  const maxInputs = fireflyVideoMaxInputImages(prepared.conf, inputImageRole);
+  if (params.inputImages?.length && maxInputs === 0) {
+    return {
+      error: `该视频模型不支持 ${inputImageRole} 输入图`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+      submissionUncertain: false,
+    };
+  }
+  if ((params.inputImages?.length ?? 0) > maxInputs) {
+    return {
+      error: `该视频模型最多支持 ${maxInputs} 张 ${inputImageRole} 输入图`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+      submissionUncertain: false,
+    };
+  }
 
   const result = await runWithAdobeCredential(
     prepared.memberId,
@@ -842,7 +864,6 @@ export async function submitAdobeDirectVideoRequest(
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
         sourceImageIds = [];
-        const maxInputs = fireflyVideoMaxInputImages(prepared.conf);
         for (const image of params.inputImages.slice(0, maxInputs)) {
           const preparedImage = await prepareAdobeVideoSourceImage(
             image.data,
@@ -871,6 +892,7 @@ export async function submitAdobeDirectVideoRequest(
         outputResolution: prepared.conf.outputResolution,
         size: prepared.size,
         generateAudio: params.generateAudio ?? prepared.conf.generateAudio,
+        ...(sourceImageIds ? { inputImageRole } : {}),
         ...(prepared.conf.referenceMode
           ? { referenceMode: prepared.conf.referenceMode }
           : {}),
@@ -1026,6 +1048,7 @@ export async function runAdobeDirectVideoRequest(
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
     generateAudio?: boolean;
+    inputImageRole?: FireflyVideoInputImageRole;
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoResult> {
@@ -1070,6 +1093,24 @@ export async function runAdobeDirectVideoRequest(
       terminal: true,
     };
   }
+  const inputImageRole = params.inputImageRole ?? "frame";
+  const maxInputs = fireflyVideoMaxInputImages(conf, inputImageRole);
+  if (params.inputImages?.length && maxInputs === 0) {
+    return {
+      error: `该视频模型不支持 ${inputImageRole} 输入图`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+    };
+  }
+  if ((params.inputImages?.length ?? 0) > maxInputs) {
+    return {
+      error: `该视频模型最多支持 ${maxInputs} 张 ${inputImageRole} 输入图`,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+    };
+  }
   const size = fireflyVideoSize(conf);
 
   const { apiTransport, downloadTransport } = await buildAdobeTransports(
@@ -1092,7 +1133,6 @@ export async function runAdobeDirectVideoRequest(
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
         sourceImageIds = [];
-        const maxInputs = fireflyVideoMaxInputImages(conf);
         for (const image of params.inputImages.slice(0, maxInputs)) {
           const preparedImage = await prepareAdobeVideoSourceImage(
             image.data,
@@ -1122,6 +1162,7 @@ export async function runAdobeDirectVideoRequest(
         outputResolution: conf.outputResolution,
         size,
         generateAudio: params.generateAudio ?? conf.generateAudio,
+        ...(sourceImageIds ? { inputImageRole } : {}),
         ...(conf.referenceMode ? { referenceMode: conf.referenceMode } : {}),
         ...(params.negativePrompt != null
           ? { negativePrompt: params.negativePrompt }

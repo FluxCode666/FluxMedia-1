@@ -5,8 +5,8 @@
  *
  * 选模型族(13族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
  * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
- * 产物视频。模型支持时可上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页
- * 独立 tab。
+ * 产物视频。模型支持时可上传首尾帧；Kling 3.0 Omni 还可切换最多三张参考图。
+ * 与图像创作解耦，作为创作页独立 tab。
  */
 
 import {
@@ -39,6 +39,7 @@ export type VideoCreateInitialSelection = {
 };
 
 type VideoStatus = "idle" | "running" | "done" | "error";
+type VideoInputImageRole = "frame" | "reference";
 
 type VideoTaskResponse = {
   taskId: string;
@@ -167,10 +168,10 @@ export function VideoCreatePanel({
     initialFamily?.generateAudio ?? false
   );
   const [prompt, setPrompt] = useState("");
-  const [inputImage, setInputImage] = useState<string | null>(null);
-  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(
-    null
-  );
+  const [inputImages, setInputImages] = useState<string[]>([]);
+  const [inputImageRole, setInputImageRole] =
+    useState<VideoInputImageRole>("frame");
+  const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
   const [status, setStatus] = useState<VideoStatus>("idle");
   const historyImages = recent.filter(
     (item) => item.status === "completed" && item.imageUrl
@@ -187,10 +188,9 @@ export function VideoCreatePanel({
       setRatio(next.ratios[0] ?? ratio);
       setResolution(next.resolutions[0] ?? resolution);
       setGenerateAudio(next.generateAudio);
-      if (next.maxInputImages === 0) {
-        setInputImage(null);
-        setSelectedHistoryId(null);
-      }
+      setInputImageRole("frame");
+      setInputImages([]);
+      setSelectedHistoryIds([]);
     }
   };
 
@@ -243,6 +243,10 @@ export function VideoCreatePanel({
     resolution,
     resolutionInId: family.resolutionInId,
   });
+  const maxInputImages =
+    inputImageRole === "reference"
+      ? (family.maxReferenceImages ?? 0)
+      : family.maxInputImages;
 
   const generate = async () => {
     if (!prompt.trim() || status === "running") return;
@@ -258,8 +262,8 @@ export function VideoCreatePanel({
           prompt: prompt.trim(),
           model,
           ...(family.supportsAudio ? { generateAudio } : {}),
-          ...(family.maxInputImages > 0 && inputImage
-            ? { inputImages: [inputImage] }
+          ...(maxInputImages > 0 && inputImages.length > 0
+            ? { inputImages, inputImageRole }
             : {}),
         }),
       });
@@ -405,10 +409,36 @@ export function VideoCreatePanel({
         rows={3}
       />
 
-      {family.maxInputImages > 0 && (
+      {(family.maxInputImages > 0 || (family.maxReferenceImages ?? 0) > 0) && (
         <div className="space-y-1.5">
+          {(family.maxReferenceImages ?? 0) > 0 && (
+            <div className="max-w-xs space-y-1.5">
+              <Label className="text-xs text-muted-foreground">
+                输入图用途
+              </Label>
+              <Select
+                value={inputImageRole}
+                onValueChange={(value: VideoInputImageRole) => {
+                  setInputImageRole(value);
+                  setInputImages([]);
+                  setSelectedHistoryIds([]);
+                }}
+                disabled={busy}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="frame">首尾帧</SelectItem>
+                  <SelectItem value="reference">参考图</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <Label className="text-xs text-muted-foreground">
-            首帧图（可选，图生视频）
+            {inputImageRole === "reference"
+              ? `参考图（可选，最多 ${maxInputImages} 张）`
+              : `首尾帧（可选，最多 ${maxInputImages} 张，按选择顺序）`}
           </Label>
           {historyImages.length > 0 && (
             <div className="flex flex-wrap gap-2">
@@ -417,18 +447,37 @@ export function VideoCreatePanel({
                   key={item.id}
                   type="button"
                   disabled={busy}
-                  title="用此历史图作首帧"
+                  title={
+                    inputImageRole === "reference"
+                      ? "选择或取消此参考图"
+                      : "按首帧、尾帧顺序选择或取消"
+                  }
                   onClick={async () => {
                     if (!item.imageUrl) return;
                     try {
-                      setInputImage(await urlToDataUrl(item.imageUrl));
-                      setSelectedHistoryId(item.id);
+                      if (selectedHistoryIds.includes(item.id)) {
+                        const index = selectedHistoryIds.indexOf(item.id);
+                        setSelectedHistoryIds((current) =>
+                          current.filter((id) => id !== item.id)
+                        );
+                        setInputImages((current) =>
+                          current.filter(
+                            (_, imageIndex) => imageIndex !== index
+                          )
+                        );
+                        return;
+                      }
+                      if (inputImages.length >= maxInputImages) return;
+                      const dataUrl = await urlToDataUrl(item.imageUrl);
+                      setInputImages((current) => [...current, dataUrl]);
+                      setSelectedHistoryIds((current) => [...current, item.id]);
                     } catch {
-                      setSelectedHistoryId(null);
+                      setSelectedHistoryIds([]);
+                      setInputImages([]);
                     }
                   }}
                   className={`h-14 w-14 overflow-hidden rounded-md border transition-[border-color,box-shadow] duration-150 ${
-                    selectedHistoryId === item.id
+                    selectedHistoryIds.includes(item.id)
                       ? "border-primary ring-1 ring-primary"
                       : "border-border hover:border-foreground/40"
                   }`}
@@ -446,26 +495,30 @@ export function VideoCreatePanel({
           )}
           <input
             type="file"
+            multiple={maxInputImages > 1}
             accept="image/png,image/jpeg,image/webp"
             disabled={busy}
             className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm"
             onChange={async (event) => {
-              const file = event.target.files?.[0];
-              setInputImage(file ? await fileToDataUrl(file) : null);
-              setSelectedHistoryId(null);
+              const files = Array.from(event.target.files ?? []).slice(
+                0,
+                maxInputImages
+              );
+              setInputImages(await Promise.all(files.map(fileToDataUrl)));
+              setSelectedHistoryIds([]);
             }}
           />
-          {inputImage && (
+          {inputImages.length > 0 && (
             <button
               type="button"
               className="text-xs text-muted-foreground underline"
               disabled={busy}
               onClick={() => {
-                setInputImage(null);
-                setSelectedHistoryId(null);
+                setInputImages([]);
+                setSelectedHistoryIds([]);
               }}
             >
-              清除首帧图
+              清除已选图片（{inputImages.length} 张）
             </button>
           )}
         </div>

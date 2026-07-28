@@ -24,7 +24,7 @@ model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
 | veo31-fast | `firefly-veo31-fast-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31-fast` | `veo` | `3.1-fast-generate` | `veo31-fast` |
 | kling-o3 | `firefly-kling-o3-{d}s-{ratio}` | 5,15 | 16:9,9:16 | 1080p 固定 | `kling:firefly:colligo:o3` | `kling` | `kling_o3_pro_reference_to_video` | `kling-o3` |
 | kling3 | `firefly-kling3-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3` | `kling3` + 默认有声 + 首尾帧 |
-| kling3-omni | `firefly-kling3-omni-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_o3_standard_t2v` | `kling3-omni` + 默认无声 + 单图 style |
+| kling3-omni | `firefly-kling3-omni-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3_omni` | `kling3-omni` + 默认无声 + 首尾帧/最多 3 张参考图 |
 | runway-gen45 | `firefly-runway-gen45-{d}s-16x9` | 5,8,10 | 16:9 | 720p 固定 | 不发送 | `runway` | `gen4.5` | `runway-gen45` + 无声 + 仅文本 |
 | ray314 | `firefly-ray314-{d}s-{ratio}-{res}` | 5,10 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray` | `ray314` + `mode:flex_2` + 无声 + 仅文本 |
 | ray314-hdr | `firefly-ray314-hdr-{d}s-{ratio}-{res}` | 5 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray-hdr` | `ray314-hdr` + 无声 + 仅文本 |
@@ -138,7 +138,7 @@ Adobe 的分辨率标签以画幅短边为基准。4:3 基准尺寸由网页选�
   "n": 1,
   "seeds": [123456],
   "modelId": "kling",
-  "modelVersion": "kling_o3_standard_t2v",
+  "modelVersion": "kling_v3_omni",
   "output": { "storeInputs": true },
   "duration": 10,
   "prompt": "<已脱敏>",
@@ -150,8 +150,12 @@ Adobe 的分辨率标签以画幅短边为基准。4:3 基准尺寸由网页选�
 }
 ```
 
-图片输入由用户补充确认与 Seedance 2.0 相近，当前实现限制单图并映射为
-`referenceBlobs:[{id,usage:"style"}]`；上述文本样本本身只验证了空数组形态。
+官网公开配置和设置转换器确认新版版本为 `kling_v3_omni`，支持首帧、尾帧以及最多
+3 张参考图。统一接口以 `inputImageRole` 区分两种互斥语义：默认 `frame`，最多两张，
+按 `referenceBlobs:[{id,usage:"frame",order:1|2}]` 发送并把 module 切换为
+`image2video`；显式 `reference` 时最多三张，按
+`referenceBlobs:[{id,usage:"asset"}]` 发送并保持 `text2video`。Firefly 历史恢复逻辑
+同时识别 `asset` 与旧 `style`，新请求使用官网统一参考素材语义 `asset`。
 
 ### Kling 3.0 已验证提交体
 
@@ -272,8 +276,9 @@ HDR 目录仅开放 5 秒；分辨率、比例和尺寸映射与普通 Ray 3.14 
 - **Sora2**：`referenceBlobs:[{id, usage:"general", promptReference:1}]`；`referenceFrames:[{localBlobRef:first}, null]`，首+尾帧时第二槽 `{localBlobRef:last}`。
 - **Veo31/veo31-ref**：同 referenceBlobs/frames；veo31-ref 加 `reference_mode:"image"`。
 - **Kling(o3/3.0)**：帧 `referenceBlobs:[{id, usage:"frame", order:idx}]`；kling-o3 实体引用 `{usage:"element", creativeCloudFileId:urn, mention:{id}}`。
-- **Kling 3.0 Omni**：用户补充其图片参数与 Seedance 2.0 相近，当前按单张
-  `referenceBlobs:[{id,usage:"style"}]` 接入；仍需带图请求样本复核。
+- **Kling 3.0 Omni**：`inputImageRole=frame` 时最多两张，使用
+  `referenceBlobs:[{id,usage:"frame",order:1|2}]`；`reference` 时最多三张，使用
+  `referenceBlobs:[{id,usage:"asset"}]`。
 - **Runway Gen-4.5**：当前文本样本未出现图片字段，目录输入图上限为 0，不上传或
   转发参考图。
 - **Ray 3.14**：当前文本样本未出现图片字段，目录输入图上限为 0，不上传或转发

@@ -25,6 +25,7 @@ import {
 } from "@repo/shared/adobe";
 import {
   assertAdobeVideoPollUrl,
+  type FireflyVideoInputImageRole,
   fireflyVideoMaxInputImages,
   resolveFireflyVideoModel,
 } from "@repo/shared/adobe/firefly-direct";
@@ -115,6 +116,7 @@ export type VideoGenerationInput = {
   negativePrompt?: string | null;
   generateAudio?: boolean;
   inputImages?: MediaInputReference[];
+  inputImageRole?: FireflyVideoInputImageRole;
   stagedInputObjects?: VideoInputCleanupObject[];
 };
 
@@ -511,6 +513,19 @@ function getVideoMetadataBoolean(
   return typeof value === "boolean" ? value : undefined;
 }
 
+/**
+ * 从任务 metadata 恢复输入图角色。
+ *
+ * @param metadata 持久任务元数据；历史任务可以为空。
+ * @returns 已验证角色；历史任务缺失或非法时回退首尾帧。
+ * @sideEffects 无。
+ */
+function getVideoInputImageRole(
+  metadata: Record<string, unknown> | null
+): FireflyVideoInputImageRole {
+  return metadata?.inputImageRole === "reference" ? "reference" : "frame";
+}
+
 /** 重新校验任务中持久化的 JSON-safe 输入引用，防止脏数据进入 worker。 */
 function parsePersistedVideoInputImages(
   row: VideoGenerationRow
@@ -582,7 +597,11 @@ export async function runAdobeVideoGenerationForUser(
     return { error: "该视频模型不支持音频开关" };
   }
   const effectiveGenerateAudio = input.generateAudio ?? conf.generateAudio;
-  const maxInputImages = fireflyVideoMaxInputImages(conf);
+  const inputImageRole = input.inputImageRole ?? "frame";
+  const maxInputImages = fireflyVideoMaxInputImages(conf, inputImageRole);
+  if (input.inputImages?.length && maxInputImages === 0) {
+    return { error: `该视频模型不支持 ${inputImageRole} 输入图` };
+  }
   if ((input.inputImages?.length ?? 0) > maxInputImages) {
     return { error: `该视频模型最多支持 ${maxInputImages} 张输入图` };
   }
@@ -661,6 +680,7 @@ export async function runAdobeVideoGenerationForUser(
           ? { negativePrompt: input.negativePrompt }
           : {}),
         generateAudio: effectiveGenerateAudio,
+        ...(persistedInputImages?.length ? { inputImageRole } : {}),
       },
       ...(persistedInputImages?.length
         ? { inputImageRefs: persistedInputImages }
@@ -736,6 +756,7 @@ async function submitClaimedCreatedVideo(
   const generateAudio =
     getVideoMetadataBoolean(initialRow.metadata, "generateAudio") ??
     conf.generateAudio;
+  const inputImageRole = getVideoInputImageRole(initialRow.metadata);
   let row = initialRow;
 
   const globalPricing = await getRuntimeGlobalVideoPricing();
@@ -870,6 +891,7 @@ async function submitClaimedCreatedVideo(
       requestProfile: row.adobeRequestProfile,
       authProfile: row.adobeAuthProfile,
       ...(inputImages ? { inputImages } : {}),
+      ...(inputImages ? { inputImageRole } : {}),
       ...(negativePrompt != null ? { negativePrompt } : {}),
       generateAudio,
       signal: AbortSignal.timeout(VIDEO_SUBMISSION_TIMEOUT_MS),

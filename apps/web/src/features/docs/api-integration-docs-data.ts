@@ -369,19 +369,20 @@ const zhContent = {
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-001",
-    "model": "firefly-veo31-8s-16x9-1080p",
-    "prompt": "A corgi running along the beach at sunset",
+    "model": "firefly-kling3-omni-8s-16x9-1080p",
+    "prompt": "A hero walking through a neon city",
     "negative_prompt": "low resolution, blur, watermark",
-    "generate_audio": false
+    "generate_audio": true,
+    "input_image_role": "reference",
+    "image": ["data:image/png;base64,..."]
   }'`,
       responseExample: `{
-  "created": 1713833628,
-  "model": "firefly-veo31-8s-16x9-1080p",
-  "data": [
-    {
-      "url": "https://gpt2image.superapi.buzz/api/storage/generations/..."
-    }
-  ]
+  "object": "video.task",
+  "id": "video_...",
+  "task_id": "video_...",
+  "generation_id": "video_...",
+  "status": "pending",
+  "model": "firefly-kling3-omni-8s-16x9-1080p"
 }`,
       parameters: [
         {
@@ -415,13 +416,19 @@ const zhContent = {
           name: "image",
           requirement: "可选",
           description:
-            "base64 image data URL 数组，模型支持时最多 3 张参考图；Kling 3.0 最多接收 2 张，依次作为首帧和尾帧；Runway Gen-4.5 与 Ray 3.14（含 HDR）当前不支持图片输入。",
+            "base64 image data URL 数组。Kling 3.0 与 Kling 3.0 Omni 的 frame 模式最多 2 张，依次作为首帧和尾帧；Omni 的 reference 模式最多 3 张；Runway Gen-4.5 与 Ray 3.14（含 HDR）当前不支持图片输入。",
+        },
+        {
+          name: "input_image_role / inputImageRole",
+          requirement: "可选",
+          description:
+            "输入图语义，可选 frame 或 reference，默认 frame。reference 当前用于 Kling 3.0 Omni，必须与 image 一起传入。",
         },
       ],
       responses: [
-        { name: "created", description: "Unix 秒时间戳。" },
+        { name: "task_id / id", description: "异步视频任务 ID。" },
+        { name: "status", description: "任务初始状态，通常为 pending。" },
         { name: "model", description: "本次使用的视频模型 ID。" },
-        { name: "data[].url", description: "生成视频的存储 URL。" },
       ],
       notes: [
         "视频生成耗时通常长于图片生成，请为客户端配置足够的读取超时时间。",
@@ -839,16 +846,22 @@ const enContent = {
           name: "image",
           requirement: "Optional",
           description:
-            "An array of up to three base64 image data URLs when supported by the model. Kling 3.0 accepts up to two images as the first and last frames. Runway Gen-4.5 and Ray 3.14, including HDR, currently do not accept image input.",
+            "An array of base64 image data URLs. Kling 3.0 and Kling 3.0 Omni accept up to two images as first/last frames in frame mode. Omni accepts up to three images in reference mode. Runway Gen-4.5 and Ray 3.14, including HDR, currently do not accept image input.",
+        },
+        {
+          name: "input_image_role / inputImageRole",
+          requirement: "Optional",
+          description:
+            "Input image semantics: frame or reference; defaults to frame. reference is currently available for Kling 3.0 Omni and requires image.",
         },
       ],
       responses: [
-        { name: "created", description: "Unix timestamp in seconds." },
-        { name: "model", description: "Video model ID used for this request." },
+        { name: "task_id / id", description: "Asynchronous video task ID." },
         {
-          name: "data[].url",
-          description: "Storage URL of the generated video.",
+          name: "status",
+          description: "Initial task status, usually pending.",
         },
+        { name: "model", description: "Video model ID used for this request." },
       ],
       notes: [
         "Video generation usually takes longer than image generation. Configure a sufficient client read timeout.",

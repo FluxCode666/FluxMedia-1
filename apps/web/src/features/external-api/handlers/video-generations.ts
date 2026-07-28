@@ -37,6 +37,8 @@ const externalVideoSchema = z
     generateAudio: z.boolean().optional(),
     generate_audio: z.boolean().optional(),
     image: z.array(videoInputImageDataUrlSchema).max(3).optional(),
+    inputImageRole: z.enum(["frame", "reference"]).optional(),
+    input_image_role: z.enum(["frame", "reference"]).optional(),
     async: z.boolean().optional(),
     callback_url: z.string().url().max(2_048).optional(),
     callbackUrl: z.string().url().max(2_048).optional(),
@@ -54,6 +56,16 @@ const externalVideoSchema = z
     {
       message: "generateAudio and generate_audio must match",
       path: ["generateAudio"],
+    }
+  )
+  .refine(
+    (value) =>
+      value.inputImageRole === undefined ||
+      value.input_image_role === undefined ||
+      value.inputImageRole === value.input_image_role,
+    {
+      message: "inputImageRole and input_image_role must match",
+      path: ["inputImageRole"],
     }
   );
 
@@ -96,6 +108,8 @@ export const postExternalVideoGenerations = withApiLogging(
     const generateAudio =
       parsed.data.generateAudio ?? parsed.data.generate_audio;
     const inputImages = parsed.data.image?.map(toVideoMediaInputReference);
+    const inputImageRole =
+      parsed.data.inputImageRole ?? parsed.data.input_image_role;
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url || parsed.data.callbackUrl) {
       try {
@@ -128,6 +142,7 @@ export const postExternalVideoGenerations = withApiLogging(
           ...(negativePrompt ? { negativePrompt } : {}),
           ...(generateAudio !== undefined ? { generateAudio } : {}),
           ...(inputImages?.length ? { inputImages } : {}),
+          ...(inputImageRole ? { inputImageRole } : {}),
         },
         {
           type: "apiKey",

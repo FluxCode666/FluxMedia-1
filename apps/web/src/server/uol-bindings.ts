@@ -21,6 +21,7 @@ import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
 
+import type { FireflyVideoInputImageRole } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import {
   usageSummaryOutputSchema,
   usageTrendsInputSchema,
@@ -328,6 +329,7 @@ bindExecute(
       model: string;
       backendGroupId?: string;
       inputImages?: MediaInputReference[];
+      inputImageRole?: FireflyVideoInputImageRole;
     },
     principal: Principal,
     ctx: OperationContext
@@ -427,6 +429,9 @@ bindExecute(
             : {}),
           ...(stagedInput.references.length
             ? { inputImages: stagedInput.references }
+            : {}),
+          ...(input.inputImageRole
+            ? { inputImageRole: input.inputImageRole }
             : {}),
           ...(stagedInput.objects.length
             ? { stagedInputObjects: stagedInput.objects }

@@ -105,4 +105,36 @@ describe("POST /api/videos/generate", () => {
       expect.any(Object)
     );
   });
+
+  it("将 Kling Omni 参考图角色原样传给 UOL", async () => {
+    const image = `data:image/png;base64,${Buffer.from("image").toString(
+      "base64"
+    )}`;
+    const response = await POST(
+      new NextRequest("https://app.example.com/api/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "request-reference",
+          prompt: "角色在城市中行走",
+          model: "firefly-kling3-omni-8s-16x9-1080p",
+          inputImageRole: "reference",
+          inputImages: [image],
+        }),
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(invokeOperationMock).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        inputImageRole: "reference",
+        inputImages: [
+          expect.objectContaining({ source: "data", byteLength: 5 }),
+        ],
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
 });
