@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { Textarea } from "@repo/ui/components/textarea";
+import { cn } from "@repo/ui/utils";
 import {
   Brush,
   Coins,
@@ -129,8 +130,10 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const formRef = useRef<HTMLFormElement | null>(null);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const maskInputRef = useRef<HTMLInputElement | null>(null);
+  const dragEnterDepthRef = useRef(0);
   const sourcePreviewUrl = useSourcePreview(props.sourceImages[0]);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
+  const [isDraggingReference, setIsDraggingReference] = useState(false);
   const selections = useMemo(
     () =>
       props.catalog.groups.flatMap((group) =>
@@ -152,6 +155,8 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     Boolean(props.referenceLoadingId) ||
     !props.prompt.trim() ||
     !props.hasAvailableModel;
+  const referenceUploadDisabled =
+    props.busy || Boolean(props.referenceLoadingId);
   const recentImages = useMemo(
     () =>
       props.recent
@@ -181,6 +186,40 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     void props.onSubmit();
   }
 
+  /** 文件进入输入卡片时显示明确投放反馈，并过滤文本等非文件拖拽。 */
+  function handleReferenceDragEnter(event: React.DragEvent<HTMLElement>): void {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    dragEnterDepthRef.current += 1;
+    if (!referenceUploadDisabled) setIsDraggingReference(true);
+  }
+
+  /** 允许浏览器把文件投放到卡片；禁用状态仍阻止浏览器直接打开图片。 */
+  function handleReferenceDragOver(event: React.DragEvent<HTMLElement>): void {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = referenceUploadDisabled ? "none" : "copy";
+  }
+
+  /** 使用进入深度抵消子元素边界事件，避免投放蒙层在卡片内部闪烁。 */
+  function handleReferenceDragLeave(event: React.DragEvent<HTMLElement>): void {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+    event.preventDefault();
+    dragEnterDepthRef.current = Math.max(0, dragEnterDepthRef.current - 1);
+    if (dragEnterDepthRef.current === 0) setIsDraggingReference(false);
+  }
+
+  /** 将投放文件交给父级既有校验与状态切换链路。 */
+  function handleReferenceDrop(event: React.DragEvent<HTMLElement>): void {
+    event.preventDefault();
+    dragEnterDepthRef.current = 0;
+    setIsDraggingReference(false);
+    if (referenceUploadDisabled || event.dataTransfer.files.length === 0) {
+      return;
+    }
+    props.onSourceImagesChange(event.dataTransfer.files);
+  }
+
   /** 将近期成品设为参考图，成功后返回统一输入卡片方便继续编辑。 */
   async function selectRecentReference(image: RecentImage): Promise<void> {
     const selected = await props.onRecentReferenceSelect(image);
@@ -191,7 +230,37 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   return (
     <div className="space-y-8">
       <form ref={formRef} className="space-y-5" onSubmit={handleSubmit}>
-        <section className="overflow-hidden rounded-2xl border border-border bg-background shadow-sm">
+        <section
+          aria-busy={referenceUploadDisabled}
+          aria-label="参考图拖拽上传区域"
+          className={cn(
+            "relative overflow-hidden rounded-2xl border border-border bg-background shadow-sm transition-[border-color,box-shadow]",
+            isDraggingReference &&
+              "border-primary shadow-[0_0_0_3px_color-mix(in_oklab,var(--primary)_18%,transparent)]"
+          )}
+          onDragEnter={handleReferenceDragEnter}
+          onDragLeave={handleReferenceDragLeave}
+          onDragOver={handleReferenceDragOver}
+          onDrop={handleReferenceDrop}
+        >
+          {isDraggingReference ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center bg-background/92 px-6 text-center backdrop-blur-sm"
+              role="status"
+            >
+              <span className="mb-3 flex size-12 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary shadow-sm">
+                <Upload className="size-5" />
+              </span>
+              <span className="text-sm font-semibold text-foreground">
+                {props.sourceImages.length > 0
+                  ? "松开即可更换参考图"
+                  : "松开即可添加参考图"}
+              </span>
+              <span className="mt-1 text-xs text-muted-foreground">
+                支持 PNG、JPEG 和 WebP，可一次拖入多张
+              </span>
+            </div>
+          ) : null}
           <div className="space-y-3 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label
@@ -228,13 +297,13 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     size="sm"
                     className="rounded-full border-dashed bg-muted/20 px-3.5 hover:bg-muted/50"
                     onClick={() => sourceInputRef.current?.click()}
-                    disabled={props.busy || Boolean(props.referenceLoadingId)}
+                    disabled={referenceUploadDisabled}
                   >
                     <ImagePlus className="mr-1.5 size-4" />
                     添加参考图
                   </Button>
                   <span className="text-xs text-muted-foreground">
-                    可选。添加后会在原位切换为图生图。
+                    可选。点击选择或拖拽到输入卡片，添加后自动切换为图生图。
                   </span>
                 </>
               ) : (
@@ -268,7 +337,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     variant="ghost"
                     size="sm"
                     onClick={() => sourceInputRef.current?.click()}
-                    disabled={props.busy || Boolean(props.referenceLoadingId)}
+                    disabled={referenceUploadDisabled}
                   >
                     <Upload className="mr-1.5 size-3.5" />
                     更换
@@ -349,7 +418,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
                 multiple
-                disabled={props.busy || Boolean(props.referenceLoadingId)}
+                disabled={referenceUploadDisabled}
                 className="sr-only"
                 onChange={(event) => {
                   props.onSourceImagesChange(event.target.files);
