@@ -3,7 +3,7 @@
 /**
  * Adobe Firefly 视频创作面板（自包含）。
  *
- * 选模型族(12族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
+ * 选模型族(13族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
  * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
  * 产物视频。模型支持时可上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页
  * 独立 tab。

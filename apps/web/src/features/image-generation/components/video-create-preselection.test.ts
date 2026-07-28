@@ -49,6 +49,17 @@ describe("resolveVideoInitialSelection", () => {
     });
   });
 
+  it("对 Ray 3.14 HDR 预选固定 5 秒和 ID 中的画幅分辨率", () => {
+    expect(
+      resolveVideoInitialSelection("firefly-ray314-hdr-5s-21x9-4k")
+    ).toEqual({
+      familyId: "ray314-hdr",
+      duration: 5,
+      ratio: "21:9",
+      resolution: "4k",
+    });
+  });
+
   it.each([
     "",
     "firefly-veo31-5s-16x9-1080p",

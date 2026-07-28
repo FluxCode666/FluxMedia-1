@@ -657,4 +657,55 @@ describe("AdobeFireflyClient.generateVideo", () => {
     expect(api.calls[0]?.headers.referer).toBe("https://firefly.adobe.com/");
     expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
   });
+
+  it("Ray 3.14 HDR 通过 Firefly Profile 提交且不携带 flex_2 mode", async () => {
+    const api = new MockTransport((req) => {
+      expect(req.url).toContain("/v2/3p-videos/generate-async");
+      expect(JSON.parse(String(req.body))).toEqual({
+        modelId: "luma",
+        modelVersion: "3.14-ray-hdr",
+        size: { width: 3840, height: 2160 },
+        prompt: "a moving cat",
+        negativePrompt: "blurry",
+        duration: 5,
+        generationMetadata: {
+          module: "text2video",
+          submodule: "ff-video-generate",
+        },
+        modelSpecificPayload: {
+          resolution: "4k",
+          aspect_ratio: "16:9",
+        },
+        output: { storeInputs: true },
+      });
+      return jsonResponse(
+        200,
+        {},
+        {
+          "x-override-status-link":
+            "https://firefly-epo1234-prod.adobe.io/v2/status/video-ray314-hdr",
+        }
+      );
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    await client.submitVideo({
+      ...videoInput,
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray-hdr",
+      engine: "ray314-hdr",
+      duration: 5,
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
+    });
+
+    expect(api.calls[0]?.headers.origin).toBe("https://firefly.adobe.com");
+    expect(api.calls[0]?.headers.referer).toBe("https://firefly.adobe.com/");
+    expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
+  });
 });

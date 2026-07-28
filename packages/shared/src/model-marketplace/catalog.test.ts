@@ -43,6 +43,9 @@ describe("模型身份规则", () => {
     expect(
       resolveModelMarketplaceVideoFamily("firefly-ray314-5s-16x9-4k")
     ).toBe("ray314");
+    expect(
+      resolveModelMarketplaceVideoFamily("firefly-ray314-hdr-5s-16x9-4k")
+    ).toBe("ray314-hdr");
     expect(resolveModelMarketplaceVideoFamily("kling-o3-5s-16x9")).toBe(
       "kling-o3"
     );
@@ -67,6 +70,9 @@ describe("模型身份规则", () => {
     );
     expect(getStableVideoDefaultModelId("ray314")).toBe(
       "firefly-ray314-5s-16x9-4k"
+    );
+    expect(getStableVideoDefaultModelId("ray314-hdr")).toBe(
+      "firefly-ray314-hdr-5s-16x9-4k"
     );
     expect(getStableVideoDefaultModelId("unknown")).toBeNull();
   });

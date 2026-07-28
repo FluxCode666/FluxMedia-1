@@ -51,6 +51,7 @@ const BUILTIN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "kling3-omni": "适合逐秒控制时长，并生成横屏或竖屏的高分辨率视频。",
   "runway-gen45": "适合生成 16:9 横屏电影感视频，并提供多档短时长选择。",
   ray314: "适合生成多画幅、高分辨率的电影感短视频。",
+  "ray314-hdr": "适合生成高动态范围、多画幅的高分辨率电影感短视频。",
   seedance2: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
   "seedance2-fast": "适合更快生成多画幅视频并保持参考图视觉风格一致。",
 };

@@ -12,6 +12,7 @@ describe("resolveVideoCreditsPerSecond", () => {
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["kling3-omni"]).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["runway-gen45"]).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.ray314).toBe(30);
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["ray314-hdr"]).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.seedance2).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["seedance2-fast"]).toBe(30);
   });

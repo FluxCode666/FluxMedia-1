@@ -219,6 +219,54 @@ describe("buildFireflyVideoPayload", () => {
       "n",
       "seeds",
       "referenceBlobs",
+      "referenceFrames",
+      "generationSettings",
+      "model",
+      "engine",
+    ]) {
+      expect(payload).not.toHaveProperty(absentField);
+    }
+  });
+
+  it("Ray 3.14 HDR 使用模型专属参数且不发送 flex_2 mode", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray-hdr",
+      engine: "ray314-hdr",
+      duration: 5,
+      aspectRatio: "16:9",
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
+      generateAudio: true,
+      sourceImageIds: ["ignored-reference-image"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "luma",
+      modelVersion: "3.14-ray-hdr",
+      size: { width: 3840, height: 2160 },
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 5,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      modelSpecificPayload: {
+        resolution: "4k",
+        aspect_ratio: "16:9",
+      },
+      output: { storeInputs: true },
+    });
+    for (const absentField of [
+      "mode",
+      "generateAudio",
+      "n",
+      "seeds",
+      "referenceBlobs",
       "generationSettings",
       "model",
       "engine",

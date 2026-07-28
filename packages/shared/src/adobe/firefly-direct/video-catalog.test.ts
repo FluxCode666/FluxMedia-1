@@ -9,7 +9,7 @@ import {
 } from "./video-catalog";
 
 describe("firefly video catalog", () => {
-  it("注册 12 个视频族", () => {
+  it("注册 13 个视频族", () => {
     expect(FIREFLY_VIDEO_FAMILIES.map((f) => f.family)).toEqual([
       "sora2",
       "sora2-pro",
@@ -21,10 +21,11 @@ describe("firefly video catalog", () => {
       "kling3-omni",
       "runway-gen45",
       "ray314",
+      "ray314-hdr",
       "seedance2",
       "seedance2-fast",
     ]);
-    expect(Object.keys(FIREFLY_VIDEO_MODEL_CATALOG)).toHaveLength(509);
+    expect(Object.keys(FIREFLY_VIDEO_MODEL_CATALOG)).toHaveLength(527);
   });
 
   it("sora2 不拼分辨率,固定 720p,带 sora 上游", () => {
@@ -230,6 +231,52 @@ describe("firefly video catalog", () => {
     expect(resolveFireflyVideoModel("firefly-ray314-5s-16x9-480p")).toBeNull();
   });
 
+  it("Ray 3.14 HDR 仅开放 5 秒并复用六种比例和三档分辨率", () => {
+    const family = FIREFLY_VIDEO_FAMILIES.find(
+      (item) => item.family === "ray314-hdr"
+    );
+    expect(family).toEqual({
+      family: "ray314-hdr",
+      label: "Ray 3.14 HDR",
+      durations: [5],
+      ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+      resolutions: ["4k", "1080p", "720p"],
+      resolutionInId: true,
+      generateAudio: false,
+      supportsAudio: false,
+      maxInputImages: 0,
+    });
+    expect(
+      Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
+        (item) => item.family === "ray314-hdr"
+      )
+    ).toHaveLength(18);
+
+    const conf = resolveFireflyVideoModel("firefly-ray314-hdr-5s-16x9-4k");
+    expect(conf).toMatchObject({
+      family: "ray314-hdr",
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray-hdr",
+      engine: "ray314-hdr",
+      duration: 5,
+      aspectRatio: "16:9",
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      generateAudio: false,
+      supportsAudio: false,
+      maxInputImages: 0,
+      webApp: "firefly",
+    });
+    expect(resolveFireflyVideoModel("ray314-hdr-5s-16x9-4k")).toEqual(conf);
+    expect(
+      resolveFireflyVideoModel("firefly-ray314-hdr-10s-16x9-4k")
+    ).toBeNull();
+    expect(
+      resolveFireflyVideoModel("firefly-ray314-hdr-5s-16x9-480p")
+    ).toBeNull();
+  });
+
   it("Seedance 2.0 开放 4 至 15 秒、三档分辨率和六种比例", () => {
     const family = FIREFLY_VIDEO_FAMILIES.find(
       (item) => item.family === "seedance2"
@@ -421,6 +468,7 @@ describe("firefly video catalog", () => {
     );
     const runway = resolveFireflyVideoModel("firefly-runway-gen45-5s-16x9");
     const ray = resolveFireflyVideoModel("firefly-ray314-5s-16x9-4k");
+    const rayHdr = resolveFireflyVideoModel("firefly-ray314-hdr-5s-16x9-4k");
     const seedance = resolveFireflyVideoModel(
       "firefly-seedance2-15s-9x16-480p"
     );
@@ -434,6 +482,7 @@ describe("firefly video catalog", () => {
     expect(klingOmni && fireflyVideoMaxInputImages(klingOmni)).toBe(1);
     expect(runway && fireflyVideoMaxInputImages(runway)).toBe(0);
     expect(ray && fireflyVideoMaxInputImages(ray)).toBe(0);
+    expect(rayHdr && fireflyVideoMaxInputImages(rayHdr)).toBe(0);
     expect(seedance && fireflyVideoMaxInputImages(seedance)).toBe(1);
     expect(seedanceFast && fireflyVideoMaxInputImages(seedanceFast)).toBe(1);
   });

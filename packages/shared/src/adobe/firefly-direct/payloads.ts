@@ -371,12 +371,12 @@ export function buildFireflyVideoPayload(params: {
     };
   }
 
-  if (params.engine === "ray314") {
+  if (params.engine === "ray314" || params.engine === "ray314-hdr") {
     return {
       modelId: params.upstreamModelId,
       modelVersion: params.upstreamModelVersion,
       size,
-      mode: "flex_2",
+      ...(params.engine === "ray314" ? { mode: "flex_2" } : {}),
       prompt: params.prompt,
       negativePrompt: params.negativePrompt ?? "",
       duration: params.duration,
