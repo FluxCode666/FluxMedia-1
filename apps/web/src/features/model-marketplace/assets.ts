@@ -13,7 +13,9 @@ import type {
 export const MODEL_MARKETPLACE_ICON_PATHS = {
   openai: "/model-marketplace/brands/openai.svg",
   google: "/model-marketplace/brands/google.svg",
+  bytedance: "/model-marketplace/brands/bytedance.svg",
   kling: "/model-marketplace/brands/kling.svg",
+  runway: "/model-marketplace/brands/runway.svg",
   xai: "/model-marketplace/brands/xai.svg",
   generic: "/model-marketplace/brands/generic.svg",
 } as const satisfies Record<ModelMarketplaceIconKey, string>;

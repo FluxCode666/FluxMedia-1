@@ -94,10 +94,31 @@ describe("filterModelMarketplaceModels", () => {
   });
 
   it("从真实目录提取厂商并安全收窄未知值", () => {
+    const seedanceModel = {
+      ...VIDEO_MODEL,
+      configKey: "seedance2",
+      defaultModelId: "seedance2-4s-16x9-480p",
+      displayName: "Seedance 2.0",
+      iconKey: "bytedance" as const,
+    };
+    const runwayModel = {
+      ...VIDEO_MODEL,
+      configKey: "runway-gen45",
+      defaultModelId: "runway-gen45-5s-16x9",
+      displayName: "Runway Gen-4.5",
+      iconKey: "runway" as const,
+    };
     expect(
-      getAvailableModelMarketplaceProviders([VIDEO_MODEL, IMAGE_MODEL])
-    ).toEqual(["openai", "google"]);
+      getAvailableModelMarketplaceProviders([
+        runwayModel,
+        VIDEO_MODEL,
+        seedanceModel,
+        IMAGE_MODEL,
+      ])
+    ).toEqual(["openai", "google", "bytedance", "runway"]);
     expect(parseModelMarketplaceProviderFilter("google")).toBe("google");
+    expect(parseModelMarketplaceProviderFilter("bytedance")).toBe("bytedance");
+    expect(parseModelMarketplaceProviderFilter("runway")).toBe("runway");
     expect(parseModelMarketplaceProviderFilter("unknown-vendor")).toBe("all");
   });
 });

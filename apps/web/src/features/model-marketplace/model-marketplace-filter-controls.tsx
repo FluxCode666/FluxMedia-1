@@ -44,7 +44,9 @@ function getProviderLabel(
   const labels: Record<ModelMarketplaceIconKey, string> = {
     openai: "OpenAI",
     google: "Google",
+    bytedance: "ByteDance",
     kling: "Kling",
+    runway: "Runway",
     xai: "xAI",
     generic: genericLabel,
   };

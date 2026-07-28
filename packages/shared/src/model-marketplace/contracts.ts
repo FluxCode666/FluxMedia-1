@@ -74,7 +74,9 @@ export const modelMarketplacePublicCategorySchema = z.enum(["image", "video"]);
 export const modelMarketplaceIconKeySchema = z.enum([
   "openai",
   "google",
+  "bytedance",
   "kling",
+  "runway",
   "xai",
   "generic",
 ]);

@@ -19,7 +19,9 @@ export type ModelMarketplaceProviderFilter = "all" | ModelMarketplaceIconKey;
 const MODEL_MARKETPLACE_PROVIDER_ORDER: readonly ModelMarketplaceIconKey[] = [
   "openai",
   "google",
+  "bytedance",
   "kling",
+  "runway",
   "xai",
   "generic",
 ];

@@ -147,7 +147,9 @@ function getDisplayName(
  */
 function getIconKey(configKey: string): ModelMarketplaceIconKey {
   if (/xai|grok/.test(configKey)) return "xai";
+  if (/seedance|bytedance|byte-dance/.test(configKey)) return "bytedance";
   if (/kling/.test(configKey)) return "kling";
+  if (/runway/.test(configKey)) return "runway";
   if (/nano|veo|gemini|google/.test(configKey)) return "google";
   if (/gpt|sora|openai/.test(configKey)) return "openai";
   return "generic";

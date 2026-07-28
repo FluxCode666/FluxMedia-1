@@ -209,6 +209,7 @@ describe("buildModelMarketplaceCatalog", () => {
     expect(items[0]).toMatchObject({
       category: "video",
       configKey: "seedance2",
+      iconKey: "bytedance",
       creditsPerSecond: 12,
       minimumCredits: 12,
       supportedDurations: durations,
@@ -270,7 +271,7 @@ describe("buildModelMarketplaceCatalog", () => {
         configKey: "runway-gen45",
         displayName: "Runway Gen-4.5",
         defaultModelId: "runway-gen45-5s-16x9",
-        iconKey: "generic",
+        iconKey: "runway",
         description: expect.stringContaining("16:9"),
         creditsPerSecond: 30,
         supportedDurations: [5, 8, 10],
@@ -373,6 +374,8 @@ describe("buildModelMarketplaceCatalog", () => {
             { id: "firefly-sora2-4s-16x9" },
             { id: "firefly-veo31-4s-16x9-1080p" },
             { id: "firefly-kling-o3-5s-16x9" },
+            { id: "firefly-seedance2-4s-16x9-480p" },
+            { id: "firefly-runway-gen45-5s-16x9" },
           ],
         },
       })
@@ -389,6 +392,8 @@ describe("buildModelMarketplaceCatalog", () => {
       sora2: "openai",
       veo31: "google",
       "kling-o3": "kling",
+      seedance2: "bytedance",
+      "runway-gen45": "runway",
     });
   });
 
