@@ -15,6 +15,7 @@ export const ADMIN_PAYMENT_ORDER_STATUSES = [
 ] as const;
 
 export const ADMIN_PAYMENT_OVERVIEW_MAX_DAYS = 366;
+export const ADMIN_PAYMENT_ORDER_DEFAULT_DAYS = 7;
 
 export const adminPaymentOrderStatusSchema = z.enum(
   ADMIN_PAYMENT_ORDER_STATUSES
@@ -41,40 +42,51 @@ const currencySchema = z.string().trim().length(3);
 const isoDateTimeSchema = z.string().datetime({ offset: true });
 const nonnegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
 
+type AdminPaymentCalendarDateRange = {
+  startDate?: string | undefined;
+  endDate?: string | undefined;
+};
+
+/** 校验成对、正序且有界的管理端支付日历日期范围。 */
+function validateAdminPaymentDateRange(
+  input: AdminPaymentCalendarDateRange,
+  context: z.RefinementCtx
+): void {
+  if (Boolean(input.startDate) !== Boolean(input.endDate)) {
+    context.addIssue({
+      code: "custom",
+      message: "开始日期和结束日期必须同时提供",
+    });
+    return;
+  }
+  if (!input.startDate || !input.endDate) return;
+  if (input.startDate > input.endDate) {
+    context.addIssue({
+      code: "custom",
+      message: "结束日期不能早于开始日期",
+      path: ["endDate"],
+    });
+    return;
+  }
+  const startTime = Date.parse(`${input.startDate}T00:00:00.000Z`);
+  const endTime = Date.parse(`${input.endDate}T00:00:00.000Z`);
+  const dayCount = Math.floor((endTime - startTime) / 86_400_000) + 1;
+  if (dayCount > ADMIN_PAYMENT_OVERVIEW_MAX_DAYS) {
+    context.addIssue({
+      code: "custom",
+      message: `日期范围不能超过 ${ADMIN_PAYMENT_OVERVIEW_MAX_DAYS} 天`,
+      path: ["endDate"],
+    });
+  }
+}
+
 export const adminPaymentOverviewInputSchema = z
   .object({
     startDate: calendarDateSchema.optional(),
     endDate: calendarDateSchema.optional(),
   })
   .strict()
-  .superRefine((input, context) => {
-    if (Boolean(input.startDate) !== Boolean(input.endDate)) {
-      context.addIssue({
-        code: "custom",
-        message: "开始日期和结束日期必须同时提供",
-      });
-      return;
-    }
-    if (!input.startDate || !input.endDate) return;
-    if (input.startDate > input.endDate) {
-      context.addIssue({
-        code: "custom",
-        message: "结束日期不能早于开始日期",
-        path: ["endDate"],
-      });
-      return;
-    }
-    const startTime = Date.parse(`${input.startDate}T00:00:00.000Z`);
-    const endTime = Date.parse(`${input.endDate}T00:00:00.000Z`);
-    const dayCount = Math.floor((endTime - startTime) / 86_400_000) + 1;
-    if (dayCount > ADMIN_PAYMENT_OVERVIEW_MAX_DAYS) {
-      context.addIssue({
-        code: "custom",
-        message: `日期范围不能超过 ${ADMIN_PAYMENT_OVERVIEW_MAX_DAYS} 天`,
-        path: ["endDate"],
-      });
-    }
-  });
+  .superRefine(validateAdminPaymentDateRange);
 
 const currencyAmountSchema = z
   .object({
@@ -111,12 +123,24 @@ export const adminPaymentOverviewOutputSchema = z
 export const adminPaymentOrderListInputSchema = z
   .object({
     cursor: cursorSchema.optional(),
-    limit: z.number().int().min(1).max(50).default(20),
+    endDate: calendarDateSchema.optional(),
+    limit: z.number().int().min(1).max(100).default(20),
     orderId: z.string().trim().min(1).max(128).optional(),
+    startDate: calendarDateSchema.optional(),
     status: adminPaymentOrderStatusSchema.optional(),
     userEmail: emailSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(validateAdminPaymentDateRange)
+  .superRefine((input, context) => {
+    if (input.cursor && (!input.startDate || !input.endDate)) {
+      context.addIssue({
+        code: "custom",
+        message: "分页游标必须携带原日期范围",
+        path: ["cursor"],
+      });
+    }
+  });
 
 export const adminPaymentOrderSchema = z
   .object({

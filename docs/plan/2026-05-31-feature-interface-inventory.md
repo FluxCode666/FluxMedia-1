@@ -21,7 +21,7 @@
 | 号池 | `pool.getAdminPool` | 管理员 | 读取统一分组、成员与调度状态 |
 | 号池 | `pool.saveGroup`、`pool.deleteGroup` | 管理员 | 管理分组及其授权范围 |
 | 号池 | `pool.saveMember`、`pool.deleteMember` | 管理员 | 管理 `api | adobe` 统一成员及显式模型能力 |
-| 系统设置 | `settings.getSnapshot`、`settings.update` | 管理员 | 读取或动态更新全局调度策略等配置 |
+| 系统设置 | `settings.getSnapshot`、`settings.update`、`settings.getPaginationConfig` | 管理员 / 系统 | 读取或动态更新全局配置；站内列表通过 system-only 只读接口获取分页大小白名单 |
 
 ## 模型配置与模型广场 operation
 
@@ -51,7 +51,7 @@
 | Operation | Principal | 口径与传输边界 |
 | --- | --- | --- |
 | `payment.getAdminOverview` | `admin`、`super_admin` 用户 | 人工会话只读；按部署时区日期范围读取已履约积分充值收入，并按 `created_at` 读取全部状态的充值订单数；默认当前自然月 |
-| `payment.listAdminOrders` | `admin`、`super_admin` 用户 | 人工会话只读；按邮箱、精确本地订单号、持久状态查询，使用绑定管理员与筛选的签名 keyset cursor |
+| `payment.listAdminOrders` | `admin`、`super_admin` 用户 | 人工会话只读；按部署时区中的 `created_at` 日期范围、邮箱、精确本地订单号和持久状态查询；默认今天及前 6 天，使用绑定管理员、日期范围与其他筛选的签名 keyset cursor |
 | `payment.searchAdminOrderUsers` | `admin`、`super_admin` 用户 | 人工会话只读；服务端有界搜索存在充值订单的用户邮箱 |
 
 三个 operation 均为 `human-only`，由管理端 Server Action 薄适配器调用。其收入范围只

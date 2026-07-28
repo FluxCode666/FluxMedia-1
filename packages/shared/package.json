@@ -101,6 +101,8 @@
     "./payment/user-order-contract": "./src/payment/user-order-contract.ts",
     "./payment/alipay-f2f": "./src/payment/alipay-f2f.ts",
     "./payment/types": "./src/payment/types.ts",
+    "./pagination/config": "./src/pagination/config.ts",
+    "./pagination/server": "./src/pagination/server.ts",
     "./monitoring": "./src/monitoring/index.ts",
     "./components": "./src/components/index.ts",
     "./components/icons": "./src/components/icons/index.ts",

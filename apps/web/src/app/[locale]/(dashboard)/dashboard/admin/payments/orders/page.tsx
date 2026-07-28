@@ -7,21 +7,22 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canAccessAdminArea } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
+import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { Button } from "@repo/ui/components/button";
 import { ChartNoAxesCombined } from "lucide-react";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
-
-import {
-  buildAdminPaymentOrdersHref,
-  type AdminPaymentSearchParams,
-  parseAdminPaymentOrderQuery,
-} from "@/features/payment/admin/admin-payment-query";
+import { loadPaginationConfig } from "@/features/pagination/server";
 import {
   listAdminPaymentOrdersAction,
   searchAdminPaymentOrderUsersAction,
 } from "@/features/payment/admin/actions";
+import {
+  type AdminPaymentSearchParams,
+  buildAdminPaymentOrdersHref,
+  parseAdminPaymentOrderQuery,
+} from "@/features/payment/admin/admin-payment-query";
 import { PaymentOrderFilters } from "@/features/payment/admin/payment-order-filters";
 import { PaymentOrderManagement } from "@/features/payment/admin/payment-order-management";
 import { Link } from "@/i18n/routing";
@@ -49,12 +50,21 @@ export default async function AdminPaymentOrdersPage({
   const role = await getUserRoleById(session.user.id);
   if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
 
-  const state = parseAdminPaymentOrderQuery(rawSearchParams);
+  const paginationConfig = await loadPaginationConfig();
+  const timeZone = getAppTimeZone();
+  const today = formatDateInputInTimeZone(new Date(), timeZone);
+  const state = parseAdminPaymentOrderQuery(
+    rawSearchParams,
+    today,
+    paginationConfig
+  );
   const [ordersResult, usersResult] = await Promise.allSettled([
     listAdminPaymentOrdersAction({
       cursor: state.cursor ?? undefined,
-      limit: 20,
+      endDate: state.endDate,
+      limit: state.pageSize,
       orderId: state.orderId ?? undefined,
+      startDate: state.startDate,
       status: state.status ?? undefined,
       userEmail: state.userEmail ?? undefined,
     }),
@@ -96,16 +106,19 @@ export default async function AdminPaymentOrdersPage({
         <PaymentOrderManagement
           initialUserOptions={initialUserOptions}
           nextCursor={orders.nextCursor}
+          pageSizeOptions={paginationConfig.pageSizeOptions}
           previousCursor={orders.previousCursor}
           records={orders.records}
           state={state}
-          timeZone={getAppTimeZone()}
+          timeZone={timeZone}
+          today={today}
         />
       ) : (
         <div className="space-y-4">
           <PaymentOrderFilters
             initialUserOptions={initialUserOptions}
             state={state}
+            today={today}
           />
           <section
             aria-live="assertive"

@@ -4,7 +4,14 @@
  * 使用方：支付概览页、订单管理页及客户端筛选/分页控件。只接受有界白名单参数，
  * 任一筛选变化都会清除签名 cursor，防止跨筛选复用。
  */
+
 import {
+  type PaginationConfig,
+  parseConfiguredPageSize,
+  parsePaginationConfig,
+} from "@repo/shared/pagination/config";
+import {
+  ADMIN_PAYMENT_ORDER_DEFAULT_DAYS,
   ADMIN_PAYMENT_ORDER_STATUSES,
   ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
   type AdminPaymentOrderStatus,
@@ -17,7 +24,10 @@ export type AdminPaymentSearchParams = Record<
 
 export type AdminPaymentOrderQueryState = {
   cursor: string | null;
+  endDate: string;
   orderId: string | null;
+  pageSize: number;
+  startDate: string;
   status: AdminPaymentOrderStatus | null;
   userEmail: string | null;
 };
@@ -160,18 +170,54 @@ export function buildCalendarPresetRange(
   };
 }
 
+/** 构造以给定日期结尾、包含当天的最近若干自然日范围。 */
+export function buildRecentCalendarDaysRange(
+  calendarDate: string,
+  days = ADMIN_PAYMENT_ORDER_DEFAULT_DAYS
+): AdminPaymentOverviewRange {
+  const parts = parseCalendarDateParts(calendarDate);
+  if (
+    !parts ||
+    !Number.isInteger(days) ||
+    days < 1 ||
+    days > ADMIN_PAYMENT_OVERVIEW_MAX_DAYS
+  ) {
+    throw new RangeError("Invalid recent calendar range");
+  }
+  const start = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  return {
+    startDate: formatCalendarDateParts(
+      start.getUTCFullYear(),
+      start.getUTCMonth() + 1,
+      start.getUTCDate()
+    ),
+    endDate: calendarDate,
+  };
+}
+
 /** 将订单列表 URL 参数收窄为稳定筛选和 cursor 状态。 */
 export function parseAdminPaymentOrderQuery(
-  searchParams: AdminPaymentSearchParams
+  searchParams: AdminPaymentSearchParams,
+  today: string,
+  paginationConfig: PaginationConfig = parsePaginationConfig(undefined)
 ): AdminPaymentOrderQueryState {
   const orderId =
     readScalar(searchParams.orderId, MAX_ORDER_ID_LENGTH)?.trim() || null;
   const userEmail =
     readScalar(searchParams.userEmail, MAX_USER_EMAIL_LENGTH)?.trim() || null;
   const status = readScalar(searchParams.status, 20);
+  const requestedRange = parseAdminPaymentDateRange(searchParams);
+  const range =
+    requestedRange && requestedRange.endDate <= today
+      ? requestedRange
+      : buildRecentCalendarDaysRange(today);
   return {
     cursor: readScalar(searchParams.cursor, MAX_CURSOR_LENGTH),
+    endDate: range.endDate,
     orderId,
+    pageSize: parseConfiguredPageSize(searchParams.pageSize, paginationConfig),
+    startDate: range.startDate,
     status: isPaymentOrderStatus(status) ? status : null,
     userEmail: userEmail && isEmail(userEmail) ? userEmail : null,
   };
@@ -182,8 +228,13 @@ export function buildAdminPaymentOrdersHref(
   state: AdminPaymentOrderQueryState
 ): string {
   const searchParams = new URLSearchParams();
+  searchParams.set("startDate", state.startDate);
+  searchParams.set("endDate", state.endDate);
   if (state.userEmail) searchParams.set("userEmail", state.userEmail);
   if (state.orderId) searchParams.set("orderId", state.orderId);
+  if (state.pageSize !== 20) {
+    searchParams.set("pageSize", String(state.pageSize));
+  }
   if (state.status) searchParams.set("status", state.status);
   if (state.cursor) searchParams.set("cursor", state.cursor);
   const query = searchParams.toString();
@@ -196,5 +247,11 @@ export function buildAdminPaymentOrdersHref(
 export function hasAdminPaymentOrderFilters(
   state: AdminPaymentOrderQueryState
 ): boolean {
-  return Boolean(state.userEmail || state.orderId || state.status);
+  return Boolean(
+    state.startDate ||
+      state.endDate ||
+      state.userEmail ||
+      state.orderId ||
+      state.status
+  );
 }

@@ -21,6 +21,8 @@ import {
   globalImageCreditOverridesSchema,
 } from "../../image-backend/group-image-pricing";
 import { logError } from "../../logger";
+import { paginationConfigSchema } from "../../pagination/config";
+import { getPaginationConfig } from "../../pagination/server";
 import { bootstrapSystemSettingsEnv } from "../../system-settings/bootstrap";
 import { syncSystemSettingsToEnvFiles } from "../../system-settings/env-file";
 import {
@@ -103,6 +105,27 @@ const settingUpdateSchema = z
       });
     }
   });
+
+/**
+ * settings.getPaginationConfig - 获取全局分页大小配置
+ *
+ * 仅供站内页面读取动态白名单；非法或缺失设置由服务层回退默认配置。
+ */
+export const settingsGetPaginationConfig = defineOperation({
+  name: "settings.getPaginationConfig",
+  domain: "system-settings",
+  title: "Get Pagination Configuration",
+  description: "获取系统列表统一使用的默认分页大小和可选分页大小。",
+  input: z.object({}).strict(),
+  output: paginationConfigSchema,
+  access: { kind: "system" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => getPaginationConfig(),
+});
 
 /**
  * settings.getSnapshot - 获取管理后台设置快照

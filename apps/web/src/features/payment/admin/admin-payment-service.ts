@@ -1,12 +1,13 @@
 /**
  * 管理端充值支付 DB-free 应用服务。
  *
- * 使用方：支付 UOL binding。职责是解析管理员日期范围、补齐每日零值、校验财务
+ * 使用方：支付 UOL binding。职责是解析部署时区日期范围、补齐每日零值、校验财务
  * 聚合、签发绑定管理员与筛选条件的 keyset cursor，并收敛为稳定安全 DTO。
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import {
+  ADMIN_PAYMENT_ORDER_DEFAULT_DAYS,
   ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
   type AdminPaymentOrder,
   type AdminPaymentOrderListOutput,
@@ -32,8 +33,10 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const paymentCursorFiltersSchema = z
   .object({
-    limit: z.number().int().min(1).max(50),
+    endDate: z.string().date(),
+    limit: z.number().int().min(1).max(100),
     orderId: z.string().nullable(),
+    startDate: z.string().date(),
     status: z.string().nullable(),
     userEmail: z.string().nullable(),
   })
@@ -63,6 +66,7 @@ export type AdminPaymentOverviewRevenueRow = {
 
 export type AdminPaymentOverviewOrderCountRow = {
   date: string;
+  currency: string;
   orderCount: number;
 };
 
@@ -78,7 +82,9 @@ export type AdminPaymentOrderRow = Omit<
 
 export type AdminPaymentOrderQuery = {
   asOf: Date;
+  endExclusive: Date;
   orderId: string | null;
+  start: Date;
   status: AdminPaymentOrder["status"] | null;
   userEmail: string | null;
   cursor: {
@@ -185,9 +191,9 @@ function listCalendarDates(startDate: string, endDate: string): string[] {
 }
 
 /**
- * 将可选日历日期解析为管理员时区中的 UTC 半开范围。
+ * 将可选日历日期解析为部署时区中的 UTC 半开范围。
  *
- * @param input 已通过 UOL schema 的起止日期、管理员时区与查询时刻。
+ * @param input 已通过 UOL schema 的起止日期、部署时区与查询时刻。
  * @returns 闭区间日历日期及其 UTC 半开边界；默认当前完整自然月。
  */
 export function resolveAdminPaymentDateRange(input: {
@@ -226,6 +232,49 @@ export function resolveAdminPaymentDateRange(input: {
   });
   if (!start || !end || start >= end) throw new AdminPaymentServiceError();
   return { startDate, endDate, dates, start, end };
+}
+
+/**
+ * 将订单日期筛选解析为部署时区中的 UTC 半开范围。
+ *
+ * @param input 可选起止日期、部署时区与查询时刻。
+ * @returns 包含起止日历日期和 UTC 半开边界的范围；缺省为今天及前 6 天。
+ * @throws 日期处于未来、超过 366 天或无法按时区解析时抛出稳定校验错误。
+ */
+export function resolveAdminPaymentOrderDateRange(input: {
+  startDate?: string;
+  endDate?: string;
+  timeZone: string;
+  asOf: Date;
+}): {
+  startDate: string;
+  endDate: string;
+  start: Date;
+  end: Date;
+} {
+  if (Number.isNaN(input.asOf.getTime())) {
+    throw new AdminPaymentServiceError();
+  }
+  if (Boolean(input.startDate) !== Boolean(input.endDate)) {
+    throw new AdminPaymentServiceError();
+  }
+  const today = formatDateInputInTimeZone(input.asOf, input.timeZone);
+  const startDate =
+    input.startDate ??
+    addCalendarDays(today, -(ADMIN_PAYMENT_ORDER_DEFAULT_DAYS - 1));
+  const endDate = input.endDate ?? today;
+  const dates = listCalendarDates(startDate, endDate);
+  if (dates.length === 0 || startDate > today || endDate > today) {
+    throw new AdminPaymentServiceError("Future payment ranges are not allowed");
+  }
+  const start = parseDateInputInTimeZone(startDate, {
+    timeZone: input.timeZone,
+  });
+  const end = parseDateInputInTimeZone(addCalendarDays(endDate, 1), {
+    timeZone: input.timeZone,
+  });
+  if (!start || !end || start >= end) throw new AdminPaymentServiceError();
+  return { startDate, endDate, start, end };
 }
 
 /** 解析或测试注入签名密钥；缺失时不得签发可伪造 cursor。 */
@@ -293,6 +342,8 @@ function decodePaymentCursor(
   expected: {
     actorUserId: string;
     filters: z.output<typeof paymentCursorFiltersSchema>;
+    rangeEndExclusive: Date;
+    rangeStart: Date;
     asOfNotAfter: Date;
   },
   secret?: string
@@ -341,7 +392,9 @@ function decodePaymentCursor(
       left.length !== right.length ||
       !timingSafeEqual(left, right) ||
       asOf > expected.asOfNotAfter ||
-      createdAt > asOf
+      createdAt > asOf ||
+      createdAt < expected.rangeStart ||
+      createdAt >= expected.rangeEndExclusive
     ) {
       throw new AdminPaymentServiceError();
     }
@@ -407,6 +460,7 @@ export async function loadAdminPaymentOverview(
   const knownDates = new Set(range.dates);
   const bucketAmounts = new Map<string, number>();
   const dailyCounts = new Map<string, number>();
+  const orderCountBuckets = new Set<string>();
   const totals = new Map<string, number>();
   const currencies = new Set<string>();
 
@@ -427,16 +481,26 @@ export async function loadAdminPaymentOverview(
     currencies.add(currency);
   }
 
+  // WHY：只从已履约收入推断币种会让“有订单但收入为零”的报表丢失金额线；订单量
+  // 先按日期和币种校验，再合并为每日总数，同时用订单币种补齐零值收入序列。
   for (const row of orderCountRows) {
+    const currency = row.currency.trim().toUpperCase();
+    const bucketKey = `${row.date}\0${currency}`;
     if (
       !knownDates.has(row.date) ||
+      !/^[A-Z]{3}$/.test(currency) ||
       !Number.isSafeInteger(row.orderCount) ||
       row.orderCount < 0 ||
-      dailyCounts.has(row.date)
+      orderCountBuckets.has(bucketKey)
     ) {
       throw new AdminPaymentServiceError();
     }
-    dailyCounts.set(row.date, row.orderCount);
+    orderCountBuckets.add(bucketKey);
+    dailyCounts.set(
+      row.date,
+      (dailyCounts.get(row.date) ?? 0) + row.orderCount
+    );
+    currencies.add(currency);
   }
 
   const sortedCurrencies = [...currencies].sort();
@@ -477,6 +541,7 @@ export async function loadAdminPaymentOrders(
   request: {
     actorUserId: string;
     input: unknown;
+    timeZone: string;
     now?: Date;
   },
   dependencies: {
@@ -485,19 +550,29 @@ export async function loadAdminPaymentOrders(
   }
 ): Promise<AdminPaymentOrderListOutput> {
   const parsed = adminPaymentOrderListInputSchema.parse(request.input);
+  const now = request.now ?? new Date();
+  const range = resolveAdminPaymentOrderDateRange({
+    startDate: parsed.startDate,
+    endDate: parsed.endDate,
+    timeZone: request.timeZone,
+    asOf: now,
+  });
   const filters = paymentCursorFiltersSchema.parse({
+    endDate: range.endDate,
     limit: parsed.limit,
     orderId: parsed.orderId ?? null,
+    startDate: range.startDate,
     status: parsed.status ?? null,
     userEmail: parsed.userEmail ?? null,
   });
-  const now = request.now ?? new Date();
   const decoded = parsed.cursor
     ? decodePaymentCursor(
         parsed.cursor,
         {
           actorUserId: request.actorUserId,
           filters,
+          rangeEndExclusive: range.end,
+          rangeStart: range.start,
           asOfNotAfter: now,
         },
         dependencies.tokenSecret
@@ -506,7 +581,9 @@ export async function loadAdminPaymentOrders(
   const asOf = decoded?.asOf ?? now;
   const rows = await dependencies.repository.readOrders({
     asOf,
+    endExclusive: range.end,
     orderId: parsed.orderId ?? null,
+    start: range.start,
     status: parsed.status ?? null,
     userEmail: parsed.userEmail ?? null,
     cursor: decoded

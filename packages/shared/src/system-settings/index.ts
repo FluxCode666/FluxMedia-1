@@ -13,6 +13,7 @@ import {
   imageCreditPricingSchema,
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
+import { paginationPageSizeOptionsSchema } from "../pagination/config";
 import { dashboardSupportConfigSchema } from "../support/dashboard-config";
 import {
   clearLocalSystemSettingsCache,
@@ -277,6 +278,15 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
       const parsed = dashboardSupportConfigSchema.safeParse(parsedValue);
       if (!parsed.success) {
         throw new Error(`${definition.label} 的字段或链接格式无效`);
+      }
+      return parsed.data;
+    }
+    if (definition.key === "PAGINATION_PAGE_SIZE_OPTIONS") {
+      const parsed = paginationPageSizeOptionsSchema.safeParse(parsedValue);
+      if (!parsed.success) {
+        throw new Error(
+          `${definition.label} 必须是包含 20 的不重复整数数组，且每项位于 1 至 100`
+        );
       }
       return parsed.data;
     }

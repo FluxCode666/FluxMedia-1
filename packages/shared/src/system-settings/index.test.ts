@@ -350,6 +350,25 @@ describe("setSystemSettings", () => {
     ).rejects.toThrow(/取值无效/);
   });
 
+  it("validates and normalizes configured pagination sizes", async () => {
+    await setSystemSettings(
+      [{ key: "PAGINATION_PAGE_SIZE_OPTIONS", value: [50, 20, 10] }],
+      "admin"
+    );
+    expect(store.get("PAGINATION_PAGE_SIZE_OPTIONS")?.value).toEqual([
+      10, 20, 50,
+    ]);
+
+    for (const invalidValue of [[10, 50], [10, 20, 20], [10, 20, 101], {}]) {
+      await expect(
+        setSystemSettings(
+          [{ key: "PAGINATION_PAGE_SIZE_OPTIONS", value: invalidValue }],
+          "admin"
+        )
+      ).rejects.toThrow(/包含 20 的不重复整数数组/);
+    }
+  });
+
   it("validates dashboard support structure and safe links before writing", async () => {
     const configured = structuredClone(DEFAULT_DASHBOARD_SUPPORT_CONFIG);
     configured.officialSupport.qrCodeUrl =

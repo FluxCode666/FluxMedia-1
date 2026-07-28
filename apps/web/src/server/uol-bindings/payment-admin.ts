@@ -59,7 +59,11 @@ bindOperationExecute(listAdminPaymentOrders, async (input, principal) => {
   return adminPaymentOrderListOutputSchema.parse(
     await invokeAdminPaymentService(() =>
       loadAdminPaymentOrders(
-        { actorUserId: principal.userId, input },
+        {
+          actorUserId: principal.userId,
+          input,
+          timeZone: getAppTimeZone(),
+        },
         { repository: databaseAdminPaymentRepository }
       )
     )

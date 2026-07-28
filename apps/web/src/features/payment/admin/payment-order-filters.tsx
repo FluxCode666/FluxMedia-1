@@ -7,6 +7,7 @@
  * 订单号和状态只在提交时导航；筛选变化后始终清除签名 cursor。
  */
 import {
+  ADMIN_PAYMENT_ORDER_DEFAULT_DAYS,
   ADMIN_PAYMENT_ORDER_STATUSES,
   type AdminPaymentOrderStatus,
 } from "@repo/shared/payment/admin-contract";
@@ -30,16 +31,18 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { useRouter } from "@/i18n/routing";
-
+import { searchAdminPaymentOrderUsersAction } from "./actions";
 import {
   type AdminPaymentOrderQueryState,
   buildAdminPaymentOrdersHref,
+  buildRecentCalendarDaysRange,
 } from "./admin-payment-query";
-import { searchAdminPaymentOrderUsersAction } from "./actions";
+import { PaymentOrderDateRangePicker } from "./payment-order-date-range-picker";
 
 type PaymentOrderFiltersProps = {
   initialUserOptions: Array<{ id: string; email: string }>;
   state: AdminPaymentOrderQueryState;
+  today: string;
 };
 
 const ALL_STATUSES = "all";
@@ -62,11 +65,14 @@ function mergeUserOptions(
 export function PaymentOrderFilters({
   initialUserOptions,
   state,
+  today,
 }: PaymentOrderFiltersProps) {
   const locale = useLocale();
   const t = useTranslations("AdminPayments.orders");
   const router = useRouter();
   const [isNavigating, startTransition] = useTransition();
+  const [startDate, setStartDate] = useState(state.startDate);
+  const [endDate, setEndDate] = useState(state.endDate);
   const [userEmail, setUserEmail] = useState(state.userEmail ?? "");
   const [orderId, setOrderId] = useState(state.orderId ?? "");
   const [status, setStatus] = useState<AdminPaymentOrderStatus | null>(
@@ -81,6 +87,8 @@ export function PaymentOrderFilters({
   );
 
   useEffect(() => {
+    setStartDate(state.startDate);
+    setEndDate(state.endDate);
     setUserEmail(state.userEmail ?? "");
     setOrderId(state.orderId ?? "");
     setStatus(state.status);
@@ -134,7 +142,10 @@ export function PaymentOrderFilters({
       router.push(
         buildAdminPaymentOrdersHref({
           cursor: null,
+          endDate,
           orderId: orderId.trim() || null,
+          pageSize: state.pageSize,
+          startDate,
           status,
           userEmail: userEmail || null,
         })
@@ -144,12 +155,28 @@ export function PaymentOrderFilters({
 
   /** 清空业务筛选并返回订单首屏。 */
   function clearFilters(): void {
+    const defaultRange = buildRecentCalendarDaysRange(
+      today,
+      ADMIN_PAYMENT_ORDER_DEFAULT_DAYS
+    );
+    setStartDate(defaultRange.startDate);
+    setEndDate(defaultRange.endDate);
     setUserEmail("");
     setOrderId("");
     setStatus(null);
     setUserSearch("");
     startTransition(() => {
-      router.push("/dashboard/admin/payments/orders");
+      router.push(
+        buildAdminPaymentOrdersHref({
+          cursor: null,
+          endDate: defaultRange.endDate,
+          orderId: null,
+          pageSize: state.pageSize,
+          startDate: defaultRange.startDate,
+          status: null,
+          userEmail: null,
+        })
+      );
     });
   }
 
@@ -162,7 +189,20 @@ export function PaymentOrderFilters({
         applyFilters();
       }}
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1.2fr)_minmax(240px,1fr)_190px_auto] xl:items-end">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(250px,1.15fr)_minmax(240px,1.1fr)_minmax(220px,1fr)_180px_auto] xl:items-end">
+        <div className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground">
+          <span>{t("dateRange")}</span>
+          <PaymentOrderDateRangePicker
+            disabled={isNavigating}
+            endDate={endDate}
+            onRangeChange={(range) => {
+              setStartDate(range.startDate);
+              setEndDate(range.endDate);
+            }}
+            startDate={startDate}
+            today={today}
+          />
+        </div>
         <div className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground">
           <span id="payment-order-user-filter-label">{t("userEmail")}</span>
           <Popover onOpenChange={setIsUserOpen} open={isUserOpen}>

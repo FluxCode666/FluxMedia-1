@@ -16,6 +16,7 @@ import {
   loadAdminPaymentOrders,
   loadAdminPaymentOverview,
   resolveAdminPaymentDateRange,
+  resolveAdminPaymentOrderDateRange,
 } from "./admin-payment-service";
 
 /** 创建最小合法订单行，允许测试覆盖排序键和业务字段。 */
@@ -57,12 +58,18 @@ function makeRepository(
 }
 
 describe("admin payment overview", () => {
-  it("counts all created recharge orders even when none are fulfilled", async () => {
+  it("keeps zero-valued amount series for currencies with created orders", async () => {
     const repository = makeRepository({
       readOverviewOrderCounts: async () => [
         {
           date: "2026-07-20",
-          orderCount: 4,
+          currency: "CNY",
+          orderCount: 3,
+        },
+        {
+          date: "2026-07-20",
+          currency: "USD",
+          orderCount: 1,
         },
       ],
     });
@@ -79,12 +86,18 @@ describe("admin payment overview", () => {
     expect(output).toMatchObject({
       rechargeOrderCount: 4,
       revenueDayCount: 0,
-      revenueTotals: [],
+      revenueTotals: [
+        { currency: "CNY", amountMinor: 0 },
+        { currency: "USD", amountMinor: 0 },
+      ],
     });
     expect(output.daily[19]).toMatchObject({
       date: "2026-07-20",
       orderCount: 4,
-      revenue: [],
+      revenue: [
+        { currency: "CNY", amountMinor: 0 },
+        { currency: "USD", amountMinor: 0 },
+      ],
     });
   });
 
@@ -117,8 +130,8 @@ describe("admin payment overview", () => {
         expect(input.end.toISOString()).toBe("2026-07-15T16:00:00.000Z");
         expect(input.timeZone).toBe("Asia/Shanghai");
         return [
-          { date: "2026-07-01", orderCount: 4 },
-          { date: "2026-07-03", orderCount: 2 },
+          { date: "2026-07-01", currency: "CNY", orderCount: 4 },
+          { date: "2026-07-03", currency: "CNY", orderCount: 2 },
         ];
       },
     });
@@ -162,7 +175,7 @@ describe("admin payment overview", () => {
       },
       readOverviewOrderCounts: async (input) => {
         queryEnds.push(input.end.toISOString());
-        return [{ date: "2026-07-28", orderCount: 1 }];
+        return [{ date: "2026-07-28", currency: "CNY", orderCount: 1 }];
       },
     });
     const output = await loadAdminPaymentOverview(
@@ -183,7 +196,7 @@ describe("admin payment overview", () => {
     expect(output.daily.at(-1)).toEqual({
       date: "2026-07-31",
       orderCount: 0,
-      revenue: [],
+      revenue: [{ currency: "CNY", amountMinor: 0 }],
     });
   });
 
@@ -284,11 +297,11 @@ describe("admin payment overview", () => {
     ).rejects.toThrow(AdminPaymentServiceError);
   });
 
-  it("rejects duplicate order-count date aggregates", async () => {
+  it("rejects duplicate order-count date and currency aggregates", async () => {
     const repository = makeRepository({
       readOverviewOrderCounts: async () => [
-        { date: "2026-07-01", orderCount: 1 },
-        { date: "2026-07-01", orderCount: 2 },
+        { date: "2026-07-01", currency: "CNY", orderCount: 1 },
+        { date: "2026-07-01", currency: "CNY", orderCount: 2 },
       ],
     });
     await expect(
@@ -305,23 +318,55 @@ describe("admin payment overview", () => {
 });
 
 describe("admin payment order cursor", () => {
+  it("defaults to the latest seven app-time-zone calendar days", () => {
+    const range = resolveAdminPaymentOrderDateRange({
+      timeZone: "Asia/Shanghai",
+      asOf: new Date("2026-07-28T00:00:00.000Z"),
+    });
+
+    expect(range.startDate).toBe("2026-07-22");
+    expect(range.endDate).toBe("2026-07-28");
+    expect(range.start.toISOString()).toBe("2026-07-21T16:00:00.000Z");
+    expect(range.end.toISOString()).toBe("2026-07-28T16:00:00.000Z");
+  });
+
+  it("uses inclusive custom dates and rejects future order ranges", () => {
+    const range = resolveAdminPaymentOrderDateRange({
+      startDate: "2026-03-07",
+      endDate: "2026-03-09",
+      timeZone: "America/New_York",
+      asOf: new Date("2026-07-28T00:00:00.000Z"),
+    });
+    expect(range.start.toISOString()).toBe("2026-03-07T05:00:00.000Z");
+    expect(range.end.toISOString()).toBe("2026-03-10T04:00:00.000Z");
+    expect(() =>
+      resolveAdminPaymentOrderDateRange({
+        startDate: "2026-07-28",
+        endDate: "2026-07-29",
+        timeZone: "UTC",
+        asOf: new Date("2026-07-28T12:00:00.000Z"),
+      })
+    ).toThrow(AdminPaymentServiceError);
+  });
+
   it("paginates forward and issues a previous cursor bound to the actor", async () => {
     const seenQueries: AdminPaymentOrderQuery[] = [];
     const repository = makeRepository({
       readOrders: async (query) => {
         seenQueries.push(query);
         return query.cursor?.direction === "next"
-          ? [makeOrder("order-1", "2026-07-01T00:00:00.000Z")]
+          ? [makeOrder("order-1", "2026-07-26T00:00:00.000Z")]
           : [
-              makeOrder("order-3", "2026-07-03T00:00:00.000Z"),
-              makeOrder("order-2", "2026-07-02T00:00:00.000Z"),
-              makeOrder("order-1", "2026-07-01T00:00:00.000Z"),
+              makeOrder("order-3", "2026-07-28T00:00:00.000Z"),
+              makeOrder("order-2", "2026-07-27T00:00:00.000Z"),
+              makeOrder("order-1", "2026-07-26T00:00:00.000Z"),
             ];
       },
     });
     const common = {
       actorUserId: "admin-1",
       now: new Date("2026-07-28T00:00:00.000Z"),
+      timeZone: "UTC",
     };
     const first = await loadAdminPaymentOrders(
       { ...common, input: { limit: 2, status: "fulfilled" } },
@@ -333,13 +378,19 @@ describe("admin payment order cursor", () => {
     ]);
     expect(first.previousCursor).toBeNull();
     expect(first.nextCursor).toBeTypeOf("string");
+    expect(seenQueries[0]).toMatchObject({
+      start: new Date("2026-07-22T00:00:00.000Z"),
+      endExclusive: new Date("2026-07-29T00:00:00.000Z"),
+    });
 
     const second = await loadAdminPaymentOrders(
       {
         ...common,
         input: {
+          endDate: "2026-07-28",
           limit: 2,
           status: "fulfilled",
+          startDate: "2026-07-22",
           cursor: first.nextCursor ?? undefined,
         },
       },
@@ -357,8 +408,8 @@ describe("admin payment order cursor", () => {
   it("rejects tampered cursors and cross-filter reuse", async () => {
     const repository = makeRepository({
       readOrders: async () => [
-        makeOrder("order-2", "2026-07-02T00:00:00.000Z"),
-        makeOrder("order-1", "2026-07-01T00:00:00.000Z"),
+        makeOrder("order-2", "2026-07-28T00:00:00.000Z"),
+        makeOrder("order-1", "2026-07-27T00:00:00.000Z"),
       ],
     });
     const first = await loadAdminPaymentOrders(
@@ -366,6 +417,7 @@ describe("admin payment order cursor", () => {
         actorUserId: "admin-1",
         input: { limit: 1, status: "fulfilled" },
         now: new Date("2026-07-28T00:00:00.000Z"),
+        timeZone: "UTC",
       },
       { repository, tokenSecret: "test-secret" }
     );
@@ -375,8 +427,15 @@ describe("admin payment order cursor", () => {
       loadAdminPaymentOrders(
         {
           actorUserId: "admin-1",
-          input: { limit: 1, status: "fulfilled", cursor: `${cursor}x` },
+          input: {
+            endDate: "2026-07-28",
+            limit: 1,
+            startDate: "2026-07-22",
+            status: "fulfilled",
+            cursor: `${cursor}x`,
+          },
           now: new Date("2026-07-28T00:00:00.000Z"),
+          timeZone: "UTC",
         },
         { repository, tokenSecret: "test-secret" }
       )
@@ -386,8 +445,73 @@ describe("admin payment order cursor", () => {
       loadAdminPaymentOrders(
         {
           actorUserId: "admin-1",
-          input: { limit: 1, status: "pending", cursor },
+          input: {
+            endDate: "2026-07-28",
+            limit: 1,
+            startDate: "2026-07-22",
+            status: "pending",
+            cursor,
+          },
           now: new Date("2026-07-28T00:00:00.000Z"),
+          timeZone: "UTC",
+        },
+        { repository, tokenSecret: "test-secret" }
+      )
+    ).rejects.toThrow(AdminPaymentServiceError);
+
+    await expect(
+      loadAdminPaymentOrders(
+        {
+          actorUserId: "admin-1",
+          input: {
+            limit: 1,
+            status: "fulfilled",
+            startDate: "2026-07-21",
+            endDate: "2026-07-27",
+            cursor,
+          },
+          now: new Date("2026-07-28T00:00:00.000Z"),
+          timeZone: "UTC",
+        },
+        { repository, tokenSecret: "test-secret" }
+      )
+    ).rejects.toThrow(AdminPaymentServiceError);
+  });
+
+  it("rejects a signed cursor whose sort key is outside the date range", async () => {
+    const repository = makeRepository({
+      readOrders: async () => [
+        makeOrder("outside-range", "2026-07-21T23:59:59.999Z"),
+        makeOrder("extra-row", "2026-07-21T23:59:59.998Z"),
+      ],
+    });
+    const common = {
+      actorUserId: "admin-1",
+      now: new Date("2026-07-28T00:00:00.000Z"),
+      timeZone: "UTC",
+    };
+    const first = await loadAdminPaymentOrders(
+      {
+        ...common,
+        input: {
+          startDate: "2026-07-22",
+          endDate: "2026-07-28",
+          limit: 1,
+        },
+      },
+      { repository, tokenSecret: "test-secret" }
+    );
+
+    await expect(
+      loadAdminPaymentOrders(
+        {
+          ...common,
+          input: {
+            startDate: "2026-07-22",
+            endDate: "2026-07-28",
+            limit: 1,
+            cursor: first.nextCursor ?? undefined,
+          },
         },
         { repository, tokenSecret: "test-secret" }
       )

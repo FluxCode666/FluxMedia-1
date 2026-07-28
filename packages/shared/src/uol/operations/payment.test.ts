@@ -47,6 +47,28 @@ describe("payment UOL contract", () => {
     ).toBe(false);
   });
 
+  it("validates complete bounded order date ranges", () => {
+    const operation = getOperation("payment.listAdminOrders");
+    expect(
+      operation?.input.safeParse({
+        startDate: "2026-07-22",
+        endDate: "2026-07-28",
+      }).success
+    ).toBe(true);
+    expect(
+      operation?.input.safeParse({ startDate: "2026-07-22" }).success
+    ).toBe(false);
+    expect(
+      operation?.input.safeParse({ cursor: "signed-cursor" }).success
+    ).toBe(false);
+    expect(
+      operation?.input.safeParse({
+        startDate: "2026-02-30",
+        endDate: "2026-03-01",
+      }).success
+    ).toBe(false);
+  });
+
   it.each([
     "payment.getAdminOverview",
     "payment.listAdminOrders",

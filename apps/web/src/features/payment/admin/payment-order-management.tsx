@@ -18,7 +18,7 @@ import {
   ReceiptText,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
 import { Link } from "@/i18n/routing";
 
 import { formatPaymentAmount } from "./admin-payment-format";
@@ -33,9 +33,11 @@ type PaymentOrderManagementProps = {
   initialUserOptions: Array<{ id: string; email: string }>;
   nextCursor: string | null;
   previousCursor: string | null;
+  pageSizeOptions: number[];
   records: AdminPaymentOrder[];
   state: AdminPaymentOrderQueryState;
   timeZone: string;
+  today: string;
 };
 
 /** 返回持久支付状态对应的语义徽标样式。 */
@@ -76,9 +78,11 @@ export function PaymentOrderManagement({
   initialUserOptions,
   nextCursor,
   previousCursor,
+  pageSizeOptions,
   records,
   state,
   timeZone,
+  today,
 }: PaymentOrderManagementProps) {
   const locale = useLocale();
   const t = useTranslations("AdminPayments.orders");
@@ -88,6 +92,7 @@ export function PaymentOrderManagement({
       <PaymentOrderFilters
         initialUserOptions={initialUserOptions}
         state={state}
+        today={today}
       />
 
       {records.length === 0 ? (
@@ -227,7 +232,22 @@ export function PaymentOrderManagement({
               </span>
             )}
           </Button>
-          <p className="text-xs text-muted-foreground">{t("pageHint")}</p>
+          <div className="flex flex-col items-center gap-2 sm:flex-row">
+            <p className="text-xs text-muted-foreground">{t("pageHint")}</p>
+            <UrlPageSizeSelect
+              itemSuffix={t("pageSizeSuffix")}
+              label={t("rowsPerPage")}
+              options={pageSizeOptions.map((pageSize) => ({
+                size: pageSize,
+                href: buildAdminPaymentOrdersHref({
+                  ...state,
+                  cursor: null,
+                  pageSize,
+                }),
+              }))}
+              value={state.pageSize}
+            />
+          </div>
           <Button
             asChild={Boolean(nextCursor)}
             disabled={!nextCursor}

@@ -43,7 +43,7 @@ export const getAdminPaymentOverview = defineOperation({
   domain: "payment",
   title: "获取支付概览",
   description:
-    "按管理员时区读取指定日期范围的充值订单，收入按完成时间和币种统计，订单数量按创建时间统计全部支付状态；缺省范围为当前自然月。",
+    "按部署时区读取指定日期范围的充值订单，收入按完成时间和币种统计，订单数量按创建时间统计全部支付状态；缺省范围为当前自然月。",
   input: adminPaymentOverviewInputSchema,
   output: adminPaymentOverviewOutputSchema,
   access: { kind: "roles", roles: ["admin", "super_admin"] },
@@ -63,7 +63,7 @@ export const listAdminPaymentOrders = defineOperation({
   domain: "payment",
   title: "查询充值订单",
   description:
-    "按用户邮箱、本地订单号和持久支付状态查询全站充值订单，并返回签名 keyset 分页游标。",
+    "按创建日期范围、用户邮箱、本地订单号和持久支付状态查询全站充值订单；默认读取部署时区中的最近 7 个自然日，并返回签名 keyset 分页游标。",
   input: adminPaymentOrderListInputSchema,
   output: adminPaymentOrderListOutputSchema,
   access: { kind: "roles", roles: ["admin", "super_admin"] },

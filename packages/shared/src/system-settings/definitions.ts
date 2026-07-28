@@ -1,6 +1,7 @@
 import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "../adobe/video-pricing";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
+import { DEFAULT_PAGE_SIZE_OPTIONS } from "../pagination/config";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 
 export type SettingCategory =
@@ -27,6 +28,7 @@ export type SettingKey =
   | "NEXT_PUBLIC_APP_URL"
   | "NEXT_PUBLIC_APP_NAME"
   | "NEXT_PUBLIC_ASSET_PREFIX"
+  | "PAGINATION_PAGE_SIZE_OPTIONS"
   | "MARKETING_SLA_STATUS_ENABLED"
   | "DASHBOARD_SUPPORT_CONFIG"
   | "EXTERNAL_API_CORS_ENABLED"
@@ -347,6 +349,16 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "general",
     valueType: "string",
     requiresRebuild: true,
+  },
+  {
+    key: "PAGINATION_PAGE_SIZE_OPTIONS",
+    label: "列表分页大小",
+    description:
+      "配置系统列表允许选择的每页记录数。取值必须是 1 至 100 的不重复整数，并包含固定默认值 20。",
+    category: "general",
+    valueType: "json",
+    defaultValue: DEFAULT_PAGE_SIZE_OPTIONS,
+    exampleValue: DEFAULT_PAGE_SIZE_OPTIONS,
   },
   {
     key: "MARKETING_SLA_STATUS_ENABLED",

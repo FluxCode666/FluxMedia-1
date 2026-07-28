@@ -42,6 +42,7 @@ const overviewRevenueRowSchema = z
 const overviewOrderCountRowSchema = z
   .object({
     date: z.string().date(),
+    currency: z.string().trim().length(3),
     orderCount: z.coerce.number().int().nonnegative().safe(),
   })
   .strict();
@@ -140,7 +141,7 @@ async function readOverviewRevenue(input: {
   return rows.map((row) => overviewRevenueRowSchema.parse(row));
 }
 
-/** 按报告时区创建自然日聚合全部状态的充值订单数量。 */
+/** 按部署报表时区的自然日与币种聚合全部状态订单，服务层再合并每日数量。 */
 async function readOverviewOrderCounts(input: {
   start: Date;
   end: Date;
@@ -152,6 +153,7 @@ async function readOverviewOrderCounts(input: {
   const rows = await db
     .select({
       date,
+      currency: paymentOrder.currency,
       orderCount: sql<number>`count(*)`.mapWith(Number),
     })
     .from(paymentOrder)
@@ -162,8 +164,8 @@ async function readOverviewOrderCounts(input: {
         lt(paymentOrder.createdAt, input.end)
       )
     )
-    .groupBy(sql.raw("1"))
-    .orderBy(sql.raw("1"));
+    .groupBy(sql.raw("1"), paymentOrder.currency)
+    .orderBy(sql.raw("1"), paymentOrder.currency);
   return rows.map((row) => overviewOrderCountRowSchema.parse(row));
 }
 
@@ -193,6 +195,8 @@ async function readOrders(
     .where(
       and(
         buildRechargePurposePredicate(),
+        gte(paymentOrder.createdAt, input.start),
+        lt(paymentOrder.createdAt, input.endExclusive),
         lte(paymentOrder.createdAt, input.asOf),
         input.orderId ? eq(paymentOrder.id, input.orderId) : undefined,
         input.status ? eq(paymentOrder.status, input.status) : undefined,

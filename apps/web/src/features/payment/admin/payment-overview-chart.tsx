@@ -52,6 +52,26 @@ function formatChartDateTick(
   return value.slice(8);
 }
 
+/** 单币种时为金额轴附加货币符号，多币种时仅显示无歧义的紧凑数值。 */
+function formatRevenueAxisTick(
+  value: number,
+  locale: string,
+  currency: string | null
+): string {
+  if (!currency) return formatCompactNumber(value, locale);
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      currencyDisplay: "narrowSymbol",
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
+  } catch {
+    return formatCompactNumber(value, locale);
+  }
+}
+
 /** 观察图表容器宽度，避免 Recharts 首次渲染得到零宽。 */
 function useElementWidth() {
   const ref = useRef<HTMLDivElement>(null);
@@ -80,6 +100,11 @@ export function PaymentOverviewChart({ overview }: PaymentOverviewChartProps) {
   const t = useTranslations("AdminPayments.overview");
   const { ref, width } = useElementWidth();
   const currencies = overview.revenueTotals.map((item) => item.currency);
+  const revenueAxisCurrency =
+    currencies.length === 1 ? (currencies[0] ?? null) : null;
+  const revenueAxisLabel = revenueAxisCurrency
+    ? t("revenueAxisCurrency", { currency: revenueAxisCurrency })
+    : t("revenueAxis");
   const orderLabel = t("rechargeOrders");
   const data = overview.daily.map((point) => {
     const row: Record<string, string | number> = {
@@ -127,21 +152,39 @@ export function PaymentOverviewChart({ overview }: PaymentOverviewChartProps) {
             />
             <YAxis
               axisLine={false}
+              label={{
+                angle: -90,
+                fill: "var(--muted-foreground)",
+                fontSize: 11,
+                position: "insideLeft",
+                value: revenueAxisLabel,
+              }}
               tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
               tickFormatter={(value) =>
-                formatCompactNumber(Number(value), locale)
+                formatRevenueAxisTick(
+                  Number(value),
+                  locale,
+                  revenueAxisCurrency
+                )
               }
               tickLine={false}
-              width={48}
+              width={68}
               yAxisId="revenue"
             />
             <YAxis
               allowDecimals={false}
               axisLine={false}
+              label={{
+                angle: 90,
+                fill: "var(--muted-foreground)",
+                fontSize: 11,
+                position: "insideRight",
+                value: t("orderCountAxis"),
+              }}
               orientation="right"
               tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
               tickLine={false}
-              width={36}
+              width={56}
               yAxisId="orders"
             />
             <Tooltip

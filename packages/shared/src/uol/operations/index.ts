@@ -52,6 +52,7 @@ export {
   settingsGetModelConfiguration,
   settingsUpdateModelConfigurationEntry,
 } from "./model-marketplace";
+export { settingsGetPaginationConfig } from "./system-settings";
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {
   videoGenerate,
