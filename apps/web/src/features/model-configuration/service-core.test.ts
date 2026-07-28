@@ -68,6 +68,8 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
       minimumCredits: 2,
       marketplaceApplicable: true as const,
       visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
       description: "",
       coverUrl: null,
       usesDefaultCover: true,
@@ -84,6 +86,8 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
     minimumCredits: 30,
     marketplaceApplicable: true as const,
     visible: true,
+    homepageVisible: false,
+    homepagePriority: 5,
     description: "",
     coverUrl: null,
     usesDefaultCover: true,
@@ -273,6 +277,8 @@ function imageInput(
     configKey: "gpt-image-2",
     expectedRevision: 0,
     visible: true,
+    homepageVisible: true,
+    homepagePriority: 5,
     description: "新的图像模型",
     coverChange: { action: "keep" as const },
     pricing: IMAGE_PRICING,
@@ -305,6 +311,8 @@ describe("模型配置保存内核", () => {
     expect(state.config.imageByModel["gpt-image-2"]).toMatchObject({
       revision: 1,
       visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
       description: "新的图像模型",
     });
     expect(state.config.imageByModel["other-image"]).toMatchObject({
@@ -331,6 +339,8 @@ describe("模型配置保存内核", () => {
         configKey: "sora2",
         expectedRevision: 0,
         visible: false,
+        homepageVisible: false,
+        homepagePriority: 5,
         description: "视频模型",
         coverChange: { action: "keep" },
         creditsPerSecond: 88,
@@ -344,6 +354,8 @@ describe("模型配置保存内核", () => {
     expect(state.config.videoByFamily.sora2).toMatchObject({
       revision: 1,
       visible: false,
+      homepageVisible: false,
+      homepagePriority: 5,
     });
     expect(state.imagePricing.byModel).not.toHaveProperty("default");
     expect(state.config.imageByModel).not.toHaveProperty("default");

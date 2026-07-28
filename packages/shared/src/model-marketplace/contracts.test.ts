@@ -37,6 +37,8 @@ function createPublicImageItem(): Record<string, unknown> {
     description: "适合高质量图像生成。",
     coverUrl: "/model-assets/image/gpt-image-2.webp",
     minimumCredits: 1.27,
+    homepageVisible: true,
+    homepagePriority: 5,
     priceUnit: "per_image",
     pricing: IMAGE_PRICING,
   };
@@ -288,6 +290,8 @@ describe("管理与公开 DTO", () => {
           revision: 0,
           marketplaceApplicable: true,
           visible: true,
+          homepageVisible: true,
+          homepagePriority: 5,
           description: "",
           coverUrl: "/images/model-default.webp",
           usesDefaultCover: true,
@@ -303,6 +307,8 @@ describe("管理与公开 DTO", () => {
           revision: 0,
           marketplaceApplicable: true,
           visible: false,
+          homepageVisible: false,
+          homepagePriority: 8,
           description: "",
           coverUrl: "/images/model-default.webp",
           usesDefaultCover: true,
@@ -371,6 +377,8 @@ describe("管理与公开 DTO", () => {
       description: "适合高质量视频生成。",
       coverUrl: "/images/video-default.webp",
       minimumCredits: 45,
+      homepageVisible: true,
+      homepagePriority: 2,
       priceUnit: "per_second",
       creditsPerSecond: 45,
       supportedDurations: [4, 6, 8],
@@ -391,6 +399,8 @@ describe("updateModelConfigurationEntryInputSchema", () => {
     configKey: "gpt-image-2",
     expectedRevision: 2,
     visible: true,
+    homepageVisible: true,
+    homepagePriority: 5,
     description: "  新简介  ",
     coverChange: { action: "keep" },
     pricing: IMAGE_PRICING,
@@ -503,6 +513,26 @@ describe("updateModelConfigurationEntryInputSchema", () => {
         expectedRevision: Number.MAX_SAFE_INTEGER + 1,
       }).success
     ).toBe(false);
+  });
+
+  it("拒绝首页展示与模型广场状态矛盾及越界优先级", () => {
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...common,
+        category: "image",
+        visible: false,
+        homepageVisible: true,
+      }).success
+    ).toBe(false);
+    for (const homepagePriority of [-1, 1.5, 10_001]) {
+      expect(
+        updateModelConfigurationEntryInputSchema.safeParse({
+          ...common,
+          category: "image",
+          homepagePriority,
+        }).success
+      ).toBe(false);
+    }
   });
 });
 

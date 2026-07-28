@@ -80,6 +80,8 @@ function explicitImageFields(): Record<string, string> {
     expectedRevision: "2",
     clientRequestId: CLIENT_REQUEST_ID,
     visible: "true",
+    homepageVisible: "true",
+    homepagePriority: "3",
     description: "公开图像模型",
     coverChange: "keep",
     ...imagePricingFields(),
@@ -323,6 +325,8 @@ describe("POST /api/admin/model-configuration", () => {
     expect(explicitResponse.status).toBe(200);
     expect(invokedInput()).toMatchObject({
       category: "image",
+      homepageVisible: true,
+      homepagePriority: 3,
       pricing: {
         base1024Credits: 1.27,
         base1kCredits: 1.27,
@@ -344,6 +348,23 @@ describe("POST /api/admin/model-configuration", () => {
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
+  it("拒绝矛盾的首页开关与非法首页优先级", async () => {
+    const invalidForms = [
+      { ...explicitImageFields(), visible: "false", homepageVisible: "true" },
+      { ...explicitImageFields(), homepagePriority: "-1" },
+      { ...explicitImageFields(), homepagePriority: "1.5" },
+      { ...explicitImageFields(), homepagePriority: "10001" },
+    ];
+
+    for (const fields of invalidForms) {
+      const response = await POST(
+        createMultipartRequest(createFormData(fields))
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
   it("正确构造视频并拒绝已删除的 default 类别", async () => {
     mocks.invokeOperation.mockResolvedValue({
       category: "video",
@@ -358,6 +379,8 @@ describe("POST /api/admin/model-configuration", () => {
           expectedRevision: "5",
           clientRequestId: CLIENT_REQUEST_ID,
           visible: "false",
+          homepageVisible: "false",
+          homepagePriority: "8",
           description: "视频模型",
           coverChange: "remove",
           creditsPerSecond: "45",
@@ -369,6 +392,8 @@ describe("POST /api/admin/model-configuration", () => {
       category: "video",
       configKey: "veo31",
       visible: false,
+      homepageVisible: false,
+      homepagePriority: 8,
       creditsPerSecond: 45,
       coverChange: { action: "remove" },
     });

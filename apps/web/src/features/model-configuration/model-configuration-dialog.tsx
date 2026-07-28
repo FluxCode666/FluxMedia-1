@@ -7,6 +7,7 @@
  * revision、幂等、价格、封面处理和审计仍由 UOL 服务端最终裁决。
  */
 import {
+  MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
   type ModelConfigurationEntry,
 } from "@repo/shared/model-marketplace";
@@ -275,7 +276,7 @@ export function ModelConfigurationDialog({
             </div>
             <DialogDescription className="text-left">
               {canEdit
-                ? "价格与展示信息会作为一个模型条目原子保存。"
+                ? "价格、模型广场与官网首页展示信息会作为一个模型条目原子保存。"
                 : "当前账号拥有查看权限，但只有超级管理员可以修改。"}
             </DialogDescription>
           </DialogHeader>
@@ -357,9 +358,62 @@ export function ModelConfigurationDialog({
                     checked={draft.visible}
                     disabled={disabled}
                     onCheckedChange={(visible) =>
-                      updateDraft((current) => ({ ...current, visible }))
+                      updateDraft((current) => ({
+                        ...current,
+                        visible,
+                        homepageVisible: visible
+                          ? current.homepageVisible
+                          : false,
+                      }))
                     }
                   />
+                </div>
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <Label htmlFor={`${entry.configKey}-homepage-visible`}>
+                        展示在官网首页
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        仅模型广场已展示的模型可以进入首页精选格子。
+                      </p>
+                    </div>
+                    <Switch
+                      id={`${entry.configKey}-homepage-visible`}
+                      checked={draft.homepageVisible}
+                      disabled={disabled || !draft.visible}
+                      onCheckedChange={(homepageVisible) =>
+                        updateDraft((current) => ({
+                          ...current,
+                          homepageVisible,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`${entry.configKey}-homepage-priority`}>
+                      首页优先级
+                    </Label>
+                    <Input
+                      id={`${entry.configKey}-homepage-priority`}
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY}
+                      step={1}
+                      value={draft.homepagePriority}
+                      disabled={disabled || !draft.homepageVisible}
+                      onChange={(event) =>
+                        updateDraft((current) => ({
+                          ...current,
+                          homepagePriority: event.target.value,
+                        }))
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      数字越小越优先；默认 5。首页格子已满时不展示后续模型。
+                    </p>
+                  </div>
                 </div>
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-4">
@@ -406,7 +460,7 @@ export function ModelConfigurationDialog({
               className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm"
             >
               该模型已被其他管理员更新。重新加载会采用最新
-              revision，同时保留当前价格、简介和封面草稿。
+              revision，同时保留当前价格、首页排序、简介和封面草稿。
             </div>
           ) : null}
 

@@ -69,6 +69,8 @@ describe("buildModelMarketplaceCatalog", () => {
         description: expect.stringMatching(/图像|文字/),
         pricing: EXPLICIT_IMAGE_PRICING,
         minimumCredits: 2,
+        homepageVisible: true,
+        homepagePriority: 5,
         priceUnit: "per_image",
       }),
     ]);
@@ -159,6 +161,8 @@ describe("buildModelMarketplaceCatalog", () => {
         priceUnit: "per_second",
         creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
         minimumCredits: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
+        homepageVisible: false,
+        homepagePriority: 5,
         supportedDurations: [6, 8],
         supportedAspectRatios: ["16:9", "9:16"],
         supportedResolutions: ["720p", "1080p"],

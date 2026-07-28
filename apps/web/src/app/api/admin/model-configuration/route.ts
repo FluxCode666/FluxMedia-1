@@ -44,6 +44,8 @@ const KNOWN_FORM_FIELDS = new Set([
   "expectedRevision",
   "clientRequestId",
   "visible",
+  "homepageVisible",
+  "homepagePriority",
   "description",
   "coverChange",
   "cover",
@@ -60,6 +62,8 @@ const COMMON_SCALAR_FIELDS = [
 const MARKETPLACE_SCALAR_FIELDS = [
   ...COMMON_SCALAR_FIELDS,
   "visible",
+  "homepageVisible",
+  "homepagePriority",
   "description",
   "coverChange",
 ] as const;
@@ -210,6 +214,21 @@ function parseRevision(value: string): number {
 }
 
 /**
+ * 解析官网首页排序优先级。
+ *
+ * @param value - 只允许非负安全整数的优先级文本。
+ * @returns 可继续由共享 schema 校验业务上限的 number。
+ * @throws ModelConfigurationFormError - 小数、负数或越过安全整数范围时失败。
+ */
+function parseHomepagePriority(value: string): number {
+  const parsed = parseFiniteNumber(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new ModelConfigurationFormError("首页优先级必须是非负整数");
+  }
+  return parsed;
+}
+
+/**
  * 解析严格布尔文本。
  *
  * @param value - 只允许 true 或 false 的文本。
@@ -297,6 +316,12 @@ async function parseImageInput(
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
+    homepageVisible: parseBoolean(
+      requireScalar(data.scalars, "homepageVisible")
+    ),
+    homepagePriority: parseHomepagePriority(
+      requireScalar(data.scalars, "homepagePriority")
+    ),
     description: requireScalar(data.scalars, "description"),
     coverChange: await parseCoverChange(
       requireScalar(data.scalars, "coverChange"),
@@ -328,6 +353,12 @@ async function parseVideoInput(
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
+    homepageVisible: parseBoolean(
+      requireScalar(data.scalars, "homepageVisible")
+    ),
+    homepagePriority: parseHomepagePriority(
+      requireScalar(data.scalars, "homepagePriority")
+    ),
     description: requireScalar(data.scalars, "description"),
     coverChange: await parseCoverChange(
       requireScalar(data.scalars, "coverChange"),

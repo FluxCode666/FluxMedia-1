@@ -5,6 +5,7 @@
  * 的幂等 UUID，并生成 Task 5 Route 接受的严格 FormData，不发请求、不访问存储。
  */
 import {
+  MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   MAX_MODEL_MARKETPLACE_COVER_BYTES,
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
   type ModelConfigurationEntry,
@@ -18,6 +19,8 @@ export type ModelConfigurationCoverDraft =
 
 type MarketplaceDraftFields = {
   visible: boolean;
+  homepageVisible: boolean;
+  homepagePriority: string;
   description: string;
   cover: ModelConfigurationCoverDraft;
 };
@@ -89,9 +92,7 @@ function createImagePricingDraft(
     | null
 ): ModelConfigurationImagePricingDraft {
   return {
-    base1024Credits: pricing
-      ? formatPricingValue(pricing.base1024Credits)
-      : "",
+    base1024Credits: pricing ? formatPricingValue(pricing.base1024Credits) : "",
     base1kCredits: pricing ? formatPricingValue(pricing.base1kCredits) : "",
     base2kCredits: pricing ? formatPricingValue(pricing.base2kCredits) : "",
     base4kCredits: pricing ? formatPricingValue(pricing.base4kCredits) : "",
@@ -118,6 +119,8 @@ export function createModelConfigurationDraft(
   };
   const marketplace = {
     visible: entry.visible,
+    homepageVisible: entry.homepageVisible,
+    homepagePriority: String(entry.homepagePriority),
     description: entry.description,
     cover: { action: "keep", file: null } as const,
   };
@@ -205,6 +208,31 @@ export function parseModelConfigurationPrice(value: string): number {
 }
 
 /**
+ * 严格解析官网首页模型排序优先级。
+ *
+ * @param value - 管理员输入的整数文本。
+ * @returns 0 到共享上限之间的整数，数字越小越优先。
+ * @sideEffects 无。
+ * @failure 空值、小数、负数、指数或超过上限时抛草稿错误。
+ */
+export function parseModelConfigurationHomepagePriority(value: string): number {
+  const normalized = value.trim();
+  if (!/^(?:0|[1-9]\d*)$/.test(normalized)) {
+    throw new ModelConfigurationDraftError("首页优先级必须是非负整数");
+  }
+  const priority = Number(normalized);
+  if (
+    !Number.isSafeInteger(priority) ||
+    priority > MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY
+  ) {
+    throw new ModelConfigurationDraftError(
+      `首页优先级不能超过 ${MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY}`
+    );
+  }
+  return priority;
+}
+
+/**
  * 把四档图像价格写入 multipart。
  *
  * @param formData - 当前保存请求的 FormData。
@@ -252,6 +280,11 @@ function appendMarketplaceFields(
     throw new ModelConfigurationDraftError("模型简介不能超过 200 个字符");
   }
   formData.append("visible", String(draft.visible));
+  formData.append("homepageVisible", String(draft.homepageVisible));
+  formData.append(
+    "homepagePriority",
+    String(parseModelConfigurationHomepagePriority(draft.homepagePriority))
+  );
   formData.append("description", draft.description.trim());
   formData.append("coverChange", draft.cover.action);
   if (draft.cover.action !== "replace") return;

@@ -19,6 +19,7 @@ import {
   formatModelConfigurationMinimumCredits,
   getModelConfigurationCategoryLabel,
   getModelConfigurationCoverSource,
+  getModelConfigurationHomepageLabel,
   getModelConfigurationVisibilityLabel,
   resolveModelConfigurationCoverAfterError,
 } from "./model-configuration-view-model";
@@ -135,6 +136,21 @@ function VisibilityBadge({ entry }: { entry: ModelConfigurationEntry }) {
 }
 
 /**
+ * 渲染官网首页展示状态及其数值优先级。
+ *
+ * @param entry - 当前管理条目。
+ * @returns 开启时使用强调 Badge，关闭时使用轮廓 Badge。
+ * @sideEffects 无。
+ */
+function HomepageBadge({ entry }: { entry: ModelConfigurationEntry }) {
+  return (
+    <Badge variant={entry.homepageVisible ? "secondary" : "outline"}>
+      {getModelConfigurationHomepageLabel(entry)}
+    </Badge>
+  );
+}
+
+/**
  * 渲染模型配置响应式列表。
  *
  * @param props - 已筛选条目、服务端编辑权限和行选择回调。
@@ -157,7 +173,7 @@ export function ModelConfigurationTable({
 
   return (
     <div className="overflow-x-auto border-t">
-      <table className="w-full min-w-[760px] table-fixed text-sm">
+      <table className="w-full min-w-[880px] table-fixed text-sm">
         <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
           <tr>
             <th scope="col" className="w-32 px-4 py-3 font-medium">
@@ -171,6 +187,9 @@ export function ModelConfigurationTable({
             </th>
             <th scope="col" className="w-28 px-4 py-3 font-medium">
               模型广场
+            </th>
+            <th scope="col" className="w-32 px-4 py-3 font-medium">
+              官网首页
             </th>
             <th scope="col" className="w-32 px-4 py-3 font-medium">
               最低价格
@@ -197,6 +216,9 @@ export function ModelConfigurationTable({
               </td>
               <td className="px-4 py-3">
                 <VisibilityBadge entry={entry} />
+              </td>
+              <td className="px-4 py-3">
+                <HomepageBadge entry={entry} />
               </td>
               <td className="px-4 py-3 tabular-nums">
                 {entry.category === "image" &&

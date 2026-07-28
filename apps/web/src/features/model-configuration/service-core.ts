@@ -353,6 +353,8 @@ function serializeRequestPayload(
     configKey: input.configKey,
     expectedRevision: input.expectedRevision,
     visible: input.visible,
+    homepageVisible: input.homepageVisible,
+    homepagePriority: input.homepagePriority,
     description: input.description,
     coverChange:
       input.coverChange.action === "replace"
@@ -632,10 +634,12 @@ export function createModelConfigurationService(
             const currentEntry =
               input.category === "image"
                 ? resolveModelMarketplaceEntry(
-                    config.imageByModel[input.configKey]
+                    config.imageByModel[input.configKey],
+                    "image"
                   )
                 : resolveModelMarketplaceEntry(
-                    config.videoByFamily[input.configKey]
+                    config.videoByFamily[input.configKey],
+                    "video"
                   );
             const currentRevision = currentEntry.revision;
             if (currentRevision !== input.expectedRevision) {
@@ -671,6 +675,8 @@ export function createModelConfigurationService(
             const nextEntry = {
               revision: resultingRevision,
               visible: input.visible,
+              homepageVisible: input.homepageVisible,
+              homepagePriority: input.homepagePriority,
               description: input.description,
               cover: nextCover,
             };

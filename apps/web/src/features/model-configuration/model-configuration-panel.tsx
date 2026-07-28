@@ -141,7 +141,7 @@ export function ModelConfigurationPanel() {
           <div className="space-y-1">
             <CardTitle>模型配置</CardTitle>
             <CardDescription>
-              按模型维护全局价格、模型广场展示信息和 3:2
+              按模型维护全局价格、模型广场与官网首页展示信息，以及 3:2
               封面。展示开关不会改变调度、创作目录或实际计费。
             </CardDescription>
           </div>

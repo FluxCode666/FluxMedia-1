@@ -167,7 +167,7 @@ function buildMarketplaceFields(
   entry: ModelMarketplaceEntry | undefined,
   buildCoverUrl: ModelConfigurationCatalogInput["buildCoverUrl"]
 ) {
-  const resolvedEntry = resolveModelMarketplaceEntry(entry);
+  const resolvedEntry = resolveModelMarketplaceEntry(entry, category);
   const cover = buildCoverUrl(category, configKey, resolvedEntry.cover);
   return {
     configKey,
@@ -176,6 +176,8 @@ function buildMarketplaceFields(
     revision: resolvedEntry.revision,
     marketplaceApplicable: true as const,
     visible: resolvedEntry.visible,
+    homepageVisible: resolvedEntry.homepageVisible,
+    homepagePriority: resolvedEntry.homepagePriority,
     description: resolvedEntry.description,
     coverUrl: cover.coverUrl,
     usesDefaultCover: cover.usesDefaultCover,

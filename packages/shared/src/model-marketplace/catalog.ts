@@ -13,6 +13,7 @@ import {
   normalizeImagePricingModelId,
 } from "../image-backend/group-image-pricing";
 import {
+  DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS,
   type ModelMarketplaceConfigurationCategory,
   type ModelMarketplaceEntry,
@@ -172,21 +173,32 @@ export function getMinimumImageCredits(
  * 解析缺失展示配置时的默认模型条目。
  *
  * @param entry - 持久化的显式条目，缺失代表新模型。
- * @returns 与输入隔离的条目；新模型 revision 为 0 且默认展示。
+ * @param category - 用于兼容默认值：图像延续首页展示，视频默认关闭首页展示。
+ * @returns 与输入隔离并补齐首页字段的条目；首页优先级缺失时为 5。
  */
 export function resolveModelMarketplaceEntry(
-  entry: ModelMarketplaceEntry | undefined
-): ModelMarketplaceEntry {
+  entry: ModelMarketplaceEntry | undefined,
+  category: ModelMarketplaceConfigurationCategory
+): Omit<ModelMarketplaceEntry, "homepageVisible" | "homepagePriority"> & {
+  homepageVisible: boolean;
+  homepagePriority: number;
+} {
   if (!entry) {
     return {
       revision: 0,
       visible: true,
+      homepageVisible: category === "image",
+      homepagePriority: DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
       description: "",
       cover: null,
     };
   }
   return {
     ...entry,
+    homepageVisible:
+      entry.visible && (entry.homepageVisible ?? category === "image"),
+    homepagePriority:
+      entry.homepagePriority ?? DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
     cover: entry.cover ? { ...entry.cover } : null,
   };
 }

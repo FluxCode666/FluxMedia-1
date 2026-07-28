@@ -12,6 +12,7 @@ import {
   getModelConfigurationCategoryLabel,
   getModelConfigurationCoverSource,
   getModelConfigurationDialogFields,
+  getModelConfigurationHomepageLabel,
   getModelConfigurationVisibilityLabel,
   resolveModelConfigurationCoverAfterError,
 } from "./model-configuration-view-model";
@@ -25,6 +26,8 @@ const ENTRIES: ModelConfigurationEntry[] = [
     revision: 0,
     marketplaceApplicable: true,
     visible: true,
+    homepageVisible: true,
+    homepagePriority: 3,
     description: "",
     coverUrl: "/custom/image.webp",
     usesDefaultCover: false,
@@ -45,6 +48,8 @@ const ENTRIES: ModelConfigurationEntry[] = [
     revision: 1,
     marketplaceApplicable: true,
     visible: false,
+    homepageVisible: false,
+    homepagePriority: 8,
     description: "",
     coverUrl: "/custom/video.webp",
     usesDefaultCover: false,
@@ -59,6 +64,8 @@ const ENTRIES: ModelConfigurationEntry[] = [
     revision: 2,
     marketplaceApplicable: true,
     visible: true,
+    homepageVisible: true,
+    homepagePriority: 5,
     description: "",
     coverUrl: "/model-marketplace/default-image.webp",
     usesDefaultCover: true,
@@ -115,6 +122,11 @@ describe("模型配置视图模型", () => {
       "已展示",
       "已隐藏",
       "未配置价格",
+    ]);
+    expect(ENTRIES.map(getModelConfigurationHomepageLabel)).toEqual([
+      "已展示 · P3",
+      "未展示",
+      "已展示 · P5",
     ]);
     expect(formatModelConfigurationMinimumCredits(1.2700001)).toBe("1.27 积分");
   });

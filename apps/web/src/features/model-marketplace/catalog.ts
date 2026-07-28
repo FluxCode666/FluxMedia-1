@@ -230,6 +230,8 @@ export function buildModelMarketplaceCatalog(
           ),
           coverUrl: entry.coverUrl,
           minimumCredits: entry.minimumCredits,
+          homepageVisible: entry.homepageVisible,
+          homepagePriority: entry.homepagePriority,
           priceUnit: "per_image",
           pricing: entry.pricing,
         })
@@ -260,6 +262,8 @@ export function buildModelMarketplaceCatalog(
           ),
           coverUrl: entry.coverUrl,
           minimumCredits: entry.minimumCredits,
+          homepageVisible: entry.homepageVisible,
+          homepagePriority: entry.homepagePriority,
           priceUnit: "per_second",
           creditsPerSecond: entry.creditsPerSecond,
           supportedDurations: sortUniqueDurations(

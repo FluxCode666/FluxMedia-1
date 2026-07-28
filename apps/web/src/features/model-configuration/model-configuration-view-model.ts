@@ -53,6 +53,22 @@ export function getModelConfigurationVisibilityLabel(
 }
 
 /**
+ * 取得官网首页展示状态与排序优先级文案。
+ *
+ * @param entry - 管理快照中的规范条目。
+ * @returns 关闭时返回未展示；开启时返回包含数值优先级的稳定文案。
+ * @sideEffects 无。
+ * @failure 共享 DTO 已校验开关与优先级，不抛错。
+ */
+export function getModelConfigurationHomepageLabel(
+  entry: ModelConfigurationEntry
+): string {
+  return entry.homepageVisible
+    ? `已展示 · P${entry.homepagePriority}`
+    : "未展示";
+}
+
+/**
  * 格式化列表最低积分，避免浮点尾数污染管理界面。
  *
  * @param credits - 共享 DTO 已校验的正有限积分。

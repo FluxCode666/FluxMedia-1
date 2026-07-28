@@ -23,6 +23,8 @@ const commonEntry = {
   revision: 0,
   marketplaceApplicable: true as const,
   visible: true,
+  homepageVisible: true,
+  homepagePriority: 5,
   description: "",
   coverUrl: null,
   usesDefaultCover: true,

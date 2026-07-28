@@ -15,6 +15,8 @@ export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
 export const MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH = 120;
 export const MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS = 256;
 export const MAX_MODEL_MARKETPLACE_COVER_BYTES = 5 * 1024 * 1024;
+export const DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY = 5;
+export const MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY = 10_000;
 
 const safeRevisionSchema = z
   .number()
@@ -36,6 +38,13 @@ const descriptionSchema = z
   .max(MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH);
 const sha256HexSchema = z.string().regex(/^[a-f0-9]{64}$/i);
 const completedAtSchema = z.string().datetime({ offset: true });
+
+/** 官网首页模型排序优先级；数字越小越优先，默认值由读取规则统一补齐。 */
+export const modelMarketplaceHomepagePrioritySchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY);
 
 /** 服务端内容寻址封面的固定对象 key，不允许任意历史路径进入存储或公开 URL。 */
 export const modelMarketplaceCoverObjectKeySchema = z
@@ -75,15 +84,30 @@ export const modelMarketplaceCoverRefSchema = z
   })
   .strict();
 
-/** 单个真实模型的展示设置；价格继续存放在现有独立财务设置中。 */
+/**
+ * 单个真实模型的模型广场与官网首页展示设置；价格仍在独立财务设置中。
+ *
+ * 首页字段保持可选以兼容既有 v2 JSON，读取层会按媒体类别补齐默认值。
+ */
 export const modelMarketplaceEntrySchema = z
   .object({
     revision: safeRevisionSchema,
     visible: z.boolean(),
+    homepageVisible: z.boolean().optional(),
+    homepagePriority: modelMarketplaceHomepagePrioritySchema.optional(),
     description: descriptionSchema,
     cover: modelMarketplaceCoverRefSchema.nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((entry, context) => {
+    if (entry.homepageVisible && !entry.visible) {
+      context.addIssue({
+        code: "custom",
+        path: ["homepageVisible"],
+        message: "模型广场隐藏时不能展示在官网首页",
+      });
+    }
+  });
 
 /** 幂等重放所需的最小写回执，不保存用户 ID 或原始 clientRequestId。 */
 export const modelMarketplaceWriteReceiptSchema = z
@@ -272,6 +296,8 @@ const managementMarketplaceShape = {
   configKey: realModelConfigKeySchema,
   marketplaceApplicable: z.literal(true),
   visible: z.boolean(),
+  homepageVisible: z.boolean(),
+  homepagePriority: modelMarketplaceHomepagePrioritySchema,
   description: descriptionSchema,
   coverUrl: firstPartyCoverUrlSchema.nullable(),
   usesDefaultCover: z.boolean(),
@@ -335,6 +361,8 @@ const publicCommonShape = {
   description: descriptionSchema,
   coverUrl: firstPartyCoverUrlSchema,
   minimumCredits: z.number().finite().positive(),
+  homepageVisible: z.boolean(),
+  homepagePriority: modelMarketplaceHomepagePrioritySchema,
 };
 
 const publicImageItemSchema = z
@@ -397,6 +425,8 @@ const updateMarketplaceShape = {
   ...updateCommonShape,
   configKey: realModelConfigKeySchema,
   visible: z.boolean(),
+  homepageVisible: z.boolean(),
+  homepagePriority: modelMarketplaceHomepagePrioritySchema,
   description: descriptionSchema,
   coverChange: modelMarketplaceCoverChangeSchema,
 };
@@ -407,21 +437,36 @@ const updateImageConfigurationInputSchema = z
     category: z.literal("image"),
     pricing: modelMarketplaceImagePricingSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    if (input.homepageVisible && !input.visible) {
+      context.addIssue({
+        code: "custom",
+        path: ["homepageVisible"],
+        message: "模型广场隐藏时不能展示在官网首页",
+      });
+    }
+  });
 const updateVideoConfigurationInputSchema = z
   .object({
-    ...updateCommonShape,
+    ...updateMarketplaceShape,
     category: z.literal("video"),
-    visible: z.boolean(),
-    description: descriptionSchema,
-    coverChange: modelMarketplaceCoverChangeSchema,
     creditsPerSecond: z
       .number()
       .finite()
       .positive()
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    if (input.homepageVisible && !input.visible) {
+      context.addIssue({
+        code: "custom",
+        path: ["homepageVisible"],
+        message: "模型广场隐藏时不能展示在官网首页",
+      });
+    }
+  });
 
 /** 单模型配置保存输入；图像写入必须一次提交完整四档显式价格。 */
 export const updateModelConfigurationEntryInputSchema = z.union([

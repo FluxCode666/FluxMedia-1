@@ -29,6 +29,8 @@ const PUBLIC_IMAGE = {
   description: "Image generation",
   coverUrl: "/model-marketplace/default-image.webp",
   minimumCredits: 1.27,
+  homepageVisible: true,
+  homepagePriority: 5,
   priceUnit: "per_image" as const,
   pricing: {
     base1024Credits: 1.27,

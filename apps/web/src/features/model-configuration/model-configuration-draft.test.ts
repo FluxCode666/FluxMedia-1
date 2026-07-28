@@ -11,12 +11,16 @@ import {
   buildModelConfigurationFormData,
   createModelConfigurationDraft,
   ModelConfigurationDraftError,
+  parseModelConfigurationHomepagePriority,
   parseModelConfigurationPrice,
   rebaseModelConfigurationDraft,
   renewModelConfigurationDraftRequestId,
 } from "./model-configuration-draft";
 
-const IMAGE_ENTRY: Extract<ModelConfigurationEntry, { category: "image" }> = {
+const IMAGE_ENTRY: Extract<
+  ModelConfigurationEntry,
+  { category: "image"; pricingSource: "explicit" }
+> = {
   category: "image",
   configKey: "gpt-image-2",
   displayName: "GPT Image 2",
@@ -24,6 +28,8 @@ const IMAGE_ENTRY: Extract<ModelConfigurationEntry, { category: "image" }> = {
   revision: 2,
   marketplaceApplicable: true,
   visible: true,
+  homepageVisible: true,
+  homepagePriority: 3,
   description: "精细图像生成",
   coverUrl: "/model-marketplace/default-image.webp",
   usesDefaultCover: true,
@@ -48,6 +54,8 @@ const UNCONFIGURED_IMAGE_ENTRY: Extract<
   revision: 0,
   marketplaceApplicable: true,
   visible: true,
+  homepageVisible: true,
+  homepagePriority: 5,
   description: "",
   coverUrl: "/model-marketplace/default-image.webp",
   usesDefaultCover: true,
@@ -62,6 +70,8 @@ const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
   revision: 5,
   marketplaceApplicable: true,
   visible: false,
+  homepageVisible: false,
+  homepagePriority: 8,
   description: "视频模型",
   coverUrl: "/model-marketplace/default-video.webp",
   usesDefaultCover: true,
@@ -107,7 +117,30 @@ describe("模型配置草稿", () => {
       clientRequestId: "video-id",
       creditsPerSecond: "45",
       visible: false,
+      homepageVisible: false,
+      homepagePriority: "8",
     });
+  });
+
+  it.each([
+    ["0", 0],
+    ["5", 5],
+    ["10000", 10_000],
+  ])("解析合法首页优先级 %s", (input, expected) => {
+    expect(parseModelConfigurationHomepagePriority(input)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    "-1",
+    "1.5",
+    "1e2",
+    "10001",
+    "Infinity",
+  ])("拒绝非法首页优先级 %s", (input) => {
+    expect(() => parseModelConfigurationHomepagePriority(input)).toThrow(
+      ModelConfigurationDraftError
+    );
   });
 
   it.each([
@@ -143,6 +176,8 @@ describe("模型配置草稿", () => {
       expectedRevision: "2",
       clientRequestId: "image-id",
       visible: "true",
+      homepageVisible: "true",
+      homepagePriority: "3",
       description: "精细图像生成",
       coverChange: "keep",
       base1024Credits: "1.27",

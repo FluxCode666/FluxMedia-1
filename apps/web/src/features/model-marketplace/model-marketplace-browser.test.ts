@@ -24,6 +24,8 @@ const IMAGE_MODEL: ModelMarketplacePublicItem = {
   description: "High quality image generation",
   coverUrl: "/model-marketplace/default-image.webp",
   minimumCredits: 1.27,
+  homepageVisible: true,
+  homepagePriority: 3,
   priceUnit: "per_image",
   pricing: {
     base1024Credits: 1.27,
@@ -42,6 +44,8 @@ const VIDEO_MODEL: ModelMarketplacePublicItem = {
   description: "Reference-aware video generation",
   coverUrl: "/model-marketplace/default-video.webp",
   minimumCredits: 3,
+  homepageVisible: true,
+  homepagePriority: 2,
   priceUnit: "per_second",
   creditsPerSecond: 3,
   supportedDurations: [4, 6, 8],

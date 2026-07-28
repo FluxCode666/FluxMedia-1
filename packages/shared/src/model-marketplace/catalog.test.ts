@@ -103,17 +103,25 @@ describe("目录展示与价格规则", () => {
     ).toBe(1.27);
   });
 
-  it("缺少显式配置时返回新的默认展示条目", () => {
-    const first = resolveModelMarketplaceEntry(undefined);
-    const second = resolveModelMarketplaceEntry(undefined);
+  it("缺少显式配置时保留图像首页展示并默认关闭视频首页展示", () => {
+    const first = resolveModelMarketplaceEntry(undefined, "image");
+    const second = resolveModelMarketplaceEntry(undefined, "image");
+    const video = resolveModelMarketplaceEntry(undefined, "video");
 
     expect(first).toEqual({
       revision: 0,
       visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
       description: "",
       cover: null,
     });
     expect(first).not.toBe(second);
+    expect(video).toMatchObject({
+      visible: true,
+      homepageVisible: false,
+      homepagePriority: 5,
+    });
     expect(
       isModelMarketplaceEntryVisible(undefined, "image", "new-model")
     ).toBe(true);

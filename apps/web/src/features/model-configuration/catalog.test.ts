@@ -233,10 +233,15 @@ describe("buildModelConfigurationSnapshot", () => {
     const defaulted = snapshot.entries.find(
       (entry) => entry.configKey === "nano-banana"
     );
+    const defaultedVideo = snapshot.entries.find(
+      (entry) => entry.configKey === "sora2"
+    );
 
     expect(configured).toMatchObject({
       revision: 3,
       visible: false,
+      homepageVisible: false,
+      homepagePriority: 5,
       description: "适合精细文字渲染",
       coverUrl: "/api/model-marketplace/covers/gpt-image-2",
       usesDefaultCover: false,
@@ -244,9 +249,17 @@ describe("buildModelConfigurationSnapshot", () => {
     expect(defaulted).toMatchObject({
       revision: 0,
       visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
       description: "",
       coverUrl: "/model-marketplace/default.webp",
       usesDefaultCover: true,
+    });
+    expect(defaultedVideo).toMatchObject({
+      category: "video",
+      visible: true,
+      homepageVisible: false,
+      homepagePriority: 5,
     });
   });
 
