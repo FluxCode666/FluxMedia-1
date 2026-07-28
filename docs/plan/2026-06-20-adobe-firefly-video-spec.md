@@ -1,8 +1,9 @@
 # Adobe Firefly 视频接口规格（移植自 adobe2api，用于 firefly-direct 视频实现）
 
 > 来源：调研 adobe2api（Python）的视频路径，并使用 2026-07-27 的 Adobe Express
-> Seedance 2.0 脱敏 HAR，以及 2026-07-28 的 Adobe Firefly Kling 3.0 Omni、
-> Runway Gen-4.5、Ray 3.14 与 Ray 3.14 HDR 脱敏请求校正网页真实协议。仅记录
+> Seedance 2.0 脱敏 HAR，以及 2026-07-28 的 Adobe Firefly Kling 3.0、
+> Kling 3.0 Omni、Runway Gen-4.5、Ray 3.14 与 Ray 3.14 HDR 脱敏请求校正
+> 网页真实协议。仅记录
 > 接口契约
 > （端点/字段/枚举），不保存
 > Cookie、Token、账号/任务/素材 ID、提示词或预签名 URL。初始日期：2026-06-20。
@@ -22,7 +23,7 @@ model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
 | veo31-ref | `firefly-veo31-ref-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31` | `veo` | `3.1-generate` | `veo31-standard` + `reference_mode:"image"` |
 | veo31-fast | `firefly-veo31-fast-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31-fast` | `veo` | `3.1-fast-generate` | `veo31-fast` |
 | kling-o3 | `firefly-kling-o3-{d}s-{ratio}` | 5,15 | 16:9,9:16 | 1080p 固定 | `kling:firefly:colligo:o3` | `kling` | `kling_o3_pro_reference_to_video` | `kling-o3` |
-| kling3 | `firefly-kling3-{d}s-{ratio}` | 5,10,15 | 16:9,9:16 | 720p 固定 | `kling:firefly:colligo:3.0` | `kling` | `kling_v3_standard_i2v` | `kling3` + 默认有声 |
+| kling3 | `firefly-kling3-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3` | `kling3` + 默认有声 + 首尾帧 |
 | kling3-omni | `firefly-kling3-omni-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_o3_standard_t2v` | `kling3-omni` + 默认无声 + 单图 style |
 | runway-gen45 | `firefly-runway-gen45-{d}s-16x9` | 5,8,10 | 16:9 | 720p 固定 | 不发送 | `runway` | `gen4.5` | `runway-gen45` + 无声 + 仅文本 |
 | ray314 | `firefly-ray314-{d}s-{ratio}-{res}` | 5,10 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray` | `ray314` + `mode:flex_2` + 无声 + 仅文本 |
@@ -34,6 +35,10 @@ model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
 `veo31-fast*`、`kling-o3*`、`kling3*`、`kling3-omni*`、`runway-gen45*`、
 `ray314*`、`ray314-hdr*`、`seedance2*`、`seedance2-fast*` 裸模型，内部统一
 归一化后按同一目录派发。
+
+Kling 3.0 旧规范 ID `firefly-kling3-{5|10|15}s-{ratio}` 继续作为 720p
+兼容别名解析，但不再进入新成员的可选模型目录。这样旧客户端、历史成员白名单和未完成
+任务可以平滑迁移，同时新请求使用带分辨率的无歧义规范 ID。
 
 ## 2. Adobe Firefly 上游视频 API（host `https://firefly-3p.ff.adobe.io`）
 
@@ -58,17 +63,19 @@ x-arp-session-id: {generated}
 x-nonce: sha256(`${user_id}-${prompt[:256]}`)
 ```
 + 浏览器伪装头（user-agent、sec-ch-ua、origin/referer）。Adobe Express 模型使用
-`https://new.express.adobe.com/` 与公开网页 API Key `projectx_webapp`；Kling 3.0 Omni、
-Runway Gen-4.5、Ray 3.14、Ray 3.14 HDR、Seedance 2.0 与 Seedance 2.0 Fast 使用
-`https://firefly.adobe.com/` 与公开网页 API Key `clio-playground-web`。Seedance
+`https://new.express.adobe.com/` 与公开网页 API Key `projectx_webapp`；Kling 3.0、
+Kling 3.0 Omni、Runway Gen-4.5、Ray 3.14、Ray 3.14 HDR、Seedance 2.0 与
+Seedance 2.0 Fast 使用 `https://firefly.adobe.com/` 与公开网页 API Key
+`clio-playground-web`。Seedance
 提交明确携带 `x-arp-session-id` 和
 `x-nonce`。Chrome sanitized HAR 会移除敏感鉴权头，因此不能根据 HAR 中未显示
 `Authorization` 推断真实请求不需要 Bearer Token。
-视频请求头 Profile 与 Bearer Token 来源相互独立。所有视频模型复用原有
-`client_id=projectx_webapp` 的 Express IMS Token；Firefly Profile 只决定
-`Origin`、`Referer` 与 `x-api-key=clio-playground-web`。上传、提交和轮询均使用任务
-保存的请求 Profile 与同一成员的 Express Token。明确 401/403 时只刷新 Express Token
-并安全重试一次，网络异常、5xx 或提交结果不确定时不得自动重投。
+请求头 Profile 与 Bearer Token 的 IMS `client_id` 必须匹配。Express Profile 使用
+`projectx_webapp` Token，Firefly Profile 使用 `clio-playground-web` Token；同一 Adobe
+成员可以由共享 Cookie 刷新并独立保存两套短期 Token。上传、提交和轮询均使用任务保存
+的请求及鉴权 Profile。明确 401/403 时只刷新原成员对应 Profile 的 Token 并安全重试
+一次，网络异常、5xx 或提交结果不确定时不得自动重投。已被 Adobe 接受的任务不得在
+迁移或恢复时切换 Profile。
 
 ### 提交体（关键字段）
 `n`、`seeds:[seed]`、`seed:str`、`modelId`、`model`(upstream)、`modelVersion`、`size:{width,height}`、
@@ -145,6 +152,33 @@ Adobe 的分辨率标签以画幅短边为基准。4:3 基准尺寸由网页选�
 
 图片输入由用户补充确认与 Seedance 2.0 相近，当前实现限制单图并映射为
 `referenceBlobs:[{id,usage:"style"}]`；上述文本样本本身只验证了空数组形态。
+
+### Kling 3.0 已验证提交体
+
+2026-07-28 官网样本为 8 秒、16:9、720p、关闭声音且不带图片。官网完整能力为
+3–15 秒逐秒、16:9/9:16、720p/1080p、可选声音和最多两张首尾帧。无图时
+`generationMetadata.module` 为 `text2video`，有图时为 `image2video`，首尾帧按
+`referenceBlobs:[{id,usage:"frame",order:1|2}]` 发送：
+
+```json
+{
+  "n": 1,
+  "seeds": [123456],
+  "modelId": "kling",
+  "modelVersion": "kling_v3",
+  "output": { "storeInputs": true },
+  "duration": 8,
+  "prompt": "<已脱敏>",
+  "size": { "height": 720, "width": 1280 },
+  "generateAudio": false,
+  "generationMetadata": { "module": "text2video" },
+  "generationSettings": { "aspectRatio": "16:9" },
+  "referenceBlobs": []
+}
+```
+
+该样本提交返回 HTTP 200，并通过既有 `x-override-status-link` 进入 BKS 轮询；轮询
+协议和产物字段与其他 Firefly 视频模型一致。
 
 ### Runway Gen-4.5 已验证提交体
 

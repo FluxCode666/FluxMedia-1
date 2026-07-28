@@ -415,7 +415,7 @@ const zhContent = {
           name: "image",
           requirement: "可选",
           description:
-            "base64 image data URL 数组，模型支持时最多 3 张参考图；Runway Gen-4.5 与 Ray 3.14（含 HDR）当前不支持图片输入。",
+            "base64 image data URL 数组，模型支持时最多 3 张参考图；Kling 3.0 最多接收 2 张，依次作为首帧和尾帧；Runway Gen-4.5 与 Ray 3.14（含 HDR）当前不支持图片输入。",
         },
       ],
       responses: [
@@ -839,7 +839,7 @@ const enContent = {
           name: "image",
           requirement: "Optional",
           description:
-            "An array of up to three base64 image data URLs when supported by the model. Runway Gen-4.5 and Ray 3.14, including HDR, currently do not accept image input.",
+            "An array of up to three base64 image data URLs when supported by the model. Kling 3.0 accepts up to two images as the first and last frames. Runway Gen-4.5 and Ray 3.14, including HDR, currently do not accept image input.",
         },
       ],
       responses: [
