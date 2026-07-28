@@ -15,6 +15,21 @@ export const supportedModelIdsSchema = z
   .max(MAX_SUPPORTED_MODEL_IDS);
 
 /**
+ * 将一个模型能力键规范为平台公开格式。
+ *
+ * @param value 来自配置、数据库或请求的未知模型值。
+ * @returns 去空白且移除历史 Firefly 前缀的 ID；非法值返回 null。
+ * @sideEffects 无。
+ * @failure 不抛错；过长、空白或非字符串输入返回 null。
+ */
+export function normalizeSupportedModelId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 120) return null;
+  return trimmed.replace(/^firefly-/i, "");
+}
+
+/**
  * 标准化模型 ID 列表，去除空白和大小写重复项，同时保留首次配置的原始展示形式。
  *
  * @param value - 来自管理端输入或数据库 JSON 列的未知值。
@@ -26,9 +41,8 @@ export function normalizeSupportedModelIds(value: unknown): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const valueItem of value) {
-    if (typeof valueItem !== "string") continue;
-    const modelId = valueItem.trim();
-    if (!modelId || modelId.length > 120) continue;
+    const modelId = normalizeSupportedModelId(valueItem);
+    if (!modelId) continue;
     const key = modelId.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -51,7 +65,7 @@ export function supportsRequestedModel(
   supportedModelIds: unknown,
   requestedModelId: string | null | undefined
 ): boolean {
-  const requested = requestedModelId?.trim().toLowerCase();
+  const requested = normalizeSupportedModelId(requestedModelId)?.toLowerCase();
   const supported = normalizeSupportedModelIds(supportedModelIds);
   if (!requested || supported.length === 0) return true;
   return supported.some((modelId) => modelId.toLowerCase() === requested);
@@ -72,9 +86,8 @@ export function collectAdvertisedModelIds(
   const modelIds: string[] = [];
   const seen = new Set<string>();
   const addModelId = (value: unknown) => {
-    if (typeof value !== "string") return;
-    const modelId = value.trim();
-    if (!modelId || modelId.length > 120) return;
+    const modelId = normalizeSupportedModelId(value);
+    if (!modelId) return;
     const key = modelId.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);

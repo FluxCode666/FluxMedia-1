@@ -48,7 +48,7 @@ describe("buildPlatformModelCatalog", () => {
   it("仅按统一成员显式能力输出图片与视频分类", () => {
     expect(buildPlatformModelCatalog(source())).toEqual({
       image: [{ id: "gpt-image-2" }],
-      video: [{ id: "firefly-sora2-8s-16x9" }],
+      video: [{ id: "sora2-8s-16x9" }],
     });
   });
 

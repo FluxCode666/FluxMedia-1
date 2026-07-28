@@ -6,6 +6,7 @@
  */
 import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
+import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { and, asc, eq } from "drizzle-orm";
 
@@ -33,7 +34,7 @@ export function mergeExternalModelIds(...modelGroups: string[][]): string[] {
   const modelIds: string[] = [];
   for (const modelGroup of modelGroups) {
     for (const modelId of modelGroup) {
-      const normalized = modelId.trim();
+      const normalized = normalizeSupportedModelId(modelId);
       if (!normalized) continue;
       const key = normalized.toLowerCase();
       if (seen.has(key)) continue;

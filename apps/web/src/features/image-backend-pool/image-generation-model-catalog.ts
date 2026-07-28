@@ -6,6 +6,7 @@
  */
 import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
+import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 
 /** 单个模型可由当前分组执行的图片动作。 */
 export interface ImageGenerationModelCapabilities {
@@ -97,7 +98,7 @@ export function buildImageGenerationModelCatalog(
       for (const member of membersByGroupId.get(group.id) ?? []) {
         const capabilities = getMemberCapabilities(member.type);
         for (const rawModelId of member.supportedModelIds) {
-          const modelId = rawModelId.trim();
+          const modelId = normalizeSupportedModelId(rawModelId);
           if (!modelId || isFireflyVideoModelId(modelId)) continue;
           const normalizedId = modelId.toLowerCase();
           const current = models.get(normalizedId);

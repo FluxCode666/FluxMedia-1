@@ -48,6 +48,19 @@ describe("video generation operations", () => {
     ).toBe(false);
   });
 
+  it("把历史 Firefly 前缀模型规范为裸 ID", () => {
+    const parsed = videoGenerateInputSchema.safeParse({
+      clientRequestId: "request-legacy-model",
+      prompt: "海边日落",
+      model: "firefly-sora2-4s-16x9",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model).toBe("sora2-4s-16x9");
+    }
+  });
+
   it.each([true, false])("接受请求级 generateAudio=%s", (generateAudio) => {
     const parsed = videoGenerateInputSchema.safeParse({
       clientRequestId: "request-1",

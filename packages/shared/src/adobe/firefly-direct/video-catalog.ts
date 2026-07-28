@@ -407,6 +407,29 @@ function normalizeFireflyVideoModelId(modelId: string): string {
     : modelId;
 }
 
+/**
+ * 将可兼容的视频 ID 解析为目录中的规范裸 ID。
+ *
+ * @param modelId 裸 ID 或历史 Firefly 前缀 ID。
+ * @returns 目录存在的裸完整 ID；未知、空值或非法组合返回 null。
+ * @sideEffects 无。
+ * @failure 不抛错。
+ */
+export function resolveFireflyVideoModelId(
+  modelId?: string | null
+): string | null {
+  const id = normalizeFireflyVideoModelId(
+    String(modelId || "")
+      .trim()
+      .toLowerCase()
+  );
+  if (!id) return null;
+  const canonicalId = LEGACY_VIDEO_MODEL_ALIASES[id] ?? id;
+  return Object.hasOwn(FIREFLY_VIDEO_MODEL_CATALOG, canonicalId)
+    ? canonicalId
+    : null;
+}
+
 /** 视频模型族 id 列表（供前端/接口列出可选模型族）。 */
 export const FIREFLY_VIDEO_FAMILIES = VIDEO_FAMILY_SPECS.map((spec) => ({
   family: spec.family,
@@ -427,13 +450,8 @@ export const FIREFLY_VIDEO_FAMILIES = VIDEO_FAMILY_SPECS.map((spec) => ({
 export function resolveFireflyVideoModel(
   modelId?: string | null
 ): FireflyVideoModelConf | null {
-  const id = normalizeFireflyVideoModelId(
-    String(modelId || "")
-      .trim()
-      .toLowerCase()
-  );
-  if (!id) return null;
-  const canonicalId = LEGACY_VIDEO_MODEL_ALIASES[id] ?? id;
+  const canonicalId = resolveFireflyVideoModelId(modelId);
+  if (!canonicalId) return null;
   return FIREFLY_VIDEO_MODEL_CATALOG[canonicalId] ?? null;
 }
 

@@ -26,6 +26,22 @@ describe("API 后端支持模型列表", () => {
     ).toEqual(["nano-banana-pro", "GROK-IMAGINE-IMAGE"]);
   });
 
+  it("移除所有模型 ID 的历史 Firefly 前缀", () => {
+    expect(
+      normalizeSupportedModelIds([
+        "firefly-gpt-image-2",
+        "FIREFLY-SORA2-4s-16x9",
+        "sora2-4s-16x9",
+      ])
+    ).toEqual(["gpt-image-2", "SORA2-4s-16x9"]);
+    expect(
+      supportsRequestedModel(
+        ["firefly-sora2-4s-16x9"],
+        "sora2-4s-16x9"
+      )
+    ).toBe(true);
+  });
+
   it("仅在配置非空时把支持列表作为调度约束", () => {
     expect(supportsRequestedModel([], "grok-imagine-image")).toBe(true);
     expect(supportsRequestedModel(["nano-banana-pro"], "NANO-BANANA-PRO")).toBe(
@@ -66,9 +82,14 @@ describe("API 后端支持模型列表", () => {
         },
         {
           model: "unused",
-          supportedModelIds: ["GROK-IMAGINE-IMAGE"],
+          supportedModelIds: ["GROK-IMAGINE-IMAGE", "firefly-gpt-image-2"],
         },
       ])
-    ).toEqual(["legacy-image-model", "nano-banana-pro", "grok-imagine-image"]);
+    ).toEqual([
+      "legacy-image-model",
+      "nano-banana-pro",
+      "grok-imagine-image",
+      "gpt-image-2",
+    ]);
   });
 });

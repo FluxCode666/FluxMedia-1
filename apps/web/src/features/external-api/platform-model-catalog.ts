@@ -10,6 +10,7 @@ import {
   SUBSCRIPTION_PLANS,
   type SubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
+import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 
 /** 平台模型目录最终公开的单条模型。 */
 export interface PlatformModelCatalogItem {
@@ -58,8 +59,8 @@ const NON_EXECUTABLE_IMAGE_MODEL_IDS = new Set(["auto", "default", "unknown"]);
 
 /** 向目录集合加入合法且大小写无关去重的模型 ID。 */
 function addModel(models: Map<string, string>, value: string): void {
-  const id = value.trim();
-  if (!id || id.length > 120) return;
+  const id = normalizeSupportedModelId(value);
+  if (!id) return;
   const key = id.toLowerCase();
   if (!models.has(key)) models.set(key, id);
 }

@@ -108,7 +108,7 @@ describe("buildBackendMemberModelOptions", () => {
     });
     expect(options).toContainEqual(
       expect.objectContaining({
-        id: "firefly-veo31-4s-16x9-1080p",
+        id: "veo31-4s-16x9-1080p",
         category: "video",
         source: "model_configuration",
       })
@@ -159,7 +159,7 @@ describe("buildBackendMemberModelOptions", () => {
 
 describe("findUnavailableBackendMemberModelIds", () => {
   const options = buildBackendMemberModelOptions(snapshot);
-  const videoModelId = "firefly-veo31-4s-16x9-1080p";
+  const videoModelId = "veo31-4s-16x9-1080p";
 
   it("API 成员只能保存模型配置中的图像 ID", () => {
     expect(

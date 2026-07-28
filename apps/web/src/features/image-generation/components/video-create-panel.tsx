@@ -103,7 +103,7 @@ function composeVideoModelId(params: {
   resolution: string;
   resolutionInId: boolean;
 }): string {
-  const base = `firefly-${params.family}-${params.duration}s-${ratioSuffix(
+  const base = `${params.family}-${params.duration}s-${ratioSuffix(
     params.ratio
   )}`;
   return params.resolutionInId ? `${base}-${params.resolution}` : base;

@@ -39,7 +39,7 @@ describe("buildImageGenerationModelCatalog", () => {
     ]);
   });
 
-  it("不根据 firefly 前缀排除 API 成员声明", () => {
+  it("兼容成员历史前缀但目录只输出裸 ID", () => {
     const result = buildImageGenerationModelCatalog({
       groups: [group],
       members: [
@@ -53,7 +53,7 @@ describe("buildImageGenerationModelCatalog", () => {
 
     expect(result.groups[0]?.models).toEqual([
       {
-        id: "firefly-gpt-image-2",
+        id: "gpt-image-2",
         capabilities: { generate: true, edit: true, mask: true },
       },
     ]);

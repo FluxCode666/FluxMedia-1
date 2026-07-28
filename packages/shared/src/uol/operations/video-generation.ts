@@ -11,6 +11,7 @@ import {
   fireflyVideoMaxInputImages,
   isFireflyVideoModelId,
   resolveFireflyVideoModel,
+  resolveFireflyVideoModelId,
 } from "../../adobe/firefly-direct/video-catalog";
 import { mediaInputReferencesSchema } from "../../image-generation/media-contract";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
@@ -30,7 +31,10 @@ export const videoGenerateInputSchema = z
       .max(120)
       .refine((modelId) => isFireflyVideoModelId(modelId), {
         message: "Unsupported video model",
-      }),
+      })
+      .transform(
+        (modelId) => resolveFireflyVideoModelId(modelId) ?? modelId
+      ),
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     inputImages: mediaInputReferencesSchema.max(3).optional(),
     inputImageRole: z

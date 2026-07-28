@@ -19,7 +19,7 @@ describe("mergeExternalModelIds", () => {
         ["firefly-sora2-8s-16x9", "GROK-IMAGINE-IMAGE"],
         ["grok-imagine-image", "  gpt-image-2  "]
       )
-    ).toEqual(["gpt-image-2", "firefly-sora2-8s-16x9", "GROK-IMAGINE-IMAGE"]);
+    ).toEqual(["gpt-image-2", "sora2-8s-16x9", "GROK-IMAGINE-IMAGE"]);
   });
 
   it("忽略空模型 ID", () => {
