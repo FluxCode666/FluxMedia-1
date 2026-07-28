@@ -26,13 +26,14 @@ import {
   type FireflyImagePayload,
   type FireflyVideoPayload,
 } from "./payloads";
+import { ADOBE_WEB_APP_PROFILES, type AdobeFireflyWebApp } from "./profile";
 import { buildArpSessionId, buildSubmitNonce } from "./signing";
 import {
   FetchFireflyTransport,
   type FireflyTransport,
   type FireflyTransportResponse,
 } from "./transport";
-import { ADOBE_WEB_APP_PROFILES, type AdobeFireflyWebApp } from "./profile";
+import type { FireflyVideoInputImageRole } from "./video-catalog";
 
 const SUBMIT_URL = "https://firefly-3p.ff.adobe.io/v2/3p-images/generate-async";
 const VIDEO_SUBMIT_URL =
@@ -40,6 +41,7 @@ const VIDEO_SUBMIT_URL =
 const UPLOAD_URL = "https://firefly-3p.ff.adobe.io/v2/storage/image";
 
 export type { AdobeFireflyWebApp } from "./profile";
+
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 const DEFAULT_SEC_CH_UA =
@@ -89,6 +91,8 @@ export type GenerateVideoInput = {
   outputResolution: string;
   size: { width: number; height: number };
   generateAudio: boolean;
+  /** 输入图按首尾帧或 Omni 参考图解释；默认首尾帧。 */
+  inputImageRole?: FireflyVideoInputImageRole;
   referenceMode?: "image";
   negativePrompt?: string | null;
   /** 已上传的输入图 id（图生视频首帧/尾帧/参考）。 */
@@ -529,6 +533,7 @@ export class AdobeFireflyClient {
       outputResolution: input.outputResolution,
       size: input.size,
       generateAudio: input.generateAudio,
+      ...(input.inputImageRole ? { inputImageRole: input.inputImageRole } : {}),
       ...(input.referenceMode ? { referenceMode: input.referenceMode } : {}),
       ...(input.negativePrompt != null
         ? { negativePrompt: input.negativePrompt }

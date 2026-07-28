@@ -80,6 +80,55 @@ describe("video generation operations", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("Kling 3.0 Omni 区分首尾帧与最多三张参考图", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    const base = {
+      clientRequestId: "kling3-omni-request-1",
+      prompt: "海边日落",
+      model: "firefly-kling3-omni-8s-16x9-1080p",
+      generateAudio: true,
+    };
+
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        inputImages: [image, image],
+      }).success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        inputImageRole: "reference",
+        inputImages: [image, image, image],
+      }).success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        inputImages: [image, image, image],
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        inputImageRole: "reference",
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        inputImageRole: "reference",
+        model: "firefly-kling3-8s-16x9-1080p",
+        inputImages: [image],
+      }).success
+    ).toBe(false);
+  });
+
   it("Kling 3.0 拒绝超出时长、分辨率和首尾帧数量的请求", () => {
     const image = {
       source: "data" as const,

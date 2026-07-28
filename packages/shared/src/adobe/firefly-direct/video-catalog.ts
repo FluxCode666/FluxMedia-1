@@ -10,6 +10,7 @@
 export type FireflyVideoResolution = "480p" | "720p" | "1080p" | "4k";
 export type FireflyVideoSourceImageMode = "original" | "target-cover";
 export type FireflyVideoWebApp = "express" | "firefly";
+export type FireflyVideoInputImageRole = "frame" | "reference";
 
 const RATIO_SUFFIX_MAP: Record<string, string> = {
   "1:1": "1x1",
@@ -82,6 +83,8 @@ export type FireflyVideoModelConf = {
   supportsAudio: boolean;
   /** 已验证并允许提交的输入图数量上限；0 表示当前只开放文生视频。 */
   maxInputImages: number;
+  /** 显式参考图模式的数量上限；缺失或 0 表示只支持首尾帧语义。 */
+  maxReferenceImages?: number;
   /** 提交所模拟的 Adobe 网页应用，决定 Origin、Referer 与公开网页 API Key。 */
   webApp: FireflyVideoWebApp;
   /** Bearer Token 来源；必须与目标 Adobe 网页接口的 IMS client_id 对齐。 */
@@ -114,6 +117,7 @@ type VideoFamilySpec = {
   generateAudio?: boolean;
   supportsAudio?: boolean;
   maxInputImages?: number;
+  maxReferenceImages?: number;
   webApp?: FireflyVideoWebApp;
   sourceImageMode?: FireflyVideoSourceImageMode;
   referenceMode?: "image";
@@ -222,13 +226,15 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     prefix: "firefly-kling3-omni",
     upstreamModel: "",
     upstreamModelId: "kling",
-    upstreamModelVersion: "kling_o3_standard_t2v",
+    upstreamModelVersion: "kling_v3_omni",
     engine: "kling3-omni",
     durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     ratios: ["16:9", "9:16"],
     resolutions: ["1080p", "720p"],
     resolutionInId: true,
     supportsAudio: true,
+    maxInputImages: 2,
+    maxReferenceImages: 3,
     webApp: "firefly",
     sourceImageMode: "original",
     label: "Kling 3.0 Omni",
@@ -376,6 +382,9 @@ function registerVideoFamily(spec: VideoFamilySpec): void {
           generateAudio: spec.generateAudio ?? false,
           supportsAudio: spec.supportsAudio ?? false,
           maxInputImages,
+          ...(spec.maxReferenceImages !== undefined
+            ? { maxReferenceImages: spec.maxReferenceImages }
+            : {}),
           webApp: spec.webApp ?? "express",
           authProfile: spec.webApp ?? "express",
           sourceImageMode: spec.sourceImageMode ?? "target-cover",
@@ -427,6 +436,9 @@ export const FIREFLY_VIDEO_FAMILIES = VIDEO_FAMILY_SPECS.map((spec) => ({
   generateAudio: spec.generateAudio ?? false,
   supportsAudio: spec.supportsAudio ?? false,
   maxInputImages: resolveVideoFamilyMaxInputImages(spec),
+  ...(spec.maxReferenceImages !== undefined
+    ? { maxReferenceImages: spec.maxReferenceImages }
+    : {}),
 }));
 
 /** 解析 Firefly 或兼容裸视频 model id → 配置；解析不到返回 null。 */
@@ -448,11 +460,21 @@ export function isFireflyVideoModelId(modelId?: string | null): boolean {
   return resolveFireflyVideoModel(modelId) !== null;
 }
 
-/** 返回各 Firefly 视频模型允许的输入图数量上限。 */
+/**
+ * 返回各 Firefly 视频模型在指定语义下允许的输入图数量上限。
+ *
+ * @param config 已解析的视频模型配置。
+ * @param role 输入图角色；默认保持既有首尾帧语义。
+ * @returns 该角色允许的数量；0 表示不支持。
+ * @sideEffects 无。
+ */
 export function fireflyVideoMaxInputImages(
-  config: FireflyVideoModelConf
+  config: FireflyVideoModelConf,
+  role: FireflyVideoInputImageRole = "frame"
 ): number {
-  return config.maxInputImages;
+  return role === "reference"
+    ? (config.maxReferenceImages ?? 0)
+    : config.maxInputImages;
 }
 
 /** 按已解析模型配置取真实提交像素宽高。 */

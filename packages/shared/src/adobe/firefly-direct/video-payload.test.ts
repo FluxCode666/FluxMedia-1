@@ -90,12 +90,12 @@ describe("buildFireflyVideoPayload", () => {
     expect(payload).not.toHaveProperty("engine");
   });
 
-  it("Kling 3.0 Omni 使用 Firefly 网页端已验证的文本提交字段", () => {
+  it("Kling 3.0 Omni 使用官网新版文本提交字段", () => {
     const payload = buildFireflyVideoPayload({
       ...base,
       upstreamModel: "",
       upstreamModelId: "kling",
-      upstreamModelVersion: "kling_o3_standard_t2v",
+      upstreamModelVersion: "kling_v3_omni",
       engine: "kling3-omni",
       duration: 10,
       aspectRatio: "16:9",
@@ -106,7 +106,7 @@ describe("buildFireflyVideoPayload", () => {
       n: 1,
       seeds: [expect.any(Number)],
       modelId: "kling",
-      modelVersion: "kling_o3_standard_t2v",
+      modelVersion: "kling_v3_omni",
       output: { storeInputs: true },
       duration: 10,
       prompt: "a cat surfing",
@@ -118,24 +118,51 @@ describe("buildFireflyVideoPayload", () => {
     });
   });
 
-  it("Kling 3.0 Omni 复用单张 style 参考图并透传音频开关", () => {
+  it("Kling 3.0 Omni 使用首尾帧并切换为图生视频", () => {
     const payload = buildFireflyVideoPayload({
       ...base,
       upstreamModel: "",
       upstreamModelId: "kling",
-      upstreamModelVersion: "kling_o3_standard_t2v",
+      upstreamModelVersion: "kling_v3_omni",
       engine: "kling3-omni",
       duration: 3,
       aspectRatio: "9:16",
       size: { width: 720, height: 1280 },
       generateAudio: true,
-      sourceImageIds: ["reference-image", "ignored"],
+      sourceImageIds: ["first-frame", "last-frame", "ignored"],
     });
 
     expect(payload).toMatchObject({
       generateAudio: true,
+      generationMetadata: { module: "image2video" },
+      referenceBlobs: [
+        { id: "first-frame", usage: "frame", order: 1 },
+        { id: "last-frame", usage: "frame", order: 2 },
+      ],
+    });
+  });
+
+  it("Kling 3.0 Omni 支持最多三张 asset 参考图", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_v3_omni",
+      engine: "kling3-omni",
+      duration: 8,
+      aspectRatio: "16:9",
+      size: { width: 1920, height: 1080 },
+      inputImageRole: "reference",
+      sourceImageIds: ["reference-1", "reference-2", "reference-3", "ignored"],
+    });
+
+    expect(payload).toMatchObject({
       generationMetadata: { module: "text2video" },
-      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+      referenceBlobs: [
+        { id: "reference-1", usage: "asset" },
+        { id: "reference-2", usage: "asset" },
+        { id: "reference-3", usage: "asset" },
+      ],
     });
   });
 

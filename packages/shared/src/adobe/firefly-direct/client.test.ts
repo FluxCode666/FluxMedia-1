@@ -635,8 +635,9 @@ describe("AdobeFireflyClient.generateVideo", () => {
         expect(req.url).toContain("/v2/3p-videos/generate-async");
         expect(JSON.parse(String(req.body))).toMatchObject({
           modelId: "kling",
-          modelVersion: "kling_o3_standard_t2v",
-          referenceBlobs: [{ id: "reference-image", usage: "style" }],
+          modelVersion: "kling_v3_omni",
+          generationMetadata: { module: "image2video" },
+          referenceBlobs: [{ id: "reference-image", usage: "frame", order: 1 }],
         });
         return jsonResponse(
           200,
@@ -662,7 +663,7 @@ describe("AdobeFireflyClient.generateVideo", () => {
       ...videoInput,
       upstreamModel: "",
       upstreamModelId: "kling",
-      upstreamModelVersion: "kling_o3_standard_t2v",
+      upstreamModelVersion: "kling_v3_omni",
       engine: "kling3-omni",
       sourceImageIds: [imageId],
     });

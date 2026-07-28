@@ -7,6 +7,7 @@
 import { z } from "zod";
 
 import {
+  type FireflyVideoInputImageRole,
   fireflyVideoMaxInputImages,
   isFireflyVideoModelId,
   resolveFireflyVideoModel,
@@ -32,6 +33,9 @@ export const videoGenerateInputSchema = z
       }),
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     inputImages: mediaInputReferencesSchema.max(3).optional(),
+    inputImageRole: z
+      .enum(["frame", "reference"] satisfies FireflyVideoInputImageRole[])
+      .optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -43,7 +47,25 @@ export const videoGenerateInputSchema = z
         path: ["generateAudio"],
       });
     }
-    const maxInputImages = model ? fireflyVideoMaxInputImages(model) : 3;
+    const inputImageRole = input.inputImageRole ?? "frame";
+    const maxInputImages = model
+      ? fireflyVideoMaxInputImages(model, inputImageRole)
+      : 3;
+    if (input.inputImageRole && !input.inputImages?.length) {
+      context.addIssue({
+        code: "custom",
+        message: "inputImageRole requires inputImages",
+        path: ["inputImageRole"],
+      });
+    }
+    if (input.inputImages?.length && maxInputImages === 0) {
+      context.addIssue({
+        code: "custom",
+        message: `This video model does not support ${inputImageRole} input images`,
+        path: ["inputImageRole"],
+      });
+      return;
+    }
     if ((input.inputImages?.length ?? 0) > maxInputImages) {
       context.addIssue({
         code: "custom",

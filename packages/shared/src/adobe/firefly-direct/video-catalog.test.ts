@@ -205,7 +205,8 @@ describe("firefly video catalog", () => {
       resolutionInId: true,
       generateAudio: false,
       supportsAudio: true,
-      maxInputImages: 1,
+      maxInputImages: 2,
+      maxReferenceImages: 3,
     });
     expect(
       Object.values(FIREFLY_VIDEO_MODEL_CATALOG).filter(
@@ -218,7 +219,7 @@ describe("firefly video catalog", () => {
       family: "kling3-omni",
       upstreamModel: "",
       upstreamModelId: "kling",
-      upstreamModelVersion: "kling_o3_standard_t2v",
+      upstreamModelVersion: "kling_v3_omni",
       engine: "kling3-omni",
       duration: 15,
       aspectRatio: "9:16",
@@ -226,7 +227,8 @@ describe("firefly video catalog", () => {
       size: { width: 1080, height: 1920 },
       generateAudio: false,
       supportsAudio: true,
-      maxInputImages: 1,
+      maxInputImages: 2,
+      maxReferenceImages: 3,
       webApp: "firefly",
       sourceImageMode: "original",
     });
@@ -583,7 +585,10 @@ describe("firefly video catalog", () => {
     expect(veo && fireflyVideoMaxInputImages(veo)).toBe(2);
     expect(veoRef && fireflyVideoMaxInputImages(veoRef)).toBe(3);
     expect(kling && fireflyVideoMaxInputImages(kling)).toBe(2);
-    expect(klingOmni && fireflyVideoMaxInputImages(klingOmni)).toBe(1);
+    expect(klingOmni && fireflyVideoMaxInputImages(klingOmni)).toBe(2);
+    expect(
+      klingOmni && fireflyVideoMaxInputImages(klingOmni, "reference")
+    ).toBe(3);
     expect(runway && fireflyVideoMaxInputImages(runway)).toBe(0);
     expect(ray && fireflyVideoMaxInputImages(ray)).toBe(0);
     expect(rayHdr && fireflyVideoMaxInputImages(rayHdr)).toBe(0);

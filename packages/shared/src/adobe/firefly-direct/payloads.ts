@@ -284,6 +284,7 @@ export function buildFireflyImagePayloadCandidates(params: {
 }
 
 export type FireflyVideoPayload = Record<string, unknown>;
+type FireflyVideoInputImageRole = "frame" | "reference";
 
 /**
  * 构造 Firefly 视频提交体（/v2/3p-videos/generate-async），依据视频协议规格
@@ -302,6 +303,7 @@ export function buildFireflyVideoPayload(params: {
   outputResolution: string;
   size: FireflySize;
   generateAudio: boolean;
+  inputImageRole?: FireflyVideoInputImageRole;
   referenceMode?: "image";
   negativePrompt?: string | null;
   sourceImageIds?: string[] | null;
@@ -335,6 +337,14 @@ export function buildFireflyVideoPayload(params: {
   }
 
   if (params.engine === "kling3-omni") {
+    const isReferenceMode = params.inputImageRole === "reference";
+    const referenceBlobs = isReferenceMode
+      ? ids.slice(0, 3).map((id) => ({ id, usage: "asset" }))
+      : ids.slice(0, 2).map((id, index) => ({
+          id,
+          usage: "frame",
+          order: index + 1,
+        }));
     return {
       n: 1,
       seeds: [seed],
@@ -345,12 +355,14 @@ export function buildFireflyVideoPayload(params: {
       prompt: params.prompt,
       size,
       generateAudio: params.generateAudio,
-      generationMetadata: { module: "text2video" },
+      generationMetadata: {
+        module:
+          !isReferenceMode && referenceBlobs.length > 0
+            ? "image2video"
+            : "text2video",
+      },
       generationSettings: { aspectRatio: params.aspectRatio },
-      referenceBlobs: ids.slice(0, 1).map((id) => ({
-        id,
-        usage: "style",
-      })),
+      referenceBlobs,
     };
   }
 
