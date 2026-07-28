@@ -34,6 +34,15 @@ describe("模型身份规则", () => {
     expect(
       resolveModelMarketplaceVideoFamily("firefly-veo31-4s-16x9-1080p")
     ).toBe("veo31");
+    expect(
+      resolveModelMarketplaceVideoFamily("firefly-kling3-omni-3s-16x9-1080p")
+    ).toBe("kling3-omni");
+    expect(
+      resolveModelMarketplaceVideoFamily("firefly-runway-gen45-5s-16x9")
+    ).toBe("runway-gen45");
+    expect(
+      resolveModelMarketplaceVideoFamily("firefly-ray314-5s-16x9-4k")
+    ).toBe("ray314");
     expect(resolveModelMarketplaceVideoFamily("kling-o3-5s-16x9")).toBe(
       "kling-o3"
     );
@@ -49,6 +58,15 @@ describe("模型身份规则", () => {
     );
     expect(getStableVideoDefaultModelId("kling-o3")).toBe(
       "firefly-kling-o3-5s-16x9"
+    );
+    expect(getStableVideoDefaultModelId("kling3-omni")).toBe(
+      "firefly-kling3-omni-3s-16x9-1080p"
+    );
+    expect(getStableVideoDefaultModelId("runway-gen45")).toBe(
+      "firefly-runway-gen45-5s-16x9"
+    );
+    expect(getStableVideoDefaultModelId("ray314")).toBe(
+      "firefly-ray314-5s-16x9-4k"
     );
     expect(getStableVideoDefaultModelId("unknown")).toBeNull();
   });
@@ -116,8 +134,8 @@ describe("目录展示与价格规则", () => {
       "1:1",
     ]);
     expect(
-      sortUniqueVideoResolutions(["1080p", "720p", "1080p", "2160p"])
-    ).toEqual(["720p", "1080p", "2160p"]);
+      sortUniqueVideoResolutions(["4k", "1080p", "720p", "1080p", "2160p"])
+    ).toEqual(["720p", "1080p", "2160p", "4k"]);
   });
 });
 

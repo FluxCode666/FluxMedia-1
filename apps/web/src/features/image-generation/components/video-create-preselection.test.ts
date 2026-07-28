@@ -29,6 +29,26 @@ describe("resolveVideoInitialSelection", () => {
     });
   });
 
+  it("对 Runway Gen-4.5 预选固定 720p 横屏和 ID 中的时长", () => {
+    expect(
+      resolveVideoInitialSelection("firefly-runway-gen45-8s-16x9")
+    ).toEqual({
+      familyId: "runway-gen45",
+      duration: 8,
+      ratio: "16:9",
+      resolution: "720p",
+    });
+  });
+
+  it("对 Ray 3.14 预选 ID 中的时长、比例和 4k 分辨率", () => {
+    expect(resolveVideoInitialSelection("firefly-ray314-10s-21x9-4k")).toEqual({
+      familyId: "ray314",
+      duration: 10,
+      ratio: "21:9",
+      resolution: "4k",
+    });
+  });
+
   it.each([
     "",
     "firefly-veo31-5s-16x9-1080p",

@@ -48,6 +48,95 @@ describe("video generation operations", () => {
     ).toBe(false);
   });
 
+  it.each([true, false])("接受请求级 generateAudio=%s", (generateAudio) => {
+    const parsed = videoGenerateInputSchema.safeParse({
+      clientRequestId: "request-1",
+      prompt: "海边日落",
+      model: "firefly-seedance2-15s-9x16-480p",
+      generateAudio,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.generateAudio).toBe(generateAudio);
+    }
+  });
+
+  it("拒绝不支持音频的模型开启声音，但允许统一客户端显式传 false", () => {
+    const base = {
+      clientRequestId: "request-1",
+      prompt: "海边日落",
+      model: "firefly-sora2-4s-16x9",
+    };
+
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
+        .success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
+        .success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: "false" })
+        .success
+    ).toBe(false);
+  });
+
+  it("Runway Gen-4.5 拒绝声音和输入图，但允许显式关闭声音", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    const base = {
+      clientRequestId: "runway-request-1",
+      prompt: "海边日落",
+      model: "firefly-runway-gen45-5s-16x9",
+    };
+
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
+        .success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
+        .success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, inputImages: [image] })
+        .success
+    ).toBe(false);
+  });
+
+  it("Ray 3.14 拒绝声音和输入图，但允许显式关闭声音", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    const base = {
+      clientRequestId: "ray-request-1",
+      prompt: "海边日落",
+      model: "firefly-ray314-5s-16x9-4k",
+    };
+
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
+        .success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
+        .success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({ ...base, inputImages: [image] })
+        .success
+    ).toBe(false);
+  });
+
   it("限制视频输入图最多三张", () => {
     const image = {
       source: "data" as const,

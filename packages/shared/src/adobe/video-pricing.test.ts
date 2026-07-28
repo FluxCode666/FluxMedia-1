@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
   getVideoCreditCost,
   resolveEffectiveVideoCreditsPerSecond,
@@ -7,6 +8,14 @@ import {
 } from "./video-pricing";
 
 describe("resolveVideoCreditsPerSecond", () => {
+  it("新增视频族提供可由系统设置覆盖的默认每秒价格", () => {
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["kling3-omni"]).toBe(30);
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["runway-gen45"]).toBe(30);
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.ray314).toBe(30);
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.seedance2).toBe(30);
+    expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["seedance2-fast"]).toBe(30);
+  });
+
   it("读取模型族配置的每秒积分", () => {
     const prices = { sora2: 42, "veo31-fast": 12.5 };
     expect(resolveVideoCreditsPerSecond("sora2", prices, 30)).toBe(42);

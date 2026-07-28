@@ -34,6 +34,8 @@ const externalVideoSchema = z
     model: z.string().trim().min(1).max(120),
     negativePrompt: z.string().max(8_000).optional(),
     negative_prompt: z.string().max(8_000).optional(),
+    generateAudio: z.boolean().optional(),
+    generate_audio: z.boolean().optional(),
     image: z.array(videoInputImageDataUrlSchema).max(3).optional(),
     async: z.boolean().optional(),
     callback_url: z.string().url().max(2_048).optional(),
@@ -43,6 +45,16 @@ const externalVideoSchema = z
   .refine(
     (value) => Boolean(value.clientRequestId ?? value.client_request_id),
     { message: "clientRequestId is required", path: ["clientRequestId"] }
+  )
+  .refine(
+    (value) =>
+      value.generateAudio === undefined ||
+      value.generate_audio === undefined ||
+      value.generateAudio === value.generate_audio,
+    {
+      message: "generateAudio and generate_audio must match",
+      path: ["generateAudio"],
+    }
   );
 
 /** 将 UOL 错误转换为稳定 OpenAI 风格错误。 */
@@ -81,6 +93,8 @@ export const postExternalVideoGenerations = withApiLogging(
       return openAIImageError("clientRequestId is required");
     const negativePrompt =
       parsed.data.negativePrompt ?? parsed.data.negative_prompt;
+    const generateAudio =
+      parsed.data.generateAudio ?? parsed.data.generate_audio;
     const inputImages = parsed.data.image?.map(toVideoMediaInputReference);
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url || parsed.data.callbackUrl) {
@@ -112,6 +126,7 @@ export const postExternalVideoGenerations = withApiLogging(
           prompt: parsed.data.prompt,
           model: parsed.data.model,
           ...(negativePrompt ? { negativePrompt } : {}),
+          ...(generateAudio !== undefined ? { generateAudio } : {}),
           ...(inputImages?.length ? { inputImages } : {}),
         },
         {

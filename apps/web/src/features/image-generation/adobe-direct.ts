@@ -572,13 +572,7 @@ async function createAdobeVideoStageClient(
       error: `Adobe 直连不支持的视频模型: ${model}`,
     };
   }
-  const size = fireflyVideoSize(conf.outputResolution, conf.aspectRatio);
-  if (!size) {
-    return {
-      ok: false,
-      error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
-    };
-  }
+  const size = fireflyVideoSize(conf);
   const transports = await buildAdobeTransports();
   return {
     ok: true,
@@ -587,6 +581,7 @@ async function createAdobeVideoStageClient(
     size,
     apiTransport: transports.apiTransport,
     client: new AdobeFireflyClient({
+      webApp: conf.webApp,
       transport: transports.apiTransport,
       downloadTransport: transports.downloadTransport,
     }),
@@ -605,6 +600,7 @@ export async function submitAdobeDirectVideoRequest(
     model: string;
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
+    generateAudio?: boolean;
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoSubmission | AdobeVideoStageError> {
@@ -612,6 +608,15 @@ export async function submitAdobeDirectVideoRequest(
   if (!prepared.ok) {
     return {
       error: prepared.error,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+      submissionUncertain: false,
+    };
+  }
+  if (params.generateAudio === true && !prepared.conf.supportsAudio) {
+    return {
+      error: "该视频模型不支持音频开关",
       switchable: false,
       upstreamAccepted: false,
       terminal: true,
@@ -631,7 +636,8 @@ export async function submitAdobeDirectVideoRequest(
         for (const image of params.inputImages.slice(0, maxInputs)) {
           const preparedImage = await prepareAdobeVideoSourceImage(
             image.data,
-            prepared.size
+            prepared.size,
+            prepared.conf.sourceImageMode
           );
           sourceImageIds.push(
             await prepared.client.uploadImage(
@@ -652,8 +658,9 @@ export async function submitAdobeDirectVideoRequest(
         engine: prepared.conf.engine,
         duration: prepared.conf.duration,
         aspectRatio: prepared.conf.aspectRatio,
+        outputResolution: prepared.conf.outputResolution,
         size: prepared.size,
-        generateAudio: prepared.conf.generateAudio,
+        generateAudio: params.generateAudio ?? prepared.conf.generateAudio,
         ...(prepared.conf.referenceMode
           ? { referenceMode: prepared.conf.referenceMode }
           : {}),
@@ -680,8 +687,16 @@ export async function submitAdobeDirectVideoRequest(
 export async function pollAdobeDirectVideoRequest(input: {
   memberId: string;
   pollUrl: string;
+  model: string;
   signal?: AbortSignal;
 }): Promise<AdobeVideoPollResult> {
+  const conf = resolveFireflyVideoModel(input.model);
+  if (!conf) {
+    throw new AdobeAcceptedVideoError(
+      `Adobe 视频恢复模型不受支持: ${input.model}`,
+      { errorType: "status" }
+    );
+  }
   const [credential] = await db
     .select({
       cookie: imageBackendMemberAdobeConfig.cookie,
@@ -705,6 +720,7 @@ export async function pollAdobeDirectVideoRequest(input: {
   const cookie = credential.cookie;
   const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
+    webApp: conf.webApp,
     transport: apiTransport,
     downloadTransport,
   });
@@ -778,6 +794,7 @@ export async function runAdobeDirectVideoRequest(
     model: string;
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
+    generateAudio?: boolean;
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoResult> {
@@ -814,20 +831,21 @@ export async function runAdobeDirectVideoRequest(
       terminal: true,
     };
   }
-  const size = fireflyVideoSize(conf.outputResolution, conf.aspectRatio);
-  if (!size) {
+  if (params.generateAudio === true && !conf.supportsAudio) {
     return {
-      error: `视频尺寸映射失败: ${conf.outputResolution}/${conf.aspectRatio}`,
+      error: "该视频模型不支持音频开关",
       switchable: false,
       upstreamAccepted: false,
       terminal: true,
     };
   }
+  const size = fireflyVideoSize(conf);
 
   const { apiTransport, downloadTransport } = await buildAdobeTransports(
     MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
   );
   const client = new AdobeFireflyClient({
+    webApp: conf.webApp,
     transport: apiTransport,
     downloadTransport,
   });
@@ -845,7 +863,8 @@ export async function runAdobeDirectVideoRequest(
         for (const image of params.inputImages.slice(0, maxInputs)) {
           const preparedImage = await prepareAdobeVideoSourceImage(
             image.data,
-            size
+            size,
+            conf.sourceImageMode
           );
           sourceImageIds.push(
             await client.uploadImage(
@@ -867,8 +886,9 @@ export async function runAdobeDirectVideoRequest(
         engine: conf.engine,
         duration: conf.duration,
         aspectRatio: conf.aspectRatio,
+        outputResolution: conf.outputResolution,
         size,
-        generateAudio: conf.generateAudio,
+        generateAudio: params.generateAudio ?? conf.generateAudio,
         ...(conf.referenceMode ? { referenceMode: conf.referenceMode } : {}),
         ...(params.negativePrompt != null
           ? { negativePrompt: params.negativePrompt }

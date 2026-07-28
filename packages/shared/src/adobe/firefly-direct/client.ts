@@ -26,6 +26,7 @@ import {
   type FireflyImagePayload,
   type FireflyVideoPayload,
 } from "./payloads";
+import { buildArpSessionId, buildSubmitNonce } from "./signing";
 import {
   FetchFireflyTransport,
   type FireflyTransport,
@@ -37,13 +38,36 @@ const VIDEO_SUBMIT_URL =
   "https://firefly-3p.ff.adobe.io/v2/3p-videos/generate-async";
 const UPLOAD_URL = "https://firefly-3p.ff.adobe.io/v2/storage/image";
 
-const DEFAULT_API_KEY = "projectx_webapp";
+export type AdobeFireflyWebApp = "express" | "firefly";
+
+type AdobeFireflyWebAppProfile = {
+  apiKey: string;
+  origin: string;
+  referer: string;
+};
+
+/** Adobe 两个网页入口各自发送的公开客户端标识和来源头。 */
+const WEB_APP_PROFILES: Record<AdobeFireflyWebApp, AdobeFireflyWebAppProfile> =
+  {
+    express: {
+      apiKey: "projectx_webapp",
+      origin: "https://new.express.adobe.com",
+      referer: "https://new.express.adobe.com/",
+    },
+    firefly: {
+      apiKey: "clio-playground-web",
+      origin: "https://firefly.adobe.com",
+      referer: "https://firefly.adobe.com/",
+    },
+  };
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 const DEFAULT_SEC_CH_UA =
   '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"';
 
 export type AdobeFireflyClientConfig = {
+  /** 所模拟的 Adobe 网页入口；默认保持既有 Express 行为。 */
+  webApp?: AdobeFireflyWebApp;
   apiKey?: string;
   userAgent?: string;
   secChUa?: string;
@@ -82,6 +106,7 @@ export type GenerateVideoInput = {
   engine: string;
   duration: number;
   aspectRatio: string;
+  outputResolution: string;
   size: { width: number; height: number };
   generateAudio: boolean;
   referenceMode?: "image";
@@ -264,13 +289,18 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 export class AdobeFireflyClient {
   private readonly apiKey: string;
+  private readonly origin: string;
+  private readonly referer: string;
   private readonly userAgent: string;
   private readonly secChUa: string;
   private readonly transport: FireflyTransport;
   private readonly downloadTransport: FireflyTransport;
 
   constructor(config: AdobeFireflyClientConfig = {}) {
-    this.apiKey = config.apiKey?.trim() || DEFAULT_API_KEY;
+    const profile = WEB_APP_PROFILES[config.webApp ?? "express"];
+    this.apiKey = config.apiKey?.trim() || profile.apiKey;
+    this.origin = profile.origin;
+    this.referer = profile.referer;
     this.userAgent = config.userAgent?.trim() || DEFAULT_USER_AGENT;
     this.secChUa = config.secChUa?.trim() || DEFAULT_SEC_CH_UA;
     this.transport = config.transport ?? new FetchFireflyTransport();
@@ -281,8 +311,8 @@ export class AdobeFireflyClient {
   private browserHeaders(): Record<string, string> {
     return {
       "user-agent": this.userAgent,
-      origin: "https://new.express.adobe.com",
-      referer: "https://new.express.adobe.com/",
+      origin: this.origin,
+      referer: this.referer,
       "accept-language": "en-US,en;q=0.9",
       "sec-ch-ua": this.secChUa,
       "sec-ch-ua-mobile": "?0",
@@ -303,12 +333,33 @@ export class AdobeFireflyClient {
     };
   }
 
+  /**
+   * 构造当前 Adobe 网页 Profile 的视频提交请求头。
+   *
+   * @param token 当前成员的短期 IMS Token。
+   * @param prompt 本次提交提示词，最多前 256 字符参与 nonce。
+   * @returns 浏览器基础头、Bearer、API Key、ARP 会话及可生成时的 nonce。
+   * @sideEffects 每次调用都会生成新的随机 ARP 会话标识。
+   * @failure Token 无账号 claim 时省略 nonce，由上游返回明确鉴权错误。
+   */
+  private videoSubmitHeaders(
+    token: string,
+    prompt: string
+  ): Record<string, string> {
+    const nonce = buildSubmitNonce(token, prompt);
+    return {
+      ...this.submitHeaders(token),
+      "x-arp-session-id": buildArpSessionId(),
+      ...(nonce ? { "x-nonce": nonce } : {}),
+    };
+  }
+
   private pollHeaders(token: string): Record<string, string> {
     return {
       Authorization: `Bearer ${token}`,
       accept: "*/*",
-      referer: "https://new.express.adobe.com/",
-      origin: "https://new.express.adobe.com",
+      referer: this.referer,
+      origin: this.origin,
       "user-agent": this.userAgent,
       "x-api-key": this.apiKey,
       "content-type": "application/json",
@@ -494,6 +545,7 @@ export class AdobeFireflyClient {
       engine: input.engine,
       duration: input.duration,
       aspectRatio: input.aspectRatio,
+      outputResolution: input.outputResolution,
       size: input.size,
       generateAudio: input.generateAudio,
       ...(input.referenceMode ? { referenceMode: input.referenceMode } : {}),
@@ -508,7 +560,7 @@ export class AdobeFireflyClient {
       submitResp = await this.transport.request({
         method: "POST",
         url: VIDEO_SUBMIT_URL,
-        headers: this.submitHeaders(input.token),
+        headers: this.videoSubmitHeaders(input.token, input.prompt),
         body: JSON.stringify(payload),
         signal: input.signal,
         timeoutMs: 60_000,
@@ -636,17 +688,8 @@ export class AdobeFireflyClient {
     const statusValue =
       String(latest.status || "").toUpperCase() || statusHeader;
     const outputs = (latest.outputs as Array<Record<string, unknown>>) || [];
-    if (outputs.length > 0) {
-      const video = outputs[0]?.video as Record<string, unknown> | undefined;
-      const videoUrl = video?.presignedUrl;
-      if (!videoUrl || typeof videoUrl !== "string") {
-        throw new AdobeAcceptedVideoError(
-          "video job finished without video url",
-          { errorType: "status" }
-        );
-      }
-      return { status: "completed", videoUrl, raw: latest };
-    }
+    const video = outputs[0]?.video as Record<string, unknown> | undefined;
+    const videoUrl = video?.presignedUrl;
     if (
       statusValue === "FAILED" ||
       statusValue === "CANCELLED" ||
@@ -658,9 +701,16 @@ export class AdobeFireflyClient {
       );
     }
     if (statusValue === "COMPLETED" || statusValue === "SUCCEEDED") {
-      throw new AdobeAcceptedVideoError("video job completed without output", {
-        errorType: "status",
-      });
+      if (!videoUrl || typeof videoUrl !== "string") {
+        throw new AdobeAcceptedVideoError(
+          "video job completed without output",
+          { errorType: "status" }
+        );
+      }
+      return { status: "completed", videoUrl, raw: latest };
+    }
+    if (!statusValue && typeof videoUrl === "string") {
+      return { status: "completed", videoUrl, raw: latest };
     }
     return { status: "pending", raw: latest };
   }

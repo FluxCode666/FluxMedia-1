@@ -368,9 +368,11 @@ const zhContent = {
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
+    "client_request_id": "video-request-001",
     "model": "firefly-veo31-8s-16x9-1080p",
     "prompt": "A corgi running along the beach at sunset",
-    "negative_prompt": "low resolution, blur, watermark"
+    "negative_prompt": "low resolution, blur, watermark",
+    "generate_audio": false
   }'`,
       responseExample: `{
   "created": 1713833628,
@@ -382,6 +384,11 @@ const zhContent = {
   ]
 }`,
       parameters: [
+        {
+          name: "client_request_id / clientRequestId",
+          requirement: "必填",
+          description: "调用方生成的幂等请求 ID，最长 128 个字符。",
+        },
         {
           name: "prompt",
           requirement: "必填",
@@ -399,9 +406,16 @@ const zhContent = {
           description: "负向提示词，最多 8000 字符。",
         },
         {
+          name: "generate_audio / generateAudio",
+          requirement: "可选",
+          description:
+            "是否生成声音。Seedance 2.0（含 Fast）与 Kling 3.0 Omni 默认关闭，Kling 3.0 默认开启；Runway Gen-4.5 与 Ray 3.14 不支持声音，不支持音频的模型不能传 true。",
+        },
+        {
           name: "image",
           requirement: "可选",
-          description: "base64 image data URL 数组，最多 3 张参考图。",
+          description:
+            "base64 image data URL 数组，模型支持时最多 3 张参考图；Runway Gen-4.5 与 Ray 3.14 当前不支持图片输入。",
         },
       ],
       responses: [
@@ -794,6 +808,12 @@ const enContent = {
       description: "Create a video from a text prompt or reference images.",
       parameters: [
         {
+          name: "client_request_id / clientRequestId",
+          requirement: "Required",
+          description:
+            "A caller-generated idempotency key of up to 128 characters.",
+        },
+        {
           name: "prompt",
           requirement: "Required",
           description: "Video prompt, up to 32,000 characters.",
@@ -810,9 +830,16 @@ const enContent = {
           description: "Negative prompt, up to 8,000 characters.",
         },
         {
+          name: "generate_audio / generateAudio",
+          requirement: "Optional",
+          description:
+            "Whether to generate audio. Seedance 2.0, including Fast, and Kling 3.0 Omni default to false, while Kling 3.0 defaults to true. Runway Gen-4.5 and Ray 3.14 do not support audio, and models without audio support cannot accept true.",
+        },
+        {
           name: "image",
           requirement: "Optional",
-          description: "An array of up to three base64 image data URLs.",
+          description:
+            "An array of up to three base64 image data URLs when supported by the model. Runway Gen-4.5 and Ray 3.14 currently do not accept image input.",
         },
       ],
       responses: [

@@ -72,6 +72,11 @@ const VIDEO_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   "veo31-fast": "Veo 3.1 Fast",
   "kling-o3": "Kling O3",
   kling3: "Kling 3.0",
+  "kling3-omni": "Kling 3.0 Omni",
+  "runway-gen45": "Runway Gen-4.5",
+  ray314: "Ray 3.14",
+  seedance2: "Seedance 2.0",
+  "seedance2-fast": "Seedance 2.0 Fast",
 };
 
 /**
@@ -204,11 +209,7 @@ function collectImageConfigKeys(
 
   for (const modelId of candidates) {
     const configKey = normalizeModelMarketplaceImageConfigKey(modelId);
-    if (
-      !configKey ||
-      configKey === "default" ||
-      builtInSet.has(configKey)
-    ) {
+    if (!configKey || configKey === "default" || builtInSet.has(configKey)) {
       continue;
     }
     additionalKeys.add(configKey);

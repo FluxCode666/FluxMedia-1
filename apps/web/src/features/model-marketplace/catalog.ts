@@ -5,6 +5,7 @@
  * 且允许展示的图像模型和视频模型族，并复用管理目录与共享纯函数避免身份和价格规则漂移。
  */
 import { resolveFireflyVideoModel } from "@repo/shared/adobe/firefly-direct/video-catalog";
+import { MAX_SUPPORTED_MODEL_IDS } from "@repo/shared/image-backend/supported-models";
 import {
   getStableVideoDefaultModelId,
   type ModelMarketplaceCoverRef,
@@ -27,7 +28,7 @@ const runtimeModelItemSchema = z
 const runtimeModelCatalogSchema = z
   .object({
     image: z.array(runtimeModelItemSchema).max(500),
-    video: z.array(runtimeModelItemSchema).max(500),
+    video: z.array(runtimeModelItemSchema).max(MAX_SUPPORTED_MODEL_IDS),
   })
   .strict();
 const publicCatalogItemsSchema = z
@@ -47,6 +48,11 @@ const BUILTIN_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "veo31-fast": "适合需要更快反馈的高质量视频创作。",
   "kling-o3": "适合强调动作表现、镜头运动与参考一致性的视频生成。",
   kling3: "适合多场景视频创作与稳定的运动表现。",
+  "kling3-omni": "适合逐秒控制时长，并生成横屏或竖屏的高分辨率视频。",
+  "runway-gen45": "适合生成 16:9 横屏电影感视频，并提供多档短时长选择。",
+  ray314: "适合生成多画幅、高分辨率的电影感短视频。",
+  seedance2: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
+  "seedance2-fast": "适合更快生成多画幅视频并保持参考图视觉风格一致。",
 };
 
 /** 公开目录构建器需要的完整事实输入。 */

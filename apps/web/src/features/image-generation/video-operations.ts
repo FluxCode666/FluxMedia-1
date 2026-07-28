@@ -111,6 +111,7 @@ export type VideoGenerationInput = {
   model: string;
   backendGroupId?: string;
   negativePrompt?: string | null;
+  generateAudio?: boolean;
   inputImages?: MediaInputReference[];
   stagedInputObjects?: VideoInputCleanupObject[];
 };
@@ -438,10 +439,7 @@ export async function reconcileUncertainVideoSubmission(
   }
 
   if (["polling", "downloading", "completed"].includes(row.stage)) {
-    if (
-      row.pollUrl !== pollUrl ||
-      row.upstreamJobId !== input.upstreamJobId
-    ) {
+    if (row.pollUrl !== pollUrl || row.upstreamJobId !== input.upstreamJobId) {
       throw new VideoSubmissionReconciliationError(
         "conflict",
         "任务已用不同的 Adobe 恢复身份完成核对"
@@ -494,6 +492,21 @@ function getVideoMetadataString(
   const normalized = value.trim();
   if (!normalized || normalized.length > maxLength) return undefined;
   return normalized;
+}
+
+/**
+ * 从任务 metadata 读取布尔值。
+ *
+ * @param metadata 已经收窄为 JSON 对象的任务元数据，历史任务可以为空。
+ * @param key 要读取的字段名。
+ * @returns 严格布尔值；非法历史值按缺失处理，交由调用方回退模型默认值。
+ */
+function getVideoMetadataBoolean(
+  metadata: Record<string, unknown> | null,
+  key: string
+): boolean | undefined {
+  const value = metadata?.[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 /** 重新校验任务中持久化的 JSON-safe 输入引用，防止脏数据进入 worker。 */
@@ -563,6 +576,10 @@ export async function runAdobeVideoGenerationForUser(
 ): Promise<VideoGenerationResult> {
   const conf = resolveFireflyVideoModel(input.model);
   if (!conf) return { error: `不支持的视频模型: ${input.model}` };
+  if (input.generateAudio === true && !conf.supportsAudio) {
+    return { error: "该视频模型不支持音频开关" };
+  }
+  const effectiveGenerateAudio = input.generateAudio ?? conf.generateAudio;
   const maxInputImages = fireflyVideoMaxInputImages(conf);
   if ((input.inputImages?.length ?? 0) > maxInputImages) {
     return { error: `该视频模型最多支持 ${maxInputImages} 张输入图` };
@@ -626,27 +643,21 @@ export async function runAdobeVideoGenerationForUser(
       stage: "created",
       creditsConsumed: 0,
       nextPollAt: createdAt,
-      ...(input.clientRequestId ||
-      input.requestFingerprint ||
-      input.backendGroupId ||
-      input.negativePrompt
-        ? {
-            metadata: {
-              ...(input.clientRequestId
-                ? { clientRequestId: input.clientRequestId }
-                : {}),
-              ...(input.requestFingerprint
-                ? { requestFingerprint: input.requestFingerprint }
-                : {}),
-              ...(input.backendGroupId
-                ? { backendGroupId: input.backendGroupId }
-                : {}),
-              ...(input.negativePrompt
-                ? { negativePrompt: input.negativePrompt }
-                : {}),
-            },
-          }
-        : {}),
+      metadata: {
+        ...(input.clientRequestId
+          ? { clientRequestId: input.clientRequestId }
+          : {}),
+        ...(input.requestFingerprint
+          ? { requestFingerprint: input.requestFingerprint }
+          : {}),
+        ...(input.backendGroupId
+          ? { backendGroupId: input.backendGroupId }
+          : {}),
+        ...(input.negativePrompt
+          ? { negativePrompt: input.negativePrompt }
+          : {}),
+        generateAudio: effectiveGenerateAudio,
+      },
       ...(persistedInputImages?.length
         ? { inputImageRefs: persistedInputImages }
         : {}),
@@ -718,6 +729,9 @@ async function submitClaimedCreatedVideo(
     "negativePrompt",
     100_000
   );
+  const generateAudio =
+    getVideoMetadataBoolean(initialRow.metadata, "generateAudio") ??
+    conf.generateAudio;
   let row = initialRow;
 
   const globalPricing = await getRuntimeGlobalVideoPricing();
@@ -851,6 +865,7 @@ async function submitClaimedCreatedVideo(
       model: row.model,
       ...(inputImages ? { inputImages } : {}),
       ...(negativePrompt != null ? { negativePrompt } : {}),
+      generateAudio,
       signal: AbortSignal.timeout(VIDEO_SUBMISSION_TIMEOUT_MS),
     });
     if (!("error" in submitted)) {
@@ -1146,6 +1161,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
       const polled = await pollAdobeDirectVideoRequest({
         memberId: row.backendMemberId,
         pollUrl: row.pollUrl,
+        model: row.model,
       });
       if (polled.status === "pending") {
         await compareAndSetVideoStage({

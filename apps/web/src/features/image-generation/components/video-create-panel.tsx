@@ -3,9 +3,10 @@
 /**
  * Adobe Firefly 视频创作面板（自包含）。
  *
- * 选模型族(7族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
+ * 选模型族(12族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
  * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
- * 产物视频。可选上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页独立 tab。
+ * 产物视频。模型支持时可上传一张输入图做图生视频首帧。与图像创作解耦，作为创作页
+ * 独立 tab。
  */
 
 import {
@@ -23,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
+import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -161,6 +163,9 @@ export function VideoCreatePanel({
   const [resolution, setResolution] = useState<string>(
     initialSelection?.resolution ?? initialFamily?.resolutions[0] ?? "720p"
   );
+  const [generateAudio, setGenerateAudio] = useState(
+    initialFamily?.generateAudio ?? false
+  );
   const [prompt, setPrompt] = useState("");
   const [inputImage, setInputImage] = useState<string | null>(null);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(
@@ -181,6 +186,11 @@ export function VideoCreatePanel({
       setDuration(next.durations[0] ?? duration);
       setRatio(next.ratios[0] ?? ratio);
       setResolution(next.resolutions[0] ?? resolution);
+      setGenerateAudio(next.generateAudio);
+      if (next.maxInputImages === 0) {
+        setInputImage(null);
+        setSelectedHistoryId(null);
+      }
     }
   };
 
@@ -247,7 +257,10 @@ export function VideoCreatePanel({
           clientRequestId: crypto.randomUUID(),
           prompt: prompt.trim(),
           model,
-          ...(inputImage ? { inputImages: [inputImage] } : {}),
+          ...(family.supportsAudio ? { generateAudio } : {}),
+          ...(family.maxInputImages > 0 && inputImage
+            ? { inputImages: [inputImage] }
+            : {}),
         }),
       });
       if (!response.ok) {
@@ -372,6 +385,18 @@ export function VideoCreatePanel({
         )}
       </div>
 
+      {family.supportsAudio && (
+        <div className="flex items-center gap-2">
+          <Switch
+            id="video-generate-audio"
+            checked={generateAudio}
+            onCheckedChange={setGenerateAudio}
+            disabled={busy}
+          />
+          <Label htmlFor="video-generate-audio">生成声音</Label>
+        </div>
+      )}
+
       <Textarea
         placeholder="描述要生成的视频…"
         value={prompt}
@@ -380,69 +405,71 @@ export function VideoCreatePanel({
         rows={3}
       />
 
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">
-          首帧图（可选，图生视频）
-        </Label>
-        {historyImages.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {historyImages.slice(0, 12).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                disabled={busy}
-                title="用此历史图作首帧"
-                onClick={async () => {
-                  if (!item.imageUrl) return;
-                  try {
-                    setInputImage(await urlToDataUrl(item.imageUrl));
-                    setSelectedHistoryId(item.id);
-                  } catch {
-                    setSelectedHistoryId(null);
-                  }
-                }}
-                className={`h-14 w-14 overflow-hidden rounded-md border transition-[border-color,box-shadow] duration-150 ${
-                  selectedHistoryId === item.id
-                    ? "border-primary ring-1 ring-primary"
-                    : "border-border hover:border-foreground/40"
-                }`}
-              >
-                {/* 历史缩略图使用本站已生成图。 */}
-                {/* biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
-                <img
-                  src={item.imageUrl ?? ""}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              </button>
-            ))}
-          </div>
-        )}
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          disabled={busy}
-          className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm"
-          onChange={async (event) => {
-            const file = event.target.files?.[0];
-            setInputImage(file ? await fileToDataUrl(file) : null);
-            setSelectedHistoryId(null);
-          }}
-        />
-        {inputImage && (
-          <button
-            type="button"
-            className="text-xs text-muted-foreground underline"
+      {family.maxInputImages > 0 && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            首帧图（可选，图生视频）
+          </Label>
+          {historyImages.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {historyImages.slice(0, 12).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={busy}
+                  title="用此历史图作首帧"
+                  onClick={async () => {
+                    if (!item.imageUrl) return;
+                    try {
+                      setInputImage(await urlToDataUrl(item.imageUrl));
+                      setSelectedHistoryId(item.id);
+                    } catch {
+                      setSelectedHistoryId(null);
+                    }
+                  }}
+                  className={`h-14 w-14 overflow-hidden rounded-md border transition-[border-color,box-shadow] duration-150 ${
+                    selectedHistoryId === item.id
+                      ? "border-primary ring-1 ring-primary"
+                      : "border-border hover:border-foreground/40"
+                  }`}
+                >
+                  {/* 历史缩略图使用本站已生成图。 */}
+                  {/* biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
+                  <img
+                    src={item.imageUrl ?? ""}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
             disabled={busy}
-            onClick={() => {
-              setInputImage(null);
+            className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm"
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              setInputImage(file ? await fileToDataUrl(file) : null);
               setSelectedHistoryId(null);
             }}
-          >
-            清除首帧图
-          </button>
-        )}
-      </div>
+          />
+          {inputImage && (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline"
+              disabled={busy}
+              onClick={() => {
+                setInputImage(null);
+                setSelectedHistoryId(null);
+              }}
+            >
+              清除首帧图
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <Button onClick={generate} disabled={busy || !prompt.trim()}>

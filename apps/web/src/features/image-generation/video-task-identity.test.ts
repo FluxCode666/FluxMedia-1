@@ -76,4 +76,23 @@ describe("createVideoTaskId", () => {
     expect(replay).toBe(first);
     expect(conflict).not.toBe(first);
   });
+
+  it("将音频开关的 true、false 与缺省值纳入不同请求指纹", () => {
+    const base = {
+      clientRequestId: "request-1",
+      prompt: "first",
+      model: "firefly-seedance2-15s-9x16-480p",
+    };
+    const omitted = createVideoRequestFingerprint(base);
+    const enabled = createVideoRequestFingerprint({
+      ...base,
+      generateAudio: true,
+    });
+    const disabled = createVideoRequestFingerprint({
+      ...base,
+      generateAudio: false,
+    });
+
+    expect(new Set([omitted, enabled, disabled]).size).toBe(3);
+  });
 });

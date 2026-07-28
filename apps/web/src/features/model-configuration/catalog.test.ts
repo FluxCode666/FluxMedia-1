@@ -108,6 +108,27 @@ describe("buildModelConfigurationSnapshot", () => {
     ]);
     expect(new Set(identities).size).toBe(identities.length);
     expect(snapshot.runtimeCatalogStatus).toBe("ready");
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "kling3-omni")
+    ).toMatchObject({
+      category: "video",
+      displayName: "Kling 3.0 Omni",
+      creditsPerSecond: 30,
+    });
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "runway-gen45")
+    ).toMatchObject({
+      category: "video",
+      displayName: "Runway Gen-4.5",
+      creditsPerSecond: 30,
+    });
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "ray314")
+    ).toMatchObject({
+      category: "video",
+      displayName: "Ray 3.14",
+      creditsPerSecond: 30,
+    });
   });
 
   it("运行时额外图像缺少显式价格时标记为未配置", () => {
@@ -166,7 +187,9 @@ describe("buildModelConfigurationSnapshot", () => {
     );
 
     expect(snapshot.entries).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ configKey: "default" })])
+      expect.arrayContaining([
+        expect.objectContaining({ configKey: "default" }),
+      ])
     );
   });
 

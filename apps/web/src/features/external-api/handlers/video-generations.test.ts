@@ -124,4 +124,41 @@ describe("postExternalVideoGenerations", () => {
     const payload = await response.json();
     expect(payload.task_id).toBe("video-1");
   });
+
+  it.each([
+    ["generateAudio", true],
+    ["generate_audio", false],
+  ] as const)("将 %s 原样映射为 UOL generateAudio", async (field, value) => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        client_request_id: `client-audio-${String(value)}`,
+        prompt: "test",
+        model: "firefly-seedance2-15s-9x16-480p",
+        [field]: value,
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({ generateAudio: value }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it("拒绝值冲突的 generateAudio 双别名", async () => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        client_request_id: "client-audio-conflict",
+        prompt: "test",
+        model: "firefly-seedance2-15s-9x16-480p",
+        generateAudio: true,
+        generate_audio: false,
+      }) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
 });

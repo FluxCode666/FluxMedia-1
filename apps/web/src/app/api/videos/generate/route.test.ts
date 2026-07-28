@@ -79,4 +79,30 @@ describe("POST /api/videos/generate", () => {
       expect.any(Object)
     );
   });
+
+  it("将显式关闭声音的 false 原样传给 UOL", async () => {
+    const response = await POST(
+      new NextRequest("https://app.example.com/api/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "request-audio-off",
+          prompt: "海边日落",
+          model: "firefly-seedance2-15s-9x16-480p",
+          generateAudio: false,
+        }),
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(invokeOperationMock).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        clientRequestId: "request-audio-off",
+        generateAudio: false,
+      }),
+      expect.objectContaining({ type: "user", userId: "user-1" }),
+      expect.any(Object)
+    );
+  });
 });

@@ -266,6 +266,7 @@ describe("AdobeFireflyClient.generateVideo", () => {
     engine: "sora2",
     duration: 8,
     aspectRatio: "16:9",
+    outputResolution: "720p",
     size: { width: 1280, height: 720 },
     generateAudio: false,
     pollIntervalMs: 1,
@@ -384,7 +385,20 @@ describe("AdobeFireflyClient.generateVideo", () => {
       }
       expect(req.url).toBe(pollUrl);
       return index === 1
-        ? jsonResponse(200, { status: "RUNNING" })
+        ? jsonResponse(
+            200,
+            {
+              progress: 80,
+              outputs: [
+                {
+                  video: {
+                    presignedUrl: "https://cdn.example/video-early.mp4",
+                  },
+                },
+              ],
+            },
+            { "x-task-status": "IN_PROGRESS" }
+          )
         : jsonResponse(200, {
             status: "COMPLETED",
             outputs: [
@@ -525,16 +539,122 @@ describe("AdobeFireflyClient.generateVideo", () => {
       pollUrl: submitted.pollUrl,
     });
 
-    expect(api.calls[0]?.headers.origin).toBe(
-      "https://new.express.adobe.com"
-    );
+    expect(api.calls[0]?.headers.origin).toBe("https://new.express.adobe.com");
     expect(api.calls[0]?.headers.referer).toBe(
       "https://new.express.adobe.com/"
     );
     expect(api.calls[0]?.headers["sec-fetch-site"]).toBe("cross-site");
     expect(api.calls[0]?.headers["x-api-key"]).toBe("projectx_webapp");
-    expect(api.calls[1]?.headers.origin).toBe(
-      "https://new.express.adobe.com"
+    expect(api.calls[0]?.headers["x-arp-session-id"]).toBeTruthy();
+    expect(api.calls[0]?.headers["x-nonce"]).toMatch(/^[a-f0-9]{64}$/);
+    expect(api.calls[1]?.headers.origin).toBe("https://new.express.adobe.com");
+    expect(api.calls[1]?.headers["x-arp-session-id"]).toBeUndefined();
+    expect(api.calls[1]?.headers["x-nonce"]).toBeUndefined();
+  });
+
+  it("Kling 3.0 Omni 的上传、提交和轮询均使用 Firefly 网页 Profile", async () => {
+    const api = new MockTransport((req, index) => {
+      if (index === 0) {
+        expect(req.url).toContain("/v2/storage/image");
+        return jsonResponse(200, { images: [{ id: "reference-image" }] });
+      }
+      if (index === 1) {
+        expect(req.url).toContain("/v2/3p-videos/generate-async");
+        expect(JSON.parse(String(req.body))).toMatchObject({
+          modelId: "kling",
+          modelVersion: "kling_o3_standard_t2v",
+          referenceBlobs: [{ id: "reference-image", usage: "style" }],
+        });
+        return jsonResponse(
+          200,
+          {},
+          {
+            "x-override-status-link":
+              "https://firefly-epo1234-prod.adobe.io/v2/status/video-firefly-profile",
+          }
+        );
+      }
+      return jsonResponse(200, { status: "RUNNING" });
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    const imageId = await client.uploadImage(
+      FAKE_TOKEN,
+      Buffer.from("reference")
     );
+    const submitted = await client.submitVideo({
+      ...videoInput,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      sourceImageIds: [imageId],
+    });
+    await client.pollVideo({
+      token: FAKE_TOKEN,
+      pollUrl: submitted.pollUrl,
+    });
+
+    expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
+    for (const call of api.calls.slice(1)) {
+      expect(call.headers.origin).toBe("https://firefly.adobe.com");
+      expect(call.headers.referer).toBe("https://firefly.adobe.com/");
+      expect(call.headers["x-api-key"]).toBe("clio-playground-web");
+    }
+  });
+
+  it("Ray 3.14 通过 Firefly 网页 Profile 提交完整模型专属参数", async () => {
+    const api = new MockTransport((req) => {
+      expect(req.url).toContain("/v2/3p-videos/generate-async");
+      expect(JSON.parse(String(req.body))).toEqual({
+        modelId: "luma",
+        modelVersion: "3.14-ray",
+        size: { width: 3840, height: 2160 },
+        mode: "flex_2",
+        prompt: "a moving cat",
+        negativePrompt: "blurry",
+        duration: 5,
+        generationMetadata: {
+          module: "text2video",
+          submodule: "ff-video-generate",
+        },
+        modelSpecificPayload: {
+          resolution: "4k",
+          aspect_ratio: "16:9",
+        },
+        output: { storeInputs: true },
+      });
+      return jsonResponse(
+        200,
+        {},
+        {
+          "x-override-status-link":
+            "https://firefly-epo1234-prod.adobe.io/v2/status/video-ray314",
+        }
+      );
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    await client.submitVideo({
+      ...videoInput,
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray",
+      engine: "ray314",
+      duration: 5,
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
+    });
+
+    expect(api.calls[0]?.headers.origin).toBe("https://firefly.adobe.com");
+    expect(api.calls[0]?.headers.referer).toBe("https://firefly.adobe.com/");
+    expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
   });
 });

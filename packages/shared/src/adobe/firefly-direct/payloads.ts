@@ -299,6 +299,7 @@ export function buildFireflyVideoPayload(params: {
   engine: string;
   duration: number;
   aspectRatio: string;
+  outputResolution: string;
   size: FireflySize;
   generateAudio: boolean;
   referenceMode?: "image";
@@ -309,6 +310,87 @@ export function buildFireflyVideoPayload(params: {
   const ids = (params.sourceImageIds ?? []).filter(Boolean);
   const hasFrames = ids.length > 0;
   const size = { width: params.size.width, height: params.size.height };
+
+  if (params.engine === "seedance2") {
+    return {
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      size,
+      seeds: [seed],
+      referenceBlobs: ids.slice(0, 1).map((id) => ({
+        id,
+        usage: "style",
+      })),
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt ?? "",
+      duration: params.duration,
+      generateAudio: params.generateAudio,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      generationSettings: { aspectRatio: params.aspectRatio },
+      output: { storeInputs: true },
+    };
+  }
+
+  if (params.engine === "kling3-omni") {
+    return {
+      n: 1,
+      seeds: [seed],
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      output: { storeInputs: true },
+      duration: params.duration,
+      prompt: params.prompt,
+      size,
+      generateAudio: params.generateAudio,
+      generationMetadata: { module: "text2video" },
+      generationSettings: { aspectRatio: params.aspectRatio },
+      referenceBlobs: ids.slice(0, 1).map((id) => ({
+        id,
+        usage: "style",
+      })),
+    };
+  }
+
+  if (params.engine === "runway-gen45") {
+    return {
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      size,
+      seeds: [seed],
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt ?? "",
+      duration: params.duration,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      output: { storeInputs: true },
+    };
+  }
+
+  if (params.engine === "ray314") {
+    return {
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      size,
+      mode: "flex_2",
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt ?? "",
+      duration: params.duration,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      modelSpecificPayload: {
+        resolution: params.outputResolution,
+        aspect_ratio: params.aspectRatio,
+      },
+      output: { storeInputs: true },
+    };
+  }
 
   if (params.engine === "veo31-fast" || params.engine === "veo31-standard") {
     const payload: FireflyVideoPayload = {

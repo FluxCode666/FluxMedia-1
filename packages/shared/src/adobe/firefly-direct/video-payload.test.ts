@@ -9,11 +9,224 @@ const base = {
   engine: "sora2",
   duration: 8,
   aspectRatio: "16:9",
+  outputResolution: "720p",
   size: { width: 1280, height: 720 },
   generateAudio: false,
 };
 
 describe("buildFireflyVideoPayload", () => {
+  it("Seedance 2.0 使用网页抓包中的最小字段集和 style 参考图", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0",
+      engine: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      size: { width: 480, height: 854 },
+      negativePrompt: "blurry",
+      sourceImageIds: ["reference-image", "ignored"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "seedance",
+      modelVersion: "seedance_2.0",
+      size: { width: 480, height: 854 },
+      seeds: [expect.any(Number)],
+      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 15,
+      generateAudio: false,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      generationSettings: { aspectRatio: "9:16" },
+      output: { storeInputs: true },
+    });
+  });
+
+  it("Seedance 2.0 将开启声音原样映射为 generateAudio=true", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0",
+      engine: "seedance2",
+      duration: 4,
+      aspectRatio: "4:3",
+      size: { width: 640, height: 480 },
+      generateAudio: true,
+    });
+
+    expect(payload.generateAudio).toBe(true);
+  });
+
+  it("Seedance 2.0 Fast 只替换 modelVersion 并复用 Seedance 提交结构", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0_fast",
+      engine: "seedance2",
+      duration: 15,
+      aspectRatio: "21:9",
+      size: { width: 1680, height: 720 },
+      sourceImageIds: ["reference-image"],
+    });
+
+    expect(payload).toMatchObject({
+      modelId: "seedance",
+      modelVersion: "seedance_2.0_fast",
+      size: { width: 1680, height: 720 },
+      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+      duration: 15,
+      generateAudio: false,
+      generationSettings: { aspectRatio: "21:9" },
+    });
+    expect(payload).not.toHaveProperty("model");
+    expect(payload).not.toHaveProperty("engine");
+  });
+
+  it("Kling 3.0 Omni 使用 Firefly 网页端已验证的文本提交字段", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      duration: 10,
+      aspectRatio: "16:9",
+      size: { width: 1280, height: 720 },
+    });
+
+    expect(payload).toEqual({
+      n: 1,
+      seeds: [expect.any(Number)],
+      modelId: "kling",
+      modelVersion: "kling_o3_standard_t2v",
+      output: { storeInputs: true },
+      duration: 10,
+      prompt: "a cat surfing",
+      size: { width: 1280, height: 720 },
+      generateAudio: false,
+      generationMetadata: { module: "text2video" },
+      generationSettings: { aspectRatio: "16:9" },
+      referenceBlobs: [],
+    });
+  });
+
+  it("Kling 3.0 Omni 复用单张 style 参考图并透传音频开关", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_o3_standard_t2v",
+      engine: "kling3-omni",
+      duration: 3,
+      aspectRatio: "9:16",
+      size: { width: 720, height: 1280 },
+      generateAudio: true,
+      sourceImageIds: ["reference-image", "ignored"],
+    });
+
+    expect(payload).toMatchObject({
+      generateAudio: true,
+      generationMetadata: { module: "text2video" },
+      referenceBlobs: [{ id: "reference-image", usage: "style" }],
+    });
+  });
+
+  it("Runway Gen-4.5 使用 Firefly 网页端已验证的纯文本字段", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "runway",
+      upstreamModelVersion: "gen4.5",
+      engine: "runway-gen45",
+      duration: 5,
+      aspectRatio: "16:9",
+      size: { width: 1280, height: 720 },
+      negativePrompt: "blurry",
+      generateAudio: true,
+      sourceImageIds: ["ignored-reference-image"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "runway",
+      modelVersion: "gen4.5",
+      size: { width: 1280, height: 720 },
+      seeds: [expect.any(Number)],
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 5,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      output: { storeInputs: true },
+    });
+    for (const absentField of [
+      "generateAudio",
+      "n",
+      "referenceBlobs",
+      "generationSettings",
+      "model",
+      "engine",
+    ]) {
+      expect(payload).not.toHaveProperty(absentField);
+    }
+  });
+
+  it("Ray 3.14 使用 Firefly 网页端已验证的 flex_2 和模型专属参数", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray",
+      engine: "ray314",
+      duration: 5,
+      aspectRatio: "16:9",
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
+      generateAudio: true,
+      sourceImageIds: ["ignored-reference-image"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "luma",
+      modelVersion: "3.14-ray",
+      size: { width: 3840, height: 2160 },
+      mode: "flex_2",
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 5,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      modelSpecificPayload: {
+        resolution: "4k",
+        aspect_ratio: "16:9",
+      },
+      output: { storeInputs: true },
+    });
+    for (const absentField of [
+      "generateAudio",
+      "n",
+      "seeds",
+      "referenceBlobs",
+      "generationSettings",
+      "model",
+      "engine",
+    ]) {
+      expect(payload).not.toHaveProperty(absentField);
+    }
+  });
+
   it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
     const payload = buildFireflyVideoPayload({
       ...base,
