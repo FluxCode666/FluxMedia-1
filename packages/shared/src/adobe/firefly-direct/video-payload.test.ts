@@ -9,6 +9,7 @@ const base = {
   engine: "sora2",
   duration: 8,
   aspectRatio: "16:9",
+  outputResolution: "720p",
   size: { width: 1280, height: 720 },
   generateAudio: false,
 };
@@ -170,6 +171,53 @@ describe("buildFireflyVideoPayload", () => {
     for (const absentField of [
       "generateAudio",
       "n",
+      "referenceBlobs",
+      "generationSettings",
+      "model",
+      "engine",
+    ]) {
+      expect(payload).not.toHaveProperty(absentField);
+    }
+  });
+
+  it("Ray 3.14 使用 Firefly 网页端已验证的 flex_2 和模型专属参数", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray",
+      engine: "ray314",
+      duration: 5,
+      aspectRatio: "16:9",
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
+      generateAudio: true,
+      sourceImageIds: ["ignored-reference-image"],
+    });
+
+    expect(payload).toEqual({
+      modelId: "luma",
+      modelVersion: "3.14-ray",
+      size: { width: 3840, height: 2160 },
+      mode: "flex_2",
+      prompt: "a cat surfing",
+      negativePrompt: "blurry",
+      duration: 5,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      modelSpecificPayload: {
+        resolution: "4k",
+        aspect_ratio: "16:9",
+      },
+      output: { storeInputs: true },
+    });
+    for (const absentField of [
+      "generateAudio",
+      "n",
+      "seeds",
       "referenceBlobs",
       "generationSettings",
       "model",

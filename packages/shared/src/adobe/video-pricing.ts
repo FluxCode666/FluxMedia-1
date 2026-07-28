@@ -20,6 +20,7 @@ export const ADOBE_VIDEO_PRICING_FAMILIES = [
   "kling3",
   "kling3-omni",
   "runway-gen45",
+  "ray314",
   "seedance2",
   "seedance2-fast",
 ] as const;
@@ -35,6 +36,7 @@ export const DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND: Record<string, number> = {
   kling3: 30,
   "kling3-omni": 30,
   "runway-gen45": 30,
+  ray314: 30,
   seedance2: 30,
   "seedance2-fast": 30,
 };

@@ -122,6 +122,13 @@ describe("buildModelConfigurationSnapshot", () => {
       displayName: "Runway Gen-4.5",
       creditsPerSecond: 30,
     });
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "ray314")
+    ).toMatchObject({
+      category: "video",
+      displayName: "Ray 3.14",
+      creditsPerSecond: 30,
+    });
   });
 
   it("运行时额外图像缺少显式价格时标记为未配置", () => {

@@ -40,6 +40,15 @@ describe("resolveVideoInitialSelection", () => {
     });
   });
 
+  it("对 Ray 3.14 预选 ID 中的时长、比例和 4k 分辨率", () => {
+    expect(resolveVideoInitialSelection("firefly-ray314-10s-21x9-4k")).toEqual({
+      familyId: "ray314",
+      duration: 10,
+      ratio: "21:9",
+      resolution: "4k",
+    });
+  });
+
   it.each([
     "",
     "firefly-veo31-5s-16x9-1080p",

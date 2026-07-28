@@ -106,6 +106,7 @@ export type GenerateVideoInput = {
   engine: string;
   duration: number;
   aspectRatio: string;
+  outputResolution: string;
   size: { width: number; height: number };
   generateAudio: boolean;
   referenceMode?: "image";
@@ -544,6 +545,7 @@ export class AdobeFireflyClient {
       engine: input.engine,
       duration: input.duration,
       aspectRatio: input.aspectRatio,
+      outputResolution: input.outputResolution,
       size: input.size,
       generateAudio: input.generateAudio,
       ...(input.referenceMode ? { referenceMode: input.referenceMode } : {}),

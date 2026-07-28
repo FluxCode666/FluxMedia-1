@@ -225,6 +225,36 @@ describe("buildModelMarketplaceCatalog", () => {
     ]);
   });
 
+  it("聚合 Ray 3.14 的多画幅、两档时长与三档分辨率", () => {
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        runtimeCatalog: {
+          image: [],
+          video: [
+            { id: "firefly-ray314-10s-9x16-720p" },
+            { id: "firefly-ray314-5s-16x9-4k" },
+            { id: "firefly-ray314-5s-1x1-1080p" },
+          ],
+        },
+      })
+    );
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        category: "video",
+        configKey: "ray314",
+        displayName: "Ray 3.14",
+        defaultModelId: "firefly-ray314-5s-16x9-4k",
+        iconKey: "generic",
+        description: expect.stringContaining("高分辨率"),
+        creditsPerSecond: 30,
+        supportedDurations: [5, 10],
+        supportedAspectRatios: ["16:9", "9:16", "1:1"],
+        supportedResolutions: ["720p", "1080p", "4k"],
+      }),
+    ]);
+  });
+
   it("运行时视频目录复用后端完整模型 ID 上限", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({

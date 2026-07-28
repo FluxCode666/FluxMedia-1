@@ -266,6 +266,7 @@ describe("AdobeFireflyClient.generateVideo", () => {
     engine: "sora2",
     duration: 8,
     aspectRatio: "16:9",
+    outputResolution: "720p",
     size: { width: 1280, height: 720 },
     generateAudio: false,
     pollIntervalMs: 1,
@@ -603,5 +604,57 @@ describe("AdobeFireflyClient.generateVideo", () => {
       expect(call.headers.referer).toBe("https://firefly.adobe.com/");
       expect(call.headers["x-api-key"]).toBe("clio-playground-web");
     }
+  });
+
+  it("Ray 3.14 通过 Firefly 网页 Profile 提交完整模型专属参数", async () => {
+    const api = new MockTransport((req) => {
+      expect(req.url).toContain("/v2/3p-videos/generate-async");
+      expect(JSON.parse(String(req.body))).toEqual({
+        modelId: "luma",
+        modelVersion: "3.14-ray",
+        size: { width: 3840, height: 2160 },
+        mode: "flex_2",
+        prompt: "a moving cat",
+        negativePrompt: "blurry",
+        duration: 5,
+        generationMetadata: {
+          module: "text2video",
+          submodule: "ff-video-generate",
+        },
+        modelSpecificPayload: {
+          resolution: "4k",
+          aspect_ratio: "16:9",
+        },
+        output: { storeInputs: true },
+      });
+      return jsonResponse(
+        200,
+        {},
+        {
+          "x-override-status-link":
+            "https://firefly-epo1234-prod.adobe.io/v2/status/video-ray314",
+        }
+      );
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    await client.submitVideo({
+      ...videoInput,
+      upstreamModel: "",
+      upstreamModelId: "luma",
+      upstreamModelVersion: "3.14-ray",
+      engine: "ray314",
+      duration: 5,
+      outputResolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
+    });
+
+    expect(api.calls[0]?.headers.origin).toBe("https://firefly.adobe.com");
+    expect(api.calls[0]?.headers.referer).toBe("https://firefly.adobe.com/");
+    expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
   });
 });

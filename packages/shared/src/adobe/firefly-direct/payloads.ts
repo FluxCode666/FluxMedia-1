@@ -299,6 +299,7 @@ export function buildFireflyVideoPayload(params: {
   engine: string;
   duration: number;
   aspectRatio: string;
+  outputResolution: string;
   size: FireflySize;
   generateAudio: boolean;
   referenceMode?: "image";
@@ -365,6 +366,27 @@ export function buildFireflyVideoPayload(params: {
       generationMetadata: {
         module: "text2video",
         submodule: "ff-video-generate",
+      },
+      output: { storeInputs: true },
+    };
+  }
+
+  if (params.engine === "ray314") {
+    return {
+      modelId: params.upstreamModelId,
+      modelVersion: params.upstreamModelVersion,
+      size,
+      mode: "flex_2",
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt ?? "",
+      duration: params.duration,
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
+      modelSpecificPayload: {
+        resolution: params.outputResolution,
+        aspect_ratio: params.aspectRatio,
       },
       output: { storeInputs: true },
     };

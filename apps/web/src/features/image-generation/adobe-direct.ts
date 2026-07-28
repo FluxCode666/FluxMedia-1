@@ -658,6 +658,7 @@ export async function submitAdobeDirectVideoRequest(
         engine: prepared.conf.engine,
         duration: prepared.conf.duration,
         aspectRatio: prepared.conf.aspectRatio,
+        outputResolution: prepared.conf.outputResolution,
         size: prepared.size,
         generateAudio: params.generateAudio ?? prepared.conf.generateAudio,
         ...(prepared.conf.referenceMode
@@ -885,6 +886,7 @@ export async function runAdobeDirectVideoRequest(
         engine: conf.engine,
         duration: conf.duration,
         aspectRatio: conf.aspectRatio,
+        outputResolution: conf.outputResolution,
         size,
         generateAudio: params.generateAudio ?? conf.generateAudio,
         ...(conf.referenceMode ? { referenceMode: conf.referenceMode } : {}),

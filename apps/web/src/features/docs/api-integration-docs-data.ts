@@ -409,13 +409,13 @@ const zhContent = {
           name: "generate_audio / generateAudio",
           requirement: "可选",
           description:
-            "是否生成声音。Seedance 2.0（含 Fast）与 Kling 3.0 Omni 默认关闭，Kling 3.0 默认开启；Runway Gen-4.5 不支持声音，不支持音频的模型不能传 true。",
+            "是否生成声音。Seedance 2.0（含 Fast）与 Kling 3.0 Omni 默认关闭，Kling 3.0 默认开启；Runway Gen-4.5 与 Ray 3.14 不支持声音，不支持音频的模型不能传 true。",
         },
         {
           name: "image",
           requirement: "可选",
           description:
-            "base64 image data URL 数组，模型支持时最多 3 张参考图；Runway Gen-4.5 当前不支持图片输入。",
+            "base64 image data URL 数组，模型支持时最多 3 张参考图；Runway Gen-4.5 与 Ray 3.14 当前不支持图片输入。",
         },
       ],
       responses: [
@@ -833,13 +833,13 @@ const enContent = {
           name: "generate_audio / generateAudio",
           requirement: "Optional",
           description:
-            "Whether to generate audio. Seedance 2.0, including Fast, and Kling 3.0 Omni default to false, while Kling 3.0 defaults to true. Runway Gen-4.5 does not support audio, and models without audio support cannot accept true.",
+            "Whether to generate audio. Seedance 2.0, including Fast, and Kling 3.0 Omni default to false, while Kling 3.0 defaults to true. Runway Gen-4.5 and Ray 3.14 do not support audio, and models without audio support cannot accept true.",
         },
         {
           name: "image",
           requirement: "Optional",
           description:
-            "An array of up to three base64 image data URLs when supported by the model. Runway Gen-4.5 currently does not accept image input.",
+            "An array of up to three base64 image data URLs when supported by the model. Runway Gen-4.5 and Ray 3.14 currently do not accept image input.",
         },
       ],
       responses: [

@@ -98,10 +98,11 @@ function getPreferenceIndex(
 /**
  * 从分辨率字符串读取纵向像素，用于默认项和能力列表的数值排序。
  *
- * @param resolution - 例如 720p、1080p 或未来未知标签。
+ * @param resolution - 例如 720p、1080p、4k 或未来未知标签。
  * @returns 可解析的正整数；未知格式返回零并由后续字典序兜底。
  */
 function getResolutionNumber(resolution: string): number {
+  if (resolution.trim().toLowerCase() === "4k") return 2160;
   const match = /^(\d+)p$/i.exec(resolution);
   return match ? Number(match[1]) : 0;
 }

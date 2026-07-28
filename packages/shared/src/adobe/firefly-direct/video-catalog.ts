@@ -7,7 +7,7 @@
  * 分辨率 + 音频/参考标志。纯数据 + 纯函数，DB-free，可单测。
  */
 
-export type FireflyVideoResolution = "480p" | "720p" | "1080p";
+export type FireflyVideoResolution = "480p" | "720p" | "1080p" | "4k";
 export type FireflyVideoSourceImageMode = "original" | "target-cover";
 export type FireflyVideoWebApp = "express" | "firefly";
 
@@ -48,6 +48,14 @@ const VIDEO_SIZE_MAP: Record<
     "16:9": { width: 1920, height: 1080 },
     "9:16": { width: 1080, height: 1920 },
     "21:9": { width: 2520, height: 1080 },
+  },
+  "4k": {
+    "1:1": { width: 2160, height: 2160 },
+    "4:3": { width: 2880, height: 2160 },
+    "3:4": { width: 2160, height: 2880 },
+    "16:9": { width: 3840, height: 2160 },
+    "9:16": { width: 2160, height: 3840 },
+    "21:9": { width: 5040, height: 2160 },
   },
 };
 
@@ -237,6 +245,21 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     label: "Runway Gen-4.5",
   },
   {
+    family: "ray314",
+    prefix: "firefly-ray314",
+    upstreamModel: "",
+    upstreamModelId: "luma",
+    upstreamModelVersion: "3.14-ray",
+    engine: "ray314",
+    durations: [5, 10],
+    ratios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+    maxInputImages: 0,
+    webApp: "firefly",
+    label: "Ray 3.14",
+  },
+  {
     family: "seedance2",
     prefix: "firefly-seedance2",
     upstreamModel: "",
@@ -268,7 +291,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
 ];
 
-// Veo/Kling/Runway/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
+// Veo/Kling/Runway/Ray/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
 const BARE_VIDEO_FAMILY_NAMES = new Set([
   "veo31",
   "veo31-ref",
@@ -277,6 +300,7 @@ const BARE_VIDEO_FAMILY_NAMES = new Set([
   "kling3",
   "kling3-omni",
   "runway-gen45",
+  "ray314",
   "seedance2",
   "seedance2-fast",
 ]);
