@@ -4,7 +4,7 @@
  * 不依赖外部 adobe2api 进程。
  *
  * 职责：
- * - 一对一凭据：每个 Adobe direct 顶层成员持有一个 cookie 与短期 IMS token。
+ * - 一对一账号：每个 Adobe direct 顶层成员持有一个 Cookie，并隔离 Express/Firefly Token。
  * - 出图：取成员 token → 选模型族/尺寸 → 图生图先 uploadImage → generateImage。
  */
 
@@ -28,6 +28,7 @@ import {
   type FireflyTransport,
   type FireflyTransportRequest,
   type FireflyTransportResponse,
+  type AdobeFireflyWebApp,
   fetchCreditsBalance,
   fireflyVideoMaxInputImages,
   fireflyVideoSize,
@@ -47,6 +48,7 @@ import {
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import { prepareAdobeVideoSourceImage } from "./adobe-video-source";
+import { runAdobeBeforeAcceptanceWithAuthRetry } from "./adobe-auth-retry";
 import type { ApiConfig, GenerateImageResult } from "./types";
 import { requireAcceptedVideoCredential } from "./video-recovery-policy";
 
@@ -158,10 +160,73 @@ function assertLoggedInAdobeCookie(
   }
 }
 
-/** 使用 direct 成员自己的 Cookie 刷新并回写其一对一短期凭据。 */
+type AdobeCredentialRecord = {
+  cookie: string;
+  scope: string | null;
+  accountUserId: string | null;
+  express: {
+    value: string | null;
+    status: string | null;
+    expiresAt: Date | null;
+  };
+  firefly: {
+    value: string | null;
+    status: string | null;
+    expiresAt: Date | null;
+  };
+};
+
+/** 读取一个成员的两套网页 Profile 凭据；Cookie 和账号身份仍为成员级共享数据。 */
+async function loadMemberCredential(
+  memberId: string
+): Promise<AdobeCredentialRecord | null> {
+  const [credential] = await db
+    .select({
+      cookie: imageBackendMemberAdobeConfig.cookie,
+      scope: imageBackendMemberAdobeConfig.scope,
+      accountUserId: imageBackendMemberAdobeConfig.accountUserId,
+      expressValue: imageBackendMemberAdobeConfig.accessToken,
+      expressStatus: imageBackendMemberAdobeConfig.credentialStatus,
+      expressExpiresAt: imageBackendMemberAdobeConfig.tokenExpiresAt,
+      fireflyValue: imageBackendMemberAdobeConfig.fireflyAccessToken,
+      fireflyStatus: imageBackendMemberAdobeConfig.fireflyCredentialStatus,
+      fireflyExpiresAt: imageBackendMemberAdobeConfig.fireflyTokenExpiresAt,
+    })
+    .from(imageBackendMemberAdobeConfig)
+    .where(
+      and(
+        eq(imageBackendMemberAdobeConfig.memberId, memberId),
+        eq(imageBackendMemberAdobeConfig.mode, "direct")
+      )
+    )
+    .limit(1);
+  if (!credential?.cookie) return null;
+  return {
+    cookie: credential.cookie,
+    scope: credential.scope,
+    accountUserId: credential.accountUserId,
+    express: {
+      value: credential.expressValue,
+      status: credential.expressStatus,
+      expiresAt: credential.expressExpiresAt,
+    },
+    firefly: {
+      value: credential.fireflyValue,
+      status: credential.fireflyStatus,
+      expiresAt: credential.fireflyExpiresAt,
+    },
+  };
+}
+
+/** 使用 direct 成员自己的 Cookie 刷新并回写指定网页 Profile 的短期凭据。 */
 async function refreshMemberCredential(
   memberId: string,
-  credential: { cookie: string; scope: string | null },
+  credential: {
+    cookie: string;
+    scope: string | null;
+    accountUserId: string | null;
+  },
+  profile: AdobeCredentialProfile,
   transport: FireflyTransport,
   signal?: AbortSignal
 ): Promise<{ value: string } | null> {
@@ -170,23 +235,51 @@ async function refreshMemberCredential(
       transport,
       credential.cookie,
       {
-        scope: credential.scope ?? undefined,
+        profile,
+        ...(profile === "express" && credential.scope
+          ? { scope: credential.scope }
+          : {}),
         signal,
-        fetchAccount: true,
+        fetchAccount: profile === "express",
       }
     );
+    const refreshedAccountUserId = String(
+      decodeJwtPayload(result.accessToken).user_id || ""
+    ).trim();
+    if (
+      profile === "firefly" &&
+      credential.accountUserId &&
+      refreshedAccountUserId &&
+      refreshedAccountUserId !== credential.accountUserId
+    ) {
+      throw new Error("Firefly Token 与成员 Adobe 账号不一致");
+    }
     const now = new Date();
-    await db
+    const profileValues =
+      profile === "express"
+        ? {
+            accessToken: result.accessToken,
+            tokenExpiresAt: tokenExpiresAt(result.accessToken),
+            credentialStatus: "active" as const,
+            tokenFails: 0,
+            lastRefreshAt: now,
+            lastRefreshError: null,
+            consecutiveFailures: 0,
+          }
+        : {
+            fireflyAccessToken: result.accessToken,
+            fireflyTokenExpiresAt: tokenExpiresAt(result.accessToken),
+            fireflyCredentialStatus: "active" as const,
+            fireflyTokenFails: 0,
+            fireflyLastRefreshAt: now,
+            fireflyLastRefreshError: null,
+            fireflyConsecutiveFailures: 0,
+          };
+    const [persisted] = await db
       .update(imageBackendMemberAdobeConfig)
       .set({
-        accessToken: result.accessToken,
-        tokenExpiresAt: tokenExpiresAt(result.accessToken),
-        credentialStatus: "active",
-        tokenFails: 0,
-        lastRefreshAt: now,
-        lastRefreshError: null,
-        consecutiveFailures: 0,
-        ...(result.account
+        ...profileValues,
+        ...(profile === "express" && result.account
           ? {
               displayName: result.account.displayName || null,
               email: result.account.email || null,
@@ -195,30 +288,79 @@ async function refreshMemberCredential(
           : {}),
         updatedAt: now,
       })
-      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
-    await storeMemberCredits(
-      transport,
-      memberId,
-      result.accessToken,
-      signal
-    ).catch((error) =>
-      logError(error, { source: "adobe-credits-balance", memberId })
-    );
+      .where(
+        and(
+          eq(imageBackendMemberAdobeConfig.memberId, memberId),
+          eq(imageBackendMemberAdobeConfig.cookie, credential.cookie)
+        )
+      )
+      .returning({ memberId: imageBackendMemberAdobeConfig.memberId });
+    if (!persisted) return null;
+    if (profile === "express") {
+      await storeMemberCredits(
+        transport,
+        memberId,
+        result.accessToken,
+        credential.cookie,
+        signal
+      ).catch((error) =>
+        logError(error, { source: "adobe-credits-balance", memberId })
+      );
+    }
     return { value: result.accessToken };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const failureValues =
+      profile === "express"
+        ? {
+            credentialStatus: "error" as const,
+            lastRefreshError: message.slice(0, 500),
+            consecutiveFailures: sql`${imageBackendMemberAdobeConfig.consecutiveFailures} + 1`,
+          }
+        : {
+            fireflyCredentialStatus: "error" as const,
+            fireflyLastRefreshError: message.slice(0, 500),
+            fireflyConsecutiveFailures: sql`${imageBackendMemberAdobeConfig.fireflyConsecutiveFailures} + 1`,
+          };
     await db
       .update(imageBackendMemberAdobeConfig)
       .set({
-        credentialStatus: "error",
-        lastRefreshError: message.slice(0, 500),
-        consecutiveFailures: sql`${imageBackendMemberAdobeConfig.consecutiveFailures} + 1`,
+        ...failureValues,
         updatedAt: new Date(),
       })
-      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
-    logError(error, { source: "adobe-direct-refresh", memberId });
+      .where(
+        and(
+          eq(imageBackendMemberAdobeConfig.memberId, memberId),
+          eq(imageBackendMemberAdobeConfig.cookie, credential.cookie)
+        )
+      );
+    logError(error, { source: "adobe-direct-refresh", memberId, profile });
     return null;
   }
+}
+
+type AdobeCredentialProfile = AdobeFireflyWebApp;
+
+/** 强制刷新指定成员的指定 Profile，供明确 401/403 的一次性安全重试使用。 */
+async function refreshMemberCredentialById(
+  memberId: string,
+  profile: AdobeCredentialProfile,
+  transport: FireflyTransport,
+  signal?: AbortSignal
+): Promise<{ value: string } | null> {
+  const credential = await loadMemberCredential(memberId);
+  if (!credential) return null;
+  return refreshMemberCredential(
+    memberId,
+    {
+      cookie: credential.cookie,
+      scope: credential.scope,
+      accountUserId: credential.accountUserId,
+    },
+    profile,
+    transport,
+    signal
+  );
 }
 
 // best-effort 拉取 Firefly 余额并写入成员配置；失败只记 creditsError，
@@ -227,6 +369,7 @@ async function storeMemberCredits(
   transport: FireflyTransport,
   memberId: string,
   accessToken: string,
+  expectedCookie: string,
   signal?: AbortSignal
 ): Promise<void> {
   try {
@@ -241,7 +384,12 @@ async function storeMemberCredits(
         creditsError: null,
         updatedAt: new Date(),
       })
-      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
+      .where(
+        and(
+          eq(imageBackendMemberAdobeConfig.memberId, memberId),
+          eq(imageBackendMemberAdobeConfig.cookie, expectedCookie)
+        )
+      );
   } catch (error) {
     await db
       .update(imageBackendMemberAdobeConfig)
@@ -253,7 +401,12 @@ async function storeMemberCredits(
         creditsUpdatedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(imageBackendMemberAdobeConfig.memberId, memberId))
+      .where(
+        and(
+          eq(imageBackendMemberAdobeConfig.memberId, memberId),
+          eq(imageBackendMemberAdobeConfig.cookie, expectedCookie)
+        )
+      )
       .catch((persistError) =>
         logError(persistError, {
           source: "adobe-credits-balance-persist-error",
@@ -264,68 +417,86 @@ async function storeMemberCredits(
 }
 
 /**
- * 读取 direct 成员唯一凭据；短期 token 不可用时只刷新这个成员自己的 Cookie。
+ * 读取 direct 成员指定 Profile 凭据；短期 Token 不可用时只刷新这个成员自己的 Cookie。
  */
 async function acquireMemberCredential(
   memberId: string,
+  profile: AdobeCredentialProfile,
   transport: FireflyTransport,
   signal?: AbortSignal
 ): Promise<{ value: string } | null> {
-  const [credential] = await db
-    .select({
-      cookie: imageBackendMemberAdobeConfig.cookie,
-      scope: imageBackendMemberAdobeConfig.scope,
-      value: imageBackendMemberAdobeConfig.accessToken,
-      status: imageBackendMemberAdobeConfig.credentialStatus,
-      expiresAt: imageBackendMemberAdobeConfig.tokenExpiresAt,
-    })
-    .from(imageBackendMemberAdobeConfig)
-    .where(
-      and(
-        eq(imageBackendMemberAdobeConfig.memberId, memberId),
-        eq(imageBackendMemberAdobeConfig.mode, "direct")
-      )
-    )
-    .limit(1);
-  if (!credential?.cookie || !credential.value) return null;
-  const expired = credential.expiresAt
-    ? credential.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
+  const credential = await loadMemberCredential(memberId);
+  if (!credential) return null;
+  const selected = credential[profile];
+  const expired = selected.expiresAt
+    ? selected.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
       Date.now()
-    : isTokenExpired(credential.value, TOKEN_REFRESH_SKEW_SECONDS);
-  if (credential.status === "active" && !expired) {
-    return { value: credential.value };
+    : selected.value
+      ? isTokenExpired(selected.value, TOKEN_REFRESH_SKEW_SECONDS)
+      : true;
+  if (selected.status === "active" && selected.value && !expired) {
+    return { value: selected.value };
   }
   return refreshMemberCredential(
     memberId,
-    { cookie: credential.cookie, scope: credential.scope },
+    {
+      cookie: credential.cookie,
+      scope: credential.scope,
+      accountUserId: credential.accountUserId,
+    },
+    profile,
     transport,
     signal
   );
 }
 
-/** 将成员唯一短期凭据标记为不可用，由统一顶层调度切换成员。 */
+/** 将成员指定 Profile 的短期凭据标记为不可用，由统一顶层调度切换成员。 */
 async function markCredentialStatus(
   memberId: string,
-  status: "error" | "exhausted" | "invalid"
+  profile: AdobeCredentialProfile,
+  status: "error" | "exhausted" | "invalid",
+  expectedToken?: string
 ): Promise<void> {
+  const values =
+    profile === "express"
+      ? {
+          credentialStatus: status,
+          tokenFails: sql`${imageBackendMemberAdobeConfig.tokenFails} + 1`,
+        }
+      : {
+          fireflyCredentialStatus: status,
+          fireflyTokenFails: sql`${imageBackendMemberAdobeConfig.fireflyTokenFails} + 1`,
+        };
+  const tokenColumn =
+    profile === "express"
+      ? imageBackendMemberAdobeConfig.accessToken
+      : imageBackendMemberAdobeConfig.fireflyAccessToken;
   await db
     .update(imageBackendMemberAdobeConfig)
     .set({
-      credentialStatus: status,
-      tokenFails: sql`${imageBackendMemberAdobeConfig.tokenFails} + 1`,
+      ...values,
       updatedAt: new Date(),
     })
-    .where(eq(imageBackendMemberAdobeConfig.memberId, memberId));
+    .where(
+      expectedToken
+        ? and(
+            eq(imageBackendMemberAdobeConfig.memberId, memberId),
+            eq(tokenColumn, expectedToken)
+          )
+        : eq(imageBackendMemberAdobeConfig.memberId, memberId)
+    );
 }
 
 /**
- * 使用一个 direct 顶层成员的一对一凭据执行一次调用。
+ * 使用一个 direct 顶层成员的指定 Profile 凭据执行一次调用。
  * 可切换错误直接交还统一调度器，禁止在成员内部再次选账号。
  */
 async function runWithAdobeCredential<T>(
   memberId: string,
+  profile: AdobeCredentialProfile,
   transport: FireflyTransport,
   signal: AbortSignal | undefined,
+  retryAuthBeforeAcceptance: boolean,
   run: (token: string) => Promise<T>
 ): Promise<
   | { ok: true; value: T }
@@ -338,7 +509,12 @@ async function runWithAdobeCredential<T>(
       submissionUncertain: boolean;
     }
 > {
-  const acquired = await acquireMemberCredential(memberId, transport, signal);
+  const acquired = await acquireMemberCredential(
+    memberId,
+    profile,
+    transport,
+    signal
+  );
   if (!acquired) {
     return {
       ok: false,
@@ -349,41 +525,63 @@ async function runWithAdobeCredential<T>(
       submissionUncertain: false,
     };
   }
-  try {
-    return { ok: true, value: await run(acquired.value) };
-  } catch (error) {
-    if (error instanceof QuotaExhaustedError) {
-      await markCredentialStatus(memberId, "exhausted").catch((persistError) =>
+  const attempted = await runAdobeBeforeAcceptanceWithAuthRetry({
+    token: acquired.value,
+    retryEnabled: retryAuthBeforeAcceptance,
+    ...(signal ? { signal } : {}),
+    run,
+    refresh: async () =>
+      (await refreshMemberCredentialById(memberId, profile, transport, signal))
+        ?.value ?? null,
+  });
+  if (attempted.ok) return attempted;
+  {
+    const failure = attempted.error;
+    if (failure instanceof QuotaExhaustedError && !attempted.refreshFailed) {
+      await markCredentialStatus(
+        memberId,
+        profile,
+        "exhausted",
+        attempted.rejectedToken
+      ).catch((persistError) =>
         logError(persistError, {
           source: "adobe-direct-credential-status",
           memberId,
+          profile,
         })
       );
-    } else if (error instanceof AuthError) {
-      await markCredentialStatus(memberId, "invalid").catch((persistError) =>
+    } else if (failure instanceof AuthError && !attempted.refreshFailed) {
+      await markCredentialStatus(
+        memberId,
+        profile,
+        "invalid",
+        attempted.rejectedToken
+      ).catch((persistError) =>
         logError(persistError, {
           source: "adobe-direct-credential-status",
           memberId,
+          profile,
         })
       );
     }
     const message =
-      error instanceof Error ? error.message : "Adobe 直连生成失败";
-    const upstreamAccepted = error instanceof AdobeAcceptedVideoError;
+      failure instanceof Error ? failure.message : "Adobe 直连生成失败";
+    const upstreamAccepted = failure instanceof AdobeAcceptedVideoError;
     const submissionUncertain =
-      error instanceof AdobeVideoSubmissionUncertainError;
+      failure instanceof AdobeVideoSubmissionUncertainError;
     const switchable =
-      isAdobeMemberSwitchableError(error) &&
+      isAdobeMemberSwitchableError(failure) &&
       !signal?.aborted &&
       !upstreamAccepted;
     if (switchable) {
       logWarn("Adobe 直连成员失败，交由统一号池切换", {
         source: "adobe-direct-switch",
         memberId,
+        profile,
         error: message.slice(0, 160),
       });
     } else {
-      logError(error, { source: "adobe-direct", memberId });
+      logError(failure, { source: "adobe-direct", memberId, profile });
     }
     return {
       ok: false,
@@ -454,8 +652,10 @@ export async function runAdobeDirectImageRequest(
 
   const result = await runWithAdobeCredential(
     memberId,
+    "express",
     apiTransport,
     params.signal,
+    false,
     async (token) => {
       // 图生图上传与生成必须使用同一次成员凭据，确保 Adobe image id 归属一致。
       let sourceImageIds: string[] | undefined;
@@ -542,7 +742,8 @@ export type AdobeVideoStageError = {
  */
 async function createAdobeVideoStageClient(
   config: ApiConfig,
-  model: string
+  model: string,
+  requestProfile: AdobeCredentialProfile
 ): Promise<
   | { ok: false; error: string }
   | {
@@ -581,7 +782,7 @@ async function createAdobeVideoStageClient(
     size,
     apiTransport: transports.apiTransport,
     client: new AdobeFireflyClient({
-      webApp: conf.webApp,
+      webApp: requestProfile,
       transport: transports.apiTransport,
       downloadTransport: transports.downloadTransport,
     }),
@@ -601,10 +802,16 @@ export async function submitAdobeDirectVideoRequest(
     inputImages?: Array<{ data: Buffer; type?: string | null }>;
     negativePrompt?: string | null;
     generateAudio?: boolean;
+    requestProfile: AdobeCredentialProfile;
+    authProfile: AdobeCredentialProfile;
     signal?: AbortSignal;
   }
 ): Promise<AdobeVideoSubmission | AdobeVideoStageError> {
-  const prepared = await createAdobeVideoStageClient(config, params.model);
+  const prepared = await createAdobeVideoStageClient(
+    config,
+    params.model,
+    params.requestProfile
+  );
   if (!prepared.ok) {
     return {
       error: prepared.error,
@@ -626,8 +833,10 @@ export async function submitAdobeDirectVideoRequest(
 
   const result = await runWithAdobeCredential(
     prepared.memberId,
+    params.authProfile,
     prepared.apiTransport,
     params.signal,
+    true,
     async (token) => {
       let sourceImageIds: string[] | undefined;
       if (params.inputImages && params.inputImages.length > 0) {
@@ -680,7 +889,7 @@ export async function submitAdobeDirectVideoRequest(
 }
 
 /**
- * 使用持久化的原成员及其一对一凭据轮询一次已接受任务。
+ * 使用持久化的原成员及请求/鉴权 Profile 轮询一次已接受任务。
  *
  * 成员凭据不存在时 fail closed；绝不选择替代成员。
  */
@@ -688,6 +897,8 @@ export async function pollAdobeDirectVideoRequest(input: {
   memberId: string;
   pollUrl: string;
   model: string;
+  requestProfile: AdobeCredentialProfile;
+  authProfile: AdobeCredentialProfile;
   signal?: AbortSignal;
 }): Promise<AdobeVideoPollResult> {
   const conf = resolveFireflyVideoModel(input.model);
@@ -697,40 +908,31 @@ export async function pollAdobeDirectVideoRequest(input: {
       { errorType: "status" }
     );
   }
-  const [credential] = await db
-    .select({
-      cookie: imageBackendMemberAdobeConfig.cookie,
-      scope: imageBackendMemberAdobeConfig.scope,
-      value: imageBackendMemberAdobeConfig.accessToken,
-      expiresAt: imageBackendMemberAdobeConfig.tokenExpiresAt,
-    })
-    .from(imageBackendMemberAdobeConfig)
-    .where(
-      and(
-        eq(imageBackendMemberAdobeConfig.memberId, input.memberId),
-        eq(imageBackendMemberAdobeConfig.mode, "direct")
-      )
-    )
-    .limit(1);
-  if (!credential?.cookie || !credential.value) {
+  const credential = await loadMemberCredential(input.memberId);
+  if (!credential) {
     throw new AdobeAcceptedVideoError("Adobe 视频恢复成员缺少凭据", {
       errorType: "status",
     });
   }
-  const cookie = credential.cookie;
+  const selected = credential[input.authProfile];
   const { apiTransport, downloadTransport } = await buildAdobeTransports();
   const client = new AdobeFireflyClient({
-    webApp: conf.webApp,
+    webApp: input.requestProfile,
     transport: apiTransport,
     downloadTransport,
   });
-  let tokenValue = credential.value;
+  let tokenValue = selected.value;
 
   /** 只刷新持久化的原成员，绝不选择另一个顶层成员。 */
   const refreshOriginalMember = async (): Promise<string> => {
     const refreshed = await refreshMemberCredential(
       input.memberId,
-      { cookie, scope: credential.scope },
+      {
+        cookie: credential.cookie,
+        scope: credential.scope,
+        accountUserId: credential.accountUserId,
+      },
+      input.authProfile,
       apiTransport,
       input.signal
     );
@@ -738,15 +940,22 @@ export async function pollAdobeDirectVideoRequest(input: {
     return tokenValue;
   };
 
-  const expired = credential.expiresAt
-    ? credential.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
+  const expired = selected.expiresAt
+    ? selected.expiresAt.getTime() - TOKEN_REFRESH_SKEW_SECONDS * 1000 <=
       Date.now()
-    : isTokenExpired(credential.value, TOKEN_REFRESH_SKEW_SECONDS);
-  if (expired) await refreshOriginalMember();
+    : tokenValue
+      ? isTokenExpired(tokenValue, TOKEN_REFRESH_SKEW_SECONDS)
+      : true;
+  if (!tokenValue || selected.status !== "active" || expired) {
+    await refreshOriginalMember();
+  }
+
+  const currentToken = (): string =>
+    requireAcceptedVideoCredential(tokenValue ? { value: tokenValue } : null);
 
   try {
     return await client.pollVideo({
-      token: tokenValue,
+      token: currentToken(),
       pollUrl: input.pollUrl,
       ...(input.signal ? { signal: input.signal } : {}),
     });
@@ -756,11 +965,32 @@ export async function pollAdobeDirectVideoRequest(input: {
       (error.statusCode === 401 || error.statusCode === 403)
     ) {
       await refreshOriginalMember();
-      return client.pollVideo({
-        token: tokenValue,
-        pollUrl: input.pollUrl,
-        ...(input.signal ? { signal: input.signal } : {}),
-      });
+      try {
+        return await client.pollVideo({
+          token: currentToken(),
+          pollUrl: input.pollUrl,
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+      } catch (retryError) {
+        if (
+          retryError instanceof AdobeAcceptedVideoError &&
+          (retryError.statusCode === 401 || retryError.statusCode === 403)
+        ) {
+          await markCredentialStatus(
+            input.memberId,
+            input.authProfile,
+            "invalid",
+            currentToken()
+          ).catch((persistError) =>
+            logError(persistError, {
+              source: "adobe-video-poll-credential-status",
+              memberId: input.memberId,
+              profile: input.authProfile,
+            })
+          );
+        }
+        throw retryError;
+      }
     }
     throw error;
   }
@@ -852,8 +1082,10 @@ export async function runAdobeDirectVideoRequest(
 
   const result = await runWithAdobeCredential(
     memberId,
+    conf.webApp,
     apiTransport,
     params.signal,
+    true,
     async (token) => {
       // 图生视频上传与提交必须使用同一次成员凭据，确保 Adobe image id 归属一致。
       let sourceImageIds: string[] | undefined;
@@ -931,6 +1163,7 @@ export async function prepareAdobeDirectCredential(
 }> {
   const { apiTransport } = await buildAdobeTransports();
   const result = await refreshAccessTokenFromCookie(apiTransport, cookie, {
+    profile: "express",
     scope,
     fetchAccount: true,
   });

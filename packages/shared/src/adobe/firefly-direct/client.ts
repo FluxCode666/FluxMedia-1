@@ -32,34 +32,14 @@ import {
   type FireflyTransport,
   type FireflyTransportResponse,
 } from "./transport";
+import { ADOBE_WEB_APP_PROFILES, type AdobeFireflyWebApp } from "./profile";
 
 const SUBMIT_URL = "https://firefly-3p.ff.adobe.io/v2/3p-images/generate-async";
 const VIDEO_SUBMIT_URL =
   "https://firefly-3p.ff.adobe.io/v2/3p-videos/generate-async";
 const UPLOAD_URL = "https://firefly-3p.ff.adobe.io/v2/storage/image";
 
-export type AdobeFireflyWebApp = "express" | "firefly";
-
-type AdobeFireflyWebAppProfile = {
-  apiKey: string;
-  origin: string;
-  referer: string;
-};
-
-/** Adobe 两个网页入口各自发送的公开客户端标识和来源头。 */
-const WEB_APP_PROFILES: Record<AdobeFireflyWebApp, AdobeFireflyWebAppProfile> =
-  {
-    express: {
-      apiKey: "projectx_webapp",
-      origin: "https://new.express.adobe.com",
-      referer: "https://new.express.adobe.com/",
-    },
-    firefly: {
-      apiKey: "clio-playground-web",
-      origin: "https://firefly.adobe.com",
-      referer: "https://firefly.adobe.com/",
-    },
-  };
+export type { AdobeFireflyWebApp } from "./profile";
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36";
 const DEFAULT_SEC_CH_UA =
@@ -297,7 +277,7 @@ export class AdobeFireflyClient {
   private readonly downloadTransport: FireflyTransport;
 
   constructor(config: AdobeFireflyClientConfig = {}) {
-    const profile = WEB_APP_PROFILES[config.webApp ?? "express"];
+    const profile = ADOBE_WEB_APP_PROFILES[config.webApp ?? "express"];
     this.apiKey = config.apiKey?.trim() || profile.apiKey;
     this.origin = profile.origin;
     this.referer = profile.referer;
@@ -380,6 +360,7 @@ export class AdobeFireflyClient {
       method: "POST",
       url: UPLOAD_URL,
       headers: {
+        ...this.browserHeaders(),
         authorization: `Bearer ${token}`,
         "x-api-key": this.apiKey,
         "content-type": mimeType,

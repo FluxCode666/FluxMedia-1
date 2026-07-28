@@ -88,6 +88,23 @@ describe("firefly video catalog", () => {
     ).toBe("1080p");
   });
 
+  it("Seedance 2.0 与 Fast 使用 Firefly Profile", () => {
+    expect(
+      resolveFireflyVideoModel("firefly-seedance2-15s-9x16-480p")
+    ).toMatchObject({
+      family: "seedance2",
+      upstreamModelVersion: "seedance_2.0",
+      webApp: "firefly",
+    });
+    expect(
+      resolveFireflyVideoModel("firefly-seedance2-fast-10s-16x9-720p")
+    ).toMatchObject({
+      family: "seedance2-fast",
+      upstreamModelVersion: "seedance_2.0_fast",
+      webApp: "firefly",
+    });
+  });
+
   it("Kling 3.0 Omni 开放 3 至 15 秒、两档分辨率和横竖两种比例", () => {
     const family = FIREFLY_VIDEO_FAMILIES.find(
       (item) => item.family === "kling3-omni"

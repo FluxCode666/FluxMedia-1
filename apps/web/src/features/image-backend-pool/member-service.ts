@@ -87,6 +87,15 @@ export type RedactedAdobeMemberConfig =
       lastRefreshAt: string | null;
       lastRefreshError: string | null;
       consecutiveFailures: number;
+      fireflyCredentialStatus:
+        | "active"
+        | "error"
+        | "exhausted"
+        | "invalid"
+        | null;
+      fireflyLastRefreshAt: string | null;
+      fireflyLastRefreshError: string | null;
+      fireflyConsecutiveFailures: number;
       creditsTotal: number | null;
       creditsUsed: number | null;
       creditsAvailable: number | null;
@@ -369,6 +378,12 @@ const memberListRowSchema = z.object({
   adobe_last_refresh_at: z.coerce.date().nullable(),
   adobe_last_refresh_error: z.string().nullable(),
   adobe_consecutive_failures: z.coerce.number().int().nonnegative(),
+  adobe_firefly_credential_status: z
+    .enum(["active", "error", "exhausted", "invalid"])
+    .nullable(),
+  adobe_firefly_last_refresh_at: z.coerce.date().nullable(),
+  adobe_firefly_last_refresh_error: z.string().nullable(),
+  adobe_firefly_consecutive_failures: z.coerce.number().int().nonnegative(),
   adobe_credits_total: z.coerce.number().int().nullable(),
   adobe_credits_used: z.coerce.number().int().nullable(),
   adobe_credits_available: z.coerce.number().int().nullable(),
@@ -444,6 +459,11 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         lastRefreshAt: row.adobe_last_refresh_at?.toISOString() ?? null,
         lastRefreshError: row.adobe_last_refresh_error,
         consecutiveFailures: row.adobe_consecutive_failures,
+        fireflyCredentialStatus: row.adobe_firefly_credential_status,
+        fireflyLastRefreshAt:
+          row.adobe_firefly_last_refresh_at?.toISOString() ?? null,
+        fireflyLastRefreshError: row.adobe_firefly_last_refresh_error,
+        fireflyConsecutiveFailures: row.adobe_firefly_consecutive_failures,
         creditsTotal: row.adobe_credits_total,
         creditsUsed: row.adobe_credits_used,
         creditsAvailable: row.adobe_credits_available,
@@ -563,6 +583,14 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
         lastRefreshError: string | null;
         nextRefreshAt: Date | null;
         consecutiveFailures: number;
+        fireflyAccessToken: string | null;
+        fireflyTokenExpiresAt: Date | null;
+        fireflyCredentialStatus: string | null;
+        fireflyTokenFails: number;
+        fireflyLastRefreshAt: Date | null;
+        fireflyLastRefreshError: string | null;
+        fireflyNextRefreshAt: Date | null;
+        fireflyConsecutiveFailures: number;
         creditsTotal: number | null;
         creditsUsed: number | null;
         creditsAvailable: number | null;
@@ -585,6 +613,14 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             lastRefreshError: null,
             nextRefreshAt: null,
             consecutiveFailures: 0,
+            fireflyAccessToken: null,
+            fireflyTokenExpiresAt: null,
+            fireflyCredentialStatus: null,
+            fireflyTokenFails: 0,
+            fireflyLastRefreshAt: null,
+            fireflyLastRefreshError: null,
+            fireflyNextRefreshAt: null,
+            fireflyConsecutiveFailures: 0,
             creditsTotal: input.directCredential.creditsTotal,
             creditsUsed: input.directCredential.creditsUsed,
             creditsAvailable: input.directCredential.creditsAvailable,
@@ -608,6 +644,22 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
               nextRefreshAt: imageBackendMemberAdobeConfig.nextRefreshAt,
               consecutiveFailures:
                 imageBackendMemberAdobeConfig.consecutiveFailures,
+              fireflyAccessToken:
+                imageBackendMemberAdobeConfig.fireflyAccessToken,
+              fireflyTokenExpiresAt:
+                imageBackendMemberAdobeConfig.fireflyTokenExpiresAt,
+              fireflyCredentialStatus:
+                imageBackendMemberAdobeConfig.fireflyCredentialStatus,
+              fireflyTokenFails:
+                imageBackendMemberAdobeConfig.fireflyTokenFails,
+              fireflyLastRefreshAt:
+                imageBackendMemberAdobeConfig.fireflyLastRefreshAt,
+              fireflyLastRefreshError:
+                imageBackendMemberAdobeConfig.fireflyLastRefreshError,
+              fireflyNextRefreshAt:
+                imageBackendMemberAdobeConfig.fireflyNextRefreshAt,
+              fireflyConsecutiveFailures:
+                imageBackendMemberAdobeConfig.fireflyConsecutiveFailures,
               creditsTotal: imageBackendMemberAdobeConfig.creditsTotal,
               creditsUsed: imageBackendMemberAdobeConfig.creditsUsed,
               creditsAvailable: imageBackendMemberAdobeConfig.creditsAvailable,
@@ -706,6 +758,21 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             nextRefreshAt: directCredentialValues?.nextRefreshAt ?? null,
             consecutiveFailures:
               directCredentialValues?.consecutiveFailures ?? 0,
+            fireflyAccessToken:
+              directCredentialValues?.fireflyAccessToken ?? null,
+            fireflyTokenExpiresAt:
+              directCredentialValues?.fireflyTokenExpiresAt ?? null,
+            fireflyCredentialStatus:
+              directCredentialValues?.fireflyCredentialStatus ?? null,
+            fireflyTokenFails: directCredentialValues?.fireflyTokenFails ?? 0,
+            fireflyLastRefreshAt:
+              directCredentialValues?.fireflyLastRefreshAt ?? null,
+            fireflyLastRefreshError:
+              directCredentialValues?.fireflyLastRefreshError ?? null,
+            fireflyNextRefreshAt:
+              directCredentialValues?.fireflyNextRefreshAt ?? null,
+            fireflyConsecutiveFailures:
+              directCredentialValues?.fireflyConsecutiveFailures ?? 0,
             creditsTotal: directCredentialValues?.creditsTotal ?? null,
             creditsUsed: directCredentialValues?.creditsUsed ?? null,
             creditsAvailable: directCredentialValues?.creditsAvailable ?? null,
@@ -740,6 +807,21 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
               nextRefreshAt: directCredentialValues?.nextRefreshAt ?? null,
               consecutiveFailures:
                 directCredentialValues?.consecutiveFailures ?? 0,
+              fireflyAccessToken:
+                directCredentialValues?.fireflyAccessToken ?? null,
+              fireflyTokenExpiresAt:
+                directCredentialValues?.fireflyTokenExpiresAt ?? null,
+              fireflyCredentialStatus:
+                directCredentialValues?.fireflyCredentialStatus ?? null,
+              fireflyTokenFails: directCredentialValues?.fireflyTokenFails ?? 0,
+              fireflyLastRefreshAt:
+                directCredentialValues?.fireflyLastRefreshAt ?? null,
+              fireflyLastRefreshError:
+                directCredentialValues?.fireflyLastRefreshError ?? null,
+              fireflyNextRefreshAt:
+                directCredentialValues?.fireflyNextRefreshAt ?? null,
+              fireflyConsecutiveFailures:
+                directCredentialValues?.fireflyConsecutiveFailures ?? 0,
               creditsTotal: directCredentialValues?.creditsTotal ?? null,
               creditsUsed: directCredentialValues?.creditsUsed ?? null,
               creditsAvailable:
@@ -815,6 +897,10 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           adobe.last_refresh_at as adobe_last_refresh_at,
           adobe.last_refresh_error as adobe_last_refresh_error,
           adobe.consecutive_failures as adobe_consecutive_failures,
+          adobe.firefly_credential_status as adobe_firefly_credential_status,
+          adobe.firefly_last_refresh_at as adobe_firefly_last_refresh_at,
+          adobe.firefly_last_refresh_error as adobe_firefly_last_refresh_error,
+          adobe.firefly_consecutive_failures as adobe_firefly_consecutive_failures,
           adobe.credits_total as adobe_credits_total,
           adobe.credits_used as adobe_credits_used,
           adobe.credits_available as adobe_credits_available,

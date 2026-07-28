@@ -25,6 +25,7 @@ export {
 } from "./client";
 export * from "./errors";
 export * from "./payloads";
+export * from "./profile";
 export * from "./signing";
 export * from "./transport";
 export * from "./video-catalog";

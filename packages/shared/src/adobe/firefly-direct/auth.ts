@@ -8,16 +8,16 @@
  * 这些请求同样经传输层（生产走 Go TLS 旁路；主机白名单含 .adobe.com/.adobelogin.com/.adobe.io）。
  */
 
-import { accountIdFromToken } from "./signing";
+import { accountIdFromToken, decodeJwtPayload } from "./signing";
+import { ADOBE_WEB_APP_PROFILES, type AdobeFireflyWebApp } from "./profile";
 import type { FireflyTransport } from "./transport";
 
 export const IMS_REFRESH_URL =
   "https://adobeid-na1.services.adobe.com/ims/check/v6/token?jslVersion=v2-v0.48.0-1-g1e322cb";
 
-export const IMS_DEFAULT_SCOPE =
-  "AdobeID,firefly_api,openid";
-
-const IMS_CLIENT_ID = "projectx_webapp";
+export const IMS_DEFAULT_SCOPE = ADOBE_WEB_APP_PROFILES.express.imsScope;
+export const IMS_FIREFLY_DEFAULT_SCOPE =
+  ADOBE_WEB_APP_PROFILES.firefly.imsScope;
 
 export type AdobeAccountInfo = {
   displayName: string;
@@ -78,9 +78,9 @@ export function normalizeCookieString(input: unknown): string {
   return "";
 }
 
-function refreshFormBody(scope: string): string {
+function refreshFormBody(clientId: string, scope: string): string {
   const form = new URLSearchParams();
-  form.set("client_id", IMS_CLIENT_ID);
+  form.set("client_id", clientId);
   form.set("guest_allowed", "true");
   form.set("scope", scope);
   return form.toString();
@@ -90,11 +90,17 @@ function refreshFormBody(scope: string): string {
 export async function refreshAccessTokenFromCookie(
   transport: FireflyTransport,
   cookieInput: unknown,
-  opts?: { scope?: string; signal?: AbortSignal; fetchAccount?: boolean }
+  opts?: {
+    profile?: AdobeFireflyWebApp;
+    scope?: string;
+    signal?: AbortSignal;
+    fetchAccount?: boolean;
+  }
 ): Promise<RefreshResult> {
   const cookie = normalizeCookieString(cookieInput);
   if (!cookie) throw new Error("cookie is required");
-  const scope = opts?.scope || IMS_DEFAULT_SCOPE;
+  const profile = ADOBE_WEB_APP_PROFILES[opts?.profile ?? "express"];
+  const scope = opts?.scope || profile.imsScope;
 
   const resp = await transport.request({
     method: "POST",
@@ -104,18 +110,17 @@ export async function refreshAccessTokenFromCookie(
       "Accept-Language": "en-US,en;q=0.9",
       "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
       Cookie: cookie,
-      Origin: "https://new.express.adobe.com",
-      Referer: "https://new.express.adobe.com/",
+      Origin: profile.origin,
+      Referer: profile.referer,
       "User-Agent": "Mozilla/5.0",
     },
-    body: refreshFormBody(scope),
+    body: refreshFormBody(profile.imsClientId, scope),
     signal: opts?.signal,
     timeoutMs: 30_000,
   });
 
   if (resp.status !== 200) {
-    const body = (await resp.text().catch(() => "")).slice(0, 200);
-    throw new Error(`refresh request failed: ${resp.status} ${body}`);
+    throw new Error(`refresh request failed: ${resp.status}`);
   }
   const data = (await resp.json().catch(() => null)) as Record<
     string,
@@ -124,6 +129,12 @@ export async function refreshAccessTokenFromCookie(
   if (!data) throw new Error("refresh response is not valid json");
   const accessToken = String(data.access_token || "").trim();
   if (!accessToken) throw new Error("refresh response missing access_token");
+  const tokenClientId = String(
+    decodeJwtPayload(accessToken).client_id || ""
+  ).trim();
+  if (tokenClientId && tokenClientId !== profile.imsClientId) {
+    throw new Error("refresh response token client_id mismatch");
+  }
 
   let account: AdobeAccountInfo | null = null;
   if (opts?.fetchAccount !== false) {

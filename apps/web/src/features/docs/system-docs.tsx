@@ -46,7 +46,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "传输层校验请求并构造用户或 API Key Principal。",
           "UOL 网关统一执行权限、套餐能力和资源归属校验。",
           "图片生成、图片编辑与蒙版编辑共用单一图片管线。",
-          "视频提交成功后固定原成员与原 token，轮询和下载不得跨成员重投。",
+          "视频提交成功后固定原成员及请求/鉴权 Profile，轮询只刷新对应 Profile Token，不得跨成员重投。",
           "最终产物写入本站存储，再返回受控签名 URL。",
         ],
       },
@@ -59,7 +59,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "同一号池页面管理分组、成员、模型能力、优先级、并发和健康状态。",
           "模型 ID 是显式能力键，调度器不从模型名称前缀推断成员类型。",
           "一次请求在指定分组的全部合格成员中选择候选，图片和视频都不使用粘性会话。",
-          "Adobe direct 成员可维护多个账号与 token，但它们始终归属于同一个统一成员。",
+          "一个 Adobe direct 成员只对应一个 Cookie/账号，并分别维护 Express 与 Firefly 短期 Token。",
         ],
       },
       {
@@ -82,7 +82,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
         items: [
           "同一用户下不同 API Key 的相同请求键互不命中。",
           "提交前明确失败可以排除当前成员并重选。",
-          "取得 pollUrl 后只使用持久化的原成员和原 token。",
+          "取得 pollUrl 后只使用持久化的原成员及请求/鉴权 Profile。",
           "提交结果不确定时保留诊断状态，不自动重投或退款。",
           "对象存储键、扣费键和退款键稳定，重复 worker 只能收敛到一个终态。",
         ],
@@ -157,7 +157,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "The transport validates input and constructs a user or API Key Principal.",
           "The UOL gateway enforces authorization, plan capabilities, and ownership.",
           "Generation, editing, and masked editing share one image pipeline.",
-          "Accepted video jobs stay bound to the original member and token.",
+          "Accepted video jobs stay bound to the original member and persisted request/auth profiles.",
           "Outputs are re-hosted in platform storage before a controlled URL is returned.",
         ],
       },
@@ -170,7 +170,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
           "One admin page manages groups, members, model capabilities, priority, concurrency, and health.",
           "Model IDs are explicit capability keys; scheduling does not infer member type from a prefix.",
           "Each request selects from every eligible member in its group with no sticky session.",
-          "Adobe direct accounts and tokens always belong to one unified member.",
+          "One Adobe direct member maps to one Cookie/account with separate Express and Firefly tokens.",
         ],
       },
       {
@@ -193,7 +193,7 @@ const contentByLocale: Record<"zh" | "en", DocsContent> = {
         items: [
           "The same request key on different API keys creates separate tasks.",
           "A clearly rejected pre-submit attempt may switch to another member.",
-          "After pollUrl is stored, only the original member and token are used.",
+          "After pollUrl is stored, only the original member and persisted request/auth profiles are used.",
           "An uncertain submission is retained for diagnosis without automatic retry or refund.",
           "Stable storage and ledger keys make repeated workers converge on one terminal state.",
         ],

@@ -59,11 +59,15 @@ x-nonce: sha256(`${user_id}-${prompt[:256]}`)
 ```
 + 浏览器伪装头（user-agent、sec-ch-ua、origin/referer）。Adobe Express 模型使用
 `https://new.express.adobe.com/` 与公开网页 API Key `projectx_webapp`；Kling 3.0 Omni、
-Runway Gen-4.5、Ray 3.14 与 Ray 3.14 HDR 使用 `https://firefly.adobe.com/` 与公开
-网页 API Key `clio-playground-web`。Seedance 提交明确携带 `x-arp-session-id` 和
+Runway Gen-4.5、Ray 3.14、Ray 3.14 HDR、Seedance 2.0 与 Seedance 2.0 Fast 使用
+`https://firefly.adobe.com/` 与公开网页 API Key `clio-playground-web`。Seedance
+提交明确携带 `x-arp-session-id` 和
 `x-nonce`。Chrome sanitized HAR 会移除敏感鉴权头，因此不能根据 HAR 中未显示
 `Authorization` 推断真实请求不需要 Bearer Token。
-IMS token 与图像路径同源（`ims/check/v6/token`，`client_id=clio-playground-web`）。
+IMS Token 必须与网页 Profile 绑定：Express 使用 `client_id=projectx_webapp`，Firefly
+使用 `client_id=clio-playground-web`。同一 Cookie 分别持久化两套短期 Token；上传、
+提交和轮询使用任务保存的同一请求/鉴权 Profile。明确 401/403 时只刷新该 Profile 并
+安全重试一次，网络异常、5xx 或提交结果不确定时不得自动重投。
 
 ### 提交体（关键字段）
 `n`、`seeds:[seed]`、`seed:str`、`modelId`、`model`(upstream)、`modelVersion`、`size:{width,height}`、

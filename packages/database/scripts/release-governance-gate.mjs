@@ -900,6 +900,12 @@ async function assertMediaPostMigrationState(pool) {
                 or (table_name = 'video_generation'
                   and column_name = 'api_key_credits_reserved'
                   and is_nullable = 'NO')
+                or (table_name = 'video_generation'
+                  and column_name in (
+                    'adobe_request_profile',
+                    'adobe_auth_profile'
+                  )
+                  and is_nullable = 'NO')
                 or (table_name = 'video_generation_callback_delivery'
                   and column_name = 'callback_url' and is_nullable = 'NO')
                 or (table_name = 'image_backend_member_api_config'
@@ -919,6 +925,14 @@ async function assertMediaPostMigrationState(pool) {
                     'last_refresh_error',
                     'next_refresh_at',
                     'consecutive_failures',
+                    'firefly_access_token',
+                    'firefly_token_expires_at',
+                    'firefly_credential_status',
+                    'firefly_token_fails',
+                    'firefly_last_refresh_at',
+                    'firefly_last_refresh_error',
+                    'firefly_next_refresh_at',
+                    'firefly_consecutive_failures',
                     'credits_total',
                     'credits_used',
                     'credits_available',
@@ -939,8 +953,10 @@ async function assertMediaPostMigrationState(pool) {
               'video_callback_delivery_status_check',
               'video_callback_delivery_attempt_count_check',
               'video_generation_principal_scope_check',
+              'video_generation_adobe_profile_check',
               'image_backend_member_adobe_config_credential_shape_check',
               'image_backend_member_adobe_config_credential_status_check',
+              'image_backend_member_adobe_config_firefly_credential_status_check',
               'image_backend_member_adobe_config_failure_counts_check'
             )
           ) as required_constraint_count,
@@ -1069,8 +1085,8 @@ async function assertMediaPostMigrationState(pool) {
       requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
       legacyTableCount !== 0 ||
       oldColumnCount !== 0 ||
-      requiredColumnCount !== 22 ||
-      requiredConstraintCount !== 10 ||
+      requiredColumnCount !== 32 ||
+      requiredConstraintCount !== 12 ||
       recoveryLeaseForeignKeyCount !== 0 ||
       requiredIndexCount !== 12 ||
       removedSettingCount !== 0 ||

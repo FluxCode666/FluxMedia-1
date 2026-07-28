@@ -1205,6 +1205,17 @@ export const imageBackendMemberAdobeConfig = pgTable(
     lastRefreshError: text("last_refresh_error"),
     nextRefreshAt: timestamp("next_refresh_at"),
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    // Firefly 网页 Profile 的独立短期 Token 与刷新状态；Express 字段保持兼容。
+    fireflyAccessToken: text("firefly_access_token"),
+    fireflyTokenExpiresAt: timestamp("firefly_token_expires_at"),
+    fireflyCredentialStatus: text("firefly_credential_status"),
+    fireflyTokenFails: integer("firefly_token_fails").notNull().default(0),
+    fireflyLastRefreshAt: timestamp("firefly_last_refresh_at"),
+    fireflyLastRefreshError: text("firefly_last_refresh_error"),
+    fireflyNextRefreshAt: timestamp("firefly_next_refresh_at"),
+    fireflyConsecutiveFailures: integer("firefly_consecutive_failures")
+      .notNull()
+      .default(0),
     creditsTotal: integer("credits_total"),
     creditsUsed: integer("credits_used"),
     creditsAvailable: integer("credits_available"),
@@ -1227,15 +1238,19 @@ export const imageBackendMemberAdobeConfig = pgTable(
     ),
     check(
       "image_backend_member_adobe_config_credential_shape_check",
-      sql`(${table.mode} = 'gateway' AND ${table.cookie} IS NULL AND ${table.scope} IS NULL AND ${table.accessToken} IS NULL AND ${table.accountUserId} IS NULL AND ${table.displayName} IS NULL AND ${table.email} IS NULL AND ${table.credentialStatus} IS NULL AND ${table.tokenExpiresAt} IS NULL AND ${table.tokenFails} = 0 AND ${table.lastRefreshAt} IS NULL AND ${table.lastRefreshError} IS NULL AND ${table.nextRefreshAt} IS NULL AND ${table.consecutiveFailures} = 0 AND ${table.creditsTotal} IS NULL AND ${table.creditsUsed} IS NULL AND ${table.creditsAvailable} IS NULL AND ${table.creditsUpdatedAt} IS NULL AND ${table.creditsError} IS NULL) OR (${table.mode} = 'direct' AND ${table.cookie} IS NOT NULL AND char_length(btrim(${table.cookie})) BETWEEN 1 AND 64000 AND (${table.scope} IS NULL OR char_length(btrim(${table.scope})) BETWEEN 1 AND 4096) AND ${table.accessToken} IS NOT NULL AND char_length(btrim(${table.accessToken})) >= 1 AND ${table.credentialStatus} IS NOT NULL)`
+      sql`(${table.mode} = 'gateway' AND ${table.cookie} IS NULL AND ${table.scope} IS NULL AND ${table.accessToken} IS NULL AND ${table.accountUserId} IS NULL AND ${table.displayName} IS NULL AND ${table.email} IS NULL AND ${table.credentialStatus} IS NULL AND ${table.tokenExpiresAt} IS NULL AND ${table.tokenFails} = 0 AND ${table.lastRefreshAt} IS NULL AND ${table.lastRefreshError} IS NULL AND ${table.nextRefreshAt} IS NULL AND ${table.consecutiveFailures} = 0 AND ${table.fireflyAccessToken} IS NULL AND ${table.fireflyTokenExpiresAt} IS NULL AND ${table.fireflyCredentialStatus} IS NULL AND ${table.fireflyTokenFails} = 0 AND ${table.fireflyLastRefreshAt} IS NULL AND ${table.fireflyLastRefreshError} IS NULL AND ${table.fireflyNextRefreshAt} IS NULL AND ${table.fireflyConsecutiveFailures} = 0 AND ${table.creditsTotal} IS NULL AND ${table.creditsUsed} IS NULL AND ${table.creditsAvailable} IS NULL AND ${table.creditsUpdatedAt} IS NULL AND ${table.creditsError} IS NULL) OR (${table.mode} = 'direct' AND ${table.cookie} IS NOT NULL AND char_length(btrim(${table.cookie})) BETWEEN 1 AND 64000 AND (${table.scope} IS NULL OR char_length(btrim(${table.scope})) BETWEEN 1 AND 4096) AND ${table.accessToken} IS NOT NULL AND char_length(btrim(${table.accessToken})) >= 1 AND ${table.credentialStatus} IS NOT NULL AND (${table.fireflyAccessToken} IS NULL OR char_length(btrim(${table.fireflyAccessToken})) >= 1) AND (${table.fireflyAccessToken} IS NULL OR ${table.fireflyCredentialStatus} IS NOT NULL) AND (${table.fireflyCredentialStatus} IS NULL OR ${table.fireflyAccessToken} IS NOT NULL OR ${table.fireflyCredentialStatus} = 'error'))`
     ),
     check(
       "image_backend_member_adobe_config_credential_status_check",
       sql`${table.credentialStatus} IS NULL OR ${table.credentialStatus} IN ('active', 'error', 'exhausted', 'invalid')`
     ),
     check(
+      "image_backend_member_adobe_config_firefly_credential_status_check",
+      sql`${table.fireflyCredentialStatus} IS NULL OR ${table.fireflyCredentialStatus} IN ('active', 'error', 'exhausted', 'invalid')`
+    ),
+    check(
       "image_backend_member_adobe_config_failure_counts_check",
-      sql`${table.tokenFails} >= 0 AND ${table.consecutiveFailures} >= 0`
+      sql`${table.tokenFails} >= 0 AND ${table.consecutiveFailures} >= 0 AND ${table.fireflyTokenFails} >= 0 AND ${table.fireflyConsecutiveFailures} >= 0`
     ),
     check(
       "image_backend_member_adobe_config_quality_check",
@@ -1434,6 +1449,13 @@ export const videoGeneration = pgTable(
     memberLeaseOwnerToken: text("member_lease_owner_token"),
     // 完整 Firefly 视频 model id（firefly-<family>-<dur>s-<ratio>[-<res>]）。
     model: text("model").notNull(),
+    // 请求头 Profile 与 IMS Token Profile；历史任务允许不同，修复后的新任务两者相同。
+    adobeRequestProfile: text("adobe_request_profile")
+      .$type<"express" | "firefly">()
+      .notNull(),
+    adobeAuthProfile: text("adobe_auth_profile")
+      .$type<"express" | "firefly">()
+      .notNull(),
     family: text("family").notNull(),
     prompt: text("prompt").notNull(),
     durationSeconds: integer("duration_seconds").notNull(),
@@ -1502,6 +1524,10 @@ export const videoGeneration = pgTable(
     check(
       "video_generation_stage_check",
       sql`${table.stage} IN ('created', 'charged', 'submitting', 'submit_uncertain', 'polling', 'downloading', 'refunding', 'completed', 'failed')`
+    ),
+    check(
+      "video_generation_adobe_profile_check",
+      sql`${table.adobeRequestProfile} IN ('express', 'firefly') AND ${table.adobeAuthProfile} IN ('express', 'firefly')`
     ),
     check(
       "video_generation_recovery_counts_check",

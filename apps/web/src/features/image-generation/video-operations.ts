@@ -634,6 +634,8 @@ export async function runAdobeVideoGenerationForUser(
       principalScope: input.principalScope,
       usageLogVisible: true,
       model: input.model,
+      adobeRequestProfile: conf.webApp,
+      adobeAuthProfile: conf.webApp,
       family: conf.family,
       prompt: input.prompt,
       durationSeconds: conf.duration,
@@ -863,6 +865,8 @@ async function submitClaimedCreatedVideo(
     const submitted = await submitAdobeDirectVideoRequest(lease.config, {
       prompt: row.prompt,
       model: row.model,
+      requestProfile: row.adobeRequestProfile,
+      authProfile: row.adobeAuthProfile,
       ...(inputImages ? { inputImages } : {}),
       ...(negativePrompt != null ? { negativePrompt } : {}),
       generateAudio,
@@ -1162,6 +1166,8 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
         memberId: row.backendMemberId,
         pollUrl: row.pollUrl,
         model: row.model,
+        requestProfile: row.adobeRequestProfile,
+        authProfile: row.adobeAuthProfile,
       });
       if (polled.status === "pending") {
         await compareAndSetVideoStage({

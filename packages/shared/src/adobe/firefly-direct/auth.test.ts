@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   fetchCreditsBalance,
   IMS_DEFAULT_SCOPE,
+  IMS_FIREFLY_DEFAULT_SCOPE,
   normalizeCookieString,
   refreshAccessTokenFromCookie,
 } from "./auth";
@@ -60,9 +61,7 @@ describe("Adobe IMS Express 会话", () => {
 
     const request = transport.calls[0];
     expect(request?.headers.Origin).toBe("https://new.express.adobe.com");
-    expect(request?.headers.Referer).toBe(
-      "https://new.express.adobe.com/"
-    );
+    expect(request?.headers.Referer).toBe("https://new.express.adobe.com/");
     const form = new URLSearchParams(String(request?.body));
     expect(form.get("client_id")).toBe("projectx_webapp");
     expect(form.get("scope")).toBe(IMS_DEFAULT_SCOPE);
@@ -78,6 +77,41 @@ describe("Adobe IMS Express 会话", () => {
         })
       )
     ).toBe("aux_sid=abc; ims=def");
+  });
+
+  it("使用 clio-playground-web、完整 scope 与 Firefly 来源刷新 Cookie", async () => {
+    const transport = new MockTransport(
+      jsonResponse(200, { access_token: "firefly-token", expires_in: 3600 })
+    );
+
+    await refreshAccessTokenFromCookie(transport, "aux_sid=abc", {
+      profile: "firefly",
+      fetchAccount: false,
+    });
+
+    const request = transport.calls[0];
+    expect(request?.headers.Origin).toBe("https://firefly.adobe.com");
+    expect(request?.headers.Referer).toBe("https://firefly.adobe.com/");
+    const form = new URLSearchParams(String(request?.body));
+    expect(form.get("client_id")).toBe("clio-playground-web");
+    expect(form.get("scope")).toBe(IMS_FIREFLY_DEFAULT_SCOPE);
+    expect(form.get("scope")).toContain("pps.read");
+  });
+
+  it("拒绝与请求 Profile 不一致的 IMS Token", async () => {
+    const transport = new MockTransport(
+      jsonResponse(200, {
+        access_token: makeToken({ client_id: "projectx_webapp" }),
+        expires_in: 3600,
+      })
+    );
+
+    await expect(
+      refreshAccessTokenFromCookie(transport, "aux_sid=abc", {
+        profile: "firefly",
+        fetchAccount: false,
+      })
+    ).rejects.toThrow("refresh response token client_id mismatch");
   });
 
   it("查询余额也携带 Express 来源", async () => {

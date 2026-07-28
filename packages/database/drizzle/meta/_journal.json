@@ -477,6 +477,20 @@
       "when": 1785196800000,
       "tag": "0067_admin_payment_order_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1785196801000,
+      "tag": "0068_adobe_direct_auth_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1785196802000,
+      "tag": "0069_video_adobe_profiles",
+      "breakpoints": true
     }
   ]
 }

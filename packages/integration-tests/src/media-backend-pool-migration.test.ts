@@ -1,7 +1,7 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063 与 0066 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068 与 0069 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
  * 作用域。
@@ -68,10 +68,14 @@ const migrationPaths = [
   "0062_video_principal_scope.sql",
   "0063_video_recovery_lease_identity.sql",
   "0066_flatten_legacy_adobe_subpool.sql",
+  "0068_adobe_direct_auth_profiles.sql",
+  "0069_video_adobe_profiles.sql",
 ].map((filename) =>
   fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
-const compatibilityMigrationPath = migrationPaths.at(-1);
+const compatibilityMigrationPath = migrationPaths.at(4);
+const profileMigrationPaths = migrationPaths.slice(5);
+const compatibilityUpgradePaths = migrationPaths.slice(4);
 
 /** 验证随机 schema 名并返回安全的双引号标识符。 */
 function quoteSchemaName(schemaName: string): string {
@@ -251,6 +255,8 @@ async function createLegacySchema(client: PoolClient): Promise<string> {
       id text primary key,
       user_id text not null,
       api_key_id text,
+      model text not null default 'firefly-sora2-4s-16x9',
+      family text not null default 'sora2',
       status text not null default 'pending',
       adobe_id text,
       constraint video_generation_adobe_id_image_backend_adobe_id_fk
@@ -385,6 +391,8 @@ async function createLegacyUnifiedAdobeSchema(
     );
     create table video_generation (
       id text primary key,
+      model text not null default 'firefly-sora2-4s-16x9',
+      family text not null default 'sora2',
       status text not null default 'pending',
       backend_member_id text references image_backend_member(id)
         on delete set null,
@@ -496,7 +504,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060-0063 and 0066 unified media backend pool migrations", () => {
+describe("0060-0063、0066、0068 与 0069 统一媒体号池迁移", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -547,14 +555,39 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         columnExists(client, schemaName, "video_generation", "principal_scope")
       ).resolves.toBe(true);
       await expect(
+        columnExists(
+          client,
+          schemaName,
+          "video_generation",
+          "adobe_request_profile"
+        )
+      ).resolves.toBe(true);
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_adobe_config",
+          "firefly_access_token"
+        )
+      ).resolves.toBe(true);
+      await expect(
         tableExists(client, schemaName, "video_generation_callback_delivery")
       ).resolves.toBe(true);
-      const principalScope = await client.query<{ principal_scope: string }>(
-        `select principal_scope
+      const principalScope = await client.query<{
+        adobe_auth_profile: string;
+        adobe_request_profile: string;
+        principal_scope: string;
+      }>(
+        `select principal_scope, adobe_request_profile, adobe_auth_profile
          from video_generation
          where id = 'legacy-video'`
       );
       expect(principalScope.rows[0]?.principal_scope).toBe("user:user-1");
+      expect(principalScope.rows[0]).toMatchObject({
+        adobe_auth_profile: "express",
+        adobe_request_profile: "express",
+      });
+      await executeMigrations(client, schemaName, profileMigrationPaths);
       const leaseForeignKey = await client.query<{ count: number }>(
         `select count(*)::integer as count
          from pg_constraint
@@ -807,8 +840,30 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         )
       `);
       await client.query(`
-        insert into video_generation (id, user_id, status, adobe_id)
-        values ('legacy-adobe-video', 'user-1', 'completed', 'legacy-adobe')
+        insert into video_generation (
+          id,
+          user_id,
+          model,
+          family,
+          status,
+          adobe_id
+        ) values
+          (
+            'legacy-adobe-video',
+            'user-1',
+            'firefly-seedance2-15s-9x16-480p',
+            'seedance2',
+            'completed',
+            'legacy-adobe'
+          ),
+          (
+            'legacy-runway-video',
+            'user-1',
+            'firefly-runway-gen45-5s-16x9',
+            'runway-gen45',
+            'completed',
+            'legacy-adobe'
+          )
       `);
 
       await executeMigrations(client, schemaName);
@@ -914,6 +969,10 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         credits_used: number | null;
         display_name: string | null;
         email: string | null;
+        firefly_access_token: string | null;
+        firefly_consecutive_failures: number;
+        firefly_credential_status: string | null;
+        firefly_token_fails: number;
         gpt_image_quality: string;
         member_id: string;
         mode: string;
@@ -934,6 +993,10 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           credential_status,
           token_fails,
           consecutive_failures,
+          firefly_access_token,
+          firefly_credential_status,
+          firefly_token_fails,
+          firefly_consecutive_failures,
           credits_total,
           credits_used,
           credits_available,
@@ -955,6 +1018,10 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           credits_used: 125,
           display_name: "Display 2",
           email: "account-2@example.test",
+          firefly_access_token: null,
+          firefly_consecutive_failures: 0,
+          firefly_credential_status: null,
+          firefly_token_fails: 0,
           gpt_image_quality: "medium",
           member_id: "adobe-direct:adobe-account-2",
           mode: "direct",
@@ -974,6 +1041,10 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           credits_used: 58,
           display_name: "Display 1",
           email: "account-1@example.test",
+          firefly_access_token: null,
+          firefly_consecutive_failures: 0,
+          firefly_credential_status: null,
+          firefly_token_fails: 0,
           gpt_image_quality: "medium",
           member_id: "legacy-adobe",
           mode: "direct",
@@ -1039,17 +1110,38 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
       });
       expect(metric.rows[0]?.metadata.legacyRows?.[0]?.id).toBe("metric-1");
       const video = await client.query<{
+        adobe_auth_profile: string;
+        adobe_request_profile: string;
         backend_member_id: string;
+        id: string;
         stage: string;
       }>(`
-        select backend_member_id, stage
+        select
+          id,
+          backend_member_id,
+          stage,
+          adobe_request_profile,
+          adobe_auth_profile
         from video_generation
-        where id = 'legacy-adobe-video'
+        where id in ('legacy-adobe-video', 'legacy-runway-video')
+        order by id
       `);
-      expect(video.rows[0]).toEqual({
-        backend_member_id: "legacy-adobe",
-        stage: "completed",
-      });
+      expect(video.rows).toEqual([
+        {
+          adobe_auth_profile: "express",
+          adobe_request_profile: "express",
+          backend_member_id: "legacy-adobe",
+          id: "legacy-adobe-video",
+          stage: "completed",
+        },
+        {
+          adobe_auth_profile: "express",
+          adobe_request_profile: "firefly",
+          backend_member_id: "legacy-adobe",
+          id: "legacy-runway-video",
+          stage: "completed",
+        },
+      ]);
       await expect(
         tableExists(client, schemaName, "image_backend_api")
       ).resolves.toBe(false);
@@ -1202,6 +1294,8 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           );
         insert into video_generation (
           id,
+          model,
+          family,
           status,
           backend_member_id,
           stage,
@@ -1209,6 +1303,8 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         ) values
           (
             'video-1',
+            'firefly-ray314-5s-16x9-720p',
+            'ray314',
             'completed',
             'adobe-parent',
             'completed',
@@ -1216,6 +1312,8 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           ),
           (
             'video-2',
+            'firefly-seedance2-15s-9x16-480p',
+            'seedance2',
             'completed',
             'adobe-parent',
             'completed',
@@ -1223,7 +1321,7 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           );
       `);
 
-      await executeMigrations(client, schemaName, [compatibilityMigrationPath]);
+      await executeMigrations(client, schemaName, compatibilityUpgradePaths);
       await client.query(
         `set search_path to ${quoteSchemaName(schemaName)}, public`
       );
@@ -1262,10 +1360,19 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         access_token: string;
         cookie: string;
         credits_available: number;
+        firefly_access_token: string | null;
+        firefly_credential_status: string | null;
         member_id: string;
         mode: string;
       }>(`
-        select member_id, mode, cookie, access_token, credits_available
+        select
+          member_id,
+          mode,
+          cookie,
+          access_token,
+          firefly_access_token,
+          firefly_credential_status,
+          credits_available
         from image_backend_member_adobe_config
         order by member_id
       `);
@@ -1274,6 +1381,8 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           access_token: "access-token-2",
           cookie: "cookie-2",
           credits_available: 75,
+          firefly_access_token: null,
+          firefly_credential_status: null,
           member_id: "adobe-direct:account-2",
           mode: "direct",
         },
@@ -1281,6 +1390,8 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
           access_token: "access-token-1",
           cookie: "cookie-1",
           credits_available: 60,
+          firefly_access_token: null,
+          firefly_credential_status: null,
           member_id: "adobe-parent",
           mode: "direct",
         },
@@ -1300,16 +1411,32 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
         { group_id: "group-2", member_id: "adobe-parent" },
       ]);
       const videos = await client.query<{
+        adobe_auth_profile: string;
+        adobe_request_profile: string;
         backend_member_id: string;
         id: string;
       }>(`
-        select id, backend_member_id
+        select
+          id,
+          backend_member_id,
+          adobe_request_profile,
+          adobe_auth_profile
         from video_generation
         order by id
       `);
       expect(videos.rows).toEqual([
-        { backend_member_id: "adobe-parent", id: "video-1" },
-        { backend_member_id: "adobe-direct:account-2", id: "video-2" },
+        {
+          adobe_auth_profile: "express",
+          adobe_request_profile: "firefly",
+          backend_member_id: "adobe-parent",
+          id: "video-1",
+        },
+        {
+          adobe_auth_profile: "express",
+          adobe_request_profile: "express",
+          backend_member_id: "adobe-direct:account-2",
+          id: "video-2",
+        },
       ]);
       await expect(
         tableExists(client, schemaName, "adobe_account")
@@ -1327,11 +1454,59 @@ describe("0060-0063 and 0066 unified media backend pool migrations", () => {
            and conname in (
              'image_backend_member_adobe_config_credential_shape_check',
              'image_backend_member_adobe_config_credential_status_check',
+             'image_backend_member_adobe_config_firefly_credential_status_check',
              'image_backend_member_adobe_config_failure_counts_check'
            )`,
         [schemaName]
       );
-      expect(credentialConstraintCount.rows[0]?.count).toBe(3);
+      expect(credentialConstraintCount.rows[0]?.count).toBe(4);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("0069 遇到未知且未终态的视频族时阻断并完整回滚", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacyUnifiedAdobeSchema(client);
+      await client.query(`
+        insert into video_generation (
+          id,
+          model,
+          family,
+          status,
+          stage
+        ) values (
+          'unknown-profile-video',
+          'firefly-experimental-5s-16x9',
+          'experimental-family',
+          'pending',
+          'created'
+        )
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, compatibilityUpgradePaths)
+      ).rejects.toThrow(
+        /0069 blocked: unknown non-terminal Adobe video family/u
+      );
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "video_generation",
+          "adobe_request_profile"
+        )
+      ).resolves.toBe(false);
+      await expect(
+        tableExists(client, schemaName, "adobe_account")
+      ).resolves.toBe(true);
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

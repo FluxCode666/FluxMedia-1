@@ -598,11 +598,13 @@ describe("AdobeFireflyClient.generateVideo", () => {
       pollUrl: submitted.pollUrl,
     });
 
-    expect(api.calls[0]?.headers["x-api-key"]).toBe("clio-playground-web");
-    for (const call of api.calls.slice(1)) {
+    for (const call of api.calls) {
       expect(call.headers.origin).toBe("https://firefly.adobe.com");
       expect(call.headers.referer).toBe("https://firefly.adobe.com/");
       expect(call.headers["x-api-key"]).toBe("clio-playground-web");
+      expect(call.headers.Authorization ?? call.headers.authorization).toBe(
+        `Bearer ${FAKE_TOKEN}`
+      );
     }
   });
 
