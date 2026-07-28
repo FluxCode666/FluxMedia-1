@@ -102,8 +102,6 @@ export default async function AdminPaymentOverviewPage({
               </p>
             </div>
             <PaymentOverviewDateRangePicker
-              currentMonthEndDate={currentMonthRange.endDate}
-              currentMonthStartDate={currentMonthRange.startDate}
               endDate={overview.endDate}
               startDate={overview.startDate}
               today={today}

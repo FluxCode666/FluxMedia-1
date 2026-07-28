@@ -20,19 +20,21 @@ import {
 } from "@repo/ui/components/popover";
 import { cn } from "@repo/ui/utils";
 import { differenceInCalendarDays, format } from "date-fns";
-import { CalendarRange, Check, RotateCcw } from "lucide-react";
+import { CalendarRange, Check } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { useRouter } from "@/i18n/routing";
 
-import { buildAdminPaymentOverviewHref } from "./admin-payment-query";
+import {
+  type AdminPaymentOverviewPreset,
+  buildAdminPaymentOverviewHref,
+  buildCalendarPresetRange,
+} from "./admin-payment-query";
 
 type PaymentOverviewDateRangePickerProps = {
   startDate: string;
   endDate: string;
-  currentMonthStartDate: string;
-  currentMonthEndDate: string;
   today: string;
 };
 
@@ -76,15 +78,13 @@ function useDesktopCalendar(): boolean {
 /**
  * 渲染支付报表日期范围并在确认后更新 URL。
  *
- * @param props 已应用范围、当前自然月范围与报告时区中的今天。
+ * @param props 已应用范围与报告时区中的今天。
  * @returns 响应式 shadcn/ui 日期范围选择器。
  * @sideEffects 点击应用时触发同源客户端导航；选择过程不发起查询。
  */
 export function PaymentOverviewDateRangePicker({
   startDate,
   endDate,
-  currentMonthStartDate,
-  currentMonthEndDate,
   today,
 }: PaymentOverviewDateRangePickerProps) {
   const locale = useLocale();
@@ -116,7 +116,17 @@ export function PaymentOverviewDateRangePicker({
     }),
     [draftEndDate, draftStartDate]
   );
-  const maxSelectableDate = parseCalendarDate(currentMonthEndDate);
+  const presetRanges = useMemo(
+    () =>
+      (["month", "quarter", "year"] as const).map((preset) => ({
+        preset,
+        range: buildCalendarPresetRange(today, preset),
+      })),
+    [today]
+  );
+  const maxSelectableDate = parseCalendarDate(
+    buildCalendarPresetRange(today, "year").endDate
+  );
   const selectedDayCount =
     draftRange.from && draftRange.to
       ? differenceInCalendarDays(draftRange.to, draftRange.from) + 1
@@ -153,10 +163,11 @@ export function PaymentOverviewDateRangePicker({
     setDraftEndDate(formatCalendarDate(range?.to));
   }
 
-  /** 将草稿快速恢复为部署时区下的当前完整自然月。 */
-  function selectCurrentMonth(): void {
-    setDraftStartDate(currentMonthStartDate);
-    setDraftEndDate(currentMonthEndDate);
+  /** 将草稿切换到部署时区下的当前完整自然周期。 */
+  function selectPreset(preset: AdminPaymentOverviewPreset): void {
+    const range = buildCalendarPresetRange(today, preset);
+    setDraftStartDate(range.startDate);
+    setDraftEndDate(range.endDate);
   }
 
   /** 应用完整合法范围；相同范围只关闭弹层，不产生重复导航。 */
@@ -192,7 +203,9 @@ export function PaymentOverviewDateRangePicker({
       </PopoverTrigger>
       <PopoverContent
         align="end"
-        className="max-h-[calc(100vh-2rem)] w-auto max-w-[calc(100vw-2rem)] overflow-y-auto p-0"
+        className="max-h-[var(--radix-popover-content-available-height)] w-auto max-w-[calc(100vw-2rem)] overflow-y-auto p-0"
+        collisionPadding={16}
+        sideOffset={8}
       >
         <div className="border-b px-4 py-3">
           <p className="text-sm font-medium">{t("selectDateRange")}</p>
@@ -201,6 +214,31 @@ export function PaymentOverviewDateRangePicker({
               days: ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
             })}
           </p>
+          <fieldset className="mt-3">
+            <legend className="text-xs font-medium text-muted-foreground">
+              {t("quickRanges")}
+            </legend>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {presetRanges.map(({ preset, range }) => {
+                const isActive =
+                  draftStartDate === range.startDate &&
+                  draftEndDate === range.endDate;
+                return (
+                  <Button
+                    aria-pressed={isActive}
+                    className="h-8 px-2"
+                    key={preset}
+                    onClick={() => selectPreset(preset)}
+                    size="sm"
+                    type="button"
+                    variant={isActive ? "secondary" : "outline"}
+                  >
+                    {t(`preset.${preset}`)}
+                  </Button>
+                );
+              })}
+            </div>
+          </fieldset>
         </div>
         <Calendar
           autoFocus
@@ -210,42 +248,35 @@ export function PaymentOverviewDateRangePicker({
             maxSelectableDate ? { after: maxSelectableDate } : undefined
           }
           excludeDisabled
+          fixedWeeks
           locale={calendarLocale}
           mode="range"
           numberOfMonths={isDesktop ? 2 : 1}
           onSelect={handleRangeSelect}
           selected={draftRange.from ? draftRange : undefined}
+          showOutsideDays={false}
         />
         <div className="sticky bottom-0 border-t bg-popover px-3 py-3">
-          <div
-            aria-live="polite"
-            className={cn(
-              "mb-3 min-h-4 text-xs text-muted-foreground",
-              (startsInFuture || exceedsLimit) && "text-destructive"
-            )}
-          >
-            {startsInFuture
-              ? t("futureStartError")
-              : exceedsLimit
-                ? t("dateRangeTooLong", {
-                    days: ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
-                  })
-                : selectedDayCount
-                  ? t("selectedDays", { days: selectedDayCount })
-                  : t("completeDateRange")}
-          </div>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-            <Button
-              disabled={isNavigating}
-              onClick={selectCurrentMonth}
-              size="sm"
-              type="button"
-              variant="ghost"
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              aria-live="polite"
+              className={cn(
+                "min-h-4 text-xs text-muted-foreground",
+                (startsInFuture || exceedsLimit) && "text-destructive"
+              )}
             >
-              <RotateCcw />
-              {t("currentMonth")}
-            </Button>
+              {startsInFuture
+                ? t("futureStartError")
+                : exceedsLimit
+                  ? t("dateRangeTooLong", {
+                      days: ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
+                    })
+                  : selectedDayCount
+                    ? t("selectedDays", { days: selectedDayCount })
+                    : t("completeDateRange")}
+            </div>
             <Button
+              className="sm:shrink-0"
               disabled={!canApply}
               onClick={applyRange}
               size="sm"

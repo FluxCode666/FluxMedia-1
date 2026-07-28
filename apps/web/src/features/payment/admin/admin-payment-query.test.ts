@@ -9,6 +9,7 @@ import {
   buildAdminPaymentOrdersHref,
   buildAdminPaymentOverviewHref,
   buildCalendarMonthRange,
+  buildCalendarPresetRange,
   parseAdminPaymentDateRange,
   parseAdminPaymentOrderQuery,
 } from "./admin-payment-query";
@@ -98,6 +99,25 @@ describe("admin payment query", () => {
     });
     expect(buildAdminPaymentOverviewHref(range)).toBe(
       "/dashboard/admin/payments?startDate=2028-02-01&endDate=2028-02-29"
+    );
+  });
+
+  it.each([
+    ["month", "2028-02-15", { startDate: "2028-02-01", endDate: "2028-02-29" }],
+    [
+      "quarter",
+      "2026-07-28",
+      { startDate: "2026-07-01", endDate: "2026-09-30" },
+    ],
+    [
+      "quarter",
+      "2028-02-15",
+      { startDate: "2028-01-01", endDate: "2028-03-31" },
+    ],
+    ["year", "2028-02-15", { startDate: "2028-01-01", endDate: "2028-12-31" }],
+  ] as const)("builds the %s natural range containing %s", (preset, calendarDate, expectedRange) => {
+    expect(buildCalendarPresetRange(calendarDate, preset)).toEqual(
+      expectedRange
     );
   });
 });

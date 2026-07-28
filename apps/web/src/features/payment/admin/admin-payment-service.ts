@@ -211,10 +211,11 @@ export function resolveAdminPaymentDateRange(input: {
   const today = formatDateInputInTimeZone(input.asOf, input.timeZone);
   const defaultStartDate = `${today.slice(0, 7)}-01`;
   const defaultEndDate = getCalendarMonthEnd(today);
+  const maxEndDate = `${today.slice(0, 4)}-12-31`;
   const startDate = input.startDate ?? defaultStartDate;
   const endDate = input.endDate ?? defaultEndDate;
   const dates = listCalendarDates(startDate, endDate);
-  if (dates.length === 0 || startDate > today || endDate > defaultEndDate) {
+  if (dates.length === 0 || startDate > today || endDate > maxEndDate) {
     throw new AdminPaymentServiceError("Future payment ranges are not allowed");
   }
   const start = parseDateInputInTimeZone(startDate, {

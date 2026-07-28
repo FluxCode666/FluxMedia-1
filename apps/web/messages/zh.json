@@ -477,11 +477,16 @@
       "timeZone": "财务报表时区：{timeZone}",
       "selectDateRange": "选择日期范围",
       "dateRangeLimit": "单次最多查询 {days} 个自然日",
+      "quickRanges": "快捷范围",
+      "preset": {
+        "month": "本月",
+        "quarter": "本季度",
+        "year": "本年度"
+      },
       "futureStartError": "开始日期不能晚于今天",
       "dateRangeTooLong": "日期范围不能超过 {days} 天",
       "selectedDays": "已选择 {days} 个自然日",
       "completeDateRange": "请选择完整的开始和结束日期",
-      "currentMonth": "当前自然月",
       "applyDateRange": "应用范围",
       "fulfilledRevenue": "已履约充值收入",
       "fulfilledRevenueHint": "按币种分别汇总，不跨币种相加",

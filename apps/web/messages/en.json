@@ -477,11 +477,16 @@
       "timeZone": "Financial report time zone: {timeZone}",
       "selectDateRange": "Select date range",
       "dateRangeLimit": "Each report can include up to {days} calendar days",
+      "quickRanges": "Quick ranges",
+      "preset": {
+        "month": "This month",
+        "quarter": "This quarter",
+        "year": "This year"
+      },
       "futureStartError": "The start date cannot be later than today",
       "dateRangeTooLong": "The date range cannot exceed {days} days",
       "selectedDays": "{days} calendar days selected",
       "completeDateRange": "Select both a start and end date",
-      "currentMonth": "Current natural month",
       "applyDateRange": "Apply range",
       "fulfilledRevenue": "Fulfilled top-up revenue",
       "fulfilledRevenueHint": "Reported separately by currency, never combined",

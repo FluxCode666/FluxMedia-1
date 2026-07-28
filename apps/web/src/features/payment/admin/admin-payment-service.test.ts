@@ -208,7 +208,7 @@ describe("admin payment overview", () => {
     expect(dstRange.end.toISOString()).toBe("2026-03-10T04:00:00.000Z");
   });
 
-  it("rejects future starts and ranges beyond the current natural month", () => {
+  it("rejects future starts but supports ranges through the current natural year", () => {
     expect(() =>
       resolveAdminPaymentDateRange({
         startDate: "2026-07-29",
@@ -228,10 +228,29 @@ describe("admin payment overview", () => {
       startDate: "2026-07-20",
       endDate: "2026-07-31",
     });
+    expect(
+      resolveAdminPaymentDateRange({
+        startDate: "2026-07-01",
+        endDate: "2026-09-30",
+        timeZone: "UTC",
+        asOf: new Date("2026-07-28T00:00:00.000Z"),
+      })
+    ).toMatchObject({
+      startDate: "2026-07-01",
+      endDate: "2026-09-30",
+    });
+    expect(
+      resolveAdminPaymentDateRange({
+        startDate: "2026-01-01",
+        endDate: "2026-12-31",
+        timeZone: "UTC",
+        asOf: new Date("2026-07-28T00:00:00.000Z"),
+      }).dates
+    ).toHaveLength(365);
     expect(() =>
       resolveAdminPaymentDateRange({
         startDate: "2026-07-20",
-        endDate: "2026-08-01",
+        endDate: "2027-01-01",
         timeZone: "UTC",
         asOf: new Date("2026-07-28T00:00:00.000Z"),
       })

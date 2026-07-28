@@ -27,6 +27,14 @@ export type AdminPaymentOverviewRange = {
   endDate: string;
 };
 
+export type AdminPaymentOverviewPreset = "month" | "quarter" | "year";
+
+type CalendarDateParts = {
+  year: number;
+  month: number;
+  day: number;
+};
+
 const MAX_CURSOR_LENGTH = 4096;
 const MAX_ORDER_ID_LENGTH = 128;
 const MAX_USER_EMAIL_LENGTH = 320;
@@ -58,8 +66,8 @@ function isEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-/** 将 YYYY-MM-DD 校验并转换为 UTC 日历日序号。 */
-function getCalendarDayNumber(value: string): number | null {
+/** 将 YYYY-MM-DD 严格解析为日历年月日，拒绝 Date 自动进位。 */
+function parseCalendarDateParts(value: string): CalendarDateParts | null {
   if (!/^20\d{2}-\d{2}-\d{2}$/.test(value)) return null;
   const [year, month, day] = value.split("-").map(Number);
   const time = Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0);
@@ -67,8 +75,28 @@ function getCalendarDayNumber(value: string): number | null {
   return date.getUTCFullYear() === year &&
     date.getUTCMonth() === (month ?? 0) - 1 &&
     date.getUTCDate() === day
-    ? Math.floor(time / 86_400_000)
+    ? { year: year ?? 0, month: month ?? 0, day: day ?? 0 }
     : null;
+}
+
+/** 将 YYYY-MM-DD 校验并转换为 UTC 日历日序号。 */
+function getCalendarDayNumber(value: string): number | null {
+  const parts = parseCalendarDateParts(value);
+  return parts
+    ? Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86_400_000)
+    : null;
+}
+
+/** 将年月日格式化为稳定的 YYYY-MM-DD。 */
+function formatCalendarDateParts(
+  year: number,
+  month: number,
+  day: number
+): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(
+    2,
+    "0"
+  )}`;
 }
 
 /** 解析支付概览的成对日期范围；非法、缺失一端或超限时回退默认范围。 */
@@ -106,23 +134,29 @@ export function buildAdminPaymentOverviewHref(
 export function buildCalendarMonthRange(
   calendarDate: string
 ): AdminPaymentOverviewRange {
-  if (!/^20\d{2}-\d{2}-\d{2}$/.test(calendarDate)) {
-    throw new RangeError("Invalid calendar date");
-  }
-  const [year, month, day] = calendarDate.split("-").map(Number);
-  const date = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0));
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== (month ?? 0) - 1 ||
-    date.getUTCDate() !== day
-  ) {
-    throw new RangeError("Invalid calendar date");
-  }
-  const monthPrefix = calendarDate.slice(0, 7);
-  const monthEnd = new Date(Date.UTC(year ?? 0, month ?? 0, 0));
+  return buildCalendarPresetRange(calendarDate, "month");
+}
+
+/** 构造给定日期所在的完整自然月、自然季度或自然年度范围。 */
+export function buildCalendarPresetRange(
+  calendarDate: string,
+  preset: AdminPaymentOverviewPreset
+): AdminPaymentOverviewRange {
+  const parts = parseCalendarDateParts(calendarDate);
+  if (!parts) throw new RangeError("Invalid calendar date");
+
+  const startMonth =
+    preset === "year"
+      ? 1
+      : preset === "quarter"
+        ? Math.floor((parts.month - 1) / 3) * 3 + 1
+        : parts.month;
+  const endMonth =
+    preset === "year" ? 12 : preset === "quarter" ? startMonth + 2 : startMonth;
+  const endDay = new Date(Date.UTC(parts.year, endMonth, 0)).getUTCDate();
   return {
-    startDate: `${monthPrefix}-01`,
-    endDate: `${monthPrefix}-${String(monthEnd.getUTCDate()).padStart(2, "0")}`,
+    startDate: formatCalendarDateParts(parts.year, startMonth, 1),
+    endDate: formatCalendarDateParts(parts.year, endMonth, endDay),
   };
 }
 
