@@ -16,11 +16,11 @@ import {
 import { Button } from "@repo/ui/components/button";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/components/sheet";
 import { Menu } from "lucide-react";
-import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { useCurrentSession } from "@/features/auth/hooks/use-current-session";
+import { SiteLogo } from "@/features/branding/site-logo";
 import { Link } from "@/i18n/routing";
 
 import { NavMenu } from "./nav-menu";
@@ -69,12 +69,7 @@ export function Header() {
         <div className="flex items-center gap-8">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2">
-            <Image
-              src="/assets/icon.svg"
-              alt="FluxMedia"
-              width={28}
-              height={28}
-            />
+            <SiteLogo size={28} alt="" />
             <span className="font-serif text-xl font-medium tracking-tight">
               FluxMedia
             </span>

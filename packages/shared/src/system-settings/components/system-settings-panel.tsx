@@ -46,6 +46,7 @@ import { SETTING_CATEGORIES } from "../definitions";
 import { DashboardSupportConfigInput } from "./dashboard-support-config-input";
 import { ModerationPolicyCard } from "./moderation-policy-card";
 import { PaginationPageSizeOptionsInput } from "./pagination-page-size-options-input";
+import { SiteLogoSettingsCard } from "./site-logo-settings-card";
 
 type SettingSnapshotItem = SettingDefinition & {
   value: string;
@@ -1645,6 +1646,10 @@ export function SystemSettingsPanel({ timeZone }: { timeZone: string }) {
     }
     return map;
   }, [settings]);
+  const siteLogoSetting = useMemo(
+    () => settings.find((setting) => setting.key === "SITE_LOGO_URL"),
+    [settings]
+  );
   const handleSave = () => {
     const payload: SettingUpdate[] = [];
     try {
@@ -1791,6 +1796,22 @@ export function SystemSettingsPanel({ timeZone }: { timeZone: string }) {
 
               {category.id === "moderation" && (
                 <ModerationPolicyCard timeZone={timeZone} />
+              )}
+
+              {category.id === "general" && siteLogoSetting && (
+                <SiteLogoSettingsCard
+                  key={`${siteLogoSetting.updatedAt ?? "default"}:${siteLogoSetting.value}`}
+                  initialValue={siteLogoSetting.value}
+                  source={
+                    siteLogoSetting.stored
+                      ? "stored"
+                      : siteLogoSetting.fromEnv
+                        ? "environment"
+                        : "default"
+                  }
+                  disabled={disabled}
+                  onSaved={() => loadSettings()}
+                />
               )}
 
               <div className="grid gap-4 lg:grid-cols-2">

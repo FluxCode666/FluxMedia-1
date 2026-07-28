@@ -20,6 +20,7 @@ import {
 import { Separator } from "@repo/ui/components/separator";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/components/sheet";
 import { cn } from "@repo/ui/utils";
+import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BookOpen,
@@ -35,8 +36,6 @@ import {
   Shield,
   Users,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
@@ -46,6 +45,7 @@ import {
   type CurrentSession,
   useCurrentSession,
 } from "@/features/auth/hooks/use-current-session";
+import { SiteLogo } from "@/features/branding/site-logo";
 import { useSidebar } from "@/features/dashboard/context";
 
 type SidebarLeafItem = {
@@ -326,13 +326,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
               }
             }}
           >
-            <Image
-              src="/assets/icon.svg"
-              alt="FluxMedia"
-              width={24}
-              height={24}
-              className="shrink-0"
-            />
+            <SiteLogo size={24} className="shrink-0" alt="" />
             <span
               className={cn(
                 "font-serif text-lg font-medium tracking-tight transition-opacity duration-150",

@@ -6,8 +6,8 @@
  */
 import { Button } from "@repo/ui/components/button";
 import { ArrowUpRight } from "lucide-react";
-import Image from "next/image";
 
+import { SiteLogo } from "@/features/branding/site-logo";
 import { Link } from "@/i18n/routing";
 
 /** 首页合层结尾的双语可见文案。 */
@@ -78,12 +78,7 @@ export function HomepageFooter({
         <div className="grid gap-10 sm:grid-cols-[1.4fr_0.7fr_0.7fr]">
           <div>
             <Link className="inline-flex items-center gap-2" href="/">
-              <Image
-                alt="FluxMedia"
-                height={28}
-                src="/assets/icon.svg"
-                width={28}
-              />
+              <SiteLogo size={28} alt="" />
               <span className="font-serif text-xl font-medium">FluxMedia</span>
             </Link>
             <p className="mt-4 max-w-sm text-sm leading-6 text-[#f6f1e7]/55">

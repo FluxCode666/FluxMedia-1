@@ -28,6 +28,7 @@ export type SettingKey =
   | "NEXT_PUBLIC_APP_URL"
   | "NEXT_PUBLIC_APP_NAME"
   | "NEXT_PUBLIC_ASSET_PREFIX"
+  | "SITE_LOGO_URL"
   | "PAGINATION_PAGE_SIZE_OPTIONS"
   | "MARKETING_SLA_STATUS_ENABLED"
   | "DASHBOARD_SUPPORT_CONFIG"
@@ -349,6 +350,16 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "general",
     valueType: "string",
     requiresRebuild: true,
+  },
+  {
+    key: "SITE_LOGO_URL",
+    label: "网站 Logo 地址",
+    description:
+      "用于导航、认证页、控制台与结构化数据的 Logo。支持站内根路径或 HTTPS 地址；留空回退内置矢量 Logo。",
+    category: "general",
+    valueType: "string",
+    defaultValue: "/assets/icon.svg",
+    managedByDedicatedOperation: true,
   },
   {
     key: "PAGINATION_PAGE_SIZE_OPTIONS",

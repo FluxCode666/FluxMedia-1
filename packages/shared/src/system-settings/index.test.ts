@@ -9,9 +9,11 @@ import {
   getRuntimeSettingJson,
   getRuntimeSettingSelect,
   getRuntimeSettingString,
+  getSiteBranding,
   importSystemSettingsFromEnv,
   resetBootstrappedProcessSettingsForTests,
   setBootstrappedProcessSetting,
+  setSiteLogoUrl,
   setSystemSettings,
 } from "./index";
 
@@ -390,6 +392,17 @@ describe("setSystemSettings", () => {
     ).rejects.toThrow(/字段或链接格式无效/);
   });
 
+  it("拒绝通过通用入口写入或清空网站 Logo", async () => {
+    for (const entry of [
+      { key: "SITE_LOGO_URL", value: "/assets/brand/logo.svg" },
+      { key: "SITE_LOGO_URL", value: "", clear: true },
+    ]) {
+      await expect(setSystemSettings([entry], "admin")).rejects.toThrow(
+        /专用配置入口/
+      );
+    }
+  });
+
   it("rejects generic writes and clears for the dedicated moderation policy", async () => {
     store.set("CONTENT_MODERATION_BLOCK_RISK_LEVEL", {
       key: "CONTENT_MODERATION_BLOCK_RISK_LEVEL",
@@ -442,6 +455,42 @@ describe("setSystemSettings", () => {
   });
 });
 
+describe("setSiteLogoUrl", () => {
+  beforeEach(() => {
+    store.clear();
+    deletedKeys.value = [];
+    clearSystemSettingsCache();
+  });
+
+  it("专用入口保存安全地址并返回公开 DTO", async () => {
+    await expect(
+      setSiteLogoUrl(" /assets/brand/logo.svg ", "super-admin-1")
+    ).resolves.toEqual({ logoUrl: "/assets/brand/logo.svg" });
+    expect(store.get("SITE_LOGO_URL")).toMatchObject({
+      value: "/assets/brand/logo.svg",
+      isSecret: false,
+      updatedBy: "super-admin-1",
+    });
+  });
+
+  it("恢复默认时删除覆盖值，且非法地址不会落库", async () => {
+    store.set("SITE_LOGO_URL", {
+      key: "SITE_LOGO_URL",
+      value: "/assets/old-logo.svg",
+    });
+
+    await expect(setSiteLogoUrl(null, "super-admin-1")).resolves.toEqual({
+      logoUrl: "/assets/icon.svg",
+    });
+    expect(store.has("SITE_LOGO_URL")).toBe(false);
+
+    await expect(
+      setSiteLogoUrl("javascript:alert(1)", "super-admin-1")
+    ).rejects.toThrow();
+    expect(store.has("SITE_LOGO_URL")).toBe(false);
+  });
+});
+
 describe("importSystemSettingsFromEnv", () => {
   beforeEach(() => {
     store.clear();
@@ -455,6 +504,7 @@ describe("importSystemSettingsFromEnv", () => {
     resetBootstrappedProcessSettingsForTests();
     delete process.env.NEXT_PUBLIC_APP_NAME;
     delete process.env.BETTER_AUTH_SECRET;
+    delete process.env.SITE_LOGO_URL;
   });
 
   it("overwrite=false (importMissing) keeps existing stored value", async () => {
@@ -488,6 +538,14 @@ describe("importSystemSettingsFromEnv", () => {
 
     expect(store.get("BETTER_AUTH_SECRET")?.value).toBe("env-secret");
     expect(store.get("BETTER_AUTH_SECRET")?.isSecret).toBe(true);
+  });
+
+  it("专用 Logo 配置不会从环境变量批量导入", async () => {
+    process.env.SITE_LOGO_URL = "https://cdn.example.com/logo.png";
+
+    await importSystemSettingsFromEnv({ overwrite: true });
+
+    expect(store.has("SITE_LOGO_URL")).toBe(false);
   });
 
   it("never imports the dedicated moderation policy from env", async () => {
@@ -681,6 +739,21 @@ describe("runtime setting getters stored/env fallback (C-L29)", () => {
     await expect(getRuntimeSettingString("NEXT_PUBLIC_APP_NAME")).resolves.toBe(
       "Env Name"
     );
+  });
+
+  it("站点品牌读取对缺失和历史脏值使用内置 Logo 回退", async () => {
+    await expect(getSiteBranding()).resolves.toEqual({
+      logoUrl: "/assets/icon.svg",
+    });
+
+    store.set("SITE_LOGO_URL", {
+      key: "SITE_LOGO_URL",
+      value: "data:image/svg+xml,<svg />",
+    });
+    clearSystemSettingsCache();
+    await expect(getSiteBranding()).resolves.toEqual({
+      logoUrl: "/assets/icon.svg",
+    });
   });
 
   it("getRuntimeSettingSelect returns fallback when value not in allowed list", async () => {

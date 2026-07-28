@@ -27,6 +27,11 @@ import {
   type SettingKey,
   SYSTEM_SETTING_DEFINITIONS,
 } from "./definitions";
+import {
+  resolveSiteLogoUrl,
+  type SiteBranding,
+  siteLogoUrlSchema,
+} from "./site-branding";
 
 export { invalidateSystemSettingsCache } from "./cache";
 export {
@@ -38,6 +43,14 @@ export {
   type SettingValueType,
   SYSTEM_SETTING_DEFINITIONS,
 } from "./definitions";
+export {
+  DEFAULT_SITE_LOGO_URL,
+  resolveSiteLogoUrl,
+  SITE_LOGO_ROUTE_PATH,
+  type SiteBranding,
+  siteBrandingSchema,
+  siteLogoUrlSchema,
+} from "./site-branding";
 
 // WHY：bootstrap 会把 DB 值灌入 process.env 供 Better Auth 等启动期模块使用；
 // 运行时设置的 env fallback 必须记住覆盖前的真实部署环境，否则后台清空 DB 行后
@@ -155,6 +168,67 @@ export async function getSystemSettingString(key: SettingKey) {
 export async function getRuntimeSettingString(key: SettingKey) {
   const value = await getSystemSettingString(key);
   return value ?? getRuntimeEnvironmentFallback(key);
+}
+
+/**
+ * 读取当前公开站点品牌配置。
+ *
+ * @returns 已通过安全契约收窄的 Logo 地址；缺失或脏值回退内置资源。
+ * @sideEffects 读取系统设置缓存，缓存未命中时访问数据库。
+ * @failure 数据库或缓存基础设施异常保持上抛，由传输层记录并降级。
+ */
+export async function getSiteBranding(): Promise<SiteBranding> {
+  const logoUrl = await getSystemSettingString("SITE_LOGO_URL");
+  return { logoUrl: resolveSiteLogoUrl(logoUrl) };
+}
+
+/**
+ * 通过专用入口保存或恢复网站 Logo。
+ *
+ * @param logoUrl - 合法 Logo 地址；null 表示删除覆盖并恢复内置资源。
+ * @param updatedBy - 已由 UOL 校验的超级管理员用户 ID。
+ * @returns 保存后立即生效的公开品牌 DTO。
+ * @sideEffects 在数据库事务中写入或删除设置，并失效本地与 Redis 设置缓存。
+ * @failure 地址非法、数据库事务或缓存失效失败时保持上抛。
+ */
+export async function setSiteLogoUrl(
+  logoUrl: string | null,
+  updatedBy: string
+): Promise<SiteBranding> {
+  const parsedLogoUrl =
+    logoUrl === null ? null : siteLogoUrlSchema.parse(logoUrl);
+  const now = new Date();
+
+  await db.transaction(async (tx) => {
+    if (parsedLogoUrl === null) {
+      await tx
+        .delete(systemSetting)
+        .where(eq(systemSetting.key, "SITE_LOGO_URL"));
+      return;
+    }
+
+    await tx
+      .insert(systemSetting)
+      .values({
+        key: "SITE_LOGO_URL",
+        value: parsedLogoUrl,
+        isSecret: false,
+        updatedBy,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: systemSetting.key,
+        set: {
+          value: parsedLogoUrl,
+          isSecret: false,
+          updatedBy,
+          updatedAt: now,
+        },
+      });
+  });
+
+  await invalidateSystemSettingsCache();
+  return { logoUrl: parsedLogoUrl ?? resolveSiteLogoUrl(undefined) };
 }
 
 export async function getRuntimeSettingBoolean(
@@ -294,6 +368,15 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
   }
 
   const text = typeof value === "string" ? value.trim() : String(value ?? "");
+  if (definition.key === "SITE_LOGO_URL" && text) {
+    const parsed = siteLogoUrlSchema.safeParse(text);
+    if (!parsed.success) {
+      throw new Error(
+        `${definition.label}仅支持站内根路径或不含账号凭据的 HTTPS 地址`
+      );
+    }
+    return parsed.data;
+  }
   if (definition.valueType === "select") {
     const allowed = definition.options?.map((option) => option.value) ?? [];
     if (text && !allowed.includes(text)) {

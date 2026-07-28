@@ -28,11 +28,14 @@ import { syncSystemSettingsToEnvFiles } from "../../system-settings/env-file";
 import {
   getAdminSystemSettingsSnapshot,
   getRuntimeSettingJson,
+  getSiteBranding,
   getSystemSettingValue,
   importSystemSettingsFromEnv,
   initializeMissingSystemSettingsDefaults,
+  setSiteLogoUrl,
   setSystemSettings,
 } from "../../system-settings/index";
+import { siteBrandingSchema } from "../../system-settings/site-branding";
 import { getPrincipalUserId } from "../principal";
 import { defineOperation } from "../registry";
 
@@ -125,6 +128,58 @@ export const settingsGetPaginationConfig = defineOperation({
   idempotency: { kind: "natural" },
   sideEffects: [],
   execute: async () => getPaginationConfig(),
+});
+
+/**
+ * settings.getSiteBranding - 获取公开站点品牌配置。
+ *
+ * 仅供站内页面和公开 Logo 路由读取，非法历史值由服务层回退内置资源。
+ */
+export const settingsGetSiteBranding = defineOperation({
+  name: "settings.getSiteBranding",
+  domain: "system-settings",
+  title: "Get Site Branding",
+  description: "获取当前网站 Logo 的安全公开地址，供全站品牌展示统一使用。",
+  input: z.object({}).strict(),
+  output: siteBrandingSchema,
+  access: { kind: "system" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => getSiteBranding(),
+});
+
+/**
+ * settings.setSiteLogo - 保存或恢复网站 Logo。
+ *
+ * 仅真实超级管理员可调用；写入使用专用 schema 与服务，不能通过通用设置入口绕过。
+ */
+export const settingsSetSiteLogo = defineOperation({
+  name: "settings.setSiteLogo",
+  domain: "system-settings",
+  title: "Set Site Logo",
+  description: "超级管理员保存安全 Logo 地址，或清除覆盖以恢复内置 Logo。",
+  input: z
+    .object({
+      logoUrl: siteBrandingSchema.shape.logoUrl.nullable(),
+    })
+    .strict(),
+  output: siteBrandingSchema,
+  access: { kind: "roles", roles: ["super_admin"] },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["cache"],
+  execute: async (input, principal) => {
+    const userId = getPrincipalUserId(principal);
+    if (!userId) {
+      throw new Error("网站 Logo 写入缺少可审计的管理员身份");
+    }
+    return setSiteLogoUrl(input.logoUrl, userId);
+  },
 });
 
 /**

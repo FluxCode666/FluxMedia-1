@@ -8,7 +8,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/image", () => ({
-  default: (props: Record<string, unknown>) => createElement("img", props),
+  default: (props: Record<string, unknown>) => {
+    const { unoptimized: _unoptimized, ...imageProps } = props;
+    return createElement("img", imageProps);
+  },
 }));
 vi.mock("@/i18n/routing", () => ({
   Link: ({ children, href }: { children: ReactNode; href: string }) =>

@@ -32,6 +32,7 @@ import {
   importSystemSettingsFromEnv,
   initializeMissingSystemSettingsDefaults,
 } from "../index";
+import { siteLogoUrlSchema } from "../site-branding";
 
 const globalModerationPolicyInputSchema = z
   .object({
@@ -192,6 +193,31 @@ export const updateSystemSettingsAction = superAdminAction
       success: result.success,
       changedKeys: result.changedKeys,
       message: "系统设置已保存",
+    };
+  });
+
+/** 保存或恢复网站 Logo；地址契约、权限与缓存副作用统一由 UOL 持有。 */
+export const setSiteLogoAction = superAdminAction
+  .metadata({ action: "system-settings.site-logo.set" })
+  .schema(
+    z
+      .object({
+        logoUrl: siteLogoUrlSchema.nullable(),
+      })
+      .strict()
+  )
+  .action(async ({ parsedInput, ctx }) => {
+    const result = await invokeOperation<{ logoUrl: string }>(
+      "settings.setSiteLogo",
+      parsedInput,
+      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
+    );
+    return {
+      ...result,
+      success: true,
+      message: parsedInput.logoUrl
+        ? "网站 Logo 已更新"
+        : "网站 Logo 已恢复为默认资源",
     };
   });
 
