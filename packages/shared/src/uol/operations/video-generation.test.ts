@@ -62,6 +62,57 @@ describe("video generation operations", () => {
     }
   });
 
+  it("Kling 3.0 接受 3 秒 1080p 首尾帧和声音开关", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    const parsed = videoGenerateInputSchema.safeParse({
+      clientRequestId: "kling3-request-1",
+      prompt: "海边日落",
+      model: "firefly-kling3-3s-16x9-1080p",
+      generateAudio: true,
+      inputImages: [image, image],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("Kling 3.0 拒绝超出时长、分辨率和首尾帧数量的请求", () => {
+    const image = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: Buffer.from("image").toString("base64"),
+      byteLength: 5,
+    };
+    const base = {
+      clientRequestId: "kling3-request-2",
+      prompt: "海边日落",
+    };
+
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        model: "firefly-kling3-2s-16x9-1080p",
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        model: "firefly-kling3-15s-9x16-480p",
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...base,
+        model: "firefly-kling3-15s-9x16-1080p",
+        inputImages: [image, image, image],
+      }).success
+    ).toBe(false);
+  });
+
   it("拒绝不支持音频的模型开启声音，但允许统一客户端显式传 false", () => {
     const base = {
       clientRequestId: "request-1",

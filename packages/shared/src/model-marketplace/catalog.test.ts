@@ -62,6 +62,9 @@ describe("模型身份规则", () => {
     expect(getStableVideoDefaultModelId("kling-o3")).toBe(
       "firefly-kling-o3-5s-16x9"
     );
+    expect(getStableVideoDefaultModelId("kling3")).toBe(
+      "firefly-kling3-3s-16x9-1080p"
+    );
     expect(getStableVideoDefaultModelId("kling3-omni")).toBe(
       "firefly-kling3-omni-3s-16x9-1080p"
     );
