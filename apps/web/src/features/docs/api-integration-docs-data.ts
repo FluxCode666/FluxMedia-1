@@ -369,7 +369,7 @@ const zhContent = {
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-001",
-    "model": "firefly-kling3-omni-8s-16x9-1080p",
+    "model": "kling3-omni-8s-16x9-1080p",
     "prompt": "A hero walking through a neon city",
     "negative_prompt": "low resolution, blur, watermark",
     "generate_audio": true,
@@ -382,7 +382,7 @@ const zhContent = {
   "task_id": "video_...",
   "generation_id": "video_...",
   "status": "pending",
-  "model": "firefly-kling3-omni-8s-16x9-1080p"
+  "model": "kling3-omni-8s-16x9-1080p"
 }`,
       parameters: [
         {
@@ -399,7 +399,7 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description:
-            "视频模型 ID，格式为 firefly-<family>-<dur>s-<ratio>[-<res>]。",
+            "视频模型 ID，格式为 <family>-<dur>s-<ratio>[-<res>]；历史 firefly- 前缀请求仍兼容。",
         },
         {
           name: "negative_prompt / negativePrompt",

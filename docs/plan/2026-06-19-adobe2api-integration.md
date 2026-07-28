@@ -17,7 +17,7 @@
 
 ## 2. adobe2api 契约摘要
 
-- **模型 id 编码一切**：图像 `firefly-<model>-<res>-<ratio>`（如 `firefly-gpt-image-2k-16x9`、`firefly-nano-banana-pro-4k-16x9`）；视频 `firefly-<model>-<duration>-<ratio>[-<res>]`（`sora2`/`sora2-pro`/`veo31`/`veo31-ref`/`veo31-fast`/`kling3`/`kling-o3`）。宽高比/分辨率/时长不是独立参数，拼进 model id。
+- **模型 id 编码一切**：平台统一使用裸 ID，图像 `<model>-<res>-<ratio>`（如 `gpt-image-2-2k-16x9`、`nano-banana-pro-4k-16x9`）；视频 `<model>-<duration>-<ratio>[-<res>]`（`sora2`/`sora2-pro`/`veo31`/`veo31-ref`/`veo31-fast`/`kling3`/`kling-o3`）。宽高比/分辨率/时长不是独立参数，拼进 model id。adobe2api gateway 的出站协议仍要求 `firefly-`，由适配器在请求边界补回。
 - **取值域**：ratio `1x1/16x9/9x16/4x3/3x4`（Nano Banana 2 另支持 `1x8/1x4/4x1/8x1`）；res 图像 `1k/2k/4k`、视频 `720p/1080p`；duration `4s/5s/6s/8s/10s/12s/15s`（按模型）。
 - **接口**：`/v1/chat/completions`（统一，messages content 支持 `image_url`=http 或 `data:image/...;base64,` → 图生图/图生视频）、`/v1/images/generations`、`/v1/entities`（Kling O3 一致性，prompt 内 `@entity:name`）、`/v1/models`。
 - **图生视频**：1 图=首帧；2 图=首+尾帧；`veo31-ref`=1–3 张参考。
@@ -39,7 +39,7 @@
 
 ### 3.2 适配层 `packages/shared/src/.../adobe/`（或 image-generation 内新模块）
 
-- `composeAdobeModelId({family, resolution, ratio, duration?})` → `firefly-...` 字符串。
+- `composeAdobeModelId({family, resolution, ratio, duration?})` → 平台规范裸 ID；gateway 请求构造器在出站边界补 `firefly-`。
 - `mapSizeToAdobe(sizeWxH)` → 最近的 `{ratio, resolution}`（Phase 1 用；新 tab 直接暴露枚举不走映射）。
 - `buildAdobeRequest(kind, params)` → `/v1/chat/completions` 或 `/v1/images/generations` body；参考图编码为 base64 data URL 放入 messages content。
 - `parseAdobeResponse(resp)` → 统一产物（图像 b64/url；视频 url），含 **异步轮询**封装（见 §8 待验证）。
@@ -56,8 +56,8 @@
 
 目标：最小闭环，复用现有创作页与单一图像管线（`operations.ts: runImageGenerationForUser`）。
 
-- 后端：`imageBackendAdobe` 成员（带 `firefly-gpt-image` 能力）纳入池调度（`image-generation/service.ts` 的池解析新增 adobe 分支，与 pool-api / pool-account 并列）。
-- 请求：生成 → `mapSizeToAdobe(size)` → `firefly-gpt-image-{res}-{ratio}` → `/v1/images/generations`（或 chat/completions）；图生图 → `/v1/chat/completions` + 输入图 base64 data URL。
+- 后端：`imageBackendAdobe` 成员（带 `gpt-image-2` 等裸模型能力）纳入池调度（`image-generation/service.ts` 的池解析新增 adobe 分支，与 pool-api / pool-account 并列）。
+- 请求：生成 → `mapSizeToAdobe(size)` → `gpt-image-2-{res}-{ratio}`，gateway 适配器补协议前缀后调用 `/v1/images/generations`（或 chat/completions）；图生图 → `/v1/chat/completions` + 输入图 base64 data URL。
 - 响应：`parseAdobeResponse` → 现有图像产物结构 → re-host → 画廊/历史照常。
 - 调度/冷却/故障转移/粘性：复用现有池机制（错误分类新增 adobe 错误形态映射）。
 - 计费：沿用图像计费（`plan-capabilities` / credits），按现有 size 维度（映射前的请求 size）。

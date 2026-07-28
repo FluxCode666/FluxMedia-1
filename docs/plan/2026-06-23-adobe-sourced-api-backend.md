@@ -112,26 +112,27 @@ api 成员参与候选的条件： (!fireflyOnly || row.adobeSourced) && (其余
 
 即「Adobe 来源」api 与真 Adobe 后端**同池按 priority 竞争**。管理员把它优先级调低即天然成为兜底。
 
-## 5. 反向转换（firefly-* → gpt）
+## 5. 反向转换（平台 Adobe 裸 ID → gpt）
 
-当**被选中的后端是「Adobe 来源」api** 且**请求模型以 `firefly-` 开头**时，在 api 派发前改写出站请求：
+当**被选中的后端是「Adobe 来源」api** 且请求模型可解析为 Adobe 图片家族时，在 api
+派发前改写出站请求。历史 `firefly-*` 输入会在统一请求边界先规范为裸 ID：
 
-- **出站 model**：从 firefly id 截取家族名，复用现有
-  `pickExplicitAdobeImageFamily`（按最长前缀从 `firefly-` 后截，避免 `nano-banana`
+- **出站 model**：从平台裸 ID 截取家族名，复用现有
+  `pickExplicitAdobeImageFamily`（按最长家族前缀匹配，避免 `nano-banana`
   误吞 `nano-banana-pro`/`nano-banana2`）。截得的家族即 gpt 侧模型名：
   `gpt-image-2` / `gpt-image-1.5` / `nano-banana` / `nano-banana2` / `nano-banana-pro`。
   - **可选覆盖**：若该后端 `image_backend_api.model` 非空，则用它（兼容个别 provider 用不同模型名）；否则用截取值。
   - 截不出家族（未知 firefly id）→ 该后端无法服务此请求，按错误处理，调度回退到下一候选 / 真 Adobe。
 - **出站 size**：
-  - 全量 id（`firefly-<家族>-<res>-<ratio>`）：由 `<res>/<ratio>` 推像素，复用
+  - 全量 id（`<家族>-<res>-<ratio>`）：由 `<res>/<ratio>` 推像素，复用
     `sizeFromRatio`（非 gpt-image 家族）/ `gptImagePixelsFromRatio`（gpt-image 家族），转成 OpenAI `size`（`"WxH"`）。
-  - 族级 id（`firefly-gpt-image-2`，无 res/ratio）：沿用请求自带 `size`。
+  - 族级 id（`gpt-image-2`，无 res/ratio）：沿用请求自带 `size`。
 - **绕开校验**：现有 `getModel` 只认 `gpt-image-*`，截出的 `nano-banana-*` 会被拒；
   本路径直接用截得的家族名发请求，不经 `getModel` 的 gpt-image-only 校验。
 - 触发条件之外（普通 gpt 请求，含 `force_firefly` 路由的 gpt-image）：**不做任何转换**，按普通 api 处理。
 - 需把 `adobeSourced` 透传到 `config.backend`（pool-api）以便派发层判定。
 
-边界小结：反向转换**只在 `pool-api + adobeSourced + 请求模型 firefly-*`** 三条件同时满足时触发。
+边界小结：反向转换**只在 `pool-api + adobeSourced + Adobe 图片裸 ID`** 三条件同时满足时触发。
 
 ## 6. 后台
 
@@ -145,14 +146,14 @@ create/update service 持久化这两列（列有 DB 默认，旧数据/旧调�
 
 - **计费**：`adobeSourced=true` 时 `config.backend.billingMultiplier = 组×成员`；
   `adobeSourced=false` 时仅组倍率（成员倍率被忽略）。
-- **调度候选**：`adobeSourced` api 在 `fireflyOnly` 下进入候选；普通 api 不进。
-- **反向映射**：`firefly-gpt-image-2-2k-16x9` → model `gpt-image-2` + 由 `2k/16x9` 推出的 size；
-  族级 `firefly-nano-banana-pro` → model `nano-banana-pro` + 用请求 size；未知 id → 不可服务。
+- **调度候选**：`adobeSourced` api 在 Adobe 图片请求下进入候选；普通 api 不进。
+- **反向映射**：`gpt-image-2-2k-16x9` → model `gpt-image-2` + 由 `2k/16x9` 推出的 size；
+  族级 `nano-banana-pro` → model `nano-banana-pro` + 用请求 size；未知 id → 不可服务。
 - 纯函数（家族截取、size 推导）抽到 DB-free 模块单测。
 
 ## 8. 不在本期范围
 
-- **视频**：firefly-* 视频模型仍只走真 Adobe；`billingMultiplier` 的视频口径已存在，
+- **视频**：Adobe 视频裸 ID 仍只走真 Adobe；`billingMultiplier` 的视频口径已存在，
   若将来该类 api 真出视频会自动生效，但本期不接视频路径。
 - 多 provider 不同模型名的批量映射表（用 `model` 单字段覆盖即可覆盖现状）。
 

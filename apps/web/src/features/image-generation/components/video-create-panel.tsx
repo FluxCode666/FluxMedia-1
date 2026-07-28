@@ -3,7 +3,7 @@
 /**
  * Adobe Firefly 视频创作面板（自包含）。
  *
- * 选模型族(13族) + 时长 + 比例[+分辨率] → 组装 firefly-<family>-<dur>s-<ratio>[-<res>]
+ * 选模型族(13族) + 时长 + 比例[+分辨率] → 组装 <family>-<dur>s-<ratio>[-<res>]
  * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
  * 产物视频。模型支持时可上传首尾帧；Kling 3.0 Omni 还可切换最多三张参考图。
  * 与图像创作解耦，作为创作页独立 tab。

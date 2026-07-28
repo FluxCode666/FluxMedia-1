@@ -25,7 +25,7 @@ async function main() {
   console.log("jwt claims keys:", Object.keys(claims));
   console.log("user_id:", claims.user_id || claims.sub || claims.aa_id);
 
-  const model = resolveFireflyImageModel("firefly-gpt-image-2k-1x1");
+  const model = resolveFireflyImageModel("gpt-image-2-2k-1x1");
   if (!model) throw new Error("model missing");
   const prompt = "a red apple on white background";
   const payloads = buildFireflyImagePayloadCandidates({

@@ -12,33 +12,32 @@
 
 ## 1. 视频模型目录
 
-model-id 格式：`firefly-{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
+平台规范 model-id 格式：`{family}-{dur}s-{ratio}[-{res}]`；ratio 后缀
 `1:1→1x1, 4:3→4x3, 3:4→3x4, 16:9→16x9, 9:16→9x16, 21:9→21x9`。
 
 | family | model-id 格式 | 时长(s) | 比例 | 分辨率 | upstream `model` | `modelId` | `modelVersion` | engine/flags |
 |---|---|---|---|---|---|---|---|---|
-| sora2 | `firefly-sora2-{d}s-{ratio}` | 4,8,12 | 9:16,16:9 | 720p 固定 | `openai:firefly:colligo:sora2`（待核 base vs pro） | `sora` | `sora-2` | sora2 |
-| sora2-pro | `firefly-sora2-pro-{d}s-{ratio}` | 4,8,12 | 9:16,16:9 | 720p | `openai:firefly:colligo:sora2-pro` | `sora` | `sora-2` | sora2 |
-| veo31 | `firefly-veo31-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31` | `veo` | `3.1-generate` | `veo31-standard` |
-| veo31-ref | `firefly-veo31-ref-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31` | `veo` | `3.1-generate` | `veo31-standard` + `reference_mode:"image"` |
-| veo31-fast | `firefly-veo31-fast-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31-fast` | `veo` | `3.1-fast-generate` | `veo31-fast` |
-| kling-o3 | `firefly-kling-o3-{d}s-{ratio}` | 5,15 | 16:9,9:16 | 1080p 固定 | `kling:firefly:colligo:o3` | `kling` | `kling_o3_pro_reference_to_video` | `kling-o3` |
-| kling3 | `firefly-kling3-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3` | `kling3` + 默认有声 + 首尾帧 |
-| kling3-omni | `firefly-kling3-omni-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3_omni` | `kling3-omni` + 默认无声 + 首尾帧/最多 3 张参考图 |
-| runway-gen45 | `firefly-runway-gen45-{d}s-16x9` | 5,8,10 | 16:9 | 720p 固定 | 不发送 | `runway` | `gen4.5` | `runway-gen45` + 无声 + 仅文本 |
-| ray314 | `firefly-ray314-{d}s-{ratio}-{res}` | 5,10 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray` | `ray314` + `mode:flex_2` + 无声 + 仅文本 |
-| ray314-hdr | `firefly-ray314-hdr-{d}s-{ratio}-{res}` | 5 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray-hdr` | `ray314-hdr` + 无声 + 仅文本 |
-| seedance2 | `firefly-seedance2-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p,1080p | 不发送 | `seedance` | `seedance_2.0` | `seedance2` + 默认无声 + 单图 style |
-| seedance2-fast | `firefly-seedance2-fast-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p | 不发送 | `seedance` | `seedance_2.0_fast` | `seedance2` + 默认无声 + 单图 style |
+| sora2 | `sora2-{d}s-{ratio}` | 4,8,12 | 9:16,16:9 | 720p 固定 | `openai:firefly:colligo:sora2`（待核 base vs pro） | `sora` | `sora-2` | sora2 |
+| sora2-pro | `sora2-pro-{d}s-{ratio}` | 4,8,12 | 9:16,16:9 | 720p | `openai:firefly:colligo:sora2-pro` | `sora` | `sora-2` | sora2 |
+| veo31 | `veo31-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31` | `veo` | `3.1-generate` | `veo31-standard` |
+| veo31-ref | `veo31-ref-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31` | `veo` | `3.1-generate` | `veo31-standard` + `reference_mode:"image"` |
+| veo31-fast | `veo31-fast-{d}s-{ratio}-{res}` | 4,6,8 | 16:9,9:16 | 1080p,720p | `google:firefly:colligo:veo31-fast` | `veo` | `3.1-fast-generate` | `veo31-fast` |
+| kling-o3 | `kling-o3-{d}s-{ratio}` | 5,15 | 16:9,9:16 | 1080p 固定 | `kling:firefly:colligo:o3` | `kling` | `kling_o3_pro_reference_to_video` | `kling-o3` |
+| kling3 | `kling3-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3` | `kling3` + 默认有声 + 首尾帧 |
+| kling3-omni | `kling3-omni-{d}s-{ratio}-{res}` | 3–15（逐秒） | 16:9,9:16 | 720p,1080p | 不发送 | `kling` | `kling_v3_omni` | `kling3-omni` + 默认无声 + 首尾帧/最多 3 张参考图 |
+| runway-gen45 | `runway-gen45-{d}s-16x9` | 5,8,10 | 16:9 | 720p 固定 | 不发送 | `runway` | `gen4.5` | `runway-gen45` + 无声 + 仅文本 |
+| ray314 | `ray314-{d}s-{ratio}-{res}` | 5,10 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray` | `ray314` + `mode:flex_2` + 无声 + 仅文本 |
+| ray314-hdr | `ray314-hdr-{d}s-{ratio}-{res}` | 5 | 1:1,4:3,3:4,16:9,9:16,21:9 | 720p,1080p,4k | 不发送 | `luma` | `3.14-ray-hdr` | `ray314-hdr` + 无声 + 仅文本 |
+| seedance2 | `seedance2-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p,1080p | 不发送 | `seedance` | `seedance_2.0` | `seedance2` + 默认无声 + 单图 style |
+| seedance2-fast | `seedance2-fast-{d}s-{ratio}-{res}` | 4–15（逐秒） | 1:1,4:3,3:4,16:9,9:16,21:9 | 480p,720p | 不发送 | `seedance` | `seedance_2.0_fast` | `seedance2` + 默认无声 + 单图 style |
 
-表中的 `firefly-*` 是规范模型 ID；入口同时兼容不带前缀的 `veo31*`、`veo31-ref*`、
-`veo31-fast*`、`kling-o3*`、`kling3*`、`kling3-omni*`、`runway-gen45*`、
-`ray314*`、`ray314-hdr*`、`seedance2*`、`seedance2-fast*` 裸模型，内部统一
-归一化后按同一目录派发。
+表中的裸 ID 是平台规范模型 ID。入口暂时兼容历史 `firefly-*` 请求，但会在校验边界
+移除前缀；能力配置、任务记录、模型目录和响应一律返回裸 ID。Adobe host、上游
+`model` 字段以及外部 adobe2api gateway 的协议前缀不属于平台模型身份。
 
-Kling 3.0 旧规范 ID `firefly-kling3-{5|10|15}s-{ratio}` 继续作为 720p
-兼容别名解析，但不再进入新成员的可选模型目录。这样旧客户端、历史成员白名单和未完成
-任务可以平滑迁移，同时新请求使用带分辨率的无歧义规范 ID。
+Kling 3.0 旧规范 ID `kling3-{5|10|15}s-{ratio}` 继续作为 720p 兼容别名解析；
+历史带 `firefly-` 前缀的同类输入也会先去前缀再解析，但两者都不再进入新成员的可选
+模型目录。新请求使用带分辨率的无歧义规范 ID。
 
 ## 2. Adobe Firefly 上游视频 API（host `https://firefly-3p.ff.adobe.io`）
 

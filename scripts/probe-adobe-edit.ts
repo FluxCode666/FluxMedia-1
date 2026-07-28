@@ -77,9 +77,8 @@ async function main() {
   );
   console.log("uploaded blobId:", blobId);
 
-  // 被测 model id 走环境变量，默认 gpt-image-2；可传 firefly-nano-banana-pro-2k-1x1 等。
-  const modelId =
-    process.env.PROBE_MODEL_ID?.trim() || "firefly-gpt-image-2-2k-1x1";
+  // 被测 model id 走环境变量；平台规范使用不带 firefly- 前缀的裸 ID。
+  const modelId = process.env.PROBE_MODEL_ID?.trim() || "gpt-image-2-2k-1x1";
   const model = resolveFireflyImageModel(modelId);
   if (!model) throw new Error(`model resolve failed: ${modelId}`);
   console.log("probing model:", modelId);
