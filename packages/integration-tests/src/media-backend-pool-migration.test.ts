@@ -1,7 +1,7 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068-0070 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0072 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
  * 作用域。
@@ -60,6 +60,18 @@ const LEGACY_DIRECT_VIDEO_MODEL_IDS = [
   ),
 ];
 
+/** 0072 追加给既有 Kling 3.0 direct 成员的官网规范组合快照。 */
+const KLING3_CANONICAL_VIDEO_MODEL_IDS = [
+  ...Array.from({ length: 13 }, (_, index) => index + 3).flatMap((duration) =>
+    ["16x9", "9x16"].flatMap((aspectRatio) =>
+      ["1080p", "720p"].map(
+        (resolution) =>
+          `firefly-kling3-${duration}s-${aspectRatio}-${resolution}`
+      )
+    )
+  ),
+];
+
 let pool: Pool | null = null;
 
 const migrationPaths = [
@@ -71,6 +83,8 @@ const migrationPaths = [
   "0068_adobe_direct_auth_profiles.sql",
   "0069_video_adobe_profiles.sql",
   "0070_video_express_auth_profile.sql",
+  "0071_video_matching_auth_profile.sql",
+  "0072_kling3_video_protocol.sql",
 ].map((filename) =>
   fileURLToPath(new URL(`../../database/drizzle/${filename}`, import.meta.url))
 );
@@ -78,7 +92,11 @@ const compatibilityMigrationPath = migrationPaths.at(4);
 const profileMigrationPaths = migrationPaths.slice(5);
 const compatibilityUpgradePaths = migrationPaths.slice(4);
 const videoAuthRepairMigrationPath = migrationPaths.at(7);
+const matchingVideoAuthMigrationPath = migrationPaths.at(8);
+const kling3VideoProtocolMigrationPath = migrationPaths.at(9);
 const migrationsBeforeVideoAuthRepair = migrationPaths.slice(0, 7);
+const migrationsBeforeMatchingVideoAuth = migrationPaths.slice(0, 8);
+const migrationsBeforeKling3VideoProtocol = migrationPaths.slice(0, 9);
 
 /** 验证随机 schema 名并返回安全的双引号标识符。 */
 function quoteSchemaName(schemaName: string): string {
@@ -507,7 +525,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0060-0063、0066、0068-0070 统一媒体号池迁移", () => {
+describe("0060-0063、0066、0068-0072 统一媒体号池迁移", () => {
   it("空旧号池原子切换到统一成员模型并清理设置", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const client = await pool.connect();
@@ -939,7 +957,11 @@ describe("0060-0063、0066、0068-0070 统一媒体号池迁移", () => {
         (member) => member.id === "legacy-adobe"
       );
       expect(new Set(migratedAdobeMember?.supported_model_ids)).toEqual(
-        new Set(["gpt-image-2", ...LEGACY_DIRECT_VIDEO_MODEL_IDS])
+        new Set([
+          "gpt-image-2",
+          ...LEGACY_DIRECT_VIDEO_MODEL_IDS,
+          ...KLING3_CANONICAL_VIDEO_MODEL_IDS,
+        ])
       );
       const apiConfig = await client.query<{
         api_key: string;
@@ -1579,6 +1601,191 @@ describe("0060-0063、0066、0068-0070 统一媒体号池迁移", () => {
         where id = 'profile-repair-video'
       `);
       expect(accepted.rows[0]?.adobe_auth_profile).toBe("firefly");
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("0071 只让尚未提交任务的鉴权 Profile 匹配请求端点", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    if (!matchingVideoAuthMigrationPath) {
+      throw new Error("0071 视频鉴权匹配迁移路径缺失");
+    }
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await client.query(`
+        insert into video_generation (id, user_id, status)
+        values ('matching-profile-video', 'user-1', 'pending')
+      `);
+      await executeMigrations(
+        client,
+        schemaName,
+        migrationsBeforeMatchingVideoAuth
+      );
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await client.query(`
+        update video_generation
+        set adobe_request_profile = 'firefly',
+            adobe_auth_profile = 'express',
+            stage = 'created'
+        where id = 'matching-profile-video'
+      `);
+
+      await executeMigrations(client, schemaName, [
+        matchingVideoAuthMigrationPath,
+      ]);
+      const firefly = await client.query<{ adobe_auth_profile: string }>(`
+        select adobe_auth_profile
+        from video_generation
+        where id = 'matching-profile-video'
+      `);
+      expect(firefly.rows[0]?.adobe_auth_profile).toBe("firefly");
+
+      await client.query(`
+        update video_generation
+        set adobe_request_profile = 'express',
+            adobe_auth_profile = 'firefly',
+            stage = 'charged'
+        where id = 'matching-profile-video'
+      `);
+      await executeMigrations(client, schemaName, [
+        matchingVideoAuthMigrationPath,
+      ]);
+      const express = await client.query<{ adobe_auth_profile: string }>(`
+        select adobe_auth_profile
+        from video_generation
+        where id = 'matching-profile-video'
+      `);
+      expect(express.rows[0]?.adobe_auth_profile).toBe("express");
+
+      await client.query(`
+        update video_generation
+        set adobe_request_profile = 'firefly',
+            adobe_auth_profile = 'express',
+            stage = 'polling'
+        where id = 'matching-profile-video'
+      `);
+      await executeMigrations(client, schemaName, [
+        matchingVideoAuthMigrationPath,
+      ]);
+      const accepted = await client.query<{ adobe_auth_profile: string }>(`
+        select adobe_auth_profile
+        from video_generation
+        where id = 'matching-profile-video'
+      `);
+      expect(accepted.rows[0]?.adobe_auth_profile).toBe("express");
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("0072 为已有 Kling 3.0 direct 成员追加规范组合并修复未提交任务身份", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    if (!kling3VideoProtocolMigrationPath) {
+      throw new Error("0072 Kling 3.0 协议迁移路径缺失");
+    }
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createLegacySchema(client);
+      await executeMigrations(
+        client,
+        schemaName,
+        migrationsBeforeKling3VideoProtocol
+      );
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await client.query(`
+        insert into image_backend_member (
+          id, type, name, supported_model_ids
+        ) values (
+          'kling3-direct-member',
+          'adobe',
+          'Kling 3.0 direct',
+          '["firefly-kling3-10s-16x9"]'::json
+        );
+        insert into image_backend_member_adobe_config (
+          member_id, mode, cookie, access_token, credential_status
+        ) values (
+          'kling3-direct-member',
+          'direct',
+          'cookie',
+          'express-token',
+          'active'
+        );
+        insert into video_generation (
+          id, user_id, model, family, status,
+          principal_scope, adobe_request_profile, adobe_auth_profile, stage
+        ) values
+          (
+            'kling3-created-video', 'user-1',
+            'firefly-kling3-3s-16x9-1080p', 'kling3', 'pending',
+            'user:user-1', 'firefly', 'express', 'created'
+          ),
+          (
+            'kling3-polling-video', 'user-1',
+            'firefly-kling3-3s-16x9-1080p', 'kling3', 'pending',
+            'user:user-1', 'firefly', 'express', 'polling'
+          );
+      `);
+
+      await executeMigrations(client, schemaName, [
+        kling3VideoProtocolMigrationPath,
+      ]);
+
+      const member = await client.query<{
+        supported_model_ids: string[];
+      }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'kling3-direct-member'
+      `);
+      const modelIds = member.rows[0]?.supported_model_ids ?? [];
+      expect(modelIds).toHaveLength(53);
+      expect(modelIds).toEqual(
+        expect.arrayContaining([
+          "firefly-kling3-10s-16x9",
+          "firefly-kling3-3s-16x9-1080p",
+          "firefly-kling3-15s-9x16-720p",
+        ])
+      );
+      expect(new Set(modelIds).size).toBe(modelIds.length);
+
+      const videos = await client.query<{
+        id: string;
+        adobe_request_profile: string;
+        adobe_auth_profile: string;
+      }>(`
+        select id, adobe_request_profile, adobe_auth_profile
+        from video_generation
+        where id in ('kling3-created-video', 'kling3-polling-video')
+        order by id
+      `);
+      expect(videos.rows).toEqual([
+        {
+          id: "kling3-created-video",
+          adobe_request_profile: "firefly",
+          adobe_auth_profile: "firefly",
+        },
+        {
+          id: "kling3-polling-video",
+          adobe_request_profile: "firefly",
+          adobe_auth_profile: "express",
+        },
+      ]);
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

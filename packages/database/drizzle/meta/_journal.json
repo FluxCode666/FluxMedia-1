@@ -498,6 +498,20 @@
       "when": 1785196803000,
       "tag": "0070_video_express_auth_profile",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1785232800000,
+      "tag": "0071_video_matching_auth_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1785236400000,
+      "tag": "0072_kling3_video_protocol",
+      "breakpoints": true
     }
   ]
 }
