@@ -380,7 +380,7 @@ describe("管理与公开 DTO", () => {
 
     expect(parsed).toMatchObject({
       category: "video",
-      defaultModelId: "firefly-veo31-4s-16x9-1080p",
+      defaultModelId: "veo31-4s-16x9-1080p",
     });
   });
 });

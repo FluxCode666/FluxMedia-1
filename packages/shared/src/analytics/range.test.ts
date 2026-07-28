@@ -147,7 +147,7 @@ describe("usage analytics range contracts", () => {
       modelDistribution: {
         models: [
           { model: "gpt-image-1", taskCount: 2 },
-          { model: "firefly-video", taskCount: 1 },
+          { model: "video", taskCount: 1 },
         ],
         totalTasks: 3,
       },

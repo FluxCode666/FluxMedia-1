@@ -22,6 +22,13 @@ describe("imageModelIdSchema", () => {
     expect(imageModelIdSchema.parse("  gpt-image-2  ")).toBe("gpt-image-2");
   });
 
+  it("兼容历史 Firefly 前缀并输出裸 ID", () => {
+    expect(imageModelIdSchema.parse("firefly-gpt-image-2")).toBe("gpt-image-2");
+    expect(imageModelIdSchema.parse("FIREFLY-NANO-BANANA-PRO")).toBe(
+      "NANO-BANANA-PRO"
+    );
+  });
+
   it("拒绝超过 120 个字符的模型 ID", () => {
     expect(imageModelIdSchema.safeParse("m".repeat(121)).success).toBe(false);
   });

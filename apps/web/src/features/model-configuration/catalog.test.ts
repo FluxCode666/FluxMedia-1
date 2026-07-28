@@ -92,7 +92,7 @@ describe("buildModelConfigurationSnapshot", () => {
       (entry) => `${entry.category}:${entry.configKey}`
     );
     const builtInImages = ADOBE_IMAGE_MODEL_IDS.map(
-      (modelId) => `image:${modelId.slice("firefly-".length)}`
+      (modelId) => `image:${modelId}`
     );
     const builtInVideos = ADOBE_VIDEO_PRICING_FAMILIES.map(
       (family) => `video:${family}`

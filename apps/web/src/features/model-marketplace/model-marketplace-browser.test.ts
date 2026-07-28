@@ -36,7 +36,7 @@ const IMAGE_MODEL: ModelMarketplacePublicItem = {
 const VIDEO_MODEL: ModelMarketplacePublicItem = {
   category: "video",
   configKey: "veo31",
-  defaultModelId: "firefly-veo31-6s-9x16-1080p",
+  defaultModelId: "veo31-6s-9x16-1080p",
   displayName: "Veo 3.1",
   iconKey: "google",
   description: "Reference-aware video generation",

@@ -126,7 +126,8 @@ describe("history service", () => {
       "image",
       "video",
     ]);
-    expect(result.modelOptions).toEqual(["firefly-sora2", "gpt-image-2"]);
+    expect(result.records[1]?.model).toBe("sora2");
+    expect(result.modelOptions).toEqual(["gpt-image-2", "sora2"]);
     expect(result.nextCursor).toEqual(expect.any(String));
     expect(result.previousCursor).toBeNull();
   });

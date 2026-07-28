@@ -35,7 +35,7 @@ describe("external async image tasks", () => {
     const task = createAsyncImageTask({
       userId: "user_1",
       apiKeyId: "key_1",
-      model: "gpt-image-2",
+      model: "firefly-gpt-image-2",
       generationIds: ["gen_1"],
     });
 
@@ -155,6 +155,7 @@ describe("external async image tasks", () => {
     expect(res).toMatchObject({
       id: "vid_1",
       object: "video",
+      model: "sora2-8s-16x9",
       status: "completed",
       duration_seconds: 8,
       generation_id: "vid_1",

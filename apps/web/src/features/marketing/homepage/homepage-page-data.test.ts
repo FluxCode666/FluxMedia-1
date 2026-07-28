@@ -123,7 +123,7 @@ const PUBLIC_IMAGE_MODEL = {
 const PUBLIC_VIDEO_MODEL = {
   category: "video" as const,
   configKey: "veo31",
-  defaultModelId: "firefly-veo31-6s-16x9-1080p",
+  defaultModelId: "veo31-6s-16x9-1080p",
   displayName: "Veo 3.1",
   iconKey: "google" as const,
   description: "Video generation",
@@ -528,7 +528,7 @@ describe("HomepageContent 服务端完成态", () => {
         catalog: {
           status: "ready",
           image: [
-            { id: " firefly-image-4-ultra " },
+            { id: " image-4-ultra " },
             { id: "gpt-image-2" },
             { id: "imagen-4" },
             { id: "gpt-image-1.5" },
@@ -544,7 +544,7 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).toContain('data-model-category="image"');
     expect(html).toContain('id="models"');
     expect(html).not.toMatch(/role="(?:tab|tablist|tabpanel)"/);
-    expect(html).toContain("firefly-image-4-ultra");
+    expect(html).toContain("image-4-ultra");
     expect(html).toContain("gpt-image-2");
     expect(html).toContain("imagen-4");
     expect(html).not.toContain("preview-overflow-canary");
@@ -552,9 +552,7 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).toContain("查看全部模型");
     expect(html).toContain("快速集成");
     expect(html).toContain("/v1/images/generations");
-    expect(html).toContain(
-      "&quot;model&quot;:&quot;firefly-image-4-ultra&quot;"
-    );
+    expect(html).toContain("&quot;model&quot;:&quot;image-4-ultra&quot;");
     expect(html).toContain("%2Fcinema%2Fwall%2Fw01.webp");
     expect(html).toContain("96.00%");
     expect(html).toContain("为什么有时看不到可靠性百分比？");

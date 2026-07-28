@@ -16,6 +16,7 @@ import {
 } from "@repo/shared/generation-maintenance";
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
+import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 import { logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { getStorageProvider } from "@repo/shared/storage/providers";
@@ -377,9 +378,9 @@ function hasImageOutput(result: GenerateImageResult) {
   );
 }
 
-/** 将显式传入的公开 `default` 别名收敛到平台默认图片模型能力键。 */
+/** 将历史前缀与公开 `default` 别名收敛到平台规范图片模型能力键。 */
 function resolveRequestedImageModel(model: string): string {
-  const requestedModel = model.trim();
+  const requestedModel = normalizeSupportedModelId(model) ?? model.trim();
   if (requestedModel.toLowerCase() === "default") {
     return DEFAULT_IMAGE_MODEL;
   }

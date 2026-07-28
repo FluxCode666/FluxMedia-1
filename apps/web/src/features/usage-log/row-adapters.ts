@@ -18,6 +18,7 @@ import {
   usageEventSchema,
 } from "@repo/shared/credits/usage-log-contract";
 import { encodeUsageEventRef } from "@repo/shared/credits/usage-log-token";
+import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 
 /** 主查询返回的安全窄行；stableId 只进入签名引用，不进入响应字段。 */
 export interface UsageLogListRow {
@@ -192,7 +193,8 @@ export function adaptRequestDetailRow(
     businessType: row.businessType,
     sourceChannel: row.sourceChannel,
     status,
-    modelOrEndpoint: row.modelOrEndpoint,
+    modelOrEndpoint:
+      normalizeSupportedModelId(row.modelOrEndpoint) ?? row.modelOrEndpoint,
     actualUsage,
     grossConsumed,
     refunded,

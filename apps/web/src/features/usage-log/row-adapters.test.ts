@@ -63,6 +63,7 @@ describe("usage log row adapters", () => {
     expect(detail).toMatchObject({
       failureCode: "timeout",
       grossConsumed: 40,
+      modelOrEndpoint: "video",
       refunded: 40,
       netConsumed: 0,
     });

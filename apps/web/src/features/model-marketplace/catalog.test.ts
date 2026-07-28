@@ -64,7 +64,7 @@ describe("buildModelMarketplaceCatalog", () => {
       expect.objectContaining({
         category: "image",
         configKey: "gpt-image-2",
-        defaultModelId: "firefly-gpt-image-2",
+        defaultModelId: "gpt-image-2",
         iconKey: "openai",
         description: expect.stringMatching(/图像|文字/),
         pricing: EXPLICIT_IMAGE_PRICING,
@@ -87,7 +87,7 @@ describe("buildModelMarketplaceCatalog", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       configKey: "gpt-image-2",
-      defaultModelId: "firefly-gpt-image-2",
+      defaultModelId: "gpt-image-2",
     });
   });
 
@@ -154,7 +154,7 @@ describe("buildModelMarketplaceCatalog", () => {
       expect.objectContaining({
         category: "video",
         configKey: "veo31",
-        defaultModelId: "firefly-veo31-6s-16x9-1080p",
+        defaultModelId: "veo31-6s-16x9-1080p",
         iconKey: "google",
         priceUnit: "per_second",
         creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
@@ -185,7 +185,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "kling3-omni",
         displayName: "Kling 3.0 Omni",
-        defaultModelId: "firefly-kling3-omni-3s-16x9-1080p",
+        defaultModelId: "kling3-omni-3s-16x9-1080p",
         iconKey: "kling",
         creditsPerSecond: 30,
         supportedDurations: [3, 15],
@@ -214,7 +214,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "runway-gen45",
         displayName: "Runway Gen-4.5",
-        defaultModelId: "firefly-runway-gen45-5s-16x9",
+        defaultModelId: "runway-gen45-5s-16x9",
         iconKey: "generic",
         description: expect.stringContaining("16:9"),
         creditsPerSecond: 30,
@@ -244,7 +244,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "ray314",
         displayName: "Ray 3.14",
-        defaultModelId: "firefly-ray314-5s-16x9-4k",
+        defaultModelId: "ray314-5s-16x9-4k",
         iconKey: "generic",
         description: expect.stringContaining("高分辨率"),
         creditsPerSecond: 30,
@@ -274,7 +274,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "ray314-hdr",
         displayName: "Ray 3.14 HDR",
-        defaultModelId: "firefly-ray314-hdr-5s-16x9-4k",
+        defaultModelId: "ray314-hdr-5s-16x9-4k",
         iconKey: "generic",
         description: expect.stringContaining("高动态范围"),
         creditsPerSecond: 30,

@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { MAX_VIDEO_CREDITS_PER_SECOND } from "../adobe/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
+import { normalizeSupportedModelId } from "../image-backend/supported-models";
 
 export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
@@ -323,7 +324,12 @@ export const modelConfigurationSnapshotSchema = z
 
 const publicCommonShape = {
   configKey: realModelConfigKeySchema,
-  defaultModelId: z.string().trim().min(1).max(255),
+  defaultModelId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .transform((modelId) => normalizeSupportedModelId(modelId) ?? modelId),
   displayName: z.string().trim().min(1).max(160),
   iconKey: modelMarketplaceIconKeySchema,
   description: descriptionSchema,

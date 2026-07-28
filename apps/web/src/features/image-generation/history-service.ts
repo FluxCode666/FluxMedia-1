@@ -6,7 +6,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-
+import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 import {
   type HistoryCreditDetails,
   type HistoryCursorFilters,
@@ -302,6 +302,7 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
   const { rawError, ...safeRow } = row;
   const common = {
     ...safeRow,
+    model: normalizeSupportedModelId(row.model) ?? row.model,
     error: sanitizeHistoryError(rawError),
     createdAt: toIsoDateTime(row.createdAt),
     completedAt: row.completedAt ? toIsoDateTime(row.completedAt) : null,
@@ -344,10 +345,12 @@ export async function loadHistoryRecords(
   dependencies: { repository: HistoryRepository; tokenSecret?: string }
 ): Promise<HistoryListOutput> {
   const parsed = historyListInputSchema.parse(request.input);
+  const requestedModel =
+    normalizeSupportedModelId(parsed.model) ?? parsed.model;
   const filters = historyCursorFiltersSchema.parse({
     createdFrom: parsed.createdFrom,
     createdTo: parsed.createdTo,
-    model: parsed.model,
+    model: requestedModel,
     status: parsed.status,
     type: parsed.type,
   });
@@ -382,7 +385,7 @@ export async function loadHistoryRecords(
       start: range.start,
       end: range.end,
       asOf,
-      model: parsed.model,
+      model: requestedModel,
       status: parsed.status,
       type: parsed.type,
       cursor,
@@ -426,7 +429,11 @@ export async function loadHistoryRecords(
   const previousCursor =
     first && canReadPrevious ? createCursor(first, "previous") : null;
   const modelOptions = Array.from(
-    new Set(rawModelOptions.map((model) => model.trim()).filter(Boolean))
+    new Set(
+      rawModelOptions
+        .map((model) => normalizeSupportedModelId(model))
+        .filter((model): model is string => Boolean(model))
+    )
   )
     .sort((left, right) => left.localeCompare(right))
     .slice(0, 200);
