@@ -26,6 +26,11 @@ describe("firefly video catalog", () => {
       "seedance2-fast",
     ]);
     expect(Object.keys(FIREFLY_VIDEO_MODEL_CATALOG)).toHaveLength(573);
+    expect(
+      Object.keys(FIREFLY_VIDEO_MODEL_CATALOG).every(
+        (modelId) => !modelId.startsWith("firefly-")
+      )
+    ).toBe(true);
   });
 
   it("sora2 不拼分辨率,固定 720p,带 sora 上游", () => {
@@ -61,7 +66,7 @@ describe("firefly video catalog", () => {
     });
   });
 
-  it("裸 Veo/Kling 模型族兼容解析为同一 Firefly 目录", () => {
+  it("裸 ID 是规范格式且所有历史 Firefly 前缀继续兼容", () => {
     expect(resolveFireflyVideoModel("veo31-6s-16x9-1080p")).toMatchObject({
       family: "veo31",
       upstreamModelId: "veo",
@@ -71,6 +76,8 @@ describe("firefly video catalog", () => {
       upstreamModelId: "kling",
     });
     expect(isFireflyVideoModelId("kling-o3-15s-9x16")).toBe(true);
+    expect(isFireflyVideoModelId("sora2-8s-16x9")).toBe(true);
+    expect(isFireflyVideoModelId("firefly-sora2-8s-16x9")).toBe(true);
   });
 
   it("veo31-ref 带 referenceMode=image", () => {
@@ -153,7 +160,7 @@ describe("firefly video catalog", () => {
     });
     expect(
       Object.keys(FIREFLY_VIDEO_MODEL_CATALOG).some(
-        (id) => id === "firefly-kling3-10s-16x9"
+        (id) => id === "kling3-10s-16x9"
       )
     ).toBe(false);
   });
@@ -479,7 +486,7 @@ describe("firefly video catalog", () => {
     expect(resolveFireflyVideoModel("firefly-gpt-image-2-2k-1x1")).toBeNull();
     expect(isFireflyVideoModelId("firefly-veo31-6s-16x9-1080p")).toBe(true);
     expect(isFireflyVideoModelId("nope")).toBe(false);
-    expect(isFireflyVideoModelId("sora2-8s-16x9")).toBe(false);
+    expect(isFireflyVideoModelId("sora2-8s-16x9")).toBe(true);
   });
 
   it("Seedance 尺寸以短边分辨率映射全部比例", () => {

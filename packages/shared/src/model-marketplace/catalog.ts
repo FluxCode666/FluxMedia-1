@@ -108,7 +108,7 @@ function getResolutionNumber(resolution: string): number {
 }
 
 /**
- * 把兼容裸 ID 转成 Firefly 目录中的规范完整 ID。
+ * 把历史前缀 ID 转成目录中的规范裸完整 ID。
  *
  * @param modelId - 运行时提供的候选 ID。
  * @returns 可在内置目录中定位的规范 ID；未知 ID 返回 null。
@@ -116,11 +116,12 @@ function getResolutionNumber(resolution: string): number {
 function normalizeVideoCatalogModelId(modelId: string): string | null {
   const normalized = modelId.trim().toLowerCase();
   if (!normalized) return null;
-  if (Object.hasOwn(FIREFLY_VIDEO_MODEL_CATALOG, normalized)) {
-    return normalized;
-  }
-  const prefixed = `firefly-${normalized}`;
-  return Object.hasOwn(FIREFLY_VIDEO_MODEL_CATALOG, prefixed) ? prefixed : null;
+  const canonical = normalized.startsWith("firefly-")
+    ? normalized.slice("firefly-".length)
+    : normalized;
+  return Object.hasOwn(FIREFLY_VIDEO_MODEL_CATALOG, canonical)
+    ? canonical
+    : null;
 }
 
 /**

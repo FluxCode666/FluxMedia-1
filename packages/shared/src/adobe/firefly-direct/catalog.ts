@@ -112,7 +112,7 @@ function registerGptImageFamily(): void {
       const resLower = res.toLowerCase();
       for (const ratio of Object.keys(GPT_IMAGE_RATIO_SUFFIX_MAP)) {
         const suffix = GPT_IMAGE_RATIO_SUFFIX_MAP[ratio];
-        const modelId = `firefly-gpt-image-${version}-${resLower}-${suffix}`;
+        const modelId = `gpt-image-${version}-${resLower}-${suffix}`;
         FIREFLY_IMAGE_MODEL_CATALOG[modelId] = {
           upstreamModel: "openai:firefly:gpt-image",
           upstreamModelId: "gpt-image",
@@ -126,17 +126,17 @@ function registerGptImageFamily(): void {
   }
 }
 
-registerNanoBananaFamily("firefly-nano-banana-pro", {
+registerNanoBananaFamily("nano-banana-pro", {
   upstreamModelId: "gemini-flash",
   upstreamModelVersion: "nano-banana-2",
   familyLabel: "Firefly Nano Banana Pro",
 });
-registerNanoBananaFamily("firefly-nano-banana", {
+registerNanoBananaFamily("nano-banana", {
   upstreamModelId: "gemini-flash",
   upstreamModelVersion: "nano-banana-2",
   familyLabel: "Firefly Nano Banana",
 });
-registerNanoBananaFamily("firefly-nano-banana2", {
+registerNanoBananaFamily("nano-banana2", {
   upstreamModelId: "gemini-flash",
   upstreamModelVersion: "nano-banana-3",
   familyLabel: "Firefly Nano Banana 2",
@@ -144,24 +144,27 @@ registerNanoBananaFamily("firefly-nano-banana2", {
 });
 registerGptImageFamily();
 
-export const FIREFLY_DEFAULT_IMAGE_MODEL_ID = "firefly-nano-banana-pro-2k-16x9";
+export const FIREFLY_DEFAULT_IMAGE_MODEL_ID = "nano-banana-pro-2k-16x9";
 
-// 图像模型族 id（family 级）。API 按 firefly-* 前缀路由到 Adobe,分辨率/宽高比可由
-// 请求的 size 参数决定（族级 id + size 即可,无需把 res/ratio 编进 id),故模型列表
+// 图像模型族 id（family 级）。分辨率/宽高比可由请求的 size 参数决定（族级 id +
+// size 即可，无需把 res/ratio 编进 id），故模型列表
 // （/v1/models）暴露族级 id 即可,避免把 5×3×5 全组合都列出来。顺序即展示顺序。
 export const FIREFLY_IMAGE_FAMILY_MODEL_IDS = [
-  "firefly-gpt-image-2",
-  "firefly-gpt-image-1.5",
-  "firefly-nano-banana-pro",
-  "firefly-nano-banana",
-  "firefly-nano-banana2",
+  "gpt-image-2",
+  "gpt-image-1.5",
+  "nano-banana-pro",
+  "nano-banana",
+  "nano-banana2",
 ] as const;
 
 /** model id → 配置；未知 id 返回 null（调用方决定回退/报错）。 */
 export function resolveFireflyImageModel(
   modelId?: string | null
 ): FireflyImageModelConf | null {
-  const id = String(modelId || "").trim();
+  const id = String(modelId || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^firefly-/, "");
   if (!id) {
     return FIREFLY_IMAGE_MODEL_CATALOG[FIREFLY_DEFAULT_IMAGE_MODEL_ID] ?? null;
   }

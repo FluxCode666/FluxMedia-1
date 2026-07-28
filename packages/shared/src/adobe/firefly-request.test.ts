@@ -55,21 +55,21 @@ describe("mapSizeToAdobe", () => {
 });
 
 describe("composeAdobeImageModelId", () => {
-  it("拼装 firefly-<family>-<res>-<ratio>", () => {
+  it("拼装无 Firefly 前缀的公开完整模型 ID", () => {
     expect(
       composeAdobeImageModelId({
         family: "gpt-image-2",
         resolution: "2k",
         ratio: "16x9",
       })
-    ).toBe("firefly-gpt-image-2-2k-16x9");
+    ).toBe("gpt-image-2-2k-16x9");
     expect(
       composeAdobeImageModelId({
         family: "nano-banana-pro",
         resolution: "4k",
         ratio: "1x1",
       })
-    ).toBe("firefly-nano-banana-pro-4k-1x1");
+    ).toBe("nano-banana-pro-4k-1x1");
   });
 });
 
@@ -86,7 +86,7 @@ describe("toAdobeImageDataUrl", () => {
 });
 
 describe("buildAdobeImageRequestBody", () => {
-  it("文生图：content 为纯文本，model 由 size 映射", () => {
+  it("文生图：仅在 Adobe gateway 上游 model 补回 Firefly 前缀", () => {
     const body = buildAdobeImageRequestBody({
       family: "gpt-image-2",
       prompt: "a cat",

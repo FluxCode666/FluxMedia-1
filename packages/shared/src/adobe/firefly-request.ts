@@ -3,7 +3,7 @@
  *
  * 职责：把站内统一的图像参数（prompt + size WxH + 模型家族）适配成 adobe2api 的
  * OpenAI 兼容请求——adobe2api 把宽高比/分辨率/时长编码进 model id
- * （`firefly-<family>-<resolution>-<ratio>`），输入图以 base64 data URL 放在
+ * （上游仍使用 `firefly-<family>-<resolution>-<ratio>`），输入图以 base64 data URL 放在
  * messages content 的 image_url 里。
  * 使用方：image-generation 的 adobe 后端适配（apps/web 侧请求构造）。
  * 关键依赖：无（纯字符串/数值计算）。
@@ -81,14 +81,14 @@ export function mapSizeToAdobe(
 }
 
 /**
- * 组装 adobe2api 图像 model id：`firefly-<family>-<resolution>-<ratio>`。
+ * 组装平台公开图像 model id：`<family>-<resolution>-<ratio>`。
  */
 export function composeAdobeImageModelId(params: {
   family: AdobeImageFamily;
   resolution: AdobeImageResolution;
   ratio: AdobeRatio;
 }): string {
-  return `firefly-${params.family}-${params.resolution}-${params.ratio}`;
+  return `${params.family}-${params.resolution}-${params.ratio}`;
 }
 
 /**
@@ -126,11 +126,13 @@ export function buildAdobeImageRequestBody(params: {
       : mapSizeToAdobe(params.size);
   const ratio = params.ratio ?? mapped.ratio;
   const resolution = params.resolution ?? mapped.resolution;
-  const model = composeAdobeImageModelId({
+  // adobe2api gateway 的协议仍依赖旧前缀；只在上游适配边界补回，不能让该前缀重新
+  // 泄漏到平台目录、成员能力或外部 API。
+  const model = `firefly-${composeAdobeImageModelId({
     family: params.family,
     resolution,
     ratio,
-  });
+  })}`;
 
   const inputs = params.images ?? [];
   const content =

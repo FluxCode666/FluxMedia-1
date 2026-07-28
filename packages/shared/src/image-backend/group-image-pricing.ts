@@ -33,9 +33,7 @@ export const DEFAULT_IMAGE_CREDIT_PRICING: ResolvedImageCreditPricing = {
 /** 仅用于读取历史 JSON；该保留键不会进入规范结果或运行时价格匹配。 */
 const LEGACY_DEFAULT_IMAGE_PRICING_MODEL = "default";
 
-const REQUIRED_GLOBAL_IMAGE_PRICING_MODELS = ADOBE_IMAGE_MODEL_IDS.map(
-  (model) => model.slice("firefly-".length)
-);
+const REQUIRED_GLOBAL_IMAGE_PRICING_MODELS = [...ADOBE_IMAGE_MODEL_IDS];
 
 /** 缺少完整显式全局模型价格时抛出的稳定 fail-closed 错误。 */
 export class MissingGlobalImagePricingError extends Error {

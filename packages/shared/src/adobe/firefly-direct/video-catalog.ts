@@ -127,7 +127,7 @@ type VideoFamilySpec = {
 const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   {
     family: "sora2",
-    prefix: "firefly-sora2",
+    prefix: "sora2",
     upstreamModel: "openai:firefly:colligo:sora2",
     upstreamModelId: "sora",
     upstreamModelVersion: "sora-2",
@@ -140,7 +140,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "sora2-pro",
-    prefix: "firefly-sora2-pro",
+    prefix: "sora2-pro",
     upstreamModel: "openai:firefly:colligo:sora2-pro",
     upstreamModelId: "sora",
     upstreamModelVersion: "sora-2",
@@ -153,7 +153,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "veo31",
-    prefix: "firefly-veo31",
+    prefix: "veo31",
     upstreamModel: "google:firefly:colligo:veo31",
     upstreamModelId: "veo",
     upstreamModelVersion: "3.1-generate",
@@ -166,7 +166,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "veo31-ref",
-    prefix: "firefly-veo31-ref",
+    prefix: "veo31-ref",
     upstreamModel: "google:firefly:colligo:veo31",
     upstreamModelId: "veo",
     upstreamModelVersion: "3.1-generate",
@@ -180,7 +180,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "veo31-fast",
-    prefix: "firefly-veo31-fast",
+    prefix: "veo31-fast",
     upstreamModel: "google:firefly:colligo:veo31-fast",
     upstreamModelId: "veo",
     upstreamModelVersion: "3.1-fast-generate",
@@ -193,7 +193,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "kling-o3",
-    prefix: "firefly-kling-o3",
+    prefix: "kling-o3",
     upstreamModel: "kling:firefly:colligo:o3",
     upstreamModelId: "kling",
     upstreamModelVersion: "kling_o3_pro_reference_to_video",
@@ -206,7 +206,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "kling3",
-    prefix: "firefly-kling3",
+    prefix: "kling3",
     upstreamModel: "",
     upstreamModelId: "kling",
     upstreamModelVersion: "kling_v3",
@@ -223,7 +223,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "kling3-omni",
-    prefix: "firefly-kling3-omni",
+    prefix: "kling3-omni",
     upstreamModel: "",
     upstreamModelId: "kling",
     upstreamModelVersion: "kling_v3_omni",
@@ -241,7 +241,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "runway-gen45",
-    prefix: "firefly-runway-gen45",
+    prefix: "runway-gen45",
     upstreamModel: "",
     upstreamModelId: "runway",
     upstreamModelVersion: "gen4.5",
@@ -256,7 +256,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "ray314",
-    prefix: "firefly-ray314",
+    prefix: "ray314",
     upstreamModel: "",
     upstreamModelId: "luma",
     upstreamModelVersion: "3.14-ray",
@@ -271,7 +271,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "ray314-hdr",
-    prefix: "firefly-ray314-hdr",
+    prefix: "ray314-hdr",
     upstreamModel: "",
     upstreamModelId: "luma",
     upstreamModelVersion: "3.14-ray-hdr",
@@ -286,7 +286,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "seedance2",
-    prefix: "firefly-seedance2",
+    prefix: "seedance2",
     upstreamModel: "",
     upstreamModelId: "seedance",
     upstreamModelVersion: "seedance_2.0",
@@ -302,7 +302,7 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
   },
   {
     family: "seedance2-fast",
-    prefix: "firefly-seedance2-fast",
+    prefix: "seedance2-fast",
     upstreamModel: "",
     upstreamModelId: "seedance",
     upstreamModelVersion: "seedance_2.0_fast",
@@ -317,21 +317,6 @@ const VIDEO_FAMILY_SPECS: VideoFamilySpec[] = [
     label: "Seedance 2.0 Fast",
   },
 ];
-
-// Veo/Kling/Runway/Ray/Seedance 对外兼容裸模型名；Sora 仍保持必须带 firefly- 前缀。
-const BARE_VIDEO_FAMILY_NAMES = new Set([
-  "veo31",
-  "veo31-ref",
-  "veo31-fast",
-  "kling-o3",
-  "kling3",
-  "kling3-omni",
-  "runway-gen45",
-  "ray314",
-  "ray314-hdr",
-  "seedance2",
-  "seedance2-fast",
-]);
 
 /**
  * 解析模型族已验证的输入图数量上限。
@@ -409,20 +394,17 @@ const LEGACY_VIDEO_MODEL_ALIASES: Readonly<Record<string, string>> =
   Object.fromEntries(
     [5, 10, 15].flatMap((duration) =>
       ["16x9", "9x16"].map((aspectRatio) => {
-        const legacyId = `firefly-kling3-${duration}s-${aspectRatio}`;
+        const legacyId = `kling3-${duration}s-${aspectRatio}`;
         return [legacyId, `${legacyId}-720p`];
       })
     )
   );
 
-/** 将兼容裸视频模型规范化为目录使用的 Firefly 完整 ID。 */
+/** 将历史 Firefly 前缀视频模型规范化为目录使用的裸完整 ID。 */
 function normalizeFireflyVideoModelId(modelId: string): string {
-  if (modelId.startsWith("firefly-")) return modelId;
-
-  const bareFamily = [...BARE_VIDEO_FAMILY_NAMES]
-    .sort((left, right) => right.length - left.length)
-    .find((family) => modelId === family || modelId.startsWith(`${family}-`));
-  return bareFamily ? `firefly-${modelId}` : modelId;
+  return modelId.startsWith("firefly-")
+    ? modelId.slice("firefly-".length)
+    : modelId;
 }
 
 /** 视频模型族 id 列表（供前端/接口列出可选模型族）。 */

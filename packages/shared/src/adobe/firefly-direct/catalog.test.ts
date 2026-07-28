@@ -8,7 +8,7 @@ import {
 
 describe("FIREFLY_IMAGE_MODEL_CATALOG", () => {
   it("注册 gpt-image 2/1.5 / nano-banana 家族", () => {
-    expect(FIREFLY_IMAGE_MODEL_CATALOG["firefly-gpt-image-2-2k-16x9"]).toEqual({
+    expect(FIREFLY_IMAGE_MODEL_CATALOG["gpt-image-2-2k-16x9"]).toEqual({
       upstreamModel: "openai:firefly:gpt-image",
       upstreamModelId: "gpt-image",
       upstreamModelVersion: "2",
@@ -17,7 +17,7 @@ describe("FIREFLY_IMAGE_MODEL_CATALOG", () => {
       description: "Firefly GPT Image 2 (2K 16:9)",
     });
     expect(
-      FIREFLY_IMAGE_MODEL_CATALOG["firefly-gpt-image-1.5-2k-16x9"]
+      FIREFLY_IMAGE_MODEL_CATALOG["gpt-image-1.5-2k-16x9"]
     ).toEqual({
       upstreamModel: "openai:firefly:gpt-image",
       upstreamModelId: "gpt-image",
@@ -26,7 +26,7 @@ describe("FIREFLY_IMAGE_MODEL_CATALOG", () => {
       aspectRatio: "16:9",
       description: "Firefly GPT Image 1.5 (2K 16:9)",
     });
-    const nano = FIREFLY_IMAGE_MODEL_CATALOG["firefly-nano-banana-pro-4k-1x1"];
+    const nano = FIREFLY_IMAGE_MODEL_CATALOG["nano-banana-pro-4k-1x1"];
     expect(nano?.upstreamModelId).toBe("gemini-flash");
     expect(nano?.upstreamModelVersion).toBe("nano-banana-2");
     expect(nano?.outputResolution).toBe("4K");
@@ -35,13 +35,13 @@ describe("FIREFLY_IMAGE_MODEL_CATALOG", () => {
 
   it("nano-banana2 支持扩展比例 1x8/4x1", () => {
     expect(
-      FIREFLY_IMAGE_MODEL_CATALOG["firefly-nano-banana2-2k-1x8"]?.aspectRatio
+      FIREFLY_IMAGE_MODEL_CATALOG["nano-banana2-2k-1x8"]?.aspectRatio
     ).toBe("1:8");
     expect(
-      FIREFLY_IMAGE_MODEL_CATALOG["firefly-nano-banana2-2k-4x1"]?.aspectRatio
+      FIREFLY_IMAGE_MODEL_CATALOG["nano-banana2-2k-4x1"]?.aspectRatio
     ).toBe("4:1");
     expect(
-      FIREFLY_IMAGE_MODEL_CATALOG["firefly-nano-banana-pro-2k-1x8"]
+      FIREFLY_IMAGE_MODEL_CATALOG["nano-banana-pro-2k-1x8"]
     ).toBeUndefined();
   });
 });
@@ -54,6 +54,20 @@ describe("resolveFireflyImageModel", () => {
     expect(resolveFireflyImageModel("")).toBe(
       FIREFLY_IMAGE_MODEL_CATALOG[FIREFLY_DEFAULT_IMAGE_MODEL_ID]
     );
+  });
+
+  it("裸 ID 是规范键且兼容历史 Firefly 前缀", () => {
+    expect(FIREFLY_DEFAULT_IMAGE_MODEL_ID).toBe(
+      "nano-banana-pro-2k-16x9"
+    );
+    expect(
+      resolveFireflyImageModel("firefly-gpt-image-2-2k-16x9")
+    ).toBe(FIREFLY_IMAGE_MODEL_CATALOG["gpt-image-2-2k-16x9"]);
+    expect(
+      Object.keys(FIREFLY_IMAGE_MODEL_CATALOG).every(
+        (modelId) => !modelId.startsWith("firefly-")
+      )
+    ).toBe(true);
   });
 
   it("未知 id 返回 null", () => {

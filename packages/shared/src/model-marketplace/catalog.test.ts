@@ -55,27 +55,27 @@ describe("模型身份规则", () => {
   });
 
   it("按最短时长、横屏和最高分辨率稳定选择默认完整 ID", () => {
-    expect(getStableVideoDefaultModelId("sora2")).toBe("firefly-sora2-4s-16x9");
+    expect(getStableVideoDefaultModelId("sora2")).toBe("sora2-4s-16x9");
     expect(getStableVideoDefaultModelId("veo31")).toBe(
-      "firefly-veo31-4s-16x9-1080p"
+      "veo31-4s-16x9-1080p"
     );
     expect(getStableVideoDefaultModelId("kling-o3")).toBe(
-      "firefly-kling-o3-5s-16x9"
+      "kling-o3-5s-16x9"
     );
     expect(getStableVideoDefaultModelId("kling3")).toBe(
-      "firefly-kling3-3s-16x9-1080p"
+      "kling3-3s-16x9-1080p"
     );
     expect(getStableVideoDefaultModelId("kling3-omni")).toBe(
-      "firefly-kling3-omni-3s-16x9-1080p"
+      "kling3-omni-3s-16x9-1080p"
     );
     expect(getStableVideoDefaultModelId("runway-gen45")).toBe(
-      "firefly-runway-gen45-5s-16x9"
+      "runway-gen45-5s-16x9"
     );
     expect(getStableVideoDefaultModelId("ray314")).toBe(
-      "firefly-ray314-5s-16x9-4k"
+      "ray314-5s-16x9-4k"
     );
     expect(getStableVideoDefaultModelId("ray314-hdr")).toBe(
-      "firefly-ray314-hdr-5s-16x9-4k"
+      "ray314-hdr-5s-16x9-4k"
     );
     expect(getStableVideoDefaultModelId("unknown")).toBeNull();
   });
@@ -87,7 +87,7 @@ describe("模型身份规则", () => {
         "firefly-veo31-6s-16x9-720p",
         "firefly-sora2-4s-16x9",
       ])
-    ).toBe("firefly-veo31-6s-16x9-720p");
+    ).toBe("veo31-6s-16x9-720p");
   });
 });
 

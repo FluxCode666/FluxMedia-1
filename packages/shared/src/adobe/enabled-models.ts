@@ -31,7 +31,7 @@ const ADOBE_IMAGE_MODEL_ID_SET = new Set(
 const MAX_ADOBE_ENABLED_MODEL_IDS = ADOBE_IMAGE_MODEL_IDS.length;
 
 /**
- * 将历史裸模型族或当前 Firefly 模型族 ID 规范为可持久化的模型 ID。
+ * 将当前裸模型族或历史 Firefly 模型族 ID 规范为可持久化的裸模型 ID。
  *
  * @param value - 来自管理端表单或旧数据库 JSON 的单个模型标识。
  * @returns 已知模型族的规范 ID；未知或空值返回 null。
@@ -43,8 +43,8 @@ export function normalizeAdobeEnabledModelId(value: unknown): string | null {
   if (!trimmed) return null;
 
   const modelId = trimmed.startsWith("firefly-")
-    ? trimmed
-    : `firefly-${trimmed}`;
+    ? trimmed.slice("firefly-".length)
+    : trimmed;
   return ADOBE_IMAGE_MODEL_ID_SET.has(modelId) ? modelId : null;
 }
 
@@ -69,7 +69,7 @@ export function normalizeAdobeEnabledModelIds(value: unknown): string[] {
 }
 
 /**
- * 判断请求是否为已知 Adobe 图像模型族（允许 Firefly 前缀或历史裸族名）。
+ * 判断请求是否为已知 Adobe 图像模型族（裸 ID 为规范格式，兼容历史前缀）。
  *
  * @param value - 客户端请求的模型 ID。
  * @returns 模型属于已知 Adobe 图像族时返回 true。
@@ -81,12 +81,11 @@ export function isAdobeImageFamilyModelId(value: unknown): boolean {
   if (!normalized) return false;
 
   return ADOBE_IMAGE_MODEL_IDS.some((modelId) => {
-    const bareModelId = modelId.slice("firefly-".length);
     return (
       normalized === modelId ||
       normalized.startsWith(`${modelId}-`) ||
-      normalized === bareModelId ||
-      normalized.startsWith(`${bareModelId}-`)
+      normalized === `firefly-${modelId}` ||
+      normalized.startsWith(`firefly-${modelId}-`)
     );
   });
 }
@@ -95,7 +94,7 @@ export function isAdobeImageFamilyModelId(value: unknown): boolean {
  * Adobe 后端保存输入 schema。
  *
  * WHY：未知模型不能落库后再由调度器静默处理，否则管理员会误以为模型已开放；同时接受
- * 历史的裸模型族（如 `nano-banana-pro`），写入时统一为 `firefly-*`。
+ * 历史的 `firefly-*` 模型族，写入时统一移除技术前缀。
  */
 export const adobeEnabledModelIdsSchema = z
   .array(z.string().trim().min(1).max(120))
@@ -115,8 +114,8 @@ export const adobeEnabledModelIdsSchema = z
 /**
  * 解析请求实际会交给 Adobe 的图像模型族。
  *
- * 普通 `gpt-image-*` 请求及 force_firefly 路由在 Adobe 适配层都会落到
- * `firefly-gpt-image-2`，因此也必须以该模型检查白名单，不能因请求名不是 firefly 前缀
+ * 普通未知 `gpt-image-*` 请求及 force_firefly 路由在 Adobe 适配层都会落到
+ * `gpt-image-2`，因此也必须以该模型检查白名单，不能因请求名没有历史前缀
  * 而绕过限制。
  *
  * @param requestedModel - 客户端本次请求的模型 ID。
@@ -128,20 +127,9 @@ export function resolveAdobeImageModelId(
   const normalized = String(requestedModel || "")
     .trim()
     .toLowerCase();
-  // 调度层允许调用方使用历史裸 Nano Banana 模型族。仅对该自定义族补上
-  // Firefly 前缀；普通裸 gpt-image 请求仍按 force_firefly 的历史语义落到
-  // firefly-gpt-image-2，避免改变既有 Adobe 路由和白名单边界。
-  const isBareNanoBanana = [
-    "nano-banana-pro",
-    "nano-banana2",
-    "nano-banana",
-  ].some(
-    (family) => normalized === family || normalized.startsWith(`${family}-`)
-  );
-  const candidate =
-    isBareNanoBanana && !normalized.startsWith("firefly-")
-      ? `firefly-${normalized}`
-      : normalized;
+  const candidate = normalized.startsWith("firefly-")
+    ? normalized.slice("firefly-".length)
+    : normalized;
   const matchingModelIds = [...ADOBE_IMAGE_MODEL_IDS].sort(
     (left, right) => right.length - left.length
   );
@@ -151,16 +139,14 @@ export function resolveAdobeImageModelId(
       return modelId;
     }
   }
-  return "firefly-gpt-image-2";
+  return "gpt-image-2";
 }
 
 /** 将任意公开模型 ID 收敛为 Adobe 适配器实际使用的图片家族。 */
 export function resolveAdobeImageFamily(
   requestedModel: string | null | undefined
 ): AdobeImageFamily {
-  const family = resolveAdobeImageModelId(requestedModel).slice(
-    "firefly-".length
-  );
+  const family = resolveAdobeImageModelId(requestedModel);
   return (
     ADOBE_IMAGE_FAMILIES.find((candidate) => candidate === family) ??
     "gpt-image-2"
@@ -168,8 +154,8 @@ export function resolveAdobeImageFamily(
 }
 
 /**
- * 仅在调用方明确请求 Firefly 或裸 Nano Banana 能力时返回 Adobe 家族。
- * 普通裸 `gpt-image-*` 仍返回 null，由统一调度决定成员后再使用默认 Adobe 家族。
+ * 仅在调用方请求已知 Adobe 图像 ID 时返回 Adobe 家族。
+ * 未知 `gpt-image-*` 仍返回 null，由统一调度决定成员后再使用默认 Adobe 家族。
  */
 export function pickExplicitAdobeImageFamily(
   requestedModel: string | null | undefined
@@ -177,10 +163,7 @@ export function pickExplicitAdobeImageFamily(
   const normalized = String(requestedModel ?? "")
     .trim()
     .toLowerCase();
-  const explicit =
-    normalized.startsWith("firefly-") ||
-    (normalized.startsWith("nano-banana") &&
-      isAdobeImageFamilyModelId(normalized));
+  const explicit = isAdobeImageFamilyModelId(normalized);
   return explicit ? resolveAdobeImageFamily(normalized) : null;
 }
 

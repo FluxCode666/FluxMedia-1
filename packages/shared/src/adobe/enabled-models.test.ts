@@ -17,14 +17,14 @@ import {
 } from "./enabled-models";
 
 describe("Adobe 后端开放模型", () => {
-  it("兼容历史裸模型族并去重为 Firefly 模型 ID", () => {
+  it("兼容历史 Firefly 前缀并去重为裸模型 ID", () => {
     expect(
       normalizeAdobeEnabledModelIds([
         " nano-banana-pro ",
         "FIREFLY-NANO-BANANA-PRO",
         "firefly-gpt-image-2",
       ])
-    ).toEqual(["firefly-nano-banana-pro", "firefly-gpt-image-2"]);
+    ).toEqual(["nano-banana-pro", "gpt-image-2"]);
   });
 
   it("保存 schema 拒绝未知模型，避免无效白名单静默落库", () => {
@@ -33,13 +33,13 @@ describe("Adobe 后端开放模型", () => {
         .success
     ).toBe(false);
     expect(adobeEnabledModelIdsSchema.parse(["gpt-image-2"])).toEqual([
-      "firefly-gpt-image-2",
+      "gpt-image-2",
     ]);
   });
 
   it("只让已开放的图像模型进入该 Adobe 后端", () => {
     const input = {
-      enabledModels: ["firefly-nano-banana-pro"],
+      enabledModels: ["nano-banana-pro"],
       supportsVideo: false,
     };
 
@@ -58,13 +58,11 @@ describe("Adobe 后端开放模型", () => {
   });
 
   it("普通模型实际落到 gpt-image-2，因此同样受白名单约束", () => {
-    expect(resolveAdobeImageModelId("gpt-image-1")).toBe("firefly-gpt-image-2");
-    expect(resolveAdobeImageModelId("gpt-image-1.5")).toBe(
-      "firefly-gpt-image-2"
-    );
+    expect(resolveAdobeImageModelId("gpt-image-1")).toBe("gpt-image-2");
+    expect(resolveAdobeImageModelId("gpt-image-1.5")).toBe("gpt-image-1.5");
     expect(
       canAdobeBackendServeModel({
-        enabledModels: ["firefly-nano-banana"],
+        enabledModels: ["nano-banana"],
         supportsVideo: false,
         requestedModel: "gpt-image-1",
       })
@@ -73,14 +71,14 @@ describe("Adobe 后端开放模型", () => {
 
   it("裸 nano-banana 模型族与 Firefly 别名使用同一白名单", () => {
     expect(resolveAdobeImageModelId("nano-banana-pro")).toBe(
-      "firefly-nano-banana-pro"
+      "nano-banana-pro"
     );
     expect(resolveAdobeImageModelId("nano-banana2-2k-1x1")).toBe(
-      "firefly-nano-banana2"
+      "nano-banana2"
     );
     expect(
       canAdobeBackendServeModel({
-        enabledModels: ["firefly-nano-banana-pro"],
+        enabledModels: ["nano-banana-pro"],
         supportsVideo: false,
         requestedModel: "nano-banana-pro",
       })
@@ -102,6 +100,9 @@ describe("Adobe 后端开放模型", () => {
 
   it("只把显式 Adobe 模型请求识别为指定家族", () => {
     expect(pickExplicitAdobeImageFamily("gpt-image-1")).toBeNull();
+    expect(pickExplicitAdobeImageFamily("gpt-image-1.5")).toBe(
+      "gpt-image-1.5"
+    );
     expect(pickExplicitAdobeImageFamily("firefly-gpt-image-1.5")).toBe(
       "gpt-image-1.5"
     );
@@ -140,7 +141,7 @@ describe("Adobe 后端开放模型", () => {
         { enabledModels: ["firefly-nano-banana-pro"] },
         { enabledModels: ["gpt-image-1.5"] },
       ])
-    ).toEqual(["firefly-gpt-image-1.5", "firefly-nano-banana-pro"]);
+    ).toEqual(["gpt-image-1.5", "nano-banana-pro"]);
   });
 
   it("任一历史不限配置会公布完整图像模型集合", () => {
@@ -149,6 +150,6 @@ describe("Adobe 后端开放模型", () => {
         { enabledModels: ["firefly-nano-banana"] },
         { enabledModels: null },
       ])
-    ).toContain("firefly-gpt-image-2");
+    ).toContain("gpt-image-2");
   });
 });
