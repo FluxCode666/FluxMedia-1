@@ -139,6 +139,37 @@ describe("buildFireflyVideoPayload", () => {
     });
   });
 
+  it("Kling 3.0 使用官网 v3 版本并发送首尾帧", () => {
+    const payload = buildFireflyVideoPayload({
+      ...base,
+      upstreamModel: "",
+      upstreamModelId: "kling",
+      upstreamModelVersion: "kling_v3",
+      engine: "kling3",
+      duration: 15,
+      aspectRatio: "9:16",
+      size: { width: 720, height: 1280 },
+      generateAudio: true,
+      sourceImageIds: ["first-frame", "last-frame", "ignored"],
+    });
+
+    expect(payload).toMatchObject({
+      n: 1,
+      modelId: "kling",
+      modelVersion: "kling_v3",
+      duration: 15,
+      size: { width: 720, height: 1280 },
+      generateAudio: true,
+      generationMetadata: { module: "image2video" },
+      generationSettings: { aspectRatio: "9:16" },
+      output: { storeInputs: true },
+    });
+    expect(payload.referenceBlobs).toEqual([
+      { id: "first-frame", usage: "frame", order: 1 },
+      { id: "last-frame", usage: "frame", order: 2 },
+    ]);
+  });
+
   it("Runway Gen-4.5 使用 Firefly 网页端已验证的纯文本字段", () => {
     const payload = buildFireflyVideoPayload({
       ...base,
@@ -383,7 +414,7 @@ describe("buildFireflyVideoPayload", () => {
 
   it.each([
     ["kling-o3", "kling_o3_pro_reference_to_video"],
-    ["kling3", "kling_v3_standard_i2v"],
+    ["kling3", "kling_v3"],
   ])("%s 帧序号从 1 开始", (engine, modelVersion) => {
     const payload = buildFireflyVideoPayload({
       ...base,

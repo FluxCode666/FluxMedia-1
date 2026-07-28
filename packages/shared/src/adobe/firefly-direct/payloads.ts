@@ -429,10 +429,7 @@ export function buildFireflyVideoPayload(params: {
       n: 1,
       seeds: [seed],
       modelId: "kling",
-      modelVersion:
-        params.engine === "kling-o3"
-          ? "kling_o3_pro_reference_to_video"
-          : "kling_v3_standard_i2v",
+      modelVersion: params.upstreamModelVersion,
       output: { storeInputs: true },
       prompt: params.prompt,
       size,
