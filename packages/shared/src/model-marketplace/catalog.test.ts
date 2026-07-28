@@ -7,7 +7,6 @@
 import { describe, expect, it } from "vitest";
 import {
   getMinimumImageCredits,
-  getStableVideoDefaultModelId,
   isModelMarketplaceEntryVisible,
   normalizeModelMarketplaceImageConfigKey,
   pruneModelMarketplaceWriteReceipts,
@@ -54,41 +53,6 @@ describe("模型身份规则", () => {
     ).toBeNull();
   });
 
-  it("按最短时长、横屏和最高分辨率稳定选择默认完整 ID", () => {
-    expect(getStableVideoDefaultModelId("sora2")).toBe("sora2-4s-16x9");
-    expect(getStableVideoDefaultModelId("veo31")).toBe(
-      "veo31-4s-16x9-1080p"
-    );
-    expect(getStableVideoDefaultModelId("kling-o3")).toBe(
-      "kling-o3-5s-16x9"
-    );
-    expect(getStableVideoDefaultModelId("kling3")).toBe(
-      "kling3-3s-16x9-1080p"
-    );
-    expect(getStableVideoDefaultModelId("kling3-omni")).toBe(
-      "kling3-omni-3s-16x9-1080p"
-    );
-    expect(getStableVideoDefaultModelId("runway-gen45")).toBe(
-      "runway-gen45-5s-16x9"
-    );
-    expect(getStableVideoDefaultModelId("ray314")).toBe(
-      "ray314-5s-16x9-4k"
-    );
-    expect(getStableVideoDefaultModelId("ray314-hdr")).toBe(
-      "ray314-hdr-5s-16x9-4k"
-    );
-    expect(getStableVideoDefaultModelId("unknown")).toBeNull();
-  });
-
-  it("只在给定的运行时完整 ID 中选择默认项", () => {
-    expect(
-      getStableVideoDefaultModelId("veo31", [
-        "firefly-veo31-8s-9x16-720p",
-        "firefly-veo31-6s-16x9-720p",
-        "firefly-sora2-4s-16x9",
-      ])
-    ).toBe("veo31-6s-16x9-720p");
-  });
 });
 
 describe("目录展示与价格规则", () => {

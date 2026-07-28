@@ -2,7 +2,7 @@
  * 公开模型广场 DB-free 目录构建器测试。
  *
  * 使用方是公开目录生产服务；测试确保只投影真实可达、显式定价且允许展示的模型，并
- * 严格处理视频族聚合、默认调用 ID、内置简介、品牌与第一方封面。
+ * 严格处理视频族聚合、定价模型 ID、内置简介、品牌与第一方封面。
  */
 import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
@@ -67,7 +67,7 @@ describe("buildModelMarketplaceCatalog", () => {
       expect.objectContaining({
         category: "image",
         configKey: "gpt-image-2",
-        defaultModelId: "gpt-image-2",
+        modelId: "gpt-image-2",
         iconKey: "openai",
         description: expect.stringMatching(/图像|文字/),
         pricing: EXPLICIT_IMAGE_PRICING,
@@ -92,7 +92,7 @@ describe("buildModelMarketplaceCatalog", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       configKey: "gpt-image-2",
-      defaultModelId: "gpt-image-2",
+      modelId: "gpt-image-2",
     });
   });
 
@@ -159,7 +159,7 @@ describe("buildModelMarketplaceCatalog", () => {
       expect.objectContaining({
         category: "video",
         configKey: "veo31",
-        defaultModelId: "veo31-6s-16x9-1080p",
+        modelId: "veo31",
         iconKey: "google",
         priceUnit: "per_second",
         creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
@@ -209,6 +209,7 @@ describe("buildModelMarketplaceCatalog", () => {
     expect(items[0]).toMatchObject({
       category: "video",
       configKey: "seedance2",
+      modelId: "seedance2",
       iconKey: "bytedance",
       creditsPerSecond: 12,
       minimumCredits: 12,
@@ -241,7 +242,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "kling3-omni",
         displayName: "Kling 3.0 Omni",
-        defaultModelId: "kling3-omni-3s-16x9-1080p",
+        modelId: "kling3-omni",
         iconKey: "kling",
         creditsPerSecond: 30,
         supportedDurations: [3, 15],
@@ -270,7 +271,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "runway-gen45",
         displayName: "Runway Gen-4.5",
-        defaultModelId: "runway-gen45-5s-16x9",
+        modelId: "runway-gen45",
         iconKey: "runway",
         description: expect.stringContaining("16:9"),
         creditsPerSecond: 30,
@@ -300,7 +301,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "ray314",
         displayName: "Ray 3.14",
-        defaultModelId: "ray314-5s-16x9-4k",
+        modelId: "ray314",
         iconKey: "generic",
         description: expect.stringContaining("高分辨率"),
         creditsPerSecond: 30,
@@ -330,7 +331,7 @@ describe("buildModelMarketplaceCatalog", () => {
         category: "video",
         configKey: "ray314-hdr",
         displayName: "Ray 3.14 HDR",
-        defaultModelId: "ray314-hdr-5s-16x9-4k",
+        modelId: "ray314-hdr",
         iconKey: "generic",
         description: expect.stringContaining("高动态范围"),
         creditsPerSecond: 30,

@@ -31,7 +31,7 @@ function createPublicImageItem(): Record<string, unknown> {
   return {
     category: "image",
     configKey: "gpt-image-2",
-    defaultModelId: "gpt-image-2",
+    modelId: "gpt-image-2",
     displayName: "GPT Image 2",
     iconKey: "openai",
     description: "适合高质量图像生成。",
@@ -367,11 +367,11 @@ describe("管理与公开 DTO", () => {
     ).toBe(false);
   });
 
-  it("公开视频 DTO 固定返回 category 与可调用 defaultModelId", () => {
+  it("公开视频 DTO 固定使用定价模型 ID 并拒绝笛卡尔积路由 ID", () => {
     const parsed = modelMarketplacePublicItemSchema.parse({
       category: "video",
       configKey: "veo31",
-      defaultModelId: "firefly-veo31-4s-16x9-1080p",
+      modelId: "veo31",
       displayName: "Veo 3.1",
       iconKey: "google",
       description: "适合高质量视频生成。",
@@ -392,8 +392,14 @@ describe("管理与公开 DTO", () => {
 
     expect(parsed).toMatchObject({
       category: "video",
-      defaultModelId: "veo31-4s-16x9-1080p",
+      modelId: "veo31",
     });
+    expect(
+      modelMarketplacePublicItemSchema.safeParse({
+        ...parsed,
+        modelId: "veo31-4s-16x9-1080p",
+      }).success
+    ).toBe(false);
   });
 });
 

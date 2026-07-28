@@ -105,7 +105,7 @@ import {
 const PUBLIC_IMAGE_MODEL = {
   category: "image" as const,
   configKey: "gpt-image-2",
-  defaultModelId: "gpt-image-2",
+  modelId: "gpt-image-2",
   displayName: "GPT Image 2",
   iconKey: "openai" as const,
   description: "Image generation",
@@ -125,7 +125,7 @@ const PUBLIC_IMAGE_MODEL = {
 const PUBLIC_VIDEO_MODEL = {
   category: "video" as const,
   configKey: "veo31",
-  defaultModelId: "veo31-6s-16x9-1080p",
+  modelId: "veo31",
   displayName: "Veo 3.1",
   iconKey: "google" as const,
   description: "Video generation",
@@ -233,15 +233,15 @@ describe("loadHomepagePageData", () => {
     expect(runtimeMocks.getUserRoleById).not.toHaveBeenCalled();
     expect(result.catalog).toEqual({
       status: "ready",
-      image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+      image: [{ id: PUBLIC_IMAGE_MODEL.modelId }],
       homepage: [
         {
-          id: PUBLIC_IMAGE_MODEL.defaultModelId,
+          id: PUBLIC_IMAGE_MODEL.modelId,
           category: "image",
           priority: 5,
         },
         {
-          id: PUBLIC_VIDEO_MODEL.defaultModelId,
+          id: PUBLIC_VIDEO_MODEL.modelId,
           category: "video",
           priority: 2,
         },
@@ -391,10 +391,10 @@ describe("loadHomepagePageData", () => {
 
     expect(result.catalog).toEqual({
       status: "ready",
-      image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+      image: [{ id: PUBLIC_IMAGE_MODEL.modelId }],
       homepage: [
         {
-          id: PUBLIC_VIDEO_MODEL.defaultModelId,
+          id: PUBLIC_VIDEO_MODEL.modelId,
           category: "video",
           priority: PUBLIC_VIDEO_MODEL.homepagePriority,
         },
@@ -554,10 +554,10 @@ function createRenderablePageData(
   return {
     catalog: {
       status: "ready",
-      image: [{ id: PUBLIC_IMAGE_MODEL.defaultModelId }],
+      image: [{ id: PUBLIC_IMAGE_MODEL.modelId }],
       homepage: [
         {
-          id: PUBLIC_IMAGE_MODEL.defaultModelId,
+          id: PUBLIC_IMAGE_MODEL.modelId,
           category: "image",
           priority: 5,
         },

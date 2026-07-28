@@ -2,12 +2,9 @@
  * 模型广场的 DB-free 目录规则。
  *
  * 使用方包括管理清单装配、公开目录和保存服务。本模块统一处理模型身份、初始条目、
- * 最低价、视频默认完整 ID、能力排序与写回执裁剪，不读取运行时设置或数据库。
+ * 最低价、视频能力排序与写回执裁剪，不读取运行时设置或数据库。
  */
-import {
-  FIREFLY_VIDEO_MODEL_CATALOG,
-  resolveFireflyVideoModel,
-} from "../adobe/firefly-direct/video-catalog";
+import { resolveFireflyVideoModel } from "../adobe/firefly-direct/video-catalog";
 import {
   IMAGE_CREDIT_PRICE_FIELDS,
   normalizeImagePricingModelId,
@@ -49,39 +46,6 @@ export function resolveModelMarketplaceVideoFamily(
 }
 
 /**
- * 比较两个已解析视频候选项，固定默认模型的时长、比例、分辨率和最终 ID 优先级。
- *
- * @param left - 左侧候选项。
- * @param right - 右侧候选项。
- * @returns 小于零时左侧优先；排序不依赖目录对象插入顺序。
- */
-function compareVideoDefaultCandidates(
-  left: VideoDefaultCandidate,
-  right: VideoDefaultCandidate
-): number {
-  const durationDifference = left.duration - right.duration;
-  if (durationDifference !== 0) return durationDifference;
-
-  const ratioDifference =
-    getPreferenceIndex(left.aspectRatio, PREFERRED_ASPECT_RATIOS) -
-    getPreferenceIndex(right.aspectRatio, PREFERRED_ASPECT_RATIOS);
-  if (ratioDifference !== 0) return ratioDifference;
-
-  const resolutionDifference =
-    getResolutionNumber(right.outputResolution) -
-    getResolutionNumber(left.outputResolution);
-  if (resolutionDifference !== 0) return resolutionDifference;
-  return left.modelId.localeCompare(right.modelId);
-}
-
-type VideoDefaultCandidate = {
-  modelId: string;
-  duration: number;
-  aspectRatio: string;
-  outputResolution: string;
-};
-
-/**
  * 返回值在偏好数组中的稳定序号，未知值统一排在已知值之后。
  *
  * @param value - 需要排序的能力值。
@@ -106,55 +70,6 @@ function getResolutionNumber(resolution: string): number {
   if (resolution.trim().toLowerCase() === "4k") return 2160;
   const match = /^(\d+)p$/i.exec(resolution);
   return match ? Number(match[1]) : 0;
-}
-
-/**
- * 把历史前缀 ID 转成目录中的规范裸完整 ID。
- *
- * @param modelId - 运行时提供的候选 ID。
- * @returns 可在内置目录中定位的规范 ID；未知 ID 返回 null。
- */
-function normalizeVideoCatalogModelId(modelId: string): string | null {
-  const normalized = modelId.trim().toLowerCase();
-  if (!normalized) return null;
-  const canonical = normalized.startsWith("firefly-")
-    ? normalized.slice("firefly-".length)
-    : normalized;
-  return Object.hasOwn(FIREFLY_VIDEO_MODEL_CATALOG, canonical)
-    ? canonical
-    : null;
-}
-
-/**
- * 为视频模型族稳定选择可复制、可预选的默认完整 ID。
- *
- * @param family - 聚合后的视频模型族。
- * @param availableModelIds - 可选的运行时可达完整 ID；缺省时使用全部内置目录。
- * @returns 最短时长、优先横屏、优先高分辨率的规范完整 ID；没有候选时返回 null。
- */
-export function getStableVideoDefaultModelId(
-  family: string,
-  availableModelIds: readonly string[] = Object.keys(
-    FIREFLY_VIDEO_MODEL_CATALOG
-  )
-): string | null {
-  const candidates = availableModelIds.flatMap((modelId) => {
-    const normalizedModelId = normalizeVideoCatalogModelId(modelId);
-    if (!normalizedModelId) return [];
-    const configuration = FIREFLY_VIDEO_MODEL_CATALOG[normalizedModelId];
-    if (!configuration || configuration.family !== family) return [];
-    return [
-      {
-        modelId: normalizedModelId,
-        duration: configuration.duration,
-        aspectRatio: configuration.aspectRatio,
-        outputResolution: configuration.outputResolution,
-      },
-    ];
-  });
-
-  candidates.sort(compareVideoDefaultCandidates);
-  return candidates[0]?.modelId ?? null;
 }
 
 /**

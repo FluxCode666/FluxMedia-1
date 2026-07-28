@@ -75,8 +75,8 @@ pnpm --filter @repo/web typecheck
 - `ModelConfigurationSnapshot` 管理读取 DTO，包含 entries、runtimeCatalogStatus 与根据真实
   Principal 计算的 canEdit；
 - `ModelMarketplacePublicItem` 图像/视频判别联合 DTO；
-- 公开 DTO 的预选字段固定为 `category + defaultModelId`，页面不再根据 family 自行推断
-  完整调用 ID；
+- 公开 DTO 的模型字段固定为 `category + modelId`；视频使用定价配置键，时长、比例与
+  分辨率只在详情字段展示，页面不再把路由笛卡尔积 ID 当作模型身份；
 - `updateModelConfigurationEntryInputSchema`，含 `clientRequestId`、
   `expectedRevision`、图像完整四档价格或视频每秒价格，以及 `keep/remove/replace` 封面联合；
 - `updateModelConfigurationEntryOutputSchema`，只返回 category、configKey、revision；
@@ -89,7 +89,6 @@ pnpm --filter @repo/web typecheck
 - 图像配置键复用 `normalizeImagePricingModelId`；
 - 视频完整 ID 解析为 family；
 - 图像最低四档价格；
-- 视频 family 的稳定默认完整 ID；
 - 支持时长、比例、分辨率的排序与去重；
 - 缺少显式配置时默认 visible；
 - `default` 永不进入公开列表；
@@ -99,7 +98,7 @@ pnpm --filter @repo/web typecheck
 
 1. 先写失败测试，覆盖 strict schema、版本、默认值、200 字边界、revision 安全整数、
    继承价格 revision、`default` 限制和写回执清理。
-2. 覆盖图像别名规范化、视频 family 解析、默认完整 ID 稳定性、最低价格和缺键默认展示。
+2. 覆盖图像别名规范化、视频 family 解析、定价模型 ID、最低价格和缺键默认展示。
 3. 执行：
 
 ```bash
@@ -342,7 +341,7 @@ feat(models): 实现模型配置事务与封面存储
 
 - 运行时模型与 visible 配置取交集；
 - 图像按规范 configKey 读取四档价格；没有显式条目时标记为未配置并从公开目录排除；
-- 视频完整 ID 按 family 聚合为一张卡，稳定选择一个真实存在的完整 ID；
+- 视频完整 ID 按 family 聚合为一张卡，公开 ID 固定使用定价配置键；
 - 从真实完整 ID 归纳支持时长、比例和分辨率；
 - 计算最低价格，不持久化派生值；
 - 应用内置简介、默认封面和品牌 `iconKey`；
@@ -371,7 +370,7 @@ feat(models): 实现模型配置事务与封面存储
 
 **测试步骤**
 
-1. 覆盖 visible false、缺项默认 true、运行时不可达、视频变体归并和稳定默认 ID。
+1. 覆盖 visible false、缺项默认 true、运行时不可达、视频变体归并和定价模型 ID。
 2. 断言 custom true 不能凭空新增模型，`default` 不能进入目录。
 3. 分别让运行时目录、价格设置和展示配置失败，断言 operation 返回稳定 `not_ready`；
    管理读取的运行时失败仍返回可编辑清单。
@@ -731,7 +730,7 @@ feat(generate): 支持模型广场安全预选
 - 桌面为筛选侧栏加三列卡片，中等宽度两列，移动端一列并用 Sheet 收纳筛选；
 - 卡片顺序严格为 3:2 封面、类型、图标 + ID + 紧随其后的仅图标复制按钮、最低价格、
   整行“查看详情”；
-- 长 ID 省略并用 Tooltip 显示完整值，复制始终使用完整默认 ID；
+- 长 ID 省略并用 Tooltip 显示完整值，复制始终使用公开模型 ID；
 - 详情 Dialog 展示简介、完整价格、支持参数和“立即使用此模型”；
 - Dialog 遵循焦点转移、Esc、关闭后回焦，移动端使用现有响应式 Dialog/Sheet 形态。
 - 封面保持固定 3:2 容器；自定义封面 404 或解码失败时只回退一次对应类别的本地默认

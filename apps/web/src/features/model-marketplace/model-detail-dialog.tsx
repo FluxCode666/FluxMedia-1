@@ -222,7 +222,7 @@ export function ModelDetailDialog({
                 </DialogTitle>
                 <div className="mt-3 flex min-w-0 items-center rounded-lg border border-border/70 bg-muted/25 p-1 pl-3">
                   <code className="min-w-0 flex-1 truncate text-xs font-medium text-foreground sm:text-sm">
-                    {model.defaultModelId}
+                    {model.modelId}
                   </code>
                   <TooltipProvider delayDuration={250}>
                     <Tooltip>
@@ -230,10 +230,10 @@ export function ModelDetailDialog({
                         <Button
                           type="button"
                           aria-label={t("actions.copyModelId", {
-                            modelId: model.defaultModelId,
+                            modelId: model.modelId,
                           })}
                           className="size-8 shrink-0 text-muted-foreground"
-                          onClick={() => onCopy(model.defaultModelId)}
+                          onClick={() => onCopy(model.modelId)}
                           size="icon"
                           variant="ghost"
                         >

@@ -23,7 +23,7 @@ import { loadModelMarketplacePageData } from "./page-data";
 const PUBLIC_IMAGE = {
   category: "image" as const,
   configKey: "gpt-image-2",
-  defaultModelId: "gpt-image-2",
+  modelId: "gpt-image-2",
   displayName: "GPT Image 2",
   iconKey: "openai" as const,
   description: "Image generation",

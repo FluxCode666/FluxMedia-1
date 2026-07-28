@@ -2,7 +2,7 @@
  * 公开模型广场的模型卡片与媒体资产组件。
  *
  * 使用方是模型广场网格和详情弹窗；卡片严格消费公开 DTO，只展示 3:2 封面、类别、
- * 品牌图标、完整可复制模型 ID、最低价格与详情入口，不读取管理配置或用户权限。
+ * 品牌图标、可复制模型 ID、最低价格与详情入口，不读取管理配置或用户权限。
  */
 "use client";
 
@@ -124,20 +124,20 @@ export function ModelMarketplaceCard({
             <Tooltip>
               <TooltipTrigger asChild>
                 <p className="min-w-0 truncate font-mono text-sm font-medium text-foreground">
-                  {model.defaultModelId}
+                  {model.modelId}
                 </p>
               </TooltipTrigger>
-              <TooltipContent>{model.defaultModelId}</TooltipContent>
+              <TooltipContent>{model.modelId}</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   type="button"
                   aria-label={t("actions.copyModelId", {
-                    modelId: model.defaultModelId,
+                    modelId: model.modelId,
                   })}
                   className="size-8 shrink-0 text-muted-foreground"
-                  onClick={() => onCopy(model.defaultModelId)}
+                  onClick={() => onCopy(model.modelId)}
                   size="icon"
                   variant="ghost"
                 >

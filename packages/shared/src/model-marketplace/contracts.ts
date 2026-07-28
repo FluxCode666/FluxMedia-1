@@ -338,6 +338,28 @@ function addVideoResolutionPricingIssues(
   });
 }
 
+/**
+ * 阻止公开视频模型身份退化为内部组合路由 ID。
+ *
+ * @param value - 已解析的视频公开 DTO 身份字段。
+ * @param context - Zod 精细校验上下文；身份不一致时追加 modelId 错误。
+ * @returns 无返回值；只报告错误，不修改输入。
+ * @sideEffects 无。
+ * @failure 不抛错，由 Zod 汇总错误。
+ */
+function addPublicVideoIdentityIssues(
+  value: { configKey: string; modelId: string },
+  context: z.RefinementCtx
+): void {
+  // WHY：视频路由会把时长、比例和分辨率展开成组合 ID；公开身份必须保持为定价模型键。
+  if (value.modelId === value.configKey) return;
+  context.addIssue({
+    code: "custom",
+    path: ["modelId"],
+    message: "公开视频模型 ID 必须与定价配置键一致",
+  });
+}
+
 const explicitImageConfigurationEntrySchema = z
   .object({
     ...managementMarketplaceShape,
@@ -391,7 +413,7 @@ export const modelConfigurationSnapshotSchema = z
 
 const publicCommonShape = {
   configKey: realModelConfigKeySchema,
-  defaultModelId: z
+  modelId: z
     .string()
     .trim()
     .min(1)
@@ -430,7 +452,8 @@ const publicVideoItemSchema = z
     supportedResolutions: z.array(z.string().trim().min(1).max(32)).max(100),
   })
   .strict()
-  .superRefine(addVideoResolutionPricingIssues);
+  .superRefine(addVideoResolutionPricingIssues)
+  .superRefine(addPublicVideoIdentityIssues);
 
 /** 公开模型广场的图像或视频判别联合 DTO。 */
 export const modelMarketplacePublicItemSchema = z.discriminatedUnion(

@@ -111,11 +111,11 @@ function parseCatalog(value: unknown): HomepageModelCatalogState | null {
     const parsed = modelMarketplacePublicItemSchema.safeParse(candidate);
     if (!parsed.success) return null;
     if (parsed.data.category === "image") {
-      image.push({ id: parsed.data.defaultModelId });
+      image.push({ id: parsed.data.modelId });
     }
     if (parsed.data.homepageVisible) {
       homepage.push({
-        id: parsed.data.defaultModelId,
+        id: parsed.data.modelId,
         category: parsed.data.category,
         priority: parsed.data.homepagePriority,
       });

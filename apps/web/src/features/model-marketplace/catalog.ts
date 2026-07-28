@@ -7,7 +7,6 @@
 import { resolveFireflyVideoModel } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import { MAX_SUPPORTED_MODEL_IDS } from "@repo/shared/image-backend/supported-models";
 import {
-  getStableVideoDefaultModelId,
   type ModelMarketplaceCoverRef,
   type ModelMarketplacePublicItem,
   modelMarketplacePublicItemSchema,
@@ -72,7 +71,6 @@ export type ModelMarketplaceCatalogInput = {
 type RuntimeCatalog = z.infer<typeof runtimeModelCatalogSchema>;
 
 type VideoRuntimeCandidate = {
-  id: string;
   duration: number;
   aspectRatio: string;
   outputResolution: string;
@@ -128,10 +126,10 @@ function buildRuntimeImageModelIdMap(
 }
 
 /**
- * 按视频 family 聚合真实可达完整 ID 及其能力事实。
+ * 按视频 family 聚合真实可达路由 ID 中的能力事实。
  *
  * @param runtimeCatalog - 已严格解析的运行时图像与视频目录。
- * @returns family 到真实完整 ID、时长、比例与分辨率候选项的映射。
+ * @returns family 到时长、比例与分辨率候选项的映射；路由 ID 不作为公开模型身份输出。
  * @sideEffects 无。
  * @failure 不抛错；不能由共享 Firefly 目录解析的视频 ID 不会伪造成公开 family。
  */
@@ -145,7 +143,6 @@ function buildRuntimeVideoCandidates(
     if (!family || !configuration) continue;
     const candidates = candidatesByFamily.get(family) ?? [];
     candidates.push({
-      id: model.id,
       duration: configuration.duration,
       aspectRatio: configuration.aspectRatio,
       outputResolution: configuration.outputResolution,
@@ -213,14 +210,14 @@ export function buildModelMarketplaceCatalog(
     if (entry.category === "image") {
       // WHY：展示开关不能把未定价模型公开；价格缺失必须先由管理员显式配置。
       if (entry.pricingSource === "unconfigured") continue;
-      const defaultModelId = runtimeImageModelIds.get(entry.configKey);
-      if (!defaultModelId) continue;
+      const modelId = runtimeImageModelIds.get(entry.configKey);
+      if (!modelId) continue;
       const persistedEntry = marketplaceConfig.imageByModel[entry.configKey];
       items.push(
         modelMarketplacePublicItemSchema.parse({
           category: "image",
           configKey: entry.configKey,
-          defaultModelId,
+          modelId,
           displayName: entry.displayName,
           iconKey: entry.iconKey,
           description: getPublicDescription(
@@ -242,11 +239,6 @@ export function buildModelMarketplaceCatalog(
     if (entry.category === "video") {
       const candidates = runtimeVideoCandidates.get(entry.configKey);
       if (!candidates?.length) continue;
-      const defaultModelId = getStableVideoDefaultModelId(
-        entry.configKey,
-        candidates.map((candidate) => candidate.id)
-      );
-      if (!defaultModelId) continue;
       const persistedEntry = marketplaceConfig.videoByFamily[entry.configKey];
       const supportedResolutions = sortUniqueVideoResolutions(
         candidates.map((candidate) => candidate.outputResolution)
@@ -265,7 +257,8 @@ export function buildModelMarketplaceCatalog(
         modelMarketplacePublicItemSchema.parse({
           category: "video",
           configKey: entry.configKey,
-          defaultModelId,
+          // WHY：组合路由 ID 只服务于请求解析；模型广场展示定价配置中的单一模型 ID。
+          modelId: entry.configKey,
           displayName: entry.displayName,
           iconKey: entry.iconKey,
           description: getPublicDescription(

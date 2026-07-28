@@ -278,7 +278,7 @@ describe("模型配置 UOL schema", () => {
           {
             category: "image",
             configKey: "gpt-image-2",
-            defaultModelId: "gpt-image-2",
+            modelId: "gpt-image-2",
             displayName: "GPT Image 2",
             iconKey: "openai",
             description: "",

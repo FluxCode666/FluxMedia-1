@@ -107,7 +107,7 @@ export function formatSupportedVideoDurations(
  * 按类别、厂商和自然语言查询过滤公开模型。
  *
  * @param models - 服务端公开 operation 返回的严格 DTO。
- * @param query - 用户输入，可匹配展示名、完整 ID、配置键或简介。
+ * @param query - 用户输入，可匹配展示名、模型 ID、配置键或简介。
  * @param category - all、image 或 video。
  * @param provider - all 或公开 DTO 中已收窄的品牌键。
  * @returns 保持服务端目录顺序的新数组，不修改输入。
@@ -126,7 +126,7 @@ export function filterModelMarketplaceModels(
     if (!normalizedQuery) return true;
     return [
       model.displayName,
-      model.defaultModelId,
+      model.modelId,
       model.configKey,
       model.description,
     ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
@@ -136,7 +136,7 @@ export function filterModelMarketplaceModels(
 /**
  * 尝试把完整模型 ID 写入系统剪贴板。
  *
- * @param modelId - 公开 DTO 中的完整默认模型 ID。
+ * @param modelId - 公开 DTO 中的单一模型 ID。
  * @param writeText - 浏览器 Clipboard 写入函数；缺失时表示环境不支持复制。
  * @returns 成功返回 true，API 缺失或拒绝返回 false。
  * @sideEffects 成功时写系统剪贴板。
@@ -159,7 +159,7 @@ export async function copyModelMarketplaceId(
  * 构建模型广场“立即使用”站内路径。
  *
  * @param model - 公开目录已验证的图片或视频模型。
- * @returns 图片进入简易生图并携带完整模型 ID；视频在页面移除后进入 API 文档。
+ * @returns 图片进入简易生图并携带模型 ID；视频在页面移除后进入 API 文档。
  * @sideEffects 无。
  * @failure DTO 已限制模型 ID 非空且有界，函数不会抛错。
  */
@@ -169,7 +169,7 @@ export function getModelMarketplaceUsageHref(
   if (model.category === "video") return "/dashboard/api-docs";
   const searchParams = new URLSearchParams({
     category: model.category,
-    model: model.defaultModelId,
+    model: model.modelId,
   });
   return `/dashboard/generate?${searchParams.toString()}`;
 }

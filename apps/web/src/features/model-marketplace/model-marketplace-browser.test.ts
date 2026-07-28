@@ -1,7 +1,7 @@
 /**
  * 模型广场客户端纯交互测试。
  *
- * 使用方是 Vitest；锁定搜索、类别与厂商筛选、完整 ID 复制结果和“立即使用”查询契约，
+ * 使用方是 Vitest；锁定搜索、类别与厂商筛选、模型 ID 复制结果和“立即使用”查询契约，
  * 不依赖浏览器 DOM 或真实 Clipboard。
  */
 import type { ModelMarketplacePublicItem } from "@repo/shared/model-marketplace";
@@ -19,7 +19,7 @@ import {
 const IMAGE_MODEL: ModelMarketplacePublicItem = {
   category: "image",
   configKey: "gpt-image-2",
-  defaultModelId: "gpt-image-2",
+  modelId: "gpt-image-2",
   displayName: "GPT Image 2",
   iconKey: "openai",
   description: "High quality image generation",
@@ -39,7 +39,7 @@ const IMAGE_MODEL: ModelMarketplacePublicItem = {
 const VIDEO_MODEL: ModelMarketplacePublicItem = {
   category: "video",
   configKey: "veo31",
-  defaultModelId: "veo31-6s-9x16-1080p",
+  modelId: "veo31",
   displayName: "Veo 3.1",
   iconKey: "google",
   description: "Reference-aware video generation",
@@ -56,12 +56,15 @@ const VIDEO_MODEL: ModelMarketplacePublicItem = {
 };
 
 describe("filterModelMarketplaceModels", () => {
-  it("按完整 ID、展示名、配置键或简介搜索并保持服务端顺序", () => {
+  it("按模型 ID、展示名、配置键或简介搜索并保持服务端顺序", () => {
     const models = [IMAGE_MODEL, VIDEO_MODEL];
 
     expect(
-      filterModelMarketplaceModels(models, "veo31-6s", "all", "all")
+      filterModelMarketplaceModels(models, "veo31", "all", "all")
     ).toEqual([VIDEO_MODEL]);
+    expect(
+      filterModelMarketplaceModels(models, "veo31-6s", "all", "all")
+    ).toEqual([]);
     expect(
       filterModelMarketplaceModels(models, "GPT IMAGE", "all", "all")
     ).toEqual([IMAGE_MODEL]);
@@ -97,14 +100,14 @@ describe("filterModelMarketplaceModels", () => {
     const seedanceModel = {
       ...VIDEO_MODEL,
       configKey: "seedance2",
-      defaultModelId: "seedance2-4s-16x9-480p",
+      modelId: "seedance2",
       displayName: "Seedance 2.0",
       iconKey: "bytedance" as const,
     };
     const runwayModel = {
       ...VIDEO_MODEL,
       configKey: "runway-gen45",
-      defaultModelId: "runway-gen45-5s-16x9",
+      modelId: "runway-gen45",
       displayName: "Runway Gen-4.5",
       iconKey: "runway" as const,
     };
@@ -124,21 +127,21 @@ describe("filterModelMarketplaceModels", () => {
 });
 
 describe("copyModelMarketplaceId", () => {
-  it("完整写入模型 ID 并报告成功", async () => {
+  it("完整写入单一模型 ID 并报告成功", async () => {
     const writeText = vi.fn(async () => undefined);
 
     await expect(
-      copyModelMarketplaceId(VIDEO_MODEL.defaultModelId, writeText)
+      copyModelMarketplaceId(VIDEO_MODEL.modelId, writeText)
     ).resolves.toBe(true);
-    expect(writeText).toHaveBeenCalledWith(VIDEO_MODEL.defaultModelId);
+    expect(writeText).toHaveBeenCalledWith(VIDEO_MODEL.modelId);
   });
 
   it("Clipboard 缺失或拒绝时报告失败且不抛错", async () => {
     await expect(
-      copyModelMarketplaceId(IMAGE_MODEL.defaultModelId, null)
+      copyModelMarketplaceId(IMAGE_MODEL.modelId, null)
     ).resolves.toBe(false);
     await expect(
-      copyModelMarketplaceId(IMAGE_MODEL.defaultModelId, async () => {
+      copyModelMarketplaceId(IMAGE_MODEL.modelId, async () => {
         throw new Error("permission denied");
       })
     ).resolves.toBe(false);
