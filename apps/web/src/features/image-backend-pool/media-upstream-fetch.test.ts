@@ -1,8 +1,8 @@
 /**
- * 统一媒体上游安全请求测试。
+ * 统一媒体上游请求测试。
  *
- * 职责：验证上游请求使用连接层 DNS pin，媒体下载逐跳复验且不会跟随到私网。
- * 测试替换真实传输，不访问网络。
+ * 职责：验证上游请求使用连接层 DNS pin，允许 HTTP/私网目标，媒体下载逐跳解析
+ * 重定向并维持响应大小限制。测试替换真实传输，不访问网络。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -61,18 +61,24 @@ describe("media upstream fetch", () => {
     );
   });
 
-  it("rejects a media response that redirects to loopback", async () => {
-    mocks.fetchWithDnsPin.mockResolvedValue(
-      new Response(null, {
-        status: 302,
-        headers: { location: "https://127.0.0.1/private" },
-      })
-    );
+  it("follows a media response redirect to a private HTTP target", async () => {
+    mocks.fetchWithDnsPin
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://127.0.0.1/private" },
+        })
+      )
+      .mockResolvedValueOnce(new Response("image"));
 
     await expect(
       fetchMediaUpstreamDownload("https://8.8.8.8/image.png")
-    ).rejects.toThrow(/unsafe media upstream/i);
-    expect(mocks.fetchWithDnsPin).toHaveBeenCalledTimes(1);
+    ).resolves.toBeInstanceOf(Response);
+    expect(mocks.fetchWithDnsPin).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1/private",
+      expect.objectContaining({ allowBlockedAddress: expect.any(Function) })
+    );
   });
 
   it("enforces the caller-selected video byte limit on every redirect hop", async () => {
@@ -97,8 +103,7 @@ describe("media upstream fetch", () => {
     );
   });
 
-  it("allows a private upstream only through the deployment allowlist", async () => {
-    vi.stubEnv("MEDIA_UPSTREAM_PRIVATE_ALLOWLIST", "10.0.0.0/8");
+  it("allows a private upstream without a deployment allowlist", async () => {
     mocks.fetchWithDnsPin.mockResolvedValue(new Response("ok"));
 
     await fetchMediaUpstream("https://10.0.0.8/v1", {

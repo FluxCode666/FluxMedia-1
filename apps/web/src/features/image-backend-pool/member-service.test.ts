@@ -120,6 +120,35 @@ describe("backend member service", () => {
     );
   });
 
+  it("默认地址解析允许保存 HTTP 私网上游", async () => {
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-private",
+      now: () => NOW,
+    });
+
+    await expect(
+      service.saveMember(
+        apiInput({
+          config: {
+            baseUrl: "http://10.0.0.8:8080/v1",
+            apiKey: "secret-api-key",
+            useStream: false,
+            parameterMappings: [],
+          },
+        })
+      )
+    ).resolves.toEqual({ id: "member-private" });
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          baseUrl: "http://10.0.0.8:8080/v1",
+        }),
+      }),
+      NOW
+    );
+  });
+
   it("编辑成员保留明确 ID 并允许 secret 留空由仓储沿用", async () => {
     const service = createBackendMemberService({
       repository,

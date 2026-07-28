@@ -51,6 +51,32 @@ describe("backend member contract", () => {
     if (parsed.type === "api") expect(parsed.config.useStream).toBe(false);
   });
 
+  it("allows HTTP and private-network media upstream URLs", () => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "api",
+        config: {
+          baseUrl: "http://10.0.0.8:8080/v1",
+          parameterMappings: [],
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "adobe",
+        config: {
+          mode: "gateway",
+          baseUrl: "http://127.0.0.1:8080/v1",
+          defaultRatio: "1:1",
+          defaultResolution: "2k",
+          gptImageQuality: "high",
+        },
+      }).success
+    ).toBe(true);
+  });
+
   it.each([
     "gateway",
     "direct",

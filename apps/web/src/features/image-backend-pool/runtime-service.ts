@@ -28,7 +28,7 @@ import { z } from "zod";
 import type { ApiConfig } from "@/features/image-generation/types";
 import { extractExecuteRows } from "@/server/database-result";
 
-import { assertSafeMediaUpstreamUrl } from "./outbound-url-security";
+import { parseMediaUpstreamUrl } from "./media-upstream-url";
 import {
   type AcquiredBackendMemberLease,
   defaultBackendPoolRepository,
@@ -281,7 +281,7 @@ async function loadRuntimeBackendLease(
     if (!row.api_base_url || !row.api_key) {
       throw new Error("API 成员缺少运行时地址或凭据");
     }
-    await assertSafeMediaUpstreamUrl(row.api_base_url);
+    parseMediaUpstreamUrl(row.api_base_url);
     return {
       acquisition,
       memberId: row.member_id,
@@ -316,7 +316,7 @@ async function loadRuntimeBackendLease(
     if (!row.adobe_base_url || !row.adobe_api_key) {
       throw new Error("Adobe gateway 成员缺少地址或凭据");
     }
-    await assertSafeMediaUpstreamUrl(row.adobe_base_url);
+    parseMediaUpstreamUrl(row.adobe_base_url);
   }
 
   return {

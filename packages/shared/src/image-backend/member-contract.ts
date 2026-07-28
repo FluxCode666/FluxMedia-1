@@ -14,6 +14,19 @@ import {
   supportedModelIdsSchema,
 } from "./supported-models";
 
+/** 管理员配置的媒体上游可使用 HTTP 或 HTTPS，不限制目标网络范围。 */
+const mediaUpstreamUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine(
+    (value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === "http:" || protocol === "https:";
+    },
+    { message: "Media upstream URL must use HTTP or HTTPS" }
+  );
+
 /** 顶层媒体后端成员类型；不得再增加 Web/Codex 等身份。 */
 export const BACKEND_MEMBER_TYPES = ["api", "adobe"] as const;
 
@@ -23,13 +36,7 @@ export type BackendMemberType = (typeof BACKEND_MEMBER_TYPES)[number];
 /** API 成员只支持 OpenAI Images 风格协议。 */
 export const apiBackendMemberConfigSchema = z
   .object({
-    baseUrl: z
-      .string()
-      .trim()
-      .url()
-      .refine((value) => new URL(value).protocol === "https:", {
-        message: "API baseUrl must use HTTPS",
-      }),
+    baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
     parameterMappings: requestParameterMappingsSchema,
@@ -40,13 +47,7 @@ export const apiBackendMemberConfigSchema = z
 export const adobeGatewayMemberConfigSchema = z
   .object({
     mode: z.literal("gateway"),
-    baseUrl: z
-      .string()
-      .trim()
-      .url()
-      .refine((value) => new URL(value).protocol === "https:", {
-        message: "Adobe gateway baseUrl must use HTTPS",
-      }),
+    baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     defaultRatio: z.string().trim().min(1).max(20),
     defaultResolution: z.string().trim().min(1).max(20),

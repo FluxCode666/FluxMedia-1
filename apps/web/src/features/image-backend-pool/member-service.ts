@@ -1,7 +1,7 @@
 /**
  * 统一媒体后端成员服务。
  *
- * 职责：校验 `api | adobe` 成员契约和出站 URL，在单一仓储事务中保存公共成员、
+ * 职责：校验 `api | adobe` 成员契约和 HTTP(S) URL，在单一仓储事务中保存公共成员、
  * 恰好一个类型配置及全部分组关系，并提供脱敏管理快照与安全删除。
  * 使用方：UOL pool operations 与管理后台；secret 永不出现在读取 DTO 中。
  */
@@ -15,7 +15,7 @@ import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
 
-import { assertSafeMediaUpstreamUrl } from "./outbound-url-security";
+import { parseMediaUpstreamUrl } from "./media-upstream-url";
 
 /** 成员服务可稳定映射到 UOL 的错误码。 */
 export type BackendMemberServiceErrorCode =
@@ -247,7 +247,7 @@ export function createBackendMemberService(
   const createId = dependencies.createId ?? nanoid;
   const now = dependencies.now ?? (() => new Date());
   const validateUpstreamUrl =
-    dependencies.validateUpstreamUrl ?? assertSafeMediaUpstreamUrl;
+    dependencies.validateUpstreamUrl ?? parseMediaUpstreamUrl;
   const prepareAdobeDirectCredential =
     dependencies.prepareAdobeDirectCredential ??
     (async (cookie: string, scope?: string) => {
@@ -281,7 +281,7 @@ export function createBackendMemberService(
       } catch {
         throw new BackendMemberServiceError(
           "validation_error",
-          "媒体上游地址不符合安全策略"
+          "媒体上游地址无效"
         );
       }
 
