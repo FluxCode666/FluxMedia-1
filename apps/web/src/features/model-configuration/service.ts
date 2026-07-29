@@ -178,12 +178,12 @@ export function createModelConfigurationStoragePort(
 }
 
 /**
- * 读取并验证模型资产、头像与生成内容 bucket 的安全隔离关系。
+ * 读取并验证模型资产、头像与生成内容 bucket 的安全关系。
  *
  * @param loadSettingString - 运行时系统设置字符串读取器。
- * @returns 去空白后的专用模型资产 bucket 与两个受保护 bucket。
+ * @returns 去空白后的模型资产、头像与生成内容 bucket。
  * @sideEffects 并发读取三项运行时设置，不写缓存或存储。
- * @failure 模型资产 bucket 缺失、为空或与头像/生成内容冲突时 fail-closed。
+ * @failure 模型资产 bucket 缺失、为空，或生成内容与任一公开域冲突时 fail-closed。
  */
 async function loadBucketConfig(
   loadSettingString: ProductionModelConfigurationDependencies["loadSettingString"]
@@ -205,10 +205,13 @@ async function loadBucketConfig(
   const avatarsBucket = avatarsRaw?.trim() || DEFAULT_AVATARS_BUCKET;
   const generationsBucket =
     generationsRaw?.trim() || DEFAULT_GENERATIONS_BUCKET;
-  if (assetBucket === avatarsBucket || assetBucket === generationsBucket) {
+  if (
+    generationsBucket === assetBucket ||
+    generationsBucket === avatarsBucket
+  ) {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
-      "模型资产存储桶必须与头像和生成内容存储桶隔离"
+      "生成内容存储桶必须与模型资产和头像存储桶隔离"
     );
   }
   return { assetBucket, avatarsBucket, generationsBucket };

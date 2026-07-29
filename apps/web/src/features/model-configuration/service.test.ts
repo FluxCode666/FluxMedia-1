@@ -236,7 +236,6 @@ describe("生产模型配置服务", () => {
 
   it.each([
     ["空资产桶", "", "avatars", "generations"],
-    ["与头像桶冲突", "avatars", "avatars", "generations"],
     ["与生成桶冲突", "generations", "avatars", "generations"],
   ])("%s 时在加载 Provider、处理封面或调用保存内核前 fail-closed", async (_label, assetBucket, avatarsBucket, generationsBucket) => {
     const harness = await createServiceHarness();
@@ -269,6 +268,36 @@ describe("生产模型配置服务", () => {
     expect(harness.loadStorageProvider).not.toHaveBeenCalled();
     expect(harness.processCoverImage).not.toHaveBeenCalled();
     expect(createCoreService).not.toHaveBeenCalled();
+  });
+
+  it("模型资产允许与头像共用系统公开资产 bucket", async () => {
+    const harness = await createServiceHarness();
+    const output = {
+      category: "image" as const,
+      configKey: "gpt-image-2",
+      revision: 1,
+    };
+    const updateEntry = vi.fn(async () => output);
+    const createCoreService = vi.fn<
+      ProductionModelConfigurationDependencies["createCoreService"]
+    >(() => ({ updateEntry }));
+    const service =
+      harness.serviceModule.createProductionModelConfigurationService({
+        createRepository: () => harness.repositoryBundle,
+        loadSettingString: async (key) =>
+          key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+            ? "generations"
+            : "system-assets",
+        loadStorageProvider: harness.loadStorageProvider,
+        createCoreService,
+      });
+    const command = { actorUserId: "admin", input: {} };
+
+    await expect(service.updateEntry(command)).resolves.toEqual(output);
+    expect(updateEntry).toHaveBeenCalledWith(command);
+    expect(createCoreService.mock.calls[0]?.[0]).toMatchObject({
+      assetBucket: "system-assets",
+    });
   });
 
   it("读取前验证全部持久化封面引用都属于专用资产桶", async () => {

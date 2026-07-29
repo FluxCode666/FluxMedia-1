@@ -15,7 +15,11 @@ import { getRuntimeSettingString } from "../system-settings";
 
 import { getStorageProvider } from "./providers";
 import { ALLOWED_IMAGE_TYPES, type AllowedImageType } from "./types";
-import { isBucketAllowed, keyBelongsToUser } from "./utils";
+import {
+  isBucketAllowed,
+  keyBelongsToUser,
+  parseAvatarStorageBucketName,
+} from "./utils";
 
 const withStorageAction = (name: string) =>
   protectedAction.metadata({ action: `storage.${name}` });
@@ -25,23 +29,18 @@ const withStorageAction = (name: string) =>
 // ============================================
 
 /**
- * 获取头像存储桶名称
+ * 获取已与生成内容隔离的头像存储桶名称。
+ *
+ * @returns 当前运行时头像 bucket。
+ * @sideEffects 并发读取头像和生成内容两项系统设置。
+ * @failure 设置缺失、为空或两个安全域同名时拒绝，不签发存储权限。
  */
 async function getAvatarsBucket(): Promise<string> {
-  const bucket = await getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME");
-  if (!bucket) {
-    throw new Error("NEXT_PUBLIC_AVATARS_BUCKET_NAME 环境变量未设置");
-  }
-  return bucket;
-}
-
-/**
- * 允许的存储桶白名单
- *
- * 安全措施：只允许访问预定义的存储桶
- */
-async function getAllowedBuckets(): Promise<string[]> {
-  return [await getAvatarsBucket()];
+  const [avatars, generations] = await Promise.all([
+    getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
+    getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
+  ]);
+  return parseAvatarStorageBucketName(avatars, generations);
 }
 
 // ============================================
@@ -62,11 +61,14 @@ export const getSignedUploadUrlAction = withStorageAction("getSignedUploadUrl")
         .string()
         .min(1, "文件键名不能为空")
         .max(255, "文件键名过长")
-        .regex(/^[a-zA-Z0-9\-_\/\.]+$/, "文件键名包含非法字符"),
+        .regex(/^[a-zA-Z0-9\-_/.]+$/, "文件键名包含非法字符"),
       /** 文件 MIME 类型 */
-      contentType: z.enum(["image/jpeg", "image/png", "image/gif", "image/webp"], {
-        message: `只支持以下文件类型: ${ALLOWED_IMAGE_TYPES.join(", ")}`,
-      }),
+      contentType: z.enum(
+        ["image/jpeg", "image/png", "image/gif", "image/webp"],
+        {
+          message: `只支持以下文件类型: ${ALLOWED_IMAGE_TYPES.join(", ")}`,
+        }
+      ),
       /** 存储桶名称 (可选，默认使用头像桶) */
       bucket: z.string().optional(),
     })
@@ -76,11 +78,11 @@ export const getSignedUploadUrlAction = withStorageAction("getSignedUploadUrl")
     const { userId } = ctx;
 
     // 确定使用的存储桶
-    const bucket = inputBucket ?? (await getAvatarsBucket());
+    const avatarsBucket = await getAvatarsBucket();
+    const bucket = inputBucket ?? avatarsBucket;
 
     // 安全检查：验证存储桶在白名单中
-    const allowedBuckets = await getAllowedBuckets();
-    if (!isBucketAllowed(bucket, allowedBuckets)) {
+    if (!isBucketAllowed(bucket, [avatarsBucket])) {
       throw new Error("不允许访问该存储桶");
     }
 
@@ -129,11 +131,11 @@ export const deleteFileAction = withStorageAction("deleteFile")
     const { userId } = ctx;
 
     // 确定使用的存储桶
-    const bucket = inputBucket ?? (await getAvatarsBucket());
+    const avatarsBucket = await getAvatarsBucket();
+    const bucket = inputBucket ?? avatarsBucket;
 
     // 安全检查：验证存储桶在白名单中
-    const allowedBuckets = await getAllowedBuckets();
-    if (!isBucketAllowed(bucket, allowedBuckets)) {
+    if (!isBucketAllowed(bucket, [avatarsBucket])) {
       throw new Error("不允许访问该存储桶");
     }
 

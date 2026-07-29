@@ -4,6 +4,8 @@
  * 验证服务把原始字节、内容类型和内容寻址引用交给存储，并在保存后失效缓存；不连接
  * 真实数据库或对象存储，数据库回执由可替换端口模拟。
  */
+
+import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbTransaction = vi.hoisted(() => vi.fn());
@@ -34,6 +36,7 @@ describe("createSiteLogoUploadService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     dbTransaction.mockReset();
+    vi.mocked(getRuntimeSettingString).mockReset();
   });
 
   it("原样写入文件并返回内容寻址 URL", async () => {
@@ -101,6 +104,40 @@ describe("createSiteLogoUploadService", () => {
 
     await expect(service(input, "super-admin-1")).rejects.toThrow(
       "cache unavailable"
+    );
+  });
+
+  it("网站、模型与头像资产允许共用系统公开资产 bucket", async () => {
+    vi.mocked(getRuntimeSettingString).mockImplementation(async (key) =>
+      key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+        ? "generations"
+        : "system-assets"
+    );
+    const putObject = vi.fn().mockResolvedValue(undefined);
+    const service = createSiteLogoUploadService({
+      loadStorage: vi.fn().mockResolvedValue({ putObject }),
+      validate: vi.fn().mockResolvedValue({
+        bytes: input.bytes,
+        sha256: "c".repeat(64),
+        format: "ico",
+        contentType: "image/x-icon",
+        extension: "ico",
+      }),
+      commit: vi.fn().mockResolvedValue({
+        logoUrl: `/api/storage/system-assets/logo/${"c".repeat(64)}.ico`,
+        replayed: false,
+      }),
+      invalidateCache: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await expect(service(input, "super-admin-1")).resolves.toMatchObject({
+      logoUrl: `/api/storage/system-assets/logo/${"c".repeat(64)}.ico`,
+    });
+    expect(putObject).toHaveBeenCalledWith(
+      `logo/${"c".repeat(64)}.ico`,
+      "system-assets",
+      expect.any(Buffer),
+      "image/x-icon"
     );
   });
 });

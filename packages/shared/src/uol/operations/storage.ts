@@ -13,9 +13,8 @@
  *   预签名直传仅 S3 可用。
  */
 import { z } from "zod";
-
-import { defineOperation } from "../registry";
 import { getStorageProvider } from "../../storage/providers/index";
+import { defineOperation } from "../registry";
 
 // ---------------------------------------------------------------------------
 // 1. storage.getSignedUploadUrl
@@ -94,7 +93,8 @@ export const readObject = defineOperation({
   title: "读取存储对象",
   description:
     "通过 GET 代理读取对象存储中的文件。权限因桶而异：" +
-    "avatars 桶公开访问；generations 桶需已认证 + 属主校验。" +
+    "头像、模型封面和品牌资产所在系统 bucket 公开访问；" +
+    "generations 桶需已认证 + 属主校验。" +
     "执行桶白名单与路径防穿越校验。",
   input: z.object({
     bucket: z.string().min(1),

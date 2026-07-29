@@ -17,7 +17,8 @@ export type StorageImageReference = {
 
 /**
  * 不需要签名的公开桶名集合。
- * 头像桶始终公开（OAuth 头像等场景无 cookie/token 可用）。
+ * 头像资产所在 bucket 始终公开；它可以同时承载模型封面和品牌资产，但不能承载
+ * generations 用户私有内容。
  */
 const PUBLIC_BUCKETS = new Set([
   process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME || "avatars",

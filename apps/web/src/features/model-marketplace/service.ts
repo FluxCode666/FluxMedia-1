@@ -2,7 +2,7 @@
  * 公开模型广场的生产基础设施装配。
  *
  * 使用方是 UOL late binding；本模块并行读取真实运行时目录、两类价格、展示配置和三个
- * bucket 设置，先完成存储隔离与全量封面引用校验，再调用 DB-free 目录构建器输出公开 DTO。
+ * bucket 设置，先完成生成内容隔离与全量封面引用校验，再调用 DB-free 目录构建器输出公开 DTO。
  */
 import "server-only";
 
@@ -73,14 +73,14 @@ const defaultDependencies: ProductionModelMarketplaceDependencies = {
 };
 
 /**
- * 规范化并验证模型资产、头像与生成内容 bucket 的隔离关系。
+ * 规范化并验证模型资产、头像与生成内容 bucket 的安全关系。
  *
  * @param assetRaw - 专用模型资产 bucket 的未知可选设置值。
  * @param avatarsRaw - 头像 bucket 的未知可选设置值。
  * @param generationsRaw - 生成内容 bucket 的未知可选设置值。
- * @returns 去空白后的专用资产 bucket 与两个受保护 bucket。
+ * @returns 去空白后的模型资产、头像与生成内容 bucket。
  * @sideEffects 无。
- * @failure 资产 bucket 缺失、为空或与头像/生成内容冲突时抛出稳定依赖错误。
+ * @failure 资产 bucket 缺失、为空，或生成内容与任一公开域冲突时抛出稳定错误。
  */
 function parseBucketConfig(
   assetRaw: string | undefined,
@@ -99,10 +99,13 @@ function parseBucketConfig(
   const avatarsBucket = avatarsRaw?.trim() || DEFAULT_AVATARS_BUCKET;
   const generationsBucket =
     generationsRaw?.trim() || DEFAULT_GENERATIONS_BUCKET;
-  if (assetBucket === avatarsBucket || assetBucket === generationsBucket) {
+  if (
+    generationsBucket === assetBucket ||
+    generationsBucket === avatarsBucket
+  ) {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
-      "模型资产存储桶必须与头像和生成内容存储桶隔离"
+      "生成内容存储桶必须与模型资产和头像存储桶隔离"
     );
   }
   return { assetBucket, avatarsBucket, generationsBucket };

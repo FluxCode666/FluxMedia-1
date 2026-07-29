@@ -22,8 +22,8 @@
 - `VIDEO_MODEL_CREDITS_PER_SECOND` 保存视频模型族每秒价格；
 - `MODEL_MARKETPLACE_CONFIG` 是版本 2 的专用 JSON 真相，独立保存展示开关、简介、
   封面引用、revision 和幂等回执；
-- `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME` 保存自定义封面的专用 bucket 名称，默认
-  `model-marketplace`。
+- `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME` 保存自定义封面的公开资产 bucket 名称，默认
+  `model-marketplace`；它可以与网站品牌和头像资产共用一个私有系统 bucket。
 
 设置初始化会识别历史 `IMAGE_MODEL_CREDIT_PRICES.byModel.default`：先用旧四档价格补齐
 已经存在的稀疏真实模型价格，再删除该键；运行时不会继续使用它。合法的模型广场 v1
@@ -55,14 +55,25 @@ JSON 会在读取时转换为 v2，并在下一次单模型保存时写回当前
 
 `STORAGE_ENDPOINT` 非空时使用现有 S3 兼容 Provider；为空时使用
 `LOCAL_STORAGE_PATH`，默认 `./storage`。两种模式共享相同的内容、引用和权限校验。
-模型资产 bucket 必须非空且分别不同于 avatars、generations；任一冲突时封面保存和公开
-目录读取均 fail-closed。公共存储读取 Route 还要求 avatars、generations、模型资产三个
-bucket 全部互异，否则整个 bucket 配置返回不可用。
+头像、模型封面与网站 Logo 可以共用一个私有系统公开资产 bucket。推荐 key 命名空间为
+`avatars/<user-id>-<timestamp>.<ext>`、
+`<image|video>/<config-key-sha256>/<content-sha256>.webp` 和
+`logo/<content-sha256>.<png|svg|ico>`。读取 Route 先按 bucket 白名单，再按 key
+命名空间选择唯一资产校验器，不能因为共桶而跳过模型封面或 Logo 的严格格式校验。
+历史生成器写入的 `<user-id>-<timestamp>.<jpg|jpeg|png|gif|webp>` 头像 key 继续兼容
+读取和归属校验；共桶中的其他未知根目录或 key 一律拒绝。
 
-匿名读取只开放专用 bucket 中满足上述内容寻址格式的 WebP，不允许缩略图参数；响应使用
-一年 `immutable` 缓存并设置 `nosniff`。generations bucket 仍要求签名 URL 或第一方会话
-归属校验，模型资产规则不能扩展到该 bucket。内置默认封面和品牌图标随 Web 应用发布，
-来源与许可见 [model-marketplace-assets.md](model-marketplace-assets.md)。
+`generations` 必须与上述三个公开资产域全部隔离；任一公共资产配置与生成内容 bucket
+重叠时，封面保存、Logo 上传、公开目录和存储读取均 fail-closed。合并部署仍保留三个
+设置键以兼容旧环境，只需把 `NEXT_PUBLIC_AVATARS_BUCKET_NAME`、
+`MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`、`SITE_ASSETS_BUCKET_NAME` 配成同一个已创建的
+bucket；头像设置属于构建期公开变量，修改后必须重新构建 Web 镜像。
+
+匿名读取只开放系统公开资产 bucket；模型 WebP 与 Logo 必须满足上述内容寻址格式，且不
+允许缩略图参数，响应使用一年 `immutable` 缓存并设置 `nosniff`。generations bucket
+仍要求签名 URL 或第一方会话归属校验，公开资产规则不能扩展到该 bucket。内置默认封面
+和品牌图标随 Web 应用发布，来源与许可见
+[model-marketplace-assets.md](model-marketplace-assets.md)。
 
 ## 缓存与故障行为
 

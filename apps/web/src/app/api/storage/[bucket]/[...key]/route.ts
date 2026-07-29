@@ -2,9 +2,10 @@
  * 存储对象读取 API 路由
  *
  * 提供本地/S3 存储桶中图像的 HTTP 读取。
- * - avatars 桶：公开访问，无需鉴权。
- * - 模型广场资产桶：仅严格内容寻址 WebP 允许匿名读取，禁止缩略图转换。
- * - 网站资产桶：仅严格内容寻址 PNG、SVG、ICO Logo 允许匿名读取，禁止缩略图转换。
+ * - 头像、模型封面与网站资产可共用一个私有系统资产 bucket，由 key 命名空间分流。
+ * - avatars 域：公开访问，无需鉴权。
+ * - image/video 域：仅严格内容寻址 WebP 允许匿名读取，禁止缩略图转换。
+ * - logo 域：仅严格内容寻址 PNG、SVG、ICO Logo 允许匿名读取，禁止缩略图转换。
  * - generations 桶：需要有效的短时签名 URL（sig + exp 查询参数）。
  *   签名验证使用 HMAC-SHA256 + 常量时间比较，防止时序攻击。
  *   v1 API 消费者通过签名 URL 参数获取授权（无 cookie）。
@@ -40,6 +41,12 @@ type StorageBucketConfig = {
   siteAssets: string;
 };
 
+type StorageObjectDomain =
+  | "avatars"
+  | "generations"
+  | "modelMarketplaceAssets"
+  | "siteAssets";
+
 const CONTENT_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -60,7 +67,7 @@ const NO_STORE_CACHE_CONTROL = "no-store";
 const DEFAULT_AVATARS_BUCKET = "avatars";
 const DEFAULT_GENERATIONS_BUCKET = "generations";
 
-/** 四项运行时 bucket 缺失、为空或安全域重叠时使用的内部稳定错误。 */
+/** 四项运行时 bucket 缺失、为空或生成内容与公开资产重叠时的稳定错误。 */
 class StorageBucketConfigurationError extends Error {
   /** 创建不包含原始设置值的配置错误。 */
   constructor() {
@@ -93,8 +100,8 @@ function parseProtectedBucketName(
  * `NEXT_PUBLIC_*` 环境变量，预构建镜像会把默认桶固化进白名单，导致图片已写入
  * 自定义 MinIO 桶、读取时却在触达 MinIO 前返回 `Bucket not allowed`。
  *
- * @returns 头像、生成图片、模型广场资产与网站资产四个互不相同的非空桶。
- * @throws 设置读取失败、任一专用资产桶非法或任意两个安全域重叠时显式失败。
+ * @returns 四项非空 bucket；三个公开资产域允许同名，生成内容必须独立。
+ * @throws 设置读取失败、任一 bucket 非法或生成内容与公开资产重叠时显式失败。
  */
 async function getStorageBucketConfig(): Promise<StorageBucketConfig> {
   const [avatarsRaw, generationsRaw, modelMarketplaceAssetsRaw, siteAssetsRaw] =
@@ -120,12 +127,58 @@ async function getStorageBucketConfig(): Promise<StorageBucketConfig> {
     throw new StorageBucketConfigurationError();
   }
   if (
-    new Set([avatars, generations, modelMarketplaceAssets, siteAssets]).size !==
-    4
+    generations === avatars ||
+    generations === modelMarketplaceAssets ||
+    generations === siteAssets
   ) {
     throw new StorageBucketConfigurationError();
   }
   return { avatars, generations, modelMarketplaceAssets, siteAssets };
+}
+
+/**
+ * 按 bucket 与 key 命名空间解析唯一对象安全域。
+ *
+ * WHY：头像、模型封面与网站 Logo 可以共用同一 bucket，不能再仅凭 bucket 依次执行
+ * 多个校验器。优先识别严格的 image/video 与 logo 命名空间；共桶头像只接受
+ * `avatars/` 或严格历史文件名，避免把同 bucket 的未知对象误当头像匿名公开。
+ *
+ * @param bucket - 请求路径中的 bucket。
+ * @param keySegments - 已剥离缩略图宽度段的对象 key 分段。
+ * @param config - 已验证生成内容隔离关系的运行时 bucket 配置。
+ * @returns 唯一对象域；bucket 合法但公开 key 不属于已配置命名空间时返回 null。
+ * @sideEffects 无。
+ * @failure 不抛错；严格引用格式由对应域的后续校验器负责。
+ */
+function resolveStorageObjectDomain(
+  bucket: string,
+  keySegments: string[],
+  config: StorageBucketConfig
+): StorageObjectDomain | null {
+  const namespace = keySegments[0];
+  if (
+    bucket === config.modelMarketplaceAssets &&
+    (namespace === "image" || namespace === "video")
+  ) {
+    return "modelMarketplaceAssets";
+  }
+  if (bucket === config.siteAssets && namespace === "logo") {
+    return "siteAssets";
+  }
+  if (bucket === config.avatars) {
+    const sharesPublicAssetBucket =
+      config.avatars === config.modelMarketplaceAssets ||
+      config.avatars === config.siteAssets;
+    const isNamespacedAvatar = namespace === "avatars";
+    const isLegacyAvatar =
+      keySegments.length === 1 &&
+      /^[a-zA-Z0-9_-]+-\d+\.(?:jpe?g|png|gif|webp)$/.test(keySegments[0] ?? "");
+    if (!sharesPublicAssetBucket || isNamespacedAvatar || isLegacyAvatar) {
+      return "avatars";
+    }
+  }
+  if (bucket === config.generations) return "generations";
+  return null;
 }
 
 // ============================================
@@ -287,7 +340,7 @@ function isObjectNotFoundError(error: unknown): boolean {
 
 /**
  * 验证 generations 桶的签名 URL。
- * avatars 与已严格校验 key 的模型资产桶跳过验证；非公开桶需要有效的 sig + exp。
+ * 三个公开资产域跳过验证；generations 域需要有效的 sig + exp。
  *
  * @returns null 表示验证通过，否则返回错误 Response
  */
@@ -320,16 +373,10 @@ async function verifyBucketAccess(
   request: NextRequest,
   bucket: string,
   fileKey: string,
-  avatarsBucket: string,
-  modelMarketplaceAssetsBucket: string,
-  siteAssetsBucket: string
+  domain: StorageObjectDomain
 ): Promise<NextResponse | null> {
-  // 公开桶无需签名
-  if (
-    bucket === avatarsBucket ||
-    bucket === modelMarketplaceAssetsBucket ||
-    bucket === siteAssetsBucket
-  ) {
+  // 已完成严格 key 分流的公开域无需签名。
+  if (domain !== "generations") {
     return null;
   }
 
@@ -399,22 +446,6 @@ export async function GET(
       }
     );
   }
-  const isModelMarketplaceAsset =
-    bucket === bucketConfig.modelMarketplaceAssets;
-  const isSiteAsset = bucket === bucketConfig.siteAssets;
-  if (
-    (isModelMarketplaceAsset || isSiteAsset) &&
-    (request.nextUrl.searchParams.has("w") || /^w\d+$/.test(key[0] ?? ""))
-  ) {
-    return NextResponse.json(
-      {
-        error: isSiteAsset
-          ? "Site logo thumbnails are not allowed"
-          : "Model marketplace thumbnails are not allowed",
-      },
-      { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
-    );
-  }
   // 缩略图宽度可经"路径段"传入:/api/storage/<bucket>/w<width>/<key>。这是为绕过
   // 线上 Cloudflare 忽略 query 的边缘缓存键(见 signed-url.buildStorageThumbnailUrl
   // 的 WHY):用查询参数 ?w= 会命中被缓存的整张原图。宽度段不参与签名,这里在验签前
@@ -431,8 +462,8 @@ export async function GET(
   if (
     bucket !== bucketConfig.avatars &&
     bucket !== bucketConfig.generations &&
-    !isModelMarketplaceAsset &&
-    !isSiteAsset
+    bucket !== bucketConfig.modelMarketplaceAssets &&
+    bucket !== bucketConfig.siteAssets
   ) {
     return NextResponse.json({ error: "Bucket not allowed" }, { status: 403 });
   }
@@ -444,6 +475,29 @@ export async function GET(
     fileKey.includes("\\")
   ) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
+  }
+
+  const domain = resolveStorageObjectDomain(bucket, keySegments, bucketConfig);
+  if (!domain) {
+    return NextResponse.json(
+      { error: "Invalid public asset key" },
+      { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
+    );
+  }
+  const isModelMarketplaceAsset = domain === "modelMarketplaceAssets";
+  const isSiteAsset = domain === "siteAssets";
+  if (
+    (isModelMarketplaceAsset || isSiteAsset) &&
+    (request.nextUrl.searchParams.has("w") || pathWidth !== null)
+  ) {
+    return NextResponse.json(
+      {
+        error: isSiteAsset
+          ? "Site logo thumbnails are not allowed"
+          : "Model marketplace thumbnails are not allowed",
+      },
+      { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
+    );
   }
 
   if (isModelMarketplaceAsset) {
@@ -482,15 +536,13 @@ export async function GET(
     }
   }
 
-  // 签名验证：generations 桶需要有效签名（或第一方会话归属），三个专用公共域
-  // 只在其严格 key 校验通过后匿名访问。
+  // 签名验证：generations 域需要有效签名（或第一方会话归属），三个公开资产域
+  // 在完成唯一域解析及其严格 key 校验后匿名访问。
   const accessError = await verifyBucketAccess(
     request,
     bucket,
     fileKey,
-    bucketConfig.avatars,
-    bucketConfig.modelMarketplaceAssets,
-    bucketConfig.siteAssets
+    domain
   );
   if (accessError) {
     return accessError;
@@ -512,7 +564,7 @@ export async function GET(
       ? (siteAssetContentType ?? "application/octet-stream")
       : mappedContentType || "application/octet-stream";
   const cacheControl =
-    bucket === bucketConfig.generations
+    domain === "generations"
       ? GENERATION_CACHE_CONTROL
       : PUBLIC_ASSET_CACHE_CONTROL;
 

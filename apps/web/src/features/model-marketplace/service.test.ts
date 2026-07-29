@@ -197,7 +197,6 @@ describe("公开模型广场生产服务", () => {
 
   it.each([
     ["空资产桶", "", "avatars", "generations"],
-    ["与头像桶冲突", "avatars", "avatars", "generations"],
     ["与生成内容桶冲突", "generations", "avatars", "generations"],
   ])("%s 时 fail-closed", async (_label, asset, avatars, generations) => {
     const { createProductionModelMarketplaceService } = await import(
@@ -214,6 +213,23 @@ describe("公开模型广场生产服务", () => {
 
     await expect(service.listPublicModels()).rejects.toMatchObject({
       code: "invalid_dependency_result",
+    });
+  });
+
+  it("模型资产允许与头像共用系统公开资产 bucket", async () => {
+    const { createProductionModelMarketplaceService } = await import(
+      "./service"
+    );
+    const service = createProductionModelMarketplaceService({
+      ...createDependencies(),
+      loadSettingString: async (key) =>
+        key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+          ? "generations"
+          : "system-assets",
+    });
+
+    await expect(service.listPublicModels()).resolves.toMatchObject({
+      items: [expect.objectContaining({ configKey: "gpt-image-2" })],
     });
   });
 

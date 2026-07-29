@@ -1091,7 +1091,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
     label: "模型广场资产 Bucket",
     description:
-      "模型广场自定义封面的专用 bucket，必须与头像和生成内容 bucket 隔离。",
+      "模型广场自定义封面的公开资产 bucket，可与网站品牌和头像共用，但必须与生成内容 bucket 隔离。",
     category: "storage",
     valueType: "string",
     defaultValue: "model-marketplace",
@@ -1100,7 +1100,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "SITE_ASSETS_BUCKET_NAME",
     label: "网站品牌资产 Bucket",
     description:
-      "网站 Logo 等公开品牌资产的专用 bucket，必须与头像、生成内容和模型广场资产 bucket 隔离。",
+      "网站 Logo 等公开品牌资产 bucket，可与模型广场和头像共用，但必须与生成内容 bucket 隔离。",
     category: "storage",
     valueType: "string",
     defaultValue: "site-assets",
@@ -1108,7 +1108,8 @@ export const SYSTEM_SETTING_DEFINITIONS = [
   {
     key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME",
     label: "头像 Bucket",
-    description: "头像文件 bucket。",
+    description:
+      "公开头像资产 bucket，可与网站品牌和模型广场共用，但必须与生成内容 bucket 隔离。修改后需要重新构建 Web。",
     category: "storage",
     valueType: "string",
     requiresRebuild: true,
@@ -1116,7 +1117,8 @@ export const SYSTEM_SETTING_DEFINITIONS = [
   {
     key: "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME",
     label: "生成图片 Bucket",
-    description: "生成图片文件 bucket。",
+    description:
+      "用户生成内容 bucket，必须与头像、网站品牌和模型广场等公开资产 bucket 隔离。",
     category: "storage",
     valueType: "string",
     requiresRebuild: true,

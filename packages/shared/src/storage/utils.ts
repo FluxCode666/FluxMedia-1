@@ -48,7 +48,9 @@ export function isExternalUrl(value: string | null | undefined): boolean {
  * getAvatarUrl(null) // => undefined
  * ```
  */
-export function getAvatarUrl(image: string | null | undefined): string | undefined {
+export function getAvatarUrl(
+  image: string | null | undefined
+): string | undefined {
   if (!image) {
     return undefined;
   }
@@ -59,14 +61,15 @@ export function getAvatarUrl(image: string | null | undefined): string | undefin
   }
 
   // 否则是存储键名，转换为本地存储读取 URL
-  const avatarsBucket = process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME ?? "avatars";
+  const avatarsBucket =
+    process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME ?? "avatars";
   return `/api/storage/${avatarsBucket}/${image}`;
 }
 
 /**
  * 生成唯一的头像文件名
  *
- * 格式: {userId}-{timestamp}.{extension}
+ * 格式: avatars/{userId}-{timestamp}.{extension}
  *
  * @param userId - 用户 ID
  * @param file - 上传的文件
@@ -75,7 +78,7 @@ export function getAvatarUrl(image: string | null | undefined): string | undefin
 export function generateAvatarKey(userId: string, file: File): string {
   const timestamp = Date.now();
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-  return `${userId}-${timestamp}.${extension}`;
+  return `avatars/${userId}-${timestamp}.${extension}`;
 }
 
 // ============================================
@@ -88,9 +91,9 @@ export function generateAvatarKey(userId: string, file: File): string {
  * 归属判定锚定在 userId 边界上，而非旧实现的 key.includes(userId) 子串匹配。
  * WHY：子串匹配过弱——当一个 userId 恰为另一 userId 的子串，或目标 userId
  * 出现在 key 的任意位置时，旧校验会被绕过，构成潜在越权（IDOR）。本仓的
- * 存储键命名为 `${userId}-${timestamp}.ext`（见 generateAvatarKey）或以
- * `${userId}/` 作前缀，因此只接受以 `${userId}/`、`${userId}-` 开头或与
- * `${userId}` 完全相等的键，杜绝子串混淆。
+ * 新存储键命名为 `avatars/${userId}-${timestamp}.ext`（见 generateAvatarKey），
+ * 同时兼容历史无 `avatars/` 命名空间的键。剥离至多一个固定命名空间后，只接受以
+ * `${userId}/`、`${userId}-` 开头或与 `${userId}` 完全相等的键，杜绝子串混淆。
  *
  * @param key - 文件键名
  * @param userId - 当前用户 ID
@@ -100,11 +103,48 @@ export function keyBelongsToUser(key: string, userId: string): boolean {
   if (!userId) {
     return false;
   }
+  if (key.includes("\\") || key.includes("\0")) {
+    return false;
+  }
+  const segments = key.split("/");
+  if (
+    segments.some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    return false;
+  }
+  const userOwnedKey = key.startsWith("avatars/")
+    ? key.slice("avatars/".length)
+    : key;
   return (
-    key === userId ||
-    key.startsWith(`${userId}/`) ||
-    key.startsWith(`${userId}-`)
+    userOwnedKey === userId ||
+    userOwnedKey.startsWith(`${userId}/`) ||
+    userOwnedKey.startsWith(`${userId}-`)
   );
+}
+
+/**
+ * 解析头像 bucket 并确保它不会与用户生成内容共用安全域。
+ *
+ * @param avatarsValue - 运行时头像 bucket；必须显式提供非空值。
+ * @param generationsValue - 运行时生成内容 bucket；缺少设置行时兼容历史默认值。
+ * @returns 去除首尾空白后的头像 bucket。
+ * @sideEffects 无。
+ * @failure 任一已配置值为空，或两个安全域同名时抛出不含原值的稳定错误。
+ */
+export function parseAvatarStorageBucketName(
+  avatarsValue: string | undefined,
+  generationsValue: string | undefined
+): string {
+  const avatars = avatarsValue?.trim();
+  const generations =
+    generationsValue === undefined ? "generations" : generationsValue.trim();
+  if (!avatars || !generations) {
+    throw new Error("存储桶配置无效");
+  }
+  if (avatars === generations) {
+    throw new Error("生成内容存储桶必须与头像存储桶隔离");
+  }
+  return avatars;
 }
 
 /**

@@ -75,7 +75,13 @@ export type SiteLogoUploadServiceDependencies = {
   createRequestHash: (bytes: Uint8Array) => string;
 };
 
-/** 读取并校验网站资产 bucket；缺失时使用定义中的稳定默认值。 */
+/**
+ * 读取并校验网站资产 bucket。
+ *
+ * @returns 网站资产 bucket；允许与模型封面、头像共用公开系统资产 bucket。
+ * @sideEffects 并发读取四项运行时 bucket 设置，不写数据库或对象存储。
+ * @failure 任一专用公开 bucket 非法，或 generations 与公开资产重叠时拒绝。
+ */
 async function loadProductionBucket(): Promise<string> {
   const [siteRaw, avatarsRaw, generationsRaw, modelRaw] = await Promise.all([
     getRuntimeSettingString("SITE_ASSETS_BUCKET_NAME"),
@@ -95,10 +101,14 @@ async function loadProductionBucket(): Promise<string> {
       "网站资产存储桶配置无效"
     );
   }
-  if (new Set([site, avatars, generations, model]).size !== 4) {
+  if (
+    generations === site ||
+    generations === avatars ||
+    generations === model
+  ) {
     throw new SiteLogoUploadServiceError(
       "invalid_dependency_result",
-      "网站资产存储桶必须与其他业务存储桶隔离"
+      "生成内容存储桶必须与网站、模型和头像资产存储桶隔离"
     );
   }
   return site;

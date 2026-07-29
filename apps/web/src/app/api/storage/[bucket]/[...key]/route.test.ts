@@ -57,6 +57,7 @@ const MODEL_IMAGE_KEY = `image/${MODEL_CONFIG_HASH}/${MODEL_CONTENT_HASH}.webp`;
 const SITE_ASSET_BUCKET = "site-assets";
 const SITE_LOGO_HASH = "c".repeat(64);
 const SITE_LOGO_KEY = `logo/${SITE_LOGO_HASH}.png`;
+const SYSTEM_ASSET_BUCKET = "system-assets";
 
 // 构造 Next.js App Router 动态路由约定的 params Promise。
 function makeParams(bucket: string, key: string[]) {
@@ -279,6 +280,104 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     expect(res.headers.get("Content-Type")).toBe("image/jpeg");
   });
 
+  it("头像、模型封面和网站 Logo 可共用系统公开资产 bucket", async () => {
+    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
+    runtimeSettings.set(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      SYSTEM_ASSET_BUCKET
+    );
+    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
+    getObject.mockResolvedValue(Buffer.from("public-asset"));
+
+    const avatarResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-9-123.jpg"])
+    );
+    const modelResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
+    );
+    const logoResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, SITE_LOGO_KEY.split("/"))
+    );
+    const legacyAvatarResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, ["user-9-123.jpg"])
+    );
+    const unknownResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, ["uploads", "private.json"])
+    );
+    const modelThumbResponse = await GET(
+      makeRequest({ w: "128" }),
+      makeParams(SYSTEM_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
+    );
+
+    expect(avatarResponse.status).toBe(200);
+    expect(avatarResponse.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(modelResponse.status).toBe(200);
+    expect(modelResponse.headers.get("Content-Type")).toBe("image/webp");
+    expect(logoResponse.status).toBe(200);
+    expect(logoResponse.headers.get("Content-Type")).toBe("image/png");
+    expect(legacyAvatarResponse.status).toBe(200);
+    expect(unknownResponse.status).toBe(400);
+    expect(modelThumbResponse.status).toBe(400);
+    expect(getObject).toHaveBeenNthCalledWith(
+      1,
+      "avatars/user-9-123.jpg",
+      SYSTEM_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
+    expect(getObject).toHaveBeenNthCalledWith(
+      2,
+      MODEL_IMAGE_KEY,
+      SYSTEM_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
+    expect(getObject).toHaveBeenNthCalledWith(
+      3,
+      SITE_LOGO_KEY,
+      SYSTEM_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
+    expect(getObject).toHaveBeenNthCalledWith(
+      4,
+      "user-9-123.jpg",
+      SYSTEM_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
+    expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(getObject).toHaveBeenCalledTimes(4);
+  });
+
+  it("模型与网站资产共桶时按 key 命名空间选择唯一校验器", async () => {
+    runtimeSettings.set(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      SYSTEM_ASSET_BUCKET
+    );
+    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
+    getObject.mockResolvedValue(Buffer.from("public-asset"));
+
+    const modelResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
+    );
+    const logoResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, SITE_LOGO_KEY.split("/"))
+    );
+    const unknownResponse = await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, ["unknown", "asset.png"])
+    );
+
+    expect(modelResponse.status).toBe(200);
+    expect(logoResponse.status).toBe(200);
+    expect(unknownResponse.status).toBe(400);
+    expect(getObject).toHaveBeenCalledTimes(2);
+  });
+
   it("模型资产桶无需签名即可读取严格内容寻址 WebP", async () => {
     getObject.mockResolvedValue(Buffer.from("model-cover"));
 
@@ -478,13 +577,6 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       SITE_ASSET_BUCKET,
     ],
     [
-      "模型资产与头像冲突",
-      "avatars",
-      "generations",
-      "avatars",
-      SITE_ASSET_BUCKET,
-    ],
-    [
       "模型资产与生成内容冲突",
       "avatars",
       "generations",
@@ -492,25 +584,11 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       SITE_ASSET_BUCKET,
     ],
     [
-      "网站资产与头像冲突",
-      "avatars",
-      "generations",
-      MODEL_ASSET_BUCKET,
-      "avatars",
-    ],
-    [
       "网站资产与生成内容冲突",
       "avatars",
       "generations",
       MODEL_ASSET_BUCKET,
       "generations",
-    ],
-    [
-      "网站资产与模型资产冲突",
-      "avatars",
-      "generations",
-      MODEL_ASSET_BUCKET,
-      MODEL_ASSET_BUCKET,
     ],
   ])("%s时稳定返回配置错误且不触达存储", async (_label, avatars, generations, modelAssets, siteAssets) => {
     runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", avatars);

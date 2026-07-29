@@ -13,6 +13,7 @@ import {
   isBucketAllowed,
   isExternalUrl,
   keyBelongsToUser,
+  parseAvatarStorageBucketName,
 } from "./utils";
 
 describe("isExternalUrl", () => {
@@ -72,18 +73,17 @@ describe("getAvatarUrl", () => {
 });
 
 describe("generateAvatarKey", () => {
-  const makeFile = (name: string): File =>
-    ({ name }) as unknown as File;
+  const makeFile = (name: string): File => ({ name }) as unknown as File;
 
   it("以 userId 前缀开头并归一扩展名为小写", () => {
     const key = generateAvatarKey("user-1", makeFile("Photo.PNG"));
-    expect(key.startsWith("user-1-")).toBe(true);
+    expect(key.startsWith("avatars/user-1-")).toBe(true);
     expect(key.endsWith(".png")).toBe(true);
   });
 
   it("文件名无点号时把整名当作扩展名（split('.').pop() 行为）", () => {
     const key = generateAvatarKey("user-1", makeFile("photo"));
-    expect(key.startsWith("user-1-")).toBe(true);
+    expect(key.startsWith("avatars/user-1-")).toBe(true);
     expect(key.endsWith(".photo")).toBe(true);
   });
 
@@ -94,6 +94,10 @@ describe("generateAvatarKey", () => {
 });
 
 describe("keyBelongsToUser", () => {
+  it("头像命名空间中的用户 ID 前缀返回 true", () => {
+    expect(keyBelongsToUser("avatars/user-1-123.png", "user-1")).toBe(true);
+  });
+
   it("以 ${userId}- 前缀开头返回 true", () => {
     expect(keyBelongsToUser("user-1-123.png", "user-1")).toBe(true);
   });
@@ -119,8 +123,40 @@ describe("keyBelongsToUser", () => {
     expect(keyBelongsToUser("victim/user-1-x.png", "user-1")).toBe(false);
   });
 
+  it.each([
+    "avatars/user-1/../../logo/system.svg",
+    "avatars/user-1/../user-2/avatar.png",
+    "avatars/user-1//avatar.png",
+    "avatars/user-1\\avatar.png",
+  ])("拒绝不安全头像 key：%s", (key) => {
+    expect(keyBelongsToUser(key, "user-1")).toBe(false);
+  });
+
   it("空 userId 返回 false", () => {
     expect(keyBelongsToUser("anything", "")).toBe(false);
+  });
+});
+
+describe("parseAvatarStorageBucketName", () => {
+  it("允许头像与其他公开资产共桶", () => {
+    expect(parseAvatarStorageBucketName(" system-assets ", "generations")).toBe(
+      "system-assets"
+    );
+  });
+
+  it("头像与生成内容共桶时 fail-closed", () => {
+    expect(() => parseAvatarStorageBucketName("shared", " shared ")).toThrow(
+      "生成内容存储桶必须与头像存储桶隔离"
+    );
+  });
+
+  it.each([
+    ["头像设置为空", "", "generations"],
+    ["生成内容设置为空", "avatars", ""],
+  ])("%s时拒绝", (_label, avatars, generations) => {
+    expect(() => parseAvatarStorageBucketName(avatars, generations)).toThrow(
+      "存储桶配置无效"
+    );
   });
 });
 
