@@ -10,6 +10,9 @@
  * 本模块必须保持不 import 任何 Node 内置模块；新增函数前先确认是纯函数。
  */
 
+/** 不可能与合法 S3 bucket 同名的第一方头像读取逻辑别名。 */
+export const PUBLIC_AVATAR_BUCKET_ALIAS = "_avatars";
+
 export type StorageImageReference = {
   bucket: string;
   key: string;
@@ -21,6 +24,7 @@ export type StorageImageReference = {
  * generations 用户私有内容。
  */
 const PUBLIC_BUCKETS = new Set([
+  PUBLIC_AVATAR_BUCKET_ALIAS,
   process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME || "avatars",
 ]);
 

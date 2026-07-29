@@ -4,6 +4,8 @@
  * 处理存储键名和外部 URL 的转换
  */
 
+import { PUBLIC_AVATAR_BUCKET_ALIAS } from "./image-url";
+
 // ============================================
 // 头像 URL 工具
 // ============================================
@@ -42,7 +44,7 @@ export function isExternalUrl(value: string | null | undefined): boolean {
  *
  * // 存储键名
  * getAvatarUrl("user-abc123-1234567890.jpg")
- * // => "/api/storage/avatars/user-abc123-1234567890.jpg"
+ * // => "/api/storage/_avatars/user-abc123-1234567890.jpg"
  *
  * // 空值
  * getAvatarUrl(null) // => undefined
@@ -60,10 +62,9 @@ export function getAvatarUrl(
     return image;
   }
 
-  // 否则是存储键名，转换为本地存储读取 URL
-  const avatarsBucket =
-    process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME ?? "avatars";
-  return `/api/storage/${avatarsBucket}/${image}`;
+  // 使用稳定逻辑别名，由读取 Route 在请求时映射到最新运行时 bucket。这样后台合并
+  // 系统公开资产后无需依赖 Next.js 构建期内联的旧 NEXT_PUBLIC 值。
+  return `/api/storage/${PUBLIC_AVATAR_BUCKET_ALIAS}/${image}`;
 }
 
 /**

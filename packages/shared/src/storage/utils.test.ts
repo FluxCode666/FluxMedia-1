@@ -57,17 +57,17 @@ describe("getAvatarUrl", () => {
     expect(getAvatarUrl(url)).toBe(url);
   });
 
-  it("存储键名拼为 /api/storage/<bucket>/<key>（默认 avatars 桶）", () => {
+  it("存储键名使用稳定头像读取别名", () => {
     delete process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME;
     expect(getAvatarUrl("user-1-123.png")).toBe(
-      "/api/storage/avatars/user-1-123.png"
+      "/api/storage/_avatars/user-1-123.png"
     );
   });
 
-  it("存储键名使用配置的桶名", () => {
+  it("构建期 bucket 改变时仍使用稳定头像读取别名", () => {
     process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME = "my-avatars";
     expect(getAvatarUrl("user-1-123.png")).toBe(
-      "/api/storage/my-avatars/user-1-123.png"
+      "/api/storage/_avatars/user-1-123.png"
     );
   });
 });

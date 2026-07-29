@@ -56,6 +56,10 @@ describe("signed-url", () => {
       expect(isPublicBucket("avatars")).toBe(true);
     });
 
+    it("稳定头像逻辑别名始终是公开域", () => {
+      expect(isPublicBucket("_avatars")).toBe(true);
+    });
+
     it("配置的头像桶为公开桶", () => {
       // isPublicBucket 在模块加载时读取 env，此测试验证默认值行为
       expect(isPublicBucket("avatars")).toBe(true);
@@ -112,10 +116,7 @@ describe("signed-url", () => {
 
   describe("generateSignedImageUrl", () => {
     it("为 generations 桶生成带签名参数的 URL", () => {
-      const url = generateSignedImageUrl(
-        "generations",
-        "user-1/abc.png"
-      );
+      const url = generateSignedImageUrl("generations", "user-1/abc.png");
       expect(url).toMatch(
         /^\/api\/storage\/generations\/user-1\/abc\.png\?sig=[0-9a-f]{64}&exp=\d+$/
       );
@@ -124,6 +125,12 @@ describe("signed-url", () => {
     it("公开桶（avatars）不添加签名参数", () => {
       const url = generateSignedImageUrl("avatars", "user-1-123.jpg");
       expect(url).toBe("/api/storage/avatars/user-1-123.jpg");
+      expect(url).not.toContain("?sig=");
+    });
+
+    it("稳定头像逻辑别名不添加签名参数", () => {
+      const url = generateSignedImageUrl("_avatars", "avatars/user-1-123.jpg");
+      expect(url).toBe("/api/storage/_avatars/avatars/user-1-123.jpg");
       expect(url).not.toContain("?sig=");
     });
   });
@@ -315,8 +322,7 @@ describe("signed-url", () => {
         "user-1/abc.png"
       );
       // 正确签名的前半段 + 错误后半段
-      const halfCorrect =
-        sig.slice(0, 32) + "0".repeat(32);
+      const halfCorrect = sig.slice(0, 32) + "0".repeat(32);
       const result = verifySignedImageUrl(
         "generations",
         "user-1/abc.png",

@@ -293,6 +293,10 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       makeRequest(),
       makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-9-123.jpg"])
     );
+    const avatarAliasResponse = await GET(
+      makeRequest(),
+      makeParams("_avatars", ["avatars", "user-10-456.jpg"])
+    );
     const modelResponse = await GET(
       makeRequest(),
       makeParams(SYSTEM_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
@@ -309,6 +313,10 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       makeRequest(),
       makeParams(SYSTEM_ASSET_BUCKET, ["uploads", "private.json"])
     );
+    const aliasUnknownResponse = await GET(
+      makeRequest(),
+      makeParams("_avatars", ["uploads", "private.json"])
+    );
     const modelThumbResponse = await GET(
       makeRequest({ w: "128" }),
       makeParams(SYSTEM_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
@@ -316,12 +324,15 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
 
     expect(avatarResponse.status).toBe(200);
     expect(avatarResponse.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(avatarAliasResponse.status).toBe(200);
+    expect(avatarAliasResponse.headers.get("Content-Type")).toBe("image/jpeg");
     expect(modelResponse.status).toBe(200);
     expect(modelResponse.headers.get("Content-Type")).toBe("image/webp");
     expect(logoResponse.status).toBe(200);
     expect(logoResponse.headers.get("Content-Type")).toBe("image/png");
     expect(legacyAvatarResponse.status).toBe(200);
     expect(unknownResponse.status).toBe(400);
+    expect(aliasUnknownResponse.status).toBe(400);
     expect(modelThumbResponse.status).toBe(400);
     expect(getObject).toHaveBeenNthCalledWith(
       1,
@@ -331,24 +342,30 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     );
     expect(getObject).toHaveBeenNthCalledWith(
       2,
-      MODEL_IMAGE_KEY,
+      "avatars/user-10-456.jpg",
       SYSTEM_ASSET_BUCKET,
       { signal: expect.anything() }
     );
     expect(getObject).toHaveBeenNthCalledWith(
       3,
-      SITE_LOGO_KEY,
+      MODEL_IMAGE_KEY,
       SYSTEM_ASSET_BUCKET,
       { signal: expect.anything() }
     );
     expect(getObject).toHaveBeenNthCalledWith(
       4,
+      SITE_LOGO_KEY,
+      SYSTEM_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
+    expect(getObject).toHaveBeenNthCalledWith(
+      5,
       "user-9-123.jpg",
       SYSTEM_ASSET_BUCKET,
       { signal: expect.anything() }
     );
     expect(getCurrentUser).not.toHaveBeenCalled();
-    expect(getObject).toHaveBeenCalledTimes(4);
+    expect(getObject).toHaveBeenCalledTimes(5);
   });
 
   it("模型与网站资产共桶时按 key 命名空间选择唯一校验器", async () => {

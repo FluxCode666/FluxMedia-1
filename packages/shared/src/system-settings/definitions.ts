@@ -1109,10 +1109,9 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME",
     label: "头像 Bucket",
     description:
-      "公开头像资产 bucket，可与网站品牌和模型广场共用，但必须与生成内容 bucket 隔离。修改后需要重新构建 Web。",
+      "公开头像资产 bucket，可与网站品牌和模型广场共用，但必须与生成内容 bucket 隔离。读取 URL 使用运行时逻辑别名，无需重新构建 Web。",
     category: "storage",
     valueType: "string",
-    requiresRebuild: true,
   },
   {
     key: "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME",

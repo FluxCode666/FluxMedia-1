@@ -6,6 +6,7 @@
  * - avatars 域：公开访问，无需鉴权。
  * - image/video 域：仅严格内容寻址 WebP 允许匿名读取，禁止缩略图转换。
  * - logo 域：仅严格内容寻址 PNG、SVG、ICO Logo 允许匿名读取，禁止缩略图转换。
+ * - `_avatars` 是稳定逻辑别名，请求时映射到最新运行时头像 bucket。
  * - generations 桶：需要有效的短时签名 URL（sig + exp 查询参数）。
  *   签名验证使用 HMAC-SHA256 + 常量时间比较，防止时序攻击。
  *   v1 API 消费者通过签名 URL 参数获取授权（无 cookie）。
@@ -19,6 +20,7 @@ import { db } from "@repo/database";
 import { generation } from "@repo/database/schema";
 import { getCurrentUser } from "@repo/shared/auth/server";
 import { logError } from "@repo/shared/logger";
+import { PUBLIC_AVATAR_BUCKET_ALIAS } from "@repo/shared/storage/image-url";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { verifySignedImageUrl } from "@repo/shared/storage/signed-url";
 import { getRuntimeSettingString } from "@repo/shared/system-settings";
@@ -446,6 +448,10 @@ export async function GET(
       }
     );
   }
+  // `_avatars` 不是合法 S3 bucket 名，因此可安全作为逻辑别名，避免 Next.js 构建期
+  // 内联的历史 NEXT_PUBLIC bucket 让运行时共桶配置失效。
+  const storageBucket =
+    bucket === PUBLIC_AVATAR_BUCKET_ALIAS ? bucketConfig.avatars : bucket;
   // 缩略图宽度可经"路径段"传入:/api/storage/<bucket>/w<width>/<key>。这是为绕过
   // 线上 Cloudflare 忽略 query 的边缘缓存键(见 signed-url.buildStorageThumbnailUrl
   // 的 WHY):用查询参数 ?w= 会命中被缓存的整张原图。宽度段不参与签名,这里在验签前
@@ -460,10 +466,10 @@ export async function GET(
   const fileKey = keySegments.join("/");
 
   if (
-    bucket !== bucketConfig.avatars &&
-    bucket !== bucketConfig.generations &&
-    bucket !== bucketConfig.modelMarketplaceAssets &&
-    bucket !== bucketConfig.siteAssets
+    storageBucket !== bucketConfig.avatars &&
+    storageBucket !== bucketConfig.generations &&
+    storageBucket !== bucketConfig.modelMarketplaceAssets &&
+    storageBucket !== bucketConfig.siteAssets
   ) {
     return NextResponse.json({ error: "Bucket not allowed" }, { status: 403 });
   }
@@ -477,7 +483,11 @@ export async function GET(
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
-  const domain = resolveStorageObjectDomain(bucket, keySegments, bucketConfig);
+  const domain = resolveStorageObjectDomain(
+    storageBucket,
+    keySegments,
+    bucketConfig
+  );
   if (!domain) {
     return NextResponse.json(
       { error: "Invalid public asset key" },
@@ -511,7 +521,7 @@ export async function GET(
     try {
       assertModelMarketplaceCoverReference(
         category,
-        { bucket, key: fileKey },
+        { bucket: storageBucket, key: fileKey },
         bucketConfig.modelMarketplaceAssets
       );
     } catch {
@@ -525,7 +535,7 @@ export async function GET(
   if (isSiteAsset) {
     try {
       assertSiteLogoAssetReference(
-        { bucket, key: fileKey },
+        { bucket: storageBucket, key: fileKey },
         bucketConfig.siteAssets
       );
     } catch {
@@ -540,7 +550,7 @@ export async function GET(
   // 在完成唯一域解析及其严格 key 校验后匿名访问。
   const accessError = await verifyBucketAccess(
     request,
-    bucket,
+    storageBucket,
     fileKey,
     domain
   );
@@ -575,8 +585,8 @@ export async function GET(
   // 缩略图请求:先查 进程内 → 磁盘 缓存(命中则连原图都不拉、不缩放,直接秒回);
   // 都未命中才 限并发 拉原图 + sharp 缩放 + 落盘。缩放失败回退到返回原图。
   if (thumbWidth) {
-    const cacheKey = `${bucket}/${fileKey}@w${thumbWidth}`;
-    const diskPath = thumbDiskPath(bucket, fileKey, thumbWidth);
+    const cacheKey = `${storageBucket}/${fileKey}@w${thumbWidth}`;
+    const diskPath = thumbDiskPath(storageBucket, fileKey, thumbWidth);
     let thumb = getCachedThumb(cacheKey);
     if (!thumb) {
       thumb = await readThumbFromDisk(diskPath);
@@ -598,7 +608,7 @@ export async function GET(
         if (!thumb) {
           const storage = await getStorageProvider();
           // 透传 signal:缩放前若客户端断开,拉原图会被中止,不再空跑。
-          const original = await storage.getObject(fileKey, bucket, {
+          const original = await storage.getObject(fileKey, storageBucket, {
             signal: request.signal,
           });
           thumb = await sharp(original)
@@ -623,7 +633,7 @@ export async function GET(
         // 缩放/读取失败不致命:记日志并回退到下方返回原图。
         logError(error, {
           source: "storage-thumb",
-          bucket,
+          bucket: storageBucket,
           key: fileKey,
           width: thumbWidth,
         });
@@ -650,7 +660,7 @@ export async function GET(
   let data: Buffer;
   try {
     const storage = await getStorageProvider();
-    data = await storage.getObject(fileKey, bucket, {
+    data = await storage.getObject(fileKey, storageBucket, {
       signal: request.signal,
     });
   } catch (error) {
@@ -662,7 +672,11 @@ export async function GET(
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
     // 凭证/网络/配置等基础设施故障不可静默吞成 404：记日志并返回 502。
-    logError(error, { source: "storage-read", bucket, key: fileKey });
+    logError(error, {
+      source: "storage-read",
+      bucket: storageBucket,
+      key: fileKey,
+    });
     return NextResponse.json(
       { error: "Storage backend error" },
       { status: 502 }
