@@ -6,6 +6,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const TEST_SYSTEM_SETTINGS_CACHE_KEY = "fluxmedia:v1:system-settings";
+const TEST_SYSTEM_SETTINGS_CACHE_EPOCH_KEY =
+  "fluxmedia:v1:system-settings:epoch";
+
 const redisMockState = vi.hoisted(() => ({
   connectFailure: false,
   store: new Map<string, string>(),
@@ -17,6 +21,9 @@ const redisMockState = vi.hoisted(() => ({
     username: string | undefined;
   }>,
   deletedKeys: [] as string[],
+  pauseNextCompareAndSet: false,
+  compareAndSetStarted: undefined as (() => void) | undefined,
+  compareAndSetRelease: undefined as Promise<void> | undefined,
 }));
 
 vi.mock("ioredis", () => ({
@@ -63,6 +70,44 @@ vi.mock("ioredis", () => ({
     async del(key: string) {
       redisMockState.deletedKeys.push(key);
       return redisMockState.store.delete(key) ? 1 : 0;
+    }
+
+    async eval(script: string, keyCount: number, ...parameters: string[]) {
+      const keys = parameters.slice(0, keyCount);
+      const arguments_ = parameters.slice(keyCount);
+      const epochKey = keys[0];
+      const cacheKey = keys[1];
+      if (!epochKey || !cacheKey) {
+        throw new Error("Redis 脚本缺少缓存 key");
+      }
+
+      if (script.includes('redis.pcall("INCR"')) {
+        const currentEpoch = Number(redisMockState.store.get(epochKey) ?? "0");
+        const nextEpoch =
+          Number.isSafeInteger(currentEpoch) && currentEpoch >= 0
+            ? currentEpoch + 1
+            : 1;
+        redisMockState.store.set(epochKey, String(nextEpoch));
+        redisMockState.deletedKeys.push(cacheKey);
+        redisMockState.store.delete(cacheKey);
+        return nextEpoch;
+      }
+
+      if (script.includes("current_epoch ~= ARGV[1]")) {
+        if (redisMockState.pauseNextCompareAndSet) {
+          redisMockState.pauseNextCompareAndSet = false;
+          redisMockState.compareAndSetStarted?.();
+          await redisMockState.compareAndSetRelease;
+        }
+        const currentEpoch = redisMockState.store.get(epochKey) ?? "0";
+        if (currentEpoch !== arguments_[0]) return 0;
+        const serialized = arguments_[1];
+        if (!serialized) throw new Error("Redis 脚本缺少缓存内容");
+        redisMockState.store.set(cacheKey, serialized);
+        return 1;
+      }
+
+      throw new Error("测试遇到未知 Redis 脚本");
     }
 
     disconnect() {
@@ -124,6 +169,9 @@ describe("system settings cache", () => {
     redisMockState.store.clear();
     redisMockState.connectionOptions = [];
     redisMockState.deletedKeys = [];
+    redisMockState.pauseNextCompareAndSet = false;
+    redisMockState.compareAndSetStarted = undefined;
+    redisMockState.compareAndSetRelease = undefined;
     clearRedisEnvironment();
     delete process.env.SYSTEM_SETTINGS_LOCAL_CACHE_TTL_MS;
     delete process.env.SYSTEM_SETTINGS_CACHE_TTL_SECONDS;
@@ -217,6 +265,90 @@ describe("system settings cache", () => {
     );
     expect(loader).toHaveBeenCalledTimes(2);
     expect(redisMockState.deletedKeys.length).toBeGreaterThan(0);
+  });
+
+  it("失效期间的旧读取不得覆盖新一代本地与 Redis 缓存", async () => {
+    configureRedisEnvironment();
+    let resolveOldLoad: ((value: Map<string, unknown>) => void) | undefined;
+    let resolveFreshLoad: ((value: Map<string, unknown>) => void) | undefined;
+    const loader = vi
+      .fn<() => Promise<Map<string, unknown>>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOldLoad = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFreshLoad = resolve;
+          })
+      );
+
+    const oldRead = loadCachedSystemSettings(loader);
+    await vi.waitFor(() => expect(resolveOldLoad).toBeTypeOf("function"));
+    await invalidateSystemSettingsCache();
+    const freshRead = loadCachedSystemSettings(loader);
+    await vi.waitFor(() => expect(resolveFreshLoad).toBeTypeOf("function"));
+
+    resolveOldLoad?.(
+      new Map<string, unknown>([["MODEL_MARKETPLACE_CONFIG", "old"]])
+    );
+    await oldRead;
+    const joinedFreshRead = loadCachedSystemSettings(loader);
+    resolveFreshLoad?.(
+      new Map<string, unknown>([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+
+    await expect(freshRead).resolves.toEqual(
+      new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+    await expect(joinedFreshRead).resolves.toEqual(
+      new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+    clearLocalSystemSettingsCache();
+    await expect(loadCachedSystemSettings(loader)).resolves.toEqual(
+      new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it("跨实例失效后拒绝已经开始的旧 Redis 回填", async () => {
+    configureRedisEnvironment();
+    let notifyCompareAndSetStarted: (() => void) | undefined;
+    let releaseCompareAndSet: (() => void) | undefined;
+    const compareAndSetStarted = new Promise<void>((resolve) => {
+      notifyCompareAndSetStarted = resolve;
+    });
+    redisMockState.compareAndSetRelease = new Promise<void>((resolve) => {
+      releaseCompareAndSet = resolve;
+    });
+    redisMockState.compareAndSetStarted = notifyCompareAndSetStarted;
+    redisMockState.pauseNextCompareAndSet = true;
+    const loader = vi
+      .fn<() => Promise<Map<string, unknown>>>()
+      .mockResolvedValueOnce(new Map([["MODEL_MARKETPLACE_CONFIG", "old"]]))
+      .mockResolvedValueOnce(new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]]));
+
+    const oldRead = loadCachedSystemSettings(loader);
+    await compareAndSetStarted;
+    // 模拟另一实例原子推进共享 epoch 并删除数据；当前模块的本地代次保持不变。
+    redisMockState.store.set(TEST_SYSTEM_SETTINGS_CACHE_EPOCH_KEY, "1");
+    redisMockState.store.delete(TEST_SYSTEM_SETTINGS_CACHE_KEY);
+    releaseCompareAndSet?.();
+    await expect(oldRead).resolves.toEqual(
+      new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+    await expect(loadCachedSystemSettings(loader)).resolves.toEqual(
+      new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+    expect(loader).toHaveBeenCalledTimes(2);
+    clearLocalSystemSettingsCache();
+    await expect(loadCachedSystemSettings(loader)).resolves.toEqual(
+      new Map([["MODEL_MARKETPLACE_CONFIG", "fresh"]])
+    );
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the database when Redis is unavailable", async () => {

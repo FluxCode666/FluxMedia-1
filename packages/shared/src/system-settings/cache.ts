@@ -2,8 +2,9 @@
  * 系统设置两级缓存。
  *
  * 使用方：system-settings/index.ts 的统一读取与写后失效入口。
- * 关键依赖：ioredis、Zod。L1 是进程内短缓存，L2 是 Redis 共享缓存；
- * Redis 未配置或暂时故障时回退数据库加载器，不阻断应用启动和业务请求。
+ * 关键依赖：ioredis、Zod。L1 是进程内短缓存，L2 是带共享 epoch 的 Redis 缓存；
+ * epoch CAS 阻止其他实例把失效前的旧数据库结果重新回填。Redis 未配置或暂时故障时
+ * 回退数据库加载器，不阻断应用启动和业务请求。
  */
 import Redis from "ioredis";
 import { z } from "zod";
@@ -11,12 +12,34 @@ import { z } from "zod";
 import { logWarn } from "../logger";
 
 const SYSTEM_SETTINGS_CACHE_KEY = "fluxmedia:v1:system-settings";
+const SYSTEM_SETTINGS_CACHE_EPOCH_KEY = "fluxmedia:v1:system-settings:epoch";
 const DEFAULT_REDIS_DATABASE = 4;
 const DEFAULT_REDIS_PORT = 6379;
 const DEFAULT_REDIS_CACHE_TTL_SECONDS = 60;
 const DEFAULT_LOCAL_CACHE_TTL_MS = 1_000;
 const DEFAULT_DATABASE_FALLBACK_CACHE_TTL_MS = 10_000;
 const REDIS_FAILURE_COOLDOWN_MS = 5_000;
+// WHY：失效与回填必须由 Redis 原子裁决；Node 进程内锁无法阻止其他实例的旧读取回灌。
+const INVALIDATE_REDIS_CACHE_SCRIPT = `
+local next_epoch = redis.pcall("INCR", KEYS[1])
+if type(next_epoch) == "table" or next_epoch < 1 then
+  next_epoch = 1
+  redis.call("SET", KEYS[1], "1")
+end
+redis.call("DEL", KEYS[2])
+return next_epoch
+`;
+const WRITE_REDIS_CACHE_IF_EPOCH_MATCHES_SCRIPT = `
+local current_epoch = redis.call("GET", KEYS[1])
+if not current_epoch then
+  current_epoch = "0"
+end
+if current_epoch ~= ARGV[1] then
+  return 0
+end
+redis.call("SET", KEYS[2], ARGV[2], "EX", ARGV[3])
+return 1
+`;
 
 const cachedSettingsSchema = z.object({
   version: z.literal(1),
@@ -25,6 +48,15 @@ const cachedSettingsSchema = z.object({
 
 type CachedSettingsPayload = z.infer<typeof cachedSettingsSchema>;
 type SettingsLoader = () => Promise<Map<string, unknown>>;
+type SettingsLoadResult = {
+  values: Map<string, unknown>;
+  cacheable: boolean;
+};
+type RedisCacheWriteResult =
+  | "written"
+  | "epoch_changed"
+  | "local_invalidated"
+  | "unavailable";
 type RedisConnectionConfiguration = {
   host: string;
   port: number;
@@ -59,10 +91,11 @@ let localCache:
     }
   | undefined;
 let inFlightLoad: Promise<Map<string, unknown>> | undefined;
+let cacheGeneration = 0;
 let redisClient: Redis | undefined;
 let redisClientFingerprint: string | undefined;
 let redisUnavailableUntil = 0;
-let pendingRedisInvalidation = false;
+let pendingRedisInvalidationGeneration: number | undefined;
 let lastRedisWarningAt = 0;
 
 /**
@@ -312,24 +345,65 @@ export function parseSystemSettingsCache(rawValue: string) {
 /**
  * 从 Redis 读取系统设置全集。
  *
- * 待处理的写后失效会优先删除旧 key，避免 Redis 故障恢复后重新读到故障前数据。
+ * 待处理的写后失效会优先推进共享 epoch 并删除旧 key，避免 Redis 故障恢复后重新
+ * 读到故障前数据。读取同时返回 epoch，供数据库回填执行跨实例 CAS。
  *
- * @returns 命中时返回 Map，miss、损坏或 Redis 不可用时返回 undefined。
+ * @returns Redis 可用时返回 epoch 与可选命中值；Redis 不可用时返回 undefined。
  */
 async function readSettingsFromRedis() {
+  const pendingGeneration = pendingRedisInvalidationGeneration;
+  if (pendingGeneration !== undefined) {
+    await invalidateRedisCache(pendingGeneration);
+  }
+
   return runRedisOperation("read", async (client) => {
-    if (pendingRedisInvalidation) {
+    const rawEpoch = await client.get(SYSTEM_SETTINGS_CACHE_EPOCH_KEY);
+    const epoch = rawEpoch === null ? "0" : rawEpoch;
+    if (!/^(0|[1-9]\d*)$/.test(epoch)) {
       await client.del(SYSTEM_SETTINGS_CACHE_KEY);
-      pendingRedisInvalidation = false;
+      return { epoch: "invalid" };
     }
     const rawValue = await client.get(SYSTEM_SETTINGS_CACHE_KEY);
-    if (typeof rawValue !== "string") return undefined;
+    if (typeof rawValue !== "string") return { epoch };
     const parsed = parseSystemSettingsCache(rawValue);
     if (!parsed) {
       await client.del(SYSTEM_SETTINGS_CACHE_KEY);
     }
-    return parsed;
+    return { epoch, values: parsed };
   });
+}
+
+/**
+ * 原子推进 Redis 共享 epoch 并删除旧设置缓存。
+ *
+ * @param invalidationGeneration - 当前进程发起失效时的本地代次。
+ * @returns 无返回；Redis 失败时保留同一代次供后续读取重试。
+ */
+async function invalidateRedisCache(
+  invalidationGeneration: number
+): Promise<void> {
+  const invalidatedEpoch = await runRedisOperation(
+    "invalidate",
+    async (client) => {
+      const result: unknown = await client.eval(
+        INVALIDATE_REDIS_CACHE_SCRIPT,
+        2,
+        SYSTEM_SETTINGS_CACHE_EPOCH_KEY,
+        SYSTEM_SETTINGS_CACHE_KEY
+      );
+      return z
+        .union([z.number().int().positive(), z.string().regex(/^\d+$/)])
+        .transform(String)
+        .parse(result);
+    },
+    { force: true }
+  );
+  if (
+    invalidatedEpoch !== undefined &&
+    pendingRedisInvalidationGeneration === invalidationGeneration
+  ) {
+    pendingRedisInvalidationGeneration = undefined;
+  }
 }
 
 /**
@@ -339,39 +413,84 @@ async function readSettingsFromRedis() {
  * 失败不改变数据库读取结果，由后续请求继续回源。
  *
  * @param values - 数据库返回的完整系统设置 Map。
+ * @param expectedGeneration - 发起数据库读取时绑定的本地缓存代次。
+ * @param expectedRedisEpoch - Redis miss 时读取的共享 epoch。
  */
-async function writeSettingsToRedis(values: Map<string, unknown>) {
+async function writeSettingsToRedis(
+  values: Map<string, unknown>,
+  expectedGeneration: number,
+  expectedRedisEpoch: string
+): Promise<RedisCacheWriteResult> {
+  if (expectedGeneration !== cacheGeneration) return "local_invalidated";
   const ttlSeconds = getRedisCacheTtlSeconds();
   const jitterSeconds = Math.floor(
     Math.random() * Math.max(1, ttlSeconds * 0.1)
   );
-  await runRedisOperation("write", async (client) => {
-    await client.set(
+  const writeResult = await runRedisOperation("write", async (client) => {
+    if (expectedGeneration !== cacheGeneration) {
+      return "local_invalidated" as const;
+    }
+    const result: unknown = await client.eval(
+      WRITE_REDIS_CACHE_IF_EPOCH_MATCHES_SCRIPT,
+      2,
+      SYSTEM_SETTINGS_CACHE_EPOCH_KEY,
       SYSTEM_SETTINGS_CACHE_KEY,
+      expectedRedisEpoch,
       serializeSystemSettingsCache(values),
-      "EX",
-      ttlSeconds + jitterSeconds
+      String(ttlSeconds + jitterSeconds)
     );
+    const parsed = z
+      .union([z.literal(0), z.literal(1), z.literal("0"), z.literal("1")])
+      .transform(Number)
+      .parse(result);
+    return parsed === 1 ? ("written" as const) : ("epoch_changed" as const);
   });
+  return writeResult ?? "unavailable";
 }
 
 /**
  * 执行一次 Redis miss 后的数据库回源，并回填共享缓存。
  *
  * @param loadFromDatabase - system-settings 注入的数据库加载器。
- * @returns 当前完整系统设置 Map。
+ * @param expectedGeneration - 本次读取开始时的缓存代次。
+ * @returns 当前完整系统设置及其是否可进入 L1。
+ * @failure Redis epoch 变化时最多重读一次；连续冲突仍返回本次数据库
+ * 结果，但明确禁止它进入 L1 或 L2。
  */
-async function loadSettingsUncached(loadFromDatabase: SettingsLoader) {
-  if (isRedisConfigured()) {
-    const redisValues = await readSettingsFromRedis();
-    if (redisValues) return redisValues;
-  }
+async function loadSettingsUncached(
+  loadFromDatabase: SettingsLoader,
+  expectedGeneration: number
+): Promise<SettingsLoadResult> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let redisEpoch: string | undefined;
+    if (isRedisConfigured()) {
+      const redisResult = await readSettingsFromRedis();
+      if (redisResult?.values) {
+        return { values: redisResult.values, cacheable: true };
+      }
+      redisEpoch = redisResult?.epoch;
+    }
 
-  const databaseValues = await loadFromDatabase();
-  if (isRedisConfigured()) {
-    await writeSettingsToRedis(databaseValues);
+    const databaseValues = await loadFromDatabase();
+    if (!isRedisConfigured() || !redisEpoch || redisEpoch === "invalid") {
+      return { values: databaseValues, cacheable: true };
+    }
+    const writeResult = await writeSettingsToRedis(
+      databaseValues,
+      expectedGeneration,
+      redisEpoch
+    );
+    if (writeResult !== "epoch_changed") {
+      return {
+        values: databaseValues,
+        cacheable: writeResult !== "local_invalidated",
+      };
+    }
+    if (attempt === 1) {
+      return { values: databaseValues, cacheable: false };
+    }
   }
-  return databaseValues;
+  throw new Error("系统设置缓存重读状态无效");
 }
 
 /**
@@ -390,22 +509,29 @@ export async function loadCachedSystemSettings(
   if (localCache && localCache.expiresAt > now) return localCache.values;
   if (inFlightLoad) return inFlightLoad;
 
-  inFlightLoad = loadSettingsUncached(loadFromDatabase)
-    .then((values) => {
-      localCache = {
-        expiresAt:
-          Date.now() +
-          (isRedisConfigured()
-            ? getLocalCacheTtlMs()
-            : DEFAULT_DATABASE_FALLBACK_CACHE_TTL_MS),
-        values,
-      };
-      return values;
+  const expectedGeneration = cacheGeneration;
+  const currentLoad = loadSettingsUncached(loadFromDatabase, expectedGeneration)
+    .then((result) => {
+      if (result.cacheable && expectedGeneration === cacheGeneration) {
+        localCache = {
+          expiresAt:
+            Date.now() +
+            (isRedisConfigured()
+              ? getLocalCacheTtlMs()
+              : DEFAULT_DATABASE_FALLBACK_CACHE_TTL_MS),
+          values: result.values,
+        };
+      }
+      return result.values;
     })
     .finally(() => {
-      inFlightLoad = undefined;
+      // WHY：失效后可能已有新一代读取在途；旧任务完成时只能释放自己的句柄。
+      if (inFlightLoad === currentLoad) {
+        inFlightLoad = undefined;
+      }
     });
-  return inFlightLoad;
+  inFlightLoad = currentLoad;
+  return currentLoad;
 }
 
 /**
@@ -414,6 +540,7 @@ export async function loadCachedSystemSettings(
  * 用于测试隔离和同进程写后可见性；不会执行网络 I/O。
  */
 export function clearLocalSystemSettingsCache() {
+  cacheGeneration += 1;
   localCache = undefined;
   inFlightLoad = undefined;
 }
@@ -421,22 +548,16 @@ export function clearLocalSystemSettingsCache() {
 /**
  * 在数据库写成功后失效 L1 与 Redis 共享缓存。
  *
- * Redis 删除失败时记录待失效标记并继续返回成功，后续本进程首次 Redis 读会先删除
- * 旧 key；其他实例最多受 Redis key 的短 TTL 约束。数据库始终是真相来源。
+ * Redis 原子失效失败时记录本地代次并继续返回成功，后续本进程首次 Redis 读会重试；
+ * 成功后共享 epoch 会拒绝所有实例在失效前启动的旧数据库回填。数据库始终是真相来源。
  */
 export async function invalidateSystemSettingsCache() {
   clearLocalSystemSettingsCache();
   if (!isRedisConfigured()) return;
 
-  pendingRedisInvalidation = true;
-  const deleted = await runRedisOperation(
-    "invalidate",
-    (client) => client.del(SYSTEM_SETTINGS_CACHE_KEY),
-    { force: true }
-  );
-  if (deleted !== undefined) {
-    pendingRedisInvalidation = false;
-  }
+  const invalidationGeneration = cacheGeneration;
+  pendingRedisInvalidationGeneration = invalidationGeneration;
+  await invalidateRedisCache(invalidationGeneration);
 }
 
 /**
@@ -450,6 +571,6 @@ export function resetSystemSettingsCacheForTests() {
   redisClient = undefined;
   redisClientFingerprint = undefined;
   redisUnavailableUntil = 0;
-  pendingRedisInvalidation = false;
+  pendingRedisInvalidationGeneration = undefined;
   lastRedisWarningAt = 0;
 }
