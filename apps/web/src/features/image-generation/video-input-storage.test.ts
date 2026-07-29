@@ -1,8 +1,10 @@
 /**
- * 视频输入持久存储测试。
+ * 视频具名输入持久存储测试。
  *
- * 职责：验证 base64 不会保留在结果引用、稳定键可幂等重写、失败会清理且不会回退。
+ * 职责：验证全部来源都会实际加载后复制、对象采用边界、共享 256 数量保护，以及
+ * MIME、字节、bucket 和失败清理不会回退到客户端引用。
  */
+import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const storage = vi.hoisted(() => ({
@@ -13,6 +15,9 @@ const storage = vi.hoisted(() => ({
 const cleanupQueue = vi.hoisted(() => ({
   enqueueVideoInputCleanup: vi.fn(),
 }));
+const mediaLoader = vi.hoisted(() => ({
+  loadMediaInputs: vi.fn(),
+}));
 
 vi.mock("@repo/shared/storage/providers", () => ({
   getStorageRuntimeSnapshot: storage.getStorageRuntimeSnapshot,
@@ -20,249 +25,264 @@ vi.mock("@repo/shared/storage/providers", () => ({
 
 vi.mock("./video-input-cleanup-queue", () => ({
   enqueueVideoInputCleanup: cleanupQueue.enqueueVideoInputCleanup,
+  parseVideoInputCleanupObjects: (value: unknown) => value,
 }));
 
+vi.mock("./media-input-loader", () => ({
+  loadMediaInputs: mediaLoader.loadMediaInputs,
+}));
+
+import { createLifecycleCleanupObjects } from "./video-input-lifecycle";
 import {
   cleanupUnusedStagedVideoInputs,
-  stageVideoInputReferences,
+  stageVideoInputManifest,
   VIDEO_INPUT_UPLOAD_TIMEOUT_MS,
 } from "./video-input-storage";
 import { VIDEO_STAGING_RESERVATION_TTL_MS } from "./video-task-admission";
 
-const DATA_REFERENCE = {
-  source: "data" as const,
-  mimeType: "image/png" as const,
-  base64: Buffer.from("video-input").toString("base64"),
-  byteLength: Buffer.byteLength("video-input"),
-};
+const PNG_BYTES = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from("video-input"),
+]);
+
+/** 构造声明与实际测试字节一致的 data 引用。 */
+function createDataReference(): MediaInputReference {
+  return {
+    source: "data",
+    mimeType: "image/png",
+    base64: PNG_BYTES.toString("base64"),
+    byteLength: PNG_BYTES.byteLength,
+  };
+}
+
+/** 为当前测试配置成功存储与按输入顺序返回的实际媒体。 */
+function setupSuccessfulStorage(): void {
+  storage.getStorageRuntimeSnapshot.mockResolvedValue({
+    provider: {
+      putObject: storage.putObject,
+      deleteObject: storage.deleteObject,
+    },
+    bucketName: "uploads",
+  });
+  storage.putObject.mockResolvedValue(undefined);
+  mediaLoader.loadMediaInputs.mockImplementation(
+    async (input: { references: MediaInputReference[] }) =>
+      input.references.map(() => ({ data: PNG_BYTES, type: "image/png" }))
+  );
+}
 
 describe("video input storage", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("把 data 引用写成稳定 storage 引用且不返回 base64", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-
-    const result = await stageVideoInputReferences({
+  it("把 data 首帧与 storage 尾帧都复制为任务隔离的具名对象", async () => {
+    setupSuccessfulStorage();
+    const result = await stageVideoInputManifest({
       userId: "user-1",
       videoId: "video-1",
       attemptId: "reservation-1",
-      references: [DATA_REFERENCE],
+      manifest: {
+        firstFrame: createDataReference(),
+        lastFrame: {
+          source: "storage",
+          mimeType: "image/png",
+          storageKey: "user-1/existing.png",
+          storageBucket: "uploads",
+          byteLength: PNG_BYTES.byteLength,
+        },
+      },
     });
 
-    expect(result.references).toEqual([
+    expect(mediaLoader.loadMediaInputs).toHaveBeenCalledWith(
       expect.objectContaining({
-        source: "storage",
-        storageBucket: "uploads",
-        storageKey: expect.stringMatching(
-          /^user-1\/video-inputs\/video-1\/reservation-1\/0-[a-f0-9]{32}\.png$/
-        ),
-      }),
-    ]);
-    expect(JSON.stringify(result.references)).not.toContain("base64");
-    expect(cleanupQueue.enqueueVideoInputCleanup).toHaveBeenCalledTimes(1);
-    expect(storage.putObject).toHaveBeenCalledTimes(1);
-    expect(
-      cleanupQueue.enqueueVideoInputCleanup.mock.invocationCallOrder[0]
-    ).toBeLessThan(storage.putObject.mock.invocationCallOrder[0] ?? 0);
-  });
-
-  it("过期 reservation 的迟到清理不会命中新尝试对象 key", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-    storage.putObject.mockResolvedValue(undefined);
-
-    const first = await stageVideoInputReferences({
-      userId: "user-1",
-      videoId: "video-1",
-      attemptId: "expired-reservation",
-      references: [DATA_REFERENCE],
-    });
-    const second = await stageVideoInputReferences({
-      userId: "user-1",
-      videoId: "video-1",
-      attemptId: "current-reservation",
-      references: [DATA_REFERENCE],
-    });
-
-    expect(first.objects[0]?.storageKey).not.toBe(
-      second.objects[0]?.storageKey
-    );
-  });
-
-  it("持久任务使用同一对象时竞争失败请求不会误删", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-    const staged = await stageVideoInputReferences({
-      userId: "user-1",
-      videoId: "video-1",
-      attemptId: "reservation-1",
-      references: [DATA_REFERENCE],
-    });
-
-    await cleanupUnusedStagedVideoInputs({
-      objects: staged.objects,
-      persistedReferences: staged.references,
-    });
-
-    expect(storage.deleteObject).not.toHaveBeenCalled();
-  });
-
-  it("上传失败时拒绝创建且不回退为 data 引用", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-    storage.putObject.mockRejectedValue(new Error("storage unavailable"));
-
-    await expect(
-      stageVideoInputReferences({
         userId: "user-1",
-        videoId: "video-1",
-        attemptId: "reservation-1",
-        references: [DATA_REFERENCE],
-      })
-    ).rejects.toThrow("storage unavailable");
-  });
-
-  it("上传取消边界早于 reservation 到期且保留持久清理意图", async () => {
-    let uploadSignal: AbortSignal | undefined;
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-    storage.putObject.mockImplementation((...args: unknown[]) => {
-      uploadSignal = (args[4] as { signal?: AbortSignal } | undefined)?.signal;
-      return Promise.reject(new DOMException("upload timed out", "AbortError"));
-    });
-
-    await expect(
-      stageVideoInputReferences({
-        userId: "user-1",
-        videoId: "video-1",
-        attemptId: "reservation-1",
-        references: [DATA_REFERENCE],
-      })
-    ).rejects.toThrow("upload timed out");
-
-    expect(VIDEO_INPUT_UPLOAD_TIMEOUT_MS).toBeLessThan(
-      VIDEO_STAGING_RESERVATION_TTL_MS
-    );
-    expect(uploadSignal).toBeInstanceOf(AbortSignal);
-    expect(cleanupQueue.enqueueVideoInputCleanup).toHaveBeenCalledTimes(1);
-    expect(storage.deleteObject).not.toHaveBeenCalled();
-  });
-
-  it("同一次 staging 的所有对象共享绝对上传 deadline", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-    storage.putObject.mockResolvedValue(undefined);
-
-    await stageVideoInputReferences({
-      userId: "user-1",
-      videoId: "video-1",
-      attemptId: "reservation-1",
-      references: [DATA_REFERENCE, DATA_REFERENCE],
-    });
-
-    const firstOptions = storage.putObject.mock.calls[0]?.[4] as
-      | { signal?: AbortSignal }
-      | undefined;
-    const secondOptions = storage.putObject.mock.calls[1]?.[4] as
-      | { signal?: AbortSignal }
-      | undefined;
-    expect(firstOptions?.signal).toBeInstanceOf(AbortSignal);
-    expect(secondOptions?.signal).toBe(firstOptions?.signal);
-  });
-
-  it("即时删除失败时登记持久清理而不遗失对象身份", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-    storage.deleteObject.mockRejectedValue(new Error("storage offline"));
-    cleanupQueue.enqueueVideoInputCleanup.mockResolvedValue(1);
-
-    await expect(
-      cleanupUnusedStagedVideoInputs({
-        objects: [
-          {
-            userId: "user-1",
-            videoId: "video-1",
-            attemptId: "reservation-1",
-            storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
-            storageBucket: "uploads",
-          },
+        references: [
+          expect.objectContaining({ source: "data" }),
+          expect.objectContaining({ source: "storage" }),
         ],
       })
-    ).rejects.toThrow("storage offline");
-    expect(cleanupQueue.enqueueVideoInputCleanup).toHaveBeenCalledWith([
-      {
-        userId: "user-1",
-        videoId: "video-1",
-        attemptId: "reservation-1",
-        storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
-        storageBucket: "uploads",
-      },
-    ]);
+    );
+    expect(result.manifest).toEqual({
+      firstFrame: expect.objectContaining({
+        source: "storage",
+        storageKey: expect.stringContaining("/reservation-1/first-frame-0-"),
+      }),
+      lastFrame: expect.objectContaining({
+        source: "storage",
+        storageKey: expect.stringContaining("/reservation-1/last-frame-0-"),
+      }),
+    });
+    expect(storage.putObject).toHaveBeenCalledTimes(2);
+    expect(result.objects).toHaveLength(2);
+    expect(result.objects.every((object) => object.reason === "orphan")).toBe(
+      true
+    );
   });
 
-  it("持久化前拒绝客户端指定其他 bucket 的 storage 引用", async () => {
-    storage.getStorageRuntimeSnapshot.mockResolvedValue({
-      provider: {
-        putObject: storage.putObject,
-        deleteObject: storage.deleteObject,
-      },
-      bucketName: "uploads",
-    });
-
-    await expect(
-      stageVideoInputReferences({
-        userId: "user-1",
-        videoId: "video-1",
-        attemptId: "reservation-1",
-        references: [
+  it("把 storage 与 remote 参考图全部复制且保持顺序", async () => {
+    setupSuccessfulStorage();
+    const result = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: {
+        referenceImages: [
           {
             source: "storage",
             mimeType: "image/png",
             storageKey: "user-1/existing.png",
-            storageBucket: "other-bucket",
-            byteLength: 10,
+            storageBucket: "uploads",
+            byteLength: PNG_BYTES.byteLength,
+          },
+          {
+            source: "remote",
+            mimeType: "image/png",
+            url: "https://cdn.example.com/reference.png",
+            byteLength: PNG_BYTES.byteLength,
           },
         ],
+      },
+    });
+
+    expect(
+      result.manifest.referenceImages?.map((reference) => reference.storageKey)
+    ).toEqual([
+      expect.stringContaining("/reference-0-"),
+      expect.stringContaining("/reference-1-"),
+    ]);
+    expect(storage.putObject).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    10, 20, 256,
+  ])("允许 %i 张小参考图通过共享基础设施边界", async (count) => {
+    setupSuccessfulStorage();
+
+    const result = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: {
+        referenceImages: Array.from({ length: count }, createDataReference),
+      },
+    });
+
+    expect(result.manifest.referenceImages).toHaveLength(count);
+    expect(storage.putObject).toHaveBeenCalledTimes(count);
+  });
+
+  it("第 257 张在实际读取和对象写入前失败", async () => {
+    setupSuccessfulStorage();
+
+    await expect(
+      stageVideoInputManifest({
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "reservation-1",
+        manifest: {
+          referenceImages: Array.from({ length: 257 }, createDataReference),
+        },
       })
-    ).rejects.toThrow("不属于当前用户或 bucket");
+    ).rejects.toThrow();
+    expect(mediaLoader.loadMediaInputs).not.toHaveBeenCalled();
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("实际 MIME 与声明不一致时不写对象", async () => {
+    setupSuccessfulStorage();
+    const jpegBytes = Buffer.alloc(PNG_BYTES.byteLength);
+    jpegBytes.set([0xff, 0xd8, 0xff]);
+    mediaLoader.loadMediaInputs.mockResolvedValueOnce([
+      { data: jpegBytes, type: "image/png" },
+    ]);
+
+    await expect(
+      stageVideoInputManifest({
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "reservation-1",
+        manifest: { firstFrame: createDataReference() },
+      })
+    ).rejects.toThrow();
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("实际字节与声明不一致时不写对象", async () => {
+    setupSuccessfulStorage();
+    mediaLoader.loadMediaInputs.mockResolvedValueOnce([
+      {
+        data: Buffer.concat([PNG_BYTES, Buffer.from("extra")]),
+        type: "image/png",
+      },
+    ]);
+
+    await expect(
+      stageVideoInputManifest({
+        userId: "user-1",
+        videoId: "video-1",
+        attemptId: "reservation-1",
+        manifest: { firstFrame: createDataReference() },
+      })
+    ).rejects.toThrow("字节数与声明不一致");
+    expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("读取和全部上传共享同一个绝对 deadline", async () => {
+    setupSuccessfulStorage();
+    await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: { firstFrame: createDataReference() },
+    });
+
+    const loadSignal = mediaLoader.loadMediaInputs.mock.calls[0]?.[0]?.signal;
+    const uploadSignal = storage.putObject.mock.calls[0]?.[4]?.signal;
+    expect(loadSignal).toBeInstanceOf(AbortSignal);
+    expect(uploadSignal).toBe(loadSignal);
+    expect(VIDEO_INPUT_UPLOAD_TIMEOUT_MS).toBeLessThan(
+      VIDEO_STAGING_RESERVATION_TTL_MS
+    );
+  });
+
+  it("持久任务采用同一清单时竞争失败请求不会误删", async () => {
+    setupSuccessfulStorage();
+    const staged = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: { firstFrame: createDataReference() },
+    });
+
+    await cleanupUnusedStagedVideoInputs({
+      objects: staged.objects,
+      persistedManifest: staged.manifest,
+    });
+
     expect(storage.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it("只从任务白名单清单派生 lifecycle_delete 身份", async () => {
+    setupSuccessfulStorage();
+    const staged = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: { firstFrame: createDataReference() },
+    });
+
+    expect(
+      createLifecycleCleanupObjects({
+        userId: "user-1",
+        videoId: "video-1",
+        manifest: staged.manifest,
+      })
+    ).toEqual([
+      expect.objectContaining({
+        reason: "lifecycle_delete",
+        attemptId: "reservation-1",
+      }),
+    ]);
   });
 });

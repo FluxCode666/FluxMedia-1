@@ -6,6 +6,7 @@
  * SQL 契约测试。
  */
 import { createHash, randomUUID } from "node:crypto";
+import { MAX_MEDIA_INPUT_COUNT } from "@repo/shared/image-generation/media-contract";
 import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -19,6 +20,7 @@ const CLEANUP_RETRY_MAX_MS = 60 * 60_000;
 
 const cleanupObjectBaseSchema = z
   .object({
+    reason: z.enum(["orphan", "lifecycle_delete"]),
     userId: z.string().trim().min(1).max(512),
     videoId: z.string().trim().min(1).max(512),
     attemptId: z.string().trim().min(1).max(128),
@@ -68,7 +70,7 @@ export type ClaimedVideoInputCleanup = z.infer<typeof claimedCleanupSchema>;
 export function parseVideoInputCleanupObjects(
   value: unknown
 ): VideoInputCleanupObject[] {
-  return cleanupObjectSchema.array().max(3).parse(value);
+  return cleanupObjectSchema.array().max(MAX_MEDIA_INPUT_COUNT).parse(value);
 }
 
 /** 清理队列只依赖参数化 SQL execute 端口。 */
@@ -90,15 +92,15 @@ export interface VideoInputCleanupRepository {
     error: unknown;
     now: Date;
   }): Promise<void>;
-  assertAvailableForPersistence(
-    objects: VideoInputCleanupObject[]
-  ): Promise<void>;
+  adoptOrphans(objects: VideoInputCleanupObject[]): Promise<void>;
 }
 
 /** 用 bucket/key 的完整身份生成稳定、定长的队列主键。 */
 function createCleanupId(object: VideoInputCleanupObject): string {
   return createHash("sha256")
     .update(object.userId)
+    .update("\0")
+    .update(object.reason)
     .update("\0")
     .update(object.videoId)
     .update("\0")
@@ -133,6 +135,7 @@ export function createPostgresVideoInputCleanupRepository(
         await database.execute(sql`
           insert into video_input_cleanup (
             id,
+            reason,
             user_id,
             video_id,
             attempt_id,
@@ -143,6 +146,7 @@ export function createPostgresVideoInputCleanupRepository(
           )
           values (
             ${id},
+            ${object.reason},
             ${object.userId},
             ${object.videoId},
             ${object.attemptId},
@@ -152,7 +156,8 @@ export function createPostgresVideoInputCleanupRepository(
             now()
           )
           on conflict (id) do update
-          set user_id = excluded.user_id,
+          set reason = excluded.reason,
+              user_id = excluded.user_id,
               video_id = excluded.video_id,
               attempt_id = excluded.attempt_id,
               storage_key = excluded.storage_key,
@@ -205,12 +210,30 @@ export function createPostgresVideoInputCleanupRepository(
             and pg_try_advisory_xact_lock(
               hashtextextended('video-user:' || user_id, 0)
             )
-            and not exists (
-              select 1
-              from video_generation as task
-              where task.id = video_input_cleanup.video_id
-                and task.user_id = video_input_cleanup.user_id
-                and task.stage = 'created'
+            and (
+              (
+                video_input_cleanup.reason = 'orphan'
+                and not exists (
+                  select 1
+                  from video_generation as task
+                  where task.id = video_input_cleanup.video_id
+                    and task.user_id = video_input_cleanup.user_id
+                )
+              )
+              or (
+                video_input_cleanup.reason = 'lifecycle_delete'
+                and exists (
+                  select 1
+                  from video_generation as task
+                  join "user" as account
+                    on account.id = task.user_id
+                  where task.id = video_input_cleanup.video_id
+                    and task.user_id = video_input_cleanup.user_id
+                    and task.stage in ('completed', 'failed')
+                    and account.banned = true
+                    and account.banned_reason = 'account_deleted'
+                )
+              )
             )
             and not exists (
               select 1
@@ -231,6 +254,7 @@ export function createPostgresVideoInputCleanupRepository(
         where cleanup.id = candidate.id
         returning
           cleanup.id,
+          cleanup.reason,
           cleanup.user_id as "userId",
           cleanup.video_id as "videoId",
           cleanup.attempt_id as "attemptId",
@@ -279,19 +303,22 @@ export function createPostgresVideoInputCleanupRepository(
       }
     },
 
-    async assertAvailableForPersistence(rawObjects) {
+    async adoptOrphans(rawObjects) {
       const objects = parseVideoInputCleanupObjects(rawObjects);
       for (const object of objects) {
+        if (object.reason !== "orphan") {
+          throw new Error("视频任务只能采用 orphan 输入清理意图");
+        }
         const id = createCleanupId(object);
         const result = await database.execute(sql`
-          select id
-          from video_input_cleanup
+          delete from video_input_cleanup
           where id = ${id}
+            and reason = 'orphan'
             and user_id = ${object.userId}
             and video_id = ${object.videoId}
             and attempt_id = ${object.attemptId}
             and claim_token is null
-          limit 1
+          returning id
         `);
         if (extractExecuteRows(result).length !== 1) {
           throw new Error("视频输入清理意图缺失或已被 worker 认领");
@@ -318,21 +345,19 @@ export async function enqueueVideoInputCleanup(
 }
 
 /**
- * 在视频任务创建事务内确认清理意图仍未被 worker 认领。
+ * 在视频任务创建事务内采用对象并完成 orphan 清理意图。
  *
  * 调用方必须已持有同一 userId 的视频准入 advisory lock；队列 claim 使用相同锁，
- * 因而“确认意图并插入任务”与“认领后删除对象”只能有一方获胜。意图不会删除：
- * created 阶段保护仍需读取的输入；进入 charged 后字节已在 worker 内存，崩溃恢复也
- * 只退款不重投，因此队列可安全清理，submit_uncertain 不会因单次删除失败永久滞留。
+ * 因而“采用意图并插入任务”与“认领后删除对象”只能有一方获胜。删除 orphan 行与
+ * 任务插入在同一事务提交，插入失败会恢复意图，已采用对象不再被 worker 认领。
  */
-export async function assertVideoInputCleanupAvailableForPersistence(
+export async function adoptVideoInputObjectsForPersistence(
   executor: VideoInputCleanupDatabase,
   objects: VideoInputCleanupObject[]
 ): Promise<void> {
   if (objects.length === 0) return;
-  await createPostgresVideoInputCleanupRepository(
-    executor
-  ).assertAvailableForPersistence(objects);
+  const repository = createPostgresVideoInputCleanupRepository(executor);
+  await repository.adoptOrphans(objects);
 }
 
 /** 认领并处理一批持久清理条目；每个条目的失败独立退避。 */

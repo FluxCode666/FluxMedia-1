@@ -7,6 +7,10 @@
 import { AdobeAcceptedVideoError } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it } from "vitest";
 import {
+  buildVideoCallbackInput,
+  shouldRetainVideoInputsAfterStage,
+} from "./video-input-lifecycle";
+import {
   createVideoStorageKey,
   requireAcceptedVideoCredential,
   resolveVideoBackendExhaustionError,
@@ -14,6 +18,29 @@ import {
 } from "./video-recovery-policy";
 
 describe("video recovery policies", () => {
+  it("任务进入完成或失败终态后仍保留具名输入清单", () => {
+    expect(shouldRetainVideoInputsAfterStage("completed")).toBe(true);
+    expect(shouldRetainVideoInputsAfterStage("failed")).toBe(true);
+  });
+
+  it("callback 输入 DTO 只返回模式和数量", () => {
+    const input = buildVideoCallbackInput({
+      referenceImages: [
+        {
+          source: "storage",
+          mimeType: "image/png",
+          storageKey: "user-1/video-inputs/video-1/reservation-1/reference.png",
+          storageBucket: "uploads",
+          byteLength: 12,
+        },
+      ],
+    });
+
+    expect(input).toEqual({ mode: "references", count: 1 });
+    expect(JSON.stringify(input)).not.toContain("storageKey");
+    expect(JSON.stringify(input)).not.toContain("url");
+  });
+
   it("为同一任务始终生成同一个对象存储键", () => {
     expect(createVideoStorageKey("user-1", "video-1")).toBe(
       "user-1/videos/video-1.mp4"

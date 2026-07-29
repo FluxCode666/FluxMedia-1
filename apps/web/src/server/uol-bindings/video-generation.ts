@@ -7,7 +7,7 @@
  */
 
 import { FIREFLY_VIDEO_FAMILIES } from "@repo/shared/adobe/firefly-direct/video-catalog";
-import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
+import { videoInputManifestSchema } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import {
   getRuntimeSettingJson,
@@ -25,13 +25,20 @@ import {
   normalizeVideoGenerateInputForReplay,
   resolveCanonicalVideoGenerateInput,
   type VideoGenerateInput,
+  videoGetInputs,
   videoListCapabilities,
   videoListUncertainSubmissions,
   videoReconcileSubmission,
+  videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
+import {
+  getVideoInputAssets,
+  requestVideoAccountInputCleanup,
+} from "@/features/image-generation/video-input-assets";
+import { buildVideoInputSummary } from "@/features/image-generation/video-input-lifecycle";
 import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/video-input-storage";
 import {
   getVideoGenerationById,
@@ -182,25 +189,6 @@ function readVideoMetadataBoolean(
   return metadata?.[key] === true;
 }
 
-/** 把迁移期数组输入投影为不含存储身份的具名摘要。 */
-function buildVideoInputSummary(
-  references: readonly unknown[] | null,
-  metadata: Record<string, unknown> | null
-): {
-  mode: "none" | "first-frame" | "first-last-frames" | "references";
-  count: number;
-} {
-  const count = references?.length ?? 0;
-  if (count === 0) return { mode: "none", count: 0 };
-  if (metadata?.inputImageRole === "reference") {
-    return { mode: "references", count };
-  }
-  return {
-    mode: count > 1 ? "first-last-frames" : "first-frame",
-    count,
-  };
-}
-
 /**
  * 为尚未切换的 Adobe service 构造迁移期复合身份。
  *
@@ -222,22 +210,6 @@ function composeLegacyVideoModelId(input: CanonicalVideoGenerateInput): string {
     : `${input.model}-${input.duration}s-${ratio}`;
 }
 
-/** 将具名输入转换为迁移期 service 的有序数组与角色。 */
-function projectCanonicalVideoInputs(input: CanonicalVideoGenerateInput): {
-  references: MediaInputReference[];
-  role: "frame" | "reference";
-} {
-  if (input.referenceImages?.length) {
-    return { references: [...input.referenceImages], role: "reference" };
-  }
-  return {
-    references: [input.firstFrame, input.lastFrame].filter(
-      (reference): reference is MediaInputReference => Boolean(reference)
-    ),
-    role: "frame",
-  };
-}
-
 bindOperationExecute(videoListCapabilities, (input, principal) =>
   executeVideoListCapabilitiesBinding(input, principal, {
     async loadCapabilityOverrides() {
@@ -252,6 +224,28 @@ bindOperationExecute(videoListCapabilities, (input, principal) =>
       logError(error, { source: "video-capability-discovery" });
     },
   })
+);
+
+/** video.getInputs - 只从任务白名单为 owner 或历史管理员签发短期 URL。 */
+bindOperationExecute(videoGetInputs, (input, principal, context) =>
+  getVideoInputAssets({ taskId: input.taskId, principal, context })
+);
+
+/** video.requestAccountInputCleanup - 账号失效前登记幂等生命周期意图。 */
+bindOperationExecute(
+  videoRequestAccountInputCleanup,
+  async (input, principal) => {
+    if (principal.type !== "user") {
+      throw new OperationError(
+        "unauthenticated",
+        "User session authentication required"
+      );
+    }
+    return requestVideoAccountInputCleanup({
+      userId: principal.userId,
+      clientRequestId: input.clientRequestId,
+    });
+  }
 );
 
 /** video.generate - Principal 作用域幂等地执行统一视频管线。 */
@@ -318,7 +312,17 @@ bindExecute(
       );
     }
     const canonicalInput = canonicalResult.input;
-    const projectedInputs = projectCanonicalVideoInputs(canonicalInput);
+    const inputManifest = {
+      ...(canonicalInput.firstFrame
+        ? { firstFrame: canonicalInput.firstFrame }
+        : {}),
+      ...(canonicalInput.lastFrame
+        ? { lastFrame: canonicalInput.lastFrame }
+        : {}),
+      ...(canonicalInput.referenceImages?.length
+        ? { referenceImages: canonicalInput.referenceImages }
+        : {}),
+    };
 
     let preparation: Awaited<
       ReturnType<typeof prepareVideoTaskInputReferences>
@@ -328,7 +332,7 @@ bindExecute(
         taskId,
         userId: principal.userId,
         principalScope,
-        references: projectedInputs.references,
+        manifest: inputManifest,
       });
       if (preparation.admission === "existing") {
         const raced = await getVideoGenerationById(taskId);
@@ -387,11 +391,8 @@ bindExecute(
           ...(canonicalInput.backendGroupId
             ? { backendGroupId: canonicalInput.backendGroupId }
             : {}),
-          ...(stagedInput.references.length
-            ? { inputImages: stagedInput.references }
-            : {}),
-          ...(stagedInput.references.length
-            ? { inputImageRole: projectedInputs.role }
+          ...(Object.keys(stagedInput.manifest).length
+            ? { inputManifest: stagedInput.manifest }
             : {}),
           ...(stagedInput.objects.length
             ? { stagedInputObjects: stagedInput.objects }
@@ -402,7 +403,7 @@ bindExecute(
       const persisted = await getVideoGenerationById(taskId);
       await cleanupUnusedStagedVideoInputs({
         objects: stagedInput.objects,
-        persistedReferences: persisted?.inputImageRefs,
+        persistedManifest: persisted?.inputManifest,
       });
       if (persisted) {
         assertVideoTaskPrincipal(persisted, principal, ctx);
@@ -434,7 +435,7 @@ bindExecute(
       const raced = await getVideoGenerationById(taskId);
       await cleanupUnusedStagedVideoInputs({
         objects: stagedInput.objects,
-        persistedReferences: raced?.inputImageRefs,
+        persistedManifest: raced?.inputManifest,
       }).catch((cleanupError) =>
         logError(cleanupError, {
           source: "video-input-storage-cleanup",
@@ -487,6 +488,12 @@ bindExecute(
             (await getRuntimeSettingString("BETTER_AUTH_URL")),
         })
       : null;
+    const parsedManifest = videoInputManifestSchema.safeParse(
+      row.inputManifest ?? {}
+    );
+    if (!parsedManifest.success) {
+      throw new OperationError("internal_error", "视频任务输入清单暂时不可用");
+    }
     return {
       taskId: row.id,
       status: toVideoOperationStatus(row.status, row.stage),
@@ -495,7 +502,7 @@ bindExecute(
       aspectRatio: row.aspectRatio,
       resolution: row.resolution,
       generateAudio: readVideoMetadataBoolean(row.metadata, "generateAudio"),
-      input: buildVideoInputSummary(row.inputImageRefs, row.metadata),
+      input: buildVideoInputSummary(parsedManifest.data),
       ...(videoUrl ? { videoUrl } : {}),
       ...(row.error ? { error: row.error } : {}),
       createdAt: row.createdAt.toISOString(),

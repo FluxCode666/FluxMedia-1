@@ -38,8 +38,9 @@ import {
 } from "@repo/shared/credits/core";
 import { refundGenerationCredits } from "@repo/shared/generation-maintenance";
 import {
-  type MediaInputReference,
-  mediaInputReferencesSchema,
+  listVideoInputManifestReferences,
+  type VideoInputManifest,
+  videoInputManifestSchema,
 } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
@@ -67,12 +68,12 @@ import {
 } from "./video-callback-delivery";
 import { reconcileVideoCreditConsumption } from "./video-credit-consumption";
 import {
-  assertVideoInputCleanupAvailableForPersistence,
+  adoptVideoInputObjectsForPersistence,
   parseVideoInputCleanupObjects,
   runVideoInputCleanupJob,
   type VideoInputCleanupObject,
 } from "./video-input-cleanup-queue";
-import { cleanupPersistedVideoInputs } from "./video-input-storage";
+import { shouldRetainVideoInputsAfterStage } from "./video-input-lifecycle";
 import {
   createVideoStorageKey,
   resolveVideoBackendExhaustionError,
@@ -117,8 +118,7 @@ export type VideoGenerationInput = {
   backendGroupId?: string;
   negativePrompt?: string | null;
   generateAudio?: boolean;
-  inputImages?: MediaInputReference[];
-  inputImageRole?: FireflyVideoInputImageRole;
+  inputManifest?: VideoInputManifest;
   stagedInputObjects?: VideoInputCleanupObject[];
 };
 
@@ -167,10 +167,6 @@ export type VideoPricingInfo = {
 
 type VideoGenerationRow = NonNullable<
   Awaited<ReturnType<typeof getVideoGenerationById>>
->;
-type PersistableVideoInputReference = Exclude<
-  MediaInputReference,
-  { source: "data" }
 >;
 
 /** 读取必填全局视频模型价格；历史脏值回退开发默认值。 */
@@ -246,6 +242,15 @@ async function compareAndSetVideoStage(input: {
     .update(videoGeneration)
     .set({
       ...input.values,
+      // WHY：阶段推进永不拥有输入删除权限。即使未来调用方误传空清单，CAS 仍以
+      // 生命周期策略覆盖并保留当前任务清单；删除只由账号删除清理队列执行。
+      inputManifest: shouldRetainVideoInputsAfterStage(
+        typeof input.values.stage === "string"
+          ? input.values.stage
+          : input.row.stage
+      )
+        ? input.row.inputManifest
+        : null,
       stateVersion: input.row.stateVersion + 1,
       updatedAt: new Date(),
     })
@@ -266,7 +271,7 @@ async function failUnchargedVideo(
   row: VideoGenerationRow,
   message: string
 ): Promise<void> {
-  const failed = await compareAndSetVideoStage({
+  await compareAndSetVideoStage({
     row,
     expectedStages: [row.stage as VideoStage],
     values: {
@@ -279,7 +284,6 @@ async function failUnchargedVideo(
       nextPollAt: null,
     },
   });
-  if (failed) await attemptVideoInputCleanup(failed);
 }
 
 /** 释放任务持有的成员租约；owner 已被接管时旧 worker 无法误释放。 */
@@ -385,7 +389,6 @@ async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
       nextPollAt: null,
     },
   });
-  if (failed) await attemptVideoInputCleanup(failed);
   await releaseVideoLease(failed ?? row);
 }
 
@@ -420,7 +423,6 @@ export async function reconcileUncertainVideoSubmission(
 
   if (input.outcome === "not_accepted") {
     if (row.stage === "failed") {
-      await attemptVideoInputCleanup(row);
       return { taskId: row.id, status: "failed" };
     }
     if (row.stage === "refunding") {
@@ -464,7 +466,6 @@ export async function reconcileUncertainVideoSubmission(
         "任务已用不同的 Adobe 恢复身份完成核对"
       );
     }
-    await attemptVideoInputCleanup(row);
     return {
       taskId: row.id,
       status: row.stage === "completed" ? "completed" : "processing",
@@ -496,7 +497,6 @@ export async function reconcileUncertainVideoSubmission(
       "视频任务状态已被其他操作修改"
     );
   }
-  await attemptVideoInputCleanup(polling);
   return { taskId: row.id, status: "processing" };
 }
 
@@ -528,72 +528,65 @@ function getVideoMetadataBoolean(
   return typeof value === "boolean" ? value : undefined;
 }
 
-/**
- * 从任务 metadata 恢复输入图角色。
- *
- * @param metadata 持久任务元数据；历史任务可以为空。
- * @returns 已验证角色；历史任务缺失或非法时回退首尾帧。
- * @sideEffects 无。
- */
-function getVideoInputImageRole(
-  metadata: Record<string, unknown> | null
-): FireflyVideoInputImageRole {
-  return metadata?.inputImageRole === "reference" ? "reference" : "frame";
-}
-
-/** 重新校验任务中持久化的 JSON-safe 输入引用，防止脏数据进入 worker。 */
-function parsePersistedVideoInputImages(
+/** 重新校验任务中 storage-only 具名清单，防止脏数据进入 worker。 */
+function parsePersistedVideoInputManifest(
   row: VideoGenerationRow
-): MediaInputReference[] | undefined {
-  if (!row.inputImageRefs) return undefined;
-  const parsed = mediaInputReferencesSchema.safeParse(row.inputImageRefs);
+): VideoInputManifest | undefined {
+  if (!row.inputManifest) return undefined;
+  const parsed = videoInputManifestSchema.safeParse(row.inputManifest);
+  if (!parsed.success) throw new Error("视频任务的具名输入清单无效");
+  const prefix = `${row.userId}/video-inputs/${row.id}/`;
   if (
-    !parsed.success ||
-    parsed.data.length > 3 ||
-    parsed.data.some((reference) => reference.source === "data")
+    listVideoInputManifestReferences(parsed.data).some(
+      (reference) => !reference.storageKey.startsWith(prefix)
+    )
   ) {
-    throw new Error("视频任务的输入图片引用无效");
+    throw new Error("视频任务的具名输入清单归属无效");
   }
   return parsed.data;
 }
 
-/** 任务表只接受稳定 storage/remote 引用，禁止任何调用方绕过 UOL 写入 base64。 */
-function assertPersistableVideoInputImages(
-  references: MediaInputReference[] | undefined
-): asserts references is PersistableVideoInputReference[] | undefined {
-  if (references?.some((reference) => reference.source === "data")) {
-    throw new Error("视频 data 输入必须先持久化为 storage 引用");
+/** 将具名清单投影为供应商迁移期仍消费的有序数组与角色。 */
+function projectVideoInputManifest(manifest: VideoInputManifest | undefined): {
+  references: NonNullable<VideoInputManifest["firstFrame"]>[];
+  role: FireflyVideoInputImageRole;
+} {
+  if (manifest?.referenceImages?.length) {
+    return { references: manifest.referenceImages, role: "reference" };
   }
+  return {
+    references: [manifest?.firstFrame, manifest?.lastFrame].filter(
+      (reference): reference is NonNullable<VideoInputManifest["firstFrame"]> =>
+        Boolean(reference)
+    ),
+    role: "frame",
+  };
 }
 
-/** 删除任务临时输入后才清空持久引用；失败时保留引用供后续 worker 重试。 */
-async function cleanupVideoInputObjects(
-  row: VideoGenerationRow
-): Promise<void> {
-  const objects = parseVideoInputCleanupObjects(row.stagedInputObjects ?? []);
-  if (objects.length > 0) {
-    await cleanupPersistedVideoInputs({
-      userId: row.userId,
-      videoId: row.id,
-      objects,
-    });
-  }
-  await db
-    .update(videoGeneration)
-    .set({ inputImageRefs: null, stagedInputObjects: null })
-    .where(eq(videoGeneration.id, row.id));
-}
-
-/** 临时输入清理失败不阻断已接受任务，并保留引用供后续恢复轮次重试。 */
-async function attemptVideoInputCleanup(
-  row: VideoGenerationRow
-): Promise<void> {
-  await cleanupVideoInputObjects(row).catch((error) =>
-    logError(error, {
-      source: "adobe-video-input-cleanup",
-      videoId: row.id,
-    })
+/** 确保任务清单与本次待采用 orphan 对象一一对应。 */
+function assertVideoInputManifestMatchesObjects(input: {
+  manifest: VideoInputManifest | undefined;
+  objects: VideoInputCleanupObject[];
+}): void {
+  const references = input.manifest
+    ? listVideoInputManifestReferences(input.manifest)
+    : [];
+  const objectIdentities = new Set(
+    input.objects.map(
+      (object) => `${object.storageBucket}\0${object.storageKey}`
+    )
   );
+  if (
+    references.length !== input.objects.length ||
+    references.some(
+      (reference) =>
+        !objectIdentities.has(
+          `${reference.storageBucket}\0${reference.storageKey}`
+        )
+    )
+  ) {
+    throw new Error("视频具名输入清单与待采用对象不一致");
+  }
 }
 
 /**
@@ -612,16 +605,18 @@ export async function runAdobeVideoGenerationForUser(
     return { error: "该视频模型不支持音频开关" };
   }
   const effectiveGenerateAudio = input.generateAudio ?? conf.generateAudio;
-  const inputImageRole = input.inputImageRole ?? "frame";
+  const persistedInputManifest = input.inputManifest
+    ? videoInputManifestSchema.parse(input.inputManifest)
+    : undefined;
+  const projectedInput = projectVideoInputManifest(persistedInputManifest);
+  const inputImageRole = projectedInput.role;
   const maxInputImages = fireflyVideoMaxInputImages(conf, inputImageRole);
-  if (input.inputImages?.length && maxInputImages === 0) {
+  if (projectedInput.references.length && maxInputImages === 0) {
     return { error: `该视频模型不支持 ${inputImageRole} 输入图` };
   }
-  if ((input.inputImages?.length ?? 0) > maxInputImages) {
+  if (projectedInput.references.length > maxInputImages) {
     return { error: `该视频模型最多支持 ${maxInputImages} 张输入图` };
   }
-  const persistedInputImages = input.inputImages;
-  assertPersistableVideoInputImages(persistedInputImages);
 
   const videoId = input.videoGenerationId || nanoid();
   const stagedInputObjects = parseVideoInputCleanupObjects(
@@ -629,11 +624,18 @@ export async function runAdobeVideoGenerationForUser(
   );
   if (
     stagedInputObjects.some(
-      (object) => object.userId !== input.userId || object.videoId !== videoId
+      (object) =>
+        object.reason !== "orphan" ||
+        object.userId !== input.userId ||
+        object.videoId !== videoId
     )
   ) {
     throw new Error("视频输入清理对象与待创建任务归属不一致");
   }
+  assertVideoInputManifestMatchesObjects({
+    manifest: persistedInputManifest,
+    objects: stagedInputObjects,
+  });
   const createdAt = new Date();
   await db.transaction(async (transaction) => {
     const admission = await admitVideoTaskCreation(
@@ -659,7 +661,7 @@ export async function runAdobeVideoGenerationForUser(
       reservationToken: input.stagingReservationToken,
       required: true,
     });
-    await assertVideoInputCleanupAvailableForPersistence(
+    await adoptVideoInputObjectsForPersistence(
       { execute: (query) => transaction.execute(query) },
       stagedInputObjects
     );
@@ -695,12 +697,10 @@ export async function runAdobeVideoGenerationForUser(
           ? { negativePrompt: input.negativePrompt }
           : {}),
         generateAudio: effectiveGenerateAudio,
-        ...(persistedInputImages?.length ? { inputImageRole } : {}),
       },
-      ...(persistedInputImages?.length
-        ? { inputImageRefs: persistedInputImages }
+      ...(projectedInput.references.length
+        ? { inputManifest: persistedInputManifest }
         : {}),
-      ...(stagedInputObjects.length ? { stagedInputObjects } : {}),
       createdAt,
       updatedAt: createdAt,
     });
@@ -743,12 +743,15 @@ async function submitClaimedCreatedVideo(
   }
 
   let inputImages: Awaited<ReturnType<typeof loadMediaInputs>> | undefined;
+  let inputImageRole: FireflyVideoInputImageRole = "frame";
   try {
-    const inputReferences = parsePersistedVideoInputImages(initialRow);
-    inputImages = inputReferences?.length
+    const inputManifest = parsePersistedVideoInputManifest(initialRow);
+    const projectedInput = projectVideoInputManifest(inputManifest);
+    inputImageRole = projectedInput.role;
+    inputImages = projectedInput.references.length
       ? await loadMediaInputs({
           userId: initialRow.userId,
-          references: inputReferences,
+          references: projectedInput.references,
         })
       : undefined;
   } catch (error) {
@@ -771,7 +774,6 @@ async function submitClaimedCreatedVideo(
   const generateAudio =
     getVideoMetadataBoolean(initialRow.metadata, "generateAudio") ??
     conf.generateAudio;
-  const inputImageRole = getVideoInputImageRole(initialRow.metadata);
   let row = initialRow;
 
   const globalPricing = await getRuntimeGlobalVideoPricing();
@@ -928,7 +930,6 @@ async function submitClaimedCreatedVideo(
         },
       });
       if (!polling) throw new Error("Adobe 接受结果持久化发生并发冲突");
-      await attemptVideoInputCleanup(polling);
       return {
         videoGenerationId: row.id,
         status: "processing",
@@ -952,7 +953,6 @@ async function submitClaimedCreatedVideo(
       if (!uncertain) {
         throw new Error("Adobe 提交不确定状态持久化发生并发冲突");
       }
-      await attemptVideoInputCleanup(uncertain);
       return {
         error: "Adobe 视频提交结果不确定，任务已保留待核对",
         videoGenerationId: row.id,
@@ -1168,7 +1168,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     return;
   }
   if (row.stage === "submitting") {
-    const uncertain = await compareAndSetVideoStage({
+    await compareAndSetVideoStage({
       row,
       expectedStages: ["submitting"],
       values: {
@@ -1179,11 +1179,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
         claimExpiresAt: null,
       },
     });
-    if (uncertain) await attemptVideoInputCleanup(uncertain);
     return;
-  }
-  if (["polling", "downloading", "refunding"].includes(row.stage)) {
-    await attemptVideoInputCleanup(row);
   }
   if (row.stage === "refunding") {
     await refundClaimedVideoOrRetry(row);

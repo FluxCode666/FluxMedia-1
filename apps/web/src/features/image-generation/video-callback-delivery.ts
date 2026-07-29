@@ -12,6 +12,7 @@ import {
   videoGeneration,
   videoGenerationCallbackDelivery,
 } from "@repo/database/schema";
+import { videoInputManifestSchema } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import { buildPublicImageUrl } from "@repo/shared/storage/signed-url";
 import { getRuntimeSettingString } from "@repo/shared/system-settings";
@@ -21,6 +22,7 @@ import { extractExecuteRows } from "../../server/database-result";
 import { toVideoGenerationTaskResponse } from "../external-api/async-image-tasks";
 import { fetchPublicCallback } from "../external-api/safe-image-fetch";
 import { getVideoCallbackRetryAt } from "./video-callback-policy";
+import { buildVideoCallbackInput } from "./video-input-lifecycle";
 
 export { createVideoCallbackDeliveryValues } from "./video-callback-policy";
 
@@ -42,6 +44,7 @@ type VideoCallbackTaskRow = {
   creditsConsumed: number;
   error: string | null;
   storageKey: string | null;
+  inputManifest: unknown;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -126,6 +129,7 @@ async function loadClaimedVideoCallback(
         creditsConsumed: videoGeneration.creditsConsumed,
         error: videoGeneration.error,
         storageKey: videoGeneration.storageKey,
+        inputManifest: videoGeneration.inputManifest,
         createdAt: videoGeneration.createdAt,
         updatedAt: videoGeneration.updatedAt,
       },
@@ -175,7 +179,16 @@ async function deliverClaimedVideoCallback(input: {
     input.video.status === "completed" && input.video.storageKey
       ? await buildVideoCallbackUrl(input.video.storageKey)
       : null;
-  const payload = toVideoGenerationTaskResponse(input.video, videoUrl);
+  const parsedManifest = videoInputManifestSchema.safeParse(
+    input.video.inputManifest ?? {}
+  );
+  if (!parsedManifest.success) {
+    throw new Error("视频 callback 输入清单无效");
+  }
+  const payload = {
+    ...toVideoGenerationTaskResponse(input.video, videoUrl),
+    input: buildVideoCallbackInput(parsedManifest.data),
+  };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CALLBACK_TIMEOUT_MS);
   try {

@@ -1396,7 +1396,7 @@ export const imageBackendParameterMappingTemplate = pgTable(
   ]
 );
 
-/** 视频 worker 可跨进程恢复的 JSON-safe 图片引用。 */
+/** 迁移前视频 worker 可跨进程恢复的旧数组图片引用。 */
 type PersistedVideoInputReference =
   | {
       source: "storage";
@@ -1412,8 +1412,25 @@ type PersistedVideoInputReference =
       byteLength: number;
     };
 
-/** 仅由服务端 data 转存创建、可在终态安全删除的对象身份。 */
+/** 视频任务自有、storage-only 的单个输入对象。 */
+type PersistedVideoInputAsset = {
+  source: "storage";
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  storageKey: string;
+  storageBucket: string;
+  byteLength: number;
+};
+
+/** 视频任务按业务语义保存的持久输入清单。 */
+type PersistedVideoInputManifest = {
+  firstFrame?: PersistedVideoInputAsset;
+  lastFrame?: PersistedVideoInputAsset;
+  referenceImages?: PersistedVideoInputAsset[];
+};
+
+/** 仅由服务端转存创建、拥有可信删除身份的对象。 */
 type PersistedVideoInputObject = {
+  reason: "orphan" | "lifecycle_delete";
   userId: string;
   videoId: string;
   attemptId: string;
@@ -1467,10 +1484,12 @@ export const videoGeneration = pgTable(
     stage: text("stage").notNull().default("created"),
     stateVersion: integer("state_version").notNull().default(0),
     attemptCount: integer("attempt_count").notNull().default(0),
-    // 图生视频输入：引用历史生成（@ 历史图）或上传图的 storageKey / generationId。
+    // 迁移前数组输入；U7 完成后删除。
     inputImageRefs:
       json("input_image_refs").$type<PersistedVideoInputReference[]>(),
-    // 与客户端 storage 引用分离的可信清理集合，禁止仅凭 key 前缀推断删除权限。
+    // 真实输入语义与存储身份；U7 迁移后取代 input_image_refs。
+    inputManifest: json("input_manifest").$type<PersistedVideoInputManifest>(),
+    // 迁移前任务内清理集合；新任务采用 orphan 后不再保存，U7 完成后删除。
     stagedInputObjects: json("staged_input_objects").$type<
       PersistedVideoInputObject[]
     >(),
@@ -1598,6 +1617,10 @@ export const videoInputCleanup = pgTable(
     attemptId: text("attempt_id").notNull(),
     storageKey: text("storage_key").notNull(),
     storageBucket: text("storage_bucket").notNull(),
+    reason: text("reason")
+      .$type<"orphan" | "lifecycle_delete">()
+      .notNull()
+      .default("orphan"),
     attemptCount: integer("attempt_count").notNull().default(0),
     nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
     claimToken: text("claim_token"),
@@ -1614,6 +1637,10 @@ export const videoInputCleanup = pgTable(
     check(
       "video_input_cleanup_attempt_count_check",
       sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "video_input_cleanup_reason_check",
+      sql`${table.reason} IN ('orphan', 'lifecycle_delete')`
     ),
     check(
       "video_input_cleanup_identity_nonempty_check",

@@ -4,9 +4,9 @@
  * 职责：强制所有大媒体处理发生在双层容量预检之后；事务内准入仍由任务创建函数
  * 终检。使用方是 video.generate UOL binding；依赖可注入以证明限流时没有存储 I/O。
  */
-import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
+import type { VideoInputReferenceManifest } from "@repo/shared/image-generation/media-contract";
 
-import type { StagedVideoInputReferences } from "./video-input-storage";
+import type { StagedVideoInputManifest } from "./video-input-storage";
 import {
   preflightVideoTaskCreation,
   releaseVideoTaskStagingReservation,
@@ -20,7 +20,7 @@ export type VideoTaskPreparationResult =
   | {
       admission: "admitted";
       reservationToken: string;
-      stagedInput: StagedVideoInputReferences;
+      stagedInput: StagedVideoInputManifest;
     };
 
 /** 输入准备依赖端口，仅供 DB-free 边界测试注入。 */
@@ -32,8 +32,8 @@ export interface VideoTaskPreparationDependencies {
     userId: string;
     videoId: string;
     attemptId: string;
-    references: MediaInputReference[];
-  }) => Promise<StagedVideoInputReferences>;
+    manifest: VideoInputReferenceManifest;
+  }) => Promise<StagedVideoInputManifest>;
   release: (input: {
     taskId: string;
     userId: string;
@@ -49,7 +49,7 @@ export interface VideoTaskPreparationDependencies {
  */
 export async function prepareVideoTaskInputReferences(
   input: VideoTaskAdmissionInput & {
-    references: MediaInputReference[];
+    manifest: VideoInputReferenceManifest;
   },
   dependencies?: VideoTaskPreparationDependencies
 ): Promise<VideoTaskPreparationResult> {
@@ -60,16 +60,16 @@ export async function prepareVideoTaskInputReferences(
     return { admission: "existing", stagedInput: null };
   }
   const reservationToken = preflight.reservationToken;
-  if (input.references.length === 0) {
+  if (Object.keys(input.manifest).length === 0) {
     return {
       admission: "admitted",
       reservationToken,
-      stagedInput: { references: [], objects: [] },
+      stagedInput: { manifest: {}, objects: [] },
     };
   }
   const stage =
     dependencies?.stage ??
-    (await import("./video-input-storage")).stageVideoInputReferences;
+    (await import("./video-input-storage")).stageVideoInputManifest;
   try {
     return {
       admission: "admitted",
@@ -78,7 +78,7 @@ export async function prepareVideoTaskInputReferences(
         userId: input.userId,
         videoId: input.taskId,
         attemptId: reservationToken,
-        references: input.references,
+        manifest: input.manifest,
       }),
     };
   } catch (error) {

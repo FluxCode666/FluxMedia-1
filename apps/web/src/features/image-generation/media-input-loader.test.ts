@@ -5,6 +5,7 @@
  * 任意对象键读取其他用户的媒体。
  */
 
+import { MAX_MEDIA_INPUT_BYTES } from "@repo/shared/image-generation/media-contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const storageMock = vi.hoisted(() => ({
@@ -19,7 +20,10 @@ vi.mock("@repo/shared/storage/providers", () => ({
   })),
 }));
 
-import { loadMediaInputs } from "./media-input-loader";
+import {
+  addActualMediaInputBytes,
+  loadMediaInputs,
+} from "./media-input-loader";
 
 describe("loadMediaInputs", () => {
   beforeEach(() => {
@@ -42,6 +46,15 @@ describe("loadMediaInputs", () => {
         ],
       })
     ).resolves.toEqual([{ data: bytes, type: "image/png" }]);
+  });
+
+  it("实际总字节允许 200 MB 边界并拒绝再多一个字节", () => {
+    expect(addActualMediaInputBytes(0, MAX_MEDIA_INPUT_BYTES)).toBe(
+      MAX_MEDIA_INPUT_BYTES
+    );
+    expect(() => addActualMediaInputBytes(MAX_MEDIA_INPUT_BYTES, 1)).toThrow(
+      "Media input exceeds the byte limit"
+    );
   });
 
   it("只读取当前用户前缀且位于当前生成桶的对象", async () => {

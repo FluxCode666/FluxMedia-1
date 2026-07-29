@@ -1,8 +1,13 @@
 "use server";
 
+/**
+ * 用户账号删除 Server Action。
+ *
+ * 职责：先经 UOL 登记视频输入生命周期清理，再取消订阅并在事务内注销认证身份、
+ * 会话和账号；用户行保留为 account_deleted 删除事实供清理 worker 门禁。
+ * 使用方：个人设置删除账号流程。
+ */
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-
 import { db, user } from "@repo/database";
 import {
   account,
@@ -13,7 +18,11 @@ import {
 import { normalizeEmail } from "@repo/shared/auth/email-domain";
 import { creem } from "@repo/shared/payment/creem";
 import { protectedAction } from "@repo/shared/safe-action";
+import { eq } from "drizzle-orm";
 
+import { requestVideoInputCleanupBeforeAccountDeletion } from "./delete-account-lifecycle";
+
+/** 删除当前 session 账号；任一步失败均不会伪装为成功。 */
 export const deleteAccountAction = protectedAction
   .metadata({ action: "settings.deleteAccount" })
   .action(async ({ ctx }) => {
@@ -27,16 +36,6 @@ export const deleteAccountAction = protectedAction
       .where(eq(subscription.userId, ctx.userId))
       .limit(1);
 
-    if (
-      activeSubscription?.subscriptionId &&
-      !activeSubscription.cancelAtPeriodEnd &&
-      ["active", "trialing", "past_due", "paused"].includes(
-        activeSubscription.status
-      )
-    ) {
-      await creem.cancelSubscription(activeSubscription.subscriptionId);
-    }
-
     const [existingUser] = await db
       .select({ email: user.email })
       .from(user)
@@ -48,6 +47,20 @@ export const deleteAccountAction = protectedAction
     }
 
     const normalizedEmail = normalizeEmail(existingUser.email);
+
+    // WHY：先持久登记、再让账号失效。若后续事务失败，账号仍有效，清理 worker 的
+    // 删除事实门禁不会认领对象；重试使用同一 per-user 幂等键。
+    await requestVideoInputCleanupBeforeAccountDeletion(ctx.userId);
+
+    if (
+      activeSubscription?.subscriptionId &&
+      !activeSubscription.cancelAtPeriodEnd &&
+      ["active", "trialing", "past_due", "paused"].includes(
+        activeSubscription.status
+      )
+    ) {
+      await creem.cancelSubscription(activeSubscription.subscriptionId);
+    }
 
     const [deletedUser] = await db.transaction(async (tx) => {
       const now = new Date();

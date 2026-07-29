@@ -10,6 +10,8 @@ import {
   MAX_MEDIA_INPUT_BYTES,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
+  videoInputManifestSchema,
+  videoInputReferenceManifestSchema,
 } from "./media-contract";
 
 describe("media input reference contract", () => {
@@ -82,5 +84,58 @@ describe("media input reference contract", () => {
       byteLength: MAX_MEDIA_INPUT_BYTES / 2 + 1,
     }));
     expect(mediaInputReferencesSchema.safeParse(oversized).success).toBe(false);
+  });
+
+  it("具名任务输入清单只接受 storage 并保持首尾帧与参考图互斥", () => {
+    const storage = {
+      source: "storage" as const,
+      mimeType: "image/png" as const,
+      storageKey: "user-1/video-inputs/video-1/attempt-1/input.png",
+      storageBucket: "uploads",
+      byteLength: 12,
+    };
+    expect(
+      videoInputManifestSchema.safeParse({
+        firstFrame: storage,
+        lastFrame: { ...storage, storageKey: `${storage.storageKey}.last` },
+      }).success
+    ).toBe(true);
+    expect(
+      videoInputManifestSchema.safeParse({
+        firstFrame: storage,
+        referenceImages: [storage],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputManifestSchema.safeParse({
+        firstFrame: {
+          source: "remote",
+          mimeType: "image/png",
+          url: "https://cdn.example.com/input.png",
+          byteLength: 12,
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("任务创建前具名清单仍允许 data、storage 与 remote 来源", () => {
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceImages: [
+          {
+            source: "data",
+            mimeType: "image/png",
+            base64: "aW1hZ2U=",
+            byteLength: 5,
+          },
+          {
+            source: "remote",
+            mimeType: "image/png",
+            url: "https://cdn.example.com/input.png",
+            byteLength: 12,
+          },
+        ],
+      }).success
+    ).toBe(true);
   });
 });
