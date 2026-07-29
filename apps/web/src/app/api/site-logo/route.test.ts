@@ -41,19 +41,42 @@ describe("GET /api/site-logo", () => {
     });
   });
 
-  it("通过 system-only UOL 把站内 Logo 路径解析为同源重定向", async () => {
+  it("通过 system-only UOL 保留站内 Logo 相对路径", async () => {
     const response = await GET(createRequest());
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe(
-      "https://media.example.com/assets/icon.svg"
-    );
+    expect(response.headers.get("location")).toBe("/assets/icon.svg");
     expect(response.headers.get("cache-control")).toBe("no-store, max-age=0");
     expect(mocks.invokeOperation).toHaveBeenCalledWith(
       "settings.getSiteBranding",
       {},
       { type: "system", reason: "public-site-logo" },
       { requestId: expect.any(String) }
+    );
+  });
+
+  it("站内 Logo 重定向不泄露反向代理内部来源", async () => {
+    const response = await GET(
+      new Request("https://0.0.0.0:3000/api/site-logo", {
+        headers: {
+          "x-forwarded-host": "media.example.com",
+          "x-forwarded-proto": "https",
+        },
+      })
+    );
+
+    expect(response.headers.get("location")).toBe("/assets/icon.svg");
+  });
+
+  it("编码站内 Logo 路径中的非 ASCII 字符并保持相对地址", async () => {
+    mocks.invokeOperation.mockResolvedValue({
+      logoUrl: "/assets/品牌 标识.svg?v=中文#片段",
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.headers.get("location")).toBe(
+      "/assets/%E5%93%81%E7%89%8C%20%E6%A0%87%E8%AF%86.svg?v=%E4%B8%AD%E6%96%87#%E7%89%87%E6%AE%B5"
     );
   });
 
@@ -75,9 +98,7 @@ describe("GET /api/site-logo", () => {
 
     const response = await GET(createRequest());
 
-    expect(response.headers.get("location")).toBe(
-      "https://media.example.com/assets/icon.svg"
-    );
+    expect(response.headers.get("location")).toBe("/assets/icon.svg");
     expect(mocks.logError).toHaveBeenCalledWith(error, {
       source: "site-logo-route",
     });

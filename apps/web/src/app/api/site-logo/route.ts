@@ -18,19 +18,35 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 /**
+ * 把已校验的 Logo 地址序列化为可安全写入响应头的 Location。
+ *
+ * @param logoUrl - 第一方根路径或外部 HTTPS 地址。
+ * @returns 第一方地址保持相对路径，外部地址保持绝对 URL；非 ASCII 字符已编码。
+ * @sideEffects 无。
+ * @failure 输入违反站点品牌输出契约、无法解析为 URL 时抛出 TypeError。
+ */
+function serializeLogoLocation(logoUrl: string): string {
+  const parsed = new URL(logoUrl, "https://site.invalid");
+
+  // 相对 Location 由浏览器绑定当前公网来源，避免反向代理内部地址泄露到客户端。
+  return logoUrl.startsWith("/")
+    ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+    : parsed.toString();
+}
+
+/**
  * 构造禁止缓存固化重定向目标的响应。
  *
- * @param request - 当前请求，用于把站内根路径解析为当前来源绝对地址。
  * @param logoUrl - 已通过 UOL 输出契约校验的 Logo 地址。
- * @returns 带 307、Location 和 no-store 的空响应。
+ * @returns 带 307、原始安全 Location 和 no-store 的空响应。
  * @sideEffects 无。
  */
-function createLogoRedirect(request: Request, logoUrl: string): Response {
+function createLogoRedirect(logoUrl: string): Response {
   return new Response(null, {
     status: 307,
     headers: {
       "Cache-Control": "no-store, max-age=0",
-      Location: new URL(logoUrl, request.url).toString(),
+      Location: serializeLogoLocation(logoUrl),
     },
   });
 }
@@ -38,11 +54,11 @@ function createLogoRedirect(request: Request, logoUrl: string): Response {
 /**
  * 返回当前 Logo 资源重定向。
  *
- * @param request - 当前同源 GET 请求，用于解析站内根路径。
- * @returns 307 重定向；成功指向动态配置，依赖失败指向内置 SVG。
+ * @param _request - 当前 GET 请求；重定向目标不依赖反向代理重写后的来源。
+ * @returns 307 重定向；站内路径保持相对，依赖失败时指向内置 SVG。
  * @sideEffects 首次调用初始化 UOL，并读取系统设置缓存；失败时写入脱敏错误日志。
  */
-export async function GET(request: Request): Promise<Response> {
+export async function GET(_request: Request): Promise<Response> {
   try {
     await ensureUolInitialized();
     const branding = await invokeOperation<SiteBranding>(
@@ -51,9 +67,9 @@ export async function GET(request: Request): Promise<Response> {
       { type: "system", reason: "public-site-logo" },
       { requestId: crypto.randomUUID() }
     );
-    return createLogoRedirect(request, branding.logoUrl);
+    return createLogoRedirect(branding.logoUrl);
   } catch (error) {
     logError(error, { source: "site-logo-route" });
-    return createLogoRedirect(request, DEFAULT_SITE_LOGO_URL);
+    return createLogoRedirect(DEFAULT_SITE_LOGO_URL);
   }
 }
