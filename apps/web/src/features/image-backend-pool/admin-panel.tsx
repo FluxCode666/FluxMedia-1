@@ -51,6 +51,7 @@ import type {
   BackendMemberAdminSummary,
   RedactedAdobeMemberConfig,
 } from "./member-service";
+import { MemberSupportedModels } from "./member-supported-models";
 
 type RedactedAdobeDirectConfig = Extract<
   RedactedAdobeMemberConfig,
@@ -475,7 +476,7 @@ export function ImageBackendPoolAdminPanel({
         </div>
         <div className="grid gap-3 xl:grid-cols-2">
           {members.map((member) => (
-            <Card key={member.id} className="gap-4 py-4">
+            <Card key={member.id} className="min-w-0 gap-4 py-4">
               <CardHeader className="px-4">
                 <CardTitle className="flex flex-wrap items-center gap-2">
                   <span>{member.name}</span>
@@ -524,7 +525,7 @@ export function ImageBackendPoolAdminPanel({
                   )}
                 </CardAction>
               </CardHeader>
-              <CardContent className="space-y-4 px-4">
+              <CardContent className="min-w-0 space-y-4 px-4">
                 <div className="grid gap-2 text-sm sm:grid-cols-3">
                   <span>优先级 {member.priority}</span>
                   <span>
@@ -539,13 +540,7 @@ export function ImageBackendPoolAdminPanel({
                     上次使用 {formatAdminTime(member.lastUsedAt, timeZone)}
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {member.supportedModelIds.map((modelId) => (
-                    <Badge key={modelId} variant="secondary">
-                      {modelId}
-                    </Badge>
-                  ))}
-                </div>
+                <MemberSupportedModels modelIds={member.supportedModelIds} />
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>
                     凭据：
