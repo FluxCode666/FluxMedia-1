@@ -13,6 +13,7 @@ import {
   getModelConfigurationCoverSource,
   getModelConfigurationDialogFields,
   getModelConfigurationHomepageLabel,
+  getModelConfigurationSaveErrorMessage,
   getModelConfigurationVisibilityLabel,
   resolveModelConfigurationCoverAfterError,
 } from "./model-configuration-view-model";
@@ -166,5 +167,20 @@ describe("模型配置视图模型", () => {
         "image"
       )
     ).toBeNull();
+  });
+
+  it("按稳定保存错误码提供可执行提示且不显示服务端原文", () => {
+    expect(getModelConfigurationSaveErrorMessage("invalid_cover")).toContain(
+      "静态 JPEG、PNG 或 WebP"
+    );
+    expect(
+      getModelConfigurationSaveErrorMessage("idempotency_conflict")
+    ).toContain("保存标识");
+    expect(getModelConfigurationSaveErrorMessage("validation_error")).toContain(
+      "模型配置内容无效"
+    );
+    expect(getModelConfigurationSaveErrorMessage("database-secret")).toBe(
+      "保存模型配置失败，请稍后重试"
+    );
   });
 });

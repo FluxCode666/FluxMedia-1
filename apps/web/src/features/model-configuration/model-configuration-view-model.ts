@@ -21,6 +21,29 @@ export type ModelConfigurationDialogFields = {
 };
 
 /**
+ * 把 Route 的稳定失败码转换为管理员可执行的保存提示。
+ *
+ * @param code - 响应 JSON 中经过服务端白名单收窄的机器码；解析失败时为 null。
+ * @returns 不包含服务端内部消息的简体中文提示。
+ * @sideEffects 无。
+ * @failure 未知码统一返回可安全重试的通用提示。
+ */
+export function getModelConfigurationSaveErrorMessage(
+  code: string | null
+): string {
+  if (code === "invalid_cover") {
+    return "封面图片无法处理，请确认文件是有效的静态 JPEG、PNG 或 WebP，且不超过 5 MB";
+  }
+  if (code === "idempotency_conflict") {
+    return "当前保存标识已用于其他内容，请修改草稿后重试";
+  }
+  if (code === "validation_error") {
+    return "模型配置内容无效，请检查价格、展示选项和封面后重试";
+  }
+  return "保存模型配置失败，请稍后重试";
+}
+
+/**
  * 取得列表类别中文标签。
  *
  * @param entry - 管理快照中的规范条目。

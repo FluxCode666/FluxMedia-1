@@ -109,6 +109,25 @@ function boundedMultipartErrorResponse(error: BoundedMultipartError): Response {
 }
 
 /**
+ * 编码模型配置 operation 错误，并把已安全分类的封面错误暴露为前端稳定机器码。
+ *
+ * @param error - UOL 网关交付的稳定错误；details 不可信且只读取固定 reason。
+ * @returns 不包含底层异常消息、图片字节、对象路径或凭据的 JSON Response。
+ * @sideEffects 无。
+ * @failure details 缺失或类型非法时退回通用 operation code。
+ */
+function modelConfigurationOperationErrorResponse(
+  error: OperationError
+): Response {
+  const responseCode =
+    error.code === "validation_error" &&
+    error.details?.reason === "invalid_cover"
+      ? "invalid_cover"
+      : error.code;
+  return errorResponse("Operation failed", responseCode, error.httpStatus);
+}
+
+/**
  * 收集全部 FormData 项并拒绝未知字段、重复标量和非 cover 文件。
  *
  * @param formData - 平台从有界正文解析出的数据。
@@ -466,7 +485,7 @@ export async function POST(request: Request): Promise<Response> {
       });
     } catch (error) {
       if (error instanceof OperationError) {
-        return errorResponse("Operation failed", error.code, error.httpStatus);
+        return modelConfigurationOperationErrorResponse(error);
       }
       logError(error, { source: "api.admin.model-configuration" });
       return errorResponse("Internal server error", "internal_error", 500);

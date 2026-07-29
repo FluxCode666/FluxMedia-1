@@ -7,6 +7,7 @@
  */
 import "server-only";
 
+import { logError } from "@repo/shared/logger";
 import type {
   ModelConfigurationSnapshot,
   UpdateModelConfigurationEntryInput,
@@ -21,6 +22,7 @@ import {
 import type { ModelMarketplacePublicCatalogOutput } from "@repo/shared/uol/operations";
 
 import { productionModelConfigurationService } from "@/features/model-configuration/service";
+import { ModelMarketplaceCoverImageError } from "@/features/model-configuration/cover-image";
 import {
   ModelConfigurationServiceError,
   type ModelConfigurationServiceErrorCode,
@@ -37,6 +39,14 @@ export type ModelMarketplaceOperationBindingDependencies = {
     input: UpdateModelConfigurationEntryInput;
   }) => Promise<UpdateModelConfigurationEntryOutput>;
   listPublicModels: () => Promise<ModelMarketplacePublicCatalogOutput>;
+  reportUpdateError: (
+    error: unknown,
+    context: {
+      requestId: string;
+      category: UpdateModelConfigurationEntryInput["category"];
+      configKey: string;
+    }
+  ) => void;
 };
 
 const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
@@ -45,6 +55,12 @@ const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
   updateModelConfigurationEntry: (command) =>
     productionModelConfigurationService.updateEntry(command),
   listPublicModels: () => productionModelMarketplaceService.listPublicModels(),
+  reportUpdateError(error, context) {
+    logError(error, {
+      source: "model-configuration-update",
+      ...context,
+    });
+  },
 };
 
 /**
@@ -52,9 +68,15 @@ const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
  *
  * @param error - production 模型配置保存服务抛出的未知异常。
  * @returns 永不返回；已知领域错误转换后抛出，普通异常原样上抛交给网关隐藏。
- * @throws OperationError - revision、幂等、模型身份或内部依赖错误。
+ * @throws OperationError - 封面、revision、幂等、模型身份或内部依赖错误。
  */
 function throwModelConfigurationOperationError(error: unknown): never {
+  if (error instanceof ModelMarketplaceCoverImageError) {
+    throw new OperationError("validation_error", error.message, {
+      reason: "invalid_cover",
+      coverCode: error.code,
+    });
+  }
   if (!(error instanceof ModelConfigurationServiceError)) throw error;
 
   const code: ModelConfigurationServiceErrorCode = error.code;
@@ -73,6 +95,23 @@ function throwModelConfigurationOperationError(error: unknown): never {
     case "revision_exhausted":
       throw new OperationError("internal_error", "模型配置服务暂时不可用");
   }
+}
+
+/**
+ * 判断保存异常是否需要在 UOL 隐藏底层详情前记录。
+ *
+ * @param error - 生产保存服务抛出的未知异常。
+ * @returns 可归因于管理员输入或并发的稳定错误返回 false，基础设施与内部错误返回 true。
+ * @sideEffects 无。
+ * @failure 不抛错；未知值按内部故障记录。
+ */
+function shouldReportModelConfigurationUpdateError(error: unknown): boolean {
+  if (error instanceof ModelMarketplaceCoverImageError) return false;
+  if (!(error instanceof ModelConfigurationServiceError)) return true;
+  return (
+    error.code === "invalid_dependency_result" ||
+    error.code === "revision_exhausted"
+  );
 }
 
 /**
@@ -121,7 +160,7 @@ export function bindModelMarketplaceOperations(
     async (
       input: UpdateModelConfigurationEntryInput,
       principal: Principal,
-      _ctx: OperationContext
+      ctx: OperationContext
     ) => {
       // UOL access 已要求 super_admin；此处仍要求真实会话用户，防止未来元数据漂移后代写。
       if (principal.type !== "user") {
@@ -136,6 +175,13 @@ export function bindModelMarketplaceOperations(
           input,
         });
       } catch (error) {
+        if (shouldReportModelConfigurationUpdateError(error)) {
+          services.reportUpdateError(error, {
+            requestId: ctx.requestId,
+            category: input.category,
+            configKey: input.configKey,
+          });
+        }
         throwModelConfigurationOperationError(error);
       }
     }

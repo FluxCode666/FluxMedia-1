@@ -43,6 +43,7 @@ import {
 import {
   getModelConfigurationCategoryLabel,
   getModelConfigurationDialogFields,
+  getModelConfigurationSaveErrorMessage,
 } from "./model-configuration-view-model";
 import { ModelCoverField } from "./model-cover-field";
 
@@ -221,11 +222,7 @@ export function ModelConfigurationDialog({
           toast.error("模型配置已更新，请重新加载后再保存");
           return;
         }
-        toast.error(
-          code === "idempotency_conflict"
-            ? "当前保存标识已用于其他内容，请修改草稿后重试"
-            : "保存模型配置失败，请稍后重试"
-        );
+        toast.error(getModelConfigurationSaveErrorMessage(code));
         return;
       }
       toast.success("模型配置已保存");

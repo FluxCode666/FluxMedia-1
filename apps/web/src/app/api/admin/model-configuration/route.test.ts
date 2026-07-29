@@ -31,18 +31,20 @@ vi.mock("@repo/shared/uol", () => ({
   invokeOperation: mocks.invokeOperation,
   OperationError: class OperationError extends Error {
     readonly code: string;
+    readonly details?: Record<string, unknown>;
     readonly httpStatus: number;
 
     /** 构造测试使用的稳定 UOL 错误。 */
     constructor(
       code: string,
       message: string,
-      _details?: Record<string, unknown>,
+      details?: Record<string, unknown>,
       httpStatus = 400
     ) {
       super(message);
       this.name = "OperationError";
       this.code = code;
+      this.details = details;
       this.httpStatus = httpStatus;
     }
   },
@@ -491,6 +493,27 @@ describe("POST /api/admin/model-configuration", () => {
     expect(await response.json()).toEqual({
       error: "Operation failed",
       code: "conflict",
+    });
+  });
+
+  it("把已分类的封面校验错误编码为前端稳定机器码", async () => {
+    mocks.invokeOperation.mockRejectedValue(
+      new OperationError(
+        "validation_error",
+        "封面必须是可安全解码的静态图片",
+        { reason: "invalid_cover", coverCode: "invalid_image" },
+        400
+      )
+    );
+
+    const response = await POST(
+      createMultipartRequest(createFormData(explicitImageFields()))
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Operation failed",
+      code: "invalid_cover",
     });
   });
 

@@ -30,6 +30,7 @@ import type {
 } from "@repo/shared/model-marketplace";
 import { invokeOperation, type Principal } from "@repo/shared/uol";
 import "@repo/shared/uol/operations";
+import { ModelMarketplaceCoverImageError } from "@/features/model-configuration/cover-image";
 import { ModelConfigurationServiceError } from "@/features/model-configuration/service-core";
 import {
   bindModelMarketplaceOperations,
@@ -145,6 +146,7 @@ function createDependencies(): ModelMarketplaceOperationBindingDependencies {
       revision: 1,
     })),
     listPublicModels: vi.fn(async () => ({ items: [createPublicItem()] })),
+    reportUpdateError: vi.fn(),
   };
 }
 
@@ -246,6 +248,53 @@ describe("模型配置与模型广场 UOL binding", () => {
         { requestId: `binding-error-${serviceCode}` }
       )
     ).rejects.toMatchObject({ code: operationCode });
+  });
+
+  it("把封面处理错误映射为可识别的管理员输入错误", async () => {
+    vi.mocked(dependencies.updateModelConfigurationEntry).mockRejectedValueOnce(
+      new ModelMarketplaceCoverImageError(
+        "invalid_image",
+        "封面图片无法安全解码"
+      )
+    );
+
+    await expect(
+      invokeOperation(
+        "settings.updateModelConfigurationEntry",
+        UPDATE_INPUT,
+        SUPER_ADMIN,
+        { requestId: "binding-invalid-cover" }
+      )
+    ).rejects.toMatchObject({
+      code: "validation_error",
+      httpStatus: 400,
+      details: {
+        reason: "invalid_cover",
+        coverCode: "invalid_image",
+      },
+    });
+    expect(dependencies.reportUpdateError).not.toHaveBeenCalled();
+  });
+
+  it("未知保存异常在网关隐藏前记录安全定位字段", async () => {
+    const failure = new Error("S3 connection reset");
+    vi.mocked(dependencies.updateModelConfigurationEntry).mockRejectedValueOnce(
+      failure
+    );
+
+    await expect(
+      invokeOperation(
+        "settings.updateModelConfigurationEntry",
+        UPDATE_INPUT,
+        SUPER_ADMIN,
+        { requestId: "binding-update-failure" }
+      )
+    ).rejects.toMatchObject({ code: "internal_error", httpStatus: 500 });
+    expect(dependencies.reportUpdateError).toHaveBeenCalledWith(failure, {
+      requestId: "binding-update-failure",
+      category: "image",
+      configKey: "gpt-image-2",
+    });
   });
 
   it("公开目录只允许 system Principal 且不泄漏内部字段", async () => {
