@@ -1,11 +1,19 @@
+/**
+ * Adobe 视频供应商目录、迁移期复合目录与像素尺寸回归测试。
+ *
+ * 使用方：共享 Adobe 适配器测试；覆盖全部旧组合行为，并验证真实模型供应商映射不复制
+ * 公共参数能力，避免实施真实 ID 切换时通过删除旧断言制造假绿。
+ */
 import { describe, expect, it } from "vitest";
 import {
   FIREFLY_VIDEO_FAMILIES,
   FIREFLY_VIDEO_MODEL_CATALOG,
+  FIREFLY_VIDEO_PROVIDER_MODELS,
   fireflyVideoMaxInputImages,
   fireflyVideoSize,
   isFireflyVideoModelId,
   resolveFireflyVideoModel,
+  resolveFireflyVideoProviderModel,
 } from "./video-catalog";
 
 describe("firefly video catalog", () => {
@@ -14,8 +22,8 @@ describe("firefly video catalog", () => {
       "sora2",
       "sora2-pro",
       "veo31",
-      "veo31-ref",
       "veo31-fast",
+      "veo31-ref",
       "kling-o3",
       "kling3",
       "kling3-omni",
@@ -601,5 +609,40 @@ describe("firefly video catalog", () => {
     expect(rayHdr && fireflyVideoMaxInputImages(rayHdr)).toBe(0);
     expect(seedance && fireflyVideoMaxInputImages(seedance)).toBe(1);
     expect(seedanceFast && fireflyVideoMaxInputImages(seedanceFast)).toBe(1);
+  });
+});
+
+describe("Adobe real video provider catalog", () => {
+  it("只按精确真实 ID 返回参数无关的供应商映射", () => {
+    expect(resolveFireflyVideoProviderModel("seedance2")).toMatchObject({
+      modelId: "seedance2",
+      upstreamModelId: "seedance",
+      upstreamModelVersion: "seedance_2.0",
+      engine: "seedance2",
+      webApp: "firefly",
+    });
+    expect(resolveFireflyVideoProviderModel("veo31-ref")).toMatchObject({
+      referenceMode: "image",
+    });
+    expect(
+      resolveFireflyVideoProviderModel("firefly-seedance2-15s-9x16-480p")
+    ).toBeNull();
+    expect(
+      resolveFireflyVideoProviderModel("seedance2-15s-9x16-480p")
+    ).toBeNull();
+  });
+
+  it("供应商映射不复制公共时长、比例、分辨率或输入数量", () => {
+    expect(Object.keys(FIREFLY_VIDEO_PROVIDER_MODELS)).toHaveLength(13);
+    for (const provider of Object.values(FIREFLY_VIDEO_PROVIDER_MODELS)) {
+      expect(provider).not.toHaveProperty("duration");
+      expect(provider).not.toHaveProperty("durations");
+      expect(provider).not.toHaveProperty("aspectRatio");
+      expect(provider).not.toHaveProperty("ratios");
+      expect(provider).not.toHaveProperty("resolution");
+      expect(provider).not.toHaveProperty("resolutions");
+      expect(provider).not.toHaveProperty("maxInputImages");
+      expect(provider).not.toHaveProperty("maxReferenceImages");
+    }
   });
 });

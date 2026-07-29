@@ -3,6 +3,7 @@ import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_PAGE_SIZE_OPTIONS } from "../pagination/config";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
+import { createDefaultVideoModelCapabilityOverrides } from "../video-generation";
 
 export type SettingCategory =
   | "general"
@@ -163,6 +164,7 @@ export type SettingKey =
   | "IMAGE_MASK_OUTPAINT_ENABLED"
   | "VIDEO_BASE_CREDITS_PER_SECOND"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
+  | "VIDEO_MODEL_CAPABILITY_OVERRIDES"
   | "NEXT_PUBLIC_GA_ID"
   | "NEXT_PUBLIC_SENTRY_DSN"
   | "SENTRY_AUTH_TOKEN"
@@ -1409,6 +1411,16 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "credits",
     valueType: "json",
     defaultValue: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
+    managedByDedicatedOperation: true,
+  },
+  {
+    key: "VIDEO_MODEL_CAPABILITY_OVERRIDES",
+    label: "视频模型能力覆盖",
+    description:
+      "按真实视频模型 ID 保存描述符允许的动态能力覆盖；当前仅 Seedance 参考图上限可配置，且只能通过独立的模型配置入口修改。",
+    category: "models",
+    valueType: "json",
+    defaultValue: createDefaultVideoModelCapabilityOverrides(),
     managedByDedicatedOperation: true,
   },
   {

@@ -6,29 +6,22 @@
  */
 import { z } from "zod";
 
-import { FIREFLY_VIDEO_FAMILIES } from "./firefly-direct/video-catalog";
+import {
+  VIDEO_MODEL_CAPABILITIES,
+  type VideoBillingFamily,
+} from "../video-generation";
 
 export const DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND = 30;
 export const MAX_VIDEO_CREDITS_PER_SECOND = 100_000;
 
-/** 平台内置视频模型族，顺序同时用于全局与分组价格表展示。 */
+/** 平台内置视频计费 family；从真实描述符派生，不维护第二份公开模型清单。 */
 export const ADOBE_VIDEO_PRICING_FAMILIES = [
-  "sora2",
-  "sora2-pro",
-  "veo31",
-  "veo31-ref",
-  "veo31-fast",
-  "kling-o3",
-  "kling3",
-  "kling3-omni",
-  "runway-gen45",
-  "ray314",
-  "ray314-hdr",
-  "seedance2",
-  "seedance2-fast",
-] as const;
+  ...new Set(
+    VIDEO_MODEL_CAPABILITIES.map((capability) => capability.billingFamily)
+  ),
+];
 
-const DEFAULT_VIDEO_FAMILY_CREDITS_PER_SECOND: Record<string, number> = {
+const DEFAULT_VIDEO_FAMILY_CREDITS_PER_SECOND = {
   sora2: 30,
   "sora2-pro": 60,
   veo31: 45,
@@ -42,7 +35,7 @@ const DEFAULT_VIDEO_FAMILY_CREDITS_PER_SECOND: Record<string, number> = {
   "ray314-hdr": 30,
   seedance2: 30,
   "seedance2-fast": 30,
-};
+} satisfies Record<VideoBillingFamily, number>;
 
 const videoCreditsPerSecondSchema = z
   .number()
@@ -119,10 +112,12 @@ export function isVideoPricingResolutionKey(key: string): boolean {
  */
 export function getVideoPricingResolutions(family: string): string[] {
   const normalizedFamily = family.trim().toLowerCase();
-  const specification = FIREFLY_VIDEO_FAMILIES.find(
-    (candidate) => candidate.family === normalizedFamily
+  const resolutions = VIDEO_MODEL_CAPABILITIES.flatMap((capability) =>
+    capability.billingFamily === normalizedFamily
+      ? [...capability.resolutions]
+      : []
   );
-  return specification ? [...new Set(specification.resolutions)] : [];
+  return [...new Set(resolutions)];
 }
 
 /**

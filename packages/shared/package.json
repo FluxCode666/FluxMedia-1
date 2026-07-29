@@ -50,6 +50,7 @@
     "./image-generation/history-contract": "./src/image-generation/history-contract.ts",
     "./image-generation/media-contract": "./src/image-generation/media-contract.ts",
     "./image-generation/model-contract": "./src/image-generation/model-contract.ts",
+    "./video-generation": "./src/video-generation/index.ts",
     "./image-backend/group-image-pricing": "./src/image-backend/group-image-pricing.ts",
     "./image-backend/group-contract": "./src/image-backend/group-contract.ts",
     "./image-backend/request-parameter-mapping": "./src/image-backend/request-parameter-mapping.ts",

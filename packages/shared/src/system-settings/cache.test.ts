@@ -267,6 +267,50 @@ describe("system settings cache", () => {
     expect(redisMockState.deletedKeys.length).toBeGreaterThan(0);
   });
 
+  it("能力覆盖写后失效使下一次读取看到新值", async () => {
+    configureRedisEnvironment();
+    let maxReferenceImages = 10;
+    const loader = vi.fn(
+      async () =>
+        new Map<string, unknown>([
+          [
+            "VIDEO_MODEL_CAPABILITY_OVERRIDES",
+            {
+              version: 1,
+              byModel: { seedance2: { maxReferenceImages } },
+            },
+          ],
+        ])
+    );
+
+    await expect(loadCachedSystemSettings(loader)).resolves.toEqual(
+      new Map([
+        [
+          "VIDEO_MODEL_CAPABILITY_OVERRIDES",
+          {
+            version: 1,
+            byModel: { seedance2: { maxReferenceImages: 10 } },
+          },
+        ],
+      ])
+    );
+    maxReferenceImages = 20;
+    await invalidateSystemSettingsCache();
+
+    await expect(loadCachedSystemSettings(loader)).resolves.toEqual(
+      new Map([
+        [
+          "VIDEO_MODEL_CAPABILITY_OVERRIDES",
+          {
+            version: 1,
+            byModel: { seedance2: { maxReferenceImages: 20 } },
+          },
+        ],
+      ])
+    );
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
   it("失效期间的旧读取不得覆盖新一代本地与 Redis 缓存", async () => {
     configureRedisEnvironment();
     let resolveOldLoad: ((value: Map<string, unknown>) => void) | undefined;

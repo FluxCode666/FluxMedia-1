@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { VIDEO_MODEL_CAPABILITIES } from "../video-generation";
 import {
+  ADOBE_VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoCreditCost,
   getVideoPricingResolutionKey,
+  getVideoPricingResolutions,
   globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
   resolveVideoCreditsPerSecond,
@@ -11,6 +14,49 @@ import {
 } from "./video-pricing";
 
 describe("resolveVideoCreditsPerSecond", () => {
+  it("从真实描述符的 billing family 与分辨率构造价格目录", () => {
+    expect(ADOBE_VIDEO_PRICING_FAMILIES).toEqual(
+      VIDEO_MODEL_CAPABILITIES.map((capability) => capability.billingFamily)
+    );
+    for (const capability of VIDEO_MODEL_CAPABILITIES) {
+      expect(getVideoPricingResolutions(capability.billingFamily)).toEqual(
+        capability.resolutions
+      );
+    }
+  });
+
+  it("全部真实模型与分辨率保持改造前的默认每秒积分", () => {
+    const expectedByFamily = {
+      sora2: 30,
+      "sora2-pro": 60,
+      veo31: 45,
+      "veo31-fast": 30,
+      "veo31-ref": 45,
+      "kling-o3": 30,
+      kling3: 30,
+      "kling3-omni": 30,
+      "runway-gen45": 30,
+      ray314: 30,
+      "ray314-hdr": 30,
+      seedance2: 30,
+      "seedance2-fast": 30,
+    } as const;
+
+    for (const capability of VIDEO_MODEL_CAPABILITIES) {
+      const expected = expectedByFamily[capability.billingFamily];
+      expect(
+        DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[capability.billingFamily]
+      ).toBe(expected);
+      for (const resolution of capability.resolutions) {
+        expect(
+          DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+            getVideoPricingResolutionKey(capability.billingFamily, resolution)
+          ]
+        ).toBe(expected);
+      }
+    }
+  });
+
   it("新增视频族提供可由系统设置覆盖的默认每秒价格", () => {
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["kling3-omni"]).toBe(30);
     expect(DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND["runway-gen45"]).toBe(30);
