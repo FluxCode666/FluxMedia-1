@@ -130,7 +130,7 @@ export function keyBelongsToUser(key: string, userId: string): boolean {
  * @param generationsValue - 运行时生成内容 bucket；缺少设置行时兼容历史默认值。
  * @returns 去除首尾空白后的头像 bucket。
  * @sideEffects 无。
- * @failure 任一已配置值为空，或两个安全域同名时抛出不含原值的稳定错误。
+ * @failure 任一值为空、使用保留逻辑别名，或两个安全域同名时抛出稳定错误。
  */
 export function parseAvatarStorageBucketName(
   avatarsValue: string | undefined,
@@ -139,7 +139,12 @@ export function parseAvatarStorageBucketName(
   const avatars = avatarsValue?.trim();
   const generations =
     generationsValue === undefined ? "generations" : generationsValue.trim();
-  if (!avatars || !generations) {
+  if (
+    !avatars ||
+    !generations ||
+    avatars === PUBLIC_AVATAR_BUCKET_ALIAS ||
+    generations === PUBLIC_AVATAR_BUCKET_ALIAS
+  ) {
     throw new Error("存储桶配置无效");
   }
   if (avatars === generations) {

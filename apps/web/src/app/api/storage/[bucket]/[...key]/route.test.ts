@@ -67,10 +67,18 @@ function makeParams(bucket: string, key: string[]) {
 /**
  * 构造带 nextUrl.searchParams 的 NextRequest 模拟对象。
  * avatars 桶不需要签名；generations 桶需要 sig+exp。
+ *
+ * @param searchParams - 可选查询参数。
+ * @param pathname - 用于验证重定向 Location 的请求路径。
+ * @returns 满足读取 Route 所需字段的 NextRequest 测试替身。
  */
-function makeRequest(searchParams?: Record<string, string>): NextRequest {
+function makeRequest(
+  searchParams?: Record<string, string>,
+  pathname = "/api/storage/avatars/test.png"
+): NextRequest {
   const params = new URLSearchParams(searchParams);
   return {
+    url: `http://localhost${pathname}${params.size > 0 ? `?${params}` : ""}`,
     nextUrl: {
       searchParams: params,
     },
@@ -294,7 +302,10 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-9-123.jpg"])
     );
     const avatarAliasResponse = await GET(
-      makeRequest(),
+      makeRequest(
+        undefined,
+        "/api/storage/_avatars/avatars/user-10-456.jpg"
+      ),
       makeParams("_avatars", ["avatars", "user-10-456.jpg"])
     );
     const modelResponse = await GET(
@@ -317,6 +328,10 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       makeRequest(),
       makeParams("_avatars", ["uploads", "private.json"])
     );
+    const aliasModelResponse = await GET(
+      makeRequest(),
+      makeParams("_avatars", MODEL_IMAGE_KEY.split("/"))
+    );
     const modelThumbResponse = await GET(
       makeRequest({ w: "128" }),
       makeParams(SYSTEM_ASSET_BUCKET, MODEL_IMAGE_KEY.split("/"))
@@ -324,8 +339,11 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
 
     expect(avatarResponse.status).toBe(200);
     expect(avatarResponse.headers.get("Content-Type")).toBe("image/jpeg");
-    expect(avatarAliasResponse.status).toBe(200);
-    expect(avatarAliasResponse.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(avatarAliasResponse.status).toBe(307);
+    expect(avatarAliasResponse.headers.get("Location")).toBe(
+      `http://localhost/api/storage/${SYSTEM_ASSET_BUCKET}/avatars/user-10-456.jpg`
+    );
+    expect(avatarAliasResponse.headers.get("Cache-Control")).toBe("no-store");
     expect(modelResponse.status).toBe(200);
     expect(modelResponse.headers.get("Content-Type")).toBe("image/webp");
     expect(logoResponse.status).toBe(200);
@@ -333,6 +351,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     expect(legacyAvatarResponse.status).toBe(200);
     expect(unknownResponse.status).toBe(400);
     expect(aliasUnknownResponse.status).toBe(400);
+    expect(aliasModelResponse.status).toBe(400);
     expect(modelThumbResponse.status).toBe(400);
     expect(getObject).toHaveBeenNthCalledWith(
       1,
@@ -342,30 +361,51 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     );
     expect(getObject).toHaveBeenNthCalledWith(
       2,
-      "avatars/user-10-456.jpg",
-      SYSTEM_ASSET_BUCKET,
-      { signal: expect.anything() }
-    );
-    expect(getObject).toHaveBeenNthCalledWith(
-      3,
       MODEL_IMAGE_KEY,
       SYSTEM_ASSET_BUCKET,
       { signal: expect.anything() }
     );
     expect(getObject).toHaveBeenNthCalledWith(
-      4,
+      3,
       SITE_LOGO_KEY,
       SYSTEM_ASSET_BUCKET,
       { signal: expect.anything() }
     );
     expect(getObject).toHaveBeenNthCalledWith(
-      5,
+      4,
       "user-9-123.jpg",
       SYSTEM_ASSET_BUCKET,
       { signal: expect.anything() }
     );
     expect(getCurrentUser).not.toHaveBeenCalled();
-    expect(getObject).toHaveBeenCalledTimes(5);
+    expect(getObject).toHaveBeenCalledTimes(4);
+  });
+
+  it("头像逻辑别名在同一进程内跟随运行时 bucket 切换", async () => {
+    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", "avatars-before");
+
+    const beforeResponse = await GET(
+      makeRequest(undefined, "/api/storage/_avatars/user-10-456.jpg"),
+      makeParams("_avatars", ["user-10-456.jpg"])
+    );
+
+    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", "avatars-after");
+    const afterResponse = await GET(
+      makeRequest(undefined, "/api/storage/_avatars/user-10-456.jpg"),
+      makeParams("_avatars", ["user-10-456.jpg"])
+    );
+
+    expect(beforeResponse.status).toBe(307);
+    expect(beforeResponse.headers.get("Location")).toBe(
+      "http://localhost/api/storage/avatars-before/user-10-456.jpg"
+    );
+    expect(afterResponse.status).toBe(307);
+    expect(afterResponse.headers.get("Location")).toBe(
+      "http://localhost/api/storage/avatars-after/user-10-456.jpg"
+    );
+    expect(beforeResponse.headers.get("Cache-Control")).toBe("no-store");
+    expect(afterResponse.headers.get("Cache-Control")).toBe("no-store");
+    expect(getObject).not.toHaveBeenCalled();
   });
 
   it("模型与网站资产共桶时按 key 命名空间选择唯一校验器", async () => {
@@ -579,6 +619,13 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       SITE_ASSET_BUCKET,
     ],
     ["网站资产桶为空", "avatars", "generations", MODEL_ASSET_BUCKET, ""],
+    [
+      "头像桶使用保留逻辑别名",
+      "_avatars",
+      "generations",
+      MODEL_ASSET_BUCKET,
+      SITE_ASSET_BUCKET,
+    ],
     [
       "网站资产桶含路径",
       "avatars",

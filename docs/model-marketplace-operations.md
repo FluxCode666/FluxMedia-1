@@ -67,8 +67,10 @@ JSON 会在读取时转换为 v2，并在下一次单模型保存时写回当前
 重叠时，封面保存、Logo 上传、公开目录和存储读取均 fail-closed。合并部署仍保留三个
 设置键以兼容旧环境，只需把 `NEXT_PUBLIC_AVATARS_BUCKET_NAME`、
 `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`、`SITE_ASSETS_BUCKET_NAME` 配成同一个已创建的
-bucket。头像展示 URL 固定使用 `_avatars` 逻辑别名，由读取 Route 在请求时映射到最新
-运行时 bucket，因此修改头像 bucket 不再依赖重新构建 Web 镜像。
+bucket。头像展示 URL 固定使用 `_avatars` 逻辑别名，由读取 Route 以不可缓存的 307
+跳转映射到最新运行时 bucket；真实 bucket URL 仍使用长缓存，因此修改头像 bucket 不再
+依赖重新构建 Web 镜像，也不会让头像请求反复读取对象存储。`_avatars` 是系统保留名称，
+不能配置为任一真实 bucket。
 
 匿名读取只开放系统公开资产 bucket；模型 WebP 与 Logo 必须满足上述内容寻址格式，且不
 允许缩略图参数，响应使用一年 `immutable` 缓存并设置 `nosniff`。generations bucket

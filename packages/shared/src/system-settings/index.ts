@@ -14,6 +14,7 @@ import {
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
 import { paginationPageSizeOptionsSchema } from "../pagination/config";
+import { PUBLIC_AVATAR_BUCKET_ALIAS } from "../storage/image-url";
 import { dashboardSupportConfigSchema } from "../support/dashboard-config";
 import {
   clearLocalSystemSettingsCache,
@@ -368,6 +369,16 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
   }
 
   const text = typeof value === "string" ? value.trim() : String(value ?? "");
+  if (
+    text === PUBLIC_AVATAR_BUCKET_ALIAS &&
+    (definition.key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME" ||
+      definition.key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME" ||
+      definition.key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME" ||
+      definition.key === "SITE_ASSETS_BUCKET_NAME")
+  ) {
+    // 逻辑别名由读取 Route 解释，不能成为真实存储目标；否则本地存储可形成自重定向。
+    throw new Error(`${definition.label} 不能使用系统保留名称`);
+  }
   if (definition.key === "SITE_LOGO_URL" && text) {
     const parsed = siteLogoUrlSchema.safeParse(text);
     if (!parsed.success) {

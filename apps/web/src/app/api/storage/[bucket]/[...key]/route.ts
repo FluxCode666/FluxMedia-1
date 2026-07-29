@@ -6,7 +6,7 @@
  * - avatars 域：公开访问，无需鉴权。
  * - image/video 域：仅严格内容寻址 WebP 允许匿名读取，禁止缩略图转换。
  * - logo 域：仅严格内容寻址 PNG、SVG、ICO Logo 允许匿名读取，禁止缩略图转换。
- * - `_avatars` 是稳定逻辑别名，请求时映射到最新运行时头像 bucket。
+ * - `_avatars` 是稳定逻辑别名，请求时以 no-store 307 跳转到最新运行时头像 bucket。
  * - generations 桶：需要有效的短时签名 URL（sig + exp 查询参数）。
  *   签名验证使用 HMAC-SHA256 + 常量时间比较，防止时序攻击。
  *   v1 API 消费者通过签名 URL 参数获取授权（无 cookie）。
@@ -84,14 +84,16 @@ class StorageBucketConfigurationError extends Error {
  * @param value - 运行时设置值；undefined 代表历史环境尚无对应设置行。
  * @param fallback - 仅设置缺失时使用的项目兼容默认值。
  * @returns 去除首尾空白后的非空 bucket。
- * @throws StorageBucketConfigurationError - 已存在设置为空白时 fail-closed。
+ * @throws StorageBucketConfigurationError - 设置为空白或使用保留逻辑别名时 fail-closed。
  */
 function parseProtectedBucketName(
   value: string | undefined,
   fallback: string
 ): string {
   const bucket = value === undefined ? fallback : value.trim();
-  if (!bucket) throw new StorageBucketConfigurationError();
+  if (!bucket || bucket === PUBLIC_AVATAR_BUCKET_ALIAS) {
+    throw new StorageBucketConfigurationError();
+  }
   return bucket;
 }
 
@@ -452,6 +454,7 @@ export async function GET(
   // 内联的历史 NEXT_PUBLIC bucket 让运行时共桶配置失效。
   const storageBucket =
     bucket === PUBLIC_AVATAR_BUCKET_ALIAS ? bucketConfig.avatars : bucket;
+  const isAvatarBucketAlias = bucket === PUBLIC_AVATAR_BUCKET_ALIAS;
   // 缩略图宽度可经"路径段"传入:/api/storage/<bucket>/w<width>/<key>。这是为绕过
   // 线上 Cloudflare 忽略 query 的边缘缓存键(见 signed-url.buildStorageThumbnailUrl
   // 的 WHY):用查询参数 ?w= 会命中被缓存的整张原图。宽度段不参与签名,这里在验签前
@@ -488,7 +491,7 @@ export async function GET(
     keySegments,
     bucketConfig
   );
-  if (!domain) {
+  if (!domain || (isAvatarBucketAlias && domain !== "avatars")) {
     return NextResponse.json(
       { error: "Invalid public asset key" },
       { status: 400, headers: { "Cache-Control": NO_STORE_CACHE_CONTROL } }
@@ -556,6 +559,23 @@ export async function GET(
   );
   if (accessError) {
     return accessError;
+  }
+
+  if (isAvatarBucketAlias) {
+    // 别名响应本身不可缓存，否则浏览器或 CDN 会在运行时切桶后继续命中旧 Location；
+    // 真实 bucket URL 仍走后续公开资产长缓存，避免每次都重新读取对象存储。
+    const redirectUrl = new URL(request.url);
+    redirectUrl.pathname = `/api/storage/${encodeURIComponent(
+      storageBucket
+    )}/${key.map((segment) => encodeURIComponent(segment)).join("/")}`;
+    const response = NextResponse.redirect(redirectUrl, 307);
+    response.headers.set("Cache-Control", NO_STORE_CACHE_CONTROL);
+    response.headers.set("CDN-Cache-Control", NO_STORE_CACHE_CONTROL);
+    response.headers.set(
+      "Cloudflare-CDN-Cache-Control",
+      NO_STORE_CACHE_CONTROL
+    );
+    return response;
   }
 
   const ext = path.extname(fileKey).toLowerCase();

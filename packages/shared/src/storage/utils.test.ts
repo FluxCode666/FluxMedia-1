@@ -150,6 +150,12 @@ describe("parseAvatarStorageBucketName", () => {
     );
   });
 
+  it("头像 bucket 使用保留逻辑别名时 fail-closed", () => {
+    expect(() =>
+      parseAvatarStorageBucketName("_avatars", "generations")
+    ).toThrow("存储桶配置无效");
+  });
+
   it.each([
     ["头像设置为空", "", "generations"],
     ["生成内容设置为空", "avatars", ""],

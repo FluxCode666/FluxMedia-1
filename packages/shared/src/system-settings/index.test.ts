@@ -218,6 +218,16 @@ describe("setSystemSettings", () => {
     expect(store.get("NEXT_PUBLIC_APP_NAME")?.isSecret).toBe(false);
   });
 
+  it("拒绝把头像 bucket 保存为保留逻辑别名", async () => {
+    await expect(
+      setSystemSettings(
+        [{ key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME", value: "_avatars" }],
+        "admin"
+      )
+    ).rejects.toThrow("头像 Bucket 不能使用系统保留名称");
+    expect(store.has("NEXT_PUBLIC_AVATARS_BUCKET_NAME")).toBe(false);
+  });
+
   it("coerces number values and rejects non-numeric (coerceValue, C-L25)", async () => {
     await setSystemSettings(
       [{ key: "REGISTRATION_BONUS_CREDITS", value: "2.5" }],
