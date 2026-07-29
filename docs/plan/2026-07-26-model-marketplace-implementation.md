@@ -44,8 +44,9 @@ pnpm --filter @repo/web typecheck
 - 每个新文件、函数和组件都有简体中文职责与边界注释。
 - 不把展示字段塞进 `imageCreditPricingSchema` 或视频价格 `Record`。
 - 不新增数据库表迁移；展示配置与幂等回执复用 `system_setting` JSON。
-- 模型资产 bucket 必须非空且与 avatars、generations bucket 互不相同；误配置时写入和匿名
-  读取都 fail-closed，不能扩大私有 generations 访问。
+- 模型封面、网站品牌和头像 bucket 均必须非空，允许三个公开资产域共桶；generations
+  必须与它们隔离。误配置时写入和匿名读取都 fail-closed，不能扩大私有 generations
+  访问。
 - 不给模型配置 operation 增加 Agent/MCP 暴露，三个 operation 均为 `human-only`。
 - 管理端 multipart 路由在解析文件前完成受信 Origin、会话和请求体大小检查。
 - 正式 UI 只复用当前主题 token 与 `@repo/ui`，草图仅作为布局依据。
@@ -234,7 +235,7 @@ feat(settings): 注册模型广场配置接口
 - 运行时目录读取失败时返回“内置 ∪ 已持久化”以及明确的 runtime-unavailable 标志，
   仍允许管理员读取和保存这些条目；
 - 配置 JSON 或完整价格矩阵脏值时显式失败，不用默认值静默覆盖；
-- 资产 bucket 非法或与 avatars/generations 冲突时显式失败，不执行任何存储写入；
+- 资产 bucket 非法或任一公开资产域与 generations 冲突时显式失败，不执行任何存储写入；
 - 保存校验复用同一清单构建器，不能把公开目录的 `not_ready` 策略用于管理写入。
 - 运行时额外图像模型没有显式价格时，DTO 标记 `pricingSource: "unconfigured"`，不携带
   价格或 minimumCredits；管理员必须填写完整四档价格后才能保存为可计费模型。
@@ -445,13 +446,15 @@ POST `/api/admin/model-configuration` 固定顺序：
 
 **公共资产读取**
 
-存储 Route 的 bucket 配置增加模型资产 bucket：
+存储 Route 的 bucket 配置增加模型与网站公开资产域：
 
-- avatars 与模型资产 bucket 允许匿名读取；generations 保持签名或所属权校验；
-- 每次从运行时设置读取三个 bucket 并验证非空且互不相同；冲突时不把模型资产规则应用到
-  任一 bucket，返回稳定配置错误；
-- 模型资产 bucket 只允许 `category/configHash/contentHash.webp` 形式的内容哈希 key；
-  其他扩展、层级和非法路径拒绝；
+- 头像、模型封面与网站品牌允许共用一个私有系统公开资产 bucket；generations 保持签名
+  或所属权校验；
+- 每次从运行时设置读取四项 bucket，验证非空且 generations 与三个公开域都不同；冲突时
+  不把公开资产规则应用到任一 bucket，返回稳定配置错误；
+- 按 key 命名空间选择唯一校验器；模型资产只允许
+  `category/configHash/contentHash.webp`，Logo 只允许严格 `logo/` 内容寻址 key，新头像使用
+  `avatars/`，其他扩展、层级、未知共桶 key 和非法路径拒绝；
 - 返回 `image/webp`、`nosniff` 和长期 immutable 缓存；
 - 不扩大 generations 或任意自定义 bucket 的读取权限。
 
@@ -472,8 +475,9 @@ pnpm --filter @repo/web typecheck
 ```
 
 重点断言 Origin 和鉴权失败发生在正文读取及 UOL 调用之前；同时覆盖缺失长度、非法长度、
-伪造偏小长度、chunked 输入、未知/重复字段、多文件、多字段总正文超过 6 MiB，以及模型
-资产 bucket 与 generations/avatars 冲突时保持 fail-closed。
+伪造偏小长度、chunked 输入、未知/重复字段、多文件、多字段总正文超过 6 MiB，以及任一
+公开资产 bucket 与 generations 冲突时保持 fail-closed；同时覆盖三个公开域共桶和未知
+key 拒绝。
 
 **Commit**
 
@@ -939,7 +943,8 @@ git diff --check
 7. 详情：完整价格、参数、焦点、Esc、关闭回焦和移动端形态。
 8. “立即使用”：图像和视频合法预选；无权限/已移除模型安全回退。
 9. 首页：关闭模型后同步隐藏；全部关闭是 ready-empty；配置故障是 unavailable。
-10. 安全：匿名只能读取模型资产 bucket 的 WebP，不能扩大 generations 私有访问。
+10. 安全：匿名只能读取系统公开资产 bucket 中严格匹配域规则的对象，不能扩大
+    generations 私有访问。
 11. 回归：同一用户的 `/v1/models` 响应和创作页可选目录不因 visible 改变。
 
 **最终提交**

@@ -295,15 +295,17 @@ type ModelMarketplaceConfig = {
 
 ## 8. 存储设计
 
-新增公共模型资产桶设置，例如 `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`，默认 `model-marketplace`。对象本身仍通过当前 Local/S3 Provider 读写；公开只表示第一方读取路由允许匿名获取该专用桶中的对象，不要求 S3 桶开放公共 ACL。
+新增公共模型资产桶设置，例如 `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`，默认
+`model-marketplace`。对象本身仍通过当前 Local/S3 Provider 读写；公开只表示第一方读取
+路由允许匿名获取严格白名单对象，不要求 S3 bucket 开放公共 ACL。
 
-模型资产 bucket 必须非空且与 avatars、generations bucket 互不相同。写入服务和读取路由
-每次使用运行时设置交叉校验；冲突或非法配置时 fail-closed，不写对象、不把匿名模型资产
-规则应用到任何 bucket，尤其不能扩大 generations 私有访问。
+模型封面、网站品牌和头像属于同一公开安全域，可以共用一个私有系统资产 bucket；
+`generations` 必须与这三个公开域不同。写入服务和读取路由每次使用运行时设置交叉校验；
+生成内容冲突或非法配置时 fail-closed，不写对象、不把匿名规则应用到 generations。
 
-读取路由增加该桶白名单，并使用内容哈希键对应的长期 immutable 缓存。该桶只接受
-`category/configHash/contentHash.webp` 形式的内容哈希键，不与 generations 私有桶或
-avatars 用户资产混用。
+读取路由按 key 命名空间选择唯一校验器，并使用内容哈希键对应的长期 immutable 缓存。
+模型封面只接受 `category/configHash/contentHash.webp`，网站品牌使用 `logo/`，新头像使用
+`avatars/`；共桶中的未知 key 不得回退为头像匿名读取。
 
 内置资产与公开 DTO 同步落地：默认图像/视频封面是项目拥有或已获许可的 3:2 WebP；
 品牌 iconKey 固定为 `openai | google | kling | xai | generic` 并映射到本地 SVG。已知模型
@@ -514,8 +516,9 @@ Dialog 展示：
 - 替换与移除的并发 revision 测试。
 - 共享封面引用只有在持有展示配置锁且确认无其他引用时删除。
 - multipart 覆盖缺失或非法长度、伪造偏小长度、chunked 输入及总正文超限。
-- 公共读取路由只开放专用模型资产桶，不扩大 generations 私有桶访问。
-- 模型资产 bucket 与 avatars/generations 冲突时写入和匿名读取都 fail-closed。
+- 公共读取路由只开放严格的系统公开资产 key，不扩大 generations 私有桶访问。
+- 三个公开资产域允许共桶；任一公开资产 bucket 与 generations 冲突时写入和匿名读取都
+  fail-closed，共桶中的未知 key 也必须拒绝。
 
 ### 15.4 公开目录
 

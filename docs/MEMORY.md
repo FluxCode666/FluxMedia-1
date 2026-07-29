@@ -43,8 +43,9 @@
   `true`；未定价图像在管理端标记为“未配置价格”，不能计费或公开。
 - 展示开关只影响 `/models` 与首页，不影响 `/v1/models`、创作目录、套餐能力、调度或
   实际计费。
-- 自定义封面使用独立模型资产 bucket；该 bucket 必须与 avatars、generations 互异，
-  匿名读取只接受严格内容寻址的静态 WebP，不能扩大 generations 的访问权限。
+- 自定义封面、网站品牌和头像可共用一个私有系统公开资产 bucket，并分别使用
+  `image|video/`、`logo/`、`avatars/` key 命名空间；`generations` 必须独立。
+  匿名模型封面读取只接受严格内容寻址的静态 WebP，不能扩大 generations 的访问权限。
 - 默认封面与品牌图标的来源、完整性和许可见
   [model-marketplace-assets.md](model-marketplace-assets.md)。
 
