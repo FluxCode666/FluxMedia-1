@@ -188,7 +188,7 @@ describe("backend member service", () => {
       type: "adobe",
       name: "Adobe Direct",
       groupIds: ["group-a"],
-      supportedModelIds: ["firefly-veo3-5s-16x9"],
+      supportedModelIds: ["seedance2"],
       contentSafetyEnabled: true,
       isEnabled: true,
       alwaysActive: false,

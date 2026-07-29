@@ -2,15 +2,19 @@
  * 统一号池成员的模型选项映射与保存校验。
  *
  * 使用方是成员管理表单和 `pool.saveMember` UOL binding。本模块只消费模型配置管理
- * 快照：图像条目直接使用管理配置键，视频条目按模型族展开为 Firefly 可执行完整 ID。
+ * 快照：图像条目直接使用管理配置键，视频条目只使用全局能力目录中的真实模型 ID。
  * 它不读取数据库或系统设置，也不根据成员类型推断调度候选。
  */
-import {
-  FIREFLY_VIDEO_MODEL_CATALOG,
-  type FireflyVideoModelConf,
-} from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
 import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
+import {
+  normalizeVideoModelId,
+  VIDEO_MODEL_CAPABILITY_CATALOG,
+} from "@repo/shared/video-generation";
 
 /** 成员表单可选择的一条真实模型能力。 */
 export interface BackendMemberModelOption {
@@ -21,32 +25,36 @@ export interface BackendMemberModelOption {
 }
 
 /**
- * 格式化视频完整模型 ID 的人类可读选项。
+ * 规范账号池成员卡片可展示的模型身份。
  *
- * @param displayName - 模型配置中的视频族展示名。
- * @param configuration - 完整模型 ID 对应的可执行 Firefly 配置。
- * @returns 包含时长、比例和分辨率的稳定标签。
+ * @param modelIds - 数据库成员能力快照，可能含迁移前旧视频身份。
+ * @returns 大小写无关去重的真实视频 ID 与既有图像 ID；旧视频身份不进入管理界面。
  * @sideEffects 无。
- * @failure 不抛错；参数均来自严格模型配置与静态视频目录。
+ * @failure 不抛错；空白和超长值沿用共享规范化规则忽略。
  */
-function formatVideoModelOptionLabel(
-  displayName: string,
-  configuration: FireflyVideoModelConf
-): string {
-  return [
-    displayName,
-    `${configuration.duration}s`,
-    configuration.aspectRatio,
-    configuration.outputResolution,
-  ].join(" · ");
+export function normalizeBackendMemberModelIdsForDisplay(
+  modelIds: readonly string[]
+): string[] {
+  const normalizedModelIds: string[] = [];
+  const seen = new Set<string>();
+  for (const rawModelId of modelIds) {
+    if (isLegacyVideoModelId(rawModelId)) continue;
+    const modelId = normalizeSupportedModelId(rawModelId);
+    if (!modelId) continue;
+    const key = modelId.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalizedModelIds.push(modelId);
+  }
+  return normalizedModelIds;
 }
 
 /**
- * 把模型配置管理快照展开为成员可保存的完整模型 ID。
+ * 把模型配置管理快照映射为成员可保存的真实模型 ID。
  *
  * @param snapshot - `settings.getModelConfiguration` 返回的严格管理快照。
  * @returns 大小写无关去重后的图像与视频完整模型选项；顺序先遵循管理条目，再遵循
- * 静态视频目录。展示开关和价格状态不参与过滤，避免模型广场展示策略影响调度。
+ * 全局视频能力目录。展示开关和价格状态不参与过滤，避免模型广场展示策略影响调度。
  * @sideEffects 无。
  * @failure 不抛错；无法映射到可执行目录的视频族不会伪造模型 ID。
  */
@@ -73,17 +81,14 @@ export function buildBackendMemberModelOptions(
       continue;
     }
 
-    for (const [modelId, configuration] of Object.entries(
-      FIREFLY_VIDEO_MODEL_CATALOG
-    )) {
-      if (configuration.family !== entry.configKey) continue;
-      addOption({
-        id: modelId,
-        label: formatVideoModelOptionLabel(entry.displayName, configuration),
-        category: "video",
-        source: "model_configuration",
-      });
-    }
+    const modelId = normalizeVideoModelId(entry.configKey);
+    if (!modelId || !VIDEO_MODEL_CAPABILITY_CATALOG[modelId]) continue;
+    addOption({
+      id: modelId,
+      label: entry.displayName,
+      category: "video",
+      source: "model_configuration",
+    });
   }
   return options;
 }
@@ -93,8 +98,8 @@ export function buildBackendMemberModelOptions(
  *
  * @param input - 已通过统一成员 schema 的保存输入。
  * @param configuredOptions - 从当前模型配置快照构建的真实选项。
- * @param existingModelIds - 编辑同一成员时允许原样保留的历史能力；只用于兼容已迁移
- * 数据，不能让新增成员提交任意 ID。
+ * @param existingModelIds - 编辑同一成员时允许原样保留的历史图像能力；真实视频 ID
+ * 仍必须存在于当前全局目录，旧视频身份不能通过编辑兼容入口继续保存。
  * @returns 保持提交顺序的非法模型 ID；非 Adobe direct 成员仅允许图像选项。
  * @sideEffects 无。
  * @failure 不抛错；调用方根据非空结果转换为稳定 UOL validation_error。
@@ -112,7 +117,13 @@ export function findUnavailableBackendMemberModelIds(
   );
   for (const modelId of existingModelIds) {
     const normalizedId = modelId.trim().toLowerCase();
-    if (normalizedId) allowedIds.add(normalizedId);
+    if (
+      normalizedId &&
+      !normalizeVideoModelId(modelId) &&
+      !isLegacyVideoModelId(modelId)
+    ) {
+      allowedIds.add(normalizedId);
+    }
   }
   return input.supportedModelIds.filter(
     (modelId) => !allowedIds.has(modelId.trim().toLowerCase())

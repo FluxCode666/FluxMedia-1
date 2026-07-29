@@ -4,9 +4,12 @@
  * 职责：将已授权分组与统一 `api | adobe` 成员的显式模型声明合并成
  * 可序列化目录。模型 ID 只是能力键；构建器不用前缀缩小成员类型。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
-import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 /** 单个模型可由当前分组执行的图片动作。 */
 export interface ImageGenerationModelCapabilities {
@@ -99,7 +102,13 @@ export function buildImageGenerationModelCatalog(
         const capabilities = getMemberCapabilities(member.type);
         for (const rawModelId of member.supportedModelIds) {
           const modelId = normalizeSupportedModelId(rawModelId);
-          if (!modelId || isFireflyVideoModelId(modelId)) continue;
+          if (
+            !modelId ||
+            normalizeVideoModelId(modelId) ||
+            isLegacyVideoModelId(modelId)
+          ) {
+            continue;
+          }
           const normalizedId = modelId.toLowerCase();
           const current = models.get(normalizedId);
           if (current) {

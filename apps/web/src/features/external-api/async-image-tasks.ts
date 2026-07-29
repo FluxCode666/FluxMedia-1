@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
+import {
+  normalizeHistoricalModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
 import { logError } from "@repo/shared/logger";
 import {
   assertPublicCallbackUrl,
@@ -129,7 +132,7 @@ export function toGenerationImageTaskResponse(
   return {
     id: row.id,
     object: status === "completed" ? "image" : "image.generation",
-    model: normalizeSupportedModelId(row.model) ?? row.model,
+    model: normalizeHistoricalModelId(row.model) ?? row.model,
     status,
     created: Math.floor(row.createdAt.getTime() / 1000),
     created_at: row.createdAt.toISOString(),
@@ -188,7 +191,7 @@ export function toVideoGenerationTaskResponse(
   return {
     id: row.id,
     object: status === "completed" ? "video" : "video.generation",
-    model: normalizeSupportedModelId(row.model) ?? row.model,
+    model: normalizeHistoricalModelId(row.model) ?? row.model,
     status,
     duration_seconds: row.durationSeconds,
     created: Math.floor(row.createdAt.getTime() / 1000),

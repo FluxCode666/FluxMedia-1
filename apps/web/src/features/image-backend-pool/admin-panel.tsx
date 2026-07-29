@@ -7,8 +7,9 @@
  * 执行安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、Sub2API、
  * Web/Codex 账号、子号池和旧三池分页不再进入此组件。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
+import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -45,6 +46,7 @@ import { BackendMemberFormDialog } from "./member-form";
 import {
   type BackendMemberModelOption,
   buildBackendMemberModelOptions,
+  normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
 import type {
@@ -263,7 +265,9 @@ export function ImageBackendPoolAdminPanel({
         new Set(
           members.flatMap((member) =>
             member.supportedModelIds.filter(
-              (modelId) => !isFireflyVideoModelId(modelId)
+              (modelId) =>
+                !normalizeVideoModelId(modelId) &&
+                !isLegacyVideoModelId(modelId)
             )
           )
         )
@@ -540,7 +544,11 @@ export function ImageBackendPoolAdminPanel({
                     上次使用 {formatAdminTime(member.lastUsedAt, timeZone)}
                   </span>
                 </div>
-                <MemberSupportedModels modelIds={member.supportedModelIds} />
+                <MemberSupportedModels
+                  modelIds={normalizeBackendMemberModelIdsForDisplay(
+                    member.supportedModelIds
+                  )}
+                />
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>
                     凭据：

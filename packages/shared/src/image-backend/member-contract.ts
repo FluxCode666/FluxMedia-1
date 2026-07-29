@@ -7,9 +7,10 @@
  */
 import { z } from "zod";
 
-import { isFireflyVideoModelId } from "../adobe/firefly-direct/video-catalog";
+import { normalizeVideoModelId } from "../video-generation/contracts";
 import { requestParameterMappingsSchema } from "./request-parameter-mapping";
 import {
+  isLegacyVideoModelId,
   normalizeSupportedModelIds,
   supportedModelIdsSchema,
 } from "./supported-models";
@@ -132,10 +133,20 @@ export const backendMemberInputSchema = z
       });
     }
     if (member.type === "adobe" && member.config.mode === "direct") {
+      for (const [index, modelId] of member.supportedModelIds.entries()) {
+        if (!isLegacyVideoModelId(modelId)) continue;
+        context.addIssue({
+          code: "custom",
+          path: ["supportedModelIds", index],
+          message: "Video models must use a real model ID",
+        });
+      }
       return;
     }
     for (const [index, modelId] of member.supportedModelIds.entries()) {
-      if (!isFireflyVideoModelId(modelId)) continue;
+      if (!normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)) {
+        continue;
+      }
       context.addIssue({
         code: "custom",
         path: ["supportedModelIds", index],

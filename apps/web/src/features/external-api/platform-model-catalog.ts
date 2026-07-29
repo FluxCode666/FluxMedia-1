@@ -4,13 +4,16 @@
  * 职责：按套餐、可达分组和统一成员显式模型能力生成 image/video 目录；
  * 模型名称只用于能力匹配与媒体分类，不参与后端类型或调度策略分流。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import {
   isPlanAtLeast,
   SUBSCRIPTION_PLANS,
   type SubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
-import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 /** 平台模型目录最终公开的单条模型。 */
 export interface PlatformModelCatalogItem {
@@ -43,6 +46,8 @@ export interface PlatformModelCatalogGroup {
 /** 统一成员中与媒体目录有关的非敏感字段。 */
 export interface PlatformModelCatalogMember {
   groupIds: readonly string[];
+  type: "api" | "adobe";
+  adobeMode: "gateway" | "direct" | null;
   supportedModelIds: readonly string[];
   isEnabled: boolean;
   status: string;
@@ -131,14 +136,20 @@ export function buildPlatformModelCatalog(
     const canGenerateVideos = plans.some((plan) =>
       isPlanAtLeast(plan, source.capabilityMinimums.externalVideosGenerate)
     );
+    const canExecuteVideo =
+      member.type === "adobe" && member.adobeMode === "direct";
 
-    for (const modelId of member.supportedModelIds) {
-      if (isFireflyVideoModelId(modelId)) {
-        if (canGenerateVideos) {
-          addModel(videoModels, modelId);
+    for (const rawModelId of member.supportedModelIds) {
+      const videoModelId = normalizeVideoModelId(rawModelId);
+      if (videoModelId) {
+        if (canGenerateVideos && canExecuteVideo) {
+          addModel(videoModels, videoModelId);
         }
-      } else if (canGenerateImages) {
-        addModel(imageModels, modelId);
+        continue;
+      }
+      if (isLegacyVideoModelId(rawModelId)) continue;
+      if (canGenerateImages) {
+        addModel(imageModels, rawModelId);
       }
     }
   }

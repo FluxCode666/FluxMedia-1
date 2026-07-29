@@ -169,6 +169,10 @@ describe("backend pool PostgreSQL repository", () => {
     expect(queries[2]?.sql).toContain(
       "json_array_elements_text(m.supported_model_ids)"
     );
+    expect(queries[2]?.sql).toContain("lower(trim(supported_model.model_id))");
+    expect(queries[2]?.sql.toLowerCase()).not.toContain(" like ");
+    expect(queries[2]?.sql).toContain("m.cooldown_until");
+    expect(queries[2]?.sql).toContain("m.status not in");
     expect(queries[2]?.params).toEqual(
       expect.arrayContaining([
         "group-a",

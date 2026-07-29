@@ -148,6 +148,21 @@ describe("backend member contract", () => {
     expect(
       backendMemberInputSchema.safeParse({
         ...commonMember,
+        supportedModelIds: [],
+        type: "adobe",
+        config: {
+          mode: "direct",
+          cookie: "cookie-secret",
+          defaultRatio: "1:1",
+          defaultResolution: "2k",
+          gptImageQuality: "high",
+        },
+      }).success
+    ).toBe(false);
+
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
         type: "api",
         config: {
           baseUrl: "https://images.example.com/v1",
@@ -173,10 +188,10 @@ describe("backend member contract", () => {
     ).toBe(false);
   });
 
-  it("allows video models only on Adobe direct members", () => {
+  it("只允许 Adobe direct 成员声明真实视频模型 ID", () => {
     const videoMember = {
       ...commonMember,
-      supportedModelIds: ["firefly-sora2-4s-16x9"],
+      supportedModelIds: ["seedance2"],
     };
 
     expect(
@@ -212,6 +227,29 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "https://images.example.com/v1",
           parameterMappings: [],
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it.each([
+    "firefly-seedance2",
+    "firefly-seedance2-15s-9x16-480p",
+    "seedance2-15s-9x16-480p",
+    "seedance2-preview",
+    "kling3-10s-16x9",
+  ])("拒绝旧视频身份 %s", (modelId) => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        id: "direct-existing",
+        supportedModelIds: [modelId],
+        type: "adobe",
+        config: {
+          mode: "direct",
+          defaultRatio: "16:9",
+          defaultResolution: "720p",
+          gptImageQuality: "high",
         },
       }).success
     ).toBe(false);

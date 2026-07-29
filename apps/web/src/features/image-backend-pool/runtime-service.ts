@@ -34,6 +34,7 @@ import {
   defaultBackendPoolRepository,
 } from "./repository";
 import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
+import { normalizeRuntimeRequestedModelId } from "./runtime-model-matching";
 import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 import { BackendSchedulerError } from "./scheduler-error";
 
@@ -548,11 +549,13 @@ async function releaseRuntimeLease(lease: RuntimeBackendLease): Promise<void> {
 export async function createRuntimeBackendSession(
   input: CreateRuntimeBackendSessionInput
 ): Promise<RuntimeBackendSession> {
-  const modelId = input.modelId.trim();
+  const modelId = normalizeRuntimeRequestedModelId(input);
   if (!modelId) {
     throw new BackendSchedulerError(
       "no_eligible_member",
-      "媒体模型 ID 不能为空"
+      input.requestKind === "video"
+        ? "视频模型 ID 必须是全局目录中的真实模型 ID"
+        : "媒体模型 ID 不能为空"
     );
   }
   const normalizedInput = { ...input, modelId };

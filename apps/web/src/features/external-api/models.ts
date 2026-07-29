@@ -4,10 +4,13 @@
  * 职责：按 API Key 绑定分组、套餐媒体能力和统一成员显式 `supportedModelIds`
  * 构造 OpenAI 兼容 `/v1/models` 响应；不再发布任何 Chat、Responses 或 Codex 模型。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
-import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
 import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { and, asc, eq } from "drizzle-orm";
 
 import { backendMemberService } from "@/features/image-backend-pool/member-service";
@@ -34,6 +37,7 @@ export function mergeExternalModelIds(...modelGroups: string[][]): string[] {
   const modelIds: string[] = [];
   for (const modelGroup of modelGroups) {
     for (const modelId of modelGroup) {
+      if (isLegacyVideoModelId(modelId)) continue;
       const normalized = normalizeSupportedModelId(modelId);
       if (!normalized) continue;
       const key = normalized.toLowerCase();
@@ -53,6 +57,30 @@ function toOpenAIModel(id: string): OpenAIModel {
     created: 0,
     owned_by: DEFAULT_MODEL_OWNER,
   };
+}
+
+/**
+ * 按成员执行形态和套餐能力筛出可发布模型 ID。
+ *
+ * @param input - 成员类型、Adobe 模式、显式模型能力与媒体套餐开关。
+ * @returns 保持成员配置顺序的图片模型和 Adobe direct 真实视频模型；旧视频身份被忽略。
+ * @sideEffects 无。
+ * @failure 不抛错；未知非视频 ID 保持既有图像模型语义。
+ */
+export function filterExternalMemberModelIds(input: {
+  memberType: "api" | "adobe";
+  adobeMode: "gateway" | "direct" | null;
+  supportedModelIds: readonly string[];
+  imageAllowed: boolean;
+  videoAllowed: boolean;
+}): string[] {
+  const canExecuteVideo =
+    input.memberType === "adobe" && input.adobeMode === "direct";
+  return input.supportedModelIds.filter((modelId) => {
+    const videoModelId = normalizeVideoModelId(modelId);
+    if (videoModelId) return input.videoAllowed && canExecuteVideo;
+    return input.imageAllowed && !isLegacyVideoModelId(modelId);
+  });
 }
 
 /**
@@ -124,11 +152,15 @@ export async function getExternalModelsForApiKey(
           member.status !== "error" &&
           member.groupIds.includes(groupId)
       )
-      .map((member) =>
-        member.supportedModelIds.filter((modelId) =>
-          isFireflyVideoModelId(modelId) ? videoAllowed : imageAllowed
-        )
-      )
+      .map((member) => {
+        return filterExternalMemberModelIds({
+          memberType: member.type,
+          adobeMode: member.type === "adobe" ? member.config.mode : null,
+          supportedModelIds: member.supportedModelIds,
+          imageAllowed,
+          videoAllowed,
+        });
+      })
   );
   return {
     object: "list",

@@ -6,10 +6,13 @@
  * 职责：以 `api | adobe` 单一入口编辑公共调度字段、显式模型能力和类型专属
  * 配置。成员类型在编辑时不可原地切换，secret 留空由服务端保留既有值。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import type { BackendMemberType } from "@repo/shared/image-backend/member-contract";
-import { normalizeSupportedModelIds } from "@repo/shared/image-backend/supported-models";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelIds,
+} from "@repo/shared/image-backend/supported-models";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import { Checkbox } from "@repo/ui/components/checkbox";
 import {
@@ -181,10 +184,10 @@ export function BackendMemberFormDialog({
     const existingOptions = selectedModelIds.flatMap((modelId) => {
       const normalizedId = modelId.trim().toLowerCase();
       if (!normalizedId || knownIds.has(normalizedId)) return [];
-      const category = isFireflyVideoModelId(modelId) ? "video" : "image";
-      if (category === "video" && !acceptsVideo) return [];
+      const realVideoModelId = normalizeVideoModelId(modelId);
+      if (isLegacyVideoModelId(modelId) || realVideoModelId) return [];
       knownIds.add(normalizedId);
-      return [createExistingMemberModelOption(modelId, category)];
+      return [createExistingMemberModelOption(modelId, "image")];
     });
     return [...configuredOptions, ...existingOptions];
   }, [acceptsVideo, modelOptions, selectedModelIds]);
@@ -192,7 +195,10 @@ export function BackendMemberFormDialog({
   useEffect(() => {
     if (acceptsVideo) return;
     setSelectedModelIds((current) =>
-      current.filter((modelId) => !isFireflyVideoModelId(modelId))
+      current.filter(
+        (modelId) =>
+          !normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)
+      )
     );
   }, [acceptsVideo]);
 

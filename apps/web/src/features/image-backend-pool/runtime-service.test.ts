@@ -79,7 +79,7 @@ describe("selectTrustedRuntimeGroupTarget", () => {
 });
 
 describe("projectConfiguredVideoModelIds", () => {
-  it("只有 Adobe direct 成员计入视频配置可达性", () => {
+  it("只有 Adobe direct 成员的真实 ID 计入视频配置可达性", () => {
     expect(
       projectConfiguredVideoModelIds([
         {
@@ -95,9 +95,32 @@ describe("projectConfiguredVideoModelIds", () => {
         {
           memberType: "adobe",
           adobeMode: "direct",
-          supportedModelIds: ["seedance2", "seedance2", "sora2"],
+          supportedModelIds: [
+            "SEEDANCE2",
+            "seedance2",
+            "sora2",
+            "firefly-sora2-8s-16x9",
+            "unknown-video",
+          ],
         },
       ])
     ).toEqual(["seedance2", "sora2"]);
+  });
+
+  it("配置可达性不读取健康、冷却、容量或实时租约状态", () => {
+    const coolingAndFullMember = {
+      memberType: "adobe" as const,
+      adobeMode: "direct" as const,
+      supportedModelIds: ["seedance2"],
+      status: "limited",
+      healthStatus: "unhealthy",
+      cooldownUntil: "2099-01-01T00:00:00.000Z",
+      inflightCount: 10,
+      concurrency: 10,
+    };
+
+    expect(projectConfiguredVideoModelIds([coolingAndFullMember])).toEqual([
+      "seedance2",
+    ]);
   });
 });

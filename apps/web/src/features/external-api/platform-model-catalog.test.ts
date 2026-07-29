@@ -35,7 +35,13 @@ function source(
     members: [
       {
         groupIds: ["default-group"],
-        supportedModelIds: ["gpt-image-2", "firefly-sora2-8s-16x9"],
+        type: "adobe",
+        adobeMode: "direct",
+        supportedModelIds: [
+          "gpt-image-2",
+          "seedance2",
+          "firefly-sora2-8s-16x9",
+        ],
         isEnabled: true,
         status: "active",
       },
@@ -48,7 +54,7 @@ describe("buildPlatformModelCatalog", () => {
   it("仅按统一成员显式能力输出图片与视频分类", () => {
     expect(buildPlatformModelCatalog(source())).toEqual({
       image: [{ id: "gpt-image-2" }],
-      video: [{ id: "sora2-8s-16x9" }],
+      video: [{ id: "seedance2" }],
     });
   });
 
@@ -75,24 +81,32 @@ describe("buildPlatformModelCatalog", () => {
         members: [
           {
             groupIds: ["default-group"],
+            type: "api",
+            adobeMode: null,
             supportedModelIds: ["Zeta-Image", "alpha-image"],
             isEnabled: true,
             status: "limited",
           },
           {
             groupIds: ["selectable-group"],
+            type: "api",
+            adobeMode: null,
             supportedModelIds: ["zeta-image", "beta-image"],
             isEnabled: true,
             status: "active",
           },
           {
             groupIds: ["hidden-group"],
+            type: "api",
+            adobeMode: null,
             supportedModelIds: ["hidden-image"],
             isEnabled: true,
             status: "active",
           },
           {
             groupIds: ["default-group"],
+            type: "api",
+            adobeMode: null,
             supportedModelIds: ["terminal-image"],
             isEnabled: true,
             status: "error",
@@ -131,6 +145,25 @@ describe("buildPlatformModelCatalog", () => {
       image: [],
       video: [],
     });
+  });
+
+  it("非 Adobe direct 成员不能把真实视频 ID 发布到任一目录", () => {
+    expect(
+      buildPlatformModelCatalog(
+        source({
+          members: [
+            {
+              groupIds: ["default-group"],
+              type: "api",
+              adobeMode: null,
+              supportedModelIds: ["seedance2"],
+              isEnabled: true,
+              status: "active",
+            },
+          ],
+        })
+      )
+    ).toEqual({ image: [], video: [] });
   });
 });
 

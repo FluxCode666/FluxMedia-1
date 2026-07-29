@@ -29,6 +29,33 @@ export type VideoModelId = (typeof VIDEO_MODEL_IDS)[number];
 /** 精确真实模型 ID schema；不会 trim、改大小写、去前缀或解析历史别名。 */
 export const videoModelIdSchema = z.enum(VIDEO_MODEL_IDS);
 
+/**
+ * 将配置或调度读取出的模型身份规范为真实视频模型 ID。
+ *
+ * @param value - 来自成员配置、数据库或内部运行时的未知模型值。
+ * @returns trim 与小写规范后精确命中目录的真实 ID；前缀、复合 ID、别名和未知值返回 null。
+ * @sideEffects 无。
+ * @failure 不抛错。
+ */
+export function normalizeVideoModelId(value: unknown): VideoModelId | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  const parsed = videoModelIdSchema.safeParse(normalized);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * 判断未知值经大小写规范后是否为精确真实视频模型 ID。
+ *
+ * @param value - 未受信任模型身份。
+ * @returns 只在真实模型目录精确命中时返回 true。
+ * @sideEffects 无。
+ * @failure 不抛错。
+ */
+export function isVideoModelId(value: unknown): value is VideoModelId {
+  return normalizeVideoModelId(value) !== null;
+}
+
 /** 所有内置视频描述符可使用的规范宽高比字面量。 */
 export const VIDEO_ASPECT_RATIOS = [
   "1:1",

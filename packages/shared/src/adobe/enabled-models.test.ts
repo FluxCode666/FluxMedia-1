@@ -70,9 +70,7 @@ describe("Adobe 后端开放模型", () => {
   });
 
   it("裸 nano-banana 模型族与 Firefly 别名使用同一白名单", () => {
-    expect(resolveAdobeImageModelId("nano-banana-pro")).toBe(
-      "nano-banana-pro"
-    );
+    expect(resolveAdobeImageModelId("nano-banana-pro")).toBe("nano-banana-pro");
     expect(resolveAdobeImageModelId("nano-banana2-2k-1x1")).toBe(
       "nano-banana2"
     );
@@ -100,9 +98,7 @@ describe("Adobe 后端开放模型", () => {
 
   it("只把显式 Adobe 模型请求识别为指定家族", () => {
     expect(pickExplicitAdobeImageFamily("gpt-image-1")).toBeNull();
-    expect(pickExplicitAdobeImageFamily("gpt-image-1.5")).toBe(
-      "gpt-image-1.5"
-    );
+    expect(pickExplicitAdobeImageFamily("gpt-image-1.5")).toBe("gpt-image-1.5");
     expect(pickExplicitAdobeImageFamily("firefly-gpt-image-1.5")).toBe(
       "gpt-image-1.5"
     );
@@ -111,7 +107,7 @@ describe("Adobe 后端开放模型", () => {
     );
   });
 
-  it("空白名单保持历史不限图像模型语义，视频仍须显式开启", () => {
+  it("空白名单保持历史不限图像模型语义，视频必须显式声明真实 ID", () => {
     expect(
       canAdobeBackendServeModel({
         enabledModels: [],
@@ -123,16 +119,40 @@ describe("Adobe 后端开放模型", () => {
       canAdobeBackendServeModel({
         enabledModels: [],
         supportsVideo: false,
-        requestedModel: "firefly-sora2-8s-16x9",
+        requestedModel: "seedance2",
       })
     ).toBe(false);
     expect(
       canAdobeBackendServeModel({
         enabledModels: [],
         supportsVideo: true,
-        requestedModel: "firefly-sora2-8s-16x9",
+        requestedModel: "seedance2",
+      })
+    ).toBe(false);
+  });
+
+  it("视频按规范大小写后的真实 ID 精确匹配且拒绝旧身份", () => {
+    expect(
+      canAdobeBackendServeModel({
+        enabledModels: ["seedance2"],
+        supportsVideo: true,
+        requestedModel: "SEEDANCE2",
       })
     ).toBe(true);
+    expect(
+      canAdobeBackendServeModel({
+        enabledModels: ["seedance2"],
+        supportsVideo: true,
+        requestedModel: "seedance2-fast",
+      })
+    ).toBe(false);
+    expect(
+      canAdobeBackendServeModel({
+        enabledModels: ["seedance2"],
+        supportsVideo: true,
+        requestedModel: "firefly-seedance2-15s-9x16-480p",
+      })
+    ).toBe(false);
   });
 
   it("模型列表仅公布启用后端明确开放的图像模型", () => {
