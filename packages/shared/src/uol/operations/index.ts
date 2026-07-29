@@ -61,8 +61,11 @@ export {
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {
   videoGenerate,
+  videoGetInputs,
   videoGetStatus,
+  videoListCapabilities,
   videoReconcileSubmission,
+  videoRequestAccountInputCleanup,
 } from "./video-generation";
 
 // 客服支持域

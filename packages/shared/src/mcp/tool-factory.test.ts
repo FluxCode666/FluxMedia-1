@@ -8,6 +8,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { imageGenerateInputSchema } from "../uol/operations/image-generation";
+import {
+  videoGenerateInputSchema,
+  videoListCapabilitiesInputSchema,
+} from "../uol/operations/video-generation";
 import type { Principal } from "../uol/principal";
 import { bindExecute, clearRegistry, defineOperation } from "../uol/registry";
 import type { AccessRequirement, OperationDefinition } from "../uol/types";
@@ -158,6 +162,13 @@ describe("MCP tool factories", () => {
     ).toEqual({ taskId: "video-1" });
     expect(
       enrichUserMcpToolArguments(
+        "video.listCapabilities",
+        { userId: "another-user", backendGroupId: "group-1" },
+        apiKeyPrincipal
+      )
+    ).toEqual({ backendGroupId: "group-1" });
+    expect(
+      enrichUserMcpToolArguments(
         "image.listMyHistoryRecords",
         { userId: "another-user", limit: 20 },
         apiKeyPrincipal
@@ -217,11 +228,65 @@ describe("MCP tool factories", () => {
     }
   });
 
+  it("projects video tools with real IDs, independent parameters and no legacy fields", () => {
+    registerOperation({
+      name: "video.generate",
+      access: { kind: "protected" },
+      input: videoGenerateInputSchema,
+    });
+    registerOperation({
+      name: "video.listCapabilities",
+      access: { kind: "protected" },
+      input: videoListCapabilitiesInputSchema,
+      readOnly: true,
+    });
+    bindExecute("video.generate", async () => ({ ok: true }));
+    bindExecute("video.listCapabilities", async () => ({ ok: true }));
+
+    const tools = buildUserMcpTools(apiKeyPrincipal);
+    const generate = tools.find((tool) => tool.name === "video.generate");
+    const capabilities = tools.find(
+      (tool) => tool.name === "video.listCapabilities"
+    );
+    const properties = generate?.inputSchema.properties as
+      | Record<string, unknown>
+      | undefined;
+
+    expect(generate?.inputSchema.required).toEqual(
+      expect.arrayContaining([
+        "clientRequestId",
+        "prompt",
+        "model",
+        "duration",
+        "aspectRatio",
+        "resolution",
+      ])
+    );
+    expect(Object.keys(properties ?? {})).toEqual(
+      expect.arrayContaining([
+        "firstFrame",
+        "lastFrame",
+        "referenceImages",
+        "generateAudio",
+      ])
+    );
+    for (const legacyField of [
+      "inputImages",
+      "inputImageRole",
+      "input_image_role",
+      "duration_seconds",
+    ]) {
+      expect(Object.hasOwn(properties ?? {}, legacyField)).toBe(false);
+    }
+    expect(capabilities?.annotations.readOnly).toBe(true);
+  });
+
   it("only projects bound image, video and own-history operations", () => {
     const allowed = [
       "image.generate",
       "video.generate",
       "video.getStatus",
+      "video.listCapabilities",
       "image.listMyHistoryRecords",
     ] as const;
     const removed = [
@@ -247,7 +312,9 @@ describe("MCP tool factories", () => {
             ? { kind: "owner", resource: "video task" }
             : { kind: "protected" },
         readOnly:
-          name === "video.getStatus" || name === "image.listMyHistoryRecords",
+          name === "video.getStatus" ||
+          name === "video.listCapabilities" ||
+          name === "image.listMyHistoryRecords",
       });
       bindExecute(name, async () => ({ ok: true }));
     }

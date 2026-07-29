@@ -5,6 +5,10 @@
  * 命中，防止跨凭据重用 clientRequestId 造成越权或误去重。
  */
 
+import {
+  resolveCanonicalVideoGenerateInput,
+  videoGenerateInputSchema,
+} from "@repo/shared/uol/operations/video-generation";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -60,39 +64,99 @@ describe("createVideoTaskId", () => {
     const first = createVideoRequestFingerprint({
       clientRequestId: "request-1",
       prompt: "first",
-      model: "model-1",
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      generateAudio: false,
     });
     const replay = createVideoRequestFingerprint({
       clientRequestId: "request-1",
       prompt: "first",
-      model: "model-1",
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      generateAudio: false,
     });
     const conflict = createVideoRequestFingerprint({
       clientRequestId: "request-1",
       prompt: "changed",
-      model: "model-1",
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      generateAudio: false,
     });
 
     expect(replay).toBe(first);
     expect(conflict).not.toBe(first);
   });
 
-  it("将音频开关的 true、false 与缺省值纳入不同请求指纹", () => {
+  it("省略声音与显式模型默认值生成同一规范指纹", () => {
     const base = {
       clientRequestId: "request-1",
       prompt: "first",
-      model: "firefly-seedance2-15s-9x16-480p",
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
     };
-    const omitted = createVideoRequestFingerprint(base);
-    const enabled = createVideoRequestFingerprint({
-      ...base,
-      generateAudio: true,
-    });
-    const disabled = createVideoRequestFingerprint({
-      ...base,
-      generateAudio: false,
-    });
+    const omitted = resolveCanonicalVideoGenerateInput(
+      videoGenerateInputSchema.parse(base),
+      undefined
+    );
+    const disabled = resolveCanonicalVideoGenerateInput(
+      videoGenerateInputSchema.parse({ ...base, generateAudio: false }),
+      undefined
+    );
+    if (!omitted.ok || !disabled.ok) {
+      throw new Error("Seedance 默认声音规范化失败");
+    }
 
-    expect(new Set([omitted, enabled, disabled]).size).toBe(3);
+    expect(createVideoRequestFingerprint(omitted.input)).toBe(
+      createVideoRequestFingerprint(disabled.input)
+    );
+  });
+
+  it("参数、具名位置和参考图顺序都是规范请求语义", () => {
+    const first = {
+      source: "storage" as const,
+      mimeType: "image/png" as const,
+      storageKey: "users/user-1/a.png",
+      byteLength: 10,
+    };
+    const second = {
+      source: "storage" as const,
+      mimeType: "image/png" as const,
+      storageKey: "users/user-1/b.png",
+      byteLength: 20,
+    };
+    const base = {
+      clientRequestId: "request-1",
+      prompt: "first",
+      model: "seedance2" as const,
+      duration: 15,
+      aspectRatio: "9:16" as const,
+      resolution: "480p" as const,
+      generateAudio: false,
+    };
+
+    const references = createVideoRequestFingerprint({
+      ...base,
+      referenceImages: [first, second],
+    });
+    expect(
+      createVideoRequestFingerprint({
+        ...base,
+        referenceImages: [second, first],
+      })
+    ).not.toBe(references);
+    expect(
+      createVideoRequestFingerprint({ ...base, firstFrame: first })
+    ).not.toBe(createVideoRequestFingerprint({ ...base, firstFrame: second }));
+    expect(createVideoRequestFingerprint({ ...base, duration: 14 })).not.toBe(
+      references
+    );
   });
 });

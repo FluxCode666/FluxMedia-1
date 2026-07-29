@@ -18,6 +18,7 @@ export function enrichUserMcpToolArguments(
     operationName === "image.generate" ||
     operationName === "video.generate" ||
     operationName === "video.getStatus" ||
+    operationName === "video.listCapabilities" ||
     operationName === "image.listMyHistoryRecords"
   ) {
     const { userId: _discardedUserId, ...identityFreeArgs } = args;

@@ -51,6 +51,7 @@ const USER_MCP_ALLOWED_OPERATIONS: readonly string[] = [
   "image.generate",
   "video.generate",
   "video.getStatus",
+  "video.listCapabilities",
   "image.listMyHistoryRecords",
 ] as const;
 

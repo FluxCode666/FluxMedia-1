@@ -179,11 +179,11 @@ export function VideoCreatePanel({
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 切换模型族时把时长/比例/分辨率收敛到该族支持的取值。
+  /** 切换真实模型时把时长、比例和分辨率收敛到该模型支持的取值。 */
   const onFamilyChange = (value: string) => {
-    setFamilyId(value);
     const next = families.find((item) => item.family === value);
     if (next) {
+      setFamilyId(next.family);
       setDuration(next.durations[0] ?? duration);
       setRatio(next.ratios[0] ?? ratio);
       setResolution(next.resolutions[0] ?? resolution);

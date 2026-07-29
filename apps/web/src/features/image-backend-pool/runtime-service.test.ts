@@ -11,6 +11,7 @@ import {
   type RuntimeGroupSelectionInput,
   selectTrustedRuntimeGroupTarget,
 } from "./runtime-group-selection";
+import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 
 /** 构造只覆盖分组信任边界所需的最小运行时输入。 */
 function runtimeInput(
@@ -32,10 +33,9 @@ describe("selectTrustedRuntimeGroupTarget", () => {
 
   it("API Key 绑定组覆盖默认选择且允许同组辅助编辑", () => {
     expect(
-      selectTrustedRuntimeGroupTarget(
-        runtimeInput({ apiKeyId: "key-1" }),
-        { groupId: "group-bound" }
-      )
+      selectTrustedRuntimeGroupTarget(runtimeInput({ apiKeyId: "key-1" }), {
+        groupId: "group-bound",
+      })
     ).toEqual({ targetGroupId: "group-bound", isUserRequested: false });
     expect(
       selectTrustedRuntimeGroupTarget(
@@ -75,5 +75,29 @@ describe("selectTrustedRuntimeGroupTarget", () => {
         { groupId: "group-bound" }
       )
     ).toThrow(/不一致/u);
+  });
+});
+
+describe("projectConfiguredVideoModelIds", () => {
+  it("只有 Adobe direct 成员计入视频配置可达性", () => {
+    expect(
+      projectConfiguredVideoModelIds([
+        {
+          memberType: "api",
+          adobeMode: null,
+          supportedModelIds: ["seedance2"],
+        },
+        {
+          memberType: "adobe",
+          adobeMode: "gateway",
+          supportedModelIds: ["seedance2-fast"],
+        },
+        {
+          memberType: "adobe",
+          adobeMode: "direct",
+          supportedModelIds: ["seedance2", "seedance2", "sora2"],
+        },
+      ])
+    ).toEqual(["seedance2", "sora2"]);
   });
 });

@@ -219,20 +219,20 @@ describe("buildModelMarketplaceCatalog", () => {
         supportedResolutions: ["1080p"],
       },
       {
-        configKey: "veo31-ref",
-        modelId: "veo31-ref",
-        iconKey: "google",
-        supportedDurations: [6],
-        supportedAspectRatios: ["9:16"],
-        supportedResolutions: ["720p"],
-      },
-      {
         configKey: "veo31-fast",
         modelId: "veo31-fast",
         iconKey: "google",
         supportedDurations: [8],
         supportedAspectRatios: ["16:9"],
         supportedResolutions: ["1080p"],
+      },
+      {
+        configKey: "veo31-ref",
+        modelId: "veo31-ref",
+        iconKey: "google",
+        supportedDurations: [6],
+        supportedAspectRatios: ["9:16"],
+        supportedResolutions: ["720p"],
       },
     ]);
   });

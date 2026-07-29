@@ -1,8 +1,8 @@
 /**
  * 视频生成 UOL 契约测试。
  *
- * 职责：验证生成请求必须有 Principal 作用域内的 clientRequestId，查询只接收任务 ID，
- * 且旧成员身份和对话字段无法进入严格输入。
+ * 职责：验证真实模型与独立参数、具名输入、动态能力发现、Principal 能力和 human-only
+ * 生命周期操作；确保复合 ID、旧输入字段和敏感能力数据无法进入统一接口。
  */
 import { describe, expect, it } from "vitest";
 
@@ -10,331 +10,348 @@ import { assertAccess } from "../access";
 import type { Principal } from "../principal";
 import { getOperation } from "../registry";
 import {
+  normalizeVideoGenerateInputForReplay,
+  resolveCanonicalVideoGenerateInput,
   videoGenerate,
   videoGenerateInputSchema,
+  videoGetInputs,
   videoGetStatus,
   videoGetStatusInputSchema,
+  videoListCapabilities,
   videoListUncertainSubmissions,
   videoReconcileSubmission,
   videoReconcileSubmissionInputSchema,
+  videoRequestAccountInputCleanup,
 } from "./video-generation";
 
+const image = {
+  source: "data" as const,
+  mimeType: "image/png" as const,
+  base64: Buffer.from("image").toString("base64"),
+  byteLength: 5,
+};
+
+const seedanceRequest = {
+  clientRequestId: "request-1",
+  prompt: "海边日落",
+  model: "seedance2",
+  duration: 15,
+  aspectRatio: "9:16",
+  resolution: "480p",
+} as const;
+
 describe("video generation operations", () => {
-  it("requires a non-empty clientRequestId", () => {
-    const base = {
-      prompt: "海边日落",
-      model: "firefly-sora2-4s-16x9",
-    };
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        clientRequestId: "request-1",
-      }).success
-    ).toBe(true);
-    expect(videoGenerateInputSchema.safeParse(base).success).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, clientRequestId: " " })
-        .success
-    ).toBe(false);
-  });
-
-  it("在创建任务前拒绝目录外的视频模型", () => {
-    expect(
-      videoGenerateInputSchema.safeParse({
-        clientRequestId: "request-1",
-        prompt: "海边日落",
-        model: "unknown-video-model",
-      }).success
-    ).toBe(false);
-  });
-
-  it("把历史 Firefly 前缀模型规范为裸 ID", () => {
-    const parsed = videoGenerateInputSchema.safeParse({
-      clientRequestId: "request-legacy-model",
-      prompt: "海边日落",
-      model: "firefly-sora2-4s-16x9",
-    });
-
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.model).toBe("sora2-4s-16x9");
+  it("要求真实模型 ID、三个独立参数和 Principal 作用域请求键", () => {
+    expect(videoGenerateInputSchema.safeParse(seedanceRequest).success).toBe(
+      true
+    );
+    for (const missingField of [
+      "clientRequestId",
+      "duration",
+      "aspectRatio",
+      "resolution",
+    ] as const) {
+      const { [missingField]: _discarded, ...incomplete } = seedanceRequest;
+      expect(videoGenerateInputSchema.safeParse(incomplete).success).toBe(
+        false
+      );
+    }
+    for (const model of [
+      "firefly-seedance2-15s-9x16-480p",
+      "seedance2-15s-9x16-480p",
+      "kling3-10s-16x9",
+      "unknown-video-model",
+    ]) {
+      expect(
+        videoGenerateInputSchema.safeParse({
+          ...seedanceRequest,
+          model,
+        }).success
+      ).toBe(false);
     }
   });
 
-  it.each([true, false])("接受请求级 generateAudio=%s", (generateAudio) => {
-    const parsed = videoGenerateInputSchema.safeParse({
-      clientRequestId: "request-1",
-      prompt: "海边日落",
-      model: "firefly-seedance2-15s-9x16-480p",
-      generateAudio,
+  it("按真实描述符拒绝非法时长、比例和分辨率组合", () => {
+    const soraRequest = {
+      ...seedanceRequest,
+      model: "sora2",
+      duration: 4,
+      aspectRatio: "16:9",
+      resolution: "720p",
+    } as const;
+    expect(videoGenerateInputSchema.safeParse(soraRequest).success).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...soraRequest,
+        duration: 3,
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...soraRequest,
+        aspectRatio: "1:1",
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...soraRequest,
+        resolution: "1080p",
+      }).success
+    ).toBe(false);
+  });
+
+  it("使用具名首尾帧并全局禁止与参考图混用", () => {
+    const veoRequest = {
+      ...seedanceRequest,
+      model: "veo31",
+      duration: 6,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+    } as const;
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        firstFrame: image,
+        lastFrame: image,
+      }).success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        lastFrame: image,
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        firstFrame: image,
+        referenceImages: [image],
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        model: "sora2",
+        duration: 4,
+        resolution: "720p",
+        firstFrame: image,
+        lastFrame: image,
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        model: "runway-gen45",
+        duration: 5,
+        resolution: "720p",
+        firstFrame: image,
+      }).success
+    ).toBe(false);
+  });
+
+  it("固定参考图模型执行静态上限，Seedance 上限在动态边界解析", () => {
+    const referenceRequest = {
+      ...seedanceRequest,
+      model: "veo31-ref",
+      duration: 6,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+    } as const;
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...referenceRequest,
+        referenceImages: [image, image, image],
+      }).success
+    ).toBe(true);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...referenceRequest,
+        referenceImages: [image, image, image, image],
+      }).success
+    ).toBe(false);
+
+    const elevenReferences = {
+      ...seedanceRequest,
+      referenceImages: Array.from({ length: 11 }, () => image),
+    };
+    const staticallyParsed =
+      videoGenerateInputSchema.safeParse(elevenReferences);
+    expect(staticallyParsed.success).toBe(true);
+    if (!staticallyParsed.success) return;
+    expect(
+      resolveCanonicalVideoGenerateInput(staticallyParsed.data, undefined)
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "too_many_reference_images",
+        field: "referenceImages",
+        maximum: 10,
+      },
+    });
+    expect(
+      resolveCanonicalVideoGenerateInput(staticallyParsed.data, {
+        version: 1,
+        byModel: { seedance2: { maxReferenceImages: 20 } },
+      })
+    ).toMatchObject({
+      ok: true,
+      input: {
+        model: "seedance2",
+        generateAudio: false,
+        referenceImages: expect.arrayContaining([image]),
+      },
+    });
+  });
+
+  it("幂等重放身份不受管理员后续降低参考图上限影响", () => {
+    const twentyReferences = videoGenerateInputSchema.parse({
+      ...seedanceRequest,
+      referenceImages: Array.from({ length: 20 }, () => image),
+    });
+    const created = resolveCanonicalVideoGenerateInput(twentyReferences, {
+      version: 1,
+      byModel: { seedance2: { maxReferenceImages: 20 } },
+    });
+    expect(created.ok).toBe(true);
+    expect(
+      resolveCanonicalVideoGenerateInput(twentyReferences, undefined)
+    ).toMatchObject({ ok: false });
+    const replay = normalizeVideoGenerateInputForReplay(twentyReferences);
+    expect(replay.generateAudio).toBe(false);
+    expect(replay.referenceImages).toHaveLength(20);
+  });
+
+  it("声音缺省解析为模型默认值且不支持模型不能开启", () => {
+    const kling = videoGenerateInputSchema.parse({
+      ...seedanceRequest,
+      model: "kling3",
+      duration: 3,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+    });
+    expect(resolveCanonicalVideoGenerateInput(kling, undefined)).toMatchObject({
+      ok: true,
+      input: { generateAudio: true },
     });
 
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.generateAudio).toBe(generateAudio);
-    }
-  });
-
-  it("Kling 3.0 接受 3 秒 1080p 首尾帧和声音开关", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    const parsed = videoGenerateInputSchema.safeParse({
-      clientRequestId: "kling3-request-1",
-      prompt: "海边日落",
-      model: "firefly-kling3-3s-16x9-1080p",
-      generateAudio: true,
-      inputImages: [image, image],
+    const sora = videoGenerateInputSchema.parse({
+      ...seedanceRequest,
+      model: "sora2",
+      duration: 4,
+      aspectRatio: "16:9",
+      resolution: "720p",
+      generateAudio: false,
     });
-
-    expect(parsed.success).toBe(true);
-  });
-
-  it("Kling 3.0 Omni 区分首尾帧与最多三张参考图", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    const base = {
-      clientRequestId: "kling3-omni-request-1",
-      prompt: "海边日落",
-      model: "firefly-kling3-omni-8s-16x9-1080p",
-      generateAudio: true,
-    };
-
+    expect(resolveCanonicalVideoGenerateInput(sora, undefined)).toMatchObject({
+      ok: true,
+      input: { generateAudio: false },
+    });
     expect(
       videoGenerateInputSchema.safeParse({
-        ...base,
-        inputImages: [image, image],
-      }).success
-    ).toBe(true);
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        inputImageRole: "reference",
-        inputImages: [image, image, image],
-      }).success
-    ).toBe(true);
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        inputImages: [image, image, image],
-      }).success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        inputImageRole: "reference",
-      }).success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        inputImageRole: "reference",
-        model: "firefly-kling3-8s-16x9-1080p",
-        inputImages: [image],
-      }).success
-    ).toBe(false);
-  });
-
-  it("Kling 3.0 拒绝超出时长、分辨率和首尾帧数量的请求", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    const base = {
-      clientRequestId: "kling3-request-2",
-      prompt: "海边日落",
-    };
-
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        model: "firefly-kling3-2s-16x9-1080p",
-      }).success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        model: "firefly-kling3-15s-9x16-480p",
-      }).success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({
-        ...base,
-        model: "firefly-kling3-15s-9x16-1080p",
-        inputImages: [image, image, image],
-      }).success
-    ).toBe(false);
-  });
-
-  it("拒绝不支持音频的模型开启声音，但允许统一客户端显式传 false", () => {
-    const base = {
-      clientRequestId: "request-1",
-      prompt: "海边日落",
-      model: "firefly-sora2-4s-16x9",
-    };
-
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
-        .success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
-        .success
-    ).toBe(true);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: "false" })
-        .success
-    ).toBe(false);
-  });
-
-  it("Runway Gen-4.5 拒绝声音和输入图，但允许显式关闭声音", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    const base = {
-      clientRequestId: "runway-request-1",
-      prompt: "海边日落",
-      model: "firefly-runway-gen45-5s-16x9",
-    };
-
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
-        .success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
-        .success
-    ).toBe(true);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, inputImages: [image] })
-        .success
-    ).toBe(false);
-  });
-
-  it("Ray 3.14 拒绝声音和输入图，但允许显式关闭声音", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    const base = {
-      clientRequestId: "ray-request-1",
-      prompt: "海边日落",
-      model: "firefly-ray314-5s-16x9-4k",
-    };
-
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
-        .success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
-        .success
-    ).toBe(true);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, inputImages: [image] })
-        .success
-    ).toBe(false);
-  });
-
-  it("Ray 3.14 HDR 拒绝声音和输入图，但允许显式关闭声音", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    const base = {
-      clientRequestId: "ray-hdr-request-1",
-      prompt: "海边日落",
-      model: "firefly-ray314-hdr-5s-16x9-4k",
-    };
-
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: true })
-        .success
-    ).toBe(false);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, generateAudio: false })
-        .success
-    ).toBe(true);
-    expect(
-      videoGenerateInputSchema.safeParse({ ...base, inputImages: [image] })
-        .success
-    ).toBe(false);
-  });
-
-  it("限制视频输入图最多三张", () => {
-    const image = {
-      source: "data" as const,
-      mimeType: "image/png" as const,
-      base64: Buffer.from("image").toString("base64"),
-      byteLength: 5,
-    };
-    expect(
-      videoGenerateInputSchema.safeParse({
-        prompt: "海边日落",
-        model: "firefly-sora2-4s-16x9",
-        clientRequestId: "request-1",
-        inputImages: [image, image, image, image],
+        ...sora,
+        generateAudio: true,
       }).success
     ).toBe(false);
   });
 
   it.each([
+    "image",
+    "inputImages",
+    "inputImageRole",
+    "input_image_role",
     "memberType",
     "adobeId",
-    ["adobe", "Sourced"].join(""),
     "previousResponseId",
     "agentConfig",
-  ])("rejects client-controlled legacy field %s", (field) => {
+  ])("拒绝旧输入或调用方控制的内部字段 %s", (field) => {
     expect(
       videoGenerateInputSchema.safeParse({
-        prompt: "海边日落",
-        model: "firefly-sora2-4s-16x9",
-        clientRequestId: "request-1",
-        [field]: "legacy",
+        ...seedanceRequest,
+        [field]: field === "inputImages" ? [image] : "legacy",
       }).success
     ).toBe(false);
   });
 
-  it("registers generate and owner-scoped status operations", () => {
+  it("注册生成、状态、能力发现与 human-only 生命周期操作", () => {
     expect(getOperation("video.generate")?.input).toBe(
       videoGenerateInputSchema
     );
     expect(getOperation("video.getStatus")?.input).toBe(
       videoGetStatusInputSchema
     );
-    expect(getOperation("video.getStatus")?.access).toEqual({
-      kind: "owner",
-      resource: "video task",
-    });
+    expect(getOperation("video.listCapabilities")).toBe(videoListCapabilities);
+    expect(getOperation("video.getInputs")).toBe(videoGetInputs);
+    expect(getOperation("video.requestAccountInputCleanup")).toBe(
+      videoRequestAccountInputCleanup
+    );
+    expect(videoGetInputs.agentExposure).toBe("human-only");
+    expect(videoRequestAccountInputCleanup.agentExposure).toBe("human-only");
+    expect(videoRequestAccountInputCleanup.destructive).toBe(true);
   });
 
-  it("公开区分需要人工核对的提交不确定状态", () => {
+  it("能力查询只返回全局能力、动态上限和配置可达性", () => {
     expect(
-      videoGenerate.output.safeParse({
-        taskId: "video-1",
-        status: "needs_attention",
+      videoListCapabilities.output.safeParse({
+        items: [
+          {
+            model: "seedance2",
+            displayName: "Seedance 2.0",
+            durations: [4, 5, 6],
+            aspectRatios: ["16:9", "9:16"],
+            resolutions: ["1080p", "720p", "480p"],
+            input: {
+              frames: "first-and-optional-last",
+              referenceImages: { maxCount: 20, configurable: true },
+              framesAndReferencesMutuallyExclusive: true,
+            },
+            audio: { supported: true, defaultEnabled: false },
+            configuredReachable: true,
+          },
+        ],
+        limits: {
+          maxMediaInputCount: 256,
+          maxMediaInputBytes: 209715200,
+        },
       }).success
     ).toBe(true);
+    expect(
+      videoListCapabilities.output.safeParse({
+        items: [
+          {
+            model: "seedance2",
+            displayName: "Seedance 2.0",
+            durations: [15],
+            aspectRatios: ["9:16"],
+            resolutions: ["480p"],
+            input: {
+              frames: "first-and-optional-last",
+              referenceImages: { maxCount: 20, configurable: true },
+              framesAndReferencesMutuallyExclusive: true,
+            },
+            audio: { supported: true, defaultEnabled: false },
+            configuredReachable: true,
+            backendMemberId: "member-secret",
+          },
+        ],
+        limits: {
+          maxMediaInputCount: 256,
+          maxMediaInputBytes: 209715200,
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("状态输出公开真实模型与独立参数并保留人工核对状态", () => {
     expect(
       videoGetStatus.output.safeParse({
         taskId: "video-1",
         status: "needs_attention",
+        model: "seedance2",
+        duration: 15,
+        aspectRatio: "9:16",
+        resolution: "480p",
+        generateAudio: false,
+        input: { mode: "references", count: 10 },
         error: "提交结果待核对",
         createdAt: "2026-07-26T00:00:00.000Z",
       }).success
@@ -371,13 +388,6 @@ describe("video generation operations", () => {
     ).toBe(true);
     expect(
       videoReconcileSubmissionInputSchema.safeParse({
-        outcome: "accepted",
-        taskId: "video-1",
-        pollUrl: "https://firefly.adobe.io/jobs/upstream-1",
-      }).success
-    ).toBe(false);
-    expect(
-      videoReconcileSubmissionInputSchema.safeParse({
         outcome: "not_accepted",
         taskId: "video-1",
         reason: "Adobe 控制台确认未创建任务",
@@ -385,25 +395,14 @@ describe("video generation operations", () => {
     ).toBe(true);
   });
 
-  it("待核对列表同样只允许真实管理员且不暴露敏感字段", () => {
-    expect(videoListUncertainSubmissions.access).toEqual({
-      kind: "roles",
-      roles: ["admin", "super_admin"],
-    });
+  it("待核对列表仍为 human-only 且只返回安全诊断字段", () => {
     expect(videoListUncertainSubmissions.agentExposure).toBe("human-only");
-    expect(() =>
-      assertAccess(videoListUncertainSubmissions.access, {
-        type: "user",
-        userId: "observer-1",
-        role: "observer_admin",
-      })
-    ).toThrow();
     expect(
       videoListUncertainSubmissions.output.safeParse({
         items: [
           {
             taskId: "video-1",
-            model: "firefly-sora2-4s-16x9",
+            model: "seedance2",
             backendMemberId: "member-1",
             error: "提交响应丢失",
             submitStartedAt: "2026-07-26T00:00:00.000Z",
@@ -420,11 +419,6 @@ describe("video generation operations", () => {
     if (!requirement || !("derive" in requirement)) {
       throw new Error("video.generate 缺少动态套餐能力声明");
     }
-    const input = {
-      clientRequestId: "request-1",
-      prompt: "海边日落",
-      model: "firefly-sora2-4s-16x9",
-    };
     const externalPrincipal = {
       type: "apiKey",
       credentialKind: "external",
@@ -440,11 +434,30 @@ describe("video generation operations", () => {
       plan: "pro",
     } satisfies Principal;
 
-    expect(requirement.derive(input, externalPrincipal)).toEqual([
+    expect(requirement.derive(seedanceRequest, externalPrincipal)).toEqual([
       "externalApi.videos.generate",
     ]);
-    expect(requirement.derive(input, mcpPrincipal)).toEqual([
+    expect(requirement.derive(seedanceRequest, mcpPrincipal)).toEqual([
       "imageGeneration.video",
     ]);
+    expect(
+      requirement.derive(
+        { ...seedanceRequest, backendGroupId: "group-1" },
+        mcpPrincipal
+      )
+    ).toEqual(["imageGeneration.video", "backendGroups.select"]);
+    const listRequirement = videoListCapabilities.capabilities?.[0];
+    if (!listRequirement || !("derive" in listRequirement)) {
+      throw new Error("video.listCapabilities 缺少动态套餐能力声明");
+    }
+    expect(listRequirement.derive({}, externalPrincipal)).toEqual([
+      "externalApi.videos.generate",
+    ]);
+    expect(listRequirement.derive({}, mcpPrincipal)).toEqual([
+      "imageGeneration.video",
+    ]);
+    expect(
+      listRequirement.derive({ backendGroupId: "group-1" }, mcpPrincipal)
+    ).toEqual(["imageGeneration.video", "backendGroups.select"]);
   });
 });

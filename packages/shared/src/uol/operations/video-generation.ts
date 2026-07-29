@@ -7,13 +7,20 @@
 import { z } from "zod";
 
 import {
-  type FireflyVideoInputImageRole,
-  fireflyVideoMaxInputImages,
-  isFireflyVideoModelId,
-  resolveFireflyVideoModel,
-  resolveFireflyVideoModelId,
-} from "../../adobe/firefly-direct/video-catalog";
-import { mediaInputReferencesSchema } from "../../image-generation/media-contract";
+  MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_COUNT,
+  mediaInputReferenceSchema,
+  mediaInputReferencesSchema,
+} from "../../image-generation/media-contract";
+import {
+  resolveEffectiveVideoModelCapability,
+  type VideoModelCapabilityDescriptor,
+  validateVideoModelParameters,
+  videoAspectRatioSchema,
+  videoFrameInputCapabilitySchema,
+  videoModelIdSchema,
+  videoResolutionSchema,
+} from "../../video-generation";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
@@ -24,60 +31,174 @@ export const videoGenerateInputSchema = z
     prompt: z.string().trim().min(1).max(100_000),
     negativePrompt: z.string().max(100_000).optional(),
     generateAudio: z.boolean().optional(),
-    model: z
-      .string()
-      .trim()
-      .min(1)
-      .max(120)
-      .refine((modelId) => isFireflyVideoModelId(modelId), {
-        message: "Unsupported video model",
-      })
-      .transform(
-        (modelId) => resolveFireflyVideoModelId(modelId) ?? modelId
-      ),
+    model: videoModelIdSchema,
+    duration: z.number().int().positive(),
+    aspectRatio: videoAspectRatioSchema,
+    resolution: videoResolutionSchema,
     backendGroupId: z.string().trim().min(1).max(128).optional(),
-    inputImages: mediaInputReferencesSchema.max(3).optional(),
-    inputImageRole: z
-      .enum(["frame", "reference"] satisfies FireflyVideoInputImageRole[])
-      .optional(),
+    firstFrame: mediaInputReferenceSchema.optional(),
+    lastFrame: mediaInputReferenceSchema.optional(),
+    referenceImages: mediaInputReferencesSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
-    const model = resolveFireflyVideoModel(input.model);
-    if (input.generateAudio === true && model && !model.supportsAudio) {
+    const parameters = validateVideoModelParameters(input);
+    if (!parameters.ok) {
+      context.addIssue({
+        code: "custom",
+        message: parameters.error.message,
+        path: [parameters.error.field],
+      });
+      return;
+    }
+    const capability = parameters.capability;
+    if (input.generateAudio === true && !capability.audio.supported) {
       context.addIssue({
         code: "custom",
         message: "This video model does not support audio generation",
         path: ["generateAudio"],
       });
     }
-    const inputImageRole = input.inputImageRole ?? "frame";
-    const maxInputImages = model
-      ? fireflyVideoMaxInputImages(model, inputImageRole)
-      : 3;
-    if (input.inputImageRole && !input.inputImages?.length) {
+    if (input.lastFrame && !input.firstFrame) {
       context.addIssue({
         code: "custom",
-        message: "inputImageRole requires inputImages",
-        path: ["inputImageRole"],
+        message: "lastFrame requires firstFrame",
+        path: ["lastFrame"],
       });
     }
-    if (input.inputImages?.length && maxInputImages === 0) {
+    if (input.firstFrame && capability.input.frames === "none") {
       context.addIssue({
         code: "custom",
-        message: `This video model does not support ${inputImageRole} input images`,
-        path: ["inputImageRole"],
+        message: "This video model does not support frame inputs",
+        path: ["firstFrame"],
       });
-      return;
     }
-    if ((input.inputImages?.length ?? 0) > maxInputImages) {
+    if (
+      input.lastFrame &&
+      capability.input.frames !== "first-and-optional-last"
+    ) {
       context.addIssue({
         code: "custom",
-        message: `This video model supports at most ${maxInputImages} input images`,
-        path: ["inputImages"],
+        message: "This video model does not support lastFrame",
+        path: ["lastFrame"],
+      });
+    }
+    const referenceCount = input.referenceImages?.length ?? 0;
+    if (referenceCount > 0 && capability.input.referenceImages.maxCount === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "This video model does not support reference images",
+        path: ["referenceImages"],
+      });
+    }
+    if (
+      referenceCount > capability.input.referenceImages.maxCount &&
+      !capability.input.referenceImages.configurable
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: `This video model supports at most ${capability.input.referenceImages.maxCount} reference images`,
+        path: ["referenceImages"],
+      });
+    }
+    if ((input.firstFrame || input.lastFrame) && referenceCount > 0) {
+      context.addIssue({
+        code: "custom",
+        message: "Frame inputs and reference images are mutually exclusive",
+        path: ["referenceImages"],
       });
     }
   });
+
+/** video.generate 经静态 schema 收窄后的输入。 */
+export type VideoGenerateInput = z.infer<typeof videoGenerateInputSchema>;
+
+/** UOL 动态能力解析后的规范视频请求。 */
+export type CanonicalVideoGenerateInput = Omit<
+  VideoGenerateInput,
+  "generateAudio"
+> & {
+  generateAudio: boolean;
+};
+
+/** Seedance 动态参考图上限失败的稳定结构。 */
+export type VideoGenerateCapabilityError = {
+  code: "too_many_reference_images";
+  field: "referenceImages";
+  message: string;
+  maximum: number;
+  received: number;
+};
+
+/** 动态能力解析结果；设置脏值继续由 Zod 显式抛出，不能静默回退。 */
+export type CanonicalVideoGenerateInputResult =
+  | {
+      ok: true;
+      input: CanonicalVideoGenerateInput;
+      capability: VideoModelCapabilityDescriptor;
+    }
+  | { ok: false; error: VideoGenerateCapabilityError };
+
+/**
+ * 为历史任务重放解析不随动态上限变化的规范默认值。
+ *
+ * @param input - 已通过静态视频请求 schema 的输入。
+ * @returns 只补齐静态声音默认值的规范身份；保留全部具名输入与顺序。
+ * @sideEffects 无。
+ * @throws ZodError 静态目录损坏时 fail closed；不得用于放行新任务的动态数量校验。
+ */
+export function normalizeVideoGenerateInputForReplay(
+  input: VideoGenerateInput
+): CanonicalVideoGenerateInput {
+  const capability = resolveEffectiveVideoModelCapability(
+    input.model,
+    undefined
+  );
+  return {
+    ...input,
+    generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
+  };
+}
+
+/**
+ * 应用运行时能力覆盖并解析声音默认值。
+ *
+ * @param input - 已通过 videoGenerateInputSchema 的静态规范请求。
+ * @param capabilityOverrides - 系统设置中的未知覆盖值；缺行使用默认 10，脏值抛错。
+ * @returns 动态数量合法时返回规范请求和有效能力，超量时返回稳定错误。
+ * @sideEffects 无。
+ * @throws ZodError 覆盖设置存在但损坏时 fail closed。
+ */
+export function resolveCanonicalVideoGenerateInput(
+  input: VideoGenerateInput,
+  capabilityOverrides: unknown
+): CanonicalVideoGenerateInputResult {
+  const capability = resolveEffectiveVideoModelCapability(
+    input.model,
+    capabilityOverrides
+  );
+  const referenceCount = input.referenceImages?.length ?? 0;
+  if (referenceCount > capability.input.referenceImages.maxCount) {
+    return {
+      ok: false,
+      error: {
+        code: "too_many_reference_images",
+        field: "referenceImages",
+        message: `This video model supports at most ${capability.input.referenceImages.maxCount} reference images`,
+        maximum: capability.input.referenceImages.maxCount,
+        received: referenceCount,
+      },
+    };
+  }
+  return {
+    ok: true,
+    capability,
+    input: {
+      ...input,
+      generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
+    },
+  };
+}
 
 /** video.getStatus 的归属查询输入契约。 */
 export const videoGetStatusInputSchema = z
@@ -115,13 +236,116 @@ export const videoListUncertainSubmissionsInputSchema = z
   })
   .strict();
 
-/** 根据 Principal 推导站内或外部视频能力。 */
-function deriveVideoCapability(principal: Principal): string[] {
-  return [
+/** 能力查询允许站内用户显式选择可信分组；API Key 绑定由 execute 强制收口。 */
+export const videoListCapabilitiesInputSchema = z
+  .object({
+    backendGroupId: z.string().trim().min(1).max(128).optional(),
+  })
+  .strict();
+
+/** 视频任务输入摘要；回调与列表只消费模式和数量，不含 URL 或存储身份。 */
+export const videoInputSummarySchema = z
+  .object({
+    mode: z.enum(["none", "first-frame", "first-last-frames", "references"]),
+    count: z.number().int().min(0).max(MAX_MEDIA_INPUT_COUNT),
+  })
+  .strict();
+
+/** 单个真实视频模型的公开有效能力与配置可达性。 */
+export const videoCapabilityItemSchema = z
+  .object({
+    model: videoModelIdSchema,
+    displayName: z.string().trim().min(1).max(160),
+    durations: z.array(z.number().int().positive()).min(1),
+    aspectRatios: z.array(videoAspectRatioSchema).min(1),
+    resolutions: z.array(videoResolutionSchema).min(1),
+    input: z
+      .object({
+        frames: videoFrameInputCapabilitySchema,
+        referenceImages: z
+          .object({
+            maxCount: z.number().int().nonnegative(),
+            configurable: z.boolean(),
+          })
+          .strict(),
+        framesAndReferencesMutuallyExclusive: z.boolean(),
+      })
+      .strict(),
+    audio: z
+      .object({
+        supported: z.boolean(),
+        defaultEnabled: z.boolean(),
+      })
+      .strict(),
+    configuredReachable: z.boolean(),
+  })
+  .strict();
+
+/** video.listCapabilities 的稳定输出，不包含成员、凭据、健康或容量。 */
+export const videoListCapabilitiesOutputSchema = z
+  .object({
+    items: z.array(videoCapabilityItemSchema),
+    limits: z
+      .object({
+        maxMediaInputCount: z.literal(MAX_MEDIA_INPUT_COUNT),
+        maxMediaInputBytes: z.literal(MAX_MEDIA_INPUT_BYTES),
+      })
+      .strict(),
+  })
+  .strict();
+
+/** human-only 视频输入详情查询。 */
+export const videoGetInputsInputSchema = z
+  .object({
+    taskId: z.string().trim().min(1).max(128),
+  })
+  .strict();
+
+const videoInputAssetSchema = z
+  .object({
+    url: z.string().url(),
+    mimeType: z.string().trim().min(1).max(128),
+  })
+  .strict();
+
+/** human-only 视频输入详情输出；签名 URL 是短期读取能力，不返回 bucket/key。 */
+export const videoGetInputsOutputSchema = z
+  .object({
+    taskId: z.string(),
+    summary: videoInputSummarySchema,
+    firstFrame: videoInputAssetSchema.optional(),
+    lastFrame: videoInputAssetSchema.optional(),
+    referenceImages: z.array(videoInputAssetSchema).optional(),
+  })
+  .strict();
+
+/** 账号删除链路登记输入资产清理意图的幂等输入。 */
+export const videoRequestAccountInputCleanupInputSchema = z
+  .object({
+    clientRequestId: z.string().trim().min(1).max(128),
+  })
+  .strict();
+
+/** 根据已校验输入与 Principal 推导视频和显式分组选择能力。 */
+function deriveVideoCapabilities(
+  input: unknown,
+  principal: Principal
+): string[] {
+  const capabilities = [
     isExternalApiKeyPrincipal(principal)
       ? "externalApi.videos.generate"
       : "imageGeneration.video",
   ];
+  if (
+    !isExternalApiKeyPrincipal(principal) &&
+    typeof input === "object" &&
+    input !== null &&
+    "backendGroupId" in input &&
+    typeof input.backendGroupId === "string"
+  ) {
+    capabilities.push("backendGroups.select");
+  }
+  return capabilities;
 }
 
 /** 创建幂等视频任务；clientRequestId 的真实唯一域由 Principal 所有者决定。 */
@@ -145,7 +369,7 @@ export const videoGenerate = defineOperation({
   }),
   access: { kind: "protected" },
   capabilities: [
-    { derive: (_input, principal) => deriveVideoCapability(principal) },
+    { derive: (input, principal) => deriveVideoCapabilities(input, principal) },
   ],
   allowSystemCapabilityBypass: true,
   readOnly: false,
@@ -158,6 +382,29 @@ export const videoGenerate = defineOperation({
   sideEffects: ["billing", "storage", "external-call", "queue"],
   execute: async () => {
     throw new Error("Not yet wired: video.generate");
+  },
+});
+
+/** 查询全局视频能力与当前 Principal 的配置可达性。 */
+export const videoListCapabilities = defineOperation({
+  name: "video.listCapabilities",
+  domain: "image-generation",
+  title: "查询视频模型能力",
+  description:
+    "返回真实视频模型、独立参数、输入与声音能力，以及当前可信分组是否已配置可达；不返回成员、凭据、健康、并发或实时容量。",
+  input: videoListCapabilitiesInputSchema,
+  output: videoListCapabilitiesOutputSchema,
+  access: { kind: "protected" },
+  capabilities: [
+    { derive: (input, principal) => deriveVideoCapabilities(input, principal) },
+  ],
+  allowSystemCapabilityBypass: true,
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: video.listCapabilities");
   },
 });
 
@@ -179,6 +426,12 @@ export const videoGetStatus = defineOperation({
       "completed",
       "failed",
     ]),
+    model: videoModelIdSchema,
+    duration: z.number().int().positive(),
+    aspectRatio: videoAspectRatioSchema,
+    resolution: videoResolutionSchema,
+    generateAudio: z.boolean(),
+    input: videoInputSummarySchema,
     progress: z.number().min(0).max(100).optional(),
     videoUrl: z.string().url().optional(),
     error: z.string().optional(),
@@ -187,7 +440,7 @@ export const videoGetStatus = defineOperation({
   }),
   access: { kind: "owner", resource: "video task" },
   capabilities: [
-    { derive: (_input, principal) => deriveVideoCapability(principal) },
+    { derive: (input, principal) => deriveVideoCapabilities(input, principal) },
   ],
   allowSystemCapabilityBypass: true,
   readOnly: true,
@@ -196,6 +449,55 @@ export const videoGetStatus = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: video.getStatus");
+  },
+});
+
+/** 读取任务自有的实际输入图；owner 与管理员授权在 binding 中统一校验。 */
+export const videoGetInputs = defineOperation({
+  name: "video.getInputs",
+  domain: "image-generation",
+  title: "查看视频任务输入",
+  description:
+    "为任务所有者或具备管理历史权限的管理员返回任务清单白名单对象的短期读取 URL。",
+  input: videoGetInputsInputSchema,
+  output: videoGetInputsOutputSchema,
+  access: { kind: "owner", resource: "video task inputs" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: video.getInputs");
+  },
+});
+
+/** 账号删除链路登记持久输入清理意图，不提供独立的用户删除任务功能。 */
+export const videoRequestAccountInputCleanup = defineOperation({
+  name: "video.requestAccountInputCleanup",
+  domain: "storage",
+  title: "登记账号视频输入清理",
+  description:
+    "在账号删除事务前幂等登记该账号视频输入的生命周期清理意图；活动任务等待终态后处理。",
+  input: videoRequestAccountInputCleanupInputSchema,
+  output: z
+    .object({
+      cleanupRequestId: z.string(),
+      status: z.enum(["queued", "existing"]),
+    })
+    .strict(),
+  access: { kind: "protected" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: {
+    kind: "required",
+    keyField: "clientRequestId",
+    scope: "per-user",
+  },
+  sideEffects: ["storage", "queue", "audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: video.requestAccountInputCleanup");
   },
 });
 

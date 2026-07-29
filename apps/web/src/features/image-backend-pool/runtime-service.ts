@@ -34,6 +34,7 @@ import {
   defaultBackendPoolRepository,
 } from "./repository";
 import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
+import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 import { BackendSchedulerError } from "./scheduler-error";
 
 const IMAGE_LEASE_TTL_MS = 21 * 60 * 1000;
@@ -51,6 +52,12 @@ const groupRowSchema = z.object({
 
 const apiKeyGroupBindingRowSchema = z.object({
   generation_group_id: z.string().trim().min(1).nullable(),
+});
+
+const configuredModelIdsRowSchema = z.object({
+  member_type: z.enum(["api", "adobe"]),
+  adobe_mode: z.enum(["gateway", "direct"]).nullable(),
+  supported_model_ids: z.array(z.string().trim().min(1)),
 });
 
 const runtimeConfigRowSchema = z.object({
@@ -106,6 +113,14 @@ export interface CreateRuntimeBackendSessionInput {
   requestKind: "image" | "video";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
+}
+
+/** 配置可达性查询所需的 Principal 分组事实。 */
+export interface ListConfiguredRuntimeModelIdsInput {
+  userId: string;
+  apiKeyId?: string;
+  requestedGroupId?: string;
+  pinnedGroupId?: string;
 }
 
 /** 运行时会话只暴露获租、结果上报和关闭，避免调用方直接操作租约行。 */
@@ -225,6 +240,51 @@ async function resolveRuntimeBackendGroup(
     imageCreditOverrides: getGroupImageCreditOverrides(group.metadata),
     videoCreditOverrides: getGroupVideoCreditOverrides(group.metadata),
   };
+}
+
+/**
+ * 读取当前 Principal 可信分组中已配置的模型 ID。
+ *
+ * @param input - 用户、可选外部 API Key 绑定和站内显式分组选择。
+ * @returns 去重后的成员配置模型 ID；忽略健康、冷却、租约、并发和实时容量。
+ * @sideEffects 读取套餐、API Key 绑定、分组与成员配置，不获取租约也不更新成员状态。
+ * @throws 分组不可达、API Key 覆盖或套餐不满足时沿用运行时选择错误。
+ */
+export async function listConfiguredRuntimeModelIds(
+  input: ListConfiguredRuntimeModelIdsInput
+): Promise<string[]> {
+  const group = await resolveRuntimeBackendGroup({
+    ...input,
+    modelId: "__video_capability_probe__",
+    requestKind: "video",
+    requiresContentSafety: false,
+  });
+  const { db } = await import("@repo/database");
+  const rows = z.array(configuredModelIdsRowSchema).parse(
+    extractExecuteRows(
+      await db.execute(sql`
+        select
+          member.type as member_type,
+          adobe.mode as adobe_mode,
+          member.supported_model_ids
+        from image_backend_member as member
+        inner join image_backend_member_group as membership
+          on membership.member_id = member.id
+        left join image_backend_member_adobe_config as adobe
+          on adobe.member_id = member.id
+        where membership.group_id = ${group.id}
+          and member.is_enabled = true
+        order by member.id asc
+      `)
+    )
+  );
+  return projectConfiguredVideoModelIds(
+    rows.map((row) => ({
+      memberType: row.member_type,
+      adobeMode: row.adobe_mode,
+      supportedModelIds: row.supported_model_ids,
+    }))
+  );
 }
 
 /** 根据统一成员与类型配置表构造现有媒体适配器可消费的配置快照。 */
