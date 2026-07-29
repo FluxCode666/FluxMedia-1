@@ -14,7 +14,7 @@ import {
 } from "./member-supported-models";
 
 describe("MemberSupportedModels", () => {
-  it("使用单行省略样式渲染完整模型文本", () => {
+  it("渲染带数量、省略文本和展开提示的可点击摘要", () => {
     const markup = renderToStaticMarkup(
       createElement(MemberSupportedModels, {
         modelIds: ["seedance2", "kling-v3-omni"],
@@ -23,15 +23,20 @@ describe("MemberSupportedModels", () => {
 
     expect(markup).toContain("truncate");
     expect(markup).toContain("seedance2、kling-v3-omni");
+    expect(markup).toContain("支持模型");
+    expect(markup).toContain("展开全部");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="展开全部支持模型，共 2 个"');
+    expect(markup).toContain(">2<");
   });
 
-  it("空模型状态不渲染 Tooltip 触发器", () => {
+  it("空模型状态不渲染展开按钮", () => {
     const markup = renderToStaticMarkup(
       createElement(MemberSupportedModels, { modelIds: [] })
     );
 
     expect(markup).toContain("未配置模型");
-    expect(markup).not.toContain("data-state");
+    expect(markup).not.toContain("<button");
   });
 });
 
@@ -39,33 +44,53 @@ describe("buildMemberSupportedModelsPresentation", () => {
   it("文本溢出时保留完整模型集合作为 Tooltip 内容并允许聚焦", () => {
     const presentation = buildMemberSupportedModelsPresentation(
       ["seedance2", "kling-v3-omni", "runway-gen4.5"],
-      true
+      true,
+      false
     );
 
     expect(presentation).toEqual({
       isEmpty: false,
-      isFocusable: true,
+      isExpanded: false,
+      modelCount: 3,
       text: "seedance2、kling-v3-omni、runway-gen4.5",
+      toggleLabel: "展开全部",
       tooltipText: "seedance2、kling-v3-omni、runway-gen4.5",
     });
   });
 
-  it("文本未溢出时只显示摘要，不创建 Tooltip 焦点", () => {
+  it("展开时切换为收起文案并关闭 Tooltip", () => {
     expect(
-      buildMemberSupportedModelsPresentation(["seedance2"], false)
+      buildMemberSupportedModelsPresentation(["seedance2"], true, true)
     ).toEqual({
       isEmpty: false,
-      isFocusable: false,
+      isExpanded: true,
+      modelCount: 1,
       text: "seedance2",
+      toggleLabel: "收起",
+      tooltipText: null,
+    });
+  });
+
+  it("文本未溢出时仍可点击展开，但不创建 Tooltip", () => {
+    expect(
+      buildMemberSupportedModelsPresentation(["seedance2"], false, false)
+    ).toEqual({
+      isEmpty: false,
+      isExpanded: false,
+      modelCount: 1,
+      text: "seedance2",
+      toggleLabel: "展开全部",
       tooltipText: null,
     });
   });
 
   it("空模型集合显示明确状态且永不创建 Tooltip", () => {
-    expect(buildMemberSupportedModelsPresentation([], true)).toEqual({
+    expect(buildMemberSupportedModelsPresentation([], true, true)).toEqual({
       isEmpty: true,
-      isFocusable: false,
+      isExpanded: false,
+      modelCount: 0,
       text: "未配置模型",
+      toggleLabel: "",
       tooltipText: null,
     });
   });
