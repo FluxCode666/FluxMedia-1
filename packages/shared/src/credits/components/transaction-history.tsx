@@ -8,7 +8,12 @@
 
 import { ENTERPRISE_RESOURCE_PACKAGE_ID } from "@repo/shared/credits/config";
 import { Badge } from "@repo/ui/components/badge";
-import { Button } from "@repo/ui/components/button";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@repo/ui/components/pagination";
 import {
   Select,
   SelectContent,
@@ -335,44 +340,73 @@ export function TransactionHistory({ timeZone }: { timeZone: string }) {
           <span>{t("pageOf", { page, total: totalPages })}</span>
 
           {/* 分页按钮 */}
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPage(1)}
-              disabled={page === 1}
-            >
-              <ChevronsLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setPage(totalPages)}
-              disabled={page === totalPages}
-            >
-              <ChevronsRight className="h-4 w-4" />
-            </Button>
-          </div>
+          <Pagination
+            aria-label={t("pagination")}
+            className="mx-0 w-auto justify-end"
+          >
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationLink
+                  aria-label={t("firstPage")}
+                  asChild
+                  size="icon-sm"
+                >
+                  <button
+                    disabled={page === 1}
+                    onClick={() => setPage(1)}
+                    type="button"
+                  >
+                    <ChevronsLeft />
+                  </button>
+                </PaginationLink>
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationLink
+                  aria-label={t("previousPage")}
+                  asChild
+                  size="icon-sm"
+                >
+                  <button
+                    disabled={page === 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    type="button"
+                  >
+                    <ChevronLeft />
+                  </button>
+                </PaginationLink>
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationLink
+                  aria-label={t("nextPage")}
+                  asChild
+                  size="icon-sm"
+                >
+                  <button
+                    disabled={page === totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    type="button"
+                  >
+                    <ChevronRight />
+                  </button>
+                </PaginationLink>
+              </PaginationItem>
+              <PaginationItem>
+                <PaginationLink
+                  aria-label={t("lastPage")}
+                  asChild
+                  size="icon-sm"
+                >
+                  <button
+                    disabled={page === totalPages}
+                    onClick={() => setPage(totalPages)}
+                    type="button"
+                  >
+                    <ChevronsRight />
+                  </button>
+                </PaginationLink>
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
         </div>
       </div>
     </div>

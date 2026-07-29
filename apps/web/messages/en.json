@@ -829,6 +829,11 @@
         "showing": "Showing {from} to {to} of {total} transactions",
         "rowsPerPage": "Rows per page",
         "pageOf": "Page {page} of {total}",
+        "pagination": "Transaction history pagination",
+        "firstPage": "First page",
+        "previousPage": "Previous page",
+        "nextPage": "Next page",
+        "lastPage": "Last page",
         "types": {
           "registration_bonus": "Registration Bonus",
           "admin_grant": "Admin Grant",

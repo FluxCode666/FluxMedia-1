@@ -14,6 +14,12 @@ import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@repo/ui/components/pagination";
+import {
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -458,63 +464,67 @@ export function HistoryClient({
       )}
 
       {hasPreviousPage || hasNextPage ? (
-        <nav
+        <Pagination
           aria-label={copy("Usage records pagination", "使用记录分页")}
-          className="flex items-center justify-between gap-3 pt-1"
+          className="mx-0 pt-1"
         >
-          <p className="text-xs text-muted-foreground">
-            {copy(
-              "Records are ordered by creation date.",
-              "记录按创建日期倒序排列。"
-            )}
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              asChild={hasPreviousPage}
-              disabled={!hasPreviousPage}
-              size="sm"
-              variant="outline"
-            >
+          <PaginationContent className="w-full flex-wrap gap-2">
+            <PaginationItem className="mr-auto">
+              <p className="text-xs text-muted-foreground">
+                {copy(
+                  "Records are ordered by creation date.",
+                  "记录按创建日期倒序排列。"
+                )}
+              </p>
+            </PaginationItem>
+            <PaginationItem>
               {hasPreviousPage && previousCursor ? (
-                <Link
-                  href={buildPreviousHistoryHref(queryState, previousCursor, {
-                    path: historyPath,
-                  })}
+                <PaginationLink asChild size="default">
+                  <Link
+                    href={buildPreviousHistoryHref(queryState, previousCursor, {
+                      path: historyPath,
+                    })}
+                  >
+                    <ChevronLeft />
+                    {copy("Previous", "上一页")}
+                  </Link>
+                </PaginationLink>
+              ) : (
+                <PaginationLink
+                  aria-disabled="true"
+                  size="default"
+                  tabIndex={-1}
                 >
                   <ChevronLeft />
                   {copy("Previous", "上一页")}
-                </Link>
-              ) : (
-                <span>
-                  <ChevronLeft />
-                  {copy("Previous", "上一页")}
-                </span>
+                </PaginationLink>
               )}
-            </Button>
-            <Button
-              asChild={hasNextPage}
-              disabled={!hasNextPage}
-              size="sm"
-              variant="outline"
-            >
+            </PaginationItem>
+            <PaginationItem>
               {hasNextPage && nextCursor ? (
-                <Link
-                  href={buildNextHistoryHref(queryState, nextCursor, {
-                    path: historyPath,
-                  })}
+                <PaginationLink asChild size="default">
+                  <Link
+                    href={buildNextHistoryHref(queryState, nextCursor, {
+                      path: historyPath,
+                    })}
+                  >
+                    {copy("Next", "下一页")}
+                    <ChevronRight />
+                  </Link>
+                </PaginationLink>
+              ) : (
+                <PaginationLink
+                  aria-disabled="true"
+                  size="default"
+                  tabIndex={-1}
                 >
                   {copy("Next", "下一页")}
                   <ChevronRight />
-                </Link>
-              ) : (
-                <span>
-                  {copy("Next", "下一页")}
-                  <ChevronRight />
-                </span>
+                </PaginationLink>
               )}
-            </Button>
-          </div>
-        </nav>
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       ) : null}
 
       {selected?.kind === "image" ? (

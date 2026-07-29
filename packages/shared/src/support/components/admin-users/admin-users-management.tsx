@@ -71,6 +71,12 @@ import {
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@repo/ui/components/pagination";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -1502,22 +1508,35 @@ export function AdminUsersManagement({
             <p className="text-sm text-muted-foreground">
               第 {pagination.page} / {totalPages} 页
             </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={isLoading || pagination.page <= 1}
-                onClick={() => void loadUsers(pagination.page - 1)}
-              >
-                上一页
-              </Button>
-              <Button
-                variant="outline"
-                disabled={isLoading || pagination.page >= totalPages}
-                onClick={() => void loadUsers(pagination.page + 1)}
-              >
-                下一页
-              </Button>
-            </div>
+            <Pagination
+              aria-label="用户列表分页"
+              className="mx-0 w-auto justify-end"
+            >
+              <PaginationContent className="gap-2">
+                <PaginationItem>
+                  <PaginationLink asChild size="default">
+                    <button
+                      disabled={isLoading || pagination.page <= 1}
+                      onClick={() => void loadUsers(pagination.page - 1)}
+                      type="button"
+                    >
+                      上一页
+                    </button>
+                  </PaginationLink>
+                </PaginationItem>
+                <PaginationItem>
+                  <PaginationLink asChild size="default">
+                    <button
+                      disabled={isLoading || pagination.page >= totalPages}
+                      onClick={() => void loadUsers(pagination.page + 1)}
+                      type="button"
+                    >
+                      下一页
+                    </button>
+                  </PaginationLink>
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
           </div>
         </CardContent>
       </Card>

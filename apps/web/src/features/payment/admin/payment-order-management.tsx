@@ -9,7 +9,12 @@
 import type { AdminPaymentOrder } from "@repo/shared/payment/admin-contract";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
-import { Button } from "@repo/ui/components/button";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@repo/ui/components/pagination";
 import { cn } from "@repo/ui/utils";
 import {
   ChevronLeft,
@@ -206,71 +211,74 @@ export function PaymentOrderManagement({
       )}
 
       {records.length > 0 ? (
-        <nav
-          aria-label={t("pagination")}
-          className="flex items-center justify-between gap-3"
-        >
-          <Button
-            asChild={Boolean(previousCursor)}
-            disabled={!previousCursor}
-            variant="outline"
-          >
-            {previousCursor ? (
-              <Link
-                href={buildAdminPaymentOrdersHref({
-                  ...state,
-                  cursor: previousCursor,
-                })}
-              >
-                <ChevronLeft />
-                {t("previousPage")}
-              </Link>
-            ) : (
-              <span>
-                <ChevronLeft />
-                {t("previousPage")}
-              </span>
-            )}
-          </Button>
-          <div className="flex flex-col items-center gap-2 sm:flex-row">
-            <p className="text-xs text-muted-foreground">{t("pageHint")}</p>
-            <UrlPageSizeSelect
-              itemSuffix={t("pageSizeSuffix")}
-              label={t("rowsPerPage")}
-              options={pageSizeOptions.map((pageSize) => ({
-                size: pageSize,
-                href: buildAdminPaymentOrdersHref({
-                  ...state,
-                  cursor: null,
-                  pageSize,
-                }),
-              }))}
-              value={state.pageSize}
-            />
-          </div>
-          <Button
-            asChild={Boolean(nextCursor)}
-            disabled={!nextCursor}
-            variant="outline"
-          >
-            {nextCursor ? (
-              <Link
-                href={buildAdminPaymentOrdersHref({
-                  ...state,
-                  cursor: nextCursor,
-                })}
-              >
-                {t("nextPage")}
-                <ChevronRight />
-              </Link>
-            ) : (
-              <span>
-                {t("nextPage")}
-                <ChevronRight />
-              </span>
-            )}
-          </Button>
-        </nav>
+        <Pagination aria-label={t("pagination")} className="mx-0">
+          <PaginationContent className="w-full justify-between gap-3">
+            <PaginationItem className="shrink-0">
+              {previousCursor ? (
+                <PaginationLink asChild size="default">
+                  <Link
+                    href={buildAdminPaymentOrdersHref({
+                      ...state,
+                      cursor: previousCursor,
+                    })}
+                  >
+                    <ChevronLeft />
+                    {t("previousPage")}
+                  </Link>
+                </PaginationLink>
+              ) : (
+                <PaginationLink
+                  aria-disabled="true"
+                  size="default"
+                  tabIndex={-1}
+                >
+                  <ChevronLeft />
+                  {t("previousPage")}
+                </PaginationLink>
+              )}
+            </PaginationItem>
+            <PaginationItem className="flex flex-col items-center gap-2 sm:flex-row">
+              <p className="text-xs text-muted-foreground">{t("pageHint")}</p>
+              <UrlPageSizeSelect
+                itemSuffix={t("pageSizeSuffix")}
+                label={t("rowsPerPage")}
+                options={pageSizeOptions.map((pageSize) => ({
+                  size: pageSize,
+                  href: buildAdminPaymentOrdersHref({
+                    ...state,
+                    cursor: null,
+                    pageSize,
+                  }),
+                }))}
+                value={state.pageSize}
+              />
+            </PaginationItem>
+            <PaginationItem className="shrink-0">
+              {nextCursor ? (
+                <PaginationLink asChild size="default">
+                  <Link
+                    href={buildAdminPaymentOrdersHref({
+                      ...state,
+                      cursor: nextCursor,
+                    })}
+                  >
+                    {t("nextPage")}
+                    <ChevronRight />
+                  </Link>
+                </PaginationLink>
+              ) : (
+                <PaginationLink
+                  aria-disabled="true"
+                  size="default"
+                  tabIndex={-1}
+                >
+                  {t("nextPage")}
+                  <ChevronRight />
+                </PaginationLink>
+              )}
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       ) : null}
     </div>
   );

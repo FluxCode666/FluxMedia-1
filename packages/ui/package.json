@@ -25,6 +25,7 @@
     "./components/label": "./src/components/label.tsx",
     "./components/navigation-menu": "./src/components/navigation-menu.tsx",
     "./components/page-size-select": "./src/components/page-size-select.tsx",
+    "./components/pagination": "./src/components/pagination.tsx",
     "./components/popover": "./src/components/popover.tsx",
     "./components/progress": "./src/components/progress.tsx",
     "./components/radio-group": "./src/components/radio-group.tsx",

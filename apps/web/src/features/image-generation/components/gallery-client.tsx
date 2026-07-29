@@ -1,8 +1,20 @@
 "use client";
 
+/**
+ * 用户图库的筛选、预览、批量操作与渐进分页容器。
+ *
+ * 使用方：图库 Server Component。分页 URL 由当前语言、标签和累计页码构造，
+ * 服务端负责重新读取截至目标页的项目。
+ */
 import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@repo/ui/components/pagination";
 import { Tabs, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
 import {
   Download,
@@ -418,13 +430,20 @@ export function GalleryClient({
       </div>
 
       {hasMore && (
-        <div className="flex justify-center pt-4">
-          <Button asChild variant="outline">
-            <Link href={nextPageHref} scroll={false}>
-              {copy("Load more", "加载更多")}
-            </Link>
-          </Button>
-        </div>
+        <Pagination
+          aria-label={copy("Gallery pagination", "图库分页")}
+          className="pt-4"
+        >
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationLink asChild size="default">
+                <Link href={nextPageHref} scroll={false}>
+                  {copy("Load more", "加载更多")}
+                </Link>
+              </PaginationLink>
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       )}
 
       {/* 多选模式下的浮动批量操作栏:从底部滑入淡入,模态级投影 */}

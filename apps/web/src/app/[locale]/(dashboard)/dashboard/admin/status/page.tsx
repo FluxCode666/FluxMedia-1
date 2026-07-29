@@ -39,6 +39,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@repo/ui/components/card";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+} from "@repo/ui/components/pagination";
 import { Progress } from "@repo/ui/components/progress";
 import {
   and,
@@ -1531,30 +1537,53 @@ function HistoricalErrorsCard({
           </div>
         )}
 
-        <div className="flex items-center justify-end gap-2">
-          {hasPrevious ? (
-            <Button asChild variant="outline" size="sm">
-              <a href={buildErrorPageHref(filters, errors.page - 1)}>
-                {copy(locale, "Previous", "上一页")}
-              </a>
-            </Button>
-          ) : (
-            <Button variant="outline" size="sm" disabled>
-              {copy(locale, "Previous", "上一页")}
-            </Button>
+        <Pagination
+          aria-label={copy(
+            locale,
+            "Historical error records pagination",
+            "历史错误记录分页"
           )}
-          {hasNext ? (
-            <Button asChild variant="outline" size="sm">
-              <a href={buildErrorPageHref(filters, errors.page + 1)}>
-                {copy(locale, "Next", "下一页")}
-              </a>
-            </Button>
-          ) : (
-            <Button variant="outline" size="sm" disabled>
-              {copy(locale, "Next", "下一页")}
-            </Button>
-          )}
-        </div>
+          className="mx-0 justify-end"
+        >
+          <PaginationContent>
+            <PaginationItem>
+              {hasPrevious ? (
+                <PaginationLink
+                  href={buildErrorPageHref(filters, errors.page - 1)}
+                  size="default"
+                >
+                  {copy(locale, "Previous", "上一页")}
+                </PaginationLink>
+              ) : (
+                <PaginationLink
+                  aria-disabled="true"
+                  size="default"
+                  tabIndex={-1}
+                >
+                  {copy(locale, "Previous", "上一页")}
+                </PaginationLink>
+              )}
+            </PaginationItem>
+            <PaginationItem>
+              {hasNext ? (
+                <PaginationLink
+                  href={buildErrorPageHref(filters, errors.page + 1)}
+                  size="default"
+                >
+                  {copy(locale, "Next", "下一页")}
+                </PaginationLink>
+              ) : (
+                <PaginationLink
+                  aria-disabled="true"
+                  size="default"
+                  tabIndex={-1}
+                >
+                  {copy(locale, "Next", "下一页")}
+                </PaginationLink>
+              )}
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       </CardContent>
     </Card>
   );
