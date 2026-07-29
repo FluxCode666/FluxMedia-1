@@ -183,6 +183,60 @@ describe("buildModelMarketplaceCatalog", () => {
     ]);
   });
 
+  it("Google 视频家族只公开定价模型 ID 并把组合参数留在详情字段", () => {
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        runtimeCatalog: {
+          image: [],
+          video: [
+            { id: "firefly-veo31-4s-16x9-1080p" },
+            { id: "firefly-veo31-ref-6s-9x16-720p" },
+            { id: "firefly-veo31-fast-8s-16x9-1080p" },
+          ],
+        },
+      })
+    );
+
+    expect(
+      items.map((item) => ({
+        configKey: item.configKey,
+        modelId: item.modelId,
+        iconKey: item.iconKey,
+        supportedDurations:
+          item.category === "video" ? item.supportedDurations : [],
+        supportedAspectRatios:
+          item.category === "video" ? item.supportedAspectRatios : [],
+        supportedResolutions:
+          item.category === "video" ? item.supportedResolutions : [],
+      }))
+    ).toEqual([
+      {
+        configKey: "veo31",
+        modelId: "veo31",
+        iconKey: "google",
+        supportedDurations: [4],
+        supportedAspectRatios: ["16:9"],
+        supportedResolutions: ["1080p"],
+      },
+      {
+        configKey: "veo31-ref",
+        modelId: "veo31-ref",
+        iconKey: "google",
+        supportedDurations: [6],
+        supportedAspectRatios: ["9:16"],
+        supportedResolutions: ["720p"],
+      },
+      {
+        configKey: "veo31-fast",
+        modelId: "veo31-fast",
+        iconKey: "google",
+        supportedDurations: [8],
+        supportedAspectRatios: ["16:9"],
+        supportedResolutions: ["1080p"],
+      },
+    ]);
+  });
+
   it("Seedance 2.0 的全部变体只生成一个模型族条目", () => {
     const durations = Array.from({ length: 12 }, (_, index) => index + 4);
     const items = buildModelMarketplaceCatalog(

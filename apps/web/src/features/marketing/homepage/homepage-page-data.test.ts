@@ -591,7 +591,7 @@ describe("HomepageContent 服务端完成态", () => {
           ],
           homepage: [
             { id: " image-4-ultra ", category: "image", priority: 5 },
-            { id: "veo31-4s-16x9-1080p", category: "video", priority: 1 },
+            { id: "veo31", category: "video", priority: 1 },
             { id: "gpt-image-2", category: "image", priority: 2 },
             { id: "imagen-4", category: "image", priority: 3 },
             { id: "gpt-image-1.5", category: "image", priority: 4 },
@@ -609,7 +609,8 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).toContain("image-4-ultra");
     expect(html).toContain("gpt-image-2");
     expect(html).toContain("imagen-4");
-    expect(html).toContain("veo31-4s-16x9-1080p");
+    expect(html).toContain("veo31");
+    expect(html).not.toContain("veo31-4s-16x9-1080p");
     expect(html).toContain("视频");
     expect(html).not.toContain("preview-overflow-canary");
     expect(html).toContain('href="/models"');
