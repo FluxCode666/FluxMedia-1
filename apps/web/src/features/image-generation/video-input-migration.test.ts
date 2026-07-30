@@ -5,13 +5,22 @@
  * 保留和安全输出，确保数据库与真实对象存储接入前即可证明迁移核心不变量。
  */
 
+import { chmod, mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
   type MigratedVideoInputReference,
   migrateVideoInputTask,
+  openVideoInputRollbackJournal,
+  parseVideoInputMigrationCliArguments,
+  parseVideoInputRollbackManifest,
+  readVideoInputRollbackJournal,
+  rollbackVideoInputAssets,
   type VideoInputMigrationDependencies,
   type VideoInputMigrationTask,
+  type VideoInputRollbackRecord,
 } from "./video-input-migration";
 
 const CURRENT_BUCKET = "private-video-assets";
@@ -31,6 +40,8 @@ type MigrationHarness = {
   objects: Map<string, Buffer>;
   persisted: MigratedVideoInputReference[][];
   putKeys: string[];
+  rollbackRecords: VideoInputRollbackRecord[];
+  writeEvents: string[];
   remoteReads: string[];
   setFailPutAt(callNumber: number | null): void;
   setPersistFailure(enabled: boolean): void;
@@ -48,6 +59,8 @@ function createHarness(): MigrationHarness {
   const persisted: MigratedVideoInputReference[][] = [];
   const clearedStaged: boolean[] = [];
   const putKeys: string[] = [];
+  const rollbackRecords: VideoInputRollbackRecord[] = [];
+  const writeEvents: string[] = [];
   const remoteReads: string[] = [];
   let putCallCount = 0;
   let failPutAt: number | null = null;
@@ -77,11 +90,16 @@ function createHarness(): MigrationHarness {
     async putStorage(input) {
       putCallCount += 1;
       if (putCallCount === failPutAt) throw new Error("injected put failure");
+      writeEvents.push(`put:${input.storageKey}`);
       putKeys.push(input.storageKey);
       objects.set(
         objectId(input.storageBucket, input.storageKey),
         Buffer.from(input.data)
       );
+    },
+    async recordRollbackTarget(record) {
+      writeEvents.push(`record:${record.key}`);
+      rollbackRecords.push(record);
     },
     async persistTaskInputReferences(input) {
       if (persistFailure) throw new Error("injected CAS failure");
@@ -96,6 +114,8 @@ function createHarness(): MigrationHarness {
     objects,
     persisted,
     putKeys,
+    rollbackRecords,
+    writeEvents,
     remoteReads,
     setFailPutAt(callNumber) {
       failPutAt = callNumber;
@@ -142,6 +162,7 @@ describe("migrateVideoInputTask", () => {
       verifiedCount: 1,
     });
     expect(harness.putKeys).toEqual([]);
+    expect(harness.rollbackRecords).toEqual([]);
     expect(harness.persisted).toEqual([]);
   });
 
@@ -171,13 +192,13 @@ describe("migrateVideoInputTask", () => {
       storageKey,
       storageBucket: CURRENT_BUCKET,
     });
+    expect(harness.rollbackRecords).toEqual([]);
   });
 
   it("任务自有对象验证成功后原子清空旧 staged 清理集合", async () => {
     const harness = createHarness();
     const attemptId = "legacy-attempt";
-    const storageKey =
-      `user-1/video-inputs/video-1/${attemptId}/first-frame.png`;
+    const storageKey = `user-1/video-inputs/video-1/${attemptId}/first-frame.png`;
     const bytes = pngBytes("legacy-staged");
     harness.objects.set(objectId(CURRENT_BUCKET, storageKey), bytes);
     const task: VideoInputMigrationTask = {
@@ -237,6 +258,17 @@ describe("migrateVideoInputTask", () => {
       /^user-1\/video-inputs\/video-1\/migration-v1\/input-0-[a-f0-9]{32}\.png$/
     );
     expect(migrated?.storageBucket).toBe(CURRENT_BUCKET);
+    expect(harness.rollbackRecords).toEqual([
+      {
+        schemaVersion: 1,
+        bucket: CURRENT_BUCKET,
+        key: migrated?.storageKey,
+      },
+    ]);
+    expect(harness.writeEvents).toEqual([
+      `record:${migrated?.storageKey}`,
+      `put:${migrated?.storageKey}`,
+    ]);
     expect(harness.objects.get(objectId(CURRENT_BUCKET, sourceKey))).toEqual(
       bytes
     );
@@ -273,6 +305,9 @@ describe("migrateVideoInputTask", () => {
     expect(serialized).not.toContain("images.example.test");
     expect(serialized).not.toContain(CURRENT_BUCKET);
     expect(serialized).not.toContain("video-inputs");
+    expect(JSON.stringify(harness.rollbackRecords)).not.toContain(
+      "images.example.test"
+    );
   });
 
   it("中途失败不持久化半成品，重跑复用目标并完成剩余复制", async () => {
@@ -310,6 +345,7 @@ describe("migrateVideoInputTask", () => {
     ).rejects.toThrow("视频任务 video-1 的第 2 个输入写入失败");
     expect(harness.persisted).toEqual([]);
     expect(harness.putKeys).toHaveLength(1);
+    expect(harness.rollbackRecords).toHaveLength(2);
     expect(harness.objects.get(objectId(CURRENT_BUCKET, firstKey))).toEqual(
       firstBytes
     );
@@ -326,6 +362,13 @@ describe("migrateVideoInputTask", () => {
       verifiedCount: 1,
     });
     expect(harness.putKeys).toHaveLength(2);
+    expect(harness.rollbackRecords).toHaveLength(3);
+    expect(harness.rollbackRecords[0]?.key).not.toBe(
+      harness.rollbackRecords[1]?.key
+    );
+    expect(harness.rollbackRecords[1]?.key).toBe(
+      harness.rollbackRecords[2]?.key
+    );
     expect(harness.persisted).toHaveLength(1);
   });
 
@@ -347,6 +390,7 @@ describe("migrateVideoInputTask", () => {
       migrateVideoInputTask(task, harness.dependencies)
     ).rejects.toThrow("视频任务 video-1 的输入引用持久化失败");
     expect(harness.putKeys).toHaveLength(1);
+    expect(harness.rollbackRecords).toHaveLength(1);
     expect(harness.objects.get(objectId(CURRENT_BUCKET, sourceKey))).toEqual(
       bytes
     );
@@ -356,6 +400,7 @@ describe("migrateVideoInputTask", () => {
 
     expect(result).toMatchObject({ copiedCount: 0, verifiedCount: 1 });
     expect(harness.putKeys).toHaveLength(1);
+    expect(harness.rollbackRecords).toHaveLength(1);
     expect(harness.persisted).toHaveLength(1);
   });
 
@@ -384,5 +429,214 @@ describe("migrateVideoInputTask", () => {
     });
     expect(harness.putKeys).toEqual([]);
     expect(harness.persisted).toEqual([]);
+  });
+});
+
+describe("parseVideoInputMigrationCliArguments", () => {
+  const manifestPath = "/var/lib/fluxmedia/video-input-rollback.ndjson";
+
+  it("要求迁移模式显式提供旧写入者退出确认和绝对清单路径", () => {
+    expect(
+      parseVideoInputMigrationCliArguments([
+        "migrate",
+        "--confirm-no-legacy-writers",
+        "--rollback-manifest",
+        manifestPath,
+      ])
+    ).toEqual({ mode: "migrate", rollbackManifestPath: manifestPath });
+  });
+
+  it("要求回滚模式显式确认数据库已经恢复", () => {
+    expect(
+      parseVideoInputMigrationCliArguments([
+        "rollback",
+        "--confirm-database-restored",
+        "--rollback-manifest",
+        manifestPath,
+      ])
+    ).toEqual({ mode: "rollback", rollbackManifestPath: manifestPath });
+  });
+
+  it.each([
+    ["migrate", "--confirm-no-legacy-writers"],
+    [
+      "migrate",
+      "--confirm-no-legacy-writers",
+      "--rollback-manifest",
+      "relative.ndjson",
+    ],
+    [
+      "rollback",
+      "--confirm-no-legacy-writers",
+      "--rollback-manifest",
+      manifestPath,
+    ],
+    [
+      "rollback",
+      "--confirm-database-restored",
+      "--rollback-manifest",
+      manifestPath,
+      "--extra",
+    ],
+  ])("拒绝缺失、相对、错误确认或额外参数 %#", (...argumentsList) => {
+    expect(() => parseVideoInputMigrationCliArguments(argumentsList)).toThrow(
+      /参数无效|路径无效/
+    );
+  });
+});
+
+describe("parseVideoInputRollbackManifest", () => {
+  const record = {
+    schemaVersion: 1,
+    bucket: CURRENT_BUCKET,
+    key: "user-1/video-inputs/video-1/migration-v1/input-0-0123456789abcdef0123456789abcdef.png",
+  } as const;
+
+  it("严格解析只含版本、bucket 和 migration-v1 key 的 NDJSON", () => {
+    expect(
+      parseVideoInputRollbackManifest(
+        `${JSON.stringify(record)}\n${JSON.stringify({ ...record, key: record.key.replace("input-0", "input-1") })}\n`
+      )
+    ).toEqual([
+      record,
+      { ...record, key: record.key.replace("input-0", "input-1") },
+    ]);
+    expect(parseVideoInputRollbackManifest("")).toEqual([]);
+  });
+
+  it.each([
+    `${JSON.stringify({ ...record, url: "https://secret.example" })}\n`,
+    `${JSON.stringify({ ...record, schemaVersion: 2 })}\n`,
+    `${JSON.stringify({ ...record, key: "user-1/generations/source.png" })}\n`,
+    `${JSON.stringify({ ...record, key: record.key.replace("migration-v1", "reservation-1") })}\n`,
+    `${JSON.stringify(record)}\n\n`,
+    "not-json\n",
+  ])("拒绝越权、扩展字段、错误版本、空行或非法 JSON %#", (content) => {
+    expect(() => parseVideoInputRollbackManifest(content)).toThrow();
+  });
+});
+
+describe("video input rollback journal", () => {
+  const record = {
+    schemaVersion: 1,
+    bucket: CURRENT_BUCKET,
+    key: "user-1/video-inputs/video-1/migration-v1/input-0-0123456789abcdef0123456789abcdef.png",
+  } as const;
+
+  it("以 0600 append-only NDJSON 持久记录并可继续幂等迁移", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "video-input-rollback-"));
+    const manifestPath = join(directory, "rollback.ndjson");
+    try {
+      const journal = await openVideoInputRollbackJournal(
+        manifestPath,
+        CURRENT_BUCKET
+      );
+      expect(journal.existingRecordCount).toBe(0);
+      await journal.record(record);
+      expect(journal.appendedRecordCount).toBe(1);
+      await journal.close();
+
+      expect((await stat(manifestPath)).mode & 0o777).toBe(0o600);
+      const content = await readFile(manifestPath, "utf8");
+      expect(content.endsWith("\n")).toBe(true);
+      expect(Object.keys(JSON.parse(content.trim()) as object).sort()).toEqual([
+        "bucket",
+        "key",
+        "schemaVersion",
+      ]);
+      await expect(
+        readVideoInputRollbackJournal(manifestPath, CURRENT_BUCKET)
+      ).resolves.toEqual([record]);
+
+      const resumed = await openVideoInputRollbackJournal(
+        manifestPath,
+        CURRENT_BUCKET
+      );
+      expect(resumed.existingRecordCount).toBe(1);
+      expect(resumed.appendedRecordCount).toBe(0);
+      await resumed.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("回滚读取拒绝权限放宽或符号链接清单", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "video-input-rollback-"));
+    const manifestPath = join(directory, "rollback.ndjson");
+    const linkPath = join(directory, "rollback-link.ndjson");
+    try {
+      const journal = await openVideoInputRollbackJournal(
+        manifestPath,
+        CURRENT_BUCKET
+      );
+      await journal.record(record);
+      await journal.close();
+      await chmod(manifestPath, 0o644);
+      await expect(
+        readVideoInputRollbackJournal(manifestPath, CURRENT_BUCKET)
+      ).rejects.toThrow("回滚清单读取失败");
+
+      await chmod(manifestPath, 0o600);
+      await symlink(manifestPath, linkPath);
+      await expect(
+        openVideoInputRollbackJournal(linkPath, CURRENT_BUCKET)
+      ).rejects.toThrow("回滚清单初始化失败");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("rollbackVideoInputAssets", () => {
+  const firstRecord = {
+    schemaVersion: 1,
+    bucket: CURRENT_BUCKET,
+    key: "user-1/video-inputs/video-1/migration-v1/input-0-0123456789abcdef0123456789abcdef.png",
+  } as const;
+
+  it("按对象身份去重并只返回计数，重复回滚由删除适配器幂等收敛", async () => {
+    const deleteCalls: string[] = [];
+    const dependencies = {
+      async deleteStorage(record: VideoInputRollbackRecord) {
+        deleteCalls.push(`${record.bucket}\0${record.key}`);
+      },
+    };
+
+    const first = await rollbackVideoInputAssets(
+      [firstRecord, firstRecord],
+      dependencies
+    );
+    const second = await rollbackVideoInputAssets([firstRecord], dependencies);
+
+    expect(first).toEqual({
+      status: "rolled_back",
+      manifestRecordCount: 2,
+      uniqueObjectCount: 1,
+      deleteAttemptCount: 1,
+    });
+    expect(second.deleteAttemptCount).toBe(1);
+    expect(deleteCalls).toHaveLength(2);
+    expect(JSON.stringify(first)).not.toContain(CURRENT_BUCKET);
+    expect(JSON.stringify(first)).not.toContain("video-inputs");
+  });
+
+  it("删除失败时停止并保留调用方清单供重跑", async () => {
+    const secondRecord = {
+      ...firstRecord,
+      key: firstRecord.key.replace("input-0", "input-1"),
+    };
+    const deleted: string[] = [];
+
+    await expect(
+      rollbackVideoInputAssets([firstRecord, secondRecord], {
+        async deleteStorage(record) {
+          if (record.key === secondRecord.key) {
+            throw new Error("injected delete failure");
+          }
+          deleted.push(record.key);
+        },
+      })
+    ).rejects.toThrow("injected delete failure");
+    expect(deleted).toEqual([firstRecord.key]);
   });
 });

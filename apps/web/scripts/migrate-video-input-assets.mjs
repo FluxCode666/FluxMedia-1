@@ -7,24 +7,31 @@
  */
 
 import { resolve4, resolve6 } from "node:dns/promises";
-import { mkdir, open, writeFile } from "node:fs/promises";
+import { mkdir, open, unlink, writeFile } from "node:fs/promises";
 import https from "node:https";
 import { BlockList, isIP } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import pg from "pg";
 
-import { migrateVideoInputTask } from "../src/features/image-generation/video-input-migration.ts";
+import {
+  migrateVideoInputTask,
+  openVideoInputRollbackJournal,
+  parseVideoInputMigrationCliArguments,
+  readVideoInputRollbackJournal,
+  rollbackVideoInputAssets,
+} from "../src/features/image-generation/video-input-migration.ts";
 
 const { Client } = pg;
-const CONFIRMATION_FLAG = "--confirm-no-legacy-writers";
 const MIGRATION_LOCK_NAME = "video_input_asset_migration_v1";
+const ROLLBACK_MANIFEST_ENV = "VIDEO_INPUT_ROLLBACK_MANIFEST";
 const REMOTE_TIMEOUT_MS = 30_000;
 const MAX_REMOTE_REDIRECTS = 3;
 const TASK_PAGE_SIZE = 50;
@@ -81,16 +88,6 @@ function createBlockedAddressLists() {
 }
 
 const BLOCKED_ADDRESS_LISTS = createBlockedAddressLists();
-
-/** 校验唯一确认参数，避免在线旧 worker 与迁移命令并发写入。 */
-function assertConfirmation(argumentsList) {
-  const normalized = argumentsList.filter((argument) => argument !== "--");
-  if (normalized.length !== 1 || normalized[0] !== CONFIRMATION_FLAG) {
-    throw new RangeError(
-      `必须仅传入 ${CONFIRMATION_FLAG}，并确认所有旧 Web/worker 已退出`
-    );
-  }
-}
 
 /** 把 DB JSON 设置值收窄为运行时文本，并保留环境变量回退语义。 */
 function readSetting(settings, key, fallback) {
@@ -227,6 +224,19 @@ function createMigrationStorage(config) {
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, input.data);
       },
+      async deleteStorage(input) {
+        try {
+          await unlink(
+            resolveLocalObjectPath(
+              config,
+              input.storageBucket,
+              input.storageKey
+            )
+          );
+        } catch (error) {
+          if (!isStorageNotFound(error)) throw error;
+        }
+      },
       close() {},
     };
   }
@@ -271,6 +281,14 @@ function createMigrationStorage(config) {
           Key: input.storageKey,
           Body: input.data,
           ContentType: input.mimeType,
+        })
+      );
+    },
+    async deleteStorage(input) {
+      await client.send(
+        new DeleteObjectCommand({
+          Bucket: input.storageBucket,
+          Key: input.storageKey,
         })
       );
     },
@@ -527,7 +545,12 @@ async function listTasksWithLegacyInputs(client, afterTaskId) {
 }
 
 /** 依次收编全部任务并仅累加可公开计数。 */
-async function runAssetMigration(client, storage, bucketName) {
+async function runAssetMigration(
+  client,
+  storage,
+  bucketName,
+  rollbackManifest
+) {
   const summary = {
     status: "complete",
     taskCount: 0,
@@ -548,6 +571,7 @@ async function runAssetMigration(client, storage, bucketName) {
         readStorageIfExists: storage.readStorageIfExists,
         readRemote: readRemoteInput,
         putStorage: storage.putStorage,
+        recordRollbackTarget: (record) => rollbackManifest.record(record),
         persistTaskInputReferences: (input) =>
           persistMigratedReferences(client, input),
       });
@@ -560,18 +584,31 @@ async function runAssetMigration(client, storage, bucketName) {
     }
     afterTaskId = tasks.at(-1)?.id ?? null;
   }
-  return summary;
+  return {
+    ...summary,
+    existingRollbackRecordCount: rollbackManifest.existingRecordCount,
+    appendedRollbackRecordCount: rollbackManifest.appendedRecordCount,
+  };
 }
 
 /** 连接数据库、持有单实例锁并执行显式资产收编。 */
 export async function main(argumentsList = process.argv.slice(2)) {
-  assertConfirmation(argumentsList);
+  const normalizedArguments = argumentsList.filter(
+    (argument) => argument !== "--"
+  );
+  const rollbackManifestPath = process.env[ROLLBACK_MANIFEST_ENV]?.trim();
+  const options = parseVideoInputMigrationCliArguments(
+    rollbackManifestPath && normalizedArguments.length === 2
+      ? [...normalizedArguments, "--rollback-manifest", rollbackManifestPath]
+      : normalizedArguments
+  );
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) throw new Error("DATABASE_URL 环境变量未设置");
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   let lockAcquired = false;
   let storage;
+  let rollbackManifest;
   try {
     await client.query("SET TIME ZONE 'UTC'");
     const lock = await client.query(
@@ -580,7 +617,8 @@ export async function main(argumentsList = process.argv.slice(2)) {
     );
     lockAcquired = lock.rows[0]?.acquired === true;
     if (!lockAcquired) throw new Error("已有视频输入资产收编命令正在运行");
-    if ((await readMigrationSchemaState(client)) === "applied") {
+    const schemaState = await readMigrationSchemaState(client);
+    if (options.mode === "migrate" && schemaState === "applied") {
       console.log(
         JSON.stringify({
           status: "already_applied",
@@ -594,15 +632,39 @@ export async function main(argumentsList = process.argv.slice(2)) {
       );
       return;
     }
+    if (options.mode === "rollback" && schemaState !== "legacy") {
+      throw new Error("数据库尚未恢复到资产迁移前 schema");
+    }
     const storageConfig = await loadStorageConfig(client);
     storage = createMigrationStorage(storageConfig);
-    const summary = await runAssetMigration(
-      client,
-      storage,
-      storageConfig.bucketName
-    );
+    let summary;
+    if (options.mode === "migrate") {
+      rollbackManifest = await openVideoInputRollbackJournal(
+        options.rollbackManifestPath,
+        storageConfig.bucketName
+      );
+      summary = await runAssetMigration(
+        client,
+        storage,
+        storageConfig.bucketName,
+        rollbackManifest
+      );
+    } else {
+      const records = await readVideoInputRollbackJournal(
+        options.rollbackManifestPath,
+        storageConfig.bucketName
+      );
+      summary = await rollbackVideoInputAssets(records, {
+        deleteStorage: (record) =>
+          storage.deleteStorage({
+            storageBucket: record.bucket,
+            storageKey: record.key,
+          }),
+      });
+    }
     console.log(JSON.stringify(summary));
   } finally {
+    await rollbackManifest?.close();
     storage?.close();
     if (lockAcquired) {
       await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
@@ -615,8 +677,8 @@ export async function main(argumentsList = process.argv.slice(2)) {
 
 /** 仅在直接运行时转成稳定非零退出码，测试导入不会触达数据库。 */
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.message : "未知资产迁移错误");
+  main().catch(() => {
+    console.error(JSON.stringify({ status: "failed", failureCount: 1 }));
     process.exitCode = 1;
   });
 }

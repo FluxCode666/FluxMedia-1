@@ -76,6 +76,7 @@ nul
 
 # deploy artifacts
 deploy.tgz
+deploy/state/
 
 # 水墨引擎审阅样张(本地生成,不入库)
 apps/web/scripts/preview/
