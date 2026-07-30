@@ -8,11 +8,11 @@
 import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
-} from "@repo/shared/image-generation/media-contract";
-import { videoListCapabilitiesOutputSchema } from "@repo/shared/uol/operations/video-generation";
+} from "@repo/shared/image-generation/media-limits";
 import {
   VIDEO_MODEL_CAPABILITIES,
   type VideoModelCapabilityDescriptor,
+  videoListCapabilitiesOutputSchema,
 } from "@repo/shared/video-generation";
 import type { z } from "zod";
 

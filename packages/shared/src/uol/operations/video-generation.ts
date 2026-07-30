@@ -7,7 +7,6 @@
 import { z } from "zod";
 
 import {
-  MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
@@ -17,12 +16,17 @@ import {
   type VideoModelCapabilityDescriptor,
   validateVideoModelParameters,
   videoAspectRatioSchema,
-  videoFrameInputCapabilitySchema,
+  videoListCapabilitiesOutputSchema,
   videoModelIdSchema,
   videoResolutionSchema,
 } from "../../video-generation";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
+
+export {
+  videoCapabilityItemSchema,
+  videoListCapabilitiesOutputSchema,
+} from "../../video-generation/public-capabilities";
 
 /** video.generate 的传输无关输入契约。 */
 export const videoGenerateInputSchema = z
@@ -248,49 +252,6 @@ export const videoInputSummarySchema = z
   .object({
     mode: z.enum(["none", "first-frame", "first-last-frames", "references"]),
     count: z.number().int().min(0).max(MAX_MEDIA_INPUT_COUNT),
-  })
-  .strict();
-
-/** 单个真实视频模型的公开有效能力与配置可达性。 */
-export const videoCapabilityItemSchema = z
-  .object({
-    model: videoModelIdSchema,
-    displayName: z.string().trim().min(1).max(160),
-    durations: z.array(z.number().int().positive()).min(1),
-    aspectRatios: z.array(videoAspectRatioSchema).min(1),
-    resolutions: z.array(videoResolutionSchema).min(1),
-    input: z
-      .object({
-        frames: videoFrameInputCapabilitySchema,
-        referenceImages: z
-          .object({
-            maxCount: z.number().int().nonnegative(),
-            configurable: z.boolean(),
-          })
-          .strict(),
-        framesAndReferencesMutuallyExclusive: z.boolean(),
-      })
-      .strict(),
-    audio: z
-      .object({
-        supported: z.boolean(),
-        defaultEnabled: z.boolean(),
-      })
-      .strict(),
-    configuredReachable: z.boolean(),
-  })
-  .strict();
-
-/** video.listCapabilities 的稳定输出，不包含成员、凭据、健康或容量。 */
-export const videoListCapabilitiesOutputSchema = z
-  .object({
-    items: z.array(videoCapabilityItemSchema),
-    limits: z
-      .object({
-        maxMediaInputCount: z.literal(MAX_MEDIA_INPUT_COUNT),
-        maxMediaInputBytes: z.literal(MAX_MEDIA_INPUT_BYTES),
-      })
-      .strict(),
   })
   .strict();
 

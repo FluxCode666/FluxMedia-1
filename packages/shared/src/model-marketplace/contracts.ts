@@ -15,7 +15,7 @@ import { normalizeSupportedModelId } from "../image-backend/supported-models";
 import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
-} from "../image-generation/media-contract";
+} from "../image-generation/media-limits";
 import { videoFrameInputCapabilitySchema } from "../video-generation";
 
 export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;

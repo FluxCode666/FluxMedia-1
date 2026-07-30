@@ -48,6 +48,7 @@
     "./generation-timeout": "./src/generation-timeout.ts",
     "./generation-settlement": "./src/generation-settlement.ts",
     "./image-generation/history-contract": "./src/image-generation/history-contract.ts",
+    "./image-generation/media-limits": "./src/image-generation/media-limits.ts",
     "./image-generation/media-contract": "./src/image-generation/media-contract.ts",
     "./image-generation/model-contract": "./src/image-generation/model-contract.ts",
     "./video-generation": "./src/video-generation/index.ts",
