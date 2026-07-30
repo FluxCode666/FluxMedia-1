@@ -125,6 +125,7 @@ describe("API integration docs data", () => {
     expect(createText).not.toContain("kling3-omni-8s-16x9-1080p");
     expect(createText).not.toContain("firefly-<family>");
     expect(createText).not.toContain("input_image_role");
+    expect(createText).toContain("https webhook");
     expect(task?.responseExample).toContain('"object": "video.task"');
     expect(task?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(taskText).toMatch(/persistent|持久/u);

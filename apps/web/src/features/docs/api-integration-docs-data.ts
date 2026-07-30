@@ -457,7 +457,7 @@ const zhContent = {
           requirement: "可选",
           defaultValue: "无",
           description:
-            "任务完成或失败时接收任务对象的公网 http(s) webhook 地址。",
+            "任务完成或失败时接收任务对象的公网 https webhook 地址。",
         },
       ],
       responses: [
@@ -945,7 +945,7 @@ const enContent = {
           requirement: "Optional",
           defaultValue: "None",
           description:
-            "Public http(s) webhook that receives the task object when the task completes or fails.",
+            "Public https webhook that receives the task object when the task completes or fails.",
         },
       ],
       responses: [
