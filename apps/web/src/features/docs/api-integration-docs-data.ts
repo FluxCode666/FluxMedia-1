@@ -1,8 +1,8 @@
 /**
  * 公开 API 接入文档的数据源。
  *
- * 内容从管理员系统文档的外接 API 章节提炼。数据源保留五个已整理端点，公开读取时
- * 统一过滤暂不展示的视频端点；图片任务的路径 ID 属于必要契约，因此显式保留。
+ * 内容从管理员系统文档的外接 API 章节提炼。数据源公开列出图片生成、图片编辑、
+ * 图片任务，以及视频能力、视频生成和视频任务六个现行端点。
  */
 
 export type ApiIntegrationParameter = {
@@ -78,7 +78,7 @@ const zhContent = {
   eyebrow: "FluxMedia External API",
   title: "API 接入文档",
   subtitle:
-    "面向服务端集成的图像接口参考。这里仅展示通用兼容参数，不包含 FluxMedia 站点扩展参数。",
+    "面向服务端集成的图片与视频接口参考。视频模型 ID 与时长、比例、分辨率独立传递，并支持能力查询与持久任务轮询。",
   baseUrlLabel: "Base URL",
   authLabel: "鉴权",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -479,6 +479,97 @@ const zhContent = {
       ],
     },
     {
+      id: "video-capabilities",
+      category: "外部视频 API",
+      operation: "video",
+      title: "查询视频模型能力",
+      method: "GET",
+      path: "/v1/videos/capabilities",
+      contentType: "无请求体",
+      description:
+        "查询当前 API 密钥可见的真实视频模型、独立生成参数、输入图和声音能力，以及账号池是否已配置可达。",
+      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/capabilities \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
+      responseExample: `{
+  "items": [
+    {
+      "model": "seedance2",
+      "displayName": "Seedance 2.0",
+      "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "aspectRatios": ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+      "resolutions": ["1080p", "720p", "480p"],
+      "input": {
+        "frames": "first-and-optional-last",
+        "referenceImages": {
+          "maxCount": 10,
+          "configurable": true
+        },
+        "framesAndReferencesMutuallyExclusive": true
+      },
+      "audio": {
+        "supported": true,
+        "defaultEnabled": false
+      },
+      "configuredReachable": true
+    }
+  ],
+  "limits": {
+    "maxMediaInputCount": 256,
+    "maxMediaInputBytes": 209715200
+  }
+}`,
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "必填 header",
+          description: "Bearer <API_KEY>。",
+        },
+      ],
+      responses: [
+        {
+          name: "items[].model / displayName",
+          description: "真实视频模型 ID 与展示名称。",
+        },
+        {
+          name: "items[].durations / aspectRatios / resolutions",
+          description: "该模型允许的独立时长、宽高比和分辨率集合。",
+        },
+        {
+          name: "items[].input.frames",
+          description:
+            "none、first-only 或 first-and-optional-last，表示帧输入能力。",
+        },
+        {
+          name: "items[].input.referenceImages",
+          description:
+            "参考图数量上限及该上限是否允许管理员配置；应使用响应中的当前值。",
+        },
+        {
+          name: "items[].input.framesAndReferencesMutuallyExclusive",
+          description: "固定指示首尾帧与参考图不能同时传入。",
+        },
+        {
+          name: "items[].audio",
+          description: "声音生成支持情况与未传 generate_audio 时的默认值。",
+        },
+        {
+          name: "items[].configuredReachable",
+          description:
+            "当前可信账号池分组是否配置了可执行该模型的账号；不代表实时容量。",
+        },
+        {
+          name: "limits",
+          description:
+            "整次媒体输入的基础设施数量与字节上限；单模型限制仍以 items[].input 为准。",
+        },
+      ],
+      notes: [
+        "提交视频前应从本接口选择 model、duration、aspect_ratio 和 resolution，不要自行拼接复合模型 ID。",
+        "configuredReachable 只表示配置可达性，不包含账号、凭据、健康、并发或实时剩余容量。",
+        "响应使用 Cache-Control: no-store；管理员调整 Seedance 参考图上限后应重新查询。",
+      ],
+    },
+    {
       id: "image-task",
       category: "外部异步图片任务",
       operation: "image_generation",
@@ -620,13 +711,13 @@ const zhContent = {
 /**
  * 读取英文文档复用的中文端点骨架。
  *
- * @param index - 五个固定端点中的位置。
+ * @param id - 中文端点的稳定文档 ID。
  * @returns 对应端点；数据源不完整时在模块初始化阶段显式失败。
  */
-function getZhEndpointTemplate(index: number): ApiIntegrationEndpoint {
-  const endpoint = zhContent.endpoints[index];
+function getZhEndpointTemplate(id: string): ApiIntegrationEndpoint {
+  const endpoint = zhContent.endpoints.find((candidate) => candidate.id === id);
   if (!endpoint) {
-    throw new Error(`Missing API integration endpoint template at ${index}`);
+    throw new Error(`Missing API integration endpoint template: ${id}`);
   }
   return endpoint;
 }
@@ -635,7 +726,7 @@ const enContent = {
   eyebrow: "FluxMedia External API",
   title: "API Integration Guide",
   subtitle:
-    "Image API reference for server-side integrations. This page lists only compatible parameters and omits FluxMedia-specific extension parameters.",
+    "Image and video API reference for server-side integrations. Video model IDs are separate from duration, aspect ratio, and resolution, with capability discovery and persistent task polling.",
   baseUrlLabel: "Base URL",
   authLabel: "Authentication",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -654,7 +745,7 @@ const enContent = {
   },
   endpoints: [
     {
-      ...getZhEndpointTemplate(0),
+      ...getZhEndpointTemplate("image-generations"),
       category: "Text-to-image API",
       title: "Create image",
       description:
@@ -755,7 +846,7 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(1),
+      ...getZhEndpointTemplate("image-edits"),
       category: "Image-to-image API",
       title: "Edit image",
       description:
@@ -873,7 +964,7 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(2),
+      ...getZhEndpointTemplate("video-generations"),
       category: "Video API",
       title: "Create video",
       description: "Create a video from a text prompt or reference images.",
@@ -973,9 +1064,71 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(3),
+      ...getZhEndpointTemplate("video-capabilities"),
+      category: "Video API",
+      title: "List video model capabilities",
+      contentType: "No request body",
+      description:
+        "List real video models visible to the current API key, their independent generation parameters, image input and audio capabilities, and whether the account pool is configured to reach them.",
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "Required header",
+          description: "Bearer <API_KEY>.",
+        },
+      ],
+      responses: [
+        {
+          name: "items[].model / displayName",
+          description: "Real video model ID and display name.",
+        },
+        {
+          name: "items[].durations / aspectRatios / resolutions",
+          description:
+            "Allowed independent duration, aspect ratio, and resolution values for the model.",
+        },
+        {
+          name: "items[].input.frames",
+          description:
+            "none, first-only, or first-and-optional-last, describing frame input support.",
+        },
+        {
+          name: "items[].input.referenceImages",
+          description:
+            "Reference-image limit and whether admins can configure that limit; use the current response value.",
+        },
+        {
+          name: "items[].input.framesAndReferencesMutuallyExclusive",
+          description:
+            "Indicates that frame inputs and reference images cannot be sent together.",
+        },
+        {
+          name: "items[].audio",
+          description:
+            "Audio generation support and the default used when generate_audio is omitted.",
+        },
+        {
+          name: "items[].configuredReachable",
+          description:
+            "Whether the trusted account-pool group is configured with an account capable of running this model; this is not real-time capacity.",
+        },
+        {
+          name: "limits",
+          description:
+            "Infrastructure-wide input count and byte limits; per-model limits still come from items[].input.",
+        },
+      ],
+      notes: [
+        "Before creating a video, select model, duration, aspect_ratio, and resolution from this endpoint. Do not construct composite model IDs.",
+        "configuredReachable reports configuration reachability only. It exposes no accounts, credentials, health, concurrency, or live remaining capacity.",
+        "Responses use Cache-Control: no-store. Query again after an admin changes a Seedance reference-image limit.",
+      ],
+    },
+    {
+      ...getZhEndpointTemplate("image-task"),
       category: "Asynchronous image task",
       title: "Get image task",
+      contentType: "No request body",
       description: "Get image generation status and results by task ID.",
       parameters: [
         {
@@ -1013,9 +1166,10 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(4),
+      ...getZhEndpointTemplate("video-task"),
       category: "Asynchronous video task",
       title: "Get video task",
+      contentType: "No request body",
       description: "Get video generation status and results by task ID.",
       parameters: [
         {
@@ -1070,32 +1224,16 @@ const enContent = {
   ],
 } satisfies ApiIntegrationDocsContent;
 
-// 视频能力仍在内部系统文档和真实 API 中保留；公开接入页按当前产品决策临时隐藏。
-// 恢复展示时只需从本集合移除对应 ID，避免复制或删除已经校对过的双语契约。
-const TEMPORARILY_HIDDEN_ENDPOINT_IDS = new Set([
-  "video-generations",
-  "video-task",
-]);
-
 /**
  * 按路由语言返回公开接入文档。
  *
  * @param locale - Next.js 路由语言；只有 zh 使用中文，其余安全回退英文。
- * @param options - 契约校验可显式读取暂时隐藏端点；公开调用默认过滤。
- * @returns 默认只含公开图片端点；校验模式返回包含隐藏视频端点的完整只读数据源。
+ * @returns 包含现行图片与视频端点的完整只读数据源。
  */
 export function getApiIntegrationDocs(
-  locale?: string,
-  options?: { includeTemporarilyHidden?: boolean }
+  locale?: string
 ): ApiIntegrationDocsContent {
-  const content = locale === "zh" ? zhContent : enContent;
-  if (options?.includeTemporarilyHidden) return content;
-  return {
-    ...content,
-    endpoints: content.endpoints.filter(
-      (endpoint) => !TEMPORARILY_HIDDEN_ENDPOINT_IDS.has(endpoint.id)
-    ),
-  };
+  return locale === "zh" ? zhContent : enContent;
 }
 
 /**

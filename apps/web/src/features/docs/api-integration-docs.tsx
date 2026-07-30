@@ -195,7 +195,7 @@ function EndpointSection({
  *
  * @param locale - 当前路由语言。
  * @param embedded - 是否嵌入已有横向内边距的控制台内容区。
- * @returns 双语、响应式且只包含公开兼容参数的文档页面。
+ * @returns 双语、响应式且只包含现行公开参数的文档页面。
  */
 export function ApiIntegrationDocs({
   embedded = false,

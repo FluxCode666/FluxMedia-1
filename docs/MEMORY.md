@@ -36,6 +36,9 @@
   Principal 构造、调用与编码。
 - 图片、视频、号池和系统设置的现行 operation 见
   [feature-interface-inventory.md](plan/2026-05-31-feature-interface-inventory.md)。
+- 公开 `/api-docs` 必须同步展示视频能力发现、任务创建与状态查询三个现行端点；视频
+  文档只使用真实模型 ID，并明确独立时长、比例、分辨率、输入图互斥、声音能力与持久
+  任务轮询契约。
 - MCP 与站内调用共享 registry、Principal、权限、幂等与审计网关。
 - 所有可见分页列表默认每页 20 条；可选大小由系统设置
   `PAGINATION_PAGE_SIZE_OPTIONS` 统一配置，必须包含 20，默认 `[10, 20, 50]`。
