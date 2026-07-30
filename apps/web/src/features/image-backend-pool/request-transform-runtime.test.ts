@@ -39,6 +39,80 @@ return request;`,
     });
   });
 
+  it("支持 Skill 推荐的 Object.hasOwn 枚举判断", async () => {
+    await expect(
+      applyApiRequestTransformScript(
+        { resolution: "720p" },
+        `const resolutionMap = { "720p": "hd" };
+if (Object.hasOwn(resolutionMap, request.resolution)) {
+  request.resolution = resolutionMap[request.resolution];
+}
+return request;`,
+        context
+      )
+    ).resolves.toEqual({ resolution: "hd" });
+  });
+
+  it("执行 Skill 生成的视频映射并保留十二张嵌套参考图", async () => {
+    const tokens = Array.from({ length: 12 }, () =>
+      createApiRequestOpaqueToken()
+    );
+    const referenceImages = tokens.map(
+      (_token, index) => `data:image/png;base64,cmVmZXJlbmNlLTI${index}`
+    );
+    const opaqueValues = new Map(
+      tokens.map((token, index) => [token, referenceImages[index]])
+    );
+    const script = `if (context.operation === "videos.generate") {
+  request.duration_ms = Math.round(request.duration * 1000);
+  delete request.duration;
+  const ratioMap = { "16:9": "16x9" };
+  if (!Object.hasOwn(ratioMap, request.aspect_ratio)) {
+    throw new Error("Unsupported aspect ratio");
+  }
+  request.ratio = ratioMap[request.aspect_ratio];
+  delete request.aspect_ratio;
+  const qualityMap = { "1080p": "fhd" };
+  if (!Object.hasOwn(qualityMap, request.resolution)) {
+    throw new Error("Unsupported resolution");
+  }
+  request.quality = qualityMap[request.resolution];
+  delete request.resolution;
+  request.audio = { enabled: request.generate_audio };
+  delete request.generate_audio;
+  request.inputs = { references: request.reference_images };
+  delete request.reference_images;
+}
+return request;`;
+
+    await expect(
+      applyApiRequestTransformScript(
+        {
+          client_request_id: "request-1",
+          prompt: "ocean",
+          model: "seedande-2.0",
+          duration: 10,
+          aspect_ratio: "16:9",
+          resolution: "1080p",
+          generate_audio: true,
+          reference_images: tokens,
+        },
+        script,
+        context,
+        opaqueValues
+      )
+    ).resolves.toEqual({
+      client_request_id: "request-1",
+      prompt: "ocean",
+      model: "seedande-2.0",
+      duration_ms: 10_000,
+      ratio: "16x9",
+      quality: "fhd",
+      audio: { enabled: true },
+      inputs: { references: referenceImages },
+    });
+  });
+
   it("保存前拒绝语法非法脚本", async () => {
     await expect(
       validateApiRequestTransformScript("if (")

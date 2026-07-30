@@ -285,6 +285,72 @@ return request;
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
   });
 
+  it("编辑多图时重命名 image[]、mask 并保持媒体顺序", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    mocks.fetchMediaUpstream.mockImplementation(
+      async (_url: string, init?: { body?: unknown }) => {
+        const formData = init?.body;
+        expect(formData).toBeInstanceOf(FormData);
+        if (!(formData instanceof FormData)) {
+          throw new Error("missing FormData");
+        }
+        const sources = formData.getAll("source[]");
+        expect(sources).toHaveLength(2);
+        expect(sources.every((source) => source instanceof Blob)).toBe(true);
+        expect(
+          await Promise.all(
+            sources.map((source) =>
+              source instanceof Blob ? source.text() : String(source)
+            )
+          )
+        ).toEqual(["first-image", "second-image"]);
+        expect(formData.get("alpha_mask")).toBeInstanceOf(Blob);
+        expect(formData.has("image[]")).toBe(false);
+        expect(formData.has("mask")).toBe(false);
+        return successfulImageResponse();
+      }
+    );
+
+    const result = await editImage(
+      createPoolApiConfig(`
+if (Object.hasOwn(request, "image[]")) {
+  request["source[]"] = request["image[]"];
+  delete request["image[]"];
+}
+if (Object.hasOwn(request, "mask")) {
+  request.alpha_mask = request.mask;
+  delete request.mask;
+}
+return request;
+`),
+      {
+        prompt: "combine source images",
+        model: "gpt-image-2",
+        images: [
+          {
+            name: "first.png",
+            type: "image/png",
+            data: Buffer.from("first-image"),
+          },
+          {
+            name: "second.png",
+            type: "image/png",
+            data: Buffer.from("second-image"),
+          },
+        ],
+        mask: {
+          name: "mask.png",
+          type: "image/png",
+          data: Buffer.from("mask-image"),
+        },
+      }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["删除", "delete request.image; return request;"],
     ["复制", "request.image_copy = request.image; return request;"],

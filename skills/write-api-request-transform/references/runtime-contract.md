@@ -23,27 +23,43 @@ type Context = {
 
 ### `images.edit`，multipart
 
-文本字段与生成接口大体相同；标准字段包括 `model`、`prompt`、`n`、`response_format`，以及可选 `size`、`width`、`height`、`quality`、`moderation`、`output_format`、`output_compression`、`background`、`stream`、`partial_images`。输入图使用 `image` 或重复的 `image[]`，蒙版使用 `mask`。
+文本字段与生成接口大体相同；标准字段包括 `model`、`prompt`、`n`、`response_format`，以及可选 `size`、`width`、`height`、`quality`、`moderation`、`output_format`、`output_compression`、`background`、`stream`、`partial_images`。单张输入图使用 `image`；多张输入图使用重复的 `image[]`；蒙版使用 `mask`。
 
-multipart 的重复键在脚本对象中表现为数组。重命名时保留数组顺序，例如：
+multipart 的重复键在脚本对象中表现为数组。重命名时保留数组顺序；源字段或目标字段冲突时应失败关闭，例如：
 
 ```js
-if (request.image !== undefined) {
+const hasSingleImage = Object.hasOwn(request, "image");
+const hasMultipleImages = Object.hasOwn(request, "image[]");
+if (hasSingleImage && hasMultipleImages) {
+  throw new Error("conflicting image fields");
+}
+if (
+  (hasSingleImage || hasMultipleImages) &&
+  Object.hasOwn(request, "source")
+) {
+  throw new Error("conflicting source field");
+}
+if (hasSingleImage) {
   request.source = request.image;
   delete request.image;
+} else if (hasMultipleImages) {
+  request.source = request["image[]"];
+  delete request["image[]"];
 }
 return request;
 ```
 
+平台不会在同一请求中同时生成 `image` 和 `image[]`。输出数组会重建为同名的重复 multipart 字段；不要把媒体数组嵌套进对象。
+
 ### `videos.generate`，JSON
 
-标准字段包括 `client_request_id`、`prompt`、`model`、`duration`、`aspect_ratio`、`resolution`、`generate_audio` 和可选 `negative_prompt`、`first_frame`、`last_frame`、`reference_images`。
+标准字段包括 `client_request_id`、`prompt`、`model`、`duration`、`aspect_ratio`、`resolution`、`generate_audio` 和可选 `negative_prompt`、`first_frame`、`last_frame`、`reference_images`。`client_request_id` 是提交幂等标识；可移动到供应商的等价字段，但不能静默删除。
 
 首尾帧和参考图由平台能力校验保证互斥；脚本只能适配上游字段名称或结构，不能绕过互斥约束。
 
 ## QuickJS 安全限制
 
-- 源码最多 32 KiB；同步执行最多 50 ms；VM 内存最多 32 MiB；栈最多 512 KiB；输入和输出序列化最多 2 MiB。
+- 源码最多 32,768 个 UTF-16 代码单元；同步执行最多 50 ms；VM 内存最多 32 MiB；栈最多 512 KiB；输入和输出序列化最多 2 MiB。
 - 不可使用 `process`、`require`、`fetch`、XHR、WebSocket、文件、网络、定时器、Promise、动态代码执行、`Date` 或 `Math.random`。
 - 脚本不能读取凭据、URL、Method、Header、用户 ID、账号 ID 或分组信息。
 - 输出必须是普通 JSON 对象，不得返回 `null`、数组、Promise、函数、Blob 或非 JSON 值。

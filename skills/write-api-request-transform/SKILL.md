@@ -13,7 +13,8 @@ description: 根据用户提供的上游 API 参数语义、请求样例、HAR �
 
 ### 1. 读取现行契约
 
-在 FluxMedia 仓库中先读取：
+先完整读取 [references/runtime-contract.md](references/runtime-contract.md)。在
+FluxMedia 仓库中再核对：
 
 - `docs/memory/api-account-upstream-adaptation.md`
 - `apps/web/src/features/image-backend-pool/request-transform-runtime.ts`
@@ -29,6 +30,7 @@ description: 根据用户提供的上游 API 参数语义、请求样例、HAR �
 - 平台请求样例和上游期望请求样例；
 - 平台字段、上游字段、类型、单位、枚举和必填条件；
 - 模型 ID 是否只是名称不同；
+- `client_request_id` 对应的上游幂等字段；
 - 首帧、尾帧、参考图、声音和负向提示词的字段形状；
 - 同一模型不同模式（文生、首尾帧、参考图）的条件差异。
 
@@ -48,7 +50,7 @@ description: 根据用户提供的上游 API 参数语义、请求样例、HAR �
 
 ### 4. 先写映射表，再写脚本
 
-输出一张简短的语义表，至少包含平台字段、上游字段、转换方式和条件/风险。说明哪些字段保持原样、哪些字段删除、哪些字段互斥。对数组必须明确是保留数组、取单项还是展开为重复 multipart 字段。
+输出一张简短的语义表，至少包含平台字段、上游字段、转换方式和条件/风险。说明哪些字段保持原样、哪些字段删除、哪些字段互斥，以及未知枚举是拒绝还是透传。对数组必须明确是保留数组、取单项还是展开为重复 multipart 字段。
 
 ### 5. 生成脚本正文
 
@@ -87,13 +89,16 @@ return request;
 为每个受影响操作提供 before/after JSON 示例，并检查：
 
 1. `model` 是否保持账号模型映射后的上游 ID；
-2. 必填字段、类型、单位和枚举是否符合上游语义；
-3. 首尾帧与参考图是否仍然互斥；
-4. 每个媒体令牌是否恰好保留一次；
-5. 脚本失败时请求不会发出；
-6. 脚本没有使用 `process`、`require`、`fetch`、定时器、Promise、文件、网络、动态代码、时间或随机数。
+2. `client_request_id` 是否保留或移动到等价的上游幂等字段；
+3. 必填字段、类型、单位和枚举是否符合上游语义；
+4. 首尾帧与参考图是否仍然互斥；
+5. 每个媒体令牌是否恰好保留一次；
+6. 脚本失败时请求不会发出；
+7. 脚本没有使用 `process`、`require`、`fetch`、定时器、Promise、文件、网络、动态代码、时间或随机数。
 
-在仓库中工作时，优先用 `applyApiRequestTransformScript` 的现有 Vitest 测试扩展真实样例；不要用 Node `eval` 或 `new Function` 代替生产 QuickJS 运行时验证。脚本源码不得超过 32 KiB，序列化输入/输出不得超过 2 MiB，执行预算为 50 ms。
+在仓库中工作时，优先用 `applyApiRequestTransformScript` 的现有 Vitest 测试扩展真实样例；不要用 Node `eval` 或 `new Function` 代替生产 QuickJS 运行时验证。脚本源码不得超过 32,768 个 UTF-16 代码单元，序列化输入/输出不得超过 2 MiB，执行预算为 50 ms。
+
+`client_request_id` 用于降低超时或重试时的重复提交风险，不得静默删除。上游字段名称不同时移动到等价幂等字段；上游完全不支持幂等键时，先向用户说明重复提交风险并取得明确确认。
 
 ## 常用转换模式
 
@@ -109,13 +114,17 @@ if (request.aspect_ratio !== undefined) {
 ### 枚举转换
 
 ```js
-const resolutionMap = { "480p": "sd", "720p": "hd", "1080p": "fhd" };
+const resolutionMap = { "720p": "hd", "1080p": "fhd" };
 if (typeof request.resolution === "string") {
-  request.resolution = resolutionMap[request.resolution] || request.resolution;
+  if (Object.hasOwn(resolutionMap, request.resolution)) {
+    request.resolution = resolutionMap[request.resolution];
+  } else {
+    throw new Error("Unsupported resolution");
+  }
 }
 ```
 
-只有在用户给出完整枚举表时才创建映射；未知值默认保留并在交付说明中标注风险，除非上游明确要求拒绝。
+只有在用户给出完整枚举表时才创建映射；上例仅适用于账号能力不包含其他分辨率的情况。若映射表不完整，先确认未知值策略：上游严格枚举时抛错并阻止请求；只有上游确认兼容同名值或用户明确选择时才原值透传。不得自行选择失败开放或失败关闭。
 
 ### 条件参数
 
@@ -132,7 +141,7 @@ delete request.generate_audio;
 
 ```js
 if (typeof request.duration === "number") {
-  request.duration_ms = request.duration * 1000;
+  request.duration_ms = Math.round(request.duration * 1000);
   delete request.duration;
 }
 ```
@@ -141,8 +150,9 @@ if (typeof request.duration === "number") {
 
 ## 媒体输入规则
 
-- Images multipart 的文件和 mask 在脚本中是不可预测的宿主令牌。令牌只能作为顶层字段值或顶层数组元素，不能复制、删除、伪造或放进对象后再 JSON 化。
-- Videos JSON 的首帧、尾帧和参考图也以宿主令牌进入脚本。可以按上游要求移动到其他 JSON 字段或嵌套对象，但每个令牌必须在输出中恰好出现一次。
+- Images multipart 单图字段是 `image`，多图字段是 `image[]`；脚本必须覆盖实际输入模式，不能只适配单图。重复字段在脚本中表现为数组，输出顶层数组会重新展开为同名 multipart 字段。
+- Images multipart 的文件和 mask 只能移动到顶层字段或顶层数组元素；Videos JSON 媒体可以移动到嵌套字段。两类请求的每个宿主令牌都必须恰好保留一次。
+- 移动媒体前检查源字段互斥且目标字段为空；冲突时抛错，不能覆盖、合并或静默丢弃已有媒体。
 - 平台已保证首尾帧与参考图互斥；脚本不得把两种输入合并或复制成同时存在。
 - 参考图数量由模型能力配置约束；脚本不得截断或静默丢弃 `reference_images`。供应商数量限制不一致时，报告并修改模型能力配置。
 - 不要解码、拼接、裁剪或生成 data URL；真实媒体值由宿主在脚本后恢复。
@@ -162,4 +172,4 @@ if (typeof request.duration === "number") {
 
 ## 参考资料
 
-读取 [references/runtime-contract.md](references/runtime-contract.md) 获取当前 FluxMedia 请求字段、沙箱限制和媒体令牌边界。该文件只作为项目适配参考；若源码和参考资料不一致，以源码为准并报告差异。
+[references/runtime-contract.md](references/runtime-contract.md) 记录当前 FluxMedia 请求字段、沙箱限制和媒体令牌边界。若源码和参考资料不一致，以源码为准并报告差异。
