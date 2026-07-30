@@ -2,7 +2,7 @@
  * 统一媒体后端成员服务测试。
  *
  * 职责：以 DB-free 仓储端口锁定新增/编辑、类型不可变、secret 保留、URL 安全、
- * 分组关系与运行中任务删除保护；数据库事务细节由集成测试覆盖。
+ * 分组关系、运行状态重置与运行中任务删除保护；数据库事务细节由集成测试覆盖。
  */
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
@@ -19,6 +19,7 @@ const NOW = new Date("2026-07-26T00:00:00.000Z");
 function createRepository(): BackendMemberRepository & {
   saveMember: ReturnType<typeof vi.fn>;
   listMembers: ReturnType<typeof vi.fn>;
+  resetMemberStatus: ReturnType<typeof vi.fn>;
   deleteMember: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -27,6 +28,7 @@ function createRepository(): BackendMemberRepository & {
       id: input.id,
     })),
     listMembers: vi.fn(async () => []),
+    resetMemberStatus: vi.fn(async () => "reset" as const),
     deleteMember: vi.fn(async () => "deleted" as const),
   };
 }
@@ -421,6 +423,40 @@ describe("backend member service", () => {
 
     expect(repository.deleteMember).toHaveBeenCalledWith("member-busy", NOW);
     expect(error).toMatchObject({ code: "conflict" });
+  });
+
+  it("按统一成员 ID 重置运行状态并使用服务端时间", async () => {
+    const service = createBackendMemberService({
+      repository,
+      now: () => NOW,
+      validateUpstreamUrl,
+    });
+
+    await expect(
+      service.resetMemberStatus("member-unhealthy")
+    ).resolves.toEqual({ success: true });
+    expect(repository.resetMemberStatus).toHaveBeenCalledWith(
+      "member-unhealthy",
+      NOW
+    );
+  });
+
+  it("重置不存在的成员时返回稳定 not_found", async () => {
+    repository.resetMemberStatus.mockResolvedValue("not_found");
+    const service = createBackendMemberService({
+      repository,
+      now: () => NOW,
+      validateUpstreamUrl,
+    });
+
+    const error = await service
+      .resetMemberStatus("missing-member")
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "not_found",
+      message: "媒体后端成员不存在",
+    });
   });
 
   it("管理列表只返回脱敏配置存在性", async () => {

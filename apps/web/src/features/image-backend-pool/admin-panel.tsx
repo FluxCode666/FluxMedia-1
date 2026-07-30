@@ -4,8 +4,8 @@
  * 统一媒体后端号池管理面板。
  *
  * 职责：在单一页面加载和展示分组及 `api | adobe` 统一成员，打开对应编辑表单、
- * 执行安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、Sub2API、
- * Web/Codex 账号、子号池和旧三池分页不再进入此组件。
+ * 执行运行状态重置和安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、
+ * Sub2API、Web/Codex 账号、子号池和旧三池分页不再进入此组件。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
@@ -28,6 +28,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Users,
 } from "lucide-react";
@@ -40,6 +41,7 @@ import {
   deleteImageBackendGroupAction,
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
+  resetImageBackendMemberStatusAction,
 } from "./actions";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
@@ -198,6 +200,9 @@ export function ImageBackendPoolAdminPanel({
   );
   const [editingMember, setEditingMember] =
     useState<BackendMemberAdminSummary | null>(null);
+  const [resettingMemberId, setResettingMemberId] = useState<string | null>(
+    null
+  );
 
   const { execute: loadPool, isPending: isLoading } = useAction(
     getAdminImageBackendPoolAction,
@@ -249,6 +254,18 @@ export function ImageBackendPoolAdminPanel({
       onError: ({ error }) => toast.error(error.serverError || "删除成员失败"),
     }
   );
+  const { execute: resetMemberStatus, isPending: isResettingMember } =
+    useAction(resetImageBackendMemberStatusAction, {
+      onSuccess: () => {
+        setResettingMemberId(null);
+        toast.success("账号运行状态已重置");
+        loadPool();
+      },
+      onError: ({ error }) => {
+        setResettingMemberId(null);
+        toast.error(error.serverError || "重置账号运行状态失败");
+      },
+    });
 
   useEffect(() => {
     loadPool();
@@ -494,13 +511,42 @@ export function ImageBackendPoolAdminPanel({
                     .map((id) => groupNameById.get(id) ?? id)
                     .join("、")}
                 </CardDescription>
-                <CardAction className="flex gap-1">
+                <CardAction className="flex flex-wrap justify-end gap-1">
                   {!readOnly && (
                     <>
                       <Button
                         type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={isResettingMember || isDeletingMember}
+                        aria-busy={
+                          isResettingMember && resettingMemberId === member.id
+                        }
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `确认重置账号“${member.name}”的运行状态？\n\n这会清除健康降级、失败连击、冷却和最近错误，不会修改凭据、累计指标或运行中租约。`
+                            )
+                          ) {
+                            return;
+                          }
+                          setResettingMemberId(member.id);
+                          resetMemberStatus({ id: member.id });
+                        }}
+                      >
+                        {isResettingMember &&
+                        resettingMemberId === member.id ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <RotateCcw className="size-4" />
+                        )}
+                        重置状态
+                      </Button>
+                      <Button
+                        type="button"
                         size="icon"
                         variant="ghost"
+                        disabled={isResettingMember || isDeletingMember}
                         onClick={() => {
                           setEditingMember(member);
                           setMemberDialogOpen(true);
@@ -513,7 +559,7 @@ export function ImageBackendPoolAdminPanel({
                         type="button"
                         size="icon"
                         variant="ghost"
-                        disabled={isDeletingMember}
+                        disabled={isDeletingMember || isResettingMember}
                         onClick={() => {
                           if (
                             window.confirm(`确认删除成员“${member.name}”？`)

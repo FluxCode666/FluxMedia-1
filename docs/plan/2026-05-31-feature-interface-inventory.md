@@ -20,7 +20,7 @@
 | 号池 | `pool.getGroupOptions` | 已登录用户 | 返回当前可用分组选项 |
 | 号池 | `pool.getAdminPool` | 管理员 | 读取统一分组、成员与调度状态 |
 | 号池 | `pool.saveGroup`、`pool.deleteGroup` | 管理员 | 管理分组及其授权范围 |
-| 号池 | `pool.saveMember`、`pool.deleteMember` | 管理员 | 管理 `api | adobe` 统一成员及显式模型能力 |
+| 号池 | `pool.saveMember`、`pool.resetMemberStatus`、`pool.deleteMember` | 管理员 | 管理 `api | adobe` 统一成员、显式模型能力及暂态运行健康 |
 | 系统设置 | `settings.getSnapshot`、`settings.update`、`settings.getPaginationConfig` | 管理员 / 系统 | 读取或动态更新全局配置；站内列表通过 system-only 只读接口获取分页大小白名单 |
 
 ## 模型配置与模型广场 operation

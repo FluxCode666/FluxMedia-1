@@ -92,7 +92,7 @@ flowchart TB
 - R5. 系统必须只有一个顶层后端成员模型，并以 `api | adobe` 作为互斥的成员类型；分组关系、模型能力、启停、健康、冷却、优先级、并发、获租计数和调度指标使用统一语义。
 - R6. `adobe` 类型必须保留 `gateway | direct` 两种模式；每个 direct 顶层成员必须恰好保存一个 Adobe 账号的 Cookie、短期 token、刷新状态和余额，不得再有内部账号/token 子池；gateway 模式继续支持外部 Adobe 兼容网关。
 - R7. API 后端原有 `adobeSourced` 身份开关必须删除，其承载的 Adobe 网关能力归入 `adobe` 类型；不得同时用成员类型和布尔标记表达 Adobe 身份。
-- R8. 管理后台必须提供一个号池页面和一个新增入口，统一展示公共状态与调度字段，并按所选成员类型展示和校验专属配置。
+- R8. 管理后台必须提供一个号池页面和一个新增入口，统一展示公共状态与调度字段，并按所选成员类型展示和校验专属配置；管理员可手动清除成员的暂态健康降级、失败冷却和最近错误，但不得借此伪造凭据有效或修改累计指标、租约和启用状态。
 
 **模型与协议**
 
@@ -474,7 +474,7 @@ flowchart LR
 - **Approach:**
   1. member service 以事务保存公共成员行、恰好一个类型配置行和全部分组关系；更新时禁止原地跨类型，要求删除重建，避免遗留另一类型凭据。成员存在有效租约或非终态视频任务时只允许停用以阻止新获租，不允许删除凭据；所有任务终态后才允许删除并让历史引用 `SET NULL`。
   2. API 表单只保留 images base URL、API key、stream 和参数映射；Adobe 表单按 gateway/direct 展示对应字段，direct 配置直接填写该成员唯一的 Cookie 与可选 IMS scope。新增态可选类型；编辑态锁定顶层类型并解释“删除后重建”的转换路径，避免用户填完凭据才收到拒绝。
-  3. 管理列表统一显示类型、Adobe mode、分组、显式模型能力、健康、优先级、并发、有效在飞、累计获租和最近错误；所有 secret 只在写入出现，不回显。
+  3. 管理列表统一显示类型、Adobe mode、分组、显式模型能力、健康、优先级、并发、有效在飞、累计获租和最近错误；管理员可通过 `pool.resetMemberStatus` 清除暂态运行故障并恢复调度资格，凭据、累计指标、有效租约和启用状态保持原样；所有 secret 只在写入出现，不回显。
   4. Actions 仅以真实会话构造 Principal 并调用 pool operations；observer 只读，admin/super_admin 可管成员，策略设置继续只允许 super_admin。
   5. 先升级设置 operation：`settings.update` 接受严格的 `{ key, value?, clear? }[]`，`settings.getSnapshot` 返回面板需要的 category、options、secret 状态、默认/环境/数据库来源等完整脱敏定义；再让两个 Actions 调用 operation，保留值归一、清空回退默认、secret 留空保持旧值和缓存失效。
   6. 系统设置页将策略渲染为下拉框；非法持久值显示“已回退 priority”的原因和诊断标识并提供保存 priority 动作，暂时不可读时提供重新读取动作，恢复后清除警告。

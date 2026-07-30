@@ -195,6 +195,25 @@ export const saveMember = defineOperation({
   },
 });
 
+/** 手动清除统一成员的暂态运行失败状态，使其重新进入调度候选。 */
+export const resetMemberStatus = defineOperation({
+  name: "pool.resetMemberStatus",
+  domain: "image-backend-pool",
+  title: "重置账号运行状态",
+  description:
+    "清除健康降级、失败连击、冷却和最近错误；不修改凭据、启用开关、累计指标或运行中租约。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.resetMemberStatus");
+  },
+});
+
 /** 删除统一成员；有效租约或非终态视频任务存在时实现层必须拒绝。 */
 export const deleteMember = defineOperation({
   name: "pool.deleteMember",

@@ -1,5 +1,5 @@
 /**
- * 生图后端池 UOL 计费配置契约测试。
+ * 账号池 UOL 计费与成员管理契约测试。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -15,6 +15,7 @@ import { getOperation } from "../registry";
 import {
   deleteMember,
   getAdminPool,
+  resetMemberStatus,
   saveGroup,
   saveMember,
 } from "./image-backend-pool";
@@ -171,6 +172,21 @@ describe("image backend pool pricing operations", () => {
       deleteMember.input.safeParse({ id: "member-a", memberType: "api" })
         .success
     ).toBe(false);
+  });
+
+  it("成员状态重置只接受统一成员 ID 且声明为自然幂等", () => {
+    expect(resetMemberStatus.input.safeParse({ id: "member-a" }).success).toBe(
+      true
+    );
+    expect(
+      resetMemberStatus.input.safeParse({
+        id: "member-a",
+        credentialStatus: "active",
+      }).success
+    ).toBe(false);
+    expect(resetMemberStatus.readOnly).toBe(false);
+    expect(resetMemberStatus.destructive).toBe(false);
+    expect(resetMemberStatus.idempotency).toEqual({ kind: "natural" });
   });
 
   it("Adobe direct 管理快照保留余额、刷新错误和运行错误", () => {

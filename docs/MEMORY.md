@@ -25,6 +25,8 @@
   `priority`。
 - 调度排序、容量检查、获租与计数更新必须在同一个 PostgreSQL 事务中完成。
 - 调度指标不得记录 prompt、媒体、Cookie、token 或 API Key。
+- 管理员可通过 `pool.resetMemberStatus` 手动清除成员的健康降级、错误 EWMA、失败连击、
+  冷却和最近错误；重置不得伪造凭据有效、修改启用开关、累计指标或运行中租约。
 
 详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)。
 

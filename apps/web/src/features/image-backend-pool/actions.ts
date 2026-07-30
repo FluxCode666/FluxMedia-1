@@ -59,6 +59,7 @@ type PoolOperationOutputs = {
   "pool.saveGroup": { id: string };
   "pool.deleteGroup": { success: boolean };
   "pool.saveMember": { id: string };
+  "pool.resetMemberStatus": { success: boolean };
   "pool.deleteMember": { success: boolean };
   "pool.listParameterMappingTemplates": {
     templates: BackendParameterMappingTemplate[];
@@ -156,6 +157,20 @@ export const saveImageBackendMemberAction = adminAction
     );
     revalidateBackendPoolPage();
     return { success: true, id: result.id };
+  });
+
+/** 清除统一成员的暂态运行失败状态，不改凭据、指标或租约。 */
+export const resetImageBackendMemberStatusAction = adminAction
+  .metadata({ action: "imageBackendPool.resetMemberStatus" })
+  .schema(idSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    await invokePoolOperation("pool.resetMemberStatus", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+    revalidateBackendPoolPage();
+    return { success: true };
   });
 
 /** 按统一成员 ID 删除没有租约或未完成视频任务的成员。 */

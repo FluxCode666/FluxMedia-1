@@ -150,6 +150,9 @@ export type DeleteBackendMemberRepositoryResult =
   | "not_found"
   | "busy";
 
+/** 手动重置成员运行状态的稳定仓储结果。 */
+export type ResetBackendMemberStatusRepositoryResult = "reset" | "not_found";
+
 /** 成员服务依赖的事务仓储端口。 */
 export interface BackendMemberRepository {
   saveMember(
@@ -157,6 +160,10 @@ export interface BackendMemberRepository {
     now: Date
   ): Promise<SaveBackendMemberRepositoryResult>;
   listMembers(now: Date): Promise<BackendMemberAdminSummary[]>;
+  resetMemberStatus(
+    memberId: string,
+    now: Date
+  ): Promise<ResetBackendMemberStatusRepositoryResult>;
   deleteMember(
     memberId: string,
     now: Date
@@ -179,6 +186,7 @@ export interface BackendMemberServiceDependencies {
 export interface BackendMemberService {
   saveMember(input: unknown): Promise<{ id: string }>;
   listMembers(): Promise<BackendMemberAdminSummary[]>;
+  resetMemberStatus(memberId: string): Promise<{ success: true }>;
   deleteMember(memberId: string): Promise<{ success: true }>;
 }
 
@@ -318,6 +326,16 @@ export function createBackendMemberService(
 
     async listMembers() {
       return dependencies.repository.listMembers(now());
+    },
+
+    /** 校验成员 ID 并清除该成员的暂态运行故障。 */
+    async resetMemberStatus(memberId) {
+      const id = z.string().trim().min(1).max(128).parse(memberId);
+      const result = await dependencies.repository.resetMemberStatus(id, now());
+      if (result === "not_found") {
+        throw new BackendMemberServiceError("not_found", "媒体后端成员不存在");
+      }
+      return { success: true };
     },
 
     async deleteMember(memberId) {
@@ -924,6 +942,28 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       `)
     );
     return rows.map(mapMemberListRow);
+  },
+
+  /** 原子重置调度健康字段；凭据、累计指标和有效租约保持原样。 */
+  async resetMemberStatus(memberId, now) {
+    const { db, imageBackendMember } = await import("@repo/database");
+    const reset = await db
+      .update(imageBackendMember)
+      .set({
+        status: "active",
+        healthStatus: "healthy",
+        errorEwma: 0,
+        successStreak: 0,
+        failStreak: 0,
+        cooldownUntil: null,
+        lastObservedAt: now,
+        lastError: null,
+        lastErrorAt: null,
+        updatedAt: now,
+      })
+      .where(eq(imageBackendMember.id, memberId))
+      .returning({ id: imageBackendMember.id });
+    return reset.length > 0 ? "reset" : "not_found";
   },
 
   async deleteMember(memberId, now) {

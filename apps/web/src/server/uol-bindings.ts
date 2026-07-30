@@ -796,6 +796,22 @@ bindExecute(
   }
 );
 
+/** pool.resetMemberStatus - 清除成员暂态运行故障并恢复调度资格。 */
+bindExecute(
+  "pool.resetMemberStatus",
+  async (
+    input: { id: string },
+    _principal: Principal,
+    _ctx: OperationContext
+  ) => {
+    try {
+      return await backendMemberService.resetMemberStatus(input.id);
+    } catch (error) {
+      throwBackendPoolOperationError(error);
+    }
+  }
+);
+
 /** pool.deleteMember - 按统一成员 ID 执行运行中任务保护删除。 */
 bindExecute(
   "pool.deleteMember",
