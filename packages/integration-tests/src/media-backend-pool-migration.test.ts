@@ -671,7 +671,12 @@ async function createPost0073VideoSchema(
       staged_input_objects json,
       poll_url text,
       upstream_job_id text,
+      submit_started_at timestamp,
+      upstream_accepted_at timestamp,
+      storage_key text,
+      video_url text,
       credits_consumed numeric(18, 2) not null default 0,
+      api_key_credits_reserved numeric(18, 2) not null default 0,
       next_poll_at timestamp,
       metadata json,
       created_at timestamp not null default now(),
@@ -2873,37 +2878,38 @@ describe("0074 视频真实模型请求契约迁移", () => {
         `insert into video_generation (
            id, user_id, model, family,
            duration_seconds, aspect_ratio, resolution,
-           stage, backend_member_id, member_lease_id,
+           status, stage, backend_member_id, member_lease_id,
            member_lease_owner_token, poll_url, upstream_job_id,
-           credits_consumed, next_poll_at, metadata,
+           upstream_accepted_at, credits_consumed, next_poll_at, metadata,
            input_image_refs, input_manifest
          ) values
            (
              'frame-one', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
-             4, '16:9', '720p', 'created', 'input-member', null,
-             null, null, null, 0, null,
+             4, '16:9', '720p', 'pending', 'created', 'input-member', null,
+             null, null, null, null, 0, null,
              '{"generateAudio":false,"inputImageRole":"frame"}'::json,
              $1::json, null
            ),
            (
              'frame-pair', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
-             4, '16:9', '720p', 'polling', 'input-member', 'lease-1',
+             4, '16:9', '720p', 'running', 'polling', 'input-member', 'lease-1',
              'owner-1', 'https://poll.example.test/task', 'upstream-1',
+             '2026-07-30T11:59:00Z'::timestamp,
              12.5, '2026-07-30T12:00:00Z'::timestamp,
              '{"generateAudio":false,"inputImageRole":"frame"}'::json,
              $2::json, null
            ),
            (
              'references', 'user-1', 'veo31-ref-4s-16x9-720p', 'veo31-ref',
-             4, '16:9', '720p', 'charged', 'input-member', null,
-             null, null, null, 3, null,
+             4, '16:9', '720p', 'running', 'charged', 'input-member',
+             'lease-2', 'owner-2', null, null, null, 3, null,
              '{"generateAudio":false,"inputImageRole":"reference"}'::json,
              $3::json, null
            ),
            (
              'existing-manifest', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
-             4, '16:9', '720p', 'completed', 'input-member', null,
-             null, null, null, 3, null,
+             4, '16:9', '720p', 'completed', 'completed', 'input-member', null,
+             null, null, null, null, 3, null,
              '{"generateAudio":false}'::json,
              null, $4::json
            )`,
@@ -3160,6 +3166,54 @@ describe("0074 视频真实模型请求契约迁移", () => {
         select model from video_generation where id = 'missing-role-task'
       `);
       expect(task.rows[0]?.model).toBe("sora2-4s-16x9");
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("在途任务缺少阶段恢复身份时阻断并完整回滚", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      await insertPost0073DirectMember(client, "recovery-member", [
+        "sora2-4s-16x9",
+      ]);
+      await client.query(`
+        insert into video_generation (
+          id, user_id, model, family, duration_seconds, aspect_ratio,
+          resolution, status, stage, backend_member_id, member_lease_id,
+          member_lease_owner_token, poll_url, upstream_accepted_at
+        ) values (
+          'broken-polling-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+          4, '16:9', '720p', 'running', 'polling', 'recovery-member',
+          'lease-1', 'owner-1', null, now()
+        )
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/broken-polling-task:recovery_identity/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const task = await client.query<{ model: string; stage: string }>(`
+        select model, stage
+        from video_generation
+        where id = 'broken-polling-task'
+      `);
+      expect(task.rows[0]).toEqual({
+        model: "sora2-4s-16x9",
+        stage: "polling",
+      });
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

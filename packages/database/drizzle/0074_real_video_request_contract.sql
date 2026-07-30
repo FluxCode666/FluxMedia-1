@@ -58,17 +58,30 @@ BEGIN
     INNER JOIN pg_namespace AS namespace
       ON namespace.oid = relation.relnamespace
     WHERE namespace.nspname = target_schema
+      AND constraint_record.contype = 'c'
+      AND constraint_record.convalidated
       AND (
         (
           relation.relname = 'image_backend_member'
           AND constraint_record.conname =
             'image_backend_member_supported_models_check'
+          AND pg_get_constraintdef(constraint_record.oid, true) =
+            'CHECK (media_supported_model_ids_are_valid(supported_model_ids))'
         )
         OR (
           relation.relname = 'video_generation'
-          AND constraint_record.conname IN (
-            'video_generation_real_model_check',
-            'video_generation_input_manifest_check'
+          AND (
+            (
+              constraint_record.conname =
+                'video_generation_input_manifest_check'
+              AND pg_get_constraintdef(constraint_record.oid, true) =
+                'CHECK (input_manifest IS NULL OR video_input_manifest_is_valid(input_manifest, user_id, id, model))'
+            )
+            OR (
+              constraint_record.conname = 'video_generation_real_model_check'
+              AND pg_get_constraintdef(constraint_record.oid, true) =
+                'CHECK (model = ANY (ARRAY[''sora2''::text, ''sora2-pro''::text, ''veo31''::text, ''veo31-fast''::text, ''veo31-ref''::text, ''kling-o3''::text, ''kling3''::text, ''kling3-omni''::text, ''runway-gen45''::text, ''ray314''::text, ''ray314-hdr''::text, ''seedance2''::text, ''seedance2-fast''::text]))'
+            )
           )
         )
       );
@@ -78,14 +91,24 @@ BEGIN
     INNER JOIN pg_namespace AS namespace
       ON namespace.oid = procedure_record.pronamespace
     WHERE namespace.nspname = target_schema
+      AND procedure_record.prorettype = 'boolean'::regtype
+      AND procedure_record.provolatile = 'i'
+      AND procedure_record.proisstrict
+      AND NOT procedure_record.prosecdef
+      AND procedure_record.proconfig = ARRAY['search_path=pg_catalog']::text[]
       AND (
         (
           procedure_record.proname = 'media_supported_model_ids_are_valid'
           AND procedure_record.pronargs = 1
+          AND procedure_record.proargtypes[0] = 'json'::regtype
         )
         OR (
           procedure_record.proname = 'video_input_manifest_is_valid'
           AND procedure_record.pronargs = 4
+          AND procedure_record.proargtypes[0] = 'json'::regtype
+          AND procedure_record.proargtypes[1] = 'text'::regtype
+          AND procedure_record.proargtypes[2] = 'text'::regtype
+          AND procedure_record.proargtypes[3] = 'text'::regtype
         )
       );
     IF NOT EXISTS (
@@ -99,6 +122,29 @@ BEGIN
     THEN
       RAISE EXCEPTION
         '0074 blocked: partially migrated real video request schema';
+    END IF;
+    IF NOT media_supported_model_ids_are_valid(
+        '["seedance2","image-model"]'::json
+      )
+      OR media_supported_model_ids_are_valid(
+        '["seedance2-4s-16x9-1080p"]'::json
+      )
+      OR media_supported_model_ids_are_valid('["image","IMAGE"]'::json)
+      OR NOT video_input_manifest_is_valid(
+        '{"firstFrame":{"source":"storage","mimeType":"image/png","storageKey":"u/video-inputs/t/a/f.png","storageBucket":"b","byteLength":1}}'::json,
+        'u',
+        't',
+        'seedance2'
+      )
+      OR video_input_manifest_is_valid(
+        '{"firstFrame":{"source":"storage","mimeType":"image/png","storageKey":"u/video-inputs/t/a/f.png","storageBucket":"b","byteLength":1},"referenceImages":[{"source":"storage","mimeType":"image/png","storageKey":"u/video-inputs/t/a/r.png","storageBucket":"b","byteLength":1}]}'::json,
+        'u',
+        't',
+        'seedance2'
+      )
+    THEN
+      RAISE EXCEPTION
+        '0074 blocked: real video request validators have drifted';
     END IF;
     RETURN;
   END IF;
@@ -456,6 +502,38 @@ BEGIN
             AND allowed.aspect_ratio = resolved.normalized_aspect_ratio
             AND allowed.resolution = resolved.normalized_resolution
         ) THEN 'parameter_conflict'
+      WHEN resolved.adobe_request_profile NOT IN ('express', 'firefly')
+        OR resolved.adobe_auth_profile NOT IN ('express', 'firefly')
+        OR CASE resolved.stage
+          WHEN 'created' THEN resolved.status <> 'pending'
+          WHEN 'charged' THEN resolved.status <> 'running'
+            OR btrim(coalesce(resolved.backend_member_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_owner_token, '')) = ''
+          WHEN 'submitting' THEN resolved.status <> 'running'
+            OR btrim(coalesce(resolved.backend_member_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_owner_token, '')) = ''
+            OR resolved.submit_started_at IS NULL
+          WHEN 'submit_uncertain' THEN resolved.status <> 'running'
+            OR btrim(coalesce(resolved.backend_member_id, '')) = ''
+          WHEN 'polling' THEN resolved.status <> 'running'
+            OR btrim(coalesce(resolved.backend_member_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_owner_token, '')) = ''
+            OR btrim(coalesce(resolved.poll_url, '')) = ''
+            OR resolved.upstream_accepted_at IS NULL
+          WHEN 'downloading' THEN resolved.status <> 'running'
+            OR btrim(coalesce(resolved.backend_member_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_id, '')) = ''
+            OR btrim(coalesce(resolved.member_lease_owner_token, '')) = ''
+            OR btrim(coalesce(resolved.video_url, '')) = ''
+            OR btrim(coalesce(resolved.storage_key, '')) = ''
+          WHEN 'refunding' THEN resolved.status <> 'running'
+          WHEN 'completed' THEN resolved.status <> 'completed'
+          WHEN 'failed' THEN resolved.status <> 'failed'
+          ELSE true
+        END THEN 'recovery_identity'
       ELSE NULL
     END
   FROM resolved;
@@ -827,7 +905,10 @@ BEGIN
       array_to_string(invalid_input_ids, ',');
   END IF;
 
-  -- 到这里所有门禁均已通过；后续任何 DML、DDL 或约束错误仍由同一 DO 事务回滚。
+  CREATE TEMP TABLE _0074_member_model_projection (
+    member_id text PRIMARY KEY,
+    model_ids json NOT NULL
+  ) ON COMMIT DROP;
   WITH expanded AS (
     SELECT
       member.id,
@@ -869,21 +950,39 @@ BEGIN
         ELSE 1
       END AS duplicate_rank
     FROM expanded
-  ), aggregated AS (
+  )
+  INSERT INTO _0074_member_model_projection (member_id, model_ids)
     SELECT
       projected.id,
       json_agg(projected.model_id ORDER BY projected.ordinality) AS model_ids
     FROM projected
     WHERE projected.duplicate_rank = 1
-    GROUP BY projected.id
+    GROUP BY projected.id;
+
+  WITH invalid AS (
+    SELECT projection.member_id AS id
+    FROM _0074_member_model_projection AS projection
+    WHERE NOT media_supported_model_ids_are_valid(projection.model_ids)
+    ORDER BY projection.member_id
+    LIMIT 20
   )
+  SELECT array_agg(id ORDER BY id)
+  INTO invalid_member_ids
+  FROM invalid;
+  IF invalid_member_ids IS NOT NULL THEN
+    RAISE EXCEPTION
+      '0074 blocked: projected member model arrays are invalid (%)',
+      array_to_string(invalid_member_ids, ',');
+  END IF;
+
+  -- 到这里所有门禁均已通过；后续任何 DML、DDL 或约束错误仍由同一 DO 事务回滚。
   UPDATE image_backend_member AS member
-  SET supported_model_ids = aggregated.model_ids,
+  SET supported_model_ids = projection.model_ids,
       updated_at = now()
-  FROM aggregated
-  WHERE member.id = aggregated.id
+  FROM _0074_member_model_projection AS projection
+  WHERE member.id = projection.member_id
     AND member.supported_model_ids::jsonb IS DISTINCT FROM
-      aggregated.model_ids::jsonb;
+      projection.model_ids::jsonb;
 
   UPDATE video_generation AS video
   SET model = task.real_model,
