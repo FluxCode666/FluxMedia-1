@@ -138,6 +138,10 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @repo/database db:release-gate -- drain
+          pnpm --filter @repo/database db:release-gate -- preflight-early
+          VIDEO_INPUT_ROLLBACK_MANIFEST=/tmp/video-input-rollback.ndjson \
+            node apps/web/scripts/migrate-video-input-assets.mjs migrate \
+            --confirm-no-legacy-writers
           pnpm --filter @repo/database db:release-gate -- preflight
           pnpm --filter @repo/database db:release-gate -- postcheck-initial
 
@@ -420,6 +424,14 @@ jobs:
               </dev/null
           }
 
+          # 旧 schema 输入全部复制为任务对象；0074 已完成时命令是幂等空操作。
+          run_video_input_asset_migration() {
+            docker compose --profile maintenance run --rm --no-deps \
+              --interactive=false migrate \
+              node apps/web/scripts/migrate-video-input-assets.mjs migrate \
+              --confirm-no-legacy-writers </dev/null
+          }
+
           # 仅在迁移开始前恢复旧镜像元数据；是否重启由退出状态机决定。
           restore_previous_metadata() {
             if [ -n "${previous_image}" ]; then
@@ -473,8 +485,12 @@ jobs:
             if [ "${web_stopped}" = "true" ] \
               && [ -n "${previous_image}" ] \
               && [ -n "${previous_tag}" ]; then
-              echo "迁移尚未开始，恢复旧 Web 服务。" >&2
-              docker compose up -d --no-deps web >/dev/null 2>&1 || true
+              if run_release_gate legacy-startup >/dev/null; then
+                echo "迁移尚未开始且旧 schema 门禁通过，恢复旧 Web 服务。" >&2
+                docker compose up -d --no-deps web >/dev/null 2>&1 || true
+              else
+                echo "旧应用启动门禁拒绝恢复，保持维护状态。" >&2
+              fi
             fi
             return "${status}"
           }
@@ -491,7 +507,7 @@ jobs:
           fi
 
           echo "在停服前烟测新 migrator 镜像与纯中转门禁。"
-          preliminary_preflight="$(run_release_gate preflight)"
+          preliminary_preflight="$(run_release_gate preflight-early)"
           printf '%s\n' "${preliminary_preflight}"
           if printf '%s\n' "${preliminary_preflight}" \
             | grep -qx 'relay_only_column=present'; then
@@ -509,14 +525,19 @@ jobs:
           fi
 
           run_release_gate drain
-          run_release_gate preflight
+          run_release_gate preflight-early
 
           echo "创建迁移前数据库备份并校验最终存储。"
           bash ./create-database-backup.sh \
             create .env "${deploy_path}" "${image_tag}" "${git_sha}"
 
-          echo "执行数据库迁移。"
+          echo "收编历史视频输入资产。"
           migration_started=true
+          install -d -m 700 state
+          run_video_input_asset_migration
+          run_release_gate preflight
+
+          echo "执行数据库迁移。"
           # 远程脚本本身从 SSH stdin 读取；迁移容器不得继承 stdin，否则会吞掉后续
           # web 启动与健康检查命令，并让未完成的部署被误判为成功。
           if ! docker compose --profile maintenance run --rm --no-deps \

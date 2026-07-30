@@ -83,6 +83,178 @@ const REMOVED_PLAN_FEATURES = [
   "externalApi.agent",
 ];
 const REMOVED_PLAN_LIMITS = ["maxChatImages", "maxChatContextChars"];
+const VIDEO_INPUT_MAX_COUNT = 256;
+const VIDEO_INPUT_MAX_BYTES = 200 * 1024 * 1024;
+const VIDEO_GATE_PAGE_SIZE = 200;
+const REAL_VIDEO_MODEL_IDS = [
+  "sora2",
+  "sora2-pro",
+  "veo31",
+  "veo31-fast",
+  "veo31-ref",
+  "kling-o3",
+  "kling3",
+  "kling3-omni",
+  "runway-gen45",
+  "ray314",
+  "ray314-hdr",
+  "seedance2",
+  "seedance2-fast",
+];
+const FROZEN_VIDEO_FAMILIES = [
+  {
+    model: "sora2",
+    durations: [4, 8, 12],
+    aspectRatios: ["9:16", "16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    model: "sora2-pro",
+    durations: [4, 8, 12],
+    aspectRatios: ["9:16", "16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    model: "veo31",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "veo31-fast",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "veo31-ref",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "kling-o3",
+    durations: [5, 15],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p"],
+    resolutionInId: false,
+  },
+  {
+    model: "kling3",
+    durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "kling3-omni",
+    durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "runway-gen45",
+    durations: [5, 8, 10],
+    aspectRatios: ["16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    model: "ray314",
+    durations: [5, 10],
+    aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "ray314-hdr",
+    durations: [5],
+    aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    model: "seedance2",
+    durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["1080p", "720p", "480p"],
+    resolutionInId: true,
+  },
+  {
+    model: "seedance2-fast",
+    durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+    resolutions: ["720p", "480p"],
+    resolutionInId: true,
+  },
+];
+
+/**
+ * 构造与 0074 SQL 独立冻结的复合模型映射。
+ *
+ * @returns 573 个规范组合与 6 个 Kling 历史别名。
+ * @throws 冻结规格计数漂移时抛错并阻止发布门禁启动。
+ * @sideEffect 无副作用。
+ * @boundary 不读取运行时模型目录，避免未来目录变化改写历史。
+ */
+function buildFrozenVideoModelMapping() {
+  const mapping = new Map();
+  let canonicalCount = 0;
+  for (const family of FROZEN_VIDEO_FAMILIES) {
+    for (const duration of family.durations) {
+      for (const aspectRatio of family.aspectRatios) {
+        for (const resolution of family.resolutions) {
+          const ratioSuffix = aspectRatio.replace(":", "x");
+          const resolutionSuffix = family.resolutionInId
+            ? `-${resolution}`
+            : "";
+          mapping.set(
+            `${family.model}-${duration}s-${ratioSuffix}${resolutionSuffix}`,
+            {
+              model: family.model,
+              duration,
+              aspectRatio,
+              resolution,
+            }
+          );
+          canonicalCount += 1;
+        }
+      }
+    }
+  }
+  let aliasCount = 0;
+  for (const duration of [5, 10, 15]) {
+    for (const aspectRatio of ["16:9", "9:16"]) {
+      mapping.set(`kling3-${duration}s-${aspectRatio.replace(":", "x")}`, {
+        model: "kling3",
+        duration,
+        aspectRatio,
+        resolution: "720p",
+      });
+      aliasCount += 1;
+    }
+  }
+  if (
+    canonicalCount !== 573 ||
+    aliasCount !== 6 ||
+    mapping.size !== canonicalCount + aliasCount
+  ) {
+    throw new Error("frozen video request migration mapping is incomplete");
+  }
+  return mapping;
+}
+
+const FROZEN_VIDEO_MODEL_MAPPING = buildFrozenVideoModelMapping();
+const REAL_VIDEO_MODEL_SET = new Set(REAL_VIDEO_MODEL_IDS);
+const VIDEO_FAMILY_BY_ID = new Map(
+  FROZEN_VIDEO_FAMILIES.map((family) => [family.model, family])
+);
 
 /**
  * 将 PostgreSQL bigint 文本计数收窄为 JavaScript 安全整数。
@@ -867,6 +1039,689 @@ async function assertMediaPreflight(pool) {
   });
 }
 
+/** 将不可信 JSON 值收窄为普通对象。 */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 判断模型值是否属于冻结视频命名空间。 */
+function looksLikeVideoModel(modelId) {
+  const normalized = modelId.trim().toLowerCase();
+  return (
+    normalized.startsWith("firefly-") ||
+    REAL_VIDEO_MODEL_IDS.some(
+      (realModel) =>
+        normalized === realModel || normalized.startsWith(`${realModel}-`)
+    )
+  );
+}
+
+/** 解析旧复合或已切换真实模型任务，并证明独立参数完全一致。 */
+function resolveFrozenVideoTask(row) {
+  if (
+    typeof row.model !== "string" ||
+    typeof row.family !== "string" ||
+    !Number.isSafeInteger(row.duration_seconds) ||
+    typeof row.aspect_ratio !== "string" ||
+    typeof row.resolution !== "string"
+  ) {
+    return null;
+  }
+  const normalizedModel = row.model.trim().toLowerCase();
+  const mapped = FROZEN_VIDEO_MODEL_MAPPING.get(normalizedModel);
+  const realModel =
+    mapped?.model ??
+    (REAL_VIDEO_MODEL_SET.has(normalizedModel) ? normalizedModel : null);
+  if (!realModel || row.family.trim().toLowerCase() !== realModel) return null;
+  const capability = VIDEO_FAMILY_BY_ID.get(realModel);
+  if (!capability) return null;
+  const durationMatches = mapped
+    ? row.duration_seconds === mapped.duration
+    : capability.durations.includes(row.duration_seconds);
+  const aspectRatio = row.aspect_ratio.trim();
+  const resolution = row.resolution.trim().toLowerCase();
+  const ratioMatches = mapped
+    ? aspectRatio === mapped.aspectRatio
+    : capability.aspectRatios.includes(aspectRatio);
+  const resolutionMatches = mapped
+    ? resolution === mapped.resolution
+    : capability.resolutions.includes(resolution);
+  if (!durationMatches || !ratioMatches || !resolutionMatches) return null;
+  return realModel;
+}
+
+/** 判断不可信数据库值是否为可持久恢复的非空文本。 */
+function isNonemptyVideoRecoveryText(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * 按视频阶段验证旧任务恢复身份，阻止切换后才发现任务无法接管或轮询。
+ *
+ * @param {Record<string, unknown>} row 旧 video_generation 行。
+ * @returns {boolean} 状态、Profile 与阶段所需持久身份全部一致时为 true。
+ * @sideEffect 无。
+ * @boundary upstream_job_id 可为空，因为供应商成功响应允许不返回；next_poll_at
+ *   为空会被恢复仓储立即认领，不属于身份缺失。
+ */
+function validateLegacyVideoRecoveryIdentity(row) {
+  if (
+    !["express", "firefly"].includes(row.adobe_request_profile) ||
+    !["express", "firefly"].includes(row.adobe_auth_profile)
+  ) {
+    return false;
+  }
+  const hasMember = isNonemptyVideoRecoveryText(row.backend_member_id);
+  const hasLease =
+    hasMember &&
+    isNonemptyVideoRecoveryText(row.member_lease_id) &&
+    isNonemptyVideoRecoveryText(row.member_lease_owner_token);
+  if (row.stage === "created") return row.status === "pending";
+  if (row.stage === "charged") return row.status === "running" && hasLease;
+  if (row.stage === "submitting") {
+    return (
+      row.status === "running" &&
+      hasLease &&
+      row.submit_started_at instanceof Date
+    );
+  }
+  if (row.stage === "submit_uncertain") {
+    return row.status === "running" && hasMember;
+  }
+  if (row.stage === "polling") {
+    return (
+      row.status === "running" &&
+      hasLease &&
+      isNonemptyVideoRecoveryText(row.poll_url) &&
+      row.upstream_accepted_at instanceof Date
+    );
+  }
+  if (row.stage === "downloading") {
+    return (
+      row.status === "running" &&
+      hasLease &&
+      isNonemptyVideoRecoveryText(row.video_url) &&
+      isNonemptyVideoRecoveryText(row.storage_key)
+    );
+  }
+  if (row.stage === "refunding") return row.status === "running";
+  if (row.stage === "completed") return row.status === "completed";
+  if (row.stage === "failed") return row.status === "failed";
+  return false;
+}
+
+/** 验证单个任务自有 storage 输入，不输出其对象身份。 */
+function validateVideoInputReference(reference, row, seenStorageKeys) {
+  if (!isRecord(reference)) return null;
+  const allowedKeys = new Set([
+    "source",
+    "mimeType",
+    "storageKey",
+    "storageBucket",
+    "byteLength",
+  ]);
+  if (Object.keys(reference).some((key) => !allowedKeys.has(key))) return null;
+  if (
+    reference.source !== "storage" ||
+    !["image/png", "image/jpeg", "image/webp"].includes(reference.mimeType) ||
+    typeof reference.storageKey !== "string" ||
+    typeof reference.storageBucket !== "string" ||
+    !Number.isSafeInteger(reference.byteLength) ||
+    reference.byteLength <= 0 ||
+    reference.byteLength > VIDEO_INPUT_MAX_BYTES
+  ) {
+    return null;
+  }
+  const storageKey = reference.storageKey;
+  const storageBucket = reference.storageBucket;
+  const prefix = `${row.user_id}/video-inputs/${row.id}/`;
+  const suffix = storageKey.startsWith(prefix)
+    ? storageKey.slice(prefix.length).split("/")
+    : [];
+  if (
+    storageKey !== storageKey.trim() ||
+    storageKey.length > 1_024 ||
+    suffix.length !== 2 ||
+    suffix.some((segment) => !segment || segment === "." || segment === "..") ||
+    storageBucket !== storageBucket.trim() ||
+    storageBucket.length === 0 ||
+    storageBucket.length > 128 ||
+    storageBucket.includes("/") ||
+    storageBucket.includes("\\") ||
+    storageBucket.includes("..") ||
+    seenStorageKeys.has(storageKey)
+  ) {
+    return null;
+  }
+  seenStorageKeys.add(storageKey);
+  return reference.byteLength;
+}
+
+/** 按真实模型能力验证具名输入清单和任务对象归属。 */
+function validateVideoInputManifest(manifest, row, realModel) {
+  if (!isRecord(manifest) || Object.keys(manifest).length === 0) return false;
+  const allowedKeys = new Set(["firstFrame", "lastFrame", "referenceImages"]);
+  if (Object.keys(manifest).some((key) => !allowedKeys.has(key))) return false;
+  const hasFirst = manifest.firstFrame !== undefined;
+  const hasLast = manifest.lastFrame !== undefined;
+  const hasReferences = manifest.referenceImages !== undefined;
+  if ((hasLast && !hasFirst) || ((hasFirst || hasLast) && hasReferences)) {
+    return false;
+  }
+  if (
+    hasReferences &&
+    (!Array.isArray(manifest.referenceImages) ||
+      manifest.referenceImages.length === 0)
+  ) {
+    return false;
+  }
+  const references = [
+    ...(hasFirst ? [manifest.firstFrame] : []),
+    ...(hasLast ? [manifest.lastFrame] : []),
+    ...(Array.isArray(manifest.referenceImages)
+      ? manifest.referenceImages
+      : []),
+  ];
+  if (references.length === 0 || references.length > VIDEO_INPUT_MAX_COUNT) {
+    return false;
+  }
+  const frameCount = Number(hasFirst) + Number(hasLast);
+  const referenceCount = Array.isArray(manifest.referenceImages)
+    ? manifest.referenceImages.length
+    : 0;
+  const framesOnly = frameCount >= 1 && referenceCount === 0;
+  const referencesOnly = frameCount === 0 && referenceCount >= 1;
+  const modeValid =
+    ((realModel === "sora2" || realModel === "sora2-pro") &&
+      frameCount === 1 &&
+      referencesOnly === false) ||
+    (["veo31", "veo31-fast", "kling-o3", "kling3"].includes(realModel) &&
+      framesOnly &&
+      frameCount <= 2) ||
+    (realModel === "veo31-ref" && referencesOnly && referenceCount <= 3) ||
+    (realModel === "kling3-omni" &&
+      ((framesOnly && frameCount <= 2) ||
+        (referencesOnly && referenceCount <= 3))) ||
+    (["seedance2", "seedance2-fast"].includes(realModel) &&
+      ((framesOnly && frameCount <= 2) || referencesOnly));
+  if (!modeValid) return false;
+  const seenStorageKeys = new Set();
+  let totalBytes = 0;
+  for (const reference of references) {
+    const byteLength = validateVideoInputReference(
+      reference,
+      row,
+      seenStorageKeys
+    );
+    if (byteLength === null) return false;
+    totalBytes += byteLength;
+    if (totalBytes > VIDEO_INPUT_MAX_BYTES) return false;
+  }
+  return true;
+}
+
+/** 将旧数组与可证明角色投影为具名输入清单。 */
+function projectLegacyVideoInputManifest(row, realModel) {
+  if (row.input_manifest !== null && row.input_image_refs !== null) return null;
+  if (row.input_manifest !== null) {
+    return validateVideoInputManifest(row.input_manifest, row, realModel)
+      ? row.input_manifest
+      : null;
+  }
+  if (row.input_image_refs === null) {
+    return (row.metadata === null || isRecord(row.metadata)) &&
+      row.metadata?.inputImageRole === undefined
+      ? undefined
+      : null;
+  }
+  if (
+    !Array.isArray(row.input_image_refs) ||
+    row.input_image_refs.length === 0 ||
+    !isRecord(row.metadata)
+  ) {
+    return null;
+  }
+  const role = row.metadata.inputImageRole;
+  let manifest;
+  if (role === "reference") {
+    manifest = { referenceImages: row.input_image_refs };
+  } else if (role === "frame" && row.input_image_refs.length === 1) {
+    manifest = { firstFrame: row.input_image_refs[0] };
+  } else if (role === "frame" && row.input_image_refs.length === 2) {
+    manifest = {
+      firstFrame: row.input_image_refs[0],
+      lastFrame: row.input_image_refs[1],
+    };
+  } else {
+    return null;
+  }
+  return validateVideoInputManifest(manifest, row, realModel) ? manifest : null;
+}
+
+/** 记录不超过 20 个非敏感记录 ID，同时保留完整阻断计数。 */
+function addVideoGateBlocker(blockers, id) {
+  blockers.count += 1;
+  if (blockers.ids.length < 20) blockers.ids.push(id);
+}
+
+/**
+ * 将阻断 ID 编码为单行 JSON，避免数据库主键中的换行污染发布证据边界。
+ *
+ * @param {string[]} ids 最多 20 个非敏感记录 ID。
+ * @returns {string} 不含实际 Unicode 行分隔符的 JSON 数组。
+ * @throws JSON 序列化失败时原样抛错；字符串数组不会触发该失败模式。
+ * @sideEffect 无。
+ * @boundary U+2028/U+2029 需额外转义，因为 JSON.stringify 默认会保留它们。
+ */
+function serializeVideoGateBlockerIds(ids) {
+  return JSON.stringify(ids)
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+}
+
+/** 输出视频契约门禁的非敏感计数与记录 ID，并在存在阻断项时拒绝。 */
+function assertNoVideoGateBlockers(blockers) {
+  printEvidence("video_contract_blocker_count", blockers.count);
+  printEvidence(
+    "video_contract_blocker_ids",
+    serializeVideoGateBlockerIds(blockers.ids)
+  );
+  if (blockers.count !== 0) {
+    throw new Error(
+      `video request contract preflight failed: ${blockers.count} records blocked`
+    );
+  }
+}
+
+/** 在 0074 前证明成员、任务、输入角色和任务对象都可唯一迁移。 */
+async function assertVideoContractPreflight(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const schemaResult = await client.query(`
+      select
+        count(*) filter (
+          where column_name in (
+            'family', 'input_image_refs', 'staged_input_objects'
+          )
+        )::text as legacy_column_count,
+        count(*) filter (
+          where column_name = 'input_manifest'
+        )::text as manifest_column_count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'video_generation'
+    `);
+    const schema = schemaResult.rows[0] ?? {};
+    const legacyColumnCount = parseCount(
+      schema.legacy_column_count,
+      "video contract legacy columns"
+    );
+    const manifestColumnCount = parseCount(
+      schema.manifest_column_count,
+      "video contract manifest columns"
+    );
+    printEvidence("video_contract_legacy_column_count", legacyColumnCount);
+    printEvidence("video_contract_manifest_column_count", manifestColumnCount);
+    if (legacyColumnCount === 0 && manifestColumnCount === 1) {
+      printEvidence("video_contract_schema_state", "applied");
+      printEvidence("video_contract_blocker_count", 0);
+      printEvidence("video_contract_blocker_ids", "[]");
+      return;
+    }
+    if (legacyColumnCount !== 3 || manifestColumnCount !== 0) {
+      throw new Error("video request contract preflight found partial schema");
+    }
+    printEvidence("video_contract_schema_state", "legacy");
+    const blockers = { count: 0, ids: [] };
+    let afterMemberId = null;
+    while (true) {
+      const members = await client.query(
+        `select member.id, member.type, member.supported_model_ids, adobe.mode
+         from image_backend_member as member
+         left join image_backend_member_adobe_config as adobe
+           on adobe.member_id = member.id
+         where ($1::text is null or member.id > $1)
+         order by member.id
+         limit $2`,
+        [afterMemberId, VIDEO_GATE_PAGE_SIZE]
+      );
+      if (members.rows.length === 0) break;
+      for (const member of members.rows) {
+        if (
+          !Array.isArray(member.supported_model_ids) ||
+          member.supported_model_ids.length === 0 ||
+          member.supported_model_ids.length > 1000
+        ) {
+          addVideoGateBlocker(blockers, `member:${member.id}`);
+          continue;
+        }
+        const seenProjectedModels = new Set();
+        let invalid = false;
+        for (const value of member.supported_model_ids) {
+          if (
+            typeof value !== "string" ||
+            value.trim().length === 0 ||
+            value.trim().length > 120
+          ) {
+            invalid = true;
+            break;
+          }
+          const normalized = value.trim().toLowerCase();
+          const mapping = FROZEN_VIDEO_MODEL_MAPPING.get(normalized);
+          const mapped = mapping !== undefined;
+          const real = REAL_VIDEO_MODEL_SET.has(normalized);
+          if (
+            (looksLikeVideoModel(normalized) && !mapped && !real) ||
+            ((mapped || real) &&
+              (member.type !== "adobe" || member.mode !== "direct"))
+          ) {
+            invalid = true;
+            break;
+          }
+          const projectedModel = mapping?.model ?? (real ? normalized : value);
+          const projectedIdentity = projectedModel.toLowerCase();
+          if (seenProjectedModels.has(projectedIdentity)) {
+            if (mapped || real) continue;
+            invalid = true;
+            break;
+          }
+          if (!mapped && !real && value !== value.trim()) {
+            invalid = true;
+            break;
+          }
+          seenProjectedModels.add(projectedIdentity);
+        }
+        if (invalid) addVideoGateBlocker(blockers, `member:${member.id}`);
+      }
+      afterMemberId = members.rows.at(-1)?.id ?? null;
+    }
+
+    let afterTaskId = null;
+    while (true) {
+      const tasks = await client.query(
+        `select
+           id, user_id, model, family, duration_seconds, aspect_ratio,
+           resolution, status, stage, metadata, input_image_refs,
+           null::json as input_manifest,
+           staged_input_objects, backend_member_id, member_lease_id,
+           member_lease_owner_token, adobe_request_profile,
+           adobe_auth_profile, poll_url, upstream_job_id, next_poll_at,
+           submit_started_at, upstream_accepted_at, storage_key, video_url,
+           credits_consumed, api_key_credits_reserved
+         from video_generation
+         where ($1::text is null or id > $1)
+         order by id
+         limit $2`,
+        [afterTaskId, VIDEO_GATE_PAGE_SIZE]
+      );
+      if (tasks.rows.length === 0) break;
+      for (const row of tasks.rows) {
+        const realModel = resolveFrozenVideoTask(row);
+        const metadataValid = row.metadata === null || isRecord(row.metadata);
+        const stagingValid =
+          row.staged_input_objects === null ||
+          (Array.isArray(row.staged_input_objects) &&
+            row.staged_input_objects.length === 0);
+        const manifest = realModel
+          ? projectLegacyVideoInputManifest(row, realModel)
+          : null;
+        if (
+          !realModel ||
+          !metadataValid ||
+          !stagingValid ||
+          !validateLegacyVideoRecoveryIdentity(row) ||
+          manifest === null
+        ) {
+          addVideoGateBlocker(blockers, `task:${row.id}`);
+        }
+      }
+      afterTaskId = tasks.rows.at(-1)?.id ?? null;
+    }
+    assertNoVideoGateBlockers(blockers);
+  });
+}
+
+/** 在停服前只验证视频 schema 处于完整旧版或完整新版，拒绝部分切换。 */
+async function assertVideoContractSchemaStage(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const result = await client.query(`
+      select
+        count(*) filter (
+          where column_name in (
+            'family', 'input_image_refs', 'staged_input_objects'
+          )
+        )::text as legacy_column_count,
+        count(*) filter (
+          where column_name = 'input_manifest'
+        )::text as manifest_column_count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'video_generation'
+    `);
+    const row = result.rows[0] ?? {};
+    const legacyColumnCount = parseCount(
+      row.legacy_column_count,
+      "video contract schema stage legacy columns"
+    );
+    const manifestColumnCount = parseCount(
+      row.manifest_column_count,
+      "video contract schema stage manifest column"
+    );
+    const state =
+      legacyColumnCount === 3 && manifestColumnCount === 0
+        ? "legacy"
+        : legacyColumnCount === 0 && manifestColumnCount === 1
+          ? "applied"
+          : "partial";
+    printEvidence("video_contract_schema_state", state);
+    if (state === "partial") {
+      throw new Error("video request contract schema is partially migrated");
+    }
+  });
+}
+
+/** 供回滚流程证明旧应用只能在仍含三个旧列的 schema 上启动。 */
+async function assertLegacyVideoContractStartupAllowed(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const result = await client.query(`
+      select count(*)::text as count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'video_generation'
+        and column_name in (
+          'family', 'input_image_refs', 'staged_input_objects'
+        )
+    `);
+    const count = parseCount(
+      result.rows[0]?.count,
+      "legacy video application startup columns"
+    );
+    printEvidence("legacy_video_contract_column_count", count);
+    if (count !== 3) {
+      throw new Error(
+        "legacy video application cannot start on the real video contract schema"
+      );
+    }
+  });
+}
+
+/** 证明 0074 已删除旧列，且真实 ID、约束函数和输入归属均完全收敛。 */
+async function assertVideoContractPostMigrationState(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const schemaResult = await client.query(`
+      select
+        count(*) filter (
+          where column_name in (
+            'family', 'input_image_refs', 'staged_input_objects'
+          )
+        )::text as legacy_column_count,
+        count(*) filter (
+          where column_name = 'input_manifest'
+            and is_nullable = 'YES'
+        )::text as manifest_column_count
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'video_generation'
+    `);
+    const schema = schemaResult.rows[0] ?? {};
+    const legacyColumnCount = parseCount(
+      schema.legacy_column_count,
+      "post-migration video legacy columns"
+    );
+    const manifestColumnCount = parseCount(
+      schema.manifest_column_count,
+      "post-migration video manifest column"
+    );
+    printEvidence("video_contract_legacy_column_count", legacyColumnCount);
+    printEvidence("video_contract_manifest_column_count", manifestColumnCount);
+    if (legacyColumnCount !== 0 || manifestColumnCount !== 1) {
+      throw new Error("post-migration video request schema invariants failed");
+    }
+    const result = await client.query(
+      `select
+         (
+           select count(*)::text
+           from pg_constraint as constraint_record
+           inner join pg_class as relation
+             on relation.oid = constraint_record.conrelid
+           where relation.relnamespace = 'public'::regnamespace
+             and constraint_record.contype = 'c'
+             and constraint_record.convalidated
+             and (
+               (relation.relname = 'image_backend_member'
+                 and constraint_record.conname =
+                   'image_backend_member_supported_models_check'
+                 and pg_get_constraintdef(constraint_record.oid, true) =
+                   'CHECK (media_supported_model_ids_are_valid(supported_model_ids))')
+               or (relation.relname = 'video_generation'
+                 and (
+                   (constraint_record.conname =
+                     'video_generation_input_manifest_check'
+                     and pg_get_constraintdef(constraint_record.oid, true) =
+                       'CHECK (input_manifest IS NULL OR video_input_manifest_is_valid(input_manifest, user_id, id, model))')
+                   or (constraint_record.conname =
+                     'video_generation_real_model_check'
+                     and pg_get_constraintdef(constraint_record.oid, true) =
+                       'CHECK (model = ANY (ARRAY[''sora2''::text, ''sora2-pro''::text, ''veo31''::text, ''veo31-fast''::text, ''veo31-ref''::text, ''kling-o3''::text, ''kling3''::text, ''kling3-omni''::text, ''runway-gen45''::text, ''ray314''::text, ''ray314-hdr''::text, ''seedance2''::text, ''seedance2-fast''::text]))')))
+             )
+         ) as constraint_count,
+         (
+           select count(*)::text
+           from pg_proc as procedure_record
+           where procedure_record.pronamespace = 'public'::regnamespace
+             and procedure_record.prorettype = 'boolean'::regtype
+             and procedure_record.provolatile = 'i'
+             and procedure_record.proisstrict
+             and not procedure_record.prosecdef
+             and procedure_record.proconfig =
+               array['search_path=pg_catalog']::text[]
+             and (
+               (procedure_record.proname =
+                 'media_supported_model_ids_are_valid'
+                 and procedure_record.pronargs = 1
+                 and procedure_record.proargtypes[0] = 'json'::regtype)
+               or (procedure_record.proname =
+                 'video_input_manifest_is_valid'
+                 and procedure_record.pronargs = 4
+                 and procedure_record.proargtypes[0] = 'json'::regtype
+                 and procedure_record.proargtypes[1] = 'text'::regtype
+                 and procedure_record.proargtypes[2] = 'text'::regtype
+                 and procedure_record.proargtypes[3] = 'text'::regtype)
+             )
+         ) as function_count,
+         (
+           media_supported_model_ids_are_valid(
+             '["seedance2","image-model"]'::json
+           )
+           and not media_supported_model_ids_are_valid(
+             '["seedance2-4s-16x9-1080p"]'::json
+           )
+           and not media_supported_model_ids_are_valid(
+             '["image","IMAGE"]'::json
+           )
+           and video_input_manifest_is_valid(
+             '{"firstFrame":{"source":"storage","mimeType":"image/png","storageKey":"u/video-inputs/t/a/f.png","storageBucket":"b","byteLength":1}}'::json,
+             'u', 't', 'seedance2'
+           )
+           and not video_input_manifest_is_valid(
+             '{"firstFrame":{"source":"storage","mimeType":"image/png","storageKey":"u/video-inputs/t/a/f.png","storageBucket":"b","byteLength":1},"referenceImages":[{"source":"storage","mimeType":"image/png","storageKey":"u/video-inputs/t/a/r.png","storageBucket":"b","byteLength":1}]}'::json,
+             'u', 't', 'seedance2'
+           )
+         ) as validator_semantics_valid,
+         (
+           select count(*)::text
+           from video_generation
+           where model <> all($1::text[])
+         ) as invalid_task_model_count,
+         (
+           select count(*)::text
+           from image_backend_member
+           where not media_supported_model_ids_are_valid(
+             supported_model_ids
+           )
+         ) as invalid_member_model_count,
+         (
+           select count(*)::text
+           from video_generation
+           where input_manifest is not null
+             and not video_input_manifest_is_valid(
+               input_manifest, user_id, id, model
+             )
+         ) as invalid_input_manifest_count`,
+      [REAL_VIDEO_MODEL_IDS]
+    );
+    const row = result.rows[0] ?? {};
+    const constraintCount = parseCount(
+      row.constraint_count,
+      "video contract constraints"
+    );
+    const functionCount = parseCount(
+      row.function_count,
+      "video contract functions"
+    );
+    const validatorSemanticsValid = row.validator_semantics_valid === true;
+    const invalidTaskModelCount = parseCount(
+      row.invalid_task_model_count,
+      "invalid video task models"
+    );
+    const invalidMemberModelCount = parseCount(
+      row.invalid_member_model_count,
+      "invalid video member models"
+    );
+    const invalidInputManifestCount = parseCount(
+      row.invalid_input_manifest_count,
+      "invalid video input manifests"
+    );
+    printEvidence("video_contract_constraint_count", constraintCount);
+    printEvidence("video_contract_function_count", functionCount);
+    printEvidence(
+      "video_contract_validator_semantics_valid",
+      validatorSemanticsValid
+    );
+    printEvidence(
+      "video_contract_invalid_task_model_count",
+      invalidTaskModelCount
+    );
+    printEvidence(
+      "video_contract_invalid_member_model_count",
+      invalidMemberModelCount
+    );
+    printEvidence(
+      "video_contract_invalid_input_manifest_count",
+      invalidInputManifestCount
+    );
+    if (
+      constraintCount !== 3 ||
+      functionCount !== 2 ||
+      !validatorSemanticsValid ||
+      invalidTaskModelCount !== 0 ||
+      invalidMemberModelCount !== 0 ||
+      invalidInputManifestCount !== 0
+    ) {
+      throw new Error("post-migration video request invariants failed");
+    }
+  });
+}
+
 /** 验证 0060-0064 后统一号池、视频恢复身份和 API Key 配额不变量。 */
 async function assertMediaPostMigrationState(pool) {
   await inReadOnlyTransaction(pool, async (client) => {
@@ -1249,8 +2104,8 @@ async function assertPostMigrationState(pool, requireEmptyOverrides) {
  * @returns {Promise<void>} 指定门禁成功且连接池关闭后完成的 Promise。
  * @throws DATABASE_URL 缺失、命令不支持、连接失败或门禁拒绝时抛错。
  * @sideEffect 读取 process.env/argv，创建并关闭 PostgreSQL 连接池，输出门禁证据。
- * @boundary 只接受 drain、preflight、postcheck 与 postcheck-initial；忽略 pnpm
- *   透传产生的独立 `--` 参数，不输出连接串。
+ * @boundary 只接受 drain、preflight-early、preflight、postcheck、
+ *   postcheck-initial 与 legacy-startup；忽略 pnpm 透传的独立 `--` 参数。
  */
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
@@ -1269,18 +2124,30 @@ async function main() {
       await assertWebConnectionsDrained(pool);
       return;
     }
+    if (command === "preflight-early") {
+      await assertRelayPreflight(pool);
+      await assertMediaPreflight(pool);
+      await assertVideoContractSchemaStage(pool);
+      return;
+    }
     if (command === "preflight") {
       await assertRelayPreflight(pool);
       await assertMediaPreflight(pool);
+      await assertVideoContractPreflight(pool);
       return;
     }
     if (command === "postcheck" || command === "postcheck-initial") {
       await assertPostMigrationState(pool, command === "postcheck-initial");
       await assertMediaPostMigrationState(pool);
+      await assertVideoContractPostMigrationState(pool);
+      return;
+    }
+    if (command === "legacy-startup") {
+      await assertLegacyVideoContractStartupAllowed(pool);
       return;
     }
     throw new Error(
-      "expected one of: drain, preflight, postcheck, postcheck-initial"
+      "expected one of: drain, preflight-early, preflight, postcheck, postcheck-initial, legacy-startup"
     );
   } finally {
     await pool.end();

@@ -18,6 +18,9 @@ import { requireDedicatedTestDatabaseUrl } from "./test-database-url";
 const releaseGatePath = fileURLToPath(
   new URL("../../database/scripts/release-governance-gate.mjs", import.meta.url)
 );
+const databasePackagePath = fileURLToPath(
+  new URL("../../database", import.meta.url)
+);
 const runPrefix = `release-governance-gate-integration-${randomUUID()}`;
 const relayUserId = `${runPrefix}-relay-user`;
 const overrideUserId = `${runPrefix}-override-user`;
@@ -26,7 +29,12 @@ const hiddenOverrideColumn =
   "moderation_block_risk_level_override_release_gate_test";
 const hiddenMediaMarkerTable = "image_backend_member_release_gate_test";
 
-type ReleaseGateCommand = "postcheck" | "postcheck-initial" | "preflight";
+type ReleaseGateCommand =
+  | "legacy-startup"
+  | "postcheck"
+  | "postcheck-initial"
+  | "preflight"
+  | "preflight-early";
 
 interface ReleaseGateResult {
   exitCode: number;
@@ -41,13 +49,159 @@ interface GovernanceSchemaState {
   overrideCheck: boolean;
   overrideColumn: boolean;
   userTable: boolean;
+  videoContractConstraintCount: string;
+  videoInputManifestColumn: boolean;
+  videoLegacyColumnCount: string;
 }
 
 let pool: Pool | null = null;
 let testDatabaseUrl: string | null = null;
+let legacyVideoDatabaseName: string | null = null;
+let legacyVideoDatabaseUrl: string | null = null;
+let legacyVideoPool: Pool | null = null;
+
+/** 使用 pnpm 对隔离数据库执行完整迁移集。 */
+async function migrateReleaseGateDatabase(databaseUrl: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("pnpm", ["db:migrate"], {
+      cwd: databasePackagePath,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (exitCode) => {
+      if (exitCode === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`隔离发布门禁数据库迁移失败：${stderr.trim()}`));
+    });
+  });
+}
+
+/** 构造同一 PostgreSQL 实例中指定数据库的连接串。 */
+function replaceDatabaseName(
+  databaseUrl: string,
+  databaseName: string
+): string {
+  const parsed = new URL(databaseUrl);
+  parsed.pathname = `/${databaseName}`;
+  return parsed.toString();
+}
+
+/** 创建已完成 0073、保留三个视频旧列的隔离真实数据库。 */
+async function createLegacyVideoGateDatabase(
+  adminPool: Pool,
+  adminDatabaseUrl: string
+): Promise<{ databaseName: string; databaseUrl: string; pool: Pool }> {
+  const databaseName = `legacy_gate_${randomUUID().replaceAll("-", "")}`;
+  if (!/^legacy_gate_[a-f0-9]{32}$/.test(databaseName)) {
+    throw new Error("隔离发布门禁数据库名称无效");
+  }
+  await adminPool.query(`create database "${databaseName}"`);
+  const databaseUrl = replaceDatabaseName(adminDatabaseUrl, databaseName);
+  let isolatedPool: Pool | null = null;
+  try {
+    await migrateReleaseGateDatabase(databaseUrl);
+    isolatedPool = new Pool({
+      application_name: "fluxmedia-release-gate-legacy-fixture",
+      connectionString: databaseUrl,
+      max: 2,
+    });
+    await isolatedPool.query(`
+      alter table video_generation
+        drop constraint video_generation_real_model_check,
+        drop constraint video_generation_input_manifest_check,
+        add column family text,
+        add column input_image_refs json,
+        add column staged_input_objects json;
+      update video_generation set family = model;
+      alter table video_generation
+        alter column family set not null,
+        drop column input_manifest;
+      alter table image_backend_member
+        drop constraint image_backend_member_supported_models_check,
+        add constraint image_backend_member_supported_models_check
+          check (
+            json_typeof(supported_model_ids) = 'array'
+            and json_array_length(supported_model_ids) > 0
+          );
+    `);
+    return { databaseName, databaseUrl, pool: isolatedPool };
+  } catch (error) {
+    await isolatedPool?.end().catch(() => undefined);
+    await dropLegacyVideoGateDatabase(adminPool, databaseName).catch(
+      () => undefined
+    );
+    throw error;
+  }
+}
+
+/** 终止隔离数据库连接并删除仅含本测试数据的数据库。 */
+async function dropLegacyVideoGateDatabase(
+  adminPool: Pool,
+  databaseName: string
+): Promise<void> {
+  await adminPool.query(
+    `select pg_terminate_backend(pid)
+       from pg_stat_activity
+      where datname = $1
+        and pid <> pg_backend_pid()`,
+    [databaseName]
+  );
+  await adminPool.query(`drop database "${databaseName}"`);
+}
+
+/** 插入满足统一媒体 preflight 的 Adobe direct 成员。 */
+async function seedLegacyVideoMember(
+  client: Pool,
+  memberId: string,
+  supportedModels: readonly string[]
+): Promise<void> {
+  await client.query(
+    `insert into image_backend_member (
+       id, type, name, supported_model_ids
+     ) values ($1, 'adobe', $1, $2::json)`,
+    [memberId, JSON.stringify(supportedModels)]
+  );
+  await client.query(
+    `insert into image_backend_member_adobe_config (
+       member_id, mode, cookie, access_token, credential_status
+     ) values ($1, 'direct', 'test-cookie', 'test-token', 'active')`,
+    [memberId]
+  );
+}
+
+/** 插入一个真实模型参数合法、但 polling 恢复身份不完整的旧任务。 */
+async function seedBrokenLegacyPollingTask(
+  client: Pool,
+  input: { memberId: string; taskId: string; userId: string }
+): Promise<void> {
+  await client.query(
+    `insert into "user" (id, name, email)
+     values ($1, 'Legacy gate user', $2)`,
+    [input.userId, `${input.userId}@release-gate-legacy.test`]
+  );
+  await client.query(
+    `insert into video_generation (
+       id, user_id, principal_scope, backend_member_id, model, family,
+       adobe_request_profile, adobe_auth_profile, prompt, duration_seconds,
+       aspect_ratio, resolution, status, stage
+     ) values (
+       $1, $2, $3, $4, 'sora2-4s-16x9', 'sora2', 'express', 'express',
+       'prompt', 4, '16:9', '720p', 'running', 'polling'
+     )`,
+    [input.taskId, input.userId, `user:${input.userId}`, input.memberId]
+  );
+}
 
 /**
- * 要求测试库处于 0056 完成后的干净治理状态。
+ * 要求测试库处于 0056 与 0074 完成后的干净治理状态。
  *
  * @param client 连接专用测试数据库的 PostgreSQL 连接池。
  * @returns 数据库满足发布门禁测试前置条件时完成的 Promise。
@@ -78,6 +232,32 @@ async function assertGovernanceMigrationReady(client: Pool): Promise<void> {
         from system_setting
         where key = 'CONTENT_MODERATION_BLOCK_RISK_LEVEL'
       ) as "globalPolicyRow",
+      exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'video_generation'
+          and column_name = 'input_manifest'
+      ) as "videoInputManifestColumn",
+      (
+        select count(*)::text
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'video_generation'
+          and column_name in (
+            'family', 'input_image_refs', 'staged_input_objects'
+          )
+      ) as "videoLegacyColumnCount",
+      (
+        select count(*)::text
+        from pg_constraint
+        where connamespace = 'public'::regnamespace
+          and conname in (
+            'image_backend_member_supported_models_check',
+            'video_generation_real_model_check',
+            'video_generation_input_manifest_check'
+          )
+      ) as "videoContractConstraintCount",
       (
         select count(*)::text
         from information_schema.columns
@@ -102,10 +282,13 @@ async function assertGovernanceMigrationReady(client: Pool): Promise<void> {
     !state.overrideColumn ||
     !state.overrideCheck ||
     !state.globalPolicyRow ||
+    !state.videoInputManifestColumn ||
+    state.videoLegacyColumnCount !== "0" ||
+    state.videoContractConstraintCount !== "3" ||
     state.oldColumnCount !== "0"
   ) {
     throw new Error(
-      "发布门禁测试库未就绪：需要 0056 完整迁移且不能残留旧治理列"
+      "发布门禁测试库未就绪：需要 0056 与 0074 完整迁移且不能残留旧列"
     );
   }
 }
@@ -262,6 +445,19 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
       `alter table ${hiddenMediaMarkerTable} rename to image_backend_member`
     );
   }
+  await client.query(`
+    alter table video_generation
+      drop constraint if exists video_generation_real_model_check;
+    alter table video_generation
+      add constraint video_generation_real_model_check
+      check (
+        model in (
+          'sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref',
+          'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45',
+          'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast'
+        )
+      );
+  `);
 }
 
 beforeAll(async () => {
@@ -274,21 +470,89 @@ beforeAll(async () => {
     max: 2,
   });
   await assertGovernanceMigrationReady(pool);
+  const legacyDatabase = await createLegacyVideoGateDatabase(
+    pool,
+    testDatabaseUrl
+  );
+  legacyVideoDatabaseName = legacyDatabase.databaseName;
+  legacyVideoDatabaseUrl = legacyDatabase.databaseUrl;
+  legacyVideoPool = legacyDatabase.pool;
 });
 
 afterEach(async () => {
   if (pool) await restoreReleaseGateFixtures(pool);
+  if (legacyVideoPool) {
+    await legacyVideoPool.query(`
+      delete from video_generation;
+      delete from image_backend_member;
+      delete from "user"
+      where email like '%@release-gate-legacy.test';
+    `);
+  }
 });
 
 afterAll(async () => {
   try {
     if (pool) await restoreReleaseGateFixtures(pool);
   } finally {
+    await legacyVideoPool?.end();
+    if (pool && legacyVideoDatabaseName) {
+      await dropLegacyVideoGateDatabase(pool, legacyVideoDatabaseName);
+    }
     await pool?.end();
   }
 });
 
 describe("release governance gate PostgreSQL integration", () => {
+  it("旧 schema preflight 接受可稳定折叠的重复视频能力", async () => {
+    if (!legacyVideoPool || !legacyVideoDatabaseUrl) {
+      throw new Error("旧 schema 门禁测试库尚未初始化");
+    }
+    await seedLegacyVideoMember(legacyVideoPool, "duplicate-video-member", [
+      "sora2-4s-16x9",
+      "sora2-8s-16x9",
+      "sora2",
+    ]);
+
+    const result = await runReleaseGate("preflight", legacyVideoDatabaseUrl);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("video_contract_schema_state=legacy\n");
+    expect(result.stdout).toContain("video_contract_blocker_count=0\n");
+    expect(result.stdout).toContain("video_contract_blocker_ids=[]\n");
+  });
+
+  it("旧 schema preflight 用单行 JSON 阻断恢复身份不完整的任务", async () => {
+    if (!legacyVideoPool || !legacyVideoDatabaseUrl) {
+      throw new Error("旧 schema 门禁测试库尚未初始化");
+    }
+    const taskId = "broken\npolling\u2028task";
+    await seedLegacyVideoMember(legacyVideoPool, "broken-task-member", [
+      "sora2-4s-16x9",
+    ]);
+    await seedBrokenLegacyPollingTask(legacyVideoPool, {
+      memberId: "broken-task-member",
+      taskId,
+      userId: "broken-task-user",
+    });
+
+    const result = await runReleaseGate("preflight", legacyVideoDatabaseUrl);
+    const evidenceLines = result.stdout
+      .split("\n")
+      .filter((line) => line.startsWith("video_contract_blocker_ids="));
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("video_contract_blocker_count=1\n");
+    expect(evidenceLines).toHaveLength(1);
+    expect(evidenceLines[0]).toBe(
+      'video_contract_blocker_ids=["task:broken\\npolling\\u2028task"]'
+    );
+    expect(result.stderr).toContain(
+      "video request contract preflight failed: 1 records blocked"
+    );
+  });
+
   it("后续发布在 relay_only 旧列已删除时允许 preflight", async () => {
     if (!testDatabaseUrl) throw new Error("集成测试尚未初始化");
     const result = await runReleaseGate("preflight", testDatabaseUrl);
@@ -296,6 +560,19 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("relay_only_column=absent\n");
     expect(result.stdout).toContain("relay_only_true_count=0\n");
+    expect(result.stdout).toContain("video_contract_schema_state=applied\n");
+    expect(result.stdout).toContain("video_contract_blocker_count=0\n");
+    expect(result.stdout).toContain("video_contract_blocker_ids=[]\n");
+  });
+
+  it("0074 后明确拒绝旧应用启动门禁", async () => {
+    if (!testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    const result = await runReleaseGate("legacy-startup", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("legacy_video_contract_column_count=0\n");
+    expect(result.stderr).toContain(
+      "legacy video application cannot start on the real video contract schema"
+    );
   });
 
   it("relay_only=true 时拒绝迁移前检查", async () => {
@@ -478,6 +755,24 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(result.stdout).toContain("old_governance_column_count=1\n");
     expect(result.stderr).toContain(
       "release governance gate failed: post-migration governance invariants failed"
+    );
+  });
+
+  it("后续 postcheck 在视频真实模型约束定义漂移时拒绝发布", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(`
+      alter table video_generation
+        drop constraint video_generation_real_model_check;
+      alter table video_generation
+        add constraint video_generation_real_model_check
+        check (model is not null)
+    `);
+
+    const result = await runReleaseGate("postcheck", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("video_contract_constraint_count=2\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: post-migration video request invariants failed"
     );
   });
 });

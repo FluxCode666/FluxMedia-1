@@ -13,7 +13,12 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必填}
+      LOCAL_STORAGE_PATH: /app/storage
       NODE_ENV: production
+      VIDEO_INPUT_ROLLBACK_MANIFEST: /app/deploy-state/video-input-rollback-${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}.ndjson
+    volumes:
+      - app-storage:/app/storage
+      - ./state:/app/deploy-state
 
   web:
     image: ${FLUXMEDIA_IMAGE:-ghcr.io/fluxcode666/fluxmedia-web}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
