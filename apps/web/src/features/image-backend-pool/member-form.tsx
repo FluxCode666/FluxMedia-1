@@ -219,10 +219,10 @@ export function BackendMemberFormDialog({
     );
   }
 
-  /** 切换账号类型；离开 Adobe 时同步移除无法执行的视频能力。 */
+  /** 切换账号类型；API 与 Adobe Direct 保留视频，切到 Gateway 时清理。 */
   function handleMemberTypeChange(nextType: BackendMemberType): void {
     setType(nextType);
-    if (nextType !== "adobe") {
+    if (nextType === "adobe" && adobeMode === "gateway") {
       setSelectedModelIds(removeVideoBackendMemberModelIds);
     }
   }
@@ -328,7 +328,7 @@ export function BackendMemberFormDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="api">API Images</SelectItem>
+                  <SelectItem value="api">API</SelectItem>
                   <SelectItem value="adobe">Adobe</SelectItem>
                 </SelectContent>
               </Select>
@@ -438,9 +438,10 @@ export function BackendMemberFormDialog({
           {type === "api" ? (
             <div className="space-y-4 rounded-md border p-4">
               <div>
-                <h3 className="font-medium">API Images 配置</h3>
+                <h3 className="font-medium">API 配置</h3>
                 <p className="text-xs text-muted-foreground">
-                  仅支持 OpenAI Images 风格协议，不含 Responses 或 Chat。
+                  图片使用 Images 兼容协议，视频使用 Videos 兼容协议；不含
+                  Responses 或 Chat。
                 </p>
               </div>
               <div className="space-y-2">
@@ -632,10 +633,10 @@ export function BackendMemberFormDialog({
             />
             <p className="text-xs text-muted-foreground">
               {acceptsVideo
-                ? "Adobe Direct 账号可选择图片与视频的真实模型 ID；未选择的模型不会进入候选集。"
+                ? "API 与 Adobe Direct 账号可选择图片和视频的真实模型 ID；未选择的模型不会进入候选集。"
                 : type === "adobe"
                   ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
-                  : "API Images 账号只支持图片模型；视频模型请使用 Adobe Direct 账号。"}
+                  : "API 账号可选择图片和视频的真实模型 ID。"}
             </p>
           </div>
 

@@ -27,7 +27,7 @@ export interface BackendMemberModelOption {
   source: "model_configuration" | "existing_member";
 }
 
-/** 新建 Adobe 账号默认使用具备视频执行链的 Direct 模式。 */
+/** 新建 Adobe 账号默认使用具备原生 Firefly 视频执行链的 Direct 模式。 */
 export const DEFAULT_ADOBE_MEMBER_MODE = "direct" as const;
 
 /** Adobe 账号支持的接入模式。 */
@@ -38,7 +38,7 @@ export type AdobeMemberMode = "gateway" | "direct";
  *
  * @param memberType - 顶层账号类型。
  * @param adobeMode - Adobe 接入模式；非 Adobe 账号仍传入当前表单草稿值。
- * @returns 仅 Adobe Direct 返回 true，避免 Gateway/API 误选无法执行的视频能力。
+ * @returns API 与 Adobe Direct 返回 true；Adobe Gateway 暂不具备视频执行链。
  * @sideEffects 无。
  * @failure 不抛错。
  */
@@ -46,7 +46,7 @@ export function acceptsVideoBackendMemberModels(
   memberType: BackendMemberType,
   adobeMode: AdobeMemberMode
 ): boolean {
-  return memberType === "adobe" && adobeMode === "direct";
+  return memberType === "api" || adobeMode === "direct";
 }
 
 /**
@@ -78,7 +78,7 @@ export function normalizeBackendMemberModelIdsForDisplay(
  * 从成员草稿中移除真实或旧复合视频模型 ID。
  *
  * @param modelIds - 当前表单已选模型，可能同时包含图片、真实视频和迁移前视频 ID。
- * @returns 保持原顺序的图片模型 ID；用于显式切离 Adobe Direct 时清理不再可执行的能力。
+ * @returns 保持原顺序的图片模型 ID；用于切到 Adobe Gateway 时清理不再可执行的能力。
  * @sideEffects 无。
  * @failure 不抛错；模型身份只通过共享视频目录和旧身份识别器判断。
  */
@@ -142,7 +142,7 @@ export function buildBackendMemberModelOptions(
  * @param configuredOptions - 从当前模型配置快照构建的真实选项。
  * @param existingModelIds - 编辑同一成员时允许原样保留的历史图像能力；真实视频 ID
  * 仍必须存在于当前全局目录，旧视频身份不能通过编辑兼容入口继续保存。
- * @returns 保持提交顺序的非法模型 ID；非 Adobe direct 成员仅允许图像选项。
+ * @returns 保持提交顺序的非法模型 ID；Adobe Gateway 仅允许图像选项。
  * @sideEffects 无。
  * @failure 不抛错；调用方根据非空结果转换为稳定 UOL validation_error。
  */
@@ -151,9 +151,10 @@ export function findUnavailableBackendMemberModelIds(
   configuredOptions: readonly BackendMemberModelOption[],
   existingModelIds: readonly string[] = []
 ): string[] {
-  const acceptsVideo =
-    input.type === "adobe" &&
-    acceptsVideoBackendMemberModels(input.type, input.config.mode);
+  const acceptsVideo = acceptsVideoBackendMemberModels(
+    input.type,
+    input.type === "adobe" ? input.config.mode : DEFAULT_ADOBE_MEMBER_MODE
+  );
   const allowedIds = new Set(
     configuredOptions
       .filter((option) => option.category === "image" || acceptsVideo)

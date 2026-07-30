@@ -6,16 +6,21 @@
 
 - 产品只承载图片生成、图片编辑、蒙版编辑、视频生成与结果查询。
 - 五个外部 v1 图片 handler 最终汇入 `runImageGenerationForUser`，不得建立平行图片管线。
-- 图片与视频均不使用会话粘性；视频被上游接受后固定成员、Adobe token 与轮询地址。
+- 图片与视频均不使用会话粘性；视频被上游接受后固定原账号、提交时可信源和轮询地址，
+  恢复时只加载该账号的当前协议凭据。
 
 ## 统一媒体号池
 
 - 顶层成员类型只有 `api | adobe`；Adobe 内部模式只有 `gateway | direct`。
 - `supportedModelIds` 是候选能力的唯一权威，模型名称不承担调度语义。
-- 成员模型选项来自管理端模型配置快照；图像使用配置键，视频族展开为可执行完整
-  ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关不得过滤调度能力。
-- API 成员只使用 OpenAI Images 协议；`useStream` 属于保留的图片上游能力，
-  Responses/Mixed-to-Responses 配置不得迁入统一号池。
+- 成员模型选项来自管理端模型配置快照；图片与视频都只保存真实模型 ID，不得把时长、
+  比例或分辨率编码进模型 ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关
+  不得过滤调度能力。
+- API 成员支持 Images 与 Videos 兼容协议，Adobe Direct 支持图片与视频，Adobe
+  Gateway 仅支持图片；`useStream` 属于保留的图片上游能力，Responses/
+  Mixed-to-Responses 配置不得迁入统一号池。
+- 管理员配置的媒体 Base URL 可使用 HTTP 或私网；上游派生的跨源轮询、产物地址及
+  每一跳重定向不得继承该信任，只能通过公网 DNS pin，且不得携带账号凭据。
 - 全局调度策略为 `priority | least_acquired | least_load`，缺失或非法时回退
   `priority`。
 - 调度排序、容量检查、获租与计数更新必须在同一个 PostgreSQL 事务中完成。

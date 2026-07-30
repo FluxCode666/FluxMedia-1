@@ -11,6 +11,7 @@ import {
   type RuntimeGroupSelectionInput,
   selectTrustedRuntimeGroupTarget,
 } from "./runtime-group-selection";
+import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
 import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 
 /** 构造只覆盖分组信任边界所需的最小运行时输入。 */
@@ -79,7 +80,7 @@ describe("selectTrustedRuntimeGroupTarget", () => {
 });
 
 describe("projectConfiguredVideoModelIds", () => {
-  it("只有 Adobe direct 成员的真实 ID 计入视频配置可达性", () => {
+  it("API 与 Adobe direct 成员的真实 ID 计入视频配置可达性", () => {
     expect(
       projectConfiguredVideoModelIds([
         {
@@ -122,5 +123,45 @@ describe("projectConfiguredVideoModelIds", () => {
     expect(projectConfiguredVideoModelIds([coolingAndFullMember])).toEqual([
       "seedance2",
     ]);
+  });
+});
+
+describe("canRuntimeBackendLeaseServeRequest", () => {
+  it("API 与 Adobe Direct 可执行视频，Adobe Gateway 不可执行", () => {
+    const videoRequest = { requestKind: "video" as const };
+    expect(
+      canRuntimeBackendLeaseServeRequest(videoRequest, {
+        memberType: "api",
+        adobeMode: null,
+      })
+    ).toBe(true);
+    expect(
+      canRuntimeBackendLeaseServeRequest(videoRequest, {
+        memberType: "adobe",
+        adobeMode: "direct",
+      })
+    ).toBe(true);
+    expect(
+      canRuntimeBackendLeaseServeRequest(videoRequest, {
+        memberType: "adobe",
+        adobeMode: "gateway",
+      })
+    ).toBe(false);
+  });
+
+  it("蒙版编辑仍只允许 API 账号", () => {
+    const maskRequest = { requestKind: "image" as const, requiresMask: true };
+    expect(
+      canRuntimeBackendLeaseServeRequest(maskRequest, {
+        memberType: "api",
+        adobeMode: null,
+      })
+    ).toBe(true);
+    expect(
+      canRuntimeBackendLeaseServeRequest(maskRequest, {
+        memberType: "adobe",
+        adobeMode: "direct",
+      })
+    ).toBe(false);
   });
 });

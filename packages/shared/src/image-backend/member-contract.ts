@@ -34,7 +34,7 @@ export const BACKEND_MEMBER_TYPES = ["api", "adobe"] as const;
 /** 顶层媒体后端成员类型。 */
 export type BackendMemberType = (typeof BACKEND_MEMBER_TYPES)[number];
 
-/** API 成员只支持 OpenAI Images 风格协议。 */
+/** API 成员支持 OpenAI 风格的 Images 与平台 Videos 兼容协议。 */
 export const apiBackendMemberConfigSchema = z
   .object({
     baseUrl: mediaUpstreamUrlSchema,
@@ -111,8 +111,8 @@ const adobeBackendMemberInputSchema = z
 /**
  * 统一成员保存 schema。
  *
- * API 与 Adobe gateway 不具备本次保留的视频执行闭环，因此即便模型名称可解析，
- * 也必须在配置边界 fail-closed；Adobe direct 是当前唯一允许声明视频能力的形态。
+ * API 与 Adobe direct 可声明真实视频模型；Adobe gateway 暂不具备视频执行闭环。
+ * 所有可执行成员都拒绝迁移前复合视频身份，避免参数重新编码进模型 ID。
  */
 export const backendMemberInputSchema = z
   .discriminatedUnion("type", [
@@ -132,7 +132,7 @@ export const backendMemberInputSchema = z
         message: "A new Adobe direct member requires a Cookie",
       });
     }
-    if (member.type === "adobe" && member.config.mode === "direct") {
+    if (member.type === "api" || member.config.mode === "direct") {
       for (const [index, modelId] of member.supportedModelIds.entries()) {
         if (!isLegacyVideoModelId(modelId)) continue;
         context.addIssue({
@@ -150,7 +150,7 @@ export const backendMemberInputSchema = z
       context.addIssue({
         code: "custom",
         path: ["supportedModelIds", index],
-        message: "Video models require an Adobe direct member",
+        message: "Video models require an API or Adobe direct member",
       });
     }
   });

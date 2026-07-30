@@ -74,7 +74,7 @@ function formatAdminTime(value: string | null, timeZone: string): string {
 
 /** 返回成员的人类可读类型与模式。 */
 function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
-  if (member.type === "api") return "API Images";
+  if (member.type === "api") return "API";
   return member.config.mode === "direct" ? "Adobe Direct" : "Adobe Gateway";
 }
 

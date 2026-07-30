@@ -43,7 +43,7 @@ export interface BackendPoolAdminSnapshot {
   members: BackendMemberAdminSummary[];
 }
 
-/** API Images 参数映射模板。 */
+/** API 媒体参数映射模板。 */
 export interface BackendParameterMappingTemplate {
   id: string;
   name: string;
@@ -187,7 +187,7 @@ export const getImageBackendGroupOptionsAction = protectedAction
     );
   });
 
-/** 读取 API Images 参数映射模板。 */
+/** 读取 API 媒体参数映射模板。 */
 export const getImageBackendParameterMappingTemplatesAction =
   imageBackendPoolViewerAction
     .metadata({ action: "imageBackendPool.listParameterMappingTemplates" })
@@ -199,7 +199,7 @@ export const getImageBackendParameterMappingTemplatesAction =
       );
     });
 
-/** 保存 API Images 参数映射模板。 */
+/** 保存 API 媒体参数映射模板。 */
 export const saveImageBackendParameterMappingTemplateAction = adminAction
   .metadata({ action: "imageBackendPool.saveParameterMappingTemplate" })
   .schema(parameterMappingTemplateInputSchema)
@@ -213,7 +213,7 @@ export const saveImageBackendParameterMappingTemplateAction = adminAction
     return { success: true, id: result.id };
   });
 
-/** 删除 API Images 参数映射模板。 */
+/** 删除 API 媒体参数映射模板。 */
 export const deleteImageBackendParameterMappingTemplateAction = adminAction
   .metadata({ action: "imageBackendPool.deleteParameterMappingTemplate" })
   .schema(idSchema)

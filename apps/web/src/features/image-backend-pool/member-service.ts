@@ -56,7 +56,7 @@ export type PersistedBackendMemberInput = BackendMemberInput & {
   directCredential?: PreparedAdobeDirectCredential;
 };
 
-/** 脱敏 API Images 配置。 */
+/** 脱敏 API 媒体配置。 */
 export interface RedactedApiMemberConfig {
   baseUrl: string;
   hasApiKey: boolean;

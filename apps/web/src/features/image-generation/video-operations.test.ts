@@ -6,6 +6,7 @@
 
 import { AdobeAcceptedVideoError } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it } from "vitest";
+import { ApiAcceptedVideoError } from "./api-video-error";
 import {
   createVideoCapabilitySnapshot,
   resolveVideoExecutionContract,
@@ -16,6 +17,7 @@ import {
 } from "./video-input-lifecycle";
 import {
   createVideoStorageKey,
+  isAcceptedVideoError,
   requireAcceptedVideoCredential,
   resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
@@ -57,6 +59,11 @@ describe("video recovery policies", () => {
   it("已接受任务的网络和 5xx 错误只恢复原任务", () => {
     expect(
       shouldRetryAcceptedVideoError(
+        new ApiAcceptedVideoError("API network", true)
+      )
+    ).toBe(true);
+    expect(
+      shouldRetryAcceptedVideoError(
         new AdobeAcceptedVideoError("network", { errorType: "network" })
       )
     ).toBe(true);
@@ -82,6 +89,9 @@ describe("video recovery policies", () => {
   });
 
   it("已接受任务的明确 4xx 和普通错误不进入轮询重试", () => {
+    const apiRejected = new ApiAcceptedVideoError("API rejected", false, 400);
+    expect(isAcceptedVideoError(apiRejected)).toBe(true);
+    expect(shouldRetryAcceptedVideoError(apiRejected)).toBe(false);
     expect(
       shouldRetryAcceptedVideoError(
         new AdobeAcceptedVideoError("rejected", { statusCode: 400 })
@@ -90,6 +100,7 @@ describe("video recovery policies", () => {
     expect(shouldRetryAcceptedVideoError(new Error("unclassified"))).toBe(
       false
     );
+    expect(isAcceptedVideoError(new Error("unclassified"))).toBe(false);
   });
 
   it("切换耗尽时保留安全的鉴权根因并隐藏未知上游正文", () => {

@@ -1,7 +1,7 @@
 /**
  * UOL 操作注册 - 统一媒体后端号池。
  *
- * 职责：只暴露分组、统一成员和 API Images 参数模板三类能力。
+ * 职责：只暴露分组、统一成员和 API 媒体参数模板三类能力。
  * Web/Codex 账号、Sub2API、注册机、旧 API/Adobe 双模型和定时同步均不属于现行契约。
  * 真实实现由 apps/web 的 UOL binding 注入。
  */
@@ -221,12 +221,12 @@ const parameterMappingTemplateSchema = z
   })
   .strict();
 
-/** 列出 API Images 参数映射模板。 */
+/** 列出 API 媒体参数映射模板。 */
 export const listParameterMappingTemplates = defineOperation({
   name: "pool.listParameterMappingTemplates",
   domain: "image-backend-pool",
   title: "列出 API 参数映射模板",
-  description: "列出可供 API Images 成员复用的请求参数映射模板。",
+  description: "列出可供 API 媒体成员复用的请求参数映射模板。",
   input: z.object({}).strict(),
   output: z
     .object({ templates: z.array(parameterMappingTemplateSchema) })
@@ -241,7 +241,7 @@ export const listParameterMappingTemplates = defineOperation({
   },
 });
 
-/** 新建或更新 API Images 参数映射模板。 */
+/** 新建或更新 API 媒体参数映射模板。 */
 export const saveParameterMappingTemplate = defineOperation({
   name: "pool.saveParameterMappingTemplate",
   domain: "image-backend-pool",
@@ -265,7 +265,7 @@ export const saveParameterMappingTemplate = defineOperation({
   },
 });
 
-/** 删除 API Images 参数映射模板。 */
+/** 删除 API 媒体参数映射模板。 */
 export const deleteParameterMappingTemplate = defineOperation({
   name: "pool.deleteParameterMappingTemplate",
   domain: "image-backend-pool",

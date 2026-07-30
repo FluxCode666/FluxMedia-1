@@ -36,13 +36,13 @@ const commonEntry = {
 };
 
 describe("账号形态视频能力", () => {
-  it("新建 Adobe 账号默认使用 Direct，并只在 Direct 下开放视频模型", () => {
+  it("API 与 Adobe Direct 开放视频模型，Adobe Gateway 不开放", () => {
     expect(DEFAULT_ADOBE_MEMBER_MODE).toBe("direct");
     expect(
       acceptsVideoBackendMemberModels("adobe", DEFAULT_ADOBE_MEMBER_MODE)
     ).toBe(true);
     expect(acceptsVideoBackendMemberModels("adobe", "gateway")).toBe(false);
-    expect(acceptsVideoBackendMemberModels("api", "direct")).toBe(false);
+    expect(acceptsVideoBackendMemberModels("api", "direct")).toBe(true);
   });
 });
 
@@ -236,7 +236,7 @@ describe("findUnavailableBackendMemberModelIds", () => {
   const options = buildBackendMemberModelOptions(snapshot);
   const videoModelId = "veo31";
 
-  it("API 成员只能保存模型配置中的图像 ID", () => {
+  it("API 成员可以保存模型配置中的图片与真实视频 ID", () => {
     expect(
       findUnavailableBackendMemberModelIds(
         createMemberInput(
@@ -245,7 +245,7 @@ describe("findUnavailableBackendMemberModelIds", () => {
         ),
         options
       )
-    ).toEqual([videoModelId, "unknown-model"]);
+    ).toEqual(["unknown-model"]);
   });
 
   it("Adobe direct 成员可保存模型配置展开的视频完整 ID", () => {

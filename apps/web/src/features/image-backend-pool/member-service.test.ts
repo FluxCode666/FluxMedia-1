@@ -31,7 +31,7 @@ function createRepository(): BackendMemberRepository & {
   };
 }
 
-/** 构造默认合法的 API Images 成员输入。 */
+/** 构造默认合法的 API 媒体成员输入。 */
 function apiInput(overrides: Record<string, unknown> = {}) {
   return {
     type: "api",

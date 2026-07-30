@@ -1093,7 +1093,7 @@ function resolutionDurationLabel(
 
 function backendDurationLabel(bucket: BackendDurationBucket) {
   if (bucket === "adobe") return "Adobe";
-  return "API Images";
+  return "API";
 }
 
 function DurationBucketCell({

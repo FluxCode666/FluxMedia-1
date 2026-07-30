@@ -21,7 +21,7 @@ const commonMember = {
 };
 
 describe("backend member contract", () => {
-  it("accepts strict API Images configuration", () => {
+  it("accepts strict API media configuration", () => {
     const parsed = backendMemberInputSchema.safeParse({
       ...commonMember,
       type: "api",
@@ -38,7 +38,7 @@ describe("backend member contract", () => {
     }
   });
 
-  it("defaults API Images streaming to disabled", () => {
+  it("defaults API image streaming to disabled", () => {
     const parsed = backendMemberInputSchema.parse({
       ...commonMember,
       type: "api",
@@ -188,7 +188,7 @@ describe("backend member contract", () => {
     ).toBe(false);
   });
 
-  it("只允许 Adobe direct 成员声明真实视频模型 ID", () => {
+  it("只允许 API 与 Adobe direct 成员声明真实视频模型 ID", () => {
     const videoMember = {
       ...commonMember,
       supportedModelIds: ["seedance2"],
@@ -229,7 +229,7 @@ describe("backend member contract", () => {
           parameterMappings: [],
         },
       }).success
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it.each([

@@ -1,8 +1,8 @@
 /**
  * 统一媒体上游请求测试。
  *
- * 职责：验证上游请求使用连接层 DNS pin，允许 HTTP/私网目标，媒体下载逐跳解析
- * 重定向并维持响应大小限制。测试替换真实传输，不访问网络。
+ * 职责：验证上游请求使用连接层 DNS pin，管理员配置可访问 HTTP/私网目标，而上游
+ * 派生的跨源地址只能访问公网。媒体下载逐跳解析重定向并维持响应大小限制。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +17,8 @@ vi.mock("@repo/shared/security/dns-pin", () => ({
 import {
   fetchMediaUpstream,
   fetchMediaUpstreamDownload,
+  fetchMediaUpstreamDownloadWithTrustedOrigin,
+  fetchPublicMediaUpstream,
 } from "./media-upstream-fetch";
 
 describe("media upstream fetch", () => {
@@ -124,5 +126,50 @@ describe("media upstream fetch", () => {
         address: "10.0.0.8",
       })
     ).toBe(true);
+  });
+
+  it("上游派生的公网请求不注入私网地址例外", async () => {
+    mocks.fetchWithDnsPin.mockResolvedValue(new Response("ok"));
+
+    await fetchPublicMediaUpstream("https://8.8.8.8/status", {
+      maxResponseBytes: 1024,
+    });
+
+    expect(mocks.fetchWithDnsPin).toHaveBeenCalledWith(
+      "https://8.8.8.8/status",
+      expect.not.objectContaining({
+        allowBlockedAddress: expect.any(Function),
+      })
+    );
+  });
+
+  it("可信 Base URL 同源可访问私网，跨源重定向恢复公网限制", async () => {
+    mocks.fetchWithDnsPin
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://127.0.0.1/private" },
+        })
+      )
+      .mockResolvedValueOnce(new Response("video"));
+
+    await fetchMediaUpstreamDownloadWithTrustedOrigin(
+      "http://10.0.0.8/video",
+      "http://10.0.0.8/v1",
+      { maxResponseBytes: 1024 }
+    );
+
+    expect(mocks.fetchWithDnsPin).toHaveBeenNthCalledWith(
+      1,
+      "http://10.0.0.8/video",
+      expect.objectContaining({ allowBlockedAddress: expect.any(Function) })
+    );
+    expect(mocks.fetchWithDnsPin).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1/private",
+      expect.not.objectContaining({
+        allowBlockedAddress: expect.any(Function),
+      })
+    );
   });
 });

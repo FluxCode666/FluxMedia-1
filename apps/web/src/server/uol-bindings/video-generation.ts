@@ -46,7 +46,7 @@ import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/vide
 import {
   getVideoGenerationById,
   reconcileUncertainVideoSubmission,
-  runAdobeVideoGenerationForUser,
+  runVideoGenerationForUser,
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
 import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
@@ -372,7 +372,7 @@ bindExecute(
     const stagedInput = preparation.stagedInput;
 
     try {
-      const result = await runAdobeVideoGenerationForUser(
+      const result = await runVideoGenerationForUser(
         {
           userId: principal.userId,
           ...(apiKeyId ? { apiKeyId } : {}),
@@ -547,7 +547,7 @@ bindOperationExecute(videoListUncertainSubmissions, async (input) => {
   };
 });
 
-/** video.reconcileSubmission - 管理员人工收敛 Adobe 提交不确定任务。 */
+/** video.reconcileSubmission - 管理员人工收敛视频上游提交不确定任务。 */
 bindOperationExecute(videoReconcileSubmission, async (input) => {
   try {
     return await reconcileUncertainVideoSubmission(input);

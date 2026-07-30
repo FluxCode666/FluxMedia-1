@@ -35,6 +35,7 @@ import {
 } from "./repository";
 import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
 import { normalizeRuntimeRequestedModelId } from "./runtime-model-matching";
+import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
 import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 import { BackendSchedulerError } from "./scheduler-error";
 
@@ -59,6 +60,13 @@ const configuredModelIdsRowSchema = z.object({
   member_type: z.enum(["api", "adobe"]),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   supported_model_ids: z.array(z.string().trim().min(1)),
+});
+
+const apiVideoRecoveryRowSchema = z.object({
+  member_id: z.string().trim().min(1),
+  base_url: z.string().trim().min(1),
+  api_key: z.string().min(1),
+  parameter_mappings: z.unknown().nullable(),
 });
 
 const runtimeConfigRowSchema = z.object({
@@ -286,6 +294,51 @@ export async function listConfiguredRuntimeModelIds(
       supportedModelIds: row.supported_model_ids,
     }))
   );
+}
+
+/**
+ * 加载已接受视频任务固定 API 账号的当前凭据。
+ *
+ * @param memberId - 任务在接受阶段持久化的统一账号 ID。
+ * @returns 原账号仍存在且类型配置完整时返回最小 API 运行时配置，否则返回 null。
+ * @sideEffects 读取统一账号及 API 配置；不获取新租约、不切换账号、不更新健康状态。
+ * @failure 数据库结果形状非法时由 Zod 抛出；URL 非 HTTP(S) 时显式失败。
+ */
+export async function loadApiVideoRecoveryConfig(
+  memberId: string
+): Promise<ApiConfig | null> {
+  const { db } = await import("@repo/database");
+  const rows = z.array(apiVideoRecoveryRowSchema).parse(
+    extractExecuteRows(
+      await db.execute(sql`
+        select
+          member.id as member_id,
+          api.base_url,
+          api.api_key,
+          api.parameter_mappings
+        from image_backend_member as member
+        inner join image_backend_member_api_config as api
+          on api.member_id = member.id
+        where member.id = ${memberId}
+          and member.type = 'api'
+        limit 1
+      `)
+    )
+  );
+  const row = rows[0];
+  if (!row) return null;
+  parseMediaUpstreamUrl(row.base_url);
+  return {
+    baseUrl: row.base_url.replace(/\/+$/, ""),
+    apiKey: row.api_key,
+    backend: {
+      type: "pool-api",
+      id: row.member_id,
+      parameterMappings: requestParameterMappingsSchema.parse(
+        row.parameter_mappings ?? []
+      ),
+    },
+  };
 }
 
 /** 根据统一成员与类型配置表构造现有媒体适配器可消费的配置快照。 */
@@ -618,11 +671,7 @@ export async function createRuntimeBackendSession(
       return acquireNext();
     }
 
-    if (
-      (normalizedInput.requiresMask && lease.memberType !== "api") ||
-      (normalizedInput.requestKind === "video" &&
-        !(lease.memberType === "adobe" && lease.adobeMode === "direct"))
-    ) {
+    if (!canRuntimeBackendLeaseServeRequest(normalizedInput, lease)) {
       await releaseRuntimeLease(lease);
       excludedMemberIds.add(lease.memberId);
       return acquireNext();
