@@ -16,9 +16,12 @@ import { VIDEO_MODEL_CAPABILITY_CATALOG } from "@repo/shared/video-generation";
 import { describe, expect, it } from "vitest";
 
 import {
+  acceptsVideoBackendMemberModels,
   buildBackendMemberModelOptions,
+  DEFAULT_ADOBE_MEMBER_MODE,
   findUnavailableBackendMemberModelIds,
   normalizeBackendMemberModelIdsForDisplay,
+  removeVideoBackendMemberModelIds,
 } from "./member-model-options";
 
 const commonEntry = {
@@ -31,6 +34,17 @@ const commonEntry = {
   coverUrl: null,
   usesDefaultCover: true,
 };
+
+describe("账号形态视频能力", () => {
+  it("新建 Adobe 账号默认使用 Direct，并只在 Direct 下开放视频模型", () => {
+    expect(DEFAULT_ADOBE_MEMBER_MODE).toBe("direct");
+    expect(
+      acceptsVideoBackendMemberModels("adobe", DEFAULT_ADOBE_MEMBER_MODE)
+    ).toBe(true);
+    expect(acceptsVideoBackendMemberModels("adobe", "gateway")).toBe(false);
+    expect(acceptsVideoBackendMemberModels("api", "direct")).toBe(false);
+  });
+});
 
 const imageEntry: ModelConfigurationEntry = {
   ...commonEntry,
@@ -284,5 +298,18 @@ describe("normalizeBackendMemberModelIdsForDisplay", () => {
         "firefly-gpt-image-2",
       ])
     ).toEqual(["seedance2", "gpt-image-2"]);
+  });
+});
+
+describe("removeVideoBackendMemberModelIds", () => {
+  it("切离 Adobe Direct 时只清理真实与旧复合视频 ID", () => {
+    expect(
+      removeVideoBackendMemberModelIds([
+        "gpt-image-2",
+        "seedance2",
+        "firefly-seedance2-15s-9x16-480p",
+        "custom-image-model",
+      ])
+    ).toEqual(["gpt-image-2", "custom-image-model"]);
   });
 });

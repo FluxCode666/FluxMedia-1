@@ -5,7 +5,10 @@
  * 快照：图像条目直接使用管理配置键，视频条目只使用全局能力目录中的真实模型 ID。
  * 它不读取数据库或系统设置，也不根据成员类型推断调度候选。
  */
-import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
+import type {
+  BackendMemberInput,
+  BackendMemberType,
+} from "@repo/shared/image-backend/member-contract";
 import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
@@ -22,6 +25,28 @@ export interface BackendMemberModelOption {
   label: string;
   category: "image" | "video";
   source: "model_configuration" | "existing_member";
+}
+
+/** 新建 Adobe 账号默认使用具备视频执行链的 Direct 模式。 */
+export const DEFAULT_ADOBE_MEMBER_MODE = "direct" as const;
+
+/** Adobe 账号支持的接入模式。 */
+export type AdobeMemberMode = "gateway" | "direct";
+
+/**
+ * 判断当前账号形态是否允许声明视频模型。
+ *
+ * @param memberType - 顶层账号类型。
+ * @param adobeMode - Adobe 接入模式；非 Adobe 账号仍传入当前表单草稿值。
+ * @returns 仅 Adobe Direct 返回 true，避免 Gateway/API 误选无法执行的视频能力。
+ * @sideEffects 无。
+ * @failure 不抛错。
+ */
+export function acceptsVideoBackendMemberModels(
+  memberType: BackendMemberType,
+  adobeMode: AdobeMemberMode
+): boolean {
+  return memberType === "adobe" && adobeMode === "direct";
 }
 
 /**
@@ -47,6 +72,23 @@ export function normalizeBackendMemberModelIdsForDisplay(
     normalizedModelIds.push(modelId);
   }
   return normalizedModelIds;
+}
+
+/**
+ * 从成员草稿中移除真实或旧复合视频模型 ID。
+ *
+ * @param modelIds - 当前表单已选模型，可能同时包含图片、真实视频和迁移前视频 ID。
+ * @returns 保持原顺序的图片模型 ID；用于显式切离 Adobe Direct 时清理不再可执行的能力。
+ * @sideEffects 无。
+ * @failure 不抛错；模型身份只通过共享视频目录和旧身份识别器判断。
+ */
+export function removeVideoBackendMemberModelIds(
+  modelIds: readonly string[]
+): string[] {
+  return modelIds.filter(
+    (modelId) =>
+      !normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)
+  );
 }
 
 /**
@@ -109,7 +151,9 @@ export function findUnavailableBackendMemberModelIds(
   configuredOptions: readonly BackendMemberModelOption[],
   existingModelIds: readonly string[] = []
 ): string[] {
-  const acceptsVideo = input.type === "adobe" && input.config.mode === "direct";
+  const acceptsVideo =
+    input.type === "adobe" &&
+    acceptsVideoBackendMemberModels(input.type, input.config.mode);
   const allowedIds = new Set(
     configuredOptions
       .filter((option) => option.category === "image" || acceptsVideo)

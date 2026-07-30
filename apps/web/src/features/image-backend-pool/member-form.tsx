@@ -41,8 +41,12 @@ import { toast } from "sonner";
 import { saveImageBackendMemberAction } from "./actions";
 import { BackendBooleanSetting } from "./boolean-setting";
 import {
+  type AdobeMemberMode,
+  acceptsVideoBackendMemberModels,
   type BackendMemberModelOption,
   createExistingMemberModelOption,
+  DEFAULT_ADOBE_MEMBER_MODE,
+  removeVideoBackendMemberModelIds,
 } from "./member-model-options";
 import {
   type BackendMemberModelOptionStatus,
@@ -117,7 +121,9 @@ export function BackendMemberFormDialog({
   const [apiKey, setApiKey] = useState("");
   const [apiUseStream, setApiUseStream] = useState(false);
   const [parameterMappingsText, setParameterMappingsText] = useState("");
-  const [adobeMode, setAdobeMode] = useState<"gateway" | "direct">("gateway");
+  const [adobeMode, setAdobeMode] = useState<AdobeMemberMode>(
+    DEFAULT_ADOBE_MEMBER_MODE
+  );
   const [adobeBaseUrl, setAdobeBaseUrl] = useState("");
   const [adobeApiKey, setAdobeApiKey] = useState("");
   const [adobeCookie, setAdobeCookie] = useState("");
@@ -162,7 +168,7 @@ export function BackendMemberFormDialog({
         member.config.mode === "gateway" ? member.config.baseUrl : ""
       );
     } else {
-      setAdobeMode("gateway");
+      setAdobeMode(DEFAULT_ADOBE_MEMBER_MODE);
       setAdobeBaseUrl("");
       setDefaultRatio("1x1");
       setDefaultResolution("2k");
@@ -173,7 +179,7 @@ export function BackendMemberFormDialog({
     setAdobeScope("");
   }, [groups, member, open]);
 
-  const acceptsVideo = type === "adobe" && adobeMode === "direct";
+  const acceptsVideo = acceptsVideoBackendMemberModels(type, adobeMode);
   const selectableModelOptions = useMemo(() => {
     const configuredOptions = modelOptions.filter(
       (option) => option.category === "image" || acceptsVideo
@@ -191,16 +197,6 @@ export function BackendMemberFormDialog({
     });
     return [...configuredOptions, ...existingOptions];
   }, [acceptsVideo, modelOptions, selectedModelIds]);
-
-  useEffect(() => {
-    if (acceptsVideo) return;
-    setSelectedModelIds((current) =>
-      current.filter(
-        (modelId) =>
-          !normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)
-      )
-    );
-  }, [acceptsVideo]);
 
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
@@ -221,6 +217,22 @@ export function BackendMemberFormDialog({
         ? Array.from(new Set([...current, groupId]))
         : current.filter((id) => id !== groupId)
     );
+  }
+
+  /** 切换账号类型；离开 Adobe 时同步移除无法执行的视频能力。 */
+  function handleMemberTypeChange(nextType: BackendMemberType): void {
+    setType(nextType);
+    if (nextType !== "adobe") {
+      setSelectedModelIds(removeVideoBackendMemberModelIds);
+    }
+  }
+
+  /** 切换 Adobe 接入模式；Gateway 不具备当前视频执行链，需清理视频能力。 */
+  function handleAdobeModeChange(nextMode: typeof adobeMode): void {
+    setAdobeMode(nextMode);
+    if (nextMode !== "direct") {
+      setSelectedModelIds(removeVideoBackendMemberModelIds);
+    }
   }
 
   /** 校验客户端草稿并提交严格的类型专属成员输入。 */
@@ -308,7 +320,9 @@ export function BackendMemberFormDialog({
               <Select
                 value={type}
                 disabled={Boolean(member)}
-                onValueChange={(value) => setType(value as BackendMemberType)}
+                onValueChange={(value) =>
+                  handleMemberTypeChange(value as BackendMemberType)
+                }
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -361,21 +375,6 @@ export function BackendMemberFormDialog({
                 </label>
               ))}
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="member-models">支持的模型</Label>
-            <BackendMemberModelSelect
-              options={selectableModelOptions}
-              value={selectedModelIds}
-              onChange={setSelectedModelIds}
-              status={modelOptionStatus}
-              disabled={isPending}
-            />
-            <p className="text-xs text-muted-foreground">
-              选项来自模型配置；未选择的模型不会进入该成员候选集。只有 Adobe
-              Direct 可以声明视频模型。
-            </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -504,7 +503,7 @@ export function BackendMemberFormDialog({
                 <Select
                   value={adobeMode}
                   onValueChange={(value) =>
-                    setAdobeMode(value as typeof adobeMode)
+                    handleAdobeModeChange(value as typeof adobeMode)
                   }
                 >
                   <SelectTrigger className="w-full">
@@ -621,6 +620,24 @@ export function BackendMemberFormDialog({
               </div>
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label htmlFor="member-models">支持的模型</Label>
+            <BackendMemberModelSelect
+              options={selectableModelOptions}
+              value={selectedModelIds}
+              onChange={setSelectedModelIds}
+              status={modelOptionStatus}
+              disabled={isPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              {acceptsVideo
+                ? "Adobe Direct 账号可选择图片与视频的真实模型 ID；未选择的模型不会进入候选集。"
+                : type === "adobe"
+                  ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
+                  : "API Images 账号只支持图片模型；视频模型请使用 Adobe Direct 账号。"}
+            </p>
+          </div>
 
           <DialogFooter>
             <Button
