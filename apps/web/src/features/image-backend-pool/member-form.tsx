@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  type ApiModelMapping,
+  MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS,
+} from "@repo/shared/image-backend/api-upstream-adaptation";
 /**
  * 统一媒体后端成员编辑表单。
  *
@@ -54,41 +58,6 @@ import {
 } from "./member-model-select";
 import type { BackendMemberAdminSummary } from "./member-service";
 
-/** 把参数映射显示为每行 `copy|move source target` 的可编辑文本。 */
-function formatParameterMappings(
-  mappings: Array<{ source: string; target: string; mode: "copy" | "move" }>
-): string {
-  return mappings
-    .map((mapping) => [mapping.mode, mapping.source, mapping.target].join(" "))
-    .join("\n");
-}
-
-/** 解析参数映射文本；格式错误时返回 null 交由表单提示。 */
-function parseParameterMappings(
-  value: string
-): Array<{ source: string; target: string; mode: "copy" | "move" }> | null {
-  const mappings: Array<{
-    source: string;
-    target: string;
-    mode: "copy" | "move";
-  }> = [];
-  for (const line of value.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const [mode, source, target, ...remaining] = trimmed.split(/\s+/);
-    if (
-      (mode !== "copy" && mode !== "move") ||
-      !source ||
-      !target ||
-      remaining.length > 0
-    ) {
-      return null;
-    }
-    mappings.push({ mode, source, target });
-  }
-  return mappings;
-}
-
 /** 渲染 API 或 Adobe 统一成员的新增/编辑弹窗。 */
 export function BackendMemberFormDialog({
   open,
@@ -120,7 +89,8 @@ export function BackendMemberFormDialog({
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiUseStream, setApiUseStream] = useState(false);
-  const [parameterMappingsText, setParameterMappingsText] = useState("");
+  const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
+  const [requestTransformScript, setRequestTransformScript] = useState("");
   const [adobeMode, setAdobeMode] = useState<AdobeMemberMode>(
     DEFAULT_ADOBE_MEMBER_MODE
   );
@@ -150,13 +120,13 @@ export function BackendMemberFormDialog({
     if (member?.type === "api") {
       setApiBaseUrl(member.config.baseUrl);
       setApiUseStream(member.config.useStream);
-      setParameterMappingsText(
-        formatParameterMappings(member.config.parameterMappings)
-      );
+      setModelMappings(member.config.modelMappings);
+      setRequestTransformScript(member.config.requestTransformScript);
     } else {
       setApiBaseUrl("");
       setApiUseStream(false);
-      setParameterMappingsText("");
+      setModelMappings([]);
+      setRequestTransformScript("");
     }
     setApiKey("");
     if (member?.type === "adobe") {
@@ -219,6 +189,22 @@ export function BackendMemberFormDialog({
     );
   }
 
+  /** 更新一个已选择平台模型的供应商模型 ID；留空表示同名透传。 */
+  function updateUpstreamModelId(
+    modelId: string,
+    upstreamModelId: string
+  ): void {
+    setModelMappings((current) => {
+      const remaining = current.filter(
+        (mapping) => mapping.modelId.toLowerCase() !== modelId.toLowerCase()
+      );
+      const normalized = upstreamModelId.trim();
+      return normalized
+        ? [...remaining, { modelId, upstreamModelId: normalized }]
+        : remaining;
+    });
+  }
+
   /** 切换账号类型；API 与 Adobe Direct 保留视频，切到 Gateway 时清理。 */
   function handleMemberTypeChange(nextType: BackendMemberType): void {
     setType(nextType);
@@ -261,11 +247,9 @@ export function BackendMemberFormDialog({
       concurrency: Number(concurrency),
     };
     if (type === "api") {
-      const parameterMappings = parseParameterMappings(parameterMappingsText);
-      if (!parameterMappings) {
-        toast.error("参数映射每行格式应为：copy|move source target");
-        return;
-      }
+      const selectedModelKeys = new Set(
+        supportedModelIds.map((modelId) => modelId.toLowerCase())
+      );
       saveMember({
         ...common,
         type: "api",
@@ -273,7 +257,10 @@ export function BackendMemberFormDialog({
           baseUrl: apiBaseUrl,
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
           useStream: apiUseStream,
-          parameterMappings,
+          modelMappings: modelMappings.filter((mapping) =>
+            selectedModelKeys.has(mapping.modelId.toLowerCase())
+          ),
+          requestTransformScript,
         },
       });
       return;
@@ -475,19 +462,80 @@ export function BackendMemberFormDialog({
                 onCheckedChange={setApiUseStream}
               />
               <div className="space-y-2">
-                <Label htmlFor="parameter-mappings">请求参数映射</Label>
-                <Textarea
-                  id="parameter-mappings"
-                  rows={4}
-                  value={parameterMappingsText}
-                  onChange={(event) =>
-                    setParameterMappingsText(event.target.value)
-                  }
-                  placeholder="copy input.source output.target"
-                />
+                <Label>上游模型 ID 映射</Label>
                 <p className="text-xs text-muted-foreground">
-                  每行格式：copy|move source target。留空表示不映射。
+                  平台仍使用左侧真实模型 ID
+                  进行调度、计费与任务记录；仅实际请求当前账号时替换为右侧供应商
+                  ID。留空表示同名透传。
                 </p>
+                {selectedModelIds.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                    请先在下方选择账号支持的模型。
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedModelIds.map((modelId) => (
+                      <div
+                        key={modelId}
+                        className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                      >
+                        <code className="truncate rounded-md bg-muted px-3 py-2 text-xs">
+                          {modelId}
+                        </code>
+                        <Input
+                          aria-label={`${modelId} 的上游模型 ID`}
+                          value={
+                            modelMappings.find(
+                              (mapping) =>
+                                mapping.modelId.toLowerCase() ===
+                                modelId.toLowerCase()
+                            )?.upstreamModelId ?? ""
+                          }
+                          onChange={(event) =>
+                            updateUpstreamModelId(modelId, event.target.value)
+                          }
+                          placeholder={`默认：${modelId}`}
+                          maxLength={240}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="request-transform-script">
+                  JavaScript 请求处理脚本
+                </Label>
+                <Textarea
+                  id="request-transform-script"
+                  rows={10}
+                  className="font-mono text-xs"
+                  value={requestTransformScript}
+                  onChange={(event) =>
+                    setRequestTransformScript(event.target.value)
+                  }
+                  maxLength={MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS}
+                  spellCheck={false}
+                  placeholder={
+                    "request.ratio = request.aspect_ratio;\n" +
+                    "delete request.aspect_ratio;\n" +
+                    "return request;"
+                  }
+                />
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <p>
+                    脚本必须同步返回 request 对象。可读取只读
+                    context.operation、
+                    context.contentType、context.platformModelId 和
+                    context.upstreamModelId。
+                  </p>
+                  <p>
+                    脚本在隔离 QuickJS 中最多执行
+                    50ms，不能访问网络、文件、Node、 URL、Header 或 API
+                    Key。输入媒体以宿主令牌表示，只能移动或重命名，
+                    不能删除、复制或伪造。
+                  </p>
+                </div>
               </div>
             </div>
           ) : (

@@ -1,5 +1,5 @@
+import type { ApiModelMapping } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
-import type { RequestParameterMapping } from "@repo/shared/image-backend/request-parameter-mapping";
 
 export interface GenerateImageParams {
   prompt: string;
@@ -140,8 +140,10 @@ export interface ApiConfig {
     groupId?: string | null;
     userId?: string;
     apiKeyId?: string;
-    // 仅 pool-api 使用：发送前把标准请求字段复制或重命名为上游字段。
-    parameterMappings?: RequestParameterMapping[];
+    // 仅 pool-api 使用：调度与计费仍使用平台 ID，发送前才解析当前账号的上游 ID。
+    modelMappings?: ApiModelMapping[];
+    // 仅 pool-api 使用：在隔离 QuickJS 中同步处理请求体，不可访问凭据、URL 或 Header。
+    requestTransformScript?: string;
     // adobe（pool-adobe）专属：暴露的 Firefly 模型家族、默认宽高比/分辨率、是否支持
     // 视频。供 image-generation 派发 adobe 请求时选择 family 与映射缺省值。
     // gateway：调外部 adobe2api；direct：用顶层成员的一对一凭据直连 Firefly。

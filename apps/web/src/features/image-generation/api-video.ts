@@ -5,7 +5,7 @@
  * 任务身份，随后按原 API 账号轮询并下载产物。使用方是视频持久状态机；本模块不
  * 负责账号调度、计费、数据库状态推进或对象存储。
  */
-import { applyRequestParameterMappings } from "@repo/shared/image-backend/request-parameter-mapping";
+import { resolveApiUpstreamModelId } from "@repo/shared/image-backend/api-upstream-adaptation";
 
 import {
   fetchMediaUpstream,
@@ -14,6 +14,10 @@ import {
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import { parseMediaUpstreamUrl } from "@/features/image-backend-pool/media-upstream-url";
+import {
+  applyApiRequestTransformScript,
+  createApiRequestOpaqueToken,
+} from "@/features/image-backend-pool/request-transform-runtime";
 
 import { ApiAcceptedVideoError } from "./api-video-error";
 import type { ApiConfig } from "./types";
@@ -158,7 +162,7 @@ function getInlineInputByteLength(inputs: ApiVideoSourceInputs): number {
 /**
  * 向一个已获租 API 账号提交视频任务。
  *
- * @param config - API 账号运行时配置与参数映射。
+ * @param config - API 账号运行时配置、模型映射与请求处理脚本。
  * @param params - 真实模型 ID、独立生成参数、幂等键和具名输入图。
  * @returns 上游任务恢复身份，或可供调度器分类的提交错误。
  * @sideEffects 发起一次带账号 API Key 的上游 POST。
@@ -188,10 +192,20 @@ export async function submitApiVideoRequest(
     };
   }
   const requestUrl = appendVideoPath(config.baseUrl, "videos/generations");
+  const upstreamModel = resolveApiUpstreamModelId(
+    params.model,
+    config.backend?.modelMappings
+  );
+  const opaqueValues = new Map<string, unknown>();
+  const toOpaqueDataUrl = (image: ApiVideoSourceImage): string => {
+    const token = createApiRequestOpaqueToken();
+    opaqueValues.set(token, toDataUrl(image));
+    return token;
+  };
   const standardBody: Record<string, unknown> = {
     client_request_id: params.clientRequestId,
     prompt: params.prompt,
-    model: params.model,
+    model: upstreamModel,
     duration: params.duration,
     aspect_ratio: params.aspectRatio,
     resolution: params.resolution,
@@ -199,16 +213,38 @@ export async function submitApiVideoRequest(
     ...(params.negativePrompt != null
       ? { negative_prompt: params.negativePrompt }
       : {}),
-    ...(params.firstFrame ? { first_frame: toDataUrl(params.firstFrame) } : {}),
-    ...(params.lastFrame ? { last_frame: toDataUrl(params.lastFrame) } : {}),
+    ...(params.firstFrame
+      ? { first_frame: toOpaqueDataUrl(params.firstFrame) }
+      : {}),
+    ...(params.lastFrame
+      ? { last_frame: toOpaqueDataUrl(params.lastFrame) }
+      : {}),
     ...(params.referenceImages?.length
-      ? { reference_images: params.referenceImages.map(toDataUrl) }
+      ? { reference_images: params.referenceImages.map(toOpaqueDataUrl) }
       : {}),
   };
-  const body = applyRequestParameterMappings(
-    standardBody,
-    config.backend?.parameterMappings
-  );
+  let body: Record<string, unknown>;
+  try {
+    body = await applyApiRequestTransformScript(
+      standardBody,
+      config.backend?.requestTransformScript ?? "",
+      {
+        operation: "videos.generate",
+        contentType: "application/json",
+        platformModelId: params.model,
+        upstreamModelId: upstreamModel,
+      },
+      opaqueValues
+    );
+  } catch {
+    return {
+      error: "API 账号请求处理脚本执行失败",
+      switchable: true,
+      upstreamAccepted: false,
+      terminal: false,
+      submissionUncertain: false,
+    };
+  }
   let response: Response;
   try {
     response = await fetchMediaUpstream(requestUrl, {

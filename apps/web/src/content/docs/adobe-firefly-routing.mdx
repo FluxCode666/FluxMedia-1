@@ -18,7 +18,7 @@ Adobe 就自动认为它支持某个模型。同一分组的 API 与 Adobe 成�
 
 ## Adobe 模式
 
-- `gateway`：调用管理员配置的 Adobe 兼容网关，由成员配置保存鉴权与参数映射。
+- `gateway`：调用管理员配置的 Adobe 兼容网关，由成员配置保存地址、鉴权与默认生成参数。
 - `direct`：每个顶层成员保存一个 Adobe 账号的 Cookie 与短期 Token，并通过 Adobe
   专用上游代理访问代码内允许的 HTTPS 主机。
 

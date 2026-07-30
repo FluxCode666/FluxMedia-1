@@ -1,10 +1,10 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068-0074 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0075 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
- * 作用域；0074 另以 0073 后隔离 schema 验证冻结映射、具名输入、约束和幂等切换。
+ * 作用域；0074-0075 另以隔离 schema 验证视频请求与 API 上游适配切换。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -267,6 +268,12 @@ const removeFireflyModelPrefixMigrationPath = migrationPaths.at(10);
 const realVideoRequestMigrationPath = fileURLToPath(
   new URL(
     "../../database/drizzle/0074_real_video_request_contract.sql",
+    import.meta.url
+  )
+);
+const apiAccountUpstreamAdaptationMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0075_api_account_upstream_adaptation.sql",
     import.meta.url
   )
 );
@@ -689,6 +696,59 @@ async function createPost0073VideoSchema(
     );
   }
   return schemaName;
+}
+
+/**
+ * 创建 0075 执行前的 API 账号配置与参数映射模板。
+ *
+ * @param client 专用测试数据库连接。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建旧 API 配置表、旧约束与旧模板表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPre0075ApiAdaptationSchema(
+  client: PoolClient
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member_api_config (
+      member_id text primary key,
+      parameter_mappings json not null default '[]'::json,
+      constraint image_backend_member_api_config_mappings_check
+        check (json_typeof(parameter_mappings) = 'array')
+    );
+    create table image_backend_parameter_mapping_template (
+      id text primary key,
+      name text not null,
+      mappings json not null default '[]'::json
+    )
+  `);
+  return schemaName;
+}
+
+/**
+ * 在 Node.js 隔离上下文中执行迁移生成的静态兼容脚本。
+ *
+ * @param script 从迁移后配置行读取的 JavaScript 函数体。
+ * @param request 用于验证旧 copy/move 语义的请求副本。
+ * @returns 转换后且已归一化为当前 realm 的 JSON 值。
+ * @sideEffects 无；仅在无宿主能力的隔离上下文中运行生产迁移常量。
+ * @throws 脚本超时、运行失败或返回值不可 JSON 序列化时抛错。
+ */
+function executeMigratedRequestTransform(
+  script: string,
+  request: Record<string, unknown>
+): unknown {
+  const executable = new Script(
+    `(function (request) {\n${script}\n})(${JSON.stringify(request)})`
+  );
+  const transformed: unknown = executable.runInNewContext(Object.create(null), {
+    timeout: 100,
+  });
+  return JSON.parse(JSON.stringify(transformed)) as unknown;
 }
 
 /** 创建符合资产收编后任务归属规则的 storage-only 输入对象。 */
@@ -3270,6 +3330,169 @@ describe("0074 视频真实模型请求契约迁移", () => {
       `);
       expect(task.rows[0]?.model).toBe("sora2-4s-16x9");
       expect(task.rows[0]?.input_image_refs).toEqual([foreignAsset]);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+});
+
+describe("0075 API 账号上游适配迁移", () => {
+  it("把旧参数映射转为等价脚本并幂等收敛旧结构", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0075ApiAdaptationSchema(client);
+      const legacyMappings = [
+        {
+          mode: "copy",
+          source: "input.referenceImages",
+          target: "references",
+        },
+        {
+          mode: "move",
+          source: "aspect_ratio",
+          target: "ratio",
+        },
+      ];
+      await client.query(
+        `insert into image_backend_member_api_config (
+           member_id, parameter_mappings
+         ) values
+           ('mapped-account', $1::json),
+           ('empty-account', '[]'::json)`,
+        [JSON.stringify(legacyMappings)]
+      );
+      await client.query(`
+        insert into image_backend_parameter_mapping_template (
+          id, name, mappings
+        ) values (
+          'legacy-template', '旧上游协议',
+          '[{"mode":"move","source":"model","target":"model_id"}]'::json
+        )
+      `);
+
+      await executeMigrations(client, schemaName, [
+        apiAccountUpstreamAdaptationMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const firstPass = await client.query<{
+        request_transform_script: string;
+      }>(`
+        select request_transform_script
+        from image_backend_member_api_config
+        where member_id = 'mapped-account'
+      `);
+      const firstMigratedScript =
+        firstPass.rows[0]?.request_transform_script ?? "";
+
+      await executeMigrations(client, schemaName, [
+        apiAccountUpstreamAdaptationMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const configs = await client.query<{
+        member_id: string;
+        model_mappings: unknown;
+        request_transform_script: string;
+      }>(`
+        select member_id, model_mappings, request_transform_script
+        from image_backend_member_api_config
+        order by member_id
+      `);
+      expect(configs.rows).toEqual([
+        {
+          member_id: "empty-account",
+          model_mappings: [],
+          request_transform_script: "",
+        },
+        {
+          member_id: "mapped-account",
+          model_mappings: [],
+          request_transform_script: firstMigratedScript,
+        },
+      ]);
+      expect(firstMigratedScript).toContain(
+        `const rules = ${JSON.stringify(legacyMappings)};`
+      );
+      expect(
+        executeMigratedRequestTransform(firstMigratedScript, {
+          model: "seedance2",
+          input: { referenceImages: ["first.png", "second.png"] },
+          aspect_ratio: "16:9",
+        })
+      ).toEqual({
+        model: "seedance2",
+        input: { referenceImages: ["first.png", "second.png"] },
+        references: ["first.png", "second.png"],
+        ratio: "16:9",
+      });
+
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_api_config",
+          "parameter_mappings"
+        )
+      ).resolves.toBe(false);
+      await expect(
+        tableExists(
+          client,
+          schemaName,
+          "image_backend_parameter_mapping_template"
+        )
+      ).resolves.toBe(false);
+
+      const constraints = await client.query<{ conname: string }>(`
+        select constraint_record.conname
+        from pg_constraint as constraint_record
+        inner join pg_class as relation
+          on relation.oid = constraint_record.conrelid
+        where relation.relnamespace = current_schema()::regnamespace
+          and relation.relname = 'image_backend_member_api_config'
+          and constraint_record.conname =
+            'image_backend_member_api_config_model_mappings_check'
+      `);
+      expect(constraints.rows).toEqual([
+        {
+          conname: "image_backend_member_api_config_model_mappings_check",
+        },
+      ]);
+      await expect(
+        client.query(`
+          update image_backend_member_api_config
+          set model_mappings = '{"seedance2":"seedance-2.0"}'::json
+          where member_id = 'mapped-account'
+        `)
+      ).rejects.toThrow(
+        /image_backend_member_api_config_model_mappings_check/u
+      );
+
+      await client.query(`
+        insert into image_backend_member_api_config (member_id)
+        values ('new-account')
+      `);
+      const defaultConfig = await client.query<{
+        model_mappings: unknown;
+        request_transform_script: string;
+      }>(`
+        select model_mappings, request_transform_script
+        from image_backend_member_api_config
+        where member_id = 'new-account'
+      `);
+      expect(defaultConfig.rows[0]).toEqual({
+        model_mappings: [],
+        request_transform_script: "",
+      });
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

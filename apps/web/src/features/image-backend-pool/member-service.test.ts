@@ -50,7 +50,8 @@ function apiInput(overrides: Record<string, unknown> = {}) {
       baseUrl: "https://images.example.com/v1",
       apiKey: "secret-api-key",
       useStream: true,
-      parameterMappings: [],
+      modelMappings: [],
+      requestTransformScript: "",
     },
     ...overrides,
   };
@@ -122,6 +123,81 @@ describe("backend member service", () => {
     );
   });
 
+  it("校验并持久化账号模型映射与请求处理脚本", async () => {
+    const validateRequestTransformScript = vi.fn(async (_script: string) => {});
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-adapted",
+      now: () => NOW,
+      validateUpstreamUrl,
+      validateRequestTransformScript,
+    });
+    const requestTransformScript =
+      "request.ratio = request.aspect_ratio; return request;";
+
+    await service.saveMember(
+      apiInput({
+        supportedModelIds: ["seedance2"],
+        config: {
+          baseUrl: "https://video.example.com/v1",
+          apiKey: "secret-api-key",
+          useStream: false,
+          modelMappings: [
+            { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
+          ],
+          requestTransformScript,
+        },
+      })
+    );
+
+    expect(validateRequestTransformScript).toHaveBeenCalledWith(
+      requestTransformScript
+    );
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          modelMappings: [
+            { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
+          ],
+          requestTransformScript,
+        }),
+      }),
+      NOW
+    );
+  });
+
+  it("请求处理脚本校验失败时拒绝保存 API 账号", async () => {
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-invalid-script",
+      now: () => NOW,
+      validateUpstreamUrl,
+      validateRequestTransformScript: async () => {
+        throw new Error("invalid JavaScript");
+      },
+    });
+
+    const error = await service
+      .saveMember(
+        apiInput({
+          config: {
+            baseUrl: "https://images.example.com/v1",
+            apiKey: "secret-api-key",
+            useStream: false,
+            modelMappings: [],
+            requestTransformScript: "if (",
+          },
+        })
+      )
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "validation_error",
+      message: "API 账号请求处理脚本语法无效",
+    });
+    expect(repository.saveMember).not.toHaveBeenCalled();
+  });
+
   it("默认地址解析允许保存 HTTP 私网上游", async () => {
     const service = createBackendMemberService({
       repository,
@@ -136,7 +212,8 @@ describe("backend member service", () => {
             baseUrl: "http://10.0.0.8:8080/v1",
             apiKey: "secret-api-key",
             useStream: false,
-            parameterMappings: [],
+            modelMappings: [],
+            requestTransformScript: "",
           },
         })
       )
@@ -161,7 +238,8 @@ describe("backend member service", () => {
       id: "member-existing",
       config: {
         baseUrl: "https://images.example.com/v1",
-        parameterMappings: [],
+        modelMappings: [],
+        requestTransformScript: "",
       },
     });
 
@@ -484,7 +562,8 @@ describe("backend member service", () => {
         baseUrl: "https://images.example.com/v1",
         hasApiKey: true,
         useStream: false,
-        parameterMappings: [],
+        modelMappings: [],
+        requestTransformScript: "",
       },
     };
     repository.listMembers.mockResolvedValue([summary]);

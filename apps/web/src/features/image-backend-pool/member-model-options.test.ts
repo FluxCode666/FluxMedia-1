@@ -99,7 +99,8 @@ function createMemberInput(
       config: {
         baseUrl: "https://api.example.com/v1",
         useStream: false,
-        parameterMappings: [],
+        modelMappings: [],
+        requestTransformScript: "",
       },
     };
   }

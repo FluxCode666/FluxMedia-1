@@ -120,7 +120,8 @@ describe("image backend pool pricing operations", () => {
         concurrency: 1,
         config: {
           baseUrl: "https://example.com",
-          parameterMappings: [],
+          modelMappings: [],
+          requestTransformScript: "",
         },
         billingMultiplier: 2,
       }).success
@@ -164,7 +165,8 @@ describe("image backend pool pricing operations", () => {
         concurrency: 1,
         config: {
           baseUrl: "https://example.com",
-          parameterMappings: [],
+          modelMappings: [],
+          requestTransformScript: "",
         },
       }).success
     ).toBe(true);
@@ -172,6 +174,32 @@ describe("image backend pool pricing operations", () => {
       deleteMember.input.safeParse({ id: "member-a", memberType: "api" })
         .success
     ).toBe(false);
+  });
+
+  it("移除旧参数映射输入与模板操作", () => {
+    expect(
+      saveMember.input.safeParse({
+        type: "api",
+        name: "API",
+        groupIds: ["group-a"],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: true,
+        priority: 0,
+        concurrency: 1,
+        config: {
+          baseUrl: "https://example.com",
+          modelMappings: [],
+          requestTransformScript: "",
+          parameterMappings: [],
+        },
+      }).success
+    ).toBe(false);
+    expect(getOperation("pool.listParameterMappingTemplates")).toBeUndefined();
+    expect(getOperation("pool.saveParameterMappingTemplate")).toBeUndefined();
+    expect(getOperation("pool.deleteParameterMappingTemplate")).toBeUndefined();
   });
 
   it("成员状态重置只接受统一成员 ID 且声明为自然幂等", () => {

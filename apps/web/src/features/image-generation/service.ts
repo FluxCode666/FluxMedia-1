@@ -11,15 +11,16 @@ import {
   parseAdobeMediaResult,
   pickExplicitAdobeImageFamily,
 } from "@repo/shared/adobe";
-import {
-  applyRequestParameterMappings,
-  normalizeRequestParameterMappings,
-} from "@repo/shared/image-backend/request-parameter-mapping";
+import { resolveApiUpstreamModelId } from "@repo/shared/image-backend/api-upstream-adaptation";
 import { logError } from "@repo/shared/logger";
 import {
   fetchMediaUpstream,
   fetchMediaUpstreamDownload,
 } from "@/features/image-backend-pool/media-upstream-fetch";
+import {
+  applyApiRequestTransformScript,
+  createApiRequestOpaqueToken,
+} from "@/features/image-backend-pool/request-transform-runtime";
 import { runAdobeDirectImageRequest } from "./adobe-direct";
 import { appendImagesUpstreamNonce } from "./images-upstream-nonce";
 import {
@@ -119,104 +120,161 @@ function getHeaders(
   };
 }
 
-/**
- * 将 API 池后端保存的字段映射应用到 JSON 请求体。
- *
- * 只有管理员配置的 pool-api 可使用映射；平台配置始终发送原始标准请求，避免成员
- * 配置越过其既有协议与安全边界。
- *
- * @param config - 当前选中的上游配置。
- * @param requestBody - 已完成标准化、即将序列化的 JSON 请求体。
- * @returns 应用映射后的独立请求体。
- */
-function applyApiBackendRequestMappings(
+/** 解析 pool-api 账号实际发送的模型 ID；其他后端保持平台模型。 */
+function getApiBackendUpstreamModel(
   config: ApiConfig,
-  requestBody: unknown
+  platformModelId: string
 ) {
-  if (config.backend?.type !== "pool-api" || !isPlainRecord(requestBody)) {
-    return requestBody;
-  }
-  return applyRequestParameterMappings(
-    requestBody,
-    config.backend.parameterMappings
+  if (config.backend?.type !== "pool-api") return platformModelId;
+  return resolveApiUpstreamModelId(
+    platformModelId,
+    config.backend.modelMappings
   );
 }
 
-/**
- * 将一个 FormData 条目值追加到新表单。
- *
- * @param formData - 重建中的上游 multipart 表单。
- * @param name - 上游字段名称。
- * @param value - 字符串或 Blob；其他值仅在异常配置下转成字符串。
- */
-function appendMappedFormDataValue(
+/** 在当前 API 账号的 QuickJS 中转换 JSON 请求体。 */
+async function transformApiBackendJsonRequest(
+  config: ApiConfig,
+  requestBody: Record<string, unknown>,
+  input: {
+    operation: "images.generate";
+    platformModelId: string;
+    upstreamModelId: string;
+  }
+) {
+  if (config.backend?.type !== "pool-api") return requestBody;
+  return applyApiRequestTransformScript(
+    requestBody,
+    config.backend.requestTransformScript ?? "",
+    {
+      ...input,
+      contentType: "application/json",
+    }
+  );
+}
+
+/** 向脚本请求对象追加字段并保留 multipart 重复键顺序。 */
+function appendScriptRequestValue(
+  request: Record<string, unknown>,
+  name: string,
+  value: unknown
+): void {
+  const existing = request[name];
+  if (existing === undefined) {
+    request[name] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(value);
+  } else {
+    request[name] = [existing, value];
+  }
+}
+
+/** 检查 multipart 脚本输出的嵌套容器中是否包含宿主媒体。 */
+function containsBlob(value: unknown): boolean {
+  if (value instanceof Blob) return true;
+  if (Array.isArray(value)) return value.some(containsBlob);
+  if (!isPlainRecord(value)) return false;
+  return Object.values(value).some(containsBlob);
+}
+
+/** 把脚本输出值重新编码为 multipart 条目。 */
+function appendTransformedFormDataValue(
   formData: FormData,
   name: string,
   value: unknown
-) {
-  if (typeof value === "string") {
-    formData.append(name, value);
+): void {
+  if (value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      appendTransformedFormDataValue(formData, name, item);
+    }
     return;
   }
   if (value instanceof Blob) {
-    formData.append(name, value);
+    const filename =
+      "name" in value && typeof value.name === "string" ? value.name : null;
+    if (filename) {
+      formData.append(name, value, filename);
+    } else {
+      formData.append(name, value);
+    }
     return;
+  }
+  if (isPlainRecord(value)) {
+    formData.append(name, JSON.stringify(value));
+    return;
+  }
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean"
+  ) {
+    throw new Error("API 账号请求处理脚本返回了非法 multipart 字段");
   }
   formData.append(name, String(value));
 }
 
 /**
- * 对 multipart 改图表单应用顶层字段映射。
+ * 限制 multipart 媒体只能位于顶层字段或顶层数组元素。
  *
- * FormData 没有 JSON 嵌套语义，故仅处理无点号的字段名；`image`、`mask` 等 Blob
- * 会连同重复条目一起保留。带点号的规则只在 JSON Images 请求中生效。
- *
- * @param config - 当前选中的上游配置。
- * @param formData - 标准化后的 multipart 表单。
- * @returns 上游可直接发送的新表单。
+ * WHY：嵌套对象会被 JSON.stringify 为普通文本，若其中混入恢复后的 Blob，文件会
+ * 静默变成 `{}`。失败关闭可以避免管理员脚本看似成功、实际上游收到损坏媒体。
  */
-function applyApiBackendFormDataMappings(
-  config: ApiConfig,
-  formData: FormData
-) {
-  if (config.backend?.type !== "pool-api") return formData;
-  const mappings = normalizeRequestParameterMappings(
-    config.backend.parameterMappings
-  ).filter(
-    (mapping) => !mapping.source.includes(".") && !mapping.target.includes(".")
-  );
-  if (!mappings.length) return formData;
-
-  const entries = new Map<string, FormDataEntryValue[]>();
-  for (const [name, value] of formData.entries()) {
-    const values = entries.get(name) || [];
-    values.push(value);
-    entries.set(name, values);
-  }
-  const snapshot = new Map(entries);
-  const resolved = mappings.flatMap((mapping) => {
-    const sourceName = snapshot.has(mapping.source)
-      ? mapping.source
-      : mapping.source === "image" && snapshot.has("image[]")
-        ? "image[]"
-        : mapping.source;
-    const values = snapshot.get(sourceName);
-    return values ? [{ ...mapping, sourceName, values }] : [];
-  });
-  for (const mapping of resolved) {
-    if (mapping.mode === "move" && mapping.source !== mapping.target) {
-      entries.delete(mapping.sourceName);
+function assertMultipartMediaPlacement(value: unknown): void {
+  if (value instanceof Blob) return;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (item instanceof Blob) continue;
+      if (containsBlob(item)) {
+        throw new Error("API 账号请求处理脚本返回了非法 multipart 媒体位置");
+      }
     }
+    return;
   }
-  for (const mapping of resolved) {
-    entries.set(mapping.target, [...mapping.values]);
+  if (containsBlob(value)) {
+    throw new Error("API 账号请求处理脚本返回了非法 multipart 媒体位置");
   }
+}
 
-  const mapped = new FormData();
-  for (const [name, values] of entries) {
-    for (const value of values) appendMappedFormDataValue(mapped, name, value);
+/**
+ * 以宿主令牌隔离 multipart 文件后执行账号脚本，再恢复 Blob 并重建表单。
+ */
+async function transformApiBackendFormDataRequest(
+  config: ApiConfig,
+  formData: FormData,
+  input: {
+    platformModelId: string;
+    upstreamModelId: string;
   }
-  return mapped;
+): Promise<FormData> {
+  if (config.backend?.type !== "pool-api") return formData;
+  const request: Record<string, unknown> = {};
+  const opaqueValues = new Map<string, unknown>();
+  for (const [name, value] of formData.entries()) {
+    if (typeof value === "string") {
+      appendScriptRequestValue(request, name, value);
+      continue;
+    }
+    const token = createApiRequestOpaqueToken();
+    opaqueValues.set(token, value);
+    appendScriptRequestValue(request, name, token);
+  }
+  const transformed = await applyApiRequestTransformScript(
+    request,
+    config.backend.requestTransformScript ?? "",
+    {
+      operation: "images.edit",
+      contentType: "multipart/form-data",
+      ...input,
+    },
+    opaqueValues
+  );
+  const result = new FormData();
+  for (const [name, value] of Object.entries(transformed)) {
+    assertMultipartMediaPlacement(value);
+    appendTransformedFormDataValue(result, name, value);
+  }
+  return result;
 }
 
 function getApiErrorMessage(errorData: unknown): string | null {
@@ -642,7 +700,7 @@ function appendImageParams(
     background?: string;
   }
 ) {
-  formData.append("model", getModel(config, params.model));
+  formData.append("model", params.model);
   // multipart 改图同样注入每请求唯一零宽 nonce 破上游内容缓存（仅上游请求体）。
   formData.append("prompt", appendImagesUpstreamNonce(params.prompt));
   formData.append("n", String(params.n || 1));
@@ -1115,6 +1173,45 @@ export async function generateImage(
     const size = params.size || DEFAULT_IMAGE_SIZE;
     const dimensions = parseImageSize(size);
     const background = normalizeImageBackground(params.background);
+    const upstreamModel = getApiBackendUpstreamModel(config, model);
+    const requestBody = await transformApiBackendJsonRequest(
+      config,
+      {
+        model: upstreamModel,
+        // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
+        // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
+        prompt: appendImagesUpstreamNonce(prompt),
+        n: params.n || 1,
+        size,
+        ...(dimensions
+          ? { width: dimensions.width, height: dimensions.height }
+          : {}),
+        ...(normalizeQuality(params.quality)
+          ? { quality: normalizeQuality(params.quality) }
+          : {}),
+        ...(normalizeModeration(params.moderation)
+          ? { moderation: normalizeModeration(params.moderation) }
+          : {}),
+        ...(normalizeOutputFormat(params.outputFormat)
+          ? { output_format: normalizeOutputFormat(params.outputFormat) }
+          : {}),
+        ...(normalizeOutputCompression(params.outputCompression) !== undefined
+          ? {
+              output_compression: normalizeOutputCompression(
+                params.outputCompression
+              ),
+            }
+          : {}),
+        ...(background ? { background } : {}),
+        ...(config.useStream ? { stream: true, partial_images: 2 } : {}),
+        response_format: "b64_json",
+      },
+      {
+        operation: "images.generate",
+        platformModelId: model,
+        upstreamModelId: upstreamModel,
+      }
+    );
     const response = await fetchMediaUpstream(
       `${config.baseUrl}/images/generations`,
       {
@@ -1123,39 +1220,7 @@ export async function generateImage(
         headers: getHeaders(config, {
           "Content-Type": "application/json",
         }),
-        body: JSON.stringify(
-          applyApiBackendRequestMappings(config, {
-            model,
-            // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
-            // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
-            prompt: appendImagesUpstreamNonce(prompt),
-            n: params.n || 1,
-            size,
-            ...(dimensions
-              ? { width: dimensions.width, height: dimensions.height }
-              : {}),
-            ...(normalizeQuality(params.quality)
-              ? { quality: normalizeQuality(params.quality) }
-              : {}),
-            ...(normalizeModeration(params.moderation)
-              ? { moderation: normalizeModeration(params.moderation) }
-              : {}),
-            ...(normalizeOutputFormat(params.outputFormat)
-              ? { output_format: normalizeOutputFormat(params.outputFormat) }
-              : {}),
-            ...(normalizeOutputCompression(params.outputCompression) !==
-            undefined
-              ? {
-                  output_compression: normalizeOutputCompression(
-                    params.outputCompression
-                  ),
-                }
-              : {}),
-            ...(background ? { background } : {}),
-            ...(config.useStream ? { stream: true, partial_images: 2 } : {}),
-            response_format: "b64_json",
-          })
-        ),
+        body: JSON.stringify(requestBody),
         maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
       }
     );
@@ -1243,10 +1308,11 @@ export async function editImage(
   }
   try {
     const prompt = effectiveEditPrompt;
+    const upstreamModel = getApiBackendUpstreamModel(config, model);
     const formData = new FormData();
     appendImageParams(formData, config, {
       prompt,
-      model,
+      model: upstreamModel,
       n: params.n,
       size: params.size,
       quality: params.quality,
@@ -1279,7 +1345,10 @@ export async function editImage(
         method: "POST",
         signal: params.signal,
         headers: getHeaders(config, {}),
-        body: applyApiBackendFormDataMappings(config, formData),
+        body: await transformApiBackendFormDataRequest(config, formData, {
+          platformModelId: model,
+          upstreamModelId: upstreamModel,
+        }),
         maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
       }
     );

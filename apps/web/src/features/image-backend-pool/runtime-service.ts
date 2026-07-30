@@ -12,11 +12,14 @@ import {
   normalizeSubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
 import {
+  apiModelMappingsSchema,
+  apiRequestTransformScriptSchema,
+} from "@repo/shared/image-backend/api-upstream-adaptation";
+import {
   getGroupImageCreditOverrides,
   getGroupVideoCreditOverrides,
   type ImageCreditOverrides,
 } from "@repo/shared/image-backend/group-image-pricing";
-import { requestParameterMappingsSchema } from "@repo/shared/image-backend/request-parameter-mapping";
 import type { BackendSchedulingStrategy } from "@repo/shared/image-backend/scheduling-policy";
 import { logWarn } from "@repo/shared/logger";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
@@ -66,7 +69,6 @@ const apiVideoRecoveryRowSchema = z.object({
   member_id: z.string().trim().min(1),
   base_url: z.string().trim().min(1),
   api_key: z.string().min(1),
-  parameter_mappings: z.unknown().nullable(),
 });
 
 const runtimeConfigRowSchema = z.object({
@@ -77,7 +79,8 @@ const runtimeConfigRowSchema = z.object({
   api_base_url: z.string().nullable(),
   api_key: z.string().nullable(),
   api_use_stream: z.boolean().nullable(),
-  parameter_mappings: z.unknown().nullable(),
+  model_mappings: z.unknown().nullable(),
+  request_transform_script: z.string().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
   adobe_api_key: z.string().nullable(),
@@ -314,8 +317,7 @@ export async function loadApiVideoRecoveryConfig(
         select
           member.id as member_id,
           api.base_url,
-          api.api_key,
-          api.parameter_mappings
+          api.api_key
         from image_backend_member as member
         inner join image_backend_member_api_config as api
           on api.member_id = member.id
@@ -334,9 +336,6 @@ export async function loadApiVideoRecoveryConfig(
     backend: {
       type: "pool-api",
       id: row.member_id,
-      parameterMappings: requestParameterMappingsSchema.parse(
-        row.parameter_mappings ?? []
-      ),
     },
   };
 }
@@ -359,7 +358,8 @@ async function loadRuntimeBackendLease(
           api.base_url as api_base_url,
           api.api_key,
           api.use_stream as api_use_stream,
-          api.parameter_mappings,
+          api.model_mappings,
+          api.request_transform_script,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
           adobe.api_key as adobe_api_key,
@@ -410,8 +410,9 @@ async function loadRuntimeBackendLease(
         backend: {
           ...commonBackend,
           type: "pool-api",
-          parameterMappings: requestParameterMappingsSchema.parse(
-            row.parameter_mappings ?? []
+          modelMappings: apiModelMappingsSchema.parse(row.model_mappings ?? []),
+          requestTransformScript: apiRequestTransformScriptSchema.parse(
+            row.request_transform_script ?? ""
           ),
         },
       },

@@ -1156,7 +1156,7 @@ export const imageBackendMember = pgTable(
   ]
 );
 
-/** API 成员的一对一 OpenAI Images 协议配置。 */
+/** API 成员的一对一 Images/Videos 兼容协议与账号级上游适配配置。 */
 export const imageBackendMemberApiConfig = pgTable(
   "image_backend_member_api_config",
   {
@@ -1166,17 +1166,20 @@ export const imageBackendMemberApiConfig = pgTable(
     baseUrl: text("base_url").notNull(),
     apiKey: text("api_key"),
     useStream: boolean("use_stream").notNull().default(false),
-    parameterMappings: json("parameter_mappings")
-      .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
+    modelMappings: json("model_mappings")
+      .$type<Array<{ modelId: string; upstreamModelId: string }>>()
       .notNull()
       .default([]),
+    requestTransformScript: text("request_transform_script")
+      .notNull()
+      .default(""),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
     check(
-      "image_backend_member_api_config_mappings_check",
-      sql`json_typeof(${table.parameterMappings}) = 'array'`
+      "image_backend_member_api_config_model_mappings_check",
+      sql`json_typeof(${table.modelMappings}) = 'array'`
     ),
   ]
 );
@@ -1371,27 +1374,6 @@ export const imageBackendMemberSchedulerMetric = pgTable(
       table.bucketStartedAt,
       table.strategy,
       table.outcome
-    ),
-  ]
-);
-
-// API 后端参数映射模板。模板仅用于管理端复用，保存到具体后端时复制为独立快照，
-// 避免编辑或删除模板悄然改变正在服务的上游协议。
-export const imageBackendParameterMappingTemplate = pgTable(
-  "image_backend_parameter_mapping_template",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    parameterMappings: json("parameter_mappings")
-      .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
-      .notNull()
-      .default([]),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("image_backend_parameter_mapping_template_name_unique").on(
-      table.name
     ),
   ]
 );
@@ -1811,10 +1793,6 @@ export type ImageBackendMemberSchedulerMetric =
   typeof imageBackendMemberSchedulerMetric.$inferSelect;
 export type NewImageBackendMemberSchedulerMetric =
   typeof imageBackendMemberSchedulerMetric.$inferInsert;
-export type ImageBackendParameterMappingTemplate =
-  typeof imageBackendParameterMappingTemplate.$inferSelect;
-export type NewImageBackendParameterMappingTemplate =
-  typeof imageBackendParameterMappingTemplate.$inferInsert;
 // ============================================
 // External API Keys
 // ============================================

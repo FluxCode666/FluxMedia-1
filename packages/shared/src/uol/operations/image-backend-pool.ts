@@ -6,14 +6,16 @@
  * 真实实现由 apps/web 的 UOL binding 注入。
  */
 import { z } from "zod";
-
+import {
+  apiModelMappingsSchema,
+  apiRequestTransformScriptSchema,
+} from "../../image-backend/api-upstream-adaptation";
 import {
   backendGroupInputSchema,
   backendGroupOptionSchema,
   backendGroupSummarySchema,
 } from "../../image-backend/group-contract";
 import { backendMemberInputSchema } from "../../image-backend/member-contract";
-import { requestParameterMappingsSchema } from "../../image-backend/request-parameter-mapping";
 import { defineOperation } from "../registry";
 import type { AccessRequirement } from "../types";
 
@@ -29,7 +31,8 @@ const redactedApiConfigSchema = z
     baseUrl: z.string().url(),
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
-    parameterMappings: requestParameterMappingsSchema,
+    modelMappings: apiModelMappingsSchema,
+    requestTransformScript: apiRequestTransformScriptSchema,
   })
   .strict();
 
@@ -229,75 +232,5 @@ export const deleteMember = defineOperation({
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.deleteMember");
-  },
-});
-
-const parameterMappingTemplateSchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    parameterMappings: requestParameterMappingsSchema,
-  })
-  .strict();
-
-/** 列出 API 媒体参数映射模板。 */
-export const listParameterMappingTemplates = defineOperation({
-  name: "pool.listParameterMappingTemplates",
-  domain: "image-backend-pool",
-  title: "列出 API 参数映射模板",
-  description: "列出可供 API 媒体成员复用的请求参数映射模板。",
-  input: z.object({}).strict(),
-  output: z
-    .object({ templates: z.array(parameterMappingTemplateSchema) })
-    .strict(),
-  access: { kind: "imageBackendPoolViewer" },
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: [],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.listParameterMappingTemplates");
-  },
-});
-
-/** 新建或更新 API 媒体参数映射模板。 */
-export const saveParameterMappingTemplate = defineOperation({
-  name: "pool.saveParameterMappingTemplate",
-  domain: "image-backend-pool",
-  title: "保存 API 参数映射模板",
-  description: "保存严格、无 Responses/Chat 语义的参数映射模板。",
-  input: z
-    .object({
-      id: z.string().trim().min(1).max(128).optional(),
-      name: z.string().trim().min(1).max(80),
-      parameterMappings: requestParameterMappingsSchema,
-    })
-    .strict(),
-  output: z.object({ id: z.string() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.saveParameterMappingTemplate");
-  },
-});
-
-/** 删除 API 媒体参数映射模板。 */
-export const deleteParameterMappingTemplate = defineOperation({
-  name: "pool.deleteParameterMappingTemplate",
-  domain: "image-backend-pool",
-  title: "删除 API 参数映射模板",
-  description: "删除未被成员引用的参数映射模板。",
-  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
-  output: z.object({ success: z.boolean() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.deleteParameterMappingTemplate");
   },
 });

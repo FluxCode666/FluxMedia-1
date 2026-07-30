@@ -18,10 +18,6 @@ import {
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
 import {
-  type RequestParameterMapping,
-  requestParameterMappingsSchema,
-} from "@repo/shared/image-backend/request-parameter-mapping";
-import {
   ActionUserError,
   adminAction,
   imageBackendPoolViewerAction,
@@ -43,13 +39,6 @@ export interface BackendPoolAdminSnapshot {
   members: BackendMemberAdminSummary[];
 }
 
-/** API 媒体参数映射模板。 */
-export interface BackendParameterMappingTemplate {
-  id: string;
-  name: string;
-  parameterMappings: RequestParameterMapping[];
-}
-
 /** pool operation 与浏览器动作所需输出的类型映射。 */
 type PoolOperationOutputs = {
   "pool.getGroupOptions": {
@@ -61,24 +50,11 @@ type PoolOperationOutputs = {
   "pool.saveMember": { id: string };
   "pool.resetMemberStatus": { success: boolean };
   "pool.deleteMember": { success: boolean };
-  "pool.listParameterMappingTemplates": {
-    templates: BackendParameterMappingTemplate[];
-  };
-  "pool.saveParameterMappingTemplate": { id: string };
-  "pool.deleteParameterMappingTemplate": { success: boolean };
 };
 
 type PoolOperationName = keyof PoolOperationOutputs;
 
 const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
-
-const parameterMappingTemplateInputSchema = z
-  .object({
-    id: z.string().trim().min(1).max(128).optional(),
-    name: z.string().trim().min(1).max(80),
-    parameterMappings: requestParameterMappingsSchema,
-  })
-  .strict();
 
 /** 初始化 UOL 并调用类型绑定的号池 operation。 */
 async function invokePoolOperation<N extends PoolOperationName>(
@@ -200,44 +176,4 @@ export const getImageBackendGroupOptionsAction = protectedAction
         role: await getUserRoleById(ctx.userId),
       }
     );
-  });
-
-/** 读取 API 媒体参数映射模板。 */
-export const getImageBackendParameterMappingTemplatesAction =
-  imageBackendPoolViewerAction
-    .metadata({ action: "imageBackendPool.listParameterMappingTemplates" })
-    .action(async ({ ctx }) => {
-      return invokePoolOperation(
-        "pool.listParameterMappingTemplates",
-        {},
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
-    });
-
-/** 保存 API 媒体参数映射模板。 */
-export const saveImageBackendParameterMappingTemplateAction = adminAction
-  .metadata({ action: "imageBackendPool.saveParameterMappingTemplate" })
-  .schema(parameterMappingTemplateInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.saveParameterMappingTemplate",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return { success: true, id: result.id };
-  });
-
-/** 删除 API 媒体参数映射模板。 */
-export const deleteImageBackendParameterMappingTemplateAction = adminAction
-  .metadata({ action: "imageBackendPool.deleteParameterMappingTemplate" })
-  .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation(
-      "pool.deleteParameterMappingTemplate",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return { success: true };
   });

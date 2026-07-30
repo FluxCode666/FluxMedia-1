@@ -19,6 +19,9 @@
 - API 成员支持 Images 与 Videos 兼容协议，Adobe Direct 支持图片与视频，Adobe
   Gateway 仅支持图片；`useStream` 属于保留的图片上游能力，Responses/
   Mixed-to-Responses 配置不得迁入统一号池。
+- API 成员的 `supportedModelIds`、调度、计费、任务和响应始终使用平台真实模型 ID；
+  账号级稀疏模型映射只在出站最后一跳替换供应商模型 ID。旧 `copy|move` 参数映射与
+  模板已删除，请求体差异统一由隔离 JavaScript 脚本处理。
 - 管理员配置的媒体 Base URL 可使用 HTTP 或私网；上游派生的跨源轮询、产物地址及
   每一跳重定向不得继承该信任，只能通过公网 DNS pin，且不得携带账号凭据。
 - 全局调度策略为 `priority | least_acquired | least_load`，缺失或非法时回退
@@ -28,7 +31,8 @@
 - 管理员可通过 `pool.resetMemberStatus` 手动清除成员的健康降级、错误 EWMA、失败连击、
   冷却和最近错误；重置不得伪造凭据有效、修改启用开关、累计指标或运行中租约。
 
-详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)。
+详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md) 与
+[api-account-upstream-adaptation.md](memory/api-account-upstream-adaptation.md)。
 
 ## 统一接口层
 

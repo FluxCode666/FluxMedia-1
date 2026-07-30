@@ -40,7 +40,6 @@ import {
 } from "@repo/shared/credits/usage-log-contract";
 import type { BackendGroupInput } from "@repo/shared/image-backend/group-contract";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
-import type { RequestParameterMapping } from "@repo/shared/image-backend/request-parameter-mapping";
 import {
   type AdminHistoryListOutput,
   adminHistoryListOutputSchema,
@@ -90,11 +89,6 @@ import {
   BackendMemberServiceError,
   backendMemberService,
 } from "@/features/image-backend-pool/member-service";
-import {
-  deleteBackendParameterMappingTemplate,
-  listBackendParameterMappingTemplates,
-  saveBackendParameterMappingTemplate,
-} from "@/features/image-backend-pool/parameter-mapping-service";
 import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
 import {
   AdminHistoryServiceError,
@@ -597,47 +591,6 @@ bindExecute(
     _principal: Principal,
     _ctx: OperationContext
   ) => fulfillAlipayCreditTopUp(input)
-);
-
-/** pool.listParameterMappingTemplates - 读取可复用的参数映射模板。 */
-bindExecute(
-  "pool.listParameterMappingTemplates",
-  async (
-    _input: Record<string, never>,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({
-    templates: await listBackendParameterMappingTemplates(),
-  })
-);
-
-/** pool.saveParameterMappingTemplate - 保存独立的参数映射模板快照。 */
-bindExecute(
-  "pool.saveParameterMappingTemplate",
-  async (
-    input: {
-      id?: string;
-      name: string;
-      parameterMappings: RequestParameterMapping[];
-    },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({
-    id: await saveBackendParameterMappingTemplate(input),
-  })
-);
-
-/** pool.deleteParameterMappingTemplate - 删除模板，不影响已保存的 API 配置。 */
-bindExecute(
-  "pool.deleteParameterMappingTemplate",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    await deleteBackendParameterMappingTemplate(input.id);
-    return { success: true };
-  }
 );
 
 // TODO: image.generateAction - 委托 image.generate

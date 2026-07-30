@@ -6,9 +6,13 @@
  * 使用方：UOL pool operations 与管理后台；secret 永不出现在读取 DTO 中。
  */
 import { normalizeCookieString } from "@repo/shared/adobe/firefly-direct";
+import {
+  type ApiModelMapping,
+  apiModelMappingsSchema,
+  apiRequestTransformScriptSchema,
+} from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import { backendMemberInputSchema } from "@repo/shared/image-backend/member-contract";
-import { requestParameterMappingsSchema } from "@repo/shared/image-backend/request-parameter-mapping";
 import { eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -16,6 +20,7 @@ import { z } from "zod";
 import { extractExecuteRows } from "@/server/database-result";
 
 import { parseMediaUpstreamUrl } from "./media-upstream-url";
+import { validateApiRequestTransformScript } from "./request-transform-runtime";
 
 /** 成员服务可稳定映射到 UOL 的错误码。 */
 export type BackendMemberServiceErrorCode =
@@ -61,11 +66,8 @@ export interface RedactedApiMemberConfig {
   baseUrl: string;
   hasApiKey: boolean;
   useStream: boolean;
-  parameterMappings: Array<{
-    source: string;
-    target: string;
-    mode: "copy" | "move";
-  }>;
+  modelMappings: ApiModelMapping[];
+  requestTransformScript: string;
 }
 
 /** 脱敏 Adobe gateway/direct 配置。 */
@@ -176,6 +178,7 @@ export interface BackendMemberServiceDependencies {
   createId?: () => string;
   now?: () => Date;
   validateUpstreamUrl?: (url: string) => Promise<unknown>;
+  validateRequestTransformScript?: (script: string) => Promise<void>;
   prepareAdobeDirectCredential?: (
     cookie: string,
     scope?: string
@@ -256,6 +259,9 @@ export function createBackendMemberService(
   const now = dependencies.now ?? (() => new Date());
   const validateUpstreamUrl =
     dependencies.validateUpstreamUrl ?? parseMediaUpstreamUrl;
+  const validateRequestTransform =
+    dependencies.validateRequestTransformScript ??
+    validateApiRequestTransformScript;
   const prepareAdobeDirectCredential =
     dependencies.prepareAdobeDirectCredential ??
     (async (cookie: string, scope?: string) => {
@@ -291,6 +297,17 @@ export function createBackendMemberService(
           "validation_error",
           "媒体上游地址无效"
         );
+      }
+
+      if (input.type === "api") {
+        try {
+          await validateRequestTransform(input.config.requestTransformScript);
+        } catch {
+          throw new BackendMemberServiceError(
+            "validation_error",
+            "API 账号请求处理脚本语法无效"
+          );
+        }
       }
 
       let directCredential: PreparedAdobeDirectCredential | undefined;
@@ -383,7 +400,8 @@ const memberListRowSchema = z.object({
   api_base_url: z.string().nullable(),
   api_has_key: z.boolean(),
   api_use_stream: z.boolean().nullable(),
-  parameter_mappings: z.unknown().nullable(),
+  model_mappings: z.unknown().nullable(),
+  request_transform_script: z.string().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
   adobe_has_key: z.boolean(),
@@ -447,8 +465,9 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         baseUrl: row.api_base_url,
         hasApiKey: row.api_has_key,
         useStream: row.api_use_stream ?? false,
-        parameterMappings: requestParameterMappingsSchema.parse(
-          row.parameter_mappings ?? []
+        modelMappings: apiModelMappingsSchema.parse(row.model_mappings ?? []),
+        requestTransformScript: apiRequestTransformScriptSchema.parse(
+          row.request_transform_script ?? ""
         ),
       },
     };
@@ -736,7 +755,8 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             baseUrl: input.config.baseUrl,
             apiKey,
             useStream: input.config.useStream,
-            parameterMappings: input.config.parameterMappings,
+            modelMappings: input.config.modelMappings,
+            requestTransformScript: input.config.requestTransformScript,
             createdAt: now,
             updatedAt: now,
           })
@@ -746,7 +766,8 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
               baseUrl: input.config.baseUrl,
               apiKey,
               useStream: input.config.useStream,
-              parameterMappings: input.config.parameterMappings,
+              modelMappings: input.config.modelMappings,
+              requestTransformScript: input.config.requestTransformScript,
               updatedAt: now,
             },
           });
@@ -904,7 +925,8 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           api.base_url as api_base_url,
           (api.api_key is not null) as api_has_key,
           api.use_stream as api_use_stream,
-          api.parameter_mappings,
+          api.model_mappings,
+          api.request_transform_script,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
           (adobe.api_key is not null) as adobe_has_key,

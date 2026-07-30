@@ -8,7 +8,10 @@
 import { z } from "zod";
 
 import { normalizeVideoModelId } from "../video-generation/contracts";
-import { requestParameterMappingsSchema } from "./request-parameter-mapping";
+import {
+  apiModelMappingsSchema,
+  apiRequestTransformScriptSchema,
+} from "./api-upstream-adaptation";
 import {
   isLegacyVideoModelId,
   normalizeSupportedModelIds,
@@ -40,7 +43,8 @@ export const apiBackendMemberConfigSchema = z
     baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
-    parameterMappings: requestParameterMappingsSchema,
+    modelMappings: apiModelMappingsSchema,
+    requestTransformScript: apiRequestTransformScriptSchema,
   })
   .strict();
 
@@ -120,6 +124,19 @@ export const backendMemberInputSchema = z
     adobeBackendMemberInputSchema,
   ])
   .superRefine((member, context) => {
+    if (member.type === "api") {
+      const supportedModelIds = new Set(
+        member.supportedModelIds.map((modelId) => modelId.toLowerCase())
+      );
+      for (const [index, mapping] of member.config.modelMappings.entries()) {
+        if (supportedModelIds.has(mapping.modelId.toLowerCase())) continue;
+        context.addIssue({
+          code: "custom",
+          path: ["config", "modelMappings", index, "modelId"],
+          message: "Model mapping source must be a supported model ID",
+        });
+      }
+    }
     if (
       member.type === "adobe" &&
       member.config.mode === "direct" &&

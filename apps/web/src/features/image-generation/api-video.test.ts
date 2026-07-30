@@ -1,7 +1,7 @@
 /**
  * API 账号视频兼容协议的 DB-free 测试。
  *
- * 职责：锁定真实模型 ID 与独立参数请求、参数映射、任务身份解析、原账号轮询和
+ * 职责：锁定真实模型 ID、账号级请求适配、任务身份解析、原账号轮询和
  * 跨源凭据隔离；测试替换网络传输，不访问真实上游。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,9 +32,10 @@ const config: ApiConfig = {
   apiKey: "provider-key",
   backend: {
     type: "pool-api",
-    parameterMappings: [
-      { source: "aspect_ratio", target: "ratio", mode: "move" },
-    ],
+    modelMappings: [{ modelId: "seedance2", upstreamModelId: "seedande-2.0" }],
+    requestTransformScript: `request.ratio = request.aspect_ratio;
+delete request.aspect_ratio;
+return request;`,
   },
 };
 const recoveryContext = { trustedOrigin: "https://video.example.com" };
@@ -73,7 +74,7 @@ describe("API video adapter", () => {
     >;
     expect(body).toMatchObject({
       client_request_id: "local-video-1",
-      model: "seedance2",
+      model: "seedande-2.0",
       duration: 15,
       ratio: "9:16",
       resolution: "480p",
@@ -83,6 +84,87 @@ describe("API video adapter", () => {
     expect(body.first_frame).toBe(
       `data:image/png;base64,${Buffer.from("frame").toString("base64")}`
     );
+  });
+
+  it("允许脚本重组首尾帧与多张参考图字段", async () => {
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({ id: "upstream-media" }, { status: 202 })
+    );
+    const mediaConfig: ApiConfig = {
+      ...config,
+      backend: {
+        ...config.backend,
+        type: "pool-api",
+        requestTransformScript: `request.input = {
+  start: request.first_frame,
+  end: request.last_frame,
+  references: request.reference_images,
+};
+delete request.first_frame;
+delete request.last_frame;
+delete request.reference_images;
+return request;`,
+      },
+    };
+
+    await submitApiVideoRequest(mediaConfig, {
+      clientRequestId: "local-video-media",
+      prompt: "prompt",
+      model: "seedance2",
+      duration: 10,
+      aspectRatio: "16:9",
+      resolution: "720p",
+      effectiveAudio: false,
+      firstFrame: { data: Buffer.from("first"), type: "image/png" },
+      lastFrame: { data: Buffer.from("last"), type: "image/png" },
+      referenceImages: [
+        { data: Buffer.from("reference-1"), type: "image/jpeg" },
+        { data: Buffer.from("reference-2"), type: "image/webp" },
+      ],
+    });
+
+    const request = mocks.fetchMediaUpstream.mock.calls[0];
+    const body = JSON.parse(String(request?.[1]?.body)) as {
+      input?: { start?: string; end?: string; references?: string[] };
+    };
+    expect(body.input).toEqual({
+      start: `data:image/png;base64,${Buffer.from("first").toString("base64")}`,
+      end: `data:image/png;base64,${Buffer.from("last").toString("base64")}`,
+      references: [
+        `data:image/jpeg;base64,${Buffer.from("reference-1").toString("base64")}`,
+        `data:image/webp;base64,${Buffer.from("reference-2").toString("base64")}`,
+      ],
+    });
+  });
+
+  it("脚本失败时允许切换账号且不发送上游请求", async () => {
+    const invalidConfig: ApiConfig = {
+      ...config,
+      backend: {
+        ...config.backend,
+        type: "pool-api",
+        requestTransformScript: 'throw new Error("invalid mapping");',
+      },
+    };
+
+    await expect(
+      submitApiVideoRequest(invalidConfig, {
+        clientRequestId: "local-video-invalid-script",
+        prompt: "prompt",
+        model: "seedance2",
+        duration: 10,
+        aspectRatio: "16:9",
+        resolution: "720p",
+        effectiveAudio: false,
+      })
+    ).resolves.toEqual({
+      error: "API 账号请求处理脚本执行失败",
+      switchable: true,
+      upstreamAccepted: false,
+      terminal: false,
+      submissionUncertain: false,
+    });
+    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 
   it("409、5xx 或成功响应缺少任务 ID 时标记提交结果不确定", async () => {

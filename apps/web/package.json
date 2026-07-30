@@ -43,6 +43,7 @@
     "onnxruntime-node": "^1.27.0",
     "pg": "^8.22.0",
     "qrcode": "1.5.4",
+    "quickjs-emscripten": "0.32.0",
     "radix-ui": "^1.6.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
