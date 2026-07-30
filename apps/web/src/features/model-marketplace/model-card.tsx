@@ -29,6 +29,7 @@ import {
 /** 模型卡片对外暴露的交互。 */
 export type ModelMarketplaceCardProps = {
   model: ModelMarketplacePublicItem;
+  eagerCover?: boolean;
   onCopy: (modelId: string) => void;
   onViewDetails: (model: ModelMarketplacePublicItem) => void;
 };
@@ -89,10 +90,12 @@ export function ModelMarketplaceCover({
   model,
   sizes,
   className = "",
+  eager = false,
 }: {
   model: ModelMarketplacePublicItem;
   sizes: string;
   className?: string;
+  eager?: boolean;
 }) {
   const fallbackCover = getDefaultModelMarketplaceCoverPath(model.category);
   const [source, setSource] = useState(model.coverUrl);
@@ -112,6 +115,7 @@ export function ModelMarketplaceCover({
       unoptimized
       alt={model.displayName}
       className={`object-cover ${className}`}
+      loading={eager ? "eager" : "lazy"}
       onError={handleImageError}
       sizes={sizes}
       src={source}
@@ -129,6 +133,7 @@ export function ModelMarketplaceCover({
  */
 export function ModelMarketplaceCard({
   model,
+  eagerCover = false,
   onCopy,
   onViewDetails,
 }: ModelMarketplaceCardProps) {
@@ -145,6 +150,7 @@ export function ModelMarketplaceCard({
           model={model}
           sizes="(min-width: 1280px) 24vw, (min-width: 768px) 36vw, 92vw"
           className="transition-transform duration-500 group-hover:scale-[1.025]"
+          eager={eagerCover}
         />
       </div>
 

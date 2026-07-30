@@ -129,9 +129,10 @@ export function ModelMarketplaceBrowser({
 
           {filteredModels.length > 0 ? (
             <div className="grid min-w-0 gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {filteredModels.map((model) => (
+              {filteredModels.map((model, index) => (
                 <ModelMarketplaceCard
                   key={`${model.category}:${model.configKey}`}
+                  eagerCover={index < 3}
                   model={model}
                   onCopy={(modelId) => void handleCopy(modelId)}
                   onViewDetails={handleViewDetails}
