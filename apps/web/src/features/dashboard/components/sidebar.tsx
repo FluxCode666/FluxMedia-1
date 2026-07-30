@@ -140,7 +140,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "System Settings": t("nav.systemSettings"),
       "Global Status": t("nav.globalStatus"),
       "Announcement Management": t("nav.announcementManagement"),
-      "Image Backend Pool": t("nav.imageBackendPool"),
+      "Account Pool": t("nav.imageBackendPool"),
       Support: t("nav.support"),
       "New Ticket": t("nav.newTicket"),
       "User Management": t("nav.userManagement"),
@@ -255,7 +255,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
               icon: Activity,
             },
             {
-              title: "Image Backend Pool",
+              title: "Account Pool",
               href: "/dashboard/admin/settings",
               icon: Server,
             },

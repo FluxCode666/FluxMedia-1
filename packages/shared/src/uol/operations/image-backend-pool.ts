@@ -121,7 +121,7 @@ export const getGroupOptions = defineOperation({
 export const getAdminPool = defineOperation({
   name: "pool.getAdminPool",
   domain: "image-backend-pool",
-  title: "获取统一媒体后端号池",
+  title: "获取账号池",
   description: "读取分组、统一成员和调度指标的脱敏管理快照。",
   input: z.object({}).strict(),
   output: z

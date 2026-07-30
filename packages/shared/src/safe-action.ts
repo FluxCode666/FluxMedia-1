@@ -226,7 +226,7 @@ export const imageBackendPoolViewerAction = protectedAction.use(
   async ({ next, ctx }) => {
     const role = await getUserRoleById(ctx.userId);
     if (!canViewImageBackendPool(role)) {
-      throw new Error("此操作需要生图后端池查看权限");
+      throw new Error("此操作需要账号池查看权限");
     }
 
     return next({

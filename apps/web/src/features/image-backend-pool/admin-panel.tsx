@@ -207,7 +207,7 @@ export function ImageBackendPoolAdminPanel({
         setMembers(data?.members ?? []);
       },
       onError: ({ error }) =>
-        toast.error(error.serverError || "加载统一号池失败"),
+        toast.error(error.serverError || "加载账号池失败"),
     }
   );
   const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
@@ -292,7 +292,7 @@ export function ImageBackendPoolAdminPanel({
   /** 打开新增成员表单，并在缺少分组时阻止创建无归属成员。 */
   function openNewMember(): void {
     if (groups.length === 0) {
-      toast.error("请先创建至少一个媒体后端分组");
+      toast.error("请先创建至少一个账号池分组");
       return;
     }
     if (
@@ -314,7 +314,7 @@ export function ImageBackendPoolAdminPanel({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold">媒体后端号池</h2>
+          <h2 className="text-xl font-semibold">账号池</h2>
           <p className="max-w-3xl text-sm text-muted-foreground">
             API 与 Adobe 成员共享分组、模型能力、优先级、并发、健康和调度指标。
             模型 ID 只做能力匹配，不再按前缀分流。

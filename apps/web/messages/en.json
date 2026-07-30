@@ -457,7 +457,7 @@
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
-      "imageBackendPool": "Image Backend Pool",
+      "imageBackendPool": "Account Pool",
       "support": "Support",
       "newTicket": "New Ticket"
     },
@@ -484,7 +484,7 @@
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
-      "imageBackendPool": "Image Backend Pool",
+      "imageBackendPool": "Account Pool",
       "creditsBuy": "Buy Credits",
       "profile": "Profile",
       "security": "Security",
