@@ -374,7 +374,7 @@ const sections = {
           path: "/v1/models",
           contentType: "无请求体",
           description:
-            "兼容 OpenAI List models，列出当前 API 密钥所属用户可见的图片模型与 Responses 模型：默认图片模型、Adobe Firefly 图像族 id、Firefly 视频模型 id（均受 externalApi.images.generate 门控，未开启不列出）、当前套餐可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
+            "兼容 OpenAI List models，列出当前 API 密钥所属用户可见的图片模型与 Responses 模型：默认图片模型、Adobe Firefly 图像族 id、真实视频模型 ID（均受 externalApi.images.generate 门控，未开启不列出）、当前套餐可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
           example: `curl https://gpt2image.superapi.buzz/v1/models \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
@@ -403,7 +403,7 @@ const sections = {
             {
               name: "data[].id",
               description:
-                "模型 ID。包含默认图片模型、Adobe Firefly 图像族 id 与 Firefly 视频模型 id（受 externalApi.images.generate 门控）、当前套餐可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
+                "模型 ID。包含默认图片模型、Adobe Firefly 图像族 id 与真实视频模型 ID（受 externalApi.images.generate 门控）、当前套餐可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
             },
             {
               name: "data[].object / created / owned_by",
@@ -1666,24 +1666,34 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
           contentType: "application/json",
           description:
             "本站扩展：Adobe Firefly 视频生成。固定路由到 Adobe（Firefly）后端，是长任务，返回 OpenAI Images 风格结构，data[].url 为产物视频 URL。鉴权与其他 v1 接口一致（API 密钥）。视频是长任务，强烈建议异步：传 async:true（或 ?async=true）立即返回 task_... 任务对象、后台生成，凭 GET /v1/videos/{id} 轮询或 callback_url 完成回调；不传则同步 keep-alive 撑住连接直到出片。",
-          example: `# 1. 文生视频；model 为完整 Firefly 视频 id
+          example: `# 1. 文生视频；model 只传真实模型 ID，其他参数独立传递
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "firefly-veo31-8s-16x9-1080p",
+    "client_request_id": "video-request-001",
+    "model": "veo31",
+    "duration_seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
     "prompt": "一只柯基在海边奔跑，电影级运镜，黄昏光线",
     "negative_prompt": "低分辨率, 模糊, 水印"
   }'
 
-# 2. 图生视频；image 为 base64 data URL 数组（首帧/参考），最多 3 张
+# 2. 首尾帧生成；首尾帧与参考图对所有模型互斥
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "firefly-kling3-5s-9x16",
+    "client_request_id": "video-request-002",
+    "model": "seedance2-fast",
+    "duration_seconds": 10,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
     "prompt": "让画面中的人物缓缓抬头微笑",
-    "image": ["data:image/png;base64,iVBORw0KGgo..."]
+    "first_frame": "data:image/png;base64,iVBORw0KGgo...",
+    "last_frame": "data:image/png;base64,iVBORw0KGgo...",
+    "generate_audio": false
   }'
 
 # 3. 异步（长视频强烈建议）：async:true 立即返回 task_...，后台生成
@@ -1691,7 +1701,11 @@ curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "firefly-veo31-8s-16x9-1080p",
+    "client_request_id": "video-request-003",
+    "model": "veo31",
+    "duration_seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
     "prompt": "城市夜景延时，霓虹倒影",
     "async": true,
     "callback_url": "https://your-server.example/callback"
@@ -1701,7 +1715,10 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
   "created": 1713833628,
-  "model": "firefly-veo31-8s-16x9-1080p",
+  "model": "veo31",
+  "duration_seconds": 8,
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
   "data": [
     { "url": "https://gpt2image.superapi.buzz/api/storage/generations/..." }
   ],
@@ -1719,7 +1736,30 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               name: "model",
               requirement: "必填",
               description:
-                "Firefly 视频模型 id：firefly-<family>-<dur>s-<ratio>[-<res>]（如 firefly-veo31-8s-16x9-1080p）。family ∈ sora2、sora2-pro、veo31、veo31-ref、veo31-fast、kling-o3、kling3；非法或未知 id 会返回参数错误。可用组合见 /v1/models。",
+                "真实视频模型 ID，例如 seedance2、seedance2-fast、veo31。不得在模型 ID 中拼接时长、比例或分辨率；旧 firefly-* 与复合 ID 会被拒绝。可用模型见 /v1/models。",
+            },
+            {
+              name: "clientRequestId / client_request_id",
+              requirement: "必填",
+              description:
+                "调用方生成的幂等请求 ID，最长 128 字符；重试同一请求时必须复用。",
+            },
+            {
+              name: "duration / duration_seconds",
+              requirement: "必填",
+              description: "视频时长（秒），必须是所选真实模型支持的整数值。",
+            },
+            {
+              name: "aspectRatio / aspect_ratio",
+              requirement: "必填",
+              description:
+                "视频宽高比，例如 16:9、9:16；必须属于所选模型能力。",
+            },
+            {
+              name: "resolution",
+              requirement: "必填",
+              description:
+                "小写分辨率，例如 480p、720p、1080p；必须属于所选模型能力。",
             },
             {
               name: "negative_prompt / negativePrompt",
@@ -1727,10 +1767,21 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               description: "负向提示词，最多 8000 字符。",
             },
             {
-              name: "image",
+              name: "firstFrame / first_frame、lastFrame / last_frame",
               requirement: "可选",
               description:
-                "图生视频输入图（首帧 / 参考），为 base64 image data URL 数组，最多 3 张。",
+                "首帧与可选尾帧，值为 base64 image data URL。尾帧必须与首帧同时提供；是否支持尾帧由模型能力决定。",
+            },
+            {
+              name: "referenceImages / reference_images",
+              requirement: "可选",
+              description:
+                "有序参考图 base64 data URL 数组；数量上限由模型能力决定，Seedance 默认 10 且管理员可配置。参考图与首尾帧对所有模型互斥。",
+            },
+            {
+              name: "generateAudio / generate_audio",
+              requirement: "可选",
+              description: "是否生成声音；仅支持声音能力的模型可设为 true。",
             },
             {
               name: "async",
@@ -1754,7 +1805,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
             },
             {
               name: "model",
-              description: "本次使用的 Firefly 视频模型 id。",
+              description: "本次使用的真实视频模型 ID。",
             },
             {
               name: "data[].url",
@@ -1769,7 +1820,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
           notes: [
             "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/generations 是同一 handler 的别名。",
             "视频生成是长任务：同步模式用 keep-alive 撑住连接直到出片或失败（请把客户端读超时设足够长）；长视频强烈建议异步（async:true）——立即拿 task_...，用 GET /v1/videos/{id} 轮询（task_... 为内存态、30 分钟过期，或用响应里的 generation_id 持久查），或用 callback_url 完成回调，避免连接被中途掐断丢产物。",
-            "计费 = 当前视频模型族对应输出分辨率的每秒积分 × 时长（秒），最终结果按积分精度向上取整；时长与分辨率由 model id 决定。每秒价格按分组分辨率覆盖 → 分组模型族覆盖 → 全局分辨率价格 → 全局模型族兜底解析。",
+            "计费 = 当前真实模型与输出分辨率对应的每秒积分 × 独立 duration（秒），最终结果按积分精度向上取整。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
             "默认需要 externalApi.images.generate 能力（入门版及以上），可在套餐能力矩阵中调整。",
           ],
         },
@@ -1785,7 +1836,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
           responseExample: `{
   "id": "task_...",
   "object": "video",
-  "model": "firefly-veo31-8s-16x9-1080p",
+  "model": "veo31",
   "status": "completed",
   "duration_seconds": 8,
   "created": 1713833628,
@@ -1802,7 +1853,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
 {
   "id": "task_...",
   "object": "video.generation",
-  "model": "firefly-veo31-8s-16x9-1080p",
+  "model": "veo31",
   "status": "processing",
   "created": 1713833628,
   "generation_id": "gen_..."
@@ -1838,7 +1889,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
             },
             {
               name: "duration_seconds",
-              description: "视频时长（秒），由 model id 中的 <dur> 决定。",
+              description: "视频时长（秒），来自创建请求的独立 duration 参数。",
               custom: true,
             },
             {
@@ -2835,7 +2886,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           path: "/v1/models",
           contentType: "No request body",
           description:
-            "Compatible with OpenAI List models. Lists the image and Responses models visible to the current API key's user: the default image model, Adobe Firefly image-family ids and Firefly video model ids (gated by externalApi.images.generate, omitted when disabled), plan-available Chat/Responses models, and model IDs configured on enabled API providers.",
+            "Compatible with OpenAI List models. Lists the image and Responses models visible to the current API key's user: the default image model, Adobe Firefly image-family IDs and real video model IDs (gated by externalApi.images.generate and omitted when disabled), plan-available Chat/Responses models, and model IDs configured on enabled API providers.",
           example: `curl https://gpt2image.superapi.buzz/v1/models \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
@@ -2864,7 +2915,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
             {
               name: "data[].id",
               description:
-                "Model ID. Includes the default image model, Adobe Firefly image-family ids and Firefly video model ids (gated by externalApi.images.generate), plan-available Chat/Responses models, and model IDs configured on enabled API providers.",
+                "Model ID. Includes the default image model, Adobe Firefly image-family IDs and real video model IDs (gated by externalApi.images.generate), plan-available Chat/Responses models, and model IDs configured on enabled API providers.",
             },
             {
               name: "data[].object / created / owned_by",
@@ -3941,24 +3992,34 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
           contentType: "application/json",
           description:
             "FluxMedia extension: Adobe Firefly video generation. It always routes to the Adobe (Firefly) backend, is a long-running job, and returns an OpenAI Images-style shape where data[].url is the produced video URL. Auth matches other v1 endpoints (API key). Video is long-running, so async is strongly recommended: pass async:true (or ?async=true) to return a task_... object immediately and generate in the background, then poll GET /v1/videos/{id} or use callback_url; otherwise it runs synchronously, holding the connection with keep-alive until the video is ready.",
-          example: `# 1. Text-to-video. model is a full Firefly video id.
+          example: `# 1. Text-to-video. model is the real model ID; parameters are separate.
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "firefly-veo31-8s-16x9-1080p",
+    "client_request_id": "video-request-001",
+    "model": "veo31",
+    "duration_seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
     "prompt": "A corgi running on the beach, cinematic camera, golden hour",
     "negative_prompt": "low resolution, blurry, watermark"
   }'
 
-# 2. Image-to-video. image is an array of base64 data URLs (first frame / reference), up to 3.
+# 2. First/last-frame generation. Frames and reference images are mutually exclusive for every model.
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "firefly-kling3-5s-9x16",
+    "client_request_id": "video-request-002",
+    "model": "seedance2-fast",
+    "duration_seconds": 10,
+    "aspect_ratio": "9:16",
+    "resolution": "720p",
     "prompt": "Make the person slowly look up and smile",
-    "image": ["data:image/png;base64,iVBORw0KGgo..."]
+    "first_frame": "data:image/png;base64,iVBORw0KGgo...",
+    "last_frame": "data:image/png;base64,iVBORw0KGgo...",
+    "generate_audio": false
   }'
 
 # 3. Async (strongly recommended for long videos): async:true returns a task_... immediately, generated in the background
@@ -3966,7 +4027,11 @@ curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "firefly-veo31-8s-16x9-1080p",
+    "client_request_id": "video-request-003",
+    "model": "veo31",
+    "duration_seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
     "prompt": "City night timelapse, neon reflections",
     "async": true,
     "callback_url": "https://your-server.example/callback"
@@ -3976,7 +4041,10 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
   "created": 1713833628,
-  "model": "firefly-veo31-8s-16x9-1080p",
+  "model": "veo31",
+  "duration_seconds": 8,
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
   "data": [
     { "url": "https://gpt2image.superapi.buzz/api/storage/generations/..." }
   ],
@@ -3994,7 +4062,31 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               name: "model",
               requirement: "Required",
               description:
-                "Firefly video model id: firefly-<family>-<dur>s-<ratio>[-<res>] (e.g. firefly-veo31-8s-16x9-1080p). family ∈ sora2, sora2-pro, veo31, veo31-ref, veo31-fast, kling-o3, kling3. Invalid or unknown ids return a parameter error. See /v1/models for available combinations.",
+                "Real video model ID, such as seedance2, seedance2-fast, or veo31. Do not encode duration, ratio, or resolution in the ID; legacy firefly-* and composite IDs are rejected. See /v1/models for available models.",
+            },
+            {
+              name: "clientRequestId / client_request_id",
+              requirement: "Required",
+              description:
+                "Caller-generated idempotency ID, up to 128 characters. Reuse it when retrying the same request.",
+            },
+            {
+              name: "duration / duration_seconds",
+              requirement: "Required",
+              description:
+                "Video duration in seconds; must be an integer supported by the selected model.",
+            },
+            {
+              name: "aspectRatio / aspect_ratio",
+              requirement: "Required",
+              description:
+                "Video aspect ratio, such as 16:9 or 9:16; must be supported by the selected model.",
+            },
+            {
+              name: "resolution",
+              requirement: "Required",
+              description:
+                "Lowercase resolution such as 480p, 720p, or 1080p; must be supported by the selected model.",
             },
             {
               name: "negative_prompt / negativePrompt",
@@ -4002,10 +4094,22 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               description: "Negative prompt, up to 8000 characters.",
             },
             {
-              name: "image",
+              name: "firstFrame / first_frame, lastFrame / last_frame",
               requirement: "Optional",
               description:
-                "Image-to-video input (first frame / reference). An array of base64 image data URLs, up to 3.",
+                "First frame and optional last frame as base64 image data URLs. lastFrame requires firstFrame; last-frame support is model-specific.",
+            },
+            {
+              name: "referenceImages / reference_images",
+              requirement: "Optional",
+              description:
+                "Ordered base64 image data URL array. The limit is model-specific; Seedance defaults to 10 and admins may configure it. Reference images and frame inputs are mutually exclusive for every model.",
+            },
+            {
+              name: "generateAudio / generate_audio",
+              requirement: "Optional",
+              description:
+                "Whether to generate audio. true is accepted only for models with audio capability.",
             },
             {
               name: "async",
@@ -4029,7 +4133,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
             },
             {
               name: "model",
-              description: "The Firefly video model id used.",
+              description: "The real video model ID used.",
             },
             {
               name: "data[].url",
@@ -4044,7 +4148,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
           notes: [
             "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos/generations is an alias.",
             "Video generation is long-running: in sync mode FluxMedia holds the connection with keep-alive until the video is ready or fails (set a generous client read timeout); for long videos prefer async (async:true) — get a task_... immediately and poll GET /v1/videos/{id} (task_... is in-memory and expires after 30 minutes, or use the generation_id from the response for persistent lookups) or rely on callback_url, to avoid the connection being cut mid-way and losing the output.",
-            "Billing = the current video model family's fixed credits per second × duration in seconds, rounded up to the supported credit precision. Duration comes from <dur> in the model id. Per-second prices are configured in the admin Adobe-backend tab and fall back to the generic video rate when a family has no override.",
+            "Billing = credits per second for the selected real model and resolution × the separate duration value, rounded up to the supported credit precision. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
             "Requires externalApi.images.generate by default (Starter or higher); admins can change it in the Plan Capability Matrix.",
           ],
         },
@@ -4060,7 +4164,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
           responseExample: `{
   "id": "task_...",
   "object": "video",
-  "model": "firefly-veo31-8s-16x9-1080p",
+  "model": "veo31",
   "status": "completed",
   "duration_seconds": 8,
   "created": 1713833628,
@@ -4077,7 +4181,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
 {
   "id": "task_...",
   "object": "video.generation",
-  "model": "firefly-veo31-8s-16x9-1080p",
+  "model": "veo31",
   "status": "processing",
   "created": 1713833628,
   "generation_id": "gen_..."
@@ -4115,7 +4219,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
             {
               name: "duration_seconds",
               description:
-                "Video duration in seconds, taken from <dur> in the model id.",
+                "Video duration in seconds from the separate duration request parameter.",
               custom: true,
             },
             {
