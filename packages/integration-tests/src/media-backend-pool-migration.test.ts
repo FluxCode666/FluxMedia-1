@@ -1,10 +1,10 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068-0073 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0074 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
- * 作用域。
+ * 作用域；0074 另以 0073 后隔离 schema 验证冻结映射、具名输入、约束和幂等切换。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
@@ -24,6 +24,168 @@ interface ExistsRow {
 interface JsonValueRow {
   value: Record<string, unknown>;
 }
+
+interface FrozenVideoMapping {
+  legacyModel: string;
+  realModel: string;
+  durationSeconds: number;
+  aspectRatio: string;
+  resolution: string;
+}
+
+interface FrozenVideoFamily {
+  realModel: string;
+  durations: readonly number[];
+  aspectRatios: readonly string[];
+  resolutions: readonly string[];
+  resolutionInId: boolean;
+}
+
+const ALL_FROZEN_ASPECT_RATIOS = [
+  "1:1",
+  "4:3",
+  "3:4",
+  "16:9",
+  "9:16",
+  "21:9",
+] as const;
+const THREE_TO_FIFTEEN_SECONDS = Array.from(
+  { length: 13 },
+  (_, index) => index + 3
+);
+const FOUR_TO_FIFTEEN_SECONDS = Array.from(
+  { length: 12 },
+  (_, index) => index + 4
+);
+
+/** 0074 SQL 独立冻结的 13 个模型组合形状；测试不读取当前运行时目录。 */
+const FROZEN_VIDEO_FAMILIES = [
+  {
+    realModel: "sora2",
+    durations: [4, 8, 12],
+    aspectRatios: ["9:16", "16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "sora2-pro",
+    durations: [4, 8, 12],
+    aspectRatios: ["9:16", "16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "veo31",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "veo31-fast",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "veo31-ref",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "kling-o3",
+    durations: [5, 15],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "kling3",
+    durations: THREE_TO_FIFTEEN_SECONDS,
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "kling3-omni",
+    durations: THREE_TO_FIFTEEN_SECONDS,
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "runway-gen45",
+    durations: [5, 8, 10],
+    aspectRatios: ["16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "ray314",
+    durations: [5, 10],
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "ray314-hdr",
+    durations: [5],
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "seedance2",
+    durations: FOUR_TO_FIFTEEN_SECONDS,
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["1080p", "720p", "480p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "seedance2-fast",
+    durations: FOUR_TO_FIFTEEN_SECONDS,
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["720p", "480p"],
+    resolutionInId: true,
+  },
+] as const satisfies readonly FrozenVideoFamily[];
+
+/**
+ * 从测试内冻结矩阵生成 0073 后规范复合 ID。
+ *
+ * @returns 573 个互不重复的复合 ID 及其独立参数，不读取产品运行时目录。
+ * @sideEffects 无。
+ * @failure 冻结常量错误会在测试长度与唯一性断言中失败。
+ */
+function buildFrozenVideoMappings(): FrozenVideoMapping[] {
+  return FROZEN_VIDEO_FAMILIES.flatMap((family) =>
+    family.durations.flatMap((durationSeconds) =>
+      family.aspectRatios.flatMap((aspectRatio) =>
+        family.resolutions.map((resolution) => ({
+          legacyModel: `${family.realModel}-${durationSeconds}s-${aspectRatio.replace(":", "x")}${family.resolutionInId ? `-${resolution}` : ""}`,
+          realModel: family.realModel,
+          durationSeconds,
+          aspectRatio,
+          resolution,
+        }))
+      )
+    )
+  );
+}
+
+const FROZEN_VIDEO_MAPPINGS = buildFrozenVideoMappings();
+const FROZEN_KLING3_ALIASES = [5, 10, 15].flatMap((durationSeconds) =>
+  ["16:9", "9:16"].map((aspectRatio) => ({
+    legacyModel: `kling3-${durationSeconds}s-${aspectRatio.replace(":", "x")}`,
+    realModel: "kling3",
+    durationSeconds,
+    aspectRatio,
+    resolution: "720p",
+  }))
+);
 
 /**
  * 0060 发布时硬编码的 Adobe direct 视频模型快照。
@@ -102,6 +264,12 @@ const videoAuthRepairMigrationPath = migrationPaths.at(7);
 const matchingVideoAuthMigrationPath = migrationPaths.at(8);
 const kling3VideoProtocolMigrationPath = migrationPaths.at(9);
 const removeFireflyModelPrefixMigrationPath = migrationPaths.at(10);
+const realVideoRequestMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0074_real_video_request_contract.sql",
+    import.meta.url
+  )
+);
 const migrationsBeforeVideoAuthRepair = migrationPaths.slice(0, 7);
 const migrationsBeforeMatchingVideoAuth = migrationPaths.slice(0, 8);
 const migrationsBeforeKling3VideoProtocol = migrationPaths.slice(0, 9);
@@ -446,6 +614,169 @@ async function createLegacyUnifiedAdobeSchema(
     );
   `);
   return schemaName;
+}
+
+/**
+ * 创建 0073 已完成、0074 尚未执行的最小生产同形 schema。
+ *
+ * @param client 专用测试数据库连接。
+ * @param includeInputManifest 是否模拟提前扩展过 input_manifest 的兼容环境。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建成员、Adobe 配置和保留完整恢复身份的视频任务表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPost0073VideoSchema(
+  client: PoolClient,
+  includeInputManifest = false
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member (
+      id text primary key,
+      type text not null,
+      name text not null,
+      supported_model_ids json not null,
+      updated_at timestamp not null default now(),
+      constraint image_backend_member_supported_models_check
+        check (
+          json_typeof(supported_model_ids) = 'array'
+          and json_array_length(supported_model_ids) > 0
+        )
+    );
+    create table image_backend_member_adobe_config (
+      member_id text primary key references image_backend_member(id)
+        on delete cascade,
+      mode text not null
+    );
+    create table video_generation (
+      id text primary key,
+      user_id text not null,
+      model text not null,
+      family text not null,
+      prompt text not null default 'prompt',
+      duration_seconds integer not null,
+      aspect_ratio text not null,
+      resolution text not null,
+      status text not null default 'pending',
+      stage text not null default 'created',
+      backend_member_id text,
+      member_lease_id text,
+      member_lease_owner_token text,
+      adobe_request_profile text not null default 'express',
+      adobe_auth_profile text not null default 'express',
+      input_image_refs json,
+      staged_input_objects json,
+      poll_url text,
+      upstream_job_id text,
+      credits_consumed numeric(18, 2) not null default 0,
+      next_poll_at timestamp,
+      metadata json,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+  `);
+  if (includeInputManifest) {
+    await client.query(
+      "alter table video_generation add column input_manifest json"
+    );
+  }
+  return schemaName;
+}
+
+/** 创建符合资产收编后任务归属规则的 storage-only 输入对象。 */
+function createMigratedVideoInputAsset(input: {
+  userId: string;
+  videoId: string;
+  fileName: string;
+}) {
+  return {
+    source: "storage",
+    mimeType: "image/png",
+    storageKey: `${input.userId}/video-inputs/${input.videoId}/adopted/${input.fileName}`,
+    storageBucket: "video-inputs",
+    byteLength: 128,
+  };
+}
+
+/**
+ * 插入一个可被 0074 转换的 Adobe direct 成员。
+ *
+ * @param client 专用测试数据库连接。
+ * @param memberId 成员定位 ID。
+ * @param modelIds 0073 后模型能力数组。
+ * @returns 无。
+ * @sideEffects 写入成员及其 direct 配置。
+ * @throws 插入失败时抛出 PostgreSQL 错误。
+ */
+async function insertPost0073DirectMember(
+  client: PoolClient,
+  memberId: string,
+  modelIds: readonly string[]
+): Promise<void> {
+  await client.query(
+    `insert into image_backend_member (
+       id, type, name, supported_model_ids
+     ) values ($1, 'adobe', $2, $3::json)`,
+    [memberId, memberId, JSON.stringify(modelIds)]
+  );
+  await client.query(
+    `insert into image_backend_member_adobe_config (member_id, mode)
+     values ($1, 'direct')`,
+    [memberId]
+  );
+}
+
+/**
+ * 插入冻结映射对应的任务集合。
+ *
+ * @param client 专用测试数据库连接。
+ * @param mappings 要验证的复合 ID 与独立参数。
+ * @returns 无。
+ * @sideEffects 批量写入视频任务，不包含输入对象。
+ * @throws 参数化 JSON 展开或插入失败时抛出 PostgreSQL 错误。
+ */
+async function insertFrozenVideoTasks(
+  client: PoolClient,
+  mappings: readonly FrozenVideoMapping[]
+): Promise<void> {
+  await client.query(
+    `insert into video_generation (
+       id, user_id, model, family,
+       duration_seconds, aspect_ratio, resolution, metadata
+     )
+     select
+       fixture.id,
+       'user-1',
+       fixture.model,
+       fixture.family,
+       fixture.duration_seconds,
+       fixture.aspect_ratio,
+       fixture.resolution,
+       '{"generateAudio":false}'::json
+     from json_to_recordset($1::json) as fixture(
+       id text,
+       model text,
+       family text,
+       duration_seconds integer,
+       aspect_ratio text,
+       resolution text
+     )`,
+    [
+      JSON.stringify(
+        mappings.map((mapping, index) => ({
+          id: `frozen-task-${index}`,
+          model: mapping.legacyModel,
+          family: mapping.realModel,
+          duration_seconds: mapping.durationSeconds,
+          aspect_ratio: mapping.aspectRatio,
+          resolution: mapping.resolution,
+        }))
+      ),
+    ]
+  );
 }
 
 /** 删除当前测试创建的随机 schema。 */
@@ -976,10 +1307,7 @@ describe("0060-0063、0066、0068-0073 统一媒体号池迁移", () => {
         (member) => member.id === "legacy-adobe"
       );
       expect(new Set(migratedAdobeMember?.supported_model_ids)).toEqual(
-        new Set([
-          "gpt-image-2",
-          ...PLATFORM_DIRECT_VIDEO_MODEL_IDS,
-        ])
+        new Set(["gpt-image-2", ...PLATFORM_DIRECT_VIDEO_MODEL_IDS])
       );
       const apiConfig = await client.query<{
         api_key: string;
@@ -2300,6 +2628,594 @@ describe("0060-0063、0066、0068-0073 统一媒体号池迁移", () => {
         where id = 'active-lease-1'
       `);
       expect(legacyLease.rows[0]?.count).toBe(1);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+});
+
+describe("0074 视频真实模型请求契约迁移", () => {
+  it("冻结迁移全部 573 个组合与 6 个别名并可幂等复跑", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    expect(FROZEN_VIDEO_MAPPINGS).toHaveLength(573);
+    expect(
+      new Set(FROZEN_VIDEO_MAPPINGS.map((mapping) => mapping.legacyModel)).size
+    ).toBe(573);
+    expect(FROZEN_KLING3_ALIASES).toHaveLength(6);
+
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      const allMappings = [...FROZEN_VIDEO_MAPPINGS, ...FROZEN_KLING3_ALIASES];
+      await insertPost0073DirectMember(client, "frozen-member", [
+        "image-first",
+        ...FROZEN_VIDEO_MAPPINGS.map((mapping) => mapping.legacyModel),
+        ...FROZEN_KLING3_ALIASES.map((mapping) => mapping.legacyModel),
+        "seedance2",
+        "image-last",
+      ]);
+      await insertFrozenVideoTasks(client, allMappings);
+      await client.query(`
+        insert into video_generation (
+          id, user_id, model, family,
+          duration_seconds, aspect_ratio, resolution, metadata
+        ) values (
+          'already-real-task', 'user-1', 'seedance2', 'seedance2',
+          15, '9:16', '480p', '{"generateAudio":false}'::json
+        )
+      `);
+
+      await executeMigrations(client, schemaName, [
+        realVideoRequestMigrationPath,
+      ]);
+      await executeMigrations(client, schemaName, [
+        realVideoRequestMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'frozen-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual([
+        "image-first",
+        ...FROZEN_VIDEO_FAMILIES.map((family) => family.realModel),
+        "image-last",
+      ]);
+
+      const taskSummary = await client.query<{
+        count: number;
+        real_count: number;
+      }>(`
+        select
+          count(*)::integer as count,
+          count(*) filter (
+            where model in (
+              'sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref',
+              'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45',
+              'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast'
+            )
+          )::integer as real_count
+        from video_generation
+      `);
+      expect(taskSummary.rows[0]).toEqual({
+        count: allMappings.length + 1,
+        real_count: allMappings.length + 1,
+      });
+      const aliasTask = await client.query<{
+        model: string;
+        duration_seconds: number;
+        aspect_ratio: string;
+        resolution: string;
+      }>(`
+        select model, duration_seconds, aspect_ratio, resolution
+        from video_generation
+        where id = 'frozen-task-573'
+      `);
+      expect(aliasTask.rows[0]).toEqual({
+        model: "kling3",
+        duration_seconds: 5,
+        aspect_ratio: "16:9",
+        resolution: "720p",
+      });
+
+      for (const columnName of [
+        "family",
+        "input_image_refs",
+        "staged_input_objects",
+      ]) {
+        await expect(
+          columnExists(client, schemaName, "video_generation", columnName)
+        ).resolves.toBe(false);
+      }
+      await expect(
+        columnExists(client, schemaName, "video_generation", "input_manifest")
+      ).resolves.toBe(true);
+
+      const constraints = await client.query<{ conname: string }>(`
+        select constraint_record.conname
+        from pg_constraint as constraint_record
+        inner join pg_class as relation
+          on relation.oid = constraint_record.conrelid
+        where relation.relnamespace = current_schema()::regnamespace
+          and constraint_record.conname in (
+            'image_backend_member_supported_models_check',
+            'video_generation_real_model_check',
+            'video_generation_input_manifest_check'
+          )
+        order by constraint_record.conname
+      `);
+      expect(constraints.rows.map((row) => row.conname)).toEqual([
+        "image_backend_member_supported_models_check",
+        "video_generation_input_manifest_check",
+        "video_generation_real_model_check",
+      ]);
+      const functionSignatures = await client.query<{
+        proname: string;
+        pronargs: number;
+      }>(`
+        select procedure_record.proname, procedure_record.pronargs::integer
+        from pg_proc as procedure_record
+        where procedure_record.pronamespace = current_schema()::regnamespace
+          and procedure_record.proname in (
+            'media_supported_model_ids_are_valid',
+            'video_input_manifest_is_valid'
+          )
+        order by procedure_record.proname
+      `);
+      expect(functionSignatures.rows).toEqual([
+        { proname: "media_supported_model_ids_are_valid", pronargs: 1 },
+        { proname: "video_input_manifest_is_valid", pronargs: 4 },
+      ]);
+
+      await expect(
+        client.query(
+          `update image_backend_member
+           set supported_model_ids = '["seedance2-preview"]'::json
+           where id = 'frozen-member'`
+        )
+      ).rejects.toThrow(/image_backend_member_supported_models_check/u);
+      await expect(
+        client.query(
+          `update image_backend_member
+           set supported_model_ids = '["SORA2"]'::json
+           where id = 'frozen-member'`
+        )
+      ).rejects.toThrow(/image_backend_member_supported_models_check/u);
+      await expect(
+        client.query(`
+          insert into video_generation (
+            id, user_id, model,
+            duration_seconds, aspect_ratio, resolution
+          ) values (
+            'invalid-new-task', 'user-1', 'seedance2-15s-9x16-480p',
+            15, '9:16', '480p'
+          )
+        `)
+      ).rejects.toThrow(/video_generation_real_model_check/u);
+      for (const model of ["runway-gen45", "ray314", "ray314-hdr"]) {
+        const inputAsset = createMigratedVideoInputAsset({
+          userId: "user-1",
+          videoId: `unsupported-input-${model}`,
+          fileName: "first.png",
+        });
+        await expect(
+          client.query(
+            `insert into video_generation (
+               id, user_id, model,
+               duration_seconds, aspect_ratio, resolution, input_manifest
+             ) values ($1, 'user-1', $2, 5, '16:9', '720p', $3::json)`,
+            [
+              `unsupported-input-${model}`,
+              model,
+              JSON.stringify({ firstFrame: inputAsset }),
+            ]
+          )
+        ).rejects.toThrow(/video_generation_input_manifest_check/u);
+      }
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("把历史角色转换为具名清单并保留非终态恢复身份", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client, true);
+      await insertPost0073DirectMember(client, "input-member", [
+        "veo31-4s-16x9-720p",
+        "veo31-ref-4s-16x9-720p",
+      ]);
+      const firstFrame = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "frame-one",
+        fileName: "first.png",
+      });
+      const firstOfPair = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "frame-pair",
+        fileName: "first.png",
+      });
+      const lastOfPair = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "frame-pair",
+        fileName: "last.png",
+      });
+      const references = ["one.png", "two.png"].map((fileName) =>
+        createMigratedVideoInputAsset({
+          userId: "user-1",
+          videoId: "references",
+          fileName,
+        })
+      );
+      const existingManifest = {
+        firstFrame: createMigratedVideoInputAsset({
+          userId: "user-1",
+          videoId: "existing-manifest",
+          fileName: "first.png",
+        }),
+      };
+      await client.query(
+        `insert into video_generation (
+           id, user_id, model, family,
+           duration_seconds, aspect_ratio, resolution,
+           stage, backend_member_id, member_lease_id,
+           member_lease_owner_token, poll_url, upstream_job_id,
+           credits_consumed, next_poll_at, metadata,
+           input_image_refs, input_manifest
+         ) values
+           (
+             'frame-one', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
+             4, '16:9', '720p', 'created', 'input-member', null,
+             null, null, null, 0, null,
+             '{"generateAudio":false,"inputImageRole":"frame"}'::json,
+             $1::json, null
+           ),
+           (
+             'frame-pair', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
+             4, '16:9', '720p', 'polling', 'input-member', 'lease-1',
+             'owner-1', 'https://poll.example.test/task', 'upstream-1',
+             12.5, '2026-07-30T12:00:00Z'::timestamp,
+             '{"generateAudio":false,"inputImageRole":"frame"}'::json,
+             $2::json, null
+           ),
+           (
+             'references', 'user-1', 'veo31-ref-4s-16x9-720p', 'veo31-ref',
+             4, '16:9', '720p', 'charged', 'input-member', null,
+             null, null, null, 3, null,
+             '{"generateAudio":false,"inputImageRole":"reference"}'::json,
+             $3::json, null
+           ),
+           (
+             'existing-manifest', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
+             4, '16:9', '720p', 'completed', 'input-member', null,
+             null, null, null, 3, null,
+             '{"generateAudio":false}'::json,
+             null, $4::json
+           )`,
+        [
+          JSON.stringify([firstFrame]),
+          JSON.stringify([firstOfPair, lastOfPair]),
+          JSON.stringify(references),
+          JSON.stringify(existingManifest),
+        ]
+      );
+
+      await executeMigrations(client, schemaName, [
+        realVideoRequestMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const tasks = await client.query<{
+        id: string;
+        model: string;
+        input_manifest: Record<string, unknown>;
+        metadata: Record<string, unknown>;
+        stage: string;
+        backend_member_id: string | null;
+        member_lease_id: string | null;
+        member_lease_owner_token: string | null;
+        poll_url: string | null;
+        upstream_job_id: string | null;
+        credits_consumed: string;
+        next_poll_at: string | null;
+      }>(`
+        select
+          id, model, input_manifest, metadata, stage, backend_member_id,
+          member_lease_id, member_lease_owner_token, poll_url,
+          upstream_job_id, credits_consumed,
+          to_char(next_poll_at, 'YYYY-MM-DD HH24:MI:SS') as next_poll_at
+        from video_generation
+        order by id
+      `);
+      const byId = new Map(tasks.rows.map((task) => [task.id, task]));
+      expect(byId.get("frame-one")?.input_manifest).toEqual({
+        firstFrame,
+      });
+      expect(byId.get("frame-pair")?.input_manifest).toEqual({
+        firstFrame: firstOfPair,
+        lastFrame: lastOfPair,
+      });
+      expect(byId.get("references")?.input_manifest).toEqual({
+        referenceImages: references,
+      });
+      expect(byId.get("existing-manifest")?.input_manifest).toEqual(
+        existingManifest
+      );
+      for (const task of tasks.rows) {
+        expect(task.metadata).toEqual({ generateAudio: false });
+      }
+      expect(byId.get("frame-pair")).toMatchObject({
+        model: "veo31",
+        stage: "polling",
+        backend_member_id: "input-member",
+        member_lease_id: "lease-1",
+        member_lease_owner_token: "owner-1",
+        poll_url: "https://poll.example.test/task",
+        upstream_job_id: "upstream-1",
+        credits_consumed: "12.50",
+      });
+      expect(byId.get("frame-pair")?.next_poll_at).toBe("2026-07-30 12:00:00");
+
+      await expect(
+        client.query(
+          `update video_generation
+           set input_manifest = $1::json
+           where id = 'frame-one'`,
+          [
+            JSON.stringify({
+              firstFrame: {
+                ...firstFrame,
+                storageKey:
+                  "other-user/video-inputs/frame-one/adopted/stolen.png",
+              },
+            }),
+          ]
+        )
+      ).rejects.toThrow(/video_generation_input_manifest_check/u);
+      await expect(
+        client.query(
+          `update video_generation
+           set input_manifest = $1::json
+           where id = 'frame-one'`,
+          [
+            JSON.stringify({
+              firstFrame: {
+                ...firstFrame,
+                storageBucket: "invalid/bucket",
+              },
+            }),
+          ]
+        )
+      ).rejects.toThrow(/video_generation_input_manifest_check/u);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("未知成员视频变体阻断且不折叠任何合法成员能力", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      const originalModels = [
+        "image-first",
+        "sora2-4s-16x9",
+        "seedance2-preview",
+      ];
+      await insertPost0073DirectMember(
+        client,
+        "unknown-member",
+        originalModels
+      );
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/unknown-member/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'unknown-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual(originalModels);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "input_manifest")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("任务参数、family 或模型无法证明时报告任务 ID 并完整回滚", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      const originalModels = ["image-first", "sora2-4s-16x9"];
+      await insertPost0073DirectMember(
+        client,
+        "conflict-member",
+        originalModels
+      );
+      await client.query(`
+        insert into video_generation (
+          id, user_id, model, family,
+          duration_seconds, aspect_ratio, resolution
+        ) values
+          (
+            'conflict-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+            8, '16:9', '720p'
+          ),
+          (
+            'family-conflict-task', 'user-1', 'sora2-4s-16x9', 'sora2-pro',
+            4, '16:9', '720p'
+          ),
+          (
+            'unknown-task', 'user-1', 'unknown-video-model', 'sora2',
+            4, '16:9', '720p'
+          )
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(
+        /conflict-task:parameter_conflict.*family-conflict-task:family_conflict.*unknown-task:unknown_model/u
+      );
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'conflict-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual(originalModels);
+      const tasks = await client.query<{ id: string; model: string }>(`
+        select id, model
+        from video_generation
+        where id in ('conflict-task', 'family-conflict-task', 'unknown-task')
+        order by id
+      `);
+      expect(tasks.rows).toEqual([
+        { id: "conflict-task", model: "sora2-4s-16x9" },
+        { id: "family-conflict-task", model: "sora2-4s-16x9" },
+        { id: "unknown-task", model: "unknown-video-model" },
+      ]);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("历史输入缺少角色时阻断且不增加新清单列", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      await insertPost0073DirectMember(client, "missing-role-member", [
+        "sora2-4s-16x9",
+      ]);
+      const asset = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "missing-role-task",
+        fileName: "first.png",
+      });
+      await client.query(
+        `insert into video_generation (
+           id, user_id, model, family,
+           duration_seconds, aspect_ratio, resolution,
+           metadata, input_image_refs
+         ) values (
+           'missing-role-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+           4, '16:9', '720p', '{"generateAudio":false}'::json, $1::json
+         )`,
+        [JSON.stringify([asset])]
+      );
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/missing-role-task/u);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "input_manifest")
+      ).resolves.toBe(false);
+      const task = await client.query<{ model: string }>(`
+        select model from video_generation where id = 'missing-role-task'
+      `);
+      expect(task.rows[0]?.model).toBe("sora2-4s-16x9");
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("越权任务输入对象阻断且保留旧列与复合模型", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      await insertPost0073DirectMember(client, "foreign-object-member", [
+        "sora2-4s-16x9",
+      ]);
+      const foreignAsset = createMigratedVideoInputAsset({
+        userId: "other-user",
+        videoId: "foreign-object-task",
+        fileName: "first.png",
+      });
+      await client.query(
+        `insert into video_generation (
+           id, user_id, model, family,
+           duration_seconds, aspect_ratio, resolution,
+           metadata, input_image_refs
+         ) values (
+           'foreign-object-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+           4, '16:9', '720p',
+           '{"generateAudio":false,"inputImageRole":"frame"}'::json,
+           $1::json
+         )`,
+        [JSON.stringify([foreignAsset])]
+      );
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/foreign-object-task/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+      const task = await client.query<{
+        model: string;
+        input_image_refs: unknown;
+      }>(`
+        select model, input_image_refs
+        from video_generation
+        where id = 'foreign-object-task'
+      `);
+      expect(task.rows[0]?.model).toBe("sora2-4s-16x9");
+      expect(task.rows[0]?.input_image_refs).toEqual([foreignAsset]);
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

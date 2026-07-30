@@ -739,7 +739,6 @@ export async function runAdobeVideoGenerationForUser(
       model: contract.model,
       adobeRequestProfile: provider.webApp,
       adobeAuthProfile: provider.authProfile,
-      family: contract.billingFamily,
       prompt: input.prompt,
       durationSeconds: contract.duration,
       aspectRatio: contract.aspectRatio,

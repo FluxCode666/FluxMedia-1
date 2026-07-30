@@ -1124,7 +1124,7 @@ export const imageBackendMember = pgTable(
     ),
     check(
       "image_backend_member_supported_models_check",
-      sql`CASE WHEN json_typeof(${table.supportedModelIds}) = 'array' THEN json_array_length(${table.supportedModelIds}) > 0 ELSE false END`
+      sql`media_supported_model_ids_are_valid(${table.supportedModelIds})`
     ),
     check(
       "image_backend_member_priority_check",
@@ -1396,22 +1396,6 @@ export const imageBackendParameterMappingTemplate = pgTable(
   ]
 );
 
-/** 迁移前视频 worker 可跨进程恢复的旧数组图片引用。 */
-type PersistedVideoInputReference =
-  | {
-      source: "storage";
-      mimeType: "image/png" | "image/jpeg" | "image/webp";
-      storageKey: string;
-      storageBucket?: string;
-      byteLength: number;
-    }
-  | {
-      source: "remote";
-      mimeType: "image/png" | "image/jpeg" | "image/webp";
-      url: string;
-      byteLength: number;
-    };
-
 /** 视频任务自有、storage-only 的单个输入对象。 */
 type PersistedVideoInputAsset = {
   source: "storage";
@@ -1426,16 +1410,6 @@ type PersistedVideoInputManifest = {
   firstFrame?: PersistedVideoInputAsset;
   lastFrame?: PersistedVideoInputAsset;
   referenceImages?: PersistedVideoInputAsset[];
-};
-
-/** 仅由服务端转存创建、拥有可信删除身份的对象。 */
-type PersistedVideoInputObject = {
-  reason: "orphan" | "lifecycle_delete";
-  userId: string;
-  videoId: string;
-  attemptId: string;
-  storageKey: string;
-  storageBucket: string;
 };
 
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
@@ -1464,7 +1438,7 @@ export const videoGeneration = pgTable(
     // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
     memberLeaseId: text("member_lease_id"),
     memberLeaseOwnerToken: text("member_lease_owner_token"),
-    // 平台规范裸视频 model id（<family>-<dur>s-<ratio>[-<res>]）。
+    // 平台真实视频模型 ID；时长、比例与分辨率只存在于各自独立列。
     model: text("model").notNull(),
     // 请求头 Profile 与 IMS Token Profile 相互独立；视频 Bearer Token 固定复用 Express。
     adobeRequestProfile: text("adobe_request_profile")
@@ -1473,7 +1447,6 @@ export const videoGeneration = pgTable(
     adobeAuthProfile: text("adobe_auth_profile")
       .$type<"express" | "firefly">()
       .notNull(),
-    family: text("family").notNull(),
     prompt: text("prompt").notNull(),
     durationSeconds: integer("duration_seconds").notNull(),
     aspectRatio: text("aspect_ratio").notNull(),
@@ -1484,15 +1457,8 @@ export const videoGeneration = pgTable(
     stage: text("stage").notNull().default("created"),
     stateVersion: integer("state_version").notNull().default(0),
     attemptCount: integer("attempt_count").notNull().default(0),
-    // 迁移前数组输入；U7 完成后删除。
-    inputImageRefs:
-      json("input_image_refs").$type<PersistedVideoInputReference[]>(),
-    // 真实输入语义与存储身份；U7 迁移后取代 input_image_refs。
+    // 真实输入语义与任务自有存储身份。
     inputManifest: json("input_manifest").$type<PersistedVideoInputManifest>(),
-    // 迁移前任务内清理集合；新任务采用 orphan 后不再保存，U7 完成后删除。
-    stagedInputObjects: json("staged_input_objects").$type<
-      PersistedVideoInputObject[]
-    >(),
     // 完成后 re-host 到对象存储的 key；videoUrl 为上游 presigned（短期）。
     storageKey: text("storage_key"),
     videoUrl: text("video_url"),
@@ -1551,6 +1517,14 @@ export const videoGeneration = pgTable(
     check(
       "video_generation_recovery_counts_check",
       sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
+    ),
+    check(
+      "video_generation_real_model_check",
+      sql`${table.model} IN ('sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref', 'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45', 'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast')`
+    ),
+    check(
+      "video_generation_input_manifest_check",
+      sql`${table.inputManifest} IS NULL OR video_input_manifest_is_valid(${table.inputManifest}, ${table.userId}, ${table.id}, ${table.model})`
     ),
   ]
 );
