@@ -76,7 +76,7 @@ const sections = {
           kind: "image_generation",
         },
         {
-          label: "外部异步视频任务",
+          label: "外部视频任务",
           path: "GET /v1/videos/{id}",
           kind: "video",
         },
@@ -195,7 +195,7 @@ const sections = {
           "Adobe Firefly video",
           "/v1/videos/generations",
           "video",
-          "本站扩展。固定路由到 Adobe（Firefly）后端的长任务；默认 keep-alive 撑住连接直到出片，也可传 async:true 立即返回 task_... 后台生成，凭 GET /v1/videos/{id} 轮询或 callback_url 回调（长视频强烈建议）。",
+          "本站扩展。始终创建持久视频任务并返回 HTTP 202；使用响应中的视频任务 ID 轮询 GET /v1/videos/{id}，也可配置 callback_url 接收终态回调。",
         ],
         [
           "Async image task",
@@ -204,10 +204,10 @@ const sections = {
           "查询 async=true 创建的内存异步任务，任务 30 分钟后自动过期。",
         ],
         [
-          "Async video task",
+          "Video task",
           "/v1/videos/{id}",
           "video",
-          "查询视频任务：先查 async=true 返回的内存 task_...（30 分钟过期），未命中再按响应里的 generation_id 从库持久取回。",
+          "按创建接口返回的持久视频任务 ID 查询状态、输入摘要和成功后的产物 URL。",
         ],
         [
           "OpenAI chat completions",
@@ -332,7 +332,7 @@ const sections = {
         "所有页面和外接 API 请求都使用平台后端池，并按平台积分与 API 密钥额度结算。",
         "image 接口的 web_first / webFirst / force_web / forceWeb（chat 对应 mix_web_first）是 Web-first 优先路由，不是硬性只走 Web，且默认开启。开启时（不传或显式 true）按 Web-first 像素区间（IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS，默认 0.66MP-2MP）判定：尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）则走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。该路由只对 mixed 后端分组生效（纯 Web / 纯 Codex-Responses 分组无此概念）；agent 始终走 Codex/Responses，不受此项影响。",
         "Adobe（Firefly）后端：作为特殊成员按 priority 挂入分组同池调度——Adobe 视频模型或 force_firefly=true 会把候选收敛到仅 Adobe；普通请求则只有当组内 web/codex/api 限流、耗尽或可切换失败时才兜底到 Adobe（取决于 Adobe 是否在该组及其优先级，priority 越大越靠后）。图片使用模型四档固定价加运行时审核费，视频使用模型族对应分辨率的每秒固定价格；两者都不乘 Adobe 或分组倍率。路由兜底详见 /docs/adobe-firefly-routing，兼容转换详见 /docs/adobe-firefly-compat。",
-        "异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。callback_url 是可选的完成回调 webhook——任务结束时服务端把任务对象 POST 到该公网地址，已发出的回调不受过期/重启影响。视频同理：/v1/videos/generations 传 async:true（或 ?async=true）即立即返回 task_...，用 GET /v1/videos/{id} 轮询（task_... 30 分钟过期，或用响应里的 generation_id 持久查），或用 callback_url 完成回调——视频是长任务，强烈建议异步，以免同步连接被中途掐断丢产物。",
+        "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos/generations 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；body 中的 async 仅为兼容接受，不改变行为，也不支持通过 URL ?async 切换模式。callback_url 会绑定到该持久任务并在终态投递。",
       ],
       officialRefsTitle: "官方参考",
       officialRefs: [
@@ -1665,7 +1665,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
           path: "/v1/videos/generations",
           contentType: "application/json",
           description:
-            "本站扩展：Adobe Firefly 视频生成。固定路由到 Adobe（Firefly）后端，是长任务，返回 OpenAI Images 风格结构，data[].url 为产物视频 URL。鉴权与其他 v1 接口一致（API 密钥）。视频是长任务，强烈建议异步：传 async:true（或 ?async=true）立即返回 task_... 任务对象、后台生成，凭 GET /v1/videos/{id} 轮询或 callback_url 完成回调；不传则同步 keep-alive 撑住连接直到出片。",
+            "本站扩展：创建持久视频任务。请求始终在任务持久化后返回 HTTP 202 和 object=video.task，不会在当前连接中等待出片；使用返回的视频任务 ID 轮询 GET /v1/videos/{id}，或通过 callback_url 接收终态回调。鉴权与其他 v1 接口一致（API 密钥）。",
           example: `# 1. 文生视频；model 只传真实模型 ID，其他参数独立传递
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
@@ -1696,7 +1696,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/generations \\
     "generate_audio": false
   }'
 
-# 3. 异步（长视频强烈建议）：async:true 立即返回 task_...，后台生成
+# 3. 兼容 async 字段；无论 true 或 false，接口都返回同一种持久任务
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -1710,21 +1710,21 @@ curl https://gpt2image.superapi.buzz/v1/videos/generations \\
     "async": true,
     "callback_url": "https://your-server.example/callback"
   }'
-# 立即返回 { "id": "task_...", "status": "processing" }；随后轮询（或等 callback_url 回调）：
-curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
+# 返回 HTTP 202；随后使用同一持久任务 ID 轮询（或等待 callback_url 回调）：
+curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
-  "created": 1713833628,
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "status": "pending",
   "model": "veo31",
+  "duration": 8,
   "duration_seconds": 8,
+  "aspectRatio": "16:9",
   "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "data": [
-    { "url": "https://gpt2image.superapi.buzz/api/storage/generations/..." }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 240
+  "resolution": "1080p"
 }`,
           fields: [
             {
@@ -1788,75 +1788,98 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               requirement: "可选",
               custom: true,
               description:
-                "异步开关（视频是长任务，强烈建议开启）。传 async:true 或 URL ?async=true（等价）即立即返回 task_... 任务对象（status:processing）、后台生成，凭 GET /v1/videos/{id} 轮询结果。",
+                "兼容字段。true、false 或省略都会创建同一种持久任务并返回 HTTP 202；不会切换同步模式。视频接口不支持用 URL ?async 改变行为。",
             },
             {
               name: "callback_url / callbackUrl",
               requirement: "可选",
               custom: true,
               description:
-                "完成回调 webhook（仅异步任务）。任务完成 / 失败时服务端把任务对象 POST 到该公网 http(s) 地址，无需轮询；已发出的回调不受任务过期 / 重启影响。",
+                "持久任务终态回调 webhook。任务完成或失败时服务端向该公网 https 地址 POST 终态结果；与 async 字段无关，重试同一 clientRequestId 时必须保持回调地址一致。",
             },
           ],
           responses: [
             {
-              name: "created",
-              description: "Unix 秒时间戳。",
+              name: "object",
+              description: "固定为 video.task。",
+            },
+            {
+              name: "id / task_id / generation_id",
+              description: "同一个持久视频任务 ID，用于 GET /v1/videos/{id}。",
+            },
+            {
+              name: "status",
+              description:
+                "任务创建后的当前状态：pending、submitting、processing、needs_attention、completed 或 failed。",
             },
             {
               name: "model",
               description: "本次使用的真实视频模型 ID。",
             },
             {
-              name: "data[].url",
-              description: "产物视频的本站存储 URL。",
+              name: "duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
+              description: "本次持久任务保存的独立生成参数。",
             },
             {
-              name: "credits_consumed",
-              description: "本次结算积分。",
-              custom: true,
+              name: "generateAudio / generate_audio",
+              description: "创建请求显式提供声音开关时返回这两个等价值。",
             },
           ],
           notes: [
             "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/generations 是同一 handler 的别名。",
-            "视频生成是长任务：同步模式用 keep-alive 撑住连接直到出片或失败（请把客户端读超时设足够长）；长视频强烈建议异步（async:true）——立即拿 task_...，用 GET /v1/videos/{id} 轮询（task_... 为内存态、30 分钟过期，或用响应里的 generation_id 持久查），或用 callback_url 完成回调，避免连接被中途掐断丢产物。",
+            "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
+            "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
             "计费 = 当前真实模型与输出分辨率对应的每秒积分 × 独立 duration（秒），最终结果按积分精度向上取整。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
             "默认需要 externalApi.images.generate 能力（入门版及以上），可在套餐能力矩阵中调整。",
           ],
         },
         {
-          title: "Get async video task",
+          title: "Get video task",
           method: "GET",
           path: "/v1/videos/{id}",
           contentType: "无请求体",
           description:
-            "本站扩展：按 ID 查询一次视频生成。路径参数可传两类 ID：（1）async=true 创建的 task_...（进程内内存任务对象，30 分钟后过期、服务重启或多实例切换即查不到）；（2）任意同步/异步响应返回的 generation_id（gen_...，从数据库持久取回，跨重启/多实例都可查）。先查内存任务，未命中再按 generation_id 查库。仅返回归属本人的记录；仅需有效 API 密钥，无套餐门槛。",
-          example: `curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
+            "本站扩展：按创建接口返回的持久视频任务 ID 查询状态。接口只查询数据库中的视频任务并校验 API 密钥归属，不读取进程内异步任务。",
+          example: `curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
-  "id": "task_...",
-  "object": "video",
-  "model": "veo31",
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "completed",
+  "model": "veo31",
+  "duration": 8,
   "duration_seconds": 8,
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed_at": "2026-05-28T00:01:40.000Z",
-  "data": [{"url": "https://gpt2image.superapi.buzz/api/storage/generations/..."}],
+  "aspectRatio": "16:9",
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generateAudio": false,
+  "generate_audio": false,
+  "input": {"mode": "none", "count": 0},
   "video_url": "https://gpt2image.superapi.buzz/api/storage/generations/...",
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 360
+  "data": [{"url": "https://gpt2image.superapi.buzz/api/storage/generations/..."}],
+  "created_at": "2026-05-28T00:00:00.000Z",
+  "completed_at": "2026-05-28T00:01:40.000Z"
 }
 
-# 仍在执行时（status:processing，暂无 *_url）
+# 仍在执行时不会返回 video_url 或 data
 {
-  "id": "task_...",
-  "object": "video.generation",
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "model": "veo31",
   "status": "processing",
-  "created": 1713833628,
-  "generation_id": "gen_..."
+  "duration": 8,
+  "duration_seconds": 8,
+  "aspectRatio": "16:9",
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generateAudio": false,
+  "generate_audio": false,
+  "input": {"mode": "none", "count": 0},
+  "created_at": "2026-05-28T00:00:00.000Z"
 }`,
           fields: [
             {
@@ -1869,28 +1892,35 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               requirement: "必填路径参数",
               custom: true,
               description:
-                "ID（路径参数）。可传 async=true 返回的 task_...（内存任务，30 分钟过期、重启/多实例后查不到），或任意响应返回的 generation_id（gen_...，从数据库持久取回，跨重启/多实例可查）。长度上限 128 字符，缺失/超长返回 400 Invalid task_id.；均按归属用户隔离，只返回本人的记录。",
+                "创建接口响应中的 id、task_id 或 generation_id；三者是同一个持久视频任务 ID。长度上限 128 字符，缺失或超长返回 400 Invalid task_id.，并按 API 密钥所有者隔离。",
             },
           ],
           responses: [
             {
-              name: "id",
-              description: "任务 ID（task_...），与请求路径中的 {id} 一致。",
+              name: "object",
+              description: "固定为 video.task。",
             },
             {
-              name: "object",
-              description:
-                "按 generation_id 持久查询时：执行中为 video.generation、完成后为 video。注意：刚用 async 返回的 task_... 查内存任务时，object 暂沿用 image.generation/image（内存任务存储与图片任务共用、未区分视频），其余字段一致；建议用 generation_id 查询以获得稳定的 video* 语义。",
+              name: "id / task_id / generation_id",
+              description: "同一个持久视频任务 ID，与请求路径中的 {id} 一致。",
             },
             {
               name: "status",
               description:
-                "任务状态，取值 processing（执行中）、completed（成功）、failed（失败，对象内含 error.message）。",
+                "pending、submitting、processing、needs_attention、completed 或 failed；存在失败原因时返回 error.message。",
             },
             {
-              name: "duration_seconds",
-              description: "视频时长（秒），来自创建请求的独立 duration 参数。",
-              custom: true,
+              name: "model、duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
+              description: "持久任务保存的真实模型 ID 和独立生成参数。",
+            },
+            {
+              name: "generateAudio / generate_audio",
+              description: "任务实际使用的声音开关。",
+            },
+            {
+              name: "input.mode / input.count",
+              description:
+                "输入摘要；mode 为 none、first-frame、first-last-frames 或 references，count 为输入图数量，不返回实际输入图。",
             },
             {
               name: "data[].url / video_url",
@@ -1898,26 +1928,15 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
                 "status=completed 时返回产物视频的本站存储签名 URL（data[].url 与顶层 video_url 等价）；执行中尚无该字段。",
             },
             {
-              name: "created / created_at / completed_at",
+              name: "created_at / completed_at",
               description:
-                "任务创建与完成时间（秒级时间戳与 ISO 字符串）；completed_at 仅在完成后出现。",
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "关联的视频生成记录 ID，可作本端点路径参数持久查询。",
-            },
-            {
-              name: "credits_consumed",
-              description: "完成后结算的本站积分。",
-              custom: true,
+                "ISO 格式的任务创建时间；completed_at 仅在完成后出现。",
             },
           ],
           notes: [
             "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/{id} 是同一 handler 的别名。",
-            "内存任务 30 分钟后过期；服务重启或多实例切换会使未完成任务返回 404 Video task not found or expired.，但 callback_url 已发送的回调不受影响。需持久查询请用 generation_id。",
             "只能查询属于当前 API 密钥所属用户自己创建的任务；响应 Cache-Control: no-store。",
-            "返回结构与 callback_url 回调 POST 的任务对象完全一致。",
+            "任务状态和产物来自持久视频记录，不存在 30 分钟内存任务过期语义。",
           ],
         },
         {
@@ -2593,7 +2612,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           kind: "image_generation",
         },
         {
-          label: "External async video task",
+          label: "External video task",
           path: "GET /v1/videos/{id}",
           kind: "video",
         },
@@ -2707,7 +2726,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "Adobe Firefly video",
           "/v1/videos/generations",
           "video",
-          "FluxMedia extension. A long-running job that always routes to the Adobe (Firefly) backend; by default it holds the connection with keep-alive until the video is ready, or pass async:true to return a task_... immediately and poll GET /v1/videos/{id} (or use callback_url) — strongly recommended for long videos.",
+          "FluxMedia extension. Always creates a persistent video task and returns HTTP 202. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery.",
         ],
         [
           "Async image task",
@@ -2716,10 +2735,10 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "Returns the in-memory task created with async=true. Tasks expire after 30 minutes.",
         ],
         [
-          "Async video task",
+          "Video task",
           "/v1/videos/{id}",
           "video",
-          "Returns a video task: first the in-memory task_... created with async=true (expires after 30 minutes), otherwise looked up persistently by the generation_id from the response.",
+          "Looks up status, input summary, and the completed output URL by the persistent video task ID returned by the create endpoint.",
         ],
         [
           "OpenAI chat completions",
@@ -2844,7 +2863,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "All page and external API requests use the platform backend pool and settle through platform credits and API key quotas.",
         "Image endpoint web_first / webFirst / force_web / forceWeb (chat: mix_web_first) is a Web-first preference route, not hard Web-only, and is on by default. When on (omitted or explicit true) it uses the Web-first pixel range (IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS, default 0.66MP-2MP): only sizes inside the range prefer Web (fall back to Codex/Responses on failure), sizes outside (e.g. 4K) use normal scheduling, auto or unparseable sizes may prefer Web; explicit false disables it. It only applies to mixed backend groups (no effect for Web-only / Codex-Responses-only groups); agent always uses Codex/Responses and is unaffected.",
         "Adobe (Firefly) backend joins the group as a special pool member ranked by priority. A firefly-* model or force_firefly=true narrows candidates to Adobe only; ordinary requests only fall back to Adobe after the group's web/codex/api members are rate-limited, exhausted, or fail with a switchable error. Images use fixed model-tier prices plus runtime review fees, while videos use fixed model-family prices per second. Neither path applies Adobe or group multipliers. See /docs/adobe-firefly-routing and /docs/adobe-firefly-compat.",
-        "Async tasks (async): body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id} for the result. Tasks are in-memory objects that expire after 30 minutes and become unavailable after a restart or multi-instance switch. For persistent lookups, use the generation_id (gen_...) from the response as the GET /v1/images/{id} path parameter — it is read from the DB and survives restarts / multi-instance switches (sync requests can re-query by generation_id this way too). callback_url is an optional completion webhook — when the task finishes the server POSTs the task object to that public URL, and an already-sent callback is unaffected by expiry or restart. Video works the same way: POST /v1/videos/generations with async:true (or ?async=true) returns a task_... immediately; poll GET /v1/videos/{id} (task_... expires after 30 minutes, or use the generation_id for persistent lookups) or rely on callback_url — video is long-running, so async is strongly recommended to avoid a synchronous connection being cut mid-way and losing the output.",
+        "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos/generations always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. The async body field is accepted only for compatibility and does not change behavior; URL ?async is not a supported video mode switch. callback_url is attached to the persistent video task and delivered at terminal state.",
       ],
       officialRefsTitle: "Official References",
       officialRefs: [
@@ -3991,7 +4010,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
           path: "/v1/videos/generations",
           contentType: "application/json",
           description:
-            "FluxMedia extension: Adobe Firefly video generation. It always routes to the Adobe (Firefly) backend, is a long-running job, and returns an OpenAI Images-style shape where data[].url is the produced video URL. Auth matches other v1 endpoints (API key). Video is long-running, so async is strongly recommended: pass async:true (or ?async=true) to return a task_... object immediately and generate in the background, then poll GET /v1/videos/{id} or use callback_url; otherwise it runs synchronously, holding the connection with keep-alive until the video is ready.",
+            "FluxMedia extension: creates a persistent video task. Every valid request returns HTTP 202 with object=video.task after persistence; it never waits for the video on the current connection. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. Authentication uses the same API key mechanism as other v1 endpoints.",
           example: `# 1. Text-to-video. model is the real model ID; parameters are separate.
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
@@ -4022,7 +4041,7 @@ curl https://gpt2image.superapi.buzz/v1/videos/generations \\
     "generate_audio": false
   }'
 
-# 3. Async (strongly recommended for long videos): async:true returns a task_... immediately, generated in the background
+# 3. Compatibility async field. true, false, or omission creates the same persistent task.
 curl https://gpt2image.superapi.buzz/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -4036,21 +4055,21 @@ curl https://gpt2image.superapi.buzz/v1/videos/generations \\
     "async": true,
     "callback_url": "https://your-server.example/callback"
   }'
-# Returns { "id": "task_...", "status": "processing" } immediately; then poll (or wait for the callback_url):
-curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
+# Returns HTTP 202. Poll the same persistent task ID, or wait for callback_url:
+curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
-  "created": 1713833628,
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "status": "pending",
   "model": "veo31",
+  "duration": 8,
   "duration_seconds": 8,
+  "aspectRatio": "16:9",
   "aspect_ratio": "16:9",
-  "resolution": "1080p",
-  "data": [
-    { "url": "https://gpt2image.superapi.buzz/api/storage/generations/..." }
-  ],
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 240
+  "resolution": "1080p"
 }`,
           fields: [
             {
@@ -4116,75 +4135,101 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               requirement: "Optional",
               custom: true,
               description:
-                "Async switch (video is long-running, strongly recommended). Pass async:true or URL ?async=true (equivalent) to return a task_... object immediately (status:processing) and generate in the background; poll GET /v1/videos/{id} for the result.",
+                "Compatibility field. true, false, or omission creates the same persistent task and returns HTTP 202; it does not enable a synchronous mode. URL ?async is not a supported video mode switch.",
             },
             {
               name: "callback_url / callbackUrl",
               requirement: "Optional",
               custom: true,
               description:
-                "Completion webhook (async tasks only). When the task finishes or fails the server POSTs the task object to this public http(s) URL, so no polling is needed; an already-sent callback is unaffected by task expiry or restart.",
+                "Terminal webhook for the persistent task. The server POSTs terminal output to this public https URL when the task completes or fails. It is independent of async, and retries with the same clientRequestId must keep the callback URL unchanged.",
             },
           ],
           responses: [
             {
-              name: "created",
-              description: "Unix timestamp in seconds.",
+              name: "object",
+              description: "Always video.task.",
+            },
+            {
+              name: "id / task_id / generation_id",
+              description:
+                "The same persistent video task ID, used with GET /v1/videos/{id}.",
+            },
+            {
+              name: "status",
+              description:
+                "Current task state: pending, submitting, processing, needs_attention, completed, or failed.",
             },
             {
               name: "model",
               description: "The real video model ID used.",
             },
             {
-              name: "data[].url",
-              description: "FluxMedia storage URL of the produced video.",
+              name: "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
+              description:
+                "Independent generation parameters saved on the task.",
             },
             {
-              name: "credits_consumed",
-              description: "Credits billed for this request.",
-              custom: true,
+              name: "generateAudio / generate_audio",
+              description:
+                "Returned as equivalent aliases when the create request explicitly includes the audio switch.",
             },
           ],
           notes: [
             "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos/generations is an alias.",
-            "Video generation is long-running: in sync mode FluxMedia holds the connection with keep-alive until the video is ready or fails (set a generous client read timeout); for long videos prefer async (async:true) — get a task_... immediately and poll GET /v1/videos/{id} (task_... is in-memory and expires after 30 minutes, or use the generation_id from the response for persistent lookups) or rely on callback_url, to avoid the connection being cut mid-way and losing the output.",
+            "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
+            "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
             "Billing = credits per second for the selected real model and resolution × the separate duration value, rounded up to the supported credit precision. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
             "Requires externalApi.images.generate by default (Starter or higher); admins can change it in the Plan Capability Matrix.",
           ],
         },
         {
-          title: "Get async video task",
+          title: "Get video task",
           method: "GET",
           path: "/v1/videos/{id}",
           contentType: "No request body",
           description:
-            "FluxMedia extension: look up a single video generation by ID. The path parameter accepts two kinds of ID: (1) the task_... returned with async=true (an in-process in-memory task object that expires after 30 minutes and becomes unavailable after a restart or multi-instance switch); (2) the generation_id (gen_...) from any sync/async response, read persistently from the DB and available across restarts / multi-instance switches. It checks the in-memory task first, then looks up by generation_id. Only the caller's own records are returned; only a valid API key is required, with no plan gate.",
-          example: `curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
+            "FluxMedia extension: looks up status by the persistent video task ID returned by the create endpoint. It reads only the database-backed video task and verifies API-key ownership; it does not consult the process-local async image task store.",
+          example: `curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
-  "id": "task_...",
-  "object": "video",
-  "model": "veo31",
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "completed",
+  "model": "veo31",
+  "duration": 8,
   "duration_seconds": 8,
-  "created": 1713833628,
-  "created_at": "2026-05-28T00:00:00.000Z",
-  "completed_at": "2026-05-28T00:01:40.000Z",
-  "data": [{"url": "https://gpt2image.superapi.buzz/api/storage/generations/..."}],
+  "aspectRatio": "16:9",
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generateAudio": false,
+  "generate_audio": false,
+  "input": {"mode": "none", "count": 0},
   "video_url": "https://gpt2image.superapi.buzz/api/storage/generations/...",
-  "generation_id": "gen_...",
-  "generationId": "gen_...",
-  "credits_consumed": 360
+  "data": [{"url": "https://gpt2image.superapi.buzz/api/storage/generations/..."}],
+  "created_at": "2026-05-28T00:00:00.000Z",
+  "completed_at": "2026-05-28T00:01:40.000Z"
 }
 
-# While still running (status:processing, no *_url yet)
+# While still running, video_url and data are omitted.
 {
-  "id": "task_...",
-  "object": "video.generation",
-  "model": "veo31",
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "processing",
-  "created": 1713833628,
-  "generation_id": "gen_..."
+  "model": "veo31",
+  "duration": 8,
+  "duration_seconds": 8,
+  "aspectRatio": "16:9",
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generateAudio": false,
+  "generate_audio": false,
+  "input": {"mode": "none", "count": 0},
+  "created_at": "2026-05-28T00:00:00.000Z"
 }`,
           fields: [
             {
@@ -4197,30 +4242,37 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
               requirement: "Required path parameter",
               custom: true,
               description:
-                "ID (path parameter). Either the task_... returned with async=true (in-memory task; expires after 30 minutes, unavailable after restart / multi-instance switch), or the generation_id (gen_...) from any response (read persistently from the DB, available across restarts / multi-instance switches). Max length 128 chars; missing/over-length returns 400 Invalid task_id. Scoped to the owning user; only your own records are returned.",
+                "The id, task_id, or generation_id from the create response; all three are the same persistent video task ID. Max length is 128 characters; missing or over-length values return 400 Invalid task_id. Access is scoped to the API-key owner.",
             },
           ],
           responses: [
             {
-              name: "id",
-              description:
-                "Task ID (task_...), matching {id} in the request path.",
+              name: "object",
+              description: "Always video.task.",
             },
             {
-              name: "object",
+              name: "id / task_id / generation_id",
               description:
-                "When polling by generation_id: video.generation while running, video once completed. Note: when polling a fresh async task_... in-memory, object temporarily reuses image.generation/image (the in-memory task store is shared with image tasks and does not distinguish video); other fields are the same. Poll by generation_id for stable video* semantics.",
+                "The same persistent video task ID, matching {id} in the request path.",
             },
             {
               name: "status",
               description:
-                "Task status: processing (running), completed (success), failed (the object carries error.message).",
+                "pending, submitting, processing, needs_attention, completed, or failed. error.message is included when an error is available.",
             },
             {
-              name: "duration_seconds",
+              name: "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
               description:
-                "Video duration in seconds from the separate duration request parameter.",
-              custom: true,
+                "The real model ID and independent generation parameters persisted on the task.",
+            },
+            {
+              name: "generateAudio / generate_audio",
+              description: "The effective audio switch used by the task.",
+            },
+            {
+              name: "input.mode / input.count",
+              description:
+                "Input summary. mode is none, first-frame, first-last-frames, or references; count is the number of input images. Actual input images are not returned.",
             },
             {
               name: "data[].url / video_url",
@@ -4228,26 +4280,15 @@ curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
                 "When status=completed, the signed FluxMedia storage URL of the produced video (data[].url equals the top-level video_url); absent while running.",
             },
             {
-              name: "created / created_at / completed_at",
+              name: "created_at / completed_at",
               description:
-                "Task creation and completion times (seconds timestamp and ISO string); completed_at only appears once finished.",
-            },
-            {
-              name: "generation_id / generationId",
-              description:
-                "The associated video generation record ID, usable as this endpoint's path parameter for persistent lookups.",
-            },
-            {
-              name: "credits_consumed",
-              description: "Credits billed after completion.",
-              custom: true,
+                "ISO task creation timestamp. completed_at is included only after completion.",
             },
           ],
           notes: [
             "This endpoint is a FluxMedia extension, not an official OpenAI endpoint; /api/v1/videos/{id} is an alias.",
-            'In-memory tasks expire after 30 minutes; a restart or multi-instance switch makes an unfinished task return 404 "Video task not found or expired.", but an already-sent callback_url callback is unaffected. Use the generation_id for persistent lookups.',
             "Only tasks created by the user that owns the current API key are queryable; the response is Cache-Control: no-store.",
-            "The shape is identical to the task object POSTed to callback_url.",
+            "Status and output come from the persistent video record; there is no 30-minute in-memory task expiry contract.",
           ],
         },
         {
@@ -5616,6 +5657,21 @@ export function getSystemDocsMetadata(locale = "en") {
     title: content.title,
     description: content.subtitle,
   };
+}
+
+/**
+ * 读取系统文档中的外部视频端点契约。
+ *
+ * @param locale 路由语言；仅 `zh` 使用中文，其余值回退英文。
+ * @returns 创建与查询两个视频端点的本地化文档数据；不修改共享静态内容。
+ * @sideEffects 无。
+ * @failure 端点缺失时返回不足两项，由契约测试和渲染调用方显式发现。
+ */
+export function getSystemDocsVideoEndpoints(locale = "en") {
+  const content = locale === "zh" ? sections.zh : sections.en;
+  return content.externalDocs.docs.filter((endpoint) =>
+    endpoint.path.startsWith("/v1/videos")
+  );
 }
 
 /**

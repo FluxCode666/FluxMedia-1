@@ -92,6 +92,44 @@ describe("API integration docs data", () => {
     ).toBe(false);
   });
 
+  it.each([
+    "zh",
+    "en",
+  ])("%s 隐藏视频契约仍使用真实模型和持久任务协议", (locale) => {
+    const content = getApiIntegrationDocs(locale, {
+      includeTemporarilyHidden: true,
+    });
+    const create = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-generations"
+    );
+    const task = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-task"
+    );
+    const createText = JSON.stringify(create);
+    const taskText = JSON.stringify(task);
+
+    expect(create?.requestExample).toContain('"model": "seedance2"');
+    expect(create?.parameters.map((parameter) => parameter.name)).toEqual(
+      expect.arrayContaining([
+        "duration / duration_seconds",
+        "aspectRatio / aspect_ratio",
+        "resolution",
+        locale === "zh"
+          ? "firstFrame / first_frame、lastFrame / last_frame"
+          : "firstFrame / first_frame, lastFrame / last_frame",
+        "referenceImages / reference_images",
+      ])
+    );
+    expect(createText).toContain("HTTP 202");
+    expect(createText).not.toContain("kling3-omni-8s-16x9-1080p");
+    expect(createText).not.toContain("firefly-<family>");
+    expect(createText).not.toContain("input_image_role");
+    expect(task?.responseExample).toContain('"object": "video.task"');
+    expect(taskText).toMatch(/persistent|持久/u);
+    expect(taskText).not.toContain("30 minutes");
+    expect(taskText).not.toContain("30 分钟");
+  });
+
   it.each(["zh", "en"])("%s 不展示站点扩展字段或示例", (locale) => {
     const content = getApiIntegrationDocs(locale);
     const visibleNames = content.endpoints.flatMap((endpoint) => [
