@@ -537,9 +537,9 @@ jobs:
           bash ./create-database-backup.sh \
             create .env "${deploy_path}" "${image_tag}" "${git_sha}"
 
+          install -d -m 700 state
           echo "收编历史视频输入资产。"
           migration_started=true
-          install -d -m 700 state
           run_video_input_asset_migration
           run_release_gate preflight
 
