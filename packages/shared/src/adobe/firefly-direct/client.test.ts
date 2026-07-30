@@ -260,15 +260,12 @@ describe("AdobeFireflyClient.generateVideo", () => {
   const videoInput = {
     token: FAKE_TOKEN,
     prompt: "a moving cat",
-    upstreamModel: "sora2",
-    upstreamModelId: "sora2",
-    upstreamModelVersion: "1",
-    engine: "sora2",
+    model: "sora2" as const,
     duration: 8,
-    aspectRatio: "16:9",
-    outputResolution: "720p",
+    aspectRatio: "16:9" as const,
+    resolution: "720p" as const,
     size: { width: 1280, height: 720 },
-    generateAudio: false,
+    effectiveAudio: false,
     pollIntervalMs: 1,
   };
 
@@ -507,12 +504,7 @@ describe("AdobeFireflyClient.generateVideo", () => {
       downloadTransport: download,
     });
 
-    const output = await client.generateVideo({
-      ...videoInput,
-      upstreamModel: "openai:firefly:colligo:sora2",
-      upstreamModelId: "sora",
-      upstreamModelVersion: "sora-2",
-    });
+    const output = await client.generateVideo(videoInput);
 
     expect(output.bytes.toString("utf-8")).toBe("MP4DATA");
     expect(download.calls[0]?.url).toBe("https://cdn/video.mp4");
@@ -550,6 +542,44 @@ describe("AdobeFireflyClient.generateVideo", () => {
     expect(api.calls[1]?.headers.origin).toBe("https://new.express.adobe.com");
     expect(api.calls[1]?.headers["x-arp-session-id"]).toBeUndefined();
     expect(api.calls[1]?.headers["x-nonce"]).toBeUndefined();
+  });
+
+  it("Seedance client 原样提交二十张有序参考图", async () => {
+    const referenceImageIds = Array.from(
+      { length: 20 },
+      (_, index) => `reference-${String(index + 1).padStart(2, "0")}`
+    );
+    const api = new MockTransport((req) => {
+      expect(req.url).toContain("/v2/3p-videos/generate-async");
+      const payload = JSON.parse(String(req.body)) as Record<string, unknown>;
+      expect(payload.referenceBlobs).toEqual(
+        referenceImageIds.map((id) => ({ id, usage: "style" }))
+      );
+      expect(payload).not.toHaveProperty("referenceFrames");
+      return jsonResponse(
+        200,
+        {},
+        {
+          "x-override-status-link":
+            "https://firefly-epo1234-prod.adobe.io/v2/status/video-seedance-references",
+        }
+      );
+    });
+    const client = new AdobeFireflyClient({
+      webApp: "firefly",
+      transport: api,
+    });
+
+    await client.submitVideo({
+      ...videoInput,
+      model: "seedance2",
+      duration: 4,
+      resolution: "480p",
+      size: { width: 854, height: 480 },
+      referenceImageIds,
+    });
+
+    expect(api.calls).toHaveLength(1);
   });
 
   it("Kling 3.0 的上传、提交和轮询均使用 Firefly 网页 Profile", async () => {
@@ -600,15 +630,13 @@ describe("AdobeFireflyClient.generateVideo", () => {
     );
     const submitted = await client.submitVideo({
       ...videoInput,
-      upstreamModel: "",
-      upstreamModelId: "kling",
-      upstreamModelVersion: "kling_v3",
-      engine: "kling3",
+      model: "kling3",
       duration: 3,
-      outputResolution: "1080p",
+      resolution: "1080p",
       size: { width: 1920, height: 1080 },
-      generateAudio: true,
-      sourceImageIds: [firstFrameId, lastFrameId],
+      effectiveAudio: true,
+      firstFrameId,
+      lastFrameId,
     });
     await client.pollVideo({
       token: FAKE_TOKEN,
@@ -661,11 +689,8 @@ describe("AdobeFireflyClient.generateVideo", () => {
     );
     const submitted = await client.submitVideo({
       ...videoInput,
-      upstreamModel: "",
-      upstreamModelId: "kling",
-      upstreamModelVersion: "kling_v3_omni",
-      engine: "kling3-omni",
-      sourceImageIds: [imageId],
+      model: "kling3-omni",
+      firstFrameId: imageId,
     });
     await client.pollVideo({
       token: FAKE_TOKEN,
@@ -719,12 +744,9 @@ describe("AdobeFireflyClient.generateVideo", () => {
 
     await client.submitVideo({
       ...videoInput,
-      upstreamModel: "",
-      upstreamModelId: "luma",
-      upstreamModelVersion: "3.14-ray",
-      engine: "ray314",
+      model: "ray314",
       duration: 5,
-      outputResolution: "4k",
+      resolution: "4k",
       size: { width: 3840, height: 2160 },
       negativePrompt: "blurry",
     });
@@ -770,12 +792,9 @@ describe("AdobeFireflyClient.generateVideo", () => {
 
     await client.submitVideo({
       ...videoInput,
-      upstreamModel: "",
-      upstreamModelId: "luma",
-      upstreamModelVersion: "3.14-ray-hdr",
-      engine: "ray314-hdr",
+      model: "ray314-hdr",
       duration: 5,
-      outputResolution: "4k",
+      resolution: "4k",
       size: { width: 3840, height: 2160 },
       negativePrompt: "blurry",
     });

@@ -14,7 +14,10 @@ import {
   getVideoCreditCost,
   resolveVideoCreditsPerSecondByResolution,
 } from "@repo/shared/adobe";
-import { FIREFLY_VIDEO_FAMILIES } from "@repo/shared/adobe/firefly-direct/video-catalog";
+import {
+  VIDEO_MODEL_CAPABILITIES,
+  type VideoModelCapabilityDescriptor,
+} from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -56,6 +59,62 @@ type VideoTaskResponse = {
 
 const VIDEO_STATUS_INITIAL_POLL_MS = 60_000;
 const VIDEO_STATUS_MAX_POLL_MS = 120_000;
+
+type VideoCreateFamily = {
+  family: string;
+  label: string;
+  durations: readonly number[];
+  ratios: readonly string[];
+  resolutions: readonly string[];
+  resolutionInId: boolean;
+  generateAudio: boolean;
+  supportsAudio: boolean;
+  maxInputImages: number;
+  maxReferenceImages?: number;
+};
+
+/**
+ * 把中立真实模型能力投影为旧面板在 U6 切换前使用的只读视图。
+ *
+ * @param capability - 真实模型静态能力。
+ * @returns 不含任何 Adobe 上游身份的面板选择数据。
+ * @sideEffects 无。
+ * @failure 不抛错；描述符已在共享目录启动时完成自校验。
+ */
+function createVideoCreateFamily(
+  capability: VideoModelCapabilityDescriptor
+): VideoCreateFamily {
+  return {
+    family: capability.modelId,
+    label: capability.displayName,
+    durations: capability.durations,
+    ratios: capability.aspectRatios,
+    resolutions: capability.resolutions,
+    resolutionInId: ![
+      "sora2",
+      "sora2-pro",
+      "kling-o3",
+      "runway-gen45",
+    ].includes(capability.modelId),
+    generateAudio: capability.audio.defaultEnabled,
+    supportsAudio: capability.audio.supported,
+    maxInputImages:
+      capability.input.frames === "none"
+        ? 0
+        : capability.input.frames === "first-only"
+          ? 1
+          : 2,
+    ...(capability.input.referenceImages.maxCount > 0
+      ? {
+          maxReferenceImages: capability.input.referenceImages.maxCount,
+        }
+      : {}),
+  };
+}
+
+const VIDEO_CREATE_FAMILIES = VIDEO_MODEL_CAPABILITIES.map(
+  createVideoCreateFamily
+);
 
 /** 等待下一轮状态查询；间隔不低于后端视频 worker 的一分钟周期。 */
 function waitForVideoPoll(delayMs: number): Promise<void> {
@@ -146,7 +205,7 @@ export function VideoCreatePanel({
   recent?: VideoHistoryItem[];
   pricing: VideoPricingInfo;
 }) {
-  const families = FIREFLY_VIDEO_FAMILIES;
+  const families = VIDEO_CREATE_FAMILIES;
   const initialFamily =
     families.find((item) => item.family === initialSelection?.familyId) ??
     families[0];

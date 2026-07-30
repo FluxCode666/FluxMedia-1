@@ -11,6 +11,11 @@
  * （presigned URL 无需 TLS 伪装）。
  */
 
+import type {
+  VideoAspectRatio,
+  VideoModelId,
+  VideoResolution,
+} from "../../video-generation";
 import {
   AdobeAcceptedVideoError,
   AdobeRequestError,
@@ -33,7 +38,6 @@ import {
   type FireflyTransport,
   type FireflyTransportResponse,
 } from "./transport";
-import type { FireflyVideoInputImageRole } from "./video-catalog";
 
 const SUBMIT_URL = "https://firefly-3p.ff.adobe.io/v2/3p-images/generate-async";
 const VIDEO_SUBMIT_URL =
@@ -82,21 +86,19 @@ export type GenerateImageOutput = {
 export type GenerateVideoInput = {
   token: string;
   prompt: string;
-  upstreamModel: string;
-  upstreamModelId: string;
-  upstreamModelVersion: string;
-  engine: string;
+  model: VideoModelId;
   duration: number;
-  aspectRatio: string;
-  outputResolution: string;
+  aspectRatio: VideoAspectRatio;
+  resolution: VideoResolution;
   size: { width: number; height: number };
-  generateAudio: boolean;
-  /** 输入图按首尾帧或 Omni 参考图解释；默认首尾帧。 */
-  inputImageRole?: FireflyVideoInputImageRole;
-  referenceMode?: "image";
+  effectiveAudio: boolean;
   negativePrompt?: string | null;
-  /** 已上传的输入图 id（图生视频首帧/尾帧/参考）。 */
-  sourceImageIds?: string[] | null;
+  /** 已上传的具名首帧 ID。 */
+  firstFrameId?: string;
+  /** 已上传的具名尾帧 ID。 */
+  lastFrameId?: string;
+  /** 已上传且保持调用者顺序的参考图 ID。 */
+  referenceImageIds?: readonly string[];
   timeoutMs?: number;
   pollIntervalMs?: number;
   signal?: AbortSignal;
@@ -524,21 +526,20 @@ export class AdobeFireflyClient {
   async submitVideo(input: GenerateVideoInput): Promise<SubmitVideoOutput> {
     const payload: FireflyVideoPayload = buildFireflyVideoPayload({
       prompt: input.prompt,
-      upstreamModel: input.upstreamModel,
-      upstreamModelId: input.upstreamModelId,
-      upstreamModelVersion: input.upstreamModelVersion,
-      engine: input.engine,
+      model: input.model,
       duration: input.duration,
       aspectRatio: input.aspectRatio,
-      outputResolution: input.outputResolution,
+      resolution: input.resolution,
       size: input.size,
-      generateAudio: input.generateAudio,
-      ...(input.inputImageRole ? { inputImageRole: input.inputImageRole } : {}),
-      ...(input.referenceMode ? { referenceMode: input.referenceMode } : {}),
+      effectiveAudio: input.effectiveAudio,
       ...(input.negativePrompt != null
         ? { negativePrompt: input.negativePrompt }
         : {}),
-      ...(input.sourceImageIds ? { sourceImageIds: input.sourceImageIds } : {}),
+      ...(input.firstFrameId ? { firstFrameId: input.firstFrameId } : {}),
+      ...(input.lastFrameId ? { lastFrameId: input.lastFrameId } : {}),
+      ...(input.referenceImageIds
+        ? { referenceImageIds: input.referenceImageIds }
+        : {}),
     });
 
     let submitResp: FireflyTransportResponse;

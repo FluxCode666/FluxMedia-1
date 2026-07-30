@@ -7,6 +7,14 @@
  * 纯函数，DB-free，可单测。
  */
 
+import {
+  getVideoModelCapability,
+  type VideoAspectRatio,
+  type VideoModelId,
+  type VideoResolution,
+} from "../../video-generation";
+import { resolveFireflyVideoProviderModel } from "./video-catalog";
+
 export type FireflySize = { width: number; height: number };
 
 function ratioMap1K(): Record<string, FireflySize> {
@@ -284,7 +292,48 @@ export function buildFireflyImagePayloadCandidates(params: {
 }
 
 export type FireflyVideoPayload = Record<string, unknown>;
-type FireflyVideoInputImageRole = "frame" | "reference";
+
+/** Adobe 已上传的具名视频素材 ID。 */
+export type FireflyVideoProviderAssets = {
+  firstFrameId?: string;
+  lastFrameId?: string;
+  referenceImageIds?: readonly string[];
+};
+
+/**
+ * 校验 payload 层不能表达的具名素材组合。
+ *
+ * @param model - 已验证的真实模型 ID。
+ * @param assets - 已上传的具名素材 ID。
+ * @returns 无返回；合法组合继续构造载荷。
+ * @sideEffects 无。
+ * @throws Error - 首尾帧与参考图混合、尾帧缺首帧或模型不支持对应输入时抛出。
+ */
+function assertFireflyVideoProviderAssets(
+  model: VideoModelId,
+  assets: FireflyVideoProviderAssets
+): void {
+  const capability = getVideoModelCapability(model);
+  const referenceCount = assets.referenceImageIds?.length ?? 0;
+  if ((assets.firstFrameId || assets.lastFrameId) && referenceCount > 0) {
+    throw new Error("首尾帧和参考图不能同时提交");
+  }
+  if (assets.lastFrameId && !assets.firstFrameId) {
+    throw new Error("尾帧必须与首帧一起提交");
+  }
+  if (assets.firstFrameId && capability.input.frames === "none") {
+    throw new Error("该视频模型不支持输入图片");
+  }
+  if (
+    assets.lastFrameId &&
+    capability.input.frames !== "first-and-optional-last"
+  ) {
+    throw new Error("该视频模型不支持尾帧");
+  }
+  if (referenceCount > 0 && capability.input.referenceImages.maxCount === 0) {
+    throw new Error("该视频模型不支持输入图片");
+  }
+}
 
 /**
  * 构造 Firefly 视频提交体（/v2/3p-videos/generate-async），依据视频协议规格
@@ -292,41 +341,52 @@ type FireflyVideoInputImageRole = "frame" | "reference";
  *
  * 不同供应商的视频协议不共用一种 payload，按上游实现分别构造。
  */
-export function buildFireflyVideoPayload(params: {
-  prompt: string;
-  upstreamModel: string;
-  upstreamModelId: string;
-  upstreamModelVersion: string;
-  engine: string;
-  duration: number;
-  aspectRatio: string;
-  outputResolution: string;
-  size: FireflySize;
-  generateAudio: boolean;
-  inputImageRole?: FireflyVideoInputImageRole;
-  referenceMode?: "image";
-  negativePrompt?: string | null;
-  sourceImageIds?: string[] | null;
-}): FireflyVideoPayload {
+export function buildFireflyVideoPayload(
+  params: {
+    prompt: string;
+    model: VideoModelId;
+    duration: number;
+    aspectRatio: VideoAspectRatio;
+    resolution: VideoResolution;
+    size: FireflySize;
+    effectiveAudio: boolean;
+    negativePrompt?: string | null;
+  } & FireflyVideoProviderAssets
+): FireflyVideoPayload {
   const seed = seedNow();
-  const ids = (params.sourceImageIds ?? []).filter(Boolean);
-  const hasFrames = ids.length > 0;
   const size = { width: params.size.width, height: params.size.height };
+  const provider = resolveFireflyVideoProviderModel(params.model);
+  if (!provider) {
+    throw new Error(`Adobe 直连不支持的视频模型: ${params.model}`);
+  }
+  assertFireflyVideoProviderAssets(params.model, params);
+  const capability = getVideoModelCapability(params.model);
+  const effectiveAudio = capability.audio.supported
+    ? params.effectiveAudio
+    : false;
+  const frameIds = [params.firstFrameId, params.lastFrameId].filter(
+    (id): id is string => Boolean(id)
+  );
+  const referenceImageIds = [...(params.referenceImageIds ?? [])];
 
-  if (params.engine === "seedance2") {
+  if (params.model === "seedance2" || params.model === "seedance2-fast") {
+    const referenceBlobs = referenceImageIds.length
+      ? referenceImageIds.map((id) => ({ id, usage: "style" }))
+      : frameIds.map((id, index) => ({
+          id,
+          usage: "frame",
+          order: index + 1,
+        }));
     return {
-      modelId: params.upstreamModelId,
-      modelVersion: params.upstreamModelVersion,
+      modelId: provider.upstreamModelId,
+      modelVersion: provider.upstreamModelVersion,
       size,
       seeds: [seed],
-      referenceBlobs: ids.slice(0, 1).map((id) => ({
-        id,
-        usage: "style",
-      })),
+      referenceBlobs,
       prompt: params.prompt,
       negativePrompt: params.negativePrompt ?? "",
       duration: params.duration,
-      generateAudio: params.generateAudio,
+      generateAudio: effectiveAudio,
       generationMetadata: {
         module: "text2video",
         submodule: "ff-video-generate",
@@ -336,11 +396,11 @@ export function buildFireflyVideoPayload(params: {
     };
   }
 
-  if (params.engine === "kling3-omni") {
-    const isReferenceMode = params.inputImageRole === "reference";
+  if (params.model === "kling3-omni") {
+    const isReferenceMode = referenceImageIds.length > 0;
     const referenceBlobs = isReferenceMode
-      ? ids.slice(0, 3).map((id) => ({ id, usage: "asset" }))
-      : ids.slice(0, 2).map((id, index) => ({
+      ? referenceImageIds.map((id) => ({ id, usage: "asset" }))
+      : frameIds.map((id, index) => ({
           id,
           usage: "frame",
           order: index + 1,
@@ -348,13 +408,13 @@ export function buildFireflyVideoPayload(params: {
     return {
       n: 1,
       seeds: [seed],
-      modelId: params.upstreamModelId,
-      modelVersion: params.upstreamModelVersion,
+      modelId: provider.upstreamModelId,
+      modelVersion: provider.upstreamModelVersion,
       output: { storeInputs: true },
       duration: params.duration,
       prompt: params.prompt,
       size,
-      generateAudio: params.generateAudio,
+      generateAudio: effectiveAudio,
       generationMetadata: {
         module:
           !isReferenceMode && referenceBlobs.length > 0
@@ -366,10 +426,10 @@ export function buildFireflyVideoPayload(params: {
     };
   }
 
-  if (params.engine === "runway-gen45") {
+  if (params.model === "runway-gen45") {
     return {
-      modelId: params.upstreamModelId,
-      modelVersion: params.upstreamModelVersion,
+      modelId: provider.upstreamModelId,
+      modelVersion: provider.upstreamModelVersion,
       size,
       seeds: [seed],
       prompt: params.prompt,
@@ -383,12 +443,12 @@ export function buildFireflyVideoPayload(params: {
     };
   }
 
-  if (params.engine === "ray314" || params.engine === "ray314-hdr") {
+  if (params.model === "ray314" || params.model === "ray314-hdr") {
     return {
-      modelId: params.upstreamModelId,
-      modelVersion: params.upstreamModelVersion,
+      modelId: provider.upstreamModelId,
+      modelVersion: provider.upstreamModelVersion,
       size,
-      ...(params.engine === "ray314" ? { mode: "flex_2" } : {}),
+      ...(params.model === "ray314" ? { mode: "flex_2" } : {}),
       prompt: params.prompt,
       negativePrompt: params.negativePrompt ?? "",
       duration: params.duration,
@@ -397,24 +457,27 @@ export function buildFireflyVideoPayload(params: {
         submodule: "ff-video-generate",
       },
       modelSpecificPayload: {
-        resolution: params.outputResolution,
+        resolution: params.resolution,
         aspect_ratio: params.aspectRatio,
       },
       output: { storeInputs: true },
     };
   }
 
-  if (params.engine === "veo31-fast" || params.engine === "veo31-standard") {
+  if (
+    params.model === "veo31" ||
+    params.model === "veo31-fast" ||
+    params.model === "veo31-ref"
+  ) {
     const payload: FireflyVideoPayload = {
       n: 1,
       seeds: [seed],
-      modelId: "veo",
-      modelVersion:
-        params.engine === "veo31-fast" ? "3.1-fast-generate" : "3.1-generate",
+      modelId: provider.upstreamModelId,
+      modelVersion: provider.upstreamModelVersion,
       output: { storeInputs: true },
       prompt: params.prompt,
       size,
-      generateAudio: params.generateAudio,
+      generateAudio: effectiveAudio,
       referenceBlobs: [],
       generationMetadata: { module: "text2video" },
       modelSpecificPayload: {
@@ -426,9 +489,9 @@ export function buildFireflyVideoPayload(params: {
       },
     };
     payload.referenceBlobs =
-      params.engine === "veo31-standard" && params.referenceMode === "image"
-        ? ids.slice(0, 3).map((id) => ({ id, usage: "asset" }))
-        : ids.slice(0, 2).map((id, index) => ({
+      params.model === "veo31-ref"
+        ? referenceImageIds.map((id) => ({ id, usage: "asset" }))
+        : frameIds.map((id, index) => ({
             id,
             usage: "general",
             promptReference: index + 1,
@@ -436,22 +499,22 @@ export function buildFireflyVideoPayload(params: {
     return payload;
   }
 
-  if (params.engine === "kling-o3" || params.engine === "kling3") {
+  if (params.model === "kling-o3" || params.model === "kling3") {
     return {
       n: 1,
       seeds: [seed],
-      modelId: "kling",
-      modelVersion: params.upstreamModelVersion,
+      modelId: provider.upstreamModelId,
+      modelVersion: provider.upstreamModelVersion,
       output: { storeInputs: true },
       prompt: params.prompt,
       size,
-      generateAudio: params.generateAudio,
+      generateAudio: effectiveAudio,
       generationMetadata: {
-        module: hasFrames ? "image2video" : "text2video",
+        module: frameIds.length > 0 ? "image2video" : "text2video",
       },
       duration: params.duration,
       generationSettings: { aspectRatio: params.aspectRatio },
-      referenceBlobs: ids.slice(0, 2).map((id, index) => ({
+      referenceBlobs: frameIds.map((id, index) => ({
         id,
         usage: "frame",
         order: index + 1,
@@ -467,19 +530,19 @@ export function buildFireflyVideoPayload(params: {
   if (params.negativePrompt) {
     promptPayload.negative_prompt = params.negativePrompt;
   }
-  const firstId = ids[0];
+  const firstId = params.firstFrameId;
   return {
     n: 1,
     seeds: [seed],
     modelId: "sora",
-    modelVersion: "sora-2",
+    modelVersion: provider.upstreamModelVersion,
     size,
     duration: params.duration,
     fps: 24,
     prompt: JSON.stringify(promptPayload),
     generationMetadata: { module: "text2video" },
-    model: params.upstreamModel,
-    generateAudio: params.generateAudio,
+    model: provider.upstreamModel,
+    generateAudio: effectiveAudio,
     generateLoop: false,
     transparentBackground: false,
     seed: String(seed),

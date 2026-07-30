@@ -27,9 +27,7 @@ import {
 } from "@repo/shared/adobe";
 import {
   assertAdobeVideoPollUrl,
-  type FireflyVideoInputImageRole,
-  fireflyVideoMaxInputImages,
-  resolveFireflyVideoModel,
+  resolveFireflyVideoProviderModel,
 } from "@repo/shared/adobe/firefly-direct";
 import {
   AccountFrozenError,
@@ -67,6 +65,11 @@ import {
   runVideoCallbackDeliveryJob,
 } from "./video-callback-delivery";
 import { reconcileVideoCreditConsumption } from "./video-credit-consumption";
+import {
+  resolveVideoExecutionContract,
+  type VideoCapabilitySnapshot,
+  type VideoExecutionContract,
+} from "./video-execution-contract";
 import {
   adoptVideoInputObjectsForPersistence,
   parseVideoInputCleanupObjects,
@@ -115,9 +118,13 @@ export type VideoGenerationInput = {
   clientRequestId?: string;
   requestFingerprint?: string;
   model: string;
+  duration: number;
+  aspectRatio: string;
+  resolution: string;
   backendGroupId?: string;
   negativePrompt?: string | null;
-  generateAudio?: boolean;
+  effectiveAudio: boolean;
+  capabilitySnapshot: VideoCapabilitySnapshot;
   inputManifest?: VideoInputManifest;
   stagedInputObjects?: VideoInputCleanupObject[];
 };
@@ -513,21 +520,6 @@ function getVideoMetadataString(
   return normalized;
 }
 
-/**
- * 从任务 metadata 读取布尔值。
- *
- * @param metadata 已经收窄为 JSON 对象的任务元数据，历史任务可以为空。
- * @param key 要读取的字段名。
- * @returns 严格布尔值；非法历史值按缺失处理，交由调用方回退模型默认值。
- */
-function getVideoMetadataBoolean(
-  metadata: Record<string, unknown> | null,
-  key: string
-): boolean | undefined {
-  const value = metadata?.[key];
-  return typeof value === "boolean" ? value : undefined;
-}
-
 /** 重新校验任务中 storage-only 具名清单，防止脏数据进入 worker。 */
 function parsePersistedVideoInputManifest(
   row: VideoGenerationRow
@@ -546,20 +538,76 @@ function parsePersistedVideoInputManifest(
   return parsed.data;
 }
 
-/** 将具名清单投影为供应商迁移期仍消费的有序数组与角色。 */
-function projectVideoInputManifest(manifest: VideoInputManifest | undefined): {
-  references: NonNullable<VideoInputManifest["firstFrame"]>[];
-  role: FireflyVideoInputImageRole;
-} {
-  if (manifest?.referenceImages?.length) {
-    return { references: manifest.referenceImages, role: "reference" };
+/** worker 已读取到内存的具名视频输入。 */
+type LoadedVideoSourceInputs = {
+  firstFrame?: Awaited<ReturnType<typeof loadMediaInputs>>[number];
+  lastFrame?: Awaited<ReturnType<typeof loadMediaInputs>>[number];
+  referenceImages?: Awaited<ReturnType<typeof loadMediaInputs>>;
+};
+
+/**
+ * 按任务执行契约校验具名清单，不读取当前动态能力。
+ *
+ * @param manifest - 已通过 storage-only schema 和归属校验的任务清单。
+ * @param contract - 由任务列与创建快照恢复的执行事实。
+ * @returns 无返回；合法清单可继续读取媒体。
+ * @sideEffects 无。
+ * @throws Error - 帧模式、参考图模式或创建时数量上限不匹配时 fail closed。
+ */
+function assertVideoInputManifestMatchesContract(
+  manifest: VideoInputManifest | undefined,
+  contract: VideoExecutionContract
+): void {
+  if (manifest?.firstFrame && contract.frameCapability === "none") {
+    throw new Error("该视频模型不支持首尾帧输入");
   }
+  if (
+    manifest?.lastFrame &&
+    contract.frameCapability !== "first-and-optional-last"
+  ) {
+    throw new Error("该视频模型不支持尾帧输入");
+  }
+  const referenceCount = manifest?.referenceImages?.length ?? 0;
+  if (referenceCount > 0 && contract.maxReferenceImages === 0) {
+    throw new Error("该视频模型不支持参考图输入");
+  }
+  if (referenceCount > contract.maxReferenceImages) {
+    throw new Error(
+      `该视频模型最多支持 ${contract.maxReferenceImages} 张参考图`
+    );
+  }
+}
+
+/**
+ * 按具名语义读取任务输入，保持参考图的持久顺序。
+ *
+ * @param userId - 任务所有者。
+ * @param manifest - 已验证的 storage-only 具名清单。
+ * @returns 与 Adobe adapter 输入同形的内存素材；无输入返回空对象。
+ * @sideEffects 从对象存储读取媒体字节。
+ * @throws Error - 任一媒体读取或实际字节校验失败时上抛。
+ */
+async function loadPersistedVideoSourceInputs(
+  userId: string,
+  manifest: VideoInputManifest | undefined
+): Promise<LoadedVideoSourceInputs> {
+  if (manifest?.referenceImages?.length) {
+    return {
+      referenceImages: await loadMediaInputs({
+        userId,
+        references: manifest.referenceImages,
+      }),
+    };
+  }
+  const references = [manifest?.firstFrame, manifest?.lastFrame].filter(
+    (reference): reference is NonNullable<VideoInputManifest["firstFrame"]> =>
+      Boolean(reference)
+  );
+  if (!references.length) return {};
+  const loaded = await loadMediaInputs({ userId, references });
   return {
-    references: [manifest?.firstFrame, manifest?.lastFrame].filter(
-      (reference): reference is NonNullable<VideoInputManifest["firstFrame"]> =>
-        Boolean(reference)
-    ),
-    role: "frame",
+    ...(loaded[0] ? { firstFrame: loaded[0] } : {}),
+    ...(loaded[1] ? { lastFrame: loaded[1] } : {}),
   };
 }
 
@@ -599,24 +647,41 @@ export async function runAdobeVideoGenerationForUser(
   input: VideoGenerationInput,
   executionOptions?: VideoGenerationExecutionOptions
 ): Promise<VideoGenerationResult> {
-  const conf = resolveFireflyVideoModel(input.model);
-  if (!conf) return { error: `不支持的视频模型: ${input.model}` };
-  if (input.generateAudio === true && !conf.supportsAudio) {
-    return { error: "该视频模型不支持音频开关" };
+  let contract: VideoExecutionContract;
+  try {
+    contract = resolveVideoExecutionContract({
+      model: input.model,
+      durationSeconds: input.duration,
+      aspectRatio: input.aspectRatio,
+      resolution: input.resolution,
+      metadata: {
+        generateAudio: input.effectiveAudio,
+        videoCapabilitySnapshot: input.capabilitySnapshot,
+      },
+    });
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "视频任务参数无效",
+    };
   }
-  const effectiveGenerateAudio = input.generateAudio ?? conf.generateAudio;
+  const provider = resolveFireflyVideoProviderModel(contract.model);
+  if (!provider) {
+    return { error: `Adobe 直连不支持的视频模型: ${input.model}` };
+  }
   const persistedInputManifest = input.inputManifest
     ? videoInputManifestSchema.parse(input.inputManifest)
     : undefined;
-  const projectedInput = projectVideoInputManifest(persistedInputManifest);
-  const inputImageRole = projectedInput.role;
-  const maxInputImages = fireflyVideoMaxInputImages(conf, inputImageRole);
-  if (projectedInput.references.length && maxInputImages === 0) {
-    return { error: `该视频模型不支持 ${inputImageRole} 输入图` };
+  try {
+    assertVideoInputManifestMatchesContract(persistedInputManifest, contract);
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "视频输入清单无效",
+    };
   }
-  if (projectedInput.references.length > maxInputImages) {
-    return { error: `该视频模型最多支持 ${maxInputImages} 张输入图` };
-  }
+  const hasInputManifest = Boolean(
+    persistedInputManifest &&
+      listVideoInputManifestReferences(persistedInputManifest).length
+  );
 
   const videoId = input.videoGenerationId || nanoid();
   const stagedInputObjects = parseVideoInputCleanupObjects(
@@ -671,14 +736,14 @@ export async function runAdobeVideoGenerationForUser(
       apiKeyId: input.apiKeyId ?? null,
       principalScope: input.principalScope,
       usageLogVisible: true,
-      model: input.model,
-      adobeRequestProfile: conf.webApp,
-      adobeAuthProfile: conf.authProfile,
-      family: conf.family,
+      model: contract.model,
+      adobeRequestProfile: provider.webApp,
+      adobeAuthProfile: provider.authProfile,
+      family: contract.billingFamily,
       prompt: input.prompt,
-      durationSeconds: conf.duration,
-      aspectRatio: conf.aspectRatio,
-      resolution: conf.outputResolution,
+      durationSeconds: contract.duration,
+      aspectRatio: contract.aspectRatio,
+      resolution: contract.resolution,
       status: "pending",
       stage: "created",
       creditsConsumed: 0,
@@ -696,11 +761,10 @@ export async function runAdobeVideoGenerationForUser(
         ...(input.negativePrompt
           ? { negativePrompt: input.negativePrompt }
           : {}),
-        generateAudio: effectiveGenerateAudio,
+        generateAudio: contract.effectiveAudio,
+        videoCapabilitySnapshot: input.capabilitySnapshot,
       },
-      ...(projectedInput.references.length
-        ? { inputManifest: persistedInputManifest }
-        : {}),
+      ...(hasInputManifest ? { inputManifest: persistedInputManifest } : {}),
       createdAt,
       updatedAt: createdAt,
     });
@@ -730,30 +794,33 @@ export async function runAdobeVideoGenerationForUser(
 async function submitClaimedCreatedVideo(
   initialRow: VideoGenerationRow
 ): Promise<VideoGenerationResult> {
-  const conf = resolveFireflyVideoModel(initialRow.model);
-  if (!conf) {
-    await failUnchargedVideo(
-      initialRow,
-      `不支持的视频模型: ${initialRow.model}`
-    );
+  let contract: VideoExecutionContract;
+  try {
+    contract = resolveVideoExecutionContract({
+      model: initialRow.model,
+      durationSeconds: initialRow.durationSeconds,
+      aspectRatio: initialRow.aspectRatio,
+      resolution: initialRow.resolution,
+      metadata: initialRow.metadata,
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "视频任务执行快照无效";
+    await failUnchargedVideo(initialRow, message);
     return {
-      error: `不支持的视频模型: ${initialRow.model}`,
+      error: message,
       videoGenerationId: initialRow.id,
     };
   }
 
-  let inputImages: Awaited<ReturnType<typeof loadMediaInputs>> | undefined;
-  let inputImageRole: FireflyVideoInputImageRole = "frame";
+  let sourceInputs: LoadedVideoSourceInputs;
   try {
     const inputManifest = parsePersistedVideoInputManifest(initialRow);
-    const projectedInput = projectVideoInputManifest(inputManifest);
-    inputImageRole = projectedInput.role;
-    inputImages = projectedInput.references.length
-      ? await loadMediaInputs({
-          userId: initialRow.userId,
-          references: projectedInput.references,
-        })
-      : undefined;
+    assertVideoInputManifestMatchesContract(inputManifest, contract);
+    sourceInputs = await loadPersistedVideoSourceInputs(
+      initialRow.userId,
+      inputManifest
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "视频输入图片读取失败";
@@ -771,9 +838,6 @@ async function submitClaimedCreatedVideo(
     "negativePrompt",
     100_000
   );
-  const generateAudio =
-    getVideoMetadataBoolean(initialRow.metadata, "generateAudio") ??
-    conf.generateAudio;
   let row = initialRow;
 
   const globalPricing = await getRuntimeGlobalVideoPricing();
@@ -783,7 +847,7 @@ async function submitClaimedCreatedVideo(
       userId: row.userId,
       ...(row.apiKeyId ? { apiKeyId: row.apiKeyId } : {}),
       ...(backendGroupId ? { requestedGroupId: backendGroupId } : {}),
-      modelId: row.model,
+      modelId: contract.model,
       requestKind: "video",
       requiresContentSafety: true,
     });
@@ -800,10 +864,10 @@ async function submitClaimedCreatedVideo(
   }
 
   const billedCost = getVideoCreditCost({
-    durationSeconds: conf.duration,
+    durationSeconds: contract.duration,
     creditsPerSecond: resolveEffectiveVideoCreditsPerSecond({
-      family: conf.family,
-      resolution: conf.outputResolution,
+      family: contract.billingFamily,
+      resolution: contract.resolution,
       global: globalPricing,
       group: backendSession.group.videoCreditOverrides,
     }),
@@ -858,7 +922,7 @@ async function submitClaimedCreatedVideo(
       metadata: {
         videoGenerationId: row.id,
         model: row.model,
-        durationSeconds: conf.duration,
+        durationSeconds: contract.duration,
         ...(row.apiKeyId ? { externalApiKeyId: row.apiKeyId } : {}),
       },
     });
@@ -905,13 +969,16 @@ async function submitClaimedCreatedVideo(
     const startedAt = Date.now();
     const submitted = await submitAdobeDirectVideoRequest(lease.config, {
       prompt: row.prompt,
-      model: row.model,
+      model: contract.model,
+      duration: contract.duration,
+      aspectRatio: contract.aspectRatio,
+      resolution: contract.resolution,
+      effectiveAudio: contract.effectiveAudio,
+      maxReferenceImages: contract.maxReferenceImages,
       requestProfile: row.adobeRequestProfile,
       authProfile: row.adobeAuthProfile,
-      ...(inputImages ? { inputImages } : {}),
-      ...(inputImages ? { inputImageRole } : {}),
+      ...sourceInputs,
       ...(negativePrompt != null ? { negativePrompt } : {}),
-      generateAudio,
       signal: AbortSignal.timeout(VIDEO_SUBMISSION_TIMEOUT_MS),
     });
     if (!("error" in submitted)) {

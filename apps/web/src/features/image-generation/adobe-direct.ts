@@ -30,9 +30,8 @@ import {
   type FireflyTransport,
   type FireflyTransportRequest,
   type FireflyTransportResponse,
-  type FireflyVideoInputImageRole,
+  type FireflyVideoProviderModel,
   fetchCreditsBalance,
-  fireflyVideoMaxInputImages,
   fireflyVideoSize,
   isAdobeMemberSwitchableError,
   isTokenExpired,
@@ -40,9 +39,15 @@ import {
   QuotaExhaustedError,
   refreshAccessTokenFromCookie,
   resolveFireflyImageModel,
-  resolveFireflyVideoModel,
+  resolveFireflyVideoProviderModel,
 } from "@repo/shared/adobe/firefly-direct";
 import { logError, logWarn } from "@repo/shared/logger";
+import {
+  type VideoModelCapabilityDescriptor,
+  validateVideoModelParameters,
+  videoAspectRatioSchema,
+  videoResolutionSchema,
+} from "@repo/shared/video-generation";
 import { and, eq, sql } from "drizzle-orm";
 import {
   fetchMediaUpstreamDownload,
@@ -50,7 +55,10 @@ import {
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import { runAdobeBeforeAcceptanceWithAuthRetry } from "./adobe-auth-retry";
-import { prepareAdobeVideoSourceImage } from "./adobe-video-source";
+import {
+  type AdobeVideoSourceInputs,
+  prepareAndUploadAdobeVideoSourceInputs,
+} from "./adobe-video-source";
 import type { ApiConfig, GenerateImageResult } from "./types";
 import { requireAcceptedVideoCredential } from "./video-recovery-policy";
 
@@ -739,19 +747,28 @@ export type AdobeVideoStageError = {
  * 校验 direct 视频模型并构造分阶段客户端。
  *
  * @param config 已获租 Adobe direct 成员配置。
- * @param model 公开 Firefly 视频模型 ID。
+ * @param request 真实模型 ID 与任务独立参数。
+ * @param requestProfile 创建时持久化的 Adobe 请求 Profile。
  * @returns 固定成员、模型配置与客户端；失败时返回可安全展示的错误。
  */
 async function createAdobeVideoStageClient(
   config: ApiConfig,
-  model: string,
+  request: {
+    model: string;
+    duration: number;
+    aspectRatio: string;
+    resolution: string;
+  },
   requestProfile: AdobeCredentialProfile
 ): Promise<
   | { ok: false; error: string }
   | {
       ok: true;
       memberId: string;
-      conf: NonNullable<ReturnType<typeof resolveFireflyVideoModel>>;
+      provider: FireflyVideoProviderModel;
+      capability: VideoModelCapabilityDescriptor;
+      aspectRatio: ReturnType<typeof videoAspectRatioSchema.parse>;
+      resolution: ReturnType<typeof videoResolutionSchema.parse>;
       size: { width: number; height: number };
       apiTransport: FireflyTransport;
       client: AdobeFireflyClient;
@@ -763,24 +780,48 @@ async function createAdobeVideoStageClient(
     !canAdobeBackendServeModel({
       enabledModels: config.backend?.adobeEnabledModels,
       supportsVideo: config.backend?.adobeSupportsVideo ?? false,
-      requestedModel: model,
+      requestedModel: request.model,
     })
   ) {
     return { ok: false, error: "此 Adobe 后端未开放所请求的模型" };
   }
-  const conf = resolveFireflyVideoModel(model);
-  if (!conf) {
+  const validated = validateVideoModelParameters({
+    model: request.model,
+    duration: request.duration,
+    aspectRatio: request.aspectRatio,
+    resolution: request.resolution,
+  });
+  if (!validated.ok) {
     return {
       ok: false,
-      error: `Adobe 直连不支持的视频模型: ${model}`,
+      error: `Adobe 直连视频参数无效: ${validated.error.field}`,
     };
   }
-  const size = fireflyVideoSize(conf);
-  const transports = await buildAdobeTransports();
+  const provider = resolveFireflyVideoProviderModel(
+    validated.capability.modelId
+  );
+  if (!provider) {
+    return {
+      ok: false,
+      error: `Adobe 直连不支持的视频模型: ${request.model}`,
+    };
+  }
+  const aspectRatio = videoAspectRatioSchema.parse(request.aspectRatio);
+  const resolution = videoResolutionSchema.parse(request.resolution);
+  const size = fireflyVideoSize(resolution, aspectRatio);
+  if (!size) {
+    return { ok: false, error: "Adobe 直连视频尺寸无效" };
+  }
+  const transports = await buildAdobeTransports(
+    MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
+  );
   return {
     ok: true,
     memberId,
-    conf,
+    provider,
+    capability: validated.capability,
+    aspectRatio,
+    resolution,
     size,
     apiTransport: transports.apiTransport,
     client: new AdobeFireflyClient({
@@ -801,18 +842,25 @@ export async function submitAdobeDirectVideoRequest(
   params: {
     prompt: string;
     model: string;
-    inputImages?: Array<{ data: Buffer; type?: string | null }>;
+    duration: number;
+    aspectRatio: string;
+    resolution: string;
+    effectiveAudio: boolean;
+    maxReferenceImages: number;
     negativePrompt?: string | null;
-    generateAudio?: boolean;
-    inputImageRole?: FireflyVideoInputImageRole;
     requestProfile: AdobeCredentialProfile;
     authProfile: AdobeCredentialProfile;
     signal?: AbortSignal;
-  }
+  } & AdobeVideoSourceInputs
 ): Promise<AdobeVideoSubmission | AdobeVideoStageError> {
   const prepared = await createAdobeVideoStageClient(
     config,
-    params.model,
+    {
+      model: params.model,
+      duration: params.duration,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
+    },
     params.requestProfile
   );
   if (!prepared.ok) {
@@ -824,7 +872,7 @@ export async function submitAdobeDirectVideoRequest(
       submissionUncertain: false,
     };
   }
-  if (params.generateAudio === true && !prepared.conf.supportsAudio) {
+  if (params.effectiveAudio && !prepared.capability.audio.supported) {
     return {
       error: "该视频模型不支持音频开关",
       switchable: false,
@@ -833,20 +881,13 @@ export async function submitAdobeDirectVideoRequest(
       submissionUncertain: false,
     };
   }
-  const inputImageRole = params.inputImageRole ?? "frame";
-  const maxInputs = fireflyVideoMaxInputImages(prepared.conf, inputImageRole);
-  if (params.inputImages?.length && maxInputs === 0) {
+  if (
+    !prepared.capability.input.referenceImages.configurable &&
+    params.maxReferenceImages !==
+      prepared.capability.input.referenceImages.maxCount
+  ) {
     return {
-      error: `该视频模型不支持 ${inputImageRole} 输入图`,
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: true,
-      submissionUncertain: false,
-    };
-  }
-  if ((params.inputImages?.length ?? 0) > maxInputs) {
-    return {
-      error: `该视频模型最多支持 ${maxInputs} 张 ${inputImageRole} 输入图`,
+      error: "视频任务的参考图能力快照无效",
       switchable: false,
       upstreamAccepted: false,
       terminal: true,
@@ -861,45 +902,34 @@ export async function submitAdobeDirectVideoRequest(
     params.signal,
     true,
     async (token) => {
-      let sourceImageIds: string[] | undefined;
-      if (params.inputImages && params.inputImages.length > 0) {
-        sourceImageIds = [];
-        for (const image of params.inputImages.slice(0, maxInputs)) {
-          const preparedImage = await prepareAdobeVideoSourceImage(
-            image.data,
-            prepared.size,
-            prepared.conf.sourceImageMode
-          );
-          sourceImageIds.push(
-            await prepared.client.uploadImage(
-              token,
-              preparedImage.data,
-              preparedImage.type,
-              params.signal
-            )
-          );
-        }
-      }
+      const sourceIds = await prepareAndUploadAdobeVideoSourceInputs({
+        inputs: {
+          ...(params.firstFrame ? { firstFrame: params.firstFrame } : {}),
+          ...(params.lastFrame ? { lastFrame: params.lastFrame } : {}),
+          ...(params.referenceImages?.length
+            ? { referenceImages: params.referenceImages }
+            : {}),
+        },
+        frameCapability: prepared.capability.input.frames,
+        maxReferenceImages: params.maxReferenceImages,
+        size: prepared.size,
+        mode: prepared.provider.sourceImageMode,
+        uploadImage: (data, type) =>
+          prepared.client.uploadImage(token, data, type, params.signal),
+      });
       const submitted = await prepared.client.submitVideo({
         token,
         prompt: params.prompt,
-        upstreamModel: prepared.conf.upstreamModel,
-        upstreamModelId: prepared.conf.upstreamModelId,
-        upstreamModelVersion: prepared.conf.upstreamModelVersion,
-        engine: prepared.conf.engine,
-        duration: prepared.conf.duration,
-        aspectRatio: prepared.conf.aspectRatio,
-        outputResolution: prepared.conf.outputResolution,
+        model: prepared.capability.modelId,
+        duration: params.duration,
+        aspectRatio: prepared.aspectRatio,
+        resolution: prepared.resolution,
         size: prepared.size,
-        generateAudio: params.generateAudio ?? prepared.conf.generateAudio,
-        ...(sourceImageIds ? { inputImageRole } : {}),
-        ...(prepared.conf.referenceMode
-          ? { referenceMode: prepared.conf.referenceMode }
-          : {}),
+        effectiveAudio: params.effectiveAudio,
         ...(params.negativePrompt != null
           ? { negativePrompt: params.negativePrompt }
           : {}),
-        ...(sourceImageIds ? { sourceImageIds } : {}),
+        ...sourceIds,
         ...(params.signal ? { signal: params.signal } : {}),
       });
       return {
@@ -924,8 +954,7 @@ export async function pollAdobeDirectVideoRequest(input: {
   authProfile: AdobeCredentialProfile;
   signal?: AbortSignal;
 }): Promise<AdobeVideoPollResult> {
-  const conf = resolveFireflyVideoModel(input.model);
-  if (!conf) {
+  if (!resolveFireflyVideoProviderModel(input.model)) {
     throw new AdobeAcceptedVideoError(
       `Adobe 视频恢复模型不受支持: ${input.model}`,
       { errorType: "status" }
@@ -1045,39 +1074,17 @@ export async function runAdobeDirectVideoRequest(
   params: {
     prompt: string;
     model: string;
-    inputImages?: Array<{ data: Buffer; type?: string | null }>;
+    duration: number;
+    aspectRatio: string;
+    resolution: string;
+    effectiveAudio: boolean;
+    maxReferenceImages: number;
     negativePrompt?: string | null;
-    generateAudio?: boolean;
-    inputImageRole?: FireflyVideoInputImageRole;
     signal?: AbortSignal;
-  }
+  } & AdobeVideoSourceInputs
 ): Promise<AdobeVideoResult> {
-  const memberId = config.backend?.id;
-  if (!memberId) {
-    return {
-      error: "Adobe 直连成员缺少 id",
-      switchable: true,
-      upstreamAccepted: false,
-      terminal: false,
-    };
-  }
-  if (
-    !canAdobeBackendServeModel({
-      enabledModels: config.backend?.adobeEnabledModels,
-      supportsVideo: config.backend?.adobeSupportsVideo ?? false,
-      requestedModel: params.model,
-    })
-  ) {
-    return {
-      error: "此 Adobe 后端未开放所请求的模型",
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: true,
-    };
-  }
-
-  const conf = resolveFireflyVideoModel(params.model);
-  if (!conf) {
+  const provider = resolveFireflyVideoProviderModel(params.model);
+  if (!provider) {
     return {
       error: `Adobe 直连不支持的视频模型: ${params.model}`,
       switchable: false,
@@ -1085,7 +1092,25 @@ export async function runAdobeDirectVideoRequest(
       terminal: true,
     };
   }
-  if (params.generateAudio === true && !conf.supportsAudio) {
+  const prepared = await createAdobeVideoStageClient(
+    config,
+    {
+      model: params.model,
+      duration: params.duration,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
+    },
+    provider.webApp
+  );
+  if (!prepared.ok) {
+    return {
+      error: prepared.error,
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+    };
+  }
+  if (params.effectiveAudio && !prepared.capability.audio.supported) {
     return {
       error: "该视频模型不支持音频开关",
       switchable: false,
@@ -1093,81 +1118,56 @@ export async function runAdobeDirectVideoRequest(
       terminal: true,
     };
   }
-  const inputImageRole = params.inputImageRole ?? "frame";
-  const maxInputs = fireflyVideoMaxInputImages(conf, inputImageRole);
-  if (params.inputImages?.length && maxInputs === 0) {
+  if (
+    !prepared.capability.input.referenceImages.configurable &&
+    params.maxReferenceImages !==
+      prepared.capability.input.referenceImages.maxCount
+  ) {
     return {
-      error: `该视频模型不支持 ${inputImageRole} 输入图`,
+      error: "视频任务的参考图能力快照无效",
       switchable: false,
       upstreamAccepted: false,
       terminal: true,
     };
   }
-  if ((params.inputImages?.length ?? 0) > maxInputs) {
-    return {
-      error: `该视频模型最多支持 ${maxInputs} 张 ${inputImageRole} 输入图`,
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: true,
-    };
-  }
-  const size = fireflyVideoSize(conf);
-
-  const { apiTransport, downloadTransport } = await buildAdobeTransports(
-    MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES
-  );
-  const client = new AdobeFireflyClient({
-    webApp: conf.webApp,
-    transport: apiTransport,
-    downloadTransport,
-  });
 
   const result = await runWithAdobeCredential(
-    memberId,
-    conf.authProfile,
-    apiTransport,
+    prepared.memberId,
+    prepared.provider.authProfile,
+    prepared.apiTransport,
     params.signal,
     true,
     async (token) => {
       // 图生视频上传与提交必须使用同一次成员凭据，确保 Adobe image id 归属一致。
-      let sourceImageIds: string[] | undefined;
-      if (params.inputImages && params.inputImages.length > 0) {
-        sourceImageIds = [];
-        for (const image of params.inputImages.slice(0, maxInputs)) {
-          const preparedImage = await prepareAdobeVideoSourceImage(
-            image.data,
-            size,
-            conf.sourceImageMode
-          );
-          sourceImageIds.push(
-            await client.uploadImage(
-              token,
-              preparedImage.data,
-              preparedImage.type,
-              params.signal
-            )
-          );
-        }
-      }
+      const sourceIds = await prepareAndUploadAdobeVideoSourceInputs({
+        inputs: {
+          ...(params.firstFrame ? { firstFrame: params.firstFrame } : {}),
+          ...(params.lastFrame ? { lastFrame: params.lastFrame } : {}),
+          ...(params.referenceImages?.length
+            ? { referenceImages: params.referenceImages }
+            : {}),
+        },
+        frameCapability: prepared.capability.input.frames,
+        maxReferenceImages: params.maxReferenceImages,
+        size: prepared.size,
+        mode: prepared.provider.sourceImageMode,
+        uploadImage: (data, type) =>
+          prepared.client.uploadImage(token, data, type, params.signal),
+      });
 
-      const output = await client.generateVideo({
+      const output = await prepared.client.generateVideo({
         token,
         prompt: params.prompt,
-        upstreamModel: conf.upstreamModel,
-        upstreamModelId: conf.upstreamModelId,
-        upstreamModelVersion: conf.upstreamModelVersion,
-        engine: conf.engine,
-        duration: conf.duration,
-        aspectRatio: conf.aspectRatio,
-        outputResolution: conf.outputResolution,
-        size,
-        generateAudio: params.generateAudio ?? conf.generateAudio,
-        ...(sourceImageIds ? { inputImageRole } : {}),
-        ...(conf.referenceMode ? { referenceMode: conf.referenceMode } : {}),
+        model: prepared.capability.modelId,
+        duration: params.duration,
+        aspectRatio: prepared.aspectRatio,
+        resolution: prepared.resolution,
+        size: prepared.size,
+        effectiveAudio: params.effectiveAudio,
         ...(params.negativePrompt != null
           ? { negativePrompt: params.negativePrompt }
           : {}),
-        ...(sourceImageIds ? { sourceImageIds } : {}),
+        ...sourceIds,
         signal: params.signal,
       });
       return {

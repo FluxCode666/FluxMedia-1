@@ -4,7 +4,6 @@
  * 使用方是公开目录生产服务；本模块严格解析运行时目录、价格与展示配置，只输出真实可达
  * 且允许展示的图像模型和视频模型族，并复用管理目录与共享纯函数避免身份和价格规则漂移。
  */
-import { resolveFireflyVideoModel } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import { MAX_SUPPORTED_MODEL_IDS } from "@repo/shared/image-backend/supported-models";
 import {
   type ModelMarketplaceCoverRef,
@@ -17,6 +16,7 @@ import {
   sortUniqueDurations,
   sortUniqueVideoResolutions,
 } from "@repo/shared/model-marketplace";
+import { resolveVideoModelCapability } from "@repo/shared/video-generation";
 import { z } from "zod";
 import { isConcretePlatformImageModelId } from "../external-api/platform-model-catalog";
 import { buildModelConfigurationSnapshot } from "../model-configuration/catalog";
@@ -126,12 +126,12 @@ function buildRuntimeImageModelIdMap(
 }
 
 /**
- * 按视频 family 聚合真实可达路由 ID 中的能力事实。
+ * 按真实视频模型聚合全局能力事实。
  *
  * @param runtimeCatalog - 已严格解析的运行时图像与视频目录。
- * @returns family 到时长、比例与分辨率候选项的映射；路由 ID 不作为公开模型身份输出。
+ * @returns 真实模型 ID 到时长、比例与分辨率候选项的映射。
  * @sideEffects 无。
- * @failure 不抛错；不能由共享 Firefly 目录解析的视频 ID 不会伪造成公开 family。
+ * @failure 不抛错；复合身份、前缀和未知 ID 不会伪造成公开模型。
  */
 function buildRuntimeVideoCandidates(
   runtimeCatalog: RuntimeCatalog
@@ -139,14 +139,16 @@ function buildRuntimeVideoCandidates(
   const candidatesByFamily = new Map<string, VideoRuntimeCandidate[]>();
   for (const model of runtimeCatalog.video) {
     const family = resolveModelMarketplaceVideoFamily(model.id);
-    const configuration = resolveFireflyVideoModel(model.id);
-    if (!family || !configuration) continue;
+    const resolved = resolveVideoModelCapability(model.id);
+    if (!family || !resolved.ok) continue;
     const candidates = candidatesByFamily.get(family) ?? [];
-    candidates.push({
-      duration: configuration.duration,
-      aspectRatio: configuration.aspectRatio,
-      outputResolution: configuration.outputResolution,
-    });
+    for (const duration of resolved.capability.durations) {
+      for (const aspectRatio of resolved.capability.aspectRatios) {
+        for (const outputResolution of resolved.capability.resolutions) {
+          candidates.push({ duration, aspectRatio, outputResolution });
+        }
+      }
+    }
     candidatesByFamily.set(family, candidates);
   }
   return candidatesByFamily;

@@ -6,7 +6,6 @@
  * 使用方：根 uol-bindings 聚合器；能力发现依赖可注入以保持权限测试 DB-free。
  */
 
-import { FIREFLY_VIDEO_FAMILIES } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import { videoInputManifestSchema } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import {
@@ -21,7 +20,6 @@ import {
   OperationError,
 } from "@repo/shared/uol";
 import {
-  type CanonicalVideoGenerateInput,
   normalizeVideoGenerateInputForReplay,
   resolveCanonicalVideoGenerateInput,
   type VideoGenerateInput,
@@ -31,9 +29,11 @@ import {
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
+import { parseVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
+import { createVideoCapabilitySnapshot } from "@/features/image-generation/video-execution-contract";
 import {
   getVideoInputAssets,
   requestVideoAccountInputCleanup,
@@ -189,27 +189,6 @@ function readVideoMetadataBoolean(
   return metadata?.[key] === true;
 }
 
-/**
- * 为尚未切换的 Adobe service 构造迁移期复合身份。
- *
- * @param input - 已完成静态和动态能力校验的规范真实模型请求。
- * @returns 旧 service 当前可解析的裸复合 ID。
- * @sideEffects 无。
- * @throws OperationError 公共目录与迁移期映射不一致时停止请求。
- */
-function composeLegacyVideoModelId(input: CanonicalVideoGenerateInput): string {
-  const family = FIREFLY_VIDEO_FAMILIES.find(
-    (candidate) => candidate.family === input.model
-  );
-  if (!family) {
-    throw new OperationError("not_ready", "视频供应商映射尚未准备好");
-  }
-  const ratio = input.aspectRatio.replace(":", "x");
-  return family.resolutionInId
-    ? `${input.model}-${input.duration}s-${ratio}-${input.resolution}`
-    : `${input.model}-${input.duration}s-${ratio}`;
-}
-
 bindOperationExecute(videoListCapabilities, (input, principal) =>
   executeVideoListCapabilitiesBinding(input, principal, {
     async loadCapabilityOverrides() {
@@ -291,11 +270,17 @@ bindExecute(
     // WHY：动态参考图上限只约束新任务。历史幂等重放已在上方按创建时规范
     // 身份命中，不能被管理员后续降限改写为新的 validation_error。
     let canonicalResult: ReturnType<typeof resolveCanonicalVideoGenerateInput>;
+    let capabilityOverridesVersion: number;
     try {
+      const capabilityOverrides = await getRuntimeSettingJson(
+        "VIDEO_MODEL_CAPABILITY_OVERRIDES"
+      );
       canonicalResult = resolveCanonicalVideoGenerateInput(
         input,
-        await getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES")
+        capabilityOverrides
       );
+      capabilityOverridesVersion =
+        parseVideoModelCapabilityOverrides(capabilityOverrides).version;
     } catch (error) {
       logError(error, { source: "video-capability-validation" });
       throw new OperationError("not_ready", "视频模型能力配置暂时不可用");
@@ -312,6 +297,11 @@ bindExecute(
       );
     }
     const canonicalInput = canonicalResult.input;
+    const capabilitySnapshot = createVideoCapabilitySnapshot({
+      capabilityOverridesVersion,
+      maxReferenceImages:
+        canonicalResult.capability.input.referenceImages.maxCount,
+    });
     const inputManifest = {
       ...(canonicalInput.firstFrame
         ? { firstFrame: canonicalInput.firstFrame }
@@ -383,11 +373,15 @@ bindExecute(
           clientRequestId: canonicalInput.clientRequestId,
           requestFingerprint,
           prompt: canonicalInput.prompt,
-          model: composeLegacyVideoModelId(canonicalInput),
+          model: canonicalInput.model,
+          duration: canonicalInput.duration,
+          aspectRatio: canonicalInput.aspectRatio,
+          resolution: canonicalInput.resolution,
           ...(canonicalInput.negativePrompt
             ? { negativePrompt: canonicalInput.negativePrompt }
             : {}),
-          generateAudio: canonicalInput.generateAudio,
+          effectiveAudio: canonicalInput.generateAudio,
+          capabilitySnapshot,
           ...(canonicalInput.backendGroupId
             ? { backendGroupId: canonicalInput.backendGroupId }
             : {}),

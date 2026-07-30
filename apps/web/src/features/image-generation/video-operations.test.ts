@@ -7,6 +7,10 @@
 import { AdobeAcceptedVideoError } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it } from "vitest";
 import {
+  createVideoCapabilitySnapshot,
+  resolveVideoExecutionContract,
+} from "./video-execution-contract";
+import {
   buildVideoCallbackInput,
   shouldRetainVideoInputsAfterStage,
 } from "./video-input-lifecycle";
@@ -97,5 +101,109 @@ describe("video recovery policies", () => {
         "video submit failed: 500 https://internal.example/token=secret"
       )
     ).toBe("当前分组没有可用于该模型的媒体后端");
+  });
+});
+
+describe("video execution contract", () => {
+  it("用真实 Seedance ID、独立参数和创建时二十张上限恢复提交事实", () => {
+    const contract = resolveVideoExecutionContract({
+      model: "seedance2",
+      durationSeconds: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      metadata: {
+        generateAudio: true,
+        videoCapabilitySnapshot: {
+          version: 1,
+          capabilityOverridesVersion: 1,
+          maxReferenceImages: 20,
+        },
+      },
+    });
+
+    expect(contract).toEqual({
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      billingFamily: "seedance2",
+      effectiveAudio: true,
+      frameCapability: "first-and-optional-last",
+      maxReferenceImages: 20,
+      capabilityOverridesVersion: 1,
+    });
+  });
+
+  it("恢复只读取任务快照，不接受调用方注入当前动态上限", () => {
+    const persisted = resolveVideoExecutionContract({
+      model: "seedance2",
+      durationSeconds: 4,
+      aspectRatio: "16:9",
+      resolution: "480p",
+      metadata: {
+        generateAudio: false,
+        videoCapabilitySnapshot: {
+          version: 1,
+          capabilityOverridesVersion: 1,
+          maxReferenceImages: 20,
+        },
+      },
+    });
+
+    expect(persisted.maxReferenceImages).toBe(20);
+    expect(Object.keys(persisted)).not.toContain("currentMaxReferenceImages");
+  });
+
+  it("从有效能力生成版本化任务快照", () => {
+    expect(
+      createVideoCapabilitySnapshot({
+        capabilityOverridesVersion: 1,
+        maxReferenceImages: 20,
+      })
+    ).toEqual({
+      version: 1,
+      capabilityOverridesVersion: 1,
+      maxReferenceImages: 20,
+    });
+  });
+
+  it.each([
+    {
+      model: "seedance2-15s-9x16-480p",
+      durationSeconds: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      metadata: {
+        generateAudio: false,
+        videoCapabilitySnapshot: {
+          version: 1,
+          capabilityOverridesVersion: 1,
+          maxReferenceImages: 20,
+        },
+      },
+    },
+    {
+      model: "seedance2",
+      durationSeconds: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      metadata: { generateAudio: false },
+    },
+    {
+      model: "runway-gen45",
+      durationSeconds: 5,
+      aspectRatio: "16:9",
+      resolution: "720p",
+      metadata: {
+        generateAudio: true,
+        videoCapabilitySnapshot: {
+          version: 1,
+          capabilityOverridesVersion: 1,
+          maxReferenceImages: 0,
+        },
+      },
+    },
+  ])("拒绝复合身份、缺失快照或不支持的有效声音", (input) => {
+    expect(() => resolveVideoExecutionContract(input)).toThrow();
   });
 });

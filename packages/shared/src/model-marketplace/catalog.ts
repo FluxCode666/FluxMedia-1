@@ -4,11 +4,11 @@
  * 使用方包括管理清单装配、公开目录和保存服务。本模块统一处理模型身份、初始条目、
  * 最低价、视频能力排序与写回执裁剪，不读取运行时设置或数据库。
  */
-import { resolveFireflyVideoModel } from "../adobe/firefly-direct/video-catalog";
 import {
   IMAGE_CREDIT_PRICE_FIELDS,
   normalizeImagePricingModelId,
 } from "../image-backend/group-image-pricing";
+import { normalizeVideoModelId } from "../video-generation";
 import {
   DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS,
@@ -34,15 +34,15 @@ export function normalizeModelMarketplaceImageConfigKey(
 }
 
 /**
- * 从可调用视频完整 ID 解析聚合后的模型族。
+ * 从运行时视频身份解析真实模型 ID。
  *
- * @param modelId - Firefly 完整 ID，或现有目录兼容的裸 Veo/Kling ID。
- * @returns 已知视频模型族；不能由运行时视频目录解析时返回 null。
+ * @param modelId - 账号池或运行时返回的真实模型 ID。
+ * @returns 已知真实视频模型 ID；复合身份、前缀、别名和未知值返回 null。
  */
 export function resolveModelMarketplaceVideoFamily(
   modelId: string | null | undefined
 ): string | null {
-  return resolveFireflyVideoModel(modelId)?.family ?? null;
+  return normalizeVideoModelId(modelId);
 }
 
 /**
