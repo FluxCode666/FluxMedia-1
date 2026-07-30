@@ -481,16 +481,22 @@ jobs:
               return "${status}"
             fi
 
-            restore_previous_metadata
+            legacy_startup_allowed=false
             if [ "${web_stopped}" = "true" ] \
               && [ -n "${previous_image}" ] \
               && [ -n "${previous_tag}" ]; then
+              # 此时 .env 仍指向本次新 migrator；首次发布的旧 migrator 不认识
+              # legacy-startup，必须先用新镜像证明旧 schema 可启动，再切回旧元数据。
               if run_release_gate legacy-startup >/dev/null; then
-                echo "迁移尚未开始且旧 schema 门禁通过，恢复旧 Web 服务。" >&2
-                docker compose up -d --no-deps web >/dev/null 2>&1 || true
-              else
-                echo "旧应用启动门禁拒绝恢复，保持维护状态。" >&2
+                legacy_startup_allowed=true
               fi
+            fi
+            restore_previous_metadata
+            if [ "${legacy_startup_allowed}" = "true" ]; then
+              echo "迁移尚未开始且旧 schema 门禁通过，恢复旧 Web 服务。" >&2
+              docker compose up -d --no-deps web >/dev/null 2>&1 || true
+            elif [ "${web_stopped}" = "true" ]; then
+              echo "旧应用启动门禁拒绝恢复，保持维护状态。" >&2
             fi
             return "${status}"
           }
