@@ -48,6 +48,7 @@ export interface VideoInputMigrationTask {
   id: string;
   userId: string;
   inputImageRefs: unknown;
+  stagedInputObjects?: unknown;
 }
 
 /** 迁移内核的全部可替换 I/O。 */
@@ -77,7 +78,9 @@ export interface VideoInputMigrationDependencies {
   persistTaskInputReferences(input: {
     taskId: string;
     expectedInputImageRefs: unknown;
+    expectedStagedInputObjects: unknown;
     migratedInputImageRefs: MigratedVideoInputReference[];
+    clearStagedInputObjects: boolean;
   }): Promise<void>;
 }
 
@@ -325,6 +328,68 @@ function isSamePersistedReference(
   );
 }
 
+/**
+ * 验证旧 staged 对象全部已被迁移清单采用，再允许数据库原子清空旧清理集合。
+ */
+function shouldClearStagedInputObjects(input: {
+  task: VideoInputMigrationTask;
+  currentBucket: string;
+  migratedReferences: MigratedVideoInputReference[];
+}): boolean {
+  const staged = input.task.stagedInputObjects;
+  if (staged === undefined || staged === null) return false;
+  if (!Array.isArray(staged) || staged.length > MAX_MEDIA_INPUT_COUNT) {
+    throw new Error("视频任务旧 staged 输入集合无效");
+  }
+  if (staged.length === 0) return false;
+  const referencedObjects = new Set(
+    input.migratedReferences.map(
+      (reference) =>
+        `${reference.storageBucket}\0${reference.storageKey}`
+    )
+  );
+  const allowedKeys = new Set([
+    "reason",
+    "userId",
+    "videoId",
+    "attemptId",
+    "storageKey",
+    "storageBucket",
+  ]);
+  for (const rawObject of staged) {
+    if (
+      !isRecord(rawObject) ||
+      Object.keys(rawObject).some((key) => !allowedKeys.has(key)) ||
+      (rawObject.reason !== undefined && rawObject.reason !== "orphan") ||
+      rawObject.userId !== input.task.userId ||
+      rawObject.videoId !== input.task.id ||
+      typeof rawObject.attemptId !== "string" ||
+      rawObject.attemptId.length === 0 ||
+      rawObject.attemptId.length > 128 ||
+      rawObject.attemptId.includes("/") ||
+      rawObject.attemptId.includes("..") ||
+      typeof rawObject.storageKey !== "string" ||
+      typeof rawObject.storageBucket !== "string"
+    ) {
+      throw new Error("视频任务旧 staged 输入归属无效");
+    }
+    const prefix = `${input.task.userId}/video-inputs/${input.task.id}/${rawObject.attemptId}/`;
+    const objectName = rawObject.storageKey.slice(prefix.length);
+    if (
+      rawObject.storageBucket !== input.currentBucket ||
+      !rawObject.storageKey.startsWith(prefix) ||
+      objectName.length === 0 ||
+      objectName.includes("/") ||
+      !referencedObjects.has(
+        `${rawObject.storageBucket}\0${rawObject.storageKey}`
+      )
+    ) {
+      throw new Error("视频任务旧 staged 输入未被任务清单采用");
+    }
+  }
+  return true;
+}
+
 /** 用不含存储身份的上下文包装单项 I/O 错误。 */
 function createSafeInputError(
   taskId: string,
@@ -470,12 +535,19 @@ export async function migrateVideoInputTask(
         migratedReferences[index] as MigratedVideoInputReference
       )
   );
-  if (referencesChanged) {
+  const clearStagedInputObjects = shouldClearStagedInputObjects({
+    task,
+    currentBucket,
+    migratedReferences,
+  });
+  if (referencesChanged || clearStagedInputObjects) {
     try {
       await dependencies.persistTaskInputReferences({
         taskId: task.id,
         expectedInputImageRefs: task.inputImageRefs,
+        expectedStagedInputObjects: task.stagedInputObjects ?? null,
         migratedInputImageRefs: migratedReferences,
+        clearStagedInputObjects,
       });
     } catch (error) {
       throw new Error(`视频任务 ${task.id} 的输入引用持久化失败`, {
@@ -486,7 +558,8 @@ export async function migrateVideoInputTask(
 
   return {
     taskId: task.id,
-    status: referencesChanged ? "migrated" : "verified",
+    status:
+      referencesChanged || clearStagedInputObjects ? "migrated" : "verified",
     inputCount: references.length,
     copiedCount,
     verifiedCount,

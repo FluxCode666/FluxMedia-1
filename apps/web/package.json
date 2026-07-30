@@ -2,6 +2,7 @@
   "name": "@repo/web",
   "version": "0.8.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "node ../../scripts/with-root-env.mjs ./node_modules/next/dist/bin/next dev --turbopack --port 3000",
     "build": "next build",

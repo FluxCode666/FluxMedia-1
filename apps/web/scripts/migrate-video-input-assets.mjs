@@ -432,21 +432,38 @@ async function readRemoteInput(input) {
 async function persistMigratedReferences(client, input) {
   const expectedJson = JSON.stringify(input.expectedInputImageRefs);
   const migratedJson = JSON.stringify(input.migratedInputImageRefs);
+  const expectedStagedJson =
+    input.expectedStagedInputObjects === null
+      ? null
+      : JSON.stringify(input.expectedStagedInputObjects);
   const updated = await client.query(
     `UPDATE video_generation
         SET input_image_refs = $2::json,
+            staged_input_objects = CASE
+              WHEN $4::boolean THEN NULL
+              ELSE staged_input_objects
+            END,
             updated_at = NOW()
       WHERE id = $1
         AND input_image_refs::jsonb = $3::jsonb
+        AND staged_input_objects::jsonb IS NOT DISTINCT FROM $5::jsonb
       RETURNING id`,
-    [input.taskId, migratedJson, expectedJson]
+    [
+      input.taskId,
+      migratedJson,
+      expectedJson,
+      input.clearStagedInputObjects,
+      expectedStagedJson,
+    ]
   );
   if (updated.rowCount === 1) return;
   const current = await client.query(
-    `SELECT input_image_refs::jsonb = $2::jsonb AS matches
+    `SELECT input_image_refs::jsonb = $2::jsonb
+              AND ($3::boolean = false OR staged_input_objects IS NULL)
+              AS matches
        FROM video_generation
       WHERE id = $1`,
-    [input.taskId, migratedJson]
+    [input.taskId, migratedJson, input.clearStagedInputObjects]
   );
   if (current.rows[0]?.matches === true) return;
   throw new Error("任务输入在迁移期间发生并发变化");
@@ -473,7 +490,7 @@ async function readMigrationSchemaState(client) {
   if (
     state.table_present === true &&
     state.legacy_column_count === 3 &&
-    state.manifest_column_count === 1
+    state.manifest_column_count === 0
   ) {
     return "legacy";
   }
@@ -492,7 +509,8 @@ async function listTasksWithLegacyInputs(client, afterTaskId) {
   const result = await client.query(
     `SELECT id,
             user_id,
-            input_image_refs
+            input_image_refs,
+            staged_input_objects
        FROM video_generation
       WHERE input_image_refs IS NOT NULL
         AND ($1::text IS NULL OR id > $1)
@@ -504,6 +522,7 @@ async function listTasksWithLegacyInputs(client, afterTaskId) {
     id: row.id,
     userId: row.user_id,
     inputImageRefs: row.input_image_refs,
+    stagedInputObjects: row.staged_input_objects,
   }));
 }
 

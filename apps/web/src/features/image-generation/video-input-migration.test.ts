@@ -26,6 +26,7 @@ function pngBytes(suffix: string): Buffer {
 
 /** 内存 I/O 夹具状态。 */
 type MigrationHarness = {
+  clearedStaged: boolean[];
   dependencies: VideoInputMigrationDependencies;
   objects: Map<string, Buffer>;
   persisted: MigratedVideoInputReference[][];
@@ -45,6 +46,7 @@ function createHarness(): MigrationHarness {
   const objects = new Map<string, Buffer>();
   const remotes = new Map<string, Buffer>();
   const persisted: MigratedVideoInputReference[][] = [];
+  const clearedStaged: boolean[] = [];
   const putKeys: string[] = [];
   const remoteReads: string[] = [];
   let putCallCount = 0;
@@ -84,10 +86,12 @@ function createHarness(): MigrationHarness {
     async persistTaskInputReferences(input) {
       if (persistFailure) throw new Error("injected CAS failure");
       persisted.push(input.migratedInputImageRefs);
+      clearedStaged.push(input.clearStagedInputObjects);
     },
   };
 
   return {
+    clearedStaged,
     dependencies,
     objects,
     persisted,
@@ -167,6 +171,47 @@ describe("migrateVideoInputTask", () => {
       storageKey,
       storageBucket: CURRENT_BUCKET,
     });
+  });
+
+  it("任务自有对象验证成功后原子清空旧 staged 清理集合", async () => {
+    const harness = createHarness();
+    const attemptId = "legacy-attempt";
+    const storageKey =
+      `user-1/video-inputs/video-1/${attemptId}/first-frame.png`;
+    const bytes = pngBytes("legacy-staged");
+    harness.objects.set(objectId(CURRENT_BUCKET, storageKey), bytes);
+    const task: VideoInputMigrationTask = {
+      id: "video-1",
+      userId: "user-1",
+      inputImageRefs: [
+        {
+          source: "storage",
+          mimeType: "image/png",
+          storageKey,
+          storageBucket: CURRENT_BUCKET,
+          byteLength: bytes.byteLength,
+        },
+      ],
+      stagedInputObjects: [
+        {
+          userId: "user-1",
+          videoId: "video-1",
+          attemptId,
+          storageKey,
+          storageBucket: CURRENT_BUCKET,
+        },
+      ],
+    };
+
+    const result = await migrateVideoInputTask(task, harness.dependencies);
+
+    expect(result).toMatchObject({
+      status: "migrated",
+      copiedCount: 0,
+      verifiedCount: 1,
+    });
+    expect(harness.clearedStaged).toEqual([true]);
+    expect(harness.persisted).toHaveLength(1);
   });
 
   it("把用户历史 storage 输入复制到确定性任务前缀并保留源对象", async () => {
