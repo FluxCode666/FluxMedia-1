@@ -32,6 +32,11 @@ import {
   updateModelConfigurationEntryInputSchema,
   updateModelConfigurationEntryOutputSchema,
 } from "@repo/shared/model-marketplace";
+import {
+  parseVideoModelCapabilityOverrides,
+  type VideoModelCapabilityOverrides,
+  videoModelCapabilityOverridesSchema,
+} from "@repo/shared/video-generation";
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -70,6 +75,8 @@ export interface ModelConfigurationTransaction {
   lockImagePricing(): Promise<unknown>;
   /** 初始化并锁定完整视频价格行。 */
   lockVideoPricing(): Promise<unknown>;
+  /** 初始化并锁定视频能力覆盖行；必须晚于视频价格行。 */
+  lockVideoCapabilities(): Promise<unknown>;
   /** 保存已通过严格 schema 的展示配置及幂等回执。 */
   saveMarketplaceConfig(
     config: ModelMarketplaceConfig,
@@ -83,6 +90,11 @@ export interface ModelConfigurationTransaction {
   /** 保存已通过全局财务 schema 的完整视频价格矩阵。 */
   saveVideoPricing(
     pricing: Record<string, number>,
+    actorUserId: string
+  ): Promise<void>;
+  /** 保存已通过严格 schema 的完整视频能力覆盖。 */
+  saveVideoCapabilities(
+    capabilities: VideoModelCapabilityOverrides,
     actorUserId: string
   ): Promise<void>;
 }
@@ -372,6 +384,9 @@ function serializeRequestPayload(
           ([left], [right]) => left.localeCompare(right)
         )
       ),
+      ...(input.maxReferenceImages !== undefined
+        ? { maxReferenceImages: input.maxReferenceImages }
+        : {}),
     });
   }
   return JSON.stringify({
@@ -595,6 +610,19 @@ export function createModelConfigurationService(
             "视频分辨率价格与当前模型目录不一致"
           );
         }
+        const capabilityIsConfigurable =
+          catalogEntry.maxReferenceImages !== undefined;
+        if (
+          capabilityIsConfigurable !==
+          (input.maxReferenceImages !== undefined)
+        ) {
+          throw new ModelConfigurationServiceError(
+            "not_configurable",
+            capabilityIsConfigurable
+              ? "该视频模型必须提交参考图上限"
+              : "该视频模型不允许配置参考图上限"
+          );
+        }
       }
 
       const replacement = await prepareCoverReplacement(input);
@@ -635,6 +663,12 @@ export function createModelConfigurationService(
               input.category === "video"
                 ? globalVideoModelCreditsPerSecondSchema.parse(
                     await transaction.lockVideoPricing()
+                  )
+                : null;
+            const videoCapabilities =
+              input.category === "video"
+                ? parseVideoModelCapabilityOverrides(
+                    await transaction.lockVideoCapabilities()
                   )
                 : null;
 
@@ -728,6 +762,12 @@ export function createModelConfigurationService(
                   "视频价格事务未初始化"
                 );
               }
+              if (!videoCapabilities) {
+                throw new ModelConfigurationServiceError(
+                  "invalid_dependency_result",
+                  "视频能力事务未初始化"
+                );
+              }
               const nextVideoPricing =
                 globalVideoModelCreditsPerSecondSchema.parse({
                   ...Object.fromEntries(
@@ -752,6 +792,22 @@ export function createModelConfigurationService(
                 });
               nextConfig.videoByFamily[input.configKey] = nextEntry;
               await transaction.saveVideoPricing(nextVideoPricing, actorUserId);
+              if (input.maxReferenceImages !== undefined) {
+                const nextVideoCapabilities =
+                  videoModelCapabilityOverridesSchema.parse({
+                    ...videoCapabilities,
+                    byModel: {
+                      ...videoCapabilities.byModel,
+                      [input.configKey]: {
+                        maxReferenceImages: input.maxReferenceImages,
+                      },
+                    },
+                  });
+                await transaction.saveVideoCapabilities(
+                  nextVideoCapabilities,
+                  actorUserId
+                );
+              }
             }
 
             const receipt: ModelMarketplaceWriteReceipt = {

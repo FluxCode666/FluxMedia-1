@@ -115,7 +115,7 @@ describe("video execution contract", () => {
         generateAudio: true,
         videoCapabilitySnapshot: {
           version: 1,
-          capabilityOverridesVersion: 1,
+          modelConfigurationRevision: 1,
           maxReferenceImages: 20,
         },
       },
@@ -130,7 +130,7 @@ describe("video execution contract", () => {
       effectiveAudio: true,
       frameCapability: "first-and-optional-last",
       maxReferenceImages: 20,
-      capabilityOverridesVersion: 1,
+      modelConfigurationRevision: 1,
     });
   });
 
@@ -144,7 +144,7 @@ describe("video execution contract", () => {
         generateAudio: false,
         videoCapabilitySnapshot: {
           version: 1,
-          capabilityOverridesVersion: 1,
+          modelConfigurationRevision: 1,
           maxReferenceImages: 20,
         },
       },
@@ -157,12 +157,12 @@ describe("video execution contract", () => {
   it("从有效能力生成版本化任务快照", () => {
     expect(
       createVideoCapabilitySnapshot({
-        capabilityOverridesVersion: 1,
+        modelConfigurationRevision: 1,
         maxReferenceImages: 20,
       })
     ).toEqual({
       version: 1,
-      capabilityOverridesVersion: 1,
+      modelConfigurationRevision: 1,
       maxReferenceImages: 20,
     });
   });
@@ -177,7 +177,7 @@ describe("video execution contract", () => {
         generateAudio: false,
         videoCapabilitySnapshot: {
           version: 1,
-          capabilityOverridesVersion: 1,
+          modelConfigurationRevision: 1,
           maxReferenceImages: 20,
         },
       },
@@ -198,7 +198,7 @@ describe("video execution contract", () => {
         generateAudio: true,
         videoCapabilitySnapshot: {
           version: 1,
-          capabilityOverridesVersion: 1,
+          modelConfigurationRevision: 1,
           maxReferenceImages: 0,
         },
       },

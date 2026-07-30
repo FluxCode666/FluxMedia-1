@@ -15,6 +15,10 @@ import {
   MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH,
   type ModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
+import {
+  createDefaultVideoModelCapabilityOverrides,
+  type VideoModelCapabilityOverrides,
+} from "@repo/shared/video-generation";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -29,11 +33,14 @@ import type {
 export const MODEL_MARKETPLACE_CONFIG_SETTING_KEY = "MODEL_MARKETPLACE_CONFIG";
 export const IMAGE_MODEL_PRICING_SETTING_KEY = "IMAGE_MODEL_CREDIT_PRICES";
 export const VIDEO_MODEL_PRICING_SETTING_KEY = "VIDEO_MODEL_CREDITS_PER_SECOND";
+export const VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY =
+  "VIDEO_MODEL_CAPABILITY_OVERRIDES";
 
 type ModelConfigurationSettingKey =
   | typeof MODEL_MARKETPLACE_CONFIG_SETTING_KEY
   | typeof IMAGE_MODEL_PRICING_SETTING_KEY
-  | typeof VIDEO_MODEL_PRICING_SETTING_KEY;
+  | typeof VIDEO_MODEL_PRICING_SETTING_KEY
+  | typeof VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY;
 
 const lockedSettingRowSchema = z.object({ value: z.unknown() });
 const mutationRowSchema = z.object({ key: z.string().min(1) });
@@ -235,6 +242,7 @@ function createTransactionPort(
     | typeof IMAGE_MODEL_PRICING_SETTING_KEY
     | typeof VIDEO_MODEL_PRICING_SETTING_KEY
     | null = null;
+  let videoCapabilitiesLocked = false;
   const auditContext: DatabaseAuditContext = Object.freeze({
     [DATABASE_AUDIT_CONTEXT_BRAND]: true as const,
     transaction: databaseTransaction,
@@ -300,6 +308,18 @@ function createTransactionPort(
         DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND
       );
     },
+    async lockVideoCapabilities() {
+      if (lockedPriceKey !== VIDEO_MODEL_PRICING_SETTING_KEY) {
+        throw new Error("必须先锁定视频价格，再锁定视频能力覆盖");
+      }
+      const value = await initializeAndLockSetting(
+        databaseTransaction,
+        VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
+        createDefaultVideoModelCapabilityOverrides()
+      );
+      videoCapabilitiesLocked = true;
+      return value;
+    },
     async saveMarketplaceConfig(
       config: ModelMarketplaceConfig,
       actorUserId: string
@@ -335,6 +355,20 @@ function createTransactionPort(
         databaseTransaction,
         VIDEO_MODEL_PRICING_SETTING_KEY,
         pricing,
+        actorUserId
+      );
+    },
+    async saveVideoCapabilities(
+      capabilities: VideoModelCapabilityOverrides,
+      actorUserId: string
+    ) {
+      if (!videoCapabilitiesLocked) {
+        throw new Error("必须先锁定视频能力覆盖再保存");
+      }
+      await saveLockedSetting(
+        databaseTransaction,
+        VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
+        capabilities,
         actorUserId
       );
     },

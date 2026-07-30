@@ -12,6 +12,11 @@ import {
 } from "../adobe/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
 import { normalizeSupportedModelId } from "../image-backend/supported-models";
+import {
+  MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_COUNT,
+} from "../image-generation/media-contract";
+import { videoFrameInputCapabilitySchema } from "../video-generation";
 
 export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
@@ -25,6 +30,11 @@ const safeRevisionSchema = z
   .number()
   .int()
   .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+const positiveSafeIntegerSchema = z
+  .number()
+  .int()
+  .positive()
   .max(Number.MAX_SAFE_INTEGER);
 const configKeySchema = z
   .string()
@@ -391,6 +401,7 @@ const videoConfigurationEntrySchema = z
       .array(z.string().trim().min(1).max(32))
       .min(1)
       .max(20),
+    maxReferenceImages: positiveSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine(addVideoResolutionPricingIssues);
@@ -450,6 +461,31 @@ const publicVideoItemSchema = z
     supportedDurations: z.array(z.number().int().positive()).max(100),
     supportedAspectRatios: z.array(z.string().trim().min(1).max(32)).max(100),
     supportedResolutions: z.array(z.string().trim().min(1).max(32)).max(100),
+    input: z
+      .object({
+        frames: videoFrameInputCapabilitySchema,
+        referenceImages: z
+          .object({
+            maxCount: z.number().int().nonnegative(),
+            configurable: z.boolean(),
+          })
+          .strict(),
+        framesAndReferencesMutuallyExclusive: z.boolean(),
+      })
+      .strict(),
+    audio: z
+      .object({
+        supported: z.boolean(),
+        defaultEnabled: z.boolean(),
+      })
+      .strict(),
+    configuredReachable: z.boolean(),
+    infrastructureLimits: z
+      .object({
+        maxMediaInputCount: z.literal(MAX_MEDIA_INPUT_COUNT),
+        maxMediaInputBytes: z.literal(MAX_MEDIA_INPUT_BYTES),
+      })
+      .strict(),
   })
   .strict()
   .superRefine(addVideoResolutionPricingIssues)
@@ -518,6 +554,7 @@ const updateVideoConfigurationInputSchema = z
     ...updateMarketplaceShape,
     category: z.literal("video"),
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
+    maxReferenceImages: positiveSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {

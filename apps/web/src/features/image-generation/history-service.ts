@@ -17,6 +17,7 @@ import {
   type HistoryRecord,
   type HistoryRecordStatus,
   type HistoryReferenceImage,
+  type HistoryVideoInputSummary,
   historyCursorFiltersSchema,
   historyListInputSchema,
   historyListOutputSchema,
@@ -92,10 +93,11 @@ export interface ImageHistoryRow extends HistoryRowCommon {
 /** PostgreSQL 仓储返回的视频窄行。 */
 export interface VideoHistoryRow extends HistoryRowCommon {
   kind: "video";
-  family: string;
   resolution: string;
-  durationSeconds: number;
+  duration: number;
   aspectRatio: string;
+  generateAudio: boolean;
+  input: HistoryVideoInputSummary;
   videoUrl: string | null;
 }
 

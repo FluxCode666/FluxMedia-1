@@ -447,6 +447,44 @@ describe("POST /api/admin/model-configuration", () => {
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
+  it("解析 Seedance 正安全整数参考图上限并拒绝非法值", async () => {
+    const baseFields = {
+      category: "video",
+      configKey: "seedance2",
+      expectedRevision: "5",
+      clientRequestId: CLIENT_REQUEST_ID,
+      visible: "true",
+      homepageVisible: "false",
+      homepagePriority: "5",
+      description: "Seedance 视频模型",
+      coverChange: "keep",
+      creditsPerSecondByResolution: JSON.stringify({ "1080p": 45 }),
+    };
+    const response = await POST(
+      createMultipartRequest(
+        createFormData({ ...baseFields, maxReferenceImages: "20" })
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(invokedInput()).toMatchObject({
+      category: "video",
+      configKey: "seedance2",
+      maxReferenceImages: 20,
+    });
+
+    for (const maxReferenceImages of ["0", "-1", "1.5", "1e3"]) {
+      mocks.invokeOperation.mockClear();
+      const invalidResponse = await POST(
+        createMultipartRequest(
+          createFormData({ ...baseFields, maxReferenceImages })
+        )
+      );
+      expect(invalidResponse.status).toBe(400);
+      expect(mocks.invokeOperation).not.toHaveBeenCalled();
+    }
+  });
+
   it("用真实会话构造 Principal，并先初始化再调用 UOL", async () => {
     const order: string[] = [];
     mocks.ensureUolInitialized.mockImplementation(async () => {

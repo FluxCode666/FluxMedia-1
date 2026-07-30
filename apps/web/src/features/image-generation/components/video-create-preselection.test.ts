@@ -11,54 +11,54 @@ import { resolveVideoInitialSelection } from "../model-preselection";
 describe("resolveVideoInitialSelection", () => {
   it("从真实 Veo ID 选择能力目录中的首个合法参数", () => {
     expect(resolveVideoInitialSelection("veo31")).toEqual({
-      familyId: "veo31",
+      modelId: "veo31",
       duration: 4,
-      ratio: "16:9",
+      aspectRatio: "16:9",
       resolution: "1080p",
     });
   });
 
   it("从真实 Sora ID 选择能力目录中的首个合法参数", () => {
     expect(resolveVideoInitialSelection("sora2-pro")).toEqual({
-      familyId: "sora2-pro",
+      modelId: "sora2-pro",
       duration: 4,
-      ratio: "9:16",
+      aspectRatio: "9:16",
       resolution: "720p",
     });
   });
 
   it("从真实 Runway ID 选择固定 720p 横屏的首个合法时长", () => {
     expect(resolveVideoInitialSelection("runway-gen45")).toEqual({
-      familyId: "runway-gen45",
+      modelId: "runway-gen45",
       duration: 5,
-      ratio: "16:9",
+      aspectRatio: "16:9",
       resolution: "720p",
     });
   });
 
   it("从真实 Kling 3.0 ID 选择能力目录中的首个合法参数", () => {
     expect(resolveVideoInitialSelection("kling3")).toEqual({
-      familyId: "kling3",
+      modelId: "kling3",
       duration: 3,
-      ratio: "16:9",
+      aspectRatio: "16:9",
       resolution: "1080p",
     });
   });
 
   it("从真实 Ray 3.14 ID 选择能力目录中的首个合法参数", () => {
     expect(resolveVideoInitialSelection("ray314")).toEqual({
-      familyId: "ray314",
+      modelId: "ray314",
       duration: 5,
-      ratio: "1:1",
+      aspectRatio: "1:1",
       resolution: "4k",
     });
   });
 
   it("从真实 Ray 3.14 HDR ID 选择能力目录中的首个合法参数", () => {
     expect(resolveVideoInitialSelection("ray314-hdr")).toEqual({
-      familyId: "ray314-hdr",
+      modelId: "ray314-hdr",
       duration: 5,
-      ratio: "1:1",
+      aspectRatio: "1:1",
       resolution: "4k",
     });
   });

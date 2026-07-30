@@ -101,10 +101,11 @@ describe("history contract", () => {
           ...common,
           id: "record-2",
           kind: "video",
-          family: "sora2",
           resolution: "1080p",
-          durationSeconds: 8,
+          duration: 8,
           aspectRatio: "16x9",
+          generateAudio: true,
+          input: { mode: "first-last-frames", count: 2 },
           videoUrl: "/api/storage/generations/user/output.mp4",
         },
       ],
@@ -123,7 +124,18 @@ describe("history contract", () => {
         records: [
           {
             ...parsed.records[0],
-            durationSeconds: 8,
+            duration: 8,
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      historyListOutputSchema.safeParse({
+        ...parsed,
+        records: [
+          {
+            ...parsed.records[1],
+            family: "sora2",
           },
         ],
       }).success

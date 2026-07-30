@@ -51,6 +51,7 @@ const KNOWN_FORM_FIELDS = new Set([
   "coverChange",
   "cover",
   "creditsPerSecondByResolution",
+  "maxReferenceImages",
   ...IMAGE_PRICE_FIELDS,
 ]);
 
@@ -234,6 +235,25 @@ function parseRevision(value: string): number {
 }
 
 /**
+ * 解析无业务硬上限的正安全整数能力值。
+ *
+ * @param value - multipart 中的十进制整数文本。
+ * @returns 1 至 Number.MAX_SAFE_INTEGER 的整数。
+ * @throws ModelConfigurationFormError - 零、符号、小数、指数或不安全整数时失败。
+ */
+function parsePositiveSafeInteger(value: string): number {
+  const normalized = value.trim();
+  if (!/^[1-9]\d*$/.test(normalized)) {
+    throw new ModelConfigurationFormError("能力值必须是正整数");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ModelConfigurationFormError("能力值超过安全整数范围");
+  }
+  return parsed;
+}
+
+/**
  * 解析官网首页排序优先级。
  *
  * @param value - 只允许非负安全整数的优先级文本。
@@ -381,8 +401,13 @@ async function parseVideoInput(
 ): Promise<UpdateModelConfigurationEntryInput> {
   assertOnlyAllowedScalars(
     data.scalars,
-    new Set([...MARKETPLACE_SCALAR_FIELDS, "creditsPerSecondByResolution"])
+    new Set([
+      ...MARKETPLACE_SCALAR_FIELDS,
+      "creditsPerSecondByResolution",
+      "maxReferenceImages",
+    ])
   );
+  const maxReferenceImages = data.scalars.get("maxReferenceImages");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "video",
     configKey: requireScalar(data.scalars, "configKey"),
@@ -405,6 +430,9 @@ async function parseVideoInput(
     creditsPerSecondByResolution: parseVideoPricing(
       requireScalar(data.scalars, "creditsPerSecondByResolution")
     ),
+    ...(maxReferenceImages !== undefined
+      ? { maxReferenceImages: parsePositiveSafeInteger(maxReferenceImages) }
+      : {}),
   });
 }
 

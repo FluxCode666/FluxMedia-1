@@ -75,6 +75,13 @@ const SYSTEM = {
   type: "system",
   reason: "model-marketplace-page",
 } satisfies Principal;
+const API_KEY = {
+  type: "apiKey",
+  credentialKind: "external",
+  userId: "user-1",
+  apiKeyId: "api-key-1",
+  plan: "pro",
+} satisfies Principal;
 
 /**
  * 创建合法管理快照，运行时状态可按管理降级用例切换。
@@ -133,9 +140,54 @@ function createPublicItem(): ModelMarketplacePublicItem {
 }
 
 /**
+ * 创建合法公开视频卡片 DTO。
+ *
+ * @param modelId - 真实定价模型 ID，同时作为公开配置键。
+ * @param configuredReachable - 公开服务计算的全局配置并集可达性。
+ * @returns 不含成员、健康、容量或凭据字段的严格视频条目。
+ */
+function createPublicVideoItem(
+  modelId: "seedance2" | "veo31",
+  configuredReachable = true
+): ModelMarketplacePublicItem {
+  return {
+    category: "video",
+    configKey: modelId,
+    modelId,
+    displayName: modelId === "seedance2" ? "Seedance 2.0" : "Veo 3.1",
+    iconKey: modelId === "seedance2" ? "bytedance" : "google",
+    description: "视频生成",
+    coverUrl: "/model-marketplace/default-video.webp",
+    minimumCredits: 3,
+    homepageVisible: true,
+    homepagePriority: 2,
+    priceUnit: "per_second",
+    creditsPerSecond: 3,
+    creditsPerSecondByResolution: {
+      "720p": 3,
+      "1080p": 5,
+    },
+    supportedDurations: [4, 6, 8],
+    supportedAspectRatios: ["16:9", "9:16"],
+    supportedResolutions: ["720p", "1080p"],
+    input: {
+      frames: "first-and-optional-last",
+      referenceImages: { maxCount: 0, configurable: false },
+      framesAndReferencesMutuallyExclusive: true,
+    },
+    audio: { supported: false, defaultEnabled: false },
+    configuredReachable,
+    infrastructureLimits: {
+      maxMediaInputCount: 256,
+      maxMediaInputBytes: 209_715_200,
+    },
+  };
+}
+
+/**
  * 创建可被每个用例独立重置的绑定依赖 spy。
  *
- * @returns 三个生产服务入口及其 Vitest 调用记录。
+ * @returns 四个生产读取/写入入口及其 Vitest 调用记录。
  */
 function createDependencies(): ModelMarketplaceOperationBindingDependencies {
   return {
@@ -146,6 +198,7 @@ function createDependencies(): ModelMarketplaceOperationBindingDependencies {
       revision: 1,
     })),
     listPublicModels: vi.fn(async () => ({ items: [createPublicItem()] })),
+    listVideoCapabilities: vi.fn(async () => ({ items: [] })),
     reportUpdateError: vi.fn(),
   };
 }
@@ -297,22 +350,74 @@ describe("模型配置与模型广场 UOL binding", () => {
     });
   });
 
-  it("公开目录只允许 system Principal 且不泄漏内部字段", async () => {
+  it("system Principal 保留全局配置并集且不读取用户能力", async () => {
+    const globalCatalog = {
+      items: [createPublicItem(), createPublicVideoItem("seedance2")],
+    };
+    vi.mocked(dependencies.listPublicModels).mockResolvedValueOnce(
+      globalCatalog
+    );
     const output = await invokeOperation<{
       items: ModelMarketplacePublicItem[];
     }>("modelMarketplace.listPublicModels", {}, SYSTEM, {
       requestId: "binding-public",
     });
 
-    expect(output).toEqual({ items: [createPublicItem()] });
+    expect(output).toEqual(globalCatalog);
+    expect(dependencies.listVideoCapabilities).not.toHaveBeenCalled();
     expect(JSON.stringify(output)).not.toMatch(
-      /"bucket"|"key"|"credential"|"health"|"member"/
+      /"bucket"|"key"|"credential"|"health"|"member"|"capacity"|"concurrency"|"token"|"cookie"/
     );
+  });
+
+  it("登录用户按可信分组覆盖视频可达性且不改变图片", async () => {
+    const image = createPublicItem();
+    const seedance = createPublicVideoItem("seedance2");
+    const veo = createPublicVideoItem("veo31");
+    vi.mocked(dependencies.listPublicModels).mockResolvedValueOnce({
+      items: [image, seedance, veo],
+    });
+    vi.mocked(dependencies.listVideoCapabilities).mockResolvedValueOnce({
+      items: [
+        {
+          model: "seedance2",
+          configuredReachable: true,
+          member: "member-1",
+          credential: "secret",
+          health: "healthy",
+          capacity: 10,
+          concurrency: 2,
+          token: "secret-token",
+          cookie: "secret-cookie",
+        },
+      ],
+    } as never);
+
+    const output = await invokeOperation<{
+      items: ModelMarketplacePublicItem[];
+    }>("modelMarketplace.listPublicModels", {}, USER, {
+      requestId: "binding-public-user",
+    });
+
+    expect(output.items).toEqual([
+      image,
+      { ...seedance, configuredReachable: true },
+      { ...veo, configuredReachable: false },
+    ]);
+    expect(dependencies.listVideoCapabilities).toHaveBeenCalledWith(USER);
+    expect(JSON.stringify(output)).not.toMatch(
+      /"member"|"credential"|"health"|"capacity"|"concurrency"|"token"|"cookie"/
+    );
+  });
+
+  it("binding 显式拒绝 API Key Principal", async () => {
     await expect(
-      invokeOperation("modelMarketplace.listPublicModels", {}, USER, {
+      invokeOperation("modelMarketplace.listPublicModels", {}, API_KEY, {
         requestId: "binding-public-denied",
       })
     ).rejects.toMatchObject({ code: "forbidden" });
+    expect(dependencies.listPublicModels).not.toHaveBeenCalled();
+    expect(dependencies.listVideoCapabilities).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -330,6 +435,26 @@ describe("模型配置与模型广场 UOL binding", () => {
         requestId: "binding-public-not-ready",
       });
       throw new Error("公开依赖失败时不应返回成功");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "not_ready", httpStatus: 503 });
+      expect(error).toBeInstanceOf(Error);
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).not.toContain(message);
+      expect(error.message).toBe("模型广场暂不可用，请稍后重试");
+    }
+  });
+
+  it("用户能力读取失败稳定映射为不泄漏详情的 not_ready", async () => {
+    const message = "member credential token leaked from dependency";
+    vi.mocked(dependencies.listVideoCapabilities).mockRejectedValueOnce(
+      new Error(message)
+    );
+
+    try {
+      await invokeOperation("modelMarketplace.listPublicModels", {}, USER, {
+        requestId: "binding-public-user-not-ready",
+      });
+      throw new Error("用户能力读取失败时不应返回成功");
     } catch (error) {
       expect(error).toMatchObject({ code: "not_ready", httpStatus: 503 });
       expect(error).toBeInstanceOf(Error);

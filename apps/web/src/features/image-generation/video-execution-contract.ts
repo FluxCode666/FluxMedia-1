@@ -21,7 +21,7 @@ export const VIDEO_CAPABILITY_SNAPSHOT_VERSION = 1 as const;
 /** 创建时固定的动态能力事实。 */
 export type VideoCapabilitySnapshot = {
   version: typeof VIDEO_CAPABILITY_SNAPSHOT_VERSION;
-  capabilityOverridesVersion: number;
+  modelConfigurationRevision: number;
   maxReferenceImages: number;
 };
 
@@ -35,7 +35,7 @@ export type VideoExecutionContract = {
   effectiveAudio: boolean;
   frameCapability: VideoFrameInputCapability;
   maxReferenceImages: number;
-  capabilityOverridesVersion: number;
+  modelConfigurationRevision: number;
 };
 
 /**
@@ -63,12 +63,12 @@ function requireNonNegativeSafeInteger(value: unknown, field: string): number {
  * @throws Error - 版本或上限不是安全整数时 fail closed。
  */
 export function createVideoCapabilitySnapshot(input: {
-  capabilityOverridesVersion: number;
+  modelConfigurationRevision: number;
   maxReferenceImages: number;
 }): VideoCapabilitySnapshot {
-  const capabilityOverridesVersion = requireNonNegativeSafeInteger(
-    input.capabilityOverridesVersion,
-    "能力覆盖版本"
+  const modelConfigurationRevision = requireNonNegativeSafeInteger(
+    input.modelConfigurationRevision,
+    "模型配置 revision"
   );
   const maxReferenceImages = requireNonNegativeSafeInteger(
     input.maxReferenceImages,
@@ -76,7 +76,7 @@ export function createVideoCapabilitySnapshot(input: {
   );
   return {
     version: VIDEO_CAPABILITY_SNAPSHOT_VERSION,
-    capabilityOverridesVersion,
+    modelConfigurationRevision,
     maxReferenceImages,
   };
 }
@@ -102,16 +102,16 @@ function parseVideoCapabilitySnapshot(
     Object.keys(record).some(
       (key) =>
         key !== "version" &&
-        key !== "capabilityOverridesVersion" &&
+        key !== "modelConfigurationRevision" &&
         key !== "maxReferenceImages"
     )
   ) {
     throw new Error("视频任务的能力快照版本无效");
   }
   return createVideoCapabilitySnapshot({
-    capabilityOverridesVersion: requireNonNegativeSafeInteger(
-      record.capabilityOverridesVersion,
-      "能力覆盖版本"
+    modelConfigurationRevision: requireNonNegativeSafeInteger(
+      record.modelConfigurationRevision,
+      "模型配置 revision"
     ),
     maxReferenceImages: requireNonNegativeSafeInteger(
       record.maxReferenceImages,
@@ -170,6 +170,6 @@ export function resolveVideoExecutionContract(input: {
     effectiveAudio,
     frameCapability: validated.capability.input.frames,
     maxReferenceImages: snapshot.maxReferenceImages,
-    capabilityOverridesVersion: snapshot.capabilityOverridesVersion,
+    modelConfigurationRevision: snapshot.modelConfigurationRevision,
   };
 }

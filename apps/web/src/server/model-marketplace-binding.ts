@@ -13,6 +13,7 @@ import type {
   UpdateModelConfigurationEntryInput,
   UpdateModelConfigurationEntryOutput,
 } from "@repo/shared/model-marketplace";
+import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import {
   bindExecute,
   type OperationContext,
@@ -20,14 +21,26 @@ import {
   type Principal,
 } from "@repo/shared/uol";
 import type { ModelMarketplacePublicCatalogOutput } from "@repo/shared/uol/operations";
-
-import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import { ModelMarketplaceCoverImageError } from "@/features/model-configuration/cover-image";
+import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import {
   ModelConfigurationServiceError,
   type ModelConfigurationServiceErrorCode,
 } from "@/features/model-configuration/service-core";
 import { productionModelMarketplaceService } from "@/features/model-marketplace/service";
+
+import { executeVideoListCapabilitiesBinding } from "./uol-bindings/video-generation-capabilities";
+
+/** 登录用户 Principal；公开模型目录只为该身份计算可信分组可达性。 */
+type UserPrincipal = Extract<Principal, { type: "user" }>;
+
+/** 模型广场只消费视频能力输出中的真实模型 ID 与可达布尔值。 */
+type PublicVideoReachability = {
+  items: ReadonlyArray<{
+    model: string;
+    configuredReachable: boolean;
+  }>;
+};
 
 /** 三个 operation 所需的生产服务入口，测试可替换且不复制业务规则。 */
 export type ModelMarketplaceOperationBindingDependencies = {
@@ -39,6 +52,9 @@ export type ModelMarketplaceOperationBindingDependencies = {
     input: UpdateModelConfigurationEntryInput;
   }) => Promise<UpdateModelConfigurationEntryOutput>;
   listPublicModels: () => Promise<ModelMarketplacePublicCatalogOutput>;
+  listVideoCapabilities: (
+    principal: UserPrincipal
+  ) => Promise<PublicVideoReachability>;
   reportUpdateError: (
     error: unknown,
     context: {
@@ -55,6 +71,20 @@ const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
   updateModelConfigurationEntry: (command) =>
     productionModelConfigurationService.updateEntry(command),
   listPublicModels: () => productionModelMarketplaceService.listPublicModels(),
+  listVideoCapabilities: (principal) =>
+    executeVideoListCapabilitiesBinding({}, principal, {
+      async loadCapabilityOverrides() {
+        return getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES");
+      },
+      async listConfiguredModelIds(selection) {
+        return (
+          await import("@/features/image-backend-pool/runtime-service")
+        ).listConfiguredRuntimeModelIds(selection);
+      },
+      reportFailure(error) {
+        logError(error, { source: "model-marketplace-video-reachability" });
+      },
+    }),
   reportUpdateError(error, context) {
     logError(error, {
       source: "model-configuration-update",
@@ -115,17 +145,58 @@ function shouldReportModelConfigurationUpdateError(error: unknown): boolean {
 }
 
 /**
- * 调用公开模型目录并把全部依赖故障收窄为稳定 not_ready。
+ * 按登录用户可信分组覆盖公开视频模型的配置可达性。
  *
- * @param listPublicModels - 已装配运行时目录、价格、展示配置与资产 bucket 的公开服务。
- * @returns 严格公开目录候选值，最终仍由 invokeOperation 输出 schema 复核。
- * @throws OperationError - 服务拒绝时只暴露稳定 not_ready，不附带底层消息或凭据。
+ * @param catalog - 已由公开服务裁剪的全局目录。
+ * @param reachability - 视频能力 binding 返回的公开模型 ID 与可达布尔值。
+ * @returns 图片条目原样保留、视频条目按用户可信分组覆盖后的新目录。
+ * @sideEffects 无；不修改输入，也不投影能力输出中的其他字段。
+ * @failure 能力目录缺少某个视频模型时按不可达处理，避免回退到全局并集。
+ */
+function applyUserVideoReachability(
+  catalog: ModelMarketplacePublicCatalogOutput,
+  reachability: PublicVideoReachability
+): ModelMarketplacePublicCatalogOutput {
+  const reachableByModel = new Map(
+    reachability.items.map((item) => [item.model, item.configuredReachable])
+  );
+  return {
+    items: catalog.items.map((item) =>
+      item.category === "video"
+        ? {
+            ...item,
+            configuredReachable: reachableByModel.get(item.modelId) ?? false,
+          }
+        : item
+    ),
+  };
+}
+
+/**
+ * 调用公开模型目录，并仅为真实登录用户叠加可信分组可达性。
+ *
+ * @param services - 已装配的公开目录和视频能力读取端口。
+ * @param principal - 仅允许 system 或真实登录用户；API Key 在此显式拒绝。
+ * @returns system 获得全局目录，用户获得只覆盖视频可达布尔值的目录。
+ * @sideEffects 读取公开目录；用户路径额外读取设置及其可信分组成员配置。
+ * @throws OperationError - 身份不允许时返回 forbidden；任一依赖失败时只暴露稳定
+ * not_ready，不附带底层消息、成员、容量、健康或凭据信息。
  */
 async function invokePublicModelMarketplace(
-  listPublicModels: () => Promise<ModelMarketplacePublicCatalogOutput>
+  services: ModelMarketplaceOperationBindingDependencies,
+  principal: Principal
 ): Promise<ModelMarketplacePublicCatalogOutput> {
+  if (principal.type !== "system" && principal.type !== "user") {
+    throw new OperationError("forbidden", "模型广场目录仅允许站内页面读取");
+  }
+
   try {
-    return await listPublicModels();
+    const catalog = await services.listPublicModels();
+    if (principal.type === "system") return catalog;
+    return applyUserVideoReachability(
+      catalog,
+      await services.listVideoCapabilities(principal)
+    );
   } catch {
     throw new OperationError("not_ready", "模型广场暂不可用，请稍后重试");
   }
@@ -191,8 +262,8 @@ export function bindModelMarketplaceOperations(
     "modelMarketplace.listPublicModels",
     async (
       _input: Record<string, never>,
-      _principal: Principal,
+      principal: Principal,
       _ctx: OperationContext
-    ) => invokePublicModelMarketplace(services.listPublicModels)
+    ) => invokePublicModelMarketplace(services, principal)
   );
 }

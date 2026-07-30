@@ -48,6 +48,7 @@ export type ModelConfigurationDraft =
       expectedRevision: number;
       clientRequestId: string;
       creditsPerSecondByResolution: Record<string, string>;
+      maxReferenceImages?: string;
     } & MarketplaceDraftFields);
 
 /** 草稿字段不能安全提交时使用的客户端稳定错误。 */
@@ -144,6 +145,9 @@ export function createModelConfigurationDraft(
         formatPricingValue(entry.creditsPerSecondByResolution[resolution] ?? 0),
       ])
     ),
+    ...(entry.maxReferenceImages !== undefined
+      ? { maxReferenceImages: String(entry.maxReferenceImages) }
+      : {}),
   };
 }
 
@@ -235,6 +239,28 @@ export function parseModelConfigurationHomepagePriority(value: string): number {
     );
   }
   return priority;
+}
+
+/**
+ * 严格解析不设业务上限的正安全整数能力值。
+ *
+ * @param value - 管理员输入的十进制整数文本。
+ * @returns 1 至 Number.MAX_SAFE_INTEGER 的整数。
+ * @sideEffects 无。
+ * @failure 空值、符号、小数、指数、零或超过安全整数时抛草稿错误。
+ */
+export function parseModelConfigurationPositiveSafeInteger(
+  value: string
+): number {
+  const normalized = value.trim();
+  if (!/^[1-9]\d*$/.test(normalized)) {
+    throw new ModelConfigurationDraftError("参考图上限必须是正整数");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ModelConfigurationDraftError("参考图上限超过安全整数范围");
+  }
+  return parsed;
 }
 
 /**
@@ -333,6 +359,14 @@ export function buildModelConfigurationFormData(
       "creditsPerSecondByResolution",
       JSON.stringify(creditsPerSecondByResolution)
     );
+    if (draft.maxReferenceImages !== undefined) {
+      formData.append(
+        "maxReferenceImages",
+        String(
+          parseModelConfigurationPositiveSafeInteger(draft.maxReferenceImages)
+        )
+      );
+    }
     return formData;
   }
   appendImagePricing(formData, draft.pricing);

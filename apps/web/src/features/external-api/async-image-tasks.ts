@@ -166,6 +166,9 @@ export type VideoTaskRow = {
   // video_generation.status 是 text 列(pending/running/completed/failed),按字符串判定。
   status: string;
   durationSeconds: number;
+  aspectRatio: string;
+  resolution: string;
+  generateAudio: boolean;
   creditsConsumed: string | number | null;
   error: string | null;
   createdAt: Date;
@@ -174,7 +177,8 @@ export type VideoTaskRow = {
 
 /**
  * 把一条 video_generation 记录转成 /v1/videos/{id} 的响应（DB 持久查询路径,纯函数）。
- * 与图像版同构,但产物是视频 URL,且带 duration_seconds。归属校验由调用方完成。
+ * 与图像版同构,但产物是视频 URL,且返回真实模型和全部独立请求参数。
+ * 归属校验由调用方完成。
  * video_generation 无 completedAt 列,completed 时以 updatedAt 作为完成时间。
  */
 export function toVideoGenerationTaskResponse(
@@ -193,7 +197,13 @@ export function toVideoGenerationTaskResponse(
     object: status === "completed" ? "video" : "video.generation",
     model: normalizeHistoricalModelId(row.model) ?? row.model,
     status,
+    duration: row.durationSeconds,
     duration_seconds: row.durationSeconds,
+    aspectRatio: row.aspectRatio,
+    aspect_ratio: row.aspectRatio,
+    resolution: row.resolution,
+    generateAudio: row.generateAudio,
+    generate_audio: row.generateAudio,
     created: Math.floor(row.createdAt.getTime() / 1000),
     created_at: row.createdAt.toISOString(),
     ...(status === "completed" && row.updatedAt

@@ -81,17 +81,17 @@ const EXPECTED_PARAMETER_MATRIX = {
 } as const;
 
 const EXPECTED_INPUT_AND_AUDIO_MATRIX = {
-  sora2: ["first-only", 0, false, false, false],
-  "sora2-pro": ["first-only", 0, false, false, false],
-  veo31: ["first-and-optional-last", 0, false, false, false],
-  "veo31-fast": ["first-and-optional-last", 0, false, false, false],
-  "veo31-ref": ["none", 3, false, false, false],
-  "kling-o3": ["first-and-optional-last", 0, false, false, false],
-  kling3: ["first-and-optional-last", 0, true, true, false],
+  sora2: ["first-only", 0, false, false, true],
+  "sora2-pro": ["first-only", 0, false, false, true],
+  veo31: ["first-and-optional-last", 0, false, false, true],
+  "veo31-fast": ["first-and-optional-last", 0, false, false, true],
+  "veo31-ref": ["none", 3, false, false, true],
+  "kling-o3": ["first-and-optional-last", 0, false, false, true],
+  kling3: ["first-and-optional-last", 0, true, true, true],
   "kling3-omni": ["first-and-optional-last", 3, true, false, true],
-  "runway-gen45": ["none", 0, false, false, false],
-  ray314: ["none", 0, false, false, false],
-  "ray314-hdr": ["none", 0, false, false, false],
+  "runway-gen45": ["none", 0, false, false, true],
+  ray314: ["none", 0, false, false, true],
+  "ray314-hdr": ["none", 0, false, false, true],
   seedance2: ["first-and-optional-last", 10, true, false, true],
   "seedance2-fast": ["first-and-optional-last", 10, true, false, true],
 } as const;

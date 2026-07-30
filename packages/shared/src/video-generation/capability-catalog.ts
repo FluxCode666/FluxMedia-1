@@ -41,7 +41,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "first-only",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -55,7 +55,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "first-only",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -69,7 +69,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "first-and-optional-last",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -83,7 +83,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "first-and-optional-last",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -97,7 +97,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "none",
       referenceImages: { maxCount: 3, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -111,7 +111,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "first-and-optional-last",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -125,7 +125,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "first-and-optional-last",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: true, defaultEnabled: true },
   },
@@ -153,7 +153,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "none",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -167,7 +167,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "none",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },
@@ -181,7 +181,7 @@ export const VIDEO_MODEL_CAPABILITY_CATALOG = {
     input: {
       frames: "none",
       referenceImages: { maxCount: 0, configurable: false },
-      framesAndReferencesMutuallyExclusive: false,
+      framesAndReferencesMutuallyExclusive: true,
     },
     audio: { supported: false, defaultEnabled: false },
   },

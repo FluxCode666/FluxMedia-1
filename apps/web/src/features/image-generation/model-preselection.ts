@@ -42,9 +42,9 @@ export interface ResolveAuthorizedImageSelectionInput {
 
 /** VideoCreatePanel 可直接用于初始化四个受控选择器的静态状态。 */
 export interface VideoInitialSelection {
-  readonly familyId: string;
+  readonly modelId: string;
   readonly duration: number;
-  readonly ratio: string;
+  readonly aspectRatio: string;
   readonly resolution: VideoResolution;
 }
 
@@ -160,9 +160,9 @@ export function resolveVideoInitialSelection(
     return null;
   }
   return {
-    familyId: model.modelId,
+    modelId: model.modelId,
     duration,
-    ratio,
+    aspectRatio: ratio,
     resolution,
   };
 }

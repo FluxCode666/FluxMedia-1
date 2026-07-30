@@ -20,6 +20,10 @@ import {
   type ModelMarketplaceConfig,
   type ModelMarketplaceCoverRef,
 } from "@repo/shared/model-marketplace";
+import {
+  createDefaultVideoModelCapabilityOverrides,
+  type VideoModelCapabilityOverrides,
+} from "@repo/shared/video-generation";
 import { describe, expect, it, vi } from "vitest";
 import {
   createModelConfigurationService,
@@ -49,6 +53,7 @@ interface MemoryState {
   config: ModelMarketplaceConfig;
   imagePricing: GlobalImageCreditOverrides;
   videoPricing: Record<string, number>;
+  videoCapabilities: VideoModelCapabilityOverrides;
   auditEvents: AuditEvent[];
 }
 
@@ -81,29 +86,34 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
       pricing: { ...IMAGE_PRICING },
     })
   );
-  const videoEntries = ["sora2", "veo31"].map((configKey) => {
-    const supportedResolutions = getVideoPricingResolutions(configKey);
-    return {
-      category: "video" as const,
-      configKey,
-      displayName: configKey,
-      iconKey: "generic" as const,
-      revision: 0,
-      minimumCredits: 30,
-      marketplaceApplicable: true as const,
-      visible: true,
-      homepageVisible: false,
-      homepagePriority: 5,
-      description: "",
-      coverUrl: null,
-      usesDefaultCover: true,
-      creditsPerSecond: 30,
-      creditsPerSecondByResolution: Object.fromEntries(
-        supportedResolutions.map((resolution) => [resolution, 30])
-      ),
-      supportedResolutions,
-    };
-  });
+  const videoEntries = ["sora2", "veo31", "seedance2", "seedance2-fast"].map(
+    (configKey) => {
+      const supportedResolutions = getVideoPricingResolutions(configKey);
+      return {
+        category: "video" as const,
+        configKey,
+        displayName: configKey,
+        iconKey: "generic" as const,
+        revision: 0,
+        minimumCredits: 30,
+        marketplaceApplicable: true as const,
+        visible: true,
+        homepageVisible: false,
+        homepagePriority: 5,
+        description: "",
+        coverUrl: null,
+        usesDefaultCover: true,
+        creditsPerSecond: 30,
+        creditsPerSecondByResolution: Object.fromEntries(
+          supportedResolutions.map((resolution) => [resolution, 30])
+        ),
+        supportedResolutions,
+        ...(configKey.startsWith("seedance2")
+          ? { maxReferenceImages: 10 }
+          : {}),
+      };
+    }
+  );
   return {
     canEdit: true,
     runtimeCatalogStatus: "ready",
@@ -122,16 +132,21 @@ function createMemoryRepository(initial?: Partial<MemoryState>) {
     config: createDefaultModelMarketplaceConfig(),
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
+    videoCapabilities: createDefaultVideoModelCapabilityOverrides(),
     auditEvents: [],
     ...structuredClone(initial ?? {}),
   };
   const lockOrder: string[] = [];
   let failNextCommit = false;
+  let failNextCapabilitySave = false;
 
   return {
     lockOrder,
     failCommitOnce() {
       failNextCommit = true;
+    },
+    failCapabilitySaveOnce() {
+      failNextCapabilitySave = true;
     },
     read() {
       return structuredClone(state);
@@ -157,6 +172,10 @@ function createMemoryRepository(initial?: Partial<MemoryState>) {
             lockOrder.push("video");
             return structuredClone(draft.videoPricing);
           },
+          async lockVideoCapabilities() {
+            lockOrder.push("capabilities");
+            return structuredClone(draft.videoCapabilities);
+          },
           async saveMarketplaceConfig(config) {
             draft.config = structuredClone(config);
           },
@@ -165,6 +184,13 @@ function createMemoryRepository(initial?: Partial<MemoryState>) {
           },
           async saveVideoPricing(pricing) {
             draft.videoPricing = structuredClone(pricing);
+          },
+          async saveVideoCapabilities(capabilities) {
+            if (failNextCapabilitySave) {
+              failNextCapabilitySave = false;
+              throw new Error("capability save failed");
+            }
+            draft.videoCapabilities = structuredClone(capabilities);
           },
         };
         const result = await work(transaction);
@@ -376,6 +402,124 @@ describe("模型配置保存内核", () => {
     });
     expect(state.imagePricing.byModel).not.toHaveProperty("default");
     expect(state.config.imageByModel).not.toHaveProperty("default");
+  });
+
+  it.each([
+    "seedance2",
+    "seedance2-fast",
+  ] as const)("原子保存 %s 的价格、展示 revision 与独立参考图上限", async (configKey) => {
+    const harness = createHarness();
+    const supportedResolutions = getVideoPricingResolutions(configKey);
+    const creditsPerSecondByResolution = Object.fromEntries(
+      supportedResolutions.map((resolution) => [resolution, 42])
+    );
+
+    await harness.service.updateEntry({
+      actorUserId: ACTOR_USER_ID,
+      input: {
+        clientRequestId: REQUEST_ID,
+        category: "video",
+        configKey,
+        expectedRevision: 0,
+        visible: true,
+        homepageVisible: false,
+        homepagePriority: 5,
+        description: "Seedance 视频模型",
+        coverChange: { action: "keep" },
+        creditsPerSecondByResolution,
+        maxReferenceImages: 20,
+      },
+    });
+
+    const state = harness.repository.read();
+    expect(state.config.videoByFamily[configKey]).toMatchObject({
+      revision: 1,
+    });
+    expect(state.videoCapabilities.byModel[configKey]).toEqual({
+      maxReferenceImages: 20,
+    });
+    expect(state.videoPricing[configKey]).toBe(42);
+    expect(state.auditEvents).toHaveLength(1);
+    expect(harness.repository.lockOrder.slice(0, 3)).toEqual([
+      "config",
+      "video",
+      "capabilities",
+    ]);
+  });
+
+  it("拒绝 Seedance 缺少上限或非 Seedance 提交上限", async () => {
+    const harness = createHarness();
+    const common = {
+      clientRequestId: REQUEST_ID,
+      category: "video" as const,
+      expectedRevision: 0,
+      visible: true,
+      homepageVisible: false,
+      homepagePriority: 5,
+      description: "视频模型",
+      coverChange: { action: "keep" as const },
+    };
+
+    await expect(
+      harness.service.updateEntry({
+        actorUserId: ACTOR_USER_ID,
+        input: {
+          ...common,
+          configKey: "seedance2",
+          creditsPerSecondByResolution: Object.fromEntries(
+            getVideoPricingResolutions("seedance2").map((resolution) => [
+              resolution,
+              42,
+            ])
+          ),
+        },
+      })
+    ).rejects.toMatchObject({ code: "not_configurable" });
+    await expect(
+      harness.service.updateEntry({
+        actorUserId: ACTOR_USER_ID,
+        input: {
+          ...common,
+          configKey: "veo31",
+          creditsPerSecondByResolution: { "720p": 36, "1080p": 88 },
+          maxReferenceImages: 20,
+        },
+      })
+    ).rejects.toMatchObject({ code: "not_configurable" });
+    expect(harness.repository.read().auditEvents).toHaveLength(0);
+  });
+
+  it("能力覆盖保存失败时价格、展示和审计全部回滚", async () => {
+    const harness = createHarness();
+    harness.repository.failCapabilitySaveOnce();
+
+    await expect(
+      harness.service.updateEntry({
+        actorUserId: ACTOR_USER_ID,
+        input: {
+          clientRequestId: REQUEST_ID,
+          category: "video",
+          configKey: "seedance2",
+          expectedRevision: 0,
+          visible: true,
+          homepageVisible: false,
+          homepagePriority: 5,
+          description: "Seedance 视频模型",
+          coverChange: { action: "keep" },
+          creditsPerSecondByResolution: {
+            "480p": 42,
+            "720p": 42,
+            "1080p": 42,
+          },
+          maxReferenceImages: 20,
+        },
+      })
+    ).rejects.toThrow("capability save failed");
+
+    const state = harness.repository.read();
+    expect(state.config.videoByFamily.seedance2).toBeUndefined();
+    expect(state.videoCapabilities.byModel.seedance2).toBeUndefined();
+    expect(state.auditEvents).toHaveLength(0);
   });
 
   it("拒绝缺少或增加目录分辨率档位的视频价格", async () => {

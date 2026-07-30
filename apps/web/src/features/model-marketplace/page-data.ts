@@ -1,16 +1,18 @@
 /**
  * 公开模型广场页面的数据装配边界。
  *
- * 使用方是 `/models` Server Component；生产路径只初始化 UOL 并调用公开目录 operation，
- * 不读取会话、角色、SLA 或管理设置，失败统一收窄为 unavailable。
+ * 使用方是 `/models` Server Component；生产路径读取 Better Auth 会话，为登录用户构造
+ * 真实 Principal，匿名访问继续使用 system Principal。失败统一收窄为 unavailable。
  */
 import "server-only";
 
+import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { getServerSession } from "@repo/shared/auth/server";
 import {
   type ModelMarketplacePublicItem,
   modelMarketplacePublicItemSchema,
 } from "@repo/shared/model-marketplace";
-import { invokeOperation } from "@repo/shared/uol";
+import { invokeOperation, type Principal } from "@repo/shared/uol";
 import { z } from "zod";
 
 import { ensureUolInitialized } from "@/server/uol-init";
@@ -29,18 +31,27 @@ const publicCatalogOutputSchema = z
 type PublicCatalogOutput = z.infer<typeof publicCatalogOutputSchema>;
 
 /**
- * 通过 system-only UOL operation 读取公开模型目录。
+ * 通过 Principal 感知的 UOL operation 读取公开模型目录。
  *
  * @returns 通过 operation 输出 schema 校验的公开 DTO。
- * @sideEffects 初始化 Web late binding，并读取运行时目录、价格和公开展示配置。
+ * @sideEffects 读取 Better Auth 会话；登录时读取角色；初始化 Web late binding，并读取
+ * 运行时目录、价格、公开展示配置与用户可信分组模型配置。
  * @failure 初始化、operation、依赖或输出校验失败时拒绝 Promise，由页面装配器降级。
  */
 async function loadPublicModelsThroughUol(): Promise<PublicCatalogOutput> {
+  const session = await getServerSession();
+  const principal: Principal = session
+    ? {
+        type: "user",
+        userId: session.user.id,
+        role: await getUserRoleById(session.user.id),
+      }
+    : { type: "system", reason: "public-model-marketplace-page" };
   await ensureUolInitialized();
   return invokeOperation<PublicCatalogOutput>(
     "modelMarketplace.listPublicModels",
     {},
-    { type: "system", reason: "public-model-marketplace-page" },
+    principal,
     { requestId: crypto.randomUUID() }
   );
 }

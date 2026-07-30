@@ -8,6 +8,7 @@ import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import type { Principal } from "@repo/shared/uol";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -32,6 +33,8 @@ function createDependencies(
       ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
     }),
     loadMarketplaceConfig: async () => createDefaultModelMarketplaceConfig(),
+    loadVideoCapabilityOverrides: async () =>
+      createDefaultVideoModelCapabilityOverrides(),
     loadRuntimeCatalog: async () => ({ image: [], video: [] }),
     buildCoverUrl: () => ({
       coverUrl: "/model-marketplace/default.webp",
@@ -58,6 +61,9 @@ describe("readModelConfiguration", () => {
     const loadMarketplaceConfig = vi
       .fn()
       .mockResolvedValue(createDefaultModelMarketplaceConfig());
+    const loadVideoCapabilityOverrides = vi
+      .fn()
+      .mockResolvedValue(createDefaultVideoModelCapabilityOverrides());
     const loadRuntimeCatalog = vi.fn().mockResolvedValue({
       image: [{ id: "runtime-image" }],
       video: [],
@@ -69,6 +75,7 @@ describe("readModelConfiguration", () => {
         loadImagePricing,
         loadVideoPricing,
         loadMarketplaceConfig,
+        loadVideoCapabilityOverrides,
         loadRuntimeCatalog,
       })
     );
@@ -76,6 +83,7 @@ describe("readModelConfiguration", () => {
     expect(loadImagePricing).toHaveBeenCalledTimes(1);
     expect(loadVideoPricing).toHaveBeenCalledTimes(1);
     expect(loadMarketplaceConfig).toHaveBeenCalledTimes(1);
+    expect(loadVideoCapabilityOverrides).toHaveBeenCalledTimes(1);
     expect(loadRuntimeCatalog).toHaveBeenCalledTimes(1);
     expect(snapshot).toMatchObject({
       canEdit: true,
@@ -117,10 +125,11 @@ describe("readModelConfiguration", () => {
     );
   });
 
-  it("图像、视频或展示配置读取失败时透传原始异常", async () => {
+  it("图像、视频、展示配置或能力覆盖读取失败时透传原始异常", async () => {
     const imageFailure = new Error("image pricing unavailable");
     const videoFailure = new Error("video pricing unavailable");
     const marketplaceFailure = new Error("marketplace config unavailable");
+    const capabilityFailure = new Error("capability config unavailable");
 
     await expect(
       readModelConfiguration(
@@ -152,6 +161,16 @@ describe("readModelConfiguration", () => {
         })
       )
     ).rejects.toBe(marketplaceFailure);
+    await expect(
+      readModelConfiguration(
+        SUPER_ADMIN,
+        createDependencies({
+          loadVideoCapabilityOverrides: async () => {
+            throw capabilityFailure;
+          },
+        })
+      )
+    ).rejects.toBe(capabilityFailure);
   });
 
   it("运行时目录与严格事实源同时失败时仍拒绝严格事实错误", async () => {

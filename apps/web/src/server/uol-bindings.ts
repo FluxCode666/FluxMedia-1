@@ -30,6 +30,7 @@ import {
 } from "@repo/shared/analytics/contracts";
 import { resolveUsageTimeRange } from "@repo/shared/analytics/range";
 import { getAnalyticsMetricUnit } from "@repo/shared/analytics/series";
+import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import { normalizeSubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import {
   type UsageEvent,
@@ -202,7 +203,7 @@ bindExecute(
   }
 );
 
-/** 绑定管理员全局统一生成历史；仅真实 admin/super_admin 可读取受控用户身份字段。 */
+/** 绑定管理员全局统一生成历史；仅现有三档管理员可读取受控用户身份字段。 */
 bindExecute(
   "image.listAdminHistoryRecords",
   async (
@@ -211,7 +212,7 @@ bindExecute(
   ): Promise<AdminHistoryListOutput> => {
     if (
       principal.type !== "user" ||
-      (principal.role !== "admin" && principal.role !== "super_admin")
+      !canViewGlobalUsageRecords(principal.role)
     ) {
       throw new OperationError("forbidden", "Admin access required");
     }

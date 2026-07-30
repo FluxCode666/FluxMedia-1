@@ -57,6 +57,12 @@ describe("getExternalVideoTask", () => {
     mocks.invokeOperation.mockResolvedValue({
       taskId: "video-1",
       status: "completed",
+      model: "seedance2",
+      duration: 10,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+      generateAudio: false,
+      input: { mode: "references", count: 2 },
       videoUrl: "https://example.com/video.mp4",
       createdAt: "2026-07-26T00:00:00.000Z",
       completedAt: "2026-07-26T00:01:00.000Z",
@@ -86,6 +92,20 @@ describe("getExternalVideoTask", () => {
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.video_url).toBe("https://example.com/video.mp4");
+    expect(payload).toMatchObject({
+      model: "seedance2",
+      duration: 10,
+      duration_seconds: 10,
+      aspectRatio: "16:9",
+      aspect_ratio: "16:9",
+      resolution: "1080p",
+      generateAudio: false,
+      generate_audio: false,
+      input: { mode: "references", count: 2 },
+    });
+    expect(JSON.stringify(payload)).not.toMatch(
+      /storageKey|storageBucket|referenceImages|firstFrame|lastFrame/
+    );
   });
 
   it("将 UOL 的归属失败映射为 404", async () => {

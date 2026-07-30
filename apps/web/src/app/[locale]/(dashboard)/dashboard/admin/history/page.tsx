@@ -6,7 +6,7 @@
  */
 
 import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
+import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
@@ -44,7 +44,7 @@ export default async function DashboardAdminHistoryPage({
   if (!session?.user) redirect(`/${locale}/sign-in`);
 
   const role = await getUserRoleById(session.user.id);
-  if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
+  if (!canViewGlobalUsageRecords(role)) redirect(`/${locale}/dashboard`);
 
   const isZh = locale === "zh";
   const copy = (en: string, zh: string) => (isZh ? zh : en);

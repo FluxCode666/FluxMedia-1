@@ -57,10 +57,13 @@ describe("image history UOL contract", () => {
     expect(parsed?.success).toBe(false);
   });
 
-  it("registers a human-only global read for admin and super admin", () => {
+  it("registers a human-only global read for all three admin roles", () => {
     const operation = getOperation("image.listAdminHistoryRecords");
     expect(operation).toMatchObject({
-      access: { kind: "roles", roles: ["admin", "super_admin"] },
+      access: {
+        kind: "roles",
+        roles: ["observer_admin", "admin", "super_admin"],
+      },
       agentExposure: "human-only",
       readOnly: true,
       destructive: false,

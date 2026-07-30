@@ -1,8 +1,9 @@
 /**
  * 公开模型广场的生产基础设施装配。
  *
- * 使用方是 UOL late binding；本模块并行读取真实运行时目录、两类价格、展示配置和三个
- * bucket 设置，先完成生成内容隔离与全量封面引用校验，再调用 DB-free 目录构建器输出公开 DTO。
+ * 使用方是 UOL late binding；本模块并行读取真实运行时目录、两类价格、视频能力覆盖、
+ * 展示配置和三个 bucket 设置，先完成生成内容隔离与全量封面引用校验，再调用 DB-free
+ * 目录构建器输出公开 DTO。
  */
 import "server-only";
 
@@ -37,6 +38,7 @@ const DEFAULT_GENERATIONS_BUCKET = "generations";
 type ModelMarketplaceJsonSettingKey =
   | "IMAGE_MODEL_CREDIT_PRICES"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
+  | "VIDEO_MODEL_CAPABILITY_OVERRIDES"
   | "MODEL_MARKETPLACE_CONFIG";
 
 type ModelMarketplaceBucketSettingKey =
@@ -164,8 +166,8 @@ function buildCoverUrl(
  * 创建连接全部生产事实源的公开模型广场服务。
  *
  * @param overrides - 测试或替代部署需要覆盖的基础设施函数。
- * @returns 每次调用均读取最新运行时目录、价格、展示配置与 bucket 设置的只读服务。
- * @sideEffects listPublicModels 会并行读取七项运行时事实，但不写数据库、缓存或存储。
+ * @returns 每次调用均读取最新运行时目录、价格、视频能力、展示配置与 bucket 设置的只读服务。
+ * @sideEffects listPublicModels 会并行读取八项运行时事实，但不写数据库、缓存或存储。
  * @failure 任一读取、严格解析、bucket 隔离、封面引用或公开 DTO 校验失败时显式拒绝，
  * 不返回不可信半成品目录。
  */
@@ -183,6 +185,7 @@ export function createProductionModelMarketplaceService(
         runtimeCatalog,
         imagePricing,
         videoPricing,
+        videoCapabilityOverrides,
         marketplaceConfigRaw,
         assetBucketRaw,
         avatarsBucketRaw,
@@ -191,6 +194,7 @@ export function createProductionModelMarketplaceService(
         dependencies.loadRuntimeCatalog(),
         dependencies.loadSettingJson("IMAGE_MODEL_CREDIT_PRICES"),
         dependencies.loadSettingJson("VIDEO_MODEL_CREDITS_PER_SECOND"),
+        dependencies.loadSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES"),
         dependencies.loadSettingJson("MODEL_MARKETPLACE_CONFIG"),
         dependencies.loadSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
         dependencies.loadSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
@@ -209,6 +213,7 @@ export function createProductionModelMarketplaceService(
         runtimeCatalog,
         imagePricing,
         videoPricing,
+        videoCapabilityOverrides,
         marketplaceConfig,
         buildCoverUrl: (category, _configKey, cover) =>
           buildCoverUrl(

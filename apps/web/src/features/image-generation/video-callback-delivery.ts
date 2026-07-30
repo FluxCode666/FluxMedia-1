@@ -41,10 +41,13 @@ type VideoCallbackTaskRow = {
   model: string;
   status: string;
   durationSeconds: number;
+  aspectRatio: string;
+  resolution: string;
   creditsConsumed: number;
   error: string | null;
   storageKey: string | null;
   inputManifest: unknown;
+  metadata: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -126,10 +129,13 @@ async function loadClaimedVideoCallback(
         model: videoGeneration.model,
         status: videoGeneration.status,
         durationSeconds: videoGeneration.durationSeconds,
+        aspectRatio: videoGeneration.aspectRatio,
+        resolution: videoGeneration.resolution,
         creditsConsumed: videoGeneration.creditsConsumed,
         error: videoGeneration.error,
         storageKey: videoGeneration.storageKey,
         inputManifest: videoGeneration.inputManifest,
+        metadata: videoGeneration.metadata,
         createdAt: videoGeneration.createdAt,
         updatedAt: videoGeneration.updatedAt,
       },
@@ -186,7 +192,13 @@ async function deliverClaimedVideoCallback(input: {
     throw new Error("视频 callback 输入清单无效");
   }
   const payload = {
-    ...toVideoGenerationTaskResponse(input.video, videoUrl),
+    ...toVideoGenerationTaskResponse(
+      {
+        ...input.video,
+        generateAudio: input.video.metadata?.generateAudio === true,
+      },
+      videoUrl
+    ),
     input: buildVideoCallbackInput(parsedManifest.data),
   };
   const controller = new AbortController();

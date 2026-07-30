@@ -157,7 +157,6 @@ function addVideoCapabilityDescriptorIssues(
     });
   }
 
-  const supportsFrames = descriptor.input.frames !== "none";
   const supportsReferences = descriptor.input.referenceImages.maxCount > 0;
   if (descriptor.input.referenceImages.configurable && !supportsReferences) {
     context.addIssue({
@@ -166,14 +165,11 @@ function addVideoCapabilityDescriptorIssues(
       message: "可配置参考图上限必须具有正数默认值",
     });
   }
-  if (
-    descriptor.input.framesAndReferencesMutuallyExclusive !==
-    (supportsFrames && supportsReferences)
-  ) {
+  if (!descriptor.input.framesAndReferencesMutuallyExclusive) {
     context.addIssue({
       code: "custom",
       path: ["input", "framesAndReferencesMutuallyExclusive"],
-      message: "同时支持帧和参考图的模型必须声明两种模式互斥",
+      message: "所有视频模型都必须声明帧和参考图模式互斥",
     });
   }
 }

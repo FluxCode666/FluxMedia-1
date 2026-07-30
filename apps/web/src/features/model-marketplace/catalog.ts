@@ -6,6 +6,10 @@
  */
 import { MAX_SUPPORTED_MODEL_IDS } from "@repo/shared/image-backend/supported-models";
 import {
+  MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_COUNT,
+} from "@repo/shared/image-generation/media-contract";
+import {
   type ModelMarketplaceCoverRef,
   type ModelMarketplacePublicItem,
   modelMarketplacePublicItemSchema,
@@ -16,7 +20,11 @@ import {
   sortUniqueDurations,
   sortUniqueVideoResolutions,
 } from "@repo/shared/model-marketplace";
-import { resolveVideoModelCapability } from "@repo/shared/video-generation";
+import {
+  resolveEffectiveVideoModelCapabilities,
+  resolveVideoModelCapability,
+  type VideoModelCapabilityDescriptor,
+} from "@repo/shared/video-generation";
 import { z } from "zod";
 import { isConcretePlatformImageModelId } from "../external-api/platform-model-catalog";
 import { buildModelConfigurationSnapshot } from "../model-configuration/catalog";
@@ -61,6 +69,7 @@ export type ModelMarketplaceCatalogInput = {
   imagePricing: unknown;
   videoPricing: unknown;
   marketplaceConfig: unknown;
+  videoCapabilityOverrides: unknown;
   buildCoverUrl: (
     category: "image" | "video",
     configKey: string,
@@ -176,8 +185,9 @@ function getPublicDescription(
 /**
  * 从严格事实源构建公开模型广场目录。
  *
- * @param input - 运行时真实目录、两类全局价格、展示配置与安全封面 URL 构造器。
- * @returns 只含真实可达且 visible 的严格公开 DTO 数组；全部关闭时返回空数组。
+ * @param input - 运行时真实目录、两类全局价格、视频能力覆盖、展示配置与安全封面 URL 构造器。
+ * @returns 可公开且 visible 的严格 DTO 数组；图像仅含真实可达模型，视频含全部全局能力并
+ * 独立标记当前配置可达性。
  * @sideEffects 仅同步调用注入的封面 URL 构造器，不读取或写入外部状态。
  * @failure 运行时目录、价格、配置、封面 URL 或最终 DTO 非法时显式抛出 ZodError；
  * 注入的封面构造错误保持原样上抛。
@@ -191,10 +201,19 @@ export function buildModelMarketplaceCatalog(
   );
   const runtimeImageModelIds = buildRuntimeImageModelIdMap(runtimeCatalog);
   const runtimeVideoCandidates = buildRuntimeVideoCandidates(runtimeCatalog);
+  const effectiveVideoCapabilities = new Map<
+    string,
+    VideoModelCapabilityDescriptor
+  >(
+    resolveEffectiveVideoModelCapabilities(input.videoCapabilityOverrides).map(
+      (capability) => [capability.modelId, capability]
+    )
+  );
   const snapshot = buildModelConfigurationSnapshot({
     imagePricing: input.imagePricing,
     videoPricing: input.videoPricing,
     marketplaceConfig,
+    videoCapabilityOverrides: input.videoCapabilityOverrides,
     runtimeCatalog: { status: "ready", catalog: runtimeCatalog },
     canEdit: false,
     buildCoverUrl(category, configKey, cover) {
@@ -240,11 +259,12 @@ export function buildModelMarketplaceCatalog(
 
     if (entry.category === "video") {
       const candidates = runtimeVideoCandidates.get(entry.configKey);
-      if (!candidates?.length) continue;
+      const capability = effectiveVideoCapabilities.get(entry.configKey);
+      if (!capability) continue;
       const persistedEntry = marketplaceConfig.videoByFamily[entry.configKey];
-      const supportedResolutions = sortUniqueVideoResolutions(
-        candidates.map((candidate) => candidate.outputResolution)
-      );
+      const supportedResolutions = sortUniqueVideoResolutions([
+        ...capability.resolutions,
+      ]);
       const creditsPerSecondByResolution = Object.fromEntries(
         supportedResolutions.map((resolution) => [
           resolution,
@@ -275,13 +295,26 @@ export function buildModelMarketplaceCatalog(
           priceUnit: "per_second",
           creditsPerSecond: minimumCredits,
           creditsPerSecondByResolution,
-          supportedDurations: sortUniqueDurations(
-            candidates.map((candidate) => candidate.duration)
-          ),
-          supportedAspectRatios: sortUniqueAspectRatios(
-            candidates.map((candidate) => candidate.aspectRatio)
-          ),
+          supportedDurations: sortUniqueDurations([...capability.durations]),
+          supportedAspectRatios: sortUniqueAspectRatios([
+            ...capability.aspectRatios,
+          ]),
           supportedResolutions,
+          input: {
+            frames: capability.input.frames,
+            referenceImages: {
+              maxCount: capability.input.referenceImages.maxCount,
+              configurable: capability.input.referenceImages.configurable,
+            },
+            framesAndReferencesMutuallyExclusive:
+              capability.input.framesAndReferencesMutuallyExclusive,
+          },
+          audio: { ...capability.audio },
+          configuredReachable: Boolean(candidates?.length),
+          infrastructureLimits: {
+            maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
+            maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,
+          },
         })
       );
     }

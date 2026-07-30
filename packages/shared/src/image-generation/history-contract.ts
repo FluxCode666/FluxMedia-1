@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { MAX_MEDIA_INPUT_COUNT } from "./media-contract";
 
 /** 历史记录产物类型。 */
 export const historyRecordTypeSchema = z.enum(["image", "video"]);
@@ -121,6 +122,14 @@ export const historyReferenceImageSchema = z
   })
   .strict();
 
+/** 视频列表可公开的具名输入摘要；实际 URL 只由 video.getInputs 按需签发。 */
+export const historyVideoInputSummarySchema = z
+  .object({
+    mode: z.enum(["none", "first-frame", "first-last-frames", "references"]),
+    count: z.number().int().min(0).max(MAX_MEDIA_INPUT_COUNT),
+  })
+  .strict();
+
 /** 图片、视频共同拥有且可安全跨 UOL 边界的历史字段。 */
 const historyRecordCommonSchema = z.object({
   id: z.string().min(1).max(512),
@@ -150,10 +159,11 @@ export const imageHistoryRecordSchema = historyRecordCommonSchema
 export const videoHistoryRecordSchema = historyRecordCommonSchema
   .extend({
     kind: z.literal("video"),
-    family: z.string().min(1).max(240),
     resolution: z.string().min(1).max(100),
-    durationSeconds: z.number().int().positive(),
+    duration: z.number().int().positive(),
     aspectRatio: z.string().min(1).max(100),
+    generateAudio: z.boolean(),
+    input: historyVideoInputSummarySchema,
     videoUrl: z.string().nullable(),
   })
   .strict();
@@ -221,6 +231,9 @@ export type HistoryRecordType = z.infer<typeof historyRecordTypeSchema>;
 export type HistoryRecordStatus = z.infer<typeof historyRecordStatusSchema>;
 export type HistoryCreditDetails = z.infer<typeof historyCreditDetailsSchema>;
 export type HistoryReferenceImage = z.infer<typeof historyReferenceImageSchema>;
+export type HistoryVideoInputSummary = z.infer<
+  typeof historyVideoInputSummarySchema
+>;
 export type HistoryCursorFilters = z.infer<typeof historyCursorFiltersSchema>;
 export type HistoryListInput = z.input<typeof historyListInputSchema>;
 export type HistoryRecord = z.infer<typeof historyRecordSchema>;

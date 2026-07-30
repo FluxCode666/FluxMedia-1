@@ -16,6 +16,7 @@ import {
   type ModelMarketplaceConfig,
   modelConfigurationSnapshotSchema,
 } from "@repo/shared/model-marketplace";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -45,6 +46,7 @@ function createInput(
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
     marketplaceConfig: createDefaultModelMarketplaceConfig(),
+    videoCapabilityOverrides: createDefaultVideoModelCapabilityOverrides(),
     runtimeCatalog: {
       status: "ready",
       catalog: { image: [], video: [] },
@@ -188,6 +190,34 @@ describe("buildModelConfigurationSnapshot", () => {
     });
   });
 
+  it("仅为可配置 Seedance 条目返回当前参考图上限", () => {
+    const defaults = buildModelConfigurationSnapshot(createInput());
+    expect(
+      defaults.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "seedance2"
+      )
+    ).toMatchObject({ maxReferenceImages: 10 });
+    expect(
+      defaults.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "veo31"
+      )
+    ).not.toHaveProperty("maxReferenceImages");
+
+    const overridden = buildModelConfigurationSnapshot(
+      createInput({
+        videoCapabilityOverrides: {
+          version: 1,
+          byModel: { seedance2: { maxReferenceImages: 20 } },
+        },
+      })
+    );
+    expect(
+      overridden.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "seedance2"
+      )
+    ).toMatchObject({ maxReferenceImages: 20 });
+  });
+
   it("持久化额外图像保持显式价格且不携带兜底 revision", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
     imagePricing.byModel["vendor-image"] = { ...EXTRA_IMAGE_PRICING };
@@ -307,7 +337,7 @@ describe("buildModelConfigurationSnapshot", () => {
     );
   });
 
-  it("展示配置、图像价格或视频价格为脏值时显式抛错", () => {
+  it("展示配置、图像价格、视频价格或能力覆盖为脏值时显式抛错", () => {
     const validMarketplace = createDefaultModelMarketplaceConfig();
     const validImagePricing = createDefaultGlobalImageCreditOverrides();
     const validVideoPricing = { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
@@ -336,6 +366,16 @@ describe("buildModelConfigurationSnapshot", () => {
       buildModelConfigurationSnapshot(
         createInput({
           videoPricing: { ...validVideoPricing, sora2: 0 },
+        })
+      )
+    ).toThrow();
+    expect(() =>
+      buildModelConfigurationSnapshot(
+        createInput({
+          videoCapabilityOverrides: {
+            version: 1,
+            byModel: { seedance2: { maxReferenceImages: 0 } },
+          },
         })
       )
     ).toThrow();

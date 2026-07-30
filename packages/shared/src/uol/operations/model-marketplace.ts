@@ -81,8 +81,9 @@ export const settingsUpdateModelConfigurationEntry = defineOperation({
 /**
  * 读取公开模型广场目录。
  *
- * 仅允许 system Principal 在站内进程调用；公开描述的是返回内容，不代表匿名传输或
- * Agent/MCP 可直接调用。运行时依赖失败由后续 binding 映射为 not_ready。
+ * 允许站内登录用户按可信分组读取，并允许 system Principal 为匿名页面保留全局并集
+ * 语义；公开描述的是返回内容，不代表 Agent/MCP 可直接调用。Web binding 会进一步
+ * 拒绝 API Key 等其他 Principal，运行时依赖失败统一映射为 not_ready。
  */
 export const modelMarketplaceListPublicModels = defineOperation({
   name: "modelMarketplace.listPublicModels",
@@ -91,7 +92,7 @@ export const modelMarketplaceListPublicModels = defineOperation({
   description: "读取运行时可达且管理员允许展示的图像与视频模型。",
   input: z.object({}).strict(),
   output: modelMarketplacePublicCatalogOutputSchema,
-  access: { kind: "system" },
+  access: { kind: "protected" },
   agentExposure: "human-only",
   readOnly: true,
   destructive: false,

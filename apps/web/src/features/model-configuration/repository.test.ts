@@ -7,6 +7,7 @@
 import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it, vi } from "vitest";
@@ -16,6 +17,7 @@ import {
   MODEL_MARKETPLACE_CONFIG_SETTING_KEY,
   type ModelConfigurationDatabase,
   type ModelConfigurationDatabaseTransaction,
+  VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
   VIDEO_MODEL_PRICING_SETTING_KEY,
 } from "./repository";
 import type { ModelConfigurationAuditEvent } from "./service-core";
@@ -191,14 +193,17 @@ describe("createDatabaseModelConfigurationRepository", () => {
     }
   });
 
-  it("按配置后视频价格的顺序锁定唯一目标价格行", async () => {
+  it("按配置、视频价格、能力覆盖的固定顺序锁定并读取三项事实", async () => {
     const configValue = createDefaultModelMarketplaceConfig();
     const videoValue = { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+    const capabilityValue = createDefaultVideoModelCapabilityOverrides();
     const { database, queries, transaction } = createDatabase([
       { rowCount: 0 },
       [{ value: configValue }],
       { rowCount: 0 },
       { rows: [{ value: videoValue }] },
+      { rowCount: 0 },
+      { rows: [{ value: capabilityValue }] },
     ]);
     const { repository } = createDatabaseModelConfigurationRepository(database);
 
@@ -206,19 +211,27 @@ describe("createDatabaseModelConfigurationRepository", () => {
       async (repositoryTransaction) => {
         const config = await repositoryTransaction.lockMarketplaceConfig();
         const videoPricing = await repositoryTransaction.lockVideoPricing();
-        return { config, videoPricing };
+        const videoCapabilities =
+          await repositoryTransaction.lockVideoCapabilities();
+        return { config, videoPricing, videoCapabilities };
       }
     );
 
-    expect(result).toEqual({ config: configValue, videoPricing: videoValue });
+    expect(result).toEqual({
+      config: configValue,
+      videoPricing: videoValue,
+      videoCapabilities: capabilityValue,
+    });
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(queries.map((query) => query.params[0])).toEqual([
       MODEL_MARKETPLACE_CONFIG_SETTING_KEY,
       MODEL_MARKETPLACE_CONFIG_SETTING_KEY,
       VIDEO_MODEL_PRICING_SETTING_KEY,
       VIDEO_MODEL_PRICING_SETTING_KEY,
+      VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
+      VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
     ]);
-    expect(queries[3]?.sql).toContain("for update");
+    expect(queries[5]?.sql).toContain("for update");
   });
 
   it("在模型广场配置加锁前拒绝锁价格，且不会执行任何 SQL", async () => {

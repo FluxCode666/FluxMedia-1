@@ -11,6 +11,7 @@ import {
   type ModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
 import type { StorageProvider } from "@repo/shared/storage";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProductionModelConfigurationDependencies } from "./service";
 import type {
@@ -120,6 +121,9 @@ async function createServiceHarness(
       }
       if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
         return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+      }
+      if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
+        return createDefaultVideoModelCapabilityOverrides();
       }
       return structuredClone(marketplaceConfig);
     },
@@ -372,6 +376,9 @@ describe("生产模型配置服务", () => {
           }
           if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
             return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+          }
+          if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
+            return createDefaultVideoModelCapabilityOverrides();
           }
           return createDefaultModelMarketplaceConfig();
         },

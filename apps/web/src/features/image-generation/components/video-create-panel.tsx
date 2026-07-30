@@ -1,23 +1,17 @@
 "use client";
 
 /**
- * Adobe Firefly 视频创作面板（自包含）。
+ * 视频创作面板（自包含）。
  *
- * 选模型族(13族) + 时长 + 比例[+分辨率] → 组装 <family>-<dur>s-<ratio>[-<res>]
- * model id → POST /api/videos/generate 获取 taskId → 按 worker 周期退避查询状态 → 播放
- * 产物视频。模型支持时可上传首尾帧；Kling 3.0 Omni 还可切换最多三张参考图。
- * 与图像创作解耦，作为创作页独立 tab。
+ * 直接维护真实模型 ID、时长、比例、分辨率、声音与具名输入，提交到统一 UOL 薄路由；
+ * 获取 taskId 后按 worker 周期退避查询状态并播放产物。帧模式与参考图模式全局互斥。
+ * 使用方：图像创作页的视频独立 tab。
  */
 
 import {
-  formatAdobeModelIdForDisplay,
   getVideoCreditCost,
   resolveVideoCreditsPerSecondByResolution,
 } from "@repo/shared/adobe";
-import {
-  VIDEO_MODEL_CAPABILITIES,
-  type VideoModelCapabilityDescriptor,
-} from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -30,19 +24,26 @@ import {
 import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  createStaticVideoCreateModels,
+  parseReachableVideoCreateModels,
+  resolveDefaultVideoCreateInputMode,
+  resolveVideoCreateInputLimits,
+  type VideoCreateInputMode,
+  type VideoCreateModel,
+} from "../video-create-capabilities";
 import type { VideoPricingInfo } from "../video-operations";
 
 /** 经静态视频目录验证后，可安全用于面板一次性初始化的模型选项。 */
 export type VideoCreateInitialSelection = {
-  familyId: string;
+  modelId: string;
   duration: number;
-  ratio: string;
+  aspectRatio: string;
   resolution: string;
 };
 
 type VideoStatus = "idle" | "running" | "done" | "error";
-type VideoInputImageRole = "frame" | "reference";
 
 type VideoTaskResponse = {
   taskId: string;
@@ -59,62 +60,8 @@ type VideoTaskResponse = {
 
 const VIDEO_STATUS_INITIAL_POLL_MS = 60_000;
 const VIDEO_STATUS_MAX_POLL_MS = 120_000;
-
-type VideoCreateFamily = {
-  family: string;
-  label: string;
-  durations: readonly number[];
-  ratios: readonly string[];
-  resolutions: readonly string[];
-  resolutionInId: boolean;
-  generateAudio: boolean;
-  supportsAudio: boolean;
-  maxInputImages: number;
-  maxReferenceImages?: number;
-};
-
-/**
- * 把中立真实模型能力投影为旧面板在 U6 切换前使用的只读视图。
- *
- * @param capability - 真实模型静态能力。
- * @returns 不含任何 Adobe 上游身份的面板选择数据。
- * @sideEffects 无。
- * @failure 不抛错；描述符已在共享目录启动时完成自校验。
- */
-function createVideoCreateFamily(
-  capability: VideoModelCapabilityDescriptor
-): VideoCreateFamily {
-  return {
-    family: capability.modelId,
-    label: capability.displayName,
-    durations: capability.durations,
-    ratios: capability.aspectRatios,
-    resolutions: capability.resolutions,
-    resolutionInId: ![
-      "sora2",
-      "sora2-pro",
-      "kling-o3",
-      "runway-gen45",
-    ].includes(capability.modelId),
-    generateAudio: capability.audio.defaultEnabled,
-    supportsAudio: capability.audio.supported,
-    maxInputImages:
-      capability.input.frames === "none"
-        ? 0
-        : capability.input.frames === "first-only"
-          ? 1
-          : 2,
-    ...(capability.input.referenceImages.maxCount > 0
-      ? {
-          maxReferenceImages: capability.input.referenceImages.maxCount,
-        }
-      : {}),
-  };
-}
-
-const VIDEO_CREATE_FAMILIES = VIDEO_MODEL_CAPABILITIES.map(
-  createVideoCreateFamily
-);
+const VIDEO_CREATE_MODELS = createStaticVideoCreateModels();
+const VIDEO_CAPABILITIES_TIMEOUT_MS = 15_000;
 
 /** 等待下一轮状态查询；间隔不低于后端视频 worker 的一分钟周期。 */
 function waitForVideoPoll(delayMs: number): Promise<void> {
@@ -149,23 +96,6 @@ function parseVideoTaskResponse(value: unknown): VideoTaskResponse {
       : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
-}
-
-function ratioSuffix(ratio: string): string {
-  return ratio.replace(":", "x");
-}
-
-function composeVideoModelId(params: {
-  family: string;
-  duration: number;
-  ratio: string;
-  resolution: string;
-  resolutionInId: boolean;
-}): string {
-  const base = `${params.family}-${params.duration}s-${ratioSuffix(
-    params.ratio
-  )}`;
-  return params.resolutionInId ? `${base}-${params.resolution}` : base;
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -205,31 +135,33 @@ export function VideoCreatePanel({
   recent?: VideoHistoryItem[];
   pricing: VideoPricingInfo;
 }) {
-  const families = VIDEO_CREATE_FAMILIES;
-  const initialFamily =
-    families.find((item) => item.family === initialSelection?.familyId) ??
-    families[0];
-  const [familyId, setFamilyId] = useState(initialFamily?.family ?? "sora2");
-  const family = useMemo(
-    () => families.find((item) => item.family === familyId) ?? families[0],
-    [familyId]
+  const [models, setModels] =
+    useState<readonly VideoCreateModel[]>(VIDEO_CREATE_MODELS);
+  const initialModel =
+    models.find((item) => item.model === initialSelection?.modelId) ??
+    models[0];
+  const [modelId, setModelId] = useState(initialModel?.model ?? "sora2");
+  const selectedModel = useMemo(
+    () => models.find((item) => item.model === modelId) ?? models[0],
+    [modelId, models]
   );
   const [duration, setDuration] = useState<number>(
-    initialSelection?.duration ?? initialFamily?.durations[0] ?? 8
+    initialSelection?.duration ?? initialModel?.durations[0] ?? 8
   );
-  const [ratio, setRatio] = useState<string>(
-    initialSelection?.ratio ?? initialFamily?.ratios[0] ?? "16:9"
+  const [aspectRatio, setAspectRatio] = useState<string>(
+    initialSelection?.aspectRatio ?? initialModel?.aspectRatios[0] ?? "16:9"
   );
   const [resolution, setResolution] = useState<string>(
-    initialSelection?.resolution ?? initialFamily?.resolutions[0] ?? "720p"
+    initialSelection?.resolution ?? initialModel?.resolutions[0] ?? "720p"
   );
   const [generateAudio, setGenerateAudio] = useState(
-    initialFamily?.generateAudio ?? false
+    initialModel?.defaultGenerateAudio ?? false
   );
   const [prompt, setPrompt] = useState("");
   const [inputImages, setInputImages] = useState<string[]>([]);
-  const [inputImageRole, setInputImageRole] =
-    useState<VideoInputImageRole>("frame");
+  const [inputMode, setInputMode] = useState<VideoCreateInputMode>(() =>
+    resolveDefaultVideoCreateInputMode(initialModel)
+  );
   const [selectedHistoryIds, setSelectedHistoryIds] = useState<string[]>([]);
   const [status, setStatus] = useState<VideoStatus>("idle");
   const historyImages = recent.filter(
@@ -237,17 +169,115 @@ export function VideoCreatePanel({
   );
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [capabilitiesStatus, setCapabilitiesStatus] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(
+    null
+  );
+
+  /**
+   * 从 Principal 感知的 UOL 薄路由加载当前可达模型和动态上限。
+   *
+   * 静态目录只维持首屏选择器结构；请求完成前所有提交控件保持禁用，避免管理员
+   * 已修改 Seedance 上限时仍按过期客户端常量选择或提交。
+   */
+  useEffect(() => {
+    const controller = new AbortController();
+    let unmounted = false;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, VIDEO_CAPABILITIES_TIMEOUT_MS);
+
+    const loadCapabilities = async () => {
+      try {
+        const response = await fetch("/api/videos/capabilities", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const message = await response.text().catch(() => "");
+          throw new Error(
+            message || `视频模型能力查询失败 HTTP ${response.status}`
+          );
+        }
+        const reachableModels = parseReachableVideoCreateModels(
+          await response.json()
+        );
+        if (unmounted) return;
+
+        setModels(reachableModels);
+        const nextModel =
+          reachableModels.find(
+            (item) => item.model === initialSelection?.modelId
+          ) ?? reachableModels[0];
+        if (nextModel) {
+          setModelId(nextModel.model);
+          setDuration(
+            initialSelection?.modelId === nextModel.model &&
+              nextModel.durations.includes(initialSelection.duration)
+              ? initialSelection.duration
+              : (nextModel.durations[0] ?? 8)
+          );
+          setAspectRatio(
+            initialSelection?.modelId === nextModel.model &&
+              nextModel.aspectRatios.includes(initialSelection.aspectRatio)
+              ? initialSelection.aspectRatio
+              : (nextModel.aspectRatios[0] ?? "16:9")
+          );
+          setResolution(
+            initialSelection?.modelId === nextModel.model &&
+              nextModel.resolutions.includes(initialSelection.resolution)
+              ? initialSelection.resolution
+              : (nextModel.resolutions[0] ?? "720p")
+          );
+          setGenerateAudio(nextModel.defaultGenerateAudio);
+        }
+        setInputMode(resolveDefaultVideoCreateInputMode(nextModel));
+        setInputImages([]);
+        setSelectedHistoryIds([]);
+        setCapabilitiesError(null);
+        setCapabilitiesStatus("ready");
+      } catch (caught) {
+        if (unmounted) return;
+        setCapabilitiesStatus("error");
+        setCapabilitiesError(
+          timedOut
+            ? "视频模型能力查询超时，请刷新后重试"
+            : caught instanceof Error
+              ? caught.message
+              : "视频模型能力查询失败"
+        );
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+
+    void loadCapabilities();
+    return () => {
+      unmounted = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [
+    initialSelection?.aspectRatio,
+    initialSelection?.duration,
+    initialSelection?.modelId,
+    initialSelection?.resolution,
+  ]);
 
   /** 切换真实模型时把时长、比例和分辨率收敛到该模型支持的取值。 */
-  const onFamilyChange = (value: string) => {
-    const next = families.find((item) => item.family === value);
+  const onModelChange = (value: string) => {
+    const next = models.find((item) => item.model === value);
     if (next) {
-      setFamilyId(next.family);
+      setModelId(next.model);
       setDuration(next.durations[0] ?? duration);
-      setRatio(next.ratios[0] ?? ratio);
+      setAspectRatio(next.aspectRatios[0] ?? aspectRatio);
       setResolution(next.resolutions[0] ?? resolution);
-      setGenerateAudio(next.generateAudio);
-      setInputImageRole("frame");
+      setGenerateAudio(next.defaultGenerateAudio);
+      setInputMode(resolveDefaultVideoCreateInputMode(next));
       setInputImages([]);
       setSelectedHistoryIds([]);
     }
@@ -255,9 +285,9 @@ export function VideoCreatePanel({
 
   // 预估积分：与扣费侧同口径——模型族分辨率每秒价格 × 时长。
   // 纯函数复用，确保展示价 = 实扣价。必须在任何 early return
-  // 之前无条件调用（React hooks 规则），故对 family 用可选链兜底。
+  // 之前无条件调用（React hooks 规则），故对 selectedModel 用可选链兜底。
   const creditsPerSecond = resolveVideoCreditsPerSecondByResolution(
-    family?.family,
+    selectedModel?.model,
     resolution,
     pricing.creditsPerSecond
   );
@@ -273,13 +303,13 @@ export function VideoCreatePanel({
   // 必须在 early return 之前无条件调用(hooks 规则)。
   const pricingTable = useMemo(
     () =>
-      families.map((item) => {
+      models.map((item) => {
         return {
-          family: item.family,
+          model: item.model,
           label: item.label,
           resolutionRows: item.resolutions.map((outputResolution) => {
             const creditsPerSecond = resolveVideoCreditsPerSecondByResolution(
-              item.family,
+              item.model,
               outputResolution,
               pricing.creditsPerSecond
             );
@@ -297,25 +327,34 @@ export function VideoCreatePanel({
           }),
         };
       }),
-    [pricing]
+    [models, pricing]
   );
 
-  if (!family) return null;
+  if (!selectedModel) {
+    return (
+      <div
+        className="rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground"
+        role="status"
+      >
+        {capabilitiesStatus === "loading"
+          ? "正在加载可用视频模型…"
+          : (capabilitiesError ?? "当前分组没有可用视频模型")}
+      </div>
+    );
+  }
 
-  const model = composeVideoModelId({
-    family: family.family,
-    duration,
-    ratio,
-    resolution,
-    resolutionInId: family.resolutionInId,
-  });
-  const maxInputImages =
-    inputImageRole === "reference"
-      ? (family.maxReferenceImages ?? 0)
-      : family.maxInputImages;
+  const inputLimits = resolveVideoCreateInputLimits(selectedModel, inputMode);
+  const maxInputImages = inputLimits.selectableMax;
+  const maxMediaInputMegabytes =
+    selectedModel.maxMediaInputBytes / (1024 * 1024);
 
   const generate = async () => {
-    if (!prompt.trim() || status === "running") return;
+    if (
+      !prompt.trim() ||
+      status === "running" ||
+      capabilitiesStatus !== "ready"
+    )
+      return;
     setStatus("running");
     setError(null);
     setVideoUrl(null);
@@ -326,10 +365,18 @@ export function VideoCreatePanel({
         body: JSON.stringify({
           clientRequestId: crypto.randomUUID(),
           prompt: prompt.trim(),
-          model,
-          ...(family.supportsAudio ? { generateAudio } : {}),
+          model: selectedModel.model,
+          duration,
+          aspectRatio,
+          resolution,
+          ...(selectedModel.supportsAudio ? { generateAudio } : {}),
           ...(maxInputImages > 0 && inputImages.length > 0
-            ? { inputImages, inputImageRole }
+            ? inputMode === "references"
+              ? { referenceImages: inputImages }
+              : {
+                  firstFrame: inputImages[0],
+                  ...(inputImages[1] ? { lastFrame: inputImages[1] } : {}),
+                }
             : {}),
         }),
       });
@@ -375,6 +422,7 @@ export function VideoCreatePanel({
   };
 
   const busy = status === "running";
+  const controlsDisabled = busy || capabilitiesStatus !== "ready";
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-background p-4">
@@ -382,16 +430,16 @@ export function VideoCreatePanel({
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">模型</Label>
           <Select
-            value={familyId}
-            onValueChange={onFamilyChange}
-            disabled={busy}
+            value={modelId}
+            onValueChange={onModelChange}
+            disabled={controlsDisabled}
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {families.map((item) => (
-                <SelectItem key={item.family} value={item.family}>
+              {models.map((item) => (
+                <SelectItem key={item.model} value={item.model}>
                   {item.label}
                 </SelectItem>
               ))}
@@ -403,13 +451,13 @@ export function VideoCreatePanel({
           <Select
             value={String(duration)}
             onValueChange={(value) => setDuration(Number(value))}
-            disabled={busy}
+            disabled={controlsDisabled}
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {family.durations.map((value) => (
+              {selectedModel.durations.map((value) => (
                 <SelectItem key={value} value={String(value)}>
                   {value}s
                 </SelectItem>
@@ -419,12 +467,16 @@ export function VideoCreatePanel({
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">比例</Label>
-          <Select value={ratio} onValueChange={setRatio} disabled={busy}>
+          <Select
+            value={aspectRatio}
+            onValueChange={setAspectRatio}
+            disabled={controlsDisabled}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {family.ratios.map((value) => (
+              {selectedModel.aspectRatios.map((value) => (
                 <SelectItem key={value} value={value}>
                   {value}
                 </SelectItem>
@@ -432,36 +484,34 @@ export function VideoCreatePanel({
             </SelectContent>
           </Select>
         </div>
-        {family.resolutionInId && (
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">分辨率</Label>
-            <Select
-              value={resolution}
-              onValueChange={setResolution}
-              disabled={busy}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {family.resolutions.map((value) => (
-                  <SelectItem key={value} value={value}>
-                    {value}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">分辨率</Label>
+          <Select
+            value={resolution}
+            onValueChange={setResolution}
+            disabled={controlsDisabled}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {selectedModel.resolutions.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {family.supportsAudio && (
+      {selectedModel.supportsAudio && (
         <div className="flex items-center gap-2">
           <Switch
             id="video-generate-audio"
             checked={generateAudio}
             onCheckedChange={setGenerateAudio}
-            disabled={busy}
+            disabled={controlsDisabled}
           />
           <Label htmlFor="video-generate-audio">生成声音</Label>
         </div>
@@ -471,50 +521,56 @@ export function VideoCreatePanel({
         placeholder="描述要生成的视频…"
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
-        disabled={busy}
+        disabled={controlsDisabled}
         rows={3}
       />
 
-      {(family.maxInputImages > 0 || (family.maxReferenceImages ?? 0) > 0) && (
+      {(selectedModel.maxFrameImages > 0 ||
+        selectedModel.maxReferenceImages > 0) && (
         <div className="space-y-1.5">
-          {(family.maxReferenceImages ?? 0) > 0 && (
-            <div className="max-w-xs space-y-1.5">
-              <Label className="text-xs text-muted-foreground">
-                输入图用途
-              </Label>
-              <Select
-                value={inputImageRole}
-                onValueChange={(value: VideoInputImageRole) => {
-                  setInputImageRole(value);
-                  setInputImages([]);
-                  setSelectedHistoryIds([]);
-                }}
-                disabled={busy}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="frame">首尾帧</SelectItem>
-                  <SelectItem value="reference">参考图</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          {selectedModel.maxFrameImages > 0 &&
+            selectedModel.maxReferenceImages > 0 && (
+              <div className="max-w-xs space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  输入图用途
+                </Label>
+                <Select
+                  value={inputMode}
+                  onValueChange={(value: VideoCreateInputMode) => {
+                    setInputMode(value);
+                    setInputImages([]);
+                    setSelectedHistoryIds([]);
+                  }}
+                  disabled={controlsDisabled}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="frames">首尾帧</SelectItem>
+                    <SelectItem value="references">参考图</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           <Label className="text-xs text-muted-foreground">
-            {inputImageRole === "reference"
-              ? `参考图（可选，最多 ${maxInputImages} 张）`
+            {inputMode === "references"
+              ? `参考图（可选，模型上限 ${inputLimits.modelMax} 张；单次最多 ${maxInputImages} 张）`
               : `首尾帧（可选，最多 ${maxInputImages} 张，按选择顺序）`}
           </Label>
+          <p className="text-xs text-muted-foreground">
+            基础设施限制：所有媒体输入合计最多
+            {selectedModel.maxMediaInputCount} 张、{maxMediaInputMegabytes} MB。
+          </p>
           {historyImages.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {historyImages.slice(0, 12).map((item) => (
                 <button
                   key={item.id}
                   type="button"
-                  disabled={busy}
+                  disabled={controlsDisabled}
                   title={
-                    inputImageRole === "reference"
+                    inputMode === "references"
                       ? "选择或取消此参考图"
                       : "按首帧、尾帧顺序选择或取消"
                   }
@@ -563,7 +619,7 @@ export function VideoCreatePanel({
             type="file"
             multiple={maxInputImages > 1}
             accept="image/png,image/jpeg,image/webp"
-            disabled={busy}
+            disabled={controlsDisabled}
             className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm"
             onChange={async (event) => {
               const files = Array.from(event.target.files ?? []).slice(
@@ -578,7 +634,7 @@ export function VideoCreatePanel({
             <button
               type="button"
               className="text-xs text-muted-foreground underline"
-              disabled={busy}
+              disabled={controlsDisabled}
               onClick={() => {
                 setInputImages([]);
                 setSelectedHistoryIds([]);
@@ -591,7 +647,10 @@ export function VideoCreatePanel({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={generate} disabled={busy || !prompt.trim()}>
+        <Button
+          onClick={generate}
+          disabled={controlsDisabled || !prompt.trim()}
+        >
           {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           生成视频
         </Button>
@@ -602,7 +661,7 @@ export function VideoCreatePanel({
           {duration}s × {creditsPerSecond}/秒
         </span>
         <span className="text-xs text-muted-foreground">
-          {formatAdobeModelIdForDisplay(model)}
+          {selectedModel.model}
         </span>
       </div>
 
@@ -620,7 +679,7 @@ export function VideoCreatePanel({
             </thead>
             <tbody>
               {pricingTable.map((item) => (
-                <tr key={item.family} className="border-b border-border/30">
+                <tr key={item.model} className="border-b border-border/30">
                   <td className="whitespace-nowrap py-1 pr-4">{item.label}</td>
                   <td className="py-1">
                     <div className="space-y-1">
@@ -648,6 +707,17 @@ export function VideoCreatePanel({
           </p>
         </div>
       </details>
+
+      {capabilitiesStatus === "loading" && (
+        <p className="text-sm text-muted-foreground" role="status">
+          正在同步当前分组的视频模型能力…
+        </p>
+      )}
+      {capabilitiesStatus === "error" && capabilitiesError && (
+        <p className="text-sm text-destructive" role="alert">
+          {capabilitiesError}
+        </p>
+      )}
 
       {status === "running" && (
         <p className="animate-pulse text-sm text-muted-foreground motion-reduce:animate-none">

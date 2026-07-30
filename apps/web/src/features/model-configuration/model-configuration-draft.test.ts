@@ -64,9 +64,9 @@ const UNCONFIGURED_IMAGE_ENTRY: Extract<
 
 const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
   category: "video",
-  configKey: "veo31",
-  displayName: "Veo 3.1",
-  iconKey: "google",
+  configKey: "seedance2",
+  displayName: "Seedance 2.0",
+  iconKey: "bytedance",
   revision: 5,
   marketplaceApplicable: true,
   visible: false,
@@ -79,6 +79,7 @@ const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
   creditsPerSecond: 45,
   creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
   supportedResolutions: ["720p", "1080p"],
+  maxReferenceImages: 20,
 };
 
 /** 把 FormData 的标量项转为便于断言的对象，文件保留原实例。 */
@@ -118,6 +119,7 @@ describe("模型配置草稿", () => {
       category: "video",
       clientRequestId: "video-id",
       creditsPerSecondByResolution: { "720p": "30", "1080p": "45" },
+      maxReferenceImages: "20",
       visible: false,
       homepageVisible: false,
       homepagePriority: "8",
@@ -206,6 +208,7 @@ describe("模型配置草稿", () => {
     expect(videoValues.creditsPerSecondByResolution).toBe(
       JSON.stringify({ "1080p": 45, "720p": 30 })
     );
+    expect(videoValues.maxReferenceImages).toBe("20");
   });
 
   it("网络重试复用 UUID，修改草稿才生成新 UUID", () => {

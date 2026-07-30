@@ -144,7 +144,17 @@
       "perSecond": "每秒"
     },
     "card": {
-      "noDescription": "该模型暂未配置公开简介。"
+      "noDescription": "该模型暂未配置公开简介。",
+      "videoCapabilities": {
+        "framesNone": "不支持帧输入",
+        "framesFirstOnly": "支持首帧",
+        "framesFirstAndLast": "支持首尾帧",
+        "referenceImagesNone": "不支持参考图",
+        "referenceImagesMax": "最多 {count} 张参考图",
+        "audioNone": "不支持声音",
+        "audioDefaultOn": "声音默认开启",
+        "audioOptional": "声音可选"
+      }
     },
     "actions": {
       "copy": "复制模型 ID",
@@ -161,6 +171,24 @@
       "supportedDurations": "支持时长",
       "supportedAspectRatios": "支持比例",
       "supportedResolutions": "支持分辨率",
+      "capabilities": {
+        "title": "视频能力",
+        "description": "区分模型全局支持能力与当前配置路径是否可达。",
+        "frameInputs": "帧输入",
+        "referenceImages": "参考图",
+        "referenceImagesNone": "不支持",
+        "referenceImagesConfigurable": "最多 {count} 张，管理员可配置",
+        "referenceImagesFixed": "最多 {count} 张",
+        "framesAndReferences": "帧与参考图模式",
+        "mutuallyExclusive": "互斥，不可同时使用",
+        "notMutuallyExclusive": "可以同时使用",
+        "audio": "声音",
+        "configuredReachable": "当前已配置可达",
+        "notConfiguredReachable": "当前访问路径未配置",
+        "infrastructureLimits": "独立基础设施限制",
+        "maxMediaInputCount": "每次请求最多 {count} 个媒体输入",
+        "maxMediaInputSize": "输入总大小最多 {megabytes} MB"
+      },
       "imageTiers": {
         "base1024": "1024 档",
         "base1k": "1K 档",

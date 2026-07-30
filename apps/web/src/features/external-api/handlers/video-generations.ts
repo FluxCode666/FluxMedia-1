@@ -6,7 +6,13 @@
  */
 
 import { withApiLogging } from "@repo/shared/api-logger";
+import { MAX_MEDIA_INPUT_COUNT } from "@repo/shared/image-generation/media-contract";
 import { invokeOperation, OperationError } from "@repo/shared/uol";
+import {
+  videoAspectRatioSchema,
+  videoModelIdSchema,
+  videoResolutionSchema,
+} from "@repo/shared/video-generation";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
@@ -23,6 +29,40 @@ import {
 } from "@/features/image-generation/video-transport-input";
 import { ensureUolInitialized } from "@/server/uol-init";
 
+const optionalReferenceImagesSchema = z
+  .array(videoInputImageDataUrlSchema)
+  .min(1)
+  .max(MAX_MEDIA_INPUT_COUNT)
+  .optional();
+
+/** 判断 v1 同一语义的两个传输别名是否完全一致。 */
+function areVideoAliasesEqual(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((value, index) => value === right[index])
+    );
+  }
+  return left === right;
+}
+
+/** 为冲突别名追加稳定 Zod issue，避免静默选择其中一个值。 */
+function addVideoAliasConflict(
+  context: z.RefinementCtx,
+  camelField: string,
+  snakeField: string,
+  camelValue: unknown,
+  snakeValue: unknown
+): void {
+  if (areVideoAliasesEqual(camelValue, snakeValue)) return;
+  context.addIssue({
+    code: "custom",
+    message: `${camelField} and ${snakeField} must match`,
+    path: [camelField],
+  });
+}
+
 const externalVideoSchema = z
   .object({
     clientRequestId: z.string().trim().min(1).max(128).optional(),
@@ -31,43 +71,113 @@ const externalVideoSchema = z
       .string()
       .min(1)
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-    model: z.string().trim().min(1).max(120),
+    model: videoModelIdSchema,
+    duration: z.number().int().positive().optional(),
+    duration_seconds: z.number().int().positive().optional(),
+    aspectRatio: videoAspectRatioSchema.optional(),
+    aspect_ratio: videoAspectRatioSchema.optional(),
+    resolution: videoResolutionSchema,
     negativePrompt: z.string().max(8_000).optional(),
     negative_prompt: z.string().max(8_000).optional(),
     generateAudio: z.boolean().optional(),
     generate_audio: z.boolean().optional(),
-    image: z.array(videoInputImageDataUrlSchema).max(3).optional(),
-    inputImageRole: z.enum(["frame", "reference"]).optional(),
-    input_image_role: z.enum(["frame", "reference"]).optional(),
+    firstFrame: videoInputImageDataUrlSchema.optional(),
+    first_frame: videoInputImageDataUrlSchema.optional(),
+    lastFrame: videoInputImageDataUrlSchema.optional(),
+    last_frame: videoInputImageDataUrlSchema.optional(),
+    referenceImages: optionalReferenceImagesSchema,
+    reference_images: optionalReferenceImagesSchema,
     async: z.boolean().optional(),
     callback_url: z.string().url().max(2_048).optional(),
     callbackUrl: z.string().url().max(2_048).optional(),
   })
   .strict()
-  .refine(
-    (value) => Boolean(value.clientRequestId ?? value.client_request_id),
-    { message: "clientRequestId is required", path: ["clientRequestId"] }
-  )
-  .refine(
-    (value) =>
-      value.generateAudio === undefined ||
-      value.generate_audio === undefined ||
-      value.generateAudio === value.generate_audio,
-    {
-      message: "generateAudio and generate_audio must match",
-      path: ["generateAudio"],
+  .superRefine((value, context) => {
+    if (!value.clientRequestId && !value.client_request_id) {
+      context.addIssue({
+        code: "custom",
+        message: "clientRequestId is required",
+        path: ["clientRequestId"],
+      });
     }
-  )
-  .refine(
-    (value) =>
-      value.inputImageRole === undefined ||
-      value.input_image_role === undefined ||
-      value.inputImageRole === value.input_image_role,
-    {
-      message: "inputImageRole and input_image_role must match",
-      path: ["inputImageRole"],
+    if (value.duration === undefined && value.duration_seconds === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "duration is required",
+        path: ["duration"],
+      });
     }
-  );
+    if (value.aspectRatio === undefined && value.aspect_ratio === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "aspectRatio is required",
+        path: ["aspectRatio"],
+      });
+    }
+    addVideoAliasConflict(
+      context,
+      "clientRequestId",
+      "client_request_id",
+      value.clientRequestId,
+      value.client_request_id
+    );
+    addVideoAliasConflict(
+      context,
+      "duration",
+      "duration_seconds",
+      value.duration,
+      value.duration_seconds
+    );
+    addVideoAliasConflict(
+      context,
+      "aspectRatio",
+      "aspect_ratio",
+      value.aspectRatio,
+      value.aspect_ratio
+    );
+    addVideoAliasConflict(
+      context,
+      "negativePrompt",
+      "negative_prompt",
+      value.negativePrompt,
+      value.negative_prompt
+    );
+    addVideoAliasConflict(
+      context,
+      "generateAudio",
+      "generate_audio",
+      value.generateAudio,
+      value.generate_audio
+    );
+    addVideoAliasConflict(
+      context,
+      "firstFrame",
+      "first_frame",
+      value.firstFrame,
+      value.first_frame
+    );
+    addVideoAliasConflict(
+      context,
+      "lastFrame",
+      "last_frame",
+      value.lastFrame,
+      value.last_frame
+    );
+    addVideoAliasConflict(
+      context,
+      "referenceImages",
+      "reference_images",
+      value.referenceImages,
+      value.reference_images
+    );
+    addVideoAliasConflict(
+      context,
+      "callbackUrl",
+      "callback_url",
+      value.callbackUrl,
+      value.callback_url
+    );
+  });
 
 /** 将 UOL 错误转换为稳定 OpenAI 风格错误。 */
 function operationErrorResponse(error: OperationError) {
@@ -107,9 +217,22 @@ export const postExternalVideoGenerations = withApiLogging(
       parsed.data.negativePrompt ?? parsed.data.negative_prompt;
     const generateAudio =
       parsed.data.generateAudio ?? parsed.data.generate_audio;
-    const inputImages = parsed.data.image?.map(toVideoMediaInputReference);
-    const inputImageRole =
-      parsed.data.inputImageRole ?? parsed.data.input_image_role;
+    const duration = parsed.data.duration ?? parsed.data.duration_seconds;
+    const aspectRatio = parsed.data.aspectRatio ?? parsed.data.aspect_ratio;
+    if (duration === undefined || aspectRatio === undefined) {
+      return openAIImageError("Missing required video parameters");
+    }
+    const rawFirstFrame = parsed.data.firstFrame ?? parsed.data.first_frame;
+    const rawLastFrame = parsed.data.lastFrame ?? parsed.data.last_frame;
+    const rawReferenceImages =
+      parsed.data.referenceImages ?? parsed.data.reference_images;
+    const firstFrame = rawFirstFrame
+      ? toVideoMediaInputReference(rawFirstFrame)
+      : undefined;
+    const lastFrame = rawLastFrame
+      ? toVideoMediaInputReference(rawLastFrame)
+      : undefined;
+    const referenceImages = rawReferenceImages?.map(toVideoMediaInputReference);
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url || parsed.data.callbackUrl) {
       try {
@@ -139,10 +262,14 @@ export const postExternalVideoGenerations = withApiLogging(
           clientRequestId,
           prompt: parsed.data.prompt,
           model: parsed.data.model,
+          duration,
+          aspectRatio,
+          resolution: parsed.data.resolution,
           ...(negativePrompt ? { negativePrompt } : {}),
           ...(generateAudio !== undefined ? { generateAudio } : {}),
-          ...(inputImages?.length ? { inputImages } : {}),
-          ...(inputImageRole ? { inputImageRole } : {}),
+          ...(firstFrame ? { firstFrame } : {}),
+          ...(lastFrame ? { lastFrame } : {}),
+          ...(referenceImages?.length ? { referenceImages } : {}),
         },
         {
           type: "apiKey",
@@ -167,6 +294,17 @@ export const postExternalVideoGenerations = withApiLogging(
           generation_id: result.taskId,
           status: result.status,
           model: parsed.data.model,
+          duration,
+          duration_seconds: duration,
+          aspectRatio,
+          aspect_ratio: aspectRatio,
+          resolution: parsed.data.resolution,
+          ...(generateAudio !== undefined
+            ? {
+                generateAudio,
+                generate_audio: generateAudio,
+              }
+            : {}),
         },
         { status: 202, headers: { "Cache-Control": "no-store" } }
       );

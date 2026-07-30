@@ -259,6 +259,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
               href: "/dashboard/admin/settings",
               icon: Server,
             },
+            {
+              title: "Global Usage Records",
+              href: "/dashboard/admin/history",
+              icon: History,
+            },
           ]
         : [];
 

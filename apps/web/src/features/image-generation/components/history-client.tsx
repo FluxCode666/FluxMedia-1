@@ -156,11 +156,27 @@ function creditSummary(
   return parts.length ? parts.join(" · ") : null;
 }
 
-/** 返回列表规格文字，图片保留像素尺寸，视频展示分辨率与时长。 */
-function formatRecordSpecification(record: HistoryRecord): string {
-  return record.kind === "image"
-    ? record.size
-    : `${record.resolution} · ${record.durationSeconds}s`;
+/** 返回列表规格文字；视频直接展示独立参数、声音和输入摘要。 */
+function formatRecordSpecification(
+  record: HistoryRecord,
+  copy: (en: string, zh: string) => string
+): string {
+  if (record.kind === "image") return record.size;
+  const inputMode = {
+    none: copy("no image input", "无图片输入"),
+    "first-frame": copy("first frame", "首帧"),
+    "first-last-frames": copy("first/last frames", "首尾帧"),
+    references: copy("references", "参考图"),
+  }[record.input.mode];
+  const inputSummary =
+    record.input.count > 0 ? `${inputMode} ${record.input.count}` : inputMode;
+  return [
+    record.resolution,
+    `${record.duration}s`,
+    record.aspectRatio,
+    record.generateAudio ? copy("audio", "声音") : copy("no audio", "无声音"),
+    inputSummary,
+  ].join(" · ");
 }
 
 /** 将统一列表状态映射回图片灯箱的历史状态类型。 */
@@ -404,7 +420,7 @@ export function HistoryClient({
                               {formatAdobeModelIdForDisplay(item.model)}
                             </span>
                             <span>·</span>
-                            <span>{formatRecordSpecification(item)}</span>
+                            <span>{formatRecordSpecification(item, copy)}</span>
                             <Badge
                               className={`rounded-full border-transparent px-2 py-0 font-normal text-[10px] uppercase ${statusClasses(item.status)}`}
                               variant="outline"
@@ -435,7 +451,7 @@ export function HistoryClient({
                           {formatAdobeModelIdForDisplay(item.model)}
                         </div>
                         <div className="hidden font-mono text-xs text-foreground lg:block">
-                          {formatRecordSpecification(item)}
+                          {formatRecordSpecification(item, copy)}
                         </div>
                         <div className="hidden text-xs text-foreground lg:block">
                           {formatCredits(item.creditsConsumed)}

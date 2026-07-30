@@ -9,6 +9,10 @@
 import { videoInputManifestSchema } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import {
+  parseModelMarketplaceConfig,
+  resolveModelMarketplaceEntry,
+} from "@repo/shared/model-marketplace";
+import {
   getRuntimeSettingJson,
   getRuntimeSettingString,
 } from "@repo/shared/system-settings";
@@ -29,7 +33,6 @@ import {
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
-import { parseVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
@@ -270,17 +273,23 @@ bindExecute(
     // WHY：动态参考图上限只约束新任务。历史幂等重放已在上方按创建时规范
     // 身份命中，不能被管理员后续降限改写为新的 validation_error。
     let canonicalResult: ReturnType<typeof resolveCanonicalVideoGenerateInput>;
-    let capabilityOverridesVersion: number;
+    let modelConfigurationRevision: number;
     try {
-      const capabilityOverrides = await getRuntimeSettingJson(
-        "VIDEO_MODEL_CAPABILITY_OVERRIDES"
-      );
+      const [capabilityOverrides, marketplaceConfigValue] = await Promise.all([
+        getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES"),
+        getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
+      ]);
       canonicalResult = resolveCanonicalVideoGenerateInput(
         input,
         capabilityOverrides
       );
-      capabilityOverridesVersion =
-        parseVideoModelCapabilityOverrides(capabilityOverrides).version;
+      const marketplaceConfig = parseModelMarketplaceConfig(
+        marketplaceConfigValue
+      );
+      modelConfigurationRevision = resolveModelMarketplaceEntry(
+        marketplaceConfig.videoByFamily[input.model],
+        "video"
+      ).revision;
     } catch (error) {
       logError(error, { source: "video-capability-validation" });
       throw new OperationError("not_ready", "视频模型能力配置暂时不可用");
@@ -298,7 +307,7 @@ bindExecute(
     }
     const canonicalInput = canonicalResult.input;
     const capabilitySnapshot = createVideoCapabilitySnapshot({
-      capabilityOverridesVersion,
+      modelConfigurationRevision,
       maxReferenceImages:
         canonicalResult.capability.input.referenceImages.maxCount,
     });
@@ -491,7 +500,7 @@ bindExecute(
     return {
       taskId: row.id,
       status: toVideoOperationStatus(row.status, row.stage),
-      model: row.family,
+      model: row.model,
       duration: row.durationSeconds,
       aspectRatio: row.aspectRatio,
       resolution: row.resolution,
