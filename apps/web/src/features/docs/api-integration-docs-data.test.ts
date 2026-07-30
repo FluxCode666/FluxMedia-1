@@ -109,6 +109,7 @@ describe("API integration docs data", () => {
     const taskText = JSON.stringify(task);
 
     expect(create?.requestExample).toContain('"model": "seedance2"');
+    expect(create?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(create?.parameters.map((parameter) => parameter.name)).toEqual(
       expect.arrayContaining([
         "duration / duration_seconds",
@@ -125,6 +126,7 @@ describe("API integration docs data", () => {
     expect(createText).not.toContain("firefly-<family>");
     expect(createText).not.toContain("input_image_role");
     expect(task?.responseExample).toContain('"object": "video.task"');
+    expect(task?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(taskText).toMatch(/persistent|持久/u);
     expect(taskText).not.toContain("30 minutes");
     expect(taskText).not.toContain("30 分钟");

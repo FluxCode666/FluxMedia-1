@@ -380,9 +380,9 @@ const zhContent = {
   }'`,
       responseExample: `{
   "object": "video.task",
-  "id": "V1StGXR8_Z5jdHi6B-myT",
-  "task_id": "V1StGXR8_Z5jdHi6B-myT",
-  "generation_id": "V1StGXR8_Z5jdHi6B-myT",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "pending",
   "model": "seedance2",
   "duration": 8,
@@ -545,13 +545,13 @@ const zhContent = {
       path: "/v1/videos/{id}",
       contentType: "无请求体",
       description: "按任务 ID 查询视频生成状态和结果。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/V1StGXR8_Z5jdHi6B-myT \\
+      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "object": "video.task",
-  "id": "V1StGXR8_Z5jdHi6B-myT",
-  "task_id": "V1StGXR8_Z5jdHi6B-myT",
-  "generation_id": "V1StGXR8_Z5jdHi6B-myT",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "completed",
   "model": "seedance2",
   "duration": 8,

@@ -26,6 +26,7 @@ describe("system docs video contract", () => {
     expect(endpoint.responseExample).toContain('"object": "video.task"');
     const idMatch = endpoint.responseExample.match(/"id": "([^"]+)"/);
     if (!idMatch?.[1]) throw new Error(`${locale} 创建响应缺少任务 ID`);
+    expect(idMatch[1]).toMatch(/^video_[0-9a-f]{40}$/u);
     expect(endpoint.responseExample).toContain(`"task_id": "${idMatch[1]}"`);
     expect(endpoint.responseExample).toContain(
       `"generation_id": "${idMatch[1]}"`
@@ -63,6 +64,7 @@ describe("system docs video contract", () => {
 
     expect(endpoint.title).toBe("Get video task");
     expect(endpoint.responseExample).toContain('"object": "video.task"');
+    expect(endpoint.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(endpoint.responseExample).toContain('"input": {');
     expect(endpoint.responseExample).toContain('"created_at":');
     for (const field of OBSOLETE_VIDEO_RESPONSE_FIELDS) {
