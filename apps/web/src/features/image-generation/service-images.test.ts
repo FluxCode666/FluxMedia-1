@@ -351,6 +351,73 @@ return request;
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
   });
 
+  it("编辑图片脚本接收字符串文本字段并按 multipart 规则重编码", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    mocks.fetchMediaUpstream.mockImplementation(
+      async (_url: string, init?: { body?: unknown }) => {
+        const formData = init?.body;
+        expect(formData).toBeInstanceOf(FormData);
+        if (!(formData instanceof FormData)) {
+          throw new Error("missing FormData");
+        }
+        expect(formData.get("count")).toBe("1");
+        expect(JSON.parse(String(formData.get("options")))).toEqual({
+          width: 1024,
+          compression: 80,
+          streaming: true,
+        });
+        expect(formData.get("image")).toBeInstanceOf(Blob);
+        expect(formData.has("n")).toBe(false);
+        expect(formData.has("width")).toBe(false);
+        expect(formData.has("output_compression")).toBe(false);
+        expect(formData.has("stream")).toBe(false);
+        return successfulImageResponse();
+      }
+    );
+    const config = {
+      ...createPoolApiConfig(`
+if (
+  typeof request.n !== "string" ||
+  typeof request.width !== "string" ||
+  typeof request.output_compression !== "string" ||
+  request.stream !== "true"
+) {
+  throw new Error("Unexpected multipart input types");
+}
+request.count = Number(request.n);
+request.options = {
+  width: Number(request.width),
+  compression: Number(request.output_compression),
+  streaming: request.stream === "true",
+};
+delete request.n;
+delete request.width;
+delete request.output_compression;
+delete request.stream;
+return request;
+`),
+      useStream: true,
+    } satisfies ApiConfig;
+
+    const result = await editImage(config, {
+      prompt: "adjust colors",
+      model: "gpt-image-2",
+      size: "1024x1024",
+      outputCompression: 80,
+      images: [
+        {
+          name: "source.png",
+          type: "image/png",
+          data: Buffer.from("source-image"),
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["删除", "delete request.image; return request;"],
     ["复制", "request.image_copy = request.image; return request;"],

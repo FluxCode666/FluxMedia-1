@@ -33,18 +33,30 @@ FluxMedia 仓库中再核对：
 - `client_request_id` 对应的上游幂等字段；
 - 首帧、尾帧、参考图、声音和负向提示词的字段形状；
 - 同一模型不同模式（文生、首尾帧、参考图）的条件差异。
+- 视频提交、轮询和下载响应是否符合平台已支持的响应协议。
 
 缺少会改变脚本语义的事实时，先逐项向用户确认；不要用猜测补齐供应商约定。
 
 ### 3. 分离模型映射与脚本转换
 
-- 平台模型 `seedance2` 对应上游 `seedande-2.0` 时，输出账号配置：
+- 平台模型 `seedance2` 对应上游 `seedande-2.0` 时，输出账号配置相关字段：
 
   ```json
-  { "modelId": "seedance2", "upstreamModelId": "seedande-2.0" }
+  {
+    "supportedModelIds": ["seedance2"],
+    "config": {
+      "modelMappings": [
+        {
+          "modelId": "seedance2",
+          "upstreamModelId": "seedande-2.0"
+        }
+      ]
+    }
+  }
   ```
 
   脚本中的 `request.model` 已经是上游模型 ID，不要再次写死或覆盖为平台 ID。
+- `supportedModelIds` 与映射来源只使用平台真实模型 ID。每个映射来源必须已在该账号的支持模型中，且大小写不敏感唯一；未配置映射的模型同名透传。
 - 字段改名、移动、嵌套、类型转换、枚举转换、默认值和条件字段才写入脚本。
 - 如果用户要求改 URL、Method、Header、Authorization 或 API Key，明确说明当前脚本契约不支持，并把需求留给适配器代码改造。
 
@@ -94,7 +106,8 @@ return request;
 4. 首尾帧与参考图是否仍然互斥；
 5. 每个媒体令牌是否恰好保留一次；
 6. 脚本失败时请求不会发出；
-7. 脚本没有使用 `process`、`require`、`fetch`、定时器、Promise、文件、网络、动态代码、时间或随机数。
+7. 脚本没有使用 `process`、`require`、`fetch`、定时器、Promise、文件、网络、动态代码、时间或随机数；
+8. 上游响应协议是否已兼容；请求脚本不能转换响应、轮询或下载流程。
 
 在仓库中工作时，优先用 `applyApiRequestTransformScript` 的现有 Vitest 测试扩展真实样例；不要用 Node `eval` 或 `new Function` 代替生产 QuickJS 运行时验证。脚本源码不得超过 32,768 个 UTF-16 代码单元，序列化输入/输出不得超过 2 MiB，执行预算为 50 ms。
 
@@ -154,7 +167,8 @@ if (typeof request.duration === "number") {
 - Images multipart 的文件和 mask 只能移动到顶层字段或顶层数组元素；Videos JSON 媒体可以移动到嵌套字段。两类请求的每个宿主令牌都必须恰好保留一次。
 - 移动媒体前检查源字段互斥且目标字段为空；冲突时抛错，不能覆盖、合并或静默丢弃已有媒体。
 - 平台已保证首尾帧与参考图互斥；脚本不得把两种输入合并或复制成同时存在。
-- 参考图数量由模型能力配置约束；脚本不得截断或静默丢弃 `reference_images`。供应商数量限制不一致时，报告并修改模型能力配置。
+- 参考图数量由模型能力配置约束；脚本不得截断或静默丢弃 `reference_images`。视频输入图还受提交前 64 MiB 总内联体积限制，这不是图片数量硬上限。
+- 供应商数量限制低于平台模型能力时，报告差异；应降低全局模型能力或从该账号移除模型，不能靠脚本截断。
 - 不要解码、拼接、裁剪或生成 data URL；真实媒体值由宿主在脚本后恢复。
 
 ## 交付格式

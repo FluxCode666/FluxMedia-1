@@ -1,5 +1,11 @@
 # FluxMedia 请求处理运行时契约
 
+## 账号模型配置
+
+`supportedModelIds` 只保存平台真实模型 ID。`config.modelMappings` 保存稀疏的
+`modelId -> upstreamModelId` 映射；来源必须属于该账号支持模型，且大小写不敏感唯一。
+未配置映射的模型同名透传，脚本不得再次覆盖映射后的 `request.model`。
+
 ## 脚本可见上下文
 
 ```ts
@@ -20,10 +26,15 @@ type Context = {
 常见字段：`model`、`prompt`、`n`、`size`、`width`、`height`、`quality`、`moderation`、`output_format`、`output_compression`、`background`、`stream`、`partial_images`、`response_format`。
 
 字段是否出现取决于用户请求和账号配置；脚本不得假设所有可选字段都存在。
+`prompt` 在脚本执行前已追加平台缓存 nonce，应把它视为不透明文本并完整保留。
 
 ### `images.edit`，multipart
 
 文本字段与生成接口大体相同；标准字段包括 `model`、`prompt`、`n`、`response_format`，以及可选 `size`、`width`、`height`、`quality`、`moderation`、`output_format`、`output_compression`、`background`、`stream`、`partial_images`。单张输入图使用 `image`；多张输入图使用重复的 `image[]`；蒙版使用 `mask`。
+
+所有 multipart 文本字段进入脚本时都是字符串，包括 `n`、`width`、`height`、
+`output_compression`、`stream` 和 `partial_images`。`prompt` 已追加缓存 nonce，并可能把
+`@图N` 展开为输入图引用标签；移动字段时完整保留，不要修剪或重建文本。
 
 multipart 的重复键在脚本对象中表现为数组。重命名时保留数组顺序；源字段或目标字段冲突时应失败关闭，例如：
 
@@ -50,12 +61,19 @@ return request;
 ```
 
 平台不会在同一请求中同时生成 `image` 和 `image[]`。输出数组会重建为同名的重复 multipart 字段；不要把媒体数组嵌套进对象。
+输出数字和布尔值会编码为 multipart 文本；普通对象会编码为 JSON 文本；`null` 和
+`undefined` 字段会被省略。含媒体的对象或嵌套数组会失败关闭。
 
 ### `videos.generate`，JSON
 
 标准字段包括 `client_request_id`、`prompt`、`model`、`duration`、`aspect_ratio`、`resolution`、`generate_audio` 和可选 `negative_prompt`、`first_frame`、`last_frame`、`reference_images`。`client_request_id` 是提交幂等标识；可移动到供应商的等价字段，但不能静默删除。
 
 首尾帧和参考图由平台能力校验保证互斥；脚本只能适配上游字段名称或结构，不能绕过互斥约束。
+全部视频输入图的 data URL 编码后总长度不得超过 64 MiB；该校验发生在脚本执行前，
+不构成参考图数量硬上限。
+
+请求脚本不能转换上游响应。提交响应须提供 `task_id`、`id` 或 `generation_id`；轮询响应
+须使用平台已支持的状态和 `video_url`、`url` 或 `output_url`。不兼容时需要修改适配器。
 
 ## QuickJS 安全限制
 
