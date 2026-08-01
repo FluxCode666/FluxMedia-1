@@ -1,78 +1,41 @@
 /**
- * API 上游脚本 Worker Thread 入口。
+ * API 上游脚本 Worker Thread 的生产入口。
  *
  * 职责：在独立线程中为每个作业创建全新的 QuickJS Runtime/Context，执行同步
- * 管理员脚本，并只通过结构化克隆安全的字符串协议与主线程通信。
+ * 管理员脚本，并只通过结构化克隆安全的字符串协议与主线程通信。使用原生 ESM，
+ * 确保 standalone 容器中的 Node 无需 TypeScript loader 即可启动。
  */
 import { parentPort } from "node:worker_threads";
 
 import { getQuickJS, shouldInterruptAfterDeadline } from "quickjs-emscripten";
 
-type WorkerJobKind = "validate" | "execute";
-
-interface WorkerJobMessage {
-  readonly type: "job";
-  readonly id: string;
-  readonly kind: WorkerJobKind;
-  readonly script: string;
-  readonly inputJson?: string;
-  readonly contextJson?: string;
-  readonly timeoutMs: number;
-  readonly memoryLimitBytes: number;
-  readonly stackLimitBytes: number;
-  readonly maxScriptCharacters: number;
-  readonly maxSerializedBytes: number;
-}
-
-interface WorkerSuccessMessage {
-  readonly type: "result";
-  readonly id: string;
-  readonly ok: true;
-  readonly outputJson?: string;
-}
-
-interface WorkerFailureMessage {
-  readonly type: "result";
-  readonly id: string;
-  readonly ok: false;
-  readonly code:
-    | "invalid_script"
-    | "execution_failed"
-    | "invalid_output"
-    | "worker_cleanup_failed";
-  readonly replaceWorker: boolean;
-}
-
 const workerPort = parentPort;
 
 /** 判断主线程消息是否满足最小作业协议，避免畸形消息触发宿主异常。 */
-function isWorkerJobMessage(value: unknown): value is WorkerJobMessage {
+function isWorkerJobMessage(value) {
   if (!value || typeof value !== "object") return false;
-  const candidate = value as Record<string, unknown>;
   return (
-    candidate.type === "job" &&
-    typeof candidate.id === "string" &&
-    (candidate.kind === "validate" || candidate.kind === "execute") &&
-    typeof candidate.script === "string" &&
-    typeof candidate.timeoutMs === "number" &&
-    typeof candidate.memoryLimitBytes === "number" &&
-    typeof candidate.stackLimitBytes === "number" &&
-    typeof candidate.maxScriptCharacters === "number" &&
-    typeof candidate.maxSerializedBytes === "number" &&
-    (candidate.inputJson === undefined ||
-      typeof candidate.inputJson === "string") &&
-    (candidate.contextJson === undefined ||
-      typeof candidate.contextJson === "string")
+    value.type === "job" &&
+    typeof value.id === "string" &&
+    (value.kind === "validate" || value.kind === "execute") &&
+    typeof value.script === "string" &&
+    typeof value.timeoutMs === "number" &&
+    typeof value.memoryLimitBytes === "number" &&
+    typeof value.stackLimitBytes === "number" &&
+    typeof value.maxScriptCharacters === "number" &&
+    typeof value.maxSerializedBytes === "number" &&
+    (value.inputJson === undefined || typeof value.inputJson === "string") &&
+    (value.contextJson === undefined || typeof value.contextJson === "string")
   );
 }
 
 /** 把管理员脚本包装为固定签名同步函数。 */
-function buildTransformFunctionSource(script: string): string {
+function buildTransformFunctionSource(script) {
   return `(function transform(input, context) {\n"use strict";\nconst request = input;\nconst response = input;\n${script}\n})`;
 }
 
 /** 构造不注入任何 Node 能力或异步原语的 QuickJS 执行源码。 */
-function buildExecutionSource(script: string): string {
+function buildExecutionSource(script) {
   return `(() => {
   const input = JSON.parse(globalThis.__fluxInputJson);
   const context = JSON.parse(globalThis.__fluxContextJson);
@@ -120,12 +83,10 @@ function buildExecutionSource(script: string): string {
 /**
  * 执行单个隔离作业并在所有路径显式销毁 QuickJS 资源。
  *
- * @param job - 已由主线程构造的字符串协议作业。
- * @returns 不携带源码、正文或堆栈的稳定结果。
+ * @param {Record<string, unknown>} job - 已由主线程构造的字符串协议作业。
+ * @returns {Promise<Record<string, unknown>>} 不携带源码、正文或堆栈的稳定结果。
  */
-async function executeWorkerJob(
-  job: WorkerJobMessage
-): Promise<WorkerSuccessMessage | WorkerFailureMessage> {
+async function executeWorkerJob(job) {
   if (
     job.script.length > job.maxScriptCharacters ||
     (job.inputJson !== undefined &&
@@ -144,13 +105,9 @@ async function executeWorkerJob(
 
   const QuickJS = await getQuickJS();
   const runtime = QuickJS.newRuntime();
-  let context: ReturnType<typeof runtime.newContext> | undefined;
-  let failureCode:
-    | "invalid_script"
-    | "execution_failed"
-    | "invalid_output"
-    | undefined;
-  let outputJson: string | undefined;
+  let context;
+  let failureCode;
+  let outputJson;
   let cleanupFailed = false;
 
   try {
@@ -239,7 +196,7 @@ if (!workerPort) {
 
 let processing = false;
 
-workerPort.on("message", (message: unknown) => {
+workerPort.on("message", (message) => {
   if (!isWorkerJobMessage(message) || processing) {
     throw new Error("API 上游脚本 Worker 收到非法或并发作业");
   }

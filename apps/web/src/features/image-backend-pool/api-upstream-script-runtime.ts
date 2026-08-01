@@ -18,6 +18,10 @@ import {
   ApiUpstreamScriptPoolError,
   ensureApiUpstreamScriptPool,
 } from "./api-upstream-script-pool";
+import {
+  ApiUpstreamScriptStaticValidationError,
+  assertApiUpstreamScriptStaticContract,
+} from "./api-upstream-script-static-validation";
 
 const BLOCKED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -147,6 +151,7 @@ export async function validateApiUpstreamScript(
   const script = normalizeScript(rawScript);
   if (!script) return;
   try {
+    assertApiUpstreamScriptStaticContract(script);
     const pool = await ensureApiUpstreamScriptPool();
     await pool.run({
       kind: "validate",
@@ -156,6 +161,9 @@ export async function validateApiUpstreamScript(
       stage,
     });
   } catch (error) {
+    if (error instanceof ApiUpstreamScriptStaticValidationError) {
+      throw new ApiUpstreamScriptRuntimeError("invalid_script");
+    }
     throw mapPoolError(error);
   }
 }

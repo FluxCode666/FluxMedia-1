@@ -109,6 +109,8 @@ describe("API upstream script worker pool", () => {
         "queuedResponses",
         "readyWorkers",
         "responsePermitCapacity",
+        "saturationCount",
+        "replacementCount",
         "state",
       ].sort()
     );

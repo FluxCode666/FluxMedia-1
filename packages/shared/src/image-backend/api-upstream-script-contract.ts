@@ -98,6 +98,9 @@ export const apiUpstreamQueryValueSchema = z.union([
   z.null(),
 ]);
 
+/** 单个请求 Query 值。 */
+export type ApiUpstreamQueryValue = z.infer<typeof apiUpstreamQueryValueSchema>;
+
 /** 判断脚本 Header 是否属于宿主保留命名空间。 */
 export function isBlockedApiUpstreamHeaderName(headerName: string): boolean {
   const normalized = headerName.trim().toLowerCase();
@@ -209,6 +212,9 @@ export const apiUpstreamQuerySchema = z
     }
   });
 
+/** 经资源边界校验的请求 Query。 */
+export type ApiUpstreamQuery = z.infer<typeof apiUpstreamQuerySchema>;
+
 /** 请求脚本可返回的业务 Header 修改。 */
 export const apiUpstreamBusinessHeadersSchema = z
   .record(z.string(), z.string())
@@ -272,6 +278,25 @@ export type ApiUpstreamRequestEnvelope = z.infer<
   typeof apiUpstreamRequestEnvelopeSchema
 >;
 
+/** 请求脚本实际接收的内置 Query；输入阶段不允许使用删除标记 null。 */
+const apiUpstreamRequestInputQuerySchema = apiUpstreamQuerySchema.refine(
+  (query) => Object.values(query).every((value) => value !== null),
+  { message: "Request input Query must not contain null" }
+);
+
+/** 管理测试器和生产运行时共享的请求脚本输入。 */
+export const apiUpstreamRequestInputSchema = z
+  .object({
+    query: apiUpstreamRequestInputQuerySchema,
+    body: apiUpstreamJsonValueSchema.optional(),
+  })
+  .strict();
+
+/** 请求脚本输入。 */
+export type ApiUpstreamRequestInput = z.infer<
+  typeof apiUpstreamRequestInputSchema
+>;
+
 /** 判断供应商操作是否属于查询阶段。 */
 export function isApiUpstreamQueryOperation(
   operation: ApiUpstreamAdapterOperationId
@@ -332,10 +357,42 @@ export type ApiUpstreamScriptContext = z.infer<
   typeof apiUpstreamScriptContextSchema
 >;
 
+/** 响应脚本只能读取的四个安全 Header。 */
+const apiUpstreamResponseHeadersSchema = z
+  .object({
+    "content-type": z.string().optional(),
+    "retry-after": z.string().optional(),
+    "request-id": z.string().optional(),
+    "x-request-id": z.string().optional(),
+  })
+  .strict();
+
+/** 管理测试器和生产运行时共享的响应脚本输入。 */
+export const apiUpstreamResponseInputSchema = z
+  .object({
+    statusCode: z.number().int().min(100).max(599),
+    headers: apiUpstreamResponseHeadersSchema,
+    body: apiUpstreamJsonValueSchema,
+  })
+  .strict();
+
+/** 响应脚本输入。 */
+export type ApiUpstreamResponseInput = z.infer<
+  typeof apiUpstreamResponseInputSchema
+>;
+
+/** 标准媒体输出只允许可由宿主安全下载的绝对 HTTP(S) URL。 */
+const apiUpstreamMediaUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => /^https?:\/\//iu.test(value), {
+    message: "Media output URL must use HTTP or HTTPS",
+  });
+
 const imageOutputSchema = z
   .object({
     kind: z.literal("image"),
-    url: z.string().url().optional(),
+    url: apiUpstreamMediaUrlSchema.optional(),
     base64: z.string().min(1).optional(),
     mediaType: z.string().trim().min(1).max(120).optional(),
   })
@@ -359,7 +416,7 @@ const imageOutputSchema = z
 const videoOutputSchema = z
   .object({
     kind: z.literal("video"),
-    url: z.string().url(),
+    url: apiUpstreamMediaUrlSchema,
   })
   .strict();
 
@@ -456,7 +513,10 @@ export function apiUpstreamResponseResultForOperationSchema(
     });
 }
 
-/** 标准图片脚本响应结果。 */
-export type ApiUpstreamImageResponseResult = z.infer<
+/** 六个操作共享的标准响应结果。 */
+export type ApiUpstreamResponseResult = z.infer<
   ReturnType<typeof apiUpstreamResponseResultForOperationSchema>
 >;
+
+/** 标准图片脚本响应结果；保留媒体调用方的语义化别名。 */
+export type ApiUpstreamImageResponseResult = ApiUpstreamResponseResult;

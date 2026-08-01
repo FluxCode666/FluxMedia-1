@@ -10,6 +10,8 @@ import {
   API_UPSTREAM_ADAPTER_OPERATION_IDS,
   API_UPSTREAM_MAX_QUERY_VALUES,
   apiUpstreamRequestEnvelopeSchema,
+  apiUpstreamRequestInputSchema,
+  apiUpstreamResponseInputSchema,
   apiUpstreamResponseResultForOperationSchema,
   parseApiUpstreamRequestEnvelope,
 } from "./api-upstream-script-contract";
@@ -36,6 +38,34 @@ describe("API upstream script contract", () => {
     expect(() =>
       parseApiUpstreamRequestEnvelope("videos.query", { body: {} })
     ).toThrow();
+  });
+
+  it("请求与响应测试输入使用和生产运行时相同的严格形状", () => {
+    expect(
+      apiUpstreamRequestInputSchema.safeParse({
+        query: {},
+        body: { model: "gpt-image-2" },
+      }).success
+    ).toBe(true);
+    expect(
+      apiUpstreamRequestInputSchema.safeParse({
+        model: "gpt-image-2",
+      }).success
+    ).toBe(false);
+    expect(
+      apiUpstreamResponseInputSchema.safeParse({
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: { status: "processing" },
+      }).success
+    ).toBe(true);
+    expect(
+      apiUpstreamResponseInputSchema.safeParse({
+        statusCode: 200,
+        headers: { authorization: "secret" },
+        body: {},
+      }).success
+    ).toBe(false);
   });
 
   it("Query 接受标量、保序数组和 null 删除，并限制参数值总数", () => {
@@ -174,6 +204,21 @@ describe("API upstream script contract", () => {
       videoSchema.safeParse({
         status: "completed",
         outputs: [{ kind: "video", base64: "not-supported" }],
+      }).success
+    ).toBe(false);
+  });
+
+  it("标准媒体输出只允许绝对 HTTP(S) URL", () => {
+    expect(
+      apiUpstreamResponseResultForOperationSchema("images.generate").safeParse({
+        status: "completed",
+        outputs: [{ kind: "image", url: "ftp://cdn.example.com/image.png" }],
+      }).success
+    ).toBe(false);
+    expect(
+      apiUpstreamResponseResultForOperationSchema("videos.query").safeParse({
+        status: "completed",
+        outputs: [{ kind: "video", url: "data:video/mp4;base64,AAAA" }],
       }).success
     ).toBe(false);
   });

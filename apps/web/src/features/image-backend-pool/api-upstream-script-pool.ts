@@ -53,6 +53,8 @@ export interface ApiUpstreamScriptPoolDiagnostics {
   readonly queuedBytes: number;
   readonly activeResponsePermits: number;
   readonly responsePermitCapacity: number;
+  readonly saturationCount: number;
+  readonly replacementCount: number;
 }
 
 type PoolErrorCode =
@@ -160,7 +162,7 @@ function getWorkerEntryUrl(): URL {
   return pathToFileURL(
     resolve(
       webRoot,
-      "src/features/image-backend-pool/api-upstream-script-worker.ts"
+      "src/features/image-backend-pool/api-upstream-script-worker.mjs"
     )
   );
 }
@@ -259,6 +261,8 @@ export class ApiUpstreamScriptPool {
   private queuedBytes = 0;
   private nextWorkerId = 1;
   private replacementFailures = 0;
+  private saturationCount = 0;
+  private replacementCount = 0;
   private shutdownPromise?: Promise<void>;
 
   /** @param config - 已在启动阶段严格验证的不可变部署配置。 */
@@ -348,6 +352,8 @@ export class ApiUpstreamScriptPool {
       queuedBytes: this.queuedBytes,
       activeResponsePermits: this.responsePermits.size,
       responsePermitCapacity: this.responsePermitCapacity(),
+      saturationCount: this.saturationCount,
+      replacementCount: this.replacementCount,
     };
   }
 
@@ -695,6 +701,7 @@ export class ApiUpstreamScriptPool {
     if (index >= 0) this.slots.splice(index, 1);
 
     if (this.stateValue === "ready") {
+      this.replacementCount += 1;
       const backoffMs = Math.min(1_000, 25 * 2 ** this.replacementFailures);
       this.replacementFailures = Math.min(this.replacementFailures + 1, 6);
       setTimeout(() => {
@@ -727,6 +734,7 @@ export class ApiUpstreamScriptPool {
 
   /** 输出厂商无关、无正文的统一饱和事件。 */
   private logSaturation(reason: string): void {
+    this.saturationCount += 1;
     logWarn("api_upstream_script_runtime_saturated", {
       event: "api_upstream_script_runtime_saturated",
       reason,
@@ -829,5 +837,7 @@ export function getApiUpstreamScriptPoolDiagnostics(): ApiUpstreamScriptPoolDiag
     queuedBytes: 0,
     activeResponsePermits: 0,
     responsePermitCapacity: config.workerCount * RESPONSE_PERMITS_PER_WORKER,
+    saturationCount: 0,
+    replacementCount: 0,
   };
 }

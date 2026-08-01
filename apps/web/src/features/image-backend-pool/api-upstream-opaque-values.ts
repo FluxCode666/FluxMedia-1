@@ -5,11 +5,21 @@
  * 不可预测字符串令牌；脚本执行后验证每个令牌恰好保留一次并恢复原值。
  */
 import { randomUUID } from "node:crypto";
+import {
+  API_UPSTREAM_MAX_JSON_DEPTH,
+  API_UPSTREAM_MAX_JSON_NODES,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 
 const OPAQUE_TOKEN_PREFIX = "__fluxmedia_opaque_";
 
 /** 不透明令牌与宿主真实值的只读映射。 */
 export type ApiUpstreamOpaqueValues = ReadonlyMap<string, unknown>;
+
+/** 判断字符串叶子是否应留在宿主的不透明值选择器。 */
+export type ApiUpstreamOpaqueValueSelector = (
+  value: string,
+  fieldName: string | undefined
+) => boolean;
 
 /** 媒体令牌被丢失、复制或伪造时的宿主稳定错误类型。 */
 export class ApiUpstreamOpaqueValueError extends Error {
@@ -25,6 +35,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+/** 遍历帧；显式栈避免恶意深层输入先耗尽 Node 主线程调用栈。 */
+interface OpaqueTraversalFrame {
+  readonly value: unknown;
+  readonly depth: number;
+}
+
 /** 创建只在单次脚本作业内有效的不可预测媒体令牌。 */
 export function createApiUpstreamOpaqueToken(): string {
   return `${OPAQUE_TOKEN_PREFIX}${randomUUID().replaceAll("-", "")}`;
@@ -38,27 +54,94 @@ export function createApiUpstreamOpaqueToken(): string {
  * @param counts - 就地累加每个已知令牌的出现次数。
  * @throws Error 出现宿主未签发的令牌时失败关闭。
  */
-function countOpaqueTokens(
+function inspectOpaqueTree(
   value: unknown,
   knownTokens: ReadonlySet<string>,
   counts: Map<string, number>
 ): void {
-  if (typeof value === "string") {
-    if (knownTokens.has(value)) {
-      counts.set(value, (counts.get(value) ?? 0) + 1);
-    } else if (knownTokens.size > 0 && value.startsWith(OPAQUE_TOKEN_PREFIX)) {
+  const stack: OpaqueTraversalFrame[] = [{ value, depth: 0 }];
+  const visited = new WeakSet<object>();
+  let nodes = 0;
+  while (stack.length > 0) {
+    const frame = stack.pop();
+    if (!frame) break;
+    nodes += 1;
+    if (
+      nodes > API_UPSTREAM_MAX_JSON_NODES ||
+      frame.depth > API_UPSTREAM_MAX_JSON_DEPTH
+    ) {
       throw new ApiUpstreamOpaqueValueError();
     }
-    return;
+    if (typeof frame.value === "string") {
+      if (knownTokens.has(frame.value)) {
+        counts.set(frame.value, (counts.get(frame.value) ?? 0) + 1);
+      } else if (
+        knownTokens.size > 0 &&
+        frame.value.startsWith(OPAQUE_TOKEN_PREFIX)
+      ) {
+        throw new ApiUpstreamOpaqueValueError();
+      }
+      continue;
+    }
+    if (!frame.value || typeof frame.value !== "object") continue;
+    if (visited.has(frame.value)) {
+      throw new ApiUpstreamOpaqueValueError();
+    }
+    visited.add(frame.value);
+    if (Array.isArray(frame.value)) {
+      for (let index = frame.value.length - 1; index >= 0; index -= 1) {
+        stack.push({
+          value: frame.value[index],
+          depth: frame.depth + 1,
+        });
+      }
+      continue;
+    }
+    for (const [key, child] of Object.entries(frame.value).reverse()) {
+      if (knownTokens.size > 0 && key.startsWith(OPAQUE_TOKEN_PREFIX)) {
+        throw new ApiUpstreamOpaqueValueError();
+      }
+      stack.push({ value: child, depth: frame.depth + 1 });
+    }
   }
-  if (Array.isArray(value)) {
-    for (const item of value) countOpaqueTokens(item, knownTokens, counts);
-    return;
-  }
-  if (!isRecord(value)) return;
-  for (const child of Object.values(value)) {
-    countOpaqueTokens(child, knownTokens, counts);
-  }
+}
+
+/**
+ * 把选中的字符串叶子替换为单次作业令牌。
+ *
+ * @param value - 尚未进入 Worker 的宿主 JSON 树。
+ * @param shouldProtect - 根据叶子值和最近字段名判断是否保护。
+ * @returns 令牌化副本及只留在宿主的真实值映射。
+ * @throws ApiUpstreamOpaqueValueError 输入循环、过深或节点过多时失败关闭。
+ */
+export function tokenizeApiUpstreamOpaqueValues(
+  value: unknown,
+  shouldProtect: ApiUpstreamOpaqueValueSelector
+): {
+  value: unknown;
+  opaqueValues: ApiUpstreamOpaqueValues;
+} {
+  inspectOpaqueTree(value, new Set(), new Map());
+  const opaqueValues = new Map<string, unknown>();
+  /** 递归复制已预检的有界树，并把命中的字符串叶子替换为新令牌。 */
+  const tokenize = (
+    current: unknown,
+    fieldName: string | undefined
+  ): unknown => {
+    if (typeof current === "string" && shouldProtect(current, fieldName)) {
+      const token = createApiUpstreamOpaqueToken();
+      opaqueValues.set(token, current);
+      return token;
+    }
+    if (Array.isArray(current)) {
+      return current.map((child) => tokenize(child, fieldName));
+    }
+    if (!isRecord(current)) return current;
+    return Object.fromEntries(
+      Object.entries(current).map(([key, child]) => [key, tokenize(child, key)])
+    );
+  };
+  return { value: tokenize(value, undefined), opaqueValues };
 }
 
 /**
@@ -74,7 +157,7 @@ export function assertApiUpstreamOpaqueValuesPreserved(
 ): void {
   const knownTokens = new Set(opaqueValues.keys());
   const counts = new Map<string, number>();
-  countOpaqueTokens(value, knownTokens, counts);
+  inspectOpaqueTree(value, knownTokens, counts);
   for (const token of knownTokens) {
     if (counts.get(token) !== 1) {
       throw new ApiUpstreamOpaqueValueError();
@@ -93,19 +176,19 @@ export function restoreApiUpstreamOpaqueValues(
   value: unknown,
   opaqueValues: ApiUpstreamOpaqueValues
 ): unknown {
-  if (typeof value === "string" && opaqueValues.has(value)) {
-    return opaqueValues.get(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) =>
-      restoreApiUpstreamOpaqueValues(item, opaqueValues)
+  inspectOpaqueTree(value, new Set(opaqueValues.keys()), new Map());
+  /** 递归复制已预检的有界树，并把宿主签发的令牌恢复为真实值。 */
+  const restore = (current: unknown): unknown => {
+    if (typeof current === "string" && opaqueValues.has(current)) {
+      return opaqueValues.get(current);
+    }
+    if (Array.isArray(current)) {
+      return current.map((item) => restore(item));
+    }
+    if (!isRecord(current)) return current;
+    return Object.fromEntries(
+      Object.entries(current).map(([key, child]) => [key, restore(child)])
     );
-  }
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => [
-      key,
-      restoreApiUpstreamOpaqueValues(child, opaqueValues),
-    ])
-  );
+  };
+  return restore(value);
 }
