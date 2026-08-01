@@ -30,7 +30,6 @@ describe("backend member contract", () => {
         apiKey: "secret",
         useStream: true,
         modelMappings: [],
-        requestTransformScript: "",
       },
     });
     expect(parsed.success).toBe(true);
@@ -46,7 +45,6 @@ describe("backend member contract", () => {
       config: {
         baseUrl: "https://images.example.com/v1",
         modelMappings: [],
-        requestTransformScript: "",
       },
     });
     expect(parsed.type).toBe("api");
@@ -65,7 +63,6 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "https://images.example.com/v1",
           modelMappings: [],
-          requestTransformScript: "",
           authentication: { mode: "custom_header", headerName: "X-Api-Key" },
           credentialScope: "https://images.example.com|x-api-key",
           expectedCurrentVersionId: "version-7",
@@ -102,6 +99,20 @@ describe("backend member contract", () => {
     ).toBe(true);
   });
 
+  it("拒绝未携带当前适配版本的 API 成员编辑", () => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        id: "member-existing",
+        type: "api",
+        config: {
+          baseUrl: "https://images.example.com/v1",
+          modelMappings: [],
+        },
+      }).success
+    ).toBe(false);
+  });
+
   it("只允许为账号已支持的平台模型配置上游模型 ID", () => {
     const valid = backendMemberInputSchema.safeParse({
       ...commonMember,
@@ -112,7 +123,6 @@ describe("backend member contract", () => {
         modelMappings: [
           { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
         ],
-        requestTransformScript: "return request;",
       },
     });
     expect(valid.success).toBe(true);
@@ -125,7 +135,6 @@ describe("backend member contract", () => {
         modelMappings: [
           { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
         ],
-        requestTransformScript: "",
       },
     });
     expect(invalid.success).toBe(false);
@@ -139,7 +148,6 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "https://images.example.com/v1",
           modelMappings: [],
-          requestTransformScript: "",
           parameterMappings: [],
         },
       }).success
@@ -154,7 +162,6 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "http://10.0.0.8:8080/v1",
           modelMappings: [],
-          requestTransformScript: "",
         },
       }).success
     ).toBe(true);
@@ -237,7 +244,6 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "https://images.example.com/v1",
           modelMappings: [],
-          requestTransformScript: "",
         },
       }).success
     ).toBe(false);
@@ -264,7 +270,6 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "https://images.example.com/v1",
           modelMappings: [],
-          requestTransformScript: "",
           mode: "gateway",
         },
       }).success
@@ -278,7 +283,6 @@ describe("backend member contract", () => {
           mode: "direct",
           cookie: "cookie-secret",
           modelMappings: [],
-          requestTransformScript: "",
           defaultRatio: "1:1",
           defaultResolution: "2k",
           gptImageQuality: "high",
@@ -326,7 +330,6 @@ describe("backend member contract", () => {
         config: {
           baseUrl: "https://images.example.com/v1",
           modelMappings: [],
-          requestTransformScript: "",
         },
       }).success
     ).toBe(true);
@@ -369,7 +372,6 @@ describe("backend member contract", () => {
           config: {
             baseUrl: "https://images.example.com/v1",
             modelMappings: [],
-            requestTransformScript: "",
           },
           [legacyField]: true,
         }).success

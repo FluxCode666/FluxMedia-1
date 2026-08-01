@@ -5,6 +5,7 @@
  * 分组关系、运行状态重置与运行中任务删除保护；数据库事务细节由集成测试覆盖。
  */
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 
 import {
   type BackendMemberAdminSummary,
@@ -51,7 +52,9 @@ function apiInput(overrides: Record<string, unknown> = {}) {
       apiKey: "secret-api-key",
       useStream: true,
       modelMappings: [],
-      requestTransformScript: "",
+      ...(typeof overrides.id === "string"
+        ? { expectedCurrentVersionId: "adapter-current" }
+        : {}),
     },
     ...overrides,
   };
@@ -123,17 +126,19 @@ describe("backend member service", () => {
     );
   });
 
-  it("校验并持久化账号模型映射与请求处理脚本", async () => {
-    const validateRequestTransformScript = vi.fn(async (_script: string) => {});
+  it("校验并持久化账号模型映射与操作级请求脚本", async () => {
+    const validateAdapterScript = vi.fn(async () => {});
     const service = createBackendMemberService({
       repository,
       createId: () => "member-adapted",
       now: () => NOW,
       validateUpstreamUrl,
-      validateRequestTransformScript,
+      validateAdapterScript,
     });
-    const requestTransformScript =
-      "request.ratio = request.aspect_ratio; return request;";
+    const operations = createDefaultApiUpstreamOperations();
+    const requestScript =
+      "return { body: { ...request.body, ratio: request.body.aspect_ratio } };";
+    operations["videos.generate"].requestScript = requestScript;
 
     await service.saveMember(
       apiInput({
@@ -145,13 +150,16 @@ describe("backend member service", () => {
           modelMappings: [
             { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
           ],
-          requestTransformScript,
+          operations,
         },
       })
     );
 
-    expect(validateRequestTransformScript).toHaveBeenCalledWith(
-      requestTransformScript
+    expect(validateAdapterScript).toHaveBeenCalledTimes(1);
+    expect(validateAdapterScript).toHaveBeenCalledWith(
+      requestScript,
+      "videos.generate",
+      "request"
     );
     expect(repository.saveMember).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -159,7 +167,11 @@ describe("backend member service", () => {
           modelMappings: [
             { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
           ],
-          requestTransformScript,
+          operations: expect.objectContaining({
+            "videos.generate": expect.objectContaining({
+              requestScript,
+            }),
+          }),
         }),
       }),
       NOW
@@ -172,11 +184,13 @@ describe("backend member service", () => {
       createId: () => "member-invalid-script",
       now: () => NOW,
       validateUpstreamUrl,
-      validateRequestTransformScript: async () => {
+      validateAdapterScript: async () => {
         throw new Error("invalid JavaScript");
       },
     });
 
+    const operations = createDefaultApiUpstreamOperations();
+    operations["images.generate"].requestScript = "if (";
     const error = await service
       .saveMember(
         apiInput({
@@ -185,7 +199,7 @@ describe("backend member service", () => {
             apiKey: "secret-api-key",
             useStream: false,
             modelMappings: [],
-            requestTransformScript: "if (",
+            operations,
           },
         })
       )
@@ -193,9 +207,118 @@ describe("backend member service", () => {
 
     expect(error).toMatchObject({
       code: "validation_error",
-      message: "API 账号请求处理脚本语法无效",
+      message: "文生图生成请求脚本语法无效",
     });
     expect(repository.saveMember).not.toHaveBeenCalled();
+  });
+
+  it("逐一校验六操作请求与响应脚本并定位失败字段", async () => {
+    const operations = createDefaultApiUpstreamOperations();
+    operations["images.generate.query"] = {
+      path: "/images/{task_id}",
+      requestScript: "return { query: { verbose: true } };",
+      responseScript: "return { status: 'processing' };",
+    };
+    operations["videos.generate"] = {
+      path: "",
+      requestScript: "return { body: input };",
+      responseScript: "return response.body;",
+    };
+    const validateAdapterScript = vi.fn(
+      async (
+        _script: string,
+        operation: string,
+        stage: "request" | "response"
+      ) => {
+        if (operation === "videos.generate" && stage === "response") {
+          throw new Error("invalid response script");
+        }
+      }
+    );
+    const service = createBackendMemberService({
+      repository,
+      validateUpstreamUrl,
+      validateAdapterScript,
+    });
+
+    const error = await service
+      .saveMember(
+        apiInput({
+          config: {
+            baseUrl: "https://video.example.com/v1",
+            apiKey: "secret-api-key",
+            useStream: false,
+            modelMappings: [],
+            authentication: { mode: "bearer" },
+            operations,
+          },
+        })
+      )
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "validation_error",
+      message: "生视频生成响应脚本语法无效",
+    });
+    expect(validateAdapterScript.mock.calls).toEqual([
+      [
+        "return { query: { verbose: true } };",
+        "images.generate.query",
+        "request",
+      ],
+      [
+        "return { status: 'processing' };",
+        "images.generate.query",
+        "response",
+      ],
+      ["return { body: input };", "videos.generate", "request"],
+      ["return response.body;", "videos.generate", "response"],
+    ]);
+    expect(repository.saveMember).not.toHaveBeenCalled();
+  });
+
+  it("返回仓储原子保存产生的适配版本标识", async () => {
+    repository.saveMember.mockResolvedValue({
+      status: "saved",
+      id: "member-versioned",
+      adapterVersion: { id: "adapter-v2", revision: 2 },
+    });
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-versioned",
+      validateUpstreamUrl,
+    });
+
+    await expect(service.saveMember(apiInput())).resolves.toEqual({
+      id: "member-versioned",
+      adapterVersion: { id: "adapter-v2", revision: 2 },
+    });
+  });
+
+  it("把版本 CAS 与跨凭据域占用映射为稳定冲突", async () => {
+    const service = createBackendMemberService({
+      repository,
+      validateUpstreamUrl,
+    });
+    repository.saveMember.mockResolvedValueOnce({
+      status: "version_conflict",
+    });
+    await expect(
+      service.saveMember(apiInput({ id: "member-existing" }))
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: "API 账号配置已被其他管理员更新，请刷新后重试",
+    });
+
+    repository.saveMember.mockResolvedValueOnce({
+      status: "credential_scope_conflict",
+    });
+    await expect(
+      service.saveMember(apiInput({ id: "member-existing" }))
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: "当前仍有使用旧凭据域的任务或租约，不能切换上游地址或认证方式",
+    });
   });
 
   it("默认地址解析允许保存 HTTP 私网上游", async () => {
@@ -213,7 +336,6 @@ describe("backend member service", () => {
             apiKey: "secret-api-key",
             useStream: false,
             modelMappings: [],
-            requestTransformScript: "",
           },
         })
       )
@@ -239,7 +361,7 @@ describe("backend member service", () => {
       config: {
         baseUrl: "https://images.example.com/v1",
         modelMappings: [],
-        requestTransformScript: "",
+        expectedCurrentVersionId: "adapter-current",
       },
     });
 
@@ -563,7 +685,6 @@ describe("backend member service", () => {
         hasApiKey: true,
         useStream: false,
         modelMappings: [],
-        requestTransformScript: "",
       },
     };
     repository.listMembers.mockResolvedValue([summary]);

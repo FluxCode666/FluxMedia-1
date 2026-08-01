@@ -13,7 +13,7 @@ import {
 } from "@repo/shared/config/subscription-plan";
 import {
   apiModelMappingsSchema,
-  apiRequestTransformScriptSchema,
+  apiUpstreamAdapterDraftSchema,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
   getGroupImageCreditOverrides,
@@ -67,8 +67,9 @@ const configuredModelIdsRowSchema = z.object({
 
 const apiVideoRecoveryRowSchema = z.object({
   member_id: z.string().trim().min(1),
-  base_url: z.string().trim().min(1),
+  credential_scope: z.string().trim().min(1),
   api_key: z.string().min(1),
+  adapter_configuration: z.unknown(),
 });
 
 const runtimeConfigRowSchema = z.object({
@@ -76,11 +77,11 @@ const runtimeConfigRowSchema = z.object({
   member_type: z.enum(["api", "adobe"]),
   supported_model_ids: z.array(z.string().trim().min(1)).min(1),
   member_content_safety_enabled: z.boolean(),
-  api_base_url: z.string().nullable(),
   api_key: z.string().nullable(),
-  api_use_stream: z.boolean().nullable(),
-  model_mappings: z.unknown().nullable(),
-  request_transform_script: z.string().nullable(),
+  api_credential_scope: z.string().nullable(),
+  api_adapter_member_id: z.string().nullable(),
+  api_adapter_version_id: z.string().nullable(),
+  api_adapter_configuration: z.unknown().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
   adobe_api_key: z.string().nullable(),
@@ -303,12 +304,17 @@ export async function listConfiguredRuntimeModelIds(
  * 加载已接受视频任务固定 API 账号的当前凭据。
  *
  * @param memberId - 任务在接受阶段持久化的统一账号 ID。
+ * @param apiAdapterMemberId - 固定适配版本的成员快照，必须与统一账号一致。
+ * @param apiAdapterVersionId - 提交时固定的不可变版本 ID。
  * @returns 原账号仍存在且类型配置完整时返回最小 API 运行时配置，否则返回 null。
  * @sideEffects 读取统一账号及 API 配置；不获取新租约、不切换账号、不更新健康状态。
  * @failure 数据库结果形状非法时由 Zod 抛出；URL 非 HTTP(S) 时显式失败。
  */
 export async function loadApiVideoRecoveryConfig(
-  memberId: string
+  memberId: string,
+  apiAdapterMemberId: string,
+  apiAdapterVersionId: string,
+  modelId: string
 ): Promise<ApiConfig | null> {
   const { db } = await import("@repo/database");
   const rows = z.array(apiVideoRecoveryRowSchema).parse(
@@ -316,12 +322,18 @@ export async function loadApiVideoRecoveryConfig(
       await db.execute(sql`
         select
           member.id as member_id,
-          api.base_url,
-          api.api_key
+          api.credential_scope,
+          api.api_key,
+          version.configuration as adapter_configuration
         from image_backend_member as member
         inner join image_backend_member_api_config as api
           on api.member_id = member.id
+        inner join image_backend_member_api_adapter_version as version
+          on version.member_id_snapshot = ${apiAdapterMemberId}
+          and version.id = ${apiAdapterVersionId}
+          and version.credential_scope = api.credential_scope
         where member.id = ${memberId}
+          and member.id = ${apiAdapterMemberId}
           and member.type = 'api'
         limit 1
       `)
@@ -329,13 +341,23 @@ export async function loadApiVideoRecoveryConfig(
   );
   const row = rows[0];
   if (!row) return null;
-  parseMediaUpstreamUrl(row.base_url);
+  const adapter = apiUpstreamAdapterDraftSchema.parse(
+    row.adapter_configuration
+  );
+  if (adapter.credentialScope !== row.credential_scope) {
+    throw new Error("API 视频恢复凭据域与固定适配版本不一致");
+  }
+  parseMediaUpstreamUrl(adapter.baseUrl);
   return {
-    baseUrl: row.base_url.replace(/\/+$/, ""),
+    baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
     apiKey: row.api_key,
+    model: modelId,
+    useStream: adapter.useStream,
     backend: {
       type: "pool-api",
       id: row.member_id,
+      modelMappings: adapter.modelMappings,
+      apiUpstreamAdapter: adapter,
     },
   };
 }
@@ -355,11 +377,11 @@ async function loadRuntimeBackendLease(
           member.type as member_type,
           member.supported_model_ids,
           member.content_safety_enabled as member_content_safety_enabled,
-          api.base_url as api_base_url,
           api.api_key,
-          api.use_stream as api_use_stream,
-          api.model_mappings,
-          api.request_transform_script,
+          api.credential_scope as api_credential_scope,
+          lease.api_adapter_member_id,
+          lease.api_adapter_version_id,
+          api_version.configuration as api_adapter_configuration,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
           adobe.api_key as adobe_api_key,
@@ -367,8 +389,15 @@ async function loadRuntimeBackendLease(
           adobe.default_resolution as adobe_default_resolution,
           adobe.gpt_image_quality as adobe_gpt_image_quality
         from image_backend_member as member
+        left join image_backend_member_lease as lease
+          on lease.id = ${acquisition.lease.id}
+          and lease.member_id = member.id
         left join image_backend_member_api_config as api
           on api.member_id = member.id
+        left join image_backend_member_api_adapter_version as api_version
+          on api_version.member_id_snapshot = lease.api_adapter_member_id
+          and api_version.id = lease.api_adapter_version_id
+          and api_version.credential_scope = api.credential_scope
         left join image_backend_member_adobe_config as adobe
           on adobe.member_id = member.id
         where member.id = ${acquisition.member.id}
@@ -392,28 +421,39 @@ async function loadRuntimeBackendLease(
     group.contentSafetyEnabled ?? row.member_content_safety_enabled;
 
   if (row.member_type === "api") {
-    if (!row.api_base_url || !row.api_key) {
-      throw new Error("API 成员缺少运行时地址或凭据");
+    if (
+      !row.api_key ||
+      !row.api_credential_scope ||
+      !row.api_adapter_member_id ||
+      !row.api_adapter_version_id ||
+      !row.api_adapter_configuration ||
+      row.api_adapter_member_id !== row.member_id
+    ) {
+      throw new Error("API 成员缺少固定适配版本、地址或凭据");
     }
-    parseMediaUpstreamUrl(row.api_base_url);
+    const adapter = apiUpstreamAdapterDraftSchema.parse(
+      row.api_adapter_configuration
+    );
+    if (adapter.credentialScope !== row.api_credential_scope) {
+      throw new Error("API 成员当前凭据域与固定适配版本不一致");
+    }
+    parseMediaUpstreamUrl(adapter.baseUrl);
     return {
       acquisition,
       memberId: row.member_id,
       memberType: "api",
       adobeMode: null,
       config: {
-        baseUrl: row.api_base_url.replace(/\/+$/, ""),
+        baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
         apiKey: row.api_key,
         model: input.modelId,
-        useStream: row.api_use_stream ?? false,
+        useStream: adapter.useStream,
         contentSafetyEnabled,
         backend: {
           ...commonBackend,
           type: "pool-api",
-          modelMappings: apiModelMappingsSchema.parse(row.model_mappings ?? []),
-          requestTransformScript: apiRequestTransformScriptSchema.parse(
-            row.request_transform_script ?? ""
-          ),
+          modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
+          apiUpstreamAdapter: adapter,
         },
       },
     };

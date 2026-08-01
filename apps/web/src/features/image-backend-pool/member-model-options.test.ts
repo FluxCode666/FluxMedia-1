@@ -103,7 +103,6 @@ function createMemberInput(
         modelMappings: [],
         authentication: { mode: "bearer" },
         operations: createDefaultApiUpstreamOperations(),
-        requestTransformScript: "",
       },
     };
   }

@@ -10,7 +10,6 @@ import { z } from "zod";
 import { normalizeVideoModelId } from "../video-generation/contracts";
 import {
   apiModelMappingsSchema,
-  apiRequestTransformScriptSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
   createDefaultApiUpstreamOperations,
@@ -58,11 +57,10 @@ export const apiBackendMemberConfigSchema = z
       .string()
       .trim()
       .min(1)
-      .max(128)
+      // 旧迁移版本由固定前缀和最长 128 字符成员 ID 组成。
+      .max(256)
       .nullable()
       .optional(),
-    // 临时兼容字段：U3 负责迁移，U5/U6 完成切换后删除。
-    requestTransformScript: apiRequestTransformScriptSchema,
   })
   .strict();
 
@@ -143,6 +141,16 @@ export const backendMemberInputSchema = z
   ])
   .superRefine((member, context) => {
     if (member.type === "api") {
+      if (
+        member.id !== undefined &&
+        member.config.expectedCurrentVersionId === undefined
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["config", "expectedCurrentVersionId"],
+          message: "Editing an API member requires the current adapter version",
+        });
+      }
       const supportedModelIds = new Set(
         member.supportedModelIds.map((modelId) => modelId.toLowerCase())
       );

@@ -8,9 +8,14 @@
 import { normalizeCookieString } from "@repo/shared/adobe/firefly-direct";
 import {
   type ApiModelMapping,
+  type ApiUpstreamAdapterDraft,
   apiModelMappingsSchema,
-  apiRequestTransformScriptSchema,
+  apiUpstreamAdapterDraftSchema,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
+import {
+  API_UPSTREAM_ADAPTER_OPERATION_IDS,
+  type ApiUpstreamAdapterOperationId,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import { backendMemberInputSchema } from "@repo/shared/image-backend/member-contract";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -20,7 +25,7 @@ import { z } from "zod";
 import { extractExecuteRows } from "@/server/database-result";
 
 import { parseMediaUpstreamUrl } from "./media-upstream-url";
-import { validateApiRequestTransformScript } from "./request-transform-runtime";
+import { validateApiUpstreamScript } from "./api-upstream-script-runtime";
 
 /** 成员服务可稳定映射到 UOL 的错误码。 */
 export type BackendMemberServiceErrorCode =
@@ -67,7 +72,14 @@ export interface RedactedApiMemberConfig {
   hasApiKey: boolean;
   useStream: boolean;
   modelMappings: ApiModelMapping[];
-  requestTransformScript: string;
+  authentication?: ApiUpstreamAdapterDraft["authentication"];
+  credentialScope?: string;
+  operations?: ApiUpstreamAdapterDraft["operations"];
+  currentAdapterVersion?: {
+    id: string;
+    revision: number;
+    createdAt: string;
+  };
 }
 
 /** 脱敏 Adobe gateway/direct 配置。 */
@@ -139,10 +151,16 @@ export type BackendMemberAdminSummary = BackendMemberAdminSummaryBase &
 
 /** 原子保存仓储返回的稳定结果。 */
 export type SaveBackendMemberRepositoryResult =
-  | { status: "saved"; id: string }
+  | {
+      status: "saved";
+      id: string;
+      adapterVersion?: { id: string; revision: number } | null;
+    }
   | { status: "not_found" }
   | { status: "already_exists" }
   | { status: "type_conflict" }
+  | { status: "version_conflict" }
+  | { status: "credential_scope_conflict" }
   | { status: "missing_secret" }
   | { status: "unknown_group" };
 
@@ -178,7 +196,11 @@ export interface BackendMemberServiceDependencies {
   createId?: () => string;
   now?: () => Date;
   validateUpstreamUrl?: (url: string) => Promise<unknown>;
-  validateRequestTransformScript?: (script: string) => Promise<void>;
+  validateAdapterScript?: (
+    script: string,
+    operation: ApiUpstreamAdapterOperationId,
+    stage: "request" | "response"
+  ) => Promise<void>;
   prepareAdobeDirectCredential?: (
     cookie: string,
     scope?: string
@@ -187,7 +209,10 @@ export interface BackendMemberServiceDependencies {
 
 /** 统一成员服务公开接口。 */
 export interface BackendMemberService {
-  saveMember(input: unknown): Promise<{ id: string }>;
+  saveMember(input: unknown): Promise<{
+    id: string;
+    adapterVersion?: { id: string; revision: number } | null;
+  }>;
   listMembers(): Promise<BackendMemberAdminSummary[]>;
   resetMemberStatus(memberId: string): Promise<{ success: true }>;
   deleteMember(memberId: string): Promise<{ success: true }>;
@@ -217,10 +242,62 @@ function normalizeAdobeDirectCookie(cookie: string): string {
   );
 }
 
+/** 基于 origin 与认证形态生成不可包含密钥的稳定凭据域。 */
+function createApiCredentialScope(
+  baseUrl: string,
+  authentication: ApiUpstreamAdapterDraft["authentication"]
+): string {
+  const origin = new URL(baseUrl).origin.toLowerCase();
+  return authentication.mode === "custom_header"
+    ? `${origin}|${authentication.mode}:${authentication.headerName.toLowerCase()}`
+    : `${origin}|${authentication.mode}`;
+}
+
+/** 从 API 成员保存输入构造不含密钥的不可变适配版本草稿。 */
+function createApiAdapterDraft(
+  input: Extract<BackendMemberInput, { type: "api" }>
+): ApiUpstreamAdapterDraft {
+  const operations = structuredClone(input.config.operations);
+  return apiUpstreamAdapterDraftSchema.parse({
+    baseUrl: input.config.baseUrl,
+    useStream: input.config.useStream,
+    modelMappings: input.config.modelMappings,
+    authentication: input.config.authentication,
+    credentialScope: createApiCredentialScope(
+      input.config.baseUrl,
+      input.config.authentication
+    ),
+    operations,
+  });
+}
+
+/** 返回适合管理员定位字段的六操作中文标签。 */
+function getApiAdapterOperationLabel(
+  operation: ApiUpstreamAdapterOperationId
+): string {
+  switch (operation) {
+    case "images.generate":
+      return "文生图生成";
+    case "images.generate.query":
+      return "文生图查询";
+    case "images.edit":
+      return "图生图生成";
+    case "images.edit.query":
+      return "图生图查询";
+    case "videos.generate":
+      return "生视频生成";
+    case "videos.query":
+      return "生视频查询";
+  }
+}
+
 /** 将仓储保存结果映射为稳定领域错误。 */
 function assertMemberSaved(
   result: SaveBackendMemberRepositoryResult
-): asserts result is { status: "saved"; id: string } {
+): asserts result is Extract<
+  SaveBackendMemberRepositoryResult,
+  { status: "saved" }
+> {
   switch (result.status) {
     case "saved":
       return;
@@ -232,6 +309,16 @@ function assertMemberSaved(
       throw new BackendMemberServiceError(
         "conflict",
         "成员类型不可原地修改，请删除后重新创建"
+      );
+    case "version_conflict":
+      throw new BackendMemberServiceError(
+        "conflict",
+        "API 账号配置已被其他管理员更新，请刷新后重试"
+      );
+    case "credential_scope_conflict":
+      throw new BackendMemberServiceError(
+        "conflict",
+        "当前仍有使用旧凭据域的任务或租约，不能切换上游地址或认证方式"
       );
     case "missing_secret":
       throw new BackendMemberServiceError(
@@ -259,9 +346,8 @@ export function createBackendMemberService(
   const now = dependencies.now ?? (() => new Date());
   const validateUpstreamUrl =
     dependencies.validateUpstreamUrl ?? parseMediaUpstreamUrl;
-  const validateRequestTransform =
-    dependencies.validateRequestTransformScript ??
-    validateApiRequestTransformScript;
+  const validateAdapterScript =
+    dependencies.validateAdapterScript ?? validateApiUpstreamScript;
   const prepareAdobeDirectCredential =
     dependencies.prepareAdobeDirectCredential ??
     (async (cookie: string, scope?: string) => {
@@ -300,14 +386,35 @@ export function createBackendMemberService(
       }
 
       if (input.type === "api") {
-        try {
-          await validateRequestTransform(input.config.requestTransformScript);
-        } catch {
-          throw new BackendMemberServiceError(
-            "validation_error",
-            "API 账号请求处理脚本语法无效"
-          );
+        const adapterDraft = createApiAdapterDraft(input);
+        for (const operation of API_UPSTREAM_ADAPTER_OPERATION_IDS) {
+          for (const stage of ["request", "response"] as const) {
+            const script =
+              stage === "request"
+                ? adapterDraft.operations[operation].requestScript
+                : adapterDraft.operations[operation].responseScript;
+            if (!script) continue;
+            try {
+              await validateAdapterScript(script, operation, stage);
+            } catch {
+              throw new BackendMemberServiceError(
+                "validation_error",
+                `${getApiAdapterOperationLabel(operation)}${
+                  stage === "request" ? "请求" : "响应"
+                }脚本语法无效`
+              );
+            }
+          }
         }
+        input = {
+          ...input,
+          config: {
+            ...input.config,
+            authentication: adapterDraft.authentication,
+            credentialScope: adapterDraft.credentialScope,
+            operations: adapterDraft.operations,
+          },
+        };
       }
 
       let directCredential: PreparedAdobeDirectCredential | undefined;
@@ -338,7 +445,12 @@ export function createBackendMemberService(
         now()
       );
       assertMemberSaved(result);
-      return { id: result.id };
+      return {
+        id: result.id,
+        ...(result.adapterVersion !== undefined
+          ? { adapterVersion: result.adapterVersion }
+          : {}),
+      };
     },
 
     async listMembers() {
@@ -397,11 +509,12 @@ const memberListRowSchema = z.object({
   last_used_at: z.coerce.date().nullable(),
   last_error: z.string().nullable(),
   last_error_at: z.coerce.date().nullable(),
-  api_base_url: z.string().nullable(),
   api_has_key: z.boolean(),
-  api_use_stream: z.boolean().nullable(),
-  model_mappings: z.unknown().nullable(),
-  request_transform_script: z.string().nullable(),
+  api_credential_scope: z.string().nullable(),
+  api_adapter_version_id: z.string().nullable(),
+  api_adapter_revision: z.coerce.number().int().positive().nullable(),
+  api_adapter_created_at: z.coerce.date().nullable(),
+  api_adapter_configuration: z.unknown().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
   adobe_has_key: z.boolean(),
@@ -455,20 +568,37 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
     lastErrorAt: row.last_error_at?.toISOString() ?? null,
   };
   if (row.type === "api") {
-    if (!row.api_base_url) {
+    if (
+      !row.api_credential_scope ||
+      !row.api_adapter_version_id ||
+      !row.api_adapter_revision ||
+      !row.api_adapter_created_at ||
+      !row.api_adapter_configuration
+    ) {
       throw new Error("API member is missing its type config");
+    }
+    const adapter = apiUpstreamAdapterDraftSchema.parse(
+      row.api_adapter_configuration
+    );
+    if (adapter.credentialScope !== row.api_credential_scope) {
+      throw new Error("API member credential scope does not match its version");
     }
     return {
       ...common,
       type: "api",
       config: {
-        baseUrl: row.api_base_url,
+        baseUrl: adapter.baseUrl,
         hasApiKey: row.api_has_key,
-        useStream: row.api_use_stream ?? false,
-        modelMappings: apiModelMappingsSchema.parse(row.model_mappings ?? []),
-        requestTransformScript: apiRequestTransformScriptSchema.parse(
-          row.request_transform_script ?? ""
-        ),
+        useStream: adapter.useStream,
+        modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
+        authentication: adapter.authentication,
+        credentialScope: adapter.credentialScope,
+        operations: adapter.operations,
+        currentAdapterVersion: {
+          id: row.api_adapter_version_id,
+          revision: row.api_adapter_revision,
+          createdAt: row.api_adapter_created_at.toISOString(),
+        },
       },
     };
   }
@@ -542,6 +672,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       imageBackendGroup,
       imageBackendMember,
       imageBackendMemberAdobeConfig,
+      imageBackendMemberApiAdapterVersion,
       imageBackendMemberApiConfig,
       imageBackendMemberGroup,
     } = await import("@repo/database");
@@ -577,18 +708,137 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       }
 
       let apiKey: string | null = null;
+      let currentApiAdapter: {
+        id: string;
+        revision: number;
+        credentialScope: string;
+        configuration: Record<string, unknown>;
+      } | null = null;
       if (input.type === "api") {
-        if (input.config.apiKey) {
-          apiKey = input.config.apiKey;
-        } else if (existing) {
+        let existingApiKey: string | null = null;
+        if (existing) {
           const [row] = await transaction
-            .select({ apiKey: imageBackendMemberApiConfig.apiKey })
+            .select({
+              apiKey: imageBackendMemberApiConfig.apiKey,
+              currentAdapterVersionId:
+                imageBackendMemberApiConfig.currentAdapterVersionId,
+            })
             .from(imageBackendMemberApiConfig)
             .where(eq(imageBackendMemberApiConfig.memberId, input.id))
             .limit(1);
-          apiKey = row?.apiKey ?? null;
+          existingApiKey = row?.apiKey ?? null;
+          if (row) {
+            const [version] = await transaction
+              .select({
+                id: imageBackendMemberApiAdapterVersion.id,
+                revision: imageBackendMemberApiAdapterVersion.revision,
+                credentialScope:
+                  imageBackendMemberApiAdapterVersion.credentialScope,
+                configuration:
+                  imageBackendMemberApiAdapterVersion.configuration,
+              })
+              .from(imageBackendMemberApiAdapterVersion)
+              .where(
+                eq(
+                  imageBackendMemberApiAdapterVersion.id,
+                  row.currentAdapterVersionId
+                )
+              )
+              .limit(1);
+            if (!version) {
+              throw new Error("API 成员当前适配版本缺失");
+            }
+            currentApiAdapter = version;
+          }
         }
-        if (!apiKey) return { status: "missing_secret" } as const;
+        apiKey =
+          input.config.authentication.mode === "none"
+            ? null
+            : (input.config.apiKey ?? existingApiKey);
+        if (input.config.authentication.mode !== "none" && !apiKey) {
+          return { status: "missing_secret" } as const;
+        }
+      }
+
+      let apiAdapterVersion: {
+        id: string;
+        revision: number;
+        credentialScope: string;
+      } | null = null;
+      if (input.type === "api") {
+        const draft = createApiAdapterDraft(input);
+        if (
+          input.config.expectedCurrentVersionId !== undefined &&
+          input.config.expectedCurrentVersionId !==
+            (currentApiAdapter?.id ?? null)
+        ) {
+          return { status: "version_conflict" } as const;
+        }
+        const currentDraft = currentApiAdapter
+          ? apiUpstreamAdapterDraftSchema.safeParse(
+              currentApiAdapter.configuration
+            )
+          : null;
+        const configurationChanged =
+          !currentDraft?.success ||
+          JSON.stringify(currentDraft.data) !== JSON.stringify(draft);
+        if (
+          configurationChanged &&
+          currentApiAdapter &&
+          currentApiAdapter.credentialScope !== draft.credentialScope
+        ) {
+          const inUse = extractExecuteRows(
+            await transaction.execute(sql`
+              select 1
+              where exists (
+                select 1
+                from image_backend_member_lease
+                where api_adapter_member_id = ${input.id}
+                  and expires_at > ${now}
+              ) or exists (
+                select 1
+                from generation
+                where api_adapter_member_id = ${input.id}
+                  and status = 'pending'
+              ) or exists (
+                select 1
+                from video_generation
+                where api_adapter_member_id = ${input.id}
+                  and status not in ('completed', 'failed')
+              )
+              limit 1
+            `)
+          );
+          if (inUse.length > 0) {
+            return { status: "credential_scope_conflict" } as const;
+          }
+        }
+        if (configurationChanged) {
+          const nextVersion = {
+            id: nanoid(),
+            memberIdSnapshot: input.id,
+            revision: (currentApiAdapter?.revision ?? 0) + 1,
+            credentialScope: draft.credentialScope,
+            configuration: draft,
+            createdAt: now,
+          };
+          await transaction
+            .insert(imageBackendMemberApiAdapterVersion)
+            .values(nextVersion);
+          apiAdapterVersion = {
+            id: nextVersion.id,
+            revision: nextVersion.revision,
+            credentialScope: nextVersion.credentialScope,
+          };
+        } else if (currentApiAdapter) {
+          apiAdapterVersion = {
+            id: currentApiAdapter.id,
+            revision: currentApiAdapter.revision,
+            credentialScope: currentApiAdapter.credentialScope,
+          };
+        } else {
+          throw new Error("API 成员缺少可保存的适配版本");
+        }
       }
 
       let adobeApiKey: string | null = null;
@@ -745,6 +995,9 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
         });
 
       if (input.type === "api") {
+        if (!apiAdapterVersion) {
+          throw new Error("API 成员适配版本未创建");
+        }
         await transaction
           .delete(imageBackendMemberAdobeConfig)
           .where(eq(imageBackendMemberAdobeConfig.memberId, input.id));
@@ -752,22 +1005,18 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           .insert(imageBackendMemberApiConfig)
           .values({
             memberId: input.id,
-            baseUrl: input.config.baseUrl,
             apiKey,
-            useStream: input.config.useStream,
-            modelMappings: input.config.modelMappings,
-            requestTransformScript: input.config.requestTransformScript,
+            currentAdapterVersionId: apiAdapterVersion.id,
+            credentialScope: apiAdapterVersion.credentialScope,
             createdAt: now,
             updatedAt: now,
           })
           .onConflictDoUpdate({
             target: imageBackendMemberApiConfig.memberId,
             set: {
-              baseUrl: input.config.baseUrl,
               apiKey,
-              useStream: input.config.useStream,
-              modelMappings: input.config.modelMappings,
-              requestTransformScript: input.config.requestTransformScript,
+              currentAdapterVersionId: apiAdapterVersion.id,
+              credentialScope: apiAdapterVersion.credentialScope,
               updatedAt: now,
             },
           });
@@ -887,7 +1136,18 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           createdAt: now,
         }))
       );
-      return { status: "saved", id: input.id } as const;
+      return {
+        status: "saved",
+        id: input.id,
+        ...(apiAdapterVersion
+          ? {
+              adapterVersion: {
+                id: apiAdapterVersion.id,
+                revision: apiAdapterVersion.revision,
+              },
+            }
+          : {}),
+      } as const;
     });
   },
 
@@ -922,11 +1182,12 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           member.last_used_at,
           member.last_error,
           member.last_error_at,
-          api.base_url as api_base_url,
           (api.api_key is not null) as api_has_key,
-          api.use_stream as api_use_stream,
-          api.model_mappings,
-          api.request_transform_script,
+          api.credential_scope as api_credential_scope,
+          api.current_adapter_version_id as api_adapter_version_id,
+          api_version.revision as api_adapter_revision,
+          api_version.created_at as api_adapter_created_at,
+          api_version.configuration as api_adapter_configuration,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
           (adobe.api_key is not null) as adobe_has_key,
@@ -957,9 +1218,12 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           and lease.expires_at > ${now}
         left join image_backend_member_api_config as api
           on api.member_id = member.id
+        left join image_backend_member_api_adapter_version as api_version
+          on api_version.member_id_snapshot = api.member_id
+          and api_version.id = api.current_adapter_version_id
         left join image_backend_member_adobe_config as adobe
           on adobe.member_id = member.id
-        group by member.id, api.member_id, adobe.member_id
+        group by member.id, api.member_id, api_version.id, adobe.member_id
         order by member.priority asc, member.id asc
       `)
     );
@@ -1008,6 +1272,11 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             from image_backend_member_lease
             where member_id = ${memberId}
               and expires_at > ${now}
+          ) or exists (
+            select 1
+            from generation
+            where api_adapter_member_id = ${memberId}
+              and status = 'pending'
           ) or exists (
             select 1
             from video_generation
