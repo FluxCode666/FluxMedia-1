@@ -277,6 +277,12 @@ const apiAccountUpstreamAdaptationMigrationPath = fileURLToPath(
     import.meta.url
   )
 );
+const apiUpstreamAdapterVersionsMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0077_api_upstream_adapter_versions.sql",
+    import.meta.url
+  )
+);
 const migrationsBeforeVideoAuthRepair = migrationPaths.slice(0, 7);
 const migrationsBeforeMatchingVideoAuth = migrationPaths.slice(0, 8);
 const migrationsBeforeKling3VideoProtocol = migrationPaths.slice(0, 9);
@@ -724,6 +730,65 @@ async function createPre0075ApiAdaptationSchema(
       id text primary key,
       name text not null,
       mappings json not null default '[]'::json
+    )
+  `);
+  return schemaName;
+}
+
+/**
+ * 创建 0077 执行前的最小 0076 API 成员、租约与媒体任务结构。
+ *
+ * @param client 专用测试数据库连接。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建 0076 形状的旧 API 配置、租约和媒体任务表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPre0077ApiAdapterVersionSchema(
+  client: PoolClient
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member (
+      id text primary key,
+      type text not null check (type in ('api', 'adobe'))
+    );
+    create table image_backend_member_api_config (
+      member_id text primary key references image_backend_member(id)
+        on delete cascade,
+      base_url text not null,
+      api_key text,
+      use_stream boolean not null default false,
+      model_mappings json not null default '[]'::json,
+      request_transform_script text not null default '',
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now(),
+      constraint image_backend_member_api_config_model_mappings_check
+        check (json_typeof(model_mappings) = 'array')
+    );
+    create table image_backend_member_lease (
+      id text primary key,
+      member_id text not null references image_backend_member(id)
+        on delete cascade,
+      owner_token text not null,
+      expires_at timestamp not null,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+    create table generation (
+      id text primary key,
+      status text not null default 'pending'
+    );
+    create table video_generation (
+      id text primary key,
+      status text not null default 'pending',
+      stage text not null default 'created',
+      backend_member_id text references image_backend_member(id)
+        on delete set null,
+      poll_url text,
+      upstream_job_id text
     )
   `);
   return schemaName;
@@ -3421,7 +3486,7 @@ describe("0075 API 账号上游适配迁移", () => {
         },
       ]);
       expect(firstMigratedScript).toContain(
-        `const rules = ${JSON.stringify(legacyMappings)};`
+        `const rawRules = ${JSON.stringify(legacyMappings)};`
       );
       expect(
         executeMigratedRequestTransform(firstMigratedScript, {
@@ -3493,6 +3558,310 @@ describe("0075 API 账号上游适配迁移", () => {
         model_mappings: [],
         request_transform_script: "",
       });
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+});
+
+describe("0077 API 上游适配不可变版本迁移", () => {
+  it("迁移旧配置、固定租约版本并以复合外键保留无密钥历史", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0077ApiAdapterVersionSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type) values
+          ('api-a', 'api'),
+          ('api-b', 'api'),
+          ('adobe-a', 'adobe');
+        insert into image_backend_member_api_config (
+          member_id,
+          base_url,
+          api_key,
+          use_stream,
+          model_mappings,
+          request_transform_script
+        ) values
+          (
+            'api-a',
+            'http://upstream.internal:8080/v1',
+            'secret-a',
+            true,
+            '[{"modelId":"seedance2","upstreamModelId":"seedance-2.0"}]'::json,
+            'request.vendor_model = request.model; delete request.model; return request;'
+          ),
+          (
+            'api-b',
+            'https://api-b.example.test',
+            null,
+            false,
+            '[]'::json,
+            ''
+          );
+        insert into image_backend_member_lease (
+          id, member_id, owner_token, expires_at
+        ) values
+          ('lease-api', 'api-a', 'owner-api', now() + interval '5 minutes'),
+          ('lease-adobe', 'adobe-a', 'owner-adobe', now() + interval '5 minutes');
+        insert into video_generation (
+          id, status, stage, backend_member_id, poll_url, upstream_job_id
+        ) values
+          ('terminal-api-video', 'completed', 'completed', 'api-a', null, 'job-a'),
+          ('terminal-adobe-video', 'completed', 'completed', 'adobe-a', null, 'job-b');
+      `);
+
+      await executeMigrations(client, schemaName, [
+        apiUpstreamAdapterVersionsMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const configs = await client.query<{
+        api_key: string | null;
+        credential_scope: string;
+        current_adapter_version_id: string;
+        member_id: string;
+      }>(`
+        select
+          member_id,
+          api_key,
+          credential_scope,
+          current_adapter_version_id
+        from image_backend_member_api_config
+        order by member_id
+      `);
+      expect(configs.rows).toEqual([
+        {
+          api_key: "secret-a",
+          credential_scope: "http://upstream.internal:8080|bearer",
+          current_adapter_version_id: "legacy-api-adapter-v1:api-a",
+          member_id: "api-a",
+        },
+        {
+          api_key: null,
+          credential_scope: "https://api-b.example.test|none",
+          current_adapter_version_id: "legacy-api-adapter-v1:api-b",
+          member_id: "api-b",
+        },
+      ]);
+
+      const versions = await client.query<{
+        configuration: {
+          authentication: { mode: string };
+          operations: Record<
+            string,
+            { path: string; requestScript: string; responseScript: string }
+          >;
+        };
+        id: string;
+        member_id_snapshot: string;
+        revision: number;
+      }>(`
+        select id, member_id_snapshot, revision, configuration
+        from image_backend_member_api_adapter_version
+        order by member_id_snapshot
+      `);
+      expect(versions.rows).toHaveLength(2);
+      expect(versions.rows[0]).toMatchObject({
+        id: "legacy-api-adapter-v1:api-a",
+        member_id_snapshot: "api-a",
+        revision: 1,
+        configuration: {
+          authentication: { mode: "bearer" },
+        },
+      });
+      expect(versions.rows[1]?.configuration.authentication).toEqual({
+        mode: "none",
+      });
+      const operations = versions.rows[0]?.configuration.operations;
+      const migratedGenerateScript =
+        operations?.["images.generate"]?.requestScript ?? "";
+      expect(migratedGenerateScript).toContain("return { body: legacyBody }");
+      expect(operations?.["images.edit"]?.requestScript).toBe(
+        migratedGenerateScript
+      );
+      expect(operations?.["videos.generate"]?.requestScript).toBe(
+        migratedGenerateScript
+      );
+      expect(operations?.["images.generate.query"]).toEqual({
+        path: "",
+        requestScript: "",
+        responseScript: "",
+      });
+      expect(
+        executeMigratedRequestTransform(migratedGenerateScript, {
+          model: "seedance2",
+          prompt: "test",
+        })
+      ).toEqual({
+        body: { prompt: "test", vendor_model: "seedance2" },
+      });
+      expect(JSON.stringify(versions.rows)).not.toContain("secret-a");
+
+      const leases = await client.query<{
+        api_adapter_member_id: string | null;
+        api_adapter_version_id: string | null;
+        id: string;
+      }>(`
+        select id, api_adapter_member_id, api_adapter_version_id
+        from image_backend_member_lease
+        order by id
+      `);
+      expect(leases.rows).toEqual([
+        {
+          api_adapter_member_id: null,
+          api_adapter_version_id: null,
+          id: "lease-adobe",
+        },
+        {
+          api_adapter_member_id: "api-a",
+          api_adapter_version_id: "legacy-api-adapter-v1:api-a",
+          id: "lease-api",
+        },
+      ]);
+
+      for (const column of [
+        "base_url",
+        "use_stream",
+        "model_mappings",
+        "request_transform_script",
+      ]) {
+        await expect(
+          columnExists(
+            client,
+            schemaName,
+            "image_backend_member_api_config",
+            column
+          )
+        ).resolves.toBe(false);
+      }
+
+      await expect(
+        client.query(`
+          update image_backend_member_lease
+          set api_adapter_version_id = null
+          where id = 'lease-api'
+        `)
+      ).rejects.toThrow(/image_backend_member_lease_api_adapter_pair_check/u);
+      await expect(
+        client.query(`
+          insert into generation (
+            id, status, api_adapter_member_id, api_adapter_version_id
+          ) values (
+            'mismatched-generation',
+            'pending',
+            'api-b',
+            'legacy-api-adapter-v1:api-a'
+          )
+        `)
+      ).rejects.toThrow(/generation_api_adapter_version_fk/u);
+
+      await client.query(`
+        insert into generation (
+          id, status, api_adapter_member_id, api_adapter_version_id
+        ) values (
+          'historical-generation',
+          'completed',
+          'api-a',
+          'legacy-api-adapter-v1:api-a'
+        );
+        delete from image_backend_member_lease where id = 'lease-api';
+        delete from image_backend_member where id = 'api-a';
+      `);
+      const retained = await client.query<{
+        api_adapter_member_id: string;
+        api_adapter_version_id: string;
+      }>(`
+        select api_adapter_member_id, api_adapter_version_id
+        from generation
+        where id = 'historical-generation'
+      `);
+      expect(retained.rows[0]).toEqual({
+        api_adapter_member_id: "api-a",
+        api_adapter_version_id: "legacy-api-adapter-v1:api-a",
+      });
+      await expect(
+        client.query(`
+          delete from image_backend_member_api_adapter_version
+          where id = 'legacy-api-adapter-v1:api-a'
+        `)
+      ).rejects.toThrow(/generation_api_adapter_version_fk/u);
+
+      await executeMigrations(client, schemaName, [
+        apiUpstreamAdapterVersionsMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const revisionCount = await client.query<{ count: number }>(`
+        select count(*)::integer as count
+        from image_backend_member_api_adapter_version
+      `);
+      expect(revisionCount.rows[0]?.count).toBe(2);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("非终态 API 视频阻断迁移并保留旧结构", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0077ApiAdapterVersionSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type) values ('api-a', 'api');
+        insert into image_backend_member_api_config (
+          member_id, base_url, api_key
+        ) values (
+          'api-a', 'https://api.example.test/v1', 'secret-a'
+        );
+        insert into video_generation (
+          id, status, stage, backend_member_id, poll_url, upstream_job_id
+        ) values (
+          'running-api-video',
+          'running',
+          'submit_uncertain',
+          'api-a',
+          'https://another.example.test/tasks/1',
+          'job-1'
+        );
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [
+          apiUpstreamAdapterVersionsMigrationPath,
+        ])
+      ).rejects.toThrow(/nonterminal API video task/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_api_config",
+          "base_url"
+        )
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(
+          client,
+          schemaName,
+          "image_backend_member_api_adapter_version"
+        )
+      ).resolves.toBe(false);
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);
