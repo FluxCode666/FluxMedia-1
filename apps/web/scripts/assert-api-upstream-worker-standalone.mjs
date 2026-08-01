@@ -34,7 +34,20 @@ const normalized = files.map((file) => file.replaceAll("\\", "/"));
 const requiredAssets = [
   {
     name: "Worker 入口",
-    matches: (file) => file.endsWith("/api-upstream-script-worker.ts"),
+    matches: (file) => file.endsWith("/api-upstream-script-worker.mjs"),
+  },
+  {
+    name: "Worker 部署探针",
+    matches: (file) => file.endsWith("/api-upstream-worker-probe.mjs"),
+  },
+  {
+    name: "0077 迁移预检入口",
+    matches: (file) =>
+      file.endsWith("/preflight-api-upstream-adapter-migration.mjs"),
+  },
+  {
+    name: "Worker 运行自检入口",
+    matches: (file) => file.endsWith("/smoke-api-upstream-worker.mjs"),
   },
   {
     name: "QuickJS JavaScript 桥接",

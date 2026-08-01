@@ -178,7 +178,11 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
       - uses: ./.github/actions/setup
-      - run: pnpm turbo build --filter=@repo/web
+      - run: |
+          set -euo pipefail
+          pnpm turbo build --filter=@repo/web
+          pnpm --filter @repo/web assert:api-upstream-worker-standalone
+          pnpm --filter @repo/web smoke:api-upstream-worker
 
   # ───────────────────────────────────────────────────────────────────────────
   # 6) 容器构建校验（仅 PR）：用 Dockerfile.web 实打实构建 web 镜像但**不推送**，
@@ -200,6 +204,8 @@ jobs:
           file: Dockerfile.web
           target: runner
           push: false # 仅校验可构建性；推送由 tag 触发的 docker-release.yml 负责
+          load: true
+          tags: fluxmedia-api-adapter-smoke:ci
           build-args: |
             NEXT_PUBLIC_APP_URL=http://localhost:3000
             NEXT_PUBLIC_APP_NAME=FluxMedia
@@ -208,3 +214,5 @@ jobs:
             NEXT_PUBLIC_AVATARS_BUCKET_NAME=avatars
           cache-from: type=gha,scope=web-ci
           cache-to: type=gha,mode=max,scope=web-ci
+      - name: Smoke API upstream worker in final container
+        run: pnpm --filter @repo/web smoke:api-upstream-container -- fluxmedia-api-adapter-smoke:ci
