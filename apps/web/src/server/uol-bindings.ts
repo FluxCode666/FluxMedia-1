@@ -17,6 +17,7 @@
 
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
+import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
@@ -38,16 +39,12 @@ import {
   usageEventDetailSchema,
   usageEventListOutputSchema,
 } from "@repo/shared/credits/usage-log-contract";
-import type { BackendGroupInput } from "@repo/shared/image-backend/group-contract";
-import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
 import {
   type AdminHistoryListOutput,
   adminHistoryListOutputSchema,
   type HistoryListOutput,
   historyListOutputSchema,
 } from "@repo/shared/image-generation/history-contract";
-import { logError } from "@repo/shared/logger";
-import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
 import {
   type ModerationImageInput,
   moderateContent,
@@ -77,18 +74,6 @@ import {
   externalApiKeyManagementService,
 } from "@/features/external-api/key-management-service";
 import { getExternalModelsForApiKey } from "@/features/external-api/models";
-import {
-  BackendGroupServiceError,
-  backendGroupService,
-} from "@/features/image-backend-pool/group-service";
-import {
-  buildBackendMemberModelOptions,
-  findUnavailableBackendMemberModelIds,
-} from "@/features/image-backend-pool/member-model-options";
-import {
-  BackendMemberServiceError,
-  backendMemberService,
-} from "@/features/image-backend-pool/member-service";
 import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
 import {
   AdminHistoryServiceError,
@@ -99,7 +84,6 @@ import {
   HistoryServiceError,
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
-import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import {
   createCreditTopUpCheckout,
   fulfillAlipayCreditTopUp,
@@ -602,184 +586,6 @@ bindExecute(
 // TODO: image.getGenerationById - 单条查询
 // TODO: image.getGenerationStats - 管理员统计
 // TODO: image.getEffectiveConfig - getEffectiveConfig 逻辑
-
-// ---------------------------------------------------------------------------
-// image-backend-pool 域
-// ---------------------------------------------------------------------------
-
-/**
- * 将统一号池领域错误映射为 UOL 错误。
- *
- * @param error 分组或成员服务抛出的未知错误。
- * @throws 始终抛出可由传输层稳定编码的错误；未知错误保持原样上抛。
- */
-function throwBackendPoolOperationError(error: unknown): never {
-  if (
-    error instanceof BackendGroupServiceError ||
-    error instanceof BackendMemberServiceError
-  ) {
-    throw new OperationError(error.code, error.message);
-  }
-  throw error;
-}
-
-/**
- * 校验成员能力只引用模型配置目录中的模型 ID。
- *
- * @param input 已通过统一成员输入 schema 的新增或编辑请求。
- * @param principal UOL 网关验证后的真实管理员身份，用于读取同权限模型配置快照。
- * @returns 校验成功时无返回值。
- * @sideEffects 读取最新模型配置；编辑时额外读取当前成员以允许原样保留迁移历史 ID。
- * @failure 模型配置不可读时返回 not_ready；新增的未知 ID 或不支持视频的成员选择视频
- * 时返回 validation_error，不进入成员保存事务。
- */
-async function assertBackendMemberModelsComeFromConfiguration(
-  input: BackendMemberInput,
-  principal: Principal
-): Promise<void> {
-  let modelConfiguration: ModelConfigurationSnapshot;
-  try {
-    modelConfiguration =
-      await productionModelConfigurationService.read(principal);
-  } catch (error) {
-    logError(error, {
-      source: "image-backend-pool",
-      operation: "validate-member-model-options",
-    });
-    throw new OperationError(
-      "not_ready",
-      "模型配置暂不可用，无法校验成员支持的模型"
-    );
-  }
-
-  const existingModelIds = input.id
-    ? ((await backendMemberService.listMembers()).find(
-        (member) => member.id === input.id
-      )?.supportedModelIds ?? [])
-    : [];
-  const unavailableModelIds = findUnavailableBackendMemberModelIds(
-    input,
-    buildBackendMemberModelOptions(modelConfiguration),
-    existingModelIds
-  );
-  if (unavailableModelIds.length === 0) return;
-
-  const displayedIds = unavailableModelIds.slice(0, 3).join("、");
-  const remainingCount = unavailableModelIds.length - 3;
-  throw new OperationError(
-    "validation_error",
-    `以下模型不在当前模型配置可选范围：${displayedIds}${
-      remainingCount > 0 ? ` 等 ${unavailableModelIds.length} 个` : ""
-    }`
-  );
-}
-
-/** pool.getGroupOptions - 获取用户可选择的启用分组。 */
-bindExecute(
-  "pool.getGroupOptions",
-  async (
-    _input: Record<string, never>,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({ options: await backendGroupService.listGroupOptions() })
-);
-
-/** pool.getAdminPool - 读取统一分组和统一成员的脱敏管理快照。 */
-bindExecute(
-  "pool.getAdminPool",
-  async (
-    _input: Record<string, never>,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    const [groups, members] = await Promise.all([
-      backendGroupService.listGroups(),
-      backendMemberService.listMembers(),
-    ]);
-    return { groups, members };
-  }
-);
-
-/** pool.saveGroup - 保存统一分组及其计费、套餐和层级配置。 */
-bindExecute(
-  "pool.saveGroup",
-  async (
-    input: BackendGroupInput,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendGroupService.saveGroup(input);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.deleteGroup - 删除不再被成员或层级关系使用的非默认分组。 */
-bindExecute(
-  "pool.deleteGroup",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendGroupService.deleteGroup(input.id);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.saveMember - 保存 `api | adobe` 统一成员及类型专属配置。 */
-bindExecute(
-  "pool.saveMember",
-  async (
-    input: BackendMemberInput,
-    principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      await assertBackendMemberModelsComeFromConfiguration(input, principal);
-      return await backendMemberService.saveMember(input);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.resetMemberStatus - 清除成员暂态运行故障并恢复调度资格。 */
-bindExecute(
-  "pool.resetMemberStatus",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendMemberService.resetMemberStatus(input.id);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.deleteMember - 按统一成员 ID 执行运行中任务保护删除。 */
-bindExecute(
-  "pool.deleteMember",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendMemberService.deleteMember(input.id);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
 
 // ---------------------------------------------------------------------------
 // user-auth 域

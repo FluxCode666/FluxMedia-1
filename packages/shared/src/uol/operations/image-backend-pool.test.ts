@@ -123,7 +123,6 @@ describe("image backend pool pricing operations", () => {
         config: {
           baseUrl: "https://example.com",
           modelMappings: [],
-          requestTransformScript: "",
         },
         billingMultiplier: 2,
       }).success
@@ -168,7 +167,6 @@ describe("image backend pool pricing operations", () => {
         config: {
           baseUrl: "https://example.com",
           modelMappings: [],
-          requestTransformScript: "",
         },
       }).success
     ).toBe(true);
@@ -194,7 +192,6 @@ describe("image backend pool pricing operations", () => {
         config: {
           baseUrl: "https://example.com",
           modelMappings: [],
-          requestTransformScript: "",
           parameterMappings: [],
         },
       }).success

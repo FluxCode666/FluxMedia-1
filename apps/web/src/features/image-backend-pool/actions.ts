@@ -18,6 +18,10 @@ import {
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
 import {
+  apiUpstreamAdapterOperationIdSchema,
+  apiUpstreamJsonValueSchema,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
+import {
   ActionUserError,
   adminAction,
   imageBackendPoolViewerAction,
@@ -50,11 +54,32 @@ type PoolOperationOutputs = {
   "pool.saveMember": { id: string };
   "pool.resetMemberStatus": { success: boolean };
   "pool.deleteMember": { success: boolean };
+  "pool.testApiUpstreamAdapter": { preview: unknown };
+  "pool.getApiUpstreamRuntimeDiagnostics": {
+    lifecycle: "starting" | "ready" | "unavailable" | "draining" | "closed";
+    workerCount: number;
+    liveWorkerCount: number;
+    requestQueueLength: number;
+    responseQueueLength: number;
+    responsePermitsInUse: number;
+    responsePermitCapacity: number;
+    saturationCount: number;
+    replacementCount: number;
+  };
 };
 
 type PoolOperationName = keyof PoolOperationOutputs;
 
 const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
+
+const apiUpstreamAdapterTestInputSchema = z
+  .object({
+    operation: apiUpstreamAdapterOperationIdSchema,
+    stage: z.enum(["request", "response"]),
+    script: z.string().max(32_768),
+    sample: apiUpstreamJsonValueSchema,
+  })
+  .strict();
 
 /** 初始化 UOL 并调用类型绑定的号池 operation。 */
 async function invokePoolOperation<N extends PoolOperationName>(
@@ -161,6 +186,29 @@ export const deleteImageBackendMemberAction = adminAction
     });
     revalidateBackendPoolPage();
     return { success: true };
+  });
+
+/** 使用生产 Worker 和合成样例执行无网络 API 上游脚本测试。 */
+export const testApiUpstreamAdapterAction = adminAction
+  .metadata({ action: "imageBackendPool.testApiUpstreamAdapter" })
+  .schema(apiUpstreamAdapterTestInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    return invokePoolOperation("pool.testApiUpstreamAdapter", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+  });
+
+/** 读取当前 Web 进程的脱敏 API 上游脚本运行诊断。 */
+export const getApiUpstreamRuntimeDiagnosticsAction = adminAction
+  .metadata({ action: "imageBackendPool.getApiUpstreamRuntimeDiagnostics" })
+  .action(async ({ ctx }) => {
+    return invokePoolOperation(
+      "pool.getApiUpstreamRuntimeDiagnostics",
+      {},
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
   });
 
 /** 获取用户可选择的启用分组。 */

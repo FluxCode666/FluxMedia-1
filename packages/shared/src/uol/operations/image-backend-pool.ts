@@ -8,7 +8,6 @@
 import { z } from "zod";
 import {
   apiModelMappingsSchema,
-  apiRequestTransformScriptSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
 } from "../../image-backend/api-upstream-adaptation";
@@ -38,7 +37,6 @@ const redactedApiConfigSchema = z
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
     modelMappings: apiModelMappingsSchema,
-    requestTransformScript: apiRequestTransformScriptSchema,
     authentication: apiUpstreamAuthenticationSchema.optional(),
     credentialScope: z.string().optional(),
     operations: apiUpstreamOperationsSchema.optional(),

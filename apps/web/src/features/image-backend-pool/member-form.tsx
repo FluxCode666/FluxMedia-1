@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  type ApiModelMapping,
-  MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS,
-} from "@repo/shared/image-backend/api-upstream-adaptation";
+import type { ApiModelMapping } from "@repo/shared/image-backend/api-upstream-adaptation";
 /**
  * 统一媒体后端成员编辑表单。
  *
@@ -43,6 +40,11 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { saveImageBackendMemberAction } from "./actions";
+import {
+  type ApiUpstreamAdapterFormDraft,
+  createDefaultApiUpstreamAdapterFormDraft,
+} from "./api-upstream-adapter-draft";
+import { ApiUpstreamAdapterForm } from "./api-upstream-adapter-form";
 import { BackendBooleanSetting } from "./boolean-setting";
 import {
   type AdobeMemberMode,
@@ -90,7 +92,10 @@ export function BackendMemberFormDialog({
   const [apiKey, setApiKey] = useState("");
   const [apiUseStream, setApiUseStream] = useState(false);
   const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
-  const [requestTransformScript, setRequestTransformScript] = useState("");
+  const [apiAdapterDraft, setApiAdapterDraft] =
+    useState<ApiUpstreamAdapterFormDraft>(() =>
+      createDefaultApiUpstreamAdapterFormDraft()
+    );
   const [adobeMode, setAdobeMode] = useState<AdobeMemberMode>(
     DEFAULT_ADOBE_MEMBER_MODE
   );
@@ -121,12 +126,23 @@ export function BackendMemberFormDialog({
       setApiBaseUrl(member.config.baseUrl);
       setApiUseStream(member.config.useStream);
       setModelMappings(member.config.modelMappings);
-      setRequestTransformScript(member.config.requestTransformScript);
+      setApiAdapterDraft({
+        authentication: member.config.authentication ?? { mode: "bearer" },
+        operations:
+          member.config.operations ??
+          createDefaultApiUpstreamAdapterFormDraft().operations,
+        ...(member.config.currentAdapterVersion
+          ? {
+              expectedCurrentVersionId:
+                member.config.currentAdapterVersion.id,
+            }
+          : {}),
+      });
     } else {
       setApiBaseUrl("");
       setApiUseStream(false);
       setModelMappings([]);
-      setRequestTransformScript("");
+      setApiAdapterDraft(createDefaultApiUpstreamAdapterFormDraft());
     }
     setApiKey("");
     if (member?.type === "adobe") {
@@ -255,12 +271,21 @@ export function BackendMemberFormDialog({
         type: "api",
         config: {
           baseUrl: apiBaseUrl,
-          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(apiAdapterDraft.authentication.mode !== "none" && apiKey.trim()
+            ? { apiKey: apiKey.trim() }
+            : {}),
           useStream: apiUseStream,
           modelMappings: modelMappings.filter((mapping) =>
             selectedModelKeys.has(mapping.modelId.toLowerCase())
           ),
-          requestTransformScript,
+          authentication: apiAdapterDraft.authentication,
+          operations: apiAdapterDraft.operations,
+          ...(apiAdapterDraft.expectedCurrentVersionId
+            ? {
+                expectedCurrentVersionId:
+                  apiAdapterDraft.expectedCurrentVersionId,
+              }
+            : {}),
         },
       });
       return;
@@ -450,8 +475,17 @@ export function BackendMemberFormDialog({
                   autoComplete="new-password"
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={member ? "留空保留现有凭据" : "必填"}
-                  required={!member}
+                  placeholder={
+                    apiAdapterDraft.authentication.mode === "none"
+                      ? "无认证模式无需填写"
+                      : member
+                        ? "留空保留现有凭据"
+                        : "必填"
+                  }
+                  required={
+                    !member && apiAdapterDraft.authentication.mode !== "none"
+                  }
+                  disabled={apiAdapterDraft.authentication.mode === "none"}
                 />
               </div>
               <BackendBooleanSetting
@@ -502,41 +536,11 @@ export function BackendMemberFormDialog({
                   </div>
                 )}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="request-transform-script">
-                  JavaScript 请求处理脚本
-                </Label>
-                <Textarea
-                  id="request-transform-script"
-                  rows={10}
-                  className="font-mono text-xs"
-                  value={requestTransformScript}
-                  onChange={(event) =>
-                    setRequestTransformScript(event.target.value)
-                  }
-                  maxLength={MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS}
-                  spellCheck={false}
-                  placeholder={
-                    "request.ratio = request.aspect_ratio;\n" +
-                    "delete request.aspect_ratio;\n" +
-                    "return request;"
-                  }
-                />
-                <div className="space-y-1 text-xs text-muted-foreground">
-                  <p>
-                    脚本必须同步返回 request 对象。可读取只读
-                    context.operation、
-                    context.contentType、context.platformModelId 和
-                    context.upstreamModelId。
-                  </p>
-                  <p>
-                    脚本在隔离 QuickJS 中最多执行
-                    50ms，不能访问网络、文件、Node、 URL、Header 或 API
-                    Key。输入媒体以宿主令牌表示，只能移动或重命名，
-                    不能删除、复制或伪造。
-                  </p>
-                </div>
-              </div>
+              <ApiUpstreamAdapterForm
+                value={apiAdapterDraft}
+                onChange={setApiAdapterDraft}
+                disabled={isPending}
+              />
             </div>
           ) : (
             <div className="space-y-4 rounded-md border p-4">
