@@ -1,23 +1,24 @@
 /**
- * API 账号的视频兼容协议适配器。
+ * API 账号的视频六操作协议适配器。
  *
- * 职责：把平台真实视频模型与独立参数发送到上游 `/videos/generations`，解析持久
- * 任务身份，随后按原 API 账号轮询并下载产物。使用方是视频持久状态机；本模块不
- * 负责账号调度、计费、数据库状态推进或对象存储。
+ * 职责：把平台视频请求交给固定版本的 `videos.generate` / `videos.query`
+ * 执行器，解析同步或异步标准结果，并下载最终产物。使用方是视频持久状态机；本
+ * 模块不负责账号调度、计费、数据库状态推进或对象存储。
  */
 import { resolveApiUpstreamModelId } from "@repo/shared/image-backend/api-upstream-adaptation";
+import type { ApiUpstreamResponseResult } from "@repo/shared/image-backend/api-upstream-script-contract";
 
 import {
-  fetchMediaUpstream,
+  ApiUpstreamExecutionError,
+  countsTowardApiUpstreamAdapterFailure,
+  executeApiUpstreamOperation,
+} from "@/features/image-backend-pool/api-upstream-executor";
+import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-upstream-opaque-values";
+import {
   fetchMediaUpstreamDownloadWithTrustedOrigin,
-  fetchPublicMediaUpstream,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import { parseMediaUpstreamUrl } from "@/features/image-backend-pool/media-upstream-url";
-import {
-  applyApiRequestTransformScript,
-  createApiRequestOpaqueToken,
-} from "@/features/image-backend-pool/request-transform-runtime";
 
 import { ApiAcceptedVideoError } from "./api-video-error";
 import type { ApiConfig } from "./types";
@@ -38,12 +39,19 @@ export type ApiVideoSourceInputs = {
   referenceImages?: ApiVideoSourceImage[];
 };
 
-/** API 上游接受视频任务后返回的固定恢复身份。 */
-export type ApiVideoSubmission = {
-  pollUrl: string;
-  upstreamJobId: string;
-  raw: Record<string, unknown>;
-};
+/** API 上游生成操作的同步或异步标准结果。 */
+export type ApiVideoSubmission =
+  | {
+      status: "pending";
+      upstreamJobId: string;
+      pollAfterSeconds?: number;
+      raw: Record<string, unknown>;
+    }
+  | {
+      status: "completed";
+      videoUrl: string;
+      raw: Record<string, unknown>;
+    };
 
 /** API 视频提交阶段错误；字段语义与持久状态机的 Adobe 适配器一致。 */
 export type ApiVideoStageError = {
@@ -52,11 +60,17 @@ export type ApiVideoStageError = {
   upstreamAccepted: boolean;
   terminal: boolean;
   submissionUncertain: boolean;
+  /** 平台脚本容量错误不得影响供应商账号健康。 */
+  backendHealthNeutral?: boolean;
 };
 
 /** API 视频单次轮询结果。 */
 export type ApiVideoPollResult =
-  | { status: "pending"; raw: Record<string, unknown> }
+  | {
+      status: "pending";
+      pollAfterSeconds?: number;
+      raw: Record<string, unknown>;
+    }
   | {
       status: "completed";
       videoUrl: string;
@@ -110,31 +124,24 @@ function getApiVideoErrorMessage(response: Response): string {
   return `视频上游返回 HTTP ${response.status}`;
 }
 
-/** 连接平台约定的视频路径，不修改管理员配置的 Base URL 前缀。 */
-function appendVideoPath(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-}
-
-/** 解析上游返回的绝对或相对恢复 URL，并只允许 HTTP(S)。 */
+/** 解析上游返回的绝对或相对产物 URL，并只允许 HTTP(S)。 */
 function resolveApiVideoUrl(baseUrl: string, value: string): string {
   const resolved = new URL(value, `${baseUrl.replace(/\/+$/, "")}/`);
   return parseMediaUpstreamUrl(resolved.toString()).toString();
 }
 
-/** 仅在状态 URL 与账号 Base URL 同源时携带该账号 API Key。 */
-function getApiVideoHeaders(
-  config: ApiConfig,
-  targetUrl: string,
-  trustedOrigin: string
-) {
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (
-    parseMediaUpstreamUrl(targetUrl).origin === trustedOrigin &&
-    parseMediaUpstreamUrl(config.baseUrl).origin === trustedOrigin
-  ) {
-    headers.Authorization = `Bearer ${config.apiKey}`;
-  }
-  return headers;
+/** 读取租约或任务固定的完整六操作配置。 */
+function getApiUpstreamAdapter(config: ApiConfig) {
+  const adapter = config.backend?.apiUpstreamAdapter;
+  if (!adapter) throw new Error("API 视频账号缺少固定适配版本");
+  return adapter;
+}
+
+/** 把脚本标准结果转换为不会携带原始响应正文的记录。 */
+function responseResultToRecord(
+  result: ApiUpstreamResponseResult
+): Record<string, unknown> {
+  return result as unknown as Record<string, unknown>;
 }
 
 /** 把已验证输入图转换为平台视频 API 接受的 data URL。 */
@@ -159,114 +166,93 @@ function getInlineInputByteLength(inputs: ApiVideoSourceInputs): number {
   ].reduce((total, image) => total + getDataUrlByteLength(image), 0);
 }
 
-/**
- * 向一个已获租 API 账号提交视频任务。
- *
- * @param config - API 账号运行时配置、模型映射与请求处理脚本。
- * @param params - 真实模型 ID、独立生成参数、幂等键和具名输入图。
- * @returns 上游任务恢复身份，或可供调度器分类的提交错误。
- * @sideEffects 发起一次带账号 API Key 的上游 POST。
- * @failure 网络、超时、5xx 或成功但缺少任务 ID 时标记 submissionUncertain，禁止盲目重投。
- */
-export async function submitApiVideoRequest(
-  config: ApiConfig,
-  params: {
-    clientRequestId: string;
-    prompt: string;
-    model: string;
-    duration: number;
-    aspectRatio: string;
-    resolution: string;
-    effectiveAudio: boolean;
-    negativePrompt?: string | null;
-    signal?: AbortSignal;
-  } & ApiVideoSourceInputs
-): Promise<ApiVideoSubmission | ApiVideoStageError> {
-  if (getInlineInputByteLength(params) > MAX_API_VIDEO_INLINE_INPUT_BYTES) {
+/** 将执行器阶段错误转换为视频提交状态机的安全分类。 */
+function toApiVideoStageError(error: unknown): ApiVideoStageError {
+  if (error instanceof ApiUpstreamExecutionError) {
     return {
-      error: "API 视频内联输入超过 64 MB 上限",
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: true,
-      submissionUncertain: false,
-    };
-  }
-  const requestUrl = appendVideoPath(config.baseUrl, "videos/generations");
-  const upstreamModel = resolveApiUpstreamModelId(
-    params.model,
-    config.backend?.modelMappings
-  );
-  const opaqueValues = new Map<string, unknown>();
-  const toOpaqueDataUrl = (image: ApiVideoSourceImage): string => {
-    const token = createApiRequestOpaqueToken();
-    opaqueValues.set(token, toDataUrl(image));
-    return token;
-  };
-  const standardBody: Record<string, unknown> = {
-    client_request_id: params.clientRequestId,
-    prompt: params.prompt,
-    model: upstreamModel,
-    duration: params.duration,
-    aspect_ratio: params.aspectRatio,
-    resolution: params.resolution,
-    generate_audio: params.effectiveAudio,
-    ...(params.negativePrompt != null
-      ? { negative_prompt: params.negativePrompt }
-      : {}),
-    ...(params.firstFrame
-      ? { first_frame: toOpaqueDataUrl(params.firstFrame) }
-      : {}),
-    ...(params.lastFrame
-      ? { last_frame: toOpaqueDataUrl(params.lastFrame) }
-      : {}),
-    ...(params.referenceImages?.length
-      ? { reference_images: params.referenceImages.map(toOpaqueDataUrl) }
-      : {}),
-  };
-  let body: Record<string, unknown>;
-  try {
-    body = await applyApiRequestTransformScript(
-      standardBody,
-      config.backend?.requestTransformScript ?? "",
-      {
-        operation: "videos.generate",
-        contentType: "application/json",
-        platformModelId: params.model,
-        upstreamModelId: upstreamModel,
-      },
-      opaqueValues
-    );
-  } catch {
-    return {
-      error: "API 账号请求处理脚本执行失败",
-      switchable: true,
-      upstreamAccepted: false,
+      error: error.message,
+      switchable:
+        error.code !== "platform_busy" && error.stage === "before_send",
+      upstreamAccepted: error.stage === "after_send",
       terminal: false,
-      submissionUncertain: false,
+      submissionUncertain: error.stage !== "before_send",
+      ...(error.code === "platform_busy" ? { backendHealthNeutral: true } : {}),
     };
   }
-  let response: Response;
-  try {
-    response = await fetchMediaUpstream(requestUrl, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: params.signal,
-      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
-    });
-  } catch {
+  return {
+    error: "供应商请求处理失败，请联系管理员",
+    switchable: true,
+    upstreamAccepted: false,
+    terminal: false,
+    submissionUncertain: false,
+  };
+}
+
+/** 将脚本显式返回的失败分类转换为生成阶段结论。 */
+function toScriptedGenerationFailure(
+  result: Extract<ApiUpstreamResponseResult, { status: "failed" }>
+): ApiVideoStageError {
+  // WHY：错误分类只描述原因，不能证明供应商未创建任务。只有管理员在响应脚本中
+  // 显式返回 retryable=true，视频状态机才能安全换号重投。
+  const switchable = result.retryable;
+  return {
+    error: "视频上游拒绝了生成请求",
+    switchable,
+    upstreamAccepted: false,
+    terminal: !switchable,
+    submissionUncertain: false,
+  };
+}
+
+/** 将脚本标准化生成结果收敛为视频提交结果。 */
+function parseScriptedVideoSubmission(
+  config: ApiConfig,
+  result: ApiUpstreamResponseResult,
+  pollAfterSeconds?: number
+): ApiVideoSubmission | ApiVideoStageError {
+  if (result.status === "failed") {
+    return toScriptedGenerationFailure(result);
+  }
+  const raw = responseResultToRecord(result);
+  if (result.status === "completed") {
+    const output = result.outputs[0];
+    if (output?.kind !== "video") {
+      return {
+        error: "供应商请求处理失败，请联系管理员",
+        switchable: false,
+        upstreamAccepted: true,
+        terminal: false,
+        submissionUncertain: true,
+      };
+    }
     return {
-      error: "API 视频提交网络错误",
+      status: "completed",
+      videoUrl: resolveApiVideoUrl(config.baseUrl, output.url),
+      raw,
+    };
+  }
+  if (!result.taskId) {
+    return {
+      error: "供应商请求处理失败，请联系管理员",
       switchable: false,
-      upstreamAccepted: false,
+      upstreamAccepted: true,
       terminal: false,
       submissionUncertain: true,
     };
   }
+  return {
+    status: "pending",
+    upstreamJobId: result.taskId,
+    pollAfterSeconds,
+    raw,
+  };
+}
+
+/** 将内置视频协议生成响应解析为同步或异步结果。 */
+async function parseBuiltInVideoSubmission(
+  config: ApiConfig,
+  response: Response
+): Promise<ApiVideoSubmission | ApiVideoStageError> {
   if (!response.ok) {
     const submissionUncertain =
       response.status === 408 ||
@@ -303,6 +289,18 @@ export async function submitApiVideoRequest(
       submissionUncertain: true,
     };
   }
+  const videoUrl = readString(record, ["video_url", "url", "output_url"]);
+  const status = readString(record, ["status", "state"])?.toLowerCase();
+  if (
+    videoUrl &&
+    (!status || ["completed", "succeeded", "success", "done"].includes(status))
+  ) {
+    return {
+      status: "completed",
+      videoUrl: resolveApiVideoUrl(config.baseUrl, videoUrl),
+      raw: record,
+    };
+  }
   const upstreamJobId = readString(record, ["task_id", "id", "generation_id"]);
   if (!upstreamJobId) {
     return {
@@ -313,59 +311,147 @@ export async function submitApiVideoRequest(
       submissionUncertain: true,
     };
   }
-  const rawPollUrl = readString(record, ["poll_url", "status_url"]);
-  let pollUrl: string;
-  try {
-    pollUrl = rawPollUrl
-      ? resolveApiVideoUrl(config.baseUrl, rawPollUrl)
-      : appendVideoPath(
-          config.baseUrl,
-          `videos/${encodeURIComponent(upstreamJobId)}`
-        );
-  } catch {
-    return {
-      error: "API 视频提交成功但恢复地址无效",
-      switchable: false,
-      upstreamAccepted: true,
-      terminal: false,
-      submissionUncertain: true,
-    };
-  }
-  return { pollUrl, upstreamJobId, raw: record };
+  return {
+    status: "pending",
+    upstreamJobId,
+    raw: record,
+  };
 }
 
 /**
- * 轮询一个已经由 API 账号接受的视频任务。
+ * 向一个已获租 API 账号提交视频任务。
  *
- * @param config - 原 API 账号当前运行时凭据。
- * @param pollUrl - 提交阶段持久化的状态 URL。
- * @param context - 提交时固定的可信源与可选取消信号。
- * @returns pending 或包含视频 URL 的 completed。
- * @sideEffects 发起一次 GET；跨源状态 URL 不携带账号 API Key。
- * @throws ApiAcceptedVideoError 供 worker 区分暂时错误与明确失败。
+ * @param config API 账号当前密钥与固定适配版本。
+ * @param params 真实模型 ID、独立生成参数、幂等键和具名输入图。
+ * @returns 同步产物、异步任务身份，或可供调度器分类的提交错误。
+ * @sideEffects 请求脚本成功后最多发起一次供应商 POST。
+ * @failure 外呼后结果不确定时禁止盲目重投；请求脚本失败可切换账号。
  */
-export async function pollApiVideoRequest(
+export async function submitApiVideoRequest(
   config: ApiConfig,
-  pollUrl: string,
-  context: ApiVideoRecoveryContext
-): Promise<ApiVideoPollResult> {
-  let response: Response;
-  try {
-    const targetUrl = parseMediaUpstreamUrl(pollUrl).toString();
-    const trustedOrigin = parseMediaUpstreamUrl(context.trustedOrigin).origin;
-    const sameOrigin =
-      parseMediaUpstreamUrl(targetUrl).origin === trustedOrigin;
-    response = await (sameOrigin
-      ? fetchMediaUpstream
-      : fetchPublicMediaUpstream)(targetUrl, {
-      method: "GET",
-      headers: getApiVideoHeaders(config, targetUrl, trustedOrigin),
-      signal: context.signal,
-      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
-    });
-  } catch {
-    throw new ApiAcceptedVideoError("API 视频状态查询网络错误", true);
+  params: {
+    clientRequestId: string;
+    prompt: string;
+    model: string;
+    duration: number;
+    aspectRatio: string;
+    resolution: string;
+    effectiveAudio: boolean;
+    negativePrompt?: string | null;
+    signal?: AbortSignal;
+  } & ApiVideoSourceInputs
+): Promise<ApiVideoSubmission | ApiVideoStageError> {
+  if (getInlineInputByteLength(params) > MAX_API_VIDEO_INLINE_INPUT_BYTES) {
+    return {
+      error: "API 视频内联输入超过 64 MB 上限",
+      switchable: false,
+      upstreamAccepted: false,
+      terminal: true,
+      submissionUncertain: false,
+    };
   }
+
+  let adapter: ReturnType<typeof getApiUpstreamAdapter>;
+  try {
+    adapter = getApiUpstreamAdapter(config);
+  } catch (error) {
+    return toApiVideoStageError(error);
+  }
+  const upstreamModel = resolveApiUpstreamModelId(
+    params.model,
+    adapter.modelMappings
+  );
+  const opaqueValues = new Map<string, unknown>();
+  const toOpaqueDataUrl = (image: ApiVideoSourceImage): string => {
+    const token = createApiUpstreamOpaqueToken();
+    opaqueValues.set(token, toDataUrl(image));
+    return token;
+  };
+  const standardBody: Record<string, unknown> = {
+    client_request_id: params.clientRequestId,
+    prompt: params.prompt,
+    model: upstreamModel,
+    duration: params.duration,
+    aspect_ratio: params.aspectRatio,
+    resolution: params.resolution,
+    generate_audio: params.effectiveAudio,
+    ...(params.negativePrompt != null
+      ? { negative_prompt: params.negativePrompt }
+      : {}),
+    ...(params.firstFrame
+      ? { first_frame: toOpaqueDataUrl(params.firstFrame) }
+      : {}),
+    ...(params.lastFrame
+      ? { last_frame: toOpaqueDataUrl(params.lastFrame) }
+      : {}),
+    ...(params.referenceImages?.length
+      ? { reference_images: params.referenceImages.map(toOpaqueDataUrl) }
+      : {}),
+  };
+
+  try {
+    const executed = await executeApiUpstreamOperation({
+      adapter,
+      apiKey: config.apiKey,
+      operation: "videos.generate",
+      platformModelId: params.model,
+      upstreamModelId: upstreamModel,
+      contentType: "application/json",
+      body: standardBody,
+      opaqueValues,
+      signal: params.signal,
+      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
+      observability: {
+        memberId: config.backend?.id,
+        groupId: config.backend?.groupId,
+      },
+    });
+    return executed.kind === "scripted"
+      ? parseScriptedVideoSubmission(
+          config,
+          executed.result,
+          executed.pollAfterSeconds
+        )
+      : await parseBuiltInVideoSubmission(config, executed.response);
+  } catch (error) {
+    return toApiVideoStageError(error);
+  }
+}
+
+/** 将脚本标准化查询结果收敛为轮询结果。 */
+function parseScriptedVideoPollResult(
+  config: ApiConfig,
+  result: ApiUpstreamResponseResult,
+  pollAfterSeconds?: number
+): ApiVideoPollResult {
+  if (result.status === "failed") {
+    throw new ApiAcceptedVideoError("API 视频任务失败", false);
+  }
+  const raw = responseResultToRecord(result);
+  if (result.status !== "completed") {
+    return { status: "pending", pollAfterSeconds, raw };
+  }
+  const output = result.outputs[0];
+  if (output?.kind !== "video") {
+    throw new ApiAcceptedVideoError(
+      "供应商请求处理失败，请联系管理员",
+      true,
+      undefined,
+      true
+    );
+  }
+  return {
+    status: "completed",
+    videoUrl: resolveApiVideoUrl(config.baseUrl, output.url),
+    raw,
+  };
+}
+
+/** 将内置视频协议查询响应解析为轮询结果。 */
+async function parseBuiltInVideoPollResult(
+  config: ApiConfig,
+  response: Response
+): Promise<ApiVideoPollResult> {
   if (!response.ok) {
     throw new ApiAcceptedVideoError(
       getApiVideoErrorMessage(response),
@@ -382,10 +468,20 @@ export async function pollApiVideoRequest(
   try {
     record = await readJsonRecord(response);
   } catch {
-    throw new ApiAcceptedVideoError("API 视频状态响应读取失败", true);
+    throw new ApiAcceptedVideoError(
+      "API 视频状态响应读取失败",
+      true,
+      undefined,
+      true
+    );
   }
   if (!record) {
-    throw new ApiAcceptedVideoError("API 视频状态响应不是有效 JSON", true);
+    throw new ApiAcceptedVideoError(
+      "API 视频状态响应不是有效 JSON",
+      true,
+      undefined,
+      true
+    );
   }
   const status = readString(record, ["status", "state"])?.toLowerCase();
   const videoUrl = readString(record, ["video_url", "url", "output_url"]);
@@ -406,7 +502,12 @@ export async function pollApiVideoRequest(
         raw: record,
       };
     } catch {
-      throw new ApiAcceptedVideoError("API 视频结果地址无效", true);
+      throw new ApiAcceptedVideoError(
+        "API 视频结果地址无效",
+        true,
+        undefined,
+        true
+      );
     }
   }
   if (
@@ -423,14 +524,100 @@ export async function pollApiVideoRequest(
   ) {
     return { status: "pending", raw: record };
   }
-  throw new ApiAcceptedVideoError("API 视频任务返回未知状态", true);
+  throw new ApiAcceptedVideoError(
+    "API 视频任务返回未知状态",
+    true,
+    undefined,
+    true
+  );
+}
+
+/**
+ * 轮询一个已经由 API 账号接受的视频任务。
+ *
+ * @param config 原 API 账号当前密钥和任务固定的适配版本。
+ * @param upstreamJobId 提交阶段持久化的上游任务 ID。
+ * @param context 提交时固定的可信源与可选取消信号。
+ * @returns pending 或包含视频 URL 的 completed。
+ * @sideEffects 只按固定 `videos.query` 路径发起一次 GET。
+ * @throws ApiAcceptedVideoError 供 worker 区分任务失败与连续适配执行失败。
+ */
+export async function pollApiVideoRequest(
+  config: ApiConfig,
+  upstreamJobId: string,
+  context: ApiVideoRecoveryContext
+): Promise<ApiVideoPollResult> {
+  let adapter: ReturnType<typeof getApiUpstreamAdapter>;
+  try {
+    adapter = getApiUpstreamAdapter(config);
+    const fixedOrigin = parseMediaUpstreamUrl(adapter.baseUrl).origin;
+    if (fixedOrigin !== parseMediaUpstreamUrl(context.trustedOrigin).origin) {
+      throw new Error("API 视频恢复的固定适配版本与可信源不一致");
+    }
+  } catch (error) {
+    throw new ApiAcceptedVideoError(
+      "供应商请求处理失败，请联系管理员",
+      true,
+      undefined,
+      true,
+      { cause: error }
+    );
+  }
+  const upstreamModel = resolveApiUpstreamModelId(
+    config.model ?? "unknown-video-model",
+    adapter.modelMappings
+  );
+  try {
+    const executed = await executeApiUpstreamOperation({
+      adapter,
+      apiKey: config.apiKey,
+      operation: "videos.query",
+      platformModelId: config.model ?? upstreamModel,
+      upstreamModelId: upstreamModel,
+      contentType: "application/json",
+      taskId: upstreamJobId,
+      signal: context.signal,
+      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
+      observability: {
+        memberId: config.backend?.id,
+        groupId: config.backend?.groupId,
+      },
+    });
+    return executed.kind === "scripted"
+      ? parseScriptedVideoPollResult(
+          config,
+          executed.result,
+          executed.pollAfterSeconds
+        )
+      : await parseBuiltInVideoPollResult(config, executed.response);
+  } catch (error) {
+    if (error instanceof ApiAcceptedVideoError) throw error;
+    if (error instanceof ApiUpstreamExecutionError) {
+      // WHY：容量饱和与传输异常不代表管理员适配配置损坏，不能消耗连续三次
+      // 适配失败预算；否则短暂平台拥塞可能让已接受任务提前失败退款。
+      throw new ApiAcceptedVideoError(
+        error.message,
+        true,
+        undefined,
+        countsTowardApiUpstreamAdapterFailure(error),
+        { cause: error }
+      );
+    }
+    throw new ApiAcceptedVideoError(
+      "供应商请求处理失败，请联系管理员",
+      true,
+      undefined,
+      true,
+      { cause: error }
+    );
+  }
 }
 
 /**
  * 下载 API 视频产物。
  *
- * @param videoUrl - 已验证的上游产物 URL。
- * @param context - 提交时固定的可信源与可选取消信号。
+ * @param videoUrl 已验证的上游产物 URL。
+ * @param context 提交时固定的可信源与可选取消信号。
  * @returns 不超过 512 MiB 的视频字节。
  * @sideEffects 发起不携带账号凭据的逐跳下载；跨源目标只允许公网地址。
  * @throws ApiAcceptedVideoError 网络、边界或 HTTP 失败时携带稳定重试分类。

@@ -35,6 +35,7 @@ import {
   InsufficientCreditsError,
 } from "@repo/shared/credits/core";
 import { refundGenerationCredits } from "@repo/shared/generation-maintenance";
+import { API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS } from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
   listVideoInputManifestReferences,
   type VideoInputManifest,
@@ -90,6 +91,7 @@ import { shouldRetainVideoInputsAfterStage } from "./video-input-lifecycle";
 import {
   createVideoStorageKey,
   isAcceptedVideoError,
+  resolveApiAdapterQueryFailure,
   resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
@@ -560,6 +562,28 @@ function getLeaseVideoBackendProtocol(
   return lease?.memberType === "api" ? "api" : "adobe_direct";
 }
 
+/** 将获租时固定的 API 适配版本复制到视频任务；Adobe 任务必须保持成对为空。 */
+function createLeaseApiAdapterSnapshot(
+  lease: NonNullable<
+    Awaited<ReturnType<typeof createRuntimeBackendSession>>["current"]
+  >
+): {
+  apiAdapterMemberId: string | null;
+  apiAdapterVersionId: string | null;
+} {
+  if (lease.memberType !== "api") {
+    return { apiAdapterMemberId: null, apiAdapterVersionId: null };
+  }
+  const { apiAdapterMemberId, apiAdapterVersionId } = lease.acquisition.lease;
+  if (!apiAdapterMemberId || !apiAdapterVersionId) {
+    throw new Error("API 视频成员租约缺少固定适配版本");
+  }
+  if (apiAdapterMemberId !== lease.memberId) {
+    throw new Error("API 视频成员租约适配版本归属不一致");
+  }
+  return { apiAdapterMemberId, apiAdapterVersionId };
+}
+
 /** 将获租协议与 API 提交时可信源合并进任务 metadata。 */
 function createLeaseVideoBackendMetadata(
   metadata: Record<string, unknown> | null,
@@ -602,13 +626,21 @@ function getApiVideoTrustedOrigin(row: VideoGenerationRow): string {
 
 /** 加载已固定 API 账号的当前配置；读取失败只允许原任务稍后重试。 */
 async function loadAcceptedApiVideoConfig(
-  memberId: string
+  memberId: string,
+  apiAdapterMemberId: string,
+  apiAdapterVersionId: string,
+  modelId: string
 ): Promise<
   NonNullable<Awaited<ReturnType<typeof loadApiVideoRecoveryConfig>>>
 > {
   let config: Awaited<ReturnType<typeof loadApiVideoRecoveryConfig>>;
   try {
-    config = await loadApiVideoRecoveryConfig(memberId);
+    config = await loadApiVideoRecoveryConfig(
+      memberId,
+      apiAdapterMemberId,
+      apiAdapterVersionId,
+      modelId
+    );
   } catch {
     throw new ApiAcceptedVideoError(
       "API 视频恢复原账号配置读取失败，任务将保留重试",
@@ -626,15 +658,31 @@ async function loadAcceptedApiVideoConfig(
 
 /** 通过任务已固定的协议和账号轮询一次；绝不重新调度其他账号。 */
 async function pollAcceptedVideoTask(row: VideoGenerationRow) {
-  if (!row.backendMemberId || !row.pollUrl) {
+  if (!row.backendMemberId) {
     throw new Error("已接受视频任务缺少恢复身份");
   }
   if (getVideoBackendProtocol(row) === "api") {
-    const config = await loadAcceptedApiVideoConfig(row.backendMemberId);
-    return pollApiVideoRequest(config, row.pollUrl, {
+    if (
+      !row.apiAdapterMemberId ||
+      !row.apiAdapterVersionId ||
+      !row.upstreamJobId
+    ) {
+      throw new ApiAcceptedVideoError(
+        "API 视频恢复缺少固定适配版本，任务将保留重试",
+        true
+      );
+    }
+    const config = await loadAcceptedApiVideoConfig(
+      row.backendMemberId,
+      row.apiAdapterMemberId,
+      row.apiAdapterVersionId,
+      row.model
+    );
+    return pollApiVideoRequest(config, row.upstreamJobId, {
       trustedOrigin: getApiVideoTrustedOrigin(row),
     });
   }
+  if (!row.pollUrl) throw new Error("Adobe 视频任务缺少恢复地址");
   return pollAdobeDirectVideoRequest({
     memberId: row.backendMemberId,
     pollUrl: row.pollUrl,
@@ -1009,6 +1057,7 @@ async function submitClaimedCreatedVideo(
       backendMemberId: initialLease.memberId,
       memberLeaseId: initialLease.acquisition.lease.id,
       memberLeaseOwnerToken: initialLease.acquisition.lease.ownerToken,
+      ...createLeaseApiAdapterSnapshot(initialLease),
       claimToken: liveClaimToken,
       claimExpiresAt: new Date(chargedAt.getTime() + VIDEO_CLAIM_TTL_MS),
     },
@@ -1084,6 +1133,7 @@ async function submitClaimedCreatedVideo(
         backendMemberId: lease.memberId,
         memberLeaseId: lease.acquisition.lease.id,
         memberLeaseOwnerToken: lease.acquisition.lease.ownerToken,
+        ...createLeaseApiAdapterSnapshot(lease),
         metadata: createLeaseVideoBackendMetadata(row.metadata, lease),
       },
     });
@@ -1121,15 +1171,48 @@ async function submitClaimedCreatedVideo(
             signal: submissionSignal,
           });
     if (!("error" in submitted)) {
+      if ("status" in submitted && submitted.status === "completed") {
+        const downloading = await compareAndSetVideoStage({
+          row,
+          expectedStages: ["submitting"],
+          values: {
+            stage: "downloading",
+            pollUrl: null,
+            upstreamJobId: null,
+            videoUrl: submitted.videoUrl,
+            storageKey: createVideoStorageKey(row.userId, row.id),
+            upstreamAcceptedAt: new Date(),
+            nextPollAt: new Date(),
+            apiAdapterQueryFailureCount: 0,
+            error: null,
+          },
+        });
+        if (!downloading) {
+          throw new Error("视频同步完成结果持久化发生并发冲突");
+        }
+        return {
+          videoGenerationId: row.id,
+          status: "processing",
+          creditsConsumed: billedCost,
+        };
+      }
+      const pollAfterSeconds =
+        "pollAfterSeconds" in submitted
+          ? (submitted.pollAfterSeconds ??
+            API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS)
+          : 0;
       const polling = await compareAndSetVideoStage({
         row,
         expectedStages: ["submitting"],
         values: {
           stage: "polling",
-          pollUrl: submitted.pollUrl,
+          // API 查询地址始终从固定版本重建，不把完整 URL 写入任务；Adobe
+          // 仍沿用其既有动态 pollUrl 契约。
+          pollUrl: "pollUrl" in submitted ? submitted.pollUrl : null,
           upstreamJobId: submitted.upstreamJobId,
           upstreamAcceptedAt: new Date(),
-          nextPollAt: new Date(),
+          nextPollAt: new Date(Date.now() + pollAfterSeconds * 1_000),
+          apiAdapterQueryFailureCount: 0,
           claimToken: null,
           claimExpiresAt: null,
           error: null,
@@ -1165,6 +1248,13 @@ async function submitClaimedCreatedVideo(
       };
     }
 
+    if ("backendHealthNeutral" in submitted && submitted.backendHealthNeutral) {
+      await backendSession.close();
+      const refunding = await moveVideoToRefunding(row, submitted.error);
+      if (refunding) await refundClaimedVideoOrRetry(refunding);
+      return { error: submitted.error, videoGenerationId: row.id };
+    }
+
     if (!submitted.switchable) {
       await backendSession.completeCurrent({
         success: false,
@@ -1189,6 +1279,7 @@ async function submitClaimedCreatedVideo(
           backendMemberId: nextLease.memberId,
           memberLeaseId: nextLease.acquisition.lease.id,
           memberLeaseOwnerToken: nextLease.acquisition.lease.ownerToken,
+          ...createLeaseApiAdapterSnapshot(nextLease),
           metadata: createLeaseVideoBackendMetadata(row.metadata, nextLease),
           error: submitted.error.slice(0, 1_000),
         },
@@ -1218,7 +1309,9 @@ async function takeoverVideoLease(
   if (
     !row.backendMemberId ||
     !row.memberLeaseId ||
-    !row.memberLeaseOwnerToken
+    !row.memberLeaseOwnerToken ||
+    (getVideoBackendProtocol(row) === "api" &&
+      (!row.apiAdapterMemberId || !row.apiAdapterVersionId))
   ) {
     return null;
   }
@@ -1231,6 +1324,12 @@ async function takeoverVideoLease(
     nextOwnerToken,
     now,
     expiresAt: new Date(now.getTime() + VIDEO_LEASE_TTL_MS),
+    ...(row.apiAdapterMemberId && row.apiAdapterVersionId
+      ? {
+          apiAdapterMemberId: row.apiAdapterMemberId,
+          apiAdapterVersionId: row.apiAdapterVersionId,
+        }
+      : {}),
   });
   if (!lease || lease.memberId !== row.backendMemberId) return null;
   const updated = await compareAndSetVideoStage({
@@ -1401,7 +1500,12 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
   row = leased;
 
   if (row.stage === "polling") {
-    if (!row.backendMemberId || !row.pollUrl) {
+    if (
+      !row.backendMemberId ||
+      (getVideoBackendProtocol(row) === "api"
+        ? !row.upstreamJobId
+        : !row.pollUrl)
+    ) {
       const refunding = await moveVideoToRefunding(
         row,
         "已接受视频任务缺少恢复身份"
@@ -1412,13 +1516,22 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     try {
       const polled = await pollAcceptedVideoTask(row);
       if (polled.status === "pending") {
+        const pollDelayMs =
+          getVideoBackendProtocol(row) === "api"
+            ? (("pollAfterSeconds" in polled
+                ? typeof polled.pollAfterSeconds === "number"
+                  ? polled.pollAfterSeconds
+                  : undefined
+                : undefined) ?? API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS) * 1_000
+            : VIDEO_POLL_DELAY_MS;
         await compareAndSetVideoStage({
           row,
           expectedStages: ["polling"],
           values: {
-            nextPollAt: new Date(Date.now() + VIDEO_POLL_DELAY_MS),
+            nextPollAt: new Date(Date.now() + pollDelayMs),
             claimToken: null,
             claimExpiresAt: null,
+            apiAdapterQueryFailureCount: 0,
             error: null,
           },
         });
@@ -1432,12 +1545,42 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
           videoUrl: polled.videoUrl,
           storageKey: createVideoStorageKey(row.userId, row.id),
           nextPollAt: new Date(),
+          apiAdapterQueryFailureCount: 0,
           error: null,
         },
       });
       if (!downloading) return;
       row = downloading;
     } catch (error) {
+      if (
+        error instanceof ApiAcceptedVideoError &&
+        error.countsTowardAdapterFailure
+      ) {
+        const failure = resolveApiAdapterQueryFailure(
+          row.apiAdapterQueryFailureCount
+        );
+        if (failure.shouldRetry) {
+          await compareAndSetVideoStage({
+            row,
+            expectedStages: ["polling"],
+            values: {
+              apiAdapterQueryFailureCount: failure.nextFailureCount,
+              error: error.message.slice(0, 1_000),
+              nextPollAt: new Date(Date.now() + VIDEO_RETRY_DELAY_MS),
+              claimToken: null,
+              claimExpiresAt: null,
+              attemptCount: row.attemptCount + 1,
+            },
+          });
+          return;
+        }
+        const refunding = await moveVideoToRefunding(
+          row,
+          "供应商请求处理连续失败，请联系管理员"
+        );
+        if (refunding) await refundClaimedVideoOrRetry(refunding);
+        return;
+      }
       if (shouldRetryAcceptedVideoError(error)) {
         await retryClaimedVideo(row, error);
         return;
@@ -1548,7 +1691,13 @@ export async function runVideoRecoveryJob() {
       if (!claim) return;
       claimed += 1;
       const row = await getVideoGenerationById(claim.id);
-      if (row?.claimToken !== claim.claimToken) continue;
+      if (
+        row?.claimToken !== claim.claimToken ||
+        row.apiAdapterMemberId !== claim.apiAdapterMemberId ||
+        row.apiAdapterVersionId !== claim.apiAdapterVersionId
+      ) {
+        continue;
+      }
       try {
         await recoverClaimedVideo(row);
         recovered += 1;

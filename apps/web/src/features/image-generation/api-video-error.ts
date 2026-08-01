@@ -13,13 +13,17 @@ export class ApiAcceptedVideoError extends Error {
    * @param message - 已脱敏且可持久化的错误消息。
    * @param retryable - 是否只保留原任务并稍后重试。
    * @param statusCode - 可选上游 HTTP 状态码。
+   * @param countsTowardAdapterFailure - 是否计入连续适配执行失败阈值。
+   * @param options - 保留内部 cause，错误消息仍不得包含供应商敏感数据。
    */
   constructor(
     message: string,
     readonly retryable: boolean,
-    readonly statusCode?: number
+    readonly statusCode?: number,
+    readonly countsTowardAdapterFailure = false,
+    options?: ErrorOptions
   ) {
-    super(message);
+    super(message, options);
     this.name = "ApiAcceptedVideoError";
   }
 }

@@ -13,6 +13,35 @@ import {
 
 import { ApiAcceptedVideoError } from "./api-video-error";
 
+const MAX_API_ADAPTER_QUERY_FAILURES = 3;
+
+/** API 查询适配连续失败后的纯状态推进结论。 */
+export interface ApiAdapterQueryFailureDecision {
+  nextFailureCount: number;
+  shouldRetry: boolean;
+}
+
+/**
+ * 连续三次查询脚本或执行失败后终止原任务并进入退款。
+ *
+ * @param currentFailureCount 任务已持久化的连续失败次数。
+ * @returns 下一次计数以及是否仍应保留原任务重试。
+ * @sideEffects 无。
+ * @failure 负数或非整数表示持久状态损坏，直接抛错并由恢复 worker 失败关闭。
+ */
+export function resolveApiAdapterQueryFailure(
+  currentFailureCount: number
+): ApiAdapterQueryFailureDecision {
+  if (!Number.isInteger(currentFailureCount) || currentFailureCount < 0) {
+    throw new Error("API 查询适配连续失败次数无效");
+  }
+  const nextFailureCount = currentFailureCount + 1;
+  return {
+    nextFailureCount,
+    shouldRetry: nextFailureCount < MAX_API_ADAPTER_QUERY_FAILURES,
+  };
+}
+
 /** 由用户和任务 ID 派生稳定对象键，worker 重放只覆盖同一对象。 */
 export function createVideoStorageKey(userId: string, videoId: string): string {
   return `${userId}/videos/${videoId}.mp4`;

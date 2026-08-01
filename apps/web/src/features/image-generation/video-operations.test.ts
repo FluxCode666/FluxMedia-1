@@ -19,11 +19,30 @@ import {
   createVideoStorageKey,
   isAcceptedVideoError,
   requireAcceptedVideoCredential,
+  resolveApiAdapterQueryFailure,
   resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
 
 describe("video recovery policies", () => {
+  it("API 查询适配连续失败恰好三次后终止重试", () => {
+    expect(resolveApiAdapterQueryFailure(0)).toEqual({
+      nextFailureCount: 1,
+      shouldRetry: true,
+    });
+    expect(resolveApiAdapterQueryFailure(1)).toEqual({
+      nextFailureCount: 2,
+      shouldRetry: true,
+    });
+    expect(resolveApiAdapterQueryFailure(2)).toEqual({
+      nextFailureCount: 3,
+      shouldRetry: false,
+    });
+    expect(() => resolveApiAdapterQueryFailure(-1)).toThrow(
+      "API 查询适配连续失败次数无效"
+    );
+  });
+
   it("任务进入完成或失败终态后仍保留具名输入清单", () => {
     expect(shouldRetainVideoInputsAfterStage("completed")).toBe(true);
     expect(shouldRetainVideoInputsAfterStage("failed")).toBe(true);

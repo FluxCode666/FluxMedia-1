@@ -1,20 +1,22 @@
 /**
- * API 账号视频兼容协议的 DB-free 测试。
+ * API 账号视频六操作适配器的 DB-free 测试。
  *
- * 职责：锁定真实模型 ID、账号级请求适配、任务身份解析、原账号轮询和
- * 跨源凭据隔离；测试替换网络传输，不访问真实上游。
+ * 职责：锁定真实模型映射、固定生成/查询路径、双向脚本、同步与异步结果、媒体
+ * 令牌及下载信任边界；测试替换网络传输，不访问真实供应商。
  */
+import {
+  type ApiUpstreamAdapterDraft,
+  createDefaultApiUpstreamOperations,
+} from "@repo/shared/image-backend/api-upstream-adaptation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   fetchMediaUpstream: vi.fn(),
-  fetchPublicMediaUpstream: vi.fn(),
   fetchMediaUpstreamDownloadWithTrustedOrigin: vi.fn(),
 }));
 
 vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
   fetchMediaUpstream: mocks.fetchMediaUpstream,
-  fetchPublicMediaUpstream: mocks.fetchPublicMediaUpstream,
   fetchMediaUpstreamDownloadWithTrustedOrigin:
     mocks.fetchMediaUpstreamDownloadWithTrustedOrigin,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES: 512 * 1024 * 1024,
@@ -27,29 +29,56 @@ import {
 } from "./api-video";
 import type { ApiConfig } from "./types";
 
-const config: ApiConfig = {
-  baseUrl: "https://video.example.com/v1",
-  apiKey: "provider-key",
-  backend: {
-    type: "pool-api",
-    modelMappings: [{ modelId: "seedance2", upstreamModelId: "seedande-2.0" }],
-    requestTransformScript: `request.ratio = request.aspect_ratio;
-delete request.aspect_ratio;
-return request;`,
-  },
-};
+/** 构造一份完整固定版本；单测只覆盖显式修改的操作。 */
+function createAdapter(): ApiUpstreamAdapterDraft {
+  return {
+    baseUrl: "https://video.example.com/v1",
+    useStream: false,
+    modelMappings: [{ modelId: "seedance2", upstreamModelId: "seedance-2.0" }],
+    authentication: { mode: "bearer" },
+    credentialScope: "https://video.example.com|bearer",
+    operations: createDefaultApiUpstreamOperations(),
+  };
+}
+
+/** 将固定版本装入现有媒体运行时配置。 */
+function createConfig(adapter = createAdapter()): ApiConfig {
+  return {
+    baseUrl: adapter.baseUrl,
+    apiKey: "provider-key",
+    model: "seedance2",
+    backend: {
+      type: "pool-api",
+      modelMappings: adapter.modelMappings,
+      apiUpstreamAdapter: adapter,
+    },
+  };
+}
+
 const recoveryContext = { trustedOrigin: "https://video.example.com" };
 
 describe("API video adapter", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("提交真实模型 ID、独立参数和具名输入，并解析持久任务身份", async () => {
+  it("提交映射后的真实模型和独立参数，并只持久化固定查询路径", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.generate"].requestScript = `
+      const body = { ...request.body, ratio: request.body.aspect_ratio };
+      delete body.aspect_ratio;
+      return { body };
+    `;
     mocks.fetchMediaUpstream.mockResolvedValue(
-      Response.json({ object: "video.task", id: "upstream-1" }, { status: 202 })
+      Response.json(
+        {
+          id: "upstream-1",
+          poll_url: "https://attacker.example/jobs/upstream-1",
+        },
+        { status: 202 }
+      )
     );
 
     await expect(
-      submitApiVideoRequest(config, {
+      submitApiVideoRequest(createConfig(adapter), {
         clientRequestId: "local-video-1",
         prompt: "prompt",
         model: "seedance2",
@@ -60,21 +89,24 @@ describe("API video adapter", () => {
         firstFrame: { data: Buffer.from("frame"), type: "image/png" },
       })
     ).resolves.toMatchObject({
+      status: "pending",
       upstreamJobId: "upstream-1",
-      pollUrl: "https://video.example.com/v1/videos/upstream-1",
     });
 
     const request = mocks.fetchMediaUpstream.mock.calls[0];
     expect(request?.[0]).toBe(
       "https://video.example.com/v1/videos/generations"
     );
+    expect(request?.[1]?.headers).toMatchObject({
+      Authorization: "Bearer provider-key",
+    });
     const body = JSON.parse(String(request?.[1]?.body)) as Record<
       string,
       unknown
     >;
     expect(body).toMatchObject({
       client_request_id: "local-video-1",
-      model: "seedande-2.0",
+      model: "seedance-2.0",
       duration: 15,
       ratio: "9:16",
       resolution: "480p",
@@ -86,28 +118,25 @@ describe("API video adapter", () => {
     );
   });
 
-  it("允许脚本重组首尾帧与多张参考图字段", async () => {
+  it("允许请求脚本重组首尾帧与多张参考图但不能复制或丢失媒体", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.generate"].requestScript = `
+      const body = { ...request.body };
+      body.input = {
+        start: body.first_frame,
+        end: body.last_frame,
+        references: body.reference_images,
+      };
+      delete body.first_frame;
+      delete body.last_frame;
+      delete body.reference_images;
+      return { body };
+    `;
     mocks.fetchMediaUpstream.mockResolvedValue(
       Response.json({ id: "upstream-media" }, { status: 202 })
     );
-    const mediaConfig: ApiConfig = {
-      ...config,
-      backend: {
-        ...config.backend,
-        type: "pool-api",
-        requestTransformScript: `request.input = {
-  start: request.first_frame,
-  end: request.last_frame,
-  references: request.reference_images,
-};
-delete request.first_frame;
-delete request.last_frame;
-delete request.reference_images;
-return request;`,
-      },
-    };
 
-    await submitApiVideoRequest(mediaConfig, {
+    await submitApiVideoRequest(createConfig(adapter), {
       clientRequestId: "local-video-media",
       prompt: "prompt",
       model: "seedance2",
@@ -137,18 +166,13 @@ return request;`,
     });
   });
 
-  it("脚本失败时允许切换账号且不发送上游请求", async () => {
-    const invalidConfig: ApiConfig = {
-      ...config,
-      backend: {
-        ...config.backend,
-        type: "pool-api",
-        requestTransformScript: 'throw new Error("invalid mapping");',
-      },
-    };
+  it("请求脚本失败时允许切换账号且不发送供应商请求", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.generate"].requestScript =
+      'throw new Error("hidden prompt");';
 
     await expect(
-      submitApiVideoRequest(invalidConfig, {
+      submitApiVideoRequest(createConfig(adapter), {
         clientRequestId: "local-video-invalid-script",
         prompt: "prompt",
         model: "seedance2",
@@ -158,7 +182,9 @@ return request;`,
         effectiveAudio: false,
       })
     ).resolves.toEqual({
-      error: "API 账号请求处理脚本执行失败",
+      error: expect.stringMatching(
+        /^供应商请求处理失败，请联系管理员（请求标识：apiu_[a-f0-9]{32}）$/
+      ),
       switchable: true,
       upstreamAccepted: false,
       terminal: false,
@@ -167,14 +193,12 @@ return request;`,
     expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 
-  it("409、5xx 或成功响应缺少任务 ID 时标记提交结果不确定", async () => {
+  it("内置协议把网络、409、5xx 和缺少任务 ID 归为提交结果不确定", async () => {
     mocks.fetchMediaUpstream
-      .mockResolvedValueOnce(Response.json({ error: "busy" }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json({ status: "processing" }))
-      .mockResolvedValueOnce(
-        Response.json({ error: "idempotency pending" }, { status: 409 })
-      );
-
+      .mockRejectedValueOnce(new Error("private network detail"))
+      .mockResolvedValueOnce(Response.json({}, { status: 409 }))
+      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ status: "processing" }));
     const params = {
       clientRequestId: "local-video-1",
       prompt: "prompt",
@@ -184,32 +208,26 @@ return request;`,
       resolution: "480p",
       effectiveAudio: false,
     };
-    await expect(submitApiVideoRequest(config, params)).resolves.toMatchObject({
-      submissionUncertain: true,
-      switchable: false,
-    });
-    await expect(submitApiVideoRequest(config, params)).resolves.toMatchObject({
-      submissionUncertain: true,
-      switchable: false,
-    });
-    await expect(submitApiVideoRequest(config, params)).resolves.toMatchObject({
-      submissionUncertain: true,
-      switchable: false,
-    });
+
+    for (let index = 0; index < 4; index += 1) {
+      await expect(
+        submitApiVideoRequest(createConfig(), params)
+      ).resolves.toMatchObject({
+        submissionUncertain: true,
+        switchable: false,
+      });
+    }
   });
 
   it.each([
     401, 403, 429,
   ])("提交返回 %s 时允许切换尚未接受请求的账号", async (status) => {
     mocks.fetchMediaUpstream.mockResolvedValue(
-      Response.json(
-        { error: { message: "Bearer provider-key at private URL" } },
-        { status }
-      )
+      Response.json({ private: "provider-key" }, { status })
     );
 
     await expect(
-      submitApiVideoRequest(config, {
+      submitApiVideoRequest(createConfig(), {
         clientRequestId: "local-video-1",
         prompt: "prompt",
         model: "seedance2",
@@ -227,157 +245,143 @@ return request;`,
     });
   });
 
-  it("提交成功但恢复地址非法时保留原任务待核对", async () => {
+  it("生成响应脚本支持同步视频结果且不会追加一次查询", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.generate"].responseScript = `
+      return {
+        status: "completed",
+        outputs: [{ kind: "video", url: response.body.output }]
+      };
+    `;
     mocks.fetchMediaUpstream.mockResolvedValue(
-      Response.json({ id: "upstream-1", poll_url: "file:///private/status" })
+      Response.json({
+        output: "https://video.example.com/v1/outputs/video.mp4",
+      })
     );
 
     await expect(
-      submitApiVideoRequest(config, {
-        clientRequestId: "local-video-1",
+      submitApiVideoRequest(createConfig(adapter), {
+        clientRequestId: "local-sync",
         prompt: "prompt",
         model: "seedance2",
-        duration: 15,
-        aspectRatio: "9:16",
-        resolution: "480p",
+        duration: 5,
+        aspectRatio: "16:9",
+        resolution: "720p",
         effectiveAudio: false,
       })
-    ).resolves.toEqual({
-      error: "API 视频提交成功但恢复地址无效",
-      switchable: false,
-      upstreamAccepted: true,
-      terminal: false,
-      submissionUncertain: true,
-    });
-  });
-
-  it("网络与上游正文错误不会泄露地址或凭据", async () => {
-    mocks.fetchMediaUpstream
-      .mockRejectedValueOnce(
-        new Error("request https://private.example/?token=provider-key failed")
-      )
-      .mockResolvedValueOnce(
-        Response.json(
-          { message: "Bearer provider-key at https://private.example" },
-          { status: 400 }
-        )
-      );
-    const params = {
-      clientRequestId: "local-video-1",
-      prompt: "prompt",
-      model: "seedance2",
-      duration: 15,
-      aspectRatio: "9:16",
-      resolution: "480p",
-      effectiveAudio: false,
-    };
-
-    await expect(submitApiVideoRequest(config, params)).resolves.toMatchObject({
-      error: "API 视频提交网络错误",
-    });
-    await expect(submitApiVideoRequest(config, params)).resolves.toMatchObject({
-      error: "视频上游返回 HTTP 400",
-    });
-  });
-
-  it("轮询同源状态地址时携带账号密钥，跨源地址不携带", async () => {
-    mocks.fetchMediaUpstream.mockResolvedValueOnce(
-      Response.json({ status: "processing" })
-    );
-    mocks.fetchPublicMediaUpstream.mockResolvedValueOnce(
-      Response.json({
-        status: "completed",
-        video_url: "https://cdn.example.com/video.mp4",
-      })
-    );
-
-    await expect(
-      pollApiVideoRequest(
-        config,
-        "https://video.example.com/v1/videos/job-1",
-        recoveryContext
-      )
-    ).resolves.toEqual({
-      status: "pending",
-      raw: { status: "processing" },
-    });
-    await expect(
-      pollApiVideoRequest(
-        config,
-        "https://status.example.net/jobs/job-1",
-        recoveryContext
-      )
-    ).resolves.toMatchObject({
-      status: "completed",
-      videoUrl: "https://cdn.example.com/video.mp4",
-    });
-    expect(mocks.fetchMediaUpstream.mock.calls[0]?.[1]?.headers).toMatchObject({
-      Authorization: "Bearer provider-key",
-    });
-    expect(
-      mocks.fetchPublicMediaUpstream.mock.calls[0]?.[1]?.headers
-    ).not.toHaveProperty("Authorization");
-  });
-
-  it("解析相对视频地址并把已接受任务的鉴权错误保留为原账号重试", async () => {
-    mocks.fetchMediaUpstream
-      .mockResolvedValueOnce(
-        Response.json({ status: "completed", video_url: "outputs/video.mp4" })
-      )
-      .mockResolvedValueOnce(
-        Response.json({ message: "Bearer provider-key" }, { status: 401 })
-      );
-
-    await expect(
-      pollApiVideoRequest(
-        config,
-        "https://video.example.com/v1/videos/job-1",
-        recoveryContext
-      )
     ).resolves.toMatchObject({
       status: "completed",
       videoUrl: "https://video.example.com/v1/outputs/video.mp4",
     });
-    await expect(
-      pollApiVideoRequest(
-        config,
-        "https://video.example.com/v1/videos/job-1",
-        recoveryContext
-      )
-    ).rejects.toMatchObject({
-      message: "视频上游返回 HTTP 401",
-      retryable: true,
-      statusCode: 401,
-    });
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
   });
 
-  it("账号 Base URL 变更后不向新源授予原任务凭据或私网信任", async () => {
-    mocks.fetchPublicMediaUpstream.mockResolvedValue(
-      Response.json({ status: "processing" })
-    );
-    const movedConfig = {
-      ...config,
-      baseUrl: "http://10.0.0.8/v1",
-      apiKey: "new-provider-key",
+  it.each([
+    { retryable: false, switchable: false, terminal: true },
+    { retryable: true, switchable: true, terminal: false },
+  ])(
+    "生成响应脚本仅按 retryable=$retryable 决定是否允许重投",
+    async ({ retryable, switchable, terminal }) => {
+      const adapter = createAdapter();
+      adapter.operations["videos.generate"].responseScript = `
+        return {
+          status: "failed",
+          error: { category: "rate_limit", code: "video_rate_limited" },
+          retryable: ${String(retryable)}
+        };
+      `;
+      mocks.fetchMediaUpstream.mockResolvedValue(
+        Response.json({ status: "rejected" }, { status: 429 })
+      );
+
+      await expect(
+        submitApiVideoRequest(createConfig(adapter), {
+          clientRequestId: "local-scripted-failure",
+          prompt: "prompt",
+          model: "seedance2",
+          duration: 5,
+          aspectRatio: "16:9",
+          resolution: "720p",
+          effectiveAudio: false,
+        })
+      ).resolves.toMatchObject({
+        error: "视频上游拒绝了生成请求",
+        switchable,
+        upstreamAccepted: false,
+        terminal,
+        submissionUncertain: false,
+      });
+    }
+  );
+
+  it("查询只使用固定路径和任务 ID，并由响应脚本采用五秒默认轮询", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.query"] = {
+      path: "/vendor/tasks/{task_id}",
+      requestScript: 'return { query: { detail: "full" } };',
+      responseScript: `
+        return response.body.done
+          ? {
+              status: "completed",
+              outputs: [{ kind: "video", url: response.body.output }]
+            }
+          : { status: "processing" };
+      `,
     };
+    mocks.fetchMediaUpstream
+      .mockResolvedValueOnce(Response.json({ done: false }))
+      .mockResolvedValueOnce(
+        Response.json({ done: true, output: "https://cdn.example/video.mp4" })
+      );
 
     await expect(
-      pollApiVideoRequest(
-        movedConfig,
-        "http://10.0.0.8/v1/videos/job-1",
-        recoveryContext
-      )
-    ).resolves.toMatchObject({ status: "pending" });
-    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
-    expect(mocks.fetchPublicMediaUpstream).toHaveBeenCalledWith(
-      "http://10.0.0.8/v1/videos/job-1",
-      expect.objectContaining({
-        headers: { Accept: "application/json" },
-      })
+      pollApiVideoRequest(createConfig(adapter), "job/id 1", recoveryContext)
+    ).resolves.toMatchObject({
+      status: "pending",
+      pollAfterSeconds: 5,
+    });
+    await expect(
+      pollApiVideoRequest(createConfig(adapter), "job/id 1", recoveryContext)
+    ).resolves.toMatchObject({
+      status: "completed",
+      videoUrl: "https://cdn.example/video.mp4",
+    });
+    expect(mocks.fetchMediaUpstream.mock.calls[0]?.[0]).toBe(
+      "https://video.example.com/v1/vendor/tasks/job%2Fid%201?detail=full"
     );
   });
 
-  it("下载视频时使用统一限流下载器", async () => {
+  it("查询响应脚本失败发生在外呼后并计入连续适配失败", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.query"].responseScript =
+      'throw new Error("hidden provider body");';
+    mocks.fetchMediaUpstream.mockResolvedValue(Response.json({ secret: true }));
+
+    await expect(
+      pollApiVideoRequest(createConfig(adapter), "job-1", recoveryContext)
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(
+        /^供应商请求处理失败，请联系管理员（请求标识：apiu_[a-f0-9]{32}）$/
+      ),
+      retryable: true,
+      countsTowardAdapterFailure: true,
+    });
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("固定版本 origin 与任务可信源不一致时不会外呼", async () => {
+    await expect(
+      pollApiVideoRequest(createConfig(), "job-1", {
+        trustedOrigin: "http://10.0.0.8",
+      })
+    ).rejects.toMatchObject({
+      message: "供应商请求处理失败，请联系管理员",
+      countsTowardAdapterFailure: true,
+    });
+    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
+  });
+
+  it("下载视频时使用提交时可信源和统一字节上限", async () => {
     mocks.fetchMediaUpstreamDownloadWithTrustedOrigin.mockResolvedValue(
       new Response(Buffer.from("video"), { status: 200 })
     );

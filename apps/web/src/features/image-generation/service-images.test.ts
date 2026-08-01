@@ -3,6 +3,8 @@
  *
  * 使用方：Vitest；仅覆盖保留的图片运行时，不访问数据库或真实上游。
  */
+
+import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApiConfig } from "./types";
 
@@ -27,16 +29,35 @@ function prepareTestEnvironment() {
 }
 
 /** 构造启用模型映射和隔离请求脚本的 API 池账号。 */
-function createPoolApiConfig(requestTransformScript: string): ApiConfig {
-  return {
+function createPoolApiConfig(requestScriptBody: string): ApiConfig {
+  const operations = createDefaultApiUpstreamOperations();
+  const wrappedScript = requestScriptBody.trim()
+    ? `
+function transformSampleRequest(request) {
+${requestScriptBody}
+}
+return { body: transformSampleRequest(request.body) };
+`
+    : "";
+  operations["images.generate"].requestScript = wrappedScript;
+  operations["images.edit"].requestScript = wrappedScript;
+  const adapter = {
     baseUrl: "https://api.example.test/v1",
+    useStream: false,
+    modelMappings: [
+      { modelId: "gpt-image-2", upstreamModelId: "vendor-image-id" },
+    ],
+    authentication: { mode: "bearer" as const },
+    credentialScope: "https://api.example.test|bearer",
+    operations,
+  };
+  return {
+    baseUrl: adapter.baseUrl,
     apiKey: "test-key",
     backend: {
       type: "pool-api",
-      modelMappings: [
-        { modelId: "gpt-image-2", upstreamModelId: "vendor-image-id" },
-      ],
-      requestTransformScript,
+      modelMappings: adapter.modelMappings,
+      apiUpstreamAdapter: adapter,
     },
   };
 }
@@ -189,8 +210,143 @@ return request;
       { prompt: "make an icon", model: "gpt-image-2" }
     );
 
-    expect(result.error).toBe("API 账号请求处理脚本执行失败");
+    expect(result.error).toMatch(
+      /^供应商请求处理失败，请联系管理员（请求标识：apiu_[a-f0-9]{32}）$/
+    );
     expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
+  });
+
+  it("生成脚本返回任务 ID 后只按固定查询路径轮询原任务", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.operations["images.generate"].responseScript = `
+      return {
+        status: "processing",
+        taskId: response.body.vendor_task,
+        pollAfterSeconds: 1
+      };
+    `;
+    adapter.operations["images.generate.query"] = {
+      path: "/vendor/images/{task_id}",
+      requestScript: 'return { query: { detail: "full" } };',
+      responseScript: `
+        return {
+          status: "completed",
+          outputs: [{ kind: "image", base64: response.body.image }]
+        };
+      `,
+    };
+    const imageBase64 = Buffer.from("async-image").toString("base64");
+    mocks.fetchMediaUpstream
+      .mockResolvedValueOnce(
+        Response.json({
+          vendor_task: "task/1",
+          poll_url: "https://attacker.example/status/task-1",
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ image: imageBase64 }));
+
+    const result = await generateImage(config, {
+      prompt: "make an icon",
+      model: "gpt-image-2",
+    });
+
+    expect(result.imageBase64).toBe(imageBase64);
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(2);
+    expect(mocks.fetchMediaUpstream.mock.calls[1]?.[0]).toBe(
+      "https://api.example.test/v1/vendor/images/task%2F1?detail=full"
+    );
+  });
+
+  it("图片生成接受异步任务但查询路径未配置时立即失败关闭", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.operations["images.generate"].responseScript = `
+      return {
+        status: "processing",
+        taskId: response.body.vendor_task
+      };
+    `;
+    mocks.fetchMediaUpstream.mockResolvedValueOnce(
+      Response.json({ vendor_task: "task-1" })
+    );
+
+    const result = await generateImage(config, {
+      prompt: "make an icon",
+      model: "gpt-image-2",
+    });
+
+    expect(result).toMatchObject({
+      error: "供应商请求处理失败，请联系管理员",
+      backendSwitchAllowed: false,
+    });
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { retryable: false, backendSwitchAllowed: false },
+    { retryable: true, backendSwitchAllowed: true },
+  ])(
+    "仅在响应脚本显式设置 retryable=$retryable 时允许切换账号",
+    async ({ retryable, backendSwitchAllowed }) => {
+      prepareTestEnvironment();
+      const { generateImage } = await import("./service");
+      const config = createPoolApiConfig("");
+      const adapter = config.backend?.apiUpstreamAdapter;
+      if (!adapter) throw new Error("missing adapter");
+      adapter.operations["images.generate"].responseScript = `
+        return {
+          status: "failed",
+          error: { category: "upstream", code: "image_submit_failed" },
+          retryable: ${String(retryable)}
+        };
+      `;
+      mocks.fetchMediaUpstream.mockResolvedValueOnce(
+        Response.json({ status: "failed" })
+      );
+
+      const result = await generateImage(config, {
+        prompt: "make an icon",
+        model: "gpt-image-2",
+      });
+
+      expect(result).toMatchObject({
+        error: "供应商图片任务失败，请联系管理员",
+        backendSwitchAllowed,
+      });
+      expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("响应脚本把图片 data URL 规范为现有管线使用的纯 Base64", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.operations["images.generate"].responseScript = `
+      return {
+        status: "completed",
+        outputs: [{ kind: "image", base64: response.body.image_data }]
+      };
+    `;
+    const imageBase64 = Buffer.from("data-url-image").toString("base64");
+    mocks.fetchMediaUpstream.mockResolvedValueOnce(
+      Response.json({ image_data: `data:image/png;base64,${imageBase64}` })
+    );
+
+    const result = await generateImage(config, {
+      prompt: "make an icon",
+      model: "gpt-image-2",
+    });
+
+    expect(result.imageBase64).toBe(imageBase64);
   });
 
   it("通过 multipart Images API 发送输入图、蒙版和安全引用标签", async () => {
@@ -441,7 +597,9 @@ return request;
       ],
     });
 
-    expect(result.error).toContain("API 账号请求处理脚本返回了非法");
+    expect(result.error).toMatch(
+      /^供应商请求处理失败，请联系管理员（请求标识：apiu_[a-f0-9]{32}）$/
+    );
     expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 });
