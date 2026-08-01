@@ -1,3 +1,5 @@
+<!-- 本文件索引 FluxMedia 后续开发必须复用的持久事实，并链接到详细设计文档。 -->
+
 # FluxMedia 持久事实索引
 
 本文件只记录后续开发必须复用的现行不变量，详细设计放在对应文档或计划中。
@@ -31,8 +33,9 @@
 - 管理员可通过 `pool.resetMemberStatus` 手动清除成员的健康降级、错误 EWMA、失败连击、
   冷却和最近错误；重置不得伪造凭据有效、修改启用开关、累计指标或运行中租约。
 
-详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md) 与
-[api-account-upstream-adaptation.md](memory/api-account-upstream-adaptation.md)。
+详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)、
+[api-account-upstream-adaptation.md](memory/api-account-upstream-adaptation.md) 与
+[api-upstream-adapter-admin.md](api-upstream-adapter-admin.md)。
 
 ## 统一接口层
 

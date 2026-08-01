@@ -1,4 +1,0 @@
-interface:
-  display_name: "编写上游请求脚本"
-  short_description: "根据上游参数语义生成并校验安全的 JavaScript 请求处理脚本"
-  default_prompt: "使用 $write-api-request-transform 根据我提供的上游参数含义生成并验证请求处理脚本。"
