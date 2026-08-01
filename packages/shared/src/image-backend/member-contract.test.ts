@@ -50,7 +50,56 @@ describe("backend member contract", () => {
       },
     });
     expect(parsed.type).toBe("api");
-    if (parsed.type === "api") expect(parsed.config.useStream).toBe(false);
+    if (parsed.type === "api") {
+      expect(parsed.config.useStream).toBe(false);
+      expect(parsed.config.authentication).toEqual({ mode: "bearer" });
+      expect(parsed.config.operations["videos.query"].path).toBe("");
+    }
+  });
+
+  it("接受六操作适配配置和乐观并发版本", () => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "api",
+        config: {
+          baseUrl: "https://images.example.com/v1",
+          modelMappings: [],
+          requestTransformScript: "",
+          authentication: { mode: "custom_header", headerName: "X-Api-Key" },
+          credentialScope: "https://images.example.com|x-api-key",
+          expectedCurrentVersionId: "version-7",
+          operations: {
+            "images.generate": {
+              path: "",
+              requestScript: "return {};",
+              responseScript: "",
+            },
+            "images.generate.query": {
+              path: "/images/{task_id}",
+              requestScript: "",
+              responseScript: "",
+            },
+            "images.edit": { path: "", requestScript: "", responseScript: "" },
+            "images.edit.query": {
+              path: "",
+              requestScript: "",
+              responseScript: "",
+            },
+            "videos.generate": {
+              path: "",
+              requestScript: "",
+              responseScript: "",
+            },
+            "videos.query": {
+              path: "",
+              requestScript: "",
+              responseScript: "",
+            },
+          },
+        },
+      }).success
+    ).toBe(true);
   });
 
   it("只允许为账号已支持的平台模型配置上游模型 ID", () => {

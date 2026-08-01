@@ -11,6 +11,9 @@ import { normalizeVideoModelId } from "../video-generation/contracts";
 import {
   apiModelMappingsSchema,
   apiRequestTransformScriptSchema,
+  apiUpstreamAuthenticationSchema,
+  apiUpstreamOperationsSchema,
+  createDefaultApiUpstreamOperations,
 } from "./api-upstream-adaptation";
 import {
   isLegacyVideoModelId,
@@ -44,6 +47,21 @@ export const apiBackendMemberConfigSchema = z
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
     modelMappings: apiModelMappingsSchema,
+    authentication: apiUpstreamAuthenticationSchema.default({
+      mode: "bearer",
+    }),
+    credentialScope: z.string().trim().min(1).max(512).optional(),
+    operations: apiUpstreamOperationsSchema.default(() =>
+      createDefaultApiUpstreamOperations()
+    ),
+    expectedCurrentVersionId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(128)
+      .nullable()
+      .optional(),
+    // 临时兼容字段：U3 负责迁移，U5/U6 完成切换后删除。
     requestTransformScript: apiRequestTransformScriptSchema,
   })
   .strict();

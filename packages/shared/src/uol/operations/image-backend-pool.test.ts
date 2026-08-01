@@ -15,9 +15,11 @@ import { getOperation } from "../registry";
 import {
   deleteMember,
   getAdminPool,
+  getApiUpstreamRuntimeDiagnostics,
   resetMemberStatus,
   saveGroup,
   saveMember,
+  testApiUpstreamAdapter,
 } from "./image-backend-pool";
 import "./external-api";
 import "./image-generation";
@@ -215,6 +217,47 @@ describe("image backend pool pricing operations", () => {
     expect(resetMemberStatus.readOnly).toBe(false);
     expect(resetMemberStatus.destructive).toBe(false);
     expect(resetMemberStatus.idempotency).toEqual({ kind: "natural" });
+  });
+
+  it("API 适配脚本测试与运行诊断是仅限人工的进程内 UOL operation", () => {
+    expect(
+      testApiUpstreamAdapter.input.safeParse({
+        operation: "videos.generate",
+        stage: "request",
+        script: "return {};",
+        sample: { model: "seedance2" },
+      }).success
+    ).toBe(true);
+    expect(testApiUpstreamAdapter.readOnly).toBe(true);
+    expect(testApiUpstreamAdapter.idempotency).toEqual({ kind: "natural" });
+    expect(testApiUpstreamAdapter.sideEffects).toEqual(["queue"]);
+    expect(testApiUpstreamAdapter.agentExposure).toBe("human-only");
+    expect(testApiUpstreamAdapter.processLocalState).toBe(true);
+
+    expect(getApiUpstreamRuntimeDiagnostics.input.safeParse({}).success).toBe(
+      true
+    );
+    expect(getApiUpstreamRuntimeDiagnostics.readOnly).toBe(true);
+    expect(getApiUpstreamRuntimeDiagnostics.idempotency).toEqual({
+      kind: "natural",
+    });
+    expect(getApiUpstreamRuntimeDiagnostics.sideEffects).toEqual([]);
+    expect(getApiUpstreamRuntimeDiagnostics.agentExposure).toBe("human-only");
+    expect(getApiUpstreamRuntimeDiagnostics.processLocalState).toBe(true);
+    expect(
+      getApiUpstreamRuntimeDiagnostics.output.safeParse({
+        lifecycle: "ready",
+        workerCount: 1,
+        liveWorkerCount: 1,
+        requestQueueLength: 0,
+        responseQueueLength: 0,
+        responsePermitsInUse: 0,
+        responsePermitCapacity: 16,
+        saturationCount: 0,
+        replacementCount: 0,
+        script: "must-not-be-exposed",
+      }).success
+    ).toBe(false);
   });
 
   it("Adobe direct 管理快照保留余额、刷新错误和运行错误", () => {

@@ -53,6 +53,7 @@
     "./image-generation/model-contract": "./src/image-generation/model-contract.ts",
     "./video-generation": "./src/video-generation/index.ts",
     "./image-backend/api-upstream-adaptation": "./src/image-backend/api-upstream-adaptation.ts",
+    "./image-backend/api-upstream-script-contract": "./src/image-backend/api-upstream-script-contract.ts",
     "./image-backend/group-image-pricing": "./src/image-backend/group-image-pricing.ts",
     "./image-backend/group-contract": "./src/image-backend/group-contract.ts",
     "./image-backend/member-contract": "./src/image-backend/member-contract.ts",

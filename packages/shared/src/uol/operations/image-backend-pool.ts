@@ -9,7 +9,13 @@ import { z } from "zod";
 import {
   apiModelMappingsSchema,
   apiRequestTransformScriptSchema,
+  apiUpstreamAuthenticationSchema,
+  apiUpstreamOperationsSchema,
 } from "../../image-backend/api-upstream-adaptation";
+import {
+  apiUpstreamAdapterOperationIdSchema,
+  apiUpstreamJsonValueSchema,
+} from "../../image-backend/api-upstream-script-contract";
 import {
   backendGroupInputSchema,
   backendGroupOptionSchema,
@@ -33,6 +39,18 @@ const redactedApiConfigSchema = z
     useStream: z.boolean(),
     modelMappings: apiModelMappingsSchema,
     requestTransformScript: apiRequestTransformScriptSchema,
+    authentication: apiUpstreamAuthenticationSchema.optional(),
+    credentialScope: z.string().optional(),
+    operations: apiUpstreamOperationsSchema.optional(),
+    currentAdapterVersion: z
+      .object({
+        id: z.string(),
+        revision: z.number().int().positive(),
+        createdAt: z.string(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -187,7 +205,19 @@ export const saveMember = defineOperation({
   description:
     "按互斥成员类型保存公共调度字段、模型配置目录中的显式能力和类型专属配置。",
   input: backendMemberInputSchema,
-  output: z.object({ id: z.string() }).strict(),
+  output: z
+    .object({
+      id: z.string(),
+      adapterVersion: z
+        .object({
+          id: z.string(),
+          revision: z.number().int().positive(),
+        })
+        .strict()
+        .nullable()
+        .optional(),
+    })
+    .strict(),
   access: poolWriteAccess,
   readOnly: false,
   destructive: false,
@@ -195,6 +225,75 @@ export const saveMember = defineOperation({
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.saveMember");
+  },
+});
+
+/** 使用生产 Worker 和校验器进行无网络 API 上游脚本测试。 */
+export const testApiUpstreamAdapter = defineOperation({
+  name: "pool.testApiUpstreamAdapter",
+  domain: "image-backend-pool",
+  title: "测试 API 上游适配脚本",
+  description: "使用脱敏样例验证请求或响应脚本，不读取密钥且不访问上游。",
+  input: z
+    .object({
+      operation: apiUpstreamAdapterOperationIdSchema,
+      stage: z.enum(["request", "response"]),
+      script: z.string().max(32_768),
+      sample: apiUpstreamJsonValueSchema,
+    })
+    .strict(),
+  output: z
+    .object({
+      preview: apiUpstreamJsonValueSchema,
+    })
+    .strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["queue"],
+  processLocalState: true,
+  execute: async () => {
+    throw new Error("Not yet wired: pool.testApiUpstreamAdapter");
+  },
+});
+
+/** 读取当前 Web 进程的脱敏 Worker Pool 运行诊断。 */
+export const getApiUpstreamRuntimeDiagnostics = defineOperation({
+  name: "pool.getApiUpstreamRuntimeDiagnostics",
+  domain: "image-backend-pool",
+  title: "获取 API 上游脚本运行诊断",
+  description: "读取当前进程的 Worker、队列和响应许可快照，不返回配置正文。",
+  input: z.object({}).strict(),
+  output: z
+    .object({
+      lifecycle: z.enum([
+        "starting",
+        "ready",
+        "unavailable",
+        "draining",
+        "closed",
+      ]),
+      workerCount: z.number().int().nonnegative(),
+      liveWorkerCount: z.number().int().nonnegative(),
+      requestQueueLength: z.number().int().nonnegative(),
+      responseQueueLength: z.number().int().nonnegative(),
+      responsePermitsInUse: z.number().int().nonnegative(),
+      responsePermitCapacity: z.number().int().nonnegative(),
+      saturationCount: z.number().int().nonnegative(),
+      replacementCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  processLocalState: true,
+  execute: async () => {
+    throw new Error("Not yet wired: pool.getApiUpstreamRuntimeDiagnostics");
   },
 });
 

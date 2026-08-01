@@ -6,10 +6,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  API_UPSTREAM_AUTH_MODES,
   apiModelMappingsSchema,
   apiRequestTransformScriptSchema,
+  apiUpstreamAdapterDraftSchema,
+  apiUpstreamAuthenticationSchema,
   MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS,
   resolveApiUpstreamModelId,
+  resolveApiUpstreamOperationPath,
 } from "./api-upstream-adaptation";
 
 describe("API upstream adaptation contract", () => {
@@ -52,5 +56,106 @@ describe("API upstream adaptation contract", () => {
         "x".repeat(MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS + 1)
       ).success
     ).toBe(false);
+  });
+
+  it("仅接受四种系统认证模式并校验自定义认证 Header", () => {
+    expect(API_UPSTREAM_AUTH_MODES).toEqual([
+      "bearer",
+      "raw_authorization",
+      "custom_header",
+      "none",
+    ]);
+    expect(
+      apiUpstreamAuthenticationSchema.safeParse({ mode: "bearer" }).success
+    ).toBe(true);
+    expect(
+      apiUpstreamAuthenticationSchema.safeParse({
+        mode: "custom_header",
+        headerName: "X-Api-Key",
+      }).success
+    ).toBe(true);
+    expect(
+      apiUpstreamAuthenticationSchema.safeParse({
+        mode: "custom_header",
+        headerName: "Host",
+      }).success
+    ).toBe(false);
+    expect(
+      apiUpstreamAuthenticationSchema.safeParse({ mode: "basic" }).success
+    ).toBe(false);
+  });
+
+  it("解析内置路径并保留图片查询未配置语义", () => {
+    expect(resolveApiUpstreamOperationPath("images.generate", "")).toBe(
+      "/images/generations"
+    );
+    expect(resolveApiUpstreamOperationPath("images.edit", "")).toBe(
+      "/images/edits"
+    );
+    expect(resolveApiUpstreamOperationPath("videos.generate", "")).toBe(
+      "/videos/generations"
+    );
+    expect(resolveApiUpstreamOperationPath("videos.query", "")).toBe(
+      "/videos/{task_id}"
+    );
+    expect(
+      resolveApiUpstreamOperationPath("images.generate.query", "")
+    ).toBeNull();
+    expect(resolveApiUpstreamOperationPath("images.edit.query", "")).toBeNull();
+  });
+
+  it("查询路径必须包含 task_id 且所有路径不能逃逸 baseUrl", () => {
+    const valid = {
+      baseUrl: "http://api.internal:8080/v1",
+      useStream: false,
+      modelMappings: [],
+      authentication: { mode: "none" },
+      credentialScope: "http://api.internal:8080|none",
+      operations: {
+        "images.generate": {
+          path: "/custom/images",
+          requestScript: "",
+          responseScript: "",
+        },
+        "images.generate.query": {
+          path: "/custom/images/{task_id}",
+          requestScript: "",
+          responseScript: "",
+        },
+        "images.edit": { path: "", requestScript: "", responseScript: "" },
+        "images.edit.query": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "videos.generate": { path: "", requestScript: "", responseScript: "" },
+        "videos.query": { path: "", requestScript: "", responseScript: "" },
+      },
+    };
+    expect(apiUpstreamAdapterDraftSchema.safeParse(valid).success).toBe(true);
+    expect(
+      apiUpstreamAdapterDraftSchema.safeParse({
+        ...valid,
+        operations: {
+          ...valid.operations,
+          "images.generate.query": {
+            path: "/custom/images/status",
+            requestScript: "",
+            responseScript: "",
+          },
+        },
+      }).success
+    ).toBe(false);
+    for (const path of [
+      "https://evil.example/tasks/{task_id}",
+      "//evil.example/tasks/{task_id}",
+      "/../tasks/{task_id}",
+      "/%2e%2e/tasks/{task_id}",
+      "\\\\evil.example\\tasks\\{task_id}",
+    ]) {
+      expect(() =>
+        resolveApiUpstreamOperationPath("videos.query", path)
+      ).toThrow();
+    }
   });
 });
