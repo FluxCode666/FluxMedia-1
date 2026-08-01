@@ -116,6 +116,14 @@ BEGIN
       OR config.base_url ~ '[[:space:]]'
       OR json_typeof(config.model_mappings) <> 'array'
       OR char_length(config.request_transform_script) > 32768
+      OR (
+        btrim(config.request_transform_script) <> ''
+        AND char_length(
+          'const legacyBody = ((request) => {' || E'\n' ||
+          config.request_transform_script || E'\n})(request.body);\n' ||
+          'return { body: legacyBody };'
+        ) > 32768
+      )
       OR CASE
         WHEN json_typeof(config.model_mappings) <> 'array' THEN false
         ELSE EXISTS (
@@ -209,8 +217,8 @@ BEGIN
       CASE
         WHEN btrim(request_transform_script) = '' THEN ''
         ELSE
-          'const legacyBody = (() => {' || E'\n' ||
-          request_transform_script || E'\n})();\n' ||
+          'const legacyBody = ((request) => {' || E'\n' ||
+          request_transform_script || E'\n})(request.body);\n' ||
           'return { body: legacyBody };'
       END AS wrapped_request_script
     FROM legacy_config

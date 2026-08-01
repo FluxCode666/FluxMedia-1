@@ -29,36 +29,75 @@ const ownerTokenSchema = z.string().trim().min(1).max(512);
 
 const strategyRowSchema = z.object({ value: z.unknown() });
 
-const lockedMemberRowSchema = z.object({
-  id: identifierSchema,
-  type: z.enum(["api", "adobe"]),
-  name: z.string().min(1).max(120),
-  supported_model_ids: z.array(z.string().trim().min(1)).min(1),
-  content_safety_enabled: z.boolean(),
-  is_enabled: z.boolean(),
-  priority: z.coerce.number().int().min(0),
-  concurrency: z.coerce.number().int().positive(),
-  lease_acquired_count: z.coerce.number().int().min(0),
-  status: z.string().min(1).max(80),
-  health_status: z.enum(["healthy", "degraded", "unhealthy"]),
-  last_acquired_at: z.coerce.date().nullable(),
-  last_used_at: z.coerce.date().nullable(),
-  cooldown_until: z.coerce.date().nullable(),
-});
+const lockedMemberRowSchema = z
+  .object({
+    id: identifierSchema,
+    type: z.enum(["api", "adobe"]),
+    name: z.string().min(1).max(120),
+    supported_model_ids: z.array(z.string().trim().min(1)).min(1),
+    content_safety_enabled: z.boolean(),
+    is_enabled: z.boolean(),
+    priority: z.coerce.number().int().min(0),
+    concurrency: z.coerce.number().int().positive(),
+    lease_acquired_count: z.coerce.number().int().min(0),
+    status: z.string().min(1).max(80),
+    health_status: z.enum(["healthy", "degraded", "unhealthy"]),
+    last_acquired_at: z.coerce.date().nullable(),
+    last_used_at: z.coerce.date().nullable(),
+    cooldown_until: z.coerce.date().nullable(),
+    api_adapter_member_id: identifierSchema.nullable(),
+    api_adapter_version_id: identifierSchema.nullable(),
+  })
+  .superRefine((row, context) => {
+    const hasMember = row.api_adapter_member_id !== null;
+    const hasVersion = row.api_adapter_version_id !== null;
+    if (hasMember !== hasVersion) {
+      context.addIssue({
+        code: "custom",
+        message: "API adapter ownership pair must be complete",
+      });
+    }
+    if (row.type === "api" && !hasMember) {
+      context.addIssue({
+        code: "custom",
+        message: "API member must have a current adapter version",
+      });
+    }
+    if (row.type === "adobe" && hasMember) {
+      context.addIssue({
+        code: "custom",
+        message: "Adobe member must not have an API adapter version",
+      });
+    }
+  });
 
 const activeLeaseCountRowSchema = z.object({
   member_id: identifierSchema,
   inflight_count: z.coerce.number().int().min(0),
 });
 
-const leaseRowSchema = z.object({
-  id: identifierSchema,
-  member_id: identifierSchema,
-  owner_token: ownerTokenSchema,
-  expires_at: z.coerce.date(),
-  created_at: z.coerce.date(),
-  updated_at: z.coerce.date(),
-});
+const leaseRowSchema = z
+  .object({
+    id: identifierSchema,
+    member_id: identifierSchema,
+    owner_token: ownerTokenSchema,
+    api_adapter_member_id: identifierSchema.nullable(),
+    api_adapter_version_id: identifierSchema.nullable(),
+    expires_at: z.coerce.date(),
+    created_at: z.coerce.date(),
+    updated_at: z.coerce.date(),
+  })
+  .superRefine((row, context) => {
+    if (
+      (row.api_adapter_member_id === null) !==
+      (row.api_adapter_version_id === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "API adapter ownership pair must be complete",
+      });
+    }
+  });
 
 const mutationIdRowSchema = z.object({ id: identifierSchema });
 
@@ -98,6 +137,8 @@ const takeoverLeaseInputSchema = z
     memberId: identifierSchema,
     currentOwnerToken: ownerTokenSchema,
     nextOwnerToken: ownerTokenSchema,
+    apiAdapterMemberId: identifierSchema.nullable().optional(),
+    apiAdapterVersionId: identifierSchema.nullable().optional(),
     now: z.date(),
     expiresAt: z.date(),
   })
@@ -109,6 +150,20 @@ const takeoverLeaseInputSchema = z
   .refine((input) => input.expiresAt.getTime() > input.now.getTime(), {
     message: "Lease expiration must be later than takeover time",
     path: ["expiresAt"],
+  })
+  .superRefine((input, context) => {
+    const hasAdapterMember =
+      input.apiAdapterMemberId !== undefined &&
+      input.apiAdapterMemberId !== null;
+    const hasAdapterVersion =
+      input.apiAdapterVersionId !== undefined &&
+      input.apiAdapterVersionId !== null;
+    if (hasAdapterMember !== hasAdapterVersion) {
+      context.addIssue({
+        code: "custom",
+        message: "API adapter ownership pair must be complete",
+      });
+    }
   });
 
 const releaseLeaseInputSchema = z
@@ -141,6 +196,8 @@ export interface BackendMemberLease {
   id: string;
   memberId: string;
   ownerToken: string;
+  apiAdapterMemberId: string | null;
+  apiAdapterVersionId: string | null;
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -227,6 +284,8 @@ function parseLeaseRow(value: unknown): BackendMemberLease {
     id: row.id,
     memberId: row.member_id,
     ownerToken: row.owner_token,
+    apiAdapterMemberId: row.api_adapter_member_id,
+    apiAdapterVersionId: row.api_adapter_version_id,
     expiresAt: row.expires_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -300,10 +359,14 @@ export function createPostgresBackendPoolRepository(
                   m.health_status,
                   m.last_acquired_at,
                   m.last_used_at,
-                  m.cooldown_until
+                  m.cooldown_until,
+                  api_config.member_id as api_adapter_member_id,
+                  api_config.current_adapter_version_id as api_adapter_version_id
                 from image_backend_member as m
                 inner join image_backend_member_group as membership
                   on membership.member_id = m.id
+                left join image_backend_member_api_config as api_config
+                  on api_config.member_id = m.id
                 where membership.group_id = ${input.groupId}
                   and m.is_enabled = true
                   and (m.cooldown_until is null or m.cooldown_until <= ${input.now})
@@ -396,12 +459,20 @@ export function createPostgresBackendPoolRepository(
             eligibleCandidateCount: lockedRows.length,
           };
         }
+        const selectedRow = lockedRows.find((row) => row.id === selected.id);
+        if (!selectedRow) {
+          throw new Error(
+            "selected backend member disappeared before lease insert"
+          );
+        }
 
         const leaseResult = await transaction.execute(sql`
           insert into image_backend_member_lease (
             id,
             member_id,
             owner_token,
+            api_adapter_member_id,
+            api_adapter_version_id,
             expires_at,
             created_at,
             updated_at
@@ -409,11 +480,15 @@ export function createPostgresBackendPoolRepository(
             ${input.leaseId},
             ${selected.id},
             ${input.ownerToken},
+            ${selectedRow.api_adapter_member_id},
+            ${selectedRow.api_adapter_version_id},
             ${input.expiresAt},
             ${input.now},
             ${input.now}
           )
-          returning id, member_id, owner_token, expires_at, created_at, updated_at
+          returning id, member_id, owner_token,
+            api_adapter_member_id, api_adapter_version_id,
+            expires_at, created_at, updated_at
         `);
         const leaseRawRow = extractExecuteRows(leaseResult)[0];
         if (!leaseRawRow) {
@@ -458,7 +533,9 @@ export function createPostgresBackendPoolRepository(
           where id = ${input.leaseId}
             and owner_token = ${input.ownerToken}
             and expires_at > ${input.now}
-          returning id, member_id, owner_token, expires_at, created_at, updated_at
+          returning id, member_id, owner_token,
+            api_adapter_member_id, api_adapter_version_id,
+            expires_at, created_at, updated_at
         `);
         const row = extractExecuteRows(result)[0];
         return row ? parseLeaseRow(row) : null;
@@ -504,12 +581,16 @@ export function createPostgresBackendPoolRepository(
               and member_id = ${input.memberId}
               and owner_token = ${input.currentOwnerToken}
               and exists (select 1 from eligible)
-            returning id, member_id, owner_token, expires_at, created_at, updated_at
+            returning id, member_id, owner_token,
+              api_adapter_member_id, api_adapter_version_id,
+              expires_at, created_at, updated_at
           ), recreated as (
             insert into image_backend_member_lease (
               id,
               member_id,
               owner_token,
+              api_adapter_member_id,
+              api_adapter_version_id,
               expires_at,
               created_at,
               updated_at
@@ -518,6 +599,8 @@ export function createPostgresBackendPoolRepository(
               ${input.leaseId},
               ${input.memberId},
               ${input.nextOwnerToken},
+              ${input.apiAdapterMemberId ?? null},
+              ${input.apiAdapterVersionId ?? null},
               ${input.expiresAt},
               ${input.now},
               ${input.now}
@@ -525,7 +608,9 @@ export function createPostgresBackendPoolRepository(
               and not exists (select 1 from current_lease)
               and not exists (select 1 from recovered)
             on conflict do nothing
-            returning id, member_id, owner_token, expires_at, created_at, updated_at
+            returning id, member_id, owner_token,
+              api_adapter_member_id, api_adapter_version_id,
+              expires_at, created_at, updated_at
           )
           select * from recovered
           union all

@@ -816,6 +816,14 @@ function executeMigratedRequestTransform(
   return JSON.parse(JSON.stringify(transformed)) as unknown;
 }
 
+/** 执行 0077 包装后的请求信封脚本，保持 0075 旧 Body 验证语义不变。 */
+function executeMigratedRequestEnvelopeTransform(
+  script: string,
+  body: Record<string, unknown>
+): unknown {
+  return executeMigratedRequestTransform(script, { query: {}, body });
+}
+
 /** 创建符合资产收编后任务归属规则的 storage-only 输入对象。 */
 function createMigratedVideoInputAsset(input: {
   userId: string;
@@ -3696,7 +3704,7 @@ describe("0077 API 上游适配不可变版本迁移", () => {
         responseScript: "",
       });
       expect(
-        executeMigratedRequestTransform(migratedGenerateScript, {
+        executeMigratedRequestEnvelopeTransform(migratedGenerateScript, {
           model: "seedance2",
           prompt: "test",
         })
@@ -3844,6 +3852,57 @@ describe("0077 API 上游适配不可变版本迁移", () => {
           apiUpstreamAdapterVersionsMigrationPath,
         ])
       ).rejects.toThrow(/nonterminal API video task/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_api_config",
+          "base_url"
+        )
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(
+          client,
+          schemaName,
+          "image_backend_member_api_adapter_version"
+        )
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("旧脚本包装后超过新上限时阻断并回滚迁移", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0077ApiAdapterVersionSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type) values ('api-a', 'api');
+        insert into image_backend_member_api_config (
+          member_id,
+          base_url,
+          request_transform_script
+        ) values (
+          'api-a',
+          'https://api.example.test/v1',
+          repeat('x', 32700)
+        );
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [
+          apiUpstreamAdapterVersionsMigrationPath,
+        ])
+      ).rejects.toThrow(/invalid API adapter config/u);
       await client.query(
         `set search_path to ${quoteSchemaName(schemaName)}, public`
       );

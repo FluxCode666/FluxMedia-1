@@ -42,7 +42,13 @@ function createDatabase(rows: unknown[]) {
 
 describe("video recovery repository", () => {
   it("用生产 SQL 即时认领一条完整恢复阶段任务", async () => {
-    const { database, queries } = createDatabase([{ id: "video-1" }]);
+    const { database, queries } = createDatabase([
+      {
+        id: "video-1",
+        api_adapter_member_id: "member-api",
+        api_adapter_version_id: "adapter-version-7",
+      },
+    ]);
     const repository = createPostgresVideoRecoveryRepository(database);
 
     await expect(
@@ -51,7 +57,12 @@ describe("video recovery repository", () => {
         now: NOW,
         claimExpiresAt: new Date(NOW.getTime() + 21 * 60_000),
       })
-    ).resolves.toEqual({ id: "video-1", claimToken: "worker-1" });
+    ).resolves.toEqual({
+      id: "video-1",
+      claimToken: "worker-1",
+      apiAdapterMemberId: "member-api",
+      apiAdapterVersionId: "adapter-version-7",
+    });
 
     const compiled = new PgDialect().sqlToQuery(queries[0] as SQL);
     expect(compiled.sql).toContain("limit 1");
@@ -64,11 +75,32 @@ describe("video recovery repository", () => {
     expect(compiled.sql).toContain("'downloading'");
     expect(compiled.sql).toContain("'refunding'");
     expect(compiled.sql).toContain("state_version = state_version + 1");
+    expect(compiled.sql).toContain("task.api_adapter_member_id");
+    expect(compiled.sql).toContain("task.api_adapter_version_id");
     expect(compiled.sql).toContain("submit_started_at");
     expect(compiled.sql).toContain("when 'refunding' then 0");
     expect(compiled.sql).toContain("when 'downloading' then 1");
     expect(compiled.sql).toContain("when 'polling' then 2");
     expect(compiled.sql).toContain("else 4");
+  });
+
+  it("拒绝数据库返回半空的 API 适配版本归属", async () => {
+    const { database } = createDatabase([
+      {
+        id: "video-invalid",
+        api_adapter_member_id: "member-api",
+        api_adapter_version_id: null,
+      },
+    ]);
+    const repository = createPostgresVideoRecoveryRepository(database);
+
+    await expect(
+      repository.claimNext({
+        claimToken: "worker-1",
+        now: NOW,
+        claimExpiresAt: new Date(NOW.getTime() + 21 * 60_000),
+      })
+    ).rejects.toMatchObject({ name: "ZodError" });
   });
 
   it("没有到期任务时返回 null", async () => {
