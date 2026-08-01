@@ -533,6 +533,13 @@
       "when": 1785412800000,
       "tag": "0075_api_account_upstream_adaptation",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1785499200000,
+      "tag": "0076_video_input_cleanup_reason",
+      "breakpoints": true
     }
   ]
 }

@@ -1544,7 +1544,16 @@ async function assertLegacyVideoContractStartupAllowed(pool) {
   });
 }
 
-/** 证明 0074 已删除旧列，且真实 ID、约束函数和输入归属均完全收敛。 */
+/**
+ * 证明 0074-0076 后真实 ID、输入归属与清理队列 schema 均完全收敛。
+ *
+ * @param {import("pg").Pool} pool 连接目标 PostgreSQL 的连接池。
+ * @returns {Promise<void>} 所有视频请求契约均满足时完成的 Promise。
+ * @throws 必需列、默认值、非空属性、约束定义或存量数据漂移时抛错。
+ * @sideEffect 在只读事务中查询 information_schema、pg_constraint 与业务表。
+ * @boundary 精确校验 reason 的默认值、非空与枚举约束，避免运行时 Drizzle
+ *   schema 再次领先于已部署数据库。
+ */
 async function assertVideoContractPostMigrationState(pool) {
   await inReadOnlyTransaction(pool, async (client) => {
     const schemaResult = await client.query(`
@@ -1557,7 +1566,16 @@ async function assertVideoContractPostMigrationState(pool) {
         count(*) filter (
           where column_name = 'input_manifest'
             and is_nullable = 'YES'
-        )::text as manifest_column_count
+        )::text as manifest_column_count,
+        (
+          select count(*)::text
+          from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'video_input_cleanup'
+            and column_name = 'reason'
+            and is_nullable = 'NO'
+            and column_default = '''orphan''::text'
+        ) as cleanup_reason_column_count
       from information_schema.columns
       where table_schema = 'public'
         and table_name = 'video_generation'
@@ -1571,9 +1589,21 @@ async function assertVideoContractPostMigrationState(pool) {
       schema.manifest_column_count,
       "post-migration video manifest column"
     );
+    const cleanupReasonColumnCount = parseCount(
+      schema.cleanup_reason_column_count,
+      "post-migration video cleanup reason column"
+    );
     printEvidence("video_contract_legacy_column_count", legacyColumnCount);
     printEvidence("video_contract_manifest_column_count", manifestColumnCount);
-    if (legacyColumnCount !== 0 || manifestColumnCount !== 1) {
+    printEvidence(
+      "video_contract_cleanup_reason_column_count",
+      cleanupReasonColumnCount
+    );
+    if (
+      legacyColumnCount !== 0 ||
+      manifestColumnCount !== 1 ||
+      cleanupReasonColumnCount !== 1
+    ) {
       throw new Error("post-migration video request schema invariants failed");
     }
     const result = await client.query(
@@ -1592,6 +1622,11 @@ async function assertVideoContractPostMigrationState(pool) {
                    'image_backend_member_supported_models_check'
                  and pg_get_constraintdef(constraint_record.oid, true) =
                    'CHECK (media_supported_model_ids_are_valid(supported_model_ids))')
+               or (relation.relname = 'video_input_cleanup'
+                 and constraint_record.conname =
+                     'video_input_cleanup_reason_check'
+                 and pg_get_constraintdef(constraint_record.oid, true) =
+                   'CHECK (reason = ANY (ARRAY[''orphan''::text, ''lifecycle_delete''::text]))')
                or (relation.relname = 'video_generation'
                  and (
                    (constraint_record.conname =
@@ -1710,7 +1745,7 @@ async function assertVideoContractPostMigrationState(pool) {
       invalidInputManifestCount
     );
     if (
-      constraintCount !== 3 ||
+      constraintCount !== 4 ||
       functionCount !== 2 ||
       !validatorSemanticsValid ||
       invalidTaskModelCount !== 0 ||

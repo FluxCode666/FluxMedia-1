@@ -8,9 +8,10 @@
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { requireDedicatedTestDatabaseUrl } from "./test-database-url";
@@ -21,6 +22,16 @@ const releaseGatePath = fileURLToPath(
 const databasePackagePath = fileURLToPath(
   new URL("../../database", import.meta.url)
 );
+const videoInputCleanupReasonMigrationStatements = readFileSync(
+  new URL(
+    "../../database/drizzle/0076_video_input_cleanup_reason.sql",
+    import.meta.url
+  ),
+  "utf8"
+)
+  .split("--> statement-breakpoint")
+  .map((statement) => statement.trim())
+  .filter((statement) => statement.length > 0);
 const runPrefix = `release-governance-gate-integration-${randomUUID()}`;
 const relayUserId = `${runPrefix}-relay-user`;
 const overrideUserId = `${runPrefix}-override-user`;
@@ -50,6 +61,7 @@ interface GovernanceSchemaState {
   overrideColumn: boolean;
   userTable: boolean;
   videoContractConstraintCount: string;
+  videoInputCleanupReasonColumn: boolean;
   videoInputManifestColumn: boolean;
   videoLegacyColumnCount: string;
 }
@@ -201,7 +213,7 @@ async function seedBrokenLegacyPollingTask(
 }
 
 /**
- * 要求测试库处于 0056 与 0074 完成后的干净治理状态。
+ * 要求测试库处于 0056 与 0076 完成后的干净治理状态。
  *
  * @param client 连接专用测试数据库的 PostgreSQL 连接池。
  * @returns 数据库满足发布门禁测试前置条件时完成的 Promise。
@@ -239,6 +251,15 @@ async function assertGovernanceMigrationReady(client: Pool): Promise<void> {
           and table_name = 'video_generation'
           and column_name = 'input_manifest'
       ) as "videoInputManifestColumn",
+      exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'video_input_cleanup'
+          and column_name = 'reason'
+          and is_nullable = 'NO'
+          and column_default = '''orphan''::text'
+      ) as "videoInputCleanupReasonColumn",
       (
         select count(*)::text
         from information_schema.columns
@@ -255,7 +276,8 @@ async function assertGovernanceMigrationReady(client: Pool): Promise<void> {
           and conname in (
             'image_backend_member_supported_models_check',
             'video_generation_real_model_check',
-            'video_generation_input_manifest_check'
+            'video_generation_input_manifest_check',
+            'video_input_cleanup_reason_check'
           )
       ) as "videoContractConstraintCount",
       (
@@ -283,12 +305,13 @@ async function assertGovernanceMigrationReady(client: Pool): Promise<void> {
     !state.overrideCheck ||
     !state.globalPolicyRow ||
     !state.videoInputManifestColumn ||
+    !state.videoInputCleanupReasonColumn ||
     state.videoLegacyColumnCount !== "0" ||
-    state.videoContractConstraintCount !== "3" ||
+    state.videoContractConstraintCount !== "4" ||
     state.oldColumnCount !== "0"
   ) {
     throw new Error(
-      "发布门禁测试库未就绪：需要 0056 与 0074 完整迁移且不能残留旧列"
+      "发布门禁测试库未就绪：需要 0056 与 0076 完整迁移且不能残留旧列"
     );
   }
 }
@@ -334,6 +357,23 @@ async function runReleaseGate(
 }
 
 /**
+ * 在当前事务中逐句执行 0076，复现 Drizzle 迁移器的 statement breakpoint 语义。
+ *
+ * @param client 已开启测试事务的 PostgreSQL 专用连接。
+ * @returns 全部 0076 语句执行完成时完成的 Promise。
+ * @throws 任一迁移语句无法应用时抛出 PostgreSQL 错误。
+ * @sideEffect 修改当前事务内的 video_input_cleanup 表结构与存量行。
+ * @boundary 调用方必须控制事务并在测试结束时回滚，避免污染共享测试库。
+ */
+async function applyVideoInputCleanupReasonMigration(
+  client: PoolClient
+): Promise<void> {
+  for (const statement of videoInputCleanupReasonMigrationStatements) {
+    await client.query(statement);
+  }
+}
+
+/**
  * 创建满足外键约束且仅属于本轮测试的用户。
  *
  * @param client 专用测试数据库连接池。
@@ -372,8 +412,8 @@ async function seedUser(
  * @param client 专用测试数据库连接池。
  * @returns 恢复完成后的 Promise。
  * @throws 数据库出现预期列与隐藏列同时存在等无法安全恢复的状态时抛错。
- * @sideEffect 执行受限 DDL，并删除 UUID 前缀限定的测试用户及其级联 API Key。
- * @boundary 仅操作本测试创建的三个旧列名、一个隐藏列名和两个固定用户 ID。
+ * @sideEffect 执行受限 DDL、恢复测试约束，并删除 UUID 前缀限定的测试用户及其级联 API Key。
+ * @boundary 仅操作本测试创建的旧列名、隐藏列名、约束和两个固定用户 ID。
  */
 async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
   const columnResult = await client.query<{
@@ -457,6 +497,14 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
           'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast'
         )
       );
+    alter table video_input_cleanup
+      drop constraint if exists video_input_cleanup_reason_check;
+    alter table video_input_cleanup
+      alter column reason set default 'orphan',
+      alter column reason set not null;
+    alter table video_input_cleanup
+      add constraint video_input_cleanup_reason_check
+      check (reason in ('orphan', 'lifecycle_delete'));
   `);
 }
 
@@ -504,6 +552,92 @@ afterAll(async () => {
 });
 
 describe("release governance gate PostgreSQL integration", () => {
+  it("0076 回填已有清理记录并收紧 reason 契约", async () => {
+    if (!pool) throw new Error("集成测试尚未初始化");
+    const client = await pool.connect();
+    const cleanupId = `${runPrefix}-legacy-cleanup`;
+    try {
+      await client.query("begin");
+      await client.query(`
+        alter table video_input_cleanup
+          drop constraint video_input_cleanup_reason_check;
+        alter table video_input_cleanup
+          drop column reason;
+        insert into video_input_cleanup (
+          id,
+          user_id,
+          video_id,
+          attempt_id,
+          storage_key,
+          storage_bucket
+        ) values (
+          '${cleanupId}',
+          '${runPrefix}-legacy-user',
+          '${runPrefix}-legacy-video',
+          '${runPrefix}-legacy-attempt',
+          '${runPrefix}/legacy-input.png',
+          'video-input'
+        );
+      `);
+
+      await applyVideoInputCleanupReasonMigration(client);
+
+      const rowResult = await client.query<{ reason: string }>(
+        "select reason from video_input_cleanup where id = $1",
+        [cleanupId]
+      );
+      expect(rowResult.rows).toEqual([{ reason: "orphan" }]);
+
+      const contractResult = await client.query<{
+        constraintDefinition: string;
+        defaultValue: string;
+        nullable: string;
+      }>(`
+        select
+          column_default as "defaultValue",
+          is_nullable as nullable,
+          pg_get_constraintdef(constraint_record.oid, true)
+            as "constraintDefinition"
+        from information_schema.columns
+        join pg_constraint as constraint_record
+          on constraint_record.conrelid = 'public.video_input_cleanup'::regclass
+         and constraint_record.conname = 'video_input_cleanup_reason_check'
+        where table_schema = 'public'
+          and table_name = 'video_input_cleanup'
+          and column_name = 'reason'
+      `);
+      expect(contractResult.rows).toEqual([
+        {
+          constraintDefinition:
+            "CHECK (reason = ANY (ARRAY['orphan'::text, 'lifecycle_delete'::text]))",
+          defaultValue: "'orphan'::text",
+          nullable: "NO",
+        },
+      ]);
+
+      await client.query("savepoint invalid_reason");
+      await expect(
+        client.query(
+          "update video_input_cleanup set reason = 'unknown' where id = $1",
+          [cleanupId]
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+      await client.query("rollback to savepoint invalid_reason");
+
+      await client.query("savepoint null_reason");
+      await expect(
+        client.query(
+          "update video_input_cleanup set reason = null where id = $1",
+          [cleanupId]
+        )
+      ).rejects.toMatchObject({ code: "23502" });
+      await client.query("rollback to savepoint null_reason");
+    } finally {
+      await client.query("rollback");
+      client.release();
+    }
+  });
+
   it("旧 schema preflight 接受可稳定折叠的重复视频能力", async () => {
     if (!legacyVideoPool || !legacyVideoDatabaseUrl) {
       throw new Error("旧 schema 门禁测试库尚未初始化");
@@ -770,9 +904,79 @@ describe("release governance gate PostgreSQL integration", () => {
 
     const result = await runReleaseGate("postcheck", testDatabaseUrl);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("video_contract_constraint_count=2\n");
+    expect(result.stdout).toContain("video_contract_constraint_count=3\n");
     expect(result.stderr).toContain(
       "release governance gate failed: post-migration video request invariants failed"
+    );
+  });
+
+  it("后续 postcheck 在视频输入清理原因约束缺失时拒绝发布", async () => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(`
+      alter table video_input_cleanup
+        drop constraint video_input_cleanup_reason_check
+    `);
+
+    const result = await runReleaseGate("postcheck", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain(
+      "video_contract_cleanup_reason_column_count=1\n"
+    );
+    expect(result.stdout).toContain("video_contract_constraint_count=3\n");
+    expect(result.stderr).toContain(
+      "release governance gate failed: post-migration video request invariants failed"
+    );
+  });
+
+  it.each([
+    {
+      cleanupReasonColumnCount: "0",
+      constraintCount: undefined,
+      errorKind: "schema invariants",
+      name: "默认值缺失",
+      sql: `alter table video_input_cleanup
+        alter column reason drop default`,
+    },
+    {
+      cleanupReasonColumnCount: "0",
+      constraintCount: undefined,
+      errorKind: "schema invariants",
+      name: "允许空值",
+      sql: `alter table video_input_cleanup
+        alter column reason drop not null`,
+    },
+    {
+      cleanupReasonColumnCount: "1",
+      constraintCount: "3",
+      errorKind: "invariants",
+      name: "同名约束定义漂移",
+      sql: `alter table video_input_cleanup
+        drop constraint video_input_cleanup_reason_check;
+      alter table video_input_cleanup
+        add constraint video_input_cleanup_reason_check
+        check (reason in ('orphan', 'lifecycle_delete', 'unknown'))`,
+    },
+  ])("后续 postcheck 在视频输入清理 reason $name 时拒绝发布", async ({
+    cleanupReasonColumnCount,
+    constraintCount,
+    errorKind,
+    sql,
+  }) => {
+    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
+    await pool.query(sql);
+
+    const result = await runReleaseGate("postcheck", testDatabaseUrl);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain(
+      `video_contract_cleanup_reason_column_count=${cleanupReasonColumnCount}\n`
+    );
+    if (constraintCount) {
+      expect(result.stdout).toContain(
+        `video_contract_constraint_count=${constraintCount}\n`
+      );
+    }
+    expect(result.stderr).toContain(
+      `release governance gate failed: post-migration video request ${errorKind} failed`
     );
   });
 });
