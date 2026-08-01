@@ -291,7 +291,7 @@ flowchart TB
 - KTD11. **视频在首次外呼前持久化版本。** 视频提交 CAS 从租约复制同一成员和版本后，才执行请求脚本和 HTTP 请求；接管与恢复不得读取 current pointer。API 视频只持久化上游任务 ID和下一次轮询时间，不采用响应 URL；Adobe 的 `pollUrl` 行为保持独立。Covers R18-R20, R23-R29。
 - KTD12. **适配管理通过 UOL，但不新增 Admin MCP 工具。** (session-settled: user-directed — chosen over exposing tester and diagnostics to Admin MCP: 当前需求只要求管理页面和项目 Skill。) 扩展 `pool.getAdminPool` 返回当前版本元数据；`pool.saveMember` 输入携带期望版本，API 输出返回新版本 ID/revision，过期写映射为稳定冲突。新增 `pool.testApiUpstreamAdapter` 与 `pool.getApiUpstreamRuntimeDiagnostics`；前者只读、自然幂等、声明进程内队列副作用，后者只读、自然幂等，二者均标记 `agentExposure: human-only` 和 `processLocalState: true`。Covers R38-R45。
 - KTD13. **配置页拆出专用编辑器。** `member-form.tsx` 只管理成员级提交流程；API 适配草稿、操作折叠区和无网络测试器各自成文件。保存再次走与生产相同的路径、脚本和 schema 校验，以期望当前版本拒绝并发覆盖，并在事务内校验凭据域兼容后才更新密钥和当前指针。Covers R26, R38-R40, R45。
-- KTD14. **Worker 入口由启动钩子初始化并显式 trace。** `instrumentation.ts` 在 Node Runtime 启动时校验 env 和建立进程单例，运行调用提供相同的幂等惰性兜底；静态 `new URL(..., import.meta.url)` 指向 Worker，`next.config.mjs` 显式包含 Worker 与 QuickJS 资产。Worker 数范围为 1-8，Runtime 内存范围为 16-128 MiB，栈范围为 256-2048 KiB；非法 env 使服务启动失败，进程退出时停止准入并在 grace period 内结算或拒绝作业。Covers R34-R37。
+- KTD14. **Worker 入口由启动钩子初始化并显式 trace。** `instrumentation.ts` 在 Node Runtime 启动时校验 env 和建立进程单例，运行调用提供相同的幂等惰性兜底；Node 侧以 `pathToFileURL(resolve(...))` 定位 Worker，避免 Turbopack 把字面量 Worker URL 误编译为浏览器 Worker，`next.config.mjs` 则显式包含 Worker 与 QuickJS 资产。Worker 数范围为 1-8，Runtime 内存范围为 16-128 MiB，栈范围为 256-2048 KiB；非法 env 使服务启动失败，进程退出时停止准入并在 grace period 内结算或拒绝作业。Covers R34-R37。
 - KTD15. **Skill 在生产契约稳定后改名。** 一个 `write-api-upstream-adapter` Skill 保留共同流程，并按文生图、图生图和视频渐进读取参考文件。Skill、管理帮助和生产测试共享版本号、操作 ID、夹具与隔离验证入口，旧 Skill 删除且不保留两套说明。Covers R41-R42。
 
 ### Operation Matrix

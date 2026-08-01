@@ -10,6 +10,7 @@
     "analytics:backfill": "node ../../scripts/with-root-env.mjs ./scripts/backfill-dashboard-analytics.mjs",
     "analytics:reconcile": "node ../../scripts/with-root-env.mjs ./scripts/backfill-dashboard-analytics.mjs --reconcile-only",
     "analytics:finalize-credit-contract": "node ../../scripts/with-root-env.mjs ./scripts/finalize-credit-usage-contract.mjs",
+    "assert:api-upstream-worker-standalone": "node ./scripts/assert-api-upstream-worker-standalone.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint ."

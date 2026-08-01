@@ -41,6 +41,13 @@ const nextConfig = {
       "./models/scunet-color-real-gan.onnx",
       "../../node_modules/.pnpm/@img+sharp-libvips-linux-x64@*/node_modules/@img/sharp-libvips-linux-x64/**",
       "../../node_modules/.pnpm/@img+sharp-linux-x64@*/node_modules/@img/sharp-linux-x64/**",
+      // Worker 入口使用静态 URL，但它在独立 Node 线程中自行解析 QuickJS；显式
+      // trace 源入口、JS 桥接与 WASM，防止 standalone 镜像只包含主服务 chunk。
+      "./src/features/image-backend-pool/api-upstream-script-worker.ts",
+      "../../node_modules/.pnpm/quickjs-emscripten@*/node_modules/quickjs-emscripten/dist/**",
+      "../../node_modules/.pnpm/quickjs-emscripten-core@*/node_modules/quickjs-emscripten-core/dist/**",
+      "../../node_modules/.pnpm/@jitl+quickjs-ffi-types@*/node_modules/@jitl/quickjs-ffi-types/dist/**",
+      "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@*/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/**",
     ],
   },
   experimental: {

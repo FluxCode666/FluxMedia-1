@@ -8,6 +8,7 @@ import {
   type BackendMemberInput,
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
+import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type {
   ModelConfigurationEntry,
   ModelConfigurationSnapshot,
@@ -100,6 +101,8 @@ function createMemberInput(
         baseUrl: "https://api.example.com/v1",
         useStream: false,
         modelMappings: [],
+        authentication: { mode: "bearer" },
+        operations: createDefaultApiUpstreamOperations(),
         requestTransformScript: "",
       },
     };
