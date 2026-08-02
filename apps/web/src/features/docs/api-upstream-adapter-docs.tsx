@@ -1,0 +1,300 @@
+/**
+ * API 类型账号上游适配的站内管理员文档。
+ *
+ * 使用方：系统文档页和管理员后端帮助页。内容覆盖六操作、脚本输入输出、资源限制、
+ * 容量估算与图片异步跨重启边界，并与账号池生产契约保持一致。
+ */
+
+import { Badge } from "@repo/ui/components/badge";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
+import { CodeBlock } from "@repo/ui/components/code-block";
+
+const operationRows = [
+  ["images.generate", "POST", "/images/generations", "JSON"],
+  ["images.generate.query", "GET", "管理员配置 /{task_id}", "无 Body"],
+  ["images.edit", "POST", "/images/edits", "multipart"],
+  ["images.edit.query", "GET", "管理员配置 /{task_id}", "无 Body"],
+  ["videos.generate", "POST", "/videos/generations", "JSON"],
+  ["videos.query", "GET", "/videos/{task_id}", "无 Body"],
+] as const;
+
+const englishOperationRows = [
+  ["images.generate", "POST", "/images/generations", "JSON"],
+  ["images.generate.query", "GET", "Admin path with /{task_id}", "No body"],
+  ["images.edit", "POST", "/images/edits", "multipart"],
+  ["images.edit.query", "GET", "Admin path with /{task_id}", "No body"],
+  ["videos.generate", "POST", "/videos/generations", "JSON"],
+  ["videos.query", "GET", "/videos/{task_id}", "No body"],
+] as const;
+
+const requestExample = `const body = { ...request.body };
+body.ratio = body.aspect_ratio;
+delete body.aspect_ratio;
+return {
+  query: { ...request.query, api_version: "2026-08-01" },
+  body,
+};`;
+
+const responseExample = `const body = response.body;
+if (body.state === "failed") {
+  return {
+    status: "failed",
+    error: { category: "upstream", code: "job_failed" },
+  };
+}
+if (body.state !== "completed") {
+  return {
+    status: "processing",
+    progress: body.progress,
+  };
+}
+return {
+  status: "completed",
+  outputs: [{ kind: "video", url: body.output.video_url }],
+};`;
+
+const localizedContent = {
+  zh: {
+    title: "API 账号上游适配",
+    description:
+      "在账号池的 API 类型账号中配置模型映射、认证，以及文生图、图生图和生视频各自的生成与查询操作。路径和认证由系统控制，JavaScript 只处理有界请求与响应数据。",
+    operationTitle: "六个固定操作",
+    operationHeaders: ["操作", "方法", "空路径默认值", "Body"],
+    scriptTitle: "脚本可读取与返回的值",
+    requestInput:
+      "请求脚本读取 request.query、可选 request.body 和只读 context；返回可省略 query、headers、body 的对象。不修改 Header 时直接省略 headers，非空脚本仍必须 return 对象。",
+    responseInput:
+      "响应脚本读取 response.statusCode、四个安全 Header 和 response.body；返回 pending、processing、completed 或 failed。pollAfterSeconds 可选，省略时图片与视频均为 5 秒。",
+    contextInput:
+      "context 仅包含 operation、stage、contentType、platformModelId、upstreamModelId 和查询阶段可选 taskId，不包含密钥、账号、用户、完整 URL 或请求 Header。",
+    requestExampleTitle: "请求脚本示例",
+    responseExampleTitle: "响应脚本示例",
+    safetyTitle: "安全、媒体和异步边界",
+    safetyItems: [
+      "允许普通函数、箭头函数和同步对象处理；禁止 import、第三方库、Promise、网络、文件、时间、随机数和动态代码。",
+      "模型映射来源只使用平台真实模型 ID；时长、比例和分辨率保持独立参数。",
+      "首尾帧与参考图对所有模型互斥；媒体令牌只能移动一次，不能删除、复制、伪造或截断。Seedance 参考图默认上限 10，管理员可调整且适配器没有硬上限。",
+      "查询路径固定由管理员配置，系统不会采用响应中的 poll_url 或 status_url。",
+      "图片供应商异步任务只在当前 Node 进程内尽力轮询。进程崩溃后不会恢复远端图片任务；供应商不支持幂等键时，客户端重试可能产生孤儿任务、重复生成和额外供应商费用。",
+      "脚本失败只向用户展示 apiu_ 请求标识和联系管理员文案；日志不得包含密钥、脚本、Prompt、媒体或上游正文。",
+    ],
+    capacityTitle: "资源限制与理论容量",
+    capacityDescription:
+      "每个 Worker 同时只运行一个脚本。50 ms 是执行上限而非平均耗时；若一次 HTTP 同时使用请求和响应脚本，理论周期吞吐约为 Worker 数 × 10 次/秒。实际 QPS 还受脚本耗时、序列化、上游延迟、账号并发和容器内存限制。",
+    capacityHeaders: [
+      "Worker",
+      "最大并行脚本",
+      "理论脚本吞吐",
+      "理论请求/响应周期",
+    ],
+    capacityRows: [
+      ["1（默认）", "1", "20 jobs/s", "10 cycles/s"],
+      ["2", "2", "40 jobs/s", "20 cycles/s"],
+      ["4", "4", "80 jobs/s", "40 cycles/s"],
+      ["8（上限）", "8", "160 jobs/s", "80 cycles/s"],
+    ],
+    copyLabels: { copy: "复制", copied: "已复制", copyFailed: "复制失败" },
+  },
+  en: {
+    title: "API account upstream adapters",
+    description:
+      "Configure model mappings, authentication, and separate generation and query operations for text-to-image, image-to-image, and video API accounts. The host controls paths and credentials; JavaScript only transforms bounded request and response data.",
+    operationTitle: "Six fixed operations",
+    operationHeaders: ["Operation", "Method", "Empty-path default", "Body"],
+    scriptTitle: "Script inputs and outputs",
+    requestInput:
+      "Request scripts read request.query, optional request.body, and read-only context. Return an object with optional query, headers, and body. Omit headers when unchanged; every non-empty script must still return an object.",
+    responseInput:
+      "Response scripts read response.statusCode, four safe headers, and response.body, then return pending, processing, completed, or failed. pollAfterSeconds is optional and defaults to 5 seconds for both images and videos.",
+    contextInput:
+      "context only contains operation, stage, contentType, platformModelId, upstreamModelId, and optional taskId for queries. It never contains credentials, account or user identity, full URLs, or request headers.",
+    requestExampleTitle: "Request script example",
+    responseExampleTitle: "Response script example",
+    safetyTitle: "Security, media, and async boundaries",
+    safetyItems: [
+      "Regular functions, arrow functions, and synchronous object operations are allowed. Imports, third-party libraries, Promise, network, files, time, randomness, and dynamic code are forbidden.",
+      "Model mappings use real platform model IDs; duration, aspect ratio, and resolution remain separate parameters.",
+      "First/last frames and reference images are mutually exclusive for every model. Media tokens may only be moved once. Seedance defaults to 10 reference images; admins may change it and the adapter adds no hard cap.",
+      "Query paths are fixed by administrators; poll_url and status_url from responses are ignored.",
+      "Async image supplier tasks are polled on a best-effort basis inside the current Node process. A process crash does not recover the remote task; without supplier idempotency, client retries may create orphan tasks, duplicate generations, and extra supplier charges.",
+      "Script failures expose only an apiu_ request identifier and contact-admin message. Logs never include credentials, scripts, prompts, media, or upstream bodies.",
+    ],
+    capacityTitle: "Resource limits and theoretical capacity",
+    capacityDescription:
+      "Each Worker runs one script at a time. The 50 ms limit is a ceiling, not average latency. When an HTTP call uses both request and response scripts, theoretical cycle throughput is about worker count × 10 per second. Actual QPS also depends on script time, serialization, upstream latency, account concurrency, and container memory.",
+    capacityHeaders: [
+      "Workers",
+      "Parallel scripts",
+      "Script throughput",
+      "Request/response cycles",
+    ],
+    capacityRows: [
+      ["1 (default)", "1", "20 jobs/s", "10 cycles/s"],
+      ["2", "2", "40 jobs/s", "20 cycles/s"],
+      ["4", "4", "80 jobs/s", "40 cycles/s"],
+      ["8 (maximum)", "8", "160 jobs/s", "80 cycles/s"],
+    ],
+    copyLabels: { copy: "Copy", copied: "Copied", copyFailed: "Copy failed" },
+  },
+} as const;
+
+/**
+ * 读取 API 上游适配站内文档的本地化静态契约。
+ *
+ * @param locale 路由语言；仅 zh 返回中文，其余语言回退英文。
+ * @returns 文档文本、六操作和容量表；无外部副作用。
+ */
+export function getApiUpstreamAdapterDocsContent(locale = "en") {
+  const content = locale === "zh" ? localizedContent.zh : localizedContent.en;
+  return {
+    ...content,
+    operationRows: locale === "zh" ? operationRows : englishOperationRows,
+  };
+}
+
+/**
+ * 渲染管理员可直接阅读的 API 上游适配文档章节。
+ *
+ * @param locale 路由语言。
+ * @returns 响应式文档卡片；只读渲染，不读取账号配置或密钥。
+ */
+export function ApiUpstreamAdapterDocs({ locale = "en" }: { locale?: string }) {
+  const content = getApiUpstreamAdapterDocsContent(locale);
+
+  return (
+    <Card className="rounded-lg">
+      <CardHeader>
+        <CardTitle className="font-serif text-lg tracking-tight">
+          {content.title}
+        </CardTitle>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {content.description}
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <section className="space-y-2">
+          <h3 className="text-sm font-medium">{content.operationTitle}</h3>
+          <div className="overflow-x-auto rounded-md border">
+            <div className="grid min-w-[720px] grid-cols-[1.4fr_0.6fr_1.6fr_0.8fr] border-b bg-muted/40 text-xs font-medium text-muted-foreground">
+              {content.operationHeaders.map((header) => (
+                <div className="px-3 py-2" key={header}>
+                  {header}
+                </div>
+              ))}
+            </div>
+            {content.operationRows.map(([operation, method, path, body]) => (
+              <div
+                className="grid min-w-[720px] grid-cols-[1.4fr_0.6fr_1.6fr_0.8fr] border-b text-sm last:border-b-0"
+                key={operation}
+              >
+                <code className="px-3 py-2 text-xs">{operation}</code>
+                <div className="px-3 py-2">
+                  <Badge
+                    variant="outline"
+                    className="rounded-sm font-mono text-[10px]"
+                  >
+                    {method}
+                  </Badge>
+                </div>
+                <code className="px-3 py-2 text-xs text-muted-foreground">
+                  {path}
+                </code>
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  {body}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-sm font-medium">{content.scriptTitle}</h3>
+          {[
+            content.requestInput,
+            content.responseInput,
+            content.contextInput,
+          ].map((item) => (
+            <p
+              className="text-sm leading-relaxed text-muted-foreground"
+              key={item}
+            >
+              {item}
+            </p>
+          ))}
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium">
+                {content.requestExampleTitle}
+              </h4>
+              <CodeBlock
+                className="mt-2"
+                code={requestExample}
+                labels={content.copyLabels}
+                language="javascript"
+              />
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium">
+                {content.responseExampleTitle}
+              </h4>
+              <CodeBlock
+                className="mt-2"
+                code={responseExample}
+                labels={content.copyLabels}
+                language="javascript"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-sm font-medium">{content.safetyTitle}</h3>
+          <ul className="space-y-2 text-sm leading-relaxed text-muted-foreground">
+            {content.safetyItems.map((item) => (
+              <li className="flex gap-2" key={item}>
+                <span
+                  aria-hidden="true"
+                  className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground/60"
+                />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-sm font-medium">{content.capacityTitle}</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {content.capacityDescription}
+          </p>
+          <div className="overflow-x-auto rounded-md border">
+            <div className="grid min-w-[680px] grid-cols-4 border-b bg-muted/40 text-xs font-medium text-muted-foreground">
+              {content.capacityHeaders.map((header) => (
+                <div className="px-3 py-2" key={header}>
+                  {header}
+                </div>
+              ))}
+            </div>
+            {content.capacityRows.map((row) => (
+              <div
+                className="grid min-w-[680px] grid-cols-4 border-b text-xs last:border-b-0"
+                key={row[0]}
+              >
+                {row.map((value) => (
+                  <div className="px-3 py-2 text-muted-foreground" key={value}>
+                    {value}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </section>
+      </CardContent>
+    </Card>
+  );
+}

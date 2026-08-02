@@ -22,6 +22,8 @@ import {
   X,
 } from "lucide-react";
 
+import { ApiUpstreamAdapterDocs } from "./api-upstream-adapter-docs";
+
 const sections = {
   zh: {
     title: "系统文档",
@@ -5700,6 +5702,10 @@ export function SystemDocsContent({
     { id: "external-api", label: content.externalDocs.title },
     { id: "route-tables", label: content.routeTables.title },
     { id: "backends", label: content.flow.backendTitle },
+    {
+      id: "api-upstream-adapter",
+      label: locale === "zh" ? "API 账号上游适配" : "API upstream adapters",
+    },
     { id: "prompt", label: content.prompt.title },
     { id: "post-process", label: content.postProcess.title },
     { id: "roadmap", label: content.roadmap.title },
@@ -5820,6 +5826,10 @@ export function SystemDocsContent({
             </Card>
           )
         )}
+      </div>
+
+      <div className="scroll-mt-32" id="api-upstream-adapter">
+        <ApiUpstreamAdapterDocs locale={locale} />
       </div>
 
       <Card className="scroll-mt-32 rounded-lg" id="prompt">
