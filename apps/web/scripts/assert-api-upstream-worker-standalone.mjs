@@ -2,7 +2,8 @@
  * Next.js standalone 中 API 上游脚本 Worker 资产断言。
  *
  * 使用方：镜像构建和发布门。脚本只读取构建目录，确认 Worker 入口、QuickJS JS
- * 桥接和 WASM 同时存在；容器运行 smoke 由部署验证在 Node 22 中另行执行。
+ * 桥接和 WASM 位于 Node 可解析的标准 node_modules 布局；容器运行
+ * smoke 由部署验证在 Node 22 中另行执行。
  */
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -10,6 +11,10 @@ import { resolve } from "node:path";
 const standaloneRoot = resolve(
   process.cwd(),
   process.argv[2] ?? ".next/standalone"
+);
+const standaloneWebRoot = resolve(standaloneRoot, "apps/web").replaceAll(
+  "\\",
+  "/"
 );
 
 /**
@@ -50,16 +55,22 @@ const requiredAssets = [
     matches: (file) => file.endsWith("/smoke-api-upstream-worker.mjs"),
   },
   {
+    name: "QuickJS 包元数据",
+    matches: (file) =>
+      file ===
+      `${standaloneWebRoot}/node_modules/quickjs-emscripten/package.json`,
+  },
+  {
     name: "QuickJS JavaScript 桥接",
     matches: (file) =>
-      file.includes("/quickjs-emscripten/") &&
-      /\/dist\/index\.(?:js|mjs)$/.test(file),
+      file ===
+      `${standaloneWebRoot}/node_modules/quickjs-emscripten/dist/index.mjs`,
   },
   {
     name: "QuickJS WebAssembly",
     matches: (file) =>
-      file.includes("/quickjs-wasmfile-release-sync/") &&
-      file.endsWith("/dist/emscripten-module.wasm"),
+      file ===
+      `${standaloneWebRoot}/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm`,
   },
 ];
 
