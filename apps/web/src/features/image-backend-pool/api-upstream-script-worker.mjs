@@ -7,7 +7,7 @@
  */
 import { parentPort } from "node:worker_threads";
 
-import { getQuickJS, shouldInterruptAfterDeadline } from "quickjs-emscripten";
+import { getQuickJS } from "quickjs-emscripten";
 
 const workerPort = parentPort;
 
@@ -27,6 +27,21 @@ function isWorkerJobMessage(value) {
     (value.inputJson === undefined || typeof value.inputJson === "string") &&
     (value.contextJson === undefined || typeof value.contextJson === "string")
   );
+}
+
+/**
+ * 构造只计算当前 Worker 线程 CPU 用量的 QuickJS 中断条件。
+ *
+ * @param {number} timeoutMs - 单个脚本允许消耗的线程 CPU 毫秒数。
+ * @returns {() => boolean} 达到 CPU 预算后返回 true 的同步中断函数。
+ */
+function shouldInterruptAfterThreadCpuBudget(timeoutMs) {
+  const startedUsage = process.threadCpuUsage();
+  const budgetMicroseconds = timeoutMs * 1_000;
+  return () => {
+    const elapsedUsage = process.threadCpuUsage(startedUsage);
+    return elapsedUsage.user + elapsedUsage.system >= budgetMicroseconds;
+  };
 }
 
 /** 把管理员脚本包装为固定签名同步函数。 */
@@ -114,7 +129,7 @@ async function executeWorkerJob(job) {
     runtime.setMemoryLimit(job.memoryLimitBytes);
     runtime.setMaxStackSize(job.stackLimitBytes);
     runtime.setInterruptHandler(
-      shouldInterruptAfterDeadline(Date.now() + job.timeoutMs)
+      shouldInterruptAfterThreadCpuBudget(job.timeoutMs)
     );
     context = runtime.newContext();
 
