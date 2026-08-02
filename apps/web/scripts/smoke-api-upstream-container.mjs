@@ -1,9 +1,9 @@
 /**
  * API 上游 Worker 最终 runner 镜像的容器 smoke。
  *
- * 使用方：CI 在已加载临时镜像后调用。先以镜像默认非 root
- * 用户执行真实 QuickJS 作业，再启动最终 CMD 并验证 SIGTERM 可在
- * Compose 同等的 30 秒宽限内结束进程。
+ * 使用方：CI 在已加载临时镜像后调用。先以镜像默认非 root 用户导入
+ * 生产迁移预检并执行真实 QuickJS 作业，再启动最终 CMD 并验证 SIGTERM
+ * 可在 Compose 同等的 30 秒宽限内结束进程。
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -132,6 +132,20 @@ export async function runApiUpstreamContainerSmoke(image) {
   ) {
     throw new ApiUpstreamContainerSmokeError("image_reference_invalid");
   }
+
+  // 只导入模块，不执行数据库预检。这里验证预检脚本及其 pg、QuickJS
+  // 依赖在最终 standalone 镜像中确实可由 Node 解析。
+  await runDocker([
+    "run",
+    "--rm",
+    "--init",
+    "--entrypoint",
+    "node",
+    image,
+    "--input-type=module",
+    "--eval",
+    "await import('./apps/web/scripts/preflight-api-upstream-adapter-migration.mjs')",
+  ]);
 
   const workerResult = await runDocker([
     "run",
