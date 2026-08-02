@@ -718,5 +718,5 @@ packages/shared/src/video-generation/
 - [x] 计费 family、分辨率单价、时长总价、扣费时点、API Key 配额、sourceRef 和退款结果与改造前一致。
 - [x] 资产收编、0074 迁移、preflight、postcheck 和真实 PostgreSQL 测试证明全部存量成员与任务可转换；任一异常使切换整体停止。
 - [x] 模型广场卡片显示能力摘要，详情显示参数、参考图数量、首尾帧、互斥、声音默认、当前配置可达性和基础设施限制。
-- [ ] Verification Contract 全部质量门通过，文档和中英文文案同步，生产 smoke 留下非敏感零阻断证据。自动化门禁与生产构建已通过；真实浏览器验收和维护窗口生产 smoke 尚未执行。
+- [ ] Verification Contract 全部质量门通过，文档和中英文文案同步，生产 smoke 留下非敏感零阻断证据。自动化门禁与生产构建已通过；受控 PostgreSQL 浏览器验收已证明账号池真实模型选择、Seedance 动态上限、模型广场能力/简介同步及创作页输入模式切换清理，仍需真实生成、历史输入授权、callback 与维护窗口生产 smoke。
 - [x] 最终 diff 不含废弃 parser、兼容别名、死代码、注释掉的旧实现、临时夹具凭据、调试日志或失败尝试遗留代码。

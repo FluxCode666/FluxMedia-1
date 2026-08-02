@@ -27,8 +27,44 @@ describe("API upstream adapter admin docs", () => {
     expect(content.requestInput).toMatch(/headers/u);
     expect(content.requestInput).toMatch(/省略|Omit/u);
     expect(content.requestInput).toMatch(/return/u);
+    expect(content.requestInput).toMatch(/return \{\}/u);
+    expect(content.requestInput).toMatch(/保留|preserves/u);
+    for (const header of [
+      "content-type",
+      "retry-after",
+      "request-id",
+      "x-request-id",
+    ]) {
+      expect(content.responseInput).toContain(header);
+    }
     expect(content.responseInput).toContain("pollAfterSeconds");
     expect(content.responseInput).toContain("5");
+  });
+
+  it.each(["zh", "en"])("%s 锁定轮询、失败和重试边界", (locale) => {
+    const content = getApiUpstreamAdapterDocsContent(locale);
+    const failures = content.failureItems.join("\n");
+    expect(failures).toContain("pollAfterSeconds");
+    expect(failures).toMatch(/1-300|1 to 300/u);
+    expect(failures).toContain("Retry-After");
+    expect(failures).toMatch(/category/u);
+    expect(failures).toMatch(/adminDetails/u);
+    expect(failures).toMatch(/retryable/u);
+    expect(failures).toMatch(/3 次|Three consecutive/u);
+    expect(failures).toContain("platform_busy");
+    expect(failures).toContain("transport_failed");
+  });
+
+  it.each(["zh", "en"])("%s 锁定通用结构化日志字段", (locale) => {
+    const content = getApiUpstreamAdapterDocsContent(locale);
+    const observability = content.observabilityItems.join("\n");
+    expect(observability).toContain("api_upstream_script_failed");
+    expect(observability).toContain("api_upstream_script_runtime_saturated");
+    expect(observability).toContain("api_upstream_image_task_orphan_risk");
+    expect(observability).toContain("requestSent");
+    expect(observability).toContain("requestId");
+    expect(observability).toMatch(/标准输出|stdout/u);
+    expect(observability).toMatch(/Datadog/u);
   });
 
   it.each(["zh", "en"])("%s 明确媒体、跨重启和容量边界", (locale) => {
