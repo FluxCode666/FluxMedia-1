@@ -1757,7 +1757,7 @@ async function assertVideoContractPostMigrationState(pool) {
   });
 }
 
-/** 验证 0060-0064 后统一号池、视频恢复身份和 API Key 配额不变量。 */
+/** 验证 0060-0077 后统一号池、视频恢复身份和 API Key 配额不变量。 */
 async function assertMediaPostMigrationState(pool) {
   await inReadOnlyTransaction(pool, async (client) => {
     const result = await client.query(
@@ -1799,7 +1799,11 @@ async function assertMediaPostMigrationState(pool) {
                 or (table_name = 'video_generation_callback_delivery'
                   and column_name = 'callback_url' and is_nullable = 'NO')
                 or (table_name = 'image_backend_member_api_config'
-                  and column_name = 'use_stream' and is_nullable = 'NO')
+                  and column_name in (
+                    'current_adapter_version_id',
+                    'credential_scope'
+                  )
+                  and is_nullable = 'NO')
                 or (table_name = 'image_backend_member_adobe_config'
                   and column_name in (
                     'cookie',
@@ -1975,7 +1979,7 @@ async function assertMediaPostMigrationState(pool) {
       requiredTableCount !== REQUIRED_MEDIA_TABLES.length ||
       legacyTableCount !== 0 ||
       oldColumnCount !== 0 ||
-      requiredColumnCount !== 32 ||
+      requiredColumnCount !== 33 ||
       requiredConstraintCount !== 12 ||
       recoveryLeaseForeignKeyCount !== 0 ||
       requiredIndexCount !== 12 ||
