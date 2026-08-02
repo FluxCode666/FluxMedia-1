@@ -217,4 +217,6 @@ jobs:
           cache-from: type=gha,scope=web-ci
           cache-to: type=gha,mode=max,scope=web-ci
       - name: Smoke API upstream worker in final container
-        run: pnpm --filter @repo/web smoke:api-upstream-container -- fluxmedia-api-adapter-smoke:ci
+        run: >-
+          node apps/web/scripts/smoke-api-upstream-container.mjs
+          fluxmedia-api-adapter-smoke:ci
