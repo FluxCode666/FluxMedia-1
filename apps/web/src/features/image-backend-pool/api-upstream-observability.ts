@@ -54,3 +54,31 @@ export function logApiUpstreamScriptFailure(input: {
     "api_upstream_script_failed"
   );
 }
+
+/**
+ * 记录供应商已接受、但平台只在当前图片进程内轮询的远端任务风险。
+ *
+ * @param input 仅包含操作枚举、平台模型和账号池内部标识。
+ * @sideEffects 通过 Pino 向标准输出写一条 warn 级结构化日志。
+ * @failure 不接收供应商 task ID、Prompt、正文或异常，避免风险事件泄露任务数据。
+ */
+export function logApiUpstreamImageTaskOrphanRisk(input: {
+  operation: "images.generate" | "images.edit";
+  platformModelId: string;
+  observability?: ApiUpstreamObservabilityContext;
+}): void {
+  logger.warn(
+    {
+      event: "api_upstream_image_task_orphan_risk",
+      operation: input.operation,
+      memberId: input.observability?.memberId ?? null,
+      groupId: input.observability?.groupId ?? null,
+      platformModelId: input.platformModelId,
+      durability: "process_local",
+      idempotencyProtection: "not_available",
+      recoveryAction: "do_not_resubmit_automatically",
+      taskSummary: "accepted_image_task",
+    },
+    "api_upstream_image_task_orphan_risk"
+  );
+}

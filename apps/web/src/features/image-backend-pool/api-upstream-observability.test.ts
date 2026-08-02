@@ -6,20 +6,22 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ error: vi.fn() }));
+const mocks = vi.hoisted(() => ({ error: vi.fn(), warn: vi.fn() }));
 
 vi.mock("@repo/shared/logger", () => ({
-  logger: { error: mocks.error },
+  logger: { error: mocks.error, warn: mocks.warn },
 }));
 
 import {
   createApiUpstreamRequestId,
+  logApiUpstreamImageTaskOrphanRisk,
   logApiUpstreamScriptFailure,
 } from "./api-upstream-observability";
 
 describe("API upstream observability", () => {
   beforeEach(() => {
     mocks.error.mockReset();
+    mocks.warn.mockReset();
   });
 
   it("生成随机支持请求标识", () => {
@@ -54,6 +56,41 @@ describe("API upstream observability", () => {
       platformModelId: "seedance2",
       requestId: "apiu_0123456789abcdef0123456789abcdef",
       taskSummary: "accepted_task",
+    });
+    expect(Object.keys(context ?? {})).not.toEqual(
+      expect.arrayContaining([
+        "apiKey",
+        "authorization",
+        "scriptSource",
+        "prompt",
+        "body",
+        "responseBody",
+        "taskId",
+        "url",
+      ])
+    );
+  });
+
+  it("只记录异步图片跨重启孤儿风险的稳定维度", () => {
+    logApiUpstreamImageTaskOrphanRisk({
+      operation: "images.edit",
+      platformModelId: "gpt-image-2",
+      observability: { memberId: "member-1", groupId: "group-1" },
+    });
+
+    expect(mocks.warn).toHaveBeenCalledTimes(1);
+    const [context, message] = mocks.warn.mock.calls[0] ?? [];
+    expect(message).toBe("api_upstream_image_task_orphan_risk");
+    expect(context).toEqual({
+      event: "api_upstream_image_task_orphan_risk",
+      operation: "images.edit",
+      memberId: "member-1",
+      groupId: "group-1",
+      platformModelId: "gpt-image-2",
+      durability: "process_local",
+      idempotencyProtection: "not_available",
+      recoveryAction: "do_not_resubmit_automatically",
+      taskSummary: "accepted_image_task",
     });
     expect(Object.keys(context ?? {})).not.toEqual(
       expect.arrayContaining([

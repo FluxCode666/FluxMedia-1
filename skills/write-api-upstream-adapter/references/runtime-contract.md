@@ -281,6 +281,11 @@ Worker 数范围 1-8，内存 16-128 MiB，栈 256-2,048 KiB。账号和脚本�
 固定原成员与版本，查询阶段的配置、请求或响应脚本、响应读取连续失败 3 次后进入现有
 失败退款。平台繁忙与传输失败不计入该阈值，运行时饱和也不能处罚供应商账号。
 
+供应商异步图片只在当前 Web 进程的单次图片管线内轮询。容器重启、进程崩溃或强制
+终止后不会恢复远端图片任务，也不能自动重新提交。当前图片标准请求没有统一供应商
+幂等键，调用方在结果未知时重试可能产生孤儿任务、重复生成和额外费用；视频持久恢复
+不受此限制。
+
 用户脚本失败文案为：
 
 ```text
@@ -294,6 +299,11 @@ Worker 数范围 1-8，内存 16-128 MiB，栈 256-2,048 KiB。账号和脚本�
   `platformModelId`、`requestId`、`taskSummary`；
 - `api_upstream_script_runtime_saturated`：`reason`、`state`、
   `queuedRequests`、`queuedResponses`、`activeResponsePermits`。
+- `api_upstream_image_task_orphan_risk`：`operation`、`memberId`、
+  `groupId`、`platformModelId`、`durability=process_local`、
+  `idempotencyProtection=not_available`、
+  `recoveryAction=do_not_resubmit_automatically`、
+  `taskSummary=accepted_image_task`。
 
 日志不得含 API Key、认证 Header、脚本、Query、Header 正文、Body、Prompt、媒体、完整
 URL、堆栈或原始 task ID。Datadog 只是 JSON 日志的可选消费者，不能成为脚本或部署

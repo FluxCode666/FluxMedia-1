@@ -11,12 +11,28 @@ import type { ApiConfig } from "./types";
 const mocks = vi.hoisted(() => ({
   fetchMediaUpstream: vi.fn(),
   fetchMediaUpstreamDownload: vi.fn(),
+  logApiUpstreamImageTaskOrphanRisk: vi.fn(),
 }));
 
 vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
   fetchMediaUpstream: mocks.fetchMediaUpstream,
   fetchMediaUpstreamDownload: mocks.fetchMediaUpstreamDownload,
 }));
+
+vi.mock(
+  "@/features/image-backend-pool/api-upstream-observability",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/features/image-backend-pool/api-upstream-observability")
+      >();
+    return {
+      ...actual,
+      logApiUpstreamImageTaskOrphanRisk:
+        mocks.logApiUpstreamImageTaskOrphanRisk,
+    };
+  }
+);
 
 /** 构造一段符合 Images API 约定的 SSE 事件。 */
 function sseBlock(event: string, data: Record<string, unknown>) {
@@ -259,6 +275,11 @@ return request;
     expect(mocks.fetchMediaUpstream.mock.calls[1]?.[0]).toBe(
       "https://api.example.test/v1/vendor/images/task%2F1?detail=full"
     );
+    expect(mocks.logApiUpstreamImageTaskOrphanRisk).toHaveBeenCalledWith({
+      operation: "images.generate",
+      platformModelId: "gpt-image-2",
+      observability: { memberId: undefined, groupId: undefined },
+    });
   });
 
   it("图片生成接受异步任务但查询路径未配置时立即失败关闭", async () => {
@@ -287,42 +308,125 @@ return request;
       backendSwitchAllowed: false,
     });
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+    expect(mocks.logApiUpstreamImageTaskOrphanRisk).toHaveBeenCalledTimes(1);
+  });
+
+  it("任务 ID 返回后模拟进程终止不会再次提交生成请求", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const controller = new AbortController();
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.operations["images.generate"].responseScript = `
+      return {
+        status: "processing",
+        taskId: response.body.vendor_task
+      };
+    `;
+    adapter.operations["images.generate.query"].path =
+      "/vendor/images/{task_id}";
+    mocks.fetchMediaUpstream.mockImplementationOnce(async () => {
+      controller.abort(new Error("simulated process shutdown"));
+      return Response.json({ vendor_task: "task-after-submit" });
+    });
+
+    await expect(
+      generateImage(config, {
+        prompt: "make an icon",
+        model: "gpt-image-2",
+        signal: controller.signal,
+      })
+    ).resolves.toMatchObject({ error: "simulated process shutdown" });
+
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+    expect(mocks.logApiUpstreamImageTaskOrphanRisk).toHaveBeenCalledTimes(1);
+  });
+
+  it("轮询中模拟进程终止只查询原任务且不重发生成 POST", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const controller = new AbortController();
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.operations["images.generate"].responseScript = `
+      return {
+        status: "processing",
+        taskId: response.body.vendor_task,
+        pollAfterSeconds: 1
+      };
+    `;
+    adapter.operations["images.generate.query"] = {
+      path: "/vendor/images/{task_id}",
+      requestScript: "",
+      responseScript: `
+        return {
+          status: "processing",
+          progress: response.body.progress,
+          pollAfterSeconds: 1
+        };
+      `,
+    };
+    mocks.fetchMediaUpstream
+      .mockResolvedValueOnce(Response.json({ vendor_task: "task-during-poll" }))
+      .mockImplementationOnce(async () => {
+        controller.abort(new Error("simulated process shutdown"));
+        return Response.json({ progress: 50 });
+      });
+
+    await expect(
+      generateImage(config, {
+        prompt: "make an icon",
+        model: "gpt-image-2",
+        signal: controller.signal,
+      })
+    ).resolves.toMatchObject({ error: "simulated process shutdown" });
+
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(2);
+    expect(mocks.fetchMediaUpstream.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+    });
+    expect(mocks.fetchMediaUpstream.mock.calls[1]?.[1]).toMatchObject({
+      method: "GET",
+    });
+    expect(mocks.logApiUpstreamImageTaskOrphanRisk).toHaveBeenCalledTimes(1);
   });
 
   it.each([
     { retryable: false, backendSwitchAllowed: false },
     { retryable: true, backendSwitchAllowed: true },
-  ])(
-    "仅在响应脚本显式设置 retryable=$retryable 时允许切换账号",
-    async ({ retryable, backendSwitchAllowed }) => {
-      prepareTestEnvironment();
-      const { generateImage } = await import("./service");
-      const config = createPoolApiConfig("");
-      const adapter = config.backend?.apiUpstreamAdapter;
-      if (!adapter) throw new Error("missing adapter");
-      adapter.operations["images.generate"].responseScript = `
+  ])("仅在响应脚本显式设置 retryable=$retryable 时允许切换账号", async ({
+    retryable,
+    backendSwitchAllowed,
+  }) => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.operations["images.generate"].responseScript = `
         return {
           status: "failed",
           error: { category: "upstream", code: "image_submit_failed" },
           retryable: ${String(retryable)}
         };
       `;
-      mocks.fetchMediaUpstream.mockResolvedValueOnce(
-        Response.json({ status: "failed" })
-      );
+    mocks.fetchMediaUpstream.mockResolvedValueOnce(
+      Response.json({ status: "failed" })
+    );
 
-      const result = await generateImage(config, {
-        prompt: "make an icon",
-        model: "gpt-image-2",
-      });
+    const result = await generateImage(config, {
+      prompt: "make an icon",
+      model: "gpt-image-2",
+    });
 
-      expect(result).toMatchObject({
-        error: "供应商图片任务失败，请联系管理员",
-        backendSwitchAllowed,
-      });
-      expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
-    }
-  );
+    expect(result).toMatchObject({
+      error: "供应商图片任务失败，请联系管理员",
+      backendSwitchAllowed,
+    });
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
 
   it("响应脚本把图片 data URL 规范为现有管线使用的纯 Base64", async () => {
     prepareTestEnvironment();

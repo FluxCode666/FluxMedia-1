@@ -30,6 +30,17 @@ API 类型供应商账号可把 FluxMedia 的文生图、图生图和生视频�
 `pending` 或 `processing`，对应查询路径必须存在，否则按账号配置错误失败。图片异步
 任务在现有图片管线内部轮询，不增加公开图片异步 API。
 
+### 异步图片跨重启边界
+
+异步文生图和图生图只在接收任务的当前 Web 进程中轮询。进程正常运行时，平台会固定
+原账号和适配配置版本完成查询；容器重启、进程崩溃或强制终止后，平台不会恢复该远端
+任务，也不会自动再次提交生成请求。
+
+当前标准图片请求没有向供应商转发统一幂等键。调用方在结果未知时自行重试，可能产生
+远端孤儿任务、重复生成和额外供应商费用。上线异步图片账号前，管理员必须确认供应商
+自身的幂等能力和费用处理方式；本版本不能承诺跨重启 exactly-once。视频使用持久任务
+恢复，不受此图片边界影响。
+
 ## 推荐配置顺序
 
 1. 在账号的“支持模型”中只选择平台真实模型 ID，例如 `seedance2`。
@@ -482,6 +493,22 @@ Worker 数是每个 Node 进程的 Worker Thread 数；增加 Web 进程或容�
 - `queuedResponses`
 - `activeResponsePermits`
 
+供应商接受异步图片任务时还会写入 warn 级
+`api_upstream_image_task_orphan_risk`，稳定字段包括：
+
+- `event`
+- `operation`
+- `memberId`
+- `groupId`
+- `platformModelId`
+- `durability=process_local`
+- `idempotencyProtection=not_available`
+- `recoveryAction=do_not_resubmit_automatically`
+- `taskSummary=accepted_image_task`
+
+该事件表示任务已经跨过不可安全重投边界，供管理员统计风险暴露和部署维护窗口；它不
+表示任务已经失败，也不包含供应商 task ID。
+
 日志不得记录 API Key、认证 Header、脚本源码、请求体、响应体、Prompt、媒体、完整 URL、
 堆栈或原始供应商 task ID。
 
@@ -497,6 +524,8 @@ docker compose -f deploy/docker-compose.yml logs --no-color --no-log-prefix -f w
 
 - 对 `api_upstream_script_failed` 持续出现或短时突增告警；
 - 对 `api_upstream_script_runtime_saturated` 任意持续出现告警；
+- 对 `api_upstream_image_task_orphan_risk` 统计并发存续窗口，在进程重启前确认没有活跃
+  图片生成请求；
 - 用 `requestId` 关联用户提供的请求标识，不搜索供应商原始任务 ID；
 - 对采集后的事件做敏感字段负向扫描。
 
@@ -505,6 +534,7 @@ Datadog 只是可选消费者示例，不是运行依赖。其查询可写为：
 ```text
 service:fluxmedia @event:api_upstream_script_failed
 service:fluxmedia @event:api_upstream_script_runtime_saturated
+service:fluxmedia @event:api_upstream_image_task_orphan_risk
 ```
 
 接入 Loki、OpenSearch、Vector、Fluent Bit 或其他系统时，沿用相同 JSON 事件和字段即可。

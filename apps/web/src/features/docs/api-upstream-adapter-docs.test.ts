@@ -38,6 +38,7 @@ describe("API upstream adapter admin docs", () => {
     expect(safety).toMatch(/参考图|reference images/u);
     expect(safety).toMatch(/进程崩溃|process crash/u);
     expect(safety).toMatch(/孤儿任务|orphan tasks/u);
+    expect(safety).toContain("api_upstream_image_task_orphan_risk");
     expect(content.capacityRows).toEqual([
       [
         locale === "zh" ? "1（默认）" : "1 (default)",

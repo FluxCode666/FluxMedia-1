@@ -28,6 +28,7 @@ import {
   countsTowardApiUpstreamAdapterFailure,
   executeApiUpstreamOperation,
 } from "@/features/image-backend-pool/api-upstream-executor";
+import { logApiUpstreamImageTaskOrphanRisk } from "@/features/image-backend-pool/api-upstream-observability";
 import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-upstream-opaque-values";
 import { resolveApiUpstreamRequestUrl } from "@/features/image-backend-pool/api-upstream-path";
 import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
@@ -1343,6 +1344,14 @@ async function parseApiImageExecutionResult(input: {
         backendSwitchAllowed: false,
       };
     }
+    logApiUpstreamImageTaskOrphanRisk({
+      operation: input.operation,
+      platformModelId: input.platformModelId,
+      observability: {
+        memberId: input.config.backend?.id,
+        groupId: input.config.backend?.groupId,
+      },
+    });
     return pollScriptedApiImageTask({
       config: input.config,
       adapter: input.adapter,
@@ -1375,6 +1384,14 @@ async function parseApiImageExecutionResult(input: {
       backendSwitchAllowed: false,
     };
   }
+  logApiUpstreamImageTaskOrphanRisk({
+    operation: input.operation,
+    platformModelId: input.platformModelId,
+    observability: {
+      memberId: input.config.backend?.id,
+      groupId: input.config.backend?.groupId,
+    },
+  });
   const queryOperation: ApiUpstreamAdapterOperationId =
     input.operation === "images.generate"
       ? "images.generate.query"
