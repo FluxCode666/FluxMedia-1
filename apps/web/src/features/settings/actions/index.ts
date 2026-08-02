@@ -1,6 +1,5 @@
 // Settings feature - action exports
 
-export { deleteAccountAction } from "./delete-account";
 export {
   createExternalApiKey,
   deleteExternalApiKey,

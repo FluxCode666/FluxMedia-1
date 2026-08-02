@@ -1,7 +1,6 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { signOut } from "@repo/shared/auth/client";
 import {
   ALLOWED_IMAGE_TYPES,
   generateAvatarKey,
@@ -12,15 +11,6 @@ import {
 import { getMyPlanAction } from "@repo/shared/subscription/actions/get-user-plan";
 import type { PlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { USER_TIME_ZONE_OPTIONS } from "@repo/shared/time-zone";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@repo/ui/components/alert-dialog";
 import {
   Avatar,
   AvatarFallback,
@@ -59,7 +49,6 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import type { z } from "zod";
 import {
-  deleteAccountAction,
   updateProfileAction,
   updateTimeZoneAction,
 } from "@/features/settings/actions";
@@ -119,7 +108,6 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
 
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedTimeZone, setSelectedTimeZone] = useState(
     user.timeZone ?? INHERIT_TIME_ZONE_VALUE
   );
@@ -213,34 +201,6 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
       },
     }
   );
-
-  const { execute: executeDeleteAccount, isPending: isDeletingAccount } =
-    useAction(deleteAccountAction, {
-      onSuccess: async ({ data }) => {
-        setIsDeleteDialogOpen(false);
-
-        if (data?.message) {
-          toast.success(data.message);
-        }
-
-        try {
-          await signOut({
-            fetchOptions: {
-              onSuccess: () => {
-                router.replace("/");
-                router.refresh();
-              },
-            },
-          });
-        } catch {
-          router.replace("/");
-          router.refresh();
-        }
-      },
-      onError: ({ error }) => {
-        toast.error(error.serverError || t("deleteAccount.error"));
-      },
-    });
 
   const { execute: executeUpdateTimeZone, isPending: isUpdatingTimeZone } =
     useAction(updateTimeZoneAction, {
@@ -358,10 +318,6 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
         fileInputRef.current.value = "";
       }
     }
-  };
-
-  const handleDeleteAccount = () => {
-    executeDeleteAccount();
   };
 
   return (
@@ -594,69 +550,6 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
                   {t("timeZone.save")}
                 </Button>
               </div>
-            </div>
-          </section>
-
-          <section className="space-y-6">
-            <div className="border-b border-border/60 pb-2">
-              <h2 className="text-xs font-medium uppercase tracking-[1.2px] text-destructive">
-                {t("deleteAccount.title")}
-              </h2>
-            </div>
-            <div
-              className={`flex items-center justify-between gap-4 ${settingRowClass}`}
-            >
-              <p className="text-sm text-muted-foreground">
-                {t("deleteAccount.description")}
-              </p>
-
-              <AlertDialog
-                open={isDeleteDialogOpen}
-                onOpenChange={(open) => {
-                  if (!isDeletingAccount) {
-                    setIsDeleteDialogOpen(open);
-                  }
-                }}
-              >
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => setIsDeleteDialogOpen(true)}
-                  disabled={isDeletingAccount}
-                >
-                  {isDeletingAccount && (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  )}
-                  {t("deleteAccount.button")}
-                </Button>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>
-                      {t("deleteAccount.confirmTitle")}
-                    </AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {t("deleteAccount.confirmDescription")}
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={isDeletingAccount}>
-                      {t("deleteAccount.cancel")}
-                    </AlertDialogCancel>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      onClick={handleDeleteAccount}
-                      disabled={isDeletingAccount}
-                    >
-                      {isDeletingAccount && (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      )}
-                      {t("deleteAccount.confirm")}
-                    </Button>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
             </div>
           </section>
         </TabsContent>
