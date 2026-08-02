@@ -1,10 +1,11 @@
 /**
- * API 上游 Worker 的 standalone 运行时打包器。
+ * API 上游 Worker 与迁移预检的 standalone 运行时打包器。
  *
  * 使用方：Web postbuild。Next 的文件 trace 能拷贝被显式列出的 pnpm
- * 文件，但不会为独立 Worker 的裸模块导入重建包元数据和解析链接。
- * 本脚本从已锁定的工作区递归收集 QuickJS 生产依赖，并复制成可移植的
- * 标准 node_modules 布局，供裸机 standalone 与最终 Docker 镜像共用。
+ * 文件，但不会为独立 Worker 和预检脚本的裸模块导入重建包元数据和
+ * 解析链接。本脚本从已锁定的工作区递归收集 QuickJS、PostgreSQL 客户端
+ * 及其生产依赖，并复制成可移植的标准 node_modules 布局，供裸机
+ * standalone 与最终 Docker 镜像共用。
  */
 import { access, cp, mkdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -15,7 +16,7 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const webRoot = resolve(scriptDirectory, "..");
 const standaloneRoot = resolve(webRoot, ".next/standalone");
 const standaloneNodeModules = resolve(standaloneRoot, "apps/web/node_modules");
-const rootRuntimePackages = ["quickjs-emscripten"];
+const standaloneRuntimePackages = ["pg", "quickjs-emscripten"];
 
 /**
  * 把 npm 包名拆成安全路径段。
@@ -26,7 +27,7 @@ const rootRuntimePackages = ["quickjs-emscripten"];
  */
 function packageNameSegments(packageName) {
   if (typeof packageName !== "string" || packageName.includes("\\")) {
-    throw new Error("QuickJS 运行时依赖包名无效");
+    throw new Error("standalone 运行时依赖包名无效");
   }
   const segments = packageName.split("/");
   const scoped = packageName.startsWith("@");
@@ -34,7 +35,7 @@ function packageNameSegments(packageName) {
     (scoped ? segments.length !== 2 : segments.length !== 1) ||
     segments.some((segment) => !segment || segment === "." || segment === "..")
   ) {
-    throw new Error("QuickJS 运行时依赖包名无效");
+    throw new Error("standalone 运行时依赖包名无效");
   }
   return segments;
 }
@@ -96,7 +97,7 @@ async function findPackageRoot(resolvedEntry, packageName) {
       currentDirectory = dirname(currentDirectory);
     }
   }
-  throw new Error(`无法定位 QuickJS 运行时依赖：${packageName}`);
+  throw new Error(`无法定位 standalone 运行时依赖：${packageName}`);
 }
 
 /**
@@ -147,7 +148,7 @@ async function collectProductionDependencyGraph(rootPackages) {
     if (existingRoot) {
       if (existingRoot !== record.root) {
         throw new Error(
-          `QuickJS standalone 无法扁平化同名多版本依赖：${nextPackage.packageName}`
+          `standalone 无法扁平化同名多版本依赖：${nextPackage.packageName}`
         );
       }
       continue;
@@ -175,7 +176,7 @@ async function collectProductionDependencyGraph(rootPackages) {
 export async function packageApiUpstreamWorkerStandalone() {
   await access(standaloneRoot);
   const packageRoots =
-    await collectProductionDependencyGraph(rootRuntimePackages);
+    await collectProductionDependencyGraph(standaloneRuntimePackages);
   for (const [packageName, packageRoot] of [...packageRoots.entries()].sort()) {
     const destination = resolve(
       standaloneNodeModules,
