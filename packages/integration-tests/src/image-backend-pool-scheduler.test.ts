@@ -72,6 +72,10 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       cooldown_until timestamp,
       updated_at timestamp not null default now()
     );
+    create table image_backend_member_api_config (
+      member_id text primary key references image_backend_member(id),
+      current_adapter_version_id text
+    );
     create table image_backend_member_group (
       id text primary key,
       member_id text not null references image_backend_member(id),
@@ -82,6 +86,8 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       id text primary key,
       member_id text not null references image_backend_member(id),
       owner_token text not null,
+      api_adapter_member_id text,
+      api_adapter_version_id text,
       expires_at timestamp not null,
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
@@ -100,7 +106,7 @@ async function dropFixtureSchema(
   await client.query(`drop schema ${quoteSchemaName(schemaName)} cascade`);
 }
 
-/** 插入一个默认健康且支持测试模型的统一成员。 */
+/** 插入一个默认健康、支持测试模型且具有当前适配器版本的 API 成员。 */
 async function insertMember(
   client: PoolClient,
   input: {
@@ -124,6 +130,12 @@ async function insertMember(
       input.concurrency ?? 10,
       input.leaseAcquiredCount ?? 0,
     ]
+  );
+  await client.query(
+    `insert into image_backend_member_api_config (
+       member_id, current_adapter_version_id
+     ) values ($1, $2)`,
+    [input.id, `adapter-version-${input.id}`]
   );
   await client.query(
     `insert into image_backend_member_group (id, member_id, group_id)
