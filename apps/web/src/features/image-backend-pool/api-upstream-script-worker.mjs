@@ -128,12 +128,14 @@ async function executeWorkerJob(job) {
   try {
     runtime.setMemoryLimit(job.memoryLimitBytes);
     runtime.setMaxStackSize(job.stackLimitBytes);
-    runtime.setInterruptHandler(
-      shouldInterruptAfterThreadCpuBudget(job.timeoutMs)
-    );
     context = runtime.newContext();
 
     if (job.kind === "validate") {
+      // WHY：50ms 只约束管理员脚本编译与执行，不计入冷启动时的 WASM、Runtime
+      // 和 Context 初始化；整个 Worker 作业另有宿主墙钟看门狗兜底。
+      runtime.setInterruptHandler(
+        shouldInterruptAfterThreadCpuBudget(job.timeoutMs)
+      );
       const result = context.evalCode(buildTransformFunctionSource(job.script));
       if (result.error) {
         result.error.dispose();
@@ -151,6 +153,9 @@ async function executeWorkerJob(job) {
       context.setProp(context.global, "__fluxContextJson", contextHandle);
       contextHandle.dispose();
 
+      runtime.setInterruptHandler(
+        shouldInterruptAfterThreadCpuBudget(job.timeoutMs)
+      );
       const result = context.evalCode(buildExecutionSource(job.script));
       if (result.error) {
         result.error.dispose();
