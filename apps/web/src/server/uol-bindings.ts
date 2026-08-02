@@ -17,12 +17,13 @@
 
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
+import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
+import "@/server/uol-bindings/video-generation";
 import "@/server/site-branding-binding";
 
-import type { FireflyVideoInputImageRole } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import {
   usageSummaryOutputSchema,
   usageTrendsInputSchema,
@@ -30,6 +31,7 @@ import {
 } from "@repo/shared/analytics/contracts";
 import { resolveUsageTimeRange } from "@repo/shared/analytics/range";
 import { getAnalyticsMetricUnit } from "@repo/shared/analytics/series";
+import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import { normalizeSubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import {
   type UsageEvent,
@@ -37,18 +39,12 @@ import {
   usageEventDetailSchema,
   usageEventListOutputSchema,
 } from "@repo/shared/credits/usage-log-contract";
-import type { BackendGroupInput } from "@repo/shared/image-backend/group-contract";
-import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
-import type { RequestParameterMapping } from "@repo/shared/image-backend/request-parameter-mapping";
 import {
   type AdminHistoryListOutput,
   adminHistoryListOutputSchema,
   type HistoryListOutput,
   historyListOutputSchema,
 } from "@repo/shared/image-generation/history-contract";
-import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
-import { logError } from "@repo/shared/logger";
-import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
 import {
   type ModerationImageInput,
   moderateContent,
@@ -58,50 +54,26 @@ import type { SubscriptionCheckoutInput } from "@repo/shared/subscription/checko
 import { subscriptionCheckoutOutputSchema } from "@repo/shared/subscription/checkout-contract";
 import { purchasablePlansOutputSchema } from "@repo/shared/subscription/purchase-contract";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
-  bindOperationExecute,
   isExternalApiKeyPrincipal,
   isMcpApiKeyPrincipal,
   OperationError,
 } from "@repo/shared/uol";
-import {
-  videoListUncertainSubmissions,
-  videoReconcileSubmission,
-} from "@repo/shared/uol/operations/video-generation";
 import {
   type AnalyticsReadModelState,
   loadOutputUsageSummary,
   loadOutputUsageTrends,
   readAnalyticsReadModelStates,
 } from "@/features/dashboard/analytics-service";
-import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import {
   type CreateExternalApiKeyInput,
   ExternalApiKeyManagementError,
   externalApiKeyManagementService,
 } from "@/features/external-api/key-management-service";
 import { getExternalModelsForApiKey } from "@/features/external-api/models";
-import {
-  BackendGroupServiceError,
-  backendGroupService,
-} from "@/features/image-backend-pool/group-service";
-import {
-  buildBackendMemberModelOptions,
-  findUnavailableBackendMemberModelIds,
-} from "@/features/image-backend-pool/member-model-options";
-import {
-  BackendMemberServiceError,
-  backendMemberService,
-} from "@/features/image-backend-pool/member-service";
-import {
-  deleteBackendParameterMappingTemplate,
-  listBackendParameterMappingTemplates,
-  saveBackendParameterMappingTemplate,
-} from "@/features/image-backend-pool/parameter-mapping-service";
 import { databaseAdminHistoryRepository } from "@/features/image-generation/admin-history-repository";
 import {
   AdminHistoryServiceError,
@@ -112,27 +84,6 @@ import {
   HistoryServiceError,
   loadHistoryRecords,
 } from "@/features/image-generation/history-service";
-import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
-import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/video-input-storage";
-import {
-  getVideoGenerationById,
-  reconcileUncertainVideoSubmission,
-  runAdobeVideoGenerationForUser,
-  VideoSubmissionReconciliationError,
-} from "@/features/image-generation/video-operations";
-import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
-import {
-  releaseVideoTaskStagingReservation,
-  VideoActiveTaskLimitError,
-  VideoTaskStagingInProgressError,
-} from "@/features/image-generation/video-task-admission";
-import {
-  createVideoPrincipalScope,
-  createVideoRequestFingerprint,
-  createVideoTaskId,
-} from "@/features/image-generation/video-task-identity";
-import { prepareVideoTaskInputReferences } from "@/features/image-generation/video-task-preparation";
-import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import {
   createCreditTopUpCheckout,
   fulfillAlipayCreditTopUp,
@@ -203,387 +154,6 @@ bindExecute(
   }
 );
 
-type VideoOperationStatus =
-  | "pending"
-  | "submitting"
-  | "processing"
-  | "needs_attention"
-  | "completed"
-  | "failed";
-
-/** 将持久视频状态映射为稳定 UOL 状态。 */
-function toVideoOperationStatus(
-  status: string,
-  stage?: string
-): VideoOperationStatus {
-  if (stage === "submitting") return "submitting";
-  if (stage === "submit_uncertain") return "needs_attention";
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "submitting":
-      return "submitting";
-    case "running":
-    case "processing":
-      return "processing";
-    default:
-      return "pending";
-  }
-}
-
-/** 从任务 metadata 取一个非空字符串，非法历史值按缺失处理。 */
-function readVideoMetadataString(
-  metadata: Record<string, unknown> | null,
-  key: string
-): string | null {
-  const value = metadata?.[key];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-/**
- * 校验视频任务与当前 Principal 完全同域。
- *
- * API Key 任务不会因共享 userId 而被另一把 Key 或站内会话命中。
- */
-function assertVideoTaskPrincipal(
-  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>,
-  principal: Principal,
-  ctx: OperationContext
-): void {
-  if (principal.type !== "user" && principal.type !== "apiKey") {
-    throw new OperationError("unauthenticated", "User identity required");
-  }
-  const expectedApiKeyId = isExternalApiKeyPrincipal(principal)
-    ? principal.apiKeyId
-    : null;
-  if (
-    row.userId !== principal.userId ||
-    row.apiKeyId !== expectedApiKeyId ||
-    row.principalScope !== createVideoPrincipalScope(principal)
-  ) {
-    throw new OperationError("not_found", "Video task not found");
-  }
-  ctx.assertOwnership("video task", row.userId);
-}
-
-/** 校验幂等重放的请求内容没有发生变化。 */
-function assertVideoRequestFingerprint(
-  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>,
-  requestFingerprint: string
-): void {
-  if (
-    readVideoMetadataString(row.metadata, "requestFingerprint") !==
-    requestFingerprint
-  ) {
-    throw new OperationError(
-      "idempotency_conflict",
-      "clientRequestId was already used with different video input"
-    );
-  }
-}
-
-/** 从受信执行上下文读取并再次校验视频完成回调地址。 */
-async function getTrustedVideoCompletionUrl(
-  ctx: OperationContext
-): Promise<string | undefined> {
-  const value = ctx.callbacks?.videoCompletionUrl;
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") {
-    throw new OperationError(
-      "validation_error",
-      "videoCompletionUrl callback must be a string"
-    );
-  }
-  try {
-    return await validateCallbackUrl(value);
-  } catch (error) {
-    throw new OperationError(
-      "validation_error",
-      error instanceof Error ? error.message : "Invalid video callback URL"
-    );
-  }
-}
-
-/** 校验幂等视频请求没有更换或追加回调目的地。 */
-async function assertVideoCallbackFingerprint(
-  taskId: string,
-  callbackUrl: string | undefined
-): Promise<void> {
-  if (await doesVideoCallbackDeliveryMatch(taskId, callbackUrl)) return;
-  throw new OperationError(
-    "idempotency_conflict",
-    "clientRequestId was already used with a different callback URL"
-  );
-}
-
-/** video.generate - Principal 作用域幂等地执行统一视频管线。 */
-bindExecute(
-  "video.generate",
-  async (
-    input: {
-      clientRequestId: string;
-      prompt: string;
-      negativePrompt?: string;
-      generateAudio?: boolean;
-      model: string;
-      backendGroupId?: string;
-      inputImages?: MediaInputReference[];
-      inputImageRole?: FireflyVideoInputImageRole;
-    },
-    principal: Principal,
-    ctx: OperationContext
-  ) => {
-    if (principal.type !== "user" && principal.type !== "apiKey") {
-      throw new OperationError("unauthenticated", "User identity required");
-    }
-    const apiKeyId = isExternalApiKeyPrincipal(principal)
-      ? principal.apiKeyId
-      : undefined;
-    const callbackUrl = await getTrustedVideoCompletionUrl(ctx);
-    const principalScope = createVideoPrincipalScope(principal);
-    const taskId = createVideoTaskId({
-      principalScope,
-      clientRequestId: input.clientRequestId,
-    });
-    const requestFingerprint = createVideoRequestFingerprint(input);
-    const existing = await getVideoGenerationById(taskId);
-    if (existing) {
-      assertVideoTaskPrincipal(existing, principal, ctx);
-      assertVideoRequestFingerprint(existing, requestFingerprint);
-      await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      return {
-        taskId,
-        status: toVideoOperationStatus(existing.status, existing.stage),
-      };
-    }
-
-    let preparation: Awaited<
-      ReturnType<typeof prepareVideoTaskInputReferences>
-    >;
-    try {
-      preparation = await prepareVideoTaskInputReferences({
-        taskId,
-        userId: principal.userId,
-        principalScope,
-        references: input.inputImages ?? [],
-      });
-      if (preparation.admission === "existing") {
-        const raced = await getVideoGenerationById(taskId);
-        if (!raced) {
-          throw new OperationError(
-            "not_ready",
-            "视频任务正在创建，请使用同一 clientRequestId 稍后重试"
-          );
-        }
-        assertVideoTaskPrincipal(raced, principal, ctx);
-        assertVideoRequestFingerprint(raced, requestFingerprint);
-        await assertVideoCallbackFingerprint(taskId, callbackUrl);
-        return {
-          taskId,
-          status: toVideoOperationStatus(raced.status, raced.stage),
-        };
-      }
-    } catch (error) {
-      if (error instanceof VideoActiveTaskLimitError) {
-        throw new OperationError("rate_limited", error.message, {
-          limitKind: error.limitKind,
-          maxActiveTasks: error.maxActiveTasks,
-        });
-      }
-      if (error instanceof VideoTaskStagingInProgressError) {
-        throw new OperationError("not_ready", error.message);
-      }
-      logError(error, {
-        source: "video-input-preparation",
-        taskId,
-        userId: principal.userId,
-      });
-      throw new OperationError(
-        "not_ready",
-        "视频任务暂时无法完成准入或输入转存，请稍后重试"
-      );
-    }
-    const stagedInput = preparation.stagedInput;
-
-    try {
-      const result = await runAdobeVideoGenerationForUser(
-        {
-          userId: principal.userId,
-          ...(apiKeyId ? { apiKeyId } : {}),
-          principalScope,
-          stagingReservationToken: preparation.reservationToken,
-          videoGenerationId: taskId,
-          clientRequestId: input.clientRequestId,
-          requestFingerprint,
-          prompt: input.prompt,
-          model: input.model,
-          ...(input.negativePrompt
-            ? { negativePrompt: input.negativePrompt }
-            : {}),
-          ...(input.generateAudio !== undefined
-            ? { generateAudio: input.generateAudio }
-            : {}),
-          ...(input.backendGroupId
-            ? { backendGroupId: input.backendGroupId }
-            : {}),
-          ...(stagedInput.references.length
-            ? { inputImages: stagedInput.references }
-            : {}),
-          ...(input.inputImageRole
-            ? { inputImageRole: input.inputImageRole }
-            : {}),
-          ...(stagedInput.objects.length
-            ? { stagedInputObjects: stagedInput.objects }
-            : {}),
-        },
-        callbackUrl ? { callbackUrl } : undefined
-      );
-      const persisted = await getVideoGenerationById(taskId);
-      await cleanupUnusedStagedVideoInputs({
-        objects: stagedInput.objects,
-        persistedReferences: persisted?.inputImageRefs,
-      });
-      if (persisted) {
-        assertVideoTaskPrincipal(persisted, principal, ctx);
-        assertVideoRequestFingerprint(persisted, requestFingerprint);
-        await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      }
-      return {
-        taskId,
-        status: persisted
-          ? toVideoOperationStatus(persisted.status, persisted.stage)
-          : "error" in result
-            ? ("failed" as const)
-            : ("pending" as const),
-      };
-    } catch (error) {
-      // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个
-      // insert 失败。只有已存在且指纹一致时才把它视为幂等命中。
-      await releaseVideoTaskStagingReservation({
-        taskId,
-        userId: principal.userId,
-        reservationToken: preparation.reservationToken,
-      }).catch((releaseError) =>
-        logError(releaseError, {
-          source: "video-staging-reservation-release",
-          taskId,
-          userId: principal.userId,
-        })
-      );
-      const raced = await getVideoGenerationById(taskId);
-      await cleanupUnusedStagedVideoInputs({
-        objects: stagedInput.objects,
-        persistedReferences: raced?.inputImageRefs,
-      }).catch((cleanupError) =>
-        logError(cleanupError, {
-          source: "video-input-storage-cleanup",
-          taskId,
-          userId: principal.userId,
-        })
-      );
-      if (!raced) {
-        if (error instanceof VideoActiveTaskLimitError) {
-          throw new OperationError("rate_limited", error.message, {
-            limitKind: error.limitKind,
-            maxActiveTasks: error.maxActiveTasks,
-          });
-        }
-        throw error;
-      }
-      assertVideoTaskPrincipal(raced, principal, ctx);
-      assertVideoRequestFingerprint(raced, requestFingerprint);
-      await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      return {
-        taskId,
-        status: toVideoOperationStatus(raced.status, raced.stage),
-      };
-    }
-  }
-);
-
-/** video.getStatus - 只返回当前 Principal 同域的持久视频任务。 */
-bindExecute(
-  "video.getStatus",
-  async (
-    input: { taskId: string },
-    principal: Principal,
-    ctx: OperationContext
-  ) => {
-    const row = await getVideoGenerationById(input.taskId);
-    if (!row) {
-      throw new OperationError("not_found", "Video task not found");
-    }
-    assertVideoTaskPrincipal(row, principal, ctx);
-    const videoUrl = row.storageKey
-      ? buildPublicVideoStatusUrl({
-          storageKey: row.storageKey,
-          bucket:
-            (await getRuntimeSettingString(
-              "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-            )) || "generations",
-          publicBaseUrl:
-            (await getRuntimeSettingString("NEXT_PUBLIC_APP_URL")) ||
-            (await getRuntimeSettingString("BETTER_AUTH_URL")),
-        })
-      : null;
-    return {
-      taskId: row.id,
-      status: toVideoOperationStatus(row.status, row.stage),
-      ...(videoUrl ? { videoUrl } : {}),
-      ...(row.error ? { error: row.error } : {}),
-      createdAt: row.createdAt.toISOString(),
-      ...(row.completedAt
-        ? { completedAt: row.completedAt.toISOString() }
-        : {}),
-    };
-  }
-);
-
-/** video.listUncertainSubmissions - 管理员读取安全的待核对任务列表。 */
-bindOperationExecute(videoListUncertainSubmissions, async (input) => {
-  const [{ db }, { videoGeneration }, { desc, eq }] = await Promise.all([
-    import("@repo/database"),
-    import("@repo/database/schema"),
-    import("drizzle-orm"),
-  ]);
-  const rows = await db
-    .select({
-      taskId: videoGeneration.id,
-      model: videoGeneration.model,
-      backendMemberId: videoGeneration.backendMemberId,
-      error: videoGeneration.error,
-      submitStartedAt: videoGeneration.submitStartedAt,
-      createdAt: videoGeneration.createdAt,
-      updatedAt: videoGeneration.updatedAt,
-    })
-    .from(videoGeneration)
-    .where(eq(videoGeneration.stage, "submit_uncertain"))
-    .orderBy(desc(videoGeneration.updatedAt), desc(videoGeneration.id))
-    .limit(input.limit);
-  return {
-    items: rows.map((row) => ({
-      ...row,
-      submitStartedAt: row.submitStartedAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    })),
-  };
-});
-
-/** video.reconcileSubmission - 管理员人工收敛 Adobe 提交不确定任务。 */
-bindOperationExecute(videoReconcileSubmission, async (input) => {
-  try {
-    return await reconcileUncertainVideoSubmission(input);
-  } catch (error) {
-    if (error instanceof VideoSubmissionReconciliationError) {
-      throw new OperationError(error.code, error.message);
-    }
-    throw error;
-  }
-});
-
 /** 绑定本人统一生成历史；站内会话和 User MCP 可读，外部 API Key 继续隔离。 */
 bindExecute(
   "image.listMyHistoryRecords",
@@ -611,7 +181,7 @@ bindExecute(
   }
 );
 
-/** 绑定管理员全局统一生成历史；仅真实 admin/super_admin 可读取受控用户身份字段。 */
+/** 绑定管理员全局统一生成历史；仅现有三档管理员可读取受控用户身份字段。 */
 bindExecute(
   "image.listAdminHistoryRecords",
   async (
@@ -620,7 +190,7 @@ bindExecute(
   ): Promise<AdminHistoryListOutput> => {
     if (
       principal.type !== "user" ||
-      (principal.role !== "admin" && principal.role !== "super_admin")
+      !canViewGlobalUsageRecords(principal.role)
     ) {
       throw new OperationError("forbidden", "Admin access required");
     }
@@ -1007,47 +577,6 @@ bindExecute(
   ) => fulfillAlipayCreditTopUp(input)
 );
 
-/** pool.listParameterMappingTemplates - 读取可复用的参数映射模板。 */
-bindExecute(
-  "pool.listParameterMappingTemplates",
-  async (
-    _input: Record<string, never>,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({
-    templates: await listBackendParameterMappingTemplates(),
-  })
-);
-
-/** pool.saveParameterMappingTemplate - 保存独立的参数映射模板快照。 */
-bindExecute(
-  "pool.saveParameterMappingTemplate",
-  async (
-    input: {
-      id?: string;
-      name: string;
-      parameterMappings: RequestParameterMapping[];
-    },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({
-    id: await saveBackendParameterMappingTemplate(input),
-  })
-);
-
-/** pool.deleteParameterMappingTemplate - 删除模板，不影响已保存的 API 配置。 */
-bindExecute(
-  "pool.deleteParameterMappingTemplate",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    await deleteBackendParameterMappingTemplate(input.id);
-    return { success: true };
-  }
-);
-
 // TODO: image.generateAction - 委托 image.generate
 // TODO: image.delete - deleteGenerationAction 逻辑
 // TODO: image.getStatus - getGenerationStatus 逻辑
@@ -1057,168 +586,6 @@ bindExecute(
 // TODO: image.getGenerationById - 单条查询
 // TODO: image.getGenerationStats - 管理员统计
 // TODO: image.getEffectiveConfig - getEffectiveConfig 逻辑
-
-// ---------------------------------------------------------------------------
-// image-backend-pool 域
-// ---------------------------------------------------------------------------
-
-/**
- * 将统一号池领域错误映射为 UOL 错误。
- *
- * @param error 分组或成员服务抛出的未知错误。
- * @throws 始终抛出可由传输层稳定编码的错误；未知错误保持原样上抛。
- */
-function throwBackendPoolOperationError(error: unknown): never {
-  if (
-    error instanceof BackendGroupServiceError ||
-    error instanceof BackendMemberServiceError
-  ) {
-    throw new OperationError(error.code, error.message);
-  }
-  throw error;
-}
-
-/**
- * 校验成员能力只引用模型配置目录中的模型 ID。
- *
- * @param input 已通过统一成员输入 schema 的新增或编辑请求。
- * @param principal UOL 网关验证后的真实管理员身份，用于读取同权限模型配置快照。
- * @returns 校验成功时无返回值。
- * @sideEffects 读取最新模型配置；编辑时额外读取当前成员以允许原样保留迁移历史 ID。
- * @failure 模型配置不可读时返回 not_ready；新增的未知 ID 或不支持视频的成员选择视频
- * 时返回 validation_error，不进入成员保存事务。
- */
-async function assertBackendMemberModelsComeFromConfiguration(
-  input: BackendMemberInput,
-  principal: Principal
-): Promise<void> {
-  let modelConfiguration: ModelConfigurationSnapshot;
-  try {
-    modelConfiguration =
-      await productionModelConfigurationService.read(principal);
-  } catch (error) {
-    logError(error, {
-      source: "image-backend-pool",
-      operation: "validate-member-model-options",
-    });
-    throw new OperationError(
-      "not_ready",
-      "模型配置暂不可用，无法校验成员支持的模型"
-    );
-  }
-
-  const existingModelIds = input.id
-    ? ((await backendMemberService.listMembers()).find(
-        (member) => member.id === input.id
-      )?.supportedModelIds ?? [])
-    : [];
-  const unavailableModelIds = findUnavailableBackendMemberModelIds(
-    input,
-    buildBackendMemberModelOptions(modelConfiguration),
-    existingModelIds
-  );
-  if (unavailableModelIds.length === 0) return;
-
-  const displayedIds = unavailableModelIds.slice(0, 3).join("、");
-  const remainingCount = unavailableModelIds.length - 3;
-  throw new OperationError(
-    "validation_error",
-    `以下模型不在当前模型配置可选范围：${displayedIds}${
-      remainingCount > 0 ? ` 等 ${unavailableModelIds.length} 个` : ""
-    }`
-  );
-}
-
-/** pool.getGroupOptions - 获取用户可选择的启用分组。 */
-bindExecute(
-  "pool.getGroupOptions",
-  async (
-    _input: Record<string, never>,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => ({ options: await backendGroupService.listGroupOptions() })
-);
-
-/** pool.getAdminPool - 读取统一分组和统一成员的脱敏管理快照。 */
-bindExecute(
-  "pool.getAdminPool",
-  async (
-    _input: Record<string, never>,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    const [groups, members] = await Promise.all([
-      backendGroupService.listGroups(),
-      backendMemberService.listMembers(),
-    ]);
-    return { groups, members };
-  }
-);
-
-/** pool.saveGroup - 保存统一分组及其计费、套餐和层级配置。 */
-bindExecute(
-  "pool.saveGroup",
-  async (
-    input: BackendGroupInput,
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendGroupService.saveGroup(input);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.deleteGroup - 删除不再被成员或层级关系使用的非默认分组。 */
-bindExecute(
-  "pool.deleteGroup",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendGroupService.deleteGroup(input.id);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.saveMember - 保存 `api | adobe` 统一成员及类型专属配置。 */
-bindExecute(
-  "pool.saveMember",
-  async (
-    input: BackendMemberInput,
-    principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      await assertBackendMemberModelsComeFromConfiguration(input, principal);
-      return await backendMemberService.saveMember(input);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
-
-/** pool.deleteMember - 按统一成员 ID 执行运行中任务保护删除。 */
-bindExecute(
-  "pool.deleteMember",
-  async (
-    input: { id: string },
-    _principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    try {
-      return await backendMemberService.deleteMember(input.id);
-    } catch (error) {
-      throwBackendPoolOperationError(error);
-    }
-  }
-);
 
 // ---------------------------------------------------------------------------
 // user-auth 域

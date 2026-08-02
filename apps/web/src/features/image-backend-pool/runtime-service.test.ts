@@ -11,6 +11,8 @@ import {
   type RuntimeGroupSelectionInput,
   selectTrustedRuntimeGroupTarget,
 } from "./runtime-group-selection";
+import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
+import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 
 /** 构造只覆盖分组信任边界所需的最小运行时输入。 */
 function runtimeInput(
@@ -32,10 +34,9 @@ describe("selectTrustedRuntimeGroupTarget", () => {
 
   it("API Key 绑定组覆盖默认选择且允许同组辅助编辑", () => {
     expect(
-      selectTrustedRuntimeGroupTarget(
-        runtimeInput({ apiKeyId: "key-1" }),
-        { groupId: "group-bound" }
-      )
+      selectTrustedRuntimeGroupTarget(runtimeInput({ apiKeyId: "key-1" }), {
+        groupId: "group-bound",
+      })
     ).toEqual({ targetGroupId: "group-bound", isUserRequested: false });
     expect(
       selectTrustedRuntimeGroupTarget(
@@ -75,5 +76,92 @@ describe("selectTrustedRuntimeGroupTarget", () => {
         { groupId: "group-bound" }
       )
     ).toThrow(/不一致/u);
+  });
+});
+
+describe("projectConfiguredVideoModelIds", () => {
+  it("API 与 Adobe direct 成员的真实 ID 计入视频配置可达性", () => {
+    expect(
+      projectConfiguredVideoModelIds([
+        {
+          memberType: "api",
+          adobeMode: null,
+          supportedModelIds: ["seedance2"],
+        },
+        {
+          memberType: "adobe",
+          adobeMode: "gateway",
+          supportedModelIds: ["seedance2-fast"],
+        },
+        {
+          memberType: "adobe",
+          adobeMode: "direct",
+          supportedModelIds: [
+            "SEEDANCE2",
+            "seedance2",
+            "sora2",
+            "firefly-sora2-8s-16x9",
+            "unknown-video",
+          ],
+        },
+      ])
+    ).toEqual(["seedance2", "sora2"]);
+  });
+
+  it("配置可达性不读取健康、冷却、容量或实时租约状态", () => {
+    const coolingAndFullMember = {
+      memberType: "adobe" as const,
+      adobeMode: "direct" as const,
+      supportedModelIds: ["seedance2"],
+      status: "limited",
+      healthStatus: "unhealthy",
+      cooldownUntil: "2099-01-01T00:00:00.000Z",
+      inflightCount: 10,
+      concurrency: 10,
+    };
+
+    expect(projectConfiguredVideoModelIds([coolingAndFullMember])).toEqual([
+      "seedance2",
+    ]);
+  });
+});
+
+describe("canRuntimeBackendLeaseServeRequest", () => {
+  it("API 与 Adobe Direct 可执行视频，Adobe Gateway 不可执行", () => {
+    const videoRequest = { requestKind: "video" as const };
+    expect(
+      canRuntimeBackendLeaseServeRequest(videoRequest, {
+        memberType: "api",
+        adobeMode: null,
+      })
+    ).toBe(true);
+    expect(
+      canRuntimeBackendLeaseServeRequest(videoRequest, {
+        memberType: "adobe",
+        adobeMode: "direct",
+      })
+    ).toBe(true);
+    expect(
+      canRuntimeBackendLeaseServeRequest(videoRequest, {
+        memberType: "adobe",
+        adobeMode: "gateway",
+      })
+    ).toBe(false);
+  });
+
+  it("蒙版编辑仍只允许 API 账号", () => {
+    const maskRequest = { requestKind: "image" as const, requiresMask: true };
+    expect(
+      canRuntimeBackendLeaseServeRequest(maskRequest, {
+        memberType: "api",
+        adobeMode: null,
+      })
+    ).toBe(true);
+    expect(
+      canRuntimeBackendLeaseServeRequest(maskRequest, {
+        memberType: "adobe",
+        adobeMode: "direct",
+      })
+    ).toBe(false);
   });
 });

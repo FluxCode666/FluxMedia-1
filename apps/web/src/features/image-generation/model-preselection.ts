@@ -5,9 +5,9 @@
  * 目录选择模型、解析静态视频目录并清理 URL；不读取数据库、localStorage 或旧创作状态。
  */
 import {
-  type FireflyVideoResolution,
-  resolveFireflyVideoModel,
-} from "@repo/shared/adobe/firefly-direct/video-catalog";
+  resolveVideoModelCapability,
+  type VideoResolution,
+} from "@repo/shared/video-generation";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 
@@ -42,10 +42,10 @@ export interface ResolveAuthorizedImageSelectionInput {
 
 /** VideoCreatePanel 可直接用于初始化四个受控选择器的静态状态。 */
 export interface VideoInitialSelection {
-  readonly familyId: string;
+  readonly modelId: string;
   readonly duration: number;
-  readonly ratio: string;
-  readonly resolution: FireflyVideoResolution;
+  readonly aspectRatio: string;
+  readonly resolution: VideoResolution;
 }
 
 /**
@@ -137,7 +137,7 @@ export function resolveAuthorizedImageSelection(
  * 将静态合法的视频模型 ID 收窄为 VideoCreatePanel 初始选择。
  *
  * @param modelId - 模型广场传入且已通过基本长度校验的视频模型 ID。
- * @returns 静态 Firefly 目录命中时返回族、时长、比例和分辨率，否则返回 null。
+ * @returns 真实能力目录命中时返回模型与默认参数选择，否则返回 null。
  * @sideEffects 无；不执行用户、套餐、后端可达性或最终服务端授权。
  * @failure 空值、超长、图片模型或已移除视频模型统一返回 null。
  */
@@ -146,13 +146,24 @@ export function resolveVideoInitialSelection(
 ): VideoInitialSelection | null {
   const normalizedModelId = normalizeModelPreselectionId(modelId);
   if (!normalizedModelId) return null;
-  const model = resolveFireflyVideoModel(normalizedModelId);
-  if (!model) return null;
+  const resolved = resolveVideoModelCapability(normalizedModelId);
+  if (!resolved.ok) return null;
+  const model = resolved.capability;
+  const duration = model.durations[0];
+  const ratio = model.aspectRatios[0];
+  const resolution = model.resolutions[0];
+  if (
+    duration === undefined ||
+    ratio === undefined ||
+    resolution === undefined
+  ) {
+    return null;
+  }
   return {
-    familyId: model.family,
-    duration: model.duration,
-    ratio: model.aspectRatio,
-    resolution: model.outputResolution,
+    modelId: model.modelId,
+    duration,
+    aspectRatio: ratio,
+    resolution,
   };
 }
 

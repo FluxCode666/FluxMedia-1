@@ -142,6 +142,17 @@ const PUBLIC_VIDEO_MODEL = {
   supportedDurations: [4, 6, 8],
   supportedAspectRatios: ["16:9", "9:16"],
   supportedResolutions: ["720p", "1080p"],
+  input: {
+    frames: "first-and-optional-last" as const,
+    referenceImages: { maxCount: 0, configurable: false },
+    framesAndReferencesMutuallyExclusive: true,
+  },
+  audio: { supported: false, defaultEnabled: false },
+  configuredReachable: true,
+  infrastructureLimits: {
+    maxMediaInputCount: 256 as const,
+    maxMediaInputBytes: 209_715_200 as const,
+  },
 };
 
 const READY_CATALOG = {

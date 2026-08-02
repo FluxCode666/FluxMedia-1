@@ -27,6 +27,26 @@ export interface LoadedMediaInput {
   storageBucket?: string;
 }
 
+/**
+ * 累加实际读取字节并执行共享 200 MB 上限。
+ *
+ * @param currentBytes 当前请求已经实际读取的字节。
+ * @param nextBytes 下一项实际 Buffer 字节。
+ * @returns 未超限时的新总量。
+ * @sideEffects 无。
+ * @throws SafeImageFetchError 总量超过共享基础设施上限时失败。
+ */
+export function addActualMediaInputBytes(
+  currentBytes: number,
+  nextBytes: number
+): number {
+  const totalBytes = currentBytes + nextBytes;
+  if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
+    throw new SafeImageFetchError("Media input exceeds the byte limit.");
+  }
+  return totalBytes;
+}
+
 /** 校验实际 MIME，防止宣称为图片的 HTML 或其他载荷进入上游。 */
 function assertExpectedMimeType(expected: string, actual: string | null): void {
   const normalized = actual?.split(";", 1)[0]?.trim().toLowerCase();
@@ -58,10 +78,7 @@ export async function loadMediaInputs(input: {
     type: string,
     storage?: Pick<LoadedMediaInput, "storageKey" | "storageBucket">
   ): void => {
-    totalBytes += data.byteLength;
-    if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
-      throw new SafeImageFetchError("Media input exceeds the byte limit.");
-    }
+    totalBytes = addActualMediaInputBytes(totalBytes, data.byteLength);
     loaded.push({ data, type, ...storage });
   };
 

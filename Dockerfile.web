@@ -66,6 +66,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV LOCAL_STORAGE_PATH=/app/storage
 ENV NEXT_PUBLIC_GENERATIONS_BUCKET_NAME=generations
 ENV NEXT_PUBLIC_AVATARS_BUCKET_NAME=avatars
+# 当前 runner 只启动一个 Node 主进程；这些值限制该进程内的
+# API 上游脚本 Worker Thread Pool，部署环境可在安全范围内覆盖。
+ENV API_UPSTREAM_SCRIPT_WORKER_COUNT=1
+ENV API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB=32
+ENV API_UPSTREAM_SCRIPT_STACK_LIMIT_KB=512
 # ISNet 模型在 standalone 的 apps/web/models 下;容器 cwd=/app(CMD 跑 apps/web/server.js),
 # 不显式指定的话 matte.ts 会按 cwd/models 找不到,故指向实际路径。
 ENV ISNET_MODEL_PATH=/app/apps/web/models/isnet.onnx

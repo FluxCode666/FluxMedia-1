@@ -7,9 +7,15 @@
  */
 import { z } from "zod";
 
-import { isFireflyVideoModelId } from "../adobe/firefly-direct/video-catalog";
-import { requestParameterMappingsSchema } from "./request-parameter-mapping";
+import { normalizeVideoModelId } from "../video-generation/contracts";
 import {
+  apiModelMappingsSchema,
+  apiUpstreamAuthenticationSchema,
+  apiUpstreamOperationsSchema,
+  createDefaultApiUpstreamOperations,
+} from "./api-upstream-adaptation";
+import {
+  isLegacyVideoModelId,
   normalizeSupportedModelIds,
   supportedModelIdsSchema,
 } from "./supported-models";
@@ -33,13 +39,28 @@ export const BACKEND_MEMBER_TYPES = ["api", "adobe"] as const;
 /** 顶层媒体后端成员类型。 */
 export type BackendMemberType = (typeof BACKEND_MEMBER_TYPES)[number];
 
-/** API 成员只支持 OpenAI Images 风格协议。 */
+/** API 成员支持 OpenAI 风格的 Images 与平台 Videos 兼容协议。 */
 export const apiBackendMemberConfigSchema = z
   .object({
     baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
-    parameterMappings: requestParameterMappingsSchema,
+    modelMappings: apiModelMappingsSchema,
+    authentication: apiUpstreamAuthenticationSchema.default({
+      mode: "bearer",
+    }),
+    credentialScope: z.string().trim().min(1).max(512).optional(),
+    operations: apiUpstreamOperationsSchema.default(() =>
+      createDefaultApiUpstreamOperations()
+    ),
+    expectedCurrentVersionId: z
+      .string()
+      .trim()
+      .min(1)
+      // 旧迁移版本由固定前缀和最长 128 字符成员 ID 组成。
+      .max(256)
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -110,8 +131,8 @@ const adobeBackendMemberInputSchema = z
 /**
  * 统一成员保存 schema。
  *
- * API 与 Adobe gateway 不具备本次保留的视频执行闭环，因此即便模型名称可解析，
- * 也必须在配置边界 fail-closed；Adobe direct 是当前唯一允许声明视频能力的形态。
+ * API 与 Adobe direct 可声明真实视频模型；Adobe gateway 暂不具备视频执行闭环。
+ * 所有可执行成员都拒绝迁移前复合视频身份，避免参数重新编码进模型 ID。
  */
 export const backendMemberInputSchema = z
   .discriminatedUnion("type", [
@@ -119,6 +140,29 @@ export const backendMemberInputSchema = z
     adobeBackendMemberInputSchema,
   ])
   .superRefine((member, context) => {
+    if (member.type === "api") {
+      if (
+        member.id !== undefined &&
+        member.config.expectedCurrentVersionId === undefined
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["config", "expectedCurrentVersionId"],
+          message: "Editing an API member requires the current adapter version",
+        });
+      }
+      const supportedModelIds = new Set(
+        member.supportedModelIds.map((modelId) => modelId.toLowerCase())
+      );
+      for (const [index, mapping] of member.config.modelMappings.entries()) {
+        if (supportedModelIds.has(mapping.modelId.toLowerCase())) continue;
+        context.addIssue({
+          code: "custom",
+          path: ["config", "modelMappings", index, "modelId"],
+          message: "Model mapping source must be a supported model ID",
+        });
+      }
+    }
     if (
       member.type === "adobe" &&
       member.config.mode === "direct" &&
@@ -131,15 +175,25 @@ export const backendMemberInputSchema = z
         message: "A new Adobe direct member requires a Cookie",
       });
     }
-    if (member.type === "adobe" && member.config.mode === "direct") {
+    if (member.type === "api" || member.config.mode === "direct") {
+      for (const [index, modelId] of member.supportedModelIds.entries()) {
+        if (!isLegacyVideoModelId(modelId)) continue;
+        context.addIssue({
+          code: "custom",
+          path: ["supportedModelIds", index],
+          message: "Video models must use a real model ID",
+        });
+      }
       return;
     }
     for (const [index, modelId] of member.supportedModelIds.entries()) {
-      if (!isFireflyVideoModelId(modelId)) continue;
+      if (!normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)) {
+        continue;
+      }
       context.addIssue({
         code: "custom",
         path: ["supportedModelIds", index],
-        message: "Video models require an Adobe direct member",
+        message: "Video models require an API or Adobe direct member",
       });
     }
   });

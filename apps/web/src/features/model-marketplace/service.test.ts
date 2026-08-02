@@ -1,8 +1,8 @@
 /**
  * 公开模型广场生产服务测试。
  *
- * 使用方是 UOL late binding；测试验证七项事实并行读取、资产 bucket 隔离、封面引用
- * 校验与第一方 URL 编码，以及依赖失败和正常空目录语义，不连接数据库或对象存储。
+ * 使用方是 UOL late binding；测试验证八项事实并行读取、资产 bucket 隔离、封面引用
+ * 校验与第一方 URL 编码，以及依赖失败和不可达目录语义，不连接数据库或对象存储。
  */
 import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
@@ -10,6 +10,7 @@ import {
   createDefaultModelMarketplaceConfig,
   type ModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProductionModelMarketplaceDependencies } from "./service";
@@ -50,6 +51,9 @@ function createDependencies(
       }
       if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
         return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+      }
+      if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
+        return createDefaultVideoModelCapabilityOverrides();
       }
       return structuredClone(marketplaceConfig);
     },
@@ -95,7 +99,7 @@ function createDeferred<T>(): {
 }
 
 describe("公开模型广场生产服务", () => {
-  it("同一轮并行启动运行时、三项 JSON 与三个 bucket 读取", async () => {
+  it("同一轮并行启动运行时、四项 JSON 与三个 bucket 读取", async () => {
     const { createProductionModelMarketplaceService } = await import(
       "./service"
     );
@@ -122,6 +126,9 @@ describe("公开模型广场生产服务", () => {
         if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
           return read(key, { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND });
         }
+        if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
+          return read(key, createDefaultVideoModelCapabilityOverrides());
+        }
         return read(key, createDefaultModelMarketplaceConfig());
       },
       loadSettingString: (key) => {
@@ -136,13 +143,14 @@ describe("公开模型广场生产服务", () => {
     });
 
     const outputPromise = service.listPublicModels();
-    expect(started).toHaveLength(7);
-    expect(new Set(started).size).toBe(7);
+    expect(started).toHaveLength(8);
+    expect(new Set(started).size).toBe(8);
     for (const deferred of deferredByKey.values()) deferred.resolve();
 
-    await expect(outputPromise).resolves.toMatchObject({
-      items: [expect.objectContaining({ configKey: "gpt-image-2" })],
-    });
+    const output = await outputPromise;
+    expect(
+      output.items.find((item) => item.configKey === "gpt-image-2")
+    ).toBeDefined();
   });
 
   it("返回严格的 items 包装且不暴露运行时或存储内部字段", async () => {
@@ -154,7 +162,12 @@ describe("公开模型广场生产服务", () => {
     ).listPublicModels();
 
     expect(Object.keys(output)).toEqual(["items"]);
-    expect(output.items).toHaveLength(1);
+    expect(
+      output.items.filter((item) => item.category === "image")
+    ).toHaveLength(1);
+    expect(
+      output.items.filter((item) => item.category === "video")
+    ).toHaveLength(13);
     expect(JSON.stringify(output)).not.toMatch(
       /"bucket"|"key"|"members"|"credentials"/
     );
@@ -164,6 +177,7 @@ describe("公开模型广场生产服务", () => {
     "runtime",
     "imagePricing",
     "videoPricing",
+    "videoCapabilities",
     "marketplaceConfig",
   ] as const)("%s 读取失败时保持原始异常并拒绝", async (failureSource) => {
     const { createProductionModelMarketplaceService } = await import(
@@ -185,6 +199,8 @@ describe("公开模型广场生产服务", () => {
             key === "IMAGE_MODEL_CREDIT_PRICES") ||
           (failureSource === "videoPricing" &&
             key === "VIDEO_MODEL_CREDITS_PER_SECOND") ||
+          (failureSource === "videoCapabilities" &&
+            key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") ||
           (failureSource === "marketplaceConfig" &&
             key === "MODEL_MARKETPLACE_CONFIG");
         if (shouldFail) throw failure;
@@ -228,9 +244,10 @@ describe("公开模型广场生产服务", () => {
           : "system-assets",
     });
 
-    await expect(service.listPublicModels()).resolves.toMatchObject({
-      items: [expect.objectContaining({ configKey: "gpt-image-2" })],
-    });
+    const output = await service.listPublicModels();
+    expect(
+      output.items.find((item) => item.configKey === "gpt-image-2")
+    ).toBeDefined();
   });
 
   it("在生成任一公开 URL 前拒绝历史跨 bucket 封面引用", async () => {
@@ -277,9 +294,9 @@ describe("公开模型广场生产服务", () => {
       createDependencies(marketplaceConfig)
     ).listPublicModels();
 
-    expect(output.items[0]?.coverUrl).toBe(
-      `/api/storage/model-marketplace/${IMAGE_COVER_KEY}`
-    );
+    expect(
+      output.items.find((item) => item.category === "image")?.coverUrl
+    ).toBe(`/api/storage/model-marketplace/${IMAGE_COVER_KEY}`);
     expect(JSON.stringify(output)).not.toMatch(/"bucket"|"key"/);
   });
 
@@ -317,11 +334,13 @@ describe("公开模型广场生产服务", () => {
       getDefaultCoverPath,
     }).listPublicModels();
 
-    expect(output.items[0]?.coverUrl).toBe("/defaults/image.webp");
+    expect(
+      output.items.find((item) => item.category === "image")?.coverUrl
+    ).toBe("/defaults/image.webp");
     expect(getDefaultCoverPath).toHaveBeenCalledWith("image");
   });
 
-  it("全部真实模型显式关闭时正常返回 ready-empty", async () => {
+  it("图像模型关闭后仍返回全局视频能力并标记不可达", async () => {
     const { createProductionModelMarketplaceService } = await import(
       "./service"
     );
@@ -336,6 +355,43 @@ describe("公开模型广场生产服务", () => {
       createDependencies(marketplaceConfig)
     ).listPublicModels();
 
-    expect(output).toEqual({ items: [] });
+    expect(output.items).toHaveLength(13);
+    expect(
+      output.items.every(
+        (item) => item.category === "video" && !item.configuredReachable
+      )
+    ).toBe(true);
+  });
+
+  it("读取动态视频能力覆盖并传入公开目录", async () => {
+    const { createProductionModelMarketplaceService } = await import(
+      "./service"
+    );
+    const dependencies = createDependencies();
+    const output = await createProductionModelMarketplaceService({
+      ...dependencies,
+      loadRuntimeCatalog: async () => ({
+        image: [],
+        video: [{ id: "seedance2" }],
+      }),
+      loadSettingJson: async (key) => {
+        if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
+          return {
+            version: 1,
+            byModel: { seedance2: { maxReferenceImages: 20 } },
+          };
+        }
+        return dependencies.loadSettingJson(key);
+      },
+    }).listPublicModels();
+
+    expect(
+      output.items.find((item) => item.modelId === "seedance2")
+    ).toMatchObject({
+      configuredReachable: true,
+      input: {
+        referenceImages: { maxCount: 20, configurable: true },
+      },
+    });
   });
 });

@@ -27,6 +27,12 @@ import {
   resolveModelMarketplaceEntry,
   resolveModelMarketplaceVideoFamily,
 } from "@repo/shared/model-marketplace";
+import {
+  normalizeVideoModelId,
+  resolveEffectiveVideoModelCapabilities,
+} from "@repo/shared/video-generation";
+
+import { getBuiltinModelMarketplaceDescription } from "../model-marketplace/builtin-descriptions";
 
 /** 运行时目录只暴露清单合并需要的模型标识。 */
 export type RuntimeModelCatalog = {
@@ -50,6 +56,7 @@ export type ModelConfigurationCatalogInput = {
   imagePricing: unknown;
   videoPricing: unknown;
   marketplaceConfig: unknown;
+  videoCapabilityOverrides: unknown;
   runtimeCatalog: RuntimeModelCatalogResult;
   canEdit: boolean;
   buildCoverUrl: (
@@ -183,7 +190,10 @@ function buildMarketplaceFields(
     visible: resolvedEntry.visible,
     homepageVisible: resolvedEntry.homepageVisible,
     homepagePriority: resolvedEntry.homepagePriority,
-    description: resolvedEntry.description,
+    description:
+      entry === undefined
+        ? getBuiltinModelMarketplaceDescription(configKey)
+        : resolvedEntry.description,
     coverUrl: cover.coverUrl,
     usesDefaultCover: cover.usesDefaultCover,
   };
@@ -279,6 +289,11 @@ export function buildModelConfigurationSnapshot(
   const marketplaceConfig = parseModelMarketplaceConfig(
     input.marketplaceConfig
   );
+  const effectiveVideoCapabilities = new Map(
+    resolveEffectiveVideoModelCapabilities(input.videoCapabilityOverrides).map(
+      (capability) => [capability.modelId, capability]
+    )
+  );
   const entries: ModelConfigurationEntry[] = [];
 
   const imageConfigKeys = collectImageConfigKeys(
@@ -337,6 +352,10 @@ export function buildModelConfigurationSnapshot(
     const minimumCredits = Math.min(
       ...Object.values(creditsPerSecondByResolution)
     );
+    const realModelId = normalizeVideoModelId(configKey);
+    const capability = realModelId
+      ? effectiveVideoCapabilities.get(realModelId)
+      : undefined;
     entries.push({
       ...buildMarketplaceFields(
         "video",
@@ -349,6 +368,11 @@ export function buildModelConfigurationSnapshot(
       creditsPerSecondByResolution,
       supportedResolutions,
       minimumCredits,
+      ...(capability?.input.referenceImages.configurable
+        ? {
+            maxReferenceImages: capability.input.referenceImages.maxCount,
+          }
+        : {}),
     });
   }
 

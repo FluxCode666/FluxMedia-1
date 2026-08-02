@@ -95,6 +95,8 @@ export const databasePlatformModelCatalogRepository: PlatformModelCatalogReposit
       const members = await backendMemberService.listMembers();
       return members.map((member) => ({
         groupIds: member.groupIds,
+        type: member.type,
+        adobeMode: member.type === "adobe" ? member.config.mode : null,
         supportedModelIds: member.supportedModelIds,
         isEnabled: member.isEnabled,
         status: member.status,

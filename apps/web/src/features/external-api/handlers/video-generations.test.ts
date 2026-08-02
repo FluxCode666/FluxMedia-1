@@ -82,20 +82,33 @@ describe("postExternalVideoGenerations", () => {
 
   it("缺少 clientRequestId 时拒绝请求", async () => {
     const response = await postExternalVideoGenerations(
-      createRequest({ prompt: "test", model: "firefly-veo-2-5s-16x9" }) as never
+      createRequest({
+        prompt: "test",
+        model: "veo31",
+        duration: 4,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+      }) as never
     );
 
     expect(response.status).toBe(400);
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
-  it("只把领域字段传给 UOL，并把 callback 放入可信上下文", async () => {
+  it("单独使用 camelCase 时把真实模型、独立参数和首帧传给 UOL", async () => {
+    const firstFrame = `data:image/png;base64,${Buffer.from("first").toString(
+      "base64"
+    )}`;
     const response = await postExternalVideoGenerations(
       createRequest({
-        client_request_id: "client-1",
+        clientRequestId: "client-camel",
         prompt: "test",
-        model: "firefly-veo-2-5s-16x9",
-        callback_url: "https://callback.example.com/video",
+        model: "veo31",
+        duration: 4,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        firstFrame,
+        callbackUrl: "https://callback.example.com/video",
       }) as never
     );
 
@@ -103,9 +116,16 @@ describe("postExternalVideoGenerations", () => {
     expect(mocks.invokeOperation).toHaveBeenCalledWith(
       "video.generate",
       {
-        clientRequestId: "client-1",
+        clientRequestId: "client-camel",
         prompt: "test",
-        model: "firefly-veo-2-5s-16x9",
+        model: "veo31",
+        duration: 4,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        firstFrame: expect.objectContaining({
+          source: "data",
+          byteLength: 5,
+        }),
       },
       {
         type: "apiKey",
@@ -122,57 +142,36 @@ describe("postExternalVideoGenerations", () => {
       }
     );
     const payload = await response.json();
-    expect(payload.task_id).toBe("video-1");
+    expect(payload).toMatchObject({
+      task_id: "video-1",
+      model: "veo31",
+      duration: 4,
+      duration_seconds: 4,
+      aspectRatio: "16:9",
+      aspect_ratio: "16:9",
+      resolution: "1080p",
+    });
   });
 
-  it.each([
-    ["generateAudio", true],
-    ["generate_audio", false],
-  ] as const)("将 %s 原样映射为 UOL generateAudio", async (field, value) => {
-    const response = await postExternalVideoGenerations(
-      createRequest({
-        client_request_id: `client-audio-${String(value)}`,
-        prompt: "test",
-        model: "firefly-seedance2-15s-9x16-480p",
-        [field]: value,
-      }) as never
-    );
-
-    expect(response.status).toBe(202);
-    expect(mocks.invokeOperation).toHaveBeenCalledWith(
-      "video.generate",
-      expect.objectContaining({ generateAudio: value }),
-      expect.any(Object),
-      expect.any(Object)
-    );
-  });
-
-  it("拒绝值冲突的 generateAudio 双别名", async () => {
-    const response = await postExternalVideoGenerations(
-      createRequest({
-        client_request_id: "client-audio-conflict",
-        prompt: "test",
-        model: "firefly-seedance2-15s-9x16-480p",
-        generateAudio: true,
-        generate_audio: false,
-      }) as never
-    );
-
-    expect(response.status).toBe(400);
-    expect(mocks.invokeOperation).not.toHaveBeenCalled();
-  });
-
-  it("接受 input_image_role 并映射为 UOL 参考图角色", async () => {
-    const image = `data:image/png;base64,${Buffer.from("image").toString(
+  it("单独使用 snake_case 时合并为唯一 camelCase UOL 输入", async () => {
+    const firstFrame = `data:image/png;base64,${Buffer.from("first").toString(
+      "base64"
+    )}`;
+    const lastFrame = `data:image/png;base64,${Buffer.from("last").toString(
       "base64"
     )}`;
     const response = await postExternalVideoGenerations(
       createRequest({
-        client_request_id: "client-reference",
-        prompt: "角色在城市中行走",
-        model: "firefly-kling3-omni-8s-16x9-1080p",
-        input_image_role: "reference",
-        image: [image],
+        client_request_id: "client-snake",
+        prompt: "test",
+        model: "seedance2-fast",
+        duration_seconds: 10,
+        aspect_ratio: "9:16",
+        resolution: "720p",
+        negative_prompt: "rain",
+        generate_audio: false,
+        first_frame: firstFrame,
+        last_frame: lastFrame,
       }) as never
     );
 
@@ -180,13 +179,106 @@ describe("postExternalVideoGenerations", () => {
     expect(mocks.invokeOperation).toHaveBeenCalledWith(
       "video.generate",
       expect.objectContaining({
-        inputImageRole: "reference",
-        inputImages: [
-          expect.objectContaining({ source: "data", byteLength: 5 }),
-        ],
+        clientRequestId: "client-snake",
+        model: "seedance2-fast",
+        duration: 10,
+        aspectRatio: "9:16",
+        resolution: "720p",
+        negativePrompt: "rain",
+        generateAudio: false,
+        firstFrame: expect.objectContaining({ byteLength: 5 }),
+        lastFrame: expect.objectContaining({ byteLength: 4 }),
       }),
       expect.any(Object),
       expect.any(Object)
     );
+  });
+
+  it("完全一致的双别名只向 UOL 传一个规范值", async () => {
+    const referenceImage = `data:image/png;base64,${Buffer.from(
+      "reference"
+    ).toString("base64")}`;
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-matched",
+        client_request_id: "client-matched",
+        prompt: "test",
+        model: "seedance2",
+        duration: 10,
+        duration_seconds: 10,
+        aspectRatio: "16:9",
+        aspect_ratio: "16:9",
+        resolution: "1080p",
+        generateAudio: true,
+        generate_audio: true,
+        referenceImages: [referenceImage],
+        reference_images: [referenceImage],
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        clientRequestId: "client-matched",
+        duration: 10,
+        aspectRatio: "16:9",
+        generateAudio: true,
+        referenceImages: [expect.objectContaining({ byteLength: 9 })],
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it.each([
+    ["clientRequestId", { clientRequestId: "a", client_request_id: "b" }],
+    ["duration", { duration: 10, duration_seconds: 11 }],
+    ["aspectRatio", { aspectRatio: "16:9", aspect_ratio: "9:16" }],
+    ["generateAudio", { generateAudio: true, generate_audio: false }],
+    [
+      "referenceImages",
+      {
+        referenceImages: ["data:image/png;base64,aW1hZ2U="],
+        reference_images: ["data:image/png;base64,b3RoZXI="],
+      },
+    ],
+  ])("拒绝值冲突的 %s 双别名", async (_field, aliases) => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-conflict",
+        prompt: "test",
+        model: "seedance2",
+        duration: 10,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        ...aliases,
+      }) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["image", { image: ["data:image/png;base64,aW1hZ2U="] }],
+    ["inputImages", { inputImages: [] }],
+    ["inputImageRole", { inputImageRole: "frame" }],
+    ["input_image_role", { input_image_role: "reference" }],
+  ])("拒绝旧输入字段 %s", async (_field, legacyInput) => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-legacy",
+        prompt: "test",
+        model: "seedance2",
+        duration: 10,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        ...legacyInput,
+      }) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 });

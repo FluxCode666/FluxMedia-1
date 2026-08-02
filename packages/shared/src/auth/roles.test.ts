@@ -4,6 +4,7 @@ import {
   canAccessAdminArea,
   canActOnTargetRole,
   canManageUserPermissions,
+  canViewGlobalUsageRecords,
   canViewImageBackendPool,
   isAdminRole,
   normalizeUserRole,
@@ -16,38 +17,50 @@ describe("角色能力门矩阵", () => {
   const cases: Array<{
     role: string;
     backendPool: boolean;
+    globalUsageRecords: boolean;
     adminArea: boolean;
     managePermissions: boolean;
   }> = [
     {
       role: "user",
       backendPool: false,
+      globalUsageRecords: false,
       adminArea: false,
       managePermissions: false,
     },
     {
       role: "observer_admin",
       backendPool: true,
+      globalUsageRecords: true,
       adminArea: false,
       managePermissions: false,
     },
     {
       role: "admin",
       backendPool: true,
+      globalUsageRecords: true,
       adminArea: true,
       managePermissions: false,
     },
     {
       role: "super_admin",
       backendPool: true,
+      globalUsageRecords: true,
       adminArea: true,
       managePermissions: true,
     },
   ];
 
-  for (const { role, backendPool, adminArea, managePermissions } of cases) {
-    it(`${role} 的三道能力门符合预期`, () => {
+  for (const {
+    role,
+    backendPool,
+    globalUsageRecords,
+    adminArea,
+    managePermissions,
+  } of cases) {
+    it(`${role} 的四道能力门符合预期`, () => {
       expect(canViewImageBackendPool(role)).toBe(backendPool);
+      expect(canViewGlobalUsageRecords(role)).toBe(globalUsageRecords);
       expect(canAccessAdminArea(role)).toBe(adminArea);
       expect(canManageUserPermissions(role)).toBe(managePermissions);
     });

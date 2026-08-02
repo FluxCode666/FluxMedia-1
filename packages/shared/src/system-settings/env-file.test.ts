@@ -31,6 +31,9 @@ describe("system settings env file sync", () => {
       shouldSyncSettingToEnvFile("CONTENT_MODERATION_BLOCK_RISK_LEVEL")
     ).toBe(false);
     expect(shouldSyncSettingToEnvFile("MODEL_MARKETPLACE_CONFIG")).toBe(false);
+    expect(shouldSyncSettingToEnvFile("VIDEO_MODEL_CAPABILITY_OVERRIDES")).toBe(
+      false
+    );
 
     expect(shouldSyncSettingToEnvFile("UNKNOWN_INTERNAL_SETTING")).toBe(false);
   });

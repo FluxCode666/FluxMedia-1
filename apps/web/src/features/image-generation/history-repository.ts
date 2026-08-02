@@ -10,6 +10,7 @@ import {
   historyRecordStatusSchema,
   historyRecordTypeSchema,
 } from "@repo/shared/image-generation/history-contract";
+import { videoInputManifestSchema } from "@repo/shared/image-generation/media-contract";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -20,6 +21,7 @@ import {
   extractPromptRepairNotice,
 } from "./generation-metadata";
 import type { HistoryListQuery, HistoryRepository } from "./history-service";
+import { buildVideoInputSummary } from "./video-input-lifecycle";
 
 const historyListRowSchema = z.object({
   record_kind: historyRecordTypeSchema,
@@ -36,10 +38,11 @@ const historyListRowSchema = z.object({
   size: z.string().min(1).max(200).nullable(),
   storage_key: z.string().nullable(),
   storage_bucket: z.string().nullable(),
-  family: z.string().min(1).max(240).nullable(),
   resolution: z.string().min(1).max(100).nullable(),
   duration_seconds: z.coerce.number().int().positive().nullable(),
   aspect_ratio: z.string().min(1).max(100).nullable(),
+  generate_audio: z.boolean().nullable(),
+  input_manifest: z.unknown().nullable(),
 });
 
 const modelOptionRowSchema = z.object({
@@ -177,10 +180,11 @@ export function buildHistoryListSql(input: HistoryListQuery): SQL {
         g.size::text as size,
         g.storage_key::text as storage_key,
         g.storage_bucket::text as storage_bucket,
-        null::text as family,
         null::text as resolution,
         null::integer as duration_seconds,
         null::text as aspect_ratio,
+        null::boolean as generate_audio,
+        null::jsonb as input_manifest,
         1::integer as kind_rank
       from generation g
       where g.user_id = ${input.userId}
@@ -207,10 +211,15 @@ export function buildHistoryListSql(input: HistoryListQuery): SQL {
         null::text as size,
         v.storage_key::text as storage_key,
         null::text as storage_bucket,
-        v.family::text as family,
         v.resolution::text as resolution,
         v.duration_seconds::integer as duration_seconds,
         v.aspect_ratio::text as aspect_ratio,
+        case
+          when jsonb_typeof((v.metadata::jsonb)->'generateAudio') = 'boolean'
+          then ((v.metadata::jsonb)->>'generateAudio')::boolean
+          else null
+        end as generate_audio,
+        v.input_manifest::jsonb as input_manifest,
         0::integer as kind_rank
       from video_generation v
       where v.user_id = ${input.userId}
@@ -237,10 +246,11 @@ export function buildHistoryListSql(input: HistoryListQuery): SQL {
       size,
       storage_key,
       storage_bucket,
-      family,
       resolution,
       duration_seconds,
-      aspect_ratio
+      aspect_ratio,
+      generate_audio,
+      input_manifest
     from (
       select * from image_rows
       union all
@@ -322,20 +332,27 @@ export const databaseHistoryRepository: HistoryRepository = {
         };
       }
       if (
-        !row.family ||
         !row.resolution ||
         !row.duration_seconds ||
-        !row.aspect_ratio
+        !row.aspect_ratio ||
+        row.generate_audio === null
       ) {
         throw new RangeError("Video history details are incomplete");
+      }
+      const inputManifest = videoInputManifestSchema.safeParse(
+        row.input_manifest ?? {}
+      );
+      if (!inputManifest.success) {
+        throw new RangeError("Video history input manifest is invalid");
       }
       return {
         ...common,
         kind: "video" as const,
-        family: row.family,
         resolution: row.resolution,
-        durationSeconds: row.duration_seconds,
+        duration: row.duration_seconds,
         aspectRatio: row.aspect_ratio,
+        generateAudio: row.generate_audio,
+        input: buildVideoInputSummary(inputManifest.data),
         videoUrl: buildSignedStorageImageUrl(row.storage_key, null),
       };
     });

@@ -12,10 +12,26 @@ import {
   pickExplicitAdobeImageFamily,
 } from "@repo/shared/adobe";
 import {
-  applyRequestParameterMappings,
-  normalizeRequestParameterMappings,
-} from "@repo/shared/image-backend/request-parameter-mapping";
+  type ApiUpstreamAdapterDraft,
+  resolveApiUpstreamModelId,
+} from "@repo/shared/image-backend/api-upstream-adaptation";
+import {
+  API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS,
+  type ApiUpstreamAdapterOperationId,
+  type ApiUpstreamResponseResult,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 import { logError } from "@repo/shared/logger";
+import {
+  ApiUpstreamExecutionError,
+  type ApiUpstreamExecutionResult,
+  ApiUpstreamRequestScriptOutputError,
+  countsTowardApiUpstreamAdapterFailure,
+  executeApiUpstreamOperation,
+} from "@/features/image-backend-pool/api-upstream-executor";
+import { logApiUpstreamImageTaskOrphanRisk } from "@/features/image-backend-pool/api-upstream-observability";
+import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-upstream-opaque-values";
+import { resolveApiUpstreamRequestUrl } from "@/features/image-backend-pool/api-upstream-path";
+import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
 import {
   fetchMediaUpstream,
   fetchMediaUpstreamDownload,
@@ -57,6 +73,8 @@ const VALID_QUALITIES = new Set<ImageQuality>([
 ]);
 const VALID_MODERATION = new Set<ImageModeration>(["auto", "low"]);
 const MAX_MEDIA_API_RESPONSE_BYTES = 128 * 1024 * 1024;
+const API_IMAGE_POLL_BUDGET_MS = 20 * 60 * 1_000;
+const MAX_API_IMAGE_QUERY_FAILURES = 3;
 
 type ImageOutput = {
   b64_json?: string;
@@ -119,104 +137,144 @@ function getHeaders(
   };
 }
 
-/**
- * 将 API 池后端保存的字段映射应用到 JSON 请求体。
- *
- * 只有管理员配置的 pool-api 可使用映射；平台配置始终发送原始标准请求，避免成员
- * 配置越过其既有协议与安全边界。
- *
- * @param config - 当前选中的上游配置。
- * @param requestBody - 已完成标准化、即将序列化的 JSON 请求体。
- * @returns 应用映射后的独立请求体。
- */
-function applyApiBackendRequestMappings(
+/** 解析 pool-api 账号实际发送的模型 ID；其他后端保持平台模型。 */
+function getApiBackendUpstreamModel(
   config: ApiConfig,
-  requestBody: unknown
+  platformModelId: string
 ) {
-  if (config.backend?.type !== "pool-api" || !isPlainRecord(requestBody)) {
-    return requestBody;
-  }
-  return applyRequestParameterMappings(
-    requestBody,
-    config.backend.parameterMappings
+  if (config.backend?.type !== "pool-api") return platformModelId;
+  return resolveApiUpstreamModelId(
+    platformModelId,
+    config.backend.modelMappings
   );
 }
 
-/**
- * 将一个 FormData 条目值追加到新表单。
- *
- * @param formData - 重建中的上游 multipart 表单。
- * @param name - 上游字段名称。
- * @param value - 字符串或 Blob；其他值仅在异常配置下转成字符串。
- */
-function appendMappedFormDataValue(
+/** 读取获租时固定的 API 六操作版本；缺失时禁止回退旧可变脚本。 */
+function getApiUpstreamAdapter(config: ApiConfig): ApiUpstreamAdapterDraft {
+  const adapter = config.backend?.apiUpstreamAdapter;
+  if (!adapter) throw new Error("API 图片账号缺少固定适配版本");
+  return adapter;
+}
+
+/** 向脚本请求对象追加字段并保留 multipart 重复键顺序。 */
+function appendScriptRequestValue(
+  request: Record<string, unknown>,
+  name: string,
+  value: unknown
+): void {
+  const existing = request[name];
+  if (existing === undefined) {
+    request[name] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(value);
+  } else {
+    request[name] = [existing, value];
+  }
+}
+
+/** 检查 multipart 脚本输出的嵌套容器中是否包含宿主媒体。 */
+function containsBlob(value: unknown): boolean {
+  if (value instanceof Blob) return true;
+  if (Array.isArray(value)) return value.some(containsBlob);
+  if (!isPlainRecord(value)) return false;
+  return Object.values(value).some(containsBlob);
+}
+
+/** 把脚本输出值重新编码为 multipart 条目。 */
+function appendTransformedFormDataValue(
   formData: FormData,
   name: string,
   value: unknown
-) {
-  if (typeof value === "string") {
-    formData.append(name, value);
+): void {
+  if (value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      appendTransformedFormDataValue(formData, name, item);
+    }
     return;
   }
   if (value instanceof Blob) {
-    formData.append(name, value);
+    const filename =
+      "name" in value && typeof value.name === "string" ? value.name : null;
+    if (filename) {
+      formData.append(name, value, filename);
+    } else {
+      formData.append(name, value);
+    }
     return;
+  }
+  if (isPlainRecord(value)) {
+    formData.append(name, JSON.stringify(value));
+    return;
+  }
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean"
+  ) {
+    throw new Error("API 账号请求处理脚本返回了非法 multipart 字段");
   }
   formData.append(name, String(value));
 }
 
 /**
- * 对 multipart 改图表单应用顶层字段映射。
+ * 限制 multipart 媒体只能位于顶层字段或顶层数组元素。
  *
- * FormData 没有 JSON 嵌套语义，故仅处理无点号的字段名；`image`、`mask` 等 Blob
- * 会连同重复条目一起保留。带点号的规则只在 JSON Images 请求中生效。
- *
- * @param config - 当前选中的上游配置。
- * @param formData - 标准化后的 multipart 表单。
- * @returns 上游可直接发送的新表单。
+ * WHY：嵌套对象会被 JSON.stringify 为普通文本，若其中混入恢复后的 Blob，文件会
+ * 静默变成 `{}`。失败关闭可以避免管理员脚本看似成功、实际上游收到损坏媒体。
  */
-function applyApiBackendFormDataMappings(
-  config: ApiConfig,
-  formData: FormData
-) {
-  if (config.backend?.type !== "pool-api") return formData;
-  const mappings = normalizeRequestParameterMappings(
-    config.backend.parameterMappings
-  ).filter(
-    (mapping) => !mapping.source.includes(".") && !mapping.target.includes(".")
-  );
-  if (!mappings.length) return formData;
-
-  const entries = new Map<string, FormDataEntryValue[]>();
-  for (const [name, value] of formData.entries()) {
-    const values = entries.get(name) || [];
-    values.push(value);
-    entries.set(name, values);
-  }
-  const snapshot = new Map(entries);
-  const resolved = mappings.flatMap((mapping) => {
-    const sourceName = snapshot.has(mapping.source)
-      ? mapping.source
-      : mapping.source === "image" && snapshot.has("image[]")
-        ? "image[]"
-        : mapping.source;
-    const values = snapshot.get(sourceName);
-    return values ? [{ ...mapping, sourceName, values }] : [];
-  });
-  for (const mapping of resolved) {
-    if (mapping.mode === "move" && mapping.source !== mapping.target) {
-      entries.delete(mapping.sourceName);
+function assertMultipartMediaPlacement(value: unknown): void {
+  if (value instanceof Blob) return;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (item instanceof Blob) continue;
+      if (containsBlob(item)) {
+        throw new Error("API 账号请求处理脚本返回了非法 multipart 媒体位置");
+      }
     }
+    return;
   }
-  for (const mapping of resolved) {
-    entries.set(mapping.target, [...mapping.values]);
+  if (containsBlob(value)) {
+    throw new Error("API 账号请求处理脚本返回了非法 multipart 媒体位置");
   }
+}
 
-  const mapped = new FormData();
-  for (const [name, values] of entries) {
-    for (const value of values) appendMappedFormDataValue(mapped, name, value);
+/**
+ * 以宿主令牌隔离 multipart 文件后执行账号脚本，再恢复 Blob 并重建表单。
+ */
+function createApiBackendFormDataRequest(formData: FormData): {
+  body: Record<string, unknown>;
+  opaqueValues: Map<string, unknown>;
+} {
+  const request: Record<string, unknown> = {};
+  const opaqueValues = new Map<string, unknown>();
+  for (const [name, value] of formData.entries()) {
+    if (typeof value === "string") {
+      appendScriptRequestValue(request, name, value);
+      continue;
+    }
+    const token = createApiUpstreamOpaqueToken();
+    opaqueValues.set(token, value);
+    appendScriptRequestValue(request, name, token);
   }
-  return mapped;
+  return { body: request, opaqueValues };
+}
+
+/** 把已恢复宿主媒体的严格顶层对象编码为 FormData。 */
+function encodeApiBackendFormDataRequest(value: unknown): FormData {
+  try {
+    if (!isPlainRecord(value)) {
+      throw new Error("API 账号请求处理脚本返回了非法 multipart 请求体");
+    }
+    const result = new FormData();
+    for (const [name, fieldValue] of Object.entries(value)) {
+      assertMultipartMediaPlacement(fieldValue);
+      appendTransformedFormDataValue(result, name, fieldValue);
+    }
+    return result;
+  } catch (error) {
+    throw new ApiUpstreamRequestScriptOutputError(error);
+  }
 }
 
 function getApiErrorMessage(errorData: unknown): string | null {
@@ -642,7 +700,7 @@ function appendImageParams(
     background?: string;
   }
 ) {
-  formData.append("model", getModel(config, params.model));
+  formData.append("model", params.model);
   // multipart 改图同样注入每请求唯一零宽 nonce 破上游内容缓存（仅上游请求体）。
   formData.append("prompt", appendImagesUpstreamNonce(params.prompt));
   formData.append("n", String(params.n || 1));
@@ -967,6 +1025,395 @@ async function parseImageResponse(
   return withRetryMetadata(result, responseRetryMetadata);
 }
 
+type BuiltInApiImageResponse =
+  | { kind: "result"; result: GenerateImageResult }
+  | { kind: "pending"; taskId?: string; pollAfterSeconds?: number };
+
+/** 从普通记录按常见别名读取首个非空字符串。 */
+function readApiImageString(
+  record: Record<string, unknown>,
+  keys: readonly string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+/**
+ * 解析脚本留空时的内置 Images 协议，兼容同步产物和常见异步任务状态。
+ *
+ * 上游返回的 poll_url/status_url 永不读取；宿主只保存 task ID 并使用固定查询路径。
+ */
+async function parseBuiltInApiImageResponse(
+  response: Response,
+  callbacks?: ImageGenerationCallbacks
+): Promise<BuiltInApiImageResponse> {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!response.ok || !contentType.includes("json")) {
+    return {
+      kind: "result",
+      result: await parseImageResponse(response, callbacks),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      kind: "result",
+      result: { error: "Images API returned invalid JSON" },
+    };
+  }
+  const record = isPlainRecord(payload)
+    ? isPlainRecord(payload.data)
+      ? payload.data
+      : payload
+    : null;
+  if (record) {
+    const status = readApiImageString(record, [
+      "status",
+      "state",
+    ])?.toLowerCase();
+    if (
+      status &&
+      ["failed", "error", "cancelled", "canceled", "rejected"].includes(status)
+    ) {
+      return {
+        kind: "result",
+        result: { error: getPayloadError(payload) || "API 图片任务失败" },
+      };
+    }
+    const synchronousResult = extractImageFromPayload(
+      payload as ImageResponsePayload
+    );
+    if (synchronousResult) {
+      return { kind: "result", result: synchronousResult };
+    }
+    const taskId = readApiImageString(record, [
+      "task_id",
+      "id",
+      "generation_id",
+    ]);
+    const isPending =
+      !status ||
+      [
+        "pending",
+        "queued",
+        "created",
+        "submitting",
+        "processing",
+        "running",
+        "in_progress",
+      ].includes(status);
+    if (isPending && (taskId || status)) {
+      return {
+        kind: "pending",
+        taskId,
+        pollAfterSeconds: parseApiUpstreamRetryAfterSeconds(
+          response.headers.get("retry-after"),
+          new Date()
+        ),
+      };
+    }
+  }
+  const result = extractImageFromPayload(payload as ImageResponsePayload);
+  return {
+    kind: "result",
+    result: result ?? {
+      error: getPayloadError(payload) || "API returned no image data",
+    },
+  };
+}
+
+/** 将标准图片输出转换为现有图片管线结果，不暴露供应商原始响应。 */
+function convertScriptedImageOutputs(
+  result: Extract<ApiUpstreamResponseResult, { status: "completed" }>
+): GenerateImageResult {
+  const imageOutputs = result.outputs.flatMap((output, index) => {
+    if (output.kind !== "image") return [];
+    const imageBase64 =
+      output.base64?.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/isu)?.[1] ??
+      output.base64;
+    return [
+      {
+        ...(imageBase64 ? { imageBase64 } : {}),
+        ...(output.url ? { imageUrl: output.url } : {}),
+        index,
+      },
+    ];
+  });
+  const first = imageOutputs[0];
+  if (!first) {
+    return {
+      error: "供应商请求处理失败，请联系管理员",
+      backendSwitchAllowed: false,
+    };
+  }
+  return {
+    ...first,
+    imageOutputs,
+    imageOutputCount: imageOutputs.length,
+  };
+}
+
+/** 把响应脚本的稳定失败类别转换为现有用户与 SLA 可识别的安全消息。 */
+function getScriptedImageFailureMessage(
+  result: Extract<ApiUpstreamResponseResult, { status: "failed" }>
+): string {
+  if (result.error.category === "moderation") {
+    return "Content moderation rejected the image request";
+  }
+  if (result.error.category === "invalid_request") {
+    return "image_generation_user_error: 供应商拒绝了图片请求参数";
+  }
+  return "供应商图片任务失败，请联系管理员";
+}
+
+/** 可取消等待；用于供应商异步图片任务的进程内轮询。 */
+async function waitForApiImagePoll(
+  seconds: number,
+  signal?: AbortSignal
+): Promise<void> {
+  if (signal?.aborted) throw signal.reason;
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(signal?.reason ?? new Error("图片任务已取消"));
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, seconds * 1_000);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (typeof timer === "object" && "unref" in timer) timer.unref();
+  });
+}
+
+/** 将执行器错误映射为图片管线的切换、健康与重试事实。 */
+function convertApiImageExecutionError(
+  error: unknown,
+  upstreamAccepted: boolean
+): GenerateImageResult {
+  if (error instanceof ApiUpstreamExecutionError) {
+    return {
+      error: error.message,
+      ...(error.retryAfterSeconds
+        ? { retryAfterSeconds: error.retryAfterSeconds }
+        : {}),
+      backendSwitchAllowed:
+        error.code === "platform_busy"
+          ? false
+          : !upstreamAccepted && error.stage === "before_send",
+      backendHealthNeutral: error.code === "platform_busy",
+    };
+  }
+  return {
+    error: "供应商请求处理失败，请联系管理员",
+    backendSwitchAllowed: !upstreamAccepted,
+  };
+}
+
+/**
+ * 在单次请求的二十分钟业务预算内轮询已接受的供应商图片任务。
+ *
+ * 一旦取得 task ID，任何错误都返回 `backendSwitchAllowed=false`，从而禁止外层
+ * 调度器更换账号并重复提交生成副作用。
+ */
+async function pollScriptedApiImageTask(input: {
+  config: ApiConfig;
+  adapter: ApiUpstreamAdapterDraft;
+  operation: "images.generate.query" | "images.edit.query";
+  platformModelId: string;
+  upstreamModelId: string;
+  taskId: string;
+  firstPollAfterSeconds?: number;
+  signal?: AbortSignal;
+}): Promise<GenerateImageResult> {
+  try {
+    resolveApiUpstreamRequestUrl({
+      baseUrl: input.adapter.baseUrl,
+      operation: input.operation,
+      operations: input.adapter.operations,
+      taskId: input.taskId,
+      query: {},
+    });
+  } catch {
+    return {
+      error: "供应商请求处理失败，请联系管理员",
+      backendSwitchAllowed: false,
+    };
+  }
+  const deadline = Date.now() + API_IMAGE_POLL_BUDGET_MS;
+  let consecutiveFailures = 0;
+  let pollAfterSeconds =
+    input.firstPollAfterSeconds ?? API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS;
+
+  while (Date.now() < deadline) {
+    await waitForApiImagePoll(pollAfterSeconds, input.signal);
+    let executed: ApiUpstreamExecutionResult;
+    try {
+      executed = await executeApiUpstreamOperation({
+        adapter: input.adapter,
+        apiKey: input.config.apiKey,
+        operation: input.operation,
+        platformModelId: input.platformModelId,
+        upstreamModelId: input.upstreamModelId,
+        contentType: "application/json",
+        taskId: input.taskId,
+        signal: input.signal,
+        maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+        observability: {
+          memberId: input.config.backend?.id,
+          groupId: input.config.backend?.groupId,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof ApiUpstreamExecutionError &&
+        !countsTowardApiUpstreamAdapterFailure(error)
+      ) {
+        // WHY：已接受图片任务不能因本地 Worker 饱和或一次网络抖动消耗适配
+        // 失败预算；继续固定原账号轮询，仍受二十分钟总业务预算约束。
+        pollAfterSeconds =
+          error.retryAfterSeconds ?? API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS;
+        continue;
+      }
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= MAX_API_IMAGE_QUERY_FAILURES) {
+        return convertApiImageExecutionError(error, true);
+      }
+      pollAfterSeconds = API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS;
+      continue;
+    }
+
+    if (executed.kind === "built_in") {
+      const parsed = await parseBuiltInApiImageResponse(executed.response);
+      if (parsed.kind === "result") {
+        return { ...parsed.result, backendSwitchAllowed: false };
+      }
+      consecutiveFailures = 0;
+      pollAfterSeconds =
+        parsed.pollAfterSeconds ?? API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS;
+      continue;
+    }
+    consecutiveFailures = 0;
+    const { result } = executed;
+    if (result.status === "completed") {
+      return convertScriptedImageOutputs(result);
+    }
+    if (result.status === "failed") {
+      return {
+        error: getScriptedImageFailureMessage(result),
+        backendSwitchAllowed: false,
+      };
+    }
+    pollAfterSeconds =
+      executed.pollAfterSeconds ?? API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS;
+  }
+  return {
+    error: "供应商图片任务轮询超时",
+    backendSwitchAllowed: false,
+  };
+}
+
+/** 解析六操作生成阶段结果；同步直接返回，异步固定原任务进入查询。 */
+async function parseApiImageExecutionResult(input: {
+  config: ApiConfig;
+  adapter: ApiUpstreamAdapterDraft;
+  operation: "images.generate" | "images.edit";
+  platformModelId: string;
+  upstreamModelId: string;
+  executed: ApiUpstreamExecutionResult;
+  callbacks?: ImageGenerationCallbacks;
+  signal?: AbortSignal;
+}): Promise<GenerateImageResult> {
+  if (input.executed.kind === "built_in") {
+    const parsed = await parseBuiltInApiImageResponse(
+      input.executed.response,
+      input.callbacks
+    );
+    if (parsed.kind === "result") return parsed.result;
+    if (!parsed.taskId) {
+      return {
+        error: "供应商请求处理失败，请联系管理员",
+        backendSwitchAllowed: false,
+      };
+    }
+    logApiUpstreamImageTaskOrphanRisk({
+      operation: input.operation,
+      platformModelId: input.platformModelId,
+      observability: {
+        memberId: input.config.backend?.id,
+        groupId: input.config.backend?.groupId,
+      },
+    });
+    return pollScriptedApiImageTask({
+      config: input.config,
+      adapter: input.adapter,
+      operation:
+        input.operation === "images.generate"
+          ? "images.generate.query"
+          : "images.edit.query",
+      platformModelId: input.platformModelId,
+      upstreamModelId: input.upstreamModelId,
+      taskId: parsed.taskId,
+      firstPollAfterSeconds: parsed.pollAfterSeconds,
+      signal: input.signal,
+    });
+  }
+  const { result } = input.executed;
+  if (result.status === "completed") {
+    return convertScriptedImageOutputs(result);
+  }
+  if (result.status === "failed") {
+    return {
+      error: getScriptedImageFailureMessage(result),
+      // WHY：响应脚本的默认语义是不重投。只有管理员通过 retryable 明确确认
+      // 供应商未创建任务时，外层账号池才可安全切换成员。
+      backendSwitchAllowed: result.retryable,
+    };
+  }
+  if (!result.taskId) {
+    return {
+      error: "供应商请求处理失败，请联系管理员",
+      backendSwitchAllowed: false,
+    };
+  }
+  logApiUpstreamImageTaskOrphanRisk({
+    operation: input.operation,
+    platformModelId: input.platformModelId,
+    observability: {
+      memberId: input.config.backend?.id,
+      groupId: input.config.backend?.groupId,
+    },
+  });
+  const queryOperation: ApiUpstreamAdapterOperationId =
+    input.operation === "images.generate"
+      ? "images.generate.query"
+      : "images.edit.query";
+  if (
+    queryOperation !== "images.generate.query" &&
+    queryOperation !== "images.edit.query"
+  ) {
+    throw new Error("API 图片查询操作无效");
+  }
+  return pollScriptedApiImageTask({
+    config: input.config,
+    adapter: input.adapter,
+    operation: queryOperation,
+    platformModelId: input.platformModelId,
+    upstreamModelId: input.upstreamModelId,
+    taskId: result.taskId,
+    firstPollAfterSeconds: input.executed.pollAfterSeconds,
+    signal: input.signal,
+  });
+}
+
 /**
  * api 后端（pool-api）分发前的输入图 re-host 守卫。
  *
@@ -1115,6 +1562,74 @@ export async function generateImage(
     const size = params.size || DEFAULT_IMAGE_SIZE;
     const dimensions = parseImageSize(size);
     const background = normalizeImageBackground(params.background);
+    const upstreamModel = getApiBackendUpstreamModel(config, model);
+    const requestBody = {
+      model: upstreamModel,
+      // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
+      // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
+      prompt: appendImagesUpstreamNonce(prompt),
+      n: params.n || 1,
+      size,
+      ...(dimensions
+        ? { width: dimensions.width, height: dimensions.height }
+        : {}),
+      ...(normalizeQuality(params.quality)
+        ? { quality: normalizeQuality(params.quality) }
+        : {}),
+      ...(normalizeModeration(params.moderation)
+        ? { moderation: normalizeModeration(params.moderation) }
+        : {}),
+      ...(normalizeOutputFormat(params.outputFormat)
+        ? { output_format: normalizeOutputFormat(params.outputFormat) }
+        : {}),
+      ...(normalizeOutputCompression(params.outputCompression) !== undefined
+        ? {
+            output_compression: normalizeOutputCompression(
+              params.outputCompression
+            ),
+          }
+        : {}),
+      ...(background ? { background } : {}),
+      ...(config.useStream ? { stream: true, partial_images: 2 } : {}),
+      response_format: "b64_json",
+    };
+    if (config.backend?.type === "pool-api") {
+      const adapter = getApiUpstreamAdapter(config);
+      let executed: ApiUpstreamExecutionResult;
+      try {
+        executed = await executeApiUpstreamOperation({
+          adapter,
+          apiKey: config.apiKey,
+          operation: "images.generate",
+          platformModelId: model,
+          upstreamModelId: upstreamModel,
+          contentType: "application/json",
+          body: requestBody,
+          signal: params.signal,
+          maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+          observability: {
+            memberId: config.backend.id,
+            groupId: config.backend.groupId,
+          },
+        });
+      } catch (error) {
+        return convertApiImageExecutionError(error, false);
+      }
+      return requireImageOutput(
+        applyPromptOptimizationResultVisibility(
+          await parseApiImageExecutionResult({
+            config,
+            adapter,
+            operation: "images.generate",
+            platformModelId: model,
+            upstreamModelId: upstreamModel,
+            executed,
+            callbacks,
+            signal: params.signal,
+          })
+        )
+      );
+    }
     const response = await fetchMediaUpstream(
       `${config.baseUrl}/images/generations`,
       {
@@ -1123,39 +1638,7 @@ export async function generateImage(
         headers: getHeaders(config, {
           "Content-Type": "application/json",
         }),
-        body: JSON.stringify(
-          applyApiBackendRequestMappings(config, {
-            model,
-            // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
-            // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
-            prompt: appendImagesUpstreamNonce(prompt),
-            n: params.n || 1,
-            size,
-            ...(dimensions
-              ? { width: dimensions.width, height: dimensions.height }
-              : {}),
-            ...(normalizeQuality(params.quality)
-              ? { quality: normalizeQuality(params.quality) }
-              : {}),
-            ...(normalizeModeration(params.moderation)
-              ? { moderation: normalizeModeration(params.moderation) }
-              : {}),
-            ...(normalizeOutputFormat(params.outputFormat)
-              ? { output_format: normalizeOutputFormat(params.outputFormat) }
-              : {}),
-            ...(normalizeOutputCompression(params.outputCompression) !==
-            undefined
-              ? {
-                  output_compression: normalizeOutputCompression(
-                    params.outputCompression
-                  ),
-                }
-              : {}),
-            ...(background ? { background } : {}),
-            ...(config.useStream ? { stream: true, partial_images: 2 } : {}),
-            response_format: "b64_json",
-          })
-        ),
+        body: JSON.stringify(requestBody),
         maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
       }
     );
@@ -1243,10 +1726,11 @@ export async function editImage(
   }
   try {
     const prompt = effectiveEditPrompt;
+    const upstreamModel = getApiBackendUpstreamModel(config, model);
     const formData = new FormData();
     appendImageParams(formData, config, {
       prompt,
-      model,
+      model: upstreamModel,
       n: params.n,
       size: params.size,
       quality: params.quality,
@@ -1273,13 +1757,53 @@ export async function editImage(
       );
     }
 
+    if (config.backend?.type === "pool-api") {
+      const adapter = getApiUpstreamAdapter(config);
+      const request = createApiBackendFormDataRequest(formData);
+      let executed: ApiUpstreamExecutionResult;
+      try {
+        executed = await executeApiUpstreamOperation({
+          adapter,
+          apiKey: config.apiKey,
+          operation: "images.edit",
+          platformModelId: model,
+          upstreamModelId: upstreamModel,
+          contentType: "multipart/form-data",
+          body: request.body,
+          opaqueValues: request.opaqueValues,
+          signal: params.signal,
+          maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+          encodeBody: encodeApiBackendFormDataRequest,
+          observability: {
+            memberId: config.backend.id,
+            groupId: config.backend.groupId,
+          },
+        });
+      } catch (error) {
+        return convertApiImageExecutionError(error, false);
+      }
+      return requireImageOutput(
+        applyPromptOptimizationResultVisibility(
+          await parseApiImageExecutionResult({
+            config,
+            adapter,
+            operation: "images.edit",
+            platformModelId: model,
+            upstreamModelId: upstreamModel,
+            executed,
+            callbacks,
+            signal: params.signal,
+          })
+        )
+      );
+    }
     const response = await fetchMediaUpstream(
       `${config.baseUrl}/images/edits`,
       {
         method: "POST",
         signal: params.signal,
         headers: getHeaders(config, {}),
-        body: applyApiBackendFormDataMappings(config, formData),
+        body: formData,
         maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
       }
     );

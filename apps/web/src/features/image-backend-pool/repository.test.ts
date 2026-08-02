@@ -80,6 +80,8 @@ function memberRow(
     last_acquired_at: null,
     last_used_at: null,
     cooldown_until: null,
+    api_adapter_member_id: id,
+    api_adapter_version_id: `adapter-version-${id}`,
     ...overrides,
   };
 }
@@ -93,6 +95,8 @@ function leaseRow(
     id: "lease-1",
     member_id: "member-low-load",
     owner_token: ownerToken,
+    api_adapter_member_id: "member-low-load",
+    api_adapter_version_id: "adapter-version-member-low-load",
     expires_at: EXPIRES_AT,
     created_at: NOW,
     updated_at: NOW,
@@ -154,6 +158,8 @@ describe("backend pool PostgreSQL repository", () => {
           id: "lease-1",
           memberId: "member-low-load",
           ownerToken: "owner-new",
+          apiAdapterMemberId: "member-low-load",
+          apiAdapterVersionId: "adapter-version-member-low-load",
         },
         eligibleCandidateCount: 2,
       },
@@ -167,8 +173,15 @@ describe("backend pool PostgreSQL repository", () => {
     expect(queries[2]?.sql).toContain("order by m.id asc");
     expect(queries[2]?.sql).toContain("for update of m");
     expect(queries[2]?.sql).toContain(
+      "left join image_backend_member_api_config"
+    );
+    expect(queries[2]?.sql).toContain(
       "json_array_elements_text(m.supported_model_ids)"
     );
+    expect(queries[2]?.sql).toContain("lower(trim(supported_model.model_id))");
+    expect(queries[2]?.sql.toLowerCase()).not.toContain(" like ");
+    expect(queries[2]?.sql).toContain("m.cooldown_until");
+    expect(queries[2]?.sql).toContain("m.status not in");
     expect(queries[2]?.params).toEqual(
       expect.arrayContaining([
         "group-a",
@@ -180,6 +193,8 @@ describe("backend pool PostgreSQL repository", () => {
     expect(queries[2]?.sql).not.toContain("group-a");
     expect(queries[2]?.sql).not.toContain("member-excluded");
     expect(queries[4]?.params).toContain("member-low-load");
+    expect(queries[4]?.sql).toContain("api_adapter_member_id");
+    expect(queries[4]?.sql).toContain("api_adapter_version_id");
     expect(queries[5]?.sql).toContain(
       "lease_acquired_count = lease_acquired_count + 1"
     );
@@ -316,6 +331,8 @@ describe("backend pool PostgreSQL repository", () => {
       nextOwnerToken: "owner-next",
       now: NOW,
       expiresAt: EXPIRES_AT,
+      apiAdapterMemberId: "member-1",
+      apiAdapterVersionId: "adapter-version-member-1",
     });
     const staleRelease = await repository.releaseLease({
       leaseId: "lease-1",
@@ -328,6 +345,7 @@ describe("backend pool PostgreSQL repository", () => {
     expect(queries[0]?.sql).toContain("for update");
     expect(queries[0]?.sql).toContain("inflight_count <");
     expect(queries[0]?.sql).toContain("on conflict do nothing");
+    expect(queries[0]?.sql).toContain("api_adapter_version_id");
     expect(queries[0]?.params).toEqual(
       expect.arrayContaining([
         "lease-1",
@@ -338,6 +356,25 @@ describe("backend pool PostgreSQL repository", () => {
       ])
     );
     expect(queries[1]?.params).toEqual(["lease-1", "owner-current"]);
+  });
+
+  it("rejects a half-populated API adapter ownership pair before SQL", async () => {
+    const { database, transaction } = createDatabase([]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await expect(
+      repository.takeoverLease({
+        leaseId: "lease-1",
+        memberId: "member-1",
+        currentOwnerToken: "owner-current",
+        nextOwnerToken: "owner-next",
+        now: NOW,
+        expiresAt: EXPIRES_AT,
+        apiAdapterMemberId: "member-1",
+        apiAdapterVersionId: null,
+      })
+    ).rejects.toMatchObject({ name: "ZodError" });
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it("releases idempotently only for the current owner", async () => {

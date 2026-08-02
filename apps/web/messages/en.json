@@ -144,7 +144,17 @@
       "perSecond": "per second"
     },
     "card": {
-      "noDescription": "No public description has been configured for this model."
+      "noDescription": "No public description has been configured for this model.",
+      "videoCapabilities": {
+        "framesNone": "No frame input",
+        "framesFirstOnly": "First frame",
+        "framesFirstAndLast": "First and last frames",
+        "referenceImagesNone": "No reference images",
+        "referenceImagesMax": "Up to {count} reference images",
+        "audioNone": "No audio",
+        "audioDefaultOn": "Audio on by default",
+        "audioOptional": "Optional audio"
+      }
     },
     "actions": {
       "copy": "Copy model ID",
@@ -161,6 +171,24 @@
       "supportedDurations": "Durations",
       "supportedAspectRatios": "Aspect ratios",
       "supportedResolutions": "Resolutions",
+      "capabilities": {
+        "title": "Video capabilities",
+        "description": "Global model support and availability for your current configured backend path.",
+        "frameInputs": "Frame inputs",
+        "referenceImages": "Reference images",
+        "referenceImagesNone": "Not supported",
+        "referenceImagesConfigurable": "Up to {count}; administrator configurable",
+        "referenceImagesFixed": "Up to {count}",
+        "framesAndReferences": "Frame and reference modes",
+        "mutuallyExclusive": "Mutually exclusive",
+        "notMutuallyExclusive": "May be combined",
+        "audio": "Audio",
+        "configuredReachable": "Configured and reachable",
+        "notConfiguredReachable": "Not configured for current access",
+        "infrastructureLimits": "Independent infrastructure limits",
+        "maxMediaInputCount": "At most {count} media inputs per request",
+        "maxMediaInputSize": "At most {megabytes} MB total input size"
+      },
       "imageTiers": {
         "base1024": "1024 tier",
         "base1k": "1K tier",
@@ -429,7 +457,7 @@
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
-      "imageBackendPool": "Image Backend Pool",
+      "imageBackendPool": "Account Pool",
       "support": "Support",
       "newTicket": "New Ticket"
     },
@@ -456,7 +484,7 @@
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
-      "imageBackendPool": "Image Backend Pool",
+      "imageBackendPool": "Account Pool",
       "creditsBuy": "Buy Credits",
       "profile": "Profile",
       "security": "Security",

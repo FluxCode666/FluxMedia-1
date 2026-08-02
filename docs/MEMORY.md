@@ -1,3 +1,5 @@
+<!-- 本文件索引 FluxMedia 后续开发必须复用的持久事实，并链接到详细设计文档。 -->
+
 # FluxMedia 持久事实索引
 
 本文件只记录后续开发必须复用的现行不变量，详细设计放在对应文档或计划中。
@@ -6,22 +8,34 @@
 
 - 产品只承载图片生成、图片编辑、蒙版编辑、视频生成与结果查询。
 - 五个外部 v1 图片 handler 最终汇入 `runImageGenerationForUser`，不得建立平行图片管线。
-- 图片与视频均不使用会话粘性；视频被上游接受后固定成员、Adobe token 与轮询地址。
+- 图片与视频均不使用会话粘性；视频被上游接受后固定原账号、提交时可信源和轮询地址，
+  恢复时只加载该账号的当前协议凭据。
 
 ## 统一媒体号池
 
 - 顶层成员类型只有 `api | adobe`；Adobe 内部模式只有 `gateway | direct`。
 - `supportedModelIds` 是候选能力的唯一权威，模型名称不承担调度语义。
-- 成员模型选项来自管理端模型配置快照；图像使用配置键，视频族展开为可执行完整
-  ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关不得过滤调度能力。
-- API 成员只使用 OpenAI Images 协议；`useStream` 属于保留的图片上游能力，
-  Responses/Mixed-to-Responses 配置不得迁入统一号池。
+- 成员模型选项来自管理端模型配置快照；图片与视频都只保存真实模型 ID，不得把时长、
+  比例或分辨率编码进模型 ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关
+  不得过滤调度能力。
+- API 成员支持 Images 与 Videos 兼容协议，Adobe Direct 支持图片与视频，Adobe
+  Gateway 仅支持图片；`useStream` 属于保留的图片上游能力，Responses/
+  Mixed-to-Responses 配置不得迁入统一号池。
+- API 成员的 `supportedModelIds`、调度、计费、任务和响应始终使用平台真实模型 ID；
+  账号级稀疏模型映射只在出站最后一跳替换供应商模型 ID。旧 `copy|move` 参数映射与
+  模板已删除，请求体差异统一由隔离 JavaScript 脚本处理。
+- 管理员配置的媒体 Base URL 可使用 HTTP 或私网；上游派生的跨源轮询、产物地址及
+  每一跳重定向不得继承该信任，只能通过公网 DNS pin，且不得携带账号凭据。
 - 全局调度策略为 `priority | least_acquired | least_load`，缺失或非法时回退
   `priority`。
 - 调度排序、容量检查、获租与计数更新必须在同一个 PostgreSQL 事务中完成。
 - 调度指标不得记录 prompt、媒体、Cookie、token 或 API Key。
+- 管理员可通过 `pool.resetMemberStatus` 手动清除成员的健康降级、错误 EWMA、失败连击、
+  冷却和最近错误；重置不得伪造凭据有效、修改启用开关、累计指标或运行中租约。
 
-详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)。
+详见 [image-backend-pool-scheduling.md](image-backend-pool-scheduling.md)、
+[api-account-upstream-adaptation.md](memory/api-account-upstream-adaptation.md) 与
+[api-upstream-adapter-admin.md](api-upstream-adapter-admin.md)。
 
 ## 统一接口层
 
@@ -29,6 +43,9 @@
   Principal 构造、调用与编码。
 - 图片、视频、号池和系统设置的现行 operation 见
   [feature-interface-inventory.md](plan/2026-05-31-feature-interface-inventory.md)。
+- 公开 `/api-docs` 必须同步展示视频能力发现、任务创建与状态查询三个现行端点；视频
+  文档只使用真实模型 ID，并明确独立时长、比例、分辨率、输入图互斥、声音能力与持久
+  任务轮询契约。
 - MCP 与站内调用共享 registry、Principal、权限、幂等与审计网关。
 - 所有可见分页列表默认每页 20 条；可选大小由系统设置
   `PAGINATION_PAGE_SIZE_OPTIONS` 统一配置，必须包含 20，默认 `[10, 20, 50]`。

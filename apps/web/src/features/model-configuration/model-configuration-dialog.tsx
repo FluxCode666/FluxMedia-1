@@ -319,33 +319,66 @@ export function ModelConfigurationDialog({
               </div>
             ) : null}
             {fields.showVideoPricing && draft.category === "video" ? (
-              <div className="grid gap-3 sm:grid-cols-3">
-                {entry.category === "video"
-                  ? entry.supportedResolutions.map((resolution) => (
-                      <PricingInput
-                        key={resolution}
-                        id={`${entry.configKey}-${resolution}-credits-per-second`}
-                        label={`${resolution} 每秒积分`}
-                        value={
-                          draft.creditsPerSecondByResolution[resolution] ?? ""
-                        }
-                        disabled={disabled}
-                        onChange={(value) =>
-                          updateDraft((current) =>
-                            current.category === "video"
-                              ? {
-                                  ...current,
-                                  creditsPerSecondByResolution: {
-                                    ...current.creditsPerSecondByResolution,
-                                    [resolution]: value,
-                                  },
-                                }
-                              : current
-                          )
-                        }
-                      />
-                    ))
-                  : null}
+              <div className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {entry.category === "video"
+                    ? entry.supportedResolutions.map((resolution) => (
+                        <PricingInput
+                          key={resolution}
+                          id={`${entry.configKey}-${resolution}-credits-per-second`}
+                          label={`${resolution} 每秒积分`}
+                          value={
+                            draft.creditsPerSecondByResolution[resolution] ?? ""
+                          }
+                          disabled={disabled}
+                          onChange={(value) =>
+                            updateDraft((current) =>
+                              current.category === "video"
+                                ? {
+                                    ...current,
+                                    creditsPerSecondByResolution: {
+                                      ...current.creditsPerSecondByResolution,
+                                      [resolution]: value,
+                                    },
+                                  }
+                                : current
+                            )
+                          }
+                        />
+                      ))
+                    : null}
+                </div>
+                {draft.maxReferenceImages !== undefined ? (
+                  <div className="max-w-xs space-y-1.5">
+                    <Label htmlFor={`${entry.configKey}-max-reference-images`}>
+                      参考图上限
+                    </Label>
+                    <Input
+                      id={`${entry.configKey}-max-reference-images`}
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      step={1}
+                      value={draft.maxReferenceImages}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updateDraft((current) =>
+                          current.category === "video" &&
+                          current.maxReferenceImages !== undefined
+                            ? {
+                                ...current,
+                                maxReferenceImages: event.target.value,
+                              }
+                            : current
+                        )
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      必须是正安全整数，不设业务硬上限；单次请求仍受 256 张和
+                      200 MB 基础设施限制。
+                    </p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </section>

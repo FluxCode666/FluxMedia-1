@@ -388,6 +388,17 @@ describe("管理与公开 DTO", () => {
       supportedDurations: [4, 6, 8],
       supportedAspectRatios: ["16:9", "9:16"],
       supportedResolutions: ["720p", "1080p"],
+      input: {
+        frames: "first-and-optional-last",
+        referenceImages: { maxCount: 0, configurable: false },
+        framesAndReferencesMutuallyExclusive: true,
+      },
+      audio: { supported: false, defaultEnabled: false },
+      configuredReachable: true,
+      infrastructureLimits: {
+        maxMediaInputCount: 256,
+        maxMediaInputBytes: 209_715_200,
+      },
     });
 
     expect(parsed).toMatchObject({
@@ -572,6 +583,39 @@ describe("updateModelConfigurationEntryInputSchema", () => {
         updateModelConfigurationEntryInputSchema.safeParse({
           ...videoCommon,
           creditsPerSecondByResolution,
+        }).success
+      ).toBe(false);
+    }
+  });
+
+  it("视频保存输入允许 Seedance 携带正安全整数参考图上限", () => {
+    const seedanceInput = {
+      clientRequestId: common.clientRequestId,
+      configKey: "seedance2",
+      expectedRevision: 2,
+      visible: true,
+      homepageVisible: false,
+      homepagePriority: 5,
+      description: "Seedance 视频模型",
+      coverChange: { action: "keep" as const },
+      category: "video" as const,
+      creditsPerSecondByResolution: { "1080p": 45 },
+      maxReferenceImages: 20,
+    };
+
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse(seedanceInput).success
+    ).toBe(true);
+    for (const maxReferenceImages of [
+      0,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(
+        updateModelConfigurationEntryInputSchema.safeParse({
+          ...seedanceInput,
+          maxReferenceImages,
         }).success
       ).toBe(false);
     }

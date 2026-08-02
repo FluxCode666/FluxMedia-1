@@ -4,11 +4,12 @@
  * 统一媒体后端号池管理面板。
  *
  * 职责：在单一页面加载和展示分组及 `api | adobe` 统一成员，打开对应编辑表单、
- * 执行安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、Sub2API、
- * Web/Codex 账号、子号池和旧三池分页不再进入此组件。
+ * 执行运行状态重置和安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、
+ * Sub2API、Web/Codex 账号、子号池和旧三池分页不再进入此组件。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
+import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -27,6 +28,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
   Users,
 } from "lucide-react";
@@ -39,12 +41,14 @@ import {
   deleteImageBackendGroupAction,
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
+  resetImageBackendMemberStatusAction,
 } from "./actions";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
 import {
   type BackendMemberModelOption,
   buildBackendMemberModelOptions,
+  normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
 import type {
@@ -72,7 +76,7 @@ function formatAdminTime(value: string | null, timeZone: string): string {
 
 /** 返回成员的人类可读类型与模式。 */
 function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
-  if (member.type === "api") return "API Images";
+  if (member.type === "api") return "API";
   return member.config.mode === "direct" ? "Adobe Direct" : "Adobe Gateway";
 }
 
@@ -196,6 +200,9 @@ export function ImageBackendPoolAdminPanel({
   );
   const [editingMember, setEditingMember] =
     useState<BackendMemberAdminSummary | null>(null);
+  const [resettingMemberId, setResettingMemberId] = useState<string | null>(
+    null
+  );
 
   const { execute: loadPool, isPending: isLoading } = useAction(
     getAdminImageBackendPoolAction,
@@ -205,7 +212,7 @@ export function ImageBackendPoolAdminPanel({
         setMembers(data?.members ?? []);
       },
       onError: ({ error }) =>
-        toast.error(error.serverError || "加载统一号池失败"),
+        toast.error(error.serverError || "加载账号池失败"),
     }
   );
   const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
@@ -247,6 +254,18 @@ export function ImageBackendPoolAdminPanel({
       onError: ({ error }) => toast.error(error.serverError || "删除成员失败"),
     }
   );
+  const { execute: resetMemberStatus, isPending: isResettingMember } =
+    useAction(resetImageBackendMemberStatusAction, {
+      onSuccess: () => {
+        setResettingMemberId(null);
+        toast.success("账号运行状态已重置");
+        loadPool();
+      },
+      onError: ({ error }) => {
+        setResettingMemberId(null);
+        toast.error(error.serverError || "重置账号运行状态失败");
+      },
+    });
 
   useEffect(() => {
     loadPool();
@@ -263,7 +282,9 @@ export function ImageBackendPoolAdminPanel({
         new Set(
           members.flatMap((member) =>
             member.supportedModelIds.filter(
-              (modelId) => !isFireflyVideoModelId(modelId)
+              (modelId) =>
+                !normalizeVideoModelId(modelId) &&
+                !isLegacyVideoModelId(modelId)
             )
           )
         )
@@ -288,7 +309,7 @@ export function ImageBackendPoolAdminPanel({
   /** 打开新增成员表单，并在缺少分组时阻止创建无归属成员。 */
   function openNewMember(): void {
     if (groups.length === 0) {
-      toast.error("请先创建至少一个媒体后端分组");
+      toast.error("请先创建至少一个账号池分组");
       return;
     }
     if (
@@ -310,7 +331,7 @@ export function ImageBackendPoolAdminPanel({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold">媒体后端号池</h2>
+          <h2 className="text-xl font-semibold">账号池</h2>
           <p className="max-w-3xl text-sm text-muted-foreground">
             API 与 Adobe 成员共享分组、模型能力、优先级、并发、健康和调度指标。
             模型 ID 只做能力匹配，不再按前缀分流。
@@ -490,13 +511,42 @@ export function ImageBackendPoolAdminPanel({
                     .map((id) => groupNameById.get(id) ?? id)
                     .join("、")}
                 </CardDescription>
-                <CardAction className="flex gap-1">
+                <CardAction className="flex flex-wrap justify-end gap-1">
                   {!readOnly && (
                     <>
                       <Button
                         type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={isResettingMember || isDeletingMember}
+                        aria-busy={
+                          isResettingMember && resettingMemberId === member.id
+                        }
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `确认重置账号“${member.name}”的运行状态？\n\n这会清除健康降级、失败连击、冷却和最近错误，不会修改凭据、累计指标或运行中租约。`
+                            )
+                          ) {
+                            return;
+                          }
+                          setResettingMemberId(member.id);
+                          resetMemberStatus({ id: member.id });
+                        }}
+                      >
+                        {isResettingMember &&
+                        resettingMemberId === member.id ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <RotateCcw className="size-4" />
+                        )}
+                        重置状态
+                      </Button>
+                      <Button
+                        type="button"
                         size="icon"
                         variant="ghost"
+                        disabled={isResettingMember || isDeletingMember}
                         onClick={() => {
                           setEditingMember(member);
                           setMemberDialogOpen(true);
@@ -509,7 +559,7 @@ export function ImageBackendPoolAdminPanel({
                         type="button"
                         size="icon"
                         variant="ghost"
-                        disabled={isDeletingMember}
+                        disabled={isDeletingMember || isResettingMember}
                         onClick={() => {
                           if (
                             window.confirm(`确认删除成员“${member.name}”？`)
@@ -540,7 +590,11 @@ export function ImageBackendPoolAdminPanel({
                     上次使用 {formatAdminTime(member.lastUsedAt, timeZone)}
                   </span>
                 </div>
-                <MemberSupportedModels modelIds={member.supportedModelIds} />
+                <MemberSupportedModels
+                  modelIds={normalizeBackendMemberModelIdsForDisplay(
+                    member.supportedModelIds
+                  )}
+                />
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>
                     凭据：

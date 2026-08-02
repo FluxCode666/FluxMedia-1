@@ -6,7 +6,10 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
+import {
+  normalizeHistoricalModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
 import {
   type HistoryCreditDetails,
   type HistoryCursorFilters,
@@ -14,6 +17,7 @@ import {
   type HistoryRecord,
   type HistoryRecordStatus,
   type HistoryReferenceImage,
+  type HistoryVideoInputSummary,
   historyCursorFiltersSchema,
   historyListInputSchema,
   historyListOutputSchema,
@@ -89,10 +93,11 @@ export interface ImageHistoryRow extends HistoryRowCommon {
 /** PostgreSQL 仓储返回的视频窄行。 */
 export interface VideoHistoryRow extends HistoryRowCommon {
   kind: "video";
-  family: string;
   resolution: string;
-  durationSeconds: number;
+  duration: number;
   aspectRatio: string;
+  generateAudio: boolean;
+  input: HistoryVideoInputSummary;
   videoUrl: string | null;
 }
 
@@ -302,7 +307,7 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
   const { rawError, ...safeRow } = row;
   const common = {
     ...safeRow,
-    model: normalizeSupportedModelId(row.model) ?? row.model,
+    model: normalizeHistoricalModelId(row.model) ?? row.model,
     error: sanitizeHistoryError(rawError),
     createdAt: toIsoDateTime(row.createdAt),
     completedAt: row.completedAt ? toIsoDateTime(row.completedAt) : null,
@@ -431,7 +436,7 @@ export async function loadHistoryRecords(
   const modelOptions = Array.from(
     new Set(
       rawModelOptions
-        .map((model) => normalizeSupportedModelId(model))
+        .map((model) => normalizeHistoricalModelId(model))
         .filter((model): model is string => Boolean(model))
     )
   )

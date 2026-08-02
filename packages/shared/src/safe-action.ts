@@ -7,6 +7,7 @@ import { getUserRoleById } from "./auth/role-server";
 import {
   canAccessAdminArea,
   canManageUserPermissions,
+  canViewGlobalUsageRecords,
   canViewImageBackendPool,
 } from "./auth/roles";
 import {
@@ -225,7 +226,7 @@ export const imageBackendPoolViewerAction = protectedAction.use(
   async ({ next, ctx }) => {
     const role = await getUserRoleById(ctx.userId);
     if (!canViewImageBackendPool(role)) {
-      throw new Error("此操作需要生图后端池查看权限");
+      throw new Error("此操作需要账号池查看权限");
     }
 
     return next({
@@ -233,6 +234,24 @@ export const imageBackendPoolViewerAction = protectedAction.use(
         ...ctx,
         role,
         canViewImageBackendPool: true,
+      },
+    });
+  }
+);
+
+/** 为现有三档管理员提供只读全局使用记录 Action 边界。 */
+export const globalUsageRecordsViewerAction = protectedAction.use(
+  async ({ next, ctx }) => {
+    const role = await getUserRoleById(ctx.userId);
+    if (!canViewGlobalUsageRecords(role)) {
+      throw new Error("此操作需要全局使用记录查看权限");
+    }
+
+    return next({
+      ctx: {
+        ...ctx,
+        role,
+        canViewGlobalUsageRecords: true,
       },
     });
   }

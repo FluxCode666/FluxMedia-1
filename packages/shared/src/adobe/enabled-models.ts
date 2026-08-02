@@ -6,9 +6,12 @@
  * 模型发现采用同一套白名单语义。
  */
 import { z } from "zod";
-
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelIds,
+} from "../image-backend/supported-models";
+import { normalizeVideoModelId } from "../video-generation/contracts";
 import { FIREFLY_IMAGE_FAMILY_MODEL_IDS } from "./firefly-direct/catalog";
-import { isFireflyVideoModelId } from "./firefly-direct/video-catalog";
 import type { AdobeImageFamily } from "./firefly-request";
 
 /** Adobe 后端可配置的图像模型族 ID，顺序同时作为管理端展示顺序。 */
@@ -170,9 +173,8 @@ export function pickExplicitAdobeImageFamily(
 /**
  * 判断一条 Adobe 后端是否允许承接指定模型。
  *
- * 空数组和 null 都代表历史“不限图像模型”配置，保持旧后端升级后的可用性；显式非空
- * 白名单则必须精确匹配解析出的 Firefly 图像模型族。视频不复用图像白名单，而由既有
- * supportsVideo 开关控制，以免旧的图像白名单配置在升级后意外禁用视频能力。
+ * 空数组和 null 仅保留历史“不限图像模型”语义。视频必须同时具备 direct 执行资格并在
+ * 成员能力中显式声明同一个真实 ID；匹配不解析参数、前缀或供应商家族。
  *
  * @param input.enabledModels - 后端已保存的图像模型白名单。
  * @param input.supportsVideo - 后端是否允许视频模型。
@@ -184,9 +186,14 @@ export function canAdobeBackendServeModel(input: {
   supportsVideo: boolean;
   requestedModel: string | null | undefined;
 }): boolean {
-  if (isFireflyVideoModelId(input.requestedModel)) {
-    return input.supportsVideo;
+  const requestedVideoModelId = normalizeVideoModelId(input.requestedModel);
+  if (requestedVideoModelId) {
+    if (!input.supportsVideo) return false;
+    return normalizeSupportedModelIds(input.enabledModels).some(
+      (modelId) => normalizeVideoModelId(modelId) === requestedVideoModelId
+    );
   }
+  if (isLegacyVideoModelId(input.requestedModel)) return false;
 
   if (!Array.isArray(input.enabledModels) || input.enabledModels.length === 0) {
     return true;

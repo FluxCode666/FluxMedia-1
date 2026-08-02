@@ -18,9 +18,9 @@ import {
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
 import {
-  type RequestParameterMapping,
-  requestParameterMappingsSchema,
-} from "@repo/shared/image-backend/request-parameter-mapping";
+  apiUpstreamAdapterOperationIdSchema,
+  apiUpstreamJsonValueSchema,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
   ActionUserError,
   adminAction,
@@ -43,13 +43,6 @@ export interface BackendPoolAdminSnapshot {
   members: BackendMemberAdminSummary[];
 }
 
-/** API Images 参数映射模板。 */
-export interface BackendParameterMappingTemplate {
-  id: string;
-  name: string;
-  parameterMappings: RequestParameterMapping[];
-}
-
 /** pool operation 与浏览器动作所需输出的类型映射。 */
 type PoolOperationOutputs = {
   "pool.getGroupOptions": {
@@ -59,23 +52,32 @@ type PoolOperationOutputs = {
   "pool.saveGroup": { id: string };
   "pool.deleteGroup": { success: boolean };
   "pool.saveMember": { id: string };
+  "pool.resetMemberStatus": { success: boolean };
   "pool.deleteMember": { success: boolean };
-  "pool.listParameterMappingTemplates": {
-    templates: BackendParameterMappingTemplate[];
+  "pool.testApiUpstreamAdapter": { preview: unknown };
+  "pool.getApiUpstreamRuntimeDiagnostics": {
+    lifecycle: "starting" | "ready" | "unavailable" | "draining" | "closed";
+    workerCount: number;
+    liveWorkerCount: number;
+    requestQueueLength: number;
+    responseQueueLength: number;
+    responsePermitsInUse: number;
+    responsePermitCapacity: number;
+    saturationCount: number;
+    replacementCount: number;
   };
-  "pool.saveParameterMappingTemplate": { id: string };
-  "pool.deleteParameterMappingTemplate": { success: boolean };
 };
 
 type PoolOperationName = keyof PoolOperationOutputs;
 
 const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
 
-const parameterMappingTemplateInputSchema = z
+const apiUpstreamAdapterTestInputSchema = z
   .object({
-    id: z.string().trim().min(1).max(128).optional(),
-    name: z.string().trim().min(1).max(80),
-    parameterMappings: requestParameterMappingsSchema,
+    operation: apiUpstreamAdapterOperationIdSchema,
+    stage: z.enum(["request", "response"]),
+    script: z.string().max(32_768),
+    sample: apiUpstreamJsonValueSchema,
   })
   .strict();
 
@@ -158,6 +160,20 @@ export const saveImageBackendMemberAction = adminAction
     return { success: true, id: result.id };
   });
 
+/** 清除统一成员的暂态运行失败状态，不改凭据、指标或租约。 */
+export const resetImageBackendMemberStatusAction = adminAction
+  .metadata({ action: "imageBackendPool.resetMemberStatus" })
+  .schema(idSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    await invokePoolOperation("pool.resetMemberStatus", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+    revalidateBackendPoolPage();
+    return { success: true };
+  });
+
 /** 按统一成员 ID 删除没有租约或未完成视频任务的成员。 */
 export const deleteImageBackendMemberAction = adminAction
   .metadata({ action: "imageBackendPool.deleteMember" })
@@ -170,6 +186,29 @@ export const deleteImageBackendMemberAction = adminAction
     });
     revalidateBackendPoolPage();
     return { success: true };
+  });
+
+/** 使用生产 Worker 和合成样例执行无网络 API 上游脚本测试。 */
+export const testApiUpstreamAdapterAction = adminAction
+  .metadata({ action: "imageBackendPool.testApiUpstreamAdapter" })
+  .schema(apiUpstreamAdapterTestInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    return invokePoolOperation("pool.testApiUpstreamAdapter", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+  });
+
+/** 读取当前 Web 进程的脱敏 API 上游脚本运行诊断。 */
+export const getApiUpstreamRuntimeDiagnosticsAction = adminAction
+  .metadata({ action: "imageBackendPool.getApiUpstreamRuntimeDiagnostics" })
+  .action(async ({ ctx }) => {
+    return invokePoolOperation(
+      "pool.getApiUpstreamRuntimeDiagnostics",
+      {},
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
   });
 
 /** 获取用户可选择的启用分组。 */
@@ -185,44 +224,4 @@ export const getImageBackendGroupOptionsAction = protectedAction
         role: await getUserRoleById(ctx.userId),
       }
     );
-  });
-
-/** 读取 API Images 参数映射模板。 */
-export const getImageBackendParameterMappingTemplatesAction =
-  imageBackendPoolViewerAction
-    .metadata({ action: "imageBackendPool.listParameterMappingTemplates" })
-    .action(async ({ ctx }) => {
-      return invokePoolOperation(
-        "pool.listParameterMappingTemplates",
-        {},
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
-    });
-
-/** 保存 API Images 参数映射模板。 */
-export const saveImageBackendParameterMappingTemplateAction = adminAction
-  .metadata({ action: "imageBackendPool.saveParameterMappingTemplate" })
-  .schema(parameterMappingTemplateInputSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.saveParameterMappingTemplate",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return { success: true, id: result.id };
-  });
-
-/** 删除 API Images 参数映射模板。 */
-export const deleteImageBackendParameterMappingTemplateAction = adminAction
-  .metadata({ action: "imageBackendPool.deleteParameterMappingTemplate" })
-  .schema(idSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    await invokePoolOperation(
-      "pool.deleteParameterMappingTemplate",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return { success: true };
   });

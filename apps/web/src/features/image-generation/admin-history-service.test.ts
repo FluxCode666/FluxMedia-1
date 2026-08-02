@@ -55,6 +55,55 @@ function createRepository(
 }
 
 describe("admin history service", () => {
+  it("returns real video model, independent parameters and input summary", async () => {
+    const result = await loadAdminHistoryRecords(
+      {
+        actorUserId: "admin-1",
+        timeZone: "UTC",
+        input: { type: "video" },
+        now: new Date("2026-07-22T13:00:00.000Z"),
+      },
+      {
+        repository: createRepository({
+          readRecords: vi.fn().mockResolvedValue([
+            {
+              kind: "video",
+              id: "video-1",
+              userId: "user-1",
+              userEmail: "member@example.com",
+              prompt: "video prompt",
+              model: "seedance2",
+              resolution: "1080p",
+              duration: 8,
+              aspectRatio: "16x9",
+              generateAudio: false,
+              input: { mode: "references", count: 3 },
+              status: "completed",
+              creditsConsumed: 20,
+              rawError: null,
+              videoUrl: "/video/video-1",
+              createdAt: "2026-07-22T12:00:00.000Z",
+              completedAt: "2026-07-22T12:01:00.000Z",
+            },
+          ]),
+        }),
+        tokenSecret: TOKEN_SECRET,
+      }
+    );
+
+    expect(result.records[0]).toEqual(
+      expect.objectContaining({
+        model: "seedance2",
+        duration: 8,
+        aspectRatio: "16x9",
+        resolution: "1080p",
+        generateAudio: false,
+        input: { mode: "references", count: 3 },
+      })
+    );
+    expect(result.records[0]).not.toHaveProperty("family");
+  });
+
   it("passes the exact email filter to the global repository and returns user identity", async () => {
     const readRecords = vi
       .fn()

@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   json,
@@ -1124,7 +1125,7 @@ export const imageBackendMember = pgTable(
     ),
     check(
       "image_backend_member_supported_models_check",
-      sql`CASE WHEN json_typeof(${table.supportedModelIds}) = 'array' THEN json_array_length(${table.supportedModelIds}) > 0 ELSE false END`
+      sql`media_supported_model_ids_are_valid(${table.supportedModelIds})`
     ),
     check(
       "image_backend_member_priority_check",
@@ -1156,28 +1157,81 @@ export const imageBackendMember = pgTable(
   ]
 );
 
-/** API 成员的一对一 OpenAI Images 协议配置。 */
+/**
+ * API 账号的不可变上游适配版本。
+ *
+ * `memberIdSnapshot` 不能引用成员表：成员在没有有效租约和非终态任务后可被删除，
+ * 但终态任务仍须保留不含密钥的协议快照，供审计与历史诊断使用。
+ */
+export const imageBackendMemberApiAdapterVersion = pgTable(
+  "image_backend_member_api_adapter_version",
+  {
+    id: text("id").primaryKey(),
+    memberIdSnapshot: text("member_id_snapshot").notNull(),
+    revision: integer("revision").notNull(),
+    credentialScope: text("credential_scope").notNull(),
+    configuration: json("configuration")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique(
+      "image_backend_member_api_adapter_version_member_revision_unique"
+    ).on(table.memberIdSnapshot, table.revision),
+    unique("image_backend_member_api_adapter_version_member_id_unique").on(
+      table.memberIdSnapshot,
+      table.id
+    ),
+    check(
+      "image_backend_member_api_adapter_version_revision_check",
+      sql`${table.revision} >= 1`
+    ),
+    check(
+      "image_backend_member_api_adapter_version_credential_scope_check",
+      sql`char_length(btrim(${table.credentialScope})) > 0`
+    ),
+    check(
+      "image_backend_member_api_adapter_version_configuration_check",
+      sql`json_typeof(${table.configuration}) = 'object'`
+    ),
+    index("image_backend_member_api_adapter_version_member_created_idx").on(
+      table.memberIdSnapshot,
+      table.createdAt
+    ),
+  ]
+);
+
+/**
+ * API 成员的当前凭据与当前适配版本指针。
+ *
+ * 密钥不进入适配版本；同凭据域的密钥轮换仅更新此表，已接受任务继续使用固定版本。
+ */
 export const imageBackendMemberApiConfig = pgTable(
   "image_backend_member_api_config",
   {
     memberId: text("member_id")
       .primaryKey()
       .references(() => imageBackendMember.id, { onDelete: "cascade" }),
-    baseUrl: text("base_url").notNull(),
     apiKey: text("api_key"),
-    useStream: boolean("use_stream").notNull().default(false),
-    parameterMappings: json("parameter_mappings")
-      .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
-      .notNull()
-      .default([]),
+    currentAdapterVersionId: text("current_adapter_version_id").notNull(),
+    credentialScope: text("credential_scope").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
     check(
-      "image_backend_member_api_config_mappings_check",
-      sql`json_typeof(${table.parameterMappings}) = 'array'`
+      "image_backend_member_api_config_credential_scope_check",
+      sql`char_length(btrim(${table.credentialScope})) > 0`
     ),
+    foreignKey({
+      name: "image_backend_member_api_config_current_adapter_version_fk",
+      columns: [table.memberId, table.currentAdapterVersionId],
+      foreignColumns: [
+        imageBackendMemberApiAdapterVersion.memberIdSnapshot,
+        imageBackendMemberApiAdapterVersion.id,
+      ],
+    }),
   ]
 );
 
@@ -1298,6 +1352,8 @@ export const imageBackendMemberLease = pgTable(
       .notNull()
       .references(() => imageBackendMember.id, { onDelete: "cascade" }),
     ownerToken: text("owner_token").notNull(),
+    apiAdapterMemberId: text("api_adapter_member_id"),
+    apiAdapterVersionId: text("api_adapter_version_id"),
     expiresAt: timestamp("expires_at").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1308,6 +1364,18 @@ export const imageBackendMemberLease = pgTable(
       table.expiresAt
     ),
     index("image_backend_member_lease_expires_idx").on(table.expiresAt),
+    check(
+      "image_backend_member_lease_api_adapter_pair_check",
+      sql`(${table.apiAdapterMemberId} IS NULL) = (${table.apiAdapterVersionId} IS NULL)`
+    ),
+    foreignKey({
+      name: "image_backend_member_lease_api_adapter_version_fk",
+      columns: [table.apiAdapterMemberId, table.apiAdapterVersionId],
+      foreignColumns: [
+        imageBackendMemberApiAdapterVersion.memberIdSnapshot,
+        imageBackendMemberApiAdapterVersion.id,
+      ],
+    }),
   ]
 );
 
@@ -1375,50 +1443,20 @@ export const imageBackendMemberSchedulerMetric = pgTable(
   ]
 );
 
-// API 后端参数映射模板。模板仅用于管理端复用，保存到具体后端时复制为独立快照，
-// 避免编辑或删除模板悄然改变正在服务的上游协议。
-export const imageBackendParameterMappingTemplate = pgTable(
-  "image_backend_parameter_mapping_template",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    parameterMappings: json("parameter_mappings")
-      .$type<Array<{ source: string; target: string; mode: "copy" | "move" }>>()
-      .notNull()
-      .default([]),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("image_backend_parameter_mapping_template_name_unique").on(
-      table.name
-    ),
-  ]
-);
-
-/** 视频 worker 可跨进程恢复的 JSON-safe 图片引用。 */
-type PersistedVideoInputReference =
-  | {
-      source: "storage";
-      mimeType: "image/png" | "image/jpeg" | "image/webp";
-      storageKey: string;
-      storageBucket?: string;
-      byteLength: number;
-    }
-  | {
-      source: "remote";
-      mimeType: "image/png" | "image/jpeg" | "image/webp";
-      url: string;
-      byteLength: number;
-    };
-
-/** 仅由服务端 data 转存创建、可在终态安全删除的对象身份。 */
-type PersistedVideoInputObject = {
-  userId: string;
-  videoId: string;
-  attemptId: string;
+/** 视频任务自有、storage-only 的单个输入对象。 */
+type PersistedVideoInputAsset = {
+  source: "storage";
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
   storageKey: string;
   storageBucket: string;
+  byteLength: number;
+};
+
+/** 视频任务按业务语义保存的持久输入清单。 */
+type PersistedVideoInputManifest = {
+  firstFrame?: PersistedVideoInputAsset;
+  lastFrame?: PersistedVideoInputAsset;
+  referenceImages?: PersistedVideoInputAsset[];
 };
 
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
@@ -1447,7 +1485,13 @@ export const videoGeneration = pgTable(
     // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
     memberLeaseId: text("member_lease_id"),
     memberLeaseOwnerToken: text("member_lease_owner_token"),
-    // 平台规范裸视频 model id（<family>-<dur>s-<ratio>[-<res>]）。
+    // API 任务固定提交时的成员/版本快照；Adobe 任务保持成对为空。
+    apiAdapterMemberId: text("api_adapter_member_id"),
+    apiAdapterVersionId: text("api_adapter_version_id"),
+    apiAdapterQueryFailureCount: integer("api_adapter_query_failure_count")
+      .notNull()
+      .default(0),
+    // 平台真实视频模型 ID；时长、比例与分辨率只存在于各自独立列。
     model: text("model").notNull(),
     // 请求头 Profile 与 IMS Token Profile 相互独立；视频 Bearer Token 固定复用 Express。
     adobeRequestProfile: text("adobe_request_profile")
@@ -1456,7 +1500,6 @@ export const videoGeneration = pgTable(
     adobeAuthProfile: text("adobe_auth_profile")
       .$type<"express" | "firefly">()
       .notNull(),
-    family: text("family").notNull(),
     prompt: text("prompt").notNull(),
     durationSeconds: integer("duration_seconds").notNull(),
     aspectRatio: text("aspect_ratio").notNull(),
@@ -1467,13 +1510,8 @@ export const videoGeneration = pgTable(
     stage: text("stage").notNull().default("created"),
     stateVersion: integer("state_version").notNull().default(0),
     attemptCount: integer("attempt_count").notNull().default(0),
-    // 图生视频输入：引用历史生成（@ 历史图）或上传图的 storageKey / generationId。
-    inputImageRefs:
-      json("input_image_refs").$type<PersistedVideoInputReference[]>(),
-    // 与客户端 storage 引用分离的可信清理集合，禁止仅凭 key 前缀推断删除权限。
-    stagedInputObjects: json("staged_input_objects").$type<
-      PersistedVideoInputObject[]
-    >(),
+    // 真实输入语义与任务自有存储身份。
+    inputManifest: json("input_manifest").$type<PersistedVideoInputManifest>(),
     // 完成后 re-host 到对象存储的 key；videoUrl 为上游 presigned（短期）。
     storageKey: text("storage_key"),
     videoUrl: text("video_url"),
@@ -1531,7 +1569,27 @@ export const videoGeneration = pgTable(
     ),
     check(
       "video_generation_recovery_counts_check",
-      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
+      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND ${table.apiAdapterQueryFailureCount} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
+    ),
+    check(
+      "video_generation_api_adapter_pair_check",
+      sql`(${table.apiAdapterMemberId} IS NULL) = (${table.apiAdapterVersionId} IS NULL)`
+    ),
+    foreignKey({
+      name: "video_generation_api_adapter_version_fk",
+      columns: [table.apiAdapterMemberId, table.apiAdapterVersionId],
+      foreignColumns: [
+        imageBackendMemberApiAdapterVersion.memberIdSnapshot,
+        imageBackendMemberApiAdapterVersion.id,
+      ],
+    }),
+    check(
+      "video_generation_real_model_check",
+      sql`${table.model} IN ('sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref', 'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45', 'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast')`
+    ),
+    check(
+      "video_generation_input_manifest_check",
+      sql`${table.inputManifest} IS NULL OR video_input_manifest_is_valid(${table.inputManifest}, ${table.userId}, ${table.id}, ${table.model})`
     ),
   ]
 );
@@ -1598,6 +1656,10 @@ export const videoInputCleanup = pgTable(
     attemptId: text("attempt_id").notNull(),
     storageKey: text("storage_key").notNull(),
     storageBucket: text("storage_bucket").notNull(),
+    reason: text("reason")
+      .$type<"orphan" | "lifecycle_delete">()
+      .notNull()
+      .default("orphan"),
     attemptCount: integer("attempt_count").notNull().default(0),
     nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
     claimToken: text("claim_token"),
@@ -1614,6 +1676,10 @@ export const videoInputCleanup = pgTable(
     check(
       "video_input_cleanup_attempt_count_check",
       sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "video_input_cleanup_reason_check",
+      sql`${table.reason} IN ('orphan', 'lifecycle_delete')`
     ),
     check(
       "video_input_cleanup_identity_nonempty_check",
@@ -1794,6 +1860,10 @@ export type ImageBackendMemberApiConfig =
   typeof imageBackendMemberApiConfig.$inferSelect;
 export type NewImageBackendMemberApiConfig =
   typeof imageBackendMemberApiConfig.$inferInsert;
+export type ImageBackendMemberApiAdapterVersion =
+  typeof imageBackendMemberApiAdapterVersion.$inferSelect;
+export type NewImageBackendMemberApiAdapterVersion =
+  typeof imageBackendMemberApiAdapterVersion.$inferInsert;
 export type ImageBackendMemberAdobeConfig =
   typeof imageBackendMemberAdobeConfig.$inferSelect;
 export type NewImageBackendMemberAdobeConfig =
@@ -1810,10 +1880,6 @@ export type ImageBackendMemberSchedulerMetric =
   typeof imageBackendMemberSchedulerMetric.$inferSelect;
 export type NewImageBackendMemberSchedulerMetric =
   typeof imageBackendMemberSchedulerMetric.$inferInsert;
-export type ImageBackendParameterMappingTemplate =
-  typeof imageBackendParameterMappingTemplate.$inferSelect;
-export type NewImageBackendParameterMappingTemplate =
-  typeof imageBackendParameterMappingTemplate.$inferInsert;
 // ============================================
 // External API Keys
 // ============================================
@@ -1887,6 +1953,9 @@ export const generation = pgTable(
       .notNull()
       .default(0),
     error: text("error"),
+    // 新图片任务与视频任务一致地固定 API 适配版本；迁移前历史缺少可靠成员证据时为空。
+    apiAdapterMemberId: text("api_adapter_member_id"),
+    apiAdapterVersionId: text("api_adapter_version_id"),
     metadata: json("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at")
       .notNull()
@@ -1901,6 +1970,18 @@ export const generation = pgTable(
       table.createdAt
     ),
     index("generation_status_created_at_idx").on(table.status, table.createdAt),
+    check(
+      "generation_api_adapter_pair_check",
+      sql`(${table.apiAdapterMemberId} IS NULL) = (${table.apiAdapterVersionId} IS NULL)`
+    ),
+    foreignKey({
+      name: "generation_api_adapter_version_fk",
+      columns: [table.apiAdapterMemberId, table.apiAdapterVersionId],
+      foreignColumns: [
+        imageBackendMemberApiAdapterVersion.memberIdSnapshot,
+        imageBackendMemberApiAdapterVersion.id,
+      ],
+    }),
     // 另有 generation_metadata_gin_idx —— metadata 的 jsonb_path_ops GIN 表达式索引,
     // 加速画廊 draft/upload 的 @? jsonpath 过滤。表达式索引以迁移 0035 的 SQL 为准
     // (Drizzle 对 (metadata::jsonb) 这类表达式索引声明支持不稳定,故此处仅注释登记)。

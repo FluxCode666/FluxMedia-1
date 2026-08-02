@@ -53,15 +53,26 @@ const VIDEO_MODEL: ModelMarketplacePublicItem = {
   supportedDurations: [4, 6, 8],
   supportedAspectRatios: ["16:9", "9:16"],
   supportedResolutions: ["720p", "1080p"],
+  input: {
+    frames: "first-and-optional-last",
+    referenceImages: { maxCount: 3, configurable: false },
+    framesAndReferencesMutuallyExclusive: true,
+  },
+  audio: { supported: true, defaultEnabled: false },
+  configuredReachable: true,
+  infrastructureLimits: {
+    maxMediaInputCount: 256,
+    maxMediaInputBytes: 209_715_200,
+  },
 };
 
 describe("filterModelMarketplaceModels", () => {
   it("按模型 ID、展示名、配置键或简介搜索并保持服务端顺序", () => {
     const models = [IMAGE_MODEL, VIDEO_MODEL];
 
-    expect(
-      filterModelMarketplaceModels(models, "veo31", "all", "all")
-    ).toEqual([VIDEO_MODEL]);
+    expect(filterModelMarketplaceModels(models, "veo31", "all", "all")).toEqual(
+      [VIDEO_MODEL]
+    );
     expect(
       filterModelMarketplaceModels(models, "veo31-6s", "all", "all")
     ).toEqual([]);

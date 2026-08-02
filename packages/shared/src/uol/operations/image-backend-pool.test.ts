@@ -1,5 +1,5 @@
 /**
- * 生图后端池 UOL 计费配置契约测试。
+ * 账号池 UOL 计费与成员管理契约测试。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -15,8 +15,11 @@ import { getOperation } from "../registry";
 import {
   deleteMember,
   getAdminPool,
+  getApiUpstreamRuntimeDiagnostics,
+  resetMemberStatus,
   saveGroup,
   saveMember,
+  testApiUpstreamAdapter,
 } from "./image-backend-pool";
 import "./external-api";
 import "./image-generation";
@@ -119,7 +122,7 @@ describe("image backend pool pricing operations", () => {
         concurrency: 1,
         config: {
           baseUrl: "https://example.com",
-          parameterMappings: [],
+          modelMappings: [],
         },
         billingMultiplier: 2,
       }).success
@@ -163,13 +166,94 @@ describe("image backend pool pricing operations", () => {
         concurrency: 1,
         config: {
           baseUrl: "https://example.com",
-          parameterMappings: [],
+          modelMappings: [],
         },
       }).success
     ).toBe(true);
     expect(
       deleteMember.input.safeParse({ id: "member-a", memberType: "api" })
         .success
+    ).toBe(false);
+  });
+
+  it("移除旧参数映射输入与模板操作", () => {
+    expect(
+      saveMember.input.safeParse({
+        type: "api",
+        name: "API",
+        groupIds: ["group-a"],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: true,
+        priority: 0,
+        concurrency: 1,
+        config: {
+          baseUrl: "https://example.com",
+          modelMappings: [],
+          parameterMappings: [],
+        },
+      }).success
+    ).toBe(false);
+    expect(getOperation("pool.listParameterMappingTemplates")).toBeUndefined();
+    expect(getOperation("pool.saveParameterMappingTemplate")).toBeUndefined();
+    expect(getOperation("pool.deleteParameterMappingTemplate")).toBeUndefined();
+  });
+
+  it("成员状态重置只接受统一成员 ID 且声明为自然幂等", () => {
+    expect(resetMemberStatus.input.safeParse({ id: "member-a" }).success).toBe(
+      true
+    );
+    expect(
+      resetMemberStatus.input.safeParse({
+        id: "member-a",
+        credentialStatus: "active",
+      }).success
+    ).toBe(false);
+    expect(resetMemberStatus.readOnly).toBe(false);
+    expect(resetMemberStatus.destructive).toBe(false);
+    expect(resetMemberStatus.idempotency).toEqual({ kind: "natural" });
+  });
+
+  it("API 适配脚本测试与运行诊断是仅限人工的进程内 UOL operation", () => {
+    expect(
+      testApiUpstreamAdapter.input.safeParse({
+        operation: "videos.generate",
+        stage: "request",
+        script: "return {};",
+        sample: { model: "seedance2" },
+      }).success
+    ).toBe(true);
+    expect(testApiUpstreamAdapter.readOnly).toBe(true);
+    expect(testApiUpstreamAdapter.idempotency).toEqual({ kind: "natural" });
+    expect(testApiUpstreamAdapter.sideEffects).toEqual(["queue"]);
+    expect(testApiUpstreamAdapter.agentExposure).toBe("human-only");
+    expect(testApiUpstreamAdapter.processLocalState).toBe(true);
+
+    expect(getApiUpstreamRuntimeDiagnostics.input.safeParse({}).success).toBe(
+      true
+    );
+    expect(getApiUpstreamRuntimeDiagnostics.readOnly).toBe(true);
+    expect(getApiUpstreamRuntimeDiagnostics.idempotency).toEqual({
+      kind: "natural",
+    });
+    expect(getApiUpstreamRuntimeDiagnostics.sideEffects).toEqual([]);
+    expect(getApiUpstreamRuntimeDiagnostics.agentExposure).toBe("human-only");
+    expect(getApiUpstreamRuntimeDiagnostics.processLocalState).toBe(true);
+    expect(
+      getApiUpstreamRuntimeDiagnostics.output.safeParse({
+        lifecycle: "ready",
+        workerCount: 1,
+        liveWorkerCount: 1,
+        requestQueueLength: 0,
+        responseQueueLength: 0,
+        responsePermitsInUse: 0,
+        responsePermitCapacity: 16,
+        saturationCount: 0,
+        replacementCount: 0,
+        script: "must-not-be-exposed",
+      }).success
     ).toBe(false);
   });
 

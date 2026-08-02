@@ -16,7 +16,7 @@ import {
   type VideoApiKeyQuotaDatabase,
 } from "../../../apps/web/src/features/image-generation/video-api-key-quota";
 import {
-  assertVideoInputCleanupAvailableForPersistence,
+  adoptVideoInputObjectsForPersistence,
   createPostgresVideoInputCleanupRepository,
   type VideoInputCleanupDatabase,
 } from "../../../apps/web/src/features/image-generation/video-input-cleanup-queue";
@@ -50,7 +50,6 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       user_id text not null default 'user-1',
       api_key_id text,
       api_key_credits_reserved numeric(18, 2) not null default 0,
-      staged_input_objects json,
       principal_scope text not null default 'user:user-1',
       stage text not null,
       state_version integer not null default 0,
@@ -58,9 +57,17 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       claim_token text,
       claim_expires_at timestamp,
       submit_started_at timestamp,
+      api_adapter_member_id text,
+      api_adapter_version_id text,
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
     );
+    create table "user" (
+      id text primary key,
+      banned boolean not null default false,
+      banned_reason text
+    );
+    insert into "user" (id) values ('user-1');
     create table external_api_key (
       id text primary key,
       user_id text not null,
@@ -76,6 +83,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
     );
     create table video_input_cleanup (
       id text primary key,
+      reason text not null,
       user_id text not null,
       video_id text not null,
       attempt_id text not null,
@@ -195,6 +203,7 @@ describe("video recovery PostgreSQL concurrency", () => {
       );
       await repository.enqueue([
         {
+          reason: "orphan",
           userId: "user-1",
           videoId: "video-1",
           attemptId: "reservation-1",
@@ -251,13 +260,14 @@ describe("video recovery PostgreSQL concurrency", () => {
     }
   });
 
-  it("reservation 与 created 保护输入，submit_uncertain 后允许清理", async () => {
+  it("reservation 保护 orphan，任务事务采用后所有阶段都不再清理", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const owner = await pool.connect();
     let schemaName: string | null = null;
     try {
       schemaName = await createFixtureSchema(owner);
       const object = {
+        reason: "orphan" as const,
         userId: "user-1",
         videoId: "video-1",
         attemptId: "reservation-1",
@@ -299,29 +309,25 @@ describe("video recovery PostgreSQL concurrency", () => {
           principalScope: "external:user-1:key-1",
         });
         expect(admission).toBe("admitted");
-        await assertVideoInputCleanupAvailableForPersistence(transaction, [
-          object,
-        ]);
         await consumeVideoTaskStagingReservation(transaction, {
           taskId: "video-1",
           userId: "user-1",
           reservationToken: object.attemptId,
           required: true,
         });
+        await adoptVideoInputObjectsForPersistence(transaction, [object]);
         await transaction.execute(sql`
           insert into video_generation (
             id,
             user_id,
             principal_scope,
-            stage,
-            staged_input_objects
+            stage
           )
           values (
             'video-1',
             'user-1',
             'external:user-1:key-1',
-            'created',
-            ${JSON.stringify([object])}::json
+            'created'
           )
         `);
       });
@@ -334,6 +340,10 @@ describe("video recovery PostgreSQL concurrency", () => {
           claimExpiresAt: new Date(now.getTime() + 60_000),
         })
       ).resolves.toBeNull();
+      const cleanupRows = await owner.query<{ count: string }>(
+        "select count(*)::text as count from video_input_cleanup"
+      );
+      expect(cleanupRows.rows[0]?.count).toBe("0");
 
       await owner.query(`
         update video_generation
@@ -346,7 +356,7 @@ describe("video recovery PostgreSQL concurrency", () => {
           now: new Date(),
           claimExpiresAt: new Date(Date.now() + 60_000),
         })
-      ).resolves.toMatchObject({ id: expect.any(String), videoId: "video-1" });
+      ).resolves.toBeNull();
     } finally {
       try {
         if (schemaName) await dropFixtureSchema(owner, schemaName);
@@ -363,6 +373,7 @@ describe("video recovery PostgreSQL concurrency", () => {
     try {
       schemaName = await createFixtureSchema(owner);
       const expiredObject = {
+        reason: "orphan" as const,
         userId: "user-1",
         videoId: "video-1",
         attemptId: "expired-reservation",
@@ -370,6 +381,7 @@ describe("video recovery PostgreSQL concurrency", () => {
         storageBucket: "uploads",
       };
       const currentObject = {
+        reason: "orphan" as const,
         userId: "user-1",
         videoId: "video-1",
         attemptId: "current-reservation",
@@ -446,6 +458,7 @@ describe("video recovery PostgreSQL concurrency", () => {
     try {
       schemaName = await createFixtureSchema(owner);
       const object = {
+        reason: "orphan" as const,
         userId: "user-1",
         videoId: "video-1",
         attemptId: "reservation-1",
@@ -474,9 +487,7 @@ describe("video recovery PostgreSQL concurrency", () => {
             principalScope: "external:user-1:key-1",
           });
           expect(admission).toBe("admitted");
-          await assertVideoInputCleanupAvailableForPersistence(transaction, [
-            object,
-          ]);
+          await adoptVideoInputObjectsForPersistence(transaction, [object]);
         })
       ).rejects.toThrow("已被 worker 认领");
     } finally {

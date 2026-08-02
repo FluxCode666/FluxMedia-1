@@ -519,6 +519,34 @@
       "when": 1785240000000,
       "tag": "0073_remove_firefly_model_prefix",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1785326400000,
+      "tag": "0074_real_video_request_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1785412800000,
+      "tag": "0075_api_account_upstream_adaptation",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1785499200000,
+      "tag": "0076_video_input_cleanup_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1785585600000,
+      "tag": "0077_api_upstream_adapter_versions",
+      "breakpoints": true
     }
   ]
 }

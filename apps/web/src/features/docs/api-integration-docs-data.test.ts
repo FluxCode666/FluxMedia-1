@@ -1,8 +1,8 @@
 /**
  * 公开 API 接入文档的数据契约测试。
  *
- * 防止管理员系统文档后续扩充时，把站点扩展参数、扩展响应字段或额外端点误带到
- * 无需登录即可访问的精简接入页。
+ * 防止管理员系统文档后续扩充时，把未支持的站点扩展参数或响应字段误带到无需登录
+ * 即可访问的图片与视频接入页，并锁定视频能力发现和持久任务协议。
  */
 import { describe, expect, it } from "vitest";
 
@@ -14,7 +14,10 @@ import {
 const EXPECTED_PATHS = [
   "/v1/images/generations",
   "/v1/images/edits",
+  "/v1/videos/generations",
+  "/v1/videos/capabilities",
   "/v1/images/{task_id}",
+  "/v1/videos/{id}",
 ] as const;
 
 const FORBIDDEN_EXTENSION_NAMES = [
@@ -28,8 +31,6 @@ const FORBIDDEN_EXTENSION_NAMES = [
   "repair_prompt",
   "repairPrompt",
   "async",
-  "callback_url",
-  "callbackUrl",
   "promptOptimization",
   "prompt_optimization",
   "promptRepair",
@@ -45,11 +46,8 @@ const FORBIDDEN_EXTENSION_NAMES = [
   "image_urls",
   "mask_url",
   "mask_image_url",
-  "generation_id",
   "generationId",
   "credits_consumed",
-  "duration_seconds",
-  "video_url",
 ] as const;
 
 describe("API integration docs data", () => {
@@ -77,19 +75,70 @@ describe("API integration docs data", () => {
     expect(homepage.endpoint).not.toHaveProperty("responseExample");
   });
 
-  it.each(["zh", "en"])("%s 仅公开指定的三个图像端点", (locale) => {
+  it.each(["zh", "en"])("%s 公开指定的图片与视频端点", (locale) => {
     const content = getApiIntegrationDocs(locale);
 
     expect(content.endpoints.map((endpoint) => endpoint.path)).toEqual(
       EXPECTED_PATHS
     );
     expect(
-      content.endpoints.some(
-        (endpoint) =>
-          endpoint.operation === "video" ||
-          endpoint.path.startsWith("/v1/videos")
-      )
-    ).toBe(false);
+      content.endpoints.filter((endpoint) => endpoint.operation === "video")
+    ).toHaveLength(3);
+  });
+
+  it.each([
+    "zh",
+    "en",
+  ])("%s 公开视频契约使用真实模型、能力发现和持久任务协议", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    const create = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-generations"
+    );
+    const capabilities = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-capabilities"
+    );
+    const task = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-task"
+    );
+    const createText = JSON.stringify(create);
+    const capabilitiesText = JSON.stringify(capabilities);
+    const capabilitiesResponse = capabilities?.responseExample ?? "";
+    const taskText = JSON.stringify(task);
+
+    expect(create?.requestExample).toContain('"model": "seedance2"');
+    expect(create?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
+    expect(create?.parameters.map((parameter) => parameter.name)).toEqual(
+      expect.arrayContaining([
+        "duration / duration_seconds",
+        "aspectRatio / aspect_ratio",
+        "resolution",
+        locale === "zh"
+          ? "firstFrame / first_frame、lastFrame / last_frame"
+          : "firstFrame / first_frame, lastFrame / last_frame",
+        "referenceImages / reference_images",
+      ])
+    );
+    expect(createText).toContain("HTTP 202");
+    expect(createText).not.toContain("kling3-omni-8s-16x9-1080p");
+    expect(createText).not.toContain("firefly-<family>");
+    expect(createText).not.toContain("input_image_role");
+    expect(createText).toContain("https webhook");
+    expect(capabilities?.path).toBe("/v1/videos/capabilities");
+    expect(capabilities?.responseExample).toContain('"model": "seedance2"');
+    expect(capabilities?.responseExample).toContain(
+      '"frames": "first-and-optional-last"'
+    );
+    expect(capabilities?.responseExample).toContain('"maxCount": 10');
+    expect(capabilitiesText).toContain("configuredReachable");
+    expect(capabilitiesText).toContain("maxMediaInputBytes");
+    expect(capabilitiesResponse).not.toMatch(
+      /apiKey|api_key|cookie|credential|inflight/iu
+    );
+    expect(task?.responseExample).toContain('"object": "video.task"');
+    expect(task?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
+    expect(taskText).toMatch(/persistent|持久/u);
+    expect(taskText).not.toContain("30 minutes");
+    expect(taskText).not.toContain("30 分钟");
   });
 
   it.each(["zh", "en"])("%s 不展示站点扩展字段或示例", (locale) => {

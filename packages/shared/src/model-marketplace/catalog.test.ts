@@ -29,30 +29,27 @@ describe("模型身份规则", () => {
     expect(normalizeModelMarketplaceImageConfigKey("  ")).toBeNull();
   });
 
-  it("从可调用视频完整 ID 解析模型族", () => {
-    expect(
-      resolveModelMarketplaceVideoFamily("firefly-veo31-4s-16x9-1080p")
-    ).toBe("veo31");
-    expect(
-      resolveModelMarketplaceVideoFamily("firefly-kling3-omni-3s-16x9-1080p")
-    ).toBe("kling3-omni");
-    expect(
-      resolveModelMarketplaceVideoFamily("firefly-runway-gen45-5s-16x9")
-    ).toBe("runway-gen45");
-    expect(
-      resolveModelMarketplaceVideoFamily("firefly-ray314-5s-16x9-4k")
-    ).toBe("ray314");
-    expect(
-      resolveModelMarketplaceVideoFamily("firefly-ray314-hdr-5s-16x9-4k")
-    ).toBe("ray314-hdr");
-    expect(resolveModelMarketplaceVideoFamily("kling-o3-5s-16x9")).toBe(
-      "kling-o3"
-    );
-    expect(
-      resolveModelMarketplaceVideoFamily("unknown-video-4s-16x9")
-    ).toBeNull();
+  it.each([
+    "veo31",
+    "kling3-omni",
+    "runway-gen45",
+    "ray314",
+    "ray314-hdr",
+    "kling-o3",
+  ])("只接受真实视频模型 ID %s", (modelId) => {
+    expect(resolveModelMarketplaceVideoFamily(modelId)).toBe(modelId);
   });
 
+  it.each([
+    "firefly-veo31",
+    "firefly-veo31-4s-16x9-1080p",
+    "kling3-omni-3s-16x9-1080p",
+    "runway-gen45-5s-16x9",
+    "ray314-hdr-5s-16x9-4k",
+    "unknown-video-4s-16x9",
+  ])("拒绝前缀、复合或未知视频模型 ID %s", (modelId) => {
+    expect(resolveModelMarketplaceVideoFamily(modelId)).toBeNull();
+  });
 });
 
 describe("目录展示与价格规则", () => {

@@ -9,7 +9,13 @@
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { MAX_MEDIA_INPUT_COUNT } from "@repo/shared/image-generation/media-contract";
 import { invokeOperation, type Principal } from "@repo/shared/uol";
+import {
+  videoAspectRatioSchema,
+  videoModelIdSchema,
+  videoResolutionSchema,
+} from "@repo/shared/video-generation";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
@@ -30,11 +36,19 @@ const generateVideoSchema = z
       .string()
       .min(1)
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-    model: z.string().trim().min(1).max(120),
+    model: videoModelIdSchema,
+    duration: z.number().int().positive(),
+    aspectRatio: videoAspectRatioSchema,
+    resolution: videoResolutionSchema,
     negativePrompt: z.string().max(8000).optional(),
     generateAudio: z.boolean().optional(),
-    inputImages: z.array(videoInputImageDataUrlSchema).max(3).optional(),
-    inputImageRole: z.enum(["frame", "reference"]).optional(),
+    firstFrame: videoInputImageDataUrlSchema.optional(),
+    lastFrame: videoInputImageDataUrlSchema.optional(),
+    referenceImages: z
+      .array(videoInputImageDataUrlSchema)
+      .min(1)
+      .max(MAX_MEDIA_INPUT_COUNT)
+      .optional(),
   })
   .strict();
 
@@ -63,7 +77,15 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse(parsed.error.issues[0]?.message || "Invalid request");
   }
 
-  const inputImages = parsed.data.inputImages?.map(toVideoMediaInputReference);
+  const firstFrame = parsed.data.firstFrame
+    ? toVideoMediaInputReference(parsed.data.firstFrame)
+    : undefined;
+  const lastFrame = parsed.data.lastFrame
+    ? toVideoMediaInputReference(parsed.data.lastFrame)
+    : undefined;
+  const referenceImages = parsed.data.referenceImages?.map(
+    toVideoMediaInputReference
+  );
   const principal: Principal = {
     type: "user",
     userId: session.user.id,
@@ -86,22 +108,33 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       clientRequestId: parsed.data.clientRequestId,
       prompt: parsed.data.prompt,
       model: parsed.data.model,
+      duration: parsed.data.duration,
+      aspectRatio: parsed.data.aspectRatio,
+      resolution: parsed.data.resolution,
       ...(parsed.data.negativePrompt
         ? { negativePrompt: parsed.data.negativePrompt }
         : {}),
       ...(parsed.data.generateAudio !== undefined
         ? { generateAudio: parsed.data.generateAudio }
         : {}),
-      ...(inputImages?.length ? { inputImages } : {}),
-      ...(parsed.data.inputImageRole
-        ? { inputImageRole: parsed.data.inputImageRole }
-        : {}),
+      ...(firstFrame ? { firstFrame } : {}),
+      ...(lastFrame ? { lastFrame } : {}),
+      ...(referenceImages?.length ? { referenceImages } : {}),
     },
     principal,
     { requestId: request.headers.get("x-request-id") ?? undefined }
   );
-  return NextResponse.json(result, {
-    status: 202,
-    headers: { "Cache-Control": "no-store" },
-  });
+  return NextResponse.json(
+    {
+      ...result,
+      model: parsed.data.model,
+      duration: parsed.data.duration,
+      aspectRatio: parsed.data.aspectRatio,
+      resolution: parsed.data.resolution,
+    },
+    {
+      status: 202,
+      headers: { "Cache-Control": "no-store" },
+    }
+  );
 });

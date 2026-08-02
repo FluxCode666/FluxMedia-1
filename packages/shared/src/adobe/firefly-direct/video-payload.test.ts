@@ -1,139 +1,229 @@
-import { describe, expect, it } from "vitest";
+/**
+ * Adobe 视频具名供应商载荷契约测试。
+ *
+ * 使用方：共享 Adobe 适配器；锁定真实模型、独立参数、有效声音和具名素材 ID 到各家
+ * 上游协议的映射，尤其防止 Seedance 参考图被截断或按上传时序重排。
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import seedance2FrameFixture from "./fixtures/seedance2-frame-request.json";
+import seedance2ReferenceFixture from "./fixtures/seedance2-reference-request.json";
 import { buildFireflyVideoPayload } from "./payloads";
 
-const base = {
-  prompt: "a cat surfing",
-  upstreamModel: "openai:firefly:colligo:sora2",
-  upstreamModelId: "sora",
-  upstreamModelVersion: "sora-2",
-  engine: "sora2",
+const BASE_REQUEST = {
+  prompt: "<prompt>",
+  model: "sora2" as const,
   duration: 8,
-  aspectRatio: "16:9",
-  outputResolution: "720p",
+  aspectRatio: "16:9" as const,
+  resolution: "720p" as const,
   size: { width: 1280, height: 720 },
-  generateAudio: false,
+  effectiveAudio: false,
 };
 
+/** 创建可重复断言的有序参考图占位符。 */
+function createReferenceIds(count: number): string[] {
+  return Array.from(
+    { length: count },
+    (_, index) => `<reference-${String(index + 1).padStart(2, "0")}>`
+  );
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("buildFireflyVideoPayload", () => {
-  it("Seedance 2.0 使用网页抓包中的最小字段集和 style 参考图", () => {
+  it("Seedance 2.0 首尾帧精确匹配脱敏协议夹具", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+
     const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "seedance",
-      upstreamModelVersion: "seedance_2.0",
-      engine: "seedance2",
+      ...BASE_REQUEST,
+      model: "seedance2",
+      duration: 4,
+      resolution: "480p",
+      size: { width: 854, height: 480 },
+      negativePrompt: "<negative-prompt>",
+      firstFrameId: "<first-frame>",
+      lastFrameId: "<last-frame>",
+    });
+
+    expect(payload).toEqual(seedance2FrameFixture);
+    expect(payload).not.toHaveProperty("referenceFrames");
+  });
+
+  it("Seedance 2.0 十张参考图精确匹配脱敏协议夹具", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+
+    const payload = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model: "seedance2",
+      duration: 4,
+      resolution: "480p",
+      size: { width: 854, height: 480 },
+      negativePrompt: "<negative-prompt>",
+      referenceImageIds: createReferenceIds(10),
+    });
+
+    expect(payload).toEqual(seedance2ReferenceFixture);
+    expect(payload).not.toHaveProperty("referenceFrames");
+  });
+
+  it("Seedance 2.0 原样保留二十张参考图的调用者顺序", () => {
+    const referenceImageIds = createReferenceIds(20);
+    const payload = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model: "seedance2",
       duration: 15,
       aspectRatio: "9:16",
+      resolution: "480p",
       size: { width: 480, height: 854 },
-      negativePrompt: "blurry",
-      sourceImageIds: ["reference-image", "ignored"],
+      referenceImageIds,
     });
 
-    expect(payload).toEqual({
-      modelId: "seedance",
-      modelVersion: "seedance_2.0",
-      size: { width: 480, height: 854 },
-      seeds: [expect.any(Number)],
-      referenceBlobs: [{ id: "reference-image", usage: "style" }],
-      prompt: "a cat surfing",
-      negativePrompt: "blurry",
-      duration: 15,
-      generateAudio: false,
-      generationMetadata: {
-        module: "text2video",
-        submodule: "ff-video-generate",
-      },
-      generationSettings: { aspectRatio: "9:16" },
-      output: { storeInputs: true },
+    expect(payload.referenceBlobs).toEqual(
+      referenceImageIds.map((id) => ({ id, usage: "style" }))
+    );
+    expect(payload.generationMetadata).toEqual({
+      module: "text2video",
+      submodule: "ff-video-generate",
     });
   });
 
-  it("Seedance 2.0 将开启声音原样映射为 generateAudio=true", () => {
+  it("Seedance 2.0 Fast 只替换已验证的 modelVersion", () => {
     const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "seedance",
-      upstreamModelVersion: "seedance_2.0",
-      engine: "seedance2",
+      ...BASE_REQUEST,
+      model: "seedance2-fast",
       duration: 4,
-      aspectRatio: "4:3",
-      size: { width: 640, height: 480 },
-      generateAudio: true,
+      resolution: "480p",
+      size: { width: 854, height: 480 },
+      firstFrameId: "<first-frame>",
+      lastFrameId: "<last-frame>",
     });
 
-    expect(payload.generateAudio).toBe(true);
+    expect(payload).toMatchObject({
+      ...seedance2FrameFixture,
+      seeds: [expect.any(Number)],
+      modelVersion: "seedance_2.0_fast",
+      negativePrompt: "",
+    });
   });
 
-  it("Seedance 2.0 Fast 只替换 modelVersion 并复用 Seedance 提交结构", () => {
+  it("Seedance 2.0 Fast 原样保留二十张有序参考图", () => {
+    const referenceImageIds = createReferenceIds(20);
     const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "seedance",
-      upstreamModelVersion: "seedance_2.0_fast",
-      engine: "seedance2",
+      ...BASE_REQUEST,
+      model: "seedance2-fast",
       duration: 15,
-      aspectRatio: "21:9",
-      size: { width: 1680, height: 720 },
-      sourceImageIds: ["reference-image"],
+      aspectRatio: "9:16",
+      resolution: "480p",
+      size: { width: 480, height: 854 },
+      referenceImageIds,
     });
 
     expect(payload).toMatchObject({
       modelId: "seedance",
       modelVersion: "seedance_2.0_fast",
-      size: { width: 1680, height: 720 },
-      referenceBlobs: [{ id: "reference-image", usage: "style" }],
-      duration: 15,
-      generateAudio: false,
-      generationSettings: { aspectRatio: "21:9" },
+      referenceBlobs: referenceImageIds.map((id) => ({
+        id,
+        usage: "style",
+      })),
+      generationMetadata: {
+        module: "text2video",
+        submodule: "ff-video-generate",
+      },
     });
-    expect(payload).not.toHaveProperty("model");
-    expect(payload).not.toHaveProperty("engine");
+    expect(payload).not.toHaveProperty("referenceFrames");
   });
 
-  it("Kling 3.0 Omni 使用官网新版文本提交字段", () => {
+  it("Seedance 帧模式与参考图模式不能混合", () => {
+    expect(() =>
+      buildFireflyVideoPayload({
+        ...BASE_REQUEST,
+        model: "seedance2",
+        firstFrameId: "first-frame",
+        referenceImageIds: ["reference-1"],
+      })
+    ).toThrow("首尾帧和参考图不能同时提交");
+  });
+
+  it("Sora 只把 firstFrame 映射为 general 和 referenceFrames", () => {
     const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "kling",
-      upstreamModelVersion: "kling_v3_omni",
-      engine: "kling3-omni",
-      duration: 10,
-      aspectRatio: "16:9",
-      size: { width: 1280, height: 720 },
+      ...BASE_REQUEST,
+      firstFrameId: "first-frame",
     });
 
-    expect(payload).toEqual({
-      n: 1,
-      seeds: [expect.any(Number)],
-      modelId: "kling",
-      modelVersion: "kling_v3_omni",
-      output: { storeInputs: true },
-      duration: 10,
-      prompt: "a cat surfing",
-      size: { width: 1280, height: 720 },
-      generateAudio: false,
-      generationMetadata: { module: "text2video" },
-      generationSettings: { aspectRatio: "16:9" },
-      referenceBlobs: [],
+    expect(payload.referenceBlobs).toEqual([
+      { id: "first-frame", usage: "general", promptReference: 1 },
+    ]);
+    expect(payload.referenceFrames).toEqual([
+      { localBlobRef: "first-frame" },
+      null,
+    ]);
+  });
+
+  it.each([
+    ["veo31", "3.1-generate"],
+    ["veo31-fast", "3.1-fast-generate"],
+  ] as const)("%s 按具名首尾帧生成 general 参考图", (model, version) => {
+    const payload = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model,
+      duration: 6,
+      resolution: "1080p",
+      size: { width: 1920, height: 1080 },
+      firstFrameId: "first-frame",
+      lastFrameId: "last-frame",
+    });
+
+    expect(payload.modelVersion).toBe(version);
+    expect(payload.referenceBlobs).toEqual([
+      { id: "first-frame", usage: "general", promptReference: 1 },
+      { id: "last-frame", usage: "general", promptReference: 2 },
+    ]);
+    expect(payload.modelSpecificPayload).toEqual({
+      parameters: {
+        durationSeconds: 6,
+        aspectRatio: "16:9",
+        addWaterMark: false,
+      },
     });
   });
 
-  it("Kling 3.0 Omni 使用首尾帧并切换为图生视频", () => {
+  it("Veo Reference 按调用者顺序映射一至三张 asset 参考图", () => {
     const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "kling",
-      upstreamModelVersion: "kling_v3_omni",
-      engine: "kling3-omni",
-      duration: 3,
-      aspectRatio: "9:16",
-      size: { width: 720, height: 1280 },
-      generateAudio: true,
-      sourceImageIds: ["first-frame", "last-frame", "ignored"],
+      ...BASE_REQUEST,
+      model: "veo31-ref",
+      duration: 6,
+      resolution: "1080p",
+      size: { width: 1920, height: 1080 },
+      referenceImageIds: ["reference-2", "reference-1", "reference-3"],
+    });
+
+    expect(payload.referenceBlobs).toEqual([
+      { id: "reference-2", usage: "asset" },
+      { id: "reference-1", usage: "asset" },
+      { id: "reference-3", usage: "asset" },
+    ]);
+  });
+
+  it.each([
+    ["kling-o3", "kling_o3_pro_reference_to_video"],
+    ["kling3", "kling_v3"],
+  ] as const)("%s 按具名首尾帧生成从 1 开始的 frame 顺序", (model, version) => {
+    const payload = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model,
+      duration: model === "kling-o3" ? 5 : 3,
+      resolution: "1080p",
+      size: { width: 1920, height: 1080 },
+      effectiveAudio: model === "kling3",
+      firstFrameId: "first-frame",
+      lastFrameId: "last-frame",
     });
 
     expect(payload).toMatchObject({
-      generateAudio: true,
+      modelId: "kling",
+      modelVersion: version,
       generationMetadata: { module: "image2video" },
       referenceBlobs: [
         { id: "first-frame", usage: "frame", order: 1 },
@@ -142,21 +232,33 @@ describe("buildFireflyVideoPayload", () => {
     });
   });
 
-  it("Kling 3.0 Omni 支持最多三张 asset 参考图", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "kling",
-      upstreamModelVersion: "kling_v3_omni",
-      engine: "kling3-omni",
-      duration: 8,
-      aspectRatio: "16:9",
+  it("Kling 3.0 Omni 的帧模式与参考图模式使用互斥字段", () => {
+    const framePayload = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model: "kling3-omni",
+      duration: 3,
+      resolution: "1080p",
       size: { width: 1920, height: 1080 },
-      inputImageRole: "reference",
-      sourceImageIds: ["reference-1", "reference-2", "reference-3", "ignored"],
+      firstFrameId: "first-frame",
+      lastFrameId: "last-frame",
+    });
+    const referencePayload = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model: "kling3-omni",
+      duration: 3,
+      resolution: "1080p",
+      size: { width: 1920, height: 1080 },
+      referenceImageIds: ["reference-1", "reference-2", "reference-3"],
     });
 
-    expect(payload).toMatchObject({
+    expect(framePayload).toMatchObject({
+      generationMetadata: { module: "image2video" },
+      referenceBlobs: [
+        { id: "first-frame", usage: "frame", order: 1 },
+        { id: "last-frame", usage: "frame", order: 2 },
+      ],
+    });
+    expect(referencePayload).toMatchObject({
       generationMetadata: { module: "text2video" },
       referenceBlobs: [
         { id: "reference-1", usage: "asset" },
@@ -164,60 +266,69 @@ describe("buildFireflyVideoPayload", () => {
         { id: "reference-3", usage: "asset" },
       ],
     });
+    expect(() =>
+      buildFireflyVideoPayload({
+        ...BASE_REQUEST,
+        model: "kling3-omni",
+        firstFrameId: "first-frame",
+        referenceImageIds: ["reference-1"],
+      })
+    ).toThrow("首尾帧和参考图不能同时提交");
   });
 
-  it("Kling 3.0 使用官网 v3 版本并发送首尾帧", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "kling",
-      upstreamModelVersion: "kling_v3",
-      engine: "kling3",
-      duration: 15,
-      aspectRatio: "9:16",
-      size: { width: 720, height: 1280 },
-      generateAudio: true,
-      sourceImageIds: ["first-frame", "last-frame", "ignored"],
-    });
-
-    expect(payload).toMatchObject({
-      n: 1,
-      modelId: "kling",
-      modelVersion: "kling_v3",
-      duration: 15,
-      size: { width: 720, height: 1280 },
-      generateAudio: true,
-      generationMetadata: { module: "image2video" },
-      generationSettings: { aspectRatio: "9:16" },
-      output: { storeInputs: true },
-    });
-    expect(payload.referenceBlobs).toEqual([
-      { id: "first-frame", usage: "frame", order: 1 },
-      { id: "last-frame", usage: "frame", order: 2 },
-    ]);
+  it.each([
+    "runway-gen45",
+    "ray314",
+    "ray314-hdr",
+  ] as const)("%s 拒绝输入图片而不是静默忽略", (model) => {
+    expect(() =>
+      buildFireflyVideoPayload({
+        ...BASE_REQUEST,
+        model,
+        duration: 5,
+        resolution: model === "runway-gen45" ? "720p" : "4k",
+        size:
+          model === "runway-gen45"
+            ? { width: 1280, height: 720 }
+            : { width: 3840, height: 2160 },
+        firstFrameId: "unsupported-frame",
+      })
+    ).toThrow("该视频模型不支持输入图片");
   });
 
-  it("Runway Gen-4.5 使用 Firefly 网页端已验证的纯文本字段", () => {
+  it("不支持声音的模型即使收到 true 也不会生成开启声音载荷", () => {
     const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "runway",
-      upstreamModelVersion: "gen4.5",
-      engine: "runway-gen45",
+      ...BASE_REQUEST,
+      model: "veo31",
+      duration: 6,
+      effectiveAudio: true,
+    });
+
+    expect(payload.generateAudio).toBe(false);
+  });
+
+  it("Runway 与 Ray 保持各自已验证的纯文本协议字段", () => {
+    const runway = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model: "runway-gen45",
       duration: 5,
-      aspectRatio: "16:9",
-      size: { width: 1280, height: 720 },
       negativePrompt: "blurry",
-      generateAudio: true,
-      sourceImageIds: ["ignored-reference-image"],
+    });
+    const ray = buildFireflyVideoPayload({
+      ...BASE_REQUEST,
+      model: "ray314",
+      duration: 5,
+      resolution: "4k",
+      size: { width: 3840, height: 2160 },
+      negativePrompt: "blurry",
     });
 
-    expect(payload).toEqual({
+    expect(runway).toEqual({
       modelId: "runway",
       modelVersion: "gen4.5",
       size: { width: 1280, height: 720 },
       seeds: [expect.any(Number)],
-      prompt: "a cat surfing",
+      prompt: "<prompt>",
       negativePrompt: "blurry",
       duration: 5,
       generationMetadata: {
@@ -226,243 +337,16 @@ describe("buildFireflyVideoPayload", () => {
       },
       output: { storeInputs: true },
     });
-    for (const absentField of [
-      "generateAudio",
-      "n",
-      "referenceBlobs",
-      "generationSettings",
-      "model",
-      "engine",
-    ]) {
-      expect(payload).not.toHaveProperty(absentField);
-    }
-  });
-
-  it("Ray 3.14 使用 Firefly 网页端已验证的 flex_2 和模型专属参数", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "luma",
-      upstreamModelVersion: "3.14-ray",
-      engine: "ray314",
-      duration: 5,
-      aspectRatio: "16:9",
-      outputResolution: "4k",
-      size: { width: 3840, height: 2160 },
-      negativePrompt: "blurry",
-      generateAudio: true,
-      sourceImageIds: ["ignored-reference-image"],
-    });
-
-    expect(payload).toEqual({
+    expect(ray).toMatchObject({
       modelId: "luma",
       modelVersion: "3.14-ray",
-      size: { width: 3840, height: 2160 },
       mode: "flex_2",
-      prompt: "a cat surfing",
-      negativePrompt: "blurry",
-      duration: 5,
-      generationMetadata: {
-        module: "text2video",
-        submodule: "ff-video-generate",
-      },
       modelSpecificPayload: {
         resolution: "4k",
         aspect_ratio: "16:9",
       },
-      output: { storeInputs: true },
     });
-    for (const absentField of [
-      "generateAudio",
-      "n",
-      "seeds",
-      "referenceBlobs",
-      "referenceFrames",
-      "generationSettings",
-      "model",
-      "engine",
-    ]) {
-      expect(payload).not.toHaveProperty(absentField);
-    }
-  });
-
-  it("Ray 3.14 HDR 使用模型专属参数且不发送 flex_2 mode", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      upstreamModel: "",
-      upstreamModelId: "luma",
-      upstreamModelVersion: "3.14-ray-hdr",
-      engine: "ray314-hdr",
-      duration: 5,
-      aspectRatio: "16:9",
-      outputResolution: "4k",
-      size: { width: 3840, height: 2160 },
-      negativePrompt: "blurry",
-      generateAudio: true,
-      sourceImageIds: ["ignored-reference-image"],
-    });
-
-    expect(payload).toEqual({
-      modelId: "luma",
-      modelVersion: "3.14-ray-hdr",
-      size: { width: 3840, height: 2160 },
-      prompt: "a cat surfing",
-      negativePrompt: "blurry",
-      duration: 5,
-      generationMetadata: {
-        module: "text2video",
-        submodule: "ff-video-generate",
-      },
-      modelSpecificPayload: {
-        resolution: "4k",
-        aspect_ratio: "16:9",
-      },
-      output: { storeInputs: true },
-    });
-    for (const absentField of [
-      "mode",
-      "generateAudio",
-      "n",
-      "seeds",
-      "referenceBlobs",
-      "generationSettings",
-      "model",
-      "engine",
-    ]) {
-      expect(payload).not.toHaveProperty(absentField);
-    }
-  });
-
-  it("构造上游 Sora 文生视频完整字段和 JSON prompt", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      negativePrompt: "blurry",
-    });
-
-    expect(payload).toMatchObject({
-      modelId: "sora",
-      model: "openai:firefly:colligo:sora2",
-      modelVersion: "sora-2",
-      duration: 8,
-      fps: 24,
-      size: { width: 1280, height: 720 },
-      generateAudio: false,
-      generationMetadata: { module: "text2video" },
-      negativePrompt: "blurry",
-      output: { storeInputs: true },
-      referenceBlobs: [],
-      referenceFrames: [],
-    });
-    expect(JSON.parse(String(payload.prompt))).toEqual({
-      id: 1,
-      duration_sec: 8,
-      prompt_text: "a cat surfing",
-      negative_prompt: "blurry",
-    });
-    expect(payload.engine).toBeUndefined();
-  });
-
-  it("Sora 图生视频只使用首帧并保留 text2video module", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      sourceImageIds: ["img-a", "img-b"],
-    });
-
-    expect(payload.generationMetadata).toEqual({ module: "text2video" });
-    expect(payload.referenceBlobs).toEqual([
-      { id: "img-a", usage: "general", promptReference: 1 },
-    ]);
-    expect(payload.referenceFrames).toEqual([{ localBlobRef: "img-a" }, null]);
-  });
-
-  it("Veo Standard 使用 modelSpecificPayload 和 general 参考图", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      engine: "veo31-standard",
-      upstreamModelId: "veo",
-      upstreamModelVersion: "3.1-generate",
-      duration: 6,
-      sourceImageIds: ["v1", "v2", "ignored"],
-    });
-
-    expect(payload).toMatchObject({
-      modelId: "veo",
-      modelVersion: "3.1-generate",
-      output: { storeInputs: true },
-      generationMetadata: { module: "text2video" },
-      modelSpecificPayload: {
-        parameters: {
-          durationSeconds: 6,
-          aspectRatio: "16:9",
-          addWaterMark: false,
-        },
-      },
-    });
-    expect(payload.referenceBlobs).toEqual([
-      { id: "v1", usage: "general", promptReference: 1 },
-      { id: "v2", usage: "general", promptReference: 2 },
-    ]);
-    expect(payload.duration).toBeUndefined();
-  });
-
-  it("Veo Reference 最多使用三张 asset 参考图", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      engine: "veo31-standard",
-      upstreamModelId: "veo",
-      upstreamModelVersion: "3.1-generate",
-      referenceMode: "image",
-      sourceImageIds: ["v1", "v2", "v3", "ignored"],
-    });
-
-    expect(payload.referenceBlobs).toEqual([
-      { id: "v1", usage: "asset" },
-      { id: "v2", usage: "asset" },
-      { id: "v3", usage: "asset" },
-    ]);
-    expect(payload.reference_mode).toBeUndefined();
-  });
-
-  it("Veo Fast 使用 fast modelVersion 和 general 参考图", () => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      engine: "veo31-fast",
-      upstreamModelId: "veo",
-      upstreamModelVersion: "3.1-fast-generate",
-      sourceImageIds: ["first", "last"],
-    });
-
-    expect(payload.modelVersion).toBe("3.1-fast-generate");
-    expect(payload.referenceBlobs).toEqual([
-      { id: "first", usage: "general", promptReference: 1 },
-      { id: "last", usage: "general", promptReference: 2 },
-    ]);
-  });
-
-  it.each([
-    ["kling-o3", "kling_o3_pro_reference_to_video"],
-    ["kling3", "kling_v3"],
-  ])("%s 帧序号从 1 开始", (engine, modelVersion) => {
-    const payload = buildFireflyVideoPayload({
-      ...base,
-      engine,
-      upstreamModelId: "kling",
-      upstreamModelVersion: modelVersion,
-      aspectRatio: "9:16",
-      size: { width: 720, height: 1280 },
-      sourceImageIds: ["k1", "k2", "ignored"],
-    });
-
-    expect(payload).toMatchObject({
-      modelId: "kling",
-      modelVersion,
-      generationMetadata: { module: "image2video" },
-      generationSettings: { aspectRatio: "9:16" },
-      output: { storeInputs: true },
-    });
-    expect(payload.referenceBlobs).toEqual([
-      { id: "k1", usage: "frame", order: 1 },
-      { id: "k2", usage: "frame", order: 2 },
-    ]);
+    expect(runway).not.toHaveProperty("generateAudio");
+    expect(ray).not.toHaveProperty("generateAudio");
   });
 });

@@ -32,6 +32,7 @@ describe("video input cleanup queue", () => {
     const { database, queries } = createDatabase([[]]);
     const repository = createPostgresVideoInputCleanupRepository(database);
     const object = {
+      reason: "orphan" as const,
       userId: "user-1",
       videoId: "video-1",
       attemptId: "reservation-1",
@@ -52,6 +53,7 @@ describe("video input cleanup queue", () => {
       [
         {
           id: "a".repeat(64),
+          reason: "lifecycle_delete",
           userId: "user-1",
           videoId: "video-1",
           attemptId: "reservation-1",
@@ -79,12 +81,19 @@ describe("video input cleanup queue", () => {
     expect(compiled[1]).toContain("for update skip locked");
     expect(compiled[1]).toContain("claim_expires_at");
     expect(compiled[1]).toContain("reservation.reservation_token =");
+    expect(compiled[1]).toContain("video_input_cleanup.reason = 'orphan'");
+    expect(compiled[1]).toContain(
+      "video_input_cleanup.reason = 'lifecycle_delete'"
+    );
+    expect(compiled[1]).toContain("task.stage in ('completed', 'failed')");
+    expect(compiled[1]).toContain("account.banned_reason = 'account_deleted'");
   });
 
   it("完成和失败退避都限定当前 claim token", async () => {
     const now = new Date("2026-07-26T00:00:00.000Z");
     const claimed = {
       id: "b".repeat(64),
+      reason: "orphan" as const,
       userId: "user-1",
       videoId: "video-1",
       attemptId: "reservation-1",
@@ -110,23 +119,47 @@ describe("video input cleanup queue", () => {
     expect(compiled[1]).toContain("claim_token = null");
   });
 
-  it("任务事务只能接管尚未被 worker 认领的清理意图", async () => {
-    const { database, queries } = createDatabase([[{ id: "c".repeat(64) }]]);
+  it("任务事务采用对象时完成 orphan 意图", async () => {
+    const object = {
+      reason: "orphan" as const,
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
+      storageBucket: "uploads",
+    };
+    const { database, queries } = createDatabase([[{ id: "d".repeat(64) }]]);
     const repository = createPostgresVideoInputCleanupRepository(database);
 
-    await repository.assertAvailableForPersistence([
-      {
-        userId: "user-1",
-        videoId: "video-1",
-        attemptId: "reservation-1",
-        storageKey: "user-1/video-inputs/video-1/reservation-1/input.png",
-        storageBucket: "uploads",
-      },
-    ]);
+    await repository.adoptOrphans([object]);
 
     const compiled = new PgDialect().sqlToQuery(queries[0] as SQL).sql;
+    expect(compiled).toContain("delete from video_input_cleanup");
+    expect(compiled).toContain("reason = 'orphan'");
     expect(compiled).toContain("claim_token is null");
-    expect(compiled).toContain("video_id =");
-    expect(compiled).toContain("select id");
+  });
+
+  it("清理对象数量沿用共享 256 上限", async () => {
+    const createObject = (index: number) => ({
+      reason: "orphan" as const,
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      storageKey: `user-1/video-inputs/video-1/reservation-1/${index}.png`,
+      storageBucket: "uploads",
+    });
+    const { database } = createDatabase(Array.from({ length: 256 }, () => []));
+    const repository = createPostgresVideoInputCleanupRepository(database);
+
+    await expect(
+      repository.enqueue(
+        Array.from({ length: 256 }, (_, index) => createObject(index))
+      )
+    ).resolves.toBe(256);
+    await expect(
+      repository.enqueue(
+        Array.from({ length: 257 }, (_, index) => createObject(index))
+      )
+    ).rejects.toThrow();
   });
 });

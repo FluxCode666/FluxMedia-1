@@ -66,7 +66,11 @@ describe("buildImageGenerationModelCatalog", () => {
         {
           groupId: group.id,
           type: "adobe",
-          supportedModelIds: ["firefly-veo31-6s-16x9-1080p", "gpt-image-2"],
+          supportedModelIds: [
+            "veo31",
+            "firefly-veo31-6s-16x9-1080p",
+            "gpt-image-2",
+          ],
         },
       ],
     });

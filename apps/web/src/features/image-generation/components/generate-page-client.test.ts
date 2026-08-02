@@ -18,8 +18,15 @@ type CapturedImageCreatePanelProps = {
   onInitialReferenceConsumed?: () => void;
 };
 
+type CapturedVideoCreatePanelProps = {
+  initialSelection?: unknown;
+  pricing?: unknown;
+  recent?: unknown;
+};
+
 const testHarness = vi.hoisted(() => ({
   panelProps: null as CapturedImageCreatePanelProps | null,
+  videoPanelProps: null as CapturedVideoCreatePanelProps | null,
   replace: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -40,6 +47,21 @@ vi.mock("./image-create-panel", () => ({
    */
   ImageCreatePanel(props: CapturedImageCreatePanelProps) {
     testHarness.panelProps = props;
+    return null;
+  },
+}));
+
+vi.mock("./video-create-panel", () => ({
+  /**
+   * 捕获生成页交给视频面板的预选、定价和近期图片。
+   *
+   * @param props 视频面板公开 props。
+   * @returns 不渲染 DOM，仅返回 null。
+   * @sideEffects 将最后一次 props 写入 testHarness。
+   * @failure 不执行真实视频请求，不产生网络副作用。
+   */
+  VideoCreatePanel(props: CapturedVideoCreatePanelProps) {
+    testHarness.videoPanelProps = props;
     return null;
   },
 }));
@@ -76,7 +98,14 @@ let root: Root | null = null;
  * @sideEffects 向 document.body 添加测试容器并执行组件 effect。
  * @failure React 渲染失败时由 act 直接使测试失败。
  */
-function mountGeneratePageClient(): Root {
+function mountGeneratePageClient(
+  recentGenerations: Array<{
+    id: string;
+    prompt: string;
+    status: string;
+    imageUrl: string | null;
+  }> = []
+): Root {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -87,7 +116,7 @@ function mountGeneratePageClient(): Root {
         null,
         createElement(GeneratePageClient, {
           balance: 100,
-          recentGenerations: [],
+          recentGenerations,
           uploadLimits: {
             maxFileSizeBytes: 10 * 1024 * 1024,
             maxUploadBytes: 20 * 1024 * 1024,
@@ -111,6 +140,13 @@ function mountGeneratePageClient(): Root {
             imageModerationCredits: 0,
             textModerationCredits: 0,
           },
+          videoPricing: {
+            creditsPerSecond: {
+              "veo31-ref": 45,
+              "veo31-ref@1080p": 45,
+              "veo31-ref@720p": 30,
+            },
+          },
         })
       )
     );
@@ -121,6 +157,7 @@ function mountGeneratePageClient(): Root {
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   testHarness.panelProps = null;
+  testHarness.videoPanelProps = null;
   testHarness.replace.mockReset();
   testHarness.toastError.mockReset();
   window.history.replaceState(
@@ -175,5 +212,67 @@ describe("GeneratePageClient reference handoff", () => {
       "/zh/dashboard/generate?tab=advanced#workspace",
       { scroll: false }
     );
+  });
+});
+
+describe("GeneratePageClient media tabs", () => {
+  it("按真实视频模型预选打开视频面板并复用定价与近期图片", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/zh/dashboard/generate?category=video&model=veo31-ref&source=marketplace#workspace"
+    );
+    const recent = [
+      {
+        id: "generation-1",
+        prompt: "参考图片",
+        status: "completed",
+        imageUrl: "/api/storage/generations/user/reference.png",
+      },
+    ];
+
+    mountGeneratePageClient(recent);
+
+    expect(
+      document.querySelector('[role="tab"][data-state="active"]')?.textContent
+    ).toBe("视频");
+    expect(testHarness.videoPanelProps).toEqual({
+      initialSelection: {
+        modelId: "veo31-ref",
+        duration: 4,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+      },
+      pricing: {
+        creditsPerSecond: {
+          "veo31-ref": 45,
+          "veo31-ref@1080p": 45,
+          "veo31-ref@720p": 30,
+        },
+      },
+      recent,
+    });
+    expect(testHarness.replace).toHaveBeenCalledWith(
+      "/zh/dashboard/generate?source=marketplace#workspace",
+      { scroll: false }
+    );
+  });
+
+  it("拒绝复合视频模型预选并回退到图片面板", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/zh/dashboard/generate?category=video&model=firefly-veo31-ref-4s-16x9-1080p"
+    );
+
+    mountGeneratePageClient();
+
+    expect(
+      document.querySelector('[role="tab"][data-state="active"]')?.textContent
+    ).toBe("图片");
+    expect(testHarness.toastError).toHaveBeenCalledWith(
+      "该视频模型无效，已保留安全默认模型"
+    );
+    expect(testHarness.videoPanelProps).toBeNull();
   });
 });

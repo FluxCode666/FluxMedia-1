@@ -1,15 +1,19 @@
 "use client";
 
+import type { ApiModelMapping } from "@repo/shared/image-backend/api-upstream-adaptation";
 /**
  * 统一媒体后端成员编辑表单。
  *
  * 职责：以 `api | adobe` 单一入口编辑公共调度字段、显式模型能力和类型专属
  * 配置。成员类型在编辑时不可原地切换，secret 留空由服务端保留既有值。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import type { BackendMemberType } from "@repo/shared/image-backend/member-contract";
-import { normalizeSupportedModelIds } from "@repo/shared/image-backend/supported-models";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelIds,
+} from "@repo/shared/image-backend/supported-models";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import { Checkbox } from "@repo/ui/components/checkbox";
 import {
@@ -36,51 +40,25 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { saveImageBackendMemberAction } from "./actions";
+import {
+  type ApiUpstreamAdapterFormDraft,
+  createDefaultApiUpstreamAdapterFormDraft,
+} from "./api-upstream-adapter-draft";
+import { ApiUpstreamAdapterForm } from "./api-upstream-adapter-form";
 import { BackendBooleanSetting } from "./boolean-setting";
 import {
+  type AdobeMemberMode,
+  acceptsVideoBackendMemberModels,
   type BackendMemberModelOption,
   createExistingMemberModelOption,
+  DEFAULT_ADOBE_MEMBER_MODE,
+  removeVideoBackendMemberModelIds,
 } from "./member-model-options";
 import {
   type BackendMemberModelOptionStatus,
   BackendMemberModelSelect,
 } from "./member-model-select";
 import type { BackendMemberAdminSummary } from "./member-service";
-
-/** 把参数映射显示为每行 `copy|move source target` 的可编辑文本。 */
-function formatParameterMappings(
-  mappings: Array<{ source: string; target: string; mode: "copy" | "move" }>
-): string {
-  return mappings
-    .map((mapping) => [mapping.mode, mapping.source, mapping.target].join(" "))
-    .join("\n");
-}
-
-/** 解析参数映射文本；格式错误时返回 null 交由表单提示。 */
-function parseParameterMappings(
-  value: string
-): Array<{ source: string; target: string; mode: "copy" | "move" }> | null {
-  const mappings: Array<{
-    source: string;
-    target: string;
-    mode: "copy" | "move";
-  }> = [];
-  for (const line of value.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const [mode, source, target, ...remaining] = trimmed.split(/\s+/);
-    if (
-      (mode !== "copy" && mode !== "move") ||
-      !source ||
-      !target ||
-      remaining.length > 0
-    ) {
-      return null;
-    }
-    mappings.push({ mode, source, target });
-  }
-  return mappings;
-}
 
 /** 渲染 API 或 Adobe 统一成员的新增/编辑弹窗。 */
 export function BackendMemberFormDialog({
@@ -113,8 +91,14 @@ export function BackendMemberFormDialog({
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiUseStream, setApiUseStream] = useState(false);
-  const [parameterMappingsText, setParameterMappingsText] = useState("");
-  const [adobeMode, setAdobeMode] = useState<"gateway" | "direct">("gateway");
+  const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
+  const [apiAdapterDraft, setApiAdapterDraft] =
+    useState<ApiUpstreamAdapterFormDraft>(() =>
+      createDefaultApiUpstreamAdapterFormDraft()
+    );
+  const [adobeMode, setAdobeMode] = useState<AdobeMemberMode>(
+    DEFAULT_ADOBE_MEMBER_MODE
+  );
   const [adobeBaseUrl, setAdobeBaseUrl] = useState("");
   const [adobeApiKey, setAdobeApiKey] = useState("");
   const [adobeCookie, setAdobeCookie] = useState("");
@@ -141,13 +125,24 @@ export function BackendMemberFormDialog({
     if (member?.type === "api") {
       setApiBaseUrl(member.config.baseUrl);
       setApiUseStream(member.config.useStream);
-      setParameterMappingsText(
-        formatParameterMappings(member.config.parameterMappings)
-      );
+      setModelMappings(member.config.modelMappings);
+      setApiAdapterDraft({
+        authentication: member.config.authentication ?? { mode: "bearer" },
+        operations:
+          member.config.operations ??
+          createDefaultApiUpstreamAdapterFormDraft().operations,
+        ...(member.config.currentAdapterVersion
+          ? {
+              expectedCurrentVersionId:
+                member.config.currentAdapterVersion.id,
+            }
+          : {}),
+      });
     } else {
       setApiBaseUrl("");
       setApiUseStream(false);
-      setParameterMappingsText("");
+      setModelMappings([]);
+      setApiAdapterDraft(createDefaultApiUpstreamAdapterFormDraft());
     }
     setApiKey("");
     if (member?.type === "adobe") {
@@ -159,7 +154,7 @@ export function BackendMemberFormDialog({
         member.config.mode === "gateway" ? member.config.baseUrl : ""
       );
     } else {
-      setAdobeMode("gateway");
+      setAdobeMode(DEFAULT_ADOBE_MEMBER_MODE);
       setAdobeBaseUrl("");
       setDefaultRatio("1x1");
       setDefaultResolution("2k");
@@ -170,7 +165,7 @@ export function BackendMemberFormDialog({
     setAdobeScope("");
   }, [groups, member, open]);
 
-  const acceptsVideo = type === "adobe" && adobeMode === "direct";
+  const acceptsVideo = acceptsVideoBackendMemberModels(type, adobeMode);
   const selectableModelOptions = useMemo(() => {
     const configuredOptions = modelOptions.filter(
       (option) => option.category === "image" || acceptsVideo
@@ -181,20 +176,13 @@ export function BackendMemberFormDialog({
     const existingOptions = selectedModelIds.flatMap((modelId) => {
       const normalizedId = modelId.trim().toLowerCase();
       if (!normalizedId || knownIds.has(normalizedId)) return [];
-      const category = isFireflyVideoModelId(modelId) ? "video" : "image";
-      if (category === "video" && !acceptsVideo) return [];
+      const realVideoModelId = normalizeVideoModelId(modelId);
+      if (isLegacyVideoModelId(modelId) || realVideoModelId) return [];
       knownIds.add(normalizedId);
-      return [createExistingMemberModelOption(modelId, category)];
+      return [createExistingMemberModelOption(modelId, "image")];
     });
     return [...configuredOptions, ...existingOptions];
   }, [acceptsVideo, modelOptions, selectedModelIds]);
-
-  useEffect(() => {
-    if (acceptsVideo) return;
-    setSelectedModelIds((current) =>
-      current.filter((modelId) => !isFireflyVideoModelId(modelId))
-    );
-  }, [acceptsVideo]);
 
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
@@ -215,6 +203,38 @@ export function BackendMemberFormDialog({
         ? Array.from(new Set([...current, groupId]))
         : current.filter((id) => id !== groupId)
     );
+  }
+
+  /** 更新一个已选择平台模型的供应商模型 ID；留空表示同名透传。 */
+  function updateUpstreamModelId(
+    modelId: string,
+    upstreamModelId: string
+  ): void {
+    setModelMappings((current) => {
+      const remaining = current.filter(
+        (mapping) => mapping.modelId.toLowerCase() !== modelId.toLowerCase()
+      );
+      const normalized = upstreamModelId.trim();
+      return normalized
+        ? [...remaining, { modelId, upstreamModelId: normalized }]
+        : remaining;
+    });
+  }
+
+  /** 切换账号类型；API 与 Adobe Direct 保留视频，切到 Gateway 时清理。 */
+  function handleMemberTypeChange(nextType: BackendMemberType): void {
+    setType(nextType);
+    if (nextType === "adobe" && adobeMode === "gateway") {
+      setSelectedModelIds(removeVideoBackendMemberModelIds);
+    }
+  }
+
+  /** 切换 Adobe 接入模式；Gateway 不具备当前视频执行链，需清理视频能力。 */
+  function handleAdobeModeChange(nextMode: typeof adobeMode): void {
+    setAdobeMode(nextMode);
+    if (nextMode !== "direct") {
+      setSelectedModelIds(removeVideoBackendMemberModelIds);
+    }
   }
 
   /** 校验客户端草稿并提交严格的类型专属成员输入。 */
@@ -243,19 +263,29 @@ export function BackendMemberFormDialog({
       concurrency: Number(concurrency),
     };
     if (type === "api") {
-      const parameterMappings = parseParameterMappings(parameterMappingsText);
-      if (!parameterMappings) {
-        toast.error("参数映射每行格式应为：copy|move source target");
-        return;
-      }
+      const selectedModelKeys = new Set(
+        supportedModelIds.map((modelId) => modelId.toLowerCase())
+      );
       saveMember({
         ...common,
         type: "api",
         config: {
           baseUrl: apiBaseUrl,
-          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(apiAdapterDraft.authentication.mode !== "none" && apiKey.trim()
+            ? { apiKey: apiKey.trim() }
+            : {}),
           useStream: apiUseStream,
-          parameterMappings,
+          modelMappings: modelMappings.filter((mapping) =>
+            selectedModelKeys.has(mapping.modelId.toLowerCase())
+          ),
+          authentication: apiAdapterDraft.authentication,
+          operations: apiAdapterDraft.operations,
+          ...(apiAdapterDraft.expectedCurrentVersionId
+            ? {
+                expectedCurrentVersionId:
+                  apiAdapterDraft.expectedCurrentVersionId,
+              }
+            : {}),
         },
       });
       return;
@@ -302,13 +332,15 @@ export function BackendMemberFormDialog({
               <Select
                 value={type}
                 disabled={Boolean(member)}
-                onValueChange={(value) => setType(value as BackendMemberType)}
+                onValueChange={(value) =>
+                  handleMemberTypeChange(value as BackendMemberType)
+                }
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="api">API Images</SelectItem>
+                  <SelectItem value="api">API</SelectItem>
                   <SelectItem value="adobe">Adobe</SelectItem>
                 </SelectContent>
               </Select>
@@ -355,21 +387,6 @@ export function BackendMemberFormDialog({
                 </label>
               ))}
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="member-models">支持的模型</Label>
-            <BackendMemberModelSelect
-              options={selectableModelOptions}
-              value={selectedModelIds}
-              onChange={setSelectedModelIds}
-              status={modelOptionStatus}
-              disabled={isPending}
-            />
-            <p className="text-xs text-muted-foreground">
-              选项来自模型配置；未选择的模型不会进入该成员候选集。只有 Adobe
-              Direct 可以声明视频模型。
-            </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -433,9 +450,10 @@ export function BackendMemberFormDialog({
           {type === "api" ? (
             <div className="space-y-4 rounded-md border p-4">
               <div>
-                <h3 className="font-medium">API Images 配置</h3>
+                <h3 className="font-medium">API 配置</h3>
                 <p className="text-xs text-muted-foreground">
-                  仅支持 OpenAI Images 风格协议，不含 Responses 或 Chat。
+                  图片使用 Images 兼容协议，视频使用 Videos 兼容协议；不含
+                  Responses 或 Chat。
                 </p>
               </div>
               <div className="space-y-2">
@@ -457,8 +475,17 @@ export function BackendMemberFormDialog({
                   autoComplete="new-password"
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={member ? "留空保留现有凭据" : "必填"}
-                  required={!member}
+                  placeholder={
+                    apiAdapterDraft.authentication.mode === "none"
+                      ? "无认证模式无需填写"
+                      : member
+                        ? "留空保留现有凭据"
+                        : "必填"
+                  }
+                  required={
+                    !member && apiAdapterDraft.authentication.mode !== "none"
+                  }
+                  disabled={apiAdapterDraft.authentication.mode === "none"}
                 />
               </div>
               <BackendBooleanSetting
@@ -469,20 +496,51 @@ export function BackendMemberFormDialog({
                 onCheckedChange={setApiUseStream}
               />
               <div className="space-y-2">
-                <Label htmlFor="parameter-mappings">请求参数映射</Label>
-                <Textarea
-                  id="parameter-mappings"
-                  rows={4}
-                  value={parameterMappingsText}
-                  onChange={(event) =>
-                    setParameterMappingsText(event.target.value)
-                  }
-                  placeholder="copy input.source output.target"
-                />
+                <Label>上游模型 ID 映射</Label>
                 <p className="text-xs text-muted-foreground">
-                  每行格式：copy|move source target。留空表示不映射。
+                  平台仍使用左侧真实模型 ID
+                  进行调度、计费与任务记录；仅实际请求当前账号时替换为右侧供应商
+                  ID。留空表示同名透传。
                 </p>
+                {selectedModelIds.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                    请先在下方选择账号支持的模型。
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedModelIds.map((modelId) => (
+                      <div
+                        key={modelId}
+                        className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                      >
+                        <code className="truncate rounded-md bg-muted px-3 py-2 text-xs">
+                          {modelId}
+                        </code>
+                        <Input
+                          aria-label={`${modelId} 的上游模型 ID`}
+                          value={
+                            modelMappings.find(
+                              (mapping) =>
+                                mapping.modelId.toLowerCase() ===
+                                modelId.toLowerCase()
+                            )?.upstreamModelId ?? ""
+                          }
+                          onChange={(event) =>
+                            updateUpstreamModelId(modelId, event.target.value)
+                          }
+                          placeholder={`默认：${modelId}`}
+                          maxLength={240}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
+              <ApiUpstreamAdapterForm
+                value={apiAdapterDraft}
+                onChange={setApiAdapterDraft}
+                disabled={isPending}
+              />
             </div>
           ) : (
             <div className="space-y-4 rounded-md border p-4">
@@ -498,7 +556,7 @@ export function BackendMemberFormDialog({
                 <Select
                   value={adobeMode}
                   onValueChange={(value) =>
-                    setAdobeMode(value as typeof adobeMode)
+                    handleAdobeModeChange(value as typeof adobeMode)
                   }
                 >
                   <SelectTrigger className="w-full">
@@ -615,6 +673,24 @@ export function BackendMemberFormDialog({
               </div>
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label htmlFor="member-models">支持的模型</Label>
+            <BackendMemberModelSelect
+              options={selectableModelOptions}
+              value={selectedModelIds}
+              onChange={setSelectedModelIds}
+              status={modelOptionStatus}
+              disabled={isPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              {acceptsVideo
+                ? "API 与 Adobe Direct 账号可选择图片和视频的真实模型 ID；未选择的模型不会进入候选集。"
+                : type === "adobe"
+                  ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
+                  : "API 账号可选择图片和视频的真实模型 ID。"}
+            </p>
+          </div>
 
           <DialogFooter>
             <Button

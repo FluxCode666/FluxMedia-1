@@ -8,7 +8,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   collectAdvertisedModelIds,
+  isLegacyVideoModelId,
   MAX_SUPPORTED_MODEL_IDS,
+  normalizeHistoricalModelId,
   normalizeSupportedModelIds,
   supportedModelIdsSchema,
   supportsRequestedModel,
@@ -26,29 +28,43 @@ describe("API 后端支持模型列表", () => {
     ).toEqual(["nano-banana-pro", "GROK-IMAGINE-IMAGE"]);
   });
 
-  it("移除所有模型 ID 的历史 Firefly 前缀", () => {
+  it("保留图像前缀兼容但不把旧视频身份伪装成合法 ID", () => {
     expect(
       normalizeSupportedModelIds([
         "firefly-gpt-image-2",
         "FIREFLY-SORA2-4s-16x9",
         "sora2-4s-16x9",
+        " SEEDANCE2 ",
       ])
-    ).toEqual(["gpt-image-2", "SORA2-4s-16x9"]);
+    ).toEqual([
+      "gpt-image-2",
+      "FIREFLY-SORA2-4s-16x9",
+      "sora2-4s-16x9",
+      "seedance2",
+    ]);
     expect(
-      supportsRequestedModel(
-        ["firefly-sora2-4s-16x9"],
-        "sora2-4s-16x9"
-      )
-    ).toBe(true);
+      supportsRequestedModel(["firefly-sora2-4s-16x9"], "sora2-4s-16x9")
+    ).toBe(false);
+    expect(isLegacyVideoModelId("firefly-seedance2")).toBe(true);
+    expect(isLegacyVideoModelId("kling3-10s-16x9")).toBe(true);
+    expect(isLegacyVideoModelId("seedance2-fast")).toBe(false);
+    expect(isLegacyVideoModelId("firefly-gpt-image-2")).toBe(false);
+    expect(normalizeHistoricalModelId("firefly-sora2-8s-16x9")).toBe(
+      "sora2-8s-16x9"
+    );
   });
 
-  it("仅在配置非空时把支持列表作为调度约束", () => {
-    expect(supportsRequestedModel([], "grok-imagine-image")).toBe(true);
+  it("空能力不再作为通配符且只做大小写无关的精确匹配", () => {
+    expect(supportsRequestedModel([], "grok-imagine-image")).toBe(false);
     expect(supportsRequestedModel(["nano-banana-pro"], "NANO-BANANA-PRO")).toBe(
       true
     );
+    expect(supportsRequestedModel(["seedance2"], "SEEDANCE2")).toBe(true);
     expect(
       supportsRequestedModel(["nano-banana-pro"], "grok-imagine-image")
+    ).toBe(false);
+    expect(
+      supportsRequestedModel(["seedance2"], "seedance2-15s-9x16-480p")
     ).toBe(false);
   });
 

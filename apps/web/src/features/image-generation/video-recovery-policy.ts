@@ -2,7 +2,7 @@
  * 视频恢复状态机的 DB-free 纯策略。
  *
  * 职责：生成稳定对象存储键、约束原成员凭据刷新、保留安全的切换失败根因，并分类
- * 已接受 Adobe 任务的可重试错误。
+ * 已接受 API 或 Adobe 任务的可重试错误。
  * 使用方：video-operations 与 Vitest；不得导入数据库或 Web 运行时。
  */
 
@@ -10,6 +10,37 @@ import {
   AdobeAcceptedVideoError,
   isRetryableStatus,
 } from "@repo/shared/adobe/firefly-direct";
+
+import { ApiAcceptedVideoError } from "./api-video-error";
+
+const MAX_API_ADAPTER_QUERY_FAILURES = 3;
+
+/** API 查询适配连续失败后的纯状态推进结论。 */
+export interface ApiAdapterQueryFailureDecision {
+  nextFailureCount: number;
+  shouldRetry: boolean;
+}
+
+/**
+ * 连续三次查询脚本或执行失败后终止原任务并进入退款。
+ *
+ * @param currentFailureCount 任务已持久化的连续失败次数。
+ * @returns 下一次计数以及是否仍应保留原任务重试。
+ * @sideEffects 无。
+ * @failure 负数或非整数表示持久状态损坏，直接抛错并由恢复 worker 失败关闭。
+ */
+export function resolveApiAdapterQueryFailure(
+  currentFailureCount: number
+): ApiAdapterQueryFailureDecision {
+  if (!Number.isInteger(currentFailureCount) || currentFailureCount < 0) {
+    throw new Error("API 查询适配连续失败次数无效");
+  }
+  const nextFailureCount = currentFailureCount + 1;
+  return {
+    nextFailureCount,
+    shouldRetry: nextFailureCount < MAX_API_ADAPTER_QUERY_FAILURES,
+  };
+}
 
 /** 由用户和任务 ID 派生稳定对象键，worker 重放只覆盖同一对象。 */
 export function createVideoStorageKey(userId: string, videoId: string): string {
@@ -57,6 +88,14 @@ export function resolveVideoBackendExhaustionError(
   }
 }
 
+/** 判断错误是否来自已经被 API 或 Adobe 接受的上游视频任务。 */
+export function isAcceptedVideoError(error: unknown): boolean {
+  return (
+    error instanceof ApiAcceptedVideoError ||
+    error instanceof AdobeAcceptedVideoError
+  );
+}
+
 /**
  * 已接受任务的网络、临时状态与鉴权状态都只重试原任务。
  *
@@ -64,6 +103,7 @@ export function resolveVideoBackendExhaustionError(
  * 暂时失败，也不能把可能已成功的上游任务退款或向其他账号重新提交。
  */
 export function shouldRetryAcceptedVideoError(error: unknown): boolean {
+  if (error instanceof ApiAcceptedVideoError) return error.retryable;
   return (
     error instanceof AdobeAcceptedVideoError &&
     (error.statusCode === undefined ||

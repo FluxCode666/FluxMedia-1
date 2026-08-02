@@ -53,7 +53,13 @@ beforeEach(() => {
 });
 
 describe("POST /api/videos/generate", () => {
-  it("创建后立即返回 accepted，而不在服务端轮询状态", async () => {
+  it("把真实模型、独立参数和具名首尾帧传给 UOL", async () => {
+    const firstFrame = `data:image/png;base64,${Buffer.from("first").toString(
+      "base64"
+    )}`;
+    const lastFrame = `data:image/png;base64,${Buffer.from("last").toString(
+      "base64"
+    )}`;
     const response = await POST(
       new NextRequest("https://app.example.com/api/videos/generate", {
         method: "POST",
@@ -61,7 +67,12 @@ describe("POST /api/videos/generate", () => {
         body: JSON.stringify({
           clientRequestId: "request-1",
           prompt: "海边日落",
-          model: "firefly-sora2-4s-16x9",
+          model: "seedance2",
+          duration: 10,
+          aspectRatio: "16:9",
+          resolution: "1080p",
+          firstFrame,
+          lastFrame,
         }),
       })
     );
@@ -70,11 +81,30 @@ describe("POST /api/videos/generate", () => {
     await expect(response.json()).resolves.toEqual({
       taskId: "video-1",
       status: "processing",
+      model: "seedance2",
+      duration: 10,
+      aspectRatio: "16:9",
+      resolution: "1080p",
     });
     expect(invokeOperationMock).toHaveBeenCalledTimes(1);
     expect(invokeOperationMock).toHaveBeenCalledWith(
       "video.generate",
-      expect.objectContaining({ clientRequestId: "request-1" }),
+      {
+        clientRequestId: "request-1",
+        prompt: "海边日落",
+        model: "seedance2",
+        duration: 10,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        firstFrame: expect.objectContaining({
+          source: "data",
+          byteLength: 5,
+        }),
+        lastFrame: expect.objectContaining({
+          source: "data",
+          byteLength: 4,
+        }),
+      },
       expect.objectContaining({ type: "user", userId: "user-1" }),
       expect.any(Object)
     );
@@ -88,7 +118,10 @@ describe("POST /api/videos/generate", () => {
         body: JSON.stringify({
           clientRequestId: "request-audio-off",
           prompt: "海边日落",
-          model: "firefly-seedance2-15s-9x16-480p",
+          model: "seedance2",
+          duration: 15,
+          aspectRatio: "9:16",
+          resolution: "480p",
           generateAudio: false,
         }),
       })
@@ -106,7 +139,7 @@ describe("POST /api/videos/generate", () => {
     );
   });
 
-  it("将 Kling Omni 参考图角色原样传给 UOL", async () => {
+  it("把参考图数组转换为有序具名媒体引用", async () => {
     const image = `data:image/png;base64,${Buffer.from("image").toString(
       "base64"
     )}`;
@@ -117,9 +150,11 @@ describe("POST /api/videos/generate", () => {
         body: JSON.stringify({
           clientRequestId: "request-reference",
           prompt: "角色在城市中行走",
-          model: "firefly-kling3-omni-8s-16x9-1080p",
-          inputImageRole: "reference",
-          inputImages: [image],
+          model: "kling3-omni",
+          duration: 8,
+          aspectRatio: "16:9",
+          resolution: "1080p",
+          referenceImages: [image],
         }),
       })
     );
@@ -128,13 +163,61 @@ describe("POST /api/videos/generate", () => {
     expect(invokeOperationMock).toHaveBeenCalledWith(
       "video.generate",
       expect.objectContaining({
-        inputImageRole: "reference",
-        inputImages: [
+        referenceImages: [
           expect.objectContaining({ source: "data", byteLength: 5 }),
         ],
       }),
       expect.any(Object),
       expect.any(Object)
     );
+  });
+
+  it.each([
+    ["duration", { aspectRatio: "16:9", resolution: "720p" }],
+    ["aspectRatio", { duration: 4, resolution: "720p" }],
+    ["resolution", { duration: 4, aspectRatio: "16:9" }],
+  ])("缺少必填字段 %s 时拒绝请求", async (_field, parameters) => {
+    const response = await POST(
+      new NextRequest("https://app.example.com/api/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "request-missing",
+          prompt: "海边日落",
+          model: "sora2",
+          ...parameters,
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(invokeOperationMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["复合模型 ID", { model: "sora2-4s-16x9-720p" }],
+    ["旧前缀模型 ID", { model: "firefly-sora2-4s-16x9" }],
+    ["snake_case", { aspect_ratio: "16:9" }],
+    ["旧输入数组", { inputImages: [] }],
+    ["旧输入角色", { inputImageRole: "frame" }],
+  ])("拒绝%s", async (_caseName, invalidFields) => {
+    const response = await POST(
+      new NextRequest("https://app.example.com/api/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "request-invalid",
+          prompt: "海边日落",
+          model: "sora2",
+          duration: 4,
+          aspectRatio: "16:9",
+          resolution: "720p",
+          ...invalidFields,
+        }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(invokeOperationMock).not.toHaveBeenCalled();
   });
 });

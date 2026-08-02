@@ -7,7 +7,9 @@
 
 import { createHash } from "node:crypto";
 
+import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
 import type { Principal } from "@repo/shared/uol";
+import type { CanonicalVideoGenerateInput } from "@repo/shared/uol/operations/video-generation";
 
 /** 为站内会话、外部 API Key 与 MCP Key 生成互不重叠的所有者作用域。 */
 export function createVideoPrincipalScope(principal: Principal): string {
@@ -37,11 +39,71 @@ export function createVideoTaskId(input: {
 }
 
 /**
- * 对经过 UOL schema 归一的视频请求生成内容指纹。
+ * 把媒体引用投影为字段顺序固定的 JSON-safe 指纹片段。
  *
- * @param input 已校验且字段顺序稳定的视频 operation 输入。
- * @returns 用于识别“同键不同请求”的 SHA-256 指纹。
+ * @param reference - 已通过共享媒体 schema 的单个引用。
+ * @returns 保留来源语义且不受调用方对象键顺序影响的普通对象。
+ * @sideEffects 无。
+ * @failure 不抛错；所有联合分支已由 TypeScript 穷尽。
  */
-export function createVideoRequestFingerprint(input: unknown): string {
-  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+function canonicalizeVideoMediaReference(
+  reference: MediaInputReference
+): Record<string, unknown> {
+  if (reference.source === "data") {
+    return {
+      source: reference.source,
+      mimeType: reference.mimeType,
+      base64: reference.base64,
+      byteLength: reference.byteLength,
+    };
+  }
+  if (reference.source === "storage") {
+    return {
+      source: reference.source,
+      mimeType: reference.mimeType,
+      storageKey: reference.storageKey,
+      storageBucket: reference.storageBucket ?? null,
+      byteLength: reference.byteLength,
+    };
+  }
+  return {
+    source: reference.source,
+    mimeType: reference.mimeType,
+    url: reference.url,
+    byteLength: reference.byteLength,
+  };
+}
+
+/**
+ * 对动态能力解析后的规范视频请求生成内容指纹。
+ *
+ * @param input - 已解析声音默认值并通过静态、动态能力校验的规范请求。
+ * @returns 用于识别“同键不同请求”的 SHA-256 指纹。
+ * @sideEffects 无。
+ * @failure 不抛错；具名位置与 referenceImages 顺序均进入指纹语义。
+ */
+export function createVideoRequestFingerprint(
+  input: CanonicalVideoGenerateInput
+): string {
+  const canonical = {
+    clientRequestId: input.clientRequestId,
+    prompt: input.prompt,
+    negativePrompt: input.negativePrompt ?? null,
+    model: input.model,
+    duration: input.duration,
+    aspectRatio: input.aspectRatio,
+    resolution: input.resolution,
+    generateAudio: input.generateAudio,
+    backendGroupId: input.backendGroupId ?? null,
+    firstFrame: input.firstFrame
+      ? canonicalizeVideoMediaReference(input.firstFrame)
+      : null,
+    lastFrame: input.lastFrame
+      ? canonicalizeVideoMediaReference(input.lastFrame)
+      : null,
+    referenceImages: (input.referenceImages ?? []).map(
+      canonicalizeVideoMediaReference
+    ),
+  };
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }

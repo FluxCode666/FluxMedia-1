@@ -82,20 +82,27 @@ describe("POST /api/mcp/admin human-only isolation", () => {
     expect(names).toEqual(["support_listTickets"]);
     expect(names).not.toContain("moderation_setGlobalRiskLevel");
     expect(names).not.toContain("modelMarketplace_listPublicModels");
+    expect(names).not.toContain("pool_testApiUpstreamAdapter");
+    expect(names).not.toContain("pool_getApiUpstreamRuntimeDiagnostics");
   });
 
   it("rejects direct calls to a human-only operation", async () => {
-    const name = "moderation_setGlobalRiskLevel";
-    const response = await POST(
-      createRpcRequest("tools/call", { name, arguments: {} })
-    );
-    const body = await response.json();
+    for (const name of [
+      "moderation_setGlobalRiskLevel",
+      "pool_testApiUpstreamAdapter",
+      "pool_getApiUpstreamRuntimeDiagnostics",
+    ]) {
+      const response = await POST(
+        createRpcRequest("tools/call", { name, arguments: {} })
+      );
+      const body = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(body.error).toMatchObject({
-      code: -32601,
-      message: `Tool not available: ${name}`,
-    });
+      expect(response.status).toBe(400);
+      expect(body.error).toMatchObject({
+        code: -32601,
+        message: `Tool not available: ${name}`,
+      });
+    }
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 });

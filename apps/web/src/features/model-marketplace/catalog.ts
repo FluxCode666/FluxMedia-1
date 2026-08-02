@@ -4,8 +4,11 @@
  * 使用方是公开目录生产服务；本模块严格解析运行时目录、价格与展示配置，只输出真实可达
  * 且允许展示的图像模型和视频模型族，并复用管理目录与共享纯函数避免身份和价格规则漂移。
  */
-import { resolveFireflyVideoModel } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import { MAX_SUPPORTED_MODEL_IDS } from "@repo/shared/image-backend/supported-models";
+import {
+  MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_COUNT,
+} from "@repo/shared/image-generation/media-contract";
 import {
   type ModelMarketplaceCoverRef,
   type ModelMarketplacePublicItem,
@@ -17,9 +20,15 @@ import {
   sortUniqueDurations,
   sortUniqueVideoResolutions,
 } from "@repo/shared/model-marketplace";
+import {
+  resolveEffectiveVideoModelCapabilities,
+  resolveVideoModelCapability,
+  type VideoModelCapabilityDescriptor,
+} from "@repo/shared/video-generation";
 import { z } from "zod";
 import { isConcretePlatformImageModelId } from "../external-api/platform-model-catalog";
 import { buildModelConfigurationSnapshot } from "../model-configuration/catalog";
+import { getBuiltinModelMarketplaceDescription } from "./builtin-descriptions";
 
 const runtimeModelItemSchema = z
   .object({ id: z.string().trim().min(1).max(255) })
@@ -34,33 +43,13 @@ const publicCatalogItemsSchema = z
   .array(modelMarketplacePublicItemSchema)
   .max(500);
 
-const BUILTIN_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  "gpt-image-2": "适合高质量图像生成、精细文字渲染与复杂指令遵循。",
-  "gpt-image-1.5": "兼顾图像质量、编辑能力与稳定指令遵循。",
-  "nano-banana-pro": "适合高质量图像创作、编辑与多元素一致性处理。",
-  "nano-banana": "适合快速图像生成、编辑与日常创意探索。",
-  "nano-banana2": "适合快速生成并保持稳定的视觉与提示词一致性。",
-  sora2: "适合生成具有连贯运动和电影感构图的视频。",
-  "sora2-pro": "适合对画面质量、运动细节与叙事一致性要求更高的视频。",
-  veo31: "适合高质量视频生成与多种时长、比例和分辨率组合。",
-  "veo31-ref": "适合基于参考图保持主体与视觉风格一致的视频生成。",
-  "veo31-fast": "适合需要更快反馈的高质量视频创作。",
-  "kling-o3": "适合强调动作表现、镜头运动与参考一致性的视频生成。",
-  kling3: "适合多场景视频创作与稳定的运动表现。",
-  "kling3-omni": "适合逐秒控制时长，并生成横屏或竖屏的高分辨率视频。",
-  "runway-gen45": "适合生成 16:9 横屏电影感视频，并提供多档短时长选择。",
-  ray314: "适合生成多画幅、高分辨率的电影感短视频。",
-  "ray314-hdr": "适合生成高动态范围、多画幅的高分辨率电影感短视频。",
-  seedance2: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
-  "seedance2-fast": "适合更快生成多画幅视频并保持参考图视觉风格一致。",
-};
-
 /** 公开目录构建器需要的完整事实输入。 */
 export type ModelMarketplaceCatalogInput = {
   runtimeCatalog: unknown;
   imagePricing: unknown;
   videoPricing: unknown;
   marketplaceConfig: unknown;
+  videoCapabilityOverrides: unknown;
   buildCoverUrl: (
     category: "image" | "video",
     configKey: string,
@@ -126,12 +115,12 @@ function buildRuntimeImageModelIdMap(
 }
 
 /**
- * 按视频 family 聚合真实可达路由 ID 中的能力事实。
+ * 按真实视频模型聚合全局能力事实。
  *
  * @param runtimeCatalog - 已严格解析的运行时图像与视频目录。
- * @returns family 到时长、比例与分辨率候选项的映射；路由 ID 不作为公开模型身份输出。
+ * @returns 真实模型 ID 到时长、比例与分辨率候选项的映射。
  * @sideEffects 无。
- * @failure 不抛错；不能由共享 Firefly 目录解析的视频 ID 不会伪造成公开 family。
+ * @failure 不抛错；复合身份、前缀和未知 ID 不会伪造成公开模型。
  */
 function buildRuntimeVideoCandidates(
   runtimeCatalog: RuntimeCatalog
@@ -139,14 +128,16 @@ function buildRuntimeVideoCandidates(
   const candidatesByFamily = new Map<string, VideoRuntimeCandidate[]>();
   for (const model of runtimeCatalog.video) {
     const family = resolveModelMarketplaceVideoFamily(model.id);
-    const configuration = resolveFireflyVideoModel(model.id);
-    if (!family || !configuration) continue;
+    const resolved = resolveVideoModelCapability(model.id);
+    if (!family || !resolved.ok) continue;
     const candidates = candidatesByFamily.get(family) ?? [];
-    candidates.push({
-      duration: configuration.duration,
-      aspectRatio: configuration.aspectRatio,
-      outputResolution: configuration.outputResolution,
-    });
+    for (const duration of resolved.capability.durations) {
+      for (const aspectRatio of resolved.capability.aspectRatios) {
+        for (const outputResolution of resolved.capability.resolutions) {
+          candidates.push({ duration, aspectRatio, outputResolution });
+        }
+      }
+    }
     candidatesByFamily.set(family, candidates);
   }
   return candidatesByFamily;
@@ -168,14 +159,15 @@ function getPublicDescription(
   persistedDescription: string | undefined
 ): string {
   if (hasPersistedEntry) return persistedDescription ?? "";
-  return BUILTIN_DESCRIPTIONS[configKey] ?? "";
+  return getBuiltinModelMarketplaceDescription(configKey);
 }
 
 /**
  * 从严格事实源构建公开模型广场目录。
  *
- * @param input - 运行时真实目录、两类全局价格、展示配置与安全封面 URL 构造器。
- * @returns 只含真实可达且 visible 的严格公开 DTO 数组；全部关闭时返回空数组。
+ * @param input - 运行时真实目录、两类全局价格、视频能力覆盖、展示配置与安全封面 URL 构造器。
+ * @returns 可公开且 visible 的严格 DTO 数组；图像仅含真实可达模型，视频含全部全局能力并
+ * 独立标记当前配置可达性。
  * @sideEffects 仅同步调用注入的封面 URL 构造器，不读取或写入外部状态。
  * @failure 运行时目录、价格、配置、封面 URL 或最终 DTO 非法时显式抛出 ZodError；
  * 注入的封面构造错误保持原样上抛。
@@ -189,10 +181,19 @@ export function buildModelMarketplaceCatalog(
   );
   const runtimeImageModelIds = buildRuntimeImageModelIdMap(runtimeCatalog);
   const runtimeVideoCandidates = buildRuntimeVideoCandidates(runtimeCatalog);
+  const effectiveVideoCapabilities = new Map<
+    string,
+    VideoModelCapabilityDescriptor
+  >(
+    resolveEffectiveVideoModelCapabilities(input.videoCapabilityOverrides).map(
+      (capability) => [capability.modelId, capability]
+    )
+  );
   const snapshot = buildModelConfigurationSnapshot({
     imagePricing: input.imagePricing,
     videoPricing: input.videoPricing,
     marketplaceConfig,
+    videoCapabilityOverrides: input.videoCapabilityOverrides,
     runtimeCatalog: { status: "ready", catalog: runtimeCatalog },
     canEdit: false,
     buildCoverUrl(category, configKey, cover) {
@@ -238,11 +239,12 @@ export function buildModelMarketplaceCatalog(
 
     if (entry.category === "video") {
       const candidates = runtimeVideoCandidates.get(entry.configKey);
-      if (!candidates?.length) continue;
+      const capability = effectiveVideoCapabilities.get(entry.configKey);
+      if (!capability) continue;
       const persistedEntry = marketplaceConfig.videoByFamily[entry.configKey];
-      const supportedResolutions = sortUniqueVideoResolutions(
-        candidates.map((candidate) => candidate.outputResolution)
-      );
+      const supportedResolutions = sortUniqueVideoResolutions([
+        ...capability.resolutions,
+      ]);
       const creditsPerSecondByResolution = Object.fromEntries(
         supportedResolutions.map((resolution) => [
           resolution,
@@ -273,13 +275,26 @@ export function buildModelMarketplaceCatalog(
           priceUnit: "per_second",
           creditsPerSecond: minimumCredits,
           creditsPerSecondByResolution,
-          supportedDurations: sortUniqueDurations(
-            candidates.map((candidate) => candidate.duration)
-          ),
-          supportedAspectRatios: sortUniqueAspectRatios(
-            candidates.map((candidate) => candidate.aspectRatio)
-          ),
+          supportedDurations: sortUniqueDurations([...capability.durations]),
+          supportedAspectRatios: sortUniqueAspectRatios([
+            ...capability.aspectRatios,
+          ]),
           supportedResolutions,
+          input: {
+            frames: capability.input.frames,
+            referenceImages: {
+              maxCount: capability.input.referenceImages.maxCount,
+              configurable: capability.input.referenceImages.configurable,
+            },
+            framesAndReferencesMutuallyExclusive:
+              capability.input.framesAndReferencesMutuallyExclusive,
+          },
+          audio: { ...capability.audio },
+          configuredReachable: Boolean(candidates?.length),
+          infrastructureLimits: {
+            maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
+            maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,
+          },
         })
       );
     }

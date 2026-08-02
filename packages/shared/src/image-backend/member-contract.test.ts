@@ -21,7 +21,7 @@ const commonMember = {
 };
 
 describe("backend member contract", () => {
-  it("accepts strict API Images configuration", () => {
+  it("accepts strict API media configuration", () => {
     const parsed = backendMemberInputSchema.safeParse({
       ...commonMember,
       type: "api",
@@ -29,7 +29,7 @@ describe("backend member contract", () => {
         baseUrl: "https://images.example.com/v1",
         apiKey: "secret",
         useStream: true,
-        parameterMappings: [],
+        modelMappings: [],
       },
     });
     expect(parsed.success).toBe(true);
@@ -38,17 +38,120 @@ describe("backend member contract", () => {
     }
   });
 
-  it("defaults API Images streaming to disabled", () => {
+  it("defaults API image streaming to disabled", () => {
     const parsed = backendMemberInputSchema.parse({
       ...commonMember,
       type: "api",
       config: {
         baseUrl: "https://images.example.com/v1",
-        parameterMappings: [],
+        modelMappings: [],
       },
     });
     expect(parsed.type).toBe("api");
-    if (parsed.type === "api") expect(parsed.config.useStream).toBe(false);
+    if (parsed.type === "api") {
+      expect(parsed.config.useStream).toBe(false);
+      expect(parsed.config.authentication).toEqual({ mode: "bearer" });
+      expect(parsed.config.operations["videos.query"].path).toBe("");
+    }
+  });
+
+  it("接受六操作适配配置和乐观并发版本", () => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "api",
+        config: {
+          baseUrl: "https://images.example.com/v1",
+          modelMappings: [],
+          authentication: { mode: "custom_header", headerName: "X-Api-Key" },
+          credentialScope: "https://images.example.com|x-api-key",
+          expectedCurrentVersionId: "version-7",
+          operations: {
+            "images.generate": {
+              path: "",
+              requestScript: "return {};",
+              responseScript: "",
+            },
+            "images.generate.query": {
+              path: "/images/{task_id}",
+              requestScript: "",
+              responseScript: "",
+            },
+            "images.edit": { path: "", requestScript: "", responseScript: "" },
+            "images.edit.query": {
+              path: "",
+              requestScript: "",
+              responseScript: "",
+            },
+            "videos.generate": {
+              path: "",
+              requestScript: "",
+              responseScript: "",
+            },
+            "videos.query": {
+              path: "",
+              requestScript: "",
+              responseScript: "",
+            },
+          },
+        },
+      }).success
+    ).toBe(true);
+  });
+
+  it("拒绝未携带当前适配版本的 API 成员编辑", () => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        id: "member-existing",
+        type: "api",
+        config: {
+          baseUrl: "https://images.example.com/v1",
+          modelMappings: [],
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("只允许为账号已支持的平台模型配置上游模型 ID", () => {
+    const valid = backendMemberInputSchema.safeParse({
+      ...commonMember,
+      supportedModelIds: ["seedance2", "seedance2-fast"],
+      type: "api",
+      config: {
+        baseUrl: "https://video.example.com/v1",
+        modelMappings: [
+          { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
+        ],
+      },
+    });
+    expect(valid.success).toBe(true);
+
+    const invalid = backendMemberInputSchema.safeParse({
+      ...commonMember,
+      type: "api",
+      config: {
+        baseUrl: "https://video.example.com/v1",
+        modelMappings: [
+          { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
+        ],
+      },
+    });
+    expect(invalid.success).toBe(false);
+  });
+
+  it("严格拒绝已移除的简易参数映射字段", () => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "api",
+        config: {
+          baseUrl: "https://images.example.com/v1",
+          modelMappings: [],
+          parameterMappings: [],
+        },
+      }).success
+    ).toBe(false);
   });
 
   it("allows HTTP and private-network media upstream URLs", () => {
@@ -58,7 +161,7 @@ describe("backend member contract", () => {
         type: "api",
         config: {
           baseUrl: "http://10.0.0.8:8080/v1",
-          parameterMappings: [],
+          modelMappings: [],
         },
       }).success
     ).toBe(true);
@@ -140,7 +243,22 @@ describe("backend member contract", () => {
         type: "api",
         config: {
           baseUrl: "https://images.example.com/v1",
-          parameterMappings: [],
+          modelMappings: [],
+        },
+      }).success
+    ).toBe(false);
+
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        supportedModelIds: [],
+        type: "adobe",
+        config: {
+          mode: "direct",
+          cookie: "cookie-secret",
+          defaultRatio: "1:1",
+          defaultResolution: "2k",
+          gptImageQuality: "high",
         },
       }).success
     ).toBe(false);
@@ -151,7 +269,7 @@ describe("backend member contract", () => {
         type: "api",
         config: {
           baseUrl: "https://images.example.com/v1",
-          parameterMappings: [],
+          modelMappings: [],
           mode: "gateway",
         },
       }).success
@@ -164,7 +282,7 @@ describe("backend member contract", () => {
         config: {
           mode: "direct",
           cookie: "cookie-secret",
-          parameterMappings: [],
+          modelMappings: [],
           defaultRatio: "1:1",
           defaultResolution: "2k",
           gptImageQuality: "high",
@@ -173,10 +291,10 @@ describe("backend member contract", () => {
     ).toBe(false);
   });
 
-  it("allows video models only on Adobe direct members", () => {
+  it("只允许 API 与 Adobe direct 成员声明真实视频模型 ID", () => {
     const videoMember = {
       ...commonMember,
-      supportedModelIds: ["firefly-sora2-4s-16x9"],
+      supportedModelIds: ["seedance2"],
     };
 
     expect(
@@ -211,7 +329,30 @@ describe("backend member contract", () => {
         type: "api",
         config: {
           baseUrl: "https://images.example.com/v1",
-          parameterMappings: [],
+          modelMappings: [],
+        },
+      }).success
+    ).toBe(true);
+  });
+
+  it.each([
+    "firefly-seedance2",
+    "firefly-seedance2-15s-9x16-480p",
+    "seedance2-15s-9x16-480p",
+    "seedance2-preview",
+    "kling3-10s-16x9",
+  ])("拒绝旧视频身份 %s", (modelId) => {
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        id: "direct-existing",
+        supportedModelIds: [modelId],
+        type: "adobe",
+        config: {
+          mode: "direct",
+          defaultRatio: "16:9",
+          defaultResolution: "720p",
+          gptImageQuality: "high",
         },
       }).success
     ).toBe(false);
@@ -230,7 +371,7 @@ describe("backend member contract", () => {
           type: "api",
           config: {
             baseUrl: "https://images.example.com/v1",
-            parameterMappings: [],
+            modelMappings: [],
           },
           [legacyField]: true,
         }).success

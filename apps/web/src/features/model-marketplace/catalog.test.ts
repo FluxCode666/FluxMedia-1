@@ -1,8 +1,8 @@
 /**
  * 公开模型广场 DB-free 目录构建器测试。
  *
- * 使用方是公开目录生产服务；测试确保只投影真实可达、显式定价且允许展示的模型，并
- * 严格处理视频族聚合、定价模型 ID、内置简介、品牌与第一方封面。
+ * 使用方是公开目录生产服务；测试确保图像仅投影真实可达模型、视频展示完整全局能力
+ * 并独立标记配置可达性，同时严格处理定价模型 ID、内置简介、品牌与第一方封面。
  */
 import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
@@ -13,6 +13,7 @@ import {
   createDefaultModelMarketplaceConfig,
   type ModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -43,6 +44,7 @@ function createInput(
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
     marketplaceConfig: createDefaultModelMarketplaceConfig(),
+    videoCapabilityOverrides: createDefaultVideoModelCapabilityOverrides(),
     buildCoverUrl: (category) => `/model-marketplace/default-${category}.webp`,
     ...overrides,
   };
@@ -63,7 +65,7 @@ describe("buildModelMarketplaceCatalog", () => {
       })
     );
 
-    expect(items).toEqual([
+    expect(items.filter((item) => item.category === "image")).toEqual([
       expect.objectContaining({
         category: "image",
         configKey: "gpt-image-2",
@@ -89,8 +91,10 @@ describe("buildModelMarketplaceCatalog", () => {
       })
     );
 
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
+    const images = items.filter((item) => item.category === "image");
+
+    expect(images).toHaveLength(1);
+    expect(images[0]).toMatchObject({
       configKey: "gpt-image-2",
       modelId: "gpt-image-2",
     });
@@ -136,108 +140,112 @@ describe("buildModelMarketplaceCatalog", () => {
       })
     );
 
-    expect(items.map((item) => item.configKey)).toEqual([
-      "runtime-default-visible",
-    ]);
+    expect(
+      items
+        .filter((item) => item.category === "image")
+        .map((item) => item.configKey)
+    ).toEqual(["runtime-default-visible"]);
   });
 
-  it("把真实视频变体聚合成一张卡并只从可达 ID 归纳能力", () => {
+  it("真实视频模型能力来自完整全局描述符并标记当前可达", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
         runtimeCatalog: {
           image: [],
           video: [
+            { id: "veo31" },
             { id: "firefly-veo31-8s-9x16-720p" },
-            { id: "firefly-veo31-6s-16x9-720p" },
-            { id: "firefly-veo31-6s-16x9-1080p" },
+            { id: "veo31-6s-16x9-1080p" },
           ],
         },
       })
     );
 
-    expect(items).toEqual([
-      expect.objectContaining({
-        category: "video",
-        configKey: "veo31",
-        modelId: "veo31",
-        iconKey: "google",
-        priceUnit: "per_second",
-        creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
-        creditsPerSecondByResolution: {
-          "720p":
-            DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
-              getVideoPricingResolutionKey("veo31", "720p")
-            ],
-          "1080p":
-            DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
-              getVideoPricingResolutionKey("veo31", "1080p")
-            ],
-        },
-        minimumCredits: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
-        homepageVisible: false,
-        homepagePriority: 5,
-        supportedDurations: [6, 8],
-        supportedAspectRatios: ["16:9", "9:16"],
-        supportedResolutions: ["720p", "1080p"],
-      }),
-    ]);
+    expect(items.find((item) => item.modelId === "veo31")).toMatchObject({
+      category: "video",
+      configKey: "veo31",
+      modelId: "veo31",
+      iconKey: "google",
+      priceUnit: "per_second",
+      creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
+      creditsPerSecondByResolution: {
+        "720p":
+          DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+            getVideoPricingResolutionKey("veo31", "720p")
+          ],
+        "1080p":
+          DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND[
+            getVideoPricingResolutionKey("veo31", "1080p")
+          ],
+      },
+      minimumCredits: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.veo31,
+      homepageVisible: false,
+      homepagePriority: 5,
+      supportedDurations: [4, 6, 8],
+      supportedAspectRatios: ["16:9", "9:16"],
+      supportedResolutions: ["720p", "1080p"],
+      configuredReachable: true,
+    });
   });
 
-  it("Google 视频家族只公开定价模型 ID 并把组合参数留在详情字段", () => {
+  it("Google 视频模型只公开真实 ID 并展示各自完整能力", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
         runtimeCatalog: {
           image: [],
-          video: [
-            { id: "firefly-veo31-4s-16x9-1080p" },
-            { id: "firefly-veo31-ref-6s-9x16-720p" },
-            { id: "firefly-veo31-fast-8s-16x9-1080p" },
-          ],
+          video: [{ id: "veo31" }, { id: "veo31-ref" }, { id: "veo31-fast" }],
         },
       })
     );
 
     expect(
-      items.map((item) => ({
-        configKey: item.configKey,
-        modelId: item.modelId,
-        iconKey: item.iconKey,
-        supportedDurations:
-          item.category === "video" ? item.supportedDurations : [],
-        supportedAspectRatios:
-          item.category === "video" ? item.supportedAspectRatios : [],
-        supportedResolutions:
-          item.category === "video" ? item.supportedResolutions : [],
-      }))
+      items
+        .filter(
+          (item) =>
+            item.modelId === "veo31" ||
+            item.modelId === "veo31-fast" ||
+            item.modelId === "veo31-ref"
+        )
+        .map((item) => ({
+          configKey: item.configKey,
+          modelId: item.modelId,
+          iconKey: item.iconKey,
+          supportedDurations:
+            item.category === "video" ? item.supportedDurations : [],
+          supportedAspectRatios:
+            item.category === "video" ? item.supportedAspectRatios : [],
+          supportedResolutions:
+            item.category === "video" ? item.supportedResolutions : [],
+        }))
     ).toEqual([
       {
         configKey: "veo31",
         modelId: "veo31",
         iconKey: "google",
-        supportedDurations: [4],
-        supportedAspectRatios: ["16:9"],
-        supportedResolutions: ["1080p"],
-      },
-      {
-        configKey: "veo31-ref",
-        modelId: "veo31-ref",
-        iconKey: "google",
-        supportedDurations: [6],
-        supportedAspectRatios: ["9:16"],
-        supportedResolutions: ["720p"],
+        supportedDurations: [4, 6, 8],
+        supportedAspectRatios: ["16:9", "9:16"],
+        supportedResolutions: ["720p", "1080p"],
       },
       {
         configKey: "veo31-fast",
         modelId: "veo31-fast",
         iconKey: "google",
-        supportedDurations: [8],
-        supportedAspectRatios: ["16:9"],
-        supportedResolutions: ["1080p"],
+        supportedDurations: [4, 6, 8],
+        supportedAspectRatios: ["16:9", "9:16"],
+        supportedResolutions: ["720p", "1080p"],
+      },
+      {
+        configKey: "veo31-ref",
+        modelId: "veo31-ref",
+        iconKey: "google",
+        supportedDurations: [4, 6, 8],
+        supportedAspectRatios: ["16:9", "9:16"],
+        supportedResolutions: ["720p", "1080p"],
       },
     ]);
   });
 
-  it("Seedance 2.0 的全部变体只生成一个模型族条目", () => {
+  it("Seedance 2.0 真实 ID 展示完整能力与分辨率价格", () => {
     const durations = Array.from({ length: 12 }, (_, index) => index + 4);
     const items = buildModelMarketplaceCatalog(
       createInput({
@@ -250,17 +258,12 @@ describe("buildModelMarketplaceCatalog", () => {
         },
         runtimeCatalog: {
           image: [],
-          video: durations.flatMap((duration) => [
-            { id: `seedance2-${duration}s-16x9-480p` },
-            { id: `seedance2-${duration}s-9x16-720p` },
-            { id: `seedance2-${duration}s-16x9-1080p` },
-          ]),
+          video: [{ id: "seedance2" }],
         },
       })
     );
 
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
+    expect(items.find((item) => item.modelId === "seedance2")).toMatchObject({
       category: "video",
       configKey: "seedance2",
       modelId: "seedance2",
@@ -277,51 +280,78 @@ describe("buildModelMarketplaceCatalog", () => {
     });
   });
 
-  it("聚合 Kling 3.0 Omni 的逐秒时长、横竖比例和两档分辨率", () => {
+  it("共享有效能力并区分全局能力、配置可达性与基础设施限制", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
+        videoCapabilityOverrides: {
+          version: 1,
+          byModel: { seedance2: { maxReferenceImages: 20 } },
+        },
         runtimeCatalog: {
           image: [],
-          video: [
-            { id: "firefly-kling3-omni-15s-9x16-720p" },
-            { id: "firefly-kling3-omni-3s-16x9-1080p" },
-            { id: "firefly-kling3-omni-3s-9x16-720p" },
-          ],
+          video: [{ id: "seedance2" }],
         },
       })
     );
+    const videos = items.filter((item) => item.category === "video");
+    const seedance = videos.find((item) => item.modelId === "seedance2");
 
-    expect(items).toEqual([
-      expect.objectContaining({
-        category: "video",
-        configKey: "kling3-omni",
-        displayName: "Kling 3.0 Omni",
-        modelId: "kling3-omni",
-        iconKey: "kling",
-        creditsPerSecond: 30,
-        supportedDurations: [3, 15],
-        supportedAspectRatios: ["16:9", "9:16"],
-        supportedResolutions: ["720p", "1080p"],
-      }),
-    ]);
+    expect(videos).toHaveLength(13);
+    expect(seedance).toMatchObject({
+      input: {
+        frames: "first-and-optional-last",
+        referenceImages: { maxCount: 20, configurable: true },
+        framesAndReferencesMutuallyExclusive: true,
+      },
+      audio: { supported: true, defaultEnabled: false },
+      configuredReachable: true,
+      infrastructureLimits: {
+        maxMediaInputCount: 256,
+        maxMediaInputBytes: 209_715_200,
+      },
+    });
+    expect(
+      videos
+        .filter((item) => item.modelId !== "seedance2")
+        .every((item) => !item.configuredReachable)
+    ).toBe(true);
   });
 
-  it("聚合 Runway Gen-4.5 的三档时长与固定 720p 横屏能力", () => {
+  it("Kling 3.0 Omni 真实 ID 展示完整逐秒能力", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
         runtimeCatalog: {
           image: [],
-          video: [
-            { id: "firefly-runway-gen45-10s-16x9" },
-            { id: "firefly-runway-gen45-5s-16x9" },
-            { id: "firefly-runway-gen45-8s-16x9" },
-          ],
+          video: [{ id: "kling3-omni" }],
         },
       })
     );
 
-    expect(items).toEqual([
-      expect.objectContaining({
+    expect(items.find((item) => item.modelId === "kling3-omni")).toMatchObject({
+      category: "video",
+      configKey: "kling3-omni",
+      displayName: "Kling 3.0 Omni",
+      modelId: "kling3-omni",
+      iconKey: "kling",
+      creditsPerSecond: 30,
+      supportedDurations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      supportedAspectRatios: ["16:9", "9:16"],
+      supportedResolutions: ["720p", "1080p"],
+    });
+  });
+
+  it("Runway Gen-4.5 真实 ID 展示完整固定画幅能力", () => {
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        runtimeCatalog: {
+          image: [],
+          video: [{ id: "runway-gen45" }],
+        },
+      })
+    );
+
+    expect(items.find((item) => item.modelId === "runway-gen45")).toMatchObject(
+      {
         category: "video",
         configKey: "runway-gen45",
         displayName: "Runway Gen-4.5",
@@ -332,71 +362,59 @@ describe("buildModelMarketplaceCatalog", () => {
         supportedDurations: [5, 8, 10],
         supportedAspectRatios: ["16:9"],
         supportedResolutions: ["720p"],
-      }),
-    ]);
+      }
+    );
   });
 
-  it("聚合 Ray 3.14 的多画幅、两档时长与三档分辨率", () => {
+  it("Ray 3.14 真实 ID 展示完整多画幅能力", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
         runtimeCatalog: {
           image: [],
-          video: [
-            { id: "firefly-ray314-10s-9x16-720p" },
-            { id: "firefly-ray314-5s-16x9-4k" },
-            { id: "firefly-ray314-5s-1x1-1080p" },
-          ],
+          video: [{ id: "ray314" }],
         },
       })
     );
 
-    expect(items).toEqual([
-      expect.objectContaining({
-        category: "video",
-        configKey: "ray314",
-        displayName: "Ray 3.14",
-        modelId: "ray314",
-        iconKey: "generic",
-        description: expect.stringContaining("高分辨率"),
-        creditsPerSecond: 30,
-        supportedDurations: [5, 10],
-        supportedAspectRatios: ["16:9", "9:16", "1:1"],
-        supportedResolutions: ["720p", "1080p", "4k"],
-      }),
-    ]);
+    expect(items.find((item) => item.modelId === "ray314")).toMatchObject({
+      category: "video",
+      configKey: "ray314",
+      displayName: "Ray 3.14",
+      modelId: "ray314",
+      iconKey: "generic",
+      description: expect.stringContaining("高分辨率"),
+      creditsPerSecond: 30,
+      supportedDurations: [5, 10],
+      supportedAspectRatios: ["16:9", "9:16", "1:1", "21:9", "3:4", "4:3"],
+      supportedResolutions: ["720p", "1080p", "4k"],
+    });
   });
 
-  it("聚合 Ray 3.14 HDR 的固定 5 秒、多画幅和三档分辨率", () => {
+  it("Ray 3.14 HDR 真实 ID 展示完整多画幅能力", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
         runtimeCatalog: {
           image: [],
-          video: [
-            { id: "firefly-ray314-hdr-5s-9x16-720p" },
-            { id: "firefly-ray314-hdr-5s-16x9-4k" },
-            { id: "firefly-ray314-hdr-5s-1x1-1080p" },
-          ],
+          video: [{ id: "ray314-hdr" }],
         },
       })
     );
 
-    expect(items).toEqual([
-      expect.objectContaining({
-        category: "video",
-        configKey: "ray314-hdr",
-        displayName: "Ray 3.14 HDR",
-        modelId: "ray314-hdr",
-        iconKey: "generic",
-        description: expect.stringContaining("高动态范围"),
-        creditsPerSecond: 30,
-        supportedDurations: [5],
-        supportedAspectRatios: ["16:9", "9:16", "1:1"],
-        supportedResolutions: ["720p", "1080p", "4k"],
-      }),
-    ]);
+    expect(items.find((item) => item.modelId === "ray314-hdr")).toMatchObject({
+      category: "video",
+      configKey: "ray314-hdr",
+      displayName: "Ray 3.14 HDR",
+      modelId: "ray314-hdr",
+      iconKey: "generic",
+      description: expect.stringContaining("高动态范围"),
+      creditsPerSecond: 30,
+      supportedDurations: [5],
+      supportedAspectRatios: ["16:9", "9:16", "1:1", "21:9", "3:4", "4:3"],
+      supportedResolutions: ["720p", "1080p", "4k"],
+    });
   });
 
-  it("运行时视频目录复用后端完整模型 ID 上限", () => {
+  it("未知运行时视频不影响全局目录且所有模型均标记不可达", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({
         runtimeCatalog: {
@@ -408,7 +426,10 @@ describe("buildModelMarketplaceCatalog", () => {
       })
     );
 
-    expect(items).toEqual([]);
+    const videos = items.filter((item) => item.category === "video");
+
+    expect(videos).toHaveLength(13);
+    expect(videos.every((item) => !item.configuredReachable)).toBe(true);
   });
 
   it("按已知供应商映射品牌，未知自定义图像保持 generic", () => {
@@ -426,11 +447,11 @@ describe("buildModelMarketplaceCatalog", () => {
             { id: "private-renderer" },
           ],
           video: [
-            { id: "firefly-sora2-4s-16x9" },
-            { id: "firefly-veo31-4s-16x9-1080p" },
-            { id: "firefly-kling-o3-5s-16x9" },
-            { id: "firefly-seedance2-4s-16x9-480p" },
-            { id: "firefly-runway-gen45-5s-16x9" },
+            { id: "sora2" },
+            { id: "veo31" },
+            { id: "kling-o3" },
+            { id: "seedance2" },
+            { id: "runway-gen45" },
           ],
         },
       })

@@ -13,6 +13,11 @@ export const IMAGE_BACKEND_POOL_VIEWER_ROLES = [
   "admin",
   "super_admin",
 ] as const;
+export const GLOBAL_USAGE_RECORDS_VIEWER_ROLES = [
+  "observer_admin",
+  "admin",
+  "super_admin",
+] as const;
 
 export function normalizeUserRole(role?: string | null): AppUserRole {
   return APP_USER_ROLES.includes(role as AppUserRole)
@@ -40,6 +45,15 @@ export function canAccessAdminArea(role?: string | null) {
 export function canViewImageBackendPool(role?: string | null) {
   return IMAGE_BACKEND_POOL_VIEWER_ROLES.includes(
     normalizeUserRole(role) as (typeof IMAGE_BACKEND_POOL_VIEWER_ROLES)[number]
+  );
+}
+
+/** 判断角色能否查看全局生成历史及其中的实际视频输入。 */
+export function canViewGlobalUsageRecords(role?: string | null) {
+  return GLOBAL_USAGE_RECORDS_VIEWER_ROLES.includes(
+    normalizeUserRole(
+      role
+    ) as (typeof GLOBAL_USAGE_RECORDS_VIEWER_ROLES)[number]
   );
 }
 

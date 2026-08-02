@@ -19,6 +19,7 @@ export type ModelConfigurationReadDependencies = {
   loadImagePricing: () => Promise<unknown>;
   loadVideoPricing: () => Promise<unknown>;
   loadMarketplaceConfig: () => Promise<unknown>;
+  loadVideoCapabilityOverrides: () => Promise<unknown>;
   loadRuntimeCatalog: () => Promise<RuntimeModelCatalog>;
   buildCoverUrl: ModelConfigurationCatalogInput["buildCoverUrl"];
 };
@@ -55,18 +56,25 @@ export async function readModelConfiguration(
   principal: Principal,
   dependencies: ModelConfigurationReadDependencies
 ): Promise<ModelConfigurationSnapshot> {
-  const [imagePricing, videoPricing, marketplaceConfig, runtimeCatalog] =
-    await Promise.all([
-      Promise.resolve().then(dependencies.loadImagePricing),
-      Promise.resolve().then(dependencies.loadVideoPricing),
-      Promise.resolve().then(dependencies.loadMarketplaceConfig),
-      loadRuntimeCatalogResult(dependencies.loadRuntimeCatalog),
-    ]);
+  const [
+    imagePricing,
+    videoPricing,
+    marketplaceConfig,
+    videoCapabilityOverrides,
+    runtimeCatalog,
+  ] = await Promise.all([
+    Promise.resolve().then(dependencies.loadImagePricing),
+    Promise.resolve().then(dependencies.loadVideoPricing),
+    Promise.resolve().then(dependencies.loadMarketplaceConfig),
+    Promise.resolve().then(dependencies.loadVideoCapabilityOverrides),
+    loadRuntimeCatalogResult(dependencies.loadRuntimeCatalog),
+  ]);
 
   return buildModelConfigurationSnapshot({
     imagePricing,
     videoPricing,
     marketplaceConfig,
+    videoCapabilityOverrides,
     runtimeCatalog,
     canEdit: isPrincipalSuperAdmin(principal),
     buildCoverUrl: dependencies.buildCoverUrl,

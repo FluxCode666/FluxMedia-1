@@ -1,7 +1,7 @@
 /**
  * 公开 API 接入文档路由。
  *
- * 与仅管理员可见的 /docs 分离，承载外部开发者需要的图像端点，并生成双语
+ * 与仅管理员可见的 /docs 分离，承载外部开发者需要的图片与视频端点，并生成双语
  * canonical、Open Graph 与面包屑结构化数据。
  */
 import { siteConfig } from "@repo/shared/config";
@@ -20,8 +20,8 @@ export async function generateMetadata({
   const isZh = locale === "zh";
   const title = isZh ? "API 接入文档" : "API Integration Guide";
   const description = isZh
-    ? "FluxMedia 外部图像 API 接入参考，包含生成、编辑和任务查询端点。"
-    : "FluxMedia external image API reference for generation, editing, and task queries.";
+    ? "FluxMedia 外部图片与视频 API 接入参考，包含模型能力、生成、编辑和任务查询端点。"
+    : "FluxMedia external image and video API reference for model capabilities, generation, editing, and task queries.";
   const url = `${siteConfig.url}/${locale}/api-docs`;
 
   return {

@@ -19,7 +19,17 @@ const INPUT = {
   taskId: "video-1",
   userId: "user-1",
   principalScope: "external:user-1:key-1",
-  references: [DATA_REFERENCE],
+  manifest: { firstFrame: DATA_REFERENCE },
+};
+
+const STAGED_MANIFEST = {
+  firstFrame: {
+    source: "storage" as const,
+    mimeType: "image/png" as const,
+    storageKey: "user-1/video-inputs/video-1/reservation-1/first-frame.png",
+    storageBucket: "uploads",
+    byteLength: DATA_REFERENCE.byteLength,
+  },
 };
 
 describe("video task input preparation", () => {
@@ -34,7 +44,7 @@ describe("video task input preparation", () => {
         },
         stage: async () => {
           await putObject();
-          return { references: [], objects: [] };
+          return { manifest: {}, objects: [] };
         },
         release,
       })
@@ -58,7 +68,7 @@ describe("video task input preparation", () => {
 
   it("预检通过后才执行一次转存", async () => {
     const stage = vi.fn(async () => ({
-      references: [DATA_REFERENCE],
+      manifest: STAGED_MANIFEST,
       objects: [],
     }));
     const release = vi.fn(async () => true);

@@ -1,0 +1,5 @@
+# 本文件为项目内 Skill 提供列表展示名称和默认触发提示，不安装到用户环境。
+interface:
+  display_name: "编写 API 上游适配器"
+  short_description: "生成并校验六操作请求与响应 JavaScript 适配配置"
+  default_prompt: "使用 $write-api-upstream-adapter 根据我提供的上游协议生成并验证账号适配配置。"

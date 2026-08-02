@@ -57,19 +57,51 @@ docker compose ps web
 手工执行迁移时显式启用维护 profile。迁移成功后再启动主服务：
 
 ```bash
+install -d -m 700 state
 docker compose --profile maintenance pull migrate
+docker compose stop --timeout 60 web
+docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+  pnpm --dir packages/database db:release-gate -- drain
+docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+  pnpm --dir packages/database db:release-gate -- preflight-early
+```
+
+此时必须先用 `create-database-backup.sh create` 创建迁移前备份，并保存其 manifest；传入
+本次镜像 tag 和对应的 40 位 Git SHA。备份成功后再继续：
+
+```bash
+docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+  node apps/web/scripts/migrate-video-input-assets.mjs migrate \
+  --confirm-no-legacy-writers
+docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+  pnpm --dir packages/database db:release-gate -- preflight
 docker compose --profile maintenance run --rm --no-deps --interactive=false migrate
+docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+  pnpm --dir packages/database db:release-gate -- postcheck
 docker compose up -d web
 ```
 
 自动部署必须关闭 migrate 容器的 stdin。远程脚本通过 SSH stdin 传入；若保留 Compose
 默认的交互输入，迁移容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
 
-自动部署先拉取新镜像，再停止旧 Web、确认 `fluxmedia-web` 数据库连接已排空，并执行只读
-预检。预检通过后才创建本地或 S3 备份并执行迁移。迁移一旦开始，任何迁移、后置校验、启动或
-健康检查失败都会保持 Web 停止，绝不自动启动旧 schema 镜像。恢复只能由值班人员选择
-前向修复，或先恢复 Workflow 记录的迁移前数据库备份，再恢复旧镜像。完整步骤见
+自动部署先拉取新镜像，再停止旧 Web、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
+只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、0074 与
+postcheck。资产收编开始后，任何迁移、后置校验、启动或健康检查失败都会保持 Web 停止，
+绝不自动启动旧 schema 镜像。恢复旧镜像前必须先恢复 Workflow 记录的迁移前数据库备份，
+并让 `legacy-startup` 门禁证明三个旧视频列仍完整；否则只能前向修复。完整步骤见
 `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
+
+资产收编会先把本轮新对象以 0600 NDJSON 写入部署目录 `state/`。若选择恢复迁移前数据库
+备份，必须在数据库恢复完成且旧 Web 仍停止时，用同一 migrator 镜像执行幂等对象回滚：
+
+```bash
+docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+  node apps/web/scripts/migrate-video-input-assets.mjs rollback \
+  --confirm-database-restored
+```
+
+回滚命令只接受清单内严格属于 `migration-v1` 前缀的对象；完成后再运行
+`db:release-gate -- legacy-startup`，通过后才可恢复旧镜像。
 
 ## 配置 Nginx 与证书
 

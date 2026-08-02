@@ -25,12 +25,30 @@ const claimInputSchema = z
     path: ["claimExpiresAt"],
   });
 
-const claimedVideoRowSchema = z.object({ id: identifierSchema });
+const claimedVideoRowSchema = z
+  .object({
+    id: identifierSchema,
+    api_adapter_member_id: identifierSchema.nullable(),
+    api_adapter_version_id: identifierSchema.nullable(),
+  })
+  .superRefine((row, context) => {
+    if (
+      (row.api_adapter_member_id === null) !==
+      (row.api_adapter_version_id === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "API adapter ownership pair must be complete",
+      });
+    }
+  });
 
 /** 单条视频恢复 claim 的稳定结果。 */
 export interface ClaimedVideoRecoveryJob {
   id: string;
   claimToken: string;
+  apiAdapterMemberId: string | null;
+  apiAdapterVersionId: string | null;
 }
 
 /** 视频恢复 claim 输入；时钟和 token 显式注入以便并发测试。 */
@@ -121,13 +139,19 @@ export function createPostgresVideoRecoveryRepository(
               updated_at = ${input.now}
           from candidate
           where task.id = candidate.id
-          returning task.id
+          returning
+            task.id,
+            task.api_adapter_member_id,
+            task.api_adapter_version_id
         `);
         const row = extractExecuteRows(result)[0];
         if (!row) return null;
+        const parsed = claimedVideoRowSchema.parse(row);
         return {
-          id: claimedVideoRowSchema.parse(row).id,
+          id: parsed.id,
           claimToken: input.claimToken,
+          apiAdapterMemberId: parsed.api_adapter_member_id,
+          apiAdapterVersionId: parsed.api_adapter_version_id,
         };
       });
     },

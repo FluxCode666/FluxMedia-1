@@ -1,9 +1,9 @@
 /**
- * 简易生图菜单页路由。
+ * 图片与视频生成菜单页路由。
  *
- * 使用方：控制台侧边栏的“简易生图”入口。
+ * 使用方：控制台侧边栏的生成入口。
  * 关键依赖：服务端装配用户额度、套餐授权模型目录、上传限制、计价和近期图片，
- * 客户端只渲染旧版统一视觉的生图工作区。
+ * 客户端渲染旧版统一视觉的图片与视频工作区。
  */
 import { getCurrentUser } from "@repo/shared/auth/server";
 import { getCreditsBalance } from "@repo/shared/credits/core";
@@ -24,9 +24,10 @@ import {
   getRuntimeImageModerationCreditPricing,
 } from "@/features/image-generation/pricing-settings";
 import { getUserRecentGenerations } from "@/features/image-generation/queries";
+import { getVideoPricingForUser } from "@/features/image-generation/video-operations";
 
 /**
- * 渲染独立的简易生图页面。
+ * 渲染独立的图片与视频生成页面。
  *
  * @returns 已完成鉴权和套餐收窄的简易生图页面。
  * @sideEffects 读取账户、系统配置和近期生成记录；未登录时跳转登录页。
@@ -57,6 +58,10 @@ export default async function GeneratePage() {
     getRuntimeImageModelCreditPricing(),
     getRuntimeImageModerationCreditPricing(),
   ]);
+  const videoPricing = await getVideoPricingForUser({
+    userId: user.id,
+    group: activeBackendGroup?.videoCreditOverrides ?? null,
+  });
   const recents = recentGenerations.map((generation) => ({
     id: generation.id,
     prompt: generation.prompt,
@@ -77,6 +82,7 @@ export default async function GeneratePage() {
       moderationEnabled={moderationEnabled}
       imageModelPricing={imageModelPricing}
       imageModerationPricing={imageModerationPricing}
+      videoPricing={videoPricing}
     />
   );
 }

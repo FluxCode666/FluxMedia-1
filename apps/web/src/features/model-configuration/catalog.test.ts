@@ -16,6 +16,7 @@ import {
   type ModelMarketplaceConfig,
   modelConfigurationSnapshotSchema,
 } from "@repo/shared/model-marketplace";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -45,6 +46,7 @@ function createInput(
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
     marketplaceConfig: createDefaultModelMarketplaceConfig(),
+    videoCapabilityOverrides: createDefaultVideoModelCapabilityOverrides(),
     runtimeCatalog: {
       status: "ready",
       catalog: { image: [], video: [] },
@@ -188,6 +190,48 @@ describe("buildModelConfigurationSnapshot", () => {
     });
   });
 
+  it("仅为可配置 Seedance 条目返回当前参考图上限", () => {
+    const defaults = buildModelConfigurationSnapshot(createInput());
+    expect(
+      defaults.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "seedance2"
+      )
+    ).toMatchObject({ maxReferenceImages: 10 });
+    expect(
+      defaults.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "veo31"
+      )
+    ).not.toHaveProperty("maxReferenceImages");
+
+    const overridden = buildModelConfigurationSnapshot(
+      createInput({
+        videoCapabilityOverrides: {
+          version: 1,
+          byModel: { seedance2: { maxReferenceImages: 20 } },
+        },
+      })
+    );
+    expect(
+      overridden.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "seedance2"
+      )
+    ).toMatchObject({ maxReferenceImages: 20 });
+  });
+
+  it("未保存展示配置时复用内置简介，避免只改参考图上限时清空文案", () => {
+    const snapshot = buildModelConfigurationSnapshot(createInput());
+
+    expect(
+      snapshot.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "seedance2"
+      )
+    ).toMatchObject({
+      revision: 0,
+      description: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
+      maxReferenceImages: 10,
+    });
+  });
+
   it("持久化额外图像保持显式价格且不携带兜底 revision", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
     imagePricing.byModel["vendor-image"] = { ...EXTRA_IMAGE_PRICING };
@@ -274,7 +318,7 @@ describe("buildModelConfigurationSnapshot", () => {
       visible: true,
       homepageVisible: true,
       homepagePriority: 5,
-      description: "",
+      description: "适合快速图像生成、编辑与日常创意探索。",
       coverUrl: "/model-marketplace/default.webp",
       usesDefaultCover: true,
     });
@@ -283,6 +327,7 @@ describe("buildModelConfigurationSnapshot", () => {
       visible: true,
       homepageVisible: false,
       homepagePriority: 5,
+      description: "适合生成具有连贯运动和电影感构图的视频。",
     });
   });
 
@@ -307,7 +352,7 @@ describe("buildModelConfigurationSnapshot", () => {
     );
   });
 
-  it("展示配置、图像价格或视频价格为脏值时显式抛错", () => {
+  it("展示配置、图像价格、视频价格或能力覆盖为脏值时显式抛错", () => {
     const validMarketplace = createDefaultModelMarketplaceConfig();
     const validImagePricing = createDefaultGlobalImageCreditOverrides();
     const validVideoPricing = { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
@@ -336,6 +381,16 @@ describe("buildModelConfigurationSnapshot", () => {
       buildModelConfigurationSnapshot(
         createInput({
           videoPricing: { ...validVideoPricing, sora2: 0 },
+        })
+      )
+    ).toThrow();
+    expect(() =>
+      buildModelConfigurationSnapshot(
+        createInput({
+          videoCapabilityOverrides: {
+            version: 1,
+            byModel: { seedance2: { maxReferenceImages: 0 } },
+          },
         })
       )
     ).toThrow();

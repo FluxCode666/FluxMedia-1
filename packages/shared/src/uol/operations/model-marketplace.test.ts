@@ -136,11 +136,11 @@ describe("模型配置 UOL 元数据", () => {
     );
   });
 
-  it("公开目录只允许 system Principal 进程内读取", () => {
+  it("公开目录允许登录用户与 system Principal 进程内读取", () => {
     expect(modelMarketplaceListPublicModels).toMatchObject({
       name: "modelMarketplace.listPublicModels",
       domain: "external-api",
-      access: { kind: "system" },
+      access: { kind: "protected" },
       agentExposure: "human-only",
       readOnly: true,
       destructive: false,
@@ -152,7 +152,10 @@ describe("模型配置 UOL 元数据", () => {
     ).not.toThrow();
     expect(() =>
       assertAccess(modelMarketplaceListPublicModels.access, superAdminPrincipal)
-    ).toThrow();
+    ).not.toThrow();
+    expect(() =>
+      assertAccess(modelMarketplaceListPublicModels.access, userPrincipal)
+    ).not.toThrow();
   });
 
   it("未绑定时由真实网关保持先鉴权后返回 not_implemented", async () => {

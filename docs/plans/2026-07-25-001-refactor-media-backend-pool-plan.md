@@ -12,6 +12,10 @@ deepened: 2026-07-26
 
 # 媒体后端统一号池重构 - Plan
 
+> 后续决策（迁移 `0075`）取代本文关于保留 `copy|move` 参数映射和模板 CRUD 的内容：
+> API 账号现使用平台模型到供应商模型的稀疏映射，以及隔离 JavaScript 请求处理脚本；
+> 旧参数映射列、运行时代码、模板表和 UOL 操作均已删除。其他统一号池设计继续有效。
+
 ## Goal Capsule
 
 - **Objective:** 将 FluxMedia 收敛为只承载图片生成、图片编辑和视频生成的媒体平台，并以单一后端号池统一 API 与 Adobe 成员的管理和调度。
@@ -59,7 +63,7 @@ flowchart TB
   Capability --> Strategy["应用全局调度策略"]
   Strategy --> Lease["原子获得成员租约"]
   Lease --> Type{"后端成员类型"}
-  Type -->|api| Api["API 图片适配"]
+  Type -->|api| Api["API 图片或视频适配"]
   Type -->|adobe gateway| AdobeGateway["Adobe 网关适配"]
   Type -->|adobe direct| AdobeDirect["Adobe 直连图片或视频适配"]
   Api --> Result["媒体结果"]
@@ -92,15 +96,15 @@ flowchart TB
 - R5. 系统必须只有一个顶层后端成员模型，并以 `api | adobe` 作为互斥的成员类型；分组关系、模型能力、启停、健康、冷却、优先级、并发、获租计数和调度指标使用统一语义。
 - R6. `adobe` 类型必须保留 `gateway | direct` 两种模式；每个 direct 顶层成员必须恰好保存一个 Adobe 账号的 Cookie、短期 token、刷新状态和余额，不得再有内部账号/token 子池；gateway 模式继续支持外部 Adobe 兼容网关。
 - R7. API 后端原有 `adobeSourced` 身份开关必须删除，其承载的 Adobe 网关能力归入 `adobe` 类型；不得同时用成员类型和布尔标记表达 Adobe 身份。
-- R8. 管理后台必须提供一个号池页面和一个新增入口，统一展示公共状态与调度字段，并按所选成员类型展示和校验专属配置。
+- R8. 管理后台必须提供一个号池页面和一个新增入口，统一展示公共状态与调度字段，并按所选成员类型展示和校验专属配置；管理员可手动清除成员的暂态健康降级、失败冷却和最近错误，但不得借此伪造凭据有效或修改累计指标、租约和启用状态。
 
 **模型与协议**
 
 - R9. 每个后端成员必须显式声明其支持的公开模型 ID，候选资格必须由请求模型与该声明匹配决定；未声明能力的成员不得被当作支持所有模型。
 - R10. 账号类型不得作为模型候选的预分流条件；同一分组内的 `api` 与 `adobe` 成员只要声明支持请求模型并通过通用资格过滤，就必须进入同一候选集合。
-- R11. `firefly-*`、裸 Veo/Kling 名称及其他现有公开模型 ID 只作为普通能力键；适配器可解析 ID 构造上游载荷，但调度器不得根据前缀、家族名称或 Adobe 来源标记缩窄成员类型。
-- R12. `api` 类型本次只保留图片接口，不得保留 Responses、Mixed、Chat Completions 或 Images-to-Responses 上游模式；本次不新增通用 API 视频协议。
-- R13. 视频模型仍由显式能力声明参与统一筛选；在本次范围内，只有能够执行现有视频闭环的 Adobe 直连成员可以声明并承接视频模型。
+- R11. 图片与视频的真实模型 ID 只作为普通能力键；视频时长、比例和分辨率必须作为独立参数，不得编码进 `firefly-<family>-<dur>s-<ratio>[-<res>]` 等复合模型 ID。调度器不得根据前缀、家族名称或 Adobe 来源标记缩窄成员类型。
+- R12. `api` 类型保留 Images 与 Videos 兼容协议，不得保留 Responses、Mixed、Chat Completions 或 Images-to-Responses 上游模式；视频提交使用真实模型 ID、独立参数和稳定客户端请求键。
+- R13. 视频模型由显式能力声明参与统一筛选；API 与 Adobe Direct 可以声明并承接视频模型，Adobe Gateway 不得保存或执行视频模型。
 
 **全局调度策略**
 
@@ -147,7 +151,7 @@ flowchart TB
 ### Acceptance Examples
 
 - AE1. **Covers R5-R11、R15-R16.** Given 同一分组有一个 `api` 和一个 `adobe` 成员且都声明支持同一图片模型，when 当前策略为按优先级并提交该模型，then 两者都进入候选，数值更小的优先级先获租，模型名称是否含 `firefly-` 不改变成员类型范围。
-- AE2. **Covers R9-R13.** Given 分组中的 API 成员未声明某视频模型而 Adobe 直连成员声明支持，when 提交该视频模型，then 只有 Adobe 直连成员进入候选，原因是模型能力与可执行协议，而不是模型前缀或类型硬编码。
+- AE2. **Covers R9-R13.** Given 分组中的 API 与 Adobe Direct 成员都声明支持 `seedance2`，when 提交独立时长、比例和分辨率的视频请求，then 两者都可按统一策略进入候选，上游模型字段始终为 `seedance2`；Adobe Gateway 即使收到脏配置也不能执行视频。
 - AE3. **Covers R14、R17.** Given 三个合格成员的累计获租次数分别为 8、3、3，when 策略切换为按最少调用并提交新请求，then 次数为 3 的成员优先，并按规定平局顺序确定其中一个；命中后其计数立即增加，即使上游随后失败。
 - AE4. **Covers R14、R18.** Given 两个合格成员的在飞数和并发上限分别为 `2/10` 与 `1/2`，when 策略为按最小负载，then 系统选择占用率 20% 的前者，而不是选择绝对在飞数较小的后者。
 - AE5. **Covers R14、R19、R21-R22.** Given 管理员动态切换策略且已有请求持有租约，when 新请求到达，then 旧请求不被迁移，新请求使用新策略；when 设置值非法，then 新请求按优先级调度并产生不含凭据的诊断记录。
@@ -159,7 +163,7 @@ flowchart TB
 - 本次包含所有对话、waterfall、对话式 PPT/PSD、editable-file 与旧号池能力的代码、数据结构、配置、定时任务、部署资产、统一接口、能力位、测试和文档清理；不保留 dormant compatibility code。
 - 本次保留媒体产物历史、图库、使用统计、审核、存储和积分账本，不删除与图片或视频结果有关的数据能力。
 - 图片结果派生的 PSD 导出不是目标媒体链路，随相关能力位与 UOL operation 一并退场；图像管线仍使用的背景移除纯函数迁入图片领域后保留。
-- 本次不新增通用 API 视频协议；未来若 API 成员需要承接视频，必须另行定义协议、能力和财务边界。
+- API 视频兼容协议仅覆盖 `/videos/generations` 提交、上游状态 URL 或 `/videos/{taskId}` 回退轮询及产物下载；不扩展为任意供应商私有协议。
 - 本次不创建新的供应商无关模型别名，也不重命名现有公开模型 ID。
 - 本次不增加分组级调度策略覆盖、加权随机、延迟感知、失败率加权或自动策略切换。
 - 本次不新增第三种后端成员类型；旧 Adobe direct 子池中的每个账号提升为一个 `adobe` 顶层成员，账号间切换只由统一调度器负责。
@@ -210,7 +214,7 @@ flowchart TB
 - KTD2. **`supportedModelIds` 是唯一候选能力权威。** (session-settled: user-directed — chosen over 空列表代表全支持或按前缀推断: 显式能力才能让不同类型成员在同一集合中安全调度。) 统一成员保存时要求至少一个公开模型 ID，API、Adobe gateway 和 Adobe direct 使用同一字段；0060 将 Adobe 图片家族的旧 `firefly-*` 标识规范为与 API 相同的公开 ID，原始列表只保留在迁移元数据。旧 `enabledModels`、`supportsVideo`、`adobeSourced` 与空列表全支持语义全部删除。Covers R7、R9-R13。
 - KTD3. **策略排序与获租在同一 PostgreSQL 事务内完成。** 三种策略共享一次资格查询，事务以稳定顺序锁定候选成员、清理过期租约、聚合有效在飞数、重新排序、插入租约，并原子更新 `leaseAcquiredCount` 与 `lastAcquiredAt`；生产环境不得退回进程内租约 Map。Covers R14-R19、R22。
 - KTD4. **调度策略复用系统设置 UOL，获租事务读取数据库快照。** (session-settled: user-directed — chosen over 分组配置或静态代码常量: 当前业务只需要全局运行时策略。) 新键 `IMAGE_BACKEND_SCHEDULING_STRATEGY` 使用 `priority | least_acquired | least_load` 严格枚举和 `priority` 默认值；系统设置 Server Action 调用补齐面板语义的 `settings.getSnapshot` / `settings.update` operation。每次获租事务直接读取并归一化数据库设置，保证保存返回后的新请求不受其他副本本地缓存滞后影响。Covers R14、R22。
-- KTD5. **调度器只选成员，类型适配器只翻译协议。** 调度器不解析 `firefly-*`、Veo、Kling 或供应商家族；命中后由 API images、Adobe gateway 或 Adobe direct 适配器解析同一个公开模型 ID 并构造上游请求。旧 API 即使带有 `adobeSourced` 也继续按 API Images 协议迁移，只删除该供应商提示标记；真正 Adobe gateway 仅来自旧 Adobe 顶层成员。API 适配器不再包含 Responses/Mixed 模式，但保留 Images 上游的 `useStream` 能力。Covers R7、R9-R13。
+- KTD5. **调度器只选成员，类型适配器只翻译协议。** 调度器不解析 `firefly-*`、Veo、Kling 或供应商家族；命中后由 API Images/Videos、Adobe Gateway 或 Adobe Direct 适配器使用同一个真实模型 ID 构造上游请求。旧 API 即使带有 `adobeSourced` 也按 API 协议迁移，只删除该供应商提示标记；真正 Adobe Gateway 仅来自旧 Adobe 顶层成员。API 适配器不再包含 Responses/Mixed 模式，但保留 Images 的 `useStream` 与图片/视频参数映射能力。Covers R7、R9-R13。
 - KTD6. **图片和视频共享无粘性的失败排除协议，视频按阶段判定是否可切换。** (session-settled: user-directed — chosen over 保留 Responses 会话粘性或按旧成员类型限制重试: 普通媒体任务不需要会话状态。) 每次编排维护请求局部的成员 ID 排除集合；确认上游未接受请求的可切换失败释放租约并以原分组、原模型、原策略重选，终态用户错误和审核拒绝不切换。视频一旦取得上游任务标识，只在同一任务上恢复轮询和下载；提交结果不确定且上游无幂等键时不得自动重投。删除 `image_backend_sticky_binding` 及 previous-response/session-hash 路径。Covers R15、R19、R21。
 - KTD7. **保留媒体传输全部收敛到 UOL。** 扩展 `image.generate` 的严格输入以承载 generate/edit/mask 变体并继续唯一委托 `runImageGenerationForUser`；新增 `video.generate` 与 `video.getStatus`，Web 与两棵 v1 路由只负责解析、构造 Principal、调用 `invokeOperation` 和编码响应。网关补齐 operation capability 执行，资源归属由视频查询 binding 校验。Covers R1、R4、R20。
 - KTD8. **视频请求键以 Principal 所有者为幂等权威。** `video.generate` 必须接收 `clientRequestId`；session 使用用户作用域，外部调用使用 `(userId, apiKeyId, clientRequestId)`，并由该作用域稳定派生任务和扣费 `sourceRef`。重放再次校验所存所有者后返回既有任务，不跨 API Key 命中，也不重复派发、扣费或退款。视频失败重选发生在同一任务和同一财务 operation context 内。Covers R4、R19-R20。
@@ -238,7 +242,7 @@ flowchart TB
     ImagePipe["runImageGenerationForUser"]
     VideoPipe["视频财务编排"]
     Scheduler["统一资格 + 策略 + 原子租约"]
-    Adapters["API images / Adobe gateway / Adobe direct"]
+    Adapters["API images/videos / Adobe gateway / Adobe direct"]
   end
   subgraph Data["PostgreSQL"]
     Member["image_backend_member + 类型配置"]
@@ -316,9 +320,9 @@ flowchart LR
 
 - 线上旧 Web 账号为空；API/Adobe 成员、关系、Adobe direct 账号凭据和历史指标可能存在且必须迁移。0060 仍以 SQL 断言不可迁移状态，而不是会话结论作为执行门。
 - 当前不要求多版本滚动兼容；迁移、应用和 Adobe 专用代理在同一维护窗口切换。
-- API 参数映射模板仍服务保留的图片 API 成员，因此保留模板 CRUD，但模板不得再表达 Responses 或 Chat 协议。
+- API 参数映射模板同时服务保留的图片与视频 API 成员，因此保留模板 CRUD，但模板不得再表达 Responses 或 Chat 协议。
 - `generation`、`video_generation`、`credits_transaction` 与用量读模型中的历史分类是审计数据，不因运行时能力退场而删除。
-- Adobe gateway 仅承接图片；Adobe direct 可承接图片与视频，保存校验据公开模型目录限制可声明的模型集合。
+- API 与 Adobe Direct 可承接图片与视频，Adobe Gateway 仅承接图片；保存校验据公开模型目录限制可声明的真实模型 ID 集合。
 - 外部视频查询继续保留，站内增加同一 operation 的查询适配；两者都以 Principal 归属校验为硬边界。
 
 ### Sequencing and Tail Ownership
@@ -474,7 +478,7 @@ flowchart LR
 - **Approach:**
   1. member service 以事务保存公共成员行、恰好一个类型配置行和全部分组关系；更新时禁止原地跨类型，要求删除重建，避免遗留另一类型凭据。成员存在有效租约或非终态视频任务时只允许停用以阻止新获租，不允许删除凭据；所有任务终态后才允许删除并让历史引用 `SET NULL`。
   2. API 表单只保留 images base URL、API key、stream 和参数映射；Adobe 表单按 gateway/direct 展示对应字段，direct 配置直接填写该成员唯一的 Cookie 与可选 IMS scope。新增态可选类型；编辑态锁定顶层类型并解释“删除后重建”的转换路径，避免用户填完凭据才收到拒绝。
-  3. 管理列表统一显示类型、Adobe mode、分组、显式模型能力、健康、优先级、并发、有效在飞、累计获租和最近错误；所有 secret 只在写入出现，不回显。
+  3. 管理列表统一显示类型、Adobe mode、分组、显式模型能力、健康、优先级、并发、有效在飞、累计获租和最近错误；管理员可通过 `pool.resetMemberStatus` 清除暂态运行故障并恢复调度资格，凭据、累计指标、有效租约和启用状态保持原样；所有 secret 只在写入出现，不回显。
   4. Actions 仅以真实会话构造 Principal 并调用 pool operations；observer 只读，admin/super_admin 可管成员，策略设置继续只允许 super_admin。
   5. 先升级设置 operation：`settings.update` 接受严格的 `{ key, value?, clear? }[]`，`settings.getSnapshot` 返回面板需要的 category、options、secret 状态、默认/环境/数据库来源等完整脱敏定义；再让两个 Actions 调用 operation，保留值归一、清空回退默认、secret 留空保持旧值和缓存失效。
   6. 系统设置页将策略渲染为下拉框；非法持久值显示“已回退 priority”的原因和诊断标识并提供保存 priority 动作，暂时不可读时提供重新读取动作，恢复后清除警告。
@@ -541,7 +545,7 @@ flowchart LR
 
 ### U5. 将视频生成和查询纳入 UOL、幂等与统一失败重选
 
-- **Goal:** 保留现有 Adobe direct 视频闭环，同时让视频使用统一候选、稳定请求键、资源归属和多成员失败切换。
+- **Goal:** 让 API 与 Adobe Direct 视频共享统一候选、稳定请求键、资源归属和多成员失败切换，同时保持各自协议恢复边界。
 - **Requirements:** R1、R4、R9-R15、R17-R22；F2-F3；AE2-AE5、AE7。
 - **Dependencies:** U1、U2。
 - **Files:**
@@ -549,6 +553,9 @@ flowchart LR
   - `packages/shared/src/uol/operations/video-generation.test.ts`
   - `apps/web/src/features/image-generation/video-operations.ts`
   - `apps/web/src/features/image-generation/video-operations.test.ts`（新增）
+  - `apps/web/src/features/image-generation/api-video.ts`（新增）
+  - `apps/web/src/features/image-generation/api-video-error.ts`（新增）
+  - `apps/web/src/features/image-generation/api-video.test.ts`（新增）
   - `apps/web/src/features/external-api/handlers/video-generations.ts`
   - `apps/web/src/features/external-api/handlers/video-tasks.ts`
   - `apps/web/src/app/api/videos/generate/route.ts`
@@ -564,27 +571,28 @@ flowchart LR
   - `packages/integration-tests/package.json`
 - **Approach:**
   1. `video.generate` 从 Principal 取得所有者作用域：session 使用 userId，外部调用使用 userId + apiKeyId；按该作用域与 `clientRequestId` 查询或创建唯一任务，并把同一键用于扣费、外部额度保留和退款 sourceRef。重放命中后再次校验持久所有者。
-  2. 视频 scheduler 使用指定分组、公开模型 ID 和统一策略；member contract 只允许 Adobe direct 声明当前视频模型，但 scheduler 本身不写类型/前缀分流。
-  3. 将 direct 调用拆成 submit、poll、download 阶段。只有上游明确未接受提交的可切换错误才能释放租约、排除成员并重选；取得 `upstreamJobId/pollUrl` 后持久绑定原成员，且只接受 Adobe allowlist 内的 HTTPS 轮询地址。轮询、下载和暂时错误只在该任务上恢复；提交响应丢失且无供应商幂等键时标记结果不确定并等待人工/定时核对，不自动向第二成员重投。
-  4. 建立可恢复的持久状态机，原子保存上游任务标识、轮询 URL、成员、状态版本、下次轮询时间和 claim lease；internal scheduler 通过幂等 claim/poll/finalize worker 恢复跨进程任务，持续续期原成员的调度租约直到终态，重复 worker 不能重复存储、结算或退款。
-  5. `video.getStatus` 直接读取持久状态，并用 Principal userId/apiKeyId 校验归属；进程内状态仅可作非权威缓存，Web 与外部查询共用同一状态映射。
-  6. 视频任务保存统一 `backendMemberId`，删除成员时历史引用 `SET NULL`；成功产物、对象存储、用量事件和财务账本保持现有行为。
-  7. Web 和 v1 handlers 退化为 UOL 适配器；Cookie session 写路由沿用 fail-closed Origin 校验，Bearer v1 使用 API Key。callback URL 与 SSE 只从受信 OperationContext callback 传入，不进入领域输入的可持久化敏感数据。
-  8. 与图片共用稳定用户错误矩阵；后台轮询的暂时错误不向用户宣告任务失败，只有状态机进入终态才展示可重试动作和安全诊断标识。
+  2. 视频 scheduler 使用指定分组、真实模型 ID 和统一策略；member contract 允许 API 与 Adobe Direct 声明当前视频模型，拒绝 Adobe Gateway 和旧复合视频 ID，scheduler 本身不写模型前缀分流。
+  3. 将 API 与 Adobe Direct 调用都拆成 submit、poll、download 阶段。API 提交到 `{baseUrl}/videos/generations`，发送 `client_request_id`、真实 `model`、独立 `duration`、`aspect_ratio`、`resolution`、首尾帧、参考图、声音与负向提示，并复用账号参数映射；状态优先使用上游 `poll_url/status_url`，缺失时回退 `{baseUrl}/videos/{taskId}`。
+  4. 只有上游明确未接受提交的可切换错误才能释放租约、排除账号并重选；取得 `upstreamJobId/pollUrl` 后持久绑定原账号、协议和提交时 Base URL 源。API 只接受 HTTP(S) 恢复地址；仅提交时可信源同源地址继承管理员私网上游信任，账号 Base URL 改动不得扩大旧任务信任，跨源轮询、下载与每一跳重定向必须通过公网 DNS pin 且不携带账号 API Key。Adobe 继续只接受 allowlist 内的 HTTPS 地址。轮询、下载和暂时错误只在原任务上恢复；提交响应丢失时标记结果不确定并等待人工核对，不自动向第二账号重投。
+  5. 建立可恢复的持久状态机，原子保存上游任务标识、轮询 URL、账号、协议、状态版本、下次轮询时间和 claim lease；internal scheduler 通过幂等 claim/poll/finalize worker 恢复跨进程任务，持续续期原账号的调度租约直到终态，重复 worker 不能重复存储、结算或退款。
+  6. `video.getStatus` 直接读取持久状态，并用 Principal userId/apiKeyId 校验归属；进程内状态仅可作非权威缓存，Web 与外部查询共用同一状态映射。
+  7. 视频任务保存统一 `backendMemberId`，删除成员时历史引用 `SET NULL`；成功产物、对象存储、用量事件和财务账本保持现有行为。
+  8. Web 和 v1 handlers 退化为 UOL 适配器；Cookie session 写路由沿用 fail-closed Origin 校验，Bearer v1 使用 API Key。callback URL 与 SSE 只从受信 OperationContext callback 传入，不进入领域输入的可持久化敏感数据。
+  9. 与图片共用稳定用户错误矩阵；后台轮询的暂时错误不向用户宣告任务失败，上游正文、URL 与凭据不进入持久错误或用户反馈。API 内联图像请求在 base64 分配前执行独立正文预算，参考图数量仍由模型配置决定；只有状态机进入终态才展示可重试动作和安全诊断标识。
 - **Test Scenarios:**
   - 同一 Principal 所有者相同 clientRequestId 并发或重放只创建一个任务、一次上游派发和一次扣费；同一用户的 API Key A 与 B 使用相同请求键时互不命中。
   - API Key A 不能查询 API Key B 或站内用户的任务，用户不能查询他人任务。
-  - 首个 direct 成员在上游明确拒绝提交后选择第二成员；取得上游任务标识后的轮询 5xx 只重试原任务，不向其他成员重复提交。
+  - 首个 API 或 Direct 账号在上游明确拒绝提交后选择第二账号；取得上游任务标识后的轮询 5xx、401 或 403 只重试原任务，不向其他账号重复提交。
   - 进程分别在扣费后、上游提交后、轮询中和存储前退出，scheduler 均能认领并恢复到唯一终态，且只结算或退款一次。
   - 提交结果不确定且无上游幂等键时不会自动切换成员，诊断状态可被后续核对任务恢复。
-  - 非 Adobe allowlist 的 pollUrl、重定向目标和协议在持久化与每次轮询前都被拒绝；合法地址继续走带 secret 的专用代理。
+  - API 的非 HTTP(S) pollUrl 被拒绝，跨源状态、产物与重定向 URL 不携带账号 API Key 且解析到私网/保留地址时被拒绝；非 Adobe allowlist 的 pollUrl、重定向目标和协议在持久化与每次轮询前都被拒绝，合法 Adobe 地址继续走带 secret 的专用代理。
   - 长视频运行期间持续占用成员并发，跨 worker 接管不会产生容量空窗或双重释放。
-  - gateway/API 即使被篡改配置为视频模型也无法保存或执行。
+  - API 与 Direct 可以保存并执行真实视频模型 ID；Gateway 与旧复合视频 ID 即使来自脏数据也无法执行。
   - running 任务在进程重启后由持久 worker 继续轮询并完成，completed URL 仍来自本站 storage。
   - 策略切换不迁移正在执行的任务，新任务使用新策略。
 - **Verification:**
   - `pnpm --filter @repo/shared exec vitest run --config vitest.config.ts src/uol/operations/video-generation.test.ts`
-  - `pnpm --filter @repo/web exec vitest run src/features/image-generation/video-operations.test.ts src/features/external-api/handlers/video-generations.test.ts src/features/external-api/handlers/video-tasks.test.ts src/server/internal-job-scheduler.test.ts`
+  - `pnpm --filter @repo/web exec vitest run src/features/image-generation/api-video.test.ts src/features/image-generation/video-operations.test.ts src/features/external-api/handlers/video-generations.test.ts src/features/external-api/handlers/video-tasks.test.ts src/server/internal-job-scheduler.test.ts`
   - `pnpm --filter @repo/integration-tests test:video-generation-recovery`
   - `pnpm --filter @repo/web typecheck`
 

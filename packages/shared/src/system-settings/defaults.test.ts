@@ -9,6 +9,7 @@ import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_PLAN_CAPABILITY_MATRIX } from "../subscription/services/plan-capabilities";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
+import { createDefaultVideoModelCapabilityOverrides } from "../video-generation";
 import {
   clearSystemSettingsCache,
   getRuntimeSettingNumber,
@@ -145,6 +146,7 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_4K");
     expect(initializedKeys).toContain("IMAGE_MODEL_CREDIT_PRICES");
     expect(initializedKeys).toContain("MODEL_MARKETPLACE_CONFIG");
+    expect(initializedKeys).toContain("VIDEO_MODEL_CAPABILITY_OVERRIDES");
     expect(initializedKeys).toContain("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME");
     expect(initializedKeys).toContain("IMAGE_TEXT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("IMAGE_INPUT_MODERATION_CREDITS");
@@ -193,6 +195,9 @@ describe("system setting default initialization", () => {
     );
     expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(
       createDefaultModelMarketplaceConfig()
+    );
+    expect(store.get("VIDEO_MODEL_CAPABILITY_OVERRIDES")?.value).toEqual(
+      createDefaultVideoModelCapabilityOverrides()
     );
     expect(store.get("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")?.value).toBe(
       "model-marketplace"

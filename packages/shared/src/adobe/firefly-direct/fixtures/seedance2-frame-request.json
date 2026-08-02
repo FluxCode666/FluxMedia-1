@@ -1,0 +1,35 @@
+{
+  "modelId": "seedance",
+  "modelVersion": "seedance_2.0",
+  "size": {
+    "width": 854,
+    "height": 480
+  },
+  "seeds": [1700],
+  "referenceBlobs": [
+    {
+      "id": "<first-frame>",
+      "usage": "frame",
+      "order": 1
+    },
+    {
+      "id": "<last-frame>",
+      "usage": "frame",
+      "order": 2
+    }
+  ],
+  "prompt": "<prompt>",
+  "negativePrompt": "<negative-prompt>",
+  "duration": 4,
+  "generateAudio": false,
+  "generationMetadata": {
+    "module": "text2video",
+    "submodule": "ff-video-generate"
+  },
+  "generationSettings": {
+    "aspectRatio": "16:9"
+  },
+  "output": {
+    "storeInputs": true
+  }
+}

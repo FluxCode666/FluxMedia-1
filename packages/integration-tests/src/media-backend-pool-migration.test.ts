@@ -1,10 +1,10 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068-0073 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0075 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
- * 作用域。
+ * 作用域；0074-0075 另以隔离 schema 验证视频请求与 API 上游适配切换。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -24,6 +25,168 @@ interface ExistsRow {
 interface JsonValueRow {
   value: Record<string, unknown>;
 }
+
+interface FrozenVideoMapping {
+  legacyModel: string;
+  realModel: string;
+  durationSeconds: number;
+  aspectRatio: string;
+  resolution: string;
+}
+
+interface FrozenVideoFamily {
+  realModel: string;
+  durations: readonly number[];
+  aspectRatios: readonly string[];
+  resolutions: readonly string[];
+  resolutionInId: boolean;
+}
+
+const ALL_FROZEN_ASPECT_RATIOS = [
+  "1:1",
+  "4:3",
+  "3:4",
+  "16:9",
+  "9:16",
+  "21:9",
+] as const;
+const THREE_TO_FIFTEEN_SECONDS = Array.from(
+  { length: 13 },
+  (_, index) => index + 3
+);
+const FOUR_TO_FIFTEEN_SECONDS = Array.from(
+  { length: 12 },
+  (_, index) => index + 4
+);
+
+/** 0074 SQL 独立冻结的 13 个模型组合形状；测试不读取当前运行时目录。 */
+const FROZEN_VIDEO_FAMILIES = [
+  {
+    realModel: "sora2",
+    durations: [4, 8, 12],
+    aspectRatios: ["9:16", "16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "sora2-pro",
+    durations: [4, 8, 12],
+    aspectRatios: ["9:16", "16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "veo31",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "veo31-fast",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "veo31-ref",
+    durations: [4, 6, 8],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "kling-o3",
+    durations: [5, 15],
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "kling3",
+    durations: THREE_TO_FIFTEEN_SECONDS,
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "kling3-omni",
+    durations: THREE_TO_FIFTEEN_SECONDS,
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "runway-gen45",
+    durations: [5, 8, 10],
+    aspectRatios: ["16:9"],
+    resolutions: ["720p"],
+    resolutionInId: false,
+  },
+  {
+    realModel: "ray314",
+    durations: [5, 10],
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "ray314-hdr",
+    durations: [5],
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["4k", "1080p", "720p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "seedance2",
+    durations: FOUR_TO_FIFTEEN_SECONDS,
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["1080p", "720p", "480p"],
+    resolutionInId: true,
+  },
+  {
+    realModel: "seedance2-fast",
+    durations: FOUR_TO_FIFTEEN_SECONDS,
+    aspectRatios: ALL_FROZEN_ASPECT_RATIOS,
+    resolutions: ["720p", "480p"],
+    resolutionInId: true,
+  },
+] as const satisfies readonly FrozenVideoFamily[];
+
+/**
+ * 从测试内冻结矩阵生成 0073 后规范复合 ID。
+ *
+ * @returns 573 个互不重复的复合 ID 及其独立参数，不读取产品运行时目录。
+ * @sideEffects 无。
+ * @failure 冻结常量错误会在测试长度与唯一性断言中失败。
+ */
+function buildFrozenVideoMappings(): FrozenVideoMapping[] {
+  return FROZEN_VIDEO_FAMILIES.flatMap((family) =>
+    family.durations.flatMap((durationSeconds) =>
+      family.aspectRatios.flatMap((aspectRatio) =>
+        family.resolutions.map((resolution) => ({
+          legacyModel: `${family.realModel}-${durationSeconds}s-${aspectRatio.replace(":", "x")}${family.resolutionInId ? `-${resolution}` : ""}`,
+          realModel: family.realModel,
+          durationSeconds,
+          aspectRatio,
+          resolution,
+        }))
+      )
+    )
+  );
+}
+
+const FROZEN_VIDEO_MAPPINGS = buildFrozenVideoMappings();
+const FROZEN_KLING3_ALIASES = [5, 10, 15].flatMap((durationSeconds) =>
+  ["16:9", "9:16"].map((aspectRatio) => ({
+    legacyModel: `kling3-${durationSeconds}s-${aspectRatio.replace(":", "x")}`,
+    realModel: "kling3",
+    durationSeconds,
+    aspectRatio,
+    resolution: "720p",
+  }))
+);
 
 /**
  * 0060 发布时硬编码的 Adobe direct 视频模型快照。
@@ -102,6 +265,24 @@ const videoAuthRepairMigrationPath = migrationPaths.at(7);
 const matchingVideoAuthMigrationPath = migrationPaths.at(8);
 const kling3VideoProtocolMigrationPath = migrationPaths.at(9);
 const removeFireflyModelPrefixMigrationPath = migrationPaths.at(10);
+const realVideoRequestMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0074_real_video_request_contract.sql",
+    import.meta.url
+  )
+);
+const apiAccountUpstreamAdaptationMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0075_api_account_upstream_adaptation.sql",
+    import.meta.url
+  )
+);
+const apiUpstreamAdapterVersionsMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0077_api_upstream_adapter_versions.sql",
+    import.meta.url
+  )
+);
 const migrationsBeforeVideoAuthRepair = migrationPaths.slice(0, 7);
 const migrationsBeforeMatchingVideoAuth = migrationPaths.slice(0, 8);
 const migrationsBeforeKling3VideoProtocol = migrationPaths.slice(0, 9);
@@ -446,6 +627,294 @@ async function createLegacyUnifiedAdobeSchema(
     );
   `);
   return schemaName;
+}
+
+/**
+ * 创建 0073 已完成、0074 尚未执行的最小生产同形 schema。
+ *
+ * @param client 专用测试数据库连接。
+ * @param includeInputManifest 是否模拟提前扩展过 input_manifest 的兼容环境。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建成员、Adobe 配置和保留完整恢复身份的视频任务表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPost0073VideoSchema(
+  client: PoolClient,
+  includeInputManifest = false
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member (
+      id text primary key,
+      type text not null,
+      name text not null,
+      supported_model_ids json not null,
+      updated_at timestamp not null default now(),
+      constraint image_backend_member_supported_models_check
+        check (
+          json_typeof(supported_model_ids) = 'array'
+          and json_array_length(supported_model_ids) > 0
+        )
+    );
+    create table image_backend_member_adobe_config (
+      member_id text primary key references image_backend_member(id)
+        on delete cascade,
+      mode text not null
+    );
+    create table video_generation (
+      id text primary key,
+      user_id text not null,
+      model text not null,
+      family text not null,
+      prompt text not null default 'prompt',
+      duration_seconds integer not null,
+      aspect_ratio text not null,
+      resolution text not null,
+      status text not null default 'pending',
+      stage text not null default 'created',
+      backend_member_id text,
+      member_lease_id text,
+      member_lease_owner_token text,
+      adobe_request_profile text not null default 'express',
+      adobe_auth_profile text not null default 'express',
+      input_image_refs json,
+      staged_input_objects json,
+      poll_url text,
+      upstream_job_id text,
+      submit_started_at timestamp,
+      upstream_accepted_at timestamp,
+      storage_key text,
+      video_url text,
+      credits_consumed numeric(18, 2) not null default 0,
+      api_key_credits_reserved numeric(18, 2) not null default 0,
+      next_poll_at timestamp,
+      metadata json,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+  `);
+  if (includeInputManifest) {
+    await client.query(
+      "alter table video_generation add column input_manifest json"
+    );
+  }
+  return schemaName;
+}
+
+/**
+ * 创建 0075 执行前的 API 账号配置与参数映射模板。
+ *
+ * @param client 专用测试数据库连接。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建旧 API 配置表、旧约束与旧模板表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPre0075ApiAdaptationSchema(
+  client: PoolClient
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member_api_config (
+      member_id text primary key,
+      parameter_mappings json not null default '[]'::json,
+      constraint image_backend_member_api_config_mappings_check
+        check (json_typeof(parameter_mappings) = 'array')
+    );
+    create table image_backend_parameter_mapping_template (
+      id text primary key,
+      name text not null,
+      mappings json not null default '[]'::json
+    )
+  `);
+  return schemaName;
+}
+
+/**
+ * 创建 0077 执行前的最小 0076 API 成员、租约与媒体任务结构。
+ *
+ * @param client 专用测试数据库连接。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建 0076 形状的旧 API 配置、租约和媒体任务表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPre0077ApiAdapterVersionSchema(
+  client: PoolClient
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member (
+      id text primary key,
+      type text not null check (type in ('api', 'adobe'))
+    );
+    create table image_backend_member_api_config (
+      member_id text primary key references image_backend_member(id)
+        on delete cascade,
+      base_url text not null,
+      api_key text,
+      use_stream boolean not null default false,
+      model_mappings json not null default '[]'::json,
+      request_transform_script text not null default '',
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now(),
+      constraint image_backend_member_api_config_model_mappings_check
+        check (json_typeof(model_mappings) = 'array')
+    );
+    create table image_backend_member_lease (
+      id text primary key,
+      member_id text not null references image_backend_member(id)
+        on delete cascade,
+      owner_token text not null,
+      expires_at timestamp not null,
+      created_at timestamp not null default now(),
+      updated_at timestamp not null default now()
+    );
+    create table generation (
+      id text primary key,
+      status text not null default 'pending'
+    );
+    create table video_generation (
+      id text primary key,
+      status text not null default 'pending',
+      stage text not null default 'created',
+      backend_member_id text references image_backend_member(id)
+        on delete set null,
+      poll_url text,
+      upstream_job_id text
+    )
+  `);
+  return schemaName;
+}
+
+/**
+ * 在 Node.js 隔离上下文中执行迁移生成的静态兼容脚本。
+ *
+ * @param script 从迁移后配置行读取的 JavaScript 函数体。
+ * @param request 用于验证旧 copy/move 语义的请求副本。
+ * @returns 转换后且已归一化为当前 realm 的 JSON 值。
+ * @sideEffects 无；仅在无宿主能力的隔离上下文中运行生产迁移常量。
+ * @throws 脚本超时、运行失败或返回值不可 JSON 序列化时抛错。
+ */
+function executeMigratedRequestTransform(
+  script: string,
+  request: Record<string, unknown>
+): unknown {
+  const executable = new Script(
+    `(function (request) {\n${script}\n})(${JSON.stringify(request)})`
+  );
+  const transformed: unknown = executable.runInNewContext(Object.create(null), {
+    timeout: 100,
+  });
+  return JSON.parse(JSON.stringify(transformed)) as unknown;
+}
+
+/** 执行 0077 包装后的请求信封脚本，保持 0075 旧 Body 验证语义不变。 */
+function executeMigratedRequestEnvelopeTransform(
+  script: string,
+  body: Record<string, unknown>
+): unknown {
+  return executeMigratedRequestTransform(script, { query: {}, body });
+}
+
+/** 创建符合资产收编后任务归属规则的 storage-only 输入对象。 */
+function createMigratedVideoInputAsset(input: {
+  userId: string;
+  videoId: string;
+  fileName: string;
+}) {
+  return {
+    source: "storage",
+    mimeType: "image/png",
+    storageKey: `${input.userId}/video-inputs/${input.videoId}/adopted/${input.fileName}`,
+    storageBucket: "video-inputs",
+    byteLength: 128,
+  };
+}
+
+/**
+ * 插入一个可被 0074 转换的 Adobe direct 成员。
+ *
+ * @param client 专用测试数据库连接。
+ * @param memberId 成员定位 ID。
+ * @param modelIds 0073 后模型能力数组。
+ * @returns 无。
+ * @sideEffects 写入成员及其 direct 配置。
+ * @throws 插入失败时抛出 PostgreSQL 错误。
+ */
+async function insertPost0073DirectMember(
+  client: PoolClient,
+  memberId: string,
+  modelIds: readonly string[]
+): Promise<void> {
+  await client.query(
+    `insert into image_backend_member (
+       id, type, name, supported_model_ids
+     ) values ($1, 'adobe', $2, $3::json)`,
+    [memberId, memberId, JSON.stringify(modelIds)]
+  );
+  await client.query(
+    `insert into image_backend_member_adobe_config (member_id, mode)
+     values ($1, 'direct')`,
+    [memberId]
+  );
+}
+
+/**
+ * 插入冻结映射对应的任务集合。
+ *
+ * @param client 专用测试数据库连接。
+ * @param mappings 要验证的复合 ID 与独立参数。
+ * @returns 无。
+ * @sideEffects 批量写入视频任务，不包含输入对象。
+ * @throws 参数化 JSON 展开或插入失败时抛出 PostgreSQL 错误。
+ */
+async function insertFrozenVideoTasks(
+  client: PoolClient,
+  mappings: readonly FrozenVideoMapping[]
+): Promise<void> {
+  await client.query(
+    `insert into video_generation (
+       id, user_id, model, family,
+       duration_seconds, aspect_ratio, resolution, metadata
+     )
+     select
+       fixture.id,
+       'user-1',
+       fixture.model,
+       fixture.family,
+       fixture.duration_seconds,
+       fixture.aspect_ratio,
+       fixture.resolution,
+       '{"generateAudio":false}'::json
+     from json_to_recordset($1::json) as fixture(
+       id text,
+       model text,
+       family text,
+       duration_seconds integer,
+       aspect_ratio text,
+       resolution text
+     )`,
+    [
+      JSON.stringify(
+        mappings.map((mapping, index) => ({
+          id: `frozen-task-${index}`,
+          model: mapping.legacyModel,
+          family: mapping.realModel,
+          duration_seconds: mapping.durationSeconds,
+          aspect_ratio: mapping.aspectRatio,
+          resolution: mapping.resolution,
+        }))
+      ),
+    ]
+  );
 }
 
 /** 删除当前测试创建的随机 schema。 */
@@ -976,10 +1445,7 @@ describe("0060-0063、0066、0068-0073 统一媒体号池迁移", () => {
         (member) => member.id === "legacy-adobe"
       );
       expect(new Set(migratedAdobeMember?.supported_model_ids)).toEqual(
-        new Set([
-          "gpt-image-2",
-          ...PLATFORM_DIRECT_VIDEO_MODEL_IDS,
-        ])
+        new Set(["gpt-image-2", ...PLATFORM_DIRECT_VIDEO_MODEL_IDS])
       );
       const apiConfig = await client.query<{
         api_key: string;
@@ -2300,6 +2766,1161 @@ describe("0060-0063、0066、0068-0073 统一媒体号池迁移", () => {
         where id = 'active-lease-1'
       `);
       expect(legacyLease.rows[0]?.count).toBe(1);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+});
+
+describe("0074 视频真实模型请求契约迁移", () => {
+  it("冻结迁移全部 573 个组合与 6 个别名并可幂等复跑", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    expect(FROZEN_VIDEO_MAPPINGS).toHaveLength(573);
+    expect(
+      new Set(FROZEN_VIDEO_MAPPINGS.map((mapping) => mapping.legacyModel)).size
+    ).toBe(573);
+    expect(FROZEN_KLING3_ALIASES).toHaveLength(6);
+
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      const allMappings = [...FROZEN_VIDEO_MAPPINGS, ...FROZEN_KLING3_ALIASES];
+      await insertPost0073DirectMember(client, "frozen-member", [
+        "image-first",
+        ...FROZEN_VIDEO_MAPPINGS.map((mapping) => mapping.legacyModel),
+        ...FROZEN_KLING3_ALIASES.map((mapping) => mapping.legacyModel),
+        "seedance2",
+        "image-last",
+      ]);
+      await insertFrozenVideoTasks(client, allMappings);
+      await client.query(`
+        insert into video_generation (
+          id, user_id, model, family,
+          duration_seconds, aspect_ratio, resolution, metadata
+        ) values (
+          'already-real-task', 'user-1', 'seedance2', 'seedance2',
+          15, '9:16', '480p', '{"generateAudio":false}'::json
+        )
+      `);
+
+      await executeMigrations(client, schemaName, [
+        realVideoRequestMigrationPath,
+      ]);
+      await executeMigrations(client, schemaName, [
+        realVideoRequestMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'frozen-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual([
+        "image-first",
+        ...FROZEN_VIDEO_FAMILIES.map((family) => family.realModel),
+        "image-last",
+      ]);
+
+      const taskSummary = await client.query<{
+        count: number;
+        real_count: number;
+      }>(`
+        select
+          count(*)::integer as count,
+          count(*) filter (
+            where model in (
+              'sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref',
+              'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45',
+              'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast'
+            )
+          )::integer as real_count
+        from video_generation
+      `);
+      expect(taskSummary.rows[0]).toEqual({
+        count: allMappings.length + 1,
+        real_count: allMappings.length + 1,
+      });
+      const aliasTask = await client.query<{
+        model: string;
+        duration_seconds: number;
+        aspect_ratio: string;
+        resolution: string;
+      }>(`
+        select model, duration_seconds, aspect_ratio, resolution
+        from video_generation
+        where id = 'frozen-task-573'
+      `);
+      expect(aliasTask.rows[0]).toEqual({
+        model: "kling3",
+        duration_seconds: 5,
+        aspect_ratio: "16:9",
+        resolution: "720p",
+      });
+
+      for (const columnName of [
+        "family",
+        "input_image_refs",
+        "staged_input_objects",
+      ]) {
+        await expect(
+          columnExists(client, schemaName, "video_generation", columnName)
+        ).resolves.toBe(false);
+      }
+      await expect(
+        columnExists(client, schemaName, "video_generation", "input_manifest")
+      ).resolves.toBe(true);
+
+      const constraints = await client.query<{ conname: string }>(`
+        select constraint_record.conname
+        from pg_constraint as constraint_record
+        inner join pg_class as relation
+          on relation.oid = constraint_record.conrelid
+        where relation.relnamespace = current_schema()::regnamespace
+          and constraint_record.conname in (
+            'image_backend_member_supported_models_check',
+            'video_generation_real_model_check',
+            'video_generation_input_manifest_check'
+          )
+        order by constraint_record.conname
+      `);
+      expect(constraints.rows.map((row) => row.conname)).toEqual([
+        "image_backend_member_supported_models_check",
+        "video_generation_input_manifest_check",
+        "video_generation_real_model_check",
+      ]);
+      const functionSignatures = await client.query<{
+        proname: string;
+        pronargs: number;
+      }>(`
+        select procedure_record.proname, procedure_record.pronargs::integer
+        from pg_proc as procedure_record
+        where procedure_record.pronamespace = current_schema()::regnamespace
+          and procedure_record.proname in (
+            'media_supported_model_ids_are_valid',
+            'video_input_manifest_is_valid'
+          )
+        order by procedure_record.proname
+      `);
+      expect(functionSignatures.rows).toEqual([
+        { proname: "media_supported_model_ids_are_valid", pronargs: 1 },
+        { proname: "video_input_manifest_is_valid", pronargs: 4 },
+      ]);
+
+      await expect(
+        client.query(
+          `update image_backend_member
+           set supported_model_ids = '["seedance2-preview"]'::json
+           where id = 'frozen-member'`
+        )
+      ).rejects.toThrow(/image_backend_member_supported_models_check/u);
+      await expect(
+        client.query(
+          `update image_backend_member
+           set supported_model_ids = '["SORA2"]'::json
+           where id = 'frozen-member'`
+        )
+      ).rejects.toThrow(/image_backend_member_supported_models_check/u);
+      await expect(
+        client.query(`
+          insert into video_generation (
+            id, user_id, model,
+            duration_seconds, aspect_ratio, resolution
+          ) values (
+            'invalid-new-task', 'user-1', 'seedance2-15s-9x16-480p',
+            15, '9:16', '480p'
+          )
+        `)
+      ).rejects.toThrow(/video_generation_real_model_check/u);
+      for (const model of ["runway-gen45", "ray314", "ray314-hdr"]) {
+        const inputAsset = createMigratedVideoInputAsset({
+          userId: "user-1",
+          videoId: `unsupported-input-${model}`,
+          fileName: "first.png",
+        });
+        await expect(
+          client.query(
+            `insert into video_generation (
+               id, user_id, model,
+               duration_seconds, aspect_ratio, resolution, input_manifest
+             ) values ($1, 'user-1', $2, 5, '16:9', '720p', $3::json)`,
+            [
+              `unsupported-input-${model}`,
+              model,
+              JSON.stringify({ firstFrame: inputAsset }),
+            ]
+          )
+        ).rejects.toThrow(/video_generation_input_manifest_check/u);
+      }
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("把历史角色转换为具名清单并保留非终态恢复身份", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client, true);
+      await insertPost0073DirectMember(client, "input-member", [
+        "veo31-4s-16x9-720p",
+        "veo31-ref-4s-16x9-720p",
+      ]);
+      const firstFrame = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "frame-one",
+        fileName: "first.png",
+      });
+      const firstOfPair = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "frame-pair",
+        fileName: "first.png",
+      });
+      const lastOfPair = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "frame-pair",
+        fileName: "last.png",
+      });
+      const references = ["one.png", "two.png"].map((fileName) =>
+        createMigratedVideoInputAsset({
+          userId: "user-1",
+          videoId: "references",
+          fileName,
+        })
+      );
+      const existingManifest = {
+        firstFrame: createMigratedVideoInputAsset({
+          userId: "user-1",
+          videoId: "existing-manifest",
+          fileName: "first.png",
+        }),
+      };
+      await client.query(
+        `insert into video_generation (
+           id, user_id, model, family,
+           duration_seconds, aspect_ratio, resolution,
+           status, stage, backend_member_id, member_lease_id,
+           member_lease_owner_token, poll_url, upstream_job_id,
+           upstream_accepted_at, credits_consumed, next_poll_at, metadata,
+           input_image_refs, input_manifest
+         ) values
+           (
+             'frame-one', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
+             4, '16:9', '720p', 'pending', 'created', 'input-member', null,
+             null, null, null, null, 0, null,
+             '{"generateAudio":false,"inputImageRole":"frame"}'::json,
+             $1::json, null
+           ),
+           (
+             'frame-pair', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
+             4, '16:9', '720p', 'running', 'polling', 'input-member', 'lease-1',
+             'owner-1', 'https://poll.example.test/task', 'upstream-1',
+             '2026-07-30T11:59:00Z'::timestamp,
+             12.5, '2026-07-30T12:00:00Z'::timestamp,
+             '{"generateAudio":false,"inputImageRole":"frame"}'::json,
+             $2::json, null
+           ),
+           (
+             'references', 'user-1', 'veo31-ref-4s-16x9-720p', 'veo31-ref',
+             4, '16:9', '720p', 'running', 'charged', 'input-member',
+             'lease-2', 'owner-2', null, null, null, 3, null,
+             '{"generateAudio":false,"inputImageRole":"reference"}'::json,
+             $3::json, null
+           ),
+           (
+             'existing-manifest', 'user-1', 'veo31-4s-16x9-720p', 'veo31',
+             4, '16:9', '720p', 'completed', 'completed', 'input-member', null,
+             null, null, null, null, 3, null,
+             '{"generateAudio":false}'::json,
+             null, $4::json
+           )`,
+        [
+          JSON.stringify([firstFrame]),
+          JSON.stringify([firstOfPair, lastOfPair]),
+          JSON.stringify(references),
+          JSON.stringify(existingManifest),
+        ]
+      );
+
+      await executeMigrations(client, schemaName, [
+        realVideoRequestMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const tasks = await client.query<{
+        id: string;
+        model: string;
+        input_manifest: Record<string, unknown>;
+        metadata: Record<string, unknown>;
+        stage: string;
+        backend_member_id: string | null;
+        member_lease_id: string | null;
+        member_lease_owner_token: string | null;
+        poll_url: string | null;
+        upstream_job_id: string | null;
+        credits_consumed: string;
+        next_poll_at: string | null;
+      }>(`
+        select
+          id, model, input_manifest, metadata, stage, backend_member_id,
+          member_lease_id, member_lease_owner_token, poll_url,
+          upstream_job_id, credits_consumed,
+          to_char(next_poll_at, 'YYYY-MM-DD HH24:MI:SS') as next_poll_at
+        from video_generation
+        order by id
+      `);
+      const byId = new Map(tasks.rows.map((task) => [task.id, task]));
+      expect(byId.get("frame-one")?.input_manifest).toEqual({
+        firstFrame,
+      });
+      expect(byId.get("frame-pair")?.input_manifest).toEqual({
+        firstFrame: firstOfPair,
+        lastFrame: lastOfPair,
+      });
+      expect(byId.get("references")?.input_manifest).toEqual({
+        referenceImages: references,
+      });
+      expect(byId.get("existing-manifest")?.input_manifest).toEqual(
+        existingManifest
+      );
+      for (const task of tasks.rows) {
+        expect(task.metadata).toEqual({ generateAudio: false });
+      }
+      expect(byId.get("frame-pair")).toMatchObject({
+        model: "veo31",
+        stage: "polling",
+        backend_member_id: "input-member",
+        member_lease_id: "lease-1",
+        member_lease_owner_token: "owner-1",
+        poll_url: "https://poll.example.test/task",
+        upstream_job_id: "upstream-1",
+        credits_consumed: "12.50",
+      });
+      expect(byId.get("frame-pair")?.next_poll_at).toBe("2026-07-30 12:00:00");
+
+      await expect(
+        client.query(
+          `update video_generation
+           set input_manifest = $1::json
+           where id = 'frame-one'`,
+          [
+            JSON.stringify({
+              firstFrame: {
+                ...firstFrame,
+                storageKey:
+                  "other-user/video-inputs/frame-one/adopted/stolen.png",
+              },
+            }),
+          ]
+        )
+      ).rejects.toThrow(/video_generation_input_manifest_check/u);
+      await expect(
+        client.query(
+          `update video_generation
+           set input_manifest = $1::json
+           where id = 'frame-one'`,
+          [
+            JSON.stringify({
+              firstFrame: {
+                ...firstFrame,
+                storageBucket: "invalid/bucket",
+              },
+            }),
+          ]
+        )
+      ).rejects.toThrow(/video_generation_input_manifest_check/u);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("未知成员视频变体阻断且不折叠任何合法成员能力", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      const originalModels = [
+        "image-first",
+        "sora2-4s-16x9",
+        "seedance2-preview",
+      ];
+      await insertPost0073DirectMember(
+        client,
+        "unknown-member",
+        originalModels
+      );
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/unknown-member/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'unknown-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual(originalModels);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "input_manifest")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("任务参数、family 或模型无法证明时报告任务 ID 并完整回滚", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      const originalModels = ["image-first", "sora2-4s-16x9"];
+      await insertPost0073DirectMember(
+        client,
+        "conflict-member",
+        originalModels
+      );
+      await client.query(`
+        insert into video_generation (
+          id, user_id, model, family,
+          duration_seconds, aspect_ratio, resolution
+        ) values
+          (
+            'conflict-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+            8, '16:9', '720p'
+          ),
+          (
+            'family-conflict-task', 'user-1', 'sora2-4s-16x9', 'sora2-pro',
+            4, '16:9', '720p'
+          ),
+          (
+            'unknown-task', 'user-1', 'unknown-video-model', 'sora2',
+            4, '16:9', '720p'
+          )
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(
+        /conflict-task:parameter_conflict.*family-conflict-task:family_conflict.*unknown-task:unknown_model/u
+      );
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const member = await client.query<{ supported_model_ids: string[] }>(`
+        select supported_model_ids
+        from image_backend_member
+        where id = 'conflict-member'
+      `);
+      expect(member.rows[0]?.supported_model_ids).toEqual(originalModels);
+      const tasks = await client.query<{ id: string; model: string }>(`
+        select id, model
+        from video_generation
+        where id in ('conflict-task', 'family-conflict-task', 'unknown-task')
+        order by id
+      `);
+      expect(tasks.rows).toEqual([
+        { id: "conflict-task", model: "sora2-4s-16x9" },
+        { id: "family-conflict-task", model: "sora2-4s-16x9" },
+        { id: "unknown-task", model: "unknown-video-model" },
+      ]);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("历史输入缺少角色时阻断且不增加新清单列", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      await insertPost0073DirectMember(client, "missing-role-member", [
+        "sora2-4s-16x9",
+      ]);
+      const asset = createMigratedVideoInputAsset({
+        userId: "user-1",
+        videoId: "missing-role-task",
+        fileName: "first.png",
+      });
+      await client.query(
+        `insert into video_generation (
+           id, user_id, model, family,
+           duration_seconds, aspect_ratio, resolution,
+           metadata, input_image_refs
+         ) values (
+           'missing-role-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+           4, '16:9', '720p', '{"generateAudio":false}'::json, $1::json
+         )`,
+        [JSON.stringify([asset])]
+      );
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/missing-role-task/u);
+      await expect(
+        columnExists(client, schemaName, "video_generation", "input_manifest")
+      ).resolves.toBe(false);
+      const task = await client.query<{ model: string }>(`
+        select model from video_generation where id = 'missing-role-task'
+      `);
+      expect(task.rows[0]?.model).toBe("sora2-4s-16x9");
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("在途任务缺少阶段恢复身份时阻断并完整回滚", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      await insertPost0073DirectMember(client, "recovery-member", [
+        "sora2-4s-16x9",
+      ]);
+      await client.query(`
+        insert into video_generation (
+          id, user_id, model, family, duration_seconds, aspect_ratio,
+          resolution, status, stage, backend_member_id, member_lease_id,
+          member_lease_owner_token, poll_url, upstream_accepted_at
+        ) values (
+          'broken-polling-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+          4, '16:9', '720p', 'running', 'polling', 'recovery-member',
+          'lease-1', 'owner-1', null, now()
+        )
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/broken-polling-task:recovery_identity/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const task = await client.query<{ model: string; stage: string }>(`
+        select model, stage
+        from video_generation
+        where id = 'broken-polling-task'
+      `);
+      expect(task.rows[0]).toEqual({
+        model: "sora2-4s-16x9",
+        stage: "polling",
+      });
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("越权任务输入对象阻断且保留旧列与复合模型", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPost0073VideoSchema(client);
+      await insertPost0073DirectMember(client, "foreign-object-member", [
+        "sora2-4s-16x9",
+      ]);
+      const foreignAsset = createMigratedVideoInputAsset({
+        userId: "other-user",
+        videoId: "foreign-object-task",
+        fileName: "first.png",
+      });
+      await client.query(
+        `insert into video_generation (
+           id, user_id, model, family,
+           duration_seconds, aspect_ratio, resolution,
+           metadata, input_image_refs
+         ) values (
+           'foreign-object-task', 'user-1', 'sora2-4s-16x9', 'sora2',
+           4, '16:9', '720p',
+           '{"generateAudio":false,"inputImageRole":"frame"}'::json,
+           $1::json
+         )`,
+        [JSON.stringify([foreignAsset])]
+      );
+
+      await expect(
+        executeMigrations(client, schemaName, [realVideoRequestMigrationPath])
+      ).rejects.toThrow(/foreign-object-task/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await expect(
+        columnExists(client, schemaName, "video_generation", "family")
+      ).resolves.toBe(true);
+      const task = await client.query<{
+        model: string;
+        input_image_refs: unknown;
+      }>(`
+        select model, input_image_refs
+        from video_generation
+        where id = 'foreign-object-task'
+      `);
+      expect(task.rows[0]?.model).toBe("sora2-4s-16x9");
+      expect(task.rows[0]?.input_image_refs).toEqual([foreignAsset]);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+});
+
+describe("0075 API 账号上游适配迁移", () => {
+  it("把旧参数映射转为等价脚本并幂等收敛旧结构", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0075ApiAdaptationSchema(client);
+      const legacyMappings = [
+        {
+          mode: "copy",
+          source: "input.referenceImages",
+          target: "references",
+        },
+        {
+          mode: "move",
+          source: "aspect_ratio",
+          target: "ratio",
+        },
+      ];
+      await client.query(
+        `insert into image_backend_member_api_config (
+           member_id, parameter_mappings
+         ) values
+           ('mapped-account', $1::json),
+           ('empty-account', '[]'::json)`,
+        [JSON.stringify(legacyMappings)]
+      );
+      await client.query(`
+        insert into image_backend_parameter_mapping_template (
+          id, name, mappings
+        ) values (
+          'legacy-template', '旧上游协议',
+          '[{"mode":"move","source":"model","target":"model_id"}]'::json
+        )
+      `);
+
+      await executeMigrations(client, schemaName, [
+        apiAccountUpstreamAdaptationMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const firstPass = await client.query<{
+        request_transform_script: string;
+      }>(`
+        select request_transform_script
+        from image_backend_member_api_config
+        where member_id = 'mapped-account'
+      `);
+      const firstMigratedScript =
+        firstPass.rows[0]?.request_transform_script ?? "";
+
+      await executeMigrations(client, schemaName, [
+        apiAccountUpstreamAdaptationMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const configs = await client.query<{
+        member_id: string;
+        model_mappings: unknown;
+        request_transform_script: string;
+      }>(`
+        select member_id, model_mappings, request_transform_script
+        from image_backend_member_api_config
+        order by member_id
+      `);
+      expect(configs.rows).toEqual([
+        {
+          member_id: "empty-account",
+          model_mappings: [],
+          request_transform_script: "",
+        },
+        {
+          member_id: "mapped-account",
+          model_mappings: [],
+          request_transform_script: firstMigratedScript,
+        },
+      ]);
+      expect(firstMigratedScript).toContain(
+        `const rawRules = ${JSON.stringify(legacyMappings)};`
+      );
+      expect(
+        executeMigratedRequestTransform(firstMigratedScript, {
+          model: "seedance2",
+          input: { referenceImages: ["first.png", "second.png"] },
+          aspect_ratio: "16:9",
+        })
+      ).toEqual({
+        model: "seedance2",
+        input: { referenceImages: ["first.png", "second.png"] },
+        references: ["first.png", "second.png"],
+        ratio: "16:9",
+      });
+
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_api_config",
+          "parameter_mappings"
+        )
+      ).resolves.toBe(false);
+      await expect(
+        tableExists(
+          client,
+          schemaName,
+          "image_backend_parameter_mapping_template"
+        )
+      ).resolves.toBe(false);
+
+      const constraints = await client.query<{ conname: string }>(`
+        select constraint_record.conname
+        from pg_constraint as constraint_record
+        inner join pg_class as relation
+          on relation.oid = constraint_record.conrelid
+        where relation.relnamespace = current_schema()::regnamespace
+          and relation.relname = 'image_backend_member_api_config'
+          and constraint_record.conname =
+            'image_backend_member_api_config_model_mappings_check'
+      `);
+      expect(constraints.rows).toEqual([
+        {
+          conname: "image_backend_member_api_config_model_mappings_check",
+        },
+      ]);
+      await expect(
+        client.query(`
+          update image_backend_member_api_config
+          set model_mappings = '{"seedance2":"seedance-2.0"}'::json
+          where member_id = 'mapped-account'
+        `)
+      ).rejects.toThrow(
+        /image_backend_member_api_config_model_mappings_check/u
+      );
+
+      await client.query(`
+        insert into image_backend_member_api_config (member_id)
+        values ('new-account')
+      `);
+      const defaultConfig = await client.query<{
+        model_mappings: unknown;
+        request_transform_script: string;
+      }>(`
+        select model_mappings, request_transform_script
+        from image_backend_member_api_config
+        where member_id = 'new-account'
+      `);
+      expect(defaultConfig.rows[0]).toEqual({
+        model_mappings: [],
+        request_transform_script: "",
+      });
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+});
+
+describe("0077 API 上游适配不可变版本迁移", () => {
+  it("迁移旧配置、固定租约版本并以复合外键保留无密钥历史", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0077ApiAdapterVersionSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type) values
+          ('api-a', 'api'),
+          ('api-b', 'api'),
+          ('adobe-a', 'adobe');
+        insert into image_backend_member_api_config (
+          member_id,
+          base_url,
+          api_key,
+          use_stream,
+          model_mappings,
+          request_transform_script
+        ) values
+          (
+            'api-a',
+            'http://upstream.internal:8080/v1',
+            'secret-a',
+            true,
+            '[{"modelId":"seedance2","upstreamModelId":"seedance-2.0"}]'::json,
+            'request.vendor_model = request.model; delete request.model; return request;'
+          ),
+          (
+            'api-b',
+            'https://api-b.example.test',
+            null,
+            false,
+            '[]'::json,
+            ''
+          );
+        insert into image_backend_member_lease (
+          id, member_id, owner_token, expires_at
+        ) values
+          ('lease-api', 'api-a', 'owner-api', now() + interval '5 minutes'),
+          ('lease-adobe', 'adobe-a', 'owner-adobe', now() + interval '5 minutes');
+        insert into video_generation (
+          id, status, stage, backend_member_id, poll_url, upstream_job_id
+        ) values
+          ('terminal-api-video', 'completed', 'completed', 'api-a', null, 'job-a'),
+          ('terminal-adobe-video', 'completed', 'completed', 'adobe-a', null, 'job-b');
+      `);
+
+      await executeMigrations(client, schemaName, [
+        apiUpstreamAdapterVersionsMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const configs = await client.query<{
+        api_key: string | null;
+        credential_scope: string;
+        current_adapter_version_id: string;
+        member_id: string;
+      }>(`
+        select
+          member_id,
+          api_key,
+          credential_scope,
+          current_adapter_version_id
+        from image_backend_member_api_config
+        order by member_id
+      `);
+      expect(configs.rows).toEqual([
+        {
+          api_key: "secret-a",
+          credential_scope: "http://upstream.internal:8080|bearer",
+          current_adapter_version_id: "legacy-api-adapter-v1:api-a",
+          member_id: "api-a",
+        },
+        {
+          api_key: null,
+          credential_scope: "https://api-b.example.test|none",
+          current_adapter_version_id: "legacy-api-adapter-v1:api-b",
+          member_id: "api-b",
+        },
+      ]);
+
+      const versions = await client.query<{
+        configuration: {
+          authentication: { mode: string };
+          operations: Record<
+            string,
+            { path: string; requestScript: string; responseScript: string }
+          >;
+        };
+        id: string;
+        member_id_snapshot: string;
+        revision: number;
+      }>(`
+        select id, member_id_snapshot, revision, configuration
+        from image_backend_member_api_adapter_version
+        order by member_id_snapshot
+      `);
+      expect(versions.rows).toHaveLength(2);
+      expect(versions.rows[0]).toMatchObject({
+        id: "legacy-api-adapter-v1:api-a",
+        member_id_snapshot: "api-a",
+        revision: 1,
+        configuration: {
+          authentication: { mode: "bearer" },
+        },
+      });
+      expect(versions.rows[1]?.configuration.authentication).toEqual({
+        mode: "none",
+      });
+      const operations = versions.rows[0]?.configuration.operations;
+      const migratedGenerateScript =
+        operations?.["images.generate"]?.requestScript ?? "";
+      expect(migratedGenerateScript).toContain("return { body: legacyBody }");
+      expect(operations?.["images.edit"]?.requestScript).toBe(
+        migratedGenerateScript
+      );
+      expect(operations?.["videos.generate"]?.requestScript).toBe(
+        migratedGenerateScript
+      );
+      expect(operations?.["images.generate.query"]).toEqual({
+        path: "",
+        requestScript: "",
+        responseScript: "",
+      });
+      expect(
+        executeMigratedRequestEnvelopeTransform(migratedGenerateScript, {
+          model: "seedance2",
+          prompt: "test",
+        })
+      ).toEqual({
+        body: { prompt: "test", vendor_model: "seedance2" },
+      });
+      expect(JSON.stringify(versions.rows)).not.toContain("secret-a");
+
+      const leases = await client.query<{
+        api_adapter_member_id: string | null;
+        api_adapter_version_id: string | null;
+        id: string;
+      }>(`
+        select id, api_adapter_member_id, api_adapter_version_id
+        from image_backend_member_lease
+        order by id
+      `);
+      expect(leases.rows).toEqual([
+        {
+          api_adapter_member_id: null,
+          api_adapter_version_id: null,
+          id: "lease-adobe",
+        },
+        {
+          api_adapter_member_id: "api-a",
+          api_adapter_version_id: "legacy-api-adapter-v1:api-a",
+          id: "lease-api",
+        },
+      ]);
+
+      for (const column of [
+        "base_url",
+        "use_stream",
+        "model_mappings",
+        "request_transform_script",
+      ]) {
+        await expect(
+          columnExists(
+            client,
+            schemaName,
+            "image_backend_member_api_config",
+            column
+          )
+        ).resolves.toBe(false);
+      }
+
+      await expect(
+        client.query(`
+          update image_backend_member_lease
+          set api_adapter_version_id = null
+          where id = 'lease-api'
+        `)
+      ).rejects.toThrow(/image_backend_member_lease_api_adapter_pair_check/u);
+      await expect(
+        client.query(`
+          insert into generation (
+            id, status, api_adapter_member_id, api_adapter_version_id
+          ) values (
+            'mismatched-generation',
+            'pending',
+            'api-b',
+            'legacy-api-adapter-v1:api-a'
+          )
+        `)
+      ).rejects.toThrow(/generation_api_adapter_version_fk/u);
+
+      await client.query(`
+        insert into generation (
+          id, status, api_adapter_member_id, api_adapter_version_id
+        ) values (
+          'historical-generation',
+          'completed',
+          'api-a',
+          'legacy-api-adapter-v1:api-a'
+        );
+        delete from image_backend_member_lease where id = 'lease-api';
+        delete from image_backend_member where id = 'api-a';
+      `);
+      const retained = await client.query<{
+        api_adapter_member_id: string;
+        api_adapter_version_id: string;
+      }>(`
+        select api_adapter_member_id, api_adapter_version_id
+        from generation
+        where id = 'historical-generation'
+      `);
+      expect(retained.rows[0]).toEqual({
+        api_adapter_member_id: "api-a",
+        api_adapter_version_id: "legacy-api-adapter-v1:api-a",
+      });
+      await expect(
+        client.query(`
+          delete from image_backend_member_api_adapter_version
+          where id = 'legacy-api-adapter-v1:api-a'
+        `)
+      ).rejects.toThrow(/generation_api_adapter_version_fk/u);
+
+      await executeMigrations(client, schemaName, [
+        apiUpstreamAdapterVersionsMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      const revisionCount = await client.query<{ count: number }>(`
+        select count(*)::integer as count
+        from image_backend_member_api_adapter_version
+      `);
+      expect(revisionCount.rows[0]?.count).toBe(2);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("非终态 API 视频阻断迁移并保留旧结构", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0077ApiAdapterVersionSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type) values ('api-a', 'api');
+        insert into image_backend_member_api_config (
+          member_id, base_url, api_key
+        ) values (
+          'api-a', 'https://api.example.test/v1', 'secret-a'
+        );
+        insert into video_generation (
+          id, status, stage, backend_member_id, poll_url, upstream_job_id
+        ) values (
+          'running-api-video',
+          'running',
+          'submit_uncertain',
+          'api-a',
+          'https://another.example.test/tasks/1',
+          'job-1'
+        );
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [
+          apiUpstreamAdapterVersionsMigrationPath,
+        ])
+      ).rejects.toThrow(/nonterminal API video task/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_api_config",
+          "base_url"
+        )
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(
+          client,
+          schemaName,
+          "image_backend_member_api_adapter_version"
+        )
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("旧脚本包装后超过新上限时阻断并回滚迁移", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0077ApiAdapterVersionSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type) values ('api-a', 'api');
+        insert into image_backend_member_api_config (
+          member_id,
+          base_url,
+          request_transform_script
+        ) values (
+          'api-a',
+          'https://api.example.test/v1',
+          repeat('x', 32700)
+        );
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [
+          apiUpstreamAdapterVersionsMigrationPath,
+        ])
+      ).rejects.toThrow(/invalid API adapter config/u);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+      await expect(
+        columnExists(
+          client,
+          schemaName,
+          "image_backend_member_api_config",
+          "base_url"
+        )
+      ).resolves.toBe(true);
+      await expect(
+        tableExists(
+          client,
+          schemaName,
+          "image_backend_member_api_adapter_version"
+        )
+      ).resolves.toBe(false);
     } finally {
       try {
         if (schemaName) await dropLegacySchema(client, schemaName);

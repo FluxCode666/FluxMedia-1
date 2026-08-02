@@ -74,11 +74,12 @@ describe("history service", () => {
         kind: "video" as const,
         id: "video-2",
         prompt: "video prompt",
-        model: "firefly-sora2",
-        family: "sora2",
+        model: "sora2",
         resolution: "1080p",
-        durationSeconds: 8,
+        duration: 8,
         aspectRatio: "16x9",
+        generateAudio: true,
+        input: { mode: "first-last-frames" as const, count: 2 },
         status: "processing" as const,
         creditsConsumed: 20,
         rawError: null,
@@ -127,6 +128,13 @@ describe("history service", () => {
       "video",
     ]);
     expect(result.records[1]?.model).toBe("sora2");
+    expect(result.records[1]).toMatchObject({
+      duration: 8,
+      aspectRatio: "16x9",
+      resolution: "1080p",
+      generateAudio: true,
+      input: { mode: "first-last-frames", count: 2 },
+    });
     expect(result.modelOptions).toEqual(["gpt-image-2", "sora2"]);
     expect(result.nextCursor).toEqual(expect.any(String));
     expect(result.previousCursor).toBeNull();

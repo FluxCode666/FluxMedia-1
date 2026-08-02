@@ -1,22 +1,28 @@
 /**
  * 统一号池成员模型选项的 DB-free 测试。
  *
- * 职责：锁定模型配置到完整调度 ID 的展开、成员类型边界与历史能力保留语义。
+ * 职责：锁定模型配置到真实模型 ID 的映射、成员类型边界与历史能力保留语义。
  */
 import { ADOBE_VIDEO_PRICING_FAMILIES } from "@repo/shared/adobe";
 import {
   type BackendMemberInput,
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
+import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type {
   ModelConfigurationEntry,
   ModelConfigurationSnapshot,
 } from "@repo/shared/model-marketplace";
+import { VIDEO_MODEL_CAPABILITY_CATALOG } from "@repo/shared/video-generation";
 import { describe, expect, it } from "vitest";
 
 import {
+  acceptsVideoBackendMemberModels,
   buildBackendMemberModelOptions,
+  DEFAULT_ADOBE_MEMBER_MODE,
   findUnavailableBackendMemberModelIds,
+  normalizeBackendMemberModelIdsForDisplay,
+  removeVideoBackendMemberModelIds,
 } from "./member-model-options";
 
 const commonEntry = {
@@ -29,6 +35,17 @@ const commonEntry = {
   coverUrl: null,
   usesDefaultCover: true,
 };
+
+describe("账号形态视频能力", () => {
+  it("API 与 Adobe Direct 开放视频模型，Adobe Gateway 不开放", () => {
+    expect(DEFAULT_ADOBE_MEMBER_MODE).toBe("direct");
+    expect(
+      acceptsVideoBackendMemberModels("adobe", DEFAULT_ADOBE_MEMBER_MODE)
+    ).toBe(true);
+    expect(acceptsVideoBackendMemberModels("adobe", "gateway")).toBe(false);
+    expect(acceptsVideoBackendMemberModels("api", "direct")).toBe(true);
+  });
+});
 
 const imageEntry: ModelConfigurationEntry = {
   ...commonEntry,
@@ -83,7 +100,9 @@ function createMemberInput(
       config: {
         baseUrl: "https://api.example.com/v1",
         useStream: false,
-        parameterMappings: [],
+        modelMappings: [],
+        authentication: { mode: "bearer" },
+        operations: createDefaultApiUpstreamOperations(),
       },
     };
   }
@@ -101,7 +120,7 @@ function createMemberInput(
 }
 
 describe("buildBackendMemberModelOptions", () => {
-  it("保留图像配置键并把视频族展开为真实完整 ID", () => {
+  it("保留图像配置键且每个视频模型只生成一个真实 ID", () => {
     const options = buildBackendMemberModelOptions(snapshot);
 
     expect(options).toContainEqual({
@@ -110,16 +129,20 @@ describe("buildBackendMemberModelOptions", () => {
       category: "image",
       source: "model_configuration",
     });
-    expect(options).toContainEqual(
-      expect.objectContaining({
-        id: "veo31-4s-16x9-1080p",
+    expect(options).toContainEqual({
+      id: "veo31",
+      label: "Veo 3.1",
+      category: "video",
+      source: "model_configuration",
+    });
+    expect(options.filter((option) => option.category === "video")).toEqual([
+      {
+        id: "veo31",
+        label: "Veo 3.1",
         category: "video",
         source: "model_configuration",
-      })
-    );
-    expect(
-      options.filter((option) => option.category === "video").length
-    ).toBeGreaterThan(1);
+      },
+    ]);
   });
 
   it("展示开关和运行时目录降级不移除管理能力选项", () => {
@@ -133,7 +156,54 @@ describe("buildBackendMemberModelOptions", () => {
     expect(options.some((option) => option.category === "video")).toBe(true);
   });
 
-  it("当前全部视频族展开后仍可由 Adobe direct 成员一次全选保存", () => {
+  it("一个 Seedance 成员能力承接该模型全部全局合法参数与互斥输入模式", () => {
+    const seedanceEntry: ModelConfigurationEntry = {
+      ...commonEntry,
+      category: "video",
+      configKey: "seedance2",
+      displayName: "Seedance 2.0",
+      iconKey: "generic",
+      minimumCredits: 30,
+      creditsPerSecond: 30,
+      creditsPerSecondByResolution: {
+        "480p": 30,
+        "720p": 30,
+        "1080p": 30,
+      },
+      supportedResolutions: ["480p", "720p", "1080p"],
+    };
+    const options = buildBackendMemberModelOptions({
+      ...snapshot,
+      entries: [seedanceEntry],
+    });
+
+    expect(options).toEqual([
+      {
+        id: "seedance2",
+        label: "Seedance 2.0",
+        category: "video",
+        source: "model_configuration",
+      },
+    ]);
+    expect(
+      findUnavailableBackendMemberModelIds(
+        createMemberInput(["seedance2"], true),
+        options
+      )
+    ).toEqual([]);
+    expect(VIDEO_MODEL_CAPABILITY_CATALOG.seedance2).toMatchObject({
+      durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      aspectRatios: ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+      resolutions: ["1080p", "720p", "480p"],
+      input: {
+        frames: "first-and-optional-last",
+        referenceImages: { maxCount: 10, configurable: true },
+        framesAndReferencesMutuallyExclusive: true,
+      },
+    });
+  });
+
+  it("当前全部视频模型各生成一个选项并可由 Adobe direct 成员一次全选保存", () => {
     const videoEntries: ModelConfigurationEntry[] =
       ADOBE_VIDEO_PRICING_FAMILIES.map((configKey) => ({
         ...commonEntry,
@@ -151,7 +221,9 @@ describe("buildBackendMemberModelOptions", () => {
       entries: [imageEntry, ...videoEntries],
     });
 
-    expect(options.length).toBeGreaterThan(videoEntries.length);
+    expect(
+      options.filter((option) => option.category === "video")
+    ).toHaveLength(videoEntries.length);
     expect(
       backendMemberInputSchema.safeParse(
         createMemberInput(
@@ -165,9 +237,9 @@ describe("buildBackendMemberModelOptions", () => {
 
 describe("findUnavailableBackendMemberModelIds", () => {
   const options = buildBackendMemberModelOptions(snapshot);
-  const videoModelId = "veo31-4s-16x9-1080p";
+  const videoModelId = "veo31";
 
-  it("API 成员只能保存模型配置中的图像 ID", () => {
+  it("API 成员可以保存模型配置中的图片与真实视频 ID", () => {
     expect(
       findUnavailableBackendMemberModelIds(
         createMemberInput(
@@ -176,7 +248,7 @@ describe("findUnavailableBackendMemberModelIds", () => {
         ),
         options
       )
-    ).toEqual([videoModelId, "unknown-model"]);
+    ).toEqual(["unknown-model"]);
   });
 
   it("Adobe direct 成员可保存模型配置展开的视频完整 ID", () => {
@@ -199,5 +271,48 @@ describe("findUnavailableBackendMemberModelIds", () => {
         "legacy-image-model",
       ])
     ).toEqual(["new-unknown"]);
+  });
+
+  it.each([
+    "firefly-seedance2",
+    "firefly-seedance2-15s-9x16-480p",
+    "seedance2-15s-9x16-480p",
+    "seedance2-preview",
+    "kling3-10s-16x9",
+  ])("编辑成员不能用 existing-member 放行旧视频身份 %s", (modelId) => {
+    expect(
+      findUnavailableBackendMemberModelIds(
+        createMemberInput([modelId], true),
+        options,
+        [modelId]
+      )
+    ).toEqual([modelId]);
+  });
+});
+
+describe("normalizeBackendMemberModelIdsForDisplay", () => {
+  it("账号池卡片只展示真实视频 ID 且保持图像兼容行为", () => {
+    expect(
+      normalizeBackendMemberModelIdsForDisplay([
+        "SEEDANCE2",
+        "seedance2",
+        "firefly-seedance2-15s-9x16-480p",
+        "seedance2-preview",
+        "firefly-gpt-image-2",
+      ])
+    ).toEqual(["seedance2", "gpt-image-2"]);
+  });
+});
+
+describe("removeVideoBackendMemberModelIds", () => {
+  it("切离 Adobe Direct 时只清理真实与旧复合视频 ID", () => {
+    expect(
+      removeVideoBackendMemberModelIds([
+        "gpt-image-2",
+        "seedance2",
+        "firefly-seedance2-15s-9x16-480p",
+        "custom-image-model",
+      ])
+    ).toEqual(["gpt-image-2", "custom-image-model"]);
   });
 });

@@ -1,8 +1,8 @@
 /**
  * 公开 API 接入文档的数据源。
  *
- * 内容从管理员系统文档的外接 API 章节提炼。数据源保留五个已整理端点，公开读取时
- * 统一过滤暂不展示的视频端点；图片任务的路径 ID 属于必要契约，因此显式保留。
+ * 内容从管理员系统文档的外接 API 章节提炼。数据源公开列出图片生成、图片编辑、
+ * 图片任务，以及视频能力、视频生成和视频任务六个现行端点。
  */
 
 export type ApiIntegrationParameter = {
@@ -78,7 +78,7 @@ const zhContent = {
   eyebrow: "FluxMedia External API",
   title: "API 接入文档",
   subtitle:
-    "面向服务端集成的图像接口参考。这里仅展示通用兼容参数，不包含 FluxMedia 站点扩展参数。",
+    "面向服务端集成的图片与视频接口参考。视频模型 ID 与时长、比例、分辨率独立传递，并支持能力查询与持久任务轮询。",
   baseUrlLabel: "Base URL",
   authLabel: "鉴权",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -369,20 +369,29 @@ const zhContent = {
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-001",
-    "model": "kling3-omni-8s-16x9-1080p",
+    "model": "seedance2",
+    "duration_seconds": 8,
+    "aspect_ratio": "16:9",
+    "resolution": "1080p",
     "prompt": "A hero walking through a neon city",
     "negative_prompt": "low resolution, blur, watermark",
     "generate_audio": true,
-    "input_image_role": "reference",
-    "image": ["data:image/png;base64,..."]
+    "reference_images": ["data:image/png;base64,..."]
   }'`,
       responseExample: `{
   "object": "video.task",
-  "id": "video_...",
-  "task_id": "video_...",
-  "generation_id": "video_...",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "pending",
-  "model": "kling3-omni-8s-16x9-1080p"
+  "model": "seedance2",
+  "duration": 8,
+  "duration_seconds": 8,
+  "aspectRatio": "16:9",
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generateAudio": true,
+  "generate_audio": true
 }`,
       parameters: [
         {
@@ -399,40 +408,165 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description:
-            "视频模型 ID，格式为 <family>-<dur>s-<ratio>[-<res>]；历史 firefly- 前缀请求仍兼容。",
+            "真实视频模型 ID，例如 seedance2、seedance2-fast 或 veo31。不得拼接时长、比例或分辨率；旧 firefly-* 与复合 ID 会被拒绝。",
+        },
+        {
+          name: "duration / duration_seconds",
+          requirement: "必填",
+          description: "独立视频时长（秒），必须是所选模型支持的整数值。",
+        },
+        {
+          name: "aspectRatio / aspect_ratio",
+          requirement: "必填",
+          description: "独立视频宽高比，必须属于所选模型能力。",
+        },
+        {
+          name: "resolution",
+          requirement: "必填",
+          description: "独立小写输出分辨率，必须属于所选模型能力。",
         },
         {
           name: "negative_prompt / negativePrompt",
           requirement: "可选",
+          defaultValue: "无",
           description: "负向提示词，最多 8000 字符。",
         },
         {
           name: "generate_audio / generateAudio",
           requirement: "可选",
+          defaultValue: "模型默认值",
           description:
             "是否生成声音。Seedance 2.0（含 Fast）与 Kling 3.0 Omni 默认关闭，Kling 3.0 默认开启；Runway Gen-4.5 与 Ray 3.14（含 HDR）不支持声音，不支持音频的模型不能传 true。",
         },
         {
-          name: "image",
+          name: "firstFrame / first_frame、lastFrame / last_frame",
           requirement: "可选",
+          defaultValue: "无",
           description:
-            "base64 image data URL 数组。Kling 3.0 与 Kling 3.0 Omni 的 frame 模式最多 2 张，依次作为首帧和尾帧；Omni 的 reference 模式最多 3 张；Runway Gen-4.5 与 Ray 3.14（含 HDR）当前不支持图片输入。",
+            "首帧与可选尾帧的 base64 image data URL。尾帧必须与首帧同时提供；是否支持尾帧由模型能力决定。",
         },
         {
-          name: "input_image_role / inputImageRole",
+          name: "referenceImages / reference_images",
           requirement: "可选",
+          defaultValue: "空数组",
           description:
-            "输入图语义，可选 frame 或 reference，默认 frame。reference 当前用于 Kling 3.0 Omni，必须与 image 一起传入。",
+            "有序参考图 base64 data URL 数组；数量上限由模型能力决定，Seedance 默认 10 且管理员可配置。参考图与首尾帧对所有模型互斥。",
+        },
+        {
+          name: "callback_url / callbackUrl",
+          requirement: "可选",
+          defaultValue: "无",
+          description:
+            "任务完成或失败时接收任务对象的公网 https webhook 地址。",
         },
       ],
       responses: [
-        { name: "task_id / id", description: "异步视频任务 ID。" },
+        {
+          name: "task_id / id / generation_id",
+          description: "同一个持久视频任务 ID。",
+        },
+        { name: "object", description: "固定为 video.task。" },
         { name: "status", description: "任务初始状态，通常为 pending。" },
-        { name: "model", description: "本次使用的视频模型 ID。" },
+        { name: "model", description: "本次使用的真实视频模型 ID。" },
+        {
+          name: "duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
+          description: "本次任务使用的独立视频参数。",
+        },
       ],
       notes: [
-        "视频生成耗时通常长于图片生成，请为客户端配置足够的读取超时时间。",
-        "模型 ID 中的时长和画幅必须属于该模型支持的组合。",
+        "接口始终以 HTTP 202 返回持久任务，不同步等待视频完成；请使用 GET /v1/videos/{id} 轮询。",
+        "模型、时长、比例和分辨率分别校验，不会从模型 ID 解析参数。",
+      ],
+    },
+    {
+      id: "video-capabilities",
+      category: "外部视频 API",
+      operation: "video",
+      title: "查询视频模型能力",
+      method: "GET",
+      path: "/v1/videos/capabilities",
+      contentType: "无请求体",
+      description:
+        "查询当前 API 密钥可见的真实视频模型、独立生成参数、输入图和声音能力，以及账号池是否已配置可达。",
+      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/capabilities \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
+      responseExample: `{
+  "items": [
+    {
+      "model": "seedance2",
+      "displayName": "Seedance 2.0",
+      "durations": [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "aspectRatios": ["1:1", "4:3", "3:4", "16:9", "9:16", "21:9"],
+      "resolutions": ["1080p", "720p", "480p"],
+      "input": {
+        "frames": "first-and-optional-last",
+        "referenceImages": {
+          "maxCount": 10,
+          "configurable": true
+        },
+        "framesAndReferencesMutuallyExclusive": true
+      },
+      "audio": {
+        "supported": true,
+        "defaultEnabled": false
+      },
+      "configuredReachable": true
+    }
+  ],
+  "limits": {
+    "maxMediaInputCount": 256,
+    "maxMediaInputBytes": 209715200
+  }
+}`,
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "必填 header",
+          description: "Bearer <API_KEY>。",
+        },
+      ],
+      responses: [
+        {
+          name: "items[].model / displayName",
+          description: "真实视频模型 ID 与展示名称。",
+        },
+        {
+          name: "items[].durations / aspectRatios / resolutions",
+          description: "该模型允许的独立时长、宽高比和分辨率集合。",
+        },
+        {
+          name: "items[].input.frames",
+          description:
+            "none、first-only 或 first-and-optional-last，表示帧输入能力。",
+        },
+        {
+          name: "items[].input.referenceImages",
+          description:
+            "参考图数量上限及该上限是否允许管理员配置；应使用响应中的当前值。",
+        },
+        {
+          name: "items[].input.framesAndReferencesMutuallyExclusive",
+          description: "固定指示首尾帧与参考图不能同时传入。",
+        },
+        {
+          name: "items[].audio",
+          description: "声音生成支持情况与未传 generate_audio 时的默认值。",
+        },
+        {
+          name: "items[].configuredReachable",
+          description:
+            "当前可信账号池分组是否配置了可执行该模型的账号；不代表实时容量。",
+        },
+        {
+          name: "limits",
+          description:
+            "整次媒体输入的基础设施数量与字节上限；单模型限制仍以 items[].input 为准。",
+        },
+      ],
+      notes: [
+        "提交视频前应从本接口选择 model、duration、aspect_ratio 和 resolution，不要自行拼接复合模型 ID。",
+        "configuredReachable 只表示配置可达性，不包含账号、凭据、健康、并发或实时剩余容量。",
+        "响应使用 Cache-Control: no-store；管理员调整 Seedance 参考图上限后应重新查询。",
       ],
     },
     {
@@ -502,20 +636,27 @@ const zhContent = {
       path: "/v1/videos/{id}",
       contentType: "无请求体",
       description: "按任务 ID 查询视频生成状态和结果。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/task_... \\
+      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
-  "id": "task_...",
-  "object": "video",
+  "object": "video.task",
+  "id": "video_0123456789abcdef0123456789abcdef01234567",
+  "task_id": "video_0123456789abcdef0123456789abcdef01234567",
+  "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "status": "completed",
-  "created": 1713833628,
+  "model": "seedance2",
+  "duration": 8,
+  "duration_seconds": 8,
+  "aspectRatio": "16:9",
+  "aspect_ratio": "16:9",
+  "resolution": "1080p",
+  "generateAudio": true,
+  "generate_audio": true,
+  "input": { "mode": "references", "count": 1 },
   "created_at": "2026-05-28T00:00:00.000Z",
   "completed_at": "2026-05-28T00:01:40.000Z",
-  "data": [
-    {
-      "url": "https://gpt2image.superapi.buzz/api/storage/generations/..."
-    }
-  ]
+  "video_url": "https://gpt2image.superapi.buzz/api/storage/generations/...",
+  "data": [{"url": "https://gpt2image.superapi.buzz/api/storage/generations/..."}]
 }`,
       parameters: [
         {
@@ -526,28 +667,42 @@ const zhContent = {
         {
           name: "id",
           requirement: "必填路径参数",
-          description: "视频任务 ID，与请求路径中的 {id} 对应。",
+          description:
+            "创建接口返回的持久视频任务 ID，与请求路径中的 {id} 对应。最长 128 字符，仅可查询当前 API 密钥所属用户的任务。",
         },
       ],
       responses: [
-        { name: "id", description: "视频任务 ID。" },
-        { name: "object", description: "任务对象类型。" },
+        {
+          name: "id / task_id / generation_id",
+          description: "同一个持久视频任务 ID。",
+        },
+        { name: "object", description: "固定为 video.task。" },
         {
           name: "status",
-          description: "processing、needs_attention、completed 或 failed。",
+          description:
+            "pending、submitting、processing、needs_attention、completed 或 failed。",
         },
         {
-          name: "data[].url",
-          description: "任务完成后返回的视频 URL。",
+          name: "model、duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
+          description: "任务的真实模型 ID 与独立视频参数。",
         },
         {
-          name: "created / created_at / completed_at",
-          description: "任务创建与完成时间；未完成时不返回完成时间。",
+          name: "input",
+          description: "输入模式与输入数量，不包含用户输入图内容。",
+        },
+        {
+          name: "data[].url / video_url",
+          description: "任务完成后返回的同一视频 URL。",
+        },
+        {
+          name: "created_at / completed_at",
+          description: "ISO 创建与完成时间；未完成时不返回 completed_at。",
         },
       ],
       notes: [
         "只能查询当前 API 密钥所属用户创建的任务。",
-        "任务仍在执行时 status 为 processing，失败时 error.message 会给出原因。",
+        "任务持久保存并可跨进程重启或多实例查询；响应带 Cache-Control: no-store。",
+        "任务失败时 error.message 会给出原因。",
       ],
     },
   ],
@@ -556,13 +711,13 @@ const zhContent = {
 /**
  * 读取英文文档复用的中文端点骨架。
  *
- * @param index - 五个固定端点中的位置。
+ * @param id - 中文端点的稳定文档 ID。
  * @returns 对应端点；数据源不完整时在模块初始化阶段显式失败。
  */
-function getZhEndpointTemplate(index: number): ApiIntegrationEndpoint {
-  const endpoint = zhContent.endpoints[index];
+function getZhEndpointTemplate(id: string): ApiIntegrationEndpoint {
+  const endpoint = zhContent.endpoints.find((candidate) => candidate.id === id);
   if (!endpoint) {
-    throw new Error(`Missing API integration endpoint template at ${index}`);
+    throw new Error(`Missing API integration endpoint template: ${id}`);
   }
   return endpoint;
 }
@@ -571,7 +726,7 @@ const enContent = {
   eyebrow: "FluxMedia External API",
   title: "API Integration Guide",
   subtitle:
-    "Image API reference for server-side integrations. This page lists only compatible parameters and omits FluxMedia-specific extension parameters.",
+    "Image and video API reference for server-side integrations. Video model IDs are separate from duration, aspect ratio, and resolution, with capability discovery and persistent task polling.",
   baseUrlLabel: "Base URL",
   authLabel: "Authentication",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -590,7 +745,7 @@ const enContent = {
   },
   endpoints: [
     {
-      ...getZhEndpointTemplate(0),
+      ...getZhEndpointTemplate("image-generations"),
       category: "Text-to-image API",
       title: "Create image",
       description:
@@ -691,7 +846,7 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(1),
+      ...getZhEndpointTemplate("image-edits"),
       category: "Image-to-image API",
       title: "Edit image",
       description:
@@ -809,7 +964,7 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(2),
+      ...getZhEndpointTemplate("video-generations"),
       category: "Video API",
       title: "Create video",
       description: "Create a video from a text prompt or reference images.",
@@ -829,49 +984,151 @@ const enContent = {
           name: "model",
           requirement: "Required",
           description:
-            "Video model ID in the form firefly-<family>-<dur>s-<ratio>[-<res>].",
+            "Real video model ID such as seedance2, seedance2-fast, or veo31. Duration, ratio, and resolution must not be encoded in the ID; legacy firefly-* and composite IDs are rejected.",
+        },
+        {
+          name: "duration / duration_seconds",
+          requirement: "Required",
+          description:
+            "Separate video duration in seconds; it must be an integer supported by the selected model.",
+        },
+        {
+          name: "aspectRatio / aspect_ratio",
+          requirement: "Required",
+          description:
+            "Separate video aspect ratio supported by the selected model.",
+        },
+        {
+          name: "resolution",
+          requirement: "Required",
+          description:
+            "Separate lowercase output resolution supported by the selected model.",
         },
         {
           name: "negative_prompt / negativePrompt",
           requirement: "Optional",
+          defaultValue: "None",
           description: "Negative prompt, up to 8,000 characters.",
         },
         {
           name: "generate_audio / generateAudio",
           requirement: "Optional",
+          defaultValue: "Model default",
           description:
             "Whether to generate audio. Seedance 2.0, including Fast, and Kling 3.0 Omni default to false, while Kling 3.0 defaults to true. Runway Gen-4.5 and Ray 3.14, including HDR, do not support audio, and models without audio support cannot accept true.",
         },
         {
-          name: "image",
+          name: "firstFrame / first_frame, lastFrame / last_frame",
           requirement: "Optional",
+          defaultValue: "None",
           description:
-            "An array of base64 image data URLs. Kling 3.0 and Kling 3.0 Omni accept up to two images as first/last frames in frame mode. Omni accepts up to three images in reference mode. Runway Gen-4.5 and Ray 3.14, including HDR, currently do not accept image input.",
+            "First frame and optional last frame as base64 image data URLs. lastFrame requires firstFrame; last-frame support is model-specific.",
         },
         {
-          name: "input_image_role / inputImageRole",
+          name: "referenceImages / reference_images",
           requirement: "Optional",
+          defaultValue: "Empty array",
           description:
-            "Input image semantics: frame or reference; defaults to frame. reference is currently available for Kling 3.0 Omni and requires image.",
+            "Ordered base64 image data URL array. The limit is model-specific; Seedance defaults to 10 and admins may configure it. Reference images and frame inputs are mutually exclusive for every model.",
+        },
+        {
+          name: "callback_url / callbackUrl",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "Public https webhook that receives the task object when the task completes or fails.",
         },
       ],
       responses: [
-        { name: "task_id / id", description: "Asynchronous video task ID." },
+        {
+          name: "task_id / id / generation_id",
+          description: "The same persistent video task ID.",
+        },
+        { name: "object", description: "Always video.task." },
         {
           name: "status",
           description: "Initial task status, usually pending.",
         },
-        { name: "model", description: "Video model ID used for this request." },
+        {
+          name: "model",
+          description: "Real video model ID used for this request.",
+        },
+        {
+          name: "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
+          description: "Separate video parameters used by this task.",
+        },
       ],
       notes: [
-        "Video generation usually takes longer than image generation. Configure a sufficient client read timeout.",
-        "The duration and aspect ratio in the model ID must be supported by that model.",
+        "The endpoint always returns a persistent task with HTTP 202 and never waits synchronously for the video; poll GET /v1/videos/{id}.",
+        "Model, duration, ratio, and resolution are validated independently and are never parsed from the model ID.",
       ],
     },
     {
-      ...getZhEndpointTemplate(3),
+      ...getZhEndpointTemplate("video-capabilities"),
+      category: "Video API",
+      title: "List video model capabilities",
+      contentType: "No request body",
+      description:
+        "List real video models visible to the current API key, their independent generation parameters, image input and audio capabilities, and whether the account pool is configured to reach them.",
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "Required header",
+          description: "Bearer <API_KEY>.",
+        },
+      ],
+      responses: [
+        {
+          name: "items[].model / displayName",
+          description: "Real video model ID and display name.",
+        },
+        {
+          name: "items[].durations / aspectRatios / resolutions",
+          description:
+            "Allowed independent duration, aspect ratio, and resolution values for the model.",
+        },
+        {
+          name: "items[].input.frames",
+          description:
+            "none, first-only, or first-and-optional-last, describing frame input support.",
+        },
+        {
+          name: "items[].input.referenceImages",
+          description:
+            "Reference-image limit and whether admins can configure that limit; use the current response value.",
+        },
+        {
+          name: "items[].input.framesAndReferencesMutuallyExclusive",
+          description:
+            "Indicates that frame inputs and reference images cannot be sent together.",
+        },
+        {
+          name: "items[].audio",
+          description:
+            "Audio generation support and the default used when generate_audio is omitted.",
+        },
+        {
+          name: "items[].configuredReachable",
+          description:
+            "Whether the trusted account-pool group is configured with an account capable of running this model; this is not real-time capacity.",
+        },
+        {
+          name: "limits",
+          description:
+            "Infrastructure-wide input count and byte limits; per-model limits still come from items[].input.",
+        },
+      ],
+      notes: [
+        "Before creating a video, select model, duration, aspect_ratio, and resolution from this endpoint. Do not construct composite model IDs.",
+        "configuredReachable reports configuration reachability only. It exposes no accounts, credentials, health, concurrency, or live remaining capacity.",
+        "Responses use Cache-Control: no-store. Query again after an admin changes a Seedance reference-image limit.",
+      ],
+    },
+    {
+      ...getZhEndpointTemplate("image-task"),
       category: "Asynchronous image task",
       title: "Get image task",
+      contentType: "No request body",
       description: "Get image generation status and results by task ID.",
       parameters: [
         {
@@ -909,9 +1166,10 @@ const enContent = {
       ],
     },
     {
-      ...getZhEndpointTemplate(4),
+      ...getZhEndpointTemplate("video-task"),
       category: "Asynchronous video task",
       title: "Get video task",
+      contentType: "No request body",
       description: "Get video generation status and results by task ID.",
       parameters: [
         {
@@ -923,57 +1181,59 @@ const enContent = {
           name: "id",
           requirement: "Required path parameter",
           description:
-            "Video task ID corresponding to {id} in the request path.",
+            "Persistent video task ID returned by the create endpoint, corresponding to {id} in the request path. Maximum 128 characters; only tasks owned by the current API key user are queryable.",
         },
       ],
       responses: [
-        { name: "id", description: "Video task ID." },
-        { name: "object", description: "Task object type." },
+        {
+          name: "id / task_id / generation_id",
+          description: "The same persistent video task ID.",
+        },
+        { name: "object", description: "Always video.task." },
         {
           name: "status",
-          description: "processing, needs_attention, completed, or failed.",
-        },
-        {
-          name: "data[].url",
-          description: "Video URL returned after completion.",
-        },
-        {
-          name: "created / created_at / completed_at",
           description:
-            "Creation and completion times; completion fields are absent while running.",
+            "pending, submitting, processing, needs_attention, completed, or failed.",
+        },
+        {
+          name: "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
+          description:
+            "The task's real model ID and separate video parameters.",
+        },
+        {
+          name: "input",
+          description:
+            "Input mode and count without the user-supplied image contents.",
+        },
+        {
+          name: "data[].url / video_url",
+          description: "The same video URL returned after completion.",
+        },
+        {
+          name: "created_at / completed_at",
+          description:
+            "ISO creation and completion times; completed_at is absent while running.",
         },
       ],
       notes: [
         "Only tasks created by the user who owns the current API key can be queried.",
-        "A running task has status processing. A failed task includes the reason in error.message.",
+        "Tasks are persisted and remain queryable across process restarts or multiple instances; responses use Cache-Control: no-store.",
+        "A failed task includes the reason in error.message.",
       ],
     },
   ],
 } satisfies ApiIntegrationDocsContent;
 
-// 视频能力仍在内部系统文档和真实 API 中保留；公开接入页按当前产品决策临时隐藏。
-// 恢复展示时只需从本集合移除对应 ID，避免复制或删除已经校对过的双语契约。
-const TEMPORARILY_HIDDEN_ENDPOINT_IDS = new Set([
-  "video-generations",
-  "video-task",
-]);
-
 /**
  * 按路由语言返回公开接入文档。
  *
  * @param locale - Next.js 路由语言；只有 zh 使用中文，其余安全回退英文。
- * @returns 不含站点扩展参数的只读文档数据。
+ * @returns 包含现行图片与视频端点的完整只读数据源。
  */
 export function getApiIntegrationDocs(
   locale?: string
 ): ApiIntegrationDocsContent {
-  const content = locale === "zh" ? zhContent : enContent;
-  return {
-    ...content,
-    endpoints: content.endpoints.filter(
-      (endpoint) => !TEMPORARILY_HIDDEN_ENDPOINT_IDS.has(endpoint.id)
-    ),
-  };
+  return locale === "zh" ? zhContent : enContent;
 }
 
 /**

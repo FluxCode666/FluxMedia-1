@@ -185,11 +185,11 @@ type SchedulerMetricRow = {
 
 // 视频生成(Adobe Firefly)是独立管线,记录落在 video_generation 表(非 generation),
 // 监控其他区块全部读 generation,因此视频在原有面板里完全不可见。此处单独聚合并展示。
-// 模型族顺序复用唯一计价目录，避免新增模型后管理状态页遗漏。
-const VIDEO_FAMILIES = ADOBE_VIDEO_PRICING_FAMILIES;
+// 真实模型顺序复用唯一计价目录，避免新增模型后管理状态页遗漏。
+const VIDEO_MODELS = ADOBE_VIDEO_PRICING_FAMILIES;
 
-type VideoFamilyStats = {
-  family: string;
+type VideoModelStats = {
+  model: string;
   total: number;
   completed: number;
   failed: number;
@@ -209,12 +209,12 @@ type VideoGenerationStats = {
   totalVideoSeconds: number;
   // 已完成视频平均生成耗时(completedAt - createdAt,秒);无样本为 null。
   avgLatencySeconds: number | null;
-  byFamily: VideoFamilyStats[];
+  byModel: VideoModelStats[];
 };
 
-// video_generation 按 (family, status) 分组的原始聚合行。
+// video_generation 按真实 (model, status) 分组的原始聚合行。
 type VideoAggregateRow = {
-  family: string;
+  model: string;
   status: string;
   total: number;
   creditsConsumed: number;
@@ -829,9 +829,9 @@ function summarizeSchedulerMetrics(
   return stats;
 }
 
-// 把 video_generation 的 (family, status) 聚合行折叠为面板所需统计:
-// 总数/各状态计数、成功率、完成视频积分与时长、平均生成耗时,以及按模型族明细。
-// 未在 VIDEO_FAMILIES 中登记的 family(如新增/历史脏数据)归入 byFamily 末尾,
+// 把 video_generation 的 (model, status) 聚合行折叠为面板所需统计:
+// 总数/各状态计数、成功率、完成视频积分与时长、平均生成耗时,以及按真实模型明细。
+// 未在 VIDEO_MODELS 中登记的 model（如新增/历史脏数据）归入 byModel 末尾，
 // 但仍计入顶部总数,避免漏算。
 function summarizeVideoGenerationRows(
   rows: VideoAggregateRow[]
@@ -846,9 +846,9 @@ function summarizeVideoGenerationRows(
   let latencySecondsTotal = 0;
   let latencyCount = 0;
 
-  const familyMap = new Map<string, VideoFamilyStats>();
-  for (const family of VIDEO_FAMILIES) {
-    familyMap.set(family, { family, total: 0, completed: 0, failed: 0 });
+  const modelMap = new Map<string, VideoModelStats>();
+  for (const model of VIDEO_MODELS) {
+    modelMap.set(model, { model, total: 0, completed: 0, failed: 0 });
   }
 
   for (const row of rows) {
@@ -856,15 +856,15 @@ function summarizeVideoGenerationRows(
     total += rowTotal;
 
     const bucket =
-      familyMap.get(row.family) ??
-      familyMap
-        .set(row.family, {
-          family: row.family,
+      modelMap.get(row.model) ??
+      modelMap
+        .set(row.model, {
+          model: row.model,
           total: 0,
           completed: 0,
           failed: 0,
         })
-        .get(row.family);
+        .get(row.model);
     if (bucket) bucket.total += rowTotal;
 
     if (row.status === "completed") {
@@ -885,8 +885,8 @@ function summarizeVideoGenerationRows(
   }
 
   const finished = completed + failed;
-  // VIDEO_FAMILIES 顺序在前,运行时新出现的 family 追加在后(保留插入顺序)。
-  const byFamily = Array.from(familyMap.values());
+  // VIDEO_MODELS 顺序在前，运行时新出现的 model 追加在后（保留插入顺序）。
+  const byModel = Array.from(modelMap.values());
 
   return {
     total,
@@ -899,7 +899,7 @@ function summarizeVideoGenerationRows(
     totalVideoSeconds,
     avgLatencySeconds:
       latencyCount > 0 ? latencySecondsTotal / latencyCount : null,
-    byFamily,
+    byModel,
   };
 }
 
@@ -1093,7 +1093,7 @@ function resolutionDurationLabel(
 
 function backendDurationLabel(bucket: BackendDurationBucket) {
   if (bucket === "adobe") return "Adobe";
-  return "API Images";
+  return "API";
 }
 
 function DurationBucketCell({
@@ -1835,12 +1835,12 @@ async function loadStatusData() {
         imageBackendMemberSchedulerMetric.strategy,
         imageBackendMemberSchedulerMetric.outcome
       ),
-    // 视频生成(Adobe Firefly)独立管线,与 generation 无关。按 (family, status) 分组,
+    // 视频生成独立管线，与 generation 无关。按真实 (model, status) 分组，
     // 与近期 SLA 一致取最近 7 天窗口(createdAt >= last7d)。
     // 积分/时长/耗时仅对完成记录(completed)累加;latencyCount 用于计算平均生成耗时。
     db
       .select({
-        family: videoGeneration.family,
+        model: videoGeneration.model,
         status: videoGeneration.status,
         total: count(),
         creditsConsumed:
@@ -1862,7 +1862,7 @@ async function loadStatusData() {
       })
       .from(videoGeneration)
       .where(gte(videoGeneration.createdAt, last7d))
-      .groupBy(videoGeneration.family, videoGeneration.status),
+      .groupBy(videoGeneration.model, videoGeneration.status),
   ]);
 
   // recentGenerationRows(带帽 10000 行)现仅用于 topErrors 列表与 rowsTruncated 旗标;
@@ -2426,8 +2426,8 @@ export default async function GlobalStatusPage({
   );
 }
 
-// 视频生成(Adobe Firefly)独立统计区块。读 video_generation 表近 7 天聚合,
-// 展示总数/完成/失败/进行中、成功率(Progress)、累计积分与时长,以及按模型族明细。
+// 视频生成独立统计区块。读 video_generation 表近 7 天聚合，
+// 展示总数/完成/失败/进行中、成功率、累计积分与时长，以及按真实模型明细。
 // 无任何样本时优雅降级为"暂无视频生成样本"。
 function VideoGenerationCard({
   stats,
@@ -2436,8 +2436,8 @@ function VideoGenerationCard({
   stats: VideoGenerationStats;
   locale: string;
 }) {
-  // 仅展示有过样本的模型族(总数 > 0),避免空表全是 0 行;无样本时整体走空态。
-  const familyRows = stats.byFamily.filter((item) => item.total > 0);
+  // 仅展示有过样本的真实模型，避免空表全是 0 行；无样本时整体走空态。
+  const modelRows = stats.byModel.filter((item) => item.total > 0);
 
   return (
     <Card className="rounded-lg">
@@ -2513,7 +2513,7 @@ function VideoGenerationCard({
                 <thead className="border-b border-border/60 text-[11px] uppercase tracking-widest text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 font-medium">
-                      {copy(locale, "Family", "模型族")}
+                      {copy(locale, "Model", "真实模型")}
                     </th>
                     <th className="px-3 py-2 font-medium">
                       {copy(locale, "Total", "总数")}
@@ -2527,12 +2527,12 @@ function VideoGenerationCard({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
-                  {familyRows.map((item) => (
+                  {modelRows.map((item) => (
                     <tr
-                      key={item.family}
+                      key={item.model}
                       className="transition-colors duration-150 hover:bg-muted/50"
                     >
-                      <td className="px-3 py-2 font-medium">{item.family}</td>
+                      <td className="px-3 py-2 font-medium">{item.model}</td>
                       <td className="px-3 py-2">
                         {formatNumber(item.total, locale)}
                       </td>

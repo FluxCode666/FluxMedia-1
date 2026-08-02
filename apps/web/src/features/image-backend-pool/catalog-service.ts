@@ -4,13 +4,14 @@
  * 职责：按用户套餐筛选可达分组，将统一 `api | adobe` 成员显式
  * 声明的模型能力投影为创作页目录。目录只用于展示，提交时调度器仍会重新授权和获租。
  */
-import { isFireflyVideoModelId } from "@repo/shared/adobe/firefly-direct/video-catalog";
 import {
   isPlanAtLeast,
   type SubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
 import { toBackendGroupContentSafety } from "@repo/shared/image-backend/group-contract";
+import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { backendGroupService } from "./group-service";
 import {
@@ -104,7 +105,9 @@ export async function getImageGenerationModelCatalogForPlan(
             groupId,
             type: member.type,
             supportedModelIds: member.supportedModelIds.filter(
-              (modelId) => !isFireflyVideoModelId(modelId)
+              (modelId) =>
+                !normalizeVideoModelId(modelId) &&
+                !isLegacyVideoModelId(modelId)
             ),
           }))
       ),

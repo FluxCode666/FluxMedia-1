@@ -40,6 +40,15 @@ export const getExternalVideoTask = withApiLogging(
           | "needs_attention"
           | "completed"
           | "failed";
+        model: string;
+        duration: number;
+        aspectRatio: string;
+        resolution: string;
+        generateAudio: boolean;
+        input: {
+          mode: "none" | "first-frame" | "first-last-frames" | "references";
+          count: number;
+        };
         videoUrl?: string;
         error?: string;
         createdAt: string;
@@ -63,6 +72,15 @@ export const getExternalVideoTask = withApiLogging(
           task_id: result.taskId,
           generation_id: result.taskId,
           status: result.status,
+          model: result.model,
+          duration: result.duration,
+          duration_seconds: result.duration,
+          aspectRatio: result.aspectRatio,
+          aspect_ratio: result.aspectRatio,
+          resolution: result.resolution,
+          generateAudio: result.generateAudio,
+          generate_audio: result.generateAudio,
+          input: result.input,
           ...(result.videoUrl
             ? { video_url: result.videoUrl, data: [{ url: result.videoUrl }] }
             : {}),

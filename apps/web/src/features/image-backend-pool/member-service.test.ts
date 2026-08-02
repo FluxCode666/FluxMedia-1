@@ -2,9 +2,10 @@
  * 统一媒体后端成员服务测试。
  *
  * 职责：以 DB-free 仓储端口锁定新增/编辑、类型不可变、secret 保留、URL 安全、
- * 分组关系与运行中任务删除保护；数据库事务细节由集成测试覆盖。
+ * 分组关系、运行状态重置与运行中任务删除保护；数据库事务细节由集成测试覆盖。
  */
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 
 import {
   type BackendMemberAdminSummary,
@@ -19,6 +20,7 @@ const NOW = new Date("2026-07-26T00:00:00.000Z");
 function createRepository(): BackendMemberRepository & {
   saveMember: ReturnType<typeof vi.fn>;
   listMembers: ReturnType<typeof vi.fn>;
+  resetMemberStatus: ReturnType<typeof vi.fn>;
   deleteMember: ReturnType<typeof vi.fn>;
 } {
   return {
@@ -27,11 +29,12 @@ function createRepository(): BackendMemberRepository & {
       id: input.id,
     })),
     listMembers: vi.fn(async () => []),
+    resetMemberStatus: vi.fn(async () => "reset" as const),
     deleteMember: vi.fn(async () => "deleted" as const),
   };
 }
 
-/** 构造默认合法的 API Images 成员输入。 */
+/** 构造默认合法的 API 媒体成员输入。 */
 function apiInput(overrides: Record<string, unknown> = {}) {
   return {
     type: "api",
@@ -48,7 +51,10 @@ function apiInput(overrides: Record<string, unknown> = {}) {
       baseUrl: "https://images.example.com/v1",
       apiKey: "secret-api-key",
       useStream: true,
-      parameterMappings: [],
+      modelMappings: [],
+      ...(typeof overrides.id === "string"
+        ? { expectedCurrentVersionId: "adapter-current" }
+        : {}),
     },
     ...overrides,
   };
@@ -120,6 +126,201 @@ describe("backend member service", () => {
     );
   });
 
+  it("校验并持久化账号模型映射与操作级请求脚本", async () => {
+    const validateAdapterScript = vi.fn(async () => {});
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-adapted",
+      now: () => NOW,
+      validateUpstreamUrl,
+      validateAdapterScript,
+    });
+    const operations = createDefaultApiUpstreamOperations();
+    const requestScript =
+      "return { body: { ...request.body, ratio: request.body.aspect_ratio } };";
+    operations["videos.generate"].requestScript = requestScript;
+
+    await service.saveMember(
+      apiInput({
+        supportedModelIds: ["seedance2"],
+        config: {
+          baseUrl: "https://video.example.com/v1",
+          apiKey: "secret-api-key",
+          useStream: false,
+          modelMappings: [
+            { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
+          ],
+          operations,
+        },
+      })
+    );
+
+    expect(validateAdapterScript).toHaveBeenCalledTimes(1);
+    expect(validateAdapterScript).toHaveBeenCalledWith(
+      requestScript,
+      "videos.generate",
+      "request"
+    );
+    expect(repository.saveMember).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          modelMappings: [
+            { modelId: "seedance2", upstreamModelId: "seedande-2.0" },
+          ],
+          operations: expect.objectContaining({
+            "videos.generate": expect.objectContaining({
+              requestScript,
+            }),
+          }),
+        }),
+      }),
+      NOW
+    );
+  });
+
+  it("请求处理脚本校验失败时拒绝保存 API 账号", async () => {
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-invalid-script",
+      now: () => NOW,
+      validateUpstreamUrl,
+      validateAdapterScript: async () => {
+        throw new Error("invalid JavaScript");
+      },
+    });
+
+    const operations = createDefaultApiUpstreamOperations();
+    operations["images.generate"].requestScript = "if (";
+    const error = await service
+      .saveMember(
+        apiInput({
+          config: {
+            baseUrl: "https://images.example.com/v1",
+            apiKey: "secret-api-key",
+            useStream: false,
+            modelMappings: [],
+            operations,
+          },
+        })
+      )
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "validation_error",
+      message: "文生图生成请求脚本语法无效",
+    });
+    expect(repository.saveMember).not.toHaveBeenCalled();
+  });
+
+  it("逐一校验六操作请求与响应脚本并定位失败字段", async () => {
+    const operations = createDefaultApiUpstreamOperations();
+    operations["images.generate.query"] = {
+      path: "/images/{task_id}",
+      requestScript: "return { query: { verbose: true } };",
+      responseScript: "return { status: 'processing' };",
+    };
+    operations["videos.generate"] = {
+      path: "",
+      requestScript: "return { body: input };",
+      responseScript: "return response.body;",
+    };
+    const validateAdapterScript = vi.fn(
+      async (
+        _script: string,
+        operation: string,
+        stage: "request" | "response"
+      ) => {
+        if (operation === "videos.generate" && stage === "response") {
+          throw new Error("invalid response script");
+        }
+      }
+    );
+    const service = createBackendMemberService({
+      repository,
+      validateUpstreamUrl,
+      validateAdapterScript,
+    });
+
+    const error = await service
+      .saveMember(
+        apiInput({
+          config: {
+            baseUrl: "https://video.example.com/v1",
+            apiKey: "secret-api-key",
+            useStream: false,
+            modelMappings: [],
+            authentication: { mode: "bearer" },
+            operations,
+          },
+        })
+      )
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "validation_error",
+      message: "生视频生成响应脚本语法无效",
+    });
+    expect(validateAdapterScript.mock.calls).toEqual([
+      [
+        "return { query: { verbose: true } };",
+        "images.generate.query",
+        "request",
+      ],
+      [
+        "return { status: 'processing' };",
+        "images.generate.query",
+        "response",
+      ],
+      ["return { body: input };", "videos.generate", "request"],
+      ["return response.body;", "videos.generate", "response"],
+    ]);
+    expect(repository.saveMember).not.toHaveBeenCalled();
+  });
+
+  it("返回仓储原子保存产生的适配版本标识", async () => {
+    repository.saveMember.mockResolvedValue({
+      status: "saved",
+      id: "member-versioned",
+      adapterVersion: { id: "adapter-v2", revision: 2 },
+    });
+    const service = createBackendMemberService({
+      repository,
+      createId: () => "member-versioned",
+      validateUpstreamUrl,
+    });
+
+    await expect(service.saveMember(apiInput())).resolves.toEqual({
+      id: "member-versioned",
+      adapterVersion: { id: "adapter-v2", revision: 2 },
+    });
+  });
+
+  it("把版本 CAS 与跨凭据域占用映射为稳定冲突", async () => {
+    const service = createBackendMemberService({
+      repository,
+      validateUpstreamUrl,
+    });
+    repository.saveMember.mockResolvedValueOnce({
+      status: "version_conflict",
+    });
+    await expect(
+      service.saveMember(apiInput({ id: "member-existing" }))
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: "API 账号配置已被其他管理员更新，请刷新后重试",
+    });
+
+    repository.saveMember.mockResolvedValueOnce({
+      status: "credential_scope_conflict",
+    });
+    await expect(
+      service.saveMember(apiInput({ id: "member-existing" }))
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: "当前仍有使用旧凭据域的任务或租约，不能切换上游地址或认证方式",
+    });
+  });
+
   it("默认地址解析允许保存 HTTP 私网上游", async () => {
     const service = createBackendMemberService({
       repository,
@@ -134,7 +335,7 @@ describe("backend member service", () => {
             baseUrl: "http://10.0.0.8:8080/v1",
             apiKey: "secret-api-key",
             useStream: false,
-            parameterMappings: [],
+            modelMappings: [],
           },
         })
       )
@@ -159,7 +360,8 @@ describe("backend member service", () => {
       id: "member-existing",
       config: {
         baseUrl: "https://images.example.com/v1",
-        parameterMappings: [],
+        modelMappings: [],
+        expectedCurrentVersionId: "adapter-current",
       },
     });
 
@@ -188,7 +390,7 @@ describe("backend member service", () => {
       type: "adobe",
       name: "Adobe Direct",
       groupIds: ["group-a"],
-      supportedModelIds: ["firefly-veo3-5s-16x9"],
+      supportedModelIds: ["seedance2"],
       contentSafetyEnabled: true,
       isEnabled: true,
       alwaysActive: false,
@@ -423,6 +625,40 @@ describe("backend member service", () => {
     expect(error).toMatchObject({ code: "conflict" });
   });
 
+  it("按统一成员 ID 重置运行状态并使用服务端时间", async () => {
+    const service = createBackendMemberService({
+      repository,
+      now: () => NOW,
+      validateUpstreamUrl,
+    });
+
+    await expect(
+      service.resetMemberStatus("member-unhealthy")
+    ).resolves.toEqual({ success: true });
+    expect(repository.resetMemberStatus).toHaveBeenCalledWith(
+      "member-unhealthy",
+      NOW
+    );
+  });
+
+  it("重置不存在的成员时返回稳定 not_found", async () => {
+    repository.resetMemberStatus.mockResolvedValue("not_found");
+    const service = createBackendMemberService({
+      repository,
+      now: () => NOW,
+      validateUpstreamUrl,
+    });
+
+    const error = await service
+      .resetMemberStatus("missing-member")
+      .catch((cause: unknown) => cause);
+
+    expect(error).toMatchObject({
+      code: "not_found",
+      message: "媒体后端成员不存在",
+    });
+  });
+
   it("管理列表只返回脱敏配置存在性", async () => {
     const summary: BackendMemberAdminSummary = {
       id: "member-api",
@@ -448,7 +684,7 @@ describe("backend member service", () => {
         baseUrl: "https://images.example.com/v1",
         hasApiKey: true,
         useStream: false,
-        parameterMappings: [],
+        modelMappings: [],
       },
     };
     repository.listMembers.mockResolvedValue([summary]);

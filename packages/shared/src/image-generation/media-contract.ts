@@ -8,21 +8,17 @@
 import { z } from "zod";
 
 import { isBlockedIP } from "../security/ip-validation";
+import {
+  MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_COUNT,
+  MEDIA_INPUT_MIME_TYPES,
+} from "./media-limits";
 
-const BYTES_PER_MB = 1024 * 1024;
-
-/** 单项和单次媒体输入的安全硬上限；套餐限制可进一步收紧。 */
-export const MAX_MEDIA_INPUT_BYTES = 200 * BYTES_PER_MB;
-
-/** 单次媒体引用数量硬上限；套餐 maxEditImages 可进一步收紧。 */
-export const MAX_MEDIA_INPUT_COUNT = 256;
-
-/** 保留媒体链路允许的输入图片 MIME。 */
-export const MEDIA_INPUT_MIME_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-] as const;
+export {
+  MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_COUNT,
+  MEDIA_INPUT_MIME_TYPES,
+} from "./media-limits";
 
 const mediaMimeTypeSchema = z.enum(MEDIA_INPUT_MIME_TYPES);
 const mediaByteLengthSchema = z
@@ -59,7 +55,7 @@ const dataMediaInputReferenceSchema = z
     });
   });
 
-const storageMediaInputReferenceSchema = z
+export const storageMediaInputReferenceSchema = z
   .object({
     source: z.literal("storage"),
     mimeType: mediaMimeTypeSchema,
@@ -130,3 +126,126 @@ export const mediaInputReferencesSchema = z
 
 /** 单个 JSON-safe 媒体输入引用类型。 */
 export type MediaInputReference = z.infer<typeof mediaInputReferenceSchema>;
+
+/** 平台持久视频输入对象必须显式保存当前 bucket，不能依赖运行时默认值漂移。 */
+export const persistedVideoInputReferenceSchema =
+  storageMediaInputReferenceSchema.extend({
+    storageBucket: z.string().trim().min(1).max(128),
+  });
+
+/** 任务创建前仍可包含 data、storage 或 remote 来源的具名视频输入。 */
+export const videoInputReferenceManifestSchema = z
+  .object({
+    firstFrame: mediaInputReferenceSchema.optional(),
+    lastFrame: mediaInputReferenceSchema.optional(),
+    referenceImages: mediaInputReferencesSchema.optional(),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.lastFrame && !manifest.firstFrame) {
+      context.addIssue({
+        code: "custom",
+        path: ["lastFrame"],
+        message: "lastFrame requires firstFrame",
+      });
+    }
+    if (
+      (manifest.firstFrame || manifest.lastFrame) &&
+      manifest.referenceImages?.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["referenceImages"],
+        message: "Frame inputs and reference images are mutually exclusive",
+      });
+    }
+    const references = listVideoInputManifestReferences(manifest);
+    if (references.length > MAX_MEDIA_INPUT_COUNT) {
+      context.addIssue({
+        code: "custom",
+        message: "Video input count exceeds the allowed maximum",
+      });
+    }
+    const totalBytes = references.reduce(
+      (total, reference) => total + reference.byteLength,
+      0
+    );
+    if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
+      context.addIssue({
+        code: "custom",
+        message: "Total media input bytes exceed the allowed maximum",
+      });
+    }
+  });
+
+/** 视频任务保存的 storage-only 具名输入清单。 */
+export const videoInputManifestSchema = z
+  .object({
+    firstFrame: persistedVideoInputReferenceSchema.optional(),
+    lastFrame: persistedVideoInputReferenceSchema.optional(),
+    referenceImages: z
+      .array(persistedVideoInputReferenceSchema)
+      .min(1)
+      .max(MAX_MEDIA_INPUT_COUNT)
+      .optional(),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.lastFrame && !manifest.firstFrame) {
+      context.addIssue({
+        code: "custom",
+        path: ["lastFrame"],
+        message: "lastFrame requires firstFrame",
+      });
+    }
+    if (
+      (manifest.firstFrame || manifest.lastFrame) &&
+      manifest.referenceImages?.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["referenceImages"],
+        message: "Frame inputs and reference images are mutually exclusive",
+      });
+    }
+    const references = listVideoInputManifestReferences(manifest);
+    if (references.length > MAX_MEDIA_INPUT_COUNT) {
+      context.addIssue({
+        code: "custom",
+        message: "Video input count exceeds the allowed maximum",
+      });
+    }
+    const totalBytes = references.reduce(
+      (total, reference) => total + reference.byteLength,
+      0
+    );
+    if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
+      context.addIssue({
+        code: "custom",
+        message: "Total media input bytes exceed the allowed maximum",
+      });
+    }
+  });
+
+/** 任务创建前的具名视频输入清单类型。 */
+export type VideoInputReferenceManifest = z.infer<
+  typeof videoInputReferenceManifestSchema
+>;
+
+/** 已归一为平台持久对象的具名视频输入清单类型。 */
+export type VideoInputManifest = z.infer<typeof videoInputManifestSchema>;
+
+/** 按 firstFrame、lastFrame、referenceImages 的稳定语义顺序展开清单。 */
+export function listVideoInputManifestReferences<
+  T extends MediaInputReference,
+>(manifest: {
+  firstFrame?: T | undefined;
+  lastFrame?: T | undefined;
+  referenceImages?: T[] | undefined;
+}): T[] {
+  return [
+    ...(manifest.firstFrame ? [manifest.firstFrame] : []),
+    ...(manifest.lastFrame ? [manifest.lastFrame] : []),
+    ...(manifest.referenceImages ?? []),
+  ];
+}

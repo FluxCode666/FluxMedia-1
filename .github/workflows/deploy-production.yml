@@ -125,10 +125,12 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
           IMAGE_BACKEND_POOL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
           MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
+          MEDIA_GENERATION_FINANCIAL_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
           VIDEO_GENERATION_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_moderation_test
         run: |
           set -euo pipefail
           pnpm --filter @repo/integration-tests test:image-backend-pool
+          pnpm --filter @repo/integration-tests test:media-generation-financial-recovery
           pnpm --filter @repo/integration-tests test:video-generation-recovery
           pnpm --filter @repo/integration-tests test:media-backend-pool-migration
 
@@ -138,6 +140,10 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @repo/database db:release-gate -- drain
+          pnpm --filter @repo/database db:release-gate -- preflight-early
+          VIDEO_INPUT_ROLLBACK_MANIFEST=/tmp/video-input-rollback.ndjson \
+            node apps/web/scripts/migrate-video-input-assets.mjs migrate \
+            --confirm-no-legacy-writers
           pnpm --filter @repo/database db:release-gate -- preflight
           pnpm --filter @repo/database db:release-gate -- postcheck-initial
 
@@ -152,7 +158,11 @@ jobs:
           NEXT_PUBLIC_GENERATIONS_BUCKET_NAME: generations
           NEXT_PUBLIC_PAYMENT_PROVIDER: none
           NEXT_TELEMETRY_DISABLED: "1"
-        run: pnpm --filter @repo/web build
+        run: |
+          set -euo pipefail
+          pnpm --filter @repo/web build
+          pnpm --filter @repo/web assert:api-upstream-worker-standalone
+          pnpm --filter @repo/web smoke:api-upstream-worker
 
   build-and-push:
     name: Build and push web, migrate, and proxy images
@@ -420,6 +430,23 @@ jobs:
               </dev/null
           }
 
+          # 用本次新 Web 镜像编译旧 requestTransformScript，并确认
+          # 非终态 API 视频已排空。命令只输出脱敏 JSON 证据。
+          run_api_upstream_adapter_preflight() {
+            docker compose run --rm --no-deps \
+              --interactive=false web \
+              node apps/web/scripts/preflight-api-upstream-adapter-migration.mjs \
+              </dev/null
+          }
+
+          # 旧 schema 输入全部复制为任务对象；0074 已完成时命令是幂等空操作。
+          run_video_input_asset_migration() {
+            docker compose --profile maintenance run --rm --no-deps \
+              --interactive=false migrate \
+              node apps/web/scripts/migrate-video-input-assets.mjs migrate \
+              --confirm-no-legacy-writers </dev/null
+          }
+
           # 仅在迁移开始前恢复旧镜像元数据；是否重启由退出状态机决定。
           restore_previous_metadata() {
             if [ -n "${previous_image}" ]; then
@@ -469,12 +496,22 @@ jobs:
               return "${status}"
             fi
 
-            restore_previous_metadata
+            legacy_startup_allowed=false
             if [ "${web_stopped}" = "true" ] \
               && [ -n "${previous_image}" ] \
               && [ -n "${previous_tag}" ]; then
-              echo "迁移尚未开始，恢复旧 Web 服务。" >&2
+              # 此时 .env 仍指向本次新 migrator；首次发布的旧 migrator 不认识
+              # legacy-startup，必须先用新镜像证明旧 schema 可启动，再切回旧元数据。
+              if run_release_gate legacy-startup >/dev/null; then
+                legacy_startup_allowed=true
+              fi
+            fi
+            restore_previous_metadata
+            if [ "${legacy_startup_allowed}" = "true" ]; then
+              echo "迁移尚未开始且旧 schema 门禁通过，恢复旧 Web 服务。" >&2
               docker compose up -d --no-deps web >/dev/null 2>&1 || true
+            elif [ "${web_stopped}" = "true" ]; then
+              echo "旧应用启动门禁拒绝恢复，保持维护状态。" >&2
             fi
             return "${status}"
           }
@@ -491,7 +528,7 @@ jobs:
           fi
 
           echo "在停服前烟测新 migrator 镜像与纯中转门禁。"
-          preliminary_preflight="$(run_release_gate preflight)"
+          preliminary_preflight="$(run_release_gate preflight-early)"
           printf '%s\n' "${preliminary_preflight}"
           if printf '%s\n' "${preliminary_preflight}" \
             | grep -qx 'relay_only_column=present'; then
@@ -509,14 +546,20 @@ jobs:
           fi
 
           run_release_gate drain
-          run_release_gate preflight
+          run_release_gate preflight-early
+          run_api_upstream_adapter_preflight
 
           echo "创建迁移前数据库备份并校验最终存储。"
           bash ./create-database-backup.sh \
             create .env "${deploy_path}" "${image_tag}" "${git_sha}"
 
-          echo "执行数据库迁移。"
+          install -d -m 700 state
+          echo "收编历史视频输入资产。"
           migration_started=true
+          run_video_input_asset_migration
+          run_release_gate preflight
+
+          echo "执行数据库迁移。"
           # 远程脚本本身从 SSH stdin 读取；迁移容器不得继承 stdin，否则会吞掉后续
           # web 启动与健康检查命令，并让未完成的部署被误判为成功。
           if ! docker compose --profile maintenance run --rm --no-deps \

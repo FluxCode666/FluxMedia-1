@@ -63,7 +63,8 @@ type ModelConfigurationBucketSettingKey =
 type ModelConfigurationJsonSettingKey =
   | "IMAGE_MODEL_CREDIT_PRICES"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
-  | "MODEL_MARKETPLACE_CONFIG";
+  | "MODEL_MARKETPLACE_CONFIG"
+  | "VIDEO_MODEL_CAPABILITY_OVERRIDES";
 
 type ModelConfigurationRepositoryBundle = {
   repository: ModelConfigurationRepository;
@@ -289,6 +290,8 @@ function createReadDependencies(
         await dependencies.loadSettingJson("MODEL_MARKETPLACE_CONFIG"),
         bucketConfig.assetBucket
       ),
+    loadVideoCapabilityOverrides: () =>
+      dependencies.loadSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES"),
     loadRuntimeCatalog: dependencies.loadRuntimeCatalog,
     buildCoverUrl: (
       category: "image" | "video",

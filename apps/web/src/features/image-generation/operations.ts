@@ -444,6 +444,17 @@ async function runAuxiliaryImageEdit(input: {
           };
       const errorMessage =
         failedResult.error || "Image repair completed without an image output";
+      if (failedResult.backendSwitchAllowed === false) {
+        if (!failedResult.backendHealthNeutral) {
+          await session.completeCurrent({
+            success: false,
+            terminal: true,
+            error: errorMessage,
+            durationMs: Date.now() - attemptStartedAt,
+          });
+        }
+        return failedResult;
+      }
       if (classifyGenerationError(errorMessage) !== "platform") {
         await session.completeCurrent({
           success: false,
@@ -793,6 +804,50 @@ function buildModelMetadata(params: {
   };
 }
 
+/** 从当前租约读取图片任务必须固定的 API 适配版本；非 API 成员保持空对。 */
+function getCurrentImageApiAdapterSnapshot(
+  session: RuntimeBackendSession
+): {
+  apiAdapterMemberId: string | null;
+  apiAdapterVersionId: string | null;
+} {
+  const lease = session.current;
+  if (!lease || lease.memberType !== "api") {
+    return { apiAdapterMemberId: null, apiAdapterVersionId: null };
+  }
+  const { apiAdapterMemberId, apiAdapterVersionId } = lease.acquisition.lease;
+  if (!apiAdapterMemberId || !apiAdapterVersionId) {
+    throw new Error("API 图片成员租约缺少固定适配版本");
+  }
+  if (apiAdapterMemberId !== lease.memberId) {
+    throw new Error("API 图片成员租约适配版本归属不一致");
+  }
+  return { apiAdapterMemberId, apiAdapterVersionId };
+}
+
+/**
+ * 在每次可能外呼前把当前成员/版本写入 pending 图片任务。
+ *
+ * WHY：请求脚本失败允许在尚未外呼时换号；因此不能只在任务创建时固定首个候选，
+ * 必须在实际尝试前随当前租约更新。CAS 未命中时停止，避免已终态任务继续外呼。
+ */
+async function pinPendingImageApiAdapterSnapshot(
+  generationId: string,
+  session: RuntimeBackendSession
+): Promise<void> {
+  const snapshot = getCurrentImageApiAdapterSnapshot(session);
+  const pinned = await db
+    .update(generation)
+    .set(snapshot)
+    .where(
+      and(eq(generation.id, generationId), eq(generation.status, "pending"))
+    )
+    .returning({ id: generation.id });
+  if (pinned.length === 0) {
+    throw new Error("图片任务已不再处于可提交状态");
+  }
+}
+
 export async function runImageGenerationForUser(
   input: RunImageGenerationInput,
   callbacks?: ImageGenerationCallbacks
@@ -1085,6 +1140,7 @@ async function runQueuedImageGenerationForUser({
   const buildStreamTelemetryMetadata = () => ({
     upstreamStream: streamTelemetry.snapshot(),
   });
+  const initialApiAdapterSnapshot = getCurrentImageApiAdapterSnapshot(session);
 
   await db.insert(generation).values({
     id: generationId,
@@ -1096,6 +1152,7 @@ async function runQueuedImageGenerationForUser({
     status: "pending",
     creditsConsumed: initialCreditCharge,
     storageBucket: bucket,
+    ...initialApiAdapterSnapshot,
     createdAt: operationCreatedAt,
     metadata:
       input.mode === "edit"
@@ -1355,6 +1412,7 @@ async function runQueuedImageGenerationForUser({
       IMAGE_GENERATION_PENDING_TIMEOUT_MS - (Date.now() - startedAt)
     );
     const commonSignal = AbortSignal.timeout(remainingMs);
+    await pinPendingImageApiAdapterSnapshot(generationId, session);
     return input.mode === "edit"
       ? await editImage(
           activeConfig,
@@ -1530,6 +1588,17 @@ async function runQueuedImageGenerationForUser({
         };
       }
       const errorMessage = result.error || "Image generation failed";
+      if (result.backendSwitchAllowed === false) {
+        if (!result.backendHealthNeutral) {
+          await session.completeCurrent({
+            success: false,
+            terminal: true,
+            error: errorMessage,
+            durationMs,
+          });
+        }
+        break;
+      }
       if (classifyGenerationError(errorMessage) !== "platform") {
         await session.completeCurrent({
           success: false,

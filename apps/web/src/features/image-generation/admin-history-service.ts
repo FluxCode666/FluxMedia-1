@@ -9,6 +9,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import {
+  normalizeHistoricalModelId,
+  normalizeSupportedModelId,
+} from "@repo/shared/image-backend/supported-models";
+import {
   type AdminHistoryListOutput,
   type AdminHistoryRecord,
   adminHistoryCursorFiltersSchema,
@@ -18,6 +22,7 @@ import {
   type HistoryCreditDetails,
   type HistoryRecordStatus,
   type HistoryReferenceImage,
+  type HistoryVideoInputSummary,
 } from "@repo/shared/image-generation/history-contract";
 import { z } from "zod";
 
@@ -97,10 +102,11 @@ export interface AdminImageHistoryRow extends AdminHistoryRowCommon {
 /** PostgreSQL 仓储返回的管理端视频窄行。 */
 export interface AdminVideoHistoryRow extends AdminHistoryRowCommon {
   kind: "video";
-  family: string;
   resolution: string;
-  durationSeconds: number;
+  duration: number;
   aspectRatio: string;
+  generateAudio: boolean;
+  input: HistoryVideoInputSummary;
   videoUrl: string | null;
 }
 
@@ -277,6 +283,7 @@ function adaptAdminHistoryRow(row: AdminHistoryListRow): AdminHistoryRecord {
   const { rawError, ...safeRow } = row;
   return adminHistoryRecordSchema.parse({
     ...safeRow,
+    model: normalizeHistoricalModelId(row.model) ?? row.model,
     error: sanitizeHistoryError(rawError),
     createdAt: toIsoDateTime(row.createdAt),
     completedAt: row.completedAt ? toIsoDateTime(row.completedAt) : null,
@@ -300,10 +307,12 @@ export async function loadAdminHistoryRecords(
   dependencies: { repository: AdminHistoryRepository; tokenSecret?: string }
 ): Promise<AdminHistoryListOutput> {
   const parsed = adminHistoryListInputSchema.parse(request.input);
+  const requestedModel =
+    normalizeSupportedModelId(parsed.model) ?? parsed.model;
   const filters = adminHistoryCursorFiltersSchema.parse({
     createdFrom: parsed.createdFrom,
     createdTo: parsed.createdTo,
-    model: parsed.model,
+    model: requestedModel,
     status: parsed.status,
     type: parsed.type,
     userEmail: parsed.userEmail,
@@ -342,7 +351,7 @@ export async function loadAdminHistoryRecords(
       start: range.start,
       end: range.end,
       asOf,
-      model: parsed.model,
+      model: requestedModel,
       status: parsed.status,
       type: parsed.type,
       userEmail: parsed.userEmail,
@@ -388,7 +397,11 @@ export async function loadAdminHistoryRecords(
   const previousCursor =
     first && canReadPrevious ? createCursor(first, "previous") : null;
   const modelOptions = Array.from(
-    new Set(rawModelOptions.map((model) => model.trim()).filter(Boolean))
+    new Set(
+      rawModelOptions
+        .map((model) => normalizeHistoricalModelId(model))
+        .filter((model): model is string => Boolean(model))
+    )
   )
     .sort((left, right) => left.localeCompare(right))
     .slice(0, 200);

@@ -12,16 +12,19 @@ import {
   normalizeSubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
 import {
+  apiModelMappingsSchema,
+  apiUpstreamAdapterDraftSchema,
+} from "@repo/shared/image-backend/api-upstream-adaptation";
+import {
   getGroupImageCreditOverrides,
   getGroupVideoCreditOverrides,
   type ImageCreditOverrides,
 } from "@repo/shared/image-backend/group-image-pricing";
-import { requestParameterMappingsSchema } from "@repo/shared/image-backend/request-parameter-mapping";
 import type { BackendSchedulingStrategy } from "@repo/shared/image-backend/scheduling-policy";
 import { logWarn } from "@repo/shared/logger";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
-import { sql } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
@@ -34,6 +37,9 @@ import {
   defaultBackendPoolRepository,
 } from "./repository";
 import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
+import { normalizeRuntimeRequestedModelId } from "./runtime-model-matching";
+import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
+import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 import { BackendSchedulerError } from "./scheduler-error";
 
 const IMAGE_LEASE_TTL_MS = 21 * 60 * 1000;
@@ -53,15 +59,34 @@ const apiKeyGroupBindingRowSchema = z.object({
   generation_group_id: z.string().trim().min(1).nullable(),
 });
 
+const configuredModelIdsRowSchema = z.object({
+  member_type: z.enum(["api", "adobe"]),
+  adobe_mode: z.enum(["gateway", "direct"]).nullable(),
+  supported_model_ids: z.array(z.string().trim().min(1)),
+});
+
+const apiVideoRecoveryRowSchema = z.object({
+  member_id: z.string().trim().min(1),
+  credential_scope: z.string().trim().min(1),
+  api_key: z.string().min(1),
+  adapter_configuration: z.unknown(),
+});
+
+/** 固定版本视频恢复只需要参数化 SQL 执行端口，真实 PostgreSQL 测试可注入连接。 */
+export interface ApiVideoRecoveryConfigDatabase {
+  execute(query: SQL): Promise<unknown>;
+}
+
 const runtimeConfigRowSchema = z.object({
   member_id: z.string().trim().min(1),
   member_type: z.enum(["api", "adobe"]),
   supported_model_ids: z.array(z.string().trim().min(1)).min(1),
   member_content_safety_enabled: z.boolean(),
-  api_base_url: z.string().nullable(),
   api_key: z.string().nullable(),
-  api_use_stream: z.boolean().nullable(),
-  parameter_mappings: z.unknown().nullable(),
+  api_credential_scope: z.string().nullable(),
+  api_adapter_member_id: z.string().nullable(),
+  api_adapter_version_id: z.string().nullable(),
+  api_adapter_configuration: z.unknown().nullable(),
   adobe_mode: z.enum(["gateway", "direct"]).nullable(),
   adobe_base_url: z.string().nullable(),
   adobe_api_key: z.string().nullable(),
@@ -106,6 +131,14 @@ export interface CreateRuntimeBackendSessionInput {
   requestKind: "image" | "video";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
+}
+
+/** 配置可达性查询所需的 Principal 分组事实。 */
+export interface ListConfiguredRuntimeModelIdsInput {
+  userId: string;
+  apiKeyId?: string;
+  requestedGroupId?: string;
+  pinnedGroupId?: string;
 }
 
 /** 运行时会话只暴露获租、结果上报和关闭，避免调用方直接操作租约行。 */
@@ -227,6 +260,114 @@ async function resolveRuntimeBackendGroup(
   };
 }
 
+/**
+ * 读取当前 Principal 可信分组中已配置的模型 ID。
+ *
+ * @param input - 用户、可选外部 API Key 绑定和站内显式分组选择。
+ * @returns 去重后的成员配置模型 ID；忽略健康、冷却、租约、并发和实时容量。
+ * @sideEffects 读取套餐、API Key 绑定、分组与成员配置，不获取租约也不更新成员状态。
+ * @throws 分组不可达、API Key 覆盖或套餐不满足时沿用运行时选择错误。
+ */
+export async function listConfiguredRuntimeModelIds(
+  input: ListConfiguredRuntimeModelIdsInput
+): Promise<string[]> {
+  const group = await resolveRuntimeBackendGroup({
+    ...input,
+    modelId: "__video_capability_probe__",
+    requestKind: "video",
+    requiresContentSafety: false,
+  });
+  const { db } = await import("@repo/database");
+  const rows = z.array(configuredModelIdsRowSchema).parse(
+    extractExecuteRows(
+      await db.execute(sql`
+        select
+          member.type as member_type,
+          adobe.mode as adobe_mode,
+          member.supported_model_ids
+        from image_backend_member as member
+        inner join image_backend_member_group as membership
+          on membership.member_id = member.id
+        left join image_backend_member_adobe_config as adobe
+          on adobe.member_id = member.id
+        where membership.group_id = ${group.id}
+          and member.is_enabled = true
+        order by member.id asc
+      `)
+    )
+  );
+  return projectConfiguredVideoModelIds(
+    rows.map((row) => ({
+      memberType: row.member_type,
+      adobeMode: row.adobe_mode,
+      supportedModelIds: row.supported_model_ids,
+    }))
+  );
+}
+
+/**
+ * 加载已接受视频任务固定 API 账号的当前凭据。
+ *
+ * @param memberId - 任务在接受阶段持久化的统一账号 ID。
+ * @param apiAdapterMemberId - 固定适配版本的成员快照，必须与统一账号一致。
+ * @param apiAdapterVersionId - 提交时固定的不可变版本 ID。
+ * @returns 原账号仍存在且类型配置完整时返回最小 API 运行时配置，否则返回 null。
+ * @sideEffects 读取统一账号及 API 配置；不获取新租约、不切换账号、不更新健康状态。
+ * @failure 数据库结果形状非法时由 Zod 抛出；URL 非 HTTP(S) 时显式失败。
+ */
+export async function loadApiVideoRecoveryConfig(
+  memberId: string,
+  apiAdapterMemberId: string,
+  apiAdapterVersionId: string,
+  modelId: string,
+  database?: ApiVideoRecoveryConfigDatabase
+): Promise<ApiConfig | null> {
+  const queryDatabase = database ?? (await import("@repo/database")).db;
+  const rows = z.array(apiVideoRecoveryRowSchema).parse(
+    extractExecuteRows(
+      await queryDatabase.execute(sql`
+        select
+          member.id as member_id,
+          api.credential_scope,
+          api.api_key,
+          version.configuration as adapter_configuration
+        from image_backend_member as member
+        inner join image_backend_member_api_config as api
+          on api.member_id = member.id
+        inner join image_backend_member_api_adapter_version as version
+          on version.member_id_snapshot = ${apiAdapterMemberId}
+          and version.id = ${apiAdapterVersionId}
+          and version.credential_scope = api.credential_scope
+        where member.id = ${memberId}
+          and member.id = ${apiAdapterMemberId}
+          and member.type = 'api'
+        limit 1
+      `)
+    )
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const adapter = apiUpstreamAdapterDraftSchema.parse(
+    row.adapter_configuration
+  );
+  if (adapter.credentialScope !== row.credential_scope) {
+    throw new Error("API 视频恢复凭据域与固定适配版本不一致");
+  }
+  parseMediaUpstreamUrl(adapter.baseUrl);
+  return {
+    baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
+    apiKey: row.api_key,
+    model: modelId,
+    useStream: adapter.useStream,
+    backend: {
+      type: "pool-api",
+      id: row.member_id,
+      modelMappings: adapter.modelMappings,
+      apiUpstreamAdapter: adapter,
+    },
+  };
+}
+
 /** 根据统一成员与类型配置表构造现有媒体适配器可消费的配置快照。 */
 async function loadRuntimeBackendLease(
   acquisition: AcquiredBackendMemberLease,
@@ -242,10 +383,11 @@ async function loadRuntimeBackendLease(
           member.type as member_type,
           member.supported_model_ids,
           member.content_safety_enabled as member_content_safety_enabled,
-          api.base_url as api_base_url,
           api.api_key,
-          api.use_stream as api_use_stream,
-          api.parameter_mappings,
+          api.credential_scope as api_credential_scope,
+          lease.api_adapter_member_id,
+          lease.api_adapter_version_id,
+          api_version.configuration as api_adapter_configuration,
           adobe.mode as adobe_mode,
           adobe.base_url as adobe_base_url,
           adobe.api_key as adobe_api_key,
@@ -253,8 +395,15 @@ async function loadRuntimeBackendLease(
           adobe.default_resolution as adobe_default_resolution,
           adobe.gpt_image_quality as adobe_gpt_image_quality
         from image_backend_member as member
+        left join image_backend_member_lease as lease
+          on lease.id = ${acquisition.lease.id}
+          and lease.member_id = member.id
         left join image_backend_member_api_config as api
           on api.member_id = member.id
+        left join image_backend_member_api_adapter_version as api_version
+          on api_version.member_id_snapshot = lease.api_adapter_member_id
+          and api_version.id = lease.api_adapter_version_id
+          and api_version.credential_scope = api.credential_scope
         left join image_backend_member_adobe_config as adobe
           on adobe.member_id = member.id
         where member.id = ${acquisition.member.id}
@@ -269,7 +418,7 @@ async function loadRuntimeBackendLease(
     id: row.member_id,
     groupId: group.id,
     userId: input.userId,
-    apiKeyId: input.apiKeyId,
+    ...(input.apiKeyId ? { apiKeyId: input.apiKeyId } : {}),
     billingGroupId: group.id,
     imageCreditOverrides: group.imageCreditOverrides,
     videoCreditOverrides: group.videoCreditOverrides,
@@ -278,27 +427,39 @@ async function loadRuntimeBackendLease(
     group.contentSafetyEnabled ?? row.member_content_safety_enabled;
 
   if (row.member_type === "api") {
-    if (!row.api_base_url || !row.api_key) {
-      throw new Error("API 成员缺少运行时地址或凭据");
+    if (
+      !row.api_key ||
+      !row.api_credential_scope ||
+      !row.api_adapter_member_id ||
+      !row.api_adapter_version_id ||
+      !row.api_adapter_configuration ||
+      row.api_adapter_member_id !== row.member_id
+    ) {
+      throw new Error("API 成员缺少固定适配版本、地址或凭据");
     }
-    parseMediaUpstreamUrl(row.api_base_url);
+    const adapter = apiUpstreamAdapterDraftSchema.parse(
+      row.api_adapter_configuration
+    );
+    if (adapter.credentialScope !== row.api_credential_scope) {
+      throw new Error("API 成员当前凭据域与固定适配版本不一致");
+    }
+    parseMediaUpstreamUrl(adapter.baseUrl);
     return {
       acquisition,
       memberId: row.member_id,
       memberType: "api",
       adobeMode: null,
       config: {
-        baseUrl: row.api_base_url.replace(/\/+$/, ""),
+        baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
         apiKey: row.api_key,
         model: input.modelId,
-        useStream: row.api_use_stream ?? false,
+        useStream: adapter.useStream,
         contentSafetyEnabled,
         backend: {
           ...commonBackend,
           type: "pool-api",
-          parameterMappings: requestParameterMappingsSchema.parse(
-            row.parameter_mappings ?? []
-          ),
+          modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
+          apiUpstreamAdapter: adapter,
         },
       },
     };
@@ -488,11 +649,13 @@ async function releaseRuntimeLease(lease: RuntimeBackendLease): Promise<void> {
 export async function createRuntimeBackendSession(
   input: CreateRuntimeBackendSessionInput
 ): Promise<RuntimeBackendSession> {
-  const modelId = input.modelId.trim();
+  const modelId = normalizeRuntimeRequestedModelId(input);
   if (!modelId) {
     throw new BackendSchedulerError(
       "no_eligible_member",
-      "媒体模型 ID 不能为空"
+      input.requestKind === "video"
+        ? "视频模型 ID 必须是全局目录中的真实模型 ID"
+        : "媒体模型 ID 不能为空"
     );
   }
   const normalizedInput = { ...input, modelId };
@@ -555,11 +718,7 @@ export async function createRuntimeBackendSession(
       return acquireNext();
     }
 
-    if (
-      (normalizedInput.requiresMask && lease.memberType !== "api") ||
-      (normalizedInput.requestKind === "video" &&
-        !(lease.memberType === "adobe" && lease.adobeMode === "direct"))
-    ) {
+    if (!canRuntimeBackendLeaseServeRequest(normalizedInput, lease)) {
       await releaseRuntimeLease(lease);
       excludedMemberIds.add(lease.memberId);
       return acquireNext();
@@ -609,7 +768,7 @@ export async function createRuntimeBackendSession(
         lease,
         success: result.success,
         terminal: result.terminal ?? false,
-        error: result.error,
+        ...(result.error ? { error: result.error } : {}),
         durationMs: result.durationMs,
       });
       if (!result.success && result.terminal) {

@@ -13,8 +13,11 @@ import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/components/dialog";
 import { Separator } from "@repo/ui/components/separator";
-import { Film } from "lucide-react";
+import { Film, Images } from "lucide-react";
+import Image from "next/image";
 import { useLocale } from "next-intl";
+import { useEffect, useState } from "react";
+import { getVideoInputsAction } from "../history-actions";
 import { formatHistoryError } from "./history-error-copy";
 
 export type HistoryVideoDialogRecord = {
@@ -22,16 +25,30 @@ export type HistoryVideoDialogRecord = {
   completedAt: string | null;
   createdAt: string;
   creditsConsumed: number;
-  durationSeconds: number;
+  duration: number;
   error: string | null;
-  family: string;
+  generateAudio: boolean;
   id: string;
+  input: {
+    mode: "none" | "first-frame" | "first-last-frames" | "references";
+    count: number;
+  };
   kind: "video";
   model: string;
   prompt: string;
   resolution: string;
   status: "processing" | "completed" | "failed";
   videoUrl: string | null;
+};
+
+type VideoInputDetails = NonNullable<
+  Awaited<ReturnType<typeof getVideoInputsAction>>["data"]
+>;
+
+type VideoInputAsset = {
+  label: string;
+  mimeType: string;
+  url: string;
 };
 
 type HistoryVideoDialogProps = {
@@ -71,6 +88,51 @@ function getStatusClass(status: HistoryVideoDialogRecord["status"]): string {
   return "bg-muted text-muted-foreground";
 }
 
+/** 把 UOL 具名输入响应投影为稳定展示顺序，不保留前一个任务的 URL。 */
+function listInputAssets(
+  details: VideoInputDetails,
+  copy: (en: string, zh: string) => string
+): VideoInputAsset[] {
+  return [
+    ...(details.firstFrame
+      ? [
+          {
+            label: copy("First frame", "首帧"),
+            ...details.firstFrame,
+          },
+        ]
+      : []),
+    ...(details.lastFrame
+      ? [
+          {
+            label: copy("Last frame", "尾帧"),
+            ...details.lastFrame,
+          },
+        ]
+      : []),
+    ...(details.referenceImages ?? []).map((asset, index) => ({
+      label: `${copy("Reference", "参考图")} ${index + 1}`,
+      ...asset,
+    })),
+  ];
+}
+
+/** 将机器输入模式转为不依赖新增 i18n key 的详情摘要。 */
+function formatInputSummary(
+  input: HistoryVideoDialogRecord["input"],
+  copy: (en: string, zh: string) => string
+): string {
+  const mode = {
+    none: copy("No image input", "无图片输入"),
+    "first-frame": copy("First frame", "首帧"),
+    "first-last-frames": copy("First and last frames", "首尾帧"),
+    references: copy("Reference images", "参考图"),
+  }[input.mode];
+  return input.count > 0
+    ? `${mode} · ${input.count} ${copy("images", "张")}`
+    : mode;
+}
+
 /**
  * 展示视频预览、规格、结算和失败信息。
  *
@@ -92,6 +154,42 @@ export function HistoryVideoDialog({
     processing: copy("Processing", "处理中"),
   }[record.status];
   const errorMessage = formatHistoryError(record.error, copy);
+  const [inputState, setInputState] = useState<
+    | { status: "loading" }
+    | { status: "ready"; details: VideoInputDetails }
+    | { status: "error" }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    if (!open) return;
+    let acceptsResult = true;
+    const taskId = record.id;
+    setInputState({ status: "loading" });
+    void getVideoInputsAction({ taskId })
+      .then((result) => {
+        if (!acceptsResult) return;
+        if (!result.data || result.data.taskId !== taskId) {
+          setInputState({ status: "error" });
+          return;
+        }
+        setInputState({ status: "ready", details: result.data });
+      })
+      .catch(() => {
+        if (acceptsResult) setInputState({ status: "error" });
+      });
+    return () => {
+      acceptsResult = false;
+    };
+  }, [open, record.id]);
+
+  const inputDetails =
+    inputState.status === "ready" ? inputState.details : null;
+  const inputAssets = inputDetails ? listInputAssets(inputDetails, copy) : [];
+  const inputSummary = inputDetails?.summary ?? record.input;
+  const inputSkeletonKeys = Array.from(
+    { length: Math.max(record.input.count, 1) },
+    (_, inputNumber) => `${record.id}-input-loading-${inputNumber + 1}`
+  );
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
@@ -164,14 +262,6 @@ export function HistoryVideoDialog({
                 </div>
                 <div>
                   <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                    {copy("Family", "模型族")}
-                  </dt>
-                  <dd className="mt-0.5 font-mono text-xs text-foreground">
-                    {record.family}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
                     {copy("Resolution", "分辨率")}
                   </dt>
                   <dd className="mt-0.5 font-mono text-xs text-foreground">
@@ -183,7 +273,25 @@ export function HistoryVideoDialog({
                     {copy("Duration", "时长")}
                   </dt>
                   <dd className="mt-0.5 text-xs text-foreground">
-                    {record.durationSeconds} {copy("seconds", "秒")}
+                    {record.duration} {copy("seconds", "秒")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Audio", "声音")}
+                  </dt>
+                  <dd className="mt-0.5 text-xs text-foreground">
+                    {record.generateAudio
+                      ? copy("Enabled", "已启用")
+                      : copy("Disabled", "未启用")}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Image input", "图片输入")}
+                  </dt>
+                  <dd className="mt-0.5 text-xs text-foreground">
+                    {formatInputSummary(inputSummary, copy)}
                   </dd>
                 </div>
                 <div>
@@ -234,6 +342,78 @@ export function HistoryVideoDialog({
                   </div>
                 ) : null}
               </dl>
+
+              <Separator />
+
+              <section aria-live="polite">
+                <div className="flex items-center gap-2">
+                  <Images
+                    aria-hidden="true"
+                    className="size-4 text-muted-foreground"
+                    strokeWidth={1.5}
+                  />
+                  <h3 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Actual inputs", "实际输入")}
+                  </h3>
+                </div>
+                {inputState.status === "loading" ? (
+                  <div
+                    aria-label={copy(
+                      "Loading video inputs",
+                      "正在加载视频输入"
+                    )}
+                    className="mt-3 grid grid-cols-2 gap-3"
+                    role="status"
+                  >
+                    {inputSkeletonKeys.map((key) => (
+                      <div
+                        className="aspect-square animate-pulse rounded-md bg-muted motion-reduce:animate-none"
+                        key={key}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {inputState.status === "error" ? (
+                  <p className="mt-3 text-sm leading-relaxed text-destructive">
+                    {copy(
+                      "Video inputs could not be loaded. Reopen the details to retry.",
+                      "视频输入加载失败，请重新打开详情后重试。"
+                    )}
+                  </p>
+                ) : null}
+                {inputState.status === "ready" && inputAssets.length === 0 ? (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    {copy(
+                      "This task has no image inputs.",
+                      "此任务没有图片输入。"
+                    )}
+                  </p>
+                ) : null}
+                {inputAssets.length > 0 ? (
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {inputAssets.map((asset) => (
+                      <figure
+                        className="min-w-0"
+                        key={`${asset.label}-${asset.url}`}
+                      >
+                        <div className="relative aspect-square overflow-hidden rounded-md border border-border bg-muted">
+                          <Image
+                            alt={asset.label}
+                            className="object-contain"
+                            fill
+                            sizes="(max-width: 640px) 50vw, 160px"
+                            src={asset.url}
+                            unoptimized
+                          />
+                        </div>
+                        <figcaption className="mt-1 truncate text-[11px] text-muted-foreground">
+                          {asset.label} · {asset.mimeType}
+                        </figcaption>
+                      </figure>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
             </div>
           </div>
         </div>

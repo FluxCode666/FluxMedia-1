@@ -2,7 +2,7 @@
  * 公开模型广场的模型卡片与媒体资产组件。
  *
  * 使用方是模型广场网格和详情弹窗；卡片严格消费公开 DTO，只展示 3:2 封面、类别、
- * 品牌图标、可复制模型 ID、最低价格与详情入口，不读取管理配置或用户权限。
+ * 品牌图标、可复制模型 ID、最低价格、视频输入摘要与详情入口，不读取管理配置或用户权限。
  */
 "use client";
 
@@ -29,9 +29,54 @@ import {
 /** 模型卡片对外暴露的交互。 */
 export type ModelMarketplaceCardProps = {
   model: ModelMarketplacePublicItem;
+  eagerCover?: boolean;
   onCopy: (modelId: string) => void;
   onViewDetails: (model: ModelMarketplacePublicItem) => void;
 };
+
+type PublicVideoModel = Extract<
+  ModelMarketplacePublicItem,
+  { category: "video" }
+>;
+
+/**
+ * 渲染视频模型的帧、参考图和声音能力摘要。
+ *
+ * @param props - 严格公开视频 DTO。
+ * @returns 三个可换行的短文本标签，完整限制仍在详情弹窗展示。
+ * @sideEffects 无。
+ * @failure DTO 已由服务端 schema 校验；未知帧枚举无法进入该组件。
+ */
+function VideoCapabilitySummary({ model }: { model: PublicVideoModel }) {
+  const t = useTranslations("ModelMarketplace");
+  const frameLabel =
+    model.input.frames === "none"
+      ? t("card.videoCapabilities.framesNone")
+      : model.input.frames === "first-only"
+        ? t("card.videoCapabilities.framesFirstOnly")
+        : t("card.videoCapabilities.framesFirstAndLast");
+  const referenceImagesLabel =
+    model.input.referenceImages.maxCount === 0
+      ? t("card.videoCapabilities.referenceImagesNone")
+      : t("card.videoCapabilities.referenceImagesMax", {
+          count: model.input.referenceImages.maxCount,
+        });
+  const audioLabel = !model.audio.supported
+    ? t("card.videoCapabilities.audioNone")
+    : model.audio.defaultEnabled
+      ? t("card.videoCapabilities.audioDefaultOn")
+      : t("card.videoCapabilities.audioOptional");
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-1.5">
+      {[frameLabel, referenceImagesLabel, audioLabel].map((label) => (
+        <Badge className="max-w-full font-normal" key={label} variant="outline">
+          <span className="truncate">{label}</span>
+        </Badge>
+      ))}
+    </div>
+  );
+}
 
 /**
  * 渲染带一次性本地兜底的 3:2 模型封面。
@@ -45,10 +90,12 @@ export function ModelMarketplaceCover({
   model,
   sizes,
   className = "",
+  eager = false,
 }: {
   model: ModelMarketplacePublicItem;
   sizes: string;
   className?: string;
+  eager?: boolean;
 }) {
   const fallbackCover = getDefaultModelMarketplaceCoverPath(model.category);
   const [source, setSource] = useState(model.coverUrl);
@@ -68,6 +115,7 @@ export function ModelMarketplaceCover({
       unoptimized
       alt={model.displayName}
       className={`object-cover ${className}`}
+      loading={eager ? "eager" : "lazy"}
       onError={handleImageError}
       sizes={sizes}
       src={source}
@@ -85,6 +133,7 @@ export function ModelMarketplaceCover({
  */
 export function ModelMarketplaceCard({
   model,
+  eagerCover = false,
   onCopy,
   onViewDetails,
 }: ModelMarketplaceCardProps) {
@@ -101,6 +150,7 @@ export function ModelMarketplaceCard({
           model={model}
           sizes="(min-width: 1280px) 24vw, (min-width: 768px) 36vw, 92vw"
           className="transition-transform duration-500 group-hover:scale-[1.025]"
+          eager={eagerCover}
         />
       </div>
 
@@ -155,6 +205,9 @@ export function ModelMarketplaceCard({
         <p className="mt-2 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
           {model.description || t("card.noDescription")}
         </p>
+        {model.category === "video" ? (
+          <VideoCapabilitySummary model={model} />
+        ) : null}
 
         <div className="mt-5 border-t border-border/70 pt-4">
           <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">

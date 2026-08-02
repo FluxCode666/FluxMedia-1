@@ -1,19 +1,26 @@
 /**
  * UOL 操作注册 - 统一媒体后端号池。
  *
- * 职责：只暴露分组、统一成员和 API Images 参数模板三类能力。
+ * 职责：只暴露分组、统一成员和 API 媒体参数模板三类能力。
  * Web/Codex 账号、Sub2API、注册机、旧 API/Adobe 双模型和定时同步均不属于现行契约。
  * 真实实现由 apps/web 的 UOL binding 注入。
  */
 import { z } from "zod";
-
+import {
+  apiModelMappingsSchema,
+  apiUpstreamAuthenticationSchema,
+  apiUpstreamOperationsSchema,
+} from "../../image-backend/api-upstream-adaptation";
+import {
+  apiUpstreamAdapterOperationIdSchema,
+  apiUpstreamJsonValueSchema,
+} from "../../image-backend/api-upstream-script-contract";
 import {
   backendGroupInputSchema,
   backendGroupOptionSchema,
   backendGroupSummarySchema,
 } from "../../image-backend/group-contract";
 import { backendMemberInputSchema } from "../../image-backend/member-contract";
-import { requestParameterMappingsSchema } from "../../image-backend/request-parameter-mapping";
 import { defineOperation } from "../registry";
 import type { AccessRequirement } from "../types";
 
@@ -29,7 +36,19 @@ const redactedApiConfigSchema = z
     baseUrl: z.string().url(),
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
-    parameterMappings: requestParameterMappingsSchema,
+    modelMappings: apiModelMappingsSchema,
+    authentication: apiUpstreamAuthenticationSchema.optional(),
+    credentialScope: z.string().optional(),
+    operations: apiUpstreamOperationsSchema.optional(),
+    currentAdapterVersion: z
+      .object({
+        id: z.string(),
+        revision: z.number().int().positive(),
+        createdAt: z.string(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -121,7 +140,7 @@ export const getGroupOptions = defineOperation({
 export const getAdminPool = defineOperation({
   name: "pool.getAdminPool",
   domain: "image-backend-pool",
-  title: "获取统一媒体后端号池",
+  title: "获取账号池",
   description: "读取分组、统一成员和调度指标的脱敏管理快照。",
   input: z.object({}).strict(),
   output: z
@@ -184,7 +203,19 @@ export const saveMember = defineOperation({
   description:
     "按互斥成员类型保存公共调度字段、模型配置目录中的显式能力和类型专属配置。",
   input: backendMemberInputSchema,
-  output: z.object({ id: z.string() }).strict(),
+  output: z
+    .object({
+      id: z.string(),
+      adapterVersion: z
+        .object({
+          id: z.string(),
+          revision: z.number().int().positive(),
+        })
+        .strict()
+        .nullable()
+        .optional(),
+    })
+    .strict(),
   access: poolWriteAccess,
   readOnly: false,
   destructive: false,
@@ -192,6 +223,94 @@ export const saveMember = defineOperation({
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.saveMember");
+  },
+});
+
+/** 使用生产 Worker 和校验器进行无网络 API 上游脚本测试。 */
+export const testApiUpstreamAdapter = defineOperation({
+  name: "pool.testApiUpstreamAdapter",
+  domain: "image-backend-pool",
+  title: "测试 API 上游适配脚本",
+  description: "使用脱敏样例验证请求或响应脚本，不读取密钥且不访问上游。",
+  input: z
+    .object({
+      operation: apiUpstreamAdapterOperationIdSchema,
+      stage: z.enum(["request", "response"]),
+      script: z.string().max(32_768),
+      sample: apiUpstreamJsonValueSchema,
+    })
+    .strict(),
+  output: z
+    .object({
+      preview: apiUpstreamJsonValueSchema,
+    })
+    .strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["queue"],
+  processLocalState: true,
+  execute: async () => {
+    throw new Error("Not yet wired: pool.testApiUpstreamAdapter");
+  },
+});
+
+/** 读取当前 Web 进程的脱敏 Worker Pool 运行诊断。 */
+export const getApiUpstreamRuntimeDiagnostics = defineOperation({
+  name: "pool.getApiUpstreamRuntimeDiagnostics",
+  domain: "image-backend-pool",
+  title: "获取 API 上游脚本运行诊断",
+  description: "读取当前进程的 Worker、队列和响应许可快照，不返回配置正文。",
+  input: z.object({}).strict(),
+  output: z
+    .object({
+      lifecycle: z.enum([
+        "starting",
+        "ready",
+        "unavailable",
+        "draining",
+        "closed",
+      ]),
+      workerCount: z.number().int().nonnegative(),
+      liveWorkerCount: z.number().int().nonnegative(),
+      requestQueueLength: z.number().int().nonnegative(),
+      responseQueueLength: z.number().int().nonnegative(),
+      responsePermitsInUse: z.number().int().nonnegative(),
+      responsePermitCapacity: z.number().int().nonnegative(),
+      saturationCount: z.number().int().nonnegative(),
+      replacementCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  access: poolWriteAccess,
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  processLocalState: true,
+  execute: async () => {
+    throw new Error("Not yet wired: pool.getApiUpstreamRuntimeDiagnostics");
+  },
+});
+
+/** 手动清除统一成员的暂态运行失败状态，使其重新进入调度候选。 */
+export const resetMemberStatus = defineOperation({
+  name: "pool.resetMemberStatus",
+  domain: "image-backend-pool",
+  title: "重置账号运行状态",
+  description:
+    "清除健康降级、失败连击、冷却和最近错误；不修改凭据、启用开关、累计指标或运行中租约。",
+  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
+  output: z.object({ success: z.boolean() }).strict(),
+  access: poolWriteAccess,
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.resetMemberStatus");
   },
 });
 
@@ -210,75 +329,5 @@ export const deleteMember = defineOperation({
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.deleteMember");
-  },
-});
-
-const parameterMappingTemplateSchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    parameterMappings: requestParameterMappingsSchema,
-  })
-  .strict();
-
-/** 列出 API Images 参数映射模板。 */
-export const listParameterMappingTemplates = defineOperation({
-  name: "pool.listParameterMappingTemplates",
-  domain: "image-backend-pool",
-  title: "列出 API 参数映射模板",
-  description: "列出可供 API Images 成员复用的请求参数映射模板。",
-  input: z.object({}).strict(),
-  output: z
-    .object({ templates: z.array(parameterMappingTemplateSchema) })
-    .strict(),
-  access: { kind: "imageBackendPoolViewer" },
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: [],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.listParameterMappingTemplates");
-  },
-});
-
-/** 新建或更新 API Images 参数映射模板。 */
-export const saveParameterMappingTemplate = defineOperation({
-  name: "pool.saveParameterMappingTemplate",
-  domain: "image-backend-pool",
-  title: "保存 API 参数映射模板",
-  description: "保存严格、无 Responses/Chat 语义的参数映射模板。",
-  input: z
-    .object({
-      id: z.string().trim().min(1).max(128).optional(),
-      name: z.string().trim().min(1).max(80),
-      parameterMappings: requestParameterMappingsSchema,
-    })
-    .strict(),
-  output: z.object({ id: z.string() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.saveParameterMappingTemplate");
-  },
-});
-
-/** 删除 API Images 参数映射模板。 */
-export const deleteParameterMappingTemplate = defineOperation({
-  name: "pool.deleteParameterMappingTemplate",
-  domain: "image-backend-pool",
-  title: "删除 API 参数映射模板",
-  description: "删除未被成员引用的参数映射模板。",
-  input: z.object({ id: z.string().trim().min(1).max(128) }).strict(),
-  output: z.object({ success: z.boolean() }).strict(),
-  access: poolWriteAccess,
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["audit"],
-  execute: async () => {
-    throw new Error("Not yet wired: pool.deleteParameterMappingTemplate");
   },
 });

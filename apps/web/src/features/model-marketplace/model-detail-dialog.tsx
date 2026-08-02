@@ -2,8 +2,8 @@
  * 模型广场详情弹窗。
  *
  * 使用方是客户端模型浏览器；弹窗展示公开 DTO 中的模型 ID、简介、完整价格、视频
- * 支持参数和创作入口，并把复制动作交回浏览器统一反馈。Radix Dialog 负责焦点圈定、
- * Esc 关闭及关闭后焦点恢复。
+ * 支持参数、输入能力、配置可达性、基础设施边界和创作入口，并把复制动作交回浏览器
+ * 统一反馈。Radix Dialog 负责焦点圈定、Esc 关闭及关闭后焦点恢复。
  */
 "use client";
 
@@ -158,6 +158,118 @@ function VideoPricingDetails({
 }
 
 /**
+ * 展示视频模型完整输入、声音、配置可达性与基础设施限制。
+ *
+ * @param props - 已通过公开 DTO schema 的视频模型。
+ * @returns 独立能力区块；明确区分全局支持与当前后端是否配置可达。
+ * @sideEffects 无。
+ * @failure 基础设施字节上限按二进制 MB 展示；非法值无法通过公开 DTO schema。
+ */
+function VideoCapabilityDetails({
+  model,
+}: {
+  model: Extract<ModelMarketplacePublicItem, { category: "video" }>;
+}) {
+  const t = useTranslations("ModelMarketplace");
+  const frameLabel =
+    model.input.frames === "none"
+      ? t("card.videoCapabilities.framesNone")
+      : model.input.frames === "first-only"
+        ? t("card.videoCapabilities.framesFirstOnly")
+        : t("card.videoCapabilities.framesFirstAndLast");
+  const referenceImagesLabel =
+    model.input.referenceImages.maxCount === 0
+      ? t("detail.capabilities.referenceImagesNone")
+      : model.input.referenceImages.configurable
+        ? t("detail.capabilities.referenceImagesConfigurable", {
+            count: model.input.referenceImages.maxCount,
+          })
+        : t("detail.capabilities.referenceImagesFixed", {
+            count: model.input.referenceImages.maxCount,
+          });
+  const audioLabel = !model.audio.supported
+    ? t("card.videoCapabilities.audioNone")
+    : model.audio.defaultEnabled
+      ? t("card.videoCapabilities.audioDefaultOn")
+      : t("card.videoCapabilities.audioOptional");
+  const maxMediaInputMegabytes =
+    model.infrastructureLimits.maxMediaInputBytes / (1024 * 1024);
+  const rows = [
+    {
+      label: t("detail.capabilities.frameInputs"),
+      value: frameLabel,
+    },
+    {
+      label: t("detail.capabilities.referenceImages"),
+      value: referenceImagesLabel,
+    },
+    {
+      label: t("detail.capabilities.framesAndReferences"),
+      value: model.input.framesAndReferencesMutuallyExclusive
+        ? t("detail.capabilities.mutuallyExclusive")
+        : t("detail.capabilities.notMutuallyExclusive"),
+    },
+    {
+      label: t("detail.capabilities.audio"),
+      value: audioLabel,
+    },
+  ];
+
+  return (
+    <section
+      aria-labelledby="model-video-capabilities-title"
+      className="mt-7 border-t border-border/70 pt-7"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3
+            className="text-base font-semibold"
+            id="model-video-capabilities-title"
+          >
+            {t("detail.capabilities.title")}
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("detail.capabilities.description")}
+          </p>
+        </div>
+        <Badge variant={model.configuredReachable ? "default" : "secondary"}>
+          {model.configuredReachable
+            ? t("detail.capabilities.configuredReachable")
+            : t("detail.capabilities.notConfiguredReachable")}
+        </Badge>
+      </div>
+
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div className="rounded-lg border bg-muted/20 p-3" key={row.label}>
+            <dt className="text-xs text-muted-foreground">{row.label}</dt>
+            <dd className="mt-1.5 text-sm font-medium">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="mt-3 rounded-lg border border-dashed p-3">
+        <p className="text-xs font-medium text-muted-foreground">
+          {t("detail.capabilities.infrastructureLimits")}
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <Badge variant="outline">
+            {t("detail.capabilities.maxMediaInputCount", {
+              count: model.infrastructureLimits.maxMediaInputCount,
+            })}
+          </Badge>
+          <Badge variant="outline">
+            {t("detail.capabilities.maxMediaInputSize", {
+              megabytes: maxMediaInputMegabytes,
+            })}
+          </Badge>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
  * 渲染响应式模型详情 Dialog。
  *
  * @param props - 当前模型、受控开关和开关回调。
@@ -272,6 +384,9 @@ export function ModelDetailDialog({
                 <VideoPricingDetails model={model} />
               )}
             </section>
+            {model.category === "video" ? (
+              <VideoCapabilityDetails model={model} />
+            ) : null}
           </div>
         </div>
 

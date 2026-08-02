@@ -41,6 +41,14 @@ const nextConfig = {
       "./models/scunet-color-real-gan.onnx",
       "../../node_modules/.pnpm/@img+sharp-libvips-linux-x64@*/node_modules/@img/sharp-libvips-linux-x64/**",
       "../../node_modules/.pnpm/@img+sharp-linux-x64@*/node_modules/@img/sharp-linux-x64/**",
+      // Worker 入口使用静态 URL，独立 Node 线程不会被 Next 的主服务
+      // trace 自动发现，因此显式携带源入口与部署探针。QuickJS 完整依赖图
+      // 由 postbuild 打包器转换成标准 node_modules 布局，避免只拷贝 pnpm dist
+      // 文件却丢失包元数据与解析链接。
+      "./src/features/image-backend-pool/api-upstream-script-worker.mjs",
+      "./scripts/api-upstream-worker-probe.mjs",
+      "./scripts/preflight-api-upstream-adapter-migration.mjs",
+      "./scripts/smoke-api-upstream-worker.mjs",
     ],
   },
   experimental: {
