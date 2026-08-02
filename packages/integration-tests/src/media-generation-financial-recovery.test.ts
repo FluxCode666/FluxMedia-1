@@ -592,6 +592,10 @@ describe("media generation financial recovery", () => {
         set stage = 'completed', next_poll_at = null
         where stage not in ('completed', 'failed')
       `);
+      const now = new Date();
+      // WHY：PostgreSQL timestamp 保留微秒，而 JavaScript Date 只有毫秒；显式使用
+      // 过去时间可避免同一毫秒内插入后立即 claim 时偶发判定为尚未到期。
+      const nextPollAt = new Date(now.getTime() - 1_000);
       await owner.query(
         `insert into image_backend_member (id, type)
          values ('api-member-1', 'api')`
@@ -615,12 +619,13 @@ describe("media generation financial recovery", () => {
           id, user_id, stage, next_poll_at,
           api_adapter_member_id, api_adapter_version_id
         ) values (
-          'video-version-1', 'video-user', 'polling', now(),
+          'video-version-1', 'video-user', 'polling', $1,
           'api-member-1', 'adapter-v1'
         )
-      `);
+      `,
+        [nextPollAt]
+      );
 
-      const now = new Date();
       const claim = await createPostgresVideoRecoveryRepository(
         createRecoveryDatabase(owner)
       ).claimNext({

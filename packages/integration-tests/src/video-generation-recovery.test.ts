@@ -57,6 +57,8 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       claim_token text,
       claim_expires_at timestamp,
       submit_started_at timestamp,
+      api_adapter_member_id text,
+      api_adapter_version_id text,
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
     );
