@@ -6,6 +6,7 @@
   "scripts": {
     "test:generation-time-migration": "vitest run --config vitest.config.ts src/generation-time-migration.test.ts",
     "test:image-backend-pool": "vitest run --config vitest.config.ts src/image-backend-pool-scheduler.test.ts",
+    "test:media-generation-financial-recovery": "vitest run --config vitest.config.ts src/media-generation-financial-recovery.test.ts",
     "test:media-backend-pool-migration": "vitest run --config vitest.config.ts src/media-backend-pool-migration.test.ts",
     "test:moderation": "vitest run --config vitest.config.ts src/moderation-policy-service.test.ts",
     "test:release-governance": "vitest run --config vitest.config.ts src/release-governance-gate.test.ts",

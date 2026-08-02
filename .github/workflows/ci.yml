@@ -144,6 +144,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
       IMAGE_BACKEND_POOL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
       MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
+      MEDIA_GENERATION_FINANCIAL_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
       VIDEO_GENERATION_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
@@ -152,6 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @repo/integration-tests test:image-backend-pool
+          pnpm --filter @repo/integration-tests test:media-generation-financial-recovery
           pnpm --filter @repo/integration-tests test:video-generation-recovery
           pnpm --filter @repo/integration-tests test:media-backend-pool-migration
 

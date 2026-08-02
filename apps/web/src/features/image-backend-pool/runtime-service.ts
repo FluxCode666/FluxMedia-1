@@ -24,7 +24,7 @@ import type { BackendSchedulingStrategy } from "@repo/shared/image-backend/sched
 import { logWarn } from "@repo/shared/logger";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
-import { sql } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 
@@ -71,6 +71,11 @@ const apiVideoRecoveryRowSchema = z.object({
   api_key: z.string().min(1),
   adapter_configuration: z.unknown(),
 });
+
+/** 固定版本视频恢复只需要参数化 SQL 执行端口，真实 PostgreSQL 测试可注入连接。 */
+export interface ApiVideoRecoveryConfigDatabase {
+  execute(query: SQL): Promise<unknown>;
+}
 
 const runtimeConfigRowSchema = z.object({
   member_id: z.string().trim().min(1),
@@ -314,12 +319,13 @@ export async function loadApiVideoRecoveryConfig(
   memberId: string,
   apiAdapterMemberId: string,
   apiAdapterVersionId: string,
-  modelId: string
+  modelId: string,
+  database?: ApiVideoRecoveryConfigDatabase
 ): Promise<ApiConfig | null> {
-  const { db } = await import("@repo/database");
+  const queryDatabase = database ?? (await import("@repo/database")).db;
   const rows = z.array(apiVideoRecoveryRowSchema).parse(
     extractExecuteRows(
-      await db.execute(sql`
+      await queryDatabase.execute(sql`
         select
           member.id as member_id,
           api.credential_scope,
@@ -412,7 +418,7 @@ async function loadRuntimeBackendLease(
     id: row.member_id,
     groupId: group.id,
     userId: input.userId,
-    apiKeyId: input.apiKeyId,
+    ...(input.apiKeyId ? { apiKeyId: input.apiKeyId } : {}),
     billingGroupId: group.id,
     imageCreditOverrides: group.imageCreditOverrides,
     videoCreditOverrides: group.videoCreditOverrides,
@@ -762,7 +768,7 @@ export async function createRuntimeBackendSession(
         lease,
         success: result.success,
         terminal: result.terminal ?? false,
-        error: result.error,
+        ...(result.error ? { error: result.error } : {}),
         durationMs: result.durationMs,
       });
       if (!result.success && result.terminal) {
