@@ -15,6 +15,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必填}
       LOCAL_STORAGE_PATH: /app/storage
       NODE_ENV: production
+      TZ: UTC
       VIDEO_INPUT_ROLLBACK_MANIFEST: /app/deploy-state/video-input-rollback-${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}.ndjson
     volumes:
       - app-storage:/app/storage
@@ -36,7 +37,10 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://media.flux-code.cc}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://media.flux-code.cc}
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}
       LOCAL_STORAGE_PATH: /app/storage
+      # pg 按进程 TZ 解析无时区 timestamp；展示时区只能通过 APP_TIME_ZONE 配置。
+      TZ: UTC
       ADOBE_DIRECT_PROXY_URL: ${ADOBE_DIRECT_PROXY_URL:-http://media-upstream-proxy:3021}
       ADOBE_DIRECT_PROXY_SECRET: ${ADOBE_DIRECT_PROXY_SECRET:?ADOBE_DIRECT_PROXY_SECRET 必填}
       ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS: ${ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS:-300}

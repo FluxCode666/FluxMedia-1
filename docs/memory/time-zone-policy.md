@@ -3,6 +3,8 @@
 ## 不变量
 
 - PostgreSQL 应用连接固定使用 `options: "-c timezone=UTC"`。
+- Web 与迁移 Node 进程固定使用 `TZ=UTC`；`pg` 会按进程时区解析
+  `timestamp without time zone`，因此禁止把 `TZ` 设置为站内展示时区。
 - 数据库时间字段按 UTC 语义写入和读取；外部 API 只返回 Unix epoch 或带 `Z` 的 ISO 8601。
 - `APP_TIME_ZONE` 只存在于部署环境，不属于系统设置，不得从 `system_setting` 覆盖进程环境。
 
@@ -22,6 +24,8 @@ user.time_zone > process.env.APP_TIME_ZONE > UTC
 ```
 
 - `user.time_zone` 保存 IANA 时区名称；`NULL` 表示继承部署默认值。
+- `APP_TIME_ZONE` 可设为 `Asia/Shanghai`，但仅用于展示；它与必须为 `UTC` 的进程
+  `TZ` 是两个独立配置。
 - 用户输入必须通过 `Intl.DateTimeFormat` 兼容性校验，不接受 `UTC+8` 这类固定偏移别名。
 - 使用 `Europe/Berlin` 等 IANA 名称自动处理夏令时，禁止手工加减小时。
 
