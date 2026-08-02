@@ -707,16 +707,16 @@ packages/shared/src/video-generation/
 
 ## Definition of Done
 
-- [ ] `video.generate`、`video.getStatus`、`video.listCapabilities` 及输入读取/清理 operation 已注册并通过 UOL 网关执行，Web、v1 和 MCP 没有传输层业务分叉。
-- [ ] 运行时代码、账号池、任务、目录、响应和 UI 只使用真实视频模型 ID；复合 ID、`firefly-` 前缀与历史别名仅存在于冻结迁移资料和历史说明。
-- [ ] `duration`、`aspectRatio`、`resolution` 在所有生成入口必填，v1 别名一致性和旧输入字段拒绝均有测试。
-- [ ] 全部模型执行 Product Contract 输入/声音能力矩阵，首尾帧与参考图全局互斥，Seedance 默认 10 且管理员可保存任意正安全整数。
-- [ ] 模型配置、能力查询、模型广场和新请求使用同一 Seedance 覆盖修订；账号池成员不能保存或覆盖参数能力。
-- [ ] 所有新输入来源都成为任务自有持久对象，终态保留；所有者与既有管理员历史角色能通过短期 URL 查看实际输入，callback 只含模式与数量。
-- [ ] 账号删除登记的清理意图最终删除终态任务输入，活动任务等待恢复完成；不存在新增用户删除任务功能或绕过归属的通用存储入口。
-- [ ] Adobe 适配器和 worker 不解析复合 ID，Seedance 首尾帧与多参考图有供应商证据，全部恢复 stage 保持原成员和提交不确定边界。
-- [ ] 计费 family、分辨率单价、时长总价、扣费时点、API Key 配额、sourceRef 和退款结果与改造前一致。
-- [ ] 资产收编、0074 迁移、preflight、postcheck 和真实 PostgreSQL 测试证明全部存量成员与任务可转换；任一异常使切换整体停止。
-- [ ] 模型广场卡片显示能力摘要，详情显示参数、参考图数量、首尾帧、互斥、声音默认、当前配置可达性和基础设施限制。
-- [ ] Verification Contract 全部质量门通过，文档和中英文文案同步，生产 smoke 留下非敏感零阻断证据。
-- [ ] 最终 diff 不含废弃 parser、兼容别名、死代码、注释掉的旧实现、临时夹具凭据、调试日志或失败尝试遗留代码。
+- [x] `video.generate`、`video.getStatus`、`video.listCapabilities` 及输入读取/清理 operation 已注册并通过 UOL 网关执行，Web、v1 和 MCP 没有传输层业务分叉。
+- [x] 运行时代码、账号池、任务、目录、响应和 UI 只使用真实视频模型 ID；复合 ID、`firefly-` 前缀与历史别名仅存在于冻结迁移资料和历史说明。
+- [x] `duration`、`aspectRatio`、`resolution` 在所有生成入口必填，v1 别名一致性和旧输入字段拒绝均有测试。
+- [x] 全部模型执行 Product Contract 输入/声音能力矩阵，首尾帧与参考图全局互斥，Seedance 默认 10 且管理员可保存任意正安全整数。
+- [x] 模型配置、能力查询、模型广场和新请求使用同一 Seedance 覆盖修订；账号池成员不能保存或覆盖参数能力。
+- [x] 所有新输入来源都成为任务自有持久对象，终态保留；所有者与既有管理员历史角色能通过短期 URL 查看实际输入，callback 只含模式与数量。
+- [x] 账号删除登记的清理意图最终删除终态任务输入，活动任务等待恢复完成；不存在新增用户删除任务功能或绕过归属的通用存储入口。
+- [x] Adobe 适配器和 worker 不解析复合 ID，Seedance 首尾帧与多参考图有供应商证据，全部恢复 stage 保持原成员和提交不确定边界。
+- [x] 计费 family、分辨率单价、时长总价、扣费时点、API Key 配额、sourceRef 和退款结果与改造前一致。
+- [x] 资产收编、0074 迁移、preflight、postcheck 和真实 PostgreSQL 测试证明全部存量成员与任务可转换；任一异常使切换整体停止。
+- [x] 模型广场卡片显示能力摘要，详情显示参数、参考图数量、首尾帧、互斥、声音默认、当前配置可达性和基础设施限制。
+- [ ] Verification Contract 全部质量门通过，文档和中英文文案同步，生产 smoke 留下非敏感零阻断证据。自动化门禁与生产构建已通过；真实浏览器验收和维护窗口生产 smoke 尚未执行。
+- [x] 最终 diff 不含废弃 parser、兼容别名、死代码、注释掉的旧实现、临时夹具凭据、调试日志或失败尝试遗留代码。

@@ -906,7 +906,7 @@ flowchart TB
 | Migration | `MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL=... pnpm --filter @repo/integration-tests test:media-backend-pool-migration` | U3 | 0075 兼容态与 0076 基线预检、0077 迁移、事务失败回滚和重跑全绿 |
 | Release migration preflight | `pnpm --filter @repo/web preflight:api-upstream-adapter-migration` | U3, U7 | 配置写冻结，旧配置生产校验通过，非终态 API 视频为零，备份/PITR 与成对恢复演练有证据 |
 | Video recovery | `VIDEO_GENERATION_RECOVERY_TEST_DATABASE_URL=... pnpm --filter @repo/integration-tests test:video-generation-recovery` | U3, U6 | 固定版本、同凭据域当前密钥、原成员、CAS 和幂等终态全绿 |
-| Financial recovery | `MEDIA_GENERATION_FINANCIAL_TEST_DATABASE_URL=... pnpm --filter @repo/integration-tests test:media-generation-financial-recovery` | U5-U7 | 图片维护竞争、视频双 claim 和退款中断只有一个 batch/ledger，余额与 API Key 配额正确 |
+| Financial recovery | `MEDIA_GENERATION_FINANCIAL_RECOVERY_TEST_DATABASE_URL=... pnpm --filter @repo/integration-tests test:media-generation-financial-recovery` | U5-U7 | 图片维护竞争、视频双 claim 和退款中断只有一个 batch/ledger，余额与 API Key 配额正确 |
 | Type safety | `pnpm --filter @repo/web exec fumadocs-mdx && pnpm typecheck` | U1-U8 | 干净 checkout 先生成 `.source`，再通过 TypeScript strict，无 `any` 和未收窄外部输入 |
 | Changed-file lint | `./apps/web/node_modules/.bin/biome lint --changed --since=<base-sha> --no-errors-on-unmatched .` | U1-U8 | 所有改动 TS/JS 文件 Biome 无 error；文件与函数注释另行人工审查 |
 | Monorepo tests | `pnpm test` | U1-U8 | 全仓测试无回归、无 skip 或弱化断言 |
@@ -928,14 +928,14 @@ flowchart TB
 
 ## Definition of Done
 
-- [ ] Product Contract preservation note 与 R24 的现有公开图片异步语义一致，四项用户确认边界没有被实施扩大。
-- [ ] U1：六个供应商适配 operation、配置版本、请求信封、响应结果和错误码只有一个共享契约来源，并与 `pool.*` UOL operation 明确分层。
-- [ ] U2：Next 主线程不创建 QuickJS Runtime；Worker Pool、资源限制、未来响应许可、故障替换和 standalone 资产均有自动化证据。
-- [ ] U3：0077 手写迁移在真实 PostgreSQL 中覆盖预检、0076 基线、空/非空旧脚本、复合归属、重复执行和旧列删除；不可逆恢复演练可用，API Key 不进入版本历史。
-- [ ] U4：API 管理页可独立配置和无网络测试六个操作；保存原子创建 revision，同凭据域密钥轮换不创建 revision，跨域旧任务受保护，后两项 UOL 不投影到 Admin MCP。
-- [ ] U5：文生图和图生图支持同步与供应商异步结果，所有公开图片入口继续汇入单一管线并保持响应、存储和财务语义；跨重启不承诺 exactly-once。
-- [ ] U6：API 视频在外呼前保存成员/版本快照，只按配置查询路径恢复，使用同凭据域当前密钥；Adobe 协议和所有幂等终态不变，旧 facade 已删除。
-- [ ] U7：两个稳定 Pino 事件、三个 env、迁移预检、standalone 断言、镜像构建和容器运行 smoke 可供本地及任意 JSON 日志采集系统使用，敏感数据负向扫描全绿。
-- [ ] U8：管理员文档列出全部可取参数、限制、跨重启风险和示例；新 Skill 渐进加载并通过三媒体生产夹具，旧 Skill 目录和引用全部删除。
-- [ ] Shared、Web、PostgreSQL integration、typecheck、lint、test、build 和 Docker smoke 全部通过，未使用 skip、`--no-verify` 或弱化断言。
-- [ ] 实施期间的实验文件、兼容 facade、旧运行时、重复 schema、过期注释和失败方案代码均已删除；最终 diff 只保留被计划采用的路径。
+- [x] Product Contract preservation note 与 R24 的现有公开图片异步语义一致，四项用户确认边界没有被实施扩大。
+- [x] U1：六个供应商适配 operation、配置版本、请求信封、响应结果和错误码只有一个共享契约来源，并与 `pool.*` UOL operation 明确分层。
+- [x] U2：Next 主线程不创建 QuickJS Runtime；Worker Pool、资源限制、未来响应许可、故障替换和 standalone 资产均有自动化证据。
+- [x] U3：0077 手写迁移在真实 PostgreSQL 中覆盖预检、0076 基线、空/非空旧脚本、复合归属、重复执行和旧列删除；不可逆恢复演练可用，API Key 不进入版本历史。
+- [ ] U4：API 管理页可独立配置和无网络测试六个操作；保存原子创建 revision，同凭据域密钥轮换不创建 revision，跨域旧任务受保护，后两项 UOL 不投影到 Admin MCP。自动化契约已通过，仍待受控数据库与管理员会话下的真实浏览器验收。
+- [x] U5：文生图和图生图支持同步与供应商异步结果，所有公开图片入口继续汇入单一管线并保持响应、存储和财务语义；跨重启不承诺 exactly-once。
+- [x] U6：API 视频在外呼前保存成员/版本快照，只按配置查询路径恢复，使用同凭据域当前密钥；Adobe 协议和所有幂等终态不变，旧 facade 已删除。
+- [ ] U7：两个稳定 Pino 事件、三个 env、迁移预检、standalone 断言、镜像构建和容器运行 smoke 可供本地及任意 JSON 日志采集系统使用，敏感数据负向扫描全绿。除最终 runner 镜像与容器 smoke 外均已有证据；本地构建仍被 Docker Hub 鉴权端点超时阻断。
+- [x] U8：管理员文档列出全部可取参数、限制、跨重启风险和示例；新 Skill 渐进加载并通过三媒体生产夹具，旧 Skill 目录和引用全部删除。
+- [ ] Shared、Web、PostgreSQL integration、typecheck、lint、test、build 和 Docker smoke 全部通过，未使用 skip、`--no-verify` 或弱化断言。仅 Docker runner 构建与容器 smoke 尚未取得通过证据。
+- [x] 实施期间的实验文件、兼容 facade、旧运行时、重复 schema、过期注释和失败方案代码均已删除；最终 diff 只保留被计划采用的路径。
