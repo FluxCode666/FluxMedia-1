@@ -49,6 +49,9 @@ const nextConfig = {
       "./scripts/api-upstream-worker-probe.mjs",
       "./scripts/preflight-api-upstream-adapter-migration.mjs",
       "./scripts/smoke-api-upstream-worker.mjs",
+      // 迁移预检直接读取 0075 的冻结脚本模板，确保它编译的是数据库将写入的
+      // 逐字内容；standalone 必须携带同一个迁移文件。
+      "../../packages/database/drizzle/0075_api_account_upstream_adaptation.sql",
     ],
   },
   experimental: {

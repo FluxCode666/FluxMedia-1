@@ -1,10 +1,9 @@
 /**
  * Next.js standalone 中 API 上游脚本 Worker 资产断言。
  *
- * 使用方：镜像构建和发布门。脚本只读取构建目录，确认 Worker 入口、迁移
- * 预检所需 PostgreSQL 客户端，以及 QuickJS JS 桥接和 WASM 位于 Node
- * 可解析的标准 node_modules 布局；容器运行 smoke 由部署验证在 Node 22
- * 中另行执行。
+ * 使用方：镜像构建和发布门。脚本只读取构建目录，确认 Worker 入口、迁移预检
+ * 所需 PostgreSQL 客户端、冻结迁移，以及 QuickJS JS 桥接和 WASM 位于可解析
+ * 路径；容器运行 smoke 由部署验证在 Node 22 中另行执行。
  */
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -50,6 +49,11 @@ const requiredAssets = [
     name: "0077 迁移预检入口",
     matches: (file) =>
       file.endsWith("/preflight-api-upstream-adapter-migration.mjs"),
+  },
+  {
+    name: "0075 参数映射迁移模板",
+    matches: (file) =>
+      file.endsWith("/0075_api_account_upstream_adaptation.sql"),
   },
   {
     name: "Worker 运行自检入口",

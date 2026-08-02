@@ -430,8 +430,9 @@ jobs:
               </dev/null
           }
 
-          # 用本次新 Web 镜像编译旧 requestTransformScript，并确认
-          # 非终态 API 视频已排空。命令只输出脱敏 JSON 证据。
+          # 用本次新 Web 镜像编译旧 parameterMappings/requestTransformScript
+          # 经 0075/0077 将生成的脚本，并确认非终态 API 视频已排空。
+          # 命令只输出脱敏 JSON 证据。
           run_api_upstream_adapter_preflight() {
             docker compose run --rm --no-deps \
               --interactive=false web \
