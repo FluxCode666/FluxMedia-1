@@ -1,10 +1,11 @@
 /**
  * 0077 API 上游适配版本迁移的升级前预检。
  *
- * 使用方：生产维护窗口在停止旧 Web、执行 0077 前运行。预检
- * 只读取旧 requestTransformScript 字段、成员 ID 和任务计数，不读取
- * API Key，不输出 URL、脚本、任务 ID、Prompt 或媒体。
+ * 使用方：生产维护窗口在停止旧 Web、执行 0075-0077 前运行。预检读取旧
+ * parameterMappings 或 requestTransformScript、成员 ID 和任务计数，不读取
+ * API Key，不输出 URL、映射、脚本、任务 ID、Prompt 或媒体。
  */
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { Pool } from "pg";
@@ -16,7 +17,14 @@ import {
   parseApiUpstreamProbeRuntimeConfig,
 } from "./api-upstream-worker-probe.mjs";
 
-const REQUIRED_LEGACY_CONFIG_COLUMNS = [
+const REQUIRED_PARAMETER_MAPPINGS_CONFIG_COLUMNS = [
+  "member_id",
+  "api_key",
+  "base_url",
+  "use_stream",
+  "parameter_mappings",
+];
+const REQUIRED_SCRIPT_CONFIG_COLUMNS = [
   "member_id",
   "api_key",
   "base_url",
@@ -33,9 +41,21 @@ const REQUIRED_VERSIONED_CONFIG_COLUMNS = [
 const LEGACY_ONLY_CONFIG_COLUMNS = [
   "base_url",
   "use_stream",
+  "parameter_mappings",
   "model_mappings",
   "request_transform_script",
 ];
+const VERSIONED_ONLY_CONFIG_COLUMNS = [
+  "current_adapter_version_id",
+  "credential_scope",
+];
+const SCRIPT_CONFIG_COLUMNS = ["model_mappings", "request_transform_script"];
+const PARAMETER_MAPPINGS_MIGRATION_URL = new URL(
+  "../../../packages/database/drizzle/0075_api_account_upstream_adaptation.sql",
+  import.meta.url
+);
+
+let parameterMappingsScriptTemplate;
 
 /** 只暴露稳定代码和脱敏维度的迁移预检错误。 */
 export class ApiUpstreamMigrationPreflightError extends Error {
@@ -50,6 +70,79 @@ export class ApiUpstreamMigrationPreflightError extends Error {
     this.memberIds = details.memberIds;
     this.count = details.count;
   }
+}
+
+/**
+ * 从冻结的 0075 SQL 读取旧参数映射脚本模板。
+ *
+ * WHY：预检必须编译数据库迁移将生成的逐字脚本，直接读取迁移文件可避免复制约
+ * 3.7 KB JavaScript 后两份实现漂移。文件或唯一占位符异常时关闭式失败。
+ *
+ * @returns {string} 含唯一 `%s` 占位符的 0075 脚本模板。
+ * @throws {ApiUpstreamMigrationPreflightError} 迁移资产缺失或模板形状异常时拒绝。
+ */
+function readParameterMappingsScriptTemplate() {
+  if (parameterMappingsScriptTemplate !== undefined) {
+    return parameterMappingsScriptTemplate;
+  }
+  let migrationSql;
+  try {
+    migrationSql = readFileSync(PARAMETER_MAPPINGS_MIGRATION_URL, "utf8");
+  } catch {
+    throw new ApiUpstreamMigrationPreflightError(
+      "legacy_parameter_mappings_migration_asset_missing"
+    );
+  }
+  const matches = [
+    ...migrationSql.matchAll(/\$script\$([\s\S]*?)\$script\$/gu),
+  ];
+  const template = matches[0]?.[1];
+  if (
+    matches.length !== 1 ||
+    typeof template !== "string" ||
+    template.split("%s").length !== 2
+  ) {
+    throw new ApiUpstreamMigrationPreflightError(
+      "legacy_parameter_mappings_migration_template_invalid"
+    );
+  }
+  parameterMappingsScriptTemplate = template;
+  return template;
+}
+
+/**
+ * 按 0075 的精确 SQL 模板构造旧参数映射迁移后的 Body 脚本。
+ *
+ * @param {string} parameterMappingsJson PostgreSQL `json::text` 原文。
+ * @returns {string} 非空映射对应的精确迁移脚本；空数组保持为空脚本。
+ * @throws {ApiUpstreamMigrationPreflightError} JSON 不是数组时关闭式失败。
+ */
+export function buildLegacyParameterMappingsTransformScript(
+  parameterMappingsJson
+) {
+  if (typeof parameterMappingsJson !== "string") {
+    throw new ApiUpstreamMigrationPreflightError(
+      "legacy_parameter_mappings_shape_invalid"
+    );
+  }
+  let mappings;
+  try {
+    mappings = JSON.parse(parameterMappingsJson);
+  } catch {
+    throw new ApiUpstreamMigrationPreflightError(
+      "legacy_parameter_mappings_shape_invalid"
+    );
+  }
+  if (!Array.isArray(mappings)) {
+    throw new ApiUpstreamMigrationPreflightError(
+      "legacy_parameter_mappings_shape_invalid"
+    );
+  }
+  if (mappings.length === 0) return "";
+  return readParameterMappingsScriptTemplate().replace(
+    "%s",
+    () => parameterMappingsJson
+  );
 }
 
 /**
@@ -83,23 +176,48 @@ export function wrapLegacyRequestTransformScript(legacyScript) {
  *
  * @param {Iterable<string>} configColumns API 配置表的列名。
  * @param {boolean} versionTableExists 不可变版本表是否存在。
- * @returns {"legacy" | "versioned" | "partial"} 当前迁移形状。
+ * @returns {"legacy-parameter-mappings" | "legacy" | "versioned" | "partial"} 当前迁移形状。
  */
 export function classifyApiUpstreamAdapterSchema(
   configColumns,
   versionTableExists
 ) {
   const columns = new Set(configColumns);
-  const hasAllLegacy = REQUIRED_LEGACY_CONFIG_COLUMNS.every((column) =>
+  const hasAllParameterMappings =
+    REQUIRED_PARAMETER_MAPPINGS_CONFIG_COLUMNS.every((column) =>
+      columns.has(column)
+    );
+  const hasAllScriptConfig = REQUIRED_SCRIPT_CONFIG_COLUMNS.every((column) =>
     columns.has(column)
   );
   const hasAnyLegacyOnly = LEGACY_ONLY_CONFIG_COLUMNS.some((column) =>
     columns.has(column)
   );
+  const hasAnyVersionedOnly = VERSIONED_ONLY_CONFIG_COLUMNS.some((column) =>
+    columns.has(column)
+  );
+  const hasAnyScriptConfig = SCRIPT_CONFIG_COLUMNS.some((column) =>
+    columns.has(column)
+  );
   const hasAllVersioned = REQUIRED_VERSIONED_CONFIG_COLUMNS.every((column) =>
     columns.has(column)
   );
-  if (hasAllLegacy && !versionTableExists && !hasAllVersioned) return "legacy";
+  if (
+    hasAllParameterMappings &&
+    !hasAnyScriptConfig &&
+    !hasAnyVersionedOnly &&
+    !versionTableExists
+  ) {
+    return "legacy-parameter-mappings";
+  }
+  if (
+    hasAllScriptConfig &&
+    !columns.has("parameter_mappings") &&
+    !hasAnyVersionedOnly &&
+    !versionTableExists
+  ) {
+    return "legacy";
+  }
   if (hasAllVersioned && versionTableExists && !hasAnyLegacyOnly) {
     return "versioned";
   }
@@ -121,7 +239,7 @@ function writeEvent(event, data = {}) {
  * 查询当前 schema 的旧或新 API 适配表形状。
  *
  * @param {import("pg").PoolClient} client 已开启只读事务的连接。
- * @returns {Promise<{ columnsByTable: Map<string, Set<string>>, state: "legacy" | "versioned" | "partial" }>} 列快照和迁移状态。
+ * @returns {Promise<{ columnsByTable: Map<string, Set<string>>, state: "legacy-parameter-mappings" | "legacy" | "versioned" | "partial" }>} 列快照和迁移状态。
  * @sideEffects 只查询 information_schema 和 to_regclass。
  */
 async function readAdapterSchemaState(client) {
@@ -253,6 +371,47 @@ async function readLegacyScripts(client) {
 }
 
 /**
+ * 读取 0075 前 API 成员的参数映射，并构造 0075 将生成的精确脚本。
+ *
+ * @param {import("pg").PoolClient} client 已开启只读事务的连接。
+ * @returns {Promise<Array<{ memberId: string, script: string }>>} 按成员 ID 排序的脚本。
+ * @sideEffects 只读取成员 ID 和 `parameter_mappings::text`；不读取凭据或 URL。
+ * @throws {ApiUpstreamMigrationPreflightError} 迁移资产、配置或映射形状无效时拒绝。
+ */
+async function readParameterMappingsScripts(client) {
+  readParameterMappingsScriptTemplate();
+  const result = await client.query(`
+    select
+      member.id as member_id,
+      config.parameter_mappings::text as parameter_mappings_json
+    from image_backend_member as member
+    left join image_backend_member_api_config as config
+      on config.member_id = member.id
+    where member.type = 'api'
+    order by member.id
+  `);
+  return result.rows.map((row) => {
+    if (!row || typeof row.member_id !== "string") {
+      throw new ApiUpstreamMigrationPreflightError(
+        "legacy_parameter_mappings_shape_invalid"
+      );
+    }
+    if (typeof row.parameter_mappings_json !== "string") {
+      throw new ApiUpstreamMigrationPreflightError(
+        "api_member_adapter_config_missing",
+        { memberIds: [row.member_id] }
+      );
+    }
+    return {
+      memberId: row.member_id,
+      script: buildLegacyParameterMappingsTransformScript(
+        row.parameter_mappings_json
+      ),
+    };
+  });
+}
+
+/**
  * 用生产 QuickJS Worker 逐个编译迁移后的包装脚本。
  *
  * @param {Array<{ memberId: string, script: string }>} rows 旧成员脚本。
@@ -333,11 +492,14 @@ export async function runApiUpstreamAdapterMigrationPreflight(pool) {
         { count: nonterminalApiVideoCount }
       );
     }
-    const rows = await readLegacyScripts(client);
+    const rows =
+      schema.state === "legacy-parameter-mappings"
+        ? await readParameterMappingsScripts(client)
+        : await readLegacyScripts(client);
     const validatedScriptCount = await validateLegacyScripts(rows);
     await client.query("commit");
     return {
-      schemaState: "legacy",
+      schemaState: schema.state,
       validatedMemberCount: rows.length,
       validatedScriptCount,
       nonterminalApiVideoCount,

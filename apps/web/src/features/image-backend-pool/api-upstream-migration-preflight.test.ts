@@ -4,7 +4,7 @@
  * 覆盖新旧 schema 分类、旧 Body 脚本信封包装、UTF-16 大小边界与
  * 生产 QuickJS Worker 编译；数据库中的阻断事务由 0077 真实迁移测试覆盖。
  */
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   ApiUpstreamWorkerProbe,
@@ -13,7 +13,9 @@ import {
 } from "../../../scripts/api-upstream-worker-probe.mjs";
 import {
   ApiUpstreamMigrationPreflightError,
+  buildLegacyParameterMappingsTransformScript,
   classifyApiUpstreamAdapterSchema,
+  runApiUpstreamAdapterMigrationPreflight,
   wrapLegacyRequestTransformScript,
 } from "../../../scripts/preflight-api-upstream-adapter-migration.mjs";
 
@@ -25,6 +27,18 @@ afterAll(async () => {
 
 describe("API upstream adapter migration preflight", () => {
   it("distinguishes the complete legacy, versioned and partial schemas", () => {
+    expect(
+      classifyApiUpstreamAdapterSchema(
+        [
+          "member_id",
+          "api_key",
+          "base_url",
+          "use_stream",
+          "parameter_mappings",
+        ],
+        false
+      )
+    ).toBe("legacy-parameter-mappings");
     expect(
       classifyApiUpstreamAdapterSchema(
         [
@@ -55,6 +69,60 @@ describe("API upstream adapter migration preflight", () => {
         true
       )
     ).toBe("partial");
+    expect(
+      classifyApiUpstreamAdapterSchema(
+        [
+          "member_id",
+          "api_key",
+          "base_url",
+          "use_stream",
+          "parameter_mappings",
+          "model_mappings",
+        ],
+        false
+      )
+    ).toBe("partial");
+    expect(
+      classifyApiUpstreamAdapterSchema(
+        [
+          "member_id",
+          "api_key",
+          "current_adapter_version_id",
+          "credential_scope",
+          "parameter_mappings",
+        ],
+        true
+      )
+    ).toBe("partial");
+  });
+
+  it("builds the exact pre-0075 parameter mapping script shape", () => {
+    expect(buildLegacyParameterMappingsTransformScript("[]")).toBe("");
+    const mappings = [
+      {
+        mode: "move",
+        source: "aspect_ratio",
+        target: "ratio",
+      },
+    ];
+    const script = buildLegacyParameterMappingsTransformScript(
+      JSON.stringify(mappings)
+    );
+    expect(script).toContain(`const rawRules = ${JSON.stringify(mappings)};`);
+    expect(script).toContain("return request;");
+    const specialMappingsJson = JSON.stringify([
+      {
+        mode: "copy",
+        source: "input.$&.$`.$'.百分号%",
+        target: "vendor.路径",
+      },
+    ]);
+    expect(
+      buildLegacyParameterMappingsTransformScript(specialMappingsJson)
+    ).toContain(`const rawRules = ${specialMappingsJson};`);
+    expect(() =>
+      buildLegacyParameterMappingsTransformScript('{"mode":"copy"}')
+    ).toThrow(ApiUpstreamMigrationPreflightError);
   });
 
   it("keeps empty scripts empty and wraps a legacy body result in an envelope", () => {
@@ -66,6 +134,80 @@ describe("API upstream adapter migration preflight", () => {
     expect(wrapped).toContain("})(request.body);");
     expect(wrapped).toContain("return { body: legacyBody };");
     expect(wrapped).not.toContain("apiKey");
+  });
+
+  it("accepts the complete 0073 production shape before running 0075", async () => {
+    const configColumns = [
+      "member_id",
+      "base_url",
+      "api_key",
+      "use_stream",
+      "parameter_mappings",
+      "created_at",
+      "updated_at",
+    ];
+    const query = vi.fn(async (statement: string) => {
+      if (statement.includes("from information_schema.columns")) {
+        return {
+          rows: [
+            { table_name: "image_backend_member", column_name: "id" },
+            { table_name: "image_backend_member", column_name: "type" },
+            ...configColumns.map((columnName) => ({
+              table_name: "image_backend_member_api_config",
+              column_name: columnName,
+            })),
+            {
+              table_name: "video_generation",
+              column_name: "backend_member_id",
+            },
+            { table_name: "video_generation", column_name: "stage" },
+          ],
+        };
+      }
+      if (statement.includes("select to_regclass")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (statement.includes("select count(*)::integer as count")) {
+        return { rows: [{ count: 0 }] };
+      }
+      if (statement.includes("config.parameter_mappings::text")) {
+        return {
+          rows: [
+            {
+              member_id: "api-member",
+              parameter_mappings_json:
+                '[{"mode":"move","source":"aspect_ratio","target":"ratio"}]',
+            },
+          ],
+        };
+      }
+      if (statement.startsWith("begin transaction") || statement === "commit") {
+        return { rows: [] };
+      }
+      throw new Error(`测试收到未处理的 SQL：${statement}`);
+    });
+    const release = vi.fn();
+    const pool = {
+      connect: vi.fn(async () => ({ query, release })),
+    };
+    const preflightPool = pool as unknown as Parameters<
+      typeof runApiUpstreamAdapterMigrationPreflight
+    >[0];
+
+    await expect(
+      runApiUpstreamAdapterMigrationPreflight(preflightPool)
+    ).resolves.toEqual({
+      schemaState: "legacy-parameter-mappings",
+      validatedMemberCount: 1,
+      validatedScriptCount: 1,
+      nonterminalApiVideoCount: 0,
+    });
+    expect(release).toHaveBeenCalledOnce();
+    expect(
+      query.mock.calls.some(([statement]) =>
+        statement.includes("config.request_transform_script")
+      )
+    ).toBe(false);
   });
 
   it("uses deployment defaults and rejects an invalid worker count", () => {
@@ -98,5 +240,15 @@ describe("API upstream adapter migration preflight", () => {
         wrapLegacyRequestTransformScript("if (request.model { return request;")
       )
     ).rejects.toMatchObject({ code: "worker_job_failed" });
+
+    const migratedParameterMappings =
+      buildLegacyParameterMappingsTransformScript(
+        '[{"mode":"copy","source":"model","target":"model_id"}]'
+      );
+    await expect(
+      probe.validate(
+        wrapLegacyRequestTransformScript(migratedParameterMappings)
+      )
+    ).resolves.toBeUndefined();
   });
 });
