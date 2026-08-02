@@ -218,6 +218,20 @@ describe("buildModelConfigurationSnapshot", () => {
     ).toMatchObject({ maxReferenceImages: 20 });
   });
 
+  it("未保存展示配置时复用内置简介，避免只改参考图上限时清空文案", () => {
+    const snapshot = buildModelConfigurationSnapshot(createInput());
+
+    expect(
+      snapshot.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "seedance2"
+      )
+    ).toMatchObject({
+      revision: 0,
+      description: "适合使用参考图生成长时竖屏视频并保持视觉风格一致。",
+      maxReferenceImages: 10,
+    });
+  });
+
   it("持久化额外图像保持显式价格且不携带兜底 revision", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
     imagePricing.byModel["vendor-image"] = { ...EXTRA_IMAGE_PRICING };
@@ -304,7 +318,7 @@ describe("buildModelConfigurationSnapshot", () => {
       visible: true,
       homepageVisible: true,
       homepagePriority: 5,
-      description: "",
+      description: "适合快速图像生成、编辑与日常创意探索。",
       coverUrl: "/model-marketplace/default.webp",
       usesDefaultCover: true,
     });
@@ -313,6 +327,7 @@ describe("buildModelConfigurationSnapshot", () => {
       visible: true,
       homepageVisible: false,
       homepagePriority: 5,
+      description: "适合生成具有连贯运动和电影感构图的视频。",
     });
   });
 

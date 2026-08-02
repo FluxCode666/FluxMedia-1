@@ -32,6 +32,8 @@ import {
   resolveEffectiveVideoModelCapabilities,
 } from "@repo/shared/video-generation";
 
+import { getBuiltinModelMarketplaceDescription } from "../model-marketplace/builtin-descriptions";
+
 /** 运行时目录只暴露清单合并需要的模型标识。 */
 export type RuntimeModelCatalog = {
   image: ReadonlyArray<{ id: string }>;
@@ -188,7 +190,10 @@ function buildMarketplaceFields(
     visible: resolvedEntry.visible,
     homepageVisible: resolvedEntry.homepageVisible,
     homepagePriority: resolvedEntry.homepagePriority,
-    description: resolvedEntry.description,
+    description:
+      entry === undefined
+        ? getBuiltinModelMarketplaceDescription(configKey)
+        : resolvedEntry.description,
     coverUrl: cover.coverUrl,
     usesDefaultCover: cover.usesDefaultCover,
   };
