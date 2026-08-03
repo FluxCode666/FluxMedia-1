@@ -149,10 +149,9 @@ export default async function GalleryPage({ searchParams }: GalleryPageProps) {
     status: v.status as "pending" | "completed" | "failed",
     creditsConsumed: Number(v.creditsConsumed) || 0,
     storageKey: v.storageKey,
-    storageBucket: null,
+    storageBucket: v.storageBucket,
     imageUrl: null,
-    // video_generation 无 storageBucket 列,buildSignedStorageImageUrl 默认 generations 桶。
-    videoUrl: buildSignedStorageImageUrl(v.storageKey, null),
+    videoUrl: buildSignedStorageImageUrl(v.storageKey, v.storageBucket),
     createdAt: v.createdAt.toISOString(),
     outputRole: "video" as GalleryOutputRole,
     referenceImages: [],

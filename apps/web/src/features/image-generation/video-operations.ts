@@ -45,7 +45,7 @@ import { logError } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import {
   getRuntimeSettingJson,
-  getRuntimeSettingString,
+  getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -856,6 +856,7 @@ export async function runVideoGenerationForUser(
   );
 
   const videoId = input.videoGenerationId || nanoid();
+  const { generations: storageBucket } = await getRuntimeStorageBucketConfig();
   const stagedInputObjects = parseVideoInputCleanupObjects(
     input.stagedInputObjects ?? []
   );
@@ -917,6 +918,7 @@ export async function runVideoGenerationForUser(
       resolution: contract.resolution,
       status: "pending",
       stage: "created",
+      storageBucket,
       creditsConsumed: 0,
       nextPollAt: createdAt,
       metadata: {
@@ -1595,7 +1597,12 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
   }
 
   if (row.stage !== "downloading") return;
-  if (!row.backendMemberId || !row.videoUrl || !row.storageKey) {
+  if (
+    !row.backendMemberId ||
+    !row.videoUrl ||
+    !row.storageKey ||
+    !row.storageBucket
+  ) {
     const refunding = await moveVideoToRefunding(row, "视频下载恢复信息不完整");
     if (refunding) await refundClaimedVideoOrRetry(refunding);
     return;
@@ -1603,6 +1610,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
   const backendMemberId = row.backendMemberId;
   const videoUrl = row.videoUrl;
   const storageKey = row.storageKey;
+  const storageBucket = row.storageBucket;
   const leaseState = { row };
   try {
     await runWithVideoExecutionHeartbeat(leaseState, async () => {
@@ -1615,12 +1623,8 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
               memberId: backendMemberId,
               videoUrl,
             });
-      const bucket =
-        (await getRuntimeSettingString(
-          "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-        )) || "generations";
       const storage = await getStorageProvider();
-      await storage.putObject(storageKey, bucket, bytes, "video/mp4");
+      await storage.putObject(storageKey, storageBucket, bytes, "video/mp4");
     });
     row = leaseState.row;
     await completeVideoGenerationWithUsage({

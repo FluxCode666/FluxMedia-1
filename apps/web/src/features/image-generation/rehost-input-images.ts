@@ -22,7 +22,7 @@ import {
   buildSignedStorageImageUrl,
   parseStorageImageUrl,
 } from "@repo/shared/storage/signed-url";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
+import { getRuntimeStorageBucketConfig } from "@repo/shared/system-settings";
 import {
   fetchPublicImage,
   readResponseBytesWithLimit,
@@ -128,9 +128,7 @@ export async function ensureInputImageRehosted(
     }
 
     const storage = await getStorageProvider();
-    const bucket =
-      (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-      "generations";
+    const { generations: bucket } = await getRuntimeStorageBucketConfig();
     const extension = extensionForType(contentType);
     const key = `${ctx.userId}/${scope}/${ctx.generationId}-${index}.${extension}`;
 

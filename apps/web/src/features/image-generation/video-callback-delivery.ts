@@ -45,6 +45,7 @@ type VideoCallbackTaskRow = {
   resolution: string;
   creditsConsumed: number;
   error: string | null;
+  storageBucket: string | null;
   storageKey: string | null;
   inputManifest: unknown;
   metadata: Record<string, unknown> | null;
@@ -133,6 +134,7 @@ async function loadClaimedVideoCallback(
         resolution: videoGeneration.resolution,
         creditsConsumed: videoGeneration.creditsConsumed,
         error: videoGeneration.error,
+        storageBucket: videoGeneration.storageBucket,
         storageKey: videoGeneration.storageKey,
         inputManifest: videoGeneration.inputManifest,
         metadata: videoGeneration.metadata,
@@ -157,18 +159,18 @@ async function loadClaimedVideoCallback(
 }
 
 /** 把本站签名视频 URL 转成外部接收方可访问的绝对 URL。 */
-async function buildVideoCallbackUrl(storageKey: string): Promise<string> {
+async function buildVideoCallbackUrl(
+  storageKey: string,
+  storageBucket: string
+): Promise<string> {
   const publicBaseUrl =
     (await getRuntimeSettingString("NEXT_PUBLIC_APP_URL")) ||
     (await getRuntimeSettingString("BETTER_AUTH_URL"));
   if (!publicBaseUrl) {
     throw new Error("视频回调缺少 NEXT_PUBLIC_APP_URL/BETTER_AUTH_URL");
   }
-  const bucket =
-    (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-    "generations";
   const videoUrl = buildPublicImageUrl(
-    `/api/storage/${bucket}/${storageKey}`,
+    `/api/storage/${storageBucket}/${storageKey}`,
     publicBaseUrl,
     24 * 60 * 60
   );
@@ -182,8 +184,13 @@ async function deliverClaimedVideoCallback(input: {
   video: VideoCallbackTaskRow;
 }): Promise<void> {
   const videoUrl =
-    input.video.status === "completed" && input.video.storageKey
-      ? await buildVideoCallbackUrl(input.video.storageKey)
+    input.video.status === "completed" &&
+    input.video.storageKey &&
+    input.video.storageBucket
+      ? await buildVideoCallbackUrl(
+          input.video.storageKey,
+          input.video.storageBucket
+        )
       : null;
   const parsedManifest = videoInputManifestSchema.safeParse(
     input.video.inputManifest ?? {}

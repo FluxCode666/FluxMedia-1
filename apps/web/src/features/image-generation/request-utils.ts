@@ -4,7 +4,10 @@ import {
 } from "@repo/shared/image-generation/media-contract";
 import { logWarn } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
+import {
+  getRuntimeSettingString,
+  getRuntimeStorageBucketConfig,
+} from "@repo/shared/system-settings";
 import sharp from "sharp";
 import type { ImageInputFile } from "./types";
 
@@ -184,9 +187,7 @@ export async function uploadTemporaryImageUrls(
     }
 
     const storage = await getStorageProvider();
-    const bucket =
-      (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-      "generations";
+    const { generations: bucket } = await getRuntimeStorageBucketConfig();
 
     return await Promise.all(
       files.map(async (file, index) => {

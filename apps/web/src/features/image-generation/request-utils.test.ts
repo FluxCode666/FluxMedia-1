@@ -17,6 +17,10 @@ const storageMocks = vi.hoisted(() => {
 
 vi.mock("@repo/shared/system-settings", () => ({
   getRuntimeSettingString: runtimeSettingMock,
+  getRuntimeStorageBucketConfig: vi.fn(async () => ({
+    systemAssets: "system",
+    generations: "generations",
+  })),
 }));
 
 vi.mock("@repo/shared/storage/providers", () => ({
@@ -67,9 +71,6 @@ describe("uploadTemporaryImageUrls", () => {
       if (key === "CONTENT_MODERATION_PUBLIC_BASE_URL") {
         return "https://app.example.test";
       }
-      if (key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME") {
-        return "generations";
-      }
       return "";
     });
     storageMocks.getSignedUrl.mockResolvedValue(
@@ -105,9 +106,6 @@ describe("uploadTemporaryImageUrls", () => {
   it("keeps external presigned storage URLs unchanged", async () => {
     runtimeSettingMock.mockImplementation(async (key: string) => {
       if (key === "STORAGE_ENDPOINT") return "https://r2.example.test";
-      if (key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME") {
-        return "generations";
-      }
       return "";
     });
     storageMocks.getSignedUrl.mockResolvedValue(

@@ -233,7 +233,7 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         null::text as revised_prompt,
         null::text as size,
         v.storage_key::text as storage_key,
-        null::text as storage_bucket,
+        v.storage_bucket::text as storage_bucket,
         v.resolution::text as resolution,
         v.duration_seconds::integer as duration_seconds,
         v.aspect_ratio::text as aspect_ratio,
@@ -408,7 +408,10 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
         aspectRatio: row.aspect_ratio,
         generateAudio: row.generate_audio,
         input: buildVideoInputSummary(inputManifest.data),
-        videoUrl: buildSignedStorageImageUrl(row.storage_key, null),
+        videoUrl: buildSignedStorageImageUrl(
+          row.storage_key,
+          row.storage_bucket
+        ),
       };
     });
   },

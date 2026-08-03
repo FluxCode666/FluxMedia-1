@@ -479,18 +479,16 @@ bindExecute(
       throw new OperationError("not_found", "Video task not found");
     }
     assertVideoTaskPrincipal(row, principal, ctx);
-    const videoUrl = row.storageKey
-      ? buildPublicVideoStatusUrl({
-          storageKey: row.storageKey,
-          bucket:
-            (await getRuntimeSettingString(
-              "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-            )) || "generations",
-          publicBaseUrl:
-            (await getRuntimeSettingString("NEXT_PUBLIC_APP_URL")) ||
-            (await getRuntimeSettingString("BETTER_AUTH_URL")),
-        })
-      : null;
+    const videoUrl =
+      row.storageKey && row.storageBucket
+        ? buildPublicVideoStatusUrl({
+            storageKey: row.storageKey,
+            bucket: row.storageBucket,
+            publicBaseUrl:
+              (await getRuntimeSettingString("NEXT_PUBLIC_APP_URL")) ||
+              (await getRuntimeSettingString("BETTER_AUTH_URL")),
+          })
+        : null;
     const parsedManifest = videoInputManifestSchema.safeParse(
       row.inputManifest ?? {}
     );

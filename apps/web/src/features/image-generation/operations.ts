@@ -29,7 +29,7 @@ import {
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import {
   getRuntimeSettingBoolean,
-  getRuntimeSettingString,
+  getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
 import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -862,9 +862,7 @@ export async function runImageGenerationForUser(
   );
   const size = input.size || DEFAULT_IMAGE_SIZE;
   const inputImages = getInputImages(input);
-  const bucket =
-    (await getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")) ||
-    "generations";
+  const { generations: bucket } = await getRuntimeStorageBucketConfig();
   const userPlan = await getUserPlan(input.userId);
   const planCapabilities = await getPlanCapabilitySnapshot(userPlan.plan);
   const queueSettings = await getPlanQueueSettings(userPlan.plan);

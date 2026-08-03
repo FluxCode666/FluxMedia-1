@@ -16,6 +16,10 @@ const logMock = vi.hoisted(() => ({ logWarn: vi.fn() }));
 
 vi.mock("@repo/shared/system-settings", () => ({
   getRuntimeSettingString: runtimeSettingMock,
+  getRuntimeStorageBucketConfig: vi.fn(async () => ({
+    systemAssets: "system",
+    generations: "generations",
+  })),
 }));
 
 vi.mock("@repo/shared/storage/providers", () => ({
@@ -49,7 +53,6 @@ const ctx = { userId: "user-1", generationId: "gen-1", index: 0 };
 beforeEach(() => {
   runtimeSettingMock.mockReset();
   runtimeSettingMock.mockImplementation(async (key: string) => {
-    if (key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME") return "generations";
     if (key === "NEXT_PUBLIC_APP_URL") return "https://app.example.test";
     return "";
   });

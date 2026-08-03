@@ -6,7 +6,7 @@
  */
 
 import { PgDialect } from "drizzle-orm/pg-core";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 
@@ -31,7 +31,17 @@ const baseQuery = {
 };
 
 describe("history repository SQL", () => {
-  beforeEach(() => execute.mockReset());
+  const originalSecret = process.env.BETTER_AUTH_SECRET;
+
+  beforeEach(() => {
+    execute.mockReset();
+    process.env.BETTER_AUTH_SECRET = "history-repository-test-secret";
+  });
+
+  afterAll(() => {
+    if (originalSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+    else process.env.BETTER_AUTH_SECRET = originalSecret;
+  });
 
   it("maps persisted video parameters, audio and named input summary", async () => {
     execute.mockResolvedValue({
@@ -49,8 +59,8 @@ describe("history repository SQL", () => {
           metadata: null,
           revised_prompt: null,
           size: null,
-          storage_key: null,
-          storage_bucket: null,
+          storage_key: "user-1/videos/video-1.mp4",
+          storage_bucket: "runtime-generations",
           resolution: "1080p",
           duration_seconds: 8,
           aspect_ratio: "16x9",
@@ -81,6 +91,9 @@ describe("history repository SQL", () => {
         resolution: "1080p",
         generateAudio: true,
         input: { mode: "references", count: 1 },
+        videoUrl: expect.stringMatching(
+          /^\/api\/storage\/runtime-generations\/user-1\/videos\/video-1\.mp4\?sig=/
+        ),
       }),
     ]);
   });
@@ -102,6 +115,7 @@ describe("history repository SQL", () => {
     expect(compiled.sql).toContain("'inputImages'");
     expect(compiled.sql).toContain("null::jsonb as metadata");
     expect(compiled.sql).toContain("v.input_manifest");
+    expect(compiled.sql).toContain("v.storage_bucket::text as storage_bucket");
     expect(compiled.sql).toContain("generateAudio");
     expect(compiled.sql).not.toContain("v.family");
     expect(compiled.sql).not.toContain("g.metadata,");
