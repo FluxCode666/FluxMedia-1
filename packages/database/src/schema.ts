@@ -1597,6 +1597,84 @@ export const videoGeneration = pgTable(
 );
 
 // ============================================
+// 图片异步任务
+// ============================================
+
+/**
+ * 图片异步 MQ 任务。
+ *
+ * Redis 只保存本表主键；经 UOL 校验的 JSON-safe 图片输入、Principal 最小快照与批次
+ * generation ID 持久保存在 PostgreSQL。generation 和 credits_transaction 仍分别是
+ * 产物与财务真相，本表只负责异步编排、claim 和查询聚合。
+ */
+export const imageAsyncTask = pgTable(
+  "image_async_task",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    apiKeyId: text("api_key_id").notNull(),
+    plan: text("plan").notNull(),
+    operation: text("operation")
+      .$type<"generate" | "edit" | "mask">()
+      .notNull(),
+    generationInputs: json("generation_inputs")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull(),
+    generationIds: json("generation_ids").$type<string[]>().notNull(),
+    responseFormat: text("response_format")
+      .$type<"url" | "b64_json">()
+      .notNull(),
+    callbackUrl: text("callback_url"),
+    status: text("status")
+      .$type<"queued" | "running" | "completed" | "failed">()
+      .notNull()
+      .default("queued"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    error: text("error"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    startedAt: timestamp("started_at"),
+    completedAt: timestamp("completed_at"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("image_async_task_owner_created_idx").on(
+      table.userId,
+      table.apiKeyId,
+      table.createdAt
+    ),
+    index("image_async_task_recovery_idx").on(
+      table.status,
+      table.claimExpiresAt,
+      table.createdAt
+    ),
+    check(
+      "image_async_task_operation_check",
+      sql`${table.operation} IN ('generate', 'edit', 'mask')`
+    ),
+    check(
+      "image_async_task_response_format_check",
+      sql`${table.responseFormat} IN ('url', 'b64_json')`
+    ),
+    check(
+      "image_async_task_status_check",
+      sql`${table.status} IN ('queued', 'running', 'completed', 'failed')`
+    ),
+    check(
+      "image_async_task_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "image_async_task_identity_nonempty_check",
+      sql`length(btrim(${table.userId})) > 0 AND length(btrim(${table.apiKeyId})) > 0 AND length(btrim(${table.plan})) > 0`
+    ),
+  ]
+);
+
+// ============================================
 // 视频输入转存准入预留
 // ============================================
 
