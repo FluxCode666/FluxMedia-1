@@ -11,7 +11,7 @@ import { z } from "zod";
 import { protectedAction } from "../safe-action";
 import { getPlanCapabilitySnapshot } from "../subscription/services/plan-capabilities";
 import { getUserPlan } from "../subscription/services/user-plan";
-import { getRuntimeSettingString } from "../system-settings";
+import { getRuntimeStorageBucketConfig } from "../system-settings";
 
 import { getStorageProvider } from "./providers";
 import { ALLOWED_IMAGE_TYPES, type AllowedImageType } from "./types";
@@ -36,11 +36,8 @@ const withStorageAction = (name: string) =>
  * @failure 设置缺失、为空或两个安全域同名时拒绝，不签发存储权限。
  */
 async function getAvatarsBucket(): Promise<string> {
-  const [avatars, generations] = await Promise.all([
-    getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
-    getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
-  ]);
-  return parseAvatarStorageBucketName(avatars, generations);
+  const { systemAssets, generations } = await getRuntimeStorageBucketConfig();
+  return parseAvatarStorageBucketName(systemAssets, generations);
 }
 
 // ============================================

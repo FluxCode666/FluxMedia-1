@@ -22,8 +22,8 @@
 - `VIDEO_MODEL_CREDITS_PER_SECOND` 保存视频模型族每秒价格；
 - `MODEL_MARKETPLACE_CONFIG` 是版本 2 的专用 JSON 真相，独立保存展示开关、简介、
   封面引用、revision 和幂等回执；
-- `MODEL_MARKETPLACE_ASSETS_BUCKET_NAME` 保存自定义封面的公开资产 bucket 名称，默认
-  `model-marketplace`；它可以与网站品牌和头像资产共用一个私有系统 bucket。
+- `SYSTEM_ASSETS_BUCKET_NAME` 保存头像、模型封面和网站品牌共用的公开资产 bucket，
+  默认 `system`；`GENERATIONS_BUCKET_NAME` 保存生成图片与视频共用的私有 bucket。
 
 设置初始化会识别历史 `IMAGE_MODEL_CREDIT_PRICES.byModel.default`：先用旧四档价格补齐
 已经存在的稀疏真实模型价格，再删除该键；运行时不会继续使用它。合法的模型广场 v1
@@ -63,11 +63,10 @@ JSON 会在读取时转换为 v2，并在下一次单模型保存时写回当前
 历史生成器写入的 `<user-id>-<timestamp>.<jpg|jpeg|png|gif|webp>` 头像 key 继续兼容
 读取和归属校验；共桶中的其他未知根目录或 key 一律拒绝。
 
-`generations` 必须与上述三个公开资产域全部隔离；任一公共资产配置与生成内容 bucket
-重叠时，封面保存、Logo 上传、公开目录和存储读取均 fail-closed。合并部署仍保留三个
-设置键以兼容旧环境，只需把 `NEXT_PUBLIC_AVATARS_BUCKET_NAME`、
-`MODEL_MARKETPLACE_ASSETS_BUCKET_NAME`、`SITE_ASSETS_BUCKET_NAME` 配成同一个已创建的
-bucket。头像展示 URL 固定使用 `_avatars` 逻辑别名，由读取 Route 以不可缓存的 307
+`GENERATIONS_BUCKET_NAME` 必须与 `SYSTEM_ASSETS_BUCKET_NAME` 隔离；两个 bucket
+重叠时，封面保存、Logo 上传、生成管线、公开目录和存储读取均 fail-closed。历史四项
+bucket 设置只在启动迁移时用于初始化两个新键，不再出现在后台或参与运行时读取。
+头像展示 URL 固定使用 `_avatars` 逻辑别名，由读取 Route 以不可缓存的 307
 跳转映射到最新运行时 bucket；真实 bucket URL 仍使用长缓存，因此修改头像 bucket 不再
 依赖重新构建 Web 镜像，也不会让头像请求反复读取对象存储。`_avatars` 是系统保留名称，
 不能配置为任一真实 bucket。

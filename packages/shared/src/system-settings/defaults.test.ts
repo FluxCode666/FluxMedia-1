@@ -149,6 +149,14 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("VIDEO_MODEL_CAPABILITY_OVERRIDES");
     expect(initializedKeys).toContain("SYSTEM_ASSETS_BUCKET_NAME");
     expect(initializedKeys).toContain("GENERATIONS_BUCKET_NAME");
+    expect(initializedKeys).not.toContain(
+      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
+    );
+    expect(initializedKeys).not.toContain("SITE_ASSETS_BUCKET_NAME");
+    expect(initializedKeys).not.toContain("NEXT_PUBLIC_AVATARS_BUCKET_NAME");
+    expect(initializedKeys).not.toContain(
+      "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
+    );
     expect(initializedKeys).toContain("IMAGE_TEXT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("IMAGE_INPUT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("CONTENT_MODERATION_BLOCK_RISK_LEVEL");

@@ -5,7 +5,7 @@
  * 真实数据库或对象存储，数据库回执由可替换端口模拟。
  */
 
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
+import { getRuntimeStorageBucketConfig } from "@repo/shared/system-settings";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbTransaction = vi.hoisted(() => vi.fn());
@@ -13,7 +13,7 @@ vi.mock("@repo/database", () => ({
   db: { transaction: dbTransaction },
 }));
 vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingString: vi.fn(),
+  getRuntimeStorageBucketConfig: vi.fn(),
   invalidateSystemSettingsCache: vi.fn(),
 }));
 vi.mock("@repo/shared/storage/providers", () => ({
@@ -36,7 +36,7 @@ describe("createSiteLogoUploadService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     dbTransaction.mockReset();
-    vi.mocked(getRuntimeSettingString).mockReset();
+    vi.mocked(getRuntimeStorageBucketConfig).mockReset();
   });
 
   it("原样写入文件并返回内容寻址 URL", async () => {
@@ -108,11 +108,10 @@ describe("createSiteLogoUploadService", () => {
   });
 
   it("网站、模型与头像资产允许共用系统公开资产 bucket", async () => {
-    vi.mocked(getRuntimeSettingString).mockImplementation(async (key) =>
-      key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-        ? "generations"
-        : "system-assets"
-    );
+    vi.mocked(getRuntimeStorageBucketConfig).mockResolvedValue({
+      systemAssets: "system-assets",
+      generations: "generations",
+    });
     const putObject = vi.fn().mockResolvedValue(undefined);
     const service = createSiteLogoUploadService({
       loadStorage: vi.fn().mockResolvedValue({ putObject }),

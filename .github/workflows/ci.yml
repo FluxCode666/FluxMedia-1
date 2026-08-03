@@ -170,8 +170,8 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_APP_NAME: FluxMedia
       NEXT_PUBLIC_PAYMENT_PROVIDER: none
-      NEXT_PUBLIC_GENERATIONS_BUCKET_NAME: generations
-      NEXT_PUBLIC_AVATARS_BUCKET_NAME: avatars
+      SYSTEM_ASSETS_BUCKET_NAME: system
+      GENERATIONS_BUCKET_NAME: generations
       # 仅供构建期模块加载使用的占位值（@repo/database 在 import 时会校验 DATABASE_URL）。
       # 绝非运行时机密 —— 真实机密只存在于部署环境（见 CLAUDE.md §0.5）。
       DATABASE_URL: postgresql://gpt2image:gpt2image@localhost:5432/gpt2image
@@ -212,8 +212,6 @@ jobs:
             NEXT_PUBLIC_APP_URL=http://localhost:3000
             NEXT_PUBLIC_APP_NAME=FluxMedia
             NEXT_PUBLIC_PAYMENT_PROVIDER=none
-            NEXT_PUBLIC_GENERATIONS_BUCKET_NAME=generations
-            NEXT_PUBLIC_AVATARS_BUCKET_NAME=avatars
           cache-from: type=gha,scope=web-ci
           cache-to: type=gha,mode=max,scope=web-ci
       - name: Smoke API upstream worker in final container

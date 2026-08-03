@@ -6,8 +6,8 @@
  * 关键依赖：无；本模块保持纯函数，供 DB-free 测试复用。
  */
 
-/** 未显式配置时使用的专用网站资产 bucket。 */
-export const DEFAULT_SITE_ASSETS_BUCKET_NAME = "site-assets";
+/** 未显式配置时使用的系统通用资产 bucket。 */
+export const DEFAULT_SITE_ASSETS_BUCKET_NAME = "system";
 
 const STORAGE_BUCKET_PATTERN = /^[A-Za-z0-9._-]{1,255}$/;
 const SITE_LOGO_OBJECT_KEY_PATTERN = /^logo\/[a-f0-9]{64}\.(?:png|svg|ico)$/;
@@ -35,7 +35,7 @@ export class SiteBrandingAssetReferenceError extends Error {
 }
 
 /**
- * 解析专用网站资产 bucket。
+ * 解析系统通用资产 bucket。
  *
  * @param value - 运行时系统设置；缺失时采用稳定默认值，显式空白视为配置错误。
  * @returns 可安全放入单个 URL path segment 的 bucket 名称。

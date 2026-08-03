@@ -2,7 +2,7 @@
  * 公开模型广场的生产基础设施装配。
  *
  * 使用方是 UOL late binding；本模块并行读取真实运行时目录、两类价格、视频能力覆盖、
- * 展示配置和三个 bucket 设置，先完成生成内容隔离与全量封面引用校验，再调用 DB-free
+ * 展示配置和两个统一 bucket 设置，先完成生成内容隔离与全量封面引用校验，再调用 DB-free
  * 目录构建器输出公开 DTO。
  */
 import "server-only";
@@ -32,7 +32,7 @@ import {
 import { getDefaultModelMarketplaceCoverPath } from "./assets";
 import { buildModelMarketplaceCatalog } from "./catalog";
 
-const DEFAULT_AVATARS_BUCKET = "avatars";
+const DEFAULT_SYSTEM_ASSETS_BUCKET = "system";
 const DEFAULT_GENERATIONS_BUCKET = "generations";
 
 type ModelMarketplaceJsonSettingKey =
@@ -42,13 +42,11 @@ type ModelMarketplaceJsonSettingKey =
   | "MODEL_MARKETPLACE_CONFIG";
 
 type ModelMarketplaceBucketSettingKey =
-  | "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
-  | "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
-  | "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME";
+  | "SYSTEM_ASSETS_BUCKET_NAME"
+  | "GENERATIONS_BUCKET_NAME";
 
 type ModelMarketplaceBucketConfig = {
   assetBucket: string;
-  avatarsBucket: string;
   generationsBucket: string;
 };
 
@@ -75,42 +73,38 @@ const defaultDependencies: ProductionModelMarketplaceDependencies = {
 };
 
 /**
- * 规范化并验证模型资产、头像与生成内容 bucket 的安全关系。
+ * 规范化并验证系统资产与生成内容 bucket 的安全关系。
  *
- * @param assetRaw - 专用模型资产 bucket 的未知可选设置值。
- * @param avatarsRaw - 头像 bucket 的未知可选设置值。
+ * @param assetRaw - 系统通用资产 bucket 的未知可选设置值。
  * @param generationsRaw - 生成内容 bucket 的未知可选设置值。
- * @returns 去空白后的模型资产、头像与生成内容 bucket。
+ * @returns 去空白后的系统资产与生成内容 bucket。
  * @sideEffects 无。
  * @failure 资产 bucket 缺失、为空，或生成内容与任一公开域冲突时抛出稳定错误。
  */
 function parseBucketConfig(
   assetRaw: string | undefined,
-  avatarsRaw: string | undefined,
   generationsRaw: string | undefined
 ): ModelMarketplaceBucketConfig {
   let assetBucket: string;
   try {
-    assetBucket = parseModelMarketplaceAssetBucketName(assetRaw);
+    assetBucket = parseModelMarketplaceAssetBucketName(
+      assetRaw ?? DEFAULT_SYSTEM_ASSETS_BUCKET
+    );
   } catch {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
       "模型资产存储桶未配置或名称无效"
     );
   }
-  const avatarsBucket = avatarsRaw?.trim() || DEFAULT_AVATARS_BUCKET;
   const generationsBucket =
     generationsRaw?.trim() || DEFAULT_GENERATIONS_BUCKET;
-  if (
-    generationsBucket === assetBucket ||
-    generationsBucket === avatarsBucket
-  ) {
+  if (generationsBucket === assetBucket) {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
-      "生成内容存储桶必须与模型资产和头像存储桶隔离"
+      "生成内容存储桶必须与系统通用资产存储桶隔离"
     );
   }
-  return { assetBucket, avatarsBucket, generationsBucket };
+  return { assetBucket, generationsBucket };
 }
 
 /**
@@ -188,7 +182,6 @@ export function createProductionModelMarketplaceService(
         videoCapabilityOverrides,
         marketplaceConfigRaw,
         assetBucketRaw,
-        avatarsBucketRaw,
         generationsBucketRaw,
       ] = await Promise.all([
         dependencies.loadRuntimeCatalog(),
@@ -196,13 +189,11 @@ export function createProductionModelMarketplaceService(
         dependencies.loadSettingJson("VIDEO_MODEL_CREDITS_PER_SECOND"),
         dependencies.loadSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES"),
         dependencies.loadSettingJson("MODEL_MARKETPLACE_CONFIG"),
-        dependencies.loadSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
-        dependencies.loadSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
-        dependencies.loadSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
+        dependencies.loadSettingString("SYSTEM_ASSETS_BUCKET_NAME"),
+        dependencies.loadSettingString("GENERATIONS_BUCKET_NAME"),
       ]);
       const bucketConfig = parseBucketConfig(
         assetBucketRaw,
-        avatarsBucketRaw,
         generationsBucketRaw
       );
       const marketplaceConfig = parseMarketplaceConfigForAssetBucket(

@@ -13,7 +13,7 @@ import { logError } from "@repo/shared/logger";
 import type { StorageProvider } from "@repo/shared/storage";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import {
-  getRuntimeSettingString,
+  getRuntimeStorageBucketConfig,
   invalidateSystemSettingsCache,
 } from "@repo/shared/system-settings";
 import {
@@ -23,8 +23,6 @@ import {
   siteLogoUploadOutputSchema,
 } from "@repo/shared/system-settings/site-branding";
 import { and, eq } from "drizzle-orm";
-import { parseModelMarketplaceAssetBucketName } from "@/features/model-marketplace/asset-reference";
-
 import {
   buildSiteLogoAssetUrl,
   buildSiteLogoObjectKey,
@@ -83,35 +81,16 @@ export type SiteLogoUploadServiceDependencies = {
  * @failure 任一专用公开 bucket 非法，或 generations 与公开资产重叠时拒绝。
  */
 async function loadProductionBucket(): Promise<string> {
-  const [siteRaw, avatarsRaw, generationsRaw, modelRaw] = await Promise.all([
-    getRuntimeSettingString("SITE_ASSETS_BUCKET_NAME"),
-    getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
-    getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
-    getRuntimeSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
-  ]);
-  const site = parseSiteAssetsBucketName(siteRaw);
-  const avatars = avatarsRaw?.trim() || "avatars";
-  const generations = generationsRaw?.trim() || "generations";
-  let model: string;
+  let systemAssets: string;
   try {
-    model = parseModelMarketplaceAssetBucketName(modelRaw);
+    ({ systemAssets } = await getRuntimeStorageBucketConfig());
   } catch {
     throw new SiteLogoUploadServiceError(
       "invalid_dependency_result",
       "网站资产存储桶配置无效"
     );
   }
-  if (
-    generations === site ||
-    generations === avatars ||
-    generations === model
-  ) {
-    throw new SiteLogoUploadServiceError(
-      "invalid_dependency_result",
-      "生成内容存储桶必须与网站、模型和头像资产存储桶隔离"
-    );
-  }
-  return site;
+  return parseSiteAssetsBucketName(systemAssets);
 }
 
 /** 创建内容寻址上传服务的生产依赖。 */

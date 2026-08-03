@@ -38,7 +38,7 @@ vi.mock("./repository", () => ({
   defaultDatabaseModelConfigurationRepository: undefined,
 }));
 
-const ASSET_BUCKET = "model-marketplace";
+const ASSET_BUCKET = "system-assets";
 const COVER_KEY = `image/${"a".repeat(64)}/${"b".repeat(64)}.webp`;
 
 /**
@@ -111,8 +111,7 @@ async function createServiceHarness(
   const service = serviceModule.createProductionModelConfigurationService({
     createRepository: () => repositoryBundle,
     loadSettingString: async (key) => {
-      if (key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME") return ASSET_BUCKET;
-      if (key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME") return "avatars";
+      if (key === "SYSTEM_ASSETS_BUCKET_NAME") return ASSET_BUCKET;
       return "generations";
     },
     loadSettingJson: async (key) => {
@@ -239,9 +238,9 @@ describe("生产模型配置服务", () => {
   });
 
   it.each([
-    ["空资产桶", "", "avatars", "generations"],
-    ["与生成桶冲突", "generations", "avatars", "generations"],
-  ])("%s 时在加载 Provider、处理封面或调用保存内核前 fail-closed", async (_label, assetBucket, avatarsBucket, generationsBucket) => {
+    ["空资产桶", "", "generations"],
+    ["与生成桶冲突", "generations", "generations"],
+  ])("%s 时在加载 Provider、处理封面或调用保存内核前 fail-closed", async (_label, assetBucket, generationsBucket) => {
     const harness = await createServiceHarness();
     const createCoreService = vi.fn<
       ProductionModelConfigurationDependencies["createCoreService"]
@@ -254,11 +253,8 @@ describe("生产模型配置服务", () => {
       harness.serviceModule.createProductionModelConfigurationService({
         createRepository: () => harness.repositoryBundle,
         loadSettingString: async (key) => {
-          if (key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME") {
+          if (key === "SYSTEM_ASSETS_BUCKET_NAME") {
             return assetBucket;
-          }
-          if (key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME") {
-            return avatarsBucket;
           }
           return generationsBucket;
         },
@@ -274,7 +270,7 @@ describe("生产模型配置服务", () => {
     expect(createCoreService).not.toHaveBeenCalled();
   });
 
-  it("模型资产允许与头像共用系统公开资产 bucket", async () => {
+  it("模型资产读取统一系统公开资产 bucket", async () => {
     const harness = await createServiceHarness();
     const output = {
       category: "image" as const,
@@ -289,9 +285,7 @@ describe("生产模型配置服务", () => {
       harness.serviceModule.createProductionModelConfigurationService({
         createRepository: () => harness.repositoryBundle,
         loadSettingString: async (key) =>
-          key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-            ? "generations"
-            : "system-assets",
+          key === "GENERATIONS_BUCKET_NAME" ? "generations" : "system-assets",
         loadStorageProvider: harness.loadStorageProvider,
         createCoreService,
       });
@@ -364,10 +358,9 @@ describe("生产模型配置服务", () => {
       harness.serviceModule.createProductionModelConfigurationService({
         createRepository: () => harness.repositoryBundle,
         loadSettingString: async (key) => {
-          if (key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME") {
+          if (key === "SYSTEM_ASSETS_BUCKET_NAME") {
             return ASSET_BUCKET;
           }
-          if (key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME") return "avatars";
           return "generations";
         },
         loadSettingJson: async (key) => {

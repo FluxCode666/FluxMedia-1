@@ -1,7 +1,7 @@
 /**
  * 公开模型广场生产服务测试。
  *
- * 使用方是 UOL late binding；测试验证八项事实并行读取、资产 bucket 隔离、封面引用
+ * 使用方是 UOL late binding；测试验证七项事实并行读取、资产 bucket 隔离、封面引用
  * 校验与第一方 URL 编码，以及依赖失败和不可达目录语义，不连接数据库或对象存储。
  */
 import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
@@ -24,7 +24,7 @@ vi.mock("@/features/external-api/platform-model-catalog-service", () => ({
   loadPlatformModelCatalog: vi.fn(),
 }));
 
-const ASSET_BUCKET = "model-marketplace";
+const ASSET_BUCKET = "system-assets";
 const CONFIG_HASH = "a".repeat(64);
 const CONTENT_HASH = "b".repeat(64);
 const IMAGE_COVER_KEY = `image/${CONFIG_HASH}/${CONTENT_HASH}.webp`;
@@ -58,8 +58,7 @@ function createDependencies(
       return structuredClone(marketplaceConfig);
     },
     loadSettingString: async (key) => {
-      if (key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME") return ASSET_BUCKET;
-      if (key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME") return "avatars";
+      if (key === "SYSTEM_ASSETS_BUCKET_NAME") return ASSET_BUCKET;
       return "generations";
     },
     getDefaultCoverPath: (category) =>
@@ -99,7 +98,7 @@ function createDeferred<T>(): {
 }
 
 describe("公开模型广场生产服务", () => {
-  it("同一轮并行启动运行时、四项 JSON 与三个 bucket 读取", async () => {
+  it("同一轮并行启动运行时、四项 JSON 与两个 bucket 读取", async () => {
     const { createProductionModelMarketplaceService } = await import(
       "./service"
     );
@@ -133,18 +132,14 @@ describe("公开模型广场生产服务", () => {
       },
       loadSettingString: (key) => {
         const value =
-          key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
-            ? ASSET_BUCKET
-            : key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
-              ? "avatars"
-              : "generations";
+          key === "SYSTEM_ASSETS_BUCKET_NAME" ? ASSET_BUCKET : "generations";
         return read(key, value);
       },
     });
 
     const outputPromise = service.listPublicModels();
-    expect(started).toHaveLength(8);
-    expect(new Set(started).size).toBe(8);
+    expect(started).toHaveLength(7);
+    expect(new Set(started).size).toBe(7);
     for (const deferred of deferredByKey.values()) deferred.resolve();
 
     const output = await outputPromise;
@@ -212,17 +207,16 @@ describe("公开模型广场生产服务", () => {
   });
 
   it.each([
-    ["空资产桶", "", "avatars", "generations"],
-    ["与生成内容桶冲突", "generations", "avatars", "generations"],
-  ])("%s 时 fail-closed", async (_label, asset, avatars, generations) => {
+    ["空资产桶", "", "generations"],
+    ["与生成内容桶冲突", "generations", "generations"],
+  ])("%s 时 fail-closed", async (_label, asset, generations) => {
     const { createProductionModelMarketplaceService } = await import(
       "./service"
     );
     const service = createProductionModelMarketplaceService({
       ...createDependencies(),
       loadSettingString: async (key) => {
-        if (key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME") return asset;
-        if (key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME") return avatars;
+        if (key === "SYSTEM_ASSETS_BUCKET_NAME") return asset;
         return generations;
       },
     });
@@ -232,16 +226,14 @@ describe("公开模型广场生产服务", () => {
     });
   });
 
-  it("模型资产允许与头像共用系统公开资产 bucket", async () => {
+  it("模型资产读取统一系统公开资产 bucket", async () => {
     const { createProductionModelMarketplaceService } = await import(
       "./service"
     );
     const service = createProductionModelMarketplaceService({
       ...createDependencies(),
       loadSettingString: async (key) =>
-        key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-          ? "generations"
-          : "system-assets",
+        key === "GENERATIONS_BUCKET_NAME" ? "generations" : "system-assets",
     });
 
     const output = await service.listPublicModels();
@@ -296,7 +288,7 @@ describe("公开模型广场生产服务", () => {
 
     expect(
       output.items.find((item) => item.category === "image")?.coverUrl
-    ).toBe(`/api/storage/model-marketplace/${IMAGE_COVER_KEY}`);
+    ).toBe(`/api/storage/${ASSET_BUCKET}/${IMAGE_COVER_KEY}`);
     expect(JSON.stringify(output)).not.toMatch(/"bucket"|"key"/);
   });
 

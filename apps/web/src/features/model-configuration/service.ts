@@ -52,13 +52,12 @@ import {
   type ModelConfigurationWarning,
 } from "./service-core";
 
-const DEFAULT_AVATARS_BUCKET = "avatars";
+const DEFAULT_SYSTEM_ASSETS_BUCKET = "system";
 const DEFAULT_GENERATIONS_BUCKET = "generations";
 
 type ModelConfigurationBucketSettingKey =
-  | "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
-  | "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
-  | "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME";
+  | "SYSTEM_ASSETS_BUCKET_NAME"
+  | "GENERATIONS_BUCKET_NAME";
 
 type ModelConfigurationJsonSettingKey =
   | "IMAGE_MODEL_CREDIT_PRICES"
@@ -73,7 +72,6 @@ type ModelConfigurationRepositoryBundle = {
 
 type ModelConfigurationBucketConfig = {
   assetBucket: string;
-  avatarsBucket: string;
   generationsBucket: string;
 };
 
@@ -179,43 +177,40 @@ export function createModelConfigurationStoragePort(
 }
 
 /**
- * 读取并验证模型资产、头像与生成内容 bucket 的安全关系。
+ * 读取并验证系统资产与生成内容 bucket 的安全关系。
  *
  * @param loadSettingString - 运行时系统设置字符串读取器。
- * @returns 去空白后的模型资产、头像与生成内容 bucket。
- * @sideEffects 并发读取三项运行时设置，不写缓存或存储。
- * @failure 模型资产 bucket 缺失、为空，或生成内容与任一公开域冲突时 fail-closed。
+ * @returns 去空白后的系统资产与生成内容 bucket。
+ * @sideEffects 并发读取两项运行时设置，不写缓存或存储。
+ * @failure 系统资产 bucket 非法，或与生成内容 bucket 冲突时 fail-closed。
  */
 async function loadBucketConfig(
   loadSettingString: ProductionModelConfigurationDependencies["loadSettingString"]
 ): Promise<ModelConfigurationBucketConfig> {
-  const [assetRaw, avatarsRaw, generationsRaw] = await Promise.all([
-    loadSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
-    loadSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
-    loadSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
+  const [assetRaw, generationsRaw] = await Promise.all([
+    loadSettingString("SYSTEM_ASSETS_BUCKET_NAME"),
+    loadSettingString("GENERATIONS_BUCKET_NAME"),
   ]);
   let assetBucket: string;
   try {
-    assetBucket = parseModelMarketplaceAssetBucketName(assetRaw);
+    assetBucket = parseModelMarketplaceAssetBucketName(
+      assetRaw ?? DEFAULT_SYSTEM_ASSETS_BUCKET
+    );
   } catch {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
       "模型资产存储桶未配置或名称无效"
     );
   }
-  const avatarsBucket = avatarsRaw?.trim() || DEFAULT_AVATARS_BUCKET;
   const generationsBucket =
     generationsRaw?.trim() || DEFAULT_GENERATIONS_BUCKET;
-  if (
-    generationsBucket === assetBucket ||
-    generationsBucket === avatarsBucket
-  ) {
+  if (generationsBucket === assetBucket) {
     throw new ModelConfigurationServiceError(
       "invalid_dependency_result",
-      "生成内容存储桶必须与模型资产和头像存储桶隔离"
+      "生成内容存储桶必须与系统通用资产存储桶隔离"
     );
   }
-  return { assetBucket, avatarsBucket, generationsBucket };
+  return { assetBucket, generationsBucket };
 }
 
 /**
