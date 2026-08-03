@@ -117,6 +117,75 @@ export type ImageGenerateOperationOutput = z.infer<
   typeof imageGenerateOutputSchema
 >;
 
+/** 图片异步任务 ID；由服务端生成并同时作为 PostgreSQL 主键与 MQ 幂等键。 */
+export const imageAsyncTaskIdSchema = z
+  .string()
+  .trim()
+  .regex(/^task_[a-zA-Z0-9_-]+$/)
+  .max(128);
+
+/** 图片异步任务的持久状态；Redis 不保存或推导此状态。 */
+export const imageAsyncTaskStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+]);
+
+/** 创建图片异步任务的传输无关输入。 */
+export const imageEnqueueAsyncInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    generationInputs: z.array(imageGenerateInputSchema).min(1).max(10_000),
+    responseFormat: z.enum(["url", "b64_json"]),
+    callbackUrl: z.string().url().max(2_048).optional(),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const operation = input.generationInputs[0]?.operation;
+    const generationIds = new Set<string>();
+    for (const [index, generationInput] of input.generationInputs.entries()) {
+      if (generationInput.operation !== operation) {
+        context.addIssue({
+          code: "custom",
+          path: ["generationInputs", index, "operation"],
+          message: "All generation inputs must use the same operation",
+        });
+      }
+      if (generationIds.has(generationInput.generationId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["generationInputs", index, "generationId"],
+          message: "generationId must be unique within an async task",
+        });
+      }
+      generationIds.add(generationInput.generationId);
+    }
+  });
+
+/** 图片异步任务的稳定编排视图，不包含提示词、凭据或媒体引用。 */
+export const imageAsyncTaskOutputSchema = z.object({
+  taskId: imageAsyncTaskIdSchema,
+  operation: z.enum(["generate", "edit", "mask"]),
+  status: imageAsyncTaskStatusSchema,
+  generationIds: z.array(z.string().trim().min(1).max(128)).min(1),
+  responseFormat: z.enum(["url", "b64_json"]),
+  createdAt: z.string().datetime(),
+  startedAt: z.string().datetime().nullable(),
+  completedAt: z.string().datetime().nullable(),
+  error: z.string().max(2_000).nullable(),
+});
+
+/** image.enqueueAsync 的严格输入类型。 */
+export type ImageEnqueueAsyncInput = z.infer<
+  typeof imageEnqueueAsyncInputSchema
+>;
+
+/** 图片异步任务的稳定输出类型。 */
+export type ImageAsyncTaskOutput = z.infer<
+  typeof imageAsyncTaskOutputSchema
+>;
+
 type ImageGenerateOperation = z.infer<
   typeof imageGenerateInputSchema
 >["operation"];
@@ -198,6 +267,113 @@ export const imageGenerate = defineOperation<
   processLocalState: true,
   execute: async () => {
     throw new Error("Not yet wired: image.generate");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 1a. image.enqueueAsync - PostgreSQL 持久化后最佳努力投递 Redis MQ
+// ---------------------------------------------------------------------------
+export const imageEnqueueAsync = defineOperation<
+  ImageEnqueueAsyncInput,
+  ImageAsyncTaskOutput
+>({
+  name: "image.enqueueAsync",
+  domain: "image-generation",
+  title: "创建图片异步任务",
+  description:
+    "幂等创建 PostgreSQL 图片异步任务，并在数据库提交后最佳努力投递 Redis MQ。" +
+    "媒体必须是 JSON-safe 引用；Redis 消息只包含 taskId。",
+  input: imageEnqueueAsyncInputSchema,
+  output: imageAsyncTaskOutputSchema,
+  access: { kind: "protected" },
+  capabilities: [
+    {
+      derive: (input, principal) => {
+        const parsed = input as ImageEnqueueAsyncInput;
+        const capabilities = [
+          ...new Set(
+            parsed.generationInputs.flatMap((generationInput) =>
+              deriveImageCapabilities(generationInput, principal)
+            )
+          ),
+        ];
+        if (parsed.generationInputs.length > 1) {
+          capabilities.push(
+            isExternalApiKeyPrincipal(principal)
+              ? "externalApi.images.batch"
+              : "imageGeneration.batch"
+          );
+        }
+        return [...new Set(capabilities)];
+      },
+    },
+  ],
+  readOnly: false,
+  destructive: false,
+  idempotency: {
+    kind: "required",
+    keyField: "taskId",
+    scope: "global",
+  },
+  sideEffects: ["queue", "storage"],
+  execute: async () => {
+    throw new Error("Not yet wired: image.enqueueAsync");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 1b. image.getAsyncTask - owner 读取 PostgreSQL 持久任务状态
+// ---------------------------------------------------------------------------
+export const imageGetAsyncTask = defineOperation({
+  name: "image.getAsyncTask",
+  domain: "image-generation",
+  title: "查询图片异步任务",
+  description:
+    "从 PostgreSQL 查询图片异步任务编排状态；执行体必须同时校验 userId 与 API Key 域。",
+  input: z
+    .object({
+      taskId: imageAsyncTaskIdSchema,
+    })
+    .strict(),
+  output: imageAsyncTaskOutputSchema,
+  access: { kind: "owner", resource: "image async task" },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: image.getAsyncTask");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 1c. image.processAsyncTask - 系统 Worker 按 taskId 恢复并执行任务
+// ---------------------------------------------------------------------------
+export const imageProcessAsyncTask = defineOperation({
+  name: "image.processAsyncTask",
+  domain: "image-generation",
+  title: "处理图片异步任务",
+  description:
+    "仅供系统 Worker 调用。按 taskId 从 PostgreSQL 恢复已校验输入和 Principal 快照，" +
+    "通过 image.generate 执行统一图片管线并原子收敛终态。",
+  input: z
+    .object({
+      taskId: imageAsyncTaskIdSchema,
+    })
+    .strict(),
+  output: imageAsyncTaskOutputSchema,
+  access: { kind: "system" },
+  allowSystemCapabilityBypass: true,
+  readOnly: false,
+  destructive: false,
+  idempotency: {
+    kind: "required",
+    keyField: "taskId",
+    scope: "global",
+  },
+  sideEffects: ["billing", "storage", "external-call", "queue"],
+  execute: async () => {
+    throw new Error("Not yet wired: image.processAsyncTask");
   },
 });
 
