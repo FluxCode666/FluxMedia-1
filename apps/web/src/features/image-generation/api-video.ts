@@ -25,6 +25,7 @@ import type { ApiConfig } from "./types";
 
 const MAX_API_VIDEO_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_API_VIDEO_INLINE_INPUT_BYTES = 64 * 1024 * 1024;
+const MAX_API_VIDEO_UPSTREAM_ERROR_DETAIL_CHARACTERS = 512;
 
 /** API 视频适配器消费的一张已验证输入图。 */
 export type ApiVideoSourceImage = {
@@ -122,6 +123,48 @@ async function readJsonRecord(
 /** 将不受信任的上游错误收敛为只含状态码的稳定消息。 */
 function getApiVideoErrorMessage(response: Response): string {
   return `视频上游返回 HTTP ${response.status}`;
+}
+
+/** 清洗上游错误详情，避免控制字符、凭据或过长正文进入任务错误。 */
+function sanitizeApiVideoUpstreamErrorDetail(
+  value: unknown
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const withoutControlCharacters = Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127 ? " " : character;
+  }).join("");
+  const normalized = withoutControlCharacters
+    .replace(/\s+/gu, " ")
+    .replace(/bearer\s+[^\s]+/giu, "Bearer [REDACTED]")
+    .replace(/\bsk-[a-z0-9_-]+\b/giu, "[REDACTED]")
+    .replace(
+      /(api[-_]?key|token|secret|password)\s*[:=]\s*[^\s,;，；。]+/giu,
+      "$1=[REDACTED]"
+    )
+    .trim();
+  if (!normalized) return undefined;
+  if (normalized.length <= MAX_API_VIDEO_UPSTREAM_ERROR_DETAIL_CHARACTERS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, MAX_API_VIDEO_UPSTREAM_ERROR_DETAIL_CHARACTERS - 3)}...`;
+}
+
+/** 从内置查询响应提取可安全展示的上游失败原因。 */
+function getApiVideoUpstreamFailureMessage(
+  record: Record<string, unknown>
+): string {
+  const error = isRecord(record.error) ? record.error : undefined;
+  const detail = sanitizeApiVideoUpstreamErrorDetail(
+    error?.message ?? record.error_message
+  );
+  if (detail) return `API 视频任务失败：${detail}`;
+
+  const code = sanitizeApiVideoUpstreamErrorDetail(
+    error?.code ?? record.error_code
+  );
+  if (code) return `API 视频任务失败（${code}）`;
+  return "API 视频任务失败";
 }
 
 /** 解析上游返回的绝对或相对产物 URL，并只允许 HTTP(S)。 */
@@ -489,7 +532,10 @@ async function parseBuiltInVideoPollResult(
     status &&
     ["failed", "error", "cancelled", "canceled", "rejected"].includes(status)
   ) {
-    throw new ApiAcceptedVideoError("API 视频任务失败", false);
+    throw new ApiAcceptedVideoError(
+      getApiVideoUpstreamFailureMessage(record),
+      false
+    );
   }
   if (
     videoUrl &&

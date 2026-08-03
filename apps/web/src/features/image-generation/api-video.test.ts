@@ -118,6 +118,93 @@ describe("API video adapter", () => {
     );
   });
 
+  it("按沧元 Seedance 协议发送参考图、音频和负面提示词", async () => {
+    const adapter = createAdapter();
+    adapter.operations["videos.generate"].path = "/videos";
+    adapter.operations["videos.generate"].requestScript = `
+      const source = request.body;
+      if (!source || typeof source !== "object" || Array.isArray(source)) {
+        throw new Error("视频请求 Body 必须是对象");
+      }
+      const body = { ...source };
+      const hasFirstFrame = source.first_frame !== undefined;
+      const hasLastFrame = source.last_frame !== undefined;
+      if (hasFirstFrame !== hasLastFrame) {
+        throw new Error("首帧和尾帧必须成对提供");
+      }
+      if (typeof source.prompt !== "string" || source.prompt.length > 1200) {
+        throw new Error("prompt 最多 1200 个字符");
+      }
+      if (
+        source.negative_prompt !== undefined &&
+        (typeof source.negative_prompt !== "string" ||
+          source.negative_prompt.length > 1200)
+      ) {
+        throw new Error("negative_prompt 最多 1200 个字符");
+      }
+      const hasFrames = hasFirstFrame || hasLastFrame;
+      const hasReferences =
+        source.reference_images !== undefined &&
+        Array.isArray(source.reference_images) &&
+        source.reference_images.length > 0;
+      if (
+        source.reference_images !== undefined &&
+        (!Array.isArray(source.reference_images) ||
+          source.reference_images.length > 9)
+      ) {
+        throw new Error("参考图最多 9 张");
+      }
+      if (hasFrames && hasReferences) {
+        throw new Error("首尾帧与参考图不能混用");
+      }
+      if (hasFrames) {
+        body.reference_mode = "frame";
+        body.first_image_url = source.first_frame;
+        body.last_image_url = source.last_frame;
+        delete body.first_frame;
+        delete body.last_frame;
+      } else if (hasReferences) {
+        body.reference_mode = "media";
+        body.reference_image_urls = source.reference_images;
+        delete body.reference_images;
+      }
+      return { body };
+    `;
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({ id: "upstream-cangyuan" }, { status: 202 })
+    );
+
+    await submitApiVideoRequest(createConfig(adapter), {
+      clientRequestId: "local-cangyuan-media",
+      prompt: "让主体自然转身",
+      model: "seedance2",
+      duration: 4,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      effectiveAudio: true,
+      negativePrompt: "画面抖动、主体变形",
+      referenceImages: [{ data: Buffer.from("reference"), type: "image/png" }],
+    });
+
+    const request = mocks.fetchMediaUpstream.mock.calls[0];
+    const body = JSON.parse(String(request?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(request?.[0]).toBe("https://video.example.com/v1/videos");
+    expect(body).toMatchObject({
+      model: "seedance-2.0",
+      generate_audio: true,
+      negative_prompt: "画面抖动、主体变形",
+      reference_mode: "media",
+      reference_image_urls: [
+        `data:image/png;base64,${Buffer.from("reference").toString("base64")}`,
+      ],
+    });
+    expect(body).not.toHaveProperty("audio");
+    expect(body).not.toHaveProperty("reference_images");
+  });
+
   it("允许请求脚本重组首尾帧与多张参考图但不能复制或丢失媒体", async () => {
     const adapter = createAdapter();
     adapter.operations["videos.generate"].requestScript = `
@@ -279,40 +366,41 @@ describe("API video adapter", () => {
   it.each([
     { retryable: false, switchable: false, terminal: true },
     { retryable: true, switchable: true, terminal: false },
-  ])(
-    "生成响应脚本仅按 retryable=$retryable 决定是否允许重投",
-    async ({ retryable, switchable, terminal }) => {
-      const adapter = createAdapter();
-      adapter.operations["videos.generate"].responseScript = `
+  ])("生成响应脚本仅按 retryable=$retryable 决定是否允许重投", async ({
+    retryable,
+    switchable,
+    terminal,
+  }) => {
+    const adapter = createAdapter();
+    adapter.operations["videos.generate"].responseScript = `
         return {
           status: "failed",
           error: { category: "rate_limit", code: "video_rate_limited" },
           retryable: ${String(retryable)}
         };
       `;
-      mocks.fetchMediaUpstream.mockResolvedValue(
-        Response.json({ status: "rejected" }, { status: 429 })
-      );
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({ status: "rejected" }, { status: 429 })
+    );
 
-      await expect(
-        submitApiVideoRequest(createConfig(adapter), {
-          clientRequestId: "local-scripted-failure",
-          prompt: "prompt",
-          model: "seedance2",
-          duration: 5,
-          aspectRatio: "16:9",
-          resolution: "720p",
-          effectiveAudio: false,
-        })
-      ).resolves.toMatchObject({
-        error: "视频上游拒绝了生成请求",
-        switchable,
-        upstreamAccepted: false,
-        terminal,
-        submissionUncertain: false,
-      });
-    }
-  );
+    await expect(
+      submitApiVideoRequest(createConfig(adapter), {
+        clientRequestId: "local-scripted-failure",
+        prompt: "prompt",
+        model: "seedance2",
+        duration: 5,
+        aspectRatio: "16:9",
+        resolution: "720p",
+        effectiveAudio: false,
+      })
+    ).resolves.toMatchObject({
+      error: "视频上游拒绝了生成请求",
+      switchable,
+      upstreamAccepted: false,
+      terminal,
+      submissionUncertain: false,
+    });
+  });
 
   it("查询只使用固定路径和任务 ID，并由响应脚本采用五秒默认轮询", async () => {
     const adapter = createAdapter();
@@ -367,6 +455,26 @@ describe("API video adapter", () => {
       countsTowardAdapterFailure: true,
     });
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("内置查询失败时保留有界且脱敏的上游错误原因", async () => {
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({
+        id: "upstream-failed",
+        status: "failed",
+        error: {
+          code: "",
+          message:
+            "视频生成失败，token=sk-sensitive；参考素材已上传，但模型临时异常。",
+        },
+      })
+    );
+
+    await expect(
+      pollApiVideoRequest(createConfig(), "upstream-failed", recoveryContext)
+    ).rejects.toThrow(
+      "API 视频任务失败：视频生成失败，token=[REDACTED]；参考素材已上传，但模型临时异常。"
+    );
   });
 
   it("固定版本 origin 与任务可信源不一致时不会外呼", async () => {
