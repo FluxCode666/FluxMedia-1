@@ -438,7 +438,7 @@
     "nav": {
       "dashboard": "控制台",
       "create": "创作",
-      "generate": "生图",
+      "generate": "生成",
       "gallery": "图库",
       "history": "使用记录",
       "apiDocs": "API 文档",
