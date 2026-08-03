@@ -23,7 +23,7 @@ export const supportedModelIdsSchema = z
  * 将一个模型能力键规范为平台公开格式。
  *
  * @param value 来自配置、数据库或请求的未知模型值。
- * @returns 去空白后的真实 ID；不转换图像别名或供应商前缀，旧视频身份保持原样以便拒绝。
+ * @returns 去空白后的配置 ID；图像历史前缀仍按既有配置兼容规则收敛，旧视频身份保持原样以便拒绝。
  * @sideEffects 无。
  * @failure 不抛错；过长、空白或非字符串输入返回 null。
  */
@@ -34,7 +34,7 @@ export function normalizeSupportedModelId(value: unknown): string | null {
   const videoModelId = normalizeVideoModelId(trimmed);
   if (videoModelId) return videoModelId;
   if (isLegacyVideoModelId(trimmed)) return trimmed;
-  return trimmed;
+  return trimmed.replace(/^firefly-/i, "");
 }
 
 /**
@@ -119,7 +119,10 @@ export function supportsRequestedModel(
   supportedModelIds: unknown,
   requestedModelId: string | null | undefined
 ): boolean {
-  const requested = normalizeSupportedModelId(requestedModelId)?.toLowerCase();
+  const requested =
+    typeof requestedModelId === "string"
+      ? requestedModelId.trim().toLowerCase()
+      : null;
   const supported = normalizeSupportedModelIds(supportedModelIds);
   if (!requested || supported.length === 0) return false;
   return supported.some((modelId) => modelId.toLowerCase() === requested);
