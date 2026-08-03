@@ -461,10 +461,6 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
     `alter table "user"
        drop column if exists moderation_block_risk_level`
   );
-  await client.query(`
-    alter table image_backend_member_api_config
-      add column if not exists use_stream boolean not null default false
-  `);
   await client.query(
     "drop table if exists image_backend_account, image_backend_api"
   );
@@ -862,19 +858,17 @@ describe("release governance gate PostgreSQL integration", () => {
     );
   });
 
-  it("后续 postcheck 在 API Images 流式配置列缺失时拒绝发布", async () => {
+  it("后续 postcheck 接受 0077 已移除的 API Images 流式配置列", async () => {
     if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
     await pool.query(`
       alter table image_backend_member_api_config
-        drop column use_stream
+        drop column if exists use_stream
     `);
 
     const result = await runReleaseGate("postcheck", testDatabaseUrl);
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("required_media_column_count=31\n");
-    expect(result.stderr).toContain(
-      "release governance gate failed: post-migration unified media invariants failed"
-    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("required_media_column_count=33\n");
+    expect(result.stderr).toBe("");
   });
 
   it("后续 postcheck 在旧治理列残留时拒绝发布", async () => {
