@@ -54,10 +54,14 @@ describe("media task queue contract", () => {
     expect(createImageTaskJobId("task_image_1")).toMatch(
       /^image-[a-f0-9]{64}$/
     );
+    expect(createImageTaskJobId("task_image_1", 5)).not.toBe(
+      createImageTaskJobId("task_image_1", 0)
+    );
   });
 
   it("拒绝非法任务 ID 与负状态版本", () => {
     expect(() => createImageTaskJobId(" ")).toThrow();
+    expect(() => createImageTaskJobId("task_image_1", -1)).toThrow();
     expect(() => createVideoTaskJobId("video_1", -1)).toThrow();
   });
 });

@@ -4,8 +4,18 @@ import {
   destroyGenerationPhotosByMaxCount,
   expireStalePendingGenerations,
 } from "@repo/shared/generation-maintenance";
+import { logError } from "@repo/shared/logger";
 import { getRuntimeSettingSelect } from "@repo/shared/system-settings";
-import { runVideoRecoveryJob as recoverVideoGenerations } from "@/features/image-generation/video-operations";
+import { runVideoCallbackDeliveryJob } from "@/features/image-generation/video-callback-delivery";
+import { runVideoInputCleanupJob } from "@/features/image-generation/video-input-cleanup-queue";
+import {
+  defaultMediaTaskRecoveryRepository,
+  type MediaTaskRecoveryRepository,
+} from "@/server/media-task-recovery-repository";
+import {
+  enqueueImageTask,
+  enqueueVideoTask,
+} from "@/server/media-task-queues";
 import {
   buildCreditsExpireResponse,
   summarizeExpiredPendingGenerations,
@@ -16,6 +26,28 @@ import {
  * 同时作为超时 pending 过期与超期成品图销毁的批量上限，避免单次任务无界扫描。
  */
 const IMAGE_MAINTENANCE_BATCH_LIMIT = 500;
+const MEDIA_TASK_RECOVERY_BATCH_LIMIT = 100;
+
+/** 媒体 MQ 补偿任务的可替换依赖。 */
+export interface MediaTaskRecoveryJobDependencies {
+  repository: MediaTaskRecoveryRepository;
+  enqueueImage: typeof enqueueImageTask;
+  enqueueVideo: typeof enqueueVideoTask;
+  reportFailure(error: unknown, queue: "image" | "video", taskId: string): void;
+}
+
+const defaultMediaTaskRecoveryDependencies: MediaTaskRecoveryJobDependencies = {
+  repository: defaultMediaTaskRecoveryRepository,
+  enqueueImage: enqueueImageTask,
+  enqueueVideo: enqueueVideoTask,
+  reportFailure(error, queue, taskId) {
+    logError(error, {
+      source: "media-task-mq-recovery",
+      queue,
+      taskId,
+    });
+  },
+};
 
 export async function runImageMaintenanceJob() {
   // 图片清理三态模式：off=不清理（永久保存，默认）；time=按时间过期；
@@ -75,7 +107,59 @@ export async function runCreditsExpireJob() {
  *
  * @returns 本轮认领、恢复与隔离失败数量。
  */
+export async function runMediaTaskQueueRecovery(
+  dependencies: MediaTaskRecoveryJobDependencies =
+    defaultMediaTaskRecoveryDependencies
+) {
+  const tasks = await dependencies.repository.scan({
+    now: new Date(),
+    limit: MEDIA_TASK_RECOVERY_BATCH_LIMIT,
+  });
+  let enqueued = 0;
+  let failed = 0;
+  await Promise.all([
+    ...tasks.images.map(async (task) => {
+      try {
+        await dependencies.enqueueImage(task);
+        enqueued += 1;
+      } catch (error) {
+        failed += 1;
+        dependencies.reportFailure(error, "image", task.taskId);
+      }
+    }),
+    ...tasks.videos.map(async (task) => {
+      try {
+        await dependencies.enqueueVideo(task);
+        enqueued += 1;
+      } catch (error) {
+        failed += 1;
+        dependencies.reportFailure(error, "video", task.taskId);
+      }
+    }),
+  ]);
+  return {
+    discovered: tasks.images.length + tasks.videos.length,
+    enqueued,
+    failed,
+  };
+}
+
+/**
+ * 低频补投媒体 MQ，并继续执行独立的视频回调与输入清理维护。
+ *
+ * @returns 本轮补投、回调投递和输入清理统计；不直接 claim 或处理媒体生成任务。
+ */
 export async function runVideoRecoveryJob() {
-  const result = await recoverVideoGenerations();
-  return { success: true, ...result, timestamp: new Date().toISOString() };
+  const [queueRecovery, callbackDelivery, inputCleanup] = await Promise.all([
+    runMediaTaskQueueRecovery(),
+    runVideoCallbackDeliveryJob(),
+    runVideoInputCleanupJob(),
+  ]);
+  return {
+    success: true,
+    queueRecovery,
+    callbackDelivery,
+    inputCleanup,
+    timestamp: new Date().toISOString(),
+  };
 }

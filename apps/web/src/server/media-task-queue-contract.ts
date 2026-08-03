@@ -54,14 +54,25 @@ function createTaskIdentityDigest(value: string): string {
  * 生成 BullMQ 可接受的稳定图片 jobId。
  *
  * @param taskId PostgreSQL 图片异步任务 ID。
- * @returns 不含冒号的确定性 jobId；重复投递由 BullMQ 合并。
+ * @param deliveryVersion PostgreSQL attempt 版本；BullMQ 重试耗尽后允许补偿新作业。
+ * @returns 不含冒号的确定性 jobId；同一数据库版本的重复投递由 BullMQ 合并。
  */
-export function createImageTaskJobId(taskId: string): string {
+export function createImageTaskJobId(
+  taskId: string,
+  deliveryVersion = 0
+): string {
   const data = imageTaskJobDataSchema.parse({
     kind: "image-generation",
     taskId,
   });
-  return `image-${createTaskIdentityDigest(data.taskId)}`;
+  const parsedDeliveryVersion = z
+    .number()
+    .int()
+    .nonnegative()
+    .parse(deliveryVersion);
+  return `image-${createTaskIdentityDigest(
+    `${data.taskId}\0${parsedDeliveryVersion}`
+  )}`;
 }
 
 /**
