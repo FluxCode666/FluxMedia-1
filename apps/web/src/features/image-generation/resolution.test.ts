@@ -19,10 +19,24 @@ import {
   normalizeImageModel,
   parseImageSize,
   QUALITY_MULTIPLIER,
+  resolveImageRequestSize,
   roundUpCreditAmount,
   THINKING_MULTIPLIER,
   validateImageSize,
 } from "./resolution";
+
+describe("resolveImageRequestSize", () => {
+  it.each([undefined, null, "", "   "])(
+    "把缺失尺寸 %s 统一为 auto",
+    (size) => {
+      expect(resolveImageRequestSize(size)).toBe("auto");
+    }
+  );
+
+  it("保留并清理用户明确提供的尺寸", () => {
+    expect(resolveImageRequestSize(" 2048x1152 ")).toBe("2048x1152");
+  });
+});
 
 describe("image resolution credit pricing", () => {
   it("keeps separate default fixed prices for 1024, 1K, 2K, and 4K tiers", () => {

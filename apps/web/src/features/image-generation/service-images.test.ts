@@ -187,6 +187,23 @@ describe("Images API service", () => {
     expect(result.error).toContain("quota_exceeded");
   });
 
+  it("文生图未传尺寸时向上游发送 auto", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    mocks.fetchMediaUpstream.mockResolvedValue(successfulImageResponse());
+
+    const result = await generateImage(
+      { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
+      { prompt: "make an icon", model: "gpt-image-2" }
+    );
+
+    expect(result.error).toBeUndefined();
+    const requestInit = mocks.fetchMediaUpstream.mock.calls[0]?.[1];
+    expect(JSON.parse(String(requestInit?.body))).toMatchObject({
+      size: "auto",
+    });
+  });
+
   it("生成图片时映射上游模型并执行 JSON 请求脚本", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
@@ -543,6 +560,39 @@ return request;
 
     expect(result.error).toBeUndefined();
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("图生图未传尺寸时向上游发送 auto", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    mocks.fetchMediaUpstream.mockImplementation(
+      async (_url: string, init?: RequestInit) => {
+        const formData = init?.body;
+        expect(formData).toBeInstanceOf(FormData);
+        if (!(formData instanceof FormData)) {
+          throw new Error("missing FormData");
+        }
+        expect(formData.get("size")).toBe("auto");
+        return successfulImageResponse();
+      }
+    );
+
+    const result = await editImage(
+      { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
+      {
+        prompt: "adjust colors",
+        model: "gpt-image-2",
+        images: [
+          {
+            name: "source.png",
+            type: "image/png",
+            data: Buffer.from("source-image"),
+          },
+        ],
+      }
+    );
+
+    expect(result.error).toBeUndefined();
   });
 
   it("编辑多图时重命名 image[]、mask 并保持媒体顺序", async () => {

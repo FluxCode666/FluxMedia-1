@@ -80,6 +80,7 @@ import {
   type ResolvedImageModerationCreditPricing,
   roundCreditAmount,
   roundUpCreditAmount,
+  resolveImageRequestSize,
 } from "./resolution";
 import { calibrateImageResolution } from "./resolution-calibration";
 import { resolveImageResolutionSettlement } from "./resolution-settlement";
@@ -887,7 +888,7 @@ export async function runImageGenerationForUser(
     generationId,
     operationCreatedAt
   );
-  const size = input.size || DEFAULT_IMAGE_SIZE;
+  const size = resolveImageRequestSize(input.size);
   const inputImages = getInputImages(input);
   const { generations: bucket } = await getRuntimeStorageBucketConfig();
   const userPlan = await getUserPlan(input.userId);

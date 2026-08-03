@@ -57,6 +57,7 @@ import {
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
+  resolveImageRequestSize,
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import type {
@@ -587,12 +588,10 @@ export const postExternalImageEdits = withApiLogging(
       "promptOptimization",
       "prompt_optimization"
     );
-    const size = getText(formData, "size") || undefined;
-    if (size) {
-      const sizeCheck = validateImageSize(size);
-      if (!sizeCheck.valid) {
-        return openAIImageError(sizeCheck.message);
-      }
+    const size = resolveImageRequestSize(getText(formData, "size"));
+    const sizeCheck = validateImageSize(size);
+    if (!sizeCheck.valid) {
+      return openAIImageError(sizeCheck.message);
     }
 
     const qualityValue = getText(formData, "quality") || "auto";

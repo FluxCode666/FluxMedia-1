@@ -52,6 +52,20 @@ const CREDIT_DECIMAL_PLACES = 2;
 const CREDIT_DECIMAL_FACTOR = 10 ** CREDIT_DECIMAL_PLACES;
 const CREDIT_ROUNDING_EPSILON = 1e-9;
 
+/**
+ * 解析一次图片请求的有效尺寸值。
+ *
+ * @param size 用户或内部调用方提供的可选尺寸。
+ * @returns 清理首尾空白后的显式尺寸；缺失或空白时返回 `auto`。
+ * @sideEffects 无。
+ * @failure 不校验尺寸格式；各传输入口仍须使用 `validateImageSize` 拒绝非法输入。
+ */
+export function resolveImageRequestSize(
+  size: string | null | undefined
+): string {
+  return size?.trim() || AUTO_IMAGE_SIZE;
+}
+
 export type ImageDimensions = {
   width: number;
   height: number;

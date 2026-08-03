@@ -40,9 +40,9 @@ import {
   normalizeOutputFormat,
 } from "@/features/image-generation/output-format";
 import {
-  DEFAULT_IMAGE_SIZE,
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
+  resolveImageRequestSize,
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import type { PartialImageResult } from "@/features/image-generation/types";
@@ -251,7 +251,7 @@ export const postExternalImageGenerations = withApiLogging(
       prompt: parsed.data.prompt,
       promptOptimization:
         parsed.data.promptOptimization ?? parsed.data.prompt_optimization,
-      size: parsed.data.size || DEFAULT_IMAGE_SIZE,
+      size: resolveImageRequestSize(parsed.data.size),
       model: imageModel,
       thinking: parsed.data.thinking,
       quality: parsed.data.quality,

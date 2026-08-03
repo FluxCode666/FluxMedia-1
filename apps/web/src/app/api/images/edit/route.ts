@@ -37,6 +37,7 @@ import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
   parseImageSize,
+  resolveImageRequestSize,
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import { createImageStreamResponse } from "@/features/image-generation/streaming";
@@ -404,7 +405,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         prompt,
         apiPrompt,
         promptOptimization,
-        size: displaySize || size,
+        size: displaySize || resolveImageRequestSize(size),
         model,
         thinking,
         quality,

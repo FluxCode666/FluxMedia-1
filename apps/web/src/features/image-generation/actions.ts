@@ -14,9 +14,9 @@ import { getStorageProvider } from "@repo/shared/storage/providers";
 import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import {
-  DEFAULT_IMAGE_SIZE,
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
+  resolveImageRequestSize,
   validateImageSize,
 } from "./resolution";
 import { invokeImageGenerationOperation } from "./uol-client";
@@ -48,7 +48,7 @@ export const generateImageAction = protectedAction
         operation: "generate",
         generationId: randomUUID(),
         prompt: parsedInput.prompt,
-        size: parsedInput.size || DEFAULT_IMAGE_SIZE,
+        size: resolveImageRequestSize(parsedInput.size),
         model: parsedInput.model,
       },
       {

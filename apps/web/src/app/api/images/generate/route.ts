@@ -22,9 +22,9 @@ import {
 } from "@/features/image-generation/output-format";
 import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
 import {
-  DEFAULT_IMAGE_SIZE,
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
+  resolveImageRequestSize,
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import { createImageStreamResponse } from "@/features/image-generation/streaming";
@@ -162,7 +162,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     prompt: parsed.data.prompt,
     apiPrompt: parsed.data.apiPrompt,
     promptOptimization: parsed.data.promptOptimization,
-    size: parsed.data.size || DEFAULT_IMAGE_SIZE,
+    size: resolveImageRequestSize(parsed.data.size),
     model: parsed.data.model,
     backendGroupId: parsed.data.backendGroupId ?? parsed.data.backend_group_id,
     thinking: parsed.data.thinking,

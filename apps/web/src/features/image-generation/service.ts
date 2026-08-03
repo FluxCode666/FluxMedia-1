@@ -45,12 +45,12 @@ import {
 } from "./output-format";
 import { ensureInputImageRehosted } from "./rehost-input-images";
 import {
-  DEFAULT_IMAGE_SIZE,
   getImageBackendApiModel,
   getImageModel,
   isImageModel,
   normalizeImageModel,
   parseImageSize,
+  resolveImageRequestSize,
 } from "./resolution";
 import type {
   ApiConfig,
@@ -706,13 +706,12 @@ function appendImageParams(
   formData.append("n", String(params.n || 1));
   formData.append("response_format", "b64_json");
 
-  if (params.size) {
-    formData.append("size", params.size);
-    const dimensions = parseImageSize(params.size);
-    if (dimensions) {
-      formData.append("width", String(dimensions.width));
-      formData.append("height", String(dimensions.height));
-    }
+  const size = resolveImageRequestSize(params.size);
+  formData.append("size", size);
+  const dimensions = parseImageSize(size);
+  if (dimensions) {
+    formData.append("width", String(dimensions.width));
+    formData.append("height", String(dimensions.height));
   }
 
   const quality = normalizeQuality(params.quality);
@@ -1559,7 +1558,7 @@ export async function generateImage(
   }
   try {
     const prompt = getEffectivePrompt(params);
-    const size = params.size || DEFAULT_IMAGE_SIZE;
+    const size = resolveImageRequestSize(params.size);
     const dimensions = parseImageSize(size);
     const background = normalizeImageBackground(params.background);
     const upstreamModel = getApiBackendUpstreamModel(config, model);
