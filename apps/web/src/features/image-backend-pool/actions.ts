@@ -43,6 +43,32 @@ export interface BackendPoolAdminSnapshot {
   members: BackendMemberAdminSummary[];
 }
 
+/** 管理员专用 Adobe 凭据健康摘要；诊断只含严格 allowlist 字段。 */
+export interface AdobeCredentialHealthSummary {
+  memberId: string;
+  status: "pending" | "healthy" | "degraded" | "isolated" | "overdue";
+  consecutiveFailures: number;
+  failureProfiles: Array<"express" | "firefly">;
+  lastCheckedAt: string | null;
+  lastSuccessAt: string | null;
+  nextCheckAt: string | null;
+  evaluationDeadlineAt: string | null;
+  isolatedAt: string | null;
+  diagnostic: {
+    statusCode?: number;
+    adobeErrorCode?: string;
+    message?: string;
+    requestId?: string;
+  } | null;
+}
+
+/** 管理员检查与重新授权共享的安全结果。 */
+export interface AdobeCredentialEvaluationResult {
+  evaluationId: string;
+  disposition: "accepted" | "stale" | "discarded";
+  health: AdobeCredentialHealthSummary;
+}
+
 /** pool operation 与浏览器动作所需输出的类型映射。 */
 type PoolOperationOutputs = {
   "pool.getGroupOptions": {
@@ -55,6 +81,9 @@ type PoolOperationOutputs = {
   "pool.resetMemberStatus": { success: boolean };
   "pool.setMemberEnabled": { id: string; isEnabled: boolean };
   "pool.deleteMember": { success: boolean };
+  "pool.checkAdobeCredentialHealth": AdobeCredentialEvaluationResult;
+  "pool.getAdobeCredentialHealth": AdobeCredentialHealthSummary;
+  "pool.reauthorizeAdobeCredential": AdobeCredentialEvaluationResult;
   "pool.testApiUpstreamAdapter": { preview: unknown };
   "pool.getApiUpstreamRuntimeDiagnostics": {
     lifecycle: "starting" | "ready" | "unavailable" | "draining" | "closed";
@@ -75,6 +104,17 @@ const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
 
 const setMemberEnabledSchema = idSchema
   .extend({ isEnabled: z.boolean() })
+  .strict();
+
+const adobeCredentialMemberSchema = z
+  .object({ memberId: z.string().trim().min(1).max(128) })
+  .strict();
+
+const adobeCredentialReauthorizationSchema = adobeCredentialMemberSchema
+  .extend({
+    cookie: z.string().trim().min(1).max(64_000),
+    clientRequestId: z.string().trim().min(1).max(128),
+  })
   .strict();
 
 const apiUpstreamAdapterTestInputSchema = z
@@ -209,6 +249,46 @@ export const deleteImageBackendMemberAction = adminAction
     });
     revalidateBackendPoolPage();
     return { success: true };
+  });
+
+/** 管理员读取 Adobe direct 成员的安全健康摘要。 */
+export const getAdobeCredentialHealthAction = adminAction
+  .metadata({ action: "imageBackendPool.getAdobeCredentialHealth" })
+  .schema(adobeCredentialMemberSchema)
+  .action(async ({ parsedInput, ctx }) =>
+    invokePoolOperation("pool.getAdobeCredentialHealth", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    })
+  );
+
+/** 管理员立即执行一次双 Profile 凭据检查。 */
+export const checkAdobeCredentialHealthAction = adminAction
+  .metadata({ action: "imageBackendPool.checkAdobeCredentialHealth" })
+  .schema(adobeCredentialMemberSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const result = await invokePoolOperation(
+      "pool.checkAdobeCredentialHealth",
+      parsedInput,
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
+    revalidateBackendPoolPage();
+    return result;
+  });
+
+/** 管理员为同一 Adobe 账号提交新 Cookie 并恢复隔离状态。 */
+export const reauthorizeAdobeCredentialAction = adminAction
+  .metadata({ action: "imageBackendPool.reauthorizeAdobeCredential" })
+  .schema(adobeCredentialReauthorizationSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const result = await invokePoolOperation(
+      "pool.reauthorizeAdobeCredential",
+      parsedInput,
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
+    revalidateBackendPoolPage();
+    return result;
   });
 
 /** 使用生产 Worker 和合成样例执行无网络 API 上游脚本测试。 */

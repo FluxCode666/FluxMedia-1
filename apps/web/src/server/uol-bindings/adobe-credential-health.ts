@@ -5,7 +5,7 @@
  * 都维持 human-only，MCP 不会因本文件接线而获得任何新工具。
  */
 
-import { bindExecute, OperationError } from "@repo/shared/uol";
+import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
 import {
   checkAdobeCredentialHealth,
   getAdobeCredentialHealth,
@@ -15,9 +15,16 @@ import {
   cleanupAdobeCredentialHealthHistory,
   drainAdobeCredentialNotifications,
 } from "@/features/image-generation/adobe-credential-notifications";
+import {
+  AdobeCredentialReauthorizationError,
+  reauthorizeAdobeCredential,
+} from "@/features/image-generation/adobe-direct-reauthorization";
 
 /** 将运行时稳定失败映射为不含 Adobe 原始错误的 UOL 错误。 */
 function throwAdobeCredentialOperationError(error: unknown): never {
+  if (error instanceof AdobeCredentialReauthorizationError) {
+    throw new OperationError(error.code, error.message);
+  }
   const message = error instanceof Error ? error.message : "Adobe 凭据操作失败";
   if (message.includes("不存在")) {
     throw new OperationError("not_found", message);
@@ -33,6 +40,27 @@ bindExecute(
   "pool.scanAdobeCredentialHealth",
   async (input: { batchSize: number }) =>
     runAdobeCredentialHealthScan({ batchSize: input.batchSize })
+);
+
+/** 管理员提交同账号 Cookie 并在通过双 Profile 验证后恢复成员。 */
+bindExecute(
+  "pool.reauthorizeAdobeCredential",
+  async (
+    input: { memberId: string; cookie: string; clientRequestId: string },
+    principal: Principal
+  ) => {
+    if (principal.type !== "user") {
+      throw new OperationError("forbidden", "管理员用户身份必需");
+    }
+    try {
+      return await reauthorizeAdobeCredential({
+        actorUserId: principal.userId,
+        ...input,
+      });
+    } catch (error) {
+      throwAdobeCredentialOperationError(error);
+    }
+  }
 );
 
 /** 内部通知补偿。 */

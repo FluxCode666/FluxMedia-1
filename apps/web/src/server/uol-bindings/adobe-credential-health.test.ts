@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   scan: vi.fn(),
   check: vi.fn(),
   get: vi.fn(),
+  reauthorize: vi.fn(),
   drain: vi.fn(),
   cleanup: vi.fn(),
 }));
@@ -31,6 +32,10 @@ vi.mock("@/features/image-generation/adobe-credential-health-runtime", () => ({
 vi.mock("@/features/image-generation/adobe-credential-notifications", () => ({
   drainAdobeCredentialNotifications: mocks.drain,
   cleanupAdobeCredentialHealthHistory: mocks.cleanup,
+}));
+vi.mock("@/features/image-generation/adobe-direct-reauthorization", () => ({
+  AdobeCredentialReauthorizationError: class extends Error {},
+  reauthorizeAdobeCredential: mocks.reauthorize,
 }));
 
 import "./adobe-credential-health";
@@ -53,6 +58,7 @@ describe("Adobe 凭据健康 UOL binding", () => {
     mocks.scan.mockReset();
     mocks.check.mockReset();
     mocks.get.mockReset();
+    mocks.reauthorize.mockReset();
     mocks.drain.mockReset();
     mocks.cleanup.mockReset();
     mocks.scan.mockResolvedValue({ claimed: 1, completed: 1, failed: 0 });
@@ -63,6 +69,11 @@ describe("Adobe 凭据健康 UOL binding", () => {
       notificationCreated: false,
     });
     mocks.get.mockResolvedValue(HEALTH);
+    mocks.reauthorize.mockResolvedValue({
+      evaluationId: "evaluation-reauthorized",
+      disposition: "accepted",
+      health: HEALTH,
+    });
   });
 
   it("只允许匹配 job 名的 cron Principal 执行健康扫描", async () => {
@@ -108,5 +119,65 @@ describe("Adobe 凭据健康 UOL binding", () => {
       )
     ).rejects.toMatchObject({ code: "forbidden" });
     expect(mocks.get).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "admin",
+    "super_admin",
+  ] as const)("%s 用户可以为同一账号重新授权且输出保持脱敏", async (role) => {
+    const output = await invokeOperation(
+      "pool.reauthorizeAdobeCredential",
+      {
+        memberId: "member-1",
+        cookie: "aux_sid=new-cookie",
+        clientRequestId: `request-${role}`,
+      },
+      { type: "user", userId: `${role}-1`, role }
+    );
+
+    expect(output).toEqual({
+      evaluationId: "evaluation-reauthorized",
+      disposition: "accepted",
+      health: HEALTH,
+    });
+    expect(mocks.reauthorize).toHaveBeenCalledWith({
+      actorUserId: `${role}-1`,
+      memberId: "member-1",
+      cookie: "aux_sid=new-cookie",
+      clientRequestId: `request-${role}`,
+    });
+    expect(JSON.stringify(output)).not.toMatch(
+      /cookie|token|authorization|notification|delivery/i
+    );
+  });
+
+  it.each([
+    {
+      type: "user" as const,
+      userId: "observer-1",
+      role: "observer_admin" as const,
+    },
+    { type: "system" as const, reason: "test" },
+    { type: "cron" as const, job: "adobe-credential-health" },
+    {
+      type: "apiKey" as const,
+      credentialKind: "external" as const,
+      userId: "user-1",
+      apiKeyId: "key-1",
+      plan: "pro",
+    },
+  ])("拒绝非真实管理员 Principal 重新授权", async (principal) => {
+    await expect(
+      invokeOperation(
+        "pool.reauthorizeAdobeCredential",
+        {
+          memberId: "member-1",
+          cookie: "aux_sid=new-cookie",
+          clientRequestId: "request-forbidden",
+        },
+        principal
+      )
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(mocks.reauthorize).not.toHaveBeenCalled();
   });
 });
