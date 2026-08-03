@@ -7,6 +7,12 @@
 
 type ShutdownHandler = () => Promise<void> | void;
 
+/** 可排序的单个进程关闭处理描述。 */
+export interface PrioritizedShutdownHandler {
+  priority: number;
+  handler: ShutdownHandler;
+}
+
 type ProcessLifecycleState = {
   installed: boolean;
   shuttingDown: boolean;
@@ -18,6 +24,27 @@ type ProcessLifecycleGlobal = typeof globalThis & {
 };
 
 const SHUTDOWN_TIMEOUT_MS = 25_000;
+
+/**
+ * 按优先级批次执行关闭处理。
+ *
+ * @param handlers 待执行处理；数值小的批次必须完全结算后才进入下一批。
+ * @returns 全部批次结算后返回；单个处理失败被隔离，不阻止后续资源释放。
+ */
+export async function runShutdownHandlersInPriorityOrder(
+  handlers: PrioritizedShutdownHandler[]
+): Promise<void> {
+  const priorities = [
+    ...new Set(handlers.map((entry) => entry.priority)),
+  ].sort((left, right) => left - right);
+  for (const priority of priorities) {
+    await Promise.allSettled(
+      handlers
+        .filter((entry) => entry.priority === priority)
+        .map(({ handler }) => Promise.resolve().then(handler))
+    );
+  }
+}
 
 /** 获取热重载期间跨模块共享的生命周期状态。 */
 function getLifecycleState(): ProcessLifecycleState {
@@ -42,12 +69,8 @@ async function shutdownProcess(signal: NodeJS.Signals): Promise<void> {
   const state = getLifecycleState();
   if (state.shuttingDown) return;
   state.shuttingDown = true;
-  const handlers = [...state.handlers.values()].sort(
-    (left, right) => left.priority - right.priority
-  );
-  const closeAll = Promise.allSettled(
-    handlers.map(({ handler }) => Promise.resolve().then(handler))
-  );
+  const handlers = [...state.handlers.values()];
+  const closeAll = runShutdownHandlersInPriorityOrder(handlers);
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
