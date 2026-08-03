@@ -38,6 +38,31 @@ sudo editor /root/flux-media/.env
 缓存默认使用逻辑库 4。迁移由部署流水线在切换 `web` 前执行。本 Compose 不启动 PostgreSQL
 或 Redis。
 
+## Redis MQ 运行要求
+
+图片和视频异步任务统一由 BullMQ 即时投递，但 PostgreSQL 始终是任务状态、幂等结果、
+生成记录和财务账本的事实来源。Redis 只保存即时投递、延迟唤醒与重试状态；低频数据库
+扫描会补投遗漏任务。因此 Redis 故障可能延迟任务，但不得导致重复扣费或丢失数据库终态。
+
+生产 Redis 必须满足以下要求：
+
+- `maxmemory-policy` 使用 `noeviction`，禁止在内存压力下逐出 BullMQ 键。容量告警应早于
+  内存耗尽，不能依赖逐出策略维持服务。
+- 至少启用 AOF `everysec` 或可靠的 RDB 持久化；推荐使用带复制、自动故障切换和备份的
+  托管高可用 Redis。持久化仍不能取代 PostgreSQL 补投器。
+- 公网或托管 Redis 设置 `REDIS_TLS=true`；仅受控内网明文连接可设为 `false`。当前配置
+  使用主机名作为 TLS SNI，证书必须覆盖 `REDIS_HOST`。
+- 当前运行时支持单节点或提供稳定主节点地址的 HA Redis，可继续使用默认 `REDIS_DB=4`。
+  Redis Cluster 只支持逻辑库 0，且当前未创建 Cluster client；接入前必须扩展连接实现、
+  改为 `REDIS_DB=0` 并验证 BullMQ Cluster 拓扑。
+- `MEDIA_IMAGE_WORKER_CONCURRENCY` 与 `MEDIA_VIDEO_WORKER_CONCURRENCY` 分别控制单个
+  Web 进程的图片、视频 Worker 并发；水平扩容时总并发会按副本数线性增加，应结合上游
+  配额、数据库连接池和生图并发槽共同定值。
+
+MQ 消息只携带任务 ID、任务类型和契约版本，不应写入提示词、媒体内容、API Key、Cookie
+或上游响应。排障时先查 PostgreSQL 任务状态，再查 BullMQ 等待、延迟和失败作业；禁止把
+Redis 队列内容视为业务审计记录。
+
 `DEPLOY_BACKUP_S3_BUCKET` 留空时无需安装 `age` 或 AWS CLI，流水线把权限为 `0600` 的
 custom-format 数据库备份写入 `${DEPLOY_PATH}/backups/<version>/`，并在迁移前复核
 archive manifest 与最终文件 SHA-256。该回退只能应对数据库迁移失败，不能防止目标机磁盘

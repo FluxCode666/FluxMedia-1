@@ -8,6 +8,7 @@ import type { ApiUpstreamAdapterDraft } from "@repo/shared/image-backend/api-ups
 import {
   type ApiUpstreamAdapterOperationId,
   type ApiUpstreamQuery,
+  type ApiUpstreamRequestSnapshot,
   type ApiUpstreamResponseResult,
   type ApiUpstreamScriptContext,
   isApiUpstreamQueryOperation,
@@ -25,6 +26,7 @@ import {
 import type { ApiUpstreamOpaqueValues } from "./api-upstream-opaque-values";
 import { resolveApiUpstreamRequestUrl } from "./api-upstream-path";
 import { resolveApiUpstreamRequestEnvelope } from "./api-upstream-request-envelope";
+import { createApiUpstreamRequestSnapshot } from "./api-upstream-request-snapshot";
 import {
   ApiUpstreamResponseReadError,
   parseApiUpstreamScriptedResponse,
@@ -232,6 +234,9 @@ export async function executeApiUpstreamOperation(input: {
   fetcher?: UpstreamFetch;
   now?: Date;
   observability?: ApiUpstreamObservabilityContext;
+  onRequestSnapshot?: (
+    snapshot: ApiUpstreamRequestSnapshot
+  ) => Promise<void> | void;
 }): Promise<ApiUpstreamExecutionResult> {
   const requestId = createApiUpstreamRequestId();
   const operationConfig = input.adapter.operations[input.operation];
@@ -281,6 +286,7 @@ export async function executeApiUpstreamOperation(input: {
   let target: URL;
   let headers: Record<string, string>;
   let encodedBody: EncodedUpstreamBody | undefined;
+  let requestSnapshot: ApiUpstreamRequestSnapshot | undefined;
   try {
     target = resolveApiUpstreamRequestUrl({
       baseUrl: input.adapter.baseUrl,
@@ -317,6 +323,11 @@ export async function executeApiUpstreamOperation(input: {
       if (input.contentType === "application/json") {
         headers["Content-Type"] = "application/json";
       }
+      requestSnapshot = createApiUpstreamRequestSnapshot({
+        operation: input.operation,
+        contentType: input.contentType,
+        body: envelope.body,
+      });
     }
   } catch (error) {
     if (
@@ -339,6 +350,12 @@ export async function executeApiUpstreamOperation(input: {
       "before_send",
       error
     );
+  }
+
+  // WHY：快照必须在 fetch 前持久化，才能覆盖网络失败和上游 HTTP 拒绝；调用方将
+  // 失败处理为脱敏日志并允许请求继续，避免调试数据反向成为生成硬依赖。
+  if (requestSnapshot) {
+    await input.onRequestSnapshot?.(requestSnapshot);
   }
 
   const permit = operationConfig.responseScript

@@ -16,7 +16,8 @@ import {
 } from "@repo/shared/generation-maintenance";
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
-import { logWarn } from "@repo/shared/logger";
+import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
+import { logError, logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { buildGeneratedImageStorageKey } from "@repo/shared/storage/bucket-config";
 import { getStorageProvider } from "@repo/shared/storage/providers";
@@ -78,9 +79,9 @@ import {
   normalizeImageSize,
   parseImageSize,
   type ResolvedImageModerationCreditPricing,
+  resolveImageRequestSize,
   roundCreditAmount,
   roundUpCreditAmount,
-  resolveImageRequestSize,
 } from "./resolution";
 import { calibrateImageResolution } from "./resolution-calibration";
 import { resolveImageResolutionSettlement } from "./resolution-settlement";
@@ -878,6 +879,35 @@ async function pinPendingImageBackendSnapshot(
   }
 }
 
+/**
+ * 最佳努力保存 API 请求脚本处理后的最终请求正文。
+ *
+ * WHY：该写入发生在真正外呼前，网络失败与上游拒绝仍可在管理端追溯；持久化失败
+ * 只记录不含正文的结构化错误，不能阻断用户生成或把敏感快照写入日志。
+ */
+async function persistImageUpstreamRequestSnapshot(
+  generationId: string,
+  snapshot: ApiUpstreamRequestSnapshot
+): Promise<void> {
+  try {
+    await db
+      .update(generation)
+      .set({
+        metadata: sql`COALESCE(${generation.metadata}, '{}'::json)::jsonb || ${JSON.stringify(
+          { upstreamRequestSnapshot: snapshot }
+        )}::jsonb`,
+      })
+      .where(
+        and(eq(generation.id, generationId), eq(generation.status, "pending"))
+      );
+  } catch (error) {
+    logError(error, {
+      event: "image_upstream_request_snapshot_persist_failed",
+      generationId,
+    });
+  }
+}
+
 export async function runImageGenerationForUser(
   input: RunImageGenerationInput,
   callbacks?: ImageGenerationCallbacks
@@ -1164,7 +1194,13 @@ async function runQueuedImageGenerationForUser({
     startedAtMs: startedAt,
     callbacks,
   });
-  const generationCallbacks = streamTelemetry.callbacks;
+  const generationCallbacks: ImageGenerationCallbacks = {
+    ...streamTelemetry.callbacks,
+    onApiUpstreamRequestSnapshot: async (snapshot) => {
+      await persistImageUpstreamRequestSnapshot(generationId, snapshot);
+      await callbacks?.onApiUpstreamRequestSnapshot?.(snapshot);
+    },
+  };
   const buildStreamTelemetryMetadata = () => ({
     upstreamStream: streamTelemetry.snapshot(),
   });

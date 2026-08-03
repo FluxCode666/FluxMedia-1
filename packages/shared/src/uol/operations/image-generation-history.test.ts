@@ -74,4 +74,29 @@ describe("image history UOL contract", () => {
       false
     );
   });
+
+  it("registers a human-only lazy request snapshot read", () => {
+    const operation = getOperation("image.getAdminHistoryRequestSnapshot");
+    expect(operation).toMatchObject({
+      access: {
+        kind: "roles",
+        roles: ["observer_admin", "admin", "super_admin"],
+      },
+      agentExposure: "human-only",
+      readOnly: true,
+      destructive: false,
+      idempotency: { kind: "natural" },
+      sideEffects: [],
+    });
+    expect(
+      operation?.input.safeParse({ id: "video-1", kind: "video" }).success
+    ).toBe(true);
+    expect(
+      operation?.input.safeParse({
+        id: "video-1",
+        kind: "video",
+        userId: "forged-user",
+      }).success
+    ).toBe(false);
+  });
 });

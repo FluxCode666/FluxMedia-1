@@ -598,6 +598,7 @@ export function HistoryClient({
           onClose={() => setSelectedKey(null)}
           onDelete={canDeleteImages ? handleDelete : undefined}
           open={selectedKey !== null}
+          showAdminRequestJson={showUserColumns}
           timeZone={timeZone}
         />
       ) : null}
@@ -606,6 +607,7 @@ export function HistoryClient({
           onClose={() => setSelectedKey(null)}
           open={selectedKey !== null}
           record={selected}
+          showAdminRequestJson={showUserColumns}
           timeZone={timeZone}
         />
       ) : null}

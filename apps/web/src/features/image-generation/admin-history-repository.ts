@@ -7,6 +7,7 @@
  */
 
 import { db } from "@repo/database";
+import { generation, videoGeneration } from "@repo/database/schema";
 import {
   adminHistoryUserEmailSchema,
   historyRecordStatusSchema,
@@ -64,6 +65,10 @@ const modelOptionRowSchema = z.object({
 const userOptionRowSchema = z.object({
   id: z.string().min(1).max(512),
   email: adminHistoryUserEmailSchema,
+});
+
+const requestSnapshotRowSchema = z.object({
+  request_snapshot: z.unknown().nullable(),
 });
 
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
@@ -372,6 +377,28 @@ export function buildAdminHistoryUserOptionsSql(input: {
   `;
 }
 
+/** 构造单条图片或视频记录的请求快照窄查询，不读取其他 metadata 字段。 */
+export function buildAdminHistoryRequestSnapshotSql(input: {
+  id: string;
+  kind: "image" | "video";
+}): SQL {
+  return input.kind === "image"
+    ? sql`
+        select (${generation.metadata}::jsonb)->'upstreamRequestSnapshot'
+          as request_snapshot
+        from ${generation}
+        where ${generation.id} = ${input.id}
+        limit 1
+      `
+    : sql`
+        select (${videoGeneration.metadata}::jsonb)->'upstreamRequestSnapshot'
+          as request_snapshot
+        from ${videoGeneration}
+        where ${videoGeneration.id} = ${input.id}
+        limit 1
+      `;
+}
+
 /** PostgreSQL 管理端全局历史仓储实现。 */
 export const databaseAdminHistoryRepository: AdminHistoryRepository = {
   async readRecords(query) {
@@ -477,5 +504,17 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
           await db.execute(buildAdminHistoryUserOptionsSql(input))
         )
       );
+  },
+
+  async readRequestSnapshot(input) {
+    const rows = z
+      .array(requestSnapshotRowSchema)
+      .parse(
+        extractExecuteRows(
+          await db.execute(buildAdminHistoryRequestSnapshotSql(input))
+        )
+      );
+    const row = rows[0];
+    return row ? { snapshot: row.request_snapshot } : null;
   },
 };

@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { deleteGenerationAction } from "@/features/image-generation/actions";
 import type { GenerationCreditDetails } from "@/features/image-generation/credit-calculation-details";
 import { generateDownloadFilename } from "@/lib/download-filename";
+import { AdminRequestJsonDetails } from "./admin-request-json-details";
 
 export interface LightboxReferenceImage {
   id: string;
@@ -63,6 +64,7 @@ export interface ImageLightboxProps {
   timeZone?: string;
   onClose: () => void;
   onDelete?: (id: string) => void;
+  showAdminRequestJson?: boolean;
 }
 
 const STATUS_LABELS_ZH: Record<string, string> = {
@@ -99,6 +101,7 @@ export function ImageLightbox({
   timeZone,
   onClose,
   onDelete,
+  showAdminRequestJson = false,
 }: ImageLightboxProps) {
   const locale = useLocale();
   const router = useRouter();
@@ -576,6 +579,14 @@ export function ImageLightbox({
                     </dd>
                   </div>
                 </dl>
+
+                {showAdminRequestJson ? (
+                  <AdminRequestJsonDetails
+                    id={generation.id}
+                    key={`image-request-${generation.id}`}
+                    kind="image"
+                  />
+                ) : null}
 
                 {creditRows.length > 0 && (
                   <div className="rounded-md border border-border bg-muted/30 p-3">

@@ -11,6 +11,7 @@ import {
   type AdminHistoryListRow,
   type AdminHistoryRepository,
   loadAdminHistoryRecords,
+  loadAdminHistoryRequestSnapshot,
 } from "./admin-history-service";
 
 const TOKEN_SECRET = "admin-history-service-test-secret";
@@ -54,11 +55,51 @@ function createRepository(
     readRecords: vi.fn().mockResolvedValue([]),
     readModelOptions: vi.fn().mockResolvedValue([]),
     readUserOptions: vi.fn().mockResolvedValue([]),
+    readRequestSnapshot: vi.fn().mockResolvedValue(null),
     ...overrides,
   };
 }
 
 describe("admin history service", () => {
+  it("returns a validated request snapshot and keeps invalid historical metadata hidden", async () => {
+    const repository = createRepository({
+      readRequestSnapshot: vi
+        .fn()
+        .mockResolvedValueOnce({
+          snapshot: {
+            operation: "videos.generate",
+            contentType: "application/json",
+            body: { reference_mode: "media" },
+          },
+        })
+        .mockResolvedValueOnce({
+          snapshot: { authorization: "unsafe historical metadata" },
+        }),
+    });
+
+    await expect(
+      loadAdminHistoryRequestSnapshot(
+        { input: { id: "video-1", kind: "video" } },
+        { repository }
+      )
+    ).resolves.toEqual({
+      id: "video-1",
+      kind: "video",
+      snapshot: {
+        operation: "videos.generate",
+        contentType: "application/json",
+        body: { reference_mode: "media" },
+      },
+    });
+
+    await expect(
+      loadAdminHistoryRequestSnapshot(
+        { input: { id: "image-1", kind: "image" } },
+        { repository }
+      )
+    ).resolves.toEqual({ id: "image-1", kind: "image", snapshot: null });
+  });
+
   it("returns real video model, independent parameters and input summary", async () => {
     const result = await loadAdminHistoryRecords(
       {

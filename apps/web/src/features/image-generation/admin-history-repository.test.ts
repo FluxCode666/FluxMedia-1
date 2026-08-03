@@ -15,6 +15,7 @@ vi.mock("@repo/database", () => ({ db: { execute } }));
 import {
   buildAdminHistoryListSql,
   buildAdminHistoryModelOptionsSql,
+  buildAdminHistoryRequestSnapshotSql,
   buildAdminHistoryUserOptionsSql,
   databaseAdminHistoryRepository,
 } from "./admin-history-repository";
@@ -173,5 +174,43 @@ describe("admin history repository SQL", () => {
     expect(userSql.sql).toContain("exists (select 1 from video_generation v");
     expect(userSql.sql).not.toContain("exists (select 1 from generation g");
     expect(userSql.params).toContain(200);
+  });
+
+  it("reads only the selected record request snapshot", async () => {
+    execute.mockResolvedValue({
+      rows: [
+        {
+          request_snapshot: {
+            operation: "videos.generate",
+            contentType: "application/json",
+            body: { reference_mode: "media" },
+          },
+        },
+      ],
+    });
+
+    await expect(
+      databaseAdminHistoryRepository.readRequestSnapshot({
+        id: "video-1",
+        kind: "video",
+      })
+    ).resolves.toEqual({
+      snapshot: {
+        operation: "videos.generate",
+        contentType: "application/json",
+        body: { reference_mode: "media" },
+      },
+    });
+
+    const compiled = new PgDialect().sqlToQuery(
+      buildAdminHistoryRequestSnapshotSql({
+        id: "video-1",
+        kind: "video",
+      })
+    );
+    expect(compiled.sql).toContain("upstreamRequestSnapshot");
+    expect(compiled.sql).toContain("video_generation");
+    expect(compiled.params).toContain("video-1");
+    expect(compiled.sql).not.toContain("generation g");
   });
 });

@@ -42,7 +42,9 @@ import {
 } from "@repo/shared/credits/usage-log-contract";
 import {
   type AdminHistoryListOutput,
+  type AdminHistoryRequestSnapshotOutput,
   adminHistoryListOutputSchema,
+  adminHistoryRequestSnapshotOutputSchema,
   type HistoryListOutput,
   historyListOutputSchema,
 } from "@repo/shared/image-generation/history-contract";
@@ -79,6 +81,7 @@ import { databaseAdminHistoryRepository } from "@/features/image-generation/admi
 import {
   AdminHistoryServiceError,
   loadAdminHistoryRecords,
+  loadAdminHistoryRequestSnapshot,
 } from "@/features/image-generation/admin-history-service";
 import { databaseHistoryRepository } from "@/features/image-generation/history-repository";
 import {
@@ -204,6 +207,35 @@ bindExecute(
             timeZone,
             input,
           },
+          { repository: databaseAdminHistoryRepository }
+        )
+      );
+    } catch (error) {
+      if (error instanceof AdminHistoryServiceError) {
+        throw new OperationError(error.code, error.message);
+      }
+      throw error;
+    }
+  }
+);
+
+/** 绑定管理员详情请求快照；列表接口继续保持窄响应和最小敏感面。 */
+bindExecute(
+  "image.getAdminHistoryRequestSnapshot",
+  async (
+    input: unknown,
+    principal: Principal
+  ): Promise<AdminHistoryRequestSnapshotOutput> => {
+    if (
+      principal.type !== "user" ||
+      !canViewGlobalUsageRecords(principal.role)
+    ) {
+      throw new OperationError("forbidden", "Admin access required");
+    }
+    try {
+      return adminHistoryRequestSnapshotOutputSchema.parse(
+        await loadAdminHistoryRequestSnapshot(
+          { input },
           { repository: databaseAdminHistoryRepository }
         )
       );

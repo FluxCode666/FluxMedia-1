@@ -191,6 +191,7 @@ describe("API video adapter", () => {
       Response.json({ id: "upstream-cangyuan" }, { status: 202 })
     );
     mockSignedStorage();
+    const onRequestSnapshot = vi.fn();
 
     await submitApiVideoRequest(createConfig(adapter), {
       clientRequestId: "local-cangyuan-media",
@@ -204,6 +205,7 @@ describe("API video adapter", () => {
       referenceImages: [
         createStoredSource("user/video-inputs/task/reference.png", "image/png"),
       ],
+      onRequestSnapshot,
     });
 
     const request = mocks.fetchMediaUpstream.mock.calls[0];
@@ -223,6 +225,18 @@ describe("API video adapter", () => {
     });
     expect(body).not.toHaveProperty("audio");
     expect(body).not.toHaveProperty("reference_images");
+    expect(onRequestSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "videos.generate",
+        contentType: "application/json",
+        body: expect.objectContaining({
+          reference_mode: "media",
+          reference_image_urls: [
+            "https://oss.example.test/media/user/video-inputs/task/reference.png?[REDACTED]",
+          ],
+        }),
+      })
+    );
   });
 
   it("允许请求脚本重组首尾帧与多张参考图但不能复制或丢失媒体", async () => {
