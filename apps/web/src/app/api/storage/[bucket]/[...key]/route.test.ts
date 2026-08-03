@@ -20,15 +20,35 @@ vi.mock("@repo/shared/logger", () => ({ logError }));
 
 // 第一方会话回退鉴权的依赖:getCurrentUser(会话)与 db(按 storage_key 查归属)。
 // 保持 DB-free:getCurrentUser/db 均被 mock;正常签名校验通过的用例不会触达它们。
-const { getCurrentUser, dbState, runtimeSettings, getRuntimeSettingString } =
-  vi.hoisted(() => ({
-    getCurrentUser: vi.fn(),
-    dbState: { rows: [] as Array<{ userId: string | null }> },
-    runtimeSettings: new Map<string, string>(),
-    getRuntimeSettingString: vi.fn(async (key: string) =>
-      runtimeSettings.get(key)
-    ),
-  }));
+const {
+  getCurrentUser,
+  dbState,
+  runtimeSettings,
+  getRuntimeStorageBucketConfig,
+} = vi.hoisted(() => ({
+  getCurrentUser: vi.fn(),
+  dbState: { rows: [] as Array<{ userId: string | null }> },
+  runtimeSettings: new Map<string, string>(),
+  getRuntimeStorageBucketConfig: vi.fn(async () => {
+    const systemAssets =
+      runtimeSettings.get("SYSTEM_ASSETS_BUCKET_NAME") ?? "system";
+    const generations =
+      runtimeSettings.get("GENERATIONS_BUCKET_NAME") ?? "generations";
+    const isValidBucket = (bucket: string) =>
+      /^[A-Za-z0-9._-]{1,255}$/.test(bucket) &&
+      bucket !== "." &&
+      bucket !== ".." &&
+      bucket !== "_avatars";
+    if (
+      !isValidBucket(systemAssets) ||
+      !isValidBucket(generations) ||
+      systemAssets === generations
+    ) {
+      throw new Error("Storage bucket configuration invalid");
+    }
+    return { systemAssets, generations };
+  }),
+}));
 vi.mock("@repo/shared/auth/server", () => ({ getCurrentUser }));
 vi.mock("@repo/database", () => ({
   db: {
@@ -41,23 +61,24 @@ vi.mock("@repo/database", () => ({
 }));
 vi.mock("@repo/database/schema", () => ({
   generation: { userId: "userId", storageKey: "storageKey" },
+  videoGeneration: { userId: "userId", storageKey: "storageKey" },
 }));
 vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingString,
+  getRuntimeStorageBucketConfig,
 }));
 
 import { generateSignedImageParams } from "@repo/shared/storage/signed-url";
 import { GET } from "./route";
 
 const TEST_SECRET = "test-secret-for-storage-route-tests";
-const MODEL_ASSET_BUCKET = "model-marketplace";
+const SYSTEM_ASSET_BUCKET = "system-assets";
+const MODEL_ASSET_BUCKET = SYSTEM_ASSET_BUCKET;
 const MODEL_CONFIG_HASH = "a".repeat(64);
 const MODEL_CONTENT_HASH = "b".repeat(64);
 const MODEL_IMAGE_KEY = `image/${MODEL_CONFIG_HASH}/${MODEL_CONTENT_HASH}.webp`;
-const SITE_ASSET_BUCKET = "site-assets";
+const SITE_ASSET_BUCKET = SYSTEM_ASSET_BUCKET;
 const SITE_LOGO_HASH = "c".repeat(64);
 const SITE_LOGO_KEY = `logo/${SITE_LOGO_HASH}.png`;
-const SYSTEM_ASSET_BUCKET = "system-assets";
 
 // 构造 Next.js App Router 动态路由约定的 params Promise。
 function makeParams(bucket: string, key: string[]) {
@@ -108,14 +129,9 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     getCurrentUser.mockResolvedValue(null);
     dbState.rows = [];
     runtimeSettings.clear();
-    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", "avatars");
-    runtimeSettings.set("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME", "generations");
-    runtimeSettings.set(
-      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
-      MODEL_ASSET_BUCKET
-    );
-    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", SITE_ASSET_BUCKET);
-    getRuntimeSettingString.mockClear();
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
+    runtimeSettings.set("GENERATIONS_BUCKET_NAME", "generations");
+    getRuntimeStorageBucketConfig.mockClear();
   });
 
   afterAll(() => {
@@ -133,10 +149,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
   });
 
   it("允许读取运行时设置中的自定义 generations 桶", async () => {
-    runtimeSettings.set(
-      "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME",
-      "minio-generations"
-    );
+    runtimeSettings.set("GENERATIONS_BUCKET_NAME", "minio-generations");
     getObject.mockResolvedValue(Buffer.from("png-bytes"));
 
     const res = await GET(
@@ -279,22 +292,19 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     getObject.mockResolvedValue(Buffer.from("avatar-bytes"));
     const res = await GET(
       makeRequest(),
-      makeParams("avatars", ["user-9", "profile.jpg"])
+      makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-9-profile.jpg"])
     );
     expect(res.status).toBe(200);
-    expect(getObject).toHaveBeenCalledWith("user-9/profile.jpg", "avatars", {
-      signal: expect.anything(),
-    });
+    expect(getObject).toHaveBeenCalledWith(
+      "avatars/user-9-profile.jpg",
+      SYSTEM_ASSET_BUCKET,
+      { signal: expect.anything() }
+    );
     expect(res.headers.get("Content-Type")).toBe("image/jpeg");
   });
 
   it("头像、模型封面和网站 Logo 可共用系统公开资产 bucket", async () => {
-    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
-    runtimeSettings.set(
-      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
-      SYSTEM_ASSET_BUCKET
-    );
-    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
     getObject.mockResolvedValue(Buffer.from("public-asset"));
 
     const avatarResponse = await GET(
@@ -302,10 +312,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
       makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-9-123.jpg"])
     );
     const avatarAliasResponse = await GET(
-      makeRequest(
-        undefined,
-        "/api/storage/_avatars/avatars/user-10-456.jpg"
-      ),
+      makeRequest(undefined, "/api/storage/_avatars/avatars/user-10-456.jpg"),
       makeParams("_avatars", ["avatars", "user-10-456.jpg"])
     );
     const modelResponse = await GET(
@@ -382,14 +389,14 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
   });
 
   it("头像逻辑别名在同一进程内跟随运行时 bucket 切换", async () => {
-    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", "avatars-before");
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", "assets-before");
 
     const beforeResponse = await GET(
       makeRequest(undefined, "/api/storage/_avatars/user-10-456.jpg"),
       makeParams("_avatars", ["user-10-456.jpg"])
     );
 
-    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", "avatars-after");
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", "assets-after");
     const afterResponse = await GET(
       makeRequest(undefined, "/api/storage/_avatars/user-10-456.jpg"),
       makeParams("_avatars", ["user-10-456.jpg"])
@@ -397,11 +404,11 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
 
     expect(beforeResponse.status).toBe(307);
     expect(beforeResponse.headers.get("Location")).toBe(
-      "http://localhost/api/storage/avatars-before/user-10-456.jpg"
+      "http://localhost/api/storage/assets-before/user-10-456.jpg"
     );
     expect(afterResponse.status).toBe(307);
     expect(afterResponse.headers.get("Location")).toBe(
-      "http://localhost/api/storage/avatars-after/user-10-456.jpg"
+      "http://localhost/api/storage/assets-after/user-10-456.jpg"
     );
     expect(beforeResponse.headers.get("Cache-Control")).toBe("no-store");
     expect(afterResponse.headers.get("Cache-Control")).toBe("no-store");
@@ -409,11 +416,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
   });
 
   it("模型与网站资产共桶时按 key 命名空间选择唯一校验器", async () => {
-    runtimeSettings.set(
-      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
-      SYSTEM_ASSET_BUCKET
-    );
-    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", SYSTEM_ASSET_BUCKET);
     getObject.mockResolvedValue(Buffer.from("public-asset"));
 
     const modelResponse = await GET(
@@ -461,24 +464,15 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     expect(res.headers.get("Content-Disposition")).toBeNull();
   });
 
-  it("每次读取同时加载四项隔离 bucket 设置", async () => {
+  it("每次读取加载统一运行时 bucket 配置", async () => {
     getObject.mockResolvedValue(Buffer.from("avatar"));
 
-    await GET(makeRequest(), makeParams("avatars", ["user", "avatar.jpg"]));
+    await GET(
+      makeRequest(),
+      makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-avatar.jpg"])
+    );
 
-    expect(getRuntimeSettingString).toHaveBeenCalledTimes(4);
-    expect(getRuntimeSettingString).toHaveBeenCalledWith(
-      "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
-    );
-    expect(getRuntimeSettingString).toHaveBeenCalledWith(
-      "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
-    );
-    expect(getRuntimeSettingString).toHaveBeenCalledWith(
-      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
-    );
-    expect(getRuntimeSettingString).toHaveBeenCalledWith(
-      "SITE_ASSETS_BUCKET_NAME"
-    );
+    expect(getRuntimeStorageBucketConfig).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -516,16 +510,16 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
   });
 
   it("网站资产设置缺失时从默认 bucket 匿名读取严格 Logo PNG", async () => {
-    runtimeSettings.delete("SITE_ASSETS_BUCKET_NAME");
+    runtimeSettings.delete("SYSTEM_ASSETS_BUCKET_NAME");
     getObject.mockResolvedValue(Buffer.from("site-logo"));
 
     const res = await GET(
       makeRequest(),
-      makeParams(SITE_ASSET_BUCKET, SITE_LOGO_KEY.split("/"))
+      makeParams("system", SITE_LOGO_KEY.split("/"))
     );
 
     expect(res.status).toBe(200);
-    expect(getObject).toHaveBeenCalledWith(SITE_LOGO_KEY, SITE_ASSET_BUCKET, {
+    expect(getObject).toHaveBeenCalledWith(SITE_LOGO_KEY, "system", {
       signal: expect.anything(),
     });
     expect(getCurrentUser).not.toHaveBeenCalled();
@@ -538,7 +532,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
   });
 
   it("网站资产桶支持运行时自定义名称", async () => {
-    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", "brand-assets");
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", "brand-assets");
     getObject.mockResolvedValue(Buffer.from("site-logo"));
 
     const res = await GET(
@@ -608,57 +602,14 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
   });
 
   it.each([
-    ["头像桶为空", "", "generations", MODEL_ASSET_BUCKET, SITE_ASSET_BUCKET],
-    ["生成内容桶为空", "avatars", "", MODEL_ASSET_BUCKET, SITE_ASSET_BUCKET],
-    ["模型资产桶为空", "avatars", "generations", "", SITE_ASSET_BUCKET],
-    [
-      "模型资产桶含路径",
-      "avatars",
-      "generations",
-      "../models",
-      SITE_ASSET_BUCKET,
-    ],
-    ["网站资产桶为空", "avatars", "generations", MODEL_ASSET_BUCKET, ""],
-    [
-      "头像桶使用保留逻辑别名",
-      "_avatars",
-      "generations",
-      MODEL_ASSET_BUCKET,
-      SITE_ASSET_BUCKET,
-    ],
-    [
-      "网站资产桶含路径",
-      "avatars",
-      "generations",
-      MODEL_ASSET_BUCKET,
-      "../site-assets",
-    ],
-    [
-      "头像与生成内容冲突",
-      "shared",
-      "shared",
-      MODEL_ASSET_BUCKET,
-      SITE_ASSET_BUCKET,
-    ],
-    [
-      "模型资产与生成内容冲突",
-      "avatars",
-      "generations",
-      "generations",
-      SITE_ASSET_BUCKET,
-    ],
-    [
-      "网站资产与生成内容冲突",
-      "avatars",
-      "generations",
-      MODEL_ASSET_BUCKET,
-      "generations",
-    ],
-  ])("%s时稳定返回配置错误且不触达存储", async (_label, avatars, generations, modelAssets, siteAssets) => {
-    runtimeSettings.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", avatars);
-    runtimeSettings.set("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME", generations);
-    runtimeSettings.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", modelAssets);
-    runtimeSettings.set("SITE_ASSETS_BUCKET_NAME", siteAssets);
+    ["系统资产桶为空", "", "generations"],
+    ["生成内容桶为空", "system", ""],
+    ["系统资产桶使用保留逻辑别名", "_avatars", "generations"],
+    ["系统资产桶含路径", "../system", "generations"],
+    ["系统资产与生成内容冲突", "shared", "shared"],
+  ])("%s时稳定返回配置错误且不触达存储", async (_label, systemAssets, generations) => {
+    runtimeSettings.set("SYSTEM_ASSETS_BUCKET_NAME", systemAssets);
+    runtimeSettings.set("GENERATIONS_BUCKET_NAME", generations);
 
     const res = await GET(
       makeRequest(),
@@ -681,7 +632,7 @@ describe("GET /api/storage/[bucket]/[...key]", () => {
     getObject.mockResolvedValue(Buffer.from("<svg/>"));
     const res = await GET(
       makeRequest(),
-      makeParams("avatars", ["user-9", "evil.svg"])
+      makeParams(SYSTEM_ASSET_BUCKET, ["avatars", "user-9-evil.svg"])
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/octet-stream");

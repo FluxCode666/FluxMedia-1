@@ -17,30 +17,22 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@repo/database";
-import { generation } from "@repo/database/schema";
+import { generation, videoGeneration } from "@repo/database/schema";
 import { getCurrentUser } from "@repo/shared/auth/server";
 import { logError } from "@repo/shared/logger";
 import { PUBLIC_AVATAR_BUCKET_ALIAS } from "@repo/shared/storage/image-url";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { verifySignedImageUrl } from "@repo/shared/storage/signed-url";
-import { getRuntimeSettingString } from "@repo/shared/system-settings";
+import { getRuntimeStorageBucketConfig } from "@repo/shared/system-settings";
 import { eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import {
-  assertModelMarketplaceCoverReference,
-  parseModelMarketplaceAssetBucketName,
-} from "@/features/model-marketplace/asset-reference";
-import {
-  assertSiteLogoAssetReference,
-  parseSiteAssetsBucketName,
-} from "@/features/site-branding/asset-reference";
+import { assertModelMarketplaceCoverReference } from "@/features/model-marketplace/asset-reference";
+import { assertSiteLogoAssetReference } from "@/features/site-branding/asset-reference";
 
 type StorageBucketConfig = {
-  avatars: string;
+  systemAssets: string;
   generations: string;
-  modelMarketplaceAssets: string;
-  siteAssets: string;
 };
 
 type StorageObjectDomain =
@@ -66,37 +58,6 @@ const GENERATION_CACHE_CONTROL =
   "public, max-age=86400, s-maxage=2592000, stale-while-revalidate=604800, immutable";
 const PUBLIC_ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const NO_STORE_CACHE_CONTROL = "no-store";
-const DEFAULT_AVATARS_BUCKET = "avatars";
-const DEFAULT_GENERATIONS_BUCKET = "generations";
-
-/** 四项运行时 bucket 缺失、为空或生成内容与公开资产重叠时的稳定错误。 */
-class StorageBucketConfigurationError extends Error {
-  /** 创建不包含原始设置值的配置错误。 */
-  constructor() {
-    super("Storage bucket configuration invalid");
-    this.name = "StorageBucketConfigurationError";
-  }
-}
-
-/**
- * 解析允许使用历史默认值的头像或生成内容 bucket。
- *
- * @param value - 运行时设置值；undefined 代表历史环境尚无对应设置行。
- * @param fallback - 仅设置缺失时使用的项目兼容默认值。
- * @returns 去除首尾空白后的非空 bucket。
- * @throws StorageBucketConfigurationError - 设置为空白或使用保留逻辑别名时 fail-closed。
- */
-function parseProtectedBucketName(
-  value: string | undefined,
-  fallback: string
-): string {
-  const bucket = value === undefined ? fallback : value.trim();
-  if (!bucket || bucket === PUBLIC_AVATAR_BUCKET_ALIAS) {
-    throw new StorageBucketConfigurationError();
-  }
-  return bucket;
-}
-
 /**
  * 读取当前允许访问的存储桶配置。
  *
@@ -104,40 +65,11 @@ function parseProtectedBucketName(
  * `NEXT_PUBLIC_*` 环境变量，预构建镜像会把默认桶固化进白名单，导致图片已写入
  * 自定义 MinIO 桶、读取时却在触达 MinIO 前返回 `Bucket not allowed`。
  *
- * @returns 四项非空 bucket；三个公开资产域允许同名，生成内容必须独立。
- * @throws 设置读取失败、任一 bucket 非法或生成内容与公开资产重叠时显式失败。
+ * @returns 唯一系统公共资产 bucket 与唯一用户生成内容 bucket。
+ * @throws 设置读取失败、任一 bucket 非法或两个安全域重叠时显式失败。
  */
 async function getStorageBucketConfig(): Promise<StorageBucketConfig> {
-  const [avatarsRaw, generationsRaw, modelMarketplaceAssetsRaw, siteAssetsRaw] =
-    await Promise.all([
-      getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME"),
-      getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"),
-      getRuntimeSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"),
-      getRuntimeSettingString("SITE_ASSETS_BUCKET_NAME"),
-    ]);
-  const avatars = parseProtectedBucketName(avatarsRaw, DEFAULT_AVATARS_BUCKET);
-  const generations = parseProtectedBucketName(
-    generationsRaw,
-    DEFAULT_GENERATIONS_BUCKET
-  );
-  let modelMarketplaceAssets: string;
-  let siteAssets: string;
-  try {
-    modelMarketplaceAssets = parseModelMarketplaceAssetBucketName(
-      modelMarketplaceAssetsRaw
-    );
-    siteAssets = parseSiteAssetsBucketName(siteAssetsRaw);
-  } catch {
-    throw new StorageBucketConfigurationError();
-  }
-  if (
-    generations === avatars ||
-    generations === modelMarketplaceAssets ||
-    generations === siteAssets
-  ) {
-    throw new StorageBucketConfigurationError();
-  }
-  return { avatars, generations, modelMarketplaceAssets, siteAssets };
+  return getRuntimeStorageBucketConfig();
 }
 
 /**
@@ -161,23 +93,20 @@ function resolveStorageObjectDomain(
 ): StorageObjectDomain | null {
   const namespace = keySegments[0];
   if (
-    bucket === config.modelMarketplaceAssets &&
+    bucket === config.systemAssets &&
     (namespace === "image" || namespace === "video")
   ) {
     return "modelMarketplaceAssets";
   }
-  if (bucket === config.siteAssets && namespace === "logo") {
+  if (bucket === config.systemAssets && namespace === "logo") {
     return "siteAssets";
   }
-  if (bucket === config.avatars) {
-    const sharesPublicAssetBucket =
-      config.avatars === config.modelMarketplaceAssets ||
-      config.avatars === config.siteAssets;
+  if (bucket === config.systemAssets) {
     const isNamespacedAvatar = namespace === "avatars";
     const isLegacyAvatar =
       keySegments.length === 1 &&
       /^[a-zA-Z0-9_-]+-\d+\.(?:jpe?g|png|gif|webp)$/.test(keySegments[0] ?? "");
-    if (!sharesPublicAssetBucket || isNamespacedAvatar || isLegacyAvatar) {
+    if (isNamespacedAvatar || isLegacyAvatar) {
       return "avatars";
     }
   }
@@ -365,12 +294,18 @@ async function isOwnerViaSession(fileKey: string): Promise<boolean> {
   if (!user) {
     return false;
   }
-  const rows = await db
+  const imageRows = await db
     .select({ userId: generation.userId })
     .from(generation)
     .where(eq(generation.storageKey, fileKey))
     .limit(1);
-  return rows.length > 0 && rows[0]?.userId === user.id;
+  if (imageRows[0]?.userId === user.id) return true;
+  const videoRows = await db
+    .select({ userId: videoGeneration.userId })
+    .from(videoGeneration)
+    .where(eq(videoGeneration.storageKey, fileKey))
+    .limit(1);
+  return videoRows[0]?.userId === user.id;
 }
 
 async function verifyBucketAccess(
@@ -453,7 +388,7 @@ export async function GET(
   // `_avatars` 不是合法 S3 bucket 名，因此可安全作为逻辑别名，避免 Next.js 构建期
   // 内联的历史 NEXT_PUBLIC bucket 让运行时共桶配置失效。
   const storageBucket =
-    bucket === PUBLIC_AVATAR_BUCKET_ALIAS ? bucketConfig.avatars : bucket;
+    bucket === PUBLIC_AVATAR_BUCKET_ALIAS ? bucketConfig.systemAssets : bucket;
   const isAvatarBucketAlias = bucket === PUBLIC_AVATAR_BUCKET_ALIAS;
   // 缩略图宽度可经"路径段"传入:/api/storage/<bucket>/w<width>/<key>。这是为绕过
   // 线上 Cloudflare 忽略 query 的边缘缓存键(见 signed-url.buildStorageThumbnailUrl
@@ -469,10 +404,8 @@ export async function GET(
   const fileKey = keySegments.join("/");
 
   if (
-    storageBucket !== bucketConfig.avatars &&
-    storageBucket !== bucketConfig.generations &&
-    storageBucket !== bucketConfig.modelMarketplaceAssets &&
-    storageBucket !== bucketConfig.siteAssets
+    storageBucket !== bucketConfig.systemAssets &&
+    storageBucket !== bucketConfig.generations
   ) {
     return NextResponse.json({ error: "Bucket not allowed" }, { status: 403 });
   }
@@ -525,7 +458,7 @@ export async function GET(
       assertModelMarketplaceCoverReference(
         category,
         { bucket: storageBucket, key: fileKey },
-        bucketConfig.modelMarketplaceAssets
+        bucketConfig.systemAssets
       );
     } catch {
       return NextResponse.json(
@@ -539,7 +472,7 @@ export async function GET(
     try {
       assertSiteLogoAssetReference(
         { bucket: storageBucket, key: fileKey },
-        bucketConfig.siteAssets
+        bucketConfig.systemAssets
       );
     } catch {
       return NextResponse.json(
