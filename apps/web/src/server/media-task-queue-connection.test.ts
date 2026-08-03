@@ -14,6 +14,7 @@ const configuration = {
   username: "worker",
   password: "secret",
   database: 7,
+  tls: true,
 };
 
 describe("media task Redis connection options", () => {
@@ -28,6 +29,7 @@ describe("media task Redis connection options", () => {
       db: 7,
       commandTimeout: 2_000,
       maxRetriesPerRequest: 1,
+      tls: { servername: "redis.internal" },
     });
   });
 

@@ -22,6 +22,7 @@ const requiredRedisEnvironmentSchema = z.object({
   username: z.string().trim().min(1).max(128).optional(),
   password: z.string().min(1).max(1_024),
   database: z.coerce.number().int().min(0).max(15),
+  tls: z.boolean(),
 });
 
 export type RequiredRedisConnectionConfiguration = z.infer<
@@ -53,6 +54,12 @@ export function readRequiredRedisConnectionConfiguration(
     username: environment.REDIS_USERNAME?.trim() || undefined,
     password: environment.REDIS_PASSWORD,
     database: environment.REDIS_DB ?? String(DEFAULT_REDIS_DATABASE),
+    tls:
+      environment.REDIS_TLS === undefined || environment.REDIS_TLS === "false"
+        ? false
+        : environment.REDIS_TLS === "true"
+          ? true
+          : environment.REDIS_TLS,
   });
   if (!parsed.success) {
     const invalidFields = Array.from(
@@ -63,6 +70,7 @@ export function readRequiredRedisConnectionConfiguration(
         if (field === "port") return "REDIS_PORT";
         if (field === "username") return "REDIS_USERNAME";
         if (field === "password") return "REDIS_PASSWORD";
+        if (field === "tls") return "REDIS_TLS";
         return "REDIS_DB";
       })
       .join(", ");
@@ -87,6 +95,7 @@ export function getRequiredRedisClient(): Redis {
     configuration.username,
     configuration.password,
     configuration.database,
+    configuration.tls,
   ]);
   const current = requiredRedisGlobal.__fluxMediaRequiredRedis;
   if (current?.fingerprint === fingerprint && current.client.status !== "end") {
@@ -100,6 +109,9 @@ export function getRequiredRedisClient(): Redis {
     ...(configuration.username ? { username: configuration.username } : {}),
     password: configuration.password,
     db: configuration.database,
+    ...(configuration.tls
+      ? { tls: { servername: configuration.host } }
+      : {}),
     lazyConnect: true,
     connectTimeout: 1_000,
     commandTimeout: 2_000,

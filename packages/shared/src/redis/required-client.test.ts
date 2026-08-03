@@ -26,6 +26,7 @@ describe("required Redis connection configuration", () => {
         REDIS_USERNAME: "worker",
         REDIS_PASSWORD: "secret",
         REDIS_DB: "7",
+        REDIS_TLS: "true",
       })
     ).toEqual({
       host: "redis.internal",
@@ -33,6 +34,7 @@ describe("required Redis connection configuration", () => {
       username: "worker",
       password: "secret",
       database: 7,
+      tls: true,
     });
 
     expect(() =>
@@ -42,5 +44,21 @@ describe("required Redis connection configuration", () => {
         REDIS_DB: "16",
       })
     ).toThrow(/REDIS_DB/);
+  });
+
+  it("默认关闭 TLS 并拒绝模糊布尔值", () => {
+    expect(
+      readRequiredRedisConnectionConfiguration({
+        REDIS_HOST: "redis.internal",
+        REDIS_PASSWORD: "secret",
+      }).tls
+    ).toBe(false);
+    expect(() =>
+      readRequiredRedisConnectionConfiguration({
+        REDIS_HOST: "redis.internal",
+        REDIS_PASSWORD: "secret",
+        REDIS_TLS: "yes",
+      })
+    ).toThrow(/REDIS_TLS/);
   });
 });
