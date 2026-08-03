@@ -8,9 +8,10 @@
  * 这些请求同样经传输层（生产走 Go TLS 旁路；主机白名单含 .adobe.com/.adobelogin.com/.adobe.io）。
  */
 
-import { accountIdFromToken, decodeJwtPayload } from "./signing";
+import { AdobeRequestError, AuthError, UpstreamTemporaryError } from "./errors";
 import { ADOBE_WEB_APP_PROFILES, type AdobeFireflyWebApp } from "./profile";
-import type { FireflyTransport } from "./transport";
+import { accountIdFromToken, decodeJwtPayload } from "./signing";
+import type { FireflyTransport, FireflyTransportResponse } from "./transport";
 
 export const IMS_REFRESH_URL =
   "https://adobeid-na1.services.adobe.com/ims/check/v6/token?jslVersion=v2-v0.48.0-1-g1e322cb";
@@ -29,8 +30,128 @@ export type RefreshResult = {
   accessToken: string;
   expiresIn: number | null;
   account: AdobeAccountInfo | null;
-  raw: Record<string, unknown>;
 };
+
+const MAX_ADOBE_AUTH_RESPONSE_BYTES = 256 * 1024;
+const SENSITIVE_ACCOUNT_FIELD_PATTERN =
+  /(?:authorization|cookie|password|secret)\s*[:=]|bearer\s+|(?:access|refresh|id)[_-]?token\s*[:=]|aux_sid\s*=/i;
+
+/**
+ * 清洗 Adobe Profile 的账号展示或身份字段。
+ *
+ * @param value 未信任的 Adobe 字段。
+ * @param maxLength 最大字符数。
+ * @param pattern 可选的完整形态约束。
+ * @returns 有限且不含疑似凭据的字符串，否则返回空字符串。
+ */
+function safeAdobeAccountField(
+  value: unknown,
+  maxLength: number,
+  pattern?: RegExp
+): string {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim().slice(0, maxLength);
+  if (
+    !normalized ||
+    SENSITIVE_ACCOUNT_FIELD_PATTERN.test(normalized) ||
+    (pattern && !pattern.test(normalized))
+  ) {
+    return "";
+  }
+  return normalized;
+}
+
+/**
+ * 从响应 header 提取可信请求标识，不读取正文。
+ *
+ * @param response Adobe transport 响应。
+ * @returns 有限 request ID；非法或疑似非标识符内容返回 undefined。
+ */
+function adobeRequestId(
+  response: FireflyTransportResponse
+): string | undefined {
+  const value = String(
+    response.headers["x-request-id"] ||
+      response.headers["request-id"] ||
+      response.headers["x-adobe-request-id"] ||
+      ""
+  ).trim();
+  return value && value.length <= 256 && /^[A-Za-z0-9._:-]+$/.test(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * 在解析 JSON 前执行 Adobe 鉴权响应字节上限与对象形态校验。
+ *
+ * @param response transport 响应。
+ * @returns 普通 JSON object；数组、空值、超限和无效 JSON 显式失败。
+ */
+async function readAdobeAuthJsonObject(
+  response: FireflyTransportResponse
+): Promise<Record<string, unknown>> {
+  const requestId = adobeRequestId(response);
+  const bytes = await response.bytes();
+  if (bytes.byteLength > MAX_ADOBE_AUTH_RESPONSE_BYTES) {
+    throw new UpstreamTemporaryError("Adobe response exceeded size limit", {
+      statusCode: response.status,
+      errorType: "status",
+      ...(requestId ? { requestId } : {}),
+    });
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf-8")) as unknown;
+  } catch {
+    throw new AdobeRequestError("Adobe response is not valid json", {
+      statusCode: response.status,
+      errorType: "status",
+      ...(requestId ? { requestId } : {}),
+    });
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new AdobeRequestError("Adobe response has invalid shape", {
+      statusCode: response.status,
+      errorType: "status",
+      ...(requestId ? { requestId } : {}),
+    });
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
+ * 将 Adobe HTTP 失败映射为结构化且不含响应正文的错误。
+ *
+ * @param response Adobe transport 响应。
+ * @param operation 安全的操作标识。
+ * @returns 永不返回；401/403 为 AuthError，临时状态为 UpstreamTemporaryError。
+ */
+function throwAdobeStatusError(
+  response: FireflyTransportResponse,
+  operation: string
+): never {
+  const message = `${operation} failed: ${response.status}`;
+  const requestId = adobeRequestId(response);
+  const options = {
+    statusCode: response.status,
+    ...(requestId ? { requestId } : {}),
+  };
+  if (response.status === 401 || response.status === 403) {
+    throw new AuthError(message, options);
+  }
+  if (
+    response.status === 408 ||
+    response.status === 429 ||
+    response.status === 451 ||
+    response.status >= 500
+  ) {
+    throw new UpstreamTemporaryError(message, {
+      ...options,
+      errorType: "status",
+    });
+  }
+  throw new AdobeRequestError(message, { ...options, errorType: "status" });
+}
 
 /** 把多种 cookie 输入（字符串/数组/对象）归一为 "k=v; k=v" 串。移植 _cookie_string_from_input。 */
 export function normalizeCookieString(input: unknown): string {
@@ -117,16 +238,13 @@ export async function refreshAccessTokenFromCookie(
     body: refreshFormBody(profile.imsClientId, scope),
     signal: opts?.signal,
     timeoutMs: 30_000,
+    maxResponseBytes: MAX_ADOBE_AUTH_RESPONSE_BYTES,
   });
 
   if (resp.status !== 200) {
-    throw new Error(`refresh request failed: ${resp.status}`);
+    throwAdobeStatusError(resp, "refresh request");
   }
-  const data = (await resp.json().catch(() => null)) as Record<
-    string,
-    unknown
-  > | null;
-  if (!data) throw new Error("refresh response is not valid json");
+  const data = await readAdobeAuthJsonObject(resp);
   const accessToken = String(data.access_token || "").trim();
   if (!accessToken) throw new Error("refresh response missing access_token");
   const tokenClientId = String(
@@ -153,7 +271,7 @@ export async function refreshAccessTokenFromCookie(
         ? Number(expiresInRaw)
         : null;
 
-  return { accessToken, expiresIn, account, raw: data };
+  return { accessToken, expiresIn, account };
 }
 
 /** 用 access_token 查账号信息。移植 _fetch_account_info。 */
@@ -180,21 +298,28 @@ export async function fetchAccountInfo(
         },
         signal,
         timeoutMs: 15_000,
+        maxResponseBytes: MAX_ADOBE_AUTH_RESPONSE_BYTES,
       });
       if (resp.status !== 200) continue;
-      data = (await resp.json().catch(() => null)) as Record<
-        string,
-        unknown
-      > | null;
+      data = await readAdobeAuthJsonObject(resp);
     } catch {
       continue;
     }
     if (!data || typeof data !== "object") continue;
-    const displayName = String(
-      data.displayName || data.name || data.fullName || ""
-    ).trim();
-    const email = String(data.email || "").trim();
-    const userId = String(data.userId || data.authId || "").trim();
+    const displayName = safeAdobeAccountField(
+      data.displayName || data.name || data.fullName,
+      256
+    );
+    const email = safeAdobeAccountField(
+      data.email,
+      320,
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    );
+    const userId = safeAdobeAccountField(
+      data.userId || data.authId,
+      512,
+      /^[A-Za-z0-9._:@/-]+$/
+    );
     if (displayName || email || userId) {
       return { displayName, email, userId };
     }
@@ -234,14 +359,12 @@ export async function fetchCreditsBalance(
     },
     signal,
     timeoutMs: 20_000,
+    maxResponseBytes: MAX_ADOBE_AUTH_RESPONSE_BYTES,
   });
   if (resp.status !== 200) {
-    throw new Error(`credits request failed: ${resp.status}`);
+    throwAdobeStatusError(resp, "credits request");
   }
-  const payload = (await resp.json().catch(() => null)) as Record<
-    string,
-    unknown
-  > | null;
+  const payload = await readAdobeAuthJsonObject(resp);
   const total = (payload?.total as Record<string, unknown>) || {};
   const quota = (total.quota as Record<string, unknown>) || {};
   return {

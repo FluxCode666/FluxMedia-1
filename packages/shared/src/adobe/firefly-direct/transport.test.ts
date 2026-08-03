@@ -50,4 +50,32 @@ describe("ProxyFireflyTransport", () => {
       bodyBase64: "",
     });
   });
+
+  it("代理失败不把可能含凭据的响应正文拼入 Error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { error: "bad secret", access_token: "upstream-secret-token" },
+          { status: 502 }
+        )
+      )
+    );
+    const transport = new ProxyFireflyTransport({
+      proxyUrl: "https://proxy.example.com",
+      secret: "test-secret",
+    });
+
+    const error = await transport
+      .request({
+        method: "GET",
+        url: "https://firefly.adobe.io/v1/credits/balance",
+        headers: {},
+      })
+      .catch((value: unknown) => value);
+
+    expect(String(error)).toContain("HTTP 502");
+    expect(String(error)).not.toContain("upstream-secret-token");
+    expect(String(error)).not.toContain("bad secret");
+  });
 });
