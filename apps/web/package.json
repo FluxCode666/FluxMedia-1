@@ -31,6 +31,7 @@
     "@sentry/nextjs": "^10.59.0",
     "@types/mdx": "^2.0.14",
     "better-auth": "^1.6.20",
+    "bullmq": "5.81.3",
     "date-fns": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "framer-motion": "^12.40.0",
