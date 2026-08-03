@@ -65,6 +65,7 @@
     "./storage/signed-url": "./src/storage/signed-url.ts",
     "./storage/providers": "./src/storage/providers/index.ts",
     "./system-settings": "./src/system-settings/index.ts",
+    "./system-settings/adobe-credential-notification-contract": "./src/system-settings/adobe-credential-notification-contract.ts",
     "./system-settings/site-branding": "./src/system-settings/site-branding.ts",
     "./system-settings/actions": "./src/system-settings/actions/index.ts",
     "./system-settings/bootstrap": "./src/system-settings/bootstrap.ts",

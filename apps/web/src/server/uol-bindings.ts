@@ -24,6 +24,7 @@ import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
 import "@/server/uol-bindings/video-generation";
+import "@/server/notification-settings-binding";
 import "@/server/site-branding-binding";
 
 import {

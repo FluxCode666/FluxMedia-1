@@ -106,6 +106,20 @@ describe("Adobe credential health operations", () => {
         webhookHost: "hooks.example.com",
         webhookConfigured: true,
         webhookHmacConfigured: true,
+        deliveryStatus: {
+          email: {
+            pending: 1,
+            retrying: 0,
+            failed: 0,
+            lastDeliveredAt: "2026-08-04T00:00:00.000Z",
+          },
+          webhook: {
+            pending: 0,
+            retrying: 1,
+            failed: 0,
+            lastDeliveredAt: null,
+          },
+        },
       }).success
     ).toBe(true);
     expect(
@@ -119,6 +133,19 @@ describe("Adobe credential health operations", () => {
         emailRecipients: [],
         webhookUrl: "https://hooks.example.com/adobe?token=secret",
       }).success
+    ).toBe(false);
+    expect(
+      setAdobeCredentialNotificationSettings.input.safeParse({
+        emailRecipients: ["ops@example.com"],
+      }).success
+    ).toBe(true);
+    expect(
+      setAdobeCredentialNotificationSettings.input.safeParse({
+        webhookUrl: "",
+      }).success
+    ).toBe(true);
+    expect(
+      setAdobeCredentialNotificationSettings.input.safeParse({}).success
     ).toBe(false);
     expect(
       setAdobeCredentialNotificationSettings.input.safeParse({

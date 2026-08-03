@@ -45,6 +45,7 @@ import {
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
 } from "./actions";
+import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
 import {
@@ -162,19 +163,28 @@ function AdobeDirectAccountFacts({
         余额更新：{formatAdminTime(config.creditsUpdatedAt, timeZone)}
       </span>
       {config.lastRefreshError && (
-        <span className="basis-full break-words text-destructive">
-          凭据刷新错误：{config.lastRefreshError}
-        </span>
+        <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
+          <summary className="cursor-pointer">
+            查看凭据刷新错误（默认折叠）
+          </summary>
+          <p className="mt-1 break-words">{config.lastRefreshError}</p>
+        </details>
       )}
       {config.fireflyLastRefreshError && (
-        <span className="basis-full break-words text-destructive">
-          历史 Firefly 凭据刷新错误：{config.fireflyLastRefreshError}
-        </span>
+        <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
+          <summary className="cursor-pointer">
+            查看历史 Firefly 凭据刷新错误（默认折叠）
+          </summary>
+          <p className="mt-1 break-words">{config.fireflyLastRefreshError}</p>
+        </details>
       )}
       {config.creditsError && (
-        <span className="basis-full break-words text-destructive">
-          余额读取失败：{config.creditsError}
-        </span>
+        <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
+          <summary className="cursor-pointer">
+            查看余额读取错误（默认折叠）
+          </summary>
+          <p className="mt-1 break-words">{config.creditsError}</p>
+        </details>
       )}
     </>
   );
@@ -678,6 +688,13 @@ export function ImageBackendPoolAdminPanel({
                     member.supportedModelIds
                   )}
                 />
+                {isAdobeDirectMember(member) ? (
+                  <AdobeCredentialHealthView
+                    memberId={member.id}
+                    timeZone={timeZone}
+                    readOnly={readOnly}
+                  />
+                ) : null}
                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                   <span>
                     凭据：

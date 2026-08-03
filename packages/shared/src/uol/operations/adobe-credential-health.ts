@@ -8,6 +8,10 @@
  */
 import { z } from "zod";
 
+import {
+  adobeCredentialNotificationSettingsOutputSchema,
+  adobeCredentialNotificationSettingsUpdateSchema,
+} from "../../system-settings/adobe-credential-notification-contract";
 import { defineOperation } from "../registry";
 import type { AccessRequirement } from "../types";
 
@@ -216,50 +220,6 @@ export const adobeCredentialReauthorize = defineOperation({
   },
 });
 
-/**
- * 验证通知 Webhook 的非机密 URL 结构。
- *
- * 这里只执行同步语法约束；保存与每次发送仍必须在 Web 层做 DNS pin、私网阻断
- * 和禁止重定向校验。query、fragment 与 userinfo 被拒绝，避免隐式凭据落库。
- */
-const notificationWebhookUrlSchema = z
-  .string()
-  .trim()
-  .max(2_048)
-  .superRefine((value, ctx) => {
-    if (value === "") return;
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      ctx.addIssue({ code: "custom", message: "Webhook 地址格式无效" });
-      return;
-    }
-    if (
-      url.protocol !== "https:" ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      url.hostname === ""
-    ) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Webhook 必须是不含凭据、query 和 fragment 的 HTTPS 地址",
-      });
-    }
-  });
-
-const notificationSettingsOutputSchema = z
-  .object({
-    emailRecipients: z.array(z.string().email()).max(50),
-    emailConfigured: z.boolean(),
-    webhookHost: z.string().nullable(),
-    webhookConfigured: z.boolean(),
-    webhookHmacConfigured: z.boolean(),
-  })
-  .strict();
-
 /** 超级管理员读取 Adobe 凭据通知配置状态，永不返回 HMAC 明文。 */
 export const getAdobeCredentialNotificationSettings = defineOperation({
   name: "settings.getAdobeCredentialNotifications",
@@ -267,7 +227,7 @@ export const getAdobeCredentialNotificationSettings = defineOperation({
   title: "读取 Adobe 凭据通知设置",
   description: "读取邮件收件人、Webhook 脱敏主机和各渠道配置完整性。",
   input: z.object({}).strict(),
-  output: notificationSettingsOutputSchema,
+  output: adobeCredentialNotificationSettingsOutputSchema,
   access: { kind: "roles", roles: ["super_admin"] },
   agentExposure: "human-only",
   readOnly: true,
@@ -285,13 +245,8 @@ export const setAdobeCredentialNotificationSettings = defineOperation({
   domain: "system-settings",
   title: "保存 Adobe 凭据通知设置",
   description: "原子保存非机密通知目标；部署 HMAC 密钥不由页面读取或写入。",
-  input: z
-    .object({
-      emailRecipients: z.array(z.string().email()).max(50),
-      webhookUrl: notificationWebhookUrlSchema,
-    })
-    .strict(),
-  output: notificationSettingsOutputSchema,
+  input: adobeCredentialNotificationSettingsUpdateSchema,
+  output: adobeCredentialNotificationSettingsOutputSchema,
   access: { kind: "roles", roles: ["super_admin"] },
   agentExposure: "human-only",
   readOnly: false,
