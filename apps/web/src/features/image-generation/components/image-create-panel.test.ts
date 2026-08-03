@@ -1,8 +1,8 @@
 /**
- * 图片创作状态容器的图库参考图回归测试。
+ * 图片创作状态容器的生成结果与图库参考图回归测试。
  *
- * 通过模拟展示组件与图片下载，验证初始图库引用会经过既有上传边界校验、转换为 File，
- * 并自动切换到图生图模式；测试不访问真实媒体存储或生成 API。
+ * 通过模拟展示组件、生成响应与图片下载，验证新产物会进入近期列表，且初始图库引用会
+ * 经过既有上传边界校验、转换为 File 并自动切换到图生图模式；测试不访问真实服务。
  */
 // @vitest-environment jsdom
 
@@ -19,7 +19,13 @@ type CapturedSimplePanelProps = {
   onRemoveSourceImage?: (index: number) => void;
   onSourceImagesChange?: (files: FileList | null) => void;
   onSubmit?: () => Promise<void>;
+  recent?: ReadonlyArray<{
+    id: string;
+    imageUrl: string | null;
+    prompt: string;
+  }>;
   referenceLoadingId?: string | null;
+  resultUrls?: readonly string[];
   size?: string;
   sourceImages?: readonly File[];
 };
@@ -105,17 +111,23 @@ function createFileList(...files: File[]): FileList {
  * 在 Strict Mode 根节点挂载带初始图库交接的图片状态容器。
  *
  * @param onInitialReferenceConsumed 一次性交接完成回调。
- * @param limits 可覆盖的单文件与总上传限制。
+ * @param options 可覆盖的上传限制与首屏近期图片。
+ * @param reference 可选的一次性图库交接意图。
  * @returns 无；根节点与容器写入测试级变量供清理。
  * @sideEffects 向 document.body 添加容器并启动初始参考图 effect。
  * @failure React 渲染失败时由 act 传播并使测试失败。
  */
 function mountImageCreatePanel(
   onInitialReferenceConsumed: () => void,
-  limits: {
+  options: {
     maxEditImages?: number;
     maxFileSizeBytes?: number;
     maxUploadBytes?: number;
+    recent?: Array<{
+      id: string;
+      imageUrl: string | null;
+      prompt: string;
+    }>;
   } = {},
   reference: typeof initialReference | null = initialReference
 ): void {
@@ -145,12 +157,12 @@ function mountImageCreatePanel(
             imageModerationCredits: 0,
             textModerationCredits: 0,
           },
-          maxFileSizeBytes: limits.maxFileSizeBytes ?? 10 * 1024 * 1024,
-          maxUploadBytes: limits.maxUploadBytes ?? 20 * 1024 * 1024,
-          maxEditImages: limits.maxEditImages ?? 16,
+          maxFileSizeBytes: options.maxFileSizeBytes ?? 10 * 1024 * 1024,
+          maxUploadBytes: options.maxUploadBytes ?? 20 * 1024 * 1024,
+          maxEditImages: options.maxEditImages ?? 16,
           moderationEnabled: false,
           onCreditsConsumed: vi.fn(),
-          recent: [],
+          recent: options.recent ?? [],
           selectedBackendGroupId: "group-1",
           initialReference: reference,
           onInitialReferenceConsumed,
@@ -190,7 +202,52 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("ImageCreatePanel initial reference", () => {
+describe("ImageCreatePanel", () => {
+  it("生成成功后立即把新图片加入最近图片首位", async () => {
+    const generationId = "generation-new";
+    const imageUrl = "/api/storage/generations/user/new.png?sig=abc&exp=123";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({
+          generationId,
+          imageUrl,
+          creditsConsumed: 2,
+        })
+      )
+    );
+    mountImageCreatePanel(
+      vi.fn(),
+      {
+        recent: [
+          {
+            id: "generation-old",
+            imageUrl: "/api/storage/generations/user/old.png?sig=abc&exp=123",
+            prompt: "旧图片",
+          },
+        ],
+      },
+      null
+    );
+
+    act(() => testHarness.panelProps?.onPromptChange?.("新图片"));
+    await act(async () => testHarness.panelProps?.onSubmit?.());
+
+    expect(testHarness.panelProps?.resultUrls).toEqual([imageUrl]);
+    expect(testHarness.panelProps?.recent).toEqual([
+      {
+        id: generationId,
+        imageUrl,
+        prompt: "新图片",
+      },
+      {
+        id: "generation-old",
+        imageUrl: "/api/storage/generations/user/old.png?sig=abc&exp=123",
+        prompt: "旧图片",
+      },
+    ]);
+  });
+
   it("首屏默认使用 auto 尺寸", () => {
     mountImageCreatePanel(vi.fn(), {}, null);
 

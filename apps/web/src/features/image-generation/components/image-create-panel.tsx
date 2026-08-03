@@ -49,6 +49,8 @@ type RecentImage = {
   prompt: string;
 };
 
+const RECENT_IMAGE_LIMIT = 6;
+
 type ImageCreatePanelProps = {
   balance: number;
   catalog: ImageGenerationModelCatalog;
@@ -84,6 +86,34 @@ type InitialReferenceLoad = {
   promise: Promise<File>;
   settled: boolean;
 };
+
+/**
+ * 以首组优先级合并近期图片，并按生成记录 ID 或产物 URL 去重。
+ *
+ * @param primary 当前会话刚完成的图片，应优先于服务端首屏快照。
+ * @param fallback 服务端返回或上一轮已保留的近期图片。
+ * @returns 保持输入顺序且不含重复记录的新数组。
+ * @sideEffects 无。
+ * @failure 图片 URL 缺失时仍可按稳定记录 ID 去重，不会丢弃占位记录。
+ */
+function mergeRecentImages(
+  primary: readonly RecentImage[],
+  fallback: readonly RecentImage[]
+): RecentImage[] {
+  const seenIds = new Set<string>();
+  const seenUrls = new Set<string>();
+  const merged: RecentImage[] = [];
+
+  for (const image of [...primary, ...fallback]) {
+    if (seenIds.has(image.id)) continue;
+    if (image.imageUrl && seenUrls.has(image.imageUrl)) continue;
+    seenIds.add(image.id);
+    if (image.imageUrl) seenUrls.add(image.imageUrl);
+    merged.push(image);
+  }
+
+  return merged;
+}
 
 /** 将字节数格式化为面向用户的 MB 限制。 */
 function formatMegabytes(bytes: number): string {
@@ -339,6 +369,9 @@ export function ImageCreatePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultUrls, setResultUrls] = useState<string[]>([]);
+  const [createdRecentImages, setCreatedRecentImages] = useState<RecentImage[]>(
+    []
+  );
   const [referenceLoadingId, setReferenceLoadingId] = useState<string | null>(
     null
   );
@@ -354,6 +387,10 @@ export function ImageCreatePanel({
   const normalizedModel = model === "default" ? DEFAULT_IMAGE_MODEL : model;
   const maskAvailable = catalog.groups.some((group) =>
     group.models.some((item) => item.capabilities.mask)
+  );
+  const visibleRecentImages = useMemo(
+    () => mergeRecentImages(createdRecentImages, recent),
+    [createdRecentImages, recent]
   );
   const estimatedCredits = getImageCreditCost(size, {
     basePricing: resolveImageCreditPricing({
@@ -634,7 +671,7 @@ export function ImageCreatePanel({
     }
   };
 
-  /** 提交文生图或编辑请求；成功后只保留站内返回的媒体 URL。 */
+  /** 提交文生图或编辑请求；成功后同步更新结果区与当前会话的最近图片。 */
   const submit = async () => {
     if (busy || referenceLoadingId) return;
     if (!prompt.trim()) {
@@ -694,8 +731,21 @@ export function ImageCreatePanel({
       const payloadError = getResponseError(payload);
       if (payloadError) throw new Error(payloadError);
       const urls = collectImageUrls(payload);
-      if (urls.length === 0) throw new Error("图片任务未返回可展示产物");
+      const recentImageUrl = urls[0];
+      if (!recentImageUrl) throw new Error("图片任务未返回可展示产物");
       setResultUrls(urls);
+      setCreatedRecentImages((current) =>
+        mergeRecentImages(
+          [
+            {
+              id: payload.generationId?.trim() || requestFields.generationId,
+              imageUrl: recentImageUrl,
+              prompt: requestFields.prompt,
+            },
+          ],
+          current
+        ).slice(0, RECENT_IMAGE_LIMIT)
+      );
       onCreditsConsumed(getConsumedCredits(payload));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "图片生成失败");
@@ -733,7 +783,7 @@ export function ImageCreatePanel({
       onSubmit={submit}
       prompt={prompt}
       quality={quality}
-      recent={recent}
+      recent={visibleRecentImages}
       referenceLoadingId={referenceLoadingId}
       resultUrls={resultUrls}
       size={size}
