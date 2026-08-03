@@ -50,6 +50,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -133,6 +142,11 @@ jobs:
           pnpm --filter @repo/integration-tests test:media-generation-financial-recovery
           pnpm --filter @repo/integration-tests test:video-generation-recovery
           pnpm --filter @repo/integration-tests test:media-backend-pool-migration
+
+      - name: Test media task queue with Redis
+        env:
+          MEDIA_TASK_MQ_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+        run: pnpm --filter @repo/integration-tests test:media-task-mq
 
       - name: Verify release database gates
         env:

@@ -122,9 +122,9 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm turbo test
 
-  # 统一媒体号池的真实 PostgreSQL 门禁独立于 DB-free 单测运行。
+  # 统一媒体号池与媒体 MQ 的真实 PostgreSQL/Redis 门禁独立于 DB-free 单测运行。
   media-integration:
-    name: Media PostgreSQL integration tests
+    name: Media PostgreSQL and Redis integration tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -140,22 +140,33 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
       IMAGE_BACKEND_POOL_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
+      MEDIA_TASK_MQ_TEST_REDIS_URL: redis://127.0.0.1:6379/15
       MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
       MEDIA_GENERATION_FINANCIAL_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
       VIDEO_GENERATION_RECOVERY_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/fluxmedia_media_test
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
       - uses: ./.github/actions/setup
-      - name: Test unified media pool with PostgreSQL
+      - name: Test unified media pool and MQ
         run: |
           set -euo pipefail
           pnpm --filter @repo/integration-tests test:image-backend-pool
           pnpm --filter @repo/integration-tests test:media-generation-financial-recovery
           pnpm --filter @repo/integration-tests test:video-generation-recovery
           pnpm --filter @repo/integration-tests test:media-backend-pool-migration
+          pnpm --filter @repo/integration-tests test:media-task-mq
 
   # ───────────────────────────────────────────────────────────────────────────
   # 5) 构建（鲁棒性）：next build（standalone）。Next 在 build 时会做整体类型与编译校验，
