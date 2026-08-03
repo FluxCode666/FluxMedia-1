@@ -40,7 +40,7 @@ export type OperationDomain =
  * - roles: 仅允许明确列出的真实用户角色，不接受任何非用户 Principal
  * - admin / superAdmin / imageBackendPoolViewer: 管理角色要求
  * - apiKey: 仅 API key 可调用（plan capability 进一步细化在 capabilities 字段）
- * - cron / webhook / proxySecret / system: 非用户身份的内部/外部调用者
+ * - cron / cronJob / webhook / proxySecret / system: 非用户身份的内部/外部调用者
  */
 export type AccessRequirement =
   | { kind: "public" }
@@ -53,6 +53,7 @@ export type AccessRequirement =
   | { kind: "imageBackendPoolViewer" }
   | { kind: "apiKey"; planCapability?: string }
   | { kind: "cron" }
+  | { kind: "cronJob"; job: string }
   | { kind: "webhook"; provider: "creem" | "epay" | "alipay" }
   | { kind: "proxySecret" }
   | { kind: "system" };

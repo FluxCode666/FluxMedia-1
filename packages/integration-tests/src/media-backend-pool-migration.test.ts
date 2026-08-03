@@ -1,10 +1,10 @@
 /**
  * 统一媒体号池破坏性迁移的真实 PostgreSQL 集成测试。
  *
- * 职责：直接执行 0060-0063、0066、0068-0075 SQL，验证 API/Adobe 旧号池可原子迁移、
+ * 职责：直接执行 0060-0063、0066、0068-0077 与 0080 SQL，验证 API/Adobe 旧号池可原子迁移、
  * Adobe direct 子账号可提升为顶层成员、已应用旧版 0060 的数据库可继续升级，
  * Web 或运行中状态会阻断且完整回滚，并锁定设置清理、回调投递和视频 Principal
- * 作用域；0074-0075 另以隔离 schema 验证视频请求与 API 上游适配切换。
+ * 作用域；0074-0077 与 0080 另以隔离 schema 验证协议版本和凭据健康迁移。
  * 使用方：显式 `test:media-backend-pool-migration` 质量门。
  * 关键依赖：专用 MEDIA_BACKEND_POOL_MIGRATION_TEST_DATABASE_URL 与生产迁移 SQL。
  */
@@ -280,6 +280,12 @@ const apiAccountUpstreamAdaptationMigrationPath = fileURLToPath(
 const apiUpstreamAdapterVersionsMigrationPath = fileURLToPath(
   new URL(
     "../../database/drizzle/0077_api_upstream_adapter_versions.sql",
+    import.meta.url
+  )
+);
+const adobeCredentialHealthMigrationPath = fileURLToPath(
+  new URL(
+    "../../database/drizzle/0080_adobe_credential_health.sql",
     import.meta.url
   )
 );
@@ -789,6 +795,44 @@ async function createPre0077ApiAdapterVersionSchema(
         on delete set null,
       poll_url text,
       upstream_job_id text
+    )
+  `);
+  return schemaName;
+}
+
+/**
+ * 创建 0080 执行前的最小统一成员和 Adobe 配置结构。
+ *
+ * @param client 专用测试数据库连接。
+ * @returns 随机隔离 schema 名。
+ * @sideEffects 创建 API、Adobe gateway/direct 均可表达的最小表。
+ * @throws 任一 DDL 失败时抛出 PostgreSQL 错误。
+ */
+async function createPre0080AdobeCredentialHealthSchema(
+  client: PoolClient
+): Promise<string> {
+  const schemaName = `pool_migration_${randomUUID().replaceAll("-", "")}`;
+  const quotedSchema = quoteSchemaName(schemaName);
+  await client.query(`create schema ${quotedSchema}`);
+  await client.query(`set search_path to ${quotedSchema}, public`);
+  await client.query(`
+    create table image_backend_member (
+      id text primary key,
+      type text not null check (type in ('api', 'adobe')),
+      name text not null,
+      is_enabled boolean not null default true
+    );
+    create table image_backend_member_adobe_config (
+      member_id text primary key references image_backend_member(id)
+        on delete cascade,
+      mode text not null check (mode in ('gateway', 'direct')),
+      cookie text,
+      access_token text,
+      account_user_id text,
+      last_refresh_error text,
+      firefly_access_token text,
+      firefly_last_refresh_error text,
+      updated_at timestamp not null default now()
     )
   `);
   return schemaName;
@@ -3928,5 +3972,168 @@ describe("0077 API 上游适配不可变版本迁移", () => {
         client.release();
       }
     }
+  });
+});
+
+describe("0080 Adobe direct 凭据健康迁移", () => {
+  it("只回填 direct 成员且完整重跑不改写原凭据字段", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0080AdobeCredentialHealthSchema(client);
+      await client.query(`
+        insert into image_backend_member (id, type, name, is_enabled) values
+          ('api-a', 'api', 'API A', true),
+          ('adobe-gateway', 'adobe', 'Adobe Gateway', true),
+          ('adobe-direct-enabled', 'adobe', 'Adobe Direct Enabled', true),
+          ('adobe-direct-disabled', 'adobe', 'Adobe Direct Disabled', false);
+        insert into image_backend_member_adobe_config (
+          member_id,
+          mode,
+          cookie,
+          access_token,
+          account_user_id,
+          last_refresh_error,
+          firefly_access_token,
+          firefly_last_refresh_error
+        ) values
+          ('adobe-gateway', 'gateway', null, null, null, null, null, null),
+          (
+            'adobe-direct-enabled',
+            'direct',
+            'cookie-enabled',
+            'token-enabled',
+            'subject-enabled',
+            'express-error-enabled',
+            'firefly-token-enabled',
+            'firefly-error-enabled'
+          ),
+          (
+            'adobe-direct-disabled',
+            'direct',
+            'cookie-disabled',
+            'token-disabled',
+            'subject-disabled',
+            'express-error-disabled',
+            'firefly-token-disabled',
+            'firefly-error-disabled'
+          )
+      `);
+      const before = await client.query(`
+        select *
+        from image_backend_member_adobe_config
+        order by member_id
+      `);
+
+      await executeMigrations(client, schemaName, [
+        adobeCredentialHealthMigrationPath,
+      ]);
+      await client.query(
+        `set search_path to ${quoteSchemaName(schemaName)}, public`
+      );
+
+      const health = await client.query<{
+        consecutive_failures: number;
+        credential_revision: number;
+        member_enable_revision: number;
+        member_id: string;
+        status: string;
+      }>(`
+        select
+          member_id,
+          status,
+          credential_revision,
+          member_enable_revision,
+          consecutive_failures
+        from adobe_credential_health
+        order by member_id
+      `);
+      expect(health.rows).toEqual([
+        {
+          consecutive_failures: 0,
+          credential_revision: 1,
+          member_enable_revision: 1,
+          member_id: "adobe-direct-disabled",
+          status: "pending",
+        },
+        {
+          consecutive_failures: 0,
+          credential_revision: 1,
+          member_enable_revision: 1,
+          member_id: "adobe-direct-enabled",
+          status: "pending",
+        },
+      ]);
+      const after = await client.query(`
+        select *
+        from image_backend_member_adobe_config
+        order by member_id
+      `);
+      expect(after.rows).toEqual(before.rows);
+
+      await executeMigrations(client, schemaName, [
+        adobeCredentialHealthMigrationPath,
+      ]);
+      const repeated = await client.query<{ count: number }>(`
+        select count(*)::integer as count from adobe_credential_health
+      `);
+      expect(repeated.rows[0]?.count).toBe(2);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("检测到半迁移表形态时 fail-closed 且不补齐其他表", async () => {
+    if (!pool) throw new Error("迁移测试数据库尚未初始化");
+    const client = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createPre0080AdobeCredentialHealthSchema(client);
+      await client.query(`
+        create table adobe_credential_health (
+          member_id text primary key
+        )
+      `);
+
+      await expect(
+        executeMigrations(client, schemaName, [
+          adobeCredentialHealthMigrationPath,
+        ])
+      ).rejects.toThrow(/partial shape/u);
+      await expect(
+        tableExists(client, schemaName, "adobe_credential_evaluation")
+      ).resolves.toBe(false);
+    } finally {
+      try {
+        if (schemaName) await dropLegacySchema(client, schemaName);
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  it("journal 在 0079 后单调登记 0080", async () => {
+    const journalPath = fileURLToPath(
+      new URL("../../database/drizzle/meta/_journal.json", import.meta.url)
+    );
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+      entries: Array<{ idx: number; tag: string; when: number }>;
+    };
+    const previous = journal.entries.at(-2);
+    const current = journal.entries.at(-1);
+    expect(previous).toMatchObject({
+      idx: 79,
+      tag: "0079_image_async_task_mq",
+    });
+    expect(current).toMatchObject({
+      idx: 80,
+      tag: "0080_adobe_credential_health",
+    });
+    expect(current?.when).toBeGreaterThan(previous?.when ?? 0);
   });
 });

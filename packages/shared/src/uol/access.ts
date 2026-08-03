@@ -123,6 +123,19 @@ export function assertAccess(
       }
       return;
 
+    case "cronJob":
+      if (
+        principal.type !== "cron" ||
+        principal.job !== access.job ||
+        access.job.trim().length === 0
+      ) {
+        throw new OperationError(
+          "forbidden",
+          `Cron job authentication required (job: ${access.job})`
+        );
+      }
+      return;
+
     case "webhook":
       if (principal.type === "system") return;
       if (

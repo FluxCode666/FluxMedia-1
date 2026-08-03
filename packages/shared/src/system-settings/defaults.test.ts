@@ -10,6 +10,7 @@ import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_PLAN_CAPABILITY_MATRIX } from "../subscription/services/plan-capabilities";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import { createDefaultVideoModelCapabilityOverrides } from "../video-generation";
+import { SETTING_DEFINITION_BY_KEY } from "./definitions";
 import {
   clearSystemSettingsCache,
   getRuntimeSettingNumber,
@@ -123,6 +124,21 @@ describe("system setting default initialization", () => {
     dbMock.deleteBuilder.where.mockClear();
   });
 
+  it("Adobe 凭据通知目标只能由专用 operation 管理", () => {
+    for (const key of [
+      "ADOBE_CREDENTIAL_ALERT_EMAIL_RECIPIENTS",
+      "ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL",
+    ] as const) {
+      expect(SETTING_DEFINITION_BY_KEY.get(key)).toMatchObject({
+        category: "mail",
+        managedByDedicatedOperation: true,
+      });
+    }
+    expect([...SETTING_DEFINITION_BY_KEY.keys()]).not.toContain(
+      "ADOBE_CREDENTIAL_WEBHOOK_HMAC_SECRET"
+    );
+  });
+
   it("persists missing non-secret defaults for a fresh database", async () => {
     const initializedKeys = await initializeMissingSystemSettingsDefaults({
       updatedBy: "admin-1",
@@ -163,6 +179,10 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("RATE_LIMIT_AI_REQUESTS_PER_MINUTE");
     expect(initializedKeys).not.toContain("BETTER_AUTH_SECRET");
     expect(initializedKeys).not.toContain("CREEM_API_KEY");
+    expect(initializedKeys).not.toContain(
+      "ADOBE_CREDENTIAL_ALERT_EMAIL_RECIPIENTS"
+    );
+    expect(initializedKeys).not.toContain("ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL");
 
     expect(store.get("PLAN_CAPABILITY_MATRIX")?.value).toEqual(
       DEFAULT_PLAN_CAPABILITY_MATRIX
@@ -224,6 +244,10 @@ describe("system setting default initialization", () => {
     expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(20);
     expect(store.get("BETTER_AUTH_SECRET")).toBeUndefined();
     expect(store.get("CREEM_API_KEY")).toBeUndefined();
+    expect(
+      store.get("ADOBE_CREDENTIAL_ALERT_EMAIL_RECIPIENTS")
+    ).toBeUndefined();
+    expect(store.get("ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL")).toBeUndefined();
   });
 
   it("把一致的历史公共桶与历史生成桶迁移到两个统一设置", async () => {

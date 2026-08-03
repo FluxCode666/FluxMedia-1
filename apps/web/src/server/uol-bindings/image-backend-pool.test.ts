@@ -12,11 +12,64 @@ vi.mock("@repo/shared/uol", async (importOriginal) => {
 });
 
 import {
+  buildAdminPoolMembers,
   executeApiUpstreamAdapterTestBinding,
   executeApiUpstreamRuntimeDiagnosticsBinding,
 } from "./image-backend-pool";
 
 describe("image backend pool UOL bindings", () => {
+  it("通用号池 DTO 移除 Adobe refresh 和余额诊断错误", () => {
+    const [member] = buildAdminPoolMembers([
+      {
+        id: "adobe-direct",
+        name: "Adobe Direct",
+        type: "adobe",
+        groupIds: [],
+        supportedModelIds: ["gpt-image-2"],
+        contentSafetyEnabled: true,
+        isEnabled: true,
+        alwaysActive: false,
+        failureCooldownEnabled: true,
+        priority: 1,
+        concurrency: 1,
+        status: "active",
+        healthStatus: "healthy",
+        inflightCount: 0,
+        leaseAcquiredCount: 0,
+        lastAcquiredAt: null,
+        lastUsedAt: null,
+        lastError: null,
+        lastErrorAt: null,
+        config: {
+          mode: "direct",
+          hasCookie: true,
+          displayName: null,
+          email: null,
+          credentialStatus: "active",
+          lastRefreshAt: null,
+          lastRefreshError: "cookie=secret",
+          consecutiveFailures: 0,
+          fireflyCredentialStatus: "active",
+          fireflyLastRefreshAt: null,
+          fireflyLastRefreshError: "Bearer secret",
+          fireflyConsecutiveFailures: 0,
+          creditsTotal: null,
+          creditsUsed: null,
+          creditsAvailable: null,
+          creditsUpdatedAt: null,
+          creditsError: "upstream raw response",
+          defaultRatio: "1x1",
+          defaultResolution: "2k",
+          gptImageQuality: "high",
+        },
+      },
+    ]);
+
+    expect(member?.config).not.toHaveProperty("lastRefreshError");
+    expect(member?.config).not.toHaveProperty("fireflyLastRefreshError");
+    expect(member?.config).not.toHaveProperty("creditsError");
+  });
+
   it("请求测试预览部分信封并保持模拟媒体令牌恰好一次", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const runScript = vi.fn(
