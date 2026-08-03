@@ -11,6 +11,7 @@ import {
 } from "@repo/shared/storage/signed-url";
 
 import type { ImageAsyncTaskRecord } from "@/features/image-generation/image-async-task-repository";
+import type { ImageAsyncTaskOutput } from "@repo/shared/uol/operations/image-generation";
 
 /** 响应组装所需的一条 generation 最小读取模型。 */
 export interface ImageAsyncGenerationRecord {
@@ -30,6 +31,19 @@ export interface ImageAsyncTaskResponseDependencies {
   loadGeneration(id: string): Promise<ImageAsyncGenerationRecord | null>;
   loadStorageObject(key: string, bucket: string): Promise<Buffer>;
   getPublicBaseUrl(): Promise<string>;
+}
+
+/** 公开响应组装所需的最小任务视图。 */
+export interface ImageAsyncTaskPublicSource {
+  id: string;
+  userId: string;
+  model: string;
+  generationIds: string[];
+  responseFormat: "url" | "b64_json";
+  status: "queued" | "running" | "completed" | "failed";
+  error: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
 }
 
 const defaultDependencies: ImageAsyncTaskResponseDependencies = {
@@ -53,25 +67,20 @@ const defaultDependencies: ImageAsyncTaskResponseDependencies = {
 
 /** 将持久任务状态映射为既有外部 API 三态。 */
 function toExternalTaskStatus(
-  status: ImageAsyncTaskRecord["status"]
+  status: ImageAsyncTaskPublicSource["status"]
 ): "processing" | "completed" | "failed" {
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
   return "processing";
 }
 
-/** 从任务首个输入读取公开模型；所有批次输入已由 UOL 保证 operation 一致。 */
-function getTaskModel(task: ImageAsyncTaskRecord): string | undefined {
-  return task.generationInputs[0]?.model;
-}
-
 /** 创建所有状态共享的公开任务字段，不包含 callbackUrl、Principal 或生成输入。 */
-function createBaseTaskResponse(task: ImageAsyncTaskRecord) {
+function createBaseTaskResponse(task: ImageAsyncTaskPublicSource) {
   const status = toExternalTaskStatus(task.status);
   return {
     id: task.id,
     object: status === "processing" ? "image.generation" : "image",
-    ...(getTaskModel(task) ? { model: getTaskModel(task) } : {}),
+    model: task.model,
     status,
     created: Math.floor(task.createdAt.getTime() / 1_000),
     created_at: task.createdAt.toISOString(),
@@ -94,7 +103,7 @@ function createBaseTaskResponse(task: ImageAsyncTaskRecord) {
 }
 
 /** 把失败任务的安全持久错误映射为 OpenAI 兼容错误对象。 */
-function createFailedTaskResponse(task: ImageAsyncTaskRecord) {
+function createFailedTaskResponse(task: ImageAsyncTaskPublicSource) {
   return {
     ...createBaseTaskResponse(task),
     error: {
@@ -103,6 +112,41 @@ function createFailedTaskResponse(task: ImageAsyncTaskRecord) {
       code: "image_generation_failed",
       status: 502,
     },
+  };
+}
+
+/** 从内部数据库记录提取公开响应最小视图。 */
+export function createImageAsyncTaskPublicSource(
+  task: ImageAsyncTaskRecord
+): ImageAsyncTaskPublicSource {
+  return {
+    id: task.id,
+    userId: task.userId,
+    model: task.generationInputs[0]?.model ?? "unknown",
+    generationIds: task.generationIds,
+    responseFormat: task.responseFormat,
+    status: task.status,
+    error: task.error,
+    createdAt: task.createdAt,
+    completedAt: task.completedAt,
+  };
+}
+
+/** 从已做 owner 校验的 UOL 输出构造公开响应最小视图。 */
+export function createImageAsyncTaskPublicSourceFromOperation(
+  task: ImageAsyncTaskOutput,
+  userId: string
+): ImageAsyncTaskPublicSource {
+  return {
+    id: task.taskId,
+    userId,
+    model: task.model,
+    generationIds: task.generationIds,
+    responseFormat: task.responseFormat,
+    status: task.status,
+    error: task.error,
+    createdAt: new Date(task.createdAt),
+    completedAt: task.completedAt ? new Date(task.completedAt) : null,
   };
 }
 
@@ -115,7 +159,7 @@ function createFailedTaskResponse(task: ImageAsyncTaskRecord) {
  * @throws completed 任务缺少 generation、跨用户、非完成状态或产物时显式失败。
  */
 export async function buildImageAsyncTaskPublicResponse(
-  task: ImageAsyncTaskRecord,
+  task: ImageAsyncTaskPublicSource,
   dependencies: ImageAsyncTaskResponseDependencies = defaultDependencies
 ): Promise<Record<string, unknown>> {
   if (task.status === "failed") return createFailedTaskResponse(task);

@@ -18,6 +18,8 @@ import { z } from "zod";
 import {
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
+  adminHistoryRequestSnapshotInputSchema,
+  adminHistoryRequestSnapshotOutputSchema,
   historyListInputSchema,
   historyListOutputSchema,
 } from "../../image-generation/history-contract";
@@ -160,12 +162,28 @@ export const imageEnqueueAsyncInputSchema = z
         });
       }
       generationIds.add(generationInput.generationId);
+      if (generationInput.operation !== "generate") {
+        const references =
+          generationInput.operation === "mask"
+            ? [...generationInput.images, generationInput.mask]
+            : generationInput.images;
+        for (const [referenceIndex, reference] of references.entries()) {
+          if (reference.source === "storage") continue;
+          context.addIssue({
+            code: "custom",
+            path: ["generationInputs", index, "media", referenceIndex],
+            message:
+              "Async image media must be persisted as storage references",
+          });
+        }
+      }
     }
   });
 
 /** 图片异步任务的稳定编排视图，不包含提示词、凭据或媒体引用。 */
 export const imageAsyncTaskOutputSchema = z.object({
   taskId: imageAsyncTaskIdSchema,
+  model: z.string().trim().min(1).max(256),
   operation: z.enum(["generate", "edit", "mask"]),
   status: imageAsyncTaskStatusSchema,
   generationIds: z.array(z.string().trim().min(1).max(128)).min(1),
@@ -514,6 +532,32 @@ defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: image.listAdminHistoryRecords");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 6a. image.getAdminHistoryRequestSnapshot - 管理员按需读取真实请求 JSON
+// ---------------------------------------------------------------------------
+export const imageGetAdminHistoryRequestSnapshot = defineOperation({
+  name: "image.getAdminHistoryRequestSnapshot",
+  domain: "image-generation",
+  title: "获取全局生成记录请求快照",
+  description:
+    "按图片或视频记录 ID 读取请求脚本处理后的脱敏上游请求正文。" +
+    "仅三档人工管理员可调用，旧记录或非 API 类型供应商返回空快照。",
+  input: adminHistoryRequestSnapshotInputSchema,
+  output: adminHistoryRequestSnapshotOutputSchema,
+  access: {
+    kind: "roles",
+    roles: ["observer_admin", "admin", "super_admin"],
+  },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: image.getAdminHistoryRequestSnapshot");
   },
 });
 

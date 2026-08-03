@@ -107,14 +107,18 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
   },
   async deliverCallback(task) {
     if (!task.callbackUrl) return;
-    const [{ buildImageAsyncTaskPublicResponse }, { postPublicAsyncImageCallback }] =
-      await Promise.all([
+    const [
+      { buildImageAsyncTaskPublicResponse, createImageAsyncTaskPublicSource },
+      { postPublicAsyncImageCallback },
+    ] = await Promise.all([
         import("@/features/external-api/image-async-task-response"),
         import("@/features/external-api/async-image-tasks"),
       ]);
     await postPublicAsyncImageCallback(
       task.callbackUrl,
-      await buildImageAsyncTaskPublicResponse(task)
+      await buildImageAsyncTaskPublicResponse(
+        createImageAsyncTaskPublicSource(task)
+      )
     );
   },
   reportCallbackFailure(error, taskId) {
@@ -131,6 +135,7 @@ export function toImageAsyncTaskOutput(
 ): ImageAsyncTaskOutput {
   return {
     taskId: task.id,
+    model: task.generationInputs[0]?.model ?? "unknown",
     operation: task.operation,
     status: task.status,
     generationIds: task.generationIds,

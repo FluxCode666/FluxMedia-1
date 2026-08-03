@@ -5,6 +5,7 @@
  * Principal 并汇入统一 image.generate UOL，不接触供应商路径、账号或适配脚本。
  */
 
+import type { ImageEnqueueAsyncInput } from "@repo/shared/uol/operations/image-generation";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getPlanLimits: vi.fn(),
   getPlanUploadLimits: vi.fn(),
   getUserPlan: vi.fn(),
+  invokeImageEnqueueAsyncOperation: vi.fn(),
   invokeImageGenerationOperation: vi.fn(),
   uploadModerationImages: vi.fn(),
 }));
@@ -79,6 +81,7 @@ vi.mock("@/features/image-generation/request-utils", () => ({
 }));
 
 vi.mock("@/features/image-generation/uol-client", () => ({
+  invokeImageEnqueueAsyncOperation: mocks.invokeImageEnqueueAsyncOperation,
   invokeImageGenerationOperation: mocks.invokeImageGenerationOperation,
 }));
 
@@ -86,7 +89,7 @@ import { postExternalImageEdits } from "./image-edits";
 import { postExternalImageGenerations } from "./image-generations";
 
 /** 构造带固定外部请求标识的文生图 JSON 请求。 */
-function createGenerationRequest(): NextRequest {
+function createGenerationRequest(useAsync = false): NextRequest {
   return new NextRequest("https://app.example.test/v1/images/generations", {
     method: "POST",
     headers: {
@@ -100,16 +103,18 @@ function createGenerationRequest(): NextRequest {
       n: 1,
       size: "1024x1024",
       response_format: "b64_json",
+      ...(useAsync ? { async: true } : {}),
     }),
   });
 }
 
 /** 构造同时包含源图与 mask 的图生图 multipart 请求。 */
-function createEditRequest(): NextRequest {
+function createEditRequest(useAsync = false): NextRequest {
   const formData = new FormData();
   formData.set("prompt", "synthetic edit");
   formData.set("model", "gpt-image-2");
   formData.set("size", "1024x1024");
+  if (useAsync) formData.set("async", "true");
   formData.set(
     "image",
     new File(["source"], "source.png", { type: "image/png" })
@@ -144,14 +149,21 @@ describe("external image generation transport contract", () => {
       maxFileSizeBytes: 10 * 1024 * 1024,
       maxUploadBytes: 20 * 1024 * 1024,
     });
-    mocks.uploadModerationImages.mockResolvedValue([]);
+    mocks.uploadModerationImages.mockImplementation(
+      async (_userId: string, _batchId: string, files: readonly File[]) =>
+        files.map((file, index) => ({
+          bucket: "test-inputs",
+          key: `${index}-${file.name}`,
+          url: `https://storage.example.test/${index}-${file.name}`,
+        }))
+    );
     mocks.filesToMediaInputReferences.mockImplementation(
       async (files: readonly File[]) =>
         files.map((file) => ({
           source: "storage",
           storageBucket: "test-inputs",
           storageKey: file.name,
-          mediaType: file.type,
+          mimeType: file.type,
           byteLength: file.size,
         }))
     );
@@ -162,6 +174,26 @@ describe("external image generation transport contract", () => {
       creditsConsumed: 1,
       imageBase64: "c3ludGhldGlj",
     });
+    mocks.invokeImageEnqueueAsyncOperation.mockImplementation(
+      async (operationInput: ImageEnqueueAsyncInput) => {
+        const firstInput = operationInput.generationInputs[0];
+        if (!firstInput) throw new Error("测试异步任务缺少 generation input");
+        return {
+          taskId: operationInput.taskId,
+          model: firstInput.model,
+          operation: firstInput.operation,
+          status: "queued",
+          generationIds: operationInput.generationInputs.map(
+            (input: { generationId: string }) => input.generationId
+          ),
+          responseFormat: operationInput.responseFormat,
+          createdAt: "2026-08-04T00:00:00.000Z",
+          startedAt: null,
+          completedAt: null,
+          error: null,
+        };
+      }
+    );
   });
 
   it("文生图只向 UOL 传平台真实模型和 API Key Principal", async () => {
@@ -212,12 +244,12 @@ describe("external image generation transport contract", () => {
         images: [
           expect.objectContaining({
             storageKey: "source.png",
-            mediaType: "image/png",
+            mimeType: "image/png",
           }),
         ],
         mask: expect.objectContaining({
           storageKey: "mask.png",
-          mediaType: "image/png",
+          mimeType: "image/png",
         }),
       }),
       {
@@ -235,5 +267,63 @@ describe("external image generation transport contract", () => {
     expect(operationInput).not.toHaveProperty("baseUrl");
     expect(operationInput).not.toHaveProperty("apiKey");
     expect(operationInput).not.toHaveProperty("apiUpstreamAdapter");
+  });
+
+  it("异步文生图只持久创建任务并由 MQ 执行，不启动请求内 Promise", async () => {
+    const response = await postExternalImageGenerations(
+      createGenerationRequest(true)
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      id: expect.stringMatching(/^task_/),
+      status: "processing",
+      object: "image.generation",
+    });
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+    expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: expect.stringMatching(/^task_/),
+        generationInputs: [
+          expect.objectContaining({
+            operation: "generate",
+            generationId: expect.any(String),
+          }),
+        ],
+        responseFormat: "b64_json",
+      }),
+      expect.objectContaining({ apiKeyId: "api-key-1" }),
+      "request-generate-1"
+    );
+  });
+
+  it("异步编辑先把源图和 mask 全部转存为 storage 引用再创建任务", async () => {
+    const response = await postExternalImageEdits(createEditRequest(true));
+
+    expect(response.status).toBe(200);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+    expect(mocks.uploadModerationImages).toHaveBeenCalledTimes(2);
+    expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationInputs: [
+          expect.objectContaining({
+            operation: "mask",
+            images: [expect.objectContaining({ source: "storage" })],
+            mask: expect.objectContaining({ source: "storage" }),
+          }),
+        ],
+      }),
+      expect.objectContaining({ apiKeyId: "api-key-1" }),
+      "request-edit-1"
+    );
+  });
+
+  it("异步编辑在对象存储不可用时明确失败且不持久化 base64", async () => {
+    mocks.uploadModerationImages.mockResolvedValue(undefined);
+
+    const response = await postExternalImageEdits(createEditRequest(true));
+
+    expect(response.status).toBe(503);
+    expect(mocks.invokeImageEnqueueAsyncOperation).not.toHaveBeenCalled();
   });
 });

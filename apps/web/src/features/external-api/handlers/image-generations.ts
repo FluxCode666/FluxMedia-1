@@ -11,10 +11,6 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 
 import {
-  completeAsyncImageTask,
-  createAsyncImageTask,
-  postAsyncImageCallback,
-  toAsyncImageTaskResponse,
   validateCallbackUrl,
 } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
@@ -29,7 +25,6 @@ import {
   openAIImageError,
   toExternalErrorStreamData,
   toLoggedOpenAIErrorPayload,
-  toOpenAIErrorPayload,
   toOpenAIImagesResponse,
   wantsImageStreamResponse,
 } from "@/features/external-api/images";
@@ -46,7 +41,12 @@ import {
   validateImageSize,
 } from "@/features/image-generation/resolution";
 import type { PartialImageResult } from "@/features/image-generation/types";
-import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
+import {
+  invokeImageEnqueueAsyncOperation,
+  invokeImageGenerationOperation,
+} from "@/features/image-generation/uol-client";
+import { buildImageAsyncTaskPublicResponse } from "@/features/external-api/image-async-task-response";
+import { createImageAsyncTaskPublicSourceFromOperation } from "@/features/external-api/image-async-task-response";
 
 const externalImageGenerationSchema = z
   .object({
@@ -338,61 +338,33 @@ export const postExternalImageGenerations = withApiLogging(
     }
 
     if (useAsync) {
-      const created = Math.floor(Date.now() / 1000);
       const generationIds = Array.from({ length: count }, () => randomUUID());
-      const task = createAsyncImageTask({
-        userId: auth.userId,
-        apiKeyId: auth.apiKeyId,
-        model: imageModel,
-        generationIds,
-      });
-
-      void (async () => {
-        const results = await runBatchImageGeneration({
-          count,
-          concurrency: limits.imageGenerationConcurrency,
-          generationIds,
-          run: (generationId) => runGeneration(generationId),
-        });
-        const resultPayload = await toOpenAIImagesResponse(
-          request,
-          results,
-          responseFormat,
-          created,
+      try {
+        const task = await invokeImageEnqueueAsyncOperation(
           {
-            route: "/v1/images/generations",
-            async: true,
-            model: imageModel,
-            size: input.size,
-          }
+            taskId: `task_${randomUUID().replace(/-/g, "")}`,
+            generationInputs: generationIds.map((generationId) => ({
+              ...input,
+              generationId,
+            })),
+            responseFormat,
+            ...(callbackUrl ? { callbackUrl } : {}),
+          },
+          principal,
+          requestId
         );
-        const completedTask = completeAsyncImageTask(task.id, {
-          error:
-            resultPayload &&
-            typeof resultPayload === "object" &&
-            "error" in resultPayload
-              ? resultPayload
-              : undefined,
-          result: resultPayload,
-        });
-        if (completedTask && callbackUrl) {
-          await postAsyncImageCallback(callbackUrl, completedTask);
-        }
-      })().catch(async (error) => {
-        const errorPayload = toOpenAIErrorPayload(
+        return Response.json(
+          await buildImageAsyncTaskPublicResponse(
+            createImageAsyncTaskPublicSourceFromOperation(task, auth.userId)
+          )
+        );
+      } catch (error) {
+        return openAIImageError(
           error instanceof Error
             ? error.message
-            : "Async image generation failed"
+            : "Failed to create async image task."
         );
-        const completedTask = completeAsyncImageTask(task.id, {
-          error: errorPayload,
-        });
-        if (completedTask && callbackUrl) {
-          await postAsyncImageCallback(callbackUrl, completedTask);
-        }
-      });
-
-      return Response.json(toAsyncImageTaskResponse(task));
+      }
     }
 
     return createJsonKeepAliveResponse(

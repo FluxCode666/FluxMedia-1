@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ImageAsyncTaskRecord } from "@/features/image-generation/image-async-task-repository";
 import {
   buildImageAsyncTaskPublicResponse,
+  createImageAsyncTaskPublicSource,
   type ImageAsyncTaskResponseDependencies,
 } from "./image-async-task-response";
 
@@ -74,7 +75,10 @@ describe("image async task public response", () => {
   it("queued 任务兼容映射为 processing 且不读取 generation", async () => {
     const dependencies = createDependencies();
     await expect(
-      buildImageAsyncTaskPublicResponse(createTask(), dependencies)
+      buildImageAsyncTaskPublicResponse(
+        createImageAsyncTaskPublicSource(createTask()),
+        dependencies
+      )
     ).resolves.toMatchObject({
       id: "task_123",
       object: "image.generation",
@@ -89,7 +93,9 @@ describe("image async task public response", () => {
     const dependencies = createDependencies();
     await expect(
       buildImageAsyncTaskPublicResponse(
-        createTask({ status: "completed", completedAt: NOW }),
+        createImageAsyncTaskPublicSource(
+          createTask({ status: "completed", completedAt: NOW })
+        ),
         dependencies
       )
     ).resolves.toMatchObject({
@@ -111,11 +117,13 @@ describe("image async task public response", () => {
   it("b64_json 从对象存储读取字节而不构造 URL", async () => {
     const dependencies = createDependencies();
     const response = await buildImageAsyncTaskPublicResponse(
-      createTask({
-        status: "completed",
-        completedAt: NOW,
-        responseFormat: "b64_json",
-      }),
+      createImageAsyncTaskPublicSource(
+        createTask({
+          status: "completed",
+          completedAt: NOW,
+          responseFormat: "b64_json",
+        })
+      ),
       dependencies
     );
     expect(response).toMatchObject({
@@ -131,7 +139,9 @@ describe("image async task public response", () => {
     const dependencies = createDependencies({ userId: "user-other" });
     await expect(
       buildImageAsyncTaskPublicResponse(
-        createTask({ status: "completed", completedAt: NOW }),
+        createImageAsyncTaskPublicSource(
+          createTask({ status: "completed", completedAt: NOW })
+        ),
         dependencies
       )
     ).rejects.toThrowError(/generation 产物不一致/);
