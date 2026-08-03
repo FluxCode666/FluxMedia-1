@@ -58,14 +58,22 @@ type VideoTaskResponse = {
   error?: string;
 };
 
-const VIDEO_STATUS_INITIAL_POLL_MS = 60_000;
+export const VIDEO_STATUS_INITIAL_POLL_MS = 3_000;
 const VIDEO_STATUS_MAX_POLL_MS = 120_000;
 const VIDEO_CREATE_MODELS = createStaticVideoCreateModels();
 const VIDEO_CAPABILITIES_TIMEOUT_MS = 15_000;
 
-/** 等待下一轮状态查询；间隔不低于后端视频 worker 的一分钟周期。 */
+/** 等待下一轮状态查询；BullMQ 即时唤醒后首轮无需等待旧的一分钟扫描周期。 */
 function waitForVideoPoll(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+/** 有界增加视频状态查询间隔，长期任务最终降到低频查询。 */
+export function resolveNextVideoPollDelay(currentDelayMs: number): number {
+  return Math.min(
+    Math.round(currentDelayMs * 1.5),
+    VIDEO_STATUS_MAX_POLL_MS
+  );
 }
 
 /** 收窄站内状态响应；非法或漂移的服务端负载显式失败。 */
@@ -410,10 +418,7 @@ export function VideoCreatePanel({
           throw new Error(text || `状态查询失败 HTTP ${statusResponse.status}`);
         }
         task = parseVideoTaskResponse(await statusResponse.json());
-        pollDelayMs = Math.min(
-          Math.round(pollDelayMs * 1.5),
-          VIDEO_STATUS_MAX_POLL_MS
-        );
+        pollDelayMs = resolveNextVideoPollDelay(pollDelayMs);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "视频生成失败");

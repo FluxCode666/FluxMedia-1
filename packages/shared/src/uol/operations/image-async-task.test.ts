@@ -101,6 +101,31 @@ describe("image async task operation contracts", () => {
     expect(imageEnqueueAsyncInputSchema.safeParse(mixed).success).toBe(false);
   });
 
+  it("拒绝把异步编辑 data 或 remote 媒体持久化进任务输入", () => {
+    const dataInput = {
+      ...createInput(),
+      generationInputs: [
+        {
+          operation: "edit" as const,
+          prompt: "edit image",
+          model: "gpt-image-2",
+          generationId: "generation-3",
+          images: [
+            {
+              source: "data" as const,
+              mimeType: "image/png" as const,
+              base64: "dGVzdA==",
+              byteLength: 4,
+            },
+          ],
+        },
+      ],
+    };
+    expect(imageEnqueueAsyncInputSchema.safeParse(dataInput).success).toBe(
+      false
+    );
+  });
+
   it("只允许 system Principal 调用 Worker operation", () => {
     expect(() =>
       assertAccess(imageProcessAsyncTask.access, externalPrincipal)

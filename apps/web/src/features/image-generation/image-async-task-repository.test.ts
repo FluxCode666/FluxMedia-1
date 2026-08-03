@@ -167,6 +167,11 @@ describe("image async task repository", () => {
   });
 
   it("完成与失败都以当前 claim token 比较交换终态", async () => {
+    const releasedRow = createRow({
+      status: "queued",
+      attempt_count: 1,
+      started_at: NOW,
+    });
     const completedRow = createRow({
       status: "completed",
       attempt_count: 1,
@@ -179,11 +184,19 @@ describe("image async task repository", () => {
       completed_at: NOW,
     });
     const { database, queries } = createDatabase([
+      [releasedRow],
       [completedRow],
       [failedRow],
     ]);
     const repository = createPostgresImageAsyncTaskRepository(database);
 
+    await expect(
+      repository.release({
+        taskId: "task_123",
+        claimToken: "worker-1",
+        now: NOW,
+      })
+    ).resolves.toMatchObject({ status: "queued" });
     await expect(
       repository.complete({
         taskId: "task_123",

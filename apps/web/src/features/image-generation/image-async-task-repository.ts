@@ -162,6 +162,9 @@ export interface ImageAsyncTaskRepository {
   claimById(
     input: ClaimImageAsyncTaskInput
   ): Promise<ImageAsyncTaskRecord | null>;
+  release(
+    input: FinishImageAsyncTaskInput
+  ): Promise<ImageAsyncTaskRecord | null>;
   complete(
     input: FinishImageAsyncTaskInput
   ): Promise<ImageAsyncTaskRecord | null>;
@@ -325,6 +328,25 @@ export function createPostgresImageAsyncTaskRepository(
               and claim_expires_at <= ${input.now}
             )
           )
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
+    async release(rawInput) {
+      const input = finishImageAsyncTaskInputSchema.parse(rawInput);
+      if (input.error !== undefined) {
+        throw new Error("释放图片异步任务 claim 时不能携带错误");
+      }
+      const result = await database.execute(sql`
+        update image_async_task
+        set status = 'queued',
+            claim_token = null,
+            claim_expires_at = null,
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status = 'running'
+          and claim_token = ${input.claimToken}
         returning ${columns}
       `);
       return parseFirstImageAsyncTaskRow(result);

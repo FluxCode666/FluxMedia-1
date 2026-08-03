@@ -31,6 +31,9 @@ export function createMediaTaskRedisConnectionOptions(
     ...(configuration.username ? { username: configuration.username } : {}),
     password: configuration.password,
     db: configuration.database,
+    ...(configuration.tls
+      ? { tls: { servername: configuration.host } }
+      : {}),
     connectTimeout: 1_000,
     enableOfflineQueue: true,
     maxRetriesPerRequest: kind === "worker" ? null : 1,

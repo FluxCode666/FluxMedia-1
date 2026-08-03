@@ -72,10 +72,7 @@ import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import { createVideoCreditOperation } from "./credit-operation-context";
 import { loadMediaInputs } from "./media-input-loader";
 import { defaultVideoApiKeyQuotaRepository } from "./video-api-key-quota";
-import {
-  createVideoCallbackDeliveryValues,
-  runVideoCallbackDeliveryJob,
-} from "./video-callback-delivery";
+import { createVideoCallbackDeliveryValues } from "./video-callback-delivery";
 import { reconcileVideoCreditConsumption } from "./video-credit-consumption";
 import {
   resolveVideoExecutionContract,
@@ -85,7 +82,6 @@ import {
 import {
   adoptVideoInputObjectsForPersistence,
   parseVideoInputCleanupObjects,
-  runVideoInputCleanupJob,
   type VideoInputCleanupObject,
 } from "./video-input-cleanup-queue";
 import { shouldRetainVideoInputsAfterStage } from "./video-input-lifecycle";
@@ -111,8 +107,6 @@ const VIDEO_RETRY_DELAY_MS = 60_000;
 const VIDEO_LEASE_TTL_MS = 21 * 60_000;
 const VIDEO_CLAIM_TTL_MS = VIDEO_LEASE_TTL_MS;
 const VIDEO_SUBMISSION_TIMEOUT_MS = 20 * 60_000;
-const VIDEO_RECOVERY_BATCH_LIMIT = 25;
-const VIDEO_RECOVERY_WORKER_COUNT = 4;
 const VIDEO_IO_HEARTBEAT_MS = 5 * 60_000;
 
 type VideoStage =
@@ -1732,73 +1726,4 @@ export async function processVideoGenerationQueueTask(
 
   const current = await getVideoGenerationById(taskId);
   return current ? resolveVideoQueueSchedule(current) : null;
-}
-
-/**
- * 执行一批视频恢复。
- *
- * 少量 worker 每次处理前即时认领一条任务，避免批量 claim 在本地队列中提前过期。
- * 单任务失败被隔离并保留下一次重试机会。
- */
-export async function runVideoRecoveryJob() {
-  let reservations = 0;
-  let claimed = 0;
-  let recovered = 0;
-  let failed = 0;
-
-  /** 同步预留批次槽位；JavaScript 单线程保证不会超过全局批次上限。 */
-  const reserveBatchSlot = (): boolean => {
-    if (reservations >= VIDEO_RECOVERY_BATCH_LIMIT) return false;
-    reservations += 1;
-    return true;
-  };
-
-  /** 单个 worker 即时 claim 并处理，直到无到期任务或批次槽位耗尽。 */
-  const runWorker = async (): Promise<void> => {
-    while (reserveBatchSlot()) {
-      const now = new Date();
-      const claim = await defaultVideoRecoveryRepository.claimNext({
-        claimToken: randomUUID(),
-        now,
-        claimExpiresAt: new Date(now.getTime() + VIDEO_CLAIM_TTL_MS),
-      });
-      if (!claim) return;
-      claimed += 1;
-      const row = await getVideoGenerationById(claim.id);
-      if (
-        row?.claimToken !== claim.claimToken ||
-        row.apiAdapterMemberId !== claim.apiAdapterMemberId ||
-        row.apiAdapterVersionId !== claim.apiAdapterVersionId
-      ) {
-        continue;
-      }
-      try {
-        await recoverClaimedVideo(row);
-        recovered += 1;
-      } catch (error) {
-        failed += 1;
-        logError(error, {
-          source: "video-recovery",
-          videoId: claim.id,
-        });
-        try {
-          await retryClaimedVideo(row, error);
-        } catch (retryError) {
-          logError(retryError, {
-            source: "video-recovery-release-claim",
-            videoId: claim.id,
-          });
-        }
-      }
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: VIDEO_RECOVERY_WORKER_COUNT }, () => runWorker())
-  );
-  const [callbackDelivery, inputCleanup] = await Promise.all([
-    runVideoCallbackDeliveryJob(),
-    runVideoInputCleanupJob(),
-  ]);
-  return { claimed, recovered, failed, callbackDelivery, inputCleanup };
 }

@@ -8,6 +8,7 @@
     "test:image-backend-pool": "vitest run --config vitest.config.ts src/image-backend-pool-scheduler.test.ts",
     "test:media-generation-financial-recovery": "vitest run --config vitest.config.ts src/media-generation-financial-recovery.test.ts",
     "test:media-backend-pool-migration": "vitest run --config vitest.config.ts src/media-backend-pool-migration.test.ts",
+    "test:media-task-mq": "vitest run --config vitest.config.ts src/media-task-mq.test.ts",
     "test:moderation": "vitest run --config vitest.config.ts src/moderation-policy-service.test.ts",
     "test:release-governance": "vitest run --config vitest.config.ts src/release-governance-gate.test.ts",
     "test:video-generation-recovery": "vitest run --config vitest.config.ts src/video-generation-recovery.test.ts",
@@ -16,6 +17,7 @@
   "dependencies": {
     "@repo/database": "workspace:*",
     "@repo/shared": "workspace:*",
+    "bullmq": "5.81.3",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.22.0"
   },

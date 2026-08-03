@@ -8,6 +8,8 @@
 
 import { invokeOperation, type Principal } from "@repo/shared/uol";
 import type {
+  ImageAsyncTaskOutput,
+  ImageEnqueueAsyncInput,
   ImageGenerateOperationInput,
   ImageGenerateOperationOutput,
 } from "@repo/shared/uol/operations/image-generation";
@@ -80,4 +82,34 @@ export async function invokeImageGenerationOperation(
     operationContext
   );
   return toImageGenerationOperationResult(output);
+}
+
+/** 创建持久图片异步任务；HTTP handler 只负责构造严格 UOL 输入。 */
+export async function invokeImageEnqueueAsyncOperation(
+  input: ImageEnqueueAsyncInput,
+  principal: Principal,
+  requestId?: string
+): Promise<ImageAsyncTaskOutput> {
+  await ensureUolInitialized();
+  return invokeOperation<ImageAsyncTaskOutput>(
+    "image.enqueueAsync",
+    input,
+    principal,
+    requestId ? { requestId } : undefined
+  );
+}
+
+/** 查询持久图片异步任务；归属和 API Key 域由 UOL binding 单点校验。 */
+export async function invokeImageGetAsyncTaskOperation(
+  input: { taskId: string },
+  principal: Principal,
+  requestId?: string
+): Promise<ImageAsyncTaskOutput> {
+  await ensureUolInitialized();
+  return invokeOperation<ImageAsyncTaskOutput>(
+    "image.getAsyncTask",
+    input,
+    principal,
+    requestId ? { requestId } : undefined
+  );
 }

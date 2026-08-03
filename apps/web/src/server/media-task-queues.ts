@@ -45,6 +45,7 @@ export interface MediaTaskQueuePort<TData> {
 /** 图片任务投递参数。 */
 export interface EnqueueImageTaskInput {
   taskId: string;
+  deliveryVersion?: number;
   priority?: number;
   runAt?: Date;
 }
@@ -131,7 +132,10 @@ export async function enqueueImageTask(
     taskId: input.taskId,
   });
   const options = createBaseJobOptions(getQueueDelay(input.runAt));
-  options.jobId = createImageTaskJobId(data.taskId);
+  options.jobId = createImageTaskJobId(
+    data.taskId,
+    input.deliveryVersion ?? 0
+  );
   if (input.priority !== undefined) {
     options.priority = Math.max(1, Math.trunc(input.priority));
   }

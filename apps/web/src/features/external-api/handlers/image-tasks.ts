@@ -1,14 +1,18 @@
 import { withApiLogging } from "@repo/shared/api-logger";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
+import { OperationError } from "@repo/shared/uol";
 import type { NextRequest } from "next/server";
 import {
-  getAsyncImageTask,
-  toAsyncImageTaskResponse,
   toGenerationImageTaskResponse,
 } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
+import {
+  buildImageAsyncTaskPublicResponse,
+  createImageAsyncTaskPublicSourceFromOperation,
+} from "@/features/external-api/image-async-task-response";
 import { openAIImageError } from "@/features/external-api/images";
 import { getGenerationById } from "@/features/image-generation/queries";
+import { invokeImageGetAsyncTaskOperation } from "@/features/image-generation/uol-client";
 
 export const getExternalImageTask = withApiLogging(
   async (
@@ -29,21 +33,36 @@ export const getExternalImageTask = withApiLogging(
       return openAIImageError("Invalid task_id.");
     }
 
-    // 1. 先查内存异步任务存储(async=true 创建,按 task_<uuid> 为键)。
-    const task = getAsyncImageTask(taskId);
-    if (
-      task &&
-      task.userId === auth.userId &&
-      (!task.apiKeyId || task.apiKeyId === auth.apiKeyId)
-    ) {
-      return Response.json(toAsyncImageTaskResponse(task), {
-        headers: { "Cache-Control": "no-store" },
-      });
+    const principal = {
+      type: "apiKey" as const,
+      credentialKind: "external" as const,
+      userId: auth.userId,
+      apiKeyId: auth.apiKeyId,
+      plan: auth.plan,
+    };
+    try {
+      const task = await invokeImageGetAsyncTaskOperation(
+        { taskId },
+        principal,
+        request.headers.get("x-request-id") ?? undefined
+      );
+      return Response.json(
+        await buildImageAsyncTaskPublicResponse(
+          createImageAsyncTaskPublicSourceFromOperation(task, auth.userId)
+        ),
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    } catch (error) {
+      if (!(error instanceof OperationError) || error.code !== "not_found") {
+        return openAIImageError(
+          error instanceof Error ? error.message : "Failed to query image task.",
+          error instanceof OperationError ? error.httpStatus : 500
+        );
+      }
     }
 
-    // 2. 未命中(同步请求拿到的是 generation_id 而非 task id;或多实例/重启/30 分钟
-    // TTL 已清)→ 把 taskId 当 generation_id 从 DB 持久取回。getGenerationById 不带
-    // 归属过滤,必须在此显式校验 userId 防越权(IDOR):只返回归属本人的记录。
+    // 同步请求拿到的是 generation_id 而非 task id，因此 UOL task 未命中时继续使用
+    // generation 持久回退；查询后必须显式校验 userId 防止 IDOR。
     const row = await getGenerationById(taskId);
     if (row && row.userId === auth.userId) {
       const imageUrl = row.storageKey

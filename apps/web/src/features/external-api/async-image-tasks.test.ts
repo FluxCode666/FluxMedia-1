@@ -12,11 +12,8 @@ vi.mock("@repo/shared/security/dns-pin", () => ({
 
 import { fetchWithDnsPin } from "@repo/shared/security/dns-pin";
 import {
-  completeAsyncImageTask,
-  createAsyncImageTask,
   type GenerationTaskRow,
-  postAsyncImageCallback,
-  toAsyncImageTaskResponse,
+  postPublicAsyncImageCallback,
   toGenerationImageTaskResponse,
   toVideoGenerationTaskResponse,
   type VideoTaskRow,
@@ -31,52 +28,6 @@ afterEach(() => {
 });
 
 describe("external async image tasks", () => {
-  it("creates a public processing payload without owner fields", () => {
-    const task = createAsyncImageTask({
-      userId: "user_1",
-      apiKeyId: "key_1",
-      model: "firefly-gpt-image-2",
-      generationIds: ["gen_1"],
-    });
-
-    expect(toAsyncImageTaskResponse(task)).toMatchObject({
-      id: expect.stringMatching(/^task_/),
-      object: "image.generation",
-      model: "gpt-image-2",
-      status: "processing",
-      generation_id: "gen_1",
-      generationId: "gen_1",
-    });
-    expect(toAsyncImageTaskResponse(task)).not.toHaveProperty("userId");
-    expect(toAsyncImageTaskResponse(task)).not.toHaveProperty("apiKeyId");
-  });
-
-  it("flattens completed image payload fields onto the task", () => {
-    const task = createAsyncImageTask({
-      userId: "user_1",
-      model: "gpt-image-2",
-      generationIds: ["gen_1", "gen_2"],
-    });
-
-    const completed = completeAsyncImageTask(task.id, {
-      result: {
-        created: 123,
-        data: [{ url: "https://cdn.example.com/image.png" }],
-        credits_consumed: 1.2,
-      },
-    });
-
-    expect(completed && toAsyncImageTaskResponse(completed)).toMatchObject({
-      id: task.id,
-      object: "image",
-      status: "completed",
-      created: 123,
-      data: [{ url: "https://cdn.example.com/image.png" }],
-      credits_consumed: 1.2,
-      generation_ids: ["gen_1", "gen_2"],
-    });
-  });
-
   it("maps a completed generation row to a task response with url + image_url", () => {
     const row: GenerationTaskRow = {
       id: "gen_abc",
@@ -221,9 +172,11 @@ describe("external async image tasks", () => {
 
   it("posts callback payloads with the callback marker header", async () => {
     mockFetchWithDnsPin.mockResolvedValueOnce(new Response("ok"));
-    const task = createAsyncImageTask({ userId: "user_1" });
 
-    await postAsyncImageCallback("https://1.1.1.1/callback", task);
+    await postPublicAsyncImageCallback("https://1.1.1.1/callback", {
+      id: "task_123",
+      status: "completed",
+    });
 
     expect(mockFetchWithDnsPin).toHaveBeenCalledWith(
       expect.stringContaining("https://1.1.1.1/callback"),
@@ -244,9 +197,11 @@ describe("external async image tasks", () => {
         headers: { location: "http://169.254.169.254/latest/meta-data/" },
       })
     );
-    const task = createAsyncImageTask({ userId: "user_1" });
-
-    await postAsyncImageCallback("https://1.1.1.1/callback", task);
+    await expect(
+      postPublicAsyncImageCallback("https://1.1.1.1/callback", {
+        id: "task_123",
+      })
+    ).rejects.toThrow();
 
     expect(mockFetchWithDnsPin).toHaveBeenCalledTimes(1);
   });

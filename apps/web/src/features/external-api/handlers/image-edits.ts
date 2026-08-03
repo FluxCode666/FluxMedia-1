@@ -12,10 +12,6 @@ import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import type { NextRequest } from "next/server";
 
 import {
-  completeAsyncImageTask,
-  createAsyncImageTask,
-  postAsyncImageCallback,
-  toAsyncImageTaskResponse,
   validateCallbackUrl,
 } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
@@ -30,7 +26,6 @@ import {
   openAIImageError,
   toExternalErrorStreamData,
   toLoggedOpenAIErrorPayload,
-  toOpenAIErrorPayload,
   toOpenAIImagesResponse,
   wantsImageStreamResponse,
 } from "@/features/external-api/images";
@@ -39,6 +34,10 @@ import {
   readResponseBytesWithLimit,
 } from "@/features/external-api/safe-image-fetch";
 import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
+import {
+  buildImageAsyncTaskPublicResponse,
+  createImageAsyncTaskPublicSourceFromOperation,
+} from "@/features/external-api/image-async-task-response";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
@@ -67,7 +66,10 @@ import type {
   PartialImageResult,
   ThinkingLevel,
 } from "@/features/image-generation/types";
-import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
+import {
+  invokeImageEnqueueAsyncOperation,
+  invokeImageGenerationOperation,
+} from "@/features/image-generation/uol-client";
 
 const VALID_QUALITIES = new Set<ImageQuality>([
   "auto",
@@ -752,12 +754,35 @@ export const postExternalImageEdits = withApiLogging(
         sourceFiles
       );
 
+      const asyncMaskImages =
+        useAsync && maskFile
+          ? await uploadModerationImages(auth.userId, batchId, [maskFile], {
+              scope: "async-masks",
+            })
+          : undefined;
+      if (
+        useAsync &&
+        (moderationImages?.length !== sourceFiles.length ||
+          (maskFile && asyncMaskImages?.length !== 1))
+      ) {
+        return openAIImageError(
+          "Async image editing requires object storage for all input images.",
+          503,
+          "storage_unavailable"
+        );
+      }
+
       const images = await filesToMediaInputReferences(
         sourceFiles,
         moderationImages
       );
       const mask = maskFile
-        ? (await filesToMediaInputReferences([maskFile]))[0]
+        ? (
+            await filesToMediaInputReferences(
+              [maskFile],
+              useAsync ? asyncMaskImages : undefined
+            )
+          )[0]
         : undefined;
       const principal = {
         type: "apiKey" as const,
@@ -853,59 +878,57 @@ export const postExternalImageEdits = withApiLogging(
       }
 
       if (useAsync) {
-        const created = Math.floor(Date.now() / 1000);
         const generationIds = Array.from({ length: count }, () => randomUUID());
-        const task = createAsyncImageTask({
-          userId: auth.userId,
-          apiKeyId: auth.apiKeyId,
-          model,
-          generationIds,
-        });
-
-        void (async () => {
-          const results = await runBatchImageGeneration({
-            count,
-            concurrency: planLimits.imageGenerationConcurrency,
-            generationIds,
-            run: runEdit,
-          });
-          const resultPayload = await toOpenAIImagesResponse(
-            request,
-            results,
-            responseFormat,
-            created,
-            {
-              route: "/v1/images/edits",
-              async: true,
+        try {
+          /** 为每个幂等 generationId 构造同一 edit 或 mask 联合输入。 */
+          const createAsyncGenerationInput = (generationId: string) => {
+            const common = {
+              prompt,
+              promptOptimization,
               model,
               size,
-            }
+              quality,
+              thinking,
+              moderation,
+              outputFormat,
+              outputCompression,
+              background,
+              transparentMatte,
+              hdRepair,
+              blockRepair,
+              repairPrompt,
+              count: 1,
+              generationId,
+              images,
+            };
+            return mask
+              ? { operation: "mask" as const, ...common, mask }
+              : { operation: "edit" as const, ...common };
+          };
+          const task = await invokeImageEnqueueAsyncOperation(
+            {
+              taskId: `task_${randomUUID().replace(/-/g, "")}`,
+              generationInputs: generationIds.map(
+                createAsyncGenerationInput
+              ),
+              responseFormat,
+              ...(callbackUrl ? { callbackUrl } : {}),
+            },
+            principal,
+            requestId
           );
-          const completedTask = completeAsyncImageTask(task.id, {
-            error:
-              resultPayload &&
-              typeof resultPayload === "object" &&
-              "error" in resultPayload
-                ? resultPayload
-                : undefined,
-            result: resultPayload,
-          });
-          if (completedTask && callbackUrl) {
-            await postAsyncImageCallback(callbackUrl, completedTask);
-          }
-        })().catch(async (error) => {
-          const errorPayload = toOpenAIErrorPayload(
-            error instanceof Error ? error.message : "Async image edit failed"
+          return Response.json(
+            await buildImageAsyncTaskPublicResponse(
+              createImageAsyncTaskPublicSourceFromOperation(task, auth.userId)
+            )
           );
-          const completedTask = completeAsyncImageTask(task.id, {
-            error: errorPayload,
-          });
-          if (completedTask && callbackUrl) {
-            await postAsyncImageCallback(callbackUrl, completedTask);
-          }
-        });
-
-        return Response.json(toAsyncImageTaskResponse(task));
+        } catch (error) {
+          return openAIImageError(
+            error instanceof Error
+              ? error.message
+              : "Failed to create async image edit task."
+          );
+        }
       }
 
       return createJsonKeepAliveResponse(

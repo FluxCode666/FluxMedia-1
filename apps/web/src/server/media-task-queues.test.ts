@@ -48,6 +48,31 @@ describe("media task queue producer", () => {
     );
   });
 
+  it("图片补偿按数据库 attempt 版本生成新 jobId，但消息仍只含 taskId", async () => {
+    const first = createQueuePort<ImageTaskJobData>();
+    const retry = createQueuePort<ImageTaskJobData>();
+    await enqueueImageTask(
+      { taskId: "task-1", deliveryVersion: 0 },
+      first.port
+    );
+    await enqueueImageTask(
+      { taskId: "task-1", deliveryVersion: 5 },
+      retry.port
+    );
+
+    expect(first.add.mock.calls[0]?.[1]).toEqual({
+      kind: "image-generation",
+      taskId: "task-1",
+    });
+    expect(retry.add.mock.calls[0]?.[1]).toEqual({
+      kind: "image-generation",
+      taskId: "task-1",
+    });
+    expect(first.add.mock.calls[0]?.[2].jobId).not.toBe(
+      retry.add.mock.calls[0]?.[2].jobId
+    );
+  });
+
   it("视频任务以状态版本去重并按目标时间延迟", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-04T00:00:00.000Z"));
