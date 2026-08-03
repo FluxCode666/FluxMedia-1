@@ -83,6 +83,7 @@ describe("history contract", () => {
       error: null,
       createdAt: "2026-07-22T01:00:00.000Z",
       completedAt: "2026-07-22T01:01:00.000Z",
+      processingDurationSeconds: 60,
     };
     const parsed = historyListOutputSchema.parse({
       asOf: "2026-07-22T02:00:00.000Z",
@@ -159,6 +160,7 @@ describe("history contract", () => {
       imageUrl: null,
       createdAt: "2026-07-22T01:00:00.000Z",
       completedAt: null,
+      processingDurationSeconds: null,
     };
     expect(
       historyListOutputSchema.safeParse({
@@ -213,5 +215,37 @@ describe("history contract", () => {
       },
       userEmail: "member@example.com",
     });
+  });
+
+  it("accepts only nullable non-negative integer processing durations", () => {
+    const common = {
+      kind: "image" as const,
+      id: "record-1",
+      prompt: "prompt",
+      revisedPrompt: null,
+      model: "model-1",
+      size: "1024x1024",
+      status: "completed" as const,
+      creditsConsumed: 10,
+      creditDetails: null,
+      promptRepairNotice: null,
+      referenceImages: [],
+      error: null,
+      imageUrl: null,
+      createdAt: "2026-07-22T01:00:00.000Z",
+      completedAt: "2026-07-22T01:01:00.000Z",
+    };
+    const output = (processingDurationSeconds: number | null) => ({
+      asOf: "2026-07-22T02:00:00.000Z",
+      records: [{ ...common, processingDurationSeconds }],
+      modelOptions: [],
+      nextCursor: null,
+      previousCursor: null,
+    });
+
+    expect(historyListOutputSchema.safeParse(output(null)).success).toBe(true);
+    expect(historyListOutputSchema.safeParse(output(60)).success).toBe(true);
+    expect(historyListOutputSchema.safeParse(output(-1)).success).toBe(false);
+    expect(historyListOutputSchema.safeParse(output(1.5)).success).toBe(false);
   });
 });

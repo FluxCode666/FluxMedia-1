@@ -71,6 +71,7 @@ type HistoryRecordBase = {
   error: string | null;
   id: string;
   model: string;
+  processingDurationSeconds: number | null;
   prompt: string;
   status: HistoryRecordStatus;
   userEmail?: string;
@@ -242,8 +243,8 @@ export function HistoryClient({
   const hasPreviousPage = Boolean(previousCursor);
   const hasNextPage = Boolean(nextCursor);
   const desktopGridColumns = showUserColumns
-    ? "lg:grid-cols-[minmax(200px,1fr)_minmax(160px,0.8fr)_minmax(220px,1fr)_228px_64px_minmax(220px,1fr)_76px_160px_124px_104px_96px]"
-    : "lg:grid-cols-[228px_64px_minmax(220px,1fr)_76px_160px_124px_104px_96px]";
+    ? "lg:grid-cols-[minmax(200px,1fr)_minmax(160px,0.8fr)_minmax(220px,1fr)_228px_64px_minmax(220px,1fr)_76px_160px_124px_112px_104px_96px]"
+    : "lg:grid-cols-[228px_64px_minmax(220px,1fr)_76px_160px_124px_112px_104px_96px]";
 
   useEffect(() => {
     setItems(records);
@@ -308,7 +309,7 @@ export function HistoryClient({
           <div className="overflow-x-auto">
             <div
               className={
-                showUserColumns ? "lg:min-w-[1780px]" : "lg:min-w-[1180px]"
+                showUserColumns ? "lg:min-w-[1920px]" : "lg:min-w-[1320px]"
               }
             >
               <div
@@ -332,6 +333,7 @@ export function HistoryClient({
                 <div>{copy("Type", "类型")}</div>
                 <div>{copy("Model", "模型")}</div>
                 <div>{copy("Specification", "规格")}</div>
+                <div>{copy("Processing time (s)", "处理时长（秒）")}</div>
                 <div>{copy("Credits", "积分")}</div>
                 <div>{copy("Status", "状态")}</div>
               </div>
@@ -445,6 +447,13 @@ export function HistoryClient({
                             </span>
                             <span>·</span>
                             <span>{formatRecordSpecification(item, copy)}</span>
+                            <span>·</span>
+                            <span>
+                              {copy("Processing time", "处理时长")}:{" "}
+                              {item.processingDurationSeconds === null
+                                ? "—"
+                                : `${item.processingDurationSeconds}s`}
+                            </span>
                             <Badge
                               className={`rounded-full border-transparent px-2 py-0 font-normal text-[10px] uppercase ${statusClasses(item.status)}`}
                               variant="outline"
@@ -488,6 +497,9 @@ export function HistoryClient({
                         </div>
                         <div className="hidden font-mono text-xs text-foreground lg:block">
                           {formatRecordSpecification(item, copy)}
+                        </div>
+                        <div className="hidden text-xs text-foreground lg:block">
+                          {item.processingDurationSeconds ?? "—"}
                         </div>
                         <div className="hidden text-xs text-foreground lg:block">
                           {formatCredits(item.creditsConsumed)}

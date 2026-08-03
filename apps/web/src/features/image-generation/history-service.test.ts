@@ -7,6 +7,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import {
+  calculateHistoryProcessingDurationSeconds,
   type HistoryListRow,
   type HistoryRepository,
   loadHistoryRecords,
@@ -49,6 +50,33 @@ function createRepository(
 }
 
 describe("history service", () => {
+  it("calculates rounded terminal processing seconds and preserves incomplete state", () => {
+    expect(
+      calculateHistoryProcessingDurationSeconds({
+        createdAt: "2026-07-22T12:00:00.000Z",
+        completedAt: "2026-07-22T12:01:00.499Z",
+      })
+    ).toBe(60);
+    expect(
+      calculateHistoryProcessingDurationSeconds({
+        createdAt: "2026-07-22T12:00:01.000Z",
+        completedAt: "2026-07-22T12:00:00.000Z",
+      })
+    ).toBe(0);
+    expect(
+      calculateHistoryProcessingDurationSeconds({
+        createdAt: "2026-07-22T12:00:00.000Z",
+        completedAt: null,
+      })
+    ).toBeNull();
+    expect(() =>
+      calculateHistoryProcessingDurationSeconds({
+        createdAt: "invalid",
+        completedAt: "2026-07-22T12:00:00.000Z",
+      })
+    ).toThrow(RangeError);
+  });
+
   it("uses calendar-day boundaries across daylight-saving changes", () => {
     const springForward = resolveHistoryDateRange({
       createdFrom: "2026-03-08",
@@ -134,6 +162,7 @@ describe("history service", () => {
       resolution: "1080p",
       generateAudio: true,
       input: { mode: "first-last-frames", count: 2 },
+      processingDurationSeconds: null,
     });
     expect(result.modelOptions).toEqual(["gpt-image-2", "sora2"]);
     expect(result.nextCursor).toEqual(expect.any(String));

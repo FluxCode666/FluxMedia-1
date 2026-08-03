@@ -57,6 +57,7 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
         input: { mode: "none", count: 0 },
         kind: "video",
         model: "seedance2",
+        processingDurationSeconds: 60,
         prompt: "video prompt",
         resolution: "1080p",
         status: "completed",
@@ -107,5 +108,12 @@ describe("HistoryClient supplier account identity", () => {
     expect(document.body.textContent).not.toContain("供应商账号");
     expect(document.body.textContent).not.toContain("视频供应商主账号");
     expect(document.body.textContent).not.toContain("backend-video-1");
+  });
+
+  it("shows processing duration in seconds in both responsive layouts", () => {
+    renderHistory(false);
+
+    expect(document.body.textContent).toContain("处理时长（秒）");
+    expect(document.body.textContent).toContain("处理时长: 60s");
   });
 });

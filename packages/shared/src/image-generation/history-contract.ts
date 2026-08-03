@@ -140,6 +140,7 @@ const historyRecordCommonSchema = z.object({
   error: z.string().nullable(),
   createdAt: isoDateTimeSchema,
   completedAt: isoDateTimeSchema.nullable(),
+  processingDurationSeconds: z.number().int().nonnegative().nullable(),
 });
 
 /** 图片历史详情所需的结算元数据、尺寸与受控资源地址。 */

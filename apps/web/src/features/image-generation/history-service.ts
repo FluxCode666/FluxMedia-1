@@ -124,13 +124,38 @@ export class HistoryServiceError extends Error {
   }
 }
 
-/** 把 Date/string 严格转换为带时区 ISO；仓储脏数据应显式失败。 */
-function toIsoDateTime(value: Date | string): string {
+/** 把仓储时间严格转换为 Date；非法持久化值必须显式失败。 */
+function toHistoryDate(value: Date | string): Date {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw new RangeError("History record date is invalid");
   }
-  return date.toISOString();
+  return date;
+}
+
+/** 把 Date/string 严格转换为带时区 ISO；仓储脏数据应显式失败。 */
+function toIsoDateTime(value: Date | string): string {
+  return toHistoryDate(value).toISOString();
+}
+
+/**
+ * 计算已结束历史记录从创建到完成的整数秒数。
+ *
+ * @param input 仓储返回的创建与完成时间；未完成记录的 completedAt 为 null。
+ * @returns 四舍五入且不小于零的秒数；未完成记录返回 null。
+ * @throws RangeError 任一已提供时间不是有效日期时抛出，避免掩盖脏数据。
+ */
+export function calculateHistoryProcessingDurationSeconds(input: {
+  createdAt: Date | string;
+  completedAt: Date | string | null;
+}): number | null {
+  if (input.completedAt === null) return null;
+  const createdAt = toHistoryDate(input.createdAt);
+  const completedAt = toHistoryDate(input.completedAt);
+  return Math.max(
+    0,
+    Math.round((completedAt.getTime() - createdAt.getTime()) / 1000)
+  );
 }
 
 /** 将有效 YYYY-MM-DD 平移自然日，用于构造 createdTo 的下一日零点。 */
@@ -310,7 +335,9 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
     model: normalizeHistoricalModelId(row.model) ?? row.model,
     error: sanitizeHistoryError(rawError),
     createdAt: toIsoDateTime(row.createdAt),
-    completedAt: row.completedAt ? toIsoDateTime(row.completedAt) : null,
+    completedAt:
+      row.completedAt === null ? null : toIsoDateTime(row.completedAt),
+    processingDurationSeconds: calculateHistoryProcessingDurationSeconds(row),
   };
   return historyRecordSchema.parse(common);
 }

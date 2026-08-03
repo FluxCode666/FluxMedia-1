@@ -27,6 +27,7 @@ import {
 import { z } from "zod";
 
 import {
+  calculateHistoryProcessingDurationSeconds,
   resolveHistoryDateRange,
   sanitizeHistoryError,
 } from "./history-service";
@@ -290,7 +291,9 @@ function adaptAdminHistoryRow(row: AdminHistoryListRow): AdminHistoryRecord {
     model: normalizeHistoricalModelId(row.model) ?? row.model,
     error: sanitizeHistoryError(rawError),
     createdAt: toIsoDateTime(row.createdAt),
-    completedAt: row.completedAt ? toIsoDateTime(row.completedAt) : null,
+    completedAt:
+      row.completedAt === null ? null : toIsoDateTime(row.completedAt),
+    processingDurationSeconds: calculateHistoryProcessingDurationSeconds(row),
   });
 }
 

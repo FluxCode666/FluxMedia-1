@@ -107,6 +107,7 @@ describe("admin history service", () => {
         resolution: "1080p",
         generateAudio: false,
         input: { mode: "references", count: 3 },
+        processingDurationSeconds: 60,
       })
     );
     expect(result.records[0]).not.toHaveProperty("family");
