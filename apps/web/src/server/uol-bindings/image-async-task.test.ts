@@ -14,6 +14,7 @@ import type {
 import {
   executeImageEnqueueAsyncBinding,
   executeImageGetAsyncTaskBinding,
+  executeImageProcessAsyncTaskBinding,
   type ImageAsyncTaskBindingDependencies,
 } from "./image-async-task";
 
@@ -66,6 +67,7 @@ function createRepository(task: ImageAsyncTaskRecord) {
     create: vi.fn().mockResolvedValue({ task, created: true }),
     findById: vi.fn().mockResolvedValue(task),
     claimById: vi.fn(),
+    release: vi.fn(),
     complete: vi.fn(),
     fail: vi.fn(),
   } satisfies ImageAsyncTaskRepository;
@@ -99,6 +101,11 @@ function createDependencies(task = createTask()) {
       return undefined;
     }),
     reportEnqueueFailure: vi.fn(),
+    runGeneration: vi.fn(async () => undefined),
+    getGenerationConcurrency: vi.fn(async () => 2),
+    createClaimToken: vi.fn(() => "worker-1"),
+    now: vi.fn(() => NOW),
+    reportGenerationFailure: vi.fn(),
   };
   return { calls, dependencies, repository };
 }
@@ -213,5 +220,120 @@ describe("image async task UOL bindings", () => {
         repository
       )
     ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("Worker 从数据库恢复 API Key Principal 并在全部 generation 完成后 CAS 完成", async () => {
+    const task = createTask({
+      generationInputs: [
+        {
+          operation: "generate",
+          prompt: "first",
+          model: "gpt-image-2",
+          generationId: "generation-1",
+        },
+        {
+          operation: "generate",
+          prompt: "second",
+          model: "gpt-image-2",
+          generationId: "generation-2",
+        },
+      ],
+      generationIds: ["generation-1", "generation-2"],
+      status: "running",
+      attemptCount: 1,
+      claimToken: "worker-1",
+      claimExpiresAt: new Date(NOW.getTime() + 22 * 60_000),
+      startedAt: NOW,
+    });
+    const { dependencies, repository } = createDependencies(task);
+    repository.claimById.mockResolvedValue(task);
+    repository.complete.mockResolvedValue(
+      createTask({ ...task, status: "completed", completedAt: NOW })
+    );
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).resolves.toMatchObject({ status: "completed" });
+    expect(dependencies.runGeneration).toHaveBeenCalledTimes(2);
+    expect(dependencies.runGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({ generationId: "generation-1" }),
+      expect.objectContaining({
+        type: "apiKey",
+        credentialKind: "external",
+        userId: "user-1",
+        apiKeyId: "key-1",
+        plan: "pro",
+      }),
+      "image-async-task:task_123:generation-1"
+    );
+    expect(repository.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: "task_123", claimToken: "worker-1" })
+    );
+  });
+
+  it("generation 失败时只收敛 task 失败，不让 BullMQ 重复执行已失败 generation", async () => {
+    const task = createTask({
+      status: "running",
+      claimToken: "worker-1",
+      claimExpiresAt: new Date(NOW.getTime() + 22 * 60_000),
+      startedAt: NOW,
+    });
+    const { dependencies, repository } = createDependencies(task);
+    repository.claimById.mockResolvedValue(task);
+    repository.fail.mockResolvedValue(
+      createTask({ ...task, status: "failed", error: "上游失败" })
+    );
+    vi.mocked(dependencies.runGeneration).mockRejectedValueOnce(
+      new Error("unexpected internal error")
+    );
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(repository.fail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "task_123",
+        claimToken: "worker-1",
+        error: "Image generation failed. Please retry later.",
+      })
+    );
+  });
+
+  it("基础设施异常时释放 claim 并交给 BullMQ 重试", async () => {
+    const task = createTask({
+      status: "running",
+      claimToken: "worker-1",
+      claimExpiresAt: new Date(NOW.getTime() + 22 * 60_000),
+      startedAt: NOW,
+    });
+    const { dependencies, repository } = createDependencies(task);
+    repository.claimById.mockResolvedValue(task);
+    repository.release.mockResolvedValue(
+      createTask({ ...task, status: "queued", claimToken: null })
+    );
+    const failure = new Error("settings unavailable");
+    vi.mocked(dependencies.getGenerationConcurrency).mockRejectedValue(failure);
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).rejects.toBe(failure);
+    expect(repository.release).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: "task_123", claimToken: "worker-1" })
+    );
   });
 });

@@ -7,9 +7,39 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { processVideoTaskJob } from "./media-task-workers";
+import {
+  processImageTaskJob,
+  processVideoTaskJob,
+} from "./media-task-workers";
 
 describe("media task workers", () => {
+  it("图片任务只把 PostgreSQL taskId 委托给系统 UOL", async () => {
+    const processTask = vi.fn().mockResolvedValue(undefined);
+
+    await processImageTaskJob(
+      { kind: "image-generation", taskId: "task_123" },
+      { processTask }
+    );
+
+    expect(processTask).toHaveBeenCalledWith("task_123");
+  });
+
+  it("图片非法消息在任何 UOL 调用前失败关闭", async () => {
+    const processTask = vi.fn();
+
+    await expect(
+      processImageTaskJob(
+        {
+          kind: "image-generation",
+          taskId: "task_123",
+          prompt: "不得进入 Redis",
+        },
+        { processTask }
+      )
+    ).rejects.toMatchObject({ name: "ZodError" });
+    expect(processTask).not.toHaveBeenCalled();
+  });
+
   it("处理视频任务后按 PostgreSQL 返回时间重投", async () => {
     const schedule = {
       taskId: "video-1",
