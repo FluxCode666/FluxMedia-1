@@ -547,6 +547,13 @@
       "when": 1785585600000,
       "tag": "0077_api_upstream_adapter_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1785739770000,
+      "tag": "0078_video_output_storage_bucket",
+      "breakpoints": true
     }
   ]
 }

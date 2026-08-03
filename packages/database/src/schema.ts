@@ -1512,6 +1512,8 @@ export const videoGeneration = pgTable(
     attemptCount: integer("attempt_count").notNull().default(0),
     // 真实输入语义与任务自有存储身份。
     inputManifest: json("input_manifest").$type<PersistedVideoInputManifest>(),
+    // 新任务在创建时固定生成内容 bucket，恢复重试不得跟随后台配置切桶；历史行允许为空。
+    storageBucket: text("storage_bucket"),
     // 完成后 re-host 到对象存储的 key；videoUrl 为上游 presigned（短期）。
     storageKey: text("storage_key"),
     videoUrl: text("video_url"),
