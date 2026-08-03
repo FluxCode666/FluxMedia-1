@@ -22,6 +22,10 @@ function imageRow(
   userEmail = "member@example.com"
 ): AdminHistoryListRow {
   return {
+    backendAccount: {
+      id: "backend-1",
+      name: "Primary supplier",
+    },
     kind: "image",
     id,
     userId: "user-1",
@@ -67,6 +71,10 @@ describe("admin history service", () => {
         repository: createRepository({
           readRecords: vi.fn().mockResolvedValue([
             {
+              backendAccount: {
+                id: "backend-video",
+                name: "Video supplier",
+              },
               kind: "video",
               id: "video-1",
               userId: "user-1",
@@ -146,10 +154,37 @@ describe("admin history service", () => {
     });
     expect(readUserOptions).toHaveBeenCalledWith({ type: null, limit: 200 });
     expect(result.records[0]).toMatchObject({
+      backendAccount: {
+        id: "backend-1",
+        name: "Primary supplier",
+      },
       userId: "user-1",
       userEmail: "member@example.com",
     });
     expect(result.nextCursor).toEqual(expect.any(String));
+  });
+
+  it("keeps records visible when no supplier account can be resolved", async () => {
+    const row = imageRow("image-1", "2026-07-22T12:00:00.000Z");
+    row.backendAccount = null;
+
+    const result = await loadAdminHistoryRecords(
+      {
+        actorUserId: "admin-1",
+        timeZone: "UTC",
+        input: {},
+        now: new Date("2026-07-22T13:00:00.000Z"),
+      },
+      {
+        repository: createRepository({
+          readRecords: vi.fn().mockResolvedValue([row]),
+        }),
+        tokenSecret: TOKEN_SECRET,
+      }
+    );
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.backendAccount).toBeNull();
   });
 
   it("binds global cursors to both the administrator and email filter", async () => {

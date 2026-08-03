@@ -2,8 +2,8 @@
  * 管理端全局生成历史 PostgreSQL 仓储。
  *
  * 使用方：admin-history-service 的管理员 UOL binding。图片和视频分别在索引分支内应用
- * 日期、邮箱、模型、状态、snapshot、cursor 与 limit+1，再 UNION ALL。用户邮箱仅在
- * 管理员查询中经参数化 JOIN 取得，个人历史仓储绝不复用此全局数据作用域。
+ * 日期、邮箱、模型、状态、snapshot、cursor 与 limit+1，再 UNION ALL。供应商账号
+ * 优先读取任务快照，旧记录才回退受控 JOIN；个人历史仓储绝不复用此全局数据作用域。
  */
 
 import { db } from "@repo/database";
@@ -34,6 +34,8 @@ import { buildVideoInputSummary } from "./video-input-lifecycle";
 const adminHistoryListRowSchema = z.object({
   record_kind: historyRecordTypeSchema,
   id: z.string().min(1).max(512),
+  backend_account_id: z.string().min(1).max(512).nullable(),
+  backend_account_name: z.string().nullable(),
   user_id: z.string().min(1).max(512),
   user_email: adminHistoryUserEmailSchema,
   prompt: z.string(),
@@ -153,6 +155,23 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
     when v.status = 'failed' then 'failed'
     else v.status::text
   end`;
+  const imageBackendAccountId = sql`coalesce(
+    nullif(btrim(g.api_adapter_member_id), ''),
+    nullif(btrim((g.metadata::jsonb)->'backend'->>'id'), '')
+  )`;
+  const videoBackendAccountId = sql`coalesce(
+    nullif(btrim(v.backend_member_id), ''),
+    nullif(btrim(v.api_adapter_member_id), ''),
+    nullif(btrim((v.metadata::jsonb)->'backend'->>'id'), '')
+  )`;
+  const imageBackendAccountName = sql`nullif(
+    btrim((g.metadata::jsonb)->'backend'->>'name'),
+    ''
+  )`;
+  const videoBackendAccountName = sql`nullif(
+    btrim((v.metadata::jsonb)->'backend'->>'name'),
+    ''
+  )`;
   const imageHistoryMetadata = sql`case
     when g.metadata is null then null
     else jsonb_build_object(
@@ -186,6 +205,11 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
       select
         'image'::text as record_kind,
         g.id::text as id,
+        ${imageBackendAccountId}::text as backend_account_id,
+        coalesce(
+          ${imageBackendAccountName},
+          backend_account.name
+        )::text as backend_account_name,
         u.id::text as user_id,
         u.email::text as user_email,
         g.prompt::text as prompt,
@@ -208,6 +232,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         1::integer as kind_rank
       from generation g
       inner join "user" u on u.id = g.user_id
+      left join image_backend_member backend_account
+        on backend_account.id = ${imageBackendAccountId}
       where ${booleanSql(input.type === null || input.type === "image")}
         and ${buildDatePredicate(input, sql`g.created_at`)}
         and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
@@ -220,6 +246,11 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
       select
         'video'::text as record_kind,
         v.id::text as id,
+        ${videoBackendAccountId}::text as backend_account_id,
+        coalesce(
+          ${videoBackendAccountName},
+          backend_account.name
+        )::text as backend_account_name,
         u.id::text as user_id,
         u.email::text as user_email,
         v.prompt::text as prompt,
@@ -246,6 +277,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         0::integer as kind_rank
       from video_generation v
       inner join "user" u on u.id = v.user_id
+      left join image_backend_member backend_account
+        on backend_account.id = ${videoBackendAccountId}
       where ${booleanSql(input.type === null || input.type === "video")}
         and ${buildDatePredicate(input, sql`v.created_at`)}
         and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
@@ -258,6 +291,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
     select
       record_kind,
       id,
+      backend_account_id,
+      backend_account_name,
       user_id,
       user_email,
       prompt,
@@ -346,7 +381,14 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
         extractExecuteRows(await db.execute(buildAdminHistoryListSql(query)))
       );
     return rows.map((row) => {
+      const backendAccount = row.backend_account_id
+        ? {
+            id: row.backend_account_id,
+            name: row.backend_account_name?.trim().slice(0, 240) || null,
+          }
+        : null;
       const common = {
+        backendAccount,
         id: row.id,
         userId: row.user_id,
         userEmail: row.user_email,

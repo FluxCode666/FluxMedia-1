@@ -50,6 +50,8 @@ describe("admin history repository SQL", () => {
         {
           record_kind: "video",
           id: "video-1",
+          backend_account_id: "backend-video",
+          backend_account_name: "Video supplier",
           user_id: "user-1",
           user_email: "member@example.com",
           prompt: "video prompt",
@@ -87,6 +89,10 @@ describe("admin history repository SQL", () => {
 
     expect(record).toEqual(
       expect.objectContaining({
+        backendAccount: {
+          id: "backend-video",
+          name: "Video supplier",
+        },
         model: "seedance2",
         duration: 8,
         generateAudio: false,
@@ -106,6 +112,16 @@ describe("admin history repository SQL", () => {
 
     expect(compiled.sql).toContain('inner join "user" u on u.id = g.user_id');
     expect(compiled.sql).toContain('inner join "user" u on u.id = v.user_id');
+    expect(compiled.sql).toContain(
+      "left join image_backend_member backend_account"
+    );
+    expect(compiled.sql).toContain("g.metadata::jsonb)->'backend'->>'id'");
+    expect(compiled.sql).toContain("g.metadata::jsonb)->'backend'->>'name'");
+    expect(compiled.sql).toContain("v.backend_member_id");
+    expect(compiled.sql).toContain("v.api_adapter_member_id");
+    expect(compiled.sql).toContain("v.metadata::jsonb)->'backend'->>'id'");
+    expect(compiled.sql).toContain("v.metadata::jsonb)->'backend'->>'name'");
+    expect(compiled.sql).toContain("backend_account.name");
     expect(compiled.sql).toContain("u.email::text as user_email");
     expect(compiled.sql).toContain("union all");
     expect(compiled.sql).toContain("order by g.created_at desc, g.id desc");

@@ -43,6 +43,7 @@ import {
   createRuntimeBackendSession,
   type RuntimeBackendSession,
 } from "@/features/image-backend-pool/runtime-service";
+import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import {
   buildGenerationBillingPolicy,
   type GenerationBillingPolicy,
@@ -779,10 +780,11 @@ function buildBackendExecutionMetadata(params: {
   billingPolicy: GenerationBillingPolicy;
 }) {
   const backend = params.config.backend || { type: "platform" as const };
+  const backendAccount = buildBackendAccountSnapshot(backend);
   return {
     backend: {
       type: backend.type,
-      id: backend.id,
+      ...(backendAccount ?? {}),
       groupId: backend.groupId,
       useCredits: params.useCredits,
       baseUrl: params.config.baseUrl,
@@ -828,19 +830,42 @@ function getCurrentImageApiAdapterSnapshot(session: RuntimeBackendSession): {
 }
 
 /**
- * 在每次可能外呼前把当前成员/版本写入 pending 图片任务。
+ * 在每次可能外呼前把当前供应商账号与 API 版本写入 pending 图片任务。
  *
  * WHY：请求脚本失败允许在尚未外呼时换号；因此不能只在任务创建时固定首个候选，
- * 必须在实际尝试前随当前租约更新。CAS 未命中时停止，避免已终态任务继续外呼。
+ * 必须在实际尝试前随当前租约更新名称和 ID。CAS 未命中时停止，避免已终态任务
+ * 继续外呼；非 FK 元数据快照保证账号删除后仍能追溯实际调用者。
  */
-async function pinPendingImageApiAdapterSnapshot(
+async function pinPendingImageBackendSnapshot(
   generationId: string,
   session: RuntimeBackendSession
 ): Promise<void> {
-  const snapshot = getCurrentImageApiAdapterSnapshot(session);
+  const apiAdapterSnapshot = getCurrentImageApiAdapterSnapshot(session);
+  const lease = session.current;
+  const backendAccount = buildBackendAccountSnapshot({
+    id: lease?.memberId,
+    name: lease?.acquisition.member.name,
+  });
+  if (!backendAccount) {
+    throw new Error("图片后端租约缺少可追溯的供应商账号身份");
+  }
   const pinned = await db
     .update(generation)
-    .set(snapshot)
+    .set({
+      ...apiAdapterSnapshot,
+      metadata: sql`jsonb_set(
+        COALESCE(${generation.metadata}, '{}'::json)::jsonb,
+        '{backend}',
+        (
+          case
+            when jsonb_typeof((${generation.metadata}::jsonb)->'backend') = 'object'
+            then (${generation.metadata}::jsonb)->'backend'
+            else '{}'::jsonb
+          end
+        ) || ${JSON.stringify(backendAccount)}::jsonb,
+        true
+      )`,
+    })
     .where(
       and(eq(generation.id, generationId), eq(generation.status, "pending"))
     )
@@ -1412,7 +1437,7 @@ async function runQueuedImageGenerationForUser({
       IMAGE_GENERATION_PENDING_TIMEOUT_MS - (Date.now() - startedAt)
     );
     const commonSignal = AbortSignal.timeout(remainingMs);
-    await pinPendingImageApiAdapterSnapshot(generationId, session);
+    await pinPendingImageBackendSnapshot(generationId, session);
     return input.mode === "edit"
       ? await editImage(
           activeConfig,

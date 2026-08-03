@@ -68,6 +68,7 @@ import {
   submitApiVideoRequest,
 } from "./api-video";
 import { ApiAcceptedVideoError } from "./api-video-error";
+import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import { createVideoCreditOperation } from "./credit-operation-context";
 import { loadMediaInputs } from "./media-input-loader";
 import { defaultVideoApiKeyQuotaRepository } from "./video-api-key-quota";
@@ -584,15 +585,23 @@ function createLeaseApiAdapterSnapshot(
   return { apiAdapterMemberId, apiAdapterVersionId };
 }
 
-/** 将获租协议与 API 提交时可信源合并进任务 metadata。 */
+/** 将供应商账号、获租协议与 API 提交时可信源合并进任务 metadata。 */
 function createLeaseVideoBackendMetadata(
   metadata: Record<string, unknown> | null,
   lease: NonNullable<
     Awaited<ReturnType<typeof createRuntimeBackendSession>>["current"]
   >
 ): Record<string, unknown> {
+  const backendAccount = buildBackendAccountSnapshot({
+    id: lease.memberId,
+    name: lease.acquisition.member.name,
+  });
+  if (!backendAccount) {
+    throw new Error("视频后端租约缺少可追溯的供应商账号身份");
+  }
   return {
     ...(metadata ?? {}),
+    backend: backendAccount,
     videoBackendProtocol: getLeaseVideoBackendProtocol(lease),
     apiVideoTrustedOrigin:
       lease.memberType === "api"
@@ -1060,6 +1069,7 @@ async function submitClaimedCreatedVideo(
       memberLeaseId: initialLease.acquisition.lease.id,
       memberLeaseOwnerToken: initialLease.acquisition.lease.ownerToken,
       ...createLeaseApiAdapterSnapshot(initialLease),
+      metadata: createLeaseVideoBackendMetadata(row.metadata, initialLease),
       claimToken: liveClaimToken,
       claimExpiresAt: new Date(chargedAt.getTime() + VIDEO_CLAIM_TTL_MS),
     },

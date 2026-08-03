@@ -82,8 +82,8 @@ export default async function DashboardAdminHistoryPage({
         </h1>
         <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
           {copy(
-            "Review image and video generations across the system, including their user email and ID.",
-            "查看系统中的图片与视频生成记录，并按所属用户邮箱、ID 和任务信息追溯。"
+            "Review image and video generations across the system, including their user and supplier account identity.",
+            "查看系统中的图片与视频生成记录，并按所属用户及供应商账号名称、ID 追溯。"
           )}
         </p>
       </header>

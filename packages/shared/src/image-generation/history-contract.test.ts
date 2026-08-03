@@ -142,7 +142,7 @@ describe("history contract", () => {
     ).toBe(false);
   });
 
-  it("requires user email and ID only in the admin history output", () => {
+  it("requires user and backend account identity only in the admin history output", () => {
     const record = {
       kind: "image" as const,
       id: "record-1",
@@ -161,6 +161,23 @@ describe("history contract", () => {
       completedAt: null,
     };
     expect(
+      historyListOutputSchema.safeParse({
+        asOf: "2026-07-22T02:00:00.000Z",
+        records: [
+          {
+            ...record,
+            backendAccount: {
+              id: "backend-1",
+              name: "Primary supplier",
+            },
+          },
+        ],
+        modelOptions: [],
+        nextCursor: null,
+        previousCursor: null,
+      }).success
+    ).toBe(false);
+    expect(
       adminHistoryListOutputSchema.safeParse({
         asOf: "2026-07-22T02:00:00.000Z",
         records: [record],
@@ -176,6 +193,10 @@ describe("history contract", () => {
         records: [
           {
             ...record,
+            backendAccount: {
+              id: "backend-1",
+              name: "Primary supplier",
+            },
             userId: "user-1",
             userEmail: "member@example.com",
           },
@@ -184,7 +205,13 @@ describe("history contract", () => {
         userOptions: [{ id: "user-1", email: "member@example.com" }],
         nextCursor: null,
         previousCursor: null,
-      }).records[0]?.userEmail
-    ).toBe("member@example.com");
+      }).records[0]
+    ).toMatchObject({
+      backendAccount: {
+        id: "backend-1",
+        name: "Primary supplier",
+      },
+      userEmail: "member@example.com",
+    });
   });
 });

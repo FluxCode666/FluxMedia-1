@@ -324,7 +324,7 @@ defineOperation({
   title: "获取全局统一生成历史",
   description:
     "按创建日期、用户邮箱、模型、状态与产物类型读取全站图片/视频历史。" +
-    "仅三档人工管理员可调用，返回受控的所属用户邮箱与 ID、模型选项和双向 keyset cursor。",
+    "仅三档人工管理员可调用，返回受控的所属用户与供应商账号身份、模型选项和双向 keyset cursor。",
   input: adminHistoryListInputSchema,
   output: adminHistoryListOutputSchema,
   access: {

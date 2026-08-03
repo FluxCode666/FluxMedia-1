@@ -76,6 +76,10 @@ export interface AdminHistoryListQuery {
 }
 
 interface AdminHistoryRowCommon {
+  backendAccount: {
+    id: string;
+    name: string | null;
+  } | null;
   id: string;
   userId: string;
   userEmail: string;

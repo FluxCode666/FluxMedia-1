@@ -144,6 +144,7 @@ export interface ApiConfig {
   backend?: {
     type: "platform" | "pool-api" | "pool-adobe";
     id?: string;
+    name?: string;
     groupId?: string | null;
     userId?: string;
     apiKeyId?: string;

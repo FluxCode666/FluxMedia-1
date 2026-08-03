@@ -61,6 +61,10 @@ const ImageLightbox = dynamic(
 export type HistoryRecordStatus = "processing" | "completed" | "failed";
 
 type HistoryRecordBase = {
+  backendAccount?: {
+    id: string;
+    name: string | null;
+  } | null;
   completedAt: string | null;
   createdAt: string;
   creditsConsumed: number;
@@ -238,7 +242,7 @@ export function HistoryClient({
   const hasPreviousPage = Boolean(previousCursor);
   const hasNextPage = Boolean(nextCursor);
   const desktopGridColumns = showUserColumns
-    ? "lg:grid-cols-[minmax(200px,1fr)_minmax(160px,0.8fr)_228px_64px_minmax(220px,1fr)_76px_160px_124px_104px_96px]"
+    ? "lg:grid-cols-[minmax(200px,1fr)_minmax(160px,0.8fr)_minmax(220px,1fr)_228px_64px_minmax(220px,1fr)_76px_160px_124px_104px_96px]"
     : "lg:grid-cols-[228px_64px_minmax(220px,1fr)_76px_160px_124px_104px_96px]";
 
   useEffect(() => {
@@ -304,7 +308,7 @@ export function HistoryClient({
           <div className="overflow-x-auto">
             <div
               className={
-                showUserColumns ? "lg:min-w-[1550px]" : "lg:min-w-[1180px]"
+                showUserColumns ? "lg:min-w-[1780px]" : "lg:min-w-[1180px]"
               }
             >
               <div
@@ -314,6 +318,12 @@ export function HistoryClient({
                   <>
                     <div>{copy("User email", "用户邮箱")}</div>
                     <div>{copy("User ID", "用户 ID")}</div>
+                    <div>
+                      {copy(
+                        "Supplier account (name / ID)",
+                        "供应商账号（名称 / ID）"
+                      )}
+                    </div>
                   </>
                 ) : null}
                 <div>{copy("Date", "日期")}</div>
@@ -352,6 +362,20 @@ export function HistoryClient({
                               title={item.userId}
                             >
                               {item.userId ?? "—"}
+                            </div>
+                            <div className="hidden min-w-0 lg:block">
+                              <p
+                                className="truncate text-xs text-foreground"
+                                title={item.backendAccount?.name ?? undefined}
+                              >
+                                {item.backendAccount?.name ?? "—"}
+                              </p>
+                              <p
+                                className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground"
+                                title={item.backendAccount?.id}
+                              >
+                                {item.backendAccount?.id ?? "—"}
+                              </p>
                             </div>
                           </>
                         ) : null}
@@ -432,6 +456,18 @@ export function HistoryClient({
                             <p className="mt-1 break-all font-mono text-[10px] leading-tight text-muted-foreground lg:hidden">
                               {copy("User ID", "用户 ID")}: {item.userId}
                             </p>
+                          ) : null}
+                          {showUserColumns ? (
+                            <div className="mt-1 space-y-0.5 text-[10px] leading-tight text-muted-foreground lg:hidden">
+                              <p className="break-words">
+                                {copy("Supplier account", "供应商账号")}:{" "}
+                                {item.backendAccount?.name ?? "—"}
+                              </p>
+                              <p className="break-all font-mono">
+                                {copy("Account ID", "账号 ID")}:{" "}
+                                {item.backendAccount?.id ?? "—"}
+                              </p>
+                            </div>
                           ) : null}
                           <p className="mt-1 text-[11px] leading-tight text-muted-foreground lg:hidden">
                             {formatCredits(item.creditsConsumed)}

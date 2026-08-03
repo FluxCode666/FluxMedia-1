@@ -174,17 +174,27 @@ export const historyRecordSchema = z.discriminatedUnion("kind", [
   videoHistoryRecordSchema,
 ]);
 
-/** 管理端图片记录，附带所属用户的受控身份字段。 */
+/** 管理端可见的供应商账号身份；不包含凭据、地址或运行状态。 */
+export const adminHistoryBackendAccountSchema = z
+  .object({
+    id: z.string().min(1).max(512),
+    name: z.string().trim().min(1).max(240).nullable(),
+  })
+  .strict();
+
+/** 管理端图片记录，附带所属用户和供应商账号的受控身份字段。 */
 export const adminImageHistoryRecordSchema = imageHistoryRecordSchema
   .safeExtend({
+    backendAccount: adminHistoryBackendAccountSchema.nullable(),
     userId: z.string().min(1).max(512),
     userEmail: adminHistoryUserEmailSchema,
   })
   .strict();
 
-/** 管理端视频记录，附带所属用户的受控身份字段。 */
+/** 管理端视频记录，附带所属用户和供应商账号的受控身份字段。 */
 export const adminVideoHistoryRecordSchema = videoHistoryRecordSchema
   .safeExtend({
+    backendAccount: adminHistoryBackendAccountSchema.nullable(),
     userId: z.string().min(1).max(512),
     userEmail: adminHistoryUserEmailSchema,
   })
@@ -215,7 +225,7 @@ export const historyListOutputSchema = z
   })
   .strict();
 
-/** 管理端全局历史输出；仅管理员 UOL 可返回用户邮箱和 ID。 */
+/** 管理端全局历史输出；仅管理员 UOL 可返回用户与供应商账号身份。 */
 export const adminHistoryListOutputSchema = z
   .object({
     asOf: isoDateTimeSchema,

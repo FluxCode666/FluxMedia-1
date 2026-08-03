@@ -416,6 +416,7 @@ async function loadRuntimeBackendLease(
 
   const commonBackend = {
     id: row.member_id,
+    name: acquisition.member.name,
     groupId: group.id,
     userId: input.userId,
     ...(input.apiKeyId ? { apiKeyId: input.apiKeyId } : {}),
