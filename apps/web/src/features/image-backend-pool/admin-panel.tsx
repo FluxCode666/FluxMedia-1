@@ -4,8 +4,8 @@
  * 统一媒体后端号池管理面板。
  *
  * 职责：在单一页面加载和展示分组及 `api | adobe` 统一成员，打开对应编辑表单、
- * 执行运行状态重置和安全删除，并展示 Adobe direct 成员的一对一凭据状态。注册机、
- * Sub2API、Web/Codex 账号、子号池和旧三池分页不再进入此组件。
+ * 就地修改成员启用状态、执行运行状态重置和安全删除，并展示 Adobe direct 成员的
+ * 一对一凭据状态。注册机、Sub2API、Web/Codex 账号、子号池和旧三池分页不再进入此组件。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
@@ -20,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@repo/ui/components/card";
+import { Switch } from "@repo/ui/components/switch";
 import {
   Activity,
   Boxes,
@@ -33,7 +34,7 @@ import {
   Users,
 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { getModelConfigurationAction } from "@/features/model-configuration/actions";
@@ -42,6 +43,7 @@ import {
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
   resetImageBackendMemberStatusAction,
+  setImageBackendMemberEnabledAction,
 } from "./actions";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
@@ -203,6 +205,11 @@ export function ImageBackendPoolAdminPanel({
   const [resettingMemberId, setResettingMemberId] = useState<string | null>(
     null
   );
+  const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+  const pendingMemberEnabledRef = useRef<{
+    id: string;
+    previous: boolean;
+  } | null>(null);
 
   const { execute: loadPool, isPending: isLoading } = useAction(
     getAdminImageBackendPoolAction,
@@ -266,6 +273,32 @@ export function ImageBackendPoolAdminPanel({
         toast.error(error.serverError || "重置账号运行状态失败");
       },
     });
+  const { execute: setMemberEnabled, isPending: isUpdatingMember } = useAction(
+    setImageBackendMemberEnabledAction,
+    {
+      onSuccess: ({ data }) => {
+        pendingMemberEnabledRef.current = null;
+        setUpdatingMemberId(null);
+        toast.success(data?.isEnabled ? "账号已启用" : "账号已停用");
+        loadPool();
+      },
+      onError: ({ error }) => {
+        const pending = pendingMemberEnabledRef.current;
+        if (pending) {
+          setMembers((current) =>
+            current.map((member) =>
+              member.id === pending.id
+                ? { ...member, isEnabled: pending.previous }
+                : member
+            )
+          );
+        }
+        pendingMemberEnabledRef.current = null;
+        setUpdatingMemberId(null);
+        toast.error(error.serverError || "修改账号启用状态失败");
+      },
+    }
+  );
 
   useEffect(() => {
     loadPool();
@@ -325,6 +358,26 @@ export function ImageBackendPoolAdminPanel({
     }
     setEditingMember(null);
     setMemberDialogOpen(true);
+  }
+
+  /** 乐观更新列表中的开关；失败时恢复原值并提示管理员。 */
+  function handleMemberEnabledChange(
+    member: BackendMemberAdminSummary,
+    isEnabled: boolean
+  ): void {
+    // WHY：ref 在 React 下一次渲染前也能同步挡住快速双击，避免并发请求互相回滚。
+    if (pendingMemberEnabledRef.current) return;
+    pendingMemberEnabledRef.current = {
+      id: member.id,
+      previous: member.isEnabled,
+    };
+    setUpdatingMemberId(member.id);
+    setMembers((current) =>
+      current.map((item) =>
+        item.id === member.id ? { ...item, isEnabled } : item
+      )
+    );
+    setMemberEnabled({ id: member.id, isEnabled });
   }
 
   return (
@@ -514,11 +567,33 @@ export function ImageBackendPoolAdminPanel({
                 <CardAction className="flex flex-wrap justify-end gap-1">
                   {!readOnly && (
                     <>
+                      <div className="flex items-center gap-2 px-2 text-sm">
+                        <span>启用</span>
+                        <Switch
+                          checked={member.isEnabled}
+                          disabled={
+                            isUpdatingMember ||
+                            isResettingMember ||
+                            isDeletingMember
+                          }
+                          aria-busy={
+                            isUpdatingMember && updatingMemberId === member.id
+                          }
+                          aria-label={`启用账号“${member.name}”`}
+                          onCheckedChange={(isEnabled) =>
+                            handleMemberEnabledChange(member, isEnabled)
+                          }
+                        />
+                      </div>
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={isResettingMember || isDeletingMember}
+                        disabled={
+                          isUpdatingMember ||
+                          isResettingMember ||
+                          isDeletingMember
+                        }
                         aria-busy={
                           isResettingMember && resettingMemberId === member.id
                         }
@@ -546,7 +621,11 @@ export function ImageBackendPoolAdminPanel({
                         type="button"
                         size="icon"
                         variant="ghost"
-                        disabled={isResettingMember || isDeletingMember}
+                        disabled={
+                          isUpdatingMember ||
+                          isResettingMember ||
+                          isDeletingMember
+                        }
                         onClick={() => {
                           setEditingMember(member);
                           setMemberDialogOpen(true);
@@ -559,7 +638,11 @@ export function ImageBackendPoolAdminPanel({
                         type="button"
                         size="icon"
                         variant="ghost"
-                        disabled={isDeletingMember || isResettingMember}
+                        disabled={
+                          isUpdatingMember ||
+                          isDeletingMember ||
+                          isResettingMember
+                        }
                         onClick={() => {
                           if (
                             window.confirm(`确认删除成员“${member.name}”？`)

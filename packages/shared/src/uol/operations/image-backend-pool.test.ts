@@ -1,5 +1,5 @@
 /**
- * 账号池 UOL 计费与成员管理契约测试。
+ * 账号池 UOL 计费、成员管理与启用状态契约测试。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -19,6 +19,7 @@ import {
   resetMemberStatus,
   saveGroup,
   saveMember,
+  setMemberEnabled,
   testApiUpstreamAdapter,
 } from "./image-backend-pool";
 import "./external-api";
@@ -214,6 +215,26 @@ describe("image backend pool pricing operations", () => {
     expect(resetMemberStatus.readOnly).toBe(false);
     expect(resetMemberStatus.destructive).toBe(false);
     expect(resetMemberStatus.idempotency).toEqual({ kind: "natural" });
+  });
+
+  it("成员启用开关使用最小输入并声明为自然幂等写操作", () => {
+    expect(
+      setMemberEnabled.input.safeParse({
+        id: "member-a",
+        isEnabled: false,
+      }).success
+    ).toBe(true);
+    expect(
+      setMemberEnabled.input.safeParse({
+        id: "member-a",
+        isEnabled: false,
+        memberType: "api",
+      }).success
+    ).toBe(false);
+    expect(setMemberEnabled.readOnly).toBe(false);
+    expect(setMemberEnabled.destructive).toBe(false);
+    expect(setMemberEnabled.idempotency).toEqual({ kind: "natural" });
+    expect(setMemberEnabled.sideEffects).toEqual(["audit"]);
   });
 
   it("API 适配脚本测试与运行诊断是仅限人工的进程内 UOL operation", () => {

@@ -1,8 +1,8 @@
 /**
  * 账号池 Server Action 薄适配测试。
  *
- * 职责：证明 API 上游脚本测试和进程诊断只从真实管理员上下文构造 Principal，
- * 唯一委托对应 UOL operation；测试不加载领域服务、Worker 或数据库。
+ * 职责：证明 API 上游脚本测试、进程诊断和成员启用状态修改只从真实管理员上下文构造
+ * Principal，唯一委托对应 UOL operation；测试不加载领域服务、Worker 或数据库。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -47,6 +47,7 @@ vi.mock("@/server/uol-init", () => ({
 
 import {
   getApiUpstreamRuntimeDiagnosticsAction,
+  setImageBackendMemberEnabledAction,
   testApiUpstreamAdapterAction,
 } from "./actions";
 
@@ -114,6 +115,27 @@ describe("image backend pool actions", () => {
         userId: "super-admin-1",
         role: "super_admin",
       }
+    );
+  });
+
+  it("修改成员启用状态只调用对应 UOL operation 并刷新管理页", async () => {
+    const input = { id: "member-a", isEnabled: false };
+    const output = { id: "member-a", isEnabled: false };
+    mocks.invokeOperation.mockResolvedValue(output);
+
+    await expect(
+      (setImageBackendMemberEnabledAction as unknown as MockAction)({
+        parsedInput: input,
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toEqual({ success: true, ...output });
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.setMemberEnabled",
+      input,
+      { type: "user", userId: "admin-1", role: "admin" }
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/dashboard/admin/settings"
     );
   });
 });

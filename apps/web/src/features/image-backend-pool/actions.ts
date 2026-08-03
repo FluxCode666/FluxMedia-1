@@ -1,6 +1,5 @@
 "use server";
 
-import { getUserRoleById } from "@repo/shared/auth/role-server";
 /**
  * 统一媒体后端号池 Server Actions。
  *
@@ -8,6 +7,11 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
  * 并刷新管理页面。数据库、凭据和分组不变量全部由 operation
  * binding 后的领域服务负责。
  */
+import { getUserRoleById } from "@repo/shared/auth/role-server";
+import {
+  apiUpstreamAdapterOperationIdSchema,
+  apiUpstreamJsonValueSchema,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
   type BackendGroupInput,
   type BackendGroupSummary,
@@ -17,10 +21,6 @@ import {
   type BackendMemberInput,
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
-import {
-  apiUpstreamAdapterOperationIdSchema,
-  apiUpstreamJsonValueSchema,
-} from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
   ActionUserError,
   adminAction,
@@ -53,6 +53,7 @@ type PoolOperationOutputs = {
   "pool.deleteGroup": { success: boolean };
   "pool.saveMember": { id: string };
   "pool.resetMemberStatus": { success: boolean };
+  "pool.setMemberEnabled": { id: string; isEnabled: boolean };
   "pool.deleteMember": { success: boolean };
   "pool.testApiUpstreamAdapter": { preview: unknown };
   "pool.getApiUpstreamRuntimeDiagnostics": {
@@ -71,6 +72,10 @@ type PoolOperationOutputs = {
 type PoolOperationName = keyof PoolOperationOutputs;
 
 const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
+
+const setMemberEnabledSchema = idSchema
+  .extend({ isEnabled: z.boolean() })
+  .strict();
 
 const apiUpstreamAdapterTestInputSchema = z
   .object({
@@ -172,6 +177,24 @@ export const resetImageBackendMemberStatusAction = adminAction
     });
     revalidateBackendPoolPage();
     return { success: true };
+  });
+
+/** 修改统一成员启用状态；停用只阻止新任务获租，不中断进行中的任务。 */
+export const setImageBackendMemberEnabledAction = adminAction
+  .metadata({ action: "imageBackendPool.setMemberEnabled" })
+  .schema(setMemberEnabledSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const result = await invokePoolOperation(
+      "pool.setMemberEnabled",
+      parsedInput,
+      {
+        type: "user",
+        userId: ctx.userId,
+        role: ctx.role,
+      }
+    );
+    revalidateBackendPoolPage();
+    return { success: true, ...result };
   });
 
 /** 按统一成员 ID 删除没有租约或未完成视频任务的成员。 */

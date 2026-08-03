@@ -314,6 +314,34 @@ export const resetMemberStatus = defineOperation({
   },
 });
 
+/** 修改统一成员是否参与后续调度；不影响凭据、运行指标或当前租约。 */
+export const setMemberEnabled = defineOperation({
+  name: "pool.setMemberEnabled",
+  domain: "image-backend-pool",
+  title: "修改账号启用状态",
+  description: "原子修改统一成员的启用状态，停用后不再获取新的任务租约。",
+  input: z
+    .object({
+      id: z.string().trim().min(1).max(128),
+      isEnabled: z.boolean(),
+    })
+    .strict(),
+  output: z
+    .object({
+      id: z.string(),
+      isEnabled: z.boolean(),
+    })
+    .strict(),
+  access: poolWriteAccess,
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["audit"],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.setMemberEnabled");
+  },
+});
+
 /** 删除统一成员；有效租约或非终态视频任务存在时实现层必须拒绝。 */
 export const deleteMember = defineOperation({
   name: "pool.deleteMember",

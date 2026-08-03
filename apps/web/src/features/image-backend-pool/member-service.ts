@@ -2,7 +2,7 @@
  * 统一媒体后端成员服务。
  *
  * 职责：校验 `api | adobe` 成员契约和 HTTP(S) URL，在单一仓储事务中保存公共成员、
- * 恰好一个类型配置及全部分组关系，并提供脱敏管理快照与安全删除。
+ * 恰好一个类型配置及全部分组关系，并提供脱敏管理快照、启用状态修改与安全删除。
  * 使用方：UOL pool operations 与管理后台；secret 永不出现在读取 DTO 中。
  */
 import { normalizeCookieString } from "@repo/shared/adobe/firefly-direct";
@@ -23,9 +23,8 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
-
-import { parseMediaUpstreamUrl } from "./media-upstream-url";
 import { validateApiUpstreamScript } from "./api-upstream-script-runtime";
+import { parseMediaUpstreamUrl } from "./media-upstream-url";
 
 /** 成员服务可稳定映射到 UOL 的错误码。 */
 export type BackendMemberServiceErrorCode =
@@ -173,6 +172,9 @@ export type DeleteBackendMemberRepositoryResult =
 /** 手动重置成员运行状态的稳定仓储结果。 */
 export type ResetBackendMemberStatusRepositoryResult = "reset" | "not_found";
 
+/** 成员启用状态写入仓储返回的稳定结果。 */
+export type SetBackendMemberEnabledRepositoryResult = "updated" | "not_found";
+
 /** 成员服务依赖的事务仓储端口。 */
 export interface BackendMemberRepository {
   saveMember(
@@ -184,6 +186,11 @@ export interface BackendMemberRepository {
     memberId: string,
     now: Date
   ): Promise<ResetBackendMemberStatusRepositoryResult>;
+  setMemberEnabled(
+    memberId: string,
+    isEnabled: boolean,
+    now: Date
+  ): Promise<SetBackendMemberEnabledRepositoryResult>;
   deleteMember(
     memberId: string,
     now: Date
@@ -215,6 +222,10 @@ export interface BackendMemberService {
   }>;
   listMembers(): Promise<BackendMemberAdminSummary[]>;
   resetMemberStatus(memberId: string): Promise<{ success: true }>;
+  setMemberEnabled(
+    memberId: string,
+    isEnabled: boolean
+  ): Promise<{ id: string; isEnabled: boolean }>;
   deleteMember(memberId: string): Promise<{ success: true }>;
 }
 
@@ -465,6 +476,21 @@ export function createBackendMemberService(
         throw new BackendMemberServiceError("not_found", "媒体后端成员不存在");
       }
       return { success: true };
+    },
+
+    /** 校验成员 ID 并原子修改其启用状态。 */
+    async setMemberEnabled(memberId, isEnabled) {
+      const id = z.string().trim().min(1).max(128).parse(memberId);
+      const enabled = z.boolean().parse(isEnabled);
+      const result = await dependencies.repository.setMemberEnabled(
+        id,
+        enabled,
+        now()
+      );
+      if (result === "not_found") {
+        throw new BackendMemberServiceError("not_found", "媒体后端成员不存在");
+      }
+      return { id, isEnabled: enabled };
     },
 
     async deleteMember(memberId) {
@@ -1250,6 +1276,17 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       .where(eq(imageBackendMember.id, memberId))
       .returning({ id: imageBackendMember.id });
     return reset.length > 0 ? "reset" : "not_found";
+  },
+
+  /** 原子修改成员启用状态；当前租约继续由调度器按原有生命周期处理。 */
+  async setMemberEnabled(memberId, isEnabled, now) {
+    const { db, imageBackendMember } = await import("@repo/database");
+    const updated = await db
+      .update(imageBackendMember)
+      .set({ isEnabled, updatedAt: now })
+      .where(eq(imageBackendMember.id, memberId))
+      .returning({ id: imageBackendMember.id });
+    return updated.length > 0 ? "updated" : "not_found";
   },
 
   async deleteMember(memberId, now) {

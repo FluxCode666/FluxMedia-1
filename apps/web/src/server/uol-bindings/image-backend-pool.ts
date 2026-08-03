@@ -1,7 +1,7 @@
 /**
  * 统一媒体后端号池 UOL late binding。
  *
- * 职责：把分组、成员、API 上游脚本测试和进程诊断绑定到共享 operation；
+ * 职责：把分组、成员启停、API 上游脚本测试和进程诊断绑定到共享 operation；
  * 管理 Action 只调用 UOL，本模块是唯一可接触领域服务和生产 Worker 的适配层。
  */
 
@@ -55,7 +55,11 @@ export interface ImageBackendPoolBindingDependencies {
   >;
   memberService: Pick<
     typeof backendMemberService,
-    "listMembers" | "saveMember" | "resetMemberStatus" | "deleteMember"
+    | "listMembers"
+    | "saveMember"
+    | "resetMemberStatus"
+    | "setMemberEnabled"
+    | "deleteMember"
   >;
   readModelConfiguration(
     principal: Principal
@@ -254,9 +258,8 @@ export async function executeApiUpstreamAdapterTestBinding(
             rawOutput
           );
     if (input.stage === "request") {
-      const requestSample = apiUpstreamRequestInputSchema.parse(
-        tokenizedSample
-      );
+      const requestSample =
+        apiUpstreamRequestInputSchema.parse(tokenizedSample);
       assertApiUpstreamOpaqueValuesPreserved(
         {
           query: "query" in parsed ? parsed.query : requestSample.query,
@@ -378,6 +381,21 @@ bindExecute("pool.resetMemberStatus", async (input: { id: string }) => {
     throwBackendPoolOperationError(error);
   }
 });
+
+/** 原子修改成员启用状态，并保留当前租约及运行指标。 */
+bindExecute(
+  "pool.setMemberEnabled",
+  async (input: { id: string; isEnabled: boolean }) => {
+    try {
+      return await defaultDependencies.memberService.setMemberEnabled(
+        input.id,
+        input.isEnabled
+      );
+    } catch (error) {
+      throwBackendPoolOperationError(error);
+    }
+  }
+);
 
 /** 按统一成员 ID 执行运行中任务保护删除。 */
 bindExecute("pool.deleteMember", async (input: { id: string }) => {
