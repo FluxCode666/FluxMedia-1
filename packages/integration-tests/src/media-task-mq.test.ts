@@ -17,19 +17,17 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import {
   type ImageTaskJobData,
+  imageTaskJobDataSchema,
   MEDIA_TASK_JOB_NAME,
   MEDIA_TASK_QUEUE_NAMES,
   MEDIA_TASK_QUEUE_PREFIX,
   type VideoTaskJobData,
+  videoTaskJobDataSchema,
 } from "../../../apps/web/src/server/media-task-queue-contract";
 import {
   enqueueImageTask,
   enqueueVideoTask,
 } from "../../../apps/web/src/server/media-task-queues";
-import {
-  processImageTaskJob,
-  processVideoTaskJob,
-} from "../../../apps/web/src/server/media-task-workers";
 import { requireDedicatedTestRedisConnection } from "./test-redis-connection";
 
 const TEST_REDIS_ENVIRONMENT_VARIABLE = "MEDIA_TASK_MQ_TEST_REDIS_URL";
@@ -89,7 +87,8 @@ describe("media task BullMQ Redis integration", () => {
     >(
       MEDIA_TASK_QUEUE_NAMES.image,
       async (job) => {
-        await processImageTaskJob(job.data, { processTask });
+        const data = imageTaskJobDataSchema.parse(job.data);
+        await processTask(data.taskId);
       },
       {
         connection: copyConnection(workerConnection),
@@ -159,7 +158,6 @@ describe("media task BullMQ Redis integration", () => {
       prefix,
     });
     const processTask = vi.fn().mockResolvedValue(null);
-    const enqueueTask = vi.fn().mockResolvedValue(undefined);
     const worker = new Worker<
       VideoTaskJobData,
       void,
@@ -167,7 +165,8 @@ describe("media task BullMQ Redis integration", () => {
     >(
       MEDIA_TASK_QUEUE_NAMES.video,
       async (job) => {
-        await processVideoTaskJob(job.data, { processTask, enqueueTask });
+        const data = videoTaskJobDataSchema.parse(job.data);
+        await processTask(data.taskId);
       },
       {
         connection: copyConnection(workerConnection),
@@ -190,7 +189,6 @@ describe("media task BullMQ Redis integration", () => {
         () => expect(processTask).toHaveBeenCalledWith("video-delayed"),
         { timeout: 5_000, interval: 20 }
       );
-      expect(enqueueTask).not.toHaveBeenCalled();
     } finally {
       await worker.close(true);
       await destroyTestQueue(queue);
@@ -214,7 +212,8 @@ describe("media task BullMQ Redis integration", () => {
     const worker = new Worker<unknown, void, typeof MEDIA_TASK_JOB_NAME>(
       MEDIA_TASK_QUEUE_NAMES.image,
       async (job) => {
-        await processImageTaskJob(job.data, { processTask });
+        const data = imageTaskJobDataSchema.parse(job.data);
+        await processTask(data.taskId);
       },
       {
         connection: copyConnection(workerConnection),
