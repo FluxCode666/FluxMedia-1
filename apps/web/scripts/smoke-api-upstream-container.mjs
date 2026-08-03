@@ -1,9 +1,9 @@
 /**
- * API 上游 Worker 最终 runner 镜像的容器 smoke。
+ * API 上游 Worker 与媒体 MQ 最终 runner 镜像的容器 smoke。
  *
  * 使用方：CI 在已加载临时镜像后调用。先以镜像默认非 root 用户导入
- * 生产迁移预检并执行真实 QuickJS 作业，再启动最终 CMD 并验证 SIGTERM
- * 可在 Compose 同等的 30 秒宽限内结束进程。
+ * 生产迁移预检并执行真实 QuickJS 作业，再通过临时 Redis 启动最终 CMD，验证
+ * BullMQ 连接和 SIGTERM 可在 Compose 同等的 30 秒宽限内结束进程。
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -11,6 +11,11 @@ import { pathToFileURL } from "node:url";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const DOCKER_COMMAND_TIMEOUT_MS = 60_000;
+const REDIS_READY_ATTEMPTS = 20;
+const REDIS_READY_INTERVAL_MS = 250;
+const RUNNER_START_SETTLE_MS = 1_000;
+const SMOKE_REDIS_IMAGE = "redis:7.4-alpine";
+const SMOKE_REDIS_PASSWORD = "container-smoke-redis-password";
 
 /** 只暴露稳定代码的容器 smoke 错误。 */
 class ApiUpstreamContainerSmokeError extends Error {
@@ -120,6 +125,35 @@ function assertWorkerSmokeOutput(output) {
 }
 
 /**
+ * 等待临时 Redis 完成启动和密码认证。
+ *
+ * @param {string} containerName 当前 smoke 创建的 Redis 容器名。
+ * @returns {Promise<void>} 收到 PONG 后返回。
+ * @throws {ApiUpstreamContainerSmokeError} 有界重试耗尽时拒绝继续启动 Web。
+ */
+async function waitForRedisReady(containerName) {
+  for (let attempt = 0; attempt < REDIS_READY_ATTEMPTS; attempt += 1) {
+    const result = await runDocker(
+      [
+        "exec",
+        containerName,
+        "redis-cli",
+        "-a",
+        SMOKE_REDIS_PASSWORD,
+        "--no-auth-warning",
+        "ping",
+      ],
+      { allowFailure: true }
+    );
+    if (result.exitCode === 0 && result.stdout.trim() === "PONG") return;
+    await new Promise((resolve) =>
+      setTimeout(resolve, REDIS_READY_INTERVAL_MS)
+    );
+  }
+  throw new ApiUpstreamContainerSmokeError("redis_not_ready");
+}
+
+/**
  * 运行完整镜像 smoke，并在所有失败路径删除临时容器。
  *
  * @param {string} image 已由 Docker build 加载的本地镜像引用。
@@ -165,14 +199,37 @@ export async function runApiUpstreamContainerSmoke(image) {
   ]);
   assertWorkerSmokeOutput(workerResult.stdout);
 
-  const containerName = `fluxmedia-api-adapter-smoke-${randomUUID().slice(0, 8)}`;
+  const suffix = randomUUID().slice(0, 8);
+  const containerName = `fluxmedia-api-adapter-smoke-${suffix}`;
+  const redisContainerName = `fluxmedia-media-mq-smoke-${suffix}`;
+  const networkName = `fluxmedia-container-smoke-${suffix}`;
   try {
+    await runDocker(["network", "create", networkName]);
+    await runDocker([
+      "run",
+      "--detach",
+      "--name",
+      redisContainerName,
+      "--network",
+      networkName,
+      SMOKE_REDIS_IMAGE,
+      "redis-server",
+      "--save",
+      "",
+      "--appendonly",
+      "no",
+      "--requirepass",
+      SMOKE_REDIS_PASSWORD,
+    ]);
+    await waitForRedisReady(redisContainerName);
     await runDocker([
       "run",
       "--detach",
       "--init",
       "--name",
       containerName,
+      "--network",
+      networkName,
       "--env",
       "DATABASE_URL=postgresql://smoke:smoke@127.0.0.1:1/smoke",
       "--env",
@@ -187,8 +244,23 @@ export async function runApiUpstreamContainerSmoke(image) {
       "API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB=32",
       "--env",
       "API_UPSTREAM_SCRIPT_STACK_LIMIT_KB=512",
+      "--env",
+      `REDIS_HOST=${redisContainerName}`,
+      "--env",
+      "REDIS_PORT=6379",
+      "--env",
+      `REDIS_PASSWORD=${SMOKE_REDIS_PASSWORD}`,
+      "--env",
+      "REDIS_DB=15",
+      "--env",
+      "REDIS_TLS=false",
+      "--env",
+      "MEDIA_IMAGE_WORKER_CONCURRENCY=1",
+      "--env",
+      "MEDIA_VIDEO_WORKER_CONCURRENCY=1",
       image,
     ]);
+    await new Promise((resolve) => setTimeout(resolve, RUNNER_START_SETTLE_MS));
     const running = await runDocker([
       "inspect",
       "--format",
@@ -210,6 +282,12 @@ export async function runApiUpstreamContainerSmoke(image) {
     }
   } finally {
     await runDocker(["rm", "--force", containerName], {
+      allowFailure: true,
+    }).catch(() => undefined);
+    await runDocker(["rm", "--force", redisContainerName], {
+      allowFailure: true,
+    }).catch(() => undefined);
+    await runDocker(["network", "rm", networkName], {
       allowFailure: true,
     }).catch(() => undefined);
   }
