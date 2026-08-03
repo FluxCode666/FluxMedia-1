@@ -86,6 +86,24 @@ describe("media input reference contract", () => {
     expect(mediaInputReferencesSchema.safeParse(oversized).success).toBe(false);
   });
 
+  it("校验大体积 base64 时不会耗尽正则调用栈", () => {
+    const base64 = "A".repeat(5_000_000);
+    const input = {
+      source: "data",
+      mimeType: "image/png",
+      base64,
+      byteLength: 3_750_000,
+    };
+
+    expect(mediaInputReferenceSchema.safeParse(input).success).toBe(true);
+    expect(
+      mediaInputReferenceSchema.safeParse({
+        ...input,
+        base64: `${base64.slice(0, -1)}!`,
+      }).success
+    ).toBe(false);
+  });
+
   it("具名任务输入清单只接受 storage 并保持首尾帧与参考图互斥", () => {
     const storage = {
       source: "storage" as const,

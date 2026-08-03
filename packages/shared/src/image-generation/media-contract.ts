@@ -26,11 +26,45 @@ const mediaByteLengthSchema = z
   .int()
   .positive()
   .max(MAX_MEDIA_INPUT_BYTES);
+const MAX_BASE64_LENGTH = Math.ceil(MAX_MEDIA_INPUT_BYTES / 3) * 4;
+
+/**
+ * 以线性扫描校验标准 base64，避免对数 MB 输入执行重复分组正则而耗尽 V8 调用栈。
+ *
+ * @param value - 不含 data URL 前缀的待校验文本。
+ * @returns 字符集、四字符分组和末尾 padding 均合法时返回 true。
+ * @sideEffects 无。
+ * @failure 不抛错；非法输入返回 false，超限输入在字符扫描前快速拒绝。
+ */
+function isStandardBase64(value: string): boolean {
+  if (
+    value.length < 4 ||
+    value.length > MAX_BASE64_LENGTH ||
+    value.length % 4 !== 0
+  ) {
+    return false;
+  }
+
+  const paddingLength = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const contentLength = value.length - paddingLength;
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const isBase64Character =
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) ||
+      code === 43 ||
+      code === 47;
+    if (!isBase64Character) return false;
+  }
+  return true;
+}
+
 const base64Schema = z
   .string()
   .min(4)
-  .max(Math.ceil((MAX_MEDIA_INPUT_BYTES * 4) / 3) + 4)
-  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+  .max(MAX_BASE64_LENGTH)
+  .refine(isStandardBase64, "Invalid base64 data");
 
 /** 计算标准 base64 文本实际表示的字节数。 */
 function getBase64ByteLength(value: string): number {
