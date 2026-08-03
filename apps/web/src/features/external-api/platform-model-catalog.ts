@@ -58,6 +58,10 @@ export interface PlatformModelCatalogSource {
   capabilityMinimums: PlatformModelCapabilityMinimums;
   groups: readonly PlatformModelCatalogGroup[];
   members: readonly PlatformModelCatalogMember[];
+  customModels?: ReadonlyArray<{
+    modelId: string;
+    category: "image" | "video";
+  }>;
 }
 
 const NON_EXECUTABLE_IMAGE_MODEL_IDS = new Set(["auto", "default", "unknown"]);
@@ -118,6 +122,12 @@ export function buildPlatformModelCatalog(
   const plansByGroupId = buildReachablePlans(source);
   const imageModels = new Map<string, string>();
   const videoModels = new Map<string, string>();
+  const customCategories = new Map(
+    (source.customModels ?? []).map((model) => [
+      model.modelId.trim().toLowerCase(),
+      model.category,
+    ])
+  );
 
   for (const member of source.members) {
     if (!member.isEnabled || member.status === "error") continue;
@@ -136,14 +146,23 @@ export function buildPlatformModelCatalog(
     const canGenerateVideos = plans.some((plan) =>
       isPlanAtLeast(plan, source.capabilityMinimums.externalVideosGenerate)
     );
-    const canExecuteVideo =
-      member.type === "adobe" && member.adobeMode === "direct";
-
     for (const rawModelId of member.supportedModelIds) {
+      const customCategory = customCategories.get(
+        rawModelId.trim().toLowerCase()
+      );
       const videoModelId = normalizeVideoModelId(rawModelId);
-      if (videoModelId) {
+      if (customCategory === "video" || videoModelId) {
+        const canExecuteVideo =
+          customCategory === "video"
+            ? member.type === "api"
+            : member.type === "adobe" && member.adobeMode === "direct";
         if (canGenerateVideos && canExecuteVideo) {
-          addModel(videoModels, videoModelId);
+          addModel(
+            videoModels,
+            customCategory === "video"
+              ? rawModelId
+              : (videoModelId ?? rawModelId)
+          );
         }
         continue;
       }

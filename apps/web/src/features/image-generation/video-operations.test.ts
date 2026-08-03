@@ -135,6 +135,36 @@ describe("video recovery policies", () => {
 });
 
 describe("video execution contract", () => {
+  it("从任务快照恢复自定义 API 视频模型与注册分辨率", () => {
+    const contract = resolveVideoExecutionContract({
+      model: "vendor-video-x",
+      durationSeconds: 12,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+      metadata: {
+        generateAudio: false,
+        videoCapabilitySnapshot: {
+          version: 1,
+          modelConfigurationRevision: 3,
+          maxReferenceImages: 0,
+          customModel: {
+            modelId: "vendor-video-x",
+            supportedResolutions: ["720p", "1080p"],
+          },
+        },
+      },
+    });
+
+    expect(contract).toMatchObject({
+      model: "vendor-video-x",
+      billingFamily: "vendor-video-x",
+      duration: 12,
+      resolution: "1080p",
+      frameCapability: "none",
+      effectiveAudio: false,
+    });
+  });
+
   it("用真实 Seedance ID、独立参数和创建时二十张上限恢复提交事实", () => {
     const contract = resolveVideoExecutionContract({
       model: "seedance2",

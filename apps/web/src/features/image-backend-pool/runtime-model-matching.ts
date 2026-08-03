@@ -4,8 +4,8 @@
  * 使用方：runtime-service 在访问数据库前固定调度身份。图像保持既有任意真实模型 ID
  * 语义；视频只接受全局目录中的真实 ID，不解析供应商前缀、参数复合 ID或历史别名。
  */
+import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
-
 /**
  * 规范一次运行时调度请求的模型 ID。
  *
@@ -18,9 +18,10 @@ export function normalizeRuntimeRequestedModelId(input: {
   requestKind: "image" | "video";
   modelId: string;
 }): string | null {
-  if (input.requestKind === "video") {
-    return normalizeVideoModelId(input.modelId);
-  }
   const modelId = input.modelId.trim();
+  if (input.requestKind === "video") {
+    if (isLegacyVideoModelId(modelId)) return null;
+    return normalizeVideoModelId(modelId) ?? (modelId || null);
+  }
   return modelId || null;
 }

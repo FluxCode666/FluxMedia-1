@@ -9,6 +9,7 @@
 import { videoInputManifestSchema } from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import {
+  type ModelMarketplaceCustomModel,
   parseModelMarketplaceConfig,
   resolveModelMarketplaceEntry,
 } from "@repo/shared/model-marketplace";
@@ -16,6 +17,7 @@ import {
   getRuntimeSettingJson,
   getRuntimeSettingString,
 } from "@repo/shared/system-settings";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -26,6 +28,7 @@ import {
 import {
   normalizeVideoGenerateInputForReplay,
   resolveCanonicalVideoGenerateInput,
+  resolveCustomVideoGenerateInput,
   type VideoGenerateInput,
   videoGetInputs,
   videoListCapabilities,
@@ -274,23 +277,40 @@ bindExecute(
     // 身份命中，不能被管理员后续降限改写为新的 validation_error。
     let canonicalResult: ReturnType<typeof resolveCanonicalVideoGenerateInput>;
     let modelConfigurationRevision: number;
+    let customModelDefinition: ModelMarketplaceCustomModel | undefined;
     try {
       const [capabilityOverrides, marketplaceConfigValue] = await Promise.all([
         getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES"),
         getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
       ]);
-      canonicalResult = resolveCanonicalVideoGenerateInput(
-        input,
-        capabilityOverrides
-      );
       const marketplaceConfig = parseModelMarketplaceConfig(
         marketplaceConfigValue
       );
+      const customModel = marketplaceConfig.customModels.find(
+        (model) =>
+          model.category === "video" &&
+          model.modelId.toLowerCase() === input.model.toLowerCase()
+      );
+      customModelDefinition = customModel;
+      if (!customModel && !normalizeVideoModelId(input.model)) {
+        throw new OperationError(
+          "validation_error",
+          "视频模型不在当前模型配置中",
+          { field: "model" }
+        );
+      }
+      canonicalResult = customModel
+        ? resolveCustomVideoGenerateInput(
+            { ...input, model: customModel.modelId },
+            customModel.supportedResolutions
+          )
+        : resolveCanonicalVideoGenerateInput(input, capabilityOverrides);
       modelConfigurationRevision = resolveModelMarketplaceEntry(
-        marketplaceConfig.videoByFamily[input.model],
+        marketplaceConfig.videoByFamily[customModel?.modelId ?? input.model],
         "video"
       ).revision;
     } catch (error) {
+      if (error instanceof OperationError) throw error;
       logError(error, { source: "video-capability-validation" });
       throw new OperationError("not_ready", "视频模型能力配置暂时不可用");
     }
@@ -298,11 +318,13 @@ bindExecute(
       throw new OperationError(
         "validation_error",
         canonicalResult.error.message,
-        {
-          field: canonicalResult.error.field,
-          maximum: canonicalResult.error.maximum,
-          received: canonicalResult.error.received,
-        }
+        canonicalResult.error.code === "too_many_reference_images"
+          ? {
+              field: canonicalResult.error.field,
+              maximum: canonicalResult.error.maximum,
+              received: canonicalResult.error.received,
+            }
+          : { field: canonicalResult.error.field }
       );
     }
     const canonicalInput = canonicalResult.input;
@@ -310,6 +332,14 @@ bindExecute(
       modelConfigurationRevision,
       maxReferenceImages:
         canonicalResult.capability.input.referenceImages.maxCount,
+      ...(customModelDefinition
+        ? {
+            customModel: {
+              modelId: customModelDefinition.modelId,
+              supportedResolutions: customModelDefinition.supportedResolutions,
+            },
+          }
+        : {}),
     });
     const inputManifest = {
       ...(canonicalInput.firstFrame

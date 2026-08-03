@@ -56,4 +56,17 @@ describe("filterExternalMemberModelIds", () => {
       })
     ).toEqual(["gpt-image-2"]);
   });
+
+  it("API 成员只把注册的自定义视频模型发布到视频目录", () => {
+    expect(
+      filterExternalMemberModelIds({
+        memberType: "api",
+        adobeMode: null,
+        supportedModelIds: ["vendor-video-x", "vendor-image-x"],
+        imageAllowed: true,
+        videoAllowed: true,
+        customVideoModelIds: new Set(["vendor-video-x"]),
+      })
+    ).toEqual(["vendor-video-x", "vendor-image-x"]);
+  });
 });

@@ -12,6 +12,7 @@ import { getOperation } from "../registry";
 import {
   normalizeVideoGenerateInputForReplay,
   resolveCanonicalVideoGenerateInput,
+  resolveCustomVideoGenerateInput,
   videoGenerate,
   videoGenerateInputSchema,
   videoGetInputs,
@@ -41,7 +42,7 @@ const seedanceRequest = {
 } as const;
 
 describe("video generation operations", () => {
-  it("要求真实模型 ID、三个独立参数和 Principal 作用域请求键", () => {
+  it("要求模型 ID、三个独立参数和 Principal 作用域请求键", () => {
     expect(videoGenerateInputSchema.safeParse(seedanceRequest).success).toBe(
       true
     );
@@ -56,19 +57,37 @@ describe("video generation operations", () => {
         false
       );
     }
-    for (const model of [
-      "firefly-seedance2-15s-9x16-480p",
-      "seedance2-15s-9x16-480p",
-      "kling3-10s-16x9",
-      "unknown-video-model",
-    ]) {
-      expect(
-        videoGenerateInputSchema.safeParse({
-          ...seedanceRequest,
-          model,
-        }).success
-      ).toBe(false);
-    }
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...seedanceRequest,
+        model: "vendor-video-x",
+      }).success
+    ).toBe(true);
+  });
+
+  it("自定义视频只接受注册分辨率和纯文本输入", () => {
+    const parsed = videoGenerateInputSchema.parse({
+      ...seedanceRequest,
+      model: "vendor-video-x",
+      resolution: "1080p",
+    });
+    expect(
+      resolveCustomVideoGenerateInput(parsed, ["720p", "1080p"])
+    ).toMatchObject({
+      ok: true,
+      capability: {
+        modelId: "vendor-video-x",
+        resolutions: ["720p", "1080p"],
+        input: { frames: "none" },
+        audio: { supported: false },
+      },
+    });
+    expect(
+      resolveCustomVideoGenerateInput(
+        { ...parsed, resolution: "4k" },
+        ["720p", "1080p"]
+      )
+    ).toMatchObject({ ok: false, error: { field: "resolution" } });
   });
 
   it("按真实描述符拒绝非法时长、比例和分辨率组合", () => {

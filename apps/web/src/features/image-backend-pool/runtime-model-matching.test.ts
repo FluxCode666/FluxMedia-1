@@ -24,6 +24,15 @@ describe("normalizeRuntimeRequestedModelId", () => {
     ).toBe("seedance2-fast");
   });
 
+  it("视频保留模型配置已经裁决的自定义精确 ID", () => {
+    expect(
+      normalizeRuntimeRequestedModelId({
+        requestKind: "video",
+        modelId: " vendor-video-x ",
+      })
+    ).toBe("vendor-video-x");
+  });
+
   it.each([
     "firefly-seedance2",
     "firefly-seedance2-15s-9x16-480p",

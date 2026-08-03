@@ -26,6 +26,7 @@ describe("loadPlatformModelCatalog", () => {
     await expect(
       loadPlatformModelCatalog({
         loadCapabilityMatrix: async () => capabilityMatrix,
+        loadMarketplaceConfig: async () => null,
         repository: {
           listGroups: async () => [
             {
@@ -58,6 +59,7 @@ describe("loadPlatformModelCatalog", () => {
     await expect(
       loadPlatformModelCatalog({
         loadCapabilityMatrix: async () => capabilityMatrix,
+        loadMarketplaceConfig: async () => null,
         repository: {
           listGroups: async () => {
             throw failure;

@@ -12,11 +12,13 @@ import {
   normalizeSubscriptionPlan,
   type SubscriptionPlan,
 } from "@repo/shared/config/subscription-plan";
+import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import type {
   PlanCapabilityKey,
   PlanCapabilityMatrix,
 } from "@repo/shared/subscription/services/plan-capabilities";
 import { getPlanCapabilityMatrix } from "@repo/shared/subscription/services/plan-capabilities";
+import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import { asc } from "drizzle-orm";
 
 import { backendMemberService } from "@/features/image-backend-pool/member-service";
@@ -39,6 +41,7 @@ export interface PlatformModelCatalogRepository {
 export interface PlatformModelCatalogServiceDependencies {
   repository: PlatformModelCatalogRepository;
   loadCapabilityMatrix(): Promise<PlanCapabilityMatrix>;
+  loadMarketplaceConfig(): Promise<unknown>;
 }
 
 /** 从动态能力矩阵读取媒体目录所需的最低套餐。 */
@@ -117,14 +120,21 @@ export async function loadPlatformModelCatalog(
     overrides.repository ?? databasePlatformModelCatalogRepository;
   const loadCapabilityMatrix =
     overrides.loadCapabilityMatrix ?? getPlanCapabilityMatrix;
-  const [groups, members, capabilityMatrix] = await Promise.all([
-    repository.listGroups(),
-    repository.listMembers(),
-    loadCapabilityMatrix(),
-  ]);
+  const loadMarketplaceConfig =
+    overrides.loadMarketplaceConfig ??
+    (() => getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"));
+  const [groups, members, capabilityMatrix, marketplaceConfigValue] =
+    await Promise.all([
+      repository.listGroups(),
+      repository.listMembers(),
+      loadCapabilityMatrix(),
+      loadMarketplaceConfig(),
+    ]);
+  const marketplaceConfig = parseModelMarketplaceConfig(marketplaceConfigValue);
   return buildPlatformModelCatalog({
     groups,
     members,
     capabilityMinimums: toCapabilityMinimums(capabilityMatrix),
+    customModels: marketplaceConfig.customModels,
   });
 }

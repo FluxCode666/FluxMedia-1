@@ -11,14 +11,14 @@ import {
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
+import { isLegacyVideoModelId } from "../../image-backend/supported-models";
 import {
   resolveEffectiveVideoModelCapability,
+  resolveVideoModelCapability,
   type VideoModelCapabilityDescriptor,
   validateVideoModelParameters,
   videoAspectRatioSchema,
   videoListCapabilitiesOutputSchema,
-  videoModelIdSchema,
-  videoResolutionSchema,
 } from "../../video-generation";
 import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
@@ -29,16 +29,32 @@ export {
 } from "../../video-generation/public-capabilities";
 
 /** video.generate 的传输无关输入契约。 */
+export const videoRequestedModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .refine(
+    (modelId) => !isLegacyVideoModelId(modelId),
+    "Video model must use an exact configured ID"
+  );
+export const videoRequestedResolutionSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+
 export const videoGenerateInputSchema = z
   .object({
     clientRequestId: z.string().trim().min(1).max(128),
     prompt: z.string().trim().min(1).max(100_000),
     negativePrompt: z.string().max(100_000).optional(),
     generateAudio: z.boolean().optional(),
-    model: videoModelIdSchema,
+    model: videoRequestedModelIdSchema,
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,
-    resolution: videoResolutionSchema,
+    resolution: videoRequestedResolutionSchema,
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     firstFrame: mediaInputReferenceSchema.optional(),
     lastFrame: mediaInputReferenceSchema.optional(),
@@ -48,6 +64,9 @@ export const videoGenerateInputSchema = z
   .superRefine((input, context) => {
     const parameters = validateVideoModelParameters(input);
     if (!parameters.ok) {
+      // WHY：未知 ID 可能是管理员注册的自定义视频模型，其动态分辨率能力必须在 Web
+      // binding 读取版本化配置后校验；内置模型的参数错误仍在共享边界立即拒绝。
+      if (parameters.error.code === "unsupported_model") return;
       context.addIssue({
         code: "custom",
         message: parameters.error.message,
@@ -125,21 +144,44 @@ export type CanonicalVideoGenerateInput = Omit<
   generateAudio: boolean;
 };
 
-/** Seedance 动态参考图上限失败的稳定结构。 */
-export type VideoGenerateCapabilityError = {
-  code: "too_many_reference_images";
-  field: "referenceImages";
-  message: string;
-  maximum: number;
-  received: number;
+/** 新任务解析后供统一视频管线消费的最小能力描述符。 */
+export type VideoGenerateRuntimeCapability = Omit<
+  VideoModelCapabilityDescriptor,
+  "modelId" | "billingFamily" | "resolutions"
+> & {
+  readonly modelId: string;
+  readonly billingFamily: string;
+  readonly resolutions: readonly string[];
 };
+
+/** Seedance 动态参考图上限失败的稳定结构。 */
+export type VideoGenerateCapabilityError =
+  | {
+      code: "too_many_reference_images";
+      field: "referenceImages";
+      message: string;
+      maximum: number;
+      received: number;
+    }
+  | {
+      code: "unsupported_resolution";
+      field: "resolution";
+      message: string;
+      received: string;
+      allowed: readonly string[];
+    }
+  | {
+      code: "unsupported_custom_input";
+      field: "firstFrame" | "lastFrame" | "referenceImages" | "generateAudio";
+      message: string;
+    };
 
 /** 动态能力解析结果；设置脏值继续由 Zod 显式抛出，不能静默回退。 */
 export type CanonicalVideoGenerateInputResult =
   | {
       ok: true;
       input: CanonicalVideoGenerateInput;
-      capability: VideoModelCapabilityDescriptor;
+      capability: VideoGenerateRuntimeCapability;
     }
   | { ok: false; error: VideoGenerateCapabilityError };
 
@@ -154,13 +196,12 @@ export type CanonicalVideoGenerateInputResult =
 export function normalizeVideoGenerateInputForReplay(
   input: VideoGenerateInput
 ): CanonicalVideoGenerateInput {
-  const capability = resolveEffectiveVideoModelCapability(
-    input.model,
-    undefined
-  );
+  const resolved = resolveVideoModelCapability(input.model);
   return {
     ...input,
-    generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
+    generateAudio:
+      input.generateAudio ??
+      (resolved.ok ? resolved.capability.audio.defaultEnabled : false),
   };
 }
 
@@ -200,6 +241,77 @@ export function resolveCanonicalVideoGenerateInput(
     input: {
       ...input,
       generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
+    },
+  };
+}
+
+/**
+ * 应用管理员注册的自定义视频分辨率能力。
+ *
+ * 自定义模型只允许 API 上游执行，因此平台不猜测供应商专属帧、参考图或声音能力；这些
+ * 能力默认关闭。时长与比例继续使用公开基础类型并交给账号适配脚本映射。
+ *
+ * @param input - 已通过通用视频请求 schema 的输入。
+ * @param supportedResolutions - 当前版本化模型定义声明的分辨率。
+ * @returns 分辨率与输入模式合法时返回规范输入和可持久化能力。
+ * @sideEffects 无。
+ * @failure 不抛错；非法分辨率或媒体输入返回稳定 validation 结构。
+ */
+export function resolveCustomVideoGenerateInput(
+  input: VideoGenerateInput,
+  supportedResolutions: readonly string[]
+): CanonicalVideoGenerateInputResult {
+  if (!supportedResolutions.includes(input.resolution)) {
+    return {
+      ok: false,
+      error: {
+        code: "unsupported_resolution",
+        field: "resolution",
+        message: `This video model does not support resolution ${input.resolution}`,
+        received: input.resolution,
+        allowed: [...supportedResolutions],
+      },
+    };
+  }
+  const referenceCount = input.referenceImages?.length ?? 0;
+  if (
+    input.firstFrame ||
+    input.lastFrame ||
+    referenceCount > 0 ||
+    input.generateAudio === true
+  ) {
+    const field = input.firstFrame
+      ? "firstFrame"
+      : input.lastFrame
+        ? "lastFrame"
+        : referenceCount > 0
+          ? "referenceImages"
+          : "generateAudio";
+    return {
+      ok: false,
+      error: {
+        code: "unsupported_custom_input",
+        field,
+        message: "Custom video models only support text input",
+      },
+    };
+  }
+  return {
+    ok: true,
+    input: { ...input, generateAudio: false },
+    capability: {
+      modelId: input.model,
+      displayName: input.model,
+      billingFamily: input.model,
+      durations: [input.duration],
+      aspectRatios: [input.aspectRatio],
+      resolutions: [...supportedResolutions],
+      input: {
+        frames: "none",
+        referenceImages: { maxCount: 0, configurable: false },
+        framesAndReferencesMutuallyExclusive: true,
+      },
+      audio: { supported: false, defaultEnabled: false },
     },
   };
 }
@@ -387,10 +499,10 @@ export const videoGetStatus = defineOperation({
       "completed",
       "failed",
     ]),
-    model: videoModelIdSchema,
+    model: videoRequestedModelIdSchema,
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,
-    resolution: videoResolutionSchema,
+    resolution: videoRequestedResolutionSchema,
     generateAudio: z.boolean(),
     input: videoInputSummarySchema,
     progress: z.number().min(0).max(100).optional(),

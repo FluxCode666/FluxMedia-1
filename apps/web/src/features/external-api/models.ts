@@ -9,6 +9,7 @@ import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
 } from "@repo/shared/image-backend/supported-models";
+import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { and, asc, eq } from "drizzle-orm";
@@ -73,12 +74,23 @@ export function filterExternalMemberModelIds(input: {
   supportedModelIds: readonly string[];
   imageAllowed: boolean;
   videoAllowed: boolean;
+  customVideoModelIds?: ReadonlySet<string>;
 }): string[] {
-  const canExecuteVideo =
-    input.memberType === "adobe" && input.adobeMode === "direct";
   return input.supportedModelIds.filter((modelId) => {
+    const isCustomVideo = input.customVideoModelIds?.has(
+      modelId.trim().toLowerCase()
+    );
     const videoModelId = normalizeVideoModelId(modelId);
-    if (videoModelId) return input.videoAllowed && canExecuteVideo;
+    if (isCustomVideo) {
+      return input.videoAllowed && input.memberType === "api";
+    }
+    if (videoModelId) {
+      return (
+        input.videoAllowed &&
+        input.memberType === "adobe" &&
+        input.adobeMode === "direct"
+      );
+    }
     return input.imageAllowed && !isLegacyVideoModelId(modelId);
   });
 }
@@ -133,17 +145,26 @@ export async function getExternalModelsForApiKey(
   apiKeyId: string,
   plan: SubscriptionPlan
 ): Promise<OpenAIModelList> {
-  const [groupId, capabilities, members] = await Promise.all([
-    resolveApiKeyGenerationGroup(userId, apiKeyId),
-    getPlanCapabilitySnapshot(plan),
-    backendMemberService.listMembers(),
-  ]);
+  const [groupId, capabilities, members, marketplaceConfigValue] =
+    await Promise.all([
+      resolveApiKeyGenerationGroup(userId, apiKeyId),
+      getPlanCapabilitySnapshot(plan),
+      backendMemberService.listMembers(),
+      import("@repo/shared/system-settings").then(({ getRuntimeSettingJson }) =>
+        getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG")
+      ),
+    ]);
   if (!groupId) return { object: "list", data: [] };
 
   const imageAllowed =
     capabilities.features["externalApi.images.generate"] === true;
   const videoAllowed =
     capabilities.features["externalApi.videos.generate"] === true;
+  const customVideoModelIds = new Set(
+    parseModelMarketplaceConfig(marketplaceConfigValue)
+      .customModels.filter((model) => model.category === "video")
+      .map((model) => model.modelId.toLowerCase())
+  );
   const modelIds = mergeExternalModelIds(
     ...members
       .filter(
@@ -159,6 +180,7 @@ export async function getExternalModelsForApiKey(
           supportedModelIds: member.supportedModelIds,
           imageAllowed,
           videoAllowed,
+          customVideoModelIds,
         });
       })
   );

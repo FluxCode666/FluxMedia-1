@@ -9,10 +9,10 @@ import { withApiLogging } from "@repo/shared/api-logger";
 import { MAX_MEDIA_INPUT_COUNT } from "@repo/shared/image-generation/media-contract";
 import { invokeOperation, OperationError } from "@repo/shared/uol";
 import {
-  videoAspectRatioSchema,
-  videoModelIdSchema,
-  videoResolutionSchema,
-} from "@repo/shared/video-generation";
+  videoRequestedModelIdSchema,
+  videoRequestedResolutionSchema,
+} from "@repo/shared/uol/operations/video-generation";
+import { videoAspectRatioSchema } from "@repo/shared/video-generation";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
@@ -71,12 +71,12 @@ const externalVideoSchema = z
       .string()
       .min(1)
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-    model: videoModelIdSchema,
+    model: videoRequestedModelIdSchema,
     duration: z.number().int().positive().optional(),
     duration_seconds: z.number().int().positive().optional(),
     aspectRatio: videoAspectRatioSchema.optional(),
     aspect_ratio: videoAspectRatioSchema.optional(),
-    resolution: videoResolutionSchema,
+    resolution: videoRequestedResolutionSchema,
     negativePrompt: z.string().max(8_000).optional(),
     negative_prompt: z.string().max(8_000).optional(),
     generateAudio: z.boolean().optional(),

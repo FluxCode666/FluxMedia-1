@@ -165,6 +165,26 @@ describe("buildPlatformModelCatalog", () => {
       )
     ).toEqual({ image: [], video: [] });
   });
+
+  it("按自定义注册类型把 API 成员模型发布为视频而不是图像", () => {
+    expect(
+      buildPlatformModelCatalog(
+        source({
+          customModels: [{ modelId: "vendor-video-x", category: "video" }],
+          members: [
+            {
+              groupIds: ["default-group"],
+              type: "api",
+              adobeMode: null,
+              supportedModelIds: ["vendor-video-x"],
+              isEnabled: true,
+              status: "active",
+            },
+          ],
+        })
+      )
+    ).toEqual({ image: [], video: [{ id: "vendor-video-x" }] });
+  });
 });
 
 describe("isConcretePlatformImageModelId", () => {

@@ -846,9 +846,12 @@ export async function runVideoGenerationForUser(
     };
   }
   const provider = resolveFireflyVideoProviderModel(contract.model);
-  if (!provider) {
-    return { error: `不支持的视频模型: ${input.model}` };
-  }
+  // WHY：自定义视频只允许 API 成员执行，但历史表仍要求非空 Adobe profile；使用不会
+  // 触发 Adobe 请求的固定占位值，真正的成员类型在获租后再次裁决。
+  const persistedProvider = provider ?? {
+    webApp: "express" as const,
+    authProfile: "express" as const,
+  };
   const persistedInputManifest = input.inputManifest
     ? videoInputManifestSchema.parse(input.inputManifest)
     : undefined;
@@ -919,8 +922,8 @@ export async function runVideoGenerationForUser(
       principalScope: input.principalScope,
       usageLogVisible: true,
       model: contract.model,
-      adobeRequestProfile: provider.webApp,
-      adobeAuthProfile: provider.authProfile,
+      adobeRequestProfile: persistedProvider.webApp,
+      adobeAuthProfile: persistedProvider.authProfile,
       prompt: input.prompt,
       durationSeconds: contract.duration,
       aspectRatio: contract.aspectRatio,

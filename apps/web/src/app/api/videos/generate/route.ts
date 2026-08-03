@@ -12,10 +12,10 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { MAX_MEDIA_INPUT_COUNT } from "@repo/shared/image-generation/media-contract";
 import { invokeOperation, type Principal } from "@repo/shared/uol";
 import {
-  videoAspectRatioSchema,
-  videoModelIdSchema,
-  videoResolutionSchema,
-} from "@repo/shared/video-generation";
+  videoRequestedModelIdSchema,
+  videoRequestedResolutionSchema,
+} from "@repo/shared/uol/operations/video-generation";
+import { videoAspectRatioSchema } from "@repo/shared/video-generation";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
@@ -36,10 +36,10 @@ const generateVideoSchema = z
       .string()
       .min(1)
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-    model: videoModelIdSchema,
+    model: videoRequestedModelIdSchema,
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,
-    resolution: videoResolutionSchema,
+    resolution: videoRequestedResolutionSchema,
     negativePrompt: z.string().max(8000).optional(),
     generateAudio: z.boolean().optional(),
     firstFrame: videoInputImageDataUrlSchema.optional(),
