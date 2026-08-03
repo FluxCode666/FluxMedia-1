@@ -61,6 +61,8 @@ export interface ImageAsyncTaskBindingDependencies {
   createClaimToken(): string;
   now(): Date;
   reportGenerationFailure(error: unknown, taskId: string): void;
+  deliverCallback(task: ImageAsyncTaskRecord): Promise<void>;
+  reportCallbackFailure(error: unknown, taskId: string): void;
 }
 
 const defaultDependencies: ImageAsyncTaskBindingDependencies = {
@@ -100,6 +102,24 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
   reportGenerationFailure(error, taskId) {
     logError(error, {
       source: "image-async-task-generation",
+      taskId,
+    });
+  },
+  async deliverCallback(task) {
+    if (!task.callbackUrl) return;
+    const [{ buildImageAsyncTaskPublicResponse }, { postPublicAsyncImageCallback }] =
+      await Promise.all([
+        import("@/features/external-api/image-async-task-response"),
+        import("@/features/external-api/async-image-tasks"),
+      ]);
+    await postPublicAsyncImageCallback(
+      task.callbackUrl,
+      await buildImageAsyncTaskPublicResponse(task)
+    );
+  },
+  reportCallbackFailure(error, taskId) {
+    logError(error, {
+      source: "image-async-task-callback",
       taskId,
     });
   },
@@ -341,11 +361,22 @@ export async function executeImageProcessAsyncTaskBinding(
           claimToken,
           now: dependencies.now(),
         });
-    return toImageAsyncTaskOutput(
+    const finalTask =
       finished ??
-        (await dependencies.repository.findById(claimed.id)) ??
-        claimed
-    );
+      (await dependencies.repository.findById(claimed.id)) ??
+      claimed;
+    if (
+      finalTask.callbackUrl &&
+      (finalTask.status === "completed" || finalTask.status === "failed")
+    ) {
+      try {
+        await dependencies.deliverCallback(finalTask);
+      } catch (error) {
+        // 回调是生成后的外部通知，不得反向改写已经结算的图片和财务终态。
+        dependencies.reportCallbackFailure(error, finalTask.id);
+      }
+    }
+    return toImageAsyncTaskOutput(finalTask);
   } catch (error) {
     // WHY：配置或数据库等基础设施故障必须释放 claim 后抛给 BullMQ 重试；业务生成
     // 错误已在上方显式写 failed，不会进入此分支造成重复外呼。

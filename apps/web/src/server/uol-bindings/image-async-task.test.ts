@@ -106,6 +106,8 @@ function createDependencies(task = createTask()) {
     createClaimToken: vi.fn(() => "worker-1"),
     now: vi.fn(() => NOW),
     reportGenerationFailure: vi.fn(),
+    deliverCallback: vi.fn(async () => undefined),
+    reportCallbackFailure: vi.fn(),
   };
   return { calls, dependencies, repository };
 }
@@ -273,6 +275,9 @@ describe("image async task UOL bindings", () => {
     );
     expect(repository.complete).toHaveBeenCalledWith(
       expect.objectContaining({ taskId: "task_123", claimToken: "worker-1" })
+    );
+    expect(dependencies.deliverCallback).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "task_123", status: "completed" })
     );
   });
 

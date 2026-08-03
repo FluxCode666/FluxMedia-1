@@ -282,3 +282,30 @@ export async function postAsyncImageCallback(
     clearTimeout(timeout);
   }
 }
+
+/**
+ * 投递已去除身份和输入的持久图片任务公开回调。
+ *
+ * @param callbackUrl 已通过公网 HTTPS 校验的目标。
+ * @param payload 由持久响应组装器生成的公开 JSON-safe 响应。
+ * @returns 目标返回 2xx 后返回；超时、重定向到内网或非 2xx 时抛错。
+ */
+export async function postPublicAsyncImageCallback(
+  callbackUrl: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CALLBACK_TIMEOUT_MS);
+  try {
+    const response = await fetchPublicCallback(callbackUrl, {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Callback request failed with ${response.status}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
