@@ -19,6 +19,7 @@ import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout"
 import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 import { logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
+import { buildGeneratedImageStorageKey } from "@repo/shared/storage/bucket-config";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import {
@@ -699,7 +700,10 @@ async function storeGeneratedImageOutput(params: {
     imageBuffer,
     params.requestedFormat
   );
-  const storageKey = `${params.userId}/${nanoid(32)}.${storedFormat.extension}`;
+  const storageKey = buildGeneratedImageStorageKey(
+    params.userId,
+    `${nanoid(32)}.${storedFormat.extension}`
+  );
   let actualSize = params.requestedSize || DEFAULT_IMAGE_SIZE;
   let actualSizeDetected = false;
   const actualDimensions = getImageDimensionsFromBuffer(imageBuffer);
@@ -805,9 +809,7 @@ function buildModelMetadata(params: {
 }
 
 /** 从当前租约读取图片任务必须固定的 API 适配版本；非 API 成员保持空对。 */
-function getCurrentImageApiAdapterSnapshot(
-  session: RuntimeBackendSession
-): {
+function getCurrentImageApiAdapterSnapshot(session: RuntimeBackendSession): {
   apiAdapterMemberId: string | null;
   apiAdapterVersionId: string | null;
 } {

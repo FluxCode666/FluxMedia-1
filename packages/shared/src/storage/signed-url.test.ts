@@ -21,14 +21,8 @@ const TEST_SECRET = "test-secret-for-signing-do-not-use-in-prod";
 
 describe("signed-url", () => {
   const originalSecret = process.env.BETTER_AUTH_SECRET;
-  const originalAvatarBucket = process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME;
-  const originalGenerationsBucket =
-    process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME;
-
   beforeEach(() => {
     process.env.BETTER_AUTH_SECRET = TEST_SECRET;
-    delete process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME;
-    delete process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME;
   });
 
   afterEach(() => {
@@ -37,32 +31,12 @@ describe("signed-url", () => {
     } else {
       process.env.BETTER_AUTH_SECRET = originalSecret;
     }
-    if (originalAvatarBucket === undefined) {
-      delete process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME;
-    } else {
-      process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME = originalAvatarBucket;
-    }
-    if (originalGenerationsBucket === undefined) {
-      delete process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME;
-    } else {
-      process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME =
-        originalGenerationsBucket;
-    }
     vi.restoreAllMocks();
   });
 
   describe("isPublicBucket", () => {
-    it("默认 avatars 桶为公开桶", () => {
-      expect(isPublicBucket("avatars")).toBe(true);
-    });
-
     it("稳定头像逻辑别名始终是公开域", () => {
       expect(isPublicBucket("_avatars")).toBe(true);
-    });
-
-    it("配置的头像桶为公开桶", () => {
-      // isPublicBucket 在模块加载时读取 env，此测试验证默认值行为
-      expect(isPublicBucket("avatars")).toBe(true);
     });
 
     it("generations 桶不是公开桶", () => {
@@ -122,10 +96,11 @@ describe("signed-url", () => {
       );
     });
 
-    it("公开桶（avatars）不添加签名参数", () => {
+    it("实际 bucket 不在客户端模块中被静态判定为公开", () => {
       const url = generateSignedImageUrl("avatars", "user-1-123.jpg");
-      expect(url).toBe("/api/storage/avatars/user-1-123.jpg");
-      expect(url).not.toContain("?sig=");
+      expect(url).toMatch(
+        /^\/api\/storage\/avatars\/user-1-123\.jpg\?sig=[0-9a-f]{64}&exp=\d+$/
+      );
     });
 
     it("稳定头像逻辑别名不添加签名参数", () => {
@@ -136,26 +111,31 @@ describe("signed-url", () => {
   });
 
   describe("buildSignedStorageImageUrl", () => {
-    it("uses the default generations bucket when storageBucket is empty", () => {
+    it("缺少运行时 bucket 时安全返回空值", () => {
       const url = buildSignedStorageImageUrl("user-1/out.png", null);
-      expect(url).toMatch(
-        /^\/api\/storage\/generations\/user-1\/out\.png\?sig=[0-9a-f]{64}&exp=\d+$/
-      );
+      expect(url).toBeNull();
     });
 
-    it("uses the configured generations bucket when omitted", () => {
-      process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME = "custom-generations";
+    it("始终使用调用方显式提供的运行时 bucket", () => {
+      process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME = "build-generations";
 
-      const url = buildSignedStorageImageUrl("user-1/out.png");
+      const url = buildSignedStorageImageUrl(
+        "user-1/out.png",
+        "runtime-generations"
+      );
 
       expect(url).toMatch(
-        /^\/api\/storage\/custom-generations\/user-1\/out\.png\?sig=[0-9a-f]{64}&exp=\d+$/
+        /^\/api\/storage\/runtime-generations\/user-1\/out\.png\?sig=[0-9a-f]{64}&exp=\d+$/
       );
+      expect(url).not.toContain("build-generations");
     });
 
     it("keeps public bucket URLs unsigned", () => {
-      const url = buildSignedStorageImageUrl("user-1/avatar.png", "avatars");
-      expect(url).toBe("/api/storage/avatars/user-1/avatar.png");
+      const url = buildSignedStorageImageUrl(
+        "user-1/avatar.png",
+        "runtime-generations"
+      );
+      expect(url).toMatch(/^\/api\/storage\/runtime-generations\//);
     });
 
     it("returns null for empty keys", () => {

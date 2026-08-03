@@ -20,13 +20,10 @@ export type StorageImageReference = {
 
 /**
  * 不需要签名的公开桶名集合。
- * 头像资产所在 bucket 始终公开；它可以同时承载模型封面和品牌资产，但不能承载
- * generations 用户私有内容。
+ * 公开访问只允许稳定逻辑别名；实际系统资产 bucket 由服务端 Route 按运行时设置解析，
+ * 不能在客户端模块加载时快照环境变量。
  */
-const PUBLIC_BUCKETS = new Set([
-  PUBLIC_AVATAR_BUCKET_ALIAS,
-  process.env.NEXT_PUBLIC_AVATARS_BUCKET_NAME || "avatars",
-]);
+const PUBLIC_BUCKETS = new Set([PUBLIC_AVATAR_BUCKET_ALIAS]);
 
 /**
  * 判断桶是否为公开桶（不需要签名验证）

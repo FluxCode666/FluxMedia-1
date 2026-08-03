@@ -10,6 +10,7 @@ import {
   AdobeAcceptedVideoError,
   isRetryableStatus,
 } from "@repo/shared/adobe/firefly-direct";
+import { buildGeneratedVideoStorageKey } from "@repo/shared/storage/bucket-config";
 
 import { ApiAcceptedVideoError } from "./api-video-error";
 
@@ -44,7 +45,7 @@ export function resolveApiAdapterQueryFailure(
 
 /** 由用户和任务 ID 派生稳定对象键，worker 重放只覆盖同一对象。 */
 export function createVideoStorageKey(userId: string, videoId: string): string {
-  return `${userId}/videos/${videoId}.mp4`;
+  return buildGeneratedVideoStorageKey(userId, videoId);
 }
 
 /**

@@ -1,7 +1,7 @@
 /**
  * 存储 URL 签名工具（服务端专用，含 node:crypto）
  *
- * 为 generations 桶的图像 URL 提供短时签名机制，防止未授权访问。
+ * 为用户生成内容桶的图像/视频 URL 提供短时签名机制，防止未授权访问。
  * 使用 HMAC-SHA256 签名，签名密钥为 BETTER_AUTH_SECRET 环境变量。
  *
  * 签名覆盖内容：bucket + "/" + key + ":" + expiresAt（unix epoch 秒）
@@ -29,9 +29,7 @@ export * from "./image-url";
 function getSigningSecret(): string {
   const secret = process.env.BETTER_AUTH_SECRET;
   if (!secret) {
-    throw new Error(
-      "BETTER_AUTH_SECRET is required for storage URL signing"
-    );
+    throw new Error("BETTER_AUTH_SECRET is required for storage URL signing");
   }
   return secret;
 }
@@ -97,11 +95,7 @@ export function generateSignedImageUrl(
   if (isPublicBucket(bucket)) {
     return `/api/storage/${bucket}/${key}`;
   }
-  const { sig, exp } = generateSignedImageParams(
-    bucket,
-    key,
-    expiresInSeconds
-  );
+  const { sig, exp } = generateSignedImageParams(bucket, key, expiresInSeconds);
   return `/api/storage/${bucket}/${key}?sig=${sig}&exp=${exp}`;
 }
 
@@ -109,7 +103,7 @@ export function generateSignedImageUrl(
  * 从数据库存储键名构造站内图像读取 URL。
  *
  * 业务层从 storageKey/storageBucket 还原图片 URL 时统一走这里：
- * - generations 等非公开桶自动追加 sig/exp，供浏览器、外接 API 客户端、
+ * - 用户生成内容等非公开桶自动追加 sig/exp，供浏览器、外接 API 客户端、
  *   OAI/第三方上游等无 cookie 场景读取；
  * - avatars 等公开桶保持普通公开路径；
  * - 空 key 返回 null，调用方可继续回退到旧 imageUrl。
@@ -121,10 +115,9 @@ export function buildSignedStorageImageUrl(
 ): string | null {
   const key = storageKey?.trim();
   if (!key) return null;
-  const bucket =
-    storageBucket?.trim() ||
-    process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME?.trim() ||
-    "generations";
+  const bucket = storageBucket?.trim();
+  // 运行时桶由调用方从系统设置或持久记录显式提供；不能回退构建期环境变量。
+  if (!bucket) return null;
   return generateSignedImageUrl(bucket, key, expiresInSeconds);
 }
 

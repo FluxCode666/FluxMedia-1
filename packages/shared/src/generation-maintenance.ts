@@ -62,9 +62,7 @@ function stringValue(value: unknown) {
 }
 
 function getGenerationBucket(bucket?: string | null) {
-  return (
-    bucket || process.env.NEXT_PUBLIC_GENERATIONS_BUCKET_NAME || "generations"
-  );
+  return bucket?.trim() || "generations";
 }
 
 /**
