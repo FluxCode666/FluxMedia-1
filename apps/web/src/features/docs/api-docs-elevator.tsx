@@ -7,6 +7,7 @@
  * requestAnimationFrame 合帧，避免长文档高频读取布局造成抖动。
  */
 import { cn } from "@repo/ui/utils";
+import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { resolveActiveElevatorSection } from "./api-docs-elevator-core";
@@ -52,6 +53,9 @@ export function ApiDocsElevator({
 }) {
   const firstSectionId = groups[0]?.id ?? endpoints[0]?.id ?? "";
   const [activeId, setActiveId] = useState(firstSectionId);
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const sectionIdsKey = groups
     .flatMap((group) => [group.id, ...group.endpointIds])
     .join("\n");
@@ -113,6 +117,19 @@ export function ApiDocsElevator({
     };
   }, [sectionIdsKey]);
 
+  /** 仅切换目录模块可见性，不修改 hash、滚动位置或当前活动端点。 */
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroupIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(groupId)) {
+        nextIds.delete(groupId);
+      } else {
+        nextIds.add(groupId);
+      }
+      return nextIds;
+    });
+  };
+
   if (endpoints.length === 0) return null;
 
   return (
@@ -136,29 +153,45 @@ export function ApiDocsElevator({
             const isGroupActive =
               activeId === group.id ||
               groupEndpoints.some((endpoint) => endpoint.id === activeId);
+            const isCollapsed = collapsedGroupIds.has(group.id);
+            const endpointListId = `api-docs-elevator-${group.id}`;
 
             return (
               <div
                 className="shrink-0 border-r border-border/60 pr-3 last:border-r-0 last:pr-0 lg:border-r-0 lg:pr-0"
                 key={group.id}
               >
-                <a
-                  aria-current={activeId === group.id ? "location" : undefined}
+                <button
+                  aria-controls={endpointListId}
+                  aria-expanded={!isCollapsed}
                   className={cn(
-                    "flex items-center gap-2 px-2 py-1 text-left text-[11px] font-medium uppercase tracking-widest transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:rounded-md",
+                    "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-widest transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                     isGroupActive
                       ? "text-foreground"
                       : "text-muted-foreground hover:text-foreground"
                   )}
-                  href={`#${group.id}`}
-                  onClick={() => setActiveId(group.id)}
+                  onClick={() => toggleGroup(group.id)}
+                  type="button"
                 >
                   <span className="font-mono text-[10px] text-muted-foreground/70">
                     {String(groupIndex + 1).padStart(2, "0")}
                   </span>
                   <span>{group.title}</span>
-                </a>
-                <div className="mt-1 flex gap-1 lg:block lg:space-y-0.5">
+                  <ChevronDown
+                    aria-hidden="true"
+                    className={cn(
+                      "ml-auto size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+                      isCollapsed && "-rotate-90"
+                    )}
+                  />
+                </button>
+                <div
+                  className={cn(
+                    "mt-1 gap-1 lg:space-y-0.5",
+                    isCollapsed ? "hidden" : "flex lg:block"
+                  )}
+                  id={endpointListId}
+                >
                   {groupEndpoints.map((endpoint) => {
                     const isActive = activeId === endpoint.id;
                     return (

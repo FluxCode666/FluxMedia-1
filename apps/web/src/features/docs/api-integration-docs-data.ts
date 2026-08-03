@@ -86,9 +86,8 @@ export type ApiIntegrationHomepageContract = {
 const IMAGE_GENERATION_ENDPOINT_ID = "image-generations";
 const API_INTEGRATION_GROUP_ENDPOINT_IDS = {
   basics: ["models", "credits"],
-  images: ["image-generations", "image-edits"],
-  videos: ["video-generations", "video-capabilities"],
-  tasks: ["image-task", "video-task"],
+  images: ["image-generations", "image-edits", "image-task"],
+  videos: ["video-generations", "video-capabilities", "video-task"],
 } as const;
 const API_KEY_AUTHENTICATION = {
   headerName: "Authorization",
@@ -106,7 +105,7 @@ const zhContent = {
   authLabel: "鉴权",
   authValue: "Authorization: Bearer <API_KEY>",
   directoryTitle: "接口目录",
-  directoryDescription: "按模块浏览，或直接定位到具体接口。",
+  directoryDescription: "展开模块后，点击具体接口定位。",
   endpointsTitle: "接口参考",
   parametersTitle: "请求参数",
   responsesTitle: "响应字段",
@@ -129,21 +128,15 @@ const zhContent = {
     },
     {
       id: "image-api",
-      title: "图片 API",
-      description: "使用文本或参考图片创建、编辑图片。",
+      title: "生成图片",
+      description: "创建、编辑图片，并查询图片任务状态与结果。",
       endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.images,
     },
     {
       id: "video-api",
-      title: "视频 API",
-      description: "发现模型能力，并提交持久化视频生成任务。",
+      title: "生成视频",
+      description: "发现模型能力，创建视频并查询持久化任务。",
       endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.videos,
-    },
-    {
-      id: "task-status",
-      title: "任务查询",
-      description: "按任务 ID 轮询图片或视频的执行状态与结果。",
-      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.tasks,
     },
   ],
   endpoints: [
@@ -899,7 +892,7 @@ const enContent = {
   authLabel: "Authentication",
   authValue: "Authorization: Bearer <API_KEY>",
   directoryTitle: "Endpoint directory",
-  directoryDescription: "Browse by module or jump directly to an endpoint.",
+  directoryDescription: "Expand a module, then select an endpoint to jump.",
   endpointsTitle: "Endpoint reference",
   parametersTitle: "Request parameters",
   responsesTitle: "Response fields",
@@ -923,23 +916,17 @@ const enContent = {
     },
     {
       id: "image-api",
-      title: "Image API",
-      description: "Create or edit images from text and image inputs.",
+      title: "Generate images",
+      description:
+        "Create or edit images, then query image task status and results.",
       endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.images,
     },
     {
       id: "video-api",
-      title: "Video API",
+      title: "Generate videos",
       description:
-        "Discover model capabilities and submit persistent video tasks.",
+        "Discover model capabilities, create videos, and query persistent tasks.",
       endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.videos,
-    },
-    {
-      id: "task-status",
-      title: "Task status",
-      description:
-        "Poll image or video execution status and results by task ID.",
-      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.tasks,
     },
   ],
   endpoints: [
