@@ -10,7 +10,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { VideoCreatePanel } from "./video-create-panel";
+import {
+  resolveNextVideoPollDelay,
+  VIDEO_STATUS_INITIAL_POLL_MS,
+  VideoCreatePanel,
+} from "./video-create-panel";
 
 const veoReferenceCapabilities = {
   items: [
@@ -77,6 +81,13 @@ afterEach(() => {
 });
 
 describe("VideoCreatePanel capabilities", () => {
+  it("BullMQ 模式首轮 3 秒查询并有界退避到 2 分钟", () => {
+    expect(VIDEO_STATUS_INITIAL_POLL_MS).toBe(3_000);
+    expect(resolveNextVideoPollDelay(3_000)).toBe(4_500);
+    expect(resolveNextVideoPollDelay(100_000)).toBe(120_000);
+    expect(resolveNextVideoPollDelay(120_000)).toBe(120_000);
+  });
+
   it("能力请求未完成时禁用生成与输入控件", () => {
     vi.stubGlobal(
       "fetch",
