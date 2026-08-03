@@ -7,6 +7,7 @@
 //   每页 +46%）。服务端一律走深路径 @repo/shared/storage/signed-url。
 // 客户端可安全从本 barrel import types、utils、actions 与 image-url 纯工具。
 export * from "./actions";
+export * from "./bucket-config";
 export * from "./image-url";
 export * from "./types";
 export * from "./utils";

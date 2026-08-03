@@ -218,14 +218,14 @@ describe("setSystemSettings", () => {
     expect(store.get("NEXT_PUBLIC_APP_NAME")?.isSecret).toBe(false);
   });
 
-  it("拒绝把头像 bucket 保存为保留逻辑别名", async () => {
+  it("拒绝把系统通用资产 bucket 保存为保留逻辑别名", async () => {
     await expect(
       setSystemSettings(
-        [{ key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME", value: "_avatars" }],
+        [{ key: "SYSTEM_ASSETS_BUCKET_NAME", value: "_avatars" }],
         "admin"
       )
-    ).rejects.toThrow("头像 Bucket 不能使用系统保留名称");
-    expect(store.has("NEXT_PUBLIC_AVATARS_BUCKET_NAME")).toBe(false);
+    ).rejects.toThrow("系统通用资产 Bucket 不能使用系统保留名称");
+    expect(store.has("SYSTEM_ASSETS_BUCKET_NAME")).toBe(false);
   });
 
   it("coerces number values and rejects non-numeric (coerceValue, C-L25)", async () => {
@@ -603,20 +603,17 @@ describe("importSystemSettingsFromEnv", () => {
     expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(existing);
   });
 
-  it("允许把模型广场资产 bucket 作为普通部署设置导入", async () => {
-    store.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", {
-      key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
-      value: "old-model-assets",
+  it("允许把系统通用资产 bucket 作为普通部署设置导入", async () => {
+    store.set("SYSTEM_ASSETS_BUCKET_NAME", {
+      key: "SYSTEM_ASSETS_BUCKET_NAME",
+      value: "old-system-assets",
     });
-    vi.stubEnv(
-      "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
-      "production-model-assets"
-    );
+    vi.stubEnv("SYSTEM_ASSETS_BUCKET_NAME", "production-system-assets");
 
     await importSystemSettingsFromEnv({ overwrite: true });
 
-    expect(store.get("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")?.value).toBe(
-      "production-model-assets"
+    expect(store.get("SYSTEM_ASSETS_BUCKET_NAME")?.value).toBe(
+      "production-system-assets"
     );
   });
 });
@@ -830,5 +827,37 @@ describe("runtime setting getters stored/env fallback (C-L29)", () => {
     await expect(getRuntimeSettingString("NEXT_PUBLIC_APP_NAME")).resolves.toBe(
       "Env Name"
     );
+  });
+});
+
+describe("legacy storage setting aliases", () => {
+  beforeEach(() => {
+    store.clear();
+    clearSystemSettingsCache();
+    resetBootstrappedProcessSettingsForTests();
+  });
+
+  it("旧读取键统一返回两个新设置的数据库真相", async () => {
+    store.set("SYSTEM_ASSETS_BUCKET_NAME", {
+      key: "SYSTEM_ASSETS_BUCKET_NAME",
+      value: "system-assets",
+    });
+    store.set("GENERATIONS_BUCKET_NAME", {
+      key: "GENERATIONS_BUCKET_NAME",
+      value: "user-outputs",
+    });
+
+    await expect(
+      getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME")
+    ).resolves.toBe("system-assets");
+    await expect(
+      getRuntimeSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")
+    ).resolves.toBe("system-assets");
+    await expect(
+      getRuntimeSettingString("SITE_ASSETS_BUCKET_NAME")
+    ).resolves.toBe("system-assets");
+    await expect(
+      getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")
+    ).resolves.toBe("user-outputs");
   });
 });

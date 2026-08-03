@@ -23,9 +23,7 @@ const END = "# END GPT2IMAGE ADMIN SETTINGS";
 describe("system settings env file sync", () => {
   it("only writes registered settings not owned by dedicated operations", () => {
     expect(shouldSyncSettingToEnvFile("NEXT_PUBLIC_APP_URL")).toBe(true);
-    expect(
-      shouldSyncSettingToEnvFile("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")
-    ).toBe(true);
+    expect(shouldSyncSettingToEnvFile("SYSTEM_ASSETS_BUCKET_NAME")).toBe(true);
     expect(shouldSyncSettingToEnvFile("APP_TIME_ZONE")).toBe(false);
     expect(
       shouldSyncSettingToEnvFile("CONTENT_MODERATION_BLOCK_RISK_LEVEL")

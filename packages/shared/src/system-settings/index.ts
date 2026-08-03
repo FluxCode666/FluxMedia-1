@@ -14,6 +14,12 @@ import {
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
 import { paginationPageSizeOptionsSchema } from "../pagination/config";
+import {
+  DEFAULT_SYSTEM_ASSETS_BUCKET_NAME,
+  GENERATIONS_BUCKET_SETTING_KEY,
+  parseRuntimeStorageBucketConfig,
+  SYSTEM_ASSETS_BUCKET_SETTING_KEY,
+} from "../storage/bucket-config";
 import { PUBLIC_AVATAR_BUCKET_ALIAS } from "../storage/image-url";
 import { dashboardSupportConfigSchema } from "../support/dashboard-config";
 import {
@@ -61,6 +67,23 @@ const PROCESS_SETTING_FALLBACKS_BEFORE_BOOTSTRAP = new Map<
   string | undefined
 >();
 
+/** 旧设置键只用于兼容尚未改造的服务端读取方，不再进入后台定义或写入接口。 */
+const LEGACY_STORAGE_SETTING_ALIASES = {
+  MODEL_MARKETPLACE_ASSETS_BUCKET_NAME: SYSTEM_ASSETS_BUCKET_SETTING_KEY,
+  SITE_ASSETS_BUCKET_NAME: SYSTEM_ASSETS_BUCKET_SETTING_KEY,
+  NEXT_PUBLIC_AVATARS_BUCKET_NAME: SYSTEM_ASSETS_BUCKET_SETTING_KEY,
+  NEXT_PUBLIC_GENERATIONS_BUCKET_NAME: GENERATIONS_BUCKET_SETTING_KEY,
+} as const satisfies Partial<Record<SettingKey, SettingKey>>;
+
+/** 把历史只读键解析为当前唯一真相源。 */
+function resolveCanonicalSettingKey(key: SettingKey): SettingKey {
+  return (
+    LEGACY_STORAGE_SETTING_ALIASES[
+      key as keyof typeof LEGACY_STORAGE_SETTING_ALIASES
+    ] ?? key
+  );
+}
+
 /**
  * 取得运行时设置的真实部署环境回退值。
  *
@@ -68,10 +91,11 @@ const PROCESS_SETTING_FALLBACKS_BEFORE_BOOTSTRAP = new Map<
  * @returns bootstrap 覆盖前的环境变量；未被覆盖时读取当前环境变量。
  */
 function getRuntimeEnvironmentFallback(key: SettingKey) {
-  if (PROCESS_SETTING_FALLBACKS_BEFORE_BOOTSTRAP.has(key)) {
-    return PROCESS_SETTING_FALLBACKS_BEFORE_BOOTSTRAP.get(key);
+  const canonicalKey = resolveCanonicalSettingKey(key);
+  if (PROCESS_SETTING_FALLBACKS_BEFORE_BOOTSTRAP.has(canonicalKey)) {
+    return PROCESS_SETTING_FALLBACKS_BEFORE_BOOTSTRAP.get(canonicalKey);
   }
-  return process.env[key]?.trim() || undefined;
+  return process.env[canonicalKey]?.trim() || undefined;
 }
 
 /**
@@ -136,7 +160,7 @@ export async function getSystemSettingValue(
   key: SettingKey
 ): Promise<unknown | undefined> {
   const values = await loadSystemSettingsMap();
-  return values.get(key);
+  return values.get(resolveCanonicalSettingKey(key));
 }
 
 function parseJsonText(value: string) {
@@ -169,6 +193,21 @@ export async function getSystemSettingString(key: SettingKey) {
 export async function getRuntimeSettingString(key: SettingKey) {
   const value = await getSystemSettingString(key);
   return value ?? getRuntimeEnvironmentFallback(key);
+}
+
+/**
+ * 读取并验证全站唯一的系统公共资产桶与用户生成内容桶。
+ *
+ * @returns 头像、模型封面、网站品牌共用的 systemAssets，以及图片/视频共用的 generations。
+ * @sideEffects 并发读取两项运行时系统设置，缓存未命中时会访问数据库或 Redis。
+ * @failure 设置非法或两个安全域同名时显式抛出 StorageBucketConfigError。
+ */
+export async function getRuntimeStorageBucketConfig() {
+  const [systemAssets, generations] = await Promise.all([
+    getRuntimeSettingString(SYSTEM_ASSETS_BUCKET_SETTING_KEY),
+    getRuntimeSettingString(GENERATIONS_BUCKET_SETTING_KEY),
+  ]);
+  return parseRuntimeStorageBucketConfig(systemAssets, generations);
 }
 
 /**
@@ -291,17 +330,17 @@ export async function getRuntimeSettingSelect<T extends string>(
 }
 
 export function getProcessSettingString(key: SettingKey) {
-  return process.env[key]?.trim() || undefined;
+  return process.env[resolveCanonicalSettingKey(key)]?.trim() || undefined;
 }
 
 export function getProcessSettingBoolean(key: SettingKey, fallback = false) {
-  const value = process.env[key];
+  const value = process.env[resolveCanonicalSettingKey(key)];
   if (!value) return fallback;
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
 export function getProcessSettingNumber(key: SettingKey, fallback: number) {
-  const value = Number(process.env[key]);
+  const value = Number(process.env[resolveCanonicalSettingKey(key)]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
@@ -371,10 +410,8 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
   const text = typeof value === "string" ? value.trim() : String(value ?? "");
   if (
     text === PUBLIC_AVATAR_BUCKET_ALIAS &&
-    (definition.key === "NEXT_PUBLIC_AVATARS_BUCKET_NAME" ||
-      definition.key === "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME" ||
-      definition.key === "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME" ||
-      definition.key === "SITE_ASSETS_BUCKET_NAME")
+    (definition.key === SYSTEM_ASSETS_BUCKET_SETTING_KEY ||
+      definition.key === GENERATIONS_BUCKET_SETTING_KEY)
   ) {
     // 逻辑别名由读取 Route 解释，不能成为真实存储目标；否则本地存储可形成自重定向。
     throw new Error(`${definition.label} 不能使用系统保留名称`);
@@ -474,6 +511,7 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
   updatedBy?: string;
 }) {
   const now = new Date();
+  await migrateLegacyStorageBucketSettings(now, options?.updatedBy);
   await migrateLegacyModerationSettings(now, options?.updatedBy);
   await migrateLegacyVideoModelPricing(now, options?.updatedBy);
   await migrateLegacyGlobalModelPricing(now, options?.updatedBy);
@@ -515,6 +553,92 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
 
   await invalidateSystemSettingsCache();
   return values.map((value) => value.key);
+}
+
+/**
+ * 把历史四项资产桶设置收敛为两个运行时真相源。
+ *
+ * WHY：旧版把头像、模型封面、网站品牌拆成三个设置，并用 NEXT_PUBLIC 生成桶触发
+ * 构建期内联。迁移只在新键缺失时复制可确定的部署意图；不删除旧键，保留快速回滚
+ * 能力，也不迁移旧对象。三项公开桶冲突时采用新的稳定 system 默认值。
+ *
+ * @param now - 本次迁移统一使用的更新时间。
+ * @param updatedBy - 可选的管理员用户 ID。
+ * @returns 无返回值；没有历史设置或新键已存在时不写数据库。
+ * @sideEffects 可能插入 SYSTEM_ASSETS_BUCKET_NAME、GENERATIONS_BUCKET_NAME 并失效缓存。
+ * @failure 数据库事务或缓存失效失败时保持上抛。
+ */
+async function migrateLegacyStorageBucketSettings(
+  now: Date,
+  updatedBy?: string
+) {
+  const legacySystemKeys = [
+    "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+    "SITE_ASSETS_BUCKET_NAME",
+    "NEXT_PUBLIC_AVATARS_BUCKET_NAME",
+  ] as const;
+  const legacyGenerationsKey = "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME";
+  const rows = await db
+    .select({ key: systemSetting.key, value: systemSetting.value })
+    .from(systemSetting)
+    .where(
+      inArray(systemSetting.key, [
+        SYSTEM_ASSETS_BUCKET_SETTING_KEY,
+        GENERATIONS_BUCKET_SETTING_KEY,
+        ...legacySystemKeys,
+        legacyGenerationsKey,
+      ])
+    );
+  const stored = new Map(
+    rows
+      .map((row) => [row.key, normalizeStoredValue(row.value)] as const)
+      .filter(([, value]) => value !== undefined)
+  );
+  const values: Array<{
+    key: SettingKey;
+    value: string;
+    isSecret: false;
+    updatedBy?: string;
+    updatedAt: Date;
+  }> = [];
+
+  if (!stored.has(SYSTEM_ASSETS_BUCKET_SETTING_KEY)) {
+    const legacySystemBuckets = legacySystemKeys.flatMap((key) => {
+      const value = stored.get(key);
+      return typeof value === "string" && value.trim() ? [value.trim()] : [];
+    });
+    if (legacySystemBuckets.length > 0) {
+      const sharedBucket = legacySystemBuckets.find(
+        (bucket, index) => legacySystemBuckets.indexOf(bucket) !== index
+      );
+      values.push({
+        key: SYSTEM_ASSETS_BUCKET_SETTING_KEY,
+        value: sharedBucket ?? DEFAULT_SYSTEM_ASSETS_BUCKET_NAME,
+        isSecret: false,
+        ...(updatedBy ? { updatedBy } : {}),
+        updatedAt: now,
+      });
+    }
+  }
+
+  if (!stored.has(GENERATIONS_BUCKET_SETTING_KEY)) {
+    const legacyGenerations = stored.get(legacyGenerationsKey);
+    if (typeof legacyGenerations === "string" && legacyGenerations.trim()) {
+      values.push({
+        key: GENERATIONS_BUCKET_SETTING_KEY,
+        value: legacyGenerations.trim(),
+        isSecret: false,
+        ...(updatedBy ? { updatedBy } : {}),
+        updatedAt: now,
+      });
+    }
+  }
+
+  if (values.length === 0) return;
+  await db.insert(systemSetting).values(values).onConflictDoNothing({
+    target: systemSetting.key,
+  });
+  await invalidateSystemSettingsCache();
 }
 
 /**

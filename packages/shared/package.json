@@ -60,6 +60,7 @@
     "./image-backend/scheduling-policy": "./src/image-backend/scheduling-policy.ts",
     "./image-backend/supported-models": "./src/image-backend/supported-models.ts",
     "./storage": "./src/storage/index.ts",
+    "./storage/bucket-config": "./src/storage/bucket-config.ts",
     "./storage/image-url": "./src/storage/image-url.ts",
     "./storage/signed-url": "./src/storage/signed-url.ts",
     "./storage/providers": "./src/storage/providers/index.ts",

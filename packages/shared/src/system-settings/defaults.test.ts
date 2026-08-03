@@ -147,7 +147,8 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("IMAGE_MODEL_CREDIT_PRICES");
     expect(initializedKeys).toContain("MODEL_MARKETPLACE_CONFIG");
     expect(initializedKeys).toContain("VIDEO_MODEL_CAPABILITY_OVERRIDES");
-    expect(initializedKeys).toContain("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME");
+    expect(initializedKeys).toContain("SYSTEM_ASSETS_BUCKET_NAME");
+    expect(initializedKeys).toContain("GENERATIONS_BUCKET_NAME");
     expect(initializedKeys).toContain("IMAGE_TEXT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("IMAGE_INPUT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("CONTENT_MODERATION_BLOCK_RISK_LEVEL");
@@ -199,9 +200,8 @@ describe("system setting default initialization", () => {
     expect(store.get("VIDEO_MODEL_CAPABILITY_OVERRIDES")?.value).toEqual(
       createDefaultVideoModelCapabilityOverrides()
     );
-    expect(store.get("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")?.value).toBe(
-      "model-marketplace"
-    );
+    expect(store.get("SYSTEM_ASSETS_BUCKET_NAME")?.value).toBe("system");
+    expect(store.get("GENERATIONS_BUCKET_NAME")?.value).toBe("generations");
     expect(store.get("IMAGE_TEXT_MODERATION_CREDITS")?.value).toBe(0.04);
     expect(store.get("IMAGE_INPUT_MODERATION_CREDITS")?.value).toBe(0.06);
     expect(store.get("CONTENT_MODERATION_BLOCK_RISK_LEVEL")?.value).toBe(
@@ -216,6 +216,32 @@ describe("system setting default initialization", () => {
     expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(20);
     expect(store.get("BETTER_AUTH_SECRET")).toBeUndefined();
     expect(store.get("CREEM_API_KEY")).toBeUndefined();
+  });
+
+  it("把一致的历史公共桶与历史生成桶迁移到两个统一设置", async () => {
+    store.set("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME", {
+      key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
+      value: "system-assets",
+    });
+    store.set("SITE_ASSETS_BUCKET_NAME", {
+      key: "SITE_ASSETS_BUCKET_NAME",
+      value: "system-assets",
+    });
+    store.set("NEXT_PUBLIC_AVATARS_BUCKET_NAME", {
+      key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME",
+      value: "avatars",
+    });
+    store.set("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME", {
+      key: "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME",
+      value: "user-outputs",
+    });
+
+    await initializeMissingSystemSettingsDefaults({ updatedBy: "admin-1" });
+
+    expect(store.get("SYSTEM_ASSETS_BUCKET_NAME")?.value).toBe("system-assets");
+    expect(store.get("GENERATIONS_BUCKET_NAME")?.value).toBe("user-outputs");
+    expect(store.has("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")).toBe(true);
+    expect(store.has("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")).toBe(true);
   });
 
   it("does not overwrite an existing dedicated moderation policy", async () => {

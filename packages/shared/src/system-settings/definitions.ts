@@ -30,7 +30,6 @@ export type SettingKey =
   | "NEXT_PUBLIC_APP_NAME"
   | "NEXT_PUBLIC_ASSET_PREFIX"
   | "SITE_LOGO_URL"
-  | "SITE_ASSETS_BUCKET_NAME"
   | "PAGINATION_PAGE_SIZE_OPTIONS"
   | "MARKETING_SLA_STATUS_ENABLED"
   | "DASHBOARD_SUPPORT_CONFIG"
@@ -131,7 +130,10 @@ export type SettingKey =
   | "STORAGE_ENDPOINT"
   | "STORAGE_REGION"
   | "STORAGE_BUCKET_NAME"
+  | "SYSTEM_ASSETS_BUCKET_NAME"
+  | "GENERATIONS_BUCKET_NAME"
   | "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME"
+  | "SITE_ASSETS_BUCKET_NAME"
   | "NEXT_PUBLIC_AVATARS_BUCKET_NAME"
   | "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME"
   | "GENERATION_IMAGE_RETENTION_HOURS"
@@ -1090,39 +1092,22 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     valueType: "string",
   },
   {
-    key: "MODEL_MARKETPLACE_ASSETS_BUCKET_NAME",
-    label: "模型广场资产 Bucket",
+    key: "SYSTEM_ASSETS_BUCKET_NAME",
+    label: "系统通用资产 Bucket",
     description:
-      "模型广场自定义封面的公开资产 bucket，可与网站品牌和头像共用，但必须与生成内容 bucket 隔离。",
+      "头像、模型广场封面和网站品牌资产共用的公开 bucket，必须与用户生成内容 bucket 隔离。",
     category: "storage",
     valueType: "string",
-    defaultValue: "model-marketplace",
+    defaultValue: "system",
   },
   {
-    key: "SITE_ASSETS_BUCKET_NAME",
-    label: "网站品牌资产 Bucket",
+    key: "GENERATIONS_BUCKET_NAME",
+    label: "用户生成内容 Bucket",
     description:
-      "网站 Logo 等公开品牌资产 bucket，可与模型广场和头像共用，但必须与生成内容 bucket 隔离。",
+      "生成图片与生成视频共用的私有 bucket，必须与系统通用资产 bucket 隔离。",
     category: "storage",
     valueType: "string",
-    defaultValue: "site-assets",
-  },
-  {
-    key: "NEXT_PUBLIC_AVATARS_BUCKET_NAME",
-    label: "头像 Bucket",
-    description:
-      "公开头像资产 bucket，可与网站品牌和模型广场共用，但必须与生成内容 bucket 隔离。读取 URL 使用运行时逻辑别名，无需重新构建 Web；_avatars 是系统保留名称，不能用作真实 bucket。",
-    category: "storage",
-    valueType: "string",
-  },
-  {
-    key: "NEXT_PUBLIC_GENERATIONS_BUCKET_NAME",
-    label: "生成图片 Bucket",
-    description:
-      "用户生成内容 bucket，必须与头像、网站品牌和模型广场等公开资产 bucket 隔离。",
-    category: "storage",
-    valueType: "string",
-    requiresRebuild: true,
+    defaultValue: "generations",
   },
   {
     key: "GENERATION_IMAGE_RETENTION_MODE",
