@@ -35,7 +35,10 @@ import {
   InsufficientCreditsError,
 } from "@repo/shared/credits/core";
 import { refundGenerationCredits } from "@repo/shared/generation-maintenance";
-import { API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS } from "@repo/shared/image-backend/api-upstream-script-contract";
+import {
+  API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS,
+  type ApiUpstreamRequestSnapshot,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
   listVideoInputManifestReferences,
   type VideoInputManifest,
@@ -47,7 +50,7 @@ import {
   getRuntimeSettingJson,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
 import { parseMediaUpstreamUrl } from "@/features/image-backend-pool/media-upstream-url";
@@ -283,6 +286,58 @@ async function compareAndSetVideoStage(input: {
     )
     .returning();
   return updated ?? null;
+}
+
+/** 将最新请求快照合并到 worker 内存行，防止后续成员切换覆盖数据库快照。 */
+function attachVideoUpstreamRequestSnapshot(
+  row: VideoGenerationRow,
+  snapshot: ApiUpstreamRequestSnapshot
+): VideoGenerationRow {
+  return {
+    ...row,
+    metadata: {
+      ...(row.metadata ?? {}),
+      upstreamRequestSnapshot: snapshot,
+    },
+  };
+}
+
+/**
+ * 在 API 视频真正外呼前最佳努力保存最终请求正文。
+ *
+ * WHY：不推进 stateVersion，避免调试快照干扰持久状态机 CAS；失败只记录任务 ID，
+ * 不把请求正文或签名 URL 写入日志，也不阻断用户生成。
+ */
+async function persistVideoUpstreamRequestSnapshot(
+  row: VideoGenerationRow,
+  snapshot: ApiUpstreamRequestSnapshot
+): Promise<void> {
+  try {
+    const claimCondition = row.claimToken
+      ? eq(videoGeneration.claimToken, row.claimToken)
+      : isNull(videoGeneration.claimToken);
+    await db
+      .update(videoGeneration)
+      .set({
+        metadata: sql`COALESCE(${videoGeneration.metadata}, '{}'::json)::jsonb || ${JSON.stringify(
+          { upstreamRequestSnapshot: snapshot }
+        )}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(videoGeneration.id, row.id),
+          eq(videoGeneration.stateVersion, row.stateVersion),
+          eq(videoGeneration.stage, "submitting"),
+          claimCondition
+        )
+      );
+  } catch (error) {
+    logError(error, {
+      event: "video_upstream_request_snapshot_persist_failed",
+      videoId: row.id,
+    });
+  }
 }
 
 /** 将未扣费或不可调度的任务直接标记失败，不创建退款。 */
@@ -1155,6 +1210,7 @@ async function submitClaimedCreatedVideo(
 
     const startedAt = Date.now();
     const submissionSignal = AbortSignal.timeout(VIDEO_SUBMISSION_TIMEOUT_MS);
+    let submittedRequestSnapshot: ApiUpstreamRequestSnapshot | null = null;
     const submitted =
       lease.memberType === "api"
         ? await submitApiVideoRequest(lease.config, {
@@ -1167,6 +1223,10 @@ async function submitClaimedCreatedVideo(
             effectiveAudio: contract.effectiveAudio,
             ...sourceInputs,
             ...(negativePrompt != null ? { negativePrompt } : {}),
+            onRequestSnapshot: async (snapshot) => {
+              submittedRequestSnapshot = snapshot;
+              await persistVideoUpstreamRequestSnapshot(row, snapshot);
+            },
             signal: submissionSignal,
           })
         : await submitAdobeDirectVideoRequest(lease.config, {
@@ -1183,6 +1243,9 @@ async function submitClaimedCreatedVideo(
             ...(negativePrompt != null ? { negativePrompt } : {}),
             signal: submissionSignal,
           });
+    if (submittedRequestSnapshot) {
+      row = attachVideoUpstreamRequestSnapshot(row, submittedRequestSnapshot);
+    }
     if (!("error" in submitted)) {
       if ("status" in submitted && submitted.status === "completed") {
         const downloading = await compareAndSetVideoStage({

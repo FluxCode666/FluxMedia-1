@@ -51,6 +51,7 @@ describe("executeApiUpstreamOperation", () => {
           headers: { "Content-Type": "application/json" },
         })
     );
+    const onRequestSnapshot = vi.fn();
 
     const result = await executeApiUpstreamOperation({
       adapter,
@@ -63,6 +64,7 @@ describe("executeApiUpstreamOperation", () => {
       body: { prompt: "test", model: "seedance2" },
       maxResponseBytes: 2 * 1024 * 1024,
       fetcher,
+      onRequestSnapshot,
     });
 
     expect(result.kind).toBe("built_in");
@@ -85,6 +87,18 @@ describe("executeApiUpstreamOperation", () => {
       model: "seedance2",
       model_id: "seedance-2.0",
     });
+    expect(onRequestSnapshot).toHaveBeenCalledWith({
+      operation: "images.generate",
+      contentType: "application/json",
+      body: {
+        prompt: "test",
+        model: "seedance2",
+        model_id: "seedance-2.0",
+      },
+    });
+    expect(onRequestSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      fetcher.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    );
   });
 
   it("响应脚本统一异步状态并采用较长的 Retry-After", async () => {
@@ -137,6 +151,7 @@ describe("executeApiUpstreamOperation", () => {
     requestFailureAdapter.operations["images.generate"].requestScript =
       "throw new Error('hidden request body');";
     const requestFetcher = vi.fn(async () => new Response("{}"));
+    const requestSnapshot = vi.fn();
 
     await expect(
       executeApiUpstreamOperation({
@@ -149,12 +164,14 @@ describe("executeApiUpstreamOperation", () => {
         body: { prompt: "secret prompt" },
         maxResponseBytes: 2 * 1024 * 1024,
         fetcher: requestFetcher,
+        onRequestSnapshot: requestSnapshot,
       })
     ).rejects.toMatchObject({
       code: "request_script_failed",
       stage: "before_send",
     } satisfies Partial<ApiUpstreamExecutionError>);
     expect(requestFetcher).not.toHaveBeenCalled();
+    expect(requestSnapshot).not.toHaveBeenCalled();
 
     const responseFailureAdapter = createAdapter();
     responseFailureAdapter.operations["images.generate"].responseScript =

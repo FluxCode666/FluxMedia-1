@@ -32,6 +32,9 @@ export const API_UPSTREAM_MAX_SCRIPT_CHARACTERS = 32_768;
 /** 普通 JSON 输入或输出的最大 UTF-8 字节数。 */
 export const API_UPSTREAM_MAX_SERIALIZED_BYTES = 2 * 1024 * 1024;
 
+/** 管理端请求快照的最大 UTF-8 字节数，避免详情读取放大数据库与网络负载。 */
+export const API_UPSTREAM_REQUEST_SNAPSHOT_MAX_SERIALIZED_BYTES = 128 * 1024;
+
 /** 普通 JSON 树允许的最大深度。 */
 export const API_UPSTREAM_MAX_JSON_DEPTH = 16;
 
@@ -188,6 +191,31 @@ export const apiUpstreamJsonValueSchema = z
       });
     }
   });
+
+/** 请求脚本完成后、外呼前保存的脱敏请求正文快照。 */
+export const apiUpstreamRequestSnapshotSchema = z
+  .object({
+    operation: apiUpstreamAdapterOperationIdSchema,
+    contentType: z.enum(["application/json", "multipart/form-data"]),
+    body: apiUpstreamJsonValueSchema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      getSerializedByteLength(value) >
+      API_UPSTREAM_REQUEST_SNAPSHOT_MAX_SERIALIZED_BYTES
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Request snapshot limit exceeded",
+      });
+    }
+  });
+
+/** 脱敏且有界的真实上游请求正文快照。 */
+export type ApiUpstreamRequestSnapshot = z.infer<
+  typeof apiUpstreamRequestSnapshotSchema
+>;
 
 /** 请求脚本可返回的 Query 修改。 */
 export const apiUpstreamQuerySchema = z

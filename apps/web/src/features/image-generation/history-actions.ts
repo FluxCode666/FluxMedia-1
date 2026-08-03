@@ -10,7 +10,9 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   type AdminHistoryListOutput,
+  type AdminHistoryRequestSnapshotOutput,
   adminHistoryListInputSchema,
+  adminHistoryRequestSnapshotInputSchema,
   type HistoryListOutput,
   historyListInputSchema,
 } from "@repo/shared/image-generation/history-contract";
@@ -53,6 +55,25 @@ export const getAdminHistoryRecordsAction = globalUsageRecordsViewerAction
       { type: "user", userId: ctx.userId, role: ctx.role }
     );
   });
+
+/** 管理员展开详情时按需读取请求脚本处理后的脱敏真实请求正文。 */
+export const getAdminHistoryRequestSnapshotAction =
+  globalUsageRecordsViewerAction
+    .metadata({ action: "image.getAdminHistoryRequestSnapshot" })
+    .schema(adminHistoryRequestSnapshotInputSchema)
+    .action(
+      async ({
+        parsedInput,
+        ctx,
+      }): Promise<AdminHistoryRequestSnapshotOutput> => {
+        await ensureUolInitialized();
+        return invokeOperation<AdminHistoryRequestSnapshotOutput>(
+          "image.getAdminHistoryRequestSnapshot",
+          parsedInput,
+          { type: "user", userId: ctx.userId, role: ctx.role }
+        );
+      }
+    );
 
 /** 按需读取视频任务具名输入；普通用户与三档历史管理员沿用 UOL 既有权限边界。 */
 export const getVideoInputsAction = protectedAction

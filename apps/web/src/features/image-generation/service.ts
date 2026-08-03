@@ -1606,6 +1606,7 @@ export async function generateImage(
           body: requestBody,
           signal: params.signal,
           maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+          onRequestSnapshot: callbacks?.onApiUpstreamRequestSnapshot,
           observability: {
             memberId: config.backend.id,
             groupId: config.backend.groupId,
@@ -1773,6 +1774,7 @@ export async function editImage(
           signal: params.signal,
           maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
           encodeBody: encodeApiBackendFormDataRequest,
+          onRequestSnapshot: callbacks?.onApiUpstreamRequestSnapshot,
           observability: {
             memberId: config.backend.id,
             groupId: config.backend.groupId,
