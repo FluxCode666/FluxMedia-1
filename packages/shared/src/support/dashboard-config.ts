@@ -140,7 +140,7 @@ export const DEFAULT_DASHBOARD_SUPPORT_CONFIG: DashboardSupportConfig = {
       id: "system-docs",
       enabled: true,
       icon: "documentation",
-      title: { zh: "接入文档", en: "API docs" },
+      title: { zh: "API 文档", en: "API docs" },
       description: {
         zh: "查看图像 API 接口和使用说明",
         en: "Explore image APIs and usage guides",

@@ -23,7 +23,6 @@ import { cn } from "@repo/ui/utils";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
-  BookOpen,
   ChevronRight,
   ChevronsUpDown,
   CreditCard,
@@ -132,7 +131,6 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "Usage records": t("nav.history"),
       "API Docs": t("nav.apiDocs"),
       Models: t("nav.models"),
-      "System Docs": t("nav.backendHelp"),
       "API Keys": t("nav.externalApi"),
       Wallet: t("nav.wallet"),
       Announcements: t("nav.announcements"),
@@ -199,11 +197,6 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   const navigationGroups: SidebarNavGroup[] = (() => {
     const adminItems = isAdmin
       ? [
-          {
-            title: "System Docs",
-            href: "/dashboard/backend-help",
-            icon: BookOpen,
-          },
           {
             title: "Global Status",
             href: "/dashboard/admin/status",

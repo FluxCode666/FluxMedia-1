@@ -5,12 +5,11 @@
 - `/{locale}/api-docs`：公开接入文档，面向外部开发者，无需登录。
 - `/{locale}/dashboard/api-docs`：接入文档的控制台镜像，面向所有已登录用户。
 - `/{locale}/docs/**`：内部系统文档，仅 `admin`、`super_admin` 可访问。
-- `/{locale}/dashboard/backend-help`：内部系统文档的控制台镜像，使用同一管理员守卫。
 - `/api/search`：Fumadocs 内部文档搜索索引，未登录返回 401，非管理员返回 403。
 
 公开导航指向 `/api-docs`；控制台侧栏、API 密钥页和支持中心默认入口指向
-`/dashboard/api-docs`，避免已登录用户离开控制台框架。管理员控制台额外显示
-`/dashboard/backend-help`。
+`/dashboard/api-docs`，避免已登录用户离开控制台框架。管理员内部文档仅保留
+`/docs/system`；旧 `/dashboard/backend-help` 只做兼容重定向，不再渲染独立页面。
 
 ## 公开内容边界
 

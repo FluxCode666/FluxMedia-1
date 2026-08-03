@@ -1,8 +1,8 @@
 /**
  * 控制台内的外部 API 接入文档入口。
  *
- * 复用公开接入文档组件，但通过服务端会话守卫限定为已登录用户；内部系统文档仍由
- * /dashboard/backend-help 独立执行管理员权限校验。
+ * 复用公开接入文档组件，但通过服务端会话守卫限定为已登录用户；管理员内部文档独立
+ * 保留在 /docs/system。
  */
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";

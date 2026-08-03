@@ -1,33 +1,23 @@
 /**
- * 控制台内的管理员系统文档入口。
+ * 已移除的控制台系统文档兼容入口。
  *
- * 与 /docs 共享同一份 SystemDocsContent，必须使用数据库真实角色重复守卫，防止普通
- * 控制台用户绕过 /docs 布局直接读取内部架构与扩展接口说明。
+ * 使用方：仍保存旧 /dashboard/backend-help 地址的管理员书签。系统文档不再作为控制台
+ * 页面展示，旧地址统一转到当前用户 API 文档，避免留下可访问的重复文档或 404。
  */
-import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { canAccessAdminArea } from "@repo/shared/auth/roles";
-import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
-import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
-import { SystemDocsContent } from "@/features/docs/system-docs";
 
-/** 渲染仅 admin 与 super_admin 可见的控制台系统文档。 */
-export default async function BackendHelpPage() {
-  const [locale, session, baseUrl] = await Promise.all([
-    getLocale(),
-    getServerSession(),
-    getCurrentDocumentationBaseUrl(),
-  ]);
-
-  if (!session?.user) {
-    redirect(`/${locale}/sign-in`);
-  }
-
-  const role = await getUserRoleById(session.user.id);
-  if (!canAccessAdminArea(role)) {
-    redirect(`/${locale}/dashboard/api-docs`);
-  }
-
-  return <SystemDocsContent baseUrl={baseUrl} locale={locale} />;
+/**
+ * 将旧系统文档地址永久收敛到控制台 API 文档。
+ *
+ * @param params - 当前国际化路由参数。
+ * @returns 不返回页面内容；Next.js redirect 会中止当前渲染。
+ * @sideEffects 抛出 Next.js 重定向控制流，不读取会话或数据库。
+ */
+export default async function LegacyBackendHelpPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  redirect(`/${locale}/dashboard/api-docs`);
 }
