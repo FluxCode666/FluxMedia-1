@@ -5,24 +5,13 @@
  * 再恢复默认信号终止；单独成文件避免 Edge instrumentation 静态分析 Node API。
  */
 import { shutdownApiUpstreamScriptPool } from "./api-upstream-script-pool";
-
-type LifecycleGlobal = typeof globalThis & {
-  __fluxmediaApiUpstreamScriptShutdownHooksInstalled?: boolean;
-};
+import { registerProcessShutdownHook } from "@/server/process-lifecycle";
 
 /** 注册一次 SIGTERM/SIGINT 钩子，并在结算结束后交还默认终止语义。 */
 export function installApiUpstreamScriptShutdownHooks(): void {
-  const lifecycleGlobal = globalThis as LifecycleGlobal;
-  if (lifecycleGlobal.__fluxmediaApiUpstreamScriptShutdownHooksInstalled) {
-    return;
-  }
-  lifecycleGlobal.__fluxmediaApiUpstreamScriptShutdownHooksInstalled = true;
-
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.once(signal, () => {
-      void shutdownApiUpstreamScriptPool().finally(() => {
-        process.kill(process.pid, signal);
-      });
-    });
-  }
+  registerProcessShutdownHook(
+    "api-upstream-script-pool",
+    shutdownApiUpstreamScriptPool,
+    40
+  );
 }

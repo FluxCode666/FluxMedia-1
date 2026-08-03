@@ -69,6 +69,9 @@ const nextConfig = {
     "pino",
     "pino-pretty",
     "@axiomhq/pino",
+    // BullMQ 使用阻塞 Redis 命令与独立连接，保持外置以便 standalone 保留完整
+    // ioredis/BullMQ 运行时依赖。
+    "bullmq",
     // 系统设置共享缓存使用 Node TCP 连接与连接池；保持外置以便 standalone
     // 完整复制 ioredis 的命令表、解析器与可选运行时依赖。
     "ioredis",

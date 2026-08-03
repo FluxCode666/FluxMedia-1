@@ -18,6 +18,7 @@ import {
   runImageMaintenanceJob,
   runVideoRecoveryJob,
 } from "./scheduled-jobs";
+import { registerProcessShutdownHook } from "./process-lifecycle";
 
 type InternalJob = {
   name: string;
@@ -569,6 +570,11 @@ export async function startInternalJobScheduler() {
   const state = getSchedulerState();
   if (state.started) return;
 
+  registerProcessShutdownHook(
+    "internal-job-scheduler",
+    stopInternalJobScheduler,
+    10
+  );
   state.started = true;
   await runControlTick(state);
   console.info("[internal-jobs] scheduler control loop started");

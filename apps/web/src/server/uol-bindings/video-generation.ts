@@ -52,6 +52,7 @@ import {
   runVideoGenerationForUser,
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
+import { resolveVideoQueueSchedule } from "@/features/image-generation/video-queue-schedule";
 import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
 import {
   releaseVideoTaskStagingReservation,
@@ -64,6 +65,7 @@ import {
   createVideoTaskId,
 } from "@/features/image-generation/video-task-identity";
 import { prepareVideoTaskInputReferences } from "@/features/image-generation/video-task-preparation";
+import { enqueueVideoTask } from "@/server/media-task-queues";
 
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
 
@@ -74,6 +76,27 @@ type VideoOperationStatus =
   | "needs_attention"
   | "completed"
   | "failed";
+
+/**
+ * 数据库提交后最佳努力投递视频任务。
+ *
+ * Redis 只负责唤醒，失败不能回滚已经提交的任务；内置恢复扫描会再次补投。这样把
+ * Redis 调用放在事务外，避免数据库事务持锁等待外部服务。
+ */
+async function enqueueVideoTaskBestEffort(
+  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>
+): Promise<void> {
+  const schedule = resolveVideoQueueSchedule(row);
+  if (!schedule) return;
+  try {
+    await enqueueVideoTask(schedule);
+  } catch (error) {
+    logError(error, {
+      source: "video-task-mq-enqueue",
+      taskId: row.id,
+    });
+  }
+}
 
 /** 将持久视频状态映射为稳定 UOL 状态。 */
 function toVideoOperationStatus(
@@ -374,6 +397,7 @@ bindExecute(
         assertVideoTaskPrincipal(raced, principal, ctx);
         assertVideoRequestFingerprint(raced, requestFingerprint);
         await assertVideoCallbackFingerprint(taskId, callbackUrl);
+        await enqueueVideoTaskBestEffort(raced);
         return {
           taskId,
           status: toVideoOperationStatus(raced.status, raced.stage),
@@ -442,6 +466,7 @@ bindExecute(
         assertVideoTaskPrincipal(persisted, principal, ctx);
         assertVideoRequestFingerprint(persisted, requestFingerprint);
         await assertVideoCallbackFingerprint(taskId, callbackUrl);
+        await enqueueVideoTaskBestEffort(persisted);
       }
       return {
         taskId,

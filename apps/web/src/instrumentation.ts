@@ -28,6 +28,10 @@ export async function register() {
       "@repo/shared/auth/bootstrap-super-admin"
     );
     await bootstrapSelfUseSuperAdmin();
+    const { startMediaTaskWorkers } = await import(
+      "./server/media-task-workers"
+    );
+    await startMediaTaskWorkers();
     const { startInternalJobScheduler } = await import(
       "./server/internal-job-scheduler"
     );

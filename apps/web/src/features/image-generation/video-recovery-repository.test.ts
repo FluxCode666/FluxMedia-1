@@ -103,6 +103,33 @@ describe("video recovery repository", () => {
     ).rejects.toMatchObject({ name: "ZodError" });
   });
 
+  it("MQ Worker 只认领消息指定的到期任务", async () => {
+    const { database, queries } = createDatabase([
+      {
+        id: "video-target",
+        api_adapter_member_id: null,
+        api_adapter_version_id: null,
+      },
+    ]);
+    const repository = createPostgresVideoRecoveryRepository(database);
+
+    await expect(
+      repository.claimById({
+        taskId: "video-target",
+        claimToken: "mq-worker-1",
+        now: NOW,
+        claimExpiresAt: new Date(NOW.getTime() + 21 * 60_000),
+      })
+    ).resolves.toMatchObject({
+      id: "video-target",
+      claimToken: "mq-worker-1",
+    });
+
+    const compiled = new PgDialect().sqlToQuery(queries[0] as SQL);
+    expect(compiled.sql).toMatch(/and id = \$\d+/);
+    expect(compiled.params).toContain("video-target");
+  });
+
   it("没有到期任务时返回 null", async () => {
     const { database } = createDatabase([]);
     const repository = createPostgresVideoRecoveryRepository(database);

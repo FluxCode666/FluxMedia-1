@@ -42,8 +42,18 @@ describe("media task queue contract", () => {
       taskId: "video_1",
       stateVersion: 3,
     });
-    expect(createVideoTaskJobId("video_1", 3)).toBe("video_1-3");
-    expect(createImageTaskJobId("task_image_1")).toBe("task_image_1");
+    expect(createVideoTaskJobId("video_1", 3)).toMatch(
+      /^video-[a-f0-9]{64}$/
+    );
+    expect(createVideoTaskJobId("video_1", 3)).toBe(
+      createVideoTaskJobId("video_1", 3)
+    );
+    expect(createVideoTaskJobId("video_1", 4)).not.toBe(
+      createVideoTaskJobId("video_1", 3)
+    );
+    expect(createImageTaskJobId("task_image_1")).toMatch(
+      /^image-[a-f0-9]{64}$/
+    );
   });
 
   it("拒绝非法任务 ID 与负状态版本", () => {

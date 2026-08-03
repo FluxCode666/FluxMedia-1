@@ -90,6 +90,10 @@ import {
 } from "./video-input-cleanup-queue";
 import { shouldRetainVideoInputsAfterStage } from "./video-input-lifecycle";
 import {
+  resolveVideoQueueSchedule,
+  type VideoQueueSchedule,
+} from "./video-queue-schedule";
+import {
   createVideoStorageKey,
   isAcceptedVideoError,
   resolveApiAdapterQueryFailure,
@@ -1675,6 +1679,59 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     }
     await retryClaimedVideo(row, error);
   }
+}
+
+/**
+ * 处理 Redis MQ 指定的一条视频任务并返回下一次投递时间。
+ *
+ * @param taskId MQ 中仅用于定位 PostgreSQL 行的任务 ID。
+ * @returns 非终态任务的下一次版本化投递；终态、人工核对态或任务不存在时为 null。
+ * @throws claim 后的异常无法持久化重试状态时上抛，让 BullMQ 执行有界重试。
+ */
+export async function processVideoGenerationQueueTask(
+  taskId: string
+): Promise<VideoQueueSchedule | null> {
+  const now = new Date();
+  const claim = await defaultVideoRecoveryRepository.claimById({
+    taskId,
+    claimToken: randomUUID(),
+    now,
+    claimExpiresAt: new Date(now.getTime() + VIDEO_CLAIM_TTL_MS),
+  });
+  if (!claim) {
+    const current = await getVideoGenerationById(taskId);
+    return current ? resolveVideoQueueSchedule(current, now) : null;
+  }
+
+  const row = await getVideoGenerationById(claim.id);
+  if (
+    row?.claimToken !== claim.claimToken ||
+    row.apiAdapterMemberId !== claim.apiAdapterMemberId ||
+    row.apiAdapterVersionId !== claim.apiAdapterVersionId
+  ) {
+    return row ? resolveVideoQueueSchedule(row, now) : null;
+  }
+
+  try {
+    await recoverClaimedVideo(row);
+  } catch (error) {
+    logError(error, {
+      source: "video-mq-processing",
+      videoId: row.id,
+    });
+    try {
+      await retryClaimedVideo(row, error);
+    } catch (retryError) {
+      logError(retryError, {
+        source: "video-mq-release-claim",
+        videoId: row.id,
+      });
+      throw retryError;
+    }
+  }
+
+  const current = await getVideoGenerationById(taskId);
+  return current ? resolveVideoQueueSchedule(current) : null;
 }
 
 /**

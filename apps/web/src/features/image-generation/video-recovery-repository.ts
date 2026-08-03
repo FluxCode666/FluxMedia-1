@@ -9,9 +9,10 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
+import { VIDEO_SUBMISSION_RECOVERY_GRACE_MS } from "./video-queue-schedule";
 
 const identifierSchema = z.string().trim().min(1).max(512);
-export const VIDEO_SUBMISSION_RECOVERY_GRACE_MS = 21 * 60_000;
+export { VIDEO_SUBMISSION_RECOVERY_GRACE_MS } from "./video-queue-schedule";
 
 const claimInputSchema = z
   .object({
@@ -24,6 +25,10 @@ const claimInputSchema = z
     message: "Claim expiration must be later than claim time",
     path: ["claimExpiresAt"],
   });
+
+const claimByIdInputSchema = claimInputSchema.extend({
+  taskId: identifierSchema,
+});
 
 const claimedVideoRowSchema = z
   .object({
@@ -54,6 +59,11 @@ export interface ClaimedVideoRecoveryJob {
 /** 视频恢复 claim 输入；时钟和 token 显式注入以便并发测试。 */
 export type ClaimNextVideoRecoveryJobInput = z.input<typeof claimInputSchema>;
 
+/** 指定视频任务的恢复 claim 输入。 */
+export type ClaimVideoRecoveryJobByIdInput = z.input<
+  typeof claimByIdInputSchema
+>;
+
 /** 视频恢复仓储只依赖参数化 SQL 事务端口。 */
 export interface VideoRecoveryTransaction {
   execute(query: SQL): Promise<unknown>;
@@ -71,6 +81,9 @@ export interface VideoRecoveryRepository {
   claimNext(
     input: ClaimNextVideoRecoveryJobInput
   ): Promise<ClaimedVideoRecoveryJob | null>;
+  claimById(
+    input: ClaimVideoRecoveryJobByIdInput
+  ): Promise<ClaimedVideoRecoveryJob | null>;
 }
 
 /**
@@ -82,11 +95,14 @@ export interface VideoRecoveryRepository {
 export function createPostgresVideoRecoveryRepository(
   database: VideoRecoveryDatabase
 ): VideoRecoveryRepository {
-  return {
-    async claimNext(rawInput) {
-      const input = claimInputSchema.parse(rawInput);
-      return database.transaction(async (transaction) => {
-        const result = await transaction.execute(sql`
+  /** 在事务中按可选任务 ID 原子认领一条到期任务。 */
+  async function claimTask(
+    input: z.output<typeof claimInputSchema>,
+    taskId?: string
+  ): Promise<ClaimedVideoRecoveryJob | null> {
+    return database.transaction(async (transaction) => {
+      const identityPredicate = taskId ? sql`and id = ${taskId}` : sql``;
+      const result = await transaction.execute(sql`
           with candidate as (
             select id
             from video_generation
@@ -112,6 +128,7 @@ export function createPostgresVideoRecoveryRepository(
                 claim_expires_at is null
                 or claim_expires_at <= ${input.now}
               )
+              ${identityPredicate}
             order by
               case stage
                 when 'refunding' then 0
@@ -144,16 +161,25 @@ export function createPostgresVideoRecoveryRepository(
             task.api_adapter_member_id,
             task.api_adapter_version_id
         `);
-        const row = extractExecuteRows(result)[0];
-        if (!row) return null;
-        const parsed = claimedVideoRowSchema.parse(row);
-        return {
-          id: parsed.id,
-          claimToken: input.claimToken,
-          apiAdapterMemberId: parsed.api_adapter_member_id,
-          apiAdapterVersionId: parsed.api_adapter_version_id,
-        };
-      });
+      const row = extractExecuteRows(result)[0];
+      if (!row) return null;
+      const parsed = claimedVideoRowSchema.parse(row);
+      return {
+        id: parsed.id,
+        claimToken: input.claimToken,
+        apiAdapterMemberId: parsed.api_adapter_member_id,
+        apiAdapterVersionId: parsed.api_adapter_version_id,
+      };
+    });
+  }
+
+  return {
+    async claimNext(rawInput) {
+      return claimTask(claimInputSchema.parse(rawInput));
+    },
+    async claimById(rawInput) {
+      const input = claimByIdInputSchema.parse(rawInput);
+      return claimTask(input, input.taskId);
     },
   };
 }

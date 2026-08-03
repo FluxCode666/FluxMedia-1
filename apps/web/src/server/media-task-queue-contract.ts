@@ -5,6 +5,7 @@
  * 共同使用。消息不得包含提示词、媒体字节、凭据或第三方响应。
  */
 
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /** BullMQ key 前缀；版本升级时显式迁移，禁止静默复用旧协议。 */
@@ -44,6 +45,11 @@ export type ImageTaskJobData = z.infer<typeof imageTaskJobDataSchema>;
 /** 视频队列消息类型。 */
 export type VideoTaskJobData = z.infer<typeof videoTaskJobDataSchema>;
 
+/** 把持久身份压缩为不含 BullMQ 保留分隔符的稳定摘要。 */
+function createTaskIdentityDigest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 /**
  * 生成 BullMQ 可接受的稳定图片 jobId。
  *
@@ -51,10 +57,11 @@ export type VideoTaskJobData = z.infer<typeof videoTaskJobDataSchema>;
  * @returns 不含冒号的确定性 jobId；重复投递由 BullMQ 合并。
  */
 export function createImageTaskJobId(taskId: string): string {
-  return imageTaskJobDataSchema.parse({
+  const data = imageTaskJobDataSchema.parse({
     kind: "image-generation",
     taskId,
-  }).taskId;
+  });
+  return `image-${createTaskIdentityDigest(data.taskId)}`;
 }
 
 /**
@@ -73,5 +80,7 @@ export function createVideoTaskJobId(
     taskId,
     stateVersion,
   });
-  return `${data.taskId}-${data.stateVersion}`;
+  return `video-${createTaskIdentityDigest(
+    `${data.taskId}\0${data.stateVersion}`
+  )}`;
 }
