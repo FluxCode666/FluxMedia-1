@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   fetchMediaUpstream: vi.fn(),
   fetchMediaUpstreamDownloadWithTrustedOrigin: vi.fn(),
+  getStorageRuntimeSnapshot: vi.fn(),
 }));
 
 vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
@@ -20,6 +21,9 @@ vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
   fetchMediaUpstreamDownloadWithTrustedOrigin:
     mocks.fetchMediaUpstreamDownloadWithTrustedOrigin,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES: 512 * 1024 * 1024,
+}));
+vi.mock("@repo/shared/storage/providers", () => ({
+  getStorageRuntimeSnapshot: mocks.getStorageRuntimeSnapshot,
 }));
 
 import {
@@ -57,6 +61,29 @@ function createConfig(adapter = createAdapter()): ApiConfig {
 
 const recoveryContext = { trustedOrigin: "https://video.example.com" };
 
+/** 配置测试对象存储，使 API 视频输入统一获得可断言的签名 HTTPS URL。 */
+function mockSignedStorage(): void {
+  mocks.getStorageRuntimeSnapshot.mockResolvedValue({
+    bucketName: "media",
+    endpoint: "https://oss.example.test",
+    provider: {
+      getSignedUrl: vi.fn(
+        async (key: string) => `https://oss.example.test/media/${key}?sig=test`
+      ),
+    },
+  });
+}
+
+/** 构造已经持久化到任务对象存储的 API 视频输入图。 */
+function createStoredSource(key: string, type: string) {
+  return {
+    data: Buffer.from(key),
+    type,
+    storageKey: key,
+    storageBucket: "media",
+  };
+}
+
 describe("API video adapter", () => {
   afterEach(() => vi.clearAllMocks());
 
@@ -67,6 +94,7 @@ describe("API video adapter", () => {
       delete body.aspect_ratio;
       return { body };
     `;
+    mockSignedStorage();
     mocks.fetchMediaUpstream.mockResolvedValue(
       Response.json(
         {
@@ -86,7 +114,7 @@ describe("API video adapter", () => {
         aspectRatio: "9:16",
         resolution: "480p",
         effectiveAudio: true,
-        firstFrame: { data: Buffer.from("frame"), type: "image/png" },
+        firstFrame: createStoredSource("first.png", "image/png"),
       })
     ).resolves.toMatchObject({
       status: "pending",
@@ -114,7 +142,7 @@ describe("API video adapter", () => {
     });
     expect(body).not.toHaveProperty("aspect_ratio");
     expect(body.first_frame).toBe(
-      `data:image/png;base64,${Buffer.from("frame").toString("base64")}`
+      "https://oss.example.test/media/first.png?sig=test"
     );
   });
 
@@ -162,6 +190,7 @@ describe("API video adapter", () => {
     mocks.fetchMediaUpstream.mockResolvedValue(
       Response.json({ id: "upstream-cangyuan" }, { status: 202 })
     );
+    mockSignedStorage();
 
     await submitApiVideoRequest(createConfig(adapter), {
       clientRequestId: "local-cangyuan-media",
@@ -172,7 +201,9 @@ describe("API video adapter", () => {
       resolution: "480p",
       effectiveAudio: true,
       negativePrompt: "画面抖动、主体变形",
-      referenceImages: [{ data: Buffer.from("reference"), type: "image/png" }],
+      referenceImages: [
+        createStoredSource("user/video-inputs/task/reference.png", "image/png"),
+      ],
     });
 
     const request = mocks.fetchMediaUpstream.mock.calls[0];
@@ -187,7 +218,7 @@ describe("API video adapter", () => {
       negative_prompt: "画面抖动、主体变形",
       reference_mode: "media",
       reference_image_urls: [
-        `data:image/png;base64,${Buffer.from("reference").toString("base64")}`,
+        "https://oss.example.test/media/user/video-inputs/task/reference.png?sig=test",
       ],
     });
     expect(body).not.toHaveProperty("audio");
@@ -211,6 +242,7 @@ describe("API video adapter", () => {
     mocks.fetchMediaUpstream.mockResolvedValue(
       Response.json({ id: "upstream-media" }, { status: 202 })
     );
+    mockSignedStorage();
 
     await submitApiVideoRequest(createConfig(adapter), {
       clientRequestId: "local-video-media",
@@ -220,11 +252,11 @@ describe("API video adapter", () => {
       aspectRatio: "16:9",
       resolution: "720p",
       effectiveAudio: false,
-      firstFrame: { data: Buffer.from("first"), type: "image/png" },
-      lastFrame: { data: Buffer.from("last"), type: "image/png" },
+      firstFrame: createStoredSource("first.png", "image/png"),
+      lastFrame: createStoredSource("last.png", "image/png"),
       referenceImages: [
-        { data: Buffer.from("reference-1"), type: "image/jpeg" },
-        { data: Buffer.from("reference-2"), type: "image/webp" },
+        createStoredSource("reference-1.jpg", "image/jpeg"),
+        createStoredSource("reference-2.webp", "image/webp"),
       ],
     });
 
@@ -233,11 +265,11 @@ describe("API video adapter", () => {
       input?: { start?: string; end?: string; references?: string[] };
     };
     expect(body.input).toEqual({
-      start: `data:image/png;base64,${Buffer.from("first").toString("base64")}`,
-      end: `data:image/png;base64,${Buffer.from("last").toString("base64")}`,
+      start: "https://oss.example.test/media/first.png?sig=test",
+      end: "https://oss.example.test/media/last.png?sig=test",
       references: [
-        `data:image/jpeg;base64,${Buffer.from("reference-1").toString("base64")}`,
-        `data:image/webp;base64,${Buffer.from("reference-2").toString("base64")}`,
+        "https://oss.example.test/media/reference-1.jpg?sig=test",
+        "https://oss.example.test/media/reference-2.webp?sig=test",
       ],
     });
   });

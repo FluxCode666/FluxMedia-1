@@ -24,13 +24,15 @@ import { ApiAcceptedVideoError } from "./api-video-error";
 import type { ApiConfig } from "./types";
 
 const MAX_API_VIDEO_RESPONSE_BYTES = 2 * 1024 * 1024;
-const MAX_API_VIDEO_INLINE_INPUT_BYTES = 64 * 1024 * 1024;
 const MAX_API_VIDEO_UPSTREAM_ERROR_DETAIL_CHARACTERS = 512;
+const API_VIDEO_SIGNED_INPUT_URL_TTL_SECONDS = 60 * 60;
 
 /** API 视频适配器消费的一张已验证输入图。 */
 export type ApiVideoSourceImage = {
   data: Buffer;
   type: string;
+  storageKey?: string;
+  storageBucket?: string;
 };
 
 /** API 视频适配器消费的具名输入图集合。 */
@@ -187,26 +189,36 @@ function responseResultToRecord(
   return result as unknown as Record<string, unknown>;
 }
 
-/** 把已验证输入图转换为平台视频 API 接受的 data URL。 */
-function toDataUrl(image: ApiVideoSourceImage): string {
-  return `data:${image.type};base64,${image.data.toString("base64")}`;
-}
-
-/** 估算一张输入图转换为 data URL 后的 UTF-8 字节数，不提前分配 base64 字符串。 */
-function getDataUrlByteLength(image: ApiVideoSourceImage): number {
-  return (
-    Buffer.byteLength(`data:${image.type};base64,`) +
-    4 * Math.ceil(image.data.byteLength / 3)
+/** 为 API 类型视频供应商签发对象存储 HTTPS 读取地址。 */
+async function createSignedApiVideoInputUrl(
+  image: ApiVideoSourceImage,
+  storage: {
+    bucketName: string;
+    provider: {
+      getSignedUrl(
+        key: string,
+        bucket: string,
+        expiresIn: number
+      ): Promise<string>;
+    };
+  }
+): Promise<string> {
+  if (!image.storageKey || !image.storageBucket) {
+    throw new Error("API 视频 URL 输入缺少对象存储引用");
+  }
+  if (storage.bucketName !== image.storageBucket) {
+    throw new Error("API 视频 URL 输入与当前对象存储桶不一致");
+  }
+  const signedUrl = await storage.provider.getSignedUrl(
+    image.storageKey,
+    image.storageBucket,
+    API_VIDEO_SIGNED_INPUT_URL_TTL_SECONDS
   );
-}
-
-/** 计算 API JSON 请求中全部内联输入图的编码后字节预算。 */
-function getInlineInputByteLength(inputs: ApiVideoSourceInputs): number {
-  return [
-    ...(inputs.firstFrame ? [inputs.firstFrame] : []),
-    ...(inputs.lastFrame ? [inputs.lastFrame] : []),
-    ...(inputs.referenceImages ?? []),
-  ].reduce((total, image) => total + getDataUrlByteLength(image), 0);
+  const parsed = parseMediaUpstreamUrl(signedUrl);
+  if (parsed.protocol !== "https:") {
+    throw new Error("API 视频 URL 输入必须使用 HTTPS");
+  }
+  return parsed.toString();
 }
 
 /** 将执行器阶段错误转换为视频提交状态机的安全分类。 */
@@ -384,16 +396,6 @@ export async function submitApiVideoRequest(
     signal?: AbortSignal;
   } & ApiVideoSourceInputs
 ): Promise<ApiVideoSubmission | ApiVideoStageError> {
-  if (getInlineInputByteLength(params) > MAX_API_VIDEO_INLINE_INPUT_BYTES) {
-    return {
-      error: "API 视频内联输入超过 64 MB 上限",
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: true,
-      submissionUncertain: false,
-    };
-  }
-
   let adapter: ReturnType<typeof getApiUpstreamAdapter>;
   try {
     adapter = getApiUpstreamAdapter(config);
@@ -404,10 +406,48 @@ export async function submitApiVideoRequest(
     params.model,
     adapter.modelMappings
   );
+  let firstFrameValue: string | undefined;
+  let lastFrameValue: string | undefined;
+  let referenceImageValues: string[] | undefined;
+  try {
+    const hasSourceInputs = Boolean(
+      params.firstFrame || params.lastFrame || params.referenceImages?.length
+    );
+    const storage = hasSourceInputs
+      ? await import("@repo/shared/storage/providers").then((module) =>
+          module.getStorageRuntimeSnapshot()
+        )
+      : undefined;
+    const resolveInputValue = async (
+      image: ApiVideoSourceImage
+    ): Promise<string> => {
+      if (!storage) throw new Error("API 视频输入缺少对象存储快照");
+      return createSignedApiVideoInputUrl(image, storage);
+    };
+    firstFrameValue = params.firstFrame
+      ? await resolveInputValue(params.firstFrame)
+      : undefined;
+    lastFrameValue = params.lastFrame
+      ? await resolveInputValue(params.lastFrame)
+      : undefined;
+    referenceImageValues = params.referenceImages?.length
+      ? await Promise.all(params.referenceImages.map(resolveInputValue))
+      : undefined;
+  } catch {
+    return {
+      error: "API 视频参考素材 URL 签发失败，请稍后重试",
+      switchable: true,
+      upstreamAccepted: false,
+      terminal: false,
+      submissionUncertain: false,
+      backendHealthNeutral: true,
+    };
+  }
+
   const opaqueValues = new Map<string, unknown>();
-  const toOpaqueDataUrl = (image: ApiVideoSourceImage): string => {
+  const toOpaqueInputValue = (value: string): string => {
     const token = createApiUpstreamOpaqueToken();
-    opaqueValues.set(token, toDataUrl(image));
+    opaqueValues.set(token, value);
     return token;
   };
   const standardBody: Record<string, unknown> = {
@@ -421,14 +461,14 @@ export async function submitApiVideoRequest(
     ...(params.negativePrompt != null
       ? { negative_prompt: params.negativePrompt }
       : {}),
-    ...(params.firstFrame
-      ? { first_frame: toOpaqueDataUrl(params.firstFrame) }
+    ...(firstFrameValue
+      ? { first_frame: toOpaqueInputValue(firstFrameValue) }
       : {}),
-    ...(params.lastFrame
-      ? { last_frame: toOpaqueDataUrl(params.lastFrame) }
+    ...(lastFrameValue
+      ? { last_frame: toOpaqueInputValue(lastFrameValue) }
       : {}),
-    ...(params.referenceImages?.length
-      ? { reference_images: params.referenceImages.map(toOpaqueDataUrl) }
+    ...(referenceImageValues?.length
+      ? { reference_images: referenceImageValues.map(toOpaqueInputValue) }
       : {}),
   };
 
