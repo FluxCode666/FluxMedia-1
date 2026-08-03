@@ -30,14 +30,16 @@ import { HomepageReliability } from "./homepage-reliability";
 /**
  * 渲染双语、作品主导的完整首页。
  *
- * @param props - 当前 locale 与已在服务端收窄的页面数据。
+ * @param props - 当前 locale、请求 origin 与已在服务端收窄的页面数据。
  * @returns 正常文档流中的所有首页区块；首尾 CTA 复用同一 href。
  */
 export async function HomepageContent({
+  baseUrl,
   locale,
   data,
   faqItems,
 }: {
+  baseUrl?: string;
   locale: string;
   data: HomepagePageData;
   faqItems?: readonly HomepageFaqItem[];
@@ -167,6 +169,7 @@ export async function HomepageContent({
 
       <div data-homepage-motion="reveal">
         <HomepageIntegration
+          baseUrl={baseUrl}
           catalog={modelCatalogs.integration}
           locale={locale}
         />

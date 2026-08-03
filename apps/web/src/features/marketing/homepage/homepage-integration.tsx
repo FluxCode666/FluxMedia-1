@@ -1,10 +1,11 @@
 /**
  * 首页快速集成服务端展示组件。
  *
- * 使用方：首页连续内容编排；从 siteConfig 读取可信配置候选，不访问请求 Host 或转发
- * 头。组件始终输出三步与 API Docs/API Key 入口，仅在安全构建成功时输出 CodeBlock。
+ * 使用方：首页连续内容编排；由服务端页面传入已校验的当前请求 origin，无请求上下文
+ * 时回退公开站点配置。组件始终输出三步与 API Docs/API Key 入口，仅在安全构建成功时
+ * 输出 CodeBlock。
  */
-import { siteConfig } from "@repo/shared/config";
+import { getSiteBaseUrl } from "@repo/shared/config";
 import { Button } from "@repo/ui/components/button";
 import { CodeBlock } from "@repo/ui/components/code-block";
 import { ArrowUpRight, CircleCheck, KeyRound } from "lucide-react";
@@ -20,22 +21,26 @@ import {
 /**
  * 渲染三步服务端集成说明、安全 cURL 示例和固定开发者入口。
  *
- * @param props - 当前语言与已由模型广场公开 DTO 投影的完整图像目录状态。
+ * @param baseUrl - 当前请求对应的 HTTP(S) origin；无请求上下文时回退公开站点配置。
+ * @param catalog - 已由模型广场公开 DTO 投影的完整图像目录状态。
+ * @param locale - 当前路由语言。
  * @returns 无 JavaScript 也可阅读的三步说明；复制交互由共享 CodeBlock 渐进增强。
  * @sideEffects 无；不读取请求头、不发起目录请求，也不接收或渲染真实 API Key。
  * @failure 目录或 origin 不可用时显示对应说明，仍保留 API Docs 与 API Key 入口。
  */
 export function HomepageIntegration({
+  baseUrl = getSiteBaseUrl(),
   catalog,
   locale,
 }: {
+  baseUrl?: string;
   catalog: HomepageIntegrationCatalogState;
   locale?: string;
 }) {
   const content = getHomepageIntegrationContent(locale);
   const example = buildHomepageIntegrationExample({
     catalog,
-    origin: siteConfig.url,
+    origin: baseUrl,
     runtime:
       process.env.NODE_ENV === "production" ? "production" : "development",
   });

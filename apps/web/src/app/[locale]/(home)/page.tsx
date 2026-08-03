@@ -7,6 +7,7 @@
 import type { Metadata } from "next";
 import { getTranslations } from "next-intl/server";
 import { HomePageJsonLd } from "@/components/seo/json-ld";
+import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 import { HomepageContent } from "@/features/marketing/homepage/homepage-content";
 import { parseHomepageFaqItems } from "@/features/marketing/homepage/homepage-faq";
 import {
@@ -46,9 +47,10 @@ export default async function HomePage({
 }) {
   const { locale } = await params;
   const normalizedLocale = normalizeHomepageMetadataLocale(locale);
-  const [pageData, t] = await Promise.all([
+  const [pageData, t, baseUrl] = await Promise.all([
     loadHomepagePageData(),
     getTranslations({ locale, namespace: "Homepage" }),
+    getCurrentDocumentationBaseUrl(),
   ]);
   const faqItems = parseHomepageFaqItems(t.raw("faq.items"));
 
@@ -56,7 +58,12 @@ export default async function HomePage({
     <>
       <HomePageJsonLd faqs={faqItems} locale={normalizedLocale} />
 
-      <HomepageContent data={pageData} faqItems={faqItems} locale={locale} />
+      <HomepageContent
+        baseUrl={baseUrl}
+        data={pageData}
+        faqItems={faqItems}
+        locale={locale}
+      />
     </>
   );
 }

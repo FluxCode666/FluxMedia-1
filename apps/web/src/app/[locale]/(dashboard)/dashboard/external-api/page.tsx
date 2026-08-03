@@ -8,6 +8,7 @@ import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 
+import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 import { ExternalApiKeySection } from "@/features/settings/components";
 
 export const metadata = {
@@ -17,8 +18,11 @@ export const metadata = {
 
 /** 渲染当前登录用户的 API 密钥管理页面。 */
 export default async function ExternalApiPage() {
-  const session = await getServerSession();
-  const locale = await getLocale();
+  const [session, locale, baseUrl] = await Promise.all([
+    getServerSession(),
+    getLocale(),
+    getCurrentDocumentationBaseUrl(),
+  ]);
   if (!session?.user) {
     redirect(`/${locale}/sign-in`);
   }
@@ -36,7 +40,7 @@ export default async function ExternalApiPage() {
         </h1>
         <p className="text-sm text-muted-foreground">{t("description")}</p>
       </div>
-      <ExternalApiKeySection timeZone={timeZone} />
+      <ExternalApiKeySection baseUrl={baseUrl} timeZone={timeZone} />
     </div>
   );
 }

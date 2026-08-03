@@ -9,6 +9,7 @@ import type { Metadata } from "next";
 
 import { BreadcrumbJsonLd } from "@/components/seo/json-ld";
 import { ApiIntegrationDocs } from "@/features/docs/api-integration-docs";
+import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 
 /** 按当前语言生成公开接入文档的搜索与分享元数据。 */
 export async function generateMetadata({
@@ -50,7 +51,10 @@ export default async function ApiDocsPage({
 }: {
   params: Promise<{ locale: string }>;
 }) {
-  const { locale } = await params;
+  const [{ locale }, baseUrl] = await Promise.all([
+    params,
+    getCurrentDocumentationBaseUrl(),
+  ]);
   const title = locale === "zh" ? "API 接入文档" : "API Integration Guide";
 
   return (
@@ -61,7 +65,7 @@ export default async function ApiDocsPage({
           { name: title, url: `/${locale}/api-docs` },
         ]}
       />
-      <ApiIntegrationDocs locale={locale} />
+      <ApiIntegrationDocs baseUrl={baseUrl} locale={locale} />
     </>
   );
 }

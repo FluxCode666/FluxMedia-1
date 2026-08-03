@@ -9,13 +9,16 @@ import { canAccessAdminArea } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
-
+import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 import { SystemDocsContent } from "@/features/docs/system-docs";
 
 /** 渲染仅 admin 与 super_admin 可见的控制台系统文档。 */
 export default async function BackendHelpPage() {
-  const locale = await getLocale();
-  const session = await getServerSession();
+  const [locale, session, baseUrl] = await Promise.all([
+    getLocale(),
+    getServerSession(),
+    getCurrentDocumentationBaseUrl(),
+  ]);
 
   if (!session?.user) {
     redirect(`/${locale}/sign-in`);
@@ -26,5 +29,5 @@ export default async function BackendHelpPage() {
     redirect(`/${locale}/dashboard/api-docs`);
   }
 
-  return <SystemDocsContent locale={locale} />;
+  return <SystemDocsContent baseUrl={baseUrl} locale={locale} />;
 }

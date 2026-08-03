@@ -6,6 +6,11 @@
  */
 import { getSiteBaseUrl } from "@repo/shared/config";
 
+import {
+  DOCUMENTATION_BASE_URL_PLACEHOLDER,
+  replaceDocumentationBaseUrl,
+} from "./documentation-base-url";
+
 export type ApiIntegrationParameter = {
   name: string;
   requirement: string;
@@ -70,7 +75,6 @@ export type ApiIntegrationHomepageContract = {
 };
 
 const IMAGE_GENERATION_ENDPOINT_ID = "image-generations";
-const EXTERNAL_API_BASE_URL = getSiteBaseUrl();
 const API_KEY_AUTHENTICATION = {
   headerName: "Authorization",
   scheme: "Bearer",
@@ -82,7 +86,7 @@ const zhContent = {
   title: "API 接入文档",
   subtitle:
     "面向服务端集成的媒体 API 参考。先查询当前密钥可见模型与积分额度，再调用图片或视频生成接口并轮询任务状态。",
-  baseUrl: EXTERNAL_API_BASE_URL,
+  baseUrl: DOCUMENTATION_BASE_URL_PLACEHOLDER,
   baseUrlLabel: "Base URL",
   authLabel: "鉴权",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -110,7 +114,7 @@ const zhContent = {
       contentType: "无请求体",
       description:
         "列出当前 API 密钥所属套餐和后端分组实际可用的图片与视频模型。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/models \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/models \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "object": "list",
@@ -164,7 +168,7 @@ const zhContent = {
       contentType: "无请求体",
       description:
         "查询当前 API 密钥的积分限额、已用额度、剩余额度和所属账户余额。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/credits \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/credits \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "object": "credit_balance",
@@ -234,7 +238,7 @@ const zhContent = {
       contentType: "application/json",
       description:
         "根据文本提示词生成图片，兼容 OpenAI Images generation 请求形态。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/images/generations \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -251,7 +255,7 @@ const zhContent = {
   "created": 1713833628,
   "data": [
     {
-      "url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/...",
+      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
       "revised_prompt": "..."
     }
   ]
@@ -358,7 +362,7 @@ const zhContent = {
       contentType: "multipart/form-data 或 application/json",
       description:
         "根据提示词编辑一张或多张输入图片，兼容 OpenAI Images edit 请求形态。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/images/edits \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -F "model=gpt-image-2" \\
   -F "prompt=Replace the sky with a clear sunset" \\
@@ -370,7 +374,7 @@ const zhContent = {
   "created": 1713833628,
   "data": [
     {
-      "url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/...",
+      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
       "revised_prompt": "..."
     }
   ]
@@ -492,7 +496,7 @@ const zhContent = {
       path: "/v1/videos/generations",
       contentType: "application/json",
       description: "根据文本提示词或参考图创建视频。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/videos/generations \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -616,7 +620,7 @@ const zhContent = {
       contentType: "无请求体",
       description:
         "查询当前 API 密钥可见的真实视频模型、独立生成参数、输入图和声音能力，以及账号池是否已配置可达。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/videos/capabilities \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/capabilities \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "items": [
@@ -706,7 +710,7 @@ const zhContent = {
       path: "/v1/images/{task_id}",
       contentType: "无请求体",
       description: "按任务 ID 查询图片生成状态和结果。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/images/task_... \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "id": "task_...",
@@ -718,7 +722,7 @@ const zhContent = {
   "completed_at": "2026-05-28T00:01:12.000Z",
   "data": [
     {
-      "url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/..."
+      "url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."
     }
   ]
 }`,
@@ -764,7 +768,7 @@ const zhContent = {
       path: "/v1/videos/{id}",
       contentType: "无请求体",
       description: "按任务 ID 查询视频生成状态和结果。",
-      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "object": "video.task",
@@ -783,8 +787,8 @@ const zhContent = {
   "input": { "mode": "references", "count": 1 },
   "created_at": "2026-05-28T00:00:00.000Z",
   "completed_at": "2026-05-28T00:01:40.000Z",
-  "video_url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/...",
-  "data": [{"url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/..."}]
+  "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
+  "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}]
 }`,
       parameters: [
         {
@@ -855,7 +859,7 @@ const enContent = {
   title: "API Integration Guide",
   subtitle:
     "Media API reference for server-side integrations. Discover models and credit quota first, then create images or videos and poll task status.",
-  baseUrl: EXTERNAL_API_BASE_URL,
+  baseUrl: DOCUMENTATION_BASE_URL_PLACEHOLDER,
   baseUrlLabel: "Base URL",
   authLabel: "Authentication",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -1432,15 +1436,50 @@ const enContent = {
 } satisfies ApiIntegrationDocsContent;
 
 /**
+ * 为单次请求创建绑定当前域名的接入文档副本。
+ *
+ * @param content - 当前语言的静态文档模板。
+ * @param baseUrl - 当前请求对应且不带尾斜杠的 HTTP(S) origin。
+ * @returns 只替换 Base URL、请求示例和响应示例的新文档对象。
+ * @sideEffects 无；不会修改模块级模板，避免多域名并发请求互相串值。
+ */
+function bindApiIntegrationBaseUrl(
+  content: ApiIntegrationDocsContent,
+  baseUrl: string
+): ApiIntegrationDocsContent {
+  return {
+    ...content,
+    baseUrl,
+    endpoints: content.endpoints.map((endpoint) => ({
+      ...endpoint,
+      requestExample: replaceDocumentationBaseUrl(
+        endpoint.requestExample,
+        baseUrl
+      ),
+      responseExample: replaceDocumentationBaseUrl(
+        endpoint.responseExample,
+        baseUrl
+      ),
+    })),
+  };
+}
+
+/**
  * 按路由语言返回公开接入文档。
  *
  * @param locale - Next.js 路由语言；只有 zh 使用中文，其余安全回退英文。
- * @returns 包含现行模型、积分、图片与视频端点的完整只读数据源。
+ * @param baseUrl - 当前请求 origin；缺省仅供无请求上下文的纯契约消费者使用站点配置。
+ * @returns 绑定单次请求域名并包含现行模型、积分、图片与视频端点的完整只读数据源。
+ * @sideEffects 缺省 baseUrl 时只读访问公开站点配置；不修改共享模板。
  */
 export function getApiIntegrationDocs(
-  locale?: string
+  locale?: string,
+  baseUrl = getSiteBaseUrl()
 ): ApiIntegrationDocsContent {
-  return locale === "zh" ? zhContent : enContent;
+  return bindApiIntegrationBaseUrl(
+    locale === "zh" ? zhContent : enContent,
+    baseUrl
+  );
 }
 
 /**

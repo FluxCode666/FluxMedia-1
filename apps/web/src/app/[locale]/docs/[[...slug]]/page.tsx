@@ -1,7 +1,7 @@
 import { DocsBody, DocsPage, DocsTitle } from "fumadocs-ui/page";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-
+import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 import {
   getSystemDocsMetadata,
   SystemDocsContent,
@@ -67,7 +67,10 @@ export default async function Page({
 }: {
   params: Promise<{ locale?: string; slug?: string[] }>;
 }) {
-  const { locale, slug } = await params;
+  const [{ locale, slug }, baseUrl] = await Promise.all([
+    params,
+    getCurrentDocumentationBaseUrl(),
+  ]);
 
   // 外部 API 文档已并入「系统文档」(SystemDocsContent,数据驱动,渲染于 /docs/system 与
   // 控制台 backend-help);external-api.mdx 已删除。旧 /docs/external-api 链接重定向到 /docs/system。
@@ -86,6 +89,7 @@ export default async function Page({
       >
         <DocsBody className="max-w-none">
           <SystemDocsContent
+            baseUrl={baseUrl}
             className="mx-auto w-full max-w-[1500px] space-y-6 px-4 py-6 lg:px-8"
             locale={locale}
           />

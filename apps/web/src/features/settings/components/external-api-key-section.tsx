@@ -9,7 +9,6 @@
  * 关键依赖：API 密钥 Server Actions、纯列表状态 reducer、Shadcn Collapsible。
  */
 import { formatCredits } from "@repo/shared/credits/format";
-import { getSiteBaseUrl } from "@repo/shared/config";
 import { getMyPlanAction } from "@repo/shared/subscription/actions/get-user-plan";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import {
@@ -81,7 +80,6 @@ import {
 } from "./external-api-key-list-state";
 
 const DEFAULT_GROUP_VALUE = "default";
-const EXTERNAL_API_BASE_URL = getSiteBaseUrl();
 
 type LoadStatus = "loading" | "ready" | "error";
 type EditableGroup = ExternalApiKeyListResult["editableGroups"][number];
@@ -122,8 +120,21 @@ function getActionError(
   return result?.serverError || fallback;
 }
 
-/** API 密钥创建区与摘要列表。 */
-export function ExternalApiKeySection({ timeZone }: { timeZone?: string }) {
+/**
+ * 渲染 API 密钥创建区与摘要列表。
+ *
+ * @param baseUrl - 当前请求对应的 HTTP(S) origin，由服务端页面校验后传入。
+ * @param timeZone - 当前用户的 IANA 时区；缺省时由格式化层回退。
+ * @returns 可创建、编辑、撤销和删除 API 密钥的客户端交互区。
+ * @sideEffects 加载与修改当前用户的 API 密钥，并展示操作反馈。
+ */
+export function ExternalApiKeySection({
+  baseUrl,
+  timeZone,
+}: {
+  baseUrl: string;
+  timeZone?: string;
+}) {
   const locale = useLocale();
   const t = useTranslations("Settings.externalApi");
   const didLoadRef = useRef(false);
@@ -510,7 +521,7 @@ export function ExternalApiKeySection({ timeZone }: { timeZone?: string }) {
               {t("createSectionDescription")}
             </p>
             <p className="font-mono text-xs text-muted-foreground">
-              {t("baseUrl", { url: EXTERNAL_API_BASE_URL })}
+              {t("baseUrl", { url: baseUrl })}
             </p>
             <Link
               href={`/${locale}/dashboard/api-docs`}

@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 
 import { ApiIntegrationDocs } from "@/features/docs/api-integration-docs";
+import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
 
 export const metadata = {
   title: "API Docs | FluxMedia",
@@ -23,14 +24,15 @@ export const metadata = {
  * @sideEffects 读取服务端会话，失败边界交由控制台路由处理。
  */
 export default async function DashboardApiDocsPage() {
-  const [session, locale] = await Promise.all([
+  const [session, locale, baseUrl] = await Promise.all([
     getServerSession(),
     getLocale(),
+    getCurrentDocumentationBaseUrl(),
   ]);
 
   if (!session?.user) {
     redirect(`/${locale}/sign-in`);
   }
 
-  return <ApiIntegrationDocs embedded locale={locale} />;
+  return <ApiIntegrationDocs baseUrl={baseUrl} embedded locale={locale} />;
 }

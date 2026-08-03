@@ -193,18 +193,21 @@ function EndpointSection({
 /**
  * 渲染可独立展示或嵌入控制台的 API 接入文档。
  *
+ * @param baseUrl - 当前请求对应的 HTTP(S) origin。
  * @param locale - 当前路由语言。
  * @param embedded - 是否嵌入已有横向内边距的控制台内容区。
  * @returns 双语、响应式且只包含现行公开参数的文档页面。
  */
 export function ApiIntegrationDocs({
+  baseUrl,
   embedded = false,
   locale,
 }: {
+  baseUrl: string;
   embedded?: boolean;
   locale?: string;
 }) {
-  const content = getApiIntegrationDocs(locale);
+  const content = getApiIntegrationDocs(locale, baseUrl);
 
   return (
     <div

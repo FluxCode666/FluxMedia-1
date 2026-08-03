@@ -15,6 +15,16 @@ const OBSOLETE_VIDEO_RESPONSE_FIELDS = [
 ] as const;
 
 describe("system docs video contract", () => {
+  it.each(["zh", "en"])("%s 按当前请求域名生成视频 API 示例", (locale) => {
+    const baseUrl = "https://tenant.example.test";
+    const endpoints = getSystemDocsVideoEndpoints(locale, baseUrl);
+    const serialized = JSON.stringify(endpoints);
+
+    expect(serialized).toContain(baseUrl);
+    expect(serialized).not.toContain("{{FLUXMEDIA_BASE_URL}}");
+    expect(serialized).not.toContain("gpt2image.superapi.buzz");
+  });
+
   it.each(["zh", "en"])("%s 精确描述持久视频创建任务", (locale) => {
     const endpoints = getSystemDocsVideoEndpoints(locale);
     const endpoint = endpoints.find(

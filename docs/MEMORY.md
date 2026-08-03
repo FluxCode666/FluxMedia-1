@@ -44,8 +44,9 @@
 - 图片、视频、号池和系统设置的现行 operation 见
   [feature-interface-inventory.md](plan/2026-05-31-feature-interface-inventory.md)。
 - 公开 `/api-docs` 与控制台镜像共用同一数据源，必须同步展示模型、积分、图片与视频八个
-  现行端点；所有示例和 API 密钥控制台统一读取 `NEXT_PUBLIC_APP_URL`。视频文档只使用
-  真实模型 ID，并明确独立时长、比例、分辨率、输入图互斥、声音能力与持久任务轮询契约。
+  现行端点；所有 Base URL、请求/响应示例和 API 密钥控制台按当前请求的可信 origin 展示，
+  缺失或非法时才回退 `NEXT_PUBLIC_APP_URL`。视频文档只使用真实模型 ID，并明确独立时长、
+  比例、分辨率、输入图互斥、声音能力与持久任务轮询契约。
 - MCP 与站内调用共享 registry、Principal、权限、幂等与审计网关。
 - 所有可见分页列表默认每页 20 条；可选大小由系统设置
   `PAGINATION_PAGE_SIZE_OPTIONS` 统一配置，必须包含 20，默认 `[10, 20, 50]`。
