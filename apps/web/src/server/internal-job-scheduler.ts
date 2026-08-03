@@ -12,13 +12,15 @@ import {
   getRuntimeSettingNumber,
 } from "@repo/shared/system-settings";
 import { eq, sql } from "drizzle-orm";
-
+import { registerProcessShutdownHook } from "./process-lifecycle";
 import {
+  runAdobeCredentialHealthCleanupJob,
+  runAdobeCredentialHealthJob,
+  runAdobeCredentialNotificationDrainJob,
   runCreditsExpireJob,
   runImageMaintenanceJob,
   runVideoRecoveryJob,
 } from "./scheduled-jobs";
-import { registerProcessShutdownHook } from "./process-lifecycle";
 
 type InternalJob = {
   name: string;
@@ -87,6 +89,27 @@ const jobs: InternalJob[] = [
     defaultIntervalMinutes: 24 * 60,
     initialDelayMs: 60_000,
     run: runCreditsExpireJob,
+  },
+  {
+    name: "adobe-credential-health",
+    lockKey: 4,
+    defaultIntervalMinutes: 1,
+    initialDelayMs: 15_000,
+    run: runAdobeCredentialHealthJob,
+  },
+  {
+    name: "adobe-credential-notification-delivery",
+    lockKey: 5,
+    defaultIntervalMinutes: 1,
+    initialDelayMs: 20_000,
+    run: runAdobeCredentialNotificationDrainJob,
+  },
+  {
+    name: "adobe-credential-health-retention",
+    lockKey: 6,
+    defaultIntervalMinutes: 24 * 60,
+    initialDelayMs: 90_000,
+    run: runAdobeCredentialHealthCleanupJob,
   },
 ];
 

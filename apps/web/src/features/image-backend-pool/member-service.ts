@@ -513,6 +513,7 @@ export function createBackendMemberService(
 const existingMemberRowSchema = z.object({
   id: z.string(),
   type: z.enum(["api", "adobe"]),
+  is_enabled: z.boolean(),
 });
 
 const memberListRowSchema = z.object({
@@ -696,6 +697,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
     const {
       db,
       imageBackendGroup,
+      adobeCredentialHealth,
       imageBackendMember,
       imageBackendMemberAdobeConfig,
       imageBackendMemberApiAdapterVersion,
@@ -705,7 +707,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
     return db.transaction(async (transaction) => {
       const existingRows = extractExecuteRows(
         await transaction.execute(sql`
-          select id, type
+          select id, type, is_enabled
           from image_backend_member
           where id = ${input.id}
           for update
@@ -1149,6 +1151,51 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
               updatedAt: now,
             },
           });
+
+        if (input.config.mode === "direct") {
+          await transaction
+            .insert(adobeCredentialHealth)
+            .values({
+              memberId: input.id,
+              status: "pending",
+              nextCheckAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .onConflictDoNothing();
+          if (
+            existing &&
+            (Boolean(input.directCredential) ||
+              existing.is_enabled !== input.isEnabled)
+          ) {
+            // WHY：普通成员编辑只使事务外旧评估失效，不能清除隔离；隔离恢复必须
+            // 经过专用同账号重新授权流程，避免替换成另一个账号绕过身份约束。
+            await transaction
+              .update(adobeCredentialHealth)
+              .set({
+                ...(input.directCredential
+                  ? {
+                      credentialRevision: sql`${adobeCredentialHealth.credentialRevision} + 1`,
+                    }
+                  : {}),
+                ...(existing.is_enabled !== input.isEnabled
+                  ? {
+                      memberEnableRevision: sql`${adobeCredentialHealth.memberEnableRevision} + 1`,
+                    }
+                  : {}),
+                claimToken: null,
+                claimExpiresAt: null,
+                evaluationDeadlineAt: null,
+                nextCheckAt: now,
+                updatedAt: now,
+              })
+              .where(eq(adobeCredentialHealth.memberId, input.id));
+          }
+        } else {
+          await transaction
+            .delete(adobeCredentialHealth)
+            .where(eq(adobeCredentialHealth.memberId, input.id));
+        }
       }
 
       await transaction
