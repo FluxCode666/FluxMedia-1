@@ -188,6 +188,17 @@ describe("Adobe 诊断 allowlist 和 claim CAS", () => {
       adobeErrorCode: "invalid_token",
       requestId: "req-1",
     });
+    expect(
+      sanitizeAdobeCredentialDiagnostic({
+        statusCode: 500,
+        message: '{"nested":{"access_token":"secret-token"}}',
+      })
+    ).toEqual({ statusCode: 500 });
+    expect(
+      sanitizeAdobeCredentialDiagnostic({
+        message: "YWNjZXNzX3Rva2VuPXNlY3JldA==",
+      })
+    ).toBeNull();
   });
 
   it("claim、credential revision 或启用 revision 不匹配时拒绝旧结果", () => {

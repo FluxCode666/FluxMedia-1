@@ -12,6 +12,7 @@ import type {
 } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it, vi } from "vitest";
 import {
+  type AdobeCredentialEvaluationSubmission,
   evaluateAdobeCredentialProfiles,
   runClaimedAdobeCredentialHealthEvaluation,
 } from "./adobe-credential-health";
@@ -166,6 +167,7 @@ describe("Adobe 双 Profile 健康评估", () => {
 
   it("事务外完成网络评估后只向提交边界传递 claim/revision 和脱敏结果", async () => {
     const events: string[] = [];
+    const submissions: AdobeCredentialEvaluationSubmission[] = [];
     const transport = new ProfileTransport({
       express: "adobe-user-1",
       firefly: "adobe-user-1",
@@ -176,10 +178,13 @@ describe("Adobe 双 Profile 健康评估", () => {
         events.push("network");
         return ProfileTransport.prototype.request.call(transport, input);
       });
-    const commit = vi.fn(async () => {
-      events.push("commit");
-      return { disposition: "accepted" as const };
-    });
+    const commit = vi.fn(
+      async (submission: AdobeCredentialEvaluationSubmission) => {
+        events.push("commit");
+        submissions.push(submission);
+        return { disposition: "accepted" as const };
+      }
+    );
 
     await runClaimedAdobeCredentialHealthEvaluation({
       claim: {
@@ -187,6 +192,7 @@ describe("Adobe 双 Profile 健康评估", () => {
         claimToken: "claim-1",
         memberId: "member-1",
         memberName: "Adobe A",
+        source: "manual",
         credentialRevision: 7,
         memberEnableRevision: 9,
       },
@@ -223,13 +229,11 @@ describe("Adobe 双 Profile 健康评估", () => {
           memberEnableRevision: 9,
           completedAt: new Date("2026-08-04T00:00:10.000Z"),
         },
+        source: "manual",
         outcome: expect.objectContaining({ kind: "success" }),
       })
     );
-    const firstCommitCall = (
-      commit.mock.calls as unknown as Array<[unknown]>
-    )[0];
-    const serialized = JSON.stringify(firstCommitCall?.[0]);
+    const serialized = JSON.stringify(submissions[0]);
     expect(serialized).not.toContain("secret-cookie");
     expect(serialized).not.toContain("access_token");
   });

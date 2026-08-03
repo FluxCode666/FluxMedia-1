@@ -16,6 +16,12 @@ export const ADOBE_CREDENTIAL_PROFILES = ["express", "firefly"] as const;
 
 export type AdobeCredentialProfile = (typeof ADOBE_CREDENTIAL_PROFILES)[number];
 
+export type AdobeCredentialEvaluationSource =
+  | "scheduled"
+  | "passive"
+  | "manual"
+  | "reauthorization";
+
 export type AdobeCredentialHealthStatus =
   | "pending"
   | "healthy"
@@ -73,7 +79,7 @@ const SECOND_FAILURE_RECHECK_MINUTES = 15;
 const ISOLATION_FAILURE_THRESHOLD = 3;
 
 const SENSITIVE_DIAGNOSTIC_PATTERN =
-  /(?:authorization|cookie|password|passcode|client[_-]?secret|proxy[_-]?secret|hmac[_-]?key)\s*[:=]|bearer\s+|(?:access|refresh|id)[_-]?token\s*[:=]|aux_sid\s*=|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}/i;
+  /(?:authorization|cookie|password|passcode|client[_-]?secret|proxy[_-]?secret|hmac[_-]?key|(?:access|refresh|id)[_-]?token|aux_sid)["']?\s*[:=]|(?:access|refresh|id)%5f?token(?:%22)?%3a|bearer\s+|eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}|[A-Za-z0-9+/]{24,}={0,2}/i;
 const SAFE_DIAGNOSTIC_IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
 
 /**

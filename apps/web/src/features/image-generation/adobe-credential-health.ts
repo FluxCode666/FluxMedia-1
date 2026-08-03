@@ -16,6 +16,7 @@ import {
   ADOBE_CREDENTIAL_PROFILES,
   type AdobeCredentialDiagnostic,
   type AdobeCredentialEvaluationOutcome,
+  type AdobeCredentialEvaluationSource,
   type AdobeCredentialFailureCategory,
   type AdobeCredentialHealthState,
   type AdobeCredentialProfile,
@@ -252,6 +253,7 @@ export type AdobeCredentialEvaluationSubmission = {
   evaluationId: string;
   memberId: string;
   memberName: string;
+  source: AdobeCredentialEvaluationSource;
   expected: {
     claimToken: string;
     credentialRevision: number;
@@ -280,6 +282,7 @@ export async function runClaimedAdobeCredentialHealthEvaluation<
     claimToken: string;
     memberId: string;
     memberName: string;
+    source: AdobeCredentialEvaluationSource;
     credentialRevision: number;
     memberEnableRevision: number;
   };
@@ -321,6 +324,7 @@ export async function runClaimedAdobeCredentialHealthEvaluation<
     evaluationId: input.claim.evaluationId,
     memberId: input.claim.memberId,
     memberName: input.claim.memberName,
+    source: input.claim.source,
     expected: {
       claimToken: input.claim.claimToken,
       credentialRevision: input.claim.credentialRevision,
