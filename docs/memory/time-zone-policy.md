@@ -29,6 +29,15 @@ user.time_zone > process.env.APP_TIME_ZONE > UTC
 - 用户输入必须通过 `Intl.DateTimeFormat` 兼容性校验，不接受 `UTC+8` 这类固定偏移别名。
 - 使用 `Europe/Berlin` 等 IANA 名称自动处理夏令时，禁止手工加减小时。
 
+## 日志时间
+
+- Pino 的标准 `time` 字段保持 UTC ISO 8601，供日志平台排序、检索和跨服务关联。
+- Pino 同时写入按 `APP_TIME_ZONE` 格式化的 `localTime` 与实际 `timeZone`，供运维直接
+  阅读；非法或缺失的 `APP_TIME_ZONE` 回退 UTC。
+- Docker `--timestamps` 输出的前缀固定为 UTC；排查应用日志时以 JSON 内的
+  `localTime` 为本地展示时间，不得为改变日志前缀而修改 Web 进程 `TZ`。
+- Nginx `$time_local` 使用宿主机/Nginx 进程时区，与应用 `APP_TIME_ZONE` 无关。
+
 ## 接口与实现
 
 - UOL：`user.getMyTimeZone`、`user.updateMyTimeZone`。

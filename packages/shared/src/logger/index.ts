@@ -8,9 +8,12 @@
  * 环境变量:
  * - AXIOM_TOKEN: Axiom API Token（可选）
  * - AXIOM_DATASET: Axiom 数据集名称（可选，默认 "gpt2image"）
+ * - APP_TIME_ZONE: 运维可读时间戳的 IANA 展示时区（可选，默认 UTC）
  */
 
 import pino from "pino";
+
+import { createPinoTimestamp } from "./timestamp";
 
 // ============================================
 // 配置检查
@@ -48,7 +51,7 @@ function createLogger(): pino.Logger {
       env: process.env.NODE_ENV,
       service: "gpt2image",
     },
-    timestamp: pino.stdTimeFunctions.isoTime,
+    timestamp: createPinoTimestamp(process.env.APP_TIME_ZONE),
     // 纵深防御：即便未来误传敏感字段，也在日志层做脱敏。
     redact: {
       paths: [

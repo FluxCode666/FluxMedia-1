@@ -98,6 +98,8 @@
 ## 部署与迁移
 
 - Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。
+- Web 与迁移进程保持 `TZ=UTC`；业务展示和 Pino 的 `localTime` 使用合法 IANA
+  `APP_TIME_ZONE`。详细契约见 [time-zone-policy.md](memory/time-zone-policy.md)。
 - 统一号池迁移 `0060` 只允许在维护窗口执行；API/Adobe 旧成员、分组、Adobe 子池、
   历史指标和终态视频引用必须原子迁移，只有旧 Web 数据、有效租约/粘性绑定、无法
   恢复的运行中视频状态、不兼容协议或非法配置才阻断。API/Adobe 关系 ID 在合并时
