@@ -105,13 +105,22 @@ describe("localProvider.getSignedUrl", () => {
     );
   });
 
-  it("keeps public bucket URLs unsigned", async () => {
+  it("returns a signed URL for the actual runtime system bucket", async () => {
     const url = await localProvider.getSignedUrl(
       "user-1/avatar.png",
       "avatars",
       60
     );
+    const parsed = new URL(url, "https://app.example.test");
+    const sig = parsed.searchParams.get("sig");
+    const exp = Number(parsed.searchParams.get("exp"));
 
-    expect(url).toBe("/api/storage/avatars/user-1/avatar.png");
+    expect(parsed.pathname).toBe("/api/storage/avatars/user-1/avatar.png");
+    expect(sig).toMatch(/^[a-f0-9]{64}$/);
+    expect(exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    if (!sig) throw new Error("missing signature");
+    expect(verifySignedImageUrl("avatars", "user-1/avatar.png", sig, exp)).toBe(
+      "valid"
+    );
   });
 });
