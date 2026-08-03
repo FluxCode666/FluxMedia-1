@@ -132,32 +132,6 @@ describe("API video adapter", () => {
       if (hasFirstFrame !== hasLastFrame) {
         throw new Error("首帧和尾帧必须成对提供");
       }
-      if (typeof source.prompt !== "string" || source.prompt.length > 1200) {
-        throw new Error("prompt 最多 1200 个字符");
-      }
-      if (
-        !Number.isInteger(source.duration) ||
-        source.duration < 4 ||
-        source.duration > 15
-      ) {
-        throw new Error("duration 必须是 4 到 15 的整数");
-      }
-      if (
-        source.aspect_ratio !== "16:9" &&
-        source.aspect_ratio !== "9:16"
-      ) {
-        throw new Error("aspect_ratio 仅支持 16:9 或 9:16");
-      }
-      if (source.resolution !== "480p" && source.resolution !== "720p") {
-        throw new Error("resolution 仅支持 480p 或 720p");
-      }
-      if (
-        source.negative_prompt !== undefined &&
-        (typeof source.negative_prompt !== "string" ||
-          source.negative_prompt.length > 1200)
-      ) {
-        throw new Error("negative_prompt 最多 1200 个字符");
-      }
       const hasFrames = hasFirstFrame || hasLastFrame;
       const hasReferences =
         source.reference_images !== undefined &&
@@ -165,10 +139,9 @@ describe("API video adapter", () => {
         source.reference_images.length > 0;
       if (
         source.reference_images !== undefined &&
-        (!Array.isArray(source.reference_images) ||
-          source.reference_images.length > 9)
+        !Array.isArray(source.reference_images)
       ) {
-        throw new Error("参考图最多 9 张");
+        throw new Error("reference_images 必须是数组");
       }
       if (hasFrames && hasReferences) {
         throw new Error("首尾帧与参考图不能混用");
@@ -192,10 +165,10 @@ describe("API video adapter", () => {
 
     await submitApiVideoRequest(createConfig(adapter), {
       clientRequestId: "local-cangyuan-media",
-      prompt: "让主体自然转身",
+      prompt: "让主体自然转身".repeat(200),
       model: "seedance2",
       duration: 4,
-      aspectRatio: "9:16",
+      aspectRatio: "3:4",
       resolution: "480p",
       effectiveAudio: true,
       negativePrompt: "画面抖动、主体变形",
