@@ -22,10 +22,12 @@ describe("imageModelIdSchema", () => {
     expect(imageModelIdSchema.parse("  gpt-image-2  ")).toBe("gpt-image-2");
   });
 
-  it("兼容历史 Firefly 前缀并输出裸 ID", () => {
-    expect(imageModelIdSchema.parse("firefly-gpt-image-2")).toBe("gpt-image-2");
+  it("不改写目录外模型 ID，由运行时分组白名单决定是否可调用", () => {
+    expect(imageModelIdSchema.parse("firefly-gpt-image-2")).toBe(
+      "firefly-gpt-image-2"
+    );
     expect(imageModelIdSchema.parse("FIREFLY-NANO-BANANA-PRO")).toBe(
-      "NANO-BANANA-PRO"
+      "FIREFLY-NANO-BANANA-PRO"
     );
   });
 

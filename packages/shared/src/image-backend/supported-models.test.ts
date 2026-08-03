@@ -28,7 +28,7 @@ describe("API 后端支持模型列表", () => {
     ).toEqual(["nano-banana-pro", "GROK-IMAGINE-IMAGE"]);
   });
 
-  it("保留图像前缀兼容但不把旧视频身份伪装成合法 ID", () => {
+  it("保留所有真实配置键且不把旧视频身份伪装成合法 ID", () => {
     expect(
       normalizeSupportedModelIds([
         "firefly-gpt-image-2",
@@ -37,11 +37,14 @@ describe("API 后端支持模型列表", () => {
         " SEEDANCE2 ",
       ])
     ).toEqual([
-      "gpt-image-2",
+      "firefly-gpt-image-2",
       "FIREFLY-SORA2-4s-16x9",
       "sora2-4s-16x9",
       "seedance2",
     ]);
+    expect(
+      supportsRequestedModel(["gpt-image-2"], "firefly-gpt-image-2")
+    ).toBe(false);
     expect(
       supportsRequestedModel(["firefly-sora2-4s-16x9"], "sora2-4s-16x9")
     ).toBe(false);
@@ -105,7 +108,7 @@ describe("API 后端支持模型列表", () => {
       "legacy-image-model",
       "nano-banana-pro",
       "grok-imagine-image",
-      "gpt-image-2",
+      "firefly-gpt-image-2",
     ]);
   });
 });

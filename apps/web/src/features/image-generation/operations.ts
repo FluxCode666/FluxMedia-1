@@ -16,7 +16,6 @@ import {
 } from "@repo/shared/generation-maintenance";
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
-import { normalizeSupportedModelId } from "@repo/shared/image-backend/supported-models";
 import { logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { buildGeneratedImageStorageKey } from "@repo/shared/storage/bucket-config";
@@ -380,13 +379,16 @@ function hasImageOutput(result: GenerateImageResult) {
   );
 }
 
-/** 将历史前缀与公开 `default` 别名收敛到平台规范图片模型能力键。 */
+/**
+ * 保留客户端明确选择的图片模型 ID。
+ *
+ * @param model 已通过统一输入 schema 的非空模型 ID。
+ * @returns 只清理首尾空白的原始能力键；目录外别名会由可信分组调度拒绝。
+ * @sideEffects 无。
+ * @failure 不抛错；调用方 schema 与运行时会话共同保证非空和分组白名单。
+ */
 function resolveRequestedImageModel(model: string): string {
-  const requestedModel = normalizeSupportedModelId(model) ?? model.trim();
-  if (requestedModel.toLowerCase() === "default") {
-    return DEFAULT_IMAGE_MODEL;
-  }
-  return requestedModel;
+  return model.trim();
 }
 
 /**

@@ -6,18 +6,15 @@
  */
 import { z } from "zod";
 
-import { normalizeSupportedModelId } from "../image-backend/supported-models";
-
 /**
  * 校验客户端明确选择的图片模型 ID。
  *
- * 输入必须是非空字符串；解析成功后会移除首尾空白与历史 `firefly-` 前缀。缺失、
- * 类型错误、空字符串、纯空白或超过 120 个字符均会失败，不产生默认模型，也没有
- * I/O 副作用。
+ * 输入必须是非空字符串；解析成功后只移除首尾空白，不转换别名或供应商前缀。
+ * 缺失、类型错误、空字符串、纯空白或超过 120 个字符均会失败，不产生默认模型，
+ * 也没有 I/O 副作用。模型是否可调用由本次可信分组的显式能力列表决定。
  */
 export const imageModelIdSchema = z
   .string({ error: "model is required" })
   .trim()
   .min(1, "model is required")
-  .max(120, "model must be at most 120 characters")
-  .transform((modelId) => normalizeSupportedModelId(modelId) ?? modelId);
+  .max(120, "model must be at most 120 characters");
