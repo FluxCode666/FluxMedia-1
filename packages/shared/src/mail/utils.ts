@@ -38,6 +38,8 @@ export interface SendEmailParams {
   replyTo?: string | string[];
   /** 强制发送 (开发环境下也发送真实邮件) */
   force?: boolean;
+  /** 可选稳定幂等键；Resend 使用原生 Idempotency-Key，SMTP 写入自定义 header。 */
+  idempotencyKey?: string;
 }
 
 /**
@@ -135,7 +137,17 @@ function logEmailPreview(params: SendEmailParams, effectiveFrom: string): void {
 export async function sendEmail(
   params: SendEmailParams
 ): Promise<SendEmailResult> {
-  const { to, subject, react, from, cc, bcc, replyTo, force = false } = params;
+  const {
+    to,
+    subject,
+    react,
+    from,
+    cc,
+    bcc,
+    replyTo,
+    force = false,
+    idempotencyKey,
+  } = params;
 
   // 开发环境且未强制发送 -> 模拟发送
   if (isDevelopment() && !force) {
@@ -163,6 +175,9 @@ export async function sendEmail(
         subject,
         html,
         text,
+        ...(idempotencyKey
+          ? { headers: { "X-FluxMedia-Idempotency-Key": idempotencyKey } }
+          : {}),
         ...(cc ? { cc } : {}),
         ...(bcc ? { bcc } : {}),
         ...(replyTo ? { replyTo } : {}),
@@ -195,7 +210,10 @@ export async function sendEmail(
       emailOptions.replyTo = Array.isArray(replyTo) ? replyTo : [replyTo];
     }
 
-    const { data, error } = await resend.emails.send(emailOptions);
+    const { data, error } = await resend.emails.send(
+      emailOptions,
+      idempotencyKey ? { idempotencyKey } : undefined
+    );
 
     if (error) {
       console.error("Failed to send email:", error);
