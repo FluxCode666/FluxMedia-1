@@ -105,7 +105,7 @@ describe("控制台导航契约", () => {
     expect(generateIndex).toBe(galleryIndex + 1);
   });
 
-  it("模型广场入口紧跟接入文档", () => {
+  it("模型广场入口紧跟 API 文档", () => {
     const dashboardItems = dashboardNav.flatMap((group) => group.items);
     const apiDocsIndex = dashboardItems.findIndex(
       (item) => item.href === "/dashboard/api-docs"
