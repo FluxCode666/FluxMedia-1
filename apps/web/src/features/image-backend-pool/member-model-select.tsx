@@ -199,6 +199,11 @@ export function BackendMemberModelSelect({
                     <span className="block truncate text-xs text-muted-foreground">
                       {option.id}
                     </span>
+                    {option.supportedResolutions?.length ? (
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        分辨率：{option.supportedResolutions.join("、")}
+                      </span>
+                    ) : null}
                   </span>
                 </label>
               );

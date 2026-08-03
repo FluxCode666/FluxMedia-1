@@ -11,7 +11,10 @@ import {
   videoCreditsPerSecondByResolutionSchema,
 } from "../adobe/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
-import { normalizeSupportedModelId } from "../image-backend/supported-models";
+import {
+  isLegacyVideoModelId,
+  normalizeSupportedModelId,
+} from "../image-backend/supported-models";
 import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
@@ -22,6 +25,8 @@ export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
 export const MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH = 120;
 export const MAX_MODEL_MARKETPLACE_WRITE_RECEIPTS = 256;
+export const MAX_MODEL_MARKETPLACE_CUSTOM_MODELS = 200;
+export const MAX_MODEL_MARKETPLACE_SUPPORTED_RESOLUTIONS = 20;
 export const MAX_MODEL_MARKETPLACE_COVER_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY = 5;
 export const MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY = 10_000;
@@ -45,6 +50,28 @@ const realModelConfigKeySchema = configKeySchema.refine(
   (configKey) => configKey.toLowerCase() !== "default",
   "default 不是可配置模型"
 );
+const modelMarketplaceCustomModelIdSchema = realModelConfigKeySchema
+  .transform((modelId) => modelId.toLowerCase())
+  .pipe(
+    z
+      .string()
+      .regex(
+        /^[a-z0-9][a-z0-9._:-]*$/,
+        "自定义模型 ID 只能包含字母、数字、点、下划线、冒号和连字符"
+      )
+      .refine(
+        (modelId) => !modelId.startsWith("firefly-"),
+        "自定义模型 ID 不能使用 firefly- 前缀"
+      )
+      .refine(
+        (modelId) => modelId !== "auto" && modelId !== "unknown",
+        "自定义模型 ID 不能使用系统保留值"
+      )
+      .refine(
+        (modelId) => !isLegacyVideoModelId(modelId),
+        "自定义模型 ID 不能使用历史视频复合格式"
+      )
+  );
 const descriptionSchema = z
   .string()
   .trim()
@@ -76,6 +103,56 @@ export const modelMarketplaceConfigurationCategorySchema = z.enum([
   "image",
   "video",
 ]);
+
+/** 自定义模型支持的分辨率标签；标签由管理员配置并原样传递给上游适配器。 */
+export const modelMarketplaceSupportedResolutionSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/, "分辨率标签格式无效");
+
+const modelMarketplaceSupportedResolutionsSchema = z
+  .array(modelMarketplaceSupportedResolutionSchema)
+  .min(1)
+  .max(MAX_MODEL_MARKETPLACE_SUPPORTED_RESOLUTIONS)
+  .superRefine((resolutions, context) => {
+    const normalized = resolutions.map((item) => item.trim().toLowerCase());
+    if (new Set(normalized).size !== normalized.length) {
+      context.addIssue({
+        code: "custom",
+        message: "分辨率不能重复",
+      });
+    }
+  });
+
+/** 管理员创建的自定义模型定义，不包含价格与展示字段。 */
+export const modelMarketplaceCustomModelSchema = z
+  .object({
+    modelId: modelMarketplaceCustomModelIdSchema,
+    category: modelMarketplaceConfigurationCategorySchema,
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema,
+  })
+  .strict();
+
+/** 自定义模型定义集合；模型 ID 在图像与视频类别之间也必须全局唯一。 */
+export const modelMarketplaceCustomModelsSchema = z
+  .array(modelMarketplaceCustomModelSchema)
+  .max(MAX_MODEL_MARKETPLACE_CUSTOM_MODELS)
+  .superRefine((models, context) => {
+    const seen = new Set<string>();
+    for (const [index, model] of models.entries()) {
+      const key = model.modelId.trim().toLowerCase();
+      if (seen.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "modelId"],
+          message: "自定义模型 ID 不能重复",
+        });
+      }
+      seen.add(key);
+    }
+  });
 
 /** 公开模型只允许图像与视频，不允许计费兜底项。 */
 export const modelMarketplacePublicCategorySchema = z.enum(["image", "video"]);
@@ -207,6 +284,7 @@ export const modelMarketplaceConfigSchema = z
     version: z.literal(MODEL_MARKETPLACE_CONFIG_VERSION),
     imageByModel: marketplaceEntryRecordSchema,
     videoByFamily: marketplaceEntryRecordSchema,
+    customModels: modelMarketplaceCustomModelsSchema.default(() => []),
     writeReceipts: writeReceiptRecordSchema.default(() => ({})),
   })
   .strict()
@@ -234,6 +312,7 @@ export function createDefaultModelMarketplaceConfig(): ModelMarketplaceConfig {
     version: MODEL_MARKETPLACE_CONFIG_VERSION,
     imageByModel: {},
     videoByFamily: {},
+    customModels: [],
     writeReceipts: {},
   };
 }
@@ -275,6 +354,7 @@ export function parseModelMarketplaceConfig(
     version: MODEL_MARKETPLACE_CONFIG_VERSION,
     imageByModel: legacy.imageByModel,
     videoByFamily: legacy.videoByFamily,
+    customModels: [],
     writeReceipts: migratedReceipts,
   });
 }
@@ -377,6 +457,7 @@ const explicitImageConfigurationEntrySchema = z
     pricingSource: z.literal("explicit"),
     minimumCredits: z.number().finite().positive(),
     pricing: modelMarketplaceImagePricingSchema,
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
   })
   .strict();
 const unconfiguredImageConfigurationEntrySchema = z
@@ -384,6 +465,7 @@ const unconfiguredImageConfigurationEntrySchema = z
     ...managementMarketplaceShape,
     category: z.literal("image"),
     pricingSource: z.literal("unconfigured"),
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
   })
   .strict();
 const videoConfigurationEntrySchema = z
@@ -522,6 +604,7 @@ const updateCommonShape = {
   clientRequestId: z.string().uuid(),
   configKey: realModelConfigKeySchema,
   expectedRevision: safeRevisionSchema,
+  isCustom: z.boolean().optional(),
 };
 const updateMarketplaceShape = {
   ...updateCommonShape,
@@ -538,6 +621,7 @@ const updateImageConfigurationInputSchema = z
     ...updateMarketplaceShape,
     category: z.literal("image"),
     pricing: modelMarketplaceImagePricingSchema,
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -546,6 +630,30 @@ const updateImageConfigurationInputSchema = z
         code: "custom",
         path: ["homepageVisible"],
         message: "模型广场隐藏时不能展示在官网首页",
+      });
+    }
+    if (input.isCustom === true) {
+      if (
+        !modelMarketplaceCustomModelIdSchema.safeParse(input.configKey).success
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["configKey"],
+          message: "自定义模型 ID 无效",
+        });
+      }
+      if (!input.supportedResolutions) {
+        context.addIssue({
+          code: "custom",
+          path: ["supportedResolutions"],
+          message: "自定义图像模型必须声明支持的分辨率",
+        });
+      }
+    } else if (input.supportedResolutions !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["supportedResolutions"],
+        message: "现有模型不能通过创建输入修改分辨率",
       });
     }
   });
@@ -563,6 +671,23 @@ const updateVideoConfigurationInputSchema = z
         code: "custom",
         path: ["homepageVisible"],
         message: "模型广场隐藏时不能展示在官网首页",
+      });
+    }
+    if (
+      input.isCustom === true &&
+      !modelMarketplaceCustomModelIdSchema.safeParse(input.configKey).success
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["configKey"],
+        message: "自定义模型 ID 无效",
+      });
+    }
+    if (input.isCustom === true && input.maxReferenceImages !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["maxReferenceImages"],
+        message: "自定义视频模型当前只支持纯文本输入",
       });
     }
   });
@@ -584,6 +709,12 @@ export const updateModelConfigurationEntryOutputSchema = z
 
 export type ModelMarketplaceConfigurationCategory = z.infer<
   typeof modelMarketplaceConfigurationCategorySchema
+>;
+export type ModelMarketplaceCustomModel = z.infer<
+  typeof modelMarketplaceCustomModelSchema
+>;
+export type ModelMarketplaceSupportedResolution = z.infer<
+  typeof modelMarketplaceSupportedResolutionSchema
 >;
 export type ModelMarketplaceCategory = ModelMarketplaceConfigurationCategory;
 export type ModelMarketplacePublicCategory = z.infer<

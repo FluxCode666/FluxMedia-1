@@ -53,11 +53,13 @@ describe("modelMarketplaceConfigSchema", () => {
       version: 2,
       imageByModel: {},
       videoByFamily: {},
+      customModels: [],
       writeReceipts: {},
     });
     expect(first).not.toBe(second);
     expect(first.imageByModel).not.toBe(second.imageByModel);
     expect(first.videoByFamily).not.toBe(second.videoByFamily);
+    expect(first.customModels).not.toBe(second.customModels);
     expect(first.writeReceipts).not.toBe(second.writeReceipts);
     expect(MODEL_MARKETPLACE_CONFIG_VERSION).toBe(2);
   });
@@ -120,6 +122,7 @@ describe("modelMarketplaceConfigSchema", () => {
       version: MODEL_MARKETPLACE_CONFIG_VERSION,
       imageByModel: {},
       videoByFamily: {},
+      customModels: [],
       writeReceipts: {
         [imageReceiptKey]: {
           requestHash: "a".repeat(64),
@@ -134,6 +137,61 @@ describe("modelMarketplaceConfigSchema", () => {
       modelMarketplaceConfigSchema.safeParse({
         ...parsed,
         fallbackImagePricingRevision: 7,
+      }).success
+    ).toBe(false);
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...parsed,
+        customModels: [
+          {
+            modelId: "firefly-vendor-image-x",
+            category: "image",
+            supportedResolutions: ["2k"],
+          },
+        ],
+      }).success
+    ).toBe(false);
+  });
+
+  it("严格保存自定义模型类型与分辨率并拒绝重复身份", () => {
+    const parsed = modelMarketplaceConfigSchema.parse({
+      version: MODEL_MARKETPLACE_CONFIG_VERSION,
+      imageByModel: {},
+      videoByFamily: {},
+      customModels: [
+        {
+          modelId: "vendor-image-x",
+          category: "image",
+          supportedResolutions: ["1k", "2k", "4k"],
+        },
+        {
+          modelId: "vendor-video-x",
+          category: "video",
+          supportedResolutions: ["720p", "1080p"],
+        },
+      ],
+    });
+
+    expect(parsed.customModels).toHaveLength(2);
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...parsed,
+        customModels: [
+          parsed.customModels[0],
+          { ...parsed.customModels[0], modelId: "VENDOR-IMAGE-X" },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      modelMarketplaceConfigSchema.safeParse({
+        ...parsed,
+        customModels: [
+          {
+            modelId: "vendor-image-x",
+            category: "image",
+            supportedResolutions: ["2k", "2K"],
+          },
+        ],
       }).success
     ).toBe(false);
   });
@@ -443,6 +501,52 @@ describe("updateModelConfigurationEntryInputSchema", () => {
         ...common,
         category: "image",
         pricing: undefined,
+      }).success
+    ).toBe(false);
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...common,
+        category: "image",
+        configKey: "firefly-vendor-image-x",
+        expectedRevision: 0,
+        isCustom: true,
+        supportedResolutions: ["2k"],
+      }).success
+    ).toBe(false);
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...common,
+        category: "image",
+        configKey: "vendor-image-x",
+        expectedRevision: 0,
+        isCustom: true,
+        supportedResolutions: undefined,
+      }).success
+    ).toBe(false);
+  });
+
+  it("自定义图像创建输入携带严格分辨率定义", () => {
+    const parsed = updateModelConfigurationEntryInputSchema.parse({
+      ...common,
+      category: "image",
+      configKey: "vendor-image-x",
+      expectedRevision: 0,
+      isCustom: true,
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+
+    expect(parsed).toMatchObject({
+      category: "image",
+      configKey: "vendor-image-x",
+      isCustom: true,
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...common,
+        category: "image",
+        isCustom: true,
+        supportedResolutions: ["2k", "2K"],
       }).success
     ).toBe(false);
   });

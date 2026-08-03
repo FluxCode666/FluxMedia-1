@@ -350,6 +350,29 @@ describe("POST /api/admin/model-configuration", () => {
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
+  it("解析自定义图像模型 ID、类型与支持分辨率", async () => {
+    const response = await POST(
+      createMultipartRequest(
+        createFormData({
+          ...explicitImageFields(),
+          configKey: "vendor-image-x",
+          expectedRevision: "0",
+          isCustom: "true",
+          supportedResolutions: JSON.stringify(["1k", "2k", "4k"]),
+        })
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(invokedInput()).toMatchObject({
+      category: "image",
+      configKey: "vendor-image-x",
+      expectedRevision: 0,
+      isCustom: true,
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+  });
+
   it("拒绝矛盾的首页开关与非法首页优先级", async () => {
     const invalidForms = [
       { ...explicitImageFields(), visible: "false", homepageVisible: "true" },

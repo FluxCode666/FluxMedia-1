@@ -26,11 +26,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
-import { AlertTriangle, Loader2, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { getModelConfigurationAction } from "./actions";
+import { CustomModelConfigurationDialog } from "./custom-model-configuration-dialog";
 import { ModelConfigurationDialog } from "./model-configuration-dialog";
 import { ModelConfigurationTable } from "./model-configuration-table";
 import {
@@ -64,6 +65,7 @@ export function ModelConfigurationPanel() {
     useState<ModelConfigurationCategoryFilter>("all");
   const [selected, setSelected] = useState<SelectedModelIdentity | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -141,20 +143,33 @@ export function ModelConfigurationPanel() {
           <div className="space-y-1">
             <CardTitle>模型配置</CardTitle>
             <CardDescription>
-              按模型维护全局价格、模型广场与官网首页展示信息，以及 3:2
-              封面。展示开关不会改变调度、创作目录或实际计费。
+              新增自定义模型
+              ID、媒体类型和支持分辨率，并按模型维护全局价格、展示信息与 3:2
+              封面。账号只能选择这里已经注册的模型。
             </CardDescription>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={isLoading}
-            onClick={() => void loadSnapshot()}
-          >
-            {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            刷新
-          </Button>
+          <div className="flex items-center gap-2">
+            {snapshot?.canEdit ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                <Plus />
+                新增自定义模型
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isLoading}
+              onClick={() => void loadSnapshot()}
+            >
+              {isLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              刷新
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -236,6 +251,13 @@ export function ModelConfigurationPanel() {
           onOpenChange={setDialogOpen}
           onReloadEntry={handleReloadEntry}
           onSaved={handleSaved}
+        />
+      ) : null}
+      {snapshot?.canEdit ? (
+        <CustomModelConfigurationDialog
+          open={createDialogOpen}
+          onOpenChange={setCreateDialogOpen}
+          onCreated={handleSaved}
         />
       ) : null}
     </Card>

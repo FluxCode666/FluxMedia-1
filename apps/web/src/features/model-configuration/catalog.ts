@@ -17,6 +17,7 @@ import {
   getMinimumImageCredits,
   type ModelConfigurationEntry,
   type ModelConfigurationSnapshot,
+  type ModelMarketplaceCustomModel,
   type ModelMarketplaceCoverRef,
   type ModelMarketplaceEntry,
   type ModelMarketplaceIconKey,
@@ -210,7 +211,8 @@ function buildMarketplaceFields(
  */
 function collectImageConfigKeys(
   persistedConfigKeys: readonly string[],
-  runtimeCatalog: RuntimeModelCatalogResult
+  runtimeCatalog: RuntimeModelCatalogResult,
+  customModels: readonly ModelMarketplaceCustomModel[]
 ): string[] {
   const builtInKeys = ADOBE_IMAGE_MODEL_IDS.flatMap((modelId) => {
     const configKey = normalizeModelMarketplaceImageConfigKey(modelId);
@@ -220,6 +222,9 @@ function collectImageConfigKeys(
   const additionalKeys = new Set<string>();
   const candidates = [
     ...persistedConfigKeys,
+    ...customModels
+      .filter((model) => model.category === "image")
+      .map((model) => model.modelId),
     ...(runtimeCatalog.status === "ready"
       ? runtimeCatalog.catalog.image.map((model) => model.id)
       : []),
@@ -246,7 +251,8 @@ function collectImageConfigKeys(
  */
 function collectVideoConfigKeys(
   persistedConfigKeys: readonly string[],
-  runtimeCatalog: RuntimeModelCatalogResult
+  runtimeCatalog: RuntimeModelCatalogResult,
+  customModels: readonly ModelMarketplaceCustomModel[]
 ): string[] {
   const builtInKeys = [...ADOBE_VIDEO_PRICING_FAMILIES];
   const builtInSet = new Set<string>(builtInKeys);
@@ -258,6 +264,10 @@ function collectVideoConfigKeys(
     if (configKey && !builtInSet.has(configKey)) {
       additionalKeys.add(configKey);
     }
+  }
+  for (const model of customModels) {
+    if (model.category !== "video" || builtInSet.has(model.modelId)) continue;
+    additionalKeys.add(model.modelId);
   }
   if (runtimeCatalog.status === "ready") {
     for (const model of runtimeCatalog.catalog.video) {
@@ -298,7 +308,14 @@ export function buildModelConfigurationSnapshot(
 
   const imageConfigKeys = collectImageConfigKeys(
     Object.keys(imagePricing.byModel),
-    input.runtimeCatalog
+    input.runtimeCatalog,
+    marketplaceConfig.customModels
+  );
+  const customModelsById = new Map(
+    marketplaceConfig.customModels.map((model) => [
+      model.modelId.toLowerCase(),
+      model,
+    ])
   );
   for (const configKey of imageConfigKeys) {
     const explicitPricing = imagePricing.byModel[configKey];
@@ -308,6 +325,7 @@ export function buildModelConfigurationSnapshot(
       marketplaceConfig.imageByModel[configKey],
       input.buildCoverUrl
     );
+    const customModel = customModelsById.get(configKey.toLowerCase());
 
     if (explicitPricing) {
       const pricing = modelMarketplaceImagePricingSchema.parse(explicitPricing);
@@ -317,25 +335,34 @@ export function buildModelConfigurationSnapshot(
         pricingSource: "explicit",
         pricing,
         minimumCredits: getMinimumImageCredits(pricing),
+        ...(customModel
+          ? { supportedResolutions: [...customModel.supportedResolutions] }
+          : {}),
       });
     } else {
       entries.push({
         ...common,
         category: "image",
         pricingSource: "unconfigured",
+        ...(customModel
+          ? { supportedResolutions: [...customModel.supportedResolutions] }
+          : {}),
       });
     }
   }
 
   const videoConfigKeys = collectVideoConfigKeys(
     Object.keys(videoPricing),
-    input.runtimeCatalog
+    input.runtimeCatalog,
+    marketplaceConfig.customModels
   );
   for (const configKey of videoConfigKeys) {
     const creditsPerSecond = videoPricing[configKey];
     if (creditsPerSecond === undefined) continue;
-    const supportedResolutions =
-      getVideoPricingResolutions(configKey).length > 0
+    const customModel = customModelsById.get(configKey.toLowerCase());
+    const supportedResolutions = customModel
+      ? [...customModel.supportedResolutions]
+      : getVideoPricingResolutions(configKey).length > 0
         ? getVideoPricingResolutions(configKey)
         : ["default"];
     const creditsPerSecondByResolution = Object.fromEntries(

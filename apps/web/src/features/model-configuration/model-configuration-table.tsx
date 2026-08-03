@@ -212,7 +212,14 @@ export function ModelConfigurationTable({
                 <ModelIdentity entry={entry} />
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                {getModelConfigurationCategoryLabel(entry)}
+                <span className="block">
+                  {getModelConfigurationCategoryLabel(entry)}
+                </span>
+                {entry.supportedResolutions?.length ? (
+                  <span className="mt-1 block text-[11px]">
+                    {entry.supportedResolutions.join("、")}
+                  </span>
+                ) : null}
               </td>
               <td className="px-4 py-3">
                 <VisibilityBadge entry={entry} />

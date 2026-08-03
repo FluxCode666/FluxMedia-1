@@ -54,6 +54,7 @@ export interface ImageGenerationCatalogSource {
     imageCreditOverrides?: ImageCreditOverrides;
   }>;
   members: ImageGenerationCatalogMember[];
+  videoModelIds?: readonly string[];
 }
 
 /** 成员类型只表达适配器能力；Adobe 图片适配器不传递 mask。 */
@@ -88,6 +89,9 @@ function mergeCapabilities(
 export function buildImageGenerationModelCatalog(
   source: ImageGenerationCatalogSource
 ): ImageGenerationModelCatalog {
+  const videoModelIds = new Set(
+    (source.videoModelIds ?? []).map((modelId) => modelId.trim().toLowerCase())
+  );
   const membersByGroupId = new Map<string, ImageGenerationCatalogMember[]>();
   for (const member of source.members) {
     const members = membersByGroupId.get(member.groupId) ?? [];
@@ -104,6 +108,7 @@ export function buildImageGenerationModelCatalog(
           const modelId = normalizeSupportedModelId(rawModelId);
           if (
             !modelId ||
+            videoModelIds.has(modelId.toLowerCase()) ||
             normalizeVideoModelId(modelId) ||
             isLegacyVideoModelId(modelId)
           ) {

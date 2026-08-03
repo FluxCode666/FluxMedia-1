@@ -134,6 +134,7 @@ describe("buildBackendMemberModelOptions", () => {
       label: "Veo 3.1",
       category: "video",
       source: "model_configuration",
+      supportedResolutions: ["720p", "1080p"],
     });
     expect(options.filter((option) => option.category === "video")).toEqual([
       {
@@ -141,6 +142,7 @@ describe("buildBackendMemberModelOptions", () => {
         label: "Veo 3.1",
         category: "video",
         source: "model_configuration",
+        supportedResolutions: ["720p", "1080p"],
       },
     ]);
   });
@@ -183,6 +185,7 @@ describe("buildBackendMemberModelOptions", () => {
         label: "Seedance 2.0",
         category: "video",
         source: "model_configuration",
+        supportedResolutions: ["480p", "720p", "1080p"],
       },
     ]);
     expect(
@@ -201,6 +204,46 @@ describe("buildBackendMemberModelOptions", () => {
         framesAndReferencesMutuallyExclusive: true,
       },
     });
+  });
+
+  it("自定义视频模型保留管理类别与分辨率并进入账号选项", () => {
+    const customVideoEntry: ModelConfigurationEntry = {
+      ...commonEntry,
+      category: "video",
+      configKey: "vendor-video-x",
+      displayName: "Vendor Video X",
+      iconKey: "generic",
+      minimumCredits: 30,
+      creditsPerSecond: 30,
+      creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+      supportedResolutions: ["720p", "1080p"],
+    };
+
+    const options = buildBackendMemberModelOptions({
+      ...snapshot,
+      entries: [customVideoEntry],
+    });
+    expect(options).toEqual([
+      {
+        id: "vendor-video-x",
+        label: "Vendor Video X",
+        category: "video",
+        source: "model_configuration",
+        supportedResolutions: ["720p", "1080p"],
+      },
+    ]);
+    expect(
+      findUnavailableBackendMemberModelIds(
+        createMemberInput(["vendor-video-x"], false),
+        options
+      )
+    ).toEqual([]);
+    expect(
+      findUnavailableBackendMemberModelIds(
+        createMemberInput(["vendor-video-x"], true),
+        options
+      )
+    ).toEqual(["vendor-video-x"]);
   });
 
   it("当前全部视频模型各生成一个选项并可由 Adobe direct 成员一次全选保存", () => {

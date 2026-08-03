@@ -16,9 +16,30 @@ import {
 } from "./api-upstream-adaptation";
 import {
   isLegacyVideoModelId,
-  normalizeSupportedModelIds,
   supportedModelIdsSchema,
 } from "./supported-models";
+
+/**
+ * 规范成员提交的模型 ID，同时保留图像模型的精确身份。
+ *
+ * @param values - 已通过基础字符串边界的成员模型列表。
+ * @returns 去空白、大小写无关去重的模型 ID；真实视频统一小写，图像不移除任何前缀。
+ * @sideEffects 无。
+ * @failure 不抛错；基础 schema 已保证元素均为非空字符串。
+ */
+function normalizeMemberSupportedModelIds(values: readonly string[]): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    const normalized = normalizeVideoModelId(trimmed) ?? trimmed;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
 
 /** 管理员配置的媒体上游可使用 HTTP 或 HTTPS，不限制目标网络范围。 */
 const mediaUpstreamUrlSchema = z
@@ -100,7 +121,7 @@ const commonBackendMemberFields = {
   groupIds: z.array(z.string().trim().min(1).max(128)).min(1).max(100),
   supportedModelIds: supportedModelIdsSchema
     .min(1)
-    .transform((value) => normalizeSupportedModelIds(value))
+    .transform((value) => normalizeMemberSupportedModelIds(value))
     .refine((value) => value.length > 0, {
       message: "At least one supported model ID is required",
     }),

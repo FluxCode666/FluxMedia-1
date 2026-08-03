@@ -168,6 +168,48 @@ describe("buildModelConfigurationSnapshot", () => {
     expect(entry).not.toHaveProperty("minimumCredits");
   });
 
+  it("无运行时成员时仍从自定义注册表返回媒体类型与分辨率", () => {
+    const imagePricing = createDefaultGlobalImageCreditOverrides();
+    imagePricing.byModel["vendor-image-x"] = { ...EXTRA_IMAGE_PRICING };
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    marketplaceConfig.customModels = [
+      {
+        modelId: "vendor-image-x",
+        category: "image",
+        supportedResolutions: ["1k", "2k", "4k"],
+      },
+      {
+        modelId: "vendor-video-x",
+        category: "video",
+        supportedResolutions: ["720p", "1080p"],
+      },
+    ];
+    const videoPricing = {
+      ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+      "vendor-video-x": 45,
+      [getVideoPricingResolutionKey("vendor-video-x", "720p")]: 30,
+      [getVideoPricingResolutionKey("vendor-video-x", "1080p")]: 45,
+    };
+
+    const snapshot = buildModelConfigurationSnapshot(
+      createInput({ imagePricing, marketplaceConfig, videoPricing })
+    );
+
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "vendor-image-x")
+    ).toMatchObject({
+      category: "image",
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    expect(
+      snapshot.entries.find((entry) => entry.configKey === "vendor-video-x")
+    ).toMatchObject({
+      category: "video",
+      supportedResolutions: ["720p", "1080p"],
+      creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+    });
+  });
+
   it("管理快照按视频分辨率返回价格，并用最低价兼容旧列表字段", () => {
     const videoPricing = {
       ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,

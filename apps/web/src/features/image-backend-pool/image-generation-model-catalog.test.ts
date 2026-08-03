@@ -79,4 +79,22 @@ describe("buildImageGenerationModelCatalog", () => {
       "gpt-image-2",
     ]);
   });
+
+  it("不把自定义视频模型误分类到图片面板", () => {
+    const result = buildImageGenerationModelCatalog({
+      groups: [group],
+      videoModelIds: ["vendor-video-x"],
+      members: [
+        {
+          groupId: group.id,
+          type: "api",
+          supportedModelIds: ["vendor-video-x", "vendor-image-x"],
+        },
+      ],
+    });
+
+    expect(result.groups[0]?.models.map((model) => model.id)).toEqual([
+      "vendor-image-x",
+    ]);
+  });
 });

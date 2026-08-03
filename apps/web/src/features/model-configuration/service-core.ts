@@ -17,6 +17,7 @@ import {
 } from "@repo/shared/image-backend/group-image-pricing";
 import {
   type ModelConfigurationSnapshot,
+  modelMarketplaceCustomModelSchema,
   type ModelMarketplaceConfig,
   type ModelMarketplaceConfigurationCategory,
   type ModelMarketplaceCoverRef,
@@ -311,9 +312,11 @@ function normalizeConfigurationInput(
   input: UpdateModelConfigurationEntryInput
 ): UpdateModelConfigurationEntryInput {
   const normalized =
-    input.category === "image"
-      ? normalizeImagePricingModelId(input.configKey)
-      : input.configKey.trim().toLowerCase();
+    input.isCustom === true
+      ? input.configKey.trim().toLowerCase()
+      : input.category === "image"
+        ? normalizeImagePricingModelId(input.configKey)
+        : input.configKey.trim().toLowerCase();
   if (!normalized) {
     throw new ModelConfigurationServiceError(
       "not_configurable",
@@ -367,6 +370,7 @@ function serializeRequestPayload(
     category: input.category,
     configKey: input.configKey,
     expectedRevision: input.expectedRevision,
+    ...(input.isCustom ? { isCustom: true } : {}),
     visible: input.visible,
     homepageVisible: input.homepageVisible,
     homepagePriority: input.homepagePriority,
@@ -391,6 +395,9 @@ function serializeRequestPayload(
   }
   return JSON.stringify({
     ...common,
+    ...(input.supportedResolutions
+      ? { supportedResolutions: input.supportedResolutions }
+      : {}),
     pricing: input.pricing,
   });
 }
@@ -586,13 +593,42 @@ export function createModelConfigurationService(
           entry.category === input.category &&
           entry.configKey === input.configKey
       );
-      if (!catalogEntry) {
+      const isCustomCreate = input.isCustom === true;
+      const customCreateCatalogConflict = catalog.entries.some(
+        (entry) =>
+          entry.configKey.trim().toLowerCase() === input.configKey.toLowerCase()
+      );
+      if (!catalogEntry && !isCustomCreate) {
         throw new ModelConfigurationServiceError(
           "not_configurable",
           "模型不在当前可配置清单中"
         );
       }
-      if (input.category === "video" && catalogEntry.category === "video") {
+      if (isCustomCreate) {
+        if (input.expectedRevision !== 0) {
+          throw new ModelConfigurationServiceError(
+            "not_configurable",
+            "自定义模型 ID 已存在或修订号无效"
+          );
+        }
+        if (input.category === "image") {
+          if (
+            !input.supportedResolutions ||
+            input.supportedResolutions.length === 0
+          ) {
+            throw new ModelConfigurationServiceError(
+              "not_configurable",
+              "自定义图像模型至少需要一个支持的分辨率"
+            );
+          }
+          modelMarketplaceCustomModelSchema.parse({
+            modelId: input.configKey,
+            category: input.category,
+            supportedResolutions: input.supportedResolutions,
+          });
+        }
+      }
+      if (input.category === "video" && catalogEntry?.category === "video") {
         const expectedResolutions = [
           ...catalogEntry.supportedResolutions,
         ].sort();
@@ -701,6 +737,28 @@ export function createModelConfigurationService(
                     config.videoByFamily[input.configKey],
                     "video"
                   );
+            if (isCustomCreate) {
+              const customModel = modelMarketplaceCustomModelSchema.parse({
+                modelId: input.configKey,
+                category: input.category,
+                supportedResolutions:
+                  input.category === "image"
+                    ? input.supportedResolutions
+                    : Object.keys(input.creditsPerSecondByResolution),
+              });
+              const hasCustomModel = config.customModels.some(
+                (model) =>
+                  model.modelId.trim().toLowerCase() ===
+                  customModel.modelId.trim().toLowerCase()
+              );
+              if (hasCustomModel || customCreateCatalogConflict) {
+                throw new ModelConfigurationServiceError(
+                  "not_configurable",
+                  "自定义模型 ID 已存在"
+                );
+              }
+              config.customModels.push(customModel);
+            }
             const currentRevision = currentEntry.revision;
             if (currentRevision !== input.expectedRevision) {
               throw new ModelConfigurationServiceError(

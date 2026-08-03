@@ -14,10 +14,7 @@ import {
   normalizeSupportedModelId,
 } from "@repo/shared/image-backend/supported-models";
 import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
-import {
-  normalizeVideoModelId,
-  VIDEO_MODEL_CAPABILITY_CATALOG,
-} from "@repo/shared/video-generation";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 /** 成员表单可选择的一条真实模型能力。 */
 export interface BackendMemberModelOption {
@@ -25,6 +22,7 @@ export interface BackendMemberModelOption {
   label: string;
   category: "image" | "video";
   source: "model_configuration" | "existing_member";
+  supportedResolutions?: readonly string[];
 }
 
 /** 新建 Adobe 账号默认使用具备原生 Firefly 视频执行链的 Direct 模式。 */
@@ -83,11 +81,19 @@ export function normalizeBackendMemberModelIdsForDisplay(
  * @failure 不抛错；模型身份只通过共享视频目录和旧身份识别器判断。
  */
 export function removeVideoBackendMemberModelIds(
-  modelIds: readonly string[]
+  modelIds: readonly string[],
+  configuredOptions: readonly BackendMemberModelOption[] = []
 ): string[] {
+  const configuredVideoIds = new Set(
+    configuredOptions
+      .filter((option) => option.category === "video")
+      .map((option) => option.id.trim().toLowerCase())
+  );
   return modelIds.filter(
     (modelId) =>
-      !normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)
+      !configuredVideoIds.has(modelId.trim().toLowerCase()) &&
+      !normalizeVideoModelId(modelId) &&
+      !isLegacyVideoModelId(modelId)
   );
 }
 
@@ -119,17 +125,19 @@ export function buildBackendMemberModelOptions(
         label: entry.displayName,
         category: "image",
         source: "model_configuration",
+        ...(entry.supportedResolutions
+          ? { supportedResolutions: [...entry.supportedResolutions] }
+          : {}),
       });
       continue;
     }
 
-    const modelId = normalizeVideoModelId(entry.configKey);
-    if (!modelId || !VIDEO_MODEL_CAPABILITY_CATALOG[modelId]) continue;
     addOption({
-      id: modelId,
+      id: entry.configKey,
       label: entry.displayName,
       category: "video",
       source: "model_configuration",
+      supportedResolutions: [...entry.supportedResolutions],
     });
   }
   return options;
@@ -157,7 +165,12 @@ export function findUnavailableBackendMemberModelIds(
   );
   const allowedIds = new Set(
     configuredOptions
-      .filter((option) => option.category === "image" || acceptsVideo)
+      .filter(
+        (option) =>
+          option.category === "image" ||
+          (acceptsVideo &&
+            (input.type === "api" || normalizeVideoModelId(option.id)))
+      )
       .map((option) => option.id.trim().toLowerCase())
   );
   for (const modelId of existingModelIds) {

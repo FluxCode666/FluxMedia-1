@@ -10,7 +10,9 @@ import {
 } from "@repo/shared/config/subscription-plan";
 import { toBackendGroupContentSafety } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
+import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
+import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { backendGroupService } from "./group-service";
@@ -67,11 +69,14 @@ export async function getEffectiveDefaultImageBackendGroup(
 export async function getImageGenerationModelCatalogForPlan(
   plan: SubscriptionPlan
 ): Promise<ImageGenerationModelCatalog> {
-  const [groups, members, canSelectGroups] = await Promise.all([
-    backendGroupService.listGroups(),
-    backendMemberService.listMembers(),
-    canUsePlanCapability(plan, "backendGroups.select"),
-  ]);
+  const [groups, members, canSelectGroups, marketplaceConfigValue] =
+    await Promise.all([
+      backendGroupService.listGroups(),
+      backendMemberService.listMembers(),
+      canUsePlanCapability(plan, "backendGroups.select"),
+      getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
+    ]);
+  const marketplaceConfig = parseModelMarketplaceConfig(marketplaceConfigValue);
   const eligibleGroups = groups.filter(
     (group) => group.isEnabled && isPlanAtLeast(plan, group.minPlan)
   );
@@ -91,6 +96,9 @@ export async function getImageGenerationModelCatalogForPlan(
       isDefault: group.id === effectiveDefault?.id,
       imageCreditOverrides: group.imageCreditOverrides,
     })),
+    videoModelIds: marketplaceConfig.customModels
+      .filter((model) => model.category === "video")
+      .map((model) => model.modelId),
     members: members
       .filter(
         (member) =>

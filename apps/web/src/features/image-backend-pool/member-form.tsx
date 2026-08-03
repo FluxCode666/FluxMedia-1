@@ -133,8 +133,7 @@ export function BackendMemberFormDialog({
           createDefaultApiUpstreamAdapterFormDraft().operations,
         ...(member.config.currentAdapterVersion
           ? {
-              expectedCurrentVersionId:
-                member.config.currentAdapterVersion.id,
+              expectedCurrentVersionId: member.config.currentAdapterVersion.id,
             }
           : {}),
       });
@@ -168,10 +167,12 @@ export function BackendMemberFormDialog({
   const acceptsVideo = acceptsVideoBackendMemberModels(type, adobeMode);
   const selectableModelOptions = useMemo(() => {
     const configuredOptions = modelOptions.filter(
-      (option) => option.category === "image" || acceptsVideo
+      (option) =>
+        option.category === "image" ||
+        (acceptsVideo && (type === "api" || normalizeVideoModelId(option.id)))
     );
     const knownIds = new Set(
-      configuredOptions.map((option) => option.id.trim().toLowerCase())
+      modelOptions.map((option) => option.id.trim().toLowerCase())
     );
     const existingOptions = selectedModelIds.flatMap((modelId) => {
       const normalizedId = modelId.trim().toLowerCase();
@@ -182,7 +183,7 @@ export function BackendMemberFormDialog({
       return [createExistingMemberModelOption(modelId, "image")];
     });
     return [...configuredOptions, ...existingOptions];
-  }, [acceptsVideo, modelOptions, selectedModelIds]);
+  }, [acceptsVideo, modelOptions, selectedModelIds, type]);
 
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
@@ -225,7 +226,9 @@ export function BackendMemberFormDialog({
   function handleMemberTypeChange(nextType: BackendMemberType): void {
     setType(nextType);
     if (nextType === "adobe" && adobeMode === "gateway") {
-      setSelectedModelIds(removeVideoBackendMemberModelIds);
+      setSelectedModelIds((current) =>
+        removeVideoBackendMemberModelIds(current, modelOptions)
+      );
     }
   }
 
@@ -233,7 +236,9 @@ export function BackendMemberFormDialog({
   function handleAdobeModeChange(nextMode: typeof adobeMode): void {
     setAdobeMode(nextMode);
     if (nextMode !== "direct") {
-      setSelectedModelIds(removeVideoBackendMemberModelIds);
+      setSelectedModelIds((current) =>
+        removeVideoBackendMemberModelIds(current, modelOptions)
+      );
     }
   }
 

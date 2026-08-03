@@ -299,6 +299,8 @@ function imageInput(
     clientRequestId: string;
     configKey: string;
     expectedRevision: number;
+    isCustom: boolean;
+    supportedResolutions: string[];
     visible: boolean;
     description: string;
     coverChange:
@@ -590,6 +592,69 @@ describe("模型配置保存内核", () => {
     expect(
       harness.repository.read().config.imageByModel["custom-image"]
     ).toMatchObject({ revision: 1 });
+  });
+
+  it("原子创建自定义图像模型定义、价格与展示条目", async () => {
+    const harness = createHarness();
+
+    const result = await harness.service.updateEntry({
+      actorUserId: ACTOR_USER_ID,
+      input: imageInput({
+        configKey: "vendor-image-x",
+        isCustom: true,
+        supportedResolutions: ["1k", "2k", "4k"],
+      }),
+    });
+
+    const state = harness.repository.read();
+    expect(result).toEqual({
+      category: "image",
+      configKey: "vendor-image-x",
+      revision: 1,
+    });
+    expect(state.config.customModels).toContainEqual({
+      modelId: "vendor-image-x",
+      category: "image",
+      supportedResolutions: ["1k", "2k", "4k"],
+    });
+    expect(state.imagePricing.byModel["vendor-image-x"]).toEqual(IMAGE_PRICING);
+    expect(state.config.imageByModel["vendor-image-x"]).toMatchObject({
+      revision: 1,
+      visible: true,
+    });
+  });
+
+  it("原子创建自定义视频模型并以声明分辨率写入价格矩阵", async () => {
+    const harness = createHarness();
+
+    await harness.service.updateEntry({
+      actorUserId: ACTOR_USER_ID,
+      input: {
+        clientRequestId: REQUEST_ID,
+        category: "video",
+        configKey: "vendor-video-x",
+        expectedRevision: 0,
+        isCustom: true,
+        visible: false,
+        homepageVisible: false,
+        homepagePriority: 5,
+        description: "",
+        coverChange: { action: "keep" },
+        creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+      },
+    });
+
+    const state = harness.repository.read();
+    expect(state.config.customModels).toContainEqual({
+      modelId: "vendor-video-x",
+      category: "video",
+      supportedResolutions: ["720p", "1080p"],
+    });
+    expect(state.videoPricing).toMatchObject({
+      "vendor-video-x": 45,
+      "vendor-video-x@720p": 30,
+      "vendor-video-x@1080p": 45,
+    });
   });
 
   it("同请求同载荷只重放结果，不重复存储、审计或缓存副作用", async () => {

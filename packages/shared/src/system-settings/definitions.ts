@@ -1348,7 +1348,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "MODEL_MARKETPLACE_CONFIG",
     label: "模型广场配置",
     description:
-      "保存模型广场与官网首页展示开关、首页优先级、简介、封面引用和并发修订号；只能通过独立的模型配置入口修改。",
+      "保存自定义模型 ID、媒体类型、支持分辨率，以及模型广场与官网首页展示、封面和并发修订号；只能通过独立的模型配置入口修改。",
     category: "models",
     valueType: "json",
     defaultValue: createDefaultModelMarketplaceConfig(),

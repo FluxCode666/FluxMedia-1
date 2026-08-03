@@ -14,6 +14,7 @@ import {
   MAX_MODEL_MARKETPLACE_COVER_BYTES,
   type ModelMarketplaceCoverChange,
   type ModelMarketplaceImagePricing,
+  modelMarketplaceCustomModelSchema,
   type UpdateModelConfigurationEntryInput,
   type UpdateModelConfigurationEntryOutput,
   updateModelConfigurationEntryInputSchema,
@@ -52,6 +53,8 @@ const KNOWN_FORM_FIELDS = new Set([
   "cover",
   "creditsPerSecondByResolution",
   "maxReferenceImages",
+  "isCustom",
+  "supportedResolutions",
   ...IMAGE_PRICE_FIELDS,
 ]);
 
@@ -60,6 +63,7 @@ const COMMON_SCALAR_FIELDS = [
   "configKey",
   "expectedRevision",
   "clientRequestId",
+  "isCustom",
 ] as const;
 const MARKETPLACE_SCALAR_FIELDS = [
   ...COMMON_SCALAR_FIELDS,
@@ -320,6 +324,27 @@ function parseVideoPricing(value: string): Record<string, number> {
 }
 
 /**
+ * 解析自定义图像模型支持的分辨率 JSON。
+ *
+ * @param value - multipart 中唯一的 JSON 数组标量。
+ * @returns 去空白、保持管理员顺序的分辨率标签。
+ * @throws ModelConfigurationFormError - JSON 语法或结构非法时失败。
+ */
+function parseSupportedResolutions(value: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ModelConfigurationFormError("支持的分辨率格式无效");
+  }
+  return modelMarketplaceCustomModelSchema.parse({
+    modelId: "validation-probe",
+    category: "image",
+    supportedResolutions: parsed,
+  }).supportedResolutions;
+}
+
+/**
  * 校验封面动作并在 replace 时读取实际文件字节。
  *
  * @param action - keep、remove 或 replace。
@@ -364,8 +389,14 @@ async function parseImageInput(
 ): Promise<UpdateModelConfigurationEntryInput> {
   assertOnlyAllowedScalars(
     data.scalars,
-    new Set([...MARKETPLACE_SCALAR_FIELDS, ...IMAGE_PRICE_FIELDS])
+    new Set([
+      ...MARKETPLACE_SCALAR_FIELDS,
+      ...IMAGE_PRICE_FIELDS,
+      "supportedResolutions",
+    ])
   );
+  const isCustom = data.scalars.get("isCustom");
+  const supportedResolutions = data.scalars.get("supportedResolutions");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
@@ -373,6 +404,7 @@ async function parseImageInput(
       requireScalar(data.scalars, "expectedRevision")
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
+    ...(isCustom !== undefined ? { isCustom: parseBoolean(isCustom) } : {}),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
     homepageVisible: parseBoolean(
       requireScalar(data.scalars, "homepageVisible")
@@ -386,6 +418,11 @@ async function parseImageInput(
       data.covers
     ),
     pricing: parseImagePricing(data.scalars),
+    ...(supportedResolutions !== undefined
+      ? {
+          supportedResolutions: parseSupportedResolutions(supportedResolutions),
+        }
+      : {}),
   });
 }
 
@@ -408,6 +445,7 @@ async function parseVideoInput(
     ])
   );
   const maxReferenceImages = data.scalars.get("maxReferenceImages");
+  const isCustom = data.scalars.get("isCustom");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "video",
     configKey: requireScalar(data.scalars, "configKey"),
@@ -415,6 +453,7 @@ async function parseVideoInput(
       requireScalar(data.scalars, "expectedRevision")
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
+    ...(isCustom !== undefined ? { isCustom: parseBoolean(isCustom) } : {}),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
     homepageVisible: parseBoolean(
       requireScalar(data.scalars, "homepageVisible")

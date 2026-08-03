@@ -21,6 +21,20 @@ const commonMember = {
 };
 
 describe("backend member contract", () => {
+  it("成员保存保留图像模型精确 ID，不移除 firefly- 前缀", () => {
+    const parsed = backendMemberInputSchema.parse({
+      ...commonMember,
+      supportedModelIds: ["firefly-gpt-image-2"],
+      type: "api",
+      config: {
+        baseUrl: "https://images.example.com/v1",
+        modelMappings: [],
+      },
+    });
+
+    expect(parsed.supportedModelIds).toEqual(["firefly-gpt-image-2"]);
+  });
+
   it("accepts strict API media configuration", () => {
     const parsed = backendMemberInputSchema.safeParse({
       ...commonMember,

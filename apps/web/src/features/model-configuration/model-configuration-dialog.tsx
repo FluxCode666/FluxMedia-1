@@ -286,6 +286,11 @@ export function ModelConfigurationDialog({
                   ? "视频按输出分辨率对应的每秒积分乘以实际生成时长计费。"
                   : "图像按最终输出像素命中对应档位计费。"}
               </p>
+              {entry.supportedResolutions?.length ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  支持的分辨率：{entry.supportedResolutions.join("、")}
+                </p>
+              ) : null}
             </div>
             {entry.category === "image" &&
             entry.pricingSource === "unconfigured" ? (
