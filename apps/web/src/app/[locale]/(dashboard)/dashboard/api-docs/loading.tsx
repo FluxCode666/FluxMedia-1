@@ -7,7 +7,7 @@
 /** 渲染与接入文档标题、入口信息和端点卡片对应的加载占位。 */
 export default function Loading() {
   return (
-    <div className="mx-auto w-full max-w-[1600px] animate-pulse space-y-8 py-12 md:py-16">
+    <div className="mx-auto w-full max-w-7xl animate-pulse space-y-8 py-12 md:py-16">
       <div className="max-w-3xl space-y-3">
         <div className="h-3 w-24 rounded bg-muted" />
         <div className="h-10 w-64 max-w-full rounded bg-muted" />
@@ -18,8 +18,8 @@ export default function Loading() {
         <div className="h-20 rounded-lg bg-muted" />
         <div className="h-20 rounded-lg bg-muted" />
       </div>
-      <div className="grid gap-8 lg:grid-cols-[14rem_minmax(0,1fr)]">
-        <div className="h-44 rounded-lg bg-muted" />
+      <div className="grid gap-8 lg:grid-cols-[15.5rem_minmax(0,1fr)]">
+        <div className="h-80 rounded-2xl bg-muted" />
         <div className="space-y-8">
           <div className="h-72 rounded-lg bg-muted" />
           <div className="h-72 rounded-lg bg-muted" />

@@ -14,6 +14,7 @@ import { ApiDocsElevator } from "./api-docs-elevator";
 import {
   type ApiIntegrationDocsContent,
   type ApiIntegrationEndpoint,
+  type ApiIntegrationEndpointGroup,
   type ApiIntegrationParameter,
   type ApiIntegrationResponseField,
   getApiIntegrationDocs,
@@ -102,6 +103,17 @@ function ResponseTable({
   );
 }
 
+/** 按模块声明的端点 ID 提取正文端点，并保持目录定义的展示顺序。 */
+function getGroupEndpoints(
+  group: ApiIntegrationEndpointGroup,
+  endpoints: readonly ApiIntegrationEndpoint[]
+): readonly ApiIntegrationEndpoint[] {
+  return group.endpointIds.flatMap((endpointId) => {
+    const endpoint = endpoints.find((item) => item.id === endpointId);
+    return endpoint ? [endpoint] : [];
+  });
+}
+
 /** 渲染单个端点的契约、示例与说明，不发起网络请求。 */
 function EndpointSection({
   content,
@@ -133,10 +145,7 @@ function EndpointSection({
               {endpoint.operation}
             </Badge>
           </div>
-          <p className="mt-4 text-xs font-medium uppercase tracking-widest text-muted-foreground">
-            {endpoint.category}
-          </p>
-          <h3 className="mt-2 font-serif text-xl font-medium tracking-tight">
+          <h3 className="mt-4 font-serif text-xl font-medium tracking-tight">
             {endpoint.title}
           </h3>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
@@ -212,7 +221,7 @@ export function ApiIntegrationDocs({
   return (
     <div
       className={cn(
-        "mx-auto w-full max-w-[1600px] py-12 md:py-16",
+        "mx-auto w-full max-w-7xl py-12 md:py-16",
         embedded ? "px-0" : "px-4 sm:px-6 lg:px-8"
       )}
     >
@@ -251,24 +260,54 @@ export function ApiIntegrationDocs({
         </div>
       </div>
 
-      <div className="mt-12 lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+      <div className="mt-12 lg:grid lg:grid-cols-[15.5rem_minmax(0,1fr)] lg:items-start lg:gap-8">
         <ApiDocsElevator
-          ariaLabel={content.endpointsTitle}
+          ariaLabel={content.directoryTitle}
+          description={content.directoryDescription}
           endpoints={content.endpoints}
+          groups={content.groups}
         />
         <div className="mt-10 min-w-0 lg:mt-0">
           <h2 className="font-serif text-2xl font-medium tracking-tight md:text-3xl">
             {content.endpointsTitle}
           </h2>
-          <div className="mt-6 space-y-8">
-            {content.endpoints.map((endpoint, index) => (
-              <EndpointSection
-                content={content}
-                endpoint={endpoint}
-                index={index}
-                key={endpoint.id}
-              />
-            ))}
+          <div className="mt-8 space-y-14">
+            {content.groups.map((group, groupIndex) => {
+              const groupEndpoints = getGroupEndpoints(
+                group,
+                content.endpoints
+              );
+
+              return (
+                <section className="scroll-mt-32" id={group.id} key={group.id}>
+                  <div className="flex items-start gap-4 border-b border-border pb-5">
+                    <span className="mt-1 font-mono text-xs text-muted-foreground/70">
+                      {String(groupIndex + 1).padStart(2, "0")}
+                    </span>
+                    <div>
+                      <h3 className="font-serif text-2xl font-medium tracking-tight">
+                        {group.title}
+                      </h3>
+                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                        {group.description}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-6 space-y-8">
+                    {groupEndpoints.map((endpoint) => (
+                      <EndpointSection
+                        content={content}
+                        endpoint={endpoint}
+                        index={content.endpoints.findIndex(
+                          (item) => item.id === endpoint.id
+                        )}
+                        key={endpoint.id}
+                      />
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         </div>
       </div>

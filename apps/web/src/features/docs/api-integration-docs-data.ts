@@ -23,9 +23,15 @@ export type ApiIntegrationResponseField = {
   description: string;
 };
 
+export type ApiIntegrationEndpointGroup = {
+  id: string;
+  title: string;
+  description: string;
+  endpointIds: readonly string[];
+};
+
 export type ApiIntegrationEndpoint = {
   id: string;
-  category: string;
   operation: "models" | "credits" | "image_generation" | "image_edit" | "video";
   title: string;
   method: "GET" | "POST";
@@ -47,6 +53,8 @@ export type ApiIntegrationDocsContent = {
   baseUrlLabel: string;
   authLabel: string;
   authValue: string;
+  directoryTitle: string;
+  directoryDescription: string;
   endpointsTitle: string;
   parametersTitle: string;
   responsesTitle: string;
@@ -60,6 +68,7 @@ export type ApiIntegrationDocsContent = {
     copied: string;
     copyFailed: string;
   };
+  groups: readonly ApiIntegrationEndpointGroup[];
   endpoints: readonly ApiIntegrationEndpoint[];
 };
 
@@ -75,6 +84,12 @@ export type ApiIntegrationHomepageContract = {
 };
 
 const IMAGE_GENERATION_ENDPOINT_ID = "image-generations";
+const API_INTEGRATION_GROUP_ENDPOINT_IDS = {
+  basics: ["models", "credits"],
+  images: ["image-generations", "image-edits"],
+  videos: ["video-generations", "video-capabilities"],
+  tasks: ["image-task", "video-task"],
+} as const;
 const API_KEY_AUTHENTICATION = {
   headerName: "Authorization",
   scheme: "Bearer",
@@ -90,7 +105,9 @@ const zhContent = {
   baseUrlLabel: "Base URL",
   authLabel: "鉴权",
   authValue: "Authorization: Bearer <API_KEY>",
-  endpointsTitle: "接口详情",
+  directoryTitle: "接口目录",
+  directoryDescription: "按模块浏览，或直接定位到具体接口。",
+  endpointsTitle: "接口参考",
   parametersTitle: "请求参数",
   responsesTitle: "响应字段",
   notesTitle: "使用说明",
@@ -103,10 +120,35 @@ const zhContent = {
     copied: "已复制",
     copyFailed: "复制失败",
   },
+  groups: [
+    {
+      id: "api-basics",
+      title: "接入基础",
+      description: "确认当前密钥可用的模型范围、账户积分与独立额度。",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.basics,
+    },
+    {
+      id: "image-api",
+      title: "图片 API",
+      description: "使用文本或参考图片创建、编辑图片。",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.images,
+    },
+    {
+      id: "video-api",
+      title: "视频 API",
+      description: "发现模型能力，并提交持久化视频生成任务。",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.videos,
+    },
+    {
+      id: "task-status",
+      title: "任务查询",
+      description: "按任务 ID 轮询图片或视频的执行状态与结果。",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.tasks,
+    },
+  ],
   endpoints: [
     {
       id: "models",
-      category: "外部 API 基础信息",
       operation: "models",
       title: "查询可用模型",
       method: "GET",
@@ -160,7 +202,6 @@ const zhContent = {
     },
     {
       id: "credits",
-      category: "外部 API 基础信息",
       operation: "credits",
       title: "查询积分与密钥额度",
       method: "GET",
@@ -230,7 +271,6 @@ const zhContent = {
     },
     {
       id: "image-generations",
-      category: "外部文生图 API",
       operation: "image_generation",
       title: "创建图片",
       method: "POST",
@@ -354,7 +394,6 @@ const zhContent = {
     },
     {
       id: "image-edits",
-      category: "外部图生图 API",
       operation: "image_edit",
       title: "编辑图片",
       method: "POST",
@@ -489,7 +528,6 @@ const zhContent = {
     },
     {
       id: "video-generations",
-      category: "外部视频 API",
       operation: "video",
       title: "创建视频",
       method: "POST",
@@ -612,7 +650,6 @@ const zhContent = {
     },
     {
       id: "video-capabilities",
-      category: "外部视频 API",
       operation: "video",
       title: "查询视频模型能力",
       method: "GET",
@@ -703,7 +740,6 @@ const zhContent = {
     },
     {
       id: "image-task",
-      category: "外部异步图片任务",
       operation: "image_generation",
       title: "查询图片任务",
       method: "GET",
@@ -761,7 +797,6 @@ const zhContent = {
     },
     {
       id: "video-task",
-      category: "外部异步视频任务",
       operation: "video",
       title: "查询视频任务",
       method: "GET",
@@ -863,6 +898,8 @@ const enContent = {
   baseUrlLabel: "Base URL",
   authLabel: "Authentication",
   authValue: "Authorization: Bearer <API_KEY>",
+  directoryTitle: "Endpoint directory",
+  directoryDescription: "Browse by module or jump directly to an endpoint.",
   endpointsTitle: "Endpoint reference",
   parametersTitle: "Request parameters",
   responsesTitle: "Response fields",
@@ -876,10 +913,38 @@ const enContent = {
     copied: "Copied",
     copyFailed: "Copy failed",
   },
+  groups: [
+    {
+      id: "api-basics",
+      title: "Integration basics",
+      description:
+        "Confirm the models, account credits, and key quota available to the current API key.",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.basics,
+    },
+    {
+      id: "image-api",
+      title: "Image API",
+      description: "Create or edit images from text and image inputs.",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.images,
+    },
+    {
+      id: "video-api",
+      title: "Video API",
+      description:
+        "Discover model capabilities and submit persistent video tasks.",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.videos,
+    },
+    {
+      id: "task-status",
+      title: "Task status",
+      description:
+        "Poll image or video execution status and results by task ID.",
+      endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.tasks,
+    },
+  ],
   endpoints: [
     {
       ...getZhEndpointTemplate("models"),
-      category: "External API basics",
       title: "List available models",
       contentType: "No request body",
       description:
@@ -911,7 +976,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("credits"),
-      category: "External API basics",
       title: "Get credits and key quota",
       contentType: "No request body",
       description:
@@ -957,7 +1021,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("image-generations"),
-      category: "Text-to-image API",
       title: "Create image",
       description:
         "Generate images from a text prompt using an OpenAI Images generation-compatible request.",
@@ -1058,7 +1121,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("image-edits"),
-      category: "Image-to-image API",
       title: "Edit image",
       description:
         "Edit one or more input images from a prompt using an OpenAI Images edit-compatible request.",
@@ -1176,7 +1238,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("video-generations"),
-      category: "Video API",
       title: "Create video",
       description: "Create a video from a text prompt or reference images.",
       parameters: [
@@ -1276,7 +1337,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("video-capabilities"),
-      category: "Video API",
       title: "List video model capabilities",
       contentType: "No request body",
       description:
@@ -1337,7 +1397,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("image-task"),
-      category: "Asynchronous image task",
       title: "Get image task",
       contentType: "No request body",
       description: "Get image generation status and results by task ID.",
@@ -1378,7 +1437,6 @@ const enContent = {
     },
     {
       ...getZhEndpointTemplate("video-task"),
-      category: "Asynchronous video task",
       title: "Get video task",
       contentType: "No request body",
       description: "Get video generation status and results by task ID.",

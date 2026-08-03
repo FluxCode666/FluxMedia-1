@@ -88,6 +88,26 @@ describe("API integration docs data", () => {
     ).toHaveLength(3);
   });
 
+  it.each(["zh", "en"])("%s 按四个模块完整编排接口目录", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    const groupedEndpointIds = content.groups.flatMap(
+      (group) => group.endpointIds
+    );
+
+    expect(content.groups.map((group) => group.id)).toEqual([
+      "api-basics",
+      "image-api",
+      "video-api",
+      "task-status",
+    ]);
+    expect(groupedEndpointIds).toEqual(
+      content.endpoints.map((endpoint) => endpoint.id)
+    );
+    expect(new Set(groupedEndpointIds).size).toBe(groupedEndpointIds.length);
+    expect(content.directoryTitle).toBeTruthy();
+    expect(content.directoryDescription).toBeTruthy();
+  });
+
   it.each([
     "zh",
     "en",
