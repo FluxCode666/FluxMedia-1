@@ -136,6 +136,22 @@ describe("API video adapter", () => {
         throw new Error("prompt 最多 1200 个字符");
       }
       if (
+        !Number.isInteger(source.duration) ||
+        source.duration < 4 ||
+        source.duration > 15
+      ) {
+        throw new Error("duration 必须是 4 到 15 的整数");
+      }
+      if (
+        source.aspect_ratio !== "16:9" &&
+        source.aspect_ratio !== "9:16"
+      ) {
+        throw new Error("aspect_ratio 仅支持 16:9 或 9:16");
+      }
+      if (source.resolution !== "480p" && source.resolution !== "720p") {
+        throw new Error("resolution 仅支持 480p 或 720p");
+      }
+      if (
         source.negative_prompt !== undefined &&
         (typeof source.negative_prompt !== "string" ||
           source.negative_prompt.length > 1200)
