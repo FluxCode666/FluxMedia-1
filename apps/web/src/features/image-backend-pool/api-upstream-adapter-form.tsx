@@ -35,7 +35,7 @@ import {
 } from "./api-upstream-adapter-draft";
 import { ApiUpstreamOperationSection } from "./api-upstream-operation-section";
 
-/** 渲染 API 账号认证与三个媒体折叠区。 */
+/** 渲染 API 账号认证与默认收起的三个媒体折叠区。 */
 export function ApiUpstreamAdapterForm({
   value,
   disabled = false,
@@ -114,7 +114,6 @@ export function ApiUpstreamAdapterForm({
 
       <Accordion
         type="multiple"
-        defaultValue={API_UPSTREAM_MEDIA_SECTIONS.map((section) => section.id)}
         className="rounded-md border px-4"
       >
         {API_UPSTREAM_MEDIA_SECTIONS.map((section) => {

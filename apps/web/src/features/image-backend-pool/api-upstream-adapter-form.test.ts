@@ -1,7 +1,7 @@
 /**
  * API 上游适配管理表单的 DOM 契约测试。
  *
- * 职责：验证三个媒体折叠区、六个固定 Method、内置路径提示与无网络测试入口；
+ * 职责：验证默认收起的三个媒体折叠区、六个固定 Method、内置路径提示与无网络测试入口；
  * Server Action 在本测试中被替换，不启动 Worker 或访问网络。
  */
 // @vitest-environment jsdom
@@ -126,6 +126,22 @@ function findButtons(label: string): HTMLButtonElement[] {
   ).filter((button) => button.textContent?.trim() === label);
 }
 
+/** 返回三个媒体配置折叠区的触发按钮。 */
+function findMediaSectionTriggers(): HTMLButtonElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      'button[data-slot="accordion-trigger"]'
+    )
+  );
+}
+
+/** 展开全部媒体配置折叠区，使后续断言可访问操作字段。 */
+function expandAllMediaSections(): void {
+  for (const trigger of findMediaSectionTriggers()) {
+    act(() => trigger.click());
+  }
+}
+
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   if (!globalThis.ResizeObserver) {
@@ -162,18 +178,27 @@ describe("ApiUpstreamAdapterForm", () => {
     ).toEqual({ query: {} });
   });
 
-  it("按文生图、图生图和生视频展示三个折叠区", () => {
+  it("按文生图、图生图和生视频展示三个默认收起的折叠区", () => {
     mountAdapterForm();
 
     expect(document.body.textContent).toContain("文生图");
     expect(document.body.textContent).toContain("图生图");
     expect(document.body.textContent).toContain("生视频");
+    expect(findMediaSectionTriggers()).toHaveLength(3);
+    expect(
+      findMediaSectionTriggers().every(
+        (trigger) => trigger.getAttribute("aria-expanded") === "false"
+      )
+    ).toBe(true);
+
+    expandAllMediaSections();
     expect(findButtons("生成")).toHaveLength(3);
     expect(findButtons("查询进度")).toHaveLength(3);
   });
 
   it("生成固定为 POST，查询固定为 GET 并展示内置路径提示", () => {
     mountAdapterForm();
+    expandAllMediaSections();
 
     expect(document.body.textContent?.match(/POST/g)).toHaveLength(3);
     const generationPlaceholders = Array.from(
@@ -192,6 +217,7 @@ describe("ApiUpstreamAdapterForm", () => {
 
   it("所有脚本区域都带无网络测试入口", () => {
     mountAdapterForm();
+    expandAllMediaSections();
 
     expect(findButtons("测试脚本")).toHaveLength(3);
     expect(findButtons("测试脚本").every((button) => button.disabled)).toBe(
