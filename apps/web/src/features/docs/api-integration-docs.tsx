@@ -233,7 +233,7 @@ export function ApiIntegrationDocs({
               {content.baseUrlLabel}
             </p>
             <code className="mt-1 block overflow-x-auto font-mono text-sm">
-              https://gpt2image.superapi.buzz
+              {content.baseUrl}
             </code>
           </div>
         </div>

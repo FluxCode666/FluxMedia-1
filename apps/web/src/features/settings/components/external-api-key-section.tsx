@@ -9,6 +9,7 @@
  * 关键依赖：API 密钥 Server Actions、纯列表状态 reducer、Shadcn Collapsible。
  */
 import { formatCredits } from "@repo/shared/credits/format";
+import { getSiteBaseUrl } from "@repo/shared/config";
 import { getMyPlanAction } from "@repo/shared/subscription/actions/get-user-plan";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import {
@@ -80,6 +81,7 @@ import {
 } from "./external-api-key-list-state";
 
 const DEFAULT_GROUP_VALUE = "default";
+const EXTERNAL_API_BASE_URL = getSiteBaseUrl();
 
 type LoadStatus = "loading" | "ready" | "error";
 type EditableGroup = ExternalApiKeyListResult["editableGroups"][number];
@@ -124,9 +126,6 @@ function getActionError(
 export function ExternalApiKeySection({ timeZone }: { timeZone?: string }) {
   const locale = useLocale();
   const t = useTranslations("Settings.externalApi");
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    "https://your-domain.example";
   const didLoadRef = useRef(false);
   const createHeadingRef = useRef<HTMLHeadingElement>(null);
   const rowTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -511,7 +510,7 @@ export function ExternalApiKeySection({ timeZone }: { timeZone?: string }) {
               {t("createSectionDescription")}
             </p>
             <p className="font-mono text-xs text-muted-foreground">
-              {t("baseUrl", { url: baseUrl })}
+              {t("baseUrl", { url: EXTERNAL_API_BASE_URL })}
             </p>
             <Link
               href={`/${locale}/dashboard/api-docs`}

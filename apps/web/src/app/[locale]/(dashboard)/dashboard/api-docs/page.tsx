@@ -12,13 +12,14 @@ import { ApiIntegrationDocs } from "@/features/docs/api-integration-docs";
 
 export const metadata = {
   title: "API Docs | FluxMedia",
-  description: "FluxMedia external image and video API integration guide",
+  description:
+    "FluxMedia external media API guide for models, credits, images, and videos",
 };
 
 /**
  * 渲染当前登录用户可见的控制台接入文档。
  *
- * @returns 复用公开内容源的图片与视频 API 文档；未登录时重定向到当前语言的登录页。
+ * @returns 复用公开内容源的模型、积分、图片与视频 API 文档；未登录时重定向到当前语言的登录页。
  * @sideEffects 读取服务端会话，失败边界交由控制台路由处理。
  */
 export default async function DashboardApiDocsPage() {

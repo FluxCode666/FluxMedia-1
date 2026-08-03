@@ -1,9 +1,10 @@
 /**
  * 公开 API 接入文档的数据源。
  *
- * 内容从管理员系统文档的外接 API 章节提炼。数据源公开列出图片生成、图片编辑、
- * 图片任务，以及视频能力、视频生成和视频任务六个现行端点。
+ * 内容从管理员系统文档的外接 API 章节提炼。数据源公开列出模型、积分、图片生成、
+ * 图片编辑、图片任务，以及视频能力、视频生成和视频任务八个现行端点。
  */
+import { getSiteBaseUrl } from "@repo/shared/config";
 
 export type ApiIntegrationParameter = {
   name: string;
@@ -20,7 +21,7 @@ export type ApiIntegrationResponseField = {
 export type ApiIntegrationEndpoint = {
   id: string;
   category: string;
-  operation: "image_generation" | "image_edit" | "video";
+  operation: "models" | "credits" | "image_generation" | "image_edit" | "video";
   title: string;
   method: "GET" | "POST";
   path: string;
@@ -37,6 +38,7 @@ export type ApiIntegrationDocsContent = {
   eyebrow: string;
   title: string;
   subtitle: string;
+  baseUrl: string;
   baseUrlLabel: string;
   authLabel: string;
   authValue: string;
@@ -68,6 +70,7 @@ export type ApiIntegrationHomepageContract = {
 };
 
 const IMAGE_GENERATION_ENDPOINT_ID = "image-generations";
+const EXTERNAL_API_BASE_URL = getSiteBaseUrl();
 const API_KEY_AUTHENTICATION = {
   headerName: "Authorization",
   scheme: "Bearer",
@@ -78,7 +81,8 @@ const zhContent = {
   eyebrow: "FluxMedia External API",
   title: "API 接入文档",
   subtitle:
-    "面向服务端集成的图片与视频接口参考。视频模型 ID 与时长、比例、分辨率独立传递，并支持能力查询与持久任务轮询。",
+    "面向服务端集成的媒体 API 参考。先查询当前密钥可见模型与积分额度，再调用图片或视频生成接口并轮询任务状态。",
+  baseUrl: EXTERNAL_API_BASE_URL,
   baseUrlLabel: "Base URL",
   authLabel: "鉴权",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -97,6 +101,130 @@ const zhContent = {
   },
   endpoints: [
     {
+      id: "models",
+      category: "外部 API 基础信息",
+      operation: "models",
+      title: "查询可用模型",
+      method: "GET",
+      path: "/v1/models",
+      contentType: "无请求体",
+      description:
+        "列出当前 API 密钥所属套餐和后端分组实际可用的图片与视频模型。",
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/models \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
+      responseExample: `{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-image-2",
+      "object": "model",
+      "created": 0,
+      "owned_by": "gpt2image"
+    },
+    {
+      "id": "seedance2",
+      "object": "model",
+      "created": 0,
+      "owned_by": "gpt2image"
+    }
+  ]
+}`,
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "必填 header",
+          description: "Bearer <API_KEY>。",
+        },
+      ],
+      responses: [
+        { name: "object", description: "固定为 list。" },
+        {
+          name: "data[].id",
+          description:
+            "当前密钥可调度的真实模型 ID；未配置可达成员时列表可能为空。",
+        },
+        {
+          name: "data[].object / created / owned_by",
+          description: "兼容 OpenAI model object 的固定元数据。",
+        },
+      ],
+      notes: [
+        "结果同时受当前套餐能力、API 密钥绑定分组和组内启用成员的显式模型列表约束。",
+        "只提供模型列表，不提供 /v1/models/{model} 详情端点。",
+        "响应使用 Cache-Control: no-store；生成前应重新查询，不要在客户端维护固定模型清单。",
+      ],
+    },
+    {
+      id: "credits",
+      category: "外部 API 基础信息",
+      operation: "credits",
+      title: "查询积分与密钥额度",
+      method: "GET",
+      path: "/v1/credits",
+      contentType: "无请求体",
+      description:
+        "查询当前 API 密钥的积分限额、已用额度、剩余额度和所属账户余额。",
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/credits \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
+      responseExample: `{
+  "object": "credit_balance",
+  "account": {
+    "balance": 15702.45,
+    "total_earned": 20000,
+    "total_spent": 4297.55,
+    "status": "active"
+  },
+  "api_key": {
+    "id": "key_...",
+    "name": "Production",
+    "key_prefix": "fm_live_",
+    "last_four": "a1b2",
+    "is_active": true,
+    "credit_limit": 1000,
+    "credits_used": 12.7,
+    "credits_remaining": 987.3,
+    "unlimited": false,
+    "last_used_at": "2026-08-03T01:02:03.000Z",
+    "created_at": "2026-08-01T01:02:03.000Z"
+  }
+}`,
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "必填 header",
+          description: "Bearer <API_KEY>。",
+        },
+      ],
+      responses: [
+        {
+          name: "account.balance",
+          description: "API 密钥所属账户的当前可用积分余额。",
+        },
+        {
+          name: "account.total_earned / total_spent / status",
+          description: "账户累计获得、累计消耗和当前状态。",
+        },
+        {
+          name: "api_key.id / name / key_prefix / last_four / is_active",
+          description: "当前 API 密钥的安全摘要和启用状态，不返回完整密钥。",
+        },
+        {
+          name: "api_key.credit_limit / credits_used / credits_remaining / unlimited",
+          description: "当前密钥的额度、已用额度、剩余额度和不限额标记。",
+        },
+        {
+          name: "api_key.last_used_at / created_at",
+          description:
+            "最近使用时间和创建时间；从未使用时 last_used_at 为 null。",
+        },
+      ],
+      notes: [
+        "credit_limit 为 null 时表示不限额，此时 credits_remaining 为 null，unlimited 为 true。",
+        "密钥额度和账户余额会共同限制请求；任一不足都可能导致生成请求失败。",
+        "响应使用 Cache-Control: no-store，不应由共享缓存保存。",
+      ],
+    },
+    {
       id: "image-generations",
       category: "外部文生图 API",
       operation: "image_generation",
@@ -106,7 +234,7 @@ const zhContent = {
       contentType: "application/json",
       description:
         "根据文本提示词生成图片，兼容 OpenAI Images generation 请求形态。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/images/generations \\
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/images/generations \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -123,7 +251,7 @@ const zhContent = {
   "created": 1713833628,
   "data": [
     {
-      "url": "https://gpt2image.superapi.buzz/api/storage/generations/...",
+      "url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/...",
       "revised_prompt": "..."
     }
   ]
@@ -230,7 +358,7 @@ const zhContent = {
       contentType: "multipart/form-data 或 application/json",
       description:
         "根据提示词编辑一张或多张输入图片，兼容 OpenAI Images edit 请求形态。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/images/edits \\
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/images/edits \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -F "model=gpt-image-2" \\
   -F "prompt=Replace the sky with a clear sunset" \\
@@ -242,7 +370,7 @@ const zhContent = {
   "created": 1713833628,
   "data": [
     {
-      "url": "https://gpt2image.superapi.buzz/api/storage/generations/...",
+      "url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/...",
       "revised_prompt": "..."
     }
   ]
@@ -364,7 +492,7 @@ const zhContent = {
       path: "/v1/videos/generations",
       contentType: "application/json",
       description: "根据文本提示词或参考图创建视频。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/generations \\
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/videos/generations \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -488,7 +616,7 @@ const zhContent = {
       contentType: "无请求体",
       description:
         "查询当前 API 密钥可见的真实视频模型、独立生成参数、输入图和声音能力，以及账号池是否已配置可达。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/capabilities \\
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/videos/capabilities \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "items": [
@@ -578,7 +706,7 @@ const zhContent = {
       path: "/v1/images/{task_id}",
       contentType: "无请求体",
       description: "按任务 ID 查询图片生成状态和结果。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/images/task_... \\
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/images/task_... \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "id": "task_...",
@@ -590,7 +718,7 @@ const zhContent = {
   "completed_at": "2026-05-28T00:01:12.000Z",
   "data": [
     {
-      "url": "https://gpt2image.superapi.buzz/api/storage/generations/..."
+      "url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/..."
     }
   ]
 }`,
@@ -636,7 +764,7 @@ const zhContent = {
       path: "/v1/videos/{id}",
       contentType: "无请求体",
       description: "按任务 ID 查询视频生成状态和结果。",
-      requestExample: `curl https://gpt2image.superapi.buzz/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
+      requestExample: `curl ${EXTERNAL_API_BASE_URL}/v1/videos/video_0123456789abcdef0123456789abcdef01234567 \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
   "object": "video.task",
@@ -655,8 +783,8 @@ const zhContent = {
   "input": { "mode": "references", "count": 1 },
   "created_at": "2026-05-28T00:00:00.000Z",
   "completed_at": "2026-05-28T00:01:40.000Z",
-  "video_url": "https://gpt2image.superapi.buzz/api/storage/generations/...",
-  "data": [{"url": "https://gpt2image.superapi.buzz/api/storage/generations/..."}]
+  "video_url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/...",
+  "data": [{"url": "${EXTERNAL_API_BASE_URL}/api/storage/generations/..."}]
 }`,
       parameters: [
         {
@@ -726,7 +854,8 @@ const enContent = {
   eyebrow: "FluxMedia External API",
   title: "API Integration Guide",
   subtitle:
-    "Image and video API reference for server-side integrations. Video model IDs are separate from duration, aspect ratio, and resolution, with capability discovery and persistent task polling.",
+    "Media API reference for server-side integrations. Discover models and credit quota first, then create images or videos and poll task status.",
+  baseUrl: EXTERNAL_API_BASE_URL,
   baseUrlLabel: "Base URL",
   authLabel: "Authentication",
   authValue: "Authorization: Bearer <API_KEY>",
@@ -744,6 +873,84 @@ const enContent = {
     copyFailed: "Copy failed",
   },
   endpoints: [
+    {
+      ...getZhEndpointTemplate("models"),
+      category: "External API basics",
+      title: "List available models",
+      contentType: "No request body",
+      description:
+        "List the image and video models actually available to the current API key's plan and backend group.",
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "Required header",
+          description: "Bearer <API_KEY>.",
+        },
+      ],
+      responses: [
+        { name: "object", description: "Always list." },
+        {
+          name: "data[].id",
+          description:
+            "Real model IDs schedulable by this key. The list can be empty when no reachable member is configured.",
+        },
+        {
+          name: "data[].object / created / owned_by",
+          description: "Fixed metadata compatible with an OpenAI model object.",
+        },
+      ],
+      notes: [
+        "Results are filtered by plan capabilities, the API key's backend group, and the explicit model lists of enabled group members.",
+        "Only model listing is available; /v1/models/{model} is not implemented.",
+        "Responses use Cache-Control: no-store. Query again before generation instead of maintaining a fixed client-side model list.",
+      ],
+    },
+    {
+      ...getZhEndpointTemplate("credits"),
+      category: "External API basics",
+      title: "Get credits and key quota",
+      contentType: "No request body",
+      description:
+        "Return the current API key's credit limit, usage, remaining quota, and owning account balance.",
+      parameters: [
+        {
+          name: "Authorization",
+          requirement: "Required header",
+          description: "Bearer <API_KEY>.",
+        },
+      ],
+      responses: [
+        {
+          name: "account.balance",
+          description: "Current available credits on the owning account.",
+        },
+        {
+          name: "account.total_earned / total_spent / status",
+          description:
+            "Cumulative credits earned, cumulative credits spent, and current account status.",
+        },
+        {
+          name: "api_key.id / name / key_prefix / last_four / is_active",
+          description:
+            "Safe summary and activation state for the current API key; the full key is never returned.",
+        },
+        {
+          name: "api_key.credit_limit / credits_used / credits_remaining / unlimited",
+          description:
+            "The key limit, used quota, remaining quota, and unlimited flag.",
+        },
+        {
+          name: "api_key.last_used_at / created_at",
+          description:
+            "Last-use and creation timestamps. last_used_at is null before the first use.",
+        },
+      ],
+      notes: [
+        "When credit_limit is null, the key is unlimited, credits_remaining is null, and unlimited is true.",
+        "Both key quota and account balance gate requests; insufficient value in either can reject a generation request.",
+        "Responses use Cache-Control: no-store and must not be retained by shared caches.",
+      ],
+    },
     {
       ...getZhEndpointTemplate("image-generations"),
       category: "Text-to-image API",
@@ -1228,7 +1435,7 @@ const enContent = {
  * 按路由语言返回公开接入文档。
  *
  * @param locale - Next.js 路由语言；只有 zh 使用中文，其余安全回退英文。
- * @returns 包含现行图片与视频端点的完整只读数据源。
+ * @returns 包含现行模型、积分、图片与视频端点的完整只读数据源。
  */
 export function getApiIntegrationDocs(
   locale?: string

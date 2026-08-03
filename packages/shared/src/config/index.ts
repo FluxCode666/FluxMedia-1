@@ -25,4 +25,4 @@ export {
   // 支付配置
   paymentConfig,
 } from "./payment";
-export { type SiteConfig, siteConfig } from "./site";
+export { getSiteBaseUrl, type SiteConfig, siteConfig } from "./site";

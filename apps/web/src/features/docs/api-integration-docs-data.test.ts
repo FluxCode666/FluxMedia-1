@@ -4,6 +4,7 @@
  * 防止管理员系统文档后续扩充时，把未支持的站点扩展参数或响应字段误带到无需登录
  * 即可访问的图片与视频接入页，并锁定视频能力发现和持久任务协议。
  */
+import { getSiteBaseUrl } from "@repo/shared/config";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +13,8 @@ import {
 } from "./api-integration-docs-data";
 
 const EXPECTED_PATHS = [
+  "/v1/models",
+  "/v1/credits",
   "/v1/images/generations",
   "/v1/images/edits",
   "/v1/videos/generations",
@@ -75,7 +78,7 @@ describe("API integration docs data", () => {
     expect(homepage.endpoint).not.toHaveProperty("responseExample");
   });
 
-  it.each(["zh", "en"])("%s 公开指定的图片与视频端点", (locale) => {
+  it.each(["zh", "en"])("%s 公开八个现行接入端点", (locale) => {
     const content = getApiIntegrationDocs(locale);
 
     expect(content.endpoints.map((endpoint) => endpoint.path)).toEqual(
@@ -84,6 +87,34 @@ describe("API integration docs data", () => {
     expect(
       content.endpoints.filter((endpoint) => endpoint.operation === "video")
     ).toHaveLength(3);
+  });
+
+  it.each([
+    "zh",
+    "en",
+  ])("%s 使用统一站点地址并公开模型与积分接入闭环", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    const baseUrl = getSiteBaseUrl();
+    const models = content.endpoints.find(
+      (endpoint) => endpoint.id === "models"
+    );
+    const credits = content.endpoints.find(
+      (endpoint) => endpoint.id === "credits"
+    );
+
+    expect(content.baseUrl).toBe(baseUrl);
+    for (const endpoint of content.endpoints) {
+      expect(endpoint.requestExample).toContain(`curl ${baseUrl}`);
+    }
+    expect(models?.path).toBe("/v1/models");
+    expect(models?.responseExample).toContain('"object": "list"');
+    expect(models?.responses.map((response) => response.name)).toContain(
+      "data[].id"
+    );
+    expect(credits?.path).toBe("/v1/credits");
+    expect(credits?.responseExample).toContain('"object": "credit_balance"');
+    expect(credits?.responseExample).toContain('"credits_remaining"');
+    expect(credits?.responseExample).toContain('"last_used_at"');
   });
 
   it.each([

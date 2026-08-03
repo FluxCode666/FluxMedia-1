@@ -14,25 +14,33 @@
 
 ## 公开内容边界
 
-公开页当前只包含以下三个图像端点：
+公开页与控制台镜像共用同一数据源，当前包含以下八个现行端点：
 
+- `GET /v1/models`
+- `GET /v1/credits`
 - `POST /v1/images/generations`
 - `POST /v1/images/edits`
 - `GET /v1/images/{task_id}`
+- `POST /v1/videos/generations`
+- `GET /v1/videos/capabilities`
+- `GET /v1/videos/{id}`
 
 请求参数、响应字段和示例不展示 `custom: true` 或其他明确的 FluxMedia 扩展字段。图片
-任务 GET 端点的 `task_id` 虽在旧系统文档中被标成扩展，但属于路径契约不可缺少的参数，
-公开页显式保留。视频生成与视频任务端点暂时只保留在管理员系统文档和原始双语数据中，
-由公开数据出口统一过滤，恢复时只需调整隐藏端点集合。契约由
+任务 GET 端点的 `task_id` 属于路径契约不可缺少的参数，公开页显式保留。模型列表按当前
+API 密钥的套餐能力、绑定分组和启用成员过滤；积分端点同时展示账户余额与密钥独立额度。
+视频端点只使用真实模型 ID，并把时长、比例和分辨率作为独立参数。契约由
 `api-integration-docs-data.test.ts` 防回归。
 
 请求参数表为参数、要求、默认值、说明四列。所有公开可选参数必须声明默认行为；其中
-`model` 取后端默认并兜底 `gpt-image-2`，`n=1`、`size=1024x1024`、
+图片 `model` 必填并应先从 `/v1/models` 查询；`n=1`、`size=1024x1024`、
 `quality=auto`、`moderation=auto`、`response_format=b64_json`、`stream=false`，图生图
 `mask` 默认为无。`output_format`、`output_compression`、`background` 本站不强制固定值，
 明确标为由上游决定，禁止凭兼容 API 的常见值猜写。`output_compression` 控制 JPEG/WebP
 输出图片的压缩级别，数值越大压缩力度越大；`0` 表示不压缩，`100` 表示最大压缩。
 通常压缩越强，文件越小、画质损失越明显；不同上游的实际结果可能略有差异。
+
+接入页 Base URL、全部 curl 示例、首页快速集成和 API 密钥控制台统一读取
+`getSiteBaseUrl()`，其来源是 `NEXT_PUBLIC_APP_URL`；禁止在任一入口单独硬编码生产域名。
 
 公开页的接口区使用响应式滚动电梯：桌面端显示粘性侧栏，窄屏显示粘性横向导航；活动
 章节随滚动位置更新，并通过文字、背景和 `aria-current` 同时表达。
