@@ -691,6 +691,38 @@ describe("getAdminSystemSettingsSnapshot", () => {
   });
 });
 
+describe("legacy storage setting aliases", () => {
+  beforeEach(() => {
+    store.clear();
+    clearSystemSettingsCache();
+    resetBootstrappedProcessSettingsForTests();
+  });
+
+  it("旧读取键统一返回两个新设置的数据库真相", async () => {
+    store.set("SYSTEM_ASSETS_BUCKET_NAME", {
+      key: "SYSTEM_ASSETS_BUCKET_NAME",
+      value: "system-assets",
+    });
+    store.set("GENERATIONS_BUCKET_NAME", {
+      key: "GENERATIONS_BUCKET_NAME",
+      value: "user-outputs",
+    });
+
+    await expect(
+      getRuntimeSettingString("NEXT_PUBLIC_AVATARS_BUCKET_NAME")
+    ).resolves.toBe("system-assets");
+    await expect(
+      getRuntimeSettingString("MODEL_MARKETPLACE_ASSETS_BUCKET_NAME")
+    ).resolves.toBe("system-assets");
+    await expect(
+      getRuntimeSettingString("SITE_ASSETS_BUCKET_NAME")
+    ).resolves.toBe("system-assets");
+    await expect(
+      getRuntimeSettingString("NEXT_PUBLIC_GENERATIONS_BUCKET_NAME")
+    ).resolves.toBe("user-outputs");
+  });
+});
+
 describe("runtime setting getters stored/env fallback (C-L29)", () => {
   beforeEach(() => {
     store.clear();
