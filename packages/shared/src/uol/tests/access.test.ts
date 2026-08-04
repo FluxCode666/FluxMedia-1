@@ -295,6 +295,28 @@ describe("UOL Access Control (assertAccess)", () => {
     });
   });
 
+  describe("cronJob", () => {
+    const access: AccessRequirement = {
+      kind: "cronJob",
+      job: "adobe-credential-health",
+    };
+
+    it("仅允许匹配的 cron job Principal", () => {
+      expect(() =>
+        assertAccess(access, {
+          type: "cron",
+          job: "adobe-credential-health",
+        })
+      ).not.toThrow();
+      expect(() => assertAccess(access, principals.cron)).toThrow(
+        OperationError
+      );
+      expect(() => assertAccess(access, principals.system)).toThrow(
+        OperationError
+      );
+    });
+  });
+
   describe("webhook", () => {
     it("allows matching webhook provider", () => {
       const creem: AccessRequirement = {

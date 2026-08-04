@@ -11,6 +11,9 @@ const runtime = vi.hoisted(() => ({
   imageMaintenance: vi.fn(async () => undefined),
   creditsExpire: vi.fn(async () => undefined),
   videoRecovery: vi.fn(async () => undefined),
+  adobeCredentialHealth: vi.fn(async () => undefined),
+  adobeCredentialNotifications: vi.fn(async () => undefined),
+  adobeCredentialRetention: vi.fn(async () => undefined),
 }));
 
 const database = vi.hoisted(() => {
@@ -81,6 +84,9 @@ vi.mock("./scheduled-jobs", () => ({
   runImageMaintenanceJob: runtime.imageMaintenance,
   runCreditsExpireJob: runtime.creditsExpire,
   runVideoRecoveryJob: runtime.videoRecovery,
+  runAdobeCredentialHealthJob: runtime.adobeCredentialHealth,
+  runAdobeCredentialNotificationDrainJob: runtime.adobeCredentialNotifications,
+  runAdobeCredentialHealthCleanupJob: runtime.adobeCredentialRetention,
 }));
 
 type SchedulerModule = typeof import("./internal-job-scheduler");
@@ -108,6 +114,9 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.imageMaintenance.mockClear();
     runtime.creditsExpire.mockClear();
     runtime.videoRecovery.mockClear();
+    runtime.adobeCredentialHealth.mockClear();
+    runtime.adobeCredentialNotifications.mockClear();
+    runtime.adobeCredentialRetention.mockClear();
     database.transaction.mockClear();
     vi.useFakeTimers();
     vi.stubEnv("NODE_ENV", "production");

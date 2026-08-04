@@ -147,6 +147,16 @@ async function buildAdobeTransports(
   };
 }
 
+/**
+ * 构造只用于 Adobe API 调用的专用代理 transport。
+ *
+ * @returns 复用生产 TLS 旁路与部署密钥的 transport。
+ * @throws 专用代理配置缺失时显式失败；调用方不得降级为服务器直连。
+ */
+export async function buildAdobeDirectApiTransport(): Promise<FireflyTransport> {
+  return (await buildAdobeTransports()).apiTransport;
+}
+
 function tokenExpiresAt(value: string): Date | null {
   const exp = decodeJwtExp(value);
   return exp === null ? null : new Date(exp * 1000);

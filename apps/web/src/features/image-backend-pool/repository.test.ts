@@ -182,6 +182,8 @@ describe("backend pool PostgreSQL repository", () => {
     expect(queries[2]?.sql.toLowerCase()).not.toContain(" like ");
     expect(queries[2]?.sql).toContain("m.cooldown_until");
     expect(queries[2]?.sql).toContain("m.status not in");
+    expect(queries[2]?.sql).toContain("from adobe_credential_health");
+    expect(queries[2]?.sql).toContain("credential_health.status =");
     expect(queries[2]?.params).toEqual(
       expect.arrayContaining([
         "group-a",

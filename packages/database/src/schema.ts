@@ -1313,6 +1313,249 @@ export const imageBackendMemberAdobeConfig = pgTable(
   ]
 );
 
+/**
+ * Adobe direct 成员的当前凭据健康摘要。
+ *
+ * 当前摘要与成员一对一并随成员删除；网络调用必须在事务外完成，提交时以
+ * claimToken、credentialRevision 和 memberEnableRevision 做 CAS，避免旧结果
+ * 覆盖重新授权或停用再启用后的新状态。
+ */
+export const adobeCredentialHealth = pgTable(
+  "adobe_credential_health",
+  {
+    memberId: text("member_id")
+      .primaryKey()
+      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    credentialRevision: integer("credential_revision").notNull().default(1),
+    memberEnableRevision: integer("member_enable_revision")
+      .notNull()
+      .default(1),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    failureProfiles: json("failure_profiles")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::json`),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    nextCheckAt: timestamp("next_check_at").notNull().defaultNow(),
+    evaluationDeadlineAt: timestamp("evaluation_deadline_at"),
+    lastCheckAt: timestamp("last_check_at"),
+    lastSuccessAt: timestamp("last_success_at"),
+    firstFailureAt: timestamp("first_failure_at"),
+    lastFailureAt: timestamp("last_failure_at"),
+    isolatedAt: timestamp("isolated_at"),
+    diagnostic: json("diagnostic").$type<Record<string, unknown> | null>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "adobe_credential_health_status_check",
+      sql`${table.status} IN ('pending', 'healthy', 'degraded', 'isolated', 'overdue')`
+    ),
+    check(
+      "adobe_credential_health_revisions_check",
+      sql`${table.credentialRevision} >= 1 AND ${table.memberEnableRevision} >= 1`
+    ),
+    check(
+      "adobe_credential_health_failure_count_check",
+      sql`${table.consecutiveFailures} >= 0`
+    ),
+    check(
+      "adobe_credential_health_claim_pair_check",
+      sql`(${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL) OR (${table.claimToken} IS NOT NULL AND ${table.claimExpiresAt} IS NOT NULL)`
+    ),
+    check(
+      "adobe_credential_health_isolation_check",
+      sql`(${table.status} = 'isolated' AND ${table.isolatedAt} IS NOT NULL) OR (${table.status} <> 'isolated')`
+    ),
+    index("adobe_credential_health_due_idx").on(
+      table.status,
+      table.nextCheckAt,
+      table.claimExpiresAt
+    ),
+    index("adobe_credential_health_isolated_idx").on(table.isolatedAt),
+  ]
+);
+
+/**
+ * Adobe 凭据评估的非敏感历史。
+ *
+ * memberIdSnapshot 不引用成员表，成员删除后仍保留 90 天追踪证据；claimToken
+ * 全局唯一，使同一 claimant 的重放只能落下一条 accepted/stale/discarded 记录。
+ */
+export const adobeCredentialEvaluation = pgTable(
+  "adobe_credential_evaluation",
+  {
+    id: text("id").primaryKey(),
+    claimToken: text("claim_token").notNull(),
+    memberIdSnapshot: text("member_id_snapshot").notNull(),
+    memberNameSnapshot: text("member_name_snapshot").notNull(),
+    credentialRevision: integer("credential_revision").notNull(),
+    memberEnableRevision: integer("member_enable_revision").notNull(),
+    source: text("source").notNull(),
+    disposition: text("disposition").notNull(),
+    outcome: text("outcome").notNull(),
+    failureProfiles: json("failure_profiles")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::json`),
+    diagnostic: json("diagnostic").$type<Record<string, unknown> | null>(),
+    startedAt: timestamp("started_at").notNull(),
+    completedAt: timestamp("completed_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("adobe_credential_evaluation_claim_unique").on(table.claimToken),
+    check(
+      "adobe_credential_evaluation_revisions_check",
+      sql`${table.credentialRevision} >= 1 AND ${table.memberEnableRevision} >= 1`
+    ),
+    check(
+      "adobe_credential_evaluation_source_check",
+      sql`${table.source} IN ('scheduled', 'passive', 'manual', 'reauthorization')`
+    ),
+    check(
+      "adobe_credential_evaluation_disposition_check",
+      sql`${table.disposition} IN ('accepted', 'stale', 'discarded')`
+    ),
+    check(
+      "adobe_credential_evaluation_outcome_check",
+      sql`${table.outcome} IN ('success', 'member_failure', 'platform_failure')`
+    ),
+    index("adobe_credential_evaluation_member_created_idx").on(
+      table.memberIdSnapshot,
+      table.createdAt
+    ),
+    index("adobe_credential_evaluation_retention_idx").on(table.completedAt),
+  ]
+);
+
+/**
+ * Adobe 凭据故障事件。
+ *
+ * 开放事件按成员偏唯一，隔离重试只更新同一事件；恢复关闭原事件并在该事件
+ * 上创建恢复投递，成员删除后非敏感快照仍可保留。
+ */
+export const adobeCredentialIncident = pgTable(
+  "adobe_credential_incident",
+  {
+    id: text("id").primaryKey(),
+    memberIdSnapshot: text("member_id_snapshot").notNull(),
+    memberNameSnapshot: text("member_name_snapshot").notNull(),
+    status: text("status").notNull().default("open"),
+    consecutiveFailures: integer("consecutive_failures").notNull(),
+    failureProfiles: json("failure_profiles")
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::json`),
+    diagnostic: json("diagnostic").$type<Record<string, unknown> | null>(),
+    openedAt: timestamp("opened_at").notNull().defaultNow(),
+    lastFailureAt: timestamp("last_failure_at").notNull(),
+    closedAt: timestamp("closed_at"),
+    closeReason: text("close_reason"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("adobe_credential_incident_open_member_unique")
+      .on(table.memberIdSnapshot)
+      .where(sql`${table.status} = 'open'`),
+    check(
+      "adobe_credential_incident_status_check",
+      sql`${table.status} IN ('open', 'closed')`
+    ),
+    check(
+      "adobe_credential_incident_failure_count_check",
+      sql`${table.consecutiveFailures} >= 1`
+    ),
+    check(
+      "adobe_credential_incident_close_shape_check",
+      sql`(${table.status} = 'open' AND ${table.closedAt} IS NULL AND ${table.closeReason} IS NULL) OR (${table.status} = 'closed' AND ${table.closedAt} IS NOT NULL AND ${table.closeReason} IS NOT NULL)`
+    ),
+    index("adobe_credential_incident_retention_idx").on(
+      table.status,
+      table.closedAt
+    ),
+  ]
+);
+
+/**
+ * Adobe 凭据通知的持久 outbox 投递。
+ *
+ * targetEnvelope、payload 与 configRevision 在事件创建时固化；HMAC 密钥本身
+ * 从不入库，只允许保存不可逆指纹。唯一约束保证同一事件类型和渠道只有一条
+ * 逻辑投递，worker 通过 claim 字段实现至少一次有限重试。
+ */
+export const adobeCredentialNotificationDelivery = pgTable(
+  "adobe_credential_notification_delivery",
+  {
+    id: text("id").primaryKey(),
+    incidentId: text("incident_id").notNull(),
+    eventType: text("event_type").notNull(),
+    channel: text("channel").notNull(),
+    status: text("status").notNull().default("pending"),
+    targetEnvelope: json("target_envelope")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    payload: json("payload").$type<Record<string, unknown>>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    configRevision: text("config_revision").notNull(),
+    secretFingerprint: text("secret_fingerprint"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    claimToken: text("claim_token"),
+    claimExpiresAt: timestamp("claim_expires_at"),
+    lastErrorCode: text("last_error_code"),
+    providerRequestId: text("provider_request_id"),
+    deliveredAt: timestamp("delivered_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "adobe_credential_delivery_incident_fk",
+      columns: [table.incidentId],
+      foreignColumns: [adobeCredentialIncident.id],
+    }).onDelete("restrict"),
+    unique("adobe_credential_delivery_event_channel_unique").on(
+      table.incidentId,
+      table.eventType,
+      table.channel
+    ),
+    check(
+      "adobe_credential_delivery_event_type_check",
+      sql`${table.eventType} IN ('failure', 'recovery')`
+    ),
+    check(
+      "adobe_credential_delivery_channel_check",
+      sql`${table.channel} IN ('email', 'webhook')`
+    ),
+    check(
+      "adobe_credential_delivery_status_check",
+      sql`${table.status} IN ('pending', 'delivering', 'retry', 'delivered', 'dead', 'configuration_superseded', 'cancelled')`
+    ),
+    check(
+      "adobe_credential_delivery_attempt_count_check",
+      sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 8`
+    ),
+    check(
+      "adobe_credential_delivery_claim_pair_check",
+      sql`(${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL) OR (${table.claimToken} IS NOT NULL AND ${table.claimExpiresAt} IS NOT NULL)`
+    ),
+    index("adobe_credential_delivery_recovery_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.claimExpiresAt
+    ),
+    index("adobe_credential_delivery_retention_idx").on(
+      table.status,
+      table.deliveredAt
+    ),
+  ]
+);
+
 /** 统一成员与既有媒体后端分组的多对多关系。 */
 export const imageBackendMemberGroup = pgTable(
   "image_backend_member_group",
@@ -1948,6 +2191,21 @@ export type ImageBackendMemberAdobeConfig =
   typeof imageBackendMemberAdobeConfig.$inferSelect;
 export type NewImageBackendMemberAdobeConfig =
   typeof imageBackendMemberAdobeConfig.$inferInsert;
+export type AdobeCredentialHealth = typeof adobeCredentialHealth.$inferSelect;
+export type NewAdobeCredentialHealth =
+  typeof adobeCredentialHealth.$inferInsert;
+export type AdobeCredentialEvaluation =
+  typeof adobeCredentialEvaluation.$inferSelect;
+export type NewAdobeCredentialEvaluation =
+  typeof adobeCredentialEvaluation.$inferInsert;
+export type AdobeCredentialIncident =
+  typeof adobeCredentialIncident.$inferSelect;
+export type NewAdobeCredentialIncident =
+  typeof adobeCredentialIncident.$inferInsert;
+export type AdobeCredentialNotificationDelivery =
+  typeof adobeCredentialNotificationDelivery.$inferSelect;
+export type NewAdobeCredentialNotificationDelivery =
+  typeof adobeCredentialNotificationDelivery.$inferInsert;
 export type ImageBackendMemberGroup =
   typeof imageBackendMemberGroup.$inferSelect;
 export type NewImageBackendMemberGroup =

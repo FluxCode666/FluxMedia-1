@@ -15,10 +15,18 @@ export class AdobeRequestError extends Error {
   statusCode: number | undefined;
   errorType: string;
   userMessage: string;
+  requestId: string | undefined;
+  adobeErrorCode: string | undefined;
 
   constructor(
     message: string,
-    opts?: { statusCode?: number; errorType?: string; userMessage?: string }
+    opts?: {
+      statusCode?: number;
+      errorType?: string;
+      userMessage?: string;
+      requestId?: string;
+      adobeErrorCode?: string;
+    }
   ) {
     super(message);
     this.name = "AdobeRequestError";
@@ -28,12 +36,18 @@ export class AdobeRequestError extends Error {
       .toLowerCase();
     this.userMessage =
       String(opts?.userMessage || "").trim() || String(message || "").trim();
+    this.requestId = String(opts?.requestId || "").trim() || undefined;
+    this.adobeErrorCode =
+      String(opts?.adobeErrorCode || "").trim() || undefined;
   }
 }
 
 /** Adobe 账号配额耗尽（x-access-error: taste_exhausted）。 */
 export class QuotaExhaustedError extends AdobeRequestError {
-  constructor(message: string, opts?: { statusCode?: number }) {
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; requestId?: string; adobeErrorCode?: string }
+  ) {
     super(message, { ...opts, errorType: "status" });
     this.name = "QuotaExhaustedError";
   }
@@ -41,7 +55,10 @@ export class QuotaExhaustedError extends AdobeRequestError {
 
 /** token 失效/过期（401/403）。 */
 export class AuthError extends AdobeRequestError {
-  constructor(message: string, opts?: { statusCode?: number }) {
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; requestId?: string; adobeErrorCode?: string }
+  ) {
     super(message, opts);
     this.name = "AuthError";
   }
@@ -51,7 +68,12 @@ export class AuthError extends AdobeRequestError {
 export class UpstreamTemporaryError extends AdobeRequestError {
   constructor(
     message: string,
-    opts?: { statusCode?: number; errorType?: string }
+    opts?: {
+      statusCode?: number;
+      errorType?: string;
+      requestId?: string;
+      adobeErrorCode?: string;
+    }
   ) {
     super(message, opts);
     this.name = "UpstreamTemporaryError";

@@ -51,6 +51,15 @@ export type EmailDeliveryClient =
       resend: Resend;
     };
 
+/** 当前邮件配置的非机密可用性快照。 */
+export type EmailDeliveryConfigurationSnapshot = {
+  configured: boolean;
+  provider: EmailProvider;
+  from: string;
+  /** 只用于 outbox 配置 revision，不可逆且不包含凭据明文。 */
+  configurationFingerprint: string;
+};
+
 /** 未配置发件人时使用的安全默认值。 */
 export const DEFAULT_FROM_EMAIL = "FluxMedia <support@media.flux-code.cc>";
 
@@ -82,6 +91,25 @@ function createConfigFingerprint(
   values: ReadonlyArray<string | number | boolean>
 ): string {
   return createHash("sha256").update(JSON.stringify(values)).digest("hex");
+}
+
+/**
+ * 计算邮件配置的非机密 revision。
+ *
+ * @param config 当前运行时配置。
+ * @returns 供持久 outbox 比较的 SHA-256 指纹；不会记录输入值。
+ */
+function getEmailConfigurationFingerprint(config: EmailRuntimeConfig): string {
+  return createConfigFingerprint([
+    config.provider,
+    config.from,
+    config.smtp?.host ?? "",
+    config.smtp?.port ?? 0,
+    config.smtp?.secure ?? false,
+    config.smtp?.user ?? "",
+    config.smtp?.pass ?? "",
+    config.resendApiKey ?? "",
+  ]);
 }
 
 /**
@@ -230,6 +258,25 @@ export async function isResendConfigured(): Promise<boolean> {
 export async function isEmailConfigured(): Promise<boolean> {
   const config = await getEmailRuntimeConfig();
   return Boolean(config.smtp || config.resendApiKey);
+}
+
+/**
+ * 判断当前选中的邮件供应商是否完整可用，并返回非机密配置 revision。
+ *
+ * @returns 发送 outbox 前使用的配置状态；不会返回 SMTP 密码或 Resend Key。
+ */
+export async function getEmailConfigurationSnapshot(): Promise<EmailDeliveryConfigurationSnapshot> {
+  const config = await getEmailRuntimeConfig();
+  const configured =
+    config.provider === "smtp"
+      ? Boolean(config.smtp)
+      : Boolean(config.resendApiKey);
+  return {
+    configured,
+    provider: config.provider,
+    from: config.from,
+    configurationFingerprint: getEmailConfigurationFingerprint(config),
+  };
 }
 
 /**

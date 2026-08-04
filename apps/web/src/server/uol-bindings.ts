@@ -17,12 +17,14 @@
 
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
+import "@/server/uol-bindings/adobe-credential-health";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
 import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
 import "@/server/uol-bindings/video-generation";
+import "@/server/notification-settings-binding";
 import "@/server/site-branding-binding";
 
 import {

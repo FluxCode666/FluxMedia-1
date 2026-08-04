@@ -8,18 +8,35 @@ import { logError } from "@repo/shared/logger";
 import { getRuntimeSettingSelect } from "@repo/shared/system-settings";
 import { runVideoCallbackDeliveryJob } from "@/features/image-generation/video-callback-delivery";
 import { runVideoInputCleanupJob } from "@/features/image-generation/video-input-cleanup-queue";
+import { enqueueImageTask, enqueueVideoTask } from "@/server/media-task-queues";
 import {
   defaultMediaTaskRecoveryRepository,
   type MediaTaskRecoveryRepository,
 } from "@/server/media-task-recovery-repository";
 import {
-  enqueueImageTask,
-  enqueueVideoTask,
-} from "@/server/media-task-queues";
-import {
   buildCreditsExpireResponse,
   summarizeExpiredPendingGenerations,
 } from "@/server/scheduled-jobs-response";
+
+/**
+ * Adobe 健康任务通过 UOL 内部 cron Principal 调用，确保调度入口与管理员手动检查
+ * 共享同一 operation、审计和权限网关；此处不直接触碰 Adobe 凭据服务。
+ */
+async function invokeAdobeHealthJob<T>(
+  operation:
+    | "pool.scanAdobeCredentialHealth"
+    | "pool.drainAdobeCredentialNotifications"
+    | "pool.cleanupAdobeCredentialHealthHistory",
+  input: { batchSize: number },
+  job: string
+): Promise<T> {
+  const [{ invokeOperation }, { ensureUolInitialized }] = await Promise.all([
+    import("@repo/shared/uol"),
+    import("@/server/uol-init"),
+  ]);
+  await ensureUolInitialized();
+  return invokeOperation<T>(operation, input, { type: "cron", job });
+}
 
 /**
  * 单次图像维护 cron 扫描的最大处理行数。
@@ -27,6 +44,7 @@ import {
  */
 const IMAGE_MAINTENANCE_BATCH_LIMIT = 500;
 const MEDIA_TASK_RECOVERY_BATCH_LIMIT = 100;
+const ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT = 25;
 
 /** 媒体 MQ 补偿任务的可替换依赖。 */
 export interface MediaTaskRecoveryJobDependencies {
@@ -108,8 +126,7 @@ export async function runCreditsExpireJob() {
  * @returns 本轮认领、恢复与隔离失败数量。
  */
 export async function runMediaTaskQueueRecovery(
-  dependencies: MediaTaskRecoveryJobDependencies =
-    defaultMediaTaskRecoveryDependencies
+  dependencies: MediaTaskRecoveryJobDependencies = defaultMediaTaskRecoveryDependencies
 ) {
   const tasks = await dependencies.repository.scan({
     now: new Date(),
@@ -162,4 +179,31 @@ export async function runVideoRecoveryJob() {
     inputCleanup,
     timestamp: new Date().toISOString(),
   };
+}
+
+/** 扫描一批到期 Adobe direct 成员并写入健康评估结果。 */
+export async function runAdobeCredentialHealthJob() {
+  return invokeAdobeHealthJob(
+    "pool.scanAdobeCredentialHealth",
+    { batchSize: ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT },
+    "adobe-credential-health"
+  );
+}
+
+/** 补偿投递 Adobe 健康事件的邮件和 Webhook outbox。 */
+export async function runAdobeCredentialNotificationDrainJob() {
+  return invokeAdobeHealthJob(
+    "pool.drainAdobeCredentialNotifications",
+    { batchSize: ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT },
+    "adobe-credential-notification-delivery"
+  );
+}
+
+/** 清理超过保留期且已终态的 Adobe 健康历史。 */
+export async function runAdobeCredentialHealthCleanupJob() {
+  return invokeAdobeHealthJob(
+    "pool.cleanupAdobeCredentialHealthHistory",
+    { batchSize: ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT },
+    "adobe-credential-health-retention"
+  );
 }

@@ -278,7 +278,7 @@ describe("image backend pool pricing operations", () => {
     ).toBe(false);
   });
 
-  it("Adobe direct 管理快照保留余额、刷新错误和运行错误", () => {
+  it("Adobe direct 通用管理快照不返回刷新和余额诊断错误", () => {
     const member = {
       id: "adobe-direct",
       name: "Adobe Direct",
@@ -306,17 +306,14 @@ describe("image backend pool pricing operations", () => {
         email: "user@example.com",
         credentialStatus: "active",
         lastRefreshAt: "2026-07-27T00:00:00.000Z",
-        lastRefreshError: null,
         consecutiveFailures: 0,
         fireflyCredentialStatus: null,
         fireflyLastRefreshAt: null,
-        fireflyLastRefreshError: null,
         fireflyConsecutiveFailures: 0,
         creditsTotal: 4_000,
         creditsUsed: 1_500,
         creditsAvailable: 2_500,
         creditsUpdatedAt: "2026-07-27T00:00:01.000Z",
-        creditsError: null,
         defaultRatio: "1x1",
         defaultResolution: "2k",
         gptImageQuality: "high",
@@ -325,6 +322,26 @@ describe("image backend pool pricing operations", () => {
     expect(
       getAdminPool.output.safeParse({ groups: [], members: [member] }).success
     ).toBe(true);
+    for (const forbiddenField of [
+      "lastRefreshError",
+      "fireflyLastRefreshError",
+      "creditsError",
+    ]) {
+      expect(
+        getAdminPool.output.safeParse({
+          groups: [],
+          members: [
+            {
+              ...member,
+              config: {
+                ...member.config,
+                [forbiddenField]: "must-not-cross-uol",
+              },
+            },
+          ],
+        }).success
+      ).toBe(false);
+    }
     expect(
       getAdminPool.output.safeParse({
         groups: [],

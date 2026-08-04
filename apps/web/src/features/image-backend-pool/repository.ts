@@ -376,6 +376,15 @@ export function createPostgresBackendPoolRepository(
                     ),
                     sql`, `
                   )})
+                  and not (
+                    m.type = 'adobe'
+                    and exists (
+                      select 1
+                      from adobe_credential_health as credential_health
+                      where credential_health.member_id = m.id
+                        and credential_health.status = 'isolated'
+                    )
+                  )
                   and exists (
                     select 1
                     from json_array_elements_text(m.supported_model_ids)

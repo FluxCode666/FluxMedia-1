@@ -149,6 +149,8 @@ export type SettingKey =
   | "SMTP_PASS"
   | "RESEND_API_KEY"
   | "SUPPORT_TICKET_NOTIFICATION_EMAIL"
+  | "ADOBE_CREDENTIAL_ALERT_EMAIL_RECIPIENTS"
+  | "ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL"
   | "REGISTRATION_BONUS_CREDITS"
   | "FREE_CREDITS_EXPIRY_DAYS"
   | "CREDITS_EXPIRY_DAYS"
@@ -1220,6 +1222,24 @@ export const SYSTEM_SETTING_DEFINITIONS = [
       "有用户新建工单或追加回复时，发送新动态提醒到这个邮箱；留空则不发送。",
     category: "mail",
     valueType: "string",
+  },
+  {
+    key: "ADOBE_CREDENTIAL_ALERT_EMAIL_RECIPIENTS",
+    label: "Adobe 凭据告警收件人",
+    description:
+      "Adobe direct 凭据隔离和恢复通知的邮箱列表；仅专用通知设置 operation 可原子校验和写入。",
+    category: "mail",
+    valueType: "json",
+    managedByDedicatedOperation: true,
+  },
+  {
+    key: "ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL",
+    label: "Adobe 凭据告警 Webhook",
+    description:
+      "不含 userinfo、query 或 fragment 的公网 HTTPS 地址；仅专用通知设置 operation 可写入。",
+    category: "mail",
+    valueType: "string",
+    managedByDedicatedOperation: true,
   },
   {
     key: "REGISTRATION_BONUS_CREDITS",

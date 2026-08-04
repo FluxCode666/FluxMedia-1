@@ -513,6 +513,7 @@ export function createBackendMemberService(
 const existingMemberRowSchema = z.object({
   id: z.string(),
   type: z.enum(["api", "adobe"]),
+  is_enabled: z.boolean(),
 });
 
 const memberListRowSchema = z.object({
@@ -696,6 +697,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
     const {
       db,
       imageBackendGroup,
+      adobeCredentialHealth,
       imageBackendMember,
       imageBackendMemberAdobeConfig,
       imageBackendMemberApiAdapterVersion,
@@ -705,7 +707,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
     return db.transaction(async (transaction) => {
       const existingRows = extractExecuteRows(
         await transaction.execute(sql`
-          select id, type
+          select id, type, is_enabled
           from image_backend_member
           where id = ${input.id}
           for update
@@ -1149,6 +1151,51 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
               updatedAt: now,
             },
           });
+
+        if (input.config.mode === "direct") {
+          await transaction
+            .insert(adobeCredentialHealth)
+            .values({
+              memberId: input.id,
+              status: "pending",
+              nextCheckAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .onConflictDoNothing();
+          if (
+            existing &&
+            (Boolean(input.directCredential) ||
+              existing.is_enabled !== input.isEnabled)
+          ) {
+            // WHY：普通成员编辑只使事务外旧评估失效，不能清除隔离；隔离恢复必须
+            // 经过专用同账号重新授权流程，避免替换成另一个账号绕过身份约束。
+            await transaction
+              .update(adobeCredentialHealth)
+              .set({
+                ...(input.directCredential
+                  ? {
+                      credentialRevision: sql`${adobeCredentialHealth.credentialRevision} + 1`,
+                    }
+                  : {}),
+                ...(existing.is_enabled !== input.isEnabled
+                  ? {
+                      memberEnableRevision: sql`${adobeCredentialHealth.memberEnableRevision} + 1`,
+                    }
+                  : {}),
+                claimToken: null,
+                claimExpiresAt: null,
+                evaluationDeadlineAt: null,
+                nextCheckAt: now,
+                updatedAt: now,
+              })
+              .where(eq(adobeCredentialHealth.memberId, input.id));
+          }
+        } else {
+          await transaction
+            .delete(adobeCredentialHealth)
+            .where(eq(adobeCredentialHealth.memberId, input.id));
+        }
       }
 
       await transaction
@@ -1280,13 +1327,31 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
 
   /** 原子修改成员启用状态；当前租约继续由调度器按原有生命周期处理。 */
   async setMemberEnabled(memberId, isEnabled, now) {
-    const { db, imageBackendMember } = await import("@repo/database");
-    const updated = await db
-      .update(imageBackendMember)
-      .set({ isEnabled, updatedAt: now })
-      .where(eq(imageBackendMember.id, memberId))
-      .returning({ id: imageBackendMember.id });
-    return updated.length > 0 ? "updated" : "not_found";
+    const { adobeCredentialHealth, db, imageBackendMember } = await import(
+      "@repo/database"
+    );
+    return db.transaction(async (transaction) => {
+      const updated = await transaction
+        .update(imageBackendMember)
+        .set({ isEnabled, updatedAt: now })
+        .where(eq(imageBackendMember.id, memberId))
+        .returning({ id: imageBackendMember.id });
+      if (updated.length === 0) return "not_found";
+      // 启停 revision 与成员启用状态同事务递增；清除旧 claim 使停用中途返回的
+      // 评估在提交 CAS 时落为 discarded，而不是覆盖重新启用后的新状态。
+      await transaction
+        .update(adobeCredentialHealth)
+        .set({
+          memberEnableRevision: sql`${adobeCredentialHealth.memberEnableRevision} + 1`,
+          claimToken: null,
+          claimExpiresAt: null,
+          evaluationDeadlineAt: null,
+          ...(isEnabled ? { nextCheckAt: now } : {}),
+          updatedAt: now,
+        })
+        .where(eq(adobeCredentialHealth.memberId, memberId));
+      return "updated";
+    });
   },
 
   async deleteMember(memberId, now) {

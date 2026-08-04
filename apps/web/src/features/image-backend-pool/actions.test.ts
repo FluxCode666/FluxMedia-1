@@ -46,7 +46,10 @@ vi.mock("@/server/uol-init", () => ({
 }));
 
 import {
+  checkAdobeCredentialHealthAction,
+  getAdobeCredentialHealthAction,
   getApiUpstreamRuntimeDiagnosticsAction,
+  reauthorizeAdobeCredentialAction,
   setImageBackendMemberEnabledAction,
   testApiUpstreamAdapterAction,
 } from "./actions";
@@ -133,6 +136,87 @@ describe("image backend pool actions", () => {
       "pool.setMemberEnabled",
       input,
       { type: "user", userId: "admin-1", role: "admin" }
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/dashboard/admin/settings"
+    );
+  });
+
+  it("Adobe 健康详情读取只委托 human-only UOL operation", async () => {
+    const input = { memberId: "member-adobe" };
+    const output = {
+      memberId: "member-adobe",
+      status: "isolated",
+      diagnostic: { adobeErrorCode: "expired_token" },
+    };
+    mocks.invokeOperation.mockResolvedValue(output);
+
+    await expect(
+      (getAdobeCredentialHealthAction as unknown as MockAction)({
+        parsedInput: input,
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toBe(output);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.getAdobeCredentialHealth",
+      input,
+      { type: "user", userId: "admin-1", role: "admin" }
+    );
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("Adobe 立即检查成功后刷新管理页", async () => {
+    const input = { memberId: "member-adobe" };
+    const output = {
+      evaluationId: "evaluation-1",
+      disposition: "accepted",
+      health: { memberId: "member-adobe", status: "healthy" },
+    };
+    mocks.invokeOperation.mockResolvedValue(output);
+
+    await expect(
+      (checkAdobeCredentialHealthAction as unknown as MockAction)({
+        parsedInput: input,
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toBe(output);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.checkAdobeCredentialHealth",
+      input,
+      { type: "user", userId: "admin-1", role: "admin" }
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/dashboard/admin/settings"
+    );
+  });
+
+  it("Adobe 同账号重新授权传递浏览器幂等键并刷新管理页", async () => {
+    const input = {
+      memberId: "member-adobe",
+      cookie: "aux_sid=new-cookie",
+      clientRequestId: "request-1",
+    };
+    const output = {
+      evaluationId: "evaluation-reauthorized",
+      disposition: "accepted",
+      health: { memberId: "member-adobe", status: "healthy" },
+    };
+    mocks.invokeOperation.mockResolvedValue(output);
+
+    await expect(
+      (reauthorizeAdobeCredentialAction as unknown as MockAction)({
+        parsedInput: input,
+        ctx: { userId: "super-admin-1", role: "super_admin" },
+      })
+    ).resolves.toBe(output);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.reauthorizeAdobeCredential",
+      input,
+      {
+        type: "user",
+        userId: "super-admin-1",
+        role: "super_admin",
+      }
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       "/dashboard/admin/settings"

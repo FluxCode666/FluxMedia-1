@@ -27,6 +27,7 @@ import {
 import { Textarea } from "@repo/ui/components/textarea";
 import { Database, Download, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { formatDateInTimeZone } from "../../time-zone";
@@ -1565,7 +1566,13 @@ function CreditPackageMatrixInput({
   );
 }
 
-export function SystemSettingsPanel({ timeZone }: { timeZone: string }) {
+export function SystemSettingsPanel({
+  timeZone,
+  notificationModule,
+}: {
+  timeZone: string;
+  notificationModule?: ReactNode;
+}) {
   const [settings, setSettings] = useState<SettingSnapshotItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftValue>>({});
   const [clearKeys, setClearKeys] = useState<Record<string, boolean>>({});
@@ -1813,6 +1820,8 @@ export function SystemSettingsPanel({ timeZone }: { timeZone: string }) {
                   onSaved={() => loadSettings()}
                 />
               )}
+
+              {category.id === "mail" ? notificationModule : null}
 
               <div className="grid gap-4 lg:grid-cols-2">
                 {categorySettings.map((setting) => (

@@ -35,6 +35,7 @@ import {
   findUnavailableBackendMemberModelIds,
 } from "@/features/image-backend-pool/member-model-options";
 import {
+  type BackendMemberAdminSummary,
   BackendMemberServiceError,
   backendMemberService,
 } from "@/features/image-backend-pool/member-service";
@@ -84,6 +85,31 @@ const defaultDependencies: ImageBackendPoolBindingDependencies = {
 /** 判断未知 JSON 值是否为普通对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/**
+ * 构造通用号池成员 DTO，并从 Adobe direct 配置移除上游诊断错误。
+ *
+ * @param members 成员服务的内部管理摘要。
+ * @returns 不含 refresh/余额错误正文的 UOL 输出；专用 human-only 详情另行读取。
+ * @sideEffects 无；不修改输入对象。
+ */
+export function buildAdminPoolMembers(
+  members: readonly BackendMemberAdminSummary[]
+): Array<
+  Omit<BackendMemberAdminSummary, "config"> & {
+    config: Record<string, unknown>;
+  }
+> {
+  return members.map((member) => {
+    const config: Record<string, unknown> = { ...member.config };
+    if (member.type === "adobe" && member.config.mode === "direct") {
+      delete config.lastRefreshError;
+      delete config.fireflyLastRefreshError;
+      delete config.creditsError;
+    }
+    return { ...member, config };
+  });
 }
 
 /** 从管理员样例中读取模型 ID，仅用于构造脱敏脚本上下文。 */
@@ -323,7 +349,7 @@ bindExecute("pool.getAdminPool", async () => {
     defaultDependencies.groupService.listGroups(),
     defaultDependencies.memberService.listMembers(),
   ]);
-  return { groups, members };
+  return { groups, members: buildAdminPoolMembers(members) };
 });
 
 /** 保存统一分组。 */
