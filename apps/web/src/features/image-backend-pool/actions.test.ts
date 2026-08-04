@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@repo/shared/safe-action", () => {
   type ActionHandler = (input: {
     parsedInput: unknown;
-    ctx: { userId: string; role: "admin" | "super_admin" };
+    ctx: {
+      userId: string;
+      role: "observer_admin" | "admin" | "super_admin";
+    };
   }) => Promise<unknown>;
   const createBuilder = () => {
     const builder = {
@@ -47,6 +50,7 @@ vi.mock("@/server/uol-init", () => ({
 
 import {
   checkAdobeCredentialHealthAction,
+  getAdminImageBackendPoolAction,
   getAdobeCredentialHealthAction,
   getApiUpstreamRuntimeDiagnosticsAction,
   reauthorizeAdobeCredentialAction,
@@ -56,13 +60,71 @@ import {
 
 type MockAction = (input: {
   parsedInput: unknown;
-  ctx: { userId: string; role: "admin" | "super_admin" };
+  ctx: {
+    userId: string;
+    role: "observer_admin" | "admin" | "super_admin";
+  };
 }) => Promise<unknown>;
 
 describe("image backend pool actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ensureUolInitialized.mockResolvedValue(undefined);
+  });
+
+  it("账号池查看动作并行合并 human-only 凭据健康状态", async () => {
+    const pool = {
+      groups: [],
+      members: [
+        { id: "direct-a", name: "Adobe Direct" },
+        { id: "api-a", name: "API" },
+      ],
+    };
+    mocks.invokeOperation.mockImplementation(async (name: string) => {
+      if (name === "pool.getAdminPool") return pool;
+      if (name === "pool.listAdobeCredentialHealthStatuses") {
+        return {
+          statuses: [{ memberId: "direct-a", status: "degraded" }],
+        };
+      }
+      throw new Error(`未预期 operation：${name}`);
+    });
+
+    await expect(
+      (getAdminImageBackendPoolAction as unknown as MockAction)({
+        parsedInput: {},
+        ctx: { userId: "observer-1", role: "observer_admin" },
+      })
+    ).resolves.toEqual({
+      groups: [],
+      members: [
+        {
+          id: "direct-a",
+          name: "Adobe Direct",
+          credentialHealthStatus: "degraded",
+        },
+        {
+          id: "api-a",
+          name: "API",
+          credentialHealthStatus: null,
+        },
+      ],
+    });
+    const principal = {
+      type: "user",
+      userId: "observer-1",
+      role: "observer_admin",
+    };
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.getAdminPool",
+      {},
+      principal
+    );
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.listAdobeCredentialHealthStatuses",
+      {},
+      principal
+    );
   });
 
   it("脚本测试只调用 human-only UOL operation", async () => {

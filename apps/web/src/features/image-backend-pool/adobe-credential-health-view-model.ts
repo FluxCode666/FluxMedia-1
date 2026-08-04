@@ -5,6 +5,7 @@
  * 使用方：管理员号池健康组件及 DB-free 单测；不访问数据库、Cookie、Token 或网络。
  */
 import type { AdobeCredentialHealthSummary } from "./actions";
+import { getEffectiveAdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 
 export type AdobeHealthStatusView = {
   label: string;
@@ -12,8 +13,6 @@ export type AdobeHealthStatusView = {
   variant: "secondary" | "outline" | "destructive";
   primaryAction: "none" | "check" | "reauthorize";
 };
-
-const HEALTH_CHECK_COMPLETION_GRACE_MS = 5 * 60_000;
 
 const STATUS_VIEWS: Record<
   AdobeCredentialHealthSummary["status"],
@@ -69,22 +68,7 @@ export function getEffectiveAdobeHealthStatus(
   health: AdobeCredentialHealthSummary,
   now = new Date()
 ): AdobeCredentialHealthSummary["status"] {
-  if (health.status === "isolated") return health.status;
-  if (
-    health.status === "healthy" &&
-    (!health.lastCheckedAt ||
-      !health.lastSuccessAt ||
-      health.failureProfiles.length > 0)
-  ) {
-    return health.failureProfiles.length > 0 ? "degraded" : "pending";
-  }
-  if (!health.nextCheckAt) return health.status;
-  const nextCheckAt = new Date(health.nextCheckAt);
-  if (Number.isNaN(nextCheckAt.getTime())) return "overdue";
-  return now.getTime() >
-    nextCheckAt.getTime() + HEALTH_CHECK_COMPLETION_GRACE_MS
-    ? "overdue"
-    : health.status;
+  return getEffectiveAdobeCredentialHealthStatus(health, now);
 }
 
 /**

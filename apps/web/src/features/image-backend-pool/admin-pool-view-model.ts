@@ -2,19 +2,20 @@
  * 账号池管理列表的纯筛选视图模型。
  *
  * 使用方：账号池管理面板及其 DB-free 单测。本模块只消费已脱敏的分组、成员快照，
- * 统一名称模糊匹配、凭据配置归一、模型精确匹配和部署时区自然日范围，不访问浏览器
+ * 统一名称模糊匹配、凭据健康、模型精确匹配和部署时区自然日范围，不访问浏览器
  * 或数据库，也不改变服务端返回顺序。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 
-import type { BackendMemberAdminSummary } from "./member-service";
+import type { BackendPoolAdminMemberSummary } from "./actions";
+import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 
-/** 管理列表可选的统一凭据配置状态。 */
+/** 管理列表可选的 Adobe Direct 凭据健康状态。 */
 export type BackendMemberCredentialFilter =
   | "all"
-  | "configured"
-  | "not_required"
-  | "missing";
+  | AdobeCredentialHealthStatus
+  | "unhealthy"
+  | "not_applicable";
 
 /** 供应商账号列表的全部筛选条件。 */
 export interface BackendMemberFilters {
@@ -40,27 +41,24 @@ function normalizeFilterValue(value: string): string {
 }
 
 /**
- * 将供应商账号映射为互斥的统一凭据配置状态。
+ * 判断成员的真实凭据健康状态是否符合筛选条件。
  *
- * @param member 已脱敏的供应商账号摘要。
- * @returns API 无认证明确返回 not_required；其余只按 secret 是否存在返回 configured
- * 或 missing，不把缓存 Token、双 Profile 健康或 Firefly 额度混入配置状态。
+ * @param status Adobe Direct 当前状态；其他成员为 null。
+ * @param filter 用户选择的精确状态或聚合状态。
+ * @returns unhealthy 聚合待复检、隔离和失约；不适用只匹配 null。
  * @sideEffects 无。
- * @failure 不抛错；旧 API 摘要缺少 authentication 时仍按需要密钥处理。
  */
-export function getBackendMemberCredentialStatus(
-  member: BackendMemberAdminSummary
-): Exclude<BackendMemberCredentialFilter, "all"> {
-  if (member.type === "api" && member.config.authentication?.mode === "none") {
-    return "not_required";
+function matchesCredentialHealthFilter(
+  status: AdobeCredentialHealthStatus | null,
+  filter: BackendMemberCredentialFilter
+): boolean {
+  if (filter === "all") return true;
+  if (filter === "unhealthy") {
+    return (
+      status === "degraded" || status === "isolated" || status === "overdue"
+    );
   }
-  if (member.type === "api") {
-    return member.config.hasApiKey ? "configured" : "missing";
-  }
-  if (member.config.mode === "direct") {
-    return member.config.hasCookie ? "configured" : "missing";
-  }
-  return member.config.hasApiKey ? "configured" : "missing";
+  return (status ?? "not_applicable") === filter;
 }
 
 /**
@@ -138,7 +136,7 @@ export function hasInvalidBackendMemberDateRange(
 }
 
 /**
- * 按名称、凭据配置、支持模型和部署时区创建日期筛选供应商账号。
+ * 按名称、凭据健康、支持模型和部署时区创建日期筛选供应商账号。
  *
  * @param members 服务端已按调度优先级排序的脱敏账号快照。
  * @param filters 当前受控筛选条件。
@@ -147,10 +145,10 @@ export function hasInvalidBackendMemberDateRange(
  * @sideEffects 无。
  */
 export function filterBackendMembers(
-  members: readonly BackendMemberAdminSummary[],
+  members: readonly BackendPoolAdminMemberSummary[],
   filters: BackendMemberFilters,
   timeZone: string
-): BackendMemberAdminSummary[] {
+): BackendPoolAdminMemberSummary[] {
   if (hasInvalidBackendMemberDateRange(filters)) return [];
   const name = normalizeFilterValue(filters.name);
   const modelId = normalizeFilterValue(filters.modelId);
@@ -164,8 +162,10 @@ export function filterBackendMembers(
       return false;
     }
     if (
-      filters.credentialStatus !== "all" &&
-      getBackendMemberCredentialStatus(member) !== filters.credentialStatus
+      !matchesCredentialHealthFilter(
+        member.credentialHealthStatus,
+        filters.credentialStatus
+      )
     ) {
       return false;
     }

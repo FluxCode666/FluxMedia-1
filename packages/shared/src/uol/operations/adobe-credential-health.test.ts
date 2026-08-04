@@ -12,6 +12,7 @@ import {
   adobeCredentialHealthCleanup,
   adobeCredentialHealthDetails,
   adobeCredentialHealthScan,
+  adobeCredentialHealthStatusList,
   adobeCredentialNotificationDrain,
   adobeCredentialReauthorize,
   getAdobeCredentialNotificationSettings,
@@ -49,6 +50,35 @@ describe("Adobe credential health operations", () => {
       });
       expect(operation.agentExposure).toBe("human-only");
     }
+  });
+
+  it("账号池三档查看者只能批量读取无诊断健康状态", () => {
+    expect(adobeCredentialHealthStatusList.access).toEqual({
+      kind: "roles",
+      roles: ["observer_admin", "admin", "super_admin"],
+    });
+    expect(adobeCredentialHealthStatusList.agentExposure).toBe("human-only");
+    expect(adobeCredentialHealthStatusList.readOnly).toBe(true);
+    expect(adobeCredentialHealthStatusList.sideEffects).toEqual([]);
+    expect(
+      adobeCredentialHealthStatusList.output.safeParse({
+        statuses: [
+          { memberId: "member-a", status: "healthy" },
+          { memberId: "member-b", status: "isolated" },
+        ],
+      }).success
+    ).toBe(true);
+    expect(
+      adobeCredentialHealthStatusList.output.safeParse({
+        statuses: [
+          {
+            memberId: "member-a",
+            status: "healthy",
+            diagnostic: { message: "must-not-pass" },
+          },
+        ],
+      }).success
+    ).toBe(false);
   });
 
   it("健康入口严格校验成员 ID，详情输出只允许清洗诊断字段", () => {

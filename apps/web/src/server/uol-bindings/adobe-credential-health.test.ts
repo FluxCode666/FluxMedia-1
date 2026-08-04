@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   scan: vi.fn(),
   check: vi.fn(),
   get: vi.fn(),
+  list: vi.fn(),
   reauthorize: vi.fn(),
   drain: vi.fn(),
   cleanup: vi.fn(),
@@ -27,6 +28,9 @@ vi.mock("@/features/image-generation/adobe-credential-health-runtime", () => ({
   runAdobeCredentialHealthScan: mocks.scan,
   checkAdobeCredentialHealth: mocks.check,
   getAdobeCredentialHealth: mocks.get,
+}));
+vi.mock("@/features/image-backend-pool/adobe-credential-health-list", () => ({
+  listAdobeCredentialHealthStatuses: mocks.list,
 }));
 
 vi.mock("@/features/image-generation/adobe-credential-notifications", () => ({
@@ -58,6 +62,7 @@ describe("Adobe 凭据健康 UOL binding", () => {
     mocks.scan.mockReset();
     mocks.check.mockReset();
     mocks.get.mockReset();
+    mocks.list.mockReset();
     mocks.reauthorize.mockReset();
     mocks.drain.mockReset();
     mocks.cleanup.mockReset();
@@ -69,6 +74,7 @@ describe("Adobe 凭据健康 UOL binding", () => {
       notificationCreated: false,
     });
     mocks.get.mockResolvedValue(HEALTH);
+    mocks.list.mockResolvedValue([{ memberId: "member-1", status: "healthy" }]);
     mocks.reauthorize.mockResolvedValue({
       evaluationId: "evaluation-reauthorized",
       disposition: "accepted",
@@ -119,6 +125,38 @@ describe("Adobe 凭据健康 UOL binding", () => {
       )
     ).rejects.toMatchObject({ code: "forbidden" });
     expect(mocks.get).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "observer_admin",
+    "admin",
+    "super_admin",
+  ] as const)("%s 可以批量读取无诊断凭据健康状态", async (role) => {
+    await expect(
+      invokeOperation(
+        "pool.listAdobeCredentialHealthStatuses",
+        {},
+        { type: "user", userId: `${role}-1`, role }
+      )
+    ).resolves.toEqual({
+      statuses: [{ memberId: "member-1", status: "healthy" }],
+    });
+  });
+
+  it.each([
+    { type: "system" as const, reason: "test" },
+    { type: "cron" as const, job: "adobe-credential-health" },
+    {
+      type: "apiKey" as const,
+      credentialKind: "external" as const,
+      userId: "user-1",
+      apiKeyId: "key-1",
+      plan: "pro",
+    },
+  ])("拒绝非人工账号池查看者批量读取凭据健康状态", async (principal) => {
+    await expect(
+      invokeOperation("pool.listAdobeCredentialHealthStatuses", {}, principal)
+    ).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it.each([

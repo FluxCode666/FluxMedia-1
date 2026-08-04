@@ -4,7 +4,7 @@
  * 账号池管理页的受控筛选工具栏。
  *
  * 使用方：ImageBackendPoolAdminPanel。组件复用 shadcn/ui Input、Select、Calendar
- * 与 Button，只回传筛选草稿并展示结果计数；名称、凭据配置、模型和日期的匹配
+ * 与 Button，只回传筛选草稿并展示结果计数；名称、凭据健康、模型和日期的匹配
  * 语义集中在纯视图模型。
  */
 import { Button } from "@repo/ui/components/button";
@@ -18,6 +18,7 @@ import {
 } from "@repo/ui/components/select";
 import { Search, X } from "lucide-react";
 
+import { ADOBE_CREDENTIAL_HEALTH_STATUSES } from "./adobe-credential-health-status";
 import {
   type BackendMemberCredentialFilter,
   type BackendMemberFilters,
@@ -35,9 +36,9 @@ export interface BackendMemberFilterModelOption {
 
 const CREDENTIAL_FILTERS = [
   "all",
-  "configured",
-  "not_required",
-  "missing",
+  ...ADOBE_CREDENTIAL_HEALTH_STATUSES,
+  "unhealthy",
+  "not_applicable",
 ] as const satisfies readonly BackendMemberCredentialFilter[];
 
 /** 将 Radix Select 的字符串值收窄为已声明凭据筛选。 */
@@ -46,7 +47,7 @@ function parseCredentialFilter(value: string): BackendMemberCredentialFilter {
 }
 
 /**
- * 渲染供应商账号名称、凭据配置、模型与创建日期范围筛选。
+ * 渲染供应商账号名称、凭据健康、模型与创建日期范围筛选。
  *
  * @param props 当前筛选值、模型选项、结果计数、日期合法性与更新回调。
  * @returns 可键盘操作且在窄屏纵向排列的筛选工具栏。
@@ -100,7 +101,9 @@ export function BackendMemberFilterBar({
           </span>
         </label>
         <div className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground">
-          <span id="backend-member-credential-filter-label">凭据配置</span>
+          <span id="backend-member-credential-filter-label">
+            凭据状态（Adobe Direct）
+          </span>
           <Select
             onValueChange={(value) =>
               onChange({
@@ -117,10 +120,16 @@ export function BackendMemberFilterBar({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部凭据配置</SelectItem>
-              <SelectItem value="configured">密钥已配置</SelectItem>
-              <SelectItem value="not_required">无需凭据</SelectItem>
-              <SelectItem value="missing">缺失</SelectItem>
+              <SelectItem value="all">全部凭据状态</SelectItem>
+              <SelectItem value="pending">待首次检查</SelectItem>
+              <SelectItem value="healthy">健康</SelectItem>
+              <SelectItem value="unhealthy">不健康（全部）</SelectItem>
+              <SelectItem value="degraded">待复检</SelectItem>
+              <SelectItem value="isolated">已隔离</SelectItem>
+              <SelectItem value="overdue">探测失约</SelectItem>
+              <SelectItem value="not_applicable">
+                不适用（非 Adobe Direct）
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>

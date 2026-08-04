@@ -323,6 +323,12 @@ describe("image backend pool pricing operations", () => {
     expect(
       getAdminPool.output.safeParse({ groups: [], members: [member] }).success
     ).toBe(true);
+    expect(
+      getAdminPool.output.safeParse({
+        groups: [],
+        members: [{ ...member, credentialHealthStatus: "healthy" }],
+      }).success
+    ).toBe(false);
     for (const forbiddenField of [
       "lastRefreshError",
       "fireflyLastRefreshError",

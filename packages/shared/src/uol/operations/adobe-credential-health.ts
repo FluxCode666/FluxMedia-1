@@ -58,6 +58,13 @@ const healthSummarySchema = z
   })
   .strict();
 
+const healthStatusListItemSchema = z
+  .object({
+    memberId: memberIdSchema,
+    status: credentialHealthStatusSchema,
+  })
+  .strict();
+
 const evaluationResultSchema = z
   .object({
     evaluationId: z.string().trim().min(1).max(128),
@@ -187,6 +194,32 @@ export const adobeCredentialHealthDetails = defineOperation({
   sideEffects: ["audit"],
   execute: async () => {
     throw new Error("Not yet wired: pool.getAdobeCredentialHealth");
+  },
+});
+
+/** 账号池查看者批量读取 Adobe direct 凭据健康状态，不包含诊断。 */
+export const adobeCredentialHealthStatusList = defineOperation({
+  name: "pool.listAdobeCredentialHealthStatuses",
+  domain: "image-backend-pool",
+  title: "列出 Adobe 凭据健康状态",
+  description: "批量读取账号池筛选所需的成员 ID 与当前健康状态，不返回诊断。",
+  input: z.object({}).strict(),
+  output: z
+    .object({
+      statuses: z.array(healthStatusListItemSchema),
+    })
+    .strict(),
+  access: {
+    kind: "roles",
+    roles: ["observer_admin", "admin", "super_admin"],
+  },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.listAdobeCredentialHealthStatuses");
   },
 });
 

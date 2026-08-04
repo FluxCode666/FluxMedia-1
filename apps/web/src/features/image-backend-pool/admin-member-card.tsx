@@ -18,7 +18,6 @@ import {
 } from "@repo/ui/components/card";
 import { Switch } from "@repo/ui/components/switch";
 import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
-import { getBackendMemberCredentialStatus } from "./admin-pool-view-model";
 import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
 import { normalizeBackendMemberModelIdsForDisplay } from "./member-model-options";
 import type {
@@ -75,12 +74,18 @@ function getMemberStatusVariant(
   return "outline";
 }
 
-/** 返回统一凭据配置状态的人类可读标签，不混入账号健康或业务额度。 */
+/** 返回凭据配置事实的人类可读标签，不混入凭据健康或业务额度。 */
 function getMemberCredentialLabel(member: BackendMemberAdminSummary): string {
-  const status = getBackendMemberCredentialStatus(member);
-  if (status === "configured") return "密钥已配置";
-  if (status === "not_required") return "无需凭据";
-  return "缺失";
+  if (member.type === "api" && member.config.authentication?.mode === "none") {
+    return "无需凭据";
+  }
+  if (member.type === "api") {
+    return member.config.hasApiKey ? "密钥已配置" : "缺失";
+  }
+  if (member.config.mode === "direct") {
+    return member.config.hasCookie ? "Cookie 已配置" : "缺失";
+  }
+  return member.config.hasApiKey ? "密钥已配置" : "缺失";
 }
 
 /** 展示 Adobe direct 账号身份、Firefly 余额与凭据错误，不暴露任何 secret。 */

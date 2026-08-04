@@ -42,6 +42,7 @@ export {
   adobeCredentialHealthCleanup,
   adobeCredentialHealthDetails,
   adobeCredentialHealthScan,
+  adobeCredentialHealthStatusList,
   adobeCredentialNotificationDrain,
   adobeCredentialReauthorize,
   getAdobeCredentialNotificationSettings,

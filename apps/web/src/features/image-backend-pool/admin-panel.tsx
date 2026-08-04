@@ -40,6 +40,7 @@ import { toast } from "sonner";
 
 import { getModelConfigurationAction } from "@/features/model-configuration/actions";
 import {
+  type BackendPoolAdminMemberSummary,
   deleteImageBackendGroupAction,
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
@@ -70,7 +71,6 @@ import {
   normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
-import type { BackendMemberAdminSummary } from "./member-service";
 
 /** 显示号池关键容量事实的统计卡。 */
 function PoolStatCard({
@@ -124,7 +124,7 @@ export function ImageBackendPoolAdminPanel({
   readOnly?: boolean;
 }) {
   const [groups, setGroups] = useState<BackendGroupSummary[]>([]);
-  const [members, setMembers] = useState<BackendMemberAdminSummary[]>([]);
+  const [members, setMembers] = useState<BackendPoolAdminMemberSummary[]>([]);
   const [modelOptions, setModelOptions] = useState<BackendMemberModelOption[]>(
     []
   );
@@ -136,7 +136,7 @@ export function ImageBackendPoolAdminPanel({
     null
   );
   const [editingMember, setEditingMember] =
-    useState<BackendMemberAdminSummary | null>(null);
+    useState<BackendPoolAdminMemberSummary | null>(null);
   const [memberFilters, setMemberFilters] = useState<BackendMemberFilters>(
     EMPTY_BACKEND_MEMBER_FILTERS
   );
@@ -335,7 +335,7 @@ export function ImageBackendPoolAdminPanel({
 
   /** 乐观更新列表中的开关；失败时恢复原值并提示管理员。 */
   function handleMemberEnabledChange(
-    member: BackendMemberAdminSummary,
+    member: BackendPoolAdminMemberSummary,
     isEnabled: boolean
   ): void {
     // WHY：ref 在 React 下一次渲染前也能同步挡住快速双击，避免并发请求互相回滚。

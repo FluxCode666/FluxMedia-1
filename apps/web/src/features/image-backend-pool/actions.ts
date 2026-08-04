@@ -35,12 +35,32 @@ import {
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
+import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 import type { BackendMemberAdminSummary } from "./member-service";
 
-/** 统一号池管理快照；不含任何明文凭据。 */
+/** 页面成员摘要；凭据健康来自独立 human-only 批量 operation。 */
+export type BackendPoolAdminMemberSummary = BackendMemberAdminSummary & {
+  credentialHealthStatus: AdobeCredentialHealthStatus | null;
+};
+
+/** 统一号池页面快照；不含任何明文凭据或凭据诊断。 */
 export interface BackendPoolAdminSnapshot {
   groups: BackendGroupSummary[];
+  members: BackendPoolAdminMemberSummary[];
+}
+
+/** 通用 pool.getAdminPool 保持可投影给 Agent 的无凭据健康快照。 */
+interface BackendPoolBaseAdminSnapshot {
+  groups: BackendGroupSummary[];
   members: BackendMemberAdminSummary[];
+}
+
+/** 页面批量凭据健康 operation 的最小输出。 */
+interface AdobeCredentialHealthStatusListOutput {
+  statuses: Array<{
+    memberId: string;
+    status: AdobeCredentialHealthStatus;
+  }>;
 }
 
 /** 管理员专用 Adobe 凭据健康摘要；诊断只含严格 allowlist 字段。 */
@@ -74,7 +94,8 @@ type PoolOperationOutputs = {
   "pool.getGroupOptions": {
     options: Array<{ id: string; name: string }>;
   };
-  "pool.getAdminPool": BackendPoolAdminSnapshot;
+  "pool.getAdminPool": BackendPoolBaseAdminSnapshot;
+  "pool.listAdobeCredentialHealthStatuses": AdobeCredentialHealthStatusListOutput;
   "pool.saveGroup": { id: string };
   "pool.deleteGroup": { success: boolean };
   "pool.saveMember": { id: string };
@@ -152,15 +173,49 @@ function revalidateBackendPoolPage(): void {
   revalidatePath("/dashboard/admin/settings");
 }
 
-/** 读取统一分组与成员的脱敏管理快照。 */
+/**
+ * 将通用账号池快照与 human-only 凭据健康状态合并为页面视图。
+ *
+ * @param pool 不含凭据健康的通用账号池快照。
+ * @param health 仅含成员 ID 与当前状态的批量健康输出。
+ * @returns 每个成员恰好带一个可筛选状态；非 Adobe Direct 为 null。
+ * @sideEffects 无。
+ * @failure 不抛错；缺失的状态项按不适用处理。
+ */
+function buildBackendPoolAdminSnapshot(
+  pool: BackendPoolBaseAdminSnapshot,
+  health: AdobeCredentialHealthStatusListOutput
+): BackendPoolAdminSnapshot {
+  const statusByMemberId = new Map(
+    health.statuses.map((item) => [item.memberId, item.status])
+  );
+  return {
+    groups: pool.groups,
+    members: pool.members.map((member) => ({
+      ...member,
+      credentialHealthStatus: statusByMemberId.get(member.id) ?? null,
+    })),
+  };
+}
+
+/** 读取通用号池快照，并并行合入不向 Agent 暴露的凭据健康状态。 */
 export const getAdminImageBackendPoolAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.list" })
   .action(async ({ ctx }): Promise<BackendPoolAdminSnapshot> => {
-    return invokePoolOperation(
-      "pool.getAdminPool",
-      {},
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
+    const principal = {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    } as const satisfies Principal;
+    const [pool, health] = await Promise.all([
+      invokePoolOperation("pool.getAdminPool", {}, principal),
+      invokePoolOperation(
+        "pool.listAdobeCredentialHealthStatuses",
+        {},
+        principal
+      ),
+    ]);
+    return buildBackendPoolAdminSnapshot(pool, health);
   });
 
 /** 保存统一媒体后端分组。 */

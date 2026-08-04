@@ -1,25 +1,26 @@
 /**
  * 账号池管理列表纯筛选测试。
  *
- * 职责：锁定名称模糊搜索、统一凭据配置、支持模型精确筛选及部署时区创建日期边界，
+ * 职责：锁定名称模糊搜索、Adobe Direct 凭据健康、支持模型精确筛选及部署时区
+ * 创建日期边界，
  * 不加载 React、数据库或 Server Action。
  */
 import { describe, expect, it } from "vitest";
 
+import type { BackendPoolAdminMemberSummary } from "./actions";
 import {
   type BackendMemberFilters,
   EMPTY_BACKEND_MEMBER_FILTERS,
   filterBackendGroups,
   filterBackendMembers,
-  getBackendMemberCredentialStatus,
   hasInvalidBackendMemberDateRange,
 } from "./admin-pool-view-model";
-import type { BackendMemberAdminSummary } from "./member-service";
+import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 
 /** 构造默认合法的 API 供应商账号摘要。 */
 function createMember(
-  overrides: Partial<BackendMemberAdminSummary> = {}
-): BackendMemberAdminSummary {
+  overrides: Partial<BackendPoolAdminMemberSummary> = {}
+): BackendPoolAdminMemberSummary {
   return {
     id: "member-api",
     name: "Primary API",
@@ -34,6 +35,7 @@ function createMember(
     concurrency: 2,
     status: "active",
     healthStatus: "healthy",
+    credentialHealthStatus: null,
     inflightCount: 0,
     leaseAcquiredCount: 0,
     createdAt: "2026-08-01T02:00:00.000Z",
@@ -49,20 +51,21 @@ function createMember(
       authentication: { mode: "bearer" },
     },
     ...overrides,
-  } as BackendMemberAdminSummary;
+  } as BackendPoolAdminMemberSummary;
 }
 
-/** 构造指定缓存 Token 状态的 Adobe Direct 账号摘要。 */
+/** 构造指定凭据健康状态的 Adobe Direct 账号摘要。 */
 function createAdobeDirectMember(
-  credentialStatus: "active" | "error" | "exhausted" | "invalid",
-  hasCookie = true
-): BackendMemberAdminSummary {
+  credentialHealthStatus: AdobeCredentialHealthStatus,
+  credentialStatus: "active" | "error" | "exhausted" | "invalid" = "active"
+): BackendPoolAdminMemberSummary {
   return createMember({
-    id: `direct-${credentialStatus}`,
+    id: `direct-${credentialHealthStatus}`,
     type: "adobe",
+    credentialHealthStatus,
     config: {
       mode: "direct",
-      hasCookie,
+      hasCookie: true,
       displayName: null,
       email: null,
       credentialStatus,
@@ -119,59 +122,37 @@ describe("admin pool view model", () => {
     ).toEqual(["primary"]);
   });
 
-  it("区分通用已配置、无需凭据和缺失状态", () => {
-    const noAuthentication = createMember({
-      id: "no-auth",
-      config: {
-        baseUrl: "https://public.example.com",
-        hasApiKey: false,
-        useStream: false,
-        modelMappings: [],
-        authentication: { mode: "none" },
-      },
-    });
-    const missingGateway = createMember({
-      id: "gateway",
-      type: "adobe",
-      config: {
-        mode: "gateway",
-        baseUrl: "https://adobe.example.com",
-        hasApiKey: false,
-        defaultRatio: "1x1",
-        defaultResolution: "2k",
-        gptImageQuality: "high",
-      },
-    });
-    const missingDirect = createAdobeDirectMember("invalid", false);
+  it("按 Adobe Direct 的真实凭据健康状态筛选", () => {
+    const directMembers = (
+      ["pending", "healthy", "degraded", "isolated", "overdue"] as const
+    ).map((status) => createAdobeDirectMember(status));
 
-    expect(getBackendMemberCredentialStatus(createMember())).toBe("configured");
-    expect(getBackendMemberCredentialStatus(noAuthentication)).toBe(
-      "not_required"
-    );
-    expect(getBackendMemberCredentialStatus(missingGateway)).toBe("missing");
-    expect(getBackendMemberCredentialStatus(missingDirect)).toBe("missing");
     expect(
       filterBackendMembers(
-        [createMember(), noAuthentication, missingGateway, missingDirect],
-        createFilters({ credentialStatus: "missing" }),
+        directMembers,
+        createFilters({ credentialStatus: "healthy" }),
         "Asia/Shanghai"
       ).map((member) => member.id)
-    ).toEqual(["gateway", "direct-invalid"]);
+    ).toEqual(["direct-healthy"]);
+    expect(
+      filterBackendMembers(
+        directMembers,
+        createFilters({ credentialStatus: "isolated" }),
+        "Asia/Shanghai"
+      ).map((member) => member.id)
+    ).toEqual(["direct-isolated"]);
+    expect(
+      filterBackendMembers(
+        directMembers,
+        createFilters({ credentialStatus: "unhealthy" }),
+        "Asia/Shanghai"
+      ).map((member) => member.id)
+    ).toEqual(["direct-degraded", "direct-isolated", "direct-overdue"]);
   });
 
-  it("区分需要密钥账号的已配置与缺失状态", () => {
-    const missingApi = createMember({
-      id: "missing-api",
-      config: {
-        baseUrl: "https://api.example.com",
-        hasApiKey: false,
-        useStream: false,
-        modelMappings: [],
-        authentication: { mode: "bearer" },
-      },
-    });
-    const configuredGateway = createMember({
-      id: "configured-gateway",
+  it("将非 Adobe Direct 账号归入凭据健康不适用", () => {
+    const gateway = createMember({
+      id: "gateway",
       type: "adobe",
       config: {
         mode: "gateway",
@@ -183,35 +164,26 @@ describe("admin pool view model", () => {
       },
     });
 
-    expect(getBackendMemberCredentialStatus(missingApi)).toBe("missing");
-    expect(getBackendMemberCredentialStatus(configuredGateway)).toBe(
-      "configured"
-    );
-  });
-
-  it("Adobe Direct 配置状态不混入缓存 Token 或额度状态", () => {
-    const directMembers = (
-      ["active", "error", "exhausted", "invalid"] as const
-    ).map((credentialStatus) => createAdobeDirectMember(credentialStatus));
-
-    expect(directMembers.map(getBackendMemberCredentialStatus)).toEqual([
-      "configured",
-      "configured",
-      "configured",
-      "configured",
-    ]);
     expect(
       filterBackendMembers(
-        directMembers,
-        createFilters({ credentialStatus: "configured" }),
+        [createMember(), gateway, createAdobeDirectMember("healthy")],
+        createFilters({ credentialStatus: "not_applicable" }),
         "Asia/Shanghai"
       ).map((member) => member.id)
-    ).toEqual([
-      "direct-active",
-      "direct-error",
-      "direct-exhausted",
-      "direct-invalid",
-    ]);
+    ).toEqual(["member-api", "gateway"]);
+  });
+
+  it("凭据健康筛选不混入缓存 Token 或最近调用质量", () => {
+    const direct = createAdobeDirectMember("healthy", "invalid");
+    direct.healthStatus = "unhealthy";
+
+    expect(
+      filterBackendMembers(
+        [direct],
+        createFilters({ credentialStatus: "healthy" }),
+        "Asia/Shanghai"
+      )
+    ).toEqual([direct]);
   });
 
   it("组合名称和支持模型筛选并保持服务端顺序", () => {

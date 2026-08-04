@@ -6,6 +6,7 @@
  */
 
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
+import { listAdobeCredentialHealthStatuses } from "@/features/image-backend-pool/adobe-credential-health-list";
 import {
   checkAdobeCredentialHealth,
   getAdobeCredentialHealth,
@@ -105,3 +106,8 @@ bindExecute(
     }
   }
 );
+
+/** 账号池页面一次读取全部 Adobe direct 凭据健康状态。 */
+bindExecute("pool.listAdobeCredentialHealthStatuses", async () => ({
+  statuses: await listAdobeCredentialHealthStatuses(),
+}));
