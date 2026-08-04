@@ -3,9 +3,9 @@
 /**
  * 账号池管理页的受控筛选工具栏。
  *
- * 使用方：ImageBackendPoolAdminPanel。组件复用 shadcn/ui Input、Select 与 Button，
- * 只回传筛选草稿并展示结果计数；名称、凭据配置、模型和日期的匹配语义集中在
- * 纯视图模型。
+ * 使用方：ImageBackendPoolAdminPanel。组件复用 shadcn/ui Input、Select、Calendar
+ * 与 Button，只回传筛选草稿并展示结果计数；名称、凭据配置、模型和日期的匹配
+ * 语义集中在纯视图模型。
  */
 import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";
@@ -25,6 +25,7 @@ import {
   hasBackendGroupFilter,
   hasBackendMemberFilters,
 } from "./admin-pool-view-model";
+import { BackendMemberDateRangePicker } from "./backend-member-date-range-picker";
 
 /** 供应商账号模型筛选的一条可读选项。 */
 export interface BackendMemberFilterModelOption {
@@ -75,7 +76,7 @@ export function BackendMemberFilterBar({
       aria-label="筛选供应商账号"
       className="rounded-lg border bg-background p-4"
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.2fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)]">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.2fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(240px,1fr)]">
         <label
           className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground"
           htmlFor="backend-member-name-filter"
@@ -145,36 +146,12 @@ export function BackendMemberFilterBar({
             </SelectContent>
           </Select>
         </div>
-        <label
-          className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground"
-          htmlFor="backend-member-created-from-filter"
-        >
-          创建日期从
-          <Input
-            aria-invalid={invalidDateRange}
-            id="backend-member-created-from-filter"
-            onChange={(event) =>
-              onChange({ ...filters, createdFrom: event.target.value })
-            }
-            type="date"
-            value={filters.createdFrom}
-          />
-        </label>
-        <label
-          className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground"
-          htmlFor="backend-member-created-to-filter"
-        >
-          创建日期至
-          <Input
-            aria-invalid={invalidDateRange}
-            id="backend-member-created-to-filter"
-            onChange={(event) =>
-              onChange({ ...filters, createdTo: event.target.value })
-            }
-            type="date"
-            value={filters.createdTo}
-          />
-        </label>
+        <BackendMemberDateRangePicker
+          createdFrom={filters.createdFrom}
+          createdTo={filters.createdTo}
+          invalid={invalidDateRange}
+          onRangeChange={(range) => onChange({ ...filters, ...range })}
+        />
       </div>
       <div className="mt-3 flex min-h-8 flex-wrap items-center justify-between gap-2">
         <p
