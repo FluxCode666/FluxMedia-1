@@ -36,6 +36,11 @@ pnpm --filter @repo/database db:push
 pnpm dev
 ```
 
+数据库迁移
+```bash
+pnpm --filter @repo/database db:migrate
+```
+
 常用质量门：
 
 ```bash
