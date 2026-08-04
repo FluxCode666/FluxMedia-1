@@ -36,6 +36,7 @@ describe("image backend pool UOL bindings", () => {
         healthStatus: "healthy",
         inflightCount: 0,
         leaseAcquiredCount: 0,
+        createdAt: "2026-07-26T00:00:00.000Z",
         lastAcquiredAt: null,
         lastUsedAt: null,
         lastError: null,

@@ -105,6 +105,7 @@ const backendMemberSummarySchema = z
     healthStatus: z.string(),
     inflightCount: z.number().int().nonnegative(),
     leaseAcquiredCount: z.number().int().nonnegative(),
+    createdAt: z.string().datetime(),
     lastAcquiredAt: z.string().nullable(),
     lastUsedAt: z.string().nullable(),
     lastError: z.string().nullable(),

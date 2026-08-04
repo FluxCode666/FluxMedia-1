@@ -135,6 +135,7 @@ interface BackendMemberAdminSummaryBase {
   healthStatus: string;
   inflightCount: number;
   leaseAcquiredCount: number;
+  createdAt: string;
   lastAcquiredAt: string | null;
   lastUsedAt: string | null;
   lastError: string | null;
@@ -532,6 +533,7 @@ const memberListRowSchema = z.object({
   health_status: z.string(),
   inflight_count: z.coerce.number().int().nonnegative(),
   lease_acquired_count: z.coerce.number().int().nonnegative(),
+  member_created_at: z.coerce.date(),
   last_acquired_at: z.coerce.date().nullable(),
   last_used_at: z.coerce.date().nullable(),
   last_error: z.string().nullable(),
@@ -589,6 +591,7 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
     healthStatus: row.health_status,
     inflightCount: row.inflight_count,
     leaseAcquiredCount: row.lease_acquired_count,
+    createdAt: row.member_created_at.toISOString(),
     lastAcquiredAt: row.last_acquired_at?.toISOString() ?? null,
     lastUsedAt: row.last_used_at?.toISOString() ?? null,
     lastError: row.last_error,
@@ -1251,6 +1254,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
           member.health_status,
           count(distinct lease.id)::integer as inflight_count,
           member.lease_acquired_count,
+          member.created_at as member_created_at,
           member.last_acquired_at,
           member.last_used_at,
           member.last_error,
