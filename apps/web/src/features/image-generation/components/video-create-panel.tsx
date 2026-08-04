@@ -12,6 +12,7 @@ import {
   getVideoCreditCost,
   resolveVideoCreditsPerSecondByResolution,
 } from "@repo/shared/adobe";
+import { formatCredits } from "@repo/shared/credits/format";
 import { Button } from "@repo/ui/components/button";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -23,7 +24,7 @@ import {
 } from "@repo/ui/components/select";
 import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
-import { Loader2 } from "lucide-react";
+import { Coins, ImageIcon, ImagePlus, Loader2, Video } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   createStaticVideoCreateModels,
@@ -70,10 +71,7 @@ function waitForVideoPoll(delayMs: number): Promise<void> {
 
 /** 有界增加视频状态查询间隔，长期任务最终降到低频查询。 */
 export function resolveNextVideoPollDelay(currentDelayMs: number): number {
-  return Math.min(
-    Math.round(currentDelayMs * 1.5),
-    VIDEO_STATUS_MAX_POLL_MS
-  );
+  return Math.min(Math.round(currentDelayMs * 1.5), VIDEO_STATUS_MAX_POLL_MS);
 }
 
 /** 收窄站内状态响应；非法或漂移的服务端负载显式失败。 */
@@ -355,6 +353,40 @@ export function VideoCreatePanel({
   const maxInputImages = inputLimits.selectableMax;
   const maxMediaInputMegabytes =
     selectedModel.maxMediaInputBytes / (1024 * 1024);
+  const busy = status === "running";
+  const controlsDisabled = busy || capabilitiesStatus !== "ready";
+
+  /** 切换一张近期图片作为视频输入，并保持输入数量与当前模型上限一致。 */
+  const toggleHistoryImage = async (item: VideoHistoryItem) => {
+    if (!item.imageUrl || busy || capabilitiesStatus !== "ready") return;
+    if (selectedHistoryIds.includes(item.id)) {
+      const index = selectedHistoryIds.indexOf(item.id);
+      setSelectedHistoryIds((current) =>
+        current.filter((id) => id !== item.id)
+      );
+      setInputImages((current) =>
+        current.filter((_, imageIndex) => imageIndex !== index)
+      );
+      return;
+    }
+    if (inputImages.length >= maxInputImages) return;
+    try {
+      const dataUrl = await urlToDataUrl(item.imageUrl);
+      setInputImages((current) => [...current, dataUrl]);
+      setSelectedHistoryIds((current) => [...current, item.id]);
+    } catch {
+      setSelectedHistoryIds([]);
+      setInputImages([]);
+      setError("近期图片读取失败，请重新选择");
+    }
+  };
+
+  const modeLabel =
+    inputImages.length === 0
+      ? "文生视频"
+      : inputMode === "references"
+        ? "参考图生视频"
+        : "首尾帧生视频";
 
   const generate = async () => {
     if (
@@ -426,20 +458,25 @@ export function VideoCreatePanel({
     }
   };
 
-  const busy = status === "running";
-  const controlsDisabled = busy || capabilitiesStatus !== "ready";
-
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-background p-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="flex flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-background p-4 shadow-sm sm:p-5">
+      <div className="order-3 grid gap-3 border-t border-border bg-muted/20 pt-4 sm:grid-cols-2 lg:grid-cols-5 sm:pt-5">
+        <div className="sm:col-span-2 lg:col-span-5">
+          <h2 className="text-sm font-semibold text-foreground">生成设置</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            选择模型、视频时长、画面比例和输出分辨率。
+          </p>
+        </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">模型</Label>
+          <Label className="text-xs font-medium text-muted-foreground">
+            模型
+          </Label>
           <Select
             value={modelId}
             onValueChange={onModelChange}
             disabled={controlsDisabled}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full bg-background">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -452,13 +489,15 @@ export function VideoCreatePanel({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">时长</Label>
+          <Label className="text-xs font-medium text-muted-foreground">
+            时长
+          </Label>
           <Select
             value={String(duration)}
             onValueChange={(value) => setDuration(Number(value))}
             disabled={controlsDisabled}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full bg-background">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -471,13 +510,15 @@ export function VideoCreatePanel({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">比例</Label>
+          <Label className="text-xs font-medium text-muted-foreground">
+            画面比例
+          </Label>
           <Select
             value={aspectRatio}
             onValueChange={setAspectRatio}
             disabled={controlsDisabled}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full bg-background">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -490,13 +531,15 @@ export function VideoCreatePanel({
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">分辨率</Label>
+          <Label className="text-xs font-medium text-muted-foreground">
+            分辨率
+          </Label>
           <Select
             value={resolution}
             onValueChange={setResolution}
             disabled={controlsDisabled}
           >
-            <SelectTrigger>
+            <SelectTrigger className="w-full bg-background">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -511,7 +554,7 @@ export function VideoCreatePanel({
       </div>
 
       {selectedModel.supportsAudio && (
-        <div className="flex items-center gap-2">
+        <div className="order-4 flex items-center gap-2 rounded-xl border border-border bg-muted/20 px-3 py-2">
           <Switch
             id="video-generate-audio"
             checked={generateAudio}
@@ -522,21 +565,41 @@ export function VideoCreatePanel({
         </div>
       )}
 
-      <Textarea
-        placeholder="描述要生成的视频…"
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-        disabled={controlsDisabled}
-        rows={3}
-      />
+      <div className="order-1 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Label
+            htmlFor="video-create-prompt"
+            className="text-sm font-semibold text-foreground"
+          >
+            文字描述
+          </Label>
+          <span className="rounded-full border border-border bg-muted/45 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+            {modeLabel}
+          </span>
+        </div>
+        <Textarea
+          id="video-create-prompt"
+          placeholder="描述你想生成的视频画面、动作、镜头和声音。"
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          disabled={controlsDisabled}
+          rows={5}
+          maxLength={32_000}
+          className="min-h-32 resize-y rounded-xl border-input bg-muted/15 px-3 py-3 text-base leading-relaxed shadow-none focus-visible:bg-background"
+        />
+        <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+          <span>支持描述主体、动作、运镜、光线和声音氛围。</span>
+          <span className="shrink-0">{prompt.length}/32000</span>
+        </div>
+      </div>
 
       {(selectedModel.maxFrameImages > 0 ||
         selectedModel.maxReferenceImages > 0) && (
-        <div className="space-y-1.5">
+        <div className="order-2 space-y-3 border-t border-border/70 pt-3">
           {selectedModel.maxFrameImages > 0 &&
             selectedModel.maxReferenceImages > 0 && (
               <div className="max-w-xs space-y-1.5">
-                <Label className="text-xs text-muted-foreground">
+                <Label className="text-xs font-medium text-muted-foreground">
                   输入图用途
                 </Label>
                 <Select
@@ -548,7 +611,7 @@ export function VideoCreatePanel({
                   }}
                   disabled={controlsDisabled}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full bg-background">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -558,7 +621,7 @@ export function VideoCreatePanel({
                 </Select>
               </div>
             )}
-          <Label className="text-xs text-muted-foreground">
+          <Label className="text-xs font-medium text-muted-foreground">
             {inputMode === "references"
               ? `参考图（可选，模型上限 ${inputLimits.modelMax} 张；单次最多 ${maxInputImages} 张）`
               : `首尾帧（可选，最多 ${maxInputImages} 张，按选择顺序）`}
@@ -567,65 +630,26 @@ export function VideoCreatePanel({
             基础设施限制：所有媒体输入合计最多
             {selectedModel.maxMediaInputCount} 张、{maxMediaInputMegabytes} MB。
           </p>
-          {historyImages.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {historyImages.slice(0, 12).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  disabled={controlsDisabled}
-                  title={
-                    inputMode === "references"
-                      ? "选择或取消此参考图"
-                      : "按首帧、尾帧顺序选择或取消"
-                  }
-                  onClick={async () => {
-                    if (!item.imageUrl) return;
-                    try {
-                      if (selectedHistoryIds.includes(item.id)) {
-                        const index = selectedHistoryIds.indexOf(item.id);
-                        setSelectedHistoryIds((current) =>
-                          current.filter((id) => id !== item.id)
-                        );
-                        setInputImages((current) =>
-                          current.filter(
-                            (_, imageIndex) => imageIndex !== index
-                          )
-                        );
-                        return;
-                      }
-                      if (inputImages.length >= maxInputImages) return;
-                      const dataUrl = await urlToDataUrl(item.imageUrl);
-                      setInputImages((current) => [...current, dataUrl]);
-                      setSelectedHistoryIds((current) => [...current, item.id]);
-                    } catch {
-                      setSelectedHistoryIds([]);
-                      setInputImages([]);
-                    }
-                  }}
-                  className={`h-14 w-14 overflow-hidden rounded-md border transition-[border-color,box-shadow] duration-150 ${
-                    selectedHistoryIds.includes(item.id)
-                      ? "border-primary ring-1 ring-primary"
-                      : "border-border hover:border-foreground/40"
-                  }`}
-                >
-                  {/* 历史缩略图使用本站已生成图。 */}
-                  {/* biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
-                  <img
-                    src={item.imageUrl ?? ""}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                </button>
-              ))}
-            </div>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-full border-dashed bg-muted/20 px-3.5 hover:bg-muted/50"
+            onClick={() =>
+              document.getElementById("video-input-files")?.click()
+            }
+            disabled={controlsDisabled}
+          >
+            <ImagePlus className="mr-1.5 size-4" />
+            上传输入图
+          </Button>
           <input
+            id="video-input-files"
             type="file"
             multiple={maxInputImages > 1}
             accept="image/png,image/jpeg,image/webp"
             disabled={controlsDisabled}
-            className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm"
+            className="sr-only"
             onChange={async (event) => {
               const files = Array.from(event.target.files ?? []).slice(
                 0,
@@ -633,6 +657,7 @@ export function VideoCreatePanel({
               );
               setInputImages(await Promise.all(files.map(fileToDataUrl)));
               setSelectedHistoryIds([]);
+              event.target.value = "";
             }}
           />
           {inputImages.length > 0 && (
@@ -651,26 +676,38 @@ export function VideoCreatePanel({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="order-5 flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Coins className="size-3.5" />
+            预计消耗
+            <span className="font-medium text-foreground">
+              {formatCredits(estimatedCredits)} 积分
+            </span>
+          </span>
+          <span>
+            {duration}s × {creditsPerSecond}/秒 · {selectedModel.model}
+          </span>
+        </div>
         <Button
+          type="button"
           onClick={generate}
           disabled={controlsDisabled || !prompt.trim()}
+          className="min-w-30"
         >
-          {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          生成视频
+          {busy ? (
+            <Loader2 className="mr-2 size-4 animate-spin" />
+          ) : (
+            <Video className="mr-2 size-4" />
+          )}
+          {busy ? "生成中" : "生成视频"}
         </Button>
-        <span className="text-sm font-medium">
-          预计消耗 {estimatedCredits} 积分
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {duration}s × {creditsPerSecond}/秒
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {selectedModel.model}
-        </span>
       </div>
 
-      <details open className="text-xs text-muted-foreground">
+      <details
+        open
+        className="order-6 border-t border-border/70 pt-3 text-xs text-muted-foreground"
+      >
         <summary className="cursor-pointer select-none font-medium">
           各视频模型积分消耗
         </summary>
@@ -714,23 +751,26 @@ export function VideoCreatePanel({
       </details>
 
       {capabilitiesStatus === "loading" && (
-        <p className="text-sm text-muted-foreground" role="status">
+        <p className="order-7 text-sm text-muted-foreground" role="status">
           正在同步当前分组的视频模型能力…
         </p>
       )}
       {capabilitiesStatus === "error" && capabilitiesError && (
-        <p className="text-sm text-destructive" role="alert">
+        <p
+          className="order-7 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          role="alert"
+        >
           {capabilitiesError}
         </p>
       )}
 
       {status === "running" && (
-        <p className="animate-pulse text-sm text-muted-foreground motion-reduce:animate-none">
+        <p className="order-7 animate-pulse text-sm text-muted-foreground motion-reduce:animate-none">
           视频生成中，可能需要数分钟，请保持页面打开…
         </p>
       )}
       {status === "error" && error && (
-        <p className="animate-in fade-in text-sm text-destructive motion-reduce:animate-none">
+        <p className="order-7 animate-in fade-in rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive motion-reduce:animate-none">
           {error}
         </p>
       )}
@@ -738,11 +778,77 @@ export function VideoCreatePanel({
         <video
           src={videoUrl}
           controls
-          className="w-full max-w-2xl rounded-lg border border-border animate-in fade-in zoom-in-95 duration-400 motion-reduce:animate-none"
+          className="order-8 w-full max-w-3xl rounded-xl border border-border bg-black animate-in fade-in zoom-in-95 duration-400 motion-reduce:animate-none"
         >
           <track kind="captions" />
         </video>
       )}
+
+      <section
+        className="order-9 border-t border-border pt-4"
+        aria-labelledby="video-recent-images-title"
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2
+            id="video-recent-images-title"
+            className="text-sm font-semibold text-foreground"
+          >
+            最近图片
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            点击图片即可添加为视频输入
+          </span>
+        </div>
+        {historyImages.length === 0 ? (
+          <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+            <ImageIcon className="mb-2 size-7" />
+            暂无可用图片
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
+            {historyImages.slice(0, 6).map((item) => {
+              const selected = selectedHistoryIds.includes(item.id);
+              const inputLimitReached = inputImages.length >= maxInputImages;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+                    selected ? "border-primary ring-1 ring-primary" : ""
+                  }`}
+                  onClick={() => void toggleHistoryImage(item)}
+                  disabled={
+                    controlsDisabled ||
+                    (inputLimitReached && !selected) ||
+                    maxInputImages === 0
+                  }
+                  aria-label={
+                    selected ? "取消视频输入图片" : "添加为视频输入图片"
+                  }
+                  title={
+                    selected
+                      ? "取消此视频输入图片"
+                      : inputLimitReached
+                        ? `最多添加 ${maxInputImages} 张输入图`
+                        : "添加为视频输入图片"
+                  }
+                >
+                  {/* 历史缩略图使用本站已生成图。 */}
+                  {/* biome-ignore lint/performance/noImgElement: 简单缩略图选择器 */}
+                  <img
+                    src={item.imageUrl ?? ""}
+                    alt="近期生成图片"
+                    className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
+                  />
+                  <span className="absolute inset-x-0 bottom-0 bg-background/90 px-2 py-1 text-center text-[11px] font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                    {selected ? "取消输入图" : "作为视频输入"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
