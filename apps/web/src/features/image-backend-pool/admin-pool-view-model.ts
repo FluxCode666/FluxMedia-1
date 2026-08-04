@@ -2,23 +2,19 @@
  * 账号池管理列表的纯筛选视图模型。
  *
  * 使用方：账号池管理面板及其 DB-free 单测。本模块只消费已脱敏的分组、成员快照，
- * 统一名称模糊匹配、凭据状态归一、模型精确匹配和部署时区自然日范围，不访问浏览器
+ * 统一名称模糊匹配、凭据配置归一、模型精确匹配和部署时区自然日范围，不访问浏览器
  * 或数据库，也不改变服务端返回顺序。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 
 import type { BackendMemberAdminSummary } from "./member-service";
 
-/** 管理列表可选的统一凭据状态。 */
+/** 管理列表可选的统一凭据配置状态。 */
 export type BackendMemberCredentialFilter =
   | "all"
   | "configured"
   | "not_required"
-  | "missing"
-  | "active"
-  | "error"
-  | "exhausted"
-  | "invalid";
+  | "missing";
 
 /** 供应商账号列表的全部筛选条件。 */
 export interface BackendMemberFilters {
@@ -44,11 +40,11 @@ function normalizeFilterValue(value: string): string {
 }
 
 /**
- * 将供应商账号映射为互斥的统一凭据状态。
+ * 将供应商账号映射为互斥的统一凭据配置状态。
  *
  * @param member 已脱敏的供应商账号摘要。
- * @returns API 无认证明确返回 not_required；Adobe Direct 保留领域状态；其余按密钥
- * 存在性返回 configured 或 missing。
+ * @returns API 无认证明确返回 not_required；其余只按 secret 是否存在返回 configured
+ * 或 missing，不把缓存 Token、双 Profile 健康或 Firefly 额度混入配置状态。
  * @sideEffects 无。
  * @failure 不抛错；旧 API 摘要缺少 authentication 时仍按需要密钥处理。
  */
@@ -62,7 +58,7 @@ export function getBackendMemberCredentialStatus(
     return member.config.hasApiKey ? "configured" : "missing";
   }
   if (member.config.mode === "direct") {
-    return member.config.credentialStatus;
+    return member.config.hasCookie ? "configured" : "missing";
   }
   return member.config.hasApiKey ? "configured" : "missing";
 }
@@ -142,7 +138,7 @@ export function hasInvalidBackendMemberDateRange(
 }
 
 /**
- * 按名称、凭据状态、支持模型和部署时区创建日期筛选供应商账号。
+ * 按名称、凭据配置、支持模型和部署时区创建日期筛选供应商账号。
  *
  * @param members 服务端已按调度优先级排序的脱敏账号快照。
  * @param filters 当前受控筛选条件。

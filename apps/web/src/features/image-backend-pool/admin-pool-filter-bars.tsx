@@ -4,7 +4,8 @@
  * 账号池管理页的受控筛选工具栏。
  *
  * 使用方：ImageBackendPoolAdminPanel。组件复用 shadcn/ui Input、Select 与 Button，
- * 只回传筛选草稿并展示结果计数；名称、凭据、模型和日期的匹配语义集中在纯视图模型。
+ * 只回传筛选草稿并展示结果计数；名称、凭据配置、模型和日期的匹配语义集中在
+ * 纯视图模型。
  */
 import { Button } from "@repo/ui/components/button";
 import { Input } from "@repo/ui/components/input";
@@ -36,10 +37,6 @@ const CREDENTIAL_FILTERS = [
   "configured",
   "not_required",
   "missing",
-  "active",
-  "error",
-  "exhausted",
-  "invalid",
 ] as const satisfies readonly BackendMemberCredentialFilter[];
 
 /** 将 Radix Select 的字符串值收窄为已声明凭据筛选。 */
@@ -48,7 +45,7 @@ function parseCredentialFilter(value: string): BackendMemberCredentialFilter {
 }
 
 /**
- * 渲染供应商账号名称、凭据、模型与创建日期范围筛选。
+ * 渲染供应商账号名称、凭据配置、模型与创建日期范围筛选。
  *
  * @param props 当前筛选值、模型选项、结果计数、日期合法性与更新回调。
  * @returns 可键盘操作且在窄屏纵向排列的筛选工具栏。
@@ -102,7 +99,7 @@ export function BackendMemberFilterBar({
           </span>
         </label>
         <div className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground">
-          <span id="backend-member-credential-filter-label">凭据状态</span>
+          <span id="backend-member-credential-filter-label">凭据配置</span>
           <Select
             onValueChange={(value) =>
               onChange({
@@ -119,16 +116,10 @@ export function BackendMemberFilterBar({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部凭据状态</SelectItem>
+              <SelectItem value="all">全部凭据配置</SelectItem>
               <SelectItem value="configured">密钥已配置</SelectItem>
               <SelectItem value="not_required">无需凭据</SelectItem>
               <SelectItem value="missing">缺失</SelectItem>
-              <SelectItem value="active">有效（Adobe Direct）</SelectItem>
-              <SelectItem value="error">异常（Adobe Direct）</SelectItem>
-              <SelectItem value="exhausted">
-                额度耗尽（Adobe Direct）
-              </SelectItem>
-              <SelectItem value="invalid">无效（Adobe Direct）</SelectItem>
             </SelectContent>
           </Select>
         </div>

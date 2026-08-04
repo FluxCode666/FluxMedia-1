@@ -631,6 +631,24 @@ export async function checkAdobeCredentialHealth(
   return evaluateClaim(claim);
 }
 
+/**
+ * 真实调用发现 Token 刷新失败或被拒绝后立即执行双 Profile 评估。
+ *
+ * @param memberId Adobe direct 成员 ID。
+ * @returns 成功认领时返回安全评估摘要；已有评估进行中时返回 null。
+ * @sideEffects 通过同一 claim/CAS 状态机访问 Adobe、写评估历史并可能触发通知。
+ */
+export async function checkAdobeCredentialHealthPassively(
+  memberId: string
+): Promise<AdobeHealthEvaluationResult | null> {
+  await ensureAdobeHealthRows();
+  const claim = await claimAdobeHealth("passive", {
+    memberId,
+    requireDue: false,
+  });
+  return claim ? evaluateClaim(claim) : null;
+}
+
 /** 读取管理员可见的健康摘要，不返回 Cookie、Token 或上游原文。 */
 export async function getAdobeCredentialHealth(memberId: string) {
   await ensureAdobeHealthRows();

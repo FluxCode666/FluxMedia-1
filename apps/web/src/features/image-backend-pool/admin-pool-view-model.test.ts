@@ -1,7 +1,7 @@
 /**
  * 账号池管理列表纯筛选测试。
  *
- * 职责：锁定名称模糊搜索、统一凭据状态、支持模型精确筛选及部署时区创建日期边界，
+ * 职责：锁定名称模糊搜索、统一凭据配置、支持模型精确筛选及部署时区创建日期边界，
  * 不加载 React、数据库或 Server Action。
  */
 import { describe, expect, it } from "vitest";
@@ -52,16 +52,17 @@ function createMember(
   } as BackendMemberAdminSummary;
 }
 
-/** 构造指定凭据领域状态的 Adobe Direct 账号摘要。 */
+/** 构造指定缓存 Token 状态的 Adobe Direct 账号摘要。 */
 function createAdobeDirectMember(
-  credentialStatus: "active" | "error" | "exhausted" | "invalid"
+  credentialStatus: "active" | "error" | "exhausted" | "invalid",
+  hasCookie = true
 ): BackendMemberAdminSummary {
   return createMember({
     id: `direct-${credentialStatus}`,
     type: "adobe",
     config: {
       mode: "direct",
-      hasCookie: true,
+      hasCookie,
       displayName: null,
       email: null,
       credentialStatus,
@@ -118,7 +119,7 @@ describe("admin pool view model", () => {
     ).toEqual(["primary"]);
   });
 
-  it("区分通用已配置、无需凭据、缺失和 Adobe Direct 领域状态", () => {
+  it("区分通用已配置、无需凭据和缺失状态", () => {
     const noAuthentication = createMember({
       id: "no-auth",
       config: {
@@ -141,21 +142,21 @@ describe("admin pool view model", () => {
         gptImageQuality: "high",
       },
     });
-    const invalidDirect = createAdobeDirectMember("invalid");
+    const missingDirect = createAdobeDirectMember("invalid", false);
 
     expect(getBackendMemberCredentialStatus(createMember())).toBe("configured");
     expect(getBackendMemberCredentialStatus(noAuthentication)).toBe(
       "not_required"
     );
     expect(getBackendMemberCredentialStatus(missingGateway)).toBe("missing");
-    expect(getBackendMemberCredentialStatus(invalidDirect)).toBe("invalid");
+    expect(getBackendMemberCredentialStatus(missingDirect)).toBe("missing");
     expect(
       filterBackendMembers(
-        [createMember(), noAuthentication, missingGateway, invalidDirect],
-        createFilters({ credentialStatus: "invalid" }),
+        [createMember(), noAuthentication, missingGateway, missingDirect],
+        createFilters({ credentialStatus: "missing" }),
         "Asia/Shanghai"
       ).map((member) => member.id)
-    ).toEqual(["direct-invalid"]);
+    ).toEqual(["gateway", "direct-invalid"]);
   });
 
   it("区分需要密钥账号的已配置与缺失状态", () => {
@@ -188,23 +189,29 @@ describe("admin pool view model", () => {
     );
   });
 
-  it.each([
-    "active",
-    "error",
-    "exhausted",
-    "invalid",
-  ] as const)("按 Adobe Direct %s 凭据状态精确筛选", (credentialStatus) => {
+  it("Adobe Direct 配置状态不混入缓存 Token 或额度状态", () => {
     const directMembers = (
       ["active", "error", "exhausted", "invalid"] as const
-    ).map(createAdobeDirectMember);
+    ).map((credentialStatus) => createAdobeDirectMember(credentialStatus));
 
+    expect(directMembers.map(getBackendMemberCredentialStatus)).toEqual([
+      "configured",
+      "configured",
+      "configured",
+      "configured",
+    ]);
     expect(
       filterBackendMembers(
         directMembers,
-        createFilters({ credentialStatus }),
+        createFilters({ credentialStatus: "configured" }),
         "Asia/Shanghai"
       ).map((member) => member.id)
-    ).toEqual([`direct-${credentialStatus}`]);
+    ).toEqual([
+      "direct-active",
+      "direct-error",
+      "direct-exhausted",
+      "direct-invalid",
+    ]);
   });
 
   it("组合名称和支持模型筛选并保持服务端顺序", () => {

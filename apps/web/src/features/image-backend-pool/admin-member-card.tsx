@@ -18,9 +18,8 @@ import {
 } from "@repo/ui/components/card";
 import { Switch } from "@repo/ui/components/switch";
 import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
-
-import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
 import { getBackendMemberCredentialStatus } from "./admin-pool-view-model";
+import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
 import { normalizeBackendMemberModelIdsForDisplay } from "./member-model-options";
 import type {
   BackendMemberAdminSummary,
@@ -76,16 +75,12 @@ function getMemberStatusVariant(
   return "outline";
 }
 
-/** 返回统一凭据状态的人类可读标签。 */
+/** 返回统一凭据配置状态的人类可读标签，不混入账号健康或业务额度。 */
 function getMemberCredentialLabel(member: BackendMemberAdminSummary): string {
   const status = getBackendMemberCredentialStatus(member);
   if (status === "configured") return "密钥已配置";
   if (status === "not_required") return "无需凭据";
-  if (status === "missing") return "缺失";
-  if (status === "active") return "已配置 · 有效";
-  if (status === "error") return "已配置 · 异常";
-  if (status === "exhausted") return "已配置 · 额度耗尽";
-  return "已配置 · 无效";
+  return "缺失";
 }
 
 /** 展示 Adobe direct 账号身份、Firefly 余额与凭据错误，不暴露任何 secret。 */
@@ -100,17 +95,6 @@ function AdobeDirectAccountFacts({
     config.creditsAvailable !== null || config.creditsTotal !== null;
   return (
     <>
-      <span>Adobe 凭据：{config.credentialStatus}</span>
-      <span>凭据刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}</span>
-      {config.fireflyCredentialStatus ? (
-        <span>历史 Firefly 凭据：{config.fireflyCredentialStatus}</span>
-      ) : null}
-      {config.fireflyLastRefreshAt ? (
-        <span>
-          历史 Firefly 刷新：
-          {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
-        </span>
-      ) : null}
       <span>Adobe 账号：{config.displayName || config.email || "未识别"}</span>
       <span>
         {config.creditsError
@@ -125,6 +109,26 @@ function AdobeDirectAccountFacts({
       <span>
         余额更新：{formatAdminTime(config.creditsUpdatedAt, timeZone)}
       </span>
+      <details className="basis-full rounded-md border p-2">
+        <summary className="cursor-pointer">
+          查看缓存 Token 状态（不代表账号凭据健康）
+        </summary>
+        <div className="mt-1 grid gap-1 sm:grid-cols-2">
+          <span>Express Token：{config.credentialStatus}</span>
+          <span>
+            Express 刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}
+          </span>
+          {config.fireflyCredentialStatus ? (
+            <span>Firefly Token：{config.fireflyCredentialStatus}</span>
+          ) : null}
+          {config.fireflyLastRefreshAt ? (
+            <span>
+              Firefly 刷新：
+              {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
+            </span>
+          ) : null}
+        </div>
+      </details>
       {config.lastRefreshError ? (
         <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
           <summary className="cursor-pointer">
@@ -278,7 +282,7 @@ export function BackendMemberCard({
             负载 {member.inflightCount}/{member.concurrency}
           </span>
           <span>累计获租 {member.leaseAcquiredCount}</span>
-          <span>健康 {member.healthStatus}</span>
+          <span>最近调用质量 {member.healthStatus}</span>
           <span>
             上次获租 {formatAdminTime(member.lastAcquiredAt, timeZone)}
           </span>
@@ -297,7 +301,7 @@ export function BackendMemberCard({
           />
         ) : null}
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-          <span>凭据：{getMemberCredentialLabel(member)}</span>
+          <span>凭据配置：{getMemberCredentialLabel(member)}</span>
           {member.type === "adobe" && member.config.mode === "direct" ? (
             <AdobeDirectAccountFacts
               config={member.config}

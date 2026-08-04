@@ -2,7 +2,7 @@
  * 账号池管理筛选栏与分组列表的 DOM 契约测试。
  *
  * 职责：锁定分组使用语义表格、只读模式隐藏写操作，以及供应商账号筛选器暴露
- * 名称、凭据、模型、创建日期范围和清除交互；不调用 Server Action 或数据库。
+ * 名称、凭据配置、模型、创建日期范围和清除交互；不调用 Server Action 或数据库。
  */
 // @vitest-environment jsdom
 
@@ -142,7 +142,7 @@ describe("admin pool components", () => {
       container?.querySelectorAll<HTMLInputElement>('input[type="date"]');
     expect(searchInput).not.toBeNull();
     expect(dateInputs).toHaveLength(2);
-    expect(container?.textContent).toContain("凭据状态");
+    expect(container?.textContent).toContain("凭据配置");
     expect(container?.textContent).toContain("支持的模型");
 
     act(() => {

@@ -13,6 +13,8 @@ export type AdobeHealthStatusView = {
   primaryAction: "none" | "check" | "reauthorize";
 };
 
+const HEALTH_CHECK_COMPLETION_GRACE_MS = 5 * 60_000;
+
 const STATUS_VIEWS: Record<
   AdobeCredentialHealthSummary["status"],
   AdobeHealthStatusView
@@ -54,6 +56,53 @@ export function getAdobeHealthStatusView(
   status: AdobeCredentialHealthSummary["status"]
 ): AdobeHealthStatusView {
   return STATUS_VIEWS[status];
+}
+
+/**
+ * 根据检查时间计算管理员当前应看到的账号级凭据状态。
+ *
+ * @param health 持久健康摘要。
+ * @param now 管理员查看时间，默认当前时间。
+ * @returns 超过下一检查窗口五分钟时返回 overdue；隔离状态保持优先。
+ */
+export function getEffectiveAdobeHealthStatus(
+  health: AdobeCredentialHealthSummary,
+  now = new Date()
+): AdobeCredentialHealthSummary["status"] {
+  if (health.status === "isolated") return health.status;
+  if (
+    health.status === "healthy" &&
+    (!health.lastCheckedAt ||
+      !health.lastSuccessAt ||
+      health.failureProfiles.length > 0)
+  ) {
+    return health.failureProfiles.length > 0 ? "degraded" : "pending";
+  }
+  if (!health.nextCheckAt) return health.status;
+  const nextCheckAt = new Date(health.nextCheckAt);
+  if (Number.isNaN(nextCheckAt.getTime())) return "overdue";
+  return now.getTime() >
+    nextCheckAt.getTime() + HEALTH_CHECK_COMPLETION_GRACE_MS
+    ? "overdue"
+    : health.status;
+}
+
+/**
+ * 把账号级摘要展开成两个 Profile 的当前验证结果。
+ *
+ * @param health 持久健康摘要与最近失败 Profile。
+ * @returns Express 和 Firefly 的健康、异常或待验证文案。
+ */
+export function getAdobeCredentialProfileViews(
+  health: AdobeCredentialHealthSummary
+): Record<"express" | "firefly", "健康" | "异常" | "待验证"> {
+  if (health.status === "pending" || health.status === "overdue") {
+    return { express: "待验证", firefly: "待验证" };
+  }
+  return {
+    express: health.failureProfiles.includes("express") ? "异常" : "健康",
+    firefly: health.failureProfiles.includes("firefly") ? "异常" : "健康",
+  };
 }
 
 /** 将健康时间格式化为管理员本地化可读文本。 */
