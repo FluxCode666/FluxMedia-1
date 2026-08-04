@@ -15,7 +15,6 @@ import {
   Loader2,
   Lock,
   MoreHorizontal,
-  RefreshCw,
   Search,
   Shield,
   Unlock,
@@ -1089,7 +1088,7 @@ export function AdminUsersManagement({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-400 motion-reduce:animate-none lg:flex-row lg:items-end lg:justify-between">
+      <div className="animate-in fade-in slide-in-from-bottom-2 duration-400 motion-reduce:animate-none">
         <div>
           <h2 className="font-serif text-2xl font-medium tracking-tight">
             用户管理
@@ -1097,24 +1096,6 @@ export function AdminUsersManagement({
           <p className="text-muted-foreground">
             查询用户、排查积分和生图问题，并记录关键后台操作。
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {canManageRoles ? (
-            <Button onClick={openCreateDialog}>
-              <UserPlus className="mr-2 h-4 w-4" />
-              新增用户
-            </Button>
-          ) : null}
-          <Button
-            variant="outline"
-            onClick={() => void reloadCurrent()}
-            disabled={isLoading}
-          >
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
-            />
-            刷新
-          </Button>
         </div>
       </div>
 
@@ -1269,12 +1250,20 @@ export function AdminUsersManagement({
 
       <Card>
         <CardHeader className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <CardTitle>用户列表</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {pagination.total > 0
-              ? `显示 ${startIndex}-${endIndex} / 共 ${pagination.total} 位`
-              : "没有匹配用户"}
-          </p>
+          <div className="space-y-1">
+            <CardTitle>用户列表</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {pagination.total > 0
+                ? `显示 ${startIndex}-${endIndex} / 共 ${pagination.total} 位`
+                : "没有匹配用户"}
+            </p>
+          </div>
+          {canManageRoles ? (
+            <Button onClick={openCreateDialog}>
+              <UserPlus className="mr-2 h-4 w-4" />
+              新增用户
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent>
           {isLoading ? (
