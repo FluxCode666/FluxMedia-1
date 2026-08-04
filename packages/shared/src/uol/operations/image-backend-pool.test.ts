@@ -295,6 +295,7 @@ describe("image backend pool pricing operations", () => {
       healthStatus: "unhealthy",
       inflightCount: 0,
       leaseAcquiredCount: 3,
+      createdAt: "2026-07-27T00:00:00.000Z",
       lastAcquiredAt: "2026-07-27T01:00:00.000Z",
       lastUsedAt: "2026-07-27T01:01:00.000Z",
       lastError: "Adobe upstream unavailable",

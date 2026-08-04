@@ -3,14 +3,13 @@
 /**
  * 统一媒体后端号池管理面板。
  *
- * 职责：在单一页面加载和展示分组及 `api | adobe` 统一成员，打开对应编辑表单、
- * 就地修改成员启用状态、执行运行状态重置和安全删除，并展示 Adobe direct 成员的
- * 一对一凭据状态。注册机、Sub2API、Web/Codex 账号、子号池和旧三池分页不再进入此组件。
+ * 职责：在“供应商账号 / 分组”独立页签加载和筛选 `api | adobe` 统一成员与分组，
+ * 打开对应编辑表单、就地修改成员启用状态、执行运行状态重置和安全删除，并展示
+ * Adobe direct 成员的一对一凭据状态。旧三池分页不再进入此组件。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
-import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
   Card,
@@ -20,17 +19,19 @@ import {
   CardHeader,
   CardTitle,
 } from "@repo/ui/components/card";
-import { Switch } from "@repo/ui/components/switch";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@repo/ui/components/tabs";
 import {
   Activity,
   Boxes,
   Database,
   Loader2,
-  Pencil,
   Plus,
   RefreshCw,
-  RotateCcw,
-  Trash2,
   Users,
 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
@@ -45,7 +46,22 @@ import {
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
 } from "./actions";
-import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
+import { BackendGroupList } from "./admin-group-list";
+import { BackendMemberCard, isAdobeDirectMember } from "./admin-member-card";
+import {
+  BackendGroupFilterBar,
+  BackendMemberFilterBar,
+  type BackendMemberFilterModelOption,
+} from "./admin-pool-filter-bars";
+import {
+  type BackendMemberFilters,
+  EMPTY_BACKEND_MEMBER_FILTERS,
+  filterBackendGroups,
+  filterBackendMembers,
+  hasBackendGroupFilter,
+  hasBackendMemberFilters,
+  hasInvalidBackendMemberDateRange,
+} from "./admin-pool-view-model";
 import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
 import {
@@ -54,48 +70,7 @@ import {
   normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
-import type {
-  BackendMemberAdminSummary,
-  RedactedAdobeMemberConfig,
-} from "./member-service";
-import { MemberSupportedModels } from "./member-supported-models";
-
-type RedactedAdobeDirectConfig = Extract<
-  RedactedAdobeMemberConfig,
-  { mode: "direct" }
->;
-
-/** 格式化后台时间，非法或空值显示短横线。 */
-function formatAdminTime(value: string | null, timeZone: string): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone,
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-}
-
-/** 返回成员的人类可读类型与模式。 */
-function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
-  if (member.type === "api") return "API";
-  return member.config.mode === "direct" ? "Adobe Direct" : "Adobe Gateway";
-}
-
-/** 判断统一成员是否为 Adobe direct 顶层账号。 */
-function isAdobeDirectMember(member: BackendMemberAdminSummary): boolean {
-  return member.type === "adobe" && member.config.mode === "direct";
-}
-
-/** 根据成员运行状态选择稳定的 Badge 样式。 */
-function getMemberStatusVariant(
-  member: BackendMemberAdminSummary
-): "secondary" | "destructive" | "outline" {
-  if (!member.isEnabled || member.status === "error") return "destructive";
-  if (member.healthStatus === "healthy") return "secondary";
-  return "outline";
-}
+import type { BackendMemberAdminSummary } from "./member-service";
 
 /** 显示号池关键容量事实的统计卡。 */
 function PoolStatCard({
@@ -125,77 +100,18 @@ function PoolStatCard({
   );
 }
 
-/** 展示 Adobe direct 账号身份、Firefly 余额与凭据错误，不暴露任何 secret。 */
-function AdobeDirectAccountFacts({
-  config,
-  timeZone,
-}: {
-  config: RedactedAdobeDirectConfig;
-  timeZone: string;
-}) {
-  const hasKnownBalance =
-    config.creditsAvailable !== null || config.creditsTotal !== null;
+/** 展示账号或分组快照首次加载时的稳定骨架。 */
+function PoolListLoadingState({ label }: { label: string }) {
   return (
-    <>
-      <span>Adobe 账号：{config.displayName || config.email || "未识别"}</span>
-      <span>
-        {config.creditsError
-          ? "Firefly 余额：读取失败"
-          : hasKnownBalance
-            ? `Firefly 余额：${config.creditsAvailable ?? "?"} / ${config.creditsTotal ?? "?"}`
-            : "Firefly 余额：未知（刷新后获取）"}
-      </span>
-      {config.creditsUsed !== null && (
-        <span>Firefly 已用：{config.creditsUsed}</span>
-      )}
-      <span>
-        余额更新：{formatAdminTime(config.creditsUpdatedAt, timeZone)}
-      </span>
-      <details className="basis-full rounded-md border p-2">
-        <summary className="cursor-pointer">
-          查看缓存 Token 状态（不代表账号凭据健康）
-        </summary>
-        <div className="mt-1 grid gap-1 sm:grid-cols-2">
-          <span>Express Token：{config.credentialStatus}</span>
-          <span>
-            Express 刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}
-          </span>
-          {config.fireflyCredentialStatus && (
-            <span>Firefly Token：{config.fireflyCredentialStatus}</span>
-          )}
-          {config.fireflyLastRefreshAt && (
-            <span>
-              Firefly 刷新：
-              {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
-            </span>
-          )}
-        </div>
-      </details>
-      {config.lastRefreshError && (
-        <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
-          <summary className="cursor-pointer">
-            查看凭据刷新错误（默认折叠）
-          </summary>
-          <p className="mt-1 break-words">{config.lastRefreshError}</p>
-        </details>
-      )}
-      {config.fireflyLastRefreshError && (
-        <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
-          <summary className="cursor-pointer">
-            查看历史 Firefly 凭据刷新错误（默认折叠）
-          </summary>
-          <p className="mt-1 break-words">{config.fireflyLastRefreshError}</p>
-        </details>
-      )}
-      {config.creditsError && (
-        <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
-          <summary className="cursor-pointer">
-            查看余额读取错误（默认折叠）
-          </summary>
-          <p className="mt-1 break-words">{config.creditsError}</p>
-        </details>
-      )}
-    </>
+    <div
+      aria-busy="true"
+      aria-label={label}
+      className="grid gap-3 md:grid-cols-2"
+      role="status"
+    >
+      <div className="h-40 animate-pulse rounded-lg border bg-muted/30" />
+      <div className="h-40 animate-pulse rounded-lg border bg-muted/30" />
+    </div>
   );
 }
 
@@ -221,6 +137,10 @@ export function ImageBackendPoolAdminPanel({
   );
   const [editingMember, setEditingMember] =
     useState<BackendMemberAdminSummary | null>(null);
+  const [memberFilters, setMemberFilters] = useState<BackendMemberFilters>(
+    EMPTY_BACKEND_MEMBER_FILTERS
+  );
+  const [groupNameFilter, setGroupNameFilter] = useState("");
   const [resettingMemberId, setResettingMemberId] = useState<string | null>(
     null
   );
@@ -328,6 +248,40 @@ export function ImageBackendPoolAdminPanel({
     () => new Map(groups.map((group) => [group.id, group.name])),
     [groups]
   );
+  const memberCountByGroup = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const member of members) {
+      for (const groupId of member.groupIds) {
+        counts.set(groupId, (counts.get(groupId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [members]);
+  const memberModelFilterOptions = useMemo<
+    BackendMemberFilterModelOption[]
+  >(() => {
+    const configuredLabelById = new Map(
+      modelOptions.map((option) => [option.id.toLowerCase(), option.label])
+    );
+    return normalizeBackendMemberModelIdsForDisplay(
+      members.flatMap((member) => member.supportedModelIds)
+    )
+      .sort((left, right) => left.localeCompare(right))
+      .map((id) => {
+        const label = configuredLabelById.get(id.toLowerCase());
+        return { id, label: label && label !== id ? `${label} · ${id}` : id };
+      });
+  }, [members, modelOptions]);
+  const filteredMembers = useMemo(
+    () => filterBackendMembers(members, memberFilters, timeZone),
+    [memberFilters, members, timeZone]
+  );
+  const filteredGroups = useMemo(
+    () => filterBackendGroups(groups, groupNameFilter),
+    [groupNameFilter, groups]
+  );
+  const invalidMemberDateRange =
+    hasInvalidBackendMemberDateRange(memberFilters);
   const imageModelIds = useMemo(
     () =>
       Array.from(
@@ -409,37 +363,23 @@ export function ImageBackendPoolAdminPanel({
             模型 ID 只做能力匹配，不再按前缀分流。
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isLoading || isLoadingModelOptions}
-            onClick={() => {
-              setModelOptionStatus("loading");
-              loadPool();
-              loadModelOptions();
-            }}
-          >
-            {isLoading || isLoadingModelOptions ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <RefreshCw className="size-4" />
-            )}
-            刷新
-          </Button>
-          {!readOnly && (
-            <>
-              <Button type="button" variant="outline" onClick={openNewGroup}>
-                <Plus className="size-4" />
-                新增分组
-              </Button>
-              <Button type="button" onClick={openNewMember}>
-                <Plus className="size-4" />
-                新增成员
-              </Button>
-            </>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={isLoading || isLoadingModelOptions}
+          onClick={() => {
+            setModelOptionStatus("loading");
+            loadPool();
+            loadModelOptions();
+          }}
+        >
+          {isLoading || isLoadingModelOptions ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCw className="size-4" />
           )}
-        </div>
+          刷新
+        </Button>
       </div>
 
       {readOnly && (
@@ -456,9 +396,9 @@ export function ImageBackendPoolAdminPanel({
           icon={Boxes}
         />
         <PoolStatCard
-          title="可用成员"
+          title="可用账号"
           value={activeMemberCount}
-          description={`总计 ${members.length} 个统一成员`}
+          description={`总计 ${members.length} 个供应商账号`}
           icon={Database}
         />
         <PoolStatCard
@@ -475,281 +415,144 @@ export function ImageBackendPoolAdminPanel({
         />
       </div>
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-base font-semibold">分组</h3>
-          <p className="text-sm text-muted-foreground">
-            调度始终限制在请求指定分组内，默认组最多一个。
-          </p>
-        </div>
-        <div className="grid gap-3 lg:grid-cols-2">
-          {groups.map((group) => (
-            <Card key={group.id} className="gap-4 py-4">
-              <CardHeader className="px-4">
-                <CardTitle className="flex flex-wrap items-center gap-2">
-                  <span>{group.name}</span>
-                  {group.isDefault && <Badge>默认</Badge>}
-                  <Badge variant={group.isEnabled ? "secondary" : "outline"}>
-                    {group.isEnabled ? "已启用" : "已停用"}
-                  </Badge>
-                </CardTitle>
-                <CardDescription>
-                  {group.description || "无说明"}
-                </CardDescription>
-                {!readOnly && (
-                  <CardAction className="flex gap-1">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        setEditingGroup(group);
-                        setGroupDialogOpen(true);
-                      }}
-                    >
-                      <Pencil className="size-4" />
-                      <span className="sr-only">编辑分组</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      disabled={isDeletingGroup || group.isDefault}
-                      onClick={() => {
-                        if (window.confirm(`确认删除分组“${group.name}”？`)) {
-                          deleteGroup({ id: group.id });
-                        }
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                      <span className="sr-only">删除分组</span>
-                    </Button>
-                  </CardAction>
-                )}
-              </CardHeader>
-              <CardContent className="grid gap-2 px-4 text-sm sm:grid-cols-2">
-                <span>最低套餐：{group.minPlan}</span>
-                <span>优先级：{group.priority}</span>
-                <span>
-                  用户选择：{group.isUserSelectable ? "允许" : "禁止"}
-                </span>
-                <span>
-                  内容安全：
-                  {group.contentSafety === "inherit"
-                    ? "继承"
-                    : group.contentSafety === "enabled"
-                      ? "开启"
-                      : "关闭"}
-                </span>
-                <span className="sm:col-span-2">
-                  子分组：
-                  {group.childGroupIds.length > 0
-                    ? group.childGroupIds
-                        .map((id) => groupNameById.get(id) ?? id)
-                        .join("、")
-                    : "无"}
-                </span>
-              </CardContent>
-            </Card>
-          ))}
-          {!isLoading && groups.length === 0 && (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground lg:col-span-2">
-              尚未创建分组。创建第一个分组后才能添加成员。
-            </div>
-          )}
-        </div>
-      </section>
+      <Tabs className="w-full" defaultValue="members">
+        <TabsList
+          aria-label="账号池管理内容"
+          className="h-auto flex-wrap justify-start bg-transparent p-0"
+        >
+          <TabsTrigger
+            className="gap-2 rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:shadow-none"
+            value="members"
+          >
+            供应商账号
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {members.length}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            className="gap-2 rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:shadow-none"
+            value="groups"
+          >
+            分组
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {groups.length}
+            </span>
+          </TabsTrigger>
+        </TabsList>
 
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-base font-semibold">统一成员</h3>
-          <p className="text-sm text-muted-foreground">
-            所有类型进入同一候选集合，再按系统配置的全局策略排序和原子获租。
-          </p>
-        </div>
-        <div className="grid gap-3 xl:grid-cols-2">
-          {members.map((member) => (
-            <Card key={member.id} className="min-w-0 gap-4 py-4">
-              <CardHeader className="px-4">
-                <CardTitle className="flex flex-wrap items-center gap-2">
-                  <span>{member.name}</span>
-                  <Badge variant="outline">{getMemberTypeLabel(member)}</Badge>
-                  <Badge variant={getMemberStatusVariant(member)}>
-                    {member.isEnabled ? member.status : "disabled"}
-                  </Badge>
-                </CardTitle>
-                <CardDescription>
-                  {member.groupIds
-                    .map((id) => groupNameById.get(id) ?? id)
-                    .join("、")}
-                </CardDescription>
-                <CardAction className="flex flex-wrap justify-end gap-1">
-                  {!readOnly && (
-                    <>
-                      <div className="flex items-center gap-2 px-2 text-sm">
-                        <span>启用</span>
-                        <Switch
-                          checked={member.isEnabled}
-                          disabled={
-                            isUpdatingMember ||
-                            isResettingMember ||
-                            isDeletingMember
-                          }
-                          aria-busy={
-                            isUpdatingMember && updatingMemberId === member.id
-                          }
-                          aria-label={`启用账号“${member.name}”`}
-                          onCheckedChange={(isEnabled) =>
-                            handleMemberEnabledChange(member, isEnabled)
-                          }
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={
-                          isUpdatingMember ||
-                          isResettingMember ||
-                          isDeletingMember
-                        }
-                        aria-busy={
-                          isResettingMember && resettingMemberId === member.id
-                        }
-                        onClick={() => {
-                          if (
-                            !window.confirm(
-                              `确认重置账号“${member.name}”的运行状态？\n\n这会清除健康降级、失败连击、冷却和最近错误，不会修改凭据、累计指标或运行中租约。`
-                            )
-                          ) {
-                            return;
-                          }
-                          setResettingMemberId(member.id);
-                          resetMemberStatus({ id: member.id });
-                        }}
-                      >
-                        {isResettingMember &&
-                        resettingMemberId === member.id ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : (
-                          <RotateCcw className="size-4" />
-                        )}
-                        重置状态
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        disabled={
-                          isUpdatingMember ||
-                          isResettingMember ||
-                          isDeletingMember
-                        }
-                        onClick={() => {
-                          setEditingMember(member);
-                          setMemberDialogOpen(true);
-                        }}
-                      >
-                        <Pencil className="size-4" />
-                        <span className="sr-only">编辑成员</span>
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        disabled={
-                          isUpdatingMember ||
-                          isDeletingMember ||
-                          isResettingMember
-                        }
-                        onClick={() => {
-                          if (
-                            window.confirm(`确认删除成员“${member.name}”？`)
-                          ) {
-                            deleteMember({ id: member.id });
-                          }
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                        <span className="sr-only">删除成员</span>
-                      </Button>
-                    </>
-                  )}
-                </CardAction>
-              </CardHeader>
-              <CardContent className="min-w-0 space-y-4 px-4">
-                <div className="grid gap-2 text-sm sm:grid-cols-3">
-                  <span>优先级 {member.priority}</span>
-                  <span>
-                    负载 {member.inflightCount}/{member.concurrency}
-                  </span>
-                  <span>累计获租 {member.leaseAcquiredCount}</span>
-                  <span>最近调用质量 {member.healthStatus}</span>
-                  <span>
-                    上次获租 {formatAdminTime(member.lastAcquiredAt, timeZone)}
-                  </span>
-                  <span>
-                    上次使用 {formatAdminTime(member.lastUsedAt, timeZone)}
-                  </span>
-                </div>
-                <MemberSupportedModels
-                  modelIds={normalizeBackendMemberModelIdsForDisplay(
-                    member.supportedModelIds
-                  )}
-                />
-                {isAdobeDirectMember(member) ? (
-                  <AdobeCredentialHealthView
-                    memberId={member.id}
-                    timeZone={timeZone}
-                    readOnly={readOnly}
-                  />
-                ) : null}
-                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>
-                    凭据：
-                    {member.type === "api"
-                      ? member.config.hasApiKey
-                        ? "已配置"
-                        : "缺失"
-                      : member.config.mode === "gateway"
-                        ? member.config.hasApiKey
-                          ? "已配置"
-                          : "缺失"
-                        : member.config.hasCookie
-                          ? "已配置"
-                          : "缺失"}
-                  </span>
-                  {member.type === "adobe" &&
-                    member.config.mode === "direct" && (
-                      <AdobeDirectAccountFacts
-                        config={member.config}
-                        timeZone={timeZone}
-                      />
-                    )}
-                  <span>
-                    失败冷却：{member.failureCooldownEnabled ? "开" : "关"}
-                  </span>
-                  <span>始终活跃：{member.alwaysActive ? "开" : "关"}</span>
-                </div>
-                {member.lastError && (
-                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-                    <p className="break-words">最近错误：{member.lastError}</p>
-                    <p className="mt-1 text-muted-foreground">
-                      发生时间：
-                      {formatAdminTime(member.lastErrorAt, timeZone)}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-          {!isLoading && members.length === 0 && (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground xl:col-span-2">
-              当前号池没有成员。
+        <TabsContent className="mt-4" value="members">
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold">供应商账号</h3>
+                <p className="text-sm text-muted-foreground">
+                  所有类型进入同一候选集合，再按全局策略排序和原子获租。
+                </p>
+              </div>
+              {!readOnly ? (
+                <Button onClick={openNewMember} type="button">
+                  <Plus />
+                  新增供应商账号
+                </Button>
+              ) : null}
             </div>
-          )}
-        </div>
-      </section>
+            <BackendMemberFilterBar
+              filters={memberFilters}
+              invalidDateRange={invalidMemberDateRange}
+              modelOptions={memberModelFilterOptions}
+              onChange={setMemberFilters}
+              resultCount={filteredMembers.length}
+              timeZone={timeZone}
+              totalCount={members.length}
+            />
+            {isLoading && members.length === 0 ? (
+              <PoolListLoadingState label="正在加载供应商账号" />
+            ) : (
+              <div className="grid gap-3 xl:grid-cols-2">
+                {filteredMembers.map((member) => (
+                  <BackendMemberCard
+                    groupNameById={groupNameById}
+                    key={member.id}
+                    member={member}
+                    mutationState={{
+                      isDeleting: isDeletingMember,
+                      isResetting: isResettingMember,
+                      isUpdating: isUpdatingMember,
+                      resettingMemberId,
+                      updatingMemberId,
+                    }}
+                    onDelete={() => deleteMember({ id: member.id })}
+                    onEdit={() => {
+                      setEditingMember(member);
+                      setMemberDialogOpen(true);
+                    }}
+                    onEnabledChange={(isEnabled) =>
+                      handleMemberEnabledChange(member, isEnabled)
+                    }
+                    onReset={() => {
+                      setResettingMemberId(member.id);
+                      resetMemberStatus({ id: member.id });
+                    }}
+                    readOnly={readOnly}
+                    timeZone={timeZone}
+                  />
+                ))}
+                {filteredMembers.length === 0 ? (
+                  <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground xl:col-span-2">
+                    {hasBackendMemberFilters(memberFilters)
+                      ? "没有符合当前筛选条件的供应商账号。"
+                      : "当前账号池没有供应商账号。"}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </section>
+        </TabsContent>
+
+        <TabsContent className="mt-4" value="groups">
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold">分组</h3>
+                <p className="text-sm text-muted-foreground">
+                  调度始终限制在请求指定分组内，默认分组最多一个。
+                </p>
+              </div>
+              {!readOnly ? (
+                <Button onClick={openNewGroup} type="button">
+                  <Plus />
+                  新增分组
+                </Button>
+              ) : null}
+            </div>
+            <BackendGroupFilterBar
+              name={groupNameFilter}
+              onChange={setGroupNameFilter}
+              resultCount={filteredGroups.length}
+              totalCount={groups.length}
+            />
+            {isLoading && groups.length === 0 ? (
+              <PoolListLoadingState label="正在加载账号池分组" />
+            ) : (
+              <div className="overflow-hidden rounded-lg border bg-background">
+                <BackendGroupList
+                  allGroups={groups}
+                  groups={filteredGroups}
+                  hasNameFilter={hasBackendGroupFilter(groupNameFilter)}
+                  isDeleting={isDeletingGroup}
+                  memberCountByGroup={memberCountByGroup}
+                  onDelete={(id) => deleteGroup({ id })}
+                  onEdit={(group) => {
+                    setEditingGroup(group);
+                    setGroupDialogOpen(true);
+                  }}
+                  readOnly={readOnly}
+                />
+              </div>
+            )}
+          </section>
+        </TabsContent>
+      </Tabs>
 
       <BackendGroupFormDialog
         open={groupDialogOpen}

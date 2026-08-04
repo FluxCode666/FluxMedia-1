@@ -711,6 +711,7 @@ describe("backend member service", () => {
       healthStatus: "healthy",
       inflightCount: 1,
       leaseAcquiredCount: 4,
+      createdAt: "2026-07-26T00:00:00.000Z",
       lastAcquiredAt: null,
       lastUsedAt: null,
       lastError: null,
