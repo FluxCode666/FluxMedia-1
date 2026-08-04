@@ -18,6 +18,7 @@ import Image from "next/image";
 import { useLocale } from "next-intl";
 import { useEffect, useState } from "react";
 import { getVideoInputsAction } from "../history-actions";
+import { AdminRequestJsonDetails } from "./admin-request-json-details";
 import { formatHistoryError } from "./history-error-copy";
 
 export type HistoryVideoDialogRecord = {
@@ -55,6 +56,7 @@ type HistoryVideoDialogProps = {
   onClose: () => void;
   open: boolean;
   record: HistoryVideoDialogRecord;
+  showAdminRequestJson?: boolean;
   timeZone: string;
 };
 
@@ -143,6 +145,7 @@ export function HistoryVideoDialog({
   onClose,
   open,
   record,
+  showAdminRequestJson = false,
   timeZone,
 }: HistoryVideoDialogProps) {
   const locale = useLocale();
@@ -342,6 +345,14 @@ export function HistoryVideoDialog({
                   </div>
                 ) : null}
               </dl>
+
+              {showAdminRequestJson ? (
+                <AdminRequestJsonDetails
+                  id={record.id}
+                  key={`video-request-${record.id}`}
+                  kind="video"
+                />
+              ) : null}
 
               <Separator />
 

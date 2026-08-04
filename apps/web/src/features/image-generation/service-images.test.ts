@@ -208,6 +208,7 @@ describe("Images API service", () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
     mocks.fetchMediaUpstream.mockResolvedValue(successfulImageResponse());
+    const onApiUpstreamRequestSnapshot = vi.fn();
 
     const result = await generateImage(
       createPoolApiConfig(`
@@ -216,7 +217,8 @@ request.adaptation = context.platformModelId + "->" + context.upstreamModelId;
 delete request.size;
 return request;
 `),
-      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" }
+      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
+      { onApiUpstreamRequestSnapshot }
     );
 
     expect(result.error).toBeUndefined();
@@ -232,6 +234,17 @@ return request;
       adaptation: "gpt-image-2->vendor-image-id",
     });
     expect(body).not.toHaveProperty("size");
+    expect(onApiUpstreamRequestSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "images.generate",
+        contentType: "application/json",
+        body: expect.objectContaining({
+          model: "vendor-image-id",
+          vendor_size: "1024x1024",
+          adaptation: "gpt-image-2->vendor-image-id",
+        }),
+      })
+    );
   });
 
   it("生成图片请求脚本失败时不调用上游", async () => {

@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { apiUpstreamRequestSnapshotSchema } from "../image-backend/api-upstream-script-contract";
 import { MAX_MEDIA_INPUT_COUNT } from "./media-contract";
 
 /** 历史记录产物类型。 */
@@ -79,6 +80,23 @@ export const adminHistoryListInputSchema = adminHistoryCursorFiltersSchema
   .safeExtend({
     cursor: z.string().min(1).max(4096).nullable().default(null),
     limit: z.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
+/** 管理员按记录类型与 ID 按需读取真实请求快照，避免把大字段塞入列表。 */
+export const adminHistoryRequestSnapshotInputSchema = z
+  .object({
+    id: z.string().trim().min(1).max(512),
+    kind: historyRecordTypeSchema,
+  })
+  .strict();
+
+/** 管理端详情读取结果；旧记录或非 API 供应商允许没有快照。 */
+export const adminHistoryRequestSnapshotOutputSchema = z
+  .object({
+    id: z.string().min(1).max(512),
+    kind: historyRecordTypeSchema,
+    snapshot: apiUpstreamRequestSnapshotSchema.nullable(),
   })
   .strict();
 
@@ -250,6 +268,12 @@ export type HistoryListInput = z.input<typeof historyListInputSchema>;
 export type HistoryRecord = z.infer<typeof historyRecordSchema>;
 export type HistoryListOutput = z.infer<typeof historyListOutputSchema>;
 export type AdminHistoryListInput = z.input<typeof adminHistoryListInputSchema>;
+export type AdminHistoryRequestSnapshotInput = z.input<
+  typeof adminHistoryRequestSnapshotInputSchema
+>;
+export type AdminHistoryRequestSnapshotOutput = z.infer<
+  typeof adminHistoryRequestSnapshotOutputSchema
+>;
 export type AdminHistoryRecord = z.infer<typeof adminHistoryRecordSchema>;
 export type AdminHistoryListOutput = z.infer<
   typeof adminHistoryListOutputSchema

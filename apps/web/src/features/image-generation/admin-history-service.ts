@@ -15,10 +15,13 @@ import {
 import {
   type AdminHistoryListOutput,
   type AdminHistoryRecord,
+  type AdminHistoryRequestSnapshotOutput,
   adminHistoryCursorFiltersSchema,
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
   adminHistoryRecordSchema,
+  adminHistoryRequestSnapshotInputSchema,
+  adminHistoryRequestSnapshotOutputSchema,
   type HistoryCreditDetails,
   type HistoryRecordStatus,
   type HistoryReferenceImage,
@@ -129,16 +132,29 @@ export interface AdminHistoryRepository {
     type: "image" | "video" | null;
     limit: number;
   }): Promise<Array<{ id: string; email: string }>>;
+  readRequestSnapshot(input: {
+    id: string;
+    kind: "image" | "video";
+  }): Promise<{ snapshot: unknown | null } | null>;
 }
 
 /** 管理端列表的稳定校验错误，不泄漏 cursor、管理员 ID 或内部 SQL。 */
 export class AdminHistoryServiceError extends Error {
-  readonly code = "validation_error" as const;
-
-  /** 创建可安全映射到 UOL 的固定校验错误。 */
-  constructor(message = "Invalid admin history query") {
+  /** 创建稳定服务错误，不包含管理员或生成记录 ID。 */
+  constructor(
+    readonly code: "not_found" | "validation_error" = "validation_error",
+    message = "Invalid admin history query"
+  ) {
     super(message);
     this.name = "AdminHistoryServiceError";
+  }
+
+  /** 创建不泄露记录存在性以外内部字段的缺失错误。 */
+  static notFound(): AdminHistoryServiceError {
+    return new AdminHistoryServiceError(
+      "not_found",
+      "History record not found"
+    );
   }
 }
 
@@ -431,5 +447,30 @@ export async function loadAdminHistoryRecords(
     userOptions,
     nextCursor,
     previousCursor,
+  });
+}
+
+/**
+ * 按需读取管理员详情中的真实上游请求快照。
+ *
+ * @param request 已由 UOL 角色门禁保护的不可信记录类型和 ID。
+ * @param dependencies 管理端历史仓储。
+ * @returns 脱敏快照；旧记录、非 API 供应商或异常旧元数据统一返回 null。
+ */
+export async function loadAdminHistoryRequestSnapshot(
+  request: { input: unknown },
+  dependencies: { repository: AdminHistoryRepository }
+): Promise<AdminHistoryRequestSnapshotOutput> {
+  const parsed = adminHistoryRequestSnapshotInputSchema.parse(request.input);
+  const row = await dependencies.repository.readRequestSnapshot(parsed);
+  if (!row) throw AdminHistoryServiceError.notFound();
+  const candidate =
+    adminHistoryRequestSnapshotOutputSchema.shape.snapshot.safeParse(
+      row.snapshot
+    );
+  return adminHistoryRequestSnapshotOutputSchema.parse({
+    id: parsed.id,
+    kind: parsed.kind,
+    snapshot: candidate.success ? candidate.data : null,
   });
 }

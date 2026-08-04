@@ -231,8 +231,8 @@ export async function startMediaTaskWorkers(): Promise<void> {
     try {
       await Promise.all([image.waitUntilReady(), video.waitUntilReady()]);
     } catch (error) {
-      state.image = undefined;
-      state.video = undefined;
+      delete state.image;
+      delete state.video;
       await Promise.allSettled([image.close(true), video.close(true)]);
       throw error;
     }
@@ -240,7 +240,7 @@ export async function startMediaTaskWorkers(): Promise<void> {
   try {
     await state.startPromise;
   } catch (error) {
-    state.startPromise = undefined;
+    delete state.startPromise;
     throw error;
   }
 }
@@ -254,7 +254,7 @@ export async function startMediaTaskWorkers(): Promise<void> {
 export async function closeMediaTaskWorkers(force = false): Promise<void> {
   const runtimeGlobal = globalThis as MediaTaskWorkerGlobal;
   const state = runtimeGlobal.__fluxmediaMediaTaskWorkers;
-  runtimeGlobal.__fluxmediaMediaTaskWorkers = undefined;
+  delete runtimeGlobal.__fluxmediaMediaTaskWorkers;
   if (!state) return;
   await Promise.allSettled([
     state.image?.close(force),

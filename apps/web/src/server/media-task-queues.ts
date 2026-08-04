@@ -168,7 +168,7 @@ export async function enqueueVideoTask(
 export async function closeMediaTaskQueues(): Promise<void> {
   const runtimeGlobal = globalThis as MediaTaskQueueGlobal;
   const queues = runtimeGlobal.__fluxmediaMediaTaskQueues;
-  runtimeGlobal.__fluxmediaMediaTaskQueues = undefined;
+  delete runtimeGlobal.__fluxmediaMediaTaskQueues;
   if (!queues) return;
   await Promise.all([queues.image.close(), queues.video.close()]);
 }

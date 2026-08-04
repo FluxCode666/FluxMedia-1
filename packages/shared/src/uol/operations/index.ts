@@ -56,7 +56,10 @@ export {
   homepageGenerationSlaStatsOutputSchema,
   homepageSlaVisibilityOutputSchema,
 } from "./homepage-reliability";
-export { imageGenerate } from "./image-generation";
+export {
+  imageGenerate,
+  imageGetAdminHistoryRequestSnapshot,
+} from "./image-generation";
 export {
   type ModelMarketplacePublicCatalogOutput,
   modelMarketplaceListPublicModels,

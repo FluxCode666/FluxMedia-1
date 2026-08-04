@@ -2,6 +2,7 @@ import type {
   ApiModelMapping,
   ApiUpstreamAdapterDraft,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
+import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 
 export interface GenerateImageParams {
@@ -77,6 +78,10 @@ export interface PartialImageResult {
 
 export interface ImageGenerationCallbacks {
   onPartialImage?: (image: PartialImageResult) => Promise<void> | void;
+  /** API 请求脚本完成后、真正外呼前产生的脱敏最终请求快照。 */
+  onApiUpstreamRequestSnapshot?: (
+    snapshot: ApiUpstreamRequestSnapshot
+  ) => Promise<void> | void;
 }
 
 export type ImageQuality = "auto" | "low" | "medium" | "high";

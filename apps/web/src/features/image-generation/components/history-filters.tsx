@@ -47,6 +47,11 @@ type HistoryFiltersProps = {
 
 const ALL_VALUE = "all";
 
+// 全局页比个人页多一个用户条件；auto-fit 按筛选容器的实际宽度重新分列，侧边栏
+// 压缩内容区时会把放不下的条件排到下一行，避免固定六列横向溢出。
+const GLOBAL_HISTORY_FILTER_GRID =
+  "xl:grid-cols-[repeat(auto-fit,minmax(190px,1fr))]";
+
 /**
  * 渲染日期、模型、状态与产物类型筛选。
  *
@@ -200,7 +205,7 @@ export function HistoryFilters({
         className={cn(
           "grid gap-3 md:grid-cols-2 xl:items-end",
           showUserEmailFilter
-            ? "xl:grid-cols-[minmax(220px,1.2fr)_minmax(190px,1fr)_minmax(220px,1fr)_150px_140px_auto]"
+            ? GLOBAL_HISTORY_FILTER_GRID
             : "xl:grid-cols-[minmax(280px,1.4fr)_minmax(190px,1fr)_150px_140px_auto]"
         )}
       >

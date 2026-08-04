@@ -1,9 +1,9 @@
 /**
- * Next.js standalone 中 API 上游脚本 Worker 资产断言。
+ * Next.js standalone 中 API 上游脚本 Worker 与媒体 MQ 资产断言。
  *
  * 使用方：镜像构建和发布门。脚本只读取构建目录，确认 Worker 入口、迁移预检
- * 所需 PostgreSQL 客户端、冻结迁移，以及 QuickJS JS 桥接和 WASM 位于可解析
- * 路径；容器运行 smoke 由部署验证在 Node 22 中另行执行。
+ * 所需 PostgreSQL 客户端、冻结迁移、QuickJS、BullMQ 与 ioredis 位于可解析路径；
+ * 容器运行 smoke 由部署验证在 Node 22 中另行执行。
  */
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -87,6 +87,15 @@ const requiredAssets = [
       file ===
       `${standaloneWebRoot}/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm`,
   },
+  {
+    name: "BullMQ Worker 入口",
+    matches: (file) =>
+      file.endsWith("/bullmq/dist/cjs/classes/worker.js"),
+  },
+  {
+    name: "ioredis 客户端入口",
+    matches: (file) => file.endsWith("/ioredis/built/Redis.js"),
+  },
 ];
 
 const missing = requiredAssets
@@ -95,8 +104,8 @@ const missing = requiredAssets
 
 if (missing.length > 0) {
   throw new Error(
-    `standalone 缺少 API 上游 Worker 资产：${missing.join("、")}`
+    `standalone 缺少 API 上游 Worker 或媒体 MQ 资产：${missing.join("、")}`
   );
 }
 
-process.stdout.write("API 上游脚本 Worker standalone 资产断言通过\n");
+process.stdout.write("API 上游脚本 Worker 与媒体 MQ standalone 资产断言通过\n");

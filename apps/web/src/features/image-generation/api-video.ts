@@ -6,7 +6,10 @@
  * 模块不负责账号调度、计费、数据库状态推进或对象存储。
  */
 import { resolveApiUpstreamModelId } from "@repo/shared/image-backend/api-upstream-adaptation";
-import type { ApiUpstreamResponseResult } from "@repo/shared/image-backend/api-upstream-script-contract";
+import type {
+  ApiUpstreamRequestSnapshot,
+  ApiUpstreamResponseResult,
+} from "@repo/shared/image-backend/api-upstream-script-contract";
 
 import {
   ApiUpstreamExecutionError,
@@ -393,6 +396,9 @@ export async function submitApiVideoRequest(
     resolution: string;
     effectiveAudio: boolean;
     negativePrompt?: string | null;
+    onRequestSnapshot?: (
+      snapshot: ApiUpstreamRequestSnapshot
+    ) => Promise<void> | void;
     signal?: AbortSignal;
   } & ApiVideoSourceInputs
 ): Promise<ApiVideoSubmission | ApiVideoStageError> {
@@ -482,6 +488,7 @@ export async function submitApiVideoRequest(
       contentType: "application/json",
       body: standardBody,
       opaqueValues,
+      onRequestSnapshot: params.onRequestSnapshot,
       signal: params.signal,
       maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
       observability: {

@@ -27,7 +27,9 @@ docker-compose.yml
 !.env.production.example
 
 # Storage (mounted at runtime)
-storage/
+/storage/
+/apps/web/storage/
+/.fluxMedia/
 
 # Documentation
 *.md
