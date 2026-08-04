@@ -108,7 +108,7 @@ describe("createStaticVideoCreateModels", () => {
     ).toMatchObject({ maxReferenceImages: 10 });
   });
 
-  it("为纯参考图模型选择 references，其余模型保持 frames", () => {
+  it("为支持参考图的模型选择 references，其余模型保持 frames", () => {
     const models = createStaticVideoCreateModels();
 
     expect(
@@ -119,6 +119,11 @@ describe("createStaticVideoCreateModels", () => {
     expect(
       resolveDefaultVideoCreateInputMode(
         models.find((item) => item.model === "seedance2")
+      )
+    ).toBe("references");
+    expect(
+      resolveDefaultVideoCreateInputMode(
+        models.find((item) => item.model === "sora2")
       )
     ).toBe("frames");
     expect(resolveDefaultVideoCreateInputMode(undefined)).toBe("frames");

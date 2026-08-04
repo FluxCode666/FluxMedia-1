@@ -1,7 +1,7 @@
 /**
  * 视频创作面板组件级回归测试。
  *
- * 使用真实 React 根节点验证能力查询未完成时 fail closed，以及纯参考图模型在动态
+ * 使用真实 React 根节点验证能力查询未完成时 fail closed，以及参考图模型在动态
  * 能力返回后直接进入 references 模式；测试不连接数据库或真实视频供应商。
  */
 // @vitest-environment jsdom

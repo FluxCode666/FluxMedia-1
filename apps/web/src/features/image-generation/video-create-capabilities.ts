@@ -119,16 +119,14 @@ export function createStaticVideoCreateModels(): VideoCreateModel[] {
  * 为模型选择可用的默认输入模式。
  *
  * @param model - 静态目录或能力接口投影出的模型；无模型时按帧模式占位。
- * @returns 纯参考图模型返回 references，其余模型返回 frames。
+ * @returns 支持参考图的模型返回 references，其余模型返回 frames。
  * @sideEffects 无。
  * @failure 不抛错；无输入能力的模型仍返回 frames，但面板不会渲染输入控件。
  */
 export function resolveDefaultVideoCreateInputMode(
   model: VideoCreateModel | undefined
 ): VideoCreateInputMode {
-  return model && model.maxFrameImages === 0 && model.maxReferenceImages > 0
-    ? "references"
-    : "frames";
+  return model && model.maxReferenceImages > 0 ? "references" : "frames";
 }
 
 /**
