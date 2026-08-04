@@ -4,6 +4,7 @@
  * 职责：锁定失败分类、5/15 分钟复检、第三次隔离、严格诊断 allowlist 和
  * claim/CAS 版本保护；测试不执行 Adobe 网络请求或数据库写入。
  */
+import { QuotaExhaustedError } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -169,6 +170,30 @@ describe("Adobe 凭据失败分类", () => {
       kind: "platform_failure",
       category: "proxy_not_configured",
     });
+  });
+
+  it("额度耗尽不属于凭据故障，不推进连续失败计数", () => {
+    const failure = classifyAdobeCredentialFailure(
+      new QuotaExhaustedError("Adobe quota exhausted", {
+        statusCode: 429,
+        adobeErrorCode: "taste_exhausted",
+      })
+    );
+    expect(failure).toMatchObject({
+      kind: "platform_failure",
+      category: "quota_exhausted",
+    });
+    expect(
+      reduceAdobeCredentialHealth({
+        state: state(),
+        now,
+        outcome: {
+          kind: failure.kind,
+          failureProfiles: [],
+          diagnostic: failure.diagnostic,
+        },
+      })
+    ).toEqual(state());
   });
 });
 

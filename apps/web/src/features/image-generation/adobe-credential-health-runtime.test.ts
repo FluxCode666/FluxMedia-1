@@ -49,7 +49,10 @@ vi.mock("./adobe-credential-notifications", () => ({
   bestEffortDrainAdobeCredentialNotifications: runtime.drain,
 }));
 
-import { runAdobeCredentialHealthScan } from "./adobe-credential-health-runtime";
+import {
+  checkAdobeCredentialHealthPassively,
+  runAdobeCredentialHealthScan,
+} from "./adobe-credential-health-runtime";
 
 const NOW = new Date("2026-08-04T00:00:00.000Z");
 
@@ -149,5 +152,35 @@ describe("Adobe 凭据健康运行时", () => {
       )
     ).toBe(true);
     expect(JSON.stringify(compiled)).not.toContain("secret-cookie");
+  });
+
+  it("真实调用触发的评估以 passive 来源写入同一健康状态机", async () => {
+    runtime.transactionResponses.push(
+      (query: unknown) => {
+        const compiled = new PgDialect().sqlToQuery(query as SQL);
+        runtime.claimToken =
+          compiled.params.find(
+            (value): value is string =>
+              typeof value === "string" &&
+              /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value)
+          ) ?? "";
+        return [healthRow({ claim_token: runtime.claimToken })];
+      },
+      () => [healthRow({ claim_token: runtime.claimToken })],
+      [],
+      []
+    );
+
+    await expect(
+      checkAdobeCredentialHealthPassively("member-1")
+    ).resolves.toMatchObject({ disposition: "accepted" });
+
+    const compiled = runtime.queries.map((query) =>
+      new PgDialect().sqlToQuery(query)
+    );
+    const evaluationInsert = compiled.find((query) =>
+      query.sql.includes("INSERT INTO adobe_credential_evaluation")
+    );
+    expect(evaluationInsert?.params).toContain("passive");
   });
 });

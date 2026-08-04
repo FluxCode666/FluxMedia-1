@@ -272,7 +272,13 @@ export function classifyAdobeCredentialFailure(
         ? { statusCode: status, message }
         : error
   );
-  return { kind: "member_failure", category, diagnostic };
+  // WHY：额度耗尽证明请求已到达账号资源边界，不代表 Cookie 或双 Profile 身份失效。
+  // 复用不推进凭据失败计数的中性分支，额度状态继续由独立余额字段展示。
+  const kind =
+    category === "quota_exhausted"
+      ? ("platform_failure" as const)
+      : ("member_failure" as const);
+  return { kind, category, diagnostic };
 }
 
 /**

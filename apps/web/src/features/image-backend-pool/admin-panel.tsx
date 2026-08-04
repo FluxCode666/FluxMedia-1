@@ -137,17 +137,6 @@ function AdobeDirectAccountFacts({
     config.creditsAvailable !== null || config.creditsTotal !== null;
   return (
     <>
-      <span>Adobe 凭据：{config.credentialStatus}</span>
-      <span>凭据刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}</span>
-      {config.fireflyCredentialStatus && (
-        <span>历史 Firefly 凭据：{config.fireflyCredentialStatus}</span>
-      )}
-      {config.fireflyLastRefreshAt && (
-        <span>
-          历史 Firefly 刷新：
-          {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
-        </span>
-      )}
       <span>Adobe 账号：{config.displayName || config.email || "未识别"}</span>
       <span>
         {config.creditsError
@@ -162,6 +151,26 @@ function AdobeDirectAccountFacts({
       <span>
         余额更新：{formatAdminTime(config.creditsUpdatedAt, timeZone)}
       </span>
+      <details className="basis-full rounded-md border p-2">
+        <summary className="cursor-pointer">
+          查看缓存 Token 状态（不代表账号凭据健康）
+        </summary>
+        <div className="mt-1 grid gap-1 sm:grid-cols-2">
+          <span>Express Token：{config.credentialStatus}</span>
+          <span>
+            Express 刷新：{formatAdminTime(config.lastRefreshAt, timeZone)}
+          </span>
+          {config.fireflyCredentialStatus && (
+            <span>Firefly Token：{config.fireflyCredentialStatus}</span>
+          )}
+          {config.fireflyLastRefreshAt && (
+            <span>
+              Firefly 刷新：
+              {formatAdminTime(config.fireflyLastRefreshAt, timeZone)}
+            </span>
+          )}
+        </div>
+      </details>
       {config.lastRefreshError && (
         <details className="basis-full rounded-md border border-destructive/30 p-2 text-destructive">
           <summary className="cursor-pointer">
@@ -675,7 +684,7 @@ export function ImageBackendPoolAdminPanel({
                     负载 {member.inflightCount}/{member.concurrency}
                   </span>
                   <span>累计获租 {member.leaseAcquiredCount}</span>
-                  <span>健康 {member.healthStatus}</span>
+                  <span>最近调用质量 {member.healthStatus}</span>
                   <span>
                     上次获租 {formatAdminTime(member.lastAcquiredAt, timeZone)}
                   </span>

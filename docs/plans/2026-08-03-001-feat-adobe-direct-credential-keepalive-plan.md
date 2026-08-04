@@ -46,6 +46,7 @@ Cookie 换短期 Token 可以维持部分会话活跃，但不是 Adobe 对网�
 ### Key Decisions
 
 - **验证 Express 与 Firefly 双 Profile。** (session-settled: user-approved — chosen over 只刷新 Express Token: 不同 Adobe 媒体链路依赖不同 Profile，单 Profile 成功不能证明成员完整可用。) Governs R1, R2, R4, R14。
+- **额度与凭据健康分离。** (session-settled: user-directed — chosen over 将额度耗尽计为凭据失败: 额度为零不代表 Cookie、Token 或账号身份无效。) Governs R5-R9, R28。
 - **连续三次失败才隔离成员。** (session-settled: user-directed — chosen over 任意单次失败即停用: 需要容忍网络、代理或 Adobe 的短暂故障。) Governs R5-R9。
 - **隔离是独立凭据状态。** (session-settled: user-approved — chosen over 修改管理员 `isEnabled`: 运营侧需要区分人工停用和系统凭据故障，恢复凭据不能覆盖人工选择。) Governs R7, R16, R17, R31, R33, R34。
 - **邮件与 Webhook 分渠道提交。** (session-settled: user-directed — chosen over 只使用单一告警渠道: 运营人员需要主动获知故障，单渠道故障不能阻止隔离或恢复。) Governs R10-R13, R23-R27。
@@ -75,7 +76,7 @@ Cookie 换短期 Token 可以维持部分会话活跃，但不是 Adobe 对网�
 - R5. 每轮主动、被动或管理员手动健康评估最多为成员产生一次成功或失败结果；双 Profile 不得在同一轮累计两次。
 - R6. 第一次评估失败后必须在 5 分钟后复检，第二次连续失败后必须在 15 分钟后复检；完整双 Profile 成功后连续失败计数归零。
 - R7. 成员第三次连续健康评估失败时必须进入凭据故障隔离状态，停止获得新调度租约；隔离不得改写管理员启用选择，也不得把已接受任务切换到其他成员或重复提交。
-- R8. 计入成员连续失败的原因包括 Adobe 拒绝 Cookie 或 Token、任一 Profile 失败、Adobe 超时、限流、临时错误以及已配置代理的网络或上游转发故障。
+- R8. 计入成员连续失败的原因包括 Adobe 拒绝 Cookie 或 Token、任一 Profile 失败、Adobe 超时、限流、临时错误以及已配置代理的网络或上游转发故障；额度耗尽必须作为独立可用性状态展示，不推进凭据失败计数或隔离。
 - R9. 代理未配置、数据库故障、调度器未运行、任务未认领等平台故障不得推进成员失败计数；这些情况必须显示为任务失败或探测失约。
 
 **告警与可观测性**

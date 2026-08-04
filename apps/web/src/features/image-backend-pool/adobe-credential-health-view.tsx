@@ -23,8 +23,10 @@ import {
 } from "./actions";
 import {
   formatAdobeHealthTime,
+  getAdobeCredentialProfileViews,
   getAdobeHealthDiagnosticEntries,
   getAdobeHealthStatusView,
+  getEffectiveAdobeHealthStatus,
 } from "./adobe-credential-health-view-model";
 
 /** 展示单个 Adobe direct 成员的健康状态和管理员动作。 */
@@ -83,7 +85,14 @@ export function AdobeCredentialHealthView({
   }, [loadHealth, memberId, readOnly]);
 
   if (readOnly) return null;
-  const statusView = health ? getAdobeHealthStatusView(health.status) : null;
+  const effectiveStatus = health ? getEffectiveAdobeHealthStatus(health) : null;
+  const statusView = effectiveStatus
+    ? getAdobeHealthStatusView(effectiveStatus)
+    : null;
+  const profileViews =
+    health && effectiveStatus
+      ? getAdobeCredentialProfileViews({ ...health, status: effectiveStatus })
+      : null;
   const diagnosticEntries = getAdobeHealthDiagnosticEntries(
     health?.diagnostic ?? null
   );
@@ -113,7 +122,7 @@ export function AdobeCredentialHealthView({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
           <ShieldCheck className="size-4 text-muted-foreground" />
-          Adobe 凭据健康
+          账号凭据状态
           {statusView ? (
             <Badge variant={statusView.variant}>{statusView.label}</Badge>
           ) : (
@@ -166,6 +175,8 @@ export function AdobeCredentialHealthView({
 
       {health ? (
         <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
+          <span>Express 凭据：{profileViews?.express}</span>
+          <span>Firefly 凭据：{profileViews?.firefly}</span>
           <span>连续失败：{health.consecutiveFailures}</span>
           <span>
             失败 Profile：

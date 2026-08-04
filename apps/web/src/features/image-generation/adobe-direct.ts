@@ -55,6 +55,7 @@ import {
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import { runAdobeBeforeAcceptanceWithAuthRetry } from "./adobe-auth-retry";
+import { synchronizeAdobeCredentialHealthAfterRuntimeStatus } from "./adobe-credential-passive-health";
 import {
   type AdobeVideoSourceInputs,
   prepareAndUploadAdobeVideoSourceInputs,
@@ -342,7 +343,7 @@ async function refreshMemberCredential(
             fireflyLastRefreshError: message.slice(0, 500),
             fireflyConsecutiveFailures: sql`${imageBackendMemberAdobeConfig.fireflyConsecutiveFailures} + 1`,
           };
-    await db
+    const persistedFailures = await db
       .update(imageBackendMemberAdobeConfig)
       .set({
         ...failureValues,
@@ -353,7 +354,14 @@ async function refreshMemberCredential(
           eq(imageBackendMemberAdobeConfig.memberId, memberId),
           eq(imageBackendMemberAdobeConfig.cookie, credential.cookie)
         )
-      );
+      )
+      .returning({ memberId: imageBackendMemberAdobeConfig.memberId });
+    if (persistedFailures[0]) {
+      await synchronizeAdobeCredentialHealthAfterRuntimeStatus({
+        memberId,
+        status: "error",
+      });
+    }
     logError(error, { source: "adobe-direct-refresh", memberId, profile });
     return null;
   }
@@ -491,7 +499,7 @@ async function markCredentialStatus(
     profile === "express"
       ? imageBackendMemberAdobeConfig.accessToken
       : imageBackendMemberAdobeConfig.fireflyAccessToken;
-  await db
+  const persistedStatuses = await db
     .update(imageBackendMemberAdobeConfig)
     .set({
       ...values,
@@ -504,7 +512,14 @@ async function markCredentialStatus(
             eq(tokenColumn, expectedToken)
           )
         : eq(imageBackendMemberAdobeConfig.memberId, memberId)
-    );
+    )
+    .returning({ memberId: imageBackendMemberAdobeConfig.memberId });
+  if (persistedStatuses[0]) {
+    await synchronizeAdobeCredentialHealthAfterRuntimeStatus({
+      memberId,
+      status,
+    });
+  }
 }
 
 /**
