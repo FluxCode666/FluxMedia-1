@@ -92,6 +92,10 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
     );
+    create table adobe_credential_health (
+      member_id text primary key references image_backend_member(id),
+      status text not null
+    );
     insert into image_backend_group (id) values ('group-a')
   `);
   return schemaName;
