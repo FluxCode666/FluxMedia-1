@@ -1,12 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import {
-  canUsePlanCapability,
-  getPlanLimits,
-  MAX_PLAN_BATCH_COUNT,
-} from "@repo/shared/subscription/services/plan-capabilities";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
+import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -30,7 +25,6 @@ import {
   toOpenAIImagesResponse,
   wantsImageStreamResponse,
 } from "@/features/external-api/images";
-import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeOutputCompression,
@@ -60,7 +54,6 @@ const externalImageGenerationSchema = z
     thinking: z
       .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
       .optional(),
-    n: z.number().int().min(1).max(MAX_PLAN_BATCH_COUNT).optional(),
     size: z
       .string()
       .optional()
@@ -194,27 +187,9 @@ export const postExternalImageGenerations = withApiLogging(
     // 上游模型（如 nano-banana-*、grok-*），OAuth/平台后端仍在管线内保持白名单。
     const imageModel = parsed.data.model;
 
-    const plan = await getUserPlan(auth.userId);
-    const limits = await getPlanLimits(plan.plan);
-    const count = parsed.data.n || 1;
-    if (
-      count > 1 &&
-      !(await canUsePlanCapability(plan.plan, "imageGeneration.batch"))
-    ) {
-      return openAIImageError(
-        "Batch image generation is not enabled for this plan.",
-        403,
-        "insufficient_plan"
-      );
-    }
-    if (count > limits.maxBatchCount) {
-      return openAIImageError(
-        `n must be between 1 and ${limits.maxBatchCount}.`
-      );
-    }
     if (
       wantsImageStreamResponse(request, parsed.data.stream) &&
-      !(await canUsePlanCapability(plan.plan, "externalApi.streaming"))
+      !(await canUsePlanCapability(auth.plan, "externalApi.streaming"))
     ) {
       return openAIImageError(
         "External API streaming is not enabled for this plan.",
@@ -231,9 +206,6 @@ export const postExternalImageGenerations = withApiLogging(
     );
     if (useAsync && useStreamResponse) {
       return openAIImageError("async cannot be used with stream.");
-    }
-    if (useAsync && count > 1) {
-      return openAIImageError("Async image generation accepts one image only.");
     }
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url) {
@@ -291,51 +263,42 @@ export const postExternalImageGenerations = withApiLogging(
 
     if (useStreamResponse) {
       return createExternalImageStreamResponse(async (emit) => {
-        await runBatchImageGeneration({
-          count,
-          concurrency: limits.imageGenerationConcurrency,
-          run: runGeneration,
-          callbacks: (index) => ({
-            onPartialImage: async (image) => {
-              await emit({
-                event: "image_generation.partial_image",
-                data: toPartialPayload(image, index),
-              });
-            },
-          }),
-          onResult: async (result, index) => {
-            if (result.error) {
-              const errorPayload = toLoggedOpenAIErrorPayload(
-                result.error,
-                {
-                  route: "/v1/images/generations",
-                  stream: true,
-                  index,
-                  model: imageModel,
-                  size: input.size,
-                },
-                {
-                  generationId: result.generationId,
-                  creditsConsumed: result.creditsConsumed,
-                }
-              );
-              await emit({
-                event: "error",
-                data: toExternalErrorStreamData(result.error, errorPayload),
-              });
-              return;
-            }
-
+        const result = await runGeneration(randomUUID(), {
+          onPartialImage: async (image) => {
             await emit({
-              event: "image_generation.completed",
-              data: await toStreamCompletedPayload(
-                request,
-                result,
-                responseFormat,
-                index
-              ),
+              event: "image_generation.partial_image",
+              data: toPartialPayload(image, 0),
             });
           },
+        });
+        if (result.error) {
+          const errorPayload = toLoggedOpenAIErrorPayload(
+            result.error,
+            {
+              route: "/v1/images/generations",
+              stream: true,
+              model: imageModel,
+              size: input.size,
+            },
+            {
+              generationId: result.generationId,
+              creditsConsumed: result.creditsConsumed,
+            }
+          );
+          await emit({
+            event: "error",
+            data: toExternalErrorStreamData(result.error, errorPayload),
+          });
+          return;
+        }
+        await emit({
+          event: "image_generation.completed",
+          data: await toStreamCompletedPayload(
+            request,
+            result,
+            responseFormat,
+            0
+          ),
         });
       });
     }
@@ -374,14 +337,10 @@ export const postExternalImageGenerations = withApiLogging(
       async () => {
         const created = Math.floor(Date.now() / 1000);
 
-        const results = await runBatchImageGeneration({
-          count,
-          concurrency: limits.imageGenerationConcurrency,
-          run: (generationId) => runGeneration(generationId),
-        });
+        const result = await runGeneration(randomUUID());
         return await toOpenAIImagesResponse(
           request,
-          results,
+          result,
           responseFormat,
           created,
           {

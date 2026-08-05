@@ -42,6 +42,16 @@ const mediaUsageGovernanceMigrationStatements = readFileSync(
   .split("--> statement-breakpoint")
   .map((statement) => statement.trim())
   .filter((statement) => statement.length > 0);
+const imageBatchRetirementMigrationStatements = readFileSync(
+  new URL(
+    "../../database/drizzle/0084_remove_image_batch_contract.sql",
+    import.meta.url
+  ),
+  "utf8"
+)
+  .split("--> statement-breakpoint")
+  .map((statement) => statement.trim())
+  .filter((statement) => statement.length > 0);
 const runPrefix = `release-governance-gate-integration-${randomUUID()}`;
 const relayUserId = `${runPrefix}-relay-user`;
 const overrideUserId = `${runPrefix}-override-user`;
@@ -404,6 +414,23 @@ async function applyMediaUsageGovernanceMigration(
   client: PoolClient | Pool
 ): Promise<void> {
   for (const statement of mediaUsageGovernanceMigrationStatements) {
+    await client.query(statement);
+  }
+}
+
+/**
+ * 在当前连接中逐句执行 0084，验证历史 count=1 归一化与批量阻断。
+ *
+ * @param client 已由调用方控制事务边界的 PostgreSQL 连接。
+ * @returns 全部 0084 语句执行完成时完成的 Promise。
+ * @throws 活跃任务、count>1、非法 count 或 DDL 失败时原样抛错。
+ * @sideEffect 规范图片任务 JSON、摘要并重建批量字段 CHECK。
+ * @boundary 不自行提交；调用方必须在隔离数据库中执行并负责回滚。
+ */
+async function applyImageBatchRetirementMigration(
+  client: PoolClient | Pool
+): Promise<void> {
+  for (const statement of imageBatchRetirementMigrationStatements) {
     await client.query(statement);
   }
 }
@@ -1098,6 +1125,92 @@ describe("release governance gate PostgreSQL integration", () => {
     }
   });
 
+  it("0084 删除历史 count=1、重算 md5 并可重复执行", async () => {
+    if (!pool) throw new Error("集成测试尚未初始化");
+    const client = await pool.connect();
+    const generationId = `${runPrefix}-single-count-generation`;
+    const taskId = `${runPrefix}-single-count-task`;
+    const legacyInput = {
+      ...createStoredImageInput(generationId),
+      count: 1,
+    };
+    try {
+      await client.query("begin");
+      await client.query(
+        `alter table image_async_task
+         drop constraint image_async_task_batch_count_retired_check`
+      );
+      await client.query(
+        `insert into "user" (id, name, email)
+         values ($1, 'Image batch migration', $2)`,
+        [mediaUsageUserId, `${mediaUsageUserId}@example.test`]
+      );
+      await seedLegacyImageAsyncTask(client, {
+        generationIds: [generationId],
+        generationInputs: [legacyInput],
+        id: taskId,
+      });
+
+      await applyMediaUsageGovernanceMigration(client);
+      await applyImageBatchRetirementMigration(client);
+      await applyImageBatchRetirementMigration(client);
+
+      const result = await client.query<{
+        generation_input: Record<string, unknown>;
+        generation_inputs: Array<Record<string, unknown>>;
+        input_digest: string;
+      }>(
+        `select generation_input, generation_inputs, input_digest
+         from image_async_task
+         where id = $1`,
+        [taskId]
+      );
+      const normalized = createStoredImageInput(generationId);
+      expect(result.rows[0]).toMatchObject({
+        generation_input: normalized,
+        generation_inputs: [normalized],
+      });
+      expect(result.rows[0]?.generation_input).not.toHaveProperty("count");
+      expect(result.rows[0]?.input_digest).toMatch(/^md5:[0-9a-f]{32}$/);
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      client.release();
+    }
+  });
+
+  it("0084 遇到历史 count>1 时整体阻断", async () => {
+    if (!pool) throw new Error("集成测试尚未初始化");
+    const client = await pool.connect();
+    const generationId = `${runPrefix}-batch-count-generation`;
+    try {
+      await client.query("begin");
+      await client.query(
+        `alter table image_async_task
+         drop constraint image_async_task_batch_count_retired_check`
+      );
+      await client.query(
+        `insert into "user" (id, name, email)
+         values ($1, 'Image batch blocker', $2)`,
+        [mediaUsageUserId, `${mediaUsageUserId}@example.test`]
+      );
+      await seedLegacyImageAsyncTask(client, {
+        generationIds: [generationId],
+        generationInputs: [
+          { ...createStoredImageInput(generationId), count: 2 },
+        ],
+        id: `${runPrefix}-batch-count-task`,
+      });
+
+      await applyMediaUsageGovernanceMigration(client);
+      await expect(applyImageBatchRetirementMigration(client)).rejects.toThrow(
+        /invalid=1/
+      );
+    } finally {
+      await client.query("rollback").catch(() => undefined);
+      client.release();
+    }
+  });
+
   it.each([
     "queued",
     "running",
@@ -1533,7 +1646,7 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(unchanged.stdout).toContain(
       "media_usage_mq_delivery_version_valid=true\n"
     );
-    expect(unchanged.stdout).toContain("media_usage_constraint_count=7\n");
+    expect(unchanged.stdout).toContain("media_usage_constraint_count=8\n");
     expect(unchanged.stdout).toContain("media_usage_partial_index_count=6\n");
     expect(unchanged.stdout).toContain("media_usage_enabled_trigger_count=2\n");
 
@@ -1595,7 +1708,7 @@ describe("release governance gate PostgreSQL integration", () => {
         drop column image_generation_concurrency_override`,
     },
     {
-      evidence: "media_usage_constraint_count=6\n",
+      evidence: "media_usage_constraint_count=7\n",
       name: "CHECK 缺失",
       sql: `alter table image_async_task
         drop constraint image_async_task_due_state_check`,

@@ -52,7 +52,6 @@ const imageGenerateCommonFields = {
   hdRepair: z.boolean().optional(),
   blockRepair: z.boolean().optional(),
   repairPrompt: z.string().max(8_000).optional(),
-  count: z.number().int().positive().max(10_000).optional(),
   generationId: z.string().trim().min(1).max(128),
   /** 本次请求明确选中的平台媒体后端分组；服务端仍会再次授权。 */
   backendGroupId: z.string().trim().min(1).max(128).optional(),
@@ -145,13 +144,6 @@ export const imageEnqueueAsyncInputSchema = z
   .strict()
   .superRefine((input, context) => {
     const generationInput = input.generationInput;
-    if (generationInput.count !== undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["generationInput", "count"],
-        message: "Async image tasks do not accept batch count",
-      });
-    }
     if (generationInput.operation !== "generate") {
       const references =
         generationInput.operation === "mask"
@@ -221,15 +213,9 @@ function deriveImageCapabilities(
   const external = isExternalApiKeyPrincipal(principal);
   const operationCapabilities =
     IMAGE_CAPABILITIES_BY_OPERATION[input.operation];
-  const capabilities = [
+  return [
     external ? operationCapabilities.external : operationCapabilities.internal,
   ];
-  if ((input.count ?? 1) > 1) {
-    capabilities.push(
-      external ? "externalApi.images.batch" : "imageGeneration.batch"
-    );
-  }
-  return capabilities;
 }
 
 // ---------------------------------------------------------------------------

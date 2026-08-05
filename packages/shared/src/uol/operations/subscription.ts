@@ -376,7 +376,6 @@ defineOperation({
         queuePriority: z.string(),
         imageGenerationConcurrency: z.number(),
         monthlyCredits: z.number(),
-        maxBatchCount: z.number(),
         maxEditImages: z.number(),
       })
       .describe("计划限制"),
@@ -400,7 +399,6 @@ defineOperation({
         queuePriority: snapshot.limits.queuePriority,
         imageGenerationConcurrency: snapshot.limits.imageGenerationConcurrency,
         monthlyCredits: snapshot.limits.monthlyCredits,
-        maxBatchCount: snapshot.limits.maxBatchCount,
         maxEditImages: snapshot.limits.maxEditImages,
       },
     };
@@ -472,7 +470,6 @@ defineOperation({
     queuePriority: z.string(),
     imageGenerationConcurrency: z.number(),
     monthlyCredits: z.number(),
-    maxBatchCount: z.number(),
     maxEditImages: z.number(),
   }),
   readOnly: true,
@@ -487,7 +484,6 @@ defineOperation({
       queuePriority: limits.queuePriority,
       imageGenerationConcurrency: limits.imageGenerationConcurrency,
       monthlyCredits: limits.monthlyCredits,
-      maxBatchCount: limits.maxBatchCount,
       maxEditImages: limits.maxEditImages,
     };
   },

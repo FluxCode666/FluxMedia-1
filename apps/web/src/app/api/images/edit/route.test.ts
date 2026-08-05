@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
-  getPlanLimits: vi.fn(),
   getUserRoleById: vi.fn(),
   getPlanUploadLimits: vi.fn(),
   getUserPlan: vi.fn(),
@@ -26,19 +25,11 @@ vi.mock("@repo/shared/auth", () => ({
 vi.mock("@repo/shared/auth/role-server", () => ({
   getUserRoleById: mocks.getUserRoleById,
 }));
-vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  canUsePlanCapability: vi.fn(),
-  getPlanLimits: mocks.getPlanLimits,
-}));
 vi.mock("@repo/shared/subscription/services/upload-limits", () => ({
   getPlanUploadLimits: mocks.getPlanUploadLimits,
 }));
 vi.mock("@repo/shared/subscription/services/user-plan", () => ({
   getUserPlan: mocks.getUserPlan,
-}));
-vi.mock("@/features/image-generation/batch-runner", () => ({
-  firstBatchError: vi.fn(),
-  runBatchImageGeneration: vi.fn(),
 }));
 vi.mock("@/features/image-generation/uol-client", () => ({
   invokeImageGenerationOperation: mocks.invokeImageGenerationOperation,
@@ -75,7 +66,6 @@ function createFormRequest(formData: FormData): NextRequest {
 describe("POST /api/images/edit", () => {
   beforeEach(() => {
     mocks.getSession.mockReset();
-    mocks.getPlanLimits.mockReset();
     mocks.getUserRoleById.mockReset();
     mocks.getPlanUploadLimits.mockReset();
     mocks.getUserPlan.mockReset();
@@ -83,13 +73,10 @@ describe("POST /api/images/edit", () => {
     mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
     mocks.getUserPlan.mockResolvedValue({ plan: "free" });
     mocks.getUserRoleById.mockResolvedValue("user");
-    mocks.getPlanLimits.mockResolvedValue({
-      maxBatchCount: 1,
-      maxEditImages: 1,
-    });
     mocks.getPlanUploadLimits.mockResolvedValue({
       maxFileSizeBytes: 10 * 1024 * 1024,
       maxUploadBytes: 20 * 1024 * 1024,
+      maxEditImages: 16,
     });
     vi.stubEnv("BETTER_AUTH_URL", "https://app.example.test");
   });
@@ -116,6 +103,21 @@ describe("POST /api/images/edit", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "model is required" });
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "count",
+    "generationIds",
+    "generation_ids",
+  ])("显式批量字段 %s 即使表达单项也返回 400", async (field) => {
+    const formData = new FormData();
+    formData.set("prompt", "test prompt");
+    formData.set(field, field === "count" ? "1" : "generation-1");
+
+    const response = await POST(createFormRequest(formData));
+
+    expect(response.status).toBe(400);
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 });

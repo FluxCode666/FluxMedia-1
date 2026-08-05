@@ -221,7 +221,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
     "imageGeneration.edit": "free",
     "imageGeneration.mask": "free",
     "imageGeneration.video": "free",
-    "imageGeneration.batch": "free",
     "promptOptimization.control": "pro",
     "backendGroups.select": "free",
     "externalApi.keys.manage": "starter",
@@ -229,7 +228,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
     "externalApi.images.generate": "starter",
     "externalApi.images.edit": "starter",
     "externalApi.images.mask": "starter",
-    "externalApi.images.batch": "starter",
     "externalApi.videos.generate": "starter",
     "externalApi.streaming": "starter",
     "moderation.blocking": "free",
@@ -242,7 +240,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       queuePriority: "normal",
       imageGenerationConcurrency: 2,
       monthlyCredits: 100,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     starter: {
@@ -251,7 +248,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       queuePriority: "normal",
       imageGenerationConcurrency: 5,
       monthlyCredits: 5000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     pro: {
@@ -260,7 +256,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       queuePriority: "priority",
       imageGenerationConcurrency: 15,
       monthlyCredits: 20000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     ultra: {
@@ -269,7 +264,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       queuePriority: "highest",
       imageGenerationConcurrency: 50,
       monthlyCredits: 80000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     enterprise: {
@@ -278,7 +272,6 @@ const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
       queuePriority: "highest",
       imageGenerationConcurrency: 100,
       monthlyCredits: 320000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
   },

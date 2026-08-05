@@ -204,7 +204,6 @@ export function buildHomepageIntegrationExample(
   const requestBody = JSON.stringify({
     model: modelId,
     prompt: "A sculptural editorial scene in warm studio light",
-    n: 1,
     size: "1024x1024",
     response_format: "url",
   });

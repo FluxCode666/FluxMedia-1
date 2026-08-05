@@ -105,11 +105,6 @@ const FEATURE_ROWS = [
     description: "页面生成视频并查询任务结果",
   },
   {
-    key: "imageGeneration.batch",
-    label: "批量生成",
-    description: "一次请求生成多张",
-  },
-  {
     key: "promptOptimization.control",
     label: "关闭提示词优化",
     description: "允许用户控制 prompt_optimization",
@@ -143,11 +138,6 @@ const FEATURE_ROWS = [
     key: "externalApi.images.mask",
     label: "外接蒙版编辑",
     description: "允许 /v1/images/edits 携带 mask",
-  },
-  {
-    key: "externalApi.images.batch",
-    label: "外接批量图片",
-    description: "允许外接图片接口一次生成多张",
   },
   {
     key: "externalApi.videos.generate",
@@ -195,12 +185,6 @@ const LIMIT_ROWS = [
     label: "单次上传总量 MB",
     description: "一次编辑/对话请求的总上传上限",
     inputMode: "decimal",
-  },
-  {
-    key: "maxBatchCount",
-    label: "批量张数",
-    description: "n/count 最大值",
-    inputMode: "numeric",
   },
   {
     key: "maxEditImages",

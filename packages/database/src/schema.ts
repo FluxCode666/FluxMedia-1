@@ -2002,6 +2002,18 @@ export const imageAsyncTask = pgTable(
       )`
     ),
     check(
+      "image_async_task_batch_count_retired_check",
+      sql`(
+        ${table.generationInput} IS NULL
+        OR NOT (${table.generationInput}::jsonb ? 'count')
+      ) AND (
+        json_typeof(${table.generationInputs}) <> 'array'
+        OR json_array_length(${table.generationInputs}) <> 1
+        OR json_typeof(${table.generationInputs}->0) <> 'object'
+        OR NOT ((${table.generationInputs}->0)::jsonb ? 'count')
+      )`
+    ),
+    check(
       "image_async_task_policy_snapshot_check",
       sql`(
         ${table.effectiveUserConcurrency} IS NULL

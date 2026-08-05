@@ -13,9 +13,7 @@ const mocks = vi.hoisted(() => ({
   authenticateExternalApiRequest: vi.fn(),
   canUsePlanCapability: vi.fn(),
   filesToMediaInputReferences: vi.fn(),
-  getPlanLimits: vi.fn(),
   getPlanUploadLimits: vi.fn(),
-  getUserPlan: vi.fn(),
   invokeImageEnqueueAsyncOperation: vi.fn(),
   invokeImageGenerationOperation: vi.fn(),
   uploadModerationImages: vi.fn(),
@@ -26,17 +24,11 @@ vi.mock("@repo/shared/api-logger", () => ({
 }));
 
 vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  MAX_PLAN_BATCH_COUNT: 16,
   canUsePlanCapability: mocks.canUsePlanCapability,
-  getPlanLimits: mocks.getPlanLimits,
 }));
 
 vi.mock("@repo/shared/subscription/services/upload-limits", () => ({
   getPlanUploadLimits: mocks.getPlanUploadLimits,
-}));
-
-vi.mock("@repo/shared/subscription/services/user-plan", () => ({
-  getUserPlan: mocks.getUserPlan,
 }));
 
 vi.mock("@/features/external-api/auth", () => ({
@@ -89,7 +81,10 @@ import { postExternalImageEdits } from "./image-edits";
 import { postExternalImageGenerations } from "./image-generations";
 
 /** 构造带固定外部请求标识的文生图 JSON 请求。 */
-function createGenerationRequest(useAsync = false): NextRequest {
+function createGenerationRequest(
+  useAsync = false,
+  overrides: Record<string, unknown> = {}
+): NextRequest {
   return new NextRequest("https://app.example.test/v1/images/generations", {
     method: "POST",
     headers: {
@@ -100,21 +95,22 @@ function createGenerationRequest(useAsync = false): NextRequest {
     body: JSON.stringify({
       prompt: "synthetic prompt",
       model: "gpt-image-2",
-      n: 1,
       size: "1024x1024",
       response_format: "b64_json",
       ...(useAsync ? { async: true } : {}),
+      ...overrides,
     }),
   });
 }
 
 /** 构造同时包含源图与 mask 的图生图 multipart 请求。 */
-function createEditRequest(useAsync = false): NextRequest {
+function createEditRequest(useAsync = false, n?: number): NextRequest {
   const formData = new FormData();
   formData.set("prompt", "synthetic edit");
   formData.set("model", "gpt-image-2");
   formData.set("size", "1024x1024");
   if (useAsync) formData.set("async", "true");
+  if (n !== undefined) formData.set("n", String(n));
   formData.set(
     "image",
     new File(["source"], "source.png", { type: "image/png" })
@@ -139,15 +135,10 @@ describe("external image generation transport contract", () => {
       plan: "pro",
     });
     mocks.canUsePlanCapability.mockResolvedValue(true);
-    mocks.getUserPlan.mockResolvedValue({ plan: "pro" });
-    mocks.getPlanLimits.mockResolvedValue({
-      imageGenerationConcurrency: 2,
-      maxBatchCount: 4,
-      maxEditImages: 12,
-    });
     mocks.getPlanUploadLimits.mockResolvedValue({
       maxFileSizeBytes: 10 * 1024 * 1024,
       maxUploadBytes: 20 * 1024 * 1024,
+      maxEditImages: 12,
     });
     mocks.uploadModerationImages.mockImplementation(
       async (_userId: string, _batchId: string, files: readonly File[]) =>
@@ -226,6 +217,15 @@ describe("external image generation transport contract", () => {
     expect(operationInput).not.toHaveProperty("responseScript");
   });
 
+  it.each([1, 2])("文生图显式 n=%s 时严格返回 400", async (n) => {
+    const response = await postExternalImageGenerations(
+      createGenerationRequest(false, { n })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
   it("图生图把源图和 mask 规范为媒体引用后进入同一 UOL", async () => {
     const response = await postExternalImageEdits(createEditRequest());
 
@@ -264,6 +264,29 @@ describe("external image generation transport contract", () => {
     expect(operationInput).not.toHaveProperty("baseUrl");
     expect(operationInput).not.toHaveProperty("apiKey");
     expect(operationInput).not.toHaveProperty("apiUpstreamAdapter");
+  });
+
+  it.each([1, 2])("multipart 编辑显式 n=%s 时严格返回 400", async (n) => {
+    const response = await postExternalImageEdits(createEditRequest(false, n));
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])("JSON 编辑显式 n=%s 时严格返回 400", async (n) => {
+    const response = await postExternalImageEdits(
+      new NextRequest("https://app.example.test/v1/images/edits", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer external-key",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ n }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 
   it("异步文生图只持久创建任务并由 MQ 执行，不启动请求内 Promise", async () => {

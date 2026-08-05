@@ -140,7 +140,6 @@ const IMAGE_GENERATION_INPUT_COMMON_FIELDS = new Set([
   "hdRepair",
   "blockRepair",
   "repairPrompt",
-  "count",
   "generationId",
   "backendGroupId",
 ]);
@@ -2357,6 +2356,7 @@ function isPersistedImageStorageReference(value) {
  * @param {unknown} value PostgreSQL JSON 字段中的输入对象。
  * @param {unknown} expectedOperation 任务外层持久动作。
  * @param {unknown} expectedGenerationId generation_ids 或新单项列中的 ID。
+ * @param {{allowLegacySingleCount?: boolean}} [options] 0084 前是否只兼容终态 count=1。
  * @returns {boolean} 输入可无损交给当前单项 operation schema 时为 true。
  * @throws 不抛错；未知字段、非法可选字段和不安全媒体引用均返回 false。
  * @sideEffect 无副作用。
@@ -2365,7 +2365,8 @@ function isPersistedImageStorageReference(value) {
 function isPersistedImageGenerationInputValid(
   value,
   expectedOperation,
-  expectedGenerationId
+  expectedGenerationId,
+  options = {}
 ) {
   if (!isRecord(value)) return false;
   if (
@@ -2385,11 +2386,18 @@ function isPersistedImageGenerationInputValid(
     return false;
   }
   const allowedFields = new Set(IMAGE_GENERATION_INPUT_COMMON_FIELDS);
+  if (options.allowLegacySingleCount) allowedFields.add("count");
   if (expectedOperation === "edit" || expectedOperation === "mask") {
     allowedFields.add("images");
   }
   if (expectedOperation === "mask") allowedFields.add("mask");
   if (Object.keys(value).some((field) => !allowedFields.has(field))) {
+    return false;
+  }
+  if (
+    Object.hasOwn(value, "count") &&
+    (!options.allowLegacySingleCount || value.count !== 1)
+  ) {
     return false;
   }
 
@@ -2447,11 +2455,7 @@ function isPersistedImageGenerationInputValid(
     (value.outputCompression !== undefined &&
       (!Number.isInteger(value.outputCompression) ||
         value.outputCompression < 0 ||
-        value.outputCompression > 100)) ||
-    (value.count !== undefined &&
-      (!Number.isInteger(value.count) ||
-        value.count < 1 ||
-        value.count > 10_000))
+        value.outputCompression > 100))
   ) {
     return false;
   }
@@ -2510,6 +2514,17 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
     }
     const additiveApplied =
       columnCount === MEDIA_USAGE_IMAGE_TASK_COLUMNS.length;
+    const batchRetirementResult = await client.query(
+      `select exists (
+         select 1
+         from pg_constraint
+         where connamespace = 'public'::regnamespace
+           and conname = 'image_async_task_batch_count_retired_check'
+           and convalidated
+       ) as applied`
+    );
+    const batchRetirementApplied =
+      batchRetirementResult.rows[0]?.applied === true;
     printEvidence(
       "image_async_task_schema_state",
       additiveApplied ? "additive" : "legacy"
@@ -2562,6 +2577,8 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
       );
       if (result.rows.length === 0) break;
       for (const row of result.rows) {
+        const terminal = ["completed", "failed"].includes(row.status);
+        const nonterminal = ["queued", "running"].includes(row.status);
         const legacyInput =
           Array.isArray(row.generation_inputs) &&
           row.generation_inputs.length === 1
@@ -2574,7 +2591,10 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
         const legacyMappingValid = isPersistedImageGenerationInputValid(
           legacyInput,
           row.operation,
-          legacyId
+          legacyId,
+          {
+            allowLegacySingleCount: terminal && !batchRetirementApplied,
+          }
         );
         if (!legacyMappingValid) invalidMappingCount += 1;
         if (
@@ -2585,13 +2605,14 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
         }
 
         if (!additiveApplied) continue;
-        const terminal = ["completed", "failed"].includes(row.status);
-        const nonterminal = ["queued", "running"].includes(row.status);
         const coreValid =
           isPersistedImageGenerationInputValid(
             row.generation_input,
             row.operation,
-            row.generation_id
+            row.generation_id,
+            {
+              allowLegacySingleCount: terminal && !batchRetirementApplied,
+            }
           ) &&
           typeof row.input_digest === "string" &&
           /^(md5:[0-9a-f]{32}|sha256:[0-9a-f]{64})$/u.test(row.input_digest);
@@ -2805,7 +2826,8 @@ async function assertMediaUsageGovernancePostMigrationState(pool) {
               'image_async_task_policy_snapshot_check',
               'image_async_task_admission_lease_state_check',
               'image_async_task_due_state_check',
-              'image_async_task_attempt_count_check'
+              'image_async_task_attempt_count_check',
+              'image_async_task_batch_count_retired_check'
             )
         ) as constraint_count,
         (
@@ -2886,7 +2908,7 @@ async function assertMediaUsageGovernancePostMigrationState(pool) {
       imageTaskColumnCount !== MEDIA_USAGE_IMAGE_TASK_COLUMNS.length ||
       row.mq_delivery_version_valid !== true ||
       row.user_override_column_valid !== true ||
-      constraintCount !== 7 ||
+      constraintCount !== 8 ||
       partialIndexCount !== 6 ||
       enabledTriggerCount !== 2
     ) {

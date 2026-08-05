@@ -3,12 +3,8 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import {
-  canUsePlanCapability,
-  getPlanLimits,
-} from "@repo/shared/subscription/services/plan-capabilities";
+import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getPlanUploadLimits } from "@repo/shared/subscription/services/upload-limits";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import type { NextRequest } from "next/server";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
@@ -35,7 +31,6 @@ import {
   fetchPublicImage,
   readResponseBytesWithLimit,
 } from "@/features/external-api/safe-image-fetch";
-import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
@@ -97,7 +92,6 @@ const JSON_SCALAR_FIELDS = [
   "background",
   "transparentMatte",
   "transparent_matte",
-  "n",
   "response_format",
   "model",
   "thinking",
@@ -181,19 +175,6 @@ async function assertPublicImageUrl(url: URL) {
 function getText(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
-}
-
-function getCount(formData: FormData, maxBatchCount: number) {
-  const value = getText(formData, "n");
-  if (!value) return 1;
-  if (!/^\d+$/.test(value)) {
-    throw new Error("n must be an integer.");
-  }
-  const count = Number(value);
-  if (count < 1 || count > maxBatchCount) {
-    throw new Error(`n must be between 1 and ${maxBatchCount}.`);
-  }
-  return count;
 }
 
 function getBoolean(formData: FormData, key: string) {
@@ -532,9 +513,7 @@ export const postExternalImageEdits = withApiLogging(
       );
     }
 
-    const plan = await getUserPlan(auth.userId);
-    const planLimits = await getPlanLimits(plan.plan);
-    const uploadLimits = await getPlanUploadLimits(plan.plan);
+    const uploadLimits = await getPlanUploadLimits(auth.plan);
     const maxImageBytes = uploadLimits.maxFileSizeBytes;
     const maxRequestBytes = uploadLimits.maxUploadBytes;
 
@@ -553,6 +532,11 @@ export const postExternalImageEdits = withApiLogging(
         if (!isPlainRecord(body)) {
           return openAIImageError("Request body must be a JSON object.");
         }
+        if (Object.hasOwn(body, "n")) {
+          return openAIImageError(
+            "n is not supported; image requests generate exactly one image."
+          );
+        }
         formData = formDataFromJson(body);
         imageReferences = getJsonImageReferences(body);
         maskReference = getJsonMaskReference(body);
@@ -562,6 +546,11 @@ export const postExternalImageEdits = withApiLogging(
           createDeprecatedGovernanceFieldResponse(formData);
         if (deprecatedFieldResponse) {
           return deprecatedFieldResponse;
+        }
+        if (formData.has("n")) {
+          return openAIImageError(
+            "n is not supported; image requests generate exactly one image."
+          );
         }
         imageReferences = getFormImageReferences(formData);
         maskReference = getFormMaskReference(formData);
@@ -639,30 +628,6 @@ export const postExternalImageEdits = withApiLogging(
     const repairPrompt =
       typeof repairPromptRaw === "string" ? repairPromptRaw : undefined;
 
-    let count = 1;
-    try {
-      count = getCount(formData, planLimits.maxBatchCount);
-    } catch (error) {
-      return openAIImageError(
-        error instanceof Error ? error.message : "Invalid n."
-      );
-    }
-    if (
-      count > 1 &&
-      !(await canUsePlanCapability(plan.plan, "imageGeneration.batch"))
-    ) {
-      return openAIImageError(
-        "Batch image editing is not enabled for this plan.",
-        403,
-        "insufficient_plan"
-      );
-    }
-    if (count > planLimits.maxBatchCount) {
-      return openAIImageError(
-        `n must be between 1 and ${planLimits.maxBatchCount}.`
-      );
-    }
-
     const responseFormat =
       getText(formData, "response_format") === "url" ? "url" : "b64_json";
     // 不在传输层硬编码模型前缀：最终选中 pool-api 时可透传任意管理员配置的
@@ -684,9 +649,9 @@ export const postExternalImageEdits = withApiLogging(
     if (imageReferences.length === 0) {
       return openAIImageError("At least one source image is required.");
     }
-    if (imageReferences.length > planLimits.maxEditImages) {
+    if (imageReferences.length > uploadLimits.maxEditImages) {
       return openAIImageError(
-        `No more than ${planLimits.maxEditImages} images are allowed.`
+        `No more than ${uploadLimits.maxEditImages} images are allowed.`
       );
     }
     if (
@@ -694,7 +659,7 @@ export const postExternalImageEdits = withApiLogging(
         request,
         getOptionalBoolean(formData, "stream")
       ) &&
-      !(await canUsePlanCapability(plan.plan, "externalApi.streaming"))
+      !(await canUsePlanCapability(auth.plan, "externalApi.streaming"))
     ) {
       return openAIImageError(
         "External API streaming is not enabled for this plan.",
@@ -811,7 +776,6 @@ export const postExternalImageEdits = withApiLogging(
           hdRepair,
           blockRepair,
           repairPrompt,
-          count: 1,
           images,
         };
         return invokeImageGenerationOperation(
@@ -826,61 +790,47 @@ export const postExternalImageEdits = withApiLogging(
 
       if (useStreamResponse) {
         return createExternalImageStreamResponse(async (emit) => {
-          await runBatchImageGeneration({
-            count,
-            concurrency: planLimits.imageGenerationConcurrency,
-            run: runEdit,
-            callbacks: (index) => ({
-              onPartialImage: async (image) => {
-                await emit({
-                  event: "image_edit.partial_image",
-                  data: toPartialPayload(image, index),
-                });
-              },
-            }),
-            onResult: async (result, index) => {
-              if (result.error) {
-                const errorPayload = toLoggedOpenAIErrorPayload(
-                  result.error,
-                  {
-                    route: "/v1/images/edits",
-                    stream: true,
-                    index,
-                    model,
-                    size,
-                  },
-                  {
-                    generationId: result.generationId,
-                    creditsConsumed: result.creditsConsumed,
-                  }
-                );
-                await emit({
-                  event: "error",
-                  data: toExternalErrorStreamData(result.error, errorPayload),
-                });
-                return;
-              }
-
+          const result = await runEdit(randomUUID(), {
+            onPartialImage: async (image) => {
               await emit({
-                event: "image_edit.completed",
-                data: await toStreamCompletedPayload(
-                  request,
-                  result,
-                  responseFormat,
-                  index
-                ),
+                event: "image_edit.partial_image",
+                data: toPartialPayload(image, 0),
               });
             },
+          });
+          if (result.error) {
+            const errorPayload = toLoggedOpenAIErrorPayload(
+              result.error,
+              {
+                route: "/v1/images/edits",
+                stream: true,
+                model,
+                size,
+              },
+              {
+                generationId: result.generationId,
+                creditsConsumed: result.creditsConsumed,
+              }
+            );
+            await emit({
+              event: "error",
+              data: toExternalErrorStreamData(result.error, errorPayload),
+            });
+            return;
+          }
+          await emit({
+            event: "image_edit.completed",
+            data: await toStreamCompletedPayload(
+              request,
+              result,
+              responseFormat,
+              0
+            ),
           });
         });
       }
 
       if (useAsync) {
-        if (count > 1) {
-          return openAIImageError(
-            "Async image editing accepts one image only."
-          );
-        }
         const generationId = randomUUID();
         try {
           /** 为单个幂等 generationId 构造 storage-only edit 或 mask 输入。 */
@@ -935,14 +885,10 @@ export const postExternalImageEdits = withApiLogging(
         async () => {
           const created = Math.floor(Date.now() / 1000);
 
-          const results = await runBatchImageGeneration({
-            count,
-            concurrency: planLimits.imageGenerationConcurrency,
-            run: runEdit,
-          });
+          const result = await runEdit(randomUUID());
           return await toOpenAIImagesResponse(
             request,
-            results,
+            result,
             responseFormat,
             created,
             {

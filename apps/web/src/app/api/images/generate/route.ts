@@ -3,18 +3,9 @@ import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import {
-  canUsePlanCapability,
-  getPlanLimits,
-} from "@repo/shared/subscription/services/plan-capabilities";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import { OperationError } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  firstBatchError,
-  runBatchImageGeneration,
-} from "@/features/image-generation/batch-runner";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
@@ -42,8 +33,6 @@ const generateImageSchema = z
       .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
     generationId: z.string().min(1).max(128).optional(),
     generation_id: z.string().min(1).max(128).optional(),
-    generationIds: z.array(z.string().min(1).max(128)).optional(),
-    generation_ids: z.array(z.string().min(1).max(128)).optional(),
     apiPrompt: z.string().min(1).max(8000).optional(),
     promptOptimization: z.boolean().optional(),
     size: z
@@ -57,7 +46,6 @@ const generateImageSchema = z
     backend_group_id: z.string().trim().min(1).max(128).optional(),
     thinking: z.enum(["none", "low", "medium", "high", "xhigh"]).optional(),
     stream: z.boolean().optional(),
-    count: z.number().int().min(1).max(10_000).optional(),
     quality: z.enum(["auto", "low", "medium", "high"]).optional(),
     moderation: z.enum(["auto", "low"]).optional(),
     output_format: z.enum(["png", "jpeg", "webp"]).optional(),
@@ -149,24 +137,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse(parsed.error.issues[0]?.message || "Invalid request");
   }
 
-  const plan = await getUserPlan(session.user.id);
   const role = await getUserRoleById(session.user.id);
-  const planLimits = await getPlanLimits(plan.plan);
-  const count = parsed.data.count || 1;
-  if (
-    count > 1 &&
-    !(await canUsePlanCapability(plan.plan, "imageGeneration.batch"))
-  ) {
-    return errorResponse(
-      "Batch image generation is not enabled for this plan.",
-      403
-    );
-  }
-  if (count > planLimits.maxBatchCount) {
-    return errorResponse(
-      `count must be between 1 and ${planLimits.maxBatchCount}.`
-    );
-  }
 
   const input = {
     operation: "generate" as const,
@@ -192,18 +163,8 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     blockRepair: parsed.data.blockRepair ?? parsed.data.block_repair,
     repairPrompt: parsed.data.repairPrompt ?? parsed.data.repair_prompt,
   };
-  const requestedGenerationIds =
-    parsed.data.generationIds || parsed.data.generation_ids;
   const requestedGenerationId =
-    parsed.data.generationId ||
-    parsed.data.generation_id ||
-    requestedGenerationIds?.[0];
-  const batchGenerationIds =
-    requestedGenerationIds?.length === count
-      ? requestedGenerationIds
-      : count === 1 && requestedGenerationId
-        ? [requestedGenerationId]
-        : undefined;
+    parsed.data.generationId || parsed.data.generation_id;
   const principal = {
     type: "user" as const,
     userId: session.user.id,
@@ -227,40 +188,34 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     if (useStreamResponse) {
       return createImageStreamResponse(
         async (emit) => {
-          await runBatchImageGeneration({
-            count,
-            concurrency: planLimits.imageGenerationConcurrency,
-            generationIds: batchGenerationIds,
-            run: runGeneration,
-            callbacks: (index) => ({
+          const result = await runGeneration(
+            requestedGenerationId ?? randomUUID(),
+            {
               onPartialImage: async (image) => {
                 await emit({
                   type: "partial_image",
-                  index,
+                  index: 0,
                   partial_image_index: image.partialImageIndex,
                   b64_json: image.imageBase64,
                   url: image.imageUrl,
                 });
               },
-            }),
-            onResult: async (result) => {
-              const safeResult = sanitizeGenerationResult(
-                result,
-                "image-generate-stream-result"
-              );
-              if (safeResult.error) {
-                await emit({
-                  type: "error",
-                  error: safeResult.error,
-                  generationId: safeResult.generationId,
-                  creditsConsumed: safeResult.creditsConsumed,
-                });
-                return;
-              }
-              await emit({ type: "completed", ...safeResult });
-            },
-            stopOnError: true,
-          });
+            }
+          );
+          const safeResult = sanitizeGenerationResult(
+            result,
+            "image-generate-stream-result"
+          );
+          if (safeResult.error) {
+            await emit({
+              type: "error",
+              error: safeResult.error,
+              generationId: safeResult.generationId,
+              creditsConsumed: safeResult.creditsConsumed,
+            });
+          } else {
+            await emit({ type: "completed", ...safeResult });
+          }
 
           return null;
         },
@@ -275,29 +230,11 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       );
     }
 
-    if (count === 1) {
-      const result = sanitizeGenerationResult(
-        await runGeneration(requestedGenerationId ?? randomUUID()),
-        "image-generate-response"
-      );
-      return NextResponse.json(result);
-    }
-
-    const results = await runBatchImageGeneration({
-      count,
-      concurrency: planLimits.imageGenerationConcurrency,
-      generationIds: batchGenerationIds,
-      run: (generationId) => runGeneration(generationId),
-    });
-
-    const safeResults = results.map((result) =>
-      sanitizeGenerationResult(result, "image-generate-batch-response")
+    const result = sanitizeGenerationResult(
+      await runGeneration(requestedGenerationId ?? randomUUID()),
+      "image-generate-response"
     );
-
-    return NextResponse.json({
-      results: safeResults,
-      error: firstBatchError(safeResults)?.error,
-    });
+    return NextResponse.json(result);
   } catch (error) {
     return generationErrorResponse(error);
   }

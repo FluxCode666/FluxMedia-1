@@ -274,7 +274,6 @@ describe("API integration docs data", () => {
         .map((parameter) => [parameter.name, parameter.defaultValue])
     );
     const commonDefaults = {
-      n: "1",
       size: "1024x1024",
       quality: "auto",
       moderation: "auto",
@@ -287,6 +286,13 @@ describe("API integration docs data", () => {
 
     expect(generationDefaults).toEqual(commonDefaults);
     expect(editDefaults).toEqual({ mask: "无", ...commonDefaults });
+    expect(generation?.requestExample).not.toContain('"n"');
+    expect(
+      generation?.parameters.map((parameter) => parameter.name)
+    ).not.toContain("n");
+    expect(edit?.parameters.map((parameter) => parameter.name)).not.toContain(
+      "n"
+    );
   });
 
   it("说明 output_compression 的用途与生效范围", () => {

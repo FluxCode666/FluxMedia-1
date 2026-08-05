@@ -1182,22 +1182,6 @@ async function runImageGenerationForUserInternal(
       generationId,
     };
   }
-  const requestedCount = input.n || 1;
-  if (
-    requestedCount > 1 &&
-    !planCapabilities.features["imageGeneration.batch"]
-  ) {
-    return {
-      error: "Batch image generation is not enabled for this plan.",
-      generationId,
-    };
-  }
-  if (requestedCount > planCapabilities.limits.maxBatchCount) {
-    return {
-      error: `Image count must be no more than ${planCapabilities.limits.maxBatchCount}.`,
-      generationId,
-    };
-  }
   // 仅以实际存在的蒙版文件作为调度条件，不能信任客户端额外声明的能力字段。
   const requiresMask =
     input.mode === "edit" &&
@@ -1573,7 +1557,6 @@ async function runQueuedImageGenerationForUser({
             outputFormat: input.outputFormat || null,
             outputCompression: input.outputCompression ?? null,
             background: input.background || null,
-            batchCount: input.n || 1,
             creditCost,
             ...billingMetadata,
             moderationBlockingEnabled: moderationEnabled,
@@ -1591,7 +1574,6 @@ async function runQueuedImageGenerationForUser({
             outputFormat: input.outputFormat || null,
             outputCompression: input.outputCompression ?? null,
             background: input.background || null,
-            batchCount: input.n || 1,
             creditCost,
             ...billingMetadata,
             moderationBlockingEnabled: moderationEnabled,
@@ -1842,7 +1824,6 @@ async function runQueuedImageGenerationForUser({
             model: imageModel,
             thinking: input.thinking,
             quality: input.quality,
-            n: input.n,
             moderation: input.moderation,
             outputFormat: input.outputFormat,
             outputCompression: input.outputCompression,
@@ -1860,7 +1841,6 @@ async function runQueuedImageGenerationForUser({
             size,
             model: imageModel,
             thinking: input.thinking,
-            n: input.n,
             quality: input.quality,
             moderation: input.moderation,
             outputFormat: input.outputFormat,

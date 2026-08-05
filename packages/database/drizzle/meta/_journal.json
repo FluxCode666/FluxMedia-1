@@ -589,6 +589,13 @@
       "when": 1786124250000,
       "tag": "0083_image_async_delivery_fencing",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1786210650000,
+      "tag": "0084_remove_image_batch_contract",
+      "breakpoints": true
     }
   ]
 }

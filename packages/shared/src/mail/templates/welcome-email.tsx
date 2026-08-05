@@ -79,7 +79,7 @@ export function WelcomeEmail({ name, dashboardUrl }: WelcomeEmailProps) {
               </Text>
               <Text className="m-0 text-sm text-gray-600">
                 - Describe your vision in natural language to generate images
-                <br />- Generate multiple variations with batch generation
+                <br />- Refine images with reference-guided editing
                 <br />- Download high-quality images and manage your gallery
               </Text>
             </Section>

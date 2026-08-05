@@ -277,7 +277,6 @@ const zhContent = {
   -d '{
     "model": "gpt-image-2",
     "prompt": "A quiet reading room in the morning sun",
-    "n": 1,
     "size": "1024x1024",
     "quality": "medium",
     "response_format": "url",
@@ -303,12 +302,6 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
-        },
-        {
-          name: "n",
-          requirement: "可选",
-          defaultValue: "1",
-          description: "生成数量，须在当前套餐允许的批量范围内。",
         },
         {
           name: "size",
@@ -437,12 +430,6 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
-        },
-        {
-          name: "n",
-          requirement: "可选",
-          defaultValue: "1",
-          description: "生成数量，须在当前套餐允许的批量范围内。",
         },
         {
           name: "size",
@@ -1023,13 +1010,6 @@ const enContent = {
           description: "Image model ID available to the current API key.",
         },
         {
-          name: "n",
-          requirement: "Optional",
-          defaultValue: "1",
-          description:
-            "Number of images, within the current plan's batch limit.",
-        },
-        {
           name: "size",
           requirement: "Optional",
           defaultValue: "1024x1024",
@@ -1138,13 +1118,6 @@ const enContent = {
           name: "model",
           requirement: "Required",
           description: "Image model ID available to the current API key.",
-        },
-        {
-          name: "n",
-          requirement: "Optional",
-          defaultValue: "1",
-          description:
-            "Number of images, within the current plan's batch limit.",
         },
         {
           name: "size",

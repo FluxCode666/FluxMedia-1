@@ -14,7 +14,6 @@ import {
   DEFAULT_PLAN_CAPABILITY_MATRIX_JSON,
   getPlanCapabilityMatrix,
   getPlanCapabilitySnapshot,
-  MAX_PLAN_BATCH_COUNT,
   MAX_PLAN_IMAGE_COUNT,
   normalizePlanCapabilityMatrix,
   PLAN_CAPABILITY_KEYS,
@@ -105,14 +104,12 @@ describe("media plan capability matrix", () => {
           queuePriority: "highest",
           imageGenerationConcurrency: 20_000,
           monthlyCredits: 900_000,
-          maxBatchCount: MAX_PLAN_BATCH_COUNT + 1,
           maxEditImages: MAX_PLAN_IMAGE_COUNT + 1,
         },
       },
     });
     expect(matrix.limits.free).toMatchObject({
       imageGenerationConcurrency: 10_000,
-      maxBatchCount: MAX_PLAN_BATCH_COUNT,
       maxEditImages: MAX_PLAN_IMAGE_COUNT,
     });
     for (const plan of SUBSCRIPTION_PLANS) {

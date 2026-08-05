@@ -118,9 +118,10 @@ describe("external JSON keep-alive response", () => {
 describe("external generation usage payload", () => {
   it("returns top-level credits and generation id for a single result", () => {
     expect(
-      toExternalGenerationUsage([
-        { generationId: "gen_1", creditsConsumed: 1.276 },
-      ])
+      toExternalGenerationUsage({
+        generationId: "gen_1",
+        creditsConsumed: 1.276,
+      })
     ).toEqual({
       generation_id: "gen_1",
       generationId: "gen_1",
@@ -128,16 +129,9 @@ describe("external generation usage payload", () => {
     });
   });
 
-  it("returns total credits and all generation ids for batch results", () => {
-    expect(
-      toExternalGenerationUsage([
-        { generationId: "gen_1", creditsConsumed: 1.27 },
-        { generationId: "gen_2", creditsConsumed: 2.01 },
-      ])
-    ).toEqual({
-      generation_ids: ["gen_1", "gen_2"],
-      generationIds: ["gen_1", "gen_2"],
-      credits_consumed: 3.28,
+  it("单次结果缺少 generation id 时只返回本次积分", () => {
+    expect(toExternalGenerationUsage({ creditsConsumed: 2.01 })).toEqual({
+      credits_consumed: 2.01,
     });
   });
 });
@@ -148,25 +142,23 @@ describe("external final image selection", () => {
 
     const payload = await toOpenAIImagesResponse(
       request,
-      [
-        {
-          generationId: "gen_1",
-          imageUrl: "/api/storage/generations/final.png",
-          revisedPrompt: "top level prompt",
-          creditsConsumed: 1,
-          imageOutputs: [
-            {
-              imageUrl: "/api/storage/generations/unclassified.png",
-              revisedPrompt: "unclassified prompt",
-            },
-            {
-              imageUrl: "/api/storage/generations/final.png",
-              revisedPrompt: "final prompt",
-              outputRole: "final",
-            },
-          ],
-        },
-      ],
+      {
+        generationId: "gen_1",
+        imageUrl: "/api/storage/generations/final.png",
+        revisedPrompt: "top level prompt",
+        creditsConsumed: 1,
+        imageOutputs: [
+          {
+            imageUrl: "/api/storage/generations/unclassified.png",
+            revisedPrompt: "unclassified prompt",
+          },
+          {
+            imageUrl: "/api/storage/generations/final.png",
+            revisedPrompt: "final prompt",
+            outputRole: "final",
+          },
+        ],
+      },
       "url",
       123
     );
@@ -234,12 +226,10 @@ describe("external final image selection", () => {
 
     const payload = await toOpenAIImagesResponse(
       request,
-      [
-        {
-          generationId: "gen_text",
-          creditsConsumed: 0,
-        },
-      ],
+      {
+        generationId: "gen_text",
+        creditsConsumed: 0,
+      },
       "url",
       123
     );

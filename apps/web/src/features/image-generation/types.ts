@@ -29,7 +29,6 @@ export interface GenerateImageParams {
   height?: number;
   gptModel?: string;
   thinking?: ThinkingLevel;
-  n?: number;
   quality?: ImageQuality;
   moderation?: ImageModeration;
   outputFormat?: ImageOutputFormat;
@@ -131,7 +130,6 @@ export interface EditImageParams {
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
-  n?: number;
   moderation?: ImageModeration;
   outputFormat?: ImageOutputFormat;
   outputCompression?: number;

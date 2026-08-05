@@ -21,7 +21,6 @@ import {
 
 const BYTES_PER_MB = 1024 * 1024;
 const MAX_LIMIT_VALUE = 1_000_000;
-export const MAX_PLAN_BATCH_COUNT = 10_000;
 export const MAX_PLAN_IMAGE_COUNT = 10_000;
 const MAX_GENERATION_CONCURRENCY = 10_000;
 
@@ -41,7 +40,6 @@ export const PLAN_CAPABILITY_KEYS = [
   "imageGeneration.edit",
   "imageGeneration.mask",
   "imageGeneration.video",
-  "imageGeneration.batch",
   "promptOptimization.control",
   "backendGroups.select",
   "externalApi.keys.manage",
@@ -49,7 +47,6 @@ export const PLAN_CAPABILITY_KEYS = [
   "externalApi.images.generate",
   "externalApi.images.edit",
   "externalApi.images.mask",
-  "externalApi.images.batch",
   "externalApi.videos.generate",
   "externalApi.streaming",
   "moderation.blocking",
@@ -66,7 +63,6 @@ export type PlanLimitConfig = {
   queuePriority: QueuePriority;
   imageGenerationConcurrency: number;
   monthlyCredits: number;
-  maxBatchCount: number;
   maxEditImages: number;
 };
 
@@ -95,7 +91,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
     "imageGeneration.edit": "free",
     "imageGeneration.mask": "free",
     "imageGeneration.video": "free",
-    "imageGeneration.batch": "free",
     "promptOptimization.control": "pro",
     "backendGroups.select": "free",
     "externalApi.keys.manage": "starter",
@@ -103,7 +98,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
     "externalApi.images.generate": "starter",
     "externalApi.images.edit": "starter",
     "externalApi.images.mask": "starter",
-    "externalApi.images.batch": "starter",
     "externalApi.videos.generate": "starter",
     "externalApi.streaming": "starter",
     "moderation.blocking": "free",
@@ -116,7 +110,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
       queuePriority: "normal",
       imageGenerationConcurrency: 2,
       monthlyCredits: 100,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     starter: {
@@ -125,7 +118,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
       queuePriority: "normal",
       imageGenerationConcurrency: 5,
       monthlyCredits: 5_000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     pro: {
@@ -134,7 +126,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
       queuePriority: "priority",
       imageGenerationConcurrency: 15,
       monthlyCredits: 20_000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     ultra: {
@@ -143,7 +134,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
       queuePriority: "highest",
       imageGenerationConcurrency: 50,
       monthlyCredits: 80_000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
     enterprise: {
@@ -152,7 +142,6 @@ export const DEFAULT_PLAN_CAPABILITY_MATRIX: PlanCapabilityMatrix = {
       queuePriority: "highest",
       imageGenerationConcurrency: 100,
       monthlyCredits: 320_000,
-      maxBatchCount: 10,
       maxEditImages: 16,
     },
   },
@@ -247,11 +236,6 @@ function normalizePlanLimits(
           fallback.monthlyCredits,
           { integer: true }
         ),
-        maxBatchCount: parsePositiveNumber(
-          raw.maxBatchCount,
-          fallback.maxBatchCount,
-          { integer: true, max: MAX_PLAN_BATCH_COUNT }
-        ),
         maxEditImages: parsePositiveNumber(
           raw.maxEditImages,
           fallback.maxEditImages,
@@ -280,7 +264,6 @@ function normalizePlanLimits(
         previous.imageGenerationConcurrency
       ),
       monthlyCredits: Math.max(current.monthlyCredits, previous.monthlyCredits),
-      maxBatchCount: Math.max(current.maxBatchCount, previous.maxBatchCount),
       maxEditImages: Math.max(current.maxEditImages, previous.maxEditImages),
     };
     previous = limits[plan];

@@ -56,6 +56,35 @@ describe("image.generate principal-bound contract", () => {
     ).toBe(false);
   });
 
+  it.each([
+    "count",
+    "generationIds",
+    "generation_ids",
+  ])("拒绝已退役的图片批量字段 %s", (field) => {
+    const value = field === "count" ? 1 : ["generation-1"];
+    expect(
+      imageGenerateInputSchema.safeParse({
+        operation: "generate",
+        prompt: "a test image",
+        model: "gpt-image-2",
+        generationId: "generation-1",
+        [field]: value,
+      }).success
+    ).toBe(false);
+  });
+
+  it("拒绝大于一的旧图片批量数量", () => {
+    expect(
+      imageGenerateInputSchema.safeParse({
+        operation: "generate",
+        prompt: "a test image",
+        model: "gpt-image-2",
+        generationId: "generation-1",
+        count: 2,
+      }).success
+    ).toBe(false);
+  });
+
   it("registers the strict schema on image.generate", () => {
     expect(getOperation("image.generate")?.input).toBe(
       imageGenerateInputSchema

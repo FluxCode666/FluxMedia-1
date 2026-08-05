@@ -223,7 +223,6 @@ export async function executeImageGenerateBinding(
     hdRepair: input.hdRepair,
     blockRepair: input.blockRepair,
     repairPrompt: input.repairPrompt,
-    n: input.count,
     generationId: input.generationId,
     backendGroupId: input.backendGroupId,
     admissionAuthorization,
