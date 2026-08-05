@@ -17,6 +17,7 @@ import {
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
+import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
 import { mediaLimitService } from "@repo/shared/image-generation/media-limit-service";
 import { logError, logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
@@ -59,8 +60,13 @@ import { createImageCreditOperation } from "./credit-operation-context";
 import { toClientErrorMessage } from "./error-sanitize";
 import { buildInputImagesMetadata } from "./generation-metadata";
 import { generativeRepairImage } from "./generative-repair";
+import {
+  type StagedImageInputObject,
+  withStagedImageInputOwnership,
+} from "./image-input-storage";
 import { restoreImage } from "./image-restoration";
 import { maskedOutpaintImage } from "./masked-outpaint";
+import { loadMediaInputs } from "./media-input-loader";
 import {
   createGenerationModerationContext,
   type GenerationModerationContext,
@@ -134,6 +140,11 @@ type RunImageGenerationInput =
       apiKeyId?: string;
       backendGroupId?: string;
       admissionAuthorization?: ImageGenerationAdmissionAuthorization;
+      mediaInputReferences?: {
+        images: MediaInputReference[];
+        mask?: MediaInputReference;
+      };
+      stagedImageInputObjects?: StagedImageInputObject[];
     } & EditImageParams);
 
 type ImageCreditCostBreakdown = ReturnType<typeof getImageCreditCostBreakdown>;
@@ -333,6 +344,68 @@ function getImageDimensionsFromBuffer(buffer: Buffer) {
 function getInputImages(input: RunImageGenerationInput): ImageInputFile[] {
   if (input.mode === "generate") return [];
   return input.images || [];
+}
+
+/** 将全站执行槽内加载的实际字节映射为现有图片管线输入。 */
+function toQueuedImageInputFile(
+  media: Awaited<ReturnType<typeof loadMediaInputs>>[number],
+  index: number,
+  prefix: string
+): ImageInputFile {
+  const extension = media.type === "image/png" ? "png" : "image";
+  return {
+    data: media.data,
+    type: media.type,
+    name: `${prefix}-${index + 1}.${extension}`,
+    ...(media.storageKey ? { storageKey: media.storageKey } : {}),
+    ...(media.storageBucket ? { storageBucket: media.storageBucket } : {}),
+  };
+}
+
+/**
+ * 在取得全站执行槽后把 storage-only 清单加载成短生命周期 Buffer。
+ *
+ * 排队项只持有 JSON-safe 引用；读取失败会在创建 generation、成员租约和扣费前结束。
+ */
+async function resolveQueuedImageInputs(
+  input: RunImageGenerationInput
+): Promise<{
+  executionInput: RunImageGenerationInput;
+  inputImages: ImageInputFile[];
+}> {
+  if (input.mode !== "edit" || !input.mediaInputReferences) {
+    return { executionInput: input, inputImages: getInputImages(input) };
+  }
+  const references = [
+    ...input.mediaInputReferences.images,
+    ...(input.mediaInputReferences.mask
+      ? [input.mediaInputReferences.mask]
+      : []),
+  ];
+  const loaded = await loadMediaInputs({ userId: input.userId, references });
+  const imageCount = input.mediaInputReferences.images.length;
+  const images = loaded
+    .slice(0, imageCount)
+    .map((media, index) => toQueuedImageInputFile(media, index, "image"));
+  const loadedMask = loaded[imageCount];
+  const mask = input.mediaInputReferences.mask
+    ? loadedMask
+      ? toQueuedImageInputFile(loadedMask, 0, "mask")
+      : null
+    : undefined;
+  if (images.length !== imageCount || mask === null) {
+    throw new Error("媒体输入加载结果数量不一致");
+  }
+  const executionInput: RunImageGenerationInput = {
+    ...input,
+    mode: "edit",
+    images,
+    ...(mask ? { mask } : {}),
+  };
+  return {
+    executionInput,
+    inputImages: getInputImages(executionInput),
+  };
 }
 
 function buildPromptOptimizationMetadata(params: {
@@ -941,9 +1014,34 @@ async function persistImageUpstreamRequestSnapshot(
   }
 }
 
+/**
+ * 执行唯一图片管线，并在 generation 持久化前管理 staging 对象所有权。
+ *
+ * @param input 已完成身份绑定的生成或编辑输入。
+ * @param callbacks 可选的局部流式回调。
+ * @returns 图片生成结果；失败结果保留稳定 generationId 和领域错误。
+ * @sideEffects 未创建 generation 时删除本轮新建的同步输入对象。
+ */
 export async function runImageGenerationForUser(
   input: RunImageGenerationInput,
   callbacks?: ImageGenerationCallbacks
+): Promise<ImageGenerationOperationResult> {
+  return withStagedImageInputOwnership({
+    objects: input.mode === "edit" ? (input.stagedImageInputObjects ?? []) : [],
+    run: (markStagedImageInputsAdopted) =>
+      runImageGenerationForUserInternal(
+        input,
+        callbacks,
+        markStagedImageInputsAdopted
+      ),
+  });
+}
+
+/** 在 staging 所有权保护内执行原有图片管线。 */
+async function runImageGenerationForUserInternal(
+  input: RunImageGenerationInput,
+  callbacks: ImageGenerationCallbacks | undefined,
+  markStagedImageInputsAdopted: () => void
 ): Promise<ImageGenerationOperationResult> {
   const generationId = input.generationId || nanoid();
   const operationCreatedAt = new Date();
@@ -952,7 +1050,6 @@ export async function runImageGenerationForUser(
     operationCreatedAt
   );
   const size = resolveImageRequestSize(input.size);
-  const inputImages = getInputImages(input);
   const { generations: bucket } = await getRuntimeStorageBucketConfig();
   if (
     input.admissionAuthorization &&
@@ -1028,7 +1125,9 @@ export async function runImageGenerationForUser(
     };
   }
   // 仅以实际存在的蒙版文件作为调度条件，不能信任客户端额外声明的能力字段。
-  const requiresMask = input.mode === "edit" && Boolean(input.mask);
+  const requiresMask =
+    input.mode === "edit" &&
+    Boolean(input.mask || input.mediaInputReferences?.mask);
   const imageModel = resolveRequestedImageModel(input.model);
   const recordModel = imageModel;
   const moderationContext = await createGenerationModerationContext(
@@ -1104,15 +1203,30 @@ export async function runImageGenerationForUser(
       async () => {
         let session: RuntimeBackendSession | null = null;
         try {
+          let executionInput: RunImageGenerationInput;
+          let inputImages: ImageInputFile[];
+          try {
+            ({ executionInput, inputImages } =
+              await resolveQueuedImageInputs(input));
+          } catch (error) {
+            return {
+              error: toClientErrorMessage(
+                error,
+                { source: "image-input-load", generationId },
+                "媒体输入加载失败，请重试"
+              ),
+              generationId,
+            };
+          }
           const moderationRequired =
             (await isContentModerationEnabled()) && moderationBlockingEnabled;
           let initialConfig: ApiConfig;
           try {
             session = await createRuntimeBackendSession(
               {
-                userId: input.userId,
-                apiKeyId: input.apiKeyId,
-                requestedGroupId: input.backendGroupId,
+                userId: executionInput.userId,
+                apiKeyId: executionInput.apiKeyId,
+                requestedGroupId: executionInput.backendGroupId,
                 modelId: imageModel,
                 requestKind: "image",
                 requiresContentSafety: moderationRequired,
@@ -1180,7 +1294,7 @@ export async function runImageGenerationForUser(
               })
             : 0;
           return await runQueuedImageGenerationForUser({
-            input,
+            input: executionInput,
             callbacks,
             generationId,
             operationCreatedAt,
@@ -1205,6 +1319,7 @@ export async function runImageGenerationForUser(
             imageModel,
             recordModel,
             moderationEnabled,
+            markStagedImageInputsAdopted,
           });
         } finally {
           await session?.close();
@@ -1259,6 +1374,7 @@ async function runQueuedImageGenerationForUser({
   imageModel,
   recordModel,
   moderationEnabled,
+  markStagedImageInputsAdopted,
 }: {
   input: RunImageGenerationInput;
   callbacks?: ImageGenerationCallbacks;
@@ -1285,6 +1401,7 @@ async function runQueuedImageGenerationForUser({
   imageModel: string;
   recordModel: string;
   moderationEnabled: boolean;
+  markStagedImageInputsAdopted: () => void;
 }): Promise<ImageGenerationOperationResult> {
   const startedAt = Date.now();
   let activeConfig = initialConfig;
@@ -1376,6 +1493,8 @@ async function runQueuedImageGenerationForUser({
             ...(input.apiKeyId ? { externalApiKeyId: input.apiKeyId } : {}),
           },
   });
+  // WHY：只有 generation 行提交成功后，历史元数据和删除流程才正式接管输入对象。
+  markStagedImageInputsAdopted();
 
   let chargedCredits = 0;
   const refundChargedCredits = async (

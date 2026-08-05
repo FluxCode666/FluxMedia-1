@@ -1,8 +1,8 @@
 /**
  * 图片生成 UOL 的强类型 late binding。
  *
- * 职责：按 generate/edit/mask 联合契约加载媒体引用并唯一委托
- * `runImageGenerationForUser`，身份只从 Principal 获取。
+ * 职责：按 generate/edit/mask 联合契约取得用户准入、把编辑输入转成 storage-only
+ * 清单并唯一委托 `runImageGenerationForUser`，身份只从 Principal 获取。
  * 使用方：根 uol-bindings 聚合器；默认依赖动态加载以保持本模块单测 DB-free。
  */
 
@@ -21,10 +21,7 @@ import {
   imageGenerate,
 } from "@repo/shared/uol/operations/image-generation";
 
-import type {
-  LoadedMediaInput,
-  loadMediaInputs,
-} from "@/features/image-generation/media-input-loader";
+import type { stageImageInputReferences } from "@/features/image-generation/image-input-storage";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
 import type {
   RedisImageGenerationAdmissionAcquisition,
@@ -32,7 +29,6 @@ import type {
 } from "@/features/image-generation/redis-image-generation-slots";
 import type {
   ImageGenerationCallbacks,
-  ImageInputFile,
   ImageQuality,
 } from "@/features/image-generation/types";
 
@@ -41,7 +37,7 @@ type ImageGenerateOutput = ImageGenerateOperationOutput;
 
 /** 图片 binding 可替换依赖；测试注入桩，生产动态加载真实媒体服务。 */
 export interface ImageGenerationBindingDependencies {
-  loadMediaInputs: typeof loadMediaInputs;
+  stageImageInputReferences: typeof stageImageInputReferences;
   runImageGenerationForUser: typeof runImageGenerationForUser;
   getMediaLimitsForUser: (userId: string) => Promise<{
     limit: number;
@@ -57,10 +53,10 @@ export interface ImageGenerationBindingDependencies {
 }
 
 const defaultDependencies: ImageGenerationBindingDependencies = {
-  async loadMediaInputs(input) {
+  async stageImageInputReferences(input) {
     return (
-      await import("@/features/image-generation/media-input-loader")
-    ).loadMediaInputs(input);
+      await import("@/features/image-generation/image-input-storage")
+    ).stageImageInputReferences(input);
   },
   async runImageGenerationForUser(input, callbacks) {
     return (
@@ -99,22 +95,6 @@ async function releaseAdmissionSafely(
       errorName: error instanceof Error ? error.name : "UnknownError",
     });
   }
-}
-
-/** 将已校验字节映射为图片管线文件，名称只用于上游 multipart 元数据。 */
-function toImageInputFile(
-  input: LoadedMediaInput,
-  index: number,
-  prefix: string
-): ImageInputFile {
-  const extension = input.type === "image/png" ? "png" : "image";
-  return {
-    data: input.data,
-    type: input.type,
-    name: `${prefix}-${index + 1}.${extension}`,
-    ...(input.storageKey ? { storageKey: input.storageKey } : {}),
-    ...(input.storageBucket ? { storageBucket: input.storageBucket } : {}),
-  };
 }
 
 /** 从受信 OperationContext 中收窄可选的局部图片流回调。 */
@@ -262,14 +242,16 @@ export async function executeImageGenerateBinding(
 
     const references =
       input.operation === "mask" ? [...input.images, input.mask] : input.images;
-    const loaded = await dependencies.loadMediaInputs({ userId, references });
+    const staged = await dependencies.stageImageInputReferences({
+      userId,
+      generationId: input.generationId,
+      references,
+    });
     const imageCount = input.images.length;
-    const images = loaded
-      .slice(0, imageCount)
-      .map((image, index) => toImageInputFile(image, index, "image"));
+    const images = staged.references.slice(0, imageCount);
     const mask =
-      input.operation === "mask" && loaded[imageCount]
-        ? toImageInputFile(loaded[imageCount], 0, "mask")
+      input.operation === "mask" && staged.references[imageCount]
+        ? staged.references[imageCount]
         : undefined;
     return toImageGenerateOutput(
       input,
@@ -277,8 +259,12 @@ export async function executeImageGenerateBinding(
         {
           mode: "edit",
           ...common,
-          images,
-          ...(mask ? { mask } : {}),
+          images: [],
+          mediaInputReferences: {
+            images,
+            ...(mask ? { mask } : {}),
+          },
+          stagedImageInputObjects: staged.objects,
         },
         callbacks
       )

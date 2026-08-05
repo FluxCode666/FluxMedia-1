@@ -6,6 +6,7 @@
  * 使用方：apps/web Vitest 门禁；所有 I/O 通过依赖注入替换。
  */
 
+import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import { describe, expect, it, vi } from "vitest";
 import type { RedisImageGenerationAdmissionAcquisition } from "@/features/image-generation/redis-image-generation-slots";
@@ -51,16 +52,29 @@ function operationContext(
 /** 构造可观测的图片 binding 依赖桩。 */
 function dependencies(): {
   value: ImageGenerationBindingDependencies;
-  load: ReturnType<typeof vi.fn>;
+  stage: ReturnType<typeof vi.fn>;
   run: ReturnType<typeof vi.fn>;
   getLimits: ReturnType<typeof vi.fn>;
   acquireAdmission: ReturnType<typeof vi.fn>;
   releaseAdmission: ReturnType<typeof vi.fn>;
 } {
-  const load = vi.fn(async () => [
-    { data: Buffer.from("image"), type: "image/png" },
-    { data: Buffer.from("mask"), type: "image/png" },
-  ]);
+  const stage = vi.fn(async (input: { references: MediaInputReference[] }) => {
+    const references = input.references.map((reference, index) => ({
+      source: "storage" as const,
+      mimeType: reference.mimeType,
+      storageKey: `user-1/image-inputs/input-${index}.png`,
+      storageBucket: "generations",
+      byteLength: reference.byteLength,
+    }));
+    return {
+      references,
+      objects: references.map((reference) => ({
+        userId: "user-1",
+        storageKey: reference.storageKey,
+        storageBucket: reference.storageBucket,
+      })),
+    };
+  });
   const run = vi.fn(async () => ({
     generationId: "generation-1",
     imageUrl: "https://cdn.example.com/image.png",
@@ -84,13 +98,13 @@ function dependencies(): {
   const releaseAdmission = vi.fn(async () => undefined);
   return {
     value: {
-      loadMediaInputs: load,
+      stageImageInputReferences: stage,
       runImageGenerationForUser: run,
       getMediaLimitsForUser: getLimits,
       acquireImageGenerationAdmission: acquireAdmission,
       releaseImageGenerationAdmission: releaseAdmission,
     },
-    load,
+    stage,
     run,
     getLimits,
     acquireAdmission,
@@ -135,7 +149,7 @@ describe("executeImageGenerateBinding", () => {
         scope: "user",
       },
     });
-    expect(deps.load).not.toHaveBeenCalled();
+    expect(deps.stage).not.toHaveBeenCalled();
     expect(deps.run).not.toHaveBeenCalled();
     expect(deps.releaseAdmission).not.toHaveBeenCalled();
   });
@@ -155,7 +169,7 @@ describe("executeImageGenerateBinding", () => {
       deps.value
     );
 
-    expect(deps.load).not.toHaveBeenCalled();
+    expect(deps.stage).not.toHaveBeenCalled();
     expect(deps.run).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "generate",
@@ -175,7 +189,7 @@ describe("executeImageGenerateBinding", () => {
     });
   });
 
-  it("edit 加载全部图片并以 edit 模式调用唯一管线", async () => {
+  it("edit 转存全部图片并以 storage-only 清单调用唯一管线", async () => {
     const deps = dependencies();
     await executeImageGenerateBinding(
       {
@@ -190,17 +204,26 @@ describe("executeImageGenerateBinding", () => {
       deps.value
     );
 
-    expect(deps.load).toHaveBeenCalledWith({
+    expect(deps.stage).toHaveBeenCalledWith({
       userId: "user-1",
+      generationId: "generation-2",
       references: [dataReference],
     });
     expect(deps.run).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "edit",
-        images: [
+        images: [],
+        mediaInputReferences: {
+          images: [
+            expect.objectContaining({
+              source: "storage",
+              storageKey: "user-1/image-inputs/input-0.png",
+            }),
+          ],
+        },
+        stagedImageInputObjects: [
           expect.objectContaining({
-            data: Buffer.from("image"),
-            name: "image-1.png",
+            storageKey: "user-1/image-inputs/input-0.png",
           }),
         ],
       }),
@@ -209,9 +232,9 @@ describe("executeImageGenerateBinding", () => {
     expect(deps.releaseAdmission).toHaveBeenCalledTimes(1);
   });
 
-  it("编辑媒体加载失败时释放已取得的用户准入槽", async () => {
+  it("编辑媒体转存失败时释放已取得的用户准入槽", async () => {
     const deps = dependencies();
-    deps.load.mockRejectedValueOnce(new Error("storage unavailable"));
+    deps.stage.mockRejectedValueOnce(new Error("storage unavailable"));
 
     await expect(
       executeImageGenerateBinding(
@@ -233,14 +256,6 @@ describe("executeImageGenerateBinding", () => {
 
   it("edit 保留可信存储引用，避免图片管线再次转存", async () => {
     const deps = dependencies();
-    deps.load.mockResolvedValueOnce([
-      {
-        data: Buffer.from("stored-image"),
-        type: "image/png",
-        storageKey: "user-1/requests/input.png",
-        storageBucket: "generations",
-      },
-    ]);
     const storageReference = {
       source: "storage" as const,
       mimeType: "image/png" as const,
@@ -248,6 +263,10 @@ describe("executeImageGenerateBinding", () => {
       storageBucket: "generations",
       byteLength: 12,
     };
+    deps.stage.mockResolvedValueOnce({
+      references: [storageReference],
+      objects: [],
+    });
 
     await executeImageGenerateBinding(
       {
@@ -264,12 +283,16 @@ describe("executeImageGenerateBinding", () => {
 
     expect(deps.run).toHaveBeenCalledWith(
       expect.objectContaining({
-        images: [
-          expect.objectContaining({
-            storageKey: "user-1/requests/input.png",
-            storageBucket: "generations",
-          }),
-        ],
+        images: [],
+        mediaInputReferences: {
+          images: [
+            expect.objectContaining({
+              storageKey: "user-1/requests/input.png",
+              storageBucket: "generations",
+            }),
+          ],
+        },
+        stagedImageInputObjects: [],
       }),
       undefined
     );
@@ -295,7 +318,7 @@ describe("executeImageGenerateBinding", () => {
     );
   });
 
-  it("mask 在一次总量校验中加载图片与蒙版并正确拆分", async () => {
+  it("mask 在一次转存中处理图片与蒙版并正确拆分", async () => {
     const deps = dependencies();
     const maskReference = {
       ...dataReference,
@@ -316,15 +339,25 @@ describe("executeImageGenerateBinding", () => {
       deps.value
     );
 
-    expect(deps.load).toHaveBeenCalledWith({
+    expect(deps.stage).toHaveBeenCalledWith({
       userId: "user-1",
+      generationId: "generation-4",
       references: [dataReference, maskReference],
     });
     expect(deps.run).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "edit",
-        images: [expect.objectContaining({ name: "image-1.png" })],
-        mask: expect.objectContaining({ name: "mask-1.png" }),
+        images: [],
+        mediaInputReferences: {
+          images: [
+            expect.objectContaining({
+              storageKey: "user-1/image-inputs/input-0.png",
+            }),
+          ],
+          mask: expect.objectContaining({
+            storageKey: "user-1/image-inputs/input-1.png",
+          }),
+        },
       }),
       undefined
     );
