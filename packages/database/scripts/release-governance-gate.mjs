@@ -2728,10 +2728,10 @@ async function assertImageAsyncTaskRetirementPreflight(pool) {
 }
 
 /**
- * 验证 0081 additive 字段、约束、partial 索引和 INSERT-only trigger 均可用。
+ * 验证媒体治理字段、MQ 投递版本、约束、partial 索引和 INSERT-only trigger 均可用。
  *
  * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
- * @returns {Promise<void>} 所有 0081 数据库对象存在且启用时完成。
+ * @returns {Promise<void>} 所有媒体治理与 MQ fencing 数据库对象存在且启用时完成。
  * @throws 任一字段、CHECK、partial index、trigger 缺失或字段脏数据存在时抛错。
  * @sideEffect 在只读事务中查询系统目录和图片任务聚合状态。
  * @boundary 不尝试修复对象；触发器必须保持 enabled，历史 UPDATE 由集成测试证明。
@@ -2779,6 +2779,15 @@ async function assertMediaUsageGovernancePostMigrationState(pool) {
           select 1
           from information_schema.columns
           where table_schema = 'public'
+            and table_name = 'image_async_task'
+            and column_name = 'mq_delivery_version'
+            and data_type = 'integer'
+            and is_nullable = 'NO'
+        ) as mq_delivery_version_valid,
+        exists (
+          select 1
+          from information_schema.columns
+          where table_schema = 'public'
             and table_name = 'user'
             and column_name = 'image_generation_concurrency_override'
             and data_type = 'integer'
@@ -2795,7 +2804,8 @@ async function assertMediaUsageGovernancePostMigrationState(pool) {
               'image_async_task_generation_input_shape_check',
               'image_async_task_policy_snapshot_check',
               'image_async_task_admission_lease_state_check',
-              'image_async_task_due_state_check'
+              'image_async_task_due_state_check',
+              'image_async_task_attempt_count_check'
             )
         ) as constraint_count,
         (
@@ -2862,6 +2872,10 @@ async function assertMediaUsageGovernancePostMigrationState(pool) {
     );
     printEvidence("media_usage_image_task_column_count", imageTaskColumnCount);
     printEvidence(
+      "media_usage_mq_delivery_version_valid",
+      row.mq_delivery_version_valid === true
+    );
+    printEvidence(
       "media_usage_user_override_column_valid",
       row.user_override_column_valid === true
     );
@@ -2870,8 +2884,9 @@ async function assertMediaUsageGovernancePostMigrationState(pool) {
     printEvidence("media_usage_enabled_trigger_count", enabledTriggerCount);
     if (
       imageTaskColumnCount !== MEDIA_USAGE_IMAGE_TASK_COLUMNS.length ||
+      row.mq_delivery_version_valid !== true ||
       row.user_override_column_valid !== true ||
-      constraintCount !== 6 ||
+      constraintCount !== 7 ||
       partialIndexCount !== 6 ||
       enabledTriggerCount !== 2
     ) {

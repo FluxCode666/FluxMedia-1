@@ -23,7 +23,9 @@ const scanInputSchema = z
   .strict();
 const imageDeliveryRowSchema = z.object({
   id: identifierSchema,
-  attempt_count: z.coerce.number().int().nonnegative(),
+  mq_delivery_version: z.coerce.number().int().nonnegative(),
+  mq_delivery_due_at: z.coerce.date().nullable(),
+  claim_recovery_due_at: z.coerce.date().nullable(),
   group_priority_snapshot: z.coerce.number().int().min(0).max(10_000),
 });
 const imageAdmissionRowSchema = z.object({
@@ -32,6 +34,7 @@ const imageAdmissionRowSchema = z.object({
   effective_user_concurrency: z.coerce.number().int().min(1).max(10_000),
   admission_lease_token: z.string().trim().min(1).max(256),
   admission_lease_expires_at: z.coerce.date(),
+  admission_renewal_due_at: z.coerce.date(),
 });
 const imageTerminalReleaseRowSchema = z.object({
   id: identifierSchema,
@@ -53,6 +56,7 @@ const videoRowSchema = z.object({
 export interface RecoverableImageTask {
   taskId: string;
   deliveryVersion: number;
+  dueAt: Date;
   priority: number;
   recoveryKind: "mq" | "claim";
 }
@@ -64,6 +68,7 @@ export interface RecoverableImageAdmission {
   effectiveUserConcurrency: number;
   token: string;
   expiresAt: Date;
+  renewalDueAt: Date;
 }
 
 /** 一条终态已提交但尚未持久确认 Redis 释放的图片任务。 */
@@ -119,7 +124,12 @@ export function createPostgresMediaTaskRecoveryRepository(
         videoResult,
       ] = await Promise.all([
         database.execute(sql`
-          select id, attempt_count, group_priority_snapshot
+          select
+            id,
+            mq_delivery_version,
+            mq_delivery_due_at,
+            claim_recovery_due_at,
+            group_priority_snapshot
           from image_async_task
           where status in ('queued', 'running')
             and mq_delivery_due_at <= ${input.now}
@@ -127,10 +137,16 @@ export function createPostgresMediaTaskRecoveryRepository(
           limit ${input.limit}
         `),
         database.execute(sql`
-          select id, attempt_count, group_priority_snapshot
+          select
+            id,
+            mq_delivery_version,
+            mq_delivery_due_at,
+            claim_recovery_due_at,
+            group_priority_snapshot
           from image_async_task
           where status = 'running'
             and claim_recovery_due_at <= ${input.now}
+            and mq_delivery_due_at is null
           order by claim_recovery_due_at, id
           limit ${input.limit}
         `),
@@ -140,7 +156,8 @@ export function createPostgresMediaTaskRecoveryRepository(
             user_id,
             effective_user_concurrency,
             admission_lease_token,
-            admission_lease_expires_at
+            admission_lease_expires_at,
+            admission_renewal_due_at
           from image_async_task
           where status in ('queued', 'running')
             and admission_renewal_due_at <= ${input.now}
@@ -199,9 +216,17 @@ export function createPostgresMediaTaskRecoveryRepository(
         recoveryKind: RecoverableImageTask["recoveryKind"]
       ): RecoverableImageTask => {
         const parsed = imageDeliveryRowSchema.parse(row);
+        const dueAt =
+          recoveryKind === "mq"
+            ? parsed.mq_delivery_due_at
+            : parsed.claim_recovery_due_at;
+        if (!dueAt) {
+          throw new Error("图片恢复行缺少对应的 due 游标");
+        }
         return {
           taskId: parsed.id,
-          deliveryVersion: parsed.attempt_count,
+          deliveryVersion: parsed.mq_delivery_version,
+          dueAt,
           priority: parsed.group_priority_snapshot + 1,
           recoveryKind,
         };
@@ -223,6 +248,7 @@ export function createPostgresMediaTaskRecoveryRepository(
             effectiveUserConcurrency: parsed.effective_user_concurrency,
             token: parsed.admission_lease_token,
             expiresAt: parsed.admission_lease_expires_at,
+            renewalDueAt: parsed.admission_renewal_due_at,
           };
         }
       );

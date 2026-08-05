@@ -1898,6 +1898,7 @@ export const imageAsyncTask = pgTable(
     admissionLeaseToken: text("admission_lease_token"),
     admissionLeaseExpiresAt: timestamp("admission_lease_expires_at"),
     admissionLeaseReleasedAt: timestamp("admission_lease_released_at"),
+    mqDeliveryVersion: integer("mq_delivery_version").notNull().default(0),
     mqDeliveryDueAt: timestamp("mq_delivery_due_at"),
     claimRecoveryDueAt: timestamp("claim_recovery_due_at"),
     admissionRenewalDueAt: timestamp("admission_renewal_due_at"),
@@ -1970,7 +1971,7 @@ export const imageAsyncTask = pgTable(
     ),
     check(
       "image_async_task_attempt_count_check",
-      sql`${table.attemptCount} >= 0`
+      sql`${table.attemptCount} >= 0 AND ${table.mqDeliveryVersion} >= 0`
     ),
     check(
       "image_async_task_identity_nonempty_check",

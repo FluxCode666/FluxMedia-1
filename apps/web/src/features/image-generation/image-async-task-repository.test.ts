@@ -46,6 +46,7 @@ function createRow(
     admission_lease_token: "admission-1",
     admission_lease_expires_at: LEASE_EXPIRES_AT,
     admission_lease_released_at: null,
+    mq_delivery_version: 0,
     mq_delivery_due_at: NOW,
     claim_recovery_due_at: null,
     admission_renewal_due_at: RENEWAL_DUE_AT,
@@ -210,6 +211,67 @@ describe("image async task repository", () => {
     expect(heartbeat.sql).toContain("and claim_token =");
     expect(heartbeat.sql).toContain("and admission_lease_token =");
     expect(heartbeat.sql).toContain("admission_renewal_due_at =");
+  });
+
+  it("MQ 补投按独立版本与 due CAS，claim 恢复和 release 都推进版本", async () => {
+    const runningRecoveryRow = createRow({
+      status: "running",
+      attempt_count: 1,
+      mq_delivery_version: 1,
+      mq_delivery_due_at: NOW,
+      claim_recovery_due_at: NOW,
+      claim_token: "worker-old",
+      claim_expires_at: NOW,
+      started_at: NOW,
+    });
+    const queuedRow = createRow({
+      mq_delivery_version: 2,
+      mq_delivery_due_at: NOW,
+    });
+    const { database, queries } = createDatabase([
+      [createRow({ mq_delivery_due_at: null })],
+      [runningRecoveryRow],
+      [runningRecoveryRow],
+      [queuedRow],
+    ]);
+    const repository = createPostgresImageAsyncTaskRepository(database);
+
+    await repository.markMqDelivered({
+      taskId: "task_123",
+      deliveryVersion: 0,
+      mqDeliveryDueAt: NOW,
+      now: NOW,
+    });
+    await repository.prepareClaimRecoveryDelivery({
+      taskId: "task_123",
+      deliveryVersion: 0,
+      claimRecoveryDueAt: NOW,
+      now: NOW,
+    });
+    await repository.deferAdmissionRenewal({
+      taskId: "task_123",
+      admissionLeaseToken: "admission-1",
+      expectedRenewalDueAt: RENEWAL_DUE_AT,
+      nextRenewalDueAt: new Date(RENEWAL_DUE_AT.getTime() + 60_000),
+      now: NOW,
+    });
+    await repository.release({
+      taskId: "task_123",
+      claimToken: "worker-1",
+      now: NOW,
+    });
+
+    const ack = new PgDialect().sqlToQuery(queries[0] as SQL).sql;
+    expect(ack).toContain("and mq_delivery_version =");
+    expect(ack).toContain("and mq_delivery_due_at =");
+    const prepare = new PgDialect().sqlToQuery(queries[1] as SQL).sql;
+    expect(prepare).toContain("mq_delivery_version = mq_delivery_version + 1");
+    expect(prepare).toContain("and claim_recovery_due_at =");
+    expect(prepare).toContain("and mq_delivery_due_at is null");
+    const defer = new PgDialect().sqlToQuery(queries[2] as SQL).sql;
+    expect(defer).toContain("and admission_renewal_due_at =");
+    const release = new PgDialect().sqlToQuery(queries[3] as SQL).sql;
+    expect(release).toContain("mq_delivery_version = mq_delivery_version + 1");
   });
 
   it("终态 CAS 保留 admission token 并在 Redis 释放后单独 ack", async () => {

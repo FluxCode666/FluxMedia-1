@@ -61,7 +61,9 @@ async function invokeAdobeHealthJob<T>(
  * 同时作为超时 pending 过期与超期成品图销毁的批量上限，避免单次任务无界扫描。
  */
 const IMAGE_MAINTENANCE_BATCH_LIMIT = 500;
-const MEDIA_TASK_RECOVERY_BATCH_LIMIT = 100;
+const MEDIA_TASK_RECOVERY_BATCH_LIMIT = 1_000;
+const MEDIA_TASK_RECOVERY_CONCURRENCY = 25;
+const IMAGE_ADMISSION_RECOVERY_BACKOFF_MS = 60_000;
 const ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT = 25;
 
 /** 媒体队列与图片租约补偿任务的可替换依赖。 */
@@ -69,7 +71,11 @@ export interface MediaTaskRecoveryJobDependencies {
   repository: MediaTaskRecoveryRepository;
   imageTaskRepository: Pick<
     ImageAsyncTaskRepository,
-    "markMqDelivered" | "updateAdmissionLease" | "markAdmissionReleased"
+    | "deferAdmissionRenewal"
+    | "markAdmissionReleased"
+    | "markMqDelivered"
+    | "prepareClaimRecoveryDelivery"
+    | "updateAdmissionLease"
   >;
   enqueueImage: typeof enqueueImageTask;
   enqueueVideo: typeof enqueueVideoTask;
@@ -150,27 +156,47 @@ async function recoverImageAdmission(
   });
   const renewal = await dependencies.renewImageAdmission(persistedLease);
   let expiresAt: number;
+  let recoveredLease = persistedLease;
   if (renewal.status === "renewed") {
     expiresAt = renewal.expiresAt;
+    recoveredLease = { ...persistedLease, expiresAt };
   } else {
     const acquisition = await dependencies.acquireImageAdmission({
       userId: task.userId,
       userConcurrency: task.effectiveUserConcurrency,
       token: task.token,
     });
-    if (acquisition.status === "blocked") return false;
+    if (acquisition.status === "blocked") {
+      const now = dependencies.now();
+      await dependencies.imageTaskRepository.deferAdmissionRenewal({
+        taskId: task.taskId,
+        admissionLeaseToken: task.token,
+        expectedRenewalDueAt: task.renewalDueAt,
+        nextRenewalDueAt: new Date(
+          now.getTime() + IMAGE_ADMISSION_RECOVERY_BACKOFF_MS
+        ),
+        now,
+      });
+      return false;
+    }
     expiresAt = acquisition.lease.expiresAt;
+    recoveredLease = acquisition.lease;
   }
   const now = dependencies.now();
-  return Boolean(
-    await dependencies.imageTaskRepository.updateAdmissionLease({
-      taskId: task.taskId,
-      admissionLeaseToken: task.token,
-      admissionLeaseExpiresAt: new Date(expiresAt),
-      admissionRenewalDueAt: getRecoveredAdmissionRenewalDueAt(now, expiresAt),
-      now,
-    })
-  );
+  const updated = await dependencies.imageTaskRepository.updateAdmissionLease({
+    taskId: task.taskId,
+    admissionLeaseToken: task.token,
+    admissionLeaseExpiresAt: new Date(expiresAt),
+    admissionRenewalDueAt: getRecoveredAdmissionRenewalDueAt(now, expiresAt),
+    now,
+  });
+  if (!updated) {
+    // WHY：扫描后任务可能已经终态并完成旧 token 的 release ack；本轮迟到的 renew/
+    // acquire 必须撤销，不能把已经释放的用户槽重新留在 Redis 直到 TTL。
+    await dependencies.releaseImageAdmission(recoveredLease);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -203,6 +229,27 @@ async function recoverImageTerminalRelease(
       now: dependencies.now(),
     })
   );
+}
+
+/**
+ * 以固定并发分片处理恢复项，避免扩大扫描吞吐后同时压垮 Redis 和 PostgreSQL。
+ *
+ * @param items 本轮同一恢复类型的有界扫描结果。
+ * @param work 单项隔离处理函数；错误应由调用方在函数内转换为统计。
+ */
+async function runBoundedMediaRecovery<T>(
+  items: T[],
+  work: (item: T) => Promise<void>
+): Promise<void> {
+  for (
+    let offset = 0;
+    offset < items.length;
+    offset += MEDIA_TASK_RECOVERY_CONCURRENCY
+  ) {
+    await Promise.all(
+      items.slice(offset, offset + MEDIA_TASK_RECOVERY_CONCURRENCY).map(work)
+    );
+  }
 }
 
 export async function runImageMaintenanceJob() {
@@ -279,26 +326,47 @@ export async function runMediaTaskQueueRecovery(
   let deferred = 0;
   let failed = 0;
   await Promise.all([
-    ...tasks.images.map(async (task) => {
+    runBoundedMediaRecovery(tasks.images, async (task) => {
       try {
+        const delivery =
+          task.recoveryKind === "claim"
+            ? await dependencies.imageTaskRepository.prepareClaimRecoveryDelivery(
+                {
+                  taskId: task.taskId,
+                  deliveryVersion: task.deliveryVersion,
+                  claimRecoveryDueAt: task.dueAt,
+                  now: dependencies.now(),
+                }
+              )
+            : null;
+        if (task.recoveryKind === "claim" && !delivery) {
+          deferred += 1;
+          return;
+        }
+        const deliveryVersion =
+          delivery?.mqDeliveryVersion ?? task.deliveryVersion;
+        const mqDeliveryDueAt = delivery?.mqDeliveryDueAt ?? task.dueAt;
+        if (!mqDeliveryDueAt) {
+          throw new Error("图片恢复投递缺少 MQ due 游标");
+        }
         await dependencies.enqueueImage({
           taskId: task.taskId,
-          deliveryVersion: task.deliveryVersion,
+          deliveryVersion,
           priority: task.priority,
         });
-        if (task.recoveryKind === "mq") {
-          await dependencies.imageTaskRepository.markMqDelivered({
-            taskId: task.taskId,
-            now: dependencies.now(),
-          });
-        }
+        await dependencies.imageTaskRepository.markMqDelivered({
+          taskId: task.taskId,
+          deliveryVersion,
+          mqDeliveryDueAt,
+          now: dependencies.now(),
+        });
         enqueued += 1;
       } catch (error) {
         failed += 1;
         dependencies.reportFailure(error, "image", task.taskId);
       }
     }),
-    ...tasks.imageAdmissions.map(async (task) => {
+    runBoundedMediaRecovery(tasks.imageAdmissions, async (task) => {
       try {
         if (await recoverImageAdmission(task, dependencies)) {
           renewed += 1;
@@ -310,7 +378,7 @@ export async function runMediaTaskQueueRecovery(
         dependencies.reportFailure(error, "image-admission", task.taskId);
       }
     }),
-    ...tasks.imageTerminalReleases.map(async (task) => {
+    runBoundedMediaRecovery(tasks.imageTerminalReleases, async (task) => {
       try {
         if (await recoverImageTerminalRelease(task, dependencies)) {
           released += 1;
@@ -322,7 +390,7 @@ export async function runMediaTaskQueueRecovery(
         dependencies.reportFailure(error, "image-release", task.taskId);
       }
     }),
-    ...tasks.videos.map(async (task) => {
+    runBoundedMediaRecovery(tasks.videos, async (task) => {
       try {
         await dependencies.enqueueVideo(task);
         enqueued += 1;

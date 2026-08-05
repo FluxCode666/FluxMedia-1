@@ -1530,7 +1530,10 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(unchanged.stdout).toContain(
       "media_usage_image_task_column_count=13\n"
     );
-    expect(unchanged.stdout).toContain("media_usage_constraint_count=6\n");
+    expect(unchanged.stdout).toContain(
+      "media_usage_mq_delivery_version_valid=true\n"
+    );
+    expect(unchanged.stdout).toContain("media_usage_constraint_count=7\n");
     expect(unchanged.stdout).toContain("media_usage_partial_index_count=6\n");
     expect(unchanged.stdout).toContain("media_usage_enabled_trigger_count=2\n");
 
@@ -1592,7 +1595,7 @@ describe("release governance gate PostgreSQL integration", () => {
         drop column image_generation_concurrency_override`,
     },
     {
-      evidence: "media_usage_constraint_count=5\n",
+      evidence: "media_usage_constraint_count=6\n",
       name: "CHECK 缺失",
       sql: `alter table image_async_task
         drop constraint image_async_task_due_state_check`,

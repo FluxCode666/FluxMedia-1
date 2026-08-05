@@ -42,6 +42,7 @@ function createRepository(): MediaTaskRecoveryRepository {
         {
           taskId: "task_mq",
           deliveryVersion: 5,
+          dueAt: NOW,
           priority: 8,
           recoveryKind: "mq" as const,
         },
@@ -53,6 +54,7 @@ function createRepository(): MediaTaskRecoveryRepository {
           effectiveUserConcurrency: 20,
           token: "admission-1",
           expiresAt: EXPIRES_AT,
+          renewalDueAt: NOW,
         },
       ],
       imageTerminalReleases: [
@@ -81,6 +83,8 @@ function createDependencies(): MediaTaskRecoveryJobDependencies {
     repository: createRepository(),
     imageTaskRepository: {
       markMqDelivered: vi.fn(async () => taskRecord),
+      prepareClaimRecoveryDelivery: vi.fn(async () => taskRecord),
+      deferAdmissionRenewal: vi.fn(async () => taskRecord),
       updateAdmissionLease: vi.fn(async () => taskRecord),
       markAdmissionReleased: vi.fn(async () => taskRecord),
     },
@@ -123,7 +127,12 @@ describe("scheduled media task recovery", () => {
     });
     expect(
       dependencies.imageTaskRepository.markMqDelivered
-    ).toHaveBeenCalledWith({ taskId: "task_mq", now: NOW });
+    ).toHaveBeenCalledWith({
+      taskId: "task_mq",
+      deliveryVersion: 5,
+      mqDeliveryDueAt: NOW,
+      now: NOW,
+    });
     expect(
       dependencies.imageTaskRepository.updateAdmissionLease
     ).toHaveBeenCalledWith(
@@ -169,6 +178,90 @@ describe("scheduled media task recovery", () => {
     expect(
       dependencies.imageTaskRepository.updateAdmissionLease
     ).not.toHaveBeenCalled();
+    expect(
+      dependencies.imageTaskRepository.deferAdmissionRenewal
+    ).toHaveBeenCalledWith({
+      taskId: "task_admission",
+      admissionLeaseToken: "admission-1",
+      expectedRenewalDueAt: NOW,
+      nextRenewalDueAt: new Date(NOW.getTime() + 60_000),
+      now: NOW,
+    });
+  });
+
+  it("claim 恢复先原子生成新投递版本再按新 due 确认", async () => {
+    const dependencies = createDependencies();
+    vi.mocked(dependencies.repository.scan).mockResolvedValue({
+      images: [
+        {
+          taskId: "task_claim",
+          deliveryVersion: 6,
+          dueAt: NOW,
+          priority: 3,
+          recoveryKind: "claim",
+        },
+      ],
+      imageAdmissions: [],
+      imageTerminalReleases: [],
+      videos: [],
+    });
+    vi.mocked(
+      dependencies.imageTaskRepository.prepareClaimRecoveryDelivery
+    ).mockResolvedValue({
+      mqDeliveryVersion: 7,
+      mqDeliveryDueAt: NOW,
+    } as ImageAsyncTaskRecord);
+
+    await expect(runMediaTaskQueueRecovery(dependencies)).resolves.toEqual({
+      discovered: 1,
+      enqueued: 1,
+      renewed: 0,
+      released: 0,
+      deferred: 0,
+      failed: 0,
+    });
+    expect(
+      dependencies.imageTaskRepository.prepareClaimRecoveryDelivery
+    ).toHaveBeenCalledWith({
+      taskId: "task_claim",
+      deliveryVersion: 6,
+      claimRecoveryDueAt: NOW,
+      now: NOW,
+    });
+    expect(dependencies.enqueueImage).toHaveBeenCalledWith({
+      taskId: "task_claim",
+      deliveryVersion: 7,
+      priority: 3,
+    });
+    expect(
+      dependencies.imageTaskRepository.markMqDelivered
+    ).toHaveBeenCalledWith({
+      taskId: "task_claim",
+      deliveryVersion: 7,
+      mqDeliveryDueAt: NOW,
+      now: NOW,
+    });
+  });
+
+  it("admission 重新取得后若任务已终态则撤销迟到租约", async () => {
+    const dependencies = createDependencies();
+    vi.mocked(dependencies.renewImageAdmission).mockResolvedValue({
+      status: "lost",
+    });
+    vi.mocked(
+      dependencies.imageTaskRepository.updateAdmissionLease
+    ).mockResolvedValue(null);
+
+    await expect(
+      runMediaTaskQueueRecovery(dependencies)
+    ).resolves.toMatchObject({
+      renewed: 0,
+      deferred: 1,
+      failed: 0,
+    });
+    expect(dependencies.releaseImageAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ token: "admission-1" })
+    );
   });
 
   it("隔离单条 MQ 失败并继续处理视频和租约恢复", async () => {

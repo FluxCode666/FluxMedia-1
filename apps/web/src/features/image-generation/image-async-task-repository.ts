@@ -55,6 +55,7 @@ const imageAsyncTaskRowSchema = z
     admission_lease_token: z.string().trim().min(1).max(256).nullable(),
     admission_lease_expires_at: z.coerce.date().nullable(),
     admission_lease_released_at: z.coerce.date().nullable(),
+    mq_delivery_version: z.coerce.number().int().nonnegative(),
     mq_delivery_due_at: z.coerce.date().nullable(),
     claim_recovery_due_at: z.coerce.date().nullable(),
     admission_renewal_due_at: z.coerce.date().nullable(),
@@ -238,9 +239,34 @@ const heartbeatImageAsyncTaskClaimInputSchema = z
 const markImageAsyncMqDeliveredInputSchema = z
   .object({
     taskId: imageAsyncTaskIdSchema,
+    deliveryVersion: z.number().int().nonnegative(),
+    mqDeliveryDueAt: z.date(),
     now: z.date(),
   })
   .strict();
+
+const prepareImageAsyncClaimRecoveryInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    deliveryVersion: z.number().int().nonnegative(),
+    claimRecoveryDueAt: z.date(),
+    now: z.date(),
+  })
+  .strict();
+
+const deferImageAsyncAdmissionRenewalInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    admissionLeaseToken: z.string().trim().min(1).max(256),
+    expectedRenewalDueAt: z.date(),
+    nextRenewalDueAt: z.date(),
+    now: z.date(),
+  })
+  .strict()
+  .refine((input) => input.nextRenewalDueAt.getTime() > input.now.getTime(), {
+    path: ["nextRenewalDueAt"],
+    message: "Deferred admission renewal must be later than now",
+  });
 
 const markImageAsyncAdmissionReleasedInputSchema = z
   .object({
@@ -265,6 +291,7 @@ export interface ImageAsyncTaskRecord {
   admissionLeaseToken: string | null;
   admissionLeaseExpiresAt: Date | null;
   admissionLeaseReleasedAt: Date | null;
+  mqDeliveryVersion: number;
   mqDeliveryDueAt: Date | null;
   claimRecoveryDueAt: Date | null;
   admissionRenewalDueAt: Date | null;
@@ -331,6 +358,12 @@ export interface ImageAsyncTaskRepository {
   markMqDelivered(
     input: z.input<typeof markImageAsyncMqDeliveredInputSchema>
   ): Promise<ImageAsyncTaskRecord | null>;
+  prepareClaimRecoveryDelivery(
+    input: z.input<typeof prepareImageAsyncClaimRecoveryInputSchema>
+  ): Promise<ImageAsyncTaskRecord | null>;
+  deferAdmissionRenewal(
+    input: z.input<typeof deferImageAsyncAdmissionRenewalInputSchema>
+  ): Promise<ImageAsyncTaskRecord | null>;
   heartbeatClaim(
     input: z.input<typeof heartbeatImageAsyncTaskClaimInputSchema>
   ): Promise<ImageAsyncTaskRecord | null>;
@@ -366,6 +399,7 @@ function parseImageAsyncTaskRow(value: unknown): ImageAsyncTaskRecord {
     admissionLeaseToken: row.admission_lease_token,
     admissionLeaseExpiresAt: row.admission_lease_expires_at,
     admissionLeaseReleasedAt: row.admission_lease_released_at,
+    mqDeliveryVersion: row.mq_delivery_version,
     mqDeliveryDueAt: row.mq_delivery_due_at,
     claimRecoveryDueAt: row.claim_recovery_due_at,
     admissionRenewalDueAt: row.admission_renewal_due_at,
@@ -411,6 +445,7 @@ function getImageAsyncTaskColumns(): SQL {
     admission_lease_token,
     admission_lease_expires_at,
     admission_lease_released_at,
+    mq_delivery_version,
     mq_delivery_due_at,
     claim_recovery_due_at,
     admission_renewal_due_at,
@@ -552,7 +587,43 @@ export function createPostgresImageAsyncTaskRepository(
         set mq_delivery_due_at = null,
             updated_at = ${input.now}
         where id = ${input.taskId}
-          and status = 'queued'
+          and status in ('queued', 'running')
+          and mq_delivery_version = ${input.deliveryVersion}
+          and mq_delivery_due_at = ${input.mqDeliveryDueAt}
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
+    async prepareClaimRecoveryDelivery(rawInput) {
+      const input = prepareImageAsyncClaimRecoveryInputSchema.parse(rawInput);
+      const result = await database.execute(sql`
+        update image_async_task
+        set mq_delivery_version = mq_delivery_version + 1,
+            mq_delivery_due_at = ${input.now},
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status = 'running'
+          and mq_delivery_version = ${input.deliveryVersion}
+          and mq_delivery_due_at is null
+          and claim_recovery_due_at = ${input.claimRecoveryDueAt}
+          and claim_recovery_due_at <= ${input.now}
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
+    async deferAdmissionRenewal(rawInput) {
+      const input = deferImageAsyncAdmissionRenewalInputSchema.parse(rawInput);
+      const result = await database.execute(sql`
+        update image_async_task
+        set admission_renewal_due_at = ${input.nextRenewalDueAt},
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status in ('queued', 'running')
+          and admission_lease_token = ${input.admissionLeaseToken}
+          and admission_lease_released_at is null
+          and admission_renewal_due_at = ${input.expectedRenewalDueAt}
         returning ${columns}
       `);
       return parseFirstImageAsyncTaskRow(result);
@@ -628,6 +699,7 @@ export function createPostgresImageAsyncTaskRepository(
         set status = 'queued',
             claim_token = null,
             claim_expires_at = null,
+            mq_delivery_version = mq_delivery_version + 1,
             mq_delivery_due_at = ${input.now},
             claim_recovery_due_at = null,
             updated_at = ${input.now}

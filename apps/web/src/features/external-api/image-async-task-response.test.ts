@@ -40,6 +40,7 @@ function createTask(
     admissionLeaseToken: "admission-1",
     admissionLeaseExpiresAt: LEASE_EXPIRES_AT,
     admissionLeaseReleasedAt: null,
+    mqDeliveryVersion: 0,
     mqDeliveryDueAt: NOW,
     claimRecoveryDueAt: null,
     admissionRenewalDueAt: new Date(NOW.getTime() + 11 * 60_000),

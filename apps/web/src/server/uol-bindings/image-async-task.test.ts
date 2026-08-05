@@ -60,6 +60,7 @@ function createTask(
     admissionLeaseToken: "admission-1",
     admissionLeaseExpiresAt: LEASE_EXPIRES_AT,
     admissionLeaseReleasedAt: null,
+    mqDeliveryVersion: 0,
     mqDeliveryDueAt: NOW,
     claimRecoveryDueAt: null,
     admissionRenewalDueAt: RENEWAL_DUE_AT,
@@ -117,15 +118,29 @@ function createTerminalTask(
 function createRepository(task: ImageAsyncTaskRecord) {
   return {
     create: vi.fn(async () => ({ task, created: true })),
-    findById: vi.fn(async () => null as ImageAsyncTaskRecord | null),
-    updateAdmissionLease: vi.fn(async () => task),
-    markMqDelivered: vi.fn(async () => task),
-    heartbeatClaim: vi.fn(async () => task),
-    markAdmissionReleased: vi.fn(async () => task),
-    claimById: vi.fn(async () => null as ImageAsyncTaskRecord | null),
-    release: vi.fn(async () => task),
-    complete: vi.fn(async () => task),
-    fail: vi.fn(async () => task),
+    findById: vi.fn(async (): Promise<ImageAsyncTaskRecord | null> => null),
+    updateAdmissionLease: vi.fn(
+      async (): Promise<ImageAsyncTaskRecord | null> => task
+    ),
+    markMqDelivered: vi.fn(
+      async (): Promise<ImageAsyncTaskRecord | null> => task
+    ),
+    prepareClaimRecoveryDelivery: vi.fn(
+      async (): Promise<ImageAsyncTaskRecord | null> => task
+    ),
+    deferAdmissionRenewal: vi.fn(
+      async (): Promise<ImageAsyncTaskRecord | null> => task
+    ),
+    heartbeatClaim: vi.fn(
+      async (): Promise<ImageAsyncTaskRecord | null> => task
+    ),
+    markAdmissionReleased: vi.fn(
+      async (): Promise<ImageAsyncTaskRecord | null> => task
+    ),
+    claimById: vi.fn(async (): Promise<ImageAsyncTaskRecord | null> => null),
+    release: vi.fn(async (): Promise<ImageAsyncTaskRecord | null> => task),
+    complete: vi.fn(async (): Promise<ImageAsyncTaskRecord | null> => task),
+    fail: vi.fn(async (): Promise<ImageAsyncTaskRecord | null> => task),
   } satisfies ImageAsyncTaskRepository;
 }
 
@@ -249,6 +264,7 @@ describe("image async task UOL bindings", () => {
     );
     expect(dependencies.enqueueTask).toHaveBeenCalledWith({
       taskId: "task_123",
+      deliveryVersion: 0,
       priority: 8,
     });
     expect(context.assertOwnership).toHaveBeenCalledWith(
@@ -350,6 +366,10 @@ describe("image async task UOL bindings", () => {
       calls.push("release-ack");
       return released;
     });
+    vi.mocked(dependencies.runGeneration).mockImplementation(async (run) => {
+      await run.executionFence.assertActive();
+      return { generationId: "generation-1" };
+    });
     vi.mocked(dependencies.findGeneration)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
@@ -378,11 +398,18 @@ describe("image async task UOL bindings", () => {
         admissionLeaseToken: "admission-1",
       })
     );
+    expect(repository.heartbeatClaim).toHaveBeenCalledTimes(2);
     expect(dependencies.runGeneration).toHaveBeenCalledTimes(1);
-    expect(dependencies.runGeneration).toHaveBeenCalledWith({
-      task: running,
-      admissionLease: expect.objectContaining({ token: "admission-1" }),
-    });
+    expect(dependencies.runGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task: running,
+        admissionLease: expect.objectContaining({ token: "admission-1" }),
+        executionFence: expect.objectContaining({
+          signal: expect.any(AbortSignal),
+          assertActive: expect.any(Function),
+        }),
+      })
+    );
     expect(calls.slice(-3)).toEqual(["release", "release-ack", "callback"]);
   });
 
@@ -465,8 +492,9 @@ describe("image async task UOL bindings", () => {
           error: null,
           inputDigest: INPUT_DIGEST,
         });
-      vi.mocked(dependencies.runGeneration).mockImplementation(async () => {
+      vi.mocked(dependencies.runGeneration).mockImplementation(async (run) => {
         await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(run.executionFence.signal.aborted).toBe(true);
         return { generationId: "generation-1" };
       });
 

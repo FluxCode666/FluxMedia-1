@@ -37,7 +37,10 @@ import {
   type RedisImageGenerationAdmissionLease,
   restoreImageGenerationAdmissionLease,
 } from "@/features/image-generation/redis-image-generation-slots";
-import type { ImageQuality } from "@/features/image-generation/types";
+import type {
+  ImageGenerationExecutionFence,
+  ImageQuality,
+} from "@/features/image-generation/types";
 import { enqueueImageTask } from "@/server/media-task-queues";
 
 /*
@@ -91,7 +94,11 @@ export interface ImageAsyncTaskBindingDependencies {
     lease: RedisImageGenerationAdmissionLease
   ): Promise<ImageAdmissionRenewal>;
   releaseAdmission(lease: RedisImageGenerationAdmissionLease): Promise<void>;
-  enqueueTask(input: { taskId: string; priority: number }): Promise<unknown>;
+  enqueueTask(input: {
+    taskId: string;
+    deliveryVersion: number;
+    priority: number;
+  }): Promise<unknown>;
   reportEnqueueFailure(error: unknown, taskId: string): void;
   isApiKeyActive(input: { userId: string; apiKeyId: string }): Promise<boolean>;
   findGeneration(
@@ -100,6 +107,7 @@ export interface ImageAsyncTaskBindingDependencies {
   runGeneration(input: {
     task: ImageAsyncTaskRecord;
     admissionLease: RedisImageGenerationAdmissionLease;
+    executionFence: ImageGenerationExecutionFence;
   }): Promise<{ generationId: string }>;
   createClaimToken(): string;
   now(): Date;
@@ -194,7 +202,7 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
       inputDigest: typeof inputDigest === "string" ? inputDigest : null,
     };
   },
-  async runGeneration({ task, admissionLease }) {
+  async runGeneration({ task, admissionLease, executionFence }) {
     if (
       task.effectiveUserConcurrency === null ||
       !task.groupIdSnapshot ||
@@ -228,6 +236,7 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
       generationId: input.generationId,
       backendGroupId: input.backendGroupId,
       inputDigest: task.inputDigest,
+      executionFence,
       admissionAuthorization: {
         userId: task.userId,
         lease: admissionLease,
@@ -251,6 +260,7 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
               ...(input.operation === "mask" ? { mask: input.mask } : {}),
             },
           });
+    await executionFence.assertActive();
     if (result.error) {
       throw new OperationError(
         result.errorCode ?? "upstream_error",
@@ -484,12 +494,17 @@ export async function executeImageEnqueueAsyncBinding(
     try {
       await dependencies.enqueueTask({
         taskId: updated.id,
+        deliveryVersion: updated.mqDeliveryVersion,
         priority: getImageTaskQueuePriority(updated),
       });
-      await dependencies.repository.markMqDelivered({
-        taskId: updated.id,
-        now: dependencies.now(),
-      });
+      if (updated.mqDeliveryDueAt) {
+        await dependencies.repository.markMqDelivered({
+          taskId: updated.id,
+          deliveryVersion: updated.mqDeliveryVersion,
+          mqDeliveryDueAt: updated.mqDeliveryDueAt,
+          now: dependencies.now(),
+        });
+      }
     } catch (error) {
       dependencies.reportEnqueueFailure(error, updated.id);
     }
@@ -526,12 +541,17 @@ export async function executeImageEnqueueAsyncBinding(
       try {
         await dependencies.enqueueTask({
           taskId: result.task.id,
+          deliveryVersion: result.task.mqDeliveryVersion,
           priority: getImageTaskQueuePriority(result.task),
         });
-        await dependencies.repository.markMqDelivered({
-          taskId: result.task.id,
-          now: dependencies.now(),
-        });
+        if (result.task.mqDeliveryDueAt) {
+          await dependencies.repository.markMqDelivered({
+            taskId: result.task.id,
+            deliveryVersion: result.task.mqDeliveryVersion,
+            mqDeliveryDueAt: result.task.mqDeliveryDueAt,
+            now: dependencies.now(),
+          });
+        }
       } catch (error) {
         // WHY：数据库已提交后 Redis 失败不能回滚任务；due 扫描会按同一优先级补投。
         dependencies.reportEnqueueFailure(error, result.task.id);
@@ -724,13 +744,19 @@ async function renewImageTaskWorkerLeases(
   return { ...lease, expiresAt: renewal.expiresAt };
 }
 
-/** 在长任务执行期间串行心跳，停止时返回最后租约或首个失败。 */
+/**
+ * 在长任务执行期间串行续期，并把首个 fencing 失败广播为取消信号。
+ *
+ * 主动 `assertActive` 与周期心跳共享同一 Promise 链，避免并行 CAS 乱序；一旦 claim 或
+ * admission 丢失，后续所有副作用边界都会收到同一失败原因。
+ */
 function startImageTaskWorkerHeartbeat(
   task: ImageAsyncTaskRecord,
   claimToken: string,
   initialLease: RedisImageGenerationAdmissionLease,
   dependencies: ImageAsyncTaskBindingDependencies
 ): {
+  executionFence: ImageGenerationExecutionFence;
   stop(): Promise<{
     lease: RedisImageGenerationAdmissionLease;
     error: unknown | null;
@@ -739,23 +765,40 @@ function startImageTaskWorkerHeartbeat(
   let lease = initialLease;
   let heartbeatError: unknown | null = null;
   let inFlight = Promise.resolve();
-  const timer = setInterval(() => {
-    inFlight = inFlight
-      .then(async () => {
-        if (heartbeatError) return;
+  const abortController = new AbortController();
+
+  /** 串行执行一次租约复核；首个失败会中止管线且保持稳定错误。 */
+  const scheduleRenewal = (): Promise<void> => {
+    const renewal = inFlight.then(async () => {
+      if (heartbeatError) throw heartbeatError;
+      try {
         lease = await renewImageTaskWorkerLeases(
           task,
           claimToken,
           lease,
           dependencies
         );
-      })
-      .catch((error: unknown) => {
+      } catch (error) {
         heartbeatError = error;
-      });
+        abortController.abort(error);
+        throw error;
+      }
+    });
+    inFlight = renewal.catch(() => undefined);
+    return renewal;
+  };
+  const timer = setInterval(() => {
+    void scheduleRenewal().catch(() => undefined);
   }, IMAGE_ASYNC_TASK_HEARTBEAT_INTERVAL_MS);
   timer.unref();
   return {
+    executionFence: {
+      signal: abortController.signal,
+      async assertActive() {
+        if (heartbeatError) throw heartbeatError;
+        await scheduleRenewal();
+      },
+    },
     async stop() {
       clearInterval(timer);
       await inFlight;
@@ -883,7 +926,11 @@ export async function executeImageProcessAsyncTaskBinding(
 
     let generationError: unknown | null = null;
     try {
-      await dependencies.runGeneration({ task: claimed, admissionLease });
+      await dependencies.runGeneration({
+        task: claimed,
+        admissionLease,
+        executionFence: heartbeat.executionFence,
+      });
     } catch (error) {
       generationError = error;
       dependencies.reportGenerationFailure(error, claimed.id);

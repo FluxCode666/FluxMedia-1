@@ -1,9 +1,22 @@
+/**
+ * 图片生成领域的共享类型。
+ *
+ * 职责：描述统一图片管线、供应商适配器与异步 Worker 之间的输入、输出和执行 fencing
+ * 契约；不包含运行时实现或持久化逻辑。
+ */
 import type {
   ApiModelMapping,
   ApiUpstreamAdapterDraft,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
+
+/** 异步 Worker 注入统一图片管线的可取消执行 fencing。 */
+export interface ImageGenerationExecutionFence {
+  signal: AbortSignal;
+  /** 主动续期并验证当前 Worker 仍同时持有 claim 与 admission。 */
+  assertActive(): Promise<void>;
+}
 
 export interface GenerateImageParams {
   prompt: string;

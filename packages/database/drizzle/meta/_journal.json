@@ -582,6 +582,13 @@
       "when": 1786037850000,
       "tag": "0082_group_queue_priority_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1786124250000,
+      "tag": "0083_image_async_delivery_fencing",
+      "breakpoints": true
     }
   ]
 }

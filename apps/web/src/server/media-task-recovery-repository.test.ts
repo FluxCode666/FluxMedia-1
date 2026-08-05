@@ -33,14 +33,18 @@ describe("media task recovery repository", () => {
       [
         {
           id: "task_mq",
-          attempt_count: 5,
+          mq_delivery_version: 5,
+          mq_delivery_due_at: NOW,
+          claim_recovery_due_at: null,
           group_priority_snapshot: 7,
         },
       ],
       [
         {
           id: "task_claim",
-          attempt_count: 6,
+          mq_delivery_version: 6,
+          mq_delivery_due_at: null,
+          claim_recovery_due_at: NOW,
           group_priority_snapshot: 2,
         },
       ],
@@ -51,6 +55,7 @@ describe("media task recovery repository", () => {
           effective_user_concurrency: 20,
           admission_lease_token: "admission-1",
           admission_lease_expires_at: NOW,
+          admission_renewal_due_at: NOW,
         },
       ],
       [
@@ -80,12 +85,14 @@ describe("media task recovery repository", () => {
         {
           taskId: "task_mq",
           deliveryVersion: 5,
+          dueAt: NOW,
           priority: 8,
           recoveryKind: "mq",
         },
         {
           taskId: "task_claim",
           deliveryVersion: 6,
+          dueAt: NOW,
           priority: 3,
           recoveryKind: "claim",
         },
@@ -97,6 +104,7 @@ describe("media task recovery repository", () => {
           effectiveUserConcurrency: 20,
           token: "admission-1",
           expiresAt: NOW,
+          renewalDueAt: NOW,
         },
       ],
       imageTerminalReleases: [
@@ -131,6 +139,7 @@ describe("media task recovery repository", () => {
     expect(mqSql).toContain("mq_delivery_due_at <=");
     expect(mqSql).toContain("order by mq_delivery_due_at, id");
     expect(claimSql).toContain("claim_recovery_due_at <=");
+    expect(claimSql).toContain("mq_delivery_due_at is null");
     expect(admissionSql).toContain("admission_renewal_due_at <=");
     expect(terminalSql).toContain("terminal_release_due_at <=");
     expect(terminalSql).toContain("admission_lease_released_at is null");
