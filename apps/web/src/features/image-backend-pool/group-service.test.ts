@@ -41,7 +41,6 @@ function groupInput(overrides: Record<string, unknown> = {}) {
     isDefault: true,
     isUserSelectable: true,
     contentSafety: "inherit",
-    minPlan: "free",
     imageCreditOverrides: { version: 1, byModel: {} },
     videoCreditOverrides: {},
     childGroupIds: [],
@@ -71,7 +70,6 @@ describe("backend group service", () => {
       expect.objectContaining({
         id: "group-new",
         isCreate: true,
-        minPlan: "free",
         childGroupIds: [],
       }),
       NOW

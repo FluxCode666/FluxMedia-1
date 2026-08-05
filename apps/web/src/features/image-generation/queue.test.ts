@@ -244,6 +244,45 @@ describe("withImageGenerationQueue", () => {
     await expect(normalRun).resolves.toBe("normal");
   });
 
+  it("按数值分组 priority 升序调度，较小值先于较大值", async () => {
+    runtimeSettings.globalConcurrency = 1;
+    const { withImageGenerationQueue: queue } = await importFreshQueue();
+    const blocker = deferred<string>();
+    const started: string[] = [];
+
+    const blockerRun = queue(
+      { userId: "blocker", priority: 50, userConcurrency: 10 },
+      async () => {
+        started.push("blocker");
+        return await blocker.promise;
+      }
+    );
+    await flushTasks();
+
+    const lowerPriority = queue(
+      { userId: "lower", priority: 100, userConcurrency: 10 },
+      async () => {
+        started.push("lower");
+        return "lower";
+      }
+    );
+    const higherPriority = queue(
+      { userId: "higher", priority: 10, userConcurrency: 10 },
+      async () => {
+        started.push("higher");
+        return "higher";
+      }
+    );
+
+    blocker.resolve("blocker");
+    await blockerRun;
+    await flushTasks();
+
+    expect(started).toEqual(["blocker", "higher", "lower"]);
+    await expect(higherPriority).resolves.toBe("higher");
+    await expect(lowerPriority).resolves.toBe("lower");
+  });
+
   it("frees user slot after completion", async () => {
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const started: string[] = [];

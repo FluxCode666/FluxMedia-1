@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   type RuntimeGroupSelectionInput,
+  selectRuntimeBackendGroupCandidate,
   selectTrustedRuntimeGroupTarget,
 } from "./runtime-group-selection";
 import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
@@ -76,6 +77,57 @@ describe("selectTrustedRuntimeGroupTarget", () => {
         { groupId: "group-bound" }
       )
     ).toThrow(/不一致/u);
+  });
+});
+
+describe("selectRuntimeBackendGroupCandidate", () => {
+  const candidates = [
+    {
+      id: "group-first",
+      isDefault: false,
+      isUserSelectable: true,
+    },
+    {
+      id: "group-default",
+      isDefault: true,
+      isUserSelectable: false,
+    },
+  ];
+
+  it("无显式目标时只选择唯一默认组，不回退列表首项", () => {
+    expect(selectRuntimeBackendGroupCandidate(candidates, {})).toEqual(
+      candidates[1]
+    );
+    expect(() =>
+      selectRuntimeBackendGroupCandidate(
+        candidates.map((candidate) => ({
+          ...candidate,
+          isDefault: false,
+        })),
+        {}
+      )
+    ).toThrow(/默认/u);
+    expect(() =>
+      selectRuntimeBackendGroupCandidate(
+        candidates.map((candidate) => ({ ...candidate, isDefault: true })),
+        {}
+      )
+    ).toThrow(/多个默认/u);
+  });
+
+  it("用户显式选择只检查 isUserSelectable，不读取套餐", () => {
+    expect(
+      selectRuntimeBackendGroupCandidate(candidates, {
+        targetGroupId: "group-first",
+        isUserRequested: true,
+      })
+    ).toEqual(candidates[0]);
+    expect(() =>
+      selectRuntimeBackendGroupCandidate(candidates, {
+        targetGroupId: "group-default",
+        isUserRequested: true,
+      })
+    ).toThrow(/不可由用户选择/u);
   });
 });
 

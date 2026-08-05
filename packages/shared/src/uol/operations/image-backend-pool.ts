@@ -162,7 +162,7 @@ export const saveGroup = defineOperation({
   name: "pool.saveGroup",
   domain: "image-backend-pool",
   title: "保存媒体后端分组",
-  description: "保存统一分组、套餐门槛、内容安全和媒体积分覆盖。",
+  description: "保存统一分组、任务队列优先级、内容安全和媒体积分覆盖。",
   input: backendGroupInputSchema,
   output: z.object({ id: z.string() }).strict(),
   access: poolWriteAccess,

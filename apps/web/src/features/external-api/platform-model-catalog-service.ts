@@ -8,10 +8,7 @@ import "server-only";
 
 import { db } from "@repo/database";
 import { imageBackendGroup } from "@repo/database/schema";
-import {
-  normalizeSubscriptionPlan,
-  type SubscriptionPlan,
-} from "@repo/shared/config/subscription-plan";
+import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import type {
   PlanCapabilityKey,
@@ -44,29 +41,17 @@ export interface PlatformModelCatalogServiceDependencies {
   loadMarketplaceConfig(): Promise<unknown>;
 }
 
-/** 从动态能力矩阵读取媒体目录所需的最低套餐。 */
+/** 从动态能力矩阵读取外部媒体目录所需的能力下限。 */
 function toCapabilityMinimums(
   matrix: PlanCapabilityMatrix
 ): PlatformModelCapabilityMinimums {
   const feature = (key: PlanCapabilityKey): SubscriptionPlan =>
     matrix.features[key];
   return {
-    backendGroupsSelect: feature("backendGroups.select"),
     externalModelsList: feature("externalApi.models.list"),
     externalImagesGenerate: feature("externalApi.images.generate"),
     externalVideosGenerate: feature("externalApi.videos.generate"),
   };
-}
-
-/** 从分组 metadata 读取最低套餐，非法值按 free 收窄。 */
-function readGroupMinPlan(metadata: unknown): SubscriptionPlan {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return "free";
-  }
-  return normalizeSubscriptionPlan(
-    (metadata as Record<string, unknown>).minPlan,
-    "free"
-  );
 }
 
 /** 默认数据库仓储，只读取媒体目录需要的白名单字段。 */
@@ -79,19 +64,14 @@ export const databasePlatformModelCatalogRepository: PlatformModelCatalogReposit
           isEnabled: imageBackendGroup.isEnabled,
           isDefault: imageBackendGroup.isDefault,
           isUserSelectable: imageBackendGroup.isUserSelectable,
-          metadata: imageBackendGroup.metadata,
         })
         .from(imageBackendGroup)
-        .orderBy(
-          asc(imageBackendGroup.priority),
-          asc(imageBackendGroup.createdAt)
-        );
+        .orderBy(asc(imageBackendGroup.createdAt), asc(imageBackendGroup.id));
       return rows.map((row) => ({
         id: row.id,
         isEnabled: row.isEnabled,
         isDefault: row.isDefault,
         isUserSelectable: row.isUserSelectable,
-        minPlan: readGroupMinPlan(row.metadata),
       }));
     },
     async listMembers() {

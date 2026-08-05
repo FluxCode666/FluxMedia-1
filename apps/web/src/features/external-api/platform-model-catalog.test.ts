@@ -18,7 +18,6 @@ function source(
 ): PlatformModelCatalogSource {
   return {
     capabilityMinimums: {
-      backendGroupsSelect: "starter",
       externalModelsList: "starter",
       externalImagesGenerate: "starter",
       externalVideosGenerate: "starter",
@@ -29,7 +28,6 @@ function source(
         isEnabled: true,
         isDefault: true,
         isUserSelectable: false,
-        minPlan: "free",
       },
     ],
     members: [
@@ -68,14 +66,12 @@ describe("buildPlatformModelCatalog", () => {
             isEnabled: true,
             isDefault: false,
             isUserSelectable: true,
-            minPlan: "starter",
           },
           {
             id: "hidden-group",
             isEnabled: true,
             isDefault: false,
             isUserSelectable: false,
-            minPlan: "free",
           },
         ],
         members: [
@@ -132,7 +128,6 @@ describe("buildPlatformModelCatalog", () => {
               isEnabled: false,
               isDefault: true,
               isUserSelectable: false,
-              minPlan: "free",
             },
           ],
         })

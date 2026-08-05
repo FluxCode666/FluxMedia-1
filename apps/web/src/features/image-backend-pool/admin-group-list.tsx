@@ -112,13 +112,12 @@ export function BackendGroupList({
                 </Badge>
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                <span className="block">最低套餐：{group.minPlan}</span>
-                <span className="mt-1 block">
+                <span className="block">
                   用户选择：{group.isUserSelectable ? "允许" : "禁止"}
                 </span>
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                <span className="block">优先级：{group.priority}</span>
+                <span className="block">任务队列优先级：{group.priority}</span>
                 <span className="mt-1 block">
                   内容安全：
                   {getGroupContentSafetyLabel(group.contentSafety)}

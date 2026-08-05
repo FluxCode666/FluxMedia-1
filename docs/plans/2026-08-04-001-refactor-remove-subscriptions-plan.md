@@ -452,11 +452,26 @@ Phase B 在维护窗口先执行外部只读预检，再由 0082 在同一 DDL �
 - `packages/shared/src/image-backend/group-contract.test.ts`
 - `apps/web/src/features/image-backend-pool/group-service.ts`
 - `apps/web/src/features/image-backend-pool/group-service.test.ts`
+- `apps/web/src/features/image-backend-pool/runtime-group-selection.ts`
 - `apps/web/src/features/image-backend-pool/runtime-service.ts`
 - `apps/web/src/features/image-backend-pool/runtime-service.test.ts`
 - `apps/web/src/features/image-backend-pool/catalog-service.ts`
+- `apps/web/src/features/image-backend-pool/catalog-service.test.ts`
 - `apps/web/src/features/image-backend-pool/group-form.tsx`
 - `apps/web/src/features/image-backend-pool/admin-group-list.tsx`
+- `apps/web/src/features/external-api/models.ts`
+- `apps/web/src/features/external-api/platform-model-catalog.ts`
+- `apps/web/src/features/external-api/platform-model-catalog-service.ts`
+- `apps/web/src/features/external-api/platform-model-catalog.test.ts`
+- `apps/web/src/features/external-api/platform-model-catalog-service.test.ts`
+- `apps/web/src/features/image-generation/operations.ts`
+- `apps/web/src/features/image-generation/queue.ts`
+- `apps/web/src/features/image-generation/queue.test.ts`
+- `packages/database/src/schema.ts`
+- `packages/database/drizzle/0082_group_queue_priority_contract.sql`
+- `packages/database/drizzle/meta/_journal.json`
+- `packages/shared/src/uol/operations/image-backend-pool.ts`
+- `packages/shared/src/uol/operations/image-backend-pool.test.ts`
 - `apps/web/src/server/uol-bindings/image-backend-pool.ts`
 - `apps/web/src/server/uol-bindings/image-backend-pool.test.ts`
 

@@ -69,7 +69,6 @@ function mountAdobeMemberForm(): void {
             isDefault: true,
             isUserSelectable: true,
             contentSafety: "inherit",
-            minPlan: "free",
             imageCreditOverrides: { version: 1, byModel: {} },
             videoCreditOverrides: {},
             childGroupIds: [],

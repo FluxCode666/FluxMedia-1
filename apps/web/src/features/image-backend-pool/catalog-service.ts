@@ -1,17 +1,13 @@
 /**
  * 统一媒体号池的站内图片目录服务。
  *
- * 职责：按用户套餐筛选可达分组，将统一 `api | adobe` 成员显式
+ * 职责：按分组访问开关筛选可达分组，将统一 `api | adobe` 成员显式
  * 声明的模型能力投影为创作页目录。目录只用于展示，提交时调度器仍会重新授权和获租。
  */
-import {
-  isPlanAtLeast,
-  type SubscriptionPlan,
-} from "@repo/shared/config/subscription-plan";
+import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import { toBackendGroupContentSafety } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
 import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
-import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
@@ -22,18 +18,13 @@ import {
 } from "./image-generation-model-catalog";
 import { backendMemberService } from "./member-service";
 
-/** 列出指定套餐可绑定到 API Key 的用户可选分组。 */
+/** 列出用户可绑定到 API Key 的启用分组；保留旧 plan 参数以兼容分阶段调用。 */
 export async function listSelectableImageBackendGroups(
-  plan: SubscriptionPlan
+  _plan: SubscriptionPlan
 ): Promise<Array<{ id: string; name: string; isEnabled: boolean }>> {
   const groups = await backendGroupService.listGroups();
   return groups
-    .filter(
-      (group) =>
-        group.isEnabled &&
-        group.isUserSelectable &&
-        isPlanAtLeast(plan, group.minPlan)
-    )
+    .filter((group) => group.isEnabled && group.isUserSelectable)
     .map((group) => ({
       id: group.id,
       name: group.name,
@@ -41,19 +32,22 @@ export async function listSelectableImageBackendGroups(
     }));
 }
 
-/** 返回与运行时默认路由同口径的分组计费快照。 */
+/** 返回唯一默认分组的计费快照；不存在默认组时不按 priority 兜底。 */
 export async function getEffectiveDefaultImageBackendGroup(
-  plan: SubscriptionPlan
+  _plan: SubscriptionPlan
 ) {
   const groups = await backendGroupService.listGroups();
-  const candidate =
-    groups.find((group) => group.isEnabled && group.isDefault) ??
-    groups.find((group) => group.isEnabled);
-  if (!candidate || !isPlanAtLeast(plan, candidate.minPlan)) return null;
+  const defaultGroups = groups.filter(
+    (group) => group.isEnabled && group.isDefault
+  );
+  if (defaultGroups.length !== 1) return null;
+  const [candidate] = defaultGroups;
+  if (!candidate) return null;
   return {
     id: candidate.id,
     name: candidate.name,
     isDefault: candidate.isDefault,
+    priority: candidate.priority,
     contentSafetyEnabled: toBackendGroupContentSafety(candidate.contentSafety),
     imageCreditOverrides: candidate.imageCreditOverrides,
     videoCreditOverrides: candidate.videoCreditOverrides,
@@ -61,32 +55,31 @@ export async function getEffectiveDefaultImageBackendGroup(
 }
 
 /**
- * 为指定套餐构建图片分组与模型目录。
+ * 为指定用户上下文构建图片分组与模型目录。
  *
  * @param plan 当前用户已规范化套餐。
  * @returns 仅包含可达分组和非视频模型；成员类型只决定传输能力，不决定候选。
  */
 export async function getImageGenerationModelCatalogForPlan(
-  plan: SubscriptionPlan
+  _plan: SubscriptionPlan
 ): Promise<ImageGenerationModelCatalog> {
-  const [groups, members, canSelectGroups, marketplaceConfigValue] =
-    await Promise.all([
-      backendGroupService.listGroups(),
-      backendMemberService.listMembers(),
-      canUsePlanCapability(plan, "backendGroups.select"),
-      getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
-    ]);
+  const [groups, members, marketplaceConfigValue] = await Promise.all([
+    backendGroupService.listGroups(),
+    backendMemberService.listMembers(),
+    getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
+  ]);
   const marketplaceConfig = parseModelMarketplaceConfig(marketplaceConfigValue);
-  const eligibleGroups = groups.filter(
-    (group) => group.isEnabled && isPlanAtLeast(plan, group.minPlan)
+  const defaultGroups = groups.filter(
+    (group) => group.isEnabled && group.isDefault
   );
-  const effectiveDefault =
-    eligibleGroups.find((group) => group.isDefault) ?? eligibleGroups[0];
-  const visibleGroups = eligibleGroups.filter(
-    (group) =>
-      group.id === effectiveDefault?.id ||
-      (canSelectGroups && group.isUserSelectable)
-  );
+  const effectiveDefault = defaultGroups.length === 1 ? defaultGroups[0] : null;
+  const visibleGroups = effectiveDefault
+    ? groups.filter(
+        (group) =>
+          group.isEnabled &&
+          (group.id === effectiveDefault.id || group.isUserSelectable)
+      )
+    : [];
   const visibleGroupIds = new Set(visibleGroups.map((group) => group.id));
 
   return buildImageGenerationModelCatalog({

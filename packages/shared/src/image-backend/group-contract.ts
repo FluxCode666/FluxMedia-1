@@ -2,22 +2,13 @@
  * 统一媒体后端分组契约。
  *
  * 职责：为 UOL、管理后台和数据库服务提供唯一的分组输入、脱敏摘要与 metadata
- * 解析规则。分组只表达套餐、内容安全、计费覆盖和层级，不再携带 Web/Responses
- * 调度车道。
+ * 解析规则。分组只表达内容安全、计费覆盖、层级和任务队列优先级，不再携带套餐
+ * 门槛或 Web/Responses 调度车道。
  */
 import { z } from "zod";
 
 import { videoModelCreditsPerSecondMapSchema } from "../adobe/video-pricing";
 import { imageCreditOverridesSchema } from "./group-image-pricing";
-
-/** 媒体后端分组允许配置的最低套餐。 */
-export const backendGroupMinimumPlanSchema = z.enum([
-  "free",
-  "starter",
-  "pro",
-  "ultra",
-  "enterprise",
-]);
 
 /** 分组级内容安全覆盖；inherit 表示沿用成员设置。 */
 export const backendGroupContentSafetySchema = z.enum([
@@ -26,7 +17,7 @@ export const backendGroupContentSafetySchema = z.enum([
   "disabled",
 ]);
 
-/** 统一分组保存输入；严格拒绝所有历史车道和倍率字段。 */
+/** 统一分组保存输入；priority 数值越小表示任务队列优先级越高。 */
 export const backendGroupInputSchema = z
   .object({
     id: z.string().trim().min(1).max(128).optional(),
@@ -36,7 +27,6 @@ export const backendGroupInputSchema = z
     isDefault: z.boolean(),
     isUserSelectable: z.boolean(),
     contentSafety: backendGroupContentSafetySchema,
-    minPlan: backendGroupMinimumPlanSchema,
     imageCreditOverrides: imageCreditOverridesSchema,
     videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
     childGroupIds: z.array(z.string().trim().min(1).max(128)).max(100),
@@ -57,10 +47,9 @@ export const backendGroupInputSchema = z
 /** 统一分组保存输入类型。 */
 export type BackendGroupInput = z.infer<typeof backendGroupInputSchema>;
 
-/** 分组 metadata 中当前仍受支持的字段。 */
+/** 分组 metadata 中当前仍受支持的治理和计费字段。 */
 export const backendGroupMetadataSchema = z
   .object({
-    minPlan: backendGroupMinimumPlanSchema,
     imageCreditOverrides: imageCreditOverridesSchema,
     videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
     childGroupIds: z.array(z.string().trim().min(1).max(128)).max(100),
@@ -80,11 +69,10 @@ export const backendGroupSummarySchema = z
     isDefault: z.boolean(),
     isUserSelectable: z.boolean(),
     contentSafety: backendGroupContentSafetySchema,
-    minPlan: backendGroupMinimumPlanSchema,
     imageCreditOverrides: imageCreditOverridesSchema,
     videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
     childGroupIds: z.array(z.string()),
-    priority: z.number().int(),
+    priority: z.number().int().min(0).max(10_000),
   })
   .strict();
 
@@ -128,7 +116,6 @@ export function parseBackendGroupMetadata(
       ? (value as Record<string, unknown>)
       : {};
   const parsed = backendGroupMetadataSchema.safeParse({
-    minPlan: source.minPlan ?? "free",
     imageCreditOverrides: source.imageCreditOverrides ?? {
       version: 1,
       byModel: {},
@@ -138,7 +125,6 @@ export function parseBackendGroupMetadata(
   });
   if (parsed.success) return parsed.data;
   return {
-    minPlan: "free",
     imageCreditOverrides: { version: 1, byModel: {} },
     videoCreditOverrides: {},
     childGroupIds: [],
@@ -150,7 +136,6 @@ export function createBackendGroupMetadata(
   input: BackendGroupInput
 ): BackendGroupMetadata {
   return {
-    minPlan: input.minPlan,
     imageCreditOverrides: input.imageCreditOverrides,
     videoCreditOverrides: input.videoCreditOverrides,
     childGroupIds: input.childGroupIds,

@@ -1,7 +1,7 @@
 /**
  * 平台媒体模型目录的 DB-free 构建器。
  *
- * 职责：按套餐、可达分组和统一成员显式模型能力生成 image/video 目录；
+ * 职责：按可达分组和统一成员显式模型能力生成 image/video 目录；
  * 模型名称只用于能力匹配与媒体分类，不参与后端类型或调度策略分流。
  */
 import {
@@ -28,7 +28,6 @@ export interface PlatformModelCatalog {
 
 /** 构建目录所需的动态套餐能力门槛。 */
 export interface PlatformModelCapabilityMinimums {
-  backendGroupsSelect: SubscriptionPlan;
   externalModelsList: SubscriptionPlan;
   externalImagesGenerate: SubscriptionPlan;
   externalVideosGenerate: SubscriptionPlan;
@@ -40,7 +39,6 @@ export interface PlatformModelCatalogGroup {
   isEnabled: boolean;
   isDefault: boolean;
   isUserSelectable: boolean;
-  minPlan: SubscriptionPlan;
 }
 
 /** 统一成员中与媒体目录有关的非敏感字段。 */
@@ -91,16 +89,10 @@ function buildReachablePlans(
   for (const group of source.groups) {
     if (!group.isEnabled) continue;
     for (const plan of SUBSCRIPTION_PLANS) {
-      if (
-        !isPlanAtLeast(plan, group.minPlan) ||
-        !isPlanAtLeast(plan, source.capabilityMinimums.externalModelsList)
-      ) {
+      if (!isPlanAtLeast(plan, source.capabilityMinimums.externalModelsList)) {
         continue;
       }
-      const reachable =
-        group.isDefault ||
-        (group.isUserSelectable &&
-          isPlanAtLeast(plan, source.capabilityMinimums.backendGroupsSelect));
+      const reachable = group.isDefault || group.isUserSelectable;
       if (!reachable) continue;
       const plans = result.get(group.id) ?? new Set<SubscriptionPlan>();
       plans.add(plan);

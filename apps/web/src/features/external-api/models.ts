@@ -1,7 +1,7 @@
 /**
  * 外部媒体 API 模型目录。
  *
- * 职责：按 API Key 绑定分组、套餐媒体能力和统一成员显式 `supportedModelIds`
+ * 职责：按 API Key 绑定分组、媒体能力和统一成员显式 `supportedModelIds`
  * 构造 OpenAI 兼容 `/v1/models` 响应；不再发布任何 Chat、Responses 或 Codex 模型。
  */
 import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
@@ -118,7 +118,7 @@ async function resolveApiKeyGenerationGroup(
     .limit(1);
   if (!key) return null;
   if (key.generationGroupId) return key.generationGroupId;
-  const [defaultGroup] = await db
+  const defaultGroups = await db
     .select({ id: imageBackendGroup.id })
     .from(imageBackendGroup)
     .where(
@@ -127,9 +127,10 @@ async function resolveApiKeyGenerationGroup(
         eq(imageBackendGroup.isDefault, true)
       )
     )
-    .orderBy(asc(imageBackendGroup.priority), asc(imageBackendGroup.createdAt))
-    .limit(1);
-  return defaultGroup?.id ?? null;
+    .orderBy(asc(imageBackendGroup.createdAt), asc(imageBackendGroup.id))
+    .limit(2);
+  if (defaultGroups.length !== 1) return null;
+  return defaultGroups[0]?.id ?? null;
 }
 
 /**

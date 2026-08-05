@@ -34,7 +34,6 @@ describe("loadPlatformModelCatalog", () => {
               isEnabled: true,
               isDefault: true,
               isUserSelectable: false,
-              minPlan: "starter",
             },
           ],
           listMembers: async () => [

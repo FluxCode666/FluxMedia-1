@@ -575,6 +575,13 @@
       "when": 1785951450000,
       "tag": "0081_add_media_usage_governance",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1786037850000,
+      "tag": "0082_group_queue_priority_contract",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,7 @@
  * 全局及单用户并发槽由必填 Redis 原子租约统一裁决，多副本之间不再各自计数。
  */
 
-import type { QueuePriority } from "@repo/shared/config/subscription-plan";
+import type { QueuePriority as LegacyQueuePriority } from "@repo/shared/config/subscription-plan";
 import { logWarn } from "@repo/shared/logger";
 import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 
@@ -16,6 +16,7 @@ import {
 } from "./redis-image-generation-slots";
 
 type QueueBlockReason = "global" | "user";
+type QueuePriority = number | LegacyQueuePriority;
 
 type QueueTask<T> = {
   id: number;
@@ -29,7 +30,7 @@ type QueueTask<T> = {
   timeout?: ReturnType<typeof setTimeout>;
 };
 
-const PRIORITY_WEIGHT: Record<QueuePriority, number> = {
+const LEGACY_PRIORITY_WEIGHT: Record<LegacyQueuePriority, number> = {
   normal: 0,
   priority: 1,
   highest: 2,
@@ -98,13 +99,25 @@ function getQueuedTaskTimeoutError(
   );
 }
 
-/** 按套餐优先级和本进程入队顺序稳定排序。 */
+/** 按分组数字 priority、兼容旧字符串优先级和本进程入队顺序稳定排序。 */
 function sortQueue(): void {
   queue.sort((left, right) => {
-    const priorityDelta =
-      PRIORITY_WEIGHT[right.priority] - PRIORITY_WEIGHT[left.priority];
+    const priorityDelta = compareQueuePriority(left.priority, right.priority);
     return priorityDelta || left.id - right.id;
   });
+}
+
+/** 比较数字分组 priority；旧字符串只在兼容调用方仍存在时使用。 */
+function compareQueuePriority(
+  left: QueuePriority,
+  right: QueuePriority
+): number {
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  if (typeof left === "number") return -1;
+  if (typeof right === "number") return 1;
+  return LEGACY_PRIORITY_WEIGHT[right] - LEGACY_PRIORITY_WEIGHT[left];
 }
 
 /** 从本进程等待队列移除指定任务。 */
@@ -253,9 +266,9 @@ async function scheduleQueue(): Promise<void> {
 }
 
 /**
- * 将一次生图工作纳入套餐优先级队列和 Redis 两级并发槽。
+ * 将一次生图工作纳入分组优先级队列和 Redis 两级并发槽。
  *
- * @param options 用户、套餐优先级、单用户并发上限与可选等待超时。
+ * @param options 用户、分组 priority、单用户并发上限与可选等待超时。
  * @param run 只在成功获得全局及用户槽位后执行的生图工作。
  * @returns 原工作结果；排队超时、Redis 故障或工作异常均显式拒绝。
  */

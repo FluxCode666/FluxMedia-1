@@ -42,6 +42,7 @@ import { fetchMediaUpstreamDownload } from "@/features/image-backend-pool/media-
 import {
   createRuntimeBackendSession,
   type RuntimeBackendSession,
+  resolveTrustedGroupSnapshot,
 } from "@/features/image-backend-pool/runtime-service";
 import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import {
@@ -986,11 +987,31 @@ export async function runImageGenerationForUser(
     input.userId
   );
 
+  let trustedGroupSnapshot: Awaited<
+    ReturnType<typeof resolveTrustedGroupSnapshot>
+  >;
+  try {
+    trustedGroupSnapshot = await resolveTrustedGroupSnapshot({
+      userId: input.userId,
+      apiKeyId: input.apiKeyId,
+      requestedGroupId: input.backendGroupId,
+    });
+  } catch (error) {
+    return {
+      error: toClientErrorMessage(
+        error,
+        { source: "image-backend-group-resolve", generationId },
+        "当前没有可用的生图后端分组"
+      ),
+      generationId,
+    };
+  }
+
   try {
     return await withImageGenerationQueue(
       {
         userId: input.userId,
-        priority: queueSettings.priority,
+        priority: trustedGroupSnapshot.priority,
         userConcurrency: queueSettings.userConcurrency,
       },
       async () => {
@@ -1000,15 +1021,18 @@ export async function runImageGenerationForUser(
             (await isContentModerationEnabled()) && moderationBlockingEnabled;
           let initialConfig: ApiConfig;
           try {
-            session = await createRuntimeBackendSession({
-              userId: input.userId,
-              apiKeyId: input.apiKeyId,
-              requestedGroupId: input.backendGroupId,
-              modelId: imageModel,
-              requestKind: "image",
-              requiresContentSafety: moderationRequired,
-              requiresMask,
-            });
+            session = await createRuntimeBackendSession(
+              {
+                userId: input.userId,
+                apiKeyId: input.apiKeyId,
+                requestedGroupId: input.backendGroupId,
+                modelId: imageModel,
+                requestKind: "image",
+                requiresContentSafety: moderationRequired,
+                requiresMask,
+              },
+              trustedGroupSnapshot
+            );
             initialConfig = (await session.acquireNext()).config;
           } catch (error) {
             return {

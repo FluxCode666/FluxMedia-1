@@ -1060,19 +1060,34 @@ export const ticketMessage = pgTable("ticket_message", {
 // ============================================
 // Image Backend Pool
 // ============================================
-export const imageBackendGroup = pgTable("image_backend_group", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
-  isEnabled: boolean("is_enabled").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false),
-  isUserSelectable: boolean("is_user_selectable").notNull().default(true),
-  contentSafetyEnabled: boolean("content_safety_enabled"),
-  priority: integer("priority").notNull().default(50),
-  metadata: json("metadata").$type<Record<string, unknown>>(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const imageBackendGroup = pgTable(
+  "image_backend_group",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+    isDefault: boolean("is_default").notNull().default(false),
+    isUserSelectable: boolean("is_user_selectable").notNull().default(true),
+    contentSafetyEnabled: boolean("content_safety_enabled"),
+    priority: integer("priority").notNull().default(50),
+    metadata: json("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "image_backend_group_priority_check",
+      sql`${table.priority} >= 0 AND ${table.priority} <= 10000`
+    ),
+    index("image_backend_group_default_lookup_idx").on(
+      table.isEnabled,
+      table.isDefault,
+      table.createdAt,
+      table.id
+    ),
+  ]
+);
 
 /**
  * 统一媒体后端成员。

@@ -8,10 +8,6 @@
 
 import { randomUUID } from "node:crypto";
 import {
-  isPlanAtLeast,
-  normalizeSubscriptionPlan,
-} from "@repo/shared/config/subscription-plan";
-import {
   apiModelMappingsSchema,
   apiUpstreamAdapterDraftSchema,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
@@ -22,8 +18,6 @@ import {
 } from "@repo/shared/image-backend/group-image-pricing";
 import type { BackendSchedulingStrategy } from "@repo/shared/image-backend/scheduling-policy";
 import { logWarn } from "@repo/shared/logger";
-import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import { type SQL, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -36,7 +30,10 @@ import {
   type AcquiredBackendMemberLease,
   defaultBackendPoolRepository,
 } from "./repository";
-import { selectTrustedRuntimeGroupTarget } from "./runtime-group-selection";
+import {
+  selectRuntimeBackendGroupCandidate,
+  selectTrustedRuntimeGroupTarget,
+} from "./runtime-group-selection";
 import { normalizeRuntimeRequestedModelId } from "./runtime-model-matching";
 import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
 import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
@@ -48,10 +45,11 @@ const MAX_MEMBER_ERROR_LENGTH = 1_000;
 const groupRowSchema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
-  is_enabled: z.boolean(),
-  is_default: z.boolean(),
-  is_user_selectable: z.boolean(),
-  content_safety_enabled: z.boolean().nullable(),
+  isEnabled: z.boolean(),
+  isDefault: z.boolean(),
+  isUserSelectable: z.boolean(),
+  contentSafetyEnabled: z.boolean().nullable(),
+  priority: z.number().int().min(0).max(10_000),
   metadata: z.record(z.string(), z.unknown()).nullable(),
 });
 
@@ -95,10 +93,11 @@ const runtimeConfigRowSchema = z.object({
   adobe_gpt_image_quality: z.enum(["low", "medium", "high"]).nullable(),
 });
 
-/** 统一分组运行时快照。 */
-export interface RuntimeBackendGroup {
+/** 准入时固定的统一分组运行时快照。 */
+export interface RuntimeBackendGroupSnapshot {
   id: string;
   name: string;
+  priority: number;
   contentSafetyEnabled: boolean | null;
   imageCreditOverrides: ImageCreditOverrides;
   videoCreditOverrides: Record<string, number>;
@@ -143,7 +142,7 @@ export interface ListConfiguredRuntimeModelIdsInput {
 
 /** 运行时会话只暴露获租、结果上报和关闭，避免调用方直接操作租约行。 */
 export interface RuntimeBackendSession {
-  readonly group: RuntimeBackendGroup;
+  readonly group: RuntimeBackendGroupSnapshot;
   readonly current: RuntimeBackendLease | null;
   acquireNext(): Promise<RuntimeBackendLease>;
   switchAfterFailure(
@@ -164,14 +163,14 @@ function sanitizeMemberError(error: string): string {
   return error.replace(/\s+/g, " ").trim().slice(0, MAX_MEMBER_ERROR_LENGTH);
 }
 
-/** 从数据库组 metadata 读取套餐门槛，非法值按免费组处理。 */
-function getGroupMinimumPlan(metadata: Record<string, unknown> | null) {
-  return normalizeSubscriptionPlan(metadata?.minPlan, "free");
-}
-
 /** 从数据库加载 API Key 绑定后，委托纯函数完成可信分组选择。 */
+type RuntimeGroupTargetInput = Pick<
+  CreateRuntimeBackendSessionInput,
+  "userId" | "apiKeyId" | "requestedGroupId" | "pinnedGroupId"
+>;
+
 async function resolveTrustedRuntimeGroupTarget(
-  input: CreateRuntimeBackendSessionInput
+  input: RuntimeGroupTargetInput
 ): Promise<{ targetGroupId: string | undefined; isUserRequested: boolean }> {
   if (!input.apiKeyId) return selectTrustedRuntimeGroupTarget(input);
   const { db } = await import("@repo/database");
@@ -194,10 +193,17 @@ async function resolveTrustedRuntimeGroupTarget(
   );
 }
 
-/** 解析用户本次允许使用的统一分组；显式非默认分组需要套餐选择能力。 */
-async function resolveRuntimeBackendGroup(
-  input: CreateRuntimeBackendSessionInput
-): Promise<RuntimeBackendGroup> {
+/**
+ * 解析可信分组并固定后续队列与执行使用的治理快照。
+ *
+ * @param input 用户、API Key 绑定或站内显式分组事实。
+ * @returns 分组 ID、任务队列 priority、内容安全和计费覆盖快照。
+ * @sideEffects 只读 API Key 与分组配置，不获取成员租约或写调度指标。
+ * @throws 目标不可用、用户选择不可选组或不存在启用默认组时 fail closed。
+ */
+export async function resolveTrustedGroupSnapshot(
+  input: ListConfiguredRuntimeModelIdsInput
+): Promise<RuntimeBackendGroupSnapshot> {
   const { db } = await import("@repo/database");
   const { targetGroupId, isUserRequested } =
     await resolveTrustedRuntimeGroupTarget(input);
@@ -207,54 +213,28 @@ async function resolveRuntimeBackendGroup(
         select
           id,
           name,
-          is_enabled,
-          is_default,
-          is_user_selectable,
-          content_safety_enabled,
+          is_enabled as "isEnabled",
+          is_default as "isDefault",
+          is_user_selectable as "isUserSelectable",
+          content_safety_enabled as "contentSafetyEnabled",
+          priority,
           metadata
         from image_backend_group
         where is_enabled = true
-        order by
-          case when id = ${targetGroupId ?? ""} then 0 else 1 end,
-          is_default desc,
-          priority asc,
-          created_at asc
+        order by created_at asc, id asc
       `)
     )
   );
-  const group = targetGroupId
-    ? rows.find((row) => row.id === targetGroupId)
-    : (rows.find((row) => row.is_default) ?? rows[0]);
-  if (!group) {
-    throw new BackendSchedulerError(
-      "no_eligible_member",
-      "当前没有可用的媒体后端分组"
-    );
-  }
-
-  const userPlan = await getUserPlan(input.userId);
-  if (!isPlanAtLeast(userPlan.plan, getGroupMinimumPlan(group.metadata))) {
-    throw new BackendSchedulerError(
-      "no_eligible_member",
-      "当前套餐不能使用该媒体后端分组"
-    );
-  }
-  if (
-    isUserRequested &&
-    !group.is_default &&
-    (!group.is_user_selectable ||
-      !(await canUsePlanCapability(userPlan.plan, "backendGroups.select")))
-  ) {
-    throw new BackendSchedulerError(
-      "no_eligible_member",
-      "当前套餐不能手动选择媒体后端分组"
-    );
-  }
+  const group = selectRuntimeBackendGroupCandidate(rows, {
+    targetGroupId,
+    isUserRequested,
+  });
 
   return {
     id: group.id,
     name: group.name,
-    contentSafetyEnabled: group.content_safety_enabled,
+    priority: group.priority,
+    contentSafetyEnabled: group.contentSafetyEnabled,
     imageCreditOverrides: getGroupImageCreditOverrides(group.metadata),
     videoCreditOverrides: getGroupVideoCreditOverrides(group.metadata),
   };
@@ -265,17 +245,14 @@ async function resolveRuntimeBackendGroup(
  *
  * @param input - 用户、可选外部 API Key 绑定和站内显式分组选择。
  * @returns 去重后的成员配置模型 ID；忽略健康、冷却、租约、并发和实时容量。
- * @sideEffects 读取套餐、API Key 绑定、分组与成员配置，不获取租约也不更新成员状态。
- * @throws 分组不可达、API Key 覆盖或套餐不满足时沿用运行时选择错误。
+ * @sideEffects 读取 API Key 绑定、分组与成员配置，不获取租约也不更新成员状态。
+ * @throws 分组不可达或 API Key 覆盖时沿用运行时选择错误。
  */
 export async function listConfiguredRuntimeModelIds(
   input: ListConfiguredRuntimeModelIdsInput
 ): Promise<string[]> {
-  const group = await resolveRuntimeBackendGroup({
+  const group = await resolveTrustedGroupSnapshot({
     ...input,
-    modelId: "__video_capability_probe__",
-    requestKind: "video",
-    requiresContentSafety: false,
   });
   const { db } = await import("@repo/database");
   const rows = z.array(configuredModelIdsRowSchema).parse(
@@ -371,7 +348,7 @@ export async function loadApiVideoRecoveryConfig(
 /** 根据统一成员与类型配置表构造现有媒体适配器可消费的配置快照。 */
 async function loadRuntimeBackendLease(
   acquisition: AcquiredBackendMemberLease,
-  group: RuntimeBackendGroup,
+  group: RuntimeBackendGroupSnapshot,
   input: CreateRuntimeBackendSessionInput
 ): Promise<RuntimeBackendLease> {
   const { db } = await import("@repo/database");
@@ -648,7 +625,8 @@ async function releaseRuntimeLease(lease: RuntimeBackendLease): Promise<void> {
  * @returns 同一请求内维护排除集合和当前租约的会话对象。
  */
 export async function createRuntimeBackendSession(
-  input: CreateRuntimeBackendSessionInput
+  input: CreateRuntimeBackendSessionInput,
+  trustedGroupSnapshot?: RuntimeBackendGroupSnapshot
 ): Promise<RuntimeBackendSession> {
   const modelId = normalizeRuntimeRequestedModelId(input);
   if (!modelId) {
@@ -660,7 +638,9 @@ export async function createRuntimeBackendSession(
     );
   }
   const normalizedInput = { ...input, modelId };
-  const group = await resolveRuntimeBackendGroup(normalizedInput);
+  const group =
+    trustedGroupSnapshot ??
+    (await resolveTrustedGroupSnapshot(normalizedInput));
   const excludedMemberIds = new Set<string>();
   let current: RuntimeBackendLease | null = null;
   let acquisitionCount = 0;
@@ -796,4 +776,19 @@ export async function createRuntimeBackendSession(
   };
 
   return session;
+}
+
+/**
+ * 使用已在用户准入阶段固定的分组快照创建成员会话。
+ *
+ * @param input 用户、模型和协议资格事实。
+ * @param trustedGroupSnapshot 已通过 resolveTrustedGroupSnapshot 的不可变快照。
+ * @returns 延迟到 acquireNext 才获取成员租约的运行时会话。
+ * @sideEffects 创建会话对象；调用 acquireNext 后才会获取成员租约。
+ */
+export async function createRuntimeBackendSessionFromSnapshot(
+  input: CreateRuntimeBackendSessionInput,
+  trustedGroupSnapshot: RuntimeBackendGroupSnapshot
+): Promise<RuntimeBackendSession> {
+  return createRuntimeBackendSession(input, trustedGroupSnapshot);
 }
