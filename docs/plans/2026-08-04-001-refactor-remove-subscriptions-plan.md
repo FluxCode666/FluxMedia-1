@@ -508,6 +508,8 @@ Phase B 在维护窗口先执行外部只读预检，再由 0082 在同一 DDL �
 
 - `apps/web/src/features/image-generation/queue.ts`
 - `apps/web/src/features/image-generation/queue.test.ts`
+- `apps/web/src/features/image-generation/indexed-priority-queue.ts`
+- `apps/web/src/features/image-generation/indexed-priority-queue.test.ts`
 - `apps/web/src/features/image-generation/redis-image-generation-slots.ts`
 - `apps/web/src/features/image-generation/redis-image-generation-slots.test.ts`
 - `apps/web/src/features/image-generation/operations.ts`

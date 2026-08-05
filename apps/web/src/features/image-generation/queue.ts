@@ -10,6 +10,7 @@ import { logWarn } from "@repo/shared/logger";
 import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 import { OperationError } from "@repo/shared/uol";
 
+import { IndexedPriorityQueue } from "./indexed-priority-queue";
 import {
   acquireImageGenerationAdmission,
   acquireImageGenerationExecution,
@@ -51,7 +52,7 @@ let nextTaskId = 1;
 let scheduling = false;
 let schedulingRequested = false;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
-const queue: QueueTask<unknown>[] = [];
+const queue = new IndexedPriorityQueue<QueueTask<unknown>>(compareQueueTasks);
 
 /** 从环境变量读取正整数；非法值使用安全默认值。 */
 function getPositiveIntegerEnv(name: string, fallback: number): number {
@@ -207,14 +208,6 @@ function startExecutionRenewal(task: QueueTask<unknown>): void {
   task.executionRenewTimer.unref?.();
 }
 
-/** 按分组数字 priority、兼容旧字符串优先级和本进程入队顺序稳定排序。 */
-function sortQueue(): void {
-  queue.sort((left, right) => {
-    const priorityDelta = compareQueuePriority(left.priority, right.priority);
-    return priorityDelta || left.id - right.id;
-  });
-}
-
 /** 比较数字分组 priority；旧字符串只在兼容调用方仍存在时使用。 */
 function compareQueuePriority(
   left: QueuePriority,
@@ -228,12 +221,19 @@ function compareQueuePriority(
   return LEGACY_PRIORITY_WEIGHT[right] - LEGACY_PRIORITY_WEIGHT[left];
 }
 
+/** 比较队列任务；同一分组 priority 以单调 ID 保持 FIFO。 */
+function compareQueueTasks(
+  left: QueueTask<unknown>,
+  right: QueueTask<unknown>
+): number {
+  return (
+    compareQueuePriority(left.priority, right.priority) || left.id - right.id
+  );
+}
+
 /** 从本进程等待队列移除指定任务。 */
 function removeQueuedTask(task: QueueTask<unknown>): boolean {
-  const index = queue.indexOf(task);
-  if (index === -1) return false;
-  queue.splice(index, 1);
-  return true;
+  return Boolean(queue.remove(task.id));
 }
 
 /** 清除当前跨实例容量轮询定时器。 */
@@ -250,7 +250,7 @@ function clearRetryTimer(): void {
  * 抖动避免多个副本在相同毫秒同时争抢刚释放的槽位。
  */
 function scheduleRetry(): void {
-  if (retryTimer || queue.length === 0) return;
+  if (retryTimer || queue.size === 0) return;
   const pollMs = getQueuePollMs();
   const jitterMs = Math.floor(Math.random() * Math.max(25, pollMs / 5));
   retryTimer = setTimeout(() => {
@@ -263,7 +263,7 @@ function scheduleRetry(): void {
 /** Redis 获取失败时拒绝本进程全部等待任务，禁止悄悄切换成本地槽位。 */
 async function rejectQueuedTasks(error: unknown): Promise<void> {
   clearRetryTimer();
-  const pending = queue.splice(0, queue.length);
+  const pending = queue.drain();
   for (const task of pending) {
     if (task.timeout) clearTimeout(task.timeout);
     clearLeaseRenewTimers(task);
@@ -340,11 +340,10 @@ async function scheduleQueue(): Promise<void> {
   scheduling = true;
   clearRetryTimer();
   try {
-    sortQueue();
     const globalConcurrency = await getGlobalConcurrency();
-    for (let index = 0; index < queue.length; index += 1) {
-      const task = queue[index];
-      if (!task) continue;
+    while (queue.size > 0) {
+      const task = queue.peek();
+      if (!task) break;
       let acquisition: Awaited<
         ReturnType<typeof acquireImageGenerationExecution>
       >;
@@ -356,27 +355,24 @@ async function scheduleQueue(): Promise<void> {
         await rejectQueuedTasks(error);
         return;
       }
-      const currentIndex = queue.indexOf(task);
-      if (currentIndex === -1) {
+      if (!queue.get(task.id)) {
         // 排队超时可能发生在 Redis 命令等待期间；迟到的成功租约必须立即归还，
         // 且绝不能执行已经向调用方报超时的任务。
         if (acquisition.status === "acquired") {
           await releaseExecutionSafely(acquisition.lease);
         }
-        index -= 1;
         continue;
       }
       if (acquisition.status === "blocked") {
         break;
       }
 
-      queue.splice(currentIndex, 1);
-      index = currentIndex - 1;
+      queue.remove(task.id);
       startTask(task, acquisition.lease);
     }
   } finally {
     scheduling = false;
-    if (queue.length > 0) scheduleRetry();
+    if (queue.size > 0) scheduleRetry();
     if (schedulingRequested) {
       schedulingRequested = false;
       void scheduleQueue();
@@ -449,13 +445,13 @@ export async function withImageGenerationQueue<T>(
                 task.admissionReleased = true;
               }
               reject(getQueuedTaskTimeoutError(timeoutMs));
-              if (queue.length === 0) clearRetryTimer();
+              if (queue.size === 0) clearRetryTimer();
             })();
           }
         }, timeoutMs),
       };
 
-      queue.push(task as QueueTask<unknown>);
+      queue.enqueue(task as QueueTask<unknown>);
       startAdmissionRenewal(task as QueueTask<unknown>);
       void scheduleQueue();
     })().catch(async (error: unknown) => {
