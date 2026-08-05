@@ -1,8 +1,8 @@
 /**
  * Redis 媒体任务队列的 PostgreSQL 补偿扫描仓储。
  *
- * 职责：只读发现因 Redis 故障、进程崩溃或 BullMQ 重试耗尽而失去唤醒的图片与视频
- * 任务；不 claim、不执行业务，只返回最小版本化投递描述供低频 reconciler 补投。
+ * 职责：按独立 due 游标发现图片 MQ、claim、admission、terminal release 和视频任务；
+ * 不 claim、不执行业务，只返回最小恢复描述供低频 reconciler 处理。
  */
 import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
@@ -21,9 +21,23 @@ const scanInputSchema = z
     limit: z.number().int().min(1).max(1_000),
   })
   .strict();
-const imageRowSchema = z.object({
+const imageDeliveryRowSchema = z.object({
   id: identifierSchema,
   attempt_count: z.coerce.number().int().nonnegative(),
+  group_priority_snapshot: z.coerce.number().int().min(0).max(10_000),
+});
+const imageAdmissionRowSchema = z.object({
+  id: identifierSchema,
+  user_id: identifierSchema,
+  effective_user_concurrency: z.coerce.number().int().min(1).max(10_000),
+  admission_lease_token: z.string().trim().min(1).max(256),
+  admission_lease_expires_at: z.coerce.date(),
+});
+const imageTerminalReleaseRowSchema = z.object({
+  id: identifierSchema,
+  user_id: identifierSchema,
+  admission_lease_token: z.string().trim().min(1).max(256),
+  admission_lease_expires_at: z.coerce.date(),
 });
 const videoRowSchema = z.object({
   id: identifierSchema,
@@ -39,11 +53,32 @@ const videoRowSchema = z.object({
 export interface RecoverableImageTask {
   taskId: string;
   deliveryVersion: number;
+  priority: number;
+  recoveryKind: "mq" | "claim";
 }
 
-/** 两个物理队列的一次补偿扫描结果。 */
+/** 一条需要续期或重新裁决 admission 的非终态图片任务。 */
+export interface RecoverableImageAdmission {
+  taskId: string;
+  userId: string;
+  effectiveUserConcurrency: number;
+  token: string;
+  expiresAt: Date;
+}
+
+/** 一条终态已提交但尚未持久确认 Redis 释放的图片任务。 */
+export interface RecoverableImageTerminalRelease {
+  taskId: string;
+  userId: string;
+  token: string;
+  expiresAt: Date;
+}
+
+/** 两个物理队列及图片租约的一次补偿扫描结果。 */
 export interface RecoverableMediaTasks {
   images: RecoverableImageTask[];
+  imageAdmissions: RecoverableImageAdmission[];
+  imageTerminalReleases: RecoverableImageTerminalRelease[];
   videos: Array<{
     taskId: string;
     stateVersion: number;
@@ -65,7 +100,7 @@ export interface MediaTaskRecoveryRepository {
  * 创建 PostgreSQL 媒体任务补偿仓储。
  *
  * @param database 可注入 SQL 执行端口。
- * @returns 同时扫描图片 queued/过期 claim 与视频到期阶段的仓储。
+ * @returns 分别扫描图片四类 due 与视频到期阶段的仓储。
  */
 export function createPostgresMediaTaskRecoveryRepository(
   database: MediaTaskRecoveryDatabase
@@ -76,16 +111,53 @@ export function createPostgresMediaTaskRecoveryRepository(
       const submissionRecoveryCutoff = new Date(
         input.now.getTime() - VIDEO_SUBMISSION_RECOVERY_GRACE_MS
       );
-      const [imageResult, videoResult] = await Promise.all([
+      const [
+        imageMqResult,
+        imageClaimResult,
+        imageAdmissionResult,
+        imageTerminalReleaseResult,
+        videoResult,
+      ] = await Promise.all([
         database.execute(sql`
-          select id, attempt_count
+          select id, attempt_count, group_priority_snapshot
           from image_async_task
-          where status = 'queued'
-             or (
-               status = 'running'
-               and (claim_expires_at is null or claim_expires_at <= ${input.now})
-             )
-          order by created_at, id
+          where status in ('queued', 'running')
+            and mq_delivery_due_at <= ${input.now}
+          order by mq_delivery_due_at, id
+          limit ${input.limit}
+        `),
+        database.execute(sql`
+          select id, attempt_count, group_priority_snapshot
+          from image_async_task
+          where status = 'running'
+            and claim_recovery_due_at <= ${input.now}
+          order by claim_recovery_due_at, id
+          limit ${input.limit}
+        `),
+        database.execute(sql`
+          select
+            id,
+            user_id,
+            effective_user_concurrency,
+            admission_lease_token,
+            admission_lease_expires_at
+          from image_async_task
+          where status in ('queued', 'running')
+            and admission_renewal_due_at <= ${input.now}
+          order by admission_renewal_due_at, id
+          limit ${input.limit}
+        `),
+        database.execute(sql`
+          select
+            id,
+            user_id,
+            admission_lease_token,
+            admission_lease_expires_at
+          from image_async_task
+          where status in ('completed', 'failed')
+            and terminal_release_due_at <= ${input.now}
+            and admission_lease_released_at is null
+          order by terminal_release_due_at, id
           limit ${input.limit}
         `),
         database.execute(sql`
@@ -121,11 +193,48 @@ export function createPostgresMediaTaskRecoveryRepository(
           limit ${input.limit}
         `),
       ]);
-      const images = extractExecuteRows(imageResult).map((row) => {
-        const parsed = imageRowSchema.parse(row);
+      /** 将 MQ 或 claim due 行映射为携带持久优先级的最小补投描述。 */
+      const mapImageDelivery = (
+        row: unknown,
+        recoveryKind: RecoverableImageTask["recoveryKind"]
+      ): RecoverableImageTask => {
+        const parsed = imageDeliveryRowSchema.parse(row);
         return {
           taskId: parsed.id,
           deliveryVersion: parsed.attempt_count,
+          priority: parsed.group_priority_snapshot + 1,
+          recoveryKind,
+        };
+      };
+      const images = [
+        ...extractExecuteRows(imageMqResult).map((row) =>
+          mapImageDelivery(row, "mq")
+        ),
+        ...extractExecuteRows(imageClaimResult).map((row) =>
+          mapImageDelivery(row, "claim")
+        ),
+      ];
+      const imageAdmissions = extractExecuteRows(imageAdmissionResult).map(
+        (row): RecoverableImageAdmission => {
+          const parsed = imageAdmissionRowSchema.parse(row);
+          return {
+            taskId: parsed.id,
+            userId: parsed.user_id,
+            effectiveUserConcurrency: parsed.effective_user_concurrency,
+            token: parsed.admission_lease_token,
+            expiresAt: parsed.admission_lease_expires_at,
+          };
+        }
+      );
+      const imageTerminalReleases = extractExecuteRows(
+        imageTerminalReleaseResult
+      ).map((row): RecoverableImageTerminalRelease => {
+        const parsed = imageTerminalReleaseRowSchema.parse(row);
+        return {
+          taskId: parsed.id,
+          userId: parsed.user_id,
+          token: parsed.admission_lease_token,
+          expiresAt: parsed.admission_lease_expires_at,
         };
       });
       const videos = extractExecuteRows(videoResult).flatMap((row) => {
@@ -144,7 +253,7 @@ export function createPostgresMediaTaskRecoveryRepository(
         );
         return schedule ? [schedule] : [];
       });
-      return { images, videos };
+      return { images, imageAdmissions, imageTerminalReleases, videos };
     },
   };
 }

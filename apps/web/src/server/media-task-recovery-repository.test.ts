@@ -1,7 +1,7 @@
 /**
  * Redis 媒体任务补偿扫描的 DB-free SQL 契约测试。
  *
- * 职责：验证扫描只读、不 claim，图片携带 attempt 投递版本，视频复用统一延迟策略。
+ * 职责：验证四类图片 due 独立扫描、补投携带持久 priority，视频复用延迟策略。
  */
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -28,9 +28,39 @@ function createDatabase(results: unknown[][]) {
 }
 
 describe("media task recovery repository", () => {
-  it("扫描图片 attempt 版本与到期视频状态，但不执行 claim update", async () => {
+  it("分别返回图片补投、续期、终态释放和到期视频", async () => {
     const { database, queries } = createDatabase([
-      [{ id: "task_123", attempt_count: 5 }],
+      [
+        {
+          id: "task_mq",
+          attempt_count: 5,
+          group_priority_snapshot: 7,
+        },
+      ],
+      [
+        {
+          id: "task_claim",
+          attempt_count: 6,
+          group_priority_snapshot: 2,
+        },
+      ],
+      [
+        {
+          id: "task_admission",
+          user_id: "user-1",
+          effective_user_concurrency: 20,
+          admission_lease_token: "admission-1",
+          admission_lease_expires_at: NOW,
+        },
+      ],
+      [
+        {
+          id: "task_terminal",
+          user_id: "user-1",
+          admission_lease_token: "admission-2",
+          admission_lease_expires_at: NOW,
+        },
+      ],
       [
         {
           id: "video-1",
@@ -46,10 +76,40 @@ describe("media task recovery repository", () => {
     const repository = createPostgresMediaTaskRecoveryRepository(database);
 
     await expect(repository.scan({ now: NOW, limit: 100 })).resolves.toEqual({
-      images: [{ taskId: "task_123", deliveryVersion: 5 }],
+      images: [
+        {
+          taskId: "task_mq",
+          deliveryVersion: 5,
+          priority: 8,
+          recoveryKind: "mq",
+        },
+        {
+          taskId: "task_claim",
+          deliveryVersion: 6,
+          priority: 3,
+          recoveryKind: "claim",
+        },
+      ],
+      imageAdmissions: [
+        {
+          taskId: "task_admission",
+          userId: "user-1",
+          effectiveUserConcurrency: 20,
+          token: "admission-1",
+          expiresAt: NOW,
+        },
+      ],
+      imageTerminalReleases: [
+        {
+          taskId: "task_terminal",
+          userId: "user-1",
+          token: "admission-2",
+          expiresAt: NOW,
+        },
+      ],
       videos: [{ taskId: "video-1", stateVersion: 7, runAt: NOW }],
     });
-    expect(queries).toHaveLength(2);
+    expect(queries).toHaveLength(5);
     for (const query of queries) {
       const compiled = new PgDialect().sqlToQuery(query);
       expect(compiled.sql).toMatch(/^\s*select/);
@@ -58,16 +118,22 @@ describe("media task recovery repository", () => {
     }
   });
 
-  it("图片扫描覆盖 queued 与过期 running，视频排除终态", async () => {
-    const { database, queries } = createDatabase([[], []]);
+  it("图片四类 due 使用独立游标和排序，视频排除终态", async () => {
+    const { database, queries } = createDatabase([[], [], [], [], []]);
     const repository = createPostgresMediaTaskRecoveryRepository(database);
 
     await repository.scan({ now: NOW, limit: 25 });
-    const imageSql = new PgDialect().sqlToQuery(queries[0] as SQL).sql;
-    const videoSql = new PgDialect().sqlToQuery(queries[1] as SQL).sql;
-    expect(imageSql).toContain("status = 'queued'");
-    expect(imageSql).toContain("status = 'running'");
-    expect(imageSql).toContain("claim_expires_at <=");
+    const mqSql = new PgDialect().sqlToQuery(queries[0] as SQL).sql;
+    const claimSql = new PgDialect().sqlToQuery(queries[1] as SQL).sql;
+    const admissionSql = new PgDialect().sqlToQuery(queries[2] as SQL).sql;
+    const terminalSql = new PgDialect().sqlToQuery(queries[3] as SQL).sql;
+    const videoSql = new PgDialect().sqlToQuery(queries[4] as SQL).sql;
+    expect(mqSql).toContain("mq_delivery_due_at <=");
+    expect(mqSql).toContain("order by mq_delivery_due_at, id");
+    expect(claimSql).toContain("claim_recovery_due_at <=");
+    expect(admissionSql).toContain("admission_renewal_due_at <=");
+    expect(terminalSql).toContain("terminal_release_due_at <=");
+    expect(terminalSql).toContain("admission_lease_released_at is null");
     expect(videoSql).toContain("'submit_uncertain'");
     expect(videoSql).toContain("next_poll_at <=");
   });

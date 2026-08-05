@@ -1,8 +1,8 @@
 /**
- * 媒体 MQ 低频补偿任务测试。
+ * 媒体 MQ 与图片租约低频补偿任务测试。
  *
- * 职责：验证扫描结果只重新投递图片与视频最小身份，单个 Redis 失败被隔离且不直接
- * 调用任何媒体业务处理器。
+ * 职责：验证图片补投携带持久 priority、admission 丢失时重新容量裁决、终态
+ * release/ack 收敛，以及单条 Redis 故障不会阻断另一物理队列。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -24,74 +24,172 @@ vi.mock("@/features/image-generation/video-input-cleanup-queue", () => ({
   runVideoInputCleanupJob: vi.fn(),
 }));
 
+import type { ImageAsyncTaskRecord } from "@/features/image-generation/image-async-task-repository";
 import type { MediaTaskRecoveryRepository } from "./media-task-recovery-repository";
 import {
   type MediaTaskRecoveryJobDependencies,
   runMediaTaskQueueRecovery,
 } from "./scheduled-jobs";
 
-/** 创建固定两类恢复任务的只读仓储。 */
+const NOW = new Date("2026-08-04T00:00:00.000Z");
+const EXPIRES_AT = new Date(NOW.getTime() + 22 * 60_000);
+
+/** 创建覆盖四类图片恢复和一条视频补投的扫描仓储。 */
 function createRepository(): MediaTaskRecoveryRepository {
   return {
     scan: vi.fn(async () => ({
-      images: [{ taskId: "task_123", deliveryVersion: 5 }],
+      images: [
+        {
+          taskId: "task_mq",
+          deliveryVersion: 5,
+          priority: 8,
+          recoveryKind: "mq" as const,
+        },
+      ],
+      imageAdmissions: [
+        {
+          taskId: "task_admission",
+          userId: "user-1",
+          effectiveUserConcurrency: 20,
+          token: "admission-1",
+          expiresAt: EXPIRES_AT,
+        },
+      ],
+      imageTerminalReleases: [
+        {
+          taskId: "task_terminal",
+          userId: "user-1",
+          token: "admission-2",
+          expiresAt: EXPIRES_AT,
+        },
+      ],
       videos: [
         {
           taskId: "video-1",
           stateVersion: 7,
-          runAt: new Date("2026-08-04T00:00:00.000Z"),
+          runAt: NOW,
         },
       ],
     })),
   };
 }
 
-describe("scheduled media task MQ recovery", () => {
-  it("只补投版本化最小身份并汇总成功数量", async () => {
-    const dependencies: MediaTaskRecoveryJobDependencies = {
-      repository: createRepository(),
-      enqueueImage: vi.fn(async () => undefined),
-      enqueueVideo: vi.fn(async () => undefined),
-      reportFailure: vi.fn(),
-    };
+/** 创建所有恢复副作用可观察的依赖桩。 */
+function createDependencies(): MediaTaskRecoveryJobDependencies {
+  const taskRecord = {} as ImageAsyncTaskRecord;
+  return {
+    repository: createRepository(),
+    imageTaskRepository: {
+      markMqDelivered: vi.fn(async () => taskRecord),
+      updateAdmissionLease: vi.fn(async () => taskRecord),
+      markAdmissionReleased: vi.fn(async () => taskRecord),
+    },
+    enqueueImage: vi.fn(async () => undefined),
+    enqueueVideo: vi.fn(async () => undefined),
+    acquireImageAdmission: vi.fn(async () => ({
+      status: "acquired" as const,
+      lease: {
+        token: "admission-1",
+        userKey: "user-key-1",
+        expiresAt: EXPIRES_AT.getTime(),
+      },
+    })),
+    renewImageAdmission: vi.fn(async () => ({
+      status: "renewed" as const,
+      expiresAt: EXPIRES_AT.getTime(),
+    })),
+    releaseImageAdmission: vi.fn(async () => undefined),
+    now: vi.fn(() => NOW),
+    reportFailure: vi.fn(),
+  };
+}
+
+describe("scheduled media task recovery", () => {
+  it("补投、续期和终态释放分别确认并汇总", async () => {
+    const dependencies = createDependencies();
 
     await expect(runMediaTaskQueueRecovery(dependencies)).resolves.toEqual({
-      discovered: 2,
+      discovered: 4,
       enqueued: 2,
+      renewed: 1,
+      released: 1,
+      deferred: 0,
       failed: 0,
     });
     expect(dependencies.enqueueImage).toHaveBeenCalledWith({
-      taskId: "task_123",
+      taskId: "task_mq",
       deliveryVersion: 5,
+      priority: 8,
     });
-    expect(dependencies.enqueueVideo).toHaveBeenCalledWith({
-      taskId: "video-1",
-      stateVersion: 7,
-      runAt: new Date("2026-08-04T00:00:00.000Z"),
+    expect(
+      dependencies.imageTaskRepository.markMqDelivered
+    ).toHaveBeenCalledWith({ taskId: "task_mq", now: NOW });
+    expect(
+      dependencies.imageTaskRepository.updateAdmissionLease
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "task_admission",
+        admissionLeaseToken: "admission-1",
+      })
+    );
+    expect(dependencies.releaseImageAdmission).toHaveBeenCalledWith(
+      expect.objectContaining({ token: "admission-2" })
+    );
+    expect(
+      dependencies.imageTaskRepository.markAdmissionReleased
+    ).toHaveBeenCalledWith({
+      taskId: "task_terminal",
+      admissionLeaseToken: "admission-2",
+      now: NOW,
     });
   });
 
-  it("隔离单条 Redis 投递失败并继续补投另一物理队列", async () => {
+  it("admission token 丢失时重新容量裁决，满载则保留 due 延后", async () => {
+    const dependencies = createDependencies();
+    vi.mocked(dependencies.renewImageAdmission).mockResolvedValue({
+      status: "lost",
+    });
+    vi.mocked(dependencies.acquireImageAdmission).mockResolvedValue({
+      status: "blocked",
+      reason: "user",
+    });
+
+    await expect(
+      runMediaTaskQueueRecovery(dependencies)
+    ).resolves.toMatchObject({
+      renewed: 0,
+      deferred: 1,
+      failed: 0,
+    });
+    expect(dependencies.acquireImageAdmission).toHaveBeenCalledWith({
+      userId: "user-1",
+      userConcurrency: 20,
+      token: "admission-1",
+    });
+    expect(
+      dependencies.imageTaskRepository.updateAdmissionLease
+    ).not.toHaveBeenCalled();
+  });
+
+  it("隔离单条 MQ 失败并继续处理视频和租约恢复", async () => {
+    const dependencies = createDependencies();
     const failure = new Error("redis unavailable");
-    const dependencies: MediaTaskRecoveryJobDependencies = {
-      repository: createRepository(),
-      enqueueImage: vi.fn(async () => {
-        throw failure;
-      }),
-      enqueueVideo: vi.fn(async () => undefined),
-      reportFailure: vi.fn(),
-    };
+    vi.mocked(dependencies.enqueueImage).mockRejectedValue(failure);
 
     await expect(runMediaTaskQueueRecovery(dependencies)).resolves.toEqual({
-      discovered: 2,
+      discovered: 4,
       enqueued: 1,
+      renewed: 1,
+      released: 1,
+      deferred: 0,
       failed: 1,
     });
     expect(dependencies.reportFailure).toHaveBeenCalledWith(
       failure,
       "image",
-      "task_123"
+      "task_mq"
     );
     expect(dependencies.enqueueVideo).toHaveBeenCalledTimes(1);
+    expect(dependencies.renewImageAdmission).toHaveBeenCalledTimes(1);
   });
 });
