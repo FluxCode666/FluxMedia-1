@@ -386,7 +386,7 @@ describe("image async task UOL bindings", () => {
     expect(calls.slice(-3)).toEqual(["release", "release-ack", "callback"]);
   });
 
-  it("已有 completed generation 时直接投影终态且不再次外呼", async () => {
+  it("Key 已停用但已有 completed generation 时仍先按真相投影终态", async () => {
     const running = createRunningTask();
     const completed = createTerminalTask("completed");
     const { dependencies, repository } = createDependencies(running);
@@ -404,6 +404,7 @@ describe("image async task UOL bindings", () => {
       error: null,
       inputDigest: INPUT_DIGEST,
     });
+    vi.mocked(dependencies.isApiKeyActive).mockResolvedValue(false);
 
     await expect(
       executeImageProcessAsyncTaskBinding(
@@ -414,10 +415,11 @@ describe("image async task UOL bindings", () => {
       )
     ).resolves.toMatchObject({ status: "completed" });
     expect(dependencies.runGeneration).not.toHaveBeenCalled();
+    expect(dependencies.isApiKeyActive).not.toHaveBeenCalled();
     expect(repository.complete).toHaveBeenCalledTimes(1);
   });
 
-  it("pending generation 进入恢复重试且绝不二次外呼", async () => {
+  it("Key 已停用但已有 pending generation 时仍进入恢复且绝不二次外呼", async () => {
     const running = createRunningTask();
     const { dependencies, repository } = createDependencies(running);
     repository.claimById.mockResolvedValue(running);
@@ -428,6 +430,7 @@ describe("image async task UOL bindings", () => {
       error: null,
       inputDigest: INPUT_DIGEST,
     });
+    vi.mocked(dependencies.isApiKeyActive).mockResolvedValue(false);
 
     await expect(
       executeImageProcessAsyncTaskBinding(
@@ -438,9 +441,52 @@ describe("image async task UOL bindings", () => {
       )
     ).rejects.toMatchObject({ code: "not_ready" });
     expect(dependencies.runGeneration).not.toHaveBeenCalled();
+    expect(dependencies.isApiKeyActive).not.toHaveBeenCalled();
     expect(repository.release).toHaveBeenCalledWith(
       expect.objectContaining({ claimToken: "worker-1" })
     );
+  });
+
+  it("heartbeat 丢失后即使 generation 已完成也不由旧 Worker 写终态", async () => {
+    vi.useFakeTimers();
+    try {
+      const running = createRunningTask();
+      const { dependencies, repository } = createDependencies(running);
+      repository.claimById.mockResolvedValue(running);
+      repository.heartbeatClaim
+        .mockResolvedValueOnce(running)
+        .mockResolvedValueOnce(null);
+      repository.release.mockResolvedValue(null);
+      vi.mocked(dependencies.findGeneration)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          userId: "user-1",
+          status: "completed",
+          error: null,
+          inputDigest: INPUT_DIGEST,
+        });
+      vi.mocked(dependencies.runGeneration).mockImplementation(async () => {
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        return { generationId: "generation-1" };
+      });
+
+      await expect(
+        executeImageProcessAsyncTaskBinding(
+          { taskId: "task_123" },
+          { type: "system", reason: "media-task-worker" },
+          createContext(),
+          dependencies
+        )
+      ).rejects.toMatchObject({ code: "conflict" });
+      expect(repository.complete).not.toHaveBeenCalled();
+      expect(dependencies.releaseAdmission).not.toHaveBeenCalled();
+      expect(dependencies.deliverCallback).not.toHaveBeenCalled();
+      expect(repository.release).toHaveBeenCalledWith(
+        expect.objectContaining({ claimToken: "worker-1" })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("API Key 入队后停用时任务失败并释放 admission", async () => {

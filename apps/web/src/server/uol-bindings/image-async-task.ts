@@ -817,6 +817,31 @@ export async function executeImageProcessAsyncTaskBinding(
 
   let heartbeat: ReturnType<typeof startImageTaskWorkerHeartbeat> | undefined;
   try {
+    const existingGeneration = await dependencies.findGeneration(
+      claimed.generationId
+    );
+    if (existingGeneration) {
+      assertGenerationMatchesImageTask(claimed, existingGeneration);
+      const settlement = await settleImageTaskFromGeneration(
+        claimed,
+        claimToken,
+        existingGeneration,
+        dependencies
+      );
+      const terminal = await releaseTerminalImageTaskAdmission(
+        settlement.task,
+        dependencies
+      );
+      await deliverImageTaskCallbackAfterTransition(
+        terminal,
+        settlement.transitioned,
+        dependencies
+      );
+      return toImageAsyncTaskOutput(terminal);
+    }
+
+    // WHY：API Key 复核只约束新的生成副作用。generation 已存在时必须先按持久真相
+    // 对账，否则 Key 在外呼或扣费后被停用会把已完成任务错误投影为失败。
     if (
       !(await dependencies.isApiKeyActive({
         userId: claimed.userId,
@@ -838,29 +863,6 @@ export async function executeImageProcessAsyncTaskBinding(
       await deliverImageTaskCallbackAfterTransition(
         terminal,
         Boolean(failed),
-        dependencies
-      );
-      return toImageAsyncTaskOutput(terminal);
-    }
-
-    const existingGeneration = await dependencies.findGeneration(
-      claimed.generationId
-    );
-    if (existingGeneration) {
-      assertGenerationMatchesImageTask(claimed, existingGeneration);
-      const settlement = await settleImageTaskFromGeneration(
-        claimed,
-        claimToken,
-        existingGeneration,
-        dependencies
-      );
-      const terminal = await releaseTerminalImageTaskAdmission(
-        settlement.task,
-        dependencies
-      );
-      await deliverImageTaskCallbackAfterTransition(
-        terminal,
-        settlement.transitioned,
         dependencies
       );
       return toImageAsyncTaskOutput(terminal);
@@ -890,6 +892,10 @@ export async function executeImageProcessAsyncTaskBinding(
     heartbeat = undefined;
     admissionLease = heartbeatResult.lease;
 
+    // WHY：旧 Worker 已知失去 claim/admission 后不得再投影 generation 终态、释放
+    // admission 或投递 callback；generation 真相由下一位合法 claim 持有者负责收敛。
+    if (heartbeatResult.error) throw heartbeatResult.error;
+
     const generated = await dependencies.findGeneration(claimed.generationId);
     if (generated) {
       assertGenerationMatchesImageTask(claimed, generated);
@@ -916,7 +922,6 @@ export async function executeImageProcessAsyncTaskBinding(
         "Image generation is still pending reconciliation"
       );
     }
-    if (heartbeatResult.error) throw heartbeatResult.error;
     if (!generationError) {
       throw new OperationError(
         "internal_error",
