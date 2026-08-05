@@ -176,16 +176,13 @@ describe("external image generation transport contract", () => {
     });
     mocks.invokeImageEnqueueAsyncOperation.mockImplementation(
       async (operationInput: ImageEnqueueAsyncInput) => {
-        const firstInput = operationInput.generationInputs[0];
-        if (!firstInput) throw new Error("测试异步任务缺少 generation input");
+        const generationInput = operationInput.generationInput;
         return {
           taskId: operationInput.taskId,
-          model: firstInput.model,
-          operation: firstInput.operation,
+          model: generationInput.model,
+          operation: generationInput.operation,
           status: "queued",
-          generationIds: operationInput.generationInputs.map(
-            (input: { generationId: string }) => input.generationId
-          ),
+          generationId: generationInput.generationId,
           responseFormat: operationInput.responseFormat,
           createdAt: "2026-08-04T00:00:00.000Z",
           startedAt: null,
@@ -284,12 +281,10 @@ describe("external image generation transport contract", () => {
     expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         taskId: expect.stringMatching(/^task_/),
-        generationInputs: [
-          expect.objectContaining({
-            operation: "generate",
-            generationId: expect.any(String),
-          }),
-        ],
+        generationInput: expect.objectContaining({
+          operation: "generate",
+          generationId: expect.any(String),
+        }),
         responseFormat: "b64_json",
       }),
       expect.objectContaining({ apiKeyId: "api-key-1" }),
@@ -305,13 +300,11 @@ describe("external image generation transport contract", () => {
     expect(mocks.uploadModerationImages).toHaveBeenCalledTimes(2);
     expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
-        generationInputs: [
-          expect.objectContaining({
-            operation: "mask",
-            images: [expect.objectContaining({ source: "storage" })],
-            mask: expect.objectContaining({ source: "storage" }),
-          }),
-        ],
+        generationInput: expect.objectContaining({
+          operation: "mask",
+          images: [expect.objectContaining({ source: "storage" })],
+          mask: expect.objectContaining({ source: "storage" }),
+        }),
       }),
       expect.objectContaining({ apiKeyId: "api-key-1" }),
       "request-edit-1"

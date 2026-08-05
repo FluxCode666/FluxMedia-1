@@ -14,6 +14,13 @@ import {
 } from "./image-async-task-response";
 
 const NOW = new Date("2026-08-04T00:00:00.000Z");
+const LEASE_EXPIRES_AT = new Date(NOW.getTime() + 22 * 60_000);
+const GENERATION_INPUT = {
+  operation: "generate" as const,
+  prompt: "test",
+  model: "gpt-image-2",
+  generationId: "generation-1",
+};
 
 /** 创建公开响应测试使用的持久任务。 */
 function createTask(
@@ -23,17 +30,20 @@ function createTask(
     id: "task_123",
     userId: "user-1",
     apiKeyId: "key-1",
-    plan: "pro",
     operation: "generate",
-    generationInputs: [
-      {
-        operation: "generate",
-        prompt: "test",
-        model: "gpt-image-2",
-        generationId: "generation-1",
-      },
-    ],
-    generationIds: ["generation-1"],
+    generationInput: GENERATION_INPUT,
+    inputDigest: `sha256:${"a".repeat(64)}`,
+    generationId: "generation-1",
+    effectiveUserConcurrency: 20,
+    groupIdSnapshot: "group-1",
+    groupPrioritySnapshot: 7,
+    admissionLeaseToken: "admission-1",
+    admissionLeaseExpiresAt: LEASE_EXPIRES_AT,
+    admissionLeaseReleasedAt: null,
+    mqDeliveryDueAt: NOW,
+    claimRecoveryDueAt: null,
+    admissionRenewalDueAt: new Date(NOW.getTime() + 11 * 60_000),
+    terminalReleaseDueAt: null,
     responseFormat: "url",
     callbackUrl: null,
     status: "queued",
@@ -74,17 +84,19 @@ function createDependencies(
 describe("image async task public response", () => {
   it("queued 任务兼容映射为 processing 且不读取 generation", async () => {
     const dependencies = createDependencies();
-    await expect(
-      buildImageAsyncTaskPublicResponse(
-        createImageAsyncTaskPublicSource(createTask()),
-        dependencies
-      )
-    ).resolves.toMatchObject({
+    const response = await buildImageAsyncTaskPublicResponse(
+      createImageAsyncTaskPublicSource(createTask()),
+      dependencies
+    );
+    expect(response).toMatchObject({
       id: "task_123",
       object: "image.generation",
       status: "processing",
       generation_id: "generation-1",
+      generationId: "generation-1",
     });
+    expect(response).not.toHaveProperty("generation_ids");
+    expect(response).not.toHaveProperty("generationIds");
     expect(dependencies.loadGeneration).not.toHaveBeenCalled();
   });
 

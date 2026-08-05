@@ -1,12 +1,11 @@
 /**
  * 图片异步任务 PostgreSQL 仓储。
  *
- * 职责：持久化已通过 UOL 校验的图片批次，按任务 ID 原子 claim，并用 claim token
- * 比较交换收敛终态。Redis 仅持有 taskId，不参与任务真相、身份或幂等判断。
+ * 职责：持久化已通过 UOL 校验的单项图片任务，Phase A 双写旧数组，并按任务 ID
+ * 原子 claim、用 claim token 比较交换收敛终态。Redis 只承担唤醒和租约裁决。
  * 使用方：图片异步 UOL binding、BullMQ Worker 与数据库恢复扫描。
  */
-import type { SQL } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import type {
   ImageEnqueueAsyncInput,
   ImageGenerateOperationInput,
@@ -17,6 +16,8 @@ import {
   imageEnqueueAsyncInputSchema,
   imageGenerateInputSchema,
 } from "@repo/shared/uol/operations/image-generation";
+import type { SQL } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
@@ -31,8 +32,33 @@ const imageAsyncTaskRowSchema = z
     api_key_id: identifierSchema,
     plan: identifierSchema,
     operation: z.enum(["generate", "edit", "mask"]),
-    generation_inputs: z.array(imageGenerateInputSchema).min(1).max(10_000),
-    generation_ids: z.array(identifierSchema).min(1).max(10_000),
+    generation_inputs: z.array(imageGenerateInputSchema).length(1),
+    generation_ids: z.array(identifierSchema).length(1),
+    generation_input: imageGenerateInputSchema,
+    input_digest: z
+      .string()
+      .regex(/^(?:md5:[0-9a-f]{32}|sha256:[0-9a-f]{64})$/),
+    generation_id: identifierSchema,
+    effective_user_concurrency: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .nullable(),
+    group_id_snapshot: identifierSchema.nullable(),
+    group_priority_snapshot: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(10_000)
+      .nullable(),
+    admission_lease_token: z.string().trim().min(1).max(256).nullable(),
+    admission_lease_expires_at: z.coerce.date().nullable(),
+    admission_lease_released_at: z.coerce.date().nullable(),
+    mq_delivery_due_at: z.coerce.date().nullable(),
+    claim_recovery_due_at: z.coerce.date().nullable(),
+    admission_renewal_due_at: z.coerce.date().nullable(),
+    terminal_release_due_at: z.coerce.date().nullable(),
     response_format: z.enum(["url", "b64_json"]),
     callback_url: z.string().url().max(2_048).nullable(),
     status: imageAsyncTaskStatusSchema,
@@ -46,28 +72,71 @@ const imageAsyncTaskRowSchema = z
     updated_at: z.coerce.date(),
   })
   .superRefine((row, context) => {
-    const inputGenerationIds = row.generation_inputs.map(
-      (input) => input.generationId
-    );
     if (
-      inputGenerationIds.length !== row.generation_ids.length ||
-      inputGenerationIds.some(
-        (generationId, index) => generationId !== row.generation_ids[index]
-      )
+      JSON.stringify(row.generation_inputs[0]) !==
+        JSON.stringify(row.generation_input) ||
+      row.generation_ids[0] !== row.generation_id
     ) {
       context.addIssue({
         code: "custom",
-        path: ["generation_ids"],
-        message: "Persisted generation IDs do not match generation inputs",
+        path: ["generation_input"],
+        message: "Legacy async columns do not match the single input",
       });
     }
     if (
-      row.generation_inputs.some((input) => input.operation !== row.operation)
+      row.generation_input.operation !== row.operation ||
+      row.generation_input.generationId !== row.generation_id
     ) {
       context.addIssue({
         code: "custom",
-        path: ["generation_inputs"],
-        message: "Persisted generation operation does not match task operation",
+        path: ["generation_input"],
+        message: "Persisted generation identity does not match the task",
+      });
+    }
+    if (row.status === "queued" || row.status === "running") {
+      if (!row.input_digest.startsWith("sha256:")) {
+        context.addIssue({
+          code: "custom",
+          path: ["input_digest"],
+          message: "Nonterminal task requires a SHA-256 input digest",
+        });
+      }
+      if (
+        row.effective_user_concurrency === null ||
+        !row.group_id_snapshot ||
+        row.group_priority_snapshot === null ||
+        !row.admission_lease_token ||
+        !row.admission_lease_expires_at
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["effective_user_concurrency"],
+          message: "Nonterminal task requires complete policy and lease state",
+        });
+      }
+      if (row.admission_lease_released_at) {
+        context.addIssue({
+          code: "custom",
+          path: ["admission_lease_released_at"],
+          message: "Nonterminal task cannot have a released admission lease",
+        });
+      }
+      if (!row.admission_renewal_due_at) {
+        context.addIssue({
+          code: "custom",
+          path: ["admission_renewal_due_at"],
+          message: "Nonterminal task requires admission renewal schedule",
+        });
+      }
+    }
+    if (
+      Boolean(row.admission_lease_token) !==
+      Boolean(row.admission_lease_expires_at)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["admission_lease_token"],
+        message: "Admission lease token and expiration must be paired",
       });
     }
   });
@@ -77,10 +146,27 @@ const createImageAsyncTaskInputSchema = z
     task: z.custom<ImageEnqueueAsyncInput>(),
     userId: identifierSchema,
     apiKeyId: identifierSchema,
-    plan: identifierSchema,
+    legacyPlan: identifierSchema,
+    effectiveUserConcurrency: z.number().int().min(1).max(10_000),
+    groupIdSnapshot: identifierSchema,
+    groupPrioritySnapshot: z.number().int().min(0).max(10_000),
+    admissionLeaseToken: z.string().trim().min(1).max(256),
+    admissionLeaseExpiresAt: z.date(),
+    admissionRenewalDueAt: z.date(),
     now: z.date(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.admissionLeaseExpiresAt.getTime() > input.now.getTime() &&
+      input.admissionRenewalDueAt.getTime() >= input.now.getTime() &&
+      input.admissionRenewalDueAt.getTime() <
+        input.admissionLeaseExpiresAt.getTime(),
+    {
+      path: ["admissionRenewalDueAt"],
+      message: "Admission renewal must be due before lease expiration",
+    }
+  );
 
 const claimImageAsyncTaskInputSchema = z
   .object({
@@ -104,15 +190,85 @@ const finishImageAsyncTaskInputSchema = z
   })
   .strict();
 
+const updateImageAsyncAdmissionLeaseInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    admissionLeaseToken: z.string().trim().min(1).max(256),
+    admissionLeaseExpiresAt: z.date(),
+    admissionRenewalDueAt: z.date(),
+    now: z.date(),
+  })
+  .strict()
+  .refine(
+    (input) =>
+      input.admissionLeaseExpiresAt.getTime() > input.now.getTime() &&
+      input.admissionRenewalDueAt.getTime() >= input.now.getTime() &&
+      input.admissionRenewalDueAt.getTime() <
+        input.admissionLeaseExpiresAt.getTime(),
+    {
+      path: ["admissionRenewalDueAt"],
+      message: "Admission renewal must be due before lease expiration",
+    }
+  );
+
+const heartbeatImageAsyncTaskClaimInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    claimToken: z.string().trim().min(1).max(256),
+    admissionLeaseToken: z.string().trim().min(1).max(256),
+    now: z.date(),
+    claimExpiresAt: z.date(),
+    admissionLeaseExpiresAt: z.date(),
+    admissionRenewalDueAt: z.date(),
+  })
+  .strict()
+  .refine(
+    (input) =>
+      input.claimExpiresAt.getTime() > input.now.getTime() &&
+      input.admissionLeaseExpiresAt.getTime() > input.now.getTime() &&
+      input.admissionRenewalDueAt.getTime() >= input.now.getTime() &&
+      input.admissionRenewalDueAt.getTime() <
+        input.admissionLeaseExpiresAt.getTime(),
+    {
+      path: ["claimExpiresAt"],
+      message: "Claim expiration must be later than heartbeat time",
+    }
+  );
+
+const markImageAsyncMqDeliveredInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    now: z.date(),
+  })
+  .strict();
+
+const markImageAsyncAdmissionReleasedInputSchema = z
+  .object({
+    taskId: imageAsyncTaskIdSchema,
+    admissionLeaseToken: z.string().trim().min(1).max(256),
+    now: z.date(),
+  })
+  .strict();
+
 /** 一条已验证的持久图片异步任务。 */
 export interface ImageAsyncTaskRecord {
   id: string;
   userId: string;
   apiKeyId: string;
-  plan: string;
   operation: "generate" | "edit" | "mask";
-  generationInputs: ImageGenerateOperationInput[];
-  generationIds: string[];
+  generationInput: ImageGenerateOperationInput;
+  inputDigest: string;
+  generationId: string;
+  effectiveUserConcurrency: number | null;
+  groupIdSnapshot: string | null;
+  groupPrioritySnapshot: number | null;
+  admissionLeaseToken: string | null;
+  admissionLeaseExpiresAt: Date | null;
+  admissionLeaseReleasedAt: Date | null;
+  mqDeliveryDueAt: Date | null;
+  claimRecoveryDueAt: Date | null;
+  admissionRenewalDueAt: Date | null;
+  terminalReleaseDueAt: Date | null;
   responseFormat: "url" | "b64_json";
   callbackUrl: string | null;
   status: "queued" | "running" | "completed" | "failed";
@@ -124,6 +280,16 @@ export interface ImageAsyncTaskRecord {
   startedAt: Date | null;
   completedAt: Date | null;
   updatedAt: Date;
+}
+
+/** 为新单项 writer 生成带算法前缀的稳定输入摘要。 */
+export function createImageAsyncTaskInputDigest(
+  input: ImageGenerateOperationInput
+): string {
+  const parsed = imageGenerateInputSchema.parse(input);
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(parsed))
+    .digest("hex")}`;
 }
 
 /** 图片异步任务创建输入；身份只允许来自已验证的 Principal。 */
@@ -159,6 +325,18 @@ export interface ImageAsyncTaskRepository {
     input: CreateImageAsyncTaskInput
   ): Promise<{ task: ImageAsyncTaskRecord; created: boolean }>;
   findById(taskId: string): Promise<ImageAsyncTaskRecord | null>;
+  updateAdmissionLease(
+    input: z.input<typeof updateImageAsyncAdmissionLeaseInputSchema>
+  ): Promise<ImageAsyncTaskRecord | null>;
+  markMqDelivered(
+    input: z.input<typeof markImageAsyncMqDeliveredInputSchema>
+  ): Promise<ImageAsyncTaskRecord | null>;
+  heartbeatClaim(
+    input: z.input<typeof heartbeatImageAsyncTaskClaimInputSchema>
+  ): Promise<ImageAsyncTaskRecord | null>;
+  markAdmissionReleased(
+    input: z.input<typeof markImageAsyncAdmissionReleasedInputSchema>
+  ): Promise<ImageAsyncTaskRecord | null>;
   claimById(
     input: ClaimImageAsyncTaskInput
   ): Promise<ImageAsyncTaskRecord | null>;
@@ -178,10 +356,20 @@ function parseImageAsyncTaskRow(value: unknown): ImageAsyncTaskRecord {
     id: row.id,
     userId: row.user_id,
     apiKeyId: row.api_key_id,
-    plan: row.plan,
     operation: row.operation,
-    generationInputs: row.generation_inputs,
-    generationIds: row.generation_ids,
+    generationInput: row.generation_input,
+    inputDigest: row.input_digest,
+    generationId: row.generation_id,
+    effectiveUserConcurrency: row.effective_user_concurrency,
+    groupIdSnapshot: row.group_id_snapshot,
+    groupPrioritySnapshot: row.group_priority_snapshot,
+    admissionLeaseToken: row.admission_lease_token,
+    admissionLeaseExpiresAt: row.admission_lease_expires_at,
+    admissionLeaseReleasedAt: row.admission_lease_released_at,
+    mqDeliveryDueAt: row.mq_delivery_due_at,
+    claimRecoveryDueAt: row.claim_recovery_due_at,
+    admissionRenewalDueAt: row.admission_renewal_due_at,
+    terminalReleaseDueAt: row.terminal_release_due_at,
     responseFormat: row.response_format,
     callbackUrl: row.callback_url,
     status: row.status,
@@ -214,6 +402,19 @@ function getImageAsyncTaskColumns(): SQL {
     operation,
     generation_inputs,
     generation_ids,
+    generation_input,
+    input_digest,
+    generation_id,
+    effective_user_concurrency,
+    group_id_snapshot,
+    group_priority_snapshot,
+    admission_lease_token,
+    admission_lease_expires_at,
+    admission_lease_released_at,
+    mq_delivery_due_at,
+    claim_recovery_due_at,
+    admission_renewal_due_at,
+    terminal_release_due_at,
     response_format,
     callback_url,
     status,
@@ -243,13 +444,9 @@ export function createPostgresImageAsyncTaskRepository(
     async create(rawInput) {
       const input = createImageAsyncTaskInputSchema.parse(rawInput);
       const task = imageEnqueueAsyncInputSchema.parse(input.task);
-      const operation = task.generationInputs[0]?.operation;
-      if (!operation) {
-        throw new Error("图片异步任务缺少 generation input");
-      }
-      const generationIds = task.generationInputs.map(
-        (generationInput) => generationInput.generationId
-      );
+      const generationInput = task.generationInput;
+      const generationId = generationInput.generationId;
+      const inputDigest = createImageAsyncTaskInputDigest(generationInput);
       return database.transaction(async (transaction) => {
         const insertedResult = await transaction.execute(sql`
           insert into image_async_task (
@@ -260,6 +457,16 @@ export function createPostgresImageAsyncTaskRepository(
             operation,
             generation_inputs,
             generation_ids,
+            generation_input,
+            input_digest,
+            generation_id,
+            effective_user_concurrency,
+            group_id_snapshot,
+            group_priority_snapshot,
+            admission_lease_token,
+            admission_lease_expires_at,
+            mq_delivery_due_at,
+            admission_renewal_due_at,
             response_format,
             callback_url,
             status,
@@ -269,17 +476,27 @@ export function createPostgresImageAsyncTaskRepository(
             ${task.taskId},
             ${input.userId},
             ${input.apiKeyId},
-            ${input.plan},
-            ${operation},
-            ${JSON.stringify(task.generationInputs)}::json,
-            ${JSON.stringify(generationIds)}::json,
+            ${input.legacyPlan},
+            ${generationInput.operation},
+            ${JSON.stringify([generationInput])}::json,
+            ${JSON.stringify([generationId])}::json,
+            ${JSON.stringify(generationInput)}::json,
+            ${inputDigest},
+            ${generationId},
+            ${input.effectiveUserConcurrency},
+            ${input.groupIdSnapshot},
+            ${input.groupPrioritySnapshot},
+            ${input.admissionLeaseToken},
+            ${input.admissionLeaseExpiresAt},
+            ${input.now},
+            ${input.admissionRenewalDueAt},
             ${task.responseFormat},
             ${task.callbackUrl ?? null},
             'queued',
             ${input.now},
             ${input.now}
           )
-          on conflict (id) do nothing
+          on conflict do nothing
           returning ${columns}
         `);
         const inserted = parseFirstImageAsyncTaskRow(insertedResult);
@@ -289,6 +506,8 @@ export function createPostgresImageAsyncTaskRepository(
           select ${columns}
           from image_async_task
           where id = ${task.taskId}
+             or generation_id = ${generationId}
+          order by case when id = ${task.taskId} then 0 else 1 end
           limit 1
         `);
         const existing = parseFirstImageAsyncTaskRow(existingResult);
@@ -310,6 +529,70 @@ export function createPostgresImageAsyncTaskRepository(
       return parseFirstImageAsyncTaskRow(result);
     },
 
+    async updateAdmissionLease(rawInput) {
+      const input = updateImageAsyncAdmissionLeaseInputSchema.parse(rawInput);
+      const result = await database.execute(sql`
+        update image_async_task
+        set admission_lease_expires_at = ${input.admissionLeaseExpiresAt},
+            admission_renewal_due_at = ${input.admissionRenewalDueAt},
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status in ('queued', 'running')
+          and admission_lease_token = ${input.admissionLeaseToken}
+          and admission_lease_released_at is null
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
+    async markMqDelivered(rawInput) {
+      const input = markImageAsyncMqDeliveredInputSchema.parse(rawInput);
+      const result = await database.execute(sql`
+        update image_async_task
+        set mq_delivery_due_at = null,
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status = 'queued'
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
+    async heartbeatClaim(rawInput) {
+      const input = heartbeatImageAsyncTaskClaimInputSchema.parse(rawInput);
+      const result = await database.execute(sql`
+        update image_async_task
+        set claim_expires_at = ${input.claimExpiresAt},
+            claim_recovery_due_at = ${input.claimExpiresAt},
+            admission_lease_expires_at = ${input.admissionLeaseExpiresAt},
+            admission_renewal_due_at = ${input.admissionRenewalDueAt},
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status = 'running'
+          and claim_token = ${input.claimToken}
+          and admission_lease_token = ${input.admissionLeaseToken}
+          and admission_lease_released_at is null
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
+    async markAdmissionReleased(rawInput) {
+      const input = markImageAsyncAdmissionReleasedInputSchema.parse(rawInput);
+      const result = await database.execute(sql`
+        update image_async_task
+        set admission_lease_released_at = ${input.now},
+            terminal_release_due_at = null,
+            updated_at = ${input.now}
+        where id = ${input.taskId}
+          and status in ('completed', 'failed')
+          and admission_lease_token = ${input.admissionLeaseToken}
+          and admission_lease_released_at is null
+        returning ${columns}
+      `);
+      return parseFirstImageAsyncTaskRow(result);
+    },
+
     async claimById(rawInput) {
       const input = claimImageAsyncTaskInputSchema.parse(rawInput);
       const result = await database.execute(sql`
@@ -318,6 +601,8 @@ export function createPostgresImageAsyncTaskRepository(
             attempt_count = attempt_count + 1,
             claim_token = ${input.claimToken},
             claim_expires_at = ${input.claimExpiresAt},
+            mq_delivery_due_at = null,
+            claim_recovery_due_at = ${input.claimExpiresAt},
             started_at = coalesce(started_at, ${input.now}),
             updated_at = ${input.now}
         where id = ${input.taskId}
@@ -343,6 +628,8 @@ export function createPostgresImageAsyncTaskRepository(
         set status = 'queued',
             claim_token = null,
             claim_expires_at = null,
+            mq_delivery_due_at = ${input.now},
+            claim_recovery_due_at = null,
             updated_at = ${input.now}
         where id = ${input.taskId}
           and status = 'running'
@@ -362,6 +649,10 @@ export function createPostgresImageAsyncTaskRepository(
         set status = 'completed',
             claim_token = null,
             claim_expires_at = null,
+            mq_delivery_due_at = null,
+            claim_recovery_due_at = null,
+            admission_renewal_due_at = null,
+            terminal_release_due_at = ${input.now},
             error = null,
             completed_at = ${input.now},
             updated_at = ${input.now}
@@ -383,6 +674,10 @@ export function createPostgresImageAsyncTaskRepository(
         set status = 'failed',
             claim_token = null,
             claim_expires_at = null,
+            mq_delivery_due_at = null,
+            claim_recovery_due_at = null,
+            admission_renewal_due_at = null,
+            terminal_release_due_at = ${input.now},
             error = ${input.error},
             completed_at = ${input.now},
             updated_at = ${input.now}

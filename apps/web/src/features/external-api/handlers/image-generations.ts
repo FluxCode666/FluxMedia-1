@@ -10,11 +10,13 @@ import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
-import {
-  validateCallbackUrl,
-} from "@/features/external-api/async-image-tasks";
+import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { createDeprecatedGovernanceFieldResponse } from "@/features/external-api/deprecated-governance-fields";
+import {
+  buildImageAsyncTaskPublicResponse,
+  createImageAsyncTaskPublicSourceFromOperation,
+} from "@/features/external-api/image-async-task-response";
 import {
   createExternalImageStreamResponse,
   createJsonKeepAliveResponse,
@@ -45,8 +47,6 @@ import {
   invokeImageEnqueueAsyncOperation,
   invokeImageGenerationOperation,
 } from "@/features/image-generation/uol-client";
-import { buildImageAsyncTaskPublicResponse } from "@/features/external-api/image-async-task-response";
-import { createImageAsyncTaskPublicSourceFromOperation } from "@/features/external-api/image-async-task-response";
 
 const externalImageGenerationSchema = z
   .object({
@@ -232,6 +232,9 @@ export const postExternalImageGenerations = withApiLogging(
     if (useAsync && useStreamResponse) {
       return openAIImageError("async cannot be used with stream.");
     }
+    if (useAsync && count > 1) {
+      return openAIImageError("Async image generation accepts one image only.");
+    }
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url) {
       try {
@@ -338,15 +341,15 @@ export const postExternalImageGenerations = withApiLogging(
     }
 
     if (useAsync) {
-      const generationIds = Array.from({ length: count }, () => randomUUID());
+      const generationId = randomUUID();
       try {
         const task = await invokeImageEnqueueAsyncOperation(
           {
             taskId: `task_${randomUUID().replace(/-/g, "")}`,
-            generationInputs: generationIds.map((generationId) => ({
+            generationInput: {
               ...input,
               generationId,
-            })),
+            },
             responseFormat,
             ...(callbackUrl ? { callbackUrl } : {}),
           },

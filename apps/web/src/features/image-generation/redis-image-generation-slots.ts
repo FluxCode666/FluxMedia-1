@@ -129,6 +129,30 @@ function getUserSlotKey(userId: string): string {
   return `${USER_SLOT_KEY_PREFIX}${digest}`;
 }
 
+/** 从持久 token 和用户身份重建不暴露原始用户 ID 的准入租约。 */
+export function restoreImageGenerationAdmissionLease(input: {
+  userId: string;
+  token: string;
+  expiresAt: Date | number;
+}): RedisImageGenerationAdmissionLease {
+  const expiresAt =
+    input.expiresAt instanceof Date
+      ? input.expiresAt.getTime()
+      : input.expiresAt;
+  if (
+    !input.token.trim() ||
+    !Number.isSafeInteger(expiresAt) ||
+    expiresAt <= 0
+  ) {
+    throw new Error("Invalid persisted image admission lease");
+  }
+  return {
+    token: input.token,
+    userKey: getUserSlotKey(input.userId),
+    expiresAt,
+  };
+}
+
 /** 读取有界槽位租约 TTL；默认覆盖完整 20 分钟生图预算并留出释放余量。 */
 export function getImageGenerationSlotLeaseTtlMs(): number {
   const parsed = Number.parseInt(

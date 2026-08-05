@@ -1,24 +1,39 @@
 /**
  * 图片异步任务 UOL binding 测试。
  *
- * 职责：验证身份只来自外部 API Principal、数据库提交先于 MQ、投递失败优雅降级，
- * 以及 userId/API Key 双重归属和 taskId 幂等冲突。
+ * 职责：验证单项任务创建、用户准入与分组快照、Worker 的 API Key 复核、
+ * generation 对账、claim/admission heartbeat、终态释放确认及 callback 单次投递。
  */
-import type { OperationContext, Principal } from "@repo/shared/uol";
+import {
+  type OperationContext,
+  OperationError,
+  type Principal,
+} from "@repo/shared/uol";
 import { describe, expect, it, vi } from "vitest";
 
-import type {
-  ImageAsyncTaskRecord,
-  ImageAsyncTaskRepository,
+import {
+  createImageAsyncTaskInputDigest,
+  type ImageAsyncTaskRecord,
+  type ImageAsyncTaskRepository,
 } from "@/features/image-generation/image-async-task-repository";
 import {
   executeImageEnqueueAsyncBinding,
   executeImageGetAsyncTaskBinding,
   executeImageProcessAsyncTaskBinding,
   type ImageAsyncTaskBindingDependencies,
+  type ImageGenerationReconciliationRecord,
 } from "./image-async-task";
 
 const NOW = new Date("2026-08-04T00:00:00.000Z");
+const LEASE_EXPIRES_AT = new Date(NOW.getTime() + 22 * 60_000);
+const RENEWAL_DUE_AT = new Date(NOW.getTime() + 11 * 60_000);
+const GENERATION_INPUT = {
+  operation: "generate" as const,
+  prompt: "test image",
+  model: "gpt-image-2",
+  generationId: "generation-1",
+};
+const INPUT_DIGEST = createImageAsyncTaskInputDigest(GENERATION_INPUT);
 const principal = {
   type: "apiKey",
   credentialKind: "external",
@@ -27,7 +42,7 @@ const principal = {
   plan: "pro",
 } satisfies Principal;
 
-/** 创建一个最小合法图片异步任务记录。 */
+/** 创建一个具备完整策略和准入快照的图片异步任务。 */
 function createTask(
   overrides: Partial<ImageAsyncTaskRecord> = {}
 ): ImageAsyncTaskRecord {
@@ -35,17 +50,20 @@ function createTask(
     id: "task_123",
     userId: "user-1",
     apiKeyId: "key-1",
-    plan: "pro",
     operation: "generate",
-    generationInputs: [
-      {
-        operation: "generate",
-        prompt: "test image",
-        model: "gpt-image-2",
-        generationId: "generation-1",
-      },
-    ],
-    generationIds: ["generation-1"],
+    generationInput: GENERATION_INPUT,
+    inputDigest: INPUT_DIGEST,
+    generationId: "generation-1",
+    effectiveUserConcurrency: 20,
+    groupIdSnapshot: "group-1",
+    groupPrioritySnapshot: 7,
+    admissionLeaseToken: "admission-1",
+    admissionLeaseExpiresAt: LEASE_EXPIRES_AT,
+    admissionLeaseReleasedAt: null,
+    mqDeliveryDueAt: NOW,
+    claimRecoveryDueAt: null,
+    admissionRenewalDueAt: RENEWAL_DUE_AT,
+    terminalReleaseDueAt: null,
     responseFormat: "url",
     callbackUrl: "https://callback.example.com/images",
     status: "queued",
@@ -61,15 +79,53 @@ function createTask(
   };
 }
 
-/** 创建只暴露本组测试所需方法的仓储桩。 */
+/** 把任务转换为当前 Worker 已成功 claim 的运行态。 */
+function createRunningTask(
+  overrides: Partial<ImageAsyncTaskRecord> = {}
+): ImageAsyncTaskRecord {
+  return createTask({
+    status: "running",
+    attemptCount: 1,
+    claimToken: "worker-1",
+    claimExpiresAt: LEASE_EXPIRES_AT,
+    claimRecoveryDueAt: LEASE_EXPIRES_AT,
+    mqDeliveryDueAt: null,
+    startedAt: NOW,
+    ...overrides,
+  });
+}
+
+/** 构造带 release due 的终态任务。 */
+function createTerminalTask(
+  status: "completed" | "failed",
+  overrides: Partial<ImageAsyncTaskRecord> = {}
+): ImageAsyncTaskRecord {
+  return createTask({
+    status,
+    attemptCount: 1,
+    mqDeliveryDueAt: null,
+    claimRecoveryDueAt: null,
+    admissionRenewalDueAt: null,
+    terminalReleaseDueAt: NOW,
+    completedAt: NOW,
+    error: status === "failed" ? "上游失败" : null,
+    ...overrides,
+  });
+}
+
+/** 创建完整仓储桩；各测试只覆盖需要改变的 CAS 结果。 */
 function createRepository(task: ImageAsyncTaskRecord) {
   return {
-    create: vi.fn().mockResolvedValue({ task, created: true }),
-    findById: vi.fn().mockResolvedValue(task),
-    claimById: vi.fn(),
-    release: vi.fn(),
-    complete: vi.fn(),
-    fail: vi.fn(),
+    create: vi.fn(async () => ({ task, created: true })),
+    findById: vi.fn(async () => null as ImageAsyncTaskRecord | null),
+    updateAdmissionLease: vi.fn(async () => task),
+    markMqDelivered: vi.fn(async () => task),
+    heartbeatClaim: vi.fn(async () => task),
+    markAdmissionReleased: vi.fn(async () => task),
+    claimById: vi.fn(async () => null as ImageAsyncTaskRecord | null),
+    release: vi.fn(async () => task),
+    complete: vi.fn(async () => task),
+    fail: vi.fn(async () => task),
   } satisfies ImageAsyncTaskRepository;
 }
 
@@ -81,7 +137,7 @@ function createContext() {
   } satisfies OperationContext;
 }
 
-/** 创建一组可观察创建、校验和 MQ 顺序的 binding 依赖。 */
+/** 创建可观察 DB、Redis、MQ、生成与 callback 顺序的依赖桩。 */
 function createDependencies(task = createTask()) {
   const calls: string[] = [];
   const repository = createRepository(task);
@@ -89,24 +145,66 @@ function createDependencies(task = createTask()) {
     calls.push("database");
     return { task, created: true };
   });
+  repository.markMqDelivered.mockImplementation(async () => {
+    calls.push("mq-ack");
+    return task;
+  });
+  repository.markAdmissionReleased.mockImplementation(async () => {
+    calls.push("release-ack");
+    return createTask({
+      ...task,
+      admissionLeaseReleasedAt: NOW,
+      terminalReleaseDueAt: null,
+    });
+  });
   const dependencies: ImageAsyncTaskBindingDependencies = {
     repository,
     validateCallback: vi.fn(async () => {
-      calls.push("callback");
+      calls.push("callback-validation");
       return "https://callback.example.com/images";
     }),
-    getQueuePriority: vi.fn(async () => 50),
+    getMediaLimitsForUser: vi.fn(async () => ({
+      limit: 20,
+      effectiveSource: "system_default" as const,
+    })),
+    resolveGroupSnapshot: vi.fn(async () => {
+      calls.push("group");
+      return { id: "group-1", priority: 7 };
+    }),
+    acquireAdmission: vi.fn(async () => {
+      calls.push("admission");
+      return {
+        status: "acquired" as const,
+        lease: {
+          token: "admission-1",
+          userKey: "user-key-1",
+          expiresAt: LEASE_EXPIRES_AT.getTime(),
+        },
+      };
+    }),
+    renewAdmission: vi.fn(async () => ({
+      status: "renewed" as const,
+      expiresAt: LEASE_EXPIRES_AT.getTime(),
+    })),
+    releaseAdmission: vi.fn(async () => {
+      calls.push("release");
+    }),
     enqueueTask: vi.fn(async () => {
       calls.push("queue");
       return undefined;
     }),
     reportEnqueueFailure: vi.fn(),
-    runGeneration: vi.fn(async () => undefined),
-    getGenerationConcurrency: vi.fn(async () => 2),
+    isApiKeyActive: vi.fn(async () => true),
+    findGeneration: vi.fn(
+      async () => null as ImageGenerationReconciliationRecord | null
+    ),
+    runGeneration: vi.fn(async () => ({ generationId: "generation-1" })),
     createClaimToken: vi.fn(() => "worker-1"),
     now: vi.fn(() => NOW),
     reportGenerationFailure: vi.fn(),
-    deliverCallback: vi.fn(async () => undefined),
+    deliverCallback: vi.fn(async () => {
+      calls.push("callback");
+    }),
     reportCallbackFailure: vi.fn(),
   };
   return { calls, dependencies, repository };
@@ -114,20 +212,13 @@ function createDependencies(task = createTask()) {
 
 const input = {
   taskId: "task_123",
-  generationInputs: [
-    {
-      operation: "generate" as const,
-      prompt: "test image",
-      model: "gpt-image-2",
-      generationId: "generation-1",
-    },
-  ],
+  generationInput: GENERATION_INPUT,
   responseFormat: "url" as const,
   callbackUrl: "https://callback.example.com/images",
 };
 
 describe("image async task UOL bindings", () => {
-  it("先校验回调并提交数据库，再按套餐优先级投递最小任务", async () => {
+  it("取得用户准入并持久化分组快照后才按快照优先级投递", async () => {
     const { calls, dependencies, repository } = createDependencies();
     const context = createContext();
 
@@ -136,19 +227,29 @@ describe("image async task UOL bindings", () => {
     ).resolves.toMatchObject({
       taskId: "task_123",
       status: "queued",
-      generationIds: ["generation-1"],
+      generationId: "generation-1",
     });
-    expect(calls).toEqual(["callback", "database", "queue"]);
+    expect(calls).toEqual([
+      "callback-validation",
+      "admission",
+      "group",
+      "database",
+      "queue",
+      "mq-ack",
+    ]);
     expect(repository.create).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: "user-1",
         apiKeyId: "key-1",
-        plan: "pro",
+        legacyPlan: "pro",
+        effectiveUserConcurrency: 20,
+        groupIdSnapshot: "group-1",
+        groupPrioritySnapshot: 7,
       })
     );
     expect(dependencies.enqueueTask).toHaveBeenCalledWith({
       taskId: "task_123",
-      priority: 50,
+      priority: 8,
     });
     expect(context.assertOwnership).toHaveBeenCalledWith(
       "image async task",
@@ -156,8 +257,8 @@ describe("image async task UOL bindings", () => {
     );
   });
 
-  it("Redis 投递失败时保留 queued 数据库任务并报告故障", async () => {
-    const { dependencies } = createDependencies();
+  it("MQ 投递失败时保留 due 且不释放已被任务采用的准入槽", async () => {
+    const { dependencies, repository } = createDependencies();
     const failure = new Error("redis unavailable");
     vi.mocked(dependencies.enqueueTask).mockRejectedValue(failure);
 
@@ -173,34 +274,42 @@ describe("image async task UOL bindings", () => {
       failure,
       "task_123"
     );
+    expect(repository.markMqDelivered).not.toHaveBeenCalled();
+    expect(dependencies.releaseAdmission).not.toHaveBeenCalled();
   });
 
-  it("拒绝非外部 API Principal 且不创建任务", async () => {
+  it("用户并发已满时返回稳定 429 领域错误且不创建任务", async () => {
     const { dependencies, repository } = createDependencies();
+    vi.mocked(dependencies.acquireAdmission).mockResolvedValue({
+      status: "blocked",
+      reason: "user",
+    });
+
     await expect(
       executeImageEnqueueAsyncBinding(
         input,
-        { type: "user", userId: "user-1", role: "user" },
+        principal,
         createContext(),
         dependencies
       )
-    ).rejects.toMatchObject({ code: "unauthenticated" });
+    ).rejects.toMatchObject({
+      code: "concurrency_limit_exceeded",
+      httpStatus: 429,
+    });
     expect(repository.create).not.toHaveBeenCalled();
   });
 
-  it("同一 taskId 改写持久输入时返回幂等冲突且不投递", async () => {
-    const { dependencies } = createDependencies(
-      createTask({
-        generationInputs: [
-          {
-            operation: "generate",
-            prompt: "different image",
-            model: "gpt-image-2",
-            generationId: "generation-1",
-          },
-        ],
-      })
-    );
+  it("同一 taskId 改写单项输入时返回幂等冲突且不碰 Redis", async () => {
+    const existing = createTask({
+      generationInput: { ...GENERATION_INPUT, prompt: "different image" },
+      inputDigest: createImageAsyncTaskInputDigest({
+        ...GENERATION_INPUT,
+        prompt: "different image",
+      }),
+    });
+    const { dependencies, repository } = createDependencies(existing);
+    repository.findById.mockResolvedValue(existing);
+
     await expect(
       executeImageEnqueueAsyncBinding(
         input,
@@ -209,11 +318,13 @@ describe("image async task UOL bindings", () => {
         dependencies
       )
     ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(dependencies.acquireAdmission).not.toHaveBeenCalled();
     expect(dependencies.enqueueTask).not.toHaveBeenCalled();
   });
 
   it("查询同时校验 userId 和 API Key 域", async () => {
     const repository = createRepository(createTask());
+    repository.findById.mockResolvedValue(createTask());
     await expect(
       executeImageGetAsyncTaskBinding(
         { taskId: "task_123" },
@@ -224,34 +335,29 @@ describe("image async task UOL bindings", () => {
     ).rejects.toMatchObject({ code: "not_found" });
   });
 
-  it("Worker 从数据库恢复 API Key Principal 并在全部 generation 完成后 CAS 完成", async () => {
-    const task = createTask({
-      generationInputs: [
-        {
-          operation: "generate",
-          prompt: "first",
-          model: "gpt-image-2",
-          generationId: "generation-1",
-        },
-        {
-          operation: "generate",
-          prompt: "second",
-          model: "gpt-image-2",
-          generationId: "generation-2",
-        },
-      ],
-      generationIds: ["generation-1", "generation-2"],
-      status: "running",
-      attemptCount: 1,
-      claimToken: "worker-1",
-      claimExpiresAt: new Date(NOW.getTime() + 22 * 60_000),
-      startedAt: NOW,
+  it("Worker 复核 Key、续期租约并直接执行一次单项管线", async () => {
+    const running = createRunningTask();
+    const completed = createTerminalTask("completed");
+    const released = createTerminalTask("completed", {
+      admissionLeaseReleasedAt: NOW,
+      terminalReleaseDueAt: null,
     });
-    const { dependencies, repository } = createDependencies(task);
-    repository.claimById.mockResolvedValue(task);
-    repository.complete.mockResolvedValue(
-      createTask({ ...task, status: "completed", completedAt: NOW })
-    );
+    const { calls, dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.heartbeatClaim.mockResolvedValue(running);
+    repository.complete.mockResolvedValue(completed);
+    repository.markAdmissionReleased.mockImplementation(async () => {
+      calls.push("release-ack");
+      return released;
+    });
+    vi.mocked(dependencies.findGeneration)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        userId: "user-1",
+        status: "completed",
+        error: null,
+        inputDigest: INPUT_DIGEST,
+      });
 
     await expect(
       executeImageProcessAsyncTaskBinding(
@@ -261,41 +367,98 @@ describe("image async task UOL bindings", () => {
         dependencies
       )
     ).resolves.toMatchObject({ status: "completed" });
-    expect(dependencies.runGeneration).toHaveBeenCalledTimes(2);
-    expect(dependencies.runGeneration).toHaveBeenCalledWith(
-      expect.objectContaining({ generationId: "generation-1" }),
+    expect(dependencies.isApiKeyActive).toHaveBeenCalledWith({
+      userId: "user-1",
+      apiKeyId: "key-1",
+    });
+    expect(repository.heartbeatClaim).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "apiKey",
-        credentialKind: "external",
-        userId: "user-1",
-        apiKeyId: "key-1",
-        plan: "pro",
-      }),
-      "image-async-task:task_123:generation-1"
+        taskId: "task_123",
+        claimToken: "worker-1",
+        admissionLeaseToken: "admission-1",
+      })
     );
-    expect(repository.complete).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: "task_123", claimToken: "worker-1" })
+    expect(dependencies.runGeneration).toHaveBeenCalledTimes(1);
+    expect(dependencies.runGeneration).toHaveBeenCalledWith({
+      task: running,
+      admissionLease: expect.objectContaining({ token: "admission-1" }),
+    });
+    expect(calls.slice(-3)).toEqual(["release", "release-ack", "callback"]);
+  });
+
+  it("已有 completed generation 时直接投影终态且不再次外呼", async () => {
+    const running = createRunningTask();
+    const completed = createTerminalTask("completed");
+    const { dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.complete.mockResolvedValue(completed);
+    repository.markAdmissionReleased.mockResolvedValue(
+      createTerminalTask("completed", {
+        admissionLeaseReleasedAt: NOW,
+        terminalReleaseDueAt: null,
+      })
     );
-    expect(dependencies.deliverCallback).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "task_123", status: "completed" })
+    vi.mocked(dependencies.findGeneration).mockResolvedValue({
+      userId: "user-1",
+      status: "completed",
+      error: null,
+      inputDigest: INPUT_DIGEST,
+    });
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).resolves.toMatchObject({ status: "completed" });
+    expect(dependencies.runGeneration).not.toHaveBeenCalled();
+    expect(repository.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("pending generation 进入恢复重试且绝不二次外呼", async () => {
+    const running = createRunningTask();
+    const { dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.release.mockResolvedValue(createTask());
+    vi.mocked(dependencies.findGeneration).mockResolvedValue({
+      userId: "user-1",
+      status: "pending",
+      error: null,
+      inputDigest: INPUT_DIGEST,
+    });
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).rejects.toMatchObject({ code: "not_ready" });
+    expect(dependencies.runGeneration).not.toHaveBeenCalled();
+    expect(repository.release).toHaveBeenCalledWith(
+      expect.objectContaining({ claimToken: "worker-1" })
     );
   });
 
-  it("generation 失败时只收敛 task 失败，不让 BullMQ 重复执行已失败 generation", async () => {
-    const task = createTask({
-      status: "running",
-      claimToken: "worker-1",
-      claimExpiresAt: new Date(NOW.getTime() + 22 * 60_000),
-      startedAt: NOW,
+  it("API Key 入队后停用时任务失败并释放 admission", async () => {
+    const running = createRunningTask();
+    const failed = createTerminalTask("failed", {
+      error: "用于创建该任务的 API Key 已停用",
     });
-    const { dependencies, repository } = createDependencies(task);
-    repository.claimById.mockResolvedValue(task);
-    repository.fail.mockResolvedValue(
-      createTask({ ...task, status: "failed", error: "上游失败" })
+    const { dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.fail.mockResolvedValue(failed);
+    repository.markAdmissionReleased.mockResolvedValue(
+      createTerminalTask("failed", {
+        error: "用于创建该任务的 API Key 已停用",
+        admissionLeaseReleasedAt: NOW,
+        terminalReleaseDueAt: null,
+      })
     );
-    vi.mocked(dependencies.runGeneration).mockRejectedValueOnce(
-      new Error("unexpected internal error")
-    );
+    vi.mocked(dependencies.isApiKeyActive).mockResolvedValue(false);
 
     await expect(
       executeImageProcessAsyncTaskBinding(
@@ -305,29 +468,74 @@ describe("image async task UOL bindings", () => {
         dependencies
       )
     ).resolves.toMatchObject({ status: "failed" });
-    expect(repository.fail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: "task_123",
-        claimToken: "worker-1",
-        error: "Image generation failed. Please retry later.",
+    expect(dependencies.runGeneration).not.toHaveBeenCalled();
+    expect(dependencies.releaseAdmission).toHaveBeenCalledTimes(1);
+    expect(repository.markAdmissionReleased).toHaveBeenCalledTimes(1);
+  });
+
+  it("无 generation 的业务错误收敛 failed，基础设施错误则释放 claim 重试", async () => {
+    const running = createRunningTask();
+    const failed = createTerminalTask("failed", { error: "上游拒绝请求" });
+    const business = createDependencies(running);
+    business.repository.claimById.mockResolvedValue(running);
+    business.repository.heartbeatClaim.mockResolvedValue(running);
+    business.repository.fail.mockResolvedValue(failed);
+    business.repository.markAdmissionReleased.mockResolvedValue(
+      createTerminalTask("failed", {
+        error: "上游拒绝请求",
+        admissionLeaseReleasedAt: NOW,
+        terminalReleaseDueAt: null,
       })
+    );
+    vi.mocked(business.dependencies.runGeneration).mockRejectedValue(
+      new OperationError("upstream_error", "上游拒绝请求")
+    );
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        business.dependencies
+      )
+    ).resolves.toMatchObject({ status: "failed" });
+    expect(business.repository.fail).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "上游拒绝请求" })
+    );
+
+    const infrastructure = createDependencies(running);
+    infrastructure.repository.claimById.mockResolvedValue(running);
+    infrastructure.repository.heartbeatClaim.mockResolvedValue(running);
+    infrastructure.repository.release.mockResolvedValue(createTask());
+    const failure = new Error("database unavailable");
+    vi.mocked(infrastructure.dependencies.runGeneration).mockRejectedValue(
+      failure
+    );
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        infrastructure.dependencies
+      )
+    ).rejects.toBe(failure);
+    expect(infrastructure.repository.release).toHaveBeenCalledWith(
+      expect.objectContaining({ claimToken: "worker-1" })
     );
   });
 
-  it("基础设施异常时释放 claim 并交给 BullMQ 重试", async () => {
-    const task = createTask({
-      status: "running",
-      claimToken: "worker-1",
-      claimExpiresAt: new Date(NOW.getTime() + 22 * 60_000),
-      startedAt: NOW,
+  it("generation 用户或摘要不一致时失败关闭", async () => {
+    const running = createRunningTask();
+    const { dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.release.mockResolvedValue(createTask());
+    vi.mocked(dependencies.findGeneration).mockResolvedValue({
+      userId: "user-other",
+      status: "completed",
+      error: null,
+      inputDigest: INPUT_DIGEST,
     });
-    const { dependencies, repository } = createDependencies(task);
-    repository.claimById.mockResolvedValue(task);
-    repository.release.mockResolvedValue(
-      createTask({ ...task, status: "queued", claimToken: null })
-    );
-    const failure = new Error("settings unavailable");
-    vi.mocked(dependencies.getGenerationConcurrency).mockRejectedValue(failure);
 
     await expect(
       executeImageProcessAsyncTaskBinding(
@@ -336,9 +544,7 @@ describe("image async task UOL bindings", () => {
         createContext(),
         dependencies
       )
-    ).rejects.toBe(failure);
-    expect(repository.release).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: "task_123", claimToken: "worker-1" })
-    );
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(dependencies.runGeneration).not.toHaveBeenCalled();
   });
 });

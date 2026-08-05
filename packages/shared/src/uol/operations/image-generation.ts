@@ -138,44 +138,32 @@ export const imageAsyncTaskStatusSchema = z.enum([
 export const imageEnqueueAsyncInputSchema = z
   .object({
     taskId: imageAsyncTaskIdSchema,
-    generationInputs: z.array(imageGenerateInputSchema).min(1).max(10_000),
+    generationInput: imageGenerateInputSchema,
     responseFormat: z.enum(["url", "b64_json"]),
     callbackUrl: z.string().url().max(2_048).optional(),
   })
   .strict()
   .superRefine((input, context) => {
-    const operation = input.generationInputs[0]?.operation;
-    const generationIds = new Set<string>();
-    for (const [index, generationInput] of input.generationInputs.entries()) {
-      if (generationInput.operation !== operation) {
+    const generationInput = input.generationInput;
+    if (generationInput.count !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["generationInput", "count"],
+        message: "Async image tasks do not accept batch count",
+      });
+    }
+    if (generationInput.operation !== "generate") {
+      const references =
+        generationInput.operation === "mask"
+          ? [...generationInput.images, generationInput.mask]
+          : generationInput.images;
+      for (const [referenceIndex, reference] of references.entries()) {
+        if (reference.source === "storage") continue;
         context.addIssue({
           code: "custom",
-          path: ["generationInputs", index, "operation"],
-          message: "All generation inputs must use the same operation",
+          path: ["generationInput", "media", referenceIndex],
+          message: "Async image media must be persisted as storage references",
         });
-      }
-      if (generationIds.has(generationInput.generationId)) {
-        context.addIssue({
-          code: "custom",
-          path: ["generationInputs", index, "generationId"],
-          message: "generationId must be unique within an async task",
-        });
-      }
-      generationIds.add(generationInput.generationId);
-      if (generationInput.operation !== "generate") {
-        const references =
-          generationInput.operation === "mask"
-            ? [...generationInput.images, generationInput.mask]
-            : generationInput.images;
-        for (const [referenceIndex, reference] of references.entries()) {
-          if (reference.source === "storage") continue;
-          context.addIssue({
-            code: "custom",
-            path: ["generationInputs", index, "media", referenceIndex],
-            message:
-              "Async image media must be persisted as storage references",
-          });
-        }
       }
     }
   });
@@ -186,7 +174,7 @@ export const imageAsyncTaskOutputSchema = z.object({
   model: z.string().trim().min(1).max(256),
   operation: z.enum(["generate", "edit", "mask"]),
   status: imageAsyncTaskStatusSchema,
-  generationIds: z.array(z.string().trim().min(1).max(128)).min(1),
+  generationId: z.string().trim().min(1).max(128),
   responseFormat: z.enum(["url", "b64_json"]),
   createdAt: z.string().datetime(),
   startedAt: z.string().datetime().nullable(),
@@ -200,9 +188,7 @@ export type ImageEnqueueAsyncInput = z.infer<
 >;
 
 /** 图片异步任务的稳定输出类型。 */
-export type ImageAsyncTaskOutput = z.infer<
-  typeof imageAsyncTaskOutputSchema
->;
+export type ImageAsyncTaskOutput = z.infer<typeof imageAsyncTaskOutputSchema>;
 
 type ImageGenerateOperation = z.infer<
   typeof imageGenerateInputSchema
@@ -308,21 +294,7 @@ export const imageEnqueueAsync = defineOperation<
     {
       derive: (input, principal) => {
         const parsed = input as ImageEnqueueAsyncInput;
-        const capabilities = [
-          ...new Set(
-            parsed.generationInputs.flatMap((generationInput) =>
-              deriveImageCapabilities(generationInput, principal)
-            )
-          ),
-        ];
-        if (parsed.generationInputs.length > 1) {
-          capabilities.push(
-            isExternalApiKeyPrincipal(principal)
-              ? "externalApi.images.batch"
-              : "imageGeneration.batch"
-          );
-        }
-        return [...new Set(capabilities)];
+        return deriveImageCapabilities(parsed.generationInput, principal);
       },
     },
   ],

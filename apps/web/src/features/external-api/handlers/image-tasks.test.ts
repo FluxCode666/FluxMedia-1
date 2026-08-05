@@ -38,7 +38,9 @@ vi.mock("@/features/image-generation/uol-client", () => ({
 import { getExternalImageTask } from "./image-tasks";
 
 /** 构造固定 API Key 与请求标识的任务查询请求。 */
-function createRequest(taskId: string): [NextRequest, { params: Promise<{ taskId: string }> }] {
+function createRequest(
+  taskId: string
+): [NextRequest, { params: Promise<{ taskId: string }> }] {
   return [
     new NextRequest(`https://app.example.test/v1/images/${taskId}`, {
       headers: {
@@ -64,7 +66,7 @@ describe("external image task query", () => {
       model: "gpt-image-2",
       operation: "generate",
       status: "queued",
-      generationIds: ["generation-1"],
+      generationId: "generation-1",
       responseFormat: "url",
       createdAt: "2026-08-04T00:00:00.000Z",
       startedAt: null,

@@ -11,11 +11,13 @@ import { getPlanUploadLimits } from "@repo/shared/subscription/services/upload-l
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import type { NextRequest } from "next/server";
 
-import {
-  validateCallbackUrl,
-} from "@/features/external-api/async-image-tasks";
+import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { createDeprecatedGovernanceFieldResponse } from "@/features/external-api/deprecated-governance-fields";
+import {
+  buildImageAsyncTaskPublicResponse,
+  createImageAsyncTaskPublicSourceFromOperation,
+} from "@/features/external-api/image-async-task-response";
 import {
   createExternalImageStreamResponse,
   createJsonKeepAliveResponse,
@@ -34,10 +36,6 @@ import {
   readResponseBytesWithLimit,
 } from "@/features/external-api/safe-image-fetch";
 import { runBatchImageGeneration } from "@/features/image-generation/batch-runner";
-import {
-  buildImageAsyncTaskPublicResponse,
-  createImageAsyncTaskPublicSourceFromOperation,
-} from "@/features/external-api/image-async-task-response";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
@@ -878,10 +876,15 @@ export const postExternalImageEdits = withApiLogging(
       }
 
       if (useAsync) {
-        const generationIds = Array.from({ length: count }, () => randomUUID());
+        if (count > 1) {
+          return openAIImageError(
+            "Async image editing accepts one image only."
+          );
+        }
+        const generationId = randomUUID();
         try {
-          /** 为每个幂等 generationId 构造同一 edit 或 mask 联合输入。 */
-          const createAsyncGenerationInput = (generationId: string) => {
+          /** 为单个幂等 generationId 构造 storage-only edit 或 mask 输入。 */
+          const createAsyncGenerationInput = () => {
             const common = {
               prompt,
               promptOptimization,
@@ -897,7 +900,6 @@ export const postExternalImageEdits = withApiLogging(
               hdRepair,
               blockRepair,
               repairPrompt,
-              count: 1,
               generationId,
               images,
             };
@@ -908,9 +910,7 @@ export const postExternalImageEdits = withApiLogging(
           const task = await invokeImageEnqueueAsyncOperation(
             {
               taskId: `task_${randomUUID().replace(/-/g, "")}`,
-              generationInputs: generationIds.map(
-                createAsyncGenerationInput
-              ),
+              generationInput: createAsyncGenerationInput(),
               responseFormat,
               ...(callbackUrl ? { callbackUrl } : {}),
             },

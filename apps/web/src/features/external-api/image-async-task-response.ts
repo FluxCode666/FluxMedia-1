@@ -9,9 +9,8 @@ import {
   buildPublicImageUrl,
   buildSignedStorageImageUrl,
 } from "@repo/shared/storage/signed-url";
-
-import type { ImageAsyncTaskRecord } from "@/features/image-generation/image-async-task-repository";
 import type { ImageAsyncTaskOutput } from "@repo/shared/uol/operations/image-generation";
+import type { ImageAsyncTaskRecord } from "@/features/image-generation/image-async-task-repository";
 
 /** 响应组装所需的一条 generation 最小读取模型。 */
 export interface ImageAsyncGenerationRecord {
@@ -38,7 +37,7 @@ export interface ImageAsyncTaskPublicSource {
   id: string;
   userId: string;
   model: string;
-  generationIds: string[];
+  generationId: string;
   responseFormat: "url" | "b64_json";
   status: "queued" | "running" | "completed" | "failed";
   error: string | null;
@@ -56,7 +55,9 @@ const defaultDependencies: ImageAsyncTaskResponseDependencies = {
     const { getStorageProvider } = await import(
       "@repo/shared/storage/providers"
     );
-    return Buffer.from(await (await getStorageProvider()).getObject(key, bucket));
+    return Buffer.from(
+      await (await getStorageProvider()).getObject(key, bucket)
+    );
   },
   async getPublicBaseUrl() {
     return import("@/features/image-generation/request-utils").then(
@@ -90,15 +91,8 @@ function createBaseTaskResponse(task: ImageAsyncTaskPublicSource) {
           completed_at: task.completedAt.toISOString(),
         }
       : {}),
-    ...(task.generationIds.length === 1
-      ? {
-          generation_id: task.generationIds[0],
-          generationId: task.generationIds[0],
-        }
-      : {
-          generation_ids: task.generationIds,
-          generationIds: task.generationIds,
-        }),
+    generation_id: task.generationId,
+    generationId: task.generationId,
   };
 }
 
@@ -122,8 +116,8 @@ export function createImageAsyncTaskPublicSource(
   return {
     id: task.id,
     userId: task.userId,
-    model: task.generationInputs[0]?.model ?? "unknown",
-    generationIds: task.generationIds,
+    model: task.generationInput.model,
+    generationId: task.generationId,
     responseFormat: task.responseFormat,
     status: task.status,
     error: task.error,
@@ -141,7 +135,7 @@ export function createImageAsyncTaskPublicSourceFromOperation(
     id: task.taskId,
     userId,
     model: task.model,
-    generationIds: task.generationIds,
+    generationId: task.generationId,
     responseFormat: task.responseFormat,
     status: task.status,
     error: task.error,
@@ -165,53 +159,47 @@ export async function buildImageAsyncTaskPublicResponse(
   if (task.status === "failed") return createFailedTaskResponse(task);
   if (task.status !== "completed") return createBaseTaskResponse(task);
 
-  const generations = await Promise.all(
-    task.generationIds.map((id) => dependencies.loadGeneration(id))
-  );
+  const generation = await dependencies.loadGeneration(task.generationId);
+  if (
+    !generation ||
+    generation.id !== task.generationId ||
+    generation.userId !== task.userId ||
+    generation.status !== "completed" ||
+    !generation.storageKey ||
+    !generation.storageBucket
+  ) {
+    throw new Error("图片异步任务完成状态与 generation 产物不一致");
+  }
   const publicBaseUrl = await dependencies.getPublicBaseUrl();
-  const data: Array<Record<string, string>> = [];
-  let creditsConsumed = 0;
-  for (const [index, generation] of generations.entries()) {
-    if (
-      !generation ||
-      generation.id !== task.generationIds[index] ||
-      generation.userId !== task.userId ||
-      generation.status !== "completed" ||
-      !generation.storageKey ||
-      !generation.storageBucket
-    ) {
-      throw new Error("图片异步任务完成状态与 generation 产物不一致");
-    }
-    const image: Record<string, string> = {};
-    if (task.responseFormat === "b64_json") {
-      image.b64_json = (
-        await dependencies.loadStorageObject(
-          generation.storageKey,
-          generation.storageBucket
-        )
-      ).toString("base64");
-    } else {
-      const signedUrl = buildSignedStorageImageUrl(
+  const image: Record<string, string> = {};
+  if (task.responseFormat === "b64_json") {
+    image.b64_json = (
+      await dependencies.loadStorageObject(
         generation.storageKey,
         generation.storageBucket
-      );
-      const publicUrl = buildPublicImageUrl(signedUrl, publicBaseUrl);
-      if (!publicUrl) {
-        throw new Error("图片异步任务无法构建公开产物 URL");
-      }
-      image.url = publicUrl;
+      )
+    ).toString("base64");
+  } else {
+    const signedUrl = buildSignedStorageImageUrl(
+      generation.storageKey,
+      generation.storageBucket
+    );
+    const publicUrl = buildPublicImageUrl(signedUrl, publicBaseUrl);
+    if (!publicUrl) {
+      throw new Error("图片异步任务无法构建公开产物 URL");
     }
-    if (generation.revisedPrompt) {
-      image.revised_prompt = generation.revisedPrompt;
-    }
-    data.push(image);
-    creditsConsumed += Math.max(0, Number(generation.creditsConsumed) || 0);
+    image.url = publicUrl;
+  }
+  if (generation.revisedPrompt) {
+    image.revised_prompt = generation.revisedPrompt;
   }
 
   return {
     ...createBaseTaskResponse(task),
-    data,
-    credits_consumed: Math.round(creditsConsumed * 100) / 100,
+    data: [image],
+    credits_consumed:
+      Math.round(Math.max(0, Number(generation.creditsConsumed) || 0) * 100) /
+      100,
     usage: null,
   };
 }

@@ -124,6 +124,12 @@ export type ImageGenerationAdmissionAuthorization = {
   effectiveSource: "system_default" | "user_override";
 };
 
+/** 异步 Worker 从任务行恢复的可信分组身份与排队快照。 */
+export type ImageGenerationGroupAuthorization = {
+  groupId: string;
+  priority: number;
+};
+
 type RunImageGenerationInput =
   | ({
       mode: "generate";
@@ -132,6 +138,8 @@ type RunImageGenerationInput =
       apiKeyId?: string;
       backendGroupId?: string;
       admissionAuthorization?: ImageGenerationAdmissionAuthorization;
+      groupAuthorization?: ImageGenerationGroupAuthorization;
+      inputDigest?: string;
     } & GenerateImageParams)
   | ({
       mode: "edit";
@@ -140,6 +148,8 @@ type RunImageGenerationInput =
       apiKeyId?: string;
       backendGroupId?: string;
       admissionAuthorization?: ImageGenerationAdmissionAuthorization;
+      groupAuthorization?: ImageGenerationGroupAuthorization;
+      inputDigest?: string;
       mediaInputReferences?: {
         images: MediaInputReference[];
         mask?: MediaInputReference;
@@ -1171,11 +1181,25 @@ async function runImageGenerationForUserInternal(
     ReturnType<typeof resolveTrustedGroupSnapshot>
   >;
   try {
-    trustedGroupSnapshot = await resolveTrustedGroupSnapshot({
+    const resolvedGroupSnapshot = await resolveTrustedGroupSnapshot({
       userId: input.userId,
       apiKeyId: input.apiKeyId,
-      requestedGroupId: input.backendGroupId,
+      ...(input.groupAuthorization
+        ? { pinnedGroupId: input.groupAuthorization.groupId }
+        : { requestedGroupId: input.backendGroupId }),
     });
+    if (
+      input.groupAuthorization &&
+      resolvedGroupSnapshot.id !== input.groupAuthorization.groupId
+    ) {
+      throw new Error("图片任务持久分组快照与运行时解析结果不一致");
+    }
+    trustedGroupSnapshot = input.groupAuthorization
+      ? {
+          ...resolvedGroupSnapshot,
+          priority: input.groupAuthorization.priority,
+        }
+      : resolvedGroupSnapshot;
   } catch (error) {
     if (releaseAdmissionInOperation) {
       await releaseAdmissionBeforeQueueSafely(admissionLease);
@@ -1473,6 +1497,7 @@ async function runQueuedImageGenerationForUser({
             ...billingMetadata,
             moderationBlockingEnabled: moderationEnabled,
             moderationFailureCredits,
+            ...(input.inputDigest ? { uolInputDigest: input.inputDigest } : {}),
             ...(input.apiKeyId ? { externalApiKeyId: input.apiKeyId } : {}),
           }
         : {
@@ -1490,6 +1515,7 @@ async function runQueuedImageGenerationForUser({
             ...billingMetadata,
             moderationBlockingEnabled: moderationEnabled,
             moderationFailureCredits,
+            ...(input.inputDigest ? { uolInputDigest: input.inputDigest } : {}),
             ...(input.apiKeyId ? { externalApiKeyId: input.apiKeyId } : {}),
           },
   });

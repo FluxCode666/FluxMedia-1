@@ -14,6 +14,7 @@ import {
   releaseRedisImageGenerationAdmission,
   releaseRedisImageGenerationExecution,
   renewRedisImageGenerationAdmission,
+  restoreImageGenerationAdmissionLease,
 } from "./redis-image-generation-slots";
 
 /** 构造只实现并发槽所需 eval 命令的 Redis 客户端桩。 */
@@ -46,6 +47,20 @@ describe("Redis image generation slots", () => {
       20,
       60_000
     );
+  });
+
+  it("从持久 token 重建不泄露用户 ID 的准入租约", () => {
+    const lease = restoreImageGenerationAdmissionLease({
+      userId: "user-a",
+      token: "task-scoped-token",
+      expiresAt: new Date(1_700_000_060_000),
+    });
+
+    expect(lease).toMatchObject({
+      token: "task-scoped-token",
+      expiresAt: 1_700_000_060_000,
+    });
+    expect(lease.userKey).not.toContain("user-a");
   });
 
   it("用户槽已满时立即返回 user 阻塞且不请求全站槽", async () => {
