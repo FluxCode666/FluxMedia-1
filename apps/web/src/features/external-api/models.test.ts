@@ -3,11 +3,7 @@
  *
  * 职责：锁定真实模型大小写无关去重，确保旧视频身份不再成为公开 API。
  */
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  getPlanCapabilitySnapshot: vi.fn(),
-}));
+import { describe, expect, it } from "vitest";
 
 import { filterExternalMemberModelIds, mergeExternalModelIds } from "./models";
 
@@ -42,8 +38,6 @@ describe("filterExternalMemberModelIds", () => {
         memberType: "adobe",
         adobeMode: "direct",
         supportedModelIds,
-        imageAllowed: true,
-        videoAllowed: true,
       })
     ).toEqual(["gpt-image-2", "seedance2"]);
     expect(
@@ -51,8 +45,6 @@ describe("filterExternalMemberModelIds", () => {
         memberType: "api",
         adobeMode: null,
         supportedModelIds,
-        imageAllowed: true,
-        videoAllowed: true,
       })
     ).toEqual(["gpt-image-2"]);
   });
@@ -63,8 +55,6 @@ describe("filterExternalMemberModelIds", () => {
         memberType: "api",
         adobeMode: null,
         supportedModelIds: ["vendor-video-x", "vendor-image-x"],
-        imageAllowed: true,
-        videoAllowed: true,
         customVideoModelIds: new Set(["vendor-video-x"]),
       })
     ).toEqual(["vendor-video-x", "vendor-image-x"]);

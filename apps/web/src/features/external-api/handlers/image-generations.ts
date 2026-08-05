@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -153,16 +152,6 @@ export const postExternalImageGenerations = withApiLogging(
         "invalid_api_key"
       );
     }
-    if (
-      !(await canUsePlanCapability(auth.plan, "externalApi.images.generate"))
-    ) {
-      return openAIImageError(
-        "External image generation is not enabled for this plan.",
-        403,
-        "insufficient_plan"
-      );
-    }
-
     let body: unknown;
     try {
       body = await request.json();
@@ -187,16 +176,6 @@ export const postExternalImageGenerations = withApiLogging(
     // 上游模型（如 nano-banana-*、grok-*），OAuth/平台后端仍在管线内保持白名单。
     const imageModel = parsed.data.model;
 
-    if (
-      wantsImageStreamResponse(request, parsed.data.stream) &&
-      !(await canUsePlanCapability(auth.plan, "externalApi.streaming"))
-    ) {
-      return openAIImageError(
-        "External API streaming is not enabled for this plan.",
-        403,
-        "insufficient_plan"
-      );
-    }
     const useAsync =
       parsed.data.async === true ||
       request.nextUrl.searchParams.get("async") === "true";
@@ -247,7 +226,6 @@ export const postExternalImageGenerations = withApiLogging(
       credentialKind: "external" as const,
       userId: auth.userId,
       apiKeyId: auth.apiKeyId,
-      plan: auth.plan,
     };
     const requestId = request.headers.get("x-request-id") ?? undefined;
     const runGeneration = (

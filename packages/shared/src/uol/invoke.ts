@@ -22,8 +22,6 @@
  */
 import { isPostgresTimeoutError } from "@repo/database/pool";
 import { nanoid } from "nanoid";
-import { isSubscriptionPlan } from "../config/subscription-plan";
-import type { PlanCapabilityKey } from "../subscription/services/plan-capabilities";
 import { assertAccess } from "./access";
 import { OperationError } from "./errors";
 import type { Principal } from "./principal";
@@ -36,70 +34,6 @@ export interface InvokeOptions {
   requestId?: string;
   /** 可选回调集合（未来扩展 SSE / webhook 通知） */
   callbacks?: Record<string, unknown>;
-}
-
-/** 判断 operation 声明是否引用运行时加载的现行套餐能力键。 */
-function isPlanCapabilityKey(
-  value: string,
-  capabilityKeys: readonly string[]
-): value is PlanCapabilityKey {
-  return capabilityKeys.includes(value);
-}
-
-/**
- * 在 execute 前执行 Principal 感知的套餐能力门禁。
- *
- * session 的套餐始终由服务端用户 ID 查询；API Key 只接受已知套餐枚举。system 必须由
- * operation 显式声明 bypass，其他内部 Principal 不具备用户套餐，统一 fail-closed。
- */
-async function assertCapabilities(
-  def: ReturnType<typeof getOperation> extends infer T
-    ? Exclude<T, undefined>
-    : never,
-  input: unknown,
-  principal: Principal
-): Promise<void> {
-  if (!def.capabilities?.length) return;
-  if (principal.type === "system" && def.allowSystemCapabilityBypass) return;
-
-  const capabilities = [
-    ...new Set(
-      def.capabilities.flatMap((requirement) =>
-        "capability" in requirement
-          ? [requirement.capability]
-          : requirement.derive(input, principal)
-      )
-    ),
-  ];
-  if (capabilities.length === 0) return;
-  // WHY：无能力声明的 operation 必须保持 DB-free；只有实际执行能力门禁时才加载
-  // 运行时设置和用户套餐服务，避免纯契约测试在模块初始化阶段要求数据库。
-  const { canUsePlanCapability, PLAN_CAPABILITY_KEYS } = await import(
-    "../subscription/services/plan-capabilities"
-  );
-  const plan =
-    principal.type === "user"
-      ? await import("../subscription/services/user-plan").then(
-          ({ getUserPlanType }) => getUserPlanType(principal.userId)
-        )
-      : principal.type === "apiKey" && isSubscriptionPlan(principal.plan)
-        ? principal.plan
-        : null;
-
-  for (const capability of capabilities) {
-    if (
-      plan &&
-      isPlanCapabilityKey(capability, PLAN_CAPABILITY_KEYS) &&
-      (await canUsePlanCapability(plan, capability))
-    ) {
-      continue;
-    }
-    throw new OperationError(
-      "capability_required",
-      `Plan capability required: ${capability}`,
-      { capability }
-    );
-  }
 }
 
 /**
@@ -147,10 +81,7 @@ export async function invokeOperation<TOutput = unknown>(
   }
   const input = parseResult.data;
 
-  // 3. 套餐能力门禁必须读取已校验 input，并在任何业务副作用前完成。
-  await assertCapabilities(def, input, principal);
-
-  // 4. 幂等键结构校验（仅校验 keyField 非空，实际去重在 execute/DB 层）
+  // 3. 幂等键结构校验（仅校验 keyField 非空，实际去重在 execute/DB 层）
   if (def.idempotency.kind === "required") {
     const keyValue = (input as Record<string, unknown>)[
       def.idempotency.keyField
@@ -163,7 +94,7 @@ export async function invokeOperation<TOutput = unknown>(
     }
   }
 
-  // 5. 构建执行上下文
+  // 4. 构建执行上下文
   const ctx: OperationContext = {
     requestId: opts?.requestId ?? nanoid(),
     callbacks: opts?.callbacks,

@@ -28,7 +28,6 @@ import {
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
 import { imageModelIdSchema } from "../../image-generation/model-contract";
-import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
 const imageGenerateCommonFields = {
@@ -182,42 +181,6 @@ export type ImageEnqueueAsyncInput = z.infer<
 /** 图片异步任务的稳定输出类型。 */
 export type ImageAsyncTaskOutput = z.infer<typeof imageAsyncTaskOutputSchema>;
 
-type ImageGenerateOperation = z.infer<
-  typeof imageGenerateInputSchema
->["operation"];
-
-/** 各图片动作对应的站内、外部 API 套餐能力。 */
-const IMAGE_CAPABILITIES_BY_OPERATION: Record<
-  ImageGenerateOperation,
-  { internal: string; external: string }
-> = {
-  generate: {
-    internal: "imageGeneration.text",
-    external: "externalApi.images.generate",
-  },
-  edit: {
-    internal: "imageGeneration.edit",
-    external: "externalApi.images.edit",
-  },
-  mask: {
-    internal: "imageGeneration.mask",
-    external: "externalApi.images.mask",
-  },
-};
-
-/** 根据媒体变体和 Principal 推导站内或外部 API 套餐能力。 */
-function deriveImageCapabilities(
-  input: z.infer<typeof imageGenerateInputSchema>,
-  principal: Principal
-): string[] {
-  const external = isExternalApiKeyPrincipal(principal);
-  const operationCapabilities =
-    IMAGE_CAPABILITIES_BY_OPERATION[input.operation];
-  return [
-    external ? operationCapabilities.external : operationCapabilities.internal,
-  ];
-}
-
 // ---------------------------------------------------------------------------
 // 1. image.generate - 统一管线核心（runImageGenerationForUser）
 // 5 个 v1 handler + 3 个 web 路由汇入的单一生图入口
@@ -236,16 +199,6 @@ export const imageGenerate = defineOperation<
   input: imageGenerateInputSchema,
   output: imageGenerateOutputSchema,
   access: { kind: "protected" },
-  capabilities: [
-    {
-      derive: (input, principal) =>
-        deriveImageCapabilities(
-          input as ImageGenerateOperationInput,
-          principal
-        ),
-    },
-  ],
-  allowSystemCapabilityBypass: true,
   readOnly: false,
   destructive: false,
   idempotency: {
@@ -276,14 +229,6 @@ export const imageEnqueueAsync = defineOperation<
   input: imageEnqueueAsyncInputSchema,
   output: imageAsyncTaskOutputSchema,
   access: { kind: "protected" },
-  capabilities: [
-    {
-      derive: (input, principal) => {
-        const parsed = input as ImageEnqueueAsyncInput;
-        return deriveImageCapabilities(parsed.generationInput, principal);
-      },
-    },
-  ],
   readOnly: false,
   destructive: false,
   idempotency: {
@@ -339,7 +284,6 @@ export const imageProcessAsyncTask = defineOperation({
     .strict(),
   output: imageAsyncTaskOutputSchema,
   access: { kind: "system" },
-  allowSystemCapabilityBypass: true,
   readOnly: false,
   destructive: false,
   idempotency: {

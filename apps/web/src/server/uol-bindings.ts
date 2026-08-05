@@ -35,7 +35,6 @@ import {
 import { resolveUsageTimeRange } from "@repo/shared/analytics/range";
 import { getAnalyticsMetricUnit } from "@repo/shared/analytics/series";
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
-import { normalizeSubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import {
   type UsageEvent,
   type UsageEventDetail,
@@ -55,10 +54,6 @@ import {
   moderateContent,
 } from "@repo/shared/moderation";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import type { SubscriptionCheckoutInput } from "@repo/shared/subscription/checkout-contract";
-import { subscriptionCheckoutOutputSchema } from "@repo/shared/subscription/checkout-contract";
-import { purchasablePlansOutputSchema } from "@repo/shared/subscription/purchase-contract";
-import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
@@ -97,12 +92,6 @@ import {
   getCreditTopUpOptions,
   getCreditTopUpOrderStatus,
 } from "@/features/payment/credit-top-up";
-import {
-  createSubscriptionCheckout,
-  SubscriptionCheckoutError,
-  selectTrustedSubscriptionCheckoutInput,
-} from "@/features/payment/subscription-checkout";
-import { loadSubscriptionPurchaseOptions } from "@/features/payment/subscription-purchase-options";
 import { databaseUsageLogRepository } from "@/features/usage-log/repository";
 import {
   loadUsageEventDetail,
@@ -254,8 +243,8 @@ bindExecute(
  * externalApi.getModels - 外接 API 模型列表。
  *
  * 源：apps/web/src/features/external-api/models.ts。
- * WHY：套餐能力与供应商模型列表必须经过同一 UOL 网关，避免 HTTP 路由和未来 MCP
- * 传输在可见模型集合上产生漂移。
+ * WHY：供应商模型列表必须经过同一 UOL 网关，避免 HTTP 路由和未来 MCP 传输
+ * 在可见模型集合上产生漂移。
  */
 bindExecute(
   "externalApi.getModels",
@@ -270,18 +259,7 @@ bindExecute(
         "API key authentication required"
       );
     }
-    const plan = normalizeSubscriptionPlan(principal.plan);
-    if (!(await canUsePlanCapability(plan, "externalApi.models.list"))) {
-      throw new OperationError(
-        "capability_required",
-        "External API model listing is not enabled for this plan."
-      );
-    }
-    return getExternalModelsForApiKey(
-      principal.userId,
-      principal.apiKeyId,
-      plan
-    );
+    return getExternalModelsForApiKey(principal.userId, principal.apiKeyId);
   }
 );
 
@@ -532,69 +510,6 @@ bindExecute(
   }
 );
 
-// ---------------------------------------------------------------------------
-// subscription 钱包购买能力域
-// ---------------------------------------------------------------------------
-
-/**
- * subscription.listMyPurchasablePlans - 只从 user Principal 读取本人资格。
- * 输出再次执行共享 schema，防止运行时套餐配置夹带敏感字段。
- */
-bindExecute(
-  "subscription.listMyPurchasablePlans",
-  async (
-    _input: Record<string, never>,
-    principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    if (principal.type !== "user") {
-      throw new OperationError(
-        "unauthenticated",
-        "User session authentication required"
-      );
-    }
-    return purchasablePlansOutputSchema.parse(
-      await loadSubscriptionPurchaseOptions(principal.userId)
-    );
-  }
-);
-
-/**
- * subscription.createCheckout - 渠道与回跳只取服务端真相。
- *
- * 兼容输入中的 provider/successUrl/cancelUrl 不会下传，防止客户端改写资金路径；
- * userId 只从已鉴权 user Principal 取得，输出再次经过共享窄 schema。
- */
-bindExecute(
-  "subscription.createCheckout",
-  async (
-    input: SubscriptionCheckoutInput,
-    principal: Principal,
-    _ctx: OperationContext
-  ) => {
-    if (principal.type !== "user") {
-      throw new OperationError(
-        "unauthenticated",
-        "User session authentication required"
-      );
-    }
-    const trusted = selectTrustedSubscriptionCheckoutInput(
-      principal.userId,
-      input
-    );
-    try {
-      return subscriptionCheckoutOutputSchema.parse(
-        await createSubscriptionCheckout(trusted.userId, trusted.priceId)
-      );
-    } catch (error) {
-      if (error instanceof SubscriptionCheckoutError) {
-        throw new OperationError("validation_error", error.message);
-      }
-      throw error;
-    }
-  }
-);
-
 /** credits.fulfillAlipayTopUp - 支付宝路由完成 RSA2 验签后经 UOL 履约。 */
 bindExecute(
   "credits.fulfillAlipayTopUp",
@@ -632,7 +547,6 @@ bindExecute(
 // TODO: user.ban - banUserAction 逻辑
 // TODO: user.grantCredits - adminGrantCreditsAction 逻辑
 // TODO: user.adjustCredits - adminAdjustCreditsAction 逻辑
-// TODO: user.setSubscription - setUserPlanAction 逻辑
 // TODO: user.setCreditsStatus - setUserCreditsStatusAction 逻辑
 // TODO: user.setExternalApiKeyStatus - setExternalApiKeyStatusAction 逻辑
 // TODO: user.create - createUserAction 逻辑
@@ -663,8 +577,6 @@ async function invokeApiKeyManagement<T>(
   } catch (error) {
     if (!(error instanceof ExternalApiKeyManagementError)) throw error;
     switch (error.code) {
-      case "capability_required":
-        throw new OperationError("capability_required", error.message);
       case "not_found":
         throw new OperationError("not_found", error.message);
       case "validation_error":

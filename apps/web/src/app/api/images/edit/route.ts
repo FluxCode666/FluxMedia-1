@@ -2,9 +2,8 @@ import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import { getPlanUploadLimits } from "@repo/shared/subscription/services/upload-limits";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import { OperationError } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
@@ -128,11 +127,12 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse("Forbidden", 403);
   }
 
-  const plan = await getUserPlan(session.user.id);
-  const role = await getUserRoleById(session.user.id);
-  const uploadLimits = await getPlanUploadLimits(plan.plan);
-  const maxImageBytes = uploadLimits.maxFileSizeBytes;
-  const maxRequestBytes = uploadLimits.maxUploadBytes;
+  const [role, mediaLimits] = await Promise.all([
+    getUserRoleById(session.user.id),
+    getMediaLimitDefaults(),
+  ]);
+  const maxImageBytes = mediaLimits.maxFileSizeBytes;
+  const maxRequestBytes = mediaLimits.maxUploadSizeBytes;
 
   let formData: FormData;
   try {
@@ -257,9 +257,9 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse("At least one source image is required.");
   }
 
-  if (sourceFiles.length > uploadLimits.maxEditImages) {
+  if (sourceFiles.length > mediaLimits.maxEditReferenceImages) {
     return errorResponse(
-      `No more than ${uploadLimits.maxEditImages} images are allowed.`
+      `No more than ${mediaLimits.maxEditReferenceImages} images are allowed.`
     );
   }
 

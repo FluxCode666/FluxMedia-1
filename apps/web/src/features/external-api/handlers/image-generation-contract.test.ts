@@ -11,9 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticateExternalApiRequest: vi.fn(),
-  canUsePlanCapability: vi.fn(),
   filesToMediaInputReferences: vi.fn(),
-  getPlanUploadLimits: vi.fn(),
+  getMediaLimitDefaults: vi.fn(),
   invokeImageEnqueueAsyncOperation: vi.fn(),
   invokeImageGenerationOperation: vi.fn(),
   uploadModerationImages: vi.fn(),
@@ -23,12 +22,8 @@ vi.mock("@repo/shared/api-logger", () => ({
   withApiLogging: <T>(handler: T) => handler,
 }));
 
-vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  canUsePlanCapability: mocks.canUsePlanCapability,
-}));
-
-vi.mock("@repo/shared/subscription/services/upload-limits", () => ({
-  getPlanUploadLimits: mocks.getPlanUploadLimits,
+vi.mock("@repo/shared/image-generation/media-limit-service", () => ({
+  getMediaLimitDefaults: mocks.getMediaLimitDefaults,
 }));
 
 vi.mock("@/features/external-api/auth", () => ({
@@ -132,13 +127,11 @@ describe("external image generation transport contract", () => {
     mocks.authenticateExternalApiRequest.mockResolvedValue({
       userId: "user-1",
       apiKeyId: "api-key-1",
-      plan: "pro",
     });
-    mocks.canUsePlanCapability.mockResolvedValue(true);
-    mocks.getPlanUploadLimits.mockResolvedValue({
+    mocks.getMediaLimitDefaults.mockResolvedValue({
       maxFileSizeBytes: 10 * 1024 * 1024,
-      maxUploadBytes: 20 * 1024 * 1024,
-      maxEditImages: 12,
+      maxUploadSizeBytes: 20 * 1024 * 1024,
+      maxEditReferenceImages: 12,
     });
     mocks.uploadModerationImages.mockImplementation(
       async (_userId: string, _batchId: string, files: readonly File[]) =>
@@ -204,7 +197,6 @@ describe("external image generation transport contract", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "api-key-1",
-        plan: "pro",
       },
       undefined,
       "request-generate-1"
@@ -254,7 +246,6 @@ describe("external image generation transport contract", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "api-key-1",
-        plan: "pro",
       },
       undefined,
       "request-edit-1"

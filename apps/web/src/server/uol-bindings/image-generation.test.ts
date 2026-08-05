@@ -27,7 +27,6 @@ const apiKeyPrincipal = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
-  plan: "pro",
 } satisfies Principal;
 
 const mcpPrincipal = {
@@ -35,7 +34,6 @@ const mcpPrincipal = {
   credentialKind: "mcp",
   userId: "user-1",
   apiKeyId: "mcp-key-1",
-  plan: "pro",
 } satisfies Principal;
 
 /** 构造不执行额外权限判断的测试 OperationContext。 */

@@ -20,8 +20,6 @@ const sessionOnlyOperations = [
   "credits.getMyBalance",
   "credits.listMyUsageEvents",
   "credits.getMyUsageEventDetail",
-  "subscription.listMyPurchasablePlans",
-  "subscription.createCheckout",
 ] as const;
 
 describe("wallet and usage log UOL contracts", () => {
@@ -65,7 +63,6 @@ describe("wallet and usage log UOL contracts", () => {
   it.each([
     "credits.listMyUsageEvents",
     "credits.getMyUsageEventDetail",
-    "subscription.listMyPurchasablePlans",
   ])("registers %s as natural read with no side effects", (name) => {
     expect(getOperation(name)).toMatchObject({
       access: { kind: "user" },
@@ -76,23 +73,6 @@ describe("wallet and usage log UOL contracts", () => {
     });
   });
 
-  it("expresses checkout as redirect or POST form without accepting userId", () => {
-    const operation = getOperation("subscription.createCheckout");
-    expect(
-      operation?.output.safeParse({
-        kind: "redirect",
-        url: "https://pay.example.test/checkout",
-      }).success
-    ).toBe(true);
-    expect(
-      operation?.output.safeParse({
-        kind: "form_post",
-        url: "https://pay.example.test/submit",
-        fields: { order: "order-1" },
-      }).success
-    ).toBe(true);
-  });
-
   it.each(
     sessionOnlyOperations
   )("rejects apiKey Principal before executing %s", async (name) => {
@@ -101,7 +81,6 @@ describe("wallet and usage log UOL contracts", () => {
       credentialKind: "external",
       userId: "user-1",
       apiKeyId: "key-1",
-      plan: "pro",
     } satisfies Principal;
     await expect(
       invokeOperation(name, {}, apiKeyPrincipal)

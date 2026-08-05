@@ -24,8 +24,6 @@ import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { buildGeneratedImageStorageKey } from "@repo/shared/storage/bucket-config";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
-import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import {
   getRuntimeSettingBoolean,
   getRuntimeStorageBucketConfig,
@@ -1134,29 +1132,12 @@ async function runImageGenerationForUserInternal(
       "生图准入授权与当前用户不匹配"
     );
   }
-  const [userPlan, mediaLimits] = await Promise.all([
-    getUserPlan(input.userId),
-    input.admissionAuthorization
-      ? Promise.resolve({
-          limit: input.admissionAuthorization.limit,
-          effectiveSource: input.admissionAuthorization.effectiveSource,
-        })
-      : mediaLimitService.getForUser(input.userId),
-  ]);
-  const planCapabilities = await getPlanCapabilitySnapshot(userPlan.plan);
-  const moderationBlockingEnabled =
-    planCapabilities.features["moderation.blocking"];
-  const promptOptimizationAllowed =
-    planCapabilities.features["promptOptimization.control"];
-  const explicitPromptOptimization =
-    input.promptOptimization !== undefined || Boolean(input.apiPrompt);
-
-  if (explicitPromptOptimization && !promptOptimizationAllowed) {
-    return {
-      error: "Prompt optimization control requires Pro plan or higher.",
-      generationId,
-    };
-  }
+  const mediaLimits = input.admissionAuthorization
+    ? {
+        limit: input.admissionAuthorization.limit,
+        effectiveSource: input.admissionAuthorization.effectiveSource,
+      }
+    : await mediaLimitService.getForUser(input.userId);
 
   const promptOptimization = input.promptOptimization ?? true;
   const apiPrompt = promptOptimization
@@ -1164,24 +1145,6 @@ async function runImageGenerationForUserInternal(
     : input.prompt;
   const moderationPrompt = !promptOptimization ? input.prompt : apiPrompt;
 
-  if (
-    input.mode === "generate" &&
-    !planCapabilities.features["imageGeneration.text"]
-  ) {
-    return {
-      error: "Text image generation is not enabled for this plan.",
-      generationId,
-    };
-  }
-  if (
-    input.mode === "edit" &&
-    !planCapabilities.features["imageGeneration.edit"]
-  ) {
-    return {
-      error: "Image editing is not enabled for this plan.",
-      generationId,
-    };
-  }
   // 仅以实际存在的蒙版文件作为调度条件，不能信任客户端额外声明的能力字段。
   const requiresMask =
     input.mode === "edit" &&
@@ -1301,8 +1264,7 @@ async function runImageGenerationForUserInternal(
             };
           }
           await assertImageGenerationExecutionActive(executionInput);
-          const moderationRequired =
-            (await isContentModerationEnabled()) && moderationBlockingEnabled;
+          const moderationRequired = await isContentModerationEnabled();
           let initialConfig: ApiConfig;
           try {
             session = await createRuntimeBackendSession(
@@ -1369,8 +1331,8 @@ async function runImageGenerationForUserInternal(
           const moderationFailureCredits = moderationEnabled
             ? getModerationFailureCharge({
                 policy: billingPolicy,
-                moderationOnlyFailureSettlement:
-                  planCapabilities.features["moderation.onlyFailureSettlement"],
+                // 订阅退役后沿用原免费默认语义，不再按套餐改变失败结算。
+                moderationOnlyFailureSettlement: false,
                 isChatInput: false,
                 chatRoundCredits: 0,
                 chatModerationOnlyCredits,

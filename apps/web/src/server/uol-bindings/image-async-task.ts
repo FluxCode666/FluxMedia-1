@@ -57,6 +57,8 @@ type ImageAdmissionRenewal =
 export const IMAGE_ASYNC_TASK_CLAIM_TTL_MS = 22 * 60_000;
 const IMAGE_ASYNC_TASK_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
 const IMAGE_ASYNC_TASK_GLOBAL_RETRY_DELAY_MS = 1_000;
+// Phase A 旧 NOT NULL 列只维持回滚兼容，不再携带或影响商业套餐语义。
+const LEGACY_IMAGE_ASYNC_TASK_PLAN = "retired";
 
 const imageGenerationReconciliationRowSchema = z
   .object({
@@ -567,7 +569,7 @@ export async function executeImageEnqueueAsyncBinding(
       task: normalizedInput,
       userId: principal.userId,
       apiKeyId: principal.apiKeyId,
-      legacyPlan: principal.plan,
+      legacyPlan: LEGACY_IMAGE_ASYNC_TASK_PLAN,
       effectiveUserConcurrency: mediaLimits.limit,
       groupIdSnapshot: groupSnapshot.id,
       groupPrioritySnapshot: groupSnapshot.priority,

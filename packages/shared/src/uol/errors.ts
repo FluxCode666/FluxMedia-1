@@ -15,7 +15,6 @@
 export type OperationErrorCode =
   | "unauthenticated"
   | "forbidden"
-  | "capability_required"
   | "not_found"
   | "not_implemented"
   | "not_ready"
@@ -67,7 +66,6 @@ export class OperationError extends Error {
 const CODE_TO_STATUS: Record<OperationErrorCode, number> = {
   unauthenticated: 401,
   forbidden: 403,
-  capability_required: 403,
   not_found: 404,
   not_implemented: 501,
   not_ready: 503,

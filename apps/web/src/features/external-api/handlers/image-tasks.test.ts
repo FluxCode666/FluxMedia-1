@@ -59,7 +59,6 @@ describe("external image task query", () => {
     mocks.authenticateExternalApiRequest.mockResolvedValue({
       userId: "user-1",
       apiKeyId: "key-1",
-      plan: "pro",
     });
     mocks.invokeImageGetAsyncTaskOperation.mockResolvedValue({
       taskId: "task_123",
@@ -93,7 +92,6 @@ describe("external image task query", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "key-1",
-        plan: "pro",
       },
       "request-task-1"
     );

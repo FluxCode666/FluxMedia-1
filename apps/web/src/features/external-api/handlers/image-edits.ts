@@ -2,9 +2,8 @@ import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { withApiLogging } from "@repo/shared/api-logger";
+import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import { canUsePlanCapability } from "@repo/shared/subscription/services/plan-capabilities";
-import { getPlanUploadLimits } from "@repo/shared/subscription/services/upload-limits";
 import type { NextRequest } from "next/server";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
@@ -505,17 +504,9 @@ export const postExternalImageEdits = withApiLogging(
         "invalid_api_key"
       );
     }
-    if (!(await canUsePlanCapability(auth.plan, "externalApi.images.edit"))) {
-      return openAIImageError(
-        "External image editing is not enabled for this plan.",
-        403,
-        "insufficient_plan"
-      );
-    }
-
-    const uploadLimits = await getPlanUploadLimits(auth.plan);
+    const uploadLimits = await getMediaLimitDefaults();
     const maxImageBytes = uploadLimits.maxFileSizeBytes;
-    const maxRequestBytes = uploadLimits.maxUploadBytes;
+    const maxRequestBytes = uploadLimits.maxUploadSizeBytes;
 
     let formData: FormData;
     let imageReferences: ImageReference[];
@@ -649,22 +640,9 @@ export const postExternalImageEdits = withApiLogging(
     if (imageReferences.length === 0) {
       return openAIImageError("At least one source image is required.");
     }
-    if (imageReferences.length > uploadLimits.maxEditImages) {
+    if (imageReferences.length > uploadLimits.maxEditReferenceImages) {
       return openAIImageError(
-        `No more than ${uploadLimits.maxEditImages} images are allowed.`
-      );
-    }
-    if (
-      wantsImageStreamResponse(
-        request,
-        getOptionalBoolean(formData, "stream")
-      ) &&
-      !(await canUsePlanCapability(auth.plan, "externalApi.streaming"))
-    ) {
-      return openAIImageError(
-        "External API streaming is not enabled for this plan.",
-        403,
-        "insufficient_plan"
+        `No more than ${uploadLimits.maxEditReferenceImages} images are allowed.`
       );
     }
     const useStreamResponse = wantsImageStreamResponse(
@@ -752,7 +730,6 @@ export const postExternalImageEdits = withApiLogging(
         credentialKind: "external" as const,
         userId: auth.userId,
         apiKeyId: auth.apiKeyId,
-        plan: auth.plan,
       };
       const requestId = request.headers.get("x-request-id") ?? undefined;
 

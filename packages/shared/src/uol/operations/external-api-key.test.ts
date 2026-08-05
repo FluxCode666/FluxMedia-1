@@ -32,7 +32,6 @@ const apiKeyPrincipal = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
-  plan: "pro",
 } satisfies Principal;
 
 const systemPrincipal = {

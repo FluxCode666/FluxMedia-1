@@ -141,9 +141,7 @@ describe("loadImagePricingCardData", () => {
       },
     });
     expect("groupMultiplier" in result.billing).toBe(false);
-    expect(mocks.getEffectiveDefaultImageBackendGroup).toHaveBeenCalledWith(
-      "pro"
-    );
+    expect(mocks.getEffectiveDefaultImageBackendGroup).toHaveBeenCalledWith();
   });
 
   it("无可用分组时返回空覆盖契约", async () => {

@@ -60,7 +60,7 @@ export async function loadImagePricingCardData(
   ]);
   const [capabilities, activeBackendGroup] = await Promise.all([
     getPlanCapabilitySnapshot(userPlanInfo.plan),
-    getEffectiveDefaultImageBackendGroup(userPlanInfo.plan),
+    getEffectiveDefaultImageBackendGroup(),
   ]);
   const referenceModelId = Object.keys(globalModelPricing.byModel).sort()[0];
   if (!referenceModelId) {

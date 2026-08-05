@@ -8,24 +8,16 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@repo/database", () => ({ db: {} }));
 
-/** 加载服务及默认动态能力矩阵。 */
+/** 加载平台目录服务。 */
 async function loadService() {
-  const [service, capabilities] = await Promise.all([
-    import("./platform-model-catalog-service"),
-    import("@repo/shared/subscription/services/plan-capabilities"),
-  ]);
-  return {
-    ...service,
-    capabilityMatrix: capabilities.DEFAULT_PLAN_CAPABILITY_MATRIX,
-  };
+  return import("./platform-model-catalog-service");
 }
 
 describe("loadPlatformModelCatalog", () => {
   it("从注入的统一成员事实构建媒体目录", async () => {
-    const { capabilityMatrix, loadPlatformModelCatalog } = await loadService();
+    const { loadPlatformModelCatalog } = await loadService();
     await expect(
       loadPlatformModelCatalog({
-        loadCapabilityMatrix: async () => capabilityMatrix,
         loadMarketplaceConfig: async () => null,
         repository: {
           listGroups: async () => [
@@ -53,11 +45,10 @@ describe("loadPlatformModelCatalog", () => {
   });
 
   it("事实源失败时拒绝结果而不回退静态模型", async () => {
-    const { capabilityMatrix, loadPlatformModelCatalog } = await loadService();
+    const { loadPlatformModelCatalog } = await loadService();
     const failure = new Error("runtime catalog unavailable");
     await expect(
       loadPlatformModelCatalog({
-        loadCapabilityMatrix: async () => capabilityMatrix,
         loadMarketplaceConfig: async () => null,
         repository: {
           listGroups: async () => {

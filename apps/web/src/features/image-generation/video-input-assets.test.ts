@@ -117,14 +117,12 @@ describe("video input assets", () => {
       credentialKind: "external",
       userId: "owner-1",
       apiKeyId: "key-1",
-      plan: "pro",
     },
     {
       type: "apiKey",
       credentialKind: "mcp",
       userId: "owner-1",
       apiKeyId: "mcp-1",
-      plan: "pro",
     },
   ])("拒绝非 owner 普通用户与任何 API Key", async (principal) => {
     await expect(
@@ -141,13 +139,11 @@ describe("video input assets", () => {
       storageBucket: "uploads",
     },
     {
-      storageKey:
-        "owner-1/video-inputs/other-video/reservation-1/stolen.png",
+      storageKey: "owner-1/video-inputs/other-video/reservation-1/stolen.png",
       storageBucket: "uploads",
     },
     {
-      storageKey:
-        "owner-1/video-inputs/video-1/reservation-1/stolen.png",
+      storageKey: "owner-1/video-inputs/video-1/reservation-1/stolen.png",
       storageBucket: "other-bucket",
     },
   ])("清单 bucket、用户或任务前缀不可信时不签发 URL", async (asset) => {

@@ -1,7 +1,7 @@
 /**
  * 平台媒体模型目录纯构建器测试。
  *
- * 职责：覆盖显式模型能力、套餐/分组可达性、媒体分类、终态过滤、稳定去重与
+ * 职责：覆盖显式模型能力、分组可达性、媒体分类、终态过滤、稳定去重与
  * 快速集成模型判断；旧 conversation 分类不得重新出现。
  */
 import { describe, expect, it } from "vitest";
@@ -17,11 +17,6 @@ function source(
   overrides: Partial<PlatformModelCatalogSource> = {}
 ): PlatformModelCatalogSource {
   return {
-    capabilityMinimums: {
-      externalModelsList: "starter",
-      externalImagesGenerate: "starter",
-      externalVideosGenerate: "starter",
-    },
     groups: [
       {
         id: "default-group",

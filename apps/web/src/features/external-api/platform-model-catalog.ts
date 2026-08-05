@@ -5,11 +5,6 @@
  * 模型名称只用于能力匹配与媒体分类，不参与后端类型或调度策略分流。
  */
 import {
-  isPlanAtLeast,
-  SUBSCRIPTION_PLANS,
-  type SubscriptionPlan,
-} from "@repo/shared/config/subscription-plan";
-import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
 } from "@repo/shared/image-backend/supported-models";
@@ -24,13 +19,6 @@ export interface PlatformModelCatalogItem {
 export interface PlatformModelCatalog {
   image: PlatformModelCatalogItem[];
   video: PlatformModelCatalogItem[];
-}
-
-/** 构建目录所需的动态套餐能力门槛。 */
-export interface PlatformModelCapabilityMinimums {
-  externalModelsList: SubscriptionPlan;
-  externalImagesGenerate: SubscriptionPlan;
-  externalVideosGenerate: SubscriptionPlan;
 }
 
 /** 分组中与平台公开可达性有关的字段。 */
@@ -53,7 +41,6 @@ export interface PlatformModelCatalogMember {
 
 /** 平台媒体目录的完整事实输入。 */
 export interface PlatformModelCatalogSource {
-  capabilityMinimums: PlatformModelCapabilityMinimums;
   groups: readonly PlatformModelCatalogGroup[];
   members: readonly PlatformModelCatalogMember[];
   customModels?: ReadonlyArray<{
@@ -81,23 +68,14 @@ function toSortedItems(
     .map(({ id }) => ({ id }));
 }
 
-/** 计算每个可达分组对应的套餐集合。 */
-function buildReachablePlans(
+/** 计算可由平台默认调度或用户显式选择的启用分组。 */
+function buildReachableGroupIds(
   source: PlatformModelCatalogSource
-): Map<string, Set<SubscriptionPlan>> {
-  const result = new Map<string, Set<SubscriptionPlan>>();
+): Set<string> {
+  const result = new Set<string>();
   for (const group of source.groups) {
     if (!group.isEnabled) continue;
-    for (const plan of SUBSCRIPTION_PLANS) {
-      if (!isPlanAtLeast(plan, source.capabilityMinimums.externalModelsList)) {
-        continue;
-      }
-      const reachable = group.isDefault || group.isUserSelectable;
-      if (!reachable) continue;
-      const plans = result.get(group.id) ?? new Set<SubscriptionPlan>();
-      plans.add(plan);
-      result.set(group.id, plans);
-    }
+    if (group.isDefault || group.isUserSelectable) result.add(group.id);
   }
   return result;
 }
@@ -105,13 +83,13 @@ function buildReachablePlans(
 /**
  * 从统一成员事实构建平台媒体模型目录。
  *
- * @param source 套餐能力、分组和统一成员事实。
+ * @param source 分组和统一成员事实。
  * @returns 仅包含至少一条真实可达调用路径的 image/video 模型。
  */
 export function buildPlatformModelCatalog(
   source: PlatformModelCatalogSource
 ): PlatformModelCatalog {
-  const plansByGroupId = buildReachablePlans(source);
+  const reachableGroupIds = buildReachableGroupIds(source);
   const imageModels = new Map<string, string>();
   const videoModels = new Map<string, string>();
   const customCategories = new Map(
@@ -123,21 +101,9 @@ export function buildPlatformModelCatalog(
 
   for (const member of source.members) {
     if (!member.isEnabled || member.status === "error") continue;
-    const reachablePlans = new Set<SubscriptionPlan>();
-    for (const groupId of member.groupIds) {
-      for (const plan of plansByGroupId.get(groupId) ?? []) {
-        reachablePlans.add(plan);
-      }
+    if (!member.groupIds.some((groupId) => reachableGroupIds.has(groupId))) {
+      continue;
     }
-    if (reachablePlans.size === 0) continue;
-
-    const plans = Array.from(reachablePlans);
-    const canGenerateImages = plans.some((plan) =>
-      isPlanAtLeast(plan, source.capabilityMinimums.externalImagesGenerate)
-    );
-    const canGenerateVideos = plans.some((plan) =>
-      isPlanAtLeast(plan, source.capabilityMinimums.externalVideosGenerate)
-    );
     for (const rawModelId of member.supportedModelIds) {
       const customCategory = customCategories.get(
         rawModelId.trim().toLowerCase()
@@ -148,7 +114,7 @@ export function buildPlatformModelCatalog(
           customCategory === "video"
             ? member.type === "api"
             : member.type === "adobe" && member.adobeMode === "direct";
-        if (canGenerateVideos && canExecuteVideo) {
+        if (canExecuteVideo) {
           addModel(
             videoModels,
             customCategory === "video"
@@ -159,9 +125,7 @@ export function buildPlatformModelCatalog(
         continue;
       }
       if (isLegacyVideoModelId(rawModelId)) continue;
-      if (canGenerateImages) {
-        addModel(imageModels, rawModelId);
-      }
+      addModel(imageModels, rawModelId);
     }
   }
 

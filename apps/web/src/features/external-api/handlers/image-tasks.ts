@@ -2,9 +2,7 @@ import { withApiLogging } from "@repo/shared/api-logger";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { OperationError } from "@repo/shared/uol";
 import type { NextRequest } from "next/server";
-import {
-  toGenerationImageTaskResponse,
-} from "@/features/external-api/async-image-tasks";
+import { toGenerationImageTaskResponse } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import {
   buildImageAsyncTaskPublicResponse,
@@ -38,7 +36,6 @@ export const getExternalImageTask = withApiLogging(
       credentialKind: "external" as const,
       userId: auth.userId,
       apiKeyId: auth.apiKeyId,
-      plan: auth.plan,
     };
     try {
       const task = await invokeImageGetAsyncTaskOperation(
@@ -55,7 +52,9 @@ export const getExternalImageTask = withApiLogging(
     } catch (error) {
       if (!(error instanceof OperationError) || error.code !== "not_found") {
         return openAIImageError(
-          error instanceof Error ? error.message : "Failed to query image task.",
+          error instanceof Error
+            ? error.message
+            : "Failed to query image task.",
           error instanceof OperationError ? error.httpStatus : 500
         );
       }

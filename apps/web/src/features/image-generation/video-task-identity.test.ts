@@ -55,7 +55,6 @@ describe("createVideoTaskId", () => {
         credentialKind: "mcp",
         userId: "user-1",
         apiKeyId: "mcp-key-1",
-        plan: "pro",
       })
     ).toBe("mcp:user-1:mcp-key-1");
   });

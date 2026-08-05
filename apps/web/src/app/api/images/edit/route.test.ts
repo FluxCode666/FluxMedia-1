@@ -11,8 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getUserRoleById: vi.fn(),
-  getPlanUploadLimits: vi.fn(),
-  getUserPlan: vi.fn(),
+  getMediaLimitDefaults: vi.fn(),
   invokeImageGenerationOperation: vi.fn(),
 }));
 
@@ -25,11 +24,8 @@ vi.mock("@repo/shared/auth", () => ({
 vi.mock("@repo/shared/auth/role-server", () => ({
   getUserRoleById: mocks.getUserRoleById,
 }));
-vi.mock("@repo/shared/subscription/services/upload-limits", () => ({
-  getPlanUploadLimits: mocks.getPlanUploadLimits,
-}));
-vi.mock("@repo/shared/subscription/services/user-plan", () => ({
-  getUserPlan: mocks.getUserPlan,
+vi.mock("@repo/shared/image-generation/media-limit-service", () => ({
+  getMediaLimitDefaults: mocks.getMediaLimitDefaults,
 }));
 vi.mock("@/features/image-generation/uol-client", () => ({
   invokeImageGenerationOperation: mocks.invokeImageGenerationOperation,
@@ -67,16 +63,17 @@ describe("POST /api/images/edit", () => {
   beforeEach(() => {
     mocks.getSession.mockReset();
     mocks.getUserRoleById.mockReset();
-    mocks.getPlanUploadLimits.mockReset();
-    mocks.getUserPlan.mockReset();
+    mocks.getMediaLimitDefaults.mockReset();
     mocks.invokeImageGenerationOperation.mockReset();
     mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
-    mocks.getUserPlan.mockResolvedValue({ plan: "free" });
     mocks.getUserRoleById.mockResolvedValue("user");
-    mocks.getPlanUploadLimits.mockResolvedValue({
+    mocks.getMediaLimitDefaults.mockResolvedValue({
+      defaultUserConcurrency: 20,
+      maxFileSizeMb: 10,
+      maxUploadSizeMb: 20,
+      maxEditReferenceImages: 16,
       maxFileSizeBytes: 10 * 1024 * 1024,
-      maxUploadBytes: 20 * 1024 * 1024,
-      maxEditImages: 16,
+      maxUploadSizeBytes: 20 * 1024 * 1024,
     });
     vi.stubEnv("BETTER_AUTH_URL", "https://app.example.test");
   });
@@ -85,13 +82,12 @@ describe("POST /api/images/edit", () => {
     vi.unstubAllEnvs();
   });
 
-  it("已登录的跨站请求在读取套餐、解析上传或发起生成前返回 403", async () => {
+  it("已登录的跨站请求在读取媒体限制、解析上传或发起生成前返回 403", async () => {
     const response = await POST(createRequest("https://attacker.example.test"));
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "Forbidden" });
-    expect(mocks.getPlanUploadLimits).not.toHaveBeenCalled();
-    expect(mocks.getUserPlan).not.toHaveBeenCalled();
+    expect(mocks.getMediaLimitDefaults).not.toHaveBeenCalled();
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 

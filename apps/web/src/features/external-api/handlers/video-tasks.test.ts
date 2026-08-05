@@ -51,7 +51,6 @@ describe("getExternalVideoTask", () => {
     mocks.authenticate.mockResolvedValue({
       userId: "user-1",
       apiKeyId: "key-a",
-      plan: "pro",
     });
     mocks.ensureInitialized.mockResolvedValue(undefined);
     mocks.invokeOperation.mockResolvedValue({
@@ -85,7 +84,6 @@ describe("getExternalVideoTask", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "key-a",
-        plan: "pro",
       },
       { requestId: "req-2" }
     );

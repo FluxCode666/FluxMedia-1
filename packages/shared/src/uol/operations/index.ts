@@ -16,8 +16,6 @@ import "./media-limits";
 import "./video-generation";
 // 积分域
 import "./credits";
-// 订阅域
-import "./subscription";
 // 用户认证域
 import "./user-auth";
 // 图像后端池域

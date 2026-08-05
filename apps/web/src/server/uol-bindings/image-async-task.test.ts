@@ -39,7 +39,6 @@ const principal = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
-  plan: "pro",
 } satisfies Principal;
 
 /** 创建一个具备完整策略和准入快照的图片异步任务。 */
@@ -271,7 +270,7 @@ describe("image async task UOL bindings", () => {
       expect.objectContaining({
         userId: "user-1",
         apiKeyId: "key-1",
-        legacyPlan: "pro",
+        legacyPlan: "retired",
         effectiveUserConcurrency: 20,
         groupIdSnapshot: "group-1",
         groupPrioritySnapshot: 7,

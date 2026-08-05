@@ -28,7 +28,7 @@ vi.mock("@repo/shared/system-settings", () => ({
 
 import {
   getEffectiveDefaultImageBackendGroup,
-  getImageGenerationModelCatalogForPlan,
+  getImageGenerationModelCatalog,
   listSelectableImageBackendGroups,
 } from "./catalog-service";
 
@@ -92,7 +92,7 @@ describe("image backend catalog group semantics", () => {
       group({ id: "disabled", isEnabled: false, isUserSelectable: true }),
     ]);
 
-    await expect(listSelectableImageBackendGroups("free")).resolves.toEqual([
+    await expect(listSelectableImageBackendGroups()).resolves.toEqual([
       { id: "selectable", name: "默认组", isEnabled: true },
     ]);
   });
@@ -102,18 +102,16 @@ describe("image backend catalog group semantics", () => {
       group({ id: "priority-first", isDefault: false, priority: 0 }),
     ]);
 
-    await expect(
-      getEffectiveDefaultImageBackendGroup("enterprise")
-    ).resolves.toBe(null);
-    await expect(
-      getImageGenerationModelCatalogForPlan("enterprise")
-    ).resolves.toEqual({ groups: [] });
+    await expect(getEffectiveDefaultImageBackendGroup()).resolves.toBe(null);
+    await expect(getImageGenerationModelCatalog()).resolves.toEqual({
+      groups: [],
+    });
   });
 
   it("默认组快照保留 priority 供后续任务队列使用", async () => {
     mocks.listGroups.mockResolvedValue([group({ priority: 7 })]);
 
-    await expect(getEffectiveDefaultImageBackendGroup("free")).resolves.toEqual(
+    await expect(getEffectiveDefaultImageBackendGroup()).resolves.toEqual(
       expect.objectContaining({ id: "group-default", priority: 7 })
     );
   });
@@ -124,11 +122,9 @@ describe("image backend catalog group semantics", () => {
       group({ id: "default-b", priority: 2 }),
     ]);
 
-    await expect(getEffectiveDefaultImageBackendGroup("free")).resolves.toBe(
-      null
-    );
-    await expect(
-      getImageGenerationModelCatalogForPlan("free")
-    ).resolves.toEqual({ groups: [] });
+    await expect(getEffectiveDefaultImageBackendGroup()).resolves.toBe(null);
+    await expect(getImageGenerationModelCatalog()).resolves.toEqual({
+      groups: [],
+    });
   });
 });

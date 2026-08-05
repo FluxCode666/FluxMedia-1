@@ -68,7 +68,6 @@ const principals = {
     credentialKind: "external",
     userId: "member",
     apiKeyId: "key-1",
-    plan: "free",
   },
   system: { type: "system", reason: "generation" },
 } satisfies Record<string, Principal>;

@@ -27,7 +27,7 @@ export const getSignedUploadUrl = defineOperation({
   description:
     "为已认证用户生成预签名的对象存储上传 URL（头像/用户文件）。" +
     "S3 后端返回可直传的 PUT URL；local 后端返回 GET 路由地址（不可 PUT）。" +
-    "需验证桶白名单与套餐能力。",
+    "需验证桶白名单与系统媒体限制。",
   input: z.object({
     bucket: z.string().min(1),
     key: z.string().min(1),

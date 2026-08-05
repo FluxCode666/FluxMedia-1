@@ -20,7 +20,6 @@ const externalPrincipal = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
-  plan: "pro",
 } satisfies Principal;
 
 /** 创建一个最小合法图片异步任务输入，测试按需覆盖字段。 */
@@ -112,19 +111,13 @@ describe("image async task operation contracts", () => {
     ).not.toThrow();
   });
 
-  it("按外部 API 能力推导单项能力且不接收身份字段", () => {
-    const requirement = imageEnqueueAsync.capabilities?.[0];
-    if (!requirement || !("derive" in requirement)) {
-      throw new Error("image.enqueueAsync 缺少动态套餐能力声明");
-    }
-    expect(requirement.derive(createInput(), externalPrincipal)).toEqual([
-      "externalApi.images.generate",
-    ]);
+  it("不接收客户端身份或套餐字段", () => {
     expect(
       imageEnqueueAsyncInputSchema.safeParse({
         ...createInput(),
         userId: "attacker",
         apiKeyId: "attacker-key",
+        plan: "enterprise",
       }).success
     ).toBe(false);
   });

@@ -205,7 +205,6 @@ describe("readModelConfiguration", () => {
         credentialKind: "mcp",
         userId: "api-user",
         apiKeyId: "api-key",
-        plan: "pro",
       },
     ];
 
