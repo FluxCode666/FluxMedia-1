@@ -568,6 +568,13 @@
       "when": 1785865050000,
       "tag": "0080_adobe_credential_health",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1785951450000,
+      "tag": "0081_add_media_usage_governance",
+      "breakpoints": true
     }
   ]
 }
