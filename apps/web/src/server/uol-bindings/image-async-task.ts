@@ -35,6 +35,8 @@ import {
 import {
   type RedisImageGenerationAdmissionAcquisition,
   type RedisImageGenerationAdmissionLease,
+  type RedisImageGenerationExecutionAcquisition,
+  type RedisImageGenerationExecutionLease,
   restoreImageGenerationAdmissionLease,
 } from "@/features/image-generation/redis-image-generation-slots";
 import type {
@@ -54,6 +56,7 @@ type ImageAdmissionRenewal =
 /** 图片 Worker 的单次 claim 租约；超过现有图片管线最长排队窗口后由补偿器恢复。 */
 export const IMAGE_ASYNC_TASK_CLAIM_TTL_MS = 22 * 60_000;
 const IMAGE_ASYNC_TASK_HEARTBEAT_INTERVAL_MS = 5 * 60_000;
+const IMAGE_ASYNC_TASK_GLOBAL_RETRY_DELAY_MS = 1_000;
 
 const imageGenerationReconciliationRowSchema = z
   .object({
@@ -94,10 +97,19 @@ export interface ImageAsyncTaskBindingDependencies {
     lease: RedisImageGenerationAdmissionLease
   ): Promise<ImageAdmissionRenewal>;
   releaseAdmission(lease: RedisImageGenerationAdmissionLease): Promise<void>;
+  getGlobalConcurrency(): Promise<number>;
+  acquireExecution(input: {
+    globalConcurrency: number;
+  }): Promise<RedisImageGenerationExecutionAcquisition>;
+  renewExecution(
+    lease: RedisImageGenerationExecutionLease
+  ): Promise<ImageAdmissionRenewal>;
+  releaseExecution(lease: RedisImageGenerationExecutionLease): Promise<void>;
   enqueueTask(input: {
     taskId: string;
     deliveryVersion: number;
     priority: number;
+    runAt?: Date;
   }): Promise<unknown>;
   reportEnqueueFailure(error: unknown, taskId: string): void;
   isApiKeyActive(input: { userId: string; apiKeyId: string }): Promise<boolean>;
@@ -107,6 +119,7 @@ export interface ImageAsyncTaskBindingDependencies {
   runGeneration(input: {
     task: ImageAsyncTaskRecord;
     admissionLease: RedisImageGenerationAdmissionLease;
+    executionLease: RedisImageGenerationExecutionLease;
     executionFence: ImageGenerationExecutionFence;
   }): Promise<{ generationId: string }>;
   createClaimToken(): string;
@@ -149,6 +162,30 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
       "@/features/image-generation/redis-image-generation-slots"
     );
     return releaseImageGenerationAdmission(lease);
+  },
+  async getGlobalConcurrency() {
+    const { getImageGenerationGlobalConcurrency } = await import(
+      "@/features/image-generation/queue"
+    );
+    return getImageGenerationGlobalConcurrency();
+  },
+  async acquireExecution(input) {
+    const { acquireImageGenerationExecution } = await import(
+      "@/features/image-generation/redis-image-generation-slots"
+    );
+    return acquireImageGenerationExecution(input);
+  },
+  async renewExecution(lease) {
+    const { renewImageGenerationExecution } = await import(
+      "@/features/image-generation/redis-image-generation-slots"
+    );
+    return renewImageGenerationExecution(lease);
+  },
+  async releaseExecution(lease) {
+    const { releaseImageGenerationExecution } = await import(
+      "@/features/image-generation/redis-image-generation-slots"
+    );
+    return releaseImageGenerationExecution(lease);
   },
   enqueueTask: enqueueImageTask,
   reportEnqueueFailure(error, taskId) {
@@ -202,7 +239,12 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
       inputDigest: typeof inputDigest === "string" ? inputDigest : null,
     };
   },
-  async runGeneration({ task, admissionLease, executionFence }) {
+  async runGeneration({
+    task,
+    admissionLease,
+    executionLease,
+    executionFence,
+  }) {
     if (
       task.effectiveUserConcurrency === null ||
       !task.groupIdSnapshot ||
@@ -237,6 +279,7 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
       backendGroupId: input.backendGroupId,
       inputDigest: task.inputDigest,
       executionFence,
+      executionAuthorization: { lease: executionLease },
       admissionAuthorization: {
         userId: task.userId,
         lease: admissionLease,
@@ -698,6 +741,60 @@ async function releaseTerminalImageTaskAdmission(
   }
 }
 
+/** 释放短生命周期全站执行槽；失败只等待 Redis TTL，不能重跑已产生副作用的管线。 */
+async function releaseImageTaskExecutionSafely(
+  taskId: string,
+  lease: RedisImageGenerationExecutionLease,
+  dependencies: ImageAsyncTaskBindingDependencies
+): Promise<void> {
+  try {
+    await dependencies.releaseExecution(lease);
+  } catch (error) {
+    dependencies.reportGenerationFailure(error, taskId);
+  }
+}
+
+/**
+ * 全站槽满时释放 claim 并投递带持久 priority 的 delayed 新代次。
+ *
+ * admission 不释放，任务也不写 failed；Queue.add 失败时保留 MQ due，由恢复扫描补投。
+ */
+async function deferImageTaskForGlobalCapacity(
+  task: ImageAsyncTaskRecord,
+  claimToken: string,
+  dependencies: ImageAsyncTaskBindingDependencies
+): Promise<ImageAsyncTaskRecord> {
+  const now = dependencies.now();
+  const queued = await dependencies.repository.release({
+    taskId: task.id,
+    claimToken,
+    now,
+  });
+  if (!queued) {
+    return (await dependencies.repository.findById(task.id)) ?? task;
+  }
+  try {
+    await dependencies.enqueueTask({
+      taskId: queued.id,
+      deliveryVersion: queued.mqDeliveryVersion,
+      priority: getImageTaskQueuePriority(queued),
+      runAt: new Date(now.getTime() + IMAGE_ASYNC_TASK_GLOBAL_RETRY_DELAY_MS),
+    });
+    if (!queued.mqDeliveryDueAt) return queued;
+    return (
+      (await dependencies.repository.markMqDelivered({
+        taskId: queued.id,
+        deliveryVersion: queued.mqDeliveryVersion,
+        mqDeliveryDueAt: queued.mqDeliveryDueAt,
+        now: dependencies.now(),
+      })) ?? queued
+    );
+  } catch (error) {
+    dependencies.reportEnqueueFailure(error, task.id);
+    return queued;
+  }
+}
+
 /** 只有赢得终态 CAS 的 Worker 才投递 callback，避免重复消息重复通知。 */
 async function deliverImageTaskCallbackAfterTransition(
   task: ImageAsyncTaskRecord,
@@ -717,31 +814,58 @@ async function deliverImageTaskCallbackAfterTransition(
 async function renewImageTaskWorkerLeases(
   task: ImageAsyncTaskRecord,
   claimToken: string,
-  lease: RedisImageGenerationAdmissionLease,
+  leases: {
+    admission: RedisImageGenerationAdmissionLease;
+    execution: RedisImageGenerationExecutionLease;
+  },
   dependencies: ImageAsyncTaskBindingDependencies
-): Promise<RedisImageGenerationAdmissionLease> {
-  const renewal = await dependencies.renewAdmission(lease);
-  if (renewal.status === "lost") {
+): Promise<{
+  admission: RedisImageGenerationAdmissionLease;
+  execution: RedisImageGenerationExecutionLease;
+}> {
+  const [admissionRenewal, executionRenewal] = await Promise.all([
+    dependencies.renewAdmission(leases.admission),
+    dependencies.renewExecution(leases.execution),
+  ]);
+  if (admissionRenewal.status === "lost") {
     throw new OperationError(
       "conflict",
       "Image async task admission lease was lost"
     );
   }
+  if (executionRenewal.status === "lost") {
+    throw new OperationError(
+      "conflict",
+      "Image async task global execution lease was lost"
+    );
+  }
   const now = dependencies.now();
-  const admissionLeaseExpiresAt = new Date(renewal.expiresAt);
+  const admissionLeaseExpiresAt = new Date(admissionRenewal.expiresAt);
   const heartbeat = await dependencies.repository.heartbeatClaim({
     taskId: task.id,
     claimToken,
-    admissionLeaseToken: lease.token,
+    admissionLeaseToken: leases.admission.token,
     now,
     claimExpiresAt: new Date(now.getTime() + IMAGE_ASYNC_TASK_CLAIM_TTL_MS),
     admissionLeaseExpiresAt,
-    admissionRenewalDueAt: getAdmissionRenewalDueAt(now, renewal.expiresAt),
+    admissionRenewalDueAt: getAdmissionRenewalDueAt(
+      now,
+      admissionRenewal.expiresAt
+    ),
   });
   if (!heartbeat) {
     throw new OperationError("conflict", "Image async task claim was lost");
   }
-  return { ...lease, expiresAt: renewal.expiresAt };
+  return {
+    admission: {
+      ...leases.admission,
+      expiresAt: admissionRenewal.expiresAt,
+    },
+    execution: {
+      ...leases.execution,
+      expiresAt: executionRenewal.expiresAt,
+    },
+  };
 }
 
 /**
@@ -753,16 +877,22 @@ async function renewImageTaskWorkerLeases(
 function startImageTaskWorkerHeartbeat(
   task: ImageAsyncTaskRecord,
   claimToken: string,
-  initialLease: RedisImageGenerationAdmissionLease,
+  initialLeases: {
+    admission: RedisImageGenerationAdmissionLease;
+    execution: RedisImageGenerationExecutionLease;
+  },
   dependencies: ImageAsyncTaskBindingDependencies
 ): {
   executionFence: ImageGenerationExecutionFence;
   stop(): Promise<{
-    lease: RedisImageGenerationAdmissionLease;
+    leases: {
+      admission: RedisImageGenerationAdmissionLease;
+      execution: RedisImageGenerationExecutionLease;
+    };
     error: unknown | null;
   }>;
 } {
-  let lease = initialLease;
+  let leases = initialLeases;
   let heartbeatError: unknown | null = null;
   let inFlight = Promise.resolve();
   const abortController = new AbortController();
@@ -772,10 +902,10 @@ function startImageTaskWorkerHeartbeat(
     const renewal = inFlight.then(async () => {
       if (heartbeatError) throw heartbeatError;
       try {
-        lease = await renewImageTaskWorkerLeases(
+        leases = await renewImageTaskWorkerLeases(
           task,
           claimToken,
-          lease,
+          leases,
           dependencies
         );
       } catch (error) {
@@ -802,7 +932,7 @@ function startImageTaskWorkerHeartbeat(
     async stop() {
       clearInterval(timer);
       await inFlight;
-      return { lease, error: heartbeatError };
+      return { leases, error: heartbeatError };
     },
   };
 }
@@ -859,6 +989,7 @@ export async function executeImageProcessAsyncTaskBinding(
   }
 
   let heartbeat: ReturnType<typeof startImageTaskWorkerHeartbeat> | undefined;
+  let executionLease: RedisImageGenerationExecutionLease | undefined;
   try {
     const existingGeneration = await dependencies.findGeneration(
       claimed.generationId
@@ -911,16 +1042,29 @@ export async function executeImageProcessAsyncTaskBinding(
       return toImageAsyncTaskOutput(terminal);
     }
 
-    let admissionLease = await renewImageTaskWorkerLeases(
+    const execution = await dependencies.acquireExecution({
+      globalConcurrency: await dependencies.getGlobalConcurrency(),
+    });
+    if (execution.status === "blocked") {
+      return toImageAsyncTaskOutput(
+        await deferImageTaskForGlobalCapacity(claimed, claimToken, dependencies)
+      );
+    }
+    executionLease = execution.lease;
+    let workerLeases = await renewImageTaskWorkerLeases(
       claimed,
       claimToken,
-      restoreImageTaskAdmissionLease(claimed),
+      {
+        admission: restoreImageTaskAdmissionLease(claimed),
+        execution: executionLease,
+      },
       dependencies
     );
+    executionLease = workerLeases.execution;
     heartbeat = startImageTaskWorkerHeartbeat(
       claimed,
       claimToken,
-      admissionLease,
+      workerLeases,
       dependencies
     );
 
@@ -928,7 +1072,8 @@ export async function executeImageProcessAsyncTaskBinding(
     try {
       await dependencies.runGeneration({
         task: claimed,
-        admissionLease,
+        admissionLease: workerLeases.admission,
+        executionLease: workerLeases.execution,
         executionFence: heartbeat.executionFence,
       });
     } catch (error) {
@@ -937,7 +1082,14 @@ export async function executeImageProcessAsyncTaskBinding(
     }
     const heartbeatResult = await heartbeat.stop();
     heartbeat = undefined;
-    admissionLease = heartbeatResult.lease;
+    workerLeases = heartbeatResult.leases;
+    executionLease = workerLeases.execution;
+    await releaseImageTaskExecutionSafely(
+      claimed.id,
+      executionLease,
+      dependencies
+    );
+    executionLease = undefined;
 
     // WHY：旧 Worker 已知失去 claim/admission 后不得再投影 generation 终态、释放
     // admission 或投递 callback；generation 真相由下一位合法 claim 持有者负责收敛。
@@ -996,6 +1148,7 @@ export async function executeImageProcessAsyncTaskBinding(
   } catch (error) {
     if (heartbeat) {
       const stopped = await heartbeat.stop();
+      executionLease = stopped.leases.execution;
       if (stopped.error) {
         dependencies.reportGenerationFailure(stopped.error, claimed.id);
       }
@@ -1012,6 +1165,14 @@ export async function executeImageProcessAsyncTaskBinding(
         dependencies.reportGenerationFailure(releaseError, claimed.id)
       );
     throw error;
+  } finally {
+    if (executionLease) {
+      await releaseImageTaskExecutionSafely(
+        claimed.id,
+        executionLease,
+        dependencies
+      );
+    }
   }
 }
 

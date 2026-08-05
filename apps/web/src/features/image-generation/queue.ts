@@ -61,7 +61,7 @@ function getPositiveIntegerEnv(name: string, fallback: number): number {
 }
 
 /** 读取系统动态配置的全站生图并发上限。 */
-async function getGlobalConcurrency(): Promise<number> {
+export async function getImageGenerationGlobalConcurrency(): Promise<number> {
   const value = await getRuntimeSettingNumber(
     "IMAGE_GENERATION_GLOBAL_CONCURRENCY",
     500,
@@ -340,7 +340,7 @@ async function scheduleQueue(): Promise<void> {
   scheduling = true;
   clearRetryTimer();
   try {
-    const globalConcurrency = await getGlobalConcurrency();
+    const globalConcurrency = await getImageGenerationGlobalConcurrency();
     while (queue.size > 0) {
       const task = queue.peek();
       if (!task) break;
@@ -394,11 +394,21 @@ export async function withImageGenerationQueue<T>(
     userConcurrency: number;
     effectiveSource?: "system_default" | "user_override";
     admissionLease?: RedisImageGenerationAdmissionLease;
+    /** 异步 Worker 已取得并自行续期/释放的全站执行租约。 */
+    executionLease?: RedisImageGenerationExecutionLease;
     releaseAdmissionOnCompletion?: boolean;
     timeoutMs?: number;
   },
   run: () => Promise<T>
 ): Promise<T> {
+  if (options.executionLease) {
+    if (!options.admissionLease) {
+      throw new Error("预授权全站执行槽缺少用户 admission 租约");
+    }
+    // WHY：BullMQ Worker 已按持久 priority 排队并取得两级 Redis 租约；再次进入本地
+    // 队列会重复占用全站槽并让 Worker active 等待。租约生命周期由 Worker fencing 管理。
+    return run();
+  }
   return new Promise<T>((resolve, reject) => {
     void (async () => {
       let admissionLease = options.admissionLease;

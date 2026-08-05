@@ -126,6 +126,36 @@ describe("withImageGenerationQueue", () => {
     redisSlots.reset();
   });
 
+  it("异步 Worker 预授权两级租约时不重复进入本地队列或占槽", async () => {
+    const { withImageGenerationQueue: queue } = await importFreshQueue();
+    const run = vi.fn(async () => "completed");
+
+    await expect(
+      queue(
+        {
+          userId: "user-a",
+          priority: 3,
+          userConcurrency: 20,
+          admissionLease: {
+            token: "admission-persisted",
+            userKey: "user:user-a",
+            expiresAt: Date.now() + 60_000,
+          },
+          executionLease: {
+            token: "execution-worker",
+            expiresAt: Date.now() + 60_000,
+          },
+          releaseAdmissionOnCompletion: false,
+        },
+        run
+      )
+    ).resolves.toBe("completed");
+    expect(redisSlots.acquireAdmission).not.toHaveBeenCalled();
+    expect(redisSlots.acquireExecution).not.toHaveBeenCalled();
+    expect(redisSlots.releaseAdmission).not.toHaveBeenCalled();
+    expect(redisSlots.releaseExecution).not.toHaveBeenCalled();
+  });
+
   it("Redis 不可用时拒绝请求且不回退进程内槽位", async () => {
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const run = vi.fn(async () => "should-not-run");

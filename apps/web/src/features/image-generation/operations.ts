@@ -82,6 +82,7 @@ import { withImageGenerationQueue } from "./queue";
 import {
   acquireImageGenerationAdmission,
   type RedisImageGenerationAdmissionLease,
+  type RedisImageGenerationExecutionLease,
   releaseImageGenerationAdmission,
 } from "./redis-image-generation-slots";
 import {
@@ -131,6 +132,11 @@ export type ImageGenerationGroupAuthorization = {
   priority: number;
 };
 
+/** 异步 Worker 已按全站容量裁决取得、并负责续期与释放的执行槽。 */
+export type ImageGenerationExecutionAuthorization = {
+  lease: RedisImageGenerationExecutionLease;
+};
+
 type RunImageGenerationInput =
   | ({
       mode: "generate";
@@ -140,6 +146,7 @@ type RunImageGenerationInput =
       backendGroupId?: string;
       admissionAuthorization?: ImageGenerationAdmissionAuthorization;
       groupAuthorization?: ImageGenerationGroupAuthorization;
+      executionAuthorization?: ImageGenerationExecutionAuthorization;
       inputDigest?: string;
       executionFence?: ImageGenerationExecutionFence;
     } & GenerateImageParams)
@@ -151,6 +158,7 @@ type RunImageGenerationInput =
       backendGroupId?: string;
       admissionAuthorization?: ImageGenerationAdmissionAuthorization;
       groupAuthorization?: ImageGenerationGroupAuthorization;
+      executionAuthorization?: ImageGenerationExecutionAuthorization;
       inputDigest?: string;
       executionFence?: ImageGenerationExecutionFence;
       mediaInputReferences?: {
@@ -1280,6 +1288,7 @@ async function runImageGenerationForUserInternal(
         userConcurrency: mediaLimits.limit,
         effectiveSource: mediaLimits.effectiveSource,
         admissionLease,
+        executionLease: input.executionAuthorization?.lease,
         releaseAdmissionOnCompletion: releaseAdmissionInOperation,
       },
       async () => {

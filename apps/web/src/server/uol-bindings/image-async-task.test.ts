@@ -204,6 +204,21 @@ function createDependencies(task = createTask()) {
     releaseAdmission: vi.fn(async () => {
       calls.push("release");
     }),
+    getGlobalConcurrency: vi.fn(async () => 500),
+    acquireExecution: vi.fn(async () => ({
+      status: "acquired" as const,
+      lease: {
+        token: "execution-1",
+        expiresAt: LEASE_EXPIRES_AT.getTime(),
+      },
+    })),
+    renewExecution: vi.fn(async () => ({
+      status: "renewed" as const,
+      expiresAt: LEASE_EXPIRES_AT.getTime(),
+    })),
+    releaseExecution: vi.fn(async () => {
+      calls.push("execution-release");
+    }),
     enqueueTask: vi.fn(async () => {
       calls.push("queue");
       return undefined;
@@ -404,13 +419,71 @@ describe("image async task UOL bindings", () => {
       expect.objectContaining({
         task: running,
         admissionLease: expect.objectContaining({ token: "admission-1" }),
+        executionLease: expect.objectContaining({ token: "execution-1" }),
         executionFence: expect.objectContaining({
           signal: expect.any(AbortSignal),
           assertActive: expect.any(Function),
         }),
       })
     );
-    expect(calls.slice(-3)).toEqual(["release", "release-ack", "callback"]);
+    expect(calls.slice(-4)).toEqual([
+      "execution-release",
+      "release",
+      "release-ack",
+      "callback",
+    ]);
+  });
+
+  it("全站执行槽满时保留 admission 并按持久优先级延迟新投递", async () => {
+    const running = createRunningTask();
+    const queued = createTask({
+      attemptCount: 1,
+      mqDeliveryVersion: 1,
+      mqDeliveryDueAt: NOW,
+    });
+    const acknowledged = createTask({
+      attemptCount: 1,
+      mqDeliveryVersion: 1,
+      mqDeliveryDueAt: null,
+    });
+    const { dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.release.mockResolvedValue(queued);
+    repository.markMqDelivered.mockResolvedValue(acknowledged);
+    vi.mocked(dependencies.acquireExecution).mockResolvedValue({
+      status: "blocked",
+      reason: "global",
+    });
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).resolves.toMatchObject({ status: "queued" });
+    expect(repository.release).toHaveBeenCalledWith({
+      taskId: "task_123",
+      claimToken: "worker-1",
+      now: NOW,
+    });
+    expect(dependencies.enqueueTask).toHaveBeenCalledWith({
+      taskId: "task_123",
+      deliveryVersion: 1,
+      priority: 8,
+      runAt: new Date(NOW.getTime() + 1_000),
+    });
+    expect(repository.markMqDelivered).toHaveBeenCalledWith({
+      taskId: "task_123",
+      deliveryVersion: 1,
+      mqDeliveryDueAt: NOW,
+      now: NOW,
+    });
+    expect(dependencies.runGeneration).not.toHaveBeenCalled();
+    expect(repository.fail).not.toHaveBeenCalled();
+    expect(dependencies.releaseAdmission).not.toHaveBeenCalled();
+    expect(dependencies.releaseExecution).not.toHaveBeenCalled();
   });
 
   it("Key 已停用但已有 completed generation 时仍先按真相投影终态", async () => {
