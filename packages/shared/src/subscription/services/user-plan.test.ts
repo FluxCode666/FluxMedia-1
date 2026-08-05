@@ -59,9 +59,8 @@ vi.mock("../../auth/self-use-mode", () => ({
   isSelfUseModeEnabled: vi.fn(async () => state.selfUseEnabled),
 }));
 
-// checkFileSizePrivilege 经 getPlanUploadLimits → getPlanCapabilityMatrix 读取
-// 运行时设置；未配置矩阵（json 返回 undefined）且数值键回落 fallback 时，
-// 套餐限额取默认矩阵值，从而无需 DB 即可断言上传特权闸门。
+// checkFileSizePrivilege 的兼容入口已统一读取系统媒体参数；系统设置未配置时
+// 数值键回落固定默认值，从而无需 DB 即可断言上传限制。
 vi.mock("../../system-settings", () => ({
   getRuntimeSettingJson: vi.fn(async () => undefined),
   getRuntimeSettingNumber: vi.fn(async (_key: string, fallback: number) => fallback),
@@ -350,20 +349,19 @@ describe("checkFileSizePrivilege", () => {
     dbMock.select.mockClear();
   });
 
-  it("allows a file exactly at the plan limit", async () => {
+  it("allows a file exactly at the system limit", async () => {
     const { checkFileSizePrivilege } = await import("./user-plan");
     const result = await checkFileSizePrivilege("user-1", FREE_MAX_BYTES);
 
     expect(result).toEqual({ allowed: true });
   });
 
-  it("rejects a file one byte over the plan limit with a formatted message and upgrade hint", async () => {
+  it("rejects a file one byte over the system limit without an upgrade hint", async () => {
     const { checkFileSizePrivilege } = await import("./user-plan");
     const result = await checkFileSizePrivilege("user-1", FREE_MAX_BYTES + 1);
 
     expect(result.allowed).toBe(false);
     expect(result.errorMessage).toContain("5MB");
-    expect(result.upgradeMessage).toBeTruthy();
-    expect(result.upgradeMessage).toContain("Starter");
+    expect(result.upgradeMessage).toBeUndefined();
   });
 });

@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { formatCredits } from "../../../credits/format";
+import type { MediaLimitsForUser } from "../../../image-generation/media-limit-service";
 import type {
   ModerationBlockRiskLevel,
   ModerationPolicySource,
@@ -103,6 +104,7 @@ import {
   type AppUserRole,
 } from "../../../auth/roles";
 import { ModerationPolicyControl } from "./moderation-policy-control";
+import { UserConcurrencyControl } from "./user-concurrency-control";
 
 type UserStatusFilter = "all" | "active" | "banned" | "unverified";
 type SubscriptionStatusFilter =
@@ -124,6 +126,7 @@ type UserRow = {
   banned: boolean;
   bannedReason: string | null;
   emailVerified: boolean;
+  imageGenerationConcurrencyOverride: number | null;
   createdAt: Date;
   updatedAt: Date;
   creditsBalance: number;
@@ -223,6 +226,7 @@ type UserDetail = {
     effectiveLevel: ModerationBlockRiskLevel;
     source: ModerationPolicySource;
   };
+  mediaLimits: MediaLimitsForUser;
   generationSummary: {
     total: number;
     completed: number;
@@ -1085,6 +1089,10 @@ export function AdminUsersManagement({
     actorRole === "admin"
       ? "目标用户权限不低于当前管理员，仅可查看其审核策略。"
       : "当前管理员角色没有修改该用户审核策略的权限。";
+  const concurrencyReadOnlyReason =
+    actorRole === "admin"
+      ? "目标用户权限不低于当前管理员，仅可查看其生图并发限制。"
+      : "当前管理员角色没有修改该用户生图并发限制的权限。";
 
   return (
     <div className="space-y-6">
@@ -1691,6 +1699,14 @@ export function AdminUsersManagement({
                       policy={detail.moderationPolicy}
                       canManage={canManageModerationPolicy}
                       readOnlyReason={moderationPolicyReadOnlyReason}
+                      onUpdated={() => loadDetail(detail.user.id, false)}
+                    />
+                    <UserConcurrencyControl
+                      key={`${detail.user.id}:${detail.mediaLimits.override ?? "inherit"}`}
+                      userId={detail.user.id}
+                      limits={detail.mediaLimits}
+                      canManage={canManageModerationPolicy}
+                      readOnlyReason={concurrencyReadOnlyReason}
                       onUpdated={() => loadDetail(detail.user.id, false)}
                     />
                   </TabsContent>

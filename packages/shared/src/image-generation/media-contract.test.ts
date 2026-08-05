@@ -10,6 +10,7 @@ import {
   MAX_MEDIA_INPUT_BYTES,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
+  parseMediaInputReferencesWithPolicy,
   videoInputManifestSchema,
   videoInputReferenceManifestSchema,
 } from "./media-contract";
@@ -155,5 +156,44 @@ describe("media input reference contract", () => {
         ],
       }).success
     ).toBe(true);
+  });
+
+  it("使用运行时策略统一拒绝单文件、总量和编辑参考图超限", () => {
+    const policy = {
+      maxFileSizeBytes: 5 * 1024 * 1024,
+      maxUploadSizeBytes: 8 * 1024 * 1024,
+      maxEditReferenceImages: 2,
+    };
+    const reference = (index: number, byteLength: number) => ({
+      source: "storage" as const,
+      mimeType: "image/png" as const,
+      storageKey: `users/u1/${index}.png`,
+      byteLength,
+    });
+
+    expect(
+      parseMediaInputReferencesWithPolicy(
+        [reference(1, 4 * 1024 * 1024), reference(2, 4 * 1024 * 1024)],
+        policy
+      )
+    ).toHaveLength(2);
+    expect(() =>
+      parseMediaInputReferencesWithPolicy(
+        [reference(1, 5 * 1024 * 1024 + 1)],
+        policy
+      )
+    ).toThrow();
+    expect(() =>
+      parseMediaInputReferencesWithPolicy(
+        [reference(1, 4 * 1024 * 1024), reference(2, 4 * 1024 * 1024 + 1)],
+        policy
+      )
+    ).toThrow();
+    expect(() =>
+      parseMediaInputReferencesWithPolicy(
+        [reference(1, 1), reference(2, 1), reference(3, 1)],
+        policy
+      )
+    ).toThrow();
   });
 });

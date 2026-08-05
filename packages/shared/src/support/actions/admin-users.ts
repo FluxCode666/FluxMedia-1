@@ -36,6 +36,10 @@ import {
   unfreezeCreditsAccount,
 } from "../../credits/core";
 import { expireStalePendingGenerations } from "../../generation-maintenance";
+import type {
+  MediaLimitsForUser,
+  SetUserConcurrencyResult,
+} from "../../image-generation/media-limit-service";
 import {
   moderationBlockRiskLevelSchema,
   type ResolvedModerationPolicyValues,
@@ -50,6 +54,7 @@ import { buildSignedStorageImageUrl } from "../../storage/signed-url";
 import { getUserPlan } from "../../subscription/services/user-plan";
 import { invokeOperation, OperationError, type Principal } from "../../uol";
 import "../../uol/operations/moderation";
+import "../../uol/operations/media-limits";
 import { randomUUID } from "node:crypto";
 // 密码哈希链路：与 bootstrap-super-admin.ts 完全一致，写入 account.password，禁止明文/自造哈希
 import { hashPassword } from "better-auth/crypto";
@@ -133,6 +138,13 @@ const setUserModerationPolicySchema = userIdSchema
   })
   .strict();
 
+const setUserImageGenerationConcurrencySchema = userIdSchema
+  .extend({
+    override: z.number().int().min(1).max(10_000).nullable(),
+    reason: reasonSchema,
+  })
+  .strict();
+
 /** 从 adminAction 已复查的用户 ID 与角色构造可信人工会话 Principal。 */
 function createAdminUsersPrincipal(input: {
   userId: string;
@@ -170,6 +182,39 @@ async function invokeUserModerationPolicyOperation<T>(
     return await invokeOperation<T>(name, input, principal);
   } catch (error) {
     throwUserModerationPolicyActionError(error);
+  }
+}
+
+/** 把媒体限制 UOL 错误转换为管理员页面可定位的安全反馈。 */
+function throwUserMediaLimitActionError(error: unknown): never {
+  if (!(error instanceof OperationError)) throw error;
+  switch (error.code) {
+    case "forbidden":
+    case "unauthenticated":
+    case "ownership_violation":
+      throw new ActionUserError("无权查看或修改该用户的生图并发限制");
+    case "validation_error":
+      throw new ActionUserError("用户、并发限制或变更原因不合法");
+    case "not_found":
+      throw new ActionUserError("用户不存在");
+    case "timeout":
+    case "not_ready":
+      throw new ActionUserError("媒体限制服务暂时不可用，请稍后重试");
+    default:
+      throw new ActionUserError("媒体限制操作失败，请稍后重试");
+  }
+}
+
+/** 调用媒体限制 operation，并在 Server Action 边界统一映射错误。 */
+async function invokeUserMediaLimitOperation<T>(
+  name: string,
+  input: unknown,
+  principal: Principal
+): Promise<T> {
+  try {
+    return await invokeOperation<T>(name, input, principal);
+  } catch (error) {
+    throwUserMediaLimitActionError(error);
   }
 }
 
@@ -444,6 +489,8 @@ async function getUserBasicOrThrow(userId: string) {
       banned: user.banned,
       bannedReason: user.bannedReason,
       emailVerified: user.emailVerified,
+      imageGenerationConcurrencyOverride:
+        user.imageGenerationConcurrencyOverride,
     })
     .from(user)
     .where(eq(user.id, userId))
@@ -473,6 +520,8 @@ export const getAllUsersAction = withAdminUsersAction("getAllUsers")
         banned: user.banned,
         bannedReason: user.bannedReason,
         emailVerified: user.emailVerified,
+        imageGenerationConcurrencyOverride:
+          user.imageGenerationConcurrencyOverride,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         creditsBalance:
@@ -625,6 +674,34 @@ export const setUserModerationPolicyAction = withAdminUsersAction(
     };
   });
 
+/**
+ * 设置或清除用户生图并发覆盖。
+ *
+ * Action 只传递真实会话 Principal；角色护栏、行锁、写入和审计统一由 UOL 下层持有。
+ */
+export const setUserImageGenerationConcurrencyAction = withAdminUsersAction(
+  "setUserImageGenerationConcurrency"
+)
+  .schema(setUserImageGenerationConcurrencySchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const result =
+      await invokeUserMediaLimitOperation<SetUserConcurrencyResult>(
+        "mediaLimits.setUserConcurrencyOverride",
+        parsedInput,
+        createAdminUsersPrincipal({ userId: ctx.userId, role: ctx.role })
+      );
+    revalidatePath("/dashboard/users");
+    return {
+      success: true,
+      ...result,
+      message: !result.changed
+        ? "用户生图并发限制未发生变化"
+        : result.after === null
+          ? "用户生图并发限制已恢复继承系统默认值"
+          : `用户生图并发限制已更新为 ${result.after}`,
+    };
+  });
+
 export const getUserDetailAction = withAdminUsersAction("getUserDetail")
   .schema(userIdSchema)
   .action(async ({ parsedInput, ctx }) => {
@@ -646,6 +723,7 @@ export const getUserDetailAction = withAdminUsersAction("getUserDetail")
       auditLogs,
       generationSummary,
       moderationPolicy,
+      mediaLimits,
     ] = await Promise.all([
       db.select().from(user).where(eq(user.id, userId)).limit(1),
       db
@@ -751,6 +829,11 @@ export const getUserDetailAction = withAdminUsersAction("getUserDetail")
         { userId },
         principal
       ),
+      invokeUserMediaLimitOperation<MediaLimitsForUser>(
+        "mediaLimits.getEffective",
+        { userId },
+        principal
+      ),
     ]);
 
     const userData = userRows[0];
@@ -777,6 +860,7 @@ export const getUserDetailAction = withAdminUsersAction("getUserDetail")
       apiKeys,
       auditLogs,
       moderationPolicy,
+      mediaLimits,
       generationSummary: generationSummary[0] ?? {
         total: 0,
         completed: 0,

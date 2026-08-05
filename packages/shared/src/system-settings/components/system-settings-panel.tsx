@@ -800,6 +800,9 @@ function SettingInput({
   return (
     <Input
       type={setting.valueType === "number" ? "number" : "text"}
+      min={setting.valueType === "number" ? setting.min : undefined}
+      max={setting.valueType === "number" ? setting.max : undefined}
+      step={setting.valueType === "number" && setting.integer ? 1 : undefined}
       value={String(value)}
       placeholder={
         setting.secret && setting.configured ? "已配置，留空不修改" : ""
@@ -1718,7 +1721,7 @@ export function SystemSettingsPanel({
             系统设置
           </h2>
           <p className="text-sm text-muted-foreground">
-            管理支持、审核、登录、支付、套餐、模型、存储和邮件等全局配置。动态配置由
+            管理支持、审核、登录、支付、模型、存储和邮件等全局配置。动态配置由
             Redis 跨实例缓存，密钥不会在页面回显。
           </p>
         </div>

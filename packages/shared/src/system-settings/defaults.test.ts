@@ -156,6 +156,12 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("GENERATION_IMAGE_RETENTION_MODE");
     expect(initializedKeys).toContain("GENERATION_IMAGE_MAX_COUNT");
     expect(initializedKeys).toContain("IMAGE_GENERATION_GLOBAL_CONCURRENCY");
+    expect(initializedKeys).toContain(
+      "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY"
+    );
+    expect(initializedKeys).toContain("MEDIA_MAX_FILE_SIZE_MB");
+    expect(initializedKeys).toContain("MEDIA_MAX_UPLOAD_SIZE_MB");
+    expect(initializedKeys).toContain("IMAGE_EDIT_MAX_REFERENCE_IMAGES");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_1024");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_1K");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_2K");
@@ -212,6 +218,12 @@ describe("system setting default initialization", () => {
     expect(store.get("GENERATION_IMAGE_MAX_COUNT")?.value).toBe(10000);
     expect(store.get("CREDITS_EXPIRY_DAYS")?.value).toBe(0);
     expect(store.get("IMAGE_GENERATION_GLOBAL_CONCURRENCY")?.value).toBe(500);
+    expect(store.get("IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY")?.value).toBe(
+      20
+    );
+    expect(store.get("MEDIA_MAX_FILE_SIZE_MB")?.value).toBe(5);
+    expect(store.get("MEDIA_MAX_UPLOAD_SIZE_MB")?.value).toBe(75);
+    expect(store.get("IMAGE_EDIT_MAX_REFERENCE_IMAGES")?.value).toBe(16);
     expect(store.get("IMAGE_BASE_CREDITS_1024")).toBeUndefined();
     expect(store.get("IMAGE_BASE_CREDITS_1K")).toBeUndefined();
     expect(store.get("IMAGE_BASE_CREDITS_2K")).toBeUndefined();

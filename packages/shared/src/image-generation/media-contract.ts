@@ -8,6 +8,7 @@
 import { z } from "zod";
 
 import { isBlockedIP } from "../security/ip-validation";
+import type { MediaLimitPolicy } from "./media-limit-policy";
 import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
@@ -140,7 +141,7 @@ export const mediaInputReferenceSchema = z.discriminatedUnion("source", [
  * 一组 JSON-safe 媒体输入引用。
  *
  * 总量根据不可信声明做第一层快速拒绝；读取 data、storage 或 remote 内容后仍须按实际
- * 字节再验，避免客户端通过伪造 byteLength 绕过套餐和内存边界。
+ * 字节再验，避免客户端通过伪造 byteLength 绕过系统策略和内存边界。
  */
 export const mediaInputReferencesSchema = z
   .array(mediaInputReferenceSchema)
@@ -160,6 +161,53 @@ export const mediaInputReferencesSchema = z
 
 /** 单个 JSON-safe 媒体输入引用类型。 */
 export type MediaInputReference = z.infer<typeof mediaInputReferenceSchema>;
+
+/**
+ * 以同一份运行时策略校验媒体引用声明。
+ *
+ * @param references - 已通过硬上限 schema 的 JSON-safe 媒体引用。
+ * @param policy - 媒体限制 service 返回的系统策略快照。
+ * @param maxCount - 当前操作允许的引用数；图片编辑通常传 maxEditReferenceImages。
+ * @returns 原引用数组，供后续 storage/remote 实际字节复验继续使用。
+ * @throws ZodError 单文件、总量或数量超过当前策略时拒绝。
+ */
+export function parseMediaInputReferencesWithPolicy(
+  references: unknown,
+  policy: Pick<
+    MediaLimitPolicy,
+    "maxFileSizeBytes" | "maxUploadSizeBytes" | "maxEditReferenceImages"
+  >,
+  maxCount = policy.maxEditReferenceImages
+): MediaInputReference[] {
+  return mediaInputReferencesSchema
+    .superRefine((items, context) => {
+      if (items.length > maxCount) {
+        context.addIssue({
+          code: "custom",
+          message: `Media input count exceeds the allowed maximum of ${maxCount}`,
+        });
+      }
+      for (const [index, item] of items.entries()) {
+        if (item.byteLength <= policy.maxFileSizeBytes) continue;
+        context.addIssue({
+          code: "custom",
+          path: [index, "byteLength"],
+          message: "Media input exceeds the per-file size limit",
+        });
+      }
+      const totalBytes = items.reduce(
+        (total, item) => total + item.byteLength,
+        0
+      );
+      if (totalBytes > policy.maxUploadSizeBytes) {
+        context.addIssue({
+          code: "custom",
+          message: "Total media input bytes exceed the request limit",
+        });
+      }
+    })
+    .parse(references);
+}
 
 /** 平台持久视频输入对象必须显式保存当前 bucket，不能依赖运行时默认值漂移。 */
 export const persistedVideoInputReferenceSchema =

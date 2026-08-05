@@ -1,11 +1,11 @@
 /**
- * 套餐媒体上传限制的字节化读取服务。
+ * 媒体上传限制的兼容读取服务。
  *
  * 使用方：站内生图、外部图片接口与上传校验。统一暴露单文件、请求总量和编辑图片
- * 数量上限，避免客户端与 API 分别解释套餐能力矩阵。
+ * 数量上限。旧调用签名暂时保留 plan 参数以支持分阶段发布，但参数不再影响结果。
  */
 import type { SubscriptionPlan } from "../../config/subscription-plan";
-import { getPlanLimits, megabytesToBytes } from "./plan-capabilities";
+import { getMediaLimitDefaults } from "../../image-generation/media-limit-service";
 
 export type PlanUploadLimits = {
   maxFileSizeBytes: number;
@@ -15,14 +15,14 @@ export type PlanUploadLimits = {
 
 /** 读取并归一化指定套餐的媒体上传限制。 */
 export async function getPlanUploadLimits(
-  plan: SubscriptionPlan
+  _plan: SubscriptionPlan
 ): Promise<PlanUploadLimits> {
-  const limits = await getPlanLimits(plan);
+  const limits = await getMediaLimitDefaults();
 
   return {
-    maxFileSizeBytes: megabytesToBytes(limits.maxFileMb),
-    maxUploadBytes: megabytesToBytes(limits.maxUploadMb),
-    maxEditImages: limits.maxEditImages,
+    maxFileSizeBytes: limits.maxFileSizeBytes,
+    maxUploadBytes: limits.maxUploadSizeBytes,
+    maxEditImages: limits.maxEditReferenceImages,
   };
 }
 

@@ -8,14 +8,13 @@ import { desc, eq } from "drizzle-orm";
 import {
   getPlanFromPriceId,
   getPlanPrivileges,
-  getUpgradeMessage,
   type SubscriptionPlan,
 } from "../../config/subscription-plan";
 import { db } from "@repo/database";
 import { subscription, user } from "@repo/database/schema";
 import { isSelfUseModeEnabled } from "../../auth/self-use-mode";
 import { logWarn } from "../../logger";
-import { getPlanUploadLimits } from "./upload-limits";
+import { getMediaLimitDefaults } from "../../image-generation/media-limit-service";
 
 // ============================================
 // 类型定义
@@ -214,19 +213,17 @@ export async function getUserPlanType(
 // ============================================
 
 /**
- * 检查文件大小是否在用户计划限制内
+ * 检查文件大小是否在系统媒体限制内。
  *
  * @param userId - 用户 ID
  * @param fileSizeBytes - 文件大小（字节）
  * @returns 检查结果
  */
 export async function checkFileSizePrivilege(
-  userId: string,
+  _userId: string,
   fileSizeBytes: number
 ): Promise<PrivilegeCheckResult> {
-  const { plan } = await getUserPlan(userId);
-
-  const limits = await getPlanUploadLimits(plan);
+  const limits = await getMediaLimitDefaults();
   if (fileSizeBytes <= limits.maxFileSizeBytes) {
     return { allowed: true };
   }
@@ -236,7 +233,6 @@ export async function checkFileSizePrivilege(
 
   return {
     allowed: false,
-    errorMessage: `File size (${actualSize}) exceeds ${limit} limit for your plan.`,
-    upgradeMessage: getUpgradeMessage(plan, `Files over ${limit}`),
+    errorMessage: `File size (${actualSize}) exceeds the system limit of ${limit}.`,
   };
 }

@@ -1,68 +1,63 @@
 /**
- * 套餐媒体上传限制服务测试。
+ * 媒体上传限制兼容服务测试。
  *
- * 验证 MB 到字节的转换，以及参考图数量上限在单套餐与全套餐读取中的透传。
+ * 验证旧套餐签名统一读取系统媒体策略，不再因套餐产生差异。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SUBSCRIPTION_PLANS } from "../../config/subscription-plan";
 
-// plan-capabilities 在导入时会经 system-settings 触达 @repo/database，
-// 为保持 DB-free，这里整体 mock 该模块：getPlanLimits 由用例注入，
-// megabytesToBytes 复刻真实实现（Math.floor(value * 1MB)）以保留字节换算契约。
 const BYTES_PER_MB = 1024 * 1024;
 
-const planCapabilitiesMock = vi.hoisted(() => ({
-  getPlanLimits: vi.fn(),
+const mediaLimitMock = vi.hoisted(() => ({
+  getMediaLimitDefaults: vi.fn(),
 }));
 
-vi.mock("./plan-capabilities", () => ({
-  getPlanLimits: planCapabilitiesMock.getPlanLimits,
-  megabytesToBytes: (value: number) => Math.floor(value * 1024 * 1024),
+vi.mock("../../image-generation/media-limit-service", () => ({
+  getMediaLimitDefaults: mediaLimitMock.getMediaLimitDefaults,
 }));
 
 function megabytesToBytes(value: number) {
   return Math.floor(value * BYTES_PER_MB);
 }
 
-const limitsFor = (maxFileMb: number, maxUploadMb: number) => ({
-  maxFileMb,
-  maxUploadMb,
-  queuePriority: "normal" as const,
-  imageGenerationConcurrency: 1,
-  monthlyCredits: 1,
-  maxBatchCount: 1,
-  maxEditImages: 1,
+const limitsFor = (maxFileSizeMb: number, maxUploadSizeMb: number) => ({
+  defaultUserConcurrency: 20,
+  maxFileSizeMb,
+  maxUploadSizeMb,
+  maxEditReferenceImages: 16,
+  maxFileSizeBytes: megabytesToBytes(maxFileSizeMb),
+  maxUploadSizeBytes: megabytesToBytes(maxUploadSizeMb),
 });
 
 describe("getPlanUploadLimits", () => {
   beforeEach(() => {
-    planCapabilitiesMock.getPlanLimits.mockReset();
+    mediaLimitMock.getMediaLimitDefaults.mockReset();
   });
 
-  it("converts plan MB limits to bytes via megabytesToBytes", async () => {
-    planCapabilitiesMock.getPlanLimits.mockResolvedValue(limitsFor(20, 75));
+  it("returns system media limits regardless of the compatibility plan", async () => {
+    mediaLimitMock.getMediaLimitDefaults.mockResolvedValue(limitsFor(5, 75));
 
     const { getPlanUploadLimits } = await import("./upload-limits");
-    const limits = await getPlanUploadLimits("starter");
+    const starter = await getPlanUploadLimits("starter");
+    const enterprise = await getPlanUploadLimits("enterprise");
 
-    expect(limits).toEqual({
-      maxFileSizeBytes: megabytesToBytes(20),
+    expect(starter).toEqual({
+      maxFileSizeBytes: megabytesToBytes(5),
       maxUploadBytes: megabytesToBytes(75),
-      maxEditImages: 1,
+      maxEditImages: 16,
     });
+    expect(enterprise).toEqual(starter);
   });
 });
 
 describe("getAllPlanUploadLimits", () => {
   beforeEach(() => {
-    planCapabilitiesMock.getPlanLimits.mockReset();
+    mediaLimitMock.getMediaLimitDefaults.mockReset();
   });
 
   it("returns upload limits for every SUBSCRIPTION_PLANS entry", async () => {
-    planCapabilitiesMock.getPlanLimits.mockImplementation(async () =>
-      limitsFor(10, 30)
-    );
+    mediaLimitMock.getMediaLimitDefaults.mockResolvedValue(limitsFor(10, 30));
 
     const { getAllPlanUploadLimits } = await import("./upload-limits");
     const all = await getAllPlanUploadLimits();
@@ -73,7 +68,7 @@ describe("getAllPlanUploadLimits", () => {
       expect(all[plan]).toEqual({
         maxFileSizeBytes: megabytesToBytes(10),
         maxUploadBytes: megabytesToBytes(30),
-        maxEditImages: 1,
+        maxEditImages: 16,
       });
     }
   });

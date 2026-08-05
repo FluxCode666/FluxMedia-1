@@ -336,14 +336,37 @@ describe("setSystemSettings", () => {
   });
 
   it("number key without declared range keeps coercion unchanged (S-M8)", async () => {
-    // 未声明 min/max 的数值键（如全局并发）行为不变：任意有限数原样写入。
+    // 未声明 min/max 的数值键行为不变：任意有限数原样写入。
     await setSystemSettings(
-      [{ key: "IMAGE_GENERATION_GLOBAL_CONCURRENCY", value: "999999" }],
+      [{ key: "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES", value: "999999" }],
       "admin"
     );
-    expect(store.get("IMAGE_GENERATION_GLOBAL_CONCURRENCY")?.value).toBe(
+    expect(store.get("IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES")?.value).toBe(
       999999
     );
+  });
+
+  it("enforces media governance setting ranges", async () => {
+    const cases = [
+      ["IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY", 10_000],
+      ["MEDIA_MAX_FILE_SIZE_MB", 200],
+      ["MEDIA_MAX_UPLOAD_SIZE_MB", 200],
+      ["IMAGE_EDIT_MAX_REFERENCE_IMAGES", 256],
+    ] as const;
+
+    for (const [key, max] of cases) {
+      await setSystemSettings([{ key, value: max }], "admin");
+      expect(store.get(key)?.value).toBe(max);
+      await expect(
+        setSystemSettings([{ key, value: 0 }], "admin")
+      ).rejects.toThrow(/不能小于/);
+      await expect(
+        setSystemSettings([{ key, value: max + 1 }], "admin")
+      ).rejects.toThrow(/不能大于/);
+      await expect(
+        setSystemSettings([{ key, value: 1.5 }], "admin")
+      ).rejects.toThrow(/必须是整数/);
+    }
   });
 
   it("rejects malformed json and value not in select options (coerceValue, C-L25)", async () => {

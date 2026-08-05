@@ -82,6 +82,7 @@ const adminSettingSnapshotSchema = z
     options: z.array(settingOptionSchema).optional(),
     min: z.number().optional(),
     max: z.number().optional(),
+    integer: z.boolean().optional(),
     defaultValue: z.unknown().optional(),
     exampleValue: z.unknown().optional(),
     managedByDedicatedOperation: z.boolean().optional(),

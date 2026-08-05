@@ -8,9 +8,8 @@
 
 import { z } from "zod";
 
+import { getMediaLimitDefaults } from "../image-generation/media-limit-service";
 import { protectedAction } from "../safe-action";
-import { getPlanCapabilitySnapshot } from "../subscription/services/plan-capabilities";
-import { getUserPlan } from "../subscription/services/user-plan";
 import { getRuntimeStorageBucketConfig } from "../system-settings";
 
 import { getStorageProvider } from "./providers";
@@ -89,8 +88,7 @@ export const getSignedUploadUrlAction = withStorageAction("getSignedUploadUrl")
       throw new Error("文件路径无效：必须以用户 ID 为前缀");
     }
 
-    const { plan } = await getUserPlan(userId);
-    const capabilities = await getPlanCapabilitySnapshot(plan);
+    const mediaLimits = await getMediaLimitDefaults();
 
     // 获取签名上传 URL
     const provider = await getStorageProvider();
@@ -104,7 +102,7 @@ export const getSignedUploadUrlAction = withStorageAction("getSignedUploadUrl")
       uploadUrl,
       key,
       bucket,
-      maxFileSizeBytes: capabilities.limits.maxFileSizeBytes,
+      maxFileSizeBytes: mediaLimits.maxFileSizeBytes,
     };
   });
 

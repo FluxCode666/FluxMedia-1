@@ -116,6 +116,10 @@ export type SettingKey =
   | "OPENAI_MODERATION_API_KEY"
   | "OPENAI_MODERATION_MODEL"
   | "IMAGE_GENERATION_GLOBAL_CONCURRENCY"
+  | "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY"
+  | "MEDIA_MAX_FILE_SIZE_MB"
+  | "MEDIA_MAX_UPLOAD_SIZE_MB"
+  | "IMAGE_EDIT_MAX_REFERENCE_IMAGES"
   | "IMAGE_BACKEND_SCHEDULING_STRATEGY"
   | "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_RATE_LIMIT_COOLDOWN_MINUTES"
@@ -202,6 +206,8 @@ export interface SettingDefinition {
   // 负积分/负价格/异常巨大值，造成经济或安全语义破坏；此处补 per-key 范围校验。
   min?: number;
   max?: number;
+  /** true 表示 number 配置必须是整数。 */
+  integer?: boolean;
   defaultValue?: unknown;
   exampleValue?: unknown;
   /** true 表示该键只允许专用 operation 写入，通用设置和 env 同步均需跳过。 */
@@ -964,10 +970,58 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "IMAGE_GENERATION_GLOBAL_CONCURRENCY",
     label: "全局生图并发",
     description:
-      "整站同时执行的生图任务硬上限。套餐能力矩阵中的生图并发仍按单用户限制；实际启动任务时必须同时满足全局并发和单用户并发。",
+      "整站同时执行的生图任务硬上限；用户准入并发由系统默认值和用户覆盖独立控制。",
     category: "models",
     valueType: "number",
+    min: 1,
+    max: 10000,
+    integer: true,
     defaultValue: 500,
+  },
+  {
+    key: "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY",
+    label: "默认用户生图并发",
+    description:
+      "单个用户同时处于准入状态的生图任务上限；用户没有单独覆盖时使用此值。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 10000,
+    integer: true,
+    defaultValue: 20,
+  },
+  {
+    key: "MEDIA_MAX_FILE_SIZE_MB",
+    label: "单文件大小 MB",
+    description: "单个图片或视频输入文件允许的最大大小。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 200,
+    integer: true,
+    defaultValue: 5,
+  },
+  {
+    key: "MEDIA_MAX_UPLOAD_SIZE_MB",
+    label: "单次上传总量 MB",
+    description: "一次媒体请求中所有输入文件允许的总大小。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 200,
+    integer: true,
+    defaultValue: 75,
+  },
+  {
+    key: "IMAGE_EDIT_MAX_REFERENCE_IMAGES",
+    label: "编辑参考图数",
+    description: "一次图片编辑请求允许提交的参考图数量。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 256,
+    integer: true,
+    defaultValue: 16,
   },
   {
     key: "IMAGE_BACKEND_SCHEDULING_STRATEGY",
