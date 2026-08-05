@@ -8,6 +8,7 @@
 
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import { describe, expect, it, vi } from "vitest";
+import type { RedisImageGenerationAdmissionAcquisition } from "@/features/image-generation/redis-image-generation-slots";
 
 import {
   executeImageGenerateBinding,
@@ -52,6 +53,9 @@ function dependencies(): {
   value: ImageGenerationBindingDependencies;
   load: ReturnType<typeof vi.fn>;
   run: ReturnType<typeof vi.fn>;
+  getLimits: ReturnType<typeof vi.fn>;
+  acquireAdmission: ReturnType<typeof vi.fn>;
+  releaseAdmission: ReturnType<typeof vi.fn>;
 } {
   const load = vi.fn(async () => [
     { data: Buffer.from("image"), type: "image/png" },
@@ -63,13 +67,34 @@ function dependencies(): {
     creditsConsumed: 2,
     model: "gpt-image-2",
   }));
+  const getLimits = vi.fn(async () => ({
+    limit: 20,
+    effectiveSource: "system_default" as const,
+  }));
+  const acquireAdmission = vi.fn(
+    async (): Promise<RedisImageGenerationAdmissionAcquisition> => ({
+      status: "acquired",
+      lease: {
+        token: "admission-token",
+        userKey: "hashed-user-key",
+        expiresAt: Date.now() + 60_000,
+      },
+    })
+  );
+  const releaseAdmission = vi.fn(async () => undefined);
   return {
     value: {
       loadMediaInputs: load,
       runImageGenerationForUser: run,
+      getMediaLimitsForUser: getLimits,
+      acquireImageGenerationAdmission: acquireAdmission,
+      releaseImageGenerationAdmission: releaseAdmission,
     },
     load,
     run,
+    getLimits,
+    acquireAdmission,
+    releaseAdmission,
   };
 }
 
@@ -81,6 +106,40 @@ const dataReference = {
 };
 
 describe("executeImageGenerateBinding", () => {
+  it("在加载编辑媒体前取得准入槽，用户超限时立即返回 429", async () => {
+    const deps = dependencies();
+    deps.acquireAdmission.mockResolvedValueOnce({
+      status: "blocked",
+      reason: "user",
+    });
+
+    await expect(
+      executeImageGenerateBinding(
+        {
+          operation: "edit",
+          prompt: "改成夜景",
+          model: "gpt-image-2",
+          generationId: "generation-limit-before-load",
+          images: [dataReference],
+        },
+        userPrincipal,
+        operationContext(),
+        deps.value
+      )
+    ).rejects.toMatchObject({
+      code: "concurrency_limit_exceeded",
+      httpStatus: 429,
+      details: {
+        limit: 20,
+        effectiveSource: "system_default",
+        scope: "user",
+      },
+    });
+    expect(deps.load).not.toHaveBeenCalled();
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(deps.releaseAdmission).not.toHaveBeenCalled();
+  });
+
   it("generate 从 API Key Principal 透传身份与局部流回调", async () => {
     const deps = dependencies();
     const onPartialImage = vi.fn();
@@ -147,6 +206,29 @@ describe("executeImageGenerateBinding", () => {
       }),
       undefined
     );
+    expect(deps.releaseAdmission).toHaveBeenCalledTimes(1);
+  });
+
+  it("编辑媒体加载失败时释放已取得的用户准入槽", async () => {
+    const deps = dependencies();
+    deps.load.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    await expect(
+      executeImageGenerateBinding(
+        {
+          operation: "edit",
+          prompt: "改成夜景",
+          model: "gpt-image-2",
+          generationId: "generation-load-failed",
+          images: [dataReference],
+        },
+        userPrincipal,
+        operationContext(),
+        deps.value
+      )
+    ).rejects.toThrow("storage unavailable");
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(deps.releaseAdmission).toHaveBeenCalledTimes(1);
   });
 
   it("edit 保留可信存储引用，避免图片管线再次转存", async () => {
@@ -246,5 +328,41 @@ describe("executeImageGenerateBinding", () => {
       }),
       undefined
     );
+  });
+
+  it("保留并发超限的 UOL code、429 和安全 details", async () => {
+    const deps = dependencies();
+    deps.run.mockResolvedValueOnce({
+      error: "用户同时进行的生图任务已达到上限 20",
+      errorCode: "concurrency_limit_exceeded",
+      errorDetails: {
+        limit: 20,
+        effectiveSource: "system_default",
+        scope: "user",
+      },
+      generationId: "generation-limit",
+    });
+
+    await expect(
+      executeImageGenerateBinding(
+        {
+          operation: "generate",
+          prompt: "一只猫",
+          model: "gpt-image-2",
+          generationId: "generation-limit",
+        },
+        userPrincipal,
+        operationContext(),
+        deps.value
+      )
+    ).rejects.toMatchObject({
+      code: "concurrency_limit_exceeded",
+      httpStatus: 429,
+      details: {
+        limit: 20,
+        effectiveSource: "system_default",
+        scope: "user",
+      },
+    });
   });
 });

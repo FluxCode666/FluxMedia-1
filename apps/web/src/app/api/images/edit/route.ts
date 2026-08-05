@@ -9,6 +9,7 @@ import {
 } from "@repo/shared/subscription/services/plan-capabilities";
 import { getPlanUploadLimits } from "@repo/shared/subscription/services/upload-limits";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
+import { OperationError } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
 import {
   firstBatchError,
@@ -523,6 +524,16 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       }
     }
   } catch (error) {
+    if (error instanceof OperationError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          ...(error.details ? { details: error.details } : {}),
+        },
+        { status: error.httpStatus }
+      );
+    }
     return errorResponse(
       toClientErrorMessage(
         error,

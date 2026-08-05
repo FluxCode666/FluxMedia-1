@@ -3,6 +3,7 @@ import {
   buildPublicImageUrl,
   parseStorageImageUrl,
 } from "@repo/shared/storage/signed-url";
+import { OperationError } from "@repo/shared/uol";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import { isContentSafetyRejection } from "@/features/image-generation/sla-classification";
 import type { GeneratedImageOutput } from "@/features/image-generation/types";
@@ -44,6 +45,7 @@ export type ExternalApiErrorOptions = {
   type?: string;
   code?: string | null;
   status?: number;
+  details?: Record<string, unknown>;
   generationId?: string;
   creditsConsumed?: number;
 };
@@ -378,7 +380,7 @@ export function createExternalImageStreamResponse(
         } catch (error) {
           const message =
             error instanceof Error ? error.message : "Image stream failed";
-          const payload = toOpenAIErrorPayload(message);
+          const payload = toOpenAIErrorPayloadFromUnknown(error);
           await emit({
             event: "error",
             data: toExternalErrorStreamData(message, payload),
@@ -671,6 +673,7 @@ export function toOpenAIErrorPayload(
     options && "code" in options ? options.code : classification.code;
   const generationId = options?.generationId;
   const creditsConsumed = options?.creditsConsumed;
+  const details = options?.details;
   const safeMessage = sanitizeExternalApiErrorMessage(message);
 
   return {
@@ -679,6 +682,7 @@ export function toOpenAIErrorPayload(
       type: options?.type ?? classification.type,
       code,
       status,
+      ...(details ? { details } : {}),
       ...(generationId ? { generation_id: generationId, generationId } : {}),
       ...(creditsConsumed !== undefined
         ? { credits_consumed: creditsConsumed }
@@ -689,6 +693,21 @@ export function toOpenAIErrorPayload(
       ? { credits_consumed: creditsConsumed }
       : {}),
   };
+}
+
+/** 将 UOL 领域错误原样编码为 OpenAI 风格 code/status/details。 */
+export function toOpenAIErrorPayloadFromUnknown(error: unknown) {
+  if (error instanceof OperationError) {
+    return toOpenAIErrorPayload(error.message, {
+      type: defaultErrorTypeForStatus(error.httpStatus),
+      code: error.code,
+      status: error.httpStatus,
+      details: error.details,
+    });
+  }
+  return toOpenAIErrorPayload(
+    error instanceof Error ? error.message : "Image request failed"
+  );
 }
 
 export function toExternalErrorStreamData(
@@ -750,10 +769,7 @@ export async function createJsonKeepAliveResponse(
 ) {
   const runResult = run().then(
     (data) => data ?? null,
-    (error) =>
-      toOpenAIErrorPayload(
-        error instanceof Error ? error.message : "Image request failed"
-      )
+    (error) => toOpenAIErrorPayloadFromUnknown(error)
   );
 
   const initialWaitMs =

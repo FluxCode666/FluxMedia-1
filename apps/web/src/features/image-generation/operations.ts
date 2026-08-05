@@ -17,20 +17,23 @@ import {
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
+import { mediaLimitService } from "@repo/shared/image-generation/media-limit-service";
 import { logError, logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { buildGeneratedImageStorageKey } from "@repo/shared/storage/bucket-config";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
-import {
-  getPlanCapabilitySnapshot,
-  getPlanQueueSettings,
-} from "@repo/shared/subscription/services/plan-capabilities";
+import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import {
   getRuntimeSettingBoolean,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
+import {
+  createConcurrencyLimitExceededError,
+  OperationError,
+  type OperationErrorCode,
+} from "@repo/shared/uol";
 import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { completeImageGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
@@ -71,6 +74,11 @@ import {
 import { getRuntimeImageCreditPricing } from "./pricing-settings";
 import { withImageGenerationQueue } from "./queue";
 import {
+  acquireImageGenerationAdmission,
+  type RedisImageGenerationAdmissionLease,
+  releaseImageGenerationAdmission,
+} from "./redis-image-generation-slots";
+import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_SIZE,
   getImageCreditCostBreakdown,
@@ -103,6 +111,13 @@ import type {
   PartialImageResult,
 } from "./types";
 
+export type ImageGenerationAdmissionAuthorization = {
+  userId: string;
+  lease: RedisImageGenerationAdmissionLease;
+  limit: number;
+  effectiveSource: "system_default" | "user_override";
+};
+
 type RunImageGenerationInput =
   | ({
       mode: "generate";
@@ -110,6 +125,7 @@ type RunImageGenerationInput =
       generationId?: string;
       apiKeyId?: string;
       backendGroupId?: string;
+      admissionAuthorization?: ImageGenerationAdmissionAuthorization;
     } & GenerateImageParams)
   | ({
       mode: "edit";
@@ -117,6 +133,7 @@ type RunImageGenerationInput =
       generationId?: string;
       apiKeyId?: string;
       backendGroupId?: string;
+      admissionAuthorization?: ImageGenerationAdmissionAuthorization;
     } & EditImageParams);
 
 type ImageCreditCostBreakdown = ReturnType<typeof getImageCreditCostBreakdown>;
@@ -128,6 +145,8 @@ function resolveOutputRole(params: { outputRole?: "final" | "choice" }) {
 
 export type ImageGenerationOperationResult = {
   error?: string;
+  errorCode?: OperationErrorCode;
+  errorDetails?: Record<string, unknown>;
   generationId?: string;
   imageUrl?: string;
   /** 可选的内联 base64，供响应层直接产出 b64_json。 */
@@ -140,6 +159,19 @@ export type ImageGenerationOperationResult = {
   promptRepairNotice?: string;
   creditsConsumed?: number;
 };
+
+/** 在进入本地队列前失败时归还用户准入槽；释放故障交给 TTL 并记录安全告警。 */
+async function releaseAdmissionBeforeQueueSafely(
+  lease: RedisImageGenerationAdmissionLease
+): Promise<void> {
+  try {
+    await releaseImageGenerationAdmission(lease);
+  } catch (error) {
+    logWarn("生图请求入队前释放用户准入槽失败，等待租约 TTL 自动回收", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+}
 
 async function getStoredImageUrl(bucket: string, storageKey: string) {
   return buildSignedStorageImageUrl(storageKey, bucket) ?? "";
@@ -922,9 +954,25 @@ export async function runImageGenerationForUser(
   const size = resolveImageRequestSize(input.size);
   const inputImages = getInputImages(input);
   const { generations: bucket } = await getRuntimeStorageBucketConfig();
-  const userPlan = await getUserPlan(input.userId);
+  if (
+    input.admissionAuthorization &&
+    input.admissionAuthorization.userId !== input.userId
+  ) {
+    throw new OperationError(
+      "ownership_violation",
+      "生图准入授权与当前用户不匹配"
+    );
+  }
+  const [userPlan, mediaLimits] = await Promise.all([
+    getUserPlan(input.userId),
+    input.admissionAuthorization
+      ? Promise.resolve({
+          limit: input.admissionAuthorization.limit,
+          effectiveSource: input.admissionAuthorization.effectiveSource,
+        })
+      : mediaLimitService.getForUser(input.userId),
+  ]);
   const planCapabilities = await getPlanCapabilitySnapshot(userPlan.plan);
-  const queueSettings = await getPlanQueueSettings(userPlan.plan);
   const moderationBlockingEnabled =
     planCapabilities.features["moderation.blocking"];
   const promptOptimizationAllowed =
@@ -987,6 +1035,39 @@ export async function runImageGenerationForUser(
     input.userId
   );
 
+  let admissionLease = input.admissionAuthorization?.lease;
+  const releaseAdmissionInOperation = !admissionLease;
+  if (!admissionLease) {
+    try {
+      const admission = await acquireImageGenerationAdmission({
+        userId: input.userId,
+        userConcurrency: mediaLimits.limit,
+      });
+      if (admission.status === "blocked") {
+        const error = createConcurrencyLimitExceededError({
+          limit: mediaLimits.limit,
+          effectiveSource: mediaLimits.effectiveSource,
+        });
+        return {
+          error: error.message,
+          errorCode: error.code,
+          errorDetails: error.details,
+          generationId,
+        };
+      }
+      admissionLease = admission.lease;
+    } catch (error) {
+      return {
+        error: toClientErrorMessage(
+          error,
+          { source: "image-generation-admission", generationId },
+          "生图并发服务暂时不可用，请稍后重试"
+        ),
+        generationId,
+      };
+    }
+  }
+
   let trustedGroupSnapshot: Awaited<
     ReturnType<typeof resolveTrustedGroupSnapshot>
   >;
@@ -997,6 +1078,9 @@ export async function runImageGenerationForUser(
       requestedGroupId: input.backendGroupId,
     });
   } catch (error) {
+    if (releaseAdmissionInOperation) {
+      await releaseAdmissionBeforeQueueSafely(admissionLease);
+    }
     return {
       error: toClientErrorMessage(
         error,
@@ -1012,7 +1096,10 @@ export async function runImageGenerationForUser(
       {
         userId: input.userId,
         priority: trustedGroupSnapshot.priority,
-        userConcurrency: queueSettings.userConcurrency,
+        userConcurrency: mediaLimits.limit,
+        effectiveSource: mediaLimits.effectiveSource,
+        admissionLease,
+        releaseAdmissionOnCompletion: releaseAdmissionInOperation,
       },
       async () => {
         let session: RuntimeBackendSession | null = null;
@@ -1125,6 +1212,14 @@ export async function runImageGenerationForUser(
       }
     );
   } catch (error) {
+    if (error instanceof OperationError) {
+      return {
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        generationId,
+      };
+    }
     // 兜底:DB/内部异常不得把裸 SQL/内部细节回给前端（issue #35:池查询失败的
     // Drizzle "Failed query: ..." 曾原样显示在用户 toast）。脱敏 + 记日志。
     return {

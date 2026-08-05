@@ -1,3 +1,4 @@
+import { OperationError } from "@repo/shared/uol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -84,6 +85,33 @@ describe("external JSON keep-alive response", () => {
     expect(response.headers.get("x-accel-buffering")).toBe("no");
     expect(firstChunk.trim()).toBe("");
     expect(firstChunk.length).toBeGreaterThan(1024);
+  });
+
+  it("把并发领域错误编码为 HTTP 429 并保留 code/details", async () => {
+    const response = await createJsonKeepAliveResponse(async () => {
+      throw new OperationError(
+        "concurrency_limit_exceeded",
+        "用户同时进行的生图任务已达到上限 20",
+        {
+          limit: 20,
+          effectiveSource: "system_default",
+          scope: "user",
+        }
+      );
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "concurrency_limit_exceeded",
+        status: 429,
+        details: {
+          limit: 20,
+          effectiveSource: "system_default",
+          scope: "user",
+        },
+      },
+    });
   });
 });
 

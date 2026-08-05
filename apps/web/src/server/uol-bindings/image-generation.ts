@@ -6,9 +6,11 @@
  * 使用方：根 uol-bindings 聚合器；默认依赖动态加载以保持本模块单测 DB-free。
  */
 
+import { logWarn } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindOperationExecute,
+  createConcurrencyLimitExceededError,
   getPrincipalUserId,
   isExternalApiKeyPrincipal,
   OperationError,
@@ -25,6 +27,10 @@ import type {
 } from "@/features/image-generation/media-input-loader";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
 import type {
+  RedisImageGenerationAdmissionAcquisition,
+  RedisImageGenerationAdmissionLease,
+} from "@/features/image-generation/redis-image-generation-slots";
+import type {
   ImageGenerationCallbacks,
   ImageInputFile,
   ImageQuality,
@@ -37,6 +43,17 @@ type ImageGenerateOutput = ImageGenerateOperationOutput;
 export interface ImageGenerationBindingDependencies {
   loadMediaInputs: typeof loadMediaInputs;
   runImageGenerationForUser: typeof runImageGenerationForUser;
+  getMediaLimitsForUser: (userId: string) => Promise<{
+    limit: number;
+    effectiveSource: "system_default" | "user_override";
+  }>;
+  acquireImageGenerationAdmission: (input: {
+    userId: string;
+    userConcurrency: number;
+  }) => Promise<RedisImageGenerationAdmissionAcquisition>;
+  releaseImageGenerationAdmission: (
+    lease: RedisImageGenerationAdmissionLease
+  ) => Promise<void>;
 }
 
 const defaultDependencies: ImageGenerationBindingDependencies = {
@@ -50,7 +67,39 @@ const defaultDependencies: ImageGenerationBindingDependencies = {
       await import("@/features/image-generation/operations")
     ).runImageGenerationForUser(input, callbacks);
   },
+  async getMediaLimitsForUser(userId) {
+    const { mediaLimitService } = await import(
+      "@repo/shared/image-generation/media-limit-service"
+    );
+    return mediaLimitService.getForUser(userId);
+  },
+  async acquireImageGenerationAdmission(input) {
+    const { acquireImageGenerationAdmission } = await import(
+      "@/features/image-generation/redis-image-generation-slots"
+    );
+    return acquireImageGenerationAdmission(input);
+  },
+  async releaseImageGenerationAdmission(lease) {
+    const { releaseImageGenerationAdmission } = await import(
+      "@/features/image-generation/redis-image-generation-slots"
+    );
+    return releaseImageGenerationAdmission(lease);
+  },
 };
+
+/** 释放 binding 持有的准入槽；失败只告警，不能改写已经完成且可能已扣费的结果。 */
+async function releaseAdmissionSafely(
+  dependencies: ImageGenerationBindingDependencies,
+  lease: RedisImageGenerationAdmissionLease
+): Promise<void> {
+  try {
+    await dependencies.releaseImageGenerationAdmission(lease);
+  } catch (error) {
+    logWarn("图片 UOL binding 释放用户准入槽失败，等待 TTL 自动回收", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+}
 
 /** 将已校验字节映射为图片管线文件，名称只用于上游 multipart 元数据。 */
 function toImageInputFile(
@@ -86,7 +135,13 @@ function toImageGenerateOutput(
   input: ImageGenerateInput,
   result: Awaited<ReturnType<typeof runImageGenerationForUser>>
 ): ImageGenerateOutput {
-  if (result.error) throw new OperationError("upstream_error", result.error);
+  if (result.error) {
+    throw new OperationError(
+      result.errorCode ?? "upstream_error",
+      result.error,
+      result.errorDetails
+    );
+  }
   const sourceOutputs =
     result.imageOutputs?.length &&
     result.imageOutputs.some((item) => item.imageUrl)
@@ -152,6 +207,23 @@ export async function executeImageGenerateBinding(
   const apiKeyId = isExternalApiKeyPrincipal(principal)
     ? principal.apiKeyId
     : undefined;
+  const mediaLimits = await dependencies.getMediaLimitsForUser(userId);
+  const admission = await dependencies.acquireImageGenerationAdmission({
+    userId,
+    userConcurrency: mediaLimits.limit,
+  });
+  if (admission.status === "blocked") {
+    throw createConcurrencyLimitExceededError({
+      limit: mediaLimits.limit,
+      effectiveSource: mediaLimits.effectiveSource,
+    });
+  }
+  const admissionAuthorization = {
+    userId,
+    lease: admission.lease,
+    limit: mediaLimits.limit,
+    effectiveSource: mediaLimits.effectiveSource,
+  };
   const common = {
     userId,
     ...(apiKeyId ? { apiKeyId } : {}),
@@ -174,41 +246,46 @@ export async function executeImageGenerateBinding(
     n: input.count,
     generationId: input.generationId,
     backendGroupId: input.backendGroupId,
+    admissionAuthorization,
   };
   const callbacks = getImageGenerationCallbacks(ctx);
-  if (input.operation === "generate") {
+  try {
+    if (input.operation === "generate") {
+      return toImageGenerateOutput(
+        input,
+        await dependencies.runImageGenerationForUser(
+          { mode: "generate", ...common },
+          callbacks
+        )
+      );
+    }
+
+    const references =
+      input.operation === "mask" ? [...input.images, input.mask] : input.images;
+    const loaded = await dependencies.loadMediaInputs({ userId, references });
+    const imageCount = input.images.length;
+    const images = loaded
+      .slice(0, imageCount)
+      .map((image, index) => toImageInputFile(image, index, "image"));
+    const mask =
+      input.operation === "mask" && loaded[imageCount]
+        ? toImageInputFile(loaded[imageCount], 0, "mask")
+        : undefined;
     return toImageGenerateOutput(
       input,
       await dependencies.runImageGenerationForUser(
-        { mode: "generate", ...common },
+        {
+          mode: "edit",
+          ...common,
+          images,
+          ...(mask ? { mask } : {}),
+        },
         callbacks
       )
     );
+  } finally {
+    await releaseAdmissionSafely(dependencies, admission.lease);
   }
-
-  const references =
-    input.operation === "mask" ? [...input.images, input.mask] : input.images;
-  const loaded = await dependencies.loadMediaInputs({ userId, references });
-  const imageCount = input.images.length;
-  const images = loaded
-    .slice(0, imageCount)
-    .map((image, index) => toImageInputFile(image, index, "image"));
-  const mask =
-    input.operation === "mask" && loaded[imageCount]
-      ? toImageInputFile(loaded[imageCount], 0, "mask")
-      : undefined;
-  return toImageGenerateOutput(
-    input,
-    await dependencies.runImageGenerationForUser(
-      {
-        mode: "edit",
-        ...common,
-        images,
-        ...(mask ? { mask } : {}),
-      },
-      callbacks
-    )
-  );
 }
 
 bindOperationExecute(imageGenerate, (input, principal, ctx) =>

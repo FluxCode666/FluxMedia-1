@@ -6,45 +6,79 @@ const runtimeSettings = vi.hoisted(() => ({
 
 const redisSlots = vi.hoisted(() => {
   let nextToken = 1;
-  const leases = new Map<string, string>();
+  const admissionLeases = new Map<string, string>();
+  const executionLeases = new Set<string>();
   return {
-    acquireGate: undefined as Promise<void> | undefined,
-    failAcquire: false,
-    acquire: vi.fn(
-      async (input: {
-        userId: string;
-        globalConcurrency: number;
-        userConcurrency: number;
-      }) => {
-        if (redisSlots.failAcquire) throw new Error("redis unavailable");
-        if (redisSlots.acquireGate) await redisSlots.acquireGate;
-        if (leases.size >= input.globalConcurrency) {
-          return { status: "blocked" as const, reason: "global" as const };
+    executionAcquireGate: undefined as Promise<void> | undefined,
+    failAdmissionAcquire: false,
+    failExecutionAcquire: false,
+    acquireAdmission: vi.fn(
+      async (input: { userId: string; userConcurrency: number }) => {
+        if (redisSlots.failAdmissionAcquire) {
+          throw new Error("redis unavailable");
         }
-        const userRunning = [...leases.values()].filter(
+        const userRunning = [...admissionLeases.values()].filter(
           (userId) => userId === input.userId
         ).length;
         if (userRunning >= input.userConcurrency) {
           return { status: "blocked" as const, reason: "user" as const };
         }
-        const token = `lease-${nextToken++}`;
-        leases.set(token, input.userId);
+        const token = `admission-${nextToken++}`;
+        admissionLeases.set(token, input.userId);
         return {
           status: "acquired" as const,
-          lease: { token, userKey: `user:${input.userId}` },
+          lease: {
+            token,
+            userKey: `user:${input.userId}`,
+            expiresAt: Date.now() + 60_000,
+          },
         };
       }
     ),
-    release: vi.fn(async (lease: { token: string }) => {
-      leases.delete(lease.token);
+    acquireExecution: vi.fn(async (input: { globalConcurrency: number }) => {
+      if (redisSlots.failExecutionAcquire) {
+        throw new Error("redis unavailable");
+      }
+      if (redisSlots.executionAcquireGate) {
+        await redisSlots.executionAcquireGate;
+      }
+      if (executionLeases.size >= input.globalConcurrency) {
+        return { status: "blocked" as const, reason: "global" as const };
+      }
+      const token = `execution-${nextToken++}`;
+      executionLeases.add(token);
+      return {
+        status: "acquired" as const,
+        lease: { token, expiresAt: Date.now() + 60_000 },
+      };
+    }),
+    renewAdmission: vi.fn(async () => ({
+      status: "renewed" as const,
+      expiresAt: Date.now() + 60_000,
+    })),
+    renewExecution: vi.fn(async () => ({
+      status: "renewed" as const,
+      expiresAt: Date.now() + 60_000,
+    })),
+    releaseAdmission: vi.fn(async (lease: { token: string }) => {
+      admissionLeases.delete(lease.token);
+    }),
+    releaseExecution: vi.fn(async (lease: { token: string }) => {
+      executionLeases.delete(lease.token);
     }),
     reset() {
       nextToken = 1;
-      leases.clear();
-      redisSlots.acquireGate = undefined;
-      redisSlots.failAcquire = false;
-      redisSlots.acquire.mockClear();
-      redisSlots.release.mockClear();
+      admissionLeases.clear();
+      executionLeases.clear();
+      redisSlots.executionAcquireGate = undefined;
+      redisSlots.failAdmissionAcquire = false;
+      redisSlots.failExecutionAcquire = false;
+      redisSlots.acquireAdmission.mockClear();
+      redisSlots.acquireExecution.mockClear();
+      redisSlots.renewAdmission.mockClear();
+      redisSlots.renewExecution.mockClear();
+      redisSlots.releaseAdmission.mockClear();
+      redisSlots.releaseExecution.mockClear();
     },
   };
 });
@@ -54,8 +88,13 @@ vi.mock("@repo/shared/system-settings", () => ({
 }));
 
 vi.mock("./redis-image-generation-slots", () => ({
-  acquireImageGenerationSlot: redisSlots.acquire,
-  releaseImageGenerationSlot: redisSlots.release,
+  acquireImageGenerationAdmission: redisSlots.acquireAdmission,
+  acquireImageGenerationExecution: redisSlots.acquireExecution,
+  getImageGenerationSlotLeaseTtlMs: vi.fn(() => 60_000),
+  releaseImageGenerationAdmission: redisSlots.releaseAdmission,
+  releaseImageGenerationExecution: redisSlots.releaseExecution,
+  renewImageGenerationAdmission: redisSlots.renewAdmission,
+  renewImageGenerationExecution: redisSlots.renewExecution,
 }));
 
 import { withImageGenerationQueue } from "./queue";
@@ -90,7 +129,7 @@ describe("withImageGenerationQueue", () => {
   it("Redis 不可用时拒绝请求且不回退进程内槽位", async () => {
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const run = vi.fn(async () => "should-not-run");
-    redisSlots.failAcquire = true;
+    redisSlots.failAdmissionAcquire = true;
 
     await expect(
       queue({ userId: "user-a", priority: "normal", userConcurrency: 1 }, run)
@@ -102,7 +141,7 @@ describe("withImageGenerationQueue", () => {
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const acquisition = deferred<void>();
     const run = vi.fn(async () => "should-not-run");
-    redisSlots.acquireGate = acquisition.promise;
+    redisSlots.executionAcquireGate = acquisition.promise;
 
     const queued = queue(
       {
@@ -118,7 +157,8 @@ describe("withImageGenerationQueue", () => {
     acquisition.resolve();
     await flushTasks();
     expect(run).not.toHaveBeenCalled();
-    expect(redisSlots.release).toHaveBeenCalledTimes(1);
+    expect(redisSlots.releaseAdmission).toHaveBeenCalledTimes(1);
+    expect(redisSlots.releaseExecution).toHaveBeenCalledTimes(1);
   });
 
   it("limits running tasks by the configured global concurrency", async () => {
@@ -160,12 +200,12 @@ describe("withImageGenerationQueue", () => {
     await expect(secondRun).resolves.toBe("second");
   });
 
-  it("limits per-user concurrency independent of global", async () => {
+  it("用户达到并发上限时立即拒绝且不影响其他用户", async () => {
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const first = deferred<string>();
     const started: string[] = [];
 
-    // 同一用户的两个任务，userConcurrency=1：第二个必须等到第一个完成。
+    // 同一用户的第一个任务持有 admission 后，第二个请求必须立即拒绝，不能进入队列。
     const firstRun = queue(
       { userId: "user-a", priority: "normal", userConcurrency: 1 },
       async () => {
@@ -189,6 +229,15 @@ describe("withImageGenerationQueue", () => {
       }
     );
 
+    await expect(secondRun).rejects.toMatchObject({
+      code: "concurrency_limit_exceeded",
+      httpStatus: 429,
+      details: {
+        limit: 1,
+        effectiveSource: "system_default",
+        scope: "user",
+      },
+    });
     await flushTasks();
     expect(started).toEqual(["a1", "b1"]);
     await expect(otherRun).resolves.toBe("b1");
@@ -197,8 +246,7 @@ describe("withImageGenerationQueue", () => {
     await firstRun;
     await flushTasks();
 
-    expect(started).toEqual(["a1", "b1", "a2"]);
-    await expect(secondRun).resolves.toBe("a2");
+    expect(started).toEqual(["a1", "b1"]);
   });
 
   it("runs higher priority before normal", async () => {
@@ -235,6 +283,7 @@ describe("withImageGenerationQueue", () => {
       }
     );
 
+    await flushTasks();
     blocker.resolve("blocker");
     await blockerRun;
     await flushTasks();
@@ -274,6 +323,7 @@ describe("withImageGenerationQueue", () => {
       }
     );
 
+    await flushTasks();
     blocker.resolve("blocker");
     await blockerRun;
     await flushTasks();
@@ -319,7 +369,8 @@ describe("withImageGenerationQueue", () => {
       )
     ).rejects.toThrow("upstream failed");
 
-    expect(redisSlots.release).toHaveBeenCalledTimes(1);
+    expect(redisSlots.releaseAdmission).toHaveBeenCalledTimes(1);
+    expect(redisSlots.releaseExecution).toHaveBeenCalledTimes(1);
     await expect(
       queue(
         { userId: "user-a", priority: "normal", userConcurrency: 1 },
@@ -328,11 +379,11 @@ describe("withImageGenerationQueue", () => {
     ).resolves.toBe("second");
   });
 
-  it("rejects queued task after timeout with concurrency-limit message when user at limit", async () => {
+  it("用户达到上限时不等待队列超时并返回稳定 429 领域错误", async () => {
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const blocker = deferred<string>();
 
-    // 占满该用户的唯一并发槽位，使下一个同用户任务排队并最终超时。
+    // 占满该用户的唯一准入槽，使下一个同用户请求在本地排队前立即失败。
     const blockerRun = queue(
       { userId: "user-a", priority: "normal", userConcurrency: 1 },
       async () => await blocker.promise
@@ -340,7 +391,7 @@ describe("withImageGenerationQueue", () => {
 
     await flushTasks();
 
-    const queuedRun = queue(
+    const rejectedRun = queue(
       {
         userId: "user-a",
         priority: "normal",
@@ -350,7 +401,15 @@ describe("withImageGenerationQueue", () => {
       async () => "never"
     );
 
-    await expect(queuedRun).rejects.toThrow(/concurrency limit reached/i);
+    await expect(rejectedRun).rejects.toMatchObject({
+      code: "concurrency_limit_exceeded",
+      httpStatus: 429,
+      details: {
+        limit: 1,
+        effectiveSource: "system_default",
+        scope: "user",
+      },
+    });
 
     blocker.resolve("blocker");
     await blockerRun;
@@ -383,5 +442,37 @@ describe("withImageGenerationQueue", () => {
 
     blocker.resolve("blocker");
     await blockerRun;
+  });
+
+  it("等待全站槽的请求持续占用用户准入槽", async () => {
+    runtimeSettings.globalConcurrency = 1;
+    const { withImageGenerationQueue: queue } = await importFreshQueue();
+    const blocker = deferred<string>();
+
+    const blockerRun = queue(
+      { userId: "user-a", priority: 10, userConcurrency: 1 },
+      async () => await blocker.promise
+    );
+    await flushTasks();
+
+    const waitingRun = queue(
+      { userId: "user-b", priority: 20, userConcurrency: 1 },
+      async () => "waiting-completed"
+    );
+    await flushTasks();
+
+    await expect(
+      queue(
+        { userId: "user-b", priority: 20, userConcurrency: 1 },
+        async () => "must-not-run"
+      )
+    ).rejects.toMatchObject({
+      code: "concurrency_limit_exceeded",
+      httpStatus: 429,
+    });
+
+    blocker.resolve("blocker");
+    await expect(blockerRun).resolves.toBe("blocker");
+    await expect(waitingRun).resolves.toBe("waiting-completed");
   });
 });
