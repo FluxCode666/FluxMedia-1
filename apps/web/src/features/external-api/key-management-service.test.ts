@@ -59,7 +59,7 @@ function createService() {
     listSelectableGroups,
     getGroupById,
     createId: () => "key-new",
-    createSecret: () => "g2i_plaintext",
+    createSecret: () => "sk-plaintext",
     hashSecret: (secret) => `hash:${secret}`,
     now: () => now,
   });
@@ -186,15 +186,15 @@ describe("create API key", () => {
       id: "key-new",
       userId: "user-1",
       name: "Production",
-      keyPrefix: "g2i_pla",
-      keyHash: "hash:g2i_plaintext",
+      keyPrefix: "sk-plai",
+      keyHash: "hash:sk-plaintext",
       lastFour: "text",
       generationGroupId: "group-2",
       creditLimit: 12.35,
       createdAt: now,
       updatedAt: now,
     });
-    expect(result.apiKey).toBe("g2i_plaintext");
+    expect(result.apiKey).toBe("sk-plaintext");
     expect(result.key.currentGroup).toEqual({
       id: "group-2",
       name: "Selectable Group",

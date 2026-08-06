@@ -15,7 +15,7 @@ import { nanoid } from "nanoid";
 import { hashApiKey } from "./auth-token";
 import { normalizeExternalApiKeyCreditLimit } from "./quota-math";
 
-const API_KEY_PREFIX = "g2i";
+const API_KEY_PREFIX = "sk-";
 const DEFAULT_KEY_NAME = "默认 API 密钥";
 
 export type ExternalApiKeyManagementErrorCode =
@@ -169,12 +169,12 @@ function toKeySummary(
 /**
  * 生成带固定前缀的高熵 API 密钥明文。
  *
- * @returns `g2i_` 前缀与 32 字节随机内容组成的密钥。
+ * @returns `sk-` 前缀与 32 字节随机内容组成的密钥。
  * @throws 系统随机源不可用时透传 `randomBytes` 的错误。
  * @remarks 副作用是读取系统随机源；明文仅应由 create 流程返回一次。
  */
 function createApiKey(): string {
-  return `${API_KEY_PREFIX}_${randomBytes(32).toString("base64url")}`;
+  return `${API_KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
 }
 
 /**

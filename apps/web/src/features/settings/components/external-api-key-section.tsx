@@ -3,7 +3,7 @@
 /**
  * API 密钥管理页面主体。
  *
- * 职责：提供创建区、一次性明文展示和单一响应式摘要列表；每行独立展开与锁定，
+ * 职责：提供创建区、可重复复制的明文展示和单一响应式摘要列表；每行独立展开与锁定，
  * 启用态只编辑分组/额度，撤销态只读且仅允许删除。
  * 使用方：/dashboard/external-api 页面。
  * 关键依赖：API 密钥 Server Actions、纯列表状态 reducer、Shadcn Collapsible。
@@ -356,7 +356,7 @@ export function ExternalApiKeySection({
     }
   };
 
-  /** 复制一次性明文；失败时聚焦并选中文本，允许用户手工复制。 */
+  /** 复制当前创建结果；按钮保持可用，允许用户重复复制同一个密钥。 */
   const handleCopyNewKey = async (): Promise<void> => {
     if (!newKey) return;
     try {
@@ -531,18 +531,20 @@ export function ExternalApiKeySection({
             <Label htmlFor="new-external-api-key" className="text-xs">
               {t("newKeyLabel")}
             </Label>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <div className="mt-2 flex items-center gap-2">
               <Input
                 ref={newKeyInputRef}
                 id="new-external-api-key"
                 value={newKey}
                 readOnly
                 onFocus={(event) => event.currentTarget.select()}
-                className="min-w-0 font-mono text-xs"
+                className="min-w-0 flex-1 font-mono text-xs"
               />
               <Button
                 type="button"
                 variant="outline"
+                className="shrink-0"
+                aria-label={t("copy")}
                 onClick={() => void handleCopyNewKey()}
               >
                 <Copy className="mr-2 h-3.5 w-3.5" />
