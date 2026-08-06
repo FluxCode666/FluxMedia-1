@@ -4124,8 +4124,13 @@ describe("0080 Adobe direct 凭据健康迁移", () => {
     const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
       entries: Array<{ idx: number; tag: string; when: number }>;
     };
-    const previous = journal.entries.at(-2);
-    const current = journal.entries.at(-1);
+    const currentIndex = journal.entries.findIndex(
+      (entry) =>
+        entry.idx === 80 && entry.tag === "0080_adobe_credential_health"
+    );
+    expect(currentIndex).toBeGreaterThan(0);
+    const previous = journal.entries[currentIndex - 1];
+    const current = journal.entries[currentIndex];
     expect(previous).toMatchObject({
       idx: 79,
       tag: "0079_image_async_task_mq",
