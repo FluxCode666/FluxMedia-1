@@ -136,8 +136,8 @@ export function AdminRequestJsonDetails({
             {requestState.status === "ready" && !snapshot ? (
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {copy(
-                  "No final API request was captured for this record. Older records, Adobe requests, and failures before request-script completion do not have a snapshot.",
-                  "该记录未采集到最终 API 请求。旧记录、Adobe 请求，以及请求脚本完成前的失败不会有快照。"
+                  "No final upstream request was captured for this record. Older records and failures before request-body completion do not have a snapshot.",
+                  "该记录未采集到最终上游请求。旧记录以及请求正文完成前的失败不会有快照。"
                 )}
               </p>
             ) : null}

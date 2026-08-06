@@ -445,8 +445,8 @@ export const imageGetAdminHistoryRequestSnapshot = defineOperation({
   domain: "image-generation",
   title: "获取全局生成记录请求快照",
   description:
-    "按图片或视频记录 ID 读取请求脚本处理后的脱敏上游请求正文。" +
-    "仅三档人工管理员可调用，旧记录或非 API 类型供应商返回空快照。",
+    "按图片或视频记录 ID 读取最终外呼前的脱敏上游请求正文。" +
+    "仅三档人工管理员可调用，旧记录或请求正文完成前失败时返回空快照。",
   input: adminHistoryRequestSnapshotInputSchema,
   output: adminHistoryRequestSnapshotOutputSchema,
   access: {

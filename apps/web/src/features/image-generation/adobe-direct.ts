@@ -43,6 +43,7 @@ import {
   resolveFireflyVideoProviderModel,
 } from "@repo/shared/adobe/firefly-direct";
 import { logError, logWarn } from "@repo/shared/logger";
+import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
 import {
   type VideoModelCapabilityDescriptor,
   validateVideoModelParameters,
@@ -55,6 +56,7 @@ import {
   MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
+import { createApiUpstreamRequestSnapshot } from "@/features/image-backend-pool/api-upstream-request-snapshot";
 import { runAdobeBeforeAcceptanceWithAuthRetry } from "./adobe-auth-retry";
 import { synchronizeAdobeCredentialHealthAfterRuntimeStatus } from "./adobe-credential-passive-health";
 import {
@@ -636,16 +638,25 @@ async function runWithAdobeCredential<T>(
 
 /**
  * mode=direct 的 adobe 派发：读取成员凭据 → 选模型族/尺寸 → 图生图先上传 → generateImage。
- * 出错返回 { error }，由上层管线统一处理（含池上报）。
+ *
+ * @param config 已获租 Adobe direct 成员的固定配置。
+ * @param params 图片操作、最终生成参数、可选输入图与请求快照回调。
+ * @returns 内联图片产物或供号池判断是否可切换的安全错误。
+ * @sideEffects 读取或刷新成员凭据，上传输入图并调用 Adobe 图片生成。
+ * @failure 输入上传前失败不产生生成快照；提交前回调失败会阻止未记录的外呼。
  */
 export async function runAdobeDirectImageRequest(
   config: ApiConfig,
   params: {
+    operation: "images.generate" | "images.edit";
     prompt: string;
     model?: string | null;
     size?: string | null;
     quality?: string | null;
     images?: Array<{ data: Buffer; type?: string | null }>;
+    onRequestSnapshot?: (
+      snapshot: ApiUpstreamRequestSnapshot
+    ) => Promise<void> | void;
     signal?: AbortSignal;
   }
 ): Promise<GenerateImageResult> {
@@ -728,6 +739,19 @@ export async function runAdobeDirectImageRequest(
             ? params.quality
             : (config.backend?.adobeGptImageQuality ?? "high"),
         ...(sourceImageIds ? { sourceImageIds } : {}),
+        ...(params.onRequestSnapshot
+          ? {
+              onRequestBody: async (body) => {
+                await params.onRequestSnapshot?.(
+                  createApiUpstreamRequestSnapshot({
+                    operation: params.operation,
+                    contentType: "application/json",
+                    body,
+                  })
+                );
+              },
+            }
+          : {}),
         signal: params.signal,
       });
       return output.bytes.toString("base64");
@@ -870,7 +894,11 @@ async function createAdobeVideoStageClient(
 /**
  * 提交一次 Adobe 视频任务并返回持久恢复身份。
  *
- * 明确未接受的账号级错误交由统一号池切换成员；提交响应不确定时立即停止，防止重投。
+ * @param config 已获租 Adobe direct 成员的固定配置。
+ * @param params 视频参数、输入素材、持久 Profile 与请求快照回调。
+ * @returns 已接受任务的固定恢复身份，或可供状态机分类的安全错误。
+ * @sideEffects 上传输入素材、刷新成员凭据并最多提交一次 Adobe 视频生成请求。
+ * @failure 明确未接受的账号级错误允许切换；提交不确定时立即停止，防止重投。
  */
 export async function submitAdobeDirectVideoRequest(
   config: ApiConfig,
@@ -885,6 +913,9 @@ export async function submitAdobeDirectVideoRequest(
     negativePrompt?: string | null;
     requestProfile: AdobeCredentialProfile;
     authProfile: AdobeCredentialProfile;
+    onRequestSnapshot?: (
+      snapshot: ApiUpstreamRequestSnapshot
+    ) => Promise<void> | void;
     signal?: AbortSignal;
   } & AdobeVideoSourceInputs
 ): Promise<AdobeVideoSubmission | AdobeVideoStageError> {
@@ -965,6 +996,19 @@ export async function submitAdobeDirectVideoRequest(
           ? { negativePrompt: params.negativePrompt }
           : {}),
         ...sourceIds,
+        ...(params.onRequestSnapshot
+          ? {
+              onRequestBody: async (body) => {
+                await params.onRequestSnapshot?.(
+                  createApiUpstreamRequestSnapshot({
+                    operation: "videos.generate",
+                    contentType: "application/json",
+                    body,
+                  })
+                );
+              },
+            }
+          : {}),
         ...(params.signal ? { signal: params.signal } : {}),
       });
       return {

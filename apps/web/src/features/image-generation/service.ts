@@ -32,6 +32,7 @@ import { logApiUpstreamImageTaskOrphanRisk } from "@/features/image-backend-pool
 import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-upstream-opaque-values";
 import { resolveApiUpstreamRequestUrl } from "@/features/image-backend-pool/api-upstream-path";
 import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
+import { createApiUpstreamRequestSnapshot } from "@/features/image-backend-pool/api-upstream-request-snapshot";
 import {
   fetchMediaUpstream,
   fetchMediaUpstreamDownload,
@@ -259,6 +260,23 @@ function createApiBackendFormDataRequest(formData: FormData): {
     appendScriptRequestValue(request, name, token);
   }
   return { body: request, opaqueValues };
+}
+
+/**
+ * 把平台 multipart 最终表单映射为可脱敏的字段记录，并保留重复字段顺序。
+ *
+ * @param formData 已完成全部平台字段和文件追加的最终表单。
+ * @returns 供统一快照清洗器消费的普通对象；文件仍为 Blob/File，后续只保留描述。
+ * @sideEffects 无；不会读取文件字节或改写原表单。
+ */
+function createFormDataSnapshotBody(
+  formData: FormData
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [name, value] of formData.entries()) {
+    appendScriptRequestValue(body, name, value);
+  }
+  return body;
 }
 
 /** 把已恢复宿主媒体的严格顶层对象编码为 FormData。 */
@@ -1474,19 +1492,28 @@ async function rehostApiBackendInputImages(
   }
 }
 
-// adobe（pool-adobe）派发：用 Firefly 适配器构造 /v1/chat/completions 请求，解析产物
-// URL 后取回字节返回 base64（由管线 re-host），不长期依赖 adobe2api 本机 /generated URL。
-// 文生图只传 prompt；图生图把输入图以 base64 data URL 放进 messages。
+/**
+ * 通过 Adobe gateway/direct 执行一次图片生成或编辑并采集最终提交正文。
+ *
+ * @param config 已获租 Adobe 成员的固定配置与凭据。
+ * @param params 规范化图片参数、操作类型和可选输入图。
+ * @param callbacks 统一管线提供的局部回调；正文完成后、外呼前触发快照回调。
+ * @returns 可交回统一图片管线的内联产物或安全错误。
+ * @sideEffects direct 可能上传输入图；两种模式都会调用 Adobe 并下载最终产物。
+ * @failure 不支持模型或上游失败时返回错误；请求正文尚未完成时不会伪造快照。
+ */
 async function runAdobeImageRequest(
   config: ApiConfig,
   params: {
+    operation: "images.generate" | "images.edit";
     prompt: string;
     model?: string | null;
     size?: string | null;
     quality?: string | null;
     images?: Array<{ data: Buffer; type?: string | null }>;
     signal?: AbortSignal;
-  }
+  },
+  callbacks?: ImageGenerationCallbacks
 ): Promise<GenerateImageResult> {
   if (
     !canAdobeBackendServeModel({
@@ -1499,7 +1526,14 @@ async function runAdobeImageRequest(
   }
   // direct 模式：用本仓库移植的逆向逻辑直连 Adobe Firefly（经 Go TLS 旁路），不走网关。
   if (config.backend?.adobeMode === "direct") {
-    return runAdobeDirectImageRequest(config, params);
+    return runAdobeDirectImageRequest(config, {
+      ...params,
+      ...(callbacks?.onApiUpstreamRequestSnapshot
+        ? {
+            onRequestSnapshot: callbacks.onApiUpstreamRequestSnapshot,
+          }
+        : {}),
+    });
   }
   // 网关模式：family 优先取请求 model 的族（支持 firefly-* 与裸 Nano Banana）；普通或未知
   // 模型（如普通 gpt-image 经 force_firefly 强制路由到 adobe）落 gpt-image-2。
@@ -1512,6 +1546,13 @@ async function runAdobeImageRequest(
       ? { images: params.images }
       : {}),
   });
+  await callbacks?.onApiUpstreamRequestSnapshot?.(
+    createApiUpstreamRequestSnapshot({
+      operation: params.operation,
+      contentType: "application/json",
+      body,
+    })
+  );
   const response = await fetchMediaUpstream(
     `${stripTrailingSlash(config.baseUrl)}/v1/chat/completions`,
     {
@@ -1552,13 +1593,18 @@ export async function generateImage(
   if (config.backend?.type === "pool-adobe") {
     return requireImageOutput(
       applyPromptOptimizationResultVisibility(
-        await runAdobeImageRequest(config, {
-          prompt: getEffectivePrompt(params),
-          model,
-          size: params.size,
-          quality: params.quality,
-          signal: params.signal,
-        })
+        await runAdobeImageRequest(
+          config,
+          {
+            operation: "images.generate",
+            prompt: getEffectivePrompt(params),
+            model,
+            size: params.size,
+            quality: params.quality,
+            signal: params.signal,
+          },
+          callbacks
+        )
       )
     );
   }
@@ -1637,6 +1683,13 @@ export async function generateImage(
         )
       );
     }
+    await callbacks?.onApiUpstreamRequestSnapshot?.(
+      createApiUpstreamRequestSnapshot({
+        operation: "images.generate",
+        contentType: "application/json",
+        body: requestBody,
+      })
+    );
     const response = await fetchMediaUpstream(
       `${config.baseUrl}/images/generations`,
       {
@@ -1720,14 +1773,19 @@ export async function editImage(
   if (config.backend?.type === "pool-adobe") {
     return requireImageOutput(
       applyPromptOptimizationResultVisibility(
-        await runAdobeImageRequest(config, {
-          prompt: effectiveEditPrompt,
-          model,
-          size: params.size,
-          quality: params.quality,
-          images: params.images,
-          signal: params.signal,
-        })
+        await runAdobeImageRequest(
+          config,
+          {
+            operation: "images.edit",
+            prompt: effectiveEditPrompt,
+            model,
+            size: params.size,
+            quality: params.quality,
+            images: params.images,
+            signal: params.signal,
+          },
+          callbacks
+        )
       )
     );
   }
@@ -1804,6 +1862,13 @@ export async function editImage(
         )
       );
     }
+    await callbacks?.onApiUpstreamRequestSnapshot?.(
+      createApiUpstreamRequestSnapshot({
+        operation: "images.edit",
+        contentType: "multipart/form-data",
+        body: createFormDataSnapshotBody(formData),
+      })
+    );
     const response = await fetchMediaUpstream(
       `${config.baseUrl}/images/edits`,
       {

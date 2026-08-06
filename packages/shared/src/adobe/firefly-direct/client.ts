@@ -76,6 +76,8 @@ export type GenerateImageInput = {
   sourceImageIds?: string[] | null;
   timeoutMs?: number;
   pollIntervalMs?: number;
+  /** 每次提交前暴露已完成随机种子、模型和素材 ID 组装的实际 JSON 正文。 */
+  onRequestBody?: (body: FireflyImagePayload) => Promise<void> | void;
   signal?: AbortSignal;
 };
 
@@ -102,6 +104,8 @@ export type GenerateVideoInput = {
   referenceImageIds?: readonly string[];
   timeoutMs?: number;
   pollIntervalMs?: number;
+  /** 提交前暴露已完成模型协议映射和素材 ID 组装的实际 JSON 正文。 */
+  onRequestBody?: (body: FireflyVideoPayload) => Promise<void> | void;
   signal?: AbortSignal;
 };
 
@@ -455,6 +459,9 @@ export class AdobeFireflyClient {
     let submitResp: FireflyTransportResponse | null = null;
     let lastError = "";
     for (const payload of candidates) {
+      // WHY：必须在真正 transport 前上报本轮候选；多个候选重试时由调用方覆盖为
+      // 最后一次实际发送的正文，不能在更早的业务参数层猜测最终 payload。
+      await input.onRequestBody?.(payload);
       submitResp = await this.transport.request({
         method: "POST",
         url: SUBMIT_URL,
@@ -604,6 +611,8 @@ export class AdobeFireflyClient {
 
     let submitResp: FireflyTransportResponse;
     try {
+      // WHY：随机种子与供应商专属结构只在 payload builder 后确定，此处才是真实请求。
+      await input.onRequestBody?.(payload);
       submitResp = await this.transport.request({
         method: "POST",
         url: VIDEO_SUBMIT_URL,

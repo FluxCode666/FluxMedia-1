@@ -226,6 +226,70 @@ describe("Images API service", () => {
     });
   });
 
+  it("普通平台文生图在外呼前暴露脱敏后的实际请求 JSON", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const onApiUpstreamRequestSnapshot = vi.fn();
+    mocks.fetchMediaUpstream.mockResolvedValue(successfulImageResponse());
+
+    const result = await generateImage(
+      { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
+      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
+      { onApiUpstreamRequestSnapshot }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(onApiUpstreamRequestSnapshot).toHaveBeenCalledWith({
+      operation: "images.generate",
+      contentType: "application/json",
+      body: expect.objectContaining({
+        model: "gpt-image-2",
+        size: "1024x1024",
+        response_format: "b64_json",
+      }),
+    });
+  });
+
+  it("Adobe gateway 文生图在外呼前暴露实际请求 JSON", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const onApiUpstreamRequestSnapshot = vi.fn();
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: "![generated](https://cdn.example.test/image.png)",
+            },
+          },
+        ],
+      })
+    );
+    mocks.fetchMediaUpstreamDownload.mockResolvedValue(
+      new Response(Buffer.from("image-result"), { status: 200 })
+    );
+
+    const result = await generateImage(
+      {
+        baseUrl: "https://adobe.example.test/v1",
+        apiKey: "test-key",
+        backend: { type: "pool-adobe", adobeMode: "gateway" },
+      },
+      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
+      { onApiUpstreamRequestSnapshot }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(onApiUpstreamRequestSnapshot).toHaveBeenCalledWith({
+      operation: "images.generate",
+      contentType: "application/json",
+      body: expect.objectContaining({
+        model: expect.any(String),
+        messages: expect.any(Array),
+      }),
+    });
+  });
+
   it("生成图片时映射上游模型并执行 JSON 请求脚本", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
@@ -555,6 +619,43 @@ return request;
       "https://api.example.test/v1/images/edits",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("普通平台图生图保存文件描述而不保存二进制正文", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    const onApiUpstreamRequestSnapshot = vi.fn();
+    mocks.fetchMediaUpstream.mockResolvedValue(successfulImageResponse());
+
+    const result = await editImage(
+      { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
+      {
+        prompt: "adjust colors",
+        model: "gpt-image-2",
+        images: [
+          {
+            name: "source.png",
+            type: "image/png",
+            data: Buffer.from("source-image"),
+          },
+        ],
+      },
+      { onApiUpstreamRequestSnapshot }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(onApiUpstreamRequestSnapshot).toHaveBeenCalledWith({
+      operation: "images.edit",
+      contentType: "multipart/form-data",
+      body: expect.objectContaining({
+        image: expect.objectContaining({
+          type: "File",
+          name: "source.png",
+          mimeType: "image/png",
+          data: "[REDACTED]",
+        }),
+      }),
+    });
   });
 
   it("编辑图片时映射上游模型并允许脚本重命名媒体字段", async () => {

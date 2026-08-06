@@ -303,7 +303,7 @@ function attachVideoUpstreamRequestSnapshot(
 }
 
 /**
- * 在 API 视频真正外呼前最佳努力保存最终请求正文。
+ * 在任意视频后端真正外呼前最佳努力保存最终请求正文。
  *
  * WHY：不推进 stateVersion，避免调试快照干扰持久状态机 CAS；失败只记录任务 ID，
  * 不把请求正文或签名 URL 写入日志，也不阻断用户生成。
@@ -1211,6 +1211,19 @@ async function submitClaimedCreatedVideo(
     const startedAt = Date.now();
     const submissionSignal = AbortSignal.timeout(VIDEO_SUBMISSION_TIMEOUT_MS);
     let submittedRequestSnapshot: ApiUpstreamRequestSnapshot | null = null;
+    /**
+     * 保存本次成员实际发送的请求；切号重试时后一次正文覆盖前一次。
+     *
+     * @param snapshot 已完成脱敏和大小限制的最终提交正文。
+     * @returns 快照最佳努力写入完成后返回。
+     * @sideEffects 更新当前视频任务 metadata，但不推进 stateVersion。
+     */
+    const onRequestSnapshot = async (
+      snapshot: ApiUpstreamRequestSnapshot
+    ): Promise<void> => {
+      submittedRequestSnapshot = snapshot;
+      await persistVideoUpstreamRequestSnapshot(row, snapshot);
+    };
     const submitted =
       lease.memberType === "api"
         ? await submitApiVideoRequest(lease.config, {
@@ -1223,10 +1236,7 @@ async function submitClaimedCreatedVideo(
             effectiveAudio: contract.effectiveAudio,
             ...sourceInputs,
             ...(negativePrompt != null ? { negativePrompt } : {}),
-            onRequestSnapshot: async (snapshot) => {
-              submittedRequestSnapshot = snapshot;
-              await persistVideoUpstreamRequestSnapshot(row, snapshot);
-            },
+            onRequestSnapshot,
             signal: submissionSignal,
           })
         : await submitAdobeDirectVideoRequest(lease.config, {
@@ -1239,6 +1249,7 @@ async function submitClaimedCreatedVideo(
             maxReferenceImages: contract.maxReferenceImages,
             requestProfile: row.adobeRequestProfile,
             authProfile: row.adobeAuthProfile,
+            onRequestSnapshot,
             ...sourceInputs,
             ...(negativePrompt != null ? { negativePrompt } : {}),
             signal: submissionSignal,

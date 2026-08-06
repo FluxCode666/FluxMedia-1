@@ -455,7 +455,7 @@ export async function loadAdminHistoryRecords(
  *
  * @param request 已由 UOL 角色门禁保护的不可信记录类型和 ID。
  * @param dependencies 管理端历史仓储。
- * @returns 脱敏快照；旧记录、非 API 供应商或异常旧元数据统一返回 null。
+ * @returns 脱敏快照；旧记录、正文完成前失败或异常旧元数据统一返回 null。
  */
 export async function loadAdminHistoryRequestSnapshot(
   request: { input: unknown },

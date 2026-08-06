@@ -86,6 +86,36 @@ describe("extractResultLink", () => {
 });
 
 describe("AdobeFireflyClient.generateImage", () => {
+  it("每次图片提交前暴露本次实际请求正文", async () => {
+    const requestBodies: unknown[] = [];
+    const api = new MockTransport((request) => {
+      expect(requestBodies).toHaveLength(1);
+      expect(requestBodies[0]).toEqual(JSON.parse(String(request.body)));
+      return jsonResponse(401, {});
+    });
+    const client = new AdobeFireflyClient({ transport: api });
+
+    await expect(
+      client.generateImage({
+        token: FAKE_TOKEN,
+        prompt: "a cat",
+        aspectRatio: "1:1",
+        outputResolution: "2K",
+        upstreamModelId: "gpt-image",
+        upstreamModelVersion: "2",
+        onRequestBody: (body) => {
+          requestBodies.push(body);
+        },
+      })
+    ).rejects.toBeInstanceOf(AuthError);
+
+    expect(requestBodies[0]).toMatchObject({
+      modelId: "gpt-image",
+      modelVersion: "2",
+      prompt: "a cat",
+    });
+  });
+
   it("提交→轮询→下载 闭环", async () => {
     const imgBytes = Buffer.from("PNGDATA");
     const api = new MockTransport((req, index) => {
@@ -306,6 +336,35 @@ describe("AdobeFireflyClient.generateVideo", () => {
     effectiveAudio: false,
     pollIntervalMs: 1,
   };
+
+  it("视频提交前暴露本次实际请求正文", async () => {
+    const requestBodies: unknown[] = [];
+    const api = new MockTransport((request) => {
+      expect(requestBodies).toHaveLength(1);
+      expect(requestBodies[0]).toEqual(JSON.parse(String(request.body)));
+      return jsonResponse(401, {});
+    });
+    const client = new AdobeFireflyClient({ transport: api });
+
+    await expect(
+      client.submitVideo({
+        ...videoInput,
+        onRequestBody: (body) => {
+          requestBodies.push(body);
+        },
+      })
+    ).rejects.toBeInstanceOf(AuthError);
+
+    expect(requestBodies[0]).toMatchObject({
+      modelId: expect.any(String),
+      duration: 8,
+    });
+    const requestBody = requestBodies[0] as { prompt?: unknown };
+    expect(JSON.parse(String(requestBody.prompt))).toMatchObject({
+      prompt_text: "a moving cat",
+      duration_sec: 8,
+    });
+  });
 
   it("上游接受后轮询 408 只重试原任务，不重复提交", async () => {
     const videoBytes = Buffer.from("MP4DATA");

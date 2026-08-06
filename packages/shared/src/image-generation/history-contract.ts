@@ -91,7 +91,7 @@ export const adminHistoryRequestSnapshotInputSchema = z
   })
   .strict();
 
-/** 管理端详情读取结果；旧记录或非 API 供应商允许没有快照。 */
+/** 管理端详情读取结果；旧记录或请求正文完成前失败时允许没有快照。 */
 export const adminHistoryRequestSnapshotOutputSchema = z
   .object({
     id: z.string().min(1).max(512),

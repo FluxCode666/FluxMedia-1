@@ -90,7 +90,7 @@ export interface PartialImageResult {
 
 export interface ImageGenerationCallbacks {
   onPartialImage?: (image: PartialImageResult) => Promise<void> | void;
-  /** API 请求脚本完成后、真正外呼前产生的脱敏最终请求快照。 */
+  /** 任意媒体后端完成最终正文组装后、真正外呼前产生的脱敏请求快照。 */
   onApiUpstreamRequestSnapshot?: (
     snapshot: ApiUpstreamRequestSnapshot
   ) => Promise<void> | void;
