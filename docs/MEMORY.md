@@ -60,7 +60,8 @@
 - 为支持刷新后由本人重复复制，迁移 `0085` 起同时保存使用 `BETTER_AUTH_SECRET`
   派生密钥加密的 AES-256-GCM 版本化密文。完整 Key 只允许通过 human-only、
   session-user 限定的 `externalApi.listKeys` 返回，不得进入 MCP、外部 API 或日志。
-- `0085` 前的历史 Key 只有不可逆哈希，无法回填明文；列表必须返回 `apiKey: null`，
+- `0085` 前的历史 Key 只有不可逆哈希，无法回填明文；密文损坏或加密 Secret 轮换后
+  同样无法恢复。单条恢复失败必须安全记日志并返回 `apiKey: null`，不得拖垮整个列表；
   需要刷新复制时应撤销并重新创建。
 
 ## 模型配置与公开目录

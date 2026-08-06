@@ -52,6 +52,7 @@ let listSelectableGroups: Mock<() => Promise<(typeof selectableGroup)[]>>;
 let getGroupById: Mock<
   (groupId: string) => Promise<typeof selectableGroup | null>
 >;
+let onSecretRecoveryError: Mock<(keyId: string, error: unknown) => void>;
 
 /** 构造完全注入依赖的服务，确保测试不会加载数据库连接。 */
 function createService() {
@@ -64,6 +65,7 @@ function createService() {
     hashSecret: (secret) => `hash:${secret}`,
     encryptSecret: (secret) => `encrypted:${secret}`,
     decryptSecret: (ciphertext) => ciphertext.replace("encrypted:", ""),
+    onSecretRecoveryError,
     now: () => now,
   });
 }
@@ -126,6 +128,7 @@ beforeEach(() => {
           ? selectableGroup
           : null
     );
+  onSecretRecoveryError = vi.fn();
 });
 
 describe("list API keys", () => {
@@ -188,6 +191,50 @@ describe("list API keys", () => {
     const result = await createService().listKeys("user-1");
 
     expect(result.keys[0]?.apiKey).toBeNull();
+    expect(onSecretRecoveryError).not.toHaveBeenCalled();
+  });
+
+  it("单条密文不可恢复时记录错误但仍返回其余列表", async () => {
+    const recoveryError = new Error("ciphertext mismatch");
+    repository.listByUser.mockResolvedValue([
+      {
+        key: activeKey,
+        currentGroup: disabledCurrentGroup,
+      },
+      {
+        key: {
+          ...activeKey,
+          id: "key-corrupted",
+          encryptedKey: "corrupted",
+        },
+        currentGroup: disabledCurrentGroup,
+      },
+    ]);
+    const service = createExternalApiKeyManagementService({
+      repository,
+      listSelectableGroups,
+      getGroupById,
+      createId: () => "key-new",
+      createSecret: () => "sk-plaintext",
+      hashSecret: (secret) => `hash:${secret}`,
+      encryptSecret: (secret) => `encrypted:${secret}`,
+      decryptSecret: (ciphertext) => {
+        if (ciphertext === "corrupted") throw recoveryError;
+        return ciphertext.replace("encrypted:", "");
+      },
+      onSecretRecoveryError,
+      now: () => now,
+    });
+
+    const result = await service.listKeys("user-1");
+
+    expect(result.keys).toHaveLength(2);
+    expect(result.keys[0]?.apiKey).toBe("sk-stored-key");
+    expect(result.keys[1]?.apiKey).toBeNull();
+    expect(onSecretRecoveryError).toHaveBeenCalledWith(
+      "key-corrupted",
+      recoveryError
+    );
   });
 });
 

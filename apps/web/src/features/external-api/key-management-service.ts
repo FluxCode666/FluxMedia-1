@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { externalApiKey as externalApiKeyTable } from "@repo/database/schema";
+import { logError } from "@repo/shared/logger";
 import type {
   ExternalApiKeyListItem,
   ExternalApiKeySummary,
@@ -134,6 +135,7 @@ type ServiceDependencies = {
   hashSecret(secret: string): string;
   encryptSecret(secret: string): string;
   decryptSecret(ciphertext: string): string;
+  onSecretRecoveryError(keyId: string, error: unknown): void;
   now(): Date;
 };
 
@@ -221,20 +223,28 @@ export function createExternalApiKeyManagementService(
    * @param key 带可空密文的本人密钥记录。
    * @param currentGroup 当前分组记录；不存在时为 null。
    * @param selectableGroupIds 当前可选分组 ID。
-   * @returns 安全摘要与可空完整 Key；历史无密文记录返回 null。
-   * @throws 密文损坏或应用 Secret 变化时 fail-closed，不返回不完整列表。
-   * @sideEffects 仅执行内存解密，不读写数据库。
+   * @returns 安全摘要与可空完整 Key；历史无密文或恢复失败记录返回 null。
+   * @throws 不因单条密文异常中断列表；摘要转换本身的异常保持上抛。
+   * @sideEffects 执行内存解密；恢复失败时调用依赖记录不含密文的错误日志。
    */
   function toKeyListItem(
     key: ExternalApiKeyRecord,
     currentGroup: ExternalApiKeyGroupRecord | null,
     selectableGroupIds: ReadonlySet<string>
   ): ExternalApiKeyListItem {
+    let apiKey: string | null = null;
+    if (key.encryptedKey) {
+      try {
+        apiKey = dependencies.decryptSecret(key.encryptedKey);
+      } catch (error) {
+        // WHY：一条历史密文可能因 Secret 轮换而不可恢复，但不能拖垮用户的全部
+        // Key 列表。保留明确 null 状态并记录 keyId，绝不记录密文、明文或哈希。
+        dependencies.onSecretRecoveryError(key.id, error);
+      }
+    }
     return {
       ...toKeySummary(key, currentGroup, selectableGroupIds),
-      apiKey: key.encryptedKey
-        ? dependencies.decryptSecret(key.encryptedKey)
-        : null,
+      apiKey,
     };
   }
 
@@ -779,6 +789,13 @@ export const externalApiKeyManagementService =
     hashSecret: hashApiKey,
     encryptSecret: encryptExternalApiKey,
     decryptSecret: decryptExternalApiKey,
+    /** 单条密文不可恢复时记录安全上下文，但不阻断其余 Key 列表。 */
+    onSecretRecoveryError(keyId, error) {
+      logError(error, {
+        event: "external_api_key_decryption_failed",
+        keyId,
+      });
+    },
     /**
      * 获取本次 mutation 使用的当前时间。
      *

@@ -148,9 +148,10 @@ const externalApiKeyPlaintextSchema = z
 /**
  * 登录用户管理页使用的密钥列表行。
  *
- * 新记录返回从服务端密文恢复的完整 Key，历史不可逆记录返回 null；该 DTO 只能由
- * human-only session operation 返回，不能暴露给 API Key、MCP 或日志。
-  */
+ * 新记录返回从服务端密文恢复的完整 Key；历史不可逆、损坏或 Secret 已轮换的记录返回
+ * null。该 DTO 只能由 human-only session operation 返回，不能暴露给 API Key、MCP
+ * 或日志。
+ */
 export const externalApiKeyListItemSchema = externalApiKeySummarySchema
   .extend({
     apiKey: externalApiKeyPlaintextSchema.nullable(),
