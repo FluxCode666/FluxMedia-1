@@ -619,7 +619,6 @@
       "nameLabel": "密钥名称",
       "namePlaceholder": "例如：生产环境",
       "create": "创建密钥",
-      "copy": "复制",
       "copyKey": "复制 API 密钥：{name}",
       "copyUnavailable": "历史密钥无法恢复",
       "save": "保存",

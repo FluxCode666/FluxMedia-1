@@ -619,7 +619,6 @@
       "nameLabel": "Key name",
       "namePlaceholder": "For example: Production",
       "create": "Create key",
-      "copy": "Copy",
       "copyKey": "Copy API key: {name}",
       "copyUnavailable": "Legacy key cannot be recovered",
       "save": "Save",

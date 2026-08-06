@@ -577,14 +577,14 @@ export function ExternalApiKeySection({
               <Button
                 type="button"
                 variant="outline"
+                size="icon"
                 className="shrink-0"
-                aria-label={t("copy")}
+                aria-label={t("copyKey", { name: keyName })}
                 onClick={() =>
                   void handleCopyApiKey(newKey, newKeyInputRef.current)
                 }
               >
-                <Copy className="mr-2 h-3.5 w-3.5" />
-                {t("copy")}
+                <Copy className="h-3.5 w-3.5" />
               </Button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
@@ -761,15 +761,14 @@ export function ExternalApiKeySection({
                               <Button
                                 type="button"
                                 variant="ghost"
-                                size="sm"
-                                className="h-7 shrink-0 px-2 text-xs"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
                                 aria-label={t("copyKey", { name: key.name })}
                                 onClick={() =>
                                   void handleCopyApiKey(key.apiKey || "")
                                 }
                               >
-                                <Copy className="mr-1 h-3.5 w-3.5" />
-                                {t("copy")}
+                                <Copy className="h-3.5 w-3.5" />
                               </Button>
                             ) : (
                               <span className="shrink-0 text-[10px] text-muted-foreground">
