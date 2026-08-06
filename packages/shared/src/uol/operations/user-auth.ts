@@ -11,7 +11,7 @@
  * - user.verifyCode: 已接线 -> verifyRegistrationCode (auth/registration-verification)
  * - user.getMyTimeZone / user.updateMyTimeZone: 已接线 -> time-zone/server
  * - user.getCurrentSession: stub（依赖 next/headers，在 app 层绑定）
- * - admin 操作（list/getDetail/ban/updateRole/create/updateProfile/setPassword/setUserPlan/setCreditsStatus/setExternalApiKeyStatus）:
+ * - admin 操作（list/getDetail/ban/updateRole/create/updateProfile/setPassword/setCreditsStatus/setExternalApiKeyStatus）:
  *   stub（业务逻辑内联于 admin-users.ts server-action 闭包，在 app 层绑定）
  */
 import { z } from "zod";
@@ -77,8 +77,7 @@ export const getUserDetail = defineOperation({
   name: "user.getDetail",
   domain: "user-auth",
   title: "Get User Detail",
-  description:
-    "获取指定用户的详细信息（含角色、积分、套餐等）。仅管理员可调用。",
+  description: "获取指定用户的详细信息（含角色、积分等）。仅管理员可调用。",
   input: z.object({
     userId: z.string().min(1),
   }),
@@ -283,33 +282,7 @@ export const setUserPassword = defineOperation({
 });
 
 // ---------------------------------------------------------------------------
-// 10. user.setUserPlan - 设置用户套餐（超级管理员）
-// ---------------------------------------------------------------------------
-export const setUserPlan = defineOperation({
-  name: "user.setUserPlan",
-  domain: "user-auth",
-  title: "Set User Plan",
-  description: "手动设置指定用户的订阅套餐。仅超级管理员可调用。",
-  input: z.object({
-    userId: z.string().min(1),
-    plan: z.string().min(1),
-  }),
-  output: z.object({
-    success: z.boolean(),
-  }),
-  access: { kind: "superAdmin" },
-  readOnly: false,
-  destructive: false,
-  idempotency: { kind: "none" },
-  sideEffects: ["audit", "billing"],
-  // Bound at app level - admin-users.ts server-action logic
-  execute: async () => {
-    throw new Error("Not yet wired: user.setUserPlan");
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 11. user.getCurrentSession - 获取当前会话（公开，通过 cookie 鉴权）
+// 10. user.getCurrentSession - 获取当前会话（公开，通过 cookie 鉴权）
 // ---------------------------------------------------------------------------
 export const getCurrentSession = defineOperation({
   name: "user.getCurrentSession",

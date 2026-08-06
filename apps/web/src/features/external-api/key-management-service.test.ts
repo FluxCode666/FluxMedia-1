@@ -1,12 +1,10 @@
 /**
  * API 密钥管理应用服务的 DB-free 单元测试。
  *
- * 职责：验证套餐能力、分组资格、额度归一、密钥散列、所有权条件及生命周期竞态。
+ * 职责：验证分组资格、额度归一、密钥散列、所有权条件及生命周期竞态。
  * 使用方：UOL externalApi.*Key bindings 的业务回归门。
- * 关键依赖：Vitest；仓储、套餐、分组与密码学依赖均使用内存替身。
+ * 关键依赖：Vitest；仓储、分组与密码学依赖均使用内存替身。
  */
-import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
-import type { PlanCapabilityKey } from "@repo/shared/subscription/services/plan-capabilities";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import {
@@ -49,13 +47,7 @@ type RepositoryMocks = {
 };
 
 let repository: RepositoryMocks;
-let getUserPlan: Mock<(userId: string) => Promise<SubscriptionPlan>>;
-let canUsePlanCapability: Mock<
-  (plan: SubscriptionPlan, capability: PlanCapabilityKey) => Promise<boolean>
->;
-let listSelectableGroups: Mock<
-  (plan: SubscriptionPlan) => Promise<(typeof selectableGroup)[]>
->;
+let listSelectableGroups: Mock<() => Promise<(typeof selectableGroup)[]>>;
 let getGroupById: Mock<
   (groupId: string) => Promise<typeof selectableGroup | null>
 >;
@@ -64,8 +56,6 @@ let getGroupById: Mock<
 function createService() {
   return createExternalApiKeyManagementService({
     repository,
-    getUserPlan,
-    canUsePlanCapability,
     listSelectableGroups,
     getGroupById,
     createId: () => "key-new",
@@ -123,14 +113,6 @@ beforeEach(() => {
     }),
     findState: vi.fn().mockResolvedValue({ isActive: true }),
   };
-  getUserPlan = vi.fn().mockResolvedValue("pro");
-  canUsePlanCapability = vi
-    .fn()
-    .mockImplementation(
-      async (_plan: SubscriptionPlan, capability: PlanCapabilityKey) =>
-        capability === "externalApi.keys.manage" ||
-        capability === "backendGroups.select"
-    );
   listSelectableGroups = vi.fn().mockResolvedValue([selectableGroup]);
   getGroupById = vi
     .fn()
@@ -178,19 +160,17 @@ describe("list API keys", () => {
         },
       ],
     });
+    expect(repository.listByUser).toHaveBeenCalledWith("user-1");
   });
 
-  it("returns no editable candidates when the plan cannot select groups", async () => {
-    canUsePlanCapability.mockImplementation(
-      async (_plan: SubscriptionPlan, capability: PlanCapabilityKey) =>
-        capability === "externalApi.keys.manage"
-    );
+  it("没有可选分组时仍保留当前禁用分组的只读状态", async () => {
+    listSelectableGroups.mockResolvedValue([]);
 
     const result = await createService().listKeys("user-1");
 
     expect(result.editableGroups).toEqual([]);
     expect(result.keys[0]?.currentGroup?.selectable).toBe(false);
-    expect(listSelectableGroups).not.toHaveBeenCalled();
+    expect(listSelectableGroups).toHaveBeenCalledOnce();
   });
 });
 
@@ -224,18 +204,24 @@ describe("create API key", () => {
     expect(result.key).not.toHaveProperty("keyHash");
   });
 
-  it("rejects creation without the API key management capability", async () => {
-    canUsePlanCapability.mockResolvedValue(false);
+  it.each([
+    undefined,
+    null,
+    "default",
+  ])("分组输入为 %s 时使用默认分组", async (generationGroupId) => {
+    await createService().createKey("user-1", {
+      name: "Production",
+      generationGroupId,
+      creditLimit: null,
+    });
 
-    await expectServiceError(
-      createService().createKey("user-1", {
-        name: "Production",
+    expect(repository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
         generationGroupId: null,
         creditLimit: null,
-      }),
-      "capability_required"
+      })
     );
-    expect(repository.insert).not.toHaveBeenCalled();
   });
 
   it("rejects a group outside the current editable candidates", async () => {
@@ -247,6 +233,17 @@ describe("create API key", () => {
       }),
       "validation_error"
     );
+    expect(repository.insert).not.toHaveBeenCalled();
+  });
+
+  it("额度为负数时在持久化前拒绝请求", async () => {
+    await expect(
+      createService().createKey("user-1", {
+        name: "Production",
+        generationGroupId: null,
+        creditLimit: -0.01,
+      })
+    ).rejects.toThrow("API Key 额度必须是大于等于 0 的数字");
     expect(repository.insert).not.toHaveBeenCalled();
   });
 });
@@ -271,12 +268,18 @@ describe("API key lifecycle mutations", () => {
       createService().revokeKey("user-1", "foreign-key"),
       "not_found"
     );
+    expect(repository.findState).toHaveBeenNthCalledWith(
+      1,
+      "user-1",
+      "foreign-key"
+    );
 
     repository.findState.mockResolvedValueOnce({ isActive: false });
     await expectServiceError(
       createService().revokeKey("user-1", "key-1"),
       "state_conflict"
     );
+    expect(repository.findState).toHaveBeenNthCalledWith(2, "user-1", "key-1");
   });
 
   it("deletes only a revoked owned key and reports active-state conflicts", async () => {

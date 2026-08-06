@@ -1,24 +1,12 @@
-import {
-  getRuntimeSettingJson,
-  getRuntimeSettingNumber,
-} from "../system-settings";
-import { getPlanMonthlyCredits } from "../subscription/services/plan-capabilities";
-import {
-  PLAN_RANK,
-  SUBSCRIPTION_PLANS,
-  isPlanAtLeast,
-  isSubscriptionPlan,
-  type SubscriptionPlan,
-} from "../config/subscription-plan";
+import { getRuntimeSettingJson } from "../system-settings";
 import {
   CREDIT_PACKAGES,
+  type CreditPackage,
   ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_CREDITS,
   ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_PRICE,
   ENTERPRISE_RESOURCE_PACKAGE_ID,
-  PAY_AS_YOU_GO_PACKAGE_ID,
   isCreditPackageVisible,
-  type CreditPackage,
-  type CreditPackagePlanMap,
+  PAY_AS_YOU_GO_PACKAGE_ID,
 } from "./config";
 
 export const CREDIT_PACKAGE_MATRIX_SETTING_KEY = "CREDIT_PACKAGE_MATRIX";
@@ -26,11 +14,9 @@ export const CREDIT_PACKAGE_MATRIX_SETTING_KEY = "CREDIT_PACKAGE_MATRIX";
 export type RuntimeCreditPackage = Omit<CreditPackage, "credits" | "price"> & {
   credits: number;
   price: number;
-  pricesByPlan?: CreditPackagePlanMap<number>;
-  creemProductIdsByPlan?: CreditPackagePlanMap<string>;
 };
 
-const STARTER_DEFAULT_PRICE = 20;
+const PAY_AS_YOU_GO_DEFAULT_PRICE = 20;
 const MAX_CREDIT_PACKAGE_CREDITS = 100_000_000;
 const MAX_CREDIT_PACKAGE_PRICE = 1_000_000;
 const MAX_CREDIT_PACKAGE_QUANTITY = 999;
@@ -57,50 +43,13 @@ function normalizeCurrency(value: unknown, fallback = "CNY") {
   return /^[A-Z]{3}$/.test(currency) ? currency : fallback;
 }
 
-function parsePlanNumberMap(
-  value: unknown,
-  fallback?: CreditPackagePlanMap<number>
-) {
-  const result: CreditPackagePlanMap<number> = { ...(fallback ?? {}) };
-  if (!isRecord(value)) return Object.keys(result).length ? result : undefined;
-
-  for (const plan of SUBSCRIPTION_PLANS) {
-    if (value[plan] === undefined) continue;
-    const numeric = Number(value[plan]);
-    if (Number.isFinite(numeric) && numeric > 0) {
-      result[plan] = Math.min(MAX_CREDIT_PACKAGE_PRICE, numeric);
-    }
-  }
-
-  return Object.keys(result).length ? result : undefined;
-}
-
-function parsePlanStringMap(
-  value: unknown,
-  fallback?: CreditPackagePlanMap<string>
-) {
-  const result: CreditPackagePlanMap<string> = { ...(fallback ?? {}) };
-  if (!isRecord(value)) return Object.keys(result).length ? result : undefined;
-
-  for (const plan of SUBSCRIPTION_PLANS) {
-    const raw = value[plan];
-    if (typeof raw === "string" && raw.trim()) {
-      result[plan] = raw.trim();
-    }
-  }
-
-  return Object.keys(result).length ? result : undefined;
-}
-
 function normalizeCreditPackage(
   raw: unknown,
   fallback?: RuntimeCreditPackage
 ): RuntimeCreditPackage | null {
   if (!isRecord(raw)) return fallback ?? null;
   const id =
-    typeof raw.id === "string" && raw.id.trim()
-      ? raw.id.trim()
-      : fallback?.id;
+    typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : fallback?.id;
   if (!id) return null;
 
   const name =
@@ -111,9 +60,6 @@ function normalizeCreditPackage(
     typeof raw.description === "string"
       ? raw.description
       : fallback?.description || "";
-  const requiresPlan = isSubscriptionPlan(raw.requiresPlan)
-    ? raw.requiresPlan
-    : fallback?.requiresPlan;
   const maxQuantity = parsePositiveInteger(
     raw.maxQuantity,
     fallback?.maxQuantity ?? 1,
@@ -150,24 +96,11 @@ function normalizeCreditPackage(
     typeof raw.creemProductId === "string" && raw.creemProductId.trim()
       ? raw.creemProductId.trim()
       : fallback?.creemProductId;
-  const pricesByPlan = parsePlanNumberMap(
-    raw.pricesByPlan,
-    fallback?.pricesByPlan
-  );
-  const creemProductIdsByPlan = parsePlanStringMap(
-    raw.creemProductIdsByPlan,
-    fallback?.creemProductIdsByPlan
-  );
 
   if (popular !== undefined) normalized.popular = popular;
   if (visible !== undefined) normalized.visible = visible;
-  if (requiresPlan !== undefined) normalized.requiresPlan = requiresPlan;
   if (allowQuantity !== undefined) normalized.allowQuantity = allowQuantity;
-  if (pricesByPlan !== undefined) normalized.pricesByPlan = pricesByPlan;
   if (creemProductId !== undefined) normalized.creemProductId = creemProductId;
-  if (creemProductIdsByPlan !== undefined) {
-    normalized.creemProductIdsByPlan = creemProductIdsByPlan;
-  }
 
   return normalized;
 }
@@ -188,53 +121,24 @@ function sortCreditPackages(packages: RuntimeCreditPackage[]) {
 
 export async function getRuntimeCreditPackages(options?: {
   includeHidden?: boolean;
-  plan?: SubscriptionPlan;
 }) {
-  const [starterCredits, starterPrice] = await Promise.all([
-    getPlanMonthlyCredits("starter"),
-    getRuntimeSettingNumber(
-      "PLAN_STARTER_MONTHLY_AMOUNT",
-      STARTER_DEFAULT_PRICE,
-      { positive: true }
-    ),
-  ]);
-  const [enterpriseCredits, enterprisePrice] = await Promise.all([
-    getRuntimeSettingNumber(
-      "ENTERPRISE_RESOURCE_PACK_CREDITS",
-      ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_CREDITS,
-      { positive: true }
-    ),
-    getRuntimeSettingNumber(
-      "ENTERPRISE_RESOURCE_PACK_PRICE",
-      ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_PRICE,
-      { positive: true }
-    ),
-  ]);
+  const payAsYouGoCredits = 5000;
+  const payAsYouGoPrice = PAY_AS_YOU_GO_DEFAULT_PRICE;
 
   const fallbackPackages = CREDIT_PACKAGES.map((pkg) => {
     if (pkg.id === PAY_AS_YOU_GO_PACKAGE_ID) {
       return {
         ...pkg,
-        credits: starterCredits,
-        price: starterPrice,
-        pricesByPlan: {
-          free: starterPrice,
-          starter: starterPrice,
-          pro: starterPrice,
-          ultra: starterPrice,
-          enterprise: starterPrice,
-        },
+        credits: payAsYouGoCredits,
+        price: payAsYouGoPrice,
       };
     }
 
     if (pkg.id === ENTERPRISE_RESOURCE_PACKAGE_ID) {
       return {
         ...pkg,
-        credits: enterpriseCredits,
-        price: enterprisePrice,
-        pricesByPlan: {
-          enterprise: enterprisePrice,
-        },
+        credits: ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_CREDITS,
+        price: ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_PRICE,
       };
     }
 
@@ -259,14 +163,6 @@ export async function getRuntimeCreditPackages(options?: {
     }
   }
 
-  if (options?.plan) {
-    const plan = options.plan;
-    packages = packages.filter(
-      (pkg) =>
-        !pkg.requiresPlan || isPlanAtLeast(plan, pkg.requiresPlan)
-    );
-  }
-
   if (options?.includeHidden) {
     return packages;
   }
@@ -276,23 +172,13 @@ export async function getRuntimeCreditPackages(options?: {
 
 export async function getRuntimeCreditPackageById(
   packageId: string,
-  options?: { includeHidden?: boolean; plan?: SubscriptionPlan }
+  options?: { includeHidden?: boolean }
 ) {
   const packages = await getRuntimeCreditPackages(options);
   return packages.find((pkg) => pkg.id === packageId);
 }
 
-export function getCreditPackagePriceForPlan(
-  pkg: RuntimeCreditPackage,
-  plan: SubscriptionPlan
-) {
-  for (let i = PLAN_RANK[plan]; i >= 0; i -= 1) {
-    const candidate = SUBSCRIPTION_PLANS.find((item) => PLAN_RANK[item] === i);
-    const price = candidate ? pkg.pricesByPlan?.[candidate] : undefined;
-    if (price) {
-      return price;
-    }
-  }
+export function getCreditPackagePrice(pkg: RuntimeCreditPackage) {
   return pkg.price;
 }
 
@@ -301,18 +187,6 @@ export function getCreditPackageCurrency(pkg: RuntimeCreditPackage) {
   return normalizeCurrency(pkg.currency, "CNY");
 }
 
-export function getCreditPackageCreemProductIdForPlan(
-  pkg: RuntimeCreditPackage,
-  plan: SubscriptionPlan
-) {
-  for (let i = PLAN_RANK[plan]; i >= 0; i -= 1) {
-    const candidate = SUBSCRIPTION_PLANS.find((item) => PLAN_RANK[item] === i);
-    const productId = candidate
-      ? pkg.creemProductIdsByPlan?.[candidate]
-      : undefined;
-    if (productId) {
-      return productId;
-    }
-  }
+export function getCreditPackageCreemProductId(pkg: RuntimeCreditPackage) {
   return pkg.creemProductId || `credits_${pkg.id}`;
 }

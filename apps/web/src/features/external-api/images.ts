@@ -3,6 +3,7 @@ import {
   buildPublicImageUrl,
   parseStorageImageUrl,
 } from "@repo/shared/storage/signed-url";
+import { OperationError } from "@repo/shared/uol";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import { isContentSafetyRejection } from "@/features/image-generation/sla-classification";
 import type { GeneratedImageOutput } from "@/features/image-generation/types";
@@ -44,6 +45,7 @@ export type ExternalApiErrorOptions = {
   type?: string;
   code?: string | null;
   status?: number;
+  details?: Record<string, unknown>;
   generationId?: string;
   creditsConsumed?: number;
 };
@@ -198,93 +200,66 @@ export function getExternalFinalImageOutputs(
 
 export async function toOpenAIImagesResponse(
   request: Request,
-  results: readonly ImageGenerationOperationResult[],
+  result: ImageGenerationOperationResult,
   responseFormat: "url" | "b64_json",
   created = Math.floor(Date.now() / 1000),
   logContext?: Record<string, unknown>
 ) {
   const data = [];
-
-  for (const [index, result] of results.entries()) {
-    if (result.error) {
-      const options = {
-        generationId: result.generationId,
-        creditsConsumed: result.creditsConsumed,
-      };
-      if (logContext) {
-        return toLoggedOpenAIErrorPayload(
-          result.error,
-          { ...logContext, resultIndex: index },
-          options
-        );
-      }
-      return toOpenAIErrorPayload(result.error, options);
-    }
-    const outputs = getExternalFinalImageOutputs(result);
-    if (outputs.length === 0) {
-      const message = "Image generation completed without an image output";
-      const options = {
-        generationId: result.generationId,
-        creditsConsumed: result.creditsConsumed,
-      };
-      if (logContext) {
-        return toLoggedOpenAIErrorPayload(
-          message,
-          { ...logContext, resultIndex: index },
-          options
-        );
-      }
-      return toOpenAIErrorPayload(message, options);
-    }
-    for (const output of outputs) {
-      data.push(
-        await toOpenAIImageData(
-          request,
-          {
-            imageBase64: output.imageBase64,
-            imageUrl: output.imageUrl,
-            revisedPrompt: output.revisedPrompt || result.revisedPrompt,
-          },
-          responseFormat
-        )
-      );
-    }
+  if (result.error) {
+    const options = {
+      generationId: result.generationId,
+      creditsConsumed: result.creditsConsumed,
+    };
+    return logContext
+      ? toLoggedOpenAIErrorPayload(result.error, logContext, options)
+      : toOpenAIErrorPayload(result.error, options);
+  }
+  const outputs = getExternalFinalImageOutputs(result);
+  if (outputs.length === 0) {
+    const message = "Image generation completed without an image output";
+    const options = {
+      generationId: result.generationId,
+      creditsConsumed: result.creditsConsumed,
+    };
+    return logContext
+      ? toLoggedOpenAIErrorPayload(message, logContext, options)
+      : toOpenAIErrorPayload(message, options);
+  }
+  for (const output of outputs) {
+    data.push(
+      await toOpenAIImageData(
+        request,
+        {
+          imageBase64: output.imageBase64,
+          imageUrl: output.imageUrl,
+          revisedPrompt: output.revisedPrompt || result.revisedPrompt,
+        },
+        responseFormat
+      )
+    );
   }
 
   return {
     created,
     data,
-    ...toExternalGenerationUsage(results),
+    ...toExternalGenerationUsage(result),
     usage: null,
   };
 }
 
-export function toExternalGenerationUsage(
-  results: readonly GenerationBillingResult[]
-) {
-  const generationIds = results
-    .map((result) => result.generationId)
-    .filter((id): id is string => Boolean(id));
+/** 将单次图片生成的计费与记录 ID 编码为外部 API 扩展字段。 */
+export function toExternalGenerationUsage(result: GenerationBillingResult) {
   const creditsConsumed =
-    Math.round(
-      results.reduce(
-        (total, result) => total + Math.max(0, result.creditsConsumed || 0),
-        0
-      ) * 100
-    ) / 100;
+    Math.round(Math.max(0, result.creditsConsumed || 0) * 100) / 100;
 
   return {
-    ...(generationIds.length === 1
+    ...(result.generationId
       ? {
-          generation_id: generationIds[0],
-          generationId: generationIds[0],
+          generation_id: result.generationId,
+          generationId: result.generationId,
         }
-      : generationIds.length > 1
-        ? {
-            generation_ids: generationIds,
-            generationIds,
-          }
-        : {}),
+      : {}),
     credits_consumed: creditsConsumed,
   };
 }
@@ -378,7 +353,7 @@ export function createExternalImageStreamResponse(
         } catch (error) {
           const message =
             error instanceof Error ? error.message : "Image stream failed";
-          const payload = toOpenAIErrorPayload(message);
+          const payload = toOpenAIErrorPayloadFromUnknown(error);
           await emit({
             event: "error",
             data: toExternalErrorStreamData(message, payload),
@@ -546,16 +521,11 @@ function classifyExternalApiError(message: string) {
     };
   }
 
-  if (
-    normalized.includes("not enabled for this plan") ||
-    normalized.includes("requires pro plan") ||
-    normalized.includes("requires ultra plan") ||
-    normalized.includes("requires enterprise plan")
-  ) {
+  if (normalized.includes("not enabled")) {
     return {
       type: "invalid_request_error",
-      code: "insufficient_plan",
-      status: 403,
+      code: "unsupported_model",
+      status: 400,
     };
   }
 
@@ -569,7 +539,7 @@ function classifyExternalApiError(message: string) {
   ) {
     return {
       type: "invalid_request_error",
-      code: "plan_limit_exceeded",
+      code: "invalid_value",
       status: 400,
     };
   }
@@ -587,7 +557,7 @@ function classifyExternalApiError(message: string) {
 
   if (
     normalized.includes("选择的生图后端分组不可用") ||
-    normalized.includes("当前套餐不可用")
+    normalized.includes("当前分组不可用")
   ) {
     return {
       type: "invalid_request_error",
@@ -671,6 +641,7 @@ export function toOpenAIErrorPayload(
     options && "code" in options ? options.code : classification.code;
   const generationId = options?.generationId;
   const creditsConsumed = options?.creditsConsumed;
+  const details = options?.details;
   const safeMessage = sanitizeExternalApiErrorMessage(message);
 
   return {
@@ -679,6 +650,7 @@ export function toOpenAIErrorPayload(
       type: options?.type ?? classification.type,
       code,
       status,
+      ...(details ? { details } : {}),
       ...(generationId ? { generation_id: generationId, generationId } : {}),
       ...(creditsConsumed !== undefined
         ? { credits_consumed: creditsConsumed }
@@ -689,6 +661,21 @@ export function toOpenAIErrorPayload(
       ? { credits_consumed: creditsConsumed }
       : {}),
   };
+}
+
+/** 将 UOL 领域错误原样编码为 OpenAI 风格 code/status/details。 */
+export function toOpenAIErrorPayloadFromUnknown(error: unknown) {
+  if (error instanceof OperationError) {
+    return toOpenAIErrorPayload(error.message, {
+      type: defaultErrorTypeForStatus(error.httpStatus),
+      code: error.code,
+      status: error.httpStatus,
+      details: error.details,
+    });
+  }
+  return toOpenAIErrorPayload(
+    error instanceof Error ? error.message : "Image request failed"
+  );
 }
 
 export function toExternalErrorStreamData(
@@ -750,10 +737,7 @@ export async function createJsonKeepAliveResponse(
 ) {
   const runResult = run().then(
     (data) => data ?? null,
-    (error) =>
-      toOpenAIErrorPayload(
-        error instanceof Error ? error.message : "Image request failed"
-      )
+    (error) => toOpenAIErrorPayloadFromUnknown(error)
   );
 
   const initialWaitMs =

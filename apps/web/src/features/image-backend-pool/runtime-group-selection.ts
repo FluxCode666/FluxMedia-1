@@ -14,6 +14,69 @@ export interface RuntimeGroupSelectionInput {
   pinnedGroupId?: string;
 }
 
+/** 运行时选择分组所需的最小启用候选事实。 */
+export interface RuntimeBackendGroupCandidate {
+  id: string;
+  isDefault: boolean;
+  isUserSelectable: boolean;
+}
+
+/**
+ * 从已启用候选中选择可信分组。
+ *
+ * @param candidates 已由数据库过滤为启用状态的分组。
+ * @param target 可信目标 ID 及其是否来自站内用户显式选择。
+ * @returns 精确目标或唯一默认组；不按 priority 或列表位置兜底。
+ * @throws 目标不可用、用户选择不可选组或不存在默认组时 fail closed。
+ */
+export function selectRuntimeBackendGroupCandidate<
+  T extends RuntimeBackendGroupCandidate,
+>(
+  candidates: readonly T[],
+  target: { targetGroupId?: string; isUserRequested?: boolean }
+): T {
+  if (target.targetGroupId) {
+    const candidate = candidates.find(
+      (item) => item.id === target.targetGroupId
+    );
+    if (!candidate) {
+      throw new BackendSchedulerError(
+        "no_eligible_member",
+        "目标媒体后端分组不存在或已停用"
+      );
+    }
+    if (target.isUserRequested && !candidate.isUserSelectable) {
+      throw new BackendSchedulerError(
+        "no_eligible_member",
+        "目标媒体后端分组不可由用户选择"
+      );
+    }
+    return candidate;
+  }
+
+  const defaultGroups = candidates.filter((candidate) => candidate.isDefault);
+  if (defaultGroups.length === 0) {
+    throw new BackendSchedulerError(
+      "no_eligible_member",
+      "当前没有启用的默认媒体后端分组"
+    );
+  }
+  if (defaultGroups.length > 1) {
+    throw new BackendSchedulerError(
+      "no_eligible_member",
+      "当前存在多个默认媒体后端分组"
+    );
+  }
+  const [defaultGroup] = defaultGroups;
+  if (!defaultGroup) {
+    throw new BackendSchedulerError(
+      "no_eligible_member",
+      "当前没有启用的默认媒体后端分组"
+    );
+  }
+  return defaultGroup;
+}
+
 /**
  * 选择可信运行时分组。
  *

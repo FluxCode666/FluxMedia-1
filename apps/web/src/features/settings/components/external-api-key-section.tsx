@@ -9,7 +9,6 @@
  * 关键依赖：API 密钥 Server Actions、纯列表状态 reducer、Shadcn Collapsible。
  */
 import { formatCredits } from "@repo/shared/credits/format";
-import { getMyPlanAction } from "@repo/shared/subscription/actions/get-user-plan";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import {
   AlertDialog,
@@ -152,7 +151,6 @@ export function ExternalApiKeySection({
   const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
   const [loadError, setLoadError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [canManageKeys, setCanManageKeys] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [keyName, setKeyName] = useState(() => t("defaultName"));
@@ -233,11 +231,6 @@ export function ExternalApiKeySection({
     if (didLoadRef.current) return;
     didLoadRef.current = true;
     void loadKeys(true);
-    void getMyPlanAction().then((result) => {
-      setCanManageKeys(
-        result?.data?.capabilities?.features["externalApi.keys.manage"] === true
-      );
-    });
   }, [loadKeys]);
 
   /** 把纯 reducer action 安全归并进 React 状态。 */
@@ -531,11 +524,6 @@ export function ExternalApiKeySection({
               <ExternalLink className="h-3 w-3" />
             </Link>
           </div>
-          {!canManageKeys ? (
-            <p className="max-w-sm text-xs text-muted-foreground">
-              {t("requiresStarter")}
-            </p>
-          ) : null}
         </div>
 
         {newKey ? (
@@ -575,7 +563,7 @@ export function ExternalApiKeySection({
               value={keyName}
               onChange={(event) => setKeyName(event.target.value)}
               placeholder={t("namePlaceholder")}
-              disabled={!canManageKeys || isCreating || isFullListLoading}
+              disabled={isCreating || isFullListLoading}
             />
           </div>
           <div className="space-y-1.5">
@@ -585,7 +573,7 @@ export function ExternalApiKeySection({
             <Select
               value={newKeyGroupId}
               onValueChange={setNewKeyGroupId}
-              disabled={!canManageKeys || isCreating || isFullListLoading}
+              disabled={isCreating || isFullListLoading}
             >
               <SelectTrigger id="external-api-key-group" className="w-full">
                 <SelectValue />
@@ -614,13 +602,13 @@ export function ExternalApiKeySection({
               value={newKeyCreditLimit}
               onChange={(event) => setNewKeyCreditLimit(event.target.value)}
               placeholder={t("quota.createPlaceholder")}
-              disabled={!canManageKeys || isCreating || isFullListLoading}
+              disabled={isCreating || isFullListLoading}
             />
           </div>
           <Button
             type="button"
             onClick={() => void handleCreateKey()}
-            disabled={!canManageKeys || isCreating || isFullListLoading}
+            disabled={isCreating || isFullListLoading}
           >
             {isCreating ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -894,9 +882,7 @@ export function ExternalApiKeySection({
                                         [key.id]: value,
                                       }))
                                     }
-                                    disabled={
-                                      isLocked || isRefreshing || !canManageKeys
-                                    }
+                                    disabled={isLocked || isRefreshing}
                                   >
                                     <SelectTrigger
                                       id={`external-key-group-${key.id}`}
@@ -931,9 +917,7 @@ export function ExternalApiKeySection({
                                     type="button"
                                     variant="outline"
                                     onClick={() => void handleSaveGroup(key.id)}
-                                    disabled={
-                                      isLocked || isRefreshing || !canManageKeys
-                                    }
+                                    disabled={isLocked || isRefreshing}
                                   >
                                     {pendingOperation === "update-group" ? (
                                       <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
@@ -964,17 +948,13 @@ export function ExternalApiKeySection({
                                       }))
                                     }
                                     placeholder={t("quota.placeholder")}
-                                    disabled={
-                                      isLocked || isRefreshing || !canManageKeys
-                                    }
+                                    disabled={isLocked || isRefreshing}
                                   />
                                   <Button
                                     type="button"
                                     variant="outline"
                                     onClick={() => void handleSaveQuota(key.id)}
-                                    disabled={
-                                      isLocked || isRefreshing || !canManageKeys
-                                    }
+                                    disabled={isLocked || isRefreshing}
                                   >
                                     {pendingOperation === "update-quota" ? (
                                       <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />

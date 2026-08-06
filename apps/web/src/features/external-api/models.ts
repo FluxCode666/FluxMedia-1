@@ -1,16 +1,14 @@
 /**
  * 外部媒体 API 模型目录。
  *
- * 职责：按 API Key 绑定分组、套餐媒体能力和统一成员显式 `supportedModelIds`
+ * 职责：按 API Key 绑定分组、媒体能力和统一成员显式 `supportedModelIds`
  * 构造 OpenAI 兼容 `/v1/models` 响应；不再发布任何 Chat、Responses 或 Codex 模型。
  */
-import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
 import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
 } from "@repo/shared/image-backend/supported-models";
 import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
-import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { and, asc, eq } from "drizzle-orm";
 
@@ -61,9 +59,9 @@ function toOpenAIModel(id: string): OpenAIModel {
 }
 
 /**
- * 按成员执行形态和套餐能力筛出可发布模型 ID。
+ * 按成员执行形态筛出可发布模型 ID。
  *
- * @param input - 成员类型、Adobe 模式、显式模型能力与媒体套餐开关。
+ * @param input - 成员类型、Adobe 模式与显式模型能力。
  * @returns 保持成员配置顺序的图片模型和 Adobe direct 真实视频模型；旧视频身份被忽略。
  * @sideEffects 无。
  * @failure 不抛错；未知非视频 ID 保持既有图像模型语义。
@@ -72,8 +70,6 @@ export function filterExternalMemberModelIds(input: {
   memberType: "api" | "adobe";
   adobeMode: "gateway" | "direct" | null;
   supportedModelIds: readonly string[];
-  imageAllowed: boolean;
-  videoAllowed: boolean;
   customVideoModelIds?: ReadonlySet<string>;
 }): string[] {
   return input.supportedModelIds.filter((modelId) => {
@@ -82,16 +78,12 @@ export function filterExternalMemberModelIds(input: {
     );
     const videoModelId = normalizeVideoModelId(modelId);
     if (isCustomVideo) {
-      return input.videoAllowed && input.memberType === "api";
+      return input.memberType === "api";
     }
     if (videoModelId) {
-      return (
-        input.videoAllowed &&
-        input.memberType === "adobe" &&
-        input.adobeMode === "direct"
-      );
+      return input.memberType === "adobe" && input.adobeMode === "direct";
     }
-    return input.imageAllowed && !isLegacyVideoModelId(modelId);
+    return !isLegacyVideoModelId(modelId);
   });
 }
 
@@ -118,7 +110,7 @@ async function resolveApiKeyGenerationGroup(
     .limit(1);
   if (!key) return null;
   if (key.generationGroupId) return key.generationGroupId;
-  const [defaultGroup] = await db
+  const defaultGroups = await db
     .select({ id: imageBackendGroup.id })
     .from(imageBackendGroup)
     .where(
@@ -127,39 +119,32 @@ async function resolveApiKeyGenerationGroup(
         eq(imageBackendGroup.isDefault, true)
       )
     )
-    .orderBy(asc(imageBackendGroup.priority), asc(imageBackendGroup.createdAt))
-    .limit(1);
-  return defaultGroup?.id ?? null;
+    .orderBy(asc(imageBackendGroup.createdAt), asc(imageBackendGroup.id))
+    .limit(2);
+  if (defaultGroups.length !== 1) return null;
+  return defaultGroups[0]?.id ?? null;
 }
 
 /**
- * 按当前 API Key 与套餐生成媒体模型列表。
+ * 按当前 API Key 的可调度分组生成媒体模型列表。
  *
  * @param userId 已鉴权 API Key 所有者。
  * @param apiKeyId 当前 API Key ID，用于收窄绑定分组。
- * @param plan Principal 携带并由 UOL 校验的套餐。
  * @returns 只含当前分组至少一个有效成员显式声明的图片/视频模型。
  */
 export async function getExternalModelsForApiKey(
   userId: string,
-  apiKeyId: string,
-  plan: SubscriptionPlan
+  apiKeyId: string
 ): Promise<OpenAIModelList> {
-  const [groupId, capabilities, members, marketplaceConfigValue] =
-    await Promise.all([
-      resolveApiKeyGenerationGroup(userId, apiKeyId),
-      getPlanCapabilitySnapshot(plan),
-      backendMemberService.listMembers(),
-      import("@repo/shared/system-settings").then(({ getRuntimeSettingJson }) =>
-        getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG")
-      ),
-    ]);
+  const [groupId, members, marketplaceConfigValue] = await Promise.all([
+    resolveApiKeyGenerationGroup(userId, apiKeyId),
+    backendMemberService.listMembers(),
+    import("@repo/shared/system-settings").then(({ getRuntimeSettingJson }) =>
+      getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG")
+    ),
+  ]);
   if (!groupId) return { object: "list", data: [] };
 
-  const imageAllowed =
-    capabilities.features["externalApi.images.generate"] === true;
-  const videoAllowed =
-    capabilities.features["externalApi.videos.generate"] === true;
   const customVideoModelIds = new Set(
     parseModelMarketplaceConfig(marketplaceConfigValue)
       .customModels.filter((model) => model.category === "video")
@@ -178,8 +163,6 @@ export async function getExternalModelsForApiKey(
           memberType: member.type,
           adobeMode: member.type === "adobe" ? member.config.mode : null,
           supportedModelIds: member.supportedModelIds,
-          imageAllowed,
-          videoAllowed,
           customVideoModelIds,
         });
       })

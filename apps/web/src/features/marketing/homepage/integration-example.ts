@@ -204,7 +204,6 @@ export function buildHomepageIntegrationExample(
   const requestBody = JSON.stringify({
     model: modelId,
     prompt: "A sculptural editorial scene in warm studio light",
-    n: 1,
     size: "1024x1024",
     response_format: "url",
   });
@@ -251,7 +250,7 @@ export function getHomepageIntegrationContent(
       eyebrow: "QUICK INTEGRATION",
       title: "快速集成",
       description:
-        "用现有图片生成端点完成第一次服务端请求。接口权限取决于账号、套餐与 API Key 配置。",
+        "用现有图片生成端点完成第一次服务端请求。接口权限取决于 API Key、绑定分组与账户积分。",
       steps: [
         {
           title: "创建 API Key",
@@ -291,7 +290,7 @@ export function getHomepageIntegrationContent(
     eyebrow: "QUICK INTEGRATION",
     title: "Quick integration",
     description:
-      "Make your first server-side request with the existing image generation endpoint. Access depends on your account, plan, and API Key permissions.",
+      "Make your first server-side request with the existing image generation endpoint. Access permissions depend on your API Key, bound group, and account credits.",
     steps: [
       {
         title: "Create an API Key",

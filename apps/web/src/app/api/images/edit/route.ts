@@ -2,18 +2,10 @@ import { randomUUID } from "node:crypto";
 import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
-import {
-  canUsePlanCapability,
-  getPlanLimits,
-} from "@repo/shared/subscription/services/plan-capabilities";
-import { getPlanUploadLimits } from "@repo/shared/subscription/services/upload-limits";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
+import { OperationError } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
-import {
-  firstBatchError,
-  runBatchImageGeneration,
-} from "@/features/image-generation/batch-runner";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
@@ -75,19 +67,6 @@ function getText(formData: FormData, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getCount(formData: FormData, key: string, maxBatchCount: number) {
-  const value = getText(formData, key);
-  if (!value) return 1;
-  if (!/^\d+$/.test(value)) {
-    throw new Error(`${key} must be an integer.`);
-  }
-  const count = Number(value);
-  if (count < 1 || count > maxBatchCount) {
-    throw new Error(`${key} must be between 1 and ${maxBatchCount}.`);
-  }
-  return count;
-}
-
 function getOptionalBoolean(formData: FormData, ...keys: string[]) {
   for (const key of keys) {
     const value = getText(formData, key).toLowerCase();
@@ -96,34 +75,6 @@ function getOptionalBoolean(formData: FormData, ...keys: string[]) {
     if (value === "false" || value === "0") return false;
   }
   return undefined;
-}
-
-function getGenerationIds(formData: FormData, count: number) {
-  const directValues = formData
-    .getAll("generationIds")
-    .concat(formData.getAll("generation_ids"))
-    .filter((value): value is string => typeof value === "string")
-    .flatMap((value) => {
-      const trimmed = value.trim();
-      if (!trimmed) return [];
-      if (!trimmed.startsWith("[")) return [trimmed];
-      try {
-        const parsed = JSON.parse(trimmed);
-        return Array.isArray(parsed)
-          ? parsed.filter((item): item is string => typeof item === "string")
-          : [];
-      } catch {
-        return [trimmed];
-      }
-    })
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  if (directValues.length !== count) return undefined;
-  if (directValues.some((value) => value.length > 128)) {
-    throw new Error("generationIds contains an ID that is too long.");
-  }
-  return directValues;
 }
 
 function wantsStreamResponse(request: NextRequest, formData: FormData) {
@@ -176,12 +127,12 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse("Forbidden", 403);
   }
 
-  const plan = await getUserPlan(session.user.id);
-  const role = await getUserRoleById(session.user.id);
-  const planLimits = await getPlanLimits(plan.plan);
-  const uploadLimits = await getPlanUploadLimits(plan.plan);
-  const maxImageBytes = uploadLimits.maxFileSizeBytes;
-  const maxRequestBytes = uploadLimits.maxUploadBytes;
+  const [role, mediaLimits] = await Promise.all([
+    getUserRoleById(session.user.id),
+    getMediaLimitDefaults(),
+  ]);
+  const maxImageBytes = mediaLimits.maxFileSizeBytes;
+  const maxRequestBytes = mediaLimits.maxUploadSizeBytes;
 
   let formData: FormData;
   try {
@@ -191,6 +142,13 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       `Upload is too large or incomplete. Each source image must be ${formatMegabytes(maxImageBytes)} or smaller, and the total upload must be ${formatMegabytes(maxRequestBytes)} or smaller.`,
       413
     );
+  }
+  for (const field of ["count", "generationIds", "generation_ids"] as const) {
+    if (formData.has(field)) {
+      return errorResponse(
+        `${field} is not supported; image requests generate exactly one image.`
+      );
+    }
   }
   const prompt = getText(formData, "prompt");
   if (!prompt) {
@@ -278,32 +236,6 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     formData.get("repairPrompt") ?? formData.get("repair_prompt");
   const repairPrompt =
     typeof repairPromptRaw === "string" ? repairPromptRaw : undefined;
-  let count = 1;
-  try {
-    count = getCount(formData, "count", planLimits.maxBatchCount);
-  } catch (error) {
-    return errorResponse(
-      error instanceof Error ? error.message : "Invalid count."
-    );
-  }
-  if (
-    count > 1 &&
-    !(await canUsePlanCapability(plan.plan, "imageGeneration.batch"))
-  ) {
-    return errorResponse(
-      "Batch image editing is not enabled for this plan.",
-      403
-    );
-  }
-  let requestedGenerationIds: string[] | undefined;
-  try {
-    requestedGenerationIds = getGenerationIds(formData, count);
-  } catch (error) {
-    return errorResponse(
-      error instanceof Error ? error.message : "Invalid generationIds."
-    );
-  }
-
   const parsedModel = imageModelIdSchema.safeParse(getText(formData, "model"));
   if (!parsedModel.success) {
     return errorResponse(
@@ -325,9 +257,9 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     return errorResponse("At least one source image is required.");
   }
 
-  if (sourceFiles.length > planLimits.maxEditImages) {
+  if (sourceFiles.length > mediaLimits.maxEditReferenceImages) {
     return errorResponse(
-      `No more than ${planLimits.maxEditImages} images are allowed.`
+      `No more than ${mediaLimits.maxEditReferenceImages} images are allowed.`
     );
   }
 
@@ -417,7 +349,6 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         hdRepair,
         blockRepair,
         repairPrompt,
-        count: 1,
         images,
       };
       return invokeImageGenerationOperation(
@@ -435,44 +366,34 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         return createImageStreamResponse(
           async (emit) => {
             try {
-              await runBatchImageGeneration({
-                count,
-                concurrency: planLimits.imageGenerationConcurrency,
-                generationIds:
-                  requestedGenerationIds ||
-                  (count === 1 && requestedGenerationId
-                    ? [requestedGenerationId]
-                    : undefined),
-                run: runEdit,
-                callbacks: (index) => ({
+              const result = await runEdit(
+                requestedGenerationId || randomUUID(),
+                {
                   onPartialImage: async (image) => {
                     await emit({
                       type: "partial_image",
-                      index,
+                      index: 0,
                       partial_image_index: image.partialImageIndex,
                       b64_json: image.imageBase64,
                       url: image.imageUrl,
                     });
                   },
-                }),
-                onResult: async (result) => {
-                  const safeResult = sanitizeGenerationResult(
-                    result,
-                    "image-edit-stream-result"
-                  );
-                  if (safeResult.error) {
-                    await emit({
-                      type: "error",
-                      error: safeResult.error,
-                      generationId: safeResult.generationId,
-                      creditsConsumed: safeResult.creditsConsumed,
-                    });
-                    return;
-                  }
-
-                  await emit({ type: "completed", ...safeResult });
-                },
-              });
+                }
+              );
+              const safeResult = sanitizeGenerationResult(
+                result,
+                "image-edit-stream-result"
+              );
+              if (safeResult.error) {
+                await emit({
+                  type: "error",
+                  error: safeResult.error,
+                  generationId: safeResult.generationId,
+                  creditsConsumed: safeResult.creditsConsumed,
+                });
+              } else {
+                await emit({ type: "completed", ...safeResult });
+              }
 
               return null;
             } finally {
@@ -490,39 +411,27 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         );
       }
 
-      if (count === 1) {
-        const result = sanitizeGenerationResult(
-          await runEdit(requestedGenerationId || randomUUID()),
-          "image-edit-response"
-        );
-        return NextResponse.json(result);
-      }
-
-      const results = await runBatchImageGeneration({
-        count,
-        concurrency: planLimits.imageGenerationConcurrency,
-        generationIds:
-          requestedGenerationIds ||
-          (count === 1 && requestedGenerationId
-            ? [requestedGenerationId]
-            : undefined),
-        run: runEdit,
-      });
-
-      const safeResults = results.map((result) =>
-        sanitizeGenerationResult(result, "image-edit-batch-response")
+      const result = sanitizeGenerationResult(
+        await runEdit(requestedGenerationId || randomUUID()),
+        "image-edit-response"
       );
-
-      return NextResponse.json({
-        results: safeResults,
-        error: firstBatchError(safeResults)?.error,
-      });
+      return NextResponse.json(result);
     } finally {
       if (!useStreamResponse) {
         await deleteTemporaryImages(maskImageUrls);
       }
     }
   } catch (error) {
+    if (error instanceof OperationError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          ...(error.details ? { details: error.details } : {}),
+        },
+        { status: error.httpStatus }
+      );
+    }
     return errorResponse(
       toClientErrorMessage(
         error,

@@ -690,7 +690,6 @@ function appendImageParams(
   params: {
     prompt: string;
     model: string;
-    n?: number;
     size?: string;
     quality?: ImageQuality;
     moderation?: ImageModeration;
@@ -703,7 +702,8 @@ function appendImageParams(
   formData.append("model", params.model);
   // multipart 改图同样注入每请求唯一零宽 nonce 破上游内容缓存（仅上游请求体）。
   formData.append("prompt", appendImagesUpstreamNonce(params.prompt));
-  formData.append("n", String(params.n || 1));
+  // 上游 OpenAI 兼容协议仍要求 n；产品契约固定单项，不接受调用方覆盖。
+  formData.append("n", "1");
   formData.append("response_format", "b64_json");
 
   const size = resolveImageRequestSize(params.size);
@@ -1567,7 +1567,8 @@ export async function generateImage(
       // images 端点不吃 prompt_cache_key,改在 prompt 注入每请求唯一零宽 nonce,
       // 打掉上游中转按请求体内容缓存导致的"同图同词出同图"。仅作用于上游请求体。
       prompt: appendImagesUpstreamNonce(prompt),
-      n: params.n || 1,
+      // 上游 OpenAI 兼容协议字段固定为单项，不能重新暴露批量产品语义。
+      n: 1,
       size,
       ...(dimensions
         ? { width: dimensions.width, height: dimensions.height }
@@ -1731,7 +1732,6 @@ export async function editImage(
     appendImageParams(formData, config, {
       prompt,
       model: upstreamModel,
-      n: params.n,
       size: params.size,
       quality: params.quality,
       moderation: params.moderation,

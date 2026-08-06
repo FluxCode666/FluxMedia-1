@@ -28,7 +28,6 @@ import {
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
 import { imageModelIdSchema } from "../../image-generation/model-contract";
-import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
 const imageGenerateCommonFields = {
@@ -52,7 +51,6 @@ const imageGenerateCommonFields = {
   hdRepair: z.boolean().optional(),
   blockRepair: z.boolean().optional(),
   repairPrompt: z.string().max(8_000).optional(),
-  count: z.number().int().positive().max(10_000).optional(),
   generationId: z.string().trim().min(1).max(128),
   /** 本次请求明确选中的平台媒体后端分组；服务端仍会再次授权。 */
   backendGroupId: z.string().trim().min(1).max(128).optional(),
@@ -138,44 +136,25 @@ export const imageAsyncTaskStatusSchema = z.enum([
 export const imageEnqueueAsyncInputSchema = z
   .object({
     taskId: imageAsyncTaskIdSchema,
-    generationInputs: z.array(imageGenerateInputSchema).min(1).max(10_000),
+    generationInput: imageGenerateInputSchema,
     responseFormat: z.enum(["url", "b64_json"]),
     callbackUrl: z.string().url().max(2_048).optional(),
   })
   .strict()
   .superRefine((input, context) => {
-    const operation = input.generationInputs[0]?.operation;
-    const generationIds = new Set<string>();
-    for (const [index, generationInput] of input.generationInputs.entries()) {
-      if (generationInput.operation !== operation) {
+    const generationInput = input.generationInput;
+    if (generationInput.operation !== "generate") {
+      const references =
+        generationInput.operation === "mask"
+          ? [...generationInput.images, generationInput.mask]
+          : generationInput.images;
+      for (const [referenceIndex, reference] of references.entries()) {
+        if (reference.source === "storage") continue;
         context.addIssue({
           code: "custom",
-          path: ["generationInputs", index, "operation"],
-          message: "All generation inputs must use the same operation",
+          path: ["generationInput", "media", referenceIndex],
+          message: "Async image media must be persisted as storage references",
         });
-      }
-      if (generationIds.has(generationInput.generationId)) {
-        context.addIssue({
-          code: "custom",
-          path: ["generationInputs", index, "generationId"],
-          message: "generationId must be unique within an async task",
-        });
-      }
-      generationIds.add(generationInput.generationId);
-      if (generationInput.operation !== "generate") {
-        const references =
-          generationInput.operation === "mask"
-            ? [...generationInput.images, generationInput.mask]
-            : generationInput.images;
-        for (const [referenceIndex, reference] of references.entries()) {
-          if (reference.source === "storage") continue;
-          context.addIssue({
-            code: "custom",
-            path: ["generationInputs", index, "media", referenceIndex],
-            message:
-              "Async image media must be persisted as storage references",
-          });
-        }
       }
     }
   });
@@ -186,7 +165,7 @@ export const imageAsyncTaskOutputSchema = z.object({
   model: z.string().trim().min(1).max(256),
   operation: z.enum(["generate", "edit", "mask"]),
   status: imageAsyncTaskStatusSchema,
-  generationIds: z.array(z.string().trim().min(1).max(128)).min(1),
+  generationId: z.string().trim().min(1).max(128),
   responseFormat: z.enum(["url", "b64_json"]),
   createdAt: z.string().datetime(),
   startedAt: z.string().datetime().nullable(),
@@ -200,51 +179,7 @@ export type ImageEnqueueAsyncInput = z.infer<
 >;
 
 /** 图片异步任务的稳定输出类型。 */
-export type ImageAsyncTaskOutput = z.infer<
-  typeof imageAsyncTaskOutputSchema
->;
-
-type ImageGenerateOperation = z.infer<
-  typeof imageGenerateInputSchema
->["operation"];
-
-/** 各图片动作对应的站内、外部 API 套餐能力。 */
-const IMAGE_CAPABILITIES_BY_OPERATION: Record<
-  ImageGenerateOperation,
-  { internal: string; external: string }
-> = {
-  generate: {
-    internal: "imageGeneration.text",
-    external: "externalApi.images.generate",
-  },
-  edit: {
-    internal: "imageGeneration.edit",
-    external: "externalApi.images.edit",
-  },
-  mask: {
-    internal: "imageGeneration.mask",
-    external: "externalApi.images.mask",
-  },
-};
-
-/** 根据媒体变体和 Principal 推导站内或外部 API 套餐能力。 */
-function deriveImageCapabilities(
-  input: z.infer<typeof imageGenerateInputSchema>,
-  principal: Principal
-): string[] {
-  const external = isExternalApiKeyPrincipal(principal);
-  const operationCapabilities =
-    IMAGE_CAPABILITIES_BY_OPERATION[input.operation];
-  const capabilities = [
-    external ? operationCapabilities.external : operationCapabilities.internal,
-  ];
-  if ((input.count ?? 1) > 1) {
-    capabilities.push(
-      external ? "externalApi.images.batch" : "imageGeneration.batch"
-    );
-  }
-  return capabilities;
-}
+export type ImageAsyncTaskOutput = z.infer<typeof imageAsyncTaskOutputSchema>;
 
 // ---------------------------------------------------------------------------
 // 1. image.generate - 统一管线核心（runImageGenerationForUser）
@@ -264,16 +199,6 @@ export const imageGenerate = defineOperation<
   input: imageGenerateInputSchema,
   output: imageGenerateOutputSchema,
   access: { kind: "protected" },
-  capabilities: [
-    {
-      derive: (input, principal) =>
-        deriveImageCapabilities(
-          input as ImageGenerateOperationInput,
-          principal
-        ),
-    },
-  ],
-  allowSystemCapabilityBypass: true,
   readOnly: false,
   destructive: false,
   idempotency: {
@@ -304,28 +229,6 @@ export const imageEnqueueAsync = defineOperation<
   input: imageEnqueueAsyncInputSchema,
   output: imageAsyncTaskOutputSchema,
   access: { kind: "protected" },
-  capabilities: [
-    {
-      derive: (input, principal) => {
-        const parsed = input as ImageEnqueueAsyncInput;
-        const capabilities = [
-          ...new Set(
-            parsed.generationInputs.flatMap((generationInput) =>
-              deriveImageCapabilities(generationInput, principal)
-            )
-          ),
-        ];
-        if (parsed.generationInputs.length > 1) {
-          capabilities.push(
-            isExternalApiKeyPrincipal(principal)
-              ? "externalApi.images.batch"
-              : "imageGeneration.batch"
-          );
-        }
-        return [...new Set(capabilities)];
-      },
-    },
-  ],
   readOnly: false,
   destructive: false,
   idempotency: {
@@ -381,7 +284,6 @@ export const imageProcessAsyncTask = defineOperation({
     .strict(),
   output: imageAsyncTaskOutputSchema,
   access: { kind: "system" },
-  allowSystemCapabilityBypass: true,
   readOnly: false,
   destructive: false,
   idempotency: {

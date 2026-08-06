@@ -1,20 +1,49 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
+  bindExecute,
+  clearRegistry,
   defineOperation,
   getOperation,
-  listOperations,
   getRegistrySize,
-  clearRegistry,
-  bindExecute,
   isOperationBound,
+  listOperations,
 } from "../registry";
 import type { OperationDefinition } from "../types";
 
+vi.hoisted(() => {
+  process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
+});
+
+/** 已删除且不得重新注册的订阅 operation 名称。 */
+const REMOVED_SUBSCRIPTION_OPERATIONS = [
+  "subscription.listMyPurchasablePlans",
+  "subscription.createCheckout",
+  "subscription.getUpgradeQuote",
+  "subscription.cancel",
+  "subscription.getPortal",
+  "subscription.getUserSubscription",
+  "subscription.hasActive",
+  "subscription.getMyPlan",
+  "subscription.getUserPlan",
+  "subscription.checkFileSize",
+  "subscription.getCapabilitySnapshot",
+  "subscription.canUseCapability",
+  "subscription.getPlanLimits",
+  "subscription.webhookCreem",
+  "subscription.webhookEpay",
+  "subscription.fulfillEpay",
+] as const;
+
+await import("../operations");
+const REGISTERED_OPERATION_NAMES = new Set(
+  listOperations().map((operation) => operation.name)
+);
+
 /** 测试用最小操作定义工厂 */
 function makeTestOp(
-  overrides: Partial<OperationDefinition> = {},
+  overrides: Partial<OperationDefinition> = {}
 ): OperationDefinition {
   return {
     name: overrides.name ?? "test.op",
@@ -51,7 +80,7 @@ describe("UOL Registry", () => {
       defineOperation(makeTestOp({ name: "dup.op" }));
 
       expect(() => defineOperation(makeTestOp({ name: "dup.op" }))).toThrow(
-        "[UOL] Duplicate operation registration: dup.op",
+        "[UOL] Duplicate operation registration: dup.op"
       );
     });
   });
@@ -79,9 +108,7 @@ describe("UOL Registry", () => {
 
     it("filters by domain", () => {
       defineOperation(makeTestOp({ name: "op.a", domain: "credits" }));
-      defineOperation(
-        makeTestOp({ name: "op.b", domain: "image-generation" }),
-      );
+      defineOperation(makeTestOp({ name: "op.b", domain: "image-generation" }));
       defineOperation(makeTestOp({ name: "op.c", domain: "credits" }));
 
       const filtered = listOperations({ domain: "credits" });
@@ -101,14 +128,10 @@ describe("UOL Registry", () => {
 
     it("filters by destructive", () => {
       defineOperation(makeTestOp({ name: "safe", destructive: false }));
-      defineOperation(
-        makeTestOp({ name: "danger", destructive: true }),
-      );
+      defineOperation(makeTestOp({ name: "danger", destructive: true }));
 
       expect(listOperations({ destructive: true })).toHaveLength(1);
-      expect(listOperations({ destructive: true })[0]?.name).toBe(
-        "danger",
-      );
+      expect(listOperations({ destructive: true })[0]?.name).toBe("danger");
     });
 
     it("combines multiple filter criteria", () => {
@@ -118,7 +141,7 @@ describe("UOL Registry", () => {
           domain: "credits",
           readOnly: true,
           destructive: false,
-        }),
+        })
       );
       defineOperation(
         makeTestOp({
@@ -126,7 +149,7 @@ describe("UOL Registry", () => {
           domain: "storage",
           readOnly: true,
           destructive: false,
-        }),
+        })
       );
       defineOperation(
         makeTestOp({
@@ -134,7 +157,7 @@ describe("UOL Registry", () => {
           domain: "credits",
           readOnly: false,
           destructive: false,
-        }),
+        })
       );
 
       const filtered = listOperations({
@@ -179,13 +202,13 @@ describe("UOL Registry", () => {
           execute: async () => {
             throw new Error("Not yet wired: bind.test");
           },
-        }),
+        })
       );
 
       // 绑定前：execute 是 stub
       const before = getOperation("bind.test");
       await expect(
-        before!.execute({}, {} as never, {} as never),
+        before!.execute({}, {} as never, {} as never)
       ).rejects.toThrow("Not yet wired");
 
       // 绑定真实实现
@@ -198,9 +221,9 @@ describe("UOL Registry", () => {
     });
 
     it("throws on unknown operation name", () => {
-      expect(() =>
-        bindExecute("nonexistent.op", async () => ({})),
-      ).toThrow("[UOL] Cannot bind unknown operation: nonexistent.op");
+      expect(() => bindExecute("nonexistent.op", async () => ({}))).toThrow(
+        "[UOL] Cannot bind unknown operation: nonexistent.op"
+      );
     });
 
     it("passes input, principal, and ctx to bound function", async () => {
@@ -210,7 +233,7 @@ describe("UOL Registry", () => {
           execute: async () => {
             throw new Error("Not yet wired: bind.args");
           },
-        }),
+        })
       );
 
       const captured: unknown[] = [];
@@ -226,7 +249,7 @@ describe("UOL Registry", () => {
       await getOperation("bind.args")!.execute(
         fakeInput,
         fakePrincipal as never,
-        fakeCtx as never,
+        fakeCtx as never
       );
 
       expect(captured[0]).toEqual(fakeInput);
@@ -247,7 +270,7 @@ describe("UOL Registry", () => {
           execute: async () => {
             throw new Error("Not yet wired: stub.op");
           },
-        }),
+        })
       );
       expect(isOperationBound("stub.op")).toBe(false);
     });
@@ -257,7 +280,7 @@ describe("UOL Registry", () => {
         makeTestOp({
           name: "real.op",
           execute: async () => ({ ok: true }),
-        }),
+        })
       );
       expect(isOperationBound("real.op")).toBe(true);
     });
@@ -269,12 +292,25 @@ describe("UOL Registry", () => {
           execute: async () => {
             throw new Error("Not yet wired: was-stub.op");
           },
-        }),
+        })
       );
       expect(isOperationBound("was-stub.op")).toBe(false);
 
       bindExecute("was-stub.op", async () => ({ ok: true }));
       expect(isOperationBound("was-stub.op")).toBe(true);
+    });
+  });
+
+  describe("removed operation tombstones", () => {
+    it("does not register any deleted subscription operation", () => {
+      for (const name of REMOVED_SUBSCRIPTION_OPERATIONS) {
+        expect(REGISTERED_OPERATION_NAMES.has(name)).toBe(false);
+      }
+      expect(
+        [...REGISTERED_OPERATION_NAMES].some((name) =>
+          name.startsWith("subscription.")
+        )
+      ).toBe(false);
     });
   });
 });

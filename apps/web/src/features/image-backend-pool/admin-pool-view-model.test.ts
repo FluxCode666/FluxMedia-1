@@ -111,7 +111,6 @@ describe("admin pool view model", () => {
           isDefault: false,
           isUserSelectable: true,
           contentSafety: "inherit" as const,
-          minPlan: "free" as const,
           imageCreditOverrides: { version: 1 as const, byModel: {} },
           videoCreditOverrides: {},
           childGroupIds: [],

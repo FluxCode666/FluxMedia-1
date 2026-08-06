@@ -8,23 +8,19 @@
  * - 可用积分余额
  * - 购买积分入口
  * - 即将过期积分提示
- * - 订阅状态
+ * - 历史来源分类
  * - 交易历史
  */
 
+import { Button } from "@repo/ui/components/button";
+import { Separator } from "@repo/ui/components/separator";
 import { Clock, Coins } from "lucide-react";
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect } from "react";
-
 import { formatDateInTimeZone } from "../../time-zone";
-import { Button } from "@repo/ui/components/button";
-import { Separator } from "@repo/ui/components/separator";
-import {
-  getMyActiveBatches,
-  getMyCreditsBalance,
-} from "../actions";
+import { getMyActiveBatches, getMyCreditsBalance } from "../actions";
 import { formatCredits } from "../format";
 
 import { TransactionHistory } from "./transaction-history";
@@ -38,11 +34,16 @@ function formatDate(
   timeZone: string
 ): string {
   if (!date) return "Never";
-  return formatDateInTimeZone(date, locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }, timeZone);
+  return formatDateInTimeZone(
+    date,
+    locale,
+    {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    },
+    timeZone
+  );
 }
 
 /**
@@ -125,9 +126,7 @@ export function CreditUsageSection({ timeZone }: { timeZone: string }) {
             </div>
           ) : (
             <>
-              <div className="text-4xl font-bold">
-                {formatCredits(balance)}
-              </div>
+              <div className="text-4xl font-bold">{formatCredits(balance)}</div>
               <div className="text-sm text-muted-foreground">
                 {t("creditsAvailable")}
               </div>
@@ -167,11 +166,6 @@ export function CreditUsageSection({ timeZone }: { timeZone: string }) {
           <Button asChild>
             <Link href={`/${locale}/dashboard/wallet?purchase=top-up`}>
               {t("getMoreCredits.buyCredits")}
-            </Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link href={`/${locale}/#pricing`}>
-              {t("getMoreCredits.viewPlans")}
             </Link>
           </Button>
         </div>

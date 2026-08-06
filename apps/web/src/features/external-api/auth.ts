@@ -1,19 +1,18 @@
 /**
  * 外接 API Key 请求认证器。
  *
- * 仅返回身份、套餐与额度事实；审核和持久化策略由系统与管理员配置统一解析，
+ * 仅返回身份与额度事实；审核和持久化策略由系统与管理员配置统一解析，
  * 不再从 API Key 读取或暴露用户可控治理字段。
  */
 
 import { db } from "@repo/database";
 import { externalApiKey, user } from "@repo/database/schema";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 import { and, eq } from "drizzle-orm";
 
 import { getBearerToken, hashApiKey, safeEqual } from "./auth-token";
 
 /**
- * 验证请求中的 Bearer API Key 并加载所属用户套餐。
+ * 验证请求中的 Bearer API Key 并加载所属用户状态。
  *
  * @param request 外接 API 请求。
  * @returns 有效 key 的认证上下文，无凭据、禁用 key 或封禁用户返回 null。
@@ -50,8 +49,6 @@ export async function authenticateExternalApiRequest(request: Request) {
     return null;
   }
 
-  const plan = await getUserPlan(apiKey.userId);
-
   await db
     .update(externalApiKey)
     .set({ lastUsedAt: new Date(), updatedAt: new Date() })
@@ -60,7 +57,6 @@ export async function authenticateExternalApiRequest(request: Request) {
   return {
     apiKeyId: apiKey.id,
     userId: apiKey.userId,
-    plan: plan.plan,
     creditLimit: apiKey.creditLimit ?? null,
     creditsUsed: Number(apiKey.creditsUsed || 0),
   };

@@ -2,7 +2,7 @@
  * `/v1/models` 外接 API 处理器的单元测试。
  *
  * 使用方：Vitest；验证传输层只构造 API Key Principal 并委托 UOL，保持模型列表
- * 的套餐与供应商能力判断集中在统一接口层。
+ * 的供应商可用性判断集中在统一接口层。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -57,7 +57,6 @@ describe("external models handler", () => {
     mocks.authenticateExternalApiRequest.mockResolvedValue({
       userId: "user_1",
       apiKeyId: "key_1",
-      plan: "starter",
     });
     mocks.ensureUolInitialized.mockResolvedValue(undefined);
     mocks.invokeOperation.mockResolvedValue({
@@ -98,17 +97,16 @@ describe("external models handler", () => {
         credentialKind: "external",
         userId: "user_1",
         apiKeyId: "key_1",
-        plan: "starter",
       }
     );
   });
 
-  it("将 UOL 套餐能力拒绝保持为 OpenAI 兼容的 403 响应", async () => {
+  it("将 UOL 权限拒绝保持为 OpenAI 兼容的 403 响应", async () => {
     const { getExternalModels } = await import("./models");
     mocks.invokeOperation.mockRejectedValue(
       new mocks.MockOperationError(
-        "capability_required",
-        "External API model listing is not enabled for this plan.",
+        "forbidden",
+        "External API model listing is forbidden.",
         403
       )
     );
@@ -118,9 +116,9 @@ describe("external models handler", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: {
-        message: "External API model listing is not enabled for this plan.",
+        message: "External API model listing is forbidden.",
         type: "invalid_request_error",
-        code: "insufficient_plan",
+        code: "forbidden",
       },
     });
   });

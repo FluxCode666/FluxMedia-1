@@ -57,9 +57,9 @@ describe("buildHomepageIntegrationExample", () => {
     expect(result.curl).not.toContain("<API_KEY>");
     expect(JSON.parse(result.requestBody)).toMatchObject({
       model: "gpt-image-alpha",
-      n: 1,
       response_format: "url",
     });
+    expect(JSON.parse(result.requestBody)).not.toHaveProperty("n");
   });
 
   it.each([

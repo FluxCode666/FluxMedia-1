@@ -25,7 +25,6 @@ const apiKeyPrincipal = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
-  plan: "pro",
 } satisfies Principal;
 
 /** 构造可观测的视频能力 binding 依赖桩。 */

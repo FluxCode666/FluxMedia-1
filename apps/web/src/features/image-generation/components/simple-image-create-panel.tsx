@@ -416,7 +416,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                       title={
                         props.maskAvailable
                           ? "在主参考图上涂抹需要编辑的区域"
-                          : "当前套餐没有支持蒙版编辑的模型"
+                          : "当前没有支持蒙版编辑的模型"
                       }
                     >
                       <Brush className="mr-1.5 size-3.5" />
@@ -432,7 +432,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                       title={
                         props.maskAvailable
                           ? "上传与主参考图尺寸一致的 PNG 蒙版"
-                          : "当前套餐没有支持蒙版编辑的模型"
+                          : "当前没有支持蒙版编辑的模型"
                       }
                     >
                       <Upload className="mr-1.5 size-3.5" />
@@ -562,7 +562,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                   </Select>
                 ) : (
                   <div className="flex h-9 items-center rounded-md border border-destructive/40 bg-background px-3 text-sm text-destructive">
-                    当前套餐没有支持此操作的生图模型。
+                    当前没有支持此操作的生图模型。
                   </div>
                 )}
               </div>

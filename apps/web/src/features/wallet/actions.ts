@@ -9,7 +9,6 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import type { UserPaymentOrderListOutput } from "@repo/shared/payment/user-order-contract";
 import { protectedAction } from "@repo/shared/safe-action";
-import type { SubscriptionPurchaseOptions } from "@repo/shared/subscription/purchase-contract";
 import { invokeOperation, type Principal } from "@repo/shared/uol";
 import { ensureUolInitialized } from "@/server/uol-init";
 import type {
@@ -22,7 +21,6 @@ type WalletOperationOutputs = {
   "credits.getMyBalance": WalletBalanceSnapshot;
   "credits.getTopUpOptions": WalletTopUpOptions;
   "payment.listMyRecentOrders": UserPaymentOrderListOutput;
-  "subscription.listMyPurchasablePlans": SubscriptionPurchaseOptions;
 };
 type WalletOperationName = keyof WalletOperationOutputs;
 
@@ -70,15 +68,8 @@ export const getMyWalletRecentPaymentOrdersAction = protectedAction
     invokeMyWalletOperation("payment.listMyRecentOrders", ctx.userId)
   );
 
-/** 读取当前用户有效订阅套餐与资格。 */
-export const getMyWalletSubscriptionOptionsAction = protectedAction
-  .metadata({ action: "subscription.listMyPurchasablePlans" })
-  .action(async ({ ctx }) =>
-    invokeMyWalletOperation("subscription.listMyPurchasablePlans", ctx.userId)
-  );
-
 /**
- * 一次鉴权并行加载钱包四块数据，供首屏使用。
+ * 一次鉴权并行加载钱包三块数据，供首屏使用。
  *
  * 单块 UOL 失败由聚合器转换为独立 error 状态；不会把读取异常伪装成关闭。
  */
@@ -93,7 +84,5 @@ export const getMyWalletPageDataAction = protectedAction
         invokeWalletOperation("payment.listMyRecentOrders", principal),
       loadTopUp: () =>
         invokeWalletOperation("credits.getTopUpOptions", principal),
-      loadSubscription: () =>
-        invokeWalletOperation("subscription.listMyPurchasablePlans", principal),
     });
   });

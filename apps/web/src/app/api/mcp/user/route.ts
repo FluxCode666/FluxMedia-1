@@ -36,9 +36,8 @@ import {
   isMcpUserEnabled,
   McpAuthError,
 } from "@repo/shared/mcp";
+import type { McpApiKeyPrincipal } from "@repo/shared/mcp/user-auth";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
-import type { Principal } from "@repo/shared/uol";
 import { invokeOperation } from "@repo/shared/uol";
 import { and, eq } from "drizzle-orm";
 import { type NextRequest, NextResponse } from "next/server";
@@ -57,7 +56,7 @@ import "@repo/shared/uol/operations";
  * 查询 mcp_api_key 表，校验 key 有效性与用户状态，
  * 返回 Principal { type: "apiKey", credentialKind: "mcp" }。
  */
-bindMcpUserAuth(async (authHeader: string): Promise<Principal> => {
+bindMcpUserAuth(async (authHeader: string): Promise<McpApiKeyPrincipal> => {
   if (!authHeader.startsWith("Bearer ")) {
     throw new McpAuthError("Missing or invalid Bearer token");
   }
@@ -99,14 +98,11 @@ bindMcpUserAuth(async (authHeader: string): Promise<Principal> => {
       /* 静默：lastUsedAt 更新失败不影响请求处理 */
     });
 
-  const plan = await getUserPlan(record.userId);
-
   return {
     type: "apiKey",
     credentialKind: "mcp",
     userId: record.userId,
     apiKeyId: record.id,
-    plan: plan.plan,
   };
 });
 
@@ -163,7 +159,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // 2. 鉴权
   const authHeader = request.headers.get("authorization") || "";
-  let principal: Principal;
+  let principal: McpApiKeyPrincipal;
   try {
     principal = await authenticateMcpUserKey(authHeader);
   } catch (err: unknown) {
@@ -180,56 +176,54 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 3. Per-key 速率限制
-  if (principal.type === "apiKey") {
-    const rateLimit = await checkRateLimit(
-      `${MCP_USER_RATE_LIMIT_PREFIX}${principal.apiKeyId}`,
-      "ai"
+  const rateLimit = await checkRateLimit(
+    `${MCP_USER_RATE_LIMIT_PREFIX}${principal.apiKeyId}`,
+    "ai"
+  );
+  if (!rateLimit.success) {
+    logWarn("MCP User key rate limit exceeded", {
+      source: "mcp-user-route",
+      apiKeyId: principal.apiKeyId,
+      userId: principal.userId,
+      limit: rateLimit.limit,
+      reset: rateLimit.reset,
+    });
+    return NextResponse.json(
+      {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: JSON_RPC_SERVER_ERROR,
+          message: "Rate limit exceeded",
+        },
+      } satisfies JsonRpcResponse,
+      { status: 429 }
     );
-    if (!rateLimit.success) {
-      logWarn("MCP User key rate limit exceeded", {
-        source: "mcp-user-route",
-        apiKeyId: principal.apiKeyId,
-        userId: principal.userId,
-        limit: rateLimit.limit,
-        reset: rateLimit.reset,
-      });
-      return NextResponse.json(
-        {
-          jsonrpc: "2.0",
-          id: null,
-          error: {
-            code: JSON_RPC_SERVER_ERROR,
-            message: "Rate limit exceeded",
-          },
-        } satisfies JsonRpcResponse,
-        { status: 429 }
-      );
-    }
+  }
 
-    // 一个用户可创建多个 MCP key；账户级桶防止通过轮换 key 放大统计查询与生图流量。
-    const aggregateRateLimit = await checkRateLimit(
-      `${MCP_USER_AGGREGATE_RATE_LIMIT_PREFIX}${principal.userId}`,
-      "ai"
+  // 一个用户可创建多个 MCP key；账户级桶防止通过轮换 key 放大统计查询与生图流量。
+  const aggregateRateLimit = await checkRateLimit(
+    `${MCP_USER_AGGREGATE_RATE_LIMIT_PREFIX}${principal.userId}`,
+    "ai"
+  );
+  if (!aggregateRateLimit.success) {
+    logWarn("MCP User account rate limit exceeded", {
+      source: "mcp-user-route",
+      userId: principal.userId,
+      limit: aggregateRateLimit.limit,
+      reset: aggregateRateLimit.reset,
+    });
+    return NextResponse.json(
+      {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: JSON_RPC_SERVER_ERROR,
+          message: "Rate limit exceeded",
+        },
+      } satisfies JsonRpcResponse,
+      { status: 429 }
     );
-    if (!aggregateRateLimit.success) {
-      logWarn("MCP User account rate limit exceeded", {
-        source: "mcp-user-route",
-        userId: principal.userId,
-        limit: aggregateRateLimit.limit,
-        reset: aggregateRateLimit.reset,
-      });
-      return NextResponse.json(
-        {
-          jsonrpc: "2.0",
-          id: null,
-          error: {
-            code: JSON_RPC_SERVER_ERROR,
-            message: "Rate limit exceeded",
-          },
-        } satisfies JsonRpcResponse,
-        { status: 429 }
-      );
-    }
   }
 
   try {
@@ -296,7 +290,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
 async function handleMethod(
   req: JsonRpcRequest,
-  principal: Principal
+  principal: McpApiKeyPrincipal
 ): Promise<JsonRpcResponse> {
   switch (req.method) {
     case "initialize":
@@ -344,7 +338,7 @@ function handleInitialize(req: JsonRpcRequest): JsonRpcResponse {
 
 function handleToolsList(
   req: JsonRpcRequest,
-  principal: Principal
+  principal: McpApiKeyPrincipal
 ): JsonRpcResponse {
   const tools = buildUserMcpTools(principal);
   return {
@@ -360,7 +354,7 @@ function handleToolsList(
 
 async function handleToolsCall(
   req: JsonRpcRequest,
-  principal: Principal
+  principal: McpApiKeyPrincipal
 ): Promise<JsonRpcResponse> {
   const params = req.params ?? {};
   const toolName = params.name as string | undefined;

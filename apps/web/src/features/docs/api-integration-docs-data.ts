@@ -147,8 +147,7 @@ const zhContent = {
       method: "GET",
       path: "/v1/models",
       contentType: "无请求体",
-      description:
-        "列出当前 API 密钥所属套餐和后端分组实际可用的图片与视频模型。",
+      description: "列出当前 API 密钥绑定分组实际可用的图片与视频模型。",
       requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/models \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
       responseExample: `{
@@ -188,7 +187,7 @@ const zhContent = {
         },
       ],
       notes: [
-        "结果同时受当前套餐能力、API 密钥绑定分组和组内启用成员的显式模型列表约束。",
+        "结果受 API 密钥绑定分组、组内启用成员的显式模型列表和系统能力开关约束。",
         "只提供模型列表，不提供 /v1/models/{model} 详情端点。",
         "响应使用 Cache-Control: no-store；生成前应重新查询，不要在客户端维护固定模型清单。",
       ],
@@ -277,7 +276,6 @@ const zhContent = {
   -d '{
     "model": "gpt-image-2",
     "prompt": "A quiet reading room in the morning sun",
-    "n": 1,
     "size": "1024x1024",
     "quality": "medium",
     "response_format": "url",
@@ -303,12 +301,6 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
-        },
-        {
-          name: "n",
-          requirement: "可选",
-          defaultValue: "1",
-          description: "生成数量，须在当前套餐允许的批量范围内。",
         },
         {
           name: "size",
@@ -437,12 +429,6 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
-        },
-        {
-          name: "n",
-          requirement: "可选",
-          defaultValue: "1",
-          description: "生成数量，须在当前套餐允许的批量范围内。",
         },
         {
           name: "size",
@@ -935,7 +921,7 @@ const enContent = {
       title: "List available models",
       contentType: "No request body",
       description:
-        "List the image and video models actually available to the current API key's plan and backend group.",
+        "List the image and video models actually available to the current API key's bound backend group.",
       parameters: [
         {
           name: "Authorization",
@@ -956,7 +942,7 @@ const enContent = {
         },
       ],
       notes: [
-        "Results are filtered by plan capabilities, the API key's backend group, and the explicit model lists of enabled group members.",
+        "Results are filtered by system capability switches, the API key's backend group, and the explicit model lists of enabled group members.",
         "Only model listing is available; /v1/models/{model} is not implemented.",
         "Responses use Cache-Control: no-store. Query again before generation instead of maintaining a fixed client-side model list.",
       ],
@@ -1021,13 +1007,6 @@ const enContent = {
           name: "model",
           requirement: "Required",
           description: "Image model ID available to the current API key.",
-        },
-        {
-          name: "n",
-          requirement: "Optional",
-          defaultValue: "1",
-          description:
-            "Number of images, within the current plan's batch limit.",
         },
         {
           name: "size",
@@ -1138,13 +1117,6 @@ const enContent = {
           name: "model",
           requirement: "Required",
           description: "Image model ID available to the current API key.",
-        },
-        {
-          name: "n",
-          requirement: "Optional",
-          defaultValue: "1",
-          description:
-            "Number of images, within the current plan's batch limit.",
         },
         {
           name: "size",

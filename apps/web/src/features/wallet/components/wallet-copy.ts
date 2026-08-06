@@ -8,8 +8,8 @@ export function createWalletCopy(isZh: boolean) {
   return {
     title: copy("Wallet", "钱包"),
     description: copy(
-      "Review your credit balance and choose an available purchase option.",
-      "查看积分资产，并选择当前可用的购买方式。"
+      "Review your credit balance and add credits as needed.",
+      "查看积分资产，并按需补充积分。"
     ),
     balance: copy("Current balance", "当前余额"),
     netSpent: copy("Total consumed", "总消耗"),
@@ -19,11 +19,9 @@ export function createWalletCopy(isZh: boolean) {
     ),
     purchaseTitle: copy("Add credits", "补充积分"),
     purchaseDescription: copy(
-      "Choose pay as you go or a subscription plan.",
-      "选择按量充值或订阅套餐。"
+      "Buy credits once and use them based on actual consumption.",
+      "一次性购买积分，并按照实际用量消耗。"
     ),
-    topUpTab: copy("Pay as you go", "按量充值"),
-    subscriptionTab: copy("Subscription plans", "订阅套餐"),
     purchaseError: copy(
       "This purchase option could not be loaded. Please refresh and try again.",
       "该购买方式加载失败，请刷新后重试。"
@@ -36,13 +34,6 @@ export function createWalletCopy(isZh: boolean) {
       "请输入允许范围内的金额。"
     ),
     topUpFailed: copy("Unable to create top-up order", "创建充值订单失败"),
-    monthly: copy("Monthly", "月付"),
-    yearly: copy("Yearly", "年付"),
-    subscribe: copy("Choose plan", "选择套餐"),
-    checkoutFailed: copy(
-      "Unable to start subscription checkout",
-      "无法发起订阅支付"
-    ),
     recentOrdersTitle: copy("Recent top-up orders", "最近充值订单"),
     recentOrdersDescription: copy(
       "Review your latest credit top-ups and payment status.",
@@ -59,7 +50,7 @@ export function createWalletCopy(isZh: boolean) {
     orderAmount: copy("Amount", "金额"),
     orderCredits: copy("Credits", "积分"),
     topUpOrder: copy("Pay as you go", "按量充值"),
-    packageOrder: copy("Credit package", "积分套餐"),
+    packageOrder: copy("Credit package", "积分包"),
     provider: copy("Provider", "支付渠道"),
     providerLabels: {
       alipay_f2f: copy("Alipay", "支付宝"),
@@ -75,12 +66,10 @@ export function createWalletCopy(isZh: boolean) {
     },
     viewOrder: copy("View order", "查看订单"),
     unavailable: copy("Currently unavailable", "当前不可购买"),
-    currentPlan: copy("Current plan", "当前套餐"),
-    popular: copy("Popular", "推荐"),
     paymentNotice: {
       success: copy(
-        "Payment completed. Your balance or plan may take a moment to update.",
-        "支付已完成，余额或套餐状态可能需要片刻更新。"
+        "Payment completed. Your balance may take a moment to update.",
+        "支付已完成，余额可能需要片刻更新。"
       ),
       processing: copy(
         "Payment confirmed and is being processed.",

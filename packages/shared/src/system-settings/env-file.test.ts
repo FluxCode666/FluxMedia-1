@@ -42,12 +42,10 @@ describe("buildManagedEnvBlock", () => {
     const block = buildManagedEnvBlock([
       { key: "NEXT_PUBLIC_APP_NAME", value: "Hello World" },
       { key: "RATE_LIMIT_AI_REQUESTS_PER_MINUTE", value: 20 },
-      { key: "PLAN_CAPABILITY_MATRIX", value: { version: 1 } },
     ]);
 
     expect(block).toContain('NEXT_PUBLIC_APP_NAME="Hello World"');
     expect(block).toContain('RATE_LIMIT_AI_REQUESTS_PER_MINUTE="20"');
-    expect(block).toContain('PLAN_CAPABILITY_MATRIX="{\\"version\\":1}"');
   });
 
   it("only includes synced keys, sorted, wrapped in BEGIN/END markers", () => {

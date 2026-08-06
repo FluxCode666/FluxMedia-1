@@ -1,8 +1,8 @@
 /**
  * 生图计价卡服务端数据装配测试。
  *
- * 使用 Vitest 隔离运行时设置、套餐能力与后端分组查询，确保账单展示使用与
- * 实际扣费一致的四档、模型覆盖和审核价格契约。
+ * 使用 Vitest 隔离运行时设置与后端分组查询，确保账单展示使用与实际扣费一致的
+ * 模型覆盖和审核价格契约。
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,10 +31,6 @@ const mocks = vi.hoisted(() => ({
       name: "专业池",
     })
   ),
-  getPlanCapabilitySnapshot: vi.fn(async () => ({
-    features: { "moderation.blocking": true },
-    limits: { monthlyCredits: 800 },
-  })),
   isContentModerationEnabled: vi.fn(async () => true),
   getRuntimeImageModelCreditPricing: vi.fn(async () => ({
     version: 1 as const,
@@ -51,27 +47,10 @@ const mocks = vi.hoisted(() => ({
     textModerationCredits: 0.13,
     imageModerationCredits: 0.27,
   })),
-  getUserPlan: vi.fn(async () => ({
-    cancelAtPeriodEnd: false,
-    currentPeriodEnd: null,
-    hasActiveSubscription: true,
-    plan: "pro" as const,
-    planName: "Pro",
-    priceId: "price-pro",
-    subscriptionStatus: "active",
-  })),
-}));
-
-vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  getPlanCapabilitySnapshot: mocks.getPlanCapabilitySnapshot,
 }));
 
 vi.mock("@repo/shared/moderation", () => ({
   isContentModerationEnabled: mocks.isContentModerationEnabled,
-}));
-
-vi.mock("@repo/shared/subscription/services/user-plan", () => ({
-  getUserPlan: mocks.getUserPlan,
 }));
 
 vi.mock("@/features/image-backend-pool/catalog-service", () => ({
@@ -111,8 +90,6 @@ describe("loadImagePricingCardData", () => {
       billing: {
         groupName: "专业池",
         moderationBlockingEnabled: true,
-        monthlyCredits: 800,
-        planName: "Pro",
       },
       referenceModel: {
         id: "gpt-image-2",
@@ -141,9 +118,7 @@ describe("loadImagePricingCardData", () => {
       },
     });
     expect("groupMultiplier" in result.billing).toBe(false);
-    expect(mocks.getEffectiveDefaultImageBackendGroup).toHaveBeenCalledWith(
-      "pro"
-    );
+    expect(mocks.getEffectiveDefaultImageBackendGroup).toHaveBeenCalledWith();
   });
 
   it("无可用分组时返回空覆盖契约", async () => {

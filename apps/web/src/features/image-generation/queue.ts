@@ -5,41 +5,47 @@
  * 全局及单用户并发槽由必填 Redis 原子租约统一裁决，多副本之间不再各自计数。
  */
 
-import type { QueuePriority } from "@repo/shared/config/subscription-plan";
 import { logWarn } from "@repo/shared/logger";
 import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
+import { OperationError } from "@repo/shared/uol";
 
+import { IndexedPriorityQueue } from "./indexed-priority-queue";
 import {
-  acquireImageGenerationSlot,
-  type RedisImageGenerationSlotLease,
-  releaseImageGenerationSlot,
+  acquireImageGenerationAdmission,
+  acquireImageGenerationExecution,
+  getImageGenerationSlotLeaseTtlMs,
+  type RedisImageGenerationAdmissionLease,
+  type RedisImageGenerationExecutionLease,
+  releaseImageGenerationAdmission,
+  releaseImageGenerationExecution,
+  renewImageGenerationAdmission,
+  renewImageGenerationExecution,
 } from "./redis-image-generation-slots";
 
-type QueueBlockReason = "global" | "user";
+type QueuePriority = number;
 
 type QueueTask<T> = {
   id: number;
-  userId: string;
   priority: QueuePriority;
-  userConcurrency: number;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
   run: () => Promise<T>;
-  lastBlockedReason?: QueueBlockReason;
+  admissionLease: RedisImageGenerationAdmissionLease;
+  admissionLost: boolean;
+  admissionReleased: boolean;
+  ownsAdmissionLease: boolean;
+  admissionRenewTimer?: ReturnType<typeof setInterval>;
+  executionRenewTimer?: ReturnType<typeof setInterval>;
+  executionLease?: RedisImageGenerationExecutionLease;
+  started: boolean;
   timeout?: ReturnType<typeof setTimeout>;
-};
-
-const PRIORITY_WEIGHT: Record<QueuePriority, number> = {
-  normal: 0,
-  priority: 1,
-  highest: 2,
 };
 
 let nextTaskId = 1;
 let scheduling = false;
 let schedulingRequested = false;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
-const queue: QueueTask<unknown>[] = [];
+const queue = new IndexedPriorityQueue<QueueTask<unknown>>(compareQueueTasks);
 
 /** 从环境变量读取正整数；非法值使用安全默认值。 */
 function getPositiveIntegerEnv(name: string, fallback: number): number {
@@ -48,7 +54,7 @@ function getPositiveIntegerEnv(name: string, fallback: number): number {
 }
 
 /** 读取系统动态配置的全站生图并发上限。 */
-async function getGlobalConcurrency(): Promise<number> {
+export async function getImageGenerationGlobalConcurrency(): Promise<number> {
   const value = await getRuntimeSettingNumber(
     "IMAGE_GENERATION_GLOBAL_CONCURRENCY",
     500,
@@ -75,44 +81,137 @@ function getQueuePollMs(): number {
   );
 }
 
+/** 以租约 TTL 的三分之一作为续期周期，避免排队或执行跨越租约边界。 */
+function getLeaseRenewMs(): number {
+  return Math.max(5_000, Math.floor(getImageGenerationSlotLeaseTtlMs() / 3));
+}
+
 /** 将秒数格式化为现有对外排队错误所需的稳定单位。 */
 function formatDuration(seconds: number): string {
   if (seconds % 60 === 0) return `${seconds / 60} minute(s)`;
   return `${seconds} second(s)`;
 }
 
-/** 根据 Redis 最近一次容量拒绝原因生成准确的排队超时错误。 */
-function getQueuedTaskTimeoutError(
-  task: Pick<QueueTask<unknown>, "lastBlockedReason" | "userConcurrency">,
-  timeoutMs: number
-): Error {
+/** 生成用户已准入但等待全站执行槽超时的稳定错误。 */
+function getQueuedTaskTimeoutError(timeoutMs: number): Error {
   const timeoutSeconds = Math.ceil(timeoutMs / 1000);
-  if (task.lastBlockedReason === "user") {
-    return new Error(
-      `Image generation concurrency limit reached for this plan. Your plan allows ${task.userConcurrency} concurrent image generation task(s); this queued request waited ${formatDuration(timeoutSeconds)} without a free slot.`
-    );
-  }
-
   return new Error(
     `Image generation queue is busy. This queued request waited ${formatDuration(timeoutSeconds)} without a free global slot. Please retry shortly.`
   );
 }
 
-/** 按套餐优先级和本进程入队顺序稳定排序。 */
-function sortQueue(): void {
-  queue.sort((left, right) => {
-    const priorityDelta =
-      PRIORITY_WEIGHT[right.priority] - PRIORITY_WEIGHT[left.priority];
-    return priorityDelta || left.id - right.id;
-  });
+/** 释放用户准入租约；失败时依赖 TTL/恢复扫描，但不改写已产生的结果。 */
+async function releaseAdmissionSafely(
+  lease: RedisImageGenerationAdmissionLease
+): Promise<void> {
+  try {
+    await releaseImageGenerationAdmission(lease);
+  } catch (error) {
+    logWarn("Redis 生图用户准入槽释放失败，等待租约 TTL 自动回收", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+}
+
+/** 释放全站执行租约；失败时依赖 TTL/恢复扫描。 */
+async function releaseExecutionSafely(
+  lease: RedisImageGenerationExecutionLease
+): Promise<void> {
+  try {
+    await releaseImageGenerationExecution(lease);
+  } catch (error) {
+    logWarn("Redis 生图全站执行槽释放失败，等待租约 TTL 自动回收", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+}
+
+/** 清除任务的两个租约续期定时器。 */
+function clearLeaseRenewTimers(task: QueueTask<unknown>): void {
+  if (task.admissionRenewTimer) {
+    clearInterval(task.admissionRenewTimer);
+    task.admissionRenewTimer = undefined;
+  }
+  if (task.executionRenewTimer) {
+    clearInterval(task.executionRenewTimer);
+    task.executionRenewTimer = undefined;
+  }
+}
+
+/** 在任务等待和执行期间持续续期准入租约，丢失时禁止尚未开始的外呼。 */
+function startAdmissionRenewal(task: QueueTask<unknown>): void {
+  task.admissionRenewTimer = setInterval(() => {
+    void (async () => {
+      try {
+        const result = await renewImageGenerationAdmission(task.admissionLease);
+        if (result.status === "lost") {
+          task.admissionLost = true;
+          if (!task.started && removeQueuedTask(task)) {
+            clearLeaseRenewTimers(task);
+            if (task.ownsAdmissionLease) {
+              await releaseAdmissionSafely(task.admissionLease);
+              task.admissionReleased = true;
+            }
+            task.reject(
+              new Error(
+                "Image generation admission lease was lost. Please retry shortly."
+              )
+            );
+            void scheduleQueue();
+          }
+        }
+      } catch (error) {
+        task.admissionLost = true;
+        if (!task.started && removeQueuedTask(task)) {
+          clearLeaseRenewTimers(task);
+          if (task.ownsAdmissionLease) {
+            await releaseAdmissionSafely(task.admissionLease);
+            task.admissionReleased = true;
+          }
+          task.reject(error);
+          void scheduleQueue();
+        }
+      }
+    })();
+  }, getLeaseRenewMs());
+  task.admissionRenewTimer.unref?.();
+}
+
+/** 在执行期间续期全站槽，避免长任务超过租约 TTL 后被其他实例复用。 */
+function startExecutionRenewal(task: QueueTask<unknown>): void {
+  task.executionRenewTimer = setInterval(() => {
+    void (async () => {
+      const lease = task.executionLease;
+      if (!lease) return;
+      try {
+        const result = await renewImageGenerationExecution(lease);
+        if (result.status === "lost") {
+          logWarn("Redis 生图全站执行槽租约丢失，任务将依赖终态结算", {
+            taskId: task.id,
+          });
+        }
+      } catch (error) {
+        logWarn("Redis 生图全站执行槽续期失败，任务将依赖租约 TTL", {
+          taskId: task.id,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+      }
+    })();
+  }, getLeaseRenewMs());
+  task.executionRenewTimer.unref?.();
+}
+
+/** 比较队列任务；同一分组 priority 以单调 ID 保持 FIFO。 */
+function compareQueueTasks(
+  left: QueueTask<unknown>,
+  right: QueueTask<unknown>
+): number {
+  return left.priority - right.priority || left.id - right.id;
 }
 
 /** 从本进程等待队列移除指定任务。 */
 function removeQueuedTask(task: QueueTask<unknown>): boolean {
-  const index = queue.indexOf(task);
-  if (index === -1) return false;
-  queue.splice(index, 1);
-  return true;
+  return Boolean(queue.remove(task.id));
 }
 
 /** 清除当前跨实例容量轮询定时器。 */
@@ -129,7 +228,7 @@ function clearRetryTimer(): void {
  * 抖动避免多个副本在相同毫秒同时争抢刚释放的槽位。
  */
 function scheduleRetry(): void {
-  if (retryTimer || queue.length === 0) return;
+  if (retryTimer || queue.size === 0) return;
   const pollMs = getQueuePollMs();
   const jitterMs = Math.floor(Math.random() * Math.max(25, pollMs / 5));
   retryTimer = setTimeout(() => {
@@ -140,25 +239,17 @@ function scheduleRetry(): void {
 }
 
 /** Redis 获取失败时拒绝本进程全部等待任务，禁止悄悄切换成本地槽位。 */
-function rejectQueuedTasks(error: unknown): void {
+async function rejectQueuedTasks(error: unknown): Promise<void> {
   clearRetryTimer();
-  const pending = queue.splice(0, queue.length);
+  const pending = queue.drain();
   for (const task of pending) {
     if (task.timeout) clearTimeout(task.timeout);
+    clearLeaseRenewTimers(task);
+    if (task.ownsAdmissionLease && !task.admissionReleased) {
+      await releaseAdmissionSafely(task.admissionLease);
+      task.admissionReleased = true;
+    }
     task.reject(error);
-  }
-}
-
-/** 释放租约但不改写已经发生的生图结果；失败时仅等待 TTL 自动回收。 */
-async function releaseSlotLeaseSafely(
-  lease: RedisImageGenerationSlotLease
-): Promise<void> {
-  try {
-    await releaseImageGenerationSlot(lease);
-  } catch (error) {
-    logWarn("Redis 生图并发槽释放失败，等待租约 TTL 自动回收", {
-      errorName: error instanceof Error ? error.name : "UnknownError",
-    });
   }
 }
 
@@ -170,9 +261,26 @@ async function releaseSlotLeaseSafely(
  */
 function startTask<T>(
   task: QueueTask<T>,
-  lease: RedisImageGenerationSlotLease
+  lease: RedisImageGenerationExecutionLease
 ): void {
   if (task.timeout) clearTimeout(task.timeout);
+  task.started = true;
+  task.executionLease = lease;
+  if (task.admissionLost) {
+    clearLeaseRenewTimers(task as QueueTask<unknown>);
+    void releaseExecutionSafely(lease);
+    if (task.ownsAdmissionLease && !task.admissionReleased) {
+      task.admissionReleased = true;
+      void releaseAdmissionSafely(task.admissionLease);
+    }
+    task.reject(
+      new Error(
+        "Image generation admission lease was lost. Please retry shortly."
+      )
+    );
+    return;
+  }
+  startExecutionRenewal(task as QueueTask<unknown>);
   void (async () => {
     let outcome:
       | { status: "fulfilled"; value: T }
@@ -183,7 +291,12 @@ function startTask<T>(
       outcome = { status: "rejected", reason: error };
     }
 
-    await releaseSlotLeaseSafely(lease);
+    clearLeaseRenewTimers(task as QueueTask<unknown>);
+    await releaseExecutionSafely(lease);
+    if (task.ownsAdmissionLease && !task.admissionReleased) {
+      await releaseAdmissionSafely(task.admissionLease);
+      task.admissionReleased = true;
+    }
 
     if (outcome.status === "fulfilled") task.resolve(outcome.value);
     else task.reject(outcome.reason);
@@ -194,8 +307,8 @@ function startTask<T>(
 /**
  * 按本地优先级逐项尝试获取 Redis 分布式槽位。
  *
- * 用户容量不足时继续检查其他用户；全局容量不足时停止本轮并等待重试。Redis 命令
- * 失败会拒绝全部本地等待请求，确保依赖故障期间不会超卖并发。
+ * 用户准入已在入队前完成；全局容量不足时停止本轮并等待重试。Redis 命令失败会
+ * 拒绝全部本地等待请求，确保依赖故障期间不会超卖全站执行并发。
  */
 async function scheduleQueue(): Promise<void> {
   if (scheduling) {
@@ -205,46 +318,39 @@ async function scheduleQueue(): Promise<void> {
   scheduling = true;
   clearRetryTimer();
   try {
-    sortQueue();
-    const globalConcurrency = await getGlobalConcurrency();
-    for (let index = 0; index < queue.length; index += 1) {
-      const task = queue[index];
-      if (!task) continue;
-      let acquisition: Awaited<ReturnType<typeof acquireImageGenerationSlot>>;
+    const globalConcurrency = await getImageGenerationGlobalConcurrency();
+    while (queue.size > 0) {
+      const task = queue.peek();
+      if (!task) break;
+      let acquisition: Awaited<
+        ReturnType<typeof acquireImageGenerationExecution>
+      >;
       try {
-        acquisition = await acquireImageGenerationSlot({
-          userId: task.userId,
+        acquisition = await acquireImageGenerationExecution({
           globalConcurrency,
-          userConcurrency: task.userConcurrency,
         });
       } catch (error) {
-        rejectQueuedTasks(error);
+        await rejectQueuedTasks(error);
         return;
       }
-      const currentIndex = queue.indexOf(task);
-      if (currentIndex === -1) {
+      if (!queue.get(task.id)) {
         // 排队超时可能发生在 Redis 命令等待期间；迟到的成功租约必须立即归还，
         // 且绝不能执行已经向调用方报超时的任务。
         if (acquisition.status === "acquired") {
-          await releaseSlotLeaseSafely(acquisition.lease);
+          await releaseExecutionSafely(acquisition.lease);
         }
-        index -= 1;
         continue;
       }
       if (acquisition.status === "blocked") {
-        task.lastBlockedReason = acquisition.reason;
-        if (acquisition.reason === "global") break;
-        index = currentIndex;
-        continue;
+        break;
       }
 
-      queue.splice(currentIndex, 1);
-      index = currentIndex - 1;
+      queue.remove(task.id);
       startTask(task, acquisition.lease);
     }
   } finally {
     scheduling = false;
-    if (queue.length > 0) scheduleRetry();
+    if (queue.size > 0) scheduleRetry();
     if (schedulingRequested) {
       schedulingRequested = false;
       void scheduleQueue();
@@ -253,9 +359,9 @@ async function scheduleQueue(): Promise<void> {
 }
 
 /**
- * 将一次生图工作纳入套餐优先级队列和 Redis 两级并发槽。
+ * 将一次生图工作纳入分组优先级队列和 Redis 两级并发槽。
  *
- * @param options 用户、套餐优先级、单用户并发上限与可选等待超时。
+ * @param options 用户、分组 priority、单用户并发上限与可选等待超时。
  * @param run 只在成功获得全局及用户槽位后执行的生图工作。
  * @returns 原工作结果；排队超时、Redis 故障或工作异常均显式拒绝。
  */
@@ -264,30 +370,84 @@ export async function withImageGenerationQueue<T>(
     userId: string;
     priority: QueuePriority;
     userConcurrency: number;
+    effectiveSource?: "system_default" | "user_override";
+    admissionLease?: RedisImageGenerationAdmissionLease;
+    /** 异步 Worker 已取得并自行续期/释放的全站执行租约。 */
+    executionLease?: RedisImageGenerationExecutionLease;
+    releaseAdmissionOnCompletion?: boolean;
     timeoutMs?: number;
   },
   run: () => Promise<T>
 ): Promise<T> {
+  if (options.executionLease) {
+    if (!options.admissionLease) {
+      throw new Error("预授权全站执行槽缺少用户 admission 租约");
+    }
+    // WHY：BullMQ Worker 已按持久 priority 排队并取得两级 Redis 租约；再次进入本地
+    // 队列会重复占用全站槽并让 Worker active 等待。租约生命周期由 Worker fencing 管理。
+    return run();
+  }
   return new Promise<T>((resolve, reject) => {
-    const timeoutMs = options.timeoutMs || getQueueTimeoutMs();
-    let task: QueueTask<T>;
-    task = {
-      id: nextTaskId++,
-      userId: options.userId,
-      priority: options.priority,
-      userConcurrency: Math.max(1, Math.floor(options.userConcurrency)),
-      resolve,
-      reject,
-      run,
-      timeout: setTimeout(() => {
-        if (removeQueuedTask(task as QueueTask<unknown>)) {
-          reject(getQueuedTaskTimeoutError(task, timeoutMs));
-          if (queue.length === 0) clearRetryTimer();
+    void (async () => {
+      let admissionLease = options.admissionLease;
+      const ownsAdmissionLease =
+        !admissionLease || options.releaseAdmissionOnCompletion !== false;
+      if (!admissionLease) {
+        const admission = await acquireImageGenerationAdmission({
+          userId: options.userId,
+          userConcurrency: Math.max(1, Math.floor(options.userConcurrency)),
+        });
+        if (admission.status === "blocked") {
+          throw new OperationError(
+            "concurrency_limit_exceeded",
+            `用户同时进行的生图任务已达到上限 ${Math.max(1, Math.floor(options.userConcurrency))}`,
+            {
+              limit: Math.max(1, Math.floor(options.userConcurrency)),
+              effectiveSource: options.effectiveSource ?? "system_default",
+              scope: "user",
+            }
+          );
         }
-      }, timeoutMs),
-    };
+        admissionLease = admission.lease;
+      }
 
-    queue.push(task as QueueTask<unknown>);
-    void scheduleQueue();
+      const timeoutMs = options.timeoutMs || getQueueTimeoutMs();
+      let task: QueueTask<T>;
+      task = {
+        id: nextTaskId++,
+        priority: options.priority,
+        resolve,
+        reject,
+        run,
+        admissionLease,
+        admissionLost: false,
+        admissionReleased: false,
+        ownsAdmissionLease,
+        started: false,
+        timeout: setTimeout(() => {
+          if (removeQueuedTask(task as QueueTask<unknown>)) {
+            clearLeaseRenewTimers(task as QueueTask<unknown>);
+            void (async () => {
+              if (task.ownsAdmissionLease) {
+                await releaseAdmissionSafely(task.admissionLease);
+                task.admissionReleased = true;
+              }
+              reject(getQueuedTaskTimeoutError(timeoutMs));
+              if (queue.size === 0) clearRetryTimer();
+            })();
+          }
+        }, timeoutMs),
+      };
+
+      queue.enqueue(task as QueueTask<unknown>);
+      startAdmissionRenewal(task as QueueTask<unknown>);
+      void scheduleQueue();
+    })().catch(async (error: unknown) => {
+      if (error instanceof OperationError) {
+        reject(error);
+        return;
+      }
+      reject(error);
+    });
   });
 }

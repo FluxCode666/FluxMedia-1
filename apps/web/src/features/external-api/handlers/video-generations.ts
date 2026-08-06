@@ -276,7 +276,6 @@ export const postExternalVideoGenerations = withApiLogging(
           credentialKind: "external",
           userId: auth.userId,
           apiKeyId: auth.apiKeyId,
-          plan: auth.plan,
         },
         {
           requestId: request.headers.get("x-request-id") ?? undefined,

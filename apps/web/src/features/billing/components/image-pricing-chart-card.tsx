@@ -2,7 +2,7 @@
  * 账单用量页的生图计价说明与曲线卡。
  *
  * 使用方通过懒加载包装器按需渲染本组件。关键依赖是 Recharts、
- * 运行时生图定价和当前用户的套餐计费数据。
+ * 运行时生图定价和当前用户的按量计费数据。
  */
 
 "use client";
@@ -304,7 +304,7 @@ function useElementWidth() {
 }
 
 /**
- * 渲染完整的生图定价曲线、套餐参数和计算示例。
+ * 渲染完整的生图定价曲线、计费参数和计算示例。
  *
  * @param props 已由 Billing 服务端 loader 装配的计价与语言数据。
  * @returns 可响应式缩放的客户端计价卡。
@@ -334,10 +334,8 @@ export function ImagePricingChartCard({
 
   const pricingItems = [
     {
-      label: copy("Plan quota", "套餐配额"),
-      value: `${billing.planName} · ${formatCredits(
-        billing.monthlyCredits
-      )} ${copy("credits / month", "积分/月")}`,
+      label: copy("Billing model", "计费模式"),
+      value: copy("Pay as you go", "按量计费"),
     },
     {
       label: copy("Backend group", "后端分组"),
@@ -643,7 +641,10 @@ export function ImagePricingChartCard({
             </div>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               {examplePoints.map((point) => {
-                const example = getExampleFormula(point, referenceModel.pricing);
+                const example = getExampleFormula(
+                  point,
+                  referenceModel.pricing
+                );
                 return (
                   <div
                     className="rounded-md border bg-background p-2"

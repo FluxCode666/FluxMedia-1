@@ -29,13 +29,12 @@ export const IMAGE_CREATE_REQUEST_HEADERS = {
  * 构造文生图 JSON 请求体。
  *
  * @param input 已由页面校验的模型、分组、提示词和输出设置。
- * @returns 与旧创作页等价的单图、PNG、自动审核、关闭后处理的 SSE 请求体。
+ * @returns PNG、自动审核、关闭后处理的单项 SSE 请求体。
  */
 export function buildImageGenerateRequestBody(input: ImageCreateRequestFields) {
   return {
     ...input,
     stream: true,
-    count: 1,
     moderation: "auto" as const,
     output_format: "png" as const,
     hd_repair: false,
@@ -64,7 +63,6 @@ export function buildImageEditRequestBody(
   body.set("output_format", "png");
   body.set("hd_repair", "false");
   body.set("block_repair", "false");
-  body.set("count", "1");
   body.set("stream", "true");
   for (const image of input.images) body.append("image[]", image);
   if (input.mask) body.set("mask", input.mask);

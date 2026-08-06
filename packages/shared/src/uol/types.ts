@@ -21,7 +21,6 @@ export type OperationDomain =
   | "payment"
   | "image-generation"
   | "credits"
-  | "subscription"
   | "user-auth"
   | "image-backend-pool"
   | "system-settings"
@@ -39,7 +38,7 @@ export type OperationDomain =
  * - owner: 需资源归属校验（延迟到 execute 内由 ctx.assertOwnership 执行）
  * - roles: 仅允许明确列出的真实用户角色，不接受任何非用户 Principal
  * - admin / superAdmin / imageBackendPoolViewer: 管理角色要求
- * - apiKey: 仅 API key 可调用（plan capability 进一步细化在 capabilities 字段）
+ * - apiKey: 仅 API key 可调用
  * - cron / cronJob / webhook / proxySecret / system: 非用户身份的内部/外部调用者
  */
 export type AccessRequirement =
@@ -51,22 +50,12 @@ export type AccessRequirement =
   | { kind: "admin" }
   | { kind: "superAdmin" }
   | { kind: "imageBackendPoolViewer" }
-  | { kind: "apiKey"; planCapability?: string }
+  | { kind: "apiKey" }
   | { kind: "cron" }
   | { kind: "cronJob"; job: string }
   | { kind: "webhook"; provider: "creem" | "epay" | "alipay" }
   | { kind: "proxySecret" }
   | { kind: "system" };
-
-/**
- * 能力位要求 - 操作可声明需要的套餐能力。
- * 静态字符串直接匹配 plan-capabilities；derive 函数根据输入动态推导。
- */
-export type CapabilityRequirement =
-  | { capability: string }
-  | {
-      derive: (input: unknown, principal: Principal) => string[];
-    };
 
 /**
  * 幂等规格 - 声明操作的幂等性要求。
@@ -125,7 +114,6 @@ export interface OperationContext {
  * - input / output: Zod schema 提供运行时校验与类型推导
  * - access: 声明式权限要求
  * - agentExposure: human-only 表示仅供站内人工会话，禁止投影为 Agent 工具
- * - capabilities: 可选套餐能力位要求
  * - readOnly: true 表示纯读操作（GET 语义），不改变系统状态
  * - destructive: true 表示不可逆操作（删除、封禁等），agent 应二次确认
  * - idempotency: 幂等规格
@@ -143,9 +131,6 @@ export interface OperationDefinition<TInput = unknown, TOutput = unknown> {
   output: z.ZodType<TOutput>;
   access: AccessRequirement;
   agentExposure?: "human-only";
-  capabilities?: CapabilityRequirement[];
-  /** system Principal 是否可显式绕过本操作的套餐能力门禁。 */
-  allowSystemCapabilityBypass?: boolean;
   readOnly: boolean;
   destructive: boolean;
   idempotency: IdempotencySpec;

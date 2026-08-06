@@ -5,13 +5,12 @@
  * 实现在 apps/web 通过 late binding 注入。本文件不依赖数据库或 Web 运行时。
  */
 import { z } from "zod";
-
+import { isLegacyVideoModelId } from "../../image-backend/supported-models";
 import {
   MAX_MEDIA_INPUT_COUNT,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
 } from "../../image-generation/media-contract";
-import { isLegacyVideoModelId } from "../../image-backend/supported-models";
 import {
   resolveEffectiveVideoModelCapability,
   resolveVideoModelCapability,
@@ -20,7 +19,6 @@ import {
   videoAspectRatioSchema,
   videoListCapabilitiesOutputSchema,
 } from "../../video-generation";
-import { isExternalApiKeyPrincipal, type Principal } from "../principal";
 import { defineOperation } from "../registry";
 
 export {
@@ -399,28 +397,6 @@ export const videoRequestAccountInputCleanupInputSchema = z
   })
   .strict();
 
-/** 根据已校验输入与 Principal 推导视频和显式分组选择能力。 */
-function deriveVideoCapabilities(
-  input: unknown,
-  principal: Principal
-): string[] {
-  const capabilities = [
-    isExternalApiKeyPrincipal(principal)
-      ? "externalApi.videos.generate"
-      : "imageGeneration.video",
-  ];
-  if (
-    !isExternalApiKeyPrincipal(principal) &&
-    typeof input === "object" &&
-    input !== null &&
-    "backendGroupId" in input &&
-    typeof input.backendGroupId === "string"
-  ) {
-    capabilities.push("backendGroups.select");
-  }
-  return capabilities;
-}
-
 /** 创建幂等视频任务；clientRequestId 的真实唯一域由 Principal 所有者决定。 */
 export const videoGenerate = defineOperation({
   name: "video.generate",
@@ -441,10 +417,6 @@ export const videoGenerate = defineOperation({
     ]),
   }),
   access: { kind: "protected" },
-  capabilities: [
-    { derive: (input, principal) => deriveVideoCapabilities(input, principal) },
-  ],
-  allowSystemCapabilityBypass: true,
   readOnly: false,
   destructive: false,
   idempotency: {
@@ -468,10 +440,6 @@ export const videoListCapabilities = defineOperation({
   input: videoListCapabilitiesInputSchema,
   output: videoListCapabilitiesOutputSchema,
   access: { kind: "protected" },
-  capabilities: [
-    { derive: (input, principal) => deriveVideoCapabilities(input, principal) },
-  ],
-  allowSystemCapabilityBypass: true,
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
@@ -512,10 +480,6 @@ export const videoGetStatus = defineOperation({
     completedAt: z.string().optional(),
   }),
   access: { kind: "owner", resource: "video task" },
-  capabilities: [
-    { derive: (input, principal) => deriveVideoCapabilities(input, principal) },
-  ],
-  allowSystemCapabilityBypass: true,
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },

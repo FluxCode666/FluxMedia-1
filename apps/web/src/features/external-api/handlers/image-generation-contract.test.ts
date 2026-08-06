@@ -11,11 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticateExternalApiRequest: vi.fn(),
-  canUsePlanCapability: vi.fn(),
   filesToMediaInputReferences: vi.fn(),
-  getPlanLimits: vi.fn(),
-  getPlanUploadLimits: vi.fn(),
-  getUserPlan: vi.fn(),
+  getMediaLimitDefaults: vi.fn(),
   invokeImageEnqueueAsyncOperation: vi.fn(),
   invokeImageGenerationOperation: vi.fn(),
   uploadModerationImages: vi.fn(),
@@ -25,18 +22,8 @@ vi.mock("@repo/shared/api-logger", () => ({
   withApiLogging: <T>(handler: T) => handler,
 }));
 
-vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  MAX_PLAN_BATCH_COUNT: 16,
-  canUsePlanCapability: mocks.canUsePlanCapability,
-  getPlanLimits: mocks.getPlanLimits,
-}));
-
-vi.mock("@repo/shared/subscription/services/upload-limits", () => ({
-  getPlanUploadLimits: mocks.getPlanUploadLimits,
-}));
-
-vi.mock("@repo/shared/subscription/services/user-plan", () => ({
-  getUserPlan: mocks.getUserPlan,
+vi.mock("@repo/shared/image-generation/media-limit-service", () => ({
+  getMediaLimitDefaults: mocks.getMediaLimitDefaults,
 }));
 
 vi.mock("@/features/external-api/auth", () => ({
@@ -89,7 +76,10 @@ import { postExternalImageEdits } from "./image-edits";
 import { postExternalImageGenerations } from "./image-generations";
 
 /** 构造带固定外部请求标识的文生图 JSON 请求。 */
-function createGenerationRequest(useAsync = false): NextRequest {
+function createGenerationRequest(
+  useAsync = false,
+  overrides: Record<string, unknown> = {}
+): NextRequest {
   return new NextRequest("https://app.example.test/v1/images/generations", {
     method: "POST",
     headers: {
@@ -100,21 +90,22 @@ function createGenerationRequest(useAsync = false): NextRequest {
     body: JSON.stringify({
       prompt: "synthetic prompt",
       model: "gpt-image-2",
-      n: 1,
       size: "1024x1024",
       response_format: "b64_json",
       ...(useAsync ? { async: true } : {}),
+      ...overrides,
     }),
   });
 }
 
 /** 构造同时包含源图与 mask 的图生图 multipart 请求。 */
-function createEditRequest(useAsync = false): NextRequest {
+function createEditRequest(useAsync = false, n?: number): NextRequest {
   const formData = new FormData();
   formData.set("prompt", "synthetic edit");
   formData.set("model", "gpt-image-2");
   formData.set("size", "1024x1024");
   if (useAsync) formData.set("async", "true");
+  if (n !== undefined) formData.set("n", String(n));
   formData.set(
     "image",
     new File(["source"], "source.png", { type: "image/png" })
@@ -136,18 +127,11 @@ describe("external image generation transport contract", () => {
     mocks.authenticateExternalApiRequest.mockResolvedValue({
       userId: "user-1",
       apiKeyId: "api-key-1",
-      plan: "pro",
     });
-    mocks.canUsePlanCapability.mockResolvedValue(true);
-    mocks.getUserPlan.mockResolvedValue({ plan: "pro" });
-    mocks.getPlanLimits.mockResolvedValue({
-      imageGenerationConcurrency: 2,
-      maxBatchCount: 4,
-      maxEditImages: 12,
-    });
-    mocks.getPlanUploadLimits.mockResolvedValue({
+    mocks.getMediaLimitDefaults.mockResolvedValue({
       maxFileSizeBytes: 10 * 1024 * 1024,
-      maxUploadBytes: 20 * 1024 * 1024,
+      maxUploadSizeBytes: 20 * 1024 * 1024,
+      maxEditReferenceImages: 12,
     });
     mocks.uploadModerationImages.mockImplementation(
       async (_userId: string, _batchId: string, files: readonly File[]) =>
@@ -176,16 +160,13 @@ describe("external image generation transport contract", () => {
     });
     mocks.invokeImageEnqueueAsyncOperation.mockImplementation(
       async (operationInput: ImageEnqueueAsyncInput) => {
-        const firstInput = operationInput.generationInputs[0];
-        if (!firstInput) throw new Error("测试异步任务缺少 generation input");
+        const generationInput = operationInput.generationInput;
         return {
           taskId: operationInput.taskId,
-          model: firstInput.model,
-          operation: firstInput.operation,
+          model: generationInput.model,
+          operation: generationInput.operation,
           status: "queued",
-          generationIds: operationInput.generationInputs.map(
-            (input: { generationId: string }) => input.generationId
-          ),
+          generationId: generationInput.generationId,
           responseFormat: operationInput.responseFormat,
           createdAt: "2026-08-04T00:00:00.000Z",
           startedAt: null,
@@ -216,7 +197,6 @@ describe("external image generation transport contract", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "api-key-1",
-        plan: "pro",
       },
       undefined,
       "request-generate-1"
@@ -227,6 +207,15 @@ describe("external image generation transport contract", () => {
     expect(operationInput).not.toHaveProperty("upstreamModelId");
     expect(operationInput).not.toHaveProperty("requestScript");
     expect(operationInput).not.toHaveProperty("responseScript");
+  });
+
+  it.each([1, 2])("文生图显式 n=%s 时严格返回 400", async (n) => {
+    const response = await postExternalImageGenerations(
+      createGenerationRequest(false, { n })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 
   it("图生图把源图和 mask 规范为媒体引用后进入同一 UOL", async () => {
@@ -257,7 +246,6 @@ describe("external image generation transport contract", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "api-key-1",
-        plan: "pro",
       },
       undefined,
       "request-edit-1"
@@ -267,6 +255,29 @@ describe("external image generation transport contract", () => {
     expect(operationInput).not.toHaveProperty("baseUrl");
     expect(operationInput).not.toHaveProperty("apiKey");
     expect(operationInput).not.toHaveProperty("apiUpstreamAdapter");
+  });
+
+  it.each([1, 2])("multipart 编辑显式 n=%s 时严格返回 400", async (n) => {
+    const response = await postExternalImageEdits(createEditRequest(false, n));
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])("JSON 编辑显式 n=%s 时严格返回 400", async (n) => {
+    const response = await postExternalImageEdits(
+      new NextRequest("https://app.example.test/v1/images/edits", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer external-key",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ n }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 
   it("异步文生图只持久创建任务并由 MQ 执行，不启动请求内 Promise", async () => {
@@ -284,12 +295,10 @@ describe("external image generation transport contract", () => {
     expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         taskId: expect.stringMatching(/^task_/),
-        generationInputs: [
-          expect.objectContaining({
-            operation: "generate",
-            generationId: expect.any(String),
-          }),
-        ],
+        generationInput: expect.objectContaining({
+          operation: "generate",
+          generationId: expect.any(String),
+        }),
         responseFormat: "b64_json",
       }),
       expect.objectContaining({ apiKeyId: "api-key-1" }),
@@ -305,13 +314,11 @@ describe("external image generation transport contract", () => {
     expect(mocks.uploadModerationImages).toHaveBeenCalledTimes(2);
     expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
-        generationInputs: [
-          expect.objectContaining({
-            operation: "mask",
-            images: [expect.objectContaining({ source: "storage" })],
-            mask: expect.objectContaining({ source: "storage" }),
-          }),
-        ],
+        generationInput: expect.objectContaining({
+          operation: "mask",
+          images: [expect.objectContaining({ source: "storage" })],
+          mask: expect.objectContaining({ source: "storage" }),
+        }),
       }),
       expect.objectContaining({ apiKeyId: "api-key-1" }),
       "request-edit-1"

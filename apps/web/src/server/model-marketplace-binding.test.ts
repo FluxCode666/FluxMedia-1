@@ -80,7 +80,6 @@ const API_KEY = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "api-key-1",
-  plan: "pro",
 } satisfies Principal;
 
 /**

@@ -13,7 +13,7 @@ import type { AppUserRole } from "../auth/roles";
  * Principal 联合类型 - 代表操作的调用者身份。
  *
  * - user: 通过会话登录的用户（含角色信息）
- * - apiKey: 通过外部 API key 或 User MCP key 鉴权的调用者（含套餐）
+ * - apiKey: 通过外部 API key 或 User MCP key 鉴权的调用者
  * - system: 系统内部调用（如初始化、后台任务）
  * - cron: 定时任务调用
  * - webhook: 外部 webhook 回调（支付平台等）
@@ -26,7 +26,6 @@ export type Principal =
       credentialKind: "external" | "mcp";
       userId: string;
       apiKeyId: string;
-      plan: string;
     }
   | { type: "system"; reason: string }
   | { type: "cron"; job: string }

@@ -568,6 +568,34 @@
       "when": 1785865050000,
       "tag": "0080_adobe_credential_health",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1785951450000,
+      "tag": "0081_add_media_usage_governance",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1786037850000,
+      "tag": "0082_group_queue_priority_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1786124250000,
+      "tag": "0083_image_async_delivery_fencing",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1786210650000,
+      "tag": "0084_remove_image_batch_contract",
+      "breakpoints": true
     }
   ]
 }

@@ -68,7 +68,6 @@ describe("postExternalVideoGenerations", () => {
     mocks.authenticate.mockResolvedValue({
       userId: "user-1",
       apiKeyId: "key-a",
-      plan: "pro",
     });
     mocks.ensureInitialized.mockResolvedValue(undefined);
     mocks.validateCallbackUrl.mockImplementation(
@@ -132,7 +131,6 @@ describe("postExternalVideoGenerations", () => {
         credentialKind: "external",
         userId: "user-1",
         apiKeyId: "key-a",
-        plan: "pro",
       },
       {
         requestId: "req-1",

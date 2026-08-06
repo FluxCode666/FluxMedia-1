@@ -151,7 +151,6 @@ describe("Adobe 凭据健康 UOL binding", () => {
       credentialKind: "external" as const,
       userId: "user-1",
       apiKeyId: "key-1",
-      plan: "pro",
     },
   ])("拒绝非人工账号池查看者批量读取凭据健康状态", async (principal) => {
     await expect(
@@ -202,7 +201,6 @@ describe("Adobe 凭据健康 UOL binding", () => {
       credentialKind: "external" as const,
       userId: "user-1",
       apiKeyId: "key-1",
-      plan: "pro",
     },
   ])("拒绝非真实管理员 Principal 重新授权", async (principal) => {
     await expect(

@@ -5,6 +5,7 @@
  * tools/call 对旧白名单或人工会话操作的直接调用稳定拒绝。
  */
 
+import type { McpApiKeyPrincipal } from "@repo/shared/mcp/user-auth";
 import type { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -37,9 +38,6 @@ vi.mock("@repo/shared/rate-limit", () => ({
     reset: Date.now() + 60_000,
   }),
 }));
-vi.mock("@repo/shared/subscription/services/user-plan", () => ({
-  getUserPlan: vi.fn(),
-}));
 vi.mock("@repo/shared/uol", () => ({
   invokeOperation: mocks.invokeOperation,
 }));
@@ -55,8 +53,7 @@ const principal = {
   credentialKind: "mcp" as const,
   userId: "user-1",
   apiKeyId: "mcp-key-1",
-  plan: "pro",
-};
+} satisfies McpApiKeyPrincipal;
 
 /** 构造已鉴权 JSON-RPC 请求；鉴权结果由测试替身提供。 */
 function createRpcRequest(

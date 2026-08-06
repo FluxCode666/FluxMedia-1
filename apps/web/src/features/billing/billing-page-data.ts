@@ -7,7 +7,7 @@
 
 import { isWalletPaymentResultStatus } from "@/features/wallet/redirects";
 
-const PURCHASE_VALUES = ["top-up", "subscription"] as const;
+const PURCHASE_VALUES = ["top-up"] as const;
 
 type LegacyBillingSearchParams = Record<string, string | string[] | undefined>;
 

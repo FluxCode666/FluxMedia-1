@@ -35,7 +35,6 @@ export const getExternalModels = withApiLogging(
           credentialKind: "external",
           userId: auth.userId,
           apiKeyId: auth.apiKeyId,
-          plan: auth.plan,
         }
       );
       return NextResponse.json(models, {
@@ -45,9 +44,6 @@ export const getExternalModels = withApiLogging(
       });
     } catch (error) {
       if (error instanceof OperationError) {
-        if (error.code === "capability_required") {
-          return openAIError(error.message, 403, "insufficient_plan");
-        }
         return openAIError(error.message, error.httpStatus, error.code);
       }
       throw error;

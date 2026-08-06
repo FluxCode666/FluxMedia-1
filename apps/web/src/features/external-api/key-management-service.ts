@@ -1,16 +1,14 @@
 /**
  * API 密钥管理应用服务。
  *
- * 职责：集中处理密钥生成/散列、套餐能力、分组资格、额度归一、所有权条件和生命周期
+ * 职责：集中处理密钥生成/散列、分组资格、额度归一、所有权条件和生命周期
  * 竞态；UOL binding 只注入可信 userId。默认依赖延迟加载数据库，纯工厂可 DB-free 单测。
  * 使用方：apps/web/src/server/uol-bindings.ts 与 API 密钥管理 Server Actions。
- * 关键依赖：Drizzle 仓储、套餐能力、后端分组选项、quota-math。
+ * 关键依赖：Drizzle 仓储、后端分组选项、quota-math。
  */
 import { randomBytes } from "node:crypto";
 
 import type { externalApiKey as externalApiKeyTable } from "@repo/database/schema";
-import type { SubscriptionPlan } from "@repo/shared/config/subscription-plan";
-import type { PlanCapabilityKey } from "@repo/shared/subscription/services/plan-capabilities";
 import type { ExternalApiKeySummary } from "@repo/shared/uol/operations";
 import { nanoid } from "nanoid";
 
@@ -21,7 +19,6 @@ const API_KEY_PREFIX = "g2i";
 const DEFAULT_KEY_NAME = "默认 API 密钥";
 
 export type ExternalApiKeyManagementErrorCode =
-  | "capability_required"
   | "not_found"
   | "state_conflict"
   | "validation_error";
@@ -118,14 +115,7 @@ export interface ExternalApiKeyRepository {
 
 type ServiceDependencies = {
   repository: ExternalApiKeyRepository;
-  getUserPlan(userId: string): Promise<SubscriptionPlan>;
-  canUsePlanCapability(
-    plan: SubscriptionPlan,
-    capability: PlanCapabilityKey
-  ): Promise<boolean>;
-  listSelectableGroups(
-    plan: SubscriptionPlan
-  ): Promise<ExternalApiKeyGroupRecord[]>;
+  listSelectableGroups(): Promise<ExternalApiKeyGroupRecord[]>;
   getGroupById(groupId: string): Promise<ExternalApiKeyGroupRecord | null>;
   createId(): string;
   createSecret(): string;
@@ -144,7 +134,7 @@ export type CreateExternalApiKeyInput = {
  *
  * @param key 仓储返回的可信密钥行，不含明文或哈希。
  * @param currentGroup 密钥当前引用的分组；分组不存在时为 null。
- * @param selectableGroupIds 当前套餐允许选择的分组 ID 集合。
+ * @param selectableGroupIds 当前允许选择的分组 ID 集合。
  * @returns 不包含 userId、哈希或明文，并标注分组可选性的摘要。
  * @throws 不主动抛错；不会修改输入记录或集合。
  */
@@ -193,7 +183,7 @@ function createApiKey(): string {
  * 所有 mutation 先执行单条带所有权/状态条件的写入；0 行后才读取当前状态区分
  * not_found 与 state_conflict，避免先查后写导致假成功。
  *
- * @param dependencies 仓储、套餐能力、分组查询及密钥生成等可注入依赖。
+ * @param dependencies 仓储、分组查询及密钥生成等可注入依赖。
  * @returns 提供列出、创建、撤销、删除和更新密钥能力的应用服务。
  * @throws 工厂本身不访问外部资源；各方法会透传依赖错误并抛出领域错误。
  */
@@ -201,67 +191,29 @@ export function createExternalApiKeyManagementService(
   dependencies: ServiceDependencies
 ) {
   /**
-   * 读取当前套餐，并在写操作前检查 API 密钥管理能力。
+   * 读取当前真实可编辑的分组。
    *
-   * @param userId 已由调用边界鉴权的用户 ID。
-   * @returns 具备密钥管理能力的当前套餐。
-   * @throws 套餐不具备能力时抛出 `capability_required`；依赖失败时透传。
-   * @remarks 副作用是读取套餐与能力配置，不执行数据库写入。
+   * @returns 可选分组列表。
+   * @throws 分组提供方失败时透传错误。
+   * @remarks 副作用仅为读取可选分组。
    */
-  async function requireManagementPlan(
-    userId: string
-  ): Promise<SubscriptionPlan> {
-    const plan = await dependencies.getUserPlan(userId);
-    if (
-      !(await dependencies.canUsePlanCapability(
-        plan,
-        "externalApi.keys.manage"
-      ))
-    ) {
-      throw new ExternalApiKeyManagementError(
-        "capability_required",
-        "当前套餐不支持管理 API 密钥"
-      );
-    }
-    return plan;
+  async function loadEditableGroups(): Promise<ExternalApiKeyGroupRecord[]> {
+    return dependencies.listSelectableGroups();
   }
 
   /**
-   * 读取当前套餐下真实可编辑的分组。
+   * 将分组输入归一为默认分组或当前确实可选的分组 ID。
    *
-   * @param plan 已解析的用户套餐。
-   * @returns 可选分组列表；无分组选择能力时返回空数组。
-   * @throws 能力或分组提供方失败时透传错误。
-   * @remarks 副作用仅为读取能力配置及可选分组。
-   */
-  async function loadEditableGroups(
-    plan: SubscriptionPlan
-  ): Promise<ExternalApiKeyGroupRecord[]> {
-    if (
-      !(await dependencies.canUsePlanCapability(plan, "backendGroups.select"))
-    ) {
-      return [];
-    }
-    return dependencies.listSelectableGroups(plan);
-  }
-
-  /**
-   * 将分组输入归一为默认分组或当前套餐确实可选的分组 ID。
-   *
-   * @param plan 已解析的用户套餐。
    * @param groupId 用户提交的分组 ID；空值或 `default` 表示默认分组。
    * @returns 归一后的分组 ID，以及本次校验使用的可编辑分组列表。
    * @throws 非默认分组不在可选列表时抛出 `validation_error`；依赖失败时透传。
-   * @remarks 副作用仅为读取能力配置及可选分组。
+   * @remarks 副作用仅为读取可选分组。
    */
-  async function normalizeGroupId(
-    plan: SubscriptionPlan,
-    groupId: string | null | undefined
-  ): Promise<{
+  async function normalizeGroupId(groupId: string | null | undefined): Promise<{
     groupId: string | null;
     editableGroups: ExternalApiKeyGroupRecord[];
   }> {
-    const editableGroups = await loadEditableGroups(plan);
+    const editableGroups = await loadEditableGroups();
     if (!groupId || groupId === "default") {
       return { groupId: null, editableGroups };
     }
@@ -275,23 +227,19 @@ export function createExternalApiKeyManagementService(
   }
 
   /**
-   * 用当前分组状态和套餐资格装饰 mutation 返回的数据库行。
+   * 用当前分组状态和可选资格装饰 mutation 返回的数据库行。
    *
-   * @param userId 已由调用边界鉴权的用户 ID。
    * @param key 数据库 mutation 实际返回的安全密钥行。
-   * @param editableGroups 可复用的可编辑分组；缺省时按用户套餐重新读取。
+   * @param editableGroups 可复用的可编辑分组；缺省时重新读取。
    * @returns 带当前分组显示信息和可选性标记的公开摘要。
-   * @throws 套餐、能力或分组查询失败时透传错误。
-   * @remarks 不执行写入；可能读取套餐、能力配置和当前分组。
+   * @throws 分组查询失败时透传错误。
+   * @remarks 不执行写入；可能读取当前分组。
    */
   async function decorateMutationRow(
-    userId: string,
     key: ExternalApiKeyRecord,
     editableGroups?: ExternalApiKeyGroupRecord[]
   ): Promise<ExternalApiKeySummary> {
-    const groups =
-      editableGroups ??
-      (await loadEditableGroups(await dependencies.getUserPlan(userId)));
+    const groups = editableGroups ?? (await loadEditableGroups());
     const currentGroup = key.generationGroupId
       ? await dependencies.getGroupById(key.generationGroupId)
       : null;
@@ -329,15 +277,14 @@ export function createExternalApiKeyManagementService(
      * 列出用户全部密钥，并分开返回当前分组与可编辑候选。
      *
      * @param userId 已由调用边界鉴权的用户 ID。
-     * @returns 安全密钥摘要和当前套餐可编辑分组；无选择能力时后者为空。
-     * @throws 套餐、能力、分组或仓储读取失败时透传错误。
+     * @returns 安全密钥摘要和当前可编辑分组。
+     * @throws 分组或仓储读取失败时透传错误。
      * @remarks 只执行读取；返回值不包含密钥明文、哈希或 userId。
      */
     async listKeys(userId: string) {
-      const plan = await dependencies.getUserPlan(userId);
       const [rows, editableGroups] = await Promise.all([
         dependencies.repository.listByUser(userId),
-        loadEditableGroups(plan),
+        loadEditableGroups(),
       ]);
       const selectableGroupIds = new Set(
         editableGroups.map((group) => group.id)
@@ -361,13 +308,11 @@ export function createExternalApiKeyManagementService(
      * @param userId 已由调用边界鉴权的用户 ID。
      * @param input 名称、分组和额度上限；空名称使用默认名称。
      * @returns 一次性密钥明文及不含明文和哈希的持久化摘要。
-     * @throws 无管理能力、分组不可选或额度非法时抛错；仓储及依赖失败时透传。
+     * @throws 分组不可选或额度非法时抛错；仓储及依赖失败时透传。
      * @remarks 会生成随机密钥并插入数据库；摘要装饰失败时插入仍可能已成功。
      */
     async createKey(userId: string, input: CreateExternalApiKeyInput) {
-      const plan = await requireManagementPlan(userId);
       const { groupId, editableGroups } = await normalizeGroupId(
-        plan,
         input.generationGroupId
       );
       const apiKey = dependencies.createSecret();
@@ -389,7 +334,7 @@ export function createExternalApiKeyManagementService(
       }
       return {
         apiKey,
-        key: await decorateMutationRow(userId, key, editableGroups),
+        key: await decorateMutationRow(key, editableGroups),
       };
     },
 
@@ -415,7 +360,7 @@ export function createExternalApiKeyManagementService(
       if (!updated) {
         return throwMutationMiss(userId, keyId, "API 密钥已被撤销");
       }
-      return decorateMutationRow(userId, updated);
+      return decorateMutationRow(updated);
     },
 
     /**
@@ -446,7 +391,7 @@ export function createExternalApiKeyManagementService(
      * @param keyId 待更新的密钥 ID。
      * @param generationGroupId 新分组 ID；null 表示恢复默认分组。
      * @returns 更新后的公开密钥摘要。
-     * @throws 无管理能力、分组不可选、密钥不存在或已撤销时抛出领域错误；
+     * @throws 分组不可选、密钥不存在或已撤销时抛出领域错误；
      * 仓储及依赖失败时透传。
      * @remarks 仅在所有权和启用态同时满足时更新；装饰失败时更新仍可能已成功。
      */
@@ -455,11 +400,8 @@ export function createExternalApiKeyManagementService(
       keyId: string,
       generationGroupId: string | null
     ): Promise<ExternalApiKeySummary> {
-      const plan = await requireManagementPlan(userId);
-      const { groupId, editableGroups } = await normalizeGroupId(
-        plan,
-        generationGroupId
-      );
+      const { groupId, editableGroups } =
+        await normalizeGroupId(generationGroupId);
       const updated = await dependencies.repository.updateActiveGroup(
         userId,
         keyId,
@@ -473,7 +415,7 @@ export function createExternalApiKeyManagementService(
           "已撤销的 API 密钥不能修改分组"
         );
       }
-      return decorateMutationRow(userId, updated, editableGroups);
+      return decorateMutationRow(updated, editableGroups);
     },
 
     /**
@@ -483,7 +425,7 @@ export function createExternalApiKeyManagementService(
      * @param keyId 待更新的密钥 ID。
      * @param creditLimit 新额度；null 表示不限额，有限非负数归一到两位小数。
      * @returns 更新后的公开密钥摘要。
-     * @throws 无管理能力、额度非法、密钥不存在或已撤销时抛错；仓储及依赖
+     * @throws 额度非法、密钥不存在或已撤销时抛错；仓储及依赖
      * 失败时透传。
      * @remarks 仅在所有权和启用态同时满足时更新；装饰失败时更新仍可能已成功。
      */
@@ -492,7 +434,6 @@ export function createExternalApiKeyManagementService(
       keyId: string,
       creditLimit: number | null
     ): Promise<ExternalApiKeySummary> {
-      await requireManagementPlan(userId);
       const normalizedLimit = normalizeExternalApiKeyCreditLimit(creditLimit);
       const updated = await dependencies.repository.updateActiveQuota(
         userId,
@@ -507,7 +448,7 @@ export function createExternalApiKeyManagementService(
           "已撤销的 API 密钥不能修改额度"
         );
       }
-      return decorateMutationRow(userId, updated);
+      return decorateMutationRow(updated);
     },
   };
 }
@@ -755,52 +696,22 @@ const databaseExternalApiKeyRepository: ExternalApiKeyRepository = {
   },
 };
 
-/** 默认生产服务；仅在实际调用时加载数据库、套餐与分组实现。 */
+/** 默认生产服务；仅在实际调用时加载数据库与分组实现。 */
 export const externalApiKeyManagementService =
   createExternalApiKeyManagementService({
     repository: databaseExternalApiKeyRepository,
     /**
-     * 读取用户当前订阅套餐。
+     * 读取允许用户选择的启用后端分组。
      *
-     * @param userId 待查询的用户 ID。
-     * @returns 用户当前生效的套餐标识。
-     * @throws 订阅模块加载或套餐查询失败时透传错误。
-     * @remarks 动态加载订阅服务并执行只读查询。
-     */
-    async getUserPlan(userId) {
-      const { getUserPlan } = await import(
-        "@repo/shared/subscription/services/user-plan"
-      );
-      return (await getUserPlan(userId)).plan;
-    },
-    /**
-     * 判断套餐是否具备指定能力。
-     *
-     * @param plan 待判断的订阅套餐。
-     * @param capability 待检查的能力位。
-     * @returns 套餐能力配置允许时为 true，否则为 false。
-     * @throws 能力模块加载或配置读取失败时透传错误。
-     * @remarks 动态加载能力服务，不执行数据库写入。
-     */
-    async canUsePlanCapability(plan, capability) {
-      const { canUsePlanCapability } = await import(
-        "@repo/shared/subscription/services/plan-capabilities"
-      );
-      return canUsePlanCapability(plan, capability);
-    },
-    /**
-     * 读取套餐允许用户选择的启用后端分组。
-     *
-     * @param plan 用于过滤分组资格的订阅套餐。
      * @returns 满足用户可选条件的后端分组最小视图列表。
      * @throws 分组服务模块加载或查询失败时透传错误。
      * @remarks 动态加载分组服务并执行只读查询。
      */
-    async listSelectableGroups(plan) {
+    async listSelectableGroups() {
       const { listSelectableImageBackendGroups } = await import(
         "@/features/image-backend-pool/catalog-service"
       );
-      return listSelectableImageBackendGroups(plan);
+      return listSelectableImageBackendGroups();
     },
     /**
      * 按 ID 读取密钥当前引用的后端分组。

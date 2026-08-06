@@ -47,7 +47,6 @@ describe("invokeImageGenerationOperation", () => {
       credentialKind: "external" as const,
       userId: "user-1",
       apiKeyId: "key-1",
-      plan: "pro",
     };
 
     const result = await invokeImageGenerationOperation(

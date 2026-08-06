@@ -10,12 +10,12 @@
 
 // 图像生成域
 import "./image-generation";
+// 媒体资源限制与用户并发覆盖
+import "./media-limits";
 // 视频生成与查询（与图片共享 image-generation 域）
 import "./video-generation";
 // 积分域
 import "./credits";
-// 订阅域
-import "./subscription";
 // 用户认证域
 import "./user-auth";
 // 图像后端池域
@@ -61,6 +61,10 @@ export {
   imageGenerate,
   imageGetAdminHistoryRequestSnapshot,
 } from "./image-generation";
+export {
+  mediaLimitsGetEffective,
+  mediaLimitsSetUserConcurrencyOverride,
+} from "./media-limits";
 export {
   type ModelMarketplacePublicCatalogOutput,
   modelMarketplaceListPublicModels,

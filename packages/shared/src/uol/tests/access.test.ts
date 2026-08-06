@@ -38,7 +38,6 @@ const principals = {
     credentialKind: "external",
     userId: "u5",
     apiKeyId: "k1",
-    plan: "pro",
   } as Principal,
   system: {
     type: "system",

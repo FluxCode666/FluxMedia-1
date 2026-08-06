@@ -1,3 +1,4 @@
+import { OperationError } from "@repo/shared/uol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -85,14 +86,42 @@ describe("external JSON keep-alive response", () => {
     expect(firstChunk.trim()).toBe("");
     expect(firstChunk.length).toBeGreaterThan(1024);
   });
+
+  it("把并发领域错误编码为 HTTP 429 并保留 code/details", async () => {
+    const response = await createJsonKeepAliveResponse(async () => {
+      throw new OperationError(
+        "concurrency_limit_exceeded",
+        "用户同时进行的生图任务已达到上限 20",
+        {
+          limit: 20,
+          effectiveSource: "system_default",
+          scope: "user",
+        }
+      );
+    });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "concurrency_limit_exceeded",
+        status: 429,
+        details: {
+          limit: 20,
+          effectiveSource: "system_default",
+          scope: "user",
+        },
+      },
+    });
+  });
 });
 
 describe("external generation usage payload", () => {
   it("returns top-level credits and generation id for a single result", () => {
     expect(
-      toExternalGenerationUsage([
-        { generationId: "gen_1", creditsConsumed: 1.276 },
-      ])
+      toExternalGenerationUsage({
+        generationId: "gen_1",
+        creditsConsumed: 1.276,
+      })
     ).toEqual({
       generation_id: "gen_1",
       generationId: "gen_1",
@@ -100,16 +129,9 @@ describe("external generation usage payload", () => {
     });
   });
 
-  it("returns total credits and all generation ids for batch results", () => {
-    expect(
-      toExternalGenerationUsage([
-        { generationId: "gen_1", creditsConsumed: 1.27 },
-        { generationId: "gen_2", creditsConsumed: 2.01 },
-      ])
-    ).toEqual({
-      generation_ids: ["gen_1", "gen_2"],
-      generationIds: ["gen_1", "gen_2"],
-      credits_consumed: 3.28,
+  it("单次结果缺少 generation id 时只返回本次积分", () => {
+    expect(toExternalGenerationUsage({ creditsConsumed: 2.01 })).toEqual({
+      credits_consumed: 2.01,
     });
   });
 });
@@ -120,25 +142,23 @@ describe("external final image selection", () => {
 
     const payload = await toOpenAIImagesResponse(
       request,
-      [
-        {
-          generationId: "gen_1",
-          imageUrl: "/api/storage/generations/final.png",
-          revisedPrompt: "top level prompt",
-          creditsConsumed: 1,
-          imageOutputs: [
-            {
-              imageUrl: "/api/storage/generations/unclassified.png",
-              revisedPrompt: "unclassified prompt",
-            },
-            {
-              imageUrl: "/api/storage/generations/final.png",
-              revisedPrompt: "final prompt",
-              outputRole: "final",
-            },
-          ],
-        },
-      ],
+      {
+        generationId: "gen_1",
+        imageUrl: "/api/storage/generations/final.png",
+        revisedPrompt: "top level prompt",
+        creditsConsumed: 1,
+        imageOutputs: [
+          {
+            imageUrl: "/api/storage/generations/unclassified.png",
+            revisedPrompt: "unclassified prompt",
+          },
+          {
+            imageUrl: "/api/storage/generations/final.png",
+            revisedPrompt: "final prompt",
+            outputRole: "final",
+          },
+        ],
+      },
       "url",
       123
     );
@@ -206,12 +226,10 @@ describe("external final image selection", () => {
 
     const payload = await toOpenAIImagesResponse(
       request,
-      [
-        {
-          generationId: "gen_text",
-          creditsConsumed: 0,
-        },
-      ],
+      {
+        generationId: "gen_text",
+        creditsConsumed: 0,
+      },
       "url",
       123
     );
@@ -299,22 +317,22 @@ describe("external image base64 loading", () => {
 });
 
 describe("external API error classification", () => {
-  it("maps plan limit errors to explicit request errors", () => {
+  it("maps retired plan and parameter limit errors to stable request errors", () => {
     expect(
       toOpenAIErrorPayload(
         "Batch image generation is not enabled for this plan."
       ).error
     ).toMatchObject({
       type: "invalid_request_error",
-      code: "insufficient_plan",
-      status: 403,
+      code: "unsupported_model",
+      status: 400,
     });
 
     expect(
       toOpenAIErrorPayload("n must be between 1 and 10.").error
     ).toMatchObject({
       type: "invalid_request_error",
-      code: "plan_limit_exceeded",
+      code: "invalid_value",
       status: 400,
     });
   });

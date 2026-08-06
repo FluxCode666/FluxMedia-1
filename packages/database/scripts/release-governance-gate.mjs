@@ -4,6 +4,7 @@
  * 使用方：deploy-production.yml 在停止旧 Web 后执行 drain/preflight，并在迁移后
  * 执行 postcheck。脚本只输出非敏感计数与状态，不输出连接串、行内容或凭据。
  */
+import { createHash } from "node:crypto";
 import process from "node:process";
 
 import pg from "pg";
@@ -86,6 +87,62 @@ const REMOVED_PLAN_LIMITS = ["maxChatImages", "maxChatContextChars"];
 const VIDEO_INPUT_MAX_COUNT = 256;
 const VIDEO_INPUT_MAX_BYTES = 200 * 1024 * 1024;
 const VIDEO_GATE_PAGE_SIZE = 200;
+const IMAGE_TASK_GATE_PAGE_SIZE = 200;
+const EPAY_FULFILLMENT_LEASE_MINUTES = 5;
+const CREDITS_BATCH_STATUSES = ["active", "consumed", "expired"];
+const CREDITS_BATCH_SOURCE_TYPES = [
+  "purchase",
+  "subscription",
+  "bonus",
+  "refund",
+];
+const CREDITS_TRANSACTION_TYPES = [
+  "purchase",
+  "consumption",
+  "monthly_grant",
+  "registration_bonus",
+  "admin_grant",
+  "expiration",
+  "refund",
+];
+const MEDIA_USAGE_IMAGE_TASK_COLUMNS = [
+  "generation_input",
+  "input_digest",
+  "generation_id",
+  "effective_user_concurrency",
+  "group_id_snapshot",
+  "group_priority_snapshot",
+  "admission_lease_token",
+  "admission_lease_expires_at",
+  "admission_lease_released_at",
+  "mq_delivery_due_at",
+  "claim_recovery_due_at",
+  "admission_renewal_due_at",
+  "terminal_release_due_at",
+];
+const IMAGE_GENERATION_INPUT_COMMON_FIELDS = new Set([
+  "operation",
+  "prompt",
+  "negativePrompt",
+  "apiPrompt",
+  "promptOptimization",
+  "model",
+  "size",
+  "quality",
+  "style",
+  "thinking",
+  "moderation",
+  "outputFormat",
+  "outputCompression",
+  "background",
+  "transparentMatte",
+  "moderationPromptRepair",
+  "hdRepair",
+  "blockRepair",
+  "repairPrompt",
+  "generationId",
+  "backendGroupId",
+]);
 const REAL_VIDEO_MODEL_IDS = [
   "sora2",
   "sora2-pro",
@@ -296,13 +353,15 @@ function printEvidence(key, value) {
  * @param {(client: pg.PoolClient) => Promise<void>} work 使用独占连接执行的检查。
  * @returns {Promise<void>} 检查成功并提交只读事务后完成的 Promise。
  * @throws 获取连接、开始/提交事务或 work 失败时原样抛错。
- * @sideEffect 获取并释放一个池连接，执行 BEGIN READ ONLY、COMMIT 或 ROLLBACK。
+ * @sideEffect 获取并释放一个池连接，执行 REPEATABLE READ READ ONLY、COMMIT 或
+ *   ROLLBACK。
  * @boundary 回滚失败不会覆盖原始异常；finally 始终释放已获取的连接。
  */
 async function inReadOnlyTransaction(pool, work) {
   const client = await pool.connect();
   try {
-    await client.query("begin read only");
+    // 多条聚合必须共享同一快照，否则并发账本写入会制造不可复现的混合摘要。
+    await client.query("begin isolation level repeatable read read only");
     await work(client);
     await client.query("commit");
   } catch (error) {
@@ -1992,6 +2051,875 @@ async function assertMediaPostMigrationState(pool) {
 }
 
 /**
+ * 读取固定枚举分桶；缺失分桶使用数据库同精度的零值，拒绝计划外分类。
+ *
+ * @param {Array<Record<string, unknown>>} rows PostgreSQL 聚合结果。
+ * @param {string} key 要读取的固定状态或交易类型。
+ * @param {string} label 错误信息使用的非敏感分类名。
+ * @returns {{count: string, amount: string, remaining?: string}} 稳定分桶。
+ * @throws 数据库返回计划外分类或非法计数时抛错。
+ * @sideEffect 无副作用。
+ * @boundary 只返回聚合值，不返回用户、订单、批次或交易标识。
+ */
+function readLedgerBucket(rows, key, label) {
+  const unexpected = rows.find((row) => !row.allowed);
+  if (unexpected) throw new Error(`${label} returned an unknown bucket`);
+  const row = rows.find((candidate) => candidate.bucket === key);
+  return {
+    count: String(parseCount(row?.count ?? "0", `${label} ${key}`)),
+    amount: String(row?.amount ?? "0.00"),
+    ...(Object.hasOwn(row ?? {}, "remaining")
+      ? { remaining: String(row.remaining) }
+      : {}),
+  };
+}
+
+/**
+ * 生成并校验不含行级信息的积分账本稳定摘要。
+ *
+ * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
+ * @param {string | undefined} expectedDigest preflight 输出并由发布流程回传的摘要。
+ * @returns {Promise<string>} 当前账本的 SHA-256 十六进制摘要。
+ * @throws 聚合分类非法、摘要参数非法或迁移前后摘要不一致时抛错。
+ * @sideEffect 在只读事务中聚合账本并输出 count、amount、remaining/status 分桶。
+ * @boundary 摘要不包含 user_id、source_ref、metadata、description 或任何行内容。
+ */
+async function assertCreditsLedgerSnapshot(pool, expectedDigest) {
+  let digest = "";
+  await inReadOnlyTransaction(pool, async (client) => {
+    const batchResult = await client.query(
+      `select
+           status::text as bucket,
+           status::text = any($1::text[]) as allowed,
+           count(*)::text as count,
+           coalesce(sum(amount), 0)::text as amount,
+           coalesce(sum(remaining), 0)::text as remaining
+         from credits_batch
+         group by status
+         order by status::text`,
+      [CREDITS_BATCH_STATUSES]
+    );
+    const batchSourceResult = await client.query(
+      `select
+           source_type::text || ':' || status::text as bucket,
+           source_type::text = any($1::text[])
+             and status::text = any($2::text[]) as allowed,
+           count(*)::text as count,
+           coalesce(sum(amount), 0)::text as amount,
+           coalesce(sum(remaining), 0)::text as remaining
+         from credits_batch
+         group by source_type, status
+         order by source_type::text, status::text`,
+      [CREDITS_BATCH_SOURCE_TYPES, CREDITS_BATCH_STATUSES]
+    );
+    const transactionResult = await client.query(
+      `select
+           type::text as bucket,
+           type::text = any($1::text[]) as allowed,
+           count(*)::text as count,
+           coalesce(sum(amount), 0)::text as amount
+         from credits_transaction
+         group by type
+         order by type::text`,
+      [CREDITS_TRANSACTION_TYPES]
+    );
+    const batches = CREDITS_BATCH_STATUSES.map((status) => ({
+      status,
+      ...readLedgerBucket(batchResult.rows, status, "credits batch ledger"),
+    }));
+    const transactions = CREDITS_TRANSACTION_TYPES.map((type) => ({
+      type,
+      ...readLedgerBucket(
+        transactionResult.rows,
+        type,
+        "credits transaction ledger"
+      ),
+    }));
+    const batchSources = CREDITS_BATCH_SOURCE_TYPES.flatMap((sourceType) =>
+      CREDITS_BATCH_STATUSES.map((status) => {
+        const bucket = `${sourceType}:${status}`;
+        return {
+          sourceType,
+          status,
+          ...readLedgerBucket(
+            batchSourceResult.rows,
+            bucket,
+            "credits batch source ledger"
+          ),
+        };
+      })
+    );
+    const canonical = JSON.stringify({ batches, batchSources, transactions });
+    digest = createHash("sha256").update(canonical).digest("hex");
+
+    for (const bucket of batches) {
+      printEvidence(`credits_batch_${bucket.status}_count`, bucket.count);
+      printEvidence(`credits_batch_${bucket.status}_amount`, bucket.amount);
+      printEvidence(
+        `credits_batch_${bucket.status}_remaining`,
+        bucket.remaining ?? "0.00"
+      );
+    }
+    for (const bucket of batchSources) {
+      printEvidence(
+        `credits_batch_${bucket.sourceType}_${bucket.status}_count`,
+        bucket.count
+      );
+      printEvidence(
+        `credits_batch_${bucket.sourceType}_${bucket.status}_amount`,
+        bucket.amount
+      );
+      printEvidence(
+        `credits_batch_${bucket.sourceType}_${bucket.status}_remaining`,
+        bucket.remaining ?? "0.00"
+      );
+    }
+    for (const bucket of transactions) {
+      printEvidence(`credits_transaction_${bucket.type}_count`, bucket.count);
+      printEvidence(`credits_transaction_${bucket.type}_amount`, bucket.amount);
+    }
+    printEvidence("credits_ledger_digest", digest);
+  });
+
+  if (expectedDigest !== undefined) {
+    if (!/^[0-9a-f]{64}$/u.test(expectedDigest)) {
+      throw new Error("expected credits ledger digest is invalid");
+    }
+    printEvidence("credits_ledger_digest_expected", true);
+    if (digest !== expectedDigest) {
+      throw new Error("credits ledger digest changed during release");
+    }
+  } else {
+    printEvidence("credits_ledger_digest_expected", false);
+  }
+  return digest;
+}
+
+/**
+ * 阻断仍可能履约的订阅与 Epay 订阅订单，不改写任何业务行。
+ *
+ * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
+ * @returns {Promise<void>} 所有订阅均已失效且 Epay 仅保留成功/失败历史时完成。
+ * @throws 活跃订阅、有效 canceled 订阅、待履约或未知 Epay 状态非零时抛错。
+ * @sideEffect 在只读事务中查询聚合计数并输出非敏感证据。
+ * @boundary fulfilling 过期租约只单独计数，不自动重领、失败或修改订单。
+ */
+async function assertSubscriptionRetirementPreflight(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const tableResult = await client.query(`select
+      to_regclass('public.subscription') is not null as subscription_present,
+      to_regclass('public.epay_order') is not null as epay_order_present`);
+    const tables = tableResult.rows[0] ?? {};
+    const subscriptionResult = tables.subscription_present
+      ? await client.query(`select
+          count(*) filter (
+            where lower(status) in ('active', 'trialing', 'past_due')
+          )::text as active_count,
+          count(*) filter (
+            where lower(status) = 'canceled'
+              and current_period_end > now()
+          )::text as effective_canceled_count
+        from subscription`)
+      : { rows: [{ active_count: "0", effective_canceled_count: "0" }] };
+    const epayResult = tables.epay_order_present
+      ? await client.query(
+          `select
+             count(*) filter (where status = 'pending')::text
+               as pending_count,
+             count(*) filter (where status = 'fulfilling')::text
+               as fulfilling_count,
+             count(*) filter (
+               where status = 'fulfilling'
+                 and updated_at <= now() - ($1::text || ' minutes')::interval
+             )::text as expired_fulfilling_count,
+             count(*) filter (
+               where status not in ('pending', 'fulfilling', 'success', 'failed')
+             )::text as unknown_count
+           from epay_order
+           where lower(business_type) = 'subscription'
+              or lower(coalesce(metadata->>'type', '')) = 'subscription'`,
+          [EPAY_FULFILLMENT_LEASE_MINUTES]
+        )
+      : {
+          rows: [
+            {
+              expired_fulfilling_count: "0",
+              fulfilling_count: "0",
+              pending_count: "0",
+              unknown_count: "0",
+            },
+          ],
+        };
+    const subscription = subscriptionResult.rows[0] ?? {};
+    const epay = epayResult.rows[0] ?? {};
+    const activeCount = parseCount(
+      subscription.active_count,
+      "active subscriptions"
+    );
+    const effectiveCanceledCount = parseCount(
+      subscription.effective_canceled_count,
+      "effective canceled subscriptions"
+    );
+    const pendingCount = parseCount(
+      epay.pending_count,
+      "pending Epay subscriptions"
+    );
+    const fulfillingCount = parseCount(
+      epay.fulfilling_count,
+      "fulfilling Epay subscriptions"
+    );
+    const expiredFulfillingCount = parseCount(
+      epay.expired_fulfilling_count,
+      "expired fulfilling Epay subscriptions"
+    );
+    const unknownCount = parseCount(
+      epay.unknown_count,
+      "unknown Epay subscriptions"
+    );
+
+    printEvidence("subscription_active_count", activeCount);
+    printEvidence(
+      "subscription_effective_canceled_count",
+      effectiveCanceledCount
+    );
+    printEvidence("epay_subscription_pending_count", pendingCount);
+    printEvidence("epay_subscription_fulfilling_count", fulfillingCount);
+    printEvidence(
+      "epay_subscription_expired_fulfilling_count",
+      expiredFulfillingCount
+    );
+    printEvidence("epay_subscription_unknown_status_count", unknownCount);
+    if (
+      activeCount +
+        effectiveCanceledCount +
+        pendingCount +
+        fulfillingCount +
+        unknownCount !==
+      0
+    ) {
+      throw new Error("subscription retirement preflight failed");
+    }
+  });
+}
+
+/**
+ * 校验图片异步任务中的 storage-only 媒体引用。
+ *
+ * @param {unknown} value PostgreSQL JSON 字段中的单个媒体引用。
+ * @returns {boolean} 字段集合、MIME、对象键和字节边界均满足契约时为 true。
+ * @throws 不抛错；所有不可信形态均返回 false。
+ * @sideEffect 无副作用。
+ * @boundary 不读取对象存储；byteLength 仍只是持久快照，执行时必须复验真实字节。
+ */
+function isPersistedImageStorageReference(value) {
+  if (!isRecord(value)) return false;
+  const allowedFields = new Set([
+    "source",
+    "mimeType",
+    "storageKey",
+    "storageBucket",
+    "byteLength",
+  ]);
+  if (Object.keys(value).some((field) => !allowedFields.has(field))) {
+    return false;
+  }
+  if (
+    value.source !== "storage" ||
+    !["image/png", "image/jpeg", "image/webp"].includes(value.mimeType) ||
+    typeof value.storageKey !== "string" ||
+    !Number.isInteger(value.byteLength) ||
+    value.byteLength < 1 ||
+    value.byteLength > 200 * 1024 * 1024
+  ) {
+    return false;
+  }
+  const storageKey = value.storageKey.trim();
+  if (
+    storageKey.length < 1 ||
+    storageKey.length > 1_024 ||
+    storageKey.startsWith("/") ||
+    storageKey.split("/").includes("..")
+  ) {
+    return false;
+  }
+  return (
+    value.storageBucket === undefined ||
+    (typeof value.storageBucket === "string" &&
+      value.storageBucket.trim().length >= 1 &&
+      value.storageBucket.trim().length <= 128)
+  );
+}
+
+/**
+ * 校验完整、strict 且 storage-only 的单项图片 generation 输入。
+ *
+ * @param {unknown} value PostgreSQL JSON 字段中的输入对象。
+ * @param {unknown} expectedOperation 任务外层持久动作。
+ * @param {unknown} expectedGenerationId generation_ids 或新单项列中的 ID。
+ * @param {{allowLegacySingleCount?: boolean}} [options] 0084 前是否只兼容终态 count=1。
+ * @returns {boolean} 输入可无损交给当前单项 operation schema 时为 true。
+ * @throws 不抛错；未知字段、非法可选字段和不安全媒体引用均返回 false。
+ * @sideEffect 无副作用。
+ * @boundary 只校验传输/持久契约；模型在可信分组中的可用性仍由执行阶段判断。
+ */
+function isPersistedImageGenerationInputValid(
+  value,
+  expectedOperation,
+  expectedGenerationId,
+  options = {}
+) {
+  if (!isRecord(value)) return false;
+  if (
+    !["generate", "edit", "mask"].includes(expectedOperation) ||
+    value.operation !== expectedOperation ||
+    typeof expectedGenerationId !== "string" ||
+    value.generationId !== expectedGenerationId ||
+    expectedGenerationId.trim().length < 1 ||
+    expectedGenerationId.trim().length > 128 ||
+    typeof value.prompt !== "string" ||
+    value.prompt.trim().length < 1 ||
+    value.prompt.trim().length > 100_000 ||
+    typeof value.model !== "string" ||
+    value.model.trim().length < 1 ||
+    value.model.trim().length > 120
+  ) {
+    return false;
+  }
+  const allowedFields = new Set(IMAGE_GENERATION_INPUT_COMMON_FIELDS);
+  if (options.allowLegacySingleCount) allowedFields.add("count");
+  if (expectedOperation === "edit" || expectedOperation === "mask") {
+    allowedFields.add("images");
+  }
+  if (expectedOperation === "mask") allowedFields.add("mask");
+  if (Object.keys(value).some((field) => !allowedFields.has(field))) {
+    return false;
+  }
+  if (
+    Object.hasOwn(value, "count") &&
+    (!options.allowLegacySingleCount || value.count !== 1)
+  ) {
+    return false;
+  }
+
+  if (
+    (value.negativePrompt !== undefined &&
+      (typeof value.negativePrompt !== "string" ||
+        value.negativePrompt.length > 100_000)) ||
+    (value.apiPrompt !== undefined &&
+      (typeof value.apiPrompt !== "string" ||
+        value.apiPrompt.trim().length < 1 ||
+        value.apiPrompt.trim().length > 8_000)) ||
+    (value.size !== undefined &&
+      (typeof value.size !== "string" ||
+        value.size.trim().length < 1 ||
+        value.size.trim().length > 40)) ||
+    (value.quality !== undefined &&
+      (typeof value.quality !== "string" ||
+        value.quality.trim().length < 1 ||
+        value.quality.trim().length > 40)) ||
+    (value.style !== undefined &&
+      (typeof value.style !== "string" ||
+        value.style.trim().length < 1 ||
+        value.style.trim().length > 80)) ||
+    (value.repairPrompt !== undefined &&
+      (typeof value.repairPrompt !== "string" ||
+        value.repairPrompt.length > 8_000)) ||
+    (value.backendGroupId !== undefined &&
+      (typeof value.backendGroupId !== "string" ||
+        value.backendGroupId.trim().length < 1 ||
+        value.backendGroupId.trim().length > 128))
+  ) {
+    return false;
+  }
+  const booleanFields = [
+    "promptOptimization",
+    "transparentMatte",
+    "moderationPromptRepair",
+    "hdRepair",
+    "blockRepair",
+  ];
+  if (
+    booleanFields.some(
+      (field) => value[field] !== undefined && typeof value[field] !== "boolean"
+    ) ||
+    (value.thinking !== undefined &&
+      !["minimal", "none", "low", "medium", "high", "xhigh"].includes(
+        value.thinking
+      )) ||
+    (value.moderation !== undefined &&
+      !["auto", "low"].includes(value.moderation)) ||
+    (value.outputFormat !== undefined &&
+      !["png", "jpeg", "webp"].includes(value.outputFormat)) ||
+    (value.background !== undefined &&
+      !["transparent", "opaque", "auto"].includes(value.background)) ||
+    (value.outputCompression !== undefined &&
+      (!Number.isInteger(value.outputCompression) ||
+        value.outputCompression < 0 ||
+        value.outputCompression > 100))
+  ) {
+    return false;
+  }
+  if (expectedOperation === "generate") return true;
+  if (
+    !Array.isArray(value.images) ||
+    value.images.length < 1 ||
+    value.images.length > 256 ||
+    value.images.some(
+      (reference) => !isPersistedImageStorageReference(reference)
+    )
+  ) {
+    return false;
+  }
+  const imageBytes = value.images.reduce(
+    (total, reference) => total + reference.byteLength,
+    0
+  );
+  if (imageBytes > 200 * 1024 * 1024) return false;
+  return (
+    expectedOperation === "edit" || isPersistedImageStorageReference(value.mask)
+  );
+}
+
+/**
+ * 检查旧图片异步批次能否无损单项化，以及 additive 字段是否保持完整。
+ *
+ * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
+ * @returns {Promise<void>} 没有活跃旧任务、非法映射、generation 冲突或脏快照时完成。
+ * @throws 0081 字段半存在或任一阻断分类非零时抛错。
+ * @sideEffect 在只读事务中扫描图片任务并输出聚合计数。
+ * @boundary 只输出计数和 schema 阶段，不输出提示词、媒体引用、token 或任务 ID。
+ */
+async function assertImageAsyncTaskRetirementPreflight(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const columnResult = await client.query(
+      `select count(*)::text as count
+       from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'image_async_task'
+         and column_name = any($1::text[])`,
+      [MEDIA_USAGE_IMAGE_TASK_COLUMNS]
+    );
+    const columnCount = parseCount(
+      columnResult.rows[0]?.count,
+      "media usage image task columns"
+    );
+    if (
+      columnCount !== 0 &&
+      columnCount !== MEDIA_USAGE_IMAGE_TASK_COLUMNS.length
+    ) {
+      printEvidence("image_async_task_schema_state", "partial");
+      throw new Error(
+        "image async task preflight found partial additive schema"
+      );
+    }
+    const additiveApplied =
+      columnCount === MEDIA_USAGE_IMAGE_TASK_COLUMNS.length;
+    const batchRetirementResult = await client.query(
+      `select exists (
+         select 1
+         from pg_constraint
+         where connamespace = 'public'::regnamespace
+           and conname = 'image_async_task_batch_count_retired_check'
+           and convalidated
+       ) as applied`
+    );
+    const batchRetirementApplied =
+      batchRetirementResult.rows[0]?.applied === true;
+    printEvidence(
+      "image_async_task_schema_state",
+      additiveApplied ? "additive" : "legacy"
+    );
+    const additiveProjection = additiveApplied
+      ? `task.generation_input,
+         task.input_digest,
+         task.generation_id,
+         task.effective_user_concurrency,
+         task.group_id_snapshot,
+         task.group_priority_snapshot,
+         task.admission_lease_token,
+         task.admission_lease_expires_at,
+         task.admission_lease_released_at,
+         task.mq_delivery_due_at,
+         task.claim_recovery_due_at,
+         task.admission_renewal_due_at,
+         task.terminal_release_due_at`
+      : `null::json as generation_input,
+         null::text as input_digest,
+         null::text as generation_id,
+         null::integer as effective_user_concurrency,
+         null::text as group_id_snapshot,
+         null::integer as group_priority_snapshot,
+         null::text as admission_lease_token,
+         null::timestamp as admission_lease_expires_at,
+         null::timestamp as admission_lease_released_at,
+         null::timestamp as mq_delivery_due_at,
+         null::timestamp as claim_recovery_due_at,
+         null::timestamp as admission_renewal_due_at,
+         null::timestamp as terminal_release_due_at`;
+    let cursor = null;
+    let legacyNonterminalCount = 0;
+    let invalidMappingCount = 0;
+    let newFieldInvalidCount = 0;
+    while (true) {
+      const result = await client.query(
+        `select
+           task.id,
+           task.status,
+           task.operation,
+           task.generation_inputs,
+           task.generation_ids,
+           ${additiveProjection}
+         from image_async_task as task
+         where $1::text is null or task.id > $1
+         order by task.id
+         limit $2`,
+        [cursor, IMAGE_TASK_GATE_PAGE_SIZE]
+      );
+      if (result.rows.length === 0) break;
+      for (const row of result.rows) {
+        const terminal = ["completed", "failed"].includes(row.status);
+        const nonterminal = ["queued", "running"].includes(row.status);
+        const legacyInput =
+          Array.isArray(row.generation_inputs) &&
+          row.generation_inputs.length === 1
+            ? row.generation_inputs[0]
+            : null;
+        const legacyId =
+          Array.isArray(row.generation_ids) && row.generation_ids.length === 1
+            ? row.generation_ids[0]
+            : null;
+        const legacyMappingValid = isPersistedImageGenerationInputValid(
+          legacyInput,
+          row.operation,
+          legacyId,
+          {
+            allowLegacySingleCount: terminal && !batchRetirementApplied,
+          }
+        );
+        if (!legacyMappingValid) invalidMappingCount += 1;
+        if (
+          row.generation_input === null &&
+          !["completed", "failed"].includes(row.status)
+        ) {
+          legacyNonterminalCount += 1;
+        }
+
+        if (!additiveApplied) continue;
+        const coreValid =
+          isPersistedImageGenerationInputValid(
+            row.generation_input,
+            row.operation,
+            row.generation_id,
+            {
+              allowLegacySingleCount: terminal && !batchRetirementApplied,
+            }
+          ) &&
+          typeof row.input_digest === "string" &&
+          /^(md5:[0-9a-f]{32}|sha256:[0-9a-f]{64})$/u.test(row.input_digest);
+        const snapshotAllNull =
+          row.effective_user_concurrency === null &&
+          row.group_id_snapshot === null &&
+          row.group_priority_snapshot === null;
+        const snapshotValid =
+          Number.isInteger(row.effective_user_concurrency) &&
+          row.effective_user_concurrency >= 1 &&
+          row.effective_user_concurrency <= 10_000 &&
+          typeof row.group_id_snapshot === "string" &&
+          row.group_id_snapshot.trim().length >= 1 &&
+          row.group_id_snapshot.trim().length <= 128 &&
+          Number.isInteger(row.group_priority_snapshot) &&
+          row.group_priority_snapshot >= 0 &&
+          row.group_priority_snapshot <= 10_000;
+        const admissionAllNull =
+          row.admission_lease_token === null &&
+          row.admission_lease_expires_at === null &&
+          row.admission_lease_released_at === null;
+        const admissionActive =
+          typeof row.admission_lease_token === "string" &&
+          row.admission_lease_token.trim().length >= 1 &&
+          row.admission_lease_token.trim().length <= 256 &&
+          row.admission_lease_expires_at instanceof Date &&
+          !Number.isNaN(row.admission_lease_expires_at.getTime()) &&
+          (row.admission_lease_released_at === null ||
+            (terminal && row.admission_lease_released_at instanceof Date));
+        const dueStateValid =
+          (row.mq_delivery_due_at === null || nonterminal) &&
+          (row.claim_recovery_due_at === null || nonterminal) &&
+          (row.admission_renewal_due_at === null ||
+            (nonterminal &&
+              admissionActive &&
+              row.admission_lease_released_at === null)) &&
+          (row.terminal_release_due_at === null ||
+            (terminal &&
+              admissionActive &&
+              row.admission_lease_released_at === null));
+        if (
+          !coreValid ||
+          !(snapshotAllNull || snapshotValid) ||
+          !(admissionAllNull || admissionActive) ||
+          !dueStateValid ||
+          (nonterminal && (!snapshotValid || !admissionActive))
+        ) {
+          newFieldInvalidCount += 1;
+        }
+      }
+      const lastRow = result.rows.at(-1);
+      if (!lastRow || typeof lastRow.id !== "string") {
+        throw new Error("image async task preflight cursor is invalid");
+      }
+      cursor = lastRow.id;
+      if (result.rows.length < IMAGE_TASK_GATE_PAGE_SIZE) break;
+    }
+    const conflictResult = await client.query(`
+      with candidates as (
+        select coalesce(
+          ${additiveApplied ? "task.generation_id" : "null::text"},
+          case
+            when json_typeof(task.generation_ids) = 'array' then
+              case
+                when json_array_length(task.generation_ids) = 1
+                  and json_typeof(task.generation_ids->0) = 'string'
+                then nullif(btrim(task.generation_ids->>0), '')
+              end
+          end
+        ) as generation_id
+        from image_async_task as task
+      ), generation_conflicts as (
+        select generation_id
+        from candidates
+        where generation_id is not null
+        group by generation_id
+        having count(*) > 1
+      )
+      select
+        (select count(*)::text from generation_conflicts)
+          as generation_conflict_count,
+        ${
+          additiveApplied
+            ? `(select count(*)::text from (
+                 select admission_lease_token
+                 from image_async_task
+                 where admission_lease_token is not null
+                 group by admission_lease_token
+                 having count(*) > 1
+               ) as token_conflicts)`
+            : "'0'::text"
+        } as admission_token_conflict_count
+    `);
+    const conflicts = conflictResult.rows[0] ?? {};
+    const generationConflictCount = parseCount(
+      conflicts.generation_conflict_count,
+      "image async task generation conflicts"
+    );
+    const admissionTokenConflictCount = parseCount(
+      conflicts.admission_token_conflict_count,
+      "image async task admission token conflicts"
+    );
+    printEvidence(
+      "image_async_task_legacy_nonterminal_count",
+      legacyNonterminalCount
+    );
+    printEvidence(
+      "image_async_task_invalid_mapping_count",
+      invalidMappingCount
+    );
+    printEvidence(
+      "image_async_task_generation_conflict_count",
+      generationConflictCount
+    );
+    printEvidence(
+      "image_async_task_admission_token_conflict_count",
+      admissionTokenConflictCount
+    );
+    printEvidence(
+      "image_async_task_new_field_invalid_count",
+      newFieldInvalidCount
+    );
+    if (
+      legacyNonterminalCount +
+        invalidMappingCount +
+        generationConflictCount +
+        admissionTokenConflictCount +
+        newFieldInvalidCount !==
+      0
+    ) {
+      throw new Error("image async task retirement preflight failed");
+    }
+  });
+}
+
+/**
+ * 验证媒体治理字段、MQ 投递版本、约束、partial 索引和 INSERT-only trigger 均可用。
+ *
+ * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
+ * @returns {Promise<void>} 所有媒体治理与 MQ fencing 数据库对象存在且启用时完成。
+ * @throws 任一字段、CHECK、partial index、trigger 缺失或字段脏数据存在时抛错。
+ * @sideEffect 在只读事务中查询系统目录和图片任务聚合状态。
+ * @boundary 不尝试修复对象；触发器必须保持 enabled，历史 UPDATE 由集成测试证明。
+ */
+async function assertMediaUsageGovernancePostMigrationState(pool) {
+  await inReadOnlyTransaction(pool, async (client) => {
+    const result = await client.query(
+      `select
+        (
+          select count(*)::text
+          from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'image_async_task'
+            and column_name = any($1::text[])
+            and is_nullable = 'YES'
+            and (
+              (column_name = 'generation_input' and data_type = 'json')
+              or (
+                column_name in (
+                  'input_digest', 'generation_id', 'group_id_snapshot',
+                  'admission_lease_token'
+                )
+                and data_type = 'text'
+              )
+              or (
+                column_name in (
+                  'effective_user_concurrency', 'group_priority_snapshot'
+                )
+                and data_type = 'integer'
+              )
+              or (
+                column_name in (
+                  'admission_lease_expires_at',
+                  'admission_lease_released_at',
+                  'mq_delivery_due_at',
+                  'claim_recovery_due_at',
+                  'admission_renewal_due_at',
+                  'terminal_release_due_at'
+                )
+                and data_type = 'timestamp without time zone'
+              )
+            )
+        ) as image_task_column_count,
+        exists (
+          select 1
+          from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'image_async_task'
+            and column_name = 'mq_delivery_version'
+            and data_type = 'integer'
+            and is_nullable = 'NO'
+        ) as mq_delivery_version_valid,
+        exists (
+          select 1
+          from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'user'
+            and column_name = 'image_generation_concurrency_override'
+            and data_type = 'integer'
+            and is_nullable = 'YES'
+        ) as user_override_column_valid,
+        (
+          select count(*)::text
+          from pg_constraint
+          where connamespace = 'public'::regnamespace
+            and convalidated
+            and conname in (
+              'user_image_generation_concurrency_override_check',
+              'image_async_task_single_input_core_check',
+              'image_async_task_generation_input_shape_check',
+              'image_async_task_policy_snapshot_check',
+              'image_async_task_admission_lease_state_check',
+              'image_async_task_due_state_check',
+              'image_async_task_attempt_count_check',
+              'image_async_task_batch_count_retired_check'
+            )
+        ) as constraint_count,
+        (
+          select count(*)::text
+          from pg_indexes
+          where schemaname = 'public'
+            and indexname in (
+              'image_async_task_generation_id_unique',
+              'image_async_task_admission_lease_token_unique',
+              'image_async_task_mq_delivery_due_idx',
+              'image_async_task_claim_recovery_due_idx',
+              'image_async_task_admission_renewal_due_idx',
+              'image_async_task_terminal_release_due_idx'
+            )
+            and indexdef ilike '% where %'
+            and (
+              (
+                indexname in (
+                  'image_async_task_generation_id_unique',
+                  'image_async_task_admission_lease_token_unique'
+                )
+                and indexdef ilike 'create unique index%'
+              )
+              or indexname in (
+                'image_async_task_mq_delivery_due_idx',
+                'image_async_task_claim_recovery_due_idx',
+                'image_async_task_admission_renewal_due_idx',
+                'image_async_task_terminal_release_due_idx'
+              )
+            )
+        ) as partial_index_count,
+        (
+          select count(*)::text
+          from pg_trigger
+          where tgrelid in (
+              'public.credits_batch'::regclass,
+              'public.credits_transaction'::regclass
+            )
+            and tgname in (
+              'credits_batch_reject_subscription_insert',
+              'credits_transaction_reject_monthly_grant_insert'
+            )
+            and not tgisinternal
+            and tgenabled <> 'D'
+        ) as enabled_trigger_count`,
+      [MEDIA_USAGE_IMAGE_TASK_COLUMNS]
+    );
+    const row = result.rows[0] ?? {};
+    const imageTaskColumnCount = parseCount(
+      row.image_task_column_count,
+      "media usage image task columns"
+    );
+    const constraintCount = parseCount(
+      row.constraint_count,
+      "media usage constraints"
+    );
+    const partialIndexCount = parseCount(
+      row.partial_index_count,
+      "media usage partial indexes"
+    );
+    const enabledTriggerCount = parseCount(
+      row.enabled_trigger_count,
+      "media usage enabled triggers"
+    );
+    printEvidence("media_usage_image_task_column_count", imageTaskColumnCount);
+    printEvidence(
+      "media_usage_mq_delivery_version_valid",
+      row.mq_delivery_version_valid === true
+    );
+    printEvidence(
+      "media_usage_user_override_column_valid",
+      row.user_override_column_valid === true
+    );
+    printEvidence("media_usage_constraint_count", constraintCount);
+    printEvidence("media_usage_partial_index_count", partialIndexCount);
+    printEvidence("media_usage_enabled_trigger_count", enabledTriggerCount);
+    if (
+      imageTaskColumnCount !== MEDIA_USAGE_IMAGE_TASK_COLUMNS.length ||
+      row.mq_delivery_version_valid !== true ||
+      row.user_override_column_valid !== true ||
+      constraintCount !== 8 ||
+      partialIndexCount !== 6 ||
+      enabledTriggerCount !== 2
+    ) {
+      throw new Error(
+        "post-migration media usage governance invariants failed"
+      );
+    }
+  });
+}
+
+/**
  * 验证 0056 的 schema、策略、套餐 JSON 与审计索引不变量。
  * 首次删除旧列时额外要求所有管理员覆盖为空，后续发布允许合法覆盖继续存在。
  *
@@ -2149,6 +3077,8 @@ async function assertPostMigrationState(pool, requireEmptyOverrides) {
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required");
+  const expectedLedgerDigest =
+    process.env.RELEASE_CREDITS_LEDGER_DIGEST?.trim() || undefined;
 
   const command = process.argv.slice(2).find((argument) => argument !== "--");
   const pool = new Pool({
@@ -2164,18 +3094,32 @@ async function main() {
       return;
     }
     if (command === "preflight-early") {
+      await assertCreditsLedgerSnapshot(pool, undefined);
+      await assertSubscriptionRetirementPreflight(pool);
+      await assertImageAsyncTaskRetirementPreflight(pool);
       await assertRelayPreflight(pool);
       await assertMediaPreflight(pool);
       await assertVideoContractSchemaStage(pool);
       return;
     }
     if (command === "preflight") {
+      await assertCreditsLedgerSnapshot(pool, undefined);
+      await assertSubscriptionRetirementPreflight(pool);
+      await assertImageAsyncTaskRetirementPreflight(pool);
       await assertRelayPreflight(pool);
       await assertMediaPreflight(pool);
       await assertVideoContractPreflight(pool);
       return;
     }
     if (command === "postcheck" || command === "postcheck-initial") {
+      await assertCreditsLedgerSnapshot(pool, expectedLedgerDigest);
+      if (!expectedLedgerDigest) {
+        throw new Error(
+          "RELEASE_CREDITS_LEDGER_DIGEST is required for postcheck"
+        );
+      }
+      await assertMediaUsageGovernancePostMigrationState(pool);
+      await assertImageAsyncTaskRetirementPreflight(pool);
       await assertPostMigrationState(pool, command === "postcheck-initial");
       await assertMediaPostMigrationState(pool);
       await assertVideoContractPostMigrationState(pool);

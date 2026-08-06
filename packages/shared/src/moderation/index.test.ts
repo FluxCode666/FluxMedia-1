@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // moderation/index.ts 通过 '../system-settings'（→ @repo/database）读取运行时配置，
 // 这里用 vi.mock 把配置层替换为可控的内存实现，使整套编排可在 DB-free 下单测。
-// 与 subscription/services/plan-capabilities.test.ts 的隔离手法一致。
+// 与其他 DB-free 纯逻辑测试的依赖隔离手法一致。
 
 const runtimeSettingsMock = vi.hoisted(() => {
   const stringValues = new Map<string, string>();
@@ -14,9 +14,8 @@ const runtimeSettingsMock = vi.hoisted(() => {
     getRuntimeSettingString: vi.fn(async (key: string) =>
       stringValues.get(key)
     ),
-    getRuntimeSettingBoolean: vi.fn(
-      async (key: string, fallback: boolean) =>
-        booleanValues.has(key) ? booleanValues.get(key) : fallback
+    getRuntimeSettingBoolean: vi.fn(async (key: string, fallback: boolean) =>
+      booleanValues.has(key) ? booleanValues.get(key) : fallback
     ),
     getRuntimeSettingNumber: vi.fn(
       async (_key: string, fallback: number) => fallback
@@ -32,10 +31,7 @@ const loggerMock = vi.hoisted(() => ({
 vi.mock("../system-settings", () => runtimeSettingsMock);
 vi.mock("../logger", () => loggerMock);
 
-import {
-  getConfiguredModerationProviders,
-  moderateContent,
-} from "./index";
+import { getConfiguredModerationProviders, moderateContent } from "./index";
 
 const PROXY_URL = "https://moderation.example.com/check";
 
@@ -292,12 +288,10 @@ describe("moderateContent orchestration", () => {
       "CONTENT_MODERATION_PROXY_URL",
       PROXY_URL
     );
-    const fetchMock = vi.fn(
-      async (_url: string, _init: { body: string }) => ({
-        ok: true,
-        json: async () => ({ decision: "allow" }),
-      })
-    );
+    const fetchMock = vi.fn(async (_url: string, _init: { body: string }) => ({
+      ok: true,
+      json: async () => ({ decision: "allow" }),
+    }));
     vi.stubGlobal("fetch", fetchMock);
 
     await moderateContent({

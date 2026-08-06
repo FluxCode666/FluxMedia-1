@@ -5,13 +5,13 @@
  * 算力消耗接口失去 CSRF 防护。
  */
 
+import { OperationError } from "@repo/shared/uol";
 import type { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getUserRoleById: vi.fn(),
-  getUserPlan: vi.fn(),
   invokeImageGenerationOperation: vi.fn(),
 }));
 
@@ -23,17 +23,6 @@ vi.mock("@repo/shared/auth", () => ({
 }));
 vi.mock("@repo/shared/auth/role-server", () => ({
   getUserRoleById: mocks.getUserRoleById,
-}));
-vi.mock("@repo/shared/subscription/services/plan-capabilities", () => ({
-  canUsePlanCapability: vi.fn(),
-  getPlanLimits: vi.fn(),
-}));
-vi.mock("@repo/shared/subscription/services/user-plan", () => ({
-  getUserPlan: mocks.getUserPlan,
-}));
-vi.mock("@/features/image-generation/batch-runner", () => ({
-  firstBatchError: vi.fn(),
-  runBatchImageGeneration: vi.fn(),
 }));
 vi.mock("@/features/image-generation/uol-client", () => ({
   invokeImageGenerationOperation: mocks.invokeImageGenerationOperation,
@@ -59,9 +48,10 @@ function createRequest(
 describe("POST /api/images/generate", () => {
   beforeEach(() => {
     mocks.getSession.mockReset();
-    mocks.getUserPlan.mockReset();
+    mocks.getUserRoleById.mockReset();
     mocks.invokeImageGenerationOperation.mockReset();
     mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.getUserRoleById.mockResolvedValue("user");
     vi.stubEnv("BETTER_AUTH_URL", "https://app.example.test");
   });
 
@@ -69,12 +59,12 @@ describe("POST /api/images/generate", () => {
     vi.unstubAllEnvs();
   });
 
-  it("已登录的跨站请求在读取套餐或发起生成前返回 403", async () => {
+  it("已登录的跨站请求在读取角色或发起生成前返回 403", async () => {
     const response = await POST(createRequest("https://attacker.example.test"));
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "Forbidden" });
-    expect(mocks.getUserPlan).not.toHaveBeenCalled();
+    expect(mocks.getUserRoleById).not.toHaveBeenCalled();
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
   });
 
@@ -83,7 +73,56 @@ describe("POST /api/images/generate", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "model is required" });
-    expect(mocks.getUserPlan).not.toHaveBeenCalled();
+    expect(mocks.getUserRoleById).not.toHaveBeenCalled();
     expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "count",
+    "generationIds",
+    "generation_ids",
+  ])("显式批量字段 %s 即使表达单项也返回 400", async (field) => {
+    const response = await POST(
+      createRequest("https://app.example.test", {
+        prompt: "test prompt",
+        model: "gpt-image-2",
+        [field]: field === "count" ? 1 : ["generation-1"],
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+  });
+
+  it("用户并发超限时返回 429 和稳定 code/details", async () => {
+    mocks.invokeImageGenerationOperation.mockRejectedValueOnce(
+      new OperationError(
+        "concurrency_limit_exceeded",
+        "用户同时进行的生图任务已达到上限 20",
+        {
+          limit: 20,
+          effectiveSource: "system_default",
+          scope: "user",
+        }
+      )
+    );
+
+    const response = await POST(
+      createRequest("https://app.example.test", {
+        prompt: "test prompt",
+        model: "gpt-image-2",
+      })
+    );
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: "用户同时进行的生图任务已达到上限 20",
+      code: "concurrency_limit_exceeded",
+      details: {
+        limit: 20,
+        effectiveSource: "system_default",
+        scope: "user",
+      },
+    });
   });
 });

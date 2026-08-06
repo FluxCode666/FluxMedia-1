@@ -53,6 +53,7 @@ export const userRoleEnum = pgEnum("user_role", [
  * @field banned - 是否被封禁
  * @field bannedReason - 封禁原因
  * @field moderationBlockRiskLevelOverride - 仅管理员维护的审核级别覆盖；空值继承全站默认
+ * @field imageGenerationConcurrencyOverride - 单用户生图并发覆盖；空值继承系统默认
  * @field timeZone - 用户展示时区；为空时继承部署环境 APP_TIME_ZONE
  * @field customerId - 支付提供商客户 ID (Creem)
  * @field createdAt - 创建时间
@@ -72,6 +73,9 @@ export const user = pgTable(
     moderationBlockRiskLevelOverride: text(
       "moderation_block_risk_level_override"
     ),
+    imageGenerationConcurrencyOverride: integer(
+      "image_generation_concurrency_override"
+    ),
     timeZone: text("time_zone"),
     customerId: text("customer_id").unique(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -81,6 +85,10 @@ export const user = pgTable(
     check(
       "user_moderation_block_risk_level_override_check",
       sql`${table.moderationBlockRiskLevelOverride} IS NULL OR ${table.moderationBlockRiskLevelOverride} IN ('low', 'medium', 'high')`
+    ),
+    check(
+      "user_image_generation_concurrency_override_check",
+      sql`${table.imageGenerationConcurrencyOverride} IS NULL OR ${table.imageGenerationConcurrencyOverride} BETWEEN 1 AND 10000`
     ),
   ]
 );
@@ -1052,19 +1060,34 @@ export const ticketMessage = pgTable("ticket_message", {
 // ============================================
 // Image Backend Pool
 // ============================================
-export const imageBackendGroup = pgTable("image_backend_group", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
-  isEnabled: boolean("is_enabled").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false),
-  isUserSelectable: boolean("is_user_selectable").notNull().default(true),
-  contentSafetyEnabled: boolean("content_safety_enabled"),
-  priority: integer("priority").notNull().default(50),
-  metadata: json("metadata").$type<Record<string, unknown>>(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const imageBackendGroup = pgTable(
+  "image_backend_group",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    isEnabled: boolean("is_enabled").notNull().default(true),
+    isDefault: boolean("is_default").notNull().default(false),
+    isUserSelectable: boolean("is_user_selectable").notNull().default(true),
+    contentSafetyEnabled: boolean("content_safety_enabled"),
+    priority: integer("priority").notNull().default(50),
+    metadata: json("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "image_backend_group_priority_check",
+      sql`${table.priority} >= 0 AND ${table.priority} <= 10000`
+    ),
+    index("image_backend_group_default_lookup_idx").on(
+      table.isEnabled,
+      table.isDefault,
+      table.createdAt,
+      table.id
+    ),
+  ]
+);
 
 /**
  * 统一媒体后端成员。
@@ -1846,9 +1869,9 @@ export const videoGeneration = pgTable(
 /**
  * 图片异步 MQ 任务。
  *
- * Redis 只保存本表主键；经 UOL 校验的 JSON-safe 图片输入、Principal 最小快照与批次
- * generation ID 持久保存在 PostgreSQL。generation 和 credits_transaction 仍分别是
- * 产物与财务真相，本表只负责异步编排、claim 和查询聚合。
+ * Redis 只保存本表主键；Phase A 同时保留旧批次数组和新的 storage-only 单项输入、
+ * generation 身份、治理快照与 admission 释放状态。generation 和
+ * credits_transaction 仍分别是产物与财务真相，本表只负责异步编排与恢复游标。
  */
 export const imageAsyncTask = pgTable(
   "image_async_task",
@@ -1866,6 +1889,20 @@ export const imageAsyncTask = pgTable(
       .$type<Array<Record<string, unknown>>>()
       .notNull(),
     generationIds: json("generation_ids").$type<string[]>().notNull(),
+    generationInput: json("generation_input").$type<Record<string, unknown>>(),
+    inputDigest: text("input_digest"),
+    generationId: text("generation_id"),
+    effectiveUserConcurrency: integer("effective_user_concurrency"),
+    groupIdSnapshot: text("group_id_snapshot"),
+    groupPrioritySnapshot: integer("group_priority_snapshot"),
+    admissionLeaseToken: text("admission_lease_token"),
+    admissionLeaseExpiresAt: timestamp("admission_lease_expires_at"),
+    admissionLeaseReleasedAt: timestamp("admission_lease_released_at"),
+    mqDeliveryVersion: integer("mq_delivery_version").notNull().default(0),
+    mqDeliveryDueAt: timestamp("mq_delivery_due_at"),
+    claimRecoveryDueAt: timestamp("claim_recovery_due_at"),
+    admissionRenewalDueAt: timestamp("admission_renewal_due_at"),
+    terminalReleaseDueAt: timestamp("terminal_release_due_at"),
     responseFormat: text("response_format")
       .$type<"url" | "b64_json">()
       .notNull(),
@@ -1894,6 +1931,32 @@ export const imageAsyncTask = pgTable(
       table.claimExpiresAt,
       table.createdAt
     ),
+    uniqueIndex("image_async_task_generation_id_unique")
+      .on(table.generationId)
+      .where(sql`${table.generationId} IS NOT NULL`),
+    uniqueIndex("image_async_task_admission_lease_token_unique")
+      .on(table.admissionLeaseToken)
+      .where(sql`${table.admissionLeaseToken} IS NOT NULL`),
+    index("image_async_task_mq_delivery_due_idx")
+      .on(table.mqDeliveryDueAt, table.id)
+      .where(
+        sql`${table.status} IN ('queued', 'running') AND ${table.mqDeliveryDueAt} IS NOT NULL`
+      ),
+    index("image_async_task_claim_recovery_due_idx")
+      .on(table.claimRecoveryDueAt, table.id)
+      .where(
+        sql`${table.status} IN ('queued', 'running') AND ${table.claimRecoveryDueAt} IS NOT NULL`
+      ),
+    index("image_async_task_admission_renewal_due_idx")
+      .on(table.admissionRenewalDueAt, table.id)
+      .where(
+        sql`${table.status} IN ('queued', 'running') AND ${table.admissionRenewalDueAt} IS NOT NULL`
+      ),
+    index("image_async_task_terminal_release_due_idx")
+      .on(table.terminalReleaseDueAt, table.id)
+      .where(
+        sql`${table.status} IN ('completed', 'failed') AND ${table.terminalReleaseDueAt} IS NOT NULL AND ${table.admissionLeaseReleasedAt} IS NULL`
+      ),
     check(
       "image_async_task_operation_check",
       sql`${table.operation} IN ('generate', 'edit', 'mask')`
@@ -1908,11 +1971,101 @@ export const imageAsyncTask = pgTable(
     ),
     check(
       "image_async_task_attempt_count_check",
-      sql`${table.attemptCount} >= 0`
+      sql`${table.attemptCount} >= 0 AND ${table.mqDeliveryVersion} >= 0`
     ),
     check(
       "image_async_task_identity_nonempty_check",
       sql`length(btrim(${table.userId})) > 0 AND length(btrim(${table.apiKeyId})) > 0 AND length(btrim(${table.plan})) > 0`
+    ),
+    check(
+      "image_async_task_single_input_core_check",
+      sql`(
+        ${table.generationInput} IS NULL
+        AND ${table.inputDigest} IS NULL
+        AND ${table.generationId} IS NULL
+      ) OR (
+        ${table.generationInput} IS NOT NULL
+        AND ${table.inputDigest} IS NOT NULL
+        AND ${table.inputDigest} ~ '^(md5:[0-9a-f]{32}|sha256:[0-9a-f]{64})$'
+        AND ${table.generationId} IS NOT NULL
+        AND length(btrim(${table.generationId})) BETWEEN 1 AND 128
+      )`
+    ),
+    check(
+      "image_async_task_generation_input_shape_check",
+      sql`${table.generationInput} IS NULL OR (
+        json_typeof(${table.generationInput}) = 'object'
+        AND json_typeof(${table.generationInput}->'generationId') = 'string'
+        AND ${table.generationInput}->>'generationId' = ${table.generationId}
+        AND json_typeof(${table.generationInput}->'operation') = 'string'
+        AND ${table.generationInput}->>'operation' = ${table.operation}
+      )`
+    ),
+    check(
+      "image_async_task_batch_count_retired_check",
+      sql`(
+        ${table.generationInput} IS NULL
+        OR NOT (${table.generationInput}::jsonb ? 'count')
+      ) AND (
+        json_typeof(${table.generationInputs}) <> 'array'
+        OR json_array_length(${table.generationInputs}) <> 1
+        OR json_typeof(${table.generationInputs}->0) <> 'object'
+        OR NOT ((${table.generationInputs}->0)::jsonb ? 'count')
+      )`
+    ),
+    check(
+      "image_async_task_policy_snapshot_check",
+      sql`(
+        ${table.effectiveUserConcurrency} IS NULL
+        AND ${table.groupIdSnapshot} IS NULL
+        AND ${table.groupPrioritySnapshot} IS NULL
+      ) OR (
+        ${table.effectiveUserConcurrency} IS NOT NULL
+        AND ${table.effectiveUserConcurrency} BETWEEN 1 AND 10000
+        AND ${table.groupIdSnapshot} IS NOT NULL
+        AND length(btrim(${table.groupIdSnapshot})) BETWEEN 1 AND 128
+        AND ${table.groupPrioritySnapshot} IS NOT NULL
+        AND ${table.groupPrioritySnapshot} BETWEEN 0 AND 10000
+      )`
+    ),
+    check(
+      "image_async_task_admission_lease_state_check",
+      sql`(
+        ${table.admissionLeaseToken} IS NULL
+        AND ${table.admissionLeaseExpiresAt} IS NULL
+        AND ${table.admissionLeaseReleasedAt} IS NULL
+      ) OR (
+        ${table.admissionLeaseToken} IS NOT NULL
+        AND length(btrim(${table.admissionLeaseToken})) BETWEEN 1 AND 256
+        AND ${table.admissionLeaseExpiresAt} IS NOT NULL
+        AND (
+          ${table.admissionLeaseReleasedAt} IS NULL
+          OR ${table.status} IN ('completed', 'failed')
+        )
+      )`
+    ),
+    check(
+      "image_async_task_due_state_check",
+      sql`(
+        (${table.mqDeliveryDueAt} IS NULL OR ${table.status} IN ('queued', 'running'))
+        AND (${table.claimRecoveryDueAt} IS NULL OR ${table.status} IN ('queued', 'running'))
+        AND (
+          ${table.admissionRenewalDueAt} IS NULL
+          OR (
+            ${table.status} IN ('queued', 'running')
+            AND ${table.admissionLeaseToken} IS NOT NULL
+            AND ${table.admissionLeaseReleasedAt} IS NULL
+          )
+        )
+        AND (
+          ${table.terminalReleaseDueAt} IS NULL
+          OR (
+            ${table.status} IN ('completed', 'failed')
+            AND ${table.admissionLeaseToken} IS NOT NULL
+            AND ${table.admissionLeaseReleasedAt} IS NULL
+          )
+        )
+      )`
     ),
   ]
 );

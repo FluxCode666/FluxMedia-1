@@ -127,7 +127,7 @@ const sections = {
         "API 密钥绑定分组优先",
         "API 密钥未绑定分组时使用平台默认分组",
         "网页端创作才使用用户在设置里选择的生图后端分组",
-        "分组会检查套餐权限、是否启用、内容安全开关",
+        "分组只检查是否启用、内容安全开关和显式模型；队列优先级按分组配置。",
       ],
       backends: [
         {
@@ -189,7 +189,7 @@ const sections = {
           "OpenAI images generation",
           "/v1/images/generations",
           "image_generation",
-          "验证 API 密钥和套餐后进入同一生成链路；默认返回 b64_json，可显式请求 url。",
+          "验证 API 密钥、绑定分组和账户积分后进入同一生成链路；默认返回 b64_json，可显式请求 url。",
         ],
         [
           "OpenAI images edit",
@@ -237,7 +237,7 @@ const sections = {
           "OpenAI models",
           "/v1/models",
           "-",
-          "只返回当前套餐/API 密钥可见模型，不触发后端池调度。",
+          "只返回当前 API 密钥绑定分组及启用成员显式暴露的模型，不触发后端池调度。",
         ],
         [
           "FluxMedia credits",
@@ -263,7 +263,7 @@ const sections = {
         [
           "外接 API 入口",
           "/v1/chat/completions、/v1/images/generations、/v1/images/edits、/v1/videos/generations、/v1/ppts、/v1/psds、/v1/images/{task_id}、/v1/editable-file-tasks/{task_id}、/v1/responses、/v1/agents/images",
-          "/api/v1/* 是同一 handler 的别名；只负责 API 密钥、OpenAI 兼容请求和响应格式适配。/v1/ppts、/v1/psds 走独立的可编辑文件链路（付费级 web 账号 + 代码解释器），不汇入 runImageGenerationForUser；支持 async:true + GET /v1/editable-file-tasks/{task_id} 轮询与 callback_url。",
+          "/api/v1/* 是同一 handler 的别名；只负责 API 密钥、OpenAI 兼容请求和响应格式适配。/v1/ppts、/v1/psds 走独立的可编辑文件链路（Web 账号 + 代码解释器），不汇入 runImageGenerationForUser；支持 async:true + GET /v1/editable-file-tasks/{task_id} 轮询与 callback_url。",
         ],
         [
           "共同核心",
@@ -305,11 +305,10 @@ const sections = {
         "支持上传文本/代码类附件作为上下文读取；不会读取用户在提示词中写入的服务器本地路径。",
         "可配置最大轮数；开启强制轮数时会跑满用户选择的轮数，否则模型可通过 continue_generation 决定是否继续。",
         "多轮生成的草稿图会作为迭代版本保存，最后一张作为默认最终图。",
-        "计费分为 Agent 每轮基础积分和图片实际输出积分；默认 Agent 每轮 3 积分，最终以套餐能力矩阵配置为准。",
+        "按量计费：当前 Chat/Agent 轮次基础费用为 0；完成图片按实际输出和审核成本结算。",
       ],
       invalid: [
         "外部 /v1/responses 不等于 Agent；它只做 OpenAI Responses 兼容协议适配，不会自动开启 Agent 工具循环。",
-        "当前没有接入 generate_image_batch 并发批量工具，避免破坏 Responses 粘性会话和线性迭代状态。",
       ],
     },
     externalDocs: {
@@ -325,7 +324,7 @@ const sections = {
       copyFailedLabel: "复制失败",
       common: [
         "所有外接接口都需要 Authorization: Bearer <本站 API 密钥>。",
-        "Chat Completions、图片生成和图片编辑接口需要入门版及以上；Responses 接口需要专业版及以上；Agent 生图接口默认需要旗舰版及以上。具体门槛可在套餐能力矩阵中调整 externalApi.*。",
+        "Chat Completions、图片、视频、Responses 和 Agent 接口均校验 API Key、绑定分组和账户积分；是否可用由分组成员与系统开关决定，并统一按量结算。",
         "/api/v1/* 与 /v1/* 使用同一套 handler，只是路径别名。",
         "所有 API 密钥请求均走普通持久化路径，并按接口能力写入生成历史、对象存储、使用记录与续承状态；不提供不记录模式。",
         "平台内容审核级别由管理员集中管理：用户覆盖优先，否则使用全站默认值，缺失或非法值回退到 high。调用方不能通过 API 密钥或请求字段修改；low、medium、high 只改变 Aliyun 审核阈值，OpenAI 审核提供方不随这三档变化。",
@@ -379,7 +378,7 @@ const sections = {
           path: "/v1/models",
           contentType: "无请求体",
           description:
-            "兼容 OpenAI List models，列出当前 API 密钥绑定分组中启用成员显式暴露且当前套餐允许调用的图片与真实视频模型 ID。图片生成和编辑必须原样使用这里返回的模型 ID。",
+            "兼容 OpenAI List models，列出当前 API 密钥绑定分组中启用成员显式暴露的图片与真实视频模型 ID。图片生成和编辑必须原样使用这里返回的模型 ID。",
           example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/models \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
@@ -408,7 +407,7 @@ const sections = {
             {
               name: "data[].id",
               description:
-                "模型 ID。包含默认图片模型、Adobe Firefly 图像族 id 与真实视频模型 ID（受 externalApi.images.generate 门控）、当前套餐可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
+                "模型 ID。包含默认图片模型、Adobe Firefly 图像族 id、真实视频模型 ID、可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
             },
             {
               name: "data[].object / created / owned_by",
@@ -417,7 +416,7 @@ const sections = {
           ],
           notes: [
             "本站当前只实现模型列表，不实现 /v1/models/{model} 详情。",
-            "返回模型按套餐能力过滤：Firefly 图像/视频需 externalApi.images.generate（入门版+）；Responses 模型需 externalApi.responses（专业版+，低于则不返回）；gpt-5.5 需 models.gpt55（旗舰版，同时进 chat 与 responses 列表）；free 用户仅得默认图片模型。",
+            "返回模型按 API Key 绑定分组、启用成员的显式模型列表和系统能力开关过滤；未配置可达成员时列表可能为空。",
             "API 后端的「支持的模型 ID」非空时会同时约束该供应商的调度候选；留空的历史后端不受此约束，模型列表仅回退展示其默认模型。",
           ],
         },
@@ -484,7 +483,7 @@ const sections = {
           path: "/v1/ppts、/v1/psds",
           contentType: "application/json",
           description:
-            "对话式驱动 ChatGPT 代码解释器生成可编辑 .pptx / 分层 .psd（含素材 zip）。仅调付费级（Plus/Pro）Web 账号，按任务固定价扣积分（后台可配 EDITABLE_FILE_PPT_CREDITS / EDITABLE_FILE_PSD_CREDITS，默认 25，仅成功扣）。分钟级长任务，用 keep-alive JSON 撑住连接直到出结果。PSD 必须传 base64_images。",
+            "对话式驱动 ChatGPT 代码解释器生成可编辑 .pptx / 分层 .psd（含素材 zip）。按任务固定价扣积分（后台可配 EDITABLE_FILE_PPT_CREDITS / EDITABLE_FILE_PSD_CREDITS，默认 25，仅成功扣）。分钟级长任务，用 keep-alive JSON 撑住连接直到出结果。PSD 必须传 base64_images。",
           example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/ppts \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -557,7 +556,7 @@ const sections = {
             },
           ],
           notes: [
-            "需付费级 Web 账号（代码解释器）；账号池无可用付费 Web 账号时返回 503 no_available_image_backend。",
+            "需可用的 Web 账号（代码解释器）；账号池无可用账号时返回 503 no_available_image_backend。",
             "同步（默认）用 keep-alive JSON 撑到出结果；异步（async:true）立即返回 task_...，任务为进程内内存态（30 分钟 TTL、多实例不共享、重启即清；可编辑文件无 DB generation 行，故不作持久回退）。client_task_id 为计费层幂等（防重复扣），任务级幂等为后续迭代。",
             "/api/v1/ppts、/api/v1/psds 为同一 handler 别名；站内 chat(web) tab 走 session 版 /api/editable-file/generate（同一 service）。",
           ],
@@ -731,12 +730,6 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
                 "GPT 对话模型。Web/Codex/Responses 后端会按各自能力处理；不可用模型会返回错误或由后端调度处理。",
             },
             {
-              name: "n",
-              requirement: "可选",
-              description:
-                "返回 choice 数量。每个 choice 会创建一次 Chat 生图任务并独立计费。",
-            },
-            {
               name: "size",
               requirement: "可选",
               description:
@@ -850,13 +843,13 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
             {
               name: "generation_id / generationId",
               description:
-                "本站扩展字段。非流式成功响应在顶层返回本次 Chat 轮次的生成记录 ID；批量请求会返回 generation_ids / generationIds。",
+                "本站扩展字段。非流式成功响应在顶层返回本次 Chat 轮次的生成记录 ID。",
               custom: true,
             },
             {
               name: "credits_consumed",
               description:
-                "本站扩展字段。本次请求 FluxMedia 结算积分（Chat 轮次加图片输出）；批量请求返回合计值。",
+                "本站扩展字段。本次请求 FluxMedia 结算积分；当前 Chat 轮次基础费用为 0，有图时按实际输出和审核成本结算。",
               custom: true,
             },
             {
@@ -876,7 +869,7 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
             "OpenAI 官方 Chat Completions 并不定义“生成图片”的标准返回字段；本站为了兼容对话生图，在 Chat Completions 外形上扩展 choices[].message.images、顶层 images，并在 content 中追加 Markdown 图片链接。严格按官方生图协议接入时，建议使用 /v1/images/generations、/v1/images/edits 或 /v1/responses。",
             "该接口走页面 Chat 的非 Agent 模式，不会注入 web_search、continue_generation，也不会展示 Agent 多轮任务卡。",
             "调度类型是 chat，可命中 Web 账号、Codex/Responses 账号或支持 /responses 的外接 API 后端。",
-            "计费等同页面 Chat：先收 Chat 每轮基础积分，再按最终图片实际尺寸和数量追加模型固定价与运行时审核费；图片费用不乘分组倍率。",
+            "计费等同页面 Chat：当前 Chat 轮次基础费用为 0；完成图片按实际尺寸和数量结算模型固定价与运行时审核费，图片费用不乘分组倍率。",
           ],
         },
         {
@@ -893,7 +886,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A cute baby sea otter",
-    "n": 1,
     "size": "1024x1024",
     "quality": "medium",
     "moderation": "auto",
@@ -907,7 +899,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-1.5",
     "prompt": "一张赛博朋克城市夜景，雨后霓虹反光",
-    "n": 2,
     "size": "1024x1024",
     "quality": "high",
     "moderation": "low",
@@ -1054,12 +1045,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
                 "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应。服务端只在该密钥绑定的可信分组中精确匹配成员显式暴露的 ID，不转换 firefly-* 前缀、default 或其他目录外别名。Responses 对话模型请使用 /v1/responses。",
             },
             {
-              name: "n",
-              requirement: "可选",
-              description:
-                "生成数量，1 到套餐允许的最大批量（默认 10，可后台按套餐配置）；n>1 需套餐开启批量（imageGeneration.batch）能力，否则返回 403 insufficient_plan。",
-            },
-            {
               name: "size",
               requirement: "可选",
               description:
@@ -1199,13 +1184,12 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
             {
               name: "generation_id / generationId",
               description:
-                "本站扩展字段。非流式成功响应会在顶层返回本次生成记录 ID；批量请求会返回 generation_ids / generationIds。",
+                "本站扩展字段。非流式成功响应会在顶层返回本次生成记录 ID。",
               custom: true,
             },
             {
               name: "credits_consumed",
-              description:
-                "本站扩展字段。本次请求 FluxMedia 结算积分；批量请求返回合计值。",
+              description: "本站扩展字段。本次请求 FluxMedia 结算积分。",
               custom: true,
             },
             {
@@ -1222,12 +1206,12 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
           notes: [
             "该接口不会调用页面 /api/images/generate，而是直接进入共享 service 层。",
             "如果命中 Responses 账号池，内部会把图片请求转换成 Responses image_generation tool 请求。",
-            "n/count 批量张数属于一次 HTTP 请求；一次 10 张会创建 10 条生成记录并按 10 张计费。运行时按套餐的生图并发受限并行，超过并发上限的图片会在本批次内排队等待。",
-            "并发与排队：底层只有一条进程内生图队列，任务按套餐队列优先级排序，同优先级先进先出；队列同时受全局并发和单用户生图并发限制。全局并发可在后台「系统设置 > 模型 > 全局生图并发」配置，环境变量 IMAGE_GENERATION_GLOBAL_CONCURRENCY 只作为兜底默认值。批量请求额外有请求内 runner，只启动套餐允许的并发数，剩余图片留在本批次内等待，不会一次性塞满底层队列。",
+            "每次请求固定创建一条生成记录；显式传入 n 会返回 400，不再支持批量生图。",
+            "并发与排队：任务同时受全站执行并发和用户生图并发限制；用户默认并发为 20，可在用户编辑页单独覆盖。异步任务按后端分组 priority 数值升序进入持久队列，数值越小优先级越高。",
             "排队等待阶段不会创建 generation，也不会扣图像生成积分；底层队列排队超过 IMAGE_GENERATION_QUEUE_TIMEOUT_MS 会返回 429 类错误。单张任务开始执行后才进入 20 分钟运行超时，运行超时按失败结算规则处理积分。",
             "Web 后端无法严格控制输出尺寸和输出格式；本站保存时会按实际图片头识别扩展名和 MIME。",
             "background=transparent 并非所有模型都支持；OpenAI 官方文档当前列出 gpt-image-1.5、gpt-image-1、gpt-image-1-mini 支持透明背景，且通常还要求 png 或 webp 输出。不支持的上游可能直接返回 HTTP 400，而不是自动降级。",
-            "async 任务当前为进程内状态，30 分钟后过期；服务重启或多实例切换会导致未完成任务无法继续查询，callback 已发送的结果不受影响。",
+            "async 任务持久化到 PostgreSQL 并由 BullMQ 唤醒；服务重启、多实例切换或短暂投递失败后会由恢复任务继续收敛。",
             "如果实际生成尺寸与请求尺寸不一致，本站会按检测到的实际尺寸修正记录和计费。",
             "官方 Images API 可能返回 usage；本站当前 usage 通常为 null，但会通过顶层 credits_consumed、错误对象或流式完成事件返回本站结算积分。",
           ],
@@ -1244,7 +1228,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-2" \\
   -F prompt="把参考图改成电影海报风格" \\
-  -F n="1" \\
   -F size="1024x1024" \\
   -F quality="high" \\
   -F moderation="auto" \\
@@ -1284,7 +1267,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "image_urls": ["https://example.com/extra.jpg"],
     "mask_url": "https://example.com/mask.png",
     "mask_image_url": "https://example.com/mask-alt.png",
-    "n": 1,
     "size": "1024x1024",
     "quality": "auto",
     "moderation": "low",
@@ -1383,12 +1365,6 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
               requirement: "必填",
               description:
                 "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应；目录外 ID、firefly-* 前缀和其他别名不会被转换。取值范围与调度规则同 /v1/images/generations。",
-            },
-            {
-              name: "n",
-              requirement: "可选",
-              description:
-                "生成数量，1 到套餐允许的最大批量（默认 10，可后台按套餐配置）；n>1 需套餐开启批量（imageGeneration.batch）能力，否则返回 403 insufficient_plan。",
             },
             {
               name: "size",
@@ -1532,13 +1508,12 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             {
               name: "generation_id / generationId",
               description:
-                "本站扩展字段。非流式成功响应会在顶层返回本次生成记录 ID；批量请求会返回 generation_ids / generationIds。",
+                "本站扩展字段。非流式成功响应会在顶层返回本次生成记录 ID。",
               custom: true,
             },
             {
               name: "credits_consumed",
-              description:
-                "本站扩展字段。本次请求 FluxMedia 结算积分；批量请求返回合计值。",
+              description: "本站扩展字段。本次请求 FluxMedia 结算积分。",
               custom: true,
             },
             {
@@ -1635,9 +1610,8 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
                 "任务创建与完成时间（秒级时间戳与 ISO 字符串）；completed* 仅在完成后出现。",
             },
             {
-              name: "generation_id / generationId / generation_ids / generationIds",
-              description:
-                "关联的生成记录 ID；单图返回单数字段，批量返回复数数组。",
+              name: "generation_id / generationId",
+              description: "关联的单条生成记录 ID。",
             },
             {
               name: "credits_consumed",
@@ -1645,7 +1619,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             },
           ],
           notes: [
-            "任务为进程内内存对象，30 分钟后过期；服务重启或多实例切换会导致未完成任务返回 404 无法继续查询，但 callback_url 已发送的回调不受影响。",
+            "任务持久化到 PostgreSQL 并由 BullMQ 唤醒；服务重启、多实例切换或短暂投递失败后会由恢复任务继续处理。",
             "只能查询属于当前 API 密钥所属用户自己创建的任务。",
             "返回结构与 callback_url 回调 POST 的任务对象完全一致。",
           ],
@@ -1821,7 +1795,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
             "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
             "计费 = 当前真实模型与输出分辨率对应的每秒积分 × 独立 duration（秒），最终结果按积分精度向上取整。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
-            "默认需要 externalApi.images.generate 能力（入门版及以上），可在套餐能力矩阵中调整。",
+            "需要 externalApi.images.generate 系统能力开关；同时校验 API Key、绑定分组和账户积分。",
           ],
         },
         {
@@ -1937,7 +1911,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
           contentType: "application/json 或 multipart/form-data",
           description:
             "本站扩展接口：把页面 Agent 模式开放给外接 API。它固定按 Codex/Responses 能力调度，支持联网、工具循环、自动迭代、附件上下文和流式 Agent 事件。",
-          example: `# 1. JSON Agent 生图；默认返回 URL。默认需要 Ultra，可在能力矩阵 externalApi.agent 调整。
+          example: `# 1. JSON Agent 生图；默认返回 URL。需要启用 externalApi.agent 系统能力。
 curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -2055,7 +2029,7 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
             {
               name: "image / image[] / image_*",
               requirement: "multipart 可选",
-              description: "参考图文件，和附件总数受套餐 maxChatImages 限制。",
+              description: "参考图文件和附件总数受系统媒体参数限制。",
             },
             {
               name: "file / file[] / attachment",
@@ -2081,12 +2055,6 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
               description:
                 "true 时强制跑满 agent_max_rounds；false 时模型可通过 continue_generation 自行停止。",
               custom: true,
-            },
-            {
-              name: "n / count",
-              requirement: "可选",
-              description:
-                "Agent 接口一次只跑一个任务；传入时必须为 1。需要多任务请并发调用接口。",
             },
             {
               name: "size",
@@ -2175,7 +2143,7 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
             {
               name: "credits_consumed",
               description:
-                "本站结算积分。Agent 接口固定走 Codex/Responses 能力；计费 = Agent 每轮基础积分 + 最终图片固定价 + 运行时审核费，图片费用不乘分组倍率。",
+                "本站结算积分。Agent 接口固定走 Codex/Responses 能力；当前轮次基础费用为 0，完成图片按最终图片固定价和运行时审核费结算，图片费用不乘分组倍率。",
               custom: true,
             },
             {
@@ -2190,10 +2158,9 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
           ],
           notes: [
             "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/agents/images 是同一 handler 的别名。",
-            "默认要求 Ultra 套餐；管理员可在套餐能力矩阵中调整 externalApi.agent。",
+            "需要启用 externalApi.agent 系统能力；管理员可在系统设置中调整。",
             "该接口强制 requiresResponsesBackend，不会命中 Web 账号；支持 Codex/Responses 账号或支持 /responses 的外接 API 后端。",
             "不会调用页面 /api/images/chat；它和页面 Agent 共享 runImageGenerationForUser service 层。",
-            "generate_image_batch 并发工具暂未开放，避免破坏线性迭代和 Responses 粘性会话。",
           ],
         },
         {
@@ -2203,7 +2170,7 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
           contentType: "application/json",
           description:
             "基于 OpenAI Responses API 的生图适配入口。它会按 responses 调度类型选择 Codex/Responses 账号池或外接 /responses API 后端。",
-          example: `# 1. 最小 Responses 生图请求；需要 Pro 套餐
+          example: `# 1. 最小 Responses 生图请求；需要 API Key、可用分组和足够积分
 curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -2298,7 +2265,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
               name: "model",
               requirement: "可选",
               description:
-                "Responses 顶层模型。可用模型以 /v1/models 返回和套餐权限为准。",
+                "Responses 顶层模型。可用模型以 /v1/models 返回和 API Key 绑定分组为准。",
             },
             {
               name: "input",
@@ -2424,14 +2391,14 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
             },
           ],
           notes: [
-            "该接口需要专业版或更高套餐。",
+            "该接口需要有效 API Key、可用分组和足够账户积分。",
             "该接口不是 Chat Completions；普通对话生图请使用 /v1/chat/completions，Responses 工具语义请使用本接口。",
             "input_image 只支持 image_url/data URL；file_id/file 输入当前不会作为参考图使用。",
             "显式传 tools 但不包含 image_generation 会返回错误，避免模型只产出文本而不生图。",
             "页面 Chat 模式只提供普通多模态对话/生图语义；Agent 模式默认提供 image_generation、web_search 和线性续跑工具 continue_generation，不强制 tool_choice，模型按任务自行选择工具。",
             "页面 Chat/Agent 支持上传文本/代码类本地文件作为上下文读取；不会读取用户在提示词中写入的服务器本地路径。",
-            "页面 Chat/Agent 的每轮基础积分由后台「套餐能力矩阵」按套餐配置，默认 Chat 每轮 1 积分、Agent 每轮 3 积分；生成图片时再按实际尺寸和输出数量追加图片积分。",
-            "Agent 会把上一轮文字、工具结果和已生成图片喂回下一轮，让模型自行判断是否继续改版；最大轮数由系统设置 IMAGE_AGENT_MAX_ROUNDS 控制，默认 3。当前没有接入 generate_image_batch 这类并发批量工具，以免打散 Responses 粘性会话。",
+            "页面 Chat/Agent 当前轮次基础费用为 0；完成图片按实际尺寸与数量及审核成本扣除积分。",
+            "Agent 会把上一轮文字、工具结果和已生成图片喂回下一轮，让模型自行判断是否继续改版；最大轮数由系统设置 IMAGE_AGENT_MAX_ROUNDS 控制，默认 3。",
             "Agent 多轮产生的 image_generation_call 会作为自动迭代版本展示，最后一张作为默认选中版本。",
           ],
         },
@@ -2464,7 +2431,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "Chat/Agent 上传的本地文本/代码文件会作为请求上下文读取；不会开放服务器文件系统路径读取。",
         "支持外部 /v1/responses；也可承接 /v1/images/generations 和 /v1/images/edits 的内部转换。",
         "关闭提示词优化时，会通过指令引导模型不要修改提示词；这是尽力约束，不能保证上游一定完全照做。",
-        "页面 Chat/Agent 的每轮基础积分由后台「套餐能力矩阵」按套餐配置，默认 Chat 每轮 1 积分、Agent 每轮 3 积分；完成的图片输出另按实际尺寸和完成数量计费。",
+        "页面 Chat/Agent 当前轮次基础费用为 0；完成图片按实际尺寸与数量及审核成本扣除积分。",
       ],
       invalid: [
         "不是 ChatGPT Web，不支持 Web 专属能力或 Web 额度语义。",
@@ -2544,7 +2511,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       items: [
         "Sub2API 非数据库接口：当前同步依赖 SUB2API_POSTGRES_URL 直连 Sub2API PostgreSQL。后续调研并适配 Sub2API 管理员 Key / HTTP API 路线，优先用正式接口完成账号查询、分组筛选、状态读取、错误清理和同步任务；只有接口缺字段或能力不足时再保留数据库直连兜底。",
         "PSD 生成接口：准备适配 PSD/分层文件生成能力，需先明确上游接口协议、输出 MIME/扩展名、存储与预览策略、积分计费、外接 API 响应字段、后台能力矩阵开关和页面下载入口。",
-        "Agent 批量生图工具：参考 generate_image_batch 模式，让模型规划多张独立图片后由后端并发执行；接入前需要先设计它与 Responses previous_response_id 粘性会话的关系。",
         "图片引用交互：继续完善 @图1、@第N轮图M 的原子化输入、图片重排后的引用重映射和缺失引用提示。",
         "Agent 分支对话/轮次树：编辑或重生成历史某一轮时，从该轮派生新分支，避免覆盖后续记录。",
       ],
@@ -2633,7 +2599,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "API key bound group first",
         "Unbound API keys use the platform default group",
         "Page creation can use an authorized backend group selected for the current request",
-        "Group checks plan access, enabled state, and content safety setting",
+        "Group checks enabled state, content-safety setting, explicit models, and queue priority",
       ],
       backends: [
         {
@@ -2705,7 +2671,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "OpenAI images generation",
           "/v1/images/generations",
           "image_generation",
-          "Validates API key and plan, then enters the same generation path; b64_json is the default response format, url can be requested explicitly.",
+          "Validates the API key, bound group, and account credits, then enters the same generation path; b64_json is the default response format, url can be requested explicitly.",
         ],
         [
           "OpenAI images edit",
@@ -2753,7 +2719,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "OpenAI models",
           "/v1/models",
           "-",
-          "Only lists models visible to the current plan/API key and does not trigger backend pool routing.",
+          "Only lists models exposed by the API key's bound group and enabled members; it does not trigger backend pool routing.",
         ],
         [
           "FluxMedia credits",
@@ -2821,11 +2787,10 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "Uploaded text/code files can be read as request context; prompted server filesystem paths are not read.",
         "Max rounds are configurable. With force rounds enabled, Agent runs the selected number of rounds; otherwise the model decides whether to continue through continue_generation.",
         "Draft images from multiple rounds are stored as iteration variants, with the last image selected as the default final output.",
-        "Billing has a base Agent round charge plus actual image output credits. The default is 3 credits per Agent round, controlled by the Plan Capability Matrix.",
+        "The current Chat/Agent base round charge is 0; completed images are billed by actual output and moderation cost.",
       ],
       invalid: [
         "External /v1/responses is not Agent. It adapts the OpenAI Responses protocol and does not automatically enable the Agent tool loop.",
-        "generate_image_batch-style concurrent batch tooling is not wired in yet to avoid breaking Responses native state and linear iteration.",
       ],
     },
     externalDocs: {
@@ -2841,7 +2806,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       copyFailedLabel: "Copy failed",
       common: [
         "All external endpoints require Authorization: Bearer <FluxMedia API key>.",
-        "Chat Completions, image generation, and image edits require Starter or higher; Responses requires Pro or higher; Agent image runs require Ultra by default. The exact gates can be changed with externalApi.* in the Plan Capability Matrix.",
+        "Chat Completions, image, video, Responses, and Agent requests validate the API key, bound group, and account credits; availability is controlled by group members and system switches, with usage billed consistently.",
         "/api/v1/* and /v1/* use the same handlers; they are path aliases.",
         "All API key requests use the normal persistence path and write generation history, object storage, usage records, and continuation state as supported by each endpoint. There is no no-record mode.",
         "Platform content-moderation levels are centrally managed by administrators: a user override wins, otherwise the global default applies, and missing or invalid values fall back to high. Callers cannot change this policy through an API key or request field. low, medium, and high only change Aliyun thresholds; the OpenAI moderation provider is unchanged by these levels.",
@@ -2895,7 +2860,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           path: "/v1/models",
           contentType: "No request body",
           description:
-            "Compatible with OpenAI List models. Lists the image and Responses models visible to the current API key's user: the default image model, Adobe Firefly image-family IDs and real video model IDs (gated by externalApi.images.generate and omitted when disabled), plan-available Chat/Responses models, and model IDs configured on enabled API providers.",
+            "Compatible with OpenAI List models. Lists image, Responses, and real video model IDs exposed by the current API key's bound group and enabled members, plus model IDs configured on enabled API providers.",
           example: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/models \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY"`,
           responseExample: `{
@@ -2924,7 +2889,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
             {
               name: "data[].id",
               description:
-                "Model ID. Includes the default image model, Adobe Firefly image-family IDs and real video model IDs (gated by externalApi.images.generate), plan-available Chat/Responses models, and model IDs configured on enabled API providers.",
+                "Model ID. Includes the default image model, Adobe Firefly image-family IDs, real video model IDs, available Chat/Responses models, and model IDs configured on enabled API providers.",
             },
             {
               name: "data[].object / created / owned_by",
@@ -2933,7 +2898,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           ],
           notes: [
             "Only model listing is implemented; /v1/models/{model} is not implemented.",
-            "Returned models are filtered by plan capability: Firefly image/video need externalApi.images.generate (Starter+); Responses models need externalApi.responses (Pro+, empty below Pro); gpt-5.5 needs models.gpt55 (Ultra, appears in both chat and responses lists); free users get only the default image model.",
+            "Returned models are filtered by the API key's bound group, enabled members' explicit model lists, and system capability switches; the list can be empty when no reachable member is configured.",
             "A non-empty API provider supported-model list also restricts that provider's scheduler eligibility. Legacy providers with an empty list stay unrestricted and only contribute their default model to the list.",
           ],
         },
@@ -3113,12 +3078,6 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
                 "GPT chat model. Web/Codex/Responses backends handle support according to their capabilities.",
             },
             {
-              name: "n",
-              requirement: "Optional",
-              description:
-                "Number of choices. Each choice creates one Chat image task and is billed independently.",
-            },
-            {
               name: "size",
               requirement: "Optional",
               description:
@@ -3218,13 +3177,13 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
             {
               name: "generation_id / generationId",
               description:
-                "FluxMedia extension. Non-stream success responses return this Chat round's generation record ID at the top level; batch requests return generation_ids / generationIds.",
+                "FluxMedia extension. Non-stream success responses return this Chat round's generation record ID at the top level.",
               custom: true,
             },
             {
               name: "credits_consumed",
               description:
-                "FluxMedia extension. FluxMedia-billed credits for this request (Chat round plus image output); batch requests return the aggregate.",
+                "FluxMedia extension. FluxMedia-billed credits for this request. The current Chat base round charge is 0; completed images are billed by actual output and moderation cost.",
               custom: true,
             },
             {
@@ -3244,7 +3203,7 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
             "OpenAI official Chat Completions does not define a standard generated-image response field. FluxMedia extends the Chat Completions shape with choices[].message.images, top-level images, and Markdown image links in content. For strict official image-generation semantics, use /v1/images/generations, /v1/images/edits, or /v1/responses.",
             "This endpoint uses page Chat non-Agent mode. It does not inject web_search or continue_generation and does not return Agent task cards.",
             "The request kind is chat, so routing can select Web accounts, Codex/Responses accounts, or external API backends that support /responses. User custom upstream APIs still keep highest priority when available.",
-            "Billing matches page Chat: a base Chat round charge first, then the model fixed price and runtime review fees for actual completed images. Image charges do not use group multipliers.",
+            "Billing matches page Chat: the current Chat base round charge is 0; completed images use the model fixed price and runtime review fees. Image charges do not use group multipliers.",
           ],
         },
         {
@@ -3261,7 +3220,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A cute baby sea otter",
-    "n": 1,
     "size": "1024x1024",
     "quality": "medium",
     "moderation": "auto",
@@ -3275,7 +3233,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-1.5",
     "prompt": "A cyberpunk city at night after rain, neon reflections",
-    "n": 2,
     "size": "1024x1024",
     "quality": "high",
     "moderation": "low",
@@ -3422,12 +3379,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
                 "Exact image model ID returned by GET /v1/models for the current API key. The server matches only IDs explicitly exposed by members in the key's trusted group; it does not rewrite firefly-* prefixes, default, or other out-of-catalog aliases. Use /v1/responses for Responses chat models.",
             },
             {
-              name: "n",
-              requirement: "Optional",
-              description:
-                "Number of images, 1 to the plan's max batch (default 10, admin-configurable); n>1 requires the imageGeneration.batch capability, otherwise 403 insufficient_plan.",
-            },
-            {
               name: "size",
               requirement: "Optional",
               description:
@@ -3547,13 +3498,13 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
             {
               name: "generation_id / generationId",
               description:
-                "FluxMedia extension. Non-stream success responses return the generation record ID at the top level; batch requests return generation_ids / generationIds.",
+                "FluxMedia extension. Non-stream success responses return the generation record ID at the top level.",
               custom: true,
             },
             {
               name: "credits_consumed",
               description:
-                "FluxMedia extension. FluxMedia-billed credits for this request; batch requests return the aggregate.",
+                "FluxMedia extension. FluxMedia-billed credits for this request.",
               custom: true,
             },
             {
@@ -3570,12 +3521,12 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
           notes: [
             "This endpoint does not call page /api/images/generate; it directly enters the shared service layer.",
             "When routed to a Responses account, the image request is converted into a Responses image_generation tool request.",
-            "n/count is one HTTP request. A 10-image request creates 10 generation records and bills 10 outputs. FluxMedia runs batch items with bounded parallelism based on the plan image-generation concurrency; items beyond that concurrency wait inside the same batch.",
-            "Concurrency and queueing: the runtime uses one in-process image queue. Tasks are sorted by plan queue priority, then FIFO within the same priority, and are started only when both the global concurrency and per-user image-generation concurrency allow it. Global concurrency is configurable in Admin System Settings > Models > Global image generation concurrency; IMAGE_GENERATION_GLOBAL_CONCURRENCY is only the fallback default. Batch requests add a request-local bounded runner, so only the allowed number of batch items are started and the rest wait inside that batch instead of flooding the shared queue.",
+            "Each request creates exactly one generation record. Explicit n is rejected with HTTP 400; batch image generation is no longer supported.",
+            "Concurrency and queueing are governed by the site-wide execution limit and the per-user image limit. The default user limit is 20 and can be overridden on the user edit page. Async tasks use the backend-group numeric priority in ascending order; smaller values run first.",
             "Waiting in a queue does not create a generation record or charge image credits. If the shared queue wait exceeds IMAGE_GENERATION_QUEUE_TIMEOUT_MS, the API returns a 429-style error. The 20-minute runtime timeout starts only after an individual image task begins execution, and timeout settlement follows the failed-generation credit rules.",
             "Web backends cannot strictly control output dimensions or output format. FluxMedia labels stored files by the detected image header and MIME.",
             "background=transparent is not universally supported. OpenAI's official docs currently list gpt-image-1.5, gpt-image-1, and gpt-image-1-mini as supporting transparent backgrounds, and png or webp output is usually required. Unsupported upstream models may reject the request with HTTP 400 instead of silently falling back.",
-            "async tasks are process-local and expire after 30 minutes. A restart or multi-instance switch can make unfinished tasks unavailable for polling; already-sent callbacks are unaffected.",
+            "Async tasks are persisted in PostgreSQL and awakened by BullMQ. Recovery jobs continue unfinished work after restarts, instance switches, or temporary delivery failures.",
             "If the actual generated dimensions differ from the requested size, FluxMedia records and bills using the detected actual size.",
             "The official Images API may return usage. FluxMedia usually returns usage: null, but FluxMedia-billed credits are returned through top-level credits_consumed, error payloads, or streaming completion events.",
           ],
@@ -3592,7 +3543,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-2" \\
   -F prompt="Turn the reference image into a cinematic poster" \\
-  -F n="1" \\
   -F size="1024x1024" \\
   -F quality="high" \\
   -F moderation="auto" \\
@@ -3632,7 +3582,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "image_urls": ["https://example.com/extra.jpg"],
     "mask_url": "https://example.com/mask.png",
     "mask_image_url": "https://example.com/mask-alt.png",
-    "n": 1,
     "size": "1024x1024",
     "quality": "auto",
     "moderation": "low",
@@ -3732,12 +3681,6 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
               requirement: "Required",
               description:
                 "Exact image model ID returned by GET /v1/models for the current API key. Out-of-catalog IDs, firefly-* prefixes, and other aliases are not rewritten. The same rule applies to /v1/images/generations.",
-            },
-            {
-              name: "n",
-              requirement: "Optional",
-              description:
-                "Number of outputs, 1 to the plan's max batch (default 10, admin-configurable); n>1 requires the imageGeneration.batch capability, otherwise 403 insufficient_plan.",
             },
             {
               name: "size",
@@ -3860,13 +3803,13 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             {
               name: "generation_id / generationId",
               description:
-                "FluxMedia extension. Non-stream success responses return the generation record ID at the top level; batch requests return generation_ids / generationIds.",
+                "FluxMedia extension. Non-stream success responses return the generation record ID at the top level.",
               custom: true,
             },
             {
               name: "credits_consumed",
               description:
-                "FluxMedia extension. FluxMedia-billed credits for this request; batch requests return the aggregate.",
+                "FluxMedia extension. FluxMedia-billed credits for this request.",
               custom: true,
             },
             {
@@ -3964,9 +3907,8 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
                 "Task create and completion times (unix seconds and ISO strings); completed* appear only after completion.",
             },
             {
-              name: "generation_id / generationId / generation_ids / generationIds",
-              description:
-                "Associated generation record IDs; singular fields for one image, plural arrays for batches.",
+              name: "generation_id / generationId",
+              description: "The associated generation record ID.",
             },
             {
               name: "credits_consumed",
@@ -3975,7 +3917,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             },
           ],
           notes: [
-            "Tasks are in-memory objects that expire after 30 minutes; a restart or multi-instance switch makes unfinished tasks return 404, but a callback_url webhook that already fired is unaffected.",
+            "Tasks are persisted in PostgreSQL and awakened by BullMQ. Recovery jobs continue unfinished work after restarts, instance switches, or temporary delivery failures.",
             "You can only query tasks created by the user that owns the current API Key.",
             "The response matches exactly the task object POSTed to callback_url.",
           ],
@@ -4156,7 +4098,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
             "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
             "Billing = credits per second for the selected real model and resolution × the separate duration value, rounded up to the supported credit precision. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
-            "Requires externalApi.images.generate by default (Starter or higher); admins can change it in the Plan Capability Matrix.",
+            "Requires the externalApi.images.generate system capability switch, plus a valid API key, bound group, and sufficient account credits.",
           ],
         },
         {
@@ -4274,7 +4216,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
           contentType: "application/json or multipart/form-data",
           description:
             "FluxMedia extension that exposes the page Agent run style to external API clients. It uses Codex/Responses scheduling, web search, tool loop continuation, attachment context, and multi-round image iteration.",
-          example: `# 1. JSON Agent image run. Ultra is required by default; admins can change externalApi.agent.
+          example: `# 1. JSON Agent image run. Enable the externalApi.agent system capability.
 curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -4393,7 +4335,7 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
               name: "image / image[] / image_*",
               requirement: "Optional for multipart",
               description:
-                "Reference image files. Images plus attachments are limited by maxChatImages.",
+                "Reference image files. Images plus attachments are limited by system media settings.",
             },
             {
               name: "file / file[] / attachment",
@@ -4419,12 +4361,6 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
               custom: true,
               description:
                 "When true, runs exactly agent_max_rounds. When false, the model may stop through continue_generation.",
-            },
-            {
-              name: "n / count",
-              requirement: "Optional",
-              description:
-                "The Agent API runs one task at a time; when supplied this must be 1. Use concurrent requests for multiple tasks.",
             },
             {
               name: "size",
@@ -4515,7 +4451,7 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
               name: "credits_consumed",
               custom: true,
               description:
-                "FluxMedia-billed credits. Agent always requires Codex/Responses capability. Billing = Agent base round credits + final image fixed prices + runtime review fees; image charges do not use group multipliers.",
+                "FluxMedia-billed credits. Agent always requires Codex/Responses capability. The current base round charge is 0; completed images use final image fixed prices and runtime review fees, without group multipliers.",
             },
             {
               name: "agent_round_count",
@@ -4530,10 +4466,9 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
           ],
           notes: [
             "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/agents/images is an alias.",
-            "Ultra is required by default; admins can change externalApi.agent in the Plan Capability Matrix.",
+            "Requires the externalApi.agent system capability; administrators can change it in system settings.",
             "It forces requiresResponsesBackend and never schedules Web accounts; it can use Codex/Responses accounts or external API backends that support /responses.",
             "It does not call page /api/images/chat; it shares the runImageGenerationForUser service layer with page Agent.",
-            "generate_image_batch concurrent tooling is intentionally not exposed yet to preserve linear iteration and Responses native state.",
           ],
         },
         {
@@ -4543,7 +4478,7 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
           contentType: "application/json",
           description:
             "A FluxMedia image-generation adapter based on the OpenAI Responses API. It routes as responses and selects Codex/Responses groups or external /responses API backends.",
-          example: `# 1. Minimal Responses image request. Requires Pro plan.
+          example: `# 1. Minimal Responses image request. Requires an API key, available group, and sufficient credits.
 curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -4638,7 +4573,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
               name: "model",
               requirement: "Optional",
               description:
-                "Top-level Responses model. Availability is determined by /v1/models and the current plan.",
+                "Top-level Responses model. Availability is determined by /v1/models and the API key's bound group.",
             },
             {
               name: "input",
@@ -4768,14 +4703,14 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
             },
           ],
           notes: [
-            "This endpoint requires Pro plan or higher.",
+            "This endpoint requires a valid API key, available group, and sufficient account credits.",
             "This is not Chat Completions. Use /v1/chat/completions for normal chat-to-image, and this endpoint for Responses tool semantics.",
             "input_image supports image_url/data URLs. file_id/file inputs are not used as references today.",
             "If tools is provided without image_generation, FluxMedia returns an error to avoid text-only responses.",
             "Page Chat mode uses normal multimodal chat/image semantics. Agent mode provides image_generation, web_search, and the linear continuation tool continue_generation by default without forcing tool_choice.",
             "Page Chat/Agent can read uploaded local text/code files as request context. Prompted server filesystem paths are not read.",
-            "Page Chat/Agent base round credits are configured per plan in the admin Plan Capability Matrix. Defaults are 1 credit per Chat round and 3 credits per Agent round; completed images are additionally billed by detected output size and output count.",
-            "Agent feeds the previous round's text, tool outputs, and generated draft images into the next round so the model can decide whether to refine again. The cap is IMAGE_AGENT_MAX_ROUNDS, default 3. Concurrent batch tools such as generate_image_batch are not wired into runtime yet because they need a native Responses state design first.",
+            "The current Page Chat/Agent base round charge is 0; completed images are billed by actual size, count, and moderation cost.",
+            "Agent feeds the previous round's text, tool outputs, and generated draft images into the next round so the model can decide whether to refine again. The cap is IMAGE_AGENT_MAX_ROUNDS, default 3.",
             "Multiple Agent image_generation_call outputs are shown as automatic iteration variants, with the last image selected by default.",
           ],
         },
@@ -4809,7 +4744,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "Uploaded local text/code files in Chat/Agent are read as request context. Server filesystem paths written in prompts are not read.",
         "Supports external /v1/responses and can also handle converted /v1/images/generations and /v1/images/edits requests.",
         "When prompt optimization is off, FluxMedia instructs the model not to modify the prompt; this is best effort and upstream may still deviate.",
-        "Page Chat/Agent base round credits are configured per plan in the admin Plan Capability Matrix. Defaults are 1 credit per Chat round and 3 credits per Agent round; completed image outputs are billed additionally by detected size and count.",
+        "The current Page Chat/Agent base round charge is 0; completed images are billed by actual size, count, and moderation cost.",
       ],
       invalid: [
         "Not ChatGPT Web, so Web-only capability or quota semantics do not apply.",
@@ -4892,7 +4827,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       items: [
         "Sub2API non-database interface: current sync uses SUB2API_POSTGRES_URL to connect to Sub2API PostgreSQL. Future work should evaluate the Sub2API admin key / HTTP API path for account lookup, group filtering, status reads, error cleanup, and sync jobs; keep direct DB access only as a fallback when the API lacks required fields.",
         "PSD generation API: prepare support for PSD/layered outputs by defining the upstream contract, MIME/extension handling, storage and preview behavior, credit billing, external API response fields, capability matrix switch, and page download entry.",
-        "Agent batch image tool: evaluate a generate_image_batch-style tool where the model plans multiple independent images and the backend executes them with bounded parallelism; design the interaction with Responses previous_response_id before enabling it.",
         "Image reference UX: improve atomic @图1 and @第N轮图M tokens, remap references after image reorder, and surface missing-reference warnings.",
         "Agent branching: when editing or regenerating an older round, fork a new branch instead of overwriting later records.",
       ],

@@ -10,7 +10,6 @@ export type SettingCategory =
   | "support"
   | "auth"
   | "payment"
-  | "plans"
   | "moderation"
   | "models"
   | "storage"
@@ -43,14 +42,6 @@ export type SettingKey =
   | "GITHUB_CLIENT_SECRET"
   | "PAYMENT_PROVIDER"
   | "NEXT_PUBLIC_PAYMENT_PROVIDER"
-  | "NEXT_PUBLIC_CREEM_PRICE_STARTER_MONTHLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_STARTER_YEARLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_PRO_MONTHLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_PRO_YEARLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_ULTRA_MONTHLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_ULTRA_YEARLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_ENTERPRISE_MONTHLY"
-  | "NEXT_PUBLIC_CREEM_PRICE_ENTERPRISE_YEARLY"
   | "CREEM_API_KEY"
   | "CREEM_WEBHOOK_SECRET"
   | "EPAY_PID"
@@ -67,30 +58,8 @@ export type SettingKey =
   | "ALIPAY_GATEWAY"
   | "ALIPAY_NOTIFY_URL"
   | "ALIPAY_F2F_TIMEOUT_MINUTES"
-  | "BILLING_YEARLY_ENABLED"
-  | "PLAN_CAPABILITY_MATRIX"
-  | "PLAN_FREE_MAX_FILE_MB"
-  | "PLAN_FREE_MAX_UPLOAD_MB"
-  | "PLAN_STARTER_MAX_FILE_MB"
-  | "PLAN_STARTER_MAX_UPLOAD_MB"
-  | "PLAN_PRO_MAX_FILE_MB"
-  | "PLAN_PRO_MAX_UPLOAD_MB"
-  | "PLAN_ULTRA_MAX_FILE_MB"
-  | "PLAN_ULTRA_MAX_UPLOAD_MB"
-  | "PLAN_ENTERPRISE_MAX_FILE_MB"
-  | "PLAN_ENTERPRISE_MAX_UPLOAD_MB"
-  | "PLAN_STARTER_MONTHLY_AMOUNT"
-  | "PLAN_STARTER_YEARLY_AMOUNT"
-  | "PLAN_PRO_MONTHLY_AMOUNT"
-  | "PLAN_PRO_YEARLY_AMOUNT"
-  | "PLAN_ULTRA_MONTHLY_AMOUNT"
-  | "PLAN_ULTRA_YEARLY_AMOUNT"
-  | "PLAN_ENTERPRISE_MONTHLY_AMOUNT"
-  | "PLAN_ENTERPRISE_YEARLY_AMOUNT"
   | "CREDIT_PACKAGE_MATRIX"
   | "CREDIT_TOP_UP_CONFIG"
-  | "ENTERPRISE_RESOURCE_PACK_CREDITS"
-  | "ENTERPRISE_RESOURCE_PACK_PRICE"
   | "CONTENT_MODERATION_ENABLED"
   | "CONTENT_MODERATION_FAIL_CLOSED"
   | "CONTENT_MODERATION_PROVIDER"
@@ -116,6 +85,10 @@ export type SettingKey =
   | "OPENAI_MODERATION_API_KEY"
   | "OPENAI_MODERATION_MODEL"
   | "IMAGE_GENERATION_GLOBAL_CONCURRENCY"
+  | "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY"
+  | "MEDIA_MAX_FILE_SIZE_MB"
+  | "MEDIA_MAX_UPLOAD_SIZE_MB"
+  | "IMAGE_EDIT_MAX_REFERENCE_IMAGES"
   | "IMAGE_BACKEND_SCHEDULING_STRATEGY"
   | "IMAGE_BACKEND_DEFAULT_COOLDOWN_MINUTES"
   | "IMAGE_BACKEND_RATE_LIMIT_COOLDOWN_MINUTES"
@@ -202,116 +175,37 @@ export interface SettingDefinition {
   // 负积分/负价格/异常巨大值，造成经济或安全语义破坏；此处补 per-key 范围校验。
   min?: number;
   max?: number;
+  /** true 表示 number 配置必须是整数。 */
+  integer?: boolean;
   defaultValue?: unknown;
   exampleValue?: unknown;
   /** true 表示该键只允许专用 operation 写入，通用设置和 env 同步均需跳过。 */
   managedByDedicatedOperation?: boolean;
 }
 
-const PLAN_CAPABILITY_MATRIX_EXAMPLE = {
-  version: 1,
-  features: {
-    "imageGeneration.text": "free",
-    "imageGeneration.edit": "free",
-    "imageGeneration.mask": "free",
-    "imageGeneration.video": "free",
-    "imageGeneration.batch": "free",
-    "promptOptimization.control": "pro",
-    "backendGroups.select": "free",
-    "externalApi.keys.manage": "starter",
-    "externalApi.models.list": "starter",
-    "externalApi.images.generate": "starter",
-    "externalApi.images.edit": "starter",
-    "externalApi.images.mask": "starter",
-    "externalApi.images.batch": "starter",
-    "externalApi.videos.generate": "starter",
-    "externalApi.streaming": "starter",
-    "moderation.blocking": "free",
-    "moderation.onlyFailureSettlement": "ultra",
-  },
-  limits: {
-    free: {
-      maxFileMb: 5,
-      maxUploadMb: 75,
-      queuePriority: "normal",
-      imageGenerationConcurrency: 2,
-      monthlyCredits: 100,
-      maxBatchCount: 10,
-      maxEditImages: 16,
-    },
-    starter: {
-      maxFileMb: 20,
-      maxUploadMb: 75,
-      queuePriority: "normal",
-      imageGenerationConcurrency: 5,
-      monthlyCredits: 5000,
-      maxBatchCount: 10,
-      maxEditImages: 16,
-    },
-    pro: {
-      maxFileMb: 50,
-      maxUploadMb: 75,
-      queuePriority: "priority",
-      imageGenerationConcurrency: 15,
-      monthlyCredits: 20000,
-      maxBatchCount: 10,
-      maxEditImages: 16,
-    },
-    ultra: {
-      maxFileMb: 100,
-      maxUploadMb: 100,
-      queuePriority: "highest",
-      imageGenerationConcurrency: 50,
-      monthlyCredits: 80000,
-      maxBatchCount: 10,
-      maxEditImages: 16,
-    },
-    enterprise: {
-      maxFileMb: 200,
-      maxUploadMb: 200,
-      queuePriority: "highest",
-      imageGenerationConcurrency: 100,
-      monthlyCredits: 320000,
-      maxBatchCount: 10,
-      maxEditImages: 16,
-    },
-  },
-};
-
 const CREDIT_PACKAGE_MATRIX_EXAMPLE = {
   packages: [
     {
       id: "payg_starter",
       name: "Pay as you go",
-      description: "One-time credits priced like Starter",
+      description: "One-time credit package",
       credits: 5000,
       price: 20,
       currency: "CNY",
       popular: true,
       visible: true,
       allowQuantity: false,
-      pricesByPlan: {
-        free: 20,
-        starter: 20,
-        pro: 20,
-        ultra: 20,
-        enterprise: 20,
-      },
     },
     {
       id: "enterprise_resource",
-      name: "Enterprise Resource Pack",
-      description: "Enterprise-only 5,000-credit resource pack",
+      name: "Resource Pack",
+      description: "One-time 5,000-credit resource pack",
       credits: 5000,
       price: 15,
       currency: "CNY",
       visible: false,
-      requiresPlan: "enterprise",
       allowQuantity: true,
       maxQuantity: 999,
-      pricesByPlan: {
-        enterprise: 15,
-      },
     },
   ],
 };
@@ -410,7 +304,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "SELF_USE_MODE_ENABLED",
     label: "自用模式",
     description:
-      "默认开启。开启后禁止公开注册；启动时没有超管会使用环境变量配置的凭据创建超管；超管按 Enterprise 套餐获得全部套餐能力。",
+      "默认开启。开启后禁止公开注册；启动时没有超管会使用环境变量配置的凭据创建超管。",
     category: "auth",
     valueType: "boolean",
     defaultValue: true,
@@ -470,7 +364,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "PAYMENT_PROVIDER",
     label: "支付通道",
     description:
-      "选择订阅与固定积分包的支付通道；支付宝当面付仅支持 CNY 按金额充值。",
+      "选择一次性积分充值的支付通道；支付宝当面付仅支持 CNY 按金额充值。",
     category: "payment",
     valueType: "select",
     options: [
@@ -624,169 +518,6 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     min: 1,
     max: 1_440,
     defaultValue: 30,
-  },
-  {
-    key: "BILLING_YEARLY_ENABLED",
-    label: "开放年付",
-    description: "关闭后用户不能选择年付套餐。",
-    category: "plans",
-    valueType: "boolean",
-    defaultValue: true,
-  },
-  {
-    key: "PLAN_CAPABILITY_MATRIX",
-    label: "套餐能力矩阵",
-    description:
-      "统一控制图片、视频与外部媒体 API 的套餐门槛，以及积分配额、上传限制、批量数量、并发和队列优先级。后台以矩阵表格编辑，保存后仍写入同一个 JSON 配置。功能门槛按最低套餐生效，高级套餐自动包含低级套餐能力。留空时使用代码默认矩阵，并兼容旧上传/月积分配置。",
-    category: "plans",
-    valueType: "json",
-    exampleValue: PLAN_CAPABILITY_MATRIX_EXAMPLE,
-  },
-  {
-    key: "PLAN_STARTER_MONTHLY_AMOUNT",
-    label: "Starter 月付价格",
-    description: "Starter 月付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    // WHY: 价格必须为正，且设上限拦截误输入的天文数字；读取侧 positive:true 已兜底，
-    // 此处在写入时即拒绝 0/负数/异常巨大值，避免脏配置落库。
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 20,
-  },
-  {
-    key: "PLAN_STARTER_YEARLY_AMOUNT",
-    label: "Starter 年付价格",
-    description: "Starter 年付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 144,
-  },
-  {
-    key: "PLAN_PRO_MONTHLY_AMOUNT",
-    label: "Pro 月付价格",
-    description: "Pro 月付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 60,
-  },
-  {
-    key: "PLAN_PRO_YEARLY_AMOUNT",
-    label: "Pro 年付价格",
-    description: "Pro 年付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 432,
-  },
-  {
-    key: "PLAN_ULTRA_MONTHLY_AMOUNT",
-    label: "Ultra 月付价格",
-    description: "Ultra 月付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 200,
-  },
-  {
-    key: "PLAN_ULTRA_YEARLY_AMOUNT",
-    label: "Ultra 年付价格",
-    description: "Ultra 年付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 1440,
-  },
-  {
-    key: "PLAN_ENTERPRISE_MONTHLY_AMOUNT",
-    label: "Enterprise 月付价格",
-    description: "Enterprise 月付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 800,
-  },
-  {
-    key: "PLAN_ENTERPRISE_YEARLY_AMOUNT",
-    label: "Enterprise 年付价格",
-    description: "Enterprise 年付价格，单位 CNY。",
-    category: "plans",
-    valueType: "number",
-    min: 0.01,
-    max: 1_000_000,
-    defaultValue: 5760,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_STARTER_MONTHLY",
-    label: "Creem Starter 月付 Price ID",
-    description: "Creem Starter 月付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_STARTER_YEARLY",
-    label: "Creem Starter 年付 Price ID",
-    description: "Creem Starter 年付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_PRO_MONTHLY",
-    label: "Creem Pro 月付 Price ID",
-    description: "Creem Pro 月付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_PRO_YEARLY",
-    label: "Creem Pro 年付 Price ID",
-    description: "Creem Pro 年付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_ULTRA_MONTHLY",
-    label: "Creem Ultra 月付 Price ID",
-    description: "Creem Ultra 月付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_ULTRA_YEARLY",
-    label: "Creem Ultra 年付 Price ID",
-    description: "Creem Ultra 年付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_ENTERPRISE_MONTHLY",
-    label: "Creem Enterprise 月付 Price ID",
-    description: "Creem Enterprise 月付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
-  },
-  {
-    key: "NEXT_PUBLIC_CREEM_PRICE_ENTERPRISE_YEARLY",
-    label: "Creem Enterprise 年付 Price ID",
-    description: "Creem Enterprise 年付产品/价格 ID。",
-    category: "plans",
-    valueType: "string",
-    requiresRebuild: true,
   },
   {
     key: "CONTENT_MODERATION_ENABLED",
@@ -964,10 +695,58 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "IMAGE_GENERATION_GLOBAL_CONCURRENCY",
     label: "全局生图并发",
     description:
-      "整站同时执行的生图任务硬上限。套餐能力矩阵中的生图并发仍按单用户限制；实际启动任务时必须同时满足全局并发和单用户并发。",
+      "整站同时执行的生图任务硬上限；用户准入并发由系统默认值和用户覆盖独立控制。",
     category: "models",
     valueType: "number",
+    min: 1,
+    max: 10000,
+    integer: true,
     defaultValue: 500,
+  },
+  {
+    key: "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY",
+    label: "默认用户生图并发",
+    description:
+      "单个用户同时处于准入状态的生图任务上限；用户没有单独覆盖时使用此值。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 10000,
+    integer: true,
+    defaultValue: 20,
+  },
+  {
+    key: "MEDIA_MAX_FILE_SIZE_MB",
+    label: "单文件大小 MB",
+    description: "单个图片或视频输入文件允许的最大大小。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 200,
+    integer: true,
+    defaultValue: 5,
+  },
+  {
+    key: "MEDIA_MAX_UPLOAD_SIZE_MB",
+    label: "单次上传总量 MB",
+    description: "一次媒体请求中所有输入文件允许的总大小。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 200,
+    integer: true,
+    defaultValue: 75,
+  },
+  {
+    key: "IMAGE_EDIT_MAX_REFERENCE_IMAGES",
+    label: "编辑参考图数",
+    description: "一次图片编辑请求允许提交的参考图数量。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 256,
+    integer: true,
+    defaultValue: 16,
   },
   {
     key: "IMAGE_BACKEND_SCHEDULING_STRATEGY",
@@ -1265,7 +1044,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "CREDITS_EXPIRY_DAYS",
     label: "积分包有效期天数",
     description:
-      "按量购买积分默认有效期；填 0 表示永不过期。免费积分和订阅积分使用各自规则。",
+      "按量购买积分默认有效期；填 0 表示永不过期。注册赠送积分使用独立的有效期设置。",
     category: "credits",
     valueType: "number",
     defaultValue: 0,
@@ -1432,7 +1211,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "CREDIT_PACKAGE_MATRIX",
     label: "按量积分包配置",
     description:
-      "表格配置一次性积分包的积分数、结账币种、显示状态、最低可购买套餐、数量购买、各套餐价格和 Creem 产品 ID。Epay 仅支持 CNY；Creem 可按预建产品收取对应币种。",
+      "表格配置一次性积分包的积分数、统一价格、结账币种、显示状态、数量购买和 Creem 产品 ID。Epay 仅支持 CNY；Creem 可按预建产品收取对应币种。",
     category: "credits",
     valueType: "json",
     exampleValue: CREDIT_PACKAGE_MATRIX_EXAMPLE,
@@ -1550,7 +1329,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     key: "RATE_LIMIT_AI_REQUESTS_PER_MINUTE",
     label: "AI 与生图限流（次/分钟）",
     description:
-      "页面生图、图生图、Chat/Agent 的每分钟请求阈值。外接 /v1 生图接口走套餐并发队列，不受该通用频率限制。",
+      "页面生图、图生图、Chat/Agent 和外部媒体 API 的每分钟请求阈值。",
     category: "general",
     valueType: "number",
     defaultValue: 20,
@@ -1609,11 +1388,6 @@ export const SETTING_CATEGORIES: Array<{
     id: "payment",
     label: "支付",
     description: "支付通道、Creem、易支付与支付宝当面付配置。",
-  },
-  {
-    id: "plans",
-    label: "套餐",
-    description: "年付开关、套餐价格和积分额度。",
   },
   {
     id: "moderation",

@@ -20,21 +20,29 @@ import type { RuntimePaymentProvider } from "./provider-policy";
 export const EPAY_TRADE_SUCCESS = "TRADE_SUCCESS";
 
 export type PaymentProvider = RuntimePaymentProvider;
-export type EpayBusinessType = "subscription" | "credit_purchase";
+export type EpayBusinessType = "credit_purchase" | "subscription";
 
-export interface EpayMetadata {
-  type: EpayBusinessType;
+interface EpayMetadataBase {
   userId: string;
   outTradeNo: string;
-  /** 积分套餐统一支付结果页使用的本地 payment_order ID。 */
+  /** 积分订单统一支付结果页使用的本地 payment_order ID。 */
   paymentOrderId?: string;
   /** 用户发起支付时的语言，用于签名回跳后恢复到正确的结果页。 */
   locale?: "en" | "zh";
-  priceId?: string;
-  planId?: string;
+}
+
+/** 当前唯一允许新建的易支付 metadata。 */
+export interface EpayCreditPurchaseMetadata extends EpayMetadataBase {
+  type: "credit_purchase";
   packageId?: string;
   quantity?: number;
-  creditPlan?: string;
+}
+
+/** 仅用于解码历史订单的订阅 metadata，不得用于新建订单或编码。 */
+export interface EpayHistoricalSubscriptionMetadata extends EpayMetadataBase {
+  type: "subscription";
+  priceId?: string;
+  planId?: string;
   checkoutMode?: "new_subscription" | "upgrade";
   expectedAmount?: number;
   originalAmount?: number;
@@ -43,6 +51,10 @@ export interface EpayMetadata {
   periodDays?: number;
   upgradeFromPriceId?: string;
 }
+
+export type EpayMetadata =
+  | EpayCreditPurchaseMetadata
+  | EpayHistoricalSubscriptionMetadata;
 
 export interface EpayPurchaseInput {
   outTradeNo: string;
@@ -309,7 +321,7 @@ export async function createRuntimeEpayPurchase(
 }
 
 export async function saveEpayOrder(
-  metadata: EpayMetadata,
+  metadata: EpayCreditPurchaseMetadata,
   amount: number | string
 ): Promise<void> {
   await db
@@ -385,7 +397,7 @@ export async function getEpayOrderStatus(
 /**
  * 原子领取订单进行发放。
  *
- * 领取时只标记为 fulfilling，发放积分和订阅成功后调用方才会写 success；这避免
+ * 领取时只标记为 fulfilling，发放积分成功后调用方才会写 success；这避免
  * 浏览器或结果页把“已领取”误显示为“积分已到账”。租约到期后可由重投通知接管。
  */
 export async function claimEpayOrderForFulfillment(
@@ -527,42 +539,19 @@ export async function parseEpayRequestParams(
   return params;
 }
 
-export function encodeEpayMetadata(metadata: EpayMetadata): string {
+export function encodeEpayMetadata(
+  metadata: EpayCreditPurchaseMetadata
+): string {
   const compact: Record<string, unknown> = {
-    t: metadata.type === "subscription" ? "s" : "c",
+    t: "c",
     u: metadata.userId,
     o: metadata.outTradeNo,
   };
 
-  if (metadata.priceId) compact.p = metadata.priceId;
-  if (metadata.planId) compact.l = metadata.planId;
   if (metadata.packageId) compact.g = metadata.packageId;
   if (metadata.quantity && metadata.quantity > 1) compact.q = metadata.quantity;
-  if (metadata.creditPlan) compact.x = metadata.creditPlan;
   if (metadata.paymentOrderId) compact.i = metadata.paymentOrderId;
   if (metadata.locale) compact.z = metadata.locale;
-
-  if (metadata.checkoutMode === "upgrade") {
-    compact.m = "u";
-    if (typeof metadata.expectedAmount === "number") {
-      compact.e = metadata.expectedAmount;
-    }
-    if (typeof metadata.originalAmount === "number") {
-      compact.a = metadata.originalAmount;
-    }
-    if (metadata.prorationCredit) {
-      compact.c = metadata.prorationCredit;
-    }
-    if (metadata.remainingDays) {
-      compact.r = metadata.remainingDays;
-    }
-    if (metadata.periodDays) {
-      compact.d = metadata.periodDays;
-    }
-    if (metadata.upgradeFromPriceId) {
-      compact.f = metadata.upgradeFromPriceId;
-    }
-  }
 
   return Buffer.from(JSON.stringify(compact), "utf8").toString("base64url");
 }
@@ -573,15 +562,50 @@ export function decodeEpayMetadata(param?: string): EpayMetadata | null {
   try {
     const parsed = JSON.parse(
       Buffer.from(param, "base64url").toString("utf8")
-    ) as Partial<EpayMetadata> & Record<string, unknown>;
+    ) as EpayMetadataPayload;
     return normalizeEpayMetadata(parsed);
   } catch {
     return null;
   }
 }
 
+type EpayMetadataPayload = {
+  type?: unknown;
+  t?: unknown;
+  userId?: unknown;
+  u?: unknown;
+  outTradeNo?: unknown;
+  o?: unknown;
+  paymentOrderId?: unknown;
+  i?: unknown;
+  locale?: unknown;
+  z?: unknown;
+  priceId?: unknown;
+  p?: unknown;
+  planId?: unknown;
+  l?: unknown;
+  packageId?: unknown;
+  g?: unknown;
+  quantity?: unknown;
+  q?: unknown;
+  checkoutMode?: unknown;
+  m?: unknown;
+  expectedAmount?: unknown;
+  e?: unknown;
+  originalAmount?: unknown;
+  a?: unknown;
+  prorationCredit?: unknown;
+  c?: unknown;
+  remainingDays?: unknown;
+  r?: unknown;
+  periodDays?: unknown;
+  d?: unknown;
+  upgradeFromPriceId?: unknown;
+  f?: unknown;
+} & Record<string, unknown>;
+
 function normalizeEpayMetadata(
-  metadata: Partial<EpayMetadata> & Record<string, unknown>
+  metadata: EpayMetadataPayload
 ): EpayMetadata | null {
   const type =
     metadata.type ??
@@ -595,7 +619,6 @@ function normalizeEpayMetadata(
   const priceId = metadata.priceId ?? metadata.p;
   const planId = metadata.planId ?? metadata.l;
   const packageId = metadata.packageId ?? metadata.g;
-  const creditPlan = metadata.creditPlan ?? metadata.x;
   const paymentOrderId = metadata.paymentOrderId ?? metadata.i;
   const locale = metadata.locale ?? metadata.z;
   const numberValue = (value: unknown) =>
@@ -627,21 +650,31 @@ function normalizeEpayMetadata(
     return null;
   }
 
-  return {
-    type,
+  const base: EpayMetadataBase = {
     userId,
     outTradeNo,
+  };
+  if (typeof paymentOrderId === "string") base.paymentOrderId = paymentOrderId;
+  if (locale === "en" || locale === "zh") base.locale = locale;
+
+  if (type === "credit_purchase") {
+    return {
+      type,
+      ...base,
+      ...(typeof packageId === "string" && { packageId }),
+      ...(typeof quantity === "number" &&
+        Number.isFinite(quantity) &&
+        quantity > 0 && {
+          quantity: Math.floor(quantity),
+        }),
+    };
+  }
+
+  return {
+    type,
+    ...base,
     ...(typeof priceId === "string" && { priceId }),
     ...(typeof planId === "string" && { planId }),
-    ...(typeof packageId === "string" && { packageId }),
-    ...(typeof creditPlan === "string" && { creditPlan }),
-    ...(typeof paymentOrderId === "string" && { paymentOrderId }),
-    ...((locale === "en" || locale === "zh") && { locale }),
-    ...(typeof quantity === "number" &&
-      Number.isFinite(quantity) &&
-      quantity > 0 && {
-        quantity: Math.floor(quantity),
-      }),
     ...((checkoutMode === "new_subscription" || checkoutMode === "upgrade") && {
       checkoutMode,
     }),

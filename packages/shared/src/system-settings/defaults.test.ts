@@ -7,7 +7,6 @@ import {
 } from "../credits/packages";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
-import { DEFAULT_PLAN_CAPABILITY_MATRIX } from "../subscription/services/plan-capabilities";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import { createDefaultVideoModelCapabilityOverrides } from "../video-generation";
 import { SETTING_DEFINITION_BY_KEY } from "./definitions";
@@ -144,9 +143,7 @@ describe("system setting default initialization", () => {
       updatedBy: "admin-1",
     });
 
-    expect(initializedKeys).toContain("PLAN_CAPABILITY_MATRIX");
     expect(initializedKeys).toContain(CREDIT_PACKAGE_MATRIX_SETTING_KEY);
-    expect(initializedKeys).toContain("BILLING_YEARLY_ENABLED");
     expect(initializedKeys).not.toContain("APP_TIME_ZONE");
     expect(initializedKeys).toContain("MARKETING_SLA_STATUS_ENABLED");
     expect(initializedKeys).toContain("DASHBOARD_SUPPORT_CONFIG");
@@ -156,6 +153,12 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("GENERATION_IMAGE_RETENTION_MODE");
     expect(initializedKeys).toContain("GENERATION_IMAGE_MAX_COUNT");
     expect(initializedKeys).toContain("IMAGE_GENERATION_GLOBAL_CONCURRENCY");
+    expect(initializedKeys).toContain(
+      "IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY"
+    );
+    expect(initializedKeys).toContain("MEDIA_MAX_FILE_SIZE_MB");
+    expect(initializedKeys).toContain("MEDIA_MAX_UPLOAD_SIZE_MB");
+    expect(initializedKeys).toContain("IMAGE_EDIT_MAX_REFERENCE_IMAGES");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_1024");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_1K");
     expect(initializedKeys).not.toContain("IMAGE_BASE_CREDITS_2K");
@@ -184,19 +187,6 @@ describe("system setting default initialization", () => {
     );
     expect(initializedKeys).not.toContain("ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL");
 
-    expect(store.get("PLAN_CAPABILITY_MATRIX")?.value).toEqual(
-      DEFAULT_PLAN_CAPABILITY_MATRIX
-    );
-    expect(store.get("PLAN_CAPABILITY_MATRIX")?.value).not.toHaveProperty(
-      "moderation"
-    );
-    const storedPlanFeatures = (
-      store.get("PLAN_CAPABILITY_MATRIX")?.value as {
-        features: Record<string, unknown>;
-      }
-    ).features;
-    expect(Object.hasOwn(storedPlanFeatures, "externalApi.relay")).toBe(false);
-    expect(store.get("BILLING_YEARLY_ENABLED")?.value).toBe(true);
     expect(store.get("APP_TIME_ZONE")).toBeUndefined();
     expect(store.get("MARKETING_SLA_STATUS_ENABLED")?.value).toBe(true);
     expect(store.get("DASHBOARD_SUPPORT_CONFIG")?.value).toEqual(
@@ -212,6 +202,12 @@ describe("system setting default initialization", () => {
     expect(store.get("GENERATION_IMAGE_MAX_COUNT")?.value).toBe(10000);
     expect(store.get("CREDITS_EXPIRY_DAYS")?.value).toBe(0);
     expect(store.get("IMAGE_GENERATION_GLOBAL_CONCURRENCY")?.value).toBe(500);
+    expect(store.get("IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY")?.value).toBe(
+      20
+    );
+    expect(store.get("MEDIA_MAX_FILE_SIZE_MB")?.value).toBe(5);
+    expect(store.get("MEDIA_MAX_UPLOAD_SIZE_MB")?.value).toBe(75);
+    expect(store.get("IMAGE_EDIT_MAX_REFERENCE_IMAGES")?.value).toBe(16);
     expect(store.get("IMAGE_BASE_CREDITS_1024")).toBeUndefined();
     expect(store.get("IMAGE_BASE_CREDITS_1K")).toBeUndefined();
     expect(store.get("IMAGE_BASE_CREDITS_2K")).toBeUndefined();
@@ -241,7 +237,6 @@ describe("system setting default initialization", () => {
     expect(store.get("RATE_LIMIT_PAYMENT_REQUESTS_PER_MINUTE")?.value).toBe(10);
     expect(store.get("RATE_LIMIT_UPLOAD_REQUESTS_PER_MINUTE")?.value).toBe(30);
     expect(store.get("RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE")?.value).toBe(3);
-    expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(20);
     expect(store.get("BETTER_AUTH_SECRET")).toBeUndefined();
     expect(store.get("CREEM_API_KEY")).toBeUndefined();
     expect(
@@ -464,36 +459,6 @@ describe("system setting default initialization", () => {
     expect(store.get("ALIYUN_MODERATION_BLOCK_RISK_LEVEL")).toBeUndefined();
   });
 
-  it("does not overwrite existing stored settings", async () => {
-    store.set("PLAN_STARTER_MONTHLY_AMOUNT", {
-      key: "PLAN_STARTER_MONTHLY_AMOUNT",
-      value: 99,
-    });
-    store.set("PLAN_CAPABILITY_MATRIX", {
-      key: "PLAN_CAPABILITY_MATRIX",
-      value: {
-        version: 1,
-        features: {
-          ...DEFAULT_PLAN_CAPABILITY_MATRIX.features,
-          "imageGeneration.video": "starter",
-        },
-        limits: DEFAULT_PLAN_CAPABILITY_MATRIX.limits,
-      },
-    });
-
-    const initializedKeys = await initializeMissingSystemSettingsDefaults();
-
-    expect(initializedKeys).not.toContain("PLAN_STARTER_MONTHLY_AMOUNT");
-    expect(initializedKeys).not.toContain("PLAN_CAPABILITY_MATRIX");
-    expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(99);
-    expect(
-      (
-        store.get("PLAN_CAPABILITY_MATRIX")
-          ?.value as typeof DEFAULT_PLAN_CAPABILITY_MATRIX
-      ).features["imageGeneration.video"]
-    ).toBe("starter");
-  });
-
   it("stores the credit package matrix without changing runtime fallback behavior", async () => {
     await initializeMissingSystemSettingsDefaults();
     clearSystemSettingsCache();
@@ -506,23 +471,11 @@ describe("system setting default initialization", () => {
       credits: 5000,
       price: 20,
       visible: true,
-      pricesByPlan: {
-        free: 20,
-        starter: 20,
-        pro: 20,
-        ultra: 20,
-        enterprise: 20,
-      },
     });
-    expect(payg?.creemProductIdsByPlan).toBeUndefined();
     expect(enterprise).toMatchObject({
       credits: 5000,
       price: 15,
       visible: false,
-      requiresPlan: "enterprise",
-      pricesByPlan: {
-        enterprise: 15,
-      },
     });
     expect(enterprise?.creemProductId).toBeUndefined();
   });

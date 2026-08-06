@@ -3,7 +3,7 @@
  *
  * 职责：校验分组层级，在 PostgreSQL 事务内保存唯一默认组，提供管理摘要与用户
  * 可选项，并拒绝删除仍参与成员关系或层级关系的分组。所有 metadata 均通过共享
- * 契约收窄，不保留 Web/Responses 车道字段。
+ * 契约收窄，不保留套餐门槛或 Web/Responses 车道字段。
  */
 import {
   type BackendGroupInput,
@@ -246,7 +246,6 @@ function mapBackendGroupRow(row: {
     isDefault: row.isDefault,
     isUserSelectable: row.isUserSelectable,
     contentSafety: fromBackendGroupContentSafety(row.contentSafetyEnabled),
-    minPlan: metadata.minPlan,
     imageCreditOverrides: metadata.imageCreditOverrides,
     videoCreditOverrides: metadata.videoCreditOverrides,
     childGroupIds: metadata.childGroupIds,
@@ -323,10 +322,7 @@ export const defaultBackendGroupRepository: BackendGroupRepository = {
     const rows = await db
       .select()
       .from(imageBackendGroup)
-      .orderBy(
-        asc(imageBackendGroup.priority),
-        asc(imageBackendGroup.createdAt)
-      );
+      .orderBy(asc(imageBackendGroup.createdAt), asc(imageBackendGroup.id));
     return rows.map(mapBackendGroupRow);
   },
 
@@ -338,10 +334,7 @@ export const defaultBackendGroupRepository: BackendGroupRepository = {
       .where(
         sql`${imageBackendGroup.isEnabled} = true and ${imageBackendGroup.isUserSelectable} = true`
       )
-      .orderBy(
-        asc(imageBackendGroup.priority),
-        asc(imageBackendGroup.createdAt)
-      );
+      .orderBy(asc(imageBackendGroup.createdAt), asc(imageBackendGroup.id));
   },
 
   async deleteGroup(groupId) {

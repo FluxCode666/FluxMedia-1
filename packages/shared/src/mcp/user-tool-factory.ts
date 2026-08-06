@@ -1,13 +1,12 @@
 /**
  * MCP User 工具工厂
  *
- * 职责：根据调用者 Principal（含 plan 信息），从 UOL Registry 中
+ * 职责：根据调用者 Principal，从 UOL Registry 中
  * 筛选出用户可通过 MCP 访问的操作子集，并转化为 MCP Tool 描述。
  *
  * 筛选规则：
  * - 仅暴露已接线的图片、视频与本人统一历史操作
  * - 绝不暴露管理员操作
- * - 操作可用性受套餐能力位约束
  *
  * 使用方：MCP user route handler（tools/list 方法）
  * 关键依赖：../uol/registry（listOperations、getOperation）、../uol/types
@@ -58,16 +57,18 @@ const USER_MCP_ALLOWED_OPERATIONS: readonly string[] = [
 /**
  * 构建用户 MCP 工具列表。
  *
- * 从 UOL Registry 中读取白名单操作，过滤出当前用户套餐可访问的子集，
- * 转化为 MCP Tool 描述列表。
+ * 从 UOL Registry 中读取白名单操作并转化为 MCP Tool 描述列表。
  *
- * @param principal - 已鉴权的调用者身份（含 plan 信息）
+ * @param principal - 已鉴权的调用者身份
  * @returns 用户可调用的 MCP 工具描述列表
  *
  * 副作用：无（纯读取 registry + 过滤）
  * 边界：registry 中不存在的操作名静默跳过（不报错）
  */
 export function buildUserMcpTools(principal: Principal): McpToolDescriptor[] {
+  if (principal.type !== "apiKey" || principal.credentialKind !== "mcp") {
+    return [];
+  }
   const tools: McpToolDescriptor[] = [];
 
   for (const opName of USER_MCP_ALLOWED_OPERATIONS) {
@@ -83,18 +84,6 @@ export function buildUserMcpTools(principal: Principal): McpToolDescriptor[] {
       def.access.kind !== "owner"
     ) {
       continue;
-    }
-
-    // 套餐能力位过滤：如操作声明了 planCapability，当前用户 plan 需满足
-    if (def.access.kind === "apiKey" && "planCapability" in def.access) {
-      const requiredCap = def.access.planCapability;
-      if (requiredCap && principal.type === "apiKey") {
-        // 简单套餐等级判断：enterprise > ultra > pro > starter > free
-        const planHierarchy = ["free", "starter", "pro", "ultra", "enterprise"];
-        const userLevel = planHierarchy.indexOf(principal.plan);
-        const requiredLevel = planHierarchy.indexOf(requiredCap);
-        if (userLevel < requiredLevel) continue;
-      }
     }
 
     tools.push({

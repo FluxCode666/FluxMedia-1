@@ -40,8 +40,16 @@ const JOBS = [
       "a single bold enso circle drawn in one continuous brushstroke," +
       " heavy wet ink at the start of the stroke, dry scratchy trailing end",
   },
-  { id: "w01", size: "1024x1024", subject: "sparse bamboo stalks and leaves in wind" },
-  { id: "w02", size: "1024x1024", subject: "distant layered mountains in mist" },
+  {
+    id: "w01",
+    size: "1024x1024",
+    subject: "sparse bamboo stalks and leaves in wind",
+  },
+  {
+    id: "w02",
+    size: "1024x1024",
+    subject: "distant layered mountains in mist",
+  },
   { id: "w03", size: "1024x1024", subject: "a lone small boat on empty water" },
   { id: "w04", size: "1024x1024", subject: "a single plum blossom branch" },
   { id: "w05", size: "1024x1024", subject: "clouds crossing a pale moon" },
@@ -52,7 +60,11 @@ const JOBS = [
   { id: "w10", size: "1024x1024", subject: "a distant pagoda silhouette" },
   { id: "w11", size: "1024x1024", subject: "swallows over willow branches" },
   { id: "w12", size: "1024x1024", subject: "a single lotus flower and leaf" },
-  { id: "w13", size: "1024x1024", subject: "an arched stone bridge over water" },
+  {
+    id: "w13",
+    size: "1024x1024",
+    subject: "an arched stone bridge over water",
+  },
   { id: "w14", size: "1024x1024", subject: "sparse falling rain over a river" },
   {
     id: "w15",
@@ -79,7 +91,6 @@ async function generateOne(job) {
         prompt: TEMPLATE.replace("{SUBJECT}", job.subject),
         size: job.size,
         quality: "high",
-        n: 1,
         response_format: "b64_json",
         output_format: "png",
       }),
@@ -113,9 +124,7 @@ async function main() {
   const only = process.argv.slice(2);
   const jobs = only.length
     ? JOBS.filter((j) => only.includes(j.id))
-    : JOBS.filter(
-        (j) => !fs.existsSync(path.join(OUT_DIR, `${j.id}.png`))
-      );
+    : JOBS.filter((j) => !fs.existsSync(path.join(OUT_DIR, `${j.id}.png`)));
   console.log(`待生成 ${jobs.length} 张 (已存在的跳过,指定编号可强制)`);
 
   const manifestPath = path.join(OUT_DIR, "manifest.json");

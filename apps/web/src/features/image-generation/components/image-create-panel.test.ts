@@ -304,7 +304,7 @@ describe("ImageCreatePanel", () => {
     expect(testHarness.panelProps?.mode).toBe("edit");
   });
 
-  it("超过套餐图片数量时保留已经选择的参考图", () => {
+  it("超过系统图片数量时保留已经选择的参考图", () => {
     mountImageCreatePanel(vi.fn(), { maxEditImages: 1 }, null);
     const first = new File([new Uint8Array([1])], "first.png", {
       type: "image/png",
@@ -438,7 +438,7 @@ describe("ImageCreatePanel", () => {
     await flushReferenceLoad();
 
     expect(streamCancelled).toBe(true);
-    expect(testHarness.panelProps?.error).toBe("参考图片超过当前套餐上传限制");
+    expect(testHarness.panelProps?.error).toBe("参考图片超过系统上传限制");
     expect(onInitialReferenceConsumed).toHaveBeenCalledTimes(1);
   });
 

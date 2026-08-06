@@ -16,6 +16,12 @@ import type { Principal } from "../uol/principal";
 import { bindExecute, clearRegistry, defineOperation } from "../uol/registry";
 import type { AccessRequirement, OperationDefinition } from "../uol/types";
 import { buildAdminMcpTools } from "./tool-factory";
+import {
+  authenticateMcpUserKey,
+  bindMcpUserAuth,
+  type McpApiKeyPrincipal,
+  McpAuthError,
+} from "./user-auth";
 import { enrichUserMcpToolArguments } from "./user-tool-arguments";
 import { buildUserMcpTools } from "./user-tool-factory";
 
@@ -28,7 +34,13 @@ const apiKeyPrincipal = {
   credentialKind: "mcp",
   userId: "user-1",
   apiKeyId: "key-1",
-  plan: "pro",
+} satisfies Principal;
+
+const externalApiKeyPrincipal = {
+  type: "apiKey",
+  credentialKind: "external",
+  userId: "user-1",
+  apiKeyId: "external-key-1",
 } satisfies Principal;
 
 const adminPrincipal = {
@@ -87,6 +99,16 @@ describe("MCP tool factories", () => {
     expect(buildUserMcpTools(apiKeyPrincipal).map((tool) => tool.name)).toEqual(
       ["image.generate"]
     );
+  });
+
+  it("never projects User MCP tools for an external API Key", () => {
+    registerOperation({
+      name: "image.generate",
+      access: { kind: "protected" },
+    });
+    bindExecute("image.generate", async () => ({ ok: true }));
+
+    expect(buildUserMcpTools(externalApiKeyPrincipal)).toHaveLength(0);
   });
 
   it("hides admin tools until their UOL operation is bound", () => {
@@ -321,6 +343,21 @@ describe("MCP tool factories", () => {
 
     expect(buildUserMcpTools(apiKeyPrincipal).map((tool) => tool.name)).toEqual(
       allowed
+    );
+  });
+});
+
+describe("MCP user auth boundary", () => {
+  it("fails closed when a binding returns an external API Key Principal", async () => {
+    bindMcpUserAuth(
+      async () => externalApiKeyPrincipal as unknown as McpApiKeyPrincipal
+    );
+
+    await expect(authenticateMcpUserKey("Bearer external-key")).rejects.toEqual(
+      expect.objectContaining({
+        name: McpAuthError.name,
+        httpStatus: 500,
+      })
     );
   });
 });

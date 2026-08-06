@@ -83,10 +83,10 @@ describe("video generation operations", () => {
       },
     });
     expect(
-      resolveCustomVideoGenerateInput(
-        { ...parsed, resolution: "4k" },
-        ["720p", "1080p"]
-      )
+      resolveCustomVideoGenerateInput({ ...parsed, resolution: "4k" }, [
+        "720p",
+        "1080p",
+      ])
     ).toMatchObject({ ok: false, error: { field: "resolution" } });
   });
 
@@ -433,50 +433,23 @@ describe("video generation operations", () => {
     ).toBe(true);
   });
 
-  it("按凭据来源区分外部 API 与 MCP 的视频能力", () => {
-    const requirement = videoGenerate.capabilities?.[0];
-    if (!requirement || !("derive" in requirement)) {
-      throw new Error("video.generate 缺少动态套餐能力声明");
-    }
+  it("视频 operation 不再声明商业套餐能力门禁", () => {
     const externalPrincipal = {
       type: "apiKey",
       credentialKind: "external",
       userId: "user-1",
       apiKeyId: "external-key-1",
-      plan: "pro",
     } satisfies Principal;
     const mcpPrincipal = {
       type: "apiKey",
       credentialKind: "mcp",
       userId: "user-1",
       apiKeyId: "mcp-key-1",
-      plan: "pro",
     } satisfies Principal;
 
-    expect(requirement.derive(seedanceRequest, externalPrincipal)).toEqual([
-      "externalApi.videos.generate",
-    ]);
-    expect(requirement.derive(seedanceRequest, mcpPrincipal)).toEqual([
-      "imageGeneration.video",
-    ]);
-    expect(
-      requirement.derive(
-        { ...seedanceRequest, backendGroupId: "group-1" },
-        mcpPrincipal
-      )
-    ).toEqual(["imageGeneration.video", "backendGroups.select"]);
-    const listRequirement = videoListCapabilities.capabilities?.[0];
-    if (!listRequirement || !("derive" in listRequirement)) {
-      throw new Error("video.listCapabilities 缺少动态套餐能力声明");
-    }
-    expect(listRequirement.derive({}, externalPrincipal)).toEqual([
-      "externalApi.videos.generate",
-    ]);
-    expect(listRequirement.derive({}, mcpPrincipal)).toEqual([
-      "imageGeneration.video",
-    ]);
-    expect(
-      listRequirement.derive({ backendGroupId: "group-1" }, mcpPrincipal)
-    ).toEqual(["imageGeneration.video", "backendGroups.select"]);
+    expect(externalPrincipal).not.toHaveProperty("plan");
+    expect(mcpPrincipal).not.toHaveProperty("plan");
+    expect(videoGenerate).not.toHaveProperty("capabilities");
+    expect(videoListCapabilities).not.toHaveProperty("capabilities");
   });
 });

@@ -12,7 +12,12 @@
  * - 将 DB 操作解耦到绑定函数中，保持 shared 包 DB-free 可测试
  * - 鉴权失败抛出包含 httpStatus 的 McpAuthError，便于传输层统一错误编码
  */
-import type { Principal } from "../uol/principal";
+import { isMcpApiKeyPrincipal, type Principal } from "../uol/principal";
+
+/** 仅代表由独立 User MCP Key 鉴权得到的 API Key Principal。 */
+export type McpApiKeyPrincipal = Extract<Principal, { type: "apiKey" }> & {
+  credentialKind: "mcp";
+};
 
 /**
  * MCP 鉴权错误
@@ -37,7 +42,7 @@ export class McpAuthError extends Error {
  */
 export type AuthenticateMcpUserKeyFn = (
   authHeader: string
-) => Promise<Principal>;
+) => Promise<McpApiKeyPrincipal>;
 
 /**
  * 默认占位实现 - 未绑定实际 DB 逻辑时抛出配置错误。
@@ -69,11 +74,15 @@ export function bindMcpUserAuth(fn: AuthenticateMcpUserKeyFn): void {
  * 验证 key 有效性与用户状态，返回 Principal。
  *
  * @param authHeader - 完整的 Authorization 头值
- * @returns Principal { type: "apiKey", credentialKind: "mcp", userId, apiKeyId, plan }
+ * @returns Principal { type: "apiKey", credentialKind: "mcp", userId, apiKeyId }
  * @throws McpAuthError 无效 token / key 已禁用 / 用户被封禁
  */
 export async function authenticateMcpUserKey(
   authHeader: string
-): Promise<Principal> {
-  return _authenticateFn(authHeader);
+): Promise<McpApiKeyPrincipal> {
+  const principal: Principal = await _authenticateFn(authHeader);
+  if (!isMcpApiKeyPrincipal(principal)) {
+    throw new McpAuthError("MCP User auth returned an invalid principal.", 500);
+  }
+  return principal;
 }

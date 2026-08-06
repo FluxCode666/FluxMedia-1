@@ -17,20 +17,22 @@ import {
 import { getFailedGenerationTargetCredits } from "@repo/shared/generation-settlement";
 import { IMAGE_GENERATION_TIMEOUT_ERROR } from "@repo/shared/generation-timeout";
 import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
+import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
+import { mediaLimitService } from "@repo/shared/image-generation/media-limit-service";
 import { logError, logWarn } from "@repo/shared/logger";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
 import { buildGeneratedImageStorageKey } from "@repo/shared/storage/bucket-config";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import {
-  getPlanCapabilitySnapshot,
-  getPlanQueueSettings,
-} from "@repo/shared/subscription/services/plan-capabilities";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
-import {
   getRuntimeSettingBoolean,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
+import {
+  createConcurrencyLimitExceededError,
+  OperationError,
+  type OperationErrorCode,
+} from "@repo/shared/uol";
 import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { completeImageGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
@@ -42,6 +44,7 @@ import { fetchMediaUpstreamDownload } from "@/features/image-backend-pool/media-
 import {
   createRuntimeBackendSession,
   type RuntimeBackendSession,
+  resolveTrustedGroupSnapshot,
 } from "@/features/image-backend-pool/runtime-service";
 import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import {
@@ -55,8 +58,13 @@ import { createImageCreditOperation } from "./credit-operation-context";
 import { toClientErrorMessage } from "./error-sanitize";
 import { buildInputImagesMetadata } from "./generation-metadata";
 import { generativeRepairImage } from "./generative-repair";
+import {
+  type StagedImageInputObject,
+  withStagedImageInputOwnership,
+} from "./image-input-storage";
 import { restoreImage } from "./image-restoration";
 import { maskedOutpaintImage } from "./masked-outpaint";
+import { loadMediaInputs } from "./media-input-loader";
 import {
   createGenerationModerationContext,
   type GenerationModerationContext,
@@ -69,6 +77,12 @@ import {
 } from "./output-format";
 import { getRuntimeImageCreditPricing } from "./pricing-settings";
 import { withImageGenerationQueue } from "./queue";
+import {
+  acquireImageGenerationAdmission,
+  type RedisImageGenerationAdmissionLease,
+  type RedisImageGenerationExecutionLease,
+  releaseImageGenerationAdmission,
+} from "./redis-image-generation-slots";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_SIZE,
@@ -98,9 +112,28 @@ import type {
   GenerateImageParams,
   GenerateImageResult,
   ImageGenerationCallbacks,
+  ImageGenerationExecutionFence,
   ImageInputFile,
   PartialImageResult,
 } from "./types";
+
+export type ImageGenerationAdmissionAuthorization = {
+  userId: string;
+  lease: RedisImageGenerationAdmissionLease;
+  limit: number;
+  effectiveSource: "system_default" | "user_override";
+};
+
+/** 异步 Worker 从任务行恢复的可信分组身份与排队快照。 */
+export type ImageGenerationGroupAuthorization = {
+  groupId: string;
+  priority: number;
+};
+
+/** 异步 Worker 已按全站容量裁决取得、并负责续期与释放的执行槽。 */
+export type ImageGenerationExecutionAuthorization = {
+  lease: RedisImageGenerationExecutionLease;
+};
 
 type RunImageGenerationInput =
   | ({
@@ -109,6 +142,11 @@ type RunImageGenerationInput =
       generationId?: string;
       apiKeyId?: string;
       backendGroupId?: string;
+      admissionAuthorization?: ImageGenerationAdmissionAuthorization;
+      groupAuthorization?: ImageGenerationGroupAuthorization;
+      executionAuthorization?: ImageGenerationExecutionAuthorization;
+      inputDigest?: string;
+      executionFence?: ImageGenerationExecutionFence;
     } & GenerateImageParams)
   | ({
       mode: "edit";
@@ -116,9 +154,57 @@ type RunImageGenerationInput =
       generationId?: string;
       apiKeyId?: string;
       backendGroupId?: string;
+      admissionAuthorization?: ImageGenerationAdmissionAuthorization;
+      groupAuthorization?: ImageGenerationGroupAuthorization;
+      executionAuthorization?: ImageGenerationExecutionAuthorization;
+      inputDigest?: string;
+      executionFence?: ImageGenerationExecutionFence;
+      mediaInputReferences?: {
+        images: MediaInputReference[];
+        mask?: MediaInputReference;
+      };
+      stagedImageInputObjects?: StagedImageInputObject[];
     } & EditImageParams);
 
 type ImageCreditCostBreakdown = ReturnType<typeof getImageCreditCostBreakdown>;
+
+/** 抛出 Worker 已广播的 fencing 失败，禁止内部错误转换把取消伪装成业务失败。 */
+function throwIfImageGenerationExecutionAborted(
+  input: RunImageGenerationInput
+): void {
+  const signal = input.executionFence?.signal;
+  if (!signal?.aborted) return;
+  throw (
+    signal.reason ??
+    new OperationError("conflict", "图片异步任务执行租约已失效")
+  );
+}
+
+/**
+ * 主动验证异步 Worker 仍持有 claim/admission；同步请求没有 fence 时为零副作用。
+ *
+ * 每个外呼、存储、财务和终态边界都调用本函数，事件循环长暂停后也会先执行数据库
+ * CAS，而不是仅依赖后台定时器晚到的状态。
+ */
+async function assertImageGenerationExecutionActive(
+  input: RunImageGenerationInput
+): Promise<void> {
+  throwIfImageGenerationExecutionAborted(input);
+  await input.executionFence?.assertActive();
+  throwIfImageGenerationExecutionAborted(input);
+}
+
+/** 合并运行时超时、客户端取消与 Worker fencing，供可取消 I/O 立即停工。 */
+function createImageGenerationAbortSignal(
+  input: RunImageGenerationInput,
+  timeoutMs: number
+): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signals = [timeoutSignal];
+  if (input.signal) signals.push(input.signal);
+  if (input.executionFence) signals.push(input.executionFence.signal);
+  return signals.length === 1 ? timeoutSignal : AbortSignal.any(signals);
+}
 
 function resolveOutputRole(params: { outputRole?: "final" | "choice" }) {
   if (params.outputRole === "choice") return "choice";
@@ -127,6 +213,8 @@ function resolveOutputRole(params: { outputRole?: "final" | "choice" }) {
 
 export type ImageGenerationOperationResult = {
   error?: string;
+  errorCode?: OperationErrorCode;
+  errorDetails?: Record<string, unknown>;
   generationId?: string;
   imageUrl?: string;
   /** 可选的内联 base64，供响应层直接产出 b64_json。 */
@@ -140,14 +228,30 @@ export type ImageGenerationOperationResult = {
   creditsConsumed?: number;
 };
 
+/** 在进入本地队列前失败时归还用户准入槽；释放故障交给 TTL 并记录安全告警。 */
+async function releaseAdmissionBeforeQueueSafely(
+  lease: RedisImageGenerationAdmissionLease
+): Promise<void> {
+  try {
+    await releaseImageGenerationAdmission(lease);
+  } catch (error) {
+    logWarn("生图请求入队前释放用户准入槽失败，等待租约 TTL 自动回收", {
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
+  }
+}
+
 async function getStoredImageUrl(bucket: string, storageKey: string) {
   return buildSignedStorageImageUrl(storageKey, bucket) ?? "";
 }
 
-async function toImageBuffer(result: {
-  imageBase64?: string;
-  imageUrl?: string;
-}) {
+async function toImageBuffer(
+  result: {
+    imageBase64?: string;
+    imageUrl?: string;
+  },
+  signal?: AbortSignal
+) {
   if (result.imageBase64) {
     const base64 = result.imageBase64.includes(",")
       ? result.imageBase64.split(",").pop() || result.imageBase64
@@ -159,7 +263,10 @@ async function toImageBuffer(result: {
     throw new Error("Missing image data");
   }
 
-  const response = await fetchMediaUpstreamDownload(result.imageUrl);
+  const response = await fetchMediaUpstreamDownload(
+    result.imageUrl,
+    signal ? { signal } : undefined
+  );
   if (!response.ok) {
     throw new Error(`Failed to download image: ${response.status}`);
   }
@@ -300,6 +407,73 @@ function getImageDimensionsFromBuffer(buffer: Buffer) {
 function getInputImages(input: RunImageGenerationInput): ImageInputFile[] {
   if (input.mode === "generate") return [];
   return input.images || [];
+}
+
+/** 将全站执行槽内加载的实际字节映射为现有图片管线输入。 */
+function toQueuedImageInputFile(
+  media: Awaited<ReturnType<typeof loadMediaInputs>>[number],
+  index: number,
+  prefix: string
+): ImageInputFile {
+  const extension = media.type === "image/png" ? "png" : "image";
+  return {
+    data: media.data,
+    type: media.type,
+    name: `${prefix}-${index + 1}.${extension}`,
+    ...(media.storageKey ? { storageKey: media.storageKey } : {}),
+    ...(media.storageBucket ? { storageBucket: media.storageBucket } : {}),
+  };
+}
+
+/**
+ * 在取得全站执行槽后把 storage-only 清单加载成短生命周期 Buffer。
+ *
+ * 排队项只持有 JSON-safe 引用；读取失败会在创建 generation、成员租约和扣费前结束。
+ */
+async function resolveQueuedImageInputs(
+  input: RunImageGenerationInput,
+  signal?: AbortSignal
+): Promise<{
+  executionInput: RunImageGenerationInput;
+  inputImages: ImageInputFile[];
+}> {
+  if (input.mode !== "edit" || !input.mediaInputReferences) {
+    return { executionInput: input, inputImages: getInputImages(input) };
+  }
+  const references = [
+    ...input.mediaInputReferences.images,
+    ...(input.mediaInputReferences.mask
+      ? [input.mediaInputReferences.mask]
+      : []),
+  ];
+  const loaded = await loadMediaInputs({
+    userId: input.userId,
+    references,
+    ...(signal ? { signal } : {}),
+  });
+  const imageCount = input.mediaInputReferences.images.length;
+  const images = loaded
+    .slice(0, imageCount)
+    .map((media, index) => toQueuedImageInputFile(media, index, "image"));
+  const loadedMask = loaded[imageCount];
+  const mask = input.mediaInputReferences.mask
+    ? loadedMask
+      ? toQueuedImageInputFile(loadedMask, 0, "mask")
+      : null
+    : undefined;
+  if (images.length !== imageCount || mask === null) {
+    throw new Error("媒体输入加载结果数量不一致");
+  }
+  const executionInput: RunImageGenerationInput = {
+    ...input,
+    mode: "edit",
+    images,
+    ...(mask ? { mask } : {}),
+  };
+  return {
+    executionInput,
+    inputImages: getInputImages(executionInput),
+  };
 }
 
 function buildPromptOptimizationMetadata(params: {
@@ -558,8 +732,10 @@ async function storeGeneratedImageOutput(params: {
   chargeTile?: (tileSize: string, tileIndex: number) => Promise<void>;
   /** 每次修复调用都通过统一号池独立获租，禁止复用主生成已释放的成员配置。 */
   runAuxiliaryEdit: (params: EditImageParams) => Promise<GenerateImageResult>;
+  /** Worker fencing 或客户端取消时中断下载与存储。 */
+  signal?: AbortSignal;
 }) {
-  let imageBuffer: Buffer = await toImageBuffer(params.output);
+  let imageBuffer: Buffer = await toImageBuffer(params.output, params.signal);
   // 出图后处理（仅对最终图）：修复与超分两个独立步骤，各自主开关门控、失败回退不阻断。
   // 顺序=先修复再超分（修复在原分辨率上跑更省算力，超分再放大到目标）。
   const isFinalImage =
@@ -724,7 +900,8 @@ async function storeGeneratedImageOutput(params: {
     storageKey,
     params.bucket,
     imageBuffer,
-    storedFormat.contentType
+    storedFormat.contentType,
+    params.signal ? { signal: params.signal } : undefined
   );
   return {
     generationId: params.generationId,
@@ -908,35 +1085,59 @@ async function persistImageUpstreamRequestSnapshot(
   }
 }
 
+/**
+ * 执行唯一图片管线，并在 generation 持久化前管理 staging 对象所有权。
+ *
+ * @param input 已完成身份绑定的生成或编辑输入。
+ * @param callbacks 可选的局部流式回调。
+ * @returns 图片生成结果；失败结果保留稳定 generationId 和领域错误。
+ * @sideEffects 未创建 generation 时删除本轮新建的同步输入对象。
+ */
 export async function runImageGenerationForUser(
   input: RunImageGenerationInput,
   callbacks?: ImageGenerationCallbacks
 ): Promise<ImageGenerationOperationResult> {
+  return withStagedImageInputOwnership({
+    objects: input.mode === "edit" ? (input.stagedImageInputObjects ?? []) : [],
+    run: (markStagedImageInputsAdopted) =>
+      runImageGenerationForUserInternal(
+        input,
+        callbacks,
+        markStagedImageInputsAdopted
+      ),
+  });
+}
+
+/** 在 staging 所有权保护内执行原有图片管线。 */
+async function runImageGenerationForUserInternal(
+  input: RunImageGenerationInput,
+  callbacks: ImageGenerationCallbacks | undefined,
+  markStagedImageInputsAdopted: () => void
+): Promise<ImageGenerationOperationResult> {
   const generationId = input.generationId || nanoid();
   const operationCreatedAt = new Date();
+  await assertImageGenerationExecutionActive(input);
   const creditOperation = createImageCreditOperation(
     generationId,
     operationCreatedAt
   );
   const size = resolveImageRequestSize(input.size);
-  const inputImages = getInputImages(input);
   const { generations: bucket } = await getRuntimeStorageBucketConfig();
-  const userPlan = await getUserPlan(input.userId);
-  const planCapabilities = await getPlanCapabilitySnapshot(userPlan.plan);
-  const queueSettings = await getPlanQueueSettings(userPlan.plan);
-  const moderationBlockingEnabled =
-    planCapabilities.features["moderation.blocking"];
-  const promptOptimizationAllowed =
-    planCapabilities.features["promptOptimization.control"];
-  const explicitPromptOptimization =
-    input.promptOptimization !== undefined || Boolean(input.apiPrompt);
-
-  if (explicitPromptOptimization && !promptOptimizationAllowed) {
-    return {
-      error: "Prompt optimization control requires Pro plan or higher.",
-      generationId,
-    };
+  if (
+    input.admissionAuthorization &&
+    input.admissionAuthorization.userId !== input.userId
+  ) {
+    throw new OperationError(
+      "ownership_violation",
+      "生图准入授权与当前用户不匹配"
+    );
   }
+  const mediaLimits = input.admissionAuthorization
+    ? {
+        limit: input.admissionAuthorization.limit,
+        effectiveSource: input.admissionAuthorization.effectiveSource,
+      }
+    : await mediaLimitService.getForUser(input.userId);
 
   const promptOptimization = input.promptOptimization ?? true;
   const apiPrompt = promptOptimization
@@ -944,73 +1145,143 @@ export async function runImageGenerationForUser(
     : input.prompt;
   const moderationPrompt = !promptOptimization ? input.prompt : apiPrompt;
 
-  if (
-    input.mode === "generate" &&
-    !planCapabilities.features["imageGeneration.text"]
-  ) {
-    return {
-      error: "Text image generation is not enabled for this plan.",
-      generationId,
-    };
-  }
-  if (
-    input.mode === "edit" &&
-    !planCapabilities.features["imageGeneration.edit"]
-  ) {
-    return {
-      error: "Image editing is not enabled for this plan.",
-      generationId,
-    };
-  }
-  const requestedCount = input.n || 1;
-  if (
-    requestedCount > 1 &&
-    !planCapabilities.features["imageGeneration.batch"]
-  ) {
-    return {
-      error: "Batch image generation is not enabled for this plan.",
-      generationId,
-    };
-  }
-  if (requestedCount > planCapabilities.limits.maxBatchCount) {
-    return {
-      error: `Image count must be no more than ${planCapabilities.limits.maxBatchCount}.`,
-      generationId,
-    };
-  }
   // 仅以实际存在的蒙版文件作为调度条件，不能信任客户端额外声明的能力字段。
-  const requiresMask = input.mode === "edit" && Boolean(input.mask);
+  const requiresMask =
+    input.mode === "edit" &&
+    Boolean(input.mask || input.mediaInputReferences?.mask);
   const imageModel = resolveRequestedImageModel(input.model);
   const recordModel = imageModel;
   const moderationContext = await createGenerationModerationContext(
     input.userId
   );
 
+  let admissionLease = input.admissionAuthorization?.lease;
+  const releaseAdmissionInOperation = !admissionLease;
+  if (!admissionLease) {
+    try {
+      const admission = await acquireImageGenerationAdmission({
+        userId: input.userId,
+        userConcurrency: mediaLimits.limit,
+      });
+      if (admission.status === "blocked") {
+        const error = createConcurrencyLimitExceededError({
+          limit: mediaLimits.limit,
+          effectiveSource: mediaLimits.effectiveSource,
+        });
+        return {
+          error: error.message,
+          errorCode: error.code,
+          errorDetails: error.details,
+          generationId,
+        };
+      }
+      admissionLease = admission.lease;
+    } catch (error) {
+      return {
+        error: toClientErrorMessage(
+          error,
+          { source: "image-generation-admission", generationId },
+          "生图并发服务暂时不可用，请稍后重试"
+        ),
+        generationId,
+      };
+    }
+  }
+
+  let trustedGroupSnapshot: Awaited<
+    ReturnType<typeof resolveTrustedGroupSnapshot>
+  >;
   try {
+    const resolvedGroupSnapshot = await resolveTrustedGroupSnapshot({
+      userId: input.userId,
+      apiKeyId: input.apiKeyId,
+      ...(input.groupAuthorization
+        ? { pinnedGroupId: input.groupAuthorization.groupId }
+        : { requestedGroupId: input.backendGroupId }),
+    });
+    if (
+      input.groupAuthorization &&
+      resolvedGroupSnapshot.id !== input.groupAuthorization.groupId
+    ) {
+      throw new Error("图片任务持久分组快照与运行时解析结果不一致");
+    }
+    trustedGroupSnapshot = input.groupAuthorization
+      ? {
+          ...resolvedGroupSnapshot,
+          priority: input.groupAuthorization.priority,
+        }
+      : resolvedGroupSnapshot;
+  } catch (error) {
+    throwIfImageGenerationExecutionAborted(input);
+    if (releaseAdmissionInOperation) {
+      await releaseAdmissionBeforeQueueSafely(admissionLease);
+    }
+    return {
+      error: toClientErrorMessage(
+        error,
+        { source: "image-backend-group-resolve", generationId },
+        "当前没有可用的生图后端分组"
+      ),
+      generationId,
+    };
+  }
+
+  try {
+    await assertImageGenerationExecutionActive(input);
     return await withImageGenerationQueue(
       {
         userId: input.userId,
-        priority: queueSettings.priority,
-        userConcurrency: queueSettings.userConcurrency,
+        priority: trustedGroupSnapshot.priority,
+        userConcurrency: mediaLimits.limit,
+        effectiveSource: mediaLimits.effectiveSource,
+        admissionLease,
+        executionLease: input.executionAuthorization?.lease,
+        releaseAdmissionOnCompletion: releaseAdmissionInOperation,
       },
       async () => {
         let session: RuntimeBackendSession | null = null;
         try {
-          const moderationRequired =
-            (await isContentModerationEnabled()) && moderationBlockingEnabled;
+          await assertImageGenerationExecutionActive(input);
+          let executionInput: RunImageGenerationInput;
+          let inputImages: ImageInputFile[];
+          try {
+            ({ executionInput, inputImages } = await resolveQueuedImageInputs(
+              input,
+              createImageGenerationAbortSignal(
+                input,
+                IMAGE_GENERATION_PENDING_TIMEOUT_MS
+              )
+            ));
+          } catch (error) {
+            throwIfImageGenerationExecutionAborted(input);
+            return {
+              error: toClientErrorMessage(
+                error,
+                { source: "image-input-load", generationId },
+                "媒体输入加载失败，请重试"
+              ),
+              generationId,
+            };
+          }
+          await assertImageGenerationExecutionActive(executionInput);
+          const moderationRequired = await isContentModerationEnabled();
           let initialConfig: ApiConfig;
           try {
-            session = await createRuntimeBackendSession({
-              userId: input.userId,
-              apiKeyId: input.apiKeyId,
-              requestedGroupId: input.backendGroupId,
-              modelId: imageModel,
-              requestKind: "image",
-              requiresContentSafety: moderationRequired,
-              requiresMask,
-            });
+            session = await createRuntimeBackendSession(
+              {
+                userId: executionInput.userId,
+                apiKeyId: executionInput.apiKeyId,
+                requestedGroupId: executionInput.backendGroupId,
+                modelId: imageModel,
+                requestKind: "image",
+                requiresContentSafety: moderationRequired,
+                requiresMask,
+              },
+              trustedGroupSnapshot
+            );
             initialConfig = (await session.acquireNext()).config;
           } catch (error) {
+            throwIfImageGenerationExecutionAborted(executionInput);
             return {
               error: toClientErrorMessage(
                 error,
@@ -1020,6 +1291,7 @@ export async function runImageGenerationForUser(
               generationId,
             };
           }
+          await assertImageGenerationExecutionActive(executionInput);
 
           const moderationEnabled =
             moderationRequired && initialConfig.contentSafetyEnabled !== false;
@@ -1059,8 +1331,8 @@ export async function runImageGenerationForUser(
           const moderationFailureCredits = moderationEnabled
             ? getModerationFailureCharge({
                 policy: billingPolicy,
-                moderationOnlyFailureSettlement:
-                  planCapabilities.features["moderation.onlyFailureSettlement"],
+                // 订阅退役后沿用原免费默认语义，不再按套餐改变失败结算。
+                moderationOnlyFailureSettlement: false,
                 isChatInput: false,
                 chatRoundCredits: 0,
                 chatModerationOnlyCredits,
@@ -1069,7 +1341,7 @@ export async function runImageGenerationForUser(
               })
             : 0;
           return await runQueuedImageGenerationForUser({
-            input,
+            input: executionInput,
             callbacks,
             generationId,
             operationCreatedAt,
@@ -1094,6 +1366,7 @@ export async function runImageGenerationForUser(
             imageModel,
             recordModel,
             moderationEnabled,
+            markStagedImageInputsAdopted,
           });
         } finally {
           await session?.close();
@@ -1101,6 +1374,15 @@ export async function runImageGenerationForUser(
       }
     );
   } catch (error) {
+    throwIfImageGenerationExecutionAborted(input);
+    if (error instanceof OperationError) {
+      return {
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        generationId,
+      };
+    }
     // 兜底:DB/内部异常不得把裸 SQL/内部细节回给前端（issue #35:池查询失败的
     // Drizzle "Failed query: ..." 曾原样显示在用户 toast）。脱敏 + 记日志。
     return {
@@ -1140,6 +1422,7 @@ async function runQueuedImageGenerationForUser({
   imageModel,
   recordModel,
   moderationEnabled,
+  markStagedImageInputsAdopted,
 }: {
   input: RunImageGenerationInput;
   callbacks?: ImageGenerationCallbacks;
@@ -1166,8 +1449,10 @@ async function runQueuedImageGenerationForUser({
   imageModel: string;
   recordModel: string;
   moderationEnabled: boolean;
+  markStagedImageInputsAdopted: () => void;
 }): Promise<ImageGenerationOperationResult> {
   const startedAt = Date.now();
+  await assertImageGenerationExecutionActive(input);
   let activeConfig = initialConfig;
   const promptOptimizationMetadata = buildPromptOptimizationMetadata({
     input,
@@ -1197,6 +1482,7 @@ async function runQueuedImageGenerationForUser({
   const generationCallbacks: ImageGenerationCallbacks = {
     ...streamTelemetry.callbacks,
     onApiUpstreamRequestSnapshot: async (snapshot) => {
+      await assertImageGenerationExecutionActive(input);
       await persistImageUpstreamRequestSnapshot(generationId, snapshot);
       await callbacks?.onApiUpstreamRequestSnapshot?.(snapshot);
     },
@@ -1206,6 +1492,7 @@ async function runQueuedImageGenerationForUser({
   });
   const initialApiAdapterSnapshot = getCurrentImageApiAdapterSnapshot(session);
 
+  await assertImageGenerationExecutionActive(input);
   await db.insert(generation).values({
     id: generationId,
     userId: input.userId,
@@ -1232,11 +1519,11 @@ async function runQueuedImageGenerationForUser({
             outputFormat: input.outputFormat || null,
             outputCompression: input.outputCompression ?? null,
             background: input.background || null,
-            batchCount: input.n || 1,
             creditCost,
             ...billingMetadata,
             moderationBlockingEnabled: moderationEnabled,
             moderationFailureCredits,
+            ...(input.inputDigest ? { uolInputDigest: input.inputDigest } : {}),
             ...(input.apiKeyId ? { externalApiKeyId: input.apiKeyId } : {}),
           }
         : {
@@ -1249,14 +1536,16 @@ async function runQueuedImageGenerationForUser({
             outputFormat: input.outputFormat || null,
             outputCompression: input.outputCompression ?? null,
             background: input.background || null,
-            batchCount: input.n || 1,
             creditCost,
             ...billingMetadata,
             moderationBlockingEnabled: moderationEnabled,
             moderationFailureCredits,
+            ...(input.inputDigest ? { uolInputDigest: input.inputDigest } : {}),
             ...(input.apiKeyId ? { externalApiKeyId: input.apiKeyId } : {}),
           },
   });
+  // WHY：只有 generation 行提交成功后，历史元数据和删除流程才正式接管输入对象。
+  markStagedImageInputsAdopted();
 
   let chargedCredits = 0;
   const refundChargedCredits = async (
@@ -1265,6 +1554,7 @@ async function runQueuedImageGenerationForUser({
     description: string
   ) => {
     if (!billingPolicy.chargesCredits || amount <= 0) return;
+    await assertImageGenerationExecutionActive(input);
     const roundedAmount = roundCreditAmount(amount);
     await refundGenerationCredits({
       generationId,
@@ -1291,6 +1581,7 @@ async function runQueuedImageGenerationForUser({
     sourceRef?: string
   ) => {
     if (!billingPolicy.chargesCredits || amount <= 0) return;
+    await assertImageGenerationExecutionActive(input);
     const roundedAmount = roundCreditAmount(amount);
     await reserveExternalApiKeyCredits({
       apiKeyId: input.apiKeyId,
@@ -1378,6 +1669,7 @@ async function runQueuedImageGenerationForUser({
         `${generationId}:charge`
       );
     } catch (error: unknown) {
+      throwIfImageGenerationExecutionAborted(input);
       const message =
         error instanceof Error ? error.message : "Insufficient credits";
       await db
@@ -1396,6 +1688,7 @@ async function runQueuedImageGenerationForUser({
     Date.now() - startedAt > IMAGE_GENERATION_PENDING_TIMEOUT_MS;
   const failTimedOutGeneration =
     async (): Promise<ImageGenerationOperationResult> => {
+      await assertImageGenerationExecutionActive(input);
       const targetCredits = getFailedGenerationTargetCredits({
         reason: "generation_error",
         moderationFailureCredits,
@@ -1454,6 +1747,7 @@ async function runQueuedImageGenerationForUser({
             })
             .where(eq(generation.id, generationId));
         } catch {
+          throwIfImageGenerationExecutionAborted(input);
           /* best effort settlement */
         }
       }
@@ -1471,11 +1765,12 @@ async function runQueuedImageGenerationForUser({
   let result: GenerateImageResult;
 
   const attemptGeneration = async (background: typeof input.background) => {
+    await assertImageGenerationExecutionActive(input);
     const remainingMs = Math.max(
       1,
       IMAGE_GENERATION_PENDING_TIMEOUT_MS - (Date.now() - startedAt)
     );
-    const commonSignal = AbortSignal.timeout(remainingMs);
+    const commonSignal = createImageGenerationAbortSignal(input, remainingMs);
     await pinPendingImageBackendSnapshot(generationId, session);
     return input.mode === "edit"
       ? await editImage(
@@ -1491,7 +1786,6 @@ async function runQueuedImageGenerationForUser({
             model: imageModel,
             thinking: input.thinking,
             quality: input.quality,
-            n: input.n,
             moderation: input.moderation,
             outputFormat: input.outputFormat,
             outputCompression: input.outputCompression,
@@ -1509,7 +1803,6 @@ async function runQueuedImageGenerationForUser({
             size,
             model: imageModel,
             thinking: input.thinking,
-            n: input.n,
             quality: input.quality,
             moderation: input.moderation,
             outputFormat: input.outputFormat,
@@ -1547,6 +1840,7 @@ async function runQueuedImageGenerationForUser({
       }
       return first;
     } catch (error) {
+      throwIfImageGenerationExecutionAborted(input);
       if (!isTransparentUnsupportedError(error)) {
         throw error;
       }
@@ -1555,6 +1849,7 @@ async function runQueuedImageGenerationForUser({
   };
 
   {
+    await assertImageGenerationExecutionActive(input);
     const moderation = !moderationEnabled
       ? ({ decision: "skipped" } as const)
       : await moderationContext.moderate({
@@ -1564,6 +1859,8 @@ async function runQueuedImageGenerationForUser({
           userId: input.userId,
           generationId,
         });
+
+    await assertImageGenerationExecutionActive(input);
 
     if (isTimedOut()) {
       return failTimedOutGeneration();
@@ -1596,8 +1893,10 @@ async function runQueuedImageGenerationForUser({
           }
         );
       } catch {
+        throwIfImageGenerationExecutionAborted(input);
         /* best effort settlement */
       }
+      await assertImageGenerationExecutionActive(input);
       await db
         .update(generation)
         .set({
@@ -1621,6 +1920,7 @@ async function runQueuedImageGenerationForUser({
       try {
         result = await runGenerationAttempt();
       } catch (error) {
+        throwIfImageGenerationExecutionAborted(input);
         result = {
           error: toClientErrorMessage(
             error,
@@ -1629,6 +1929,8 @@ async function runQueuedImageGenerationForUser({
           ),
         };
       }
+
+      await assertImageGenerationExecutionActive(input);
 
       const durationMs = Date.now() - attemptStartedAt;
       if (isTimedOut()) {
@@ -1712,8 +2014,10 @@ async function runQueuedImageGenerationForUser({
         }
       );
     } catch {
+      throwIfImageGenerationExecutionAborted(input);
       /* best effort settlement */
     }
+    await assertImageGenerationExecutionActive(input);
     await db
       .update(generation)
       .set({
@@ -1753,8 +2057,10 @@ async function runQueuedImageGenerationForUser({
         }
       );
     } catch {
+      throwIfImageGenerationExecutionAborted(input);
       /* best effort settlement */
     }
+    await assertImageGenerationExecutionActive(input);
     await db
       .update(generation)
       .set({
@@ -1787,6 +2093,7 @@ async function runQueuedImageGenerationForUser({
     }
     storedOutputs = [];
     for (const [index, output] of imageOutputs.entries()) {
+      await assertImageGenerationExecutionActive(input);
       const outputGenerationId = resolveOutputGenerationId(
         generationId,
         index,
@@ -1803,15 +2110,36 @@ async function runQueuedImageGenerationForUser({
           hdRepair: input.hdRepair,
           blockRepair: input.blockRepair,
           repairPrompt: input.repairPrompt,
-          runAuxiliaryEdit: (params) =>
-            runAuxiliaryImageEdit({
+          signal: createImageGenerationAbortSignal(
+            input,
+            Math.max(
+              1,
+              IMAGE_GENERATION_PENDING_TIMEOUT_MS - (Date.now() - startedAt)
+            )
+          ),
+          runAuxiliaryEdit: async (params) => {
+            await assertImageGenerationExecutionActive(input);
+            const auxiliaryResult = await runAuxiliaryImageEdit({
               userId: input.userId,
               apiKeyId: input.apiKeyId,
               pinnedGroupId: session.group.id,
               modelId: DEFAULT_IMAGE_MODEL,
               requiresContentSafety: moderationEnabled,
-              params,
-            }),
+              params: {
+                ...params,
+                signal: createImageGenerationAbortSignal(
+                  input,
+                  Math.max(
+                    1,
+                    IMAGE_GENERATION_PENDING_TIMEOUT_MS -
+                      (Date.now() - startedAt)
+                  )
+                ),
+              },
+            });
+            await assertImageGenerationExecutionActive(input);
+            return auxiliaryResult;
+          },
           // 生成式修复计费:重绘一次按尺寸扣一次,幂等 sourceRef 防重试重复扣。
           chargeTile: async (tileSize, tileIndex) => {
             const tileCost = getImageCreditCostBreakdown(tileSize, {
@@ -1832,8 +2160,10 @@ async function runQueuedImageGenerationForUser({
           },
         })
       );
+      await assertImageGenerationExecutionActive(input);
     }
   } catch (storageError: unknown) {
+    await assertImageGenerationExecutionActive(input);
     const message =
       storageError instanceof Error
         ? storageError.message
@@ -1856,8 +2186,10 @@ async function runQueuedImageGenerationForUser({
         }
       );
     } catch {
+      throwIfImageGenerationExecutionAborted(input);
       /* best effort settlement */
     }
+    await assertImageGenerationExecutionActive(input);
     // 必须在单次 UPDATE 中同时写入 status、error、metadata 和
     // creditsConsumed：isPendingGeneration 要求 status='pending'，
     // 若先把 status 改为 'failed'，后续以同一 WHERE 条件写
@@ -1955,6 +2287,7 @@ async function runQueuedImageGenerationForUser({
       }
     );
   } catch (error) {
+    throwIfImageGenerationExecutionAborted(input);
     const message =
       error instanceof Error ? error.message : "Insufficient credits";
     try {
@@ -1977,8 +2310,10 @@ async function runQueuedImageGenerationForUser({
         }
       );
     } catch {
+      throwIfImageGenerationExecutionAborted(input);
       /* best effort settlement */
     }
+    await assertImageGenerationExecutionActive(input);
     await db
       .update(generation)
       .set({
@@ -1997,6 +2332,8 @@ async function runQueuedImageGenerationForUser({
     };
   }
 
+  await assertImageGenerationExecutionActive(input);
+
   if (isTimedOut()) {
     return failTimedOutGeneration();
   }
@@ -2011,6 +2348,7 @@ async function runQueuedImageGenerationForUser({
   if (resolvedOutputCount.status === "insufficientEvidence") {
     throw new Error("持久化图片完成后缺少可验证的产物证据");
   }
+  await assertImageGenerationExecutionActive(input);
   await completeImageGenerationWithUsage({
     generationId,
     output:

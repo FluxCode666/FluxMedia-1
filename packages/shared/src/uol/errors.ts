@@ -15,7 +15,6 @@
 export type OperationErrorCode =
   | "unauthenticated"
   | "forbidden"
-  | "capability_required"
   | "not_found"
   | "not_implemented"
   | "not_ready"
@@ -23,6 +22,7 @@ export type OperationErrorCode =
   | "insufficient_credits"
   | "account_frozen"
   | "quota_exceeded"
+  | "concurrency_limit_exceeded"
   | "validation_error"
   | "conflict"
   | "idempotency_conflict"
@@ -66,7 +66,6 @@ export class OperationError extends Error {
 const CODE_TO_STATUS: Record<OperationErrorCode, number> = {
   unauthenticated: 401,
   forbidden: 403,
-  capability_required: 403,
   not_found: 404,
   not_implemented: 501,
   not_ready: 503,
@@ -74,6 +73,7 @@ const CODE_TO_STATUS: Record<OperationErrorCode, number> = {
   insufficient_credits: 402,
   account_frozen: 403,
   quota_exceeded: 429,
+  concurrency_limit_exceeded: 429,
   validation_error: 400,
   conflict: 409,
   idempotency_conflict: 409,
@@ -90,4 +90,25 @@ const CODE_TO_STATUS: Record<OperationErrorCode, number> = {
  */
 export function getDefaultHttpStatus(code: OperationErrorCode): number {
   return CODE_TO_STATUS[code] ?? 500;
+}
+
+/**
+ * 创建不泄露 Redis 身份或请求内容的用户并发超限错误。
+ *
+ * @param input - 已由媒体策略服务解析的限制值和来源。
+ * @returns REST 默认映射为 429、MCP 可原样投影 code/details 的领域错误。
+ */
+export function createConcurrencyLimitExceededError(input: {
+  limit: number;
+  effectiveSource: "system_default" | "user_override";
+}): OperationError {
+  return new OperationError(
+    "concurrency_limit_exceeded",
+    `用户同时进行的生图任务已达到上限 ${input.limit}`,
+    {
+      limit: input.limit,
+      effectiveSource: input.effectiveSource,
+      scope: "user",
+    }
+  );
 }

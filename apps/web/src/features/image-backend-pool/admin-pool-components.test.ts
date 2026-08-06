@@ -33,7 +33,6 @@ function createGroup(
     isDefault: false,
     isUserSelectable: true,
     contentSafety: "inherit",
-    minPlan: "free",
     imageCreditOverrides: { version: 1, byModel: {} },
     videoCreditOverrides: {},
     childGroupIds: [],

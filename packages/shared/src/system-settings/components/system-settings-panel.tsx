@@ -64,170 +64,6 @@ type SettingUpdate = {
   clear?: boolean;
 };
 
-const PLAN_OPTIONS = [
-  { value: "free", label: "Free" },
-  { value: "starter", label: "Starter" },
-  { value: "pro", label: "Pro" },
-  { value: "ultra", label: "Ultra" },
-  { value: "enterprise", label: "Enterprise" },
-] as const;
-
-const PLAN_REQUIREMENT_OPTIONS = [
-  { value: "none", label: "不限制" },
-  ...PLAN_OPTIONS,
-] as const;
-
-const QUEUE_PRIORITY_OPTIONS = [
-  { value: "normal", label: "普通" },
-  { value: "priority", label: "优先" },
-  { value: "highest", label: "最高" },
-] as const;
-
-const FEATURE_ROWS = [
-  {
-    key: "imageGeneration.text",
-    label: "文生图",
-    description: "页面/API 文本生成图片",
-  },
-  {
-    key: "imageGeneration.edit",
-    label: "图生图/编辑",
-    description: "上传参考图、编辑图片",
-  },
-  {
-    key: "imageGeneration.mask",
-    label: "蒙版编辑",
-    description: "页面使用蒙版进行局部重绘与编辑",
-  },
-  {
-    key: "imageGeneration.video",
-    label: "视频生成",
-    description: "页面生成视频并查询任务结果",
-  },
-  {
-    key: "imageGeneration.batch",
-    label: "批量生成",
-    description: "一次请求生成多张",
-  },
-  {
-    key: "promptOptimization.control",
-    label: "关闭提示词优化",
-    description: "允许用户控制 prompt_optimization",
-  },
-  {
-    key: "backendGroups.select",
-    label: "选择后端分组",
-    description: "允许选择平台后端分组",
-  },
-  {
-    key: "externalApi.keys.manage",
-    label: "管理外接 API Key",
-    description: "本站对外 API Key 管理",
-  },
-  {
-    key: "externalApi.models.list",
-    label: "外接 /v1/models",
-    description: "允许模型列表接口",
-  },
-  {
-    key: "externalApi.images.generate",
-    label: "外接文生图",
-    description: "允许 /v1/images/generations",
-  },
-  {
-    key: "externalApi.images.edit",
-    label: "外接图片编辑",
-    description: "允许 /v1/images/edits",
-  },
-  {
-    key: "externalApi.images.mask",
-    label: "外接蒙版编辑",
-    description: "允许 /v1/images/edits 携带 mask",
-  },
-  {
-    key: "externalApi.images.batch",
-    label: "外接批量图片",
-    description: "允许外接图片接口一次生成多张",
-  },
-  {
-    key: "externalApi.videos.generate",
-    label: "外接视频生成",
-    description: "允许外部媒体 API 创建和查询视频任务",
-  },
-  {
-    key: "externalApi.streaming",
-    label: "外接流式",
-    description: "允许 stream=true",
-  },
-  {
-    key: "moderation.blocking",
-    label: "审核拦截",
-    description: "本站内容审核是否对该套餐生效",
-  },
-  {
-    key: "moderation.onlyFailureSettlement",
-    label: "审核失败只扣审核积分",
-    description: "审核拦截后只结算审核成本",
-  },
-] as const;
-
-const LIMIT_ROWS = [
-  {
-    key: "monthlyCredits",
-    label: "月积分配额",
-    description: "Free 为一次性额度，订阅为每月额度",
-    inputMode: "numeric",
-  },
-  {
-    key: "imageGenerationConcurrency",
-    label: "生图并发",
-    description: "单用户图片生成并发上限",
-    inputMode: "numeric",
-  },
-  {
-    key: "maxFileMb",
-    label: "单文件大小 MB",
-    description: "单个上传文件大小上限",
-    inputMode: "decimal",
-  },
-  {
-    key: "maxUploadMb",
-    label: "单次上传总量 MB",
-    description: "一次编辑/对话请求的总上传上限",
-    inputMode: "decimal",
-  },
-  {
-    key: "maxBatchCount",
-    label: "批量张数",
-    description: "n/count 最大值",
-    inputMode: "numeric",
-  },
-  {
-    key: "maxEditImages",
-    label: "编辑参考图数",
-    description: "图生图/编辑最多参考图数量",
-    inputMode: "numeric",
-  },
-  {
-    key: "queuePriority",
-    label: "队列优先级",
-    description: "调度队列优先级",
-    inputMode: "select",
-  },
-] as const;
-
-type PlanValue = (typeof PLAN_OPTIONS)[number]["value"];
-type PlanRequirementValue = (typeof PLAN_REQUIREMENT_OPTIONS)[number]["value"];
-type QueuePriorityValue = (typeof QUEUE_PRIORITY_OPTIONS)[number]["value"];
-type FeatureKey = (typeof FEATURE_ROWS)[number]["key"];
-type LimitKey = (typeof LIMIT_ROWS)[number]["key"];
-
-type CapabilityMatrixDraft = {
-  version: 1;
-  features: Record<FeatureKey, PlanValue>;
-  limits: Record<PlanValue, Record<LimitKey, string | number>>;
-};
-
 type CreditPackageDraft = {
   id: string;
   name: string;
@@ -237,12 +73,9 @@ type CreditPackageDraft = {
   currency: string;
   popular: boolean;
   visible: boolean;
-  requiresPlan: PlanRequirementValue;
   allowQuantity: boolean;
   maxQuantity: number;
   creemProductId: string;
-  pricesByPlan: Record<PlanValue, number>;
-  creemProductIdsByPlan: Record<PlanValue, string>;
 };
 
 type CreditPackageMatrixDraft = {
@@ -265,14 +98,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function recordValue(
-  record: Record<string, unknown>,
-  key: string
-): Record<string, unknown> {
-  const value = record[key];
-  return isRecord(value) ? value : {};
-}
-
 function parseJsonDraft(value: DraftValue) {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
@@ -282,30 +107,6 @@ function parseJsonDraft(value: DraftValue) {
   } catch {
     return undefined;
   }
-}
-
-function asPlan(value: unknown, fallback: PlanValue): PlanValue {
-  return PLAN_OPTIONS.some((option) => option.value === value)
-    ? (value as PlanValue)
-    : fallback;
-}
-
-function asPlanRequirement(
-  value: unknown,
-  fallback: PlanRequirementValue
-): PlanRequirementValue {
-  return PLAN_REQUIREMENT_OPTIONS.some((option) => option.value === value)
-    ? (value as PlanRequirementValue)
-    : fallback;
-}
-
-function asQueuePriority(
-  value: unknown,
-  fallback: QueuePriorityValue
-): QueuePriorityValue {
-  return QUEUE_PRIORITY_OPTIONS.some((option) => option.value === value)
-    ? (value as QueuePriorityValue)
-    : fallback;
 }
 
 function numberValue(value: unknown, fallback: number) {
@@ -412,92 +213,6 @@ function compactCreditTopUpConfigDraft(draft: CreditTopUpConfigDraft) {
   };
 }
 
-function normalizePlanNumberMap(
-  value: unknown,
-  fallbackValue: unknown,
-  fallbackNumber: number
-) {
-  const raw = isRecord(value) ? value : {};
-  const fallback = isRecord(fallbackValue) ? fallbackValue : {};
-
-  return Object.fromEntries(
-    PLAN_OPTIONS.map((plan) => [
-      plan.value,
-      numberValue(
-        raw[plan.value],
-        numberValue(fallback[plan.value], fallbackNumber)
-      ),
-    ])
-  ) as Record<PlanValue, number>;
-}
-
-function normalizePlanStringMap(value: unknown, fallbackValue: unknown) {
-  const raw = isRecord(value) ? value : {};
-  const fallback = isRecord(fallbackValue) ? fallbackValue : {};
-
-  return Object.fromEntries(
-    PLAN_OPTIONS.map((plan) => [
-      plan.value,
-      stringValue(raw[plan.value], stringValue(fallback[plan.value])),
-    ])
-  ) as Record<PlanValue, string>;
-}
-
-function normalizeCapabilityMatrixDraft(
-  rawValue: DraftValue,
-  fallbackValue: unknown
-): CapabilityMatrixDraft {
-  const parsedRaw = parseJsonDraft(rawValue);
-  const raw = isRecord(parsedRaw) ? parsedRaw : {};
-  const fallback = isRecord(fallbackValue) ? fallbackValue : {};
-  const rawFeatures = isRecord(raw.features) ? raw.features : {};
-  const fallbackFeatures = isRecord(fallback.features) ? fallback.features : {};
-  const rawLimits = isRecord(raw.limits) ? raw.limits : {};
-  const fallbackLimits = isRecord(fallback.limits) ? fallback.limits : {};
-
-  const features = Object.fromEntries(
-    FEATURE_ROWS.map((row) => [
-      row.key,
-      asPlan(rawFeatures[row.key], asPlan(fallbackFeatures[row.key], "free")),
-    ])
-  ) as CapabilityMatrixDraft["features"];
-
-  const limits = Object.fromEntries(
-    PLAN_OPTIONS.map((plan) => {
-      const rawPlanLimits = recordValue(rawLimits, plan.value);
-      const fallbackPlanLimits = recordValue(fallbackLimits, plan.value);
-
-      const entries = LIMIT_ROWS.map((row) => {
-        if (row.key === "queuePriority") {
-          return [
-            row.key,
-            asQueuePriority(
-              rawPlanLimits[row.key],
-              asQueuePriority(fallbackPlanLimits[row.key], "normal")
-            ),
-          ] as const;
-        }
-
-        return [
-          row.key,
-          numberValue(
-            rawPlanLimits[row.key],
-            numberValue(fallbackPlanLimits[row.key], 1)
-          ),
-        ] as const;
-      });
-
-      return [plan.value, Object.fromEntries(entries)] as const;
-    })
-  ) as CapabilityMatrixDraft["limits"];
-
-  return {
-    version: 1,
-    features,
-    limits,
-  };
-}
-
 function getRawCreditPackages(value: unknown) {
   if (Array.isArray(value)) return value;
   if (isRecord(value) && Array.isArray(value.packages)) return value.packages;
@@ -533,15 +248,6 @@ function normalizeCreditPackageMatrixDraft(
           rawPackage.price,
           numberValue(fallback.price, 1)
         );
-        const fallbackRequiresPlan = asPlanRequirement(
-          fallback.requiresPlan,
-          "none"
-        );
-        const requiresPlan = asPlanRequirement(
-          rawPackage.requiresPlan,
-          fallbackRequiresPlan
-        );
-
         return {
           id,
           name: stringValue(rawPackage.name, stringValue(fallback.name, id)),
@@ -565,7 +271,6 @@ function normalizeCreditPackageMatrixDraft(
             rawPackage.visible,
             fallback.visible === undefined ? true : Boolean(fallback.visible)
           ),
-          requiresPlan,
           allowQuantity: booleanValue(
             rawPackage.allowQuantity,
             Boolean(fallback.allowQuantity)
@@ -577,15 +282,6 @@ function normalizeCreditPackageMatrixDraft(
           creemProductId: stringValue(
             rawPackage.creemProductId,
             stringValue(fallback.creemProductId)
-          ),
-          pricesByPlan: normalizePlanNumberMap(
-            rawPackage.pricesByPlan,
-            fallback.pricesByPlan,
-            price
-          ),
-          creemProductIdsByPlan: normalizePlanStringMap(
-            rawPackage.creemProductIdsByPlan,
-            fallback.creemProductIdsByPlan
           ),
           sortIndex: index,
         };
@@ -600,40 +296,21 @@ function normalizeCreditPackageMatrixDraft(
 
 function compactCreditPackageMatrixDraft(matrix: CreditPackageMatrixDraft) {
   return {
-    packages: matrix.packages.map((pkg) => {
-      const pricesByPlan = Object.fromEntries(
-        PLAN_OPTIONS.map((plan) => [plan.value, pkg.pricesByPlan[plan.value]])
-      );
-      const creemProductIdsByPlan = Object.fromEntries(
-        PLAN_OPTIONS.map((plan) => [
-          plan.value,
-          pkg.creemProductIdsByPlan[plan.value].trim(),
-        ]).filter(([, value]) => Boolean(value))
-      );
-
-      return {
-        id: pkg.id.trim(),
-        name: pkg.name.trim() || pkg.id.trim(),
-        description: pkg.description,
-        credits: Number(pkg.credits) || 1,
-        price: Number(pkg.price) || 1,
-        currency: pkg.currency.trim().toUpperCase() || "CNY",
-        popular: pkg.popular,
-        visible: pkg.visible,
-        ...(pkg.requiresPlan !== "none"
-          ? { requiresPlan: pkg.requiresPlan }
-          : {}),
-        allowQuantity: pkg.allowQuantity,
-        maxQuantity: Number(pkg.maxQuantity) || 1,
-        ...(pkg.creemProductId.trim()
-          ? { creemProductId: pkg.creemProductId.trim() }
-          : {}),
-        pricesByPlan,
-        ...(Object.keys(creemProductIdsByPlan).length > 0
-          ? { creemProductIdsByPlan }
-          : {}),
-      };
-    }),
+    packages: matrix.packages.map((pkg) => ({
+      id: pkg.id.trim(),
+      name: pkg.name.trim() || pkg.id.trim(),
+      description: pkg.description,
+      credits: Number(pkg.credits) || 1,
+      price: Number(pkg.price) || 1,
+      currency: pkg.currency.trim().toUpperCase() || "CNY",
+      popular: pkg.popular,
+      visible: pkg.visible,
+      allowQuantity: pkg.allowQuantity,
+      maxQuantity: Number(pkg.maxQuantity) || 1,
+      ...(pkg.creemProductId.trim()
+        ? { creemProductId: pkg.creemProductId.trim() }
+        : {}),
+    })),
   };
 }
 
@@ -641,11 +318,8 @@ function getJsonSettingHint(key: string) {
   if (key === "PAGINATION_PAGE_SIZE_OPTIONS") {
     return "默认允许每页 10、20、50 条；固定默认值 20 必须保留。保存后所有列表的新请求动态生效。";
   }
-  if (key === "PLAN_CAPABILITY_MATRIX") {
-    return "留空表示使用代码默认矩阵，并继续兼容旧上传/月积分配置。后台矩阵保存后会写入 JSON；功能门槛按最低套餐生效，高级套餐自动包含低级套餐能力。";
-  }
   if (key === "CREDIT_PACKAGE_MATRIX") {
-    return "留空表示使用代码默认积分包。占位内容只是示例，填写 JSON 后保存才会启用自定义积分包；pricesByPlan 可按套餐配置不同价格，Creem 按套餐定价时需配置对应产品 ID。";
+    return "留空表示使用代码默认一次性充值包。填写 JSON 后保存才会启用自定义充值选项；每个充值包只配置统一的积分数和价格。";
   }
   if (key === "CREDIT_TOP_UP_CONFIG") {
     return "金额以最小货币单位填写：CNY 的 100 表示 ¥1。creditsPerMajorUnit 是每 1 主货币单位兑换的积分数，例如 CNY=10 即 ¥1=10 积分。支付宝当面付仅允许 CNY。";
@@ -712,17 +386,6 @@ function SettingInput({
         fallbackValue={setting.exampleValue ?? setting.defaultValue}
         onChange={(nextValue) => onChange(nextValue)}
         value={value}
-      />
-    );
-  }
-
-  if (setting.key === "PLAN_CAPABILITY_MATRIX") {
-    return (
-      <PlanCapabilityMatrixInput
-        value={value}
-        fallbackValue={setting.exampleValue}
-        disabled={disabled}
-        onChange={onChange}
       />
     );
   }
@@ -800,6 +463,9 @@ function SettingInput({
   return (
     <Input
       type={setting.valueType === "number" ? "number" : "text"}
+      min={setting.valueType === "number" ? setting.min : undefined}
+      max={setting.valueType === "number" ? setting.max : undefined}
+      step={setting.valueType === "number" && setting.integer ? 1 : undefined}
       value={String(value)}
       placeholder={
         setting.secret && setting.configured ? "已配置，留空不修改" : ""
@@ -813,216 +479,6 @@ function SettingInput({
         )
       }
     />
-  );
-}
-
-function MatrixSelect({
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  value: string;
-  options: readonly { value: string; label: string }[];
-  disabled: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Select value={value} disabled={disabled} onValueChange={onChange}>
-      <SelectTrigger className="h-9 min-w-24">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-function PlanCapabilityMatrixInput({
-  value,
-  fallbackValue,
-  disabled,
-  onChange,
-}: {
-  value: DraftValue;
-  fallbackValue: unknown;
-  disabled: boolean;
-  onChange: (value: DraftValue) => void;
-}) {
-  const matrix = useMemo(
-    () => normalizeCapabilityMatrixDraft(value, fallbackValue),
-    [value, fallbackValue]
-  );
-  const preview = useMemo(() => JSON.stringify(matrix, null, 2), [matrix]);
-
-  const updateMatrix = (next: CapabilityMatrixDraft) => {
-    onChange(JSON.stringify(next, null, 2));
-  };
-
-  const updateFeature = (key: FeatureKey, plan: PlanValue) => {
-    updateMatrix({
-      ...matrix,
-      features: {
-        ...matrix.features,
-        [key]: plan,
-      },
-    });
-  };
-
-  const updateLimit = (plan: PlanValue, key: LimitKey, nextValue: string) => {
-    updateMatrix({
-      ...matrix,
-      limits: {
-        ...matrix.limits,
-        [plan]: {
-          ...matrix.limits[plan],
-          [key]: key === "queuePriority" ? nextValue : Number(nextValue),
-        },
-      },
-    });
-  };
-
-  return (
-    <div className="space-y-5">
-      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        按最低套餐配置功能门槛；Starter/Pro/Ultra/Enterprise
-        自动包含更低套餐能力。并发、上传大小、月积分、批量张数和参考图数量在这里统一配置。
-      </div>
-
-      <section className="space-y-2">
-        <div>
-          <h4 className="text-[11px] uppercase tracking-widest text-muted-foreground font-medium">
-            功能门槛
-          </h4>
-          <p className="text-xs text-muted-foreground">
-            选择启用某项能力所需的最低套餐。
-          </p>
-        </div>
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead className="border-b border-border/60 text-[11px] uppercase tracking-widest text-muted-foreground">
-              <tr>
-                <th className="w-56 px-3 py-2 text-left font-medium">能力</th>
-                <th className="px-3 py-2 text-left font-medium">说明</th>
-                <th className="w-36 px-3 py-2 text-left font-medium">
-                  最低套餐
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {FEATURE_ROWS.map((row) => (
-                <tr key={row.key}>
-                  <td className="px-3 py-2 font-medium">{row.label}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {row.description}
-                  </td>
-                  <td className="px-3 py-2">
-                    <MatrixSelect
-                      value={matrix.features[row.key]}
-                      options={PLAN_OPTIONS}
-                      disabled={disabled}
-                      onChange={(nextValue) =>
-                        updateFeature(row.key, nextValue as PlanValue)
-                      }
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <div>
-          <h4 className="text-[11px] uppercase tracking-widest text-muted-foreground font-medium">
-            套餐限制
-          </h4>
-          <p className="text-xs text-muted-foreground">
-            管理 Ultra 等套餐的并发、上传大小、月积分和请求数量限制。
-          </p>
-        </div>
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full min-w-[980px] text-sm">
-            <thead className="border-b border-border/60 text-[11px] uppercase tracking-widest text-muted-foreground">
-              <tr>
-                <th className="w-52 px-3 py-2 text-left font-medium">限制项</th>
-                {PLAN_OPTIONS.map((plan) => (
-                  <th
-                    key={plan.value}
-                    className="w-36 px-3 py-2 text-left font-medium"
-                  >
-                    {plan.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/60">
-              {LIMIT_ROWS.map((row) => (
-                <tr key={row.key}>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{row.label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {row.description}
-                    </div>
-                  </td>
-                  {PLAN_OPTIONS.map((plan) => {
-                    const currentValue = matrix.limits[plan.value][row.key];
-                    return (
-                      <td key={plan.value} className="px-3 py-2 align-top">
-                        {row.key === "queuePriority" ? (
-                          <MatrixSelect
-                            value={String(currentValue)}
-                            options={QUEUE_PRIORITY_OPTIONS}
-                            disabled={disabled}
-                            onChange={(nextValue) =>
-                              updateLimit(plan.value, row.key, nextValue)
-                            }
-                          />
-                        ) : (
-                          <Input
-                            type="number"
-                            min="1"
-                            step={row.inputMode === "decimal" ? "0.1" : "1"}
-                            value={String(currentValue)}
-                            disabled={disabled}
-                            className="h-9 min-w-28"
-                            onChange={(event) =>
-                              updateLimit(
-                                plan.value,
-                                row.key,
-                                event.target.value
-                              )
-                            }
-                          />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <details className="rounded-md border bg-muted/20 p-3">
-        <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-          查看当前 JSON 预览
-        </summary>
-        <Textarea
-          value={preview}
-          rows={12}
-          readOnly
-          className="mt-3 resize-y font-mono text-xs"
-        />
-      </details>
-    </div>
   );
 }
 
@@ -1189,32 +645,6 @@ function CreditPackageMatrixInput({
     });
   };
 
-  const updatePlanPrice = (index: number, plan: PlanValue, price: string) => {
-    const pkg = matrix.packages[index];
-    if (!pkg) return;
-    updatePackage(index, {
-      pricesByPlan: {
-        ...pkg.pricesByPlan,
-        [plan]: Number(price),
-      },
-    });
-  };
-
-  const updatePlanCreemProductId = (
-    index: number,
-    plan: PlanValue,
-    productId: string
-  ) => {
-    const pkg = matrix.packages[index];
-    if (!pkg) return;
-    updatePackage(index, {
-      creemProductIdsByPlan: {
-        ...pkg.creemProductIdsByPlan,
-        [plan]: productId,
-      },
-    });
-  };
-
   const addPackage = () => {
     const nextIndex = matrix.packages.length + 1;
     const id = `custom_${nextIndex}`;
@@ -1230,16 +660,9 @@ function CreditPackageMatrixInput({
           currency: "CNY",
           popular: false,
           visible: true,
-          requiresPlan: "none",
           allowQuantity: false,
           maxQuantity: 1,
           creemProductId: "",
-          pricesByPlan: Object.fromEntries(
-            PLAN_OPTIONS.map((plan) => [plan.value, 10])
-          ) as Record<PlanValue, number>,
-          creemProductIdsByPlan: Object.fromEntries(
-            PLAN_OPTIONS.map((plan) => [plan.value, ""])
-          ) as Record<PlanValue, string>,
         },
       ],
     });
@@ -1257,7 +680,7 @@ function CreditPackageMatrixInput({
     <div className="space-y-5">
       <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
         管理一次性购买积分包。Epay 仅支持 CNY；Creem
-        可使用各币种对应的预建产品，按套餐定价时需填写对应产品 ID。
+        可使用各币种对应的预建产品，每个积分包只有一套统一价格。
       </div>
 
       <div className="flex justify-end">
@@ -1341,7 +764,7 @@ function CreditPackageMatrixInput({
             </div>
             <div className="space-y-1.5">
               <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
-                兜底价格
+                统一价格
               </Label>
               <Input
                 type="number"
@@ -1372,21 +795,6 @@ function CreditPackageMatrixInput({
             </div>
             <div className="space-y-1.5">
               <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
-                最低可购买套餐
-              </Label>
-              <MatrixSelect
-                value={pkg.requiresPlan}
-                options={PLAN_REQUIREMENT_OPTIONS}
-                disabled={disabled}
-                onChange={(nextValue) =>
-                  updatePackage(index, {
-                    requiresPlan: nextValue as PlanRequirementValue,
-                  })
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
                 最大购买数量
               </Label>
               <Input
@@ -1404,7 +812,7 @@ function CreditPackageMatrixInput({
             </div>
             <div className="space-y-1.5">
               <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">
-                Creem 兜底产品 ID
+                Creem 产品 ID
               </Label>
               <Input
                 value={pkg.creemProductId}
@@ -1484,69 +892,6 @@ function CreditPackageMatrixInput({
                 updatePackage(index, { description: event.target.value })
               }
             />
-          </div>
-
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full min-w-[820px] text-sm">
-              <thead className="border-b border-border/60 text-[11px] uppercase tracking-widest text-muted-foreground">
-                <tr>
-                  <th className="w-40 px-3 py-2 text-left font-medium">套餐</th>
-                  {PLAN_OPTIONS.map((plan) => (
-                    <th
-                      key={plan.value}
-                      className="w-40 px-3 py-2 text-left font-medium"
-                    >
-                      {plan.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                <tr>
-                  <td className="px-3 py-2 font-medium">价格</td>
-                  {PLAN_OPTIONS.map((plan) => (
-                    <td key={plan.value} className="px-3 py-2">
-                      <Input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={String(pkg.pricesByPlan[plan.value])}
-                        disabled={disabled}
-                        className="h-9 min-w-28"
-                        onChange={(event) =>
-                          updatePlanPrice(index, plan.value, event.target.value)
-                        }
-                      />
-                    </td>
-                  ))}
-                </tr>
-                <tr>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">Creem 产品 ID</div>
-                    <div className="text-xs text-muted-foreground">
-                      Epay 可留空
-                    </div>
-                  </td>
-                  {PLAN_OPTIONS.map((plan) => (
-                    <td key={plan.value} className="px-3 py-2">
-                      <Input
-                        value={pkg.creemProductIdsByPlan[plan.value]}
-                        disabled={disabled}
-                        className="h-9 min-w-36"
-                        placeholder="可选"
-                        onChange={(event) =>
-                          updatePlanCreemProductId(
-                            index,
-                            plan.value,
-                            event.target.value
-                          )
-                        }
-                      />
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
           </div>
         </section>
       ))}
@@ -1718,7 +1063,7 @@ export function SystemSettingsPanel({
             系统设置
           </h2>
           <p className="text-sm text-muted-foreground">
-            管理支持、审核、登录、支付、套餐、模型、存储和邮件等全局配置。动态配置由
+            管理支持、审核、登录、支付、模型、存储和邮件等全局配置。动态配置由
             Redis 跨实例缓存，密钥不会在页面回显。
           </p>
         </div>
@@ -1828,7 +1173,6 @@ export function SystemSettingsPanel({
                   <Card
                     key={setting.key}
                     className={
-                      setting.key === "PLAN_CAPABILITY_MATRIX" ||
                       setting.key === "CREDIT_PACKAGE_MATRIX" ||
                       setting.key === "CREDIT_TOP_UP_CONFIG" ||
                       setting.key === "DASHBOARD_SUPPORT_CONFIG" ||

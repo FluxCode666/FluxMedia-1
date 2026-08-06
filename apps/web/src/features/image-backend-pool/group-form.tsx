@@ -3,7 +3,7 @@
 /**
  * 统一媒体后端分组编辑表单。
  *
- * 职责：编辑分组公共属性、套餐门槛、层级关系以及图像/视频计费覆盖，并通过单一
+ * 职责：编辑分组公共属性、队列优先级、层级关系以及图像/视频计费覆盖，并通过单一
  * saveGroup Action 持久化。组件只维护表单草稿，最终校验由共享契约和 UOL 完成。
  */
 import { ADOBE_VIDEO_PRICING_FAMILIES } from "@repo/shared/adobe";
@@ -51,14 +51,6 @@ import {
   videoCreditPricingDraftToOverrides,
 } from "./video-credit-pricing-editor";
 
-const PLAN_OPTIONS = [
-  ["free", "Free"],
-  ["starter", "Starter"],
-  ["pro", "Pro"],
-  ["ultra", "Ultra"],
-  ["enterprise", "Enterprise"],
-] as const;
-
 /** 渲染新增或编辑分组的受控弹窗。 */
 export function BackendGroupFormDialog({
   open,
@@ -84,9 +76,6 @@ export function BackendGroupFormDialog({
   const [contentSafety, setContentSafety] = useState<
     "inherit" | "enabled" | "disabled"
   >("inherit");
-  const [minPlan, setMinPlan] = useState<
-    "free" | "starter" | "pro" | "ultra" | "enterprise"
-  >("free");
   const [childGroupIds, setChildGroupIds] = useState<string[]>([]);
   const [imagePricing, setImagePricing] = useState<ImageCreditPricingDraft>({});
   const [videoPricing, setVideoPricing] = useState<VideoCreditPricingDraft>({});
@@ -100,7 +89,6 @@ export function BackendGroupFormDialog({
     setIsDefault(group?.isDefault ?? groups.length === 0);
     setIsUserSelectable(group?.isUserSelectable ?? true);
     setContentSafety(group?.contentSafety ?? "inherit");
-    setMinPlan(group?.minPlan ?? "free");
     setChildGroupIds(group?.childGroupIds ?? []);
     setImagePricing(
       imageCreditOverridesToDraft(
@@ -155,7 +143,6 @@ export function BackendGroupFormDialog({
       isDefault,
       isUserSelectable,
       contentSafety,
-      minPlan,
       imageCreditOverrides: imageCreditPricingDraftToOverrides(imagePricing),
       videoCreditOverrides: videoCreditPricingDraftToOverrides(videoPricing),
       childGroupIds,
@@ -170,8 +157,8 @@ export function BackendGroupFormDialog({
           <DialogHeader>
             <DialogTitle>{group ? "编辑分组" : "新增分组"}</DialogTitle>
             <DialogDescription>
-              分组只控制访问、内容安全和计费覆盖，不再划分 Web 或 Responses
-              调度车道。
+              分组控制访问、内容安全、计费覆盖和任务队列优先级，不再划分套餐或
+              Web/Responses 调度车道。
             </DialogDescription>
           </DialogHeader>
 
@@ -186,7 +173,7 @@ export function BackendGroupFormDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="group-priority">优先级</Label>
+              <Label htmlFor="group-priority">任务队列优先级</Label>
               <Input
                 id="group-priority"
                 type="number"
@@ -196,6 +183,9 @@ export function BackendGroupFormDialog({
                 onChange={(event) => setPriority(event.target.value)}
                 required
               />
+              <p className="text-xs text-muted-foreground">
+                允许 0 至 10000，数值越小越优先；仅影响后续新任务。
+              </p>
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="group-description">说明</Label>
@@ -205,24 +195,6 @@ export function BackendGroupFormDialog({
                 onChange={(event) => setDescription(event.target.value)}
                 maxLength={500}
               />
-            </div>
-            <div className="space-y-2">
-              <Label>最低套餐</Label>
-              <Select
-                value={minPlan}
-                onValueChange={(value) => setMinPlan(value as typeof minPlan)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PLAN_OPTIONS.map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
             <div className="space-y-2">
               <Label>内容安全</Label>
@@ -262,7 +234,7 @@ export function BackendGroupFormDialog({
             <BackendBooleanSetting
               id="group-selectable"
               label="用户可选择"
-              description="允许具备套餐能力的用户手动选择。"
+              description="允许用户手动选择此分组。"
               checked={isUserSelectable}
               onCheckedChange={setIsUserSelectable}
             />

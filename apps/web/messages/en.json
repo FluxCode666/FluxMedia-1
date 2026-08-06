@@ -425,15 +425,6 @@
       "closed": "Closed"
     }
   },
-  "Subscription": {
-    "plans": {
-      "free": "Free",
-      "starter": "Starter",
-      "pro": "Pro",
-      "ultra": "Ultra",
-      "enterprise": "Enterprise"
-    }
-  },
   "Dashboard": {
     "nav": {
       "dashboard": "Dashboard",
@@ -533,7 +524,7 @@
       "revenueCurrency": "Revenue ({currency})",
       "date": "Date",
       "accessibleTableCaption": "Daily top-up revenue and order details",
-      "scopeNote": "This report includes amount top-ups and credit package orders in payment_order. Order volume includes every status by creation time, while revenue includes fulfilled orders by fulfillment time. Amounts are gross order values before provider fees, refunds, or chargeback adjustments. Subscription revenue and records created before unified payment orders are excluded.",
+      "scopeNote": "This report includes amount top-ups and credit package orders in payment_order. Order volume includes every status by creation time, while revenue includes fulfilled orders by fulfillment time. Amounts are gross order values before provider fees, refunds, or chargeback adjustments.",
       "loadError": "Payment overview could not be loaded",
       "loadErrorDescription": "Check the date range or try again later.",
       "retry": "Retry"
@@ -620,7 +611,6 @@
       "createSectionDescription": "Create a separate key for a site or application, with an optional generation group and credit limit.",
       "listTitle": "Key list",
       "listDescription": "Expand an active key to edit its group and quota. Revoked keys are read-only.",
-      "requiresStarter": "Your current plan cannot create or edit API keys. Existing keys can still be revoked and deleted.",
       "baseUrl": "Base URL: {url}",
       "documentation": "View API documentation",
       "defaultName": "Default API key",
@@ -669,7 +659,7 @@
       "backendGroup": {
         "label": "Generation group",
         "default": "Platform default group",
-        "hint": "Only enabled groups available to the current plan can be selected. An unavailable current value is shown for identification only.",
+        "hint": "Only enabled groups available to this API key can be selected. An unavailable current value is shown for identification only.",
         "notSelectable": "{name} (currently unavailable)",
         "unavailable": "Unavailable group (…{id})"
       },
@@ -759,42 +749,10 @@
     },
     "billing": {
       "pageTitle": "Billing & Usage",
-      "description": "Manage subscriptions, billing history, credit usage, and image pricing here.",
+      "description": "Review billing history, credit usage, and image pricing here.",
       "tabs": {
         "billing": "Billing",
         "usage": "Usage"
-      },
-      "currentPlan": {
-        "title": "Current Plan",
-        "description": "Manage your subscription and billing cycle.",
-        "freePlan": "Free Plan",
-        "current": "Current",
-        "basicFeatures": "Basic features with limited credits",
-        "premiumFeatures": "API, chat, and model benefits follow your current plan",
-        "upgradePlan": "Upgrade Plan",
-        "managePlan": "Manage Plan",
-        "monthlyCredits": "Monthly Credits",
-        "renewalDate": "Renewal Date",
-        "notApplicable": "N/A",
-        "price": "Price",
-        "perMonth": "month",
-        "perYear": "year",
-        "cancelSubscription": "Cancel Subscription",
-        "cancelPending": "Cancels on {date}",
-        "cancelDialog": {
-          "title": "Cancel Subscription?",
-          "description": "Your subscription will remain active until the end of your current billing period ({date}). After that, your plan will revert to Free.",
-          "keepBenefits": "You'll keep all your current plan benefits until {date}",
-          "confirm": "Yes, Cancel Subscription",
-          "cancel": "Keep Subscription"
-        }
-      },
-      "paymentMethods": {
-        "title": "Payment Methods",
-        "description": "Add or manage your payment methods for subscriptions and purchases.",
-        "addMethod": "Add Payment Method",
-        "noMethods": "No payment methods added",
-        "noMethodsHint": "Add a payment method to upgrade your plan or purchase credits"
       },
       "history": {
         "title": "Billing History",
@@ -817,14 +775,13 @@
       "creditsAvailable": "credits available",
       "getMoreCredits": {
         "title": "Get More Credits",
-        "description": "Buy one-time pay-as-you-go credits, or subscribe for monthly credits and advanced features",
-        "buyCredits": "Pay as you go",
-        "viewPlans": "View Subscription Plans"
+        "description": "Buy credits once and pay as you go.",
+        "buyCredits": "Buy credits"
       },
       "sources": {
         "bonus": "Free Credits",
         "purchase": "Pay as you go",
-        "subscription": "Plan Credits",
+        "subscription": "Historical subscription credits",
         "refund": "Refund Credits"
       },
       "expiringSoon": {
@@ -860,8 +817,8 @@
         },
         "descriptions": {
           "registration_bonus": "New user registration bonus",
-          "monthly_grant": "{plan} monthly subscription credits",
-          "yearly_grant": "{plan} yearly subscription credits ({monthly} x 12)",
+          "monthly_grant": "Historical monthly grant",
+          "yearly_grant": "Historical yearly grant ({monthly} x 12)",
           "purchase": "Pay-as-you-go credit purchase",
           "consumption": "Image generation",
           "expiration": "Credits expired",
@@ -880,8 +837,6 @@
         "newUsersThisWeek": "{count} new this week",
         "pendingTickets": "Pending Tickets",
         "newTicketsToday": "{count} new today",
-        "activeSubscriptions": "Active Subscriptions",
-        "totalSubscriptions": "{count} total",
         "creditsCirculation": "Credits in Circulation",
         "currentUserCredits": "Total credits held by users",
         "imageGeneration": "Image Generation",
@@ -903,7 +858,6 @@
         "currentBalance": "Current Balance",
         "totalGranted": "Total Granted",
         "totalSpent": "Total Spent",
-        "subscriberCount": "Subscribers",
         "activeLabel": "{count} active",
         "generationStats": "Generation Statistics",
         "totalGenerations": "Total Generations",
@@ -930,7 +884,6 @@
       "stats": {
         "totalUsers": "Total Users",
         "admins": "Admins",
-        "subscribers": "Subscribers",
         "banned": "Banned"
       },
       "search": {
@@ -944,7 +897,6 @@
         "user": "User",
         "status": "Status",
         "credits": "Credits",
-        "subscription": "Subscription",
         "role": "Role",
         "actions": "Actions",
         "noResults": "No matching users found",
@@ -954,13 +906,6 @@
         "banned": "Banned",
         "verified": "Verified",
         "unverified": "Unverified"
-      },
-      "subscriptionLabels": {
-        "none": "No Subscription",
-        "active": "Subscribed",
-        "canceled": "Canceled",
-        "pastDue": "Past Due",
-        "incomplete": "Incomplete"
       },
       "ban": {
         "banTitle": "Ban User",
