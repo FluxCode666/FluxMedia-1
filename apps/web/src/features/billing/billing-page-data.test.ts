@@ -21,7 +21,7 @@ describe("resolveLegacyBillingRedirect", () => {
         purchase: "subscription",
         ignored: "secret",
       })
-    ).toBe("/dashboard/wallet?pay=processing&purchase=subscription");
+    ).toBe("/dashboard/wallet?pay=processing");
   });
 
   it("兼容旧 cancel 并丢弃数组、HTML 与跨站载荷", () => {

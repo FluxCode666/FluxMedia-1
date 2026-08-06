@@ -1,7 +1,7 @@
 /**
  * 钱包 Server Action 薄适配测试。
  *
- * 证明四块数据只从当前会话构造 user Principal，并原样返回 UOL 输出。
+ * 证明三块数据只从当前会话构造 user Principal，并原样返回 UOL 输出。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -38,7 +38,6 @@ import {
   getMyWalletBalanceAction,
   getMyWalletPageDataAction,
   getMyWalletRecentPaymentOrdersAction,
-  getMyWalletSubscriptionOptionsAction,
   getMyWalletTopUpOptionsAction,
 } from "./actions";
 
@@ -55,10 +54,6 @@ describe("wallet actions", () => {
     [getMyWalletBalanceAction, "credits.getMyBalance"],
     [getMyWalletTopUpOptionsAction, "credits.getTopUpOptions"],
     [getMyWalletRecentPaymentOrdersAction, "payment.listMyRecentOrders"],
-    [
-      getMyWalletSubscriptionOptionsAction,
-      "subscription.listMyPurchasablePlans",
-    ],
   ] as const)("%s 仅以本人 Principal 调用 %s", async (action, operation) => {
     const output = { marker: operation };
     mocks.invokeOperation.mockResolvedValue(output);
@@ -77,7 +72,7 @@ describe("wallet actions", () => {
     );
   });
 
-  it("首屏聚合只读取一次角色并隔离四块 UOL 结果", async () => {
+  it("首屏聚合只读取一次角色并隔离三块 UOL 结果", async () => {
     mocks.invokeOperation.mockImplementation(async (operation: string) => {
       if (operation === "credits.getTopUpOptions") {
         throw new Error("top-up unavailable");
@@ -91,12 +86,11 @@ describe("wallet actions", () => {
 
     expect(mocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
     expect(mocks.getUserRoleById).toHaveBeenCalledTimes(1);
-    expect(mocks.invokeOperation).toHaveBeenCalledTimes(4);
+    expect(mocks.invokeOperation).toHaveBeenCalledTimes(3);
     expect(result).toMatchObject({
       balance: { status: "ready" },
       recentOrders: { status: "ready" },
       topUp: { status: "error" },
-      subscription: { status: "ready" },
     });
   });
 });

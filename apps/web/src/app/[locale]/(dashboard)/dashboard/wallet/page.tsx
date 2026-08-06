@@ -2,7 +2,7 @@
  * 钱包页面。
  *
  * 使用方：用户侧独立资产与购买入口。页面通过单次本人 UOL 聚合读取余额、最近充值
- * 订单、充值和订阅能力；不展示退款记录或价格趋势，也不在页面层处理支付履约。
+ * 订单和一次性充值能力；不展示退款记录或价格趋势，也不在页面层处理支付履约。
  */
 import { getServerSession } from "@repo/shared/auth/server";
 import { redirect } from "next/navigation";
@@ -35,7 +35,6 @@ function createUnavailableWalletPageData(): WalletPageData {
   return {
     balance: { status: "error" },
     recentOrders: { status: "error" },
-    subscription: { status: "error" },
     topUp: { status: "error" },
   };
 }
@@ -52,8 +51,6 @@ export default async function WalletPage({ searchParams }: WalletPageProps) {
   const actionResult = await getMyWalletPageDataAction();
   const pageData = actionResult?.data ?? createUnavailableWalletPageData();
   const copy = createWalletCopy(locale === "zh");
-  const initialPurchase =
-    params.purchase === "subscription" ? "subscription" : "top-up";
   const paymentNotice = isWalletPaymentResultStatus(params.pay)
     ? params.pay
     : params.success === "true"
@@ -76,9 +73,7 @@ export default async function WalletPage({ searchParams }: WalletPageProps) {
       <WalletOverview balance={pageData.balance} copy={copy} />
       <WalletPurchaseSection
         copy={copy}
-        initialPurchase={initialPurchase}
         locale={locale}
-        subscription={pageData.subscription}
         topUp={pageData.topUp}
       />
       <WalletRecentOrders

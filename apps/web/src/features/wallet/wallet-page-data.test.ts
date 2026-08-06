@@ -1,8 +1,8 @@
 /**
  * 钱包页面数据聚合测试。
  *
- * 证明余额、最近订单、充值与订阅能力并行读取且独立失败，主动关闭不会被误判为
- * 读取异常。
+ * 证明余额、最近订单和一次性充值能力并行读取且独立失败，充值关闭不会被误判
+ * 为读取异常。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -17,8 +17,8 @@ const BALANCE = {
   asOf: "2026-07-22T01:00:00.000Z",
 };
 
-/** 创建指定充值/订阅开关的钱包 loader。 */
-function createLoaders(topUpEnabled: boolean, subscriptionEnabled: boolean) {
+/** 创建指定充值开关的钱包 loader。 */
+function createLoaders(topUpEnabled: boolean) {
   return {
     loadBalance: vi.fn().mockResolvedValue(BALANCE),
     loadRecentOrders: vi.fn().mockResolvedValue({
@@ -41,23 +41,12 @@ function createLoaders(topUpEnabled: boolean, subscriptionEnabled: boolean) {
           ]
         : [],
     }),
-    loadSubscription: vi.fn().mockResolvedValue({
-      enabled: subscriptionEnabled,
-      currentPlan: "free" as const,
-      currency: "CNY",
-      plans: [],
-    }),
   };
 }
 
 describe("loadWalletPageData", () => {
-  it.each([
-    [false, false],
-    [true, false],
-    [false, true],
-    [true, true],
-  ])("保留充值=%s、订阅=%s 的四态快照", async (topUp, subscription) => {
-    const result = await loadWalletPageData(createLoaders(topUp, subscription));
+  it.each([false, true])("保留充值=%s 的快照", async (topUp) => {
+    const result = await loadWalletPageData(createLoaders(topUp));
 
     expect(result.balance).toEqual({ status: "ready", data: BALANCE });
     expect(result.recentOrders).toEqual({
@@ -72,14 +61,10 @@ describe("loadWalletPageData", () => {
       status: "ready",
       data: { enabled: topUp },
     });
-    expect(result.subscription).toMatchObject({
-      status: "ready",
-      data: { enabled: subscription },
-    });
   });
 
   it("隔离余额与购买能力失败，不把异常伪装为关闭或零余额", async () => {
-    const loaders = createLoaders(false, true);
+    const loaders = createLoaders(false);
     loaders.loadBalance.mockRejectedValue(new Error("balance unavailable"));
     loaders.loadRecentOrders.mockRejectedValue(
       new Error("recent orders unavailable")
@@ -91,25 +76,5 @@ describe("loadWalletPageData", () => {
     expect(result.balance).toEqual({ status: "error" });
     expect(result.recentOrders).toEqual({ status: "error" });
     expect(result.topUp).toEqual({ status: "error" });
-    expect(result.subscription).toMatchObject({
-      status: "ready",
-      data: { enabled: true },
-    });
-  });
-
-  it("区分订阅主动关闭与 provider 配置读取异常", async () => {
-    const loaders = createLoaders(false, false);
-    loaders.loadSubscription.mockRejectedValue(
-      new Error("provider settings unavailable")
-    );
-
-    const result = await loadWalletPageData(loaders);
-
-    expect(result.topUp).toMatchObject({
-      status: "ready",
-      data: { enabled: false },
-    });
-    expect(result.recentOrders).toMatchObject({ status: "ready" });
-    expect(result.subscription).toEqual({ status: "error" });
   });
 });
