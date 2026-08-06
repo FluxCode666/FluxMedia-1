@@ -130,6 +130,29 @@ require_backup_commands() {
   done
 }
 
+# 用真实只读 schema-only dump 验证客户端版本、数据库权限与 archive 读取链路。
+# 探测文件只存在于 mktemp 路径并在函数退出时删除，不读取业务表数据。
+probe_backup_toolchain() (
+  set -euo pipefail
+  local probe_archive
+
+  probe_archive="$(mktemp)"
+  cleanup_probe_archive() {
+    rm -f "${probe_archive}"
+  }
+  trap cleanup_probe_archive EXIT
+
+  chmod 600 "${probe_archive}"
+  pg_dump \
+    --dbname="${database_url}" \
+    --format=custom \
+    --schema-only \
+    --no-acl \
+    --no-owner \
+    --file "${probe_archive}"
+  pg_restore --list "${probe_archive}" >/dev/null
+)
+
 # 准备本地备份目录并拒绝符号链接边界。
 # 目录固定在 deploy-path/backups/<image-tag>，权限收紧为 0700。
 prepare_local_backup_directory() {
@@ -153,6 +176,7 @@ run_preflight() {
   local bucket_versioning
 
   require_backup_commands
+  probe_backup_toolchain
   if [ "${backup_storage}" = "local" ]; then
     prepare_local_backup_directory "${deploy_path}" "${image_tag}"
     return

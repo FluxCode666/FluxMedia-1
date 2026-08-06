@@ -67,6 +67,7 @@ if [ -n "${PGDATABASE:-}" ]; then
 fi
 database_url=""
 output=""
+schema_only=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dbname)
@@ -81,6 +82,10 @@ while [ "$#" -gt 0 ]; do
       output="$2"
       shift 2
       ;;
+    --schema-only|-s)
+      schema_only=true
+      shift
+      ;;
     *)
       shift
       ;;
@@ -88,6 +93,22 @@ while [ "$#" -gt 0 ]; do
 done
 : "${database_url:?pg_dump 缺少 --dbname}"
 [ "${database_url}" = "postgresql://flux:secret@db:5432/flux" ]
+if [ "${FAKE_PG_DUMP_VERSION_MISMATCH:-false}" = "true" ]; then
+  if [ "${schema_only}" != "true" ]; then
+    exit 0
+  fi
+  printf "pg_dump: error: aborting because of server version mismatch\n" >&2
+  printf "pg_dump: detail: server version: 18.4; pg_dump version: 16.14\n" >&2
+  exit 1
+fi
+if [ "${schema_only}" = "true" ]; then
+  if [ -n "${output}" ]; then
+    printf "fake-schema-dump" >"${output}"
+  else
+    printf "fake-schema-dump"
+  fi
+  exit 0
+fi
 : "${output:?pg_dump 缺少 --file}"
 printf "fake-custom-dump" >"${output}"'
 
@@ -115,6 +136,16 @@ printf '%s\n' \
   'DATABASE_URL=postgresql://flux:secret@db:5432/flux' \
   'DEPLOY_BACKUP_RETENTION_DAYS=7' \
   >"${env_file}"
+
+# preflight 必须真实连接数据库并执行只读 schema-only 探测。只检查命令存在
+# 无法在停服前发现客户端与服务端版本不兼容，会让 create 阶段才暴露故障。
+assert_rejected \
+  "preflight 拒绝 pg_dump 服务端版本不兼容" \
+  "server version mismatch" \
+  env PATH="${fake_bin}:${PATH}" \
+  FAKE_PG_DUMP_VERSION_MISMATCH=true \
+  bash "${backup_script}" \
+  preflight "${env_file}" "${deploy_path}" "${image_tag}" "${git_sha}"
 
 PATH="${fake_bin}:${PATH}" bash "${backup_script}" \
   preflight "${env_file}" "${deploy_path}" "${image_tag}" "${git_sha}"

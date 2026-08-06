@@ -17,8 +17,9 @@
 
 ## 首次配置服务器
 
-目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot，以及与数据库主版本兼容的
-PostgreSQL 客户端。生产 Workflow 会在停止旧 Web 后用 `pg_dump` 创建一致性备份；配置了
+目标机需要 Docker Engine、Docker Compose v2、Nginx、Certbot，以及不低于数据库主版本的
+PostgreSQL `pg_dump`/`pg_restore` 客户端。生产 Workflow 会在停止旧 Web 前执行真实的
+schema-only archive 探测，在停止旧 Web 后用 `pg_dump` 创建一致性备份；配置了
 S3 bucket 时使用 age 公钥加密并上传到启用版本控制的 bucket，未配置时持久化到部署目录的
 `backups/`。先准备部署目录和真实环境变量：
 
@@ -112,8 +113,10 @@ docker compose up -d web
 自动部署先拉取新镜像，再停止旧 Web、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
 只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、0074 与
 postcheck。资产收编开始后，任何迁移、后置校验、启动或健康检查失败都会保持 Web 停止，
-绝不自动启动旧 schema 镜像。恢复旧镜像前必须先恢复 Workflow 记录的迁移前数据库备份，
-并让 `legacy-startup` 门禁证明三个旧视频列仍完整；否则只能前向修复。完整步骤见
+绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版 Web 在本轮停服前确实处于
+运行状态且镜像元数据完整，退出状态机才恢复同一上一版 Web 与代理；该证据证明数据库尚未
+改变且上一版已运行在当前 schema 上。恢复迁移前数据库备份后手工启动旧 schema 镜像时，
+仍必须让 `legacy-startup` 门禁证明三个旧视频列完整。完整步骤见
 `docs/plan/2026-07-23-api-key-moderation-rollout.md`。
 
 资产收编会先把本轮新对象以 0600 NDJSON 写入部署目录 `state/`。若选择恢复迁移前数据库

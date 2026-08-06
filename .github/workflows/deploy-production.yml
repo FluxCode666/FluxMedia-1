@@ -97,6 +97,9 @@ jobs:
       - name: Test deployment database backup
         run: bash deploy/create-database-backup.test.sh
 
+      - name: Test deployment release recovery policy
+        run: bash deploy/release-recovery-policy.test.sh
+
       - name: Generate Fumadocs source
         run: pnpm --filter @repo/web exec fumadocs-mdx
 
@@ -353,6 +356,7 @@ jobs:
             -P "${DEPLOY_PORT}" \
             deploy/docker-compose.yml \
             deploy/create-database-backup.sh \
+            deploy/release-recovery-policy.sh \
             deploy/read-env-value.sh \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
 
@@ -411,6 +415,10 @@ jobs:
           fi
           if [ ! -f create-database-backup.sh ]; then
             echo "目标服务器缺少数据库备份脚本。" >&2
+            exit 1
+          fi
+          if [ ! -f release-recovery-policy.sh ]; then
+            echo "目标服务器缺少发布恢复策略脚本。" >&2
             exit 1
           fi
 
@@ -480,8 +488,11 @@ jobs:
           previous_migrate_image="$(read_env_value FLUXMEDIA_MIGRATE_IMAGE)"
           previous_proxy_image="$(read_env_value FLUXMEDIA_PROXY_IMAGE)"
           previous_tag="$(read_env_value FLUXMEDIA_TAG)"
+          previous_release_available=false
           if [[ "${previous_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
+            && [[ "${previous_proxy_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
             && [[ "${previous_tag}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            previous_release_available=true
             printf 'previous_release=%s:%s\n' \
               "${previous_image}" "${previous_tag}"
           else
@@ -495,36 +506,44 @@ jobs:
           web_stopped=false
           migration_started=false
           deployment_succeeded=false
+          previous_web_was_running=false
 
           # 迁移前允许恢复旧服务；迁移开始后只保持维护状态。
           handle_deployment_exit() {
             status="$?"
+            recovery_action="keep-maintenance"
             if [ "${status}" -eq 0 ] || [ "${deployment_succeeded}" = "true" ]; then
               return
             fi
 
-            if [ "${migration_started}" = "true" ]; then
+            if ! recovery_action="$(
+              bash ./release-recovery-policy.sh \
+                "${migration_started}" \
+                "${web_stopped}" \
+                "${previous_web_was_running}" \
+                "${previous_release_available}"
+            )"; then
+              echo "发布恢复策略执行失败，保持维护状态。" >&2
+              recovery_action="keep-maintenance"
+            fi
+
+            if [ "${recovery_action}" = "keep-maintenance" ] \
+              && [ "${migration_started}" = "true" ]; then
               echo "迁移已开始：保持维护状态，禁止自动启动旧 schema 镜像。" >&2
               docker compose stop --timeout 30 web >/dev/null 2>&1 || true
               return "${status}"
             fi
 
-            legacy_startup_allowed=false
-            if [ "${web_stopped}" = "true" ] \
-              && [ -n "${previous_image}" ] \
-              && [ -n "${previous_tag}" ]; then
-              # 此时 .env 仍指向本次新 migrator；首次发布的旧 migrator 不认识
-              # legacy-startup，必须先用新镜像证明旧 schema 可启动，再切回旧元数据。
-              if run_release_gate legacy-startup >/dev/null; then
-                legacy_startup_allowed=true
-              fi
-            fi
             restore_previous_metadata
-            if [ "${legacy_startup_allowed}" = "true" ]; then
-              echo "迁移尚未开始且旧 schema 门禁通过，恢复旧 Web 服务。" >&2
-              docker compose up -d --no-deps web >/dev/null 2>&1 || true
-            elif [ "${web_stopped}" = "true" ]; then
-              echo "旧应用启动门禁拒绝恢复，保持维护状态。" >&2
+            if [ "${recovery_action}" = "restart-previous" ]; then
+              echo "迁移尚未开始，恢复原本运行的上一版 Web 与代理服务。" >&2
+              if ! docker compose up -d --no-deps \
+                media-upstream-proxy web >/dev/null 2>&1; then
+                echo "上一版服务恢复失败，保持维护状态。" >&2
+              fi
+            elif [ "${recovery_action}" = "keep-maintenance" ] \
+              && [ "${web_stopped}" = "true" ]; then
+              echo "缺少可证明安全的上一版运行状态，保持维护状态。" >&2
             fi
             return "${status}"
           }
@@ -551,6 +570,9 @@ jobs:
           fi
 
           echo "进入维护状态并停止旧 Web 服务。"
+          if [ -n "$(docker compose ps -q --status running web)" ]; then
+            previous_web_was_running=true
+          fi
           docker compose stop --timeout 60 web
           web_stopped=true
           if [ -n "$(docker compose ps -q --status running web)" ]; then
