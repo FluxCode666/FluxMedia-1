@@ -5,7 +5,6 @@
  * 全局及单用户并发槽由必填 Redis 原子租约统一裁决，多副本之间不再各自计数。
  */
 
-import type { QueuePriority as LegacyQueuePriority } from "@repo/shared/config/subscription-plan";
 import { logWarn } from "@repo/shared/logger";
 import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 import { OperationError } from "@repo/shared/uol";
@@ -23,7 +22,7 @@ import {
   renewImageGenerationExecution,
 } from "./redis-image-generation-slots";
 
-type QueuePriority = number | LegacyQueuePriority;
+type QueuePriority = number;
 
 type QueueTask<T> = {
   id: number;
@@ -40,12 +39,6 @@ type QueueTask<T> = {
   executionLease?: RedisImageGenerationExecutionLease;
   started: boolean;
   timeout?: ReturnType<typeof setTimeout>;
-};
-
-const LEGACY_PRIORITY_WEIGHT: Record<LegacyQueuePriority, number> = {
-  normal: 0,
-  priority: 1,
-  highest: 2,
 };
 
 let nextTaskId = 1;
@@ -208,27 +201,12 @@ function startExecutionRenewal(task: QueueTask<unknown>): void {
   task.executionRenewTimer.unref?.();
 }
 
-/** 比较数字分组 priority；旧字符串只在兼容调用方仍存在时使用。 */
-function compareQueuePriority(
-  left: QueuePriority,
-  right: QueuePriority
-): number {
-  if (typeof left === "number" && typeof right === "number") {
-    return left - right;
-  }
-  if (typeof left === "number") return -1;
-  if (typeof right === "number") return 1;
-  return LEGACY_PRIORITY_WEIGHT[right] - LEGACY_PRIORITY_WEIGHT[left];
-}
-
 /** 比较队列任务；同一分组 priority 以单调 ID 保持 FIFO。 */
 function compareQueueTasks(
   left: QueueTask<unknown>,
   right: QueueTask<unknown>
 ): number {
-  return (
-    compareQueuePriority(left.priority, right.priority) || left.id - right.id
-  );
+  return left.priority - right.priority || left.id - right.id;
 }
 
 /** 从本进程等待队列移除指定任务。 */

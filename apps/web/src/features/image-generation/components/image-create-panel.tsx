@@ -147,7 +147,7 @@ function isAbortError(value: unknown): boolean {
   );
 }
 
-/** 检查上传文件是否为允许的图片且未超过套餐单文件限制。 */
+/** 检查上传文件是否为允许的图片且未超过系统单文件限制。 */
 function validateImageFile(file: File, maxFileSizeBytes: number): void {
   if (file.size <= 0) throw new Error("图片文件不能为空");
   if (!isSupportedImageType(file.type)) {
@@ -158,7 +158,7 @@ function validateImageFile(file: File, maxFileSizeBytes: number): void {
   }
 }
 
-/** 校验来源图片与蒙版的合计大小，提前对齐服务端套餐上传上限。 */
+/** 校验来源图片与蒙版的合计大小，提前对齐服务端系统上传上限。 */
 function validateTotalUploadSize(
   files: readonly File[],
   mask: File | null,
@@ -212,7 +212,7 @@ function createReferenceFileName(
  * 在构造 Blob 前按上传上限读取响应流，避免超限媒体先完整占用浏览器内存。
  *
  * @param response 已成功返回且由站内存储提供的图片响应。
- * @param maxBytes 当前套餐单文件与总上传限制中的较小值。
+ * @param maxBytes 当前系统单文件与总上传限制中的较小值。
  * @returns MIME 已收窄、大小未超过上限的图片 Blob。
  * @sideEffects 消费响应体；超限时主动取消剩余响应流。
  * @failure MIME 非法、响应为空或流式读取超限时抛出面向用户的错误。
@@ -232,13 +232,13 @@ async function readReferenceImageBlob(
 
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new Error("参考图片超过当前套餐上传限制");
+    throw new Error("参考图片超过系统上传限制");
   }
 
   if (!response.body) {
     const blob = await response.blob();
     if (blob.size > maxBytes) {
-      throw new Error("参考图片超过当前套餐上传限制");
+      throw new Error("参考图片超过系统上传限制");
     }
     return blob;
   }
@@ -253,7 +253,7 @@ async function readReferenceImageBlob(
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
         await reader.cancel();
-        throw new Error("参考图片超过当前套餐上传限制");
+        throw new Error("参考图片超过系统上传限制");
       }
       chunks.push(value);
     }
@@ -267,8 +267,8 @@ async function readReferenceImageBlob(
  * 下载一张参考图并复用本地上传的 MIME、单文件和总大小边界。
  *
  * @param source 已由调用方授权或由服务端返回的图片来源。
- * @param maxFileSizeBytes 套餐允许的单文件字节上限。
- * @param maxUploadBytes 套餐允许的请求总上传字节上限。
+ * @param maxFileSizeBytes 系统允许的单文件字节上限。
+ * @param maxUploadBytes 系统允许的请求总上传字节上限。
  * @param abortController 初始交接可传入控制器，以便用户操作使旧下载失效。
  * @returns 可直接加入 multipart 编辑请求的浏览器 File。
  * @sideEffects 发起一次图片 GET；跨站来源不会携带浏览器凭据。
@@ -501,7 +501,7 @@ export function ImageCreatePanel({
         setMask(null);
         setMode("edit");
         if (!selectModelForMode("edit")) {
-          setError("当前套餐没有支持图生图的模型");
+          setError("当前没有支持图生图的模型");
         }
       })
       .catch((caught: unknown) => {
@@ -592,7 +592,7 @@ export function ImageCreatePanel({
     }
     try {
       if (!maskAvailable) {
-        throw new Error("当前套餐没有支持蒙版编辑的模型");
+        throw new Error("当前没有支持蒙版编辑的模型");
       }
       if (file.type !== "image/png") throw new Error("蒙版必须为 PNG 图片");
       validateImageFile(file, maxFileSizeBytes);

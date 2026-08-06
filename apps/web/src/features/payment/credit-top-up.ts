@@ -359,7 +359,7 @@ export async function getCreditTopUpOrderStatus(input: {
 /**
  * 查询当前用户自己的统一积分支付订单状态。
  *
- * 支付结果页通过此函数同时读取支付宝按金额充值与 Creem / 易支付积分套餐订单。
+ * 支付结果页通过此函数同时读取支付宝按金额充值与 Creem / 易支付积分包订单。
  * 状态仅来自本地服务端记录；第三方页面回跳不参与积分发放或成功判定。
  */
 export async function getCreditPaymentStatus(input: {

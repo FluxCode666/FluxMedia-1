@@ -62,7 +62,6 @@ const adminSettingSnapshotSchema = z
       "support",
       "auth",
       "payment",
-      "plans",
       "moderation",
       "models",
       "storage",

@@ -162,7 +162,7 @@ describe("withImageGenerationQueue", () => {
     redisSlots.failAdmissionAcquire = true;
 
     await expect(
-      queue({ userId: "user-a", priority: "normal", userConcurrency: 1 }, run)
+      queue({ userId: "user-a", priority: 100, userConcurrency: 1 }, run)
     ).rejects.toThrow("redis unavailable");
     expect(run).not.toHaveBeenCalled();
   });
@@ -176,7 +176,7 @@ describe("withImageGenerationQueue", () => {
     const queued = queue(
       {
         userId: "user-a",
-        priority: "normal",
+        priority: 100,
         userConcurrency: 1,
         timeoutMs: 5,
       },
@@ -199,7 +199,7 @@ describe("withImageGenerationQueue", () => {
     const firstRun = withImageGenerationQueue(
       {
         userId: "user-a",
-        priority: "normal",
+        priority: 100,
         userConcurrency: 10,
       },
       async () => {
@@ -210,7 +210,7 @@ describe("withImageGenerationQueue", () => {
     const secondRun = withImageGenerationQueue(
       {
         userId: "user-b",
-        priority: "normal",
+        priority: 100,
         userConcurrency: 10,
       },
       async () => {
@@ -237,14 +237,14 @@ describe("withImageGenerationQueue", () => {
 
     // 同一用户的第一个任务持有 admission 后，第二个请求必须立即拒绝，不能进入队列。
     const firstRun = queue(
-      { userId: "user-a", priority: "normal", userConcurrency: 1 },
+      { userId: "user-a", priority: 100, userConcurrency: 1 },
       async () => {
         started.push("a1");
         return await first.promise;
       }
     );
     const secondRun = queue(
-      { userId: "user-a", priority: "normal", userConcurrency: 1 },
+      { userId: "user-a", priority: 100, userConcurrency: 1 },
       async () => {
         started.push("a2");
         return "a2";
@@ -252,7 +252,7 @@ describe("withImageGenerationQueue", () => {
     );
     // 另一用户不受前者占用影响，应当立即起跑（全局并发充足）。
     const otherRun = queue(
-      { userId: "user-b", priority: "normal", userConcurrency: 1 },
+      { userId: "user-b", priority: 100, userConcurrency: 1 },
       async () => {
         started.push("b1");
         return "b1";
@@ -279,7 +279,7 @@ describe("withImageGenerationQueue", () => {
     expect(started).toEqual(["a1", "b1"]);
   });
 
-  it("runs higher priority before normal", async () => {
+  it("runs lower numeric priority before higher numeric priority", async () => {
     runtimeSettings.globalConcurrency = 1;
     const { withImageGenerationQueue: queue } = await importFreshQueue();
     const blocker = deferred<string>();
@@ -287,7 +287,7 @@ describe("withImageGenerationQueue", () => {
 
     // 先占满唯一的全局槽位，使后续任务全部排队等待调度。
     const blockerRun = queue(
-      { userId: "blocker", priority: "normal", userConcurrency: 10 },
+      { userId: "blocker", priority: 100, userConcurrency: 10 },
       async () => {
         started.push("blocker");
         return await blocker.promise;
@@ -297,16 +297,16 @@ describe("withImageGenerationQueue", () => {
     await flushTasks();
     expect(started).toEqual(["blocker"]);
 
-    // 先入队 normal，再入队 highest；释放槽位后应优先调度 highest（优先级加权）。
+    // 先入队较低优先级，再入队较高优先级；释放槽位后应按数值优先级调度。
     const normalRun = queue(
-      { userId: "normal-user", priority: "normal", userConcurrency: 10 },
+      { userId: "normal-user", priority: 100, userConcurrency: 10 },
       async () => {
         started.push("normal");
         return "normal";
       }
     );
     const highestRun = queue(
-      { userId: "highest-user", priority: "highest", userConcurrency: 10 },
+      { userId: "highest-user", priority: 1, userConcurrency: 10 },
       async () => {
         started.push("highest");
         return "highest";
@@ -370,14 +370,14 @@ describe("withImageGenerationQueue", () => {
     // 串行跑两个同用户任务（userConcurrency=1），第二个能起跑即证明第一个完成后
     // runningByUser 计数被正确清理、槽位已释放。
     await queue(
-      { userId: "user-a", priority: "normal", userConcurrency: 1 },
+      { userId: "user-a", priority: 100, userConcurrency: 1 },
       async () => {
         started.push("a1");
         return "a1";
       }
     );
     await queue(
-      { userId: "user-a", priority: "normal", userConcurrency: 1 },
+      { userId: "user-a", priority: 100, userConcurrency: 1 },
       async () => {
         started.push("a2");
         return "a2";
@@ -392,7 +392,7 @@ describe("withImageGenerationQueue", () => {
 
     await expect(
       queue(
-        { userId: "user-a", priority: "normal", userConcurrency: 1 },
+        { userId: "user-a", priority: 100, userConcurrency: 1 },
         async () => {
           throw new Error("upstream failed");
         }
@@ -403,7 +403,7 @@ describe("withImageGenerationQueue", () => {
     expect(redisSlots.releaseExecution).toHaveBeenCalledTimes(1);
     await expect(
       queue(
-        { userId: "user-a", priority: "normal", userConcurrency: 1 },
+        { userId: "user-a", priority: 100, userConcurrency: 1 },
         async () => "second"
       )
     ).resolves.toBe("second");
@@ -415,7 +415,7 @@ describe("withImageGenerationQueue", () => {
 
     // 占满该用户的唯一准入槽，使下一个同用户请求在本地排队前立即失败。
     const blockerRun = queue(
-      { userId: "user-a", priority: "normal", userConcurrency: 1 },
+      { userId: "user-a", priority: 100, userConcurrency: 1 },
       async () => await blocker.promise
     );
 
@@ -424,7 +424,7 @@ describe("withImageGenerationQueue", () => {
     const rejectedRun = queue(
       {
         userId: "user-a",
-        priority: "normal",
+        priority: 100,
         userConcurrency: 1,
         timeoutMs: 5,
       },
@@ -452,7 +452,7 @@ describe("withImageGenerationQueue", () => {
 
     // 用 user-a 占满唯一的全局槽位；user-b 仍在自身并发额度内，却因全局繁忙超时。
     const blockerRun = queue(
-      { userId: "user-a", priority: "normal", userConcurrency: 10 },
+      { userId: "user-a", priority: 100, userConcurrency: 10 },
       async () => await blocker.promise
     );
 
@@ -461,7 +461,7 @@ describe("withImageGenerationQueue", () => {
     const queuedRun = queue(
       {
         userId: "user-b",
-        priority: "normal",
+        priority: 100,
         userConcurrency: 10,
         timeoutMs: 5,
       },

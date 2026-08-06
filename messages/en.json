@@ -21,7 +21,7 @@
   "Features": {
     "label": "Core Features",
     "title": "Everything You Need to Create",
-    "subtitle": "A complete toolkit for turning imagination into reality — from conversational prompts to batch generation, powered by cutting-edge AI.",
+    "subtitle": "A complete toolkit for turning imagination into reality — from conversational prompts to multi-model creation, powered by cutting-edge AI.",
     "items": {
       "ai": {
         "title": "Chat-to-Image",
@@ -32,8 +32,8 @@
         "description": "Organize, browse, and revisit every image you've created. Powerful filters, tags, and collections keep your work at your fingertips."
       },
       "outline": {
-        "title": "Batch Generation",
-        "description": "Generate multiple variations in a single request. Perfect for exploring concepts, iterating on designs, or producing content at scale."
+        "title": "Iterative Editing",
+        "description": "Keep editing and refining with reference images to explore concepts and polish designs."
       },
       "export": {
         "title": "Cutting-Edge Models",
@@ -114,12 +114,12 @@
         "role": "Product Designer"
       },
       {
-        "content": "Batch generation saves me hours every week. I can produce a dozen hero image variations for A/B testing without breaking a sweat.",
+        "content": "Pay-as-you-go billing lets me create flexibly for each project without a recurring commitment.",
         "author": "Michael Zhang",
         "role": "Marketing Lead"
       },
       {
-        "content": "I signed up and had my first batch of images within minutes. The interface is incredibly intuitive — just describe what you want and the AI nails it.",
+        "content": "I signed up and created my first image within minutes. The interface is incredibly intuitive — just describe what you want and the AI nails it.",
         "author": "Emily Chen",
         "role": "Full-Stack Developer"
       },
@@ -134,7 +134,7 @@
         "role": "Illustrator"
       },
       {
-        "content": "FluxMedia replaced three other tools in my workflow. Chat-based prompting, batch runs, and a stunning gallery — it's everything in one place.",
+        "content": "FluxMedia replaced three other tools in my workflow. Chat-based prompting, multi-model support, and a stunning gallery — it's everything in one place.",
         "author": "Kevin Zhao",
         "role": "Creative Director"
       }
@@ -147,23 +147,23 @@
     "items": [
       {
         "question": "What is FluxMedia?",
-        "answer": "FluxMedia is an AI-powered platform that turns natural-language conversations into high-quality images. Describe what you want, and our AI generates it — no prompt engineering required. Features include chat-to-image generation, a visual gallery, batch generation, and a flexible credits system."
+        "answer": "FluxMedia is an AI-powered platform that turns natural-language conversations into high-quality images. Describe what you want, and our AI generates it — no prompt engineering required. Features include chat-to-image generation, a visual gallery, multi-model support, and pay-as-you-go billing."
       },
       {
         "question": "Which AI image models are supported?",
-        "answer": "FluxMedia supports the leading image generation models on the market, including GPT Image 2. Just sign up, choose a plan, and start generating — the platform handles model routing and delivers results in a unified interface."
+        "answer": "FluxMedia supports the leading image generation models on the market, including GPT Image 2. Sign up and purchase prepaid credits to start generating — the platform handles model routing and delivers results in a unified interface."
       },
       {
         "question": "How does the credits system work?",
-        "answer": "Every image generation consumes a small number of credits based on the model and parameters you choose. Credits never expire, so unused credits are never wasted. You can subscribe to a monthly plan for recurring credits or top up whenever you need more."
+        "answer": "Every image generation consumes credits based on the model and parameters you choose. Purchase prepaid credits in one-time transactions and top up whenever you need more."
       },
       {
         "question": "How do I get started?",
-        "answer": "Just sign up for a free account — no credit card required. You'll receive starter credits to try out image generation immediately. When you're ready for more, choose a subscription plan that fits your needs."
+        "answer": "Sign up for an account and purchase prepaid credits when you are ready; usage is billed according to the images you generate."
       },
       {
-        "question": "Does batch generation cost more?",
-        "answer": "Batch generation consumes credits per image generated, the same as single generation. It's a convenience feature that lets you produce multiple variations in one request — perfect for exploring concepts or iterating on designs quickly."
+        "question": "How is image generation billed?",
+        "answer": "Images consume credits based on the selected model, size, and actual output. You pay for usage without a recurring fee."
       },
       {
         "question": "Can I download and use the images commercially?",
@@ -284,7 +284,7 @@
     "features": "Features",
     "docs": "Docs",
     "pseo": "PSEO",
-    "pricing": "Pricing",
+    "pricing": "Pay-as-you-go credits",
     "blog": "Blog",
     "about": "About",
     "productsMenu": {
@@ -294,8 +294,8 @@
         "chatToImageDesc": "Generate images through natural conversation",
         "gallery": "Visual Gallery",
         "galleryDesc": "Browse, organize, and revisit your creations",
-        "batch": "Batch Generation",
-        "batchDesc": "Produce multiple variations in one request"
+        "batch": "Iterative Editing",
+        "batchDesc": "Keep editing and refining with reference images"
       },
       "platform": {
         "title": "Platform",
@@ -313,7 +313,7 @@
     "login": "Log in",
     "dashboard": "Dashboard",
     "products": "Features",
-    "pricing": "Pricing",
+    "pricing": "Pay-as-you-go credits",
     "blog": "Blog",
     "docs": "Documentation",
     "features": "Features",
@@ -371,138 +371,11 @@
     "saveSettings": "Save settings"
   },
   "Pricing": {
-    "title": "Simple, transparent pricing",
-    "subtitle": "Pay by credits — <strong>never expire</strong>, so unused credits aren't wasted. Generate images whenever inspiration strikes. Save 40% with yearly billing.",
+    "title": "Pay as you go",
+    "subtitle": "Buy one-time credits and generate whenever you need.",
     "creditsUpfront": "all at once",
-    "creditsPerYear": "credits / year",
-    "monthly": "Monthly",
-    "yearly": "Yearly",
-    "save": "Save",
-    "mostPopular": "Best Value",
-    "currentPlan": "Current Plan",
-    "alreadySubscribed": "Already Subscribed",
-    "manageSubscription": "Manage Subscription",
     "booksNote": "≈ {count} images generated",
-    "cardsNote": "≈ {count} image generations",
-    "plans": {
-      "free": {
-        "name": "Free",
-        "description": "Try FluxMedia with no commitment",
-        "cta": "Get Started",
-        "creditsAmount": "200",
-        "creditsLabel": "credits",
-        "creditsNote": "one-time",
-        "features": {
-          "creditsNeverExpire": "Credits never expire",
-          "credits": "200 credits (one-time)",
-          "input": "Chat-to-image generation",
-          "fileSize": "Up to 5 images per batch",
-          "queue": "Up to 2 concurrent generations",
-          "export": "Download & share",
-          "history": "Gallery history saved forever",
-          "creditsValidity": "Credits follow the plan period",
-          "batch": "Batch image generation"
-        }
-      },
-      "starter": {
-        "name": "Starter",
-        "description": "Perfect for casual creators",
-        "cta": "Subscribe",
-        "creditsAmount": "3,000",
-        "creditsLabel": "credits / month",
-        "booksCount": "8",
-        "features": {
-          "creditsNeverExpire": "Credits never expire",
-          "credits": "3,000 credits / month",
-          "input": "Chat-to-image generation",
-          "fileSize": "Up to 10 images per batch",
-          "queue": "Up to 5 concurrent generations",
-          "export": "Download & share",
-          "history": "Gallery history saved forever",
-          "support": "Email support",
-          "creditsValidity": "Credits follow the plan period",
-          "batch": "Batch image generation",
-          "externalApi": "Create multiple external API keys"
-        }
-      },
-      "pro": {
-        "name": "Pro",
-        "description": "Best value for active creators",
-        "cta": "Subscribe",
-        "creditsAmount": "8,000",
-        "creditsLabel": "credits / month",
-        "booksCount": "23",
-        "features": {
-          "creditsNeverExpire": "Credits never expire",
-          "credits": "8,000 credits / month",
-          "input": "All generation features",
-          "fileSize": "Up to 25 images per batch",
-          "queue": "Priority queue, up to 15 concurrent generations",
-          "export": "Download & share",
-          "history": "Gallery history saved forever",
-          "customCards": "Advanced model access",
-          "support": "Priority support",
-          "creditsValidity": "Credits follow the plan period",
-          "batch": "Batch image generation",
-          "chat": "Chat-to-image and edit mode",
-          "promptOptimization": "Control prompt optimization",
-          "externalApi": "Create multiple external API keys"
-        }
-      },
-      "ultra": {
-        "name": "Ultra",
-        "description": "For power users and teams",
-        "cta": "Subscribe",
-        "creditsAmount": "16,000",
-        "creditsLabel": "credits / month",
-        "booksCount": "46",
-        "features": {
-          "creditsNeverExpire": "Credits never expire",
-          "credits": "16,000 credits / month",
-          "input": "All generation features",
-          "fileSize": "Up to 50 images per batch",
-          "queue": "Highest priority queue, up to 50 concurrent generations",
-          "export": "Download & share",
-          "history": "Gallery history saved forever",
-          "customCards": "Premium model access",
-          "aiAssist": "Higher generation limits",
-          "support": "Dedicated support",
-          "creditsValidity": "Credits follow the plan period",
-          "batch": "Batch image generation",
-          "chatGpt55": "Use GPT-5.5 in chat-to-image",
-          "moderationSettlement": "Moderation blocks settle moderation cost only",
-          "moderationLowControl": "Option to allow low-risk moderation results",
-          "promptOptimization": "Control prompt optimization",
-          "externalApi": "Create multiple external API keys"
-        }
-      },
-      "enterprise": {
-        "name": "Enterprise",
-        "description": "For scaled team production",
-        "cta": "Subscribe",
-        "creditsAmount": "64,000",
-        "creditsLabel": "credits / month",
-        "booksCount": "184",
-        "features": {
-          "creditsValidity": "Credits follow the plan period",
-          "credits": "64,000 credits / month",
-          "input": "All generation features",
-          "batch": "Batch image generation",
-          "fileSize": "Up to 100 images per batch",
-          "chatGpt55": "Use GPT-5.5 in chat-to-image",
-          "moderationSettlement": "Moderation blocks settle moderation cost only",
-          "moderationMediumControl": "Option to allow low and medium-risk moderation results",
-          "promptOptimization": "Control prompt optimization",
-          "queue": "Highest priority queue, up to 100 concurrent generations",
-          "enterpriseResourcePack": "Enterprise resource pack access",
-          "enterpriseResourcePackUnlimited": "Unlimited enterprise resource pack purchases",
-          "export": "Download & share",
-          "history": "Gallery history saved forever",
-          "externalApi": "Create multiple external API keys",
-          "support": "Dedicated support"
-        }
-      }
-    }
+    "cardsNote": "≈ {count} image generations"
   },
   "Toggle": {
     "theme": "Toggle Theme",
@@ -535,14 +408,6 @@
       "in_progress": "In Progress",
       "resolved": "Resolved",
       "closed": "Closed"
-    }
-  },
-  "Subscription": {
-    "plans": {
-      "free": "Free",
-      "starter": "Starter",
-      "pro": "Pro",
-      "ultra": "Ultra"
     }
   },
   "Dashboard": {
@@ -661,38 +526,6 @@
       "avatarUpdated": "Avatar updated successfully"
     },
     "billing": {
-      "currentPlan": {
-        "title": "Current Plan",
-        "description": "Manage your subscription and billing cycle.",
-        "freePlan": "Free Plan",
-        "current": "Current",
-        "basicFeatures": "Basic features with limited credits",
-        "premiumFeatures": "Full access to all premium features",
-        "upgradePlan": "Upgrade Plan",
-        "managePlan": "Manage Plan",
-        "monthlyCredits": "Monthly Credits",
-        "renewalDate": "Renewal Date",
-        "notApplicable": "N/A",
-        "price": "Price",
-        "perMonth": "month",
-        "perYear": "year",
-        "cancelSubscription": "Cancel Subscription",
-        "cancelPending": "Cancels on {date}",
-        "cancelDialog": {
-          "title": "Cancel Subscription?",
-          "description": "Your subscription will remain active until the end of your current billing period ({date}). After that, your plan will revert to Free.",
-          "keepBenefits": "You'll keep all your current plan benefits until {date}",
-          "confirm": "Yes, Cancel Subscription",
-          "cancel": "Keep Subscription"
-        }
-      },
-      "paymentMethods": {
-        "title": "Payment Methods",
-        "description": "Add or manage your payment methods for subscriptions and purchases.",
-        "addMethod": "Add Payment Method",
-        "noMethods": "No payment methods added",
-        "noMethodsHint": "Add a payment method to upgrade your plan or purchase credits"
-      },
       "history": {
         "title": "Billing History",
         "description": "View and download your past invoices.",
@@ -712,8 +545,7 @@
       "creditsAvailable": "credits available",
       "getMoreCredits": {
         "title": "Get More Credits",
-        "description": "Subscribe to a plan to get monthly credits and unlock advanced features",
-        "viewPlans": "View Subscription Plans"
+        "description": "Buy one-time credits whenever you need more image generation"
       },
       "expiringSoon": {
         "title": "Credits Expiring Soon",
@@ -743,8 +575,8 @@
         },
         "descriptions": {
           "registration_bonus": "New user registration bonus",
-          "monthly_grant": "{plan} monthly subscription credits",
-          "yearly_grant": "{plan} yearly subscription credits ({monthly} x 12)",
+          "monthly_grant": "Historical monthly/yearly grant",
+          "yearly_grant": "Historical yearly grant",
           "consumption": "Image generation",
           "expiration": "Credits expired",
           "admin_grant": "Admin granted credits",
@@ -755,7 +587,7 @@
     "moderation": {
       "title": "Moderation block level",
       "description": "This setting applies to web generation. External API keys can use their own level.",
-      "upgradeHint": "Ultra can allow low-risk results. Enterprise can also allow medium-risk results.",
+      "upgradeHint": "Administrators can configure whether low- or medium-risk results are allowed.",
       "options": {
         "low": {
           "label": "Block low and above",
@@ -763,11 +595,11 @@
         },
         "medium": {
           "label": "Allow low",
-          "description": "Blocks medium and high only. Available on Ultra."
+          "description": "Blocks medium and high only when enabled by system settings."
         },
         "high": {
           "label": "Block high only",
-          "description": "Allows low and medium. Available on Enterprise."
+          "description": "Allows low and medium when enabled by system settings."
         }
       }
     },
@@ -786,7 +618,6 @@
       "lastUsed": "Last used",
       "never": "Never",
       "newKeyLabel": "New API Key",
-      "requiresStarter": "External API access requires Starter plan or higher.",
       "moderation": {
         "label": "Moderation level",
         "options": {
@@ -822,8 +653,6 @@
         "newUsersThisWeek": "{count} new this week",
         "pendingTickets": "Pending Tickets",
         "newTicketsToday": "{count} new today",
-        "activeSubscriptions": "Active Subscriptions",
-        "totalSubscriptions": "{count} total",
         "creditsCirculation": "Credits in Circulation",
         "currentUserCredits": "Total credits held by users",
         "imageGeneration": "Image Generation",
@@ -845,8 +674,6 @@
         "currentBalance": "Current Balance",
         "totalGranted": "Total Granted",
         "totalSpent": "Total Spent",
-        "subscriberCount": "Subscribers",
-        "activeLabel": "{count} active",
         "generationStats": "Generation Statistics",
         "totalGenerations": "Total Generations",
         "successRate": "Success Rate",
@@ -872,7 +699,6 @@
       "stats": {
         "totalUsers": "Total Users",
         "admins": "Admins",
-        "subscribers": "Subscribers",
         "banned": "Banned"
       },
       "search": {
@@ -886,7 +712,6 @@
         "user": "User",
         "status": "Status",
         "credits": "Credits",
-        "subscription": "Subscription",
         "role": "Role",
         "actions": "Actions",
         "noResults": "No matching users found",
@@ -896,13 +721,6 @@
         "banned": "Banned",
         "verified": "Verified",
         "unverified": "Unverified"
-      },
-      "subscriptionLabels": {
-        "none": "No Subscription",
-        "active": "Subscribed",
-        "canceled": "Canceled",
-        "pastDue": "Past Due",
-        "incomplete": "Incomplete"
       },
       "ban": {
         "banTitle": "Ban User",

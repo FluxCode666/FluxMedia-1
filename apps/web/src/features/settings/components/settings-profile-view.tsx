@@ -8,8 +8,6 @@ import {
   getSignedUploadUrlAction,
   MAX_FILE_SIZE,
 } from "@repo/shared/storage";
-import { getMyPlanAction } from "@repo/shared/subscription/actions/get-user-plan";
-import type { PlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
 import { USER_TIME_ZONE_OPTIONS } from "@repo/shared/time-zone";
 import {
   Avatar,
@@ -111,12 +109,7 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
   const [selectedTimeZone, setSelectedTimeZone] = useState(
     user.timeZone ?? INHERIT_TIME_ZONE_VALUE
   );
-  const [capabilities, setCapabilities] =
-    useState<PlanCapabilitySnapshot | null>(null);
-  const avatarMaxFileSizeBytes = resolveAvatarMaxFileSizeBytes(
-    capabilities,
-    MAX_FILE_SIZE
-  );
+  const avatarMaxFileSizeBytes = resolveAvatarMaxFileSizeBytes(MAX_FILE_SIZE);
   const normalizeTab = useCallback((value: string | null) => {
     if (value === "security" || value === "account") {
       return value;
@@ -155,12 +148,6 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
       name: user.name,
     },
   });
-
-  useEffect(() => {
-    void getMyPlanAction().then((result) => {
-      setCapabilities(result?.data?.capabilities ?? null);
-    });
-  }, []);
 
   useEffect(() => {
     const requestedTab = searchParams.get("tab");
@@ -277,12 +264,7 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
         throw new Error(t("errors.uploadFailed"));
       }
       const signedMaxFileSizeBytes = resolveAvatarMaxFileSizeBytes(
-        {
-          limits: {
-            maxFileSizeBytes: uploadUrlResult.data.maxFileSizeBytes,
-          },
-        },
-        avatarMaxFileSizeBytes
+        uploadUrlResult.data.maxFileSizeBytes
       );
       if (!isAvatarFileSizeAllowed(file.size, signedMaxFileSizeBytes)) {
         throw new Error(

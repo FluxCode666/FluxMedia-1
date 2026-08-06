@@ -13,11 +13,7 @@ vi.mock("../system-settings", () => ({
 
 import {
   assertRuntimeCreemCheckoutConfigured,
-  buildSubscriptionPeriodKey,
-  computeSubscriptionCreditsToGrant,
   creem,
-  getCreemPeriodDays,
-  isYearlyCreemPeriod,
   parseCreemWebhookEvent,
   verifyCreemWebhookSignature,
 } from "./creem";
@@ -60,63 +56,6 @@ describe("Creem 配置门槛", () => {
     await expect(
       assertRuntimeCreemCheckoutConfigured()
     ).resolves.toBeUndefined();
-  });
-});
-
-describe("buildSubscriptionPeriodKey", () => {
-  it("拼接订阅 ID 与周期开始时间作为幂等键", () => {
-    expect(buildSubscriptionPeriodKey("sub_1", "2026-01-01T00:00:00Z")).toBe(
-      "sub_1:2026-01-01T00:00:00Z"
-    );
-  });
-});
-
-describe("getCreemPeriodDays", () => {
-  it("按毫秒差四舍五入计算月付约 30 天", () => {
-    expect(
-      getCreemPeriodDays("2026-01-01T00:00:00Z", "2026-01-31T00:00:00Z")
-    ).toBe(30);
-  });
-
-  it("年付约 365 天", () => {
-    expect(
-      getCreemPeriodDays("2026-01-01T00:00:00Z", "2027-01-01T00:00:00Z")
-    ).toBe(365);
-  });
-
-  it("日期非法时返回 NaN", () => {
-    expect(
-      Number.isNaN(getCreemPeriodDays("not-a-date", "2026-01-01T00:00:00Z"))
-    ).toBe(true);
-    expect(
-      Number.isNaN(getCreemPeriodDays("2026-01-01T00:00:00Z", "not-a-date"))
-    ).toBe(true);
-  });
-});
-
-describe("isYearlyCreemPeriod", () => {
-  it("超过 60 天判为年付", () => {
-    expect(isYearlyCreemPeriod(61)).toBe(true);
-    expect(isYearlyCreemPeriod(365)).toBe(true);
-  });
-
-  it("60 天及以下判为月付（边界）", () => {
-    expect(isYearlyCreemPeriod(60)).toBe(false);
-    expect(isYearlyCreemPeriod(30)).toBe(false);
-  });
-
-  it("周期天数为 NaN 时按月付处理，避免误发 12 倍积分", () => {
-    expect(isYearlyCreemPeriod(Number.NaN)).toBe(false);
-  });
-});
-
-describe("computeSubscriptionCreditsToGrant", () => {
-  it("月付发放月度积分", () => {
-    expect(computeSubscriptionCreditsToGrant(1000, false)).toBe(1000);
-  });
-
-  it("年付发放 12 倍月度积分", () => {
-    expect(computeSubscriptionCreditsToGrant(1000, true)).toBe(12000);
   });
 });
 

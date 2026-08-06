@@ -2,7 +2,7 @@
  * 账单用量页的生图计价卡数据装配器。
  *
  * 使用方只有 Billing 的 Usage 服务端分支。该文件聚合运行时定价、
- * 用户套餐能力和平台默认后端分组，不将数据查询带入 Dashboard 首屏。
+ * 按量计费价格和平台默认后端分组，不将数据查询带入 Dashboard 首屏。
  */
 
 import {
@@ -11,8 +11,6 @@ import {
   resolveImageCreditPricing,
 } from "@repo/shared/image-backend/group-image-pricing";
 import { isContentModerationEnabled } from "@repo/shared/moderation";
-import { getPlanCapabilitySnapshot } from "@repo/shared/subscription/services/plan-capabilities";
-import { getUserPlan } from "@repo/shared/subscription/services/user-plan";
 
 import { getEffectiveDefaultImageBackendGroup } from "@/features/image-backend-pool/catalog-service";
 import {
@@ -25,8 +23,6 @@ export type ImagePricingCardData = {
   billing: {
     groupName: string | null;
     moderationBlockingEnabled: boolean;
-    monthlyCredits: number;
-    planName: string;
   };
   referenceModel: {
     id: string;
@@ -41,27 +37,19 @@ export type ImagePricingCardData = {
  * 为当前用户装配生图计价卡所需的全部数据。
  *
  * @param userId 已鉴权会话的用户 ID。
- * @returns 标准化定价、套餐能力与平台默认后端分组。
+ * @returns 标准化定价、审核附加费与平台默认后端分组。
  * @throws 运行时设置或数据库查询失败时向上抛出，由路由错误边界处理。
  */
 export async function loadImagePricingCardData(
-  userId: string
+  _userId: string
 ): Promise<ImagePricingCardData> {
-  const [
-    globalModelPricing,
-    moderationPricing,
-    moderationSystemEnabled,
-    userPlanInfo,
-  ] = await Promise.all([
-    getRuntimeImageModelCreditPricing(),
-    getRuntimeImageModerationCreditPricing(),
-    isContentModerationEnabled(),
-    getUserPlan(userId),
-  ]);
-  const [capabilities, activeBackendGroup] = await Promise.all([
-    getPlanCapabilitySnapshot(userPlanInfo.plan),
-    getEffectiveDefaultImageBackendGroup(),
-  ]);
+  const [globalModelPricing, moderationPricing, moderationSystemEnabled] =
+    await Promise.all([
+      getRuntimeImageModelCreditPricing(),
+      getRuntimeImageModerationCreditPricing(),
+      isContentModerationEnabled(),
+    ]);
+  const activeBackendGroup = await getEffectiveDefaultImageBackendGroup();
   const referenceModelId = Object.keys(globalModelPricing.byModel).sort()[0];
   if (!referenceModelId) {
     throw new Error("没有已配置价格的图像模型");
@@ -72,10 +60,7 @@ export async function loadImagePricingCardData(
       groupName: activeBackendGroup?.name ?? null,
       moderationBlockingEnabled:
         moderationSystemEnabled &&
-        capabilities.features["moderation.blocking"] &&
         activeBackendGroup?.contentSafetyEnabled !== false,
-      monthlyCredits: capabilities.limits.monthlyCredits,
-      planName: userPlanInfo.planName,
     },
     referenceModel: {
       id: referenceModelId,

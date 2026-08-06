@@ -1,9 +1,7 @@
-import type { SubscriptionPlan } from "../config/subscription-plan";
-
 /**
  * 积分系统配置
  *
- * 定义积分系统的常量和套餐配置
+ * 定义积分系统的常量和一次性积分包配置
  */
 
 // ============================================
@@ -16,10 +14,10 @@ import type { SubscriptionPlan } from "../config/subscription-plan";
 export const REGISTRATION_BONUS_CREDITS = 100;
 
 /**
- * 非订阅付费积分默认过期天数（从发放日起）。
+ * 一次性购买积分默认过期天数（从发放日起）。
  * 0 表示永不过期。
  * 免费积分默认 7 天过期。
- * 订阅积分应由调用方按套餐周期传入 expiresAt。
+ * 历史订阅积分的过期时间仅由兼容履约数据传入，不产生新的订阅发放。
  */
 export const CREDITS_EXPIRY_DAYS = 0;
 export const FREE_CREDITS_EXPIRY_DAYS = 7;
@@ -31,18 +29,16 @@ export const CREDIT_CONFIG_DEFAULTS = {
 } as const;
 
 export const PAY_AS_YOU_GO_PACKAGE_ID = "payg_starter";
+/** 历史资源包 ID；仅用于旧订单履约与流水展示兼容。 */
 export const ENTERPRISE_RESOURCE_PACKAGE_ID = "enterprise_resource";
 export const ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_CREDITS = 5000;
 export const ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_PRICE = 15;
 
-export type CreditPackagePlanMap<T> = Partial<Record<SubscriptionPlan, T>>;
-
 /**
  * 积分包配置（一次性购买）。
  *
- * price 是兜底价格；pricesByPlan 可按用户当前套餐覆盖价格。
- * Creem 一次性产品价格在 Creem 后台预建，按套餐定价时需要配置对应
- * creemProductIdsByPlan；currency 按 ISO 4217 指定结账币种（缺省 CNY）；
+ * price 是服务端唯一价格。Creem 一次性产品价格在 Creem 后台预建；currency
+ * 按 ISO 4217 指定结账币种（缺省 CNY）；
  * Epay 仅支持 CNY，Creem 可按对应预建产品使用其他币种。
  */
 export type CreditPackageConfig = {
@@ -54,12 +50,9 @@ export type CreditPackageConfig = {
   description: string;
   popular?: boolean;
   visible?: boolean;
-  requiresPlan?: SubscriptionPlan;
   allowQuantity?: boolean;
   maxQuantity?: number;
-  pricesByPlan?: CreditPackagePlanMap<number>;
   creemProductId?: string;
-  creemProductIdsByPlan?: CreditPackagePlanMap<string>;
 };
 
 /**
@@ -73,16 +66,15 @@ export const CREDIT_PACKAGES = [
     price: 20,
     currency: "CNY",
     popular: true,
-    description: "One-time credits priced like Starter",
+    description: "One-time pay-as-you-go credits",
   },
   {
     id: ENTERPRISE_RESOURCE_PACKAGE_ID,
-    name: "Enterprise Resource Pack",
+    name: "Resource Pack",
     credits: ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_CREDITS,
     price: ENTERPRISE_RESOURCE_PACKAGE_DEFAULT_PRICE,
     currency: "CNY",
-    description: "Enterprise-only 5,000-credit resource pack",
-    requiresPlan: "enterprise",
+    description: "One-time 5,000-credit resource pack",
     allowQuantity: true,
     maxQuantity: 999,
     visible: false,
@@ -117,12 +109,12 @@ export const CREDIT_PACKAGES = [
 ] as const satisfies readonly CreditPackageConfig[];
 
 /**
- * 积分套餐类型
+ * 积分包类型
  */
 export type CreditPackage = CreditPackageConfig;
 
 /**
- * 套餐 ID 类型
+ * 积分包 ID 类型
  */
 export type CreditPackageId = string;
 

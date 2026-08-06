@@ -52,7 +52,7 @@ export interface CreemGrantDecision {
 /**
  * 实付金额比对容差（最小货币单位）。
  *
- * WHY：Creem 的 order.amount 以最小货币单位返回，服务端套餐价目以主单位配置。
+ * WHY：Creem 的 order.amount 以最小货币单位返回，服务端积分订单价目以主单位配置。
  * 换算后允许实付不低于期望、且不超出期望 + 容差，容忍上游四舍五入/手续费导致
  * 的轻微多付，避免误拒真实支付。
  */
@@ -132,8 +132,8 @@ export function creemMajorToMinorUnits(
 /**
  * 比对 Creem 实付金额/币种与服务端期望，给出裁决结果（纯逻辑，无副作用）。
  *
- * WHY：webhook 仅经签名校验无法防止 checkout 阶段被篡改的价格/数量套取高价套餐，
- * 须在发放积分前用服务端套餐重算期望金额并与 Creem 实付额比对。本函数只判定，
+ * WHY：webhook 仅经签名校验无法防止 checkout 阶段被篡改的价格/数量套取高额积分订单，
+ * 须在发放积分前用服务端积分订单价格重算期望金额并与 Creem 实付额比对。本函数只判定，
  * 不决定放行/拒付；信息不可比时返回 comparable=false 由调用方放行 + 告警。
  *
  * @param expected - 服务端期望（amount 为主单位，currency 为 ISO 4217）

@@ -21,7 +21,6 @@ import {
   grantCredits,
   processExpiredBatches,
   unfreezeCreditsAccount,
-  voidActiveSubscriptionCreditsForUpgrade,
 } from "../../credits/core";
 import {
   usageEventDetailSchema,
@@ -170,8 +169,8 @@ export const grant = defineOperation({
     userId: z.string().describe("目标用户 ID"),
     amount: z.number().int().positive().describe("发放积分数量"),
     sourceType: z
-      .enum(["purchase", "subscription", "bonus"])
-      .describe("非退款来源类型：purchase/subscription/bonus"),
+      .enum(["purchase", "bonus"])
+      .describe("非退款来源类型：purchase/bonus"),
     sourceRef: z
       .string()
       .optional()
@@ -198,11 +197,7 @@ export const grant = defineOperation({
   sideEffects: ["billing"],
   execute: async (input) => {
     const transactionType =
-      input.sourceType === "purchase"
-        ? "purchase"
-        : input.sourceType === "subscription"
-          ? "monthly_grant"
-          : "admin_grant";
+      input.sourceType === "purchase" ? "purchase" : "admin_grant";
     const params: Parameters<typeof grantCredits>[0] = {
       userId: input.userId,
       amount: input.amount,
@@ -233,7 +228,7 @@ export const consume = defineOperation({
   domain: "credits",
   title: "Consume Credits",
   description:
-    "从用户余额中扣减积分（FIFO 优先级 bonus>subscription>purchase）。" +
+    "从用户余额中按过期时间与历史来源优先级扣减积分。" +
     "内部先触发过期批次处理，再逐批扣减并记账。传入 sourceRef 时" +
     "通过 per-user 偏唯一索引 (user_id,type,source_ref) 保证强幂等。",
   input: z.object({
@@ -575,41 +570,7 @@ export const getUserTransactionCount = defineOperation({
 });
 
 // ---------------------------------------------------------------------------
-// 12. credits.voidSubscriptionCreditsForUpgrade - 升级时作废订阅积分
-// ---------------------------------------------------------------------------
-export const voidSubscriptionCreditsForUpgrade = defineOperation({
-  name: "credits.voidSubscriptionCreditsForUpgrade",
-  domain: "credits",
-  title: "Void Subscription Credits For Upgrade",
-  description:
-    "套餐升级时作废当前订阅周期剩余的活跃订阅积分批次。" +
-    "逐批次置 expired + 写 expiration 交易 + 扣减余额。" +
-    "条件更新（status=active）保证幂等。由支付 webhook 调用。",
-  input: z.object({
-    userId: z.string().describe("目标用户 ID"),
-  }),
-  output: z.object({
-    voidedCount: z.number().describe("作废的批次数量"),
-    deductedAmount: z.number().describe("扣减的总积分数"),
-  }),
-  access: { kind: "webhook", provider: "creem" },
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["billing"],
-  execute: async (input) => {
-    const result = await voidActiveSubscriptionCreditsForUpgrade({
-      userId: input.userId,
-    });
-    return {
-      voidedCount: result.voidedBatches.length,
-      deductedAmount: result.voidedAmount,
-    };
-  },
-});
-
-// ---------------------------------------------------------------------------
-// 13. credits.processExpired - 处理过期积分批次
+// 12. credits.processExpired - 处理过期积分批次
 // ---------------------------------------------------------------------------
 export const processExpired = defineOperation({
   name: "credits.processExpired",
@@ -904,7 +865,7 @@ export const createPurchaseCheckout = defineOperation({
   description:
     "创建积分购买结账会话（Epay 落单 / Creem 外呼）。不直接发放积分，" +
     "积分在支付 webhook 确认后发放。每次调用创建新 checkout（非幂等）。" +
-    "按用户套餐校验购买资格。",
+    "按用户身份和当前积分包配置校验购买资格。",
   input: z.object({
     packageId: z.string().describe("积分包 ID"),
     paymentProvider: z
@@ -1036,7 +997,7 @@ export const getPaymentStatus = defineOperation({
   title: "Get Credit Payment Status",
   description:
     "查询当前用户自己的积分支付订单。统一覆盖支付宝按金额充值、易支付和 Creem " +
-    "积分套餐；返回值仅代表服务端履约状态，绝不以浏览器回跳作为到账依据。",
+    "一次性积分订单；返回值仅代表服务端履约状态，绝不以浏览器回跳作为到账依据。",
   input: z.object({ orderId: z.string().min(1) }),
   output: z.object({
     orderId: z.string(),

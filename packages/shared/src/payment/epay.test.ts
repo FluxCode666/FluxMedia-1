@@ -22,7 +22,7 @@ vi.mock("../system-settings", () => ({
 
 import {
   decodeEpayMetadata,
-  type EpayMetadata,
+  type EpayCreditPurchaseMetadata,
   encodeEpayMetadata,
   getPaymentProvider,
   getRuntimePaymentProvider,
@@ -211,7 +211,7 @@ describe("moneyToCents", () => {
 
 describe("encodeEpayMetadata / decodeEpayMetadata", () => {
   it("round-trips a credit_purchase metadata via compact keys", () => {
-    const metadata: EpayMetadata = {
+    const metadata: EpayCreditPurchaseMetadata = {
       type: "credit_purchase",
       userId: "user-1",
       outTradeNo: "T1",
@@ -219,16 +219,70 @@ describe("encodeEpayMetadata / decodeEpayMetadata", () => {
       locale: "zh",
       packageId: "pack-1",
       quantity: 3,
-      creditPlan: "pro",
     };
     expect(decodeEpayMetadata(encodeEpayMetadata(metadata))).toEqual(metadata);
   });
 
-  it("round-trips a subscription upgrade preserving proration fields", () => {
-    const metadata: EpayMetadata = {
-      type: "subscription",
+  it("解码历史积分订单时忽略已退役的套餐字段", () => {
+    const encoded = Buffer.from(
+      JSON.stringify({
+        t: "c",
+        u: "user-1",
+        o: "T-LEGACY-CREDIT",
+        g: "pack-1",
+        x: "pro",
+      }),
+      "utf8"
+    ).toString("base64url");
+
+    expect(decodeEpayMetadata(encoded)).toEqual({
+      type: "credit_purchase",
+      userId: "user-1",
+      outTradeNo: "T-LEGACY-CREDIT",
+      packageId: "pack-1",
+    });
+  });
+
+  it("只编码当前积分购买字段", () => {
+    const metadata: EpayCreditPurchaseMetadata = {
+      type: "credit_purchase",
       userId: "user-1",
       outTradeNo: "T2",
+      packageId: "pack-1",
+      quantity: 1,
+    };
+    const encoded = encodeEpayMetadata(metadata);
+    expect(
+      JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
+    ).toEqual({
+      t: "c",
+      u: "user-1",
+      o: "T2",
+      g: "pack-1",
+    });
+  });
+
+  it("只解码历史订阅 metadata，不允许新编码", () => {
+    const encoded = Buffer.from(
+      JSON.stringify({
+        t: "s",
+        u: "user-1",
+        o: "T-HISTORY",
+        p: "pro_monthly",
+        m: "u",
+        e: 12.34,
+        a: 20,
+        c: 7.66,
+        r: 12,
+        d: 30,
+        f: "starter_monthly",
+      }),
+      "utf8"
+    ).toString("base64url");
+    expect(decodeEpayMetadata(encoded)).toMatchObject({
+      type: "subscription",
+      userId: "user-1",
+      outTradeNo: "T-HISTORY",
       priceId: "pro_monthly",
       checkoutMode: "upgrade",
       expectedAmount: 12.34,
@@ -237,8 +291,7 @@ describe("encodeEpayMetadata / decodeEpayMetadata", () => {
       remainingDays: 12,
       periodDays: 30,
       upgradeFromPriceId: "starter_monthly",
-    };
-    expect(decodeEpayMetadata(encodeEpayMetadata(metadata))).toEqual(metadata);
+    });
   });
 
   it("decodes long-form metadata keys and coerces numeric strings", () => {
@@ -266,7 +319,7 @@ describe("encodeEpayMetadata / decodeEpayMetadata", () => {
         "utf8"
       ).toString("base64url")
     );
-    expect(floored?.quantity).toBe(2);
+    expect(floored).toMatchObject({ type: "credit_purchase", quantity: 2 });
 
     const dropped = decodeEpayMetadata(
       Buffer.from(
@@ -274,7 +327,7 @@ describe("encodeEpayMetadata / decodeEpayMetadata", () => {
         "utf8"
       ).toString("base64url")
     );
-    expect(dropped?.quantity).toBeUndefined();
+    expect(dropped).not.toHaveProperty("quantity");
   });
 
   it("returns null for malformed base64 or missing required fields", () => {

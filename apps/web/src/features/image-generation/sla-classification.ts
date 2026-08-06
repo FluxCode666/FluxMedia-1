@@ -58,10 +58,9 @@ const USER_REQUEST_PATTERNS = [
   "api key quota exceeded",
   "api key credit limit",
   "api_key_quota_exceeded",
-  "requires pro plan",
-  "requires starter",
-  "requires ultra",
-  "requires enterprise",
+  // 兼容上游遗留的能力提示；当前平台不按套餐分级。
+  "not enabled for this plan",
+  "feature is not enabled",
   "invalid model",
   "unsupported model",
   "prompt exceeds",

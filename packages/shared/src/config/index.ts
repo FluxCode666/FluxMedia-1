@@ -15,14 +15,5 @@ export {
   // 类型
   type NavItem,
 } from "./nav";
-export {
-  findPlanByPriceId,
-  getBaseUrl,
-  getPlanPrice,
-  getPricingConfig,
-  getPricingPlans,
-  PRICE_IDS,
-  // 支付配置
-  paymentConfig,
-} from "./payment";
+export { getBaseUrl, paymentConfig, paymentProvider } from "./payment";
 export { getSiteBaseUrl, type SiteConfig, siteConfig } from "./site";

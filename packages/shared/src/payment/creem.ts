@@ -237,76 +237,6 @@ export function parseCreemWebhookEvent(payload: string): CreemWebhookEvent {
 }
 
 // ============================================
-// Webhook 纯逻辑助手（DB-free，可单测）
-// ============================================
-
-/** 一天的毫秒数 */
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
-
-/**
- * 订阅周期长度判为年付的阈值（天）。
- *
- * WHY：Creem 不直接给出计费间隔，只能用周期长度推断。月付约 30 天、年付约 365 天，
- * 取 60 天作为分界既能容纳 28/31 天月份，又远低于年付下限，避免边界误判导致少发/多发积分。
- */
-export const CREEM_YEARLY_PERIOD_DAY_THRESHOLD = 60;
-
-/**
- * 构造订阅周期幂等键。
- *
- * 同一订阅 + 同一周期开始时间只发放一次积分，作为 credits_batch (source_type, source_ref)
- * 幂等去重的 sourceRef。
- */
-export function buildSubscriptionPeriodKey(
-  subscriptionId: string,
-  periodStartDate: string
-): string {
-  return `${subscriptionId}:${periodStartDate}`;
-}
-
-/**
- * 计算订阅周期天数。
- *
- * @returns 周期天数（四舍五入）；当日期非法时返回 NaN，交由调用方决定回退。
- */
-export function getCreemPeriodDays(
-  periodStartDate: string,
-  periodEndDate: string
-): number {
-  const start = new Date(periodStartDate).getTime();
-  const end = new Date(periodEndDate).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return Number.NaN;
-  }
-  return Math.round((end - start) / MS_PER_DAY);
-}
-
-/**
- * 依据周期天数判断是否为年付订阅。
- *
- * 周期天数非法（NaN）时按月付处理，避免误发 12 倍积分。
- */
-export function isYearlyCreemPeriod(periodDays: number): boolean {
-  return (
-    Number.isFinite(periodDays) &&
-    periodDays > CREEM_YEARLY_PERIOD_DAY_THRESHOLD
-  );
-}
-
-/**
- * 计算订阅周期应发放的积分。
- *
- * 月付发放月度积分，年付发放 12 个月积分。monthlyCredits 由服务端套餐配置提供，
- * 此处仅做纯算术，便于 DB-free 单测覆盖年付/月付与边界判定。
- */
-export function computeSubscriptionCreditsToGrant(
-  monthlyCredits: number,
-  isYearly: boolean
-): number {
-  return isYearly ? monthlyCredits * 12 : monthlyCredits;
-}
-
-// ============================================
 // API 客户端
 // ============================================
 
@@ -332,57 +262,6 @@ export const creem = {
       },
       body: JSON.stringify(params),
     });
-
-    if (!res.ok) {
-      const error = await res.text();
-      throw new Error(`Creem API error: ${res.status} - ${error}`);
-    }
-
-    return res.json();
-  },
-
-  /**
-   * 获取订阅详情
-   *
-   * @param subscriptionId - 订阅 ID
-   * @returns 订阅信息
-   */
-  async getSubscription(subscriptionId: string): Promise<CreemSubscription> {
-    const apiKey = await requireRuntimeCreemApiKey();
-    const res = await fetch(
-      `${getCreemApiBase(apiKey)}/subscriptions/${subscriptionId}`,
-      {
-        headers: {
-          "x-api-key": apiKey,
-        },
-      }
-    );
-
-    if (!res.ok) {
-      const error = await res.text();
-      throw new Error(`Creem API error: ${res.status} - ${error}`);
-    }
-
-    return res.json();
-  },
-
-  /**
-   * 取消订阅
-   *
-   * @param subscriptionId - 订阅 ID
-   * @returns 更新后的订阅信息
-   */
-  async cancelSubscription(subscriptionId: string): Promise<CreemSubscription> {
-    const apiKey = await requireRuntimeCreemApiKey();
-    const res = await fetch(
-      `${getCreemApiBase(apiKey)}/subscriptions/${subscriptionId}/cancel`,
-      {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-        },
-      }
-    );
 
     if (!res.ok) {
       const error = await res.text();

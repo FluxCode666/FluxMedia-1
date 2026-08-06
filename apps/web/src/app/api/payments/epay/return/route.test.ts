@@ -1,7 +1,7 @@
 /**
  * Epay 同步回跳路由测试。
  *
- * 证明订阅回钱包、按量充值回订单结果页，并锁定本路由只读取状态而不履约。
+ * 证明历史订阅回钱包、按量充值回订单结果页，并锁定本路由只读取状态而不履约。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -48,7 +48,7 @@ describe("Epay return route", () => {
     mocks.isRuntimeEpayConfigured.mockResolvedValue(true);
     mocks.parseEpayRequestParams.mockResolvedValue({ sign: "signed" });
     mocks.verifyRuntimeEpayParams.mockResolvedValue({
-      outTradeNo: "subscription-order",
+      outTradeNo: "historical-subscription-order",
       param: null,
       tradeStatus: "TRADE_SUCCESS",
       verifyStatus: true,
@@ -57,13 +57,15 @@ describe("Epay return route", () => {
     mocks.getEpayOrderStatus.mockResolvedValue("success");
   });
 
-  it("订阅支付完成后回钱包并展示成功状态", async () => {
+  it("历史订阅支付完成后回钱包并展示成功状态", async () => {
     const response = await GET(createRequest());
 
     expect(response.headers.get("location")).toBe(
       "https://app.example/dashboard/wallet?pay=success"
     );
-    expect(mocks.getEpayOrderStatus).toHaveBeenCalledWith("subscription-order");
+    expect(mocks.getEpayOrderStatus).toHaveBeenCalledWith(
+      "historical-subscription-order"
+    );
   });
 
   it("按量充值保留语言与订单结果页", async () => {

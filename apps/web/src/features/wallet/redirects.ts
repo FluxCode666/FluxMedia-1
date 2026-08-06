@@ -1,13 +1,12 @@
 /**
  * 钱包支付回跳目标生成器。
  *
- * 使用方：订阅 checkout 与 Epay 同步回跳路由。所有目标只由服务端 base URL
+ * 使用方：Epay 同步回跳路由。所有目标只由服务端 base URL
  * 生成，不接受客户端 URL，避免开放重定向和跨站回跳。
  */
 import { getBaseUrl } from "@repo/shared/config/payment";
 
 const WALLET_PATH = "/dashboard/wallet";
-const EPAY_RETURN_PATH = "/api/payments/epay/return";
 const PAYMENT_RESULT_STATUSES = [
   "success",
   "canceled",
@@ -42,21 +41,6 @@ function resolveApplicationOrigin(baseUrl: string): string {
     throw new Error("应用基础 URL 必须使用 http 或 https");
   }
   return url.origin;
-}
-
-/**
- * 生成订阅支付所需的同源钱包回跳目标。
- *
- * @param baseUrl 服务端基础 URL，默认读取部署配置。
- * @returns Creem success/cancel 与 Epay 签名校验入口。
- */
-export function createWalletCheckoutRedirects(baseUrl = getBaseUrl()) {
-  const origin = resolveApplicationOrigin(baseUrl);
-  return {
-    successUrl: new URL(`${WALLET_PATH}?pay=success`, origin).toString(),
-    cancelUrl: new URL(`${WALLET_PATH}?pay=canceled`, origin).toString(),
-    returnUrl: new URL(EPAY_RETURN_PATH, origin).toString(),
-  };
 }
 
 /**

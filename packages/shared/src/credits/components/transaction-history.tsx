@@ -73,13 +73,18 @@ function formatDateTime(
   locale: string,
   timeZone: string
 ): string {
-  return formatDateInTimeZone(date, locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }, timeZone);
+  return formatDateInTimeZone(
+    date,
+    locale,
+    {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
+    timeZone
+  );
 }
 
 /**
@@ -154,8 +159,6 @@ export function TransactionHistory({ timeZone }: { timeZone: string }) {
       case "registration_bonus":
         return t("descriptions.registration_bonus");
       case "monthly_grant": {
-        const planType = (meta?.planType as string) ?? "";
-        const plan = planType.charAt(0).toUpperCase() + planType.slice(1);
         const interval = meta?.interval as string;
         const monthlyCredits = getMonthlyCreditsFromMetadata(
           meta,
@@ -164,11 +167,10 @@ export function TransactionHistory({ timeZone }: { timeZone: string }) {
         );
         if (interval === "year") {
           return t("descriptions.yearly_grant", {
-            plan,
             monthly: monthlyCredits,
           });
         }
-        return t("descriptions.monthly_grant", { plan });
+        return t("descriptions.monthly_grant");
       }
       case "consumption":
         return tx.description ?? t("descriptions.consumption");

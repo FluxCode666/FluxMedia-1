@@ -84,12 +84,6 @@
     "./support/components/admin-ticket-reply-form": "./src/support/components/admin-ticket-reply-form.tsx",
     "./support/components/admin-ticket-status-select": "./src/support/components/admin-ticket-status-select.tsx",
     "./support/components/ticket-message-form": "./src/support/components/ticket-message-form.tsx",
-    "./subscription/actions/get-user-plan": "./src/subscription/actions/get-user-plan.ts",
-    "./subscription/components/plan-badge": "./src/subscription/components/plan-badge.tsx",
-    "./subscription/services/plan-capabilities": "./src/subscription/services/plan-capabilities.ts",
-    "./subscription/services/user-plan": "./src/subscription/services/user-plan.ts",
-    "./subscription/purchase-contract": "./src/subscription/purchase-contract.ts",
-    "./subscription/checkout-contract": "./src/subscription/checkout-contract.ts",
     "./mail": "./src/mail/index.ts",
     "./mail/client": "./src/mail/client.ts",
     "./mail/utils": "./src/mail/utils.ts",
@@ -101,8 +95,6 @@
     "./config": "./src/config/index.ts",
     "./config/nav": "./src/config/nav.ts",
     "./config/payment": "./src/config/payment.ts",
-    "./config/payment-runtime": "./src/config/payment-runtime.ts",
-    "./config/subscription-plan": "./src/config/subscription-plan.ts",
     "./payment/creem": "./src/payment/creem.ts",
     "./payment/creem-amount": "./src/payment/creem-amount.ts",
     "./payment/epay": "./src/payment/epay.ts",
@@ -135,7 +127,6 @@
   },
   "scripts": {
     "test": "vitest run --config vitest.config.ts",
-    "test:matrix": "vitest run --config vitest.config.ts src/subscription/services/plan-capabilities.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

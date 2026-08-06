@@ -16,7 +16,6 @@ export {
   setUserCreditsStatusAction,
   setUserImageGenerationConcurrencyAction,
   setUserPasswordAction,
-  setUserPlanAction,
   updateUserProfileAction,
   updateUserRoleAction,
 } from "./admin-users";

@@ -4,7 +4,7 @@
  * API 密钥管理 Server Actions 薄传输适配器。
  *
  * 职责：校验页面输入、构造当前 session Principal、调用六个 UOL operation，并刷新
- * API 密钥路由；数据库、套餐、分组、额度和生命周期逻辑全部由应用服务负责。
+ * API 密钥路由；数据库、分组、额度和生命周期逻辑全部由应用服务负责。
  * 使用方：external-api-key-section.tsx。
  * 关键依赖：protectedAction、UOL invoke 网关和 Web UOL 初始化。
  */

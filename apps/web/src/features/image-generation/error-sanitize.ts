@@ -51,7 +51,7 @@ export function isInternalDatabaseError(error: unknown): boolean {
  * 是否可能携带供应商实现、网络拓扑或凭据细节的上游错误。
  *
  * 生成管线会把部分上游失败作为 `result.error` 正常返回而非抛异常，故同时接受
- * Error 与 string。只匹配供应商/网络/凭据边界信号，避免把积分、套餐、校验等面向
+ * Error 与 string。只匹配供应商/网络/凭据边界信号，避免把积分、参数校验等面向
  * 用户的本地错误误降级。
  */
 export function isSensitiveUpstreamError(error: unknown): boolean {

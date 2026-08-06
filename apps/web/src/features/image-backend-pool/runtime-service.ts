@@ -226,7 +226,7 @@ export async function resolveTrustedGroupSnapshot(
     )
   );
   const group = selectRuntimeBackendGroupCandidate(rows, {
-    targetGroupId,
+    ...(targetGroupId !== undefined && { targetGroupId }),
     isUserRequested,
   });
 

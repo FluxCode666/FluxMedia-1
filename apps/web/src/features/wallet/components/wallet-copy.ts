@@ -50,7 +50,7 @@ export function createWalletCopy(isZh: boolean) {
     orderAmount: copy("Amount", "金额"),
     orderCredits: copy("Credits", "积分"),
     topUpOrder: copy("Pay as you go", "按量充值"),
-    packageOrder: copy("Credit package", "积分套餐"),
+    packageOrder: copy("Credit package", "积分包"),
     provider: copy("Provider", "支付渠道"),
     providerLabels: {
       alipay_f2f: copy("Alipay", "支付宝"),

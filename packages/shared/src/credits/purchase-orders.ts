@@ -1,11 +1,11 @@
 /**
- * 积分套餐支付订单服务。
+ * 积分包支付订单服务。
  *
- * 使用方：积分套餐 Checkout、Creem / 易支付履约与统一支付结果页。
+ * 使用方：积分包 Checkout、Creem / 易支付履约与统一支付结果页。
  * 关键依赖：payment_order。所有支付渠道先创建本地订单，浏览器只能查询订单，
  * 不能据第三方回跳自行发放积分。
  *
- * WHY：支付成功通知与浏览器回跳的先后顺序并不稳定。把套餐购买也持久化为
+ * WHY：支付成功通知与浏览器回跳的先后顺序并不稳定。把积分包购买也持久化为
  * payment_order 后，用户可以看到准确的“等待支付 → 正在发放 → 已到账”状态，
  * 而发放仍只由服务端 webhook 触发并通过积分账本的幂等约束兜底。
  */
@@ -29,7 +29,6 @@ export type CreditPaymentDisplayStatus =
 export type CreditPackagePricingSnapshot = {
   packageId: string;
   quantity: number;
-  planId: string;
   currency: string;
   amountMinor: number;
   creditsAmount: number;
@@ -62,7 +61,7 @@ function toCreditPackagePaymentOrder(order: typeof paymentOrder.$inferSelect) {
     order.purpose !== "credit_package" ||
     !isCreditPackagePaymentProvider(order.provider)
   ) {
-    throw new Error("积分套餐支付订单类型无效");
+    throw new Error("积分包支付订单类型无效");
   }
 
   return {
@@ -113,10 +112,10 @@ export function getCreditPaymentDisplayStatus(input: {
 }
 
 /**
- * 创建或按用户幂等键重取积分套餐支付订单。
+ * 创建或按用户幂等键重取积分包支付订单。
  *
  * 同一 key 只能对应完全相同的通道和报价，防止客户端重试时把旧订单错误用于
- * 另一份套餐。实际第三方 Checkout 在调用方创建，成功后再写入 providerPayload。
+ * 另一份积分包。实际第三方 Checkout 在调用方创建，成功后再写入 providerPayload。
  */
 export async function createCreditPackagePaymentOrder(input: {
   userId: string;
@@ -137,7 +136,7 @@ export async function createCreditPackagePaymentOrder(input: {
     !Number.isFinite(input.creditsAmount) ||
     input.creditsAmount <= 0
   ) {
-    throw new Error("积分套餐支付金额无效");
+    throw new Error("积分包支付金额无效");
   }
 
   const now = new Date();
@@ -177,22 +176,20 @@ export async function createCreditPackagePaymentOrder(input: {
         )
         .limit(1)
     )[0];
-  if (!order) throw new Error("无法创建积分套餐支付订单");
+  if (!order) throw new Error("无法创建积分包支付订单");
 
   const normalized = toCreditPackagePaymentOrder(order);
   const existingPackageId = order.pricingSnapshot.packageId;
   const existingQuantity = order.pricingSnapshot.quantity;
-  const existingPlanId = order.pricingSnapshot.planId;
   if (
     normalized.provider !== input.provider ||
     normalized.currency !== input.currency ||
     normalized.amountMinor !== input.amountMinor ||
     normalized.creditsAmount !== input.creditsAmount ||
     existingPackageId !== input.pricingSnapshot.packageId ||
-    existingQuantity !== input.pricingSnapshot.quantity ||
-    existingPlanId !== input.pricingSnapshot.planId
+    existingQuantity !== input.pricingSnapshot.quantity
   ) {
-    throw new Error("该支付请求已用于另一份积分套餐");
+    throw new Error("该支付请求已用于另一份积分包");
   }
   return normalized;
 }
@@ -229,7 +226,7 @@ export async function saveCreditPackageCheckout(input: {
 }
 
 /**
- * 为已验签的支付通知领取积分套餐履约租约。
+ * 为已验签的支付通知领取积分包履约租约。
  *
  * 跨实例并发由状态 CAS 约束；租约超时可由后续通知接管，最终发放仍以
  * credits_batch 的 sourceRef 唯一约束保证只发一次。

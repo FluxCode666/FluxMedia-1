@@ -60,10 +60,7 @@ export interface EnqueueVideoTaskInput {
 /** 把目标时间收窄为 BullMQ 安全延迟；过去时间立即执行。 */
 function getQueueDelay(runAt: Date | undefined, now = Date.now()): number {
   if (!runAt) return 0;
-  return Math.min(
-    MAX_BULLMQ_DELAY_MS,
-    Math.max(0, runAt.getTime() - now)
-  );
+  return Math.min(MAX_BULLMQ_DELAY_MS, Math.max(0, runAt.getTime() - now));
 }
 
 /** 生成所有媒体队列共用的保留、重试和退避选项。 */
@@ -90,22 +87,20 @@ function getMediaTaskQueues() {
     return runtimeGlobal.__fluxmediaMediaTaskQueues;
   }
   const connection = getMediaTaskRedisConnectionOptions("producer");
-  const image = new Queue<
-    ImageTaskJobData,
-    void,
-    typeof MEDIA_TASK_JOB_NAME
-  >(MEDIA_TASK_QUEUE_NAMES.image, {
-    connection,
-    prefix: MEDIA_TASK_QUEUE_PREFIX,
-  });
-  const video = new Queue<
-    VideoTaskJobData,
-    void,
-    typeof MEDIA_TASK_JOB_NAME
-  >(MEDIA_TASK_QUEUE_NAMES.video, {
-    connection,
-    prefix: MEDIA_TASK_QUEUE_PREFIX,
-  });
+  const image = new Queue<ImageTaskJobData, void, typeof MEDIA_TASK_JOB_NAME>(
+    MEDIA_TASK_QUEUE_NAMES.image,
+    {
+      connection,
+      prefix: MEDIA_TASK_QUEUE_PREFIX,
+    }
+  );
+  const video = new Queue<VideoTaskJobData, void, typeof MEDIA_TASK_JOB_NAME>(
+    MEDIA_TASK_QUEUE_NAMES.video,
+    {
+      connection,
+      prefix: MEDIA_TASK_QUEUE_PREFIX,
+    }
+  );
   image.on("error", (error) =>
     logError(error, { source: "media-task-image-queue" })
   );
@@ -119,7 +114,7 @@ function getMediaTaskQueues() {
 /**
  * 投递一条持久图片任务。
  *
- * @param input 任务 ID、可选套餐优先级和延迟时间。
+ * @param input 任务 ID、可选队列优先级和延迟时间。
  * @param queue 可注入队列；生产默认使用图片 Queue。
  * @returns BullMQ add 完成后的未知作业句柄；调用方不依赖其内部结构。
  */
@@ -132,10 +127,7 @@ export async function enqueueImageTask(
     taskId: input.taskId,
   });
   const options = createBaseJobOptions(getQueueDelay(input.runAt));
-  options.jobId = createImageTaskJobId(
-    data.taskId,
-    input.deliveryVersion ?? 0
-  );
+  options.jobId = createImageTaskJobId(data.taskId, input.deliveryVersion ?? 0);
   if (input.priority !== undefined) {
     options.priority = Math.max(1, Math.trunc(input.priority));
   }

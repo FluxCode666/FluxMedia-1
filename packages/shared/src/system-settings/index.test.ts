@@ -6,7 +6,6 @@ import {
   clearSystemSettingsCache,
   getAdminSystemSettingsSnapshot,
   getRuntimeSettingBoolean,
-  getRuntimeSettingJson,
   getRuntimeSettingSelect,
   getRuntimeSettingString,
   getSiteBranding,
@@ -243,50 +242,6 @@ describe("setSystemSettings", () => {
     ).rejects.toThrow(/必须是有效数字/);
   });
 
-  it("enforces per-key number range bounds (coerceValue, S-M8)", async () => {
-    // 经济键：价格 min=0.01 拒绝 0 与负数，max=1_000_000 拒绝异常巨大值。
-    await expect(
-      setSystemSettings(
-        [{ key: "PLAN_STARTER_MONTHLY_AMOUNT", value: "0" }],
-        "admin"
-      )
-    ).rejects.toThrow(/不能小于/);
-
-    await expect(
-      setSystemSettings(
-        [{ key: "PLAN_STARTER_MONTHLY_AMOUNT", value: "-5" }],
-        "admin"
-      )
-    ).rejects.toThrow(/不能小于/);
-
-    await expect(
-      setSystemSettings(
-        [{ key: "PLAN_STARTER_MONTHLY_AMOUNT", value: "2000000" }],
-        "admin"
-      )
-    ).rejects.toThrow(/不能大于/);
-
-    // 边界：恰好等于下界/上界应通过（闭区间）。
-    await setSystemSettings(
-      [{ key: "PLAN_STARTER_MONTHLY_AMOUNT", value: "0.01" }],
-      "admin"
-    );
-    expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(0.01);
-
-    await setSystemSettings(
-      [{ key: "PLAN_STARTER_MONTHLY_AMOUNT", value: "1000000" }],
-      "admin"
-    );
-    expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(1_000_000);
-
-    // 正常区间内的值原样写入。
-    await setSystemSettings(
-      [{ key: "PLAN_STARTER_MONTHLY_AMOUNT", value: "20" }],
-      "admin"
-    );
-    expect(store.get("PLAN_STARTER_MONTHLY_AMOUNT")?.value).toBe(20);
-  });
-
   it("allows registration bonus 0 but rejects negative (coerceValue, S-M8)", async () => {
     // 注册奖励积分 min=0：允许 0（关闭赠送），拒绝负数（会发负积分）。
     await setSystemSettings(
@@ -317,22 +272,6 @@ describe("setSystemSettings", () => {
       "admin"
     );
     expect(store.get("CONTENT_MODERATION_PROVIDER_TIMEOUT_MS")?.value).toBe(1);
-  });
-
-  it("blank number input clears the row instead of coercing to 0 (S-M8)", async () => {
-    store.set("PLAN_PRO_MONTHLY_AMOUNT", {
-      key: "PLAN_PRO_MONTHLY_AMOUNT",
-      value: 60,
-    });
-
-    // 空白数值视为清空：删除行回退默认值，且不被 min 范围误判。
-    const changed = await setSystemSettings(
-      [{ key: "PLAN_PRO_MONTHLY_AMOUNT", value: "   " }],
-      "admin"
-    );
-    expect(changed).toEqual(["PLAN_PRO_MONTHLY_AMOUNT"]);
-    expect(store.has("PLAN_PRO_MONTHLY_AMOUNT")).toBe(false);
-    expect(deletedKeys.value).toContain("PLAN_PRO_MONTHLY_AMOUNT");
   });
 
   it("number key without declared range keeps coercion unchanged (S-M8)", async () => {
@@ -369,14 +308,7 @@ describe("setSystemSettings", () => {
     }
   });
 
-  it("rejects malformed json and value not in select options (coerceValue, C-L25)", async () => {
-    await expect(
-      setSystemSettings(
-        [{ key: "PLAN_CAPABILITY_MATRIX", value: "{not json" }],
-        "admin"
-      )
-    ).rejects.toThrow(/必须是有效 JSON/);
-
+  it("rejects values not in select options (coerceValue, C-L25)", async () => {
     await expect(
       setSystemSettings(
         [{ key: "PAYMENT_PROVIDER", value: "definitely-not-an-option" }],
@@ -698,20 +630,6 @@ describe("getAdminSystemSettingsSnapshot", () => {
     expect(appName?.stored).toBe(false);
     expect(appName?.fromEnv).toBe(true);
   });
-
-  it("JSON.stringifies an object stored value for display", async () => {
-    store.set("PLAN_CAPABILITY_MATRIX", {
-      key: "PLAN_CAPABILITY_MATRIX",
-      value: { version: 1 },
-    });
-
-    const snapshot = await getAdminSystemSettingsSnapshot();
-    const matrix = snapshot.find(
-      (item) => item.key === "PLAN_CAPABILITY_MATRIX"
-    );
-
-    expect(matrix?.value).toBe(JSON.stringify({ version: 1 }, null, 2));
-  });
 });
 
 describe("legacy storage setting aliases", () => {
@@ -759,7 +677,6 @@ describe("runtime setting getters stored/env fallback (C-L29)", () => {
     delete process.env.SELF_USE_MODE_ENABLED;
     delete process.env.NEXT_PUBLIC_APP_NAME;
     delete process.env.PAYMENT_PROVIDER;
-    delete process.env.PLAN_CAPABILITY_MATRIX;
   });
 
   it("getRuntimeSettingBoolean reads stored boolean, then env truthy string, else fallback", async () => {
@@ -844,25 +761,6 @@ describe("runtime setting getters stored/env fallback (C-L29)", () => {
         "creem"
       )
     ).resolves.toBe("epay");
-  });
-
-  it("getRuntimeSettingJson parses stored string JSON and returns object directly", async () => {
-    store.set("PLAN_CAPABILITY_MATRIX", {
-      key: "PLAN_CAPABILITY_MATRIX",
-      value: '{"version":2}',
-    });
-    await expect(
-      getRuntimeSettingJson("PLAN_CAPABILITY_MATRIX")
-    ).resolves.toEqual({ version: 2 });
-
-    store.set("PLAN_CAPABILITY_MATRIX", {
-      key: "PLAN_CAPABILITY_MATRIX",
-      value: { version: 3 },
-    });
-    clearSystemSettingsCache();
-    await expect(
-      getRuntimeSettingJson("PLAN_CAPABILITY_MATRIX")
-    ).resolves.toEqual({ version: 3 });
   });
 
   it("clear falls back to deployment env instead of bootstrapped DB env", async () => {

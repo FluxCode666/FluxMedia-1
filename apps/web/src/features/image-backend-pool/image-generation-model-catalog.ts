@@ -83,7 +83,7 @@ function mergeCapabilities(
 /**
  * 按分组合并显式模型能力。
  *
- * @param source 已完成套餐和状态筛选的分组、成员事实。
+ * @param source 已完成启用状态和成员可达性筛选的分组事实。
  * @returns 不含视频模型，且按模型 ID 稳定排序的目录。
  */
 export function buildImageGenerationModelCatalog(

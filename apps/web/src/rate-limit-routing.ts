@@ -3,7 +3,7 @@ import type { RateLimitType } from "@repo/shared/rate-limit";
 /**
  * API 路由限流配置（白名单模式）
  *
- * 外接 /v1 生图接口不在这里做每分钟请求限流；它们已经进入套餐并发队列，
+ * 外接 /v1 生图接口不在这里做每分钟请求限流；它们已经进入统一并发队列，
  * 超出并发的请求应排队，而不是被通用 20/min AI 限流提前拒绝。
  */
 const API_RATE_LIMITS: Array<{ pattern: RegExp; type: RateLimitType }> = [

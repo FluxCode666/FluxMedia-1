@@ -10,7 +10,6 @@ import {
   externalApiKey,
   generation,
   session,
-  subscription,
   user,
 } from "@repo/database/schema";
 import { and, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
@@ -23,11 +22,6 @@ import {
   canActOnTargetRole,
   getUserRoleLabel,
 } from "../../auth/roles";
-import { PRICE_IDS } from "../../config/payment";
-import {
-  getPlanFromPriceId,
-  type SubscriptionPlan,
-} from "../../config/subscription-plan";
 import {
   consumeCredits,
   freezeCreditsAccount,
@@ -51,7 +45,6 @@ import {
   superAdminAction,
 } from "../../safe-action";
 import { buildSignedStorageImageUrl } from "../../storage/signed-url";
-import { getUserPlan } from "../../subscription/services/user-plan";
 import { invokeOperation, OperationError, type Principal } from "../../uol";
 import "../../uol/operations/moderation";
 import "../../uol/operations/media-limits";
@@ -91,23 +84,7 @@ function assertCanActOnTarget(
 }
 
 const userStatusSchema = z.enum(["all", "active", "banned", "unverified"]);
-const subscriptionStatusSchema = z.enum([
-  "all",
-  "none",
-  "active",
-  "canceled",
-  "past_due",
-  "incomplete",
-]);
 const creditsStatusSchema = z.enum(["all", "active", "frozen"]);
-const planFilterSchema = z.enum([
-  "all",
-  "free",
-  "starter",
-  "pro",
-  "ultra",
-  "enterprise",
-]);
 
 const listUsersSchema = z
   .object({
@@ -115,9 +92,7 @@ const listUsersSchema = z
     page: z.number().int().min(1).default(1),
     pageSize: z.number().int().min(10).max(100).default(20),
     status: userStatusSchema.default("all"),
-    subscriptionStatus: subscriptionStatusSchema.default("all"),
     creditsStatus: creditsStatusSchema.default("all"),
-    plan: planFilterSchema.default("all"),
   })
   .optional();
 
@@ -249,11 +224,6 @@ const setCreditsStatusSchema = userIdSchema.extend({
   reason: reasonSchema,
 });
 
-const setUserPlanSchema = userIdSchema.extend({
-  plan: z.enum(["free", "starter", "pro", "ultra", "enterprise"]),
-  reason: reasonSchema,
-});
-
 const setExternalApiKeyStatusSchema = z.object({
   keyId: z.string().min(1, "API Key ID 不能为空"),
   isActive: z.boolean(),
@@ -312,7 +282,6 @@ const setUserPasswordSchema = userIdSchema.extend({
 });
 
 type ListUsersInput = z.infer<typeof listUsersSchema>;
-type PlanFilter = z.infer<typeof planFilterSchema>;
 
 function normalizeListInput(input: ListUsersInput) {
   return {
@@ -320,79 +289,8 @@ function normalizeListInput(input: ListUsersInput) {
     page: input?.page ?? 1,
     pageSize: input?.pageSize ?? 20,
     status: input?.status ?? "all",
-    subscriptionStatus: input?.subscriptionStatus ?? "all",
     creditsStatus: input?.creditsStatus ?? "all",
-    plan: input?.plan ?? "all",
   };
-}
-
-function getPlanFromSubscriptionPriceId(priceId: string | null | undefined) {
-  if (!priceId) {
-    return "free" satisfies SubscriptionPlan;
-  }
-  return getPlanFromPriceId(priceId) ?? ("free" satisfies SubscriptionPlan);
-}
-
-function isSubscriptionWithinPeriod(sub: {
-  currentPeriodEnd: Date | null;
-  status: string | null;
-}) {
-  if (!sub.status) {
-    return false;
-  }
-  if (sub.status === "lifetime") {
-    return true;
-  }
-  const withinPeriod =
-    !sub.currentPeriodEnd || sub.currentPeriodEnd > new Date();
-  return (
-    (["active", "trialing"].includes(sub.status) && withinPeriod) ||
-    (sub.status === "canceled" && withinPeriod)
-  );
-}
-
-function effectiveSubscriptionCondition() {
-  return sql<boolean>`(
-    ${subscription.status} = 'lifetime'
-    OR (
-      ${subscription.status} IN ('active', 'trialing')
-      AND (
-        ${subscription.currentPeriodEnd} IS NULL
-        OR ${subscription.currentPeriodEnd} > now()
-      )
-    )
-    OR (
-      ${subscription.status} = 'canceled'
-      AND ${subscription.currentPeriodEnd} IS NOT NULL
-      AND ${subscription.currentPeriodEnd} > now()
-    )
-  )`;
-}
-
-function getPlanPriceIds(plan: Exclude<PlanFilter, "all" | "free">) {
-  return Object.values(PRICE_IDS).filter((value): value is string => {
-    if (!value) {
-      return false;
-    }
-    return getPlanFromPriceId(value) === plan;
-  });
-}
-
-function getMonthlyPriceIdForPlan(plan: Exclude<SubscriptionPlan, "free">) {
-  const priceIdMap: Record<Exclude<SubscriptionPlan, "free">, string> = {
-    starter: PRICE_IDS.STARTER_MONTHLY,
-    pro: PRICE_IDS.PRO_MONTHLY,
-    ultra: PRICE_IDS.ULTRA_MONTHLY,
-    enterprise: PRICE_IDS.ENTERPRISE_MONTHLY,
-  };
-  const priceId = priceIdMap[plan]?.trim();
-  if (!priceId) {
-    // 用 ActionUserError 让提示原样透传前端(否则生产环境被统一替换成"服务器错误")。
-    throw new ActionUserError(
-      `套餐「${plan}」尚未配置月付 Price ID,请先在系统设置中为该套餐配置价格后再切换。`
-    );
-  }
-  return priceId;
 }
 
 function normalizeAdminCreditAmount(amount: number) {
@@ -423,29 +321,6 @@ function buildUserFilters(input: ReturnType<typeof normalizeListInput>) {
 
   if (input.creditsStatus !== "all") {
     filters.push(eq(creditsBalance.status, input.creditsStatus));
-  }
-
-  if (input.subscriptionStatus === "none") {
-    filters.push(sql`${subscription.id} IS NULL`);
-  } else if (input.subscriptionStatus !== "all") {
-    filters.push(eq(subscription.status, input.subscriptionStatus));
-  }
-
-  if (input.plan === "free") {
-    filters.push(
-      or(
-        sql`${subscription.id} IS NULL`,
-        sql`NOT ${effectiveSubscriptionCondition()}`
-      )
-    );
-  } else if (input.plan !== "all") {
-    const priceIds = getPlanPriceIds(input.plan);
-    if (priceIds.length > 0) {
-      filters.push(inArray(subscription.priceId, priceIds));
-      filters.push(effectiveSubscriptionCondition());
-    } else {
-      filters.push(sql`false`);
-    }
   }
 
   return filters.length > 0 ? and(...filters) : undefined;
@@ -535,19 +410,14 @@ export const getAllUsersAction = withAdminUsersAction("getAllUsers")
             Number
           ),
         creditsStatus: creditsBalance.status,
-        subscriptionStatus: subscription.status,
-        subscriptionPriceId: subscription.priceId,
-        subscriptionCurrentPeriodEnd: subscription.currentPeriodEnd,
       })
       .from(user)
-      .leftJoin(creditsBalance, eq(creditsBalance.userId, user.id))
-      .leftJoin(subscription, eq(subscription.userId, user.id));
+      .leftJoin(creditsBalance, eq(creditsBalance.userId, user.id));
 
     const countQuery = db
       .select({ count: count() })
       .from(user)
-      .leftJoin(creditsBalance, eq(creditsBalance.userId, user.id))
-      .leftJoin(subscription, eq(subscription.userId, user.id));
+      .leftJoin(creditsBalance, eq(creditsBalance.userId, user.id));
 
     const [rows, totalResult, statsResults] = await Promise.all([
       (where ? baseQuery.where(where) : baseQuery)
@@ -564,10 +434,6 @@ export const getAllUsersAction = withAdminUsersAction("getAllUsers")
             inArray(user.role, ["observer_admin", ...ADMIN_MANAGEMENT_ROLES])
           ),
         db.select({ count: count() }).from(user).where(eq(user.banned, true)),
-        db
-          .select({ count: count() })
-          .from(subscription)
-          .where(effectiveSubscriptionCondition()),
       ]),
     ]);
 
@@ -615,12 +481,6 @@ export const getAllUsersAction = withAdminUsersAction("getAllUsers")
         const apiKeyStats = apiKeyCountMap.get(row.id);
         return {
           ...row,
-          plan: isSubscriptionWithinPeriod({
-            status: row.subscriptionStatus,
-            currentPeriodEnd: row.subscriptionCurrentPeriodEnd,
-          })
-            ? getPlanFromSubscriptionPriceId(row.subscriptionPriceId)
-            : ("free" satisfies SubscriptionPlan),
           creditsStatus: row.creditsStatus ?? "active",
           generationCount: generationStats?.total ?? 0,
           failedGenerationCount: generationStats?.failed ?? 0,
@@ -637,7 +497,6 @@ export const getAllUsersAction = withAdminUsersAction("getAllUsers")
         totalUsers: statsResults[0][0]?.count ?? 0,
         admins: statsResults[1][0]?.count ?? 0,
         banned: statsResults[2][0]?.count ?? 0,
-        activeSubscriptions: statsResults[3][0]?.count ?? 0,
       },
     };
   });
@@ -715,7 +574,6 @@ export const getUserDetailAction = withAdminUsersAction("getUserDetail")
     const [
       userRows,
       balanceRows,
-      subscriptionRows,
       activeBatches,
       transactions,
       generations,
@@ -730,11 +588,6 @@ export const getUserDetailAction = withAdminUsersAction("getUserDetail")
         .select()
         .from(creditsBalance)
         .where(eq(creditsBalance.userId, userId))
-        .limit(1),
-      db
-        .select()
-        .from(subscription)
-        .where(eq(subscription.userId, userId))
         .limit(1),
       db
         .select()
@@ -841,13 +694,9 @@ export const getUserDetailAction = withAdminUsersAction("getUserDetail")
       throw new Error("用户不存在");
     }
 
-    const sub = subscriptionRows[0] ?? null;
-    const planInfo = await getUserPlan(userId);
     return {
       user: userData,
       creditsBalance: balanceRows[0] ?? null,
-      subscription: sub,
-      plan: planInfo.plan,
       activeBatches,
       transactions,
       generations: generations.map((item) => ({
@@ -1063,85 +912,6 @@ export const adminAdjustCreditsAction = withSuperAdminUsersAction(
     return {
       message: `已扣减 ${amount} 积分`,
       balance: after.balance,
-    };
-  });
-
-export const setUserPlanAction = withSuperAdminUsersAction("setUserPlan")
-  .schema(setUserPlanSchema)
-  .action(async ({ parsedInput: data, ctx }) => {
-    await getUserBasicOrThrow(data.userId);
-
-    const [before] = await db
-      .select()
-      .from(subscription)
-      .where(eq(subscription.userId, data.userId))
-      .limit(1);
-
-    const now = new Date();
-    if (data.plan === "free") {
-      if (before) {
-        await db
-          .update(subscription)
-          .set({
-            status: "canceled",
-            currentPeriodEnd: now,
-            cancelAtPeriodEnd: false,
-            updatedAt: now,
-          })
-          .where(eq(subscription.userId, data.userId));
-      }
-    } else {
-      const priceId = getMonthlyPriceIdForPlan(data.plan);
-      const subscriptionData = {
-        subscriptionId: before?.subscriptionId ?? `manual:${data.userId}`,
-        priceId,
-        status: "active",
-        currentPeriodStart: now,
-        currentPeriodEnd: null,
-        cancelAtPeriodEnd: false,
-        updatedAt: now,
-      };
-
-      if (before) {
-        await db
-          .update(subscription)
-          .set(subscriptionData)
-          .where(eq(subscription.userId, data.userId));
-      } else {
-        await db.insert(subscription).values({
-          id: crypto.randomUUID(),
-          userId: data.userId,
-          ...subscriptionData,
-        });
-      }
-    }
-
-    const [after] = await db
-      .select()
-      .from(subscription)
-      .where(eq(subscription.userId, data.userId))
-      .limit(1);
-
-    await writeAdminAuditLog({
-      adminUserId: ctx.userId,
-      targetUserId: data.userId,
-      action: "subscription.plan.set",
-      reason: data.reason,
-      before,
-      after,
-      metadata: {
-        targetPlan: data.plan,
-        grantPlanCredits: false,
-        note: "Manual plan change only updates subscription state and does not grant plan credits.",
-      },
-    });
-
-    revalidatePath("/dashboard/users");
-    return {
-      message:
-        data.plan === "free"
-          ? "已将用户套餐改为 Free，不发放套餐积分"
-          : `已将用户套餐改为 ${data.plan.toUpperCase()}，不发放套餐积分`,
     };
   });
 

@@ -317,22 +317,22 @@ describe("external image base64 loading", () => {
 });
 
 describe("external API error classification", () => {
-  it("maps plan limit errors to explicit request errors", () => {
+  it("maps retired plan and parameter limit errors to stable request errors", () => {
     expect(
       toOpenAIErrorPayload(
         "Batch image generation is not enabled for this plan."
       ).error
     ).toMatchObject({
       type: "invalid_request_error",
-      code: "insufficient_plan",
-      status: 403,
+      code: "unsupported_model",
+      status: 400,
     });
 
     expect(
       toOpenAIErrorPayload("n must be between 1 and 10.").error
     ).toMatchObject({
       type: "invalid_request_error",
-      code: "plan_limit_exceeded",
+      code: "invalid_value",
       status: 400,
     });
   });

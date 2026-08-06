@@ -521,16 +521,11 @@ function classifyExternalApiError(message: string) {
     };
   }
 
-  if (
-    normalized.includes("not enabled for this plan") ||
-    normalized.includes("requires pro plan") ||
-    normalized.includes("requires ultra plan") ||
-    normalized.includes("requires enterprise plan")
-  ) {
+  if (normalized.includes("not enabled")) {
     return {
       type: "invalid_request_error",
-      code: "insufficient_plan",
-      status: 403,
+      code: "unsupported_model",
+      status: 400,
     };
   }
 
@@ -544,7 +539,7 @@ function classifyExternalApiError(message: string) {
   ) {
     return {
       type: "invalid_request_error",
-      code: "plan_limit_exceeded",
+      code: "invalid_value",
       status: 400,
     };
   }
@@ -562,7 +557,7 @@ function classifyExternalApiError(message: string) {
 
   if (
     normalized.includes("选择的生图后端分组不可用") ||
-    normalized.includes("当前套餐不可用")
+    normalized.includes("当前分组不可用")
   ) {
     return {
       type: "invalid_request_error",

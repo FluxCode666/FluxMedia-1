@@ -11,10 +11,6 @@ import { creditsTransaction, externalApiKey } from "@repo/database/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getBaseUrl } from "../config/payment";
-import {
-  isPlanAtLeast,
-  type SubscriptionPlan,
-} from "../config/subscription-plan";
 import { logEvent } from "../logger/index";
 import { assertRuntimeCreemCheckoutConfigured, creem } from "../payment/creem";
 import {
@@ -23,7 +19,6 @@ import {
   saveEpayOrder,
 } from "../payment/epay";
 import { ActionUserError, protectedAction } from "../safe-action";
-import { getUserPlanType } from "../subscription/services/user-plan";
 import { getRuntimeSettingNumber } from "../system-settings";
 
 import { CREDIT_CONFIG_DEFAULTS, isCreditPackageVisible } from "./config";
@@ -40,9 +35,9 @@ import {
   InsufficientCreditsError,
 } from "./core";
 import {
-  getCreditPackageCreemProductIdForPlan,
+  getCreditPackageCreemProductId,
   getCreditPackageCurrency,
-  getCreditPackagePriceForPlan,
+  getCreditPackagePrice,
   getRuntimeCreditPackageById,
   getRuntimeCreditPackages,
 } from "./packages";
@@ -78,12 +73,6 @@ function getExpiryDate(expiryDays: number) {
   return expiryDays
     ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
     : null;
-}
-
-async function getUserPlanForCreditsAction(
-  userId: string
-): Promise<SubscriptionPlan> {
-  return getUserPlanType(userId);
 }
 
 // ============================================
@@ -368,7 +357,7 @@ export const checkCreditsAvailable = withProtectedCreditsAction(
 /**
  * 创建积分购买 Checkout Session
  *
- * 创建 Creem Checkout Session 用于购买积分套餐
+ * 创建 Creem Checkout Session 用于购买积分包
  * metadata 中包含 type: 'credit_purchase' 和 credits 数量
  * Webhook 会根据这些信息发放积分
  */
@@ -393,20 +382,15 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
     const { userId } = ctx;
     const requestedQuantity = parsedInput.quantity ?? 1;
 
-    // 查找套餐配置
-    const userPlan = await getUserPlanForCreditsAction(userId);
+    // 查找积分包配置
     const pkg = await getRuntimeCreditPackageById(packageId, {
       includeHidden: true,
-      plan: userPlan,
     });
     if (!pkg) {
-      throw new Error("无效的积分套餐");
+      throw new Error("无效的积分包");
     }
-    if (!isCreditPackageVisible(pkg) && !pkg.requiresPlan) {
-      throw new Error("无效的积分套餐");
-    }
-    if (pkg.requiresPlan && !isPlanAtLeast(userPlan, pkg.requiresPlan)) {
-      throw new Error("当前套餐不可购买该积分包");
+    if (!isCreditPackageVisible(pkg)) {
+      throw new Error("无效的积分包");
     }
     if (!pkg.allowQuantity && requestedQuantity !== 1) {
       throw new Error("该积分包不支持数量购买");
@@ -416,7 +400,7 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
     if (pkg.maxQuantity && quantity > pkg.maxQuantity) {
       throw new Error(`购买数量不能超过 ${pkg.maxQuantity}`);
     }
-    const unitPrice = getCreditPackagePriceForPlan(pkg, userPlan);
+    const unitPrice = getCreditPackagePrice(pkg);
     const currency = getCreditPackageCurrency(pkg);
     const creditsAmount = pkg.credits * quantity;
     const totalPrice = unitPrice * quantity;
@@ -424,7 +408,7 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
       totalPrice * 10 ** getCurrencyMinorUnitExponent(currency)
     );
     if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
-      throw new Error("积分套餐金额无效");
+      throw new Error("积分包金额无效");
     }
 
     const baseUrl = getBaseUrl();
@@ -476,7 +460,6 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
       pricingSnapshot: {
         packageId: pkg.id,
         quantity,
-        planId: userPlan,
         currency,
         amountMinor,
         creditsAmount,
@@ -504,7 +487,6 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
         packageId: pkg.id,
         quantity,
         currency,
-        creditPlan: userPlan,
       };
       await saveEpayOrder(metadata, totalPrice);
       await saveCreditPackageCheckout({
@@ -541,7 +523,7 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
     // 注意：Creem 需要预先在后台创建产品，这里使用 packageId 作为 product_id
     // 实际使用时需要在 Creem 后台创建对应的积分产品
     const checkout = await creem.createCheckout({
-      product_id: getCreditPackageCreemProductIdForPlan(pkg, userPlan),
+      product_id: getCreditPackageCreemProductId(pkg),
       success_url: resultUrl,
       request_id: `credit_purchase_${paymentOrder.id}`,
       metadata: {
@@ -551,7 +533,6 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
         credits: String(creditsAmount),
         packageId: pkg.id,
         quantity: String(quantity),
-        planId: userPlan,
         unitPrice: String(unitPrice),
         currency,
       },
@@ -570,16 +551,14 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
   });
 
 /**
- * 获取积分套餐列表
+ * 获取积分包列表
  */
 export const getCreditPackages = withProtectedCreditsAction(
   "getCreditPackages"
-).action(async ({ ctx }) => {
-  const userPlan = await getUserPlanForCreditsAction(ctx.userId);
+).action(async () => {
   const [packages, paymentProvider] = await Promise.all([
     getRuntimeCreditPackages({
-      includeHidden: isPlanAtLeast(userPlan, "enterprise"),
-      plan: userPlan,
+      includeHidden: false,
     }),
     getRuntimePaymentProvider(),
   ]);
@@ -588,16 +567,13 @@ export const getCreditPackages = withProtectedCreditsAction(
   }
   const useEpay = paymentProvider === "epay";
   return packages
-    .filter((pkg) => {
-      if (pkg.requiresPlan) return isPlanAtLeast(userPlan, pkg.requiresPlan);
-      return isCreditPackageVisible(pkg);
-    })
+    .filter((pkg) => isCreditPackageVisible(pkg))
     .filter((pkg) => !useEpay || getCreditPackageCurrency(pkg) === "CNY")
     .map((pkg) => ({
       id: pkg.id,
       name: pkg.name,
       credits: pkg.credits,
-      price: getCreditPackagePriceForPlan(pkg, userPlan),
+      price: getCreditPackagePrice(pkg),
       currency: getCreditPackageCurrency(pkg),
       description: pkg.description,
       popular: "popular" in pkg ? pkg.popular : false,
