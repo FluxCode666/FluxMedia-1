@@ -32,6 +32,8 @@ const HISTORY_FILTER_DOMAIN = "fluxmedia:generation-history:filters:v1";
 const MAX_CURSOR_LENGTH = 4096;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const HISTORY_KIND_RANK = { image: 1, video: 0 } as const;
+const CONTENT_SAFETY_HISTORY_ERROR =
+  "Prompt did not pass content safety review; modify the prompt and retry";
 
 const historyCursorPayloadSchema = z
   .object({
@@ -346,8 +348,12 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
 export function sanitizeHistoryError(rawError: string | null): string | null {
   if (!rawError?.trim()) return null;
   const normalized = rawError.toLowerCase();
-  if (/moderation|safety|content policy|审核|内容安全/.test(normalized)) {
-    return "Content moderation blocked this generation";
+  if (
+    /moderation|safety|image_unsafe|generated images appear to be unsafe|content policy|审核|内容安全/.test(
+      normalized
+    )
+  ) {
+    return CONTENT_SAFETY_HISTORY_ERROR;
   }
   if (/insufficient credits|积分不足/.test(normalized)) {
     return "Insufficient credits";

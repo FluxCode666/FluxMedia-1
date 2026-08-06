@@ -192,6 +192,44 @@ describe("AdobeFireflyClient.generateImage", () => {
     ).rejects.toBeInstanceOf(UpstreamTemporaryError);
   });
 
+  it("轮询 451 image_unsafe → 内容安全业务拒绝", async () => {
+    const api = new MockTransport((_req, index) => {
+      if (index === 0) {
+        return jsonResponse(
+          200,
+          {},
+          {
+            "x-override-status-link":
+              "https://firefly-epo8552.adobe.io/jobs/result/image-unsafe",
+          }
+        );
+      }
+      return jsonResponse(451, {
+        error_code: "image_unsafe",
+        message:
+          "The generated images appear to be unsafe. Try modifying the prompts or the seeds.",
+      });
+    });
+    const client = new AdobeFireflyClient({ transport: api });
+
+    await expect(
+      client.generateImage({
+        token: FAKE_TOKEN,
+        prompt: "unsafe prompt",
+        aspectRatio: "1:1",
+        outputResolution: "2K",
+        upstreamModelId: "gpt-image",
+        upstreamModelVersion: "2",
+      })
+    ).rejects.toMatchObject({
+      name: "AdobeContentSafetyError",
+      businessError: true,
+      statusCode: 451,
+      adobeErrorCode: "image_unsafe",
+      userMessage: "提示词未通过内容安全审核，请修改提示词后重试。",
+    });
+  });
+
   it("拒绝上游返回的非 Adobe 轮询地址", async () => {
     const api = new MockTransport(() =>
       jsonResponse(

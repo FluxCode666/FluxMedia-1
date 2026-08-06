@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AdobeAcceptedVideoError,
+  AdobeContentSafetyError,
   AdobeRequestError,
   AuthError,
   isAdobeMemberSwitchableError,
@@ -45,6 +46,14 @@ describe("isAdobeMemberSwitchableError", () => {
     expect(
       isAdobeMemberSwitchableError(
         new AdobeAcceptedVideoError("poll failed after submission")
+      )
+    ).toBe(false);
+    expect(
+      isAdobeMemberSwitchableError(
+        new AdobeContentSafetyError("poll failed: 451 image_unsafe", {
+          statusCode: 451,
+          adobeErrorCode: "image_unsafe",
+        })
       )
     ).toBe(false);
   });

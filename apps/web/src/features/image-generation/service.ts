@@ -52,6 +52,7 @@ import {
   parseImageSize,
   resolveImageRequestSize,
 } from "./resolution";
+import { normalizeContentSafetyUserMessage } from "./sla-classification";
 import type {
   ApiConfig,
   EditImageParams,
@@ -315,6 +316,8 @@ function getApiErrorMessage(errorData: unknown): string | null {
       record.message,
       record.detail,
       record.details,
+      record.error_code,
+      record.errorCode,
       record.code,
       record.type,
       record.status,
@@ -641,7 +644,10 @@ function stripTrailingSlash(value: string) {
 function applyPromptOptimizationResultVisibility(
   result: GenerateImageResult
 ): GenerateImageResult {
-  if (result.error) return result;
+  if (result.error) {
+    const error = normalizeContentSafetyUserMessage(result.error);
+    return error === result.error ? result : { ...result, error };
+  }
   const upstreamRevisedPrompt =
     result.upstreamRevisedPrompt || result.revisedPrompt;
   if (!upstreamRevisedPrompt) return result;
@@ -1200,7 +1206,7 @@ function convertApiImageExecutionError(
 ): GenerateImageResult {
   if (error instanceof ApiUpstreamExecutionError) {
     return {
-      error: error.message,
+      error: normalizeContentSafetyUserMessage(error.message),
       ...(error.retryAfterSeconds
         ? { retryAfterSeconds: error.retryAfterSeconds }
         : {}),

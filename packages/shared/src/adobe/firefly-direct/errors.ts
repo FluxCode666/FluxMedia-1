@@ -42,6 +42,29 @@ export class AdobeRequestError extends Error {
   }
 }
 
+/** Adobe 明确拒绝图片内容时返回的正常业务错误，不允许切换成员重试。 */
+export class AdobeContentSafetyError extends AdobeRequestError {
+  readonly businessError = true;
+
+  /**
+   * 保存供应商诊断信息，同时提供不暴露上游正文的稳定用户提示。
+   *
+   * @param message 仅供内部诊断的原始失败摘要。
+   * @param opts 已校验的 HTTP 状态、请求标识与 Adobe 错误码。
+   */
+  constructor(
+    message: string,
+    opts?: { statusCode?: number; requestId?: string; adobeErrorCode?: string }
+  ) {
+    super(message, {
+      ...opts,
+      errorType: "status",
+      userMessage: "提示词未通过内容安全审核，请修改提示词后重试。",
+    });
+    this.name = "AdobeContentSafetyError";
+  }
+}
+
 /** Adobe 账号配额耗尽（x-access-error: taste_exhausted）。 */
 export class QuotaExhaustedError extends AdobeRequestError {
   constructor(
@@ -64,7 +87,7 @@ export class AuthError extends AdobeRequestError {
   }
 }
 
-/** 上游临时错误（408/429/451/5xx 或网络层），可重试。 */
+/** 上游临时错误（408/429/451/5xx 或网络层），可重试；明确安全拒绝除外。 */
 export class UpstreamTemporaryError extends AdobeRequestError {
   constructor(
     message: string,
@@ -125,7 +148,7 @@ export function isRetryableStatus(status: number): boolean {
 /**
  * 是否属于可切换顶层成员的错误：408/429/451/5xx 上游临时错误、账号配额耗尽、token
  * 鉴权失效。统一调度可在提交尚未被接受时切换另一个 Adobe direct 成员；请求本身 4xx、
- * 内容拒绝和模型不支持等终态错误切换成员也无效。
+ * 内容拒绝（包括 AdobeContentSafetyError）和模型不支持等终态错误切换成员也无效。
  */
 export function isAdobeMemberSwitchableError(error: unknown): boolean {
   return (

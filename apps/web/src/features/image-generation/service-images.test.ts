@@ -187,6 +187,28 @@ describe("Images API service", () => {
     expect(result.error).toContain("quota_exceeded");
   });
 
+  it("将 Images API 的 image_unsafe 拒绝映射为友好业务提示", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json(
+        {
+          error_code: "image_unsafe",
+          message:
+            "The generated images appear to be unsafe. Try modifying the prompts or the seeds.",
+        },
+        { status: 451 }
+      )
+    );
+
+    const result = await generateImage(
+      { baseUrl: "https://api.example.test/v1", apiKey: "test-key" },
+      { prompt: "unsafe prompt", model: "gpt-image-2" }
+    );
+
+    expect(result.error).toBe("提示词未通过内容安全审核，请修改提示词后重试。");
+  });
+
   it("文生图未传尺寸时向上游发送 auto", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");

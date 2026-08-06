@@ -21,6 +21,7 @@ import {
 } from "@repo/shared/adobe";
 import {
   AdobeAcceptedVideoError,
+  AdobeContentSafetyError,
   AdobeFireflyClient,
   type AdobeFireflyWebApp,
   AdobeVideoSubmissionUncertainError,
@@ -599,8 +600,12 @@ async function runWithAdobeCredential<T>(
         })
       );
     }
-    const message =
+    const diagnosticMessage =
       failure instanceof Error ? failure.message : "Adobe 直连生成失败";
+    const userMessage =
+      failure instanceof AdobeContentSafetyError
+        ? failure.userMessage
+        : diagnosticMessage;
     const upstreamAccepted = failure instanceof AdobeAcceptedVideoError;
     const submissionUncertain =
       failure instanceof AdobeVideoSubmissionUncertainError;
@@ -613,14 +618,14 @@ async function runWithAdobeCredential<T>(
         source: "adobe-direct-switch",
         memberId,
         profile,
-        error: message.slice(0, 160),
+        error: diagnosticMessage.slice(0, 160),
       });
-    } else {
+    } else if (!(failure instanceof AdobeContentSafetyError)) {
       logError(failure, { source: "adobe-direct", memberId, profile });
     }
     return {
       ok: false,
-      error: message,
+      error: userMessage,
       switchable,
       upstreamAccepted,
       terminal: !switchable && !upstreamAccepted && !submissionUncertain,
@@ -728,7 +733,12 @@ export async function runAdobeDirectImageRequest(
       return output.bytes.toString("base64");
     }
   );
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) {
+    return {
+      error: result.error,
+      backendSwitchAllowed: result.switchable,
+    };
+  }
   return { imageBase64: result.value };
 }
 

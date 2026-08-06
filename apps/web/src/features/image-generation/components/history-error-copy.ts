@@ -20,6 +20,11 @@ export function formatHistoryError(
 ): string | null {
   if (!error) return null;
   switch (error) {
+    case "Prompt did not pass content safety review; modify the prompt and retry":
+      return copy(
+        "Prompt did not pass content safety review; modify the prompt and retry",
+        "提示词未通过内容安全审核，请修改提示词后重试。"
+      );
     case "Content moderation blocked this generation":
       return copy(
         "Content moderation blocked this generation",

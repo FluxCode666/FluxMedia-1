@@ -18,6 +18,7 @@ import type {
 } from "../../video-generation";
 import {
   AdobeAcceptedVideoError,
+  AdobeContentSafetyError,
   AdobeRequestError,
   AdobeVideoSubmissionUncertainError,
   AuthError,
@@ -136,6 +137,53 @@ const ADOBE_BKS_EPO_HOST_PATTERN = /^bks-epo(\d{4})\.adobe\.io$/;
 const ADOBE_EPO_JOB_PATH_PATTERN =
   /^\/(?:v2\/)?(?:jobs(?:\/result)?|status)\/([^/]+)$/;
 const ADOBE_BKS_JOB_PATH_PATTERN = /^\/v2\/jobs\/result\/([^/]+)$/;
+const ADOBE_IMAGE_UNSAFE_ERROR_CODE = "image_unsafe";
+
+/** 在 Adobe 外部响应的常见包装层中查找稳定错误码。 */
+function hasAdobeErrorCode(value: unknown, expectedCode: string): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasAdobeErrorCode(item, expectedCode));
+  }
+  if (!value || typeof value !== "object") return false;
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["error_code", "errorCode", "code"] as const) {
+    const code = record[key];
+    if (typeof code === "string" && code.trim()) {
+      if (code.trim().toLowerCase() === expectedCode) return true;
+    }
+  }
+  for (const key of ["error", "response", "details", "data"] as const) {
+    if (hasAdobeErrorCode(record[key], expectedCode)) return true;
+  }
+  return false;
+}
+
+/**
+ * 将 Adobe 明确返回的图片安全拒绝转换为不可重试的业务错误。
+ *
+ * @param context 当前失败阶段，仅用于内部诊断。
+ * @param status Adobe HTTP 状态码。
+ * @param body 已限制长度的响应正文。
+ * @returns 命中 `image_unsafe` 时返回领域错误，否则返回 null。
+ */
+function createAdobeContentSafetyError(
+  context: "submit" | "poll",
+  status: number,
+  body: string
+): AdobeContentSafetyError | null {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body) as unknown;
+  } catch {
+    return null;
+  }
+  if (!hasAdobeErrorCode(payload, ADOBE_IMAGE_UNSAFE_ERROR_CODE)) return null;
+  return new AdobeContentSafetyError(`${context} failed: ${status} ${body}`, {
+    statusCode: status,
+    adobeErrorCode: ADOBE_IMAGE_UNSAFE_ERROR_CODE,
+  });
+}
 
 /**
  * 解析并校验 Adobe 轮询 URL 的通用 HTTPS 安全边界。
@@ -435,6 +483,12 @@ export class AdobeFireflyClient {
     if (submitResp.status !== 200) {
       const body =
         lastError || (await submitResp.text().catch(() => "")).slice(0, 300);
+      const contentSafetyError = createAdobeContentSafetyError(
+        "submit",
+        submitResp.status,
+        body
+      );
+      if (contentSafetyError) throw contentSafetyError;
       if (isRetryableStatus(submitResp.status)) {
         throw new UpstreamTemporaryError(
           `submit failed: ${submitResp.status} ${body}`,
@@ -475,6 +529,12 @@ export class AdobeFireflyClient {
             statusCode: pollResp.status,
           });
         }
+        const contentSafetyError = createAdobeContentSafetyError(
+          "poll",
+          pollResp.status,
+          body
+        );
+        if (contentSafetyError) throw contentSafetyError;
         if (isRetryableStatus(pollResp.status)) {
           throw new UpstreamTemporaryError(
             `poll failed: ${pollResp.status} ${body}`,

@@ -5,7 +5,10 @@ import {
 } from "@repo/shared/storage/signed-url";
 import { OperationError } from "@repo/shared/uol";
 import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
-import { isContentSafetyRejection } from "@/features/image-generation/sla-classification";
+import {
+  isContentSafetyRejection,
+  normalizeContentSafetyUserMessage,
+} from "@/features/image-generation/sla-classification";
 import type { GeneratedImageOutput } from "@/features/image-generation/types";
 
 type OpenAIImageData = {
@@ -618,6 +621,9 @@ function classifyExternalApiError(message: string) {
 }
 
 function sanitizeExternalApiErrorMessage(message: string) {
+  if (isContentSafetyRejection(message)) {
+    return normalizeContentSafetyUserMessage(message);
+  }
   const normalized = message.toLowerCase();
   if (
     normalized.includes("failed query:") ||

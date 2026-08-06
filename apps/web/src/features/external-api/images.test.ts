@@ -478,6 +478,17 @@ describe("external API error classification", () => {
       code: "content_policy_violation",
       status: 400,
     });
+
+    expect(
+      toOpenAIErrorPayload(
+        'poll failed: 451 {"error_code":"image_unsafe","message":"The generated images appear to be unsafe."}'
+      ).error
+    ).toMatchObject({
+      message: "提示词未通过内容安全审核，请修改提示词后重试。",
+      type: "invalid_request_error",
+      code: "content_policy_violation",
+      status: 400,
+    });
   });
 
   it("maps unavailable backend pool errors to service unavailable", () => {

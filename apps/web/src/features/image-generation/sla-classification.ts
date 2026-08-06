@@ -3,6 +3,10 @@ export type GenerationErrorCategory =
   | "moderation"
   | "user_request";
 
+/** 上游内容安全拒绝统一返回给用户的稳定提示。 */
+export const CONTENT_SAFETY_USER_MESSAGE =
+  "提示词未通过内容安全审核，请修改提示词后重试。";
+
 // 注意：不要把裸 "insufficient quota"/"insufficient_quota"/"unauthorized" 放进
 // 来——生产中这些文案几乎都来自平台自有池(上游配额耗尽如 "no available image
 // quota | insufficient_quota"、池账号 401)，归 user_request 会把平台事故从
@@ -256,6 +260,11 @@ export function isContentSafetyRejection(error: string | null | undefined) {
     includesAny(normalized, CONTENT_SAFETY_REJECTION_PATTERNS) ||
     isApologyRefusal(normalized)
   );
+}
+
+/** 将供应商安全拒绝收敛为不暴露上游正文的业务文案。 */
+export function normalizeContentSafetyUserMessage(error: string): string {
+  return isContentSafetyRejection(error) ? CONTENT_SAFETY_USER_MESSAGE : error;
 }
 
 export function classifyGenerationError(error: string | null | undefined) {

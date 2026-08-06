@@ -304,7 +304,10 @@ describe("history service", () => {
       "Generation timed out"
     );
     expect(sanitizeHistoryError("moderation content policy rejected")).toBe(
-      "Content moderation blocked this generation"
+      "Prompt did not pass content safety review; modify the prompt and retry"
+    );
+    expect(sanitizeHistoryError("poll failed: 451 image_unsafe")).toBe(
+      "Prompt did not pass content safety review; modify the prompt and retry"
     );
   });
 });
