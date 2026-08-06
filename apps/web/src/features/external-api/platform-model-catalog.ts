@@ -10,6 +10,8 @@ import {
 } from "@repo/shared/image-backend/supported-models";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
+import { canRuntimeBackendLeaseServeRequest } from "@/features/image-backend-pool/runtime-protocol-eligibility";
+
 /** 平台模型目录最终公开的单条模型。 */
 export interface PlatformModelCatalogItem {
   id: string;
@@ -113,7 +115,13 @@ export function buildPlatformModelCatalog(
         const canExecuteVideo =
           customCategory === "video"
             ? member.type === "api"
-            : member.type === "adobe" && member.adobeMode === "direct";
+            : canRuntimeBackendLeaseServeRequest(
+                { requestKind: "video" },
+                {
+                  memberType: member.type,
+                  adobeMode: member.adobeMode,
+                }
+              );
         if (canExecuteVideo) {
           addModel(
             videoModels,

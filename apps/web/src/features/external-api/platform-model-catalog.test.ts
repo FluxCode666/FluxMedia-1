@@ -137,7 +137,7 @@ describe("buildPlatformModelCatalog", () => {
     });
   });
 
-  it("非 Adobe direct 成员不能把真实视频 ID 发布到任一目录", () => {
+  it("API 成员把真实视频 ID 发布到视频目录", () => {
     expect(
       buildPlatformModelCatalog(
         source({
@@ -146,6 +146,25 @@ describe("buildPlatformModelCatalog", () => {
               groupIds: ["default-group"],
               type: "api",
               adobeMode: null,
+              supportedModelIds: ["seedance2"],
+              isEnabled: true,
+              status: "active",
+            },
+          ],
+        })
+      )
+    ).toEqual({ image: [], video: [{ id: "seedance2" }] });
+  });
+
+  it("Adobe gateway 成员不能把真实视频 ID 发布到任一目录", () => {
+    expect(
+      buildPlatformModelCatalog(
+        source({
+          members: [
+            {
+              groupIds: ["default-group"],
+              type: "adobe",
+              adobeMode: "gateway",
               supportedModelIds: ["seedance2"],
               isEnabled: true,
               status: "active",

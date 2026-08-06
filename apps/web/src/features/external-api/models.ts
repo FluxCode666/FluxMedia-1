@@ -13,6 +13,7 @@ import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { and, asc, eq } from "drizzle-orm";
 
 import { backendMemberService } from "@/features/image-backend-pool/member-service";
+import { canRuntimeBackendLeaseServeRequest } from "@/features/image-backend-pool/runtime-protocol-eligibility";
 
 const DEFAULT_MODEL_OWNER = "gpt2image";
 
@@ -62,7 +63,7 @@ function toOpenAIModel(id: string): OpenAIModel {
  * 按成员执行形态筛出可发布模型 ID。
  *
  * @param input - 成员类型、Adobe 模式与显式模型能力。
- * @returns 保持成员配置顺序的图片模型和 Adobe direct 真实视频模型；旧视频身份被忽略。
+ * @returns 保持成员配置顺序的图片模型和 API/Adobe direct 真实视频模型；旧视频身份被忽略。
  * @sideEffects 无。
  * @failure 不抛错；未知非视频 ID 保持既有图像模型语义。
  */
@@ -81,7 +82,13 @@ export function filterExternalMemberModelIds(input: {
       return input.memberType === "api";
     }
     if (videoModelId) {
-      return input.memberType === "adobe" && input.adobeMode === "direct";
+      return canRuntimeBackendLeaseServeRequest(
+        { requestKind: "video" },
+        {
+          memberType: input.memberType,
+          adobeMode: input.adobeMode,
+        }
+      );
     }
     return !isLegacyVideoModelId(modelId);
   });

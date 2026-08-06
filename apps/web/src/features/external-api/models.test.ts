@@ -26,7 +26,7 @@ describe("mergeExternalModelIds", () => {
 });
 
 describe("filterExternalMemberModelIds", () => {
-  it("/v1/models 只发布 Adobe direct 成员声明的真实视频 ID", () => {
+  it("/v1/models 发布 API 与 Adobe direct 成员声明的真实视频 ID", () => {
     const supportedModelIds = [
       "gpt-image-2",
       "seedance2",
@@ -45,6 +45,16 @@ describe("filterExternalMemberModelIds", () => {
         memberType: "api",
         adobeMode: null,
         supportedModelIds,
+      })
+    ).toEqual(["gpt-image-2", "seedance2"]);
+  });
+
+  it("/v1/models 不发布 Adobe gateway 成员声明的真实视频 ID", () => {
+    expect(
+      filterExternalMemberModelIds({
+        memberType: "adobe",
+        adobeMode: "gateway",
+        supportedModelIds: ["gpt-image-2", "seedance2"],
       })
     ).toEqual(["gpt-image-2"]);
   });
