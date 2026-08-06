@@ -54,6 +54,15 @@
   `PAGINATION_PAGE_SIZE_OPTIONS` 统一配置，必须包含 20，默认 `[10, 20, 50]`。
   页面通过 `settings.getPaginationConfig` 读取，切换大小时必须重置页码或签名 cursor。
 
+## 外部 API 密钥
+
+- 新建外部 API Key 固定使用 `sk-` 前缀；鉴权继续只查 SHA-256 哈希。
+- 为支持刷新后由本人重复复制，迁移 `0085` 起同时保存使用 `BETTER_AUTH_SECRET`
+  派生密钥加密的 AES-256-GCM 版本化密文。完整 Key 只允许通过 human-only、
+  session-user 限定的 `externalApi.listKeys` 返回，不得进入 MCP、外部 API 或日志。
+- `0085` 前的历史 Key 只有不可逆哈希，无法回填明文；列表必须返回 `apiKey: null`，
+  需要刷新复制时应撤销并重新创建。
+
 ## 模型配置与公开目录
 
 - 管理端“模型配置”以单条目保存价格、展示开关、简介和封面；公开目录由

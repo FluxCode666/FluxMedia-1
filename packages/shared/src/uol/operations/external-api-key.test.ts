@@ -1,8 +1,8 @@
 /**
  * API 密钥管理 UOL operations 的 DB-free 契约测试。
  *
- * 职责：锁定 session-only 权限、human-only 暴露、strict 输入、一次性明文与
- * 摘要列表 DTO，并确保旧审核/纯中转写入口不再注册。
+ * 职责：锁定 session-only 权限、human-only 暴露、strict 输入、可恢复明文与
+ * 安全摘要 DTO，并确保旧审核/纯中转写入口不再注册。
  * 使用方：API 密钥 Server Actions、Web UOL bindings 与 MCP 暴露边界回归门。
  * 关键依赖：Vitest、UOL invoke 网关和 external-api operation 定义。
  */
@@ -59,6 +59,11 @@ const keySummary = {
   createdAt: new Date("2026-07-21T08:00:00.000Z"),
   updatedAt: new Date("2026-07-22T08:00:00.000Z"),
   currentGroup,
+};
+
+const keyListItem = {
+  ...keySummary,
+  apiKey: "sk-secret",
 };
 
 const keyOperations = [
@@ -173,10 +178,10 @@ describe("external API key input schemas", () => {
 });
 
 describe("external API key output schemas", () => {
-  it("returns safe summaries and editable group candidates from list", () => {
+  it("只向本人列表返回可复制明文和可编辑分组候选", () => {
     expect(
       listKeys.output.safeParse({
-        keys: [keySummary],
+        keys: [keyListItem, { ...keyListItem, apiKey: null }],
         editableGroups: [
           {
             id: "group-2",
@@ -189,33 +194,43 @@ describe("external API key output schemas", () => {
     ).toBe(true);
 
     for (const legacyField of [
-      { apiKey: "g2i_secret" },
       { keyHash: "secret-hash" },
+      { encryptedKey: "encrypted-secret" },
       { relayOnly: false },
       { moderationBlockRiskLevel: "high" },
     ]) {
       expect(
         listKeys.output.safeParse({
-          keys: [{ ...keySummary, ...legacyField }],
+          keys: [{ ...keyListItem, ...legacyField }],
           editableGroups: [],
         }).success
       ).toBe(false);
     }
+    expect(
+      listKeys.output.safeParse({
+        keys: [keySummary],
+        editableGroups: [],
+      }).success
+    ).toBe(false);
   });
 
-  it("returns plaintext only from create and real rows from mutations", () => {
+  it("创建返回明文，mutation 继续只返回安全摘要", () => {
     expect(
-      createKey.output.safeParse({ apiKey: "g2i_secret", key: keySummary })
+      createKey.output.safeParse({ apiKey: "sk-secret", key: keySummary })
         .success
     ).toBe(true);
     expect(revokeKey.output.safeParse(keySummary).success).toBe(true);
     expect(updateKeyGroup.output.safeParse(keySummary).success).toBe(true);
     expect(updateKeyQuota.output.safeParse(keySummary).success).toBe(true);
     expect(deleteKey.output.safeParse({ id: "key-1" }).success).toBe(true);
+    expect(
+      createKey.output.safeParse({ apiKey: "g2i_secret", key: keySummary })
+        .success
+    ).toBe(false);
 
     expect(
       listKeys.output.safeParse({
-        keys: [{ ...keySummary, apiKey: "g2i_secret" }],
+        keys: [{ ...keyListItem, keyHash: "secret-hash" }],
         editableGroups: [],
       }).success
     ).toBe(false);

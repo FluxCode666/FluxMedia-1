@@ -596,6 +596,13 @@
       "when": 1786210650000,
       "tag": "0084_remove_image_batch_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1786297050000,
+      "tag": "0085_external_api_key_recovery",
+      "breakpoints": true
     }
   ]
 }

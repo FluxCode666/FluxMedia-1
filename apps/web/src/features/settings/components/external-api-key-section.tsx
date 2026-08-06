@@ -52,7 +52,10 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import type { ExternalApiKeySummary } from "@/features/external-api/key-management-service";
+import type {
+  ExternalApiKeyListItem,
+  ExternalApiKeySummary,
+} from "@/features/external-api/key-management-service";
 
 import {
   createExternalApiKey,
@@ -83,7 +86,7 @@ const DEFAULT_GROUP_VALUE = "default";
 type LoadStatus = "loading" | "ready" | "error";
 type EditableGroup = ExternalApiKeyListResult["editableGroups"][number];
 type RefreshedKeyResult =
-  | { status: "found"; key: ExternalApiKeySummary }
+  | { status: "found"; key: ExternalApiKeyListItem }
   | { status: "missing" }
   | { status: "failed" };
 
@@ -120,6 +123,24 @@ function getActionError(
 }
 
 /**
+ * mutation 安全摘要替换列表行时保留此前已恢复的完整 Key。
+ *
+ * @param key mutation 返回且不含敏感字段的最新摘要。
+ * @param items 当前列表，用于按 ID 找回已由本人列表读取的完整 Key。
+ * @returns 可继续复制、其余字段来自最新服务端事实的列表行。
+ * @sideEffects 无；找不到现有行时明文降级为 null。
+ */
+function preserveListItemApiKey(
+  key: ExternalApiKeySummary,
+  items: readonly ExternalApiKeyListItem[]
+): ExternalApiKeyListItem {
+  return {
+    ...key,
+    apiKey: items.find((item) => item.id === key.id)?.apiKey ?? null,
+  };
+}
+
+/**
  * 渲染 API 密钥创建区与摘要列表。
  *
  * @param baseUrl - 当前请求对应的 HTTP(S) origin，由服务端页面校验后传入。
@@ -145,7 +166,7 @@ export function ExternalApiKeySection({
   const newKeyInputRef = useRef<HTMLInputElement>(null);
 
   const [listState, setListState] = useState(() =>
-    createExternalApiKeyListState<ExternalApiKeySummary>([])
+    createExternalApiKeyListState<ExternalApiKeyListItem>([])
   );
   const [editableGroups, setEditableGroups] = useState<EditableGroup[]>([]);
   const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
@@ -237,7 +258,7 @@ export function ExternalApiKeySection({
   const dispatchListAction = useCallback(
     (
       action: Parameters<
-        typeof reduceExternalApiKeyListState<ExternalApiKeySummary>
+        typeof reduceExternalApiKeyListState<ExternalApiKeyListItem>
       >[1]
     ) => {
       setListState((current) => reduceExternalApiKeyListState(current, action));
@@ -334,7 +355,10 @@ export function ExternalApiKeySection({
       setNewKeyCreditLimit("");
       setListState((current) => ({
         ...current,
-        items: [result.data.key, ...current.items],
+        items: [
+          { ...result.data.key, apiKey: result.data.apiKey },
+          ...current.items,
+        ],
       }));
       setGroupDrafts((current) => ({
         ...current,
@@ -356,15 +380,25 @@ export function ExternalApiKeySection({
     }
   };
 
-  /** 复制当前创建结果；按钮保持可用，允许用户重复复制同一个密钥。 */
-  const handleCopyNewKey = async (): Promise<void> => {
-    if (!newKey) return;
+  /**
+   * 复制完整 API Key；每次点击都会重新写剪贴板，不消费或清除服务端密文。
+   *
+   * @param apiKey 仅来自本人列表或本次创建响应的完整 Key。
+   * @param fallbackInput 创建结果输入框；自动复制失败时用于聚焦并选中文本。
+   * @returns 剪贴板写入完成后结束；没有 Key 时直接返回。
+   * @sideEffects 写浏览器剪贴板并展示 toast；失败时可能改变输入框焦点和选区。
+   */
+  const handleCopyApiKey = async (
+    apiKey: string,
+    fallbackInput?: HTMLInputElement | null
+  ): Promise<void> => {
+    if (!apiKey) return;
     try {
-      await navigator.clipboard.writeText(newKey);
+      await navigator.clipboard.writeText(apiKey);
       toast.success(t("success.copied"));
     } catch {
-      newKeyInputRef.current?.focus();
-      newKeyInputRef.current?.select();
+      fallbackInput?.focus();
+      fallbackInput?.select();
       toast.error(t("errors.copy"));
     }
   };
@@ -389,7 +423,7 @@ export function ExternalApiKeySection({
       type: "mutation-succeeded",
       keyId,
       operation: "update-group",
-      item: result.data,
+      item: preserveListItemApiKey(result.data, listState.items),
     });
     finishRowMutation(keyId);
     toast.success(t("success.updated"));
@@ -419,7 +453,7 @@ export function ExternalApiKeySection({
       type: "mutation-succeeded",
       keyId,
       operation: "update-quota",
-      item: result.data,
+      item: preserveListItemApiKey(result.data, listState.items),
     });
     setQuotaDrafts((current) => ({
       ...current,
@@ -446,7 +480,7 @@ export function ExternalApiKeySection({
       type: "mutation-succeeded",
       keyId,
       operation: "revoke",
-      item: result.data,
+      item: preserveListItemApiKey(result.data, listState.items),
     });
     finishRowMutation(keyId);
     toast.success(t("success.revoked"));
@@ -545,7 +579,9 @@ export function ExternalApiKeySection({
                 variant="outline"
                 className="shrink-0"
                 aria-label={t("copy")}
-                onClick={() => void handleCopyNewKey()}
+                onClick={() =>
+                  void handleCopyApiKey(newKey, newKeyInputRef.current)
+                }
               >
                 <Copy className="mr-2 h-3.5 w-3.5" />
                 {t("copy")}
@@ -703,7 +739,46 @@ export function ExternalApiKeySection({
                         })
                       }
                     >
-                      <div className="flex flex-col bg-background transition-colors hover:bg-muted/30 md:flex-row md:items-stretch">
+                      <div className="grid bg-background transition-colors hover:bg-muted/30 md:grid-cols-[minmax(0,1.4fr)_minmax(0,3fr)_auto] md:items-stretch">
+                        <div className="min-w-0 px-4 pt-4 md:py-4">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-sm font-medium">
+                              {key.name}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 text-[10px] uppercase tracking-wider"
+                            >
+                              {key.isActive ? t("active") : t("revoked")}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                            <span className="truncate font-mono text-xs text-muted-foreground">
+                              {key.apiKey ||
+                                `${key.keyPrefix}...${key.lastFour}`}
+                            </span>
+                            {key.apiKey ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 shrink-0 px-2 text-xs"
+                                aria-label={t("copyKey", { name: key.name })}
+                                onClick={() =>
+                                  void handleCopyApiKey(key.apiKey || "")
+                                }
+                              >
+                                <Copy className="mr-1 h-3.5 w-3.5" />
+                                {t("copy")}
+                              </Button>
+                            ) : (
+                              <span className="shrink-0 text-[10px] text-muted-foreground">
+                                {t("copyUnavailable")}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
                         <CollapsibleTrigger asChild>
                           <button
                             ref={(node) => {
@@ -713,29 +788,13 @@ export function ExternalApiKeySection({
                             }}
                             type="button"
                             disabled={isLocked || isRefreshing}
-                            className="grid min-w-0 flex-1 cursor-pointer grid-cols-1 gap-3 px-4 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-wait disabled:opacity-70 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] md:items-center md:gap-4"
+                            className="grid min-w-0 cursor-pointer grid-cols-1 gap-3 px-4 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-wait disabled:opacity-70 md:grid-cols-3 md:items-center md:gap-4"
                             aria-label={
                               isExpanded
                                 ? t("collapse", { name: key.name })
                                 : t("expand", { name: key.name })
                             }
                           >
-                            <span className="min-w-0">
-                              <span className="flex items-center gap-2">
-                                <span className="truncate text-sm font-medium">
-                                  {key.name}
-                                </span>
-                                <Badge
-                                  variant="outline"
-                                  className="shrink-0 text-[10px] uppercase tracking-wider"
-                                >
-                                  {key.isActive ? t("active") : t("revoked")}
-                                </Badge>
-                              </span>
-                              <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
-                                {key.keyPrefix}...{key.lastFour}
-                              </span>
-                            </span>
                             <span className="text-sm">
                               <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
                                 {t("columns.quota")}

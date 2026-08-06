@@ -2382,6 +2382,8 @@ export const externalApiKey = pgTable("external_api_key", {
   name: text("name").notNull().default("Default API key"),
   keyPrefix: text("key_prefix").notNull(),
   keyHash: text("key_hash").notNull().unique(),
+  // AES-256-GCM 版本化密文，仅供本人登录后的管理页面恢复复制；旧记录为空。
+  encryptedKey: text("encrypted_key"),
   lastFour: text("last_four").notNull(),
   generationGroupId: text("generation_group_id").references(
     () => imageBackendGroup.id,

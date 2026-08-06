@@ -48,7 +48,10 @@ export {
   getAdobeCredentialNotificationSettings,
   setAdobeCredentialNotificationSettings,
 } from "./adobe-credential-health";
-export type { ExternalApiKeySummary } from "./external-api";
+export type {
+  ExternalApiKeyListItem,
+  ExternalApiKeySummary,
+} from "./external-api";
 export {
   getHomepageGenerationSlaStats,
   getHomepageSlaVisibility,

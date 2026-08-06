@@ -18,7 +18,10 @@ import {
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import type { ExternalApiKeySummary } from "@/features/external-api/key-management-service";
+import type {
+  ExternalApiKeyListItem,
+  ExternalApiKeySummary,
+} from "@/features/external-api/key-management-service";
 import { ensureUolInitialized } from "@/server/uol-init";
 
 const createKeySchema = z
@@ -46,7 +49,7 @@ const updateKeyQuotaSchema = z
   .strict();
 
 export type ExternalApiKeyListResult = {
-  keys: ExternalApiKeySummary[];
+  keys: ExternalApiKeyListItem[];
   editableGroups: Array<{
     id: string;
     name: string;

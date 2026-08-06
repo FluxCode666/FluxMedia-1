@@ -592,7 +592,7 @@ async function invokeApiKeyManagement<T>(
   }
 }
 
-/** externalApi.listKeys - 返回本人 Key 摘要与当前可编辑分组。 */
+/** externalApi.listKeys - 返回本人可恢复 Key 与当前可编辑分组。 */
 bindExecute(
   "externalApi.listKeys",
   async (_input: Record<string, never>, principal: Principal) =>

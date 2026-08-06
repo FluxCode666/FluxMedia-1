@@ -1,17 +1,24 @@
 /**
  * API 密钥管理应用服务。
  *
- * 职责：集中处理密钥生成/散列、分组资格、额度归一、所有权条件和生命周期
+ * 职责：集中处理密钥生成/散列/加密、分组资格、额度归一、所有权条件和生命周期
  * 竞态；UOL binding 只注入可信 userId。默认依赖延迟加载数据库，纯工厂可 DB-free 单测。
  * 使用方：apps/web/src/server/uol-bindings.ts 与 API 密钥管理 Server Actions。
- * 关键依赖：Drizzle 仓储、后端分组选项、quota-math。
+ * 关键依赖：Drizzle 仓储、后端分组选项、API Key 密文工具、quota-math。
  */
 import { randomBytes } from "node:crypto";
 
 import type { externalApiKey as externalApiKeyTable } from "@repo/database/schema";
-import type { ExternalApiKeySummary } from "@repo/shared/uol/operations";
+import type {
+  ExternalApiKeyListItem,
+  ExternalApiKeySummary,
+} from "@repo/shared/uol/operations";
 import { nanoid } from "nanoid";
 
+import {
+  decryptExternalApiKey,
+  encryptExternalApiKey,
+} from "./api-key-encryption";
 import { hashApiKey } from "./auth-token";
 import { normalizeExternalApiKeyCreditLimit } from "./quota-math";
 
@@ -42,11 +49,12 @@ export class ExternalApiKeyManagementError extends Error {
   }
 }
 
-/** 仓储返回的可信 API 密钥行；不包含明文和哈希。 */
+/** 仓储返回的可信 API 密钥行；包含可空密文，但不包含明文和哈希。 */
 export type ExternalApiKeyRecord = {
   id: string;
   name: string;
   keyPrefix: string;
+  encryptedKey: string | null;
   lastFour: string;
   generationGroupId: string | null;
   creditLimit: number | null;
@@ -64,7 +72,10 @@ export type ExternalApiKeyGroupRecord = {
   isEnabled: boolean;
 };
 
-export type { ExternalApiKeySummary } from "@repo/shared/uol/operations";
+export type {
+  ExternalApiKeyListItem,
+  ExternalApiKeySummary,
+} from "@repo/shared/uol/operations";
 
 /** 创建仓储行时唯一允许写入的字段。 */
 export type ExternalApiKeyInsert = {
@@ -73,6 +84,7 @@ export type ExternalApiKeyInsert = {
   name: string;
   keyPrefix: string;
   keyHash: string;
+  encryptedKey: string;
   lastFour: string;
   generationGroupId: string | null;
   creditLimit: number | null;
@@ -120,6 +132,8 @@ type ServiceDependencies = {
   createId(): string;
   createSecret(): string;
   hashSecret(secret: string): string;
+  encryptSecret(secret: string): string;
+  decryptSecret(ciphertext: string): string;
   now(): Date;
 };
 
@@ -132,10 +146,10 @@ export type CreateExternalApiKeyInput = {
 /**
  * 将仓储行和分组资格裁剪成可公开返回的密钥摘要。
  *
- * @param key 仓储返回的可信密钥行，不含明文或哈希。
+ * @param key 仓储返回的可信密钥行，可能包含密文但不含明文或哈希。
  * @param currentGroup 密钥当前引用的分组；分组不存在时为 null。
  * @param selectableGroupIds 当前允许选择的分组 ID 集合。
- * @returns 不包含 userId、哈希或明文，并标注分组可选性的摘要。
+ * @returns 不包含 userId、哈希、密文或明文，并标注分组可选性的摘要。
  * @throws 不主动抛错；不会修改输入记录或集合。
  */
 function toKeySummary(
@@ -171,7 +185,7 @@ function toKeySummary(
  *
  * @returns `sk-` 前缀与 32 字节随机内容组成的密钥。
  * @throws 系统随机源不可用时透传 `randomBytes` 的错误。
- * @remarks 副作用是读取系统随机源；明文仅应由 create 流程返回一次。
+ * @remarks 副作用是读取系统随机源；明文随后加密持久化并由本人列表按需恢复。
  */
 function createApiKey(): string {
   return `${API_KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
@@ -199,6 +213,29 @@ export function createExternalApiKeyManagementService(
    */
   async function loadEditableGroups(): Promise<ExternalApiKeyGroupRecord[]> {
     return dependencies.listSelectableGroups();
+  }
+
+  /**
+   * 将仓储行转换为本人管理页可复制的列表项。
+   *
+   * @param key 带可空密文的本人密钥记录。
+   * @param currentGroup 当前分组记录；不存在时为 null。
+   * @param selectableGroupIds 当前可选分组 ID。
+   * @returns 安全摘要与可空完整 Key；历史无密文记录返回 null。
+   * @throws 密文损坏或应用 Secret 变化时 fail-closed，不返回不完整列表。
+   * @sideEffects 仅执行内存解密，不读写数据库。
+   */
+  function toKeyListItem(
+    key: ExternalApiKeyRecord,
+    currentGroup: ExternalApiKeyGroupRecord | null,
+    selectableGroupIds: ReadonlySet<string>
+  ): ExternalApiKeyListItem {
+    return {
+      ...toKeySummary(key, currentGroup, selectableGroupIds),
+      apiKey: key.encryptedKey
+        ? dependencies.decryptSecret(key.encryptedKey)
+        : null,
+    };
   }
 
   /**
@@ -277,9 +314,9 @@ export function createExternalApiKeyManagementService(
      * 列出用户全部密钥，并分开返回当前分组与可编辑候选。
      *
      * @param userId 已由调用边界鉴权的用户 ID。
-     * @returns 安全密钥摘要和当前可编辑分组。
-     * @throws 分组或仓储读取失败时透传错误。
-     * @remarks 只执行读取；返回值不包含密钥明文、哈希或 userId。
+     * @returns 本人可复制的密钥列表项和当前可编辑分组。
+     * @throws 分组、仓储读取或密文恢复失败时透传错误。
+     * @remarks 只执行读取；返回值不包含密文、哈希或 userId，历史记录明文为 null。
      */
     async listKeys(userId: string) {
       const [rows, editableGroups] = await Promise.all([
@@ -291,7 +328,7 @@ export function createExternalApiKeyManagementService(
       );
       return {
         keys: rows.map(({ key, currentGroup }) =>
-          toKeySummary(key, currentGroup, selectableGroupIds)
+          toKeyListItem(key, currentGroup, selectableGroupIds)
         ),
         editableGroups: editableGroups.map((group) => ({
           id: group.id,
@@ -303,13 +340,13 @@ export function createExternalApiKeyManagementService(
     },
 
     /**
-     * 为用户创建 API 密钥，并仅在本次调用中返回一次明文。
+     * 为用户创建 API 密钥，同时保存可恢复密文供本人后续复制。
      *
      * @param userId 已由调用边界鉴权的用户 ID。
      * @param input 名称、分组和额度上限；空名称使用默认名称。
-     * @returns 一次性密钥明文及不含明文和哈希的持久化摘要。
+     * @returns 完整密钥明文及不含明文、密文和哈希的持久化摘要。
      * @throws 分组不可选或额度非法时抛错；仓储及依赖失败时透传。
-     * @remarks 会生成随机密钥并插入数据库；摘要装饰失败时插入仍可能已成功。
+     * @remarks 会生成随机密钥、哈希和密文并插入数据库；摘要装饰失败时插入仍可能已成功。
      */
     async createKey(userId: string, input: CreateExternalApiKeyInput) {
       const { groupId, editableGroups } = await normalizeGroupId(
@@ -323,6 +360,7 @@ export function createExternalApiKeyManagementService(
         name: input.name?.trim() || DEFAULT_KEY_NAME,
         keyPrefix: apiKey.slice(0, 7),
         keyHash: dependencies.hashSecret(apiKey),
+        encryptedKey: dependencies.encryptSecret(apiKey),
         lastFour: apiKey.slice(-4),
         generationGroupId: groupId,
         creditLimit: normalizeExternalApiKeyCreditLimit(input.creditLimit),
@@ -459,7 +497,7 @@ export function createExternalApiKeyManagementService(
  * @param externalApiKey Drizzle 的 API 密钥表定义。
  * @returns 仅包含 `ExternalApiKeyRecord` 允许进入服务层的字段映射。
  * @throws 不主动抛错；不执行查询或修改表定义。
- * @remarks 排除 userId、密钥哈希和废弃治理列，避免意外进入返回值。
+ * @remarks 排除 userId、密钥哈希和废弃治理列；密文仅进入服务层并由 DTO 显式裁剪。
  */
 function selectExternalApiKeyFields(
   externalApiKey: typeof externalApiKeyTable
@@ -468,6 +506,7 @@ function selectExternalApiKeyFields(
     id: externalApiKey.id,
     name: externalApiKey.name,
     keyPrefix: externalApiKey.keyPrefix,
+    encryptedKey: externalApiKey.encryptedKey,
     lastFour: externalApiKey.lastFour,
     generationGroupId: externalApiKey.generationGroupId,
     creditLimit: externalApiKey.creditLimit,
@@ -549,12 +588,12 @@ const databaseExternalApiKeyRepository: ExternalApiKeyRepository = {
   },
 
   /**
-   * 插入一条仅持久化密钥哈希的记录。
+   * 插入一条同时持久化密钥哈希与可恢复密文的记录。
    *
-   * @param values 已包含所有权、哈希、展示片段和时间戳的插入字段。
+   * @param values 已包含所有权、哈希、密文、展示片段和时间戳的插入字段。
    * @returns 数据库返回的安全密钥行；未返回行时为 null。
    * @throws 数据库模块加载、约束校验或插入失败时透传错误。
-   * @remarks 写入数据库；返回投影不会包含 userId、哈希或明文。
+   * @remarks 写入数据库；返回投影包含密文供服务裁剪，但不包含 userId、哈希或明文。
    */
   async insert(values) {
     const [{ db }, { externalApiKey }] = await loadDatabaseModules();
@@ -738,6 +777,8 @@ export const externalApiKeyManagementService =
     createId: nanoid,
     createSecret: createApiKey,
     hashSecret: hashApiKey,
+    encryptSecret: encryptExternalApiKey,
+    decryptSecret: decryptExternalApiKey,
     /**
      * 获取本次 mutation 使用的当前时间。
      *

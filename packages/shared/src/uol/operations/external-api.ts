@@ -120,7 +120,7 @@ export const externalApiKeyGroupSchema = z
   })
   .strict();
 
-/** API 密钥列表行；严格排除明文、哈希和废弃治理字段。 */
+/** API 密钥安全摘要；严格排除明文、密文、哈希和废弃治理字段。 */
 export const externalApiKeySummarySchema = z
   .object({
     id: z.string(),
@@ -140,6 +140,27 @@ export const externalApiKeySummarySchema = z
 
 export type ExternalApiKeySummary = z.infer<typeof externalApiKeySummarySchema>;
 
+/** 新版可复制 API Key 明文格式；内容使用 base64url 安全字符。 */
+const externalApiKeyPlaintextSchema = z
+  .string()
+  .regex(/^sk-[A-Za-z0-9_-]+$/u, "API Key 必须以 sk- 开头");
+
+/**
+ * 登录用户管理页使用的密钥列表行。
+ *
+ * 新记录返回从服务端密文恢复的完整 Key，历史不可逆记录返回 null；该 DTO 只能由
+ * human-only session operation 返回，不能暴露给 API Key、MCP 或日志。
+  */
+export const externalApiKeyListItemSchema = externalApiKeySummarySchema
+  .extend({
+    apiKey: externalApiKeyPlaintextSchema.nullable(),
+  })
+  .strict();
+
+export type ExternalApiKeyListItem = z.infer<
+  typeof externalApiKeyListItemSchema
+>;
+
 // ---------------------------------------------------------------------------
 // 9. externalApi.listKeys - getExternalApiKeys (session user, read)
 // ---------------------------------------------------------------------------
@@ -151,7 +172,7 @@ export const listKeys = defineOperation({
   input: z.object({}).strict(),
   output: z
     .object({
-      keys: z.array(externalApiKeySummarySchema),
+      keys: z.array(externalApiKeyListItemSchema),
       editableGroups: z.array(externalApiKeyGroupSchema),
     })
     .strict(),
@@ -194,7 +215,9 @@ export const createKey = defineOperation({
     .strict(),
   output: z
     .object({
-      apiKey: z.string().describe("完整 Key（仅创建时返回一次）"),
+      apiKey: externalApiKeyPlaintextSchema.describe(
+        "完整 Key；创建响应及后续本人列表读取均可恢复"
+      ),
       key: externalApiKeySummarySchema,
     })
     .strict(),

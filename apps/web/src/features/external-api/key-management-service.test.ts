@@ -1,7 +1,7 @@
 /**
  * API 密钥管理应用服务的 DB-free 单元测试。
  *
- * 职责：验证分组资格、额度归一、密钥散列、所有权条件及生命周期竞态。
+ * 职责：验证分组资格、额度归一、密钥散列/加密、所有权条件及生命周期竞态。
  * 使用方：UOL externalApi.*Key bindings 的业务回归门。
  * 关键依赖：Vitest；仓储、分组与密码学依赖均使用内存替身。
  */
@@ -20,6 +20,7 @@ const activeKey: ExternalApiKeyRecord = {
   id: "key-1",
   name: "Production",
   keyPrefix: "g2i_abc",
+  encryptedKey: "encrypted:sk-stored-key",
   lastFour: "wxyz",
   generationGroupId: "group-1",
   creditLimit: 100,
@@ -61,6 +62,8 @@ function createService() {
     createId: () => "key-new",
     createSecret: () => "sk-plaintext",
     hashSecret: (secret) => `hash:${secret}`,
+    encryptSecret: (secret) => `encrypted:${secret}`,
+    decryptSecret: (ciphertext) => ciphertext.replace("encrypted:", ""),
     now: () => now,
   });
 }
@@ -135,6 +138,7 @@ describe("list API keys", () => {
           id: "key-1",
           name: "Production",
           keyPrefix: "g2i_abc",
+          apiKey: "sk-stored-key",
           lastFour: "wxyz",
           generationGroupId: "group-1",
           creditLimit: 100,
@@ -172,10 +176,23 @@ describe("list API keys", () => {
     expect(result.keys[0]?.currentGroup?.selectable).toBe(false);
     expect(listSelectableGroups).toHaveBeenCalledOnce();
   });
+
+  it("历史记录没有可恢复密文时明确返回 null", async () => {
+    repository.listByUser.mockResolvedValue([
+      {
+        key: { ...activeKey, encryptedKey: null },
+        currentGroup: disabledCurrentGroup,
+      },
+    ]);
+
+    const result = await createService().listKeys("user-1");
+
+    expect(result.keys[0]?.apiKey).toBeNull();
+  });
 });
 
 describe("create API key", () => {
-  it("validates the group, normalizes quota and stores only the hash", async () => {
+  it("校验分组、归一额度并同时保存哈希与密文", async () => {
     const result = await createService().createKey("user-1", {
       name: "Production",
       generationGroupId: "group-2",
@@ -188,6 +205,7 @@ describe("create API key", () => {
       name: "Production",
       keyPrefix: "sk-plai",
       keyHash: "hash:sk-plaintext",
+      encryptedKey: "encrypted:sk-plaintext",
       lastFour: "text",
       generationGroupId: "group-2",
       creditLimit: 12.35,
