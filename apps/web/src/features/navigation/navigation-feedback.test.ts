@@ -10,7 +10,10 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NAVIGATION_FEEDBACK_START_EVENT } from "./navigation-feedback-event";
-import { NAVIGATION_PROGRESS_COMPLETE_DELAY_MS } from "./navigation-progress";
+import {
+  NAVIGATION_PROGRESS_COMPLETE_DELAY_MS,
+  NAVIGATION_PROGRESS_DELAY_MS,
+} from "./navigation-progress";
 
 const testHarness = vi.hoisted(() => ({
   pathname: "/zh/dashboard",
@@ -76,10 +79,24 @@ afterEach(() => {
 });
 
 describe("NavigationFeedback", () => {
+  it("先给路由鱼骨屏机会，再显示顶部进度兜底", () => {
+    const mounted = mountNavigationFeedback();
+
+    act(() => window.dispatchEvent(new Event(NAVIGATION_FEEDBACK_START_EVENT)));
+    expect(mounted.querySelector('[role="progressbar"]')).toBeNull();
+
+    act(() => vi.advanceTimersByTime(NAVIGATION_PROGRESS_DELAY_MS - 1));
+    expect(mounted.querySelector('[role="progressbar"]')).toBeNull();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(mounted.querySelector('[role="progressbar"]')).not.toBeNull();
+  });
+
   it("完成停留期内连续提交路由后仍按期收起", () => {
     const mounted = mountNavigationFeedback();
 
     act(() => window.dispatchEvent(new Event(NAVIGATION_FEEDBACK_START_EVENT)));
+    act(() => vi.advanceTimersByTime(NAVIGATION_PROGRESS_DELAY_MS));
     expect(mounted.querySelector('[role="progressbar"]')).not.toBeNull();
 
     commitRoute("/zh/dashboard/gallery");

@@ -1,8 +1,8 @@
 /**
  * 全站客户端导航反馈组件。
  *
- * 使用方：locale 根布局。组件在内部链接点击或浏览器前进/后退时立即显示顶部进度条，
- * 并在 App Router 提交新路径或查询参数后收起；页面自身的 loading.tsx 继续负责骨架屏。
+ * 使用方：locale 根布局。组件在内部链接点击或浏览器前进/后退时监听导航意图，优先让
+ * App Router 的 loading.tsx 展示页面骨架；只有等待超过阈值时才显示顶部进度兜底。
  */
 "use client";
 
@@ -15,6 +15,7 @@ import { decideNavigationFeedback } from "./navigation-feedback-policy";
 import {
   advanceNavigationProgress,
   NAVIGATION_PROGRESS_COMPLETE_DELAY_MS,
+  NAVIGATION_PROGRESS_DELAY_MS,
   NAVIGATION_PROGRESS_INITIAL,
   NAVIGATION_PROGRESS_STALE_MS,
   NAVIGATION_PROGRESS_TICK_MS,
@@ -35,6 +36,8 @@ export function NavigationFeedback() {
   const [progress, setProgress] = useState<number | null>(null);
   const [progressRunId, setProgressRunId] = useState(0);
   const isActiveRef = useRef(false);
+  const hasVisibleProgressRef = useRef(false);
+  const startTimerRef = useRef<number | null>(null);
   const completionTimerRef = useRef<number | null>(null);
   const staleTimerRef = useRef<number | null>(null);
   const previousRouteKeyRef = useRef<string | null>(null);
@@ -50,6 +53,13 @@ export function NavigationFeedback() {
     completionTimerRef.current = null;
   }, []);
 
+  /** 清除等待路由骨架优先展示的延迟进度计时器。 */
+  const clearStartTimer = useCallback((): void => {
+    if (startTimerRef.current === null) return;
+    window.clearTimeout(startTimerRef.current);
+    startTimerRef.current = null;
+  }, []);
+
   /** 清除导航失败或未提交时的最长存活兜底计时器。 */
   const clearStaleTimer = useCallback((): void => {
     if (staleTimerRef.current === null) return;
@@ -57,34 +67,51 @@ export function NavigationFeedback() {
     staleTimerRef.current = null;
   }, []);
 
-  /** 启动一轮新的导航反馈，立即显示非零进度。 */
+  /** 启动一轮新的导航反馈，先等待路由骨架，超时后再显示非零进度。 */
   const start = useCallback((): void => {
     clearCompletionTimer();
+    clearStartTimer();
     clearStaleTimer();
     isActiveRef.current = true;
-    setProgressRunId((current) => current + 1);
-    setProgress(NAVIGATION_PROGRESS_INITIAL);
+    hasVisibleProgressRef.current = false;
+    setProgress(null);
+    startTimerRef.current = window.setTimeout(() => {
+      if (!isActiveRef.current) return;
+      startTimerRef.current = null;
+      hasVisibleProgressRef.current = true;
+      setProgressRunId((current) => current + 1);
+      setProgress(NAVIGATION_PROGRESS_INITIAL);
+    }, NAVIGATION_PROGRESS_DELAY_MS);
     staleTimerRef.current = window.setTimeout(() => {
       isActiveRef.current = false;
+      hasVisibleProgressRef.current = false;
+      clearStartTimer();
       staleTimerRef.current = null;
       setProgress(null);
     }, NAVIGATION_PROGRESS_STALE_MS);
-  }, [clearCompletionTimer, clearStaleTimer]);
+  }, [clearCompletionTimer, clearStartTimer, clearStaleTimer]);
 
   /** 将活动导航推进到 100%；收起计时由完成态提交后的 effect 负责。 */
   const complete = useCallback((): void => {
     if (!isActiveRef.current) return;
     clearStaleTimer();
+    clearStartTimer();
+    if (!hasVisibleProgressRef.current) {
+      isActiveRef.current = false;
+      return;
+    }
     setProgress(100);
-  }, [clearStaleTimer]);
+  }, [clearStartTimer, clearStaleTimer]);
 
   /** 立即撤销不会离开当前文档的反馈，不播放虚假的完成动画。 */
   const reset = useCallback((): void => {
     clearCompletionTimer();
+    clearStartTimer();
     clearStaleTimer();
     isActiveRef.current = false;
+    hasVisibleProgressRef.current = false;
     setProgress(null);
-  }, [clearCompletionTimer, clearStaleTimer]);
+  }, [clearCompletionTimer, clearStartTimer, clearStaleTimer]);
 
   const isAdvancing =
     progress !== null && progress < NAVIGATION_PROGRESS_WAITING_MAX;
@@ -113,9 +140,10 @@ export function NavigationFeedback() {
   useEffect(
     () => () => {
       clearCompletionTimer();
+      clearStartTimer();
       clearStaleTimer();
     },
-    [clearCompletionTimer, clearStaleTimer]
+    [clearCompletionTimer, clearStartTimer, clearStaleTimer]
   );
 
   useEffect(() => {
