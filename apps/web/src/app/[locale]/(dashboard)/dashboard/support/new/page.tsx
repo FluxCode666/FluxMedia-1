@@ -1,13 +1,17 @@
 "use client";
 
-import { ArrowLeft, Loader2 } from "lucide-react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useLocale } from "next-intl";
-import { useState } from "react";
-import { toast } from "sonner";
+import { createTicketAction } from "@repo/shared/support/actions/ticket";
+import {
+  ticketCategories,
+  ticketPriorities,
+} from "@repo/shared/support/schemas";
 import { Button } from "@repo/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -18,8 +22,13 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { Textarea } from "@repo/ui/components/textarea";
-import { createTicketAction } from "@repo/shared/support/actions/ticket";
-import { ticketCategories, ticketPriorities } from "@repo/shared/support/schemas";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useLocale } from "next-intl";
+import { useState } from "react";
+import { toast } from "sonner";
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 
 /**
  * 新建工单页面
@@ -59,6 +68,7 @@ export default function NewTicketPage() {
 
       if (result?.data) {
         toast.success("工单创建成功");
+        requestNavigationFeedback();
         router.push(`/${locale}/dashboard/support/${result.data.ticketId}`);
       } else if (result?.serverError) {
         toast.error(result.serverError);

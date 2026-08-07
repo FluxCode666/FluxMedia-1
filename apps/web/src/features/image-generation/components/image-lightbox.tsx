@@ -23,6 +23,7 @@ import { type PointerEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { deleteGenerationAction } from "@/features/image-generation/actions";
 import type { GenerationCreditDetails } from "@/features/image-generation/credit-calculation-details";
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { generateDownloadFilename } from "@/lib/download-filename";
 import { AdminRequestJsonDetails } from "./admin-request-json-details";
 
@@ -262,6 +263,7 @@ export function ImageLightbox({
   const handleSendReference = () => {
     if (!previewImageUrl) return;
     const intent = createReferenceIntent();
+    requestNavigationFeedback();
     router.push(createReferenceHref(intent));
     onClose();
   };

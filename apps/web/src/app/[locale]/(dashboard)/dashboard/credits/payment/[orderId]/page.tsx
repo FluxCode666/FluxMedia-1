@@ -7,6 +7,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import CreditPaymentResultLoading from "./loading";
 import { CreditPaymentResultView } from "./payment-result-view";
 
 export const metadata: Metadata = {
@@ -22,7 +23,7 @@ export default async function CreditPaymentResultPage({
 }) {
   const { orderId } = await params;
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<CreditPaymentResultLoading />}>
       <CreditPaymentResultView orderId={orderId} />
     </Suspense>
   );

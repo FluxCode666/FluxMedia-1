@@ -14,7 +14,7 @@ import { Loader2 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
 import { useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { createCreditTopUpCheckoutAction } from "@/features/payment/credit-top-up-actions";
 import type { WalletCopy } from "@/features/wallet/components/wallet-copy";
 import { useRouter } from "@/i18n/routing";
@@ -76,7 +76,10 @@ export function TopUpPurchasePanel({
   }, [selected]);
   const { execute, isPending } = useAction(createCreditTopUpCheckoutAction, {
     onSuccess: ({ data }) => {
-      if (data) router.push(`/dashboard/credits/payment/${data.orderId}`);
+      if (data) {
+        requestNavigationFeedback();
+        router.push(`/dashboard/credits/payment/${data.orderId}`);
+      }
     },
     onError: ({ error }) => {
       toast.error(error.serverError ?? copy.topUpFailed);

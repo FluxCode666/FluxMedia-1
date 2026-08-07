@@ -29,7 +29,7 @@ import { cn } from "@repo/ui/utils";
 import { Check, ChevronsUpDown, Loader2, Search, X } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
-
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { useRouter } from "@/i18n/routing";
 import { searchAdminPaymentOrderUsersAction } from "./actions";
 import {
@@ -139,6 +139,7 @@ export function PaymentOrderFilters({
   /** 使用当前控件值替换 URL，并从 keyset 首屏重新查询。 */
   function applyFilters(): void {
     startTransition(() => {
+      requestNavigationFeedback();
       router.push(
         buildAdminPaymentOrdersHref({
           cursor: null,
@@ -166,6 +167,7 @@ export function PaymentOrderFilters({
     setStatus(null);
     setUserSearch("");
     startTransition(() => {
+      requestNavigationFeedback();
       router.push(
         buildAdminPaymentOrdersHref({
           cursor: null,

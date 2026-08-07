@@ -46,6 +46,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import type { z } from "zod";
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import {
   updateProfileAction,
   updateTimeZoneAction,
@@ -123,6 +124,7 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
 
   const handleLanguageChange = (newLocale: string) => {
     startLocaleTransition(() => {
+      requestNavigationFeedback();
       router.replace(
         // @ts-expect-error Current route params always match the current pathname.
         { pathname, params },

@@ -4,9 +4,11 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages } from "next-intl/server";
+import { Suspense } from "react";
 import { Toaster } from "sonner";
 import { Analytics } from "@/features/analytics";
 import { CookieConsent } from "@/features/marketing/components/cookie-consent";
+import { NavigationFeedback } from "@/features/navigation/navigation-feedback";
 import { routing } from "@/i18n/routing";
 
 import "@repo/ui/globals.css";
@@ -115,6 +117,9 @@ export default async function LocaleLayout({
       <body className="font-serif antialiased">
         <NextIntlClientProvider messages={messages}>
           <Providers>
+            <Suspense fallback={null}>
+              <NavigationFeedback />
+            </Suspense>
             {children}
             <CookieConsent />
             <Toaster richColors position="top-right" />

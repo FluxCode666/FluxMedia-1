@@ -1,4 +1,8 @@
 {
+  "NavigationFeedback": {
+    "loading": "Opening page",
+    "opening": "Opening {page}"
+  },
   "Homepage": {
     "hero": {
       "eyebrow": "CREATE WITH LANGUAGE",

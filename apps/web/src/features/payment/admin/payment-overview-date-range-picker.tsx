@@ -23,7 +23,7 @@ import { differenceInCalendarDays, format } from "date-fns";
 import { CalendarRange, Check } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useMemo, useState, useTransition } from "react";
-
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { useRouter } from "@/i18n/routing";
 
 import {
@@ -182,7 +182,10 @@ export function PaymentOverviewDateRangePicker({
       endDate: draftEndDate,
     });
     setIsOpen(false);
-    startTransition(() => router.push(href));
+    startTransition(() => {
+      requestNavigationFeedback();
+      router.push(href);
+    });
   }
 
   return (

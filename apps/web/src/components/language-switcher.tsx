@@ -1,10 +1,5 @@
 "use client";
 
-import { Globe } from "lucide-react";
-import { useParams } from "next/navigation";
-import { useLocale, useTranslations } from "next-intl";
-import { useTransition } from "react";
-
 import { Button } from "@repo/ui/components/button";
 import {
   DropdownMenu,
@@ -12,6 +7,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@repo/ui/components/dropdown-menu";
+import { Globe } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
+import { useTransition } from "react";
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { usePathname, useRouter } from "@/i18n/routing";
 
 /**
@@ -43,6 +43,7 @@ export function LanguageSwitcher() {
    */
   const handleLocaleChange = (newLocale: string) => {
     startTransition(() => {
+      requestNavigationFeedback();
       router.replace(
         // @ts-expect-error -- TypeScript will validate that only known `params`
         // are used in combination with a given `pathname`. Since the two will

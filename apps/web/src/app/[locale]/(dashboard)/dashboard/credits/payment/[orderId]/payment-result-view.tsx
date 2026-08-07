@@ -33,7 +33,7 @@ import QRCode from "qrcode";
 import { useCallback, useEffect, useState } from "react";
 
 import { getCreditPaymentStatusAction } from "@/features/payment/credit-top-up-actions";
-import { useRouter } from "@/i18n/routing";
+import { Link, useRouter } from "@/i18n/routing";
 
 type CreditPaymentStatus = {
   orderId: string;
@@ -258,14 +258,15 @@ export function CreditPaymentResultView({
   return (
     <main className="mx-auto max-w-xl px-4 py-10">
       <Button
-        type="button"
+        asChild
         variant="ghost"
         size="sm"
         className="mb-5 gap-2 text-muted-foreground"
-        onClick={() => router.push("/dashboard/wallet?purchase=top-up")}
       >
-        <ArrowLeft className="h-4 w-4" />
-        {copy("Back to buy credits", "返回购买积分")}
+        <Link href="/dashboard/wallet?purchase=top-up">
+          <ArrowLeft className="h-4 w-4" />
+          {copy("Back to buy credits", "返回购买积分")}
+        </Link>
       </Button>
 
       <Card className="border-foreground/20 shadow-whisper">
@@ -390,31 +391,24 @@ export function CreditPaymentResultView({
           )}
           {payment?.status === "fulfilled" && (
             <>
-              <Button
-                type="button"
-                className="w-full"
-                onClick={() => router.push("/dashboard/generate")}
-              >
-                {copy("Start creating", "立即创作")}
+              <Button asChild className="w-full">
+                <Link href="/dashboard/generate">
+                  {copy("Start creating", "立即创作")}
+                </Link>
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => router.push("/dashboard/history")}
-              >
-                <ExternalLink className="mr-2 h-4 w-4" />
-                {copy("View usage records", "查看使用记录")}
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/dashboard/history">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {copy("View usage records", "查看使用记录")}
+                </Link>
               </Button>
             </>
           )}
           {(payment?.status === "failed" || payment?.status === "expired") && (
-            <Button
-              type="button"
-              className="w-full"
-              onClick={() => router.push("/dashboard/wallet?purchase=top-up")}
-            >
-              {copy("Buy credits again", "重新发起充值")}
+            <Button asChild className="w-full">
+              <Link href="/dashboard/wallet?purchase=top-up">
+                {copy("Buy credits again", "重新发起充值")}
+              </Link>
             </Button>
           )}
         </CardFooter>

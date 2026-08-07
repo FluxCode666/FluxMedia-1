@@ -8,7 +8,7 @@
  */
 import { PageSizeSelect } from "@repo/ui/components/page-size-select";
 import { useTransition } from "react";
-
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { useRouter } from "@/i18n/routing";
 
 export type PageSizeHrefOption = {
@@ -46,7 +46,10 @@ export function UrlPageSizeSelect({
       onValueChange={(nextSize) => {
         const option = options.find(({ size }) => size === nextSize);
         if (!option || option.size === value) return;
-        startTransition(() => router.push(option.href));
+        startTransition(() => {
+          requestNavigationFeedback();
+          router.push(option.href);
+        });
       }}
       options={options.map(({ size }) => size)}
       value={value}

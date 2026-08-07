@@ -27,6 +27,7 @@ import {
   ChevronsUpDown,
   CreditCard,
   History,
+  Loader2,
   LogOut,
   Megaphone,
   ReceiptText,
@@ -35,7 +36,7 @@ import {
   Shield,
   Users,
 } from "lucide-react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useAction } from "next-safe-action/hooks";
@@ -46,6 +47,7 @@ import {
 } from "@/features/auth/hooks/use-current-session";
 import { SiteLogo } from "@/features/branding/site-logo";
 import { useSidebar } from "@/features/dashboard/context";
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 
 type SidebarLeafItem = {
   title: string;
@@ -77,6 +79,37 @@ type DashboardSidebarProps = {
   initialSession?: CurrentSession;
 };
 
+/**
+ * 显示由 Next.js Link 自身管理的目标路由 pending 状态。
+ *
+ * @param label 面向辅助技术的目标页面加载说明。
+ * @param collapsed 是否处于仅图标侧栏，用于把状态固定到图标右上角。
+ * @returns 当前 Link pending 时的旋转指示与读屏状态，空闲时不占布局。
+ */
+function SidebarLinkPendingIndicator({
+  label,
+  collapsed = false,
+}: {
+  label: string;
+  collapsed?: boolean;
+}) {
+  const { pending } = useLinkStatus();
+  if (!pending) return null;
+
+  return (
+    <span
+      className={cn(
+        "ml-auto inline-flex shrink-0",
+        collapsed && "absolute right-1 top-1 ml-0"
+      )}
+      role="status"
+    >
+      <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
 export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -84,6 +117,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   const { isCollapsed, isMobileOpen, setMobileOpen, toggleSidebar } =
     useSidebar();
   const t = useTranslations("Dashboard");
+  const tNavigationFeedback = useTranslations("NavigationFeedback");
 
   // 获取当前用户会话
   const { data: session } = useCurrentSession(initialSession);
@@ -172,18 +206,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
     await signOut({
       fetchOptions: {
         onSuccess: () => {
+          requestNavigationFeedback();
           router.push("/");
         },
       },
     });
-  };
-
-  /**
-   * 处理设置点击
-   */
-  const handleSettingsClick = () => {
-    setOpen(false);
-    router.push(`/${locale}/dashboard/settings`);
   };
 
   const localizedHref = (href: string) =>
@@ -314,8 +341,10 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
         <div className="flex h-14 items-center px-5">
           <Link
             href={`/${locale}`}
-            prefetch={false}
-            className="flex items-center gap-2.5"
+            data-navigation-feedback={
+              collapsed && !mobile ? "ignore" : undefined
+            }
+            className="relative flex items-center gap-2.5"
             onClick={(e) => {
               if (mobile) {
                 setMobileOpen(false);
@@ -334,6 +363,10 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             >
               FluxMedia
             </span>
+            <SidebarLinkPendingIndicator
+              collapsed={collapsed}
+              label={tNavigationFeedback("opening", { page: "FluxMedia" })}
+            />
           </Link>
         </div>
 
@@ -441,7 +474,6 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                                   href={localizedHref(child.href)}
                                   key={child.href}
                                   onClick={() => mobile && setMobileOpen(false)}
-                                  prefetch={false}
                                 >
                                   <span
                                     aria-hidden="true"
@@ -455,6 +487,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                                     <ChildIcon className="size-3.5 shrink-0" />
                                   ) : null}
                                   <span>{getNavTitle(child.title)}</span>
+                                  <SidebarLinkPendingIndicator
+                                    label={tNavigationFeedback("opening", {
+                                      page: getNavTitle(child.title),
+                                    })}
+                                  />
                                 </Link>
                               );
                             })}
@@ -468,7 +505,6 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                     <Link
                       key={item.href}
                       href={localizedHref(item.href)}
-                      prefetch={false}
                       title={collapsed ? translatedTitle : undefined}
                       onClick={() => mobile && setMobileOpen(false)}
                       className={cn(
@@ -509,6 +545,12 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                           )}
                         </>
                       )}
+                      <SidebarLinkPendingIndicator
+                        collapsed={collapsed}
+                        label={tNavigationFeedback("opening", {
+                          page: translatedTitle,
+                        })}
+                      />
                     </Link>
                   );
                 })}
@@ -605,14 +647,19 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                 {/* 菜单项 */}
                 <div className="p-2">
                   {/* 设置 */}
-                  <button
-                    type="button"
-                    onClick={handleSettingsClick}
+                  <Link
+                    href={`/${locale}/dashboard/settings`}
+                    onClick={() => setOpen(false)}
                     className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm hover:bg-muted transition-colors duration-150"
                   >
                     <Settings className="h-4 w-4" />
                     {t("sidebar.settings")}
-                  </button>
+                    <SidebarLinkPendingIndicator
+                      label={tNavigationFeedback("opening", {
+                        page: t("sidebar.settings"),
+                      })}
+                    />
+                  </Link>
 
                   {/* 登出 */}
                   <button

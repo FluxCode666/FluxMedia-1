@@ -1,4 +1,8 @@
 {
+  "NavigationFeedback": {
+    "loading": "正在打开页面",
+    "opening": "正在打开{page}"
+  },
   "Homepage": {
     "hero": {
       "eyebrow": "CREATE WITH LANGUAGE",
