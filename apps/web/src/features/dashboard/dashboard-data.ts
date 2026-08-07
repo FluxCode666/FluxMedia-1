@@ -12,6 +12,7 @@ import {
 import { generation } from "@repo/database/schema";
 import type { UsageSummaryOutput } from "@repo/shared/analytics/contracts";
 import type { AppUserRole } from "@repo/shared/auth/roles";
+import type { WalletBalanceSnapshot } from "@repo/shared/credits/wallet-contract";
 import { logError } from "@repo/shared/logger";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { invokeOperation } from "@repo/shared/uol";
@@ -22,6 +23,7 @@ import { ensureUolInitialized } from "@/server/uol-init";
 
 export type DashboardSnapshot = {
   summary: UsageSummaryOutput;
+  creditBalance: WalletBalanceSnapshot;
   recentCreations: RecentCreation[];
 };
 
@@ -31,6 +33,10 @@ type DashboardSnapshotDependencies = {
     userId: string;
     role: AppUserRole;
   }) => Promise<UsageSummaryOutput>;
+  loadBalance: (input: {
+    userId: string;
+    role: AppUserRole;
+  }) => Promise<WalletBalanceSnapshot>;
   loadRecentCreations: (userId: string) => Promise<RecentCreation[]>;
   reportRecentCreationsError: (error: SafePostgresPoolError) => void;
 };
@@ -91,6 +97,18 @@ async function loadSummaryThroughUol(input: {
   );
 }
 
+/** 通过 Credits UOL 读取本人当前余额，身份只来自服务端 Principal。 */
+async function loadBalanceThroughUol(input: {
+  userId: string;
+  role: AppUserRole;
+}): Promise<WalletBalanceSnapshot> {
+  return invokeOperation<WalletBalanceSnapshot>(
+    "credits.getMyBalance",
+    {},
+    { type: "user", userId: input.userId, role: input.role }
+  );
+}
+
 /**
  * 从 Drizzle 包装错误中提取安全的数据库根因字段。
  *
@@ -115,6 +133,7 @@ function reportRecentCreationsError(error: SafePostgresPoolError): void {
 const defaultSnapshotDependencies: DashboardSnapshotDependencies = {
   ensureInitialized: ensureUolInitialized,
   loadSummary: loadSummaryThroughUol,
+  loadBalance: loadBalanceThroughUol,
   loadRecentCreations: loadRecentDashboardCreations,
   reportRecentCreationsError,
 };
@@ -123,7 +142,7 @@ const defaultSnapshotDependencies: DashboardSnapshotDependencies = {
  * 装配控制台首屏或刷新快照。
  *
  * @param input 当前用户与角色；身份只用于构造本人 Principal。
- * @returns 摘要和近期创作；近期创作失败时降级为空，核心统计失败时整体拒绝。
+ * @returns 摘要、余额和近期创作；近期创作失败时降级为空，核心统计失败时整体拒绝。
  */
 export async function loadDashboardSnapshot(
   input: {
@@ -141,9 +160,10 @@ export async function loadDashboardSnapshot(
       );
       return [];
     });
-  const [summary, recentCreations] = await Promise.all([
+  const [summary, creditBalance, recentCreations] = await Promise.all([
     dependencies.loadSummary({ userId: input.userId, role: input.role }),
+    dependencies.loadBalance({ userId: input.userId, role: input.role }),
     recentCreationsPromise,
   ]);
-  return { summary, recentCreations };
+  return { summary, creditBalance, recentCreations };
 }

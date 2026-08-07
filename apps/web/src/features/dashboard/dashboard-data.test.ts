@@ -29,20 +29,34 @@ const summary = {
   lifetime: { imageCount: 20, videoSeconds: 50, creditsConsumed: 40 },
 } satisfies UsageSummaryOutput;
 
+const creditBalance = {
+  balance: 96,
+  totalSpent: 42,
+  totalRefunded: 2,
+  totalNetSpent: 40,
+  status: "active",
+  asOf: "2026-07-21T05:00:00.000Z",
+} as const;
+
 describe("dashboard snapshot loader", () => {
   it("loads summary and recent creations for the same user", async () => {
     const dependencies = {
       ensureInitialized: vi.fn().mockResolvedValue(undefined),
       loadSummary: vi.fn().mockResolvedValue(summary),
+      loadBalance: vi.fn().mockResolvedValue(creditBalance),
       loadRecentCreations: vi.fn().mockResolvedValue([]),
       reportRecentCreationsError: vi.fn(),
     };
 
     await expect(
       loadDashboardSnapshot({ userId: "user-1", role: "user" }, dependencies)
-    ).resolves.toEqual({ summary, recentCreations: [] });
+    ).resolves.toEqual({ summary, creditBalance, recentCreations: [] });
     expect(dependencies.ensureInitialized).toHaveBeenCalledTimes(1);
     expect(dependencies.loadSummary).toHaveBeenCalledWith({
+      userId: "user-1",
+      role: "user",
+    });
+    expect(dependencies.loadBalance).toHaveBeenCalledWith({
       userId: "user-1",
       role: "user",
     });
@@ -53,6 +67,7 @@ describe("dashboard snapshot loader", () => {
     const dependencies = {
       ensureInitialized: vi.fn().mockResolvedValue(undefined),
       loadSummary: vi.fn().mockRejectedValue(new Error("summary unavailable")),
+      loadBalance: vi.fn().mockResolvedValue(creditBalance),
       loadRecentCreations: vi.fn().mockResolvedValue([]),
       reportRecentCreationsError: vi.fn(),
     };
@@ -60,6 +75,20 @@ describe("dashboard snapshot loader", () => {
     await expect(
       loadDashboardSnapshot({ userId: "user-1", role: "user" }, dependencies)
     ).rejects.toThrow("summary unavailable");
+  });
+
+  it("rejects the whole snapshot when the credit balance fails", async () => {
+    const dependencies = {
+      ensureInitialized: vi.fn().mockResolvedValue(undefined),
+      loadSummary: vi.fn().mockResolvedValue(summary),
+      loadBalance: vi.fn().mockRejectedValue(new Error("balance unavailable")),
+      loadRecentCreations: vi.fn().mockResolvedValue([]),
+      reportRecentCreationsError: vi.fn(),
+    };
+
+    await expect(
+      loadDashboardSnapshot({ userId: "user-1", role: "user" }, dependencies)
+    ).rejects.toThrow("balance unavailable");
   });
 
   it("keeps the core snapshot when recent creations are unavailable", async () => {
@@ -74,13 +103,14 @@ describe("dashboard snapshot loader", () => {
     const dependencies = {
       ensureInitialized: vi.fn().mockResolvedValue(undefined),
       loadSummary: vi.fn().mockResolvedValue(summary),
+      loadBalance: vi.fn().mockResolvedValue(creditBalance),
       loadRecentCreations: vi.fn().mockRejectedValue(recentCreationsError),
       reportRecentCreationsError: vi.fn(),
     };
 
     await expect(
       loadDashboardSnapshot({ userId: "admin-1", role: "admin" }, dependencies)
-    ).resolves.toEqual({ summary, recentCreations: [] });
+    ).resolves.toEqual({ summary, creditBalance, recentCreations: [] });
     expect(dependencies.reportRecentCreationsError).toHaveBeenCalledWith({
       name: "Error",
       message: "read ETIMEDOUT",

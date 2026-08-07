@@ -3,8 +3,8 @@
 /**
  * 用户控制台统计面板。
  *
- * 展示固定滚动近 24 小时、累计摘要、同窗口模型使用占比和近期创作；客户端只保留
- * 刷新状态，不再维护时间范围或趋势指标草稿。
+ * 展示积分用量、固定滚动近 24 小时、累计摘要、同窗口模型使用占比和近期创作；
+ * 客户端只保留刷新状态，不再维护时间范围或趋势指标草稿。
  */
 import { formatCredits } from "@repo/shared/credits/format";
 import { Button } from "@repo/ui/components/button";
@@ -15,7 +15,14 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import { cn } from "@repo/ui/utils";
-import { Coins, Image as ImageIcon, RefreshCw, Video } from "lucide-react";
+import {
+  ChartNoAxesCombined,
+  Coins,
+  Image as ImageIcon,
+  RefreshCw,
+  Video,
+  WalletCards,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -51,7 +58,7 @@ function formatCount(value: number, locale: string): string {
 }
 
 /**
- * 渲染近 24 小时和累计摘要、模型占比与近期创作。
+ * 渲染积分用量、近 24 小时和累计摘要、模型占比与近期创作。
  *
  * @param props 服务端首屏快照、语言与账户支持区。
  * @returns 可刷新且对窄屏友好的控制台主体。
@@ -90,6 +97,29 @@ export function DashboardAnalyticsPanel({
     }
   };
 
+  const creditMetrics = [
+    {
+      label: copy("Consumed, last 24 hours", "近24小时消耗"),
+      value: formatCredits(snapshot.summary.last24Hours.creditsConsumed),
+      description: copy("net of linked refunds", "净消耗，已扣除关联退款"),
+      icon: Coins,
+    },
+    {
+      label: copy("Total consumed", "总消耗"),
+      value: formatCredits(snapshot.summary.lifetime.creditsConsumed),
+      description: copy(
+        "net consumption since account creation",
+        "账户创建以来的净消耗"
+      ),
+      icon: ChartNoAxesCombined,
+    },
+    {
+      label: copy("Remaining credits", "剩余积分"),
+      value: formatCredits(snapshot.creditBalance.balance),
+      description: copy("available for new creations", "当前可用于创作"),
+      icon: WalletCards,
+    },
+  ];
   const last24HoursMetrics = [
     {
       label: copy("Images, last 24 hours", "近24小时生图数量"),
@@ -102,12 +132,6 @@ export function DashboardAnalyticsPanel({
       value: formatCount(snapshot.summary.last24Hours.videoSeconds, locale),
       description: copy("seconds of video output", "视频产出秒数"),
       icon: Video,
-    },
-    {
-      label: copy("Credits used, last 24 hours", "近24小时消耗积分"),
-      value: formatCredits(snapshot.summary.last24Hours.creditsConsumed),
-      description: copy("net of linked refunds", "已扣除关联退款"),
-      icon: Coins,
     },
   ];
   const lifetimeMetrics = [
@@ -123,12 +147,6 @@ export function DashboardAnalyticsPanel({
       description: copy("since account creation", "账户创建以来"),
       icon: Video,
     },
-    {
-      label: copy("Total credits used", "累计消耗积分"),
-      value: formatCredits(snapshot.summary.lifetime.creditsConsumed),
-      description: copy("net of linked refunds", "已扣除关联退款"),
-      icon: Coins,
-    },
   ];
 
   return (
@@ -137,15 +155,24 @@ export function DashboardAnalyticsPanel({
 
       {[
         {
+          title: copy("Credit usage", "积分用量"),
+          metrics: creditMetrics,
+          delay: "delay-80",
+          columns: "sm:grid-cols-2 md:grid-cols-3",
+          showRefresh: true,
+        },
+        {
           title: copy("Last 24 hours", "近24小时统计"),
           metrics: last24HoursMetrics,
-          delay: "delay-80",
-          showRefresh: true,
+          delay: "delay-160",
+          columns: "sm:grid-cols-2",
+          showRefresh: false,
         },
         {
           title: copy("Lifetime", "累计统计"),
           metrics: lifetimeMetrics,
-          delay: "delay-160",
+          delay: "delay-240",
+          columns: "sm:grid-cols-2",
           showRefresh: false,
         },
       ].map((section) => (
@@ -169,7 +196,7 @@ export function DashboardAnalyticsPanel({
               </Button>
             )}
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className={cn("grid gap-4", section.columns)}>
             {section.metrics.map((metric) => {
               const Icon = metric.icon;
               return (
@@ -202,7 +229,7 @@ export function DashboardAnalyticsPanel({
         className={cn(
           "grid gap-4 xl:grid-cols-[minmax(340px,.9fr)_minmax(0,1.7fr)]",
           sectionEnterClass,
-          "delay-240"
+          "delay-320"
         )}
       >
         <ModelUsageDistributionChartLazy

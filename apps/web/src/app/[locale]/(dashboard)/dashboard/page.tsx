@@ -2,7 +2,7 @@
  * 用户控制台首页的服务端入口。
  *
  * 本页只负责会话鉴权、本人 Principal 和首屏快照装配；刷新状态与模型占比图表拆包由
- * dashboard feature 承担。摘要固定为滚动近 24 小时与累计口径。
+ * dashboard feature 承担。摘要固定为滚动近 24 小时与累计口径，并附带当前积分余额。
  */
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
