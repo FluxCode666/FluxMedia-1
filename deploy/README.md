@@ -101,8 +101,8 @@ docker compose --profile maintenance run --rm --no-deps --interactive=false migr
   --confirm-no-legacy-writers
 release_preflight="$(docker compose --profile maintenance run --rm --no-deps \
   --interactive=false migrate \
-  pnpm --dir packages/database db:release-gate -- preflight)"
-printf '%s\n' "${release_preflight}"
+  pnpm --dir packages/database db:release-gate -- preflight \
+  | tee /dev/stderr)"
 release_credits_ledger_digest="$(printf '%s\n' "${release_preflight}" \
   | bash ./read-release-ledger-digest.sh)"
 docker compose --profile maintenance run --rm --no-deps --interactive=false migrate

@@ -165,9 +165,10 @@ jobs:
             node apps/web/scripts/migrate-video-input-assets.mjs migrate \
             --confirm-no-legacy-writers
           release_preflight="$(
-            pnpm --filter @repo/database db:release-gate -- preflight
+            # 门禁失败时仍需把非敏感聚合证据写入 Actions 日志，供阻塞报告定位。
+            pnpm --filter @repo/database db:release-gate -- preflight \
+              | tee /dev/stderr
           )"
-          printf '%s\n' "${release_preflight}"
           release_credits_ledger_digest="$(
             printf '%s\n' "${release_preflight}" \
               | bash deploy/read-release-ledger-digest.sh
@@ -586,8 +587,10 @@ jobs:
           fi
 
           echo "在停服前烟测新 migrator 镜像与纯中转门禁。"
-          preliminary_preflight="$(run_release_gate preflight-early)"
-          printf '%s\n' "${preliminary_preflight}"
+          # tee 同时保留成功输出供后续判断，并在失败退出前回放阻断证据。
+          preliminary_preflight="$(
+            run_release_gate preflight-early | tee /dev/stderr
+          )"
           if printf '%s\n' "${preliminary_preflight}" \
             | grep -qx 'relay_only_column=present'; then
             initial_governance_migration=true
@@ -618,8 +621,9 @@ jobs:
           echo "收编历史视频输入资产。"
           migration_started=true
           run_video_input_asset_migration
-          release_preflight="$(run_release_gate preflight)"
-          printf '%s\n' "${release_preflight}"
+          release_preflight="$(
+            run_release_gate preflight | tee /dev/stderr
+          )"
           release_credits_ledger_digest="$(
             printf '%s\n' "${release_preflight}" \
               | bash ./read-release-ledger-digest.sh
