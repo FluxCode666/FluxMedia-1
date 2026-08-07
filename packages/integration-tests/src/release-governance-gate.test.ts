@@ -56,13 +56,7 @@ const runPrefix = `release-governance-gate-integration-${randomUUID()}`;
 const relayUserId = `${runPrefix}-relay-user`;
 const overrideUserId = `${runPrefix}-override-user`;
 const mediaUsageUserId = `${runPrefix}-media-usage-user`;
-const subscriptionUserId = `${runPrefix}-subscription-user`;
-const seededUserIds = [
-  relayUserId,
-  overrideUserId,
-  mediaUsageUserId,
-  subscriptionUserId,
-] as const;
+const seededUserIds = [relayUserId, overrideUserId, mediaUsageUserId] as const;
 const hiddenOverrideColumn =
   "moderation_block_risk_level_override_release_gate_test";
 const hiddenMediaMarkerTable = "image_backend_member_release_gate_test";
@@ -72,8 +66,7 @@ type ReleaseGateCommand =
   | "postcheck"
   | "postcheck-initial"
   | "preflight"
-  | "preflight-early"
-  | "retire-active-subscriptions";
+  | "preflight-early";
 
 interface ReleaseGateResult {
   exitCode: number;
@@ -357,8 +350,7 @@ async function assertGovernanceMigrationReady(client: Pool): Promise<void> {
 async function runReleaseGate(
   command: ReleaseGateCommand,
   databaseUrl: string,
-  expectedLedgerDigest?: string,
-  retireActiveSubscriptionCount?: string
+  expectedLedgerDigest?: string
 ): Promise<ReleaseGateResult> {
   return new Promise<ReleaseGateResult>((resolve, reject) => {
     const child = spawn(process.execPath, [releaseGatePath, command], {
@@ -367,12 +359,6 @@ async function runReleaseGate(
         DATABASE_URL: databaseUrl,
         ...(expectedLedgerDigest
           ? { RELEASE_CREDITS_LEDGER_DIGEST: expectedLedgerDigest }
-          : {}),
-        ...(retireActiveSubscriptionCount
-          ? {
-              RELEASE_ACTIVE_SUBSCRIPTION_RETIRE_COUNT:
-                retireActiveSubscriptionCount,
-            }
           : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -1043,137 +1029,6 @@ describe("release governance gate PostgreSQL integration", () => {
     expect(result.stderr).toContain(
       "release governance gate failed: subscription retirement preflight failed"
     );
-  });
-
-  it("按精确数量原子退役活跃订阅并保持账本摘要不变", async () => {
-    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
-    const baseline = await runReleaseGate("preflight", testDatabaseUrl);
-    expect(baseline.exitCode).toBe(0);
-    const ledgerDigest = readEvidence(
-      baseline.stdout,
-      "credits_ledger_digest"
-    );
-
-    await seedUser(pool, subscriptionUserId);
-    await pool.query(
-      `insert into subscription (
-         id, user_id, subscription_id, price_id, status,
-         current_period_start, current_period_end
-       ) values
-         ($1, $2, $3, 'price-test', 'active', now(), now() + interval '30 days'),
-         ($4, $2, $5, 'price-test', 'trialing', now(), now() + interval '30 days')`,
-      [
-        `${runPrefix}-subscription-active`,
-        subscriptionUserId,
-        `${runPrefix}-provider-active`,
-        `${runPrefix}-subscription-trialing`,
-        `${runPrefix}-provider-trialing`,
-      ]
-    );
-
-    const result = await runReleaseGate(
-      "retire-active-subscriptions",
-      testDatabaseUrl,
-      undefined,
-      "2"
-    );
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("subscription_retired_count=2\n");
-    expect(result.stderr).toBe("");
-
-    const rows = await pool.query<{
-      cancelAtPeriodEnd: boolean;
-      currentPeriodEnd: Date;
-      status: string;
-    }>(
-      `select
-         cancel_at_period_end as "cancelAtPeriodEnd",
-         current_period_end as "currentPeriodEnd",
-         status
-       from subscription
-       where user_id = $1
-       order by id`,
-      [subscriptionUserId]
-    );
-    expect(rows.rows).toHaveLength(2);
-    for (const row of rows.rows) {
-      expect(row.status).toBe("canceled");
-      expect(row.cancelAtPeriodEnd).toBe(true);
-      expect(row.currentPeriodEnd.getTime()).toBeLessThanOrEqual(Date.now());
-    }
-
-    const after = await runReleaseGate("preflight", testDatabaseUrl);
-    expect(after.exitCode).toBe(0);
-    expect(readEvidence(after.stdout, "credits_ledger_digest")).toBe(
-      ledgerDigest
-    );
-    expect(after.stdout).toContain("subscription_active_count=0\n");
-    expect(after.stdout).toContain(
-      "subscription_effective_canceled_count=0\n"
-    );
-
-    const repeated = await runReleaseGate(
-      "retire-active-subscriptions",
-      testDatabaseUrl,
-      undefined,
-      "2"
-    );
-    expect(repeated.exitCode).toBe(1);
-    expect(repeated.stderr).toContain(
-      "subscription retirement expected 2 active rows, found 0"
-    );
-  });
-
-  it("活跃订阅数量不匹配时不修改任何记录", async () => {
-    if (!pool || !testDatabaseUrl) throw new Error("集成测试尚未初始化");
-    await seedUser(pool, subscriptionUserId);
-    await pool.query(
-      `insert into subscription (
-         id, user_id, subscription_id, price_id, status,
-         current_period_start, current_period_end
-       ) values
-         ($1, $2, $3, 'price-test', 'active', now(), now() + interval '30 days'),
-         ($4, $2, $5, 'price-test', 'past_due', now(), now() + interval '30 days')`,
-      [
-        `${runPrefix}-subscription-mismatch-active`,
-        subscriptionUserId,
-        `${runPrefix}-provider-mismatch-active`,
-        `${runPrefix}-subscription-mismatch-past-due`,
-        `${runPrefix}-provider-mismatch-past-due`,
-      ]
-    );
-
-    const result = await runReleaseGate(
-      "retire-active-subscriptions",
-      testDatabaseUrl,
-      undefined,
-      "1"
-    );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(
-      "subscription retirement expected 1 active rows, found 2"
-    );
-
-    const rows = await pool.query<{
-      cancelAtPeriodEnd: boolean;
-      currentPeriodEnd: Date;
-      status: string;
-    }>(
-      `select
-         cancel_at_period_end as "cancelAtPeriodEnd",
-         current_period_end as "currentPeriodEnd",
-         status
-       from subscription
-       where user_id = $1
-       order by id`,
-      [subscriptionUserId]
-    );
-    expect(rows.rows).toHaveLength(2);
-    for (const row of rows.rows) {
-      expect(row.status).not.toBe("canceled");
-      expect(row.cancelAtPeriodEnd).toBe(false);
-      expect(row.currentPeriodEnd.getTime()).toBeGreaterThan(Date.now());
-    }
   });
 
   it("用户生图并发覆盖只接受 null 或 1..10000", async () => {

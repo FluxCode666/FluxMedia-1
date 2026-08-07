@@ -333,28 +333,6 @@ function parseCount(value, label) {
 }
 
 /**
- * 解析维护命令要求的正整数数量。
- *
- * @param {string | undefined} value 外部环境变量值。
- * @param {string} key 环境变量名，仅用于错误定位。
- * @returns {number} 位于安全整数范围内的正整数。
- * @throws 值缺失、格式不严格或超出安全整数范围时抛错。
- * @sideEffect 无副作用。
- * @boundary 拒绝 0、负数、小数、前导符号和超大数，避免宽泛解析误操作生产数据。
- */
-function parsePositiveCount(value, key) {
-  const normalized = value?.trim();
-  if (!normalized || !/^[1-9][0-9]*$/u.test(normalized)) {
-    throw new Error(`${key} must be a positive integer`);
-  }
-  const count = Number(normalized);
-  if (!Number.isSafeInteger(count)) {
-    throw new Error(`${key} exceeds the safe integer range`);
-  }
-  return count;
-}
-
-/**
  * 输出部署脚本可解析的单行键值证据。
  *
  * @param {string} key 由调用方控制的稳定证据键。
@@ -384,30 +362,6 @@ async function inReadOnlyTransaction(pool, work) {
   try {
     // 多条聚合必须共享同一快照，否则并发账本写入会制造不可复现的混合摘要。
     await client.query("begin isolation level repeatable read read only");
-    await work(client);
-    await client.query("commit");
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * 在单个可写事务中执行受控维护操作，并确保连接归还连接池。
- *
- * @param {pg.Pool} pool 已配置到目标数据库的连接池。
- * @param {(client: pg.PoolClient) => Promise<void>} work 使用独占连接执行的更新。
- * @returns {Promise<void>} 操作成功并提交事务后完成的 Promise。
- * @throws 获取连接、事务、更新或提交失败时抛错并回滚。
- * @sideEffect 获取并释放一个池连接，执行 COMMIT 或 ROLLBACK。
- * @boundary 回滚失败不会覆盖原始异常；finally 始终释放已获取的连接。
- */
-async function inWriteTransaction(pool, work) {
-  const client = await pool.connect();
-  try {
-    await client.query("begin");
     await work(client);
     await client.query("commit");
   } catch (error) {
@@ -2349,66 +2303,6 @@ async function assertSubscriptionRetirementPreflight(pool) {
 }
 
 /**
- * 按显式数量原子退役活跃订阅，并保留所有历史记录。
- *
- * @param {pg.Pool} pool 已配置到目标生产数据库的连接池。
- * @returns {Promise<void>} 精确数量的活跃订阅已标记取消并结束周期时完成。
- * @throws 预期数量缺失、数量不匹配、订阅表缺失或数据库更新失败时抛错。
- * @sideEffect 在事务中锁定 subscription 表，更新 status、取消标记、周期结束时间和更新时间。
- * @boundary 只修改 active、trialing、past_due；不删除订阅、不修改 credits_batch 或 credits_transaction。
- */
-async function retireActiveSubscriptions(pool) {
-  const expectedCount = parsePositiveCount(
-    process.env.RELEASE_ACTIVE_SUBSCRIPTION_RETIRE_COUNT,
-    "RELEASE_ACTIVE_SUBSCRIPTION_RETIRE_COUNT"
-  );
-
-  await inWriteTransaction(pool, async (client) => {
-    const tableResult = await client.query(
-      "select to_regclass('public.subscription') is not null as present"
-    );
-    if (tableResult.rows[0]?.present !== true) {
-      throw new Error("subscription table is required for retirement");
-    }
-
-    // SHARE ROW EXCLUSIVE 同时阻塞订阅 INSERT/UPDATE/DELETE，保证精确数量校验
-    // 与后续更新处于同一不可交错窗口，避免并发写入造成误退役。
-    await client.query(
-      "lock table subscription in share row exclusive mode"
-    );
-    const activeResult = await client.query(
-      `select count(*)::text as count
-         from subscription
-        where lower(status) in ('active', 'trialing', 'past_due')`
-    );
-    const activeCount = parseCount(
-      activeResult.rows[0]?.count,
-      "active subscriptions"
-    );
-    if (activeCount !== expectedCount) {
-      throw new Error(
-        `subscription retirement expected ${expectedCount} active rows, found ${activeCount}`
-      );
-    }
-
-    const updateResult = await client.query(
-      `update subscription
-          set status = 'canceled',
-              cancel_at_period_end = true,
-              current_period_end = now(),
-              updated_at = now()
-        where lower(status) in ('active', 'trialing', 'past_due')`
-    );
-    if (updateResult.rowCount !== expectedCount) {
-      throw new Error(
-        `subscription retirement updated ${updateResult.rowCount ?? 0} rows, expected ${expectedCount}`
-      );
-    }
-    printEvidence("subscription_retired_count", expectedCount);
-  });
-}
-
-/**
  * 校验图片异步任务中的 storage-only 媒体引用。
  *
  * @param {unknown} value PostgreSQL JSON 字段中的单个媒体引用。
@@ -3177,7 +3071,7 @@ async function assertPostMigrationState(pool, requireEmptyOverrides) {
  * @returns {Promise<void>} 指定门禁成功且连接池关闭后完成的 Promise。
  * @throws DATABASE_URL 缺失、命令不支持、连接失败或门禁拒绝时抛错。
  * @sideEffect 读取 process.env/argv，创建并关闭 PostgreSQL 连接池，输出门禁证据。
- * @boundary 只接受 drain、retire-active-subscriptions、preflight-early、
+ * @boundary 只接受 drain、preflight-early、
  *   preflight、postcheck、postcheck-initial 与 legacy-startup；忽略 pnpm
  *   透传的独立 `--` 参数。
  */
@@ -3198,10 +3092,6 @@ async function main() {
   try {
     if (command === "drain") {
       await assertWebConnectionsDrained(pool);
-      return;
-    }
-    if (command === "retire-active-subscriptions") {
-      await retireActiveSubscriptions(pool);
       return;
     }
     if (command === "preflight-early") {
@@ -3241,7 +3131,7 @@ async function main() {
       return;
     }
     throw new Error(
-      "expected one of: drain, retire-active-subscriptions, preflight-early, preflight, postcheck, postcheck-initial, legacy-startup"
+      "expected one of: drain, preflight-early, preflight, postcheck, postcheck-initial, legacy-startup"
     );
   } finally {
     await pool.end();

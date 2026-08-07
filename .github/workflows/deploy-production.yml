@@ -17,16 +17,6 @@ on:
         required: false
         default: false
         type: boolean
-      retire_active_subscriptions:
-        description: "将预期数量的活跃订阅标记为已取消并结束周期"
-        required: false
-        default: false
-        type: boolean
-      retire_active_subscription_count:
-        description: "预期退役的活跃订阅记录数"
-        required: false
-        default: "0"
-        type: string
 
 # 同一生产环境只允许一个部署运行；保留已开始的部署，避免中途取消留下半更新状态。
 concurrency:
@@ -312,8 +302,6 @@ jobs:
       MIGRATE_IMAGE: ${{ needs.build-and-push.outputs.migrate_image }}
       PROXY_IMAGE: ${{ needs.build-and-push.outputs.proxy_image }}
       IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
-      RETIRE_ACTIVE_SUBSCRIPTIONS: ${{ inputs.retire_active_subscriptions }}
-      RETIRE_ACTIVE_SUBSCRIPTION_COUNT: ${{ inputs.retire_active_subscription_count }}
     steps:
       - name: Checkout deployment files
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -348,15 +336,6 @@ jobs:
           fi
           if [[ ! "${GHCR_USERNAME}" =~ ^[A-Za-z0-9-]+$ ]]; then
             echo "::error::GHCR_USERNAME 必须是有效的 GitHub 用户名。"
-            exit 1
-          fi
-          if [ "${RETIRE_ACTIVE_SUBSCRIPTIONS}" = "true" ]; then
-            if [[ ! "${RETIRE_ACTIVE_SUBSCRIPTION_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
-              echo "::error::启用订阅退役时必须提供正整数退役数量。"
-              exit 1
-            fi
-          elif [ "${RETIRE_ACTIVE_SUBSCRIPTION_COUNT}" != "0" ]; then
-            echo "::error::未启用订阅退役时，退役数量必须保持为 0。"
             exit 1
           fi
           if ! command -v sshpass >/dev/null 2>&1; then
@@ -428,9 +407,7 @@ jobs:
               "${PROXY_IMAGE}" \
               "${IMAGE_TAG}" \
               "${DEPLOY_PATH}" \
-              "${GITHUB_SHA}" \
-              "${RETIRE_ACTIVE_SUBSCRIPTIONS}" \
-              "${RETIRE_ACTIVE_SUBSCRIPTION_COUNT}" <<'REMOTE_SCRIPT' | tee "${result_file}"
+              "${GITHUB_SHA}" <<'REMOTE_SCRIPT' | tee "${result_file}"
           set -euo pipefail
 
           web_image="$1"
@@ -439,8 +416,6 @@ jobs:
           image_tag="$4"
           deploy_path="$5"
           git_sha="$6"
-          retire_active_subscriptions="$7"
-          retire_active_subscription_count="$8"
           cd "${deploy_path}"
 
           if [ ! -f .env ]; then
@@ -463,16 +438,6 @@ jobs:
             echo "目标服务器缺少发布恢复策略脚本。" >&2
             exit 1
           fi
-          if [ "${retire_active_subscriptions}" = "true" ]; then
-            if [[ ! "${retire_active_subscription_count}" =~ ^[1-9][0-9]*$ ]]; then
-              echo "订阅退役数量必须是正整数。" >&2
-              exit 1
-            fi
-          elif [ "${retire_active_subscriptions}" != "false" ] \
-            || [ "${retire_active_subscription_count}" != "0" ]; then
-            echo "订阅退役参数组合无效。" >&2
-            exit 1
-          fi
 
           # 用受测解析器读取单行 dotenv。
           # 不会 source/eval 配置或打印其他值。
@@ -493,7 +458,7 @@ jobs:
             fi
           }
 
-          # 用本次新 migrator 镜像运行发布门禁；退役命令仅在显式输入时写数据库。
+          # 用本次新 migrator 镜像运行只读数据库门禁。
           run_release_gate() {
             gate="$1"
             expected_ledger_digest="${2:-}"
@@ -510,18 +475,6 @@ jobs:
                 pnpm --dir packages/database db:release-gate -- "${gate}" \
                 </dev/null
             fi
-          }
-
-          # 只按流水线传入的精确数量退役活跃订阅，命令自身负责事务和表锁。
-          run_subscription_retirement() {
-            retire_count="$1"
-            docker compose --profile maintenance run --rm --no-deps \
-              --interactive=false \
-              -e "RELEASE_ACTIVE_SUBSCRIPTION_RETIRE_COUNT=${retire_count}" \
-              migrate \
-              pnpm --dir packages/database db:release-gate -- \
-              retire-active-subscriptions \
-              </dev/null
           }
 
           # 用本次新 Web 镜像编译旧 parameterMappings/requestTransformScript
@@ -632,15 +585,6 @@ jobs:
           if ! docker compose --profile maintenance pull migrate media-upstream-proxy web; then
             exit 1
           fi
-
-          subscription_retirement_requested=false
-          if [ "${retire_active_subscriptions}" = "true" ]; then
-            echo "按显式授权退役 ${retire_active_subscription_count} 条活跃订阅。"
-            run_subscription_retirement "${retire_active_subscription_count}"
-            subscription_retirement_requested=true
-          fi
-          printf 'subscription_retirement_requested=%s\n' \
-            "${subscription_retirement_requested}"
 
           echo "在停服前烟测新 migrator 镜像与纯中转门禁。"
           # tee 同时保留成功输出供后续判断，并在失败退出前回放阻断证据。
@@ -772,12 +716,6 @@ jobs:
           )"
           deployment_completed="$(extract_evidence deployment_completed)"
           previous_release="$(extract_evidence previous_release)"
-          subscription_retirement_requested="$(
-            extract_evidence subscription_retirement_requested
-          )"
-          subscription_retired_count="$(
-            extract_evidence subscription_retired_count
-          )"
           if [ "${relay_count}" != "0" ] \
             || { [ "${backup_storage}" != "local" ] \
               && [ "${backup_storage}" != "s3" ]; } \
@@ -788,11 +726,6 @@ jobs:
             || [ "${backup_storage_verified}" != "true" ] \
             || [ "${deployment_completed}" != "true" ]; then
             echo "::error::部署完成但安全证据不完整。"
-            exit 1
-          fi
-          if [ "${subscription_retirement_requested}" = "true" ] \
-            && [ "${subscription_retired_count}" != "${RETIRE_ACTIVE_SUBSCRIPTION_COUNT}" ]; then
-            echo "::error::订阅退役证据与请求数量不一致。"
             exit 1
           fi
 
@@ -807,10 +740,6 @@ jobs:
             printf 'backup_storage_verified=%s\n' \
               "${backup_storage_verified}"
             echo "previous_release=${previous_release}"
-            echo "subscription_retirement_requested=${subscription_retirement_requested}"
-            if [ "${subscription_retirement_requested}" = "true" ]; then
-              echo "subscription_retired_count=${subscription_retired_count}"
-            fi
           } >> "${GITHUB_OUTPUT}"
 
       - name: Deployment summary
@@ -829,10 +758,6 @@ jobs:
             echo "- 备份存储：\`${{ steps.deploy.outputs.backup_storage }}\`"
             echo "- 备份 artifact：\`${{ steps.deploy.outputs.backup_artifact_id }}\`"
             echo "- 备份 artifact SHA-256：\`${{ steps.deploy.outputs.backup_artifact_sha256 }}\`"
-            echo "- 订阅退役：\`${{ steps.deploy.outputs.subscription_retirement_requested }}\`"
-            if [ "${{ steps.deploy.outputs.subscription_retirement_requested }}" = "true" ]; then
-              echo "- 退役订阅数：\`${{ steps.deploy.outputs.subscription_retired_count }}\`"
-            fi
             echo "- 备份销毁截止：\`${{ steps.deploy.outputs.backup_delete_after }}\`"
             echo "- archive manifest 校验：" \
               "\`${{ steps.deploy.outputs.backup_archive_manifest_verified }}\`"
