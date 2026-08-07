@@ -1,8 +1,8 @@
 /**
  * Dashboard 页面加载骨架屏。
  *
- * Next.js App Router 在页面数据获取时自动显示；结构与标题、账户支持、积分用量、
- * 两组产出摘要、模型占比和近期创作保持一致，减少切换时的布局跳动。
+ * Next.js App Router 在页面数据获取时自动显示；结构与标题、账户支持、用量概览、
+ * 模型占比和近期创作保持一致，减少切换时的布局跳动。
  */
 /** 渲染与控制台实际布局对齐的无交互加载占位。 */
 export default function DashboardLoading() {
@@ -57,48 +57,28 @@ export default function DashboardLoading() {
           </div>
         </div>
 
-        {/* 积分用量、近 24 小时与累计产出统计骨架 */}
-        {(
-          [
-            {
-              key: "credits",
-              cardCount: 3,
-              columns: "sm:grid-cols-2 md:grid-cols-3",
-            },
-            {
-              key: "recent",
-              cardCount: 2,
-              columns: "sm:grid-cols-2",
-            },
-            {
-              key: "lifetime",
-              cardCount: 2,
-              columns: "sm:grid-cols-2",
-            },
-          ] as const
-        ).map((section) => (
-          <div className="space-y-3" key={section.key}>
-            <div className="h-5 w-28 rounded-md bg-muted" />
-            <div className={`grid gap-4 ${section.columns}`}>
-              {Array.from({ length: section.cardCount }).map((_, cardIndex) => (
-                <div
-                  // biome-ignore lint/suspicious/noArrayIndexKey: 静态骨架无重排
-                  key={cardIndex}
-                  className="space-y-4 rounded-lg border border-border p-6"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="h-3 w-24 rounded-md bg-muted" />
-                    <div className="h-4 w-4 rounded-full bg-muted" />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="h-9 w-24 rounded-md bg-muted" />
-                    <div className="h-3 w-3/4 rounded-md bg-muted" />
-                  </div>
+        {/* 用量概览统计骨架 */}
+        <div className="space-y-3">
+          <div className="h-5 w-28 rounded-md bg-muted" />
+          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, cardIndex) => (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: 静态骨架无重排
+                key={cardIndex}
+                className="space-y-4 rounded-lg border border-border p-6"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="h-3 w-24 rounded-md bg-muted" />
+                  <div className="h-4 w-4 rounded-full bg-muted" />
                 </div>
-              ))}
-            </div>
+                <div className="space-y-2">
+                  <div className="h-9 w-24 rounded-md bg-muted" />
+                  <div className="h-3 w-3/4 rounded-md bg-muted" />
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
 
         {/* 模型占比与近期创作骨架 */}
         <div className="grid gap-4 xl:grid-cols-[minmax(340px,.9fr)_minmax(0,1.7fr)]">

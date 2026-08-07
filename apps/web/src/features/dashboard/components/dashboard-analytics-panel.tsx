@@ -3,8 +3,8 @@
 /**
  * 用户控制台统计面板。
  *
- * 展示积分用量、固定滚动近 24 小时、累计摘要、同窗口模型使用占比和近期创作；
- * 客户端只保留刷新状态，不再维护时间范围或趋势指标草稿。
+ * 展示用量概览、同窗口模型使用占比和近期创作；客户端只保留刷新状态，不再维护
+ * 时间范围或趋势指标草稿。
  */
 import { formatCredits } from "@repo/shared/credits/format";
 import { Button } from "@repo/ui/components/button";
@@ -18,9 +18,7 @@ import { cn } from "@repo/ui/utils";
 import {
   ChartNoAxesCombined,
   Coins,
-  Image as ImageIcon,
   RefreshCw,
-  Video,
   WalletCards,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -47,18 +45,7 @@ const cardLiftClass =
   "transition-[border-color,box-shadow,translate] duration-250 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-whisper motion-reduce:transition-none";
 
 /**
- * 将摘要数字格式化为稳定的本地数字分组。
- *
- * @param value 非负统计值。
- * @param locale 当前界面语言对应的 Intl locale。
- * @returns 带本地千位分组的字符串。
- */
-function formatCount(value: number, locale: string): string {
-  return new Intl.NumberFormat(locale).format(value);
-}
-
-/**
- * 渲染积分用量、近 24 小时和累计摘要、模型占比与近期创作。
+ * 渲染用量概览、模型占比与近期创作。
  *
  * @param props 服务端首屏快照、语言与账户支持区。
  * @returns 可刷新且对窄屏友好的控制台主体。
@@ -69,7 +56,6 @@ export function DashboardAnalyticsPanel({
   accountSupport,
 }: DashboardAnalyticsPanelProps) {
   const copy = (en: string, zh: string) => (isZh ? zh : en);
-  const locale = isZh ? "zh-CN" : "en-US";
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -120,116 +106,64 @@ export function DashboardAnalyticsPanel({
       icon: WalletCards,
     },
   ];
-  const last24HoursMetrics = [
-    {
-      label: copy("Images, last 24 hours", "近24小时生图数量"),
-      value: formatCount(snapshot.summary.last24Hours.imageCount, locale),
-      description: copy("successful image outputs", "成功产出的图片"),
-      icon: ImageIcon,
-    },
-    {
-      label: copy("Video seconds, last 24 hours", "近24小时生视频秒数"),
-      value: formatCount(snapshot.summary.last24Hours.videoSeconds, locale),
-      description: copy("seconds of video output", "视频产出秒数"),
-      icon: Video,
-    },
-  ];
-  const lifetimeMetrics = [
-    {
-      label: copy("Total images", "累计生图数量"),
-      value: formatCount(snapshot.summary.lifetime.imageCount, locale),
-      description: copy("since account creation", "账户创建以来"),
-      icon: ImageIcon,
-    },
-    {
-      label: copy("Total video seconds", "累计生视频秒数"),
-      value: formatCount(snapshot.summary.lifetime.videoSeconds, locale),
-      description: copy("since account creation", "账户创建以来"),
-      icon: Video,
-    },
-  ];
-
   return (
     <div className="space-y-8">
       {accountSupport}
 
-      {[
-        {
-          title: copy("Credit usage", "积分用量"),
-          metrics: creditMetrics,
-          delay: "delay-80",
-          columns: "sm:grid-cols-2 md:grid-cols-3",
-          showRefresh: true,
-        },
-        {
-          title: copy("Last 24 hours", "近24小时统计"),
-          metrics: last24HoursMetrics,
-          delay: "delay-160",
-          columns: "sm:grid-cols-2",
-          showRefresh: false,
-        },
-        {
-          title: copy("Lifetime", "累计统计"),
-          metrics: lifetimeMetrics,
-          delay: "delay-240",
-          columns: "sm:grid-cols-2",
-          showRefresh: false,
-        },
-      ].map((section) => (
-        <section
-          className={cn("space-y-3", sectionEnterClass, section.delay)}
-          key={section.title}
-        >
-          <div className="flex items-center justify-between gap-4">
-            <h2 className="font-serif text-lg font-medium tracking-tight">
-              {section.title}
-            </h2>
-            {section.showRefresh && (
-              <Button
-                aria-busy={isRefreshing}
-                disabled={isRefreshing}
-                onClick={() => void refreshSnapshot()}
-                type="button"
-              >
-                <RefreshCw className={cn(isRefreshing && "animate-spin")} />
-                {copy("Refresh", "刷新")}
-              </Button>
-            )}
-          </div>
-          <div className={cn("grid gap-4", section.columns)}>
-            {section.metrics.map((metric) => {
-              const Icon = metric.icon;
-              return (
-                <Card className={cardLiftClass} key={metric.label}>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1">
-                    <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                      {metric.label}
-                    </CardTitle>
-                    <Icon
-                      className="size-4 text-muted-foreground"
-                      strokeWidth={1.5}
-                    />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="font-serif text-3xl font-medium tracking-tight tabular-nums">
-                      {metric.value}
-                    </div>
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      {metric.description}
-                    </p>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+      <section
+        className={cn("space-y-3", sectionEnterClass, "delay-80")}
+        aria-labelledby="dashboard-usage-overview-title"
+      >
+        <div className="flex items-center justify-between gap-4">
+          <h2
+            className="font-serif text-lg font-medium tracking-tight"
+            id="dashboard-usage-overview-title"
+          >
+            {copy("Usage overview", "用量概览")}
+          </h2>
+          <Button
+            aria-busy={isRefreshing}
+            disabled={isRefreshing}
+            onClick={() => void refreshSnapshot()}
+            type="button"
+          >
+            <RefreshCw className={cn(isRefreshing && "animate-spin")} />
+            {copy("Refresh", "刷新")}
+          </Button>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+          {creditMetrics.map((metric) => {
+            const Icon = metric.icon;
+            return (
+              <Card className={cardLiftClass} key={metric.label}>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1">
+                  <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {metric.label}
+                  </CardTitle>
+                  <Icon
+                    className="size-4 text-muted-foreground"
+                    strokeWidth={1.5}
+                  />
+                </CardHeader>
+                <CardContent>
+                  <div className="font-serif text-3xl font-medium tracking-tight tabular-nums">
+                    {metric.value}
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {metric.description}
+                  </p>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </section>
 
       <div
         className={cn(
           "grid gap-4 xl:grid-cols-[minmax(340px,.9fr)_minmax(0,1.7fr)]",
           sectionEnterClass,
-          "delay-320"
+          "delay-160"
         )}
       >
         <ModelUsageDistributionChartLazy
