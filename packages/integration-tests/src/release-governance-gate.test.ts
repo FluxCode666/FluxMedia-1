@@ -685,6 +685,7 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
       check (reason in ('orphan', 'lifecycle_delete'));
   `);
   await applyMediaUsageGovernanceMigration(client);
+  await applyImageBatchRetirementMigration(client);
 }
 
 beforeAll(async () => {
