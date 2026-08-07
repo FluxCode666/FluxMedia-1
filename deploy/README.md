@@ -99,10 +99,15 @@ docker compose --profile maintenance run --rm --no-deps --interactive=false migr
 docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
   node apps/web/scripts/migrate-video-input-assets.mjs migrate \
   --confirm-no-legacy-writers
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
-  pnpm --dir packages/database db:release-gate -- preflight
+release_preflight="$(docker compose --profile maintenance run --rm --no-deps \
+  --interactive=false migrate \
+  pnpm --dir packages/database db:release-gate -- preflight)"
+printf '%s\n' "${release_preflight}"
+release_credits_ledger_digest="$(printf '%s\n' "${release_preflight}" \
+  | bash ./read-release-ledger-digest.sh)"
 docker compose --profile maintenance run --rm --no-deps --interactive=false migrate
-docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
+docker compose --profile maintenance run --rm --no-deps --interactive=false \
+  -e "RELEASE_CREDITS_LEDGER_DIGEST=${release_credits_ledger_digest}" migrate \
   pnpm --dir packages/database db:release-gate -- postcheck
 docker compose up -d web
 ```

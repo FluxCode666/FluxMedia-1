@@ -94,6 +94,9 @@ jobs:
       - name: Test deployment environment parser
         run: bash deploy/read-env-value.test.sh
 
+      - name: Test release ledger digest parser
+        run: bash deploy/read-release-ledger-digest.test.sh
+
       - name: Test deployment database backup
         run: bash deploy/create-database-backup.test.sh
 
@@ -161,8 +164,16 @@ jobs:
           VIDEO_INPUT_ROLLBACK_MANIFEST=/tmp/video-input-rollback.ndjson \
             node apps/web/scripts/migrate-video-input-assets.mjs migrate \
             --confirm-no-legacy-writers
-          pnpm --filter @repo/database db:release-gate -- preflight
-          pnpm --filter @repo/database db:release-gate -- postcheck-initial
+          release_preflight="$(
+            pnpm --filter @repo/database db:release-gate -- preflight
+          )"
+          printf '%s\n' "${release_preflight}"
+          release_credits_ledger_digest="$(
+            printf '%s\n' "${release_preflight}" \
+              | bash deploy/read-release-ledger-digest.sh
+          )"
+          RELEASE_CREDITS_LEDGER_DIGEST="${release_credits_ledger_digest}" \
+            pnpm --filter @repo/database db:release-gate -- postcheck-initial
 
       - name: Build web
         env:
@@ -356,6 +367,7 @@ jobs:
             -P "${DEPLOY_PORT}" \
             deploy/docker-compose.yml \
             deploy/create-database-backup.sh \
+            deploy/read-release-ledger-digest.sh \
             deploy/release-recovery-policy.sh \
             deploy/read-env-value.sh \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
@@ -417,6 +429,10 @@ jobs:
             echo "目标服务器缺少数据库备份脚本。" >&2
             exit 1
           fi
+          if [ ! -f read-release-ledger-digest.sh ]; then
+            echo "目标服务器缺少发布门禁账本摘要读取器。" >&2
+            exit 1
+          fi
           if [ ! -f release-recovery-policy.sh ]; then
             echo "目标服务器缺少发布恢复策略脚本。" >&2
             exit 1
@@ -444,10 +460,20 @@ jobs:
           # 用本次新 migrator 镜像运行只读数据库门禁。
           run_release_gate() {
             gate="$1"
-            docker compose --profile maintenance run --rm --no-deps \
-              --interactive=false migrate \
-              pnpm --dir packages/database db:release-gate -- "${gate}" \
-              </dev/null
+            expected_ledger_digest="${2:-}"
+            if [ -n "${expected_ledger_digest}" ]; then
+              docker compose --profile maintenance run --rm --no-deps \
+                --interactive=false \
+                -e "RELEASE_CREDITS_LEDGER_DIGEST=${expected_ledger_digest}" \
+                migrate \
+                pnpm --dir packages/database db:release-gate -- "${gate}" \
+                </dev/null
+            else
+              docker compose --profile maintenance run --rm --no-deps \
+                --interactive=false migrate \
+                pnpm --dir packages/database db:release-gate -- "${gate}" \
+                </dev/null
+            fi
           }
 
           # 用本次新 Web 镜像编译旧 parameterMappings/requestTransformScript
@@ -592,7 +618,12 @@ jobs:
           echo "收编历史视频输入资产。"
           migration_started=true
           run_video_input_asset_migration
-          run_release_gate preflight
+          release_preflight="$(run_release_gate preflight)"
+          printf '%s\n' "${release_preflight}"
+          release_credits_ledger_digest="$(
+            printf '%s\n' "${release_preflight}" \
+              | bash ./read-release-ledger-digest.sh
+          )"
 
           echo "执行数据库迁移。"
           # 远程脚本本身从 SSH stdin 读取；迁移容器不得继承 stdin，否则会吞掉后续
@@ -604,9 +635,10 @@ jobs:
           fi
 
           if [ "${initial_governance_migration}" = "true" ]; then
-            run_release_gate postcheck-initial
+            run_release_gate \
+              postcheck-initial "${release_credits_ledger_digest}"
           else
-            run_release_gate postcheck
+            run_release_gate postcheck "${release_credits_ledger_digest}"
           fi
 
           echo "启动 Adobe 代理和 web 服务。"
