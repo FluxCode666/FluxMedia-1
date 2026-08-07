@@ -88,6 +88,24 @@ docker compose --profile maintenance pull migrate
 docker compose stop --timeout 60 web
 docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
   pnpm --dir packages/database db:release-gate -- drain
+```
+
+如果发布前确认需要退役指定数量的活跃订阅，必须显式传入正整数数量；命令在事务中锁定
+`subscription` 表，数量不完全匹配时整体失败，不删除历史记录，也不修改积分账本：
+
+```bash
+docker compose --profile maintenance run --rm --no-deps --interactive=false \
+  -e RELEASE_ACTIVE_SUBSCRIPTION_RETIRE_COUNT=2 migrate \
+  pnpm --dir packages/database db:release-gate -- retire-active-subscriptions
+```
+
+生产流水线默认不执行退役。手动触发 `Deploy Production` 时，仅在确认目标数量后同时设置
+`retire_active_subscriptions=true` 与 `retire_active_subscription_count=2`；普通部署保持
+默认关闭，避免未来误改订阅数据。
+
+退役完成或确认没有待退役订阅后，再执行早期预检：
+
+```bash
 docker compose --profile maintenance run --rm --no-deps --interactive=false migrate \
   pnpm --dir packages/database db:release-gate -- preflight-early
 ```
