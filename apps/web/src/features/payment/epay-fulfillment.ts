@@ -24,6 +24,7 @@ import {
 } from "@repo/shared/payment/epay";
 import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 import { and, eq } from "drizzle-orm";
+import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
 
 interface FulfillEpayPaymentResult {
   metadata: EpayMetadata;
@@ -153,13 +154,14 @@ async function fulfillSuccessfulEpayPaymentInner(
   }
 
   try {
-    await handleCreditPurchase(
-      metadata.userId,
-      metadata.packageId,
-      metadata.quantity ?? 1,
+    await handleCreditPurchase({
+      userId: metadata.userId,
+      packageId: metadata.packageId,
+      quantity: metadata.quantity ?? 1,
       verifyInfo,
-      source
-    );
+      source,
+      paymentOrderId: metadata.paymentOrderId,
+    });
     if (metadata.type === "credit_purchase" && metadata.paymentOrderId) {
       await fulfillCreditPackagePaymentOrder({
         orderId: metadata.paymentOrderId,
@@ -186,13 +188,16 @@ async function fulfillSuccessfulEpayPaymentInner(
   return { metadata };
 }
 
-async function handleCreditPurchase(
-  userId: string,
-  packageId: string | undefined,
-  quantity: number,
-  verifyInfo: EpayVerifyResult,
-  source: EpayFulfillmentSource
-) {
+async function handleCreditPurchase(input: {
+  userId: string;
+  packageId: string | undefined;
+  quantity: number;
+  verifyInfo: EpayVerifyResult;
+  source: EpayFulfillmentSource;
+  paymentOrderId?: string;
+}) {
+  const { packageId, quantity, source, userId, verifyInfo, paymentOrderId } =
+    input;
   if (!packageId) {
     throw new Error("Missing credit package ID");
   }
@@ -229,31 +234,36 @@ async function handleCreditPurchase(
 
   if (existingBatch) {
     logger.info({ source, sourceRef }, "Credit purchase already fulfilled");
-    return;
   }
 
-  const expiresAt = await getCreditPackExpiresAt();
-
-  const result = await grantCredits({
-    userId,
-    amount: creditsAmount,
-    sourceType: "purchase",
-    debitAccount: `PAYMENT:${verifyInfo.outTradeNo}`,
-    transactionType: "purchase",
-    expiresAt,
-    sourceRef,
-    description: `Epay credit pack purchase: ${creditsAmount} credits (${pkg.id})`,
-    metadata: {
-      provider: "epay",
-      outTradeNo: verifyInfo.outTradeNo,
-      tradeNo: verifyInfo.tradeNo,
-      paymentMethod: verifyInfo.type,
-      packageId: pkg.id,
-      quantity: normalizedQuantity,
-      unitCredits: pkg.credits,
-      unitPrice: pkg.price,
-      paidMoney: verifyInfo.money,
-    },
+  const result = existingBatch
+    ? { batchId: existingBatch.id }
+    : await grantCredits({
+        userId,
+        amount: creditsAmount,
+        sourceType: "purchase",
+        debitAccount: `PAYMENT:${verifyInfo.outTradeNo}`,
+        transactionType: "purchase",
+        expiresAt: await getCreditPackExpiresAt(),
+        sourceRef,
+        description: `Epay credit pack purchase: ${creditsAmount} credits (${pkg.id})`,
+        metadata: {
+          provider: "epay",
+          outTradeNo: verifyInfo.outTradeNo,
+          tradeNo: verifyInfo.tradeNo,
+          paymentMethod: verifyInfo.type,
+          packageId: pkg.id,
+          quantity: normalizedQuantity,
+          unitCredits: pkg.credits,
+          unitPrice: pkg.price,
+          paidMoney: verifyInfo.money,
+        },
+      });
+  await invokeReferralFirstPayment({
+    orderId: paymentOrderId ?? verifyInfo.outTradeNo,
+    inviteeUserId: userId,
+    firstPaymentCredits: creditsAmount,
+    provider: "epay",
   });
 
   logEvent("credits.purchased", {

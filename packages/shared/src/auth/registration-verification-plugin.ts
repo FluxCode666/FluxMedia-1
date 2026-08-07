@@ -1,7 +1,12 @@
+import { db, user as userTable } from "@repo/database";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { db, user as userTable } from "@repo/database";
 import { eq } from "drizzle-orm";
+import { logError } from "../logger";
+import {
+  createReferralRelationshipFromCode,
+  readReferralCodeFromAuthContext,
+} from "../referrals";
 import {
   getAllowedRegistrationEmailMessage,
   isAllowedRegistrationEmail,
@@ -159,8 +164,23 @@ export const registrationVerificationPlugin = (): BetterAuthPlugin => ({
                 },
               };
             },
-            after: async (user) => {
+            after: async (user, context) => {
               await recordRegistrationIdentity(user.email, user.id);
+              // 推广归因只读取服务端请求上下文，客户端不能直接指定 inviterUserId。
+              // 无效码、自邀请和重复归因均安全忽略，不阻断注册主流程。
+              try {
+                const referralCode = readReferralCodeFromAuthContext(context);
+                if (!referralCode) return;
+                await createReferralRelationshipFromCode(user.id, referralCode);
+              } catch (error) {
+                // Better Auth 已完成用户写入；归因失败不能让注册客户端误判失败，
+                // 但必须保留结构化日志，供运营按用户 ID 做补偿处理。
+                logError(error, {
+                  source: "referral-attribution",
+                  stage: "registration-after-hook",
+                  userId: user.id,
+                });
+              }
             },
           },
           delete: {

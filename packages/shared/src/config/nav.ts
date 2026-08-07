@@ -17,6 +17,7 @@ import {
   type LucideIcon,
   Megaphone,
   Settings,
+  Share2,
   Ticket,
   Users,
   WalletCards,
@@ -127,6 +128,11 @@ export const dashboardNav: NavGroup[] = [
         title: "Wallet",
         href: "/dashboard/wallet",
         icon: WalletCards,
+      },
+      {
+        title: "Referrals",
+        href: "/dashboard/referrals",
+        icon: Share2,
       },
       {
         title: "Announcements",

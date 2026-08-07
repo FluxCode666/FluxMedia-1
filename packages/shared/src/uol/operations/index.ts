@@ -97,3 +97,13 @@ import "./support";
 import "./analytics";
 // 管理端支付概览与充值订单
 import "./payment";
+// 推广码、归因与首充奖励看板
+import "./referrals";
+
+export {
+  fulfillAlipayReferralFirstPayment,
+  fulfillCreemReferralFirstPayment,
+  fulfillEpayReferralFirstPayment,
+  getMyReferralDashboard,
+  referralDashboardOutputSchema,
+} from "./referrals";

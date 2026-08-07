@@ -15,6 +15,10 @@ import {
 } from "../image-backend/group-image-pricing";
 import { paginationPageSizeOptionsSchema } from "../pagination/config";
 import {
+  REFERRAL_REWARD_CONFIG_SETTING_KEY,
+  referralRewardConfigSchema,
+} from "../referrals/config";
+import {
   DEFAULT_SYSTEM_ASSETS_BUCKET_NAME,
   GENERATIONS_BUCKET_SETTING_KEY,
   parseRuntimeStorageBucketConfig,
@@ -403,6 +407,15 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
       if (!parsed.success) {
         throw new Error(
           `${definition.label} 必须是包含 20 的不重复整数数组，且每项位于 1 至 100`
+        );
+      }
+      return parsed.data;
+    }
+    if (definition.key === REFERRAL_REWARD_CONFIG_SETTING_KEY) {
+      const parsed = referralRewardConfigSchema.safeParse(parsedValue);
+      if (!parsed.success) {
+        throw new Error(
+          `${definition.label} 必须包含 enabled、inviter 和 invitee 的有效奖励配置`
         );
       }
       return parsed.data;

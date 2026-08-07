@@ -133,6 +133,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       Models: t("nav.models"),
       "API Keys": t("nav.externalApi"),
       Wallet: t("nav.wallet"),
+      Referrals: t("nav.referrals"),
       Announcements: t("nav.announcements"),
       Settings: t("nav.settings"),
       "System Settings": t("nav.systemSettings"),

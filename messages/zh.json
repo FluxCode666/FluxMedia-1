@@ -384,6 +384,7 @@
       "backendHelp": "系统文档",
       "externalApi": "外接 API",
       "billing": "账单与用量",
+      "referrals": "推广奖励",
       "announcements": "公告",
       "settings": "设置",
       "userManagement": "用户管理",
@@ -418,6 +419,7 @@
       "profile": "个人资料",
       "security": "安全",
       "billing": "账单",
+      "referrals": "推广奖励",
       "notifications": "通知",
       "ticketDetails": "工单详情",
       "advanced": "高级"
@@ -426,6 +428,25 @@
       "settings": "设置",
       "logout": "退出登录"
     }
+  },
+  "ReferralDashboard": {
+    "title": "推广奖励",
+    "description": "分享邀请链接。新人完成首次充值后，您和新人都将按当前活动规则获得积分奖励。",
+    "invited": "已邀请",
+    "rewarded": "已奖励",
+    "totalReward": "累计推广奖励",
+    "inviteLinkTitle": "您的邀请链接",
+    "copy": "复制链接",
+    "copyUnsupported": "当前浏览器不支持自动复制",
+    "copied": "邀请链接已复制",
+    "codeHint": "推广码：{code}。奖励仅在新人首次成功充值时发放一次；支付退款不影响已发放的活动积分。",
+    "recent": "最近邀请",
+    "empty": "暂无邀请记录，复制上方链接开始分享。",
+    "loading": "正在加载推广信息",
+    "loadError": "推广信息暂时不可用，请稍后重试。",
+    "statusRewarded": "已奖励",
+    "statusPending": "待首充",
+    "statusSkipped": "未发放"
   },
   "Settings": {
     "tabs": {
@@ -535,7 +556,8 @@
           "purchase": "购买",
           "consumption": "消耗",
           "expiration": "已过期",
-          "refund": "退款"
+          "refund": "退款",
+          "referral_reward": "推广奖励"
         },
         "descriptions": {
           "registration_bonus": "新用户注册奖励",
@@ -544,7 +566,8 @@
           "consumption": "图像生成",
           "expiration": "积分已过期",
           "admin_grant": "管理员发放积分",
-          "refund": "积分退款"
+          "refund": "积分退款",
+          "referral_reward": "推广首充奖励"
         }
       }
     },

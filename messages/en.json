@@ -420,6 +420,7 @@
       "backendHelp": "System Docs",
       "externalApi": "External API",
       "billing": "Billing & Usage",
+      "referrals": "Referral Rewards",
       "announcements": "Announcements",
       "settings": "Settings",
       "userManagement": "User Management",
@@ -454,6 +455,7 @@
       "profile": "Profile",
       "security": "Security",
       "billing": "Billing",
+      "referrals": "Referral Rewards",
       "notifications": "Notifications",
       "ticketDetails": "Ticket Details",
       "advanced": "Advanced"
@@ -462,6 +464,25 @@
       "settings": "Settings",
       "logout": "Logout"
     }
+  },
+  "ReferralDashboard": {
+    "title": "Referral Rewards",
+    "description": "Share your invite link. After a new user completes their first top-up, you will both receive credits under the current campaign rules.",
+    "invited": "Invited",
+    "rewarded": "Rewarded",
+    "totalReward": "Total referral rewards",
+    "inviteLinkTitle": "Your invite link",
+    "copy": "Copy link",
+    "copyUnsupported": "Automatic copying is not supported by this browser",
+    "copied": "Invite link copied",
+    "codeHint": "Referral code: {code}. Rewards are issued once after the new user's first successful top-up. Payment refunds do not revoke campaign credits already issued.",
+    "recent": "Recent referrals",
+    "empty": "No referrals yet. Copy the link above to start sharing.",
+    "loading": "Loading referral information",
+    "loadError": "Referral information is temporarily unavailable. Please try again later.",
+    "statusRewarded": "Rewarded",
+    "statusPending": "Awaiting first top-up",
+    "statusSkipped": "Not issued"
   },
   "Settings": {
     "tabs": {
@@ -571,7 +592,8 @@
           "purchase": "Purchase",
           "consumption": "Usage",
           "expiration": "Expired",
-          "refund": "Refund"
+          "refund": "Refund",
+          "referral_reward": "Referral Reward"
         },
         "descriptions": {
           "registration_bonus": "New user registration bonus",
@@ -580,7 +602,8 @@
           "consumption": "Image generation",
           "expiration": "Credits expired",
           "admin_grant": "Admin granted credits",
-          "refund": "Credits refund"
+          "refund": "Credits refund",
+          "referral_reward": "First-payment referral reward"
         }
       }
     },

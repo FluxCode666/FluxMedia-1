@@ -47,7 +47,8 @@ type TransactionTypeKey =
   | "purchase"
   | "consumption"
   | "expiration"
-  | "refund";
+  | "refund"
+  | "referral_reward";
 
 /**
  * 交易类型变体映射
@@ -63,6 +64,7 @@ const TRANSACTION_TYPE_VARIANTS: Record<
   consumption: "destructive",
   expiration: "outline",
   refund: "secondary",
+  referral_reward: "default",
 };
 
 /**
@@ -97,6 +99,7 @@ function isIncomeType(type: string): boolean {
     "monthly_grant",
     "purchase",
     "refund",
+    "referral_reward",
   ].includes(type);
 }
 
@@ -191,6 +194,8 @@ export function TransactionHistory({ timeZone }: { timeZone: string }) {
         return t("descriptions.purchase");
       case "refund":
         return t("descriptions.refund");
+      case "referral_reward":
+        return t("descriptions.referral_reward");
       default:
         return tx.description ?? "-";
     }

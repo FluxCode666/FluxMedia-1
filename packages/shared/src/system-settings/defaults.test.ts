@@ -7,6 +7,7 @@ import {
 } from "../credits/packages";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
+import { REFERRAL_REWARD_CONFIG_SETTING_KEY } from "../referrals/config";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import { createDefaultVideoModelCapabilityOverrides } from "../video-generation";
 import { SETTING_DEFINITION_BY_KEY } from "./definitions";
@@ -144,6 +145,7 @@ describe("system setting default initialization", () => {
     });
 
     expect(initializedKeys).toContain(CREDIT_PACKAGE_MATRIX_SETTING_KEY);
+    expect(initializedKeys).toContain(REFERRAL_REWARD_CONFIG_SETTING_KEY);
     expect(initializedKeys).not.toContain("APP_TIME_ZONE");
     expect(initializedKeys).toContain("MARKETING_SLA_STATUS_ENABLED");
     expect(initializedKeys).toContain("DASHBOARD_SUPPORT_CONFIG");

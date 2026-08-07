@@ -35,6 +35,7 @@ const CREDIT_DECIMAL_FACTOR = 10 ** CREDIT_DECIMAL_PLACES;
 function creditBatchSourcePriorityOrder() {
   return sql`CASE ${creditsBatch.sourceType}
     WHEN 'bonus' THEN 1
+    WHEN 'referral' THEN 1
     WHEN 'subscription' THEN 2
     WHEN 'purchase' THEN 3
     ELSE 4
@@ -514,7 +515,7 @@ export async function grantCredits(params: GrantCreditsParams) {
     const issuedAt = transactionCreatedAt;
     const effectiveExpiresAt =
       expiresAt === undefined
-        ? sourceType === "bonus"
+        ? sourceType === "bonus" || sourceType === "referral"
           ? await getFreeCreditsExpiryDate(issuedAt)
           : await getDefaultCreditsExpiryDate(issuedAt)
         : expiresAt;

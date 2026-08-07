@@ -1683,7 +1683,7 @@ async function loadStatusData() {
             Number
           ),
         grants:
-          sql<number>`coalesce(sum(case when ${creditsTransaction.type} in ('monthly_grant', 'registration_bonus', 'admin_grant', 'purchase') then ${creditsTransaction.amount} else 0 end), 0)`.mapWith(
+          sql<number>`coalesce(sum(case when ${creditsTransaction.type} in ('monthly_grant', 'registration_bonus', 'admin_grant', 'purchase', 'referral_reward') then ${creditsTransaction.amount} else 0 end), 0)`.mapWith(
             Number
           ),
       })
@@ -1704,7 +1704,7 @@ async function loadStatusData() {
             Number
           ),
         grants:
-          sql<number>`coalesce(sum(case when ${creditsTransaction.type} in ('monthly_grant', 'registration_bonus', 'admin_grant', 'purchase') then ${creditsTransaction.amount} else 0 end), 0)`.mapWith(
+          sql<number>`coalesce(sum(case when ${creditsTransaction.type} in ('monthly_grant', 'registration_bonus', 'admin_grant', 'purchase', 'referral_reward') then ${creditsTransaction.amount} else 0 end), 0)`.mapWith(
             Number
           ),
       })

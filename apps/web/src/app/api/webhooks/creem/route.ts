@@ -27,6 +27,7 @@ import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
 
 // ============================================
 // 实付金额/币种反欺诈校验（软门闩）
@@ -369,6 +370,12 @@ async function handleCreditPurchase(
       logger.info({ sourceRef }, "Credits already granted for purchase");
     }
 
+    await invokeReferralFirstPayment({
+      orderId: paymentOrderId ?? creemOrderId,
+      inviteeUserId: userId,
+      firstPaymentCredits: creditsAmount,
+      provider: "creem",
+    });
     if (paymentOrderId) {
       await fulfillCreditPackagePaymentOrder({
         orderId: paymentOrderId,

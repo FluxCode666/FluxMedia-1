@@ -24,9 +24,9 @@ vi.mock("@repo/shared/api-logger", () => ({
   withApiLogging: <T>(handler: T): T => handler,
 }));
 vi.mock("@repo/shared/payment/creem", async () => {
-  const actual = await vi.importActual<typeof import("@repo/shared/payment/creem")>(
-    "@repo/shared/payment/creem"
-  );
+  const actual = await vi.importActual<
+    typeof import("@repo/shared/payment/creem")
+  >("@repo/shared/payment/creem");
   return {
     ...actual,
     constructRuntimeCreemEvent: mocks.constructRuntimeCreemEvent,
@@ -48,7 +48,12 @@ vi.mock("@repo/database/schema", () => ({
   creditsBatch: {},
   user: {},
 }));
-vi.mock("@repo/shared/credits/core", () => ({ grantCredits: mocks.grantCredits }));
+vi.mock("@repo/shared/credits/core", () => ({
+  grantCredits: mocks.grantCredits,
+}));
+vi.mock("@/features/referrals/reward-fulfillment", () => ({
+  invokeReferralFirstPayment: vi.fn(),
+}));
 vi.mock("@repo/shared/credits/purchase-orders", () => ({
   claimCreditPackagePaymentOrderForFulfillment: vi.fn(),
   failCreditPackagePaymentOrder: vi.fn(),

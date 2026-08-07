@@ -603,6 +603,13 @@
       "when": 1786297050000,
       "tag": "0085_external_api_key_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1786383450000,
+      "tag": "0086_referral_rewards",
+      "breakpoints": true
     }
   ]
 }

@@ -32,6 +32,7 @@ import {
   getRuntimeSettingNumber,
 } from "@repo/shared/system-settings";
 import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
 
 const PROCESSING_LEASE_MS = 5 * 60_000;
 const CHECKOUT_CREATION_LEASE_MS = 30_000;
@@ -532,6 +533,12 @@ export async function fulfillAlipayCreditTopUp(
         amountMinor: snapshot.amountMinor,
         creditsPerMajorUnit: snapshot.creditsPerMajorUnit,
       },
+    });
+    await invokeReferralFirstPayment({
+      orderId: claimed.id,
+      inviteeUserId: claimed.userId,
+      firstPaymentCredits: snapshot.creditsAmount,
+      provider: "alipay",
     });
     await db
       .update(paymentOrder)

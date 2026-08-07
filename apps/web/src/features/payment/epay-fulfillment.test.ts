@@ -23,6 +23,9 @@ vi.mock("@repo/database/schema", () => ({
   subscription: {},
   epayOrder: {},
 }));
+vi.mock("@/features/referrals/reward-fulfillment", () => ({
+  invokeReferralFirstPayment: vi.fn(),
+}));
 vi.mock("@repo/shared/payment/epay", async () => {
   const actual = await vi.importActual<
     typeof import("@repo/shared/payment/epay")

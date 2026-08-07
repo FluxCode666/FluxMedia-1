@@ -167,6 +167,93 @@ export const registrationIdentity = pgTable("registration_identity", {
 });
 
 // ============================================
+// 推广关系与首充奖励
+// ============================================
+/**
+ * 用户推广码。
+ *
+ * 使用方：推广入口、用户推广页和注册后的关系归因。推广码是公开标识，
+ * 不承载权限；真正的奖励归属仍由 referral_relationship 的外键和唯一约束兜底。
+ */
+export const referralProfile = pgTable("referral_profile", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  code: text("code").notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * 一对一推广关系及首充奖励履约状态。
+ *
+ * WHY：first_payment_order_id 通过原子 UPDATE 抢占首充资格；两个奖励批次分别
+ * 使用稳定 sourceRef 写入积分账本，即使奖励中途失败，重试也只补齐缺失的一方。
+ */
+export const referralRelationship = pgTable(
+  "referral_relationship",
+  {
+    id: text("id").primaryKey(),
+    inviterUserId: text("inviter_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    inviteeUserId: text("invitee_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    referralCode: text("referral_code").notNull(),
+    firstPaymentOrderId: text("first_payment_order_id"),
+    status: text("status", {
+      enum: ["pending", "rewarded", "skipped"],
+    })
+      .notNull()
+      .default("pending"),
+    inviterRewardCredits: numeric("inviter_reward_credits", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    inviteeRewardCredits: numeric("invitee_reward_credits", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    rewardConfigSnapshot: json("reward_config_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    rewardedAt: timestamp("rewarded_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("referral_relationship_invitee_unique").on(table.inviteeUserId),
+    index("referral_relationship_inviter_created_at_idx").on(
+      table.inviterUserId,
+      table.createdAt
+    ),
+    index("referral_relationship_status_created_at_idx").on(
+      table.status,
+      table.createdAt
+    ),
+    check(
+      "referral_relationship_users_distinct_check",
+      sql`${table.inviterUserId} <> ${table.inviteeUserId}`
+    ),
+    check(
+      "referral_relationship_status_check",
+      sql`${table.status} IN ('pending', 'rewarded', 'skipped')`
+    ),
+    check(
+      "referral_relationship_reward_amounts_nonnegative_check",
+      sql`${table.inviterRewardCredits} >= 0 AND ${table.inviteeRewardCredits} >= 0`
+    ),
+  ]
+);
+
+// ============================================
 // 会话表 (Session)
 // ============================================
 /**
@@ -448,6 +535,7 @@ export const creditsBatchSourceEnum = pgEnum("credits_batch_source", [
   "subscription",
   "bonus",
   "refund",
+  "referral",
 ]);
 
 /**
@@ -461,6 +549,7 @@ export const creditsTransactionTypeEnum = pgEnum("credits_transaction_type", [
   "admin_grant",
   "expiration",
   "refund",
+  "referral_reward",
 ]);
 
 /** 积分用量投影只接受消费与退款两种账本贡献。 */
@@ -833,6 +922,12 @@ export type NewCreditsBatch = typeof creditsBatch.$inferInsert;
 
 export type CreditsTransaction = typeof creditsTransaction.$inferSelect;
 export type NewCreditsTransaction = typeof creditsTransaction.$inferInsert;
+
+export type ReferralProfile = typeof referralProfile.$inferSelect;
+export type NewReferralProfile = typeof referralProfile.$inferInsert;
+
+export type ReferralRelationship = typeof referralRelationship.$inferSelect;
+export type NewReferralRelationship = typeof referralRelationship.$inferInsert;
 
 export type CreditUsageOperation = typeof creditUsageOperation.$inferSelect;
 export type NewCreditUsageOperation = typeof creditUsageOperation.$inferInsert;

@@ -2,6 +2,10 @@ import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "../adobe/video-pricing";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_PAGE_SIZE_OPTIONS } from "../pagination/config";
+import {
+  DEFAULT_REFERRAL_REWARD_CONFIG,
+  REFERRAL_REWARD_CONFIG_SETTING_KEY,
+} from "../referrals/config";
 import { DEFAULT_DASHBOARD_SUPPORT_CONFIG } from "../support/dashboard-config";
 import { createDefaultVideoModelCapabilityOverrides } from "../video-generation";
 
@@ -60,6 +64,7 @@ export type SettingKey =
   | "ALIPAY_F2F_TIMEOUT_MINUTES"
   | "CREDIT_PACKAGE_MATRIX"
   | "CREDIT_TOP_UP_CONFIG"
+  | typeof REFERRAL_REWARD_CONFIG_SETTING_KEY
   | "CONTENT_MODERATION_ENABLED"
   | "CONTENT_MODERATION_FAIL_CLOSED"
   | "CONTENT_MODERATION_PROVIDER"
@@ -1226,6 +1231,16 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     exampleValue: CREDIT_TOP_UP_CONFIG_EXAMPLE,
   },
   {
+    key: REFERRAL_REWARD_CONFIG_SETTING_KEY,
+    label: "推广首充奖励",
+    description:
+      "新人通过推广码注册后首次成功充值时，邀请人和新人各获得一次积分奖励；可分别按首充积分比例或固定积分配置。关闭后不会发放，历史已发放奖励不回收。",
+    category: "credits",
+    valueType: "json",
+    defaultValue: DEFAULT_REFERRAL_REWARD_CONFIG,
+    exampleValue: DEFAULT_REFERRAL_REWARD_CONFIG,
+  },
+  {
     key: "NEXT_PUBLIC_GA_ID",
     label: "Google Analytics ID",
     description: "GA Measurement ID。",
@@ -1412,7 +1427,7 @@ export const SETTING_CATEGORIES: Array<{
   {
     id: "credits",
     label: "积分",
-    description: "注册奖励、积分有效期、按金额充值比例和积分包规则。",
+    description: "注册奖励、积分有效期、按金额充值比例、积分包和推广首充奖励。",
   },
   {
     id: "analytics",
