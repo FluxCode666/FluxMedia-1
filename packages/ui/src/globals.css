@@ -290,19 +290,6 @@
   }
 }
 
-/* 全站导航使用不确定进度动画：不伪造百分比，持续表明目标页面仍在响应。 */
-@keyframes navigation-progress {
-  0% {
-    transform: translateX(-100%) scaleX(0.4);
-  }
-  50% {
-    transform: translateX(80%) scaleX(0.8);
-  }
-  100% {
-    transform: translateX(250%) scaleX(0.4);
-  }
-}
-
 @layer utilities {
   /* 隐藏滚动条(轮播/走马灯容器用,滚动能力保留) */
   .scrollbar-none {

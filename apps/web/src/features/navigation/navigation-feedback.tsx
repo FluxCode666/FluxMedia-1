@@ -6,11 +6,20 @@
  */
 "use client";
 
+import { Progress } from "@repo/ui/components/progress";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NAVIGATION_FEEDBACK_START_EVENT } from "./navigation-feedback-event";
 import { decideNavigationFeedback } from "./navigation-feedback-policy";
+import {
+  advanceNavigationProgress,
+  NAVIGATION_PROGRESS_COMPLETE_DELAY_MS,
+  NAVIGATION_PROGRESS_INITIAL,
+  NAVIGATION_PROGRESS_STALE_MS,
+  NAVIGATION_PROGRESS_TICK_MS,
+  NAVIGATION_PROGRESS_WAITING_MAX,
+} from "./navigation-progress";
 
 /**
  * 监听全站导航意图并渲染不阻塞交互的顶部进度条。
@@ -23,15 +32,91 @@ export function NavigationFeedback() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const t = useTranslations("NavigationFeedback");
-  const [isNavigating, setIsNavigating] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [progressRunId, setProgressRunId] = useState(0);
+  const isActiveRef = useRef(false);
+  const completionTimerRef = useRef<number | null>(null);
+  const staleTimerRef = useRef<number | null>(null);
   const previousRouteKeyRef = useRef<string | null>(null);
   const routeKey = useMemo(
     () => `${pathname}?${searchParams.toString()}`,
     [pathname, searchParams]
   );
 
-  const start = useCallback(() => setIsNavigating(true), []);
-  const cancel = useCallback(() => setIsNavigating(false), []);
+  /** 清除上一轮完成态的延迟收起计时器。 */
+  const clearCompletionTimer = useCallback((): void => {
+    if (completionTimerRef.current === null) return;
+    window.clearTimeout(completionTimerRef.current);
+    completionTimerRef.current = null;
+  }, []);
+
+  /** 清除导航失败或未提交时的最长存活兜底计时器。 */
+  const clearStaleTimer = useCallback((): void => {
+    if (staleTimerRef.current === null) return;
+    window.clearTimeout(staleTimerRef.current);
+    staleTimerRef.current = null;
+  }, []);
+
+  /** 启动一轮新的导航反馈，立即显示非零进度。 */
+  const start = useCallback((): void => {
+    clearCompletionTimer();
+    clearStaleTimer();
+    isActiveRef.current = true;
+    setProgressRunId((current) => current + 1);
+    setProgress(NAVIGATION_PROGRESS_INITIAL);
+    staleTimerRef.current = window.setTimeout(() => {
+      isActiveRef.current = false;
+      staleTimerRef.current = null;
+      setProgress(null);
+    }, NAVIGATION_PROGRESS_STALE_MS);
+  }, [clearCompletionTimer, clearStaleTimer]);
+
+  /** 将活动导航推进到 100%；收起计时由完成态提交后的 effect 负责。 */
+  const complete = useCallback((): void => {
+    if (!isActiveRef.current) return;
+    clearStaleTimer();
+    setProgress(100);
+  }, [clearStaleTimer]);
+
+  /** 立即撤销不会离开当前文档的反馈，不播放虚假的完成动画。 */
+  const reset = useCallback((): void => {
+    clearCompletionTimer();
+    clearStaleTimer();
+    isActiveRef.current = false;
+    setProgress(null);
+  }, [clearCompletionTimer, clearStaleTimer]);
+
+  const isAdvancing =
+    progress !== null && progress < NAVIGATION_PROGRESS_WAITING_MAX;
+  const feedbackText = progress === 100 ? t("complete") : t("loading");
+
+  useEffect(() => {
+    if (!isAdvancing) return;
+    const intervalId = window.setInterval(() => {
+      setProgress((current) =>
+        current === null ? null : advanceNavigationProgress(current)
+      );
+    }, NAVIGATION_PROGRESS_TICK_MS);
+    return () => window.clearInterval(intervalId);
+  }, [isAdvancing]);
+
+  useEffect(() => {
+    if (progress !== 100) return;
+    completionTimerRef.current = window.setTimeout(() => {
+      isActiveRef.current = false;
+      completionTimerRef.current = null;
+      setProgress(null);
+    }, NAVIGATION_PROGRESS_COMPLETE_DELAY_MS);
+    return clearCompletionTimer;
+  }, [clearCompletionTimer, progress]);
+
+  useEffect(
+    () => () => {
+      clearCompletionTimer();
+      clearStaleTimer();
+    },
+    [clearCompletionTimer, clearStaleTimer]
+  );
 
   useEffect(() => {
     if (previousRouteKeyRef.current === null) {
@@ -40,8 +125,8 @@ export function NavigationFeedback() {
     }
     if (previousRouteKeyRef.current === routeKey) return;
     previousRouteKeyRef.current = routeKey;
-    cancel();
-  }, [cancel, routeKey]);
+    complete();
+  }, [complete, routeKey]);
 
   useEffect(() => {
     /** 从事件目标向上定位真实链接，并按纯策略开启或撤销反馈。 */
@@ -62,36 +147,36 @@ export function NavigationFeedback() {
       });
 
       if (decision === "start") start();
-      if (decision === "cancel") cancel();
+      if (decision === "cancel") reset();
     };
 
     // 捕获阶段先于 Next.js Link 的异步导航，保证用户按下链接后同一帧内获得反馈。
     document.addEventListener("click", handleDocumentClick, true);
     window.addEventListener(NAVIGATION_FEEDBACK_START_EVENT, start);
     window.addEventListener("popstate", start);
-    window.addEventListener("pageshow", cancel);
+    window.addEventListener("pageshow", reset);
     return () => {
       document.removeEventListener("click", handleDocumentClick, true);
       window.removeEventListener(NAVIGATION_FEEDBACK_START_EVENT, start);
       window.removeEventListener("popstate", start);
-      window.removeEventListener("pageshow", cancel);
+      window.removeEventListener("pageshow", reset);
     };
-  }, [cancel, start]);
+  }, [reset, start]);
 
   return (
     <>
-      {isNavigating ? (
-        <div
-          aria-label={t("loading")}
-          aria-valuetext={t("loading")}
-          className="pointer-events-none fixed inset-x-0 top-0 z-[100] h-0.5 overflow-hidden bg-primary/15"
-          role="progressbar"
-        >
-          <span className="block h-full w-2/5 bg-primary motion-safe:animate-[navigation-progress_1.15s_ease-in-out_infinite] motion-reduce:w-full" />
-        </div>
+      {progress !== null ? (
+        <Progress
+          aria-label={feedbackText}
+          aria-valuetext={feedbackText}
+          className="pointer-events-none fixed inset-x-0 top-0 z-[100] h-0.5 rounded-none bg-primary/15"
+          indicatorClassName="duration-200 ease-out motion-reduce:transition-none"
+          key={progressRunId}
+          value={progress}
+        />
       ) : null}
       <span aria-atomic="true" aria-live="polite" className="sr-only">
-        {isNavigating ? t("loading") : ""}
+        {progress !== null ? feedbackText : ""}
       </span>
     </>
   );

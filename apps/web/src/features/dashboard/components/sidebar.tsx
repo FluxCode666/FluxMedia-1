@@ -206,7 +206,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
     await signOut({
       fetchOptions: {
         onSuccess: () => {
-          requestNavigationFeedback();
+          requestNavigationFeedback("/");
           router.push("/");
         },
       },

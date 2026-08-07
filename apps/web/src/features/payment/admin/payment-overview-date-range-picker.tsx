@@ -183,7 +183,7 @@ export function PaymentOverviewDateRangePicker({
     });
     setIsOpen(false);
     startTransition(() => {
-      requestNavigationFeedback();
+      requestNavigationFeedback(href);
       router.push(href);
     });
   }

@@ -123,6 +123,7 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
   const lastAppliedTabParamRef = useRef(searchParams.get("tab"));
 
   const handleLanguageChange = (newLocale: string) => {
+    if (newLocale === locale) return;
     startLocaleTransition(() => {
       requestNavigationFeedback();
       router.replace(

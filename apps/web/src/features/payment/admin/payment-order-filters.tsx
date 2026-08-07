@@ -138,19 +138,18 @@ export function PaymentOrderFilters({
 
   /** 使用当前控件值替换 URL，并从 keyset 首屏重新查询。 */
   function applyFilters(): void {
+    const href = buildAdminPaymentOrdersHref({
+      cursor: null,
+      endDate,
+      orderId: orderId.trim() || null,
+      pageSize: state.pageSize,
+      startDate,
+      status,
+      userEmail: userEmail || null,
+    });
     startTransition(() => {
-      requestNavigationFeedback();
-      router.push(
-        buildAdminPaymentOrdersHref({
-          cursor: null,
-          endDate,
-          orderId: orderId.trim() || null,
-          pageSize: state.pageSize,
-          startDate,
-          status,
-          userEmail: userEmail || null,
-        })
-      );
+      requestNavigationFeedback(href);
+      router.push(href);
     });
   }
 
@@ -166,19 +165,18 @@ export function PaymentOrderFilters({
     setOrderId("");
     setStatus(null);
     setUserSearch("");
+    const href = buildAdminPaymentOrdersHref({
+      cursor: null,
+      endDate: defaultRange.endDate,
+      orderId: null,
+      pageSize: state.pageSize,
+      startDate: defaultRange.startDate,
+      status: null,
+      userEmail: null,
+    });
     startTransition(() => {
-      requestNavigationFeedback();
-      router.push(
-        buildAdminPaymentOrdersHref({
-          cursor: null,
-          endDate: defaultRange.endDate,
-          orderId: null,
-          pageSize: state.pageSize,
-          startDate: defaultRange.startDate,
-          status: null,
-          userEmail: null,
-        })
-      );
+      requestNavigationFeedback(href);
+      router.push(href);
     });
   }
 

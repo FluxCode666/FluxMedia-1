@@ -42,6 +42,7 @@ export function LanguageSwitcher() {
    * 切换语言
    */
   const handleLocaleChange = (newLocale: string) => {
+    if (newLocale === locale) return;
     startTransition(() => {
       requestNavigationFeedback();
       router.replace(

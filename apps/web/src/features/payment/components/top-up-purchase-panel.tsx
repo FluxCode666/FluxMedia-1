@@ -77,8 +77,9 @@ export function TopUpPurchasePanel({
   const { execute, isPending } = useAction(createCreditTopUpCheckoutAction, {
     onSuccess: ({ data }) => {
       if (data) {
-        requestNavigationFeedback();
-        router.push(`/dashboard/credits/payment/${data.orderId}`);
+        const href = `/dashboard/credits/payment/${data.orderId}`;
+        requestNavigationFeedback(href);
+        router.push(href);
       }
     },
     onError: ({ error }) => {

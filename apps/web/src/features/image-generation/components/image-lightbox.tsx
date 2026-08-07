@@ -263,8 +263,9 @@ export function ImageLightbox({
   const handleSendReference = () => {
     if (!previewImageUrl) return;
     const intent = createReferenceIntent();
-    requestNavigationFeedback();
-    router.push(createReferenceHref(intent));
+    const href = createReferenceHref(intent);
+    requestNavigationFeedback(href);
+    router.push(href);
     onClose();
   };
 

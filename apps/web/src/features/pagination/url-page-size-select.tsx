@@ -47,7 +47,7 @@ export function UrlPageSizeSelect({
         const option = options.find(({ size }) => size === nextSize);
         if (!option || option.size === value) return;
         startTransition(() => {
-          requestNavigationFeedback();
+          requestNavigationFeedback(option.href);
           router.push(option.href);
         });
       }}

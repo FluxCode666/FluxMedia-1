@@ -1,5 +1,6 @@
 import { createNavigation } from "next-intl/navigation";
 import { defineRouting } from "next-intl/routing";
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locale-config";
 
 /**
  * 国际化路由配置
@@ -8,9 +9,9 @@ import { defineRouting } from "next-intl/routing";
  */
 export const routing = defineRouting({
   // 支持的语言列表
-  locales: ["en", "zh"],
+  locales: SUPPORTED_LOCALES,
   // 默认语言
-  defaultLocale: "en",
+  defaultLocale: DEFAULT_LOCALE,
 });
 
 /**

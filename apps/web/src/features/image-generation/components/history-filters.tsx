@@ -136,22 +136,21 @@ export function HistoryFilters({
     type: HistoryTypeFilter | null;
     userEmail: string;
   }): void {
+    const href = buildHistoryHref(
+      {
+        createdFrom: next.createdFrom || null,
+        createdTo: next.createdTo || null,
+        cursor: null,
+        model: next.model.trim() || null,
+        status: next.status,
+        type: next.type,
+        userEmail: next.userEmail.trim() || null,
+      },
+      { path: historyPath }
+    );
     startTransition(() => {
-      requestNavigationFeedback();
-      router.push(
-        buildHistoryHref(
-          {
-            createdFrom: next.createdFrom || null,
-            createdTo: next.createdTo || null,
-            cursor: null,
-            model: next.model.trim() || null,
-            status: next.status,
-            type: next.type,
-            userEmail: next.userEmail.trim() || null,
-          },
-          { path: historyPath }
-        )
-      );
+      requestNavigationFeedback(href);
+      router.push(href);
     });
   }
 

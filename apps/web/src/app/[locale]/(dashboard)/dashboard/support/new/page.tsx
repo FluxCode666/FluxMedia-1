@@ -68,8 +68,9 @@ export default function NewTicketPage() {
 
       if (result?.data) {
         toast.success("工单创建成功");
-        requestNavigationFeedback();
-        router.push(`/${locale}/dashboard/support/${result.data.ticketId}`);
+        const href = `/${locale}/dashboard/support/${result.data.ticketId}`;
+        requestNavigationFeedback(href);
+        router.push(href);
       } else if (result?.serverError) {
         toast.error(result.serverError);
       }

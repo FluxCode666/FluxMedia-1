@@ -1,5 +1,6 @@
 {
   "NavigationFeedback": {
+    "complete": "Page opened",
     "loading": "Opening page",
     "opening": "Opening {page}"
   },

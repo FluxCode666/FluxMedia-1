@@ -1,5 +1,6 @@
 {
   "NavigationFeedback": {
+    "complete": "页面已打开",
     "loading": "正在打开页面",
     "opening": "正在打开{page}"
   },
