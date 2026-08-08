@@ -32,15 +32,12 @@ sudo chmod 600 /root/flux-media/.env
 sudo editor /root/flux-media/.env
 ```
 
-至少填写 `DATABASE_URL`、`DATABASE_MIGRATION_URL`、`BETTER_AUTH_SECRET`、`REDIS_HOST`、
-`REDIS_PORT`、`REDIS_PASSWORD`、`ADOBE_DIRECT_PROXY_SECRET`、
-`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和 `FLUXMEDIA_SUPER_ADMIN_PASSWORD`；`REDIS_USERNAME` 可选。
-数据库必须已创建；外部 Redis 必须可从 Web 容器访问。`DATABASE_URL` 必须使用仅有运行时
-读写权限的账号；`DATABASE_MIGRATION_URL` 只会注入 `maintenance` 容器，必须连接同一数据库，
-并使用拥有目标表及 enum type 的 DDL owner 账号（或其成员角色）。这两个 URL 不得复用，且
-迁移凭据不得进入常驻 Web 容器。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；
-系统设置缓存默认使用逻辑库 4。迁移由部署流水线在切换 `web` 前执行。本 Compose 不启动
-PostgreSQL 或 Redis。
+至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
+`REDIS_PASSWORD`、`ADOBE_DIRECT_PROXY_SECRET`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和
+`FLUXMEDIA_SUPER_ADMIN_PASSWORD`；`REDIS_USERNAME` 可选。数据库必须已创建；外部 Redis
+必须可从 Web 容器访问。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；系统设置
+缓存默认使用逻辑库 4。迁移由部署流水线在切换 `web` 前执行。本 Compose 不启动 PostgreSQL
+或 Redis。
 
 ## Redis MQ 运行要求
 

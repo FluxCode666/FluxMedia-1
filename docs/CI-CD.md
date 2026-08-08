@@ -42,11 +42,6 @@ cmp -s CLAUDE.md AGENTS.md
 `FLUXMEDIA_IMAGE`、`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_PROXY_IMAGE` 和
 `FLUXMEDIA_TAG`。目标机的 `.env` 与业务机密不会由仓库覆盖。
 
-目标机必须将运行时 `DATABASE_URL` 与只供 `maintenance` 容器使用的
-`DATABASE_MIGRATION_URL` 分开配置。后者必须连接同一数据库，并使用 PostgreSQL schema
-对象与 enum type 的 owner（或其成员角色），以便合法执行 DDL；Compose 会在常驻 Web 容器
-中显式清空该变量。缺少该值时，部署会在停止旧 Web 前拒绝继续。
-
 ## 维护窗口与恢复边界
 
 统一号池迁移是破坏性切换。发布流程必须：

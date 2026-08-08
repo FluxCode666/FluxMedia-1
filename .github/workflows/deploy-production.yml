@@ -94,9 +94,6 @@ jobs:
       - name: Test deployment environment parser
         run: bash deploy/read-env-value.test.sh
 
-      - name: Test production migration database connection isolation
-        run: bash deploy/migration-database-url.test.sh
-
       - name: Test release ledger digest parser
         run: bash deploy/read-release-ledger-digest.test.sh
 
@@ -449,17 +446,6 @@ jobs:
             bash ./read-env-value.sh .env "${key}"
           }
 
-          # migration URL 必须在任何镜像元数据更新、备份或停服前存在。它只会
-          # 注入 maintenance 容器，用拥有 DDL 的账号执行 enum/table 迁移。
-          require_migration_database_url() {
-            if ! read_env_value DATABASE_MIGRATION_URL >/dev/null; then
-              printf '%s\n' \
-                "目标服务器缺少 DATABASE_MIGRATION_URL；" \
-                "请配置同库的 PostgreSQL DDL owner 连接后重试部署。" >&2
-              return 1
-            fi
-          }
-
           # 只更新流水线托管的镜像元数据键。
           set_env_value() {
             key="$1"
@@ -529,7 +515,6 @@ jobs:
           previous_migrate_image="$(read_env_value FLUXMEDIA_MIGRATE_IMAGE)"
           previous_proxy_image="$(read_env_value FLUXMEDIA_PROXY_IMAGE)"
           previous_tag="$(read_env_value FLUXMEDIA_TAG)"
-          require_migration_database_url
           previous_release_available=false
           if [[ "${previous_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \
             && [[ "${previous_proxy_image}" =~ ^[A-Za-z0-9._/@:-]+$ ]] \

@@ -12,9 +12,7 @@ services:
     env_file:
       - .env
     environment:
-      # DDL（特别是 ALTER TYPE）要求 PostgreSQL 对象 owner；不得复用 Web
-      # 的最小权限运行时账号，以免生产迁移在维护窗口中因权限拒绝而中断。
-      DATABASE_URL: ${DATABASE_MIGRATION_URL:?DATABASE_MIGRATION_URL 必填}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必填}
       LOCAL_STORAGE_PATH: /app/storage
       NODE_ENV: production
       TZ: UTC
@@ -36,9 +34,6 @@ services:
     # Node 进程计算，水平扩容 web 副本时容量会随副本数线性增加。
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必填}
-      # .env 同时供 maintenance 容器读取；显式清空 owner 连接，避免它进入
-      # 常驻 Web 进程的环境变量。
-      DATABASE_MIGRATION_URL: ""
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET 必填}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-https://media.flux-code.cc}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://media.flux-code.cc}
