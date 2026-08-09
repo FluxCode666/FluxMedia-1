@@ -1,16 +1,39 @@
 /**
  * UOL Analytics 操作定义。
  *
- * 只注册本人摘要与趋势两个只读能力；数据库实现由 apps/web 延迟绑定，确保 Web、
- * Server Action、MCP 和内置 Agent 共享同一输入输出 schema、权限与 readiness 语义。
+ * 注册本人摘要、趋势与数据看板三个只读能力；数据库实现由 apps/web 延迟绑定，确保
+ * Web、Server Action、MCP 和内置 Agent 共享同一输入输出 schema、权限与 readiness
+ * 语义。
  */
 import {
+  dataDashboardInputSchema,
+  dataDashboardOutputSchema,
   usageSummaryInputSchema,
   usageSummaryOutputSchema,
   usageTrendsInputSchema,
   usageTrendsOutputSchema,
 } from "../../analytics/contracts";
 import { defineOperation } from "../registry";
+
+/** 获取当前用户同一自然日范围下的完整数据看板快照。 */
+export const getMyDataDashboard = defineOperation({
+  name: "analytics.getMyDataDashboard",
+  domain: "analytics",
+  title: "Get My Data Dashboard",
+  description:
+    "获取当前用户最多 30 个账号时区自然日内的六项指标、逐日趋势与成功任务构成。" +
+    "用户身份只由 user Principal 派生，输入不接受 userId 或其它身份字段。",
+  input: dataDashboardInputSchema,
+  output: dataDashboardOutputSchema,
+  access: { kind: "user" },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: analytics.getMyDataDashboard");
+  },
+});
 
 /** 获取当前用户近 24 小时、模型分布与累计用量摘要。 */
 export const getMyUsageSummary = defineOperation({
