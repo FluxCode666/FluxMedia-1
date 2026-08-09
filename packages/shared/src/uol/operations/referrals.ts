@@ -1,5 +1,6 @@
 /** 推广域 UOL 操作注册：用户推广看板只读当前主体数据。 */
 import { z } from "zod";
+import { referralRewardConfigSchema } from "../../referrals/config";
 import { referralRelationshipStatusSchema } from "../../referrals/contract";
 import { defineOperation } from "../registry";
 
@@ -10,6 +11,7 @@ export const referralDashboardOutputSchema = z
     invitedCount: z.number().int().nonnegative(),
     rewardedCount: z.number().int().nonnegative(),
     totalRewardCredits: z.number().nonnegative(),
+    rewardConfig: referralRewardConfigSchema,
     relationships: z.array(
       z.object({
         id: z.string(),
@@ -30,7 +32,7 @@ export const getMyReferralDashboard = defineOperation({
   domain: "credits",
   title: "查询我的推广奖励",
   description:
-    "读取当前用户推广码、邀请链接和最近推广关系；邮箱只返回脱敏值，不接受客户端 userId。",
+    "读取当前用户推广码、邀请链接、当前奖励规则和最近推广关系；邮箱只返回脱敏值，不接受客户端 userId。",
   input: z.object({}).strict(),
   output: referralDashboardOutputSchema,
   access: { kind: "user" },

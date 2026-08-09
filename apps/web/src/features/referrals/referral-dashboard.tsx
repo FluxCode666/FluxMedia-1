@@ -66,6 +66,32 @@ export function ReferralDashboard({
       </Card>
     );
   }
+  const inviterReward =
+    dashboard.rewardConfig.inviter.mode === "percentage"
+      ? t("percentageReward", {
+          value: formatCredits(dashboard.rewardConfig.inviter.value),
+        })
+      : t("fixedReward", {
+          value: formatCredits(dashboard.rewardConfig.inviter.value),
+        });
+  const inviteeReward =
+    dashboard.rewardConfig.invitee.mode === "percentage"
+      ? t("percentageReward", {
+          value: formatCredits(dashboard.rewardConfig.invitee.value),
+        })
+      : t("fixedReward", {
+          value: formatCredits(dashboard.rewardConfig.invitee.value),
+        });
+  const hasSharedReward =
+    dashboard.rewardConfig.inviter.mode ===
+      dashboard.rewardConfig.invitee.mode &&
+    dashboard.rewardConfig.inviter.value ===
+      dashboard.rewardConfig.invitee.value;
+  const rewardRule = !dashboard.rewardConfig.enabled
+    ? t("rewardDisabled")
+    : hasSharedReward
+      ? t("sharedRewardRule", { reward: inviterReward })
+      : t("splitRewardRule", { inviterReward, inviteeReward });
 
   return (
     <div className="space-y-6">
@@ -107,7 +133,7 @@ export function ReferralDashboard({
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            {t("codeHint", { code: dashboard.code })}
+            {t("codeHint", { code: dashboard.code, rewardRule })}
           </p>
         </CardContent>
       </Card>

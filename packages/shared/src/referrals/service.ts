@@ -146,6 +146,7 @@ export type ReferralDashboard = {
   invitedCount: number;
   rewardedCount: number;
   totalRewardCredits: number;
+  rewardConfig: ReferralRewardConfig;
   relationships: Array<{
     id: string;
     inviteeName: string;
@@ -158,13 +159,13 @@ export type ReferralDashboard = {
   }>;
 };
 
-/** 读取当前用户推广码与有界关系列表，邮箱只返回脱敏地址。 */
+/** 读取当前用户推广码、当前奖励配置与有界关系列表，邮箱只返回脱敏地址。 */
 export async function getReferralDashboard(input: {
   userId: string;
   appUrl: string;
 }) {
   const profile = await ensureReferralProfile(input.userId);
-  const [[summary], rows] = await Promise.all([
+  const [[summary], rows, rewardConfig] = await Promise.all([
     db
       .select({
         invitedCount: sql<number>`count(*)`.mapWith(Number),
@@ -195,6 +196,7 @@ export async function getReferralDashboard(input: {
       .where(eq(referralRelationship.inviterUserId, input.userId))
       .orderBy(desc(referralRelationship.createdAt))
       .limit(100),
+    loadReferralConfig(),
   ]);
   const relationships = rows.map((row) => ({
     ...row,
@@ -210,6 +212,7 @@ export async function getReferralDashboard(input: {
     invitedCount: Number(summary?.invitedCount ?? 0),
     rewardedCount: Number(summary?.rewardedCount ?? 0),
     totalRewardCredits: Number(summary?.totalRewardCredits ?? 0),
+    rewardConfig,
     relationships,
   } satisfies ReferralDashboard;
 }
