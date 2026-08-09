@@ -20,6 +20,7 @@ import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/adobe-credential-health";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
+import "@/server/uol-bindings/image-deletion";
 import "@/server/uol-bindings/image-generation";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-user";
@@ -529,7 +530,6 @@ bindExecute(
 );
 
 // TODO: image.generateAction - 委托 image.generate
-// TODO: image.delete - deleteGenerationAction 逻辑
 // TODO: image.getStatus - getGenerationStatus 逻辑
 // TODO: image.getUserGenerations - 分页查询逻辑
 // TODO: image.getUserGenerationCount - 计数查询逻辑

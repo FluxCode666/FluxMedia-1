@@ -114,6 +114,9 @@ docker compose --profile maintenance run --rm --no-deps --interactive=false migr
 docker compose --profile maintenance run --rm --no-deps --interactive=false \
   -e "RELEASE_CREDITS_LEDGER_DIGEST=${release_credits_ledger_digest}" migrate \
   pnpm --dir packages/database db:release-gate -- postcheck
+docker compose run --rm --no-deps --interactive=false web \
+  node apps/web/scripts/backfill-dashboard-analytics.mjs \
+  --batch-size=500 --skip-ready
 docker compose up -d web
 ```
 
@@ -121,8 +124,9 @@ docker compose up -d web
 默认的交互输入，迁移容器会读取后续 Web 启动命令，导致只完成迁移却未启动服务。
 
 自动部署先拉取新镜像，再停止旧 Web、确认 `fluxmedia-web` 数据库连接已排空，并执行早期
-只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、0074 与
-postcheck。资产收编开始后，任何迁移、后置校验、启动或健康检查失败都会保持 Web 停止，
+只读预检。创建本地或 S3 备份后，先幂等收编历史视频输入，再执行完整 preflight、迁移、
+postcheck 与控制台统计回填对账。资产收编开始后，任何迁移、后置校验、统计对账、启动或
+健康检查失败都会保持 Web 停止，
 绝不自动启动旧 schema 镜像。资产收编开始前失败时，只有上一版 Web 在本轮停服前确实处于
 运行状态且镜像元数据完整，退出状态机才恢复同一上一版 Web 与代理；该证据证明数据库尚未
 改变且上一版已运行在当前 schema 上。恢复迁移前数据库备份后手工启动旧 schema 镜像时，

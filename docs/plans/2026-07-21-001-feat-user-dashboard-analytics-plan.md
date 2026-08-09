@@ -290,7 +290,7 @@ sequenceDiagram
 
 ### Data Model and Query Shape
 
-- `user_output_usage_event` 是窄型成功产物事件，唯一键覆盖产物类型与源任务 ID，查询索引为 `(user_id, operation_created_at, output_kind)`；图片与视频互斥字段带非负约束。一次范围 SQL 以条件聚合同时产出所选趋势和两类任务数，避免为饼图重复扫描。
+- `user_output_usage_event` 是窄型、不可变的成功产物用量事实，唯一键覆盖产物类型与源任务 ID，查询索引为 `(user_id, operation_created_at, output_kind)`；图片与视频互斥字段带非负约束。画廊删除只移除媒体引用，不删除事件；历史硬删遗留的事件也继续保留。一次范围 SQL 以条件聚合同时产出所选趋势和两类任务数，避免为饼图重复扫描。
 - `user_usage_summary` 每用户一行，保存累计图片成品数与累计视频秒数。只有事件 `INSERT ... RETURNING` 真正插入时才原子递增；冲突回放和回填重复扫描不递增，在线回填不得用全量覆盖丢失并发完成事件。
 - `credits_transaction` 为 consumption/refund 增加可空的规范化操作类型、操作 ID 和操作创建时间列；旧数据回填后用条件约束保证这两类新写入不能缺少上下文。
 - `credit_usage_projection_entry` 以 `credits_transaction.id` 为主键，记录该账本行投影到哪个计费操作；只有贡献行真实插入时才更新操作聚合和累计退款，形成“每笔账本贡献至多应用一次”不变量。
@@ -305,7 +305,7 @@ sequenceDiagram
 1. **Expand:** 以当前下一个可用编号手写输出事件、累计汇总、readiness 表、账本可空规范化列、贡献表、计费操作和累计退款字段；新窄表索引在空表上建立，大账本只做 metadata-only 可空列扩展，不在该阶段验证历史约束。
 2. **Dual-write:** 部署兼容旧数据的新写路径。生成所有完成/恢复入口使用统一完成事务；所有 consumption/refund 调用方显式传 operation context。回滚目标必须仍能容忍新增可空列和读模型表。
 3. **Backfill:** 记录 snapshot high-water，按用户与 `(created_at,id)` 稳定复合游标分批、每批独立提交；同一唯一事件/贡献插入路径避免与在线双写重复。批次根据锁等待、WAL、复制延迟和死元组自适应限速，不打印敏感字段。
-4. **Catch-up and reconcile:** 追赶 high-water 后的新写入，再比较原始任务数/产物数、账本 gross/refund、贡献、操作聚合和账户累计。历史图片既无 billable count、storageKey、也无 photoRetention 证据或任一退款无法关联时失败退出。
+4. **Catch-up and reconcile:** 追赶 high-water 后的新写入；仍存在的成功任务必须有逐字段一致的产物事件，事件累计必须与 `user_usage_summary` 一致。事件允许在画廊任务被历史硬删后独立保留，不反向要求 source 行存在。随后比较账本 gross/refund、贡献、操作聚合和账户累计。历史图片既无 billable count、storageKey、也无 photoRetention 证据或任一退款无法关联时失败退出。
 5. **Enable and observe:** 对账为零后将 readiness 标为 ready，启用 UOL、User MCP 和新首页；观察至少一个部署窗口，持续抽样对账。回滚入口只需把 readiness 置回不可用或恢复旧 UI，不删除派生数据、不改写账本。
 6. **Contract:** 确认旧应用实例全部退出且回滚目标包含 operation context 双写后，单独部署条件 CHECK `NOT VALID`，再执行 `VALIDATE CONSTRAINT`。设置短 `lock_timeout`，记录锁等待；失败只回退未生效约束，不删除已双写数据。
 
@@ -321,7 +321,7 @@ sequenceDiagram
 
 ### System-Wide Impact
 
-- **Data lifecycle:** 新表均为可删除重建的读模型；用户删除继续通过 user 外键级联。源 generation、video 和账本保留策略不变。
+- **Data lifecycle:** `user_output_usage_event` 是随用户生命周期保留的不可变用量事实；累计汇总和积分投影可从各自事实重建。用户删除继续通过 user 外键级联。画廊删除只清理媒体对象与引用并保留 generation 墓碑，账本保留策略不变。
 - **Financial integrity:** 账本写入先于或同事务伴随派生更新；对账只读真相并修复派生表，不反向改写账本，不读取 generation 的积分字段作为财务依据。
 - **Authorization:** operation 输入没有 `userId`；管理员以普通 user Principal 调用时也只能读取本人。任意用户统计、全局统计和 Admin MCP 均不在本次范围。
 - **Privacy:** 输出只有计数、秒数、积分、时间边界和桶，不返回 prompt、模型、URL、storage key、账本 metadata 或 API key 信息；relay-only 不产生统计持久化。
@@ -556,7 +556,7 @@ sequenceDiagram
 
 1. 在可丢弃数据库从空库依次运行全部迁移，确认 `0049`-`0051`（或顺延编号）手写 SQL 与 `_journal.json` 顺序正确，不使用 `drizzle-kit generate`；在已有数据副本按 expand 与 contract 两次部署验证旧版本兼容窗口。
 2. 在生产规模副本部署 expand 和双写，记录 snapshot high-water，再运行 `pnpm --filter @repo/web analytics:backfill`；中断一次后恢复并完成 catch-up，最后运行 `pnpm --filter @repo/web analytics:reconcile`。
-3. Reconcile 必须返回：证据不足历史图片 0、未关联/孤立/超额退款 0、重复输出事件 0、重复账本贡献 0、源成功任务与事件差异 0、用户累计差异 0、账本 gross/refund 差异 0、计费操作 gross/refund/net 差异 0。
+3. Reconcile 必须返回：证据不足历史图片 0、未关联/孤立/超额退款 0、重复输出事件 0、重复账本贡献 0、仍存在的源成功任务缺失或事件字段不一致 0、事件与用户累计差异 0、账本 gross/refund 差异 0、计费操作 gross/refund/net 差异 0。已删除画廊任务留下的不可变事件不属于差异。
 4. readiness 只有在零差异时才能切换为 ready；观察窗口内持续抽样为零且旧实例全部退出后，才部署 `NOT VALID` 条件约束并单独 `VALIDATE CONSTRAINT`。
 5. 对 consumption/refund 重放、并发消费、部分退款、全额退款、孤立/超额退款和回填撞上在线双写进行数据库级验证；任一余额、账本、贡献、计费操作或汇总不一致即失败。
 6. 回填期间记录每批行数/时长、锁等待、WAL、复制延迟、死元组和失败重试；完成后执行适合数据库环境的 analyze/维护并重新测量查询计划。

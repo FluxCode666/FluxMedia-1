@@ -30,13 +30,14 @@ export function creditOperationKey(userId, operationType, operationId) {
  * 解析回填命令参数。
  *
  * @param {string[]} argumentsList `process.argv.slice(2)`。
- * @returns {{ model: "all" | "output" | "credit", batchSize: number, reconcileOnly: boolean }}
+ * @returns {{ model: "all" | "output" | "credit", batchSize: number, reconcileOnly: boolean, skipReady: boolean }}
  * @throws 参数未知、重复、越界或格式非法时抛出 RangeError；无副作用。
  */
 export function parseBackfillOptions(argumentsList) {
   let model = "all";
   let batchSize = DEFAULT_BATCH_SIZE;
   let reconcileOnly = false;
+  let skipReady = false;
   const seen = new Set();
 
   for (const argument of argumentsList) {
@@ -47,6 +48,14 @@ export function parseBackfillOptions(argumentsList) {
       }
       seen.add("reconcileOnly");
       reconcileOnly = true;
+      continue;
+    }
+    if (argument === "--skip-ready") {
+      if (seen.has("skipReady")) {
+        throw new RangeError("--skip-ready 不能重复传入");
+      }
+      seen.add("skipReady");
+      skipReady = true;
       continue;
     }
     if (argument.startsWith("--model=")) {
@@ -77,7 +86,7 @@ export function parseBackfillOptions(argumentsList) {
     throw new RangeError(`未知参数：${argument}`);
   }
 
-  return { model, batchSize, reconcileOnly };
+  return { model, batchSize, reconcileOnly, skipReady };
 }
 
 /**
@@ -112,6 +121,94 @@ export function resolveBackfillImageOutputCount(row) {
   return { status: "insufficientEvidence", count: null };
 }
 
+/**
+ * 构造成功产物事实与累计汇总的对账 SQL。
+ *
+ * WHY：画廊删除只删除展示记录和存储对象，已经发生的用量不能随之消失。因此
+ * `user_output_usage_event` 在首次事务写入后是持久事实；仍存在的任务必须能在事件表中
+ * 找到一致记录，但事件不要求反向找到可被用户删除的 generation。累计汇总始终从事件
+ * 事实重算，才能同时覆盖在库任务与已删除画廊任务。
+ *
+ * @returns 可直接交给 pg Client 执行的单条只读 SQL。
+ * @sideEffects 无副作用。
+ */
+export function buildOutputUsageReconciliationSql() {
+  return `WITH image_source AS (
+       SELECT id, user_id, created_at, storage_key, metadata::jsonb AS metadata,
+              metadata::jsonb #> '{outputImage,billableImageOutputCount}'
+                AS billable_value
+         FROM generation
+        WHERE status = 'completed'
+     ), image_classified AS (
+       SELECT *,
+              CASE
+                WHEN jsonb_typeof(billable_value) = 'number' THEN
+                  CASE WHEN (billable_value #>> '{}')::numeric > 0
+                             AND (billable_value #>> '{}')::numeric
+                                 = trunc((billable_value #>> '{}')::numeric)
+                       THEN (billable_value #>> '{}')::integer
+                       ELSE 0 END
+                WHEN nullif(btrim(storage_key), '') IS NOT NULL THEN 1
+                WHEN jsonb_typeof(metadata #> '{outputImage,photoRetention}')
+                     = 'object' THEN 1
+                WHEN jsonb_typeof(metadata -> 'chatTextOnlyCharge')
+                     = 'object' THEN 0
+                ELSE NULL
+              END AS image_count
+         FROM image_source
+     ), expected AS (
+       SELECT 'image'::output_usage_kind AS output_kind,
+              id AS source_task_id, user_id,
+              created_at AS operation_created_at,
+              image_count, 0::integer AS video_seconds
+         FROM image_classified
+        WHERE image_count > 0
+       UNION ALL
+       SELECT 'video'::output_usage_kind, id, user_id, created_at,
+              0::integer, duration_seconds
+         FROM video_generation
+        WHERE status = 'completed'
+          AND duration_seconds > 0
+     ), event_difference AS (
+       SELECT count(*)::integer AS count
+         FROM expected
+         LEFT JOIN user_output_usage_event actual
+           ON actual.output_kind = expected.output_kind
+          AND actual.source_task_id = expected.source_task_id
+        WHERE actual.source_task_id IS NULL
+           OR actual.user_id IS DISTINCT FROM expected.user_id
+           OR actual.operation_created_at
+              IS DISTINCT FROM expected.operation_created_at
+           OR actual.image_count IS DISTINCT FROM expected.image_count
+           OR actual.video_seconds IS DISTINCT FROM expected.video_seconds
+     ), expected_summary AS (
+       SELECT user_id,
+              sum(image_count)::bigint AS total_image_count,
+              sum(video_seconds)::bigint AS total_video_seconds
+         FROM user_output_usage_event
+        GROUP BY user_id
+     ), summary_difference AS (
+       SELECT count(*)::integer AS count
+         FROM expected_summary expected
+         FULL JOIN user_usage_summary actual USING (user_id)
+        WHERE expected.user_id IS NULL
+           OR actual.user_id IS NULL
+           OR actual.total_image_count
+              IS DISTINCT FROM expected.total_image_count
+           OR actual.total_video_seconds
+              IS DISTINCT FROM expected.total_video_seconds
+     )
+     SELECT
+       (SELECT count(*)::integer FROM image_classified WHERE image_count IS NULL)
+         AS insufficient_image_evidence,
+       (SELECT count(*)::integer FROM video_generation
+         WHERE status = 'completed'
+           AND duration_seconds <= 0)
+         AS invalid_completed_videos,
+       (SELECT count FROM event_difference) AS event_difference,
+       (SELECT count FROM summary_difference) AS summary_difference`;
+}
+
 /** 校验同一 operation key 的创建时间保持唯一，并写入当前批次缓存。 */
 function rememberOperationContext(context, evidence) {
   const key = creditOperationKey(
@@ -133,7 +230,7 @@ function rememberOperationContext(context, evidence) {
   };
 }
 
-/** 从权威任务表或已处理操作缓存读取创建时间。 */
+/** 从权威任务/不可变产物事件或已处理操作缓存读取创建时间。 */
 function resolveKnownOperationCreatedAt(params, evidence) {
   const taskCreatedAt = params.taskCreatedAt;
   const key = creditOperationKey(
@@ -214,7 +311,9 @@ function verifyStoredOperationContext(row, evidence, context, metadata) {
         ? evidence.imageCreatedAtByKey.get(taskKey)
         : evidence.videoCreatedAtByKey.get(taskKey);
     if (!taskCreatedAt || taskCreatedAt !== context.operationCreatedAt) {
-      throw new Error(`账本 ${row.id} 的 operation context 与权威任务不一致`);
+      throw new Error(
+        `账本 ${row.id} 的 operation context 与任务或产物事件不一致`
+      );
     }
     const sourceRef =
       nonemptyString(row.sourceRef) ?? nonemptyString(metadata?.sourceRef);
@@ -320,7 +419,7 @@ function isAllowedImageRefundSourceRef(generationId, sourceRef) {
  * 用可验证证据解析一条历史消费或退款的 operation context。
  *
  * @param {object} row 账本行；时间字段必须是数据库规范化字符串。
- * @param {object} evidence 权威 generation/video 时间映射及已存在/本批操作映射。
+ * @param {object} evidence generation/video 或不可变产物事件时间映射及操作映射。
  * @returns {{ operationType: string, operationId: string, operationCreatedAt: string }}
  * @throws 部分 context、任务归属冲突、孤立退款或缺少证据时抛出；不修改账本。
  */

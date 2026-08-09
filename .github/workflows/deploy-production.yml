@@ -495,6 +495,15 @@ jobs:
               --confirm-no-legacy-writers </dev/null
           }
 
+          # 统计迁移只创建 building 状态；必须使用新 Web 镜像补齐事实、汇总并零差异
+          # 对账后才能启动页面。已 ready 的当前版本逐模型跳过，避免每次发布重复全扫。
+          run_dashboard_analytics_backfill() {
+            docker compose run --rm --no-deps \
+              --interactive=false web \
+              node apps/web/scripts/backfill-dashboard-analytics.mjs \
+              --batch-size=500 --skip-ready </dev/null
+          }
+
           # 仅在迁移开始前恢复旧镜像元数据；是否重启由退出状态机决定。
           restore_previous_metadata() {
             if [ -n "${previous_image}" ]; then
@@ -643,6 +652,12 @@ jobs:
               postcheck-initial "${release_credits_ledger_digest}"
           else
             run_release_gate postcheck "${release_credits_ledger_digest}"
+          fi
+
+          echo "回填并对账控制台统计读模型。"
+          if ! run_dashboard_analytics_backfill; then
+            echo "控制台统计回填或对账失败，保持维护状态等待前向修复。" >&2
+            exit 1
           fi
 
           echo "启动 Adobe 代理和 web 服务。"

@@ -1,18 +1,18 @@
 "use server";
 
+/**
+ * 图片生成与媒体删除 Server Action 薄适配器。
+ *
+ * 使用方：创作页与画廊。输入经 Zod 校验后构造本人 Principal，所有业务逻辑经 UOL
+ * operation 执行，Action 不直接访问数据库或对象存储。
+ */
 import { randomUUID } from "node:crypto";
-import { db } from "@repo/database";
-import { generation } from "@repo/database/schema";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
-import {
-  collectGenerationImageStorageReferences,
-  type GenerationImageStorageReference,
-} from "@repo/shared/generation-maintenance";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import { protectedAction } from "@repo/shared/safe-action";
-import { getStorageProvider } from "@repo/shared/storage/providers";
-import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
+import { invokeOperation } from "@repo/shared/uol";
 import { z } from "zod";
+import { ensureUolInitialized } from "@/server/uol-init";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
@@ -35,10 +35,7 @@ const generateImageSchema = z.object({
   model: imageModelIdSchema,
 });
 
-function referenceKey(ref: GenerationImageStorageReference) {
-  return `${ref.bucket}:${ref.key}`;
-}
-
+/** 创建单次图片生成任务并委托统一 image.generate operation。 */
 export const generateImageAction = protectedAction
   .metadata({ action: "image-generation.generate" })
   .schema(generateImageSchema)
@@ -59,153 +56,46 @@ export const generateImageAction = protectedAction
     );
   });
 
+/** 移除本人单条生成媒体；保留任务、计费与历史用量事实。 */
 export const deleteGenerationAction = protectedAction
   .metadata({ action: "image-generation.delete" })
-  .schema(z.object({ generationId: z.string() }))
+  .schema(
+    z.object({ generationId: z.string().trim().min(1).max(128) }).strict()
+  )
   .action(async ({ parsedInput, ctx }) => {
-    const gen = await db
-      .select()
-      .from(generation)
-      .where(eq(generation.id, parsedInput.generationId))
-      .limit(1);
-
-    if (!gen[0] || gen[0].userId !== ctx.userId) {
-      return { error: "Not found" };
-    }
-
-    const storageReferences = collectGenerationImageStorageReferences({
-      storageKey: gen[0].storageKey,
-      storageBucket: gen[0].storageBucket,
-      metadata: gen[0].metadata,
+    await ensureUolInitialized();
+    return invokeOperation<{ success: boolean }>("image.delete", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: await getUserRoleById(ctx.userId),
     });
-    const storageReferenceKeys = new Set(storageReferences.map(referenceKey));
-
-    if (storageReferenceKeys.size > 0) {
-      const otherGenerations = await db
-        .select({
-          storageKey: generation.storageKey,
-          storageBucket: generation.storageBucket,
-          metadata: generation.metadata,
-        })
-        .from(generation)
-        .where(
-          and(
-            eq(generation.userId, ctx.userId),
-            ne(generation.id, parsedInput.generationId)
-          )
-        );
-      for (const other of otherGenerations) {
-        for (const ref of collectGenerationImageStorageReferences(other)) {
-          storageReferenceKeys.delete(referenceKey(ref));
-        }
-      }
-    }
-
-    if (storageReferenceKeys.size > 0) {
-      try {
-        const storage = await getStorageProvider();
-        for (const ref of storageReferences) {
-          if (!storageReferenceKeys.has(referenceKey(ref))) continue;
-          await storage.deleteObject(ref.key, ref.bucket);
-        }
-      } catch {
-        /* best effort */
-      }
-    }
-
-    await db
-      .delete(generation)
-      .where(eq(generation.id, parsedInput.generationId));
-    return { success: true };
   });
 
 /**
- * 批量删除生成记录。
- * 逐条验证归属后,收集存储引用并去重(排除被其他记录共享的存储对象),
- * 然后尽力删除存储文件,最后批量删除 DB 记录。
- * 最多一次删除 100 条。
+ * 批量移除本人生成媒体。
+ * UOL 服务排除仍被其他任务引用的共享对象，并把任务更新为不可见媒体墓碑；最多 100 条。
  */
 export const batchDeleteGenerationAction = protectedAction
   .metadata({ action: "image-generation.batch-delete" })
   .schema(
-    z.object({
-      generationIds: z.array(z.string()).min(1).max(100),
-    })
+    z
+      .object({
+        generationIds: z
+          .array(z.string().trim().min(1).max(128))
+          .min(1)
+          .max(100),
+      })
+      .strict()
   )
   .action(async ({ parsedInput, ctx }) => {
-    // 查出所有待删记录并校验归属
-    const gens = await db
-      .select()
-      .from(generation)
-      .where(
-        and(
-          inArray(generation.id, parsedInput.generationIds),
-          eq(generation.userId, ctx.userId)
-        )
-      );
-
-    if (gens.length === 0) {
-      return { success: true, deletedCount: 0 };
-    }
-
-    const idsToDelete = gens.map((g) => g.id);
-
-    // 收集待删记录的全部存储引用
-    const allRefs: GenerationImageStorageReference[] = [];
-    const allRefKeys = new Set<string>();
-    for (const g of gens) {
-      const refs = collectGenerationImageStorageReferences({
-        storageKey: g.storageKey,
-        storageBucket: g.storageBucket,
-        metadata: g.metadata,
-      });
-      for (const ref of refs) {
-        const key = referenceKey(ref);
-        if (!allRefKeys.has(key)) {
-          allRefKeys.add(key);
-          allRefs.push(ref);
-        }
+    await ensureUolInitialized();
+    return invokeOperation<{ success: boolean; deletedCount: number }>(
+      "image.batchDelete",
+      parsedInput,
+      {
+        type: "user",
+        userId: ctx.userId,
+        role: await getUserRoleById(ctx.userId),
       }
-    }
-
-    // 去重:排除被本用户其他记录(不在待删集中)仍在使用的存储对象
-    const uniqueRefKeys = new Set(allRefKeys);
-    if (uniqueRefKeys.size > 0) {
-      const otherGenerations = await db
-        .select({
-          storageKey: generation.storageKey,
-          storageBucket: generation.storageBucket,
-          metadata: generation.metadata,
-        })
-        .from(generation)
-        .where(
-          and(
-            eq(generation.userId, ctx.userId),
-            notInArray(generation.id, idsToDelete)
-          )
-        );
-      for (const other of otherGenerations) {
-        for (const ref of collectGenerationImageStorageReferences(other)) {
-          uniqueRefKeys.delete(referenceKey(ref));
-        }
-      }
-    }
-
-    // 尽力删除存储文件
-    if (uniqueRefKeys.size > 0) {
-      try {
-        const storage = await getStorageProvider();
-        for (const ref of allRefs) {
-          if (!uniqueRefKeys.has(referenceKey(ref))) continue;
-          await storage.deleteObject(ref.key, ref.bucket);
-        }
-      } catch {
-        /* best effort */
-      }
-    }
-
-    // 批量删除 DB 记录
-    await db.delete(generation).where(inArray(generation.id, idsToDelete));
-
-    return { success: true, deletedCount: idsToDelete.length };
+    );
   });

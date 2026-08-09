@@ -49,6 +49,10 @@ const nextConfig = {
       "./scripts/api-upstream-worker-probe.mjs",
       "./scripts/preflight-api-upstream-adapter-migration.mjs",
       "./scripts/smoke-api-upstream-worker.mjs",
+      // 生产发布在 Web 启动前使用同一镜像执行统计回填；显式 trace 命令入口与
+      // DB-free 核心，避免 standalone 镜像因没有页面静态引用而漏带运维脚本。
+      "./scripts/backfill-dashboard-analytics.mjs",
+      "./scripts/dashboard-analytics-backfill-core.mjs",
       // 迁移预检直接读取 0075 的冻结脚本模板，确保它编译的是数据库将写入的
       // 逐字内容；standalone 必须携带同一个迁移文件。
       "../../packages/database/drizzle/0075_api_account_upstream_adaptation.sql",

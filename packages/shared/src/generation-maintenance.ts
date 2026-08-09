@@ -196,6 +196,7 @@ export function stripDestroyedGenerationImageReferences(
     destroyedAt: string;
     retentionHours: number;
     storageObjectsDeleted: number;
+    reason?: "retention" | "user_deleted";
   }
 ) {
   const nextMetadata = isRecord(metadata) ? { ...metadata } : {};
@@ -218,6 +219,7 @@ export function stripDestroyedGenerationImageReferences(
     destroyedAt: params.destroyedAt,
     retentionHours: params.retentionHours,
     storageObjectsDeleted: params.storageObjectsDeleted,
+    ...(params.reason ? { reason: params.reason } : {}),
   };
   nextMetadata.outputImage = outputImage;
 
@@ -226,19 +228,23 @@ export function stripDestroyedGenerationImageReferences(
     : null;
   if (inputImages) {
     if (Array.isArray(inputImages.images)) {
-      inputImages.images = inputImages.images.map((image) => {
-        if (!isRecord(image)) return image;
-        const nextImage = { ...image };
-        delete nextImage.storageKey;
-        delete nextImage.storageBucket;
-        delete nextImage.imageUrl;
-        return nextImage;
-      });
+      inputImages.images =
+        params.reason === "user_deleted"
+          ? []
+          : inputImages.images.map((image) => {
+              if (!isRecord(image)) return image;
+              const nextImage = { ...image };
+              delete nextImage.storageKey;
+              delete nextImage.storageBucket;
+              delete nextImage.imageUrl;
+              return nextImage;
+            });
     }
     inputImages.photoRetention = {
       destroyedAt: params.destroyedAt,
       retentionHours: params.retentionHours,
       storageObjectsDeleted: params.storageObjectsDeleted,
+      ...(params.reason ? { reason: params.reason } : {}),
     };
     nextMetadata.inputImages = inputImages;
   }

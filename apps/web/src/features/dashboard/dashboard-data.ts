@@ -16,7 +16,7 @@ import type { WalletBalanceSnapshot } from "@repo/shared/credits/wallet-contract
 import { logError } from "@repo/shared/logger";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import { invokeOperation } from "@repo/shared/uol";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import type { RecentCreation } from "@/features/image-generation/components/recent-creations-client";
 import { ensureUolInitialized } from "@/server/uol-init";
@@ -65,7 +65,11 @@ export async function loadRecentDashboardCreations(
     })
     .from(generation)
     .where(
-      and(eq(generation.userId, userId), eq(generation.status, "completed"))
+      and(
+        eq(generation.userId, userId),
+        eq(generation.status, "completed"),
+        isNotNull(generation.storageKey)
+      )
     )
     .orderBy(desc(generation.createdAt))
     .limit(4);

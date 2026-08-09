@@ -8,6 +8,7 @@ export type BackfillOptions = {
   model: "all" | "output" | "credit";
   batchSize: number;
   reconcileOnly: boolean;
+  skipReady: boolean;
 };
 
 export type BackfillCreditRow = {
@@ -48,6 +49,8 @@ export function creditOperationKey(
 ): string;
 
 export function parseBackfillOptions(argumentsList: string[]): BackfillOptions;
+
+export function buildOutputUsageReconciliationSql(): string;
 
 export function resolveBackfillImageOutputCount(row: {
   status: string;

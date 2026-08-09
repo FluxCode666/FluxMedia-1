@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   type BackfillCreditEvidence,
   type BackfillCreditRow,
+  buildOutputUsageReconciliationSql,
   creditOperationKey,
   hasReconciliationDifference,
   parseBackfillOptions,
@@ -47,6 +48,20 @@ function creditRow(
 }
 
 describe("dashboard analytics backfill core", () => {
+  it("keeps durable usage events after their gallery source was deleted", () => {
+    const reconciliationSql = buildOutputUsageReconciliationSql();
+
+    expect(reconciliationSql).toContain(
+      "FROM expected\n         LEFT JOIN user_output_usage_event actual"
+    );
+    expect(reconciliationSql).not.toContain(
+      "FULL JOIN user_output_usage_event actual"
+    );
+    expect(reconciliationSql).toContain(
+      "FROM user_output_usage_event\n        GROUP BY user_id"
+    );
+  });
+
   it("parses bounded options and rejects unknown arguments", () => {
     expect(
       parseBackfillOptions([
@@ -54,8 +69,14 @@ describe("dashboard analytics backfill core", () => {
         "--model=credit",
         "--batch-size=1000",
         "--reconcile-only",
+        "--skip-ready",
       ])
-    ).toEqual({ model: "credit", batchSize: 1000, reconcileOnly: true });
+    ).toEqual({
+      model: "credit",
+      batchSize: 1000,
+      reconcileOnly: true,
+      skipReady: true,
+    });
     expect(() => parseBackfillOptions(["--batch-size=0"])).toThrow(
       /batch-size/
     );
@@ -211,7 +232,7 @@ describe("dashboard analytics backfill core", () => {
         }),
         createEvidence()
       )
-    ).toThrow(/权威任务/);
+    ).toThrow(/任务或产物事件/);
   });
 
   it("does not trust admin metadata without the controlled service account", () => {

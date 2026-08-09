@@ -332,29 +332,59 @@ defineOperation({
 });
 
 // ---------------------------------------------------------------------------
-// 3. image.delete - 删除生成记录及孤立图（deleteGenerationAction）
-// 近似幂等：已删除的记录再次删除不报错
+// 3. image.delete / image.batchDelete - 删除画廊媒体并保留历史用量事实
+// 近似幂等：已删除媒体的记录再次删除不报错
 // ---------------------------------------------------------------------------
 defineOperation({
   name: "image.delete",
   domain: "image-generation",
-  title: "删除生成记录",
+  title: "删除生成媒体",
   description:
-    "删除用户的生成记录及其关联的存储对象（best-effort 清理）。" +
-    "需校验资源归属，不涉及扣费。近似幂等。",
-  input: z.object({
-    generationId: z.string(),
-  }),
+    "移除用户生成媒体及其画廊引用（best-effort 存储清理），" +
+    "保留任务、计费字段与历史用量事实。需校验资源归属，不涉及扣费。",
+  input: z
+    .object({
+      generationId: z.string().trim().min(1).max(128),
+    })
+    .strict(),
   output: z.object({
     success: z.boolean(),
   }),
   access: { kind: "owner", resource: "generation" },
+  agentExposure: "human-only",
   readOnly: false,
   destructive: true,
   idempotency: { kind: "natural" },
   sideEffects: ["storage"],
   execute: async () => {
     throw new Error("Not yet wired: image.delete");
+  },
+});
+
+defineOperation({
+  name: "image.batchDelete",
+  domain: "image-generation",
+  title: "批量删除生成媒体",
+  description:
+    "批量移除本人最多 100 条生成媒体及画廊引用，保留任务、计费字段与历史用量事实。" +
+    "共享存储对象仍被其他本人任务引用时不会删除。",
+  input: z
+    .object({
+      generationIds: z.array(z.string().trim().min(1).max(128)).min(1).max(100),
+    })
+    .strict(),
+  output: z.object({
+    success: z.boolean(),
+    deletedCount: z.number().int().nonnegative(),
+  }),
+  access: { kind: "protected" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: { kind: "natural" },
+  sideEffects: ["storage"],
+  execute: async () => {
+    throw new Error("Not yet wired: image.batchDelete");
   },
 });
 

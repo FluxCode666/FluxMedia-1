@@ -2,8 +2,9 @@
  * 控制台统计读模型的可恢复回填与对账命令。
  *
  * 输出用量和积分操作分别使用 snapshot、全量 catch-up、稳定 `(created_at,id)` 游标和
- * 分批事务。每批业务写入与状态游标同事务提交；中断后可直接重跑。账本、generation 与
- * video_generation 始终是权威真相，任何证据不足、归属冲突或对账差异都会非零退出。
+ * 分批事务。每批业务写入与状态游标同事务提交；中断后可直接重跑。账本是财务权威；
+ * generation/video_generation 用于补齐仍存在任务的成功事件，已写事件保留被删除画廊
+ * 记录的历史用量事实。任何证据不足、归属冲突或对账差异都会非零退出。
  */
 
 import { resolve } from "node:path";
@@ -11,6 +12,7 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 import {
+  buildOutputUsageReconciliationSql,
   creditOperationKey,
   hasReconciliationDifference,
   parseBackfillOptions,
@@ -462,7 +464,12 @@ function collectCreditEvidenceCandidates(rows) {
   };
 }
 
-/** 批量读取权威任务时间和已投影 operation 时间，供纯解析器使用。 */
+/**
+ * 批量读取任务或不可变产物事件时间，以及已投影 operation 时间。
+ *
+ * 画廊历史硬删可能移除 generation，但成功事件与账本仍保留；事件创建时间可继续证明
+ * 对应图片/视频计费操作，且与仍存在任务同时出现时必须逐值一致。
+ */
 async function loadCreditEvidence(client, rows) {
   const candidates = collectCreditEvidenceCandidates(rows);
   const evidence = {
@@ -483,6 +490,11 @@ async function loadCreditEvidence(client, rows) {
            SELECT 'video'::text AS kind, id, user_id, created_at
              FROM video_generation
             WHERE id = ANY($1::text[])
+           UNION ALL
+           SELECT output_kind::text AS kind, source_task_id AS id, user_id,
+                  operation_created_at AS created_at
+             FROM user_output_usage_event
+            WHERE source_task_id = ANY($1::text[])
          ) tasks`,
       [candidates.taskIds]
     );
@@ -492,6 +504,10 @@ async function loadCreditEvidence(client, rows) {
         task.kind === "image"
           ? evidence.imageCreatedAtByKey
           : evidence.videoCreatedAtByKey;
+      const existingCreatedAt = target.get(key);
+      if (existingCreatedAt && existingCreatedAt !== task.created_at) {
+        throw new Error(`任务与产物事件 ${task.id} 的创建时间不一致`);
+      }
       target.set(key, task.created_at);
     }
   }
@@ -1039,83 +1055,7 @@ async function preflightCreditEvidence(client, highWater, batchSize) {
 
 /** 对账权威输出任务、事件和累计汇总。 */
 async function reconcileOutputUsage(client) {
-  const result = await client.query(
-    `WITH image_source AS (
-       SELECT id, user_id, created_at, storage_key, metadata::jsonb AS metadata,
-              metadata::jsonb #> '{outputImage,billableImageOutputCount}'
-                AS billable_value
-         FROM generation
-        WHERE status = 'completed'
-     ), image_classified AS (
-       SELECT *,
-              CASE
-                WHEN jsonb_typeof(billable_value) = 'number' THEN
-                  CASE WHEN (billable_value #>> '{}')::numeric > 0
-                             AND (billable_value #>> '{}')::numeric
-                                 = trunc((billable_value #>> '{}')::numeric)
-                       THEN (billable_value #>> '{}')::integer
-                       ELSE 0 END
-                WHEN nullif(btrim(storage_key), '') IS NOT NULL THEN 1
-                WHEN jsonb_typeof(metadata #> '{outputImage,photoRetention}')
-                     = 'object' THEN 1
-                WHEN jsonb_typeof(metadata -> 'chatTextOnlyCharge')
-                     = 'object' THEN 0
-                ELSE NULL
-              END AS image_count
-         FROM image_source
-     ), expected AS (
-       SELECT 'image'::output_usage_kind AS output_kind,
-              id AS source_task_id, user_id,
-              created_at AS operation_created_at,
-              image_count, 0::integer AS video_seconds
-         FROM image_classified
-        WHERE image_count > 0
-       UNION ALL
-       SELECT 'video'::output_usage_kind, id, user_id, created_at,
-              0::integer, duration_seconds
-         FROM video_generation
-        WHERE status = 'completed'
-          AND duration_seconds > 0
-     ), event_difference AS (
-       SELECT count(*)::integer AS count
-         FROM expected
-         FULL JOIN user_output_usage_event actual
-           ON actual.output_kind = expected.output_kind
-          AND actual.source_task_id = expected.source_task_id
-        WHERE expected.source_task_id IS NULL
-           OR actual.source_task_id IS NULL
-           OR actual.user_id IS DISTINCT FROM expected.user_id
-           OR actual.operation_created_at
-              IS DISTINCT FROM expected.operation_created_at
-           OR actual.image_count IS DISTINCT FROM expected.image_count
-           OR actual.video_seconds IS DISTINCT FROM expected.video_seconds
-     ), expected_summary AS (
-       SELECT user_id,
-              sum(image_count)::bigint AS total_image_count,
-              sum(video_seconds)::bigint AS total_video_seconds
-         FROM expected
-        GROUP BY user_id
-     ), summary_difference AS (
-       SELECT count(*)::integer AS count
-         FROM expected_summary expected
-         FULL JOIN user_usage_summary actual USING (user_id)
-        WHERE expected.user_id IS NULL
-           OR actual.user_id IS NULL
-           OR actual.total_image_count
-              IS DISTINCT FROM expected.total_image_count
-           OR actual.total_video_seconds
-              IS DISTINCT FROM expected.total_video_seconds
-     )
-     SELECT
-       (SELECT count(*)::integer FROM image_classified WHERE image_count IS NULL)
-         AS insufficient_image_evidence,
-       (SELECT count(*)::integer FROM video_generation
-         WHERE status = 'completed'
-           AND duration_seconds <= 0)
-         AS invalid_completed_videos,
-       (SELECT count FROM event_difference) AS event_difference,
-       (SELECT count FROM summary_difference) AS summary_difference`
-  );
+  const result = await client.query(buildOutputUsageReconciliationSql());
   const row = result.rows[0];
   return {
     insufficientImageEvidence: databaseNumber(
@@ -1548,6 +1488,16 @@ async function runSelectedModels(client, options) {
   for (const model of models) {
     const readModel = model === "output" ? "output_usage" : "credit_usage";
     try {
+      if (options.skipReady) {
+        const stored = await ensureReadModelState(client, readModel);
+        if (
+          stored.version === READ_MODEL_VERSION &&
+          stored.status === "ready"
+        ) {
+          console.log(`[${readModel}] 当前版本已 ready，跳过重复全量回填`);
+          continue;
+        }
+      }
       if (model === "output") {
         await runOutputUsage(client, options);
       } else {

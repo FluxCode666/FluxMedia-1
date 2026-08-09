@@ -2324,10 +2324,10 @@ export const analyticsReadModelStatusEnum = pgEnum(
 );
 
 /**
- * 成功产物事件读模型。
+ * 不可变成功产物用量事实。
  *
- * 每个持久化任务最多一行；图片数量和视频秒数互斥。该表可由 generation 与
- * video_generation 重建，不是产物真相。
+ * 每个持久化任务最多一行；图片数量和视频秒数互斥。在线完成事务与历史回填只追加，
+ * 画廊删除不移除事件，因此累计历史用量不依赖可删除的 generation 生命周期。
  */
 export const userOutputUsageEvent = pgTable(
   "user_output_usage_event",
