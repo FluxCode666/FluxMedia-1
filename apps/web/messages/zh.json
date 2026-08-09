@@ -701,7 +701,39 @@
       "images": "成功图片数",
       "videos": "成功视频",
       "composition": "成功任务构成",
-      "preparing": "图表准备中"
+      "preparing": "图表准备中",
+      "replay": "重播动画",
+      "rangeLabel": "{start} 至 {end}",
+      "imagesDescription": "{range} · 每个点对应一个账号时区自然日",
+      "imagesSummary": "范围内共生成 {value} 张成功图片。",
+      "creditsDescription": "{range} · 每根发丝对应当日非负净积分用量",
+      "creditsSummary": "范围内共消耗 {value} 净积分。",
+      "videosDescription": "{range} · 当前展示：{unit}",
+      "videosSummary": "范围内当前序列合计：{value}（{unit}）。",
+      "compositionDescription": "{range} · 每个点表示成功任务中的 1 个百分点",
+      "compositionSummary": "成功图片任务 {images} 个，成功视频任务 {videos} 个。",
+      "compositionEmpty": "范围内暂无成功任务",
+      "videoMode": {
+        "label": "视频趋势展示口径",
+        "count": "视频数",
+        "seconds": "视频秒数"
+      },
+      "taskType": {
+        "image": "图片任务",
+        "video": "视频任务"
+      },
+      "table": {
+        "show": "查看明细数据",
+        "caption": "{metric}图表的等价数据表",
+        "date": "日期",
+        "images": "图片数",
+        "credits": "净积分",
+        "videos": "视频数",
+        "seconds": "视频秒数",
+        "taskType": "任务类型",
+        "tasks": "任务数",
+        "percent": "占比"
+      }
     }
   },
   "Settings": {

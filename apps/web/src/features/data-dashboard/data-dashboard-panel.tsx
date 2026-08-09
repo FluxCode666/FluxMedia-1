@@ -8,7 +8,6 @@
 
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import { Button } from "@repo/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
 import { cn } from "@repo/ui/utils";
 import { RefreshCw, TriangleAlert } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
@@ -20,12 +19,13 @@ import {
   type DataDashboardActionResult,
   refreshDataDashboardAction,
 } from "./actions";
+import { DataDashboardChartsLazy } from "./charts/data-dashboard-charts-lazy";
 import { DataDashboardDateRangePicker } from "./data-dashboard-date-range-picker";
 import { DataDashboardMetricGrid } from "./data-dashboard-metric-grid";
 import { DataDashboardPending } from "./data-dashboard-pending";
 import {
-  type DataDashboardAppliedRange,
   buildDataDashboardHref,
+  type DataDashboardAppliedRange,
   isDefaultDataDashboardRange,
 } from "./data-dashboard-query";
 import {
@@ -74,7 +74,9 @@ export function DataDashboardPanel({
     snapshot: initialSnapshot,
     appliedRange: initialAppliedRange,
     requestStatus: initialSnapshot ? "idle" : "error",
-    failureStatus: initialSnapshot ? null : initialFailureStatus ?? "unavailable",
+    failureStatus: initialSnapshot
+      ? null
+      : (initialFailureStatus ?? "unavailable"),
   });
   const [draftRange, setDraftRange] = useState({
     startDate: initialAppliedRange?.startDate ?? "",
@@ -231,30 +233,17 @@ export function DataDashboardPanel({
 
       <DataDashboardMetricGrid snapshot={snapshot} />
 
-      <section aria-labelledby="data-dashboard-charts-title" className="space-y-3">
+      <section
+        aria-labelledby="data-dashboard-charts-title"
+        className="space-y-3"
+      >
         <h2
           className="font-serif text-lg font-medium tracking-tight"
           id="data-dashboard-charts-title"
         >
           {t("charts.title")}
         </h2>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {[
-            "credits",
-            "images",
-            "videos",
-            "composition",
-          ].map((chart) => (
-            <Card data-chart-placeholder={chart} key={chart}>
-              <CardHeader>
-                <CardTitle>{t(`charts.${chart}`)}</CardTitle>
-              </CardHeader>
-              <CardContent className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
-                {t("charts.preparing")}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <DataDashboardChartsLazy snapshot={snapshot} />
       </section>
       <p aria-live="polite" className="sr-only">
         {liveMessage}

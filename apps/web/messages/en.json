@@ -701,7 +701,39 @@
       "images": "Successful images",
       "videos": "Successful videos",
       "composition": "Successful task mix",
-      "preparing": "Chart is preparing"
+      "preparing": "Chart is preparing",
+      "replay": "Replay animation",
+      "rangeLabel": "{start} to {end}",
+      "imagesDescription": "{range} · one dot per account-time-zone day",
+      "imagesSummary": "{value} successful images were generated in this range.",
+      "creditsDescription": "{range} · one hairline per day of non-negative net credit usage",
+      "creditsSummary": "{value} net credits were consumed in this range.",
+      "videosDescription": "{range} · currently showing {unit}",
+      "videosSummary": "Current series total: {value} {unit}.",
+      "compositionDescription": "{range} · each dot represents one percentage point of successful tasks",
+      "compositionSummary": "{images} successful image tasks and {videos} successful video tasks.",
+      "compositionEmpty": "No successful tasks in this range",
+      "videoMode": {
+        "label": "Video trend measure",
+        "count": "video count",
+        "seconds": "video seconds"
+      },
+      "taskType": {
+        "image": "Image tasks",
+        "video": "Video tasks"
+      },
+      "table": {
+        "show": "View detailed data",
+        "caption": "Equivalent data table for the {metric} chart",
+        "date": "Date",
+        "images": "Images",
+        "credits": "Net credits",
+        "videos": "Videos",
+        "seconds": "Video seconds",
+        "taskType": "Task type",
+        "tasks": "Tasks",
+        "percent": "Share"
+      }
     }
   },
   "Settings": {
