@@ -29,6 +29,7 @@
     "./announcements/actions": "./src/announcements/actions.ts",
     "./announcements/schemas": "./src/announcements/schemas.ts",
     "./analytics/contracts": "./src/analytics/contracts.ts",
+    "./analytics/data-dashboard-range": "./src/analytics/data-dashboard-range.ts",
     "./analytics/range": "./src/analytics/range.ts",
     "./analytics/series": "./src/analytics/series.ts",
     "./analytics/output-count": "./src/analytics/output-count.ts",
