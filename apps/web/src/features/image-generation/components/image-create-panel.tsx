@@ -357,8 +357,15 @@ export function ImageCreatePanel({
       ),
     [mode, selectedGroup]
   );
+  // 生图页默认选中 gpt-image-2（若当前分组可用），否则回退分组首个可用模型。
+  // WHY: 模型按 ID 字典序排列，gpt-image-1.5 会排在 gpt-image-2 前面，直接取首项
+  // 会默认选中 gpt-image-1.5；页面默认选中是页面层决策，不绑定系统回退常量。
   const [model, setModel] = useState(
-    initialSelection?.modelId ?? availableModels[0]?.id ?? DEFAULT_IMAGE_MODEL
+    initialSelection?.modelId ??
+      (availableModels.some((item) => item.id === "gpt-image-2")
+        ? "gpt-image-2"
+        : availableModels[0]?.id) ??
+      DEFAULT_IMAGE_MODEL
   );
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState(AUTO_IMAGE_SIZE);
