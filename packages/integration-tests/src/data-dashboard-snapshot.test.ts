@@ -277,4 +277,73 @@ describe("data dashboard snapshot", () => {
       )
     ).rejects.toMatchObject({ code: "not_ready" });
   });
+
+  it("发现范围外计费 operation 时拒绝积分口径漂移", async () => {
+    if (!ownerPool) throw new Error("集成测试数据库尚未初始化");
+    const client = await ownerPool.connect();
+    try {
+      await client.query(`set search_path to "${fixtureSchemaName}", public`);
+      await client.query(`
+        update analytics_read_model_state
+        set status = 'ready'
+        where read_model in ('output_usage', 'credit_usage');
+        insert into generation (id, user_id, model, status, metadata, created_at)
+        values (
+          'image-drift',
+          'user-a',
+          'image-model',
+          'completed',
+          '{"mode":"generate"}',
+          '2000-01-01 05:00:00'
+        );
+        insert into user_output_usage_event (
+          output_kind,
+          source_task_id,
+          user_id,
+          operation_created_at,
+          image_count,
+          video_seconds
+        ) values (
+          'image',
+          'image-drift',
+          'user-a',
+          '2000-01-01 05:00:00',
+          1,
+          0
+        );
+        insert into credit_usage_operation (
+          user_id,
+          operation_type,
+          operation_id,
+          operation_created_at,
+          net_consumed
+        ) values (
+          'user-a',
+          'image_generation',
+          'image-drift',
+          '1999-12-31 23:00:00',
+          10
+        );
+      `);
+    } finally {
+      client.release();
+    }
+
+    const repository = createDataDashboardSnapshotRepository(
+      createPostgresTransactionDatabase(ownerPool, async () => undefined)
+    );
+    await expect(
+      loadDataDashboardSnapshot(
+        {
+          userId: "user-a",
+          timeZone: "UTC",
+          rangeInput: {
+            startDate: "2000-01-01",
+            endDate: "2000-01-01",
+          },
+        },
+        repository
+      )
+    ).rejects.toMatchObject({ code: "invalid_data" });
+  });
 });

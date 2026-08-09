@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildDataDashboardCreditBucketsSql,
   buildDataDashboardFailedTasksSql,
+  buildDataDashboardModelUsageSql,
   buildDataDashboardSnapshotHeaderSql,
   buildDataDashboardSuccessBucketsSql,
   createDataDashboardSnapshotRepository,
@@ -91,7 +92,9 @@ function createRepository(
     ...overrides,
   };
   const repository: DataDashboardSnapshotRepository = {
-    async withReadOnlySnapshot<T>(work: (value: DataDashboardSnapshotReader) => Promise<T>) {
+    async withReadOnlySnapshot<T>(
+      work: (value: DataDashboardSnapshotReader) => Promise<T>
+    ) {
       calls.push("transaction:start");
       try {
         return await work(reader);
@@ -154,9 +157,9 @@ describe("loadDataDashboardSnapshot", () => {
       videoSeconds: 5,
       creditsConsumed: 60,
     });
-    expect(result.buckets.slice(1).every((bucket) => bucket.imageCount === 0)).toBe(
-      true
-    );
+    expect(
+      result.buckets.slice(1).every((bucket) => bucket.imageCount === 0)
+    ).toBe(true);
     const expectedQuery = {
       userId: "user-a",
       start: new Date("2026-08-02T16:00:00.000Z"),
@@ -343,9 +346,7 @@ describe("loadDataDashboardSnapshot", () => {
       ]),
     });
     const modelDrift = createRepository({
-      readModelUsage: vi.fn(async () => [
-        { model: "only-one", taskCount: 1 },
-      ]),
+      readModelUsage: vi.fn(async () => [{ model: "only-one", taskCount: 1 }]),
     });
     const missingCreditBucket = createRepository({
       readCreditBuckets: vi.fn(async () => []),
@@ -430,18 +431,34 @@ describe("data dashboard production SQL", () => {
       timeZone: "Asia/Shanghai",
     };
     const dialect = new PgDialect();
-    const success = dialect.sqlToQuery(buildDataDashboardSuccessBucketsSql(input));
-    const credits = dialect.sqlToQuery(buildDataDashboardCreditBucketsSql(input));
+    const success = dialect.sqlToQuery(
+      buildDataDashboardSuccessBucketsSql(input)
+    );
+    const credits = dialect.sqlToQuery(
+      buildDataDashboardCreditBucketsSql(input)
+    );
+    const models = dialect.sqlToQuery(buildDataDashboardModelUsageSql(input));
     const failed = dialect.sqlToQuery(buildDataDashboardFailedTasksSql(input));
 
-    for (const query of [success, credits, failed]) {
+    for (const query of [success, credits, models, failed]) {
       expect(query.params).toContain("user-a");
       expect(query.params).toContain(input.start.toISOString());
       expect(query.params).toContain(input.end.toISOString());
     }
     expect(credits.sql).toContain('from "user_output_usage_event"');
-    expect(credits.sql).toContain('left join "credit_usage_operation"');
+    expect(credits.sql).toContain(
+      'left join "credit_usage_operation" as credit_lookup'
+    );
+    expect(credits.sql).toContain("credit_lookup.operation_created_at >=");
+    expect(credits.sql).toContain("exists");
+    expect(credits.sql).toContain(
+      'from "credit_usage_operation" as mismatch_lookup'
+    );
     expect(credits.sql).not.toContain("credits_transaction");
+    expect(models.sql).toContain('left join "generation"');
+    expect(models.sql).toContain('left join "video_generation"');
+    expect(models.sql).toContain('"generation"."created_at" >=');
+    expect(models.sql).toContain('"video_generation"."created_at" >=');
     expect(failed.sql).toContain("generate");
     expect(failed.sql).toContain("edit");
   });

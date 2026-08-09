@@ -21,7 +21,7 @@ import {
   type ResolvedDataDashboardRange,
   resolveDataDashboardRange,
 } from "@repo/shared/analytics/data-dashboard-range";
-import { sql, type SQL } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { extractExecuteRows } from "@/server/database-result";
 
@@ -236,11 +236,10 @@ export function buildDataDashboardSuccessBucketsSql(
   return sql`
     with scoped_success as (
       select
-        to_char(
+        (
           (${userOutputUsageEvent.operationCreatedAt} at time zone 'UTC')
-            at time zone ${input.timeZone},
-          'YYYY-MM-DD'
-        ) as bucket_date,
+            at time zone ${input.timeZone}
+        )::date as bucket_date,
         ${userOutputUsageEvent.outputKind} as output_kind,
         ${userOutputUsageEvent.imageCount} as image_count,
         ${userOutputUsageEvent.videoSeconds} as video_seconds
@@ -250,7 +249,7 @@ export function buildDataDashboardSuccessBucketsSql(
         and ${userOutputUsageEvent.operationCreatedAt} < ${end}
     )
     select
-      bucket_date,
+      to_char(bucket_date, 'YYYY-MM-DD') as bucket_date,
       coalesce(sum(image_count), 0) as image_count,
       count(*) filter (where output_kind = 'image') as image_task_count,
       count(*) filter (where output_kind = 'video') as video_count,
@@ -275,34 +274,50 @@ export function buildDataDashboardCreditBucketsSql(
   return sql`
     with scoped_credits as (
       select
-        to_char(
+        (
           (${userOutputUsageEvent.operationCreatedAt} at time zone 'UTC')
-            at time zone ${input.timeZone},
-          'YYYY-MM-DD'
-        ) as bucket_date,
-        coalesce(${creditUsageOperation.netConsumed}, 0) as net_consumed,
+            at time zone ${input.timeZone}
+        )::date as bucket_date,
+        coalesce(credit_lookup.net_consumed, 0) as net_consumed,
         case
-          when ${creditUsageOperation.operationId} is not null
-            and ${creditUsageOperation.operationCreatedAt}
+          when credit_lookup.operation_id is not null
+            and credit_lookup.operation_created_at
               <> ${userOutputUsageEvent.operationCreatedAt}
-          then 1 else 0
+          then 1
+          when credit_lookup.operation_id is null
+            and exists (
+              select 1
+              from ${creditUsageOperation} as mismatch_lookup
+              where mismatch_lookup.user_id = ${userOutputUsageEvent.userId}
+                and mismatch_lookup.operation_id
+                  = ${userOutputUsageEvent.sourceTaskId}
+                and mismatch_lookup.operation_type = case
+                  when ${userOutputUsageEvent.outputKind} = 'image'
+                    then 'image_generation'
+                  else 'video_generation'
+                end
+            )
+          then 1
+          else 0
         end as operation_created_at_mismatch
       from ${userOutputUsageEvent}
-      left join ${creditUsageOperation}
-        on ${creditUsageOperation.userId} = ${userOutputUsageEvent.userId}
-        and ${creditUsageOperation.operationId}
+      left join ${creditUsageOperation} as credit_lookup
+        on credit_lookup.user_id = ${userOutputUsageEvent.userId}
+        and credit_lookup.operation_id
           = ${userOutputUsageEvent.sourceTaskId}
-        and ${creditUsageOperation.operationType} = case
+        and credit_lookup.operation_type = case
           when ${userOutputUsageEvent.outputKind} = 'image'
             then 'image_generation'
           else 'video_generation'
         end
+        and credit_lookup.operation_created_at >= ${start}
+        and credit_lookup.operation_created_at < ${end}
       where ${userOutputUsageEvent.userId} = ${input.userId}
         and ${userOutputUsageEvent.operationCreatedAt} >= ${start}
         and ${userOutputUsageEvent.operationCreatedAt} < ${end}
     )
     select
-      bucket_date,
+      to_char(bucket_date, 'YYYY-MM-DD') as bucket_date,
       coalesce(sum(net_consumed), 0) as credits_consumed,
       coalesce(sum(operation_created_at_mismatch), 0)
         as operation_created_at_mismatch_count
@@ -323,6 +338,10 @@ export function buildDataDashboardModelUsageSql(
 ): SQL {
   const start = sql.param(input.start, userOutputUsageEvent.operationCreatedAt);
   const end = sql.param(input.end, userOutputUsageEvent.operationCreatedAt);
+  const imageStart = sql.param(input.start, generation.createdAt);
+  const imageEnd = sql.param(input.end, generation.createdAt);
+  const videoStart = sql.param(input.start, videoGeneration.createdAt);
+  const videoEnd = sql.param(input.end, videoGeneration.createdAt);
   return sql`
     select
       coalesce(
@@ -339,10 +358,14 @@ export function buildDataDashboardModelUsageSql(
       on ${userOutputUsageEvent.outputKind} = 'image'
       and ${userOutputUsageEvent.sourceTaskId} = ${generation.id}
       and ${userOutputUsageEvent.userId} = ${generation.userId}
+      and ${generation.createdAt} >= ${imageStart}
+      and ${generation.createdAt} < ${imageEnd}
     left join ${videoGeneration}
       on ${userOutputUsageEvent.outputKind} = 'video'
       and ${userOutputUsageEvent.sourceTaskId} = ${videoGeneration.id}
       and ${userOutputUsageEvent.userId} = ${videoGeneration.userId}
+      and ${videoGeneration.createdAt} >= ${videoStart}
+      and ${videoGeneration.createdAt} < ${videoEnd}
     where ${userOutputUsageEvent.userId} = ${input.userId}
       and ${userOutputUsageEvent.operationCreatedAt} >= ${start}
       and ${userOutputUsageEvent.operationCreatedAt} < ${end}
@@ -410,10 +433,7 @@ async function readSnapshotHeader(
     await execute(buildDataDashboardSnapshotHeaderSql())
   );
   if (!rawRow) {
-    throw new DataDashboardServiceError(
-      "invalid_data",
-      "数据看板快照头缺失"
-    );
+    throw new DataDashboardServiceError("invalid_data", "数据看板快照头缺失");
   }
   const row = snapshotHeaderRowSchema.parse(rawRow);
   return {
@@ -465,8 +485,7 @@ async function readCreditBuckets(
     .map((row) => ({
       date: row.bucket_date,
       creditsConsumed: row.credits_consumed,
-      operationCreatedAtMismatchCount:
-        row.operation_created_at_mismatch_count,
+      operationCreatedAtMismatchCount: row.operation_created_at_mismatch_count,
     }));
 }
 
@@ -507,7 +526,9 @@ async function readFailedTasks(
 }
 
 /** 用同一个 transaction execute 构造全部读取方法，防止查询逃逸到全局连接。 */
-function createSnapshotReader(execute: ExecuteSql): DataDashboardSnapshotReader {
+function createSnapshotReader(
+  execute: ExecuteSql
+): DataDashboardSnapshotReader {
   return {
     readSnapshotHeader: () => readSnapshotHeader(execute),
     readSuccessBuckets: (input) => readSuccessBuckets(execute, input),
@@ -591,16 +612,10 @@ function assertDashboardReadModelsReady(
     header.creditUsage?.version !== 1 ||
     header.creditUsage.status !== "ready"
   ) {
-    throw new DataDashboardServiceError(
-      "not_ready",
-      "数据看板统计仍在准备中"
-    );
+    throw new DataDashboardServiceError("not_ready", "数据看板统计仍在准备中");
   }
   if (Number.isNaN(header.asOf.getTime())) {
-    throw new DataDashboardServiceError(
-      "invalid_data",
-      "数据看板快照时间无效"
-    );
+    throw new DataDashboardServiceError("invalid_data", "数据看板快照时间无效");
   }
 }
 
@@ -625,10 +640,7 @@ function indexSuccessBuckets(
         "图片任务数"
       ),
       videoCount: requireNonnegativeInteger(row.videoCount, "视频任务数"),
-      videoSeconds: requireNonnegativeInteger(
-        row.videoSeconds,
-        "视频秒数"
-      ),
+      videoSeconds: requireNonnegativeInteger(row.videoSeconds, "视频秒数"),
     };
     if (normalized.imageTaskCount > normalized.imageCount) {
       throw new DataDashboardServiceError(
@@ -772,8 +784,7 @@ function sumCredits(buckets: readonly DataDashboardBucket[]): number {
  */
 export async function loadDataDashboardSnapshot(
   input: LoadDataDashboardSnapshotInput,
-  repository: DataDashboardSnapshotRepository =
-    databaseDataDashboardSnapshotRepository
+  repository: DataDashboardSnapshotRepository = databaseDataDashboardSnapshotRepository
 ): Promise<DataDashboardOutput> {
   return repository.withReadOnlySnapshot(async (reader) => {
     try {
@@ -864,8 +875,7 @@ export async function loadDataDashboardSnapshot(
             rate: terminal === 0 ? null : succeeded / terminal,
           },
           activeDays: buckets.filter(
-            (bucket) =>
-              bucket.imageTaskCount > 0 || bucket.videoCount > 0
+            (bucket) => bucket.imageTaskCount > 0 || bucket.videoCount > 0
           ).length,
           mostUsedModel: normalizeModelUsage(modelRows, succeeded),
         },
