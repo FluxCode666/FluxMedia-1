@@ -69,6 +69,18 @@
 订单范围只包含 `payment_order` 中的 `credit_top_up | credit_package`，按
 `created_at DESC, id DESC` 稳定排序；面向用户的状态与统一支付结果页保持一致。
 
+## 用户数据看板 operation
+
+| Operation | Principal | 口径与传输边界 |
+| --- | --- | --- |
+| `analytics.getMyDataDashboard` | 仅当前登录 `user` Principal | 只读、自然幂等、无副作用；输入不接受 `userId`，返回账号有效时区中最多 30 个自然日的同一 `asOf` 整页快照 |
+
+Web 首屏与刷新 Server Action 都经 UOL 调用该 operation；binding 在聚合事务前使用
+`analytics-dashboard:<userId>` 和 `global` 桶限流。readiness、数据库时钟、日期范围、
+成功产出、净积分、模型与失败任务全部位于同一只读 repeatable-read 快照。首版不加入
+User MCP 白名单，也不投影到 Admin MCP；站内 Agent 未来只能使用真实 user Principal
+进程内调用。
+
 ## 媒体传输映射
 
 | 传输 | operation |
