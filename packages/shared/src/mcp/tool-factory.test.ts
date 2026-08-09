@@ -167,6 +167,19 @@ describe("MCP tool factories", () => {
     expect(buildUserMcpTools(apiKeyPrincipal)).toHaveLength(0);
   });
 
+  it("keeps the user data dashboard inside UOL without projecting it to MCP", () => {
+    registerOperation({
+      name: "analytics.getMyDataDashboard",
+      domain: "analytics",
+      access: { kind: "user" },
+      readOnly: true,
+    });
+    bindExecute("analytics.getMyDataDashboard", async () => ({ ok: true }));
+
+    expect(buildUserMcpTools(apiKeyPrincipal)).toHaveLength(0);
+    expect(buildAdminMcpTools(adminPrincipal)).toHaveLength(0);
+  });
+
   it("keeps all allowed media operation identities principal-only", () => {
     expect(
       enrichUserMcpToolArguments(

@@ -133,6 +133,7 @@ describe("POST /api/mcp/user media allowlist isolation", () => {
         "subscription.createCheckout",
         "analytics.getMyUsageSummary",
         "analytics.getMyUsageTrends",
+        "analytics.getMyDataDashboard",
       ])
     );
   });
@@ -214,6 +215,7 @@ describe("POST /api/mcp/user media allowlist isolation", () => {
     "subscription.createCheckout",
     "analytics.getMyUsageSummary",
     "analytics.getMyUsageTrends",
+    "analytics.getMyDataDashboard",
   ])("returns method-not-found without invoking %s", async (name) => {
     const response = await POST(
       createRpcRequest("tools/call", { name, arguments: {} })
