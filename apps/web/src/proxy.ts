@@ -21,6 +21,19 @@ const VERSIONED_ASSET_PREFIX_PATTERN =
   /^\/(?:gpt2-assets|next-assets)-[^/]+(\/_next\/.*)$/;
 
 /**
+ * 判断是否为根级推广短链。
+ *
+ * 推广短链由 `/r/[code]` Route Handler 直接处理，不属于本地化页面树；如果交给
+ * next-intl，它会先补上语言前缀，随后落到不存在的 `/{locale}/r/[code]` 页面并返回 404。
+ *
+ * @param pathname - 请求路径，不包含查询字符串。
+ * @returns 路径是否属于推广短链命名空间。
+ */
+function isReferralShortLinkPath(pathname: string) {
+  return pathname === "/r" || pathname.startsWith("/r/");
+}
+
+/**
  * 为认证相关响应设置禁止共享缓存的响应头。
  *
  * @param response - 待修改的 Next.js 响应。
@@ -125,6 +138,11 @@ export async function proxy(request: NextRequest) {
       return response;
     }
 
+    return NextResponse.next();
+  }
+
+  // 根级推广短链必须让对应 Route Handler 直接接管，不能被 next-intl 补语言前缀。
+  if (isReferralShortLinkPath(pathname)) {
     return NextResponse.next();
   }
 
