@@ -6,7 +6,10 @@
  * 使用方是管理员设置页面；超管可查看系统设置和模型配置，其他后台角色仅进入自身获准的
  * 后端池入口。各业务面板自行通过服务端权限再次校验，本组件不作为授权边界。
  */
-import { SystemSettingsPanel } from "@repo/shared/system-settings/components";
+import {
+  ReferralRewardSettingsPanel,
+  SystemSettingsPanel,
+} from "@repo/shared/system-settings/components";
 import {
   Tabs,
   TabsContent,
@@ -28,7 +31,11 @@ type AdminSettingsTabsProps = {
   imageBackendPoolReadOnly: boolean;
 };
 
-type AdminSettingsTab = "system" | "model-configuration" | "image-backends";
+type AdminSettingsTab =
+  | "system"
+  | "referrals"
+  | "model-configuration"
+  | "image-backends";
 
 /**
  * 按页面服务端交付的超管能力渲染并惰性挂载管理页签。
@@ -53,10 +60,11 @@ export function AdminSettingsTabs({
   );
 
   const handleTabChange = (value: string) => {
-    // 非超管禁止进入系统设置和模型配置，强制回落到后端池。
+    // 非超管禁止进入系统设置、推广奖励和模型配置，强制回落到后端池。
     const requestedTab = value as AdminSettingsTab;
     const nextTab: AdminSettingsTab =
       (value === "system" && canManageSystemSettings) ||
+      (value === "referrals" && canManageSystemSettings) ||
       (value === "model-configuration" && canViewModelConfiguration)
         ? requestedTab
         : "image-backends";
@@ -78,6 +86,14 @@ export function AdminSettingsTabs({
             className="rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:text-foreground data-[state=active]:shadow-none"
           >
             系统设置
+          </TabsTrigger>
+        ) : null}
+        {canManageSystemSettings ? (
+          <TabsTrigger
+            value="referrals"
+            className="rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:text-foreground data-[state=active]:shadow-none"
+          >
+            推广奖励
           </TabsTrigger>
         ) : null}
         {canViewModelConfiguration ? (
@@ -104,6 +120,13 @@ export function AdminSettingsTabs({
                 <AdobeCredentialNotificationSettingsCard disabled={false} />
               }
             />
+          ) : null}
+        </TabsContent>
+      ) : null}
+      {canManageSystemSettings ? (
+        <TabsContent value="referrals" className="mt-6">
+          {mountedTabs.has("referrals") ? (
+            <ReferralRewardSettingsPanel />
           ) : null}
         </TabsContent>
       ) : null}

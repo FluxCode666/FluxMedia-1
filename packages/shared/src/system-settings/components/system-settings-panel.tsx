@@ -30,12 +30,7 @@ import { useAction } from "next-safe-action/hooks";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  REFERRAL_REWARD_CONFIG_SETTING_KEY,
-  REFERRAL_REWARD_FIXED_MAX,
-  REFERRAL_REWARD_PERCENTAGE_MAX,
-  type ReferralRewardMode,
-} from "../../referrals/config";
+import { REFERRAL_REWARD_CONFIG_SETTING_KEY } from "../../referrals/config";
 import { formatDateInTimeZone } from "../../time-zone";
 
 import {
@@ -96,14 +91,6 @@ type CreditTopUpConfigDraft = {
   extraCurrencies: unknown[];
 };
 
-type ReferralRewardDraft = {
-  enabled: boolean;
-  inviterMode: ReferralRewardMode;
-  inviterValue: number;
-  inviteeMode: ReferralRewardMode;
-  inviteeValue: number;
-};
-
 function formatJsonExample(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
@@ -126,25 +113,6 @@ function parseJsonDraft(value: DraftValue) {
 function numberValue(value: unknown, fallback: number) {
   const numeric = typeof value === "number" ? value : Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
-}
-
-/** 规范化奖励表单数值，允许 0 并按当前模式截断到配置层相同上限。 */
-function referralRewardValue(
-  value: unknown,
-  mode: ReferralRewardMode,
-  fallback: number
-) {
-  const numeric = typeof value === "number" ? value : Number(value);
-  const max =
-    mode === "fixed"
-      ? REFERRAL_REWARD_FIXED_MAX
-      : REFERRAL_REWARD_PERCENTAGE_MAX;
-  const safeFallback = Number.isFinite(fallback)
-    ? Math.min(Math.max(fallback, 0), max)
-    : 0;
-  return Number.isFinite(numeric)
-    ? Math.min(Math.max(numeric, 0), max)
-    : safeFallback;
 }
 
 function stringValue(value: unknown, fallback = "") {
@@ -244,148 +212,6 @@ function compactCreditTopUpConfigDraft(draft: CreditTopUpConfigDraft) {
       ...draft.extraCurrencies,
     ],
   };
-}
-
-/** 将推广 JSON 规范为管理员可编辑表单，坏值回退示例而不让整页崩溃。 */
-function normalizeReferralRewardDraft(
-  rawValue: DraftValue,
-  fallbackValue: unknown
-): ReferralRewardDraft {
-  const parsedRaw = parseJsonDraft(rawValue);
-  const raw = isRecord(parsedRaw) ? parsedRaw : {};
-  const fallback = isRecord(fallbackValue) ? fallbackValue : {};
-  const rawInviter = isRecord(raw.inviter) ? raw.inviter : {};
-  const rawInvitee = isRecord(raw.invitee) ? raw.invitee : {};
-  const fallbackInviter = isRecord(fallback.inviter) ? fallback.inviter : {};
-  const fallbackInvitee = isRecord(fallback.invitee) ? fallback.invitee : {};
-  const inviterMode: ReferralRewardMode =
-    rawInviter.mode === "fixed" || rawInviter.mode === "percentage"
-      ? rawInviter.mode
-      : fallbackInviter.mode === "fixed"
-        ? "fixed"
-        : "percentage";
-  const inviteeMode: ReferralRewardMode =
-    rawInvitee.mode === "fixed" || rawInvitee.mode === "percentage"
-      ? rawInvitee.mode
-      : fallbackInvitee.mode === "fixed"
-        ? "fixed"
-        : "percentage";
-  return {
-    enabled: booleanValue(raw.enabled, booleanValue(fallback.enabled, false)),
-    inviterMode,
-    inviterValue: referralRewardValue(
-      rawInviter.value,
-      inviterMode,
-      referralRewardValue(
-        fallbackInviter.value,
-        inviterMode,
-        inviterMode === "fixed" ? 0 : 10
-      )
-    ),
-    inviteeMode,
-    inviteeValue: referralRewardValue(
-      rawInvitee.value,
-      inviteeMode,
-      referralRewardValue(
-        fallbackInvitee.value,
-        inviteeMode,
-        inviteeMode === "fixed" ? 0 : 10
-      )
-    ),
-  };
-}
-
-function ReferralRewardConfigInput({
-  value,
-  fallbackValue,
-  disabled,
-  onChange,
-}: {
-  value: DraftValue;
-  fallbackValue: unknown;
-  disabled: boolean;
-  onChange: (value: DraftValue) => void;
-}) {
-  const draft = normalizeReferralRewardDraft(value, fallbackValue);
-  const update = (next: Partial<ReferralRewardDraft>) => {
-    const merged = { ...draft, ...next };
-    onChange(
-      JSON.stringify(
-        {
-          enabled: merged.enabled,
-          inviter: { mode: merged.inviterMode, value: merged.inviterValue },
-          invitee: { mode: merged.inviteeMode, value: merged.inviteeValue },
-        },
-        null,
-        2
-      )
-    );
-  };
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm">
-        <Switch
-          checked={draft.enabled}
-          disabled={disabled}
-          onCheckedChange={(enabled) => update({ enabled })}
-        />
-        启用推广首充双方奖励
-      </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {(
-          [
-            ["邀请人奖励", "inviterMode", "inviterValue"],
-            ["新人奖励", "inviteeMode", "inviteeValue"],
-          ] as const
-        ).map(([label, modeKey, valueKey]) => (
-          <div key={label} className="space-y-3 rounded-md border p-4">
-            <Label>{label}</Label>
-            <Select
-              value={draft[modeKey]}
-              disabled={disabled}
-              onValueChange={(mode: ReferralRewardMode) =>
-                update({ [modeKey]: mode })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="percentage">按首充积分比例</SelectItem>
-                <SelectItem value="fixed">固定积分</SelectItem>
-              </SelectContent>
-            </Select>
-            <div className="space-y-1.5">
-              <Label className="text-xs">
-                {draft[modeKey] === "percentage" ? "比例（%）" : "积分数量"}
-              </Label>
-              <Input
-                type="number"
-                min={0}
-                max={
-                  draft[modeKey] === "percentage"
-                    ? REFERRAL_REWARD_PERCENTAGE_MAX
-                    : REFERRAL_REWARD_FIXED_MAX
-                }
-                step="0.01"
-                disabled={disabled}
-                value={draft[valueKey]}
-                onChange={(event) =>
-                  update({
-                    [valueKey]: referralRewardValue(
-                      event.target.value,
-                      draft[modeKey],
-                      draft[valueKey]
-                    ),
-                  })
-                }
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function getRawCreditPackages(value: unknown) {
@@ -579,17 +405,6 @@ function SettingInput({
   if (setting.key === "CREDIT_TOP_UP_CONFIG") {
     return (
       <CreditTopUpConfigInput
-        value={value}
-        fallbackValue={setting.exampleValue}
-        disabled={disabled}
-        onChange={onChange}
-      />
-    );
-  }
-
-  if (setting.key === REFERRAL_REWARD_CONFIG_SETTING_KEY) {
-    return (
-      <ReferralRewardConfigInput
         value={value}
         fallbackValue={setting.exampleValue}
         disabled={disabled}
@@ -1173,9 +988,10 @@ export function SystemSettingsPanel({
       map.set(category.id, []);
     }
     for (const setting of settings) {
-      // 专用 operation 管理的配置由独立卡片负责，不能进入通用 grid 或批量保存。
+      // 专用 operation 或独立页签管理的配置由专用面板负责，不能进入通用 grid 或批量保存。
       if (
         setting.managedByDedicatedOperation ||
+        setting.key === REFERRAL_REWARD_CONFIG_SETTING_KEY ||
         setting.key === "CONTENT_MODERATION_BLOCK_RISK_LEVEL"
       ) {
         continue;
@@ -1192,9 +1008,10 @@ export function SystemSettingsPanel({
     const payload: SettingUpdate[] = [];
     try {
       for (const setting of settings) {
-        // 双重排除专用治理键：即使服务端快照标记缺失，也不能从批量入口提交。
+        // 双重排除专用治理键和独立页签配置：即使服务端快照标记缺失，也不能从批量入口提交。
         if (
           setting.managedByDedicatedOperation ||
+          setting.key === REFERRAL_REWARD_CONFIG_SETTING_KEY ||
           setting.key === "CONTENT_MODERATION_BLOCK_RISK_LEVEL"
         ) {
           continue;
@@ -1361,7 +1178,6 @@ export function SystemSettingsPanel({
                     className={
                       setting.key === "CREDIT_PACKAGE_MATRIX" ||
                       setting.key === "CREDIT_TOP_UP_CONFIG" ||
-                      setting.key === REFERRAL_REWARD_CONFIG_SETTING_KEY ||
                       setting.key === "DASHBOARD_SUPPORT_CONFIG" ||
                       setting.key === "PAGINATION_PAGE_SIZE_OPTIONS"
                         ? "rounded-lg lg:col-span-2"
