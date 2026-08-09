@@ -15,6 +15,7 @@ import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/
 type CapturedSimplePanelProps = {
   error?: string | null;
   mode?: string;
+  model?: string;
   onPromptChange?: (value: string) => void;
   onRemoveSourceImage?: (index: number) => void;
   onSourceImagesChange?: (files: FileList | null) => void;
@@ -128,6 +129,7 @@ function mountImageCreatePanel(
       imageUrl: string | null;
       prompt: string;
     }>;
+    catalog?: ImageGenerationModelCatalog;
   } = {},
   reference: typeof initialReference | null = initialReference
 ): void {
@@ -141,7 +143,7 @@ function mountImageCreatePanel(
         null,
         createElement(ImageCreatePanel, {
           balance: 100,
-          catalog,
+          catalog: options.catalog ?? catalog,
           imageModelPricing: {
             version: 1,
             byModel: {
@@ -203,6 +205,36 @@ afterEach(() => {
 });
 
 describe("ImageCreatePanel", () => {
+  it("默认分组同时含 gpt-image-1.5 与 gpt-image-2 时首选 gpt-image-2", () => {
+    // WHY: 模型在分组内按字典序排列，gpt-image-1.5 会排在 gpt-image-2 前面；
+    // 生图页默认选中固定为 gpt-image-2，而非字典序首项。
+    const multiModelCatalog: ImageGenerationModelCatalog = {
+      groups: [
+        {
+          id: "group-1",
+          name: "默认分组",
+          isDefault: true,
+          models: [
+            {
+              id: "gpt-image-1.5",
+              capabilities: { generate: true, edit: true, mask: false },
+            },
+            {
+              id: "gpt-image-2",
+              capabilities: { generate: true, edit: true, mask: false },
+            },
+          ],
+        },
+      ],
+    };
+    mountImageCreatePanel(
+      () => {},
+      { catalog: multiModelCatalog },
+      null
+    );
+    expect(testHarness.panelProps?.model).toBe("gpt-image-2");
+  });
+
   it("生成成功后立即把新图片加入最近图片首位", async () => {
     const generationId = "generation-new";
     const imageUrl = "/api/storage/generations/user/new.png?sig=abc&exp=123";
