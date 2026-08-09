@@ -5,6 +5,7 @@
  * 本地化注册页；不会据推广码读取用户身份或执行奖励发放。
  */
 
+import { resolvePublicAppUrl } from "@repo/shared/config";
 import { normalizeReferralCode } from "@repo/shared/referrals/contract";
 import { REFERRAL_CODE_COOKIE } from "@repo/shared/referrals/cookie";
 import { NextResponse } from "next/server";
@@ -28,7 +29,12 @@ export async function GET(
       : request.headers.get("accept-language")?.toLowerCase().startsWith("en")
         ? "en"
         : "zh";
-  const url = new URL(`/${locale}/sign-up`, request.url);
+  const redirectOrigin = resolvePublicAppUrl([
+    process.env.BETTER_AUTH_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+    request.url,
+  ]);
+  const url = new URL(`/${locale}/sign-up`, `${redirectOrigin}/`);
   const response = NextResponse.redirect(url, 303);
   if (code) {
     response.cookies.set(REFERRAL_CODE_COOKIE, code, {
