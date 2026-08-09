@@ -119,6 +119,7 @@
     "./uol/errors": "./src/uol/errors.ts",
     "./uol/principal": "./src/uol/principal.ts",
     "./uol/operations": "./src/uol/operations/index.ts",
+    "./uol/operations/analytics": "./src/uol/operations/analytics.ts",
     "./uol/operations/image-generation": "./src/uol/operations/image-generation.ts",
     "./uol/operations/media-limits": "./src/uol/operations/media-limits.ts",
     "./uol/operations/payment": "./src/uol/operations/payment.ts",
