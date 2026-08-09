@@ -7,6 +7,7 @@
  */
 import {
   BookOpen,
+  ChartNoAxesCombined,
   Clock,
   GalleryHorizontalEnd,
   Headset,
@@ -93,6 +94,11 @@ export const dashboardNav: NavGroup[] = [
         title: "Dashboard",
         href: "/dashboard",
         icon: LayoutDashboard,
+      },
+      {
+        title: "Data dashboard",
+        href: "/dashboard/analytics",
+        icon: ChartNoAxesCombined,
       },
       {
         title: "Gallery",

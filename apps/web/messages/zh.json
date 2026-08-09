@@ -433,6 +433,7 @@
   "Dashboard": {
     "nav": {
       "dashboard": "控制台",
+      "analytics": "数据看板",
       "create": "创作",
       "generate": "生成",
       "gallery": "图库",
@@ -459,6 +460,7 @@
     },
     "pages": {
       "dashboard": "控制台",
+      "analytics": "数据看板",
       "create": "创作",
       "generate": "生成",
       "gallery": "图库",
@@ -624,6 +626,82 @@
       "loadError": "订单列表加载失败",
       "loadErrorDescription": "请检查筛选条件后重试。",
       "retry": "重试"
+    }
+  },
+  "DataDashboard": {
+    "title": "数据看板",
+    "description": "在同一账号时区日期范围内查看成功产出、净积分用量和逐日活跃情况。",
+    "snapshotMeta": "账号时区：{timeZone} · 更新于 {asOf}",
+    "date": {
+      "select": "选择日期范围",
+      "limit": "最多选择首尾包含的 {days} 个自然日。",
+      "quickRanges": "快捷范围",
+      "lastDays": {
+        "7": "近 7 天",
+        "30": "近 30 天"
+      },
+      "unapplied": "当前草稿范围尚未应用。",
+      "selectedDays": "已选择 {days} 天",
+      "apply": "应用范围",
+      "error": {
+        "incomplete": "请选择完整的开始和结束日期。",
+        "invalid": "请选择有效的自然日。",
+        "reversed": "结束日期不能早于开始日期。",
+        "future": "不能选择未来日期。",
+        "too_long": "日期范围不能超过 30 个自然日。"
+      }
+    },
+    "metrics": {
+      "title": "范围概览",
+      "images": "生成图片数",
+      "videoSeconds": "视频秒数",
+      "secondsValue": "{value} 秒",
+      "credits": "积分消耗",
+      "successRate": "成功率",
+      "activeDays": "活跃天数",
+      "mostUsedModel": "常用模型",
+      "noData": "暂无数据"
+    },
+    "methodology": {
+      "trigger": "数据口径",
+      "title": "指标如何统计",
+      "description": "所有指标都使用已应用的账号时区日期范围和同一个数据库快照。",
+      "items": {
+        "images": "只统计成功图片产物；一次任务产出多张图片时按实际产物数量累计。",
+        "videoSeconds": "累计成功视频产物的实际时长。",
+        "credits": "只显示成功产物关联且扣除关联退款后的非负净积分消耗。",
+        "successRate": "按任务创建日期，以成功媒体任务数除以成功和失败终态媒体任务数。",
+        "activeDays": "统计至少有一个成功图片或视频任务的账号时区自然日。",
+        "mostUsedModel": "按成功任务数排序；并列时按稳定模型 ID 顺序选择。"
+      }
+    },
+    "state": {
+      "loadingTitle": "正在加载数据看板",
+      "loadingDescription": "正在按同一日期范围刷新全部指标和图表。",
+      "unavailableTitle": "数据看板暂不可用",
+      "invalidDeepLink": "请求的日期范围无效，已显示默认近 7 天。",
+      "updated": "数据看板已更新。",
+      "failure": {
+        "validation_error": "该日期范围无法应用，原有数据保持不变。",
+        "not_ready": "统计数据仍在准备中，请稍后重试。",
+        "rate_limited": "刷新过于频繁，请稍后重试。",
+        "timeout": "查询超时，原有数据保持不变。",
+        "unauthenticated": "登录会话已过期，请重新登录后刷新。",
+        "unavailable": "数据看板加载失败，请重试。"
+      }
+    },
+    "actions": {
+      "refresh": "刷新",
+      "retry": "重试",
+      "signIn": "重新登录"
+    },
+    "charts": {
+      "title": "逐日报告",
+      "credits": "积分净用量",
+      "images": "成功图片数",
+      "videos": "成功视频",
+      "composition": "成功任务构成",
+      "preparing": "图表准备中"
     }
   },
   "Settings": {

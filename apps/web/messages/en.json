@@ -433,6 +433,7 @@
   "Dashboard": {
     "nav": {
       "dashboard": "Dashboard",
+      "analytics": "Data dashboard",
       "create": "Create",
       "generate": "Generate",
       "gallery": "Gallery",
@@ -459,6 +460,7 @@
     },
     "pages": {
       "dashboard": "Dashboard",
+      "analytics": "Data dashboard",
       "create": "Create",
       "generate": "Generate",
       "gallery": "Gallery",
@@ -624,6 +626,82 @@
       "loadError": "Order list could not be loaded",
       "loadErrorDescription": "Check the filters and try again.",
       "retry": "Retry"
+    }
+  },
+  "DataDashboard": {
+    "title": "Data dashboard",
+    "description": "Review your successful media output, net credit usage, and daily activity within one account-time-zone date range.",
+    "snapshotMeta": "Account time zone: {timeZone} · Updated {asOf}",
+    "date": {
+      "select": "Select date range",
+      "limit": "Choose up to {days} calendar days, including both endpoints.",
+      "quickRanges": "Quick ranges",
+      "lastDays": {
+        "7": "Last 7 days",
+        "30": "Last 30 days"
+      },
+      "unapplied": "This draft range has not been applied.",
+      "selectedDays": "{days} days selected",
+      "apply": "Apply range",
+      "error": {
+        "incomplete": "Select both a start and end date.",
+        "invalid": "Choose valid calendar dates.",
+        "reversed": "The end date cannot be before the start date.",
+        "future": "Future dates are not available.",
+        "too_long": "The range cannot exceed 30 calendar days."
+      }
+    },
+    "metrics": {
+      "title": "Range overview",
+      "images": "Images generated",
+      "videoSeconds": "Video duration",
+      "secondsValue": "{value} sec",
+      "credits": "Credits consumed",
+      "successRate": "Success rate",
+      "activeDays": "Active days",
+      "mostUsedModel": "Most used model",
+      "noData": "No data"
+    },
+    "methodology": {
+      "trigger": "Data methodology",
+      "title": "How these metrics are calculated",
+      "description": "All metrics use the applied account-time-zone date range and the same database snapshot.",
+      "items": {
+        "images": "Counts successful image outputs. A task that produces multiple images contributes every output.",
+        "videoSeconds": "Sums the duration of successful video outputs.",
+        "credits": "Shows non-negative net credits linked to successful outputs after associated refunds.",
+        "successRate": "Successful media tasks divided by successful and failed terminal media tasks, grouped by task creation date.",
+        "activeDays": "Counts calendar days with at least one successful image or video task.",
+        "mostUsedModel": "Ranks models by successful task count; ties use the stable model ID order."
+      }
+    },
+    "state": {
+      "loadingTitle": "Loading dashboard",
+      "loadingDescription": "Refreshing all metrics and charts for one date range.",
+      "unavailableTitle": "Dashboard temporarily unavailable",
+      "invalidDeepLink": "The requested date range was invalid, so the default last 7 days is shown.",
+      "updated": "Dashboard updated.",
+      "failure": {
+        "validation_error": "That date range cannot be applied. Your previous data is unchanged.",
+        "not_ready": "Analytics data is still being prepared. Try again shortly.",
+        "rate_limited": "Too many refreshes were requested. Please wait and try again.",
+        "timeout": "The query timed out. Your previous data is unchanged.",
+        "unauthenticated": "Your session has expired. Sign in again to refresh this dashboard.",
+        "unavailable": "The dashboard could not be loaded. Please try again."
+      }
+    },
+    "actions": {
+      "refresh": "Refresh",
+      "retry": "Try again",
+      "signIn": "Sign in again"
+    },
+    "charts": {
+      "title": "Daily report",
+      "credits": "Net credit usage",
+      "images": "Successful images",
+      "videos": "Successful videos",
+      "composition": "Successful task mix",
+      "preparing": "Chart is preparing"
     }
   },
   "Settings": {
