@@ -698,9 +698,9 @@
     "charts": {
       "title": "逐日报告",
       "credits": "积分净用量",
-      "images": "成功图片数",
-      "videos": "成功视频",
-      "composition": "成功任务构成",
+      "images": "生图数量",
+      "videos": "视频",
+      "composition": "任务构成",
       "preparing": "图表准备中",
       "rangeLabel": "{start} 至 {end}",
       "imagesDescription": "{range} · 每日成功生成的图片数量",
