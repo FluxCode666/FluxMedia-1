@@ -702,17 +702,18 @@
       "videos": "Successful videos",
       "composition": "Successful task mix",
       "preparing": "Chart is preparing",
-      "replay": "Replay animation",
       "rangeLabel": "{start} to {end}",
-      "imagesDescription": "{range} · one dot per account-time-zone day",
+      "imagesDescription": "{range} · successful images generated each day",
       "imagesSummary": "{value} successful images were generated in this range.",
-      "creditsDescription": "{range} · one hairline per day of non-negative net credit usage",
+      "creditsDescription": "{range} · net credits consumed each day",
       "creditsSummary": "{value} net credits were consumed in this range.",
-      "videosDescription": "{range} · currently showing {unit}",
-      "videosSummary": "Current series total: {value} {unit}.",
-      "compositionDescription": "{range} · each dot represents one percentage point of successful tasks",
+      "videosDescription": "{range} · daily successful videos shown by {unit}",
+      "videosSummary": "Total {unit} in this range: {value}.",
+      "compositionDescription": "{range} · share of successful image and video tasks",
       "compositionSummary": "{images} successful image tasks and {videos} successful video tasks.",
       "compositionEmpty": "No successful tasks in this range",
+      "totalTasks": "successful tasks",
+      "taskCount": "{value} tasks",
       "videoMode": {
         "label": "Video trend measure",
         "count": "video count",
@@ -721,13 +722,6 @@
       "taskType": {
         "image": "Image tasks",
         "video": "Video tasks"
-      },
-      "tooltip": {
-        "images": "{value} successful images",
-        "credits": "{value} net credits",
-        "videoCount": "{value} successful videos",
-        "videoSeconds": "{value} seconds of successful video",
-        "task": "{count} tasks · {percent}%"
       }
     }
   },

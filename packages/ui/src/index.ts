@@ -48,6 +48,17 @@ export {
 // Calendar
 export { Calendar, CalendarDayButton } from "./components/calendar";
 
+// Chart
+export {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartStyle,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "./components/chart";
+
 // Checkbox
 export { Checkbox } from "./components/checkbox";
 

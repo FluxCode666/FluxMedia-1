@@ -1,8 +1,8 @@
 /**
- * 数据看板 Lieflat 图表组合测试。
+ * 数据看板 shadcn/ui 图表组合测试。
  *
- * 使用方：Vitest；以 React SSR 验证 F2/F3/L3/G4 模板、逐日位置、100 点构成、真实
- * 数据点浮窗命中层和视频数量/秒数的同快照切换数据。
+ * 使用方：Vitest；以 React SSR 验证四张用户熟悉的图表类型、无管理端 Lieflat 标记，
+ * 并验证视频数量/秒数读取同一快照中的独立序列。
  */
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import { createElement } from "react";
@@ -60,38 +60,20 @@ function createSnapshot(days: number): DataDashboardOutput {
 }
 
 describe("DataDashboardCharts", () => {
-  it.each([7, 30])("以四个真实模板渲染 %d 天位置和浮窗命中层", (days) => {
+  it.each([7, 30])("以四种常规图表渲染 %d 天快照", (days) => {
     const html = renderToStaticMarkup(
       createElement(DataDashboardCharts, { snapshot: createSnapshot(days) })
     );
 
-    for (const template of [
-      "F2-hairline-line",
-      "F3-hairline-area",
-      "L3-barcode-lollipop",
-      "G4-dot-waffle",
-    ]) {
-      expect(html).toContain(`data-lieflat-template="${template}"`);
-    }
-    expect(html.match(/data-image-day=/g)).toHaveLength(days);
-    expect(html.match(/data-credit-day=/g)).toHaveLength(days);
-    expect(html.match(/data-video-day=/g)).toHaveLength(days);
-    expect(html.match(/data-waffle-dot=/g)).toHaveLength(100);
+    expect(html).toContain('data-dashboard-chart="images-line"');
+    expect(html).toContain('data-dashboard-chart="credits-bar"');
+    expect(html).toContain('data-dashboard-chart="videos-bar-count"');
+    expect(html).toContain('data-dashboard-chart="composition-donut"');
+    expect(html.match(/data-slot="chart"/g)).toHaveLength(4);
+    expect(html).not.toContain("data-lieflat-template");
+    expect(html).not.toMatch(/hairline|barcode|waffle/i);
     expect(html).not.toContain("<table");
     expect(html).not.toContain("<details");
-    expect(html).not.toContain("charts.table.show");
-    expect(html.match(/data-chart-tooltip-target="images"/g)).toHaveLength(
-      days
-    );
-    expect(html.match(/data-chart-tooltip-target="credits"/g)).toHaveLength(
-      days
-    );
-    expect(html.match(/data-chart-tooltip-target="videos"/g)).toHaveLength(
-      days
-    );
-    expect(html).toContain('data-chart-tooltip-target="composition-image"');
-    expect(html).toContain('data-chart-tooltip-target="composition-video"');
-    expect(html.match(/charts\.replay/g)).toHaveLength(4);
     expect(html).not.toMatch(/iframe|dangerouslySetInnerHTML|javascript:/i);
   });
 

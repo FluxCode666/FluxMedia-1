@@ -2,7 +2,7 @@
  * 用户数据看板从共享契约到页面图表的 DB-free 跨层合同测试。
  *
  * 使用方：Vitest；以固定 Asia/Shanghai 数据把日期解析、UOL 权限和输出校验、页面
- * 装配、客户端原子状态与四张 Lieflat 图表串成同一条真实类型链，避免各层范围漂移。
+ * 装配、客户端原子状态与四张 shadcn/ui 图表串成同一条真实类型链，避免范围漂移。
  */
 import {
   type DataDashboardInput,
@@ -153,10 +153,10 @@ describe("data dashboard cross-layer contract", () => {
       requestStatus: "idle",
       failureStatus: null,
     });
-    expect(html.match(/data-image-day=/g)).toHaveLength(7);
-    expect(html.match(/data-credit-day=/g)).toHaveLength(7);
-    expect(html.match(/data-video-day=/g)).toHaveLength(7);
-    expect(html.match(/data-waffle-dot=/g)).toHaveLength(100);
+    expect(html).toContain('data-dashboard-chart="images-line"');
+    expect(html).toContain('data-dashboard-chart="credits-bar"');
+    expect(html).toContain('data-dashboard-chart="videos-bar-count"');
+    expect(html).toContain('data-dashboard-chart="composition-donut"');
     expect(html).toContain("2026-08-03");
     expect(html).toContain("2026-08-09");
   });
