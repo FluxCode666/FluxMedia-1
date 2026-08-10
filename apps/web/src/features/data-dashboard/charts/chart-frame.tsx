@@ -1,8 +1,8 @@
 /**
- * Lieflat React SVG 的统一卡片、标题、摘要、Mono scope 和数据表框架。
+ * Lieflat React SVG 的统一卡片、标题、摘要与 Mono scope 框架。
  *
  * 使用方：F2、F3、L3、G4。页面主题只影响外层 chrome；图表内部固定使用审计过的
- * paper/ink/gray token，并在 reduced-motion 下关闭入场动画。
+ * paper/ink/gray token，并在 reduced-motion 下关闭入场动画；具体图表自行处理数据交互。
  */
 "use client";
 
@@ -21,7 +21,6 @@ type ChartFrameProps = {
   replayLabel: string;
   controls?: ReactNode;
   children: (ids: { titleId: string; descriptionId: string }) => ReactNode;
-  dataTable: ReactNode;
 };
 
 type ChartScopeStyle = CSSProperties & {
@@ -45,8 +44,8 @@ const chartScopeStyle: ChartScopeStyle = {
 /**
  * 渲染一个可访问且模板可追溯的 Lieflat 图表卡。
  *
- * @param props 模板 ID、结论式标题、持续摘要、SVG 和等价数据表。
- * @returns 固定 Mono 局部作用域，不依赖远程字体、CDN 或 tooltip。
+ * @param props 模板 ID、结论式标题、持续摘要、SVG 和可选控件。
+ * @returns 固定 Mono 局部作用域，不依赖远程字体或 CDN。
  */
 export function ChartFrame({
   template,
@@ -57,7 +56,6 @@ export function ChartFrame({
   replayLabel,
   controls,
   children,
-  dataTable,
 }: ChartFrameProps) {
   const id = useId().replaceAll(":", "");
   const titleId = `chart-title-${id}`;
@@ -159,7 +157,6 @@ export function ChartFrame({
             {source}
           </p>
         </figure>
-        {dataTable}
       </div>
     </Card>
   );

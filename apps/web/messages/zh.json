@@ -722,17 +722,12 @@
         "image": "图片任务",
         "video": "视频任务"
       },
-      "table": {
-        "show": "查看明细数据",
-        "caption": "{metric}图表的等价数据表",
-        "date": "日期",
-        "images": "图片数",
-        "credits": "净积分",
-        "videos": "视频数",
-        "seconds": "视频秒数",
-        "taskType": "任务类型",
-        "tasks": "任务数",
-        "percent": "占比"
+      "tooltip": {
+        "images": "{value} 张成功图片",
+        "credits": "{value} 净积分",
+        "videoCount": "{value} 个成功视频",
+        "videoSeconds": "{value} 秒成功视频",
+        "task": "{count} 个 · {percent}%"
       }
     }
   },

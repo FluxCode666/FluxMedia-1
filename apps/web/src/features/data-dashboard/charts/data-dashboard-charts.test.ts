@@ -1,8 +1,8 @@
 /**
  * 数据看板 Lieflat 图表组合测试。
  *
- * 使用方：Vitest；以 React SSR 验证 F2/F3/L3/G4 模板、逐日位置、100 点构成、等价
- * 数据表和视频数量/秒数的同快照切换数据。
+ * 使用方：Vitest；以 React SSR 验证 F2/F3/L3/G4 模板、逐日位置、100 点构成、真实
+ * 数据点浮窗命中层和视频数量/秒数的同快照切换数据。
  */
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import { createElement } from "react";
@@ -60,7 +60,7 @@ function createSnapshot(days: number): DataDashboardOutput {
 }
 
 describe("DataDashboardCharts", () => {
-  it.each([7, 30])("以四个真实模板渲染 %d 天位置和等价表格", (days) => {
+  it.each([7, 30])("以四个真实模板渲染 %d 天位置和浮窗命中层", (days) => {
     const html = renderToStaticMarkup(
       createElement(DataDashboardCharts, { snapshot: createSnapshot(days) })
     );
@@ -77,7 +77,20 @@ describe("DataDashboardCharts", () => {
     expect(html.match(/data-credit-day=/g)).toHaveLength(days);
     expect(html.match(/data-video-day=/g)).toHaveLength(days);
     expect(html.match(/data-waffle-dot=/g)).toHaveLength(100);
-    expect(html.match(/<table/g)).toHaveLength(4);
+    expect(html).not.toContain("<table");
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("charts.table.show");
+    expect(html.match(/data-chart-tooltip-target="images"/g)).toHaveLength(
+      days
+    );
+    expect(html.match(/data-chart-tooltip-target="credits"/g)).toHaveLength(
+      days
+    );
+    expect(html.match(/data-chart-tooltip-target="videos"/g)).toHaveLength(
+      days
+    );
+    expect(html).toContain('data-chart-tooltip-target="composition-image"');
+    expect(html).toContain('data-chart-tooltip-target="composition-video"');
     expect(html.match(/charts\.replay/g)).toHaveLength(4);
     expect(html).not.toMatch(/iframe|dangerouslySetInnerHTML|javascript:/i);
   });

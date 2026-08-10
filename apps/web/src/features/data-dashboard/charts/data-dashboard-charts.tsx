@@ -2,7 +2,8 @@
  * 用户数据看板四张 Lieflat 图表组合。
  *
  * 使用方：DataDashboardChartsLazy。组件把同一快照分别映射到 F2 图片、F3 积分、L3
- * 视频和 G4 构成；视频数量/秒数切换仅在本地换序列，不发起 action。
+ * 视频和 G4 构成；视频数量/秒数切换仅在本地换序列，不发起 action，并把真实数据
+ * 作为各图表的 hover 浮窗文案。
  */
 "use client";
 
@@ -10,7 +11,6 @@ import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 
-import { ChartDataTable } from "./chart-data-table";
 import { ChartFrame } from "./chart-frame";
 import { allocateTaskWaffleDots } from "./chart-geometry";
 import { DATA_DASHBOARD_CHART_TEMPLATES } from "./chart-tokens";
@@ -36,10 +36,10 @@ type DataDashboardChartsProps = {
 };
 
 /**
- * 渲染四张不重复模板图表与逐日等价数据表。
+ * 渲染四张不重复模板图表及其真实数据点浮窗。
  *
  * @param props 同一账号时区日期范围的已验证快照。
- * @returns 响应式双列报告网格；窄屏保持单位、控件和全部日期表格可读。
+ * @returns 响应式双列报告网格；窄屏保持单位、控件和日期浮窗可读。
  */
 export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
   const locale = useLocale();
@@ -59,19 +59,6 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       <ChartFrame
-        dataTable={
-          <ChartDataTable
-            caption={t("charts.table.caption", {
-              metric: t("charts.images"),
-            })}
-            columns={[t("charts.table.date"), t("charts.table.images")]}
-            label={t("charts.table.show")}
-            rows={snapshot.buckets.map((bucket) => [
-              bucket.date,
-              number.format(bucket.imageCount),
-            ])}
-          />
-        }
         description={t("charts.imagesDescription", { range: rangeLabel })}
         replayLabel={t("charts.replay")}
         source="F2 HAIRLINE LINE · MONO · SUCCESSFUL OUTPUTS"
@@ -87,24 +74,16 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
             buckets={snapshot.buckets}
             descriptionId={descriptionId}
             titleId={titleId}
+            tooltipValues={snapshot.buckets.map((bucket) =>
+              t("charts.tooltip.images", {
+                value: number.format(bucket.imageCount),
+              })
+            )}
           />
         )}
       </ChartFrame>
 
       <ChartFrame
-        dataTable={
-          <ChartDataTable
-            caption={t("charts.table.caption", {
-              metric: t("charts.credits"),
-            })}
-            columns={[t("charts.table.date"), t("charts.table.credits")]}
-            label={t("charts.table.show")}
-            rows={snapshot.buckets.map((bucket) => [
-              bucket.date,
-              number.format(bucket.creditsConsumed),
-            ])}
-          />
-        }
         description={t("charts.creditsDescription", { range: rangeLabel })}
         replayLabel={t("charts.replay")}
         source="F3 HAIRLINE AREA · MONO · NET CREDITS"
@@ -120,6 +99,11 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
             buckets={snapshot.buckets}
             descriptionId={descriptionId}
             titleId={titleId}
+            tooltipValues={snapshot.buckets.map((bucket) =>
+              t("charts.tooltip.credits", {
+                value: number.format(bucket.creditsConsumed),
+              })
+            )}
           />
         )}
       </ChartFrame>
@@ -140,26 +124,6 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
               </button>
             ))}
           </fieldset>
-        }
-        dataTable={
-          <ChartDataTable
-            caption={t("charts.table.caption", {
-              metric: t(`charts.videoMode.${videoMode}`),
-            })}
-            columns={[
-              t("charts.table.date"),
-              t(
-                videoMode === "count"
-                  ? "charts.table.videos"
-                  : "charts.table.seconds"
-              ),
-            ]}
-            label={t("charts.table.show")}
-            rows={snapshot.buckets.map((bucket, index) => [
-              bucket.date,
-              number.format(videoValues[index] ?? 0),
-            ])}
-          />
         }
         description={t("charts.videosDescription", {
           range: rangeLabel,
@@ -182,37 +146,20 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
             buckets={snapshot.buckets}
             descriptionId={descriptionId}
             titleId={titleId}
+            tooltipValues={snapshot.buckets.map((_, index) =>
+              t(
+                videoMode === "count"
+                  ? "charts.tooltip.videoCount"
+                  : "charts.tooltip.videoSeconds",
+                { value: number.format(videoValues[index] ?? 0) }
+              )
+            )}
             values={videoValues}
           />
         )}
       </ChartFrame>
 
       <ChartFrame
-        dataTable={
-          <ChartDataTable
-            caption={t("charts.table.caption", {
-              metric: t("charts.composition"),
-            })}
-            columns={[
-              t("charts.table.taskType"),
-              t("charts.table.tasks"),
-              t("charts.table.percent"),
-            ]}
-            label={t("charts.table.show")}
-            rows={[
-              [
-                t("charts.taskType.image"),
-                number.format(snapshot.taskComposition.imageTaskCount),
-                `${composition.allocations[0]}%`,
-              ],
-              [
-                t("charts.taskType.video"),
-                number.format(snapshot.taskComposition.videoCount),
-                `${composition.allocations[1]}%`,
-              ],
-            ]}
-          />
-        }
         description={t("charts.compositionDescription", { range: rangeLabel })}
         replayLabel={t("charts.replay")}
         source="G4 DOT WAFFLE · MONO · SUCCESSFUL TASK MIX"
@@ -234,9 +181,17 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
             emptyLabel={t("charts.compositionEmpty")}
             imageLabel={t("charts.taskType.image")}
             imageTaskCount={snapshot.taskComposition.imageTaskCount}
+            imageTooltipValue={t("charts.tooltip.task", {
+              count: number.format(snapshot.taskComposition.imageTaskCount),
+              percent: composition.allocations[0],
+            })}
             titleId={titleId}
             videoLabel={t("charts.taskType.video")}
             videoTaskCount={snapshot.taskComposition.videoCount}
+            videoTooltipValue={t("charts.tooltip.task", {
+              count: number.format(snapshot.taskComposition.videoCount),
+              percent: composition.allocations[1],
+            })}
           />
         )}
       </ChartFrame>

@@ -722,17 +722,12 @@
         "image": "Image tasks",
         "video": "Video tasks"
       },
-      "table": {
-        "show": "View detailed data",
-        "caption": "Equivalent data table for the {metric} chart",
-        "date": "Date",
-        "images": "Images",
-        "credits": "Net credits",
-        "videos": "Videos",
-        "seconds": "Video seconds",
-        "taskType": "Task type",
-        "tasks": "Tasks",
-        "percent": "Share"
+      "tooltip": {
+        "images": "{value} successful images",
+        "credits": "{value} net credits",
+        "videoCount": "{value} successful videos",
+        "videoSeconds": "{value} seconds of successful video",
+        "task": "{count} tasks · {percent}%"
       }
     }
   },
