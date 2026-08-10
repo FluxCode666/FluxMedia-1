@@ -1,14 +1,14 @@
 /**
  * 用户数据看板内联的 Lieflat Mono token 正本。
  *
- * 使用方：四张 React SVG 与 ChartFrame。值逐项来自 lieflat-charts `mono-tokens.js`；
- * 图表数据编码不读取应用 primary、主题品牌色或外部样式表。
+ * 使用方：四张 React SVG 与 ChartFrame。黑灰数据 token 来自 lieflat-charts
+ * `mono-tokens.js`；纸面按产品要求改为纯白，不读取应用 primary 或主题品牌色。
  */
 
-/** 纸灰、炭黑与七级灰阶；明度是唯一系列区分。 */
+/** 纯白纸面、炭黑与七级灰阶；明度是唯一系列区分。 */
 export const LIEFLAT_MONO_TOKENS = {
   ink: "#1C1C1A",
-  paper: "#F0EFEB",
+  paper: "#FFFFFF",
   muted: "#8F8E88",
   faint: "#C6C5BF",
   grid: "#DEDDD6",

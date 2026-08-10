@@ -15,7 +15,7 @@ describe("data dashboard chart tokens", () => {
   it("保持 Lieflat Mono 唯一色阶", () => {
     expect(LIEFLAT_MONO_TOKENS).toEqual({
       ink: "#1C1C1A",
-      paper: "#F0EFEB",
+      paper: "#FFFFFF",
       muted: "#8F8E88",
       faint: "#C6C5BF",
       grid: "#DEDDD6",
