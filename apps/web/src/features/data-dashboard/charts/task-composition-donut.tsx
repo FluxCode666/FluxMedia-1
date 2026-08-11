@@ -1,5 +1,5 @@
 /**
- * 用户端成功任务构成环形图。
+ * 用户端与管理端成功任务构成环形图。
  *
  * 使用方：DataDashboardCharts。环形图只比较图片任务和视频任务两类成功任务，旁边的
  * 文本明细同时给出任务数和占比，避免颜色成为唯一信息来源。
@@ -17,9 +17,11 @@ import { useLocale, useTranslations } from "next-intl";
 import { Cell, Pie, PieChart } from "recharts";
 
 import { DashboardChartCard } from "./dashboard-chart-card";
+import type { DashboardTranslationNamespace } from "./data-dashboard-charts";
 
 type TaskCompositionDonutProps = {
   snapshot: DataDashboardOutput;
+  namespace?: DashboardTranslationNamespace;
 };
 
 type TaskCompositionItem = {
@@ -29,9 +31,12 @@ type TaskCompositionItem = {
 };
 
 /** 渲染图片和视频成功任务的数量与占比。 */
-export function TaskCompositionDonut({ snapshot }: TaskCompositionDonutProps) {
+export function TaskCompositionDonut({
+  namespace = "DataDashboard",
+  snapshot,
+}: TaskCompositionDonutProps) {
   const locale = useLocale();
-  const t = useTranslations("DataDashboard");
+  const t = useTranslations(namespace);
   const number = new Intl.NumberFormat(locale);
   const percent = new Intl.NumberFormat(locale, {
     style: "percent",

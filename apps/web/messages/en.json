@@ -454,6 +454,7 @@
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
+      "adminAnalytics": "Data Dashboard",
       "imageBackendPool": "Account Pool",
       "support": "Support",
       "newTicket": "New Ticket"
@@ -481,6 +482,7 @@
       "announcementManagement": "Announcement Management",
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
+      "adminAnalytics": "Data Dashboard",
       "imageBackendPool": "Account Pool",
       "creditsBuy": "Buy Credits",
       "profile": "Profile",
@@ -712,6 +714,80 @@
       "compositionDescription": "{range} · share of successful image and video tasks",
       "compositionSummary": "{images} successful image tasks and {videos} successful video tasks.",
       "compositionEmpty": "No successful tasks in this range",
+      "totalTasks": "successful tasks",
+      "taskCount": "{value} tasks",
+      "videoMode": {
+        "label": "Video trend measure",
+        "count": "video count",
+        "seconds": "video seconds"
+      },
+      "taskType": {
+        "image": "Image tasks",
+        "video": "Video tasks"
+      }
+    }
+  },
+  "AdminDataDashboard": {
+    "title": "Admin data dashboard",
+    "description": "Review global successful image and video output, credit usage, and task mix in the application time zone. The default range is the last 7 calendar days.",
+    "snapshotMeta": "Application time zone: {timeZone} · Updated {asOf}",
+    "metrics": {
+      "title": "Global range overview",
+      "images": "Images generated",
+      "videoSeconds": "Video duration",
+      "secondsValue": "{value} sec",
+      "credits": "Credits consumed",
+      "successRate": "Task success rate",
+      "activeDays": "Active days",
+      "mostUsedModel": "Most used model",
+      "noData": "No data"
+    },
+    "methodology": {
+      "trigger": "Data methodology",
+      "title": "How global metrics are calculated",
+      "description": "All metrics use the applied application-time-zone date range and the same database snapshot.",
+      "items": {
+        "images": "Counts successful image outputs across the site. A task producing multiple images contributes every output.",
+        "videoSeconds": "Sums the duration of successful video outputs across the site.",
+        "credits": "Shows global non-negative net credits linked to successful outputs after associated refunds.",
+        "successRate": "Successful media tasks across the site divided by successful and failed terminal media tasks, grouped by task creation date.",
+        "activeDays": "Counts application-time-zone calendar days with at least one successful image or video task.",
+        "mostUsedModel": "Ranks models by global successful task count; ties use the stable model ID order."
+      }
+    },
+    "state": {
+      "loadingDescription": "Refreshing global metrics and charts for one date range.",
+      "invalidDeepLink": "The requested date range was invalid, so the default last 7 days is shown.",
+      "updated": "Admin data dashboard updated.",
+      "failure": {
+        "validation_error": "That date range cannot be applied. Your previous data is unchanged.",
+        "not_ready": "Analytics data is still being prepared. Try again shortly.",
+        "rate_limited": "Too many refreshes were requested. Please wait and try again.",
+        "timeout": "The query timed out. Your previous data is unchanged.",
+        "unavailable": "The admin data dashboard could not be loaded. Please try again."
+      }
+    },
+    "actions": {
+      "refresh": "Refresh",
+      "retry": "Try again"
+    },
+    "charts": {
+      "title": "Global generation trends",
+      "credits": "Credit usage",
+      "images": "Images generated",
+      "videos": "Videos",
+      "composition": "Task mix",
+      "preparing": "Charts are preparing",
+      "rangeLabel": "{start} to {end}",
+      "imagesDescription": "{range} · successful images generated across the site each day",
+      "imagesSummary": "{value} images were generated across the site in this range.",
+      "creditsDescription": "{range} · net credits consumed across the site each day",
+      "creditsSummary": "{value} net credits were consumed across the site in this range.",
+      "videosDescription": "{range} · successful videos across the site shown by {unit}",
+      "videosSummary": "Total {unit} across the site in this range: {value}.",
+      "compositionDescription": "{range} · share of successful image and video tasks across the site",
+      "compositionSummary": "{images} successful image tasks and {videos} successful video tasks across the site.",
+      "compositionEmpty": "No successful tasks across the site in this range",
       "totalTasks": "successful tasks",
       "taskCount": "{value} tasks",
       "videoMode": {

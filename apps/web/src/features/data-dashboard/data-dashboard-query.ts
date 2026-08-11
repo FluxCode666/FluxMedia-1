@@ -58,13 +58,19 @@ export function parseDataDashboardSearchParams(
 }
 
 /** 构造默认 canonical 路径或同时包含两个日期的自定义路径。 */
-export function buildDataDashboardHref(input: DataDashboardInput): string {
-  if (!("startDate" in input)) return "/dashboard/analytics";
+export function buildDataDashboardHref(
+  input: DataDashboardInput,
+  path = "/dashboard/analytics"
+): string {
+  if (!path.startsWith("/")) {
+    throw new RangeError("数据看板路径必须是站内绝对路径");
+  }
+  if (!("startDate" in input)) return path;
   const search = new URLSearchParams({
     startDate: input.startDate,
     endDate: input.endDate,
   });
-  return `/dashboard/analytics?${search.toString()}`;
+  return `${path}?${search.toString()}`;
 }
 
 /**

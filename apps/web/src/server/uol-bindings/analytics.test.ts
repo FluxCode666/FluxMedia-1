@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     "postgresql://unit-test:unit-test@127.0.0.1:5432/unit-test";
   return {
     checkRateLimit: vi.fn(),
+    getAppTimeZone: vi.fn(),
     getUserTimeZone: vi.fn(),
     loadDataDashboardSnapshot: vi.fn(),
     loadOutputUsageSummary: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock("@repo/shared/rate-limit", () => ({
   checkRateLimit: mocks.checkRateLimit,
 }));
 vi.mock("@repo/shared/time-zone/server", () => ({
+  getAppTimeZone: mocks.getAppTimeZone,
   getUserTimeZone: mocks.getUserTimeZone,
 }));
 vi.mock("@/features/data-dashboard/data-dashboard-service", () => ({
@@ -93,6 +95,7 @@ describe("analytics.getMyDataDashboard binding", () => {
       reset: Date.now() + 60_000,
     });
     mocks.getUserTimeZone.mockResolvedValue("Asia/Shanghai");
+    mocks.getAppTimeZone.mockReturnValue("Asia/Shanghai");
     mocks.loadDataDashboardSnapshot.mockResolvedValue(SNAPSHOT);
   });
 
@@ -101,32 +104,34 @@ describe("analytics.getMyDataDashboard binding", () => {
     expect(isOperationBound("analytics.getMyUsageTrends")).toBe(true);
   });
 
-  it.each(["user", "admin", "observer_admin", "super_admin"] as const)(
-    "%s 会话只使用自己的 Principal 用户 ID",
-    async (role) => {
-      await expect(
-        invokeOperation(
-          "analytics.getMyDataDashboard",
-          { startDate: "2026-08-09", endDate: "2026-08-09" },
-          { type: "user", userId: `${role}-1`, role }
-        )
-      ).resolves.toEqual(SNAPSHOT);
+  it.each([
+    "user",
+    "admin",
+    "observer_admin",
+    "super_admin",
+  ] as const)("%s 会话只使用自己的 Principal 用户 ID", async (role) => {
+    await expect(
+      invokeOperation(
+        "analytics.getMyDataDashboard",
+        { startDate: "2026-08-09", endDate: "2026-08-09" },
+        { type: "user", userId: `${role}-1`, role }
+      )
+    ).resolves.toEqual(SNAPSHOT);
 
-      expect(mocks.checkRateLimit).toHaveBeenCalledWith(
-        `analytics-dashboard:${role}-1`,
-        "global"
-      );
-      expect(mocks.getUserTimeZone).toHaveBeenCalledWith(`${role}-1`);
-      expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
-        userId: `${role}-1`,
-        timeZone: "Asia/Shanghai",
-        rangeInput: {
-          startDate: "2026-08-09",
-          endDate: "2026-08-09",
-        },
-      });
-    }
-  );
+    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
+      `analytics-dashboard:${role}-1`,
+      "global"
+    );
+    expect(mocks.getUserTimeZone).toHaveBeenCalledWith(`${role}-1`);
+    expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
+      userId: `${role}-1`,
+      timeZone: "Asia/Shanghai",
+      rangeInput: {
+        startDate: "2026-08-09",
+        endDate: "2026-08-09",
+      },
+    });
+  });
 
   it("在 strict schema 处拒绝伪造 userId 且不进入 binding", async () => {
     await expect(
@@ -202,5 +207,55 @@ describe("analytics.getMyDataDashboard binding", () => {
         { type: "user", userId: "user-1", role: "user" }
       )
     ).rejects.toMatchObject({ code: uolCode });
+  });
+});
+
+describe("analytics.getAdminDataDashboard binding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.checkRateLimit.mockResolvedValue({
+      success: true,
+      limit: 30,
+      reset: Date.now() + 60_000,
+    });
+    mocks.getAppTimeZone.mockReturnValue("Asia/Shanghai");
+    mocks.loadDataDashboardSnapshot.mockResolvedValue(SNAPSHOT);
+  });
+
+  it.each([
+    "admin",
+    "super_admin",
+  ] as const)("%s 只读取应用时区并加载全站快照", async (role) => {
+    await expect(
+      invokeOperation(
+        "analytics.getAdminDataDashboard",
+        { startDate: "2026-08-03", endDate: "2026-08-09" },
+        { type: "user", userId: `${role}-1`, role }
+      )
+    ).resolves.toEqual(SNAPSHOT);
+
+    expect(mocks.checkRateLimit).toHaveBeenCalledWith(
+      `admin-analytics-dashboard:${role}-1`,
+      "global"
+    );
+    expect(mocks.getAppTimeZone).toHaveBeenCalledOnce();
+    expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
+      timeZone: "Asia/Shanghai",
+      rangeInput: { startDate: "2026-08-03", endDate: "2026-08-09" },
+    });
+  });
+
+  it.each([
+    "user",
+    "observer_admin",
+  ] as const)("%s 会话被拒绝且不进入全站聚合", async (role) => {
+    await expect(
+      invokeOperation(
+        "analytics.getAdminDataDashboard",
+        {},
+        { type: "user", userId: `${role}-1`, role }
+      )
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(mocks.loadDataDashboardSnapshot).not.toHaveBeenCalled();
   });
 });

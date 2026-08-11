@@ -23,6 +23,7 @@ import { cn } from "@repo/ui/utils";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  ChartNoAxesCombined,
   ChevronRight,
   ChevronsUpDown,
   CreditCard,
@@ -173,6 +174,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       Settings: t("nav.settings"),
       "System Settings": t("nav.systemSettings"),
       "Global Status": t("nav.globalStatus"),
+      "Admin Data Dashboard": t("nav.adminAnalytics"),
       "Announcement Management": t("nav.announcementManagement"),
       "Account Pool": t("nav.imageBackendPool"),
       Support: t("nav.support"),
@@ -230,6 +232,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             title: "Global Status",
             href: "/dashboard/admin/status",
             icon: Activity,
+          },
+          {
+            title: "Admin Data Dashboard",
+            href: "/dashboard/admin/analytics",
+            icon: ChartNoAxesCombined,
           },
           {
             title: "User Management",

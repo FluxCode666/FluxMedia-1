@@ -59,8 +59,17 @@ describe("data dashboard URL and presets", () => {
         startDate: "2026-08-01",
         endDate: "2026-08-09",
       })
+    ).toBe("/dashboard/analytics?startDate=2026-08-01&endDate=2026-08-09");
+    expect(
+      buildDataDashboardHref(
+        { startDate: "2026-08-01", endDate: "2026-08-09" },
+        "/dashboard/admin/analytics"
+      )
     ).toBe(
-      "/dashboard/analytics?startDate=2026-08-01&endDate=2026-08-09"
+      "/dashboard/admin/analytics?startDate=2026-08-01&endDate=2026-08-09"
+    );
+    expect(() => buildDataDashboardHref({}, "dashboard/analytics")).toThrow(
+      "数据看板路径必须是站内绝对路径"
     );
   });
 

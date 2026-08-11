@@ -1,8 +1,8 @@
 /**
- * 用户数据看板四张常规 shadcn/ui 图表组合。
+ * 用户端与管理端数据看板的四张常规 shadcn/ui 图表组合。
  *
  * 使用方：DataDashboardChartsLazy。组件把同一快照映射为图片折线图、积分柱状图、
- * 视频可切换柱状图和任务构成环形图，面向普通用户优先使用熟悉的视觉语法。
+ * 视频可切换柱状图和任务构成环形图；通过 namespace 切换本人或全站文案。
  */
 "use client";
 
@@ -21,12 +21,20 @@ export {
 
 type DataDashboardChartsProps = {
   snapshot: DataDashboardOutput;
+  namespace?: DashboardTranslationNamespace;
 };
 
-/** 渲染同一日期快照的四张用户端常规图表。 */
-export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
+export type DashboardTranslationNamespace =
+  | "DataDashboard"
+  | "AdminDataDashboard";
+
+/** 渲染同一日期快照的四张常规图表；标题可切换到管理员文案。 */
+export function DataDashboardCharts({
+  snapshot,
+  namespace = "DataDashboard",
+}: DataDashboardChartsProps) {
   const locale = useLocale();
-  const t = useTranslations("DataDashboard");
+  const t = useTranslations(namespace);
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
   const range = t("charts.rangeLabel", {
     start: snapshot.range.startDate,
@@ -53,8 +61,8 @@ export function DataDashboardCharts({ snapshot }: DataDashboardChartsProps) {
         })}
         title={t("charts.credits")}
       />
-      <VideoBarChart snapshot={snapshot} />
-      <TaskCompositionDonut snapshot={snapshot} />
+      <VideoBarChart namespace={namespace} snapshot={snapshot} />
+      <TaskCompositionDonut namespace={namespace} snapshot={snapshot} />
     </div>
   );
 }

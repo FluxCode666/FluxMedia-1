@@ -2349,6 +2349,11 @@ export const userOutputUsageEvent = pgTable(
       table.operationCreatedAt,
       table.outputKind
     ),
+    // 管理端全站看板没有 user_id 前缀；按日期先收窄后再按产物类型聚合。
+    index("user_output_usage_event_created_kind_idx").on(
+      table.operationCreatedAt,
+      table.outputKind
+    ),
     check(
       "user_output_usage_event_metric_check",
       sql`(

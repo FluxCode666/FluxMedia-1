@@ -1,7 +1,7 @@
 /**
- * 用户数据看板客户端原子快照状态纯逻辑。
+ * 用户端与管理端数据看板客户端原子快照状态纯逻辑。
  *
- * 使用方：DataDashboardPanel 与 DB-free Vitest。模块不导入 React、Next 或 i18n，确保
+ * 使用方：DataDashboardPanel、AdminDataDashboardPanel 与 DB-free Vitest。模块不导入 React、Next 或 i18n，确保
  * 最新请求门禁与失败保留旧快照行为可被确定性验证。
  */
 import type { DataDashboardOutput } from "@repo/shared/analytics/contracts";
@@ -13,11 +13,7 @@ export type DataDashboardFailureStatus = Exclude<
   DataDashboardActionResult["status"],
   "ready"
 > | null;
-export type DataDashboardRequestStatus =
-  | "idle"
-  | "loading"
-  | "stale"
-  | "error";
+export type DataDashboardRequestStatus = "idle" | "loading" | "stale" | "error";
 
 /** 客户端必须原子提交的快照、范围与状态集合。 */
 export type DataDashboardViewState = {

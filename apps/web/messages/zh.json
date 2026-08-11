@@ -454,6 +454,7 @@
       "announcementManagement": "公告管理",
       "systemSettings": "系统设置",
       "globalStatus": "全局状态",
+      "adminAnalytics": "数据看板",
       "imageBackendPool": "账号池",
       "support": "支持",
       "newTicket": "新建工单"
@@ -481,6 +482,7 @@
       "announcementManagement": "公告管理",
       "systemSettings": "系统设置",
       "globalStatus": "全局状态",
+      "adminAnalytics": "数据看板",
       "imageBackendPool": "账号池",
       "creditsBuy": "购买积分",
       "profile": "个人资料",
@@ -712,6 +714,80 @@
       "compositionDescription": "{range} · 图片任务与视频任务占成功任务的比例",
       "compositionSummary": "成功图片任务 {images} 个，成功视频任务 {videos} 个。",
       "compositionEmpty": "范围内暂无成功任务",
+      "totalTasks": "成功任务",
+      "taskCount": "{value} 个任务",
+      "videoMode": {
+        "label": "视频趋势展示口径",
+        "count": "视频数",
+        "seconds": "视频秒数"
+      },
+      "taskType": {
+        "image": "图片任务",
+        "video": "视频任务"
+      }
+    }
+  },
+  "AdminDataDashboard": {
+    "title": "管理端数据看板",
+    "description": "按应用时区查看全站成功生图、生视频、积分用量和任务构成。默认范围为近 7 个自然日。",
+    "snapshotMeta": "应用时区：{timeZone} · 更新于 {asOf}",
+    "metrics": {
+      "title": "全站范围概览",
+      "images": "生图数量",
+      "videoSeconds": "视频秒数",
+      "secondsValue": "{value} 秒",
+      "credits": "积分消耗",
+      "successRate": "任务成功率",
+      "activeDays": "活跃天数",
+      "mostUsedModel": "使用最多的模型",
+      "noData": "暂无数据"
+    },
+    "methodology": {
+      "trigger": "数据口径",
+      "title": "全站指标如何统计",
+      "description": "所有指标都使用已应用的应用时区日期范围和同一个数据库快照。",
+      "items": {
+        "images": "统计全站成功图片产物；一次任务产出多张图片时按实际产物数量累计。",
+        "videoSeconds": "累计全站成功视频产物的实际时长。",
+        "credits": "统计成功产物关联且扣除关联退款后的全站非负净积分消耗。",
+        "successRate": "按任务创建日期，以全站成功媒体任务数除以成功和失败终态媒体任务数。",
+        "activeDays": "统计至少有一个成功图片或视频任务的应用时区自然日。",
+        "mostUsedModel": "按全站成功任务数排序；并列时按稳定模型 ID 顺序选择。"
+      }
+    },
+    "state": {
+      "loadingDescription": "正在按同一日期范围刷新全站指标和图表。",
+      "invalidDeepLink": "请求的日期范围无效，已显示默认近 7 天。",
+      "updated": "管理端数据看板已更新。",
+      "failure": {
+        "validation_error": "该日期范围无法应用，原有数据保持不变。",
+        "not_ready": "统计数据仍在准备中，请稍后重试。",
+        "rate_limited": "刷新过于频繁，请稍后重试。",
+        "timeout": "查询超时，原有数据保持不变。",
+        "unavailable": "管理端数据看板加载失败，请重试。"
+      }
+    },
+    "actions": {
+      "refresh": "刷新",
+      "retry": "重试"
+    },
+    "charts": {
+      "title": "全站生成趋势",
+      "credits": "积分用量",
+      "images": "生图数量",
+      "videos": "视频",
+      "composition": "任务构成",
+      "preparing": "图表准备中",
+      "rangeLabel": "{start} 至 {end}",
+      "imagesDescription": "{range} · 全站每日成功生成的图片数量",
+      "imagesSummary": "范围内全站共生成 {value} 张图片。",
+      "creditsDescription": "{range} · 全站每日实际消耗的净积分",
+      "creditsSummary": "范围内全站共消耗 {value} 净积分。",
+      "videosDescription": "{range} · 当前按{unit}展示全站每日成功视频",
+      "videosSummary": "范围内全站{unit}合计为 {value}。",
+      "compositionDescription": "{range} · 全站图片任务与视频任务占成功任务的比例",
+      "compositionSummary": "全站成功图片任务 {images} 个，成功视频任务 {videos} 个。",
+      "compositionEmpty": "范围内暂无全站成功任务",
       "totalTasks": "成功任务",
       "taskCount": "{value} 个任务",
       "videoMode": {

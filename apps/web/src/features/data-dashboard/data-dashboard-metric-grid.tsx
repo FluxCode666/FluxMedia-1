@@ -1,8 +1,8 @@
 /**
- * 用户数据看板六项范围指标与持续可达的数据口径说明。
+ * 用户端与管理端数据看板六项范围指标及持续可达的数据口径说明。
  *
- * 使用方：DataDashboardPanel。所有数值来自同一快照；组件只格式化，不重新计算范围、
- * 成功率、净积分或模型排序。
+ * 使用方：DataDashboardPanel、AdminDataDashboardPanel。所有数值来自同一快照；组件
+ * 只格式化并按 namespace 切换本人或全站文案，不重新计算统计口径。
  */
 "use client";
 
@@ -36,6 +36,7 @@ import { useLocale, useTranslations } from "next-intl";
 
 type DataDashboardMetricGridProps = {
   snapshot: DataDashboardOutput;
+  namespace?: "DataDashboard" | "AdminDataDashboard";
 };
 
 /** 将可空成功率格式化为用户可区分的百分比或无数据。 */
@@ -60,9 +61,10 @@ function formatSuccessRate(
  */
 export function DataDashboardMetricGrid({
   snapshot,
+  namespace = "DataDashboard",
 }: DataDashboardMetricGridProps) {
   const locale = useLocale();
-  const t = useTranslations("DataDashboard");
+  const t = useTranslations(namespace);
   const number = new Intl.NumberFormat(locale);
   const metrics = [
     {
@@ -110,7 +112,10 @@ export function DataDashboardMetricGrid({
   ] as const;
 
   return (
-    <section aria-labelledby="data-dashboard-metrics-title" className="space-y-3">
+    <section
+      aria-labelledby="data-dashboard-metrics-title"
+      className="space-y-3"
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2
           className="font-serif text-lg font-medium tracking-tight"

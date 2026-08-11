@@ -1,7 +1,7 @@
 /**
- * 用户端成功视频逐日柱状图。
+ * 用户端与管理端成功视频逐日柱状图。
  *
- * 使用方：DataDashboardCharts。用户可在视频数量和成功视频秒数之间切换；切换只替换
+ * 使用方：DataDashboardCharts。查看者可在视频数量和成功视频秒数之间切换；切换只替换
  * 当前快照的展示序列，不重新请求数据或改变日期范围。
  */
 "use client";
@@ -23,6 +23,7 @@ import {
   formatDashboardDateTick,
 } from "./chart-format";
 import { DashboardChartCard } from "./dashboard-chart-card";
+import type { DashboardTranslationNamespace } from "./data-dashboard-charts";
 
 export type VideoDashboardMode = "count" | "seconds";
 
@@ -38,12 +39,16 @@ export function selectVideoDashboardSeries(
 
 type VideoBarChartProps = {
   snapshot: DataDashboardOutput;
+  namespace?: DashboardTranslationNamespace;
 };
 
 /** 渲染可切换统计口径的每日成功视频柱状图。 */
-export function VideoBarChart({ snapshot }: VideoBarChartProps) {
+export function VideoBarChart({
+  namespace = "DataDashboard",
+  snapshot,
+}: VideoBarChartProps) {
   const locale = useLocale();
-  const t = useTranslations("DataDashboard");
+  const t = useTranslations(namespace);
   const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
   const [mode, setMode] = useState<VideoDashboardMode>("count");
   const values = selectVideoDashboardSeries(snapshot, mode);

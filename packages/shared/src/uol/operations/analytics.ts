@@ -35,6 +35,26 @@ export const getMyDataDashboard = defineOperation({
   },
 });
 
+/** 获取全站生图、生视频与积分用量的管理员数据看板。 */
+export const getAdminDataDashboard = defineOperation({
+  name: "analytics.getAdminDataDashboard",
+  domain: "analytics",
+  title: "Get Admin Data Dashboard",
+  description:
+    "获取全站最多 30 个应用时区自然日内的成功生图、生视频、积分用量与任务构成。" +
+    "统计范围固定为全站，不接受用户身份或筛选字段。",
+  input: dataDashboardInputSchema,
+  output: dataDashboardOutputSchema,
+  access: { kind: "roles", roles: ["admin", "super_admin"] },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: analytics.getAdminDataDashboard");
+  },
+});
+
 /** 获取当前用户近 24 小时、模型分布与累计用量摘要。 */
 export const getMyUsageSummary = defineOperation({
   name: "analytics.getMyUsageSummary",

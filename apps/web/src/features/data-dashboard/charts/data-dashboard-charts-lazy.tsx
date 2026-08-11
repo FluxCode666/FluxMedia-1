@@ -1,7 +1,7 @@
 /**
- * 用户数据看板 shadcn/ui 图表的客户端懒加载边界。
+ * 用户端与管理端数据看板 shadcn/ui 图表的客户端懒加载边界。
  *
- * 使用方：DataDashboardPanel。四张 Recharts 图表形成独立客户端 chunk；等高骨架
+ * 使用方：DataDashboardPanel、AdminDataDashboardPanel。四张 Recharts 图表形成独立客户端 chunk；等高骨架
  * 维持报告网格空间，Server Component 不直接引入图表和视频切换运行时。
  */
 "use client";
@@ -39,7 +39,7 @@ const LazyDataDashboardCharts = dynamic(
   }
 );
 
-/** 懒加载同一快照的四张用户端常规图表。 */
+/** 懒加载同一快照的四张常规图表。 */
 export function DataDashboardChartsLazy(
   props: ComponentProps<typeof DataDashboardCharts>
 ) {
