@@ -2,7 +2,7 @@
  * 用户端与管理端数据看板六项范围指标及持续可达的数据口径说明。
  *
  * 使用方：DataDashboardPanel、AdminDataDashboardPanel。所有数值来自同一快照；组件
- * 只格式化并按 namespace 切换本人或全站文案，不重新计算统计口径。
+ * 只格式化并按 namespace 切换本人或管理员所选范围文案，不重新计算统计口径。
  */
 "use client";
 

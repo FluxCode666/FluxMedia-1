@@ -1,14 +1,16 @@
 "use server";
 
 /**
- * 管理端全局数据看板刷新 Server Action。
+ * 管理端数据看板刷新与用户搜索 Server Action。
  *
- * Action 只做管理员会话边界、输入 schema 和 UOL 薄适配；全站范围、时区、readiness
- * 与统计口径统一由 `analytics.getAdminDataDashboard` operation 处理。
+ * Action 只做管理员会话边界、输入 schema 和 UOL 薄适配；用户范围、时区、
+ * readiness 与统计口径统一由 analytics operation 处理。
  */
 import {
+  type AdminDataDashboardUserSearchOutput,
   type DataDashboardOutput,
-  dataDashboardInputSchema,
+  adminDataDashboardInputSchema,
+  adminDataDashboardUserSearchInputSchema,
 } from "@repo/shared/analytics/contracts";
 import { logError } from "@repo/shared/logger";
 import { adminAction } from "@repo/shared/safe-action";
@@ -42,10 +44,10 @@ function mapOperationError(
   }
 }
 
-/** 刷新管理员全站数据看板。 */
+/** 刷新管理员全站或指定用户的数据看板。 */
 export const refreshAdminDataDashboardAction = adminAction
   .metadata({ action: "analytics.getAdminDataDashboard" })
-  .schema(dataDashboardInputSchema)
+  .schema(adminDataDashboardInputSchema)
   .action(
     async ({ parsedInput, ctx }): Promise<AdminDataDashboardActionResult> => {
       try {
@@ -67,5 +69,23 @@ export const refreshAdminDataDashboardAction = adminAction
         logError(error, { source: "admin-data-dashboard-action" });
         return { status: "unavailable" };
       }
+    }
+  );
+
+/** 搜索管理员数据看板用户下拉选项；查询同时匹配名称和邮箱。 */
+export const searchAdminDataDashboardUsersAction = adminAction
+  .metadata({ action: "analytics.searchAdminDataDashboardUsers" })
+  .schema(adminDataDashboardUserSearchInputSchema)
+  .action(
+    async ({
+      parsedInput,
+      ctx,
+    }): Promise<AdminDataDashboardUserSearchOutput> => {
+      await ensureUolInitialized();
+      return invokeOperation<AdminDataDashboardUserSearchOutput>(
+        "analytics.searchAdminDataDashboardUsers",
+        parsedInput,
+        { type: "user", userId: ctx.userId, role: ctx.role }
+      );
     }
   );

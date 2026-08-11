@@ -3,7 +3,7 @@
  *
  * UOL operation、聚合服务、Web 页面与站内 Agent 必须复用这里的 schema，避免身份、
  * 日期、单位或跨字段口径漂移。本模块只依赖 Zod 与 DB-free 时区工具，不读取运行时
- * 设置或数据库。
+ * 设置或数据库。管理员用户筛选使用本文件中的专用输入/输出契约。
  */
 import { z } from "zod";
 
@@ -56,6 +56,49 @@ export const dataDashboardInputSchema = z.union([
   dataDashboardCustomInputSchema,
   dataDashboardDefaultInputSchema,
 ]);
+
+const adminDataDashboardUserIdSchema = z.string().trim().min(1).max(512);
+
+const adminDataDashboardCustomInputSchema = z
+  .object({
+    startDate: gregorianDateSchema,
+    endDate: gregorianDateSchema,
+    userId: adminDataDashboardUserIdSchema.optional(),
+  })
+  .strict();
+
+const adminDataDashboardDefaultInputSchema = z
+  .object({ userId: adminDataDashboardUserIdSchema.optional() })
+  .strict();
+
+/** 管理员专用日期范围输入；用户 ID 由下拉搜索结果提供，不接受邮箱或名称。 */
+export const adminDataDashboardInputSchema = z.union([
+  adminDataDashboardCustomInputSchema,
+  adminDataDashboardDefaultInputSchema,
+]);
+
+/** 管理员用户下拉搜索输入；query 同时匹配名称与邮箱。 */
+export const adminDataDashboardUserSearchInputSchema = z
+  .object({
+    query: z.string().trim().max(160).default(""),
+    limit: z.number().int().min(1).max(50).default(20),
+    selectedUserId: adminDataDashboardUserIdSchema.optional(),
+  })
+  .strict();
+
+export const adminDataDashboardUserOptionSchema = z
+  .object({
+    id: adminDataDashboardUserIdSchema,
+    name: z.string().trim().min(1).max(255),
+    email: z.string().trim().email().max(320),
+  })
+  .strict();
+
+export const adminDataDashboardUserSearchOutputSchema = z
+  .object({
+    users: z.array(adminDataDashboardUserOptionSchema).max(50),
+  })
+  .strict();
 
 const dataDashboardRangeSchema = z
   .object({
@@ -429,5 +472,17 @@ export const dataDashboardOutputSchema =
   dataDashboardOutputBaseSchema.superRefine(validateDataDashboardOutput);
 
 export type DataDashboardInput = z.infer<typeof dataDashboardInputSchema>;
+export type AdminDataDashboardInput = z.infer<
+  typeof adminDataDashboardInputSchema
+>;
+export type AdminDataDashboardUserSearchInput = z.infer<
+  typeof adminDataDashboardUserSearchInputSchema
+>;
+export type AdminDataDashboardUserOption = z.infer<
+  typeof adminDataDashboardUserOptionSchema
+>;
+export type AdminDataDashboardUserSearchOutput = z.infer<
+  typeof adminDataDashboardUserSearchOutputSchema
+>;
 export type DataDashboardBucket = z.infer<typeof dataDashboardBucketSchema>;
 export type DataDashboardOutput = z.infer<typeof dataDashboardOutputSchema>;

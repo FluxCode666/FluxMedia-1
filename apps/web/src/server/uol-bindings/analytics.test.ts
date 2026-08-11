@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     getAppTimeZone: vi.fn(),
     getUserTimeZone: vi.fn(),
     loadDataDashboardSnapshot: vi.fn(),
+    searchAdminDataDashboardUsers: vi.fn(),
     loadOutputUsageSummary: vi.fn(),
     loadOutputUsageTrends: vi.fn(),
     readAnalyticsReadModelStates: vi.fn(),
@@ -43,6 +44,9 @@ vi.mock("@/features/data-dashboard/data-dashboard-service", () => ({
     }
   },
   loadDataDashboardSnapshot: mocks.loadDataDashboardSnapshot,
+}));
+vi.mock("@/features/data-dashboard/admin-data-dashboard-user-search", () => ({
+  searchAdminDataDashboardUsers: mocks.searchAdminDataDashboardUsers,
 }));
 vi.mock("@/features/dashboard/analytics-service", () => ({
   loadOutputUsageSummary: mocks.loadOutputUsageSummary,
@@ -245,6 +249,25 @@ describe("analytics.getAdminDataDashboard binding", () => {
     });
   });
 
+  it("按用户 ID 传入单用户统计范围，不把筛选 ID 混入日期输入", async () => {
+    await expect(
+      invokeOperation(
+        "analytics.getAdminDataDashboard",
+        {
+          startDate: "2026-08-03",
+          endDate: "2026-08-09",
+          userId: "target-user",
+        },
+        { type: "user", userId: "admin-1", role: "admin" }
+      )
+    ).resolves.toEqual(SNAPSHOT);
+    expect(mocks.loadDataDashboardSnapshot).toHaveBeenCalledWith({
+      userId: "target-user",
+      timeZone: "Asia/Shanghai",
+      rangeInput: { startDate: "2026-08-03", endDate: "2026-08-09" },
+    });
+  });
+
   it.each([
     "user",
     "observer_admin",
@@ -257,5 +280,46 @@ describe("analytics.getAdminDataDashboard binding", () => {
       )
     ).rejects.toMatchObject({ code: "forbidden" });
     expect(mocks.loadDataDashboardSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+describe("analytics.searchAdminDataDashboardUsers binding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.checkRateLimit.mockResolvedValue({
+      success: true,
+      limit: 30,
+      reset: Date.now() + 60_000,
+    });
+    mocks.searchAdminDataDashboardUsers.mockResolvedValue({
+      users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }],
+    });
+  });
+
+  it("管理员可搜索名称或邮箱，并返回有限用户选项", async () => {
+    await expect(
+      invokeOperation(
+        "analytics.searchAdminDataDashboardUsers",
+        { query: "张", limit: 20 },
+        { type: "user", userId: "admin-1", role: "super_admin" }
+      )
+    ).resolves.toEqual({
+      users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }],
+    });
+    expect(mocks.searchAdminDataDashboardUsers).toHaveBeenCalledWith({
+      query: "张",
+      limit: 20,
+    });
+  });
+
+  it("普通用户不能调用搜索 operation", async () => {
+    await expect(
+      invokeOperation(
+        "analytics.searchAdminDataDashboardUsers",
+        { query: "张" },
+        { type: "user", userId: "user-1", role: "user" }
+      )
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(mocks.searchAdminDataDashboardUsers).not.toHaveBeenCalled();
   });
 });

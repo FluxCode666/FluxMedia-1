@@ -11,6 +11,7 @@ import {
   getMyDataDashboard,
   getMyUsageSummary,
   getMyUsageTrends,
+  searchAdminDataDashboardUsers,
 } from "./analytics";
 
 describe("analytics.getMyDataDashboard", () => {
@@ -71,7 +72,7 @@ describe("analytics.getAdminDataDashboard", () => {
     });
   });
 
-  it("只接受日期范围，不接受用户或全站范围篡改字段", () => {
+  it("支持日期范围和可选用户 ID，拒绝邮箱或未知筛选字段", () => {
     expect(getAdminDataDashboard.input.safeParse({}).success).toBe(true);
     expect(
       getAdminDataDashboard.input.safeParse({
@@ -81,6 +82,26 @@ describe("analytics.getAdminDataDashboard", () => {
     ).toBe(true);
     expect(
       getAdminDataDashboard.input.safeParse({ userId: "another-user" }).success
+    ).toBe(true);
+    expect(
+      getAdminDataDashboard.input.safeParse({ userEmail: "a@example.com" })
+        .success
     ).toBe(false);
+  });
+});
+
+describe("analytics.searchAdminDataDashboardUsers", () => {
+  it("注册为人工管理员只读搜索 operation", () => {
+    expect(searchAdminDataDashboardUsers).toMatchObject({
+      name: "analytics.searchAdminDataDashboardUsers",
+      access: { kind: "roles", roles: ["admin", "super_admin"] },
+      agentExposure: "human-only",
+      readOnly: true,
+      destructive: false,
+    });
+    expect(
+      searchAdminDataDashboardUsers.input.safeParse({ query: "张", limit: 20 })
+        .success
+    ).toBe(true);
   });
 });

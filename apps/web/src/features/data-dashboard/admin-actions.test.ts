@@ -51,7 +51,10 @@ vi.mock("@/server/uol-init", () => ({
 
 import { OperationError } from "@repo/shared/uol";
 
-import { refreshAdminDataDashboardAction } from "./admin-actions";
+import {
+  refreshAdminDataDashboardAction,
+  searchAdminDataDashboardUsersAction,
+} from "./admin-actions";
 
 type MockAction = (input: {
   ctx: { userId: string; role: "admin" | "super_admin" };
@@ -116,5 +119,26 @@ describe("refreshAdminDataDashboardAction", () => {
     expect(mocks.logError).toHaveBeenCalledWith(error, {
       source: "admin-data-dashboard-action",
     });
+  });
+});
+
+describe("searchAdminDataDashboardUsersAction", () => {
+  it("使用管理员 Principal 调用用户搜索 operation", async () => {
+    const output = {
+      users: [{ id: "user-1", name: "张三", email: "zhang@example.com" }],
+    };
+    mocks.invokeOperation.mockResolvedValue(output);
+
+    await expect(
+      (searchAdminDataDashboardUsersAction as unknown as MockAction)({
+        ctx: { userId: "admin-1", role: "admin" },
+        parsedInput: { query: "张", limit: 20 },
+      })
+    ).resolves.toEqual(output);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "analytics.searchAdminDataDashboardUsers",
+      { query: "张", limit: 20 },
+      { type: "user", userId: "admin-1", role: "admin" }
+    );
   });
 });

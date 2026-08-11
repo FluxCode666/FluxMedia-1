@@ -2,7 +2,7 @@
  * 用户端与管理端数据看板的四张常规 shadcn/ui 图表组合。
  *
  * 使用方：DataDashboardChartsLazy。组件把同一快照映射为图片折线图、积分柱状图、
- * 视频可切换柱状图和任务构成环形图；通过 namespace 切换本人或全站文案。
+ * 视频可切换柱状图和任务构成环形图；通过 namespace 切换本人或管理员范围文案。
  */
 "use client";
 
