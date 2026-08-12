@@ -87,6 +87,9 @@
 - 视频请求以 Principal 所有者和 `clientRequestId` 派生稳定任务、扣费与存储键。
 - 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
   退款或覆盖新 worker 的状态。
+- 视频提交不确定恢复的拟定公开四态、人工窗口、退款后跨账号重试和稳定告警标识见
+  [openai-video-api-recovery-plan.md](plans/2026-08-12-001-feat-openai-video-api-recovery-plan.md)
+  与 [video-submission-recovery-log-events.md](video-submission-recovery-log-events.md)。
 - 管理端“支付概览/订单管理”只统计统一 `payment_order` 中的积分充值订单；收入按
   `fulfilled_at`、部署级 `APP_TIME_ZONE` 和币种分别汇总，不代表订阅或渠道净收入。
 - 支付概览图表左轴为收入金额、右轴为充值订单数；订单币种与已履约收入币种取并集，
