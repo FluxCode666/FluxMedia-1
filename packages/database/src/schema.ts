@@ -82,6 +82,7 @@ export const user = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
+    index("user_created_at_id_idx").on(table.createdAt, table.id),
     check(
       "user_moderation_block_risk_level_override_check",
       sql`${table.moderationBlockRiskLevelOverride} IS NULL OR ${table.moderationBlockRiskLevelOverride} IN ('low', 'medium', 'high')`
@@ -147,6 +148,10 @@ export const userWebVisit = pgTable(
       columns: [table.userId, table.appDate],
     }),
     index("user_web_visit_app_date_user_idx").on(table.appDate, table.userId),
+    index("user_web_visit_first_visited_user_idx").on(
+      table.firstVisitedAt,
+      table.userId
+    ),
     check(
       "user_web_visit_app_date_check",
       sql`${table.appDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`

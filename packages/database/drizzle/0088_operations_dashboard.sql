@@ -3,6 +3,10 @@
 -- WHY：行为统计从显式生产 epoch 开始，不根据迁移时间猜测；网页访问事实使用
 -- 数据库唯一约束抵抗同日重放与并发竞争。
 
+CREATE INDEX IF NOT EXISTS "user_created_at_id_idx"
+  ON "user" ("created_at", "id");
+--> statement-breakpoint
+
 CREATE TABLE IF NOT EXISTS "operations_analytics_epoch" (
   "id" integer PRIMARY KEY NOT NULL,
   "app_date" text NOT NULL,
@@ -52,4 +56,8 @@ CREATE TABLE IF NOT EXISTS "user_web_visit" (
 
 CREATE INDEX IF NOT EXISTS "user_web_visit_app_date_user_idx"
   ON "user_web_visit" ("app_date", "user_id");
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "user_web_visit_first_visited_user_idx"
+  ON "user_web_visit" ("first_visited_at", "user_id");
 --> statement-breakpoint
