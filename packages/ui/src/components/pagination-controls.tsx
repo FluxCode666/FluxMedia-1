@@ -40,6 +40,45 @@ export type PaginationControlsProps = {
   className?: string;
 };
 
+export type PaginationControlsViewModel = {
+  page: number;
+  totalPages: number;
+  showNavigation: boolean;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
+  mobilePages: number[];
+};
+
+/**
+ * 为响应式分页控件生成无副作用视图模型。
+ *
+ * @param page - 当前有效页码。
+ * @param totalPages - 当前总页数。
+ * @returns 前后导航状态和移动端完整页码选项。
+ */
+export function getPaginationControlsViewModel(
+  page: number,
+  totalPages: number
+): PaginationControlsViewModel {
+  const safeTotalPages = Number.isSafeInteger(totalPages)
+    ? Math.max(1, totalPages)
+    : 1;
+  const safePage = Number.isSafeInteger(page)
+    ? Math.min(safeTotalPages, Math.max(1, page))
+    : 1;
+  return {
+    page: safePage,
+    totalPages: safeTotalPages,
+    showNavigation: safeTotalPages > 1,
+    canGoPrevious: safePage > 1,
+    canGoNext: safePage < safeTotalPages,
+    mobilePages: Array.from(
+      { length: safeTotalPages },
+      (_, index) => index + 1
+    ),
+  };
+}
+
 /**
  * 渲染客户端状态驱动的统一分页导航。
  *
@@ -59,7 +98,8 @@ export function PaginationControls({
   disabled = false,
   className,
 }: PaginationControlsProps) {
-  if (totalPages <= 1) return null;
+  const viewModel = getPaginationControlsViewModel(page, totalPages);
+  if (!viewModel.showNavigation) return null;
 
   return (
     <Pagination aria-label={ariaLabel} className={cn("mx-0 w-auto", className)}>
@@ -68,8 +108,8 @@ export function PaginationControls({
           <PaginationLink asChild size="default">
             <button
               aria-label={previousLabel}
-              disabled={disabled || page <= 1}
-              onClick={() => onPageChange(page - 1)}
+              disabled={disabled || !viewModel.canGoPrevious}
+              onClick={() => onPageChange(viewModel.page - 1)}
               type="button"
             >
               <ChevronLeftIcon />
@@ -91,19 +131,17 @@ export function PaginationControls({
                 onPageChange(nextPage);
               }
             }}
-            value={String(page)}
+            value={String(viewModel.page)}
           >
             <SelectTrigger aria-label={pageSelectLabel} className="w-24">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Array.from({ length: totalPages }, (_, index) => index + 1).map(
-                (pageNumber) => (
-                  <SelectItem key={pageNumber} value={String(pageNumber)}>
-                    {pageNumber} / {totalPages}
-                  </SelectItem>
-                )
-              )}
+              {viewModel.mobilePages.map((pageNumber) => (
+                <SelectItem key={pageNumber} value={String(pageNumber)}>
+                  {pageNumber} / {viewModel.totalPages}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </li>
@@ -114,8 +152,8 @@ export function PaginationControls({
           <PaginationLink asChild size="default">
             <button
               aria-label={nextLabel}
-              disabled={disabled || page >= totalPages}
-              onClick={() => onPageChange(page + 1)}
+              disabled={disabled || !viewModel.canGoNext}
+              onClick={() => onPageChange(viewModel.page + 1)}
               type="button"
             >
               <span className="hidden sm:inline">{nextLabel}</span>

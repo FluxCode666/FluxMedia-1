@@ -144,9 +144,11 @@ export {
   PaginationEllipsis,
 } from "./components/pagination";
 export {
+  getPaginationControlsViewModel,
   PaginationControls,
   type PaginationControlsItem,
   type PaginationControlsProps,
+  type PaginationControlsViewModel,
 } from "./components/pagination-controls";
 
 // Popover
