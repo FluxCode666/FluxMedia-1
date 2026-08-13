@@ -74,7 +74,22 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
     );
     create table image_backend_member_api_config (
       member_id text primary key references image_backend_member(id),
-      current_adapter_version_id text
+      api_key text,
+      current_adapter_version_id text,
+      credential_scope text
+    );
+    create table image_backend_member_api_adapter_version (
+      id text primary key,
+      member_id_snapshot text not null,
+      credential_scope text not null
+    );
+    create table image_backend_member_adobe_config (
+      member_id text primary key references image_backend_member(id),
+      mode text not null,
+      base_url text,
+      api_key text,
+      cookie text,
+      access_token text
     );
     create table image_backend_member_group (
       id text primary key,
@@ -135,11 +150,19 @@ async function insertMember(
       input.leaseAcquiredCount ?? 0,
     ]
   );
+  const adapterVersionId = `adapter-version-${input.id}`;
+  const credentialScope = `https://${input.id}.example.test|bearer`;
+  await client.query(
+    `insert into image_backend_member_api_adapter_version (
+       id, member_id_snapshot, credential_scope
+     ) values ($1, $2, $3)`,
+    [adapterVersionId, input.id, credentialScope]
+  );
   await client.query(
     `insert into image_backend_member_api_config (
-       member_id, current_adapter_version_id
-     ) values ($1, $2)`,
-    [input.id, `adapter-version-${input.id}`]
+       member_id, api_key, current_adapter_version_id, credential_scope
+     ) values ($1, $2, $3, $4)`,
+    [input.id, `api-key-${input.id}`, adapterVersionId, credentialScope]
   );
   await client.query(
     `insert into image_backend_member_group (id, member_id, group_id)
