@@ -374,6 +374,31 @@ describe("API video adapter", () => {
   });
 
   it.each([
+    { task_id: "upstream-conflict-task" },
+    { data: { id: "upstream-conflict-id" } },
+    { generation_id: "upstream-conflict-generation" },
+  ])("409 携带有效任务身份时固定原任务继续轮询", async (body) => {
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json(body, { status: 409 })
+    );
+
+    await expect(
+      submitApiVideoRequest(createConfig(), {
+        clientRequestId: "local-video-conflict",
+        prompt: "prompt",
+        model: "seedance2",
+        duration: 15,
+        aspectRatio: "9:16",
+        resolution: "480p",
+        effectiveAudio: false,
+      })
+    ).resolves.toMatchObject({
+      status: "pending",
+      upstreamJobId: Object.values("data" in body ? body.data : body)[0],
+    });
+  });
+
+  it.each([
     401, 403, 429,
   ])("提交返回 %s 时保留 HTTP 分类供状态机裁决", async (status) => {
     mocks.fetchMediaUpstream.mockResolvedValue(

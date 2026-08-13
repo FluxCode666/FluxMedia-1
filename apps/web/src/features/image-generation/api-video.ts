@@ -334,6 +334,25 @@ async function parseBuiltInVideoSubmission(
   response: Response
 ): Promise<ApiVideoSubmission | ApiVideoStageError> {
   if (!response.ok) {
+    // WHY：部分上游用 409 表示相同幂等请求已创建任务。只要响应仍携带有效
+    // 任务 ID，就必须锁定该身份继续轮询，避免把已接受请求误判为失败后重复创建。
+    if (response.status === 409) {
+      try {
+        const conflictRecord = await readJsonRecord(response);
+        const upstreamJobId = conflictRecord
+          ? readString(conflictRecord, ["task_id", "id", "generation_id"])
+          : undefined;
+        if (upstreamJobId) {
+          return {
+            status: "pending",
+            upstreamJobId,
+            raw: conflictRecord,
+          };
+        }
+      } catch {
+        // 响应读取失败仍按无有效任务身份的 409 处理，由状态机安全终止退款。
+      }
+    }
     const retryAfterSeconds = parseApiUpstreamRetryAfterSeconds(
       response.headers.get("retry-after"),
       new Date()
@@ -392,7 +411,8 @@ async function parseBuiltInVideoSubmission(
  * @param params 真实模型 ID、独立生成参数、幂等键和具名输入图。
  * @returns 同步产物、异步任务身份，或可供调度器分类的提交错误。
  * @sideEffects 请求脚本成功后最多发起一次供应商 POST。
- * @failure 创建失败由状态机有界重试或切号；409 仅在脚本明确可重试时自动恢复。
+ * @failure 创建失败由状态机有界重试或切号；409 携带任务 ID 时固定原任务，
+ * 否则仅在脚本明确可重试时自动恢复。
  */
 export async function submitApiVideoRequest(
   config: ApiConfig,
