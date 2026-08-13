@@ -11,8 +11,9 @@
  * - user.verifyCode: 已接线 -> verifyRegistrationCode (auth/registration-verification)
  * - user.getMyTimeZone / user.updateMyTimeZone: 已接线 -> time-zone/server
  * - user.getCurrentSession: stub（依赖 next/headers，在 app 层绑定）
- * - admin 操作（list/getDetail/ban/updateRole/create/updateProfile/setPassword/setCreditsStatus/setExternalApiKeyStatus）:
- *   stub（业务逻辑内联于 admin-users.ts server-action 闭包，在 app 层绑定）
+ * - user.list: 已接线 -> support/admin-user-list-service
+ * - 其余 admin 操作（getDetail/ban/updateRole/create/updateProfile/setPassword/setCreditsStatus/setExternalApiKeyStatus）:
+ *   stub（业务逻辑仍内联于 admin-users.ts server-action 闭包）
  */
 import { z } from "zod";
 
@@ -21,6 +22,11 @@ import {
   sendRegistrationVerificationCode as sendRegistrationVerificationCodeService,
   verifyRegistrationCode as verifyRegistrationCodeService,
 } from "../../auth/registration-verification";
+import {
+  adminUserListInputSchema,
+  adminUserListOutputSchema,
+} from "../../support/admin-user-list-contract";
+import { listAdminUsers } from "../../support/admin-user-list-service";
 import { userTimeZoneSchema } from "../../time-zone";
 import {
   getUserTimeZoneSettings,
@@ -47,27 +53,15 @@ export const listUsers = defineOperation({
   domain: "user-auth",
   title: "List Users",
   description: "列出系统中的用户列表，支持分页与过滤。仅管理员可调用。",
-  input: z.object({
-    page: z.number().int().min(1).default(1),
-    pageSize: z.number().int().min(1).max(100).default(20),
-    search: z.string().optional(),
-    role: z.string().optional(),
-  }),
-  output: z.object({
-    users: z.array(z.record(z.string(), z.unknown())),
-    total: z.number(),
-    page: z.number(),
-    pageSize: z.number(),
-  }),
-  access: { kind: "admin" },
+  input: adminUserListInputSchema,
+  output: adminUserListOutputSchema,
+  access: { kind: "roles", roles: ["admin", "super_admin"] },
+  agentExposure: "human-only",
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
   sideEffects: [],
-  // Bound at app level - admin-users.ts server-action logic
-  execute: async () => {
-    throw new Error("Not yet wired: user.list");
-  },
+  execute: listAdminUsers,
 });
 
 // ---------------------------------------------------------------------------
