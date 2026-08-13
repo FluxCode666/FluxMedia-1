@@ -115,14 +115,16 @@ function buildImageStatusPredicate(
 function buildVideoStatusPredicate(
   status: AdminHistoryListQuery["status"],
   statusColumn: SQL,
-  stageColumn: SQL
+  stageColumn: SQL,
+  capacityWaitDeadlineColumn: SQL
 ): SQL {
   if (status === null) return sql`true`;
   if (status === "processing") return sql`false`;
   return buildVideoPublicStatusPredicate(
     videoPublicStatusSchema.parse(status),
     statusColumn,
-    stageColumn
+    stageColumn,
+    capacityWaitDeadlineColumn
   );
 }
 
@@ -175,7 +177,11 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
     when g.status = 'failed' then 'failed'
     else g.status::text
   end`;
-  const videoStatus = buildVideoPublicStatusSql(sql`v.status`, sql`v.stage`);
+  const videoStatus = buildVideoPublicStatusSql(
+    sql`v.status`,
+    sql`v.stage`,
+    sql`v.capacity_wait_deadline_at`
+  );
   const imageBackendAccountId = sql`coalesce(
     nullif(btrim(g.api_adapter_member_id), ''),
     nullif(btrim((g.metadata::jsonb)->'backend'->>'id'), '')
@@ -327,7 +333,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         and ${buildVideoStatusPredicate(
           input.status,
           sql`v.status`,
-          sql`v.stage`
+          sql`v.stage`,
+          sql`v.capacity_wait_deadline_at`
         )}
         and ${buildCursorPredicate(input, sql`v.created_at`, sql`v.id`, 0)}
       order by v.created_at ${orderDirection}, v.id ${orderDirection}

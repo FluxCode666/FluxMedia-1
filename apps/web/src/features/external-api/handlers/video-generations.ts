@@ -283,6 +283,7 @@ export const postExternalVideoGenerations = withApiLogging(
       const result = await invokeOperation<{
         taskId: string;
         status: "queued" | "in_progress" | "completed" | "failed";
+        error?: string;
       }>(
         "video.generate",
         {
@@ -319,6 +320,7 @@ export const postExternalVideoGenerations = withApiLogging(
           task_id: result.taskId,
           generation_id: result.taskId,
           status: result.status,
+          ...(result.error ? { error: { message: result.error } } : {}),
           model: parsed.data.model,
           duration,
           duration_seconds: duration,

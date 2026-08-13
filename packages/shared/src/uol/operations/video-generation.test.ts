@@ -386,6 +386,13 @@ describe("video generation operations", () => {
         status: "queued",
       }).success
     ).toBe(true);
+    expect(
+      videoGenerate.output.safeParse({
+        taskId: output.taskId,
+        status: "failed",
+        error: "当前没有可用生成服务",
+      }).success
+    ).toBe(true);
     for (const status of [
       "pending",
       "submitting",

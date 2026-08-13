@@ -167,6 +167,29 @@ describe("external async image tasks", () => {
     });
   });
 
+  it("首次获租前容量等待在回调投影中为 in_progress", () => {
+    const response = toVideoGenerationTaskResponse(
+      {
+        id: "vid-capacity-wait",
+        model: "seedance2",
+        status: "pending",
+        stage: "created",
+        capacityWaitDeadlineAt: new Date("2026-08-13T00:02:00.000Z"),
+        durationSeconds: 8,
+        aspectRatio: "16:9",
+        resolution: "720p",
+        generateAudio: false,
+        creditsConsumed: 0,
+        error: null,
+        createdAt: new Date("2026-06-22T00:00:00Z"),
+        updatedAt: null,
+      },
+      null
+    );
+
+    expect(response.status).toBe("in_progress");
+  });
+
   it("maps legacy uncertain video tasks to in_progress", () => {
     const response = toVideoGenerationTaskResponse(
       {

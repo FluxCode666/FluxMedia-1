@@ -346,7 +346,7 @@ async function parseBuiltInVideoSubmission(
           return {
             status: "pending",
             upstreamJobId,
-            raw: conflictRecord,
+            raw: conflictRecord ?? {},
           };
         }
       } catch {

@@ -363,21 +363,109 @@ async function persistVideoUpstreamRequestSnapshot(
 /** 将未扣费或不可调度的任务直接标记失败，不创建退款。 */
 async function failUnchargedVideo(
   row: VideoGenerationRow,
-  message: string
-): Promise<void> {
-  await compareAndSetVideoStage({
+  message: string,
+  failureCode?: VideoSubmissionFailureCode
+): Promise<VideoGenerationRow | null> {
+  const failureReason = sanitizeVideoSubmissionFailureReason(message);
+  const failed = await compareAndSetVideoStage({
     row,
     expectedStages: [row.stage as VideoStage],
     values: {
       status: "failed",
       stage: "failed",
       creditsConsumed: 0,
-      error: message.slice(0, 1_000),
+      error: failureReason,
+      ...(failureCode ? { failureCode } : {}),
       claimToken: null,
       claimExpiresAt: null,
       nextPollAt: null,
     },
   });
+  if (failed && failureCode) {
+    logger.error(
+      createVideoSubmissionRecoveryEvent({
+        event: "video_submission_recovery_exhausted",
+        videoTaskId: failed.id,
+        supplierName: getVideoSupplierName(failed),
+        model: failed.model,
+        protocol: "api",
+        requestId: getVideoRequestId(failed) ?? randomUUID(),
+        failureCode,
+        failureReason,
+        ...(getVideoExternalRequestId(failed)
+          ? { externalRequestId: getVideoExternalRequestId(failed) }
+          : {}),
+      }),
+      "视频 API 创建在外呼前终止"
+    );
+  }
+  return failed;
+}
+
+/** 创建响应前只读资格裁决的结果。 */
+export type InitialVideoBackendAvailability =
+  | "available"
+  | "capacity_rejected"
+  | "no_candidate";
+
+/**
+ * 把创建响应前的只读资格裁决持久化，不获取账号租约或发起上游请求。
+ *
+ * @param taskId 已持久化的视频任务 ID。
+ * @param availability 当前可信分组的资格与容量快照。
+ * @returns 更新后的任务；任务已被并发推进时返回数据库当前事实。
+ * @sideEffects 无合格账号或零等待时标记失败；容量满时固定等待截止并打印一次日志。
+ * @failure 任务不存在时返回 null；配置读取失败上抛，避免错误终结合法任务。
+ */
+export async function applyInitialVideoBackendAvailability(
+  taskId: string,
+  availability: InitialVideoBackendAvailability
+): Promise<VideoGenerationRow | null> {
+  const row = await getVideoGenerationById(taskId);
+  if (row?.stage !== "created") return row;
+  if (availability === "available") return row;
+  if (availability === "no_candidate") {
+    return (
+      (await failUnchargedVideo(
+        row,
+        "当前没有可用生成服务",
+        "no_eligible_api_account"
+      )) ?? (await getVideoGenerationById(taskId))
+    );
+  }
+
+  const configuredSeconds = await getRuntimeSettingNumber(
+    "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
+    120,
+    { nonNegative: true }
+  );
+  const waitSeconds = Math.min(
+    1_800,
+    Math.max(0, Math.round(configuredSeconds))
+  );
+  if (waitSeconds === 0) {
+    return (
+      (await failUnchargedVideo(
+        row,
+        "当前生成服务繁忙，请稍后重试",
+        "capacity_wait_timeout"
+      )) ?? (await getVideoGenerationById(taskId))
+    );
+  }
+  const now = new Date();
+  const deadline = new Date(now.getTime() + waitSeconds * 1_000);
+  const waiting = await compareAndSetVideoStage({
+    row,
+    expectedStages: ["created"],
+    values: {
+      capacityWaitDeadlineAt: deadline,
+      nextPollAt: now,
+      claimToken: null,
+      claimExpiresAt: null,
+    },
+  });
+  if (waiting) logVideoCapacityWaitStarted({ row: waiting, deadline });
+  return waiting ?? getVideoGenerationById(taskId);
 }
 
 /** 释放任务持有的成员租约；owner 已被接管时旧 worker 无法误释放。 */
@@ -1597,7 +1685,7 @@ async function submitClaimedCreatedVideo(
         const refunding = await moveVideoToRefunding(row, reason, failureCode);
         if (refunding) await refundClaimedVideoOrRetry(refunding);
       } else {
-        await failUnchargedVideo(row, reason);
+        await failUnchargedVideo(row, reason, failureCode);
       }
       return { error: reason, videoGenerationId: row.id };
     }
@@ -1611,11 +1699,15 @@ async function submitClaimedCreatedVideo(
         );
         if (refunding) await refundClaimedVideoOrRetry(refunding);
       } else {
-        await failUnchargedVideo(row, reason);
+        await failUnchargedVideo(row, reason, "no_eligible_api_account");
       }
       return { error: reason, videoGenerationId: row.id };
     }
-    await failUnchargedVideo(row, "当前没有可用生成服务");
+    await failUnchargedVideo(
+      row,
+      "当前没有可用生成服务",
+      "no_eligible_api_account"
+    );
     return {
       error: "当前没有可用生成服务",
       videoGenerationId: row.id,

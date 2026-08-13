@@ -47,6 +47,7 @@ import {
 import { buildVideoInputSummary } from "@/features/image-generation/video-input-lifecycle";
 import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/video-input-storage";
 import {
+  applyInitialVideoBackendAvailability,
   getVideoGenerationById,
   reconcileUncertainVideoSubmission,
   runVideoGenerationForUser,
@@ -189,6 +190,26 @@ function readVideoMetadataBoolean(
   return metadata?.[key] === true;
 }
 
+/** 仅向创建响应投影 failed 任务已持久化的安全失败原因。 */
+function createVideoGenerateResult(
+  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>
+): {
+  taskId: string;
+  status: ReturnType<typeof toLegacyVideoPublicStatus>;
+  error?: string;
+} {
+  const status = toLegacyVideoPublicStatus(
+    row.status,
+    row.stage,
+    row.capacityWaitDeadlineAt
+  );
+  return {
+    taskId: row.id,
+    status,
+    ...(status === "failed" && row.error ? { error: row.error } : {}),
+  };
+}
+
 bindOperationExecute(videoListCapabilities, (input, principal) =>
   executeVideoListCapabilitiesBinding(input, principal, {
     async loadCapabilityOverrides() {
@@ -261,10 +282,7 @@ bindExecute(
       assertVideoTaskPrincipal(existing, principal, ctx);
       assertVideoRequestFingerprint(existing, requestFingerprint);
       await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      return {
-        taskId,
-        status: toLegacyVideoPublicStatus(existing.status, existing.stage),
-      };
+      return createVideoGenerateResult(existing);
     }
 
     // WHY：动态参考图上限只约束新任务。历史幂等重放已在上方按创建时规范
@@ -369,10 +387,7 @@ bindExecute(
         assertVideoRequestFingerprint(raced, requestFingerprint);
         await assertVideoCallbackFingerprint(taskId, callbackUrl);
         await enqueueVideoTaskBestEffort(raced);
-        return {
-          taskId,
-          status: toLegacyVideoPublicStatus(raced.status, raced.stage),
-        };
+        return createVideoGenerateResult(raced);
       }
     } catch (error) {
       if (error instanceof VideoActiveTaskLimitError) {
@@ -437,20 +452,49 @@ bindExecute(
         objects: stagedInput.objects,
         persistedManifest: persisted?.inputManifest,
       });
-      if (persisted) {
-        assertVideoTaskPrincipal(persisted, principal, ctx);
-        assertVideoRequestFingerprint(persisted, requestFingerprint);
-        await assertVideoCallbackFingerprint(taskId, callbackUrl);
-        await enqueueVideoTaskBestEffort(persisted);
+      let responseRow = persisted;
+      if (responseRow?.stage === "created") {
+        try {
+          const availability = await import(
+            "@/features/image-backend-pool/runtime-service"
+          ).then((runtime) =>
+            runtime.inspectRuntimeVideoBackendAvailability({
+              userId: principal.userId,
+              ...(apiKeyId ? { apiKeyId } : {}),
+              ...(canonicalInput.backendGroupId
+                ? { requestedGroupId: canonicalInput.backendGroupId }
+                : {}),
+              modelId: canonicalInput.model,
+              requiresContentSafety: true,
+            })
+          );
+          responseRow =
+            (await applyInitialVideoBackendAvailability(
+              responseRow.id,
+              availability
+            )) ?? responseRow;
+        } catch (availabilityError) {
+          // 只读资格预检故障不能撤销已持久化任务；独立 worker 会重新执行权威调度。
+          logError(availabilityError, {
+            source: "video-initial-backend-availability",
+            taskId,
+          });
+        }
       }
-      return {
-        taskId,
-        status: persisted
-          ? toLegacyVideoPublicStatus(persisted.status, persisted.stage)
-          : "error" in result
-            ? ("failed" as const)
-            : ("queued" as const),
-      };
+      if (responseRow) {
+        assertVideoTaskPrincipal(responseRow, principal, ctx);
+        assertVideoRequestFingerprint(responseRow, requestFingerprint);
+        await assertVideoCallbackFingerprint(taskId, callbackUrl);
+        await enqueueVideoTaskBestEffort(responseRow);
+      }
+      return responseRow
+        ? createVideoGenerateResult(responseRow)
+        : {
+            taskId,
+            status:
+              "error" in result ? ("failed" as const) : ("queued" as const),
+            ...("error" in result ? { error: result.error } : {}),
+          };
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个 insert
       // 失败。只有已存在且指纹一致时才把它视为幂等命中。
@@ -488,10 +532,7 @@ bindExecute(
       assertVideoTaskPrincipal(raced, principal, ctx);
       assertVideoRequestFingerprint(raced, requestFingerprint);
       await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      return {
-        taskId,
-        status: toLegacyVideoPublicStatus(raced.status, raced.stage),
-      };
+      return createVideoGenerateResult(raced);
     }
   }
 );
@@ -579,7 +620,11 @@ bindExecute(
     }
     return {
       taskId: row.id,
-      status: toLegacyVideoPublicStatus(row.status, row.stage),
+      status: toLegacyVideoPublicStatus(
+        row.status,
+        row.stage,
+        row.capacityWaitDeadlineAt
+      ),
       model: row.model,
       duration: row.durationSeconds,
       aspectRatio: row.aspectRatio,

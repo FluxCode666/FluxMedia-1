@@ -5,6 +5,7 @@
  * 错误 owner/停用 Key、固定分组漂移和外部覆盖尝试的 fail-closed 行为。
  * 使用方：apps/web DB-free Vitest 门禁；数据库查询本身由参数化 SQL 实现。
  */
+import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -13,6 +14,7 @@ import {
   selectTrustedRuntimeGroupTarget,
 } from "./runtime-group-selection";
 import { canRuntimeBackendLeaseServeRequest } from "./runtime-protocol-eligibility";
+import { inspectRuntimeVideoBackendAvailability } from "./runtime-service";
 import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 
 /** 构造只覆盖分组信任边界所需的最小运行时输入。 */
@@ -215,5 +217,42 @@ describe("canRuntimeBackendLeaseServeRequest", () => {
         adobeMode: "direct",
       })
     ).toBe(false);
+  });
+});
+
+describe("inspectRuntimeVideoBackendAvailability", () => {
+  const group = {
+    id: "group-1",
+    name: "Default",
+    priority: 0,
+    contentSafetyEnabled: true,
+    imageCreditOverrides: {},
+    videoCreditOverrides: {},
+  };
+
+  it.each([
+    [{ eligible_count: 0, available_count: 0 }, "no_candidate"],
+    [{ eligible_count: 2, available_count: 0 }, "capacity_rejected"],
+    [{ eligible_count: 2, available_count: 1 }, "available"],
+  ] as const)("把只读候选计数投影为 %s", async (row, expected) => {
+    const execute = async (query: Parameters<PgDialect["sqlToQuery"]>[0]) => {
+      const compiled = new PgDialect().sqlToQuery(query);
+      expect(compiled.sql).toContain("with eligible as");
+      expect(compiled.sql).toContain("image_backend_member_lease");
+      expect(compiled.sql).not.toContain("insert into");
+      expect(compiled.sql).not.toContain("update image_backend_member");
+      return { rows: [row] };
+    };
+
+    await expect(
+      inspectRuntimeVideoBackendAvailability(
+        {
+          userId: "user-1",
+          modelId: "seedance2",
+          requiresContentSafety: true,
+        },
+        { group, database: { execute } }
+      )
+    ).resolves.toBe(expected);
   });
 });

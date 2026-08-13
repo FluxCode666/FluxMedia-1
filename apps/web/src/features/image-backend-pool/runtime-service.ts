@@ -63,6 +63,11 @@ const configuredModelIdsRowSchema = z.object({
   supported_model_ids: z.array(z.string().trim().min(1)),
 });
 
+const runtimeAvailabilityRowSchema = z.object({
+  eligible_count: z.coerce.number().int().nonnegative(),
+  available_count: z.coerce.number().int().nonnegative(),
+});
+
 const apiVideoRecoveryRowSchema = z.object({
   member_id: z.string().trim().min(1),
   credential_scope: z.string().trim().min(1),
@@ -142,6 +147,17 @@ export interface ListConfiguredRuntimeModelIdsInput {
   apiKeyId?: string;
   requestedGroupId?: string;
   pinnedGroupId?: string;
+}
+
+/** 创建响应前只读资格裁决的稳定结果。 */
+export type RuntimeBackendAvailability =
+  | "available"
+  | "capacity_rejected"
+  | "no_candidate";
+
+/** 只读视频账号资格裁决使用的最小数据库端口。 */
+export interface RuntimeVideoBackendAvailabilityDatabase {
+  execute(query: SQL): Promise<unknown>;
 }
 
 /** 运行时会话只暴露获租、结果上报和关闭，避免调用方直接操作租约行。 */
@@ -286,6 +302,105 @@ export async function listConfiguredRuntimeModelIds(
       supportedModelIds: row.supported_model_ids,
     }))
   );
+}
+
+/**
+ * 在不获取租约、不修改成员状态的前提下判断当前视频任务是否存在合格账号。
+ *
+ * @param input Principal 可信分组、真实模型和内容安全要求。
+ * @returns 有空闲账号、仅容量已满或没有合格账号。
+ * @sideEffects 只读 API Key 绑定、分组、成员配置和当前有效租约。
+ * @failure 分组不可达或数据库事实非法时显式抛错，不把系统错误伪装成无账号。
+ */
+export async function inspectRuntimeVideoBackendAvailability(
+  input: ListConfiguredRuntimeModelIdsInput & {
+    modelId: string;
+    requiresContentSafety: boolean;
+  },
+  dependencies?: {
+    group?: RuntimeBackendGroupSnapshot;
+    database?: RuntimeVideoBackendAvailabilityDatabase;
+  }
+): Promise<RuntimeBackendAvailability> {
+  const group =
+    dependencies?.group ?? (await resolveTrustedGroupSnapshot(input));
+  const requiresContentSafety =
+    input.requiresContentSafety && group.contentSafetyEnabled !== false;
+  const database =
+    dependencies?.database ?? (await import("@repo/database")).db;
+  const rows = z.array(runtimeAvailabilityRowSchema).parse(
+    extractExecuteRows(
+      await database.execute(sql`
+        with eligible as (
+          select member.id, member.concurrency
+          from image_backend_member as member
+          inner join image_backend_member_group as membership
+            on membership.member_id = member.id
+          left join image_backend_member_api_config as api
+            on api.member_id = member.id
+          left join image_backend_member_api_adapter_version as api_version
+            on api_version.id = api.current_adapter_version_id
+            and api_version.member_id_snapshot = member.id
+            and api_version.credential_scope = api.credential_scope
+          left join image_backend_member_adobe_config as adobe
+            on adobe.member_id = member.id
+          where membership.group_id = ${group.id}
+            and member.is_enabled = true
+            and (member.cooldown_until is null or member.cooldown_until <= now())
+            and member.status <> 'error'
+            and not (
+              member.type = 'adobe'
+              and exists (
+                select 1
+                from adobe_credential_health as credential_health
+                where credential_health.member_id = member.id
+                  and credential_health.status = 'isolated'
+              )
+            )
+            and exists (
+              select 1
+              from json_array_elements_text(member.supported_model_ids)
+                as supported_model(model_id)
+              where lower(trim(supported_model.model_id)) =
+                lower(${input.modelId})
+            )
+            and (
+              ${requiresContentSafety} = false
+              or member.content_safety_enabled = true
+            )
+            and (
+              (
+                member.type = 'api'
+                and api.api_key is not null
+                and api_version.id is not null
+              )
+              or (
+                member.type = 'adobe'
+                and adobe.mode = 'direct'
+                and adobe.cookie is not null
+                and adobe.access_token is not null
+              )
+            )
+        ), inflight as (
+          select lease.member_id, count(*)::integer as count
+          from image_backend_member_lease as lease
+          inner join eligible on eligible.id = lease.member_id
+          where lease.expires_at > now()
+          group by lease.member_id
+        )
+        select
+          count(*)::integer as eligible_count,
+          count(*) filter (
+            where coalesce(inflight.count, 0) < eligible.concurrency
+          )::integer as available_count
+        from eligible
+        left join inflight on inflight.member_id = eligible.id
+      `)
+    )
+  );
+  const availability = rows[0];
+  if (!availability || availability.eligible_count === 0) return "no_candidate";
+  return availability.available_count > 0 ? "available" : "capacity_rejected";
 }
 
 /**

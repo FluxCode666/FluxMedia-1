@@ -94,6 +94,31 @@ describe("postExternalVideoGenerations", () => {
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
+  it("已持久化但无合格账号时返回 OpenAI 风格失败原因", async () => {
+    mocks.invokeOperation.mockResolvedValueOnce({
+      taskId: "video-no-account",
+      status: "failed",
+      error: "当前没有可用生成服务",
+    });
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-no-account",
+        prompt: "test",
+        model: "seedance2",
+        duration: 5,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      id: "video-no-account",
+      status: "failed",
+      error: { message: "当前没有可用生成服务" },
+    });
+  });
+
   it("单独使用 camelCase 时把真实模型、独立参数和首帧传给 UOL", async () => {
     const firstFrame = `data:image/png;base64,${Buffer.from("first").toString(
       "base64"

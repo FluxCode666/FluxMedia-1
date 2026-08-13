@@ -139,6 +139,35 @@ describe("POST /api/videos/generate", () => {
     );
   });
 
+  it("已持久化但无合格账号时以 202 返回 failed 和安全原因", async () => {
+    invokeOperationMock.mockResolvedValueOnce({
+      taskId: "video-no-account",
+      status: "failed",
+      error: "当前没有可用生成服务",
+    });
+    const response = await POST(
+      new NextRequest("https://app.example.com/api/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "request-no-account",
+          prompt: "海边日落",
+          model: "seedance2",
+          duration: 15,
+          aspectRatio: "9:16",
+          resolution: "480p",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      taskId: "video-no-account",
+      status: "failed",
+      error: "当前没有可用生成服务",
+    });
+  });
+
   it("把参考图数组转换为有序具名媒体引用", async () => {
     const image = `data:image/png;base64,${Buffer.from("image").toString(
       "base64"

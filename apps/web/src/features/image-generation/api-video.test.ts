@@ -374,10 +374,13 @@ describe("API video adapter", () => {
   });
 
   it.each([
-    { task_id: "upstream-conflict-task" },
-    { data: { id: "upstream-conflict-id" } },
-    { generation_id: "upstream-conflict-generation" },
-  ])("409 携带有效任务身份时固定原任务继续轮询", async (body) => {
+    [{ task_id: "upstream-conflict-task" }, "upstream-conflict-task"],
+    [{ data: { id: "upstream-conflict-id" } }, "upstream-conflict-id"],
+    [
+      { generation_id: "upstream-conflict-generation" },
+      "upstream-conflict-generation",
+    ],
+  ])("409 携带有效任务身份时固定原任务继续轮询", async (body, taskId) => {
     mocks.fetchMediaUpstream.mockResolvedValue(
       Response.json(body, { status: 409 })
     );
@@ -394,7 +397,7 @@ describe("API video adapter", () => {
       })
     ).resolves.toMatchObject({
       status: "pending",
-      upstreamJobId: Object.values("data" in body ? body.data : body)[0],
+      upstreamJobId: taskId,
     });
   });
 

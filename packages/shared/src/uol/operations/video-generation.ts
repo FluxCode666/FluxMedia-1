@@ -417,6 +417,7 @@ export const videoGenerate = defineOperation({
   output: z.object({
     taskId: z.string(),
     status: videoPublicStatusSchema,
+    error: z.string().max(1_000).optional(),
   }),
   access: { kind: "protected" },
   readOnly: false,

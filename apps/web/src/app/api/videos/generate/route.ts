@@ -96,6 +96,7 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   const result = await invokeOperation<{
     taskId: string;
     status: "queued" | "in_progress" | "completed" | "failed";
+    error?: string;
   }>(
     "video.generate",
     {

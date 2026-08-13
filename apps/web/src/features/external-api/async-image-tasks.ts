@@ -91,6 +91,7 @@ export type VideoTaskRow = {
   // status/stage 是 text 列，公开值必须经共享四态投影，禁止直接透传内部阶段。
   status: string;
   stage?: string;
+  capacityWaitDeadlineAt?: Date | null;
   durationSeconds: number;
   aspectRatio: string;
   resolution: string;
@@ -111,7 +112,11 @@ export function toVideoGenerationTaskResponse(
   row: VideoTaskRow,
   videoUrl: string | null
 ) {
-  const status = toLegacyVideoPublicStatus(row.status, row.stage);
+  const status = toLegacyVideoPublicStatus(
+    row.status,
+    row.stage,
+    row.capacityWaitDeadlineAt
+  );
   const credits = Number(row.creditsConsumed ?? 0);
   return {
     id: row.id,

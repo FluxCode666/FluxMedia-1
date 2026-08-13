@@ -44,6 +44,13 @@ describe("video public status", () => {
     }
   });
 
+  it("首次获租前容量等待公开为 in_progress", () => {
+    expect(
+      toVideoPublicStatus("pending", "created", "2026-08-13T00:00:00.000Z")
+    ).toBe("in_progress");
+    expect(toVideoPublicStatus("pending", "created", null)).toBe("queued");
+  });
+
   it("迁移窗口内不公开遗留人工态", () => {
     expect(toLegacyVideoPublicStatus("running", "submit_uncertain")).toBe(
       "in_progress"
@@ -54,17 +61,23 @@ describe("video public status", () => {
   it("SQL 投影和筛选只使用公开四态", () => {
     const dialect = new PgDialect();
     const projection = dialect.sqlToQuery(
-      buildVideoPublicStatusSql(sql`v.status`, sql`v.stage`)
+      buildVideoPublicStatusSql(
+        sql`v.status`,
+        sql`v.stage`,
+        sql`v.capacity_wait_deadline_at`
+      )
     );
     const filter = dialect.sqlToQuery(
       buildVideoPublicStatusPredicate(
         "in_progress",
         sql`v.status`,
-        sql`v.stage`
+        sql`v.stage`,
+        sql`v.capacity_wait_deadline_at`
       )
     );
 
     expect(projection.sql).toContain("then 'queued'");
+    expect(projection.sql).toContain("capacity_wait_deadline_at is not null");
     expect(projection.sql).toContain("else 'in_progress'");
     expect(projection.sql).not.toContain("needs_attention");
     expect(filter.params).toEqual(["in_progress"]);
