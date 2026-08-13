@@ -108,6 +108,7 @@ import {
   sanitizeVideoSubmissionFailureReason,
   type VideoSubmissionFailureDecision,
 } from "./video-submission-failure";
+import { resolveVideoSubmissionRetryAccountSelection } from "./video-submission-retry-selection";
 import {
   admitVideoTaskCreation,
   consumeVideoTaskStagingReservation,
@@ -1218,6 +1219,19 @@ async function submitClaimedCreatedVideo(
   );
   let row = initialRow;
   const isSubmissionRetry = initialRow.stage === "retrying";
+  // 切号后容量满会清空绑定账号。恢复时必须以外呼前账本为准排除已尝试账号，
+  // 否则调度器可能再次选择已耗尽的账号并造成无效循环。
+  const attemptedMemberIdsForRecovery =
+    isSubmissionRetry && !row.backendMemberId
+      ? await defaultVideoSubmissionAttemptRepository.listAttemptedMemberIds(
+          row.id
+        )
+      : [];
+  const retryAccountSelection = resolveVideoSubmissionRetryAccountSelection({
+    isSubmissionRetry,
+    backendMemberId: row.backendMemberId,
+    attemptedMemberIds: attemptedMemberIdsForRecovery,
+  });
 
   const globalPricing = await getRuntimeGlobalVideoPricing();
   let backendSession: Awaited<ReturnType<typeof createRuntimeBackendSession>>;
@@ -1229,9 +1243,7 @@ async function submitClaimedCreatedVideo(
       modelId: contract.model,
       requestKind: "video",
       requiresContentSafety: true,
-      ...(isSubmissionRetry && row.backendMemberId
-        ? { requiredMemberId: row.backendMemberId }
-        : {}),
+      ...retryAccountSelection,
     });
     await backendSession.acquireNext();
   } catch (error) {
