@@ -10,6 +10,8 @@
 
 // 图像生成域
 import "./image-generation";
+// 管理状态页历史错误（仅人工管理员）
+import "./admin-status";
 // 媒体资源限制与用户并发覆盖
 import "./media-limits";
 // 视频生成与查询（与图片共享 image-generation 域）
@@ -37,6 +39,7 @@ import "./external-api";
 // 模型配置与模型广场（人工管理写入、system-only 公开读取）
 import "./model-marketplace";
 
+export { listAdminStatusErrors } from "./admin-status";
 export {
   adobeCredentialHealthCheck,
   adobeCredentialHealthCleanup,

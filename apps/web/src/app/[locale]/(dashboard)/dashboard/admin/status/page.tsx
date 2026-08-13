@@ -24,12 +24,14 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewImageBackendPool } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import { formatCredits } from "@repo/shared/credits/format";
+import type { AdminStatusErrorListOutput } from "@repo/shared/image-generation/admin-status-errors-contract";
 import {
   formatDateInputInTimeZone,
   formatDateInTimeZone,
   parseDateInputInTimeZone,
 } from "@repo/shared/time-zone";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
+import { invokeOperation } from "@repo/shared/uol";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -39,24 +41,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@repo/ui/components/card";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-} from "@repo/ui/components/pagination";
 import { Progress } from "@repo/ui/components/progress";
-import {
-  and,
-  count,
-  desc,
-  eq,
-  gte,
-  inArray,
-  lte,
-  type SQL,
-  sql,
-} from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   Activity,
   AlertTriangle,
@@ -74,12 +60,17 @@ import {
   normalizeValidImageSize,
 } from "@/features/image-generation/resolution";
 import { classifyGenerationError } from "@/features/image-generation/sla";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
+import { ensureUolInitialized } from "@/server/uol-init";
 import { GLOBAL_STATUS_CACHE_TAG } from "./cache-tag";
 import { RefreshStatusButton } from "./refresh-status-button";
 
 export const dynamic = "force-dynamic";
 
-const ERROR_PAGE_SIZE = 50;
+const ERROR_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+const ERROR_PAGINATION_NAMES = createPaginationUrlParamNames("error");
 
 type ErrorRange = "24h" | "7d" | "30d" | "90d" | "all" | "custom";
 
@@ -89,6 +80,7 @@ interface GlobalStatusPageProps {
     errorFrom?: string;
     errorTo?: string;
     errorPage?: string;
+    errorPageSize?: string;
   }>;
 }
 
@@ -230,6 +222,7 @@ type HistoricalErrorFilters = {
   fromDate: Date | null;
   toDate: Date | null;
   page: number;
+  pageSize: 10 | 20 | 50;
 };
 
 type HistoricalGenerationErrorRow = {
@@ -291,6 +284,7 @@ function parseHistoricalErrorFilters(
   const range = normalizeErrorRange(searchParams.errorRange);
   const now = new Date();
   const page = parsePositiveInteger(searchParams.errorPage, 1);
+  const pageSize = parseHistoricalErrorPageSize(searchParams.errorPageSize);
   const customFrom = parseDateInput(searchParams.errorFrom, timeZone);
   const customTo = parseDateInput(searchParams.errorTo, timeZone, true);
 
@@ -302,6 +296,7 @@ function parseHistoricalErrorFilters(
       fromDate: null,
       toDate: null,
       page,
+      pageSize,
     };
   }
 
@@ -313,6 +308,7 @@ function parseHistoricalErrorFilters(
       fromDate: customFrom,
       toDate: customTo,
       page,
+      pageSize,
     };
   }
 
@@ -333,16 +329,15 @@ function parseHistoricalErrorFilters(
     fromDate,
     toDate: null,
     page,
+    pageSize,
   };
 }
 
-function buildHistoricalErrorWhere(filters: HistoricalErrorFilters) {
-  const conditions: SQL[] = [eq(generation.status, "failed")];
-  if (filters.fromDate)
-    conditions.push(gte(generation.createdAt, filters.fromDate));
-  if (filters.toDate)
-    conditions.push(lte(generation.createdAt, filters.toDate));
-  return and(...conditions);
+/** 将历史错误页大小收窄到产品确认的 10/20/50 白名单。 */
+function parseHistoricalErrorPageSize(value: string | undefined): 10 | 20 | 50 {
+  if (value === "10") return 10;
+  if (value === "50") return 50;
+  return 20;
 }
 
 function formatDateTime(value: Date | null, locale: string, timeZone: string) {
@@ -366,10 +361,14 @@ function truncateText(value: string | null, length: number) {
     : normalized;
 }
 
-function buildErrorPageHref(filters: HistoricalErrorFilters, page: number) {
+/** 构造保留历史错误时间筛选且回到第一页的页大小 URL。 */
+function buildErrorPageSizeHref(
+  filters: HistoricalErrorFilters,
+  pageSize: number
+) {
   const params = new URLSearchParams();
   params.set("errorRange", filters.range);
-  params.set("errorPage", String(page));
+  if (pageSize !== 20) params.set("errorPageSize", String(pageSize));
   if (filters.range === "custom") {
     if (filters.fromInput) params.set("errorFrom", filters.fromInput);
     if (filters.toInput) params.set("errorTo", filters.toInput);
@@ -1248,45 +1247,26 @@ function formatSchedulerDistribution(
     .join(" · ");
 }
 
-async function loadHistoricalGenerationErrors(filters: HistoricalErrorFilters) {
-  const where = buildHistoricalErrorWhere(filters);
-  const offset = (filters.page - 1) * ERROR_PAGE_SIZE;
-
-  const [rows, totalRows] = await Promise.all([
-    db
-      .select({
-        id: generation.id,
-        userId: generation.userId,
-        userEmail: user.email,
-        userName: user.name,
-        prompt: generation.prompt,
-        model: generation.model,
-        size: generation.size,
-        creditsConsumed: generation.creditsConsumed,
-        error: generation.error,
-        createdAt: generation.createdAt,
-        completedAt: generation.completedAt,
-      })
-      .from(generation)
-      .leftJoin(user, eq(user.id, generation.userId))
-      .where(where)
-      .orderBy(desc(generation.createdAt))
-      .limit(ERROR_PAGE_SIZE)
-      .offset(offset),
-    db.select({ total: count() }).from(generation).where(where),
-  ]);
-
-  const items: HistoricalGenerationErrorRow[] = rows.map((row) => ({
-    ...row,
-    category: classifyGenerationError(row.error),
-  }));
-
-  return {
-    items,
-    total: totalRows[0]?.total ?? 0,
-    page: filters.page,
-    pageSize: ERROR_PAGE_SIZE,
-  };
+/** 通过 UOL 读取当前管理员可见的历史错误分页结果。 */
+async function loadHistoricalGenerationErrors(
+  filters: HistoricalErrorFilters,
+  principal: {
+    type: "user";
+    userId: string;
+    role: "user" | "observer_admin" | "admin" | "super_admin";
+  }
+): Promise<AdminStatusErrorListOutput> {
+  await ensureUolInitialized();
+  return invokeOperation<AdminStatusErrorListOutput>(
+    "image.listAdminStatusErrors",
+    {
+      fromDate: filters.fromDate,
+      toDate: filters.toDate,
+      page: filters.page,
+      pageSize: filters.pageSize,
+    },
+    principal
+  );
 }
 
 function errorCategoryLabel(
@@ -1328,18 +1308,18 @@ function HistoricalErrorsCard({
   locale,
   timeZone,
 }: {
-  errors: Awaited<ReturnType<typeof loadHistoricalGenerationErrors>>;
+  errors: AdminStatusErrorListOutput;
   filters: HistoricalErrorFilters;
   locale: string;
   timeZone: string;
 }) {
-  const totalPages = Math.max(1, Math.ceil(errors.total / errors.pageSize));
-  const page = Math.min(errors.page, totalPages);
-  const hasPrevious = errors.page > 1;
-  const hasNext = errors.page < totalPages;
+  const pageSizeOptions = ERROR_PAGE_SIZE_OPTIONS.map((size) => ({
+    size,
+    href: buildErrorPageSizeHref(filters, size),
+  }));
 
   return (
-    <Card id="historical-errors" className="rounded-lg">
+    <Card id="historical-errors" className="rounded-lg" tabIndex={-1}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 text-warning" />
@@ -1355,6 +1335,13 @@ function HistoricalErrorsCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <form className="grid gap-3 rounded-md border bg-muted/20 p-3 md:grid-cols-[160px_180px_180px_auto] md:items-end">
+          {filters.pageSize !== 20 ? (
+            <input
+              name="errorPageSize"
+              type="hidden"
+              value={filters.pageSize}
+            />
+          ) : null}
           <label className="grid gap-1 text-sm">
             <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
               {copy(locale, "Range", "时间范围")}
@@ -1416,19 +1403,22 @@ function HistoricalErrorsCard({
           </p>
         </form>
 
-        <div className="flex flex-col gap-2 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 text-sm text-muted-foreground md:flex-row md:items-center md:justify-between">
           <div>
             {describeErrorFilter(filters, locale, timeZone)} ·{" "}
-            {copy(locale, "Total", "共")} {formatNumber(errors.total, locale)}{" "}
+            {copy(locale, "Total", "共")}{" "}
+            {formatNumber(errors.totalCount, locale)}{" "}
             {copy(locale, "records", "条")}
           </div>
-          <div>
-            {copy(locale, "Page", "第")} {formatNumber(page, locale)} /{" "}
-            {formatNumber(totalPages, locale)} {copy(locale, "page", "页")}
-          </div>
+          <UrlPageSizeSelect
+            itemSuffix={copy(locale, " records", " 条")}
+            label={copy(locale, "Rows per page", "每页条数")}
+            options={pageSizeOptions}
+            value={errors.pageSize}
+          />
         </div>
 
-        {errors.items.length === 0 ? (
+        {errors.records.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
             {copy(
               locale,
@@ -1459,7 +1449,7 @@ function HistoricalErrorsCard({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
-                {errors.items.map((item) => {
+                {errors.records.map((item) => {
                   const userDisplay =
                     item.userEmail || item.userName || item.userId || "-";
                   const prompt = truncateText(item.prompt, 180);
@@ -1537,53 +1527,40 @@ function HistoricalErrorsCard({
           </div>
         )}
 
-        <Pagination
-          aria-label={copy(
-            locale,
-            "Historical error records pagination",
-            "历史错误记录分页"
-          )}
-          className="mx-0 justify-end"
-        >
-          <PaginationContent>
-            <PaginationItem>
-              {hasPrevious ? (
-                <PaginationLink
-                  href={buildErrorPageHref(filters, errors.page - 1)}
-                  size="default"
-                >
-                  {copy(locale, "Previous", "上一页")}
-                </PaginationLink>
-              ) : (
-                <PaginationLink
-                  aria-disabled="true"
-                  size="default"
-                  tabIndex={-1}
-                >
-                  {copy(locale, "Previous", "上一页")}
-                </PaginationLink>
-              )}
-            </PaginationItem>
-            <PaginationItem>
-              {hasNext ? (
-                <PaginationLink
-                  href={buildErrorPageHref(filters, errors.page + 1)}
-                  size="default"
-                >
-                  {copy(locale, "Next", "下一页")}
-                </PaginationLink>
-              ) : (
-                <PaginationLink
-                  aria-disabled="true"
-                  size="default"
-                  tabIndex={-1}
-                >
-                  {copy(locale, "Next", "下一页")}
-                </PaginationLink>
-              )}
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
+        <div className="flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
+          <p className="text-sm text-muted-foreground">
+            {copy(locale, "Page", "第")} {formatNumber(errors.page, locale)} /{" "}
+            {formatNumber(errors.totalPages, locale)}{" "}
+            {copy(locale, "page", "页")}
+          </p>
+          <UrlPaginationControls
+            ariaLabel={copy(
+              locale,
+              "Historical error records pagination",
+              "历史错误记录分页"
+            )}
+            focusTargetId="historical-errors"
+            getPageLabel={(pageNumber, isCurrent) =>
+              isCurrent
+                ? copy(
+                    locale,
+                    `Page ${pageNumber}, current page`,
+                    `第 ${pageNumber} 页，当前页`
+                  )
+                : copy(
+                    locale,
+                    `Go to page ${pageNumber}`,
+                    `前往第 ${pageNumber} 页`
+                  )
+            }
+            names={ERROR_PAGINATION_NAMES}
+            nextLabel={copy(locale, "Next", "下一页")}
+            page={errors.page}
+            pageSelectLabel={copy(locale, "Select page", "选择页码")}
+            previousLabel={copy(locale, "Previous", "上一页")}
+            totalPages={errors.totalPages}
+          />
+        </div>
       </CardContent>
     </Card>
   );
@@ -1979,7 +1956,11 @@ export default async function GlobalStatusPage({
   const errorFilters = parseHistoricalErrorFilters(params, timeZone);
   const [data, historicalErrors] = await Promise.all([
     getCachedStatusData(),
-    loadHistoricalGenerationErrors(errorFilters),
+    loadHistoricalGenerationErrors(errorFilters, {
+      type: "user",
+      userId: session.user.id,
+      role,
+    }),
   ]);
   const generationTotals = data.generationTotals;
   const creditBalance = data.credits.balance;

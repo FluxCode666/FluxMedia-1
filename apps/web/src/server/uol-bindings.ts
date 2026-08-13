@@ -18,6 +18,7 @@
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/adobe-credential-health";
+import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
@@ -434,7 +435,6 @@ bindExecute(
 // user-auth 域
 // ---------------------------------------------------------------------------
 
-// TODO: user.list - getAllUsersAction 逻辑（DB 查询在 packages/shared 但需运行时 DB 连接）
 // TODO: user.getDetail - getUserDetailAction 逻辑
 // TODO: user.updateRole - updateUserRoleAction 逻辑
 // TODO: user.ban - banUserAction 逻辑
