@@ -329,14 +329,11 @@ export default async function TicketDetailPage({
           ariaLabel={locale === "zh" ? "消息分页" : "Message pagination"}
           className="justify-end"
           focusTargetId="ticket-messages-heading"
-          getPageLabel={(page, current) =>
-            locale === "zh"
-              ? current
-                ? `当前第 ${page} 页`
-                : `前往第 ${page} 页`
-              : current
-                ? `Current page ${page}`
-                : `Go to page ${page}`
+          pageLabelTemplate={
+            locale === "zh" ? "前往第 {page} 页" : "Go to page {page}"
+          }
+          currentPageLabelTemplate={
+            locale === "zh" ? "当前第 {page} 页" : "Current page {page}"
           }
           names={MESSAGE_PAGINATION_NAMES}
           nextLabel={locale === "zh" ? "下一页" : "Next"}

@@ -1540,19 +1540,16 @@ function HistoricalErrorsCard({
               "历史错误记录分页"
             )}
             focusTargetId="historical-errors"
-            getPageLabel={(pageNumber, isCurrent) =>
-              isCurrent
-                ? copy(
-                    locale,
-                    `Page ${pageNumber}, current page`,
-                    `第 ${pageNumber} 页，当前页`
-                  )
-                : copy(
-                    locale,
-                    `Go to page ${pageNumber}`,
-                    `前往第 ${pageNumber} 页`
-                  )
-            }
+            pageLabelTemplate={copy(
+              locale,
+              "Go to page {page}",
+              "前往第 {page} 页"
+            )}
+            currentPageLabelTemplate={copy(
+              locale,
+              "Page {page}, current page",
+              "第 {page} 页，当前页"
+            )}
             names={ERROR_PAGINATION_NAMES}
             nextLabel={copy(locale, "Next", "下一页")}
             page={errors.page}

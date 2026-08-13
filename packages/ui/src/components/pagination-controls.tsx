@@ -34,11 +34,26 @@ export type PaginationControlsProps = {
   pageSelectLabel: string;
   previousLabel: string;
   nextLabel: string;
-  getPageLabel: (page: number, isCurrent: boolean) => string;
+  pageLabelTemplate: string;
+  currentPageLabelTemplate: string;
   onPageChange: (page: number) => void;
   disabled?: boolean;
   className?: string;
 };
+
+/**
+ * 将可序列化页码文案模板转换为最终辅助标签。
+ *
+ * @param template - 包含零个或多个 `{page}` 占位符的本地化模板。
+ * @param page - 要写入模板的有效页码。
+ * @returns 替换全部页码占位符后的文案；无占位符时原样返回。
+ */
+export function formatPaginationPageLabel(
+  template: string,
+  page: number
+): string {
+  return template.replaceAll("{page}", String(page));
+}
 
 export type PaginationControlsViewModel = {
   page: number;
@@ -93,7 +108,8 @@ export function PaginationControls({
   pageSelectLabel,
   previousLabel,
   nextLabel,
-  getPageLabel,
+  pageLabelTemplate,
+  currentPageLabelTemplate,
   onPageChange,
   disabled = false,
   className,
@@ -146,7 +162,14 @@ export function PaginationControls({
           </Select>
         </li>
 
-        {renderDesktopItems(items, page, getPageLabel, disabled, onPageChange)}
+        {renderDesktopItems(
+          items,
+          page,
+          pageLabelTemplate,
+          currentPageLabelTemplate,
+          disabled,
+          onPageChange
+        )}
 
         <PaginationItem>
           <PaginationLink asChild size="default">
@@ -170,7 +193,8 @@ export function PaginationControls({
 function renderDesktopItems(
   items: readonly PaginationControlsItem[],
   page: number,
-  getPageLabel: (page: number, isCurrent: boolean) => string,
+  pageLabelTemplate: string,
+  currentPageLabelTemplate: string,
   disabled: boolean,
   onPageChange: (page: number) => void
 ): ReactNode[] {
@@ -188,7 +212,10 @@ function renderDesktopItems(
       <PaginationItem className="hidden sm:block" key={item}>
         {isCurrent ? (
           <PaginationLink
-            aria-label={getPageLabel(item, true)}
+            aria-label={formatPaginationPageLabel(
+              currentPageLabelTemplate,
+              item
+            )}
             asChild
             isActive
           >
@@ -197,7 +224,7 @@ function renderDesktopItems(
         ) : (
           <PaginationLink asChild>
             <button
-              aria-label={getPageLabel(item, false)}
+              aria-label={formatPaginationPageLabel(pageLabelTemplate, item)}
               disabled={disabled}
               onClick={() => onPageChange(item)}
               type="button"

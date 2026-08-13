@@ -25,7 +25,8 @@ export type UrlPaginationControlsProps = {
   pageSelectLabel: string;
   previousLabel: string;
   nextLabel: string;
-  getPageLabel: (page: number, isCurrent: boolean) => string;
+  pageLabelTemplate: string;
+  currentPageLabelTemplate: string;
   navigation?: "push" | "replace";
   focusTargetId?: string;
   className?: string;
@@ -46,7 +47,8 @@ export function UrlPaginationControls({
   pageSelectLabel,
   previousLabel,
   nextLabel,
-  getPageLabel,
+  pageLabelTemplate,
+  currentPageLabelTemplate,
   navigation = "push",
   focusTargetId,
   className,
@@ -68,8 +70,8 @@ export function UrlPaginationControls({
     <PaginationControls
       ariaLabel={ariaLabel}
       className={className}
+      currentPageLabelTemplate={currentPageLabelTemplate}
       disabled={isPending}
-      getPageLabel={getPageLabel}
       items={getPaginationWindow(page, totalPages)}
       nextLabel={nextLabel}
       onPageChange={(nextPage) => {
@@ -86,6 +88,7 @@ export function UrlPaginationControls({
         });
       }}
       page={page}
+      pageLabelTemplate={pageLabelTemplate}
       pageSelectLabel={pageSelectLabel}
       previousLabel={previousLabel}
       totalPages={totalPages}

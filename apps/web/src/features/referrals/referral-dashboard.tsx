@@ -235,15 +235,14 @@ export function ReferralDashboard({
               </p>
               <UrlPaginationControls
                 ariaLabel={t("pagination")}
+                currentPageLabelTemplate={t("currentPageLabel", {
+                  page: "{page}",
+                })}
                 focusTargetId="referral-relationships"
-                getPageLabel={(page, isCurrent) =>
-                  isCurrent
-                    ? t("currentPageLabel", { page })
-                    : t("goToPageLabel", { page })
-                }
                 names={REFERRAL_RELATIONSHIP_PAGINATION_NAMES}
                 nextLabel={t("next")}
                 page={relationships.page}
+                pageLabelTemplate={t("goToPageLabel", { page: "{page}" })}
                 pageSelectLabel={t("pageSelectLabel")}
                 previousLabel={t("previous")}
                 totalPages={relationships.totalPages}

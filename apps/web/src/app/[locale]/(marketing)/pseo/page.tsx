@@ -193,14 +193,9 @@ export default async function PseoIndexPage({
             pageSelectLabel={isZh ? "选择页码" : "Select page"}
             previousLabel={isZh ? "上一页" : "Previous"}
             nextLabel={isZh ? "下一页" : "Next"}
-            getPageLabel={(page, isCurrent) =>
-              isZh
-                ? isCurrent
-                  ? `第 ${page} 页，当前页`
-                  : `前往第 ${page} 页`
-                : isCurrent
-                  ? `Page ${page}, current page`
-                  : `Go to page ${page}`
+            pageLabelTemplate={isZh ? "前往第 {page} 页" : "Go to page {page}"}
+            currentPageLabelTemplate={
+              isZh ? "第 {page} 页，当前页" : "Page {page}, current page"
             }
           />
         </div>

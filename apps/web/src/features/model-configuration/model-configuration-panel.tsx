@@ -351,13 +351,12 @@ export function ModelConfigurationPanel({
                 </div>
                 <UrlPaginationControls
                   ariaLabel="模型配置分页"
+                  currentPageLabelTemplate="第 {page} 页，当前页"
                   focusTargetId="model-configuration-list"
-                  getPageLabel={(page, isCurrent) =>
-                    isCurrent ? `第 ${page} 页，当前页` : `前往第 ${page} 页`
-                  }
                   names={MODEL_CONFIGURATION_PAGINATION_NAMES}
                   nextLabel="下一页"
                   page={pageResult.page}
+                  pageLabelTemplate="前往第 {page} 页"
                   pageSelectLabel="选择页码"
                   previousLabel="上一页"
                   totalPages={pageResult.totalPages}

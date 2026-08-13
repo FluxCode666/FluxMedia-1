@@ -299,11 +299,10 @@ export default async function SupportPage({ searchParams }: SupportPageProps) {
             ariaLabel={t("pagination")}
             className="justify-end"
             focusTargetId="ticket-list-heading"
-            getPageLabel={(page, current) =>
-              current
-                ? t("currentPageLabel", { page })
-                : t("pageLabel", { page })
-            }
+            pageLabelTemplate={t("pageLabel", { page: "{page}" })}
+            currentPageLabelTemplate={t("currentPageLabel", {
+              page: "{page}",
+            })}
             names={TICKET_PAGINATION_NAMES}
             nextLabel={t("nextPage")}
             page={data.page}

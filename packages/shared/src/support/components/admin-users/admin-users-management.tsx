@@ -1460,12 +1460,8 @@ export function AdminUsersManagement({
             <PaginationControls
               ariaLabel="用户列表分页"
               className="justify-end"
+              currentPageLabelTemplate="第 {page} 页，当前页"
               disabled={isLoading || isNavigating}
-              getPageLabel={(pageNumber, isCurrent) =>
-                isCurrent
-                  ? `第 ${pageNumber} 页，当前页`
-                  : `前往第 ${pageNumber} 页`
-              }
               items={getPaginationWindow(
                 pagination.page,
                 pagination.totalPages
@@ -1473,6 +1469,7 @@ export function AdminUsersManagement({
               nextLabel="下一页"
               onPageChange={(page) => replaceListUrl({ page })}
               page={pagination.page}
+              pageLabelTemplate="前往第 {page} 页"
               pageSelectLabel="选择用户列表页码"
               previousLabel="上一页"
               totalPages={pagination.totalPages}

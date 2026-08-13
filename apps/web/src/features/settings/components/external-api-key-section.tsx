@@ -1143,15 +1143,14 @@ export function ExternalApiKeySection({
           </p>
           <UrlPaginationControls
             ariaLabel={t("pagination")}
+            currentPageLabelTemplate={t("currentPageLabel", {
+              page: "{page}",
+            })}
             focusTargetId="external-api-key-list"
-            getPageLabel={(page, isCurrent) =>
-              isCurrent
-                ? t("currentPageLabel", { page })
-                : t("goToPageLabel", { page })
-            }
             names={EXTERNAL_API_KEY_PAGINATION_NAMES}
             nextLabel={t("next")}
             page={pagination.page}
+            pageLabelTemplate={t("goToPageLabel", { page: "{page}" })}
             pageSelectLabel={t("pageSelectLabel")}
             previousLabel={t("previous")}
             totalPages={pagination.totalPages}

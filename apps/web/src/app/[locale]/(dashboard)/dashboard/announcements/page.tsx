@@ -311,11 +311,11 @@ export default async function DashboardAnnouncementsPage({
             <UrlPaginationControls
               ariaLabel={copy("Announcements pagination", "公告分页")}
               focusTargetId="announcements-heading"
-              getPageLabel={(page, isCurrent) =>
-                isCurrent
-                  ? copy(`Page ${page}, current page`, `第 ${page} 页，当前页`)
-                  : copy(`Go to page ${page}`, `前往第 ${page} 页`)
-              }
+              pageLabelTemplate={copy("Go to page {page}", "前往第 {page} 页")}
+              currentPageLabelTemplate={copy(
+                "Page {page}, current page",
+                "第 {page} 页，当前页"
+              )}
               names={createPaginationUrlParamNames()}
               nextLabel={copy("Next", "下一页")}
               page={announcementPage.page}

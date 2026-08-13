@@ -734,13 +734,12 @@ export function ImageBackendPoolAdminPanel({
                 </div>
                 <UrlPaginationControls
                   ariaLabel="供应商账号分页"
+                  currentPageLabelTemplate="第 {page} 页，当前页"
                   focusTargetId="backend-member-list"
-                  getPageLabel={(page, isCurrent) =>
-                    isCurrent ? `第 ${page} 页，当前页` : `前往第 ${page} 页`
-                  }
                   names={ADMIN_POOL_MEMBER_PAGINATION_NAMES}
                   nextLabel="下一页"
                   page={memberPage.page}
+                  pageLabelTemplate="前往第 {page} 页"
                   pageSelectLabel="选择页码"
                   previousLabel="上一页"
                   totalPages={memberPage.totalPages}
@@ -808,13 +807,12 @@ export function ImageBackendPoolAdminPanel({
                 </div>
                 <UrlPaginationControls
                   ariaLabel="账号池分组分页"
+                  currentPageLabelTemplate="第 {page} 页，当前页"
                   focusTargetId="backend-group-list"
-                  getPageLabel={(page, isCurrent) =>
-                    isCurrent ? `第 ${page} 页，当前页` : `前往第 ${page} 页`
-                  }
                   names={ADMIN_POOL_GROUP_PAGINATION_NAMES}
                   nextLabel="下一页"
                   page={groupPage.page}
+                  pageLabelTemplate="前往第 {page} 页"
                   pageSelectLabel="选择页码"
                   previousLabel="上一页"
                   totalPages={groupPage.totalPages}

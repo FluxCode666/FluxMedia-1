@@ -169,14 +169,13 @@ export default async function BlogPage({
           pageSelectLabel={safeLocale === "zh" ? "选择页码" : "Select page"}
           previousLabel={safeLocale === "zh" ? "上一页" : "Previous"}
           nextLabel={safeLocale === "zh" ? "下一页" : "Next"}
-          getPageLabel={(page, isCurrent) =>
+          pageLabelTemplate={
+            safeLocale === "zh" ? "前往第 {page} 页" : "Go to page {page}"
+          }
+          currentPageLabelTemplate={
             safeLocale === "zh"
-              ? isCurrent
-                ? `第 ${page} 页，当前页`
-                : `前往第 ${page} 页`
-              : isCurrent
-                ? `Page ${page}, current page`
-                : `Go to page ${page}`
+              ? "第 {page} 页，当前页"
+              : "Page {page}, current page"
           }
         />
       </div>

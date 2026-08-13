@@ -533,13 +533,12 @@ export function AdminAnnouncementsManagement({
           </p>
           <UrlPaginationControls
             ariaLabel="管理公告分页"
+            currentPageLabelTemplate="第 {page} 页，当前页"
             focusTargetId="admin-announcements-heading"
-            getPageLabel={(page, isCurrent) =>
-              isCurrent ? `第 ${page} 页，当前页` : `前往第 ${page} 页`
-            }
             names={createPaginationUrlParamNames()}
             nextLabel="下一页"
             page={data.page}
+            pageLabelTemplate="前往第 {page} 页"
             pageSelectLabel="选择页码"
             previousLabel="上一页"
             totalPages={data.totalPages}
