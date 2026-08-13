@@ -166,6 +166,42 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).not.toContain("video_url");
   });
 
+  it("冻结导出按不可变积分贡献和各事实高水位重算，不读取可变净用量", () => {
+    const highWatermarks = {
+      users: { createdAt: new Date("2026-08-07T00:00:00.000Z"), id: "user-z" },
+      webVisits: null,
+      outputs: {
+        createdAt: new Date("2026-08-07T00:00:00.000Z"),
+        outputKind: "video",
+        sourceTaskId: "task-z",
+      },
+      paymentOrders: null,
+      paymentLifecycle: null,
+      creditContributions: {
+        projectedAt: new Date("2026-08-07T00:00:00.000Z"),
+        transactionId: "tx-z",
+      },
+    };
+    const compiled = dialect.sqlToQuery(
+      buildOperationsContentDetailSql({
+        ...base,
+        kind: "content",
+        detail: "credit_usage",
+        highWatermarks,
+      })
+    );
+
+    expect(compiled.sql).toContain('from "credit_usage_projection_entry"');
+    expect(compiled.sql).toContain("frozen_credit_lookup.net_consumed");
+    expect(compiled.sql).toContain(
+      '"credit_usage_projection_entry"."projected_at"'
+    );
+    expect(compiled.sql).toContain('"user_output_usage_event"."created_at"');
+    expect(compiled.sql).not.toContain(
+      "coalesce(credit_lookup.net_consumed, 0)"
+    );
+  });
+
   it("以最后一个已返回行签发下一页原始 keyset", () => {
     const makeRow = (userId: string, businessTime: string) => ({
       kind: "growth" as const,

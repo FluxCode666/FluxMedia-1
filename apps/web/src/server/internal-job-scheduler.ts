@@ -19,6 +19,8 @@ import {
   runAdobeCredentialNotificationDrainJob,
   runCreditsExpireJob,
   runImageMaintenanceJob,
+  runOperationsExportExpirationJob,
+  runOperationsExportProcessingJob,
   runPaymentFulfillmentRecoveryJob,
   runVideoRecoveryJob,
 } from "./scheduled-jobs";
@@ -26,12 +28,22 @@ import {
 type InternalJob = {
   name: string;
   lockKey: number;
+  enabledSettingKey?:
+    | "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED"
+    | "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED";
   intervalSettingKey?:
     | "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES"
-    | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES";
+    | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES"
+    | "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES"
+    | "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_INTERVAL_MINUTES";
+  batchSizeSettingKey?:
+    | "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE"
+    | "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE";
+  defaultEnabled?: boolean;
   defaultIntervalMinutes: number;
+  defaultBatchSize?: number;
   initialDelayMs: number;
-  run: () => Promise<unknown>;
+  run: (batchSize: number) => Promise<unknown>;
 };
 
 type SchedulerState = {
@@ -44,16 +56,20 @@ type SchedulerState = {
 };
 
 type ScheduledJobState = {
+  enabled: boolean;
   running: boolean;
   awaitingInitialRun: boolean;
   intervalMs: number;
   scheduleAnchorMs: number;
+  batchSize: number;
   nextRunAtMs?: number;
 };
 
 type SchedulerRuntimeConfig = {
   enabled: boolean;
+  jobEnabled: Map<string, boolean>;
   intervals: Map<string, number>;
+  batchSizes: Map<string, number>;
 };
 
 type SchedulerGlobal = typeof globalThis & {
@@ -118,6 +134,32 @@ const jobs: InternalJob[] = [
     defaultIntervalMinutes: 24 * 60,
     initialDelayMs: 90_000,
     run: runAdobeCredentialHealthCleanupJob,
+  },
+  {
+    name: "operations-export",
+    lockKey: 8,
+    enabledSettingKey: "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED",
+    intervalSettingKey:
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES",
+    batchSizeSettingKey: "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+    defaultEnabled: false,
+    defaultIntervalMinutes: 1,
+    defaultBatchSize: 10,
+    initialDelayMs: 30_000,
+    run: runOperationsExportProcessingJob,
+  },
+  {
+    name: "operations-export-retention",
+    lockKey: 9,
+    enabledSettingKey: "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED",
+    intervalSettingKey:
+      "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_INTERVAL_MINUTES",
+    batchSizeSettingKey: "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE",
+    defaultEnabled: false,
+    defaultIntervalMinutes: 60,
+    defaultBatchSize: 100,
+    initialDelayMs: 60_000,
+    run: runOperationsExportExpirationJob,
   },
 ];
 
@@ -327,12 +369,13 @@ async function withJobLock<T>(
  *
  * @param job - 任务定义
  * @param intervalMs - 本次执行采用的动态间隔
+ * @param batchSize - 本次执行采用的动态批次大小
  * @returns 无返回值
  */
-async function runJob(job: InternalJob, intervalMs: number) {
+async function runJob(job: InternalJob, intervalMs: number, batchSize: number) {
   const startedAt = Date.now();
   try {
-    const result = await withJobLock(job, intervalMs, job.run);
+    const result = await withJobLock(job, intervalMs, () => job.run(batchSize));
     if (!result.locked) return;
     if (result.skipped) return;
     console.info(
@@ -369,36 +412,69 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
 }
 
 /**
- * 一次性读取调度开关和全部任务间隔。
+ * 一次性读取全局调度开关，以及各任务的独立开关、间隔和批次。
  *
  * @returns 当前运行时配置；失败时返回最后有效配置，首次失败则安全禁用任务
  */
 async function getSchedulerRuntimeConfig(): Promise<SchedulerRuntimeConfig> {
   const readConfig = async (): Promise<SchedulerRuntimeConfig> => {
-    const [enabled, intervalMinutes] = await Promise.all([
-      getRuntimeSettingBoolean("INTERNAL_JOB_SCHEDULER_ENABLED", true),
-      Promise.all(
-        jobs.map((job) =>
-          job.intervalSettingKey
-            ? getRuntimeSettingNumber(
-                job.intervalSettingKey,
-                job.defaultIntervalMinutes,
-                { positive: true }
-              )
-            : Promise.resolve(job.defaultIntervalMinutes)
-        )
-      ),
-    ]);
+    const [enabled, jobEnabledValues, intervalMinutes, batchSizeValues] =
+      await Promise.all([
+        getRuntimeSettingBoolean("INTERNAL_JOB_SCHEDULER_ENABLED", true),
+        Promise.all(
+          jobs.map((job) =>
+            job.enabledSettingKey
+              ? getRuntimeSettingBoolean(
+                  job.enabledSettingKey,
+                  job.defaultEnabled ?? true
+                )
+              : Promise.resolve(job.defaultEnabled ?? true)
+          )
+        ),
+        Promise.all(
+          jobs.map((job) =>
+            job.intervalSettingKey
+              ? getRuntimeSettingNumber(
+                  job.intervalSettingKey,
+                  job.defaultIntervalMinutes,
+                  { positive: true }
+                )
+              : Promise.resolve(job.defaultIntervalMinutes)
+          )
+        ),
+        Promise.all(
+          jobs.map((job) =>
+            job.batchSizeSettingKey
+              ? getRuntimeSettingNumber(
+                  job.batchSizeSettingKey,
+                  job.defaultBatchSize ?? 1,
+                  { positive: true }
+                )
+              : Promise.resolve(job.defaultBatchSize ?? 1)
+          )
+        ),
+      ]);
+    const jobEnabled = new Map<string, boolean>();
     const intervals = new Map<string, number>();
+    const batchSizes = new Map<string, number>();
     for (const [index, job] of jobs.entries()) {
+      jobEnabled.set(job.name, Boolean(jobEnabledValues[index]));
       const minutes = intervalMinutes[index];
       intervals.set(
         job.name,
         Math.max(1, Math.trunc(minutes ?? job.defaultIntervalMinutes)) *
           MINUTE_MS
       );
+      const batchSize = batchSizeValues[index];
+      batchSizes.set(
+        job.name,
+        Math.min(
+          100,
+          Math.max(1, Math.trunc(batchSize ?? job.defaultBatchSize ?? 1))
+        )
+      );
     }
-    return { enabled: Boolean(enabled), intervals };
+    return { enabled: Boolean(enabled), jobEnabled, intervals, batchSizes };
   };
 
   try {
@@ -413,8 +489,14 @@ async function getSchedulerRuntimeConfig(): Promise<SchedulerRuntimeConfig> {
     return (
       lastRuntimeConfig ?? {
         enabled: false,
+        jobEnabled: new Map(
+          jobs.map((job) => [job.name, job.defaultEnabled ?? true])
+        ),
         intervals: new Map(
           jobs.map((job) => [job.name, job.defaultIntervalMinutes * MINUTE_MS])
+        ),
+        batchSizes: new Map(
+          jobs.map((job) => [job.name, job.defaultBatchSize ?? 1])
         ),
       }
     );
@@ -439,17 +521,24 @@ function enableSchedule(
   for (const job of jobs) {
     const existing = state.jobs.get(job.name);
     const nextState: ScheduledJobState = existing ?? {
+      enabled: config.jobEnabled.get(job.name) ?? true,
       running: false,
       awaitingInitialRun: true,
       intervalMs: job.defaultIntervalMinutes * MINUTE_MS,
       scheduleAnchorMs: now,
+      batchSize: job.defaultBatchSize ?? 1,
     };
     // 复用正在执行任务的状态对象，让旧执行周期的 finally 能正确清除 running。
     nextState.awaitingInitialRun = true;
     nextState.intervalMs =
       config.intervals.get(job.name) ?? job.defaultIntervalMinutes * MINUTE_MS;
+    nextState.enabled = config.jobEnabled.get(job.name) ?? true;
+    nextState.batchSize =
+      config.batchSizes.get(job.name) ?? job.defaultBatchSize ?? 1;
     nextState.scheduleAnchorMs = now;
-    nextState.nextRunAtMs = now + job.initialDelayMs;
+    nextState.nextRunAtMs = nextState.enabled
+      ? now + job.initialDelayMs
+      : undefined;
     state.jobs.set(job.name, nextState);
   }
   console.info("[internal-jobs] scheduler enabled");
@@ -488,10 +577,14 @@ async function executeScheduledJob(
   jobState.running = true;
   jobState.nextRunAtMs = undefined;
   try {
-    await runJob(job, jobState.intervalMs);
+    await runJob(job, jobState.intervalMs, jobState.batchSize);
   } finally {
     jobState.running = false;
-    if (schedulerState.enabled && schedulerState.generation === generation) {
+    if (
+      schedulerState.enabled &&
+      schedulerState.generation === generation &&
+      jobState.enabled
+    ) {
       jobState.awaitingInitialRun = false;
       jobState.scheduleAnchorMs = Date.now();
       jobState.nextRunAtMs = jobState.scheduleAnchorMs + jobState.intervalMs;
@@ -520,8 +613,11 @@ function reconcileSchedule(
   for (const job of jobs) {
     const jobState = state.jobs.get(job.name);
     if (!jobState) continue;
+    const nextEnabled = config.jobEnabled.get(job.name) ?? true;
     const nextIntervalMs =
       config.intervals.get(job.name) ?? job.defaultIntervalMinutes * MINUTE_MS;
+    jobState.batchSize =
+      config.batchSizes.get(job.name) ?? job.defaultBatchSize ?? 1;
     if (jobState.intervalMs !== nextIntervalMs) {
       jobState.intervalMs = nextIntervalMs;
       // 首次运行保留初始错峰；之后锚定上次完成时刻重算，使缩短和延长都动态生效。
@@ -533,7 +629,15 @@ function reconcileSchedule(
       }
     }
 
+    if (jobState.enabled !== nextEnabled) {
+      jobState.enabled = nextEnabled;
+      jobState.awaitingInitialRun = nextEnabled;
+      jobState.scheduleAnchorMs = now;
+      jobState.nextRunAtMs = nextEnabled ? now + job.initialDelayMs : undefined;
+    }
+
     if (
+      jobState.enabled &&
       !jobState.running &&
       jobState.nextRunAtMs !== undefined &&
       jobState.nextRunAtMs <= now

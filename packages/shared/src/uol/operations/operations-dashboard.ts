@@ -8,6 +8,8 @@ import {
   operationsCreateExportInputSchema,
   operationsCreateExportOutputSchema,
   operationsDetailOutputSchema,
+  operationsExpireExportsInputSchema,
+  operationsExpireExportsOutputSchema,
   operationsGetDetailInputSchema,
   operationsGetOverviewInputSchema,
   operationsListExportsInputSchema,
@@ -19,8 +21,6 @@ import {
   operationsProcessExportsOutputSchema,
   operationsRetryExportInputSchema,
   operationsRetryExportOutputSchema,
-  operationsExpireExportsInputSchema,
-  operationsExpireExportsOutputSchema,
 } from "../../operations-dashboard/contracts";
 import { defineOperation } from "../registry";
 import type { AccessRequirement } from "../types";
@@ -80,7 +80,11 @@ export const createOperationsExport = defineOperation({
   agentExposure: "human-only",
   readOnly: false,
   destructive: false,
-  idempotency: { kind: "required", keyField: "clientRequestId", scope: "per-principal" },
+  idempotency: {
+    kind: "required",
+    keyField: "clientRequestId",
+    scope: "per-principal",
+  },
   sideEffects: ["queue", "audit"],
   execute: async () => {
     throw new Error("Not yet wired: operations.createExport");
@@ -118,7 +122,11 @@ export const retryOperationsExport = defineOperation({
   agentExposure: "human-only",
   readOnly: false,
   destructive: false,
-  idempotency: { kind: "required", keyField: "clientRequestId", scope: "per-principal" },
+  idempotency: {
+    kind: "required",
+    keyField: "clientRequestId",
+    scope: "per-principal",
+  },
   sideEffects: ["queue", "audit"],
   execute: async () => {
     throw new Error("Not yet wired: operations.retryExport");
@@ -175,7 +183,7 @@ export const expireOperationsExports = defineOperation({
   access: { kind: "cronJob", job: "operations-export-retention" },
   agentExposure: "human-only",
   readOnly: false,
-  destructive: false,
+  destructive: true,
   idempotency: { kind: "natural" },
   sideEffects: ["storage", "audit"],
   hasMaintenanceWrite: true,
@@ -185,8 +193,8 @@ export const expireOperationsExports = defineOperation({
 });
 
 export {
-  operationsGetOverviewInputSchema,
-  operationsGetDetailInputSchema,
-  operationsOverviewOutputSchema,
   operationsDetailOutputSchema,
+  operationsGetDetailInputSchema,
+  operationsGetOverviewInputSchema,
+  operationsOverviewOutputSchema,
 };

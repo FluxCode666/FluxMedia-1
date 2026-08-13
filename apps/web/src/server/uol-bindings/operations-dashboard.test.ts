@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
     getAppTimeZone: vi.fn(),
     getDetail: vi.fn(),
     getOverview: vi.fn(),
+    createExport: vi.fn(),
   };
 });
 
@@ -64,6 +65,17 @@ vi.mock("@/features/operations-dashboard/growth-service", () => ({
 }));
 vi.mock("@/features/operations-dashboard/health-adapter", () => ({
   OperationsHealthAdapterError: class OperationsHealthAdapterError extends Error {},
+}));
+vi.mock("@/features/operations-dashboard/export-service", () => ({
+  createOperationsExport: mocks.createExport,
+  listOperationsExports: vi.fn(),
+  retryOperationsExport: vi.fn(),
+  prepareOperationsExportDownload: vi.fn(),
+  OperationsExportServiceError: class OperationsExportServiceError extends Error {},
+}));
+vi.mock("@/features/operations-dashboard/export-worker", () => ({
+  processDatabaseOperationsExports: vi.fn(),
+  expireDatabaseOperationsExports: vi.fn(),
 }));
 
 import { OperationsDashboardServiceError } from "@/features/operations-dashboard/operations-dashboard-service";
@@ -201,7 +213,7 @@ describe("operations.getOverview binding", () => {
     ).rejects.toMatchObject({ code: "not_implemented" });
   });
 
-  it("导出 operation 在 U6 前保持 bound 但明确返回未实现", async () => {
+  it("导出 operation 完整绑定并把管理员与筛选传给导出服务", async () => {
     for (const name of [
       "operations.createExport",
       "operations.listExports",
@@ -213,6 +225,21 @@ describe("operations.getOverview binding", () => {
       expect(isOperationBound(name)).toBe(true);
     }
     expect(isOperationBound("operations.getDetail")).toBe(true);
+    mocks.createExport.mockResolvedValue({
+      task: {
+        id: "task-1",
+        exportType: "user_growth",
+        status: "queued",
+        query: { granularity: "day", range: { kind: "default" } },
+        createdAt: "2026-08-14T00:00:00.000Z",
+        completedAt: null,
+        expiresAt: null,
+        rowCount: null,
+        byteCount: null,
+        errorCode: null,
+        retryOfTaskId: null,
+      },
+    });
     await expect(
       invokeOperation(
         "operations.createExport",
@@ -223,6 +250,15 @@ describe("operations.getOverview binding", () => {
         },
         { type: "user", userId: "admin-1", role: "admin" }
       )
-    ).rejects.toMatchObject({ code: "not_implemented" });
+    ).resolves.toMatchObject({ task: { id: "task-1", status: "queued" } });
+    expect(mocks.createExport).toHaveBeenCalledWith({
+      createdBy: "admin-1",
+      timeZone: "Asia/Shanghai",
+      input: {
+        exportType: "user_growth",
+        query: { granularity: "day", range: { kind: "default" } },
+        clientRequestId: "request-1",
+      },
+    });
   });
 });

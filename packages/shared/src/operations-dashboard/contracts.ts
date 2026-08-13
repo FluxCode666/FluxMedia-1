@@ -324,6 +324,11 @@ export type OperationsDateRangeInput = z.infer<
 export type OperationsDashboardQueryInput = z.infer<
   typeof operationsDashboardQueryInputSchema
 >;
+export type OperationsExportType = z.infer<typeof operationsExportTypeSchema>;
+export type OperationsExportTask = z.infer<typeof operationsExportTaskSchema>;
+export type OperationsCreateExportInput = z.infer<
+  typeof operationsCreateExportInputSchema
+>;
 export type OperationsRangeAvailability = z.infer<
   typeof operationsRangeAvailabilitySchema
 >;

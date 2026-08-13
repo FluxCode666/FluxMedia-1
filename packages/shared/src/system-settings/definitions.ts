@@ -158,6 +158,12 @@ export type SettingKey =
   | "INTERNAL_JOB_SCHEDULER_ENABLED"
   | "INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES"
   | "INTERNAL_JOB_CREDITS_EXPIRE_INTERVAL_MINUTES"
+  | "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED"
+  | "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES"
+  | "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE"
+  | "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED"
+  | "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_INTERVAL_MINUTES"
+  | "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE"
   | "UPSTASH_REDIS_REST_URL"
   | "UPSTASH_REDIS_REST_TOKEN"
   | "RATE_LIMIT_GLOBAL_REQUESTS_PER_MINUTE"
@@ -1345,6 +1351,68 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "general",
     valueType: "number",
     defaultValue: 1440,
+  },
+  {
+    key: "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED",
+    label: "运营导出处理任务",
+    description:
+      "独立启用运营 CSV 导出 worker；默认关闭，启用前需确认对象存储流式写入配置可用。",
+    category: "general",
+    valueType: "boolean",
+    defaultValue: false,
+  },
+  {
+    key: "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES",
+    label: "运营导出处理间隔（分钟）",
+    description: "扫描并处理排队或租约已陈旧导出任务的执行间隔。",
+    category: "general",
+    valueType: "number",
+    min: 1,
+    max: 1_440,
+    integer: true,
+    defaultValue: 1,
+  },
+  {
+    key: "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+    label: "运营导出处理批次",
+    description: "单次最多认领并处理的导出任务数，范围为 1 至 100。",
+    category: "general",
+    valueType: "number",
+    min: 1,
+    max: 100,
+    integer: true,
+    defaultValue: 10,
+  },
+  {
+    key: "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED",
+    label: "运营导出过期清理任务",
+    description:
+      "独立启用运营 CSV 文件过期与对象清理；默认关闭，不依赖导出处理任务开关。",
+    category: "general",
+    valueType: "boolean",
+    defaultValue: false,
+  },
+  {
+    key: "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_INTERVAL_MINUTES",
+    label: "运营导出清理间隔（分钟）",
+    description: "扫描超过七天保留期的导出文件并推进幂等清理的执行间隔。",
+    category: "general",
+    valueType: "number",
+    min: 1,
+    max: 10_080,
+    integer: true,
+    defaultValue: 60,
+  },
+  {
+    key: "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE",
+    label: "运营导出清理批次",
+    description: "单次最多过期并清理的导出任务数，范围为 1 至 100。",
+    category: "general",
+    valueType: "number",
+    min: 1,
+    max: 100,
+    integer: true,
+    defaultValue: 100,
   },
   {
     key: "UPSTASH_REDIS_REST_URL",

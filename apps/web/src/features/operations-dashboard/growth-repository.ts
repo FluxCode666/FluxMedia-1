@@ -16,6 +16,7 @@ import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
+import type { OperationsDetailHighWatermarks } from "./detail-repository";
 
 /** 增长模块可核对的三类周期活跃事实。 */
 export type OperationsGrowthActivityKind = "login" | "creation" | "payment";
@@ -178,9 +179,20 @@ export function buildOperationsNewUserCountSql(
 export function buildOperationsActivitySourceSql(
   kind: OperationsGrowthActivityKind,
   start: SQL,
-  end: SQL
+  end: SQL,
+  highWatermarks?: OperationsDetailHighWatermarks
 ): SQL {
   if (kind === "login") {
+    const watermark = highWatermarks?.webVisits;
+    const bound = watermark
+      ? sql`and (
+          ${userWebVisit.createdAt},
+          ${userWebVisit.userId},
+          ${userWebVisit.appDate}
+        ) <= (${watermark.createdAt}, ${watermark.userId}, ${watermark.appDate})`
+      : highWatermarks
+        ? sql`and false`
+        : sql``;
     return sql`
       select
         ${userWebVisit.userId} as user_id,
@@ -188,9 +200,24 @@ export function buildOperationsActivitySourceSql(
       from ${userWebVisit}
       where ${userWebVisit.firstVisitedAt} >= ${start}
         and ${userWebVisit.firstVisitedAt} < ${end}
+        ${bound}
     `;
   }
   if (kind === "creation") {
+    const watermark = highWatermarks?.outputs;
+    const bound = watermark
+      ? sql`and (
+          ${userOutputUsageEvent.createdAt},
+          ${userOutputUsageEvent.outputKind}::text,
+          ${userOutputUsageEvent.sourceTaskId}
+        ) <= (
+          ${watermark.createdAt},
+          ${watermark.outputKind},
+          ${watermark.sourceTaskId}
+        )`
+      : highWatermarks
+        ? sql`and false`
+        : sql``;
     return sql`
       select
         ${userOutputUsageEvent.userId} as user_id,
@@ -198,8 +225,16 @@ export function buildOperationsActivitySourceSql(
       from ${userOutputUsageEvent}
       where ${userOutputUsageEvent.operationCreatedAt} >= ${start}
         and ${userOutputUsageEvent.operationCreatedAt} < ${end}
+        ${bound}
     `;
   }
+  const watermark = highWatermarks?.paymentOrders;
+  const bound = watermark
+    ? sql`and (${paymentOrder.createdAt}, ${paymentOrder.id})
+        <= (${watermark.createdAt}, ${watermark.id})`
+    : highWatermarks
+      ? sql`and false`
+      : sql``;
   return sql`
     select
       ${paymentOrder.userId} as user_id,
@@ -210,6 +245,7 @@ export function buildOperationsActivitySourceSql(
       and ${paymentOrder.fulfilledAt} is not null
       and ${paymentOrder.fulfilledAt} >= ${start}
       and ${paymentOrder.fulfilledAt} < ${end}
+      ${bound}
   `;
 }
 

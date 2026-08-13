@@ -69,6 +69,7 @@ describe("operations dashboard operations", () => {
     });
     expect(expireOperationsExports).toMatchObject({
       access: { kind: "cronJob", job: "operations-export-retention" },
+      destructive: true,
       hasMaintenanceWrite: true,
     });
   });

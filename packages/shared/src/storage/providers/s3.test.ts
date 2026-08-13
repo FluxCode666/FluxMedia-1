@@ -43,9 +43,13 @@ const presign = vi.hoisted(() => vi.fn(async () => "https://signed.test"));
 
 vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: awsMocks.MockS3Client,
+  AbortMultipartUploadCommand: class AbortMultipartUploadCommand extends awsMocks.MockCommand {},
+  CompleteMultipartUploadCommand: class CompleteMultipartUploadCommand extends awsMocks.MockCommand {},
+  CreateMultipartUploadCommand: class CreateMultipartUploadCommand extends awsMocks.MockCommand {},
   DeleteObjectCommand: awsMocks.MockCommand,
   GetObjectCommand: awsMocks.MockCommand,
   PutObjectCommand: awsMocks.MockCommand,
+  UploadPartCommand: class UploadPartCommand extends awsMocks.MockCommand {},
 }));
 
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
@@ -125,5 +129,66 @@ describe("S3 client 动态配置", () => {
     expect(awsMocks.clients[0]?.destroy).toHaveBeenCalledTimes(1);
     expect(awsMocks.clients[1]?.destroy).toHaveBeenCalledTimes(1);
     expect(awsMocks.clients[2]?.destroy).not.toHaveBeenCalled();
+  });
+
+  it("流式写入使用 multipart，并在成功后 complete", async () => {
+    const { createS3StorageProvider } = await import("./s3");
+    const provider = createS3StorageProvider(createConfig());
+    await provider.getSignedUploadUrl("warmup", "uploads", "text/plain");
+    const client =
+      awsMocks.clients[0] ??
+      (() => {
+        throw new Error("missing client");
+      })();
+    client.send
+      .mockResolvedValueOnce({ UploadId: "upload-1" })
+      .mockResolvedValueOnce({ ETag: "etag-1" })
+      .mockResolvedValueOnce({});
+    if (!provider.putObjectStream) throw new Error("missing stream capability");
+    await provider.putObjectStream(
+      "export.csv",
+      "uploads",
+      (async function* () {
+        yield Buffer.from("a,b\r\n");
+      })(),
+      "text/csv"
+    );
+    expect(client.send).toHaveBeenCalledTimes(3);
+    expect(
+      (client.send.mock.calls[0]?.[0] as { input: unknown }).input
+    ).toMatchObject({ Bucket: "uploads", Key: "export.csv" });
+    expect(
+      (client.send.mock.calls[2]?.[0] as { input: unknown }).input
+    ).toMatchObject({ UploadId: "upload-1" });
+  });
+
+  it("multipart 上传失败后尽力 abort 并原样抛错", async () => {
+    const { createS3StorageProvider } = await import("./s3");
+    const provider = createS3StorageProvider(createConfig());
+    await provider.getSignedUploadUrl("warmup", "uploads", "text/plain");
+    const client =
+      awsMocks.clients[0] ??
+      (() => {
+        throw new Error("missing client");
+      })();
+    client.send
+      .mockResolvedValueOnce({ UploadId: "upload-2" })
+      .mockRejectedValueOnce(new Error("part failed"))
+      .mockResolvedValueOnce({});
+    if (!provider.putObjectStream) throw new Error("missing stream capability");
+    await expect(
+      provider.putObjectStream(
+        "export.csv",
+        "uploads",
+        (async function* () {
+          yield Buffer.from("broken");
+        })(),
+        "text/csv"
+      )
+    ).rejects.toThrow("part failed");
+    expect(client.send).toHaveBeenCalledTimes(3);
+    expect(
+      (client.send.mock.calls[2]?.[0] as { input: unknown }).input
+    ).toMatchObject({ UploadId: "upload-2" });
   });
 });
