@@ -160,6 +160,125 @@ export const userWebVisit = pgTable(
   ]
 );
 
+/**
+ * 运营 CSV 异步导出任务。
+ *
+ * 使用方：operations UOL、内部 worker、受控下载路由和 7 天清理任务。筛选、时区、
+ * epoch 与事实高水位在创建时冻结；租约字段作为 fencing token，阻止陈旧 worker
+ * 覆盖新 attempt。对象 key 仅在完成 CAS 成功后成为可下载事实。
+ */
+export const operationsExportTask = pgTable(
+  "operations_export_task",
+  {
+    id: text("id").primaryKey(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    clientRequestId: text("client_request_id").notNull(),
+    exportType: text("export_type").notNull(),
+    status: text("status").notNull().default("queued"),
+    query: json("query").$type<Record<string, unknown>>().notNull(),
+    timeZone: text("time_zone").notNull(),
+    epochAppDate: text("epoch_app_date").notNull(),
+    epochStartsAt: timestamp("epoch_starts_at").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    snapshotAt: timestamp("snapshot_at").notNull(),
+    highWatermarks: json("high_watermarks")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    retryOfTaskId: text("retry_of_task_id"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    objectBucket: text("object_bucket"),
+    objectKey: text("object_key"),
+    checksumSha256: text("checksum_sha256"),
+    rowCount: bigint("row_count", { mode: "number" }),
+    byteCount: bigint("byte_count", { mode: "number" }),
+    errorCode: text("error_code"),
+    completedAt: timestamp("completed_at"),
+    expiresAt: timestamp("expires_at"),
+    objectDeletedAt: timestamp("object_deleted_at"),
+    cleanupErrorCode: text("cleanup_error_code"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("operations_export_task_creator_request_unique").on(
+      table.createdBy,
+      table.clientRequestId
+    ),
+    index("operations_export_task_creator_created_idx").on(
+      table.createdBy,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    index("operations_export_task_claim_idx").on(
+      table.status,
+      table.leaseExpiresAt,
+      table.createdAt,
+      table.id
+    ),
+    index("operations_export_task_expire_idx").on(
+      table.status,
+      table.expiresAt,
+      table.id
+    ),
+    foreignKey({
+      name: "operations_export_task_retry_fk",
+      columns: [table.retryOfTaskId],
+      foreignColumns: [table.id],
+    }).onDelete("set null"),
+    check(
+      "operations_export_task_type_check",
+      sql`${table.exportType} IN ('user_growth', 'commercialization', 'content_production')`
+    ),
+    check(
+      "operations_export_task_status_check",
+      sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'expired')`
+    ),
+    check(
+      "operations_export_task_epoch_app_date_check",
+      sql`${table.epochAppDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
+    ),
+    check(
+      "operations_export_task_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "operations_export_task_lease_shape_check",
+      sql`(
+        ${table.status} = 'running'
+        AND ${table.leaseOwner} IS NOT NULL
+        AND ${table.leaseToken} IS NOT NULL
+        AND ${table.leaseExpiresAt} IS NOT NULL
+      ) OR (
+        ${table.status} <> 'running'
+        AND ${table.leaseOwner} IS NULL
+        AND ${table.leaseToken} IS NULL
+        AND ${table.leaseExpiresAt} IS NULL
+      )`
+    ),
+    check(
+      "operations_export_task_object_shape_check",
+      sql`(
+        ${table.status} IN ('completed', 'expired')
+        AND ${table.objectBucket} IS NOT NULL
+        AND ${table.objectKey} IS NOT NULL
+        AND ${table.checksumSha256} IS NOT NULL
+        AND ${table.rowCount} IS NOT NULL
+        AND ${table.byteCount} IS NOT NULL
+        AND ${table.completedAt} IS NOT NULL
+        AND ${table.expiresAt} IS NOT NULL
+      ) OR ${table.status} IN ('queued', 'running', 'failed')`
+    ),
+  ]
+);
+
+export type OperationsExportTask = typeof operationsExportTask.$inferSelect;
+export type NewOperationsExportTask = typeof operationsExportTask.$inferInsert;
+
 // ============================================
 // 管理员操作审计日志 (Admin Audit Log)
 // ============================================

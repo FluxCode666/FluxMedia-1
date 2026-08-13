@@ -62,6 +62,95 @@ CREATE INDEX IF NOT EXISTS "user_web_visit_first_visited_user_idx"
   ON "user_web_visit" ("first_visited_at", "user_id");
 --> statement-breakpoint
 
+-- 异步 CSV 导出任务冻结范围、时区、epoch 与事实高水位；陈旧 worker 只能持有
+-- 已失效 lease_token，不能提交完成结果或覆盖新 attempt。
+CREATE TABLE IF NOT EXISTS "operations_export_task" (
+  "id" text PRIMARY KEY NOT NULL,
+  "created_by" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+  "client_request_id" text NOT NULL,
+  "export_type" text NOT NULL,
+  "status" text NOT NULL DEFAULT 'queued',
+  "query" json NOT NULL,
+  "time_zone" text NOT NULL,
+  "epoch_app_date" text NOT NULL,
+  "epoch_starts_at" timestamp NOT NULL,
+  "schema_version" integer NOT NULL DEFAULT 1,
+  "snapshot_at" timestamp NOT NULL,
+  "high_watermarks" json NOT NULL,
+  "retry_of_task_id" text,
+  "attempt_count" integer NOT NULL DEFAULT 0,
+  "lease_owner" text,
+  "lease_token" text,
+  "lease_expires_at" timestamp,
+  "object_bucket" text,
+  "object_key" text,
+  "checksum_sha256" text,
+  "row_count" bigint,
+  "byte_count" bigint,
+  "error_code" text,
+  "completed_at" timestamp,
+  "expires_at" timestamp,
+  "object_deleted_at" timestamp,
+  "cleanup_error_code" text,
+  "created_at" timestamp NOT NULL DEFAULT now(),
+  "updated_at" timestamp NOT NULL DEFAULT now(),
+  CONSTRAINT "operations_export_task_retry_fk"
+    FOREIGN KEY ("retry_of_task_id")
+    REFERENCES "operations_export_task"("id") ON DELETE SET NULL,
+  CONSTRAINT "operations_export_task_type_check" CHECK (
+    "export_type" IN ('user_growth', 'commercialization', 'content_production')
+  ),
+  CONSTRAINT "operations_export_task_status_check" CHECK (
+    "status" IN ('queued', 'running', 'completed', 'failed', 'expired')
+  ),
+  CONSTRAINT "operations_export_task_epoch_app_date_check"
+    CHECK ("epoch_app_date" ~ '^\d{4}-\d{2}-\d{2}$'),
+  CONSTRAINT "operations_export_task_attempt_count_check"
+    CHECK ("attempt_count" >= 0),
+  CONSTRAINT "operations_export_task_lease_shape_check" CHECK (
+    (
+      "status" = 'running'
+      AND "lease_owner" IS NOT NULL
+      AND "lease_token" IS NOT NULL
+      AND "lease_expires_at" IS NOT NULL
+    ) OR (
+      "status" <> 'running'
+      AND "lease_owner" IS NULL
+      AND "lease_token" IS NULL
+      AND "lease_expires_at" IS NULL
+    )
+  ),
+  CONSTRAINT "operations_export_task_object_shape_check" CHECK (
+    (
+      "status" IN ('completed', 'expired')
+      AND "object_bucket" IS NOT NULL
+      AND "object_key" IS NOT NULL
+      AND "checksum_sha256" IS NOT NULL
+      AND "row_count" IS NOT NULL
+      AND "byte_count" IS NOT NULL
+      AND "completed_at" IS NOT NULL
+      AND "expires_at" IS NOT NULL
+    ) OR "status" IN ('queued', 'running', 'failed')
+  )
+);
+--> statement-breakpoint
+
+CREATE UNIQUE INDEX IF NOT EXISTS "operations_export_task_creator_request_unique"
+  ON "operations_export_task" ("created_by", "client_request_id");
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "operations_export_task_creator_created_idx"
+  ON "operations_export_task" ("created_by", "created_at" DESC, "id" DESC);
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "operations_export_task_claim_idx"
+  ON "operations_export_task" ("status", "lease_expires_at", "created_at", "id");
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "operations_export_task_expire_idx"
+  ON "operations_export_task" ("status", "expires_at", "id");
+--> statement-breakpoint
+
 -- 支付生命周期事件只从本迁移上线后在线写入，不根据历史 updated_at 回造阶段时间。
 CREATE TABLE IF NOT EXISTS "payment_lifecycle_event" (
   "id" text PRIMARY KEY NOT NULL,
