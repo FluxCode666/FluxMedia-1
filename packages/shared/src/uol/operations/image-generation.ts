@@ -14,7 +14,10 @@
  * 不从 apps/web 或 @repo/database 导入任何内容。
  */
 import { z } from "zod";
-
+import {
+  galleryListInputSchema,
+  galleryListOutputSchema,
+} from "../../image-generation/gallery-contract";
 import {
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
@@ -468,7 +471,30 @@ defineOperation({
 });
 
 // ---------------------------------------------------------------------------
-// 6a. image.getAdminHistoryRequestSnapshot - 管理员按需读取真实请求 JSON
+// 6a. image.listMyGallery - 本人图库的卡片级无限滚动批次
+// ---------------------------------------------------------------------------
+export const imageListMyGallery = defineOperation({
+  name: "image.listMyGallery",
+  domain: "image-generation",
+  title: "获取本人图库批次",
+  description:
+    "按成品、上传图或视频页签读取当前会话用户的一批图库卡片。" +
+    "身份只来自 Principal，返回短期资源地址与签名下一边界，不返回总条数。",
+  input: galleryListInputSchema,
+  output: galleryListOutputSchema,
+  access: { kind: "protected" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: image.listMyGallery");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 6b. image.getAdminHistoryRequestSnapshot - 管理员按需读取真实请求 JSON
 // ---------------------------------------------------------------------------
 export const imageGetAdminHistoryRequestSnapshot = defineOperation({
   name: "image.getAdminHistoryRequestSnapshot",

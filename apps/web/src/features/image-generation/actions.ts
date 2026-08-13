@@ -8,6 +8,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
+import {
+  type GalleryListOutput,
+  galleryListInputSchema,
+} from "@repo/shared/image-generation/gallery-contract";
 import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract";
 import { protectedAction } from "@repo/shared/safe-action";
 import { invokeOperation } from "@repo/shared/uol";
@@ -91,6 +95,23 @@ export const batchDeleteGenerationAction = protectedAction
     await ensureUolInitialized();
     return invokeOperation<{ success: boolean; deletedCount: number }>(
       "image.batchDelete",
+      parsedInput,
+      {
+        type: "user",
+        userId: ctx.userId,
+        role: await getUserRoleById(ctx.userId),
+      }
+    );
+  });
+
+/** 读取本人图库的一批安全卡片；用于触底追加和详情返回后的有界重放。 */
+export const getMyGalleryItemsAction = protectedAction
+  .metadata({ action: "image.listMyGallery" })
+  .schema(galleryListInputSchema)
+  .action(async ({ parsedInput, ctx }): Promise<GalleryListOutput> => {
+    await ensureUolInitialized();
+    return invokeOperation<GalleryListOutput>(
+      "image.listMyGallery",
       parsedInput,
       {
         type: "user",
