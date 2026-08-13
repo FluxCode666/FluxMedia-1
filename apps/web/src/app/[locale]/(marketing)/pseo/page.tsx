@@ -1,17 +1,42 @@
 import { Badge } from "@repo/ui/components/badge";
 import { Card, CardContent } from "@repo/ui/components/card";
 import { ArrowUpRight, Database, LayoutTemplate, Route } from "lucide-react";
-import { getPseoPages } from "@/features/pseo/lib/pseo-data";
+import { loadPseoIndexPageData } from "@/features/content/content-index-page-data";
+import {
+  buildContentIndexPageSizeHref,
+  type ContentIndexSearchParams,
+  contentPaginationNames,
+  parseContentIndexPagination,
+} from "@/features/content/content-index-pagination";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { loadPaginationConfig } from "@/features/pagination/server";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
 import { Link } from "@/i18n/routing";
 
 export default async function PseoIndexPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ locale: string }>;
+  searchParams: Promise<ContentIndexSearchParams>;
 }) {
-  const { locale } = await params;
-  const pages = getPseoPages(locale);
-  const isZh = locale === "zh";
+  const [{ locale }, rawSearchParams, paginationConfig] = await Promise.all([
+    params,
+    searchParams,
+    loadPaginationConfig(),
+  ]);
+  const safeLocale = locale === "zh" ? "zh" : "en";
+  const requested = parseContentIndexPagination(
+    rawSearchParams,
+    paginationConfig
+  );
+  const result = await loadPseoIndexPageData({
+    locale: safeLocale,
+    page: requested.page,
+    pageSize: requested.pageSize,
+  });
+  const pathname = `/${safeLocale}/pseo`;
+  const isZh = safeLocale === "zh";
 
   const overviewCards = isZh
     ? [
@@ -113,7 +138,7 @@ export default async function PseoIndexPage({
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {pages.map((page) => (
+          {result.records.map((page) => (
             <Card
               key={page.slug}
               className="group border-border bg-background shadow-none transition-[border-color,box-shadow,transform] duration-250 hover:-translate-y-0.5 hover:border-foreground/30 hover:shadow-whisper"
@@ -123,11 +148,9 @@ export default async function PseoIndexPage({
                   <Badge variant="secondary">{page.category}</Badge>
                   <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-colors duration-150 group-hover:text-foreground" />
                 </div>
-                <h3 className="mb-2 text-lg font-medium">
-                  {page.data.hero.title} {page.data.hero.highlight}
-                </h3>
+                <h3 className="mb-2 text-lg font-medium">{page.title}</h3>
                 <p className="mb-6 text-sm leading-relaxed text-muted-foreground">
-                  {page.data.seo.description}
+                  {page.description}
                 </p>
                 <div className="mt-auto">
                   <Link
@@ -140,6 +163,46 @@ export default async function PseoIndexPage({
               </CardContent>
             </Card>
           ))}
+        </div>
+        <div className="mt-10 flex flex-col gap-4 border-t pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <span>
+              {isZh
+                ? `共 ${result.totalCount} 个模板`
+                : `${result.totalCount} templates total`}
+            </span>
+            <UrlPageSizeSelect
+              value={result.pageSize}
+              options={paginationConfig.pageSizeOptions.map((pageSize) => ({
+                size: pageSize,
+                href: buildContentIndexPageSizeHref(
+                  pathname,
+                  rawSearchParams,
+                  pageSize
+                ),
+              }))}
+              label={isZh ? "每页模板数" : "Templates per page"}
+              itemSuffix={isZh ? " 个" : " / page"}
+            />
+          </div>
+          <UrlPaginationControls
+            page={result.page}
+            totalPages={result.totalPages}
+            names={contentPaginationNames}
+            ariaLabel={isZh ? "PSEO 模板分页" : "PSEO template pagination"}
+            pageSelectLabel={isZh ? "选择页码" : "Select page"}
+            previousLabel={isZh ? "上一页" : "Previous"}
+            nextLabel={isZh ? "下一页" : "Next"}
+            getPageLabel={(page, isCurrent) =>
+              isZh
+                ? isCurrent
+                  ? `第 ${page} 页，当前页`
+                  : `前往第 ${page} 页`
+                : isCurrent
+                  ? `Page ${page}, current page`
+                  : `Go to page ${page}`
+            }
+          />
         </div>
       </div>
     </section>

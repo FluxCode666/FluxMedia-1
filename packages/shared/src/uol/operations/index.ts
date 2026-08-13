@@ -96,8 +96,20 @@ export {
 
 // 客服支持域
 import "./support";
+
+export {
+  getAdminTicketDetail,
+  getAllTickets,
+  getMyTickets,
+  getTicketDetail,
+  markAdminTicketSeen,
+  markMyTicketSeen,
+} from "./support";
+
 // 用户控制台统计
 import "./analytics";
+// 公开内容索引域
+import "./content";
 // 管理端支付概览与充值订单
 import "./payment";
 // 推广码、归因与首充奖励看板
@@ -108,5 +120,6 @@ export {
   fulfillCreemReferralFirstPayment,
   fulfillEpayReferralFirstPayment,
   getMyReferralDashboard,
+  listMyReferralRelationships,
   referralDashboardOutputSchema,
 } from "./referrals";

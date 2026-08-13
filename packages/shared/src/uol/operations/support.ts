@@ -14,15 +14,37 @@ import { z } from "zod";
 
 import {
   countUnreadAnnouncementsForUser,
-  listActiveAnnouncementsForUser,
-  listAnnouncementsForAdmin,
   markAnnouncementIdsReadForUser,
 } from "../../announcements/actions";
+import {
+  adminAnnouncementListInputSchema,
+  adminAnnouncementListOutputSchema,
+  userAnnouncementListInputSchema,
+  userAnnouncementListOutputSchema,
+} from "../../announcements/list-contract";
+import {
+  markAllActiveAnnouncementsReadForUser,
+  readAdminAnnouncementsPage,
+  readUserAnnouncementsPage,
+} from "../../announcements/list-service";
 import { logError } from "../../logger";
 import {
   DEFAULT_DASHBOARD_SUPPORT_CONFIG,
   dashboardSupportConfigSchema,
 } from "../../support/dashboard-config";
+import {
+  markTicketSeenInputSchema,
+  markTicketSeenOutputSchema,
+  ticketListInputSchema,
+  ticketListOutputSchema,
+  ticketMessageListInputSchema,
+  ticketMessageListOutputSchema,
+} from "../../support/ticket-list-contract";
+import {
+  listTicketMessages,
+  listTickets,
+  markTicketSeen,
+} from "../../support/ticket-list-service";
 import { getRuntimeSettingJson } from "../../system-settings/index";
 import { getPrincipalUserId } from "../principal";
 import { defineOperation } from "../registry";
@@ -87,8 +109,7 @@ export const createTicket = defineOperation({
   name: "support.createTicket",
   domain: "support",
   title: "Create Support Ticket",
-  description:
-    "Create a new support ticket for the authenticated user.",
+  description: "Create a new support ticket for the authenticated user.",
   input: z.object({
     subject: z.string().min(1).max(200),
     message: z.string().min(1).max(5000),
@@ -121,81 +142,56 @@ export const getMyTickets = defineOperation({
   name: "support.getMyTickets",
   domain: "support",
   title: "Get My Tickets",
-  description:
-    "List all support tickets belonging to the authenticated user.",
-  input: z.object({
-    page: z.number().int().min(1).optional(),
-    pageSize: z.number().int().min(1).max(100).optional(),
-    status: z
-      .enum(["open", "closed", "pending"])
-      .optional(),
-  }),
-  output: z.object({
-    tickets: z.array(
-      z.object({
-        id: z.string(),
-        subject: z.string(),
-        status: z.string(),
-        createdAt: z.string(),
-        updatedAt: z.string(),
-        hasUnread: z.boolean(),
-      }),
-    ),
-    total: z.number(),
-  }),
-  access: { kind: "protected" },
+  description: "分页读取当前人工会话用户的客服工单与精确总数。",
+  input: ticketListInputSchema,
+  output: ticketListOutputSchema,
+  access: { kind: "user" },
+  agentExposure: "human-only",
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
   sideEffects: [],
-  // Bound at app level - ticket logic inline in server-action
-  execute: async () => {
-    throw new Error("Not yet wired: support.getMyTickets");
-  },
+  execute: listTickets,
 });
 
 /**
  * support.getTicketDetail - 获取工单详情（用户侧）
  *
  * 权限：protected + owner（需校验工单归属）
- * 只读但有副作用：标记用户已读
+ * 只读操作；标记已读由独立 operation 负责
  */
 export const getTicketDetail = defineOperation({
   name: "support.getTicketDetail",
   domain: "support",
   title: "Get Ticket Detail",
-  description:
-    "Get full detail of a ticket including messages. Marks user messages as read (side-effect).",
-  input: z.object({
-    ticketId: z.string().min(1),
-  }),
-  output: z.object({
-    id: z.string(),
-    subject: z.string(),
-    status: z.string(),
-    category: z.string().optional(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-    messages: z.array(
-      z.object({
-        id: z.string(),
-        content: z.string(),
-        sender: z.enum(["user", "admin"]),
-        createdAt: z.string(),
-        isRead: z.boolean(),
-      }),
-    ),
-  }),
+  description: "分页读取本人客服工单详情和稳定排序的消息历史。",
+  input: ticketMessageListInputSchema,
+  output: ticketMessageListOutputSchema,
   access: { kind: "owner", resource: "ticket" },
+  agentExposure: "human-only",
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
-  sideEffects: ["cache"],
-  hasMaintenanceWrite: true,
-  // Bound at app level - ticket logic inline in server-action
-  execute: async () => {
-    throw new Error("Not yet wired: support.getTicketDetail");
-  },
+  sideEffects: [],
+  execute: listTicketMessages,
+});
+
+/** support.markMyTicketSeen - 独立更新本人查看时间，不受消息分页范围影响。 */
+export const markMyTicketSeen = defineOperation({
+  name: "support.markMyTicketSeen",
+  domain: "support",
+  title: "Mark My Ticket Seen",
+  description: "将本人客服工单的全部既有客服动态标记为已读。",
+  input: markTicketSeenInputSchema,
+  output: markTicketSeenOutputSchema,
+  access: { kind: "owner", resource: "ticket" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async (input, principal) =>
+    markTicketSeen(input.ticketId, principal),
 });
 
 /**
@@ -239,40 +235,16 @@ export const getAllTickets = defineOperation({
   name: "support.getAllTickets",
   domain: "support",
   title: "Get All Tickets (Admin)",
-  description:
-    "List all support tickets across all users. Admin only.",
-  input: z.object({
-    page: z.number().int().min(1).optional(),
-    pageSize: z.number().int().min(1).max(100).optional(),
-    status: z
-      .enum(["open", "closed", "pending"])
-      .optional(),
-    search: z.string().optional(),
-  }),
-  output: z.object({
-    tickets: z.array(
-      z.object({
-        id: z.string(),
-        subject: z.string(),
-        status: z.string(),
-        userId: z.string(),
-        userName: z.string().optional(),
-        createdAt: z.string(),
-        updatedAt: z.string(),
-        hasUnread: z.boolean(),
-      }),
-    ),
-    total: z.number(),
-  }),
+  description: "分页读取管理员可见的全站客服工单与精确总数。",
+  input: ticketListInputSchema,
+  output: ticketListOutputSchema,
   access: { kind: "admin" },
+  agentExposure: "human-only",
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
   sideEffects: [],
-  // Bound at app level - ticket logic inline in server-action
-  execute: async () => {
-    throw new Error("Not yet wired: support.getAllTickets");
-  },
+  execute: listTickets,
 });
 
 /**
@@ -285,8 +257,7 @@ export const getAdminUnreadCount = defineOperation({
   name: "support.getAdminUnreadCount",
   domain: "support",
   title: "Get Admin Unread Ticket Count",
-  description:
-    "Get the count of tickets with unread user messages for admin.",
+  description: "Get the count of tickets with unread user messages for admin.",
   input: z.object({}),
   output: z.object({
     count: z.number().int().min(0),
@@ -333,47 +304,40 @@ export const getMyUnreadCount = defineOperation({
  * support.getAdminTicketDetail - 管理员查看工单详情
  *
  * 权限：admin
- * 只读但有副作用：标记管理员已读
+ * 只读操作；标记管理员已读由独立 operation 负责
  */
 export const getAdminTicketDetail = defineOperation({
   name: "support.getAdminTicketDetail",
   domain: "support",
   title: "Get Admin Ticket Detail",
-  description:
-    "Get full detail of any ticket for admin. Marks admin messages as read (side-effect).",
-  input: z.object({
-    ticketId: z.string().min(1),
-  }),
-  output: z.object({
-    id: z.string(),
-    subject: z.string(),
-    status: z.string(),
-    category: z.string().optional(),
-    userId: z.string(),
-    userName: z.string().optional(),
-    userEmail: z.string().optional(),
-    createdAt: z.string(),
-    updatedAt: z.string(),
-    messages: z.array(
-      z.object({
-        id: z.string(),
-        content: z.string(),
-        sender: z.enum(["user", "admin"]),
-        createdAt: z.string(),
-        isRead: z.boolean(),
-      }),
-    ),
-  }),
+  description: "分页读取任意客服工单详情和稳定排序的消息历史。",
+  input: ticketMessageListInputSchema,
+  output: ticketMessageListOutputSchema,
   access: { kind: "admin" },
+  agentExposure: "human-only",
   readOnly: true,
   destructive: false,
   idempotency: { kind: "natural" },
-  sideEffects: ["cache"],
-  hasMaintenanceWrite: true,
-  // Bound at app level - ticket logic inline in server-action
-  execute: async () => {
-    throw new Error("Not yet wired: support.getAdminTicketDetail");
-  },
+  sideEffects: [],
+  execute: listTicketMessages,
+});
+
+/** support.markAdminTicketSeen - 管理员一次标记工单全部用户动态已读。 */
+export const markAdminTicketSeen = defineOperation({
+  name: "support.markAdminTicketSeen",
+  domain: "support",
+  title: "Mark Admin Ticket Seen",
+  description: "将指定客服工单的全部既有用户动态标记为管理员已读。",
+  input: markTicketSeenInputSchema,
+  output: markTicketSeenOutputSchema,
+  access: { kind: "admin" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async (input, principal) =>
+    markTicketSeen(input.ticketId, principal),
 });
 
 /**
@@ -419,7 +383,7 @@ export const updateTicketStatus = defineOperation({
     "Admin updates the status of a support ticket (open/closed/pending).",
   input: z.object({
     ticketId: z.string().min(1),
-    status: z.enum(["open", "closed", "pending"]),
+    status: z.enum(["open", "in_progress", "resolved", "closed"]),
   }),
   output: z.object({
     ticketId: z.string(),
@@ -447,8 +411,7 @@ export const updateTicketStatus = defineOperation({
  * 权限：protected（登录用户）
  * 只读操作
  *
- * 已接线至 listActiveAnnouncementsForUser 服务函数。
- * 将 DB 行映射为操作输出格式（日期序列化、isRead 判定）。
+ * 已接线至公告分页服务，保留旧 Dashboard 摘要输出格式。
  */
 export const listAnnouncements = defineOperation({
   name: "support.listAnnouncements",
@@ -468,7 +431,7 @@ export const listAnnouncements = defineOperation({
         content: z.string(),
         publishedAt: z.string(),
         isRead: z.boolean(),
-      }),
+      })
     ),
     total: z.number(),
   }),
@@ -483,26 +446,48 @@ export const listAnnouncements = defineOperation({
       throw new Error("Principal does not have a userId");
     }
 
-    const rows = await listActiveAnnouncementsForUser(userId);
+    const result = await readUserAnnouncementsPage(userId, {
+      page: _input.page ?? 1,
+      pageSize: _input.pageSize ?? 50,
+    });
 
-    // 应用分页（服务函数返回全量，此处做内存分页）
-    const page = _input.page ?? 1;
-    const pageSize = _input.pageSize ?? 50;
-    const total = rows.length;
-    const start = (page - 1) * pageSize;
-    const sliced = rows.slice(start, start + pageSize);
-
-    const announcements = sliced.map((row) => ({
+    const announcements = result.records.map((row) => ({
       id: row.id,
       title: row.title,
       content: row.content,
-      publishedAt: (
-        row.publishedAt ?? row.createdAt
-      ).toISOString(),
-      isRead: row.readAt !== null,
+      publishedAt: row.publishedAt ?? row.createdAt,
+      isRead: row.isRead,
     }));
 
-    return { announcements, total };
+    return { announcements, total: result.totalCount };
+  },
+});
+
+/**
+ * support.listMyAnnouncementPage - 用户完整公告页分页读取
+ *
+ * 权限：只接受真实站内用户 Principal；仅供人工页面使用，不进入 MCP。
+ * 精确总数和当前页记录由领域服务在同一只读 repeatable-read 快照读取。
+ */
+export const listMyAnnouncementPage = defineOperation({
+  name: "support.listMyAnnouncementPage",
+  domain: "support",
+  title: "List My Announcement Page",
+  description: "读取当前登录用户可见的完整公告分页。",
+  input: userAnnouncementListInputSchema,
+  output: userAnnouncementListOutputSchema,
+  access: { kind: "user" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async (input, principal) => {
+    const userId = getPrincipalUserId(principal);
+    if (!userId) {
+      throw new Error("Principal does not have a userId");
+    }
+    return readUserAnnouncementsPage(userId, input);
   },
 });
 
@@ -551,8 +536,7 @@ export const markAnnouncementRead = defineOperation({
   name: "support.markAnnouncementRead",
   domain: "support",
   title: "Mark Announcement Read",
-  description:
-    "Mark a single announcement as read for the authenticated user.",
+  description: "Mark a single announcement as read for the authenticated user.",
   input: z.object({
     announcementId: z.string().min(1),
   }),
@@ -570,10 +554,9 @@ export const markAnnouncementRead = defineOperation({
       throw new Error("Principal does not have a userId");
     }
 
-    const marked = await markAnnouncementIdsReadForUser(
-      userId,
-      [input.announcementId],
-    );
+    const marked = await markAnnouncementIdsReadForUser(userId, [
+      input.announcementId,
+    ]);
     return { success: marked > 0 };
   },
 });
@@ -583,21 +566,20 @@ export const markAnnouncementRead = defineOperation({
  *
  * 权限：protected（登录用户）
  *
- * 已接线至 listActiveAnnouncementsForUser + markAnnouncementIdsReadForUser。
- * 先获取所有活跃公告 ID，再批量标记已读。
+ * 已接线至单条 INSERT ... SELECT 集合写入，不读取全部公告 ID。
  */
 export const markAllAnnouncementsRead = defineOperation({
   name: "support.markAllAnnouncementsRead",
   domain: "support",
   title: "Mark All Announcements Read",
-  description:
-    "Mark all announcements as read for the authenticated user.",
+  description: "Mark all announcements as read for the authenticated user.",
   input: z.object({}),
   output: z.object({
     success: z.boolean(),
     markedCount: z.number().int().min(0),
   }),
-  access: { kind: "protected" },
+  access: { kind: "user" },
+  agentExposure: "human-only",
   readOnly: false,
   destructive: false,
   idempotency: { kind: "natural" },
@@ -608,20 +590,7 @@ export const markAllAnnouncementsRead = defineOperation({
       throw new Error("Principal does not have a userId");
     }
 
-    // 获取所有活跃公告中未读的 ID
-    const rows = await listActiveAnnouncementsForUser(userId);
-    const unreadIds = rows
-      .filter((row) => row.readAt === null)
-      .map((row) => row.id);
-
-    if (unreadIds.length === 0) {
-      return { success: true, markedCount: 0 };
-    }
-
-    const markedCount = await markAnnouncementIdsReadForUser(
-      userId,
-      unreadIds,
-    );
+    const markedCount = await markAllActiveAnnouncementsReadForUser(userId);
     return { success: true, markedCount };
   },
 });
@@ -632,7 +601,7 @@ export const markAllAnnouncementsRead = defineOperation({
  * 权限：admin
  * 只读操作
  *
- * 已接线至 listAnnouncementsForAdmin 服务函数。
+ * 已接线至公告分页服务，保留旧管理读取输出格式。
  */
 export const getAdminAnnouncements = defineOperation({
   name: "support.getAdminAnnouncements",
@@ -655,7 +624,7 @@ export const getAdminAnnouncements = defineOperation({
         publishedAt: z.string().nullable(),
         createdAt: z.string(),
         updatedAt: z.string(),
-      }),
+      })
     ),
     total: z.number(),
   }),
@@ -665,35 +634,50 @@ export const getAdminAnnouncements = defineOperation({
   idempotency: { kind: "natural" },
   sideEffects: [],
   execute: async (input) => {
-    const rows = await listAnnouncementsForAdmin();
-
-    // 可选按发布状态过滤
-    let filtered = rows;
-    if (input.published !== undefined) {
-      filtered = rows.filter(
-        (row) => row.isPublished === input.published,
-      );
-    }
-
-    // 分页
-    const page = input.page ?? 1;
-    const pageSize = input.pageSize ?? 100;
-    const total = filtered.length;
-    const start = (page - 1) * pageSize;
-    const sliced = filtered.slice(start, start + pageSize);
-
-    const announcements = sliced.map((row) => ({
+    const result = await readAdminAnnouncementsPage({
+      page: input.page ?? 1,
+      pageSize: input.pageSize ?? 100,
+      published:
+        input.published === undefined
+          ? "all"
+          : input.published
+            ? "published"
+            : "unpublished",
+    });
+    const announcements = result.records.map((row) => ({
       id: row.id,
       title: row.title,
       content: row.content,
       isPublished: row.isPublished,
-      publishedAt: row.publishedAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
+      publishedAt: row.publishedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     }));
 
-    return { announcements, total };
+    return { announcements, total: result.totalCount };
   },
+});
+
+/**
+ * support.listAdminAnnouncementPage - 管理公告页分页读取
+ *
+ * 权限：管理员；仅供人工管理页使用，不进入 MCP。管理统计独立于当前页和筛选，
+ * 与筛选口径的精确总数、记录共同来自同一只读 repeatable-read 快照。
+ */
+export const listAdminAnnouncementPage = defineOperation({
+  name: "support.listAdminAnnouncementPage",
+  domain: "support",
+  title: "List Admin Announcement Page",
+  description: "读取管理员公告分页及全局统计。",
+  input: adminAnnouncementListInputSchema,
+  output: adminAnnouncementListOutputSchema,
+  access: { kind: "admin" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async (input) => readAdminAnnouncementsPage(input),
 });
 
 /**
@@ -812,8 +796,6 @@ export const toggleAnnouncementPublish = defineOperation({
   sideEffects: [],
   // Bound at app level - toggle logic inline in server-action (includes audit log + revalidatePath)
   execute: async () => {
-    throw new Error(
-      "Not yet wired: support.toggleAnnouncementPublish",
-    );
+    throw new Error("Not yet wired: support.toggleAnnouncementPublish");
   },
 });
