@@ -16,7 +16,7 @@ const EXPECTED_PATHS = [
   "/v1/credits",
   "/v1/images/generations",
   "/v1/images/edits",
-  "/v1/videos/generations",
+  "/v1/videos",
   "/v1/videos/capabilities",
   "/v1/images/{task_id}",
   "/v1/videos/{id}",
@@ -176,7 +176,7 @@ describe("API integration docs data", () => {
     expect(create?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(create?.parameters.map((parameter) => parameter.name)).toEqual(
       expect.arrayContaining([
-        "duration / duration_seconds",
+        "seconds / duration / duration_seconds",
         "aspectRatio / aspect_ratio",
         "resolution",
         locale === "zh"
@@ -186,6 +186,23 @@ describe("API integration docs data", () => {
       ])
     );
     expect(createText).toContain("HTTP 202");
+    expect(createText).toContain("/v1/videos/generations");
+    expect(createText).toContain("/api/v1/videos/generations");
+    expect(createText).toContain("/api/v1/videos");
+    if (locale === "zh") {
+      expect(create?.deprecationNotice).toContain("警告：");
+      expect(create?.deprecationNotice).toContain("即将废弃下线");
+      expect(create?.deprecationNotice).toContain(
+        "请尽快迁移至 POST /v1/videos"
+      );
+    } else {
+      expect(create?.deprecationNotice).toContain("Warning:");
+      expect(create?.deprecationNotice).toContain(
+        "scheduled for deprecation and removal"
+      );
+      expect(create?.deprecationNotice).toContain("Migrate to POST /v1/videos");
+    }
+    expect(create?.responseExample).toContain('"status": "queued"');
     expect(createText).not.toContain("kling3-omni-8s-16x9-1080p");
     expect(createText).not.toContain("firefly-<family>");
     expect(createText).not.toContain("input_image_role");
@@ -203,6 +220,8 @@ describe("API integration docs data", () => {
     );
     expect(task?.responseExample).toContain('"object": "video.task"');
     expect(task?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
+    expect(taskText).toContain("in_progress");
+    expect(taskText).not.toContain("needs_attention");
     expect(taskText).toMatch(/persistent|持久/u);
     expect(taskText).not.toContain("30 minutes");
     expect(taskText).not.toContain("30 分钟");

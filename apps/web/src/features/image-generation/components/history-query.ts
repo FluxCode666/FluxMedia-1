@@ -13,6 +13,8 @@ import { parsePaginationState } from "@repo/shared/pagination/state";
 
 export const HISTORY_STATUS_FILTERS = [
   "processing",
+  "queued",
+  "in_progress",
   "completed",
   "failed",
 ] as const;

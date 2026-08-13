@@ -43,6 +43,7 @@ function createConfig(): ApiConfig {
   const adapter: ApiUpstreamAdapterDraft = {
     baseUrl: "https://video.example.com/v1",
     useStream: false,
+    videoSubmissionRetryCount: 2,
     modelMappings: [],
     authentication: { mode: "bearer" },
     credentialScope: "https://video.example.com|bearer",

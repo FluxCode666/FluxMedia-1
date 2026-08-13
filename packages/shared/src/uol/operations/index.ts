@@ -104,6 +104,7 @@ export {
   videoGetInputs,
   videoGetStatus,
   videoListCapabilities,
+  videoListUncertainSubmissions,
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "./video-generation";

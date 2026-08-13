@@ -90,6 +90,16 @@ describe("admin history repository SQL", () => {
               byteLength: 12,
             },
           },
+          submission_attempts: [
+            {
+              attemptNumber: 1,
+              supplierName: "Video supplier",
+              failureCode: "submission_timeout",
+              failureReason: "生成服务请求超时，请稍后重试",
+              operationsReason: "上游视频创建请求超时",
+              failedAt: "2026-07-22T12:00:30.000Z",
+            },
+          ],
         },
       ],
     });
@@ -108,6 +118,16 @@ describe("admin history repository SQL", () => {
         duration: 8,
         generateAudio: false,
         input: { mode: "first-frame", count: 1 },
+        submissionAttempts: [
+          {
+            attemptNumber: 1,
+            supplierName: "Video supplier",
+            failureCode: "submission_timeout",
+            failureReason: "生成服务请求超时，请稍后重试",
+            operationsReason: "上游视频创建请求超时",
+            failedAt: "2026-07-22T12:00:30.000Z",
+          },
+        ],
         videoUrl: expect.stringMatching(
           /^\/api\/storage\/runtime-generations\/user-1\/videos\/video-1\.mp4\?sig=/
         ),
@@ -171,9 +191,20 @@ describe("admin history repository SQL", () => {
     expect(compiled.sql).toContain("v.input_manifest");
     expect(compiled.sql).toContain("v.storage_bucket::text as storage_bucket");
     expect(compiled.sql).toContain("generateAudio");
+    expect(compiled.sql).toContain(
+      "from video_generation_submission_attempt attempt"
+    );
+    expect(compiled.sql).toContain("attempt.failure_code is not null");
+    expect(compiled.sql).toContain(
+      "order by attempt.global_attempt_number asc"
+    );
+    expect(compiled.sql).toContain("video_generation_submission_attempt");
+    expect(compiled.sql).toContain("submission_attempts");
     expect(compiled.sql).not.toContain("v.family");
     expect(compiled.sql).not.toContain("sql.raw");
     expect(compiled.sql).not.toContain("webConversation");
+    expect(compiled.sql).toContain("v.stage in ('created', 'charged')");
+    expect(compiled.sql).toContain("else 'in_progress'");
   });
 
   it("reverses global ordering for a signed previous cursor", () => {

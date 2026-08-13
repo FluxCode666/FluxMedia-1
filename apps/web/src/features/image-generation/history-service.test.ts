@@ -113,7 +113,7 @@ describe("history service", () => {
         aspectRatio: "16x9",
         generateAudio: true,
         input: { mode: "first-last-frames" as const, count: 2 },
-        status: "processing" as const,
+        status: "in_progress" as const,
         creditsConsumed: 20,
         rawError: null,
         videoUrl: null,

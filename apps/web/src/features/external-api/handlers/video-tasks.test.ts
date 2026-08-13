@@ -85,7 +85,7 @@ describe("getExternalVideoTask", () => {
         userId: "user-1",
         apiKeyId: "key-a",
       },
-      { requestId: "req-2" }
+      { externalRequestId: "req-2" }
     );
     expect(response.status).toBe(200);
     const payload = await response.json();

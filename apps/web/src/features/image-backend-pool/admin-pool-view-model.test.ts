@@ -47,6 +47,7 @@ function createMember(
       baseUrl: "https://api.example.com",
       hasApiKey: true,
       useStream: false,
+      videoSubmissionRetryCount: 2,
       modelMappings: [],
       authentication: { mode: "bearer" },
     },

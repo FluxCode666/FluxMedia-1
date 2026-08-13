@@ -42,6 +42,16 @@ function createRecord(id: string): HistoryVideoDialogRecord {
     prompt: "video prompt",
     resolution: "1080p",
     status: "completed",
+    submissionAttempts: [
+      {
+        attemptNumber: 1,
+        supplierName: "测试供应商",
+        failureCode: "submission_timeout",
+        failureReason: "生成服务请求超时，请稍后重试",
+        operationsReason: "上游视频创建请求超时",
+        failedAt: "2026-07-22T12:00:30.000Z",
+      },
+    ],
     videoUrl: "https://app.example.com/video.mp4",
   };
 }
@@ -59,6 +69,26 @@ function renderDialog(record: HistoryVideoDialogRecord): void {
         onClose: vi.fn(),
         open: true,
         record,
+        timeZone: "UTC",
+      })
+    );
+  });
+}
+
+/** 以管理员全局使用记录权限挂载视频详情。 */
+function renderAdminDialog(record: HistoryVideoDialogRecord): void {
+  if (!container) {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  }
+  act(() => {
+    root?.render(
+      createElement(HistoryVideoDialog, {
+        onClose: vi.fn(),
+        open: true,
+        record,
+        showAdminSubmissionAttempts: true,
         timeZone: "UTC",
       })
     );
@@ -104,6 +134,23 @@ describe("HistoryVideoDialog", () => {
         'img[src="https://app.example.com/signed/video-1-first"]'
       )
     ).not.toBeNull();
+  });
+
+  it("only reveals submission failure details in global usage records", async () => {
+    getVideoInputsAction.mockResolvedValue({
+      data: { taskId: "video-admin", summary: { mode: "none", count: 0 } },
+    });
+    renderDialog(createRecord("video-admin"));
+    await act(async () => undefined);
+
+    expect(document.body.textContent).not.toContain("提交失败记录");
+    renderAdminDialog(createRecord("video-admin"));
+    await act(async () => undefined);
+
+    expect(document.body.textContent).toContain("提交失败记录");
+    expect(document.body.textContent).toContain("测试供应商");
+    expect(document.body.textContent).toContain("submission_timeout");
+    expect(document.body.textContent).toContain("生成服务请求超时，请稍后重试");
   });
 
   it("does not reuse a previous task signed URL after switching records", async () => {

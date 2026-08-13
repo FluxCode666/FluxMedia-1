@@ -4,11 +4,11 @@
  * 职责：锁定模型配置到真实模型 ID 的映射、成员类型边界与历史能力保留语义。
  */
 import { ADOBE_VIDEO_PRICING_FAMILIES } from "@repo/shared/adobe";
+import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
   type BackendMemberInput,
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
-import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type {
   ModelConfigurationEntry,
   ModelConfigurationSnapshot,
@@ -100,6 +100,7 @@ function createMemberInput(
       config: {
         baseUrl: "https://api.example.com/v1",
         useStream: false,
+        videoSubmissionRetryCount: 2,
         modelMappings: [],
         authentication: { mode: "bearer" },
         operations: createDefaultApiUpstreamOperations(),

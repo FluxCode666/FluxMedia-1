@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-
-import { invokeOperation } from "../invoke";
-import { defineOperation, clearRegistry } from "../registry";
 import { OperationError } from "../errors";
+import { invokeOperation } from "../invoke";
 import type { Principal } from "../principal";
+import { clearRegistry, defineOperation } from "../registry";
 import type { OperationContext } from "../types";
 
 const userPrincipal: Principal = {
@@ -79,7 +78,7 @@ describe("UOL Invoke Gateway", () => {
   describe("operation lookup", () => {
     it("throws not_found for unknown operation", async () => {
       await expect(
-        invokeOperation("nonexistent.op", {}, userPrincipal),
+        invokeOperation("nonexistent.op", {}, userPrincipal)
       ).rejects.toThrow(OperationError);
 
       try {
@@ -100,7 +99,7 @@ describe("UOL Invoke Gateway", () => {
         await invokeOperation(
           "math.add",
           { a: "not-a-number", b: 2 },
-          userPrincipal,
+          userPrincipal
         );
         expect.fail("Should have thrown");
       } catch (e) {
@@ -116,7 +115,7 @@ describe("UOL Invoke Gateway", () => {
       const result = await invokeOperation<{ sum: number }>(
         "math.add",
         { a: 3, b: 4 },
-        userPrincipal,
+        userPrincipal
       );
       expect(result.sum).toBe(7);
     });
@@ -127,11 +126,7 @@ describe("UOL Invoke Gateway", () => {
       registerIdempotentOp();
 
       try {
-        await invokeOperation(
-          "credits.consume",
-          { amount: 10 },
-          userPrincipal,
-        );
+        await invokeOperation("credits.consume", { amount: 10 }, userPrincipal);
         expect.fail("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(OperationError);
@@ -146,7 +141,7 @@ describe("UOL Invoke Gateway", () => {
         await invokeOperation(
           "credits.consume",
           { amount: 10, sourceRef: "   " },
-          userPrincipal,
+          userPrincipal
         );
         expect.fail("Should have thrown");
       } catch (e) {
@@ -162,7 +157,7 @@ describe("UOL Invoke Gateway", () => {
       const result = await invokeOperation<{ remaining: number }>(
         "credits.consume",
         { amount: 10, sourceRef: "gen-123" },
-        userPrincipal,
+        userPrincipal
       );
       expect(result.remaining).toBe(90);
     });
@@ -202,7 +197,7 @@ describe("UOL Invoke Gateway", () => {
       const result = await invokeOperation<{ sum: number }>(
         "math.add",
         { a: 10, b: 20 },
-        userPrincipal,
+        userPrincipal
       );
       expect(result).toEqual({ sum: 30 });
     });
@@ -220,7 +215,7 @@ describe("UOL Invoke Gateway", () => {
       });
     });
 
-    it("provides requestId in context", async () => {
+    it("provides a server requestId and preserves external correlation separately", async () => {
       let capturedCtx: OperationContext | undefined;
 
       defineOperation({
@@ -245,10 +240,11 @@ describe("UOL Invoke Gateway", () => {
         "ctx.capture",
         {},
         userPrincipal,
-        { requestId: "custom-req-id" },
+        { externalRequestId: "external-req-id" }
       );
-      expect(result.requestId).toBe("custom-req-id");
-      expect(capturedCtx?.requestId).toBe("custom-req-id");
+      expect(result.requestId).not.toBe("external-req-id");
+      expect(capturedCtx?.requestId).toBe(result.requestId);
+      expect(capturedCtx?.externalRequestId).toBe("external-req-id");
     });
 
     it("generates requestId when not provided", async () => {
@@ -272,7 +268,7 @@ describe("UOL Invoke Gateway", () => {
       const result = await invokeOperation<{ requestId: string }>(
         "ctx.autoid",
         {},
-        userPrincipal,
+        userPrincipal
       );
       expect(result.requestId).toBeTruthy();
       expect(typeof result.requestId).toBe("string");
@@ -297,7 +293,7 @@ describe("UOL Invoke Gateway", () => {
           throw new OperationError(
             "quota_exceeded",
             "You have reached your limit",
-            { limit: 100 },
+            { limit: 100 }
           );
         },
       });
@@ -309,7 +305,7 @@ describe("UOL Invoke Gateway", () => {
         expect(e).toBeInstanceOf(OperationError);
         expect((e as OperationError).code).toBe("quota_exceeded");
         expect((e as OperationError).message).toBe(
-          "You have reached your limit",
+          "You have reached your limit"
         );
         expect((e as OperationError).details).toEqual({ limit: 100 });
         expect((e as OperationError).httpStatus).toBe(429);
@@ -413,7 +409,7 @@ describe("UOL Invoke Gateway", () => {
         execute: async () => {
           throw new Error(
             'Failed query: select "private_column" where "user_id" = $1',
-            { cause: new Error("Query read timeout") },
+            { cause: new Error("Query read timeout") }
           );
         },
       });
@@ -433,7 +429,7 @@ describe("UOL Invoke Gateway", () => {
         expect(operationError.message).toBe("Database query timed out");
         expect(operationError.message).not.toContain("private_column");
         expect(JSON.stringify(operationError.details)).not.toContain(
-          "private_column",
+          "private_column"
         );
       }
     });
@@ -464,7 +460,7 @@ describe("UOL Invoke Gateway", () => {
         expect((e as OperationError).code).toBe("internal_error");
         // 不泄露内部错误细节
         expect((e as OperationError).message).toBe(
-          "An unexpected error occurred",
+          "An unexpected error occurred"
         );
         expect((e as OperationError).httpStatus).toBe(500);
       }
@@ -494,7 +490,7 @@ describe("UOL Invoke Gateway", () => {
       const result = await invokeOperation<{ ok: boolean }>(
         "owner.pass",
         {},
-        userPrincipal,
+        userPrincipal
       );
       expect(result.ok).toBe(true);
     });
@@ -550,7 +546,7 @@ describe("UOL Invoke Gateway", () => {
       const result = await invokeOperation<{ ok: boolean }>(
         "owner.system",
         {},
-        systemPrincipal,
+        systemPrincipal
       );
       expect(result.ok).toBe(true);
     });

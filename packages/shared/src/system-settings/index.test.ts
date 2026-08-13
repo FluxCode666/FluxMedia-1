@@ -308,6 +308,38 @@ describe("setSystemSettings", () => {
     }
   });
 
+  it("enforces video submission retry and timeout setting ranges", async () => {
+    const cases = [
+      {
+        key: "VIDEO_SUBMISSION_RETRY_DELAY_SECONDS",
+        valid: [0, 2, 300],
+        invalid: [-1, 1.5, 301],
+      },
+      {
+        key: "VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS",
+        valid: [1, 30, 300],
+        invalid: [0, -1, 1.5, 301],
+      },
+      {
+        key: "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
+        valid: [0, 120, 1_800],
+        invalid: [-1, 1.5, 1_801],
+      },
+    ] as const;
+
+    for (const { key, valid, invalid } of cases) {
+      for (const value of valid) {
+        await setSystemSettings([{ key, value }], "admin");
+        expect(store.get(key)?.value).toBe(value);
+      }
+      for (const value of invalid) {
+        await expect(
+          setSystemSettings([{ key, value }], "admin")
+        ).rejects.toThrow(/不能小于|不能大于|必须是整数/);
+      }
+    }
+  });
+
   it("rejects values not in select options (coerceValue, C-L25)", async () => {
     await expect(
       setSystemSettings(

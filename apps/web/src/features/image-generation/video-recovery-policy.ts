@@ -16,6 +16,22 @@ import { ApiAcceptedVideoError } from "./api-video-error";
 
 const MAX_API_ADAPTER_QUERY_FAILURES = 3;
 
+/** 视频退款恢复策略所识别的持久协议。 */
+export type VideoRefundRecoveryProtocol = "api" | "adobe_direct";
+
+/**
+ * 判断退款是否使用 API 专属的三次有界重试策略。
+ *
+ * @param protocol 任务创建时固定的后端协议。
+ * @returns API 为 true；Adobe Direct 保持升级前的普通恢复语义。
+ * @sideEffects 无。
+ */
+export function usesBoundedVideoRefundRetryPolicy(
+  protocol: VideoRefundRecoveryProtocol
+): boolean {
+  return protocol === "api";
+}
+
 /** API 查询适配连续失败后的纯状态推进结论。 */
 export interface ApiAdapterQueryFailureDecision {
   nextFailureCount: number;

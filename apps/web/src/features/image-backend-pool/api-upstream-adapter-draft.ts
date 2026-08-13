@@ -9,6 +9,7 @@ import {
   type ApiUpstreamAdapterDraft,
   type ApiUpstreamOperations,
   createDefaultApiUpstreamOperations,
+  DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
   resolveApiUpstreamOperationPath,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/api-upstream-script-contract";
@@ -16,6 +17,7 @@ import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/a
 /** 管理表单中与账号密钥分离的 API 适配草稿。 */
 export interface ApiUpstreamAdapterFormDraft {
   authentication: ApiUpstreamAdapterDraft["authentication"];
+  videoSubmissionRetryCount: number;
   operations: ApiUpstreamOperations;
   expectedCurrentVersionId?: string;
 }
@@ -58,6 +60,7 @@ export const API_UPSTREAM_MEDIA_SECTIONS = [
 export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFormDraft {
   return {
     authentication: { mode: "bearer" },
+    videoSubmissionRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
     operations: createDefaultApiUpstreamOperations(),
   };
 }

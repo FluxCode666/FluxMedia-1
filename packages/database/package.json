@@ -15,7 +15,7 @@
     "db:release-gate": "node scripts/release-governance-gate.mjs",
     "db:verify-history-projection": "node scripts/verify-media-history-count-projection.mjs",
     "db:studio": "drizzle-kit studio",
-    "test": "node --test scripts/migration-error.test.mjs scripts/media-history-count-projection.test.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

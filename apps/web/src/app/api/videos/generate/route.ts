@@ -95,13 +95,8 @@ export const POST = withApiLogging(async (request: NextRequest) => {
 
   const result = await invokeOperation<{
     taskId: string;
-    status:
-      | "pending"
-      | "submitting"
-      | "processing"
-      | "needs_attention"
-      | "completed"
-      | "failed";
+    status: "queued" | "in_progress" | "completed" | "failed";
+    error?: string;
   }>(
     "video.generate",
     {
@@ -122,7 +117,9 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       ...(referenceImages?.length ? { referenceImages } : {}),
     },
     principal,
-    { requestId: request.headers.get("x-request-id") ?? undefined }
+    {
+      externalRequestId: request.headers.get("x-request-id") ?? undefined,
+    }
   );
   return NextResponse.json(
     {

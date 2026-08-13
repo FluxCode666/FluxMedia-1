@@ -38,6 +38,7 @@ const redactedApiConfigSchema = z
     baseUrl: z.string().url(),
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
+    videoSubmissionRetryCount: z.number().int().min(0).max(10),
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema.optional(),
     credentialScope: z.string().optional(),

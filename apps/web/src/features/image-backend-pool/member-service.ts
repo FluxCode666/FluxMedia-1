@@ -70,6 +70,7 @@ export interface RedactedApiMemberConfig {
   baseUrl: string;
   hasApiKey: boolean;
   useStream: boolean;
+  videoSubmissionRetryCount: number;
   modelMappings: ApiModelMapping[];
   authentication?: ApiUpstreamAdapterDraft["authentication"];
   credentialScope?: string;
@@ -273,6 +274,7 @@ function createApiAdapterDraft(
   return apiUpstreamAdapterDraftSchema.parse({
     baseUrl: input.config.baseUrl,
     useStream: input.config.useStream,
+    videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
     modelMappings: input.config.modelMappings,
     authentication: input.config.authentication,
     credentialScope: createApiCredentialScope(
@@ -620,6 +622,7 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         baseUrl: adapter.baseUrl,
         hasApiKey: row.api_has_key,
         useStream: adapter.useStream,
+        videoSubmissionRetryCount: adapter.videoSubmissionRetryCount,
         modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
         authentication: adapter.authentication,
         credentialScope: adapter.credentialScope,

@@ -97,6 +97,18 @@ describe("history query", () => {
     ).toBe(true);
   });
 
+  it("解析图片 processing 与视频 queued/in_progress 筛选", () => {
+    expect(parseHistorySearchParams({ status: "processing" }).status).toBe(
+      "processing"
+    );
+    expect(parseHistorySearchParams({ status: "queued" }).status).toBe(
+      "queued"
+    );
+    expect(parseHistorySearchParams({ status: "in_progress" }).status).toBe(
+      "in_progress"
+    );
+  });
+
   it("为管理端保留用户邮箱筛选并使用指定路由", () => {
     const state = parseHistorySearchParams(
       {

@@ -8,6 +8,9 @@
 /** charged/submitting 中断后自动恢复前的安全观察窗口。 */
 export const VIDEO_SUBMISSION_RECOVERY_GRACE_MS = 21 * 60_000;
 
+/** 容量暂满时的固定重试间隔，避免每秒轮询放大账号池和队列压力。 */
+export const VIDEO_CAPACITY_RETRY_DELAY_MS = 15_000;
+
 /** 计算视频重投所需的最小持久字段。 */
 export interface VideoQueueScheduleRow {
   id: string;
@@ -16,6 +19,7 @@ export interface VideoQueueScheduleRow {
   nextPollAt: Date | null;
   claimExpiresAt: Date | null;
   submitStartedAt: Date | null;
+  refundExhaustedAt?: Date | null;
   updatedAt: Date;
 }
 
@@ -38,6 +42,21 @@ function latestDate(candidates: Array<Date | null>): Date {
 }
 
 /**
+ * 计算容量等待的下一次尝试时间。
+ *
+ * @param now 当前时钟。
+ * @param deadline 本轮容量等待的持久截止时间。
+ * @returns 固定退避后的时刻，但绝不越过截止时间。
+ * @sideEffects 无。
+ * @failure 调用方必须提供合法日期；非法持久事实由上层状态机校验。
+ */
+export function resolveVideoCapacityRetryAt(now: Date, deadline: Date): Date {
+  return new Date(
+    Math.min(deadline.getTime(), now.getTime() + VIDEO_CAPACITY_RETRY_DELAY_MS)
+  );
+}
+
+/**
  * 计算非终态视频任务下一次 Redis MQ 投递时间。
  *
  * @param row PostgreSQL 当前任务快照。
@@ -48,7 +67,10 @@ export function resolveVideoQueueSchedule(
   row: VideoQueueScheduleRow,
   now = new Date()
 ): VideoQueueSchedule | null {
-  if (["completed", "failed", "submit_uncertain"].includes(row.stage)) {
+  if (
+    ["completed", "failed", "submit_uncertain"].includes(row.stage) ||
+    (row.stage === "refunding" && row.refundExhaustedAt)
+  ) {
     return null;
   }
 

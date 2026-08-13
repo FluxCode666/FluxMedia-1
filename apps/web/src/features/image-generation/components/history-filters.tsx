@@ -449,6 +449,10 @@ export function HistoryFilters({
               <SelectItem value="processing">
                 {copy("Processing", "处理中")}
               </SelectItem>
+              <SelectItem value="queued">{copy("Queued", "排队中")}</SelectItem>
+              <SelectItem value="in_progress">
+                {copy("In progress", "生成中")}
+              </SelectItem>
               <SelectItem value="completed">
                 {copy("Completed", "已完成")}
               </SelectItem>

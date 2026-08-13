@@ -60,6 +60,7 @@ return { body: transformSampleRequest(request.body) };
   const adapter = {
     baseUrl: "https://api.example.test/v1",
     useStream: false,
+    videoSubmissionRetryCount: 2,
     modelMappings: [
       { modelId: "gpt-image-2", upstreamModelId: "vendor-image-id" },
     ],

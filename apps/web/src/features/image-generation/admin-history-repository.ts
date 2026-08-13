@@ -33,6 +33,11 @@ import {
   extractPromptRepairNotice,
 } from "./generation-metadata";
 import { buildVideoInputSummary } from "./video-input-lifecycle";
+import {
+  buildVideoPublicStatusPredicate,
+  buildVideoPublicStatusSql,
+  videoPublicStatusSchema,
+} from "./video-public-status";
 
 const adminHistoryListRowSchema = z.object({
   record_kind: historyRecordTypeSchema,
@@ -58,6 +63,7 @@ const adminHistoryListRowSchema = z.object({
   aspect_ratio: z.string().min(1).max(100).nullable(),
   generate_audio: z.boolean().nullable(),
   input_manifest: z.unknown().nullable(),
+  submission_attempts: z.unknown().nullable(),
 });
 
 const modelOptionRowSchema = z.object({
@@ -72,6 +78,18 @@ const userOptionRowSchema = z.object({
 const requestSnapshotRowSchema = z.object({
   request_snapshot: z.unknown().nullable(),
 });
+
+/** 管理端视频失败尝试 JSON 聚合的数据库行；时间须在输出边界统一转为 ISO。 */
+const submissionAttemptRowSchema = z
+  .object({
+    attemptNumber: z.coerce.number().int().positive(),
+    supplierName: z.string().trim().min(1).max(120),
+    failureCode: z.string().min(1).max(64),
+    failureReason: z.string().min(1).max(1_000),
+    operationsReason: z.string().min(1).max(1_000),
+    failedAt: z.coerce.date(),
+  })
+  .strict();
 
 const countRowSchema = z.object({
   total_count: z.coerce.number().int().nonnegative().safe(),
@@ -102,16 +120,21 @@ function buildImageStatusPredicate(
   return sql`${column} = ${status}`;
 }
 
-/** 将统一状态筛选转换为视频原始状态，processing 同时覆盖 pending/running。 */
+/** 将统一状态筛选转换为视频原始 status/stage 谓词。 */
 function buildVideoStatusPredicate(
   status: AdminHistoryListQuery["status"],
-  column: SQL
+  statusColumn: SQL,
+  stageColumn: SQL,
+  capacityWaitDeadlineColumn: SQL
 ): SQL {
   if (status === null) return sql`true`;
-  if (status === "processing") {
-    return sql`${column} in ('pending', 'running')`;
-  }
-  return sql`${column} = ${status}`;
+  if (status === "processing") return sql`false`;
+  return buildVideoPublicStatusPredicate(
+    videoPublicStatusSchema.parse(status),
+    statusColumn,
+    stageColumn,
+    capacityWaitDeadlineColumn
+  );
 }
 
 /** 创建精确模型匹配谓词。 */
@@ -163,12 +186,11 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
     when g.status = 'failed' then 'failed'
     else g.status::text
   end`;
-  const videoStatus = sql`case
-    when v.status in ('pending', 'running') then 'processing'
-    when v.status = 'completed' then 'completed'
-    when v.status = 'failed' then 'failed'
-    else v.status::text
-  end`;
+  const videoStatus = buildVideoPublicStatusSql(
+    sql`v.status`,
+    sql`v.stage`,
+    sql`v.capacity_wait_deadline_at`
+  );
   const imageBackendAccountId = sql`coalesce(
     nullif(btrim(g.api_adapter_member_id), ''),
     nullif(btrim((g.metadata::jsonb)->'backend'->>'id'), '')
@@ -243,6 +265,7 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         null::text as aspect_ratio,
         null::boolean as generate_audio,
         null::jsonb as input_manifest,
+        null::jsonb as submission_attempts,
         1::integer as kind_rank
       from generation g
       inner join "user" u on u.id = g.user_id
@@ -288,6 +311,25 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
           else null
         end as generate_audio,
         v.input_manifest::jsonb as input_manifest,
+        coalesce(
+          (
+            select jsonb_agg(
+              jsonb_build_object(
+                'attemptNumber', attempt.global_attempt_number,
+                'supplierName', attempt.supplier_name_snapshot,
+                'failureCode', attempt.failure_code,
+                'failureReason', attempt.failure_reason,
+                'operationsReason', attempt.operations_reason,
+                'failedAt', attempt.failed_at
+              )
+              order by attempt.global_attempt_number asc
+            )
+            from video_generation_submission_attempt attempt
+            where attempt.video_generation_id = v.id
+              and attempt.failure_code is not null
+          ),
+          '[]'::jsonb
+        ) as submission_attempts,
         0::integer as kind_rank
       from video_generation v
       inner join "user" u on u.id = v.user_id
@@ -297,7 +339,12 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         and ${buildDatePredicate(input, sql`v.created_at`)}
         and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
         and ${buildModelPredicate(input.model, sql`v.model`)}
-        and ${buildVideoStatusPredicate(input.status, sql`v.status`)}
+        and ${buildVideoStatusPredicate(
+          input.status,
+          sql`v.status`,
+          sql`v.stage`,
+          sql`v.capacity_wait_deadline_at`
+        )}
         and ${buildCursorPredicate(input, sql`v.created_at`, sql`v.id`, 0)}
       order by v.created_at ${orderDirection}, v.id ${orderDirection}
       limit ${input.branchLimit}
@@ -325,7 +372,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
       duration_seconds,
       aspect_ratio,
       generate_audio,
-      input_manifest
+      input_manifest,
+      submission_attempts
     from (
       select * from image_rows
       union all
@@ -528,6 +576,15 @@ function createAdminHistorySnapshotReader(
         if (!inputManifest.success) {
           throw new RangeError("Admin video history input manifest is invalid");
         }
+        const submissionAttempts = z
+          .array(submissionAttemptRowSchema)
+          .max(100)
+          .safeParse(row.submission_attempts ?? []);
+        if (!submissionAttempts.success) {
+          throw new RangeError(
+            "Admin video history submission attempts are invalid"
+          );
+        }
         return {
           ...common,
           kind: "video" as const,
@@ -536,6 +593,10 @@ function createAdminHistorySnapshotReader(
           aspectRatio: row.aspect_ratio,
           generateAudio: row.generate_audio,
           input: buildVideoInputSummary(inputManifest.data),
+          submissionAttempts: submissionAttempts.data.map((attempt) => ({
+            ...attempt,
+            failedAt: attempt.failedAt.toISOString(),
+          })),
           videoUrl: buildSignedStorageImageUrl(
             row.storage_key,
             row.storage_bucket

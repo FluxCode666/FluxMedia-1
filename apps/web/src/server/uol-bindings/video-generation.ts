@@ -17,7 +17,6 @@ import {
   getRuntimeSettingJson,
   getRuntimeSettingString,
 } from "@repo/shared/system-settings";
-import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -36,6 +35,7 @@ import {
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
@@ -47,11 +47,13 @@ import {
 import { buildVideoInputSummary } from "@/features/image-generation/video-input-lifecycle";
 import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/video-input-storage";
 import {
+  applyInitialVideoBackendAvailability,
   getVideoGenerationById,
   reconcileUncertainVideoSubmission,
   runVideoGenerationForUser,
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
+import { toLegacyVideoPublicStatus } from "@/features/image-generation/video-public-status";
 import { resolveVideoQueueSchedule } from "@/features/image-generation/video-queue-schedule";
 import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
 import {
@@ -68,14 +70,6 @@ import { prepareVideoTaskInputReferences } from "@/features/image-generation/vid
 import { enqueueVideoTask } from "@/server/media-task-queues";
 
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
-
-type VideoOperationStatus =
-  | "pending"
-  | "submitting"
-  | "processing"
-  | "needs_attention"
-  | "completed"
-  | "failed";
 
 /**
  * 数据库提交后最佳努力投递视频任务。
@@ -95,28 +89,6 @@ async function enqueueVideoTaskBestEffort(
       source: "video-task-mq-enqueue",
       taskId: row.id,
     });
-  }
-}
-
-/** 将持久视频状态映射为稳定 UOL 状态。 */
-function toVideoOperationStatus(
-  status: string,
-  stage?: string
-): VideoOperationStatus {
-  if (stage === "submitting") return "submitting";
-  if (stage === "submit_uncertain") return "needs_attention";
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "submitting":
-      return "submitting";
-    case "running":
-    case "processing":
-      return "processing";
-    default:
-      return "pending";
   }
 }
 
@@ -218,6 +190,26 @@ function readVideoMetadataBoolean(
   return metadata?.[key] === true;
 }
 
+/** 仅向创建响应投影 failed 任务已持久化的安全失败原因。 */
+function createVideoGenerateResult(
+  row: NonNullable<Awaited<ReturnType<typeof getVideoGenerationById>>>
+): {
+  taskId: string;
+  status: ReturnType<typeof toLegacyVideoPublicStatus>;
+  error?: string;
+} {
+  const status = toLegacyVideoPublicStatus(
+    row.status,
+    row.stage,
+    row.capacityWaitDeadlineAt
+  );
+  return {
+    taskId: row.id,
+    status,
+    ...(status === "failed" && row.error ? { error: row.error } : {}),
+  };
+}
+
 bindOperationExecute(videoListCapabilities, (input, principal) =>
   executeVideoListCapabilitiesBinding(input, principal, {
     async loadCapabilityOverrides() {
@@ -290,10 +282,7 @@ bindExecute(
       assertVideoTaskPrincipal(existing, principal, ctx);
       assertVideoRequestFingerprint(existing, requestFingerprint);
       await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      return {
-        taskId,
-        status: toVideoOperationStatus(existing.status, existing.stage),
-      };
+      return createVideoGenerateResult(existing);
     }
 
     // WHY：动态参考图上限只约束新任务。历史幂等重放已在上方按创建时规范
@@ -398,10 +387,7 @@ bindExecute(
         assertVideoRequestFingerprint(raced, requestFingerprint);
         await assertVideoCallbackFingerprint(taskId, callbackUrl);
         await enqueueVideoTaskBestEffort(raced);
-        return {
-          taskId,
-          status: toVideoOperationStatus(raced.status, raced.stage),
-        };
+        return createVideoGenerateResult(raced);
       }
     } catch (error) {
       if (error instanceof VideoActiveTaskLimitError) {
@@ -434,6 +420,10 @@ bindExecute(
           stagingReservationToken: preparation.reservationToken,
           videoGenerationId: taskId,
           clientRequestId: canonicalInput.clientRequestId,
+          serverRequestId: ctx.requestId,
+          ...(ctx.externalRequestId
+            ? { externalRequestId: ctx.externalRequestId }
+            : {}),
           requestFingerprint,
           prompt: canonicalInput.prompt,
           model: canonicalInput.model,
@@ -462,20 +452,54 @@ bindExecute(
         objects: stagedInput.objects,
         persistedManifest: persisted?.inputManifest,
       });
-      if (persisted) {
-        assertVideoTaskPrincipal(persisted, principal, ctx);
-        assertVideoRequestFingerprint(persisted, requestFingerprint);
-        await assertVideoCallbackFingerprint(taskId, callbackUrl);
-        await enqueueVideoTaskBestEffort(persisted);
+      let responseRow = persisted;
+      if (responseRow?.stage === "created") {
+        try {
+          const availability = await import(
+            "@/features/image-backend-pool/runtime-service"
+          ).then((runtime) =>
+            runtime.inspectRuntimeVideoBackendAvailability({
+              userId: principal.userId,
+              ...(apiKeyId ? { apiKeyId } : {}),
+              ...(canonicalInput.backendGroupId
+                ? { requestedGroupId: canonicalInput.backendGroupId }
+                : {}),
+              modelId: canonicalInput.model,
+              requiresContentSafety: true,
+              // 自定义模型只能由 API 成员执行；内置模型必须同时统计 API 与
+              // Adobe Direct，保持创建预检与权威获租的协议边界一致。
+              ...(customModelDefinition
+                ? { requiredMemberType: "api" as const }
+                : {}),
+            })
+          );
+          responseRow =
+            (await applyInitialVideoBackendAvailability(
+              responseRow.id,
+              availability
+            )) ?? responseRow;
+        } catch (availabilityError) {
+          // 只读资格预检故障不能撤销已持久化任务；独立 worker 会重新执行权威调度。
+          logError(availabilityError, {
+            source: "video-initial-backend-availability",
+            taskId,
+          });
+        }
       }
-      return {
-        taskId,
-        status: persisted
-          ? toVideoOperationStatus(persisted.status, persisted.stage)
-          : "error" in result
-            ? ("failed" as const)
-            : ("pending" as const),
-      };
+      if (responseRow) {
+        assertVideoTaskPrincipal(responseRow, principal, ctx);
+        assertVideoRequestFingerprint(responseRow, requestFingerprint);
+        await assertVideoCallbackFingerprint(taskId, callbackUrl);
+        await enqueueVideoTaskBestEffort(responseRow);
+      }
+      return responseRow
+        ? createVideoGenerateResult(responseRow)
+        : {
+            taskId,
+            status:
+              "error" in result ? ("failed" as const) : ("queued" as const),
+            ...("error" in result ? { error: result.error } : {}),
+          };
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个 insert
       // 失败。只有已存在且指纹一致时才把它视为幂等命中。
@@ -513,13 +537,62 @@ bindExecute(
       assertVideoTaskPrincipal(raced, principal, ctx);
       assertVideoRequestFingerprint(raced, requestFingerprint);
       await assertVideoCallbackFingerprint(taskId, callbackUrl);
-      return {
-        taskId,
-        status: toVideoOperationStatus(raced.status, raced.stage),
-      };
+      return createVideoGenerateResult(raced);
     }
   }
 );
+
+/**
+ * @deprecated 仅供 Adobe Direct 遗留 submit_uncertain 任务恢复。
+ * API 供应商任务由状态机自动重试、切号和退款，不会出现在本列表。
+ */
+bindOperationExecute(videoListUncertainSubmissions, async (input) => {
+  const [{ db }, { videoGeneration }, { and, desc, eq, sql }] =
+    await Promise.all([
+      import("@repo/database"),
+      import("@repo/database/schema"),
+      import("drizzle-orm"),
+    ]);
+  const rows = await db
+    .select({
+      taskId: videoGeneration.id,
+      model: videoGeneration.model,
+      backendMemberId: videoGeneration.backendMemberId,
+      error: videoGeneration.error,
+      submitStartedAt: videoGeneration.submitStartedAt,
+      createdAt: videoGeneration.createdAt,
+      updatedAt: videoGeneration.updatedAt,
+    })
+    .from(videoGeneration)
+    .where(
+      and(
+        eq(videoGeneration.stage, "submit_uncertain"),
+        sql`COALESCE(${videoGeneration.metadata}->>'videoBackendProtocol', 'adobe_direct') = 'adobe_direct'`
+      )
+    )
+    .orderBy(desc(videoGeneration.updatedAt), desc(videoGeneration.id))
+    .limit(input.limit);
+  return {
+    items: rows.map((row) => ({
+      ...row,
+      submitStartedAt: row.submitStartedAt?.toISOString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    })),
+  };
+});
+
+/** @deprecated 仅允许管理员收敛 Adobe Direct 遗留人工态。 */
+bindOperationExecute(videoReconcileSubmission, async (input) => {
+  try {
+    return await reconcileUncertainVideoSubmission(input);
+  } catch (error) {
+    if (error instanceof VideoSubmissionReconciliationError) {
+      throw new OperationError(error.code, error.message);
+    }
+    throw error;
+  }
+});
 
 /** video.getStatus - 只返回当前 Principal 同域的持久视频任务。 */
 bindExecute(
@@ -552,7 +625,11 @@ bindExecute(
     }
     return {
       taskId: row.id,
-      status: toVideoOperationStatus(row.status, row.stage),
+      status: toLegacyVideoPublicStatus(
+        row.status,
+        row.stage,
+        row.capacityWaitDeadlineAt
+      ),
       model: row.model,
       duration: row.durationSeconds,
       aspectRatio: row.aspectRatio,
@@ -568,46 +645,3 @@ bindExecute(
     };
   }
 );
-
-/** video.listUncertainSubmissions - 管理员读取安全的待核对任务列表。 */
-bindOperationExecute(videoListUncertainSubmissions, async (input) => {
-  const [{ db }, { videoGeneration }, { desc, eq }] = await Promise.all([
-    import("@repo/database"),
-    import("@repo/database/schema"),
-    import("drizzle-orm"),
-  ]);
-  const rows = await db
-    .select({
-      taskId: videoGeneration.id,
-      model: videoGeneration.model,
-      backendMemberId: videoGeneration.backendMemberId,
-      error: videoGeneration.error,
-      submitStartedAt: videoGeneration.submitStartedAt,
-      createdAt: videoGeneration.createdAt,
-      updatedAt: videoGeneration.updatedAt,
-    })
-    .from(videoGeneration)
-    .where(eq(videoGeneration.stage, "submit_uncertain"))
-    .orderBy(desc(videoGeneration.updatedAt), desc(videoGeneration.id))
-    .limit(input.limit);
-  return {
-    items: rows.map((row) => ({
-      ...row,
-      submitStartedAt: row.submitStartedAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    })),
-  };
-});
-
-/** video.reconcileSubmission - 管理员人工收敛视频上游提交不确定任务。 */
-bindOperationExecute(videoReconcileSubmission, async (input) => {
-  try {
-    return await reconcileUncertainVideoSubmission(input);
-  } catch (error) {
-    if (error instanceof VideoSubmissionReconciliationError) {
-      throw new OperationError(error.code, error.message);
-    }
-    throw error;
-  }
-});

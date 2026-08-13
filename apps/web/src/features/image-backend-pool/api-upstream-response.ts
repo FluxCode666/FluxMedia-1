@@ -107,10 +107,9 @@ export function parseApiUpstreamRetryAfterSeconds(
   }
   const timestamp = Date.parse(trimmed);
   if (!Number.isFinite(timestamp)) return undefined;
-  return Math.min(
-    300,
-    Math.max(1, Math.ceil((timestamp - now.getTime()) / 1_000))
-  );
+  const deltaSeconds = Math.ceil((timestamp - now.getTime()) / 1_000);
+  if (deltaSeconds <= 0) return undefined;
+  return Math.min(300, deltaSeconds);
 }
 
 /** 只复制脚本契约允许读取的响应 Header。 */

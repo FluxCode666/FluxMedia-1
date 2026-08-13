@@ -64,8 +64,38 @@ describe("backend member contract", () => {
     expect(parsed.type).toBe("api");
     if (parsed.type === "api") {
       expect(parsed.config.useStream).toBe(false);
+      expect(parsed.config.videoSubmissionRetryCount).toBe(2);
       expect(parsed.config.authentication).toEqual({ mode: "bearer" });
       expect(parsed.config.operations["videos.query"].path).toBe("");
+    }
+  });
+
+  it("API 成员只接受 0 到 10 的整数作为视频额外重试次数", () => {
+    for (const videoSubmissionRetryCount of [0, 10]) {
+      expect(
+        backendMemberInputSchema.safeParse({
+          ...commonMember,
+          type: "api",
+          config: {
+            baseUrl: "https://video.example.com/v1",
+            modelMappings: [],
+            videoSubmissionRetryCount,
+          },
+        }).success
+      ).toBe(true);
+    }
+    for (const videoSubmissionRetryCount of [-1, 0.5, 11]) {
+      expect(
+        backendMemberInputSchema.safeParse({
+          ...commonMember,
+          type: "api",
+          config: {
+            baseUrl: "https://video.example.com/v1",
+            modelMappings: [],
+            videoSubmissionRetryCount,
+          },
+        }).success
+      ).toBe(false);
     }
   });
 

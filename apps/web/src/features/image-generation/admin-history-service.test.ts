@@ -134,6 +134,16 @@ describe("admin history service", () => {
               aspectRatio: "16x9",
               generateAudio: false,
               input: { mode: "references", count: 3 },
+              submissionAttempts: [
+                {
+                  attemptNumber: 1,
+                  supplierName: "Video supplier",
+                  failureCode: "submission_timeout",
+                  failureReason: "生成服务请求超时，请稍后重试",
+                  operationsReason: "上游视频创建请求超时",
+                  failedAt: "2026-07-22T12:00:30.000Z",
+                },
+              ],
               status: "completed",
               creditsConsumed: 20,
               rawError: null,
@@ -155,6 +165,16 @@ describe("admin history service", () => {
         resolution: "1080p",
         generateAudio: false,
         input: { mode: "references", count: 3 },
+        submissionAttempts: [
+          {
+            attemptNumber: 1,
+            supplierName: "Video supplier",
+            failureCode: "submission_timeout",
+            failureReason: "生成服务请求超时，请稍后重试",
+            operationsReason: "上游视频创建请求超时",
+            failedAt: "2026-07-22T12:00:30.000Z",
+          },
+        ],
         processingDurationSeconds: 60,
       })
     );

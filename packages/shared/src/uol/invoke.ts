@@ -22,6 +22,7 @@
  */
 import { isPostgresTimeoutError } from "@repo/database/pool";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import { assertAccess } from "./access";
 import { OperationError } from "./errors";
 import type { Principal } from "./principal";
@@ -30,11 +31,23 @@ import type { OperationContext } from "./types";
 
 /** invokeOperation 的可选配置 */
 export interface InvokeOptions {
-  /** 外部传入的请求 ID（如 HTTP X-Request-Id），不传则自动生成 */
+  /**
+   * 服务端权威请求标识；仅受信进程内调用可显式指定，用于同一执行链路的日志关联。
+   * HTTP 传入的 X-Request-Id 必须使用 externalRequestId，不能覆盖此字段。
+   */
   requestId?: string;
+  /** 已校验长度的外部关联标识；仅供 operation 读取或受控持久化，不能作为审计主键。 */
+  externalRequestId?: string;
   /** 可选回调集合（未来扩展 SSE / webhook 通知） */
   callbacks?: Record<string, unknown>;
 }
+
+const externalRequestIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .regex(/^[\x20-\x7E]+$/);
 
 /**
  * 调用一个已注册的操作。
@@ -45,7 +58,7 @@ export interface InvokeOptions {
  * @param name - 操作名称（如 "credits.consume"）
  * @param rawInput - 未校验的原始输入
  * @param principal - 调用者身份
- * @param opts - 可选配置（requestId、callbacks）
+ * @param opts - 可选配置（服务端 requestId、外部关联 ID、callbacks）
  * @returns 操作输出（经 Zod output schema 类型保证）
  * @throws OperationError 任何阶段失败时
  */
@@ -95,8 +108,14 @@ export async function invokeOperation<TOutput = unknown>(
   }
 
   // 4. 构建执行上下文
+  const externalRequestId = opts?.externalRequestId
+    ? externalRequestIdSchema.safeParse(opts.externalRequestId)
+    : null;
   const ctx: OperationContext = {
     requestId: opts?.requestId ?? nanoid(),
+    ...(externalRequestId?.success
+      ? { externalRequestId: externalRequestId.data }
+      : {}),
     callbacks: opts?.callbacks,
     assertOwnership(resource: string, ownerId: string) {
       const principalUserId =

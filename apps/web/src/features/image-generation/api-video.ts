@@ -17,6 +17,7 @@ import {
   executeApiUpstreamOperation,
 } from "@/features/image-backend-pool/api-upstream-executor";
 import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-upstream-opaque-values";
+import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
 import {
   fetchMediaUpstreamDownloadWithTrustedOrigin,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
@@ -62,10 +63,22 @@ export type ApiVideoSubmission =
 /** API 视频提交阶段错误；字段语义与持久状态机的 Adobe 适配器一致。 */
 export type ApiVideoStageError = {
   error: string;
-  switchable: boolean;
-  upstreamAccepted: boolean;
-  terminal: boolean;
-  submissionUncertain: boolean;
+  failure: {
+    kind?:
+      | "timeout"
+      | "network"
+      | "response_read"
+      | "response_parse"
+      | "missing_task_id"
+      | "unknown";
+    statusCode?: number;
+    scriptedCategory?: Extract<
+      ApiUpstreamResponseResult,
+      { status: "failed" }
+    >["error"]["category"];
+    scriptedRetryable?: boolean;
+  };
+  retryAfterSeconds?: number;
   /** 平台脚本容量错误不得影响供应商账号健康。 */
   backendHealthNeutral?: boolean;
 };
@@ -225,24 +238,31 @@ async function createSignedApiVideoInputUrl(
 }
 
 /** 将执行器阶段错误转换为视频提交状态机的安全分类。 */
-function toApiVideoStageError(error: unknown): ApiVideoStageError {
+function toApiVideoStageError(
+  error: unknown,
+  signal?: AbortSignal
+): ApiVideoStageError {
   if (error instanceof ApiUpstreamExecutionError) {
+    const kind =
+      signal?.aborted || error.cause instanceof DOMException
+        ? "timeout"
+        : error.code === "response_read_failed"
+          ? "response_read"
+          : error.code === "transport_failed"
+            ? "network"
+            : "unknown";
     return {
       error: error.message,
-      switchable:
-        error.code !== "platform_busy" && error.stage === "before_send",
-      upstreamAccepted: error.stage === "after_send",
-      terminal: false,
-      submissionUncertain: error.stage !== "before_send",
+      failure: { kind },
+      ...(error.retryAfterSeconds !== undefined
+        ? { retryAfterSeconds: error.retryAfterSeconds }
+        : {}),
       ...(error.code === "platform_busy" ? { backendHealthNeutral: true } : {}),
     };
   }
   return {
     error: "供应商请求处理失败，请联系管理员",
-    switchable: true,
-    upstreamAccepted: false,
-    terminal: false,
-    submissionUncertain: false,
+    failure: { kind: "unknown" },
   };
 }
 
@@ -250,15 +270,15 @@ function toApiVideoStageError(error: unknown): ApiVideoStageError {
 function toScriptedGenerationFailure(
   result: Extract<ApiUpstreamResponseResult, { status: "failed" }>
 ): ApiVideoStageError {
-  // WHY：错误分类只描述原因，不能证明供应商未创建任务。只有管理员在响应脚本中
-  // 显式返回 retryable=true，视频状态机才能安全换号重投。
+  // WHY：409 可能表示上游已创建任务；只有受控脚本明确标记可重试时才允许自动恢复。
+  // 其他失败由状态机按 HTTP 与脚本分类执行同账号重试、切号或终止退款。
   const switchable = result.retryable;
   return {
     error: "视频上游拒绝了生成请求",
-    switchable,
-    upstreamAccepted: false,
-    terminal: !switchable,
-    submissionUncertain: false,
+    failure: {
+      scriptedCategory: result.error.category,
+      scriptedRetryable: switchable,
+    },
   };
 }
 
@@ -266,10 +286,18 @@ function toScriptedGenerationFailure(
 function parseScriptedVideoSubmission(
   config: ApiConfig,
   result: ApiUpstreamResponseResult,
-  pollAfterSeconds?: number
+  pollAfterSeconds?: number,
+  statusCode?: number
 ): ApiVideoSubmission | ApiVideoStageError {
   if (result.status === "failed") {
-    return toScriptedGenerationFailure(result);
+    const failure = toScriptedGenerationFailure(result);
+    return {
+      ...failure,
+      failure: {
+        ...failure.failure,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+      },
+    };
   }
   const raw = responseResultToRecord(result);
   if (result.status === "completed") {
@@ -277,10 +305,7 @@ function parseScriptedVideoSubmission(
     if (output?.kind !== "video") {
       return {
         error: "供应商请求处理失败，请联系管理员",
-        switchable: false,
-        upstreamAccepted: true,
-        terminal: false,
-        submissionUncertain: true,
+        failure: { kind: "missing_task_id" },
       };
     }
     return {
@@ -292,10 +317,7 @@ function parseScriptedVideoSubmission(
   if (!result.taskId) {
     return {
       error: "供应商请求处理失败，请联系管理员",
-      switchable: false,
-      upstreamAccepted: true,
-      terminal: false,
-      submissionUncertain: true,
+      failure: { kind: "missing_task_id" },
     };
   }
   return {
@@ -312,18 +334,33 @@ async function parseBuiltInVideoSubmission(
   response: Response
 ): Promise<ApiVideoSubmission | ApiVideoStageError> {
   if (!response.ok) {
-    const submissionUncertain =
-      response.status === 408 ||
-      response.status === 409 ||
-      response.status >= 500;
+    // WHY：部分上游用 409 表示相同幂等请求已创建任务。只要响应仍携带有效
+    // 任务 ID，就必须锁定该身份继续轮询，避免把已接受请求误判为失败后重复创建。
+    if (response.status === 409) {
+      try {
+        const conflictRecord = await readJsonRecord(response);
+        const upstreamJobId = conflictRecord
+          ? readString(conflictRecord, ["task_id", "id", "generation_id"])
+          : undefined;
+        if (upstreamJobId) {
+          return {
+            status: "pending",
+            upstreamJobId,
+            raw: conflictRecord ?? {},
+          };
+        }
+      } catch {
+        // 响应读取失败仍按无有效任务身份的 409 处理，由状态机安全终止退款。
+      }
+    }
+    const retryAfterSeconds = parseApiUpstreamRetryAfterSeconds(
+      response.headers.get("retry-after"),
+      new Date()
+    );
     return {
       error: getApiVideoErrorMessage(response),
-      switchable:
-        !submissionUncertain && [401, 403, 429].includes(response.status),
-      upstreamAccepted: false,
-      terminal:
-        !submissionUncertain && ![401, 403, 429].includes(response.status),
-      submissionUncertain,
+      failure: { statusCode: response.status },
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     };
   }
   let record: Record<string, unknown> | null;
@@ -332,19 +369,13 @@ async function parseBuiltInVideoSubmission(
   } catch {
     return {
       error: "API 视频提交成功但响应读取失败",
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: false,
-      submissionUncertain: true,
+      failure: { kind: "response_read" },
     };
   }
   if (!record) {
     return {
       error: "API 视频提交成功但响应不是有效 JSON",
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: false,
-      submissionUncertain: true,
+      failure: { kind: "response_parse" },
     };
   }
   const videoUrl = readString(record, ["video_url", "url", "output_url"]);
@@ -363,10 +394,7 @@ async function parseBuiltInVideoSubmission(
   if (!upstreamJobId) {
     return {
       error: "API 视频提交成功但响应缺少任务 ID",
-      switchable: false,
-      upstreamAccepted: false,
-      terminal: false,
-      submissionUncertain: true,
+      failure: { kind: "missing_task_id" },
     };
   }
   return {
@@ -383,7 +411,8 @@ async function parseBuiltInVideoSubmission(
  * @param params 真实模型 ID、独立生成参数、幂等键和具名输入图。
  * @returns 同步产物、异步任务身份，或可供调度器分类的提交错误。
  * @sideEffects 请求脚本成功后最多发起一次供应商 POST。
- * @failure 外呼后结果不确定时禁止盲目重投；请求脚本失败可切换账号。
+ * @failure 创建失败由状态机有界重试或切号；409 携带任务 ID 时固定原任务，
+ * 否则仅在脚本明确可重试时自动恢复。
  */
 export async function submitApiVideoRequest(
   config: ApiConfig,
@@ -396,6 +425,8 @@ export async function submitApiVideoRequest(
     resolution: string;
     effectiveAudio: boolean;
     negativePrompt?: string | null;
+    requestId?: string;
+    onBeforeSend?: () => Promise<void> | void;
     onRequestSnapshot?: (
       snapshot: ApiUpstreamRequestSnapshot
     ) => Promise<void> | void;
@@ -406,7 +437,7 @@ export async function submitApiVideoRequest(
   try {
     adapter = getApiUpstreamAdapter(config);
   } catch (error) {
-    return toApiVideoStageError(error);
+    return toApiVideoStageError(error, params.signal);
   }
   const upstreamModel = resolveApiUpstreamModelId(
     params.model,
@@ -442,10 +473,7 @@ export async function submitApiVideoRequest(
   } catch {
     return {
       error: "API 视频参考素材 URL 签发失败，请稍后重试",
-      switchable: true,
-      upstreamAccepted: false,
-      terminal: false,
-      submissionUncertain: false,
+      failure: { kind: "unknown" },
       backendHealthNeutral: true,
     };
   }
@@ -489,8 +517,9 @@ export async function submitApiVideoRequest(
       body: standardBody,
       opaqueValues,
       onRequestSnapshot: params.onRequestSnapshot,
+      onBeforeSend: params.onBeforeSend,
       signal: params.signal,
-      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
+      requestId: params.requestId,
       observability: {
         memberId: config.backend?.id,
         groupId: config.backend?.groupId,
@@ -500,11 +529,12 @@ export async function submitApiVideoRequest(
       ? parseScriptedVideoSubmission(
           config,
           executed.result,
-          executed.pollAfterSeconds
+          executed.pollAfterSeconds,
+          executed.response.status
         )
       : await parseBuiltInVideoSubmission(config, executed.response);
   } catch (error) {
-    return toApiVideoStageError(error);
+    return toApiVideoStageError(error, params.signal);
   }
 }
 

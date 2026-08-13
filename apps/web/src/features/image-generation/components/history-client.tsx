@@ -47,7 +47,12 @@ const ImageLightbox = dynamic(
   { ssr: false }
 );
 
-export type HistoryRecordStatus = "processing" | "completed" | "failed";
+export type HistoryRecordStatus =
+  | "processing"
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "failed";
 
 type HistoryRecordBase = {
   backendAccount?: {
@@ -75,6 +80,7 @@ export type HistoryImageRecord = HistoryRecordBase & {
   referenceImages?: LightboxReferenceImage[];
   revisedPrompt: string | null;
   size: string;
+  status: "processing" | "completed" | "failed";
 };
 
 export type HistoryVideoRecord = HistoryRecordBase &
@@ -83,7 +89,7 @@ export type HistoryVideoRecord = HistoryRecordBase &
     keyof HistoryRecordBase | "kind" | "status"
   > & {
     kind: "video";
-    status: HistoryRecordStatus;
+    status: "queued" | "in_progress" | "completed" | "failed";
   };
 
 export type HistoryRecord = HistoryImageRecord | HistoryVideoRecord;
@@ -224,6 +230,8 @@ export function HistoryClient({
     ({
       completed: copy("Completed", "已完成"),
       failed: copy("Failed", "失败"),
+      queued: copy("Queued", "排队中"),
+      in_progress: copy("In progress", "生成中"),
       processing: copy("Processing", "处理中"),
     })[status];
   const [items, setItems] = useState<HistoryRecord[]>(records);
@@ -582,6 +590,7 @@ export function HistoryClient({
           open={selectedKey !== null}
           record={selected}
           showAdminRequestJson={showUserColumns}
+          showAdminSubmissionAttempts={showUserColumns}
           timeZone={timeZone}
         />
       ) : null}

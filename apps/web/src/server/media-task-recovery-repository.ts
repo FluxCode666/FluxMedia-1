@@ -49,6 +49,7 @@ const videoRowSchema = z.object({
   next_poll_at: z.coerce.date().nullable(),
   claim_expires_at: z.coerce.date().nullable(),
   submit_started_at: z.coerce.date().nullable(),
+  refund_exhausted_at: z.coerce.date().nullable(),
   updated_at: z.coerce.date(),
 });
 
@@ -185,16 +186,22 @@ export function createPostgresMediaTaskRecoveryRepository(
             next_poll_at,
             claim_expires_at,
             submit_started_at,
+            refund_exhausted_at,
             updated_at
           from video_generation
-          where stage not in ('completed', 'failed', 'submit_uncertain')
+          where stage not in ('completed', 'failed')
             and (
               claim_expires_at is null
               or claim_expires_at <= ${input.now}
             )
             and (
               (
-                stage in ('created', 'polling', 'downloading', 'refunding')
+                stage in ('created', 'retrying', 'polling', 'downloading')
+                and (next_poll_at is null or next_poll_at <= ${input.now})
+              )
+              or (
+                stage = 'refunding'
+                and refund_exhausted_at is null
                 and (next_poll_at is null or next_poll_at <= ${input.now})
               )
               or (
@@ -204,6 +211,12 @@ export function createPostgresMediaTaskRecoveryRepository(
               or (
                 stage = 'submitting'
                 and coalesce(submit_started_at, updated_at) <= ${submissionRecoveryCutoff}
+              )
+              or (
+                -- @deprecated：只补投升级前显式 API 人工态；Adobe 与协议缺失行永久排除。
+                -- 下个版本仅在遗留查询为零后删除本分支。
+                stage = 'submit_uncertain'
+                and metadata->>'videoBackendProtocol' = ${"api"}
               )
             )
           order by coalesce(next_poll_at, updated_at), created_at, id
@@ -265,6 +278,17 @@ export function createPostgresMediaTaskRecoveryRepository(
       });
       const videos = extractExecuteRows(videoResult).flatMap((row) => {
         const parsed = videoRowSchema.parse(row);
+        if (parsed.stage === "submit_uncertain") {
+          // @deprecated：迁移 worker 需要一次立即投递；普通排程仍拒绝人工兼容态。
+          // 下个版本只有在显式 API 遗留查询为零后才能删除。
+          return [
+            {
+              taskId: parsed.id,
+              stateVersion: parsed.state_version,
+              runAt: input.now,
+            },
+          ];
+        }
         const schedule = resolveVideoQueueSchedule(
           {
             id: parsed.id,
@@ -273,6 +297,7 @@ export function createPostgresMediaTaskRecoveryRepository(
             nextPollAt: parsed.next_poll_at,
             claimExpiresAt: parsed.claim_expires_at,
             submitStartedAt: parsed.submit_started_at,
+            refundExhaustedAt: parsed.refund_exhausted_at,
             updatedAt: parsed.updated_at,
           },
           input.now
