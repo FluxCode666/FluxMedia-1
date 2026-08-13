@@ -7,7 +7,6 @@
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 
-import type { BackendPoolAdminMemberSummary } from "./actions";
 import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 
 /** 管理列表可选的 Adobe Direct 凭据健康状态。 */
@@ -24,6 +23,14 @@ export interface BackendMemberFilters {
   modelId: string;
   createdFrom: string;
   createdTo: string;
+}
+
+/** 筛选器所需的最小成员投影，避免纯逻辑依赖 Server Action DTO。 */
+export interface BackendPoolFilterableMember {
+  name: string;
+  supportedModelIds: string[];
+  createdAt: string;
+  credentialHealthStatus: AdobeCredentialHealthStatus | null;
 }
 
 /** 供应商账号筛选器的稳定空值。 */
@@ -144,11 +151,13 @@ export function hasInvalidBackendMemberDateRange(
  * @returns 保持输入顺序的匹配账号；非法日期范围明确返回空数组。
  * @sideEffects 无。
  */
-export function filterBackendMembers(
-  members: readonly BackendPoolAdminMemberSummary[],
+export function filterBackendMembers<
+  Member extends BackendPoolFilterableMember,
+>(
+  members: readonly Member[],
   filters: BackendMemberFilters,
   timeZone: string
-): BackendPoolAdminMemberSummary[] {
+): Member[] {
   if (hasInvalidBackendMemberDateRange(filters)) return [];
   const name = normalizeFilterValue(filters.name);
   const modelId = normalizeFilterValue(filters.modelId);

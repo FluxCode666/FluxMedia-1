@@ -19,6 +19,15 @@ import { logError } from "@repo/shared/logger";
 import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
 import type { Principal } from "@repo/shared/uol";
 import { bindExecute, OperationError } from "@repo/shared/uol";
+import type {
+  AdminPoolGroupListInput,
+  AdminPoolMemberListInput,
+} from "@repo/shared/uol/operations/image-backend-pool";
+import {
+  filterBackendGroups,
+  filterBackendMembers,
+} from "@/features/image-backend-pool/admin-pool-view-model";
+import { listAdobeCredentialHealthStatuses } from "@/features/image-backend-pool/adobe-credential-health-list";
 import {
   assertApiUpstreamOpaqueValuesPreserved,
   createApiUpstreamOpaqueToken,
@@ -110,6 +119,25 @@ export function buildAdminPoolMembers(
     }
     return { ...member, config };
   });
+}
+
+/** 把筛选后的内存快照收敛为统一 offset 分页信封。 */
+function paginateAdminPoolRecords<Record>(
+  records: readonly Record[],
+  page: number,
+  pageSize: number
+) {
+  const totalCount = records.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const normalizedPage = Math.min(page, totalPages);
+  const offset = (normalizedPage - 1) * pageSize;
+  return {
+    records: records.slice(offset, offset + pageSize),
+    page: normalizedPage,
+    pageSize,
+    totalCount,
+    totalPages,
+  };
 }
 
 /** 从管理员样例中读取模型 ID，仅用于构造脱敏脚本上下文。 */
@@ -350,6 +378,46 @@ bindExecute("pool.getAdminPool", async () => {
     defaultDependencies.memberService.listMembers(),
   ]);
   return { groups, members: buildAdminPoolMembers(members) };
+});
+
+/** 按人工页面筛选分页成员，并在计数前合入当前凭据健康状态。 */
+bindExecute(
+  "pool.listAdminMembers",
+  async (input: AdminPoolMemberListInput) => {
+    const [members, healthStatuses] = await Promise.all([
+      defaultDependencies.memberService.listMembers(),
+      listAdobeCredentialHealthStatuses(),
+    ]);
+    const statusByMemberId = new Map(
+      healthStatuses.map((item) => [item.memberId, item.status])
+    );
+    const pageMembers = members.map((member) => ({
+      ...member,
+      credentialHealthStatus: statusByMemberId.get(member.id) ?? null,
+    }));
+    const filtered = filterBackendMembers(
+      pageMembers,
+      {
+        name: input.name,
+        credentialStatus: input.credentialStatus,
+        modelId: input.modelId,
+        createdFrom: input.createdFrom,
+        createdTo: input.createdTo,
+      },
+      input.timeZone
+    );
+    return paginateAdminPoolRecords(filtered, input.page, input.pageSize);
+  }
+);
+
+/** 按人工页面名称条件分页分组。 */
+bindExecute("pool.listAdminGroups", async (input: AdminPoolGroupListInput) => {
+  const groups = await defaultDependencies.groupService.listGroups();
+  return paginateAdminPoolRecords(
+    filterBackendGroups(groups, input.name),
+    input.page,
+    input.pageSize
+  );
 });
 
 /** 保存统一分组。 */

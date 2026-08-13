@@ -132,6 +132,7 @@
     "./uol/operations/analytics": "./src/uol/operations/analytics.ts",
     "./uol/operations/content": "./src/uol/operations/content.ts",
     "./uol/operations/image-generation": "./src/uol/operations/image-generation.ts",
+    "./uol/operations/image-backend-pool": "./src/uol/operations/image-backend-pool.ts",
     "./uol/operations/media-limits": "./src/uol/operations/media-limits.ts",
     "./uol/operations/payment": "./src/uol/operations/payment.ts",
     "./uol/operations/referrals": "./src/uol/operations/referrals.ts",

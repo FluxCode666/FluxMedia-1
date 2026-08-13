@@ -64,6 +64,18 @@ export {
   homepageSlaVisibilityOutputSchema,
 } from "./homepage-reliability";
 export {
+  type AdminPoolGroupListInput,
+  type AdminPoolGroupListOutput,
+  type AdminPoolMemberListInput,
+  type AdminPoolMemberListOutput,
+  adminPoolGroupListInputSchema,
+  adminPoolGroupListOutputSchema,
+  adminPoolMemberListInputSchema,
+  adminPoolMemberListOutputSchema,
+  listAdminGroups,
+  listAdminMembers,
+} from "./image-backend-pool";
+export {
   imageGenerate,
   imageGetAdminHistoryRequestSnapshot,
 } from "./image-generation";

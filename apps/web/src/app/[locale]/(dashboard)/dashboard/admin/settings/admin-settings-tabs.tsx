@@ -143,6 +143,7 @@ export function AdminSettingsTabs({
       <TabsContent value="image-backends" className="mt-6">
         {mountedTabs.has("image-backends") ? (
           <ImageBackendPoolAdminPanel
+            paginationConfig={paginationConfig}
             readOnly={imageBackendPoolReadOnly}
             timeZone={timeZone}
           />

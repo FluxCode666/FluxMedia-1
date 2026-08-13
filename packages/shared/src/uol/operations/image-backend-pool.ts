@@ -21,6 +21,8 @@ import {
   backendGroupSummarySchema,
 } from "../../image-backend/group-contract";
 import { backendMemberInputSchema } from "../../image-backend/member-contract";
+import { createOffsetPaginationOutputSchema } from "../../pagination/contracts";
+import { isValidTimeZone } from "../../time-zone";
 import { defineOperation } from "../registry";
 import type { AccessRequirement } from "../types";
 
@@ -88,6 +90,37 @@ const redactedAdobeConfigSchema = z.discriminatedUnion("mode", [
     .strict(),
 ]);
 
+/** 人工列表可继续展示既有折叠诊断；通用 Agent 快照仍使用上方无诊断 schema。 */
+const adminRedactedAdobeConfigSchema = z.union([
+  redactedAdobeConfigSchema,
+  z
+    .object({
+      mode: z.literal("direct"),
+      hasCookie: z.boolean(),
+      displayName: z.string().nullable(),
+      email: z.string().nullable(),
+      credentialStatus: z.enum(["active", "error", "exhausted", "invalid"]),
+      lastRefreshAt: z.string().nullable(),
+      lastRefreshError: z.string().nullable(),
+      consecutiveFailures: z.number().int().nonnegative(),
+      fireflyCredentialStatus: z
+        .enum(["active", "error", "exhausted", "invalid"])
+        .nullable(),
+      fireflyLastRefreshAt: z.string().nullable(),
+      fireflyLastRefreshError: z.string().nullable(),
+      fireflyConsecutiveFailures: z.number().int().nonnegative(),
+      creditsTotal: z.number().int().nullable(),
+      creditsUsed: z.number().int().nullable(),
+      creditsAvailable: z.number().int().nullable(),
+      creditsUpdatedAt: z.string().nullable(),
+      creditsError: z.string().nullable(),
+      defaultRatio: z.string(),
+      defaultResolution: z.string(),
+      gptImageQuality: z.enum(["low", "medium", "high"]),
+    })
+    .strict(),
+]);
+
 const backendMemberSummarySchema = z
   .object({
     id: z.string(),
@@ -113,6 +146,89 @@ const backendMemberSummarySchema = z
     config: z.union([redactedApiConfigSchema, redactedAdobeConfigSchema]),
   })
   .strict();
+
+/** 管理列表允许的 Adobe Direct 凭据健康筛选。 */
+export const backendMemberCredentialFilterSchema = z.enum([
+  "all",
+  "pending",
+  "healthy",
+  "degraded",
+  "isolated",
+  "overdue",
+  "unhealthy",
+  "not_applicable",
+]);
+
+/** 人工管理页面的成员分页输入；日期边界按显式部署时区解释。 */
+export const adminPoolMemberListInputSchema = z
+  .object({
+    page: z.number().int().positive().default(1),
+    pageSize: z
+      .union([z.literal(10), z.literal(20), z.literal(50)])
+      .default(20),
+    name: z.string().trim().max(120).default(""),
+    credentialStatus: backendMemberCredentialFilterSchema.default("all"),
+    modelId: z.string().trim().max(240).default("all"),
+    createdFrom: z.iso.date().or(z.literal("")).default(""),
+    createdTo: z.iso.date().or(z.literal("")).default(""),
+    timeZone: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .refine(isValidTimeZone, "无效的 IANA 时区"),
+  })
+  .strict();
+
+/** 人工管理页面的分组分页输入。 */
+export const adminPoolGroupListInputSchema = z
+  .object({
+    page: z.number().int().positive().default(1),
+    pageSize: z
+      .union([z.literal(10), z.literal(20), z.literal(50)])
+      .default(20),
+    name: z.string().trim().max(120).default(""),
+  })
+  .strict();
+
+const credentialHealthStatusSchema = z.enum([
+  "pending",
+  "healthy",
+  "degraded",
+  "isolated",
+  "overdue",
+]);
+
+/** 管理成员列表输出；凭据健康只增加可筛选状态，不返回诊断。 */
+export const adminPoolMemberListOutputSchema =
+  createOffsetPaginationOutputSchema(
+    backendMemberSummarySchema
+      .extend({
+        config: z.union([
+          redactedApiConfigSchema,
+          adminRedactedAdobeConfigSchema,
+        ]),
+        credentialHealthStatus: credentialHealthStatusSchema.nullable(),
+      })
+      .strict()
+  );
+
+/** 管理分组列表输出。 */
+export const adminPoolGroupListOutputSchema =
+  createOffsetPaginationOutputSchema(backendGroupSummarySchema);
+
+export type AdminPoolMemberListInput = z.output<
+  typeof adminPoolMemberListInputSchema
+>;
+export type AdminPoolGroupListInput = z.output<
+  typeof adminPoolGroupListInputSchema
+>;
+export type AdminPoolMemberListOutput = z.output<
+  typeof adminPoolMemberListOutputSchema
+>;
+export type AdminPoolGroupListOutput = z.output<
+  typeof adminPoolGroupListOutputSchema
+>;
 
 /** 获取用户或表单可选择的统一后端分组。 */
 export const getGroupOptions = defineOperation({
@@ -154,6 +270,44 @@ export const getAdminPool = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: pool.getAdminPool");
+  },
+});
+
+/** 分页读取人工账号池成员列表，不改变运行时全量快照。 */
+export const listAdminMembers = defineOperation({
+  name: "pool.listAdminMembers",
+  domain: "image-backend-pool",
+  title: "分页读取账号池成员",
+  description: "按管理筛选条件读取脱敏成员、凭据健康状态和精确总数。",
+  input: adminPoolMemberListInputSchema,
+  output: adminPoolMemberListOutputSchema,
+  access: { kind: "imageBackendPoolViewer" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.listAdminMembers");
+  },
+});
+
+/** 分页读取人工账号池分组列表，不改变表单使用的完整分组选项。 */
+export const listAdminGroups = defineOperation({
+  name: "pool.listAdminGroups",
+  domain: "image-backend-pool",
+  title: "分页读取账号池分组",
+  description: "按名称筛选读取脱敏分组和精确总数。",
+  input: adminPoolGroupListInputSchema,
+  output: adminPoolGroupListOutputSchema,
+  access: { kind: "imageBackendPoolViewer" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: pool.listAdminGroups");
   },
 });
 

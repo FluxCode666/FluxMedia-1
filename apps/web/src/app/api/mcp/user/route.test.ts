@@ -134,6 +134,8 @@ describe("POST /api/mcp/user media allowlist isolation", () => {
         "analytics.getMyUsageSummary",
         "analytics.getMyUsageTrends",
         "analytics.getMyDataDashboard",
+        "pool.listAdminMembers",
+        "pool.listAdminGroups",
       ])
     );
   });
