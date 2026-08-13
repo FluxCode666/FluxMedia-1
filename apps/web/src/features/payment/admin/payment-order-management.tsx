@@ -227,10 +227,18 @@ export function PaymentOrderManagement({
           <UrlCursorPaginationControls
             ariaLabel={t("pagination")}
             currentPageLabel={t("pageHint", { page, totalPages })}
+            currentPageLabelTemplate={
+              locale === "zh"
+                ? "第 {page} 页，当前页"
+                : "Page {page}, current page"
+            }
             names={createPaginationUrlParamNames()}
             nextCursor={nextCursor}
             nextLabel={t("nextPage")}
             page={page}
+            pageLabelTemplate={
+              locale === "zh" ? "前往第 {page} 页" : "Go to page {page}"
+            }
             previousCursor={previousCursor}
             previousLabel={t("previousPage")}
             totalPages={totalPages}

@@ -27,6 +27,7 @@ export type UrlPaginationControlsProps = {
   nextLabel: string;
   pageLabelTemplate: string;
   currentPageLabelTemplate: string;
+  mobilePageLabel?: string;
   navigation?: "push" | "replace";
   focusTargetId?: string;
   className?: string;
@@ -49,6 +50,7 @@ export function UrlPaginationControls({
   nextLabel,
   pageLabelTemplate,
   currentPageLabelTemplate,
+  mobilePageLabel,
   navigation = "push",
   focusTargetId,
   className,
@@ -73,6 +75,7 @@ export function UrlPaginationControls({
       currentPageLabelTemplate={currentPageLabelTemplate}
       disabled={isPending}
       items={getPaginationWindow(page, totalPages)}
+      mobilePageLabel={mobilePageLabel}
       nextLabel={nextLabel}
       onPageChange={(nextPage) => {
         const href = buildPaginationHref(

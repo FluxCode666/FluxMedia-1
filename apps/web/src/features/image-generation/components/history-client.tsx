@@ -522,10 +522,10 @@ export function HistoryClient({
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <p aria-live="polite" className="text-xs text-muted-foreground">
-          {copy(`Total ${totalCount} records`, `共 ${totalCount} 条记录`)}
-        </p>
         <div className="flex flex-wrap items-center gap-3">
+          <p aria-live="polite" className="text-xs text-muted-foreground">
+            {copy(`Total ${totalCount} records`, `共 ${totalCount} 条记录`)}
+          </p>
           <UrlPageSizeSelect
             itemSuffix={copy(" rows", " 条")}
             label={copy("Rows per page", "每页条数")}
@@ -543,21 +543,26 @@ export function HistoryClient({
             }))}
             value={queryState.pageSize}
           />
-          <UrlCursorPaginationControls
-            ariaLabel={copy("Usage records pagination", "使用记录分页")}
-            currentPageLabel={copy(
-              `Page ${page} of ${totalPages}`,
-              `第 ${page} / ${totalPages} 页`
-            )}
-            names={createPaginationUrlParamNames()}
-            nextCursor={nextCursor}
-            nextLabel={copy("Next", "下一页")}
-            page={page}
-            previousCursor={previousCursor}
-            previousLabel={copy("Previous", "上一页")}
-            totalPages={totalPages}
-          />
         </div>
+        <UrlCursorPaginationControls
+          ariaLabel={copy("Usage records pagination", "使用记录分页")}
+          currentPageLabel={copy(
+            `Page ${page} of ${totalPages}`,
+            `第 ${page} / ${totalPages} 页`
+          )}
+          currentPageLabelTemplate={copy(
+            "Page {page}, current page",
+            "第 {page} 页，当前页"
+          )}
+          names={createPaginationUrlParamNames()}
+          nextCursor={nextCursor}
+          nextLabel={copy("Next", "下一页")}
+          page={page}
+          pageLabelTemplate={copy("Go to page {page}", "前往第 {page} 页")}
+          previousCursor={previousCursor}
+          previousLabel={copy("Previous", "上一页")}
+          totalPages={totalPages}
+        />
       </div>
 
       {selected?.kind === "image" ? (

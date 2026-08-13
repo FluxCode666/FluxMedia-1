@@ -16,13 +16,6 @@ import {
   PaginationItem,
   PaginationLink,
 } from "./pagination";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./select";
 
 export type PaginationControlsItem = number | "start-ellipsis" | "end-ellipsis";
 
@@ -36,6 +29,7 @@ export type PaginationControlsProps = {
   nextLabel: string;
   pageLabelTemplate: string;
   currentPageLabelTemplate: string;
+  mobilePageLabel?: string;
   onPageChange: (page: number) => void;
   disabled?: boolean;
   className?: string;
@@ -105,11 +99,11 @@ export function PaginationControls({
   totalPages,
   items,
   ariaLabel,
-  pageSelectLabel,
   previousLabel,
   nextLabel,
   pageLabelTemplate,
   currentPageLabelTemplate,
+  mobilePageLabel,
   onPageChange,
   disabled = false,
   className,
@@ -134,33 +128,19 @@ export function PaginationControls({
           </PaginationLink>
         </PaginationItem>
 
-        <li className="sm:hidden">
-          <Select
-            disabled={disabled}
-            onValueChange={(value) => {
-              const nextPage = Number(value);
-              if (
-                Number.isSafeInteger(nextPage) &&
-                nextPage >= 1 &&
-                nextPage <= totalPages
-              ) {
-                onPageChange(nextPage);
-              }
-            }}
-            value={String(viewModel.page)}
+        <PaginationItem className="sm:hidden">
+          <span
+            aria-current="page"
+            aria-label={formatPaginationPageLabel(
+              currentPageLabelTemplate,
+              viewModel.page
+            )}
+            className="flex h-9 min-w-20 items-center justify-center px-2 text-sm tabular-nums"
           >
-            <SelectTrigger aria-label={pageSelectLabel} className="w-24">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {viewModel.mobilePages.map((pageNumber) => (
-                <SelectItem key={pageNumber} value={String(pageNumber)}>
-                  {pageNumber} / {viewModel.totalPages}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </li>
+            {mobilePageLabel ??
+              `${viewModel.page} / ${viewModel.totalPages}`}
+          </span>
+        </PaginationItem>
 
         {renderDesktopItems(
           items,

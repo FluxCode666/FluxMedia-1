@@ -126,4 +126,24 @@ describe("HistoryClient supplier account identity", () => {
     expect(document.body.textContent).toContain("处理时长（秒）");
     expect(document.body.textContent).toContain("处理时长: 60s");
   });
+
+  it("places the page-size selector after the total record count", () => {
+    renderHistory(false);
+
+    const pageSize = document.querySelector('[aria-label="每页条数"]');
+    const total = Array.from(document.querySelectorAll("p")).find((element) =>
+      element.textContent?.includes("共 1 条记录")
+    );
+
+    expect(pageSize).not.toBeNull();
+    expect(total).not.toBeUndefined();
+    expect(
+      pageSize && total
+        ? Boolean(
+            total.compareDocumentPosition(pageSize) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          )
+        : false
+    ).toBe(true);
+  });
 });

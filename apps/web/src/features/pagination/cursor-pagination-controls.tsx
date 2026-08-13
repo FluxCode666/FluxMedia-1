@@ -7,6 +7,7 @@
  * 不提供任意页码跳转。
  */
 import { CursorPaginationControls } from "@repo/ui/components/cursor-pagination-controls";
+import { getPaginationWindow } from "@repo/shared/pagination/state";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useTransition } from "react";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
@@ -24,6 +25,8 @@ export type UrlCursorPaginationControlsProps = {
   names: PaginationUrlParamNames;
   ariaLabel: string;
   currentPageLabel: string;
+  pageLabelTemplate: string;
+  currentPageLabelTemplate: string;
   previousLabel: string;
   nextLabel: string;
   focusTargetId?: string;
@@ -45,6 +48,8 @@ export function UrlCursorPaginationControls({
   names,
   ariaLabel,
   currentPageLabel,
+  pageLabelTemplate,
+  currentPageLabelTemplate,
   previousLabel,
   nextLabel,
   focusTargetId,
@@ -82,9 +87,11 @@ export function UrlCursorPaginationControls({
       ariaLabel={ariaLabel}
       className={className}
       currentPageLabel={currentPageLabel}
+      currentPageLabelTemplate={currentPageLabelTemplate}
       disabled={isPending}
       hasNext={nextCursor !== null}
       hasPrevious={previousCursor !== null}
+      items={getPaginationWindow(page, totalPages)}
       nextLabel={nextLabel}
       onNext={() => {
         if (nextCursor) navigate(page + 1, nextCursor);
@@ -93,6 +100,8 @@ export function UrlCursorPaginationControls({
         if (previousCursor) navigate(Math.max(1, page - 1), previousCursor);
       }}
       previousLabel={previousLabel}
+      page={page}
+      pageLabelTemplate={pageLabelTemplate}
       totalPages={totalPages}
     />
   );

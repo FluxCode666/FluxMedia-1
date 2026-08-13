@@ -5,6 +5,7 @@
  * 页大小以及同页其他 namespace。
  */
 import { describe, expect, it } from "vitest";
+import { getPaginationWindow } from "@repo/shared/pagination/state";
 import {
   buildPaginationHref,
   createPaginationUrlParamNames,
@@ -23,5 +24,18 @@ describe("cursor pagination controls", () => {
     expect(href).toBe(
       "/dashboard/history?cursor=next%2B%2F%3D&memberPage=4&page=3&pageSize=50&status=failed"
     );
+  });
+
+  it("桌面使用数字窗口，移动端由组件保留紧凑当前页提示", () => {
+    expect(getPaginationWindow(1, 4)).toEqual([1, 2, 3, 4]);
+    expect(getPaginationWindow(5, 10)).toEqual([
+      1,
+      "start-ellipsis",
+      4,
+      5,
+      6,
+      "end-ellipsis",
+      10,
+    ]);
   });
 });

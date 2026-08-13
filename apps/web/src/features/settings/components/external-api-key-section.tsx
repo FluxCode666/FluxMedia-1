@@ -3,8 +3,8 @@
 /**
  * API 密钥管理页面主体。
  *
- * 职责：提供创建区、可重复复制的明文展示和单一响应式摘要列表；每行独立展开与锁定，
- * 启用态只编辑分组/额度，撤销态只读且仅允许删除。
+ * 职责：提供创建区、可重复复制的明文展示和单一响应式摘要列表；启用态可行内修改分组、
+ * 通过操作列修改额度，撤销态只读且仅允许删除。
  * 使用方：/dashboard/external-api 页面。
  * 关键依赖：API 密钥 Server Actions、纯列表状态 reducer、Shadcn Collapsible。
  */
@@ -25,10 +25,13 @@ import {
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@repo/ui/components/collapsible";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@repo/ui/components/dialog";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -39,11 +42,11 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import {
-  ChevronDown,
   Copy,
   ExternalLink,
   KeyRound,
   Loader2,
+  PencilLine,
   RefreshCw,
   Trash2,
   XCircle,
@@ -175,7 +178,7 @@ export function ExternalApiKeySection({
   const searchParams = useSearchParams();
   const loadedPaginationRef = useRef("");
   const createHeadingRef = useRef<HTMLHeadingElement>(null);
-  const rowTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const rowTriggerRefs = useRef(new Map<string, HTMLDivElement>());
   const pendingRowsRef = useRef(new Set<string>());
   const activityRef = useRef(createExternalApiKeyActivityState());
   const createMutationActiveRef = useRef(false);
@@ -200,10 +203,9 @@ export function ExternalApiKeySection({
   const [newKeyCreditLimit, setNewKeyCreditLimit] = useState("");
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>({});
   const [quotaDrafts, setQuotaDrafts] = useState<Record<string, string>>({});
-  const expandedKeyIdSet = useMemo(
-    () => new Set(listState.expandedKeyIds),
-    [listState.expandedKeyIds]
-  );
+  const [quotaDialogKeyId, setQuotaDialogKeyId] = useState<string | null>(null);
+  const quotaDialogKey =
+    listState.items.find((key) => key.id === quotaDialogKeyId) ?? null;
   const editableGroupIdSet = useMemo(
     () => new Set(editableGroups.map((group) => group.id)),
     [editableGroups]
@@ -363,13 +365,17 @@ export function ExternalApiKeySection({
   /** mutation 失败后只取目标行真实状态；若行已消失则采用完整服务端列表。 */
   const refreshKeyAfterFailure = useCallback(
     async (keyId: string): Promise<RefreshedKeyResult> => {
-      const result = await getExternalApiKeys(initialPagination);
-      if (!result?.data) return { status: "failed" };
-      setEditableGroups(result.data.editableGroups);
-      const refreshedKey = result.data.keys.find((key) => key.id === keyId);
-      if (refreshedKey) return { status: "found", key: refreshedKey };
-      applyLoadedList(result.data);
-      return { status: "missing" };
+      try {
+        const result = await getExternalApiKeys(initialPagination);
+        if (!result?.data) return { status: "failed" };
+        setEditableGroups(result.data.editableGroups);
+        const refreshedKey = result.data.keys.find((key) => key.id === keyId);
+        if (refreshedKey) return { status: "found", key: refreshedKey };
+        applyLoadedList(result.data);
+        return { status: "missing" };
+      } catch {
+        return { status: "failed" };
+      }
     },
     [applyLoadedList, initialPagination]
   );
@@ -380,7 +386,7 @@ export function ExternalApiKeySection({
       keyId: string,
       operation: ExternalApiKeyRowMutation,
       message: string
-    ): Promise<void> => {
+    ): Promise<RefreshedKeyResult> => {
       const refreshed = await refreshKeyAfterFailure(keyId);
       if (refreshed.status !== "missing") {
         dispatchListAction({
@@ -395,6 +401,7 @@ export function ExternalApiKeySection({
       }
       finishRowMutation(keyId);
       toast.error(message);
+      return refreshed;
     },
     [dispatchListAction, finishRowMutation, refreshKeyAfterFailure]
   );
@@ -473,20 +480,45 @@ export function ExternalApiKeySection({
     }
   };
 
-  /** 保存目标启用 Key 的分组，成功时只替换该行。 */
-  const handleSaveGroup = async (keyId: string): Promise<void> => {
+  /** 分组重新选择后立即保存，失败时恢复服务端真实值或选择前的值。 */
+  const handleUpdateGroup = async (
+    keyId: string,
+    selectedGroup: string
+  ): Promise<void> => {
     if (!startRowMutation(keyId, "update-group")) return;
-    const draft = groupDrafts[keyId] || DEFAULT_GROUP_VALUE;
-    const result = await updateExternalApiKeyGroup({
-      id: keyId,
-      generationGroupId: draft === DEFAULT_GROUP_VALUE ? null : draft,
-    });
+    setGroupDrafts((current) => ({
+      ...current,
+      [keyId]: selectedGroup,
+    }));
+    const previousGroup =
+      listState.items.find((key) => key.id === keyId)?.generationGroupId ||
+      DEFAULT_GROUP_VALUE;
+    let result:
+      | Awaited<ReturnType<typeof updateExternalApiKeyGroup>>
+      | undefined;
+    try {
+      result = await updateExternalApiKeyGroup({
+        id: keyId,
+        generationGroupId:
+          selectedGroup === DEFAULT_GROUP_VALUE ? null : selectedGroup,
+      });
+    } catch {
+      result = undefined;
+    }
     if (!result?.data) {
-      await handleRowFailure(
+      const refreshed = await handleRowFailure(
         keyId,
         "update-group",
         getActionError(result, t("errors.update"))
       );
+      const restoredGroup =
+        refreshed.status === "found"
+          ? refreshed.key.generationGroupId || DEFAULT_GROUP_VALUE
+          : previousGroup;
+      setGroupDrafts((current) => ({
+        ...current,
+        [keyId]: restoredGroup,
+      }));
       return;
     }
     dispatchListAction({
@@ -495,6 +527,10 @@ export function ExternalApiKeySection({
       operation: "update-group",
       item: preserveListItemApiKey(result.data, listState.items),
     });
+    setGroupDrafts((current) => ({
+      ...current,
+      [keyId]: result.data.generationGroupId || DEFAULT_GROUP_VALUE,
+    }));
     finishRowMutation(keyId);
     toast.success(t("success.updated"));
   };
@@ -531,6 +567,7 @@ export function ExternalApiKeySection({
         result.data.creditLimit === null ? "" : String(result.data.creditLimit),
     }));
     finishRowMutation(keyId);
+    setQuotaDialogKeyId(null);
     toast.success(t("success.quotaUpdated"));
   };
 
@@ -755,16 +792,6 @@ export function ExternalApiKeySection({
           </Button>
         </div>
 
-        <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <span>{t("totalRecords", { count: pagination.totalCount })}</span>
-          <UrlPageSizeSelect
-            itemSuffix={t("pageSizeSuffix")}
-            label={t("pageSizeLabel")}
-            options={pageSizeHrefOptions}
-            value={pagination.pageSize}
-          />
-        </div>
-
         <div className="overflow-hidden rounded-lg border border-border">
           {loadStatus === "loading" ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
@@ -794,16 +821,15 @@ export function ExternalApiKeySection({
             </div>
           ) : (
             <>
-              <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-4 border-b border-border/60 bg-muted/50 px-4 py-3 text-xs font-medium uppercase tracking-[0.6px] text-muted-foreground md:grid">
+              <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_12rem] gap-4 border-b border-border/60 bg-muted/50 px-4 py-3 text-xs font-medium uppercase tracking-[0.6px] text-muted-foreground md:grid">
                 <span>{t("columns.key")}</span>
                 <span>{t("columns.quota")}</span>
                 <span>{t("columns.group")}</span>
                 <span>{t("columns.lastUsed")}</span>
-                <span className="sr-only">{t("columns.actions")}</span>
+                <span className="text-right">{t("columns.actions")}</span>
               </div>
               <div className="divide-y divide-border/60">
                 {listState.items.map((key) => {
-                  const isExpanded = expandedKeyIdSet.has(key.id);
                   const isLocked = isExternalApiKeyRowLocked(listState, key.id);
                   const pendingOperation = listState.pendingByKeyId[key.id];
                   const rowError = listState.errorsByKeyId[key.id];
@@ -816,18 +842,16 @@ export function ExternalApiKeySection({
                     DEFAULT_GROUP_VALUE;
 
                   return (
-                    <Collapsible
-                      key={key.id}
-                      open={isExpanded}
-                      onOpenChange={() =>
-                        dispatchListAction({
-                          type: "toggle-expanded",
-                          keyId: key.id,
-                        })
-                      }
-                    >
-                      <div className="grid bg-background transition-colors hover:bg-muted/30 md:grid-cols-[minmax(0,1.4fr)_minmax(0,3fr)_auto] md:items-stretch">
-                        <div className="min-w-0 px-4 pt-4 md:py-4">
+                    <div key={key.id}>
+                      <div className="grid gap-3 bg-background px-4 transition-colors hover:bg-muted/30 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_12rem] md:items-center md:gap-4">
+                        <div
+                          ref={(node) => {
+                            if (node) rowTriggerRefs.current.set(key.id, node);
+                            else rowTriggerRefs.current.delete(key.id);
+                          }}
+                          className="min-w-0 pt-4 md:py-4"
+                          tabIndex={-1}
+                        >
                           <div className="flex items-center gap-2">
                             <span className="truncate text-sm font-medium">
                               {key.name}
@@ -865,102 +889,128 @@ export function ExternalApiKeySection({
                           </div>
                         </div>
 
-                        <CollapsibleTrigger asChild>
-                          <button
-                            ref={(node) => {
-                              if (node)
-                                rowTriggerRefs.current.set(key.id, node);
-                              else rowTriggerRefs.current.delete(key.id);
-                            }}
-                            type="button"
-                            disabled={isLocked || isRefreshing}
-                            className="grid min-w-0 cursor-pointer grid-cols-1 gap-3 px-4 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-wait disabled:opacity-70 md:grid-cols-3 md:items-center md:gap-4"
-                            aria-label={
-                              isExpanded
-                                ? t("collapse", { name: key.name })
-                                : t("expand", { name: key.name })
-                            }
-                          >
-                            <span className="text-sm">
-                              <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
-                                {t("columns.quota")}
-                              </span>
-                              <span className="block text-xs text-muted-foreground">
-                                {t("quota.used")}:{" "}
-                                {formatCredits(key.creditsUsed)}
-                              </span>
-                              <span className="mt-0.5 block text-xs">
-                                {key.creditLimit === null
-                                  ? t("quota.unlimited")
-                                  : `${formatCredits(Math.max(0, key.creditLimit - key.creditsUsed))} / ${formatCredits(key.creditLimit)}`}
-                              </span>
-                            </span>
-                            <span className="min-w-0 text-sm">
-                              <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
-                                {t("columns.group")}
-                              </span>
-                              <span className="block truncate text-xs">
-                                {getCurrentGroupLabel(key)}
-                              </span>
-                            </span>
-                            <span className="flex items-center justify-between gap-2 text-sm">
-                              <span>
-                                <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
-                                  {t("columns.lastUsed")}
-                                </span>
-                                <span className="block text-xs text-muted-foreground">
-                                  {formatDate(
-                                    key.lastUsedAt,
-                                    t("never"),
-                                    locale,
-                                    timeZone
-                                  )}
-                                </span>
-                              </span>
-                              <ChevronDown
-                                className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                              />
-                            </span>
-                          </button>
-                        </CollapsibleTrigger>
-
-                        <div className="flex items-center justify-end gap-2 border-t border-border/40 px-4 pb-4 pt-3 md:border-l md:border-t-0 md:py-3">
+                        <span className="text-sm md:py-4">
+                          <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
+                            {t("columns.quota")}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {t("quota.used")}: {formatCredits(key.creditsUsed)}
+                          </span>
+                          <span className="mt-0.5 block text-xs">
+                            {key.creditLimit === null
+                              ? t("quota.unlimited")
+                              : `${formatCredits(Math.max(0, key.creditLimit - key.creditsUsed))} / ${formatCredits(key.creditLimit)}`}
+                          </span>
+                        </span>
+                        <div className="min-w-0 text-sm md:py-4">
+                          <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
+                            {t("columns.group")}
+                          </span>
                           {key.isActive ? (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isLocked || isRefreshing}
-                                >
-                                  {pendingOperation === "revoke" ? (
-                                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                  ) : null}
-                                  {t("revoke")}
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>
-                                    {t("confirmRevokeTitle")}
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    {t("confirmRevoke", { name: key.name })}
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>
-                                    {t("cancel")}
-                                  </AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => void handleRevokeKey(key.id)}
+                            <Select
+                              disabled={isLocked || isRefreshing}
+                              onValueChange={(value) => {
+                                void handleUpdateGroup(key.id, value);
+                              }}
+                              value={groupDraft}
+                            >
+                              <SelectTrigger
+                                aria-label={t("backendGroup.label")}
+                                className="w-full"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={DEFAULT_GROUP_VALUE}>
+                                  {t("backendGroup.default")}
+                                </SelectItem>
+                                {key.generationGroupId &&
+                                !currentGroupIsEditable ? (
+                                  <SelectItem
+                                    disabled
+                                    value={key.generationGroupId}
                                   >
+                                    {getCurrentGroupLabel(key)}
+                                  </SelectItem>
+                                ) : null}
+                                {editableGroups.map((group) => (
+                                  <SelectItem key={group.id} value={group.id}>
+                                    {group.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {getCurrentGroupLabel(key)}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-sm md:py-4">
+                          <span className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground md:hidden">
+                            {t("columns.lastUsed")}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {formatDate(
+                              key.lastUsedAt,
+                              t("never"),
+                              locale,
+                              timeZone
+                            )}
+                          </span>
+                        </span>
+
+                        <div className="flex items-center justify-end gap-2 border-t border-border/40 pb-4 pt-3 md:border-l md:border-t-0 md:py-3">
+                          {key.isActive ? (
+                            <>
+                              <Button
+                                disabled={isLocked || isRefreshing}
+                                onClick={() => setQuotaDialogKeyId(key.id)}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                <PencilLine className="mr-2 h-3.5 w-3.5" />
+                                {t("quota.edit")}
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={isLocked || isRefreshing}
+                                  >
+                                    {pendingOperation === "revoke" ? (
+                                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                                    ) : null}
                                     {t("revoke")}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      {t("confirmRevokeTitle")}
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {t("confirmRevoke", { name: key.name })}
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>
+                                      {t("cancel")}
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() =>
+                                        void handleRevokeKey(key.id)
+                                      }
+                                    >
+                                      {t("revoke")}
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </>
                           ) : (
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
@@ -1004,129 +1054,15 @@ export function ExternalApiKeySection({
                         </div>
                       </div>
 
-                      <CollapsibleContent>
-                        <div className="border-t border-border/60 bg-muted/20 px-4 py-4">
-                          {rowError ? (
-                            <p
-                              role="alert"
-                              className="mb-4 text-xs text-destructive"
-                            >
-                              {rowError.message}
-                            </p>
-                          ) : null}
-                          {key.isActive ? (
-                            <div className="grid gap-4 lg:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label htmlFor={`external-key-group-${key.id}`}>
-                                  {t("backendGroup.label")}
-                                </Label>
-                                <div className="flex flex-col gap-2 sm:flex-row">
-                                  <Select
-                                    value={groupDraft}
-                                    onValueChange={(value) =>
-                                      setGroupDrafts((current) => ({
-                                        ...current,
-                                        [key.id]: value,
-                                      }))
-                                    }
-                                    disabled={isLocked || isRefreshing}
-                                  >
-                                    <SelectTrigger
-                                      id={`external-key-group-${key.id}`}
-                                      className="w-full"
-                                    >
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value={DEFAULT_GROUP_VALUE}>
-                                        {t("backendGroup.default")}
-                                      </SelectItem>
-                                      {key.generationGroupId &&
-                                      !currentGroupIsEditable ? (
-                                        <SelectItem
-                                          value={key.generationGroupId}
-                                          disabled
-                                        >
-                                          {getCurrentGroupLabel(key)}
-                                        </SelectItem>
-                                      ) : null}
-                                      {editableGroups.map((group) => (
-                                        <SelectItem
-                                          key={group.id}
-                                          value={group.id}
-                                        >
-                                          {group.name}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => void handleSaveGroup(key.id)}
-                                    disabled={isLocked || isRefreshing}
-                                  >
-                                    {pendingOperation === "update-group" ? (
-                                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                    ) : null}
-                                    {t("save")}
-                                  </Button>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {t("backendGroup.hint")}
-                                </p>
-                              </div>
-
-                              <div className="space-y-2">
-                                <Label htmlFor={`external-key-quota-${key.id}`}>
-                                  {t("quota.label")}
-                                </Label>
-                                <div className="flex flex-col gap-2 sm:flex-row">
-                                  <Input
-                                    id={`external-key-quota-${key.id}`}
-                                    type="number"
-                                    min={0}
-                                    step="0.01"
-                                    value={quotaDrafts[key.id] ?? ""}
-                                    onChange={(event) =>
-                                      setQuotaDrafts((current) => ({
-                                        ...current,
-                                        [key.id]: event.target.value,
-                                      }))
-                                    }
-                                    placeholder={t("quota.placeholder")}
-                                    disabled={isLocked || isRefreshing}
-                                  />
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={() => void handleSaveQuota(key.id)}
-                                    disabled={isLocked || isRefreshing}
-                                  >
-                                    {pendingOperation === "update-quota" ? (
-                                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                                    ) : null}
-                                    {t("quota.save")}
-                                  </Button>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {t("quota.description")}
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-1 text-sm">
-                              <p className="font-medium">
-                                {t("revokedReadOnlyTitle")}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {t("revokedReadOnlyDescription")}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
+                      {rowError ? (
+                        <p
+                          className="border-t border-border/60 bg-destructive/5 px-4 py-2 text-xs text-destructive"
+                          role="alert"
+                        >
+                          {rowError.message}
+                        </p>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
@@ -1135,12 +1071,15 @@ export function ExternalApiKeySection({
         </div>
 
         <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-muted-foreground">
-            {t("pageHint", {
-              page: pagination.page,
-              totalPages: pagination.totalPages,
-            })}
-          </p>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>{t("totalRecords", { count: pagination.totalCount })}</span>
+            <UrlPageSizeSelect
+              itemSuffix={t("pageSizeSuffix")}
+              label={t("pageSizeLabel")}
+              options={pageSizeHrefOptions}
+              value={pagination.pageSize}
+            />
+          </div>
           <UrlPaginationControls
             ariaLabel={t("pagination")}
             currentPageLabelTemplate={t("currentPageLabel", {
@@ -1149,6 +1088,10 @@ export function ExternalApiKeySection({
             focusTargetId="external-api-key-list"
             names={EXTERNAL_API_KEY_PAGINATION_NAMES}
             nextLabel={t("next")}
+            mobilePageLabel={t("pageHint", {
+              page: pagination.page,
+              totalPages: pagination.totalPages,
+            })}
             page={pagination.page}
             pageLabelTemplate={t("goToPageLabel", { page: "{page}" })}
             pageSelectLabel={t("pageSelectLabel")}
@@ -1157,6 +1100,81 @@ export function ExternalApiKeySection({
           />
         </div>
       </section>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) setQuotaDialogKeyId(null);
+        }}
+        open={quotaDialogKey !== null}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("quota.dialogTitle")}</DialogTitle>
+            <DialogDescription>
+              {quotaDialogKey
+                ? t("quota.dialogDescription", { name: quotaDialogKey.name })
+                : t("quota.description")}
+            </DialogDescription>
+          </DialogHeader>
+          {quotaDialogKey ? (
+            <div className="space-y-2">
+              <Label htmlFor={`external-key-quota-${quotaDialogKey.id}`}>
+                {t("quota.label")}
+              </Label>
+              <Input
+                disabled={
+                  isExternalApiKeyRowLocked(listState, quotaDialogKey.id) ||
+                  isRefreshing
+                }
+                id={`external-key-quota-${quotaDialogKey.id}`}
+                min={0}
+                onChange={(event) =>
+                  setQuotaDrafts((current) => ({
+                    ...current,
+                    [quotaDialogKey.id]: event.target.value,
+                  }))
+                }
+                placeholder={t("quota.placeholder")}
+                step="0.01"
+                type="number"
+                value={quotaDrafts[quotaDialogKey.id] ?? ""}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("quota.description")}
+              </p>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              onClick={() => setQuotaDialogKeyId(null)}
+              type="button"
+              variant="outline"
+            >
+              {t("cancel")}
+            </Button>
+            <Button
+              disabled={
+                !quotaDialogKey ||
+                isExternalApiKeyRowLocked(
+                  listState,
+                  quotaDialogKey?.id ?? ""
+                ) ||
+                isRefreshing
+              }
+              onClick={() => {
+                if (quotaDialogKey) void handleSaveQuota(quotaDialogKey.id);
+              }}
+              type="button"
+            >
+              {quotaDialogKey &&
+              listState.pendingByKeyId[quotaDialogKey.id] === "update-quota" ? (
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {t("quota.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

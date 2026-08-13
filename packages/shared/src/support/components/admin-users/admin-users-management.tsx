@@ -36,6 +36,7 @@ import {
 } from "@repo/ui/components/dropdown-menu";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
+import { PageSizeSelect } from "@repo/ui/components/page-size-select";
 import { PaginationControls } from "@repo/ui/components/pagination-controls";
 import {
   Select,
@@ -1201,26 +1202,6 @@ export function AdminUsersManagement({
                 <SelectItem value="frozen">积分冻结</SelectItem>
               </SelectContent>
             </Select>
-            <Select
-              value={String(requestedPageSize)}
-              onValueChange={(value) =>
-                replaceListUrl({
-                  page: 1,
-                  pageSize: Number(value),
-                })
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PAGE_SIZE_OPTIONS.map((size) => (
-                  <SelectItem key={size} value={String(size)}>
-                    每页 {size} 条
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
         </CardContent>
       </Card>
@@ -1454,9 +1435,19 @@ export function AdminUsersManagement({
           )}
 
           <div className="mt-4 flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
-            <p className="text-sm text-muted-foreground">
-              第 {pagination.page} / {pagination.totalPages} 页
-            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-muted-foreground">
+                共 {pagination.totalCount} 条记录
+              </p>
+              <PageSizeSelect
+                disabled={isLoading || isNavigating}
+                itemSuffix=" 条"
+                label="每页条数"
+                onValueChange={(pageSize) => replaceListUrl({ pageSize })}
+                options={PAGE_SIZE_OPTIONS}
+                value={requestedPageSize}
+              />
+            </div>
             <PaginationControls
               ariaLabel="用户列表分页"
               className="justify-end"
@@ -1466,6 +1457,7 @@ export function AdminUsersManagement({
                 pagination.page,
                 pagination.totalPages
               )}
+              mobilePageLabel={`第 ${pagination.page} / ${pagination.totalPages} 页`}
               nextLabel="下一页"
               onPageChange={(page) => replaceListUrl({ page })}
               page={pagination.page}
