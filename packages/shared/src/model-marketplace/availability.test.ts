@@ -5,12 +5,11 @@
  * 与自定义模型的显式停用语义。
  */
 import { describe, expect, it } from "vitest";
-
-import { createDefaultModelMarketplaceConfig } from "./contracts";
 import {
   isModelMarketplaceEntryEnabled,
   isModelMarketplaceModelEnabled,
 } from "./availability";
+import { createDefaultModelMarketplaceConfig } from "./contracts";
 
 describe("model marketplace availability", () => {
   it("缺失条目和旧条目默认启用", () => {
@@ -42,15 +41,15 @@ describe("model marketplace availability", () => {
     expect(
       isModelMarketplaceModelEnabled(config, "image", "firefly-gpt-image-2")
     ).toBe(false);
-    expect(
-      isModelMarketplaceModelEnabled(config, "video", "seedance2")
-    ).toBe(false);
+    expect(isModelMarketplaceModelEnabled(config, "video", "seedance2")).toBe(
+      false
+    );
     expect(
       isModelMarketplaceModelEnabled(config, "video", "vendor-video")
     ).toBe(false);
-    expect(
-      isModelMarketplaceModelEnabled(config, "image", "nano-banana")
-    ).toBe(true);
+    expect(isModelMarketplaceModelEnabled(config, "image", "nano-banana")).toBe(
+      true
+    );
   });
 
   it("拒绝空模型和图片 default 占位符", () => {

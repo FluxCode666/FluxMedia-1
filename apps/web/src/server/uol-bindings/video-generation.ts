@@ -70,6 +70,7 @@ import { prepareVideoTaskInputReferences } from "@/features/image-generation/vid
 import { enqueueVideoTask } from "@/server/media-task-queues";
 
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
+import { assertVideoModelEnabled } from "./video-model-availability";
 
 /**
  * 数据库提交后最佳努力投递视频任务。
@@ -215,6 +216,9 @@ bindOperationExecute(videoListCapabilities, (input, principal) =>
     async loadCapabilityOverrides() {
       return getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES");
     },
+    async loadMarketplaceConfig() {
+      return getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG");
+    },
     async listConfiguredModelIds(selection) {
       return (
         await import("@/features/image-backend-pool/runtime-service")
@@ -311,6 +315,8 @@ bindExecute(
           { field: "model" }
         );
       }
+      const modelId = customModel?.modelId ?? input.model;
+      assertVideoModelEnabled(marketplaceConfig, modelId);
       canonicalResult = customModel
         ? resolveCustomVideoGenerateInput(
             { ...input, model: customModel.modelId },
@@ -318,7 +324,7 @@ bindExecute(
           )
         : resolveCanonicalVideoGenerateInput(input, capabilityOverrides);
       modelConfigurationRevision = resolveModelMarketplaceEntry(
-        marketplaceConfig.videoByFamily[customModel?.modelId ?? input.model],
+        marketplaceConfig.videoByFamily[modelId],
         "video"
       ).revision;
     } catch (error) {

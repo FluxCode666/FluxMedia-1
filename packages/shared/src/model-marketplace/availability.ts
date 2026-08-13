@@ -4,15 +4,16 @@
  * 使用方包括图片与视频生成管线、公开模型目录和站内创作页目录。
  * 本模块只解释已严格解析的 MODEL_MARKETPLACE_CONFIG，不读取数据库或运行时设置。
  */
-import {
-  type ModelMarketplaceConfig,
-  type ModelMarketplaceConfigurationCategory,
-  type ModelMarketplaceEntry,
-} from "./contracts";
+
 import {
   normalizeModelMarketplaceImageConfigKey,
   resolveModelMarketplaceVideoFamily,
 } from "./catalog";
+import type {
+  ModelMarketplaceConfig,
+  ModelMarketplaceConfigurationCategory,
+  ModelMarketplaceEntry,
+} from "./contracts";
 
 /**
  * 判断单条模型配置是否允许运行时暴露和调用。
