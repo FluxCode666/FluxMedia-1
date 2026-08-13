@@ -18,7 +18,7 @@ import {
 } from "@repo/ui/components/sheet";
 import { cn } from "@repo/ui/utils";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getOperationsDetailAction } from "./actions";
@@ -26,6 +26,7 @@ import {
   buildOperationsDetailTableModel,
   type OperationsDetailPage,
   type OperationsDetailSelection,
+  type OperationsDetailTableLabels,
   parseOperationsDetailPage,
 } from "./operations-detail-sheet-data";
 import {
@@ -44,14 +45,6 @@ export type OperationsDetailSheetProps = {
   query: OperationsDashboardQueryInput;
   selection: OperationsDetailSelection | null;
   onOpenChange: (open: boolean) => void;
-};
-
-const FAILURE_COPY: Record<OperationsDetailFailure, string> = {
-  validation_error: "当前明细条件无效，请关闭后重新选择。",
-  not_ready: "运营统计起点尚未初始化，暂时无法读取明细。",
-  rate_limited: "明细请求过于频繁，请稍后重试。",
-  timeout: "明细读取超时，请重试。",
-  unavailable: "明细暂不可用，请稍后重试。",
 };
 
 /** 将 Action 层错误或缺失数据收敛为不泄露内部细节的失败状态。 */
@@ -88,6 +81,7 @@ export function OperationsDetailSheet({
   onOpenChange,
 }: OperationsDetailSheetProps) {
   const locale = useLocale();
+  const t = useTranslations("OperationsDashboard");
   const [state, setState] = useState(createOperationsDetailState);
   const stateRef = useRef(state);
   const requestGate = useRef(createOperationsDetailRequestGate());
@@ -146,6 +140,133 @@ export function OperationsDetailSheet({
     void loadPage(false);
   }, [loadPage, open, selection]);
 
+  const labels = useMemo<OperationsDetailTableLabels>(
+    () => ({
+      selection: {
+        users: {
+          title: t("detail.selection.users.title"),
+          description: t("detail.selection.users.description"),
+        },
+        loginActivity: {
+          title: t("detail.selection.login_activity.title"),
+          description: t("detail.selection.login_activity.description"),
+        },
+        creationActivity: {
+          title: t("detail.selection.creation_activity.title"),
+          description: t("detail.selection.creation_activity.description"),
+        },
+        paymentActivity: {
+          title: t("detail.selection.payment_activity.title"),
+          description: t("detail.selection.payment_activity.description"),
+        },
+        retentionCohorts: {
+          title:
+            selection?.module === "growth" &&
+            selection.detail === "retention_cohorts"
+              ? t("detail.selection.retention_cohorts.title", {
+                  date: selection.cohortDate,
+                  day: selection.retentionDay,
+                })
+              : t("detail.selection.retention_cohorts.fallbackTitle"),
+          description:
+            selection?.module === "growth" &&
+            selection.detail === "retention_cohorts"
+              ? t("detail.selection.retention_cohorts.description", {
+                  day: selection.retentionDay,
+                })
+              : t("detail.selection.retention_cohorts.fallbackDescription"),
+        },
+        orders: {
+          title: t("detail.selection.orders.title"),
+          description: t("detail.selection.orders.description"),
+        },
+        paymentLifecycle: {
+          title: t("detail.selection.payment_lifecycle.title"),
+          description: t("detail.selection.payment_lifecycle.description"),
+        },
+        imageOutputs: {
+          title: t("detail.selection.image_outputs.title"),
+          description: t("detail.selection.image_outputs.description"),
+        },
+        videoOutputs: {
+          title: t("detail.selection.video_outputs.title"),
+          description: t("detail.selection.video_outputs.description"),
+        },
+        creditUsage: {
+          title: t("detail.selection.credit_usage.title"),
+          description: t("detail.selection.credit_usage.description"),
+        },
+      },
+      columns: {
+        user: t("detail.columns.user"),
+        email: t("detail.columns.email"),
+        role: t("detail.columns.role"),
+        accountStatus: t("detail.columns.accountStatus"),
+        businessTime: t("detail.columns.businessTime"),
+        retention:
+          selection?.module === "growth" &&
+          selection.detail === "retention_cohorts"
+            ? t("detail.columns.retention", {
+                day: selection.retentionDay,
+              })
+            : t("detail.columns.retentionFallback"),
+        order: t("detail.columns.order"),
+        tradeNumber: t("detail.columns.tradeNumber"),
+        userId: t("detail.columns.userId"),
+        amount: t("detail.columns.amount"),
+        orderStatus: t("detail.columns.orderStatus"),
+        paymentEvent: t("detail.columns.paymentEvent"),
+        createdAt: t("detail.columns.createdAt"),
+        fulfilledAt: t("detail.columns.fulfilledAt"),
+        taskId: t("detail.columns.taskId"),
+        model: t("detail.columns.model"),
+        media: t("detail.columns.media"),
+        quantity: t("detail.columns.quantity"),
+        videoSeconds: t("detail.columns.videoSeconds"),
+        netCredits: t("detail.columns.netCredits"),
+      },
+      values: {
+        unnamedUser: t("detail.values.unnamedUser"),
+        banned: t("detail.values.banned"),
+        normal: t("detail.values.normal"),
+        retained: t("detail.values.retained"),
+        notRetained: t("detail.values.notRetained"),
+        image: t("detail.values.image"),
+        video: t("detail.values.video"),
+        seconds: (value) => t("detail.values.seconds", { value }),
+        emptyValue: t("detail.values.emptyValue"),
+      },
+      roles: {
+        user: t("detail.roles.user"),
+        observer_admin: t("detail.roles.observer_admin"),
+        admin: t("detail.roles.admin"),
+        super_admin: t("detail.roles.super_admin"),
+      },
+      orderStatus: {
+        pending: t("detail.orderStatus.pending"),
+        paid: t("detail.orderStatus.paid"),
+        fulfilled: t("detail.orderStatus.fulfilled"),
+        failed: t("detail.orderStatus.failed"),
+        expired: t("detail.orderStatus.expired"),
+      },
+      paymentEvent: {
+        order_created: t("detail.paymentEvent.order_created"),
+        checkout_ready: t("detail.paymentEvent.checkout_ready"),
+        payment_confirmed: t("detail.paymentEvent.payment_confirmed"),
+        fulfillment_succeeded: t("detail.paymentEvent.fulfillment_succeeded"),
+        checkout_failed: t("detail.paymentEvent.checkout_failed"),
+        fulfillment_attempt_failed: t(
+          "detail.paymentEvent.fulfillment_attempt_failed"
+        ),
+        fulfillment_failed_terminal: t(
+          "detail.paymentEvent.fulfillment_failed_terminal"
+        ),
+        expired: t("detail.paymentEvent.expired"),
+      },
+    }),
+    [selection, t]
+  );
+
   const tableModel = useMemo(() => {
     if (!state.selection || !state.range) return null;
     return buildOperationsDetailTableModel(
@@ -155,16 +276,23 @@ export function OperationsDetailSheet({
         state.rows,
         state.nextCursor
       ),
-      locale
+      locale,
+      labels
     );
-  }, [locale, state.nextCursor, state.range, state.rows, state.selection]);
+  }, [
+    labels,
+    locale,
+    state.nextCursor,
+    state.range,
+    state.rows,
+    state.selection,
+  ]);
 
-  const title = tableModel?.title ?? "运营明细";
-  const description =
-    tableModel?.description ?? "按当前日期范围读取同源核对记录。";
+  const title = tableModel?.title ?? t("detail.defaultTitle");
+  const description = tableModel?.description ?? t("detail.defaultDescription");
   const isInitialLoading = state.status === "loading";
   const isLoadingMore = state.status === "loading_more";
-  const errorMessage = state.error ? FAILURE_COPY[state.error] : null;
+  const errorMessage = state.error ? t(`detail.failure.${state.error}`) : null;
 
   return (
     <Sheet onOpenChange={onOpenChange} open={open}>
@@ -184,19 +312,21 @@ export function OperationsDetailSheet({
 
         <div aria-live="polite" className="sr-only" role="status">
           {isInitialLoading
-            ? "正在加载运营明细"
+            ? t("detail.loading")
             : isLoadingMore
-              ? "正在加载更多运营明细"
+              ? t("detail.loadingMore")
               : (errorMessage ??
                 (state.rows.length > 0
-                  ? `已加载 ${state.rows.length} 条运营明细`
-                  : "运营明细为空"))}
+                  ? t("detail.loaded", { count: state.rows.length })
+                  : t("detail.empty")))}
         </div>
 
         {errorMessage && state.rows.length > 0 ? (
           <div className="flex shrink-0 items-start gap-3 border-b bg-destructive/5 px-5 py-3 text-sm text-destructive sm:px-6">
             <TriangleAlert aria-hidden="true" className="mt-0.5 size-4" />
-            <p className="flex-1">{errorMessage} 已加载记录仍保留。</p>
+            <p className="flex-1">
+              {t("detail.retainedRows", { error: errorMessage })}
+            </p>
           </div>
         ) : null}
 
@@ -207,7 +337,7 @@ export function OperationsDetailSheet({
                 aria-hidden="true"
                 className="mr-2 size-4 animate-spin motion-reduce:animate-none"
               />
-              正在加载明细
+              {t("detail.loadingShort")}
             </div>
           ) : state.status === "error" ? (
             <div className="mx-auto flex min-h-64 max-w-md flex-col items-center justify-center px-6 text-center">
@@ -216,7 +346,7 @@ export function OperationsDetailSheet({
                 className="mb-3 size-6 text-destructive"
               />
               <p className="text-sm text-muted-foreground">
-                {errorMessage ?? FAILURE_COPY.unavailable}
+                {errorMessage ?? t("detail.failure.unavailable")}
               </p>
               <Button
                 className="mt-5 min-h-11"
@@ -225,17 +355,20 @@ export function OperationsDetailSheet({
                 variant="outline"
               >
                 <RefreshCw aria-hidden="true" className="size-4" />
-                重试
+                {t("detail.actions.retry")}
               </Button>
             </div>
           ) : tableModel && tableModel.rows.length === 0 ? (
             <div className="flex min-h-64 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-              当前筛选范围没有可核对的明细记录。
+              {t("detail.emptyRange")}
             </div>
           ) : tableModel ? (
             <table className="w-max min-w-full border-collapse text-sm">
               <caption className="sr-only">
-                {title}，共已加载 {tableModel.rows.length} 条记录
+                {t("detail.caption", {
+                  title,
+                  count: tableModel.rows.length,
+                })}
               </caption>
               <thead className="sticky top-0 z-10 bg-background">
                 <tr className="border-b">
@@ -284,7 +417,9 @@ export function OperationsDetailSheet({
         {tableModel && (state.nextCursor || errorMessage) ? (
           <footer className="flex shrink-0 items-center justify-between gap-3 border-t px-5 py-4 sm:px-6">
             <p className="text-xs text-muted-foreground">
-              已加载 {state.rows.length.toLocaleString(locale)} 条
+              {t("detail.loadedShort", {
+                count: state.rows.length.toLocaleString(locale),
+              })}
             </p>
             {state.nextCursor ? (
               <Button
@@ -301,10 +436,10 @@ export function OperationsDetailSheet({
                   />
                 ) : null}
                 {isLoadingMore
-                  ? "加载中"
+                  ? t("detail.actions.loading")
                   : errorMessage
-                    ? "重试加载更多"
-                    : "加载更多"}
+                    ? t("detail.actions.retryMore")
+                    : t("detail.actions.more")}
               </Button>
             ) : null}
           </footer>

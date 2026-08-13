@@ -111,7 +111,7 @@ export function OperationsDashboardCommercial({
       {lifecycleChart}
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="border-[#1C1C1A]/15 bg-[#F0EFEB] shadow-none">
+        <Card className="shadow-none">
           <CardHeader>
             <CardTitle>{t("commercial.revenue.title")}</CardTitle>
             <CardDescription>
@@ -124,7 +124,7 @@ export function OperationsDashboardCommercial({
                 {t("status.pre_epoch")}
               </p>
             ) : snapshot.revenue.current.length === 0 ? (
-              <p className="text-sm text-[#1C1C1A]/60">
+              <p className="text-sm text-muted-foreground">
                 {t("commercial.revenue.empty")}
               </p>
             ) : (
@@ -135,7 +135,7 @@ export function OperationsDashboardCommercial({
                   );
                   return (
                     <div
-                      className="flex items-baseline justify-between gap-4 border-b border-[#1C1C1A]/10 pb-3 last:border-0 last:pb-0"
+                      className="flex items-baseline justify-between gap-4 border-b pb-3 last:border-0 last:pb-0"
                       key={amount.currency}
                     >
                       <dt className="text-sm font-semibold">
@@ -149,7 +149,7 @@ export function OperationsDashboardCommercial({
                             locale
                           )}
                         </p>
-                        <p className="mt-1 text-xs text-[#1C1C1A]/60">
+                        <p className="mt-1 text-xs text-muted-foreground">
                           {comparison?.status === "value"
                             ? `${comparison.changePercent > 0 ? "+" : ""}${comparison.changePercent.toLocaleString(locale, { maximumFractionDigits: 1 })}%`
                             : unavailable}
@@ -160,7 +160,7 @@ export function OperationsDashboardCommercial({
                 })}
               </dl>
             )}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#1C1C1A]/10 pt-3 text-xs text-[#1C1C1A]/60">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
               <span>{t("commercial.revenue.disclaimer")}</span>
               <Button
                 onClick={openOrders}

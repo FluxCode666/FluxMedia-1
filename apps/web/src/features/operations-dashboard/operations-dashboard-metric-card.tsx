@@ -37,33 +37,28 @@ export function OperationsMetricCard({
   action,
 }: OperationsMetricCardProps) {
   return (
-    <Card className="gap-4 border-[#1C1C1A]/15 bg-[#F0EFEB] py-5 shadow-none">
+    <Card className="gap-4 py-5 shadow-none">
       <CardHeader className="gap-2 px-5">
         <div className="flex items-start justify-between gap-3">
-          <CardTitle className="text-sm font-semibold text-[#1C1C1A]">
-            {title}
-          </CardTitle>
+          <CardTitle className="text-sm font-semibold">{title}</CardTitle>
           {statusLabel ? (
-            <Badge
-              className="border-[#1C1C1A]/15 bg-transparent text-[#1C1C1A]"
-              variant="outline"
-            >
+            <Badge className="bg-transparent" variant="outline">
               {statusLabel}
             </Badge>
           ) : null}
         </div>
-        <CardDescription className="text-xs leading-relaxed text-[#1C1C1A]/60">
+        <CardDescription className="text-xs leading-relaxed">
           {description}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 px-5">
         <div
-          className="font-mono text-3xl font-extrabold tabular-nums tracking-tight text-[#1C1C1A]"
+          className="font-mono text-3xl font-extrabold tabular-nums tracking-tight"
           data-status={status}
         >
           {value}
         </div>
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2 text-xs text-[#1C1C1A]/65">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>{comparison}</span>
           {action}
         </div>

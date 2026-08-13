@@ -17,10 +17,14 @@ import {
   operationsRetryExportInputSchema,
 } from "@repo/shared/operations-dashboard/contracts";
 import { adminAction, protectedAction } from "@repo/shared/safe-action";
-import { invokeOperation, OperationError } from "@repo/shared/uol";
+import { invokeOperation } from "@repo/shared/uol";
 
 import { ensureUolInitialized } from "@/server/uol-init";
 
+import {
+  mapOperationsActionError,
+  type OperationsDashboardActionFailure,
+} from "./action-result";
 import { tryRecordDashboardWebVisit } from "./dashboard-web-visit";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 
@@ -44,29 +48,6 @@ export const recordDashboardWebVisitAction = protectedAction
       ? { status: "recorded", appDate: result.appDate }
       : { status: "unavailable" };
   });
-
-/** 将运营读取失败转换为页面可区分、但不泄露内部细节的状态。 */
-export type OperationsDashboardActionFailure =
-  | "validation_error"
-  | "not_ready"
-  | "rate_limited"
-  | "timeout"
-  | "unavailable";
-
-function mapOperationsActionError(
-  error: unknown
-): OperationsDashboardActionFailure {
-  if (!(error instanceof OperationError)) return "unavailable";
-  switch (error.code) {
-    case "validation_error":
-    case "not_ready":
-    case "rate_limited":
-    case "timeout":
-      return error.code;
-    default:
-      return "unavailable";
-  }
-}
 
 /** 客户端刷新只接收完整新快照或安全失败码，不接收半成品模块。 */
 export type OperationsDashboardOverviewActionResult =
@@ -161,4 +142,4 @@ export const prepareOperationsExportDownloadAction = adminAction
     });
   });
 
-export { mapOperationsActionError };
+export type { OperationsDashboardActionFailure } from "./action-result";

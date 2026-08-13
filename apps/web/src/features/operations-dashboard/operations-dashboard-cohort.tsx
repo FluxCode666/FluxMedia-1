@@ -43,7 +43,7 @@ function formatRetentionCell(
   return labels.noData;
 }
 
-/** 渲染可逐 Cohort 下钻的固定高度留存矩阵。 */
+/** 渲染可逐 Cohort 下钻的固定高度留存核对表。 */
 export function OperationsDashboardCohort({
   cohorts,
   onOpenDetail,
@@ -57,21 +57,21 @@ export function OperationsDashboardCohort({
   };
 
   return (
-    <Card className="border-[#1C1C1A]/15 bg-[#F0EFEB] shadow-none">
+    <Card className="shadow-none">
       <CardHeader>
         <CardTitle>{t("growth.cohort.title")}</CardTitle>
         <CardDescription>{t("growth.cohort.description")}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="max-h-[28rem] overflow-auto rounded-xl border border-[#1C1C1A]/15">
+        <div className="max-h-[28rem] overflow-auto rounded-xl border">
           <table className="w-full min-w-[42rem] border-collapse text-sm">
             <caption className="sr-only">
               {t("growth.cohort.description")}
             </caption>
-            <thead className="sticky top-0 z-20 bg-[#F0EFEB]">
-              <tr className="border-b border-[#1C1C1A]/15">
+            <thead className="sticky top-0 z-20 bg-background">
+              <tr className="border-b">
                 <th
-                  className="sticky left-0 z-30 bg-[#F0EFEB] px-4 py-3 text-left text-xs font-semibold"
+                  className="sticky left-0 z-30 bg-background px-4 py-3 text-left text-xs font-semibold"
                   scope="col"
                 >
                   {t("growth.cohort.date")}
@@ -95,12 +95,9 @@ export function OperationsDashboardCohort({
             </thead>
             <tbody>
               {cohorts.map((cohort) => (
-                <tr
-                  className="border-b border-[#1C1C1A]/10 last:border-0"
-                  key={cohort.cohortDate}
-                >
+                <tr className="border-b last:border-0" key={cohort.cohortDate}>
                   <th
-                    className="sticky left-0 z-10 whitespace-nowrap bg-[#F0EFEB] px-4 py-3 text-left font-medium"
+                    className="sticky left-0 z-10 whitespace-nowrap bg-background px-4 py-3 text-left font-medium"
                     scope="row"
                   >
                     {formatOperationsDate(cohort.cohortDate, locale)}
@@ -115,7 +112,8 @@ export function OperationsDashboardCohort({
                         <Button
                           className={cn(
                             "h-9 min-w-24 justify-end font-mono tabular-nums shadow-none",
-                            retention.status !== "value" && "text-[#1C1C1A]/55"
+                            retention.status !== "value" &&
+                              "text-muted-foreground"
                           )}
                           disabled={retention.status === "pre_epoch"}
                           onClick={() =>

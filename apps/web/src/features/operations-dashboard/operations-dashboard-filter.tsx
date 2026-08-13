@@ -135,7 +135,7 @@ export function OperationsDashboardFilter({
         <Popover onOpenChange={setIsOpen} open={isOpen}>
           <PopoverTrigger asChild>
             <Button
-              className="min-h-11 justify-start gap-2 bg-[#F0EFEB] text-[#1C1C1A] shadow-none"
+              className="min-h-11 justify-start gap-2 shadow-none"
               disabled={disabled}
               type="button"
               variant="outline"

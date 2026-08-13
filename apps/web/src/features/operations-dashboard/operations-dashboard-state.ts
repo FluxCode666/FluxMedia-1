@@ -6,7 +6,7 @@
  */
 import type { OperationsDashboardQueryInput } from "@repo/shared/operations-dashboard/contracts";
 
-import type { OperationsDashboardActionFailure } from "./actions";
+import type { OperationsDashboardActionFailure } from "./action-result";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 
 export type OperationsDashboardRequestStatus =

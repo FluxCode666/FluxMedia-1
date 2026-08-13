@@ -6,7 +6,6 @@
  * 媒体链接、支付 provider payload 等核对范围外字段。
  */
 
-import { getUserRoleLabel } from "@repo/shared/auth/roles";
 import { amountMinorToMajor } from "@repo/shared/credits/top-up";
 import {
   type OperationsDetailOutput,
@@ -88,6 +87,73 @@ export type OperationsDetailTableModel = {
   description: string;
   columns: OperationsDetailColumn[];
   rows: OperationsDetailTableRow[];
+};
+
+type OperationsDetailSelectionCopy = {
+  title: string;
+  description: string;
+};
+
+/**
+ * 明细展示模型需要的全部本地化文本。
+ *
+ * 使用方：`operations-detail-sheet.tsx` 在当前 locale 下构造，DB-free 测试可注入固定
+ * 文案；动态 Cohort 标题和秒数单位由调用方使用 ICU 规则完成，不在数据模块猜语言。
+ */
+export type OperationsDetailTableLabels = {
+  selection: {
+    users: OperationsDetailSelectionCopy;
+    loginActivity: OperationsDetailSelectionCopy;
+    creationActivity: OperationsDetailSelectionCopy;
+    paymentActivity: OperationsDetailSelectionCopy;
+    retentionCohorts: OperationsDetailSelectionCopy;
+    orders: OperationsDetailSelectionCopy;
+    paymentLifecycle: OperationsDetailSelectionCopy;
+    imageOutputs: OperationsDetailSelectionCopy;
+    videoOutputs: OperationsDetailSelectionCopy;
+    creditUsage: OperationsDetailSelectionCopy;
+  };
+  columns: {
+    user: string;
+    email: string;
+    role: string;
+    accountStatus: string;
+    businessTime: string;
+    retention: string;
+    order: string;
+    tradeNumber: string;
+    userId: string;
+    amount: string;
+    orderStatus: string;
+    paymentEvent: string;
+    createdAt: string;
+    fulfilledAt: string;
+    taskId: string;
+    model: string;
+    media: string;
+    quantity: string;
+    videoSeconds: string;
+    netCredits: string;
+  };
+  values: {
+    unnamedUser: string;
+    banned: string;
+    normal: string;
+    retained: string;
+    notRetained: string;
+    image: string;
+    video: string;
+    seconds: (value: string) => string;
+    emptyValue: string;
+  };
+  roles: {
+    user: string;
+    observer_admin: string;
+    admin: string;
+    super_admin: string;
+  };
+  orderStatus: Record<string, string>;
+  paymentEvent: Record<string, string>;
 };
 
 /** 使用稳定 JSON 表达比较封闭 selection，不依赖对象引用。 */
@@ -172,93 +238,45 @@ function formatAmount(
   }
 }
 
-/** 将数据库角色转换为管理员熟悉的中文标签，未知角色仍原样展示便于核对。 */
-function formatRole(role: string): string {
-  return ["user", "observer_admin", "admin", "super_admin"].includes(role)
-    ? getUserRoleLabel(role)
-    : role;
+/** 使用本地化角色映射；未知角色保留数据库原值，便于管理员核对异常数据。 */
+function formatRole(
+  role: string,
+  labels: OperationsDetailTableLabels["roles"]
+): string {
+  return role in labels ? labels[role as keyof typeof labels] : role;
 }
 
-const PAYMENT_EVENT_LABELS: Record<string, string> = {
-  order_created: "订单已创建",
-  checkout_ready: "结账已就绪",
-  payment_confirmed: "支付已确认",
-  fulfillment_succeeded: "履约成功",
-  checkout_failed: "结账失败",
-  fulfillment_attempt_failed: "履约尝试失败",
-  fulfillment_failed_terminal: "履约终止失败",
-  expired: "已过期",
-};
-
-const ORDER_STATUS_LABELS: Record<string, string> = {
-  pending: "待支付",
-  paid: "已支付",
-  fulfilled: "已履约",
-  failed: "失败",
-  expired: "已过期",
-};
-
 /** 返回各 selection 的用户可见标题和口径说明。 */
-function getSelectionCopy(selection: OperationsDetailSelection): {
-  title: string;
-  description: string;
-} {
+function getSelectionCopy(
+  selection: OperationsDetailSelection,
+  labels: OperationsDetailTableLabels["selection"]
+): OperationsDetailSelectionCopy {
   if (selection.module === "growth") {
     switch (selection.detail) {
       case "users":
-        return {
-          title: "新增用户明细",
-          description: "按注册业务时间列出范围内新增账户。",
-        };
+        return labels.users;
       case "login_activity":
-        return {
-          title: "登录活跃用户明细",
-          description: "每位范围内实际访问平台的用户只列一行。",
-        };
+        return labels.loginActivity;
       case "creation_activity":
-        return {
-          title: "创作活跃用户明细",
-          description: "每位范围内成功生图或生视频的用户只列一行。",
-        };
+        return labels.creationActivity;
       case "payment_activity":
-        return {
-          title: "付费活跃用户明细",
-          description: "每位范围内成功充值的用户只列一行。",
-        };
+        return labels.paymentActivity;
       case "retention_cohorts":
-        return {
-          title: `${selection.cohortDate} Cohort D${selection.retentionDay} 明细`,
-          description: `核对注册日用户在第 ${selection.retentionDay} 个自然日当天是否成功创作。`,
-        };
+        return labels.retentionCohorts;
     }
   }
   if (selection.module === "commercialization") {
     return selection.detail === "orders"
-      ? {
-          title: "订单明细",
-          description: "按订单创建业务时间核对充值订单，不含线下退款。",
-        }
-      : {
-          title: "支付生命周期明细",
-          description: "按不可变支付事件核对订单创建、支付和履约阶段。",
-        };
+      ? labels.orders
+      : labels.paymentLifecycle;
   }
   switch (selection.detail) {
     case "image_outputs":
-      return {
-        title: "生图明细",
-        description: "仅列成功图片产物，不包含提示词或媒体链接。",
-      };
+      return labels.imageOutputs;
     case "video_outputs":
-      return {
-        title: "视频明细",
-        description: "仅列成功视频产物及视频秒数。",
-      };
+      return labels.videoOutputs;
     case "credit_usage":
-      return {
-        title: "成功积分净用量明细",
-        description: "按成功产物稳定关联后的实际净积分核对。",
-      };
+      return labels.creditUsage;
   }
 }
 
@@ -266,7 +284,8 @@ function getSelectionCopy(selection: OperationsDetailSelection): {
 function buildGrowthTableModel(
   page: OperationsDetailPage,
   locale: string,
-  timeZone: string
+  timeZone: string,
+  labels: OperationsDetailTableLabels
 ): Pick<OperationsDetailTableModel, "columns" | "rows"> {
   const retentionDay =
     page.selection.module === "growth" &&
@@ -274,13 +293,13 @@ function buildGrowthTableModel(
       ? page.selection.retentionDay
       : null;
   const columns: OperationsDetailColumn[] = [
-    { key: "user", label: "用户" },
-    { key: "email", label: "完整邮箱" },
-    { key: "role", label: "角色" },
-    { key: "status", label: "账号状态" },
-    { key: "businessTime", label: "业务时间" },
+    { key: "user", label: labels.columns.user },
+    { key: "email", label: labels.columns.email },
+    { key: "role", label: labels.columns.role },
+    { key: "status", label: labels.columns.accountStatus },
+    { key: "businessTime", label: labels.columns.businessTime },
     ...(retentionDay
-      ? [{ key: "retained", label: `D${retentionDay} 留存` }]
+      ? [{ key: "retained", label: labels.columns.retention }]
       : []),
   ];
   return {
@@ -288,12 +307,14 @@ function buildGrowthTableModel(
     rows: (page.rows as OperationsGrowthDetailRow[]).map((row) => ({
       key: row.userId,
       cells: [
-        `${row.name || "未命名用户"}\n${row.userId}`,
+        `${row.name || labels.values.unnamedUser}\n${row.userId}`,
         row.email,
-        formatRole(row.role),
-        row.banned ? "已封禁" : "正常",
+        formatRole(row.role, labels.roles),
+        row.banned ? labels.values.banned : labels.values.normal,
         formatDateTime(row.businessTime, locale, timeZone),
-        ...(retentionDay ? [row.retained ? "已留存" : "未留存"] : []),
+        ...(retentionDay
+          ? [row.retained ? labels.values.retained : labels.values.notRetained]
+          : []),
       ],
     })),
   };
@@ -303,42 +324,45 @@ function buildGrowthTableModel(
 function buildCommercialTableModel(
   page: OperationsDetailPage,
   locale: string,
-  timeZone: string
+  timeZone: string,
+  labels: OperationsDetailTableLabels
 ): Pick<OperationsDetailTableModel, "columns" | "rows"> {
   const isLifecycle =
     page.selection.module === "commercialization" &&
     page.selection.detail === "payment_lifecycle";
   return {
     columns: [
-      { key: "order", label: "平台订单" },
-      { key: "trade", label: "渠道交易号" },
-      { key: "user", label: "用户 ID" },
-      { key: "amount", label: "金额", numeric: true },
-      { key: "status", label: "订单状态" },
-      ...(isLifecycle ? [{ key: "event", label: "支付事件" }] : []),
-      { key: "createdAt", label: "创建时间" },
-      { key: "fulfilledAt", label: "履约时间" },
-      { key: "businessTime", label: "业务时间" },
+      { key: "order", label: labels.columns.order },
+      { key: "trade", label: labels.columns.tradeNumber },
+      { key: "user", label: labels.columns.userId },
+      { key: "amount", label: labels.columns.amount, numeric: true },
+      { key: "status", label: labels.columns.orderStatus },
+      ...(isLifecycle
+        ? [{ key: "event", label: labels.columns.paymentEvent }]
+        : []),
+      { key: "createdAt", label: labels.columns.createdAt },
+      { key: "fulfilledAt", label: labels.columns.fulfilledAt },
+      { key: "businessTime", label: labels.columns.businessTime },
     ],
     rows: (page.rows as OperationsCommercialDetailRow[]).map((row) => ({
       key: `${row.paymentOrderId}:${row.businessTime}:${row.eventType ?? "order"}`,
       cells: [
         row.paymentOrderId,
-        row.providerTradeNo ?? "—",
+        row.providerTradeNo ?? labels.values.emptyValue,
         row.userId,
         formatAmount(row.amountMinor, row.currency, locale),
-        ORDER_STATUS_LABELS[row.orderStatus] ?? row.orderStatus,
+        labels.orderStatus[row.orderStatus] ?? row.orderStatus,
         ...(isLifecycle
           ? [
               row.eventType
-                ? (PAYMENT_EVENT_LABELS[row.eventType] ?? row.eventType)
-                : "—",
+                ? (labels.paymentEvent[row.eventType] ?? row.eventType)
+                : labels.values.emptyValue,
             ]
           : []),
         formatDateTime(row.createdAt, locale, timeZone),
         row.fulfilledAt
           ? formatDateTime(row.fulfilledAt, locale, timeZone)
-          : "—",
+          : labels.values.emptyValue,
         formatDateTime(row.businessTime, locale, timeZone),
       ],
     })),
@@ -349,18 +373,19 @@ function buildCommercialTableModel(
 function buildContentTableModel(
   page: OperationsDetailPage,
   locale: string,
-  timeZone: string
+  timeZone: string,
+  labels: OperationsDetailTableLabels
 ): Pick<OperationsDetailTableModel, "columns" | "rows"> {
   return {
     columns: [
-      { key: "task", label: "任务 ID" },
-      { key: "user", label: "用户 ID" },
-      { key: "model", label: "模型" },
-      { key: "media", label: "媒体" },
-      { key: "quantity", label: "数量", numeric: true },
-      { key: "seconds", label: "视频秒数", numeric: true },
-      { key: "credits", label: "净积分", numeric: true },
-      { key: "businessTime", label: "业务时间" },
+      { key: "task", label: labels.columns.taskId },
+      { key: "user", label: labels.columns.userId },
+      { key: "model", label: labels.columns.model },
+      { key: "media", label: labels.columns.media },
+      { key: "quantity", label: labels.columns.quantity, numeric: true },
+      { key: "seconds", label: labels.columns.videoSeconds, numeric: true },
+      { key: "credits", label: labels.columns.netCredits, numeric: true },
+      { key: "businessTime", label: labels.columns.businessTime },
     ],
     rows: (page.rows as OperationsContentDetailRow[]).map((row) => ({
       key: `${row.mediaType}:${row.taskId}`,
@@ -368,9 +393,9 @@ function buildContentTableModel(
         row.taskId,
         row.userId,
         row.model,
-        row.mediaType === "image" ? "图片" : "视频",
+        row.mediaType === "image" ? labels.values.image : labels.values.video,
         row.quantity.toLocaleString(locale),
-        `${row.videoSeconds.toLocaleString(locale)} 秒`,
+        labels.values.seconds(row.videoSeconds.toLocaleString(locale)),
         row.netCredits.toLocaleString(locale, {
           maximumFractionDigits: 2,
         }),
@@ -385,19 +410,21 @@ function buildContentTableModel(
  *
  * @param page 当前 selection 下累计的安全记录。
  * @param locale 管理员页面 locale。
+ * @param labels 当前 locale 下完整的标题、列名、枚举值和单位文案。
  * @returns 稳定标题、口径、列及文本单元格；不产生 HTML。
  */
 export function buildOperationsDetailTableModel(
   page: OperationsDetailPage,
-  locale: string
+  locale: string,
+  labels: OperationsDetailTableLabels
 ): OperationsDetailTableModel {
-  const copy = getSelectionCopy(page.selection);
+  const copy = getSelectionCopy(page.selection, labels.selection);
   const timeZone = resolveTimeZone(page.range);
   const table =
     page.selection.module === "growth"
-      ? buildGrowthTableModel(page, locale, timeZone)
+      ? buildGrowthTableModel(page, locale, timeZone, labels)
       : page.selection.module === "commercialization"
-        ? buildCommercialTableModel(page, locale, timeZone)
-        : buildContentTableModel(page, locale, timeZone);
+        ? buildCommercialTableModel(page, locale, timeZone, labels)
+        : buildContentTableModel(page, locale, timeZone, labels);
   return { ...copy, ...table };
 }
