@@ -336,9 +336,10 @@ async function readSeriesWhenAvailable(
 export async function buildOperationsContentSnapshot(
   input: OperationsDashboardQueryInput | unknown,
   timeZone: string,
-  reader: OperationsContentSnapshotReader
+  reader: OperationsContentSnapshotReader,
+  sharedHeader?: OperationsContentSnapshotHeader
 ): Promise<OperationsContentSnapshot> {
-  const header = await reader.readHeader();
+  const header = sharedHeader ?? (await reader.readHeader());
   assertContentReadiness(header);
 
   let range: ResolvedOperationsDashboardRange;

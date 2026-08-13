@@ -28,7 +28,10 @@ import {
   type OperationsCommercialRevenueRow,
   type OperationsCommercialSnapshotReader,
 } from "./commercial-repository";
-import type { OperationsGrowthRangeQuery } from "./growth-repository";
+import type {
+  OperationsGrowthRangeQuery,
+  OperationsGrowthSnapshotHeader,
+} from "./growth-repository";
 
 /** 商业化服务对 UOL binding 暴露的稳定错误类别。 */
 export type OperationsCommercialServiceErrorCode =
@@ -284,9 +287,10 @@ function toRangeQuery(input: {
 export async function buildOperationsCommercialSnapshot(
   input: OperationsDashboardQueryInput | unknown,
   timeZone: string,
-  reader: OperationsCommercialSnapshotReader
+  reader: OperationsCommercialSnapshotReader,
+  sharedHeader?: OperationsGrowthSnapshotHeader
 ): Promise<OperationsCommercialSnapshot> {
-  const header = await reader.readHeader();
+  const header = sharedHeader ?? (await reader.readHeader());
   if (!header.epoch) {
     throw new OperationsCommercialServiceError(
       "not_ready",

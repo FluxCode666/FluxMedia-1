@@ -35,6 +35,7 @@ import {
   type OperationsGrowthRangeQuery,
   type OperationsGrowthRepository,
   type OperationsGrowthSeriesRow,
+  type OperationsGrowthSnapshotHeader,
   type OperationsGrowthSnapshotReader,
 } from "./growth-repository";
 
@@ -294,9 +295,10 @@ function createRetentionMetric(
 export async function buildOperationsGrowthSnapshot(
   input: OperationsDashboardQueryInput | unknown,
   timeZone: string,
-  reader: OperationsGrowthSnapshotReader
+  reader: OperationsGrowthSnapshotReader,
+  sharedHeader?: OperationsGrowthSnapshotHeader
 ): Promise<OperationsGrowthSnapshot> {
-  const header = await reader.readHeader();
+  const header = sharedHeader ?? (await reader.readHeader());
   if (!header.epoch) {
     throw new OperationsGrowthServiceError(
       "not_ready",
