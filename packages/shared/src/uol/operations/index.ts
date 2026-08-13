@@ -78,6 +78,7 @@ export {
 export {
   imageGenerate,
   imageGetAdminHistoryRequestSnapshot,
+  imageMaintainHistoryCountProjection,
 } from "./image-generation";
 export {
   mediaLimitsGetEffective,

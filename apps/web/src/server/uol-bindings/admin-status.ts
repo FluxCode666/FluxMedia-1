@@ -12,11 +12,17 @@ import type {
 } from "@repo/shared/image-generation/admin-status-errors-contract";
 import { bindOperationExecute } from "@repo/shared/uol";
 import { listAdminStatusErrors } from "@repo/shared/uol/operations";
-import { and, count, desc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
+import { z } from "zod";
 import {
   classifyGenerationError,
   type GenerationErrorCategory,
 } from "@/features/image-generation/sla";
+import { extractExecuteRows } from "@/server/database-result";
+
+const statusErrorCountRowSchema = z.object({
+  totalCount: z.coerce.number().int().nonnegative().safe(),
+});
 
 /** 根据 UOL 已校验的绝对时间边界构造失败记录条件。 */
 function buildAdminStatusErrorWhere(input: AdminStatusErrorListInput) {
@@ -34,11 +40,21 @@ async function executeListAdminStatusErrors(
   const where = buildAdminStatusErrorWhere(input);
   const result = await db.transaction(
     async (tx) => {
-      const totalRows = await tx
-        .select({ totalCount: count() })
-        .from(generation)
-        .where(where);
-      const totalCount = totalRows[0]?.totalCount ?? 0;
+      const totalRows = await tx.execute(sql`
+        select media_history_exact_count(
+          'global',
+          '',
+          'image',
+          'failed',
+          null,
+          ${input.fromDate},
+          ${input.toDate ? sql`${input.toDate} + interval '1 microsecond'` : null},
+          'infinity'::timestamp
+        ) as "totalCount"
+      `);
+      const totalCount = statusErrorCountRowSchema.parse(
+        extractExecuteRows(totalRows)[0]
+      ).totalCount;
       const totalPages = Math.max(1, Math.ceil(totalCount / input.pageSize));
       const page = Math.min(input.page, totalPages);
       const rows = await tx

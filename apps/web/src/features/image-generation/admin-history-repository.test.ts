@@ -20,6 +20,7 @@ const { execute, transaction } = vi.hoisted(() => ({
 vi.mock("@repo/database", () => ({ db: { execute, transaction } }));
 
 import {
+  buildAdminHistoryCountSql,
   buildAdminHistoryListSql,
   buildAdminHistoryModelOptionsSql,
   buildAdminHistoryRequestSnapshotSql,
@@ -126,6 +127,22 @@ describe("admin history repository SQL", () => {
       isolationLevel: "repeatable read",
       accessMode: "read only",
     });
+  });
+
+  it("resolves filtered email ownership before reading exact projection totals", () => {
+    const filtered = new PgDialect().sqlToQuery(
+      buildAdminHistoryCountSql(baseQuery)
+    );
+    const global = new PgDialect().sqlToQuery(
+      buildAdminHistoryCountSql({ ...baseQuery, userEmail: null })
+    );
+
+    expect(filtered.sql).toContain("media_history_exact_count");
+    expect(filtered.sql).toContain('from "user" u');
+    expect(filtered.sql).not.toContain("count(*)");
+    expect(filtered.sql).toContain("'owner'");
+    expect(filtered.params).toContain("member@example.com");
+    expect(global.sql).toContain("'global'");
   });
 
   it("builds a bounded global image/video union with an email join", () => {

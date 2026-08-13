@@ -20,6 +20,7 @@ const { execute, transaction } = vi.hoisted(() => ({
 vi.mock("@repo/database", () => ({ db: { execute, transaction } }));
 
 import {
+  buildHistoryCountSql,
   buildHistoryListSql,
   buildHistoryModelOptionsSql,
   databaseHistoryRepository,
@@ -119,6 +120,19 @@ describe("history repository SQL", () => {
       isolationLevel: "repeatable read",
       accessMode: "read only",
     });
+  });
+
+  it("reads exact totals from the owner count projection", () => {
+    const compiled = new PgDialect().sqlToQuery(
+      buildHistoryCountSql(baseQuery)
+    );
+
+    expect(compiled.sql).toContain("media_history_exact_count");
+    expect(compiled.sql).not.toContain("count(*)");
+    expect(compiled.sql).toContain("'owner'");
+    expect(compiled.params).toContain("user-1");
+    expect(compiled.params).toContain("completed");
+    expect(compiled.params).toContain("gpt-image-2");
   });
 
   it("builds one bounded parameterized image/video union", () => {

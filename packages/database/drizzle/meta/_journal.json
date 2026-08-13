@@ -631,6 +631,13 @@
       "when": 1786592400000,
       "tag": "0089_gallery_card_cursor_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1786600800000,
+      "tag": "0090_media_history_count_projection",
+      "breakpoints": true
     }
   ]
 }

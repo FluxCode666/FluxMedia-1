@@ -344,24 +344,21 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
  */
 export function buildAdminHistoryCountSql(input: AdminHistoryCountQuery): SQL {
   return sql`
-    select (
-      select count(*)
-      from generation g
-      inner join "user" u on u.id = g.user_id
-      where ${booleanSql(input.type === null || input.type === "image")}
-        and ${buildDatePredicate(input, sql`g.created_at`)}
-        and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
-        and ${buildModelPredicate(input.model, sql`g.model`)}
-        and ${buildImageStatusPredicate(input.status, sql`g.status`)}
-    ) + (
-      select count(*)
-      from video_generation v
-      inner join "user" u on u.id = v.user_id
-      where ${booleanSql(input.type === null || input.type === "video")}
-        and ${buildDatePredicate(input, sql`v.created_at`)}
-        and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
-        and ${buildModelPredicate(input.model, sql`v.model`)}
-        and ${buildVideoStatusPredicate(input.status, sql`v.status`)}
+    select media_history_exact_count(
+      ${input.userEmail === null ? sql`'global'` : sql`'owner'`},
+      coalesce((
+        select u.id::text
+        from "user" u
+        where ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
+          and ${booleanSql(input.userEmail !== null)}
+        limit 1
+      ), ''),
+      ${input.type},
+      ${input.status},
+      ${input.model},
+      ${input.start},
+      ${input.end},
+      ${input.asOf}
     ) as total_count
   `;
 }

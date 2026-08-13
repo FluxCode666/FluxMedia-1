@@ -520,6 +520,36 @@ export const imageGetAdminHistoryRequestSnapshot = defineOperation({
 });
 
 // ---------------------------------------------------------------------------
+// 6c. image.maintainHistoryCountProjection - 系统对账或幂等重建精确计数投影
+// ---------------------------------------------------------------------------
+export const imageMaintainHistoryCountProjection = defineOperation({
+  name: "image.maintainHistoryCountProjection",
+  domain: "image-generation",
+  title: "维护生成历史精确计数投影",
+  description:
+    "仅供系统发布门和运维任务调用。校验图片/视频历史计数投影漂移，或从权威事实幂等重建后再次校验。",
+  input: z
+    .object({
+      mode: z.enum(["verify", "rebuild"]),
+    })
+    .strict(),
+  output: z.object({
+    driftCount: z.number().int().nonnegative(),
+    rebuilt: z.boolean(),
+  }),
+  access: { kind: "system" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  hasMaintenanceWrite: true,
+  execute: async () => {
+    throw new Error("Not yet wired: image.maintainHistoryCountProjection");
+  },
+});
+
+// ---------------------------------------------------------------------------
 // 7. image.getUserGenerations - 用户生成历史（分页）
 // 语义只读，可能触发过期 pending 清理（维护性写入）
 // ---------------------------------------------------------------------------

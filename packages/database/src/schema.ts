@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -2681,6 +2682,51 @@ export const generation = pgTable(
 export type Generation = typeof generation.$inferSelect;
 export type NewGeneration = typeof generation.$inferInsert;
 export type GenerationStatus = (typeof generationStatusEnum.enumValues)[number];
+
+/**
+ * 图片/视频历史精确计数投影。
+ *
+ * 触发器和重建函数由 0090 手写迁移维护；应用只读此表，不直接写入。空字符串是
+ * global scope 的固定 owner 占位，0001-01-01 是 all-time bucket 的固定日期占位。
+ */
+export const mediaHistoryCountProjection = pgTable(
+  "media_history_count_projection",
+  {
+    scopeKind: text("scope_kind").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    visibilityState: text("visibility_state").notNull(),
+    mediaType: text("media_type").notNull(),
+    status: text("status").notNull(),
+    model: text("model").notNull(),
+    bucketKind: text("bucket_kind").notNull(),
+    utcDay: date("utc_day").notNull(),
+    recordCount: bigint("record_count", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "media_history_count_projection_pk",
+      columns: [
+        table.scopeKind,
+        table.ownerUserId,
+        table.visibilityState,
+        table.mediaType,
+        table.status,
+        table.model,
+        table.bucketKind,
+        table.utcDay,
+      ],
+    }),
+    index("media_history_count_projection_owner_lookup_idx").on(
+      table.scopeKind,
+      table.ownerUserId,
+      table.bucketKind,
+      table.utcDay,
+      table.mediaType,
+      table.status,
+      table.model
+    ),
+  ]
+);
 
 // ============================================
 // 工单系统类型导出

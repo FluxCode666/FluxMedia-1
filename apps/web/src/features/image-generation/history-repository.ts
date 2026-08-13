@@ -278,22 +278,15 @@ export function buildHistoryListSql(input: HistoryListQuery): SQL {
  */
 export function buildHistoryCountSql(input: HistoryCountQuery): SQL {
   return sql`
-    select (
-      select count(*)
-      from generation g
-      where g.user_id = ${input.userId}
-        and ${booleanSql(input.type === null || input.type === "image")}
-        and ${buildDatePredicate(input, sql`g.created_at`)}
-        and ${buildModelPredicate(input.model, sql`g.model`)}
-        and ${buildImageStatusPredicate(input.status, sql`g.status`)}
-    ) + (
-      select count(*)
-      from video_generation v
-      where v.user_id = ${input.userId}
-        and ${booleanSql(input.type === null || input.type === "video")}
-        and ${buildDatePredicate(input, sql`v.created_at`)}
-        and ${buildModelPredicate(input.model, sql`v.model`)}
-        and ${buildVideoStatusPredicate(input.status, sql`v.status`)}
+    select media_history_exact_count(
+      'owner',
+      ${input.userId},
+      ${input.type},
+      ${input.status},
+      ${input.model},
+      ${input.start},
+      ${input.end},
+      ${input.asOf}
     ) as total_count
   `;
 }
