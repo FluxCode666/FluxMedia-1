@@ -68,18 +68,31 @@ function mapOperationsActionError(
   }
 }
 
+/** 客户端刷新只接收完整新快照或安全失败码，不接收半成品模块。 */
+export type OperationsDashboardOverviewActionResult =
+  | { status: "ready"; snapshot: OperationsDashboardOverview }
+  | { status: OperationsDashboardActionFailure };
+
 /** 读取管理员运营总览；输入和输出都由共享 operation schema 约束。 */
 export const getOperationsOverviewAction = adminAction
   .metadata({ action: "operations.getOverview" })
   .schema(operationsGetOverviewInputSchema)
   .action(
-    async ({ parsedInput, ctx }): Promise<OperationsDashboardOverview> => {
-      await ensureUolInitialized();
-      return invokeOperation<OperationsDashboardOverview>(
-        "operations.getOverview",
-        parsedInput,
-        { type: "user", userId: ctx.userId, role: ctx.role }
-      );
+    async ({
+      parsedInput,
+      ctx,
+    }): Promise<OperationsDashboardOverviewActionResult> => {
+      try {
+        await ensureUolInitialized();
+        const snapshot = await invokeOperation<OperationsDashboardOverview>(
+          "operations.getOverview",
+          parsedInput,
+          { type: "user", userId: ctx.userId, role: ctx.role }
+        );
+        return { status: "ready", snapshot };
+      } catch (error) {
+        return { status: mapOperationsActionError(error) };
+      }
     }
   );
 
