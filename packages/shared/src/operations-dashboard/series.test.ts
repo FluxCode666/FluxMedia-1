@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { resolveOperationsDashboardRange } from "./range";
 import {
+  downsampleOperationsSeries,
   fillOperationsCountSeries,
   fillOperationsCreditSeries,
 } from "./series";
@@ -155,5 +156,50 @@ describe("operations series", () => {
         { bucketKey: availableKey, value: -0.25 },
       ])[2]
     ).toMatchObject({ status: "value", value: -0.25 });
+  });
+
+  it("确定性降采样保留首末、最小值和最大值且不修改原数组", () => {
+    const buckets = resolveOperationsDashboardRange(
+      {
+        range: {
+          kind: "custom",
+          from: "2026-08-01",
+          to: "2026-08-10",
+        },
+      },
+      {
+        asOf: new Date("2026-08-20T12:00:00.000Z"),
+        epochDate: "2026-08-01",
+        timeZone: "UTC",
+      }
+    ).buckets;
+    const series = fillOperationsCreditSeries(
+      buckets,
+      [2, 4, -9, 3, 8, 1, 20, 6, 5, 7].map((value, index) => ({
+        bucketKey: buckets[index]?.key ?? "",
+        value,
+      }))
+    );
+    const original = structuredClone(series);
+
+    const first = downsampleOperationsSeries(series, 6);
+    const second = downsampleOperationsSeries(series, 6);
+
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(6);
+    expect(first.map(({ index }) => index)).toEqual(
+      expect.arrayContaining([0, 2, 6, 9])
+    );
+    expect(first.map(({ index }) => index)).toEqual(
+      [...first.map(({ index }) => index)].sort((left, right) => left - right)
+    );
+    expect(series).toEqual(original);
+  });
+
+  it("短序列原样返回并拒绝不足以保留极值的点数上限", () => {
+    const series = fillOperationsCountSeries(createBuckets(), []);
+
+    expect(downsampleOperationsSeries(series, 4)).toHaveLength(4);
+    expect(() => downsampleOperationsSeries(series, 3)).toThrow(RangeError);
   });
 });
