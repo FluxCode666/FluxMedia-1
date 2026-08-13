@@ -143,6 +143,11 @@ export {
   PaginationNext,
   PaginationEllipsis,
 } from "./components/pagination";
+export {
+  PaginationControls,
+  type PaginationControlsItem,
+  type PaginationControlsProps,
+} from "./components/pagination-controls";
 
 // Popover
 export {
