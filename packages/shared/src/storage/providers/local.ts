@@ -278,6 +278,7 @@ export const localProvider: StorageProvider = {
   },
   async getObjectStream(key, bucket, options) {
     const provider = await getDynamicLocalProvider();
+    if (!provider.getObjectStream) throw new Error("本地存储不支持流式读取");
     return provider.getObjectStream(key, bucket, options);
   },
   async putObject(key, bucket, data, contentType, options) {
@@ -286,6 +287,7 @@ export const localProvider: StorageProvider = {
   },
   async putObjectStream(key, bucket, data, contentType, options) {
     const provider = await getDynamicLocalProvider();
+    if (!provider.putObjectStream) throw new Error("本地存储不支持流式写入");
     return provider.putObjectStream(key, bucket, data, contentType, options);
   },
 };

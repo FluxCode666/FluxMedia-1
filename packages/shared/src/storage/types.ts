@@ -75,7 +75,7 @@ export interface StorageProvider {
    * @param options 可选取消信号。
    * @returns 不要求调用方把完整对象载入内存的异步字节流。
    */
-  getObjectStream(
+  getObjectStream?(
     key: string,
     bucket: string,
     options?: { signal?: AbortSignal }
@@ -107,7 +107,7 @@ export interface StorageProvider {
    * @param contentType 文件 MIME 类型。
    * @param options 可选取消信号。
    */
-  putObjectStream(
+  putObjectStream?(
     key: string,
     bucket: string,
     data: AsyncIterable<Uint8Array>,

@@ -140,6 +140,9 @@ describe("localProvider streaming", () => {
         yield Buffer.from("第一段");
         yield Buffer.from("-第二段");
       }
+      if (!provider.putObjectStream || !provider.getObjectStream) {
+        throw new Error("local provider streaming missing");
+      }
       await provider.putObjectStream(
         "exports/test.csv",
         "private",
@@ -167,6 +170,9 @@ describe("localProvider streaming", () => {
     try {
       const provider = createLocalStorageProvider(tempDir);
       const controller = new AbortController();
+      if (!provider.putObjectStream) {
+        throw new Error("local provider streaming missing");
+      }
       async function* bytes() {
         yield Buffer.from("第一段");
         controller.abort();

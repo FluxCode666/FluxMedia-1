@@ -420,6 +420,7 @@ export const s3Provider: StorageProvider = {
   },
   async getObjectStream(key, bucket, options) {
     const provider = await getDynamicS3Provider();
+    if (!provider.getObjectStream) throw new Error("S3 存储不支持流式读取");
     return provider.getObjectStream(key, bucket, options);
   },
   async putObject(key, bucket, data, contentType, options) {
@@ -428,6 +429,7 @@ export const s3Provider: StorageProvider = {
   },
   async putObjectStream(key, bucket, data, contentType, options) {
     const provider = await getDynamicS3Provider();
+    if (!provider.putObjectStream) throw new Error("S3 存储不支持流式写入");
     return provider.putObjectStream(key, bucket, data, contentType, options);
   },
 };
