@@ -229,7 +229,7 @@ flowchart TB
 
 ### Delivery Sequence
 
-U1 和 U2 建立事实与统一语义；U3、U4 可在其后并行形成四个模块的读路径；U5 将全部能力注册并绑定 UOL；U6 复用相同读路径实现异步导出；U7、U8 完成页面与图表。每个单元完成后小步提交；只有 U1-U8 与全量验证均完成后才可发布。
+U1 和 U2 建立事实与统一语义；U3 形成增长与活跃读路径，U4 在其结果上完成商业化、内容和健康模块；U5 将其余能力注册并绑定 UOL；U6 复用相同读路径实现异步导出；U7、U8 完成页面与图表。每个单元完成后小步提交；只有 U1-U8 与全量验证均完成后才可发布。
 
 ## Deferred Question Resolutions
 
@@ -249,6 +249,7 @@ U1 和 U2 建立事实与统一语义；U3、U4 可在其后并行形成四个�
 - 新增 `operations.*` operations，不扩展 `analytics.getAdminDataDashboard`。后者支持 `userId` 且受最多 30 天限制，与 R2、R3 的全站不限跨度口径冲突。
 - 新增独立 `operations` OperationDomain。最小操作集合为：`operations.recordWebVisit`、`operations.getOverview`、`operations.getDetail`、`operations.createExport`、`operations.listExports`、`operations.retryExport`、`operations.prepareExportDownload`，以及仅内部身份可调用的 `operations.initializeEpoch`、`operations.processExports`、`operations.expireExports`。
 - `getOverview` 返回一个查询时刻的一致快照；模块失败使用带模块名的明确错误，不以部分旧数据伪装成功。`getDetail` 接受模块和受限明细种类联合类型，使用 keyset cursor。
+- 为避免事实采集反向依赖读服务，`operations.recordWebVisit` 与 `operations.initializeEpoch` 的 operation 定义、binding 和最小测试随 U1 落地；U5 只补齐其余读取、导出和 worker operation。
 
 ### KTD-2: 时间与比较周期
 
@@ -262,11 +263,17 @@ U1 和 U2 建立事实与统一语义；U3、U4 可在其后并行形成四个�
 - 成功积分只将成功产物事件按稳定任务身份关联 `credit_usage_operation`，求 `net_consumed`；禁止把所有 completed generation 或全部积分消耗当作成功业务。若现有 operation identity 不能无歧义关联，U1 先补投影关系约束，不能使用时间近似关联。
 - 支付漏斗取上线后的不可变生命周期事件；收入取已履约充值订单并按 `fulfilled_at`、币种分组。失败生成退款不进入商业化。
 - 明细与 CSV 从同一事实查询生成。每个汇总指标声明其 reconciliation key，测试用相同明细逐行归并反算汇总。
+- 运营总览的增长、商业化、内容、明细和 CSV 一律受 epoch 截断；上线前既有成功产物仅继续服务既有生成看板，不能在运营总览中把上线前 bucket 伪装成真实零值或历史统计。
+- 支付事件枚举固定为 `order_created`、`checkout_ready`、`payment_confirmed`、`fulfillment_succeeded`、`checkout_failed`、`fulfillment_attempt_failed`、`fulfillment_failed_terminal` 和 `expired`；每条事件保存 `occurred_at`、`recorded_at` 与 `timestamp_source`。优先使用经验证的 provider 时间，缺失时统一降级为服务器接收时间并标注来源；R26 只统计履约失败事件。
+- 支付写路径新增 transaction-aware 状态转换仓储：短事务内执行状态 CAS 与事件追加。积分发放保留自身事务，成功后再以独立短事务幂等写入 `fulfilled` 和成功事件；失败依靠既有发放幂等键与 webhook 重试补齐，禁止用外层事务包住 `grantCredits`。
 
 ### KTD-4: 异步导出状态与安全
 
 - 状态为 `queued -> running -> completed | failed -> queued`，`completed -> expired`；重试创建新任务并保存 `retry_of_task_id`，保留原失败记录。租约使用 `lease_owner`、`lease_token`、`lease_expires_at` 和 attempt 计数，以条件更新认领；续租和终态写入必须匹配 fencing token，过期 worker 不得覆盖新 worker。
-- 创建任务固化规范化筛选 JSON、应用时区、epoch、导出类型和 schema version；worker 不从用户当前页面状态重新推断。对象键由服务端 UUID 构造，不接受客户端路径。
+- 创建任务固化规范化筛选 JSON、应用时区、epoch、导出类型、schema version、数据库 `snapshot_at` 与各事实源稳定高水位；worker 不从用户当前页面状态重新推断，所有分页谓词同时受业务范围与高水位约束。成功积分按不可变账本贡献在该高水位重算，不读取导出期间仍可能变化的当前投影。
+- 对象键由任务 ID、attempt 和本次不可预测 `lease_token` 构造且不可覆盖；只有 fencing token 匹配的 completed CAS 才提交该对象键和校验和，失败 CAS 的对象进入孤儿清理。
+- `expires_at` 到达后任务先无条件转为 `expired` 并拒绝下载；物理对象删除独立幂等重试，删除失败只记录清理错误，不能延长下载权限。
+- 单个获准导出仍不截断行数，但创建和重试受每管理员 queued/running 上限、创建频率与全局队列容量限制，超限返回可恢复错误并记录审计指标。
 - 页面通知由导出记录的 `completed_at` 与客户端已见水位计算，不新建跨渠道通知系统。列表打开或刷新即可看到完成提醒；不自动轮询符合 R5。
 
 ### KTD-5: UI、图表与可访问性
@@ -274,6 +281,34 @@ U1 和 U2 建立事实与统一语义；U3、U4 可在其后并行形成四个�
 - 页面、筛选、卡片、tooltip、表格、滚动区、空态和状态容器全部优先复用 `@repo/ui` 的 shadcn/ui 组件；图形可复用其 Recharts 封装，但必须按 `lieflat-charts` 模板视觉实现，不能采用库默认样式。
 - 实施时每张图记录至少三个候选及淘汰理由，并优先普通用户熟悉的折线图、面积图、柱状图、漏斗/分阶段条形图。建议候选起点：生图 F2/常规折线/柱状，积分 F3/常规面积/柱状，视频 L3/折线/柱状，支付漏斗 L13/横向阶段条/标准漏斗；最终选择以可理解性和数据语义审计为准。
 - 同页使用 Mono 单色体系；hover 只展示真实数据点。支持键盘焦点、屏幕阅读器摘要、颜色之外的标签和 `prefers-reduced-motion`。无数据、上线前、尚未成熟、不可比较和失败态不得共用一个空态。
+- 高密序列采用双层机制：可见路径按确定性采样绘制，但 tooltip 命中、十字线、触摸点选和键盘前后移动始终基于完整 bucket；最近点选择保留首末边界，焦点有可见指示，并提供包含全部点的可访问数据表。
+
+### Chart Candidate Record
+
+| 信息任务 | 候选 | 最终选择与理由 | 编码与核对 |
+| --- | --- | --- | --- |
+| 新增、登录、创作、付费活跃趋势 | 多序列折线、小倍折线、分组柱 | 小倍折线；四类量级差异较大，分图共用时间轴比同轴混线更易读 | X 为日期 bucket，Y 为去重用户数；每图单序列、明确单位、完整 bucket tooltip/表格 |
+| Cohort D1/D7/D30 | 热力矩阵、分组柱、三线趋势 | 热力矩阵；注册日逐行与成熟状态最适合矩阵，且保留全部 Cohort | 行为注册日、列为 D1/D7/D30；单元格显示分子/分母/比例或尚未成熟 |
+| 支付阶段 | 标准漏斗、横向阶段条、桑基 | 横向阶段条；阶段并非严格逐层同一批订单，阶段条避免面积暗示 | Y 为阶段，X 为订单数；标签直接显示精确值，不用面积编码 |
+| 生图数量 | F2、常规折线、柱状 | 常规折线；强调随时间变化且用户已熟悉，断档保持可见 | X 为日期 bucket，Y 为成功图片数量；单序列真实点 tooltip |
+| 视频数量/秒数 | L3、双轴折线、切换折线 | 单序列切换折线；数量和秒数单位不同，不使用误导性的双轴 | 分段控件切换 count/seconds，范围不变，Y 轴单位随模式切换 |
+| 成功积分净用量 | F3、面积、柱状 | 柱状；净用量是离散 bucket 总量，基线和小数值更易比较 | X 为日期 bucket，Y 为积分；tooltip 保留两位小数，不用累计面积暗示 |
+
+所有图均使用 shadcn/ui `ChartContainer` 与 `ChartTooltipContent`，不使用默认 Recharts 样式；上线前、空数据、真实零值和不可比较分别渲染。多币种收入不混入单轴图，按币种稳定排序为数字列表和对比值。
+
+### Drill-down Matrix
+
+| 触发项 | 目的地 | 继承参数与附加过滤 | 返回与状态 |
+| --- | --- | --- | --- |
+| 六个顶部增长指标、增长小倍图点 | 同页右侧 Sheet 的用户增长明细 | `from/to/granularity`；按指标和 bucket 增加 activity kind/date | URL 写入 `detail` 与 `bucket` 便于分享；关闭恢复原 URL，含 loading/empty/error/keyset 更多 |
+| Cohort 单元格 | 同一 Sheet 的 Cohort 用户明细 | 注册日、D1/D7/D30 目标日、成熟状态 | 未成熟单元格不可下钻；其余保持矩阵滚动位置 |
+| 支付阶段、收入与转化 | 独立订单管理页 | 保留日期，增加 lifecycle stage/currency；粒度不改变明细 | 新页可分享，返回浏览器历史恢复运营筛选 |
+| 生图、视频、积分图点 | 独立生成数据核对页 | 保留日期 bucket 与媒体/积分种类；不传用户条件 | 新页可分享；若目的页不支持长范围则使用 operations 独立明细路由，不裁剪日期 |
+| 系统健康摘要 | 既有 status、analytics 或 payment 页面 | 仅传目标页明确支持的范围；当前指标不伪造历史参数 | 普通导航链接，不在运营页复制处置控件 |
+
+筛选和刷新期间保留旧内容并设置 `aria-busy`，筛选控件进入 pending 且禁止重复提交；失败时保留 URL 和旧内容并显示原条件重试。导出创建、重试和下载分别按任务禁用重复动作并通过 live region/Toast 公告结果；通知已读水位以管理员 ID 保存在浏览器本地，首次看见 completed 时推进，刷新不重复提醒，导出记录始终保留。
+
+响应式规则：桌面筛选同排、指标三列；平板两列；手机单列且日期、快捷项、粒度依次换行。图表在手机保持稳定高度并将图例置底；Cohort 与明细表使用粘性表头/首列和受控横向滚动，非关键列在手机收敛进详情。Sheet 桌面占不超过视口 2/3，手机全屏。交互目标至少 44px；触摸点按锁定最近真实 bucket，点外关闭，垂直滚动不触发点选。
 
 ## Technical Design
 
@@ -312,7 +347,7 @@ sequenceDiagram
   Auth-->>Layout: 有效 user session
   Layout->>Facts: 经 UOL upsert user_web_visit(user, appDate)
   Note over Facts: 同用户、同应用自然日唯一
-  Payment->>Facts: 同事务追加 payment_lifecycle_event
+  Payment->>Facts: 短事务 CAS 状态并追加 payment_lifecycle_event
   Media->>Facts: 写 user_output_usage_event 与 credit_usage_operation
   Query->>Facts: 读取 epoch 和统一范围事实
   Facts-->>Query: 增长、支付、成功产物、成功积分
@@ -348,7 +383,7 @@ stateDiagram-v2
   running --> failed: 失败、超时或不可恢复错误
   failed --> queued: 新重试任务引用原任务
   running --> queued: 租约过期后恢复
-  completed --> expired: 7 天到期并删除对象
+  completed --> expired: 7 天到期，立即拒绝下载
   expired --> [*]
 ```
 
@@ -377,8 +412,8 @@ sequenceDiagram
   UOL->>Audit: 记录下载许可和结果
   UOL->>Storage: 生成短期 signed URL
   UOL-->>Admin: 受控下载许可
-  Worker->>Storage: 到期删除对象
-  Worker->>DB: 标记 expired
+  Worker->>DB: 到期先标记 expired
+  Worker->>Storage: 幂等删除对象，失败独立重试
 ```
 
 ## Implementation Units
@@ -403,14 +438,16 @@ sequenceDiagram
 - 新增 `packages/database/drizzle/0088_operations_dashboard.sql`，并手动登记 `packages/database/drizzle/meta/_journal.json`；若并行开发已占用 0088，实施时取下一个连续编号。
 - 新增 `apps/web/src/features/operations-dashboard/operations-epoch-service.ts`、`web-visit-service.ts`、`payment-lifecycle-service.ts`、`export-task-repository.ts` 及对应测试，并新增显式生产初始化脚本。
 - 修改 `apps/web/src/app/[locale]/(dashboard)/layout.tsx` 及其必要的客户端可见性记录器，以及所有改变 `payment_order.status` 的充值创建、webhook/履约路径。
+- 新增 `packages/shared/src/uol/operations/operations-dashboard-facts.ts`、`apps/web/src/server/uol-bindings/operations-dashboard-facts.ts` 及测试，先注册并绑定访问与 epoch operation。
+- 修改 `packages/shared/src/credits/purchase-orders.ts`、`apps/web/src/features/payment/credit-top-up.ts`、Creem webhook、易支付与支付宝履约写点，统一接入 transaction-aware 状态转换仓储。
 
 **Approach**
 
 1. 新增单行 epoch、`user_web_visit`、append-only 支付事件和导出任务表；为日期聚合、状态扫描、租约认领、过期清理与管理员列表建立针对性索引、检查约束和唯一键。
 2. 提供显式生产初始化 operation 和薄命令入口，接收经 Zod 校验的应用日期和 UTC 起点；插入后重复相同值返回 unchanged，不同值失败并审计。迁移不自动写 epoch。
 3. dashboard shell 在成功获得真实 session user 后调用 `operations.recordWebVisit`；首次渲染以及跨应用自然日后重新获得可见性时记录，布局内导航不重复膨胀。统计写失败只告警，不记录 IP、UA、session token 或 API Key。
-4. 支付状态改变与生命周期事件放在相同已有事务中，以 provider event/request reference 防 webhook 重放；明确覆盖创建、支付成功、履约成功、失败和过期。
-5. 若成功产物与积分 operation 缺少可证明的稳定连接键，在本迁移补最小投影引用和约束；上线前已有成功产物可继续按已有不可变读模型统计，但新增行为指标受 epoch 截断。
+4. 按 KTD-3 重构支付状态写点：创建、确认和终态失败在短事务内同时执行状态 CAS 与事件追加；积分发放保持自身事务，随后以可重试的独立短事务幂等写履约成功。以 provider event/request reference 防 webhook 重放，并用幂等过期扫描产生 `expired` 事件。
+5. 若成功产物与积分 operation 缺少可证明的稳定连接键，在本迁移补最小投影引用和约束；运营总览所有事实、明细和 CSV 均受 epoch 截断，既有生成看板的历史统计保持原状。
 
 **Patterns to follow**
 
@@ -449,6 +486,7 @@ sequenceDiagram
 **Files**
 
 - 新增 `packages/shared/src/operations-dashboard/contracts.ts`、`range.ts`、`comparison.ts`、`series.ts` 及测试。
+- 修改 `packages/shared/package.json`，为上述共享契约增加明确 exports，并由 Web 侧边界测试验证公开导入路径。
 - 仅在确有复用价值时抽取现有 `packages/shared/src/analytics/range.ts` 的通用底层函数；不得改变旧 analytics 对外契约。
 
 **Approach**
@@ -531,7 +569,7 @@ sequenceDiagram
 
 **Dependencies**
 
-依赖 U1、U2；可与 U3 并行。
+依赖 U1-U3。
 
 **Files**
 
@@ -581,13 +619,13 @@ sequenceDiagram
 
 **Files**
 
-- 新增 `packages/shared/src/uol/operations/operations-dashboard.ts` 及测试，并修改 `packages/shared/src/uol/operations/index.ts` 与 `packages/shared/src/uol/types.ts`。
+- 新增 `packages/shared/src/uol/operations/operations-dashboard.ts` 及测试，并修改 `packages/shared/src/uol/operations/index.ts` 与 `packages/shared/src/uol/types.ts`；复用 U1 已注册的事实采集 operation。
 - 新增 `apps/web/src/server/uol-bindings/operations-dashboard.ts` 及测试，并修改 `apps/web/src/server/uol-bindings.ts`。
 - 新增 `apps/web/src/features/operations-dashboard/actions.ts` 及测试。
 
 **Approach**
 
-1. 按 KTD-1 注册十个 operation；人工管理操作权限明确为 `roles: ["admin", "super_admin"]`，涉及邮箱/文件均 human-only。访问记录使用 user Principal 和自然幂等日期键；读取天然幂等；创建和重试要求 per-principal `clientRequestId`；初始化/worker 只接受明确 system/job Principal。
+1. 按 KTD-1 注册剩余八个读取、导出和 worker operation；人工管理操作权限明确为 `roles: ["admin", "super_admin"]`，涉及邮箱/文件均 human-only。读取天然幂等；创建和重试要求 per-principal `clientRequestId`；worker 只接受明确 system/job Principal。访问与初始化 operation 已在 U1 注册和绑定。
 2. binding 将 Principal、requestId、应用时区与服务依赖相连，统一映射 validation/not_ready/forbidden/conflict/internal 错误；不在 Action 重复权限和业务判断。
 3. `adminAction` 只调用 `invokeOperation` 并返回可序列化结果；下载接口仅返回短期许可，不暴露存储配置或任意对象键。
 4. overview、detail、CSV 都消费 U2 的同一 schema 和 U3/U4 的同一 repository filters。
@@ -629,15 +667,16 @@ sequenceDiagram
 - 新增 `apps/web/src/features/operations-dashboard/export-service.ts`、`export-worker.ts`、`csv-encoder.ts`、`export-storage.ts` 及测试。
 - 修改 `packages/shared/src/storage/types.ts` 与 S3/local provider 及测试，补充后端流式写入能力，避免最终 CSV 必须成为单个内存 `Buffer`。
 - 修改 `apps/web/src/server/internal-job-scheduler.ts` 及测试，注册生成和清理 job。
-- 如需受控下载响应，新增 `apps/web/src/app/api/admin/operations/exports/[taskId]/download/route.ts` 及测试；该路由仍调用 download operation。
+- 修改 `system-settings/definitions.ts`、默认值测试与 `system-settings-panel.tsx`，增加默认关闭的导出处理/清理独立开关、interval 和 batch 配置。
+- 新增 `apps/web/src/app/api/admin/operations/exports/[taskId]/download/route.ts` 及测试；本地 provider 必须经该受控路由流式下载，S3 可返回短期签名 URL，两者都先调用 download operation。
 
 **Approach**
 
-1. 创建时固化模块、规范化范围、schema version、time zone、epoch 和创建者；唯一 `(created_by, client_request_id)` 保证页面重试不会重复排队，并同步写 `admin_audit_log`。
-2. scheduler 单次批次先取得 PostgreSQL advisory lock；worker 再使用 fencing token 条件认领并续租。使用 keyset 分批读取同源明细，通过新增的 `StorageProvider.putObjectStream` 以 `AsyncIterable<Uint8Array>` 写入，避免将全量行常驻内存；S3 走流式 multipart/SDK body，本地 provider 写入受控临时文件后原子落位。
+1. 创建时固化模块、规范化范围、schema version、time zone、epoch、数据库 `snapshot_at`、各事实源高水位和创建者；唯一 `(created_by, client_request_id)` 保证页面重试不会重复排队，并同步写 `admin_audit_log`。create/retry 同时执行每管理员与全局队列配额、频率限制，不改变单个获准导出的完整性。
+2. scheduler 由独立默认关闭的系统设置控制，处理与清理使用不同 advisory lock/job Principal；worker 使用 fencing token 条件认领并续租。使用 keyset 和高水位分批读取同源明细，通过 `putObjectStream` 写入；S3 走 multipart/可取消流，本地 provider 写受控临时文件后原子落位。对象键包含 lease token 且不可覆盖，completed CAS 失败的对象进入孤儿清理。
 3. CSV 执行公式注入防护、RFC 4180 转义、UTF-8 BOM 与稳定列顺序；完成时保存行数、字节数、校验和、对象键、完成/过期时间。
-4. 页面列表以 `completed_at` 水位显示站内完成通知；失败任务以新 clientRequestId 创建引用原任务的新记录。prepare download 复核角色和状态后生成短期 signed URL，并记录许可/结果审计。
-5. 清理 job 删除到期对象后标记 expired；对象已不存在视为幂等成功，存储暂不可用则记录错误并下次重试，不提前把任务标过期。
+4. 页面列表以 `completed_at` 水位显示站内完成通知；失败任务以新 clientRequestId 创建引用原任务的新记录。prepare download 复核角色和状态后，S3 生成短期 signed URL，本地 provider 返回受控下载许可；两者均记录许可/结果审计并流式传输。
+5. 清理 job 在到达 `expires_at` 时先标记 expired 并拒绝下载，再独立删除对象；对象已不存在视为幂等成功，存储暂不可用则记录错误并下次重试。孤儿对象按任务/lease 前缀扫描清理。
 
 **Patterns to follow**
 
@@ -783,7 +822,7 @@ sequenceDiagram
 
 - 新增运营 epoch、网页访问日、支付生命周期事件、导出任务及必要稳定关联；均有唯一键、检查约束、时间/状态索引和明确删除策略。
 - 迁移只创建结构，不猜测生产 epoch，也不回填新增/活跃/留存/支付阶段事件。累计用户和已有不可变成功产物仍按 Product Contract 查询。
-- 导出记录长期保留状态与审计；对象文件只保留 7 天。访问事实当前无产品删除期限要求，作为最小日级事实保存且不含 IP/UA。
+- 导出记录长期保留状态与审计；对象文件只保留 7 天。访问事实不含 IP/UA，账户删除时随用户级事实级联删除；长期分析只保留不可逆日级聚合，具体保留窗口在生产隐私基线中登记并由清理任务执行。
 
 ### APIs, Auth and Agent Boundary
 
@@ -819,7 +858,7 @@ sequenceDiagram
 | 成功积分关联不稳定 | 内容积分与成功产物不一致 | U1 先验证稳定任务身份并加约束；无确定键时阻止发布，不用时间窗猜测。 |
 | 跨多年查询拖慢主库 | 管理页影响业务请求 | EXPLAIN、索引、statement timeout、按模块查询预算、keyset 导出；达到阈值后另立读模型计划。 |
 | 大 CSV 造成内存/磁盘压力 | worker OOM 或容器不稳定 | keyset 分批、分段缓冲/临时文件受控目录、对象直传可行性验证、任务并发上限和租约；压测记录峰值。 |
-| 上传完成而 DB 未提交 | 孤儿对象泄漏 | 确定性任务对象键、重试覆盖/复用、周期性清理无对应完成任务的旧前缀对象。 |
+| 上传完成而 DB 未提交 | 孤儿对象泄漏或陈旧 worker 覆盖 | 每个 lease 写不可变对象键、仅 matching-token CAS 提交、周期性清理未提交 lease 前缀，禁止覆盖。 |
 | signed URL 泄露 | 7 天文件被越权读取 | 短期 URL、下载前角色与任务归属复核、对象键不可预测、审计；不写日志或页面持久状态。 |
 | 图表降采样误导 | 极值或事件断档不可见 | 保首末/极值、只对视觉坐标采样、tooltip 限真实点、提供同源明细；浏览器测试超密范围。 |
 | 当前健康依赖故障 | 整页失败或把未知当零 | 独立超时和 unavailable 状态；历史运营模块继续明确展示，绝不缓存为零。 |
@@ -828,7 +867,7 @@ sequenceDiagram
 
 ### Deployment Order
 
-1. 部署向后兼容数据库结构和索引；验证迁移 journal、约束与查询计划。
+1. 部署向后兼容数据库结构；新空表索引随迁移创建。已有大表索引先以受审计脚本、独立连接和 `CREATE INDEX CONCURRENTLY IF NOT EXISTS` 预建，设置 lock/statement timeout，清理 invalid index 后可重跑；journal 迁移保留普通 `IF NOT EXISTS` 以服务空库，并验证约束与查询计划。
 2. 部署事实写入、支付事件双写、UOL、worker，但保持运营导航隐藏且导出 worker 可配置关闭。
 3. 用明确的 `APP_TIME_ZONE` 与批准的生产上线日期执行 epoch 初始化预演；核对 UTC 起止后幂等写入并保存审计 ID。
 4. 开启 worker，创建三类小范围导出并验证存储、下载、审计和过期时间。
@@ -839,7 +878,7 @@ sequenceDiagram
 - `not_ready`：首先核对 epoch 是否初始化，禁止临时使用当前时间补值。
 - 导出 queued age 异常：核对 scheduler 开关、advisory lock、租约和存储配置；恢复 worker 即可继续，不手工篡改 completed。
 - failed：管理员通过 retry operation 新建关联任务；运维只处理根因，不删除原任务或审计。
-- 清理失败：文件保持不可过期状态并重试删除；若已到期，下载 operation 即使对象存在也必须拒绝。
+- 清理失败：任务按时保持 expired，下载 operation 即使对象存在也必须拒绝；记录清理错误并重试物理删除。
 - 支付事件缺口：停止开放漏斗，修复写路径；不得依据 `updated_at` 静默回填近似阶段时间。
 
 ### Data Reconciliation Runbook
