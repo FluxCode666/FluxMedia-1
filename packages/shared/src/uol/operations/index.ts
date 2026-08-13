@@ -97,6 +97,8 @@ import "./support";
 import "./analytics";
 // 管理端运营总览事实采集与初始化
 import "./operations-dashboard-facts";
+// 运营总览、明细、异步导出与后台维护 operation
+import "./operations-dashboard";
 // 支付履约恢复任务
 import "./payment-fulfillment";
 // 管理端支付概览与充值订单
@@ -116,3 +118,14 @@ export {
   getMyReferralDashboard,
   referralDashboardOutputSchema,
 } from "./referrals";
+
+export {
+  createOperationsExport,
+  expireOperationsExports,
+  getOperationsDetail,
+  getOperationsOverview,
+  listOperationsExports,
+  prepareOperationsExportDownload,
+  processOperationsExports,
+  retryOperationsExport,
+} from "./operations-dashboard";

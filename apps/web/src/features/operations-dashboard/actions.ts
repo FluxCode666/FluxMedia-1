@@ -7,7 +7,20 @@
  * 不接受身份、日期、访问时间或页面字段，实际写入统一委托 UOL。
  */
 import { getUserRoleById } from "@repo/shared/auth/role-server";
-import { protectedAction } from "@repo/shared/safe-action";
+import { adminAction, protectedAction } from "@repo/shared/safe-action";
+import {
+  operationsCreateExportInputSchema,
+  operationsGetDetailInputSchema,
+  operationsGetOverviewInputSchema,
+  operationsListExportsInputSchema,
+  operationsPrepareExportDownloadInputSchema,
+  operationsRetryExportInputSchema,
+  type OperationsDetailOutput,
+  type OperationsOverviewOutput,
+} from "@repo/shared/operations-dashboard/contracts";
+import { invokeOperation, OperationError } from "@repo/shared/uol";
+
+import { ensureUolInitialized } from "@/server/uol-init";
 
 import { tryRecordDashboardWebVisit } from "./dashboard-web-visit";
 
@@ -31,3 +44,104 @@ export const recordDashboardWebVisitAction = protectedAction
       ? { status: "recorded", appDate: result.appDate }
       : { status: "unavailable" };
   });
+
+/** 将运营读取失败转换为页面可区分、但不泄露内部细节的状态。 */
+export type OperationsDashboardActionFailure =
+  | "validation_error"
+  | "not_ready"
+  | "rate_limited"
+  | "timeout"
+  | "unavailable";
+
+function mapOperationsActionError(error: unknown): OperationsDashboardActionFailure {
+  if (!(error instanceof OperationError)) return "unavailable";
+  switch (error.code) {
+    case "validation_error":
+    case "not_ready":
+    case "rate_limited":
+    case "timeout":
+      return error.code;
+    default:
+      return "unavailable";
+  }
+}
+
+/** 读取管理员运营总览；输入和输出都由共享 operation schema 约束。 */
+export const getOperationsOverviewAction = adminAction
+  .metadata({ action: "operations.getOverview" })
+  .schema(operationsGetOverviewInputSchema)
+  .action(async ({ parsedInput, ctx }): Promise<OperationsOverviewOutput> => {
+    await ensureUolInitialized();
+    return invokeOperation<OperationsOverviewOutput>(
+      "operations.getOverview",
+      parsedInput,
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
+  });
+
+/** 读取管理员运营明细；客户端按 cursor 继续请求。 */
+export const getOperationsDetailAction = adminAction
+  .metadata({ action: "operations.getDetail" })
+  .schema(operationsGetDetailInputSchema)
+  .action(async ({ parsedInput, ctx }): Promise<OperationsDetailOutput> => {
+    await ensureUolInitialized();
+    return invokeOperation<OperationsDetailOutput>(
+      "operations.getDetail",
+      parsedInput,
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
+  });
+
+/** 异步创建 CSV 导出；U6 接入后 action API 无需变更。 */
+export const createOperationsExportAction = adminAction
+  .metadata({ action: "operations.createExport" })
+  .schema(operationsCreateExportInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    await ensureUolInitialized();
+    return invokeOperation("operations.createExport", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+  });
+
+/** 列出当前管理员导出记录。 */
+export const listOperationsExportsAction = adminAction
+  .metadata({ action: "operations.listExports" })
+  .schema(operationsListExportsInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    await ensureUolInitialized();
+    return invokeOperation("operations.listExports", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+  });
+
+/** 重试失败导出；幂等键由页面生成并由 UOL 网关强制校验。 */
+export const retryOperationsExportAction = adminAction
+  .metadata({ action: "operations.retryExport" })
+  .schema(operationsRetryExportInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    await ensureUolInitialized();
+    return invokeOperation("operations.retryExport", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+  });
+
+/** 为已完成导出准备短期下载许可。 */
+export const prepareOperationsExportDownloadAction = adminAction
+  .metadata({ action: "operations.prepareExportDownload" })
+  .schema(operationsPrepareExportDownloadInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    await ensureUolInitialized();
+    return invokeOperation("operations.prepareExportDownload", parsedInput, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    });
+  });
+
+export { mapOperationsActionError };
