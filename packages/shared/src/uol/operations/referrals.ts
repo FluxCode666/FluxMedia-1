@@ -1,7 +1,10 @@
 /** 推广域 UOL 操作注册：用户推广看板只读当前主体数据。 */
 import { z } from "zod";
 import { referralRewardConfigSchema } from "../../referrals/config";
-import { referralRelationshipStatusSchema } from "../../referrals/contract";
+import {
+  referralRelationshipListInputSchema,
+  referralRelationshipListOutputSchema,
+} from "../../referrals/pagination-contract";
 import { defineOperation } from "../registry";
 
 export const referralDashboardOutputSchema = z
@@ -12,18 +15,6 @@ export const referralDashboardOutputSchema = z
     rewardedCount: z.number().int().nonnegative(),
     totalRewardCredits: z.number().nonnegative(),
     rewardConfig: referralRewardConfigSchema,
-    relationships: z.array(
-      z.object({
-        id: z.string(),
-        inviteeName: z.string(),
-        inviteeEmail: z.string(),
-        status: referralRelationshipStatusSchema,
-        inviterRewardCredits: z.number().nonnegative(),
-        inviteeRewardCredits: z.number().nonnegative(),
-        createdAt: z.string().datetime(),
-        rewardedAt: z.string().datetime().nullable(),
-      })
-    ),
   })
   .strict();
 
@@ -42,6 +33,26 @@ export const getMyReferralDashboard = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: referral.getMyDashboard");
+  },
+});
+
+/** 当前用户推广关系明细分页读取；仅供站内人工页面使用。 */
+export const listMyReferralRelationships = defineOperation({
+  name: "referral.listMyRelationships",
+  domain: "credits",
+  title: "分页查询我的推广关系",
+  description:
+    "按创建时间分页读取当前用户的推广关系明细与精确总数；邮箱只返回脱敏值。",
+  input: referralRelationshipListInputSchema,
+  output: referralRelationshipListOutputSchema,
+  access: { kind: "user" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: referral.listMyRelationships");
   },
 });
 

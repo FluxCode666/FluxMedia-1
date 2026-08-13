@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn(),
+  transaction: vi.fn(),
   update: vi.fn(),
   getRuntimeSettingJson: vi.fn(),
   grantCredits: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@repo/database", () => ({
   db: {
     select: mocks.select,
+    transaction: mocks.transaction,
     update: mocks.update,
   },
   referralProfile: {
@@ -28,6 +30,8 @@ vi.mock("@repo/database", () => ({
     inviteeUserId: "referral_relationship.invitee_user_id",
     firstPaymentOrderId: "referral_relationship.first_payment_order_id",
     status: "referral_relationship.status",
+    inviterRewardCredits: "referral_relationship.inviter_reward_credits",
+    inviteeRewardCredits: "referral_relationship.invitee_reward_credits",
     createdAt: "referral_relationship.created_at",
     rewardedAt: "referral_relationship.rewarded_at",
   },
@@ -40,6 +44,7 @@ vi.mock("@repo/database", () => ({
 
 vi.mock("drizzle-orm", () => ({
   and: vi.fn(),
+  count: vi.fn(() => "count"),
   desc: vi.fn(),
   eq: vi.fn(),
   isNull: vi.fn(),
@@ -55,7 +60,10 @@ vi.mock("../system-settings", () => ({
   getRuntimeSettingJson: mocks.getRuntimeSettingJson,
 }));
 
-import { fulfillReferralFirstPayment } from "./service";
+import {
+  fulfillReferralFirstPayment,
+  listReferralRelationships,
+} from "./service";
 
 type Relationship = {
   id: string;
@@ -367,5 +375,74 @@ describe("fulfillReferralFirstPayment", () => {
     expect(mocks.grantCredits.mock.calls[3]?.[0]).toEqual(
       expect.objectContaining({ userId: "invitee-1", amount: 9 })
     );
+  });
+});
+
+describe("listReferralRelationships", () => {
+  beforeEach(() => {
+    mocks.transaction.mockReset();
+  });
+
+  it("counts first, clamps the page and reads rows in one read-only snapshot", async () => {
+    const offset = vi.fn(async () => [
+      {
+        id: "relationship-41",
+        inviteeName: "Example User",
+        inviteeEmail: "example@example.com",
+        status: "rewarded" as const,
+        inviterRewardCredits: 10,
+        inviteeRewardCredits: 5,
+        createdAt: new Date("2026-08-12T08:00:00.000Z"),
+        rewardedAt: new Date("2026-08-13T08:00:00.000Z"),
+      },
+    ]);
+    const limit = vi.fn(() => ({ offset }));
+    const orderBy = vi.fn(() => ({ limit }));
+    const rowsWhere = vi.fn(() => ({ orderBy }));
+    const countWhere = vi.fn(async () => [{ totalCount: 41 }]);
+    const select = vi
+      .fn()
+      .mockReturnValueOnce({ from: vi.fn(() => ({ where: countWhere })) })
+      .mockReturnValueOnce({
+        from: vi.fn(() => ({
+          innerJoin: vi.fn(() => ({ where: rowsWhere })),
+        })),
+      });
+    mocks.transaction.mockImplementation(
+      async (
+        callback: (tx: { select: typeof select }) => Promise<unknown>,
+        options: unknown
+      ) => {
+        expect(options).toEqual({
+          isolationLevel: "repeatable read",
+          accessMode: "read only",
+        });
+        return callback({ select });
+      }
+    );
+
+    await expect(
+      listReferralRelationships("inviter-1", { page: 9, pageSize: 20 })
+    ).resolves.toEqual({
+      records: [
+        {
+          id: "relationship-41",
+          inviteeName: "Example User",
+          inviteeEmail: "e***@example.com",
+          status: "rewarded",
+          inviterRewardCredits: 10,
+          inviteeRewardCredits: 5,
+          createdAt: "2026-08-12T08:00:00.000Z",
+          rewardedAt: "2026-08-13T08:00:00.000Z",
+        },
+      ],
+      page: 3,
+      pageSize: 20,
+      totalCount: 41,
+      totalPages: 3,
+    });
+    expect(select).toHaveBeenCalledTimes(2);
+    expect(limit).toHaveBeenCalledWith(20);
+    expect(offset).toHaveBeenCalledWith(40);
   });
 });

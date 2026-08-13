@@ -1,6 +1,7 @@
 "use client";
 
 import { formatCredits } from "@repo/shared/credits/format";
+import type { ReferralRelationshipListOutput } from "@repo/shared/referrals/pagination-contract";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 /** 用户推广看板：展示邀请链接、奖励统计和最近邀请记录。 */
 import { Badge } from "@repo/ui/components/badge";
@@ -17,17 +18,27 @@ import { useLocale, useTranslations } from "next-intl";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect } from "react";
 import { toast } from "sonner";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import {
+  type PageSizeHrefOption,
+  UrlPageSizeSelect,
+} from "@/features/pagination/url-page-size-select";
 import {
   getMyReferralDashboardAction,
   type ReferralDashboardOutput,
 } from "./actions";
+import { REFERRAL_RELATIONSHIP_PAGINATION_NAMES } from "./referral-pagination";
 
 /** 加载并渲染当前用户的推广信息；服务端错误以安全提示降级。 */
 export function ReferralDashboard({
   initialDashboard,
+  initialRelationships,
+  pageSizeOptions,
   timeZone,
 }: {
   initialDashboard: ReferralDashboardOutput | null;
+  initialRelationships: ReferralRelationshipListOutput | null;
+  pageSizeOptions: PageSizeHrefOption[];
   timeZone: string;
 }) {
   const locale = useLocale();
@@ -39,6 +50,7 @@ export function ReferralDashboard({
     if (!initialDashboard) execute();
   }, [execute, initialDashboard]);
   const dashboard = result.data ?? initialDashboard;
+  const relationships = initialRelationships;
 
   const copyInviteUrl = async () => {
     if (!dashboard?.inviteUrl || !navigator.clipboard?.writeText) {
@@ -140,16 +152,39 @@ export function ReferralDashboard({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("recent")}</CardTitle>
+          <CardTitle
+            id="referral-relationships"
+            className="text-base"
+            tabIndex={-1}
+          >
+            {t("recent")}
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          {dashboard.relationships.length === 0 ? (
+        <CardContent className="space-y-4">
+          {relationships ? (
+            <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                {t("totalRecords", { count: relationships.totalCount })}
+              </span>
+              <UrlPageSizeSelect
+                itemSuffix={t("pageSizeSuffix")}
+                label={t("pageSizeLabel")}
+                options={pageSizeOptions}
+                value={relationships.pageSize}
+              />
+            </div>
+          ) : null}
+          {!relationships ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {t("relationshipLoadError")}
+            </p>
+          ) : relationships.records.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               {t("empty")}
             </p>
           ) : (
             <div className="divide-y rounded-md border">
-              {dashboard.relationships.map((item) => (
+              {relationships.records.map((item) => (
                 <div
                   key={item.id}
                   className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
@@ -190,6 +225,31 @@ export function ReferralDashboard({
               ))}
             </div>
           )}
+          {relationships ? (
+            <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground">
+                {t("pageHint", {
+                  page: relationships.page,
+                  totalPages: relationships.totalPages,
+                })}
+              </p>
+              <UrlPaginationControls
+                ariaLabel={t("pagination")}
+                focusTargetId="referral-relationships"
+                getPageLabel={(page, isCurrent) =>
+                  isCurrent
+                    ? t("currentPageLabel", { page })
+                    : t("goToPageLabel", { page })
+                }
+                names={REFERRAL_RELATIONSHIP_PAGINATION_NAMES}
+                nextLabel={t("next")}
+                page={relationships.page}
+                pageSelectLabel={t("pageSelectLabel")}
+                previousLabel={t("previous")}
+                totalPages={relationships.totalPages}
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>
