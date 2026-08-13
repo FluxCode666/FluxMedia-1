@@ -1,12 +1,13 @@
-import { redirect } from "next/navigation";
-import { getLocale } from "next-intl/server";
-import { CheckCircle2, Megaphone, Pin } from "lucide-react";
+/**
+ * 当前用户公告完整列表页。
+ *
+ * 页面解析 URL 分页状态，通过 UOL 读取精确总数和当前页，并以独立集合 mutation
+ * 标记全部活跃公告已读；读取失败时显示可重试错误，不伪装为空列表。
+ */
 
-import {
-  listActiveAnnouncementsForUser,
-  markAnnouncementIdsReadForUser,
-} from "@repo/shared/announcements";
+import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { getServerSession } from "@repo/shared/auth/server";
+import { logError } from "@repo/shared/logger";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { Badge } from "@repo/ui/components/badge";
@@ -17,6 +18,22 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import { cn } from "@repo/ui/utils";
+import { CheckCircle2, Megaphone, Pin } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getLocale } from "next-intl/server";
+import {
+  loadMyAnnouncementPage,
+  markAllMyAnnouncementsRead,
+} from "@/features/announcements/announcement-page-data";
+import {
+  type AnnouncementSearchParams,
+  buildAnnouncementHref,
+  parseAnnouncementPagination,
+} from "@/features/announcements/announcement-pagination";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
+import { Link } from "@/i18n/routing";
 
 /**
  * 公告级别视觉映射：单色为主，仅 success/warning/critical 用语义色 token
@@ -70,25 +87,53 @@ function formatDateTime(
   );
 }
 
-export default async function DashboardAnnouncementsPage() {
-  const [session, locale] = await Promise.all([
+type DashboardAnnouncementsPageProps = {
+  searchParams: Promise<AnnouncementSearchParams>;
+};
+
+/** 渲染 URL 驱动的本人公告分页。 */
+export default async function DashboardAnnouncementsPage({
+  searchParams,
+}: DashboardAnnouncementsPageProps) {
+  const [session, locale, rawSearchParams] = await Promise.all([
     getServerSession(),
     getLocale(),
+    searchParams,
   ]);
 
   if (!session?.user) {
     redirect(`/${locale}/sign-in`);
   }
 
-  const timeZone = await getUserTimeZone(session.user.id);
+  const pagination = parseAnnouncementPagination(rawSearchParams);
+  const role = await getUserRoleById(session.user.id);
+  const principal = { userId: session.user.id, role };
+  const retryHref = buildAnnouncementHref(pagination);
+  const [announcementResult, timeZoneResult] = await Promise.allSettled([
+    loadMyAnnouncementPage(principal, pagination),
+    getUserTimeZone(session.user.id),
+  ]);
+  const announcementPage =
+    announcementResult.status === "fulfilled" ? announcementResult.value : null;
+  const timeZone =
+    timeZoneResult.status === "fulfilled" ? timeZoneResult.value : "UTC";
 
-  const announcements = await listActiveAnnouncementsForUser(session.user.id);
-  const unreadIds = announcements
-    .filter((item) => !item.readAt || item.readAt < item.updatedAt)
-    .map((item) => item.id);
-
-  if (unreadIds.length > 0) {
-    await markAnnouncementIdsReadForUser(session.user.id, unreadIds);
+  if (announcementPage) {
+    if (announcementPage.page !== pagination.page) {
+      redirect(
+        `/${locale}${buildAnnouncementHref({
+          page: announcementPage.page,
+          pageSize: announcementPage.pageSize as 10 | 20 | 50,
+        })}`
+      );
+    }
+    try {
+      await markAllMyAnnouncementsRead(principal);
+    } catch {
+      logError(new Error("Active announcements could not be marked as read"), {
+        source: "dashboard-announcements-page",
+      });
+    }
   }
 
   const isZh = locale === "zh";
@@ -97,7 +142,11 @@ export default async function DashboardAnnouncementsPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
-        <h2 className="font-serif text-2xl font-medium tracking-tight">
+        <h2
+          className="font-serif text-2xl font-medium tracking-tight"
+          id="announcements-heading"
+          tabIndex={-1}
+        >
           {copy("Announcements", "公告")}
         </h2>
         <p className="text-sm text-muted-foreground">
@@ -108,7 +157,33 @@ export default async function DashboardAnnouncementsPage() {
         </p>
       </div>
 
-      {announcements.length === 0 ? (
+      {!announcementPage ? (
+        <Card
+          aria-live="assertive"
+          className="border-destructive/30 bg-destructive/5"
+          role="alert"
+        >
+          <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+            <div>
+              <p className="font-serif font-medium">
+                {copy("Announcements could not be loaded", "公告加载失败")}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {copy(
+                  "Please check your connection and try again.",
+                  "请检查连接后重试。"
+                )}
+              </p>
+              <Link
+                className="mt-3 inline-block text-sm font-medium underline"
+                href={retryHref}
+              >
+                {copy("Retry", "重试")}
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      ) : announcementPage.records.length === 0 ? (
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
             <Megaphone className="h-10 w-10 text-muted-foreground" />
@@ -127,9 +202,9 @@ export default async function DashboardAnnouncementsPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {announcements.map((item, index) => {
+          {announcementPage.records.map((item, index) => {
             const meta = getSeverityMeta(item.severity);
-            const wasUnread = unreadIds.includes(item.id);
+            const wasUnread = !item.isRead;
 
             return (
               // 公告卡入场错峰：按索引 50ms 递增（12 个一轮回），fill-mode 用
@@ -211,6 +286,46 @@ export default async function DashboardAnnouncementsPage() {
           })}
         </div>
       )}
+
+      {announcementPage ? (
+        <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p aria-live="polite" className="text-sm text-muted-foreground">
+            {copy(
+              `Total ${announcementPage.totalCount} records · Page ${announcementPage.page} of ${announcementPage.totalPages}`,
+              `共 ${announcementPage.totalCount} 条 · 第 ${announcementPage.page} / ${announcementPage.totalPages} 页`
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <UrlPageSizeSelect
+              itemSuffix={copy(" records", " 条")}
+              label={copy("Rows per page", "每页条数")}
+              options={[10, 20, 50].map((pageSize) => ({
+                size: pageSize,
+                href: buildAnnouncementHref({
+                  page: 1,
+                  pageSize: pageSize as 10 | 20 | 50,
+                }),
+              }))}
+              value={announcementPage.pageSize}
+            />
+            <UrlPaginationControls
+              ariaLabel={copy("Announcements pagination", "公告分页")}
+              focusTargetId="announcements-heading"
+              getPageLabel={(page, isCurrent) =>
+                isCurrent
+                  ? copy(`Page ${page}, current page`, `第 ${page} 页，当前页`)
+                  : copy(`Go to page ${page}`, `前往第 ${page} 页`)
+              }
+              names={createPaginationUrlParamNames()}
+              nextLabel={copy("Next", "下一页")}
+              page={announcementPage.page}
+              pageSelectLabel={copy("Select page", "选择页码")}
+              previousLabel={copy("Previous", "上一页")}
+              totalPages={announcementPage.totalPages}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
