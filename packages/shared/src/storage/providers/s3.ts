@@ -5,10 +5,14 @@
  */
 
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -35,6 +39,8 @@ let cachedS3Client:
       client: S3Client;
     }
   | undefined;
+
+const S3_MULTIPART_PART_BYTES = 5 * 1024 * 1024;
 
 /**
  * 校验并收窄 S3 存储配置
@@ -111,6 +117,27 @@ function getS3Client(runtimeConfig: StorageRuntimeConfig): S3Client {
   }
 
   return cachedS3Client.client;
+}
+
+/** 构造标准 AbortError，供 multipart 上传在取消时停止并清理。 */
+function createStorageAbortError(): DOMException {
+  return new DOMException("存储操作已取消", "AbortError");
+}
+
+/** 将 S3 Web 流收窄为纯字节异步迭代器。 */
+async function* readS3ObjectStream(body: {
+  transformToWebStream(): ReadableStream<Uint8Array>;
+}): AsyncGenerator<Uint8Array> {
+  const reader = body.transformToWebStream().getReader();
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) return;
+      yield result.value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 // ============================================
@@ -248,6 +275,20 @@ export function createS3StorageProvider(
       return Buffer.concat(chunks);
     },
 
+    async getObjectStream(
+      key: string,
+      bucket: string,
+      options?: { signal?: AbortSignal }
+    ): Promise<AsyncIterable<Uint8Array>> {
+      const client = getS3Client(config);
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+        options?.signal ? { abortSignal: options.signal } : {}
+      );
+      if (!response.Body) throw new Error(`File not found: ${key}`);
+      return readS3ObjectStream(response.Body);
+    },
+
     async putObject(
       key: string,
       bucket: string,
@@ -266,6 +307,91 @@ export function createS3StorageProvider(
         command,
         options?.signal ? { abortSignal: options.signal } : {}
       );
+    },
+
+    async putObjectStream(
+      key: string,
+      bucket: string,
+      data: AsyncIterable<Uint8Array>,
+      contentType: string,
+      options?: { signal?: AbortSignal }
+    ): Promise<void> {
+      const client = getS3Client(config);
+      const requestOptions = options?.signal
+        ? { abortSignal: options.signal }
+        : {};
+      const created = await client.send(
+        new CreateMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          ContentType: contentType,
+        }),
+        requestOptions
+      );
+      if (!created.UploadId) {
+        throw new Error("S3 multipart upload did not return an upload id");
+      }
+      const uploadId = created.UploadId;
+      const completedParts: { ETag: string; PartNumber: number }[] = [];
+      let pending: Buffer[] = [];
+      let pendingBytes = 0;
+
+      /** 上传当前已聚合的一段，并立即释放其内存。 */
+      const flushPart = async () => {
+        const partNumber = completedParts.length + 1;
+        const response = await client.send(
+          new UploadPartCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            PartNumber: partNumber,
+            Body: Buffer.concat(pending, pendingBytes),
+          }),
+          requestOptions
+        );
+        if (!response.ETag) throw new Error("S3 multipart part missing ETag");
+        completedParts.push({ ETag: response.ETag, PartNumber: partNumber });
+        pending = [];
+        pendingBytes = 0;
+      };
+
+      try {
+        for await (const value of data) {
+          let offset = 0;
+          const chunk = Buffer.from(value);
+          while (offset < chunk.length) {
+            if (options?.signal?.aborted) throw createStorageAbortError();
+            const available = S3_MULTIPART_PART_BYTES - pendingBytes;
+            const length = Math.min(available, chunk.length - offset);
+            pending.push(chunk.subarray(offset, offset + length));
+            pendingBytes += length;
+            offset += length;
+            if (pendingBytes === S3_MULTIPART_PART_BYTES) await flushPart();
+          }
+        }
+        if (options?.signal?.aborted) throw createStorageAbortError();
+        if (pendingBytes > 0 || completedParts.length === 0) await flushPart();
+        await client.send(
+          new CompleteMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            MultipartUpload: { Parts: completedParts },
+          }),
+          requestOptions
+        );
+      } catch (error) {
+        await client
+          .send(
+            new AbortMultipartUploadCommand({
+              Bucket: bucket,
+              Key: key,
+              UploadId: uploadId,
+            })
+          )
+          .catch(() => undefined);
+        throw error;
+      }
     },
   };
 }
@@ -292,9 +418,17 @@ export const s3Provider: StorageProvider = {
     const provider = await getDynamicS3Provider();
     return provider.getObject(key, bucket, options);
   },
+  async getObjectStream(key, bucket, options) {
+    const provider = await getDynamicS3Provider();
+    return provider.getObjectStream(key, bucket, options);
+  },
   async putObject(key, bucket, data, contentType, options) {
     const provider = await getDynamicS3Provider();
     return provider.putObject(key, bucket, data, contentType, options);
+  },
+  async putObjectStream(key, bucket, data, contentType, options) {
+    const provider = await getDynamicS3Provider();
+    return provider.putObjectStream(key, bucket, data, contentType, options);
   },
 };
 

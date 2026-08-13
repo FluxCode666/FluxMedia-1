@@ -80,6 +80,11 @@ async function getFs(): Promise<typeof import("node:fs/promises")> {
   return await import("node:fs/promises");
 }
 
+/** 获取流式文件系统模块，避免客户端 bundle 引入 Node.js API。 */
+async function getFsStream(): Promise<typeof import("node:fs")> {
+  return await import("node:fs");
+}
+
 /** 获取延迟加载的路径模块，避免客户端 bundle 引入 Node.js API。 */
 async function getPath(): Promise<typeof import("node:path")> {
   return await import("node:path");
@@ -101,6 +106,23 @@ async function safePath(
   const path = await getPath();
   const baseDir = await resolveBaseDir(configuredBaseDir);
   return resolveSafePath(path, baseDir, bucket, key);
+}
+
+/** 构造标准 AbortError，供 provider 在取消边界立即停止外部 I/O。 */
+function createStorageAbortError(): DOMException {
+  return new DOMException("存储操作已取消", "AbortError");
+}
+
+/** 将本地文件读取流收窄为纯字节异步迭代器。 */
+async function* readLocalObjectStream(
+  filePath: string,
+  signal?: AbortSignal
+): AsyncGenerator<Uint8Array> {
+  const fs = await getFsStream();
+  const stream = fs.createReadStream(filePath, signal ? { signal } : undefined);
+  for await (const chunk of stream) {
+    yield typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+  }
 }
 
 /**
@@ -165,6 +187,15 @@ export function createLocalStorageProvider(
       ) as Promise<Buffer>;
     },
 
+    async getObjectStream(
+      key: string,
+      bucket: string,
+      options?: { signal?: AbortSignal }
+    ): Promise<AsyncIterable<Uint8Array>> {
+      const filePath = await safePath(configuredBaseDir, bucket, key);
+      return readLocalObjectStream(filePath, options?.signal);
+    },
+
     async putObject(
       key: string,
       bucket: string,
@@ -182,6 +213,42 @@ export function createLocalStorageProvider(
         data,
         options?.signal ? { signal: options.signal } : {}
       );
+    },
+
+    async putObjectStream(
+      key: string,
+      bucket: string,
+      data: AsyncIterable<Uint8Array>,
+      _contentType: string,
+      options?: { signal?: AbortSignal }
+    ): Promise<void> {
+      const filePath = await safePath(configuredBaseDir, bucket, key);
+      const fs = await getFs();
+      const path = await getPath();
+      const { randomUUID } = await import("node:crypto");
+      const dir = path.dirname(filePath);
+      const tempPath = `${filePath}.${randomUUID()}.tmp`;
+      await fs.mkdir(dir, { recursive: true });
+      const handle = await fs.open(tempPath, "wx");
+      let linked = false;
+      try {
+        for await (const chunk of data) {
+          if (options?.signal?.aborted) throw createStorageAbortError();
+          await handle.write(chunk);
+        }
+        if (options?.signal?.aborted) throw createStorageAbortError();
+        await handle.sync();
+        await handle.close();
+        // WHY：link 在目标已存在时失败，避免重复 worker 覆盖不可变导出对象。
+        await fs.link(tempPath, filePath);
+        linked = true;
+      } finally {
+        await handle.close().catch(() => undefined);
+        await fs.unlink(tempPath).catch(() => undefined);
+        if (!linked && options?.signal?.aborted) {
+          await fs.unlink(filePath).catch(() => undefined);
+        }
+      }
     },
   };
 }
@@ -209,9 +276,17 @@ export const localProvider: StorageProvider = {
     const provider = await getDynamicLocalProvider();
     return provider.getObject(key, bucket, options);
   },
+  async getObjectStream(key, bucket, options) {
+    const provider = await getDynamicLocalProvider();
+    return provider.getObjectStream(key, bucket, options);
+  },
   async putObject(key, bucket, data, contentType, options) {
     const provider = await getDynamicLocalProvider();
     return provider.putObject(key, bucket, data, contentType, options);
+  },
+  async putObjectStream(key, bucket, data, contentType, options) {
+    const provider = await getDynamicLocalProvider();
+    return provider.putObjectStream(key, bucket, data, contentType, options);
   },
 };
 

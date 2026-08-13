@@ -15,8 +15,12 @@ vi.mock("../../system-settings", () => ({
   getRuntimeSettingString: vi.fn(async () => null),
 }));
 
-import { localProvider, resolveSafePath } from "./local";
 import { verifySignedImageUrl } from "../signed-url";
+import {
+  createLocalStorageProvider,
+  localProvider,
+  resolveSafePath,
+} from "./local";
 
 // 统一用 posix 语义，避免 Windows 反斜杠分隔符影响断言。
 const posix = path.posix;
@@ -57,9 +61,9 @@ describe("resolveSafePath", () => {
   });
 
   it("bucket 含 '..' 抛错", () => {
-    expect(() =>
-      resolveSafePath(posix, BASE, "..", "user-1-1.png")
-    ).toThrow(/directory traversal/);
+    expect(() => resolveSafePath(posix, BASE, "..", "user-1-1.png")).toThrow(
+      /directory traversal/
+    );
   });
 
   it("含前导斜杠的 key 经 join 仍被并入 base，不发生逃逸", () => {
@@ -100,9 +104,9 @@ describe("localProvider.getSignedUrl", () => {
     expect(sig).toMatch(/^[a-f0-9]{64}$/);
     expect(exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
     if (!sig) throw new Error("missing signature");
-    expect(verifySignedImageUrl("generations", "user-1/out.png", sig, exp)).toBe(
-      "valid"
-    );
+    expect(
+      verifySignedImageUrl("generations", "user-1/out.png", sig, exp)
+    ).toBe("valid");
   });
 
   it("returns a signed URL for the actual runtime system bucket", async () => {
@@ -122,5 +126,66 @@ describe("localProvider.getSignedUrl", () => {
     expect(verifySignedImageUrl("avatars", "user-1/avatar.png", sig, exp)).toBe(
       "valid"
     );
+  });
+});
+
+describe("localProvider streaming", () => {
+  it("以临时文件原子写入并可逐块读取", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const tempDir = await fs.mkdtemp(`${os.tmpdir()}/flux-storage-stream-`);
+    try {
+      const provider = createLocalStorageProvider(tempDir);
+      async function* bytes() {
+        yield Buffer.from("第一段");
+        yield Buffer.from("-第二段");
+      }
+      await provider.putObjectStream(
+        "exports/test.csv",
+        "private",
+        bytes(),
+        "text/csv"
+      );
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of await provider.getObjectStream(
+        "exports/test.csv",
+        "private"
+      )) {
+        chunks.push(chunk);
+      }
+      expect(Buffer.concat(chunks).toString("utf8")).toBe("第一段-第二段");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("取消流式写入后不留下目标或临时对象", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tempDir = await fs.mkdtemp(`${os.tmpdir()}/flux-storage-abort-`);
+    try {
+      const provider = createLocalStorageProvider(tempDir);
+      const controller = new AbortController();
+      async function* bytes() {
+        yield Buffer.from("第一段");
+        controller.abort();
+        yield Buffer.from("不应写入");
+      }
+      await expect(
+        provider.putObjectStream(
+          "exports/test.csv",
+          "private",
+          bytes(),
+          "text/csv",
+          { signal: controller.signal }
+        )
+      ).rejects.toMatchObject({ name: "AbortError" });
+      const exportDir = path.join(tempDir, "private", "exports");
+      const entries = await fs.readdir(exportDir).catch(() => []);
+      expect(entries).toEqual([]);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

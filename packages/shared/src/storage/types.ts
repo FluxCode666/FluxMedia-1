@@ -68,6 +68,20 @@ export interface StorageProvider {
   ): Promise<Buffer>;
 
   /**
+   * 流式读取文件，供大文件受控下载使用。
+   *
+   * @param key 文件键名。
+   * @param bucket 存储桶名称。
+   * @param options 可选取消信号。
+   * @returns 不要求调用方把完整对象载入内存的异步字节流。
+   */
+  getObjectStream(
+    key: string,
+    bucket: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<AsyncIterable<Uint8Array>>;
+
+  /**
    * 写入文件。
    *
    * @param key 文件键名。
@@ -80,6 +94,23 @@ export interface StorageProvider {
     key: string,
     bucket: string,
     data: Buffer,
+    contentType: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<void>;
+
+  /**
+   * 流式写入文件，供后台生成不限行数的导出文件。
+   *
+   * @param key 文件键名。
+   * @param bucket 存储桶名称。
+   * @param data 异步字节流。
+   * @param contentType 文件 MIME 类型。
+   * @param options 可选取消信号。
+   */
+  putObjectStream(
+    key: string,
+    bucket: string,
+    data: AsyncIterable<Uint8Array>,
     contentType: string,
     options?: { signal?: AbortSignal }
   ): Promise<void>;
