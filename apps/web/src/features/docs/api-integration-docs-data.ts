@@ -510,16 +510,16 @@ const zhContent = {
       operation: "video",
       title: "创建视频",
       method: "POST",
-      path: "/v1/videos/generations",
+      path: "/v1/videos",
       contentType: "application/json",
-      description: "根据文本提示词或参考图创建视频。",
-      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+      description: "按 OpenAI 风格地址根据文本提示词或参考图创建持久视频任务。",
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-001",
     "model": "seedance2",
-    "duration_seconds": 8,
+    "seconds": 8,
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "A hero walking through a neon city",
@@ -532,7 +532,7 @@ const zhContent = {
   "id": "video_0123456789abcdef0123456789abcdef01234567",
   "task_id": "video_0123456789abcdef0123456789abcdef01234567",
   "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "pending",
+  "status": "queued",
   "model": "seedance2",
   "duration": 8,
   "duration_seconds": 8,
@@ -560,9 +560,10 @@ const zhContent = {
             "真实视频模型 ID，例如 seedance2、seedance2-fast 或 veo31。不得拼接时长、比例或分辨率；旧 firefly-* 与复合 ID 会被拒绝。",
         },
         {
-          name: "duration / duration_seconds",
+          name: "seconds / duration / duration_seconds",
           requirement: "必填",
-          description: "独立视频时长（秒），必须是所选模型支持的整数值。",
+          description:
+            "独立视频时长（秒）。seconds 兼容正整数或正整数字符串；三个别名并存时必须一致，且归一化值必须受所选模型支持。",
         },
         {
           name: "aspectRatio / aspect_ratio",
@@ -615,7 +616,7 @@ const zhContent = {
           description: "同一个持久视频任务 ID。",
         },
         { name: "object", description: "固定为 video.task。" },
-        { name: "status", description: "任务初始状态，通常为 pending。" },
+        { name: "status", description: "任务初始状态，通常为 queued。" },
         { name: "model", description: "本次使用的真实视频模型 ID。" },
         {
           name: "duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
@@ -625,6 +626,7 @@ const zhContent = {
       notes: [
         "接口始终以 HTTP 202 返回持久任务，不同步等待视频完成；请使用 GET /v1/videos/{id} 轮询。",
         "模型、时长、比例和分辨率分别校验，不会从模型 ID 解析参数。",
+        "/v1/videos/generations 以及两者的 /api/v1 等价地址长期兼容，并复用同一处理逻辑。",
       ],
     },
     {
@@ -825,8 +827,7 @@ const zhContent = {
         { name: "object", description: "固定为 video.task。" },
         {
           name: "status",
-          description:
-            "pending、submitting、processing、needs_attention、completed 或 failed。",
+          description: "queued、in_progress、completed 或 failed。",
         },
         {
           name: "model、duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
@@ -1198,7 +1199,8 @@ const enContent = {
     {
       ...getZhEndpointTemplate("video-generations"),
       title: "Create video",
-      description: "Create a video from a text prompt or reference images.",
+      description:
+        "Create a persistent video task from a text prompt or reference images using the OpenAI-style route.",
       parameters: [
         {
           name: "client_request_id / clientRequestId",
@@ -1218,10 +1220,10 @@ const enContent = {
             "Real video model ID such as seedance2, seedance2-fast, or veo31. Duration, ratio, and resolution must not be encoded in the ID; legacy firefly-* and composite IDs are rejected.",
         },
         {
-          name: "duration / duration_seconds",
+          name: "seconds / duration / duration_seconds",
           requirement: "Required",
           description:
-            "Separate video duration in seconds; it must be an integer supported by the selected model.",
+            "Separate video duration in seconds. seconds accepts a positive integer or decimal integer string; supplied aliases must agree and the normalized value must be supported by the selected model.",
         },
         {
           name: "aspectRatio / aspect_ratio",
@@ -1278,7 +1280,7 @@ const enContent = {
         { name: "object", description: "Always video.task." },
         {
           name: "status",
-          description: "Initial task status, usually pending.",
+          description: "Initial task status, usually queued.",
         },
         {
           name: "model",
@@ -1291,6 +1293,7 @@ const enContent = {
       ],
       notes: [
         "The endpoint always returns a persistent task with HTTP 202 and never waits synchronously for the video; poll GET /v1/videos/{id}.",
+        "The legacy /v1/videos/generations route remains supported long term, and /api/v1/videos plus /api/v1/videos/generations are equivalent aliases.",
         "Model, duration, ratio, and resolution are validated independently and are never parsed from the model ID.",
       ],
     },
@@ -1420,8 +1423,7 @@ const enContent = {
         { name: "object", description: "Always video.task." },
         {
           name: "status",
-          description:
-            "pending, submitting, processing, needs_attention, completed, or failed.",
+          description: "queued, in_progress, completed, or failed.",
         },
         {
           name: "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",

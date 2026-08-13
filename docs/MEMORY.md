@@ -87,7 +87,14 @@
 - 视频请求以 Principal 所有者和 `clientRequestId` 派生稳定任务、扣费与存储键。
 - 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
   退款或覆盖新 worker 的状态。
-- 视频提交不确定恢复的拟定公开四态、人工窗口、退款后跨账号重试和稳定告警标识见
+- 视频创建推荐使用 `POST /v1/videos`；`/api/v1/videos` 和新旧
+  `*/videos/generations` 地址长期等价支持。请求兼容 `seconds`、`duration`、
+  `duration_seconds`，响应仍只返回后两个时长字段。视频所有入口只公开 `queued`、
+  `in_progress`、`completed`、`failed`。
+- API 供应商创建没有有效响应时不进入人工核对：每个账号按任务快照执行首次请求加配置的
+  额外重试，耗尽后排除该账号并自动切号；最终失败后停止外呼并幂等退款。Adobe Direct
+  继续使用既有受信 `pollUrl` 恢复，不套用 API 提交重试。
+- API 视频提交的现行四态、自动重试、容量等待、退款和稳定告警标识见
   [openai-video-api-recovery-plan.md](plans/2026-08-12-001-feat-openai-video-api-recovery-plan.md)
   与 [video-submission-recovery-log-events.md](video-submission-recovery-log-events.md)。
 - 管理端“支付概览/订单管理”只统计统一 `payment_order` 中的积分充值订单；收入按

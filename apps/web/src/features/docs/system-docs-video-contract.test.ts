@@ -28,11 +28,12 @@ describe("system docs video contract", () => {
   it.each(["zh", "en"])("%s 精确描述持久视频创建任务", (locale) => {
     const endpoints = getSystemDocsVideoEndpoints(locale);
     const endpoint = endpoints.find(
-      (item) => item.method === "POST" && item.path === "/v1/videos/generations"
+      (item) => item.method === "POST" && item.path === "/v1/videos"
     );
     if (!endpoint) throw new Error(`${locale} 缺少视频创建文档`);
 
     expect(endpoint.description).toContain("HTTP 202");
+    expect(endpoint.description).toMatch(/OpenAI|风格/u);
     expect(endpoint.responseExample).toContain('"object": "video.task"');
     const idMatch = endpoint.responseExample.match(/"id": "([^"]+)"/);
     if (!idMatch?.[1]) throw new Error(`${locale} 创建响应缺少任务 ID`);
@@ -63,6 +64,12 @@ describe("system docs video contract", () => {
         : "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
       "generateAudio / generate_audio",
     ]);
+    expect(JSON.stringify(endpoint)).toMatch(
+      /seconds \/ duration(?: \/ duration_seconds)?/u
+    );
+    expect(JSON.stringify(endpoint)).not.toMatch(
+      /needs_attention|submitting|pending/u
+    );
   });
 
   it.each(["zh", "en"])("%s 精确描述持久视频任务查询", (locale) => {
