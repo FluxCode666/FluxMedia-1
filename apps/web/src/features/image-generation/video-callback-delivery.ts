@@ -40,6 +40,7 @@ type VideoCallbackTaskRow = {
   id: string;
   model: string;
   status: string;
+  stage: string;
   durationSeconds: number;
   aspectRatio: string;
   resolution: string;
@@ -129,6 +130,7 @@ async function loadClaimedVideoCallback(
         id: videoGeneration.id,
         model: videoGeneration.model,
         status: videoGeneration.status,
+        stage: videoGeneration.stage,
         durationSeconds: videoGeneration.durationSeconds,
         aspectRatio: videoGeneration.aspectRatio,
         resolution: videoGeneration.resolution,

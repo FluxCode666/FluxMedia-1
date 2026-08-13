@@ -31,6 +31,11 @@ import {
   extractPromptRepairNotice,
 } from "./generation-metadata";
 import { buildVideoInputSummary } from "./video-input-lifecycle";
+import {
+  buildVideoPublicStatusPredicate,
+  buildVideoPublicStatusSql,
+  videoPublicStatusSchema,
+} from "./video-public-status";
 
 const adminHistoryListRowSchema = z.object({
   record_kind: historyRecordTypeSchema,
@@ -93,16 +98,19 @@ function buildImageStatusPredicate(
   return sql`${column} = ${status}`;
 }
 
-/** 将统一状态筛选转换为视频原始状态，processing 同时覆盖 pending/running。 */
+/** 将统一状态筛选转换为视频原始 status/stage 谓词。 */
 function buildVideoStatusPredicate(
   status: AdminHistoryListQuery["status"],
-  column: SQL
+  statusColumn: SQL,
+  stageColumn: SQL
 ): SQL {
   if (status === null) return sql`true`;
-  if (status === "processing") {
-    return sql`${column} in ('pending', 'running')`;
-  }
-  return sql`${column} = ${status}`;
+  if (status === "processing") return sql`false`;
+  return buildVideoPublicStatusPredicate(
+    videoPublicStatusSchema.parse(status),
+    statusColumn,
+    stageColumn
+  );
 }
 
 /** 创建精确模型匹配谓词。 */
@@ -154,12 +162,7 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
     when g.status = 'failed' then 'failed'
     else g.status::text
   end`;
-  const videoStatus = sql`case
-    when v.status in ('pending', 'running') then 'processing'
-    when v.status = 'completed' then 'completed'
-    when v.status = 'failed' then 'failed'
-    else v.status::text
-  end`;
+  const videoStatus = buildVideoPublicStatusSql(sql`v.status`, sql`v.stage`);
   const imageBackendAccountId = sql`coalesce(
     nullif(btrim(g.api_adapter_member_id), ''),
     nullif(btrim((g.metadata::jsonb)->'backend'->>'id'), '')
@@ -288,7 +291,11 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         and ${buildDatePredicate(input, sql`v.created_at`)}
         and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
         and ${buildModelPredicate(input.model, sql`v.model`)}
-        and ${buildVideoStatusPredicate(input.status, sql`v.status`)}
+        and ${buildVideoStatusPredicate(
+          input.status,
+          sql`v.status`,
+          sql`v.stage`
+        )}
         and ${buildCursorPredicate(input, sql`v.created_at`, sql`v.id`, 0)}
       order by v.created_at ${orderDirection}, v.id ${orderDirection}
       limit ${input.branchLimit}

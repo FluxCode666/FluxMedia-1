@@ -33,13 +33,7 @@ export const getExternalVideoTask = withApiLogging(
       await ensureUolInitialized();
       const result = await invokeOperation<{
         taskId: string;
-        status:
-          | "pending"
-          | "submitting"
-          | "processing"
-          | "needs_attention"
-          | "completed"
-          | "failed";
+        status: "queued" | "in_progress" | "completed" | "failed";
         model: string;
         duration: number;
         aspectRatio: string;

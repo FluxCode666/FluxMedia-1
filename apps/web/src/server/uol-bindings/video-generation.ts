@@ -17,7 +17,6 @@ import {
   getRuntimeSettingJson,
   getRuntimeSettingString,
 } from "@repo/shared/system-settings";
-import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -36,6 +35,7 @@ import {
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
+import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
@@ -52,6 +52,7 @@ import {
   runVideoGenerationForUser,
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
+import { toLegacyVideoPublicStatus } from "@/features/image-generation/video-public-status";
 import { resolveVideoQueueSchedule } from "@/features/image-generation/video-queue-schedule";
 import { buildPublicVideoStatusUrl } from "@/features/image-generation/video-status-url";
 import {
@@ -68,14 +69,6 @@ import { prepareVideoTaskInputReferences } from "@/features/image-generation/vid
 import { enqueueVideoTask } from "@/server/media-task-queues";
 
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
-
-type VideoOperationStatus =
-  | "pending"
-  | "submitting"
-  | "processing"
-  | "needs_attention"
-  | "completed"
-  | "failed";
 
 /**
  * 数据库提交后最佳努力投递视频任务。
@@ -95,28 +88,6 @@ async function enqueueVideoTaskBestEffort(
       source: "video-task-mq-enqueue",
       taskId: row.id,
     });
-  }
-}
-
-/** 将持久视频状态映射为稳定 UOL 状态。 */
-function toVideoOperationStatus(
-  status: string,
-  stage?: string
-): VideoOperationStatus {
-  if (stage === "submitting") return "submitting";
-  if (stage === "submit_uncertain") return "needs_attention";
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "submitting":
-      return "submitting";
-    case "running":
-    case "processing":
-      return "processing";
-    default:
-      return "pending";
   }
 }
 
@@ -292,7 +263,7 @@ bindExecute(
       await assertVideoCallbackFingerprint(taskId, callbackUrl);
       return {
         taskId,
-        status: toVideoOperationStatus(existing.status, existing.stage),
+        status: toLegacyVideoPublicStatus(existing.status, existing.stage),
       };
     }
 
@@ -400,7 +371,7 @@ bindExecute(
         await enqueueVideoTaskBestEffort(raced);
         return {
           taskId,
-          status: toVideoOperationStatus(raced.status, raced.stage),
+          status: toLegacyVideoPublicStatus(raced.status, raced.stage),
         };
       }
     } catch (error) {
@@ -471,10 +442,10 @@ bindExecute(
       return {
         taskId,
         status: persisted
-          ? toVideoOperationStatus(persisted.status, persisted.stage)
+          ? toLegacyVideoPublicStatus(persisted.status, persisted.stage)
           : "error" in result
             ? ("failed" as const)
-            : ("pending" as const),
+            : ("queued" as const),
       };
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个 insert
@@ -515,7 +486,7 @@ bindExecute(
       await assertVideoCallbackFingerprint(taskId, callbackUrl);
       return {
         taskId,
-        status: toVideoOperationStatus(raced.status, raced.stage),
+        status: toLegacyVideoPublicStatus(raced.status, raced.stage),
       };
     }
   }
@@ -552,7 +523,7 @@ bindExecute(
     }
     return {
       taskId: row.id,
-      status: toVideoOperationStatus(row.status, row.stage),
+      status: toLegacyVideoPublicStatus(row.status, row.stage),
       model: row.model,
       duration: row.durationSeconds,
       aspectRatio: row.aspectRatio,

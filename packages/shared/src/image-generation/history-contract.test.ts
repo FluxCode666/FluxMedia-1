@@ -143,6 +143,73 @@ describe("history contract", () => {
     ).toBe(false);
   });
 
+  it("保留图片 processing 并仅让视频使用 queued 和 in_progress", () => {
+    const base = {
+      id: "record-status",
+      prompt: "prompt",
+      model: "model-1",
+      creditsConsumed: 0,
+      error: null,
+      createdAt: "2026-07-22T01:00:00.000Z",
+      completedAt: null,
+      processingDurationSeconds: null,
+    };
+    expect(
+      historyListOutputSchema.safeParse({
+        asOf: "2026-07-22T02:00:00.000Z",
+        records: [
+          {
+            ...base,
+            kind: "image",
+            status: "processing",
+            revisedPrompt: null,
+            size: "1024x1024",
+            creditDetails: null,
+            promptRepairNotice: null,
+            referenceImages: [],
+            imageUrl: null,
+          },
+          {
+            ...base,
+            id: "video-status",
+            kind: "video",
+            status: "queued",
+            resolution: "720p",
+            duration: 4,
+            aspectRatio: "16:9",
+            generateAudio: false,
+            input: { mode: "none", count: 0 },
+            videoUrl: null,
+          },
+        ],
+        modelOptions: [],
+        nextCursor: null,
+        previousCursor: null,
+      }).success
+    ).toBe(true);
+    expect(
+      historyListOutputSchema.safeParse({
+        asOf: "2026-07-22T02:00:00.000Z",
+        records: [
+          {
+            ...base,
+            kind: "image",
+            status: "queued",
+            revisedPrompt: null,
+            size: "1024x1024",
+            creditDetails: null,
+            promptRepairNotice: null,
+            referenceImages: [],
+            imageUrl: null,
+          },
+        ],
+        modelOptions: [],
+        nextCursor: null,
+        previousCursor: null,
+      }).success
+    ).toBe(false);
+  });
+
   it("requires user and backend account identity only in the admin history output", () => {
     const record = {
       kind: "image" as const,

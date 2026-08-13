@@ -48,7 +48,7 @@ beforeEach(() => {
   getUserRoleByIdMock.mockResolvedValue("user");
   invokeOperationMock.mockResolvedValue({
     taskId: "video-1",
-    status: "processing",
+    status: "in_progress",
   });
 });
 
@@ -80,7 +80,7 @@ describe("POST /api/videos/generate", () => {
     expect(response.status).toBe(202);
     await expect(response.json()).resolves.toEqual({
       taskId: "video-1",
-      status: "processing",
+      status: "in_progress",
       model: "seedance2",
       duration: 10,
       aspectRatio: "16:9",

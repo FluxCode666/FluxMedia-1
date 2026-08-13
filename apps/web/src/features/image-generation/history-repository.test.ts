@@ -121,6 +121,43 @@ describe("history repository SQL", () => {
     expect(compiled.sql).not.toContain("g.metadata,");
     expect(compiled.sql).not.toContain("v.metadata,");
     expect(compiled.sql).not.toContain("webConversation");
+    expect(compiled.sql).toContain("v.stage in ('created', 'charged')");
+    expect(compiled.sql).toContain("else 'in_progress'");
+  });
+
+  it("按视频四态筛选 stage 且不改变图片 processing 谓词", () => {
+    const queued = new PgDialect().sqlToQuery(
+      buildHistoryListSql({ ...baseQuery, status: "queued", type: null })
+    );
+    const inProgress = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        status: "in_progress",
+        type: "video",
+      })
+    );
+    const imageProcessing = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        status: "processing",
+        type: "image",
+      })
+    );
+    const videoProcessing = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        status: "processing",
+        type: "video",
+      })
+    );
+
+    expect(queued.sql).toContain("v.stage in ('created', 'charged')");
+    expect(inProgress.sql).toContain("else 'in_progress'");
+    expect(inProgress.params).toContain("in_progress");
+    expect(imageProcessing.sql).toContain("g.status = 'pending'");
+    expect(videoProcessing.sql).toMatch(
+      /from video_generation v[\s\S]*and false/
+    );
   });
 
   it("reverses comparison and order for a signed previous cursor", () => {

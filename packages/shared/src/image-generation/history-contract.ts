@@ -12,9 +12,26 @@ import { MAX_MEDIA_INPUT_COUNT } from "./media-contract";
 /** 历史记录产物类型。 */
 export const historyRecordTypeSchema = z.enum(["image", "video"]);
 
-/** 图片与视频统一后的展示状态。 */
+/** 历史筛选可接受的状态；图片和视频输出由各自 schema 进一步收窄。 */
 export const historyRecordStatusSchema = z.enum([
   "processing",
+  "queued",
+  "in_progress",
+  "completed",
+  "failed",
+]);
+
+/** 图片历史保留的既有三态。 */
+export const imageHistoryStatusSchema = z.enum([
+  "processing",
+  "completed",
+  "failed",
+]);
+
+/** 视频历史统一公开的四态。 */
+export const videoHistoryStatusSchema = z.enum([
+  "queued",
+  "in_progress",
   "completed",
   "failed",
 ]);
@@ -153,7 +170,6 @@ const historyRecordCommonSchema = z.object({
   id: z.string().min(1).max(512),
   prompt: z.string(),
   model: z.string().min(1).max(240),
-  status: historyRecordStatusSchema,
   creditsConsumed: z.number().finite().nonnegative(),
   error: z.string().nullable(),
   createdAt: isoDateTimeSchema,
@@ -165,6 +181,7 @@ const historyRecordCommonSchema = z.object({
 export const imageHistoryRecordSchema = historyRecordCommonSchema
   .extend({
     kind: z.literal("image"),
+    status: imageHistoryStatusSchema,
     revisedPrompt: z.string().nullable(),
     size: z.string().min(1).max(200),
     creditDetails: historyCreditDetailsSchema.nullable(),
@@ -178,6 +195,7 @@ export const imageHistoryRecordSchema = historyRecordCommonSchema
 export const videoHistoryRecordSchema = historyRecordCommonSchema
   .extend({
     kind: z.literal("video"),
+    status: videoHistoryStatusSchema,
     resolution: z.string().min(1).max(100),
     duration: z.number().int().positive(),
     aspectRatio: z.string().min(1).max(100),

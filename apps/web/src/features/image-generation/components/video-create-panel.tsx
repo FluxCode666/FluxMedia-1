@@ -48,13 +48,7 @@ type VideoStatus = "idle" | "running" | "done" | "error";
 
 type VideoTaskResponse = {
   taskId: string;
-  status:
-    | "pending"
-    | "submitting"
-    | "processing"
-    | "needs_attention"
-    | "completed"
-    | "failed";
+  status: "queued" | "in_progress" | "completed" | "failed";
   videoUrl?: string;
   error?: string;
 };
@@ -74,17 +68,22 @@ export function resolveNextVideoPollDelay(currentDelayMs: number): number {
   return Math.min(Math.round(currentDelayMs * 1.5), VIDEO_STATUS_MAX_POLL_MS);
 }
 
-/** 收窄站内状态响应；非法或漂移的服务端负载显式失败。 */
-function parseVideoTaskResponse(value: unknown): VideoTaskResponse {
+/**
+ * 收窄站内视频状态响应。
+ *
+ * @param value 创建或查询路由返回的不可信 JSON。
+ * @returns 只含公开视频四态、任务 ID 和可选结果/错误的响应。
+ * @sideEffects 无。
+ * @throws Error 负载不是对象、缺少任务 ID 或包含旧状态/未知状态时显式失败。
+ */
+export function parseVideoTaskResponse(value: unknown): VideoTaskResponse {
   if (!value || typeof value !== "object") {
     throw new Error("视频任务响应格式无效");
   }
   const record = value as Record<string, unknown>;
   const statuses: VideoTaskResponse["status"][] = [
-    "pending",
-    "submitting",
-    "processing",
-    "needs_attention",
+    "queued",
+    "in_progress",
     "completed",
     "failed",
   ];
@@ -432,13 +431,8 @@ export function VideoCreatePanel({
           setStatus("done");
           return;
         }
-        if (task.status === "failed" || task.status === "needs_attention") {
-          throw new Error(
-            task.error ??
-              (task.status === "needs_attention"
-                ? "视频提交结果需要人工核对"
-                : "视频生成失败")
-          );
+        if (task.status === "failed") {
+          throw new Error(task.error ?? "视频生成失败");
         }
         await waitForVideoPoll(pollDelayMs);
         const statusResponse = await fetch(

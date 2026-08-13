@@ -4,9 +4,8 @@
  * 职责：校验并安全投递公网 HTTPS 回调，以及把持久 generation/video_generation 行
  * 映射为兼容响应。图片异步任务真相已迁至 PostgreSQL，不在本模块保存进程内状态。
  */
-import {
-  normalizeHistoricalModelId,
-} from "@repo/shared/image-backend/supported-models";
+import { normalizeHistoricalModelId } from "@repo/shared/image-backend/supported-models";
+import { toLegacyVideoPublicStatus } from "@/features/image-generation/video-public-status";
 import {
   assertPublicCallbackUrl,
   fetchPublicCallback,
@@ -89,8 +88,9 @@ export function toGenerationImageTaskResponse(
 export type VideoTaskRow = {
   id: string;
   model: string;
-  // video_generation.status 是 text 列(pending/running/completed/failed),按字符串判定。
+  // status/stage 是 text 列，公开值必须经共享四态投影，禁止直接透传内部阶段。
   status: string;
+  stage?: string;
   durationSeconds: number;
   aspectRatio: string;
   resolution: string;
@@ -111,12 +111,7 @@ export function toVideoGenerationTaskResponse(
   row: VideoTaskRow,
   videoUrl: string | null
 ) {
-  const status: AsyncImageTaskStatus =
-    row.status === "completed"
-      ? "completed"
-      : row.status === "failed"
-        ? "failed"
-        : "processing";
+  const status = toLegacyVideoPublicStatus(row.status, row.stage);
   const credits = Number(row.creditsConsumed ?? 0);
   return {
     id: row.id,

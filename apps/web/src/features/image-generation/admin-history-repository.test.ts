@@ -135,6 +135,8 @@ describe("admin history repository SQL", () => {
     expect(compiled.sql).not.toContain("v.family");
     expect(compiled.sql).not.toContain("sql.raw");
     expect(compiled.sql).not.toContain("webConversation");
+    expect(compiled.sql).toContain("v.stage in ('created', 'charged')");
+    expect(compiled.sql).toContain("else 'in_progress'");
   });
 
   it("reverses global ordering for a signed previous cursor", () => {

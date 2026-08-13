@@ -134,6 +134,17 @@ export const videoGenerateInputSchema = z
 /** video.generate 经静态 schema 收窄后的输入。 */
 export type VideoGenerateInput = z.infer<typeof videoGenerateInputSchema>;
 
+/** 视频创建、查询、回调与历史共同使用的公开四态。 */
+export const videoPublicStatusSchema = z.enum([
+  "queued",
+  "in_progress",
+  "completed",
+  "failed",
+]);
+
+/** 视频对外稳定公开状态。 */
+export type VideoPublicStatus = z.infer<typeof videoPublicStatusSchema>;
+
 /** UOL 动态能力解析后的规范视频请求。 */
 export type CanonicalVideoGenerateInput = Omit<
   VideoGenerateInput,
@@ -407,14 +418,7 @@ export const videoGenerate = defineOperation({
   input: videoGenerateInputSchema,
   output: z.object({
     taskId: z.string(),
-    status: z.enum([
-      "pending",
-      "submitting",
-      "processing",
-      "needs_attention",
-      "completed",
-      "failed",
-    ]),
+    status: videoPublicStatusSchema,
   }),
   access: { kind: "protected" },
   readOnly: false,
@@ -459,14 +463,7 @@ export const videoGetStatus = defineOperation({
   input: videoGetStatusInputSchema,
   output: z.object({
     taskId: z.string(),
-    status: z.enum([
-      "pending",
-      "submitting",
-      "processing",
-      "needs_attention",
-      "completed",
-      "failed",
-    ]),
+    status: videoPublicStatusSchema,
     model: videoRequestedModelIdSchema,
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,

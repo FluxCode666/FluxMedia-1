@@ -360,21 +360,40 @@ describe("video generation operations", () => {
     ).toBe(false);
   });
 
-  it("状态输出公开真实模型与独立参数并保留人工核对状态", () => {
+  it("生成与状态输出仅接受视频公开四态", () => {
+    const output = {
+      taskId: "video-1",
+      status: "in_progress",
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      generateAudio: false,
+      input: { mode: "references", count: 10 },
+      error: "提交结果待核对",
+      createdAt: "2026-07-26T00:00:00.000Z",
+    } as const;
+    expect(videoGetStatus.output.safeParse(output).success).toBe(true);
     expect(
-      videoGetStatus.output.safeParse({
-        taskId: "video-1",
-        status: "needs_attention",
-        model: "seedance2",
-        duration: 15,
-        aspectRatio: "9:16",
-        resolution: "480p",
-        generateAudio: false,
-        input: { mode: "references", count: 10 },
-        error: "提交结果待核对",
-        createdAt: "2026-07-26T00:00:00.000Z",
+      videoGenerate.output.safeParse({
+        taskId: output.taskId,
+        status: "queued",
       }).success
     ).toBe(true);
+    for (const status of [
+      "pending",
+      "submitting",
+      "processing",
+      "needs_attention",
+    ]) {
+      expect(
+        videoGetStatus.output.safeParse({ ...output, status }).success
+      ).toBe(false);
+      expect(
+        videoGenerate.output.safeParse({ taskId: output.taskId, status })
+          .success
+      ).toBe(false);
+    }
   });
 
   it("只允许管理员显式提交完整的人工核对结论", () => {

@@ -75,7 +75,7 @@ describe("postExternalVideoGenerations", () => {
     );
     mocks.invokeOperation.mockResolvedValue({
       taskId: "video-1",
-      status: "processing",
+      status: "in_progress",
     });
   });
 

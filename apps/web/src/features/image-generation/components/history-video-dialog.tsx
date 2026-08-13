@@ -38,7 +38,7 @@ export type HistoryVideoDialogRecord = {
   model: string;
   prompt: string;
   resolution: string;
-  status: "processing" | "completed" | "failed";
+  status: "queued" | "in_progress" | "completed" | "failed";
   videoUrl: string | null;
 };
 
@@ -154,7 +154,8 @@ export function HistoryVideoDialog({
   const statusLabel = {
     completed: copy("Completed", "已完成"),
     failed: copy("Failed", "失败"),
-    processing: copy("Processing", "处理中"),
+    queued: copy("Queued", "排队中"),
+    in_progress: copy("In progress", "生成中"),
   }[record.status];
   const errorMessage = formatHistoryError(record.error, copy);
   const [inputState, setInputState] = useState<
@@ -219,12 +220,14 @@ export function HistoryVideoDialog({
               <div className="flex flex-col items-center gap-3 px-6 text-center text-sm text-white/60">
                 <Film className="size-12" strokeWidth={1.2} />
                 <span>
-                  {record.status === "processing"
-                    ? copy(
-                        "The video is still being generated.",
-                        "视频仍在生成中。"
-                      )
-                    : copy("Video preview unavailable", "视频预览不可用")}
+                  {record.status === "queued"
+                    ? copy("The video is queued.", "视频正在排队。")
+                    : record.status === "in_progress"
+                      ? copy(
+                          "The video is still being generated.",
+                          "视频仍在生成中。"
+                        )
+                      : copy("Video preview unavailable", "视频预览不可用")}
                 </span>
               </div>
             )}

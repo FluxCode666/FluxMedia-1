@@ -126,7 +126,7 @@ describe("external async image tasks", () => {
     });
   });
 
-  it("maps running/failed video generations without leaking a url", () => {
+  it("maps queued/in-progress/failed video generations without leaking a url", () => {
     const base: VideoTaskRow = {
       id: "vid_r",
       model: "firefly-sora2-8s-16x9",
@@ -140,13 +140,22 @@ describe("external async image tasks", () => {
       createdAt: new Date("2026-06-22T00:00:00Z"),
       updatedAt: null,
     };
-    const running = toVideoGenerationTaskResponse(base, null);
-    expect(running).toMatchObject({
-      status: "processing",
+    const queued = toVideoGenerationTaskResponse(
+      { ...base, status: "pending", stage: "created" },
+      null
+    );
+    expect(queued).toMatchObject({
+      status: "queued",
       object: "video.generation",
     });
-    expect(running).not.toHaveProperty("video_url");
-    expect(running).not.toHaveProperty("data");
+    expect(queued).not.toHaveProperty("video_url");
+    expect(queued).not.toHaveProperty("data");
+
+    const running = toVideoGenerationTaskResponse(
+      { ...base, stage: "polling" },
+      null
+    );
+    expect(running.status).toBe("in_progress");
 
     const failed = toVideoGenerationTaskResponse(
       { ...base, id: "vid_f", status: "failed", error: "upstream 500" },
@@ -156,6 +165,28 @@ describe("external async image tasks", () => {
       status: "failed",
       error: { message: "upstream 500" },
     });
+  });
+
+  it("maps legacy uncertain video tasks to in_progress", () => {
+    const response = toVideoGenerationTaskResponse(
+      {
+        id: "vid_legacy",
+        model: "seedance2",
+        status: "needs_attention",
+        stage: "submit_uncertain",
+        durationSeconds: 8,
+        aspectRatio: "16:9",
+        resolution: "720p",
+        generateAudio: false,
+        creditsConsumed: 20,
+        error: null,
+        createdAt: new Date("2026-06-22T00:00:00Z"),
+        updatedAt: null,
+      },
+      null
+    );
+
+    expect(response.status).toBe("in_progress");
   });
 
   it("rejects private callback URLs", async () => {
