@@ -276,10 +276,6 @@ export function buildOperationsQueueBacklogSql(): SQL {
       (select count(*) from ${videoGeneration}
         where ${videoGeneration.stage} not in ('completed', 'failed'))
         as video_pending
-    where exists (
-      select 1 from ${imageAsyncTask}
-      where ${imageAsyncTask.status} in ('queued', 'running')
-    ) or true
   `;
 }
 

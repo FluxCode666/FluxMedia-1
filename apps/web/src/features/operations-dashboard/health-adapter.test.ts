@@ -56,8 +56,10 @@ describe("operations health adapter SQL", () => {
 
     expect(queueQuery).toContain('from "image_async_task"');
     expect(queueQuery).toContain('from "video_generation"');
-    expect(queueQuery).toContain("in ('queued', 'running')");
+    expect(queueQuery).toContain("\"status\" = 'queued'");
+    expect(queueQuery).toContain("\"status\" = 'running'");
     expect(queueQuery).toContain("not in ('completed', 'failed')");
+    expect(queueQuery).not.toContain("or true");
     expect(backendQuery).toContain('from "image_backend_member"');
     expect(backendQuery).toContain("\"health_status\" = 'healthy'");
   });
