@@ -9,6 +9,7 @@ import {
   type ApiUpstreamAdapterDraft,
   type ApiUpstreamOperations,
   createDefaultApiUpstreamOperations,
+  DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
   resolveApiUpstreamOperationPath,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/api-upstream-script-contract";
@@ -59,7 +60,7 @@ export const API_UPSTREAM_MEDIA_SECTIONS = [
 export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFormDraft {
   return {
     authentication: { mode: "bearer" },
-    videoSubmissionRetryCount: 2,
+    videoSubmissionRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
     operations: createDefaultApiUpstreamOperations(),
   };
 }

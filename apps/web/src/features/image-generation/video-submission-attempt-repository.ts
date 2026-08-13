@@ -4,6 +4,8 @@
  * 职责：每次真实外呼前原子固定账号级重试配置和序号，并由数据库上限与唯一键阻止
  * 多 Worker 越界。账本只保存安全身份和失败摘要，不保存请求正文、URL、凭据或任务 ID。
  */
+
+import { videoSubmissionRetryCountSchema } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
@@ -18,7 +20,7 @@ const reserveInputSchema = z
     videoGenerationId: identifierSchema,
     backendMemberId: identifierSchema,
     requestId: identifierSchema,
-    videoSubmissionRetryCount: z.number().int().min(0).max(10),
+    videoSubmissionRetryCount: videoSubmissionRetryCountSchema.unwrap(),
     supplierNameSnapshot: z.string().trim().min(1).max(120),
     apiAdapterMemberId: identifierSchema,
     apiAdapterVersionId: identifierSchema,

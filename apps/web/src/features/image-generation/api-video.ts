@@ -270,8 +270,8 @@ function toApiVideoStageError(
 function toScriptedGenerationFailure(
   result: Extract<ApiUpstreamResponseResult, { status: "failed" }>
 ): ApiVideoStageError {
-  // WHY：错误分类只描述原因，不能证明供应商未创建任务。只有管理员在响应脚本中
-  // 显式返回 retryable=true，视频状态机才能安全换号重投。
+  // WHY：409 可能表示上游已创建任务；只有受控脚本明确标记可重试时才允许自动恢复。
+  // 其他失败由状态机按 HTTP 与脚本分类执行同账号重试、切号或终止退款。
   const switchable = result.retryable;
   return {
     error: "视频上游拒绝了生成请求",
@@ -334,20 +334,14 @@ async function parseBuiltInVideoSubmission(
   response: Response
 ): Promise<ApiVideoSubmission | ApiVideoStageError> {
   if (!response.ok) {
+    const retryAfterSeconds = parseApiUpstreamRetryAfterSeconds(
+      response.headers.get("retry-after"),
+      new Date()
+    );
     return {
       error: getApiVideoErrorMessage(response),
       failure: { statusCode: response.status },
-      ...(parseApiUpstreamRetryAfterSeconds(
-        response.headers.get("retry-after"),
-        new Date()
-      ) !== undefined
-        ? {
-            retryAfterSeconds: parseApiUpstreamRetryAfterSeconds(
-              response.headers.get("retry-after"),
-              new Date()
-            ),
-          }
-        : {}),
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
     };
   }
   let record: Record<string, unknown> | null;
@@ -398,7 +392,7 @@ async function parseBuiltInVideoSubmission(
  * @param params 真实模型 ID、独立生成参数、幂等键和具名输入图。
  * @returns 同步产物、异步任务身份，或可供调度器分类的提交错误。
  * @sideEffects 请求脚本成功后最多发起一次供应商 POST。
- * @failure 外呼后结果不确定时禁止盲目重投；请求脚本失败可切换账号。
+ * @failure 创建失败由状态机有界重试或切号；409 仅在脚本明确可重试时自动恢复。
  */
 export async function submitApiVideoRequest(
   config: ApiConfig,
@@ -506,6 +500,7 @@ export async function submitApiVideoRequest(
       onBeforeSend: params.onBeforeSend,
       signal: params.signal,
       requestId: params.requestId,
+      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
       observability: {
         memberId: config.backend?.id,
         groupId: config.backend?.groupId,

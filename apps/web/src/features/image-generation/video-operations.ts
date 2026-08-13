@@ -6,7 +6,8 @@
  * 关键依赖：video_generation CAS、API/Adobe 分阶段适配器、成员租约、credits 与 storage。
  *
  * 不变量：上游接受后固定顶层成员；HTTP 与对象存储 I/O 不进入数据库事务；
- * submit 不确定不重投不退款；所有终态通过持久阶段和幂等财务键收敛。
+ * API 创建失败自动有界重试并切号；Adobe Direct 提交不确定时保留协议兼容态；
+ * 所有终态通过持久阶段和幂等财务键收敛。
  */
 
 import { randomUUID } from "node:crypto";
@@ -35,6 +36,7 @@ import {
   InsufficientCreditsError,
 } from "@repo/shared/credits/core";
 import { refundGenerationCredits } from "@repo/shared/generation-maintenance";
+import { DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
   API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS,
   type ApiUpstreamRequestSnapshot,
@@ -510,15 +512,17 @@ async function recordVideoSubmissionFailure(input: {
   now: Date;
 }): Promise<void> {
   if (!input.decision.failureCode || !input.decision.userReason) return;
+  const failureReason = sanitizeVideoSubmissionFailureReason(
+    input.decision.userReason
+  );
+  const operationsReason = sanitizeVideoSubmissionFailureReason(
+    input.decision.operationsReason
+  );
   await defaultVideoSubmissionAttemptRepository.markFailed({
     attemptId: input.attemptId,
     failureCode: input.decision.failureCode,
-    failureReason: sanitizeVideoSubmissionFailureReason(
-      input.decision.userReason
-    ),
-    operationsReason: sanitizeVideoSubmissionFailureReason(
-      input.decision.operationsReason
-    ),
+    failureReason,
+    operationsReason,
     failedAt: input.now,
   });
   logWarn(
@@ -538,12 +542,8 @@ async function recordVideoSubmissionFailure(input: {
       httpTimeoutSeconds: input.httpTimeoutSeconds,
       memberId: input.memberId,
       failureCode: input.decision.failureCode,
-      failureReason: sanitizeVideoSubmissionFailureReason(
-        input.decision.userReason
-      ),
-      operationsReason: sanitizeVideoSubmissionFailureReason(
-        input.decision.operationsReason
-      ),
+      failureReason,
+      operationsReason,
       ...(getVideoExternalRequestId(input.row)
         ? { externalRequestId: getVideoExternalRequestId(input.row) }
         : {}),
@@ -1453,7 +1453,8 @@ export async function runVideoGenerationForUser(
  * 执行一条已由 worker 认领的 created 任务。
  *
  * 媒体读取发生在获租前；扣费后才进入 submitting。进程在各阶段退出时，持久状态机
- * 分别重跑 created、幂等收敛 charged 或把 submitting 转为人工核对，绝不盲目重投。
+ * 分别重跑 created、幂等收敛 charged；API submitting 自动恢复，Adobe Direct 保留
+ * 协议专属的不确定提交兼容态。
  */
 async function submitClaimedCreatedVideo(
   initialRow: VideoGenerationRow
@@ -1751,7 +1752,8 @@ async function submitClaimedCreatedVideo(
           requestId: submissionRequestId,
           videoSubmissionRetryCount:
             lease.config.backend?.apiUpstreamAdapter
-              ?.videoSubmissionRetryCount ?? 2,
+              ?.videoSubmissionRetryCount ??
+            DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
           supplierNameSnapshot: lease.acquisition.member.name,
           apiAdapterMemberId:
             lease.acquisition.lease.apiAdapterMemberId ?? lease.memberId,
@@ -2550,7 +2552,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
  * 处理 Redis MQ 指定的一条视频任务并返回下一次投递时间。
  *
  * @param taskId MQ 中仅用于定位 PostgreSQL 行的任务 ID。
- * @returns 非终态任务的下一次版本化投递；终态、人工核对态或任务不存在时为 null。
+ * @returns 非终态任务的下一次版本化投递；终态、协议兼容态或任务不存在时为 null。
  * @throws claim 后的异常无法持久化重试状态时上抛，让 BullMQ 执行有界重试。
  */
 export async function processVideoGenerationQueueTask(
