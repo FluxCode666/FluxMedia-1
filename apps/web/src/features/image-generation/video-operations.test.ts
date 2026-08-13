@@ -22,9 +22,15 @@ import {
   resolveApiAdapterQueryFailure,
   resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
+  usesBoundedVideoRefundRetryPolicy,
 } from "./video-recovery-policy";
 
 describe("video recovery policies", () => {
+  it("仅 API 退款使用三次有界恢复策略", () => {
+    expect(usesBoundedVideoRefundRetryPolicy("api")).toBe(true);
+    expect(usesBoundedVideoRefundRetryPolicy("adobe_direct")).toBe(false);
+  });
+
   it("API 查询适配连续失败恰好三次后终止重试", () => {
     expect(resolveApiAdapterQueryFailure(0)).toEqual({
       nextFailureCount: 1,

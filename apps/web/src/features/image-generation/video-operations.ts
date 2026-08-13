@@ -101,6 +101,7 @@ import {
   resolveApiAdapterQueryFailure,
   resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
+  usesBoundedVideoRefundRetryPolicy,
 } from "./video-recovery-policy";
 import { defaultVideoRecoveryRepository } from "./video-recovery-repository";
 import { defaultVideoSubmissionAttemptRepository } from "./video-submission-attempt-repository";
@@ -831,6 +832,17 @@ async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
 async function refundClaimedVideoOrRetry(
   row: VideoGenerationRow
 ): Promise<void> {
+  // Adobe Direct 的退款恢复沿用升级前的普通恢复间隔；API 供应商才使用
+  // 有界三次退款策略。两种协议的财务语义不能互相覆盖。
+  if (!usesBoundedVideoRefundRetryPolicy(getVideoBackendProtocol(row))) {
+    try {
+      await refundClaimedVideo(row);
+    } catch (error) {
+      await retryClaimedVideo(row, error);
+      throw error;
+    }
+    return;
+  }
   try {
     await refundClaimedVideo(row);
   } catch {
@@ -922,6 +934,15 @@ export async function reconcileUncertainVideoSubmission(
     throw new VideoSubmissionReconciliationError("not_found", "视频任务不存在");
   }
 
+  // API 供应商不再接受人工核对；此入口仅为 Adobe Direct 遗留
+  // submit_uncertain 任务保留，待遗留行清零后随兼容代码一并移除。
+  if (getVideoBackendProtocol(row) !== "adobe_direct") {
+    throw new VideoSubmissionReconciliationError(
+      "conflict",
+      "API 视频任务不支持人工核对，请等待自动恢复"
+    );
+  }
+
   if (input.outcome === "not_accepted") {
     if (row.stage === "failed") {
       return { taskId: row.id, status: "failed" };
@@ -952,10 +973,7 @@ export async function reconcileUncertainVideoSubmission(
 
   let pollUrl: string;
   try {
-    pollUrl =
-      getVideoBackendProtocol(row) === "api"
-        ? parseMediaUpstreamUrl(input.pollUrl).toString()
-        : assertAdobeVideoPollUrl(input.pollUrl);
+    pollUrl = assertAdobeVideoPollUrl(input.pollUrl);
   } catch (error) {
     throw new VideoSubmissionReconciliationError(
       "validation_error",
