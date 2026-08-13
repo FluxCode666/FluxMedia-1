@@ -24,6 +24,7 @@ import {
 import { z } from "zod";
 
 import type {
+  AdminPaymentOrderCountQuery,
   AdminPaymentOrderQuery,
   AdminPaymentOrderRow,
   AdminPaymentOverviewOrderCountRow,
@@ -79,6 +80,8 @@ const userOptionSchema = z
   })
   .strict();
 
+const countSchema = z.coerce.number().int().nonnegative().safe();
+
 /** 返回支付订单固定用途谓词，防止未来其他订单类型混入充值报表。 */
 function buildRechargePurposePredicate() {
   return inArray(paymentOrder.purpose, ["credit_top_up", "credit_package"]);
@@ -105,6 +108,31 @@ function escapeLikePattern(value: string): string {
     .replaceAll("\\", "\\\\")
     .replaceAll("%", "\\%")
     .replaceAll("_", "\\_");
+}
+
+/** 构造列表与精确总数共用的充值用途、日期和管理筛选谓词。 */
+function buildOrderWhere(input: AdminPaymentOrderCountQuery) {
+  return and(
+    buildRechargePurposePredicate(),
+    gte(paymentOrder.createdAt, input.start),
+    lt(paymentOrder.createdAt, input.endExclusive),
+    lte(paymentOrder.createdAt, input.asOf),
+    input.orderId ? eq(paymentOrder.id, input.orderId) : undefined,
+    input.status ? eq(paymentOrder.status, input.status) : undefined,
+    input.userEmail ? eq(user.email, input.userEmail) : undefined
+  );
+}
+
+/** 读取当前管理员筛选和浏览上界内的精确订单总数。 */
+async function countOrders(
+  input: AdminPaymentOrderCountQuery
+): Promise<number> {
+  const [row] = await db
+    .select({ totalCount: sql<number>`count(*)`.mapWith(Number) })
+    .from(paymentOrder)
+    .innerJoin(user, eq(user.id, paymentOrder.userId))
+    .where(buildOrderWhere(input));
+  return countSchema.parse(row?.totalCount ?? 0);
 }
 
 /** 按报告时区自然日与币种聚合已履约订单最小单位金额。 */
@@ -192,18 +220,7 @@ async function readOrders(
     })
     .from(paymentOrder)
     .innerJoin(user, eq(user.id, paymentOrder.userId))
-    .where(
-      and(
-        buildRechargePurposePredicate(),
-        gte(paymentOrder.createdAt, input.start),
-        lt(paymentOrder.createdAt, input.endExclusive),
-        lte(paymentOrder.createdAt, input.asOf),
-        input.orderId ? eq(paymentOrder.id, input.orderId) : undefined,
-        input.status ? eq(paymentOrder.status, input.status) : undefined,
-        input.userEmail ? eq(user.email, input.userEmail) : undefined,
-        buildOrderCursorPredicate(input)
-      )
-    )
+    .where(and(buildOrderWhere(input), buildOrderCursorPredicate(input)))
     .orderBy(
       input.cursor?.direction === "previous"
         ? asc(paymentOrder.createdAt)
@@ -240,6 +257,7 @@ async function searchUsers(input: {
 
 /** 生产数据库仓储；所有方法都执行有界、参数化只读查询。 */
 export const databaseAdminPaymentRepository: AdminPaymentRepository = {
+  countOrders,
   readOverviewRevenue,
   readOverviewOrderCounts,
   readOrders,
