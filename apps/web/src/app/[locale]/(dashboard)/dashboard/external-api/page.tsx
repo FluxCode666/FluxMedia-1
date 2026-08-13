@@ -9,20 +9,38 @@ import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 
 import { getCurrentDocumentationBaseUrl } from "@/features/docs/documentation-base-url-server";
+import { loadPaginationConfig } from "@/features/pagination/server";
 import { ExternalApiKeySection } from "@/features/settings/components";
+import {
+  type ExternalApiKeySearchParams,
+  parseExternalApiKeyPagination,
+} from "@/features/settings/external-api-key-pagination";
 
 export const metadata = {
   title: "API Keys | FluxMedia",
   description: "Create and manage FluxMedia API keys",
 };
 
-/** 渲染当前登录用户的 API 密钥管理页面。 */
-export default async function ExternalApiPage() {
-  const [session, locale, baseUrl] = await Promise.all([
-    getServerSession(),
-    getLocale(),
-    getCurrentDocumentationBaseUrl(),
-  ]);
+/**
+ * 渲染当前登录用户的 API 密钥管理页面。
+ *
+ * @param searchParams 未信任的 keyPage/keyPageSize URL 状态。
+ * @returns 带统一分页配置和用户时区的 API Key 管理区。
+ * @sideEffects 读取会话、分页系统设置、文档地址和用户时区；未登录时重定向。
+ */
+export default async function ExternalApiPage({
+  searchParams,
+}: {
+  searchParams: Promise<ExternalApiKeySearchParams>;
+}) {
+  const [session, locale, baseUrl, rawSearchParams, paginationConfig] =
+    await Promise.all([
+      getServerSession(),
+      getLocale(),
+      getCurrentDocumentationBaseUrl(),
+      searchParams,
+      loadPaginationConfig(),
+    ]);
   if (!session?.user) {
     redirect(`/${locale}/sign-in`);
   }
@@ -31,6 +49,10 @@ export default async function ExternalApiPage() {
     getTranslations("Settings.externalApi"),
     getUserTimeZone(session.user.id),
   ]);
+  const pagination = parseExternalApiKeyPagination(
+    rawSearchParams,
+    paginationConfig
+  );
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -40,7 +62,12 @@ export default async function ExternalApiPage() {
         </h1>
         <p className="text-sm text-muted-foreground">{t("description")}</p>
       </div>
-      <ExternalApiKeySection baseUrl={baseUrl} timeZone={timeZone} />
+      <ExternalApiKeySection
+        baseUrl={baseUrl}
+        initialPagination={pagination}
+        pageSizeOptions={paginationConfig.pageSizeOptions}
+        timeZone={timeZone}
+      />
     </div>
   );
 }

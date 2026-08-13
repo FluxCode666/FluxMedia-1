@@ -99,15 +99,27 @@ describe("external API key operation metadata", () => {
 
   it("rejects API Key and system principals before execution", async () => {
     await expectOperationError(
-      invokeOperation("externalApi.listKeys", {}, apiKeyPrincipal),
+      invokeOperation(
+        "externalApi.listKeys",
+        { page: 1, pageSize: 20 },
+        apiKeyPrincipal
+      ),
       "unauthenticated"
     );
     await expectOperationError(
-      invokeOperation("externalApi.listKeys", {}, systemPrincipal),
+      invokeOperation(
+        "externalApi.listKeys",
+        { page: 1, pageSize: 20 },
+        systemPrincipal
+      ),
       "unauthenticated"
     );
     await expectOperationError(
-      invokeOperation("externalApi.listKeys", {}, sessionPrincipal),
+      invokeOperation(
+        "externalApi.listKeys",
+        { page: 1, pageSize: 20 },
+        sessionPrincipal
+      ),
       "not_implemented"
     );
   });
@@ -119,6 +131,19 @@ describe("external API key operation metadata", () => {
 });
 
 describe("external API key input schemas", () => {
+  it("uses strict pagination input for the list operation", () => {
+    expect(listKeys.input.safeParse({ page: 2, pageSize: 50 }).success).toBe(
+      true
+    );
+    expect(
+      listKeys.input.safeParse({
+        page: 2,
+        pageSize: 50,
+        userId: "forged-user",
+      }).success
+    ).toBe(false);
+  });
+
   it("accepts only the settled create fields", () => {
     expect(
       createKey.input.safeParse({
@@ -190,6 +215,10 @@ describe("external API key output schemas", () => {
             selectable: true,
           },
         ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 2,
+        totalPages: 1,
       }).success
     ).toBe(true);
 
@@ -203,6 +232,10 @@ describe("external API key output schemas", () => {
         listKeys.output.safeParse({
           keys: [{ ...keyListItem, ...legacyField }],
           editableGroups: [],
+          page: 1,
+          pageSize: 20,
+          totalCount: 1,
+          totalPages: 1,
         }).success
       ).toBe(false);
     }
@@ -210,6 +243,10 @@ describe("external API key output schemas", () => {
       listKeys.output.safeParse({
         keys: [keySummary],
         editableGroups: [],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+        totalPages: 1,
       }).success
     ).toBe(false);
   });
@@ -232,6 +269,10 @@ describe("external API key output schemas", () => {
       listKeys.output.safeParse({
         keys: [{ ...keyListItem, keyHash: "secret-hash" }],
         editableGroups: [],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+        totalPages: 1,
       }).success
     ).toBe(false);
   });

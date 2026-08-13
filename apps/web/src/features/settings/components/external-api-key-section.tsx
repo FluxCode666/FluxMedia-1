@@ -9,6 +9,7 @@
  * 关键依赖：API 密钥 Server Actions、纯列表状态 reducer、Shadcn Collapsible。
  */
 import { formatCredits } from "@repo/shared/credits/format";
+import { buildPaginationHref } from "@repo/shared/pagination/url-adapter";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import {
   AlertDialog,
@@ -48,6 +49,7 @@ import {
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -56,6 +58,9 @@ import type {
   ExternalApiKeyListItem,
   ExternalApiKeySummary,
 } from "@/features/external-api/key-management-service";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
+import { usePathname, useRouter } from "@/i18n/routing";
 
 import {
   createExternalApiKey,
@@ -66,6 +71,10 @@ import {
   updateExternalApiKeyGroup,
   updateExternalApiKeyQuota,
 } from "../actions/external-api-key";
+import {
+  EXTERNAL_API_KEY_PAGINATION_NAMES,
+  type ExternalApiKeyPaginationState,
+} from "../external-api-key-pagination";
 import {
   canApplyExternalApiKeyFullListLoad,
   createExternalApiKeyActivityState,
@@ -150,14 +159,21 @@ function preserveListItemApiKey(
  */
 export function ExternalApiKeySection({
   baseUrl,
+  initialPagination,
+  pageSizeOptions,
   timeZone,
 }: {
   baseUrl: string;
+  initialPagination: ExternalApiKeyPaginationState;
+  pageSizeOptions: number[];
   timeZone?: string;
 }) {
   const locale = useLocale();
   const t = useTranslations("Settings.externalApi");
-  const didLoadRef = useRef(false);
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const loadedPaginationRef = useRef("");
   const createHeadingRef = useRef<HTMLHeadingElement>(null);
   const rowTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingRowsRef = useRef(new Set<string>());
@@ -169,6 +185,11 @@ export function ExternalApiKeySection({
     createExternalApiKeyListState<ExternalApiKeyListItem>([])
   );
   const [editableGroups, setEditableGroups] = useState<EditableGroup[]>([]);
+  const [pagination, setPagination] = useState(() => ({
+    ...initialPagination,
+    totalCount: 0,
+    totalPages: 1,
+  }));
   const [loadStatus, setLoadStatus] = useState<LoadStatus>("loading");
   const [loadError, setLoadError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -190,11 +211,37 @@ export function ExternalApiKeySection({
   const isFullListLoading = loadStatus === "loading" || isRefreshing;
   const hasActiveMutation =
     isCreating || Object.keys(listState.pendingByKeyId).length > 0;
+  const pageSizeHrefOptions = useMemo(
+    () =>
+      pageSizeOptions.map((pageSize) => ({
+        size: pageSize,
+        href: buildPaginationHref(
+          pathname,
+          new URLSearchParams(searchParams.toString()),
+          EXTERNAL_API_KEY_PAGINATION_NAMES,
+          { pageSize },
+          "criteria"
+        ),
+      })),
+    [pageSizeOptions, pathname, searchParams]
+  );
 
-  /** 用服务端摘要重建列表和编辑草稿；只在完整加载成功时调用。 */
+  /**
+   * 用服务端分页结果重建列表、分页元数据和编辑草稿。
+   *
+   * @param data 经 UOL 校验的本人 API Key 页及可编辑分组。
+   * @returns 无返回值。
+   * @sideEffects 替换当前页列表状态、精确总数和表单草稿。
+   */
   const applyLoadedList = useCallback((data: ExternalApiKeyListResult) => {
     setListState(createExternalApiKeyListState(data.keys));
     setEditableGroups(data.editableGroups);
+    setPagination({
+      page: data.page,
+      pageSize: data.pageSize,
+      totalCount: data.totalCount,
+      totalPages: data.totalPages,
+    });
     setGroupDrafts(
       Object.fromEntries(
         data.keys.map((key) => [
@@ -213,7 +260,13 @@ export function ExternalApiKeySection({
     );
   }, []);
 
-  /** 初次加载或人工重试列表；加载失败永不降级为空态。 */
+  /**
+   * 初次加载、人工刷新或写后重新读取当前页。
+   *
+   * @param initial 是否按首屏加载展示错误卡片；false 时只用 toast 提示失败。
+   * @returns 请求完成后结束。
+   * @sideEffects 调用列表 Action、更新当前页，并在页码越界时 replace URL。
+   */
   const loadKeys = useCallback(
     async (initial: boolean) => {
       const loadToken = tryStartExternalApiKeyFullListLoad(activityRef.current);
@@ -225,7 +278,7 @@ export function ExternalApiKeySection({
       }
       setLoadError("");
       try {
-        const result = await getExternalApiKeys();
+        const result = await getExternalApiKeys(initialPagination);
         if (
           !canApplyExternalApiKeyFullListLoad(activityRef.current, loadToken)
         ) {
@@ -234,25 +287,44 @@ export function ExternalApiKeySection({
         if (result?.data) {
           applyLoadedList(result.data);
           setLoadStatus("ready");
+          if (result.data.page !== initialPagination.page) {
+            router.replace(
+              buildPaginationHref(
+                pathname,
+                new URLSearchParams(searchParams.toString()),
+                EXTERNAL_API_KEY_PAGINATION_NAMES,
+                { page: result.data.page },
+                "page"
+              )
+            );
+          }
         } else if (initial) {
           setLoadStatus("error");
           setLoadError(getActionError(result, t("errors.load")));
         } else {
           toast.error(getActionError(result, t("errors.load")));
         }
+      } catch {
+        if (initial) {
+          setLoadStatus("error");
+          setLoadError(t("errors.load"));
+        } else {
+          toast.error(t("errors.load"));
+        }
       } finally {
         finishExternalApiKeyFullListLoad(activityRef.current, loadToken);
         setIsRefreshing(false);
       }
     },
-    [applyLoadedList, t]
+    [applyLoadedList, initialPagination, pathname, router, searchParams, t]
   );
 
   useEffect(() => {
-    if (didLoadRef.current) return;
-    didLoadRef.current = true;
+    const paginationKey = `${initialPagination.page}:${initialPagination.pageSize}`;
+    if (loadedPaginationRef.current === paginationKey) return;
+    loadedPaginationRef.current = paginationKey;
     void loadKeys(true);
-  }, [loadKeys]);
+  }, [initialPagination, loadKeys]);
 
   /** 把纯 reducer action 安全归并进 React 状态。 */
   const dispatchListAction = useCallback(
@@ -291,7 +363,7 @@ export function ExternalApiKeySection({
   /** mutation 失败后只取目标行真实状态；若行已消失则采用完整服务端列表。 */
   const refreshKeyAfterFailure = useCallback(
     async (keyId: string): Promise<RefreshedKeyResult> => {
-      const result = await getExternalApiKeys();
+      const result = await getExternalApiKeys(initialPagination);
       if (!result?.data) return { status: "failed" };
       setEditableGroups(result.data.editableGroups);
       const refreshedKey = result.data.keys.find((key) => key.id === keyId);
@@ -299,7 +371,7 @@ export function ExternalApiKeySection({
       applyLoadedList(result.data);
       return { status: "missing" };
     },
-    [applyLoadedList]
+    [applyLoadedList, initialPagination]
   );
 
   /** 归并行错误和可用的刷新行，保证竞态失败不会保留虚假旧状态。 */
@@ -338,6 +410,7 @@ export function ExternalApiKeySection({
     if (!tryStartExternalApiKeyMutation(activityRef.current)) return;
     createMutationActiveRef.current = true;
     setIsCreating(true);
+    let shouldReload = false;
     try {
       const result = await createExternalApiKey({
         name: keyName.trim() || undefined,
@@ -353,30 +426,27 @@ export function ExternalApiKeySection({
       }
       setNewKey(result.data.apiKey);
       setNewKeyCreditLimit("");
-      setListState((current) => ({
-        ...current,
-        items: [
-          { ...result.data.key, apiKey: result.data.apiKey },
-          ...current.items,
-        ],
-      }));
-      setGroupDrafts((current) => ({
-        ...current,
-        [result.data.key.id]:
-          result.data.key.generationGroupId || DEFAULT_GROUP_VALUE,
-      }));
-      setQuotaDrafts((current) => ({
-        ...current,
-        [result.data.key.id]:
-          result.data.key.creditLimit === null
-            ? ""
-            : String(result.data.key.creditLimit),
-      }));
+      shouldReload = true;
       toast.success(t("success.created"));
     } finally {
       createMutationActiveRef.current = false;
       setIsCreating(false);
       finishExternalApiKeyMutation(activityRef.current);
+    }
+    if (shouldReload) {
+      if (initialPagination.page === 1) {
+        await loadKeys(false);
+      } else {
+        router.replace(
+          buildPaginationHref(
+            pathname,
+            new URLSearchParams(searchParams.toString()),
+            EXTERNAL_API_KEY_PAGINATION_NAMES,
+            { page: 1 },
+            "page"
+          )
+        );
+      }
     }
   };
 
@@ -508,6 +578,7 @@ export function ExternalApiKeySection({
       operation: "delete",
     });
     finishRowMutation(keyId);
+    await loadKeys(false);
     window.requestAnimationFrame(() => {
       restoreExternalApiKeyDeleteFocus(
         focusTarget,
@@ -659,7 +730,13 @@ export function ExternalApiKeySection({
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-medium">{t("listTitle")}</h2>
+            <h2
+              id="external-api-key-list"
+              className="text-sm font-medium"
+              tabIndex={-1}
+            >
+              {t("listTitle")}
+            </h2>
             <p className="text-xs text-muted-foreground">
               {t("listDescription")}
             </p>
@@ -676,6 +753,16 @@ export function ExternalApiKeySection({
               className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
             />
           </Button>
+        </div>
+
+        <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <span>{t("totalRecords", { count: pagination.totalCount })}</span>
+          <UrlPageSizeSelect
+            itemSuffix={t("pageSizeSuffix")}
+            label={t("pageSizeLabel")}
+            options={pageSizeHrefOptions}
+            value={pagination.pageSize}
+          />
         </div>
 
         <div className="overflow-hidden rounded-lg border border-border">
@@ -1045,6 +1132,30 @@ export function ExternalApiKeySection({
               </div>
             </>
           )}
+        </div>
+
+        <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            {t("pageHint", {
+              page: pagination.page,
+              totalPages: pagination.totalPages,
+            })}
+          </p>
+          <UrlPaginationControls
+            ariaLabel={t("pagination")}
+            focusTargetId="external-api-key-list"
+            getPageLabel={(page, isCurrent) =>
+              isCurrent
+                ? t("currentPageLabel", { page })
+                : t("goToPageLabel", { page })
+            }
+            names={EXTERNAL_API_KEY_PAGINATION_NAMES}
+            nextLabel={t("next")}
+            page={pagination.page}
+            pageSelectLabel={t("pageSelectLabel")}
+            previousLabel={t("previous")}
+            totalPages={pagination.totalPages}
+          />
         </div>
       </section>
     </div>

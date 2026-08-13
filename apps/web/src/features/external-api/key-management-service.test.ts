@@ -86,11 +86,13 @@ async function expectServiceError(
 
 beforeEach(() => {
   repository = {
-    listByUser: vi
-      .fn()
-      .mockResolvedValue([
-        { key: activeKey, currentGroup: disabledCurrentGroup },
-      ]),
+    listByUser: vi.fn().mockResolvedValue({
+      rows: [{ key: activeKey, currentGroup: disabledCurrentGroup }],
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
+      totalPages: 1,
+    }),
     insert: vi.fn().mockResolvedValue({
       ...activeKey,
       id: "key-new",
@@ -133,7 +135,10 @@ beforeEach(() => {
 
 describe("list API keys", () => {
   it("keeps a disabled current group visible and returns separate editable candidates", async () => {
-    const result = await createService().listKeys("user-1");
+    const result = await createService().listKeys("user-1", {
+      page: 1,
+      pageSize: 20,
+    });
 
     expect(result).toEqual({
       keys: [
@@ -166,14 +171,24 @@ describe("list API keys", () => {
           selectable: true,
         },
       ],
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
+      totalPages: 1,
     });
-    expect(repository.listByUser).toHaveBeenCalledWith("user-1");
+    expect(repository.listByUser).toHaveBeenCalledWith("user-1", {
+      page: 1,
+      pageSize: 20,
+    });
   });
 
   it("没有可选分组时仍保留当前禁用分组的只读状态", async () => {
     listSelectableGroups.mockResolvedValue([]);
 
-    const result = await createService().listKeys("user-1");
+    const result = await createService().listKeys("user-1", {
+      page: 1,
+      pageSize: 20,
+    });
 
     expect(result.editableGroups).toEqual([]);
     expect(result.keys[0]?.currentGroup?.selectable).toBe(false);
@@ -181,14 +196,23 @@ describe("list API keys", () => {
   });
 
   it("历史记录没有可恢复密文时明确返回 null", async () => {
-    repository.listByUser.mockResolvedValue([
-      {
-        key: { ...activeKey, encryptedKey: null },
-        currentGroup: disabledCurrentGroup,
-      },
-    ]);
+    repository.listByUser.mockResolvedValue({
+      rows: [
+        {
+          key: { ...activeKey, encryptedKey: null },
+          currentGroup: disabledCurrentGroup,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
+      totalPages: 1,
+    });
 
-    const result = await createService().listKeys("user-1");
+    const result = await createService().listKeys("user-1", {
+      page: 1,
+      pageSize: 20,
+    });
 
     expect(result.keys[0]?.apiKey).toBeNull();
     expect(onSecretRecoveryError).not.toHaveBeenCalled();
@@ -196,20 +220,26 @@ describe("list API keys", () => {
 
   it("单条密文不可恢复时记录错误但仍返回其余列表", async () => {
     const recoveryError = new Error("ciphertext mismatch");
-    repository.listByUser.mockResolvedValue([
-      {
-        key: activeKey,
-        currentGroup: disabledCurrentGroup,
-      },
-      {
-        key: {
-          ...activeKey,
-          id: "key-corrupted",
-          encryptedKey: "corrupted",
+    repository.listByUser.mockResolvedValue({
+      rows: [
+        {
+          key: activeKey,
+          currentGroup: disabledCurrentGroup,
         },
-        currentGroup: disabledCurrentGroup,
-      },
-    ]);
+        {
+          key: {
+            ...activeKey,
+            id: "key-corrupted",
+            encryptedKey: "corrupted",
+          },
+          currentGroup: disabledCurrentGroup,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      totalCount: 2,
+      totalPages: 1,
+    });
     const service = createExternalApiKeyManagementService({
       repository,
       listSelectableGroups,
@@ -226,7 +256,10 @@ describe("list API keys", () => {
       now: () => now,
     });
 
-    const result = await service.listKeys("user-1");
+    const result = await service.listKeys("user-1", {
+      page: 1,
+      pageSize: 20,
+    });
 
     expect(result.keys).toHaveLength(2);
     expect(result.keys[0]?.apiKey).toBe("sk-stored-key");

@@ -20,6 +20,7 @@ import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/adobe-credential-health";
 import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
+import "@/server/uol-bindings/content";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
 import "@/server/uol-bindings/image-deletion";
@@ -485,13 +486,14 @@ async function invokeApiKeyManagement<T>(
   }
 }
 
-/** externalApi.listKeys - 返回本人可恢复 Key 与当前可编辑分组。 */
+/** externalApi.listKeys - 分页返回本人可恢复 Key 与当前可编辑分组。 */
 bindExecute(
   "externalApi.listKeys",
-  async (_input: Record<string, never>, principal: Principal) =>
+  async (input: { page: number; pageSize: number }, principal: Principal) =>
     invokeApiKeyManagement(() =>
       externalApiKeyManagementService.listKeys(
-        getApiKeyManagementUserId(principal)
+        getApiKeyManagementUserId(principal),
+        input
       )
     )
 );

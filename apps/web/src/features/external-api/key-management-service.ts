@@ -10,6 +10,8 @@ import { randomBytes } from "node:crypto";
 
 import type { externalApiKey as externalApiKeyTable } from "@repo/database/schema";
 import { logError } from "@repo/shared/logger";
+import type { PaginationState } from "@repo/shared/pagination/state";
+import { resolvePaginationState } from "@repo/shared/pagination/state";
 import type {
   ExternalApiKeyListItem,
   ExternalApiKeySummary,
@@ -95,12 +97,19 @@ export type ExternalApiKeyInsert = {
 
 /** 数据库仓储边界；所有生命周期写入都必须带 userId 和状态条件。 */
 export interface ExternalApiKeyRepository {
-  listByUser(userId: string): Promise<
-    Array<{
+  listByUser(
+    userId: string,
+    pagination: PaginationState
+  ): Promise<{
+    rows: Array<{
       key: ExternalApiKeyRecord;
       currentGroup: ExternalApiKeyGroupRecord | null;
-    }>
-  >;
+    }>;
+    page: number;
+    pageSize: number;
+    totalCount: number;
+    totalPages: number;
+  }>;
   insert(values: ExternalApiKeyInsert): Promise<ExternalApiKeyRecord | null>;
   revokeActive(
     userId: string,
@@ -321,23 +330,24 @@ export function createExternalApiKeyManagementService(
 
   return {
     /**
-     * 列出用户全部密钥，并分开返回当前分组与可编辑候选。
+     * 分页列出用户密钥，并分开返回当前分组与可编辑候选。
      *
      * @param userId 已由调用边界鉴权的用户 ID。
-     * @returns 本人可复制的密钥列表项和当前可编辑分组。
+     * @param pagination 已由 UOL 校验的请求页码和页大小。
+     * @returns 本人可复制的密钥分页列表、精确总数和当前可编辑分组。
      * @throws 分组、仓储读取或密文恢复失败时透传错误。
      * @remarks 只执行读取；返回值不包含密文、哈希或 userId，历史记录明文为 null。
      */
-    async listKeys(userId: string) {
-      const [rows, editableGroups] = await Promise.all([
-        dependencies.repository.listByUser(userId),
+    async listKeys(userId: string, pagination: PaginationState) {
+      const [listResult, editableGroups] = await Promise.all([
+        dependencies.repository.listByUser(userId, pagination),
         loadEditableGroups(),
       ]);
       const selectableGroupIds = new Set(
         editableGroups.map((group) => group.id)
       );
       return {
-        keys: rows.map(({ key, currentGroup }) =>
+        keys: listResult.rows.map(({ key, currentGroup }) =>
           toKeyListItem(key, currentGroup, selectableGroupIds)
         ),
         editableGroups: editableGroups.map((group) => ({
@@ -346,6 +356,10 @@ export function createExternalApiKeyManagementService(
           enabled: group.isEnabled,
           selectable: true,
         })),
+        page: listResult.page,
+        pageSize: listResult.pageSize,
+        totalCount: listResult.totalCount,
+        totalPages: listResult.totalPages,
       };
     },
 
@@ -565,36 +579,57 @@ function loadDatabaseModules(): Promise<DatabaseModules> {
 
 const databaseExternalApiKeyRepository: ExternalApiKeyRepository = {
   /**
-   * 读取指定用户的全部密钥及其当前分组。
+   * 分页读取指定用户的密钥及其当前分组。
    *
    * @param userId 用于限定所有权范围的用户 ID。
    * @returns 按创建时间倒序排列的安全密钥行和可空当前分组。
    * @throws 数据库模块加载或查询失败时透传错误。
    * @remarks 执行只读 left join，使已禁用的当前分组仍可被识别。
    */
-  async listByUser(userId) {
-    const [{ db }, { externalApiKey, imageBackendGroup }, { desc, eq }] =
+  async listByUser(userId, requestedPagination) {
+    const [{ db }, { externalApiKey, imageBackendGroup }, { count, desc, eq }] =
       await loadDatabaseModules();
-    const rows = await db
-      .select({
-        key: selectExternalApiKeyFields(externalApiKey),
-        currentGroup: {
-          id: imageBackendGroup.id,
-          name: imageBackendGroup.name,
-          isEnabled: imageBackendGroup.isEnabled,
-        },
-      })
-      .from(externalApiKey)
-      .leftJoin(
-        imageBackendGroup,
-        eq(externalApiKey.generationGroupId, imageBackendGroup.id)
-      )
-      .where(eq(externalApiKey.userId, userId))
-      .orderBy(desc(externalApiKey.createdAt));
-    return rows as Array<{
-      key: ExternalApiKeyRecord;
-      currentGroup: ExternalApiKeyGroupRecord | null;
-    }>;
+    return db.transaction(
+      async (tx) => {
+        const totalRows = await tx
+          .select({ totalCount: count() })
+          .from(externalApiKey)
+          .where(eq(externalApiKey.userId, userId));
+        const pagination = resolvePaginationState(
+          requestedPagination,
+          totalRows[0]?.totalCount ?? 0
+        );
+        const rows = await tx
+          .select({
+            key: selectExternalApiKeyFields(externalApiKey),
+            currentGroup: {
+              id: imageBackendGroup.id,
+              name: imageBackendGroup.name,
+              isEnabled: imageBackendGroup.isEnabled,
+            },
+          })
+          .from(externalApiKey)
+          .leftJoin(
+            imageBackendGroup,
+            eq(externalApiKey.generationGroupId, imageBackendGroup.id)
+          )
+          .where(eq(externalApiKey.userId, userId))
+          .orderBy(desc(externalApiKey.createdAt), desc(externalApiKey.id))
+          .limit(pagination.pageSize)
+          .offset((pagination.page - 1) * pagination.pageSize);
+        return {
+          rows: rows as Array<{
+            key: ExternalApiKeyRecord;
+            currentGroup: ExternalApiKeyGroupRecord | null;
+          }>,
+          page: pagination.page,
+          pageSize: pagination.pageSize,
+          totalCount: pagination.totalCount,
+          totalPages: pagination.totalPages,
+        };
+      },
+      { isolationLevel: "repeatable read", accessMode: "read only" }
+    );
   },
 
   /**
