@@ -391,6 +391,27 @@ export function ModelConfigurationDialog({
           {fields.showMarketplaceFields && entry.marketplaceApplicable ? (
             <section className="grid gap-5 rounded-lg border p-4 md:grid-cols-[minmax(0,1fr)_280px]">
               <div className="space-y-5">
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor={`${entry.configKey}-enabled`}>
+                      启用模型
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      停用后，模型不会出现在可用模型列表中，也不能用于生成。
+                    </p>
+                  </div>
+                  <Switch
+                    id={`${entry.configKey}-enabled`}
+                    checked={draft.enabled}
+                    disabled={disabled}
+                    onCheckedChange={(enabled) =>
+                      updateDraft((current) => ({
+                        ...current,
+                        enabled,
+                      }))
+                    }
+                  />
+                </div>
                 <div className="flex items-center justify-between gap-4 rounded-lg bg-muted/40 p-3">
                   <div>
                     <Label htmlFor={`${entry.configKey}-visible`}>

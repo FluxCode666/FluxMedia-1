@@ -347,6 +347,7 @@ describe("管理与公开 DTO", () => {
           iconKey: "generic",
           revision: 0,
           marketplaceApplicable: true,
+          enabled: true,
           visible: true,
           homepageVisible: true,
           homepagePriority: 5,
@@ -364,6 +365,7 @@ describe("管理与公开 DTO", () => {
           iconKey: "generic",
           revision: 0,
           marketplaceApplicable: true,
+          enabled: false,
           visible: false,
           homepageVisible: false,
           homepagePriority: 8,
@@ -477,6 +479,7 @@ describe("updateModelConfigurationEntryInputSchema", () => {
     clientRequestId: "6b7d1204-3f43-4da7-b2b5-b7540927e462",
     configKey: "gpt-image-2",
     expectedRevision: 2,
+    enabled: true,
     visible: true,
     homepageVisible: true,
     homepagePriority: 5,
@@ -495,6 +498,7 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       throw new Error("应解析为图像配置输入");
     }
     expect(parsed.description).toBe("新简介");
+    expect(parsed.enabled).toBe(true);
     expect(parsed.pricing).toEqual(IMAGE_PRICING);
     expect(
       updateModelConfigurationEntryInputSchema.safeParse({
@@ -660,11 +664,23 @@ describe("updateModelConfigurationEntryInputSchema", () => {
     }
   });
 
+  it("允许独立停用模型且仍保留展示配置", () => {
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...common,
+        category: "image",
+        enabled: false,
+        visible: true,
+      }).success
+    ).toBe(true);
+  });
+
   it("视频保存输入要求至少一个合法分辨率每秒价格", () => {
     const videoCommon = {
       clientRequestId: common.clientRequestId,
       configKey: "veo31",
       expectedRevision: 2,
+      enabled: true,
       visible: true,
       homepageVisible: true,
       homepagePriority: 5,
@@ -697,6 +713,7 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       clientRequestId: common.clientRequestId,
       configKey: "seedance2",
       expectedRevision: 2,
+      enabled: true,
       visible: true,
       homepageVisible: false,
       homepagePriority: 5,

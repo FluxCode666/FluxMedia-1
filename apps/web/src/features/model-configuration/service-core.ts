@@ -17,13 +17,13 @@ import {
 } from "@repo/shared/image-backend/group-image-pricing";
 import {
   type ModelConfigurationSnapshot,
-  modelMarketplaceCustomModelSchema,
   type ModelMarketplaceConfig,
   type ModelMarketplaceConfigurationCategory,
   type ModelMarketplaceCoverRef,
   type ModelMarketplaceWriteReceipt,
   modelConfigurationSnapshotSchema,
   modelMarketplaceConfigSchema,
+  modelMarketplaceCustomModelSchema,
   modelMarketplaceImagePricingSchema,
   parseModelMarketplaceConfig,
   pruneModelMarketplaceWriteReceipts,
@@ -371,6 +371,7 @@ function serializeRequestPayload(
     configKey: input.configKey,
     expectedRevision: input.expectedRevision,
     ...(input.isCustom ? { isCustom: true } : {}),
+    enabled: input.enabled,
     visible: input.visible,
     homepageVisible: input.homepageVisible,
     homepagePriority: input.homepagePriority,
@@ -789,6 +790,7 @@ export function createModelConfigurationService(
                   : (replacement?.reference ?? null);
             const nextEntry = {
               revision: resultingRevision,
+              enabled: input.enabled,
               visible: input.visible,
               homepageVisible: input.homepageVisible,
               homepagePriority: input.homepagePriority,

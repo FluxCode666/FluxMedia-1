@@ -184,6 +184,7 @@ export const modelMarketplaceCoverRefSchema = z
 export const modelMarketplaceEntrySchema = z
   .object({
     revision: safeRevisionSchema,
+    enabled: z.boolean().optional(),
     visible: z.boolean(),
     homepageVisible: z.boolean().optional(),
     homepagePriority: modelMarketplaceHomepagePrioritySchema.optional(),
@@ -390,6 +391,7 @@ const managementMarketplaceShape = {
   ...managementCommonShape,
   configKey: realModelConfigKeySchema,
   marketplaceApplicable: z.literal(true),
+  enabled: z.boolean(),
   visible: z.boolean(),
   homepageVisible: z.boolean(),
   homepagePriority: modelMarketplaceHomepagePrioritySchema,
@@ -609,6 +611,7 @@ const updateCommonShape = {
 const updateMarketplaceShape = {
   ...updateCommonShape,
   configKey: realModelConfigKeySchema,
+  enabled: z.boolean(),
   visible: z.boolean(),
   homepageVisible: z.boolean(),
   homepagePriority: modelMarketplaceHomepagePrioritySchema,

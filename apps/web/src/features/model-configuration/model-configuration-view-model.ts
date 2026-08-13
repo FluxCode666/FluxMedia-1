@@ -76,6 +76,20 @@ export function getModelConfigurationVisibilityLabel(
 }
 
 /**
+ * 取得模型运行状态中文标签。
+ *
+ * @param entry - 管理快照中的规范条目。
+ * @returns enabled 为 true 时返回已启用，否则返回已停用。
+ * @sideEffects 无。
+ * @failure 共享 DTO 已校验 enabled，不抛错。
+ */
+export function getModelConfigurationEnabledLabel(
+  entry: ModelConfigurationEntry
+): "已启用" | "已停用" {
+  return entry.enabled ? "已启用" : "已停用";
+}
+
+/**
  * 取得官网首页展示状态与排序优先级文案。
  *
  * @param entry - 管理快照中的规范条目。

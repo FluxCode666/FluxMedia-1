@@ -12,6 +12,7 @@ import {
   getModelConfigurationCategoryLabel,
   getModelConfigurationCoverSource,
   getModelConfigurationDialogFields,
+  getModelConfigurationEnabledLabel,
   getModelConfigurationHomepageLabel,
   getModelConfigurationSaveErrorMessage,
   getModelConfigurationVisibilityLabel,
@@ -26,6 +27,7 @@ const ENTRIES: ModelConfigurationEntry[] = [
     iconKey: "openai",
     revision: 0,
     marketplaceApplicable: true,
+    enabled: true,
     visible: true,
     homepageVisible: true,
     homepagePriority: 3,
@@ -48,6 +50,7 @@ const ENTRIES: ModelConfigurationEntry[] = [
     iconKey: "google",
     revision: 1,
     marketplaceApplicable: true,
+    enabled: false,
     visible: false,
     homepageVisible: false,
     homepagePriority: 8,
@@ -66,6 +69,7 @@ const ENTRIES: ModelConfigurationEntry[] = [
     iconKey: "generic",
     revision: 2,
     marketplaceApplicable: true,
+    enabled: true,
     visible: true,
     homepageVisible: true,
     homepagePriority: 5,
@@ -125,6 +129,11 @@ describe("模型配置视图模型", () => {
       "已展示",
       "已隐藏",
       "未配置价格",
+    ]);
+    expect(ENTRIES.map(getModelConfigurationEnabledLabel)).toEqual([
+      "已启用",
+      "已停用",
+      "已启用",
     ]);
     expect(ENTRIES.map(getModelConfigurationHomepageLabel)).toEqual([
       "已展示 · P3",
