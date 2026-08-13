@@ -332,35 +332,6 @@ export const videoGetStatusInputSchema = z
   })
   .strict();
 
-/** video.reconcileSubmission 的人工核对输入契约。 */
-export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
-  "outcome",
-  [
-    z
-      .object({
-        outcome: z.literal("accepted"),
-        taskId: z.string().trim().min(1).max(128),
-        pollUrl: z.string().url().max(2_048),
-        upstreamJobId: z.string().trim().min(1).max(512),
-      })
-      .strict(),
-    z
-      .object({
-        outcome: z.literal("not_accepted"),
-        taskId: z.string().trim().min(1).max(128),
-        reason: z.string().trim().min(1).max(1_000),
-      })
-      .strict(),
-  ]
-);
-
-/** 待人工核对视频任务列表的受限输入。 */
-export const videoListUncertainSubmissionsInputSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100).default(50),
-  })
-  .strict();
-
 /** 能力查询允许站内用户显式选择可信分组；API Key 绑定由 execute 强制收口。 */
 export const videoListCapabilitiesInputSchema = z
   .object({
@@ -532,65 +503,5 @@ export const videoRequestAccountInputCleanup = defineOperation({
   sideEffects: ["storage", "queue", "audit"],
   execute: async () => {
     throw new Error("Not yet wired: video.requestAccountInputCleanup");
-  },
-});
-
-/**
- * 人工核对 Adobe 提交不确定任务。
- *
- * 只有确认上游接受后才能恢复原任务轮询；确认未接受后才触发幂等退款。
- */
-export const videoReconcileSubmission = defineOperation({
-  name: "video.reconcileSubmission",
-  domain: "image-generation",
-  title: "核对视频提交结果",
-  description:
-    "管理员人工核对 submit_uncertain 任务；确认接受时恢复原上游任务，确认未接受时幂等退款。",
-  input: videoReconcileSubmissionInputSchema,
-  output: z.object({
-    taskId: z.string(),
-    status: z.enum(["processing", "completed", "failed"]),
-  }),
-  access: { kind: "roles", roles: ["admin", "super_admin"] },
-  agentExposure: "human-only",
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["billing", "queue", "audit"],
-  hasMaintenanceWrite: true,
-  execute: async () => {
-    throw new Error("Not yet wired: video.reconcileSubmission");
-  },
-});
-
-/** 管理员读取待人工核对任务；不返回 prompt、token 值、Cookie 或回调地址。 */
-export const videoListUncertainSubmissions = defineOperation({
-  name: "video.listUncertainSubmissions",
-  domain: "image-generation",
-  title: "列出待核对视频提交",
-  description:
-    "列出 submit_uncertain 视频任务的安全诊断字段，供管理员调查后提交核对结论。",
-  input: videoListUncertainSubmissionsInputSchema,
-  output: z.object({
-    items: z.array(
-      z.object({
-        taskId: z.string(),
-        model: z.string(),
-        backendMemberId: z.string().nullable(),
-        error: z.string().nullable(),
-        submitStartedAt: z.string().nullable(),
-        createdAt: z.string(),
-        updatedAt: z.string(),
-      })
-    ),
-  }),
-  access: { kind: "roles", roles: ["admin", "super_admin"] },
-  agentExposure: "human-only",
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: [],
-  execute: async () => {
-    throw new Error("Not yet wired: video.listUncertainSubmissions");
   },
 });

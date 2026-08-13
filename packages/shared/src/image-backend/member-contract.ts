@@ -13,6 +13,7 @@ import {
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
   createDefaultApiUpstreamOperations,
+  videoSubmissionRetryCountSchema,
 } from "./api-upstream-adaptation";
 import {
   isLegacyVideoModelId,
@@ -66,6 +67,7 @@ export const apiBackendMemberConfigSchema = z
     baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
+    videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema.default({
       mode: "bearer",

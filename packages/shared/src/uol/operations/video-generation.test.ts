@@ -6,7 +6,6 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { assertAccess } from "../access";
 import type { Principal } from "../principal";
 import { getOperation } from "../registry";
 import {
@@ -19,9 +18,6 @@ import {
   videoGetStatus,
   videoGetStatusInputSchema,
   videoListCapabilities,
-  videoListUncertainSubmissions,
-  videoReconcileSubmission,
-  videoReconcileSubmissionInputSchema,
   videoRequestAccountInputCleanup,
 } from "./video-generation";
 
@@ -394,62 +390,6 @@ describe("video generation operations", () => {
           .success
       ).toBe(false);
     }
-  });
-
-  it("只允许管理员显式提交完整的人工核对结论", () => {
-    expect(videoReconcileSubmission.access).toEqual({
-      kind: "roles",
-      roles: ["admin", "super_admin"],
-    });
-    expect(videoReconcileSubmission.agentExposure).toBe("human-only");
-    expect(() =>
-      assertAccess(videoReconcileSubmission.access, {
-        type: "user",
-        userId: "observer-1",
-        role: "observer_admin",
-      })
-    ).toThrow();
-    expect(() =>
-      assertAccess(videoReconcileSubmission.access, {
-        type: "user",
-        userId: "admin-1",
-        role: "admin",
-      })
-    ).not.toThrow();
-    expect(
-      videoReconcileSubmissionInputSchema.safeParse({
-        outcome: "accepted",
-        taskId: "video-1",
-        pollUrl: "https://firefly.adobe.io/jobs/upstream-1",
-        upstreamJobId: "upstream-1",
-      }).success
-    ).toBe(true);
-    expect(
-      videoReconcileSubmissionInputSchema.safeParse({
-        outcome: "not_accepted",
-        taskId: "video-1",
-        reason: "Adobe 控制台确认未创建任务",
-      }).success
-    ).toBe(true);
-  });
-
-  it("待核对列表仍为 human-only 且只返回安全诊断字段", () => {
-    expect(videoListUncertainSubmissions.agentExposure).toBe("human-only");
-    expect(
-      videoListUncertainSubmissions.output.safeParse({
-        items: [
-          {
-            taskId: "video-1",
-            model: "seedance2",
-            backendMemberId: "member-1",
-            error: "提交响应丢失",
-            submitStartedAt: "2026-07-26T00:00:00.000Z",
-            createdAt: "2026-07-26T00:00:00.000Z",
-            updatedAt: "2026-07-26T00:01:00.000Z",
-          },
-        ],
-      }).success
-    ).toBe(true);
   });
 
   it("视频 operation 不再声明商业套餐能力门禁", () => {

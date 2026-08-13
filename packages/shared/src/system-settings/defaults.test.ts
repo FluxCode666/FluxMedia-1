@@ -168,6 +168,11 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("IMAGE_MODEL_CREDIT_PRICES");
     expect(initializedKeys).toContain("MODEL_MARKETPLACE_CONFIG");
     expect(initializedKeys).toContain("VIDEO_MODEL_CAPABILITY_OVERRIDES");
+    expect(initializedKeys).toContain("VIDEO_SUBMISSION_RETRY_DELAY_SECONDS");
+    expect(initializedKeys).toContain("VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS");
+    expect(initializedKeys).toContain(
+      "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS"
+    );
     expect(initializedKeys).toContain("SYSTEM_ASSETS_BUCKET_NAME");
     expect(initializedKeys).toContain("GENERATIONS_BUCKET_NAME");
     expect(initializedKeys).not.toContain(
@@ -226,6 +231,11 @@ describe("system setting default initialization", () => {
     expect(store.get("VIDEO_MODEL_CAPABILITY_OVERRIDES")?.value).toEqual(
       createDefaultVideoModelCapabilityOverrides()
     );
+    expect(store.get("VIDEO_SUBMISSION_RETRY_DELAY_SECONDS")?.value).toBe(2);
+    expect(store.get("VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS")?.value).toBe(30);
+    expect(
+      store.get("VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS")?.value
+    ).toBe(120);
     expect(store.get("SYSTEM_ASSETS_BUCKET_NAME")?.value).toBe("system");
     expect(store.get("GENERATIONS_BUCKET_NAME")?.value).toBe("generations");
     expect(store.get("IMAGE_TEXT_MODERATION_CREDITS")?.value).toBe(0.04);

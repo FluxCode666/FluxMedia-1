@@ -488,6 +488,9 @@ async function refundClaimedVideoOrRetry(
 /**
  * 人工收敛 submit_uncertain 视频任务。
  *
+ * @deprecated 仅供 0087 前遗留 `submit_uncertain` 数据迁移验证使用。公开 HTTP 与
+ * UOL 人工入口已删除；下个版本在遗留行数为零后删除本函数及其输入/错误类型。
+ *
  * 接受结论必须绑定原成员与受信 poll URL；未接受结论才会
  * 进入幂等退款。重复提交相同接受身份或已完成退款时返回当前结果，不产生新副作用。
  */

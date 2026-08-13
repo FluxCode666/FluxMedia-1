@@ -16,6 +16,7 @@ import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/a
 /** 管理表单中与账号密钥分离的 API 适配草稿。 */
 export interface ApiUpstreamAdapterFormDraft {
   authentication: ApiUpstreamAdapterDraft["authentication"];
+  videoSubmissionRetryCount: number;
   operations: ApiUpstreamOperations;
   expectedCurrentVersionId?: string;
 }
@@ -58,6 +59,7 @@ export const API_UPSTREAM_MEDIA_SECTIONS = [
 export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFormDraft {
   return {
     authentication: { mode: "bearer" },
+    videoSubmissionRetryCount: 2,
     operations: createDefaultApiUpstreamOperations(),
   };
 }

@@ -31,8 +31,6 @@ import {
   type VideoGenerateInput,
   videoGetInputs,
   videoListCapabilities,
-  videoListUncertainSubmissions,
-  videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
@@ -48,9 +46,7 @@ import { buildVideoInputSummary } from "@/features/image-generation/video-input-
 import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/video-input-storage";
 import {
   getVideoGenerationById,
-  reconcileUncertainVideoSubmission,
   runVideoGenerationForUser,
-  VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
 import { toLegacyVideoPublicStatus } from "@/features/image-generation/video-public-status";
 import { resolveVideoQueueSchedule } from "@/features/image-generation/video-queue-schedule";
@@ -539,46 +535,3 @@ bindExecute(
     };
   }
 );
-
-/** video.listUncertainSubmissions - 管理员读取安全的待核对任务列表。 */
-bindOperationExecute(videoListUncertainSubmissions, async (input) => {
-  const [{ db }, { videoGeneration }, { desc, eq }] = await Promise.all([
-    import("@repo/database"),
-    import("@repo/database/schema"),
-    import("drizzle-orm"),
-  ]);
-  const rows = await db
-    .select({
-      taskId: videoGeneration.id,
-      model: videoGeneration.model,
-      backendMemberId: videoGeneration.backendMemberId,
-      error: videoGeneration.error,
-      submitStartedAt: videoGeneration.submitStartedAt,
-      createdAt: videoGeneration.createdAt,
-      updatedAt: videoGeneration.updatedAt,
-    })
-    .from(videoGeneration)
-    .where(eq(videoGeneration.stage, "submit_uncertain"))
-    .orderBy(desc(videoGeneration.updatedAt), desc(videoGeneration.id))
-    .limit(input.limit);
-  return {
-    items: rows.map((row) => ({
-      ...row,
-      submitStartedAt: row.submitStartedAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    })),
-  };
-});
-
-/** video.reconcileSubmission - 管理员人工收敛视频上游提交不确定任务。 */
-bindOperationExecute(videoReconcileSubmission, async (input) => {
-  try {
-    return await reconcileUncertainVideoSubmission(input);
-  } catch (error) {
-    if (error instanceof VideoSubmissionReconciliationError) {
-      throw new OperationError(error.code, error.message);
-    }
-    throw error;
-  }
-});

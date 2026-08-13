@@ -1869,6 +1869,9 @@ export const videoGeneration = pgTable(
     status: text("status").notNull().default("pending"),
     // 可恢复执行阶段；status 保留为面向查询方的稳定粗粒度状态。
     stage: text("stage").notNull().default("created"),
+    // API 自动恢复的最终失败分类和容量等待截止；Adobe direct 保持为空。
+    failureCode: text("failure_code"),
+    capacityWaitDeadlineAt: timestamp("capacity_wait_deadline_at"),
     stateVersion: integer("state_version").notNull().default(0),
     attemptCount: integer("attempt_count").notNull().default(0),
     // 真实输入语义与任务自有存储身份。
@@ -1924,7 +1927,7 @@ export const videoGeneration = pgTable(
     ),
     check(
       "video_generation_stage_check",
-      sql`${table.stage} IN ('created', 'charged', 'submitting', 'submit_uncertain', 'polling', 'downloading', 'refunding', 'completed', 'failed')`
+      sql`${table.stage} IN ('created', 'charged', 'submitting', 'submit_uncertain', 'retrying', 'polling', 'downloading', 'refunding', 'completed', 'failed')`
     ),
     check(
       "video_generation_adobe_profile_check",
@@ -1953,6 +1956,68 @@ export const videoGeneration = pgTable(
     check(
       "video_generation_input_manifest_check",
       sql`${table.inputManifest} IS NULL OR video_input_manifest_is_valid(${table.inputManifest}, ${table.userId}, ${table.id}, ${table.model})`
+    ),
+  ]
+);
+
+/**
+ * API 视频每次真实创建外呼的不可变安全账本。
+ *
+ * 成员和适配版本均保存快照而不设置级联外键，避免账号删除后丢失审计事实；失败字段
+ * 只允许稳定代码与脱敏摘要，禁止保存 prompt、URL、凭据、上游 task ID 和原始正文。
+ */
+export const videoGenerationSubmissionAttempt = pgTable(
+  "video_generation_submission_attempt",
+  {
+    id: text("id").primaryKey(),
+    videoGenerationId: text("video_generation_id")
+      .notNull()
+      .references(() => videoGeneration.id, { onDelete: "cascade" }),
+    backendMemberId: text("backend_member_id").notNull(),
+    memberAttemptNumber: integer("member_attempt_number").notNull(),
+    globalAttemptNumber: integer("global_attempt_number").notNull(),
+    requestId: text("request_id").notNull(),
+    retryCountSnapshot: integer("retry_count_snapshot").notNull(),
+    maxAttemptsSnapshot: integer("max_attempts_snapshot").notNull(),
+    supplierNameSnapshot: text("supplier_name_snapshot").notNull(),
+    apiAdapterMemberId: text("api_adapter_member_id").notNull(),
+    apiAdapterVersionId: text("api_adapter_version_id").notNull(),
+    failureCode: text("failure_code"),
+    failureReason: text("failure_reason"),
+    operationsReason: text("operations_reason"),
+    failedAt: timestamp("failed_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("video_generation_submission_attempt_member_number_unique").on(
+      table.videoGenerationId,
+      table.backendMemberId,
+      table.memberAttemptNumber
+    ),
+    unique("video_generation_submission_attempt_global_number_unique").on(
+      table.videoGenerationId,
+      table.globalAttemptNumber
+    ),
+    check(
+      "video_generation_submission_attempt_counts_check",
+      sql`${table.memberAttemptNumber} >= 1 AND ${table.globalAttemptNumber} >= 1 AND ${table.retryCountSnapshot} BETWEEN 0 AND 10 AND ${table.maxAttemptsSnapshot} = ${table.retryCountSnapshot} + 1 AND ${table.memberAttemptNumber} <= ${table.maxAttemptsSnapshot}`
+    ),
+    check(
+      "video_generation_submission_attempt_supplier_check",
+      sql`char_length(btrim(${table.supplierNameSnapshot})) BETWEEN 1 AND 120`
+    ),
+    check(
+      "video_generation_submission_attempt_failure_pair_check",
+      sql`(${table.failureCode} IS NULL AND ${table.failureReason} IS NULL AND ${table.operationsReason} IS NULL AND ${table.failedAt} IS NULL) OR (${table.failureCode} IS NOT NULL AND ${table.failureReason} IS NOT NULL AND ${table.operationsReason} IS NOT NULL AND ${table.failedAt} IS NOT NULL AND char_length(${table.failureCode}) BETWEEN 1 AND 64 AND char_length(${table.failureReason}) BETWEEN 1 AND 1000 AND char_length(${table.operationsReason}) BETWEEN 1 AND 1000)`
+    ),
+    check(
+      "video_generation_submission_attempt_failure_code_check",
+      sql`${table.failureCode} IS NULL OR ${table.failureCode} IN ('submission_timeout', 'network_error', 'response_read_failed', 'response_parse_failed', 'missing_upstream_task_id', 'rate_limited', 'upstream_unavailable', 'authentication_failed', 'permission_denied', 'invalid_request', 'moderation_rejected', 'submission_conflict', 'capacity_wait_timeout', 'no_eligible_api_account', 'unknown_submission_failure')`
+    ),
+    index("video_generation_submission_attempt_task_created_idx").on(
+      table.videoGenerationId,
+      table.createdAt
     ),
   ]
 );

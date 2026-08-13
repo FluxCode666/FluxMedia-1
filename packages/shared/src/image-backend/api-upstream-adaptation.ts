@@ -19,6 +19,17 @@ import {
 /** 单个 API 账号允许保存的最大模型映射数量。 */
 export const MAX_API_MODEL_MAPPINGS = 1_000;
 
+/** API 视频创建默认允许的额外重试次数。 */
+export const DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT = 2;
+
+/** API 视频创建额外重试次数；实际请求上限始终为该值加一。 */
+export const videoSubmissionRetryCountSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(10)
+  .default(DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT);
+
 /** 单个账号请求处理脚本的最大 UTF-16 字符数。 */
 export const MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS =
   API_UPSTREAM_MAX_SCRIPT_CHARACTERS;
@@ -244,6 +255,7 @@ export const apiUpstreamAdapterDraftSchema = z
         }
       ),
     useStream: z.boolean(),
+    videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema,
     credentialScope: z.string().trim().min(1).max(512),

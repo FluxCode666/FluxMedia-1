@@ -87,7 +87,6 @@ export {
   videoGetInputs,
   videoGetStatus,
   videoListCapabilities,
-  videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "./video-generation";
 

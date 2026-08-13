@@ -11,12 +11,72 @@ import {
   apiRequestTransformScriptSchema,
   apiUpstreamAdapterDraftSchema,
   apiUpstreamAuthenticationSchema,
+  DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
   MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS,
   resolveApiUpstreamModelId,
   resolveApiUpstreamOperationPath,
 } from "./api-upstream-adaptation";
 
 describe("API upstream adaptation contract", () => {
+  it("视频创建额外重试次数默认 2 且只接受 0 到 10 的整数", () => {
+    const baseDraft = {
+      baseUrl: "http://api.internal:8080/v1",
+      useStream: false,
+      modelMappings: [],
+      authentication: { mode: "none" as const },
+      credentialScope: "http://api.internal:8080|none",
+      operations: {
+        "images.generate": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "images.generate.query": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "images.edit": { path: "", requestScript: "", responseScript: "" },
+        "images.edit.query": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "videos.generate": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "videos.query": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+      },
+    };
+
+    expect(DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT).toBe(2);
+    expect(apiUpstreamAdapterDraftSchema.parse(baseDraft)).toMatchObject({
+      videoSubmissionRetryCount: 2,
+    });
+    for (const videoSubmissionRetryCount of [0, 2, 10]) {
+      expect(
+        apiUpstreamAdapterDraftSchema.safeParse({
+          ...baseDraft,
+          videoSubmissionRetryCount,
+        }).success
+      ).toBe(true);
+    }
+    for (const videoSubmissionRetryCount of [-1, 1.5, 11]) {
+      expect(
+        apiUpstreamAdapterDraftSchema.safeParse({
+          ...baseDraft,
+          videoSubmissionRetryCount,
+        }).success
+      ).toBe(false);
+    }
+  });
+
   it("按平台模型大小写不敏感匹配并保留上游 ID 格式", () => {
     expect(
       resolveApiUpstreamModelId("Seedance2", [
