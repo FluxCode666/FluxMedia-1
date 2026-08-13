@@ -98,6 +98,9 @@
   失败尝试再进入自动重试，不完整快照不得重提，只进入幂等退款并输出一次
   `video_legacy_submission_snapshot_invalid`。Adobe 与协议缺失行永远排除；下版本仅在遗留
   查询为零后移除兼容分支。
+- 功能分支新增数据库迁移前必须先对齐主线 journal 的最新编号和时间戳；Drizzle 只按
+  数据库最新迁移时间判断待执行项，已登记迁移不得改写。视频重试最终使用主线 0090
+  之后的幂等 `0091_video_submission_retry.sql`，兼容未迁移和执行过旧分支迁移的环境。
 - API 视频提交的现行四态、自动重试、容量等待、退款和稳定告警标识见
   [openai-video-api-recovery-plan.md](plans/2026-08-12-001-feat-openai-video-api-recovery-plan.md)
   与 [video-submission-recovery-log-events.md](video-submission-recovery-log-events.md)。

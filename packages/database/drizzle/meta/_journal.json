@@ -614,8 +614,36 @@
     {
       "idx": 87,
       "version": "7",
-      "when": 1786556250000,
-      "tag": "0087_video_submission_retry",
+      "when": 1786469850000,
+      "tag": "0087_admin_data_dashboard_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1786543200000,
+      "tag": "0088_unified_list_pagination_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1786592400000,
+      "tag": "0089_gallery_card_cursor_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1786600800000,
+      "tag": "0090_media_history_count_projection",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1786636800000,
+      "tag": "0091_video_submission_retry",
       "breakpoints": true
     }
   ]

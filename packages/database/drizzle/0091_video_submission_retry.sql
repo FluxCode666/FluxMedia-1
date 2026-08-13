@@ -1,8 +1,8 @@
 -- API 视频创建自动重试和逐次尝试账本。
 --
--- 职责：新增 retrying 阶段、稳定终局失败事实、容量等待截止及不可变创建尝试表；
--- 同时为 0087 前适配版本补齐账号级默认额外重试次数 2。账本不保存 prompt、URL、
--- 凭据、上游 task ID 或原始响应正文。
+-- 职责：在主线 0090 之后幂等补齐 retrying 阶段、稳定终局失败事实、容量等待截止
+-- 及不可变创建尝试表；同时兼容曾执行过功能分支旧 0087 的环境。账本不保存
+-- prompt、URL、凭据、上游 task ID 或原始响应正文。
 
 ALTER TABLE "video_generation"
   ADD COLUMN IF NOT EXISTS "failure_code" text;
@@ -157,7 +157,6 @@ CREATE TABLE IF NOT EXISTS "video_generation_submission_attempt" (
         'unknown_submission_failure'
       )
     )
-  )
 );
 
 CREATE INDEX IF NOT EXISTS

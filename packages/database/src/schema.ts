@@ -1311,7 +1311,7 @@ export const imageBackendMemberApiAdapterVersion = pgTable(
     ),
     check(
       "image_backend_member_api_adapter_version_configuration_check",
-      sql`json_typeof(${table.configuration}) = 'object'`
+      sql`json_typeof(${table.configuration}) = 'object' AND NOT (${table.configuration}::jsonb ? 'apiKey') AND jsonb_typeof(${table.configuration}::jsonb->'videoSubmissionRetryCount') = 'number' AND (${table.configuration}->>'videoSubmissionRetryCount')::numeric >= 0 AND (${table.configuration}->>'videoSubmissionRetryCount')::numeric <= 10 AND trunc((${table.configuration}->>'videoSubmissionRetryCount')::numeric) = (${table.configuration}->>'videoSubmissionRetryCount')::numeric`
     ),
     index("image_backend_member_api_adapter_version_member_created_idx").on(
       table.memberIdSnapshot,

@@ -1,7 +1,7 @@
 /**
  * API 视频创建重试迁移与真实 PostgreSQL 并发测试。
  *
- * 职责：验证 0087 补齐历史账号默认重试配置、开放 retrying 阶段，并证明两个 Worker
+ * 职责：验证 0091 补齐历史账号默认重试配置、开放 retrying 阶段，并证明两个 Worker
  * 并发预留零重试账号时只有一次真实外呼资格。需要专用恢复测试数据库。
  */
 import { randomUUID } from "node:crypto";
@@ -29,7 +29,12 @@ async function createFixture(client: PoolClient): Promise<string> {
     create table video_generation (
       id text primary key,
       stage text not null,
-      upstream_job_id text
+      upstream_job_id text,
+      state_version integer not null default 0,
+      attempt_count integer not null default 0,
+      api_key_credits_reserved numeric(18, 2) not null default 0,
+      api_adapter_query_failure_count integer not null default 0,
+      api_key_id text
     );
     alter table video_generation
       add constraint video_generation_stage_check
@@ -87,7 +92,7 @@ afterAll(async () => {
   await pool?.end();
 });
 
-describe("0087 video submission retry migration", () => {
+describe("0091 video submission retry migration", () => {
   it("补齐历史配置并由数据库阻止零重试账号的并发第二次外呼", async () => {
     if (!pool) throw new Error("集成测试数据库尚未初始化");
     const owner = await pool.connect();
@@ -106,7 +111,7 @@ describe("0087 video submission retry migration", () => {
       `);
       const migrationPath = fileURLToPath(
         new URL(
-          "../../database/drizzle/0087_video_submission_retry.sql",
+          "../../database/drizzle/0091_video_submission_retry.sql",
           import.meta.url
         )
       );
