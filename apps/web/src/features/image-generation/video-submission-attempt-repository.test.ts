@@ -66,6 +66,7 @@ describe("video submission attempt repository", () => {
     expect(compiled.sql).toContain("member_attempt_number");
     expect(compiled.sql).toContain("max_attempts_snapshot");
     expect(compiled.sql).toContain("on conflict do nothing");
+    expect(compiled.sql).toContain("select * from inserted");
   });
 
   it("数据库未返回预留行时明确拒绝外呼", async () => {
@@ -87,5 +88,45 @@ describe("video submission attempt repository", () => {
         now: new Date(),
       })
     ).resolves.toBeNull();
+  });
+
+  it("遗留首次请求补账固定为一次已失败的默认三次预算", async () => {
+    const executedQueries: SQL[] = [];
+    const repository = createPostgresVideoSubmissionAttemptRepository({
+      transaction: async (work) =>
+        work({
+          execute: async (query) => {
+            executedQueries.push(query);
+            return { rows: [{ id: "legacy-initial:video-1" }] };
+          },
+        }),
+    });
+
+    await expect(
+      repository.recordLegacyInitialFailure({
+        videoGenerationId: "video-1",
+        backendMemberId: "member-1",
+        requestId: "legacy-request-video-1",
+        supplierNameSnapshot: "供应商 A",
+        apiAdapterMemberId: "member-1",
+        apiAdapterVersionId: "adapter-1",
+        now: new Date("2026-08-13T00:00:00.000Z"),
+      })
+    ).resolves.toBe(true);
+
+    const query = executedQueries[0];
+    if (!query) throw new Error("遗留尝试补账未执行 SQL");
+    const compiled = new PgDialect().sqlToQuery(query);
+    expect(compiled.sql).toContain("member_attempt_number");
+    expect(compiled.sql).toContain("global_attempt_number");
+    expect(compiled.sql).toContain("retry_count_snapshot");
+    expect(compiled.sql).toContain("max_attempts_snapshot");
+    expect(compiled.sql).toContain("on conflict do nothing");
+    expect(compiled.sql).toContain("select id from inserted");
+    expect(compiled.sql).toContain("from video_generation_submission_attempt");
+    expect(compiled.params).toContain(1);
+    expect(compiled.params).toContain(2);
+    expect(compiled.params).toContain(3);
+    expect(compiled.params).toContain("unknown_submission_failure");
   });
 });

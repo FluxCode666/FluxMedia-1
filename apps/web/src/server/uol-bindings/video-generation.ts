@@ -466,6 +466,11 @@ bindExecute(
                 : {}),
               modelId: canonicalInput.model,
               requiresContentSafety: true,
+              // 自定义模型只能由 API 成员执行；内置模型必须同时统计 API 与
+              // Adobe Direct，保持创建预检与权威获租的协议边界一致。
+              ...(customModelDefinition
+                ? { requiredMemberType: "api" as const }
+                : {}),
             })
           );
           responseRow =

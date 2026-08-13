@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyLegacyUncertainVideoSnapshot,
   classifyVideoSubmissionFailure,
+  isValidPersistedVideoStorageBucket,
   resolveVideoSubmissionRetrySchedule,
   sanitizeVideoSubmissionFailureReason,
 } from "./video-submission-failure";
@@ -128,6 +129,7 @@ describe("video submission failure", () => {
     expect(
       classifyLegacyUncertainVideoSnapshot({
         protocol: "api",
+        hasSupplierSnapshot: true,
         hasBackendMember: true,
         hasAdapterIdentity: true,
         hasModelCapabilitySnapshot: true,
@@ -139,6 +141,7 @@ describe("video submission failure", () => {
     expect(
       classifyLegacyUncertainVideoSnapshot({
         protocol: "api",
+        hasSupplierSnapshot: true,
         hasBackendMember: true,
         hasAdapterIdentity: false,
         hasModelCapabilitySnapshot: true,
@@ -149,7 +152,20 @@ describe("video submission failure", () => {
     ).toBe("refund_invalid_snapshot");
     expect(
       classifyLegacyUncertainVideoSnapshot({
+        protocol: "api",
+        hasSupplierSnapshot: false,
+        hasBackendMember: true,
+        hasAdapterIdentity: true,
+        hasModelCapabilitySnapshot: true,
+        hasValidInputManifest: true,
+        hasStorageBucket: true,
+        hasLedgerConsumption: true,
+      })
+    ).toBe("refund_invalid_snapshot");
+    expect(
+      classifyLegacyUncertainVideoSnapshot({
         protocol: "adobe_direct",
+        hasSupplierSnapshot: true,
         hasBackendMember: true,
         hasAdapterIdentity: false,
         hasModelCapabilitySnapshot: true,
@@ -158,5 +174,13 @@ describe("video submission failure", () => {
         hasLedgerConsumption: true,
       })
     ).toBe("not_applicable");
+  });
+
+  it("历史输出桶只校验持久身份，不要求等于当前系统桶", () => {
+    expect(isValidPersistedVideoStorageBucket("legacy-generations")).toBe(true);
+    expect(isValidPersistedVideoStorageBucket(" current-bucket ")).toBe(false);
+    expect(isValidPersistedVideoStorageBucket("invalid/bucket")).toBe(false);
+    expect(isValidPersistedVideoStorageBucket("invalid..bucket")).toBe(false);
+    expect(isValidPersistedVideoStorageBucket(null)).toBe(false);
   });
 });

@@ -77,6 +77,7 @@ export type VideoSubmissionRetrySchedule = {
 /** 遗留人工态任务是否具备可重建的 API 创建事实。 */
 export type LegacyUncertainVideoSnapshotInput = {
   protocol: "api" | "adobe_direct" | "unknown";
+  hasSupplierSnapshot: boolean;
   hasBackendMember: boolean;
   hasAdapterIdentity: boolean;
   hasModelCapabilitySnapshot: boolean;
@@ -87,6 +88,26 @@ export type LegacyUncertainVideoSnapshotInput = {
 
 const acceptedTaskIdSchema = z.string().trim().min(1).max(1_024);
 const MAX_FAILURE_REASON_CHARACTERS = 1_000;
+
+/**
+ * 校验任务持久化的输出桶身份，不读取当前动态存储配置。
+ *
+ * @param value 历史任务自己的 storage_bucket 值。
+ * @returns 非空、规范且不含路径语义的桶名返回 true。
+ * @sideEffects 无。
+ * @failure 非字符串或非法桶名返回 false，不抛错。
+ */
+export function isValidPersistedVideoStorageBucket(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value === value.trim() &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("..")
+  );
+}
 
 const FAILURE_REASONS: Record<
   VideoSubmissionFailureCode,
@@ -253,7 +274,8 @@ export function classifyLegacyUncertainVideoSnapshot(
   input: LegacyUncertainVideoSnapshotInput
 ): "retrying" | "refund_invalid_snapshot" | "not_applicable" {
   if (input.protocol !== "api") return "not_applicable";
-  return input.hasBackendMember &&
+  return input.hasSupplierSnapshot &&
+    input.hasBackendMember &&
     input.hasAdapterIdentity &&
     input.hasModelCapabilitySnapshot &&
     input.hasValidInputManifest &&

@@ -145,6 +145,10 @@ describe("media task recovery repository", () => {
     expect(terminalSql).toContain("terminal_release_due_at <=");
     expect(terminalSql).toContain("admission_lease_released_at is null");
     expect(videoSql).toContain("'submit_uncertain'");
+    expect(videoSql).toContain("metadata->>'videoBackendProtocol'");
+    expect(new PgDialect().sqlToQuery(queries[4] as SQL).params).toContain(
+      "api"
+    );
     expect(videoSql).toContain("'retrying'");
     expect(videoSql).toContain("next_poll_at <=");
     expect(videoSql).toContain("refund_exhausted_at is null");

@@ -107,6 +107,9 @@ const acquireLeaseInputSchema = z
     requestedModel: z.string().trim().min(1).max(240),
     excludedMemberIds: z.array(identifierSchema).max(1_000).default([]),
     requiredMemberId: identifierSchema.optional(),
+    requiredMemberType: z.enum(["api", "adobe"]).optional(),
+    requiredApiAdapterMemberId: identifierSchema.optional(),
+    requiredApiAdapterVersionId: identifierSchema.optional(),
     requiresContentSafety: z.boolean().default(false),
     leaseId: identifierSchema,
     ownerToken: ownerTokenSchema,
@@ -117,6 +120,26 @@ const acquireLeaseInputSchema = z
   .refine((input) => input.expiresAt.getTime() > input.now.getTime(), {
     message: "Lease expiration must be later than acquisition time",
     path: ["expiresAt"],
+  })
+  .superRefine((input, context) => {
+    const hasAdapterMember = input.requiredApiAdapterMemberId !== undefined;
+    const hasAdapterVersion = input.requiredApiAdapterVersionId !== undefined;
+    if (hasAdapterMember !== hasAdapterVersion) {
+      context.addIssue({
+        code: "custom",
+        message: "Fixed API adapter ownership pair must be complete",
+      });
+    }
+    if (
+      hasAdapterMember &&
+      (input.requiredMemberType !== "api" ||
+        input.requiredMemberId !== input.requiredApiAdapterMemberId)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Fixed API adapter must belong to the required API member",
+      });
+    }
   });
 
 const renewLeaseInputSchema = z
@@ -361,13 +384,22 @@ export function createPostgresBackendPoolRepository(
                   m.last_acquired_at,
                   m.last_used_at,
                   m.cooldown_until,
-                  api_config.member_id as api_adapter_member_id,
-                  api_config.current_adapter_version_id as api_adapter_version_id
+                  api_version.member_id_snapshot as api_adapter_member_id,
+                  api_version.id as api_adapter_version_id
                 from image_backend_member as m
                 inner join image_backend_member_group as membership
                   on membership.member_id = m.id
                 left join image_backend_member_api_config as api_config
                   on api_config.member_id = m.id
+                left join image_backend_member_api_adapter_version as api_version
+                  on api_version.id = coalesce(
+                    ${input.requiredApiAdapterVersionId ?? null}::text,
+                    api_config.current_adapter_version_id
+                  )
+                  and api_version.member_id_snapshot = m.id
+                  and api_version.credential_scope = api_config.credential_scope
+                left join image_backend_member_adobe_config as adobe_config
+                  on adobe_config.member_id = m.id
                 where membership.group_id = ${input.groupId}
                   and m.is_enabled = true
                   and (m.cooldown_until is null or m.cooldown_until <= ${input.now})
@@ -401,6 +433,34 @@ export function createPostgresBackendPoolRepository(
                   and (${input.requiredMemberId ?? null}::text is null or m.id = ${
                     input.requiredMemberId ?? null
                   })
+                  and (${input.requiredMemberType ?? null}::text is null or m.type = ${
+                    input.requiredMemberType ?? null
+                  })
+                  and (${input.requiredApiAdapterMemberId ?? null}::text is null or m.id = ${
+                    input.requiredApiAdapterMemberId ?? null
+                  })
+                  and (
+                    (
+                      m.type = 'api'
+                      and api_config.api_key is not null
+                      and api_version.id is not null
+                    )
+                    or (
+                      m.type = 'adobe'
+                      and (
+                        (
+                          adobe_config.mode = 'direct'
+                          and adobe_config.cookie is not null
+                          and adobe_config.access_token is not null
+                        )
+                        or (
+                          adobe_config.mode = 'gateway'
+                          and adobe_config.base_url is not null
+                          and adobe_config.api_key is not null
+                        )
+                      )
+                    )
+                  )
                 order by m.id asc
                 for update of m
               `)

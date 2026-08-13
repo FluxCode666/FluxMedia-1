@@ -17,6 +17,8 @@ export const VIDEO_SUBMISSION_RECOVERY_EVENTS = [
   "video_submission_supplier_switched",
   "video_submission_capacity_wait_started",
   "video_submission_recovery_exhausted",
+  /** @deprecated 仅用于 API 历史快照无效的一次性兼容告警；遗留行清零后移除。 */
+  "video_legacy_submission_snapshot_invalid",
   "video_refund_attempt_failed",
   "video_refund_retry_exhausted",
 ] as const;

@@ -140,6 +140,82 @@ describe("backend pool PostgreSQL repository", () => {
     expect(candidateQuery?.params).toContain("member-required");
   });
 
+  it("API 视频调度把成员类型限制编入权威获租 SQL", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "least_load" }] },
+      { rowCount: 0 },
+      { rows: [] },
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(
+      acquireInput({ requiredMemberType: "api", requestedModel: "seedance2" })
+    );
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery).toBeDefined();
+    expect(candidateQuery?.sql).toContain("m.type =");
+    expect(candidateQuery?.params).toContain("api");
+  });
+
+  it("同账号重试把固定 API 适配版本编入权威获租 SQL", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "least_load" }] },
+      { rowCount: 0 },
+      { rows: [] },
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(
+      acquireInput({
+        requiredMemberId: "member-required",
+        requiredMemberType: "api",
+        requiredApiAdapterMemberId: "member-required",
+        requiredApiAdapterVersionId: "adapter-version-fixed",
+      })
+    );
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery).toBeDefined();
+    expect(candidateQuery?.sql).toContain("api_version.id = coalesce(");
+    expect(candidateQuery?.sql).toContain(
+      "api_config.current_adapter_version_id"
+    );
+    expect(candidateQuery?.sql).toContain(
+      "api_version.member_id_snapshot = m.id"
+    );
+    expect(candidateQuery?.params).toEqual(
+      expect.arrayContaining([
+        "member-required",
+        "api",
+        "adapter-version-fixed",
+      ])
+    );
+  });
+
+  it("权威获租只把配置完整的成员计入候选和容量", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "least_load" }] },
+      { rowCount: 0 },
+      { rows: [] },
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(acquireInput());
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery).toBeDefined();
+    expect(candidateQuery?.sql).toContain(
+      "image_backend_member_api_adapter_version"
+    );
+    expect(candidateQuery?.sql).toContain("api_config.api_key is not null");
+    expect(candidateQuery?.sql).toContain("api_version.id is not null");
+    expect(candidateQuery?.sql).toContain("adobe_config.cookie is not null");
+    expect(candidateQuery?.sql).toContain(
+      "adobe_config.access_token is not null"
+    );
+  });
+
   it("acquires the least-loaded eligible member in one transaction", async () => {
     const { database, queries, transaction } = createDatabase([
       { rows: [{ value: "least_load" }] },
@@ -311,6 +387,39 @@ describe("backend pool PostgreSQL repository", () => {
     await expect(
       repository.acquireLease(
         acquireInput({ expiresAt: new Date(NOW.getTime() - 1) })
+      )
+    ).rejects.toMatchObject({ name: "ZodError" });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("拒绝不完整的固定 API 适配版本对且不打开事务", async () => {
+    const { database, transaction } = createDatabase([]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await expect(
+      repository.acquireLease(
+        acquireInput({
+          requiredMemberId: "member-required",
+          requiredMemberType: "api",
+          requiredApiAdapterMemberId: "member-required",
+        })
+      )
+    ).rejects.toMatchObject({ name: "ZodError" });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("拒绝固定适配版本与必选 API 成员归属不一致", async () => {
+    const { database, transaction } = createDatabase([]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await expect(
+      repository.acquireLease(
+        acquireInput({
+          requiredMemberId: "member-a",
+          requiredMemberType: "api",
+          requiredApiAdapterMemberId: "member-b",
+          requiredApiAdapterVersionId: "adapter-version-member-b",
+        })
       )
     ).rejects.toMatchObject({ name: "ZodError" });
     expect(transaction).not.toHaveBeenCalled();

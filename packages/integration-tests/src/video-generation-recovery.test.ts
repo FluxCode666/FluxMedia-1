@@ -52,6 +52,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       api_key_credits_reserved numeric(18, 2) not null default 0,
       principal_scope text not null default 'user:user-1',
       stage text not null,
+      metadata json,
       state_version integer not null default 0,
       next_poll_at timestamp,
       claim_token text,
@@ -538,6 +539,94 @@ describe("video recovery PostgreSQL concurrency", () => {
         first.release();
         second.release();
       }
+    } finally {
+      try {
+        if (schemaName) await dropFixtureSchema(owner, schemaName);
+      } finally {
+        owner.release();
+      }
+    }
+  });
+
+  it("遗留 API 人工态并发只被专用入口认领一次，Adobe 与协议缺失行保持不动", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const owner = await pool.connect();
+    let schemaName: string | null = null;
+    try {
+      schemaName = await createFixtureSchema(owner);
+      await owner.query(`
+        insert into video_generation (id, stage, metadata)
+        values
+          ('legacy-api', 'submit_uncertain', '{"videoBackendProtocol":"api"}'::json),
+          ('legacy-adobe', 'submit_uncertain', '{"videoBackendProtocol":"adobe_direct"}'::json),
+          ('legacy-missing', 'submit_uncertain', null)
+      `);
+      const first = await pool.connect();
+      const second = await pool.connect();
+      try {
+        await Promise.all([
+          first.query(`set search_path to "${schemaName}", public`),
+          second.query(`set search_path to "${schemaName}", public`),
+        ]);
+        const now = new Date();
+        const claimExpiresAt = new Date(now.getTime() + 21 * 60_000);
+        const claims = await Promise.all([
+          createPostgresVideoRecoveryRepository(
+            createRecoveryDatabase(first)
+          ).claimLegacyApiUncertainById({
+            taskId: "legacy-api",
+            claimToken: "legacy-worker-1",
+            now,
+            claimExpiresAt,
+          }),
+          createPostgresVideoRecoveryRepository(
+            createRecoveryDatabase(second)
+          ).claimLegacyApiUncertainById({
+            taskId: "legacy-api",
+            claimToken: "legacy-worker-2",
+            now,
+            claimExpiresAt,
+          }),
+        ]);
+        expect(claims.filter(Boolean)).toHaveLength(1);
+
+        const repository = createPostgresVideoRecoveryRepository(
+          createRecoveryDatabase(owner)
+        );
+        await expect(
+          repository.claimLegacyApiUncertainById({
+            taskId: "legacy-adobe",
+            claimToken: "legacy-worker-adobe",
+            now,
+            claimExpiresAt,
+          })
+        ).resolves.toBeNull();
+        await expect(
+          repository.claimLegacyApiUncertainById({
+            taskId: "legacy-missing",
+            claimToken: "legacy-worker-missing",
+            now,
+            claimExpiresAt,
+          })
+        ).resolves.toBeNull();
+      } finally {
+        first.release();
+        second.release();
+      }
+
+      const untouched = await owner.query<{
+        id: string;
+        claim_token: string | null;
+      }>(`
+        select id, claim_token
+        from video_generation
+        where id in ('legacy-adobe', 'legacy-missing')
+        order by id
+      `);
+      expect(untouched.rows).toEqual([
+        { id: "legacy-adobe", claim_token: null },
+        { id: "legacy-missing", claim_token: null },
+      ]);
     } finally {
       try {
         if (schemaName) await dropFixtureSchema(owner, schemaName);

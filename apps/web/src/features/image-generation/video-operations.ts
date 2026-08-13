@@ -59,6 +59,7 @@ import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-us
 import { parseMediaUpstreamUrl } from "@/features/image-backend-pool/media-upstream-url";
 import { defaultBackendPoolRepository } from "@/features/image-backend-pool/repository";
 import {
+  ApiVideoRecoveryConfigInvalidError,
   createRuntimeBackendSession,
   loadApiVideoRecoveryConfig,
 } from "@/features/image-backend-pool/runtime-service";
@@ -92,6 +93,7 @@ import {
 } from "./video-input-cleanup-queue";
 import { shouldRetainVideoInputsAfterStage } from "./video-input-lifecycle";
 import {
+  resolveVideoCapacityRetryAt,
   resolveVideoQueueSchedule,
   type VideoQueueSchedule,
 } from "./video-queue-schedule";
@@ -106,7 +108,9 @@ import {
 import { defaultVideoRecoveryRepository } from "./video-recovery-repository";
 import { defaultVideoSubmissionAttemptRepository } from "./video-submission-attempt-repository";
 import {
+  classifyLegacyUncertainVideoSnapshot,
   classifyVideoSubmissionFailure,
+  isValidPersistedVideoStorageBucket,
   resolveVideoSubmissionRetrySchedule,
   sanitizeVideoSubmissionFailureReason,
   type VideoSubmissionFailureCode,
@@ -126,6 +130,10 @@ const VIDEO_CLAIM_TTL_MS = VIDEO_LEASE_TTL_MS;
 const VIDEO_IO_HEARTBEAT_MS = 5 * 60_000;
 const VIDEO_REFUND_RETRY_DELAY_MS = 30_000;
 const VIDEO_REFUND_MAX_ATTEMPTS = 3;
+const LEGACY_API_INVALID_SNAPSHOT_REASON =
+  "历史视频任务恢复快照不完整，生成已终止";
+const LEGACY_API_INVALID_SNAPSHOT_OPERATIONS_REASON =
+  "升级前 API 视频任务缺少不可变恢复快照";
 
 type VideoStage =
   | "created"
@@ -459,7 +467,7 @@ export async function applyInitialVideoBackendAvailability(
     expectedStages: ["created"],
     values: {
       capacityWaitDeadlineAt: deadline,
-      nextPollAt: now,
+      nextPollAt: resolveVideoCapacityRetryAt(now, deadline),
       claimToken: null,
       claimExpiresAt: null,
     },
@@ -849,6 +857,233 @@ async function hasVideoCreditConsumption(
     )
     .limit(1);
   return Boolean(transaction);
+}
+
+/** 判断对象存储错误是否明确证明历史输入对象已经不存在。 */
+function isPersistedVideoInputNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { code?: unknown }).code;
+  if (code === "ENOENT" || code === "ENOTDIR") return true;
+  if (error.name === "NoSuchKey" || error.name === "NotFound") return true;
+  const statusCode = (error as { $metadata?: { httpStatusCode?: unknown } })
+    .$metadata?.httpStatusCode;
+  return statusCode === 404 || error.message.startsWith("File not found");
+}
+
+/**
+ * 校验升级前 API 人工态是否仍具备可重放的不可变执行快照。
+ *
+ * @deprecated 仅用于 0087 前显式 API `submit_uncertain`。下个版本在遗留查询
+ * 为零后移除；不得用当前账号或系统配置猜测缺失事实。
+ * @param row 已由专用 API-only claim 持有的遗留任务。
+ * @returns 分类器需要的六类恢复事实和固定账号名称。
+ * @sideEffects 读取固定适配版本、对象存储配置与消费账本；不发起上游请求。
+ * @failure 明确的快照损坏按事实缺失处理；数据库、凭据存储或对象存储临时异常上抛，
+ * 由队列重试，禁止把基础设施故障误判成永久缺失并退款。
+ */
+async function inspectLegacyApiUncertainSnapshot(row: VideoGenerationRow) {
+  const supplierName = getVideoSupplierName(row);
+  const backendSnapshot = row.metadata?.backend;
+  const hasSupplierSnapshot = Boolean(
+    row.backendMemberId &&
+      backendSnapshot &&
+      typeof backendSnapshot === "object" &&
+      "id" in backendSnapshot &&
+      backendSnapshot.id === row.backendMemberId &&
+      "name" in backendSnapshot &&
+      typeof backendSnapshot.name === "string" &&
+      backendSnapshot.name.trim()
+  );
+  let hasAdapterIdentity = false;
+  if (
+    row.backendMemberId &&
+    row.apiAdapterMemberId &&
+    row.apiAdapterVersionId
+  ) {
+    try {
+      const config = await loadApiVideoRecoveryConfig(
+        row.backendMemberId,
+        row.apiAdapterMemberId,
+        row.apiAdapterVersionId,
+        row.model
+      );
+      hasAdapterIdentity = Boolean(config);
+    } catch (error) {
+      if (error instanceof ApiVideoRecoveryConfigInvalidError) {
+        hasAdapterIdentity = false;
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  let hasModelCapabilitySnapshot = false;
+  try {
+    resolveVideoExecutionContract({
+      model: row.model,
+      durationSeconds: row.durationSeconds,
+      aspectRatio: row.aspectRatio,
+      resolution: row.resolution,
+      metadata: row.metadata,
+    });
+    hasModelCapabilitySnapshot = true;
+  } catch {
+    hasModelCapabilitySnapshot = false;
+  }
+
+  let hasValidInputManifest = false;
+  const manifest = (() => {
+    try {
+      return parsePersistedVideoInputManifest(row);
+    } catch {
+      return null;
+    }
+  })();
+  if (manifest !== null) {
+    try {
+      if (manifest) {
+        await loadPersistedVideoSourceInputs(row.userId, manifest);
+      }
+      hasValidInputManifest = true;
+    } catch (error) {
+      if (!isPersistedVideoInputNotFoundError(error)) throw error;
+    }
+  }
+
+  // 历史输出桶是任务自己的不可变事实。不能拿当前配置做相等判断，否则正常的
+  // 存储配置迁移会把可恢复任务误判为损坏并退款。
+  const hasStorageBucket = isValidPersistedVideoStorageBucket(
+    row.storageBucket
+  );
+
+  const hasLedgerConsumption =
+    row.creditsConsumed > 0 && (await hasVideoCreditConsumption(row));
+
+  return {
+    supplierName,
+    classification: classifyLegacyUncertainVideoSnapshot({
+      protocol:
+        getVideoMetadataString(row.metadata, "videoBackendProtocol", 32) ===
+        "api"
+          ? "api"
+          : "adobe_direct",
+      hasSupplierSnapshot,
+      hasBackendMember: Boolean(row.backendMemberId),
+      hasAdapterIdentity,
+      hasModelCapabilitySnapshot,
+      hasValidInputManifest,
+      hasStorageBucket,
+      hasLedgerConsumption,
+    }),
+  };
+}
+
+/**
+ * 自动迁移一条已认领的历史 API `submit_uncertain` 任务。
+ *
+ * @deprecated 仅处理升级前遗留数据。完整快照补记历史首次失败尝试后进入 retrying；
+ * 不完整快照只 CAS 到 refunding、打印一次专用错误事件并执行幂等退款。下个版本只有
+ * 在遗留查询为零后才能删除，Adobe 永远不得调用。
+ */
+async function migrateClaimedLegacyApiUncertainVideo(
+  row: VideoGenerationRow
+): Promise<void> {
+  const snapshot = await inspectLegacyApiUncertainSnapshot(row);
+  if (snapshot.classification === "not_applicable") return;
+  if (
+    snapshot.classification === "retrying" &&
+    row.backendMemberId &&
+    row.apiAdapterMemberId &&
+    row.apiAdapterVersionId
+  ) {
+    const requestId = getVideoRequestId(row) ?? `legacy-migration:${row.id}`;
+    const initialAttemptRecorded =
+      await defaultVideoSubmissionAttemptRepository.recordLegacyInitialFailure({
+        videoGenerationId: row.id,
+        backendMemberId: row.backendMemberId,
+        requestId,
+        supplierNameSnapshot: snapshot.supplierName,
+        apiAdapterMemberId: row.apiAdapterMemberId,
+        apiAdapterVersionId: row.apiAdapterVersionId,
+        now: new Date(),
+      });
+    if (!initialAttemptRecorded) {
+      // WHY：无法证明历史首次请求已占用预算时禁止进入 retrying，避免升级竞态
+      // 让同一账号实际外呼超过“首次请求加两次重试”的上限。
+      throw new Error("历史视频首次创建尝试账本补记失败");
+    }
+    const retrying = await compareAndSetVideoStage({
+      row,
+      expectedStages: ["submit_uncertain"],
+      values: {
+        status: "running",
+        stage: "retrying",
+        failureCode: "unknown_submission_failure",
+        error: "历史首次创建请求未取得有效响应，已安排自动重试",
+        nextPollAt: new Date(),
+        submitStartedAt: null,
+        claimToken: null,
+        claimExpiresAt: null,
+      },
+    });
+    if (!retrying) return;
+    logger.info(
+      createVideoSubmissionRecoveryEvent({
+        event: "video_submission_retry_scheduled",
+        videoTaskId: retrying.id,
+        supplierName: snapshot.supplierName,
+        model: retrying.model,
+        protocol: "api",
+        requestId,
+        attemptNumber: 1,
+        memberAttemptNumber: 1,
+        configuredRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
+        maxAttemptsSnapshot: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT + 1,
+        memberId: row.backendMemberId,
+        baseRetryDelaySeconds: 0,
+        finalRetryDelaySeconds: 0,
+        nextAttemptAt:
+          retrying.nextPollAt?.toISOString() ?? new Date().toISOString(),
+        failureCode: "unknown_submission_failure",
+        failureReason: "历史首次创建请求未取得有效响应",
+        operationsReason: "升级前 API 人工态已迁移到自动重试",
+      }),
+      "历史视频 API 人工态已迁移到自动重试"
+    );
+    return;
+  }
+
+  const refunding = await compareAndSetVideoStage({
+    row,
+    expectedStages: ["submit_uncertain"],
+    values: {
+      status: "failed",
+      stage: "refunding",
+      failureCode: "unknown_submission_failure",
+      error: LEGACY_API_INVALID_SNAPSHOT_REASON,
+      nextPollAt: new Date(),
+    },
+  });
+  if (!refunding) return;
+  logger.error(
+    createVideoSubmissionRecoveryEvent({
+      event: "video_legacy_submission_snapshot_invalid",
+      videoTaskId: refunding.id,
+      supplierName: snapshot.supplierName,
+      model: refunding.model,
+      protocol: "api",
+      requestId:
+        getVideoRequestId(refunding) ?? `legacy-migration:${refunding.id}`,
+      failureCode: "unknown_submission_failure",
+      failureReason: LEGACY_API_INVALID_SNAPSHOT_REASON,
+      operationsReason: LEGACY_API_INVALID_SNAPSHOT_OPERATIONS_REASON,
+      ...(getVideoExternalRequestId(refunding)
+        ? { externalRequestId: getVideoExternalRequestId(refunding) }
+        : {}),
+    }),
+    "历史视频 API 人工态恢复快照无效"
+  );
+  await refundClaimedVideoOrRetry(refunding);
 }
 
 /**
@@ -1622,6 +1857,8 @@ async function submitClaimedCreatedVideo(
   const retryAccountSelection = resolveVideoSubmissionRetryAccountSelection({
     isSubmissionRetry,
     backendMemberId: row.backendMemberId,
+    apiAdapterMemberId: row.apiAdapterMemberId,
+    apiAdapterVersionId: row.apiAdapterVersionId,
     attemptedMemberIds: attemptedMemberIdsForRecovery,
   });
 
@@ -1635,13 +1872,21 @@ async function submitClaimedCreatedVideo(
       modelId: contract.model,
       requestKind: "video",
       requiresContentSafety: true,
+      ...(contract.requiredMemberType
+        ? { requiredMemberType: contract.requiredMemberType }
+        : {}),
       ...retryAccountSelection,
     });
     await backendSession.acquireNext();
   } catch (error) {
-    const isCapacity =
-      error instanceof BackendSchedulerError &&
-      error.code === "capacity_rejected";
+    if (
+      !(error instanceof BackendSchedulerError) ||
+      (error.code !== "capacity_rejected" &&
+        error.code !== "no_eligible_member")
+    ) {
+      throw error;
+    }
+    const isCapacity = error.code === "capacity_rejected";
     if (isCapacity) {
       const capacityWaitSeconds = await getRuntimeSettingNumber(
         "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
@@ -1666,9 +1911,7 @@ async function submitClaimedCreatedVideo(
           expectedStages: ["created", "retrying"],
           values: {
             capacityWaitDeadlineAt: deadline,
-            nextPollAt: new Date(
-              Math.min(deadline.getTime(), Date.now() + 1_000)
-            ),
+            nextPollAt: resolveVideoCapacityRetryAt(new Date(), deadline),
             claimToken: null,
             claimExpiresAt: null,
           },
@@ -2082,31 +2325,40 @@ async function submitClaimedCreatedVideo(
             modelId: contract.model,
             requestKind: "video",
             requiresContentSafety: true,
+            requiredMemberType: "api",
             excludedMemberIds: attemptedMemberIds,
           });
-          const nextLease = await switchedSession.acquireNext();
-          const retryable = await compareAndSetVideoStage({
-            row,
-            expectedStages: ["submitting"],
-            values: {
-              stage: "retrying",
-              backendMemberId: nextLease.memberId,
-              memberLeaseId: nextLease.acquisition.lease.id,
-              memberLeaseOwnerToken: nextLease.acquisition.lease.ownerToken,
-              ...createLeaseApiAdapterSnapshot(nextLease),
-              metadata: createLeaseVideoBackendMetadata(
-                row.metadata,
-                nextLease
-              ),
-              error: decision.userReason,
-              failureCode: decision.failureCode,
-              nextPollAt: new Date(),
-              submitStartedAt: null,
-              claimToken: null,
-              claimExpiresAt: null,
-            },
-          });
-          await switchedSession.close();
+          let nextLease: Awaited<
+            ReturnType<typeof switchedSession.acquireNext>
+          >;
+          let retryable: VideoGenerationRow | null;
+          try {
+            nextLease = await switchedSession.acquireNext();
+            retryable = await compareAndSetVideoStage({
+              row,
+              expectedStages: ["submitting"],
+              values: {
+                stage: "retrying",
+                backendMemberId: nextLease.memberId,
+                memberLeaseId: nextLease.acquisition.lease.id,
+                memberLeaseOwnerToken: nextLease.acquisition.lease.ownerToken,
+                ...createLeaseApiAdapterSnapshot(nextLease),
+                metadata: createLeaseVideoBackendMetadata(
+                  row.metadata,
+                  nextLease
+                ),
+                error: decision.userReason,
+                failureCode: decision.failureCode,
+                nextPollAt: new Date(),
+                submitStartedAt: null,
+                claimToken: null,
+                claimExpiresAt: null,
+              },
+            });
+          } finally {
+            // CAS、数据库或日志前置失败都不能把预先获取的新账号租约遗留到 TTL。
+            await switchedSession.close();
+          }
           if (!retryable) throw new Error("视频成员切换发生并发冲突");
           logVideoSupplierSwitched({
             row: retryable,
@@ -2128,9 +2380,13 @@ async function submitClaimedCreatedVideo(
           };
         } catch (error) {
           if (
-            error instanceof BackendSchedulerError &&
-            error.code === "capacity_rejected"
+            !(error instanceof BackendSchedulerError) ||
+            (error.code !== "capacity_rejected" &&
+              error.code !== "no_eligible_member")
           ) {
+            throw error;
+          }
+          if (error.code === "capacity_rejected") {
             const capacityWaitSeconds = await getRuntimeSettingNumber(
               "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
               120,
@@ -2156,9 +2412,7 @@ async function submitClaimedCreatedVideo(
                   memberLeaseOwnerToken: null,
                   apiAdapterMemberId: null,
                   apiAdapterVersionId: null,
-                  nextPollAt: new Date(
-                    Math.min(deadline.getTime(), Date.now() + 1_000)
-                  ),
+                  nextPollAt: resolveVideoCapacityRetryAt(new Date(), deadline),
                   claimToken: null,
                   claimExpiresAt: null,
                   submitStartedAt: null,
@@ -2172,20 +2426,14 @@ async function submitClaimedCreatedVideo(
               };
             }
           }
-          const finalDecision =
-            error instanceof BackendSchedulerError &&
-            error.code === "capacity_rejected"
-              ? classifyVideoSubmissionFailure({ kind: "unknown" })
-              : decision;
           const finalCode =
-            error instanceof BackendSchedulerError &&
             error.code === "capacity_rejected"
               ? "capacity_wait_timeout"
-              : finalDecision.failureCode;
+              : "no_eligible_api_account";
           const finalReason =
             finalCode === "capacity_wait_timeout"
               ? "当前生成服务繁忙，请稍后重试"
-              : (finalDecision.userReason ?? "当前没有可用生成服务");
+              : "当前没有可用生成服务";
           const refunding = await moveVideoToRefunding(
             row,
             finalReason,
@@ -2392,6 +2640,10 @@ async function retryClaimedVideo(
 
 /** 处理一条已认领任务；每个 I/O 前后均以持久 CAS 收敛。 */
 async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
+  if (row.stage === "submit_uncertain") {
+    await migrateClaimedLegacyApiUncertainVideo(row);
+    return;
+  }
   if (row.stage === "created") {
     await submitClaimedCreatedVideo(row);
     return;
@@ -2669,12 +2921,29 @@ export async function processVideoGenerationQueueTask(
   taskId: string
 ): Promise<VideoQueueSchedule | null> {
   const now = new Date();
-  const claim = await defaultVideoRecoveryRepository.claimById({
+  let claim = await defaultVideoRecoveryRepository.claimById({
     taskId,
     claimToken: randomUUID(),
     now,
     claimExpiresAt: new Date(now.getTime() + VIDEO_CLAIM_TTL_MS),
   });
+  if (!claim) {
+    const legacy = await getVideoGenerationById(taskId);
+    if (
+      legacy?.stage === "submit_uncertain" &&
+      getVideoMetadataString(legacy.metadata, "videoBackendProtocol", 32) ===
+        "api"
+    ) {
+      // @deprecated：普通 claim 永远排除人工态；这里只为升级前显式 API 遗留行
+      // 使用专用入口。下个版本仅在遗留查询为零后移除。
+      claim = await defaultVideoRecoveryRepository.claimLegacyApiUncertainById({
+        taskId,
+        claimToken: randomUUID(),
+        now,
+        claimExpiresAt: new Date(now.getTime() + VIDEO_CLAIM_TTL_MS),
+      });
+    }
+  }
   if (!claim) {
     const current = await getVideoGenerationById(taskId);
     return current ? resolveVideoQueueSchedule(current, now) : null;

@@ -14,6 +14,8 @@ describe("video submission retry account selection", () => {
       resolveVideoSubmissionRetryAccountSelection({
         isSubmissionRetry: false,
         backendMemberId: null,
+        apiAdapterMemberId: null,
+        apiAdapterVersionId: null,
         attemptedMemberIds: ["member-a"],
       })
     ).toEqual({});
@@ -24,9 +26,28 @@ describe("video submission retry account selection", () => {
       resolveVideoSubmissionRetryAccountSelection({
         isSubmissionRetry: true,
         backendMemberId: "member-b",
+        apiAdapterMemberId: "member-b",
+        apiAdapterVersionId: "version-b",
         attemptedMemberIds: ["member-a", "member-b"],
       })
-    ).toEqual({ requiredMemberId: "member-b" });
+    ).toEqual({
+      requiredMemberId: "member-b",
+      requiredMemberType: "api",
+      requiredApiAdapterMemberId: "member-b",
+      requiredApiAdapterVersionId: "version-b",
+    });
+  });
+
+  it("同账号重试缺少固定适配版本时拒绝继续外呼", () => {
+    expect(() =>
+      resolveVideoSubmissionRetryAccountSelection({
+        isSubmissionRetry: true,
+        backendMemberId: "member-b",
+        apiAdapterMemberId: "member-b",
+        apiAdapterVersionId: null,
+        attemptedMemberIds: ["member-b"],
+      })
+    ).toThrow("API 视频同账号重试缺少固定适配版本");
   });
 
   it("切号后容量等待恢复时排除已实际外呼的账号", () => {
@@ -34,8 +55,13 @@ describe("video submission retry account selection", () => {
       resolveVideoSubmissionRetryAccountSelection({
         isSubmissionRetry: true,
         backendMemberId: null,
+        apiAdapterMemberId: null,
+        apiAdapterVersionId: null,
         attemptedMemberIds: ["member-a", "member-a"],
       })
-    ).toEqual({ excludedMemberIds: ["member-a"] });
+    ).toEqual({
+      excludedMemberIds: ["member-a"],
+      requiredMemberType: "api",
+    });
   });
 });

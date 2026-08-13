@@ -166,6 +166,7 @@ describe("video execution contract", () => {
       billingFamily: "vendor-video-x",
       duration: 12,
       resolution: "1080p",
+      requiredMemberType: "api",
       frameCapability: "none",
       effectiveAudio: false,
     });

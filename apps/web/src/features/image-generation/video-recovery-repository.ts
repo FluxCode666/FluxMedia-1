@@ -31,6 +31,8 @@ const claimByIdInputSchema = claimInputSchema.extend({
   taskId: identifierSchema,
 });
 
+const legacyClaimByIdInputSchema = claimByIdInputSchema;
+
 const claimedVideoRowSchema = z
   .object({
     id: identifierSchema,
@@ -83,6 +85,14 @@ export interface VideoRecoveryRepository {
     input: ClaimNextVideoRecoveryJobInput
   ): Promise<ClaimedVideoRecoveryJob | null>;
   claimById(
+    input: ClaimVideoRecoveryJobByIdInput
+  ): Promise<ClaimedVideoRecoveryJob | null>;
+  /**
+   * @deprecated 仅认领升级前显式标记为 API 的 `submit_uncertain` 行。
+   * 下个版本只有在遗留查询为零后才可连同迁移状态分支一起移除；Adobe 和协议缺失行
+   * 永远不得进入此入口。
+   */
+  claimLegacyApiUncertainById(
     input: ClaimVideoRecoveryJobByIdInput
   ): Promise<ClaimedVideoRecoveryJob | null>;
 }
@@ -180,6 +190,54 @@ export function createPostgresVideoRecoveryRepository(
     });
   }
 
+  /**
+   * 原子认领一条升级前 API 人工兼容态。
+   *
+   * @deprecated 仅处理显式 `videoBackendProtocol=api` 的遗留数据；下个版本在遗留
+   * 查询为零后删除。独立 SQL 避免普通恢复入口误接纳 Adobe `submit_uncertain`。
+   */
+  async function claimLegacyApiUncertainTask(
+    input: z.output<typeof legacyClaimByIdInputSchema>
+  ): Promise<ClaimedVideoRecoveryJob | null> {
+    return database.transaction(async (transaction) => {
+      const result = await transaction.execute(sql`
+        with candidate as (
+          select id
+          from video_generation
+          where id = ${input.taskId}
+            and stage = 'submit_uncertain'
+            and metadata->>'videoBackendProtocol' = ${"api"}
+            and (
+              claim_expires_at is null
+              or claim_expires_at <= ${input.now}
+            )
+          limit 1
+          for update skip locked
+        )
+        update video_generation as task
+        set claim_token = ${input.claimToken},
+            claim_expires_at = ${input.claimExpiresAt},
+            state_version = state_version + 1,
+            updated_at = ${input.now}
+        from candidate
+        where task.id = candidate.id
+        returning
+          task.id,
+          task.api_adapter_member_id,
+          task.api_adapter_version_id
+      `);
+      const row = extractExecuteRows(result)[0];
+      if (!row) return null;
+      const parsed = claimedVideoRowSchema.parse(row);
+      return {
+        id: parsed.id,
+        claimToken: input.claimToken,
+        apiAdapterMemberId: parsed.api_adapter_member_id,
+        apiAdapterVersionId: parsed.api_adapter_version_id,
+      };
+    });
+  }
+
   return {
     async claimNext(rawInput) {
       return claimTask(claimInputSchema.parse(rawInput));
@@ -187,6 +245,11 @@ export function createPostgresVideoRecoveryRepository(
     async claimById(rawInput) {
       const input = claimByIdInputSchema.parse(rawInput);
       return claimTask(input, input.taskId);
+    },
+    async claimLegacyApiUncertainById(rawInput) {
+      return claimLegacyApiUncertainTask(
+        legacyClaimByIdInputSchema.parse(rawInput)
+      );
     },
   };
 }

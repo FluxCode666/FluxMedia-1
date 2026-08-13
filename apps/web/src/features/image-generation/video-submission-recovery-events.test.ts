@@ -115,4 +115,24 @@ describe("video submission recovery events", () => {
       })
     ).toThrow("敏感内容");
   });
+
+  it("accepts the dedicated legacy invalid snapshot alert", () => {
+    expect(
+      createVideoSubmissionRecoveryEvent({
+        event: "video_legacy_submission_snapshot_invalid",
+        videoTaskId: "video-legacy-1",
+        supplierName: "Historical supplier",
+        model: "seedance2",
+        protocol: "api",
+        requestId: "legacy-migration-video-legacy-1",
+        failureCode: "unknown_submission_failure",
+        failureReason: "历史视频任务恢复快照不完整，生成已终止",
+        operationsReason: "升级前 API 视频任务缺少不可变恢复快照",
+      })
+    ).toMatchObject({
+      event: "video_legacy_submission_snapshot_invalid",
+      videoTaskId: "video-legacy-1",
+      supplierName: "Historical supplier",
+    });
+  });
 });

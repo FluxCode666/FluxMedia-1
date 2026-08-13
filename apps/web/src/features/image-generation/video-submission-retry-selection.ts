@@ -10,6 +10,9 @@
 export type VideoSubmissionRetryAccountSelection = Readonly<{
   requiredMemberId?: string;
   excludedMemberIds?: readonly string[];
+  requiredMemberType?: "api";
+  requiredApiAdapterMemberId?: string;
+  requiredApiAdapterVersionId?: string;
 }>;
 
 /**
@@ -23,14 +26,30 @@ export type VideoSubmissionRetryAccountSelection = Readonly<{
 export function resolveVideoSubmissionRetryAccountSelection(input: {
   isSubmissionRetry: boolean;
   backendMemberId: string | null;
+  apiAdapterMemberId: string | null;
+  apiAdapterVersionId: string | null;
   attemptedMemberIds: readonly string[];
 }): VideoSubmissionRetryAccountSelection {
   if (!input.isSubmissionRetry) return {};
 
   if (input.backendMemberId) {
-    return { requiredMemberId: input.backendMemberId };
+    if (
+      input.apiAdapterMemberId !== input.backendMemberId ||
+      !input.apiAdapterVersionId
+    ) {
+      throw new Error("API 视频同账号重试缺少固定适配版本");
+    }
+    return {
+      requiredMemberId: input.backendMemberId,
+      requiredMemberType: "api",
+      requiredApiAdapterMemberId: input.apiAdapterMemberId,
+      requiredApiAdapterVersionId: input.apiAdapterVersionId,
+    };
   }
 
   const excludedMemberIds = Array.from(new Set(input.attemptedMemberIds));
-  return excludedMemberIds.length > 0 ? { excludedMemberIds } : {};
+  return {
+    ...(excludedMemberIds.length > 0 ? { excludedMemberIds } : {}),
+    requiredMemberType: "api",
+  };
 }

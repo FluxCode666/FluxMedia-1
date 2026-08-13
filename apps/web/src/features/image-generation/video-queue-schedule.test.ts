@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveVideoCapacityRetryAt,
   resolveVideoQueueSchedule,
+  VIDEO_CAPACITY_RETRY_DELAY_MS,
   VIDEO_SUBMISSION_RECOVERY_GRACE_MS,
   type VideoQueueScheduleRow,
 } from "./video-queue-schedule";
@@ -31,6 +33,18 @@ function createRow(
 }
 
 describe("video queue schedule", () => {
+  it("容量等待使用有界退避且不会越过截止时间", () => {
+    const laterDeadline = new Date(NOW.getTime() + 60_000);
+    expect(resolveVideoCapacityRetryAt(NOW, laterDeadline)).toEqual(
+      new Date(NOW.getTime() + VIDEO_CAPACITY_RETRY_DELAY_MS)
+    );
+
+    const nearDeadline = new Date(NOW.getTime() + 2_000);
+    expect(resolveVideoCapacityRetryAt(NOW, nearDeadline)).toEqual(
+      nearDeadline
+    );
+  });
+
   it("created、retrying 与 polling 使用数据库 nextPollAt", () => {
     const nextPollAt = new Date(NOW.getTime() + 15_000);
     expect(
