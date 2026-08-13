@@ -16,6 +16,7 @@ import {
   type AdminHistoryListOutput,
   type AdminHistoryRecord,
   type AdminHistoryRequestSnapshotOutput,
+  type AdminHistoryVideoSubmissionAttempt,
   adminHistoryCursorFiltersSchema,
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
@@ -115,6 +116,7 @@ export interface AdminVideoHistoryRow extends AdminHistoryRowCommon {
   aspectRatio: string;
   generateAudio: boolean;
   input: HistoryVideoInputSummary;
+  submissionAttempts: AdminHistoryVideoSubmissionAttempt[];
   videoUrl: string | null;
 }
 

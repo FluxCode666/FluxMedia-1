@@ -401,6 +401,10 @@ bindExecute(
           stagingReservationToken: preparation.reservationToken,
           videoGenerationId: taskId,
           clientRequestId: canonicalInput.clientRequestId,
+          serverRequestId: ctx.requestId,
+          ...(ctx.externalRequestId
+            ? { externalRequestId: ctx.externalRequestId }
+            : {}),
           requestFingerprint,
           prompt: canonicalInput.prompt,
           model: canonicalInput.model,

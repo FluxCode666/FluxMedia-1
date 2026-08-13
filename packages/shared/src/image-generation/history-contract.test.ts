@@ -284,6 +284,63 @@ describe("history contract", () => {
     });
   });
 
+  it("only allows safe video submission failure facts in global history", () => {
+    const video = {
+      aspectRatio: "16:9",
+      backendAccount: null,
+      completedAt: null,
+      createdAt: "2026-07-22T01:00:00.000Z",
+      creditsConsumed: 10,
+      duration: 8,
+      error: "生成服务请求超时，请稍后重试",
+      generateAudio: false,
+      id: "video-1",
+      input: { mode: "none" as const, count: 0 },
+      kind: "video" as const,
+      model: "seedance2",
+      processingDurationSeconds: null,
+      prompt: "prompt",
+      resolution: "1080p",
+      status: "failed" as const,
+      submissionAttempts: [
+        {
+          attemptNumber: 1,
+          supplierName: "Video supplier",
+          failureCode: "submission_timeout",
+          failureReason: "生成服务请求超时，请稍后重试",
+          operationsReason: "上游视频创建请求超时",
+          failedAt: "2026-07-22T01:00:30.000Z",
+        },
+      ],
+      userEmail: "member@example.com",
+      userId: "user-1",
+      videoUrl: null,
+    };
+    const output = {
+      asOf: "2026-07-22T02:00:00.000Z",
+      records: [video],
+      modelOptions: [],
+      nextCursor: null,
+      previousCursor: null,
+      userOptions: [{ id: "user-1", email: "member@example.com" }],
+    };
+
+    expect(adminHistoryListOutputSchema.safeParse(output).success).toBe(true);
+    expect(
+      adminHistoryListOutputSchema.safeParse({
+        ...output,
+        records: [
+          {
+            ...video,
+            submissionAttempts: [
+              { ...video.submissionAttempts[0], unsafeField: "request-1" },
+            ],
+          },
+        ],
+      }).success
+    ).toBe(false);
+  });
+
   it("accepts only nullable non-negative integer processing durations", () => {
     const common = {
       kind: "image" as const,

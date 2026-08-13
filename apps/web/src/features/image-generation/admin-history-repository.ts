@@ -61,6 +61,7 @@ const adminHistoryListRowSchema = z.object({
   aspect_ratio: z.string().min(1).max(100).nullable(),
   generate_audio: z.boolean().nullable(),
   input_manifest: z.unknown().nullable(),
+  submission_attempts: z.unknown().nullable(),
 });
 
 const modelOptionRowSchema = z.object({
@@ -75,6 +76,18 @@ const userOptionRowSchema = z.object({
 const requestSnapshotRowSchema = z.object({
   request_snapshot: z.unknown().nullable(),
 });
+
+/** 管理端视频失败尝试 JSON 聚合的数据库行；时间须在输出边界统一转为 ISO。 */
+const submissionAttemptRowSchema = z
+  .object({
+    attemptNumber: z.coerce.number().int().positive(),
+    supplierName: z.string().trim().min(1).max(120),
+    failureCode: z.string().min(1).max(64),
+    failureReason: z.string().min(1).max(1_000),
+    operationsReason: z.string().min(1).max(1_000),
+    failedAt: z.coerce.date(),
+  })
+  .strict();
 
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
@@ -237,6 +250,7 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         null::text as aspect_ratio,
         null::boolean as generate_audio,
         null::jsonb as input_manifest,
+        null::jsonb as submission_attempts,
         1::integer as kind_rank
       from generation g
       inner join "user" u on u.id = g.user_id
@@ -282,6 +296,25 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
           else null
         end as generate_audio,
         v.input_manifest::jsonb as input_manifest,
+        coalesce(
+          (
+            select jsonb_agg(
+              jsonb_build_object(
+                'attemptNumber', attempt.global_attempt_number,
+                'supplierName', attempt.supplier_name_snapshot,
+                'failureCode', attempt.failure_code,
+                'failureReason', attempt.failure_reason,
+                'operationsReason', attempt.operations_reason,
+                'failedAt', attempt.failed_at
+              )
+              order by attempt.global_attempt_number asc
+            )
+            from video_generation_submission_attempt attempt
+            where attempt.video_generation_id = v.id
+              and attempt.failure_code is not null
+          ),
+          '[]'::jsonb
+        ) as submission_attempts,
         0::integer as kind_rank
       from video_generation v
       inner join "user" u on u.id = v.user_id
@@ -323,7 +356,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
       duration_seconds,
       aspect_ratio,
       generate_audio,
-      input_manifest
+      input_manifest,
+      submission_attempts
     from (
       select * from image_rows
       union all
@@ -476,6 +510,15 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
       if (!inputManifest.success) {
         throw new RangeError("Admin video history input manifest is invalid");
       }
+      const submissionAttempts = z
+        .array(submissionAttemptRowSchema)
+        .max(100)
+        .safeParse(row.submission_attempts ?? []);
+      if (!submissionAttempts.success) {
+        throw new RangeError(
+          "Admin video history submission attempts are invalid"
+        );
+      }
       return {
         ...common,
         kind: "video" as const,
@@ -484,6 +527,10 @@ export const databaseAdminHistoryRepository: AdminHistoryRepository = {
         aspectRatio: row.aspect_ratio,
         generateAudio: row.generate_audio,
         input: buildVideoInputSummary(inputManifest.data),
+        submissionAttempts: submissionAttempts.data.map((attempt) => ({
+          ...attempt,
+          failedAt: attempt.failedAt.toISOString(),
+        })),
         videoUrl: buildSignedStorageImageUrl(
           row.storage_key,
           row.storage_bucket

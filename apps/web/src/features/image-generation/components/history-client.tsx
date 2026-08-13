@@ -616,6 +616,7 @@ export function HistoryClient({
           open={selectedKey !== null}
           record={selected}
           showAdminRequestJson={showUserColumns}
+          showAdminSubmissionAttempts={showUserColumns}
           timeZone={timeZone}
         />
       ) : null}

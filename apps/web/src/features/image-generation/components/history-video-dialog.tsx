@@ -39,6 +39,14 @@ export type HistoryVideoDialogRecord = {
   prompt: string;
   resolution: string;
   status: "queued" | "in_progress" | "completed" | "failed";
+  submissionAttempts?: Array<{
+    attemptNumber: number;
+    failureCode: string;
+    failureReason: string;
+    failedAt: string;
+    operationsReason: string;
+    supplierName: string;
+  }>;
   videoUrl: string | null;
 };
 
@@ -57,6 +65,7 @@ type HistoryVideoDialogProps = {
   open: boolean;
   record: HistoryVideoDialogRecord;
   showAdminRequestJson?: boolean;
+  showAdminSubmissionAttempts?: boolean;
   timeZone: string;
 };
 
@@ -146,6 +155,7 @@ export function HistoryVideoDialog({
   open,
   record,
   showAdminRequestJson = false,
+  showAdminSubmissionAttempts = false,
   timeZone,
 }: HistoryVideoDialogProps) {
   const locale = useLocale();
@@ -194,6 +204,9 @@ export function HistoryVideoDialog({
     { length: Math.max(record.input.count, 1) },
     (_, inputNumber) => `${record.id}-input-loading-${inputNumber + 1}`
   );
+  const submissionAttempts = showAdminSubmissionAttempts
+    ? (record.submissionAttempts ?? [])
+    : [];
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
@@ -355,6 +368,64 @@ export function HistoryVideoDialog({
                   key={`video-request-${record.id}`}
                   kind="video"
                 />
+              ) : null}
+
+              {submissionAttempts.length > 0 ? (
+                <section
+                  aria-label={copy("Submission failures", "提交失败记录")}
+                >
+                  <Separator className="mb-5" />
+                  <h3 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Submission failures", "提交失败记录")}
+                  </h3>
+                  <ol className="mt-3 space-y-3">
+                    {submissionAttempts.map((attempt) => (
+                      <li
+                        className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs"
+                        key={`${attempt.attemptNumber}-${attempt.supplierName}`}
+                      >
+                        <p className="font-medium text-foreground">
+                          {copy("Attempt", "第")} {attempt.attemptNumber}
+                          {isZh ? " 次" : ""} · {attempt.supplierName}
+                        </p>
+                        <dl className="mt-2 grid gap-x-3 gap-y-2 sm:grid-cols-2">
+                          <div>
+                            <dt className="text-muted-foreground">
+                              {copy("Failure code", "失败码")}
+                            </dt>
+                            <dd className="break-all font-mono text-[11px] text-foreground">
+                              {attempt.failureCode}
+                            </dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="text-muted-foreground">
+                              {copy("Failure reason", "失败原因")}
+                            </dt>
+                            <dd className="mt-0.5 break-words text-foreground">
+                              {attempt.failureReason}
+                            </dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="text-muted-foreground">
+                              {copy("Operations note", "运营说明")}
+                            </dt>
+                            <dd className="mt-0.5 break-words text-foreground">
+                              {attempt.operationsReason}
+                            </dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="text-muted-foreground">
+                              {copy("Failed at", "失败时间")}
+                            </dt>
+                            <dd className="mt-0.5 text-foreground">
+                              {formatDate(attempt.failedAt, locale, timeZone)}
+                            </dd>
+                          </div>
+                        </dl>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
               ) : null}
 
               <Separator />

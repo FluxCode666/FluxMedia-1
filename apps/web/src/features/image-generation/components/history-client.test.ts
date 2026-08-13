@@ -61,6 +61,16 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
         prompt: "video prompt",
         resolution: "1080p",
         status: "completed",
+        submissionAttempts: [
+          {
+            attemptNumber: 1,
+            supplierName: "视频供应商主账号",
+            failureCode: "submission_timeout",
+            failureReason: "生成服务请求超时，请稍后重试",
+            operationsReason: "上游视频创建请求超时",
+            failedAt: "2026-07-22T12:00:30.000Z",
+          },
+        ],
         userEmail: "member@example.com",
         userId: "user-1",
         videoUrl: null,

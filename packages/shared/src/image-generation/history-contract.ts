@@ -219,6 +219,18 @@ export const adminHistoryBackendAccountSchema = z
   })
   .strict();
 
+/** 管理端视频提交尝试的安全审计摘要；不包含正文、凭据或上游任务 ID。 */
+export const adminHistoryVideoSubmissionAttemptSchema = z
+  .object({
+    attemptNumber: z.number().int().positive(),
+    supplierName: z.string().trim().min(1).max(120),
+    failureCode: z.string().min(1).max(64),
+    failureReason: z.string().min(1).max(1000),
+    operationsReason: z.string().min(1).max(1000),
+    failedAt: isoDateTimeSchema,
+  })
+  .strict();
+
 /** 管理端图片记录，附带所属用户和供应商账号的受控身份字段。 */
 export const adminImageHistoryRecordSchema = imageHistoryRecordSchema
   .safeExtend({
@@ -232,6 +244,9 @@ export const adminImageHistoryRecordSchema = imageHistoryRecordSchema
 export const adminVideoHistoryRecordSchema = videoHistoryRecordSchema
   .safeExtend({
     backendAccount: adminHistoryBackendAccountSchema.nullable(),
+    submissionAttempts: z
+      .array(adminHistoryVideoSubmissionAttemptSchema)
+      .max(100),
     userId: z.string().min(1).max(512),
     userEmail: adminHistoryUserEmailSchema,
   })
@@ -291,6 +306,9 @@ export type AdminHistoryRequestSnapshotInput = z.input<
 >;
 export type AdminHistoryRequestSnapshotOutput = z.infer<
   typeof adminHistoryRequestSnapshotOutputSchema
+>;
+export type AdminHistoryVideoSubmissionAttempt = z.infer<
+  typeof adminHistoryVideoSubmissionAttemptSchema
 >;
 export type AdminHistoryRecord = z.infer<typeof adminHistoryRecordSchema>;
 export type AdminHistoryListOutput = z.infer<
