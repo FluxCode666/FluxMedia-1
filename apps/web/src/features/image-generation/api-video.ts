@@ -500,7 +500,6 @@ export async function submitApiVideoRequest(
       onBeforeSend: params.onBeforeSend,
       signal: params.signal,
       requestId: params.requestId,
-      maxResponseBytes: MAX_API_VIDEO_RESPONSE_BYTES,
       observability: {
         memberId: config.backend?.id,
         groupId: config.backend?.groupId,
