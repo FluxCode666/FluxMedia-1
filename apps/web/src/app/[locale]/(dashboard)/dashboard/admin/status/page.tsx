@@ -30,7 +30,7 @@ import {
   formatDateInTimeZone,
   parseDateInputInTimeZone,
 } from "@repo/shared/time-zone";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { invokeOperation } from "@repo/shared/uol";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
@@ -1946,10 +1946,8 @@ export default async function GlobalStatusPage({
     redirect(`/${locale}/dashboard`);
   }
 
-  const [params, timeZone] = await Promise.all([
-    searchParams,
-    getUserTimeZone(session.user.id),
-  ]);
+  const params = await searchParams;
+  const timeZone = getAppTimeZone();
   const errorFilters = parseHistoricalErrorFilters(params, timeZone);
   const [data, historicalErrors] = await Promise.all([
     getCachedStatusData(),

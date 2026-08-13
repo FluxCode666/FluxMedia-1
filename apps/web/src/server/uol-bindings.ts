@@ -52,7 +52,7 @@ import {
   moderateContent,
 } from "@repo/shared/moderation";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -182,12 +182,11 @@ bindExecute(
       throw new OperationError("forbidden", "Admin access required");
     }
     try {
-      const timeZone = await getUserTimeZone(principal.userId);
       return adminHistoryListOutputSchema.parse(
         await loadAdminHistoryRecords(
           {
             actorUserId: principal.userId,
-            timeZone,
+            timeZone: getAppTimeZone(),
             input,
           },
           { repository: databaseAdminHistoryRepository }

@@ -8,7 +8,7 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
-import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 
@@ -57,7 +57,7 @@ export default async function DashboardAdminHistoryPage({
   });
   const historyPath = "/dashboard/admin/history";
   const retryHref = buildHistoryHref(queryState, { path: historyPath });
-  const [historyResult, timeZoneResult] = await Promise.allSettled([
+  const [historyResult] = await Promise.allSettled([
     getAdminHistoryRecordsAction({
       createdFrom: queryState.createdFrom,
       createdTo: queryState.createdTo,
@@ -69,12 +69,8 @@ export default async function DashboardAdminHistoryPage({
       type: queryState.type,
       userEmail: queryState.userEmail,
     }),
-    getUserTimeZone(session.user.id),
   ]);
-  const timeZone =
-    timeZoneResult.status === "fulfilled"
-      ? timeZoneResult.value
-      : getAppTimeZone();
+  const timeZone = getAppTimeZone();
   const historyActionResult =
     historyResult.status === "fulfilled" ? historyResult.value : null;
   const historyData = historyActionResult?.data;
