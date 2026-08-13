@@ -3,18 +3,16 @@
  *
  * 使用方：Vitest；证明角色护栏、安全失败映射和 overview/导出独立降级。
  */
-import type {
-  OperationsExportTask,
-  OperationsOverviewOutput,
-} from "@repo/shared/operations-dashboard/contracts";
+import type { OperationsExportTask } from "@repo/shared/operations-dashboard/contracts";
 import { OperationError } from "@repo/shared/uol";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadOperationsDashboardPageData } from "./operations-dashboard-page-data";
+import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 
 const overview = {
   marker: "operations",
-} as unknown as OperationsOverviewOutput;
+} as unknown as OperationsDashboardOverview;
 const exportTask = {
   id: "export-1",
 } as unknown as OperationsExportTask;

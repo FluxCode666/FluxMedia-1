@@ -9,7 +9,6 @@ import { isAdminRole } from "@repo/shared/auth/roles";
 import type {
   OperationsDashboardQueryInput,
   OperationsExportTask,
-  OperationsOverviewOutput,
 } from "@repo/shared/operations-dashboard/contracts";
 import {
   invokeOperation,
@@ -19,6 +18,8 @@ import {
 
 import { ensureUolInitialized } from "@/server/uol-init";
 
+import type { OperationsDashboardOverview } from "./operations-dashboard-service";
+
 export type OperationsDashboardLoadFailure =
   | "validation_error"
   | "not_ready"
@@ -27,7 +28,7 @@ export type OperationsDashboardLoadFailure =
   | "unavailable";
 
 export type OperationsDashboardPageData = {
-  overview: OperationsOverviewOutput | null;
+  overview: OperationsDashboardOverview | null;
   exports: OperationsExportTask[];
   exportsNextCursor: string | null;
   loadError: OperationsDashboardLoadFailure | null;
@@ -40,7 +41,7 @@ export type OperationsDashboardPageDataDependencies = {
   invokeOverview: (
     input: OperationsDashboardQueryInput,
     principal: Principal
-  ) => Promise<OperationsOverviewOutput>;
+  ) => Promise<OperationsDashboardOverview>;
   listExports: (
     input: { limit: number },
     principal: Principal
@@ -51,8 +52,8 @@ export type OperationsDashboardPageDataDependencies = {
 async function invokeOverviewThroughUol(
   input: OperationsDashboardQueryInput,
   principal: Principal
-): Promise<OperationsOverviewOutput> {
-  return invokeOperation<OperationsOverviewOutput>(
+): Promise<OperationsDashboardOverview> {
+  return invokeOperation<OperationsDashboardOverview>(
     "operations.getOverview",
     input,
     principal

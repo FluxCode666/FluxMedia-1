@@ -9,7 +9,6 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
   type OperationsDetailOutput,
-  type OperationsOverviewOutput,
   operationsCreateExportInputSchema,
   operationsGetDetailInputSchema,
   operationsGetOverviewInputSchema,
@@ -23,6 +22,7 @@ import { invokeOperation, OperationError } from "@repo/shared/uol";
 import { ensureUolInitialized } from "@/server/uol-init";
 
 import { tryRecordDashboardWebVisit } from "./dashboard-web-visit";
+import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 
 /** 客户端可安全消费的访问记录结果，不携带内部异常详情。 */
 export type RecordDashboardWebVisitActionResult =
@@ -72,14 +72,16 @@ function mapOperationsActionError(
 export const getOperationsOverviewAction = adminAction
   .metadata({ action: "operations.getOverview" })
   .schema(operationsGetOverviewInputSchema)
-  .action(async ({ parsedInput, ctx }): Promise<OperationsOverviewOutput> => {
-    await ensureUolInitialized();
-    return invokeOperation<OperationsOverviewOutput>(
-      "operations.getOverview",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-  });
+  .action(
+    async ({ parsedInput, ctx }): Promise<OperationsDashboardOverview> => {
+      await ensureUolInitialized();
+      return invokeOperation<OperationsDashboardOverview>(
+        "operations.getOverview",
+        parsedInput,
+        { type: "user", userId: ctx.userId, role: ctx.role }
+      );
+    }
+  );
 
 /** 读取管理员运营明细；客户端按 cursor 继续请求。 */
 export const getOperationsDetailAction = adminAction
