@@ -19,6 +19,7 @@ import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { extractExecuteRows } from "@/server/database-result";
 import type {
+  AdminHistoryCountQuery,
   AdminHistoryListQuery,
   AdminHistoryRepository,
 } from "./admin-history-service";
@@ -71,13 +72,20 @@ const requestSnapshotRowSchema = z.object({
   request_snapshot: z.unknown().nullable(),
 });
 
+const countRowSchema = z.object({
+  total_count: z.coerce.number().int().nonnegative().safe(),
+});
+
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
   return value ? sql`true` : sql`false`;
 }
 
 /** 创建全局日期半开区间、快照上限谓词。 */
-function buildDatePredicate(input: AdminHistoryListQuery, createdAt: SQL): SQL {
+function buildDatePredicate(
+  input: AdminHistoryCountQuery,
+  createdAt: SQL
+): SQL {
   return sql`${input.start ? sql`${createdAt} >= ${input.start}` : sql`true`}
     and ${input.end ? sql`${createdAt} < ${input.end}` : sql`true`}
     and ${createdAt} <= ${input.asOf}`;
@@ -327,6 +335,36 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
   `;
 }
 
+/**
+ * 构造管理端全局历史的精确计数查询。
+ *
+ * WHY：邮箱筛选继续通过唯一邮箱收敛到单用户，未筛选时按同一日期、模型、状态和
+ * `asOf` 口径统计两张事实表；cursor 只决定当前页边界，不得改变授权总数。
+ */
+export function buildAdminHistoryCountSql(input: AdminHistoryCountQuery): SQL {
+  return sql`
+    select (
+      select count(*)
+      from generation g
+      inner join "user" u on u.id = g.user_id
+      where ${booleanSql(input.type === null || input.type === "image")}
+        and ${buildDatePredicate(input, sql`g.created_at`)}
+        and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
+        and ${buildModelPredicate(input.model, sql`g.model`)}
+        and ${buildImageStatusPredicate(input.status, sql`g.status`)}
+    ) + (
+      select count(*)
+      from video_generation v
+      inner join "user" u on u.id = v.user_id
+      where ${booleanSql(input.type === null || input.type === "video")}
+        and ${buildDatePredicate(input, sql`v.created_at`)}
+        and ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
+        and ${buildModelPredicate(input.model, sql`v.model`)}
+        and ${buildVideoStatusPredicate(input.status, sql`v.status`)}
+    ) as total_count
+  `;
+}
+
 /** 构造全局历史真实模型选项查询；邮箱筛选时仅返回该用户使用过的模型。 */
 export function buildAdminHistoryModelOptionsSql(input: {
   userEmail: string | null;
@@ -401,6 +439,13 @@ export function buildAdminHistoryRequestSnapshotSql(input: {
 
 /** PostgreSQL 管理端全局历史仓储实现。 */
 export const databaseAdminHistoryRepository: AdminHistoryRepository = {
+  async countRecords(query) {
+    const row = countRowSchema.parse(
+      extractExecuteRows(await db.execute(buildAdminHistoryCountSql(query)))[0]
+    );
+    return row.total_count;
+  },
+
   async readRecords(query) {
     const rows = z
       .array(adminHistoryListRowSchema)

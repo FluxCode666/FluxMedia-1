@@ -20,7 +20,11 @@ import {
   extractGenerationReferenceImages,
   extractPromptRepairNotice,
 } from "./generation-metadata";
-import type { HistoryListQuery, HistoryRepository } from "./history-service";
+import type {
+  HistoryCountQuery,
+  HistoryListQuery,
+  HistoryRepository,
+} from "./history-service";
 import { buildVideoInputSummary } from "./video-input-lifecycle";
 
 const historyListRowSchema = z.object({
@@ -49,13 +53,17 @@ const modelOptionRowSchema = z.object({
   model: z.string().trim().min(1).max(240),
 });
 
+const countRowSchema = z.object({
+  total_count: z.coerce.number().int().nonnegative().safe(),
+});
+
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
   return value ? sql`true` : sql`false`;
 }
 
 /** 创建可选的用户本地日期半开区间谓词。 */
-function buildDatePredicate(input: HistoryListQuery, createdAt: SQL): SQL {
+function buildDatePredicate(input: HistoryCountQuery, createdAt: SQL): SQL {
   return sql`${input.start ? sql`${createdAt} >= ${input.start}` : sql`true`}
     and ${input.end ? sql`${createdAt} < ${input.end}` : sql`true`}
     and ${createdAt} <= ${input.asOf}`;
@@ -261,6 +269,34 @@ export function buildHistoryListSql(input: HistoryListQuery): SQL {
   `;
 }
 
+/**
+ * 构造与本人历史列表完全同口径的精确计数查询。
+ *
+ * WHY：图片与视频分表分别命中用户、日期和筛选索引，再合并两个标量；不把
+ * cursor 谓词带入总数，确保每一页显示的是当前快照内完整授权结果数。
+ */
+export function buildHistoryCountSql(input: HistoryCountQuery): SQL {
+  return sql`
+    select (
+      select count(*)
+      from generation g
+      where g.user_id = ${input.userId}
+        and ${booleanSql(input.type === null || input.type === "image")}
+        and ${buildDatePredicate(input, sql`g.created_at`)}
+        and ${buildModelPredicate(input.model, sql`g.model`)}
+        and ${buildImageStatusPredicate(input.status, sql`g.status`)}
+    ) + (
+      select count(*)
+      from video_generation v
+      where v.user_id = ${input.userId}
+        and ${booleanSql(input.type === null || input.type === "video")}
+        and ${buildDatePredicate(input, sql`v.created_at`)}
+        and ${buildModelPredicate(input.model, sql`v.model`)}
+        and ${buildVideoStatusPredicate(input.status, sql`v.status`)}
+    ) as total_count
+  `;
+}
+
 /** 构造本人历史真实模型选项查询；UNION 去重且输出严格有界。 */
 export function buildHistoryModelOptionsSql(input: {
   userId: string;
@@ -289,6 +325,13 @@ export function buildHistoryModelOptionsSql(input: {
 
 /** PostgreSQL 统一历史仓储实现。 */
 export const databaseHistoryRepository: HistoryRepository = {
+  async countRecords(query) {
+    const row = countRowSchema.parse(
+      extractExecuteRows(await db.execute(buildHistoryCountSql(query)))[0]
+    );
+    return row.total_count;
+  },
+
   async readRecords(query) {
     const rows = z
       .array(historyListRowSchema)

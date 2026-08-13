@@ -43,6 +43,7 @@ function createRepository(
   overrides: Partial<HistoryRepository> = {}
 ): HistoryRepository {
   return {
+    countRecords: vi.fn().mockResolvedValue(0),
     readRecords: vi.fn().mockResolvedValue([]),
     readModelOptions: vi.fn().mockResolvedValue([]),
     ...overrides,
@@ -117,6 +118,7 @@ describe("history service", () => {
       },
       imageRow("image-1", "2026-07-22T10:00:00.000Z"),
     ];
+    const countRecords = vi.fn().mockResolvedValue(3);
     const readRecords = vi.fn().mockResolvedValue(rows);
     const readModelOptions = vi
       .fn()
@@ -133,7 +135,11 @@ describe("history service", () => {
         now: new Date("2026-07-22T13:00:00.000Z"),
       },
       {
-        repository: createRepository({ readRecords, readModelOptions }),
+        repository: createRepository({
+          countRecords,
+          readRecords,
+          readModelOptions,
+        }),
         tokenSecret: TOKEN_SECRET,
       }
     );
@@ -165,6 +171,7 @@ describe("history service", () => {
       processingDurationSeconds: null,
     });
     expect(result.modelOptions).toEqual(["gpt-image-2", "sora2"]);
+    expect(result).toMatchObject({ page: 1, pageSize: 2, totalCount: 3 });
     expect(result.nextCursor).toEqual(expect.any(String));
     expect(result.previousCursor).toBeNull();
   });
@@ -247,7 +254,7 @@ describe("history service", () => {
       {
         userId: "user-1",
         timeZone: "UTC",
-        input: { cursor: firstPage.nextCursor, limit: 2 },
+        input: { cursor: firstPage.nextCursor, limit: 2, page: 2 },
         now: new Date("2026-07-22T13:01:00.000Z"),
       },
       {
@@ -273,7 +280,7 @@ describe("history service", () => {
       {
         userId: "user-1",
         timeZone: "UTC",
-        input: { cursor: secondPage.previousCursor, limit: 2 },
+        input: { cursor: secondPage.previousCursor, limit: 2, page: 1 },
         now: new Date("2026-07-22T13:02:00.000Z"),
       },
       {

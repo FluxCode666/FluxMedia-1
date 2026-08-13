@@ -18,6 +18,11 @@ vi.mock("./history-video-dialog", () => ({ HistoryVideoDialog: () => null }));
 vi.mock("@/i18n/routing", () => ({
   Link: ({ children }: { children: ReactNode }) =>
     createElement("a", null, children),
+  usePathname: () => "/dashboard/history",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 import { HistoryClient, type HistoryClientProps } from "./history-client";
@@ -30,12 +35,16 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
   return {
     modelOptions: [],
     nextCursor: null,
+    page: 1,
+    pageSizeOptions: [10, 20, 50],
     previousCursor: null,
     queryState: {
       createdFrom: null,
       createdTo: null,
       cursor: null,
       model: null,
+      page: 1,
+      pageSize: 20,
       status: null,
       type: null,
       userEmail: null,
@@ -68,6 +77,7 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
     ],
     showUserColumns,
     timeZone: "UTC",
+    totalCount: 1,
   };
 }
 
