@@ -12,6 +12,7 @@ import { extractExecuteRows } from "@/server/database-result";
 import { VIDEO_SUBMISSION_RECOVERY_GRACE_MS } from "./video-queue-schedule";
 
 const identifierSchema = z.string().trim().min(1).max(512);
+
 export { VIDEO_SUBMISSION_RECOVERY_GRACE_MS } from "./video-queue-schedule";
 
 const claimInputSchema = z
@@ -108,7 +109,12 @@ export function createPostgresVideoRecoveryRepository(
             from video_generation
             where (
                 (
-                  stage in ('created', 'polling', 'downloading', 'refunding')
+                  stage in ('created', 'retrying', 'polling', 'downloading')
+                  and (next_poll_at is null or next_poll_at <= ${input.now})
+                )
+                or (
+                  stage = 'refunding'
+                  and refund_exhausted_at is null
                   and (next_poll_at is null or next_poll_at <= ${input.now})
                 )
                 or (
@@ -134,6 +140,7 @@ export function createPostgresVideoRecoveryRepository(
                 when 'refunding' then 0
                 when 'downloading' then 1
                 when 'polling' then 2
+                when 'retrying' then 3
                 when 'submitting' then 3
                 when 'charged' then 3
                 else 4

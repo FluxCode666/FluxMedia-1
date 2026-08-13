@@ -106,6 +106,7 @@ const acquireLeaseInputSchema = z
     groupId: identifierSchema,
     requestedModel: z.string().trim().min(1).max(240),
     excludedMemberIds: z.array(identifierSchema).max(1_000).default([]),
+    requiredMemberId: identifierSchema.optional(),
     requiresContentSafety: z.boolean().default(false),
     leaseId: identifierSchema,
     ownerToken: ownerTokenSchema,
@@ -397,6 +398,9 @@ export function createPostgresBackendPoolRepository(
                     or m.content_safety_enabled = true
                   )
                   and ${buildExcludedMemberPredicate(input.excludedMemberIds)}
+                  and (${input.requiredMemberId ?? null}::text is null or m.id = ${
+                    input.requiredMemberId ?? null
+                  })
                 order by m.id asc
                 for update of m
               `)

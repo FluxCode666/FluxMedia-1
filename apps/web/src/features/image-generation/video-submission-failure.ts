@@ -66,6 +66,14 @@ export type VideoSubmissionFailureDecision = {
   operationsReason?: string;
 };
 
+/** 同账号重试的持久排程结果。 */
+export type VideoSubmissionRetrySchedule = {
+  baseDelaySeconds: number;
+  retryAfterSeconds?: number;
+  finalDelaySeconds: number;
+  nextAttemptAt: Date;
+};
+
 /** 遗留人工态任务是否具备可重建的 API 创建事实。 */
 export type LegacyUncertainVideoSnapshotInput = {
   protocol: "api" | "adobe_direct" | "unknown";
@@ -193,6 +201,42 @@ export function sanitizeVideoSubmissionFailureReason(value: unknown): string {
     .trim();
   const safe = normalized || "视频生成失败，请稍后重试";
   return safe.slice(0, MAX_FAILURE_REASON_CHARACTERS);
+}
+
+/**
+ * 计算同账号下一次创建时间；上游提示只能延长基础等待且统一封顶 300 秒。
+ *
+ * @param input 当前系统设置、受控 Retry-After、失败时钟。
+ * @returns 可直接持久化的延迟明细与下一次执行时间。
+ * @sideEffects 无。
+ * @failure 非法配置显式抛错，避免错误设置造成无界等待或抢跑。
+ */
+export function resolveVideoSubmissionRetrySchedule(input: {
+  baseDelaySeconds: number;
+  retryAfterSeconds?: number;
+  now: Date;
+}): VideoSubmissionRetrySchedule {
+  if (
+    !Number.isInteger(input.baseDelaySeconds) ||
+    input.baseDelaySeconds < 0 ||
+    input.baseDelaySeconds > 300
+  ) {
+    throw new Error("视频同账号重试等待配置无效");
+  }
+  const retryAfterSeconds =
+    input.retryAfterSeconds === undefined
+      ? undefined
+      : Math.min(300, Math.max(0, Math.ceil(input.retryAfterSeconds)));
+  const finalDelaySeconds = Math.max(
+    input.baseDelaySeconds,
+    retryAfterSeconds ?? 0
+  );
+  return {
+    baseDelaySeconds: input.baseDelaySeconds,
+    ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+    finalDelaySeconds,
+    nextAttemptAt: new Date(input.now.getTime() + finalDelaySeconds * 1_000),
+  };
 }
 
 /**

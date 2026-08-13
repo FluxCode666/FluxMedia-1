@@ -44,10 +44,11 @@ import {
   type VideoInputManifest,
   videoInputManifestSchema,
 } from "@repo/shared/image-generation/media-contract";
-import { logError } from "@repo/shared/logger";
+import { logError, logWarn } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import {
   getRuntimeSettingJson,
+  getRuntimeSettingNumber,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -100,6 +101,13 @@ import {
   shouldRetryAcceptedVideoError,
 } from "./video-recovery-policy";
 import { defaultVideoRecoveryRepository } from "./video-recovery-repository";
+import { defaultVideoSubmissionAttemptRepository } from "./video-submission-attempt-repository";
+import {
+  classifyVideoSubmissionFailure,
+  resolveVideoSubmissionRetrySchedule,
+  sanitizeVideoSubmissionFailureReason,
+  type VideoSubmissionFailureDecision,
+} from "./video-submission-failure";
 import {
   admitVideoTaskCreation,
   consumeVideoTaskStagingReservation,
@@ -109,14 +117,16 @@ const VIDEO_POLL_DELAY_MS = 15_000;
 const VIDEO_RETRY_DELAY_MS = 60_000;
 const VIDEO_LEASE_TTL_MS = 21 * 60_000;
 const VIDEO_CLAIM_TTL_MS = VIDEO_LEASE_TTL_MS;
-const VIDEO_SUBMISSION_TIMEOUT_MS = 20 * 60_000;
 const VIDEO_IO_HEARTBEAT_MS = 5 * 60_000;
+const VIDEO_REFUND_RETRY_DELAY_MS = 30_000;
+const VIDEO_REFUND_MAX_ATTEMPTS = 3;
 
 type VideoStage =
   | "created"
   | "charged"
   | "submitting"
   | "submit_uncertain"
+  | "retrying"
   | "polling"
   | "downloading"
   | "refunding"
@@ -376,15 +386,99 @@ async function releaseVideoLease(row: VideoGenerationRow): Promise<void> {
 /** 将已扣费任务推进到 refunding，随后由幂等退款阶段收敛。 */
 async function moveVideoToRefunding(
   row: VideoGenerationRow,
-  message: string
+  message: string,
+  failureCode?: string
 ): Promise<VideoGenerationRow | null> {
   return compareAndSetVideoStage({
     row,
     expectedStages: [row.stage as VideoStage],
     values: {
       stage: "refunding",
+      status: "failed",
       error: message.slice(0, 1_000),
+      ...(failureCode ? { failureCode } : {}),
       nextPollAt: new Date(),
+    },
+  });
+}
+
+/** 把一次 API 外呼失败写入尝试账本，并输出不含敏感载荷的稳定日志。 */
+async function recordVideoSubmissionFailure(input: {
+  row: VideoGenerationRow;
+  attemptId: string;
+  requestId: string;
+  supplierName: string;
+  decision: VideoSubmissionFailureDecision;
+  now: Date;
+}): Promise<void> {
+  if (!input.decision.failureCode || !input.decision.userReason) return;
+  await defaultVideoSubmissionAttemptRepository.markFailed({
+    attemptId: input.attemptId,
+    failureCode: input.decision.failureCode,
+    failureReason: sanitizeVideoSubmissionFailureReason(
+      input.decision.userReason
+    ),
+    operationsReason: sanitizeVideoSubmissionFailureReason(
+      input.decision.operationsReason
+    ),
+    failedAt: input.now,
+  });
+  logWarn("视频 API 创建尝试失败", {
+    event: "video_submission_attempt_failed",
+    videoTaskId: input.row.id,
+    requestId: input.requestId,
+    supplierName: input.supplierName,
+    attemptId: input.attemptId,
+    failureCode: input.decision.failureCode,
+  });
+}
+
+/** 读取配置的创建 HTTP 超时；每次实际请求前固定本次值。 */
+async function getVideoSubmissionHttpTimeoutSignal(): Promise<AbortSignal> {
+  const seconds = await getRuntimeSettingNumber(
+    "VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS",
+    30,
+    { positive: true }
+  );
+  return AbortSignal.timeout(
+    Math.min(300, Math.max(1, Math.round(seconds))) * 1_000
+  );
+}
+
+/** 读取 API 同账号重试基础等待。 */
+async function getVideoSubmissionRetryDelaySeconds(): Promise<number> {
+  const seconds = await getRuntimeSettingNumber(
+    "VIDEO_SUBMISSION_RETRY_DELAY_SECONDS",
+    2,
+    { nonNegative: true }
+  );
+  return Math.min(300, Math.max(0, Math.round(seconds)));
+}
+
+/** 将 API 创建暂时失败持久化为 retrying，释放 claim 但保留原账号恢复身份。 */
+async function scheduleVideoSubmissionRetry(input: {
+  row: VideoGenerationRow;
+  decision: VideoSubmissionFailureDecision;
+  retryAfterSeconds?: number;
+}): Promise<VideoGenerationRow | null> {
+  const now = new Date();
+  const schedule = resolveVideoSubmissionRetrySchedule({
+    baseDelaySeconds: await getVideoSubmissionRetryDelaySeconds(),
+    retryAfterSeconds: input.retryAfterSeconds,
+    now,
+  });
+  return compareAndSetVideoStage({
+    row: input.row,
+    expectedStages: ["submitting", "retrying"],
+    values: {
+      stage: "retrying",
+      status: "running",
+      error: input.decision.userReason ?? "视频生成暂时失败，请稍后重试",
+      failureCode: input.decision.failureCode ?? "unknown_submission_failure",
+      nextPollAt: schedule.nextAttemptAt,
+      claimToken: null,
+      claimExpiresAt: null,
+      submitStartedAt: null,
     },
   });
 }
@@ -465,6 +559,10 @@ async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
       status: "failed",
       stage: "failed",
       creditsConsumed: 0,
+      refundAttemptCount: Math.min(
+        VIDEO_REFUND_MAX_ATTEMPTS,
+        row.refundAttemptCount + 1
+      ),
       claimToken: null,
       claimExpiresAt: null,
       nextPollAt: null,
@@ -479,9 +577,48 @@ async function refundClaimedVideoOrRetry(
 ): Promise<void> {
   try {
     await refundClaimedVideo(row);
-  } catch (error) {
-    await retryClaimedVideo(row, error);
-    throw error;
+  } catch {
+    const attemptCount = row.refundAttemptCount + 1;
+    if (attemptCount >= VIDEO_REFUND_MAX_ATTEMPTS) {
+      const exhaustedAt = new Date();
+      const exhausted = await compareAndSetVideoStage({
+        row,
+        expectedStages: ["refunding"],
+        values: {
+          refundAttemptCount: VIDEO_REFUND_MAX_ATTEMPTS,
+          refundExhaustedAt: exhaustedAt,
+          nextPollAt: null,
+          claimToken: null,
+          claimExpiresAt: null,
+        },
+      });
+      if (exhausted) {
+        logError(new Error("视频退款自动重试已耗尽"), {
+          event: "video_refund_retry_exhausted",
+          videoTaskId: row.id,
+          failureCode: row.failureCode,
+          refundAttemptCount: VIDEO_REFUND_MAX_ATTEMPTS,
+        });
+        await releaseVideoLease(exhausted);
+      }
+      return;
+    }
+    await compareAndSetVideoStage({
+      row,
+      expectedStages: ["refunding"],
+      values: {
+        refundAttemptCount: attemptCount,
+        nextPollAt: new Date(Date.now() + VIDEO_REFUND_RETRY_DELAY_MS),
+        claimToken: null,
+        claimExpiresAt: null,
+      },
+    });
+    logWarn("视频退款尝试失败，已安排重试", {
+      event: "video_refund_attempt_failed",
+      videoTaskId: row.id,
+      failureCode: row.failureCode,
+      refundAttemptCount: attemptCount,
+    });
   }
 }
 
@@ -1080,6 +1217,7 @@ async function submitClaimedCreatedVideo(
     100_000
   );
   let row = initialRow;
+  const isSubmissionRetry = initialRow.stage === "retrying";
 
   const globalPricing = await getRuntimeGlobalVideoPricing();
   let backendSession: Awaited<ReturnType<typeof createRuntimeBackendSession>>;
@@ -1091,35 +1229,98 @@ async function submitClaimedCreatedVideo(
       modelId: contract.model,
       requestKind: "video",
       requiresContentSafety: true,
+      ...(isSubmissionRetry && row.backendMemberId
+        ? { requiredMemberId: row.backendMemberId }
+        : {}),
     });
     await backendSession.acquireNext();
   } catch (error) {
-    await failUnchargedVideo(
-      row,
-      error instanceof Error ? error.message : "无可用视频后端"
-    );
+    const isCapacity =
+      error instanceof BackendSchedulerError &&
+      error.code === "capacity_rejected";
+    if (isCapacity) {
+      const capacityWaitSeconds = await getRuntimeSettingNumber(
+        "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
+        120,
+        { nonNegative: true }
+      );
+      const deadline =
+        row.capacityWaitDeadlineAt ??
+        new Date(
+          Date.now() +
+            Math.min(1_800, Math.max(0, Math.round(capacityWaitSeconds))) *
+              1_000
+        );
+      if (deadline.getTime() > Date.now()) {
+        await compareAndSetVideoStage({
+          row,
+          // 首次获租前容量满时任务仍未扣费，必须保留 created；否则后续
+          // 恢复会被误判为已扣费重试并跳过积分/配额扣除。
+          expectedStages: ["created", "retrying"],
+          values: {
+            capacityWaitDeadlineAt: deadline,
+            nextPollAt: new Date(
+              Math.min(deadline.getTime(), Date.now() + 1_000)
+            ),
+            claimToken: null,
+            claimExpiresAt: null,
+          },
+        });
+        return {
+          videoGenerationId: row.id,
+          status: "processing",
+          creditsConsumed: row.creditsConsumed,
+        };
+      }
+      const failureCode = "capacity_wait_timeout";
+      const reason = "当前生成服务繁忙，请稍后重试";
+      if (row.creditsConsumed > 0) {
+        const refunding = await moveVideoToRefunding(row, reason, failureCode);
+        if (refunding) await refundClaimedVideoOrRetry(refunding);
+      } else {
+        await failUnchargedVideo(row, reason);
+      }
+      return { error: reason, videoGenerationId: row.id };
+    }
+    if (isSubmissionRetry) {
+      const reason = "当前没有可用生成服务";
+      if (row.creditsConsumed > 0) {
+        const refunding = await moveVideoToRefunding(
+          row,
+          reason,
+          "no_eligible_api_account"
+        );
+        if (refunding) await refundClaimedVideoOrRetry(refunding);
+      } else {
+        await failUnchargedVideo(row, reason);
+      }
+      return { error: reason, videoGenerationId: row.id };
+    }
+    await failUnchargedVideo(row, "当前没有可用生成服务");
     return {
-      error: "无可用视频后端",
+      error: "当前没有可用生成服务",
       videoGenerationId: row.id,
     };
   }
 
-  const billedCost = getVideoCreditCost({
-    durationSeconds: contract.duration,
-    creditsPerSecond: resolveEffectiveVideoCreditsPerSecond({
-      family: contract.billingFamily,
-      resolution: contract.resolution,
-      global: globalPricing,
-      group: backendSession.group.videoCreditOverrides,
-    }),
-  });
+  const billedCost = isSubmissionRetry
+    ? row.creditsConsumed
+    : getVideoCreditCost({
+        durationSeconds: contract.duration,
+        creditsPerSecond: resolveEffectiveVideoCreditsPerSecond({
+          family: contract.billingFamily,
+          resolution: contract.resolution,
+          global: globalPricing,
+          group: backendSession.group.videoCreditOverrides,
+        }),
+      });
   const initialLease = backendSession.current;
   if (!initialLease) throw new Error("视频后端租约在扣费前丢失");
   const liveClaimToken = row.claimToken ?? randomUUID();
   const chargedAt = new Date();
   const charged = await compareAndSetVideoStage({
     row,
-    expectedStages: ["created"],
+    expectedStages: isSubmissionRetry ? ["retrying"] : ["created"],
     values: {
       status: "running",
       stage: "charged",
@@ -1131,6 +1332,7 @@ async function submitClaimedCreatedVideo(
       metadata: createLeaseVideoBackendMetadata(row.metadata, initialLease),
       claimToken: liveClaimToken,
       claimExpiresAt: new Date(chargedAt.getTime() + VIDEO_CLAIM_TTL_MS),
+      capacityWaitDeadlineAt: null,
     },
   });
   if (!charged) {
@@ -1139,52 +1341,54 @@ async function submitClaimedCreatedVideo(
   }
   row = charged;
 
-  try {
-    await defaultVideoApiKeyQuotaRepository.reserve({
-      videoId: row.id,
-      amount: billedCost,
-    });
-  } catch (error) {
-    await backendSession.close();
-    await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
-    await failUnchargedVideo(
-      row,
-      error instanceof Error ? error.message : "视频配额预留未完成"
-    );
-    return {
-      error: error instanceof Error ? error.message : "视频配额预留未完成",
-      videoGenerationId: row.id,
-    };
-  }
-
-  let consumption: Awaited<ReturnType<typeof consumeVideoCredits>>;
-  try {
-    consumption = await consumeVideoCredits({
-      row,
-      amount: billedCost,
-      metadata: {
+  if (!isSubmissionRetry) {
+    try {
+      await defaultVideoApiKeyQuotaRepository.reserve({
+        videoId: row.id,
+        amount: billedCost,
+      });
+    } catch (error) {
+      await backendSession.close();
+      await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
+      await failUnchargedVideo(
+        row,
+        error instanceof Error ? error.message : "视频配额预留未完成"
+      );
+      return {
+        error: error instanceof Error ? error.message : "视频配额预留未完成",
         videoGenerationId: row.id,
-        model: row.model,
-        durationSeconds: contract.duration,
-        ...(row.apiKeyId ? { externalApiKeyId: row.apiKeyId } : {}),
-      },
-    });
-  } catch (error) {
-    await backendSession.close();
-    throw error;
-  }
-  if (!consumption.consumed) {
-    const error = consumption.error;
-    await backendSession.close();
-    await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
-    await failUnchargedVideo(
-      row,
-      error instanceof Error ? error.message : "积分不足"
-    );
-    return {
-      error: error instanceof Error ? error.message : "积分不足",
-      videoGenerationId: row.id,
-    };
+      };
+    }
+
+    let consumption: Awaited<ReturnType<typeof consumeVideoCredits>>;
+    try {
+      consumption = await consumeVideoCredits({
+        row,
+        amount: billedCost,
+        metadata: {
+          videoGenerationId: row.id,
+          model: row.model,
+          durationSeconds: contract.duration,
+          ...(row.apiKeyId ? { externalApiKeyId: row.apiKeyId } : {}),
+        },
+      });
+    } catch (error) {
+      await backendSession.close();
+      throw error;
+    }
+    if (!consumption.consumed) {
+      const error = consumption.error;
+      await backendSession.close();
+      await defaultVideoApiKeyQuotaRepository.refund({ videoId: row.id });
+      await failUnchargedVideo(
+        row,
+        error instanceof Error ? error.message : "积分不足"
+      );
+      return {
+        error: error instanceof Error ? error.message : "积分不足",
+        videoGenerationId: row.id,
+      };
+    }
   }
 
   for (;;) {
@@ -1196,7 +1400,7 @@ async function submitClaimedCreatedVideo(
     }
     const submitting = await compareAndSetVideoStage({
       row,
-      expectedStages: ["charged"],
+      expectedStages: ["charged", "retrying"],
       values: {
         stage: "submitting",
         submitStartedAt: new Date(),
@@ -1212,7 +1416,10 @@ async function submitClaimedCreatedVideo(
     row = submitting;
 
     const startedAt = Date.now();
-    const submissionSignal = AbortSignal.timeout(VIDEO_SUBMISSION_TIMEOUT_MS);
+    const submissionSignal =
+      lease.memberType === "api"
+        ? await getVideoSubmissionHttpTimeoutSignal()
+        : AbortSignal.timeout(20 * 60_000);
     let submittedRequestSnapshot: ApiUpstreamRequestSnapshot | null = null;
     /**
      * 保存本次成员实际发送的请求；切号重试时后一次正文覆盖前一次。
@@ -1227,10 +1434,41 @@ async function submitClaimedCreatedVideo(
       submittedRequestSnapshot = snapshot;
       await persistVideoUpstreamRequestSnapshot(row, snapshot);
     };
+    const submissionRequestId = randomUUID();
+    let attemptReservationRejected = false;
+    let reservedAttemptPromise: Promise<
+      Awaited<
+        ReturnType<typeof defaultVideoSubmissionAttemptRepository.reserveNext>
+      >
+    > = Promise.resolve(null);
+    const reserveAttemptBeforeSend = async (): Promise<void> => {
+      reservedAttemptPromise =
+        defaultVideoSubmissionAttemptRepository.reserveNext({
+          attemptId: nanoid(),
+          videoGenerationId: row.id,
+          backendMemberId: lease.memberId,
+          requestId: submissionRequestId,
+          videoSubmissionRetryCount:
+            lease.config.backend?.apiUpstreamAdapter
+              ?.videoSubmissionRetryCount ?? 2,
+          supplierNameSnapshot: lease.acquisition.member.name,
+          apiAdapterMemberId:
+            lease.acquisition.lease.apiAdapterMemberId ?? lease.memberId,
+          apiAdapterVersionId:
+            lease.acquisition.lease.apiAdapterVersionId ?? "missing",
+          now: new Date(),
+        });
+      const reservedAttempt = await reservedAttemptPromise;
+      if (!reservedAttempt) {
+        attemptReservationRejected = true;
+        throw new Error("当前 API 视频账号的创建尝试次数已耗尽");
+      }
+    };
     const submitted =
       lease.memberType === "api"
         ? await submitApiVideoRequest(lease.config, {
             clientRequestId: row.id,
+            requestId: submissionRequestId,
             prompt: row.prompt,
             model: contract.model,
             duration: contract.duration,
@@ -1240,6 +1478,7 @@ async function submitClaimedCreatedVideo(
             ...sourceInputs,
             ...(negativePrompt != null ? { negativePrompt } : {}),
             onRequestSnapshot,
+            onBeforeSend: reserveAttemptBeforeSend,
             signal: submissionSignal,
           })
         : await submitAdobeDirectVideoRequest(lease.config, {
@@ -1259,6 +1498,14 @@ async function submitClaimedCreatedVideo(
           });
     if (submittedRequestSnapshot) {
       row = attachVideoUpstreamRequestSnapshot(row, submittedRequestSnapshot);
+    }
+    const reservedAttempt = await reservedAttemptPromise;
+    if (
+      lease.memberType === "api" &&
+      !("error" in submitted) &&
+      !reservedAttempt
+    ) {
+      throw new Error("API 视频创建请求缺少发送前尝试账本");
     }
     if (!("error" in submitted)) {
       if ("status" in submitted && submitted.status === "completed") {
@@ -1316,26 +1563,185 @@ async function submitClaimedCreatedVideo(
       };
     }
 
-    if (submitted.submissionUncertain) {
-      const uncertain = await compareAndSetVideoStage({
-        row,
-        expectedStages: ["submitting"],
-        values: {
-          stage: "submit_uncertain",
-          error: submitted.error.slice(0, 1_000),
-          nextPollAt: null,
-          claimToken: null,
-          claimExpiresAt: null,
-        },
-      });
-      await backendSession.close();
-      if (!uncertain) {
-        throw new Error("视频提交不确定状态持久化发生并发冲突");
+    if (lease.memberType === "api" && "failure" in submitted) {
+      const decision = attemptReservationRejected
+        ? {
+            action: "switch_member" as const,
+            failureCode: "unknown_submission_failure" as const,
+            userReason: "当前生成服务暂时不可用，请稍后重试",
+            operationsReason: "当前 API 视频账号的创建尝试次数已耗尽",
+          }
+        : classifyVideoSubmissionFailure(submitted.failure);
+      if (!reservedAttempt && submitted.backendHealthNeutral) {
+        // 平台脚本容量或输入签名发生在真实外呼前，不写尝试账本，也不消耗
+        // 账号次数；保留原账号并用持久排程恢复。
+        const retrying = await scheduleVideoSubmissionRetry({
+          row,
+          decision,
+          retryAfterSeconds: submitted.retryAfterSeconds,
+        });
+        await backendSession.close();
+        if (!retrying) throw new Error("视频平台容量重试排程发生并发冲突");
+        return {
+          videoGenerationId: row.id,
+          status: "processing",
+          creditsConsumed: billedCost,
+        };
       }
-      return {
-        error: "视频提交结果不确定，任务已保留待核对",
-        videoGenerationId: row.id,
-      };
+      if (reservedAttempt) {
+        await recordVideoSubmissionFailure({
+          row,
+          attemptId: reservedAttempt.id,
+          requestId: reservedAttempt.requestId,
+          supplierName: reservedAttempt.supplierNameSnapshot,
+          decision,
+          now: new Date(),
+        });
+      }
+      const sameMemberRemaining =
+        reservedAttempt !== null &&
+        reservedAttempt.memberAttemptNumber <
+          reservedAttempt.maxAttemptsSnapshot;
+      if (decision.action === "retry_same_member" && sameMemberRemaining) {
+        const retrying = await scheduleVideoSubmissionRetry({
+          row,
+          decision,
+          retryAfterSeconds: submitted.retryAfterSeconds,
+        });
+        await backendSession.close();
+        if (!retrying) throw new Error("视频同账号重试排程发生并发冲突");
+        return {
+          videoGenerationId: row.id,
+          status: "processing",
+          creditsConsumed: billedCost,
+        };
+      }
+      if (
+        decision.action === "switch_member" ||
+        (decision.action === "retry_same_member" && !sameMemberRemaining)
+      ) {
+        try {
+          await backendSession.close();
+          const attemptedMemberIds =
+            await defaultVideoSubmissionAttemptRepository.listAttemptedMemberIds(
+              row.id
+            );
+          if (attemptReservationRejected) {
+            attemptedMemberIds.push(lease.memberId);
+          }
+          const switchedSession = await createRuntimeBackendSession({
+            userId: row.userId,
+            ...(row.apiKeyId ? { apiKeyId: row.apiKeyId } : {}),
+            ...(backendGroupId ? { requestedGroupId: backendGroupId } : {}),
+            modelId: contract.model,
+            requestKind: "video",
+            requiresContentSafety: true,
+            excludedMemberIds: attemptedMemberIds,
+          });
+          const nextLease = await switchedSession.acquireNext();
+          const retryable = await compareAndSetVideoStage({
+            row,
+            expectedStages: ["submitting"],
+            values: {
+              stage: "retrying",
+              backendMemberId: nextLease.memberId,
+              memberLeaseId: nextLease.acquisition.lease.id,
+              memberLeaseOwnerToken: nextLease.acquisition.lease.ownerToken,
+              ...createLeaseApiAdapterSnapshot(nextLease),
+              metadata: createLeaseVideoBackendMetadata(
+                row.metadata,
+                nextLease
+              ),
+              error: decision.userReason,
+              failureCode: decision.failureCode,
+              nextPollAt: new Date(),
+              submitStartedAt: null,
+              claimToken: null,
+              claimExpiresAt: null,
+            },
+          });
+          await switchedSession.close();
+          if (!retryable) throw new Error("视频成员切换发生并发冲突");
+          return {
+            videoGenerationId: row.id,
+            status: "processing",
+            creditsConsumed: billedCost,
+          };
+        } catch (error) {
+          if (
+            error instanceof BackendSchedulerError &&
+            error.code === "capacity_rejected"
+          ) {
+            const capacityWaitSeconds = await getRuntimeSettingNumber(
+              "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
+              120,
+              { nonNegative: true }
+            );
+            const waitMs =
+              Math.min(1_800, Math.max(0, Math.round(capacityWaitSeconds))) *
+              1_000;
+            const deadline =
+              row.capacityWaitDeadlineAt ?? new Date(Date.now() + waitMs);
+            if (waitMs > 0 && deadline.getTime() > Date.now()) {
+              const waiting = await compareAndSetVideoStage({
+                row,
+                expectedStages: ["submitting"],
+                values: {
+                  stage: "retrying",
+                  capacityWaitDeadlineAt: deadline,
+                  backendMemberId: null,
+                  memberLeaseId: null,
+                  memberLeaseOwnerToken: null,
+                  apiAdapterMemberId: null,
+                  apiAdapterVersionId: null,
+                  nextPollAt: new Date(
+                    Math.min(deadline.getTime(), Date.now() + 1_000)
+                  ),
+                  claimToken: null,
+                  claimExpiresAt: null,
+                  submitStartedAt: null,
+                },
+              });
+              if (!waiting) throw new Error("视频容量等待排程发生并发冲突");
+              return {
+                videoGenerationId: row.id,
+                status: "processing",
+                creditsConsumed: billedCost,
+              };
+            }
+          }
+          const finalDecision =
+            error instanceof BackendSchedulerError &&
+            error.code === "capacity_rejected"
+              ? classifyVideoSubmissionFailure({ kind: "unknown" })
+              : decision;
+          const finalCode =
+            error instanceof BackendSchedulerError &&
+            error.code === "capacity_rejected"
+              ? "capacity_wait_timeout"
+              : finalDecision.failureCode;
+          const finalReason =
+            finalCode === "capacity_wait_timeout"
+              ? "当前生成服务繁忙，请稍后重试"
+              : (finalDecision.userReason ?? "当前没有可用生成服务");
+          const refunding = await moveVideoToRefunding(
+            row,
+            finalReason,
+            finalCode
+          );
+          if (refunding) await refundClaimedVideoOrRetry(refunding);
+          return { error: finalReason, videoGenerationId: row.id };
+        }
+      }
+      await backendSession.close();
+      const finalReason = decision.userReason ?? "视频生成失败，请稍后重试";
+      const refunding = await moveVideoToRefunding(
+        row,
+        finalReason,
+        decision.failureCode
+      );
+      if (refunding) await refundClaimedVideoOrRetry(refunding);
+      return { error: finalReason, videoGenerationId: row.id };
     }
 
     if ("backendHealthNeutral" in submitted && submitted.backendHealthNeutral) {
@@ -1343,6 +1749,10 @@ async function submitClaimedCreatedVideo(
       const refunding = await moveVideoToRefunding(row, submitted.error);
       if (refunding) await refundClaimedVideoOrRetry(refunding);
       return { error: submitted.error, videoGenerationId: row.id };
+    }
+
+    if (!("switchable" in submitted)) {
+      throw new Error("API 视频提交失败未被自动恢复状态机收敛");
     }
 
     if (!submitted.switchable) {
@@ -1564,6 +1974,23 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     return;
   }
   if (row.stage === "submitting") {
+    const protocol = getVideoBackendProtocol(row);
+    if (protocol === "api") {
+      await compareAndSetVideoStage({
+        row,
+        expectedStages: ["submitting"],
+        values: {
+          stage: "retrying",
+          error: "视频创建进程中断，已安排自动恢复",
+          nextPollAt: new Date(),
+          claimToken: null,
+          claimExpiresAt: null,
+          submitStartedAt: null,
+        },
+      });
+      return;
+    }
+    // Adobe Direct 保持既有人工兼容语义，不进入 API 自动创建重试。
     await compareAndSetVideoStage({
       row,
       expectedStages: ["submitting"],
@@ -1575,6 +2002,23 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
         claimExpiresAt: null,
       },
     });
+    return;
+  }
+  if (row.stage === "retrying") {
+    const now = new Date();
+    if (
+      row.capacityWaitDeadlineAt &&
+      row.capacityWaitDeadlineAt.getTime() <= now.getTime()
+    ) {
+      const refunding = await moveVideoToRefunding(
+        row,
+        "当前生成服务繁忙，请稍后重试",
+        "capacity_wait_timeout"
+      );
+      if (refunding) await refundClaimedVideoOrRetry(refunding);
+      return;
+    }
+    await submitClaimedCreatedVideo(row);
     return;
   }
   if (row.stage === "refunding") {

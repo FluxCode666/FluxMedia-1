@@ -289,10 +289,11 @@ describe("API video adapter", () => {
     });
   });
 
-  it("请求脚本失败时允许切换账号且不发送供应商请求", async () => {
+  it("请求脚本失败时不预留提交尝试且不发送供应商请求", async () => {
     const adapter = createAdapter();
     adapter.operations["videos.generate"].requestScript =
       'throw new Error("hidden prompt");';
+    const onBeforeSend = vi.fn();
 
     await expect(
       submitApiVideoRequest(createConfig(adapter), {
@@ -303,20 +304,45 @@ describe("API video adapter", () => {
         aspectRatio: "16:9",
         resolution: "720p",
         effectiveAudio: false,
+        onBeforeSend,
       })
     ).resolves.toEqual({
       error: expect.stringMatching(
         /^供应商请求处理失败，请联系管理员（请求标识：apiu_[a-f0-9]{32}）$/
       ),
-      switchable: true,
-      upstreamAccepted: false,
-      terminal: false,
-      submissionUncertain: false,
+      failure: { kind: "unknown" },
     });
+    expect(onBeforeSend).not.toHaveBeenCalled();
     expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 
-  it("内置协议把网络、409、5xx 和缺少任务 ID 归为提交结果不确定", async () => {
+  it("只有发送前账本预留成功后才发起供应商请求", async () => {
+    const onBeforeSend = vi.fn(async () => {
+      throw new Error("attempt limit reached");
+    });
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({ id: "must-not-send" }, { status: 202 })
+    );
+
+    await expect(
+      submitApiVideoRequest(createConfig(), {
+        clientRequestId: "local-video-attempt-limit",
+        prompt: "prompt",
+        model: "seedance2",
+        duration: 10,
+        aspectRatio: "16:9",
+        resolution: "720p",
+        effectiveAudio: false,
+        onBeforeSend,
+      })
+    ).resolves.toMatchObject({
+      failure: { kind: "unknown" },
+    });
+    expect(onBeforeSend).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
+  });
+
+  it("内置协议输出网络、409、5xx 和缺少任务 ID 的稳定分类", async () => {
     mocks.fetchMediaUpstream
       .mockRejectedValueOnce(new Error("private network detail"))
       .mockResolvedValueOnce(Response.json({}, { status: 409 }))
@@ -332,19 +358,24 @@ describe("API video adapter", () => {
       effectiveAudio: false,
     };
 
-    for (let index = 0; index < 4; index += 1) {
+    const expectedFailures = [
+      { kind: "network" },
+      { statusCode: 409 },
+      { statusCode: 503 },
+      { kind: "missing_task_id" },
+    ] as const;
+    for (const failure of expectedFailures) {
       await expect(
         submitApiVideoRequest(createConfig(), params)
       ).resolves.toMatchObject({
-        submissionUncertain: true,
-        switchable: false,
+        failure,
       });
     }
   });
 
   it.each([
     401, 403, 429,
-  ])("提交返回 %s 时允许切换尚未接受请求的账号", async (status) => {
+  ])("提交返回 %s 时保留 HTTP 分类供状态机裁决", async (status) => {
     mocks.fetchMediaUpstream.mockResolvedValue(
       Response.json({ private: "provider-key" }, { status })
     );
@@ -361,10 +392,7 @@ describe("API video adapter", () => {
       })
     ).resolves.toEqual({
       error: `视频上游返回 HTTP ${status}`,
-      switchable: true,
-      upstreamAccepted: false,
-      terminal: false,
-      submissionUncertain: false,
+      failure: { statusCode: status },
     });
   });
 
@@ -400,12 +428,10 @@ describe("API video adapter", () => {
   });
 
   it.each([
-    { retryable: false, switchable: false, terminal: true },
-    { retryable: true, switchable: true, terminal: false },
-  ])("生成响应脚本仅按 retryable=$retryable 决定是否允许重投", async ({
+    { retryable: false },
+    { retryable: true },
+  ])("生成响应脚本保留 retryable=$retryable 供受控分类器裁决", async ({
     retryable,
-    switchable,
-    terminal,
   }) => {
     const adapter = createAdapter();
     adapter.operations["videos.generate"].responseScript = `
@@ -431,10 +457,11 @@ describe("API video adapter", () => {
       })
     ).resolves.toMatchObject({
       error: "视频上游拒绝了生成请求",
-      switchable,
-      upstreamAccepted: false,
-      terminal,
-      submissionUncertain: false,
+      failure: {
+        statusCode: 429,
+        scriptedCategory: "rate_limit",
+        scriptedRetryable: retryable,
+      },
     });
   });
 

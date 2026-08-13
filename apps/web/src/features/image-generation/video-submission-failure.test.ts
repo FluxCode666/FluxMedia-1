@@ -9,10 +9,33 @@ import { describe, expect, it } from "vitest";
 import {
   classifyLegacyUncertainVideoSnapshot,
   classifyVideoSubmissionFailure,
+  resolveVideoSubmissionRetrySchedule,
   sanitizeVideoSubmissionFailureReason,
 } from "./video-submission-failure";
 
 describe("video submission failure", () => {
+  it("同账号等待取系统设置与 Retry-After 较大值并封顶 300 秒", () => {
+    const now = new Date("2026-08-13T00:00:00.000Z");
+    expect(
+      resolveVideoSubmissionRetrySchedule({
+        baseDelaySeconds: 2,
+        retryAfterSeconds: 1,
+        now,
+      })
+    ).toMatchObject({ finalDelaySeconds: 2 });
+    expect(
+      resolveVideoSubmissionRetrySchedule({
+        baseDelaySeconds: 2,
+        retryAfterSeconds: 999,
+        now,
+      })
+    ).toMatchObject({
+      retryAfterSeconds: 300,
+      finalDelaySeconds: 300,
+      nextAttemptAt: new Date("2026-08-13T00:05:00.000Z"),
+    });
+  });
+
   it.each([
     408, 429, 500, 502, 503, 504,
   ])("HTTP %s 在没有接受事实时重试同一账号", (statusCode) => {

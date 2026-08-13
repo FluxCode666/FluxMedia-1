@@ -122,6 +122,24 @@ function acquireInput(
 }
 
 describe("backend pool PostgreSQL repository", () => {
+  it("同账号重试把 requiredMemberId 编入候选 SQL", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "least_load" }] },
+      { rowCount: 0 },
+      { rows: [] },
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(
+      acquireInput({ requiredMemberId: "member-required" })
+    );
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery).toBeDefined();
+    expect(candidateQuery?.sql).toContain("m.id =");
+    expect(candidateQuery?.params).toContain("member-required");
+  });
+
   it("acquires the least-loaded eligible member in one transaction", async () => {
     const { database, queries, transaction } = createDatabase([
       { rows: [{ value: "least_load" }] },

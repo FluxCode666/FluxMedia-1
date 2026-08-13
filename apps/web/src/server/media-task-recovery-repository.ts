@@ -49,6 +49,7 @@ const videoRowSchema = z.object({
   next_poll_at: z.coerce.date().nullable(),
   claim_expires_at: z.coerce.date().nullable(),
   submit_started_at: z.coerce.date().nullable(),
+  refund_exhausted_at: z.coerce.date().nullable(),
   updated_at: z.coerce.date(),
 });
 
@@ -185,6 +186,7 @@ export function createPostgresMediaTaskRecoveryRepository(
             next_poll_at,
             claim_expires_at,
             submit_started_at,
+            refund_exhausted_at,
             updated_at
           from video_generation
           where stage not in ('completed', 'failed', 'submit_uncertain')
@@ -194,7 +196,12 @@ export function createPostgresMediaTaskRecoveryRepository(
             )
             and (
               (
-                stage in ('created', 'polling', 'downloading', 'refunding')
+                stage in ('created', 'retrying', 'polling', 'downloading')
+                and (next_poll_at is null or next_poll_at <= ${input.now})
+              )
+              or (
+                stage = 'refunding'
+                and refund_exhausted_at is null
                 and (next_poll_at is null or next_poll_at <= ${input.now})
               )
               or (
@@ -273,6 +280,7 @@ export function createPostgresMediaTaskRecoveryRepository(
             nextPollAt: parsed.next_poll_at,
             claimExpiresAt: parsed.claim_expires_at,
             submitStartedAt: parsed.submit_started_at,
+            refundExhaustedAt: parsed.refund_exhausted_at,
             updatedAt: parsed.updated_at,
           },
           input.now

@@ -70,10 +70,12 @@ describe("video recovery repository", () => {
     expect(compiled.sql).toContain("'created'");
     expect(compiled.sql).toContain("'charged'");
     expect(compiled.sql).toContain("'submitting'");
+    expect(compiled.sql).toContain("'retrying'");
     expect(compiled.sql).not.toContain("'submit_uncertain'");
     expect(compiled.sql).toContain("'polling'");
     expect(compiled.sql).toContain("'downloading'");
     expect(compiled.sql).toContain("'refunding'");
+    expect(compiled.sql).toContain("refund_exhausted_at is null");
     expect(compiled.sql).toContain("state_version = state_version + 1");
     expect(compiled.sql).toContain("task.api_adapter_member_id");
     expect(compiled.sql).toContain("task.api_adapter_version_id");

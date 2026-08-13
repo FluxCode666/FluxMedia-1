@@ -8,6 +8,7 @@
 /** 调度失败的稳定错误码。 */
 export type BackendSchedulerErrorCode =
   | "no_eligible_member"
+  | "capacity_rejected"
   | "infrastructure_unavailable";
 
 /** 上层可稳定映射且不泄露数据库细节的调度错误。 */

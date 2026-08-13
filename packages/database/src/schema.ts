@@ -1872,6 +1872,8 @@ export const videoGeneration = pgTable(
     // API 自动恢复的最终失败分类和容量等待截止；Adobe direct 保持为空。
     failureCode: text("failure_code"),
     capacityWaitDeadlineAt: timestamp("capacity_wait_deadline_at"),
+    refundAttemptCount: integer("refund_attempt_count").notNull().default(0),
+    refundExhaustedAt: timestamp("refund_exhausted_at"),
     stateVersion: integer("state_version").notNull().default(0),
     attemptCount: integer("attempt_count").notNull().default(0),
     // 真实输入语义与任务自有存储身份。
@@ -1935,7 +1937,7 @@ export const videoGeneration = pgTable(
     ),
     check(
       "video_generation_recovery_counts_check",
-      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.apiKeyCreditsReserved} >= 0 AND ${table.apiAdapterQueryFailureCount} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
+      sql`${table.stateVersion} >= 0 AND ${table.attemptCount} >= 0 AND ${table.refundAttemptCount} BETWEEN 0 AND 3 AND ${table.apiKeyCreditsReserved} >= 0 AND ${table.apiAdapterQueryFailureCount} >= 0 AND (${table.apiKeyId} IS NOT NULL OR ${table.apiKeyCreditsReserved} = 0)`
     ),
     check(
       "video_generation_api_adapter_pair_check",

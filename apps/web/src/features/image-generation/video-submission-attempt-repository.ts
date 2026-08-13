@@ -79,6 +79,14 @@ export interface VideoSubmissionAttemptRepository {
   reserveNext(
     input: ReserveVideoSubmissionAttemptInput
   ): Promise<ReservedVideoSubmissionAttempt | null>;
+  markFailed(input: {
+    attemptId: string;
+    failureCode: string;
+    failureReason: string;
+    operationsReason: string;
+    failedAt: Date;
+  }): Promise<boolean>;
+  listAttemptedMemberIds(videoGenerationId: string): Promise<string[]>;
 }
 
 /**
@@ -180,6 +188,47 @@ export function createPostgresVideoSubmissionAttemptRepository(
           apiAdapterVersionId: parsed.api_adapter_version_id,
           createdAt: parsed.created_at,
         };
+      });
+    },
+    async markFailed(rawInput) {
+      const input = z
+        .object({
+          attemptId: identifierSchema,
+          failureCode: z.string().trim().min(1).max(64),
+          failureReason: z.string().trim().min(1).max(1_000),
+          operationsReason: z.string().trim().min(1).max(1_000),
+          failedAt: z.date(),
+        })
+        .strict()
+        .parse(rawInput);
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute(sql`
+          update video_generation_submission_attempt
+          set failure_code = ${input.failureCode},
+              failure_reason = ${input.failureReason},
+              operations_reason = ${input.operationsReason},
+              failed_at = ${input.failedAt},
+              updated_at = ${input.failedAt}
+          where id = ${input.attemptId}
+            and failure_code is null
+          returning id
+        `);
+        return extractExecuteRows(result).length === 1;
+      });
+    },
+    async listAttemptedMemberIds(rawVideoGenerationId) {
+      const videoGenerationId = identifierSchema.parse(rawVideoGenerationId);
+      return database.transaction(async (transaction) => {
+        const result = await transaction.execute(sql`
+          select distinct backend_member_id
+          from video_generation_submission_attempt
+          where video_generation_id = ${videoGenerationId}
+          order by backend_member_id
+        `);
+        return z
+          .array(z.object({ backend_member_id: identifierSchema }))
+          .parse(extractExecuteRows(result))
+          .map((row) => row.backend_member_id);
       });
     },
   };

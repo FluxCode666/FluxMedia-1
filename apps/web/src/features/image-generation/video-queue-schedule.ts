@@ -16,6 +16,7 @@ export interface VideoQueueScheduleRow {
   nextPollAt: Date | null;
   claimExpiresAt: Date | null;
   submitStartedAt: Date | null;
+  refundExhaustedAt?: Date | null;
   updatedAt: Date;
 }
 
@@ -48,7 +49,10 @@ export function resolveVideoQueueSchedule(
   row: VideoQueueScheduleRow,
   now = new Date()
 ): VideoQueueSchedule | null {
-  if (["completed", "failed", "submit_uncertain"].includes(row.stage)) {
+  if (
+    ["completed", "failed", "submit_uncertain"].includes(row.stage) ||
+    (row.stage === "refunding" && row.refundExhaustedAt)
+  ) {
     return null;
   }
 

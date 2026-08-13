@@ -130,6 +130,10 @@ export interface CreateRuntimeBackendSessionInput {
   requestKind: "image" | "video";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
+  /** 当前任务已耗尽或明确排除的账号；只影响本次会话。 */
+  excludedMemberIds?: readonly string[];
+  /** 同账号创建重试时只允许重新获取该账号。 */
+  requiredMemberId?: string;
 }
 
 /** 配置可达性查询所需的 Principal 分组事实。 */
@@ -149,6 +153,8 @@ export interface RuntimeBackendSession {
     error: string,
     durationMs: number
   ): Promise<RuntimeBackendLease>;
+  /** 仅在当前任务排除账号并切换，不修改账号全局健康与冷却。 */
+  switchForTask(): Promise<RuntimeBackendLease>;
   completeCurrent(input: {
     success: boolean;
     error?: string;
@@ -641,7 +647,7 @@ export async function createRuntimeBackendSession(
   const group =
     trustedGroupSnapshot ??
     (await resolveTrustedGroupSnapshot(normalizedInput));
-  const excludedMemberIds = new Set<string>();
+  const excludedMemberIds = new Set(input.excludedMemberIds ?? []);
   let current: RuntimeBackendLease | null = null;
   let acquisitionCount = 0;
 
@@ -652,6 +658,9 @@ export async function createRuntimeBackendSession(
       groupId: group.id,
       requestedModel: modelId,
       excludedMemberIds: Array.from(excludedMemberIds),
+      ...(normalizedInput.requiredMemberId
+        ? { requiredMemberId: normalizedInput.requiredMemberId }
+        : {}),
       requiresContentSafety:
         normalizedInput.requiresContentSafety &&
         group.contentSafetyEnabled !== false,
@@ -670,7 +679,9 @@ export async function createRuntimeBackendSession(
         candidateCount: acquisitionResult.eligibleCandidateCount,
       });
       throw new BackendSchedulerError(
-        "no_eligible_member",
+        acquisitionResult.status === "capacity_rejected"
+          ? "capacity_rejected"
+          : "no_eligible_member",
         acquisitionResult.status === "capacity_rejected"
           ? "当前分组的媒体后端容量已满"
           : "当前分组没有可用于该模型的媒体后端"
@@ -737,6 +748,15 @@ export async function createRuntimeBackendSession(
         error,
         durationMs,
       });
+      await releaseRuntimeLease(lease);
+      current = null;
+      return acquireNext();
+    },
+
+    async switchForTask() {
+      const lease = current;
+      if (!lease) throw new Error("没有可切换的当前媒体成员租约");
+      excludedMemberIds.add(lease.memberId);
       await releaseRuntimeLease(lease);
       current = null;
       return acquireNext();

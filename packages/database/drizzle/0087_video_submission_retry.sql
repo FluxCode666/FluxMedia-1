@@ -11,6 +11,29 @@ ALTER TABLE "video_generation"
   ADD COLUMN IF NOT EXISTS "capacity_wait_deadline_at" timestamp;
 
 ALTER TABLE "video_generation"
+  ADD COLUMN IF NOT EXISTS "refund_attempt_count" integer NOT NULL DEFAULT 0;
+
+ALTER TABLE "video_generation"
+  ADD COLUMN IF NOT EXISTS "refund_exhausted_at" timestamp;
+
+ALTER TABLE "video_generation"
+  DROP CONSTRAINT IF EXISTS "video_generation_recovery_counts_check";
+
+ALTER TABLE "video_generation"
+  ADD CONSTRAINT "video_generation_recovery_counts_check"
+  CHECK (
+    "state_version" >= 0
+    AND "attempt_count" >= 0
+    AND "refund_attempt_count" BETWEEN 0 AND 3
+    AND "api_key_credits_reserved" >= 0
+    AND "api_adapter_query_failure_count" >= 0
+    AND (
+      "api_key_id" IS NOT NULL
+      OR "api_key_credits_reserved" = 0
+    )
+  );
+
+ALTER TABLE "video_generation"
   DROP CONSTRAINT IF EXISTS "video_generation_stage_check";
 
 ALTER TABLE "video_generation"
