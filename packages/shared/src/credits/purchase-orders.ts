@@ -12,10 +12,8 @@
 import crypto from "node:crypto";
 
 import { db } from "@repo/database";
-import { paymentOrder } from "@repo/database/schema";
-import { and, eq, lt, or } from "drizzle-orm";
-
-const FULFILLMENT_LEASE_MS = 5 * 60_000;
+import { paymentLifecycleEvent, paymentOrder } from "@repo/database/schema";
+import { and, eq } from "drizzle-orm";
 
 export type CreditPackagePaymentProvider = "creem" | "epay";
 
@@ -32,6 +30,7 @@ export type CreditPackagePricingSnapshot = {
   currency: string;
   amountMinor: number;
   creditsAmount: number;
+  creditsExpiresAt: string | null;
 };
 
 export type CreditPackagePaymentOrder = {
@@ -141,41 +140,65 @@ export async function createCreditPackagePaymentOrder(input: {
 
   const now = new Date();
   const id = `CP${Date.now()}${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  const inserted = await db
-    .insert(paymentOrder)
-    .values({
-      id,
-      userId: input.userId,
-      clientRequestId: input.clientRequestId,
-      provider: input.provider,
-      purpose: "credit_package",
-      status: "creating",
-      currency: input.currency,
-      amount: input.amount,
-      amountMinor: input.amountMinor,
-      creditsAmount: input.creditsAmount,
-      pricingSnapshot: input.pricingSnapshot,
-      expiresAt: input.expiresAt,
-      updatedAt: now,
-    })
-    .onConflictDoNothing({
-      target: [paymentOrder.userId, paymentOrder.clientRequestId],
-    })
-    .returning();
-  const order =
-    inserted[0] ??
-    (
-      await db
-        .select()
-        .from(paymentOrder)
-        .where(
-          and(
-            eq(paymentOrder.userId, input.userId),
-            eq(paymentOrder.clientRequestId, input.clientRequestId)
+  const order = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(paymentOrder)
+      .values({
+        id,
+        userId: input.userId,
+        clientRequestId: input.clientRequestId,
+        provider: input.provider,
+        purpose: "credit_package",
+        status: "creating",
+        currency: input.currency,
+        amount: input.amount,
+        amountMinor: input.amountMinor,
+        creditsAmount: input.creditsAmount,
+        pricingSnapshot: input.pricingSnapshot,
+        expiresAt: input.expiresAt,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: [paymentOrder.userId, paymentOrder.clientRequestId],
+      })
+      .returning();
+    const current =
+      inserted[0] ??
+      (
+        await tx
+          .select()
+          .from(paymentOrder)
+          .where(
+            and(
+              eq(paymentOrder.userId, input.userId),
+              eq(paymentOrder.clientRequestId, input.clientRequestId)
+            )
           )
-        )
-        .limit(1)
-    )[0];
+          .limit(1)
+      )[0];
+    if (current) {
+      await tx
+        .insert(paymentLifecycleEvent)
+        .values({
+          id: crypto.randomUUID(),
+          paymentOrderId: current.id,
+          eventType: "order_created",
+          sourceRef: `request:${input.userId}:${input.clientRequestId}`,
+          occurredAt: current.createdAt,
+          recordedAt: new Date(),
+          timestampSource: "server_generated",
+          provider: input.provider,
+        })
+        .onConflictDoNothing({
+          target: [
+            paymentLifecycleEvent.paymentOrderId,
+            paymentLifecycleEvent.eventType,
+            paymentLifecycleEvent.sourceRef,
+          ],
+        });
+    }
+    return current;
+  });
   if (!order) throw new Error("无法创建积分包支付订单");
 
   const normalized = toCreditPackagePaymentOrder(order);
@@ -205,12 +228,65 @@ export async function saveCreditPackageCheckout(input: {
   providerPayload: Record<string, unknown>;
   expiresAt: Date;
 }) {
+  return db.transaction(async (tx) => {
+    const occurredAt = new Date();
+    const [updated] = await tx
+      .update(paymentOrder)
+      .set({
+        status: "pending",
+        providerPayload: input.providerPayload,
+        expiresAt: input.expiresAt,
+        updatedAt: occurredAt,
+      })
+      .where(
+        and(
+          eq(paymentOrder.id, input.orderId),
+          eq(paymentOrder.provider, input.provider),
+          eq(paymentOrder.purpose, "credit_package"),
+          eq(paymentOrder.status, "creating")
+        )
+      )
+      .returning();
+    if (!updated) return null;
+    await tx
+      .insert(paymentLifecycleEvent)
+      .values({
+        id: crypto.randomUUID(),
+        paymentOrderId: updated.id,
+        eventType: "checkout_ready",
+        sourceRef: `checkout:${updated.id}`,
+        occurredAt,
+        recordedAt: new Date(),
+        timestampSource: "server_generated",
+        provider: input.provider,
+      })
+      .onConflictDoNothing({
+        target: [
+          paymentLifecycleEvent.paymentOrderId,
+          paymentLifecycleEvent.eventType,
+          paymentLifecycleEvent.sourceRef,
+        ],
+      });
+    return toCreditPackagePaymentOrder(updated);
+  });
+}
+
+/**
+ * 在外部 Checkout 创建前冻结提供商侧幂等引用，但不伪造 checkout_ready 事实。
+ *
+ * @param input 本地订单、通道和提供商引用。
+ * @returns 更新后的订单；订单已经离开 creating 时返回 null。
+ * @sideeffect 只写 providerPayload，不改变订单状态或追加生命周期事件。
+ */
+export async function saveCreditPackageProviderReference(input: {
+  orderId: string;
+  provider: CreditPackagePaymentProvider;
+  providerPayload: Record<string, unknown>;
+}) {
   const [updated] = await db
     .update(paymentOrder)
     .set({
-      status: "pending",
       providerPayload: input.providerPayload,
-      expiresAt: input.expiresAt,
       updatedAt: new Date(),
     })
     .where(
@@ -226,141 +302,50 @@ export async function saveCreditPackageCheckout(input: {
 }
 
 /**
- * 为已验签的支付通知领取积分包履约租约。
+ * 记录第三方 Checkout 创建失败。
  *
- * 跨实例并发由状态 CAS 约束；租约超时可由后续通知接管，最终发放仍以
- * credits_batch 的 sourceRef 唯一约束保证只发一次。
+ * 只把仍处于 creating 的订单终结，已经进入 pending/fulfilling 的订单由其真实
+ * 生命周期负责，避免迟到的异常覆盖已成功打开或已付款的订单。
  */
-export async function claimCreditPackagePaymentOrderForFulfillment(input: {
+export async function failCreditPackageCheckout(input: {
   orderId: string;
-  userId: string;
   provider: CreditPackagePaymentProvider;
-  providerTradeNo: string;
+  sourceRef?: string;
 }) {
-  const leaseExpiresAt = new Date(Date.now() - FULFILLMENT_LEASE_MS);
-  const [claimed] = await db
-    .update(paymentOrder)
-    .set({
-      status: "fulfilling",
-      providerTradeNo: input.providerTradeNo,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(paymentOrder.id, input.orderId),
-        eq(paymentOrder.userId, input.userId),
-        eq(paymentOrder.provider, input.provider),
-        eq(paymentOrder.purpose, "credit_package"),
-        or(
-          eq(paymentOrder.status, "pending"),
-          and(
-            eq(paymentOrder.status, "fulfilling"),
-            lt(paymentOrder.updatedAt, leaseExpiresAt)
-          )
+  return db.transaction(async (tx) => {
+    const occurredAt = new Date();
+    const [failed] = await tx
+      .update(paymentOrder)
+      .set({ status: "failed", updatedAt: occurredAt })
+      .where(
+        and(
+          eq(paymentOrder.id, input.orderId),
+          eq(paymentOrder.provider, input.provider),
+          eq(paymentOrder.purpose, "credit_package"),
+          eq(paymentOrder.status, "creating")
         )
       )
-    )
-    .returning();
-
-  if (claimed) return "claimed" as const;
-  const [current] = await db
-    .select({
-      status: paymentOrder.status,
-      providerTradeNo: paymentOrder.providerTradeNo,
-    })
-    .from(paymentOrder)
-    .where(
-      and(
-        eq(paymentOrder.id, input.orderId),
-        eq(paymentOrder.userId, input.userId),
-        eq(paymentOrder.provider, input.provider),
-        eq(paymentOrder.purpose, "credit_package")
-      )
-    )
-    .limit(1);
-  if (
-    current?.status === "fulfilled" &&
-    current.providerTradeNo === input.providerTradeNo
-  ) {
-    return "fulfilled" as const;
-  }
-  return "busy" as const;
-}
-
-/** 在积分账本成功落库后标记订单已履约。 */
-export async function fulfillCreditPackagePaymentOrder(input: {
-  orderId: string;
-  userId: string;
-  provider: CreditPackagePaymentProvider;
-  providerTradeNo: string;
-}) {
-  await db
-    .update(paymentOrder)
-    .set({
-      status: "fulfilled",
-      providerTradeNo: input.providerTradeNo,
-      fulfilledAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(paymentOrder.id, input.orderId),
-        eq(paymentOrder.userId, input.userId),
-        eq(paymentOrder.provider, input.provider),
-        eq(paymentOrder.purpose, "credit_package"),
-        eq(paymentOrder.status, "fulfilling"),
-        eq(paymentOrder.providerTradeNo, input.providerTradeNo)
-      )
-    );
-}
-
-/** 履约失败时释放本次租约，令支付平台后续重试可以安全接管。 */
-export async function releaseCreditPackagePaymentOrderFulfillment(input: {
-  orderId: string;
-  userId: string;
-  provider: CreditPackagePaymentProvider;
-  providerTradeNo: string;
-}) {
-  await db
-    .update(paymentOrder)
-    .set({ status: "pending", updatedAt: new Date() })
-    .where(
-      and(
-        eq(paymentOrder.id, input.orderId),
-        eq(paymentOrder.userId, input.userId),
-        eq(paymentOrder.provider, input.provider),
-        eq(paymentOrder.purpose, "credit_package"),
-        eq(paymentOrder.status, "fulfilling"),
-        eq(paymentOrder.providerTradeNo, input.providerTradeNo)
-      )
-    );
-}
-
-/**
- * 标记服务端已确认无法履约的支付订单。
- *
- * 只用于金额校验等不可通过重试恢复的失败；临时数据库或网络错误必须释放为 pending，
- * 让上游 webhook 重投，不能把已付款用户的订单错误终结。
- */
-export async function failCreditPackagePaymentOrder(input: {
-  orderId: string;
-  userId: string;
-  provider: CreditPackagePaymentProvider;
-}) {
-  await db
-    .update(paymentOrder)
-    .set({ status: "failed", updatedAt: new Date() })
-    .where(
-      and(
-        eq(paymentOrder.id, input.orderId),
-        eq(paymentOrder.userId, input.userId),
-        eq(paymentOrder.provider, input.provider),
-        eq(paymentOrder.purpose, "credit_package"),
-        or(
-          eq(paymentOrder.status, "creating"),
-          eq(paymentOrder.status, "pending"),
-          eq(paymentOrder.status, "fulfilling")
-        )
-      )
-    );
+      .returning({ id: paymentOrder.id });
+    if (!failed) return false;
+    await tx
+      .insert(paymentLifecycleEvent)
+      .values({
+        id: crypto.randomUUID(),
+        paymentOrderId: input.orderId,
+        eventType: "checkout_failed",
+        sourceRef: input.sourceRef ?? `checkout:${input.orderId}`,
+        occurredAt,
+        recordedAt: occurredAt,
+        timestampSource: "server_generated",
+        provider: input.provider,
+      })
+      .onConflictDoNothing({
+        target: [
+          paymentLifecycleEvent.paymentOrderId,
+          paymentLifecycleEvent.eventType,
+          paymentLifecycleEvent.sourceRef,
+        ],
+      });
+    return true;
+  });
 }

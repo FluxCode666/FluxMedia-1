@@ -1,18 +1,13 @@
+/**
+ * Creem webhook 薄适配器。
+ *
+ * 使用方：Creem 已验签 Checkout 通知。积分包履约只读取本地 payment_order 冻结快照，
+ * 运行时积分包配置和客户端 metadata 均不参与金额、币种或积分数量裁决。
+ */
 import { db } from "@repo/database";
-import { creditsBatch, user } from "@repo/database/schema";
+import { paymentOrder, user } from "@repo/database/schema";
 import { withApiLogging } from "@repo/shared/api-logger";
-import { CREDIT_CONFIG_DEFAULTS } from "@repo/shared/credits/config";
-import { grantCredits } from "@repo/shared/credits/core";
-import {
-  getCreditPackageCurrency,
-  getRuntimeCreditPackageById,
-} from "@repo/shared/credits/packages";
-import {
-  claimCreditPackagePaymentOrderForFulfillment,
-  failCreditPackagePaymentOrder,
-  fulfillCreditPackagePaymentOrder,
-  releaseCreditPackagePaymentOrderFulfillment,
-} from "@repo/shared/credits/purchase-orders";
+import { getCurrencyMinorUnitExponent } from "@repo/shared/credits/top-up";
 import { logError, logEvent, logger } from "@repo/shared/logger";
 import {
   type CreemCheckoutCompletedData,
@@ -23,11 +18,37 @@ import {
   evaluateCreemAmountMatch,
   shouldGrantAfterAmountCheck,
 } from "@repo/shared/payment/creem-amount";
-import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
+import { z } from "zod";
+import { processPaymentFulfillmentOrder } from "@/features/payment/payment-fulfillment-service";
+import {
+  confirmPaymentAndCreateFulfillmentWorkItem,
+  rejectCreemPaymentAmountMismatch,
+} from "@/features/payment/payment-lifecycle-service";
+
+const creditPackagePricingSnapshotSchema = z
+  .object({
+    packageId: z.string().min(1),
+    quantity: z.number().int().positive(),
+    currency: z.string().min(1),
+    amountMinor: z.number().int().positive(),
+    creditsAmount: z.number().positive(),
+    creditsExpiresAt: z.string().datetime().nullable().optional(),
+  })
+  .passthrough();
+
+const creemPaymentOrderSchema = z.object({
+  id: z.string().min(1),
+  userId: z.string().min(1),
+  provider: z.literal("creem"),
+  purpose: z.literal("credit_package"),
+  currency: z.string().min(1),
+  amountMinor: z.coerce.number().int().positive(),
+  creditsAmount: z.coerce.number().positive(),
+  pricingSnapshot: creditPackagePricingSnapshotSchema,
+});
 
 // ============================================
 // 实付金额/币种反欺诈校验（软门闩）
@@ -89,15 +110,16 @@ function shouldGrantWithLogging(
   return decision.grant;
 }
 
-async function getCreditPackExpiresAt() {
-  const expiryDays = await getRuntimeSettingNumber(
-    "CREDITS_EXPIRY_DAYS",
-    CREDIT_CONFIG_DEFAULTS.creditsExpiryDays,
-    { nonNegative: true }
-  );
-  return expiryDays > 0
-    ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
-    : null;
+/** 将已验签 Creem 事件时间转换为可落库时间，无效值才降级到接收时间。 */
+function getCreemOccurredAt(createdAt: number) {
+  const occurredAt = new Date(createdAt);
+  if (!Number.isNaN(occurredAt.getTime())) {
+    return { occurredAt, timestampSource: "provider" as const };
+  }
+  return {
+    occurredAt: new Date(),
+    timestampSource: "server_received" as const,
+  };
 }
 
 /**
@@ -144,7 +166,10 @@ export const POST = withApiLogging(async (req: Request) => {
           logIgnoredCreemEvent(event, data.request_id);
           break;
         }
-        await handleCheckoutCompleted(data);
+        await handleCheckoutCompleted(
+          data,
+          getCreemOccurredAt(event.created_at)
+        );
         break;
       }
 
@@ -205,7 +230,10 @@ function logIgnoredCreemEvent(event: CreemWebhookEvent, requestId?: string) {
  *
  * 当用户完成一次性积分购买后发放积分。
  */
-async function handleCheckoutCompleted(data: CreemCheckoutCompletedData) {
+async function handleCheckoutCompleted(
+  data: CreemCheckoutCompletedData,
+  eventTime: ReturnType<typeof getCreemOccurredAt>
+) {
   const userId = data.metadata?.userId;
   const customerId = data.customer.id;
   const productId = data.product?.id || data.order?.product;
@@ -225,7 +253,7 @@ async function handleCheckoutCompleted(data: CreemCheckoutCompletedData) {
   // 根据 checkout 类型分别处理
   if (checkoutType === "credit_purchase") {
     // 积分包一次性购买
-    await handleCreditPurchase(userId, data);
+    await handleCreditPurchase(userId, data, eventTime);
   }
 
   logEvent("payment.checkout.completed", {
@@ -240,48 +268,60 @@ async function handleCheckoutCompleted(data: CreemCheckoutCompletedData) {
 /**
  * 处理积分包购买
  *
- * 在一次性支付完成后，根据服务端积分包配置发放积分
- * 安全: 不信任 metadata.credits，从服务端积分包配置查找真实积分数量
+ * 在一次性支付完成后，根据订单创建时冻结的快照发放积分。
+ *
+ * @param userId webhook metadata 声明的用户，只用于与本地订单归属交叉校验。
+ * @param data 已验签且通过运行时结构校验的 Checkout 完成数据。
+ * @returns 无返回值；首次或重放确认会触发持久履约 worker。
+ * @sideeffect 读取本地订单，创建支付确认和工作项，必要时触发积分履约。
+ * @failure 缺订单、归属不匹配或冻结快照内部不一致时 fail closed。
  */
 async function handleCreditPurchase(
   userId: string,
-  data: CreemCheckoutCompletedData
+  data: CreemCheckoutCompletedData,
+  eventTime: ReturnType<typeof getCreemOccurredAt>
 ) {
-  const packageId = data.metadata?.packageId;
+  const reportedPackageId = data.metadata?.packageId;
   const creemOrderId = data.order?.id ?? data.id;
   const paymentOrderId = data.metadata?.paymentOrderId;
-  if (!packageId) {
-    logger.error(
-      { source: "creem-webhook", userId, creemOrderId },
-      "Missing packageId in credit_purchase metadata"
-    );
-    return;
+  if (!paymentOrderId) {
+    throw new Error("Creem 积分包通知缺少本地支付订单 ID");
   }
 
-  // 从服务端配置查找积分数量（不信任客户端 metadata.credits）
-  const pkg = await getRuntimeCreditPackageById(packageId, {
-    includeHidden: true,
-  });
-  if (!pkg) {
-    logger.error(
-      { source: "creem-webhook", packageId, userId },
-      "Unknown credit package ID"
-    );
-    return;
+  const [rawOrder] = await db
+    .select({
+      id: paymentOrder.id,
+      userId: paymentOrder.userId,
+      provider: paymentOrder.provider,
+      purpose: paymentOrder.purpose,
+      currency: paymentOrder.currency,
+      amountMinor: paymentOrder.amountMinor,
+      creditsAmount: paymentOrder.creditsAmount,
+      pricingSnapshot: paymentOrder.pricingSnapshot,
+    })
+    .from(paymentOrder)
+    .where(eq(paymentOrder.id, paymentOrderId))
+    .limit(1);
+  const order = creemPaymentOrderSchema.parse(rawOrder);
+  if (order.userId !== userId) {
+    throw new Error("Creem 通知用户与本地订单不匹配");
+  }
+  const snapshot = order.pricingSnapshot;
+  if (
+    snapshot.currency !== order.currency ||
+    snapshot.amountMinor !== order.amountMinor ||
+    snapshot.creditsAmount !== order.creditsAmount
+  ) {
+    throw new Error("Creem 支付订单冻结快照不一致");
   }
 
-  const quantity = 1;
-  const creditsAmount = pkg.credits * quantity;
-  const unitPrice = pkg.price;
-
-  // 实付金额/币种校验（软门闩）：用服务端积分包价格重算期望金额（unitPrice * quantity），
-  // 与 Creem 实付额（order.amount，单位分）及 order.currency 比对，阻止 checkout
-  // 阶段被篡改的价格/数量套取高价积分包。配置不可比或未开启硬拒时仅告警照常发放。
-  const expectedAmount = unitPrice * quantity;
+  // 实付校验使用订单创建时冻结的最小货币单位与币种。管理员随后调整积分包价格、
+  // 币种或积分数量不会改变旧订单；metadata.packageId 仅保留为通知关联审计字段。
+  const currencyScale = 10 ** getCurrencyMinorUnitExponent(order.currency);
   const amountMatch = evaluateCreemAmountMatch(
     {
-      amount: expectedAmount,
-      currency: getCreditPackageCurrency(pkg),
+      amount: order.amountMinor / currencyScale,
+      currency: order.currency,
     },
     {
       amount: data.order?.amount ?? Number.NaN,
@@ -292,117 +332,54 @@ async function handleCreditPurchase(
     !shouldGrantWithLogging(amountMatch, {
       stage: "credit-purchase",
       userId,
-      packageId,
+      packageId: snapshot.packageId,
+      reportedPackageId,
       orderId: creemOrderId,
     })
   ) {
-    if (paymentOrderId) {
-      await failCreditPackagePaymentOrder({
-        orderId: paymentOrderId,
-        userId,
-        provider: "creem",
-      });
+    const rejected = await rejectCreemPaymentAmountMismatch({
+      orderId: paymentOrderId,
+      userId,
+      providerTradeNo: creemOrderId,
+      eventSourceRef: `creem:${creemOrderId}`,
+      occurredAt: eventTime.occurredAt,
+    });
+    if (!rejected) {
+      throw new Error("Creem 异常金额订单状态或交易号已变化");
     }
     return;
   }
 
-  if (paymentOrderId) {
-    const claim = await claimCreditPackagePaymentOrderForFulfillment({
-      orderId: paymentOrderId,
-      userId,
-      provider: "creem",
-      providerTradeNo: creemOrderId,
-    });
-    if (claim === "fulfilled") return;
-    if (claim === "busy") {
-      throw new Error("Creem 积分包订单正在履约，请重试通知");
-    }
-  }
-
-  // 新版 Checkout 以本地订单 ID 作为 sourceRef。payment_order 负责给用户展示状态，
-  // credits_batch 唯一索引负责在 webhook 重试或崩溃恢复时防止重复发放；旧订单保持
-  // 旧 sourceRef，以免升级后找不到历史幂等记录。
-  const sourceRef = paymentOrderId
-    ? `creem:${paymentOrderId}`
-    : `credit_purchase:${creemOrderId}`;
-
-  try {
-    const [existingBatch] = await db
-      .select({ id: creditsBatch.id })
-      .from(creditsBatch)
-      .where(
-        and(
-          eq(creditsBatch.sourceRef, sourceRef),
-          eq(creditsBatch.sourceType, "purchase")
-        )
-      )
-      .limit(1);
-
-    if (!existingBatch) {
-      const result = await grantCredits({
-        userId,
-        amount: creditsAmount,
-        sourceType: "purchase",
-        debitAccount: `PAYMENT:${creemOrderId}`,
-        transactionType: "purchase",
-        expiresAt: await getCreditPackExpiresAt(),
-        sourceRef,
-        description: `Credit pack purchase: ${creditsAmount} credits (${packageId})`,
-        metadata: {
-          provider: "creem",
-          orderId: creemOrderId,
-          paymentOrderId,
-          packageId,
-          checkoutId: data.id,
-          paymentType: "one-time",
-          quantity,
-          unitCredits: pkg.credits,
-          unitPrice,
-          paidMoney: unitPrice * quantity,
-        },
-      });
-
-      logger.info(
-        { userId, creditsAmount, packageId, quantity, batchId: result.batchId },
-        "Credits granted for credit pack purchase"
-      );
-    } else {
-      logger.info({ sourceRef }, "Credits already granted for purchase");
-    }
-
-    await invokeReferralFirstPayment({
-      orderId: paymentOrderId ?? creemOrderId,
-      inviteeUserId: userId,
-      firstPaymentCredits: creditsAmount,
-      provider: "creem",
-    });
-    if (paymentOrderId) {
-      await fulfillCreditPackagePaymentOrder({
-        orderId: paymentOrderId,
-        userId,
+  const confirmation = await confirmPaymentAndCreateFulfillmentWorkItem({
+    orderId: paymentOrderId,
+    userId,
+    provider: "creem",
+    providerTradeNo: creemOrderId,
+    eventSourceRef: `creem:${creemOrderId}`,
+    occurredAt: eventTime.occurredAt,
+    timestampSource: eventTime.timestampSource,
+    fulfillment: {
+      creditsAmount: order.creditsAmount,
+      creditSourceRef: `creem:${paymentOrderId}`,
+      debitAccount: `PAYMENT:${creemOrderId}`,
+      description: `Credit pack purchase: ${order.creditsAmount} credits (${snapshot.packageId})`,
+      metadata: {
         provider: "creem",
-        providerTradeNo: creemOrderId,
-      });
-    }
-  } catch (error) {
-    if (paymentOrderId) {
-      await releaseCreditPackagePaymentOrderFulfillment({
-        orderId: paymentOrderId,
-        userId,
-        provider: "creem",
-        providerTradeNo: creemOrderId,
-      });
-    }
-    logError(error, {
-      source: "creem-webhook",
-      stage: "grant-credit-purchase",
-      userId,
-      packageId,
-    });
-    // S-L2：不再吞异常。grantCredits 对幂等命中（重复 sourceRef）走
-    // onConflictDoNothing 并正常返回，不抛错；故能到此 catch 的都是真正的 DB/未知
-    // 异常。前置 existingBatch 短路 + credits_batch (source_type, source_ref) 唯一索引
-    // 保证 Creem 重投不会双发，因此上抛让外层返回 5xx 触发重投，避免静默漏发积分。
-    throw error;
+        orderId: creemOrderId,
+        paymentOrderId,
+        packageId: snapshot.packageId,
+        reportedPackageId,
+        checkoutId: data.id,
+        paymentType: "one-time",
+        creditsAmount: order.creditsAmount,
+        quantity: snapshot.quantity,
+        amountMinor: order.amountMinor,
+        currency: order.currency,
+        paidMoneyMinor: data.order?.amount,
+      },
+    },
+  });
+  if (confirmation !== "fulfilled") {
+    await processPaymentFulfillmentOrder(paymentOrderId);
   }
 }

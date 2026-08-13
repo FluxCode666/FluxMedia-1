@@ -129,6 +129,7 @@
     "./uol/operations/image-generation": "./src/uol/operations/image-generation.ts",
     "./uol/operations/media-limits": "./src/uol/operations/media-limits.ts",
     "./uol/operations/payment": "./src/uol/operations/payment.ts",
+    "./uol/operations/payment-fulfillment": "./src/uol/operations/payment-fulfillment.ts",
     "./uol/operations/referrals": "./src/uol/operations/referrals.ts",
     "./uol/operations/video-generation": "./src/uol/operations/video-generation.ts",
     "./mcp": "./src/mcp/index.ts",

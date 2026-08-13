@@ -43,8 +43,10 @@ import {
 } from "./packages";
 import {
   createCreditPackagePaymentOrder,
+  failCreditPackageCheckout,
   getCreditPackageCheckoutUrl,
   saveCreditPackageCheckout,
+  saveCreditPackageProviderReference,
 } from "./purchase-orders";
 import { getCurrencyMinorUnitExponent } from "./top-up";
 
@@ -449,6 +451,17 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
     });
 
     const checkoutExpiry = new Date(Date.now() + 30 * 60 * 1000);
+    const creditsExpiryDays = await getRuntimeSettingNumber(
+      "CREDITS_EXPIRY_DAYS",
+      CREDIT_CONFIG_DEFAULTS.creditsExpiryDays,
+      { nonNegative: true }
+    );
+    const creditsExpiresAt =
+      creditsExpiryDays > 0
+        ? new Date(
+            Date.now() + creditsExpiryDays * 24 * 60 * 60 * 1000
+          ).toISOString()
+        : null;
     const paymentOrder = await createCreditPackagePaymentOrder({
       userId,
       clientRequestId,
@@ -463,6 +476,7 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
         currency,
         amountMinor,
         creditsAmount,
+        creditsExpiresAt,
       },
       expiresAt: checkoutExpiry,
     });
@@ -489,27 +503,40 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
         currency,
       };
       await saveEpayOrder(metadata, totalPrice);
-      await saveCreditPackageCheckout({
+      await saveCreditPackageProviderReference({
         orderId: paymentOrder.id,
         provider: "epay",
         providerPayload: { outTradeNo },
-        expiresAt: checkoutExpiry,
       });
-      const checkout = await createRuntimeEpayPurchase({
-        outTradeNo,
-        name:
-          quantity > 1
-            ? `FluxMedia Credits ${pkg.credits} x ${quantity}`
-            : `FluxMedia Credits ${pkg.credits}`,
-        money: totalPrice,
-      });
+      try {
+        const checkout = await createRuntimeEpayPurchase({
+          outTradeNo,
+          name:
+            quantity > 1
+              ? `FluxMedia Credits ${pkg.credits} x ${quantity}`
+              : `FluxMedia Credits ${pkg.credits}`,
+          money: totalPrice,
+        });
+        await saveCreditPackageCheckout({
+          orderId: paymentOrder.id,
+          provider: "epay",
+          providerPayload: { outTradeNo },
+          expiresAt: checkoutExpiry,
+        });
 
-      return {
-        url: checkout.url,
-        params: checkout.params,
-        method: "POST" as const,
-        orderId: paymentOrder.id,
-      };
+        return {
+          url: checkout.url,
+          params: checkout.params,
+          method: "POST" as const,
+          orderId: paymentOrder.id,
+        };
+      } catch (error) {
+        await failCreditPackageCheckout({
+          orderId: paymentOrder.id,
+          provider: "epay",
+        });
+        throw error;
+      }
     }
 
     const existingCheckoutUrl = getCreditPackageCheckoutUrl(
@@ -522,32 +549,40 @@ export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
     // 创建 Creem Checkout Session（一次性支付）
     // 注意：Creem 需要预先在后台创建产品，这里使用 packageId 作为 product_id
     // 实际使用时需要在 Creem 后台创建对应的积分产品
-    const checkout = await creem.createCheckout({
-      product_id: getCreditPackageCreemProductId(pkg),
-      success_url: resultUrl,
-      request_id: `credit_purchase_${paymentOrder.id}`,
-      metadata: {
-        userId,
-        type: "credit_purchase", // 关键: Webhook 用此判断类型
-        paymentOrderId: paymentOrder.id,
-        credits: String(creditsAmount),
-        packageId: pkg.id,
-        quantity: String(quantity),
-        unitPrice: String(unitPrice),
-        currency,
-      },
-    });
+    try {
+      const checkout = await creem.createCheckout({
+        product_id: getCreditPackageCreemProductId(pkg),
+        success_url: resultUrl,
+        request_id: `credit_purchase_${paymentOrder.id}`,
+        metadata: {
+          userId,
+          type: "credit_purchase", // 关键: Webhook 用此判断类型
+          paymentOrderId: paymentOrder.id,
+          credits: String(creditsAmount),
+          packageId: pkg.id,
+          quantity: String(quantity),
+          unitPrice: String(unitPrice),
+          currency,
+        },
+      });
 
-    await saveCreditPackageCheckout({
-      orderId: paymentOrder.id,
-      provider: "creem",
-      providerPayload: {
-        checkoutId: checkout.id,
-        checkoutUrl: checkout.checkout_url,
-      },
-      expiresAt: checkoutExpiry,
-    });
-    return { url: checkout.checkout_url, orderId: paymentOrder.id };
+      await saveCreditPackageCheckout({
+        orderId: paymentOrder.id,
+        provider: "creem",
+        providerPayload: {
+          checkoutId: checkout.id,
+          checkoutUrl: checkout.checkout_url,
+        },
+        expiresAt: checkoutExpiry,
+      });
+      return { url: checkout.checkout_url, orderId: paymentOrder.id };
+    } catch (error) {
+      await failCreditPackageCheckout({
+        orderId: paymentOrder.id,
+        provider: "creem",
+      });
+      throw error;
+    }
   });
 
 /**

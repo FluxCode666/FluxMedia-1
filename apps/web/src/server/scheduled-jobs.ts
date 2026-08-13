@@ -57,6 +57,24 @@ async function invokeAdobeHealthJob<T>(
 }
 
 /**
+ * 支付履约恢复通过 system/job UOL operation 执行，scheduler 不直接调用财务 service。
+ *
+ * @returns 本轮领取与收敛统计。
+ */
+export async function runPaymentFulfillmentRecoveryJob() {
+  const [{ invokeOperation }, { ensureUolInitialized }] = await Promise.all([
+    import("@repo/shared/uol"),
+    import("@/server/uol-init"),
+  ]);
+  await ensureUolInitialized();
+  return invokeOperation(
+    "payment.recoverFulfillments",
+    {},
+    { type: "cron", job: "payment-fulfillment" }
+  );
+}
+
+/**
  * 单次图像维护 cron 扫描的最大处理行数。
  * 同时作为超时 pending 过期与超期成品图销毁的批量上限，避免单次任务无界扫描。
  */

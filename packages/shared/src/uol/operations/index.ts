@@ -97,6 +97,8 @@ import "./support";
 import "./analytics";
 // 管理端运营总览事实采集与初始化
 import "./operations-dashboard-facts";
+// 支付履约恢复任务
+import "./payment-fulfillment";
 // 管理端支付概览与充值订单
 import "./payment";
 // 推广码、归因与首充奖励看板
@@ -106,6 +108,7 @@ export {
   initializeOperationsEpoch,
   recordWebVisit,
 } from "./operations-dashboard-facts";
+export { recoverPaymentFulfillments } from "./payment-fulfillment";
 export {
   fulfillAlipayReferralFirstPayment,
   fulfillCreemReferralFirstPayment,

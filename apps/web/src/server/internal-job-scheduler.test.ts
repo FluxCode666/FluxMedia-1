@@ -14,6 +14,7 @@ const runtime = vi.hoisted(() => ({
   adobeCredentialHealth: vi.fn(async () => undefined),
   adobeCredentialNotifications: vi.fn(async () => undefined),
   adobeCredentialRetention: vi.fn(async () => undefined),
+  paymentFulfillment: vi.fn(async () => undefined),
 }));
 
 const database = vi.hoisted(() => {
@@ -87,6 +88,7 @@ vi.mock("./scheduled-jobs", () => ({
   runAdobeCredentialHealthJob: runtime.adobeCredentialHealth,
   runAdobeCredentialNotificationDrainJob: runtime.adobeCredentialNotifications,
   runAdobeCredentialHealthCleanupJob: runtime.adobeCredentialRetention,
+  runPaymentFulfillmentRecoveryJob: runtime.paymentFulfillment,
 }));
 
 type SchedulerModule = typeof import("./internal-job-scheduler");
@@ -117,6 +119,7 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.adobeCredentialHealth.mockClear();
     runtime.adobeCredentialNotifications.mockClear();
     runtime.adobeCredentialRetention.mockClear();
+    runtime.paymentFulfillment.mockClear();
     database.transaction.mockClear();
     vi.useFakeTimers();
     vi.stubEnv("NODE_ENV", "production");
@@ -146,6 +149,7 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(1);
     expect(runtime.videoRecovery).toHaveBeenCalled();
+    expect(runtime.paymentFulfillment).toHaveBeenCalled();
 
     runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", false);
     await vi.advanceTimersByTimeAsync(5_000);

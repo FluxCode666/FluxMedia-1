@@ -61,3 +61,79 @@ CREATE INDEX IF NOT EXISTS "user_web_visit_app_date_user_idx"
 CREATE INDEX IF NOT EXISTS "user_web_visit_first_visited_user_idx"
   ON "user_web_visit" ("first_visited_at", "user_id");
 --> statement-breakpoint
+
+-- 支付生命周期事件只从本迁移上线后在线写入，不根据历史 updated_at 回造阶段时间。
+CREATE TABLE IF NOT EXISTS "payment_lifecycle_event" (
+  "id" text PRIMARY KEY NOT NULL,
+  "payment_order_id" text NOT NULL REFERENCES "payment_order"("id") ON DELETE CASCADE,
+  "event_type" text NOT NULL,
+  "source_ref" text NOT NULL,
+  "occurred_at" timestamp NOT NULL,
+  "recorded_at" timestamp NOT NULL DEFAULT now(),
+  "timestamp_source" text NOT NULL,
+  "provider" text NOT NULL,
+  CONSTRAINT "payment_lifecycle_event_type_check" CHECK (
+    "event_type" IN (
+      'order_created', 'checkout_ready', 'payment_confirmed',
+      'fulfillment_succeeded', 'checkout_failed',
+      'fulfillment_attempt_failed', 'fulfillment_failed_terminal', 'expired'
+    )
+  ),
+  CONSTRAINT "payment_lifecycle_event_timestamp_source_check" CHECK (
+    "timestamp_source" IN ('provider', 'server_received', 'server_generated')
+  )
+);
+--> statement-breakpoint
+
+CREATE UNIQUE INDEX IF NOT EXISTS "payment_lifecycle_event_order_type_source_unique"
+  ON "payment_lifecycle_event" ("payment_order_id", "event_type", "source_ref");
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "payment_lifecycle_event_type_occurred_order_idx"
+  ON "payment_lifecycle_event" ("event_type", "occurred_at", "payment_order_id");
+--> statement-breakpoint
+
+-- 已验签支付确认与工作项同事务落库；冻结字段防止恢复时读取已变化的包配置。
+CREATE TABLE IF NOT EXISTS "payment_fulfillment_work_item" (
+  "id" text PRIMARY KEY NOT NULL,
+  "payment_order_id" text NOT NULL UNIQUE REFERENCES "payment_order"("id") ON DELETE CASCADE,
+  "user_id" text NOT NULL REFERENCES "user"("id") ON DELETE CASCADE,
+  "provider" text NOT NULL,
+  "provider_trade_no" text NOT NULL,
+  "credit_source_ref" text NOT NULL UNIQUE,
+  "credits_amount" numeric(18, 2) NOT NULL,
+  "credits_expires_at" timestamp,
+  "debit_account" text NOT NULL,
+  "description" text NOT NULL,
+  "metadata" json NOT NULL,
+  "status" text NOT NULL DEFAULT 'pending',
+  "attempt_count" integer NOT NULL DEFAULT 0,
+  "next_attempt_at" timestamp NOT NULL DEFAULT now(),
+  "lease_token" text,
+  "lease_expires_at" timestamp,
+  "last_error_code" text,
+  "credits_batch_id" text,
+  "completed_at" timestamp,
+  "created_at" timestamp NOT NULL DEFAULT now(),
+  "updated_at" timestamp NOT NULL DEFAULT now(),
+  CONSTRAINT "payment_fulfillment_work_item_provider_check"
+    CHECK ("provider" IN ('alipay_f2f', 'creem', 'epay')),
+  CONSTRAINT "payment_fulfillment_work_item_status_check"
+    CHECK ("status" IN ('pending', 'processing', 'retry', 'succeeded', 'failed')),
+  CONSTRAINT "payment_fulfillment_work_item_attempt_count_check"
+    CHECK ("attempt_count" >= 0),
+  CONSTRAINT "payment_fulfillment_work_item_lease_shape_check" CHECK (
+    ("status" = 'processing' AND "lease_token" IS NOT NULL AND "lease_expires_at" IS NOT NULL)
+    OR
+    ("status" <> 'processing' AND "lease_token" IS NULL AND "lease_expires_at" IS NULL)
+  )
+);
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "payment_fulfillment_work_item_due_idx"
+  ON "payment_fulfillment_work_item" ("status", "next_attempt_at", "created_at", "id");
+--> statement-breakpoint
+
+CREATE INDEX IF NOT EXISTS "payment_fulfillment_work_item_lease_idx"
+  ON "payment_fulfillment_work_item" ("status", "lease_expires_at");
+--> statement-breakpoint

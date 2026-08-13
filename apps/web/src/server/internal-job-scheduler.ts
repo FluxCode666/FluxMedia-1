@@ -19,6 +19,7 @@ import {
   runAdobeCredentialNotificationDrainJob,
   runCreditsExpireJob,
   runImageMaintenanceJob,
+  runPaymentFulfillmentRecoveryJob,
   runVideoRecoveryJob,
 } from "./scheduled-jobs";
 
@@ -67,6 +68,13 @@ const schedulerGlobal = globalThis as SchedulerGlobal;
 let lastRuntimeConfig: SchedulerRuntimeConfig | undefined;
 
 const jobs: InternalJob[] = [
+  {
+    name: "payment-fulfillment",
+    lockKey: 7,
+    defaultIntervalMinutes: 1,
+    initialDelayMs: 5_000,
+    run: runPaymentFulfillmentRecoveryJob,
+  },
   {
     name: "video-recovery",
     lockKey: 3,

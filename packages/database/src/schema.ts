@@ -581,6 +581,130 @@ export type PaymentOrder = typeof paymentOrder.$inferSelect;
 export type NewPaymentOrder = typeof paymentOrder.$inferInsert;
 
 // ============================================
+// 支付生命周期事实与可恢复履约工作项
+// ============================================
+
+/**
+ * 支付生命周期不可变事实。
+ *
+ * 使用方：运营总览支付漏斗与履约失败健康指标。每个标准事件保留业务发生时间、
+ * 数据库记录时间及时间来源；账户删除沿 payment_order 既有级联策略清除。
+ */
+export const paymentLifecycleEvent = pgTable(
+  "payment_lifecycle_event",
+  {
+    id: text("id").primaryKey(),
+    paymentOrderId: text("payment_order_id")
+      .notNull()
+      .references(() => paymentOrder.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    occurredAt: timestamp("occurred_at").notNull(),
+    recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+    timestampSource: text("timestamp_source").notNull(),
+    provider: text("provider").notNull(),
+  },
+  (table) => [
+    uniqueIndex("payment_lifecycle_event_order_type_source_unique").on(
+      table.paymentOrderId,
+      table.eventType,
+      table.sourceRef
+    ),
+    index("payment_lifecycle_event_type_occurred_order_idx").on(
+      table.eventType,
+      table.occurredAt,
+      table.paymentOrderId
+    ),
+    check(
+      "payment_lifecycle_event_type_check",
+      sql`${table.eventType} IN ('order_created', 'checkout_ready', 'payment_confirmed', 'fulfillment_succeeded', 'checkout_failed', 'fulfillment_attempt_failed', 'fulfillment_failed_terminal', 'expired')`
+    ),
+    check(
+      "payment_lifecycle_event_timestamp_source_check",
+      sql`${table.timestampSource} IN ('provider', 'server_received', 'server_generated')`
+    ),
+  ]
+);
+
+/**
+ * 支付积分持久履约工作项。
+ *
+ * 使用方：已验签通知和内部 scheduler。创建时冻结全部积分发放参数，恢复时不再读取
+ * 可变化的积分包或充值配置；leaseToken 是完成、重试和终态失败的 fencing token。
+ */
+export const paymentFulfillmentWorkItem = pgTable(
+  "payment_fulfillment_work_item",
+  {
+    id: text("id").primaryKey(),
+    paymentOrderId: text("payment_order_id")
+      .notNull()
+      .unique()
+      .references(() => paymentOrder.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    providerTradeNo: text("provider_trade_no").notNull(),
+    creditSourceRef: text("credit_source_ref").notNull().unique(),
+    creditsAmount: numeric("credits_amount", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    }).notNull(),
+    creditsExpiresAt: timestamp("credits_expires_at"),
+    debitAccount: text("debit_account").notNull(),
+    description: text("description").notNull(),
+    metadata: json("metadata").$type<Record<string, unknown>>().notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    lastErrorCode: text("last_error_code"),
+    creditsBatchId: text("credits_batch_id"),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("payment_fulfillment_work_item_due_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.createdAt,
+      table.id
+    ),
+    index("payment_fulfillment_work_item_lease_idx").on(
+      table.status,
+      table.leaseExpiresAt
+    ),
+    check(
+      "payment_fulfillment_work_item_provider_check",
+      sql`${table.provider} IN ('alipay_f2f', 'creem', 'epay')`
+    ),
+    check(
+      "payment_fulfillment_work_item_status_check",
+      sql`${table.status} IN ('pending', 'processing', 'retry', 'succeeded', 'failed')`
+    ),
+    check(
+      "payment_fulfillment_work_item_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "payment_fulfillment_work_item_lease_shape_check",
+      sql`(${table.status} = 'processing' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL) OR (${table.status} <> 'processing' AND ${table.leaseToken} IS NULL AND ${table.leaseExpiresAt} IS NULL)`
+    ),
+  ]
+);
+
+export type PaymentLifecycleEvent = typeof paymentLifecycleEvent.$inferSelect;
+export type NewPaymentLifecycleEvent =
+  typeof paymentLifecycleEvent.$inferInsert;
+export type PaymentFulfillmentWorkItem =
+  typeof paymentFulfillmentWorkItem.$inferSelect;
+export type NewPaymentFulfillmentWorkItem =
+  typeof paymentFulfillmentWorkItem.$inferInsert;
+
+// ============================================
 // 积分系统枚举
 // ============================================
 

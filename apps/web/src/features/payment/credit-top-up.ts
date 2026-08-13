@@ -10,9 +10,8 @@
  */
 import crypto from "node:crypto";
 import { db } from "@repo/database";
-import { paymentOrder } from "@repo/database/schema";
+import { paymentLifecycleEvent, paymentOrder } from "@repo/database/schema";
 import { CREDIT_CONFIG_DEFAULTS } from "@repo/shared/credits/config";
-import { grantCredits } from "@repo/shared/credits/core";
 import { getCreditPaymentDisplayStatus } from "@repo/shared/credits/purchase-orders";
 import {
   type CreditTopUpPaymentProvider,
@@ -31,10 +30,10 @@ import {
   getRuntimeSettingJson,
   getRuntimeSettingNumber,
 } from "@repo/shared/system-settings";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
-import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
+import { and, eq, lt } from "drizzle-orm";
+import { processPaymentFulfillmentOrder } from "@/features/payment/payment-fulfillment-service";
+import { confirmPaymentAndCreateFulfillmentWorkItem } from "@/features/payment/payment-lifecycle-service";
 
-const PROCESSING_LEASE_MS = 5 * 60_000;
 const CHECKOUT_CREATION_LEASE_MS = 30_000;
 
 type PaymentOrderStatus =
@@ -218,43 +217,68 @@ export async function createCreditTopUpCheckout(input: {
     provider: quote.provider,
   };
 
-  const inserted = await db
-    .insert(paymentOrder)
-    .values({
-      id: orderId,
-      userId: input.userId,
-      clientRequestId: input.clientRequestId,
-      provider: quote.provider,
-      purpose: "credit_top_up",
-      status: "creating",
-      currency: quote.currency,
-      amount: quote.amount,
-      amountMinor: quote.amountMinor,
-      creditsAmount: quote.creditsAmount,
-      pricingSnapshot,
-      updatedAt: now,
-    })
-    .onConflictDoNothing({
-      target: [paymentOrder.userId, paymentOrder.clientRequestId],
-    })
-    .returning();
-  let order =
-    inserted[0] ??
-    (
-      await db
-        .select()
-        .from(paymentOrder)
-        .where(
-          and(
-            eq(paymentOrder.userId, input.userId),
-            eq(paymentOrder.clientRequestId, input.clientRequestId)
+  const { inserted, order: initialOrder } = await db.transaction(async (tx) => {
+    const created = await tx
+      .insert(paymentOrder)
+      .values({
+        id: orderId,
+        userId: input.userId,
+        clientRequestId: input.clientRequestId,
+        provider: quote.provider,
+        purpose: "credit_top_up",
+        status: "creating",
+        currency: quote.currency,
+        amount: quote.amount,
+        amountMinor: quote.amountMinor,
+        creditsAmount: quote.creditsAmount,
+        pricingSnapshot,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: [paymentOrder.userId, paymentOrder.clientRequestId],
+      })
+      .returning();
+    const current =
+      created[0] ??
+      (
+        await tx
+          .select()
+          .from(paymentOrder)
+          .where(
+            and(
+              eq(paymentOrder.userId, input.userId),
+              eq(paymentOrder.clientRequestId, input.clientRequestId)
+            )
           )
-        )
-        .limit(1)
-    )[0];
+          .limit(1)
+      )[0];
+    if (current) {
+      await tx
+        .insert(paymentLifecycleEvent)
+        .values({
+          id: crypto.randomUUID(),
+          paymentOrderId: current.id,
+          eventType: "order_created",
+          sourceRef: `request:${input.userId}:${input.clientRequestId}`,
+          occurredAt: current.createdAt,
+          recordedAt: new Date(),
+          timestampSource: "server_generated",
+          provider: "alipay_f2f",
+        })
+        .onConflictDoNothing({
+          target: [
+            paymentLifecycleEvent.paymentOrderId,
+            paymentLifecycleEvent.eventType,
+            paymentLifecycleEvent.sourceRef,
+          ],
+        });
+    }
+    return { inserted: Boolean(created[0]), order: current };
+  });
+  let order = initialOrder;
   if (!order) throw new Error("无法创建充值订单");
 
-  if (!inserted[0]) {
+  if (!inserted) {
     const existingView = toTopUpOrderView(order);
     if (existingView.qrCode || existingView.status === "fulfilled") {
       return existingView;
@@ -289,18 +313,45 @@ export async function createCreditTopUpCheckout(input: {
       amount: order.amount,
       subject: `FluxMedia 充值 ${order.creditsAmount} Credits`,
     });
-    const [updated] = await db
-      .update(paymentOrder)
-      .set({
-        providerPayload: { qrCode: precreate.qrCode },
-        expiresAt: precreate.expiresAt,
-        status: "pending",
-        updatedAt: new Date(),
-      })
-      .where(
-        and(eq(paymentOrder.id, order.id), eq(paymentOrder.status, "creating"))
-      )
-      .returning();
+    const updated = await db.transaction(async (tx) => {
+      const occurredAt = new Date();
+      const [current] = await tx
+        .update(paymentOrder)
+        .set({
+          providerPayload: { qrCode: precreate.qrCode },
+          expiresAt: precreate.expiresAt,
+          status: "pending",
+          updatedAt: occurredAt,
+        })
+        .where(
+          and(
+            eq(paymentOrder.id, order.id),
+            eq(paymentOrder.status, "creating")
+          )
+        )
+        .returning();
+      if (!current) return null;
+      await tx
+        .insert(paymentLifecycleEvent)
+        .values({
+          id: crypto.randomUUID(),
+          paymentOrderId: current.id,
+          eventType: "checkout_ready",
+          sourceRef: `checkout:${current.id}`,
+          occurredAt,
+          recordedAt: occurredAt,
+          timestampSource: "server_generated",
+          provider: "alipay_f2f",
+        })
+        .onConflictDoNothing({
+          target: [
+            paymentLifecycleEvent.paymentOrderId,
+            paymentLifecycleEvent.eventType,
+            paymentLifecycleEvent.sourceRef,
+          ],
+        });
+      return current;
+    });
     if (!updated) throw new Error("充值订单状态已变化，请刷新后重试");
 
     logEvent("credits.top_up.checkout_created", {
@@ -313,12 +364,39 @@ export async function createCreditTopUpCheckout(input: {
     });
     return toTopUpOrderView(updated);
   } catch (error) {
-    await db
-      .update(paymentOrder)
-      .set({ status: "failed", updatedAt: new Date() })
-      .where(
-        and(eq(paymentOrder.id, order.id), eq(paymentOrder.status, "creating"))
-      );
+    await db.transaction(async (tx) => {
+      const occurredAt = new Date();
+      const [failed] = await tx
+        .update(paymentOrder)
+        .set({ status: "failed", updatedAt: occurredAt })
+        .where(
+          and(
+            eq(paymentOrder.id, order.id),
+            eq(paymentOrder.status, "creating")
+          )
+        )
+        .returning({ id: paymentOrder.id });
+      if (!failed) return;
+      await tx
+        .insert(paymentLifecycleEvent)
+        .values({
+          id: crypto.randomUUID(),
+          paymentOrderId: order.id,
+          eventType: "checkout_failed",
+          sourceRef: `checkout:${order.id}`,
+          occurredAt,
+          recordedAt: occurredAt,
+          timestampSource: "server_generated",
+          provider: "alipay_f2f",
+        })
+        .onConflictDoNothing({
+          target: [
+            paymentLifecycleEvent.paymentOrderId,
+            paymentLifecycleEvent.eventType,
+            paymentLifecycleEvent.sourceRef,
+          ],
+        });
+    });
     logError(error, {
       source: "credits-top-up-checkout",
       orderId: order.id,
@@ -461,119 +539,41 @@ export async function fulfillAlipayCreditTopUp(
     return { orderId: order.id, status: "fulfilled" };
   }
 
-  const leaseExpiresAt = new Date(Date.now() - PROCESSING_LEASE_MS);
-  const [claimed] = await db
-    .update(paymentOrder)
-    // 在发放积分前就写入并唯一约束支付宝交易号。若等到发放完成后再写，
-    // 两笔订单的并发回调可能各自发放积分、随后才因唯一索引冲突暴露问题。
-    .set({
-      status: "fulfilling",
-      providerTradeNo: notification.tradeNo,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(paymentOrder.id, order.id),
-        or(
-          and(
-            eq(paymentOrder.status, "pending"),
-            or(
-              isNull(paymentOrder.providerTradeNo),
-              eq(paymentOrder.providerTradeNo, notification.tradeNo)
-            )
-          ),
-          and(
-            eq(paymentOrder.status, "fulfilling"),
-            lt(paymentOrder.updatedAt, leaseExpiresAt),
-            eq(paymentOrder.providerTradeNo, notification.tradeNo)
-          )
-        )
-      )
-    )
-    .returning();
-  if (!claimed) {
-    const [currentOrder] = await db
-      .select({
-        status: paymentOrder.status,
-        providerTradeNo: paymentOrder.providerTradeNo,
-      })
-      .from(paymentOrder)
-      .where(eq(paymentOrder.id, order.id))
-      .limit(1);
-    if (
-      currentOrder?.status === "fulfilled" &&
-      currentOrder.providerTradeNo === notification.tradeNo
-    ) {
-      return { orderId: order.id, status: "fulfilled" };
-    }
-    // 不能在另一个 worker 的履约租约仍有效时向支付宝返回 success。若该 worker
-    // 在发放前后崩溃，支付宝停止重试会令订单永久卡住；返回 failure 让通知按
-    // 支付宝退避策略重投，租约过期后即可安全接管。
-    throw new Error("支付宝充值订单正在履约，请稍后重试通知");
-  }
-
-  try {
-    const snapshot = getPricingSnapshot(claimed.pricingSnapshot);
-    const result = await grantCredits({
-      userId: claimed.userId,
-      amount: snapshot.creditsAmount,
-      sourceType: "purchase",
+  const snapshot = getPricingSnapshot(order.pricingSnapshot);
+  const confirmation = await confirmPaymentAndCreateFulfillmentWorkItem({
+    orderId: order.id,
+    userId: order.userId,
+    provider: "alipay_f2f",
+    providerTradeNo: notification.tradeNo,
+    eventSourceRef: `alipay:${notification.tradeNo}`,
+    occurredAt: new Date(),
+    timestampSource: "server_received",
+    fulfillment: {
+      creditsAmount: snapshot.creditsAmount,
+      creditSourceRef: `alipay:${order.id}`,
       debitAccount: `ALIPAY:${notification.tradeNo}`,
-      transactionType: "purchase",
-      expiresAt: snapshot.creditsExpiresAt
-        ? new Date(snapshot.creditsExpiresAt)
-        : null,
-      sourceRef: `alipay:${claimed.id}`,
       description: `Alipay credit top-up: ${snapshot.creditsAmount} credits`,
       metadata: {
         provider: "alipay_f2f",
-        orderId: claimed.id,
+        orderId: order.id,
         tradeNo: notification.tradeNo,
         currency: snapshot.currency,
         amountMinor: snapshot.amountMinor,
+        creditsAmount: snapshot.creditsAmount,
         creditsPerMajorUnit: snapshot.creditsPerMajorUnit,
       },
-    });
-    await invokeReferralFirstPayment({
-      orderId: claimed.id,
-      inviteeUserId: claimed.userId,
-      firstPaymentCredits: snapshot.creditsAmount,
-      provider: "alipay",
-    });
-    await db
-      .update(paymentOrder)
-      .set({
-        status: "fulfilled",
-        providerTradeNo: notification.tradeNo,
-        fulfilledAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(paymentOrder.id, claimed.id),
-          eq(paymentOrder.status, "fulfilling")
-        )
-      );
-
-    logEvent("credits.top_up.fulfilled", {
-      userId: claimed.userId,
-      orderId: claimed.id,
-      tradeNo: notification.tradeNo,
-      creditsAmount: snapshot.creditsAmount,
-      alreadyGranted: result.alreadyGranted,
-    });
-    return { orderId: claimed.id, status: "fulfilled" };
-  } catch (error) {
-    await db
-      .update(paymentOrder)
-      .set({ status: "pending", updatedAt: new Date() })
-      .where(
-        and(
-          eq(paymentOrder.id, claimed.id),
-          eq(paymentOrder.status, "fulfilling"),
-          eq(paymentOrder.providerTradeNo, notification.tradeNo)
-        )
-      );
-    throw error;
+    },
+  });
+  if (confirmation !== "fulfilled") {
+    await processPaymentFulfillmentOrder(order.id);
   }
+  const [currentOrder] = await db
+    .select({ status: paymentOrder.status })
+    .from(paymentOrder)
+    .where(eq(paymentOrder.id, order.id))
+    .limit(1);
+  return {
+    orderId: order.id,
+    status: currentOrder?.status === "fulfilled" ? "fulfilled" : "fulfilling",
+  };
 }

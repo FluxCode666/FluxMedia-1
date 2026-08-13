@@ -9,7 +9,7 @@
 import crypto from "node:crypto";
 import { db } from "@repo/database";
 import { epayOrder } from "@repo/database/schema";
-import { and, eq, lt, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getBaseUrl } from "../config/payment";
 import {
   getRuntimeSettingSelect,
@@ -84,10 +84,6 @@ export interface EpayVerifyResult {
 }
 
 export type EpayOrderStatus = "pending" | "fulfilling" | "success" | "failed";
-
-export type EpayFulfillmentClaim = "claimed" | "fulfilled" | "busy" | "missing";
-
-const EPAY_FULFILLMENT_LEASE_MS = 5 * 60_000;
 
 export function getPaymentProvider(): PaymentProvider {
   const providerValues = [
@@ -365,21 +361,6 @@ export async function getEpayOrderMetadata(
   return normalizeEpayMetadata(order.metadata);
 }
 
-export async function updateEpayOrderStatus(
-  outTradeNo: string,
-  status: EpayOrderStatus
-): Promise<void> {
-  if (!outTradeNo) return;
-
-  await db
-    .update(epayOrder)
-    .set({
-      status,
-      updatedAt: new Date(),
-    })
-    .where(eq(epayOrder.outTradeNo, outTradeNo));
-}
-
 export async function getEpayOrderStatus(
   outTradeNo: string
 ): Promise<EpayOrderStatus | null> {
@@ -392,48 +373,6 @@ export async function getEpayOrderStatus(
     .limit(1);
 
   return (order?.status as EpayOrderStatus | undefined) ?? null;
-}
-
-/**
- * 原子领取订单进行发放。
- *
- * 领取时只标记为 fulfilling，发放积分成功后调用方才会写 success；这避免
- * 浏览器或结果页把“已领取”误显示为“积分已到账”。租约到期后可由重投通知接管。
- */
-export async function claimEpayOrderForFulfillment(
-  outTradeNo: string
-): Promise<EpayFulfillmentClaim> {
-  if (!outTradeNo) return "missing";
-
-  const claimed = await db
-    .update(epayOrder)
-    .set({ status: "fulfilling", updatedAt: new Date() })
-    .where(
-      and(
-        eq(epayOrder.outTradeNo, outTradeNo),
-        or(
-          eq(epayOrder.status, "pending"),
-          and(
-            eq(epayOrder.status, "fulfilling"),
-            lt(
-              epayOrder.updatedAt,
-              new Date(Date.now() - EPAY_FULFILLMENT_LEASE_MS)
-            )
-          )
-        )
-      )
-    )
-    .returning({ outTradeNo: epayOrder.outTradeNo });
-
-  if (claimed.length > 0) return "claimed";
-  const [current] = await db
-    .select({ status: epayOrder.status })
-    .from(epayOrder)
-    .where(eq(epayOrder.outTradeNo, outTradeNo))
-    .limit(1);
-  if (current?.status === "success") return "fulfilled";
-  if (current?.status === "fulfilling") return "busy";
-  return "missing";
 }
 
 export function verifyEpayParams(
