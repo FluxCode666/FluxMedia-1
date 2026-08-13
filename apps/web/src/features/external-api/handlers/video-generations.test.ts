@@ -133,7 +133,7 @@ describe("postExternalVideoGenerations", () => {
         apiKeyId: "key-a",
       },
       {
-        requestId: "req-1",
+        externalRequestId: "req-1",
         callbacks: {
           videoCompletionUrl: "https://callback.example.com/video",
         },
@@ -192,6 +192,31 @@ describe("postExternalVideoGenerations", () => {
     );
   });
 
+  it.each([
+    5,
+    "5",
+  ])("accepts OpenAI seconds compatibility value %o", async (seconds) => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-seconds",
+        prompt: "test",
+        model: "seedance2",
+        seconds,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({ duration: 5 }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(await response.json()).not.toHaveProperty("seconds");
+  });
+
   it("完全一致的双别名只向 UOL 传一个规范值", async () => {
     const referenceImage = `data:image/png;base64,${Buffer.from(
       "reference"
@@ -232,6 +257,7 @@ describe("postExternalVideoGenerations", () => {
   it.each([
     ["clientRequestId", { clientRequestId: "a", client_request_id: "b" }],
     ["duration", { duration: 10, duration_seconds: 11 }],
+    ["seconds", { duration: 10, seconds: "11" }],
     ["aspectRatio", { aspectRatio: "16:9", aspect_ratio: "9:16" }],
     ["generateAudio", { generateAudio: true, generate_audio: false }],
     [
@@ -273,6 +299,30 @@ describe("postExternalVideoGenerations", () => {
         aspectRatio: "16:9",
         resolution: "1080p",
         ...legacyInput,
+      }) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    "",
+    "01",
+    "1.5",
+    "five",
+  ])("rejects invalid seconds compatibility value %o", async (seconds) => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-invalid-seconds",
+        prompt: "test",
+        model: "seedance2",
+        seconds,
+        aspectRatio: "16:9",
+        resolution: "1080p",
       }) as never
     );
 

@@ -116,7 +116,9 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       ...(referenceImages?.length ? { referenceImages } : {}),
     },
     principal,
-    { requestId: request.headers.get("x-request-id") ?? undefined }
+    {
+      externalRequestId: request.headers.get("x-request-id") ?? undefined,
+    }
   );
   return NextResponse.json(
     {

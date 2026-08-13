@@ -71,7 +71,7 @@ describe("GET /api/videos/capabilities", () => {
       "video.listCapabilities",
       {},
       { type: "user", userId: "user-1", role: "user" },
-      { requestId: "req-web-capabilities" }
+      { externalRequestId: "req-web-capabilities" }
     );
   });
 

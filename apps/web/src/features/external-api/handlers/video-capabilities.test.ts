@@ -80,7 +80,7 @@ describe("getExternalVideoCapabilities", () => {
         userId: "user-1",
         apiKeyId: "key-a",
       },
-      { requestId: "req-capabilities" }
+      { externalRequestId: "req-capabilities" }
     );
   });
 

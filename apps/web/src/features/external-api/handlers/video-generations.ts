@@ -35,6 +35,17 @@ const optionalReferenceImagesSchema = z
   .max(MAX_MEDIA_INPUT_COUNT)
   .optional();
 
+/** OpenAI 风格时长兼容值：正整数数字，或十进制正整数字符串。 */
+const videoSecondsSchema = z.union([
+  z.number().int().positive(),
+  z
+    .string()
+    .trim()
+    .regex(/^[1-9]\d*$/, "seconds must be a positive integer")
+    .transform((value) => Number(value))
+    .refine(Number.isSafeInteger, "seconds must be a safe positive integer"),
+]);
+
 /** 判断 v1 同一语义的两个传输别名是否完全一致。 */
 function areVideoAliasesEqual(left: unknown, right: unknown): boolean {
   if (left === undefined || right === undefined) return true;
@@ -74,6 +85,7 @@ const externalVideoSchema = z
     model: videoRequestedModelIdSchema,
     duration: z.number().int().positive().optional(),
     duration_seconds: z.number().int().positive().optional(),
+    seconds: videoSecondsSchema.optional(),
     aspectRatio: videoAspectRatioSchema.optional(),
     aspect_ratio: videoAspectRatioSchema.optional(),
     resolution: videoRequestedResolutionSchema,
@@ -100,7 +112,11 @@ const externalVideoSchema = z
         path: ["clientRequestId"],
       });
     }
-    if (value.duration === undefined && value.duration_seconds === undefined) {
+    if (
+      value.duration === undefined &&
+      value.duration_seconds === undefined &&
+      value.seconds === undefined
+    ) {
       context.addIssue({
         code: "custom",
         message: "duration is required",
@@ -127,6 +143,20 @@ const externalVideoSchema = z
       "duration_seconds",
       value.duration,
       value.duration_seconds
+    );
+    addVideoAliasConflict(
+      context,
+      "duration",
+      "seconds",
+      value.duration,
+      value.seconds
+    );
+    addVideoAliasConflict(
+      context,
+      "duration_seconds",
+      "seconds",
+      value.duration_seconds,
+      value.seconds
     );
     addVideoAliasConflict(
       context,
@@ -217,7 +247,10 @@ export const postExternalVideoGenerations = withApiLogging(
       parsed.data.negativePrompt ?? parsed.data.negative_prompt;
     const generateAudio =
       parsed.data.generateAudio ?? parsed.data.generate_audio;
-    const duration = parsed.data.duration ?? parsed.data.duration_seconds;
+    const duration =
+      parsed.data.duration ??
+      parsed.data.duration_seconds ??
+      parsed.data.seconds;
     const aspectRatio = parsed.data.aspectRatio ?? parsed.data.aspect_ratio;
     if (duration === undefined || aspectRatio === undefined) {
       return openAIImageError("Missing required video parameters");
@@ -272,7 +305,7 @@ export const postExternalVideoGenerations = withApiLogging(
           apiKeyId: auth.apiKeyId,
         },
         {
-          requestId: request.headers.get("x-request-id") ?? undefined,
+          externalRequestId: request.headers.get("x-request-id") ?? undefined,
           // callback 仅存在于受信执行上下文，不进入领域输入或任务 metadata。
           callbacks: callbackUrl
             ? { videoCompletionUrl: callbackUrl }

@@ -56,7 +56,10 @@ export const getExternalVideoTask = withApiLogging(
           userId: auth.userId,
           apiKeyId: auth.apiKeyId,
         },
-        { requestId: request.headers.get("x-request-id") ?? undefined }
+        {
+          externalRequestId:
+            request.headers.get("x-request-id") ?? undefined,
+        }
       );
       return Response.json(
         {
