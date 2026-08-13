@@ -410,7 +410,7 @@ function parseCohorts(result: unknown): OperationsGrowthCohortRow[] {
 }
 
 /** 把唯一事务 execute 绑定为增长快照 reader。 */
-function createOperationsGrowthSnapshotReader(
+export function createOperationsGrowthSnapshotReader(
   execute: ExecuteSql
 ): OperationsGrowthSnapshotReader {
   return {

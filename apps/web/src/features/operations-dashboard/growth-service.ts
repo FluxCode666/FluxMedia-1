@@ -282,231 +282,245 @@ function createRetentionMetric(
 }
 
 /**
- * 读取用户增长模块的一致快照。
+ * 使用已绑定到调用方事务的 reader 组装用户增长快照。
+ *
+ * @param input 已由共享 strict schema 定义的范围与趋势粒度。
+ * @param timeZone 服务端应用时区，不接受客户端覆盖。
+ * @param reader 已绑定到同一只读数据库事务的增长 reader。
+ * @returns 含特殊状态、对比、完整趋势与 Cohort 矩阵的快照。
+ * @sideEffects 只读 reader，不开启事务也不写入业务事实。
+ * @failure epoch 未初始化返回 not_ready；范围或数据异常显式失败。
+ */
+export async function buildOperationsGrowthSnapshot(
+  input: OperationsDashboardQueryInput | unknown,
+  timeZone: string,
+  reader: OperationsGrowthSnapshotReader
+): Promise<OperationsGrowthSnapshot> {
+  const header = await reader.readHeader();
+  if (!header.epoch) {
+    throw new OperationsGrowthServiceError(
+      "not_ready",
+      "运营统计起点尚未初始化"
+    );
+  }
+  const epoch = header.epoch;
+  let range: ResolvedOperationsDashboardRange;
+  try {
+    range = resolveOperationsDashboardRange(input, {
+      timeZone,
+      asOf: header.asOf,
+      epochDate: epoch.appDate,
+    });
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw new OperationsGrowthServiceError(
+        "validation_error",
+        "运营总览查询范围无效"
+      );
+    }
+    throw error;
+  }
+
+  const currentRange = { dataStart: range.dataStart, end: range.end };
+  const previousRange = {
+    dataStart: range.previous.dataStart,
+    end: range.previous.end,
+  };
+  const readNewUsers = (
+    targetReader: OperationsGrowthSnapshotReader,
+    targetRange: OperationsGrowthRangeQuery
+  ) => targetReader.readNewUserCount(targetRange);
+  const readActivity =
+    (kind: "login" | "creation" | "payment") =>
+    (
+      targetReader: OperationsGrowthSnapshotReader,
+      targetRange: OperationsGrowthRangeQuery
+    ) =>
+      targetReader.readActivityUserCount(kind, targetRange);
+
+  const cumulativeUsers = requireCount(
+    await reader.readCumulativeUserCount(range.end),
+    "累计用户"
+  );
+  const previousCumulativeUsers = requireCount(
+    await reader.readCumulativeUserCount(range.previous.end),
+    "上期累计用户"
+  );
+  const newUsers = await readCountForAvailableRange(
+    reader,
+    currentRange,
+    readNewUsers
+  );
+  const previousNewUsers = await readCountForAvailableRange(
+    reader,
+    previousRange,
+    readNewUsers
+  );
+  const loginActiveUsers = await readCountForAvailableRange(
+    reader,
+    currentRange,
+    readActivity("login")
+  );
+  const previousLoginActiveUsers = await readCountForAvailableRange(
+    reader,
+    previousRange,
+    readActivity("login")
+  );
+  const creationActiveUsers = await readCountForAvailableRange(
+    reader,
+    currentRange,
+    readActivity("creation")
+  );
+  const previousCreationActiveUsers = await readCountForAvailableRange(
+    reader,
+    previousRange,
+    readActivity("creation")
+  );
+  const paymentActiveUsers = await readCountForAvailableRange(
+    reader,
+    currentRange,
+    readActivity("payment")
+  );
+  const previousPaymentActiveUsers = await readCountForAvailableRange(
+    reader,
+    previousRange,
+    readActivity("payment")
+  );
+
+  const newUserRows = await reader.readNewUserSeries(range.buckets);
+  const loginRows = await reader.readActivitySeries("login", range.buckets);
+  const creationRows = await reader.readActivitySeries(
+    "creation",
+    range.buckets
+  );
+  const paymentRows = await reader.readActivitySeries("payment", range.buckets);
+
+  const currentRawCohorts = await readCohortRows(
+    reader,
+    {
+      start: range.dataStart ?? range.start,
+      end: range.end,
+      epochStart: epoch.startsAt,
+      asOf: range.asOf,
+      timeZone: range.timeZone,
+    },
+    range.dataStart !== null
+  );
+  const previousRawCohorts = await readCohortRows(
+    reader,
+    {
+      start: range.previous.dataStart ?? range.previous.start,
+      end: range.previous.end,
+      epochStart: epoch.startsAt,
+      asOf: range.asOf,
+      timeZone: range.timeZone,
+    },
+    range.previous.dataStart !== null
+  );
+  const cohorts = buildCohortMatrix({
+    from: range.from,
+    to: range.to,
+    epochDate: range.epochDate,
+    asOfDate: range.today,
+    rows: currentRawCohorts,
+  });
+  const previousCohorts = buildCohortMatrix({
+    from: range.previous.from,
+    to: range.previous.to,
+    epochDate: range.epochDate,
+    asOfDate: range.today,
+    rows: previousRawCohorts,
+  });
+
+  const comparisonAvailability = range.previous.availability;
+  return {
+    generatedAt: range.asOf.toISOString(),
+    range,
+    metrics: {
+      cumulativeUsers: createCountMetric({
+        current: cumulativeUsers,
+        previous: previousCumulativeUsers,
+      }),
+      newUsers: createCountMetric({
+        current: newUsers,
+        previous: previousNewUsers,
+        currentAvailability: range.availability,
+        previousAvailability: comparisonAvailability,
+      }),
+      loginActiveUsers: createCountMetric({
+        current: loginActiveUsers,
+        previous: previousLoginActiveUsers,
+        currentAvailability: range.availability,
+        previousAvailability: comparisonAvailability,
+      }),
+      creationActiveUsers: createCountMetric({
+        current: creationActiveUsers,
+        previous: previousCreationActiveUsers,
+        currentAvailability: range.availability,
+        previousAvailability: comparisonAvailability,
+      }),
+      paymentActiveUsers: createCountMetric({
+        current: paymentActiveUsers,
+        previous: previousPaymentActiveUsers,
+        currentAvailability: range.availability,
+        previousAvailability: comparisonAvailability,
+      }),
+      d1Retention: createRetentionMetric(
+        cohorts,
+        previousCohorts,
+        "d1",
+        comparisonAvailability
+      ),
+      d7Retention: createRetentionMetric(
+        cohorts,
+        previousCohorts,
+        "d7",
+        comparisonAvailability
+      ),
+      d30Retention: createRetentionMetric(
+        cohorts,
+        previousCohorts,
+        "d30",
+        comparisonAvailability
+      ),
+    },
+    series: {
+      newUsers: fillOperationsCountSeries(
+        range.buckets,
+        toSeriesPoints(newUserRows)
+      ),
+      loginActiveUsers: fillOperationsCountSeries(
+        range.buckets,
+        toSeriesPoints(loginRows)
+      ),
+      creationActiveUsers: fillOperationsCountSeries(
+        range.buckets,
+        toSeriesPoints(creationRows)
+      ),
+      paymentActiveUsers: fillOperationsCountSeries(
+        range.buckets,
+        toSeriesPoints(paymentRows)
+      ),
+    },
+    cohorts,
+  };
+}
+
+/**
+ * 读取用户增长模块的独立一致快照。
  *
  * @param input 已由共享 strict schema 定义的范围与趋势粒度。
  * @param timeZone 服务端应用时区，不接受客户端覆盖。
  * @param repository 可注入的只读快照仓储。
  * @returns 含特殊状态、对比、完整趋势与 Cohort 矩阵的快照。
- * @sideEffects 只读数据库，不写入用户、事实或审计。
- * @failure epoch 未初始化返回 not_ready；范围或数据异常显式失败。
+ * @sideEffects 仅开启一次只读 repeatable-read 事务。
  */
 export async function loadOperationsGrowthSnapshot(
   input: OperationsDashboardQueryInput | unknown,
   timeZone: string,
   repository: OperationsGrowthRepository = databaseOperationsGrowthRepository
 ): Promise<OperationsGrowthSnapshot> {
-  return repository.withReadOnlySnapshot(async (reader) => {
-    const header = await reader.readHeader();
-    if (!header.epoch) {
-      throw new OperationsGrowthServiceError(
-        "not_ready",
-        "运营统计起点尚未初始化"
-      );
-    }
-    const epoch = header.epoch;
-    let range: ResolvedOperationsDashboardRange;
-    try {
-      range = resolveOperationsDashboardRange(input, {
-        timeZone,
-        asOf: header.asOf,
-        epochDate: epoch.appDate,
-      });
-    } catch (error) {
-      if (error instanceof RangeError) {
-        throw new OperationsGrowthServiceError(
-          "validation_error",
-          "运营总览查询范围无效"
-        );
-      }
-      throw error;
-    }
-
-    const currentRange = { dataStart: range.dataStart, end: range.end };
-    const previousRange = {
-      dataStart: range.previous.dataStart,
-      end: range.previous.end,
-    };
-    const readNewUsers = (
-      targetReader: OperationsGrowthSnapshotReader,
-      targetRange: OperationsGrowthRangeQuery
-    ) => targetReader.readNewUserCount(targetRange);
-    const readActivity =
-      (kind: "login" | "creation" | "payment") =>
-      (
-        targetReader: OperationsGrowthSnapshotReader,
-        targetRange: OperationsGrowthRangeQuery
-      ) =>
-        targetReader.readActivityUserCount(kind, targetRange);
-
-    const cumulativeUsers = requireCount(
-      await reader.readCumulativeUserCount(range.end),
-      "累计用户"
-    );
-    const previousCumulativeUsers = requireCount(
-      await reader.readCumulativeUserCount(range.previous.end),
-      "上期累计用户"
-    );
-    const newUsers = await readCountForAvailableRange(
-      reader,
-      currentRange,
-      readNewUsers
-    );
-    const previousNewUsers = await readCountForAvailableRange(
-      reader,
-      previousRange,
-      readNewUsers
-    );
-    const loginActiveUsers = await readCountForAvailableRange(
-      reader,
-      currentRange,
-      readActivity("login")
-    );
-    const previousLoginActiveUsers = await readCountForAvailableRange(
-      reader,
-      previousRange,
-      readActivity("login")
-    );
-    const creationActiveUsers = await readCountForAvailableRange(
-      reader,
-      currentRange,
-      readActivity("creation")
-    );
-    const previousCreationActiveUsers = await readCountForAvailableRange(
-      reader,
-      previousRange,
-      readActivity("creation")
-    );
-    const paymentActiveUsers = await readCountForAvailableRange(
-      reader,
-      currentRange,
-      readActivity("payment")
-    );
-    const previousPaymentActiveUsers = await readCountForAvailableRange(
-      reader,
-      previousRange,
-      readActivity("payment")
-    );
-
-    const newUserRows = await reader.readNewUserSeries(range.buckets);
-    const loginRows = await reader.readActivitySeries("login", range.buckets);
-    const creationRows = await reader.readActivitySeries(
-      "creation",
-      range.buckets
-    );
-    const paymentRows = await reader.readActivitySeries(
-      "payment",
-      range.buckets
-    );
-
-    const currentRawCohorts = await readCohortRows(
-      reader,
-      {
-        start: range.dataStart ?? range.start,
-        end: range.end,
-        epochStart: epoch.startsAt,
-        asOf: range.asOf,
-        timeZone: range.timeZone,
-      },
-      range.dataStart !== null
-    );
-    const previousRawCohorts = await readCohortRows(
-      reader,
-      {
-        start: range.previous.dataStart ?? range.previous.start,
-        end: range.previous.end,
-        epochStart: epoch.startsAt,
-        asOf: range.asOf,
-        timeZone: range.timeZone,
-      },
-      range.previous.dataStart !== null
-    );
-    const cohorts = buildCohortMatrix({
-      from: range.from,
-      to: range.to,
-      epochDate: range.epochDate,
-      asOfDate: range.today,
-      rows: currentRawCohorts,
-    });
-    const previousCohorts = buildCohortMatrix({
-      from: range.previous.from,
-      to: range.previous.to,
-      epochDate: range.epochDate,
-      asOfDate: range.today,
-      rows: previousRawCohorts,
-    });
-
-    const comparisonAvailability = range.previous.availability;
-    return {
-      generatedAt: range.asOf.toISOString(),
-      range,
-      metrics: {
-        cumulativeUsers: createCountMetric({
-          current: cumulativeUsers,
-          previous: previousCumulativeUsers,
-        }),
-        newUsers: createCountMetric({
-          current: newUsers,
-          previous: previousNewUsers,
-          currentAvailability: range.availability,
-          previousAvailability: comparisonAvailability,
-        }),
-        loginActiveUsers: createCountMetric({
-          current: loginActiveUsers,
-          previous: previousLoginActiveUsers,
-          currentAvailability: range.availability,
-          previousAvailability: comparisonAvailability,
-        }),
-        creationActiveUsers: createCountMetric({
-          current: creationActiveUsers,
-          previous: previousCreationActiveUsers,
-          currentAvailability: range.availability,
-          previousAvailability: comparisonAvailability,
-        }),
-        paymentActiveUsers: createCountMetric({
-          current: paymentActiveUsers,
-          previous: previousPaymentActiveUsers,
-          currentAvailability: range.availability,
-          previousAvailability: comparisonAvailability,
-        }),
-        d1Retention: createRetentionMetric(
-          cohorts,
-          previousCohorts,
-          "d1",
-          comparisonAvailability
-        ),
-        d7Retention: createRetentionMetric(
-          cohorts,
-          previousCohorts,
-          "d7",
-          comparisonAvailability
-        ),
-        d30Retention: createRetentionMetric(
-          cohorts,
-          previousCohorts,
-          "d30",
-          comparisonAvailability
-        ),
-      },
-      series: {
-        newUsers: fillOperationsCountSeries(
-          range.buckets,
-          toSeriesPoints(newUserRows)
-        ),
-        loginActiveUsers: fillOperationsCountSeries(
-          range.buckets,
-          toSeriesPoints(loginRows)
-        ),
-        creationActiveUsers: fillOperationsCountSeries(
-          range.buckets,
-          toSeriesPoints(creationRows)
-        ),
-        paymentActiveUsers: fillOperationsCountSeries(
-          range.buckets,
-          toSeriesPoints(paymentRows)
-        ),
-      },
-      cohorts,
-    };
-  });
+  return repository.withReadOnlySnapshot((reader) =>
+    buildOperationsGrowthSnapshot(input, timeZone, reader)
+  );
 }
