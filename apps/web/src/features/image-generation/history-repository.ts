@@ -20,7 +20,12 @@ import {
   extractGenerationReferenceImages,
   extractPromptRepairNotice,
 } from "./generation-metadata";
-import type { HistoryListQuery, HistoryRepository } from "./history-service";
+import type {
+  HistoryCountQuery,
+  HistoryListQuery,
+  HistoryRepository,
+  HistorySnapshotReader,
+} from "./history-service";
 import { buildVideoInputSummary } from "./video-input-lifecycle";
 import {
   buildVideoPublicStatusPredicate,
@@ -54,13 +59,17 @@ const modelOptionRowSchema = z.object({
   model: z.string().trim().min(1).max(240),
 });
 
+const countRowSchema = z.object({
+  total_count: z.coerce.number().int().nonnegative().safe(),
+});
+
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
   return value ? sql`true` : sql`false`;
 }
 
 /** 创建可选的用户本地日期半开区间谓词。 */
-function buildDatePredicate(input: HistoryListQuery, createdAt: SQL): SQL {
+function buildDatePredicate(input: HistoryCountQuery, createdAt: SQL): SQL {
   return sql`${input.start ? sql`${createdAt} >= ${input.start}` : sql`true`}
     and ${input.end ? sql`${createdAt} < ${input.end}` : sql`true`}
     and ${createdAt} <= ${input.asOf}`;
@@ -275,6 +284,27 @@ export function buildHistoryListSql(input: HistoryListQuery): SQL {
   `;
 }
 
+/**
+ * 构造与本人历史列表完全同口径的精确计数查询。
+ *
+ * WHY：图片与视频分表分别命中用户、日期和筛选索引，再合并两个标量；不把
+ * cursor 谓词带入总数，确保每一页显示的是当前快照内完整授权结果数。
+ */
+export function buildHistoryCountSql(input: HistoryCountQuery): SQL {
+  return sql`
+    select media_history_exact_count(
+      'owner',
+      ${input.userId},
+      ${input.type},
+      ${input.status},
+      ${input.model},
+      ${input.start},
+      ${input.end},
+      ${input.asOf}
+    ) as total_count
+  `;
+}
+
 /** 构造本人历史真实模型选项查询；UNION 去重且输出严格有界。 */
 export function buildHistoryModelOptionsSql(input: {
   userId: string;
@@ -301,86 +331,133 @@ export function buildHistoryModelOptionsSql(input: {
   `;
 }
 
-/** PostgreSQL 统一历史仓储实现。 */
-export const databaseHistoryRepository: HistoryRepository = {
-  async readRecords(query) {
-    const rows = z
-      .array(historyListRowSchema)
-      .parse(extractExecuteRows(await db.execute(buildHistoryListSql(query))));
-    return rows.map((row) => {
-      const common = {
-        id: row.id,
-        prompt: row.prompt,
-        model: row.model,
-        status: row.status,
-        creditsConsumed: row.credits_consumed,
-        rawError: row.error,
-        createdAt: row.created_at,
-        completedAt: row.completed_at,
-      };
-      if (row.record_kind === "image") {
-        if (!row.size) throw new RangeError("Image history size is missing");
+type ExecuteSql = (query: SQL) => Promise<unknown>;
+
+/** 生产与仓储测试共用的最小 PostgreSQL 事务端口。 */
+export interface HistoryTransactionDatabase {
+  transaction<T>(
+    work: (transaction: { execute: ExecuteSql }) => Promise<T>,
+    config: {
+      isolationLevel: "repeatable read";
+      accessMode: "read only";
+    }
+  ): Promise<T>;
+}
+
+/** 从唯一事务 execute 创建本人历史读取器，禁止查询逃逸到全局连接。 */
+function createHistorySnapshotReader(
+  execute: ExecuteSql
+): HistorySnapshotReader {
+  return {
+    async countRecords(query) {
+      const row = countRowSchema.parse(
+        extractExecuteRows(await execute(buildHistoryCountSql(query)))[0]
+      );
+      return row.total_count;
+    },
+
+    async readRecords(query) {
+      const rows = z
+        .array(historyListRowSchema)
+        .parse(extractExecuteRows(await execute(buildHistoryListSql(query))));
+      return rows.map((row) => {
+        const common = {
+          id: row.id,
+          prompt: row.prompt,
+          model: row.model,
+          status: row.status,
+          creditsConsumed: row.credits_consumed,
+          rawError: row.error,
+          createdAt: row.created_at,
+          completedAt: row.completed_at,
+        };
+        if (row.record_kind === "image") {
+          if (!row.size) throw new RangeError("Image history size is missing");
+          return {
+            ...common,
+            kind: "image" as const,
+            revisedPrompt: row.revised_prompt,
+            size: row.size,
+            creditDetails: extractGenerationCreditDetails(
+              row.metadata,
+              row.credits_consumed
+            ),
+            promptRepairNotice: extractPromptRepairNotice(row.metadata),
+            referenceImages: extractGenerationReferenceImages(row.metadata)
+              .slice(0, 50)
+              .map(
+                ({
+                  storageBucket: _storageBucket,
+                  storageKey: _storageKey,
+                  ...safe
+                }) => safe
+              ),
+            imageUrl: buildSignedStorageImageUrl(
+              row.storage_key,
+              row.storage_bucket
+            ),
+          };
+        }
+        if (
+          !row.resolution ||
+          !row.duration_seconds ||
+          !row.aspect_ratio ||
+          row.generate_audio === null
+        ) {
+          throw new RangeError("Video history details are incomplete");
+        }
+        const inputManifest = videoInputManifestSchema.safeParse(
+          row.input_manifest ?? {}
+        );
+        if (!inputManifest.success) {
+          throw new RangeError("Video history input manifest is invalid");
+        }
         return {
           ...common,
-          kind: "image" as const,
-          revisedPrompt: row.revised_prompt,
-          size: row.size,
-          creditDetails: extractGenerationCreditDetails(
-            row.metadata,
-            row.credits_consumed
-          ),
-          promptRepairNotice: extractPromptRepairNotice(row.metadata),
-          referenceImages: extractGenerationReferenceImages(row.metadata)
-            .slice(0, 50)
-            .map(
-              ({
-                storageBucket: _storageBucket,
-                storageKey: _storageKey,
-                ...safe
-              }) => safe
-            ),
-          imageUrl: buildSignedStorageImageUrl(
+          kind: "video" as const,
+          resolution: row.resolution,
+          duration: row.duration_seconds,
+          aspectRatio: row.aspect_ratio,
+          generateAudio: row.generate_audio,
+          input: buildVideoInputSummary(inputManifest.data),
+          videoUrl: buildSignedStorageImageUrl(
             row.storage_key,
             row.storage_bucket
           ),
         };
-      }
-      if (
-        !row.resolution ||
-        !row.duration_seconds ||
-        !row.aspect_ratio ||
-        row.generate_audio === null
-      ) {
-        throw new RangeError("Video history details are incomplete");
-      }
-      const inputManifest = videoInputManifestSchema.safeParse(
-        row.input_manifest ?? {}
-      );
-      if (!inputManifest.success) {
-        throw new RangeError("Video history input manifest is invalid");
-      }
-      return {
-        ...common,
-        kind: "video" as const,
-        resolution: row.resolution,
-        duration: row.duration_seconds,
-        aspectRatio: row.aspect_ratio,
-        generateAudio: row.generate_audio,
-        input: buildVideoInputSummary(inputManifest.data),
-        videoUrl: buildSignedStorageImageUrl(
-          row.storage_key,
-          row.storage_bucket
-        ),
-      };
-    });
-  },
+      });
+    },
 
-  async readModelOptions(input) {
-    return z
-      .array(modelOptionRowSchema)
-      .parse(
-        extractExecuteRows(await db.execute(buildHistoryModelOptionsSql(input)))
-      )
-      .map((row) => row.model);
-  },
-};
+    async readModelOptions(input) {
+      return z
+        .array(modelOptionRowSchema)
+        .parse(
+          extractExecuteRows(await execute(buildHistoryModelOptionsSql(input)))
+        )
+        .map((row) => row.model);
+    },
+  };
+}
+
+/** 从数据库端口创建每次读取都使用只读 repeatable-read 的本人历史仓储。 */
+export function createHistoryRepository(
+  database: HistoryTransactionDatabase
+): HistoryRepository {
+  return {
+    withReadOnlySnapshot<T>(
+      work: (reader: HistorySnapshotReader) => Promise<T>
+    ): Promise<T> {
+      return database.transaction(
+        async (transaction) =>
+          work(
+            createHistorySnapshotReader((query) => transaction.execute(query))
+          ),
+        { isolationLevel: "repeatable read", accessMode: "read only" }
+      );
+    },
+  };
+}
+
+/** PostgreSQL 统一历史仓储实现。 */
+export const databaseHistoryRepository: HistoryRepository =
+  createHistoryRepository(db as unknown as HistoryTransactionDatabase);

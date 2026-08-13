@@ -16,7 +16,12 @@ export const metadata = {
   description: "Create and manage FluxMedia API keys",
 };
 
-/** 渲染当前登录用户的 API 密钥管理页面。 */
+/**
+ * 渲染当前登录用户的 API 密钥管理页面。
+ *
+ * @returns 带用户时区的 API Key 管理区。
+ * @sideEffects 读取会话、文档地址和用户时区；未登录时重定向。
+ */
 export default async function ExternalApiPage() {
   const [session, locale, baseUrl] = await Promise.all([
     getServerSession(),
@@ -31,7 +36,6 @@ export default async function ExternalApiPage() {
     getTranslations("Settings.externalApi"),
     getUserTimeZone(session.user.id),
   ]);
-
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div>

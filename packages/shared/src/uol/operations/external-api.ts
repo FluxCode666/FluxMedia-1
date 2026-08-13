@@ -14,7 +14,6 @@
  * 注意：所有 execute 函数当前为存根实现，待后续接入实际业务逻辑。
  */
 import { z } from "zod";
-
 import { defineOperation } from "../registry";
 
 // ---------------------------------------------------------------------------
@@ -162,6 +161,15 @@ export type ExternalApiKeyListItem = z.infer<
   typeof externalApiKeyListItemSchema
 >;
 
+export const externalApiKeyListInputSchema = z.object({}).strict();
+
+export const externalApiKeyListOutputSchema = z
+  .object({
+    keys: z.array(externalApiKeyListItemSchema),
+    editableGroups: z.array(externalApiKeyGroupSchema),
+  })
+  .strict();
+
 // ---------------------------------------------------------------------------
 // 9. externalApi.listKeys - getExternalApiKeys (session user, read)
 // ---------------------------------------------------------------------------
@@ -169,14 +177,9 @@ export const listKeys = defineOperation({
   name: "externalApi.listKeys",
   domain: "external-api",
   title: "List API Keys",
-  description: "获取当前用户的外部 API Key 列表。需要登录认证。只读操作。",
-  input: z.object({}).strict(),
-  output: z
-    .object({
-      keys: z.array(externalApiKeyListItemSchema),
-      editableGroups: z.array(externalApiKeyGroupSchema),
-    })
-    .strict(),
+  description: "获取当前用户的全部外部 API Key。需要登录认证。只读操作。",
+  input: externalApiKeyListInputSchema,
+  output: externalApiKeyListOutputSchema,
   access: { kind: "user" },
   agentExposure: "human-only",
   readOnly: true,

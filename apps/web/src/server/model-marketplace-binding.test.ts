@@ -15,6 +15,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/features/model-configuration/service", () => ({
   productionModelConfigurationService: {
     read: vi.fn(),
+    readPage: vi.fn(),
     updateEntry: vi.fn(),
   },
 }));
@@ -25,6 +26,7 @@ vi.mock("@/features/model-marketplace/service", () => ({
 }));
 
 import type {
+  ModelConfigurationListOutput,
   ModelConfigurationSnapshot,
   ModelMarketplacePublicItem,
 } from "@repo/shared/model-marketplace";
@@ -189,8 +191,19 @@ function createPublicVideoItem(
  * @returns 四个生产读取/写入入口及其 Vitest 调用记录。
  */
 function createDependencies(): ModelMarketplaceOperationBindingDependencies {
+  const snapshot = createManagementSnapshot();
+  const page: ModelConfigurationListOutput = {
+    records: snapshot.entries,
+    page: 1,
+    pageSize: 20,
+    totalCount: snapshot.entries.length,
+    totalPages: 1,
+    canEdit: snapshot.canEdit,
+    runtimeCatalogStatus: snapshot.runtimeCatalogStatus,
+  };
   return {
-    readModelConfiguration: vi.fn(async () => createManagementSnapshot()),
+    readModelConfiguration: vi.fn(async () => snapshot),
+    readModelConfigurationPage: vi.fn(async () => page),
     updateModelConfigurationEntry: vi.fn(async () => ({
       category: "image" as const,
       configKey: "gpt-image-2",
@@ -221,6 +234,26 @@ describe("模型配置与模型广场 UOL binding", () => {
     expect(output).toEqual(createManagementSnapshot());
     expect(dependencies.readModelConfiguration).toHaveBeenCalledWith(ADMIN);
     expect(JSON.stringify(output)).not.toMatch(/"bucket"|"key"/);
+  });
+
+  it("分页管理读取透传查询条件并返回统一分页信封", async () => {
+    const output = await invokeOperation<ModelConfigurationListOutput>(
+      "settings.listModelConfigurations",
+      { page: 1, pageSize: 20, query: "gpt", category: "image" },
+      ADMIN,
+      { requestId: "binding-list" }
+    );
+
+    expect(output).toMatchObject({
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
+      totalPages: 1,
+    });
+    expect(dependencies.readModelConfigurationPage).toHaveBeenCalledWith(
+      ADMIN,
+      { page: 1, pageSize: 20, query: "gpt", category: "image" }
+    );
   });
 
   it("管理运行时目录不可用时仍返回降级快照", async () => {

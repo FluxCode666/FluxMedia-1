@@ -1,11 +1,14 @@
 /**
  * UOL Analytics 操作定义。
  *
- * 注册本人摘要、趋势与数据看板三个只读能力；数据库实现由 apps/web 延迟绑定，确保
+ * 注册本人摘要、趋势、数据看板与管理员用户搜索只读能力；数据库实现由 apps/web 延迟绑定，确保
  * Web、Server Action、MCP 和内置 Agent 共享同一输入输出 schema、权限与 readiness
  * 语义。
  */
 import {
+  adminDataDashboardInputSchema,
+  adminDataDashboardUserSearchInputSchema,
+  adminDataDashboardUserSearchOutputSchema,
   dataDashboardInputSchema,
   dataDashboardOutputSchema,
   usageSummaryInputSchema,
@@ -32,6 +35,44 @@ export const getMyDataDashboard = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: analytics.getMyDataDashboard");
+  },
+});
+
+/** 获取全站生图、生视频与积分用量的管理员数据看板。 */
+export const getAdminDataDashboard = defineOperation({
+  name: "analytics.getAdminDataDashboard",
+  domain: "analytics",
+  title: "Get Admin Data Dashboard",
+  description: "获取全站或指定用户最多 30 个应用时区自然日内的生成数据看板。",
+  input: adminDataDashboardInputSchema,
+  output: dataDashboardOutputSchema,
+  access: { kind: "roles", roles: ["admin", "super_admin"] },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: analytics.getAdminDataDashboard");
+  },
+});
+
+/** 为管理员数据看板下拉搜索用户名称或邮箱。 */
+export const searchAdminDataDashboardUsers = defineOperation({
+  name: "analytics.searchAdminDataDashboardUsers",
+  domain: "analytics",
+  title: "Search Admin Data Dashboard Users",
+  description:
+    "按用户名称或邮箱片段搜索管理员数据看板筛选项，返回有界的用户 ID、名称和邮箱。",
+  input: adminDataDashboardUserSearchInputSchema,
+  output: adminDataDashboardUserSearchOutputSchema,
+  access: { kind: "roles", roles: ["admin", "super_admin"] },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: analytics.searchAdminDataDashboardUsers");
   },
 });
 

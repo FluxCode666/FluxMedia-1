@@ -36,12 +36,8 @@ import {
 } from "@repo/ui/components/dropdown-menu";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-} from "@repo/ui/components/pagination";
+import { PageSizeSelect } from "@repo/ui/components/page-size-select";
+import { PaginationControls } from "@repo/ui/components/pagination-controls";
 import {
   Select,
   SelectContent,
@@ -81,7 +77,15 @@ import {
   XCircle,
 } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { toast } from "sonner";
 import {
   APP_USER_ROLES,
@@ -95,6 +99,7 @@ import type {
   ModerationBlockRiskLevel,
   ModerationPolicySource,
 } from "../../../moderation/policy-contract";
+import { getPaginationWindow } from "../../../pagination/state";
 import { buildStorageThumbnailUrl } from "../../../storage/signed-url";
 import { formatDateInTimeZone } from "../../../time-zone";
 import {
@@ -115,6 +120,32 @@ import { UserConcurrencyControl } from "./user-concurrency-control";
 
 type UserStatusFilter = "all" | "active" | "banned" | "unverified";
 type CreditsStatusFilter = "all" | "active" | "frozen";
+
+/** 将 URL 页码收窄为安全正整数，非法值回退到默认值。 */
+function parseUrlPositiveInteger(value: string | null, fallback: number) {
+  return value && /^\d+$/.test(value) && Number.isSafeInteger(Number(value))
+    ? Math.max(1, Number(value))
+    : fallback;
+}
+
+/** 仅接受产品确认的 10/20/50 页大小。 */
+function parseAdminUserPageSize(value: string | null): 10 | 20 | 50 {
+  if (value === "10") return 10;
+  if (value === "50") return 50;
+  return 20;
+}
+
+/** 将 URL 用户状态筛选收窄到白名单。 */
+function parseUserStatus(value: string | null): UserStatusFilter {
+  return value === "active" || value === "banned" || value === "unverified"
+    ? value
+    : "all";
+}
+
+/** 将 URL 积分状态筛选收窄到白名单。 */
+function parseCreditsStatus(value: string | null): CreditsStatusFilter {
+  return value === "active" || value === "frozen" ? value : "all";
+}
 
 type UserRow = {
   id: string;
@@ -222,7 +253,7 @@ type UserDetail = {
   };
 };
 
-const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 const ROLE_OPTIONS: Array<{ value: AppUserRole; label: string }> =
   APP_USER_ROLES.map((role) => ({
     value: role,
@@ -423,6 +454,64 @@ export function AdminUsersManagement({
   canManageRoles?: boolean;
   timeZone?: string;
 }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [isNavigating, startNavigation] = useTransition();
+  const requestedPage = parseUrlPositiveInteger(searchParams.get("page"), 1);
+  const requestedPageSize = parseAdminUserPageSize(
+    searchParams.get("pageSize")
+  );
+  const requestedQuery = searchParams.get("query")?.trim() ?? "";
+  const requestedStatus = parseUserStatus(searchParams.get("status"));
+  const requestedCreditsStatus = parseCreditsStatus(
+    searchParams.get("creditsStatus")
+  );
+
+  /** 更新用户列表归属 URL；保留未知安全参数，筛选或页大小变化回第一页。 */
+  const replaceListUrl = (update: {
+    page?: number;
+    pageSize?: number;
+    query?: string;
+    status?: UserStatusFilter;
+    creditsStatus?: CreditsStatusFilter;
+  }) => {
+    const next = new URLSearchParams(searchParams.toString());
+    const isCriteriaChange =
+      update.pageSize !== undefined ||
+      update.query !== undefined ||
+      update.status !== undefined ||
+      update.creditsStatus !== undefined;
+    if (isCriteriaChange) next.delete("page");
+    if (update.page !== undefined && !isCriteriaChange) {
+      if (update.page === 1) next.delete("page");
+      else next.set("page", String(update.page));
+    }
+    if (update.pageSize !== undefined) {
+      if (update.pageSize === 20) next.delete("pageSize");
+      else next.set("pageSize", String(update.pageSize));
+    }
+    if (update.query !== undefined) {
+      if (update.query) next.set("query", update.query);
+      else next.delete("query");
+    }
+    if (update.status !== undefined) {
+      if (update.status === "all") next.delete("status");
+      else next.set("status", update.status);
+    }
+    if (update.creditsStatus !== undefined) {
+      if (update.creditsStatus === "all") next.delete("creditsStatus");
+      else next.set("creditsStatus", update.creditsStatus);
+    }
+    next.sort();
+    const queryString = next.toString();
+    const href = queryString ? `${pathname}?${queryString}` : pathname;
+    startNavigation(() => {
+      router.replace(href, {
+        scroll: false,
+      });
+    });
+  };
   const [users, setUsers] = useState<UserRow[]>([]);
   const [stats, setStats] = useState({
     totalUsers: 0,
@@ -432,14 +521,12 @@ export function AdminUsersManagement({
   const [pagination, setPagination] = useState({
     page: 1,
     pageSize: 20,
-    total: 0,
+    totalCount: 0,
+    totalPages: 1,
   });
   const [isLoading, setIsLoading] = useState(true);
-  const [queryInput, setQueryInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<UserStatusFilter>("all");
-  const [creditsStatus, setCreditsStatus] =
-    useState<CreditsStatusFilter>("all");
+  const [queryInput, setQueryInput] = useState(requestedQuery);
+  const listRequestGenerationRef = useRef(0);
 
   const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
   const [detail, setDetail] = useState<UserDetail | null>(null);
@@ -501,29 +588,29 @@ export function AdminUsersManagement({
   const [passwordReason, setPasswordReason] = useState("");
   const [isSettingPassword, setIsSettingPassword] = useState(false);
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(pagination.total / pagination.pageSize)
-  );
   const startIndex =
-    pagination.total === 0
+    pagination.totalCount === 0
       ? 0
       : (pagination.page - 1) * pagination.pageSize + 1;
   const endIndex = Math.min(
     pagination.page * pagination.pageSize,
-    pagination.total
+    pagination.totalCount
   );
 
-  const loadUsers = async (nextPage = pagination.page) => {
+  /** 读取当前 URL 对应用户页，并用世代号隔离快速导航产生的过期响应。 */
+  const loadUsers = useCallback(async () => {
+    const requestGeneration = listRequestGenerationRef.current + 1;
+    listRequestGenerationRef.current = requestGeneration;
     setIsLoading(true);
     try {
       const result = await getAllUsersAction({
-        query,
-        page: nextPage,
-        pageSize: pagination.pageSize,
-        status,
-        creditsStatus,
+        query: requestedQuery,
+        page: requestedPage,
+        pageSize: requestedPageSize,
+        status: requestedStatus,
+        creditsStatus: requestedCreditsStatus,
       });
+      if (requestGeneration !== listRequestGenerationRef.current) return;
       if (result?.data) {
         setUsers(result.data.users as UserRow[]);
         setStats(result.data.stats);
@@ -532,18 +619,28 @@ export function AdminUsersManagement({
         toast.error(result.serverError);
       }
     } catch (error) {
+      if (requestGeneration !== listRequestGenerationRef.current) return;
       toast.error(error instanceof Error ? error.message : "加载用户列表失败");
     } finally {
-      setIsLoading(false);
+      if (requestGeneration === listRequestGenerationRef.current) {
+        setIsLoading(false);
+      }
     }
-  };
+  }, [
+    requestedCreditsStatus,
+    requestedPage,
+    requestedPageSize,
+    requestedQuery,
+    requestedStatus,
+  ]);
 
   useEffect(() => {
-    void loadUsers(1);
-  }, [query, status, creditsStatus, pagination.pageSize]);
+    setQueryInput(requestedQuery);
+    void loadUsers();
+  }, [loadUsers, requestedQuery]);
 
   const reloadCurrent = async () => {
-    await loadUsers(pagination.page);
+    await loadUsers();
     if (selectedUser && detailOpen) {
       await loadDetail(selectedUser.id, false);
     }
@@ -675,7 +772,8 @@ export function AdminUsersManagement({
       if (result?.data) {
         toast.success(result.data.message);
         setCreateOpen(false);
-        await loadUsers(1);
+        if (requestedPage === 1) await loadUsers();
+        else replaceListUrl({ page: 1 });
       } else if (result?.serverError) {
         toast.error(result.serverError);
       }
@@ -763,14 +861,17 @@ export function AdminUsersManagement({
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
-    setQuery(queryInput.trim());
+    replaceListUrl({ page: 1, query: queryInput.trim() });
   };
 
   const clearFilters = () => {
     setQueryInput("");
-    setQuery("");
-    setStatus("all");
-    setCreditsStatus("all");
+    replaceListUrl({
+      page: 1,
+      query: "",
+      status: "all",
+      creditsStatus: "all",
+    });
   };
 
   const handleGrant = async () => {
@@ -1065,8 +1166,13 @@ export function AdminUsersManagement({
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             <Select
-              value={status}
-              onValueChange={(value) => setStatus(value as UserStatusFilter)}
+              value={requestedStatus}
+              onValueChange={(value) =>
+                replaceListUrl({
+                  page: 1,
+                  status: value as UserStatusFilter,
+                })
+              }
             >
               <SelectTrigger>
                 <SelectValue />
@@ -1079,9 +1185,12 @@ export function AdminUsersManagement({
               </SelectContent>
             </Select>
             <Select
-              value={creditsStatus}
+              value={requestedCreditsStatus}
               onValueChange={(value) =>
-                setCreditsStatus(value as CreditsStatusFilter)
+                replaceListUrl({
+                  page: 1,
+                  creditsStatus: value as CreditsStatusFilter,
+                })
               }
             >
               <SelectTrigger>
@@ -1093,27 +1202,6 @@ export function AdminUsersManagement({
                 <SelectItem value="frozen">积分冻结</SelectItem>
               </SelectContent>
             </Select>
-            <Select
-              value={String(pagination.pageSize)}
-              onValueChange={(value) =>
-                setPagination((current) => ({
-                  ...current,
-                  page: 1,
-                  pageSize: Number(value),
-                }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PAGE_SIZE_OPTIONS.map((size) => (
-                  <SelectItem key={size} value={String(size)}>
-                    每页 {size} 条
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
         </CardContent>
       </Card>
@@ -1123,8 +1211,8 @@ export function AdminUsersManagement({
           <div className="space-y-1">
             <CardTitle>用户列表</CardTitle>
             <p className="text-sm text-muted-foreground">
-              {pagination.total > 0
-                ? `显示 ${startIndex}-${endIndex} / 共 ${pagination.total} 位`
+              {pagination.totalCount > 0
+                ? `显示 ${startIndex}-${endIndex} / 共 ${pagination.totalCount} 位`
                 : "没有匹配用户"}
             </p>
           </div>
@@ -1347,38 +1435,37 @@ export function AdminUsersManagement({
           )}
 
           <div className="mt-4 flex flex-col gap-3 border-t pt-4 md:flex-row md:items-center md:justify-between">
-            <p className="text-sm text-muted-foreground">
-              第 {pagination.page} / {totalPages} 页
-            </p>
-            <Pagination
-              aria-label="用户列表分页"
-              className="mx-0 w-auto justify-end"
-            >
-              <PaginationContent className="gap-2">
-                <PaginationItem>
-                  <PaginationLink asChild size="default">
-                    <button
-                      disabled={isLoading || pagination.page <= 1}
-                      onClick={() => void loadUsers(pagination.page - 1)}
-                      type="button"
-                    >
-                      上一页
-                    </button>
-                  </PaginationLink>
-                </PaginationItem>
-                <PaginationItem>
-                  <PaginationLink asChild size="default">
-                    <button
-                      disabled={isLoading || pagination.page >= totalPages}
-                      onClick={() => void loadUsers(pagination.page + 1)}
-                      type="button"
-                    >
-                      下一页
-                    </button>
-                  </PaginationLink>
-                </PaginationItem>
-              </PaginationContent>
-            </Pagination>
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-muted-foreground">
+                共 {pagination.totalCount} 条记录
+              </p>
+              <PageSizeSelect
+                disabled={isLoading || isNavigating}
+                itemSuffix=" 条"
+                label="每页条数"
+                onValueChange={(pageSize) => replaceListUrl({ pageSize })}
+                options={PAGE_SIZE_OPTIONS}
+                value={requestedPageSize}
+              />
+            </div>
+            <PaginationControls
+              ariaLabel="用户列表分页"
+              className="justify-end"
+              currentPageLabelTemplate="第 {page} 页，当前页"
+              disabled={isLoading || isNavigating}
+              items={getPaginationWindow(
+                pagination.page,
+                pagination.totalPages
+              )}
+              mobilePageLabel={`第 ${pagination.page} / ${pagination.totalPages} 页`}
+              nextLabel="下一页"
+              onPageChange={(page) => replaceListUrl({ page })}
+              page={pagination.page}
+              pageLabelTemplate="前往第 {page} 页"
+              pageSelectLabel="选择用户列表页码"
+              previousLabel="上一页"
+              totalPages={pagination.totalPages}
+            />
           </div>
         </CardContent>
       </Card>

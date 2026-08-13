@@ -27,6 +27,7 @@ export type OperationDomain =
   | "storage"
   | "moderation"
   | "external-api"
+  | "content"
   | "support";
 
 /**

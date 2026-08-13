@@ -2,7 +2,16 @@ import { siteConfig } from "@repo/shared/config";
 import { Separator } from "@repo/ui/components/separator";
 import type { Metadata } from "next";
 import { BreadcrumbJsonLd } from "@/components/seo/json-ld";
-import { getBlogPosts } from "@/lib/source";
+import { loadBlogIndexPageData } from "@/features/content/content-index-page-data";
+import {
+  buildContentIndexPageSizeHref,
+  type ContentIndexSearchParams,
+  contentPaginationNames,
+  parseContentIndexPagination,
+} from "@/features/content/content-index-pagination";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { loadPaginationConfig } from "@/features/pagination/server";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
 
 import { BlogPostCard } from "./blog-post-card";
 
@@ -49,18 +58,27 @@ export async function generateMetadata({
  */
 export default async function BlogPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ locale: string }>;
+  searchParams: Promise<ContentIndexSearchParams>;
 }) {
-  const { locale } = await params;
-  const posts = getBlogPosts(locale);
-
-  // 按日期排序（最新的在前）
-  const sortedPosts = posts.sort((a, b) => {
-    const dateA = new Date(a.date);
-    const dateB = new Date(b.date);
-    return dateB.getTime() - dateA.getTime();
+  const [{ locale }, rawSearchParams, paginationConfig] = await Promise.all([
+    params,
+    searchParams,
+    loadPaginationConfig(),
+  ]);
+  const safeLocale = locale === "zh" ? "zh" : "en";
+  const requested = parseContentIndexPagination(
+    rawSearchParams,
+    paginationConfig
+  );
+  const result = await loadBlogIndexPageData({
+    locale: safeLocale,
+    page: requested.page,
+    pageSize: requested.pageSize,
   });
+  const pathname = `/${safeLocale}/blog`;
 
   return (
     <div className="container mx-auto max-w-5xl py-20">
@@ -88,19 +106,14 @@ export default async function BlogPage({
       </div>
 
       {/* Posts List */}
-      {sortedPosts.length > 0 ? (
+      {result.records.length > 0 ? (
         <div className="space-y-12">
-          {sortedPosts.map((post, index) => {
-            // 从路径中提取 slug
-            const pathParts = post.info.path.split("/");
-            const fileName = pathParts[pathParts.length - 1] ?? "";
-            const slug = fileName.replace(/\.mdx$/, "");
-
+          {result.records.map((post, index) => {
             return (
               // 列表项入场错峰:按索引 70ms 递增(封顶 6 档),fill-mode 用
               // backwards 保证延迟期间停留在动画首帧(透明),避免闪现跳变。
               <div
-                key={post.info.path}
+                key={post.slug}
                 className="animate-in fade-in slide-in-from-bottom-2 duration-400 motion-reduce:animate-none"
                 style={{
                   animationDelay: `${Math.min(index, 6) * 70}ms`,
@@ -108,18 +121,14 @@ export default async function BlogPage({
                 }}
               >
                 <BlogPostCard
-                  slug={slug}
+                  slug={post.slug}
                   title={post.title}
                   description={post.description}
-                  date={
-                    typeof post.date === "string"
-                      ? post.date
-                      : (post.date.toISOString().split("T")[0] ?? "")
-                  }
+                  date={post.date}
                   author={post.author}
                   tags={post.tags}
                 />
-                {index < sortedPosts.length - 1 && (
+                {index < result.records.length - 1 && (
                   <Separator className="mt-12" />
                 )}
               </div>
@@ -131,6 +140,45 @@ export default async function BlogPage({
           {locale === "zh" ? "暂无博客文章" : "No blog posts yet"}
         </div>
       )}
+      <div className="mt-12 flex flex-col gap-4 border-t pt-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <span>
+            {safeLocale === "zh"
+              ? `共 ${result.totalCount} 篇文章`
+              : `${result.totalCount} posts total`}
+          </span>
+          <UrlPageSizeSelect
+            value={result.pageSize}
+            options={paginationConfig.pageSizeOptions.map((pageSize) => ({
+              size: pageSize,
+              href: buildContentIndexPageSizeHref(
+                pathname,
+                rawSearchParams,
+                pageSize
+              ),
+            }))}
+            label={safeLocale === "zh" ? "每页文章数" : "Posts per page"}
+            itemSuffix={safeLocale === "zh" ? " 篇" : " / page"}
+          />
+        </div>
+        <UrlPaginationControls
+          page={result.page}
+          totalPages={result.totalPages}
+          names={contentPaginationNames}
+          ariaLabel={safeLocale === "zh" ? "博客分页" : "Blog pagination"}
+          pageSelectLabel={safeLocale === "zh" ? "选择页码" : "Select page"}
+          previousLabel={safeLocale === "zh" ? "上一页" : "Previous"}
+          nextLabel={safeLocale === "zh" ? "下一页" : "Next"}
+          pageLabelTemplate={
+            safeLocale === "zh" ? "前往第 {page} 页" : "Go to page {page}"
+          }
+          currentPageLabelTemplate={
+            safeLocale === "zh"
+              ? "第 {page} 页，当前页"
+              : "Page {page}, current page"
+          }
+        />
+      </div>
     </div>
   );
 }

@@ -10,6 +10,8 @@
 
 // 图像生成域
 import "./image-generation";
+// 管理状态页历史错误（仅人工管理员）
+import "./admin-status";
 // 媒体资源限制与用户并发覆盖
 import "./media-limits";
 // 视频生成与查询（与图片共享 image-generation 域）
@@ -37,6 +39,7 @@ import "./external-api";
 // 模型配置与模型广场（人工管理写入、system-only 公开读取）
 import "./model-marketplace";
 
+export { listAdminStatusErrors } from "./admin-status";
 export {
   adobeCredentialHealthCheck,
   adobeCredentialHealthCleanup,
@@ -61,8 +64,21 @@ export {
   homepageSlaVisibilityOutputSchema,
 } from "./homepage-reliability";
 export {
+  type AdminPoolGroupListInput,
+  type AdminPoolGroupListOutput,
+  type AdminPoolMemberListInput,
+  type AdminPoolMemberListOutput,
+  adminPoolGroupListInputSchema,
+  adminPoolGroupListOutputSchema,
+  adminPoolMemberListInputSchema,
+  adminPoolMemberListOutputSchema,
+  listAdminGroups,
+  listAdminMembers,
+} from "./image-backend-pool";
+export {
   imageGenerate,
   imageGetAdminHistoryRequestSnapshot,
+  imageMaintainHistoryCountProjection,
 } from "./image-generation";
 export {
   mediaLimitsGetEffective,
@@ -73,6 +89,7 @@ export {
   modelMarketplaceListPublicModels,
   modelMarketplacePublicCatalogOutputSchema,
   settingsGetModelConfiguration,
+  settingsListModelConfigurations,
   settingsUpdateModelConfigurationEntry,
 } from "./model-marketplace";
 export {
@@ -94,8 +111,20 @@ export {
 
 // 客服支持域
 import "./support";
+
+export {
+  getAdminTicketDetail,
+  getAllTickets,
+  getMyTickets,
+  getTicketDetail,
+  markAdminTicketSeen,
+  markMyTicketSeen,
+} from "./support";
+
 // 用户控制台统计
 import "./analytics";
+// 公开内容索引域
+import "./content";
 // 管理端支付概览与充值订单
 import "./payment";
 // 推广码、归因与首充奖励看板
@@ -106,5 +135,6 @@ export {
   fulfillCreemReferralFirstPayment,
   fulfillEpayReferralFirstPayment,
   getMyReferralDashboard,
+  listMyReferralRelationships,
   referralDashboardOutputSchema,
 } from "./referrals";

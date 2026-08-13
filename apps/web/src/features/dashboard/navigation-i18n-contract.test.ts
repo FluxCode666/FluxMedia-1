@@ -28,4 +28,13 @@ describe("控制台生成入口多语言契约", () => {
       ["/dashboard", "/dashboard/analytics"]
     );
   });
+
+  it("为管理端全站数据看板提供独立导航与页面标题", () => {
+    expect(enMessages.Dashboard.nav.adminAnalytics).toBe("Data Dashboard");
+    expect(zhMessages.Dashboard.nav.adminAnalytics).toBe("数据看板");
+    expect(enMessages.Dashboard.pages.adminAnalytics).toBe("Data Dashboard");
+    expect(zhMessages.Dashboard.pages.adminAnalytics).toBe("数据看板");
+    expect(zhMessages.AdminDataDashboard.charts.images).toBe("生图数量");
+    expect(zhMessages.AdminDataDashboard.charts.videos).toBe("视频");
+  });
 });

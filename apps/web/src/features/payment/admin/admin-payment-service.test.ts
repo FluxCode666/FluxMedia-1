@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AdminPaymentOrderQuery,
   AdminPaymentOrderRow,
+  AdminPaymentOrderSnapshotReader,
   AdminPaymentRepository,
 } from "./admin-payment-service";
 import {
@@ -46,14 +47,20 @@ function makeOrder(
 
 /** 创建可按需覆盖的 DB-free 仓储。 */
 function makeRepository(
-  overrides: Partial<AdminPaymentRepository> = {}
+  overrides: Partial<AdminPaymentRepository> &
+    Partial<AdminPaymentOrderSnapshotReader> = {}
 ): AdminPaymentRepository {
+  const reader: AdminPaymentOrderSnapshotReader = {
+    countOrders: overrides.countOrders ?? (async () => 0),
+    readOrders: overrides.readOrders ?? (async () => []),
+  };
   return {
-    readOverviewRevenue: async () => [],
-    readOverviewOrderCounts: async () => [],
-    readOrders: async () => [],
-    searchUsers: async () => [],
-    ...overrides,
+    withReadOnlyOrderSnapshot:
+      overrides.withReadOnlyOrderSnapshot ?? (async (work) => work(reader)),
+    readOverviewRevenue: overrides.readOverviewRevenue ?? (async () => []),
+    readOverviewOrderCounts:
+      overrides.readOverviewOrderCounts ?? (async () => []),
+    searchUsers: overrides.searchUsers ?? (async () => []),
   };
 }
 
@@ -352,6 +359,7 @@ describe("admin payment order cursor", () => {
   it("paginates forward and issues a previous cursor bound to the actor", async () => {
     const seenQueries: AdminPaymentOrderQuery[] = [];
     const repository = makeRepository({
+      countOrders: async () => 3,
       readOrders: async (query) => {
         seenQueries.push(query);
         return query.cursor?.direction === "next"
@@ -378,6 +386,7 @@ describe("admin payment order cursor", () => {
     ]);
     expect(first.previousCursor).toBeNull();
     expect(first.nextCursor).toBeTypeOf("string");
+    expect(first).toMatchObject({ page: 1, pageSize: 2, totalCount: 3 });
     expect(seenQueries[0]).toMatchObject({
       start: new Date("2026-07-22T00:00:00.000Z"),
       endExclusive: new Date("2026-07-29T00:00:00.000Z"),
@@ -389,6 +398,7 @@ describe("admin payment order cursor", () => {
         input: {
           endDate: "2026-07-28",
           limit: 2,
+          page: 2,
           status: "fulfilled",
           startDate: "2026-07-22",
           cursor: first.nextCursor ?? undefined,
@@ -403,6 +413,7 @@ describe("admin payment order cursor", () => {
     expect(second.records.map((record) => record.id)).toEqual(["order-1"]);
     expect(second.previousCursor).toBeTypeOf("string");
     expect(second.nextCursor).toBeNull();
+    expect(second).toMatchObject({ page: 2, pageSize: 2, totalCount: 3 });
   });
 
   it("rejects tampered cursors and cross-filter reuse", async () => {
@@ -430,6 +441,7 @@ describe("admin payment order cursor", () => {
           input: {
             endDate: "2026-07-28",
             limit: 1,
+            page: 2,
             startDate: "2026-07-22",
             status: "fulfilled",
             cursor: `${cursor}x`,
@@ -448,6 +460,7 @@ describe("admin payment order cursor", () => {
           input: {
             endDate: "2026-07-28",
             limit: 1,
+            page: 2,
             startDate: "2026-07-22",
             status: "pending",
             cursor,
@@ -465,6 +478,7 @@ describe("admin payment order cursor", () => {
           actorUserId: "admin-1",
           input: {
             limit: 1,
+            page: 2,
             status: "fulfilled",
             startDate: "2026-07-21",
             endDate: "2026-07-27",
@@ -510,6 +524,7 @@ describe("admin payment order cursor", () => {
             startDate: "2026-07-22",
             endDate: "2026-07-28",
             limit: 1,
+            page: 2,
             cursor: first.nextCursor ?? undefined,
           },
         },

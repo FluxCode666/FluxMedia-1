@@ -22,7 +22,8 @@ describe("history contract", () => {
       status: null,
       type: null,
       cursor: null,
-      limit: 20,
+      page: 1,
+      pageSize: 20,
     });
     expect(
       historyListInputSchema.safeParse({ userId: "forged-user" }).success
@@ -52,7 +53,7 @@ describe("history contract", () => {
         cursor: "signed-cursor",
         limit: 50,
       })
-    ).toMatchObject({ model: "gpt-image-2", limit: 50 });
+    ).toMatchObject({ model: "gpt-image-2", pageSize: 50 });
     expect(historyListInputSchema.safeParse({ limit: 51 }).success).toBe(false);
     expect(
       historyListInputSchema.safeParse({ status: "running" }).success
@@ -66,7 +67,7 @@ describe("history contract", () => {
     ).toBe(false);
     expect(
       adminHistoryListInputSchema.parse({ userEmail: " member@example.com " })
-    ).toMatchObject({ userEmail: "member@example.com", limit: 20 });
+    ).toMatchObject({ userEmail: "member@example.com", pageSize: 20 });
     expect(
       adminHistoryListInputSchema.safeParse({ userEmail: "not-an-email" })
         .success
@@ -87,6 +88,9 @@ describe("history contract", () => {
     };
     const parsed = historyListOutputSchema.parse({
       asOf: "2026-07-22T02:00:00.000Z",
+      page: 1,
+      pageSize: 20,
+      totalCount: 2,
       records: [
         {
           ...common,
@@ -157,6 +161,8 @@ describe("history contract", () => {
     expect(
       historyListOutputSchema.safeParse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
         records: [
           {
             ...base,
@@ -185,6 +191,7 @@ describe("history contract", () => {
         modelOptions: [],
         nextCursor: null,
         previousCursor: null,
+        totalCount: 2,
       }).success
     ).toBe(true);
     expect(
@@ -232,6 +239,9 @@ describe("history contract", () => {
     expect(
       historyListOutputSchema.safeParse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
         records: [
           {
             ...record,
@@ -249,6 +259,9 @@ describe("history contract", () => {
     expect(
       adminHistoryListOutputSchema.safeParse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
         records: [record],
         modelOptions: [],
         userOptions: [],
@@ -259,6 +272,9 @@ describe("history contract", () => {
     expect(
       adminHistoryListOutputSchema.parse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
         records: [
           {
             ...record,
@@ -318,10 +334,13 @@ describe("history contract", () => {
     };
     const output = {
       asOf: "2026-07-22T02:00:00.000Z",
+      page: 1,
+      pageSize: 20,
       records: [video],
       modelOptions: [],
       nextCursor: null,
       previousCursor: null,
+      totalCount: 1,
       userOptions: [{ id: "user-1", email: "member@example.com" }],
     };
 
@@ -361,6 +380,9 @@ describe("history contract", () => {
     };
     const output = (processingDurationSeconds: number | null) => ({
       asOf: "2026-07-22T02:00:00.000Z",
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
       records: [{ ...common, processingDurationSeconds }],
       modelOptions: [],
       nextCursor: null,

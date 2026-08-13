@@ -14,6 +14,7 @@ import { getUserTimeZone } from "@repo/shared/time-zone/server";
  */
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
+import { loadPaginationConfig } from "@/features/pagination/server";
 import { AdminSettingsTabs } from "./admin-settings-tabs";
 
 /**
@@ -35,13 +36,17 @@ export default async function DashboardAdminSettingsPage() {
     redirect(`/${locale}/dashboard`);
   }
 
-  const timeZone = await getUserTimeZone(session.user.id);
+  const [timeZone, paginationConfig] = await Promise.all([
+    getUserTimeZone(session.user.id),
+    loadPaginationConfig(),
+  ]);
 
   // 系统设置面板可写入 BETTER_AUTH_SECRET 等密钥，必须限制为超管，
   // 否则普通 admin 可改写认证密钥伪造会话实现账号接管（见审计 S-C1）。
   return (
     <AdminSettingsTabs
       timeZone={timeZone}
+      paginationConfig={paginationConfig}
       canManageSystemSettings={canManageUserPermissions(role)}
       canViewModelConfiguration={
         canAccessAdminArea(role) || role === "observer_admin"

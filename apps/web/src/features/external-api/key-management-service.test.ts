@@ -86,11 +86,9 @@ async function expectServiceError(
 
 beforeEach(() => {
   repository = {
-    listByUser: vi
-      .fn()
-      .mockResolvedValue([
-        { key: activeKey, currentGroup: disabledCurrentGroup },
-      ]),
+    listByUser: vi.fn().mockResolvedValue({
+      rows: [{ key: activeKey, currentGroup: disabledCurrentGroup }],
+    }),
     insert: vi.fn().mockResolvedValue({
       ...activeKey,
       id: "key-new",
@@ -181,12 +179,14 @@ describe("list API keys", () => {
   });
 
   it("历史记录没有可恢复密文时明确返回 null", async () => {
-    repository.listByUser.mockResolvedValue([
-      {
-        key: { ...activeKey, encryptedKey: null },
-        currentGroup: disabledCurrentGroup,
-      },
-    ]);
+    repository.listByUser.mockResolvedValue({
+      rows: [
+        {
+          key: { ...activeKey, encryptedKey: null },
+          currentGroup: disabledCurrentGroup,
+        },
+      ],
+    });
 
     const result = await createService().listKeys("user-1");
 
@@ -196,20 +196,22 @@ describe("list API keys", () => {
 
   it("单条密文不可恢复时记录错误但仍返回其余列表", async () => {
     const recoveryError = new Error("ciphertext mismatch");
-    repository.listByUser.mockResolvedValue([
-      {
-        key: activeKey,
-        currentGroup: disabledCurrentGroup,
-      },
-      {
-        key: {
-          ...activeKey,
-          id: "key-corrupted",
-          encryptedKey: "corrupted",
+    repository.listByUser.mockResolvedValue({
+      rows: [
+        {
+          key: activeKey,
+          currentGroup: disabledCurrentGroup,
         },
-        currentGroup: disabledCurrentGroup,
-      },
-    ]);
+        {
+          key: {
+            ...activeKey,
+            id: "key-corrupted",
+            encryptedKey: "corrupted",
+          },
+          currentGroup: disabledCurrentGroup,
+        },
+      ],
+    });
     const service = createExternalApiKeyManagementService({
       repository,
       listSelectableGroups,

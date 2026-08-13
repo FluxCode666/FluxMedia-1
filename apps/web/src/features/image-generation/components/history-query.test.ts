@@ -30,6 +30,8 @@ describe("history query", () => {
       createdTo: null,
       cursor: "signed-cursor",
       model: "gpt-image-2",
+      page: 1,
+      pageSize: 20,
       status: "completed",
       type: null,
       userEmail: null,
@@ -59,6 +61,8 @@ describe("history query", () => {
         createdTo: "2026-07-22",
         cursor: null,
         model: "firefly-image-4",
+        page: 1,
+        pageSize: 20,
         status: "failed",
         type: "image",
         userEmail: null,
@@ -72,11 +76,12 @@ describe("history query", () => {
     const firstPage = parseHistorySearchParams({ type: "video" });
     const nextHref = buildNextHistoryHref(firstPage, "next+/=cursor");
     expect(nextHref).toBe(
-      "/dashboard/history?type=video&cursor=next%2B%2F%3Dcursor"
+      "/dashboard/history?type=video&page=2&cursor=next%2B%2F%3Dcursor"
     );
 
     const secondPage = parseHistorySearchParams({
       cursor: "next+/=cursor",
+      page: "2",
       type: "video",
     });
     expect(buildPreviousHistoryHref(secondPage, "previous-cursor")).toBe(

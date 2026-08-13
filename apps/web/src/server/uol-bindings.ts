@@ -18,7 +18,9 @@
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
 import "@/server/uol-bindings/adobe-credential-health";
+import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
+import "@/server/uol-bindings/content";
 import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
 import "@/server/uol-bindings/image-deletion";
@@ -50,7 +52,7 @@ import {
   moderateContent,
 } from "@repo/shared/moderation";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
   bindExecute,
@@ -180,12 +182,11 @@ bindExecute(
       throw new OperationError("forbidden", "Admin access required");
     }
     try {
-      const timeZone = await getUserTimeZone(principal.userId);
       return adminHistoryListOutputSchema.parse(
         await loadAdminHistoryRecords(
           {
             actorUserId: principal.userId,
-            timeZone,
+            timeZone: getAppTimeZone(),
             input,
           },
           { repository: databaseAdminHistoryRepository }
@@ -434,7 +435,6 @@ bindExecute(
 // user-auth 域
 // ---------------------------------------------------------------------------
 
-// TODO: user.list - getAllUsersAction 逻辑（DB 查询在 packages/shared 但需运行时 DB 连接）
 // TODO: user.getDetail - getUserDetailAction 逻辑
 // TODO: user.updateRole - updateUserRoleAction 逻辑
 // TODO: user.ban - banUserAction 逻辑
@@ -485,7 +485,7 @@ async function invokeApiKeyManagement<T>(
   }
 }
 
-/** externalApi.listKeys - 返回本人可恢复 Key 与当前可编辑分组。 */
+/** externalApi.listKeys - 返回本人全部可恢复 Key 与当前可编辑分组。 */
 bindExecute(
   "externalApi.listKeys",
   async (_input: Record<string, never>, principal: Principal) =>

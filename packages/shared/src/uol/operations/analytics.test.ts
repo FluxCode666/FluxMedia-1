@@ -7,9 +7,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getAdminDataDashboard,
   getMyDataDashboard,
   getMyUsageSummary,
   getMyUsageTrends,
+  searchAdminDataDashboardUsers,
 } from "./analytics";
 
 describe("analytics.getMyDataDashboard", () => {
@@ -54,5 +56,52 @@ describe("analytics.getMyDataDashboard", () => {
       name: "analytics.getMyUsageTrends",
       access: { kind: "protected" },
     });
+  });
+});
+
+describe("analytics.getAdminDataDashboard", () => {
+  it("注册为管理员可读、天然幂等且无副作用的全站 operation", () => {
+    expect(getAdminDataDashboard).toMatchObject({
+      name: "analytics.getAdminDataDashboard",
+      domain: "analytics",
+      access: { kind: "roles", roles: ["admin", "super_admin"] },
+      readOnly: true,
+      destructive: false,
+      idempotency: { kind: "natural" },
+      sideEffects: [],
+    });
+  });
+
+  it("支持日期范围和可选用户 ID，拒绝邮箱或未知筛选字段", () => {
+    expect(getAdminDataDashboard.input.safeParse({}).success).toBe(true);
+    expect(
+      getAdminDataDashboard.input.safeParse({
+        startDate: "2026-08-03",
+        endDate: "2026-08-09",
+      }).success
+    ).toBe(true);
+    expect(
+      getAdminDataDashboard.input.safeParse({ userId: "another-user" }).success
+    ).toBe(true);
+    expect(
+      getAdminDataDashboard.input.safeParse({ userEmail: "a@example.com" })
+        .success
+    ).toBe(false);
+  });
+});
+
+describe("analytics.searchAdminDataDashboardUsers", () => {
+  it("注册为人工管理员只读搜索 operation", () => {
+    expect(searchAdminDataDashboardUsers).toMatchObject({
+      name: "analytics.searchAdminDataDashboardUsers",
+      access: { kind: "roles", roles: ["admin", "super_admin"] },
+      agentExposure: "human-only",
+      readOnly: true,
+      destructive: false,
+    });
+    expect(
+      searchAdminDataDashboardUsers.input.safeParse({ query: "张", limit: 20 })
+        .success
+    ).toBe(true);
   });
 });

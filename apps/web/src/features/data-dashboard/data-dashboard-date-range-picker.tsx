@@ -1,7 +1,7 @@
 /**
- * 用户数据看板的受控 shadcn/ui 日期范围选择器。
+ * 用户端与管理端数据看板的受控 shadcn/ui 日期范围选择器。
  *
- * 使用方：DataDashboardPanel。触发器只展示已应用范围，弹层维护由父组件持久化的草稿；
+ * 使用方：两个数据看板 Panel。触发器只展示已应用范围，弹层维护由父组件持久化的草稿；
  * 选择日期或快捷范围不查询，只有点击应用才提交最多 30 天的完整范围。
  */
 "use client";
@@ -255,9 +255,7 @@ export function DataDashboardDateRangePicker({
           mode="range"
           numberOfMonths={isDesktop ? 2 : 1}
           onSelect={handleRangeSelect}
-          selected={
-            draftCalendarRange.from ? draftCalendarRange : undefined
-          }
+          selected={draftCalendarRange.from ? draftCalendarRange : undefined}
           showOutsideDays={false}
         />
         <div className="sticky bottom-0 border-t bg-popover px-3 py-3">

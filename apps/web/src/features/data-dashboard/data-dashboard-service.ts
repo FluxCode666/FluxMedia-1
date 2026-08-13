@@ -1,9 +1,10 @@
 /**
  * 用户数据看板的一致快照聚合服务。
  *
- * UOL binding 传入 Principal 派生的用户 ID、账号有效时区与 strict 原始范围；服务在
- * 一个只读 repeatable-read 事务内先读取 readiness 和数据库时钟，再执行四类有界
- * 聚合，最后用 shared schema 复核整页 DTO。Web 适配层不得绕过本服务直接拼装指标。
+ * UOL binding 传入用户 ID（用户看板）或空用户 ID（管理员全局看板）、有效时区与
+ * strict 原始范围；服务在一个只读 repeatable-read 事务内先读取 readiness 和数据库
+ * 时钟，再执行四类有界聚合，最后用 shared schema 复核整页 DTO。Web 适配层不得绕过
+ * 本服务直接拼装指标。
  */
 import {
   analyticsReadModelState,
@@ -63,9 +64,10 @@ export type DataDashboardSnapshotHeader = {
   creditUsage: DataDashboardReadModelState;
 };
 
-/** 四类范围查询共用的本人、UTC 半开边界和账号时区。 */
+/** 四类范围查询共用的可选用户作用域、UTC 半开边界和展示时区。 */
 export type DataDashboardRangeQuery = {
-  userId: string;
+  /** 为空表示管理员全局范围；非空时严格限定单个用户。 */
+  userId?: string;
   start: Date;
   end: Date;
   timeZone: string;
@@ -130,7 +132,8 @@ export interface DataDashboardSnapshotRepository {
 }
 
 type LoadDataDashboardSnapshotInput = {
-  userId: string;
+  /** 为空表示管理员全局看板；非空表示用户本人看板。 */
+  userId?: string;
   timeZone: string;
   rangeInput: unknown;
 };
@@ -225,14 +228,18 @@ export function buildDataDashboardSnapshotHeaderSql(): SQL {
 /**
  * 构造成功产物逐日聚合 SQL。
  *
- * @param input Principal 用户、账号时区与已验证 UTC 半开范围。
- * @returns 仅扫描本人事件时间索引的单次有界查询。
+ * @param input 可选用户作用域、展示时区与已验证 UTC 半开范围。
+ * @returns 扫描全局或本人事件时间索引的单次有界查询。
  */
 export function buildDataDashboardSuccessBucketsSql(
   input: DataDashboardRangeQuery
 ): SQL {
   const start = sql.param(input.start, userOutputUsageEvent.operationCreatedAt);
   const end = sql.param(input.end, userOutputUsageEvent.operationCreatedAt);
+  const userScope =
+    input.userId !== undefined
+      ? sql`and ${userOutputUsageEvent.userId} = ${input.userId}`
+      : sql``;
   return sql`
     with scoped_success as (
       select
@@ -244,9 +251,9 @@ export function buildDataDashboardSuccessBucketsSql(
         ${userOutputUsageEvent.imageCount} as image_count,
         ${userOutputUsageEvent.videoSeconds} as video_seconds
       from ${userOutputUsageEvent}
-      where ${userOutputUsageEvent.userId} = ${input.userId}
-        and ${userOutputUsageEvent.operationCreatedAt} >= ${start}
+      where ${userOutputUsageEvent.operationCreatedAt} >= ${start}
         and ${userOutputUsageEvent.operationCreatedAt} < ${end}
+        ${userScope}
     )
     select
       to_char(bucket_date, 'YYYY-MM-DD') as bucket_date,
@@ -263,7 +270,7 @@ export function buildDataDashboardSuccessBucketsSql(
 /**
  * 构造成功产物关联净积分逐日聚合 SQL。
  *
- * @param input Principal 用户、账号时区与已验证 UTC 半开范围。
+ * @param input 可选用户作用域、展示时区与已验证 UTC 半开范围。
  * @returns 由成功事件驱动的左连接查询；免费任务没有 operation 时贡献 0。
  */
 export function buildDataDashboardCreditBucketsSql(
@@ -271,6 +278,10 @@ export function buildDataDashboardCreditBucketsSql(
 ): SQL {
   const start = sql.param(input.start, userOutputUsageEvent.operationCreatedAt);
   const end = sql.param(input.end, userOutputUsageEvent.operationCreatedAt);
+  const userScope =
+    input.userId !== undefined
+      ? sql`and ${userOutputUsageEvent.userId} = ${input.userId}`
+      : sql``;
   return sql`
     with scoped_credits as (
       select
@@ -312,9 +323,9 @@ export function buildDataDashboardCreditBucketsSql(
         end
         and credit_lookup.operation_created_at >= ${start}
         and credit_lookup.operation_created_at < ${end}
-      where ${userOutputUsageEvent.userId} = ${input.userId}
-        and ${userOutputUsageEvent.operationCreatedAt} >= ${start}
+      where ${userOutputUsageEvent.operationCreatedAt} >= ${start}
         and ${userOutputUsageEvent.operationCreatedAt} < ${end}
+        ${userScope}
     )
     select
       to_char(bucket_date, 'YYYY-MM-DD') as bucket_date,
@@ -330,7 +341,7 @@ export function buildDataDashboardCreditBucketsSql(
 /**
  * 构造成功任务模型分布 SQL。
  *
- * @param input Principal 用户、账号时区与已验证 UTC 半开范围。
+ * @param input 可选用户作用域、展示时区与已验证 UTC 半开范围。
  * @returns 每个成功事件恰好归入一个真实模型或 unknown 分类的有界查询。
  */
 export function buildDataDashboardModelUsageSql(
@@ -342,6 +353,10 @@ export function buildDataDashboardModelUsageSql(
   const imageEnd = sql.param(input.end, generation.createdAt);
   const videoStart = sql.param(input.start, videoGeneration.createdAt);
   const videoEnd = sql.param(input.end, videoGeneration.createdAt);
+  const userScope =
+    input.userId !== undefined
+      ? sql`and ${userOutputUsageEvent.userId} = ${input.userId}`
+      : sql``;
   return sql`
     select
       coalesce(
@@ -366,9 +381,9 @@ export function buildDataDashboardModelUsageSql(
       and ${userOutputUsageEvent.userId} = ${videoGeneration.userId}
       and ${videoGeneration.createdAt} >= ${videoStart}
       and ${videoGeneration.createdAt} < ${videoEnd}
-    where ${userOutputUsageEvent.userId} = ${input.userId}
-      and ${userOutputUsageEvent.operationCreatedAt} >= ${start}
+    where ${userOutputUsageEvent.operationCreatedAt} >= ${start}
       and ${userOutputUsageEvent.operationCreatedAt} < ${end}
+      ${userScope}
     group by 1
     order by task_count desc, model asc
   `;
@@ -377,7 +392,7 @@ export function buildDataDashboardModelUsageSql(
 /**
  * 构造失败媒体任务与成功事件冲突查询。
  *
- * @param input Principal 用户、账号时区与已验证 UTC 半开范围。
+ * @param input 可选用户作用域、展示时区与已验证 UTC 半开范围。
  * @returns 图片 generate/edit 与视频 failed 任务数；重叠检测不限制事件日期。
  */
 export function buildDataDashboardFailedTasksSql(
@@ -387,29 +402,41 @@ export function buildDataDashboardFailedTasksSql(
   const imageEnd = sql.param(input.end, generation.createdAt);
   const videoStart = sql.param(input.start, videoGeneration.createdAt);
   const videoEnd = sql.param(input.end, videoGeneration.createdAt);
+  const imageUserScope =
+    input.userId !== undefined
+      ? sql`and ${generation.userId} = ${input.userId}`
+      : sql``;
+  const videoUserScope =
+    input.userId !== undefined
+      ? sql`and ${videoGeneration.userId} = ${input.userId}`
+      : sql``;
+  const successUserScope =
+    input.userId !== undefined
+      ? sql`and ${userOutputUsageEvent.userId} = ${input.userId}`
+      : sql``;
   return sql`
     with failed_tasks as (
       select
         'image'::text as output_kind,
         ${generation.id} as source_task_id
       from ${generation}
-      where ${generation.userId} = ${input.userId}
-        and ${generation.createdAt} >= ${imageStart}
+      where ${generation.createdAt} >= ${imageStart}
         and ${generation.createdAt} < ${imageEnd}
         and ${generation.status} = 'failed'
         and coalesce(
           nullif(lower(btrim(${generation.metadata}->>'mode')), ''),
           'generate'
         ) in ('generate', 'edit')
+        ${imageUserScope}
       union all
       select
         'video'::text as output_kind,
         ${videoGeneration.id} as source_task_id
       from ${videoGeneration}
-      where ${videoGeneration.userId} = ${input.userId}
-        and ${videoGeneration.createdAt} >= ${videoStart}
+      where ${videoGeneration.createdAt} >= ${videoStart}
         and ${videoGeneration.createdAt} < ${videoEnd}
         and ${videoGeneration.status} = 'failed'
+        ${videoUserScope}
     )
     select
       count(*) filter (where failed_tasks.output_kind = 'image')
@@ -419,9 +446,9 @@ export function buildDataDashboardFailedTasksSql(
       count(${userOutputUsageEvent.sourceTaskId}) as success_overlap_count
     from failed_tasks
     left join ${userOutputUsageEvent}
-      on ${userOutputUsageEvent.userId} = ${input.userId}
-      and ${userOutputUsageEvent.outputKind}::text = failed_tasks.output_kind
+      on ${userOutputUsageEvent.outputKind}::text = failed_tasks.output_kind
       and ${userOutputUsageEvent.sourceTaskId} = failed_tasks.source_task_id
+      ${successUserScope}
   `;
 }
 
@@ -807,8 +834,8 @@ export async function loadDataDashboardSnapshot(
         throw error;
       }
 
-      const query = {
-        userId: input.userId,
+      const query: DataDashboardRangeQuery = {
+        ...(input.userId !== undefined ? { userId: input.userId } : {}),
         start: range.start,
         end: range.end,
         timeZone: range.timeZone,

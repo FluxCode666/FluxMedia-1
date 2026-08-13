@@ -62,7 +62,8 @@ export default async function AdminPaymentOrdersPage({
     listAdminPaymentOrdersAction({
       cursor: state.cursor ?? undefined,
       endDate: state.endDate,
-      limit: state.pageSize,
+      page: state.page,
+      pageSize: state.pageSize,
       orderId: state.orderId ?? undefined,
       startDate: state.startDate,
       status: state.status ?? undefined,
@@ -106,12 +107,14 @@ export default async function AdminPaymentOrdersPage({
         <PaymentOrderManagement
           initialUserOptions={initialUserOptions}
           nextCursor={orders.nextCursor}
+          page={orders.page}
           pageSizeOptions={paginationConfig.pageSizeOptions}
           previousCursor={orders.previousCursor}
           records={orders.records}
           state={state}
           timeZone={timeZone}
           today={today}
+          totalCount={orders.totalCount}
         />
       ) : (
         <div className="space-y-4">

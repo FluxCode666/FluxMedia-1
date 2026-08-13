@@ -5,6 +5,9 @@
  * session user Principal，并在数据库事务前执行每用户 global 限流和账号时区解析。
  */
 import {
+  adminDataDashboardInputSchema,
+  adminDataDashboardUserSearchInputSchema,
+  adminDataDashboardUserSearchOutputSchema,
   dataDashboardOutputSchema,
   usageSummaryOutputSchema,
   usageTrendsInputSchema,
@@ -12,14 +15,16 @@ import {
 } from "@repo/shared/analytics/contracts";
 import { resolveUsageTimeRange } from "@repo/shared/analytics/range";
 import { getAnalyticsMetricUnit } from "@repo/shared/analytics/series";
+import { isAdminRole } from "@repo/shared/auth/roles";
 import { checkRateLimit } from "@repo/shared/rate-limit";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
 import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
 
 import {
   DataDashboardServiceError,
   loadDataDashboardSnapshot,
 } from "@/features/data-dashboard/data-dashboard-service";
+import { searchAdminDataDashboardUsers } from "@/features/data-dashboard/admin-data-dashboard-user-search";
 import {
   type AnalyticsReadModelState,
   loadOutputUsageSummary,
@@ -96,6 +101,71 @@ bindExecute(
       );
     } catch (error) {
       throwDataDashboardOperationError(error);
+    }
+  }
+);
+
+/** 绑定全站或指定用户数据看板；范围固定为应用时区且仅人工管理员可读。 */
+bindExecute(
+  "analytics.getAdminDataDashboard",
+  async (input: unknown, principal: Principal) => {
+    if (principal.type !== "user" || !isAdminRole(principal.role)) {
+      throw new OperationError("forbidden", "Administrator access required");
+    }
+    const rateLimit = await checkRateLimit(
+      `admin-analytics-dashboard:${principal.userId}`,
+      "global"
+    );
+    if (!rateLimit.success) {
+      throw new OperationError(
+        "rate_limited",
+        "Admin data dashboard requests are too frequent"
+      );
+    }
+    try {
+      const parsedInput = adminDataDashboardInputSchema.parse(input);
+      const { userId, ...rangeInput } = parsedInput;
+      return dataDashboardOutputSchema.parse(
+        await loadDataDashboardSnapshot({
+          ...(userId !== undefined ? { userId } : {}),
+          timeZone: getAppTimeZone(),
+          rangeInput,
+        })
+      );
+    } catch (error) {
+      throwDataDashboardOperationError(error);
+    }
+  }
+);
+
+/** 绑定管理员数据看板用户下拉搜索；仅返回名称、邮箱和稳定用户 ID。 */
+bindExecute(
+  "analytics.searchAdminDataDashboardUsers",
+  async (input: unknown, principal: Principal) => {
+    if (principal.type !== "user" || !isAdminRole(principal.role)) {
+      throw new OperationError("forbidden", "Administrator access required");
+    }
+    const rateLimit = await checkRateLimit(
+      `admin-analytics-dashboard-users:${principal.userId}`,
+      "global"
+    );
+    if (!rateLimit.success) {
+      throw new OperationError(
+        "rate_limited",
+        "Admin data dashboard user searches are too frequent"
+      );
+    }
+    try {
+      return adminDataDashboardUserSearchOutputSchema.parse(
+        await searchAdminDataDashboardUsers(
+          adminDataDashboardUserSearchInputSchema.parse(input)
+        )
+      );
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw new OperationError("validation_error", error.message);
+      }
+      throw error;
     }
   }
 );

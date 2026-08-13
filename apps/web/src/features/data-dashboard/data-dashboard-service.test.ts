@@ -172,6 +172,25 @@ describe("loadDataDashboardSnapshot", () => {
     expect(reader.readFailedTasks).toHaveBeenCalledWith(expectedQuery);
   });
 
+  it("缺少用户作用域时复用同一快照流程加载全站范围", async () => {
+    const { repository, reader } = createRepository();
+
+    await expect(
+      loadDataDashboardSnapshot(
+        { timeZone: "Asia/Shanghai", rangeInput: {} },
+        repository
+      )
+    ).resolves.toMatchObject({
+      range: { startDate: "2026-08-03", endDate: "2026-08-09" },
+      metrics: { imageCount: 4, videoSeconds: 5 },
+    });
+    expect(reader.readSuccessBuckets).toHaveBeenCalledWith({
+      start: new Date("2026-08-02T16:00:00.000Z"),
+      end: AS_OF,
+      timeZone: "Asia/Shanghai",
+    });
+  });
+
   it("在 readiness 缺失时停止于首条读取且返回稳定 not_ready", async () => {
     const { repository, reader, calls } = createRepository({
       readSnapshotHeader: vi.fn(async () => {
@@ -461,5 +480,26 @@ describe("data dashboard production SQL", () => {
     expect(models.sql).toContain('"video_generation"."created_at" >=');
     expect(failed.sql).toContain("generate");
     expect(failed.sql).toContain("edit");
+  });
+
+  it("管理员全局作用域只绑定日期与时区，不把 undefined 当作用户条件", () => {
+    const input = {
+      start: new Date("2026-08-02T16:00:00.000Z"),
+      end: AS_OF,
+      timeZone: "Asia/Shanghai",
+    };
+    const dialect = new PgDialect();
+    const queries = [
+      buildDataDashboardSuccessBucketsSql(input),
+      buildDataDashboardCreditBucketsSql(input),
+      buildDataDashboardModelUsageSql(input),
+      buildDataDashboardFailedTasksSql(input),
+    ].map((query) => dialect.sqlToQuery(query));
+
+    for (const query of queries) {
+      expect(query.params).not.toContain(undefined);
+      expect(query.params).toContain(input.start.toISOString());
+      expect(query.params).toContain(input.end.toISOString());
+    }
   });
 });

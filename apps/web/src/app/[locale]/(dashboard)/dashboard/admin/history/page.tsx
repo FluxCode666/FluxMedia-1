@@ -8,7 +8,7 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
-import { getAppTimeZone, getUserTimeZone } from "@repo/shared/time-zone/server";
+import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 
@@ -20,6 +20,7 @@ import {
   parseHistorySearchParams,
 } from "@/features/image-generation/components/history-query";
 import { getAdminHistoryRecordsAction } from "@/features/image-generation/history-actions";
+import { loadPaginationConfig } from "@/features/pagination/server";
 import { Link } from "@/i18n/routing";
 
 export const metadata = {
@@ -36,11 +37,13 @@ type AdminHistoryPageProps = {
 export default async function DashboardAdminHistoryPage({
   searchParams,
 }: AdminHistoryPageProps) {
-  const [session, locale, rawSearchParams] = await Promise.all([
-    getServerSession(),
-    getLocale(),
-    searchParams,
-  ]);
+  const [session, locale, rawSearchParams, paginationConfig] =
+    await Promise.all([
+      getServerSession(),
+      getLocale(),
+      searchParams,
+      loadPaginationConfig(),
+    ]);
   if (!session?.user) redirect(`/${locale}/sign-in`);
 
   const role = await getUserRoleById(session.user.id);
@@ -50,26 +53,24 @@ export default async function DashboardAdminHistoryPage({
   const copy = (en: string, zh: string) => (isZh ? zh : en);
   const queryState = parseHistorySearchParams(rawSearchParams, {
     allowUserEmail: true,
+    paginationConfig,
   });
   const historyPath = "/dashboard/admin/history";
   const retryHref = buildHistoryHref(queryState, { path: historyPath });
-  const [historyResult, timeZoneResult] = await Promise.allSettled([
+  const [historyResult] = await Promise.allSettled([
     getAdminHistoryRecordsAction({
       createdFrom: queryState.createdFrom,
       createdTo: queryState.createdTo,
       cursor: queryState.cursor,
-      limit: 20,
       model: queryState.model,
+      page: queryState.page,
+      pageSize: queryState.pageSize,
       status: queryState.status,
       type: queryState.type,
       userEmail: queryState.userEmail,
     }),
-    getUserTimeZone(session.user.id),
   ]);
-  const timeZone =
-    timeZoneResult.status === "fulfilled"
-      ? timeZoneResult.value
-      : getAppTimeZone();
+  const timeZone = getAppTimeZone();
   const historyActionResult =
     historyResult.status === "fulfilled" ? historyResult.value : null;
   const historyData = historyActionResult?.data;
@@ -94,11 +95,14 @@ export default async function DashboardAdminHistoryPage({
           historyPath={historyPath}
           modelOptions={historyData.modelOptions}
           nextCursor={historyData.nextCursor}
+          page={historyData.page}
+          pageSizeOptions={paginationConfig.pageSizeOptions}
           previousCursor={historyData.previousCursor}
           queryState={queryState}
           records={historyData.records}
           showUserColumns
           timeZone={timeZone}
+          totalCount={historyData.totalCount}
           userOptions={historyData.userOptions}
         />
       ) : (

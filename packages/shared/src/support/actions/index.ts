@@ -24,12 +24,8 @@ export {
   adminReplyTicketAction,
   // 用户端 Actions
   createTicketAction,
-  getAdminTicketDetailAction,
   getAdminUnreadTicketCountAction,
   // 管理员 Actions
-  getAllTicketsAction,
-  getMyTicketsAction,
   getMyUnreadTicketCountAction,
-  getTicketDetailAction,
   updateTicketStatusAction,
 } from "./ticket";

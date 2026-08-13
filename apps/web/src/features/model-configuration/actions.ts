@@ -7,7 +7,11 @@
  * 构造 user Principal，并调用统一读取 operation，不访问数据库、不合并价格或构造封面 URL。
  * 读取角色集合与 UOL admin 一致，包含 observer_admin、admin 和 super_admin。
  */
-import type { ModelConfigurationSnapshot } from "@repo/shared/model-marketplace";
+import {
+  type ModelConfigurationListOutput,
+  type ModelConfigurationSnapshot,
+  modelConfigurationListInputSchema,
+} from "@repo/shared/model-marketplace";
 import { imageBackendPoolViewerAction } from "@repo/shared/safe-action";
 import { invokeOperation } from "@repo/shared/uol";
 
@@ -31,3 +35,24 @@ export const getModelConfigurationAction = imageBackendPoolViewerAction
       { type: "user", userId: ctx.userId, role: ctx.role }
     );
   });
+
+/**
+ * 按查询条件分页读取当前管理员可见的模型配置。
+ *
+ * @returns UOL 校验后的精确总数和当前页条目。
+ * @sideEffects 初始化 UOL 并读取最新模型配置事实。
+ * @failure 会话、角色、输入和 operation 错误由统一 Action 边界处理。
+ */
+export const listModelConfigurationsAction = imageBackendPoolViewerAction
+  .metadata({ action: "modelConfiguration.list" })
+  .schema(modelConfigurationListInputSchema)
+  .action(
+    async ({ parsedInput, ctx }): Promise<ModelConfigurationListOutput> => {
+      await ensureUolInitialized();
+      return invokeOperation<ModelConfigurationListOutput>(
+        "settings.listModelConfigurations",
+        parsedInput,
+        { type: "user", userId: ctx.userId, role: ctx.role }
+      );
+    }
+  );

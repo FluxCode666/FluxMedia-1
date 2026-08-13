@@ -48,6 +48,17 @@ export {
 // Calendar
 export { Calendar, CalendarDayButton } from "./components/calendar";
 
+// Chart
+export {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartStyle,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "./components/chart";
+
 // Checkbox
 export { Checkbox } from "./components/checkbox";
 
@@ -57,6 +68,12 @@ export {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "./components/collapsible";
+
+// Cursor Pagination
+export {
+  CursorPaginationControls,
+  type CursorPaginationControlsProps,
+} from "./components/cursor-pagination-controls";
 
 // Dialog
 export {
@@ -132,6 +149,13 @@ export {
   PaginationNext,
   PaginationEllipsis,
 } from "./components/pagination";
+export {
+  getPaginationControlsViewModel,
+  PaginationControls,
+  type PaginationControlsItem,
+  type PaginationControlsProps,
+  type PaginationControlsViewModel,
+} from "./components/pagination-controls";
 
 // Popover
 export {

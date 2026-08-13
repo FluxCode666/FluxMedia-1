@@ -99,4 +99,22 @@ describe("image history UOL contract", () => {
       }).success
     ).toBe(false);
   });
+
+  it("registers system-only projection verification and rebuild maintenance", () => {
+    const operation = getOperation("image.maintainHistoryCountProjection");
+    expect(operation).toMatchObject({
+      access: { kind: "system" },
+      agentExposure: "human-only",
+      readOnly: false,
+      destructive: false,
+      idempotency: { kind: "natural" },
+      sideEffects: [],
+      hasMaintenanceWrite: true,
+    });
+    expect(operation?.input.safeParse({ mode: "verify" }).success).toBe(true);
+    expect(operation?.input.safeParse({ mode: "rebuild" }).success).toBe(true);
+    expect(
+      operation?.input.safeParse({ mode: "rebuild", userId: "forged" }).success
+    ).toBe(false);
+  });
 });
