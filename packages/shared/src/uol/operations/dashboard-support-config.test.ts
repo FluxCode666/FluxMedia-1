@@ -25,6 +25,18 @@ vi.mock("../../announcements/actions", () => ({
   markAnnouncementIdsReadForUser: vi.fn(),
 }));
 
+vi.mock("../../announcements/list-service", () => ({
+  markAllActiveAnnouncementsReadForUser: vi.fn(),
+  readAdminAnnouncementsPage: vi.fn(),
+  readUserAnnouncementsPage: vi.fn(),
+}));
+
+vi.mock("../../support/ticket-list-service", () => ({
+  listTickets: vi.fn(),
+  listTicketMessages: vi.fn(),
+  markTicketSeen: vi.fn(),
+}));
+
 import { getDashboardConfiguration } from "./support";
 
 const context: OperationContext = {
