@@ -13,7 +13,9 @@ import { extractExecuteRows } from "@/server/database-result";
 
 import {
   buildOperationsActivitySourceSql,
+  createOperationsGrowthSnapshotReader,
   type OperationsGrowthActivityKind,
+  type OperationsGrowthSnapshotHeader,
 } from "./growth-repository";
 
 /** 明细排序键；同一业务时间以用户 ID 稳定打破平局。 */
@@ -72,11 +74,32 @@ export type OperationsGrowthDetailPage = {
   nextCursor: OperationsGrowthDetailCursor | null;
 };
 
-/** 增长明细仓储端口；limit 应包含服务层用于判断下一页的额外一行。 */
-export interface OperationsGrowthDetailRepository {
+/** 单个只读快照中的增长明细读取端口。 */
+export interface OperationsGrowthDetailSnapshotReader {
+  readHeader(): Promise<OperationsGrowthSnapshotHeader>;
   readRows(
     input: OperationsGrowthDetailQuery
   ): Promise<OperationsGrowthDetailRow[]>;
+}
+
+/** 增长明细仓储端口；limit 应包含服务层用于判断下一页的额外一行。 */
+export interface OperationsGrowthDetailRepository {
+  withReadOnlySnapshot<T>(
+    work: (reader: OperationsGrowthDetailSnapshotReader) => Promise<T>
+  ): Promise<T>;
+}
+
+type ExecuteSql = (query: SQL) => Promise<unknown>;
+
+/** 生产与集成测试共用的最小只读事务数据库端口。 */
+export interface OperationsGrowthDetailTransactionDatabase {
+  transaction<T>(
+    work: (transaction: { execute: ExecuteSql }) => Promise<T>,
+    config: {
+      isolationLevel: "repeatable read";
+      accessMode: "read only";
+    }
+  ): Promise<T>;
 }
 
 const detailDatabaseRowSchema = z.object({
@@ -329,13 +352,47 @@ function parseDetailRows(result: unknown): OperationsGrowthDetailRow[] {
     }));
 }
 
+/** 将唯一事务 execute 绑定为明细与快照头的组合 reader。 */
+function createOperationsGrowthDetailSnapshotReader(
+  execute: ExecuteSql
+): OperationsGrowthDetailSnapshotReader {
+  const growthReader = createOperationsGrowthSnapshotReader(execute);
+  return {
+    readHeader: growthReader.readHeader,
+    async readRows(input) {
+      return parseDetailRows(
+        await execute(buildOperationsGrowthDetailSql(input))
+      );
+    },
+  };
+}
+
+/** 从 Drizzle 类数据库端口创建单一 repeatable-read 明细仓储。 */
+export function createOperationsGrowthDetailRepository(
+  database: OperationsGrowthDetailTransactionDatabase
+): OperationsGrowthDetailRepository {
+  return {
+    withReadOnlySnapshot<T>(
+      work: (reader: OperationsGrowthDetailSnapshotReader) => Promise<T>
+    ): Promise<T> {
+      return database.transaction(
+        async (transaction) =>
+          work(createOperationsGrowthDetailSnapshotReader(transaction.execute)),
+        { isolationLevel: "repeatable read", accessMode: "read only" }
+      );
+    },
+  };
+}
+
 /** 生产增长明细仓储；动态导入数据库以保持 DB-free Vitest。 */
 export const databaseOperationsGrowthDetailRepository: OperationsGrowthDetailRepository =
   {
-    async readRows(input) {
+    async withReadOnlySnapshot<T>(
+      work: (reader: OperationsGrowthDetailSnapshotReader) => Promise<T>
+    ): Promise<T> {
       const { db } = await import("@repo/database");
-      return parseDetailRows(
-        await db.execute(buildOperationsGrowthDetailSql(input))
-      );
+      return createOperationsGrowthDetailRepository(
+        db as unknown as OperationsGrowthDetailTransactionDatabase
+      ).withReadOnlySnapshot(work);
     },
   };

@@ -11,6 +11,7 @@ import {
   buildOperationsActivityDetailSql,
   buildOperationsCohortDetailSql,
   buildOperationsNewUserDetailSql,
+  createOperationsGrowthDetailRepository,
   paginateOperationsGrowthDetailRows,
 } from "./detail-repository";
 
@@ -130,6 +131,42 @@ describe("operations growth detail repository SQL", () => {
     expect(page.nextCursor).toEqual({
       businessTime: new Date("2026-08-02T00:00:00.000Z"),
       stableId: "user-2",
+    });
+  });
+
+  it("明细头与行读取共享单一只读 repeatable-read 事务", async () => {
+    const execute = async () => ({
+      rows: [
+        {
+          as_of: "2026-08-08T00:00:00.000Z",
+          app_date: "2026-08-01",
+          starts_at: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const transaction = async <T>(
+      work: (transaction: { execute: typeof execute }) => Promise<T>,
+      config: {
+        isolationLevel: "repeatable read";
+        accessMode: "read only";
+      }
+    ): Promise<T> => {
+      expect(config).toEqual({
+        isolationLevel: "repeatable read",
+        accessMode: "read only",
+      });
+      return work({ execute });
+    };
+    const repository = createOperationsGrowthDetailRepository({ transaction });
+
+    await expect(
+      repository.withReadOnlySnapshot((reader) => reader.readHeader())
+    ).resolves.toEqual({
+      asOf: new Date("2026-08-08T00:00:00.000Z"),
+      epoch: {
+        appDate: "2026-08-01",
+        startsAt: new Date("2026-08-01T00:00:00.000Z"),
+      },
     });
   });
 });

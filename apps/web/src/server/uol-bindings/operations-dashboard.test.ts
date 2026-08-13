@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
   return {
     checkRateLimit: vi.fn(),
     getAppTimeZone: vi.fn(),
+    getDetail: vi.fn(),
     getOverview: vi.fn(),
   };
 });
@@ -42,6 +43,22 @@ vi.mock("@/features/operations-dashboard/commercial-service", () => ({
 vi.mock("@/features/operations-dashboard/content-service", () => ({
   OperationsContentServiceError: class OperationsContentServiceError extends Error {},
 }));
+vi.mock("@/features/operations-dashboard/detail-service", () => ({
+  loadOperationsDetail: mocks.getDetail,
+  OperationsDetailServiceError: class OperationsDetailServiceError extends Error {
+    constructor(
+      readonly code:
+        | "validation_error"
+        | "not_ready"
+        | "not_implemented"
+        | "invalid_data",
+      message: string
+    ) {
+      super(message);
+      this.name = "OperationsDetailServiceError";
+    }
+  },
+}));
 vi.mock("@/features/operations-dashboard/growth-service", () => ({
   OperationsGrowthServiceError: class OperationsGrowthServiceError extends Error {},
 }));
@@ -67,11 +84,19 @@ const SNAPSHOT = {
   systemHealth: {},
 };
 
+const DETAIL = {
+  selection: { module: "growth", detail: "users" },
+  range: {},
+  rows: [],
+  nextCursor: null,
+};
+
 describe("operations.getOverview binding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.checkRateLimit.mockResolvedValue({ success: true });
     mocks.getAppTimeZone.mockReturnValue("Asia/Shanghai");
+    mocks.getDetail.mockResolvedValue(DETAIL);
     mocks.getOverview.mockResolvedValue(SNAPSHOT);
   });
 
@@ -137,9 +162,47 @@ describe("operations.getOverview binding", () => {
     ).rejects.toMatchObject({ code: "internal_error" });
   });
 
-  it("其他 operation 在 U6 前也保持 bound 但明确返回未实现", async () => {
+  it("增长明细绑定管理员、部署时区和已规范化输入", async () => {
+    await expect(
+      invokeOperation(
+        "operations.getDetail",
+        { selection: { module: "growth", detail: "users" } },
+        { type: "user", userId: "admin-1", role: "admin" }
+      )
+    ).resolves.toEqual(DETAIL);
+    expect(mocks.getDetail).toHaveBeenCalledWith({
+      actorUserId: "admin-1",
+      timeZone: "Asia/Shanghai",
+      input: {
+        granularity: "day",
+        range: { kind: "default" },
+        selection: { module: "growth", detail: "users" },
+        limit: 100,
+      },
+    });
+  });
+
+  it("未接入的明细类型映射为稳定 not_implemented", async () => {
+    const { OperationsDetailServiceError } = await import(
+      "@/features/operations-dashboard/detail-service"
+    );
+    mocks.getDetail.mockRejectedValue(
+      new OperationsDetailServiceError(
+        "not_implemented",
+        "detail not implemented"
+      )
+    );
+    await expect(
+      invokeOperation(
+        "operations.getDetail",
+        { selection: { module: "commercialization", detail: "orders" } },
+        { type: "user", userId: "admin-1", role: "admin" }
+      )
+    ).rejects.toMatchObject({ code: "not_implemented" });
+  });
+
+  it("导出 operation 在 U6 前保持 bound 但明确返回未实现", async () => {
     for (const name of [
-      "operations.getDetail",
       "operations.createExport",
       "operations.listExports",
       "operations.retryExport",
@@ -149,10 +212,15 @@ describe("operations.getOverview binding", () => {
     ]) {
       expect(isOperationBound(name)).toBe(true);
     }
+    expect(isOperationBound("operations.getDetail")).toBe(true);
     await expect(
       invokeOperation(
-        "operations.getDetail",
-        { selection: { module: "growth", detail: "users" } },
+        "operations.createExport",
+        {
+          exportType: "user_growth",
+          query: {},
+          clientRequestId: "request-1",
+        },
         { type: "user", userId: "admin-1", role: "admin" }
       )
     ).rejects.toMatchObject({ code: "not_implemented" });

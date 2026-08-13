@@ -83,8 +83,24 @@ describe("operations dashboard contracts", () => {
       operationsDetailSelectionSchema.safeParse({
         module: "growth",
         detail: "retention_cohorts",
+        cohortDate: "2026-08-01",
+        retentionDay: 7,
       }).success
     ).toBe(true);
+    expect(
+      operationsDetailSelectionSchema.safeParse({
+        module: "growth",
+        detail: "retention_cohorts",
+      }).success
+    ).toBe(false);
+    expect(
+      operationsDetailSelectionSchema.safeParse({
+        module: "growth",
+        detail: "users",
+        cohortDate: "2026-08-01",
+        retentionDay: 1,
+      }).success
+    ).toBe(false);
     expect(
       operationsDetailSelectionSchema.safeParse({
         module: "content",

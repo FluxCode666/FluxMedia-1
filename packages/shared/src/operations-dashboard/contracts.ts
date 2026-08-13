@@ -67,7 +67,7 @@ export const operationsModuleSchema = z.enum([
   "system_health",
 ]);
 
-const growthDetailSelectionSchema = z
+const growthNonCohortDetailSelectionSchema = z
   .object({
     module: z.literal("growth"),
     detail: z.enum([
@@ -75,10 +75,21 @@ const growthDetailSelectionSchema = z
       "login_activity",
       "creation_activity",
       "payment_activity",
-      "retention_cohorts",
     ]),
   })
   .strict();
+const growthCohortDetailSelectionSchema = z
+  .object({
+    module: z.literal("growth"),
+    detail: z.literal("retention_cohorts"),
+    cohortDate: operationsAppDateSchema,
+    retentionDay: z.union([z.literal(1), z.literal(7), z.literal(30)]),
+  })
+  .strict();
+const growthDetailSelectionSchema = z.union([
+  growthNonCohortDetailSelectionSchema,
+  growthCohortDetailSelectionSchema,
+]);
 const commercializationDetailSelectionSchema = z
   .object({
     module: z.literal("commercialization"),
@@ -92,7 +103,7 @@ const contentDetailSelectionSchema = z
   })
   .strict();
 /** 模块与明细种类的合法组合；拒绝把订单明细伪装成内容明细等跨域请求。 */
-export const operationsDetailSelectionSchema = z.discriminatedUnion("module", [
+export const operationsDetailSelectionSchema = z.union([
   growthDetailSelectionSchema,
   commercializationDetailSelectionSchema,
   contentDetailSelectionSchema,
@@ -149,16 +160,18 @@ export const operationsCurrencyAmountSchema = z
   .strict();
 
 /** 运营总览读取 operation 的输入；与页面查询共用同一严格范围契约。 */
-export const operationsGetOverviewInputSchema = operationsDashboardQueryInputSchema;
+export const operationsGetOverviewInputSchema =
+  operationsDashboardQueryInputSchema;
 
 /** 明细查询输入；selection、keyset 和页大小均由服务器 schema 限定。 */
-export const operationsGetDetailInputSchema = operationsDashboardQueryInputSchema
-  .extend({
-    selection: operationsDetailSelectionSchema,
-    cursor: operationsCursorSchema.optional(),
-    limit: z.number().int().min(1).max(500).default(100),
-  })
-  .strict();
+export const operationsGetDetailInputSchema =
+  operationsDashboardQueryInputSchema
+    .extend({
+      selection: operationsDetailSelectionSchema,
+      cursor: operationsCursorSchema.optional(),
+      limit: z.number().int().min(1).max(500).default(100),
+    })
+    .strict();
 
 /**
  * 运营快照的日期时间允许 Date 或带偏移 ISO 字符串。
@@ -208,6 +221,10 @@ export const operationsDetailOutputSchema = z
 
 export type OperationsDetailOutput = z.infer<
   typeof operationsDetailOutputSchema
+>;
+
+export type OperationsGetDetailInput = z.infer<
+  typeof operationsGetDetailInputSchema
 >;
 
 /** 三类异步 CSV 导出的创建输入。 */
@@ -271,7 +288,8 @@ export const operationsRetryExportInputSchema = z
   })
   .strict();
 
-export const operationsRetryExportOutputSchema = operationsCreateExportOutputSchema;
+export const operationsRetryExportOutputSchema =
+  operationsCreateExportOutputSchema;
 
 /** 下载准备只返回短期许可，不把对象键或存储配置穿过 UOL。 */
 export const operationsPrepareExportDownloadInputSchema = z
@@ -294,8 +312,10 @@ export const operationsProcessExportsInputSchema = z
 export const operationsProcessExportsOutputSchema = z
   .object({ processed: operationsCountSchema })
   .strict();
-export const operationsExpireExportsInputSchema = operationsProcessExportsInputSchema;
-export const operationsExpireExportsOutputSchema = operationsProcessExportsOutputSchema;
+export const operationsExpireExportsInputSchema =
+  operationsProcessExportsInputSchema;
+export const operationsExpireExportsOutputSchema =
+  operationsProcessExportsOutputSchema;
 
 export type OperationsGranularity = z.infer<typeof operationsGranularitySchema>;
 export type OperationsDateRangeInput = z.infer<
