@@ -8,6 +8,10 @@ import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
 } from "@repo/shared/image-backend/supported-models";
+import {
+  isModelMarketplaceModelEnabled,
+  type ModelMarketplaceConfig,
+} from "@repo/shared/model-marketplace";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { canRuntimeBackendLeaseServeRequest } from "@/features/image-backend-pool/runtime-protocol-eligibility";
@@ -45,6 +49,7 @@ export interface PlatformModelCatalogMember {
 export interface PlatformModelCatalogSource {
   groups: readonly PlatformModelCatalogGroup[];
   members: readonly PlatformModelCatalogMember[];
+  marketplaceConfig?: ModelMarketplaceConfig;
   customModels?: ReadonlyArray<{
     modelId: string;
     category: "image" | "video";
@@ -112,6 +117,20 @@ export function buildPlatformModelCatalog(
       );
       const videoModelId = normalizeVideoModelId(rawModelId);
       if (customCategory === "video" || videoModelId) {
+        const resolvedVideoModelId =
+          customCategory === "video"
+            ? rawModelId
+            : (videoModelId ?? rawModelId);
+        if (
+          source.marketplaceConfig &&
+          !isModelMarketplaceModelEnabled(
+            source.marketplaceConfig,
+            "video",
+            resolvedVideoModelId
+          )
+        ) {
+          continue;
+        }
         const canExecuteVideo =
           customCategory === "video"
             ? member.type === "api"
@@ -123,16 +142,21 @@ export function buildPlatformModelCatalog(
                 }
               );
         if (canExecuteVideo) {
-          addModel(
-            videoModels,
-            customCategory === "video"
-              ? rawModelId
-              : (videoModelId ?? rawModelId)
-          );
+          addModel(videoModels, resolvedVideoModelId);
         }
         continue;
       }
       if (isLegacyVideoModelId(rawModelId)) continue;
+      if (
+        source.marketplaceConfig &&
+        !isModelMarketplaceModelEnabled(
+          source.marketplaceConfig,
+          "image",
+          rawModelId
+        )
+      ) {
+        continue;
+      }
       addModel(imageModels, rawModelId);
     }
   }

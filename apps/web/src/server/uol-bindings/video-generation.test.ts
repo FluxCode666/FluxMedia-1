@@ -175,6 +175,35 @@ describe("executeVideoListCapabilitiesBinding", () => {
     expect(output.items.every((item) => !item.configuredReachable)).toBe(true);
   });
 
+  it("显式停用的视频模型不返回能力项", async () => {
+    const deps = dependencies({ configuredModelIds: ["seedance2", "sora2"] });
+    deps.value.loadMarketplaceConfig = async () => ({
+      version: 2,
+      imageByModel: {},
+      videoByFamily: {
+        seedance2: {
+          revision: 1,
+          enabled: false,
+          visible: false,
+          homepageVisible: false,
+          description: "",
+          cover: null,
+        },
+      },
+      customModels: [],
+      writeReceipts: {},
+    });
+
+    const output = await executeVideoListCapabilitiesBinding(
+      {},
+      userPrincipal,
+      deps.value
+    );
+
+    expect(output.items.some((item) => item.model === "seedance2")).toBe(false);
+    expect(output.items.some((item) => item.model === "sora2")).toBe(true);
+  });
+
   it("输出采用严格公共投影，不泄露成员、凭据、健康或容量", async () => {
     const deps = dependencies({ configuredModelIds: ["seedance2"] });
     const output = await executeVideoListCapabilitiesBinding(

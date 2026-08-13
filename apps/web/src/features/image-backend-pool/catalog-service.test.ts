@@ -127,4 +127,44 @@ describe("image backend catalog group semantics", () => {
       groups: [],
     });
   });
+
+  it("创作页图片目录不返回已停用模型", async () => {
+    mocks.listGroups.mockResolvedValue([group()]);
+    mocks.listMembers.mockResolvedValue([
+      {
+        ...member,
+        supportedModelIds: ["firefly-gpt-image-2", "vendor-image"],
+      },
+    ]);
+    mocks.getRuntimeSettingJson.mockResolvedValue({
+      version: 2,
+      imageByModel: {
+        "gpt-image-2": {
+          revision: 1,
+          enabled: false,
+          visible: false,
+          homepageVisible: false,
+          homepagePriority: 5,
+          description: "",
+          cover: null,
+        },
+      },
+      videoByFamily: {},
+      customModels: [],
+      writeReceipts: {},
+    });
+
+    await expect(getImageGenerationModelCatalog()).resolves.toEqual({
+      groups: [
+        expect.objectContaining({
+          models: [
+            {
+              id: "vendor-image",
+              capabilities: { generate: true, edit: true, mask: true },
+            },
+          ],
+        }),
+      ],
+    });
+  });
 });

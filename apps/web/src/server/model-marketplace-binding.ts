@@ -84,6 +84,9 @@ const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
       async loadCapabilityOverrides() {
         return getRuntimeSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES");
       },
+      async loadMarketplaceConfig() {
+        return getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG");
+      },
       async listConfiguredModelIds(selection) {
         return (
           await import("@/features/image-backend-pool/runtime-service")

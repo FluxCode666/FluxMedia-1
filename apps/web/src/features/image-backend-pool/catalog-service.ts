@@ -6,7 +6,10 @@
  */
 import { toBackendGroupContentSafety } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
-import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
+import {
+  isModelMarketplaceModelEnabled,
+  parseModelMarketplaceConfig,
+} from "@repo/shared/model-marketplace";
 import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
@@ -101,6 +104,11 @@ export async function getImageGenerationModelCatalog(): Promise<ImageGenerationM
             type: member.type,
             supportedModelIds: member.supportedModelIds.filter(
               (modelId) =>
+                isModelMarketplaceModelEnabled(
+                  marketplaceConfig,
+                  "image",
+                  modelId
+                ) &&
                 !normalizeVideoModelId(modelId) &&
                 !isLegacyVideoModelId(modelId)
             ),

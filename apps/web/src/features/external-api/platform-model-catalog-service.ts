@@ -89,6 +89,7 @@ export async function loadPlatformModelCatalog(
   return buildPlatformModelCatalog({
     groups,
     members,
+    marketplaceConfig,
     customModels: marketplaceConfig.customModels,
   });
 }
