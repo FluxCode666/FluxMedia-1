@@ -69,6 +69,12 @@ export {
   CollapsibleContent,
 } from "./components/collapsible";
 
+// Cursor Pagination
+export {
+  CursorPaginationControls,
+  type CursorPaginationControlsProps,
+} from "./components/cursor-pagination-controls";
+
 // Dialog
 export {
   Dialog,
