@@ -38,6 +38,7 @@ export type ApiIntegrationEndpoint = {
   path: string;
   contentType: string;
   description: string;
+  deprecationNotice?: string;
   requestExample: string;
   responseExample: string;
   parameters: readonly ApiIntegrationParameter[];
@@ -513,6 +514,8 @@ const zhContent = {
       path: "/v1/videos",
       contentType: "application/json",
       description: "按 OpenAI 风格地址根据文本提示词或参考图创建持久视频任务。",
+      deprecationNotice:
+        "警告：旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；具体下线版本另行发布。",
       requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -626,7 +629,6 @@ const zhContent = {
       notes: [
         "接口始终以 HTTP 202 返回持久任务，不同步等待视频完成；请使用 GET /v1/videos/{id} 轮询。",
         "模型、时长、比例和分辨率分别校验，不会从模型 ID 解析参数。",
-        "旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；下线前旧地址继续复用同一处理逻辑，具体下线版本另行发布。",
       ],
     },
     {
@@ -1201,6 +1203,8 @@ const enContent = {
       title: "Create video",
       description:
         "Create a persistent video task from a text prompt or reference images using the OpenAI-style route.",
+      deprecationNotice:
+        "Warning: The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal. Migrate to POST /v1/videos or /api/v1/videos; the removal release will be announced separately.",
       parameters: [
         {
           name: "client_request_id / clientRequestId",
@@ -1293,7 +1297,6 @@ const enContent = {
       ],
       notes: [
         "The endpoint always returns a persistent task with HTTP 202 and never waits synchronously for the video; poll GET /v1/videos/{id}.",
-        "The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal. Migrate to POST /v1/videos or /api/v1/videos. The legacy routes continue to use the same handler until removal; the removal release will be announced separately.",
         "Model, duration, ratio, and resolution are validated independently and are never parsed from the model ID.",
       ],
     },
