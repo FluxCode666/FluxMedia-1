@@ -175,6 +175,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "System Settings": t("nav.systemSettings"),
       "Global Status": t("nav.globalStatus"),
       "Admin Data Dashboard": t("nav.adminAnalytics"),
+      "Operations Dashboard": t("nav.operations"),
       "Announcement Management": t("nav.announcementManagement"),
       "Account Pool": t("nav.imageBackendPool"),
       Support: t("nav.support"),
@@ -237,6 +238,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             title: "Admin Data Dashboard",
             href: "/dashboard/admin/analytics",
             icon: ChartNoAxesCombined,
+          },
+          {
+            title: "Operations Dashboard",
+            href: "/dashboard/admin/operations",
+            icon: Activity,
           },
           {
             title: "User Management",

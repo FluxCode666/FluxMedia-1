@@ -455,6 +455,7 @@
       "systemSettings": "系统设置",
       "globalStatus": "全局状态",
       "adminAnalytics": "数据看板",
+      "operations": "运营总览",
       "imageBackendPool": "账号池",
       "support": "支持",
       "newTicket": "新建工单"
@@ -483,6 +484,7 @@
       "systemSettings": "系统设置",
       "globalStatus": "全局状态",
       "adminAnalytics": "数据看板",
+      "operations": "运营总览",
       "imageBackendPool": "账号池",
       "creditsBuy": "购买积分",
       "profile": "个人资料",

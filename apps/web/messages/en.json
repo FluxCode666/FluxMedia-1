@@ -455,6 +455,7 @@
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
       "adminAnalytics": "Data Dashboard",
+      "operations": "Operations Dashboard",
       "imageBackendPool": "Account Pool",
       "support": "Support",
       "newTicket": "New Ticket"
@@ -483,6 +484,7 @@
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
       "adminAnalytics": "Data Dashboard",
+      "operations": "Operations Dashboard",
       "imageBackendPool": "Account Pool",
       "creditsBuy": "Buy Credits",
       "profile": "Profile",

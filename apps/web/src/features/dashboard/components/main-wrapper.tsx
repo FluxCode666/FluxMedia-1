@@ -37,6 +37,7 @@ function getPageTitleKey(pathname: string): string {
     "/dashboard/admin/settings": "systemSettings",
     "/dashboard/admin/status": "globalStatus",
     "/dashboard/admin/analytics": "adminAnalytics",
+    "/dashboard/admin/operations": "operations",
     "/dashboard/settings/profile": "profile",
     "/dashboard/settings/security": "security",
     "/dashboard/settings/notifications": "notifications",
