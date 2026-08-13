@@ -70,6 +70,16 @@ describe("system docs video contract", () => {
     expect(JSON.stringify(endpoint)).not.toMatch(
       /needs_attention|submitting|pending/u
     );
+    const notes = endpoint.notes.join("\n");
+    expect(notes).toContain("/v1/videos/generations");
+    expect(notes).toContain("/api/v1/videos/generations");
+    if (locale === "zh") {
+      expect(notes).toContain("即将废弃下线");
+      expect(notes).toContain("请尽快迁移至 POST /v1/videos");
+    } else {
+      expect(notes).toContain("scheduled for deprecation and removal");
+      expect(notes).toContain("migrate to POST /v1/videos");
+    }
   });
 
   it.each(["zh", "en"])("%s 精确描述持久视频任务查询", (locale) => {

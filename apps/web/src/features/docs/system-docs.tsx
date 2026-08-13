@@ -1791,7 +1791,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             },
           ],
           notes: [
-            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos 是同一 handler 的别名。",
+            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos 是同一 handler 的别名。旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；下线前仍复用同一处理逻辑，具体下线版本另行发布。",
             "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
             "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
             "计费 = 当前真实模型与输出分辨率对应的每秒积分 × 独立 duration（秒），最终结果按积分精度向上取整。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
@@ -4094,7 +4094,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             },
           ],
           notes: [
-            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. The legacy /v1/videos/generations route remains supported long term, while /api/v1/videos and /api/v1/videos/generations are equivalent aliases.",
+            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos is an equivalent alias. The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal; migrate to POST /v1/videos or /api/v1/videos. They continue to use the same handler until removal, and the removal release will be announced separately.",
             "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
             "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
             "Billing = credits per second for the selected real model and resolution × the separate duration value, rounded up to the supported credit precision. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",

@@ -187,6 +187,15 @@ describe("API integration docs data", () => {
     );
     expect(createText).toContain("HTTP 202");
     expect(createText).toContain("/v1/videos/generations");
+    expect(createText).toContain("/api/v1/videos/generations");
+    expect(createText).toContain("/api/v1/videos");
+    if (locale === "zh") {
+      expect(createText).toContain("即将废弃下线");
+      expect(createText).toContain("请尽快迁移至 POST /v1/videos");
+    } else {
+      expect(createText).toContain("scheduled for deprecation and removal");
+      expect(createText).toContain("Migrate to POST /v1/videos");
+    }
     expect(create?.responseExample).toContain('"status": "queued"');
     expect(createText).not.toContain("kling3-omni-8s-16x9-1080p");
     expect(createText).not.toContain("firefly-<family>");

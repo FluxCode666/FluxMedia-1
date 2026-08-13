@@ -21,7 +21,7 @@ execution: code
 - **Stop conditions:** 任一 API 供应商实现要求恢复人工核对、再次向用户扣费、在最终退款完成前继续请求上游，或让同一账号超过提交上限时停止并回到产品决策；不得借此改写 Adobe Direct 既有恢复流程。
 - **Tail ownership:** `ce-work` 或实现者按 U1-U6 的依赖顺序交付，完成 Verification Contract、Definition of Done 和计划内文档后再结束。
 
-**Product Contract preservation:** changed: R1-R4, R30-R32 — 新地址、旧地址和三个时长请求字段均长期支持，只做统一逻辑与请求兼容，不再对接口地址或参数实施废弃治理。changed: R10-R29, F2-F4, AE3-AE9 — 用户推翻 API 供应商人工核对方案。删除 API 供应商的管理员人工窗口、异常任务页面、上游 task ID 填写和人工结论；API 创建请求无有效响应时改为自动重试、同账号达到上限后切号、最终失败后退款并记录原因。Adobe Direct 的既有 `pollUrl` 恢复流程不因本计划改变。
+**Product Contract preservation:** changed: R1-R4, R30-R32 — `POST /v1/videos` 与 `/api/v1/videos` 是长期规范地址；旧 `*/videos/generations` 创建地址进入文档废弃迁移期，在另行发布的下线版本前继续复用同一逻辑。三个时长请求字段继续兼容，不因地址迁移废弃。changed: R10-R29, F2-F4, AE3-AE9 — 用户推翻 API 供应商人工核对方案。删除 API 供应商的管理员人工窗口、异常任务页面、上游 task ID 填写和人工结论；API 创建请求无有效响应时改为自动重试、同账号达到上限后切号、最终失败后退款并记录原因。Adobe Direct 的既有 `pollUrl` 恢复流程不因本计划改变。
 
 ---
 
@@ -47,8 +47,8 @@ API 供应商创建视频任务时，如果平台没有取得可确认任务已�
 - **`seconds` 同时兼容数字和整数字符串。** (session-settled: user-directed — accept a positive integer number or a decimal positive-integer string, normalize both to the same internal numeric duration, and reject fractional or non-decimal forms.) Governs R2.
 - **新增别名不提供默认时长。** (session-settled: user-directed — when `seconds`, `duration`, and `duration_seconds` are all absent, preserve the existing HTTP `400` required-duration behavior rather than defaulting to 4 seconds.) Governs R2.
 - **新旧创建地址都接受 `seconds`。** (session-settled: user-directed — expose the same additive request alias on every supported route; neither the routes nor `duration` and `duration_seconds` are deprecated.) Governs R2, R30.
-- **新旧接口地址长期并存。** (session-settled: user-directed — supersedes route deprecation: retain every existing route without `Deprecation`, `Sunset`, successor headers, removal telemetry, or a removal condition; unify behavior behind the routes.) Governs R3-R4, R30-R31.
-- **文档首选新地址但不降低旧地址支持级别。** (session-settled: user-directed — show `/v1/videos` in primary examples, list `/v1/videos/generations` as a supported compatibility address, and document `/api/v1/...` as equivalent deployment aliases without deprecation language.) Governs R30.
+- **旧创建地址进入文档废弃迁移期。** (session-settled: user-directed — supersedes indefinite route coexistence: keep `/v1/videos/generations` and `/api/v1/videos/generations` working through the compatibility window, mark them as scheduled for deprecation and removal, and announce the concrete removal release separately.) Governs R3-R4, R30-R31.
+- **文档明确规范地址和迁移目标。** (session-settled: user-directed — show `/v1/videos` in primary examples, identify `/api/v1/videos` as its equivalent deployment alias, and direct legacy generations callers to those routes without inventing a removal date.) Governs R30.
 - **响应对象保持 FluxMedia 契约。** (session-settled: user-directed — chosen over full or partial OpenAI Video-object parity: retain existing response fields on every route and change only the public status values plus the already-approved safe failure reason behavior.) Governs R3, R5-R8.
 - **遗留人工态在迁移窗口暂投影为 `in_progress`。** (session-settled: user-directed — before automatic migration claims the old API row, map legacy `needs_attention`/`submit_uncertain` to `in_progress`; mark this projection `@deprecated` and remove it next version only after the legacy-row count reaches zero.) Governs R6-R7, R22-R23.
 - **OpenAI 路径保留等价 `/api` 别名。** (session-settled: user-directed — `/v1/videos` is the canonical documented route, while `/api/v1/videos` and their task-query forms remain behaviorally identical aliases rather than redirects.) Governs R1 and R9.
@@ -103,7 +103,7 @@ stateDiagram-v2
 - R2. 新旧创建接口必须在现有 `duration`、`duration_seconds` 数值字段之外新增 `seconds` 兼容字段。`seconds` 接受正整数或只包含十进制正整数的字符串，归一化后与旧字段进入同一 FluxMedia 模型时长能力校验；不得截断小数、就近取值或把时长自动改成 OpenAI 的 4、8、12、16、20 秒集合。5、6、10、15 秒等现有模型支持值继续合法。本次不为 `seconds` 设置独立默认值；三个时长字段均未提供时仍按现有“时长必填”契约拒绝请求。任意两个或三个时长字段同时提供时，必须先归一化再比较；值不完全一致时返回 HTTP `400` 参数冲突，且不得产生任务、财务、配额或调度副作用。
 - R2a. 任一时长字段完成格式归一化后，必须在创建任务前校验所选 FluxMedia 模型的有效能力。若该模型不支持请求时长，根路径和 `/api` 别名必须返回相同的 HTTP `400` 友好参数错误；不得创建或持久化视频任务、扣除积分、预留 API Key 配额、占用供应商并发槽、创建提交尝试或进入退款流程，也不得自动改成相邻时长。
 - R3. 旧 `POST /v1/videos/generations` 必须继续接受并返回其现有非状态字段，以支持兼容迁移；新旧创建和查询响应继续只使用现有数值 `duration`、`duration_seconds` 字段，不新增响应字段 `seconds`。
-- R4. 旧创建地址、`duration` 和 `duration_seconds` 均继续作为正式支持的接口契约，不标记废弃、不设置移除版本或 Sunset 条件。新增地址和 `seconds` 只扩展兼容面；新旧地址与三个时长字段必须进入同一参数归一化、能力校验、UOL、状态机和自动恢复逻辑。
+- R4. 旧创建地址在下线版本发布前继续接受请求，但必须在 API 文档标记为即将废弃下线，并引导调用方迁移到 `POST /v1/videos` 或 `/api/v1/videos`；本次没有确定的下线版本，不发送虚构的 `Sunset` 日期。`duration` 和 `duration_seconds` 不随地址废弃，继续与 `seconds` 进入同一参数归一化、能力校验、UOL、状态机和自动恢复逻辑。
 - R5. 新旧创建与查询接口必须只公开 `queued`、`in_progress`、`completed`、`failed`，不得再返回 `pending`、`submitting`、`processing` 或 `needs_attention`。
 - R6. 尚未开始执行的视频任务公开为 `queued`；API 供应商提交重试、切换账号、上游轮询和下载阶段，以及 Adobe Direct 既有轮询和下载阶段，公开为 `in_progress`；进入退款阶段后立即公开为 `failed`。升级前遗留 API `needs_attention` / `submit_uncertain` 在自动迁移取得处理权前临时公开为 `in_progress`，迁移后再按实际重试或退款阶段投影。查询与用户记录的失败原因可暂时说明“退款正在处理中”，但生成结果终态回调只携带最后一次生成失败原因，不携带退款信息。不得新增“生成失败”“退款失败”等公开或内部状态枚举。
 - R7. API 供应商的新任务不得进入需要人工处理的公开或内部状态。旧 API `submit_uncertain` 只作为部署兼容输入，处理规则见 R22-R23；其临时 `in_progress` 投影必须在代码中使用 `@deprecated` 注释明确适用数据范围、升级窗口和零遗留删除条件。Adobe Direct 的既有协议专属恢复流程不因本计划改变。
@@ -148,9 +148,9 @@ stateDiagram-v2
 
 **Route coexistence and status migration**
 
-- R30. 新旧创建地址及其 `/api` 别名必须长期并存并在 API 文档中同时列出。文档的主要请求示例使用 `/v1/videos`，`/v1/videos/generations` 作为“兼容地址”说明，`/api/v1/videos` 与 `/api/v1/videos/generations` 作为等价部署别名说明；“兼容”只表示文档主次，不表示支持级别降低。任何地址均不得发送 `Deprecation`、`Sunset` 或 successor `Link`，也不得建设面向下线的匿名调用计数或移除门槛。
+- R30. API 文档的主要请求示例使用 `/v1/videos`，并把 `/api/v1/videos` 说明为等价部署别名；旧 `/v1/videos/generations` 与 `/api/v1/videos/generations` 必须在“创建视频”处明确标记为即将废弃下线并给出迁移目标。旧地址在另行发布的下线版本前继续工作。本次只建立文档级迁移通知，不发送没有确定日期的 `Sunset` 或 successor `Link`，也不伪造移除版本。
 - R31. 新旧地址必须复用同一传输处理与 UOL operation，除 URL 和新旧请求字段组合外，不得出现鉴权、校验、HTTP 状态、响应对象、扣费、调度、重试、退款或日志语义差异。
-- R32. 旧公开状态不保留兼容周期，因为新旧接口在本次发布即统一为四态；发布说明必须把状态变更列为破坏性变更，但不得把接口地址或时长参数描述为废弃。
+- R32. 旧公开状态不保留兼容周期，因为新旧接口在本次发布即统一为四态；发布说明必须把状态变更列为破坏性变更，并把旧 generations 创建地址描述为进入废弃迁移期，但不得把三个时长请求字段描述为废弃。
 
 ### Key Flows
 
@@ -208,7 +208,7 @@ stateDiagram-v2
 - AE9. **Covers R22-R23.** Given 历史 API `submit_uncertain` 任务缺少供应商、协议、账号、能力、存储或有效恢复身份等不可变执行快照，when 部署后扫描发现，then 系统不重提、不恢复人工入口，幂等退款后公开 `failed`，保存稳定的历史快照无效失败原因并只输出一次兼容告警；兼容分支带废弃注释且仅在遗留数为零时移除。Adobe Direct 历史任务不进入该分支。
 - AE9a. **Covers R6-R7, R22-R23.** Given 升级前遗留 API `needs_attention` / `submit_uncertain` 尚未被迁移 Worker 取得处理权，when 客户端查询，then 只返回 `in_progress`，不得泄露旧状态；迁移取得处理权后按自动重试阶段继续返回 `in_progress`，或在进入退款阶段后返回 `failed`。临时投影带 `@deprecated` 和零遗留删除条件，下个版本只有在遗留查询为零后才移除。
 - AE10. **Covers R24-R29.** Given 任一提交尝试失败，when 日志被采集，then 可用事件名、供应商名称、任务 ID、服务端 request ID、尝试序号和失败代码定位问题，且不存在敏感正文或凭据。
-- AE11. **Covers R30-R32.** Given 客户端分别使用“旧地址 + `seconds`”“新地址 + `duration`”“旧地址 + `duration`”，when 请求成功，then 三种请求均进入同一操作并返回一致业务结果，任何组合都不返回 `Deprecation`、`Sunset` 或 successor `Link`，也不写下线统计；API 文档首选 `/v1/videos`，同时明确其他三个创建地址长期等价支持；旧状态名称不再出现在任何新旧视频公开响应中。
+- AE11. **Covers R30-R32.** Given 客户端分别使用“旧地址 + `seconds`”“新地址 + `duration`”“旧地址 + `duration`”，when 请求成功，then 三种请求均进入同一操作并返回一致业务结果；API 文档首选 `/v1/videos`，把 `/api/v1/videos` 标为等价别名，并明确两个旧 generations 地址即将废弃下线及迁移目标。本次未确定下线版本，因此不返回 `Sunset` 或 successor `Link`；旧状态名称不再出现在任何新旧视频公开响应中。
 
 ### Success Criteria
 
@@ -268,7 +268,7 @@ stateDiagram-v2
 - KTD8. **日志直接输出，数据库记录负责持久真相。** 取得状态转换权的流程输出白名单 Pino 事件；任务行和尝试账本保存失败事实，不新增日志 outbox/drain 子系统。日志丢失不改变恢复正确性，运维可以从数据库事实补查。
 - KTD9. **三层关联标识。** `videoTaskId` 贯穿任务生命周期；每次 HTTP、Worker 或扫描生成服务端 `requestId`；每次供应商外呼使用尝试序号。受限 `externalRequestId` 只做辅助关联，不能成为权威审计或日志主键。
 - KTD10. **API 历史人工态仅作废弃兼容输入。** 旧 API `submit_uncertain` 若执行快照完整则迁移到 `retrying`；不完整则进入最终退款。迁移完成前，共享状态投影将遗留 `needs_attention` / `submit_uncertain` 临时映射为 `in_progress`。兼容函数和临时投影都必须带 `@deprecated`、适用数据范围与下版本零行删除门槛，新 API 任务绝不再写该阶段；Adobe Direct 历史状态不套用该兼容分支。
-- KTD11. **路由长期共存且不建设废弃治理。** 新旧创建地址及 `/api` 别名都直接复用同一 handler 和 UOL operation；不新增废弃 header、Sunset、successor Link、旧地址调用聚合、下线扫描或移除门槛。测试只证明路由行为一致，而不维护迁移统计子系统。
+- KTD11. **旧路由作为迁移期适配器继续复用统一逻辑。** 新旧创建地址及 `/api` 别名都直接复用同一 handler 和 UOL operation；旧 generations 路由使用 `@deprecated` 注释并由双语 API 文档引导迁移。本次没有确定下线版本，因此不新增 `Sunset`、successor Link 或伪造日期；真正移除路由必须作为后续独立版本实施。
 
 ### High-Level Technical Design
 
@@ -301,7 +301,7 @@ flowchart TB
 
 ### Sequencing and Dependencies
 
-U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和历史兼容迁移；U3 在其上实现同账号重试、切号和最终退款；U4 接入失败原因与日志；U5 可在 U1、U2 后并行接入长期共存的公开路由和参数兼容；U6 最后同步文档并执行全链路验证。
+U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和历史兼容迁移；U3 在其上实现同账号重试、切号和最终退款；U4 接入失败原因与日志；U5 可在 U1、U2 后并行接入规范公开路由、旧路由迁移期适配和参数兼容；U6 最后同步文档并执行全链路验证。
 
 ### System-Wide Impact
 
@@ -449,9 +449,9 @@ U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和�
 - **Test scenarios:** 每种事件字段完整；失败响应与任务记录一致；换行、超长值、prompt、凭据、URL、上游 task ID 和正文不进入日志或持久字段。
 - **Verification:** 事件 schema、日志捕获、请求 ID 和文档同步测试通过。
 
-### U5. 接入长期共存的公开视频路由与参数兼容
+### U5. 接入规范公开视频路由、迁移期旧路由与参数兼容
 
-- **Goal:** 新增 OpenAI 地址和请求字段 `seconds`，同时长期保留旧路由与旧字段，并确保所有入口逻辑一致。
+- **Goal:** 新增 OpenAI 地址和请求字段 `seconds`，在下线版本发布前保留旧路由兼容，长期保留旧时长字段，并确保所有入口逻辑一致。
 - **Requirements:** R1-R4, R30-R32；F1；AE1-AE2, AE11。
 - **Dependencies:** U1, U2。
 - **Files:**
@@ -463,8 +463,8 @@ U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和�
   - `apps/web/src/app/api/v1/videos/route.ts`
   - `apps/web/src/app/v1/videos/generations/route.ts`
   - `apps/web/src/app/api/v1/videos/generations/route.ts`
-- **Approach:** 新旧根路径及 `/api` 路径直接复用同一 handler 且不重定向。新旧 schema 均保留 `duration`、`duration_seconds` 并新增请求字段 `seconds` 兼容别名，统一归一为内部数值时长；各路径只调用一次 UOL，响应继续使用现有公开视频对象投影，不新增 `seconds`，也不增加任何废弃治理逻辑。
-- **Test scenarios:** 新旧根路径与 `/api` 创建、查询入口均不重定向且响应完全一致；JSON 请求被接受，multipart 请求被新创建路径一致拒绝且无副作用；`seconds` 数值和十进制正整数字符串与两个旧字段分别合法，三个字段缺失、非法或值冲突时拒绝；5、6、10、15 秒等模型支持值不因新增别名失效；模型不支持的时长返回 `400`，且任务、积分、配额、租约、提交账本和退款均无副作用；新旧创建和查询响应继续返回 `duration`、`duration_seconds` 且不新增 `seconds`，也不补齐 OpenAI Video 对象字段；任何入口均不发送废弃或 Sunset 响应头、不写下线统计；新旧查询返回四态和失败原因。
+- **Approach:** 新旧根路径及 `/api` 路径直接复用同一 handler 且不重定向。旧 generations 路由带迁移期 `@deprecated` 注释，但在实际下线前不改变运行语义。新旧 schema 均保留 `duration`、`duration_seconds` 并新增请求字段 `seconds` 兼容别名，统一归一为内部数值时长；各路径只调用一次 UOL，响应继续使用现有公开视频对象投影，不新增 `seconds`。
+- **Test scenarios:** 新旧根路径与 `/api` 创建、查询入口均不重定向且响应完全一致；JSON 请求被接受，multipart 请求被新创建路径一致拒绝且无副作用；`seconds` 数值和十进制正整数字符串与两个旧字段分别合法，三个字段缺失、非法或值冲突时拒绝；5、6、10、15 秒等模型支持值不因新增别名失效；模型不支持的时长返回 `400`，且任务、积分、配额、租约、提交账本和退款均无副作用；新旧创建和查询响应继续返回 `duration`、`duration_seconds` 且不新增 `seconds`，也不补齐 OpenAI Video 对象字段；在未确定下线版本时不发送 `Sunset` 或 successor 响应头；新旧查询返回四态和失败原因。
 - **Verification:** handler、全部路由入口、查询和参数兼容测试通过。
 
 ### U6. 同步文档、发布说明与全链路验证
@@ -477,14 +477,16 @@ U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和�
   - `apps/web/src/features/docs/api-integration-docs-data.test.ts`
   - `apps/web/src/features/docs/system-docs.tsx`
   - `apps/web/src/features/docs/system-docs-video-contract.test.ts`
+  - `apps/web/scripts/test-video-api-compat.mjs`
   - `docs/video-submission-recovery-log-events.md`
   - `docs/MEMORY.md`
   - `CHANGELOG.md`
 - **Approach:**
-  1. 文档以 `/v1/videos` 为首选示例，同时说明长期支持的 `/v1/videos/generations` 兼容地址与两套 `/api/v1/...` 等价别名，并说明请求侧 `seconds` 兼容参数、四态和失败原因；不承诺其他 OpenAI 参数对齐，`duration` 和 `duration_seconds` 继续支持。
+  1. 文档以 `/v1/videos` 为首选示例，把 `/api/v1/videos` 说明为等价部署别名，并把两个旧 generations 地址标记为即将废弃下线，明确迁移目标和“具体下线版本另行发布”；同时说明请求侧 `seconds` 兼容参数、四态和失败原因。`duration` 和 `duration_seconds` 继续支持。
   2. 删除 API 供应商人工核对、60 秒窗口和管理员填写 task ID 的运维说明，改为账号级额外重试次数（范围 `0-10`、默认 `2`、`0` 表示不重试）、系统级重试等待时间（范围 `0-300` 秒、默认 `2` 秒、`0` 表示立即重试）、自动切号、最终退款及日志事件；保留 Adobe Direct 既有 `pollUrl` 恢复说明。
-  3. CHANGELOG 将四态列为破坏性变更，明确新旧地址与三个时长字段均长期支持，并说明 API 供应商人工核对事件已废弃。
-  4. 运行 focused tests 后执行全仓质量门，逐条核对 R/F/AE。
+  3. CHANGELOG 将四态列为破坏性变更，明确旧 generations 地址进入文档废弃迁移期、三个时长字段继续兼容，并说明 API 供应商人工核对事件已废弃。
+  4. 提供真实部署兼容测试脚本，使用同一幂等请求 ID 验证四个创建地址、两个查询地址和四态响应，只产生一个实际视频任务。
+  5. 运行 focused tests 后执行全仓质量门，逐条核对 R/F/AE。
 - **Verification:** 文档契约、链接、日志事件同步和全仓质量门通过。
 
 ---
@@ -496,7 +498,7 @@ U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和�
 | Shared/UOL contract | `pnpm --filter @repo/shared exec vitest run src/uol/operations/video-generation.test.ts src/uol/tests/invoke.test.ts` | 四态、失败原因 schema 和服务端 request ID |
 | Video retry domain | `pnpm --filter @repo/web exec vitest run src/features/image-generation/video-public-status.test.ts src/features/image-generation/video-submission-failure.test.ts src/features/image-generation/video-submission-attempt-repository.test.ts src/features/image-generation/video-recovery-policy.test.ts src/features/image-generation/video-operations.test.ts src/features/image-generation/video-queue-schedule.test.ts` | 账号级额外重试次数（范围 `0-10`、默认 `2`、`0` 不重试）、失败分类、自动切号、终局退款和历史兼容 |
 | Account and system config, pool and worker | `pnpm --filter @repo/shared exec vitest run src/image-backend/api-upstream-adaptation.test.ts src/image-backend/member-contract.test.ts src/system-settings/defaults.test.ts && pnpm --filter @repo/web exec vitest run src/features/image-backend-pool/member-service.test.ts src/features/image-backend-pool/runtime-service.test.ts src/features/image-backend-pool/repository.test.ts src/server/media-task-workers.test.ts src/server/media-task-recovery-repository.test.ts` | 账号级额外重试配置 `0-10`；系统级等待 `0-300` 秒、默认 `2`；创建 HTTP 超时 `1-300` 秒、默认 `30`；配置面板、持久排程、排除耗尽账号和跨进程恢复 |
-| Public API and internal UI | `pnpm --filter @repo/web exec vitest run src/features/external-api/handlers/video-generations.test.ts src/features/external-api/handlers/video-tasks.test.ts src/app/api/videos/generate/route.test.ts src/features/image-generation/components/video-create-panel.test.ts` | 长期共存的新旧 transport、参数兼容、四态、失败原因和站内轮询 |
+| Public API and internal UI | `pnpm --filter @repo/web exec vitest run src/features/external-api/handlers/video-generations.test.ts src/features/external-api/handlers/video-tasks.test.ts src/app/api/videos/generate/route.test.ts src/features/image-generation/components/video-create-panel.test.ts` | 规范与迁移期旧 transport、参数兼容、四态、失败原因和站内轮询 |
 | Migration | `pnpm --filter @repo/integration-tests exec vitest run src/video-submission-retry-migration.test.ts` | `0091` 可重入、尝试唯一约束、历史完整/不完整任务分流 |
 | Logs and docs | `pnpm --filter @repo/web exec vitest run src/features/image-generation/video-submission-recovery-events.test.ts src/features/docs/api-integration-docs-data.test.ts src/features/docs/system-docs-video-contract.test.ts` | 供应商名称、失败原因、事件迁移和 API 文档一致 |
 | Monorepo typecheck | `pnpm turbo typecheck` | TypeScript strict 与跨包公开类型一致 |
@@ -512,7 +514,7 @@ U1 先统一四态和站内消费者；U2 建立尝试账本、失败分类和�
 - U1-U6 的文件、行为、测试和文档均已交付；API 供应商没有管理员核对页面、人工操作或 60 秒窗口残留，创建阶段无合格 API 账号仍以 HTTP `202 Accepted` 返回已持久化任务对象，Adobe Direct 既有恢复流程未被误删。
 - 新旧视频创建、查询、站内页面、回调和用户视频记录只公开 `queued`、`in_progress`、`completed`、`failed`。
 - 新旧 API 继续返回现有 FluxMedia 任务对象；除四态和已确认的安全失败原因外，不新增或重命名为完整 OpenAI Video 对象字段。
-- 新旧创建地址及其 `/api` 别名长期支持、不重定向，并复用同一逻辑；新旧创建路径均在保留 `duration`、`duration_seconds` 的基础上接受请求字段 `seconds`，响应继续只返回现有时长字段；任何地址或时长参数都不发送废弃、Sunset 或 successor 响应头，也不建设下线统计。
+- 规范创建地址及其 `/api` 别名长期支持；旧 generations 地址在下线版本发布前不重定向并复用同一逻辑，但双语 API 文档已明确标记为即将废弃下线并给出迁移目标。所有创建路径均在保留 `duration`、`duration_seconds` 的基础上接受请求字段 `seconds`，响应继续只返回现有时长字段；本次没有确定下线版本，因此不发送虚构的 `Sunset` 或 successor 响应头。
 - 新创建路径只接受 JSON，不新增 multipart、文件上传或 `input_reference` 兼容面；两套新地址对不支持的编码一致拒绝且不产生副作用。
 - 任一时长参数格式合法但不受所选模型支持时，创建路径在任何任务、财务或调度副作用前返回 HTTP `400`，不自动改写时长。
 - 创建请求无有效响应时直接失败重试；按 API 账号 `0-10` 的配置执行额外重试，默认 `2`，`0` 表示不重试，达到 `1 + 配置值` 后自动切换未耗尽账号。

@@ -626,7 +626,7 @@ const zhContent = {
       notes: [
         "接口始终以 HTTP 202 返回持久任务，不同步等待视频完成；请使用 GET /v1/videos/{id} 轮询。",
         "模型、时长、比例和分辨率分别校验，不会从模型 ID 解析参数。",
-        "/v1/videos/generations 以及两者的 /api/v1 等价地址长期兼容，并复用同一处理逻辑。",
+        "旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；下线前旧地址继续复用同一处理逻辑，具体下线版本另行发布。",
       ],
     },
     {
@@ -1293,7 +1293,7 @@ const enContent = {
       ],
       notes: [
         "The endpoint always returns a persistent task with HTTP 202 and never waits synchronously for the video; poll GET /v1/videos/{id}.",
-        "The legacy /v1/videos/generations route remains supported long term, and /api/v1/videos plus /api/v1/videos/generations are equivalent aliases.",
+        "The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal. Migrate to POST /v1/videos or /api/v1/videos. The legacy routes continue to use the same handler until removal; the removal release will be announced separately.",
         "Model, duration, ratio, and resolution are validated independently and are never parsed from the model ID.",
       ],
     },

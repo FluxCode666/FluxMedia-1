@@ -87,8 +87,9 @@
 - 视频请求以 Principal 所有者和 `clientRequestId` 派生稳定任务、扣费与存储键。
 - 视频恢复使用数据库 claim token、租约与 `stateVersion` 比较交换；旧 worker 不得完成、
   退款或覆盖新 worker 的状态。
-- 视频创建推荐使用 `POST /v1/videos`；`/api/v1/videos` 和新旧
-  `*/videos/generations` 地址长期等价支持。请求兼容 `seconds`、`duration`、
+- 视频创建使用 `POST /v1/videos`，`/api/v1/videos` 是等价部署别名。旧
+  `*/videos/generations` 地址在下线前继续复用同一逻辑，但 API 文档已标记为即将废弃
+  下线，具体下线版本另行发布。请求兼容 `seconds`、`duration`、
   `duration_seconds`，响应仍只返回后两个时长字段。视频所有入口只公开 `queued`、
   `in_progress`、`completed`、`failed`。
 - API 供应商创建没有有效响应时不进入人工核对：每个账号按任务快照执行首次请求加配置的
