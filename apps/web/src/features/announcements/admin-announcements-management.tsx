@@ -12,7 +12,7 @@ import {
   deleteAnnouncementAction,
   toggleAnnouncementPublishAction,
   updateAnnouncementAction,
-} from "@repo/shared/announcements";
+} from "@repo/shared/announcements/actions";
 import type {
   AdminAnnouncementItem,
   AdminAnnouncementListOutput,
