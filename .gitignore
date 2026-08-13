@@ -47,6 +47,7 @@ rollout-*.jsonl
 **/.fluxMedia/
 # Claude Code 子 Agent 隔离 worktree（临时，自动管理；偶有 node_modules 残留）
 .claude/worktrees/
+.worktrees/
 
 # env files (can opt-in for committing if needed)
 .env*
