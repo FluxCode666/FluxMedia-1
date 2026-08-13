@@ -55,6 +55,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       metadata json,
       state_version integer not null default 0,
       next_poll_at timestamp,
+      refund_exhausted_at timestamp,
       claim_token text,
       claim_expires_at timestamp,
       submit_started_at timestamp,
