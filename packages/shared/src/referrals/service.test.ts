@@ -8,7 +8,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn(),
-  transaction: vi.fn(),
   update: vi.fn(),
   getRuntimeSettingJson: vi.fn(),
   grantCredits: vi.fn(),
@@ -17,7 +16,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@repo/database", () => ({
   db: {
     select: mocks.select,
-    transaction: mocks.transaction,
     update: mocks.update,
   },
   referralProfile: {
@@ -44,7 +42,6 @@ vi.mock("@repo/database", () => ({
 
 vi.mock("drizzle-orm", () => ({
   and: vi.fn(),
-  count: vi.fn(() => "count"),
   desc: vi.fn(),
   eq: vi.fn(),
   isNull: vi.fn(),
@@ -380,11 +377,11 @@ describe("fulfillReferralFirstPayment", () => {
 
 describe("listReferralRelationships", () => {
   beforeEach(() => {
-    mocks.transaction.mockReset();
+    mocks.select.mockReset();
   });
 
-  it("counts first, clamps the page and reads rows in one read-only snapshot", async () => {
-    const offset = vi.fn(async () => [
+  it("returns every relationship in stable descending order", async () => {
+    const orderBy = vi.fn(async () => [
       {
         id: "relationship-41",
         inviteeName: "Example User",
@@ -396,34 +393,14 @@ describe("listReferralRelationships", () => {
         rewardedAt: new Date("2026-08-13T08:00:00.000Z"),
       },
     ]);
-    const limit = vi.fn(() => ({ offset }));
-    const orderBy = vi.fn(() => ({ limit }));
     const rowsWhere = vi.fn(() => ({ orderBy }));
-    const countWhere = vi.fn(async () => [{ totalCount: 41 }]);
-    const select = vi
-      .fn()
-      .mockReturnValueOnce({ from: vi.fn(() => ({ where: countWhere })) })
-      .mockReturnValueOnce({
-        from: vi.fn(() => ({
-          innerJoin: vi.fn(() => ({ where: rowsWhere })),
-        })),
-      });
-    mocks.transaction.mockImplementation(
-      async (
-        callback: (tx: { select: typeof select }) => Promise<unknown>,
-        options: unknown
-      ) => {
-        expect(options).toEqual({
-          isolationLevel: "repeatable read",
-          accessMode: "read only",
-        });
-        return callback({ select });
-      }
-    );
+    mocks.select.mockReturnValue({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({ where: rowsWhere })),
+      })),
+    });
 
-    await expect(
-      listReferralRelationships("inviter-1", { page: 9, pageSize: 20 })
-    ).resolves.toEqual({
+    await expect(listReferralRelationships("inviter-1", {})).resolves.toEqual({
       records: [
         {
           id: "relationship-41",
@@ -436,13 +413,9 @@ describe("listReferralRelationships", () => {
           rewardedAt: "2026-08-13T08:00:00.000Z",
         },
       ],
-      page: 3,
-      pageSize: 20,
-      totalCount: 41,
-      totalPages: 3,
+      totalCount: 1,
     });
-    expect(select).toHaveBeenCalledTimes(2);
-    expect(limit).toHaveBeenCalledWith(20);
-    expect(offset).toHaveBeenCalledWith(40);
+    expect(mocks.select).toHaveBeenCalledTimes(1);
+    expect(orderBy).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,7 +2,7 @@
  * 推广关系 UOL 契约测试。
  *
  * 使用方：Vitest；锁定统计与明细分离、Principal 身份边界、human-only 暴露和
- * 统一 offset 分页信封，避免关系明细重新混入看板摘要。
+ * 全量列表信封，避免关系明细重新混入看板摘要。
  */
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +11,7 @@ import {
   listMyReferralRelationships,
 } from "./referrals";
 
-describe("referral pagination operation contracts", () => {
+describe("referral operation contracts", () => {
   it("keeps the dashboard output limited to aggregate fields", () => {
     expect(
       getMyReferralDashboard.output.safeParse({
@@ -30,7 +30,7 @@ describe("referral pagination operation contracts", () => {
     ).toBe(false);
   });
 
-  it("registers a session-only human pagination read", () => {
+  it("registers a session-only human full-list read", () => {
     expect(listMyReferralRelationships).toMatchObject({
       access: { kind: "user" },
       agentExposure: "human-only",
@@ -39,22 +39,16 @@ describe("referral pagination operation contracts", () => {
       idempotency: { kind: "natural" },
       sideEffects: [],
     });
+    expect(listMyReferralRelationships.input.safeParse({}).success).toBe(true);
     expect(
       listMyReferralRelationships.input.safeParse({
         page: 2,
-        pageSize: 50,
-      }).success
-    ).toBe(true);
-    expect(
-      listMyReferralRelationships.input.safeParse({
-        page: 2,
-        pageSize: 50,
         userId: "forged-user",
       }).success
     ).toBe(false);
   });
 
-  it("accepts the shared offset envelope without raw email fields", () => {
+  it("accepts the full-list envelope without pagination metadata", () => {
     const parsed = listMyReferralRelationships.output.safeParse({
       records: [
         {
@@ -68,11 +62,15 @@ describe("referral pagination operation contracts", () => {
           rewardedAt: "2026-08-13T08:00:00.000Z",
         },
       ],
-      page: 1,
-      pageSize: 20,
       totalCount: 1,
-      totalPages: 1,
     });
     expect(parsed.success).toBe(true);
+    expect(
+      listMyReferralRelationships.output.safeParse({
+        records: [],
+        totalCount: 0,
+        page: 1,
+      }).success
+    ).toBe(false);
   });
 });

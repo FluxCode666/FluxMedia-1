@@ -485,14 +485,13 @@ async function invokeApiKeyManagement<T>(
   }
 }
 
-/** externalApi.listKeys - 分页返回本人可恢复 Key 与当前可编辑分组。 */
+/** externalApi.listKeys - 返回本人全部可恢复 Key 与当前可编辑分组。 */
 bindExecute(
   "externalApi.listKeys",
-  async (input: { page: number; pageSize: number }, principal: Principal) =>
+  async (_input: Record<string, never>, principal: Principal) =>
     invokeApiKeyManagement(() =>
       externalApiKeyManagementService.listKeys(
-        getApiKeyManagementUserId(principal),
-        input
+        getApiKeyManagementUserId(principal)
       )
     )
 );

@@ -161,23 +161,12 @@ export type ExternalApiKeyListItem = z.infer<
   typeof externalApiKeyListItemSchema
 >;
 
-export const externalApiKeyListInputSchema = z
-  .object({
-    page: z.number().int().positive().default(1),
-    pageSize: z
-      .union([z.literal(10), z.literal(20), z.literal(50)])
-      .default(20),
-  })
-  .strict();
+export const externalApiKeyListInputSchema = z.object({}).strict();
 
 export const externalApiKeyListOutputSchema = z
   .object({
     keys: z.array(externalApiKeyListItemSchema),
     editableGroups: z.array(externalApiKeyGroupSchema),
-    page: z.number().int().positive(),
-    pageSize: z.number().int().positive(),
-    totalCount: z.number().int().nonnegative(),
-    totalPages: z.number().int().positive(),
   })
   .strict();
 
@@ -188,7 +177,7 @@ export const listKeys = defineOperation({
   name: "externalApi.listKeys",
   domain: "external-api",
   title: "List API Keys",
-  description: "获取当前用户的外部 API Key 列表。需要登录认证。只读操作。",
+  description: "获取当前用户的全部外部 API Key。需要登录认证。只读操作。",
   input: externalApiKeyListInputSchema,
   output: externalApiKeyListOutputSchema,
   access: { kind: "user" },

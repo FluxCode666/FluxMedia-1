@@ -48,14 +48,7 @@ const updateKeyQuotaSchema = z
   })
   .strict();
 
-const listKeySchema = z
-  .object({
-    page: z.number().int().positive().default(1),
-    pageSize: z
-      .union([z.literal(10), z.literal(20), z.literal(50)])
-      .default(20),
-  })
-  .strict();
+const listKeySchema = z.object({}).strict();
 
 export type ExternalApiKeyListResult = {
   keys: ExternalApiKeyListItem[];
@@ -65,10 +58,6 @@ export type ExternalApiKeyListResult = {
     enabled: boolean;
     selectable: boolean;
   }>;
-  page: number;
-  pageSize: 10 | 20 | 50;
-  totalCount: number;
-  totalPages: number;
 };
 
 type CreateExternalApiKeyResult = {

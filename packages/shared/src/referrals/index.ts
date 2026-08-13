@@ -2,5 +2,5 @@
 export * from "./config";
 export * from "./contract";
 export * from "./cookie";
-export * from "./pagination-contract";
+export * from "./relationship-contract";
 export * from "./service";

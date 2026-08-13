@@ -14,10 +14,9 @@ import {
   referralRelationship,
   user,
 } from "@repo/database";
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 
 import { grantCredits } from "../credits/core";
-import { resolvePaginationState } from "../pagination/state";
 import { getRuntimeSettingJson } from "../system-settings";
 import {
   calculateReferralReward,
@@ -34,7 +33,7 @@ import type {
   ReferralRelationshipListInput,
   ReferralRelationshipListItem,
   ReferralRelationshipListOutput,
-} from "./pagination-contract";
+} from "./relationship-contract";
 
 const REFERRAL_CODE_LENGTH = 10;
 
@@ -155,7 +154,7 @@ export type ReferralDashboard = {
   rewardConfig: ReferralRewardConfig;
 };
 
-/** 读取当前用户推广码、全量统计与当前奖励配置，不混入分页关系明细。 */
+/** 读取当前用户推广码、全量统计与当前奖励配置，不混入关系明细。 */
 export async function getReferralDashboard(input: {
   userId: string;
   appUrl: string;
@@ -210,60 +209,41 @@ function toReferralRelationshipListItem(row: {
 }
 
 /**
- * 分页读取当前用户的推广关系明细。
+ * 读取当前用户的全部推广关系明细。
  *
  * @param userId 已由 Principal 派生的当前用户 ID。
- * @param input 已通过 UOL 校验的页码和页大小。
- * @returns 精确总数、越界收敛后的页码和脱敏关系记录。
+ * @param _input 已通过 UOL 校验的空查询对象，不接受客户端身份或分页字段。
+ * @returns 按创建时间倒序排列的全部脱敏关系记录及其总数。
  * @throws 数据库读取失败时透传错误。
- * @sideEffects 只在同一 repeatable-read 只读事务中执行 count 和 rows 查询。
+ * @sideEffects 仅读取数据库，不修改推广关系或奖励统计。
  */
 export async function listReferralRelationships(
   userId: string,
-  input: ReferralRelationshipListInput
+  _input: ReferralRelationshipListInput
 ): Promise<ReferralRelationshipListOutput> {
-  const result = await db.transaction(
-    async (tx) => {
-      const totalRows = await tx
-        .select({ totalCount: count() })
-        .from(referralRelationship)
-        .where(eq(referralRelationship.inviterUserId, userId));
-      const pagination = resolvePaginationState(
-        { page: input.page, pageSize: input.pageSize },
-        totalRows[0]?.totalCount ?? 0
-      );
-      const rows = await tx
-        .select({
-          id: referralRelationship.id,
-          inviteeName: user.name,
-          inviteeEmail: user.email,
-          status: referralRelationship.status,
-          inviterRewardCredits: referralRelationship.inviterRewardCredits,
-          inviteeRewardCredits: referralRelationship.inviteeRewardCredits,
-          createdAt: referralRelationship.createdAt,
-          rewardedAt: referralRelationship.rewardedAt,
-        })
-        .from(referralRelationship)
-        .innerJoin(user, eq(user.id, referralRelationship.inviteeUserId))
-        .where(eq(referralRelationship.inviterUserId, userId))
-        .orderBy(
-          desc(referralRelationship.createdAt),
-          desc(referralRelationship.id)
-        )
-        .limit(pagination.pageSize)
-        .offset((pagination.page - 1) * pagination.pageSize);
-
-      return {
-        records: rows.map(toReferralRelationshipListItem),
-        page: pagination.page,
-        pageSize: pagination.pageSize,
-        totalCount: pagination.totalCount,
-        totalPages: pagination.totalPages,
-      };
-    },
-    { isolationLevel: "repeatable read", accessMode: "read only" }
-  );
-  return result satisfies ReferralRelationshipListOutput;
+  const rows = await db
+    .select({
+      id: referralRelationship.id,
+      inviteeName: user.name,
+      inviteeEmail: user.email,
+      status: referralRelationship.status,
+      inviterRewardCredits: referralRelationship.inviterRewardCredits,
+      inviteeRewardCredits: referralRelationship.inviteeRewardCredits,
+      createdAt: referralRelationship.createdAt,
+      rewardedAt: referralRelationship.rewardedAt,
+    })
+    .from(referralRelationship)
+    .innerJoin(user, eq(user.id, referralRelationship.inviteeUserId))
+    .where(eq(referralRelationship.inviterUserId, userId))
+    .orderBy(
+      desc(referralRelationship.createdAt),
+      desc(referralRelationship.id)
+    );
+  const records = rows.map(toReferralRelationshipListItem);
+  return {
+    records,
+    totalCount: records.length,
+  } satisfies ReferralRelationshipListOutput;
 }
 
 /** 脱敏推广关系中的邮箱，只保留首字符和域名用于识别。 */

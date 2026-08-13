@@ -88,10 +88,6 @@ beforeEach(() => {
   repository = {
     listByUser: vi.fn().mockResolvedValue({
       rows: [{ key: activeKey, currentGroup: disabledCurrentGroup }],
-      page: 1,
-      pageSize: 20,
-      totalCount: 1,
-      totalPages: 1,
     }),
     insert: vi.fn().mockResolvedValue({
       ...activeKey,
@@ -135,10 +131,7 @@ beforeEach(() => {
 
 describe("list API keys", () => {
   it("keeps a disabled current group visible and returns separate editable candidates", async () => {
-    const result = await createService().listKeys("user-1", {
-      page: 1,
-      pageSize: 20,
-    });
+    const result = await createService().listKeys("user-1");
 
     expect(result).toEqual({
       keys: [
@@ -171,24 +164,14 @@ describe("list API keys", () => {
           selectable: true,
         },
       ],
-      page: 1,
-      pageSize: 20,
-      totalCount: 1,
-      totalPages: 1,
     });
-    expect(repository.listByUser).toHaveBeenCalledWith("user-1", {
-      page: 1,
-      pageSize: 20,
-    });
+    expect(repository.listByUser).toHaveBeenCalledWith("user-1");
   });
 
   it("没有可选分组时仍保留当前禁用分组的只读状态", async () => {
     listSelectableGroups.mockResolvedValue([]);
 
-    const result = await createService().listKeys("user-1", {
-      page: 1,
-      pageSize: 20,
-    });
+    const result = await createService().listKeys("user-1");
 
     expect(result.editableGroups).toEqual([]);
     expect(result.keys[0]?.currentGroup?.selectable).toBe(false);
@@ -203,16 +186,9 @@ describe("list API keys", () => {
           currentGroup: disabledCurrentGroup,
         },
       ],
-      page: 1,
-      pageSize: 20,
-      totalCount: 1,
-      totalPages: 1,
     });
 
-    const result = await createService().listKeys("user-1", {
-      page: 1,
-      pageSize: 20,
-    });
+    const result = await createService().listKeys("user-1");
 
     expect(result.keys[0]?.apiKey).toBeNull();
     expect(onSecretRecoveryError).not.toHaveBeenCalled();
@@ -235,10 +211,6 @@ describe("list API keys", () => {
           currentGroup: disabledCurrentGroup,
         },
       ],
-      page: 1,
-      pageSize: 20,
-      totalCount: 2,
-      totalPages: 1,
     });
     const service = createExternalApiKeyManagementService({
       repository,
@@ -256,10 +228,7 @@ describe("list API keys", () => {
       now: () => now,
     });
 
-    const result = await service.listKeys("user-1", {
-      page: 1,
-      pageSize: 20,
-    });
+    const result = await service.listKeys("user-1");
 
     expect(result.keys).toHaveLength(2);
     expect(result.keys[0]?.apiKey).toBe("sk-stored-key");

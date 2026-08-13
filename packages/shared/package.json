@@ -47,7 +47,7 @@
     "./referrals": "./src/referrals/index.ts",
     "./referrals/contract": "./src/referrals/contract.ts",
     "./referrals/cookie": "./src/referrals/cookie.ts",
-    "./referrals/pagination-contract": "./src/referrals/pagination-contract.ts",
+    "./referrals/relationship-contract": "./src/referrals/relationship-contract.ts",
     "./credits/format": "./src/credits/format.ts",
     "./credits/components": "./src/credits/components/index.ts",
     "./generation-maintenance": "./src/generation-maintenance.ts",
