@@ -95,11 +95,17 @@ export {
 import "./support";
 // 用户控制台统计
 import "./analytics";
+// 管理端运营总览事实采集与初始化
+import "./operations-dashboard-facts";
 // 管理端支付概览与充值订单
 import "./payment";
 // 推广码、归因与首充奖励看板
 import "./referrals";
 
+export {
+  initializeOperationsEpoch,
+  recordWebVisit,
+} from "./operations-dashboard-facts";
 export {
   fulfillAlipayReferralFirstPayment,
   fulfillCreemReferralFirstPayment,

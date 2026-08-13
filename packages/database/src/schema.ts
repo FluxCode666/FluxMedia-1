@@ -94,6 +94,67 @@ export const user = pgTable(
 );
 
 // ============================================
+// 运营总览事实与导出任务
+// ============================================
+
+/**
+ * 运营统计 epoch。
+ *
+ * 使用方：运营总览查询、明细和导出统一截断上线前行为。仅允许固定单行 ID，迁移不
+ * 自动填值；正式部署由受控 operation 幂等初始化，防止应用重启或迁移时间漂移口径。
+ */
+export const operationsAnalyticsEpoch = pgTable(
+  "operations_analytics_epoch",
+  {
+    id: integer("id").primaryKey(),
+    appDate: text("app_date").notNull(),
+    startsAt: timestamp("starts_at").notNull(),
+    initializedBy: text("initialized_by"),
+    initializationRequestId: text("initialization_request_id").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("operations_analytics_epoch_request_unique").on(
+      table.initializationRequestId
+    ),
+    check("operations_analytics_epoch_singleton_check", sql`${table.id} = 1`),
+    check(
+      "operations_analytics_epoch_app_date_check",
+      sql`${table.appDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
+    ),
+  ]
+);
+
+/**
+ * 用户网页有效访问日事实。
+ *
+ * 使用方：登录活跃用户与 Cohort 核对。每用户、每应用自然日最多一行；只记录
+ * userId 和日期，不持久化 session token、IP、UA 或页面路径，账户删除时级联清除。
+ */
+export const userWebVisit = pgTable(
+  "user_web_visit",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    appDate: text("app_date").notNull(),
+    firstVisitedAt: timestamp("first_visited_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: "user_web_visit_user_app_date_pk",
+      columns: [table.userId, table.appDate],
+    }),
+    index("user_web_visit_app_date_user_idx").on(table.appDate, table.userId),
+    check(
+      "user_web_visit_app_date_check",
+      sql`${table.appDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
+    ),
+  ]
+);
+
+// ============================================
 // 管理员操作审计日志 (Admin Audit Log)
 // ============================================
 /**
@@ -385,6 +446,14 @@ export const subscription = pgTable("subscription", {
  */
 export type User = typeof user.$inferSelect;
 export type NewUser = typeof user.$inferInsert;
+
+export type OperationsAnalyticsEpoch =
+  typeof operationsAnalyticsEpoch.$inferSelect;
+export type NewOperationsAnalyticsEpoch =
+  typeof operationsAnalyticsEpoch.$inferInsert;
+
+export type UserWebVisit = typeof userWebVisit.$inferSelect;
+export type NewUserWebVisit = typeof userWebVisit.$inferInsert;
 
 export type AdminAuditLog = typeof adminAuditLog.$inferSelect;
 export type NewAdminAuditLog = typeof adminAuditLog.$inferInsert;
