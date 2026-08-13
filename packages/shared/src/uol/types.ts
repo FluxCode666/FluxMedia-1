@@ -28,6 +28,7 @@ export type OperationDomain =
   | "storage"
   | "moderation"
   | "external-api"
+  | "content"
   | "support";
 
 /**
@@ -92,11 +93,13 @@ export type SideEffect =
  * 操作执行上下文 - invoke 网关构建并传入 execute 函数。
  *
  * - requestId: 全局唯一请求标识（用于日志关联与审计追踪）
+ * - externalRequestId: 经传输层校验的外部关联标识，绝不覆盖服务端 requestId
  * - callbacks: 可选回调集合（未来扩展 SSE/webhook 通知等）
  * - assertOwnership: owner 类操作在 execute 内调用以验证资源归属
  */
 export interface OperationContext {
   requestId: string;
+  externalRequestId?: string | undefined;
   callbacks?: Record<string, unknown> | undefined;
   assertOwnership: (resource: string, ownerId: string) => void;
 }

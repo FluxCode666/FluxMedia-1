@@ -10,6 +10,7 @@ import {
   parseConfiguredPageSize,
   parsePaginationConfig,
 } from "@repo/shared/pagination/config";
+import { parsePositivePageInteger } from "@repo/shared/pagination/state";
 import {
   ADMIN_PAYMENT_ORDER_DEFAULT_DAYS,
   ADMIN_PAYMENT_ORDER_STATUSES,
@@ -26,6 +27,7 @@ export type AdminPaymentOrderQueryState = {
   cursor: string | null;
   endDate: string;
   orderId: string | null;
+  page: number;
   pageSize: number;
   startDate: string;
   status: AdminPaymentOrderStatus | null;
@@ -216,6 +218,7 @@ export function parseAdminPaymentOrderQuery(
     cursor: readScalar(searchParams.cursor, MAX_CURSOR_LENGTH),
     endDate: range.endDate,
     orderId,
+    page: parsePositivePageInteger(searchParams.page),
     pageSize: parseConfiguredPageSize(searchParams.pageSize, paginationConfig),
     startDate: range.startDate,
     status: isPaymentOrderStatus(status) ? status : null,
@@ -235,6 +238,7 @@ export function buildAdminPaymentOrdersHref(
   if (state.pageSize !== 20) {
     searchParams.set("pageSize", String(state.pageSize));
   }
+  if (state.page > 1) searchParams.set("page", String(state.page));
   if (state.status) searchParams.set("status", state.status);
   if (state.cursor) searchParams.set("cursor", state.cursor);
   const query = searchParams.toString();

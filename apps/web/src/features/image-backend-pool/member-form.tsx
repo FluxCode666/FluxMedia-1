@@ -128,6 +128,7 @@ export function BackendMemberFormDialog({
       setModelMappings(member.config.modelMappings);
       setApiAdapterDraft({
         authentication: member.config.authentication ?? { mode: "bearer" },
+        videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
         operations:
           member.config.operations ??
           createDefaultApiUpstreamAdapterFormDraft().operations,
@@ -280,6 +281,7 @@ export function BackendMemberFormDialog({
             ? { apiKey: apiKey.trim() }
             : {}),
           useStream: apiUseStream,
+          videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
           modelMappings: modelMappings.filter((mapping) =>
             selectedModelKeys.has(mapping.modelId.toLowerCase())
           ),

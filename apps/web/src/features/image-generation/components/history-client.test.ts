@@ -18,6 +18,11 @@ vi.mock("./history-video-dialog", () => ({ HistoryVideoDialog: () => null }));
 vi.mock("@/i18n/routing", () => ({
   Link: ({ children }: { children: ReactNode }) =>
     createElement("a", null, children),
+  usePathname: () => "/dashboard/history",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 import { HistoryClient, type HistoryClientProps } from "./history-client";
@@ -30,12 +35,16 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
   return {
     modelOptions: [],
     nextCursor: null,
+    page: 1,
+    pageSizeOptions: [10, 20, 50],
     previousCursor: null,
     queryState: {
       createdFrom: null,
       createdTo: null,
       cursor: null,
       model: null,
+      page: 1,
+      pageSize: 20,
       status: null,
       type: null,
       userEmail: null,
@@ -61,6 +70,16 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
         prompt: "video prompt",
         resolution: "1080p",
         status: "completed",
+        submissionAttempts: [
+          {
+            attemptNumber: 1,
+            supplierName: "视频供应商主账号",
+            failureCode: "submission_timeout",
+            failureReason: "生成服务请求超时，请稍后重试",
+            operationsReason: "上游视频创建请求超时",
+            failedAt: "2026-07-22T12:00:30.000Z",
+          },
+        ],
         userEmail: "member@example.com",
         userId: "user-1",
         videoUrl: null,
@@ -68,6 +87,7 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
     ],
     showUserColumns,
     timeZone: "UTC",
+    totalCount: 1,
   };
 }
 
@@ -115,5 +135,25 @@ describe("HistoryClient supplier account identity", () => {
 
     expect(document.body.textContent).toContain("处理时长（秒）");
     expect(document.body.textContent).toContain("处理时长: 60s");
+  });
+
+  it("places the page-size selector after the total record count", () => {
+    renderHistory(false);
+
+    const pageSize = document.querySelector('[aria-label="每页条数"]');
+    const total = Array.from(document.querySelectorAll("p")).find((element) =>
+      element.textContent?.includes("共 1 条记录")
+    );
+
+    expect(pageSize).not.toBeNull();
+    expect(total).not.toBeUndefined();
+    expect(
+      pageSize && total
+        ? Boolean(
+            total.compareDocumentPosition(pageSize) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          )
+        : false
+    ).toBe(true);
   });
 });

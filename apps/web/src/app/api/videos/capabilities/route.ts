@@ -36,7 +36,10 @@ export async function GET(request: NextRequest) {
         userId: session.user.id,
         role: await getUserRoleById(session.user.id),
       },
-      { requestId: request.headers.get("x-request-id") ?? undefined }
+      {
+        externalRequestId:
+          request.headers.get("x-request-id") ?? undefined,
+      }
     );
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },

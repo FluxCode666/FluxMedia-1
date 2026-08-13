@@ -29,6 +29,11 @@ import {
   type ReferralRelationshipStatus,
 } from "./contract";
 import { REFERRAL_CODE_COOKIE } from "./cookie";
+import type {
+  ReferralRelationshipListInput,
+  ReferralRelationshipListItem,
+  ReferralRelationshipListOutput,
+} from "./relationship-contract";
 
 const REFERRAL_CODE_LENGTH = 10;
 
@@ -147,25 +152,15 @@ export type ReferralDashboard = {
   rewardedCount: number;
   totalRewardCredits: number;
   rewardConfig: ReferralRewardConfig;
-  relationships: Array<{
-    id: string;
-    inviteeName: string;
-    inviteeEmail: string;
-    status: ReferralRelationshipStatus;
-    inviterRewardCredits: number;
-    inviteeRewardCredits: number;
-    createdAt: string;
-    rewardedAt: string | null;
-  }>;
 };
 
-/** 读取当前用户推广码、当前奖励配置与有界关系列表，邮箱只返回脱敏地址。 */
+/** 读取当前用户推广码、全量统计与当前奖励配置，不混入关系明细。 */
 export async function getReferralDashboard(input: {
   userId: string;
   appUrl: string;
 }) {
   const profile = await ensureReferralProfile(input.userId);
-  const [[summary], rows, rewardConfig] = await Promise.all([
+  const [[summary], rewardConfig] = await Promise.all([
     db
       .select({
         invitedCount: sql<number>`count(*)`.mapWith(Number),
@@ -180,32 +175,8 @@ export async function getReferralDashboard(input: {
       })
       .from(referralRelationship)
       .where(eq(referralRelationship.inviterUserId, input.userId)),
-    db
-      .select({
-        id: referralRelationship.id,
-        inviteeName: user.name,
-        inviteeEmail: user.email,
-        status: referralRelationship.status,
-        inviterRewardCredits: referralRelationship.inviterRewardCredits,
-        inviteeRewardCredits: referralRelationship.inviteeRewardCredits,
-        createdAt: referralRelationship.createdAt,
-        rewardedAt: referralRelationship.rewardedAt,
-      })
-      .from(referralRelationship)
-      .innerJoin(user, eq(user.id, referralRelationship.inviteeUserId))
-      .where(eq(referralRelationship.inviterUserId, input.userId))
-      .orderBy(desc(referralRelationship.createdAt))
-      .limit(100),
     loadReferralConfig(),
   ]);
-  const relationships = rows.map((row) => ({
-    ...row,
-    inviteeEmail: maskEmail(row.inviteeEmail),
-    inviterRewardCredits: Number(row.inviterRewardCredits),
-    inviteeRewardCredits: Number(row.inviteeRewardCredits),
-    createdAt: row.createdAt.toISOString(),
-    rewardedAt: row.rewardedAt?.toISOString() ?? null,
-  }));
   return {
     code: profile.code,
     inviteUrl: `${input.appUrl.replace(/\/$/, "")}/r/${profile.code}`,
@@ -213,8 +184,66 @@ export async function getReferralDashboard(input: {
     rewardedCount: Number(summary?.rewardedCount ?? 0),
     totalRewardCredits: Number(summary?.totalRewardCredits ?? 0),
     rewardConfig,
-    relationships,
   } satisfies ReferralDashboard;
+}
+
+/** 将数据库推广关系转换为不包含原始邮箱的本人列表 DTO。 */
+function toReferralRelationshipListItem(row: {
+  id: string;
+  inviteeName: string;
+  inviteeEmail: string;
+  status: ReferralRelationshipStatus;
+  inviterRewardCredits: number;
+  inviteeRewardCredits: number;
+  createdAt: Date;
+  rewardedAt: Date | null;
+}): ReferralRelationshipListItem {
+  return {
+    ...row,
+    inviteeEmail: maskEmail(row.inviteeEmail),
+    inviterRewardCredits: Number(row.inviterRewardCredits),
+    inviteeRewardCredits: Number(row.inviteeRewardCredits),
+    createdAt: row.createdAt.toISOString(),
+    rewardedAt: row.rewardedAt?.toISOString() ?? null,
+  };
+}
+
+/**
+ * 读取当前用户的全部推广关系明细。
+ *
+ * @param userId 已由 Principal 派生的当前用户 ID。
+ * @param _input 已通过 UOL 校验的空查询对象，不接受客户端身份或分页字段。
+ * @returns 按创建时间倒序排列的全部脱敏关系记录及其总数。
+ * @throws 数据库读取失败时透传错误。
+ * @sideEffects 仅读取数据库，不修改推广关系或奖励统计。
+ */
+export async function listReferralRelationships(
+  userId: string,
+  _input: ReferralRelationshipListInput
+): Promise<ReferralRelationshipListOutput> {
+  const rows = await db
+    .select({
+      id: referralRelationship.id,
+      inviteeName: user.name,
+      inviteeEmail: user.email,
+      status: referralRelationship.status,
+      inviterRewardCredits: referralRelationship.inviterRewardCredits,
+      inviteeRewardCredits: referralRelationship.inviteeRewardCredits,
+      createdAt: referralRelationship.createdAt,
+      rewardedAt: referralRelationship.rewardedAt,
+    })
+    .from(referralRelationship)
+    .innerJoin(user, eq(user.id, referralRelationship.inviteeUserId))
+    .where(eq(referralRelationship.inviterUserId, userId))
+    .orderBy(
+      desc(referralRelationship.createdAt),
+      desc(referralRelationship.id)
+    );
+  const records = rows.map(toReferralRelationshipListItem);
+  return {
+    records,
+    totalCount: records.length,
+  } satisfies ReferralRelationshipListOutput;
 }
 
 /** 脱敏推广关系中的邮箱，只保留首字符和域名用于识别。 */

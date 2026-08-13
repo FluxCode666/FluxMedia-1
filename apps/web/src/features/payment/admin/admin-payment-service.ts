@@ -34,7 +34,7 @@ const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const paymentCursorFiltersSchema = z
   .object({
     endDate: z.string().date(),
-    limit: z.number().int().min(1).max(100),
+    pageSize: z.number().int().min(1).max(100),
     orderId: z.string().nullable(),
     startDate: z.string().date(),
     status: z.string().nullable(),
@@ -48,6 +48,8 @@ const paymentCursorPayloadSchema = z
     sub: z.string().min(1).max(512),
     filter: z.string().length(43),
     direction: z.enum(["next", "previous"]),
+    page: z.number().int().positive().safe(),
+    pageSize: z.number().int().min(1).max(100),
     asOf: z.string().datetime({ offset: true }),
     sortKey: z
       .object({
@@ -87,6 +89,8 @@ export type AdminPaymentOrderQuery = {
   start: Date;
   status: AdminPaymentOrder["status"] | null;
   userEmail: string | null;
+  page: number;
+  pageSize: number;
   cursor: {
     createdAt: Date;
     id: string;
@@ -95,8 +99,23 @@ export type AdminPaymentOrderQuery = {
   limit: number;
 };
 
-/** 支付管理仓储端口；所有实现必须只读取充值用途订单。 */
+/** 支付订单计数使用与列表完全相同的日期、充值用途和管理员筛选口径。 */
+export type AdminPaymentOrderCountQuery = Omit<
+  AdminPaymentOrderQuery,
+  "cursor" | "limit" | "page" | "pageSize"
+>;
+
+/** 单个数据库快照内可用的管理端订单读取器。 */
+export interface AdminPaymentOrderSnapshotReader {
+  countOrders(input: AdminPaymentOrderCountQuery): Promise<number>;
+  readOrders(input: AdminPaymentOrderQuery): Promise<AdminPaymentOrderRow[]>;
+}
+
+/** 支付管理仓储端口；订单行与精确总数必须共享同一个只读快照。 */
 export interface AdminPaymentRepository {
+  withReadOnlyOrderSnapshot<T>(
+    work: (reader: AdminPaymentOrderSnapshotReader) => Promise<T>
+  ): Promise<T>;
   readOverviewRevenue(input: {
     start: Date;
     end: Date;
@@ -107,7 +126,6 @@ export interface AdminPaymentRepository {
     end: Date;
     timeZone: string;
   }): Promise<AdminPaymentOverviewOrderCountRow[]>;
-  readOrders(input: AdminPaymentOrderQuery): Promise<AdminPaymentOrderRow[]>;
   searchUsers(input: {
     query: string;
     limit: number;
@@ -314,6 +332,8 @@ function encodePaymentCursor(
     filters: z.output<typeof paymentCursorFiltersSchema>;
     asOf: string;
     direction: "next" | "previous";
+    page: number;
+    pageSize: number;
     sortKey: { createdAt: string; id: string };
   },
   secret?: string
@@ -324,6 +344,8 @@ function encodePaymentCursor(
     sub: input.actorUserId,
     filter: fingerprintFilters(input.filters, resolvedSecret),
     direction: input.direction,
+    page: input.page,
+    pageSize: input.pageSize,
     asOf: input.asOf,
     sortKey: input.sortKey,
   });
@@ -350,6 +372,8 @@ function decodePaymentCursor(
 ): {
   asOf: Date;
   direction: "next" | "previous";
+  page: number;
+  pageSize: number;
   sortKey: { createdAt: Date; id: string };
 } {
   try {
@@ -401,6 +425,8 @@ function decodePaymentCursor(
     return {
       asOf,
       direction: payload.direction,
+      page: payload.page,
+      pageSize: payload.pageSize,
       sortKey: { createdAt, id: payload.sortKey.id },
     };
   } catch (error) {
@@ -559,7 +585,7 @@ export async function loadAdminPaymentOrders(
   });
   const filters = paymentCursorFiltersSchema.parse({
     endDate: range.endDate,
-    limit: parsed.limit,
+    pageSize: parsed.pageSize,
     orderId: parsed.orderId ?? null,
     startDate: range.startDate,
     status: parsed.status ?? null,
@@ -578,21 +604,37 @@ export async function loadAdminPaymentOrders(
         dependencies.tokenSecret
       )
     : null;
+  if (
+    decoded &&
+    (decoded.page !== parsed.page || decoded.pageSize !== parsed.pageSize)
+  ) {
+    throw new AdminPaymentServiceError();
+  }
   const asOf = decoded?.asOf ?? now;
-  const rows = await dependencies.repository.readOrders({
+  const countQuery = {
     asOf,
     endExclusive: range.end,
     orderId: parsed.orderId ?? null,
     start: range.start,
     status: parsed.status ?? null,
     userEmail: parsed.userEmail ?? null,
-    cursor: decoded
-      ? { ...decoded.sortKey, direction: decoded.direction }
-      : null,
-    limit: parsed.limit + 1,
-  });
-  const hasDirectionalExtra = rows.length > parsed.limit;
-  const selectedRows = rows.slice(0, parsed.limit);
+  };
+  const { rows, totalCount } =
+    await dependencies.repository.withReadOnlyOrderSnapshot(async (reader) => {
+      const totalCount = await reader.countOrders(countQuery);
+      const rows = await reader.readOrders({
+        ...countQuery,
+        cursor: decoded
+          ? { ...decoded.sortKey, direction: decoded.direction }
+          : null,
+        page: parsed.page,
+        pageSize: parsed.pageSize,
+        limit: parsed.pageSize + 1,
+      });
+      return { rows, totalCount };
+    });
+  const hasDirectionalExtra = rows.length > parsed.pageSize;
+  const selectedRows = rows.slice(0, parsed.pageSize);
   if (decoded?.direction === "previous") selectedRows.reverse();
   const records = selectedRows.map(adaptPaymentOrderRow);
   const first = records[0];
@@ -609,6 +651,8 @@ export async function loadAdminPaymentOrders(
       ? encodePaymentCursor(
           {
             ...sharedCursorInput,
+            page: parsed.page - 1,
+            pageSize: parsed.pageSize,
             direction: "previous",
             sortKey: { createdAt: first.createdAt, id: first.id },
           },
@@ -620,13 +664,23 @@ export async function loadAdminPaymentOrders(
       ? encodePaymentCursor(
           {
             ...sharedCursorInput,
+            page: parsed.page + 1,
+            pageSize: parsed.pageSize,
             direction: "next",
             sortKey: { createdAt: last.createdAt, id: last.id },
           },
           dependencies.tokenSecret
         )
       : null;
-  return { records, nextCursor, previousCursor };
+  return {
+    asOf: asOf.toISOString(),
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+    totalCount,
+    records,
+    nextCursor,
+    previousCursor,
+  };
 }
 
 /** 搜索存在充值订单的用户邮箱，并对仓储结果做严格输出校验。 */

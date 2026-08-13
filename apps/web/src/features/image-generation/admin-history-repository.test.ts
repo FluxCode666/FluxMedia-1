@@ -8,11 +8,19 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, transaction } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  transaction: vi.fn(
+    async (
+      work: (transaction: { execute: typeof execute }) => Promise<unknown>
+    ) => work({ execute })
+  ),
+}));
 
-vi.mock("@repo/database", () => ({ db: { execute } }));
+vi.mock("@repo/database", () => ({ db: { execute, transaction } }));
 
 import {
+  buildAdminHistoryCountSql,
   buildAdminHistoryListSql,
   buildAdminHistoryModelOptionsSql,
   buildAdminHistoryRequestSnapshotSql,
@@ -37,6 +45,7 @@ describe("admin history repository SQL", () => {
 
   beforeEach(() => {
     execute.mockReset();
+    transaction.mockClear();
     process.env.BETTER_AUTH_SECRET = "admin-history-repository-test-secret";
   });
 
@@ -81,12 +90,23 @@ describe("admin history repository SQL", () => {
               byteLength: 12,
             },
           },
+          submission_attempts: [
+            {
+              attemptNumber: 1,
+              supplierName: "Video supplier",
+              failureCode: "submission_timeout",
+              failureReason: "生成服务请求超时，请稍后重试",
+              operationsReason: "上游视频创建请求超时",
+              failedAt: "2026-07-22T12:00:30.000Z",
+            },
+          ],
         },
       ],
     });
 
-    const [record] =
-      await databaseAdminHistoryRepository.readRecords(baseQuery);
+    const [record] = await databaseAdminHistoryRepository.withReadOnlySnapshot(
+      (reader) => reader.readRecords(baseQuery)
+    );
 
     expect(record).toEqual(
       expect.objectContaining({
@@ -98,12 +118,51 @@ describe("admin history repository SQL", () => {
         duration: 8,
         generateAudio: false,
         input: { mode: "first-frame", count: 1 },
+        submissionAttempts: [
+          {
+            attemptNumber: 1,
+            supplierName: "Video supplier",
+            failureCode: "submission_timeout",
+            failureReason: "生成服务请求超时，请稍后重试",
+            operationsReason: "上游视频创建请求超时",
+            failedAt: "2026-07-22T12:00:30.000Z",
+          },
+        ],
         videoUrl: expect.stringMatching(
           /^\/api\/storage\/runtime-generations\/user-1\/videos\/video-1\.mp4\?sig=/
         ),
       })
     );
     expect(record).not.toHaveProperty("family");
+  });
+
+  it("uses one read-only repeatable-read transaction for global list reads", async () => {
+    execute.mockResolvedValueOnce({ rows: [{ total_count: 0 }] });
+
+    await databaseAdminHistoryRepository.withReadOnlySnapshot((reader) =>
+      reader.countRecords(baseQuery)
+    );
+
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "repeatable read",
+      accessMode: "read only",
+    });
+  });
+
+  it("resolves filtered email ownership before reading exact projection totals", () => {
+    const filtered = new PgDialect().sqlToQuery(
+      buildAdminHistoryCountSql(baseQuery)
+    );
+    const global = new PgDialect().sqlToQuery(
+      buildAdminHistoryCountSql({ ...baseQuery, userEmail: null })
+    );
+
+    expect(filtered.sql).toContain("media_history_exact_count");
+    expect(filtered.sql).toContain('from "user" u');
+    expect(filtered.sql).not.toContain("count(*)");
+    expect(filtered.sql).toContain("'owner'");
+    expect(filtered.params).toContain("member@example.com");
+    expect(global.sql).toContain("'global'");
   });
 
   it("builds a bounded global image/video union with an email join", () => {
@@ -132,9 +191,20 @@ describe("admin history repository SQL", () => {
     expect(compiled.sql).toContain("v.input_manifest");
     expect(compiled.sql).toContain("v.storage_bucket::text as storage_bucket");
     expect(compiled.sql).toContain("generateAudio");
+    expect(compiled.sql).toContain(
+      "from video_generation_submission_attempt attempt"
+    );
+    expect(compiled.sql).toContain("attempt.failure_code is not null");
+    expect(compiled.sql).toContain(
+      "order by attempt.global_attempt_number asc"
+    );
+    expect(compiled.sql).toContain("video_generation_submission_attempt");
+    expect(compiled.sql).toContain("submission_attempts");
     expect(compiled.sql).not.toContain("v.family");
     expect(compiled.sql).not.toContain("sql.raw");
     expect(compiled.sql).not.toContain("webConversation");
+    expect(compiled.sql).toContain("v.stage in ('created', 'charged')");
+    expect(compiled.sql).toContain("else 'in_progress'");
   });
 
   it("reverses global ordering for a signed previous cursor", () => {

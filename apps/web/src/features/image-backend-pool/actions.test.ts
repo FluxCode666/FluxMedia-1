@@ -53,6 +53,8 @@ import {
   getAdminImageBackendPoolAction,
   getAdobeCredentialHealthAction,
   getApiUpstreamRuntimeDiagnosticsAction,
+  listAdminImageBackendGroupsAction,
+  listAdminImageBackendMembersAction,
   reauthorizeAdobeCredentialAction,
   setImageBackendMemberEnabledAction,
   testApiUpstreamAdapterAction,
@@ -124,6 +126,102 @@ describe("image backend pool actions", () => {
       "pool.listAdobeCredentialHealthStatuses",
       {},
       principal
+    );
+  });
+
+  it("成员分页动作只调用 human-only 列表 operation 并补空诊断字段", async () => {
+    const input = {
+      page: 2,
+      pageSize: 20,
+      name: "Adobe",
+      credentialStatus: "healthy",
+      modelId: "all",
+      createdFrom: "",
+      createdTo: "",
+      timeZone: "Asia/Shanghai",
+    };
+    mocks.invokeOperation.mockResolvedValue({
+      records: [
+        {
+          id: "direct-a",
+          name: "Adobe Direct",
+          type: "adobe",
+          config: {
+            mode: "direct",
+            hasCookie: true,
+            displayName: null,
+            email: null,
+            credentialStatus: "active",
+            lastRefreshAt: null,
+            lastRefreshError: null,
+            consecutiveFailures: 0,
+            fireflyCredentialStatus: null,
+            fireflyLastRefreshAt: null,
+            fireflyLastRefreshError: null,
+            fireflyConsecutiveFailures: 0,
+            creditsTotal: null,
+            creditsUsed: null,
+            creditsAvailable: null,
+            creditsUpdatedAt: null,
+            creditsError: null,
+            defaultRatio: "1x1",
+            defaultResolution: "2k",
+            gptImageQuality: "high",
+          },
+          credentialHealthStatus: "healthy",
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
+      totalPages: 1,
+    });
+
+    const result = await (
+      listAdminImageBackendMembersAction as unknown as MockAction
+    )({
+      parsedInput: input,
+      ctx: { userId: "observer-1", role: "observer_admin" },
+    });
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.listAdminMembers",
+      input,
+      { type: "user", userId: "observer-1", role: "observer_admin" }
+    );
+    expect(result).toMatchObject({
+      records: [
+        {
+          config: {
+            lastRefreshError: null,
+            fireflyLastRefreshError: null,
+            creditsError: null,
+          },
+        },
+      ],
+    });
+  });
+
+  it("分组分页动作只委托独立列表 operation", async () => {
+    const input = { page: 3, pageSize: 50, name: "primary" };
+    const output = {
+      records: [],
+      page: 1,
+      pageSize: 50,
+      totalCount: 0,
+      totalPages: 1,
+    };
+    mocks.invokeOperation.mockResolvedValue(output);
+
+    await expect(
+      (listAdminImageBackendGroupsAction as unknown as MockAction)({
+        parsedInput: input,
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toBe(output);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.listAdminGroups",
+      input,
+      { type: "user", userId: "admin-1", role: "admin" }
     );
   });
 

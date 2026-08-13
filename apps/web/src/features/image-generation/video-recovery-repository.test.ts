@@ -70,10 +70,12 @@ describe("video recovery repository", () => {
     expect(compiled.sql).toContain("'created'");
     expect(compiled.sql).toContain("'charged'");
     expect(compiled.sql).toContain("'submitting'");
+    expect(compiled.sql).toContain("'retrying'");
     expect(compiled.sql).not.toContain("'submit_uncertain'");
     expect(compiled.sql).toContain("'polling'");
     expect(compiled.sql).toContain("'downloading'");
     expect(compiled.sql).toContain("'refunding'");
+    expect(compiled.sql).toContain("refund_exhausted_at is null");
     expect(compiled.sql).toContain("state_version = state_version + 1");
     expect(compiled.sql).toContain("task.api_adapter_member_id");
     expect(compiled.sql).toContain("task.api_adapter_version_id");
@@ -128,6 +130,37 @@ describe("video recovery repository", () => {
     const compiled = new PgDialect().sqlToQuery(queries[0] as SQL);
     expect(compiled.sql).toMatch(/and id = \$\d+/);
     expect(compiled.params).toContain("video-target");
+  });
+
+  it("遗留兼容入口只认领显式 API 人工态并使用原子行锁", async () => {
+    const { database, queries } = createDatabase([
+      {
+        id: "video-legacy-api",
+        api_adapter_member_id: "member-api",
+        api_adapter_version_id: "adapter-version-7",
+      },
+    ]);
+    const repository = createPostgresVideoRecoveryRepository(database);
+
+    await expect(
+      repository.claimLegacyApiUncertainById({
+        taskId: "video-legacy-api",
+        claimToken: "legacy-worker-1",
+        now: NOW,
+        claimExpiresAt: new Date(NOW.getTime() + 21 * 60_000),
+      })
+    ).resolves.toMatchObject({
+      id: "video-legacy-api",
+      claimToken: "legacy-worker-1",
+    });
+
+    const compiled = new PgDialect().sqlToQuery(queries[0] as SQL);
+    expect(compiled.sql).toContain("stage = 'submit_uncertain'");
+    expect(compiled.sql).toContain("metadata->>'videoBackendProtocol'");
+    expect(compiled.sql).toContain("for update skip locked");
+    expect(compiled.sql).toContain("state_version = state_version + 1");
+    expect(compiled.params).toContain("api");
+    expect(compiled.params).not.toContain("adobe_direct");
   });
 
   it("没有到期任务时返回 null", async () => {

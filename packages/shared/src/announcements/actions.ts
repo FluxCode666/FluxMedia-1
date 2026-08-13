@@ -1,7 +1,11 @@
 "use server";
 
-import { and, desc, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
+/**
+ * 公告写操作与兼容读取 Action。
+ *
+ * 使用方：公告管理表单、侧栏未读数和既有 Dashboard 摘要。完整列表读取通过
+ * support UOL 分页 operation；全部已读委托集合写入，避免先读取全部公告 ID。
+ */
 
 import { db } from "@repo/database";
 import {
@@ -9,28 +13,15 @@ import {
   announcement,
   announcementRead,
 } from "@repo/database/schema";
+import { and, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 import { adminAction, protectedAction } from "../safe-action";
+import { markAllActiveAnnouncementsReadForUser } from "./list-service";
 import {
   announcementIdSchema,
   createAnnouncementSchema,
   updateAnnouncementSchema,
 } from "./schemas";
-
-export type AdminAnnouncementItem = {
-  id: string;
-  title: string;
-  content: string;
-  severity: string;
-  isPublished: boolean;
-  isPinned: boolean;
-  priority: number;
-  publishedAt: string | null;
-  expiresAt: string | null;
-  createdByUserId: string | null;
-  updatedByUserId: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
 
 const withAnnouncementAction = (name: string) =>
   protectedAction.metadata({ action: `announcements.${name}` });
@@ -45,13 +36,6 @@ const activeAnnouncementFilter = () => {
     or(isNull(announcement.expiresAt), sql`${announcement.expiresAt} > ${now}`)
   );
 };
-
-const announcementOrder = [
-  desc(announcement.isPinned),
-  desc(announcement.priority),
-  desc(announcement.publishedAt),
-  desc(announcement.createdAt),
-];
 
 const unreadAnnouncementFilter = () =>
   or(
@@ -92,53 +76,6 @@ async function writeAnnouncementAuditLog(params: {
     after: sanitizeSnapshot(params.after),
     metadata: params.metadata,
   });
-}
-
-function serializeAdminAnnouncement(
-  row: typeof announcement.$inferSelect
-): AdminAnnouncementItem {
-  return {
-    id: row.id,
-    title: row.title,
-    content: row.content,
-    severity: row.severity,
-    isPublished: row.isPublished,
-    isPinned: row.isPinned,
-    priority: row.priority,
-    publishedAt: row.publishedAt?.toISOString() ?? null,
-    expiresAt: row.expiresAt?.toISOString() ?? null,
-    createdByUserId: row.createdByUserId,
-    updatedByUserId: row.updatedByUserId,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-export async function listActiveAnnouncementsForUser(userId: string) {
-  return db
-    .select({
-      id: announcement.id,
-      title: announcement.title,
-      content: announcement.content,
-      severity: announcement.severity,
-      isPinned: announcement.isPinned,
-      priority: announcement.priority,
-      publishedAt: announcement.publishedAt,
-      expiresAt: announcement.expiresAt,
-      createdAt: announcement.createdAt,
-      updatedAt: announcement.updatedAt,
-      readAt: announcementRead.readAt,
-    })
-    .from(announcement)
-    .leftJoin(
-      announcementRead,
-      and(
-        eq(announcementRead.announcementId, announcement.id),
-        eq(announcementRead.userId, userId)
-      )
-    )
-    .where(activeAnnouncementFilter())
-    .orderBy(...announcementOrder);
 }
 
 export async function countUnreadAnnouncementsForUser(userId: string) {
@@ -193,25 +130,10 @@ export const getMyUnreadAnnouncementCountAction = withAnnouncementAction(
 export const markAllAnnouncementsReadAction = withAnnouncementAction(
   "markAllRead"
 ).action(async ({ ctx }) => {
-  const rows = await db
-    .select({ id: announcement.id })
-    .from(announcement)
-    .leftJoin(
-      announcementRead,
-      and(
-        eq(announcementRead.announcementId, announcement.id),
-        eq(announcementRead.userId, ctx.userId)
-      )
-    )
-    .where(and(activeAnnouncementFilter(), unreadAnnouncementFilter()));
-
-  await markAnnouncementIdsReadForUser(
-    ctx.userId,
-    rows.map((row) => row.id)
-  );
+  const count = await markAllActiveAnnouncementsReadForUser(ctx.userId);
 
   revalidatePath("/dashboard/announcements");
-  return { count: rows.length };
+  return { count };
 });
 
 export const markAnnouncementReadAction = withAnnouncementAction("markRead")
@@ -220,7 +142,9 @@ export const markAnnouncementReadAction = withAnnouncementAction("markRead")
     const [target] = await db
       .select({ id: announcement.id })
       .from(announcement)
-      .where(and(eq(announcement.id, parsedInput.id), activeAnnouncementFilter()))
+      .where(
+        and(eq(announcement.id, parsedInput.id), activeAnnouncementFilter())
+      )
       .limit(1);
 
     if (!target) {
@@ -233,25 +157,12 @@ export const markAnnouncementReadAction = withAnnouncementAction("markRead")
     return { message: "已标记为已读" };
   });
 
-export async function listAnnouncementsForAdmin() {
-  return db
-    .select()
-    .from(announcement)
-    .orderBy(desc(announcement.isPinned), desc(announcement.updatedAt));
-}
-
-export const getAdminAnnouncementsAction = withAdminAnnouncementAction("list")
-  .action(async () => {
-    const rows = await listAnnouncementsForAdmin();
-    return { announcements: rows.map(serializeAdminAnnouncement) };
-  });
-
 export const createAnnouncementAction = withAdminAnnouncementAction("create")
   .schema(createAnnouncementSchema)
   .action(async ({ parsedInput, ctx }) => {
     const now = new Date();
     const publishedAt = parsedInput.isPublished
-      ? parseOptionalDate(parsedInput.publishedAt) ?? now
+      ? (parseOptionalDate(parsedInput.publishedAt) ?? now)
       : parseOptionalDate(parsedInput.publishedAt);
 
     const row = {
@@ -295,7 +206,9 @@ export const updateAnnouncementAction = withAdminAnnouncementAction("update")
     }
 
     const publishedAt = parsedInput.isPublished
-      ? parseOptionalDate(parsedInput.publishedAt) ?? before.publishedAt ?? new Date()
+      ? (parseOptionalDate(parsedInput.publishedAt) ??
+        before.publishedAt ??
+        new Date())
       : parseOptionalDate(parsedInput.publishedAt);
 
     const updateData = {
@@ -375,7 +288,9 @@ export const toggleAnnouncementPublishAction = withAdminAnnouncementAction(
       .set({
         isPublished: nextPublished,
         publishedAt:
-          nextPublished && !before.publishedAt ? new Date() : before.publishedAt,
+          nextPublished && !before.publishedAt
+            ? new Date()
+            : before.publishedAt,
         updatedByUserId: ctx.userId,
         updatedAt: new Date(),
       })

@@ -32,6 +32,14 @@ import {
   OperationError,
   type Principal,
 } from "@repo/shared/uol";
+import {
+  type AdminPoolGroupListInput,
+  type AdminPoolGroupListOutput,
+  type AdminPoolMemberListInput,
+  type AdminPoolMemberListOutput,
+  adminPoolGroupListInputSchema,
+  adminPoolMemberListInputSchema,
+} from "@repo/shared/uol/operations/image-backend-pool";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
@@ -47,6 +55,12 @@ export type BackendPoolAdminMemberSummary = BackendMemberAdminSummary & {
 export interface BackendPoolAdminSnapshot {
   groups: BackendGroupSummary[];
   members: BackendPoolAdminMemberSummary[];
+}
+
+/** 页面成员列表分页结果；保留分页前既有的折叠诊断卡片字段。 */
+export interface BackendPoolAdminMemberListOutput
+  extends Omit<AdminPoolMemberListOutput, "records"> {
+  records: BackendPoolAdminMemberSummary[];
 }
 
 /** 通用 pool.getAdminPool 保持可投影给 Agent 的无凭据健康快照。 */
@@ -95,6 +109,8 @@ type PoolOperationOutputs = {
     options: Array<{ id: string; name: string }>;
   };
   "pool.getAdminPool": BackendPoolBaseAdminSnapshot;
+  "pool.listAdminMembers": AdminPoolMemberListOutput;
+  "pool.listAdminGroups": AdminPoolGroupListOutput;
   "pool.listAdobeCredentialHealthStatuses": AdobeCredentialHealthStatusListOutput;
   "pool.saveGroup": { id: string };
   "pool.deleteGroup": { success: boolean };
@@ -198,6 +214,39 @@ function buildBackendPoolAdminSnapshot(
   };
 }
 
+/** 恢复 UOL 分别校验后的成员 type/config 判别关联。 */
+function restoreMemberDiscriminant(
+  member: AdminPoolMemberListOutput["records"][number]
+): BackendPoolAdminMemberSummary {
+  if (member.type === "api" && !("mode" in member.config)) {
+    // WHY：UOL schema 分别校验 type 与 config；此处经互斥字段检查恢复二者的判别关联。
+    const config = member.config as Extract<
+      BackendMemberAdminSummary,
+      { type: "api" }
+    >["config"];
+    return { ...member, type: "api", config };
+  }
+  if (member.type !== "adobe" || !("mode" in member.config)) {
+    throw new Error("账号池成员类型与配置不匹配");
+  }
+  if (member.config.mode === "gateway") {
+    const config = member.config as Extract<
+      BackendMemberAdminSummary,
+      { type: "adobe" }
+    >["config"];
+    return { ...member, type: "adobe", config };
+  }
+  const config = member.config as Extract<
+    BackendMemberAdminSummary,
+    { type: "adobe" }
+  >["config"];
+  return {
+    ...member,
+    type: "adobe",
+    config,
+  };
+}
+
 /** 读取通用号池快照，并并行合入不向 Agent 暴露的凭据健康状态。 */
 export const getAdminImageBackendPoolAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.list" })
@@ -217,6 +266,37 @@ export const getAdminImageBackendPoolAction = imageBackendPoolViewerAction
     ]);
     return buildBackendPoolAdminSnapshot(pool, health);
   });
+
+/** 按 URL 条件分页读取人工账号池成员明细。 */
+export const listAdminImageBackendMembersAction = imageBackendPoolViewerAction
+  .metadata({ action: "imageBackendPool.listMembers" })
+  .schema(adminPoolMemberListInputSchema)
+  .action(
+    async ({ parsedInput, ctx }): Promise<BackendPoolAdminMemberListOutput> => {
+      const result = await invokePoolOperation(
+        "pool.listAdminMembers",
+        parsedInput satisfies AdminPoolMemberListInput,
+        { type: "user", userId: ctx.userId, role: ctx.role }
+      );
+      return {
+        ...result,
+        records: result.records.map(restoreMemberDiscriminant),
+      };
+    }
+  );
+
+/** 按 URL 条件分页读取人工账号池分组明细。 */
+export const listAdminImageBackendGroupsAction = imageBackendPoolViewerAction
+  .metadata({ action: "imageBackendPool.listGroups" })
+  .schema(adminPoolGroupListInputSchema)
+  .action(
+    async ({ parsedInput, ctx }): Promise<AdminPoolGroupListOutput> =>
+      invokePoolOperation(
+        "pool.listAdminGroups",
+        parsedInput satisfies AdminPoolGroupListInput,
+        { type: "user", userId: ctx.userId, role: ctx.role }
+      )
+  );
 
 /** 保存统一媒体后端分组。 */
 export const saveImageBackendGroupAction = adminAction

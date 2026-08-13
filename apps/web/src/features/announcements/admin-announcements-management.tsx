@@ -1,29 +1,26 @@
 "use client";
 
-import {
-  Archive,
-  Loader2,
-  Megaphone,
-  Pencil,
-  Pin,
-  Plus,
-  Trash2,
-  Upload,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
+/**
+ * 管理员公告分页、筛选与编辑界面。
+ *
+ * 使用方：管理公告 Server Component。分页数据和全局统计完全由服务端 UOL 提供；
+ * 写操作成功后刷新当前 URL，保留页码、页大小和发布状态筛选。
+ */
 
 import {
   createAnnouncementAction,
   deleteAnnouncementAction,
-  getAdminAnnouncementsAction,
   toggleAnnouncementPublishAction,
   updateAnnouncementAction,
-  type AdminAnnouncementItem,
-} from "@repo/shared/announcements";
+} from "@repo/shared/announcements/actions";
+import type {
+  AdminAnnouncementItem,
+  AdminAnnouncementListOutput,
+  AdminAnnouncementPublishedFilter,
+} from "@repo/shared/announcements/list-contract";
 import {
-  announcementSeverities,
   type AnnouncementSeverity,
+  announcementSeverities,
 } from "@repo/shared/announcements/schemas";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
@@ -53,6 +50,27 @@ import {
 import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { cn } from "@repo/ui/utils";
+import {
+  Archive,
+  Loader2,
+  Megaphone,
+  Pencil,
+  Pin,
+  Plus,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { AdminAnnouncementFilter } from "@/features/announcements/admin-announcement-filter";
+import {
+  type AdminAnnouncementQueryState,
+  buildAdminAnnouncementHref,
+} from "@/features/announcements/announcement-pagination";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
+import { Link, useRouter } from "@/i18n/routing";
 
 type AnnouncementFormState = {
   id?: string;
@@ -170,32 +188,48 @@ function formFromAnnouncement(
   };
 }
 
+/**
+ * 渲染管理公告的全局统计、URL 筛选、分页卡片与写操作弹窗。
+ *
+ * @param data - 服务端 UOL 返回的当前页；null 表示读取失败。
+ * @param query - 当前 URL 分页与发布状态筛选。
+ * @param retryHref - 读取失败时保留当前上下文的重试地址。
+ * @param timeZone - 管理员展示日期使用的 IANA 时区。
+ * @returns 管理公告交互界面；写操作成功后刷新当前路由。
+ */
 export function AdminAnnouncementsManagement({
-  initialAnnouncements,
+  data,
+  query,
+  retryHref,
   timeZone,
 }: {
-  initialAnnouncements: AdminAnnouncementItem[];
+  data: AdminAnnouncementListOutput | null;
+  query: AdminAnnouncementQueryState;
+  retryHref: string;
   timeZone?: string;
 }) {
-  const [announcements, setAnnouncements] = useState(initialAnnouncements);
+  const router = useRouter();
+  const announcements = data?.records ?? [];
+  const baseFilterOptions: Array<{
+    value: AdminAnnouncementPublishedFilter;
+    label: string;
+  }> = [
+    { value: "all", label: "全部" },
+    { value: "published", label: "已发布" },
+    { value: "unpublished", label: "草稿/下线" },
+  ];
+  const filterOptions = baseFilterOptions.map((option) => ({
+    ...option,
+    href: buildAdminAnnouncementHref({
+      ...query,
+      page: 1,
+      published: option.value,
+    }),
+  }));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<AnnouncementFormState>(emptyForm);
   const [isSaving, setIsSaving] = useState(false);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
-
-  const stats = useMemo(() => {
-    const active = announcements.filter(isActiveAnnouncement).length;
-    const drafts = announcements.filter((item) => !item.isPublished).length;
-    const pinned = announcements.filter((item) => item.isPinned).length;
-    return { active, drafts, pinned };
-  }, [announcements]);
-
-  const refresh = async () => {
-    const result = await getAdminAnnouncementsAction();
-    if (result?.data?.announcements) {
-      setAnnouncements(result.data.announcements);
-    }
-  };
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -232,7 +266,7 @@ export function AdminAnnouncementsManagement({
 
       toast.success(form.id ? "公告已更新" : "公告已创建");
       setDialogOpen(false);
-      await refresh();
+      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存公告失败");
     } finally {
@@ -249,7 +283,7 @@ export function AdminAnnouncementsManagement({
         return;
       }
       toast.success(item.isPublished ? "公告已下线" : "公告已发布");
-      await refresh();
+      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "操作失败");
     } finally {
@@ -270,7 +304,7 @@ export function AdminAnnouncementsManagement({
         return;
       }
       toast.success("公告已删除");
-      await refresh();
+      router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "删除公告失败");
     } finally {
@@ -282,7 +316,11 @@ export function AdminAnnouncementsManagement({
     <div className="space-y-6">
       <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-400 motion-reduce:animate-none sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-serif text-2xl font-medium tracking-tight">
+          <h2
+            className="font-serif text-2xl font-medium tracking-tight"
+            id="admin-announcements-heading"
+            tabIndex={-1}
+          >
             公告管理
           </h2>
           <p className="text-muted-foreground">
@@ -295,40 +333,91 @@ export function AdminAnnouncementsManagement({
         </Button>
       </div>
 
-      {/* 统计卡:入场错峰放外层包裹,hover 过渡放卡片(duration 工具类共享
-          同一 CSS 变量,同元素叠加会互相覆盖)。 */}
-      <div className="grid gap-4 md:grid-cols-3">
-        {[
-          { label: "生效中", value: stats.active },
-          { label: "草稿/下线", value: stats.drafts },
-          { label: "置顶", value: stats.pinned },
-        ].map((item, index) => (
-          <div
-            key={item.label}
-            className="animate-in fade-in slide-in-from-bottom-2 duration-400 motion-reduce:animate-none"
-            style={{
-              animationDelay: `${index * 60}ms`,
-              animationFillMode: "backwards",
-            }}
-          >
-            <Card className="h-full transition-all duration-250 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-whisper">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                  {item.label}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="font-serif text-3xl font-medium tracking-tight">
-                  {item.value}
-                </div>
-              </CardContent>
-            </Card>
+      {data ? (
+        <>
+          {/* 统计是当前快照的全局 aggregate，不从当前页卡片推导。 */}
+          <div className="grid gap-4 md:grid-cols-3">
+            {[
+              { label: "生效中", value: data.stats.active },
+              { label: "草稿/下线", value: data.stats.drafts },
+              { label: "置顶", value: data.stats.pinned },
+            ].map((item, index) => (
+              <div
+                key={item.label}
+                className="animate-in fade-in slide-in-from-bottom-2 duration-400 motion-reduce:animate-none"
+                style={{
+                  animationDelay: `${index * 60}ms`,
+                  animationFillMode: "backwards",
+                }}
+              >
+                <Card className="h-full transition-all duration-250 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-whisper">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                      {item.label}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="font-serif text-3xl font-medium tracking-tight">
+                      {item.value}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p aria-live="polite" className="text-sm text-muted-foreground">
+              共 {data.totalCount} 条 · 第 {data.page} / {data.totalPages} 页
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <AdminAnnouncementFilter
+                label="筛选发布状态"
+                options={filterOptions}
+                value={query.published}
+              />
+              <UrlPageSizeSelect
+                itemSuffix=" 条"
+                label="每页条数"
+                options={[10, 20, 50].map((pageSize) => ({
+                  size: pageSize,
+                  href: buildAdminAnnouncementHref({
+                    ...query,
+                    page: 1,
+                    pageSize: pageSize as 10 | 20 | 50,
+                  }),
+                }))}
+                value={data.pageSize}
+              />
+            </div>
+          </div>
+        </>
+      ) : null}
 
       <div className="space-y-3">
-        {announcements.length === 0 ? (
+        {!data ? (
+          <Card
+            aria-live="assertive"
+            className="border-destructive/30 bg-destructive/5"
+            role="alert"
+          >
+            <CardContent className="flex flex-col items-center justify-center gap-3 py-14 text-center">
+              <Megaphone className="h-10 w-10 text-destructive" />
+              <div>
+                <p className="font-medium">公告加载失败</p>
+                <p className="text-sm text-muted-foreground">
+                  请检查连接后重试，现有公告不会显示为已清空。
+                </p>
+                <Link
+                  className="mt-3 inline-block text-sm font-medium underline"
+                  href={retryHref}
+                >
+                  重试
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        ) : announcements.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center gap-3 py-14 text-center">
               <Megaphone className="h-10 w-10 text-muted-foreground" />
@@ -376,9 +465,7 @@ export function AdminAnnouncementsManagement({
                         </span>
                       </div>
                       <div>
-                        <h3 className="text-base font-medium">
-                          {item.title}
-                        </h3>
+                        <h3 className="text-base font-medium">{item.title}</h3>
                         <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-muted-foreground">
                           {item.content}
                         </p>
@@ -438,6 +525,26 @@ export function AdminAnnouncementsManagement({
           })
         )}
       </div>
+
+      {data ? (
+        <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            第 {data.page} / {data.totalPages} 页
+          </p>
+          <UrlPaginationControls
+            ariaLabel="管理公告分页"
+            currentPageLabelTemplate="第 {page} 页，当前页"
+            focusTargetId="admin-announcements-heading"
+            names={createPaginationUrlParamNames()}
+            nextLabel="下一页"
+            page={data.page}
+            pageLabelTemplate="前往第 {page} 页"
+            pageSelectLabel="选择页码"
+            previousLabel="上一页"
+            totalPages={data.totalPages}
+          />
+        </div>
+      ) : null}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">

@@ -8,7 +8,7 @@ import { Badge } from "@repo/ui/components/badge";
 import { Card, CardContent } from "@repo/ui/components/card";
 import { CodeBlock } from "@repo/ui/components/code-block";
 import { cn } from "@repo/ui/utils";
-import { KeyRound, Link2 } from "lucide-react";
+import { KeyRound, Link2, TriangleAlert } from "lucide-react";
 
 import { ApiDocsElevator } from "./api-docs-elevator";
 import {
@@ -151,6 +151,15 @@ function EndpointSection({
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             {endpoint.description}
           </p>
+          {endpoint.deprecationNotice ? (
+            <div className="mt-2 flex max-w-3xl items-start gap-2 text-sm leading-relaxed text-destructive">
+              <TriangleAlert
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0"
+              />
+              <p>{endpoint.deprecationNotice}</p>
+            </div>
+          ) : null}
           <p className="mt-3 font-mono text-xs text-muted-foreground">
             {endpoint.contentType}
           </p>

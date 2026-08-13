@@ -134,6 +134,17 @@ export const videoGenerateInputSchema = z
 /** video.generate 经静态 schema 收窄后的输入。 */
 export type VideoGenerateInput = z.infer<typeof videoGenerateInputSchema>;
 
+/** 视频创建、查询、回调与历史共同使用的公开四态。 */
+export const videoPublicStatusSchema = z.enum([
+  "queued",
+  "in_progress",
+  "completed",
+  "failed",
+]);
+
+/** 视频对外稳定公开状态。 */
+export type VideoPublicStatus = z.infer<typeof videoPublicStatusSchema>;
+
 /** UOL 动态能力解析后的规范视频请求。 */
 export type CanonicalVideoGenerateInput = Omit<
   VideoGenerateInput,
@@ -321,35 +332,6 @@ export const videoGetStatusInputSchema = z
   })
   .strict();
 
-/** video.reconcileSubmission 的人工核对输入契约。 */
-export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
-  "outcome",
-  [
-    z
-      .object({
-        outcome: z.literal("accepted"),
-        taskId: z.string().trim().min(1).max(128),
-        pollUrl: z.string().url().max(2_048),
-        upstreamJobId: z.string().trim().min(1).max(512),
-      })
-      .strict(),
-    z
-      .object({
-        outcome: z.literal("not_accepted"),
-        taskId: z.string().trim().min(1).max(128),
-        reason: z.string().trim().min(1).max(1_000),
-      })
-      .strict(),
-  ]
-);
-
-/** 待人工核对视频任务列表的受限输入。 */
-export const videoListUncertainSubmissionsInputSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100).default(50),
-  })
-  .strict();
-
 /** 能力查询允许站内用户显式选择可信分组；API Key 绑定由 execute 强制收口。 */
 export const videoListCapabilitiesInputSchema = z
   .object({
@@ -397,6 +379,33 @@ export const videoRequestAccountInputCleanupInputSchema = z
   })
   .strict();
 
+/** @deprecated 仅供 Adobe Direct 遗留 submit_uncertain 任务兼容恢复。 */
+export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
+  "outcome",
+  [
+    z
+      .object({
+        outcome: z.literal("accepted"),
+        taskId: z.string().trim().min(1).max(128),
+        pollUrl: z.string().url().max(2_048),
+        upstreamJobId: z.string().trim().min(1).max(512),
+      })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("not_accepted"),
+        taskId: z.string().trim().min(1).max(128),
+        reason: z.string().trim().min(1).max(1_000),
+      })
+      .strict(),
+  ]
+);
+
+/** @deprecated 仅列出 Adobe Direct 遗留 submit_uncertain 任务。 */
+export const videoListUncertainSubmissionsInputSchema = z
+  .object({ limit: z.number().int().min(1).max(100).default(50) })
+  .strict();
+
 /** 创建幂等视频任务；clientRequestId 的真实唯一域由 Principal 所有者决定。 */
 export const videoGenerate = defineOperation({
   name: "video.generate",
@@ -407,14 +416,8 @@ export const videoGenerate = defineOperation({
   input: videoGenerateInputSchema,
   output: z.object({
     taskId: z.string(),
-    status: z.enum([
-      "pending",
-      "submitting",
-      "processing",
-      "needs_attention",
-      "completed",
-      "failed",
-    ]),
+    status: videoPublicStatusSchema,
+    error: z.string().max(1_000).optional(),
   }),
   access: { kind: "protected" },
   readOnly: false,
@@ -459,14 +462,7 @@ export const videoGetStatus = defineOperation({
   input: videoGetStatusInputSchema,
   output: z.object({
     taskId: z.string(),
-    status: z.enum([
-      "pending",
-      "submitting",
-      "processing",
-      "needs_attention",
-      "completed",
-      "failed",
-    ]),
+    status: videoPublicStatusSchema,
     model: videoRequestedModelIdSchema,
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,
@@ -538,17 +534,13 @@ export const videoRequestAccountInputCleanup = defineOperation({
   },
 });
 
-/**
- * 人工核对 Adobe 提交不确定任务。
- *
- * 只有确认上游接受后才能恢复原任务轮询；确认未接受后才触发幂等退款。
- */
+/** @deprecated 仅供 Adobe Direct 遗留任务恢复；API 任务会被拒绝。 */
 export const videoReconcileSubmission = defineOperation({
   name: "video.reconcileSubmission",
   domain: "image-generation",
-  title: "核对视频提交结果",
+  title: "核对 Adobe 视频提交结果",
   description:
-    "管理员人工核对 submit_uncertain 任务；确认接受时恢复原上游任务，确认未接受时幂等退款。",
+    "管理员人工核对 Adobe Direct 遗留 submit_uncertain 任务；API 任务不允许人工介入。",
   input: videoReconcileSubmissionInputSchema,
   output: z.object({
     taskId: z.string(),
@@ -566,13 +558,13 @@ export const videoReconcileSubmission = defineOperation({
   },
 });
 
-/** 管理员读取待人工核对任务；不返回 prompt、token 值、Cookie 或回调地址。 */
+/** @deprecated 仅列出 Adobe Direct 遗留 submit_uncertain 任务。 */
 export const videoListUncertainSubmissions = defineOperation({
   name: "video.listUncertainSubmissions",
   domain: "image-generation",
-  title: "列出待核对视频提交",
+  title: "列出待核对 Adobe 视频提交",
   description:
-    "列出 submit_uncertain 视频任务的安全诊断字段，供管理员调查后提交核对结论。",
+    "列出 Adobe Direct 遗留 submit_uncertain 视频任务的安全诊断字段。",
   input: videoListUncertainSubmissionsInputSchema,
   output: z.object({
     items: z.array(

@@ -142,6 +142,8 @@ export function HistoryFilters({
         createdTo: next.createdTo || null,
         cursor: null,
         model: next.model.trim() || null,
+        page: 1,
+        pageSize: state.pageSize,
         status: next.status,
         type: next.type,
         userEmail: next.userEmail.trim() || null,
@@ -446,6 +448,10 @@ export function HistoryFilters({
               </SelectItem>
               <SelectItem value="processing">
                 {copy("Processing", "处理中")}
+              </SelectItem>
+              <SelectItem value="queued">{copy("Queued", "排队中")}</SelectItem>
+              <SelectItem value="in_progress">
+                {copy("In progress", "生成中")}
               </SelectItem>
               <SelectItem value="completed">
                 {copy("Completed", "已完成")}

@@ -41,6 +41,8 @@ const historyCursorPayloadSchema = z
     sub: z.string().min(1).max(512),
     filter: z.string().length(43),
     direction: z.enum(["next", "previous"]),
+    page: z.number().int().positive().safe(),
+    pageSize: z.number().int().min(1).max(50),
     asOf: z.string().datetime({ offset: true }),
     sortKey: z
       .object({
@@ -69,6 +71,12 @@ export interface HistoryListQuery {
   } | null;
   branchLimit: number;
 }
+
+/** 本人历史计数使用与列表完全相同的身份、筛选和快照口径。 */
+export type HistoryCountQuery = Omit<
+  HistoryListQuery,
+  "branchLimit" | "cursor"
+>;
 
 interface HistoryRowCommon {
   id: string;
@@ -105,14 +113,22 @@ export interface VideoHistoryRow extends HistoryRowCommon {
 
 export type HistoryListRow = ImageHistoryRow | VideoHistoryRow;
 
-/** DB-free 仓储端口；主列表和真实模型选项都必须按本人查询且有界。 */
-export interface HistoryRepository {
+/** 单个数据库快照内可用的本人历史读取器。 */
+export interface HistorySnapshotReader {
+  countRecords(query: HistoryCountQuery): Promise<number>;
   readRecords(query: HistoryListQuery): Promise<HistoryListRow[]>;
   readModelOptions(input: {
     userId: string;
     type: "image" | "video" | null;
     limit: number;
   }): Promise<string[]>;
+}
+
+/** DB-free 仓储端口；分页行、精确总数和选项必须共享同一个只读快照。 */
+export interface HistoryRepository {
+  withReadOnlySnapshot<T>(
+    work: (reader: HistorySnapshotReader) => Promise<T>
+  ): Promise<T>;
 }
 
 /** 查询层稳定错误，不包含 cursor、用户 ID 或内部 SQL。 */
@@ -235,6 +251,8 @@ export function encodeHistoryCursor(
     filters: HistoryCursorFilters;
     asOf: string;
     direction: "next" | "previous";
+    page: number;
+    pageSize: number;
     sortKey: { createdAt: string; kindRank: number; id: string };
   },
   secret?: string
@@ -245,6 +263,8 @@ export function encodeHistoryCursor(
     sub: input.userId,
     filter: fingerprintFilters(input.filters, resolvedSecret),
     direction: input.direction,
+    page: input.page,
+    pageSize: input.pageSize,
     asOf: input.asOf,
     sortKey: input.sortKey,
   });
@@ -269,6 +289,8 @@ function decodeHistoryCursor(
 ): {
   asOf: Date;
   direction: "next" | "previous";
+  page: number;
+  pageSize: number;
   sortKey: { createdAt: Date; kindRank: number; id: string };
 } {
   try {
@@ -321,6 +343,8 @@ function decodeHistoryCursor(
     return {
       asOf,
       direction: payload.direction,
+      page: payload.page,
+      pageSize: payload.pageSize,
       sortKey: { ...payload.sortKey, createdAt },
     };
   } catch (error) {
@@ -400,6 +424,8 @@ export async function loadHistoryRecords(
   const serverNow = request.now ?? new Date();
   let asOf = serverNow;
   let cursor: HistoryListQuery["cursor"] = null;
+  let page = parsed.page;
+  if (!parsed.cursor && parsed.page !== 1) throw new HistoryServiceError();
   if (parsed.cursor) {
     const decoded = decodeHistoryCursor(
       parsed.cursor,
@@ -407,6 +433,10 @@ export async function loadHistoryRecords(
       dependencies.tokenSecret
     );
     asOf = decoded.asOf;
+    if (decoded.page !== parsed.page || decoded.pageSize !== parsed.pageSize) {
+      throw new HistoryServiceError();
+    }
+    page = decoded.page;
     cursor = { ...decoded.sortKey, direction: decoded.direction };
   }
   if (
@@ -417,27 +447,35 @@ export async function loadHistoryRecords(
     throw new HistoryServiceError();
   }
 
-  const [rows, rawModelOptions] = await Promise.all([
-    dependencies.repository.readRecords({
-      userId: request.userId,
-      start: range.start,
-      end: range.end,
-      asOf,
-      model: requestedModel,
-      status: parsed.status,
-      type: parsed.type,
-      cursor,
-      branchLimit: parsed.limit + 1,
-    }),
-    dependencies.repository.readModelOptions({
-      userId: request.userId,
-      type: parsed.type,
-      limit: 200,
-    }),
-  ]);
+  const countQuery = {
+    userId: request.userId,
+    start: range.start,
+    end: range.end,
+    asOf,
+    model: requestedModel,
+    status: parsed.status,
+    type: parsed.type,
+  };
+  const { rows, rawModelOptions, totalCount } =
+    await dependencies.repository.withReadOnlySnapshot(async (reader) => {
+      const totalCount = await reader.countRecords(countQuery);
+      const [rows, rawModelOptions] = await Promise.all([
+        reader.readRecords({
+          ...countQuery,
+          cursor,
+          branchLimit: parsed.pageSize + 1,
+        }),
+        reader.readModelOptions({
+          userId: request.userId,
+          type: parsed.type,
+          limit: 200,
+        }),
+      ]);
+      return { rows, rawModelOptions, totalCount };
+    });
   const direction = cursor?.direction ?? "next";
-  const hasExtra = rows.length > parsed.limit;
-  const selectedRows = rows.slice(0, parsed.limit);
+  const hasExtra = rows.length > parsed.pageSize;
+  const selectedRows = rows.slice(0, parsed.pageSize);
   const pageRows =
     direction === "previous" ? selectedRows.reverse() : selectedRows;
   const records = pageRows.map(adaptHistoryRow);
@@ -455,6 +493,8 @@ export async function loadHistoryRecords(
         filters,
         asOf: asOf.toISOString(),
         direction: cursorDirection,
+        page: cursorDirection === "next" ? page + 1 : page - 1,
+        pageSize: parsed.pageSize,
         sortKey: {
           createdAt: toIsoDateTime(row.createdAt),
           kindRank: HISTORY_KIND_RANK[row.kind],
@@ -478,6 +518,9 @@ export async function loadHistoryRecords(
 
   return historyListOutputSchema.parse({
     asOf: asOf.toISOString(),
+    page,
+    pageSize: parsed.pageSize,
+    totalCount,
     records,
     modelOptions,
     nextCursor,

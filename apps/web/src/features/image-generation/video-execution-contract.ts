@@ -41,6 +41,8 @@ export type VideoExecutionContract = {
   frameCapability: VideoFrameInputCapability;
   maxReferenceImages: number;
   modelConfigurationRevision: number;
+  /** 自定义视频模型只能由 API 成员执行；内置模型保留 API/Adobe Direct 共存。 */
+  requiredMemberType?: "api";
 };
 
 /**
@@ -196,6 +198,7 @@ export function resolveVideoExecutionContract(input: {
       frameCapability: "none",
       maxReferenceImages: 0,
       modelConfigurationRevision: snapshot.modelConfigurationRevision,
+      requiredMemberType: "api",
     };
   }
   const validated = validateVideoModelParameters({

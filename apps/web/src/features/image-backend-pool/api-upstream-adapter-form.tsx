@@ -80,9 +80,7 @@ export function ApiUpstreamAdapterForm({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="bearer">Bearer</SelectItem>
-            <SelectItem value="raw_authorization">
-              Raw Authorization
-            </SelectItem>
+            <SelectItem value="raw_authorization">Raw Authorization</SelectItem>
             <SelectItem value="custom_header">自定义认证 Header</SelectItem>
             <SelectItem value="none">无认证</SelectItem>
           </SelectContent>
@@ -112,10 +110,32 @@ export function ApiUpstreamAdapterForm({
         </div>
       )}
 
-      <Accordion
-        type="multiple"
-        className="rounded-md border px-4"
-      >
+      <div className="space-y-2">
+        <Label htmlFor="api-video-submission-retry-count">
+          生视频创建额外重试次数
+        </Label>
+        <Input
+          id="api-video-submission-retry-count"
+          type="number"
+          min={0}
+          max={10}
+          step={1}
+          value={value.videoSubmissionRetryCount}
+          disabled={disabled}
+          onChange={(event) =>
+            onChange({
+              ...value,
+              videoSubmissionRetryCount: Number(event.target.value),
+            })
+          }
+        />
+        <p className="text-xs text-muted-foreground">
+          0 表示只请求一次；默认 2
+          表示首次请求后最多再重试两次。任务首次选择该账号时固定配置。
+        </p>
+      </div>
+
+      <Accordion type="multiple" className="rounded-md border px-4">
         {API_UPSTREAM_MEDIA_SECTIONS.map((section) => {
           const queryPathAvailable = hasApiUpstreamQueryPath(
             section.queryOperation,

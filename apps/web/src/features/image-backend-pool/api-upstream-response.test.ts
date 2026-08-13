@@ -7,7 +7,10 @@
 import { afterAll, describe, expect, it } from "vitest";
 
 import { ApiUpstreamOpaqueValueError } from "./api-upstream-opaque-values";
-import { parseApiUpstreamScriptedResponse } from "./api-upstream-response";
+import {
+  parseApiUpstreamRetryAfterSeconds,
+  parseApiUpstreamScriptedResponse,
+} from "./api-upstream-response";
 import { shutdownApiUpstreamScriptPool } from "./api-upstream-script-pool";
 import { reserveApiUpstreamResponsePermit } from "./api-upstream-script-runtime";
 
@@ -69,6 +72,19 @@ describe("API upstream scripted response", () => {
         { kind: "image", base64: thirdImage, mediaType: "image/png" },
       ],
     });
+  });
+
+  it("Retry-After 接受秒数和未来日期，过去日期按无提示处理", () => {
+    const now = new Date("2026-08-13T00:00:00.000Z");
+    expect(parseApiUpstreamRetryAfterSeconds("120", now)).toBe(120);
+    expect(parseApiUpstreamRetryAfterSeconds("999", now)).toBe(300);
+    expect(
+      parseApiUpstreamRetryAfterSeconds("Thu, 13 Aug 2026 00:02:00 GMT", now)
+    ).toBe(120);
+    expect(
+      parseApiUpstreamRetryAfterSeconds("Wed, 12 Aug 2026 23:59:59 GMT", now)
+    ).toBeUndefined();
+    expect(parseApiUpstreamRetryAfterSeconds("invalid", now)).toBeUndefined();
   });
 
   it.each([

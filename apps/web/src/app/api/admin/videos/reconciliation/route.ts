@@ -1,8 +1,10 @@
 /**
- * 视频提交不确定状态的管理员 HTTP 适配器。
+ * Adobe Direct 遗留提交不确定状态的管理员 HTTP 适配器。
  *
- * 职责：提供待核对任务列表，并把管理员结论薄适配到 UOL；不直接访问视频 service、
- * 财务或 Adobe。Cookie 写请求必须通过 same-origin 校验。
+ * 职责：列出仅 Adobe Direct 的兼容任务，并把管理员结论薄适配到 UOL；API
+ * 供应商任务由自动状态机处理且会被领域层拒绝。Cookie 写请求必须通过同源校验。
+ *
+ * @deprecated 下个版本仅在 Adobe Direct 遗留 submit_uncertain 行清零后移除。
  */
 
 import { withApiLogging } from "@repo/shared/api-logger";
@@ -22,7 +24,7 @@ function operationErrorResponse(error: OperationError): Response {
   );
 }
 
-/** 从会话构造真实管理员 Principal；权限最终仍由 UOL roles 门禁判定。 */
+/** 从会话构造管理员 Principal；最终权限由 UOL roles 门禁判定。 */
 async function getSessionPrincipal(request: NextRequest) {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user) return null;
@@ -33,7 +35,7 @@ async function getSessionPrincipal(request: NextRequest) {
   };
 }
 
-/** 列出 submit_uncertain 任务的安全诊断字段。 */
+/** 列出 Adobe Direct 遗留 submit_uncertain 任务的安全诊断字段。 */
 export const GET = withApiLogging(async (request: NextRequest) => {
   const principal = await getSessionPrincipal(request);
   if (!principal) {
@@ -58,7 +60,7 @@ export const GET = withApiLogging(async (request: NextRequest) => {
   }
 });
 
-/** 提交 accepted 或 not_accepted 人工核对结论。 */
+/** 提交 Adobe Direct accepted 或 not_accepted 兼容核对结论。 */
 export const POST = withApiLogging(async (request: NextRequest) => {
   const principal = await getSessionPrincipal(request);
   if (!principal) {

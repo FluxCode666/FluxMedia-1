@@ -12,9 +12,26 @@ import { MAX_MEDIA_INPUT_COUNT } from "./media-contract";
 /** 历史记录产物类型。 */
 export const historyRecordTypeSchema = z.enum(["image", "video"]);
 
-/** 图片与视频统一后的展示状态。 */
+/** 历史筛选可接受的状态；图片和视频输出由各自 schema 进一步收窄。 */
 export const historyRecordStatusSchema = z.enum([
   "processing",
+  "queued",
+  "in_progress",
+  "completed",
+  "failed",
+]);
+
+/** 图片历史保留的既有三态。 */
+export const imageHistoryStatusSchema = z.enum([
+  "processing",
+  "completed",
+  "failed",
+]);
+
+/** 视频历史统一公开的四态。 */
+export const videoHistoryStatusSchema = z.enum([
+  "queued",
+  "in_progress",
   "completed",
   "failed",
 ]);
@@ -60,13 +77,43 @@ export const historyCursorFiltersSchema = z
     { message: "createdFrom must not be after createdTo", path: ["createdTo"] }
   );
 
+const historyPageSizeSchema = z.number().int().min(1).max(50);
+
+/**
+ * 为历史输入兼容旧 limit，同时统一输出 pageSize。
+ *
+ * @param input 已通过严格字段校验的分页输入。
+ * @returns pageSize 优先，旧调用方只传 limit 时平滑迁移；二者冲突会被拒绝。
+ */
+function resolveHistoryPaginationInput<
+  T extends {
+    cursor: string | null;
+    limit?: number | undefined;
+    page: number;
+    pageSize?: number | undefined;
+  },
+>(input: T): Omit<T, "limit"> & { pageSize: number } {
+  const { limit: _legacyLimit, ...safeInput } = input;
+  return { ...safeInput, pageSize: input.pageSize ?? input.limit ?? 20 };
+}
+
 /** 本人历史列表输入；userId 等只读身份字段会被 strict 拒绝。 */
 export const historyListInputSchema = historyCursorFiltersSchema
   .safeExtend({
     cursor: z.string().min(1).max(4096).nullable().default(null),
-    limit: z.number().int().min(1).max(50).default(20),
+    limit: z.number().int().min(1).max(50).optional(),
+    page: z.number().int().min(1).safe().default(1),
+    pageSize: historyPageSizeSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.limit === undefined ||
+      input.pageSize === undefined ||
+      input.limit === input.pageSize,
+    "limit 与 pageSize 必须一致"
+  )
+  .transform(resolveHistoryPaginationInput);
 
 /** 管理端 cursor 绑定的完整筛选，额外包含精确用户邮箱。 */
 export const adminHistoryCursorFiltersSchema = historyCursorFiltersSchema
@@ -79,9 +126,19 @@ export const adminHistoryCursorFiltersSchema = historyCursorFiltersSchema
 export const adminHistoryListInputSchema = adminHistoryCursorFiltersSchema
   .safeExtend({
     cursor: z.string().min(1).max(4096).nullable().default(null),
-    limit: z.number().int().min(1).max(50).default(20),
+    limit: z.number().int().min(1).max(50).optional(),
+    page: z.number().int().min(1).safe().default(1),
+    pageSize: historyPageSizeSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.limit === undefined ||
+      input.pageSize === undefined ||
+      input.limit === input.pageSize,
+    "limit 与 pageSize 必须一致"
+  )
+  .transform(resolveHistoryPaginationInput);
 
 /** 管理员按记录类型与 ID 按需读取真实请求快照，避免把大字段塞入列表。 */
 export const adminHistoryRequestSnapshotInputSchema = z
@@ -153,7 +210,6 @@ const historyRecordCommonSchema = z.object({
   id: z.string().min(1).max(512),
   prompt: z.string(),
   model: z.string().min(1).max(240),
-  status: historyRecordStatusSchema,
   creditsConsumed: z.number().finite().nonnegative(),
   error: z.string().nullable(),
   createdAt: isoDateTimeSchema,
@@ -165,6 +221,7 @@ const historyRecordCommonSchema = z.object({
 export const imageHistoryRecordSchema = historyRecordCommonSchema
   .extend({
     kind: z.literal("image"),
+    status: imageHistoryStatusSchema,
     revisedPrompt: z.string().nullable(),
     size: z.string().min(1).max(200),
     creditDetails: historyCreditDetailsSchema.nullable(),
@@ -178,6 +235,7 @@ export const imageHistoryRecordSchema = historyRecordCommonSchema
 export const videoHistoryRecordSchema = historyRecordCommonSchema
   .extend({
     kind: z.literal("video"),
+    status: videoHistoryStatusSchema,
     resolution: z.string().min(1).max(100),
     duration: z.number().int().positive(),
     aspectRatio: z.string().min(1).max(100),
@@ -201,6 +259,18 @@ export const adminHistoryBackendAccountSchema = z
   })
   .strict();
 
+/** 管理端视频提交尝试的安全审计摘要；不包含正文、凭据或上游任务 ID。 */
+export const adminHistoryVideoSubmissionAttemptSchema = z
+  .object({
+    attemptNumber: z.number().int().positive(),
+    supplierName: z.string().trim().min(1).max(120),
+    failureCode: z.string().min(1).max(64),
+    failureReason: z.string().min(1).max(1000),
+    operationsReason: z.string().min(1).max(1000),
+    failedAt: isoDateTimeSchema,
+  })
+  .strict();
+
 /** 管理端图片记录，附带所属用户和供应商账号的受控身份字段。 */
 export const adminImageHistoryRecordSchema = imageHistoryRecordSchema
   .safeExtend({
@@ -214,6 +284,9 @@ export const adminImageHistoryRecordSchema = imageHistoryRecordSchema
 export const adminVideoHistoryRecordSchema = videoHistoryRecordSchema
   .safeExtend({
     backendAccount: adminHistoryBackendAccountSchema.nullable(),
+    submissionAttempts: z
+      .array(adminHistoryVideoSubmissionAttemptSchema)
+      .max(100),
     userId: z.string().min(1).max(512),
     userEmail: adminHistoryUserEmailSchema,
   })
@@ -237,6 +310,9 @@ export const adminHistoryUserOptionSchema = z
 export const historyListOutputSchema = z
   .object({
     asOf: isoDateTimeSchema,
+    page: z.number().int().positive().safe(),
+    pageSize: historyPageSizeSchema,
+    totalCount: z.number().int().nonnegative().safe(),
     records: z.array(historyRecordSchema).max(50),
     modelOptions: z.array(z.string().min(1).max(240)).max(200),
     nextCursor: z.string().min(1).max(4096).nullable(),
@@ -248,6 +324,9 @@ export const historyListOutputSchema = z
 export const adminHistoryListOutputSchema = z
   .object({
     asOf: isoDateTimeSchema,
+    page: z.number().int().positive().safe(),
+    pageSize: historyPageSizeSchema,
+    totalCount: z.number().int().nonnegative().safe(),
     records: z.array(adminHistoryRecordSchema).max(50),
     modelOptions: z.array(z.string().min(1).max(240)).max(200),
     userOptions: z.array(adminHistoryUserOptionSchema).max(200),
@@ -273,6 +352,9 @@ export type AdminHistoryRequestSnapshotInput = z.input<
 >;
 export type AdminHistoryRequestSnapshotOutput = z.infer<
   typeof adminHistoryRequestSnapshotOutputSchema
+>;
+export type AdminHistoryVideoSubmissionAttempt = z.infer<
+  typeof adminHistoryVideoSubmissionAttemptSchema
 >;
 export type AdminHistoryRecord = z.infer<typeof adminHistoryRecordSchema>;
 export type AdminHistoryListOutput = z.infer<

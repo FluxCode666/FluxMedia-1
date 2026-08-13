@@ -17,8 +17,7 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { Search, X } from "lucide-react";
-
-import { ADOBE_CREDENTIAL_HEALTH_STATUSES } from "./adobe-credential-health-status";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   type BackendMemberCredentialFilter,
   type BackendMemberFilters,
@@ -26,6 +25,7 @@ import {
   hasBackendGroupFilter,
   hasBackendMemberFilters,
 } from "./admin-pool-view-model";
+import { ADOBE_CREDENTIAL_HEALTH_STATUSES } from "./adobe-credential-health-status";
 import { BackendMemberDateRangePicker } from "./backend-member-date-range-picker";
 
 /** 供应商账号模型筛选的一条可读选项。 */
@@ -70,12 +70,23 @@ export function BackendMemberFilterBar({
   invalidDateRange: boolean;
   onChange: (filters: BackendMemberFilters) => void;
 }) {
-  const hasFilters = hasBackendMemberFilters(filters);
+  const [nameDraft, setNameDraft] = useState(filters.name);
+  const hasFilters =
+    hasBackendMemberFilters(filters) || Boolean(nameDraft.trim());
+
+  useEffect(() => setNameDraft(filters.name), [filters.name]);
+
+  /** 提交名称草稿，避免每个按键都写入浏览器历史和触发读取。 */
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    onChange({ ...filters, name: nameDraft });
+  }
 
   return (
-    <search
+    <form
       aria-label="筛选供应商账号"
       className="rounded-lg border bg-background p-4"
+      onSubmit={handleSubmit}
     >
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.2fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(240px,1fr)]">
         <label
@@ -91,12 +102,10 @@ export function BackendMemberFilterBar({
             <Input
               className="pl-9"
               id="backend-member-name-filter"
-              onChange={(event) =>
-                onChange({ ...filters, name: event.target.value })
-              }
+              onChange={(event) => setNameDraft(event.target.value)}
               placeholder="输入名称片段"
               type="search"
-              value={filters.name}
+              value={nameDraft}
             />
           </span>
         </label>
@@ -177,19 +186,27 @@ export function BackendMemberFilterBar({
               ? `${resultCount} / ${totalCount} 个账号 · 日期按 ${timeZone} 统计`
               : `共 ${totalCount} 个账号 · 日期按 ${timeZone} 统计`}
         </p>
-        {hasFilters ? (
-          <Button
-            onClick={() => onChange(EMPTY_BACKEND_MEMBER_FILTERS)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <X />
-            清除筛选
+        <div className="flex items-center gap-2">
+          <Button size="sm" type="submit" variant="outline">
+            搜索
           </Button>
-        ) : null}
+          {hasFilters ? (
+            <Button
+              onClick={() => {
+                setNameDraft("");
+                onChange(EMPTY_BACKEND_MEMBER_FILTERS);
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <X />
+              清除筛选
+            </Button>
+          ) : null}
+        </div>
       </div>
-    </search>
+    </form>
   );
 }
 
@@ -212,11 +229,18 @@ export function BackendGroupFilterBar({
   onChange: (name: string) => void;
 }) {
   const hasFilter = hasBackendGroupFilter(name);
+  const [nameDraft, setNameDraft] = useState(name);
+
+  useEffect(() => setNameDraft(name), [name]);
 
   return (
-    <search
+    <form
       aria-label="筛选账号池分组"
       className="flex flex-col gap-3 rounded-lg border bg-background p-4 sm:flex-row sm:items-center"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onChange(nameDraft);
+      }}
     >
       <label
         className="relative min-w-0 flex-1"
@@ -230,10 +254,10 @@ export function BackendGroupFilterBar({
         <Input
           className="pl-9"
           id="backend-group-name-filter"
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => setNameDraft(event.target.value)}
           placeholder="按分组名称模糊搜索"
           type="search"
-          value={name}
+          value={nameDraft}
         />
       </label>
       <span
@@ -244,6 +268,9 @@ export function BackendGroupFilterBar({
           ? `${resultCount} / ${totalCount} 个分组`
           : `共 ${totalCount} 个分组`}
       </span>
+      <Button className="shrink-0" size="sm" type="submit" variant="outline">
+        搜索
+      </Button>
       {hasFilter ? (
         <Button
           className="shrink-0"
@@ -256,6 +283,6 @@ export function BackendGroupFilterBar({
           清除搜索
         </Button>
       ) : null}
-    </search>
+    </form>
   );
 }

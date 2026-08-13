@@ -21,6 +21,7 @@ pnpm turbo typecheck
 pnpm turbo lint
 pnpm turbo test
 pnpm --filter @repo/web build
+(cd deploy/nginx && sh ./url-privacy-canary.test.sh)
 (cd services/media-upstream-proxy && go test ./...)
 cmp -s CLAUDE.md AGENTS.md
 ```
@@ -58,3 +59,6 @@ cmp -s CLAUDE.md AGENTS.md
 `ADOBE_DIRECT_PROXY_SECRET`，Web 只有在代理健康后才能启动。
 
 详细目标机准备、备份与 Nginx 配置见 [deploy/README.md](../deploy/README.md)。
+生产访问日志只允许记录不含查询字符串的 `$uri`，不得记录原始 `$request` 或
+`Referer`；应用和 Nginx 均使用 `Referrer-Policy: same-origin`，防止分页筛选与
+签名 cursor 离开同源站点。

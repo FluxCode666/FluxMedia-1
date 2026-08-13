@@ -8,11 +8,19 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, transaction } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  transaction: vi.fn(
+    async (
+      work: (transaction: { execute: typeof execute }) => Promise<unknown>
+    ) => work({ execute })
+  ),
+}));
 
-vi.mock("@repo/database", () => ({ db: { execute } }));
+vi.mock("@repo/database", () => ({ db: { execute, transaction } }));
 
 import {
+  buildHistoryCountSql,
   buildHistoryListSql,
   buildHistoryModelOptionsSql,
   databaseHistoryRepository,
@@ -35,6 +43,7 @@ describe("history repository SQL", () => {
 
   beforeEach(() => {
     execute.mockReset();
+    transaction.mockClear();
     process.env.BETTER_AUTH_SECRET = "history-repository-test-secret";
   });
 
@@ -82,7 +91,9 @@ describe("history repository SQL", () => {
     });
 
     await expect(
-      databaseHistoryRepository.readRecords(baseQuery)
+      databaseHistoryRepository.withReadOnlySnapshot((reader) =>
+        reader.readRecords(baseQuery)
+      )
     ).resolves.toEqual([
       expect.objectContaining({
         model: "seedance2",
@@ -96,6 +107,32 @@ describe("history repository SQL", () => {
         ),
       }),
     ]);
+  });
+
+  it("uses one read-only repeatable-read transaction for list reads", async () => {
+    execute.mockResolvedValueOnce({ rows: [{ total_count: 0 }] });
+
+    await databaseHistoryRepository.withReadOnlySnapshot((reader) =>
+      reader.countRecords(baseQuery)
+    );
+
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "repeatable read",
+      accessMode: "read only",
+    });
+  });
+
+  it("reads exact totals from the owner count projection", () => {
+    const compiled = new PgDialect().sqlToQuery(
+      buildHistoryCountSql(baseQuery)
+    );
+
+    expect(compiled.sql).toContain("media_history_exact_count");
+    expect(compiled.sql).not.toContain("count(*)");
+    expect(compiled.sql).toContain("'owner'");
+    expect(compiled.params).toContain("user-1");
+    expect(compiled.params).toContain("completed");
+    expect(compiled.params).toContain("gpt-image-2");
   });
 
   it("builds one bounded parameterized image/video union", () => {
@@ -121,6 +158,43 @@ describe("history repository SQL", () => {
     expect(compiled.sql).not.toContain("g.metadata,");
     expect(compiled.sql).not.toContain("v.metadata,");
     expect(compiled.sql).not.toContain("webConversation");
+    expect(compiled.sql).toContain("v.stage in ('created', 'charged')");
+    expect(compiled.sql).toContain("else 'in_progress'");
+  });
+
+  it("按视频四态筛选 stage 且不改变图片 processing 谓词", () => {
+    const queued = new PgDialect().sqlToQuery(
+      buildHistoryListSql({ ...baseQuery, status: "queued", type: null })
+    );
+    const inProgress = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        status: "in_progress",
+        type: "video",
+      })
+    );
+    const imageProcessing = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        status: "processing",
+        type: "image",
+      })
+    );
+    const videoProcessing = new PgDialect().sqlToQuery(
+      buildHistoryListSql({
+        ...baseQuery,
+        status: "processing",
+        type: "video",
+      })
+    );
+
+    expect(queued.sql).toContain("v.stage in ('created', 'charged')");
+    expect(inProgress.sql).toContain("else 'in_progress'");
+    expect(inProgress.params).toContain("in_progress");
+    expect(imageProcessing.sql).toContain("g.status = 'pending'");
+    expect(videoProcessing.sql).toMatch(
+      /from video_generation v[\s\S]*and false/
+    );
   });
 
   it("reverses comparison and order for a signed previous cursor", () => {

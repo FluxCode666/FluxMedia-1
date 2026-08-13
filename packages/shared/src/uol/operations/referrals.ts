@@ -1,7 +1,10 @@
 /** 推广域 UOL 操作注册：用户推广看板只读当前主体数据。 */
 import { z } from "zod";
 import { referralRewardConfigSchema } from "../../referrals/config";
-import { referralRelationshipStatusSchema } from "../../referrals/contract";
+import {
+  referralRelationshipListInputSchema,
+  referralRelationshipListOutputSchema,
+} from "../../referrals/relationship-contract";
 import { defineOperation } from "../registry";
 
 export const referralDashboardOutputSchema = z
@@ -12,18 +15,6 @@ export const referralDashboardOutputSchema = z
     rewardedCount: z.number().int().nonnegative(),
     totalRewardCredits: z.number().nonnegative(),
     rewardConfig: referralRewardConfigSchema,
-    relationships: z.array(
-      z.object({
-        id: z.string(),
-        inviteeName: z.string(),
-        inviteeEmail: z.string(),
-        status: referralRelationshipStatusSchema,
-        inviterRewardCredits: z.number().nonnegative(),
-        inviteeRewardCredits: z.number().nonnegative(),
-        createdAt: z.string().datetime(),
-        rewardedAt: z.string().datetime().nullable(),
-      })
-    ),
   })
   .strict();
 
@@ -32,7 +23,7 @@ export const getMyReferralDashboard = defineOperation({
   domain: "credits",
   title: "查询我的推广奖励",
   description:
-    "读取当前用户推广码、邀请链接、当前奖励规则和最近推广关系；邮箱只返回脱敏值，不接受客户端 userId。",
+    "读取当前用户推广码、邀请链接和当前奖励规则；不接受客户端 userId。",
   input: z.object({}).strict(),
   output: referralDashboardOutputSchema,
   access: { kind: "user" },
@@ -42,6 +33,26 @@ export const getMyReferralDashboard = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: referral.getMyDashboard");
+  },
+});
+
+/** 当前用户推广关系明细全量读取；仅供站内人工页面使用。 */
+export const listMyReferralRelationships = defineOperation({
+  name: "referral.listMyRelationships",
+  domain: "credits",
+  title: "查询我的全部推广关系",
+  description:
+    "按创建时间倒序读取当前用户的全部推广关系明细与精确总数；邮箱只返回脱敏值。",
+  input: referralRelationshipListInputSchema,
+  output: referralRelationshipListOutputSchema,
+  access: { kind: "user" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: referral.listMyRelationships");
   },
 });
 

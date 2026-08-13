@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  parseVideoTaskResponse,
   resolveNextVideoPollDelay,
   VIDEO_STATUS_INITIAL_POLL_MS,
   VideoCreatePanel,
@@ -81,6 +82,25 @@ afterEach(() => {
 });
 
 describe("VideoCreatePanel capabilities", () => {
+  it("只接受视频四态并继续轮询 queued/in_progress", () => {
+    expect(
+      parseVideoTaskResponse({ taskId: "video-1", status: "queued" })
+    ).toEqual({ taskId: "video-1", status: "queued" });
+    expect(
+      parseVideoTaskResponse({ taskId: "video-1", status: "in_progress" })
+    ).toEqual({ taskId: "video-1", status: "in_progress" });
+    for (const status of [
+      "pending",
+      "submitting",
+      "processing",
+      "needs_attention",
+    ]) {
+      expect(() =>
+        parseVideoTaskResponse({ taskId: "video-1", status })
+      ).toThrow("视频任务响应格式无效");
+    }
+  });
+
   it("BullMQ 模式首轮 3 秒查询并有界退避到 2 分钟", () => {
     expect(VIDEO_STATUS_INITIAL_POLL_MS).toBe(3_000);
     expect(resolveNextVideoPollDelay(3_000)).toBe(4_500);

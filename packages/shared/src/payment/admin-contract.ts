@@ -124,7 +124,9 @@ export const adminPaymentOrderListInputSchema = z
   .object({
     cursor: cursorSchema.optional(),
     endDate: calendarDateSchema.optional(),
-    limit: z.number().int().min(1).max(100).default(20),
+    limit: z.number().int().min(1).max(100).optional(),
+    page: z.number().int().positive().safe().default(1),
+    pageSize: z.number().int().min(1).max(100).optional(),
     orderId: z.string().trim().min(1).max(128).optional(),
     startDate: calendarDateSchema.optional(),
     status: adminPaymentOrderStatusSchema.optional(),
@@ -140,7 +142,24 @@ export const adminPaymentOrderListInputSchema = z
         path: ["cursor"],
       });
     }
-  });
+    if (
+      input.limit !== undefined &&
+      input.pageSize !== undefined &&
+      input.limit !== input.pageSize
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "limit 与 pageSize 必须一致",
+      });
+    }
+    if (!input.cursor && input.page !== 1) {
+      context.addIssue({ code: "custom", message: "非首屏必须携带分页游标" });
+    }
+  })
+  .transform(({ limit, pageSize, ...input }) => ({
+    ...input,
+    pageSize: pageSize ?? limit ?? 20,
+  }));
 
 export const adminPaymentOrderSchema = z
   .object({
@@ -163,6 +182,10 @@ export const adminPaymentOrderSchema = z
 
 export const adminPaymentOrderListOutputSchema = z
   .object({
+    asOf: isoDateTimeSchema,
+    page: z.number().int().positive().safe(),
+    pageSize: z.number().int().min(1).max(100),
+    totalCount: nonnegativeSafeIntegerSchema,
     records: z.array(adminPaymentOrderSchema),
     nextCursor: cursorSchema.nullable(),
     previousCursor: cursorSchema.nullable(),

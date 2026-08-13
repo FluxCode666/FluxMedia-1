@@ -720,6 +720,7 @@ describe("backend member service", () => {
         baseUrl: "https://images.example.com/v1",
         hasApiKey: true,
         useStream: false,
+        videoSubmissionRetryCount: 2,
         modelMappings: [],
       },
     };

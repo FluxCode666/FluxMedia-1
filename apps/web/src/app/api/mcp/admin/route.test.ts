@@ -84,6 +84,8 @@ describe("POST /api/mcp/admin human-only isolation", () => {
     expect(names).not.toContain("modelMarketplace_listPublicModels");
     expect(names).not.toContain("pool_testApiUpstreamAdapter");
     expect(names).not.toContain("pool_getApiUpstreamRuntimeDiagnostics");
+    expect(names).not.toContain("pool_listAdminMembers");
+    expect(names).not.toContain("pool_listAdminGroups");
   });
 
   it("rejects direct calls to a human-only operation", async () => {
@@ -91,6 +93,8 @@ describe("POST /api/mcp/admin human-only isolation", () => {
       "moderation_setGlobalRiskLevel",
       "pool_testApiUpstreamAdapter",
       "pool_getApiUpstreamRuntimeDiagnostics",
+      "pool_listAdminMembers",
+      "pool_listAdminGroups",
     ]) {
       const response = await POST(
         createRpcRequest("tools/call", { name, arguments: {} })

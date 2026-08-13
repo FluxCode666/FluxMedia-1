@@ -73,7 +73,7 @@ const sections = {
         },
         {
           label: "外部视频 API",
-          path: "POST /v1/videos/generations",
+          path: "POST /v1/videos",
           kind: "video",
         },
         {
@@ -198,8 +198,8 @@ const sections = {
           "multipart 图片会被转成统一图片输入，再按分组调度。",
         ],
         [
-          "Adobe Firefly video",
-          "/v1/videos/generations",
+          "OpenAI-style video",
+          "/v1/videos",
           "video",
           "本站扩展。始终创建持久视频任务并返回 HTTP 202；使用响应中的视频任务 ID 轮询 GET /v1/videos/{id}，也可配置 callback_url 接收终态回调。",
         ],
@@ -262,7 +262,7 @@ const sections = {
         ],
         [
           "外接 API 入口",
-          "/v1/chat/completions、/v1/images/generations、/v1/images/edits、/v1/videos/generations、/v1/ppts、/v1/psds、/v1/images/{task_id}、/v1/editable-file-tasks/{task_id}、/v1/responses、/v1/agents/images",
+          "/v1/chat/completions、/v1/images/generations、/v1/images/edits、/v1/videos、/v1/ppts、/v1/psds、/v1/images/{task_id}、/v1/editable-file-tasks/{task_id}、/v1/responses、/v1/agents/images",
           "/api/v1/* 是同一 handler 的别名；只负责 API 密钥、OpenAI 兼容请求和响应格式适配。/v1/ppts、/v1/psds 走独立的可编辑文件链路（Web 账号 + 代码解释器），不汇入 runImageGenerationForUser；支持 async:true + GET /v1/editable-file-tasks/{task_id} 轮询与 callback_url。",
         ],
         [
@@ -336,7 +336,7 @@ const sections = {
         "所有页面和外接 API 请求都使用平台后端池，并按平台积分与 API 密钥额度结算。",
         "image 接口的 web_first / webFirst / force_web / forceWeb（chat 对应 mix_web_first）是 Web-first 优先路由，不是硬性只走 Web，且默认开启。开启时（不传或显式 true）按 Web-first 像素区间（IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS，默认 0.66MP-2MP）判定：尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）则走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。该路由只对 mixed 后端分组生效（纯 Web / 纯 Codex-Responses 分组无此概念）；agent 始终走 Codex/Responses，不受此项影响。",
         "Adobe（Firefly）后端与 API 后端使用同一分组调度规则：只有成员 supportedModelIds 显式声明的真实模型 ID 才能参与候选，客户端模型 ID 不做供应商前缀或别名转换。图片使用模型四档固定价加运行时审核费，视频使用模型族对应分辨率的每秒固定价格。",
-        "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos/generations 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；body 中的 async 仅为兼容接受，不改变行为，也不支持通过 URL ?async 切换模式。callback_url 会绑定到该持久任务并在终态投递。",
+        "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；body 中的 async 仅为兼容接受，不改变行为，也不支持通过 URL ?async 切换模式。callback_url 会绑定到该持久任务并在终态投递。",
       ],
       officialRefsTitle: "官方参考",
       officialRefs: [
@@ -1597,7 +1597,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             {
               name: "status",
               description:
-                "任务状态，取值 processing（执行中）、completed（成功）、failed（失败，对象内含 error）。当前实现无 queued 等其他取值。",
+                "任务状态，取值 processing（执行中）、completed（成功）或 failed（失败，对象内含 error）。",
             },
             {
               name: "data",
@@ -1627,18 +1627,18 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
         {
           title: "Create video",
           method: "POST",
-          path: "/v1/videos/generations",
+          path: "/v1/videos",
           contentType: "application/json",
           description:
-            "本站扩展：创建持久视频任务。请求始终在任务持久化后返回 HTTP 202 和 object=video.task，不会在当前连接中等待出片；使用返回的视频任务 ID 轮询 GET /v1/videos/{id}，或通过 callback_url 接收终态回调。鉴权与其他 v1 接口一致（API 密钥）。",
+            "按 OpenAI 风格创建地址创建持久视频任务。请求始终在任务持久化后返回 HTTP 202 和 object=video.task，不会在当前连接中等待出片；使用返回的视频任务 ID 轮询 GET /v1/videos/{id}，或通过 callback_url 接收终态回调。鉴权与其他 v1 接口一致（API 密钥）。",
           example: `# 1. 文生视频；model 只传真实模型 ID，其他参数独立传递
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-001",
     "model": "veo31",
-    "duration_seconds": 8,
+    "seconds": 8,
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "一只柯基在海边奔跑，电影级运镜，黄昏光线",
@@ -1646,7 +1646,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   }'
 
 # 2. 首尾帧生成；首尾帧与参考图对所有模型互斥
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -1662,13 +1662,13 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   }'
 
 # 3. 兼容 async 字段；无论 true 或 false，接口都返回同一种持久任务
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-003",
     "model": "veo31",
-    "duration_seconds": 8,
+    "seconds": 8,
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "城市夜景延时，霓虹倒影",
@@ -1683,7 +1683,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "id": "video_0123456789abcdef0123456789abcdef01234567",
   "task_id": "video_0123456789abcdef0123456789abcdef01234567",
   "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "pending",
+  "status": "queued",
   "model": "veo31",
   "duration": 8,
   "duration_seconds": 8,
@@ -1710,7 +1710,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
                 "调用方生成的幂等请求 ID，最长 128 字符；重试同一请求时必须复用。",
             },
             {
-              name: "duration / duration_seconds",
+              name: "seconds / duration / duration_seconds",
               requirement: "必填",
               description: "视频时长（秒），必须是所选真实模型支持的整数值。",
             },
@@ -1775,7 +1775,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             {
               name: "status",
               description:
-                "任务创建后的当前状态：pending、submitting、processing、needs_attention、completed 或 failed。",
+                "任务创建后的当前状态：queued、in_progress、completed 或 failed。",
             },
             {
               name: "model",
@@ -1791,7 +1791,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             },
           ],
           notes: [
-            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/generations 是同一 handler 的别名。",
+            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos 是同一 handler 的别名。旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；下线前仍复用同一处理逻辑，具体下线版本另行发布。",
             "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
             "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
             "计费 = 当前真实模型与输出分辨率对应的每秒积分 × 独立 duration（秒），最终结果按积分精度向上取整。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
@@ -1835,7 +1835,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "task_id": "video_0123456789abcdef0123456789abcdef01234567",
   "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
   "model": "veo31",
-  "status": "processing",
+  "status": "in_progress",
   "duration": 8,
   "duration_seconds": 8,
   "aspectRatio": "16:9",
@@ -1872,7 +1872,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             {
               name: "status",
               description:
-                "pending、submitting、processing、needs_attention、completed 或 failed；存在失败原因时返回 error.message。",
+                "queued、in_progress、completed 或 failed；存在失败原因时返回 error.message。",
             },
             {
               name: "model、duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
@@ -2560,7 +2560,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         },
         {
           label: "External video API",
-          path: "POST /v1/videos/generations",
+          path: "POST /v1/videos",
           kind: "video",
         },
         {
@@ -2680,8 +2680,8 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "Multipart images are converted into unified image inputs before backend routing.",
         ],
         [
-          "Adobe Firefly video",
-          "/v1/videos/generations",
+          "OpenAI-style video",
+          "/v1/videos",
           "video",
           "FluxMedia extension. Always creates a persistent video task and returns HTTP 202. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery.",
         ],
@@ -2744,7 +2744,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         ],
         [
           "External API entries",
-          "/v1/chat/completions, /v1/images/generations, /v1/images/edits, /v1/videos/generations, /v1/images/{task_id}, /v1/responses, /v1/agents/images",
+          "/v1/chat/completions, /v1/images/generations, /v1/images/edits, /v1/videos, /v1/images/{task_id}, /v1/responses, /v1/agents/images",
           "/api/v1/* is an alias to the same handlers; these adapt API keys and OpenAI-compatible request/response formats.",
         ],
         [
@@ -2818,7 +2818,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "All page and external API requests use the platform backend pool and settle through platform credits and API key quotas.",
         "Image endpoint web_first / webFirst / force_web / forceWeb (chat: mix_web_first) is a Web-first preference route, not hard Web-only, and is on by default. When on (omitted or explicit true) it uses the Web-first pixel range (IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS, default 0.66MP-2MP): only sizes inside the range prefer Web (fall back to Codex/Responses on failure), sizes outside (e.g. 4K) use normal scheduling, auto or unparseable sizes may prefer Web; explicit false disables it. It only applies to mixed backend groups (no effect for Web-only / Codex-Responses-only groups); agent always uses Codex/Responses and is unaffected.",
         "Adobe (Firefly) and API backends follow the same group scheduling rule: only exact model IDs explicitly declared in member supportedModelIds are candidates. Client model IDs are not rewritten from vendor prefixes or aliases. Images use fixed model-tier prices plus runtime review fees, while videos use fixed model-family prices per second.",
-        "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos/generations always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. The async body field is accepted only for compatibility and does not change behavior; URL ?async is not a supported video mode switch. callback_url is attached to the persistent video task and delivered at terminal state.",
+        "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. The async body field is accepted only for compatibility and does not change behavior; URL ?async is not a supported video mode switch. callback_url is attached to the persistent video task and delivered at terminal state.",
       ],
       officialRefsTitle: "Official References",
       officialRefs: [
@@ -3894,7 +3894,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             {
               name: "status",
               description:
-                "Task status: processing (running), completed (success), or failed (the object then includes error). No other values such as queued exist in the current implementation.",
+                "Task status: processing (running), completed (success), or failed (the object then includes error).",
             },
             {
               name: "data",
@@ -3925,18 +3925,18 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
         {
           title: "Create video",
           method: "POST",
-          path: "/v1/videos/generations",
+          path: "/v1/videos",
           contentType: "application/json",
           description:
-            "FluxMedia extension: creates a persistent video task. Every valid request returns HTTP 202 with object=video.task after persistence; it never waits for the video on the current connection. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. Authentication uses the same API key mechanism as other v1 endpoints.",
+            "Creates a persistent video task through the OpenAI-style POST /v1/videos route. Every valid request returns HTTP 202 with object=video.task after persistence; it never waits for the video on the current connection. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. Authentication uses the same API key mechanism as other v1 endpoints.",
           example: `# 1. Text-to-video. model is the real model ID; parameters are separate.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-001",
     "model": "veo31",
-    "duration_seconds": 8,
+    "seconds": 8,
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "A corgi running on the beach, cinematic camera, golden hour",
@@ -3944,7 +3944,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   }'
 
 # 2. First/last-frame generation. Frames and reference images are mutually exclusive for every model.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -3960,13 +3960,13 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   }'
 
 # 3. Compatibility async field. true, false, or omission creates the same persistent task.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "client_request_id": "video-request-003",
     "model": "veo31",
-    "duration_seconds": 8,
+    "seconds": 8,
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "City night timelapse, neon reflections",
@@ -3981,7 +3981,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "id": "video_0123456789abcdef0123456789abcdef01234567",
   "task_id": "video_0123456789abcdef0123456789abcdef01234567",
   "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "pending",
+  "status": "queued",
   "model": "veo31",
   "duration": 8,
   "duration_seconds": 8,
@@ -4008,7 +4008,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
                 "Caller-generated idempotency ID, up to 128 characters. Reuse it when retrying the same request.",
             },
             {
-              name: "duration / duration_seconds",
+              name: "seconds / duration / duration_seconds",
               requirement: "Required",
               description:
                 "Video duration in seconds; must be an integer supported by the selected model.",
@@ -4076,7 +4076,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             {
               name: "status",
               description:
-                "Current task state: pending, submitting, processing, needs_attention, completed, or failed.",
+                "Current task state: queued, in_progress, completed, or failed.",
             },
             {
               name: "model",
@@ -4094,7 +4094,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             },
           ],
           notes: [
-            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos/generations is an alias.",
+            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos is an equivalent alias. The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal; migrate to POST /v1/videos or /api/v1/videos. They continue to use the same handler until removal, and the removal release will be announced separately.",
             "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
             "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
             "Billing = credits per second for the selected real model and resolution × the separate duration value, rounded up to the supported credit precision. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
@@ -4137,7 +4137,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "id": "video_0123456789abcdef0123456789abcdef01234567",
   "task_id": "video_0123456789abcdef0123456789abcdef01234567",
   "generation_id": "video_0123456789abcdef0123456789abcdef01234567",
-  "status": "processing",
+  "status": "in_progress",
   "model": "veo31",
   "duration": 8,
   "duration_seconds": 8,
@@ -4176,7 +4176,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             {
               name: "status",
               description:
-                "pending, submitting, processing, needs_attention, completed, or failed. error.message is included when an error is available.",
+                "queued, in_progress, completed, or failed. error.message is included when an error is available.",
             },
             {
               name: "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",

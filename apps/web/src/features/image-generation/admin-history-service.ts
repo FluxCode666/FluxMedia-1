@@ -16,6 +16,7 @@ import {
   type AdminHistoryListOutput,
   type AdminHistoryRecord,
   type AdminHistoryRequestSnapshotOutput,
+  type AdminHistoryVideoSubmissionAttempt,
   adminHistoryCursorFiltersSchema,
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
@@ -50,6 +51,8 @@ const adminHistoryCursorPayloadSchema = z
     sub: z.string().min(1).max(512),
     filter: z.string().length(43),
     direction: z.enum(["next", "previous"]),
+    page: z.number().int().positive().safe(),
+    pageSize: z.number().int().min(1).max(50),
     asOf: z.string().datetime({ offset: true }),
     sortKey: z
       .object({
@@ -78,6 +81,12 @@ export interface AdminHistoryListQuery {
   } | null;
   branchLimit: number;
 }
+
+/** 管理员历史计数使用与列表完全相同的全局筛选和快照口径。 */
+export type AdminHistoryCountQuery = Omit<
+  AdminHistoryListQuery,
+  "branchLimit" | "cursor"
+>;
 
 interface AdminHistoryRowCommon {
   backendAccount: {
@@ -115,13 +124,15 @@ export interface AdminVideoHistoryRow extends AdminHistoryRowCommon {
   aspectRatio: string;
   generateAudio: boolean;
   input: HistoryVideoInputSummary;
+  submissionAttempts: AdminHistoryVideoSubmissionAttempt[];
   videoUrl: string | null;
 }
 
 export type AdminHistoryListRow = AdminImageHistoryRow | AdminVideoHistoryRow;
 
-/** 管理端仓储端口；查询始终是全局作用域，邮箱仅是精确筛选条件。 */
-export interface AdminHistoryRepository {
+/** 单个数据库快照内可用的管理端历史读取器。 */
+export interface AdminHistorySnapshotReader {
+  countRecords(query: AdminHistoryCountQuery): Promise<number>;
   readRecords(query: AdminHistoryListQuery): Promise<AdminHistoryListRow[]>;
   readModelOptions(input: {
     userEmail: string | null;
@@ -132,6 +143,13 @@ export interface AdminHistoryRepository {
     type: "image" | "video" | null;
     limit: number;
   }): Promise<Array<{ id: string; email: string }>>;
+}
+
+/** 管理端仓储端口；分页行、精确总数和筛选选项必须共享同一个只读快照。 */
+export interface AdminHistoryRepository {
+  withReadOnlySnapshot<T>(
+    work: (reader: AdminHistorySnapshotReader) => Promise<T>
+  ): Promise<T>;
   readRequestSnapshot(input: {
     id: string;
     kind: "image" | "video";
@@ -205,6 +223,8 @@ function encodeAdminHistoryCursor(
     filters: z.output<typeof adminHistoryCursorFiltersSchema>;
     asOf: string;
     direction: "next" | "previous";
+    page: number;
+    pageSize: number;
     sortKey: { createdAt: string; kindRank: number; id: string };
   },
   secret?: string
@@ -215,6 +235,8 @@ function encodeAdminHistoryCursor(
     sub: input.actorUserId,
     filter: fingerprintFilters(input.filters, resolvedSecret),
     direction: input.direction,
+    page: input.page,
+    pageSize: input.pageSize,
     asOf: input.asOf,
     sortKey: input.sortKey,
   });
@@ -239,6 +261,8 @@ function decodeAdminHistoryCursor(
 ): {
   asOf: Date;
   direction: "next" | "previous";
+  page: number;
+  pageSize: number;
   sortKey: { createdAt: Date; kindRank: number; id: string };
 } {
   try {
@@ -291,6 +315,8 @@ function decodeAdminHistoryCursor(
     return {
       asOf,
       direction: payload.direction,
+      page: payload.page,
+      pageSize: payload.pageSize,
       sortKey: { ...payload.sortKey, createdAt },
     };
   } catch (error) {
@@ -348,6 +374,8 @@ export async function loadAdminHistoryRecords(
   const serverNow = request.now ?? new Date();
   let asOf = serverNow;
   let cursor: AdminHistoryListQuery["cursor"] = null;
+  let page = parsed.page;
+  if (!parsed.cursor && parsed.page !== 1) throw new AdminHistoryServiceError();
   if (parsed.cursor) {
     const decoded = decodeAdminHistoryCursor(
       parsed.cursor,
@@ -359,6 +387,10 @@ export async function loadAdminHistoryRecords(
       dependencies.tokenSecret
     );
     asOf = decoded.asOf;
+    if (decoded.page !== parsed.page || decoded.pageSize !== parsed.pageSize) {
+      throw new AdminHistoryServiceError();
+    }
+    page = decoded.page;
     cursor = { ...decoded.sortKey, direction: decoded.direction };
   }
   if (
@@ -369,28 +401,39 @@ export async function loadAdminHistoryRecords(
     throw new AdminHistoryServiceError();
   }
 
-  const [rows, rawModelOptions, rawUserOptions] = await Promise.all([
-    dependencies.repository.readRecords({
-      start: range.start,
-      end: range.end,
-      asOf,
-      model: requestedModel,
-      status: parsed.status,
-      type: parsed.type,
-      userEmail: parsed.userEmail,
-      cursor,
-      branchLimit: parsed.limit + 1,
-    }),
-    dependencies.repository.readModelOptions({
-      userEmail: parsed.userEmail,
-      type: parsed.type,
-      limit: 200,
-    }),
-    dependencies.repository.readUserOptions({ type: parsed.type, limit: 200 }),
-  ]);
+  const countQuery = {
+    start: range.start,
+    end: range.end,
+    asOf,
+    model: requestedModel,
+    status: parsed.status,
+    type: parsed.type,
+    userEmail: parsed.userEmail,
+  };
+  const { rows, rawModelOptions, rawUserOptions, totalCount } =
+    await dependencies.repository.withReadOnlySnapshot(async (reader) => {
+      const totalCount = await reader.countRecords(countQuery);
+      const [rows, rawModelOptions, rawUserOptions] = await Promise.all([
+        reader.readRecords({
+          ...countQuery,
+          cursor,
+          branchLimit: parsed.pageSize + 1,
+        }),
+        reader.readModelOptions({
+          userEmail: parsed.userEmail,
+          type: parsed.type,
+          limit: 200,
+        }),
+        reader.readUserOptions({
+          type: parsed.type,
+          limit: 200,
+        }),
+      ]);
+      return { rows, rawModelOptions, rawUserOptions, totalCount };
+    });
   const direction = cursor?.direction ?? "next";
-  const hasExtra = rows.length > parsed.limit;
-  const selectedRows = rows.slice(0, parsed.limit);
+  const hasExtra = rows.length > parsed.pageSize;
+  const selectedRows = rows.slice(0, parsed.pageSize);
   const pageRows =
     direction === "previous" ? selectedRows.reverse() : selectedRows;
   const records = pageRows.map(adaptAdminHistoryRow);
@@ -408,6 +451,8 @@ export async function loadAdminHistoryRecords(
         filters,
         asOf: asOf.toISOString(),
         direction: cursorDirection,
+        page: cursorDirection === "next" ? page + 1 : page - 1,
+        pageSize: parsed.pageSize,
         sortKey: {
           createdAt: toIsoDateTime(row.createdAt),
           kindRank: HISTORY_KIND_RANK[row.kind],
@@ -442,6 +487,9 @@ export async function loadAdminHistoryRecords(
 
   return adminHistoryListOutputSchema.parse({
     asOf: asOf.toISOString(),
+    page,
+    pageSize: parsed.pageSize,
+    totalCount,
     records,
     modelOptions,
     userOptions,

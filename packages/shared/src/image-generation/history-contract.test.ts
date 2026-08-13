@@ -22,7 +22,8 @@ describe("history contract", () => {
       status: null,
       type: null,
       cursor: null,
-      limit: 20,
+      page: 1,
+      pageSize: 20,
     });
     expect(
       historyListInputSchema.safeParse({ userId: "forged-user" }).success
@@ -52,7 +53,7 @@ describe("history contract", () => {
         cursor: "signed-cursor",
         limit: 50,
       })
-    ).toMatchObject({ model: "gpt-image-2", limit: 50 });
+    ).toMatchObject({ model: "gpt-image-2", pageSize: 50 });
     expect(historyListInputSchema.safeParse({ limit: 51 }).success).toBe(false);
     expect(
       historyListInputSchema.safeParse({ status: "running" }).success
@@ -66,7 +67,7 @@ describe("history contract", () => {
     ).toBe(false);
     expect(
       adminHistoryListInputSchema.parse({ userEmail: " member@example.com " })
-    ).toMatchObject({ userEmail: "member@example.com", limit: 20 });
+    ).toMatchObject({ userEmail: "member@example.com", pageSize: 20 });
     expect(
       adminHistoryListInputSchema.safeParse({ userEmail: "not-an-email" })
         .success
@@ -87,6 +88,9 @@ describe("history contract", () => {
     };
     const parsed = historyListOutputSchema.parse({
       asOf: "2026-07-22T02:00:00.000Z",
+      page: 1,
+      pageSize: 20,
+      totalCount: 2,
       records: [
         {
           ...common,
@@ -143,6 +147,76 @@ describe("history contract", () => {
     ).toBe(false);
   });
 
+  it("保留图片 processing 并仅让视频使用 queued 和 in_progress", () => {
+    const base = {
+      id: "record-status",
+      prompt: "prompt",
+      model: "model-1",
+      creditsConsumed: 0,
+      error: null,
+      createdAt: "2026-07-22T01:00:00.000Z",
+      completedAt: null,
+      processingDurationSeconds: null,
+    };
+    expect(
+      historyListOutputSchema.safeParse({
+        asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        records: [
+          {
+            ...base,
+            kind: "image",
+            status: "processing",
+            revisedPrompt: null,
+            size: "1024x1024",
+            creditDetails: null,
+            promptRepairNotice: null,
+            referenceImages: [],
+            imageUrl: null,
+          },
+          {
+            ...base,
+            id: "video-status",
+            kind: "video",
+            status: "queued",
+            resolution: "720p",
+            duration: 4,
+            aspectRatio: "16:9",
+            generateAudio: false,
+            input: { mode: "none", count: 0 },
+            videoUrl: null,
+          },
+        ],
+        modelOptions: [],
+        nextCursor: null,
+        previousCursor: null,
+        totalCount: 2,
+      }).success
+    ).toBe(true);
+    expect(
+      historyListOutputSchema.safeParse({
+        asOf: "2026-07-22T02:00:00.000Z",
+        records: [
+          {
+            ...base,
+            kind: "image",
+            status: "queued",
+            revisedPrompt: null,
+            size: "1024x1024",
+            creditDetails: null,
+            promptRepairNotice: null,
+            referenceImages: [],
+            imageUrl: null,
+          },
+        ],
+        modelOptions: [],
+        nextCursor: null,
+        previousCursor: null,
+      }).success
+    ).toBe(false);
+  });
+
   it("requires user and backend account identity only in the admin history output", () => {
     const record = {
       kind: "image" as const,
@@ -165,6 +239,9 @@ describe("history contract", () => {
     expect(
       historyListOutputSchema.safeParse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
         records: [
           {
             ...record,
@@ -182,6 +259,9 @@ describe("history contract", () => {
     expect(
       adminHistoryListOutputSchema.safeParse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
         records: [record],
         modelOptions: [],
         userOptions: [],
@@ -192,6 +272,9 @@ describe("history contract", () => {
     expect(
       adminHistoryListOutputSchema.parse({
         asOf: "2026-07-22T02:00:00.000Z",
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
         records: [
           {
             ...record,
@@ -217,6 +300,66 @@ describe("history contract", () => {
     });
   });
 
+  it("only allows safe video submission failure facts in global history", () => {
+    const video = {
+      aspectRatio: "16:9",
+      backendAccount: null,
+      completedAt: null,
+      createdAt: "2026-07-22T01:00:00.000Z",
+      creditsConsumed: 10,
+      duration: 8,
+      error: "生成服务请求超时，请稍后重试",
+      generateAudio: false,
+      id: "video-1",
+      input: { mode: "none" as const, count: 0 },
+      kind: "video" as const,
+      model: "seedance2",
+      processingDurationSeconds: null,
+      prompt: "prompt",
+      resolution: "1080p",
+      status: "failed" as const,
+      submissionAttempts: [
+        {
+          attemptNumber: 1,
+          supplierName: "Video supplier",
+          failureCode: "submission_timeout",
+          failureReason: "生成服务请求超时，请稍后重试",
+          operationsReason: "上游视频创建请求超时",
+          failedAt: "2026-07-22T01:00:30.000Z",
+        },
+      ],
+      userEmail: "member@example.com",
+      userId: "user-1",
+      videoUrl: null,
+    };
+    const output = {
+      asOf: "2026-07-22T02:00:00.000Z",
+      page: 1,
+      pageSize: 20,
+      records: [video],
+      modelOptions: [],
+      nextCursor: null,
+      previousCursor: null,
+      totalCount: 1,
+      userOptions: [{ id: "user-1", email: "member@example.com" }],
+    };
+
+    expect(adminHistoryListOutputSchema.safeParse(output).success).toBe(true);
+    expect(
+      adminHistoryListOutputSchema.safeParse({
+        ...output,
+        records: [
+          {
+            ...video,
+            submissionAttempts: [
+              { ...video.submissionAttempts[0], unsafeField: "request-1" },
+            ],
+          },
+        ],
+      }).success
+    ).toBe(false);
+  });
+
   it("accepts only nullable non-negative integer processing durations", () => {
     const common = {
       kind: "image" as const,
@@ -237,6 +380,9 @@ describe("history contract", () => {
     };
     const output = (processingDurationSeconds: number | null) => ({
       asOf: "2026-07-22T02:00:00.000Z",
+      page: 1,
+      pageSize: 20,
+      totalCount: 1,
       records: [{ ...common, processingDurationSeconds }],
       modelOptions: [],
       nextCursor: null,

@@ -60,6 +60,14 @@ describe("buildHomepageIntegrationExample", () => {
       response_format: "url",
     });
     expect(JSON.parse(result.requestBody)).not.toHaveProperty("n");
+    expect(result.requestBody.split("\n")).toEqual([
+      "{",
+      '  "model": "gpt-image-alpha",',
+      '  "prompt": "A sculptural editorial scene in warm studio light",',
+      '  "size": "1024x1024",',
+      '  "response_format": "url"',
+      "}",
+    ]);
   });
 
   it.each([
@@ -125,7 +133,7 @@ describe("buildHomepageIntegrationExample", () => {
     expect(result.curl).toContain("'\"'\"'");
     expect(result.curl).not.toContain("\n touch /tmp/pwned");
     expect(result.curl).toContain("$(whoami)");
-    expect(result.curl.split("\n")).toHaveLength(4);
+    expect(result.curl.split("\n")).toHaveLength(9);
   });
 
   it("忽略调用方夹带的真实 API Key，只生成固定环境变量占位符", () => {

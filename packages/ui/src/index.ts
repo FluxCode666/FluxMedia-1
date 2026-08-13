@@ -69,6 +69,12 @@ export {
   CollapsibleContent,
 } from "./components/collapsible";
 
+// Cursor Pagination
+export {
+  CursorPaginationControls,
+  type CursorPaginationControlsProps,
+} from "./components/cursor-pagination-controls";
+
 // Dialog
 export {
   Dialog,
@@ -143,6 +149,13 @@ export {
   PaginationNext,
   PaginationEllipsis,
 } from "./components/pagination";
+export {
+  getPaginationControlsViewModel,
+  PaginationControls,
+  type PaginationControlsItem,
+  type PaginationControlsProps,
+  type PaginationControlsViewModel,
+} from "./components/pagination-controls";
 
 // Popover
 export {

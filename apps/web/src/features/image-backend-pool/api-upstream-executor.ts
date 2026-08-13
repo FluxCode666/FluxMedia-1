@@ -229,7 +229,8 @@ export async function executeApiUpstreamOperation(input: {
   taskId?: string;
   opaqueValues?: ApiUpstreamOpaqueValues;
   signal?: AbortSignal;
-  maxResponseBytes: number;
+  /** 省略时由底层传输自行治理；下载与图片调用方仍应显式给出边界。 */
+  maxResponseBytes?: number;
   encodeBody?: (body: unknown) => EncodedUpstreamBody;
   fetcher?: UpstreamFetch;
   now?: Date;
@@ -237,8 +238,15 @@ export async function executeApiUpstreamOperation(input: {
   onRequestSnapshot?: (
     snapshot: ApiUpstreamRequestSnapshot
   ) => Promise<void> | void;
+  /**
+   * 所有脚本、编码和响应脚本许可均准备完成后，在 fetch 前执行一次。
+   * 视频创建用它原子预留尝试账本；回调失败时不得发送请求。
+   */
+  onBeforeSend?: () => Promise<void> | void;
+  /** 调用方已持久化的服务端请求标识；省略时由执行器生成。 */
+  requestId?: string;
 }): Promise<ApiUpstreamExecutionResult> {
-  const requestId = createApiUpstreamRequestId();
+  const requestId = input.requestId ?? createApiUpstreamRequestId();
   const operationConfig = input.adapter.operations[input.operation];
   let envelope: Awaited<ReturnType<typeof resolveApiUpstreamRequestEnvelope>>;
   try {
@@ -375,6 +383,19 @@ export async function executeApiUpstreamOperation(input: {
         });
       })
     : undefined;
+
+  try {
+    await input.onBeforeSend?.();
+  } catch (error) {
+    permit?.release();
+    throw new ApiUpstreamExecutionError(
+      "invalid_configuration",
+      "before_send",
+      error,
+      undefined,
+      requestId
+    );
+  }
 
   let response: Response;
   try {

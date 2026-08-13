@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type ModelConfigurationReadDependencies,
   readModelConfiguration,
+  readModelConfigurationPage,
 } from "./read-service";
 
 /**
@@ -216,5 +217,54 @@ describe("readModelConfiguration", () => {
         readModelConfiguration(principal, createDependencies())
       ).resolves.toMatchObject({ canEdit: false });
     }
+  });
+});
+
+describe("readModelConfigurationPage", () => {
+  it("按类别和名称筛选并返回精确分页信封", async () => {
+    const page = await readModelConfigurationPage(
+      SUPER_ADMIN,
+      { page: 1, pageSize: 10, query: "sora", category: "video" },
+      createDependencies()
+    );
+
+    expect(page).toMatchObject({
+      page: 1,
+      pageSize: 10,
+      totalCount: 2,
+      totalPages: 1,
+      canEdit: true,
+      runtimeCatalogStatus: "ready",
+    });
+    expect(page.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "video", configKey: "sora2" }),
+      ])
+    );
+    expect(page.records.every((entry) => entry.category === "video")).toBe(
+      true
+    );
+  });
+
+  it("将越界页收敛到最后一个有效页且零结果保持第一页", async () => {
+    const lastPage = await readModelConfigurationPage(
+      SUPER_ADMIN,
+      { page: 999, pageSize: 10, query: "", category: "all" },
+      createDependencies()
+    );
+    expect(lastPage.page).toBe(lastPage.totalPages);
+
+    const emptyPage = await readModelConfigurationPage(
+      SUPER_ADMIN,
+      { page: 999, pageSize: 20, query: "missing-model", category: "all" },
+      createDependencies()
+    );
+    expect(emptyPage).toMatchObject({
+      records: [],
+      page: 1,
+      pageSize: 20,
+      totalCount: 0,
+      totalPages: 1,
+    });
   });
 });

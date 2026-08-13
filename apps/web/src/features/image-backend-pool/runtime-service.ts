@@ -63,16 +63,53 @@ const configuredModelIdsRowSchema = z.object({
   supported_model_ids: z.array(z.string().trim().min(1)),
 });
 
+const runtimeAvailabilityRowSchema = z.object({
+  eligible_count: z.coerce.number().int().nonnegative(),
+  available_count: z.coerce.number().int().nonnegative(),
+});
+
 const apiVideoRecoveryRowSchema = z.object({
   member_id: z.string().trim().min(1),
   credential_scope: z.string().trim().min(1),
-  api_key: z.string().min(1),
+  api_key: z.string().min(1).nullable(),
   adapter_configuration: z.unknown(),
 });
 
 /** 固定版本视频恢复只需要参数化 SQL 执行端口，真实 PostgreSQL 测试可注入连接。 */
 export interface ApiVideoRecoveryConfigDatabase {
   execute(query: SQL): Promise<unknown>;
+}
+
+/** 固定 API 适配版本存在但内容无法安全重放。 */
+export class ApiVideoRecoveryConfigInvalidError extends Error {
+  constructor() {
+    super("API 视频恢复固定适配版本无效");
+    this.name = "ApiVideoRecoveryConfigInvalidError";
+  }
+}
+
+/** 已获租成员的持久运行时配置缺失或损坏，可以排除该成员后重选。 */
+export class RuntimeBackendConfigurationInvalidError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RuntimeBackendConfigurationInvalidError";
+  }
+}
+
+/**
+ * 区分获租后配置加载的永久成员错误与临时基础设施错误。
+ *
+ * @param error 加载运行时配置时捕获的未知异常。
+ * @returns 只有已分类的永久配置损坏允许排除成员，其余必须交队列稍后重试。
+ * @sideEffects 无。
+ * @failure 不抛错；未知异常保守返回 retry_later。
+ */
+export function classifyRuntimeBackendLeaseLoadFailure(
+  error: unknown
+): "exclude_member" | "retry_later" {
+  return error instanceof RuntimeBackendConfigurationInvalidError
+    ? "exclude_member"
+    : "retry_later";
 }
 
 const runtimeConfigRowSchema = z.object({
@@ -130,6 +167,15 @@ export interface CreateRuntimeBackendSessionInput {
   requestKind: "image" | "video";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
+  /** 当前任务已耗尽或明确排除的账号；只影响本次会话。 */
+  excludedMemberIds?: readonly string[];
+  /** 同账号创建重试时只允许重新获取该账号。 */
+  requiredMemberId?: string;
+  /** 协议恢复必须固定成员类型，避免 API 重试漂移到 Adobe Direct。 */
+  requiredMemberType?: "api" | "adobe";
+  /** 同账号重试固定使用首次选择时持久化的 API 适配版本。 */
+  requiredApiAdapterMemberId?: string;
+  requiredApiAdapterVersionId?: string;
 }
 
 /** 配置可达性查询所需的 Principal 分组事实。 */
@@ -138,6 +184,17 @@ export interface ListConfiguredRuntimeModelIdsInput {
   apiKeyId?: string;
   requestedGroupId?: string;
   pinnedGroupId?: string;
+}
+
+/** 创建响应前只读资格裁决的稳定结果。 */
+export type RuntimeBackendAvailability =
+  | "available"
+  | "capacity_rejected"
+  | "no_candidate";
+
+/** 只读视频账号资格裁决使用的最小数据库端口。 */
+export interface RuntimeVideoBackendAvailabilityDatabase {
+  execute(query: SQL): Promise<unknown>;
 }
 
 /** 运行时会话只暴露获租、结果上报和关闭，避免调用方直接操作租约行。 */
@@ -149,6 +206,8 @@ export interface RuntimeBackendSession {
     error: string,
     durationMs: number
   ): Promise<RuntimeBackendLease>;
+  /** 仅在当前任务排除账号并切换，不修改账号全局健康与冷却。 */
+  switchForTask(): Promise<RuntimeBackendLease>;
   completeCurrent(input: {
     success: boolean;
     error?: string;
@@ -283,6 +342,110 @@ export async function listConfiguredRuntimeModelIds(
 }
 
 /**
+ * 在不获取租约、不修改成员状态的前提下判断当前视频任务是否存在合格账号。
+ *
+ * @param input Principal 可信分组、真实模型和内容安全要求。
+ * @returns 有空闲账号、仅容量已满或没有合格账号。
+ * @sideEffects 只读 API Key 绑定、分组、成员配置和当前有效租约。
+ * @failure 分组不可达或数据库事实非法时显式抛错，不把系统错误伪装成无账号。
+ */
+export async function inspectRuntimeVideoBackendAvailability(
+  input: ListConfiguredRuntimeModelIdsInput & {
+    modelId: string;
+    requiresContentSafety: boolean;
+    /** 自定义模型等 API-only 请求必须在只读预检时沿用同一成员类型约束。 */
+    requiredMemberType?: "api" | "adobe";
+  },
+  dependencies?: {
+    group?: RuntimeBackendGroupSnapshot;
+    database?: RuntimeVideoBackendAvailabilityDatabase;
+  }
+): Promise<RuntimeBackendAvailability> {
+  const group =
+    dependencies?.group ?? (await resolveTrustedGroupSnapshot(input));
+  const requiresContentSafety =
+    input.requiresContentSafety && group.contentSafetyEnabled !== false;
+  const database =
+    dependencies?.database ?? (await import("@repo/database")).db;
+  const rows = z.array(runtimeAvailabilityRowSchema).parse(
+    extractExecuteRows(
+      await database.execute(sql`
+        with eligible as (
+          select member.id, member.concurrency
+          from image_backend_member as member
+          inner join image_backend_member_group as membership
+            on membership.member_id = member.id
+          left join image_backend_member_api_config as api
+            on api.member_id = member.id
+          left join image_backend_member_api_adapter_version as api_version
+            on api_version.id = api.current_adapter_version_id
+            and api_version.member_id_snapshot = member.id
+            and api_version.credential_scope = api.credential_scope
+          left join image_backend_member_adobe_config as adobe
+            on adobe.member_id = member.id
+          where membership.group_id = ${group.id}
+            and member.is_enabled = true
+            and (${input.requiredMemberType ?? null}::text is null or member.type = ${
+              input.requiredMemberType ?? null
+            })
+            and (member.cooldown_until is null or member.cooldown_until <= now())
+            and member.status <> 'error'
+            and not (
+              member.type = 'adobe'
+              and exists (
+                select 1
+                from adobe_credential_health as credential_health
+                where credential_health.member_id = member.id
+                  and credential_health.status = 'isolated'
+              )
+            )
+            and exists (
+              select 1
+              from json_array_elements_text(member.supported_model_ids)
+                as supported_model(model_id)
+              where lower(trim(supported_model.model_id)) =
+                lower(${input.modelId})
+            )
+            and (
+              ${requiresContentSafety} = false
+              or member.content_safety_enabled = true
+            )
+            and (
+              (
+                member.type = 'api'
+                and api.api_key is not null
+                and api_version.id is not null
+              )
+              or (
+                member.type = 'adobe'
+                and adobe.mode = 'direct'
+                and adobe.cookie is not null
+                and adobe.access_token is not null
+              )
+            )
+        ), inflight as (
+          select lease.member_id, count(*)::integer as count
+          from image_backend_member_lease as lease
+          inner join eligible on eligible.id = lease.member_id
+          where lease.expires_at > now()
+          group by lease.member_id
+        )
+        select
+          count(*)::integer as eligible_count,
+          count(*) filter (
+            where coalesce(inflight.count, 0) < eligible.concurrency
+          )::integer as available_count
+        from eligible
+        left join inflight on inflight.member_id = eligible.id
+      `)
+    )
+  );
+  const availability = rows[0];
+  if (!availability || availability.eligible_count === 0) return "no_candidate";
+  return availability.available_count > 0 ? "available" : "capacity_rejected";
+}
+
+/**
  * 加载已接受视频任务固定 API 账号的当前凭据。
  *
  * @param memberId - 任务在接受阶段持久化的统一账号 ID。
@@ -324,25 +487,33 @@ export async function loadApiVideoRecoveryConfig(
   );
   const row = rows[0];
   if (!row) return null;
-  const adapter = apiUpstreamAdapterDraftSchema.parse(
-    row.adapter_configuration
-  );
-  if (adapter.credentialScope !== row.credential_scope) {
-    throw new Error("API 视频恢复凭据域与固定适配版本不一致");
+  if (!row.api_key) throw new ApiVideoRecoveryConfigInvalidError();
+  try {
+    const adapter = apiUpstreamAdapterDraftSchema.parse(
+      row.adapter_configuration
+    );
+    if (adapter.credentialScope !== row.credential_scope) {
+      throw new ApiVideoRecoveryConfigInvalidError();
+    }
+    parseMediaUpstreamUrl(adapter.baseUrl);
+    return {
+      baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
+      apiKey: row.api_key,
+      model: modelId,
+      useStream: adapter.useStream,
+      backend: {
+        type: "pool-api",
+        id: row.member_id,
+        modelMappings: adapter.modelMappings,
+        apiUpstreamAdapter: adapter,
+      },
+    };
+  } catch (error) {
+    if (error instanceof ApiVideoRecoveryConfigInvalidError) throw error;
+    // WHY：数据库读取异常发生在本 try 之前；这里只收敛已读取版本的 schema、
+    // 凭据域和 URL 损坏，供遗留迁移区分永久快照缺失与临时基础设施异常。
+    throw new ApiVideoRecoveryConfigInvalidError();
   }
-  parseMediaUpstreamUrl(adapter.baseUrl);
-  return {
-    baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
-    apiKey: row.api_key,
-    model: modelId,
-    useStream: adapter.useStream,
-    backend: {
-      type: "pool-api",
-      id: row.member_id,
-      modelMappings: adapter.modelMappings,
-      apiUpstreamAdapter: adapter,
-    },
-  };
 }
 
 /** 根据统一成员与类型配置表构造现有媒体适配器可消费的配置快照。 */
@@ -352,9 +523,7 @@ async function loadRuntimeBackendLease(
   input: CreateRuntimeBackendSessionInput
 ): Promise<RuntimeBackendLease> {
   const { db } = await import("@repo/database");
-  const rows = z.array(runtimeConfigRowSchema).parse(
-    extractExecuteRows(
-      await db.execute(sql`
+  const result = await db.execute(sql`
         select
           member.id as member_id,
           member.type as member_type,
@@ -385,11 +554,21 @@ async function loadRuntimeBackendLease(
           on adobe.member_id = member.id
         where member.id = ${acquisition.member.id}
         limit 1
-      `)
-    )
-  );
+      `);
+  let rows: z.output<typeof runtimeConfigRowSchema>[];
+  try {
+    rows = z.array(runtimeConfigRowSchema).parse(extractExecuteRows(result));
+  } catch {
+    throw new RuntimeBackendConfigurationInvalidError(
+      "获租成员的运行时配置记录无效"
+    );
+  }
   const row = rows[0];
-  if (!row) throw new Error("获租成员在加载运行时配置前已不存在");
+  if (!row) {
+    throw new RuntimeBackendConfigurationInvalidError(
+      "获租成员在加载运行时配置前已不存在"
+    );
+  }
 
   const commonBackend = {
     id: row.member_id,
@@ -413,15 +592,26 @@ async function loadRuntimeBackendLease(
       !row.api_adapter_configuration ||
       row.api_adapter_member_id !== row.member_id
     ) {
-      throw new Error("API 成员缺少固定适配版本、地址或凭据");
+      throw new RuntimeBackendConfigurationInvalidError(
+        "API 成员缺少固定适配版本、地址或凭据"
+      );
     }
-    const adapter = apiUpstreamAdapterDraftSchema.parse(
-      row.api_adapter_configuration
-    );
+    let adapter: z.output<typeof apiUpstreamAdapterDraftSchema>;
+    try {
+      adapter = apiUpstreamAdapterDraftSchema.parse(
+        row.api_adapter_configuration
+      );
+      parseMediaUpstreamUrl(adapter.baseUrl);
+    } catch {
+      throw new RuntimeBackendConfigurationInvalidError(
+        "API 成员固定适配版本无效"
+      );
+    }
     if (adapter.credentialScope !== row.api_credential_scope) {
-      throw new Error("API 成员当前凭据域与固定适配版本不一致");
+      throw new RuntimeBackendConfigurationInvalidError(
+        "API 成员当前凭据域与固定适配版本不一致"
+      );
     }
-    parseMediaUpstreamUrl(adapter.baseUrl);
     return {
       acquisition,
       memberId: row.member_id,
@@ -449,13 +639,23 @@ async function loadRuntimeBackendLease(
     !row.adobe_default_resolution ||
     !row.adobe_gpt_image_quality
   ) {
-    throw new Error("Adobe 成员缺少运行时类型配置");
+    throw new RuntimeBackendConfigurationInvalidError(
+      "Adobe 成员缺少运行时类型配置"
+    );
   }
   if (row.adobe_mode === "gateway") {
     if (!row.adobe_base_url || !row.adobe_api_key) {
-      throw new Error("Adobe gateway 成员缺少地址或凭据");
+      throw new RuntimeBackendConfigurationInvalidError(
+        "Adobe gateway 成员缺少地址或凭据"
+      );
     }
-    parseMediaUpstreamUrl(row.adobe_base_url);
+    try {
+      parseMediaUpstreamUrl(row.adobe_base_url);
+    } catch {
+      throw new RuntimeBackendConfigurationInvalidError(
+        "Adobe gateway 成员地址无效"
+      );
+    }
   }
 
   return {
@@ -641,7 +841,7 @@ export async function createRuntimeBackendSession(
   const group =
     trustedGroupSnapshot ??
     (await resolveTrustedGroupSnapshot(normalizedInput));
-  const excludedMemberIds = new Set<string>();
+  const excludedMemberIds = new Set(input.excludedMemberIds ?? []);
   let current: RuntimeBackendLease | null = null;
   let acquisitionCount = 0;
 
@@ -652,6 +852,24 @@ export async function createRuntimeBackendSession(
       groupId: group.id,
       requestedModel: modelId,
       excludedMemberIds: Array.from(excludedMemberIds),
+      ...(normalizedInput.requiredMemberId
+        ? { requiredMemberId: normalizedInput.requiredMemberId }
+        : {}),
+      ...(normalizedInput.requiredMemberType
+        ? { requiredMemberType: normalizedInput.requiredMemberType }
+        : {}),
+      ...(normalizedInput.requiredApiAdapterMemberId
+        ? {
+            requiredApiAdapterMemberId:
+              normalizedInput.requiredApiAdapterMemberId,
+          }
+        : {}),
+      ...(normalizedInput.requiredApiAdapterVersionId
+        ? {
+            requiredApiAdapterVersionId:
+              normalizedInput.requiredApiAdapterVersionId,
+          }
+        : {}),
       requiresContentSafety:
         normalizedInput.requiresContentSafety &&
         group.contentSafetyEnabled !== false,
@@ -670,7 +888,9 @@ export async function createRuntimeBackendSession(
         candidateCount: acquisitionResult.eligibleCandidateCount,
       });
       throw new BackendSchedulerError(
-        "no_eligible_member",
+        acquisitionResult.status === "capacity_rejected"
+          ? "capacity_rejected"
+          : "no_eligible_member",
         acquisitionResult.status === "capacity_rejected"
           ? "当前分组的媒体后端容量已满"
           : "当前分组没有可用于该模型的媒体后端"
@@ -690,6 +910,11 @@ export async function createRuntimeBackendSession(
         leaseId: acquisition.lease.id,
         ownerToken: acquisition.lease.ownerToken,
       });
+      if (classifyRuntimeBackendLeaseLoadFailure(error) === "retry_later") {
+        // 数据库、模块加载等临时故障必须交给任务队列稍后重试；固定成员场景若
+        // 排除当前成员递归重选，会被错误收敛成 no_eligible_member 并触发退款。
+        throw error;
+      }
       excludedMemberIds.add(acquisition.member.id);
       logWarn("统一媒体成员运行时配置不可用，已排除并重选", {
         memberId: acquisition.member.id,
@@ -737,6 +962,15 @@ export async function createRuntimeBackendSession(
         error,
         durationMs,
       });
+      await releaseRuntimeLease(lease);
+      current = null;
+      return acquireNext();
+    },
+
+    async switchForTask() {
+      const lease = current;
+      if (!lease) throw new Error("没有可切换的当前媒体成员租约");
+      excludedMemberIds.add(lease.memberId);
       await releaseRuntimeLease(lease);
       current = null;
       return acquireNext();

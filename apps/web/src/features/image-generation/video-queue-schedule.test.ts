@@ -7,7 +7,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveVideoCapacityRetryAt,
   resolveVideoQueueSchedule,
+  VIDEO_CAPACITY_RETRY_DELAY_MS,
   VIDEO_SUBMISSION_RECOVERY_GRACE_MS,
   type VideoQueueScheduleRow,
 } from "./video-queue-schedule";
@@ -31,11 +33,29 @@ function createRow(
 }
 
 describe("video queue schedule", () => {
-  it("created 与 polling 使用数据库 nextPollAt", () => {
+  it("容量等待使用有界退避且不会越过截止时间", () => {
+    const laterDeadline = new Date(NOW.getTime() + 60_000);
+    expect(resolveVideoCapacityRetryAt(NOW, laterDeadline)).toEqual(
+      new Date(NOW.getTime() + VIDEO_CAPACITY_RETRY_DELAY_MS)
+    );
+
+    const nearDeadline = new Date(NOW.getTime() + 2_000);
+    expect(resolveVideoCapacityRetryAt(NOW, nearDeadline)).toEqual(
+      nearDeadline
+    );
+  });
+
+  it("created、retrying 与 polling 使用数据库 nextPollAt", () => {
     const nextPollAt = new Date(NOW.getTime() + 15_000);
     expect(
       resolveVideoQueueSchedule(
         createRow({ stage: "polling", nextPollAt }),
+        NOW
+      )
+    ).toEqual({ taskId: "video-1", stateVersion: 2, runAt: nextPollAt });
+    expect(
+      resolveVideoQueueSchedule(
+        createRow({ stage: "retrying", nextPollAt }),
         NOW
       )
     ).toEqual({ taskId: "video-1", stateVersion: 2, runAt: nextPollAt });
@@ -59,9 +79,7 @@ describe("video queue schedule", () => {
         NOW
       )?.runAt
     ).toEqual(
-      new Date(
-        submitStartedAt.getTime() + VIDEO_SUBMISSION_RECOVERY_GRACE_MS
-      )
+      new Date(submitStartedAt.getTime() + VIDEO_SUBMISSION_RECOVERY_GRACE_MS)
     );
   });
 
@@ -69,5 +87,14 @@ describe("video queue schedule", () => {
     for (const stage of ["completed", "failed", "submit_uncertain"]) {
       expect(resolveVideoQueueSchedule(createRow({ stage }), NOW)).toBeNull();
     }
+  });
+
+  it("退款重试耗尽后停止再次投递", () => {
+    expect(
+      resolveVideoQueueSchedule(
+        createRow({ stage: "refunding", refundExhaustedAt: NOW }),
+        NOW
+      )
+    ).toBeNull();
   });
 });

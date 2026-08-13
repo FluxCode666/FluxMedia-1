@@ -147,6 +147,9 @@ export type SettingKey =
   | "VIDEO_BASE_CREDITS_PER_SECOND"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
   | "VIDEO_MODEL_CAPABILITY_OVERRIDES"
+  | "VIDEO_SUBMISSION_RETRY_DELAY_SECONDS"
+  | "VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS"
+  | "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS"
   | "NEXT_PUBLIC_GA_ID"
   | "NEXT_PUBLIC_SENTRY_DSN"
   | "SENTRY_AUTH_TOKEN"
@@ -1211,6 +1214,42 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     valueType: "json",
     defaultValue: createDefaultVideoModelCapabilityOverrides(),
     managedByDedicatedOperation: true,
+  },
+  {
+    key: "VIDEO_SUBMISSION_RETRY_DELAY_SECONDS",
+    label: "视频同账号重试等待秒数",
+    description:
+      "API 供应商创建视频失败后，同一账号再次请求前的基础等待时间；0 表示立即安排重试。",
+    category: "models",
+    valueType: "number",
+    min: 0,
+    max: 300,
+    integer: true,
+    defaultValue: 2,
+  },
+  {
+    key: "VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS",
+    label: "视频创建 HTTP 超时秒数",
+    description:
+      "API 供应商创建视频任务的单次同步 HTTP 请求超时；不影响后续查询、下载或回调。",
+    category: "models",
+    valueType: "number",
+    min: 1,
+    max: 300,
+    integer: true,
+    defaultValue: 30,
+  },
+  {
+    key: "VIDEO_SUBMISSION_CAPACITY_WAIT_TIMEOUT_SECONDS",
+    label: "视频账号容量等待超时秒数",
+    description:
+      "存在合格 API 账号但并发槽均满时的最长等待时间；0 表示不等待并立即进入失败退款。",
+    category: "models",
+    valueType: "number",
+    min: 0,
+    max: 1_800,
+    integer: true,
+    defaultValue: 120,
   },
   {
     key: "CREDIT_PACKAGE_MATRIX",

@@ -201,12 +201,16 @@ export function buildHomepageIntegrationExample(
 
   const contract = getApiIntegrationHomepageContract();
   const endpointUrl = `${origin}${contract.endpoint.path}`;
-  const requestBody = JSON.stringify({
-    model: modelId,
-    prompt: "A sculptural editorial scene in warm studio light",
-    size: "1024x1024",
-    response_format: "url",
-  });
+  const requestBody = JSON.stringify(
+    {
+      model: modelId,
+      prompt: "A sculptural editorial scene in warm studio light",
+      size: "1024x1024",
+      response_format: "url",
+    },
+    null,
+    2
+  );
   const auth = contract.authentication;
   const curl = [
     `curl ${quoteShellArgument(endpointUrl)} \\`,
