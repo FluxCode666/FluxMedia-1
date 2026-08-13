@@ -562,7 +562,8 @@ BEGIN
 
     v_total := v_total - media_history_boundary_fact_count(
       p_scope_kind, p_owner_user_id, p_media_type, p_status, p_model,
-      p_as_of + INTERVAL '1 microsecond', NULL, 'infinity'::timestamp
+      p_as_of + INTERVAL '1 microsecond', NULL,
+      timestamp '9999-12-31 23:59:59.999999'
     );
     IF p_end IS NOT NULL AND p_end <= p_as_of THEN
       v_total := v_total - media_history_boundary_fact_count(

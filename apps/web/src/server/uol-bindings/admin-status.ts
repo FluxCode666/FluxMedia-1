@@ -49,7 +49,7 @@ async function executeListAdminStatusErrors(
           null,
           ${input.fromDate},
           ${input.toDate ? sql`${input.toDate} + interval '1 microsecond'` : null},
-          'infinity'::timestamp
+          timestamp '9999-12-31 23:59:59.999999'
         ) as "totalCount"
       `);
       const totalCount = statusErrorCountRowSchema.parse(
