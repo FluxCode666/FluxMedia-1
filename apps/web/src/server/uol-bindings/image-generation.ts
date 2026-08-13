@@ -6,7 +6,6 @@
  * 使用方：根 uol-bindings 聚合器；默认依赖动态加载以保持本模块单测 DB-free。
  */
 
-import { db } from "@repo/database";
 import type { GalleryListOutput } from "@repo/shared/image-generation/gallery-contract";
 import { logWarn } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
@@ -290,6 +289,7 @@ bindOperationExecute(imageGenerate, (input, principal, ctx) =>
 
 /** 校验或幂等重建媒体历史精确计数投影；数据库函数自行持有写锁和漂移口径。 */
 bindOperationExecute(imageMaintainHistoryCountProjection, async (input) => {
+  const { db } = await import("@repo/database");
   if (input.mode === "rebuild") {
     await db.execute(sql`select rebuild_media_history_count_projection()`);
   }
