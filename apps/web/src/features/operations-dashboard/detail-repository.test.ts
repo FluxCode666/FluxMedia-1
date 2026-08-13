@@ -10,6 +10,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildOperationsActivityDetailSql,
   buildOperationsCohortDetailSql,
+  buildOperationsCommercialDetailSql,
+  buildOperationsContentDetailSql,
   buildOperationsNewUserDetailSql,
   createOperationsGrowthDetailRepository,
   paginateOperationsGrowthDetailRows,
@@ -108,8 +110,65 @@ describe("operations growth detail repository SQL", () => {
     ).toThrow("Cohort 目标日范围无效");
   });
 
+  it.each([
+    "orders",
+    "payment_lifecycle",
+  ] as const)("商业化 %s 明细受范围、epoch、asOf 和双列 keyset 约束", (kind) => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({ ...base, kind })
+    );
+
+    expect(compiled.sql).toContain('from "payment_order"');
+    expect(compiled.sql).toContain("in ('credit_top_up', 'credit_package')");
+    expect(compiled.sql).toContain("business_time >=");
+    expect(compiled.sql).toContain("business_time <");
+    expect(compiled.sql).toContain("business_time <=");
+    expect(compiled.sql).toContain("stable_id <");
+    if (kind === "orders") {
+      expect(compiled.sql).toContain('"payment_order"."created_at"');
+      expect(compiled.sql).not.toContain(
+        '"payment_order"."status" = \'fulfilled\''
+      );
+    } else {
+      expect(compiled.sql).toContain('"payment_lifecycle_event"."occurred_at"');
+      expect(compiled.sql).toContain(
+        '"payment_lifecycle_event"."event_type" in ('
+      );
+    }
+    expect(compiled.sql).not.toContain("credits_transaction");
+  });
+
+  it.each([
+    "image_outputs",
+    "video_outputs",
+    "credit_usage",
+  ] as const)("内容 %s 明细由成功产物驱动并使用稳定积分关联", (detail) => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsContentDetailSql({
+        ...base,
+        kind: "content",
+        detail,
+      })
+    );
+
+    expect(compiled.sql).toContain('from "user_output_usage_event"');
+    expect(compiled.sql).toContain(
+      'left join "credit_usage_operation" as credit_lookup'
+    );
+    expect(compiled.sql).toContain(
+      "credit_lookup.operation_created_at = scoped_outputs.business_time"
+    );
+    expect(compiled.sql).toContain("mismatch_lookup.operation_created_at <>");
+    expect(compiled.sql).toContain('left join "generation"');
+    expect(compiled.sql).toContain('left join "video_generation"');
+    expect(compiled.sql).not.toContain("prompt");
+    expect(compiled.sql).not.toContain("storage_key");
+    expect(compiled.sql).not.toContain("video_url");
+  });
+
   it("以最后一个已返回行签发下一页原始 keyset", () => {
     const makeRow = (userId: string, businessTime: string) => ({
+      kind: "growth" as const,
       userId,
       name: userId,
       email: `${userId}@example.com`,

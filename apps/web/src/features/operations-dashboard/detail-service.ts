@@ -21,11 +21,15 @@ import { z } from "zod";
 
 import {
   databaseOperationsGrowthDetailRepository,
-  type OperationsGrowthDetailCursor,
+  type OperationsCommercialDetailRow,
+  type OperationsContentDetailRow,
+  type OperationsDetailCursor,
+  type OperationsDetailQuery,
+  type OperationsDetailRepository,
+  type OperationsDetailRow,
   type OperationsGrowthDetailQuery,
-  type OperationsGrowthDetailRepository,
   type OperationsGrowthDetailRow,
-  paginateOperationsGrowthDetailRows,
+  paginateOperationsDetailRows,
 } from "./detail-repository";
 
 const DETAIL_CURSOR_VERSION = 1;
@@ -70,7 +74,7 @@ export class OperationsDetailServiceError extends Error {
 
 /** 明细服务的依赖；测试可注入 DB-free 仓储和固定 cursor 密钥。 */
 export type OperationsDetailServiceDependencies = {
-  repository: OperationsGrowthDetailRepository;
+  repository: OperationsDetailRepository;
   tokenSecret?: string;
 };
 
@@ -118,7 +122,7 @@ function encodeOperationsDetailCursor(
     actorUserId: string;
     filters: OperationsGetDetailInput;
     asOf: Date;
-    sortKey: OperationsGrowthDetailCursor;
+    sortKey: OperationsDetailCursor;
   },
   secret?: string
 ): string {
@@ -152,7 +156,7 @@ function decodeOperationsDetailCursor(
     asOfNotAfter: Date;
   },
   secret?: string
-): { asOf: Date; sortKey: OperationsGrowthDetailCursor } {
+): { asOf: Date; sortKey: OperationsDetailCursor } {
   try {
     if (!token || token.length > MAX_CURSOR_LENGTH) {
       throw new OperationsDetailServiceError(
@@ -254,7 +258,7 @@ function buildGrowthDetailQuery(input: {
   epochStart: Date;
   asOf: Date;
   timeZone: string;
-  cursor: OperationsGrowthDetailCursor | null;
+  cursor: OperationsDetailCursor | null;
 }): OperationsGrowthDetailQuery {
   const base = {
     start: input.start,
@@ -323,6 +327,37 @@ function buildGrowthDetailQuery(input: {
   };
 }
 
+/** 将模块选择映射为增长、商业化或内容的同源明细查询。 */
+function buildDetailQuery(input: {
+  parsed: OperationsGetDetailInput;
+  start: Date;
+  end: Date;
+  epochStart: Date;
+  asOf: Date;
+  timeZone: string;
+  cursor: OperationsDetailCursor | null;
+}): OperationsDetailQuery {
+  if (input.parsed.selection.module === "growth") {
+    return buildGrowthDetailQuery(input);
+  }
+  const base = {
+    start: input.start,
+    end: input.end,
+    epochStart: input.epochStart,
+    asOf: input.asOf,
+    cursor: input.cursor,
+    limit: input.parsed.limit + 1,
+  };
+  if (input.parsed.selection.module === "commercialization") {
+    return { ...base, kind: input.parsed.selection.detail };
+  }
+  return {
+    ...base,
+    kind: "content",
+    detail: input.parsed.selection.detail,
+  };
+}
+
 /** 把数据库 Date 转成可跨 UOL 传输的明细行。 */
 function adaptGrowthDetailRow(
   row: OperationsGrowthDetailRow
@@ -338,14 +373,56 @@ function adaptGrowthDetailRow(
   };
 }
 
+/** 把商业化日期转换为传输安全字段，不暴露 provider payload。 */
+function adaptCommercialDetailRow(
+  row: OperationsCommercialDetailRow
+): Record<string, unknown> {
+  return {
+    paymentOrderId: row.paymentOrderId,
+    providerTradeNo: row.providerTradeNo,
+    userId: row.userId,
+    currency: row.currency,
+    amountMinor: row.amountMinor,
+    orderStatus: row.orderStatus,
+    createdAt: row.createdAt.toISOString(),
+    fulfilledAt: row.fulfilledAt?.toISOString() ?? null,
+    businessTime: row.businessTime.toISOString(),
+    eventType: row.eventType,
+  };
+}
+
+/** 把成功产物转换为不含提示词、媒体链接的传输安全字段。 */
+function adaptContentDetailRow(
+  row: OperationsContentDetailRow
+): Record<string, unknown> {
+  return {
+    taskId: row.taskId,
+    userId: row.userId,
+    model: row.model,
+    mediaType: row.mediaType,
+    businessTime: row.businessTime.toISOString(),
+    status: row.status,
+    quantity: row.quantity,
+    videoSeconds: row.videoSeconds,
+    netCredits: row.netCredits,
+  };
+}
+
+/** 根据封闭行类型选择安全传输适配器。 */
+function adaptDetailRow(row: OperationsDetailRow): Record<string, unknown> {
+  if ("taskId" in row) return adaptContentDetailRow(row);
+  if ("paymentOrderId" in row) return adaptCommercialDetailRow(row);
+  return adaptGrowthDetailRow(row);
+}
+
 /**
  * 读取一页运营明细。
  *
  * @param request 已验证管理员身份、部署时区与不可信 operation 输入。
  * @param dependencies 可替换的只读仓储和 cursor 密钥。
- * @returns 与筛选范围同源的增长明细及下一页签名 cursor。
+ * @returns 与筛选范围同源的增长、商业化或内容明细及下一页签名 cursor。
  * @sideEffects 只开启一个只读 repeatable-read 事务。
- * @failure 未初始化 epoch 返回 not_ready，非增长模块返回 not_implemented。
+ * @failure 未初始化 epoch 返回 not_ready，数据关联漂移返回 invalid_data。
  */
 export async function loadOperationsDetail(
   request: {
@@ -372,12 +449,6 @@ export async function loadOperationsDetail(
       "运营明细管理员身份无效"
     );
   }
-  if (parsed.selection.module !== "growth") {
-    throw new OperationsDetailServiceError(
-      "not_implemented",
-      "该运营明细类型尚未接入"
-    );
-  }
   const tokenSecret = resolveCursorSecret(dependencies.tokenSecret);
   return dependencies.repository.withReadOnlySnapshot(async (reader) => {
     const header = await reader.readHeader();
@@ -388,7 +459,7 @@ export async function loadOperationsDetail(
       );
     }
     let asOf = header.asOf;
-    let cursor: OperationsGrowthDetailCursor | null = null;
+    let cursor: OperationsDetailCursor | null = null;
     if (parsed.cursor) {
       const decoded = decodeOperationsDetailCursor(
         parsed.cursor,
@@ -423,7 +494,7 @@ export async function loadOperationsDetail(
     }
     const rows = range.dataStart
       ? await reader.readRows(
-          buildGrowthDetailQuery({
+          buildDetailQuery({
             parsed,
             start: range.dataStart,
             end: range.end,
@@ -457,12 +528,18 @@ export async function loadOperationsDetail(
           "运营明细数据库结果超出查询范围"
         );
       }
+      if (row.kind === "content" && row.operationCreatedAtMismatch) {
+        throw new OperationsDetailServiceError(
+          "invalid_data",
+          "成功产物与积分操作业务时间不一致"
+        );
+      }
     }
-    const page = paginateOperationsGrowthDetailRows(rows, parsed.limit);
+    const page = paginateOperationsDetailRows(rows, parsed.limit);
     return {
       selection: parsed.selection,
       range,
-      rows: page.rows.map(adaptGrowthDetailRow),
+      rows: page.rows.map(adaptDetailRow),
       nextCursor: page.nextCursor
         ? encodeOperationsDetailCursor(
             {
