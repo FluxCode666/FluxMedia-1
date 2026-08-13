@@ -131,6 +131,16 @@ export function buildOperationsCommercialLifecycleSql(
       join ${paymentOrder}
         on ${paymentOrder.id} = ${paymentLifecycleEvent.paymentOrderId}
       where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+        and ${paymentLifecycleEvent.eventType} in (
+          'order_created',
+          'checkout_ready',
+          'payment_confirmed',
+          'fulfillment_succeeded',
+          'checkout_failed',
+          'fulfillment_attempt_failed',
+          'fulfillment_failed_terminal',
+          'expired'
+        )
         and ${paymentLifecycleEvent.occurredAt} >= ${sql.param(
           input.start,
           paymentLifecycleEvent.occurredAt

@@ -38,6 +38,9 @@ describe("operations commercial repository SQL", () => {
     expect(compiled.sql).toContain("event_type = 'payment_confirmed'");
     expect(compiled.sql).toContain("event_type = 'fulfillment_succeeded'");
     expect(compiled.sql).toContain("event_type in (");
+    expect(compiled.sql).toContain(
+      '"payment_lifecycle_event"."event_type" in ('
+    );
     expect(compiled.sql).not.toContain('"payment_order"."status"');
   });
 
