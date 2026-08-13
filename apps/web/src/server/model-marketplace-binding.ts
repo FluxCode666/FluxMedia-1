@@ -9,6 +9,8 @@ import "server-only";
 
 import { logError } from "@repo/shared/logger";
 import type {
+  ModelConfigurationListInput,
+  ModelConfigurationListOutput,
   ModelConfigurationSnapshot,
   UpdateModelConfigurationEntryInput,
   UpdateModelConfigurationEntryOutput,
@@ -47,6 +49,10 @@ export type ModelMarketplaceOperationBindingDependencies = {
   readModelConfiguration: (
     principal: Principal
   ) => Promise<ModelConfigurationSnapshot>;
+  readModelConfigurationPage: (
+    principal: Principal,
+    input: ModelConfigurationListInput
+  ) => Promise<ModelConfigurationListOutput>;
   updateModelConfigurationEntry: (command: {
     actorUserId: string;
     input: UpdateModelConfigurationEntryInput;
@@ -68,6 +74,8 @@ export type ModelMarketplaceOperationBindingDependencies = {
 const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
   readModelConfiguration: (principal) =>
     productionModelConfigurationService.read(principal),
+  readModelConfigurationPage: (principal, input) =>
+    productionModelConfigurationService.readPage(principal, input),
   updateModelConfigurationEntry: (command) =>
     productionModelConfigurationService.updateEntry(command),
   listPublicModels: () => productionModelMarketplaceService.listPublicModels(),
@@ -224,6 +232,15 @@ export function bindModelMarketplaceOperations(
       principal: Principal,
       _ctx: OperationContext
     ) => services.readModelConfiguration(principal)
+  );
+
+  bindExecute(
+    "settings.listModelConfigurations",
+    async (
+      input: ModelConfigurationListInput,
+      principal: Principal,
+      _ctx: OperationContext
+    ) => services.readModelConfigurationPage(principal, input)
   );
 
   bindExecute(

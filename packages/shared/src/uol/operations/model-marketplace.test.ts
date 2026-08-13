@@ -12,6 +12,8 @@ vi.hoisted(() => {
 });
 
 import {
+  modelConfigurationListInputSchema,
+  modelConfigurationListOutputSchema,
   modelConfigurationSnapshotSchema,
   updateModelConfigurationEntryInputSchema,
   updateModelConfigurationEntryOutputSchema,
@@ -24,6 +26,7 @@ import {
   modelMarketplaceListPublicModels,
   modelMarketplacePublicCatalogOutputSchema,
   settingsGetModelConfiguration,
+  settingsListModelConfigurations,
   settingsUpdateModelConfigurationEntry,
 } from "./model-marketplace";
 
@@ -97,6 +100,25 @@ describe("模型配置 UOL 元数据", () => {
     );
   });
 
+  it("注册人工管理员专用的模型配置分页读取", () => {
+    expect(settingsListModelConfigurations).toMatchObject({
+      name: "settings.listModelConfigurations",
+      domain: "system-settings",
+      access: { kind: "admin" },
+      agentExposure: "human-only",
+      readOnly: true,
+      destructive: false,
+      idempotency: { kind: "natural" },
+      sideEffects: [],
+    });
+    expect(settingsListModelConfigurations.input).toBe(
+      modelConfigurationListInputSchema
+    );
+    expect(settingsListModelConfigurations.output).toBe(
+      modelConfigurationListOutputSchema
+    );
+  });
+
   it("只允许真实超级管理员执行单条目幂等写入", () => {
     expect(settingsUpdateModelConfigurationEntry).toMatchObject({
       name: "settings.updateModelConfigurationEntry",
@@ -161,6 +183,7 @@ describe("模型配置 UOL 元数据", () => {
   it("未绑定时由真实网关保持先鉴权后返回 not_implemented", async () => {
     for (const name of [
       "settings.getModelConfiguration",
+      "settings.listModelConfigurations",
       "settings.updateModelConfigurationEntry",
       "modelMarketplace.listPublicModels",
     ]) {
@@ -170,6 +193,11 @@ describe("模型配置 UOL 元数据", () => {
     await expect(
       invokeOperation("settings.getModelConfiguration", {}, adminPrincipal, {
         requestId: "model-config-read",
+      })
+    ).rejects.toMatchObject({ code: "not_implemented" });
+    await expect(
+      invokeOperation("settings.listModelConfigurations", {}, adminPrincipal, {
+        requestId: "model-config-list",
       })
     ).rejects.toMatchObject({ code: "not_implemented" });
     await expect(
@@ -206,6 +234,18 @@ describe("模型配置 UOL schema", () => {
     );
     expect(
       settingsGetModelConfiguration.input.safeParse({ injected: true }).success
+    ).toBe(false);
+    expect(
+      settingsListModelConfigurations.input.safeParse({
+        page: 2,
+        pageSize: 50,
+        query: "gpt",
+        category: "image",
+      }).success
+    ).toBe(true);
+    expect(
+      settingsListModelConfigurations.input.safeParse({ injected: true })
+        .success
     ).toBe(false);
     expect(modelMarketplaceListPublicModels.input.safeParse({}).success).toBe(
       true

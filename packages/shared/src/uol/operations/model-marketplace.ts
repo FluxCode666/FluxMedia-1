@@ -7,6 +7,8 @@
 import { z } from "zod";
 
 import {
+  modelConfigurationListInputSchema,
+  modelConfigurationListOutputSchema,
   modelConfigurationSnapshotSchema,
   modelMarketplacePublicItemSchema,
   updateModelConfigurationEntryInputSchema,
@@ -47,6 +49,30 @@ export const settingsGetModelConfiguration = defineOperation({
   sideEffects: [],
   async execute(_input, _principal, _ctx) {
     throw new Error("Not yet wired: settings.getModelConfiguration");
+  },
+});
+
+/**
+ * 分页读取管理端模型配置列表。
+ *
+ * 该人工页面 operation 保留完整快照读取供运行时校验与编辑冲突重载使用；列表筛选和
+ * 分页不向 MCP 暴露，也不改变公开模型广场的产品边界。
+ */
+export const settingsListModelConfigurations = defineOperation({
+  name: "settings.listModelConfigurations",
+  domain: "system-settings",
+  title: "分页读取模型配置",
+  description: "按媒体类型和模型名称分页读取规范化管理模型配置。",
+  input: modelConfigurationListInputSchema,
+  output: modelConfigurationListOutputSchema,
+  access: { kind: "admin" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  async execute(_input, _principal, _ctx) {
+    throw new Error("Not yet wired: settings.listModelConfigurations");
   },
 });
 

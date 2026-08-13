@@ -113,8 +113,8 @@ export interface VideoHistoryRow extends HistoryRowCommon {
 
 export type HistoryListRow = ImageHistoryRow | VideoHistoryRow;
 
-/** DB-free 仓储端口；主列表和真实模型选项都必须按本人查询且有界。 */
-export interface HistoryRepository {
+/** 单个数据库快照内可用的本人历史读取器。 */
+export interface HistorySnapshotReader {
   countRecords(query: HistoryCountQuery): Promise<number>;
   readRecords(query: HistoryListQuery): Promise<HistoryListRow[]>;
   readModelOptions(input: {
@@ -122,6 +122,13 @@ export interface HistoryRepository {
     type: "image" | "video" | null;
     limit: number;
   }): Promise<string[]>;
+}
+
+/** DB-free 仓储端口；分页行、精确总数和选项必须共享同一个只读快照。 */
+export interface HistoryRepository {
+  withReadOnlySnapshot<T>(
+    work: (reader: HistorySnapshotReader) => Promise<T>
+  ): Promise<T>;
 }
 
 /** 查询层稳定错误，不包含 cursor、用户 ID 或内部 SQL。 */
@@ -449,19 +456,23 @@ export async function loadHistoryRecords(
     status: parsed.status,
     type: parsed.type,
   };
-  const [rows, rawModelOptions, totalCount] = await Promise.all([
-    dependencies.repository.readRecords({
-      ...countQuery,
-      cursor,
-      branchLimit: parsed.pageSize + 1,
-    }),
-    dependencies.repository.readModelOptions({
-      userId: request.userId,
-      type: parsed.type,
-      limit: 200,
-    }),
-    dependencies.repository.countRecords(countQuery),
-  ]);
+  const { rows, rawModelOptions, totalCount } =
+    await dependencies.repository.withReadOnlySnapshot(async (reader) => {
+      const totalCount = await reader.countRecords(countQuery);
+      const [rows, rawModelOptions] = await Promise.all([
+        reader.readRecords({
+          ...countQuery,
+          cursor,
+          branchLimit: parsed.pageSize + 1,
+        }),
+        reader.readModelOptions({
+          userId: request.userId,
+          type: parsed.type,
+          limit: 200,
+        }),
+      ]);
+      return { rows, rawModelOptions, totalCount };
+    });
   const direction = cursor?.direction ?? "next";
   const hasExtra = rows.length > parsed.pageSize;
   const selectedRows = rows.slice(0, parsed.pageSize);

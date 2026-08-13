@@ -76,6 +76,7 @@ export {
   modelMarketplaceListPublicModels,
   modelMarketplacePublicCatalogOutputSchema,
   settingsGetModelConfiguration,
+  settingsListModelConfigurations,
   settingsUpdateModelConfigurationEntry,
 } from "./model-marketplace";
 export {

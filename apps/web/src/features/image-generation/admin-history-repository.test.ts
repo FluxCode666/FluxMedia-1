@@ -8,9 +8,16 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, transaction } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  transaction: vi.fn(
+    async (
+      work: (transaction: { execute: typeof execute }) => Promise<unknown>
+    ) => work({ execute })
+  ),
+}));
 
-vi.mock("@repo/database", () => ({ db: { execute } }));
+vi.mock("@repo/database", () => ({ db: { execute, transaction } }));
 
 import {
   buildAdminHistoryListSql,
@@ -37,6 +44,7 @@ describe("admin history repository SQL", () => {
 
   beforeEach(() => {
     execute.mockReset();
+    transaction.mockClear();
     process.env.BETTER_AUTH_SECRET = "admin-history-repository-test-secret";
   });
 
@@ -85,8 +93,9 @@ describe("admin history repository SQL", () => {
       ],
     });
 
-    const [record] =
-      await databaseAdminHistoryRepository.readRecords(baseQuery);
+    const [record] = await databaseAdminHistoryRepository.withReadOnlySnapshot(
+      (reader) => reader.readRecords(baseQuery)
+    );
 
     expect(record).toEqual(
       expect.objectContaining({
@@ -104,6 +113,19 @@ describe("admin history repository SQL", () => {
       })
     );
     expect(record).not.toHaveProperty("family");
+  });
+
+  it("uses one read-only repeatable-read transaction for global list reads", async () => {
+    execute.mockResolvedValueOnce({ rows: [{ total_count: 0 }] });
+
+    await databaseAdminHistoryRepository.withReadOnlySnapshot((reader) =>
+      reader.countRecords(baseQuery)
+    );
+
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "repeatable read",
+      accessMode: "read only",
+    });
   });
 
   it("builds a bounded global image/video union with an email join", () => {

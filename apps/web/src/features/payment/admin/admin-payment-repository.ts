@@ -27,6 +27,7 @@ import type {
   AdminPaymentOrderCountQuery,
   AdminPaymentOrderQuery,
   AdminPaymentOrderRow,
+  AdminPaymentOrderSnapshotReader,
   AdminPaymentOverviewOrderCountRow,
   AdminPaymentOverviewRevenueRow,
   AdminPaymentRepository,
@@ -82,6 +83,20 @@ const userOptionSchema = z
 
 const countSchema = z.coerce.number().int().nonnegative().safe();
 
+/** 单快照订单读取依赖的最小 Drizzle 查询事务形状。 */
+type AdminPaymentTransaction = Pick<typeof db, "select">;
+
+/** 生产与仓储测试共用的最小 PostgreSQL 事务端口。 */
+export interface AdminPaymentTransactionDatabase {
+  transaction<T>(
+    work: (transaction: AdminPaymentTransaction) => Promise<T>,
+    config: {
+      isolationLevel: "repeatable read";
+      accessMode: "read only";
+    }
+  ): Promise<T>;
+}
+
 /** 返回支付订单固定用途谓词，防止未来其他订单类型混入充值报表。 */
 function buildRechargePurposePredicate() {
   return inArray(paymentOrder.purpose, ["credit_top_up", "credit_package"]);
@@ -125,9 +140,10 @@ function buildOrderWhere(input: AdminPaymentOrderCountQuery) {
 
 /** 读取当前管理员筛选和浏览上界内的精确订单总数。 */
 async function countOrders(
-  input: AdminPaymentOrderCountQuery
+  input: AdminPaymentOrderCountQuery,
+  database: AdminPaymentTransaction = db
 ): Promise<number> {
-  const [row] = await db
+  const [row] = await database
     .select({ totalCount: sql<number>`count(*)`.mapWith(Number) })
     .from(paymentOrder)
     .innerJoin(user, eq(user.id, paymentOrder.userId))
@@ -199,9 +215,10 @@ async function readOverviewOrderCounts(input: {
 
 /** 读取一页全局充值订单；previous 查询升序取最近一页，服务层再反转为展示降序。 */
 async function readOrders(
-  input: AdminPaymentOrderQuery
+  input: AdminPaymentOrderQuery,
+  database: AdminPaymentTransaction = db
 ): Promise<AdminPaymentOrderRow[]> {
-  const rows = await db
+  const rows = await database
     .select({
       id: paymentOrder.id,
       userId: paymentOrder.userId,
@@ -255,11 +272,31 @@ async function searchUsers(input: {
   return rows.map((row) => userOptionSchema.parse(row));
 }
 
-/** 生产数据库仓储；所有方法都执行有界、参数化只读查询。 */
-export const databaseAdminPaymentRepository: AdminPaymentRepository = {
-  countOrders,
-  readOverviewRevenue,
-  readOverviewOrderCounts,
-  readOrders,
-  searchUsers,
-};
+/** 从数据库端口创建订单 count 与 rows 共用单一只读快照的仓储。 */
+export function createAdminPaymentRepository(
+  database: AdminPaymentTransactionDatabase
+): AdminPaymentRepository {
+  return {
+    withReadOnlyOrderSnapshot<T>(
+      work: (reader: AdminPaymentOrderSnapshotReader) => Promise<T>
+    ): Promise<T> {
+      return database.transaction(
+        async (transaction) =>
+          work({
+            countOrders: (input) => countOrders(input, transaction),
+            readOrders: (input) => readOrders(input, transaction),
+          }),
+        { isolationLevel: "repeatable read", accessMode: "read only" }
+      );
+    },
+    readOverviewRevenue,
+    readOverviewOrderCounts,
+    searchUsers,
+  };
+}
+
+/** 生产数据库仓储；列表分页固定在只读 repeatable-read 事务内。 */
+export const databaseAdminPaymentRepository: AdminPaymentRepository =
+  createAdminPaymentRepository(
+    db as unknown as AdminPaymentTransactionDatabase
+  );

@@ -8,9 +8,16 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, transaction } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  transaction: vi.fn(
+    async (
+      work: (transaction: { execute: typeof execute }) => Promise<unknown>
+    ) => work({ execute })
+  ),
+}));
 
-vi.mock("@repo/database", () => ({ db: { execute } }));
+vi.mock("@repo/database", () => ({ db: { execute, transaction } }));
 
 import {
   buildHistoryListSql,
@@ -35,6 +42,7 @@ describe("history repository SQL", () => {
 
   beforeEach(() => {
     execute.mockReset();
+    transaction.mockClear();
     process.env.BETTER_AUTH_SECRET = "history-repository-test-secret";
   });
 
@@ -82,7 +90,9 @@ describe("history repository SQL", () => {
     });
 
     await expect(
-      databaseHistoryRepository.readRecords(baseQuery)
+      databaseHistoryRepository.withReadOnlySnapshot((reader) =>
+        reader.readRecords(baseQuery)
+      )
     ).resolves.toEqual([
       expect.objectContaining({
         model: "seedance2",
@@ -96,6 +106,19 @@ describe("history repository SQL", () => {
         ),
       }),
     ]);
+  });
+
+  it("uses one read-only repeatable-read transaction for list reads", async () => {
+    execute.mockResolvedValueOnce({ rows: [{ total_count: 0 }] });
+
+    await databaseHistoryRepository.withReadOnlySnapshot((reader) =>
+      reader.countRecords(baseQuery)
+    );
+
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: "repeatable read",
+      accessMode: "read only",
+    });
   });
 
   it("builds one bounded parameterized image/video union", () => {

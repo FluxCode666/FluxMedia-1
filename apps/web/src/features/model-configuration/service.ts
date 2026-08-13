@@ -11,6 +11,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { logger } from "@repo/shared/logger";
 import {
+  type ModelConfigurationListInput,
+  type ModelConfigurationListOutput,
   type ModelConfigurationSnapshot,
   type ModelMarketplaceConfig,
   type ModelMarketplaceCoverRef,
@@ -38,7 +40,10 @@ import type {
   RuntimeModelCatalog,
 } from "./catalog";
 import { processModelMarketplaceCoverImage } from "./cover-image";
-import { readModelConfiguration } from "./read-service";
+import {
+  readModelConfiguration,
+  readModelConfigurationPage,
+} from "./read-service";
 import { defaultDatabaseModelConfigurationRepository } from "./repository";
 import {
   assertModelConfigurationCoverBucket,
@@ -98,6 +103,10 @@ export type ProductionModelConfigurationDependencies = {
 /** 供 UOL binding 使用的生产读取与保存入口。 */
 export type ProductionModelConfigurationService = {
   read(principal: Principal): Promise<ModelConfigurationSnapshot>;
+  readPage(
+    principal: Principal,
+    input: ModelConfigurationListInput
+  ): Promise<ModelConfigurationListOutput>;
   updateEntry(command: {
     actorUserId: string;
     input: unknown;
@@ -320,6 +329,16 @@ export function createProductionModelConfigurationService(
       );
       return readModelConfiguration(
         principal,
+        createReadDependencies(dependencies, bucketConfig)
+      );
+    },
+    async readPage(principal, input) {
+      const bucketConfig = await loadBucketConfig(
+        dependencies.loadSettingString
+      );
+      return readModelConfigurationPage(
+        principal,
+        input,
         createReadDependencies(dependencies, bucketConfig)
       );
     },

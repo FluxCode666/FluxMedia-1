@@ -14,10 +14,12 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@repo/shared/safe-action", () => {
   type AdminActionHandler = (input: {
+    parsedInput?: unknown;
     ctx: { userId: string; role: "admin" | "observer_admin" | "super_admin" };
   }) => Promise<unknown>;
   const builder = {
     metadata: () => builder,
+    schema: () => builder,
     action: (handler: AdminActionHandler) => handler,
   };
   return { imageBackendPoolViewerAction: builder };

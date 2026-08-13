@@ -1,5 +1,6 @@
 "use client";
 
+import type { PaginationConfig } from "@repo/shared/pagination/config";
 /**
  * 管理员设置页的按权限惰性页签编排器。
  *
@@ -24,6 +25,7 @@ import { AdobeCredentialNotificationSettingsCard } from "@/features/system-setti
 
 type AdminSettingsTabsProps = {
   timeZone: string;
+  paginationConfig: PaginationConfig;
   // 是否允许管理系统设置（含 BETTER_AUTH_SECRET 等密钥）。仅超管为 true；普通 admin
   // 和 observer_admin 可查看模型配置，但不应看到/进入系统设置 tab（见审计 S-C1）。
   canManageSystemSettings: boolean;
@@ -47,6 +49,7 @@ type AdminSettingsTab =
  */
 export function AdminSettingsTabs({
   timeZone,
+  paginationConfig,
   canManageSystemSettings,
   canViewModelConfiguration,
   imageBackendPoolReadOnly,
@@ -133,7 +136,7 @@ export function AdminSettingsTabs({
       {canViewModelConfiguration ? (
         <TabsContent value="model-configuration" className="mt-6">
           {mountedTabs.has("model-configuration") ? (
-            <ModelConfigurationPanel />
+            <ModelConfigurationPanel paginationConfig={paginationConfig} />
           ) : null}
         </TabsContent>
       ) : null}

@@ -10,6 +10,7 @@ import {
   calculateHistoryProcessingDurationSeconds,
   type HistoryListRow,
   type HistoryRepository,
+  type HistorySnapshotReader,
   loadHistoryRecords,
   resolveHistoryDateRange,
   sanitizeHistoryError,
@@ -40,13 +41,16 @@ function imageRow(id: string, createdAt: string): HistoryListRow {
 
 /** 创建默认 DB-free 仓储并允许覆盖目标读取。 */
 function createRepository(
-  overrides: Partial<HistoryRepository> = {}
+  overrides: Partial<HistorySnapshotReader> = {}
 ): HistoryRepository {
-  return {
+  const reader: HistorySnapshotReader = {
     countRecords: vi.fn().mockResolvedValue(0),
     readRecords: vi.fn().mockResolvedValue([]),
     readModelOptions: vi.fn().mockResolvedValue([]),
     ...overrides,
+  };
+  return {
+    withReadOnlySnapshot: (work) => work(reader),
   };
 }
 

@@ -128,8 +128,8 @@ export interface AdminVideoHistoryRow extends AdminHistoryRowCommon {
 
 export type AdminHistoryListRow = AdminImageHistoryRow | AdminVideoHistoryRow;
 
-/** 管理端仓储端口；查询始终是全局作用域，邮箱仅是精确筛选条件。 */
-export interface AdminHistoryRepository {
+/** 单个数据库快照内可用的管理端历史读取器。 */
+export interface AdminHistorySnapshotReader {
   countRecords(query: AdminHistoryCountQuery): Promise<number>;
   readRecords(query: AdminHistoryListQuery): Promise<AdminHistoryListRow[]>;
   readModelOptions(input: {
@@ -141,6 +141,13 @@ export interface AdminHistoryRepository {
     type: "image" | "video" | null;
     limit: number;
   }): Promise<Array<{ id: string; email: string }>>;
+}
+
+/** 管理端仓储端口；分页行、精确总数和筛选选项必须共享同一个只读快照。 */
+export interface AdminHistoryRepository {
+  withReadOnlySnapshot<T>(
+    work: (reader: AdminHistorySnapshotReader) => Promise<T>
+  ): Promise<T>;
   readRequestSnapshot(input: {
     id: string;
     kind: "image" | "video";
@@ -401,25 +408,27 @@ export async function loadAdminHistoryRecords(
     type: parsed.type,
     userEmail: parsed.userEmail,
   };
-  const [rows, rawModelOptions, rawUserOptions, totalCount] = await Promise.all(
-    [
-      dependencies.repository.readRecords({
-        ...countQuery,
-        cursor,
-        branchLimit: parsed.pageSize + 1,
-      }),
-      dependencies.repository.readModelOptions({
-        userEmail: parsed.userEmail,
-        type: parsed.type,
-        limit: 200,
-      }),
-      dependencies.repository.readUserOptions({
-        type: parsed.type,
-        limit: 200,
-      }),
-      dependencies.repository.countRecords(countQuery),
-    ]
-  );
+  const { rows, rawModelOptions, rawUserOptions, totalCount } =
+    await dependencies.repository.withReadOnlySnapshot(async (reader) => {
+      const totalCount = await reader.countRecords(countQuery);
+      const [rows, rawModelOptions, rawUserOptions] = await Promise.all([
+        reader.readRecords({
+          ...countQuery,
+          cursor,
+          branchLimit: parsed.pageSize + 1,
+        }),
+        reader.readModelOptions({
+          userEmail: parsed.userEmail,
+          type: parsed.type,
+          limit: 200,
+        }),
+        reader.readUserOptions({
+          type: parsed.type,
+          limit: 200,
+        }),
+      ]);
+      return { rows, rawModelOptions, rawUserOptions, totalCount };
+    });
   const direction = cursor?.direction ?? "next";
   const hasExtra = rows.length > parsed.pageSize;
   const selectedRows = rows.slice(0, parsed.pageSize);

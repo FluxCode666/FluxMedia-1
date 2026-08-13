@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AdminPaymentOrderQuery,
   AdminPaymentOrderRow,
+  AdminPaymentOrderSnapshotReader,
   AdminPaymentRepository,
 } from "./admin-payment-service";
 import {
@@ -46,15 +47,20 @@ function makeOrder(
 
 /** 创建可按需覆盖的 DB-free 仓储。 */
 function makeRepository(
-  overrides: Partial<AdminPaymentRepository> = {}
+  overrides: Partial<AdminPaymentRepository> &
+    Partial<AdminPaymentOrderSnapshotReader> = {}
 ): AdminPaymentRepository {
+  const reader: AdminPaymentOrderSnapshotReader = {
+    countOrders: overrides.countOrders ?? (async () => 0),
+    readOrders: overrides.readOrders ?? (async () => []),
+  };
   return {
-    countOrders: async () => 0,
-    readOverviewRevenue: async () => [],
-    readOverviewOrderCounts: async () => [],
-    readOrders: async () => [],
-    searchUsers: async () => [],
-    ...overrides,
+    withReadOnlyOrderSnapshot:
+      overrides.withReadOnlyOrderSnapshot ?? (async (work) => work(reader)),
+    readOverviewRevenue: overrides.readOverviewRevenue ?? (async () => []),
+    readOverviewOrderCounts:
+      overrides.readOverviewOrderCounts ?? (async () => []),
+    searchUsers: overrides.searchUsers ?? (async () => []),
   };
 }
 

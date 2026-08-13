@@ -105,9 +105,17 @@ export type AdminPaymentOrderCountQuery = Omit<
   "cursor" | "limit" | "page" | "pageSize"
 >;
 
-/** 支付管理仓储端口；所有实现必须只读取充值用途订单。 */
-export interface AdminPaymentRepository {
+/** 单个数据库快照内可用的管理端订单读取器。 */
+export interface AdminPaymentOrderSnapshotReader {
   countOrders(input: AdminPaymentOrderCountQuery): Promise<number>;
+  readOrders(input: AdminPaymentOrderQuery): Promise<AdminPaymentOrderRow[]>;
+}
+
+/** 支付管理仓储端口；订单行与精确总数必须共享同一个只读快照。 */
+export interface AdminPaymentRepository {
+  withReadOnlyOrderSnapshot<T>(
+    work: (reader: AdminPaymentOrderSnapshotReader) => Promise<T>
+  ): Promise<T>;
   readOverviewRevenue(input: {
     start: Date;
     end: Date;
@@ -118,7 +126,6 @@ export interface AdminPaymentRepository {
     end: Date;
     timeZone: string;
   }): Promise<AdminPaymentOverviewOrderCountRow[]>;
-  readOrders(input: AdminPaymentOrderQuery): Promise<AdminPaymentOrderRow[]>;
   searchUsers(input: {
     query: string;
     limit: number;
@@ -612,18 +619,20 @@ export async function loadAdminPaymentOrders(
     status: parsed.status ?? null,
     userEmail: parsed.userEmail ?? null,
   };
-  const [rows, totalCount] = await Promise.all([
-    dependencies.repository.readOrders({
-      ...countQuery,
-      cursor: decoded
-        ? { ...decoded.sortKey, direction: decoded.direction }
-        : null,
-      page: parsed.page,
-      pageSize: parsed.pageSize,
-      limit: parsed.pageSize + 1,
-    }),
-    dependencies.repository.countOrders(countQuery),
-  ]);
+  const { rows, totalCount } =
+    await dependencies.repository.withReadOnlyOrderSnapshot(async (reader) => {
+      const totalCount = await reader.countOrders(countQuery);
+      const rows = await reader.readOrders({
+        ...countQuery,
+        cursor: decoded
+          ? { ...decoded.sortKey, direction: decoded.direction }
+          : null,
+        page: parsed.page,
+        pageSize: parsed.pageSize,
+        limit: parsed.pageSize + 1,
+      });
+      return { rows, totalCount };
+    });
   const hasDirectionalExtra = rows.length > parsed.pageSize;
   const selectedRows = rows.slice(0, parsed.pageSize);
   if (decoded?.direction === "previous") selectedRows.reverse();

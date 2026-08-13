@@ -102,6 +102,7 @@
     "./moderation/policy-contract": "./src/moderation/policy-contract.ts",
     "./moderation/policy-service": "./src/moderation/policy-service.ts",
     "./model-marketplace": "./src/model-marketplace/index.ts",
+    "./model-marketplace/pagination-contract": "./src/model-marketplace/pagination-contract.ts",
     "./config": "./src/config/index.ts",
     "./config/nav": "./src/config/nav.ts",
     "./config/payment": "./src/config/payment.ts",
