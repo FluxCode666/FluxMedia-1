@@ -9,37 +9,26 @@
 
 import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
+import { calculateTotalPages } from "@repo/shared/pagination/state";
 import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-} from "@repo/ui/components/pagination";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Film,
-  ImageIcon,
-  ImagePlus,
-} from "lucide-react";
+import { Clock, Film, ImageIcon, ImagePlus } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useLocale } from "next-intl";
 import { useEffect, useState } from "react";
-
+import { UrlCursorPaginationControls } from "@/features/pagination/cursor-pagination-controls";
+import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
 import { Link } from "@/i18n/routing";
 
 import type { GenerationCreditDetails } from "../credit-calculation-details";
 import { formatHistoryError } from "./history-error-copy";
 import { HistoryFilters } from "./history-filters";
 import {
-  buildNextHistoryHref,
-  buildPreviousHistoryHref,
+  buildHistoryHref,
   type HistoryQueryState,
   hasActiveHistoryFilters,
 } from "./history-query";
@@ -104,11 +93,14 @@ export type HistoryClientProps = {
   historyPath?: string;
   modelOptions: string[];
   nextCursor: string | null;
+  page: number;
+  pageSizeOptions: number[];
   previousCursor: string | null;
   queryState: HistoryQueryState;
   records: HistoryRecord[];
   showUserColumns?: boolean;
   timeZone: string;
+  totalCount: number;
   userOptions?: Array<{ id: string; email: string }>;
 };
 
@@ -215,11 +207,14 @@ export function HistoryClient({
   historyPath,
   modelOptions,
   nextCursor,
+  page,
+  pageSizeOptions,
   previousCursor,
   queryState,
   records,
   showUserColumns = false,
   timeZone,
+  totalCount,
   userOptions = [],
 }: HistoryClientProps) {
   const locale = useLocale();
@@ -240,8 +235,7 @@ export function HistoryClient({
     items.find(
       (item) => item.id === selectedKey?.id && item.kind === selectedKey.kind
     ) ?? null;
-  const hasPreviousPage = Boolean(previousCursor);
-  const hasNextPage = Boolean(nextCursor);
+  const totalPages = calculateTotalPages(totalCount, queryState.pageSize);
   const desktopGridColumns = showUserColumns
     ? "lg:grid-cols-[minmax(200px,1fr)_minmax(160px,0.8fr)_minmax(220px,1fr)_228px_64px_minmax(220px,1fr)_76px_160px_124px_112px_104px_96px]"
     : "lg:grid-cols-[228px_64px_minmax(220px,1fr)_76px_160px_124px_112px_104px_96px]";
@@ -527,69 +521,49 @@ export function HistoryClient({
         </div>
       )}
 
-      {hasPreviousPage || hasNextPage ? (
-        <Pagination
-          aria-label={copy("Usage records pagination", "使用记录分页")}
-          className="mx-0 pt-1"
-        >
-          <PaginationContent className="w-full flex-wrap gap-2">
-            <PaginationItem className="mr-auto">
-              <p className="text-xs text-muted-foreground">
-                {copy(
-                  "Records are ordered by creation date.",
-                  "记录按创建日期倒序排列。"
-                )}
-              </p>
-            </PaginationItem>
-            <PaginationItem>
-              {hasPreviousPage && previousCursor ? (
-                <PaginationLink asChild size="default">
-                  <Link
-                    href={buildPreviousHistoryHref(queryState, previousCursor, {
-                      path: historyPath,
-                    })}
-                  >
-                    <ChevronLeft />
-                    {copy("Previous", "上一页")}
-                  </Link>
-                </PaginationLink>
-              ) : (
-                <PaginationLink
-                  aria-disabled="true"
-                  size="default"
-                  tabIndex={-1}
-                >
-                  <ChevronLeft />
-                  {copy("Previous", "上一页")}
-                </PaginationLink>
-              )}
-            </PaginationItem>
-            <PaginationItem>
-              {hasNextPage && nextCursor ? (
-                <PaginationLink asChild size="default">
-                  <Link
-                    href={buildNextHistoryHref(queryState, nextCursor, {
-                      path: historyPath,
-                    })}
-                  >
-                    {copy("Next", "下一页")}
-                    <ChevronRight />
-                  </Link>
-                </PaginationLink>
-              ) : (
-                <PaginationLink
-                  aria-disabled="true"
-                  size="default"
-                  tabIndex={-1}
-                >
-                  {copy("Next", "下一页")}
-                  <ChevronRight />
-                </PaginationLink>
-              )}
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <div className="flex flex-wrap items-center gap-3">
+          <p aria-live="polite" className="text-xs text-muted-foreground">
+            {copy(`Total ${totalCount} records`, `共 ${totalCount} 条记录`)}
+          </p>
+          <UrlPageSizeSelect
+            itemSuffix={copy(" rows", " 条")}
+            label={copy("Rows per page", "每页条数")}
+            options={pageSizeOptions.map((pageSize) => ({
+              size: pageSize,
+              href: buildHistoryHref(
+                {
+                  ...queryState,
+                  cursor: null,
+                  page: 1,
+                  pageSize,
+                },
+                { path: historyPath }
+              ),
+            }))}
+            value={queryState.pageSize}
+          />
+        </div>
+        <UrlCursorPaginationControls
+          ariaLabel={copy("Usage records pagination", "使用记录分页")}
+          currentPageLabel={copy(
+            `Page ${page} of ${totalPages}`,
+            `第 ${page} / ${totalPages} 页`
+          )}
+          currentPageLabelTemplate={copy(
+            "Page {page}, current page",
+            "第 {page} 页，当前页"
+          )}
+          names={createPaginationUrlParamNames()}
+          nextCursor={nextCursor}
+          nextLabel={copy("Next", "下一页")}
+          page={page}
+          pageLabelTemplate={copy("Go to page {page}", "前往第 {page} 页")}
+          previousCursor={previousCursor}
+          previousLabel={copy("Previous", "上一页")}
+          totalPages={totalPages}
+        />
+      </div>
 
       {selected?.kind === "image" ? (
         <ImageLightbox

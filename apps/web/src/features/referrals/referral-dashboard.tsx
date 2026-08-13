@@ -1,8 +1,9 @@
 "use client";
 
 import { formatCredits } from "@repo/shared/credits/format";
+import type { ReferralRelationshipListOutput } from "@repo/shared/referrals/relationship-contract";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
-/** 用户推广看板：展示邀请链接、奖励统计和最近邀请记录。 */
+/** 用户推广看板：展示邀请链接、奖励统计和全部邀请记录。 */
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -25,9 +26,11 @@ import {
 /** 加载并渲染当前用户的推广信息；服务端错误以安全提示降级。 */
 export function ReferralDashboard({
   initialDashboard,
+  initialRelationships,
   timeZone,
 }: {
   initialDashboard: ReferralDashboardOutput | null;
+  initialRelationships: ReferralRelationshipListOutput | null;
   timeZone: string;
 }) {
   const locale = useLocale();
@@ -39,6 +42,7 @@ export function ReferralDashboard({
     if (!initialDashboard) execute();
   }, [execute, initialDashboard]);
   const dashboard = result.data ?? initialDashboard;
+  const relationships = initialRelationships;
 
   const copyInviteUrl = async () => {
     if (!dashboard?.inviteUrl || !navigator.clipboard?.writeText) {
@@ -142,14 +146,23 @@ export function ReferralDashboard({
         <CardHeader>
           <CardTitle className="text-base">{t("recent")}</CardTitle>
         </CardHeader>
-        <CardContent>
-          {dashboard.relationships.length === 0 ? (
+        <CardContent className="space-y-4">
+          {relationships ? (
+            <p className="text-sm text-muted-foreground">
+              {t("totalRecords", { count: relationships.totalCount })}
+            </p>
+          ) : null}
+          {!relationships ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {t("relationshipLoadError")}
+            </p>
+          ) : relationships.records.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               {t("empty")}
             </p>
           ) : (
             <div className="divide-y rounded-md border">
-              {dashboard.relationships.map((item) => (
+              {relationships.records.map((item) => (
                 <div
                   key={item.id}
                   className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"

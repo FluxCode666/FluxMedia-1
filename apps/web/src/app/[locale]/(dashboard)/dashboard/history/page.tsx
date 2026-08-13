@@ -17,6 +17,7 @@ import {
   parseHistorySearchParams,
 } from "@/features/image-generation/components/history-query";
 import { getMyHistoryRecordsAction } from "@/features/image-generation/history-actions";
+import { loadPaginationConfig } from "@/features/pagination/server";
 import { Link } from "@/i18n/routing";
 
 export const metadata = {
@@ -30,24 +31,28 @@ type HistoryPageProps = {
 
 /** 渲染 URL 驱动的本人图片/视频使用记录。 */
 export default async function HistoryPage({ searchParams }: HistoryPageProps) {
-  const [user, locale, rawSearchParams] = await Promise.all([
+  const [user, locale, rawSearchParams, paginationConfig] = await Promise.all([
     getCurrentUser(),
     getLocale(),
     searchParams,
+    loadPaginationConfig(),
   ]);
   if (!user) redirect(`/${locale}/sign-in`);
 
   const isZh = locale === "zh";
   const copy = (en: string, zh: string) => (isZh ? zh : en);
-  const queryState = parseHistorySearchParams(rawSearchParams);
+  const queryState = parseHistorySearchParams(rawSearchParams, {
+    paginationConfig,
+  });
   const retryHref = buildHistoryHref(queryState);
   const [historyResult, timeZoneResult] = await Promise.allSettled([
     getMyHistoryRecordsAction({
       createdFrom: queryState.createdFrom,
       createdTo: queryState.createdTo,
       cursor: queryState.cursor,
-      limit: 20,
       model: queryState.model,
+      page: queryState.page,
+      pageSize: queryState.pageSize,
       status: queryState.status,
       type: queryState.type,
     }),
@@ -80,10 +85,13 @@ export default async function HistoryPage({ searchParams }: HistoryPageProps) {
           key={retryHref}
           modelOptions={historyData.modelOptions}
           nextCursor={historyData.nextCursor}
+          page={historyData.page}
+          pageSizeOptions={paginationConfig.pageSizeOptions}
           previousCursor={historyData.previousCursor}
           queryState={queryState}
           records={historyData.records}
           timeZone={timeZone}
+          totalCount={historyData.totalCount}
         />
       ) : (
         <div className="space-y-4">

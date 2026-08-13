@@ -13,9 +13,13 @@ import {
 import { getOperation } from "../registry";
 
 import {
+  adminPoolGroupListInputSchema,
+  adminPoolMemberListInputSchema,
   deleteMember,
   getAdminPool,
   getApiUpstreamRuntimeDiagnostics,
+  listAdminGroups,
+  listAdminMembers,
   resetMemberStatus,
   saveGroup,
   saveMember,
@@ -38,6 +42,39 @@ const validGroup = {
 };
 
 describe("image backend pool pricing operations", () => {
+  it("人工号池列表使用独立严格分页契约且不向 Agent 暴露", () => {
+    expect(
+      adminPoolMemberListInputSchema.safeParse({
+        timeZone: "Asia/Shanghai",
+      }).success
+    ).toBe(true);
+    expect(
+      adminPoolMemberListInputSchema.safeParse({
+        page: 2,
+        pageSize: 50,
+        name: "adobe",
+        credentialStatus: "unhealthy",
+        modelId: "gpt-image-2",
+        createdFrom: "2026-08-01",
+        createdTo: "2026-08-13",
+        timeZone: "Asia/Shanghai",
+      }).success
+    ).toBe(true);
+    expect(
+      adminPoolMemberListInputSchema.safeParse({
+        pageSize: 30,
+        timeZone: "Invalid/TimeZone",
+      }).success
+    ).toBe(false);
+    expect(adminPoolGroupListInputSchema.safeParse({}).success).toBe(true);
+    for (const operation of [listAdminMembers, listAdminGroups]) {
+      expect(operation.readOnly).toBe(true);
+      expect(operation.agentExposure).toBe("human-only");
+      expect(operation.idempotency).toEqual({ kind: "natural" });
+      expect(operation.sideEffects).toEqual([]);
+    }
+  });
+
   it("pool.saveGroup 接受真实分组字段和稀疏图像价格覆盖", () => {
     expect(
       saveGroup.input.safeParse({

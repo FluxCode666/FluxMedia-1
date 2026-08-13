@@ -5,6 +5,12 @@
  * 分页 cursor 由服务端签名并携带方向，URL 只保存当前页 cursor，避免深页 URL 增长。
  */
 
+import {
+  type PaginationConfig,
+  parsePaginationConfig,
+} from "@repo/shared/pagination/config";
+import { parsePaginationState } from "@repo/shared/pagination/state";
+
 export const HISTORY_STATUS_FILTERS = [
   "processing",
   "completed",
@@ -25,6 +31,8 @@ export type HistoryQueryState = {
   createdTo: string | null;
   cursor: string | null;
   model: string | null;
+  page: number;
+  pageSize: number;
   status: HistoryStatusFilter | null;
   type: HistoryTypeFilter | null;
   userEmail: string | null;
@@ -40,6 +48,7 @@ export type HistoryHrefOptions = {
 
 export type HistoryParseOptions = {
   allowUserEmail?: boolean;
+  paginationConfig?: PaginationConfig;
 };
 
 /** 判断输入是否为真实存在的 ISO 日历日期。 */
@@ -86,6 +95,10 @@ export function parseHistorySearchParams(
   searchParams: HistorySearchParams,
   options?: HistoryParseOptions
 ): HistoryQueryState {
+  const pagination = parsePaginationState(
+    { page: searchParams.page, pageSize: searchParams.pageSize },
+    options?.paginationConfig ?? parsePaginationConfig(undefined)
+  );
   const createdFrom = readScalar(searchParams.createdFrom, 10);
   const createdTo = readScalar(searchParams.createdTo, 10);
   const model =
@@ -101,6 +114,8 @@ export function parseHistorySearchParams(
     createdTo: createdTo && isIsoCalendarDate(createdTo) ? createdTo : null,
     cursor: readScalar(searchParams.cursor, MAX_CURSOR_LENGTH),
     model,
+    page: pagination.page,
+    pageSize: pagination.pageSize,
     status: isOneOf(HISTORY_STATUS_FILTERS, status) ? status : null,
     type: isOneOf(HISTORY_TYPE_FILTERS, type) ? type : null,
     userEmail:
@@ -122,6 +137,10 @@ export function buildHistoryHref(
   if (state.status) searchParams.set("status", state.status);
   if (state.type) searchParams.set("type", state.type);
   if (state.userEmail) searchParams.set("userEmail", state.userEmail);
+  if (state.page > 1) searchParams.set("page", String(state.page));
+  if (state.pageSize !== 20) {
+    searchParams.set("pageSize", String(state.pageSize));
+  }
   if (state.cursor) searchParams.set("cursor", state.cursor);
   const query = searchParams.toString();
   const path = options?.path ?? "/dashboard/history";
@@ -138,6 +157,7 @@ export function buildNextHistoryHref(
     {
       ...state,
       cursor: nextCursor,
+      page: state.page + 1,
     },
     options
   );
@@ -153,6 +173,7 @@ export function buildPreviousHistoryHref(
     {
       ...state,
       cursor: previousCursor,
+      page: Math.max(1, state.page - 1),
     },
     options
   );

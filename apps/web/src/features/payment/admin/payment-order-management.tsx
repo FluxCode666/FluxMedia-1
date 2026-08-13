@@ -1,5 +1,6 @@
 "use client";
 
+import { calculateTotalPages } from "@repo/shared/pagination/state";
 /**
  * 管理端充值订单列表容器。
  *
@@ -9,23 +10,12 @@
 import type { AdminPaymentOrder } from "@repo/shared/payment/admin-contract";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-} from "@repo/ui/components/pagination";
 import { cn } from "@repo/ui/utils";
-import {
-  ChevronLeft,
-  ChevronRight,
-  CircleDollarSign,
-  ReceiptText,
-} from "lucide-react";
+import { CircleDollarSign, ReceiptText } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
+import { UrlCursorPaginationControls } from "@/features/pagination/cursor-pagination-controls";
+import { createPaginationUrlParamNames } from "@/features/pagination/url-adapter";
 import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
-import { Link } from "@/i18n/routing";
-
 import { formatPaymentAmount } from "./admin-payment-format";
 import {
   type AdminPaymentOrderQueryState,
@@ -37,12 +27,14 @@ import { PaymentOrderFilters } from "./payment-order-filters";
 type PaymentOrderManagementProps = {
   initialUserOptions: Array<{ id: string; email: string }>;
   nextCursor: string | null;
+  page: number;
   previousCursor: string | null;
   pageSizeOptions: number[];
   records: AdminPaymentOrder[];
   state: AdminPaymentOrderQueryState;
   timeZone: string;
   today: string;
+  totalCount: number;
 };
 
 /** 返回持久支付状态对应的语义徽标样式。 */
@@ -82,15 +74,18 @@ function formatOrderDate(
 export function PaymentOrderManagement({
   initialUserOptions,
   nextCursor,
+  page,
   previousCursor,
   pageSizeOptions,
   records,
   state,
   timeZone,
   today,
+  totalCount,
 }: PaymentOrderManagementProps) {
   const locale = useLocale();
   const t = useTranslations("AdminPayments.orders");
+  const totalPages = calculateTotalPages(totalCount, state.pageSize);
 
   return (
     <div className="space-y-4">
@@ -210,76 +205,46 @@ export function PaymentOrderManagement({
         </div>
       )}
 
-      {records.length > 0 ? (
-        <Pagination aria-label={t("pagination")} className="mx-0">
-          <PaginationContent className="w-full justify-between gap-3">
-            <PaginationItem className="shrink-0">
-              {previousCursor ? (
-                <PaginationLink asChild size="default">
-                  <Link
-                    href={buildAdminPaymentOrdersHref({
-                      ...state,
-                      cursor: previousCursor,
-                    })}
-                  >
-                    <ChevronLeft />
-                    {t("previousPage")}
-                  </Link>
-                </PaginationLink>
-              ) : (
-                <PaginationLink
-                  aria-disabled="true"
-                  size="default"
-                  tabIndex={-1}
-                >
-                  <ChevronLeft />
-                  {t("previousPage")}
-                </PaginationLink>
-              )}
-            </PaginationItem>
-            <PaginationItem className="flex flex-col items-center gap-2 sm:flex-row">
-              <p className="text-xs text-muted-foreground">{t("pageHint")}</p>
-              <UrlPageSizeSelect
-                itemSuffix={t("pageSizeSuffix")}
-                label={t("rowsPerPage")}
-                options={pageSizeOptions.map((pageSize) => ({
-                  size: pageSize,
-                  href: buildAdminPaymentOrdersHref({
-                    ...state,
-                    cursor: null,
-                    pageSize,
-                  }),
-                }))}
-                value={state.pageSize}
-              />
-            </PaginationItem>
-            <PaginationItem className="shrink-0">
-              {nextCursor ? (
-                <PaginationLink asChild size="default">
-                  <Link
-                    href={buildAdminPaymentOrdersHref({
-                      ...state,
-                      cursor: nextCursor,
-                    })}
-                  >
-                    {t("nextPage")}
-                    <ChevronRight />
-                  </Link>
-                </PaginationLink>
-              ) : (
-                <PaginationLink
-                  aria-disabled="true"
-                  size="default"
-                  tabIndex={-1}
-                >
-                  {t("nextPage")}
-                  <ChevronRight />
-                </PaginationLink>
-              )}
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p aria-live="polite" className="text-xs text-muted-foreground">
+          {t("totalRecords", { count: totalCount })}
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <UrlPageSizeSelect
+            itemSuffix={t("pageSizeSuffix")}
+            label={t("rowsPerPage")}
+            options={pageSizeOptions.map((pageSize) => ({
+              size: pageSize,
+              href: buildAdminPaymentOrdersHref({
+                ...state,
+                cursor: null,
+                page: 1,
+                pageSize,
+              }),
+            }))}
+            value={state.pageSize}
+          />
+          <UrlCursorPaginationControls
+            ariaLabel={t("pagination")}
+            currentPageLabel={t("pageHint", { page, totalPages })}
+            currentPageLabelTemplate={
+              locale === "zh"
+                ? "第 {page} 页，当前页"
+                : "Page {page}, current page"
+            }
+            names={createPaginationUrlParamNames()}
+            nextCursor={nextCursor}
+            nextLabel={t("nextPage")}
+            page={page}
+            pageLabelTemplate={
+              locale === "zh" ? "前往第 {page} 页" : "Go to page {page}"
+            }
+            previousCursor={previousCursor}
+            previousLabel={t("previousPage")}
+            totalPages={totalPages}
+          />
+        </div>
+      </div>
     </div>
   );
 }

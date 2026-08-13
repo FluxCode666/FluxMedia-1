@@ -119,6 +119,15 @@ describe("external API key operation metadata", () => {
 });
 
 describe("external API key input schemas", () => {
+  it("uses a strict empty input for the full list operation", () => {
+    expect(listKeys.input.safeParse({}).success).toBe(true);
+    expect(
+      listKeys.input.safeParse({
+        userId: "forged-user",
+      }).success
+    ).toBe(false);
+  });
+
   it("accepts only the settled create fields", () => {
     expect(
       createKey.input.safeParse({

@@ -19,8 +19,10 @@ import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { extractExecuteRows } from "@/server/database-result";
 import type {
+  AdminHistoryCountQuery,
   AdminHistoryListQuery,
   AdminHistoryRepository,
+  AdminHistorySnapshotReader,
 } from "./admin-history-service";
 import {
   extractGenerationCreditDetails,
@@ -71,13 +73,20 @@ const requestSnapshotRowSchema = z.object({
   request_snapshot: z.unknown().nullable(),
 });
 
+const countRowSchema = z.object({
+  total_count: z.coerce.number().int().nonnegative().safe(),
+});
+
 /** 返回 SQL 字面量；避免可选分支使用 OR 参数阻断索引前缀。 */
 function booleanSql(value: boolean): SQL {
   return value ? sql`true` : sql`false`;
 }
 
 /** 创建全局日期半开区间、快照上限谓词。 */
-function buildDatePredicate(input: AdminHistoryListQuery, createdAt: SQL): SQL {
+function buildDatePredicate(
+  input: AdminHistoryCountQuery,
+  createdAt: SQL
+): SQL {
   return sql`${input.start ? sql`${createdAt} >= ${input.start}` : sql`true`}
     and ${input.end ? sql`${createdAt} < ${input.end}` : sql`true`}
     and ${createdAt} <= ${input.asOf}`;
@@ -327,6 +336,33 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
   `;
 }
 
+/**
+ * 构造管理端全局历史的精确计数查询。
+ *
+ * WHY：邮箱筛选继续通过唯一邮箱收敛到单用户，未筛选时按同一日期、模型、状态和
+ * `asOf` 口径统计两张事实表；cursor 只决定当前页边界，不得改变授权总数。
+ */
+export function buildAdminHistoryCountSql(input: AdminHistoryCountQuery): SQL {
+  return sql`
+    select media_history_exact_count(
+      ${input.userEmail === null ? sql`'global'` : sql`'owner'`},
+      coalesce((
+        select u.id::text
+        from "user" u
+        where ${buildUserEmailPredicate(input.userEmail, sql`u.email`)}
+          and ${booleanSql(input.userEmail !== null)}
+        limit 1
+      ), ''),
+      ${input.type},
+      ${input.status},
+      ${input.model},
+      ${input.start},
+      ${input.end},
+      ${input.asOf}
+    ) as total_count
+  `;
+}
+
 /** 构造全局历史真实模型选项查询；邮箱筛选时仅返回该用户使用过的模型。 */
 export function buildAdminHistoryModelOptionsSql(input: {
   userEmail: string | null;
@@ -399,122 +435,177 @@ export function buildAdminHistoryRequestSnapshotSql(input: {
       `;
 }
 
-/** PostgreSQL 管理端全局历史仓储实现。 */
-export const databaseAdminHistoryRepository: AdminHistoryRepository = {
-  async readRecords(query) {
-    const rows = z
-      .array(adminHistoryListRowSchema)
-      .parse(
-        extractExecuteRows(await db.execute(buildAdminHistoryListSql(query)))
+type ExecuteSql = (query: SQL) => Promise<unknown>;
+
+/** 生产与仓储测试共用的最小 PostgreSQL 事务端口。 */
+export interface AdminHistoryTransactionDatabase {
+  transaction<T>(
+    work: (transaction: { execute: ExecuteSql }) => Promise<T>,
+    config: {
+      isolationLevel: "repeatable read";
+      accessMode: "read only";
+    }
+  ): Promise<T>;
+}
+
+/** 从唯一事务 execute 创建管理端历史快照读取器。 */
+function createAdminHistorySnapshotReader(
+  execute: ExecuteSql
+): AdminHistorySnapshotReader {
+  return {
+    async countRecords(query) {
+      const row = countRowSchema.parse(
+        extractExecuteRows(await execute(buildAdminHistoryCountSql(query)))[0]
       );
-    return rows.map((row) => {
-      const backendAccount = row.backend_account_id
-        ? {
-            id: row.backend_account_id,
-            name: row.backend_account_name?.trim().slice(0, 240) || null,
-          }
-        : null;
-      const common = {
-        backendAccount,
-        id: row.id,
-        userId: row.user_id,
-        userEmail: row.user_email,
-        prompt: row.prompt,
-        model: row.model,
-        status: row.status,
-        creditsConsumed: row.credits_consumed,
-        rawError: row.error,
-        createdAt: row.created_at,
-        completedAt: row.completed_at,
-      };
-      if (row.record_kind === "image") {
-        if (!row.size)
-          throw new RangeError("Admin image history size is missing");
+      return row.total_count;
+    },
+
+    async readRecords(query) {
+      const rows = z
+        .array(adminHistoryListRowSchema)
+        .parse(
+          extractExecuteRows(await execute(buildAdminHistoryListSql(query)))
+        );
+      return rows.map((row) => {
+        const backendAccount = row.backend_account_id
+          ? {
+              id: row.backend_account_id,
+              name: row.backend_account_name?.trim().slice(0, 240) || null,
+            }
+          : null;
+        const common = {
+          backendAccount,
+          id: row.id,
+          userId: row.user_id,
+          userEmail: row.user_email,
+          prompt: row.prompt,
+          model: row.model,
+          status: row.status,
+          creditsConsumed: row.credits_consumed,
+          rawError: row.error,
+          createdAt: row.created_at,
+          completedAt: row.completed_at,
+        };
+        if (row.record_kind === "image") {
+          if (!row.size)
+            throw new RangeError("Admin image history size is missing");
+          return {
+            ...common,
+            kind: "image" as const,
+            revisedPrompt: row.revised_prompt,
+            size: row.size,
+            creditDetails: extractGenerationCreditDetails(
+              row.metadata,
+              row.credits_consumed
+            ) as GenerationCreditDetails | null,
+            promptRepairNotice: extractPromptRepairNotice(row.metadata),
+            referenceImages: extractGenerationReferenceImages(row.metadata)
+              .slice(0, 50)
+              .map(
+                ({
+                  storageBucket: _storageBucket,
+                  storageKey: _storageKey,
+                  ...safe
+                }) => safe
+              ),
+            imageUrl: buildSignedStorageImageUrl(
+              row.storage_key,
+              row.storage_bucket
+            ),
+          };
+        }
+        if (
+          !row.resolution ||
+          !row.duration_seconds ||
+          !row.aspect_ratio ||
+          row.generate_audio === null
+        ) {
+          throw new RangeError("Admin video history details are incomplete");
+        }
+        const inputManifest = videoInputManifestSchema.safeParse(
+          row.input_manifest ?? {}
+        );
+        if (!inputManifest.success) {
+          throw new RangeError("Admin video history input manifest is invalid");
+        }
         return {
           ...common,
-          kind: "image" as const,
-          revisedPrompt: row.revised_prompt,
-          size: row.size,
-          creditDetails: extractGenerationCreditDetails(
-            row.metadata,
-            row.credits_consumed
-          ) as GenerationCreditDetails | null,
-          promptRepairNotice: extractPromptRepairNotice(row.metadata),
-          referenceImages: extractGenerationReferenceImages(row.metadata)
-            .slice(0, 50)
-            .map(
-              ({
-                storageBucket: _storageBucket,
-                storageKey: _storageKey,
-                ...safe
-              }) => safe
-            ),
-          imageUrl: buildSignedStorageImageUrl(
+          kind: "video" as const,
+          resolution: row.resolution,
+          duration: row.duration_seconds,
+          aspectRatio: row.aspect_ratio,
+          generateAudio: row.generate_audio,
+          input: buildVideoInputSummary(inputManifest.data),
+          videoUrl: buildSignedStorageImageUrl(
             row.storage_key,
             row.storage_bucket
           ),
         };
-      }
-      if (
-        !row.resolution ||
-        !row.duration_seconds ||
-        !row.aspect_ratio ||
-        row.generate_audio === null
-      ) {
-        throw new RangeError("Admin video history details are incomplete");
-      }
-      const inputManifest = videoInputManifestSchema.safeParse(
-        row.input_manifest ?? {}
-      );
-      if (!inputManifest.success) {
-        throw new RangeError("Admin video history input manifest is invalid");
-      }
-      return {
-        ...common,
-        kind: "video" as const,
-        resolution: row.resolution,
-        duration: row.duration_seconds,
-        aspectRatio: row.aspect_ratio,
-        generateAudio: row.generate_audio,
-        input: buildVideoInputSummary(inputManifest.data),
-        videoUrl: buildSignedStorageImageUrl(
-          row.storage_key,
-          row.storage_bucket
-        ),
-      };
-    });
-  },
+      });
+    },
 
-  async readModelOptions(input) {
-    return z
-      .array(modelOptionRowSchema)
-      .parse(
-        extractExecuteRows(
-          await db.execute(buildAdminHistoryModelOptionsSql(input))
+    async readModelOptions(input) {
+      return z
+        .array(modelOptionRowSchema)
+        .parse(
+          extractExecuteRows(
+            await execute(buildAdminHistoryModelOptionsSql(input))
+          )
         )
-      )
-      .map((row) => row.model);
-  },
+        .map((row) => row.model);
+    },
 
-  async readUserOptions(input) {
-    return z
-      .array(userOptionRowSchema)
-      .parse(
-        extractExecuteRows(
-          await db.execute(buildAdminHistoryUserOptionsSql(input))
-        )
-      );
-  },
+    async readUserOptions(input) {
+      return z
+        .array(userOptionRowSchema)
+        .parse(
+          extractExecuteRows(
+            await execute(buildAdminHistoryUserOptionsSql(input))
+          )
+        );
+    },
+  };
+}
 
-  async readRequestSnapshot(input) {
-    const rows = z
-      .array(requestSnapshotRowSchema)
-      .parse(
-        extractExecuteRows(
-          await db.execute(buildAdminHistoryRequestSnapshotSql(input))
-        )
+/** 从数据库端口创建每次列表读取都使用单一只读快照的管理端历史仓储。 */
+export function createAdminHistoryRepository(
+  database: AdminHistoryTransactionDatabase,
+  executeOutsideSnapshot: ExecuteSql
+): AdminHistoryRepository {
+  return {
+    withReadOnlySnapshot<T>(
+      work: (reader: AdminHistorySnapshotReader) => Promise<T>
+    ): Promise<T> {
+      return database.transaction(
+        async (transaction) =>
+          work(
+            createAdminHistorySnapshotReader((query) =>
+              transaction.execute(query)
+            )
+          ),
+        { isolationLevel: "repeatable read", accessMode: "read only" }
       );
-    const row = rows[0];
-    return row ? { snapshot: row.request_snapshot } : null;
-  },
-};
+    },
+
+    async readRequestSnapshot(input) {
+      const rows = z
+        .array(requestSnapshotRowSchema)
+        .parse(
+          extractExecuteRows(
+            await executeOutsideSnapshot(
+              buildAdminHistoryRequestSnapshotSql(input)
+            )
+          )
+        );
+      const row = rows[0];
+      return row ? { snapshot: row.request_snapshot } : null;
+    },
+  };
+}
+
+/** PostgreSQL 管理端全局历史仓储实现。 */
+export const databaseAdminHistoryRepository: AdminHistoryRepository =
+  createAdminHistoryRepository(
+    db as unknown as AdminHistoryTransactionDatabase,
+    (query) => db.execute(query)
+  );

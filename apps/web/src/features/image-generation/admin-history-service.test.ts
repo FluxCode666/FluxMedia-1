@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type AdminHistoryListRow,
   type AdminHistoryRepository,
+  type AdminHistorySnapshotReader,
   loadAdminHistoryRecords,
   loadAdminHistoryRequestSnapshot,
 } from "./admin-history-service";
@@ -49,14 +50,20 @@ function imageRow(
 
 /** 创建默认 DB-free 管理端仓储并允许目标读取覆写。 */
 function createRepository(
-  overrides: Partial<AdminHistoryRepository> = {}
+  overrides: Partial<AdminHistorySnapshotReader> &
+    Pick<Partial<AdminHistoryRepository>, "readRequestSnapshot"> = {}
 ): AdminHistoryRepository {
-  return {
+  const reader: AdminHistorySnapshotReader = {
+    countRecords: vi.fn().mockResolvedValue(0),
     readRecords: vi.fn().mockResolvedValue([]),
     readModelOptions: vi.fn().mockResolvedValue([]),
     readUserOptions: vi.fn().mockResolvedValue([]),
-    readRequestSnapshot: vi.fn().mockResolvedValue(null),
     ...overrides,
+  };
+  return {
+    withReadOnlySnapshot: (work) => work(reader),
+    readRequestSnapshot:
+      overrides.readRequestSnapshot ?? vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -155,6 +162,7 @@ describe("admin history service", () => {
   });
 
   it("passes the exact email filter to the global repository and returns user identity", async () => {
+    const countRecords = vi.fn().mockResolvedValue(2);
     const readRecords = vi
       .fn()
       .mockResolvedValue([
@@ -175,6 +183,7 @@ describe("admin history service", () => {
       },
       {
         repository: createRepository({
+          countRecords,
           readRecords,
           readModelOptions,
           readUserOptions,
@@ -195,6 +204,7 @@ describe("admin history service", () => {
       limit: 200,
     });
     expect(readUserOptions).toHaveBeenCalledWith({ type: null, limit: 200 });
+    expect(result).toMatchObject({ page: 1, pageSize: 1, totalCount: 2 });
     expect(result.records[0]).toMatchObject({
       backendAccount: {
         id: "backend-1",
@@ -260,6 +270,7 @@ describe("admin history service", () => {
             userEmail: "member@example.com",
             cursor: first.nextCursor,
             limit: 1,
+            page: 2,
           },
           now: new Date("2026-07-22T13:01:00.000Z"),
         },
@@ -278,6 +289,7 @@ describe("admin history service", () => {
             userEmail: "another@example.com",
             cursor: first.nextCursor,
             limit: 1,
+            page: 2,
           },
           now: new Date("2026-07-22T13:01:00.000Z"),
         },

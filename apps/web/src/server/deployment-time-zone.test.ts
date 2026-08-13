@@ -23,6 +23,24 @@ const deployEnvExample = readFileSync(
   resolve(repositoryRoot, "deploy/.env.example"),
   "utf8"
 );
+const uolBindingsSource = readFileSync(
+  resolve(repositoryRoot, "apps/web/src/server/uol-bindings.ts"),
+  "utf8"
+);
+const adminHistoryPageSource = readFileSync(
+  resolve(
+    repositoryRoot,
+    "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/history/page.tsx"
+  ),
+  "utf8"
+);
+const adminStatusPageSource = readFileSync(
+  resolve(
+    repositoryRoot,
+    "apps/web/src/app/[locale]/(dashboard)/dashboard/admin/status/page.tsx"
+  ),
+  "utf8"
+);
 
 /**
  * 从 Compose 源码中截取一个顶层 service，供部署契约断言使用。
@@ -74,5 +92,17 @@ describe("deployment time-zone contract", () => {
     expect(readEnvExampleValue(deployEnvExample, "APP_TIME_ZONE")).toBe(
       "Asia/Shanghai"
     );
+  });
+
+  it("管理员全局历史和状态筛选固定使用部署展示时区", () => {
+    expect(uolBindingsSource).toContain("timeZone: getAppTimeZone()");
+    expect(adminHistoryPageSource).toContain(
+      "const timeZone = getAppTimeZone()"
+    );
+    expect(adminHistoryPageSource).not.toContain("getUserTimeZone");
+    expect(adminStatusPageSource).toContain(
+      "const timeZone = getAppTimeZone()"
+    );
+    expect(adminStatusPageSource).not.toContain("getUserTimeZone");
   });
 });

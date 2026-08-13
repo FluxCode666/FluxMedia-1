@@ -1,34 +1,27 @@
 "use server";
 
-import { and, desc, eq, sql } from "drizzle-orm";
-import { revalidatePath } from "next/cache";
-
 import { db } from "@repo/database";
-import { ticket, ticketMessage, user } from "@repo/database/schema";
+import { ticket, ticketMessage } from "@repo/database/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 import { getUserRoleById } from "../../auth/role-server";
 import { isAdminRole } from "../../auth/roles";
+import { adminAction, protectedAction } from "../../safe-action";
 import { sendTicketAdminNotification } from "../notifications";
 import {
   addTicketMessageSchema,
   createTicketSchema,
   updateTicketStatusSchema,
 } from "../schemas";
-import { adminAction, protectedAction } from "../../safe-action";
 
 const withTicketAction = (name: string) =>
   protectedAction.metadata({ action: `support.${name}` });
 const withAdminTicketAction = (name: string) =>
   adminAction.metadata({ action: `support.admin.${name}` });
 
-const unreadTicketSql = sql<boolean>`${ticket.lastAdminActivityAt} > ${ticket.userLastSeenAt}`.mapWith(
-  Boolean
-);
-const unreadTicketCountSql = sql<number>`count(*) filter (where ${ticket.lastAdminActivityAt} > ${ticket.userLastSeenAt})`.mapWith(
-  Number
-);
-const adminUnreadTicketSql =
-  sql<boolean>`${ticket.lastUserActivityAt} is not null and (${ticket.adminLastSeenAt} is null or ${ticket.lastUserActivityAt} > ${ticket.adminLastSeenAt})`.mapWith(
-    Boolean
+const unreadTicketCountSql =
+  sql<number>`count(*) filter (where ${ticket.lastAdminActivityAt} > ${ticket.userLastSeenAt})`.mapWith(
+    Number
   );
 const adminUnreadTicketCountSql =
   sql<number>`count(*) filter (where ${ticket.lastUserActivityAt} is not null and (${ticket.adminLastSeenAt} is null or ${ticket.lastUserActivityAt} > ${ticket.adminLastSeenAt}))`.mapWith(
@@ -91,82 +84,6 @@ export const createTicketAction = withTicketAction("createTicket")
     return {
       message: "工单创建成功",
       ticketId,
-    };
-  });
-
-/**
- * 获取用户的工单列表
- */
-export const getMyTicketsAction = withTicketAction("getMyTickets").action(
-  async ({ ctx }) => {
-    const tickets = await db
-      .select({
-        id: ticket.id,
-        subject: ticket.subject,
-        category: ticket.category,
-        priority: ticket.priority,
-        status: ticket.status,
-        userLastSeenAt: ticket.userLastSeenAt,
-        lastAdminActivityAt: ticket.lastAdminActivityAt,
-        unread: unreadTicketSql,
-        createdAt: ticket.createdAt,
-        updatedAt: ticket.updatedAt,
-      })
-      .from(ticket)
-      .where(eq(ticket.userId, ctx.userId))
-      .orderBy(desc(ticket.createdAt));
-
-    return { tickets };
-  }
-);
-
-/**
- * 获取工单详情 (用户端)
- *
- * 只能查看自己的工单
- */
-export const getTicketDetailAction = withTicketAction("getTicketDetail")
-  .schema(addTicketMessageSchema.pick({ ticketId: true }))
-  .action(async ({ parsedInput: { ticketId }, ctx }) => {
-    // 获取工单信息
-    const ticketResult = await db
-      .select()
-      .from(ticket)
-      .where(and(eq(ticket.id, ticketId), eq(ticket.userId, ctx.userId)))
-      .limit(1);
-
-    const ticketData = ticketResult[0];
-    if (!ticketData) {
-      throw new Error("工单不存在或无权访问");
-    }
-    const now = new Date();
-
-    await db
-      .update(ticket)
-      .set({ userLastSeenAt: now })
-      .where(and(eq(ticket.id, ticketId), eq(ticket.userId, ctx.userId)));
-
-    // 获取消息列表
-    const messages = await db
-      .select({
-        id: ticketMessage.id,
-        content: ticketMessage.content,
-        isAdminResponse: ticketMessage.isAdminResponse,
-        createdAt: ticketMessage.createdAt,
-        user: {
-          id: user.id,
-          name: user.name,
-          image: user.image,
-        },
-      })
-      .from(ticketMessage)
-      .leftJoin(user, eq(ticketMessage.userId, user.id))
-      .where(eq(ticketMessage.ticketId, ticketId))
-      .orderBy(ticketMessage.createdAt);
-
-    return {
-      ticket: { ...ticketData, userLastSeenAt: now },
-      messages,
     };
   });
 
@@ -235,41 +152,6 @@ export const addTicketMessageAction = withTicketAction("addTicketMessage")
 // ============================================
 
 /**
- * 获取所有工单列表 (管理员)
- */
-export const getAllTicketsAction = withAdminTicketAction(
-  "getAllTickets"
-).action(async () => {
-  const tickets = await db
-    .select({
-      id: ticket.id,
-      subject: ticket.subject,
-      category: ticket.category,
-      priority: ticket.priority,
-      status: ticket.status,
-      userLastSeenAt: ticket.userLastSeenAt,
-      lastAdminActivityAt: ticket.lastAdminActivityAt,
-      adminLastSeenAt: ticket.adminLastSeenAt,
-      lastUserActivityAt: ticket.lastUserActivityAt,
-      unread: unreadTicketSql,
-      adminUnread: adminUnreadTicketSql,
-      createdAt: ticket.createdAt,
-      updatedAt: ticket.updatedAt,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        image: user.image,
-      },
-    })
-    .from(ticket)
-    .leftJoin(user, eq(ticket.userId, user.id))
-    .orderBy(desc(ticket.createdAt));
-
-  return { tickets };
-});
-
-/**
  * 获取管理员未读工单用户动态数量
  */
 export const getAdminUnreadTicketCountAction = withAdminTicketAction(
@@ -310,68 +192,6 @@ export const getMyUnreadTicketCountAction = withTicketAction(
 
   return { count: rows[0]?.count ?? 0 };
 });
-
-/**
- * 获取工单详情 (管理员)
- *
- * 管理员可以查看任何工单
- */
-export const getAdminTicketDetailAction = withAdminTicketAction(
-  "getAdminTicketDetail"
-)
-  .schema(addTicketMessageSchema.pick({ ticketId: true }))
-  .action(async ({ parsedInput: { ticketId } }) => {
-    // 获取工单信息（包含用户信息）
-    const ticketResult = await db
-      .select({
-        ticket: ticket,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          image: user.image,
-        },
-      })
-      .from(ticket)
-      .leftJoin(user, eq(ticket.userId, user.id))
-      .where(eq(ticket.id, ticketId))
-      .limit(1);
-
-    const result = ticketResult[0];
-    if (!result) {
-      throw new Error("工单不存在");
-    }
-    const now = new Date();
-
-    await db
-      .update(ticket)
-      .set({ adminLastSeenAt: now })
-      .where(eq(ticket.id, ticketId));
-
-    // 获取消息列表
-    const messages = await db
-      .select({
-        id: ticketMessage.id,
-        content: ticketMessage.content,
-        isAdminResponse: ticketMessage.isAdminResponse,
-        createdAt: ticketMessage.createdAt,
-        user: {
-          id: user.id,
-          name: user.name,
-          image: user.image,
-        },
-      })
-      .from(ticketMessage)
-      .leftJoin(user, eq(ticketMessage.userId, user.id))
-      .where(eq(ticketMessage.ticketId, ticketId))
-      .orderBy(ticketMessage.createdAt);
-
-    return {
-      ticket: { ...result.ticket, adminLastSeenAt: now },
-      ticketUser: result.user,
-      messages,
-    };
-  });
 
 /**
  * 管理员回复工单

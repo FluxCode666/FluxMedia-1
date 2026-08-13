@@ -6,6 +6,7 @@
  * 使用方：根 uol-bindings 聚合器；默认依赖动态加载以保持本模块单测 DB-free。
  */
 
+import type { GalleryListOutput } from "@repo/shared/image-generation/gallery-contract";
 import { logWarn } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
@@ -19,7 +20,11 @@ import {
   type ImageGenerateOperationInput,
   type ImageGenerateOperationOutput,
   imageGenerate,
+  imageListMyGallery,
+  imageMaintainHistoryCountProjection,
 } from "@repo/shared/uol/operations/image-generation";
+import { sql } from "drizzle-orm";
+import { z } from "zod";
 
 import type { stageImageInputReferences } from "@/features/image-generation/image-input-storage";
 import type { runImageGenerationForUser } from "@/features/image-generation/operations";
@@ -31,9 +36,14 @@ import type {
   ImageGenerationCallbacks,
   ImageQuality,
 } from "@/features/image-generation/types";
+import { extractExecuteRows } from "@/server/database-result";
 
 type ImageGenerateInput = ImageGenerateOperationInput;
 type ImageGenerateOutput = ImageGenerateOperationOutput;
+
+const projectionDriftRowSchema = z.object({
+  driftCount: z.coerce.number().int().nonnegative().safe(),
+});
 
 /** 图片 binding 可替换依赖；测试注入桩，生产动态加载真实媒体服务。 */
 export interface ImageGenerationBindingDependencies {
@@ -275,4 +285,49 @@ export async function executeImageGenerateBinding(
 
 bindOperationExecute(imageGenerate, (input, principal, ctx) =>
   executeImageGenerateBinding(input, principal, ctx)
+);
+
+/** 校验或幂等重建媒体历史精确计数投影；数据库函数自行持有写锁和漂移口径。 */
+bindOperationExecute(imageMaintainHistoryCountProjection, async (input) => {
+  const { db } = await import("@repo/database");
+  if (input.mode === "rebuild") {
+    await db.execute(sql`select rebuild_media_history_count_projection()`);
+  }
+  const result = await db.execute(sql`
+    select media_history_count_projection_drift_count() as "driftCount"
+  `);
+  const driftCount = projectionDriftRowSchema.parse(
+    extractExecuteRows(result)[0]
+  ).driftCount;
+  return { driftCount, rebuilt: input.mode === "rebuild" };
+});
+
+/** 绑定本人图库批次；数据库查询与 cursor 签名仅在服务端执行。 */
+bindOperationExecute(
+  imageListMyGallery,
+  async (input, principal): Promise<GalleryListOutput> => {
+    const userId = getPrincipalUserId(principal);
+    if (!userId || principal.type !== "user") {
+      throw new OperationError("unauthenticated", "User session required");
+    }
+    const [{ databaseGalleryRepository }, { loadGalleryItems }] =
+      await Promise.all([
+        import("@/features/image-generation/gallery-repository"),
+        import("@/features/image-generation/gallery-service"),
+      ]);
+    try {
+      return await loadGalleryItems(
+        { userId, input },
+        { repository: databaseGalleryRepository }
+      );
+    } catch (error) {
+      const { GalleryServiceError } = await import(
+        "@/features/image-generation/gallery-service"
+      );
+      if (error instanceof GalleryServiceError) {
+        throw new OperationError(error.code, error.message);
+      }
+      throw error;
+    }
+  }
 );

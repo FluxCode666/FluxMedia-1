@@ -142,6 +142,8 @@ export function HistoryFilters({
         createdTo: next.createdTo || null,
         cursor: null,
         model: next.model.trim() || null,
+        page: 1,
+        pageSize: state.pageSize,
         status: next.status,
         type: next.type,
         userEmail: next.userEmail.trim() || null,

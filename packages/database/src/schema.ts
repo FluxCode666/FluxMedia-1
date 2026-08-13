@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -233,6 +234,11 @@ export const referralRelationship = pgTable(
     index("referral_relationship_inviter_created_at_idx").on(
       table.inviterUserId,
       table.createdAt
+    ),
+    index("referral_relationship_inviter_created_id_idx").on(
+      table.inviterUserId,
+      table.createdAt.desc(),
+      table.id.desc()
     ),
     index("referral_relationship_status_created_at_idx").on(
       table.status,
@@ -500,6 +506,9 @@ export const paymentOrder = pgTable(
       .where(
         sql`${table.status} = 'fulfilled' and ${table.purpose} in ('credit_top_up', 'credit_package') and ${table.fulfilledAt} is not null`
       ),
+    index("payment_order_admin_recharge_created_id_idx")
+      .on(table.createdAt.desc(), table.id.desc(), table.status, table.userId)
+      .where(sql`${table.purpose} in ('credit_top_up', 'credit_package')`),
   ]
 );
 
@@ -1009,25 +1018,43 @@ export type NewNewsletterSubscriber = typeof newsletterSubscriber.$inferInsert;
  * @field createdAt - 创建时间
  * @field updatedAt - 更新时间
  */
-export const announcement = pgTable("announcement", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull(),
-  content: text("content").notNull(),
-  severity: text("severity").notNull().default("info"),
-  isPublished: boolean("is_published").notNull().default(false),
-  isPinned: boolean("is_pinned").notNull().default(false),
-  priority: integer("priority").notNull().default(0),
-  publishedAt: timestamp("published_at"),
-  expiresAt: timestamp("expires_at"),
-  createdByUserId: text("created_by_user_id").references(() => user.id, {
-    onDelete: "set null",
-  }),
-  updatedByUserId: text("updated_by_user_id").references(() => user.id, {
-    onDelete: "set null",
-  }),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const announcement = pgTable(
+  "announcement",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    severity: text("severity").notNull().default("info"),
+    isPublished: boolean("is_published").notNull().default(false),
+    isPinned: boolean("is_pinned").notNull().default(false),
+    priority: integer("priority").notNull().default(0),
+    publishedAt: timestamp("published_at"),
+    expiresAt: timestamp("expires_at"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    updatedByUserId: text("updated_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("announcement_user_pinned_priority_published_created_id_idx").on(
+      table.isPinned.desc(),
+      table.priority.desc(),
+      table.publishedAt.desc(),
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    index("announcement_admin_published_pinned_updated_id_idx").on(
+      table.isPublished,
+      table.isPinned.desc(),
+      table.updatedAt.desc(),
+      table.id.desc()
+    ),
+  ]
+);
 
 /**
  * 公告已读表 - 记录用户已读公告
@@ -1109,22 +1136,37 @@ export const ticketStatusEnum = pgEnum("ticket_status", [
  * @field createdAt - 创建时间
  * @field updatedAt - 更新时间
  */
-export const ticket = pgTable("ticket", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  subject: text("subject").notNull(),
-  category: ticketCategoryEnum("category").notNull().default("other"),
-  priority: ticketPriorityEnum("priority").notNull().default("medium"),
-  status: ticketStatusEnum("status").notNull().default("open"),
-  userLastSeenAt: timestamp("user_last_seen_at").notNull().defaultNow(),
-  lastAdminActivityAt: timestamp("last_admin_activity_at"),
-  adminLastSeenAt: timestamp("admin_last_seen_at"),
-  lastUserActivityAt: timestamp("last_user_activity_at").defaultNow(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const ticket = pgTable(
+  "ticket",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    subject: text("subject").notNull(),
+    category: ticketCategoryEnum("category").notNull().default("other"),
+    priority: ticketPriorityEnum("priority").notNull().default("medium"),
+    status: ticketStatusEnum("status").notNull().default("open"),
+    userLastSeenAt: timestamp("user_last_seen_at").notNull().defaultNow(),
+    lastAdminActivityAt: timestamp("last_admin_activity_at"),
+    adminLastSeenAt: timestamp("admin_last_seen_at"),
+    lastUserActivityAt: timestamp("last_user_activity_at").defaultNow(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("ticket_user_created_id_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    index("ticket_admin_status_created_id_idx").on(
+      table.status,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+  ]
+);
 
 // ============================================
 // 工单消息表 (Ticket Messages)
@@ -1139,18 +1181,28 @@ export const ticket = pgTable("ticket", {
  * @field isAdminResponse - 是否为管理员回复 (用于 UI 样式区分)
  * @field createdAt - 创建时间
  */
-export const ticketMessage = pgTable("ticket_message", {
-  id: text("id").primaryKey(),
-  ticketId: text("ticket_id")
-    .notNull()
-    .references(() => ticket.id, { onDelete: "cascade" }),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  content: text("content").notNull(),
-  isAdminResponse: boolean("is_admin_response").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+export const ticketMessage = pgTable(
+  "ticket_message",
+  {
+    id: text("id").primaryKey(),
+    ticketId: text("ticket_id")
+      .notNull()
+      .references(() => ticket.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    isAdminResponse: boolean("is_admin_response").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("ticket_message_ticket_created_id_idx").on(
+      table.ticketId,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+  ]
+);
 
 // ============================================
 // Image Backend Pool
@@ -1180,6 +1232,10 @@ export const imageBackendGroup = pgTable(
       table.isDefault,
       table.createdAt,
       table.id
+    ),
+    index("image_backend_group_created_id_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
     ),
   ]
 );
@@ -1272,6 +1328,10 @@ export const imageBackendMember = pgTable(
       table.id
     ),
     index("image_backend_member_cooldown_idx").on(table.cooldownUntil),
+    index("image_backend_member_created_id_idx").on(
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
   ]
 );
 
@@ -1922,6 +1982,20 @@ export const videoGeneration = pgTable(
       table.nextPollAt,
       table.claimExpiresAt
     ),
+    index("video_generation_history_user_created_id_status_model_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+      table.id.desc(),
+      table.status,
+      table.model
+    ),
+    index("video_generation_history_admin_created_id_status_model_idx").on(
+      table.createdAt.desc(),
+      table.id.desc(),
+      table.status,
+      table.model,
+      table.userId
+    ),
     check(
       "video_generation_stage_check",
       sql`${table.stage} IN ('created', 'charged', 'submitting', 'submit_uncertain', 'polling', 'downloading', 'refunding', 'completed', 'failed')`
@@ -2474,38 +2548,48 @@ export type NewImageBackendMemberSchedulerMetric =
 // ============================================
 // External API Keys
 // ============================================
-export const externalApiKey = pgTable("external_api_key", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  name: text("name").notNull().default("Default API key"),
-  keyPrefix: text("key_prefix").notNull(),
-  keyHash: text("key_hash").notNull().unique(),
-  // AES-256-GCM 版本化密文，仅供本人登录后的管理页面恢复复制；旧记录为空。
-  encryptedKey: text("encrypted_key"),
-  lastFour: text("last_four").notNull(),
-  generationGroupId: text("generation_group_id").references(
-    () => imageBackendGroup.id,
-    { onDelete: "set null" }
-  ),
-  creditLimit: numeric("credit_limit", {
-    precision: 18,
-    scale: 2,
-    mode: "number",
-  }),
-  creditsUsed: numeric("credits_used", {
-    precision: 18,
-    scale: 2,
-    mode: "number",
-  })
-    .notNull()
-    .default(0),
-  lastUsedAt: timestamp("last_used_at"),
-  isActive: boolean("is_active").notNull().default(true),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const externalApiKey = pgTable(
+  "external_api_key",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull().default("Default API key"),
+    keyPrefix: text("key_prefix").notNull(),
+    keyHash: text("key_hash").notNull().unique(),
+    // AES-256-GCM 版本化密文，仅供本人登录后的管理页面恢复复制；旧记录为空。
+    encryptedKey: text("encrypted_key"),
+    lastFour: text("last_four").notNull(),
+    generationGroupId: text("generation_group_id").references(
+      () => imageBackendGroup.id,
+      { onDelete: "set null" }
+    ),
+    creditLimit: numeric("credit_limit", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    }),
+    creditsUsed: numeric("credits_used", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    })
+      .notNull()
+      .default(0),
+    lastUsedAt: timestamp("last_used_at"),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("external_api_key_user_created_id_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+  ]
+);
 
 export type ExternalApiKey = typeof externalApiKey.$inferSelect;
 export type NewExternalApiKey = typeof externalApiKey.$inferInsert;
@@ -2563,6 +2647,20 @@ export const generation = pgTable(
       table.createdAt
     ),
     index("generation_status_created_at_idx").on(table.status, table.createdAt),
+    index("generation_history_user_created_id_status_model_idx").on(
+      table.userId,
+      table.createdAt.desc(),
+      table.id.desc(),
+      table.status,
+      table.model
+    ),
+    index("generation_history_admin_created_id_status_model_idx").on(
+      table.createdAt.desc(),
+      table.id.desc(),
+      table.status,
+      table.model,
+      table.userId
+    ),
     check(
       "generation_api_adapter_pair_check",
       sql`(${table.apiAdapterMemberId} IS NULL) = (${table.apiAdapterVersionId} IS NULL)`
@@ -2584,6 +2682,51 @@ export const generation = pgTable(
 export type Generation = typeof generation.$inferSelect;
 export type NewGeneration = typeof generation.$inferInsert;
 export type GenerationStatus = (typeof generationStatusEnum.enumValues)[number];
+
+/**
+ * 图片/视频历史精确计数投影。
+ *
+ * 触发器和重建函数由 0090 手写迁移维护；应用只读此表，不直接写入。空字符串是
+ * global scope 的固定 owner 占位，0001-01-01 是 all-time bucket 的固定日期占位。
+ */
+export const mediaHistoryCountProjection = pgTable(
+  "media_history_count_projection",
+  {
+    scopeKind: text("scope_kind").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    visibilityState: text("visibility_state").notNull(),
+    mediaType: text("media_type").notNull(),
+    status: text("status").notNull(),
+    model: text("model").notNull(),
+    bucketKind: text("bucket_kind").notNull(),
+    utcDay: date("utc_day").notNull(),
+    recordCount: bigint("record_count", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "media_history_count_projection_pk",
+      columns: [
+        table.scopeKind,
+        table.ownerUserId,
+        table.visibilityState,
+        table.mediaType,
+        table.status,
+        table.model,
+        table.bucketKind,
+        table.utcDay,
+      ],
+    }),
+    index("media_history_count_projection_owner_lookup_idx").on(
+      table.scopeKind,
+      table.ownerUserId,
+      table.bucketKind,
+      table.utcDay,
+      table.mediaType,
+      table.status,
+      table.model
+    ),
+  ]
+);
 
 // ============================================
 // 工单系统类型导出

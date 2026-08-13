@@ -14,7 +14,10 @@
  * 不从 apps/web 或 @repo/database 导入任何内容。
  */
 import { z } from "zod";
-
+import {
+  galleryListInputSchema,
+  galleryListOutputSchema,
+} from "../../image-generation/gallery-contract";
 import {
   adminHistoryListInputSchema,
   adminHistoryListOutputSchema,
@@ -468,7 +471,30 @@ defineOperation({
 });
 
 // ---------------------------------------------------------------------------
-// 6a. image.getAdminHistoryRequestSnapshot - 管理员按需读取真实请求 JSON
+// 6a. image.listMyGallery - 本人图库的卡片级无限滚动批次
+// ---------------------------------------------------------------------------
+export const imageListMyGallery = defineOperation({
+  name: "image.listMyGallery",
+  domain: "image-generation",
+  title: "获取本人图库批次",
+  description:
+    "按成品、上传图或视频页签读取当前会话用户的一批图库卡片。" +
+    "身份只来自 Principal，返回短期资源地址与签名下一边界，不返回总条数。",
+  input: galleryListInputSchema,
+  output: galleryListOutputSchema,
+  access: { kind: "protected" },
+  agentExposure: "human-only",
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: image.listMyGallery");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 6b. image.getAdminHistoryRequestSnapshot - 管理员按需读取真实请求 JSON
 // ---------------------------------------------------------------------------
 export const imageGetAdminHistoryRequestSnapshot = defineOperation({
   name: "image.getAdminHistoryRequestSnapshot",
@@ -490,6 +516,36 @@ export const imageGetAdminHistoryRequestSnapshot = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: image.getAdminHistoryRequestSnapshot");
+  },
+});
+
+// ---------------------------------------------------------------------------
+// 6c. image.maintainHistoryCountProjection - 系统对账或幂等重建精确计数投影
+// ---------------------------------------------------------------------------
+export const imageMaintainHistoryCountProjection = defineOperation({
+  name: "image.maintainHistoryCountProjection",
+  domain: "image-generation",
+  title: "维护生成历史精确计数投影",
+  description:
+    "仅供系统发布门和运维任务调用。校验图片/视频历史计数投影漂移，或从权威事实幂等重建后再次校验。",
+  input: z
+    .object({
+      mode: z.enum(["verify", "rebuild"]),
+    })
+    .strict(),
+  output: z.object({
+    driftCount: z.number().int().nonnegative(),
+    rebuilt: z.boolean(),
+  }),
+  access: { kind: "system" },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  hasMaintenanceWrite: true,
+  execute: async () => {
+    throw new Error("Not yet wired: image.maintainHistoryCountProjection");
   },
 });
 

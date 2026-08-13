@@ -28,6 +28,8 @@ vi.mock("@repo/database", () => ({
     inviteeUserId: "referral_relationship.invitee_user_id",
     firstPaymentOrderId: "referral_relationship.first_payment_order_id",
     status: "referral_relationship.status",
+    inviterRewardCredits: "referral_relationship.inviter_reward_credits",
+    inviteeRewardCredits: "referral_relationship.invitee_reward_credits",
     createdAt: "referral_relationship.created_at",
     rewardedAt: "referral_relationship.rewarded_at",
   },
@@ -55,7 +57,10 @@ vi.mock("../system-settings", () => ({
   getRuntimeSettingJson: mocks.getRuntimeSettingJson,
 }));
 
-import { fulfillReferralFirstPayment } from "./service";
+import {
+  fulfillReferralFirstPayment,
+  listReferralRelationships,
+} from "./service";
 
 type Relationship = {
   id: string;
@@ -367,5 +372,50 @@ describe("fulfillReferralFirstPayment", () => {
     expect(mocks.grantCredits.mock.calls[3]?.[0]).toEqual(
       expect.objectContaining({ userId: "invitee-1", amount: 9 })
     );
+  });
+});
+
+describe("listReferralRelationships", () => {
+  beforeEach(() => {
+    mocks.select.mockReset();
+  });
+
+  it("returns every relationship in stable descending order", async () => {
+    const orderBy = vi.fn(async () => [
+      {
+        id: "relationship-41",
+        inviteeName: "Example User",
+        inviteeEmail: "example@example.com",
+        status: "rewarded" as const,
+        inviterRewardCredits: 10,
+        inviteeRewardCredits: 5,
+        createdAt: new Date("2026-08-12T08:00:00.000Z"),
+        rewardedAt: new Date("2026-08-13T08:00:00.000Z"),
+      },
+    ]);
+    const rowsWhere = vi.fn(() => ({ orderBy }));
+    mocks.select.mockReturnValue({
+      from: vi.fn(() => ({
+        innerJoin: vi.fn(() => ({ where: rowsWhere })),
+      })),
+    });
+
+    await expect(listReferralRelationships("inviter-1", {})).resolves.toEqual({
+      records: [
+        {
+          id: "relationship-41",
+          inviteeName: "Example User",
+          inviteeEmail: "e***@example.com",
+          status: "rewarded",
+          inviterRewardCredits: 10,
+          inviteeRewardCredits: 5,
+          createdAt: "2026-08-12T08:00:00.000Z",
+          rewardedAt: "2026-08-13T08:00:00.000Z",
+        },
+      ],
+      totalCount: 1,
+    });
+    expect(mocks.select).toHaveBeenCalledTimes(1);
+    expect(orderBy).toHaveBeenCalledTimes(1);
   });
 });

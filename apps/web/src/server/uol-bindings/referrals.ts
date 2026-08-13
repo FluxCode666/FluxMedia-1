@@ -3,6 +3,7 @@ import { resolvePublicAppUrl } from "@repo/shared/config";
 import {
   fulfillReferralFirstPayment,
   getReferralDashboard,
+  listReferralRelationships,
 } from "@repo/shared/referrals";
 import { getRuntimeSettingString } from "@repo/shared/system-settings";
 import { bindOperationExecute, OperationError } from "@repo/shared/uol";
@@ -11,6 +12,7 @@ import {
   fulfillCreemReferralFirstPayment,
   fulfillEpayReferralFirstPayment,
   getMyReferralDashboard,
+  listMyReferralRelationships,
 } from "@repo/shared/uol/operations/referrals";
 
 bindOperationExecute(getMyReferralDashboard, async (_input, principal) => {
@@ -29,6 +31,16 @@ bindOperationExecute(getMyReferralDashboard, async (_input, principal) => {
     { allowInternal: process.env.NODE_ENV !== "production" }
   );
   return getReferralDashboard({ userId: principal.userId, appUrl });
+});
+
+bindOperationExecute(listMyReferralRelationships, async (input, principal) => {
+  if (principal.type !== "user") {
+    throw new OperationError(
+      "unauthenticated",
+      "User session authentication required"
+    );
+  }
+  return listReferralRelationships(principal.userId, input);
 });
 
 for (const [definition, provider] of [

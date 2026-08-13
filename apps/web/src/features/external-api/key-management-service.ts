@@ -95,12 +95,12 @@ export type ExternalApiKeyInsert = {
 
 /** 数据库仓储边界；所有生命周期写入都必须带 userId 和状态条件。 */
 export interface ExternalApiKeyRepository {
-  listByUser(userId: string): Promise<
-    Array<{
+  listByUser(userId: string): Promise<{
+    rows: Array<{
       key: ExternalApiKeyRecord;
       currentGroup: ExternalApiKeyGroupRecord | null;
-    }>
-  >;
+    }>;
+  }>;
   insert(values: ExternalApiKeyInsert): Promise<ExternalApiKeyRecord | null>;
   revokeActive(
     userId: string,
@@ -324,12 +324,12 @@ export function createExternalApiKeyManagementService(
      * 列出用户全部密钥，并分开返回当前分组与可编辑候选。
      *
      * @param userId 已由调用边界鉴权的用户 ID。
-     * @returns 本人可复制的密钥列表项和当前可编辑分组。
+     * @returns 本人可复制的完整密钥列表和当前可编辑分组。
      * @throws 分组、仓储读取或密文恢复失败时透传错误。
      * @remarks 只执行读取；返回值不包含密文、哈希或 userId，历史记录明文为 null。
      */
     async listKeys(userId: string) {
-      const [rows, editableGroups] = await Promise.all([
+      const [listResult, editableGroups] = await Promise.all([
         dependencies.repository.listByUser(userId),
         loadEditableGroups(),
       ]);
@@ -337,7 +337,7 @@ export function createExternalApiKeyManagementService(
         editableGroups.map((group) => group.id)
       );
       return {
-        keys: rows.map(({ key, currentGroup }) =>
+        keys: listResult.rows.map(({ key, currentGroup }) =>
           toKeyListItem(key, currentGroup, selectableGroupIds)
         ),
         editableGroups: editableGroups.map((group) => ({
@@ -575,26 +575,33 @@ const databaseExternalApiKeyRepository: ExternalApiKeyRepository = {
   async listByUser(userId) {
     const [{ db }, { externalApiKey, imageBackendGroup }, { desc, eq }] =
       await loadDatabaseModules();
-    const rows = await db
-      .select({
-        key: selectExternalApiKeyFields(externalApiKey),
-        currentGroup: {
-          id: imageBackendGroup.id,
-          name: imageBackendGroup.name,
-          isEnabled: imageBackendGroup.isEnabled,
-        },
-      })
-      .from(externalApiKey)
-      .leftJoin(
-        imageBackendGroup,
-        eq(externalApiKey.generationGroupId, imageBackendGroup.id)
-      )
-      .where(eq(externalApiKey.userId, userId))
-      .orderBy(desc(externalApiKey.createdAt));
-    return rows as Array<{
-      key: ExternalApiKeyRecord;
-      currentGroup: ExternalApiKeyGroupRecord | null;
-    }>;
+    return db.transaction(
+      async (tx) => {
+        const rows = await tx
+          .select({
+            key: selectExternalApiKeyFields(externalApiKey),
+            currentGroup: {
+              id: imageBackendGroup.id,
+              name: imageBackendGroup.name,
+              isEnabled: imageBackendGroup.isEnabled,
+            },
+          })
+          .from(externalApiKey)
+          .leftJoin(
+            imageBackendGroup,
+            eq(externalApiKey.generationGroupId, imageBackendGroup.id)
+          )
+          .where(eq(externalApiKey.userId, userId))
+          .orderBy(desc(externalApiKey.createdAt), desc(externalApiKey.id));
+        return {
+          rows: rows as Array<{
+            key: ExternalApiKeyRecord;
+            currentGroup: ExternalApiKeyGroupRecord | null;
+          }>,
+        };
+      },
+      { isolationLevel: "repeatable read", accessMode: "read only" }
+    );
   },
 
   /**

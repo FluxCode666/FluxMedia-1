@@ -9,6 +9,8 @@
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
+import type { PaginationConfig } from "@repo/shared/pagination/config";
+import { buildPaginationHref } from "@repo/shared/pagination/url-adapter";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -34,16 +36,22 @@ import {
   RefreshCw,
   Users,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { getModelConfigurationAction } from "@/features/model-configuration/actions";
+import { UrlPaginationControls } from "@/features/pagination/pagination-controls";
+import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
+import { usePathname, useRouter } from "@/i18n/routing";
 import {
   type BackendPoolAdminMemberSummary,
   deleteImageBackendGroupAction,
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
+  listAdminImageBackendGroupsAction,
+  listAdminImageBackendMembersAction,
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
 } from "./actions";
@@ -55,10 +63,16 @@ import {
   type BackendMemberFilterModelOption,
 } from "./admin-pool-filter-bars";
 import {
+  ADMIN_POOL_GROUP_NAME_PARAM,
+  ADMIN_POOL_GROUP_PAGINATION_NAMES,
+  ADMIN_POOL_MEMBER_FILTER_PARAMS,
+  ADMIN_POOL_MEMBER_PAGINATION_NAMES,
+  ADMIN_POOL_TAB_PARAM,
+  parseAdminPoolGroupListInput,
+  parseAdminPoolMemberListInput,
+} from "./admin-pool-pagination";
+import {
   type BackendMemberFilters,
-  EMPTY_BACKEND_MEMBER_FILTERS,
-  filterBackendGroups,
-  filterBackendMembers,
   hasBackendGroupFilter,
   hasBackendMemberFilters,
   hasInvalidBackendMemberDateRange,
@@ -118,13 +132,49 @@ function PoolListLoadingState({ label }: { label: string }) {
 /** 统一号池主面板；viewer 权限下可通过 readOnly 禁止所有写操作。 */
 export function ImageBackendPoolAdminPanel({
   timeZone,
+  paginationConfig,
   readOnly = false,
 }: {
   timeZone: string;
+  paginationConfig: PaginationConfig;
   readOnly?: boolean;
 }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const currentSearchParams = useMemo(
+    () => new URLSearchParams(searchParams.toString()),
+    [searchParams]
+  );
+  const memberListInput = useMemo(
+    () =>
+      parseAdminPoolMemberListInput(
+        currentSearchParams,
+        paginationConfig,
+        timeZone
+      ),
+    [currentSearchParams, paginationConfig, timeZone]
+  );
+  const groupListInput = useMemo(
+    () => parseAdminPoolGroupListInput(currentSearchParams, paginationConfig),
+    [currentSearchParams, paginationConfig]
+  );
   const [groups, setGroups] = useState<BackendGroupSummary[]>([]);
   const [members, setMembers] = useState<BackendPoolAdminMemberSummary[]>([]);
+  const [memberPage, setMemberPage] = useState<{
+    records: BackendPoolAdminMemberSummary[];
+    page: number;
+    pageSize: number;
+    totalCount: number;
+    totalPages: number;
+  } | null>(null);
+  const [groupPage, setGroupPage] = useState<{
+    records: BackendGroupSummary[];
+    page: number;
+    pageSize: number;
+    totalCount: number;
+    totalPages: number;
+  } | null>(null);
   const [modelOptions, setModelOptions] = useState<BackendMemberModelOption[]>(
     []
   );
@@ -137,10 +187,6 @@ export function ImageBackendPoolAdminPanel({
   );
   const [editingMember, setEditingMember] =
     useState<BackendPoolAdminMemberSummary | null>(null);
-  const [memberFilters, setMemberFilters] = useState<BackendMemberFilters>(
-    EMPTY_BACKEND_MEMBER_FILTERS
-  );
-  const [groupNameFilter, setGroupNameFilter] = useState("");
   const [resettingMemberId, setResettingMemberId] = useState<string | null>(
     null
   );
@@ -149,6 +195,19 @@ export function ImageBackendPoolAdminPanel({
     id: string;
     previous: boolean;
   } | null>(null);
+
+  const memberFilters: BackendMemberFilters = {
+    name: memberListInput.name,
+    credentialStatus: memberListInput.credentialStatus,
+    modelId: memberListInput.modelId,
+    createdFrom: memberListInput.createdFrom,
+    createdTo: memberListInput.createdTo,
+  };
+  const groupNameFilter = groupListInput.name;
+  const activePoolTab =
+    currentSearchParams.get(ADMIN_POOL_TAB_PARAM) === "groups"
+      ? "groups"
+      : "members";
 
   const { execute: loadPool, isPending: isLoading } = useAction(
     getAdminImageBackendPoolAction,
@@ -159,6 +218,50 @@ export function ImageBackendPoolAdminPanel({
       },
       onError: ({ error }) =>
         toast.error(error.serverError || "加载账号池失败"),
+    }
+  );
+  const { execute: loadMemberPage, isPending: isLoadingMemberPage } = useAction(
+    listAdminImageBackendMembersAction,
+    {
+      onSuccess: ({ data }) => {
+        if (!data) return;
+        setMemberPage(data);
+        if (data.page !== memberListInput.page) {
+          router.replace(
+            buildPaginationHref(
+              pathname,
+              new URLSearchParams(searchParams.toString()),
+              ADMIN_POOL_MEMBER_PAGINATION_NAMES,
+              { page: data.page },
+              "page"
+            )
+          );
+        }
+      },
+      onError: ({ error }) =>
+        toast.error(error.serverError || "加载供应商账号失败"),
+    }
+  );
+  const { execute: loadGroupPage, isPending: isLoadingGroupPage } = useAction(
+    listAdminImageBackendGroupsAction,
+    {
+      onSuccess: ({ data }) => {
+        if (!data) return;
+        setGroupPage(data);
+        if (data.page !== groupListInput.page) {
+          router.replace(
+            buildPaginationHref(
+              pathname,
+              new URLSearchParams(searchParams.toString()),
+              ADMIN_POOL_GROUP_PAGINATION_NAMES,
+              { page: data.page },
+              "page"
+            )
+          );
+        }
+      },
+      onError: ({ error }) =>
+        toast.error(error.serverError || "加载账号池分组失败"),
     }
   );
   const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
@@ -185,7 +288,7 @@ export function ImageBackendPoolAdminPanel({
     {
       onSuccess: () => {
         toast.success("分组已删除");
-        loadPool();
+        reloadPoolSnapshots();
       },
       onError: ({ error }) => toast.error(error.serverError || "删除分组失败"),
     }
@@ -195,7 +298,7 @@ export function ImageBackendPoolAdminPanel({
     {
       onSuccess: () => {
         toast.success("成员已删除");
-        loadPool();
+        reloadPoolSnapshots();
       },
       onError: ({ error }) => toast.error(error.serverError || "删除成员失败"),
     }
@@ -205,7 +308,7 @@ export function ImageBackendPoolAdminPanel({
       onSuccess: () => {
         setResettingMemberId(null);
         toast.success("账号运行状态已重置");
-        loadPool();
+        reloadPoolSnapshots();
       },
       onError: ({ error }) => {
         setResettingMemberId(null);
@@ -219,7 +322,7 @@ export function ImageBackendPoolAdminPanel({
         pendingMemberEnabledRef.current = null;
         setUpdatingMemberId(null);
         toast.success(data?.isEnabled ? "账号已启用" : "账号已停用");
-        loadPool();
+        reloadPoolSnapshots();
       },
       onError: ({ error }) => {
         const pending = pendingMemberEnabledRef.current;
@@ -231,6 +334,18 @@ export function ImageBackendPoolAdminPanel({
                 : member
             )
           );
+          setMemberPage((current) =>
+            current
+              ? {
+                  ...current,
+                  records: current.records.map((member) =>
+                    member.id === pending.id
+                      ? { ...member, isEnabled: pending.previous }
+                      : member
+                  ),
+                }
+              : current
+          );
         }
         pendingMemberEnabledRef.current = null;
         setUpdatingMemberId(null);
@@ -239,10 +354,25 @@ export function ImageBackendPoolAdminPanel({
     }
   );
 
+  /** 写操作成功后刷新完整辅助快照和两个分页明细。 */
+  function reloadPoolSnapshots(): void {
+    loadPool();
+    loadMemberPage(memberListInput);
+    loadGroupPage(groupListInput);
+  }
+
   useEffect(() => {
     loadPool();
     loadModelOptions();
   }, [loadModelOptions, loadPool]);
+
+  useEffect(() => {
+    loadMemberPage(memberListInput);
+  }, [loadMemberPage, memberListInput]);
+
+  useEffect(() => {
+    loadGroupPage(groupListInput);
+  }, [groupListInput, loadGroupPage]);
 
   const groupNameById = useMemo(
     () => new Map(groups.map((group) => [group.id, group.name])),
@@ -272,14 +402,8 @@ export function ImageBackendPoolAdminPanel({
         return { id, label: label && label !== id ? `${label} · ${id}` : id };
       });
   }, [members, modelOptions]);
-  const filteredMembers = useMemo(
-    () => filterBackendMembers(members, memberFilters, timeZone),
-    [memberFilters, members, timeZone]
-  );
-  const filteredGroups = useMemo(
-    () => filterBackendGroups(groups, groupNameFilter),
-    [groupNameFilter, groups]
-  );
+  const filteredMembers = memberPage?.records ?? [];
+  const filteredGroups = groupPage?.records ?? [];
   const invalidMemberDateRange =
     hasInvalidBackendMemberDateRange(memberFilters);
   const imageModelIds = useMemo(
@@ -305,6 +429,72 @@ export function ImageBackendPoolAdminPanel({
     0
   );
   const adobeDirectCount = members.filter(isAdobeDirectMember).length;
+
+  const memberPageSizeOptions = paginationConfig.pageSizeOptions.map(
+    (pageSize) => ({
+      size: pageSize,
+      href: buildPaginationHref(
+        pathname,
+        currentSearchParams,
+        ADMIN_POOL_MEMBER_PAGINATION_NAMES,
+        { pageSize },
+        "criteria"
+      ),
+    })
+  );
+  const groupPageSizeOptions = paginationConfig.pageSizeOptions.map(
+    (pageSize) => ({
+      size: pageSize,
+      href: buildPaginationHref(
+        pathname,
+        currentSearchParams,
+        ADMIN_POOL_GROUP_PAGINATION_NAMES,
+        { pageSize },
+        "criteria"
+      ),
+    })
+  );
+
+  /** 用 URL 提交成员筛选并清理旧页码。 */
+  function updateMemberFilters(next: BackendMemberFilters): void {
+    router.push(
+      buildPaginationHref(
+        pathname,
+        currentSearchParams,
+        ADMIN_POOL_MEMBER_PAGINATION_NAMES,
+        {
+          criteria: {
+            [ADMIN_POOL_MEMBER_FILTER_PARAMS.name]: next.name.trim() || null,
+            [ADMIN_POOL_MEMBER_FILTER_PARAMS.credentialStatus]:
+              next.credentialStatus === "all" ? null : next.credentialStatus,
+            [ADMIN_POOL_MEMBER_FILTER_PARAMS.modelId]:
+              next.modelId === "all" ? null : next.modelId,
+            [ADMIN_POOL_MEMBER_FILTER_PARAMS.createdFrom]:
+              next.createdFrom || null,
+            [ADMIN_POOL_MEMBER_FILTER_PARAMS.createdTo]: next.createdTo || null,
+          },
+        },
+        "criteria"
+      )
+    );
+  }
+
+  /** 用 URL 提交分组名称筛选并清理旧页码。 */
+  function updateGroupNameFilter(name: string): void {
+    router.push(
+      buildPaginationHref(
+        pathname,
+        currentSearchParams,
+        ADMIN_POOL_GROUP_PAGINATION_NAMES,
+        {
+          criteria: {
+            [ADMIN_POOL_GROUP_NAME_PARAM]: name.trim() || null,
+          },
+        },
+        "criteria"
+      )
+    );
+  }
 
   /** 打开新增分组表单。 */
   function openNewGroup(): void {
@@ -350,6 +540,16 @@ export function ImageBackendPoolAdminPanel({
         item.id === member.id ? { ...item, isEnabled } : item
       )
     );
+    setMemberPage((current) =>
+      current
+        ? {
+            ...current,
+            records: current.records.map((item) =>
+              item.id === member.id ? { ...item, isEnabled } : item
+            ),
+          }
+        : current
+    );
     setMemberEnabled({ id: member.id, isEnabled });
   }
 
@@ -369,7 +569,7 @@ export function ImageBackendPoolAdminPanel({
           disabled={isLoading || isLoadingModelOptions}
           onClick={() => {
             setModelOptionStatus("loading");
-            loadPool();
+            reloadPoolSnapshots();
             loadModelOptions();
           }}
         >
@@ -415,7 +615,18 @@ export function ImageBackendPoolAdminPanel({
         />
       </div>
 
-      <Tabs className="w-full" defaultValue="members">
+      <Tabs
+        className="w-full"
+        onValueChange={(value) => {
+          const next = new URLSearchParams(searchParams.toString());
+          if (value === "groups") next.set(ADMIN_POOL_TAB_PARAM, "groups");
+          else next.delete(ADMIN_POOL_TAB_PARAM);
+          next.sort();
+          const query = next.toString();
+          router.push(query ? `${pathname}?${query}` : pathname);
+        }}
+        value={activePoolTab}
+      >
         <TabsList
           aria-label="账号池管理内容"
           className="h-auto flex-wrap justify-start bg-transparent p-0"
@@ -426,7 +637,7 @@ export function ImageBackendPoolAdminPanel({
           >
             供应商账号
             <span className="text-xs tabular-nums text-muted-foreground">
-              {members.length}
+              {memberPage?.totalCount ?? members.length}
             </span>
           </TabsTrigger>
           <TabsTrigger
@@ -435,7 +646,7 @@ export function ImageBackendPoolAdminPanel({
           >
             分组
             <span className="text-xs tabular-nums text-muted-foreground">
-              {groups.length}
+              {groupPage?.totalCount ?? groups.length}
             </span>
           </TabsTrigger>
         </TabsList>
@@ -460,15 +671,19 @@ export function ImageBackendPoolAdminPanel({
               filters={memberFilters}
               invalidDateRange={invalidMemberDateRange}
               modelOptions={memberModelFilterOptions}
-              onChange={setMemberFilters}
-              resultCount={filteredMembers.length}
+              onChange={updateMemberFilters}
+              resultCount={memberPage?.totalCount ?? 0}
               timeZone={timeZone}
               totalCount={members.length}
             />
-            {isLoading && members.length === 0 ? (
+            {isLoadingMemberPage && !memberPage ? (
               <PoolListLoadingState label="正在加载供应商账号" />
             ) : (
-              <div className="grid gap-3 xl:grid-cols-2">
+              <div
+                className="grid gap-3 xl:grid-cols-2"
+                id="backend-member-list"
+                tabIndex={-1}
+              >
                 {filteredMembers.map((member) => (
                   <BackendMemberCard
                     groupNameById={groupNameById}
@@ -506,6 +721,31 @@ export function ImageBackendPoolAdminPanel({
                 ) : null}
               </div>
             )}
+            {memberPage ? (
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                  <span>共 {memberPage.totalCount} 条</span>
+                  <UrlPageSizeSelect
+                    itemSuffix=" 条/页"
+                    label="每页条数"
+                    options={memberPageSizeOptions}
+                    value={memberPage.pageSize}
+                  />
+                </div>
+                <UrlPaginationControls
+                  ariaLabel="供应商账号分页"
+                  currentPageLabelTemplate="第 {page} 页，当前页"
+                  focusTargetId="backend-member-list"
+                  names={ADMIN_POOL_MEMBER_PAGINATION_NAMES}
+                  nextLabel="下一页"
+                  page={memberPage.page}
+                  pageLabelTemplate="前往第 {page} 页"
+                  pageSelectLabel="选择页码"
+                  previousLabel="上一页"
+                  totalPages={memberPage.totalPages}
+                />
+              </div>
+            ) : null}
           </section>
         </TabsContent>
 
@@ -527,14 +767,18 @@ export function ImageBackendPoolAdminPanel({
             </div>
             <BackendGroupFilterBar
               name={groupNameFilter}
-              onChange={setGroupNameFilter}
-              resultCount={filteredGroups.length}
+              onChange={updateGroupNameFilter}
+              resultCount={groupPage?.totalCount ?? 0}
               totalCount={groups.length}
             />
-            {isLoading && groups.length === 0 ? (
+            {isLoadingGroupPage && !groupPage ? (
               <PoolListLoadingState label="正在加载账号池分组" />
             ) : (
-              <div className="overflow-hidden rounded-lg border bg-background">
+              <div
+                className="overflow-hidden rounded-lg border bg-background"
+                id="backend-group-list"
+                tabIndex={-1}
+              >
                 <BackendGroupList
                   allGroups={groups}
                   groups={filteredGroups}
@@ -550,6 +794,31 @@ export function ImageBackendPoolAdminPanel({
                 />
               </div>
             )}
+            {groupPage ? (
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                  <span>共 {groupPage.totalCount} 条</span>
+                  <UrlPageSizeSelect
+                    itemSuffix=" 条/页"
+                    label="每页条数"
+                    options={groupPageSizeOptions}
+                    value={groupPage.pageSize}
+                  />
+                </div>
+                <UrlPaginationControls
+                  ariaLabel="账号池分组分页"
+                  currentPageLabelTemplate="第 {page} 页，当前页"
+                  focusTargetId="backend-group-list"
+                  names={ADMIN_POOL_GROUP_PAGINATION_NAMES}
+                  nextLabel="下一页"
+                  page={groupPage.page}
+                  pageLabelTemplate="前往第 {page} 页"
+                  pageSelectLabel="选择页码"
+                  previousLabel="上一页"
+                  totalPages={groupPage.totalPages}
+                />
+              </div>
+            ) : null}
           </section>
         </TabsContent>
       </Tabs>
@@ -560,7 +829,7 @@ export function ImageBackendPoolAdminPanel({
         group={editingGroup}
         groups={groups}
         imageModelIds={imageModelIds}
-        onSaved={loadPool}
+        onSaved={reloadPoolSnapshots}
       />
       <BackendMemberFormDialog
         open={memberDialogOpen}
@@ -569,7 +838,7 @@ export function ImageBackendPoolAdminPanel({
         groups={groups}
         modelOptions={modelOptions}
         modelOptionStatus={modelOptionStatus}
-        onSaved={loadPool}
+        onSaved={reloadPoolSnapshots}
       />
     </div>
   );

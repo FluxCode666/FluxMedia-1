@@ -172,7 +172,11 @@ export function ModelConfigurationTable({
   }
 
   return (
-    <div className="overflow-x-auto border-t">
+    <div
+      id="model-configuration-list"
+      className="overflow-x-auto border-t"
+      tabIndex={-1}
+    >
       <table className="w-full min-w-[880px] table-fixed text-sm">
         <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
           <tr>

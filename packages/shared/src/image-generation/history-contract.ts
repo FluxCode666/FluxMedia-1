@@ -60,13 +60,43 @@ export const historyCursorFiltersSchema = z
     { message: "createdFrom must not be after createdTo", path: ["createdTo"] }
   );
 
+const historyPageSizeSchema = z.number().int().min(1).max(50);
+
+/**
+ * 为历史输入兼容旧 limit，同时统一输出 pageSize。
+ *
+ * @param input 已通过严格字段校验的分页输入。
+ * @returns pageSize 优先，旧调用方只传 limit 时平滑迁移；二者冲突会被拒绝。
+ */
+function resolveHistoryPaginationInput<
+  T extends {
+    cursor: string | null;
+    limit?: number | undefined;
+    page: number;
+    pageSize?: number | undefined;
+  },
+>(input: T): Omit<T, "limit"> & { pageSize: number } {
+  const { limit: _legacyLimit, ...safeInput } = input;
+  return { ...safeInput, pageSize: input.pageSize ?? input.limit ?? 20 };
+}
+
 /** 本人历史列表输入；userId 等只读身份字段会被 strict 拒绝。 */
 export const historyListInputSchema = historyCursorFiltersSchema
   .safeExtend({
     cursor: z.string().min(1).max(4096).nullable().default(null),
-    limit: z.number().int().min(1).max(50).default(20),
+    limit: z.number().int().min(1).max(50).optional(),
+    page: z.number().int().min(1).safe().default(1),
+    pageSize: historyPageSizeSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.limit === undefined ||
+      input.pageSize === undefined ||
+      input.limit === input.pageSize,
+    "limit 与 pageSize 必须一致"
+  )
+  .transform(resolveHistoryPaginationInput);
 
 /** 管理端 cursor 绑定的完整筛选，额外包含精确用户邮箱。 */
 export const adminHistoryCursorFiltersSchema = historyCursorFiltersSchema
@@ -79,9 +109,19 @@ export const adminHistoryCursorFiltersSchema = historyCursorFiltersSchema
 export const adminHistoryListInputSchema = adminHistoryCursorFiltersSchema
   .safeExtend({
     cursor: z.string().min(1).max(4096).nullable().default(null),
-    limit: z.number().int().min(1).max(50).default(20),
+    limit: z.number().int().min(1).max(50).optional(),
+    page: z.number().int().min(1).safe().default(1),
+    pageSize: historyPageSizeSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.limit === undefined ||
+      input.pageSize === undefined ||
+      input.limit === input.pageSize,
+    "limit 与 pageSize 必须一致"
+  )
+  .transform(resolveHistoryPaginationInput);
 
 /** 管理员按记录类型与 ID 按需读取真实请求快照，避免把大字段塞入列表。 */
 export const adminHistoryRequestSnapshotInputSchema = z
@@ -237,6 +277,9 @@ export const adminHistoryUserOptionSchema = z
 export const historyListOutputSchema = z
   .object({
     asOf: isoDateTimeSchema,
+    page: z.number().int().positive().safe(),
+    pageSize: historyPageSizeSchema,
+    totalCount: z.number().int().nonnegative().safe(),
     records: z.array(historyRecordSchema).max(50),
     modelOptions: z.array(z.string().min(1).max(240)).max(200),
     nextCursor: z.string().min(1).max(4096).nullable(),
@@ -248,6 +291,9 @@ export const historyListOutputSchema = z
 export const adminHistoryListOutputSchema = z
   .object({
     asOf: isoDateTimeSchema,
+    page: z.number().int().positive().safe(),
+    pageSize: historyPageSizeSchema,
+    totalCount: z.number().int().nonnegative().safe(),
     records: z.array(adminHistoryRecordSchema).max(50),
     modelOptions: z.array(z.string().min(1).max(240)).max(200),
     userOptions: z.array(adminHistoryUserOptionSchema).max(200),

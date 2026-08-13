@@ -12,11 +12,10 @@ import {
   session,
   user,
 } from "@repo/database/schema";
-import { and, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
-  ADMIN_MANAGEMENT_ROLES,
   APP_USER_ROLES,
   type AppUserRole,
   canActOnTargetRole,
@@ -46,8 +45,14 @@ import {
 } from "../../safe-action";
 import { buildSignedStorageImageUrl } from "../../storage/signed-url";
 import { invokeOperation, OperationError, type Principal } from "../../uol";
+import type {
+  AdminUserListInput,
+  AdminUserListOutput,
+} from "../admin-user-list-contract";
+import { adminUserListInputSchema } from "../admin-user-list-contract";
 import "../../uol/operations/moderation";
 import "../../uol/operations/media-limits";
+import "../../uol/operations/user-auth";
 import { randomUUID } from "node:crypto";
 // 密码哈希链路：与 bootstrap-super-admin.ts 完全一致，写入 account.password，禁止明文/自造哈希
 import { hashPassword } from "better-auth/crypto";
@@ -82,19 +87,6 @@ function assertCanActOnTarget(
     throw new Error(`无权对该账户执行${operation}：目标权限不低于操作者`);
   }
 }
-
-const userStatusSchema = z.enum(["all", "active", "banned", "unverified"]);
-const creditsStatusSchema = z.enum(["all", "active", "frozen"]);
-
-const listUsersSchema = z
-  .object({
-    query: z.string().trim().optional(),
-    page: z.number().int().min(1).default(1),
-    pageSize: z.number().int().min(10).max(100).default(20),
-    status: userStatusSchema.default("all"),
-    creditsStatus: creditsStatusSchema.default("all"),
-  })
-  .optional();
 
 const userIdSchema = z.object({
   userId: z.string().min(1, "用户ID不能为空"),
@@ -281,49 +273,8 @@ const setUserPasswordSchema = userIdSchema.extend({
   reason: reasonSchema,
 });
 
-type ListUsersInput = z.infer<typeof listUsersSchema>;
-
-function normalizeListInput(input: ListUsersInput) {
-  return {
-    query: input?.query?.trim() || "",
-    page: input?.page ?? 1,
-    pageSize: input?.pageSize ?? 20,
-    status: input?.status ?? "all",
-    creditsStatus: input?.creditsStatus ?? "all",
-  };
-}
-
 function normalizeAdminCreditAmount(amount: number) {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
-}
-
-function buildUserFilters(input: ReturnType<typeof normalizeListInput>) {
-  const filters = [];
-
-  if (input.query) {
-    const query = `%${input.query}%`;
-    filters.push(
-      or(
-        ilike(user.id, query),
-        ilike(user.name, query),
-        ilike(user.email, query)
-      )
-    );
-  }
-
-  if (input.status === "active") {
-    filters.push(eq(user.banned, false));
-  } else if (input.status === "banned") {
-    filters.push(eq(user.banned, true));
-  } else if (input.status === "unverified") {
-    filters.push(eq(user.emailVerified, false));
-  }
-
-  if (input.creditsStatus !== "all") {
-    filters.push(eq(creditsBalance.status, input.creditsStatus));
-  }
-
-  return filters.length > 0 ? and(...filters) : undefined;
 }
 
 function sanitizeSnapshot(value: unknown): Record<string, unknown> | undefined {
@@ -379,126 +330,14 @@ async function getUserBasicOrThrow(userId: string) {
 }
 
 export const getAllUsersAction = withAdminUsersAction("getAllUsers")
-  .schema(listUsersSchema)
-  .action(async ({ parsedInput }) => {
-    const input = normalizeListInput(parsedInput);
-    const where = buildUserFilters(input);
-    const offset = (input.page - 1) * input.pageSize;
-
-    const baseQuery = db
-      .select({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        image: user.image,
-        role: user.role,
-        banned: user.banned,
-        bannedReason: user.bannedReason,
-        emailVerified: user.emailVerified,
-        imageGenerationConcurrencyOverride:
-          user.imageGenerationConcurrencyOverride,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-        creditsBalance:
-          sql<number>`coalesce(${creditsBalance.balance}, 0)`.mapWith(Number),
-        creditsTotalEarned:
-          sql<number>`coalesce(${creditsBalance.totalEarned}, 0)`.mapWith(
-            Number
-          ),
-        creditsTotalSpent:
-          sql<number>`coalesce(${creditsBalance.totalSpent}, 0)`.mapWith(
-            Number
-          ),
-        creditsStatus: creditsBalance.status,
-      })
-      .from(user)
-      .leftJoin(creditsBalance, eq(creditsBalance.userId, user.id));
-
-    const countQuery = db
-      .select({ count: count() })
-      .from(user)
-      .leftJoin(creditsBalance, eq(creditsBalance.userId, user.id));
-
-    const [rows, totalResult, statsResults] = await Promise.all([
-      (where ? baseQuery.where(where) : baseQuery)
-        .orderBy(desc(user.createdAt))
-        .limit(input.pageSize)
-        .offset(offset),
-      where ? countQuery.where(where) : countQuery,
-      Promise.all([
-        db.select({ count: count() }).from(user),
-        db
-          .select({ count: count() })
-          .from(user)
-          .where(
-            inArray(user.role, ["observer_admin", ...ADMIN_MANAGEMENT_ROLES])
-          ),
-        db.select({ count: count() }).from(user).where(eq(user.banned, true)),
-      ]),
-    ]);
-
-    const userIds = rows.map((row) => row.id);
-    const [generationCounts, apiKeyCounts] =
-      userIds.length > 0
-        ? await Promise.all([
-            db
-              .select({
-                userId: generation.userId,
-                total: sql<number>`count(*)`.mapWith(Number),
-                failed:
-                  sql<number>`sum(case when ${generation.status} = 'failed' then 1 else 0 end)`.mapWith(
-                    Number
-                  ),
-              })
-              .from(generation)
-              .where(inArray(generation.userId, userIds))
-              .groupBy(generation.userId),
-            db
-              .select({
-                userId: externalApiKey.userId,
-                total: sql<number>`count(*)`.mapWith(Number),
-                active:
-                  sql<number>`sum(case when ${externalApiKey.isActive} then 1 else 0 end)`.mapWith(
-                    Number
-                  ),
-              })
-              .from(externalApiKey)
-              .where(inArray(externalApiKey.userId, userIds))
-              .groupBy(externalApiKey.userId),
-          ])
-        : [[], []];
-
-    const generationCountMap = new Map(
-      generationCounts.map((item) => [item.userId, item])
+  .schema(adminUserListInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const input: AdminUserListInput = parsedInput;
+    return invokeOperation<AdminUserListOutput>(
+      "user.list",
+      input,
+      createAdminUsersPrincipal({ userId: ctx.userId, role: ctx.role })
     );
-    const apiKeyCountMap = new Map(
-      apiKeyCounts.map((item) => [item.userId, item])
-    );
-
-    return {
-      users: rows.map((row) => {
-        const generationStats = generationCountMap.get(row.id);
-        const apiKeyStats = apiKeyCountMap.get(row.id);
-        return {
-          ...row,
-          creditsStatus: row.creditsStatus ?? "active",
-          generationCount: generationStats?.total ?? 0,
-          failedGenerationCount: generationStats?.failed ?? 0,
-          apiKeyCount: apiKeyStats?.total ?? 0,
-          activeApiKeyCount: apiKeyStats?.active ?? 0,
-        };
-      }),
-      pagination: {
-        page: input.page,
-        pageSize: input.pageSize,
-        total: totalResult[0]?.count ?? 0,
-      },
-      stats: {
-        totalUsers: statsResults[0][0]?.count ?? 0,
-        admins: statsResults[1][0]?.count ?? 0,
-        banned: statsResults[2][0]?.count ?? 0,
-      },
-    };
   });
 
 /**
