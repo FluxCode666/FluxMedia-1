@@ -94,6 +94,10 @@
 - API 供应商创建没有有效响应时不进入人工核对：每个账号按任务快照执行首次请求加配置的
   额外重试，耗尽后排除该账号并自动切号；最终失败后停止外呼并幂等退款。Adobe Direct
   继续使用既有受信 `pollUrl` 恢复，不套用 API 提交重试。
+- 升级前显式 API `submit_uncertain` 只由废弃兼容 Worker 认领：完整快照先补记历史首次
+  失败尝试再进入自动重试，不完整快照不得重提，只进入幂等退款并输出一次
+  `video_legacy_submission_snapshot_invalid`。Adobe 与协议缺失行永远排除；下版本仅在遗留
+  查询为零后移除兼容分支。
 - API 视频提交的现行四态、自动重试、容量等待、退款和稳定告警标识见
   [openai-video-api-recovery-plan.md](plans/2026-08-12-001-feat-openai-video-api-recovery-plan.md)
   与 [video-submission-recovery-log-events.md](video-submission-recovery-log-events.md)。

@@ -90,6 +90,14 @@ Adobe Direct 的既有轮询恢复不使用本契约的 API 提交事件。
 - **必要字段：** `videoTaskId`、最后一个 `supplierName`、`model`、`protocol`、`requestId`、`failureCode`。
 - **告警：** 立即高优先级告警，按供应商和失败码聚合。
 
+### `video_legacy_submission_snapshot_invalid`
+
+- **级别：** `error`
+- **触发：** 升级前显式 API `submit_uncertain` 任务缺少供应商账号、固定适配版本、模型能力、输入/输出存储或消费账本等不可变恢复事实，系统禁止重新提交并进入幂等退款。
+- **必要字段：** `videoTaskId`、历史安全 `supplierName`（缺失时为明确哨兵）、`model`、`protocol`、迁移专用 `requestId`、`failureCode`、`failureReason`、`operationsReason`。
+- **告警：** 立即高优先级通知管理员；同一任务仅成功 CAS 到 `refunding` 的 Worker 打印一次，退款恢复不得重复打印。
+- **移除条件：** 这是带 `@deprecated` 的升级兼容标识；下个版本只有在显式 API 遗留查询数量为零后才可移除。Adobe Direct 与协议字段缺失的任务不产生本事件。
+
 ### `video_refund_attempt_failed`
 
 - **级别：** `warn`
@@ -119,6 +127,12 @@ event == "video_submission_recovery_exhausted"
 ```
 
 立即通知管理员，标题包含 `supplierName`、`failureCode` 和 `videoTaskId`。
+
+```text
+event == "video_legacy_submission_snapshot_invalid"
+```
+
+立即通知管理员检查历史任务快照和幂等退款事实；按 `videoTaskId` 去重。显式 API 遗留行清零后删除该告警规则。
 
 ```text
 event == "video_refund_retry_exhausted"
