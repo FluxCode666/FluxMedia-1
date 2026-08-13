@@ -107,6 +107,7 @@ const dbMock = vi.hoisted(() => {
       callback({
         insert: vi.fn(() => makeInsertBuilder()),
         delete: vi.fn(() => deleteBuilder),
+        execute: vi.fn(async () => []),
       })
     ),
   };
@@ -197,6 +198,40 @@ describe("setSystemSettings", () => {
     expect(changed).toEqual(["NEXT_PUBLIC_APP_NAME"]);
     expect(store.has("NEXT_PUBLIC_APP_NAME")).toBe(false);
     expect(deletedKeys.value).toContain("NEXT_PUBLIC_APP_NAME");
+  });
+
+  it("存在运营导出任务时拒绝切换对象存储配置", async () => {
+    const execute = vi.fn(async (query: unknown) => {
+      if (query && typeof query === "object" && "strings" in query) {
+        const strings = (query as { strings: readonly string[] }).strings;
+        if (strings.some((value) => value.includes("from operations_export_task"))) {
+          return [{ exists: 1 }];
+        }
+      }
+      return [];
+    });
+    vi.mocked(dbMock.transaction).mockImplementationOnce(
+      async (callback: (tx: unknown) => Promise<void>) =>
+        callback({
+          insert: vi.fn(() => ({
+            values: vi.fn(() => ({
+              onConflictDoUpdate: vi.fn(),
+              onConflictDoNothing: vi.fn(),
+            })),
+          })),
+          delete: vi.fn(() => ({ where: vi.fn() })),
+          execute,
+        })
+    );
+
+    await expect(
+      setSystemSettings(
+        [{ key: "STORAGE_BUCKET_NAME", value: "new-exports" }],
+        "admin"
+      )
+    ).rejects.toThrow("存在未完成或尚未清理的运营导出任务");
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(store.has("STORAGE_BUCKET_NAME")).toBe(false);
   });
 
   it("upsert always stamps isSecret from definition not input", async () => {

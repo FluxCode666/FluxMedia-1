@@ -347,6 +347,11 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
       try {
         return await db.transaction(
           async (transaction) => {
+            // 与 system-settings 的存储配置更新共用同一事务锁，避免“配置检查无任务”
+            // 与导出任务插入交错，导致任务引用已经切换的 provider。
+            await transaction.execute(
+              sql`select pg_advisory_xact_lock(hashtext('operations-export:storage-config'))`
+            );
             // WHY：全局锁保证不同管理员并发创建时也不会越过全局 active 上限；
             // 所有事务再按同一顺序获取管理员锁，避免锁顺序反转。
             await transaction.execute(
