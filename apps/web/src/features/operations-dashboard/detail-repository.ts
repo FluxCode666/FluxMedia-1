@@ -885,7 +885,11 @@ export function createOperationsGrowthDetailRepository(
     ): Promise<T> {
       return database.transaction(
         async (transaction) =>
-          work(createOperationsGrowthDetailSnapshotReader(transaction.execute)),
+          work(
+            createOperationsGrowthDetailSnapshotReader(
+              transaction.execute.bind(transaction)
+            )
+          ),
         { isolationLevel: "repeatable read", accessMode: "read only" }
       );
     },

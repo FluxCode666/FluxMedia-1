@@ -314,7 +314,11 @@ export function createOperationsCommercialRepository(
     ): Promise<T> {
       return database.transaction(
         async (transaction) =>
-          work(createOperationsCommercialSnapshotReader(transaction.execute)),
+          work(
+            createOperationsCommercialSnapshotReader(
+              transaction.execute.bind(transaction)
+            )
+          ),
         { isolationLevel: "repeatable read", accessMode: "read only" }
       );
     },

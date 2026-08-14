@@ -98,20 +98,26 @@ describe("operations content repository SQL", () => {
   });
 
   it("整个内容读取使用唯一只读 repeatable-read 事务", async () => {
-    const execute = vi.fn().mockResolvedValue({
-      rows: [
-        {
-          as_of: new Date(),
-          app_date: null,
-          starts_at: null,
-          output_version: null,
-          output_status: null,
-          credit_version: null,
-          credit_status: null,
-        },
-      ],
-    });
-    const transaction = vi.fn(async (work) => work({ execute }));
+    const connection = {
+      marker: "content-transaction",
+      execute: vi.fn(async function (this: { marker: string }) {
+        expect(this.marker).toBe("content-transaction");
+        return {
+          rows: [
+            {
+              as_of: new Date(),
+              app_date: null,
+              starts_at: null,
+              output_version: null,
+              output_status: null,
+              credit_version: null,
+              credit_status: null,
+            },
+          ],
+        };
+      }),
+    };
+    const transaction = vi.fn(async (work) => work(connection));
     const repository = createOperationsContentRepository({ transaction });
 
     await repository.withReadOnlySnapshot((reader) => reader.readHeader());
@@ -121,6 +127,6 @@ describe("operations content repository SQL", () => {
       isolationLevel: "repeatable read",
       accessMode: "read only",
     });
-    expect(execute).toHaveBeenCalledOnce();
+    expect(connection.execute).toHaveBeenCalledOnce();
   });
 });

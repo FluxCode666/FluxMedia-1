@@ -230,17 +230,23 @@ describe("operations growth detail repository SQL", () => {
   });
 
   it("明细头与行读取共享单一只读 repeatable-read 事务", async () => {
-    const execute = async () => ({
-      rows: [
-        {
-          as_of: "2026-08-08T00:00:00.000Z",
-          app_date: "2026-08-01",
-          starts_at: "2026-08-01T00:00:00.000Z",
-        },
-      ],
-    });
+    const connection = {
+      marker: "detail-transaction",
+      async execute(this: { marker: string }) {
+        expect(this.marker).toBe("detail-transaction");
+        return {
+          rows: [
+            {
+              as_of: "2026-08-08T00:00:00.000Z",
+              app_date: "2026-08-01",
+              starts_at: "2026-08-01T00:00:00.000Z",
+            },
+          ],
+        };
+      },
+    };
     const transaction = async <T>(
-      work: (transaction: { execute: typeof execute }) => Promise<T>,
+      work: (transaction: { execute: typeof connection.execute }) => Promise<T>,
       config: {
         isolationLevel: "repeatable read";
         accessMode: "read only";
@@ -250,7 +256,7 @@ describe("operations growth detail repository SQL", () => {
         isolationLevel: "repeatable read",
         accessMode: "read only",
       });
-      return work({ execute });
+      return work(connection);
     };
     const repository = createOperationsGrowthDetailRepository({ transaction });
 

@@ -137,10 +137,13 @@ export function createOperationsDashboardService(dependencies: {
     async getOverview(input, timeZone) {
       return dependencies.database.transaction(
         async (transaction) => {
-          const growthReader = factories.growth(transaction.execute);
-          const commercialReader = factories.commercial(transaction.execute);
-          const contentReader = factories.content(transaction.execute);
-          const healthReader = factories.health(transaction.execute);
+          // Drizzle execute 依赖事务实例上的 dialect；裸传方法会在真实 PostgreSQL
+          // 丢失 this，所有 reader 必须共享同一个显式绑定的执行函数。
+          const execute = transaction.execute.bind(transaction);
+          const growthReader = factories.growth(execute);
+          const commercialReader = factories.commercial(execute);
+          const contentReader = factories.content(execute);
+          const healthReader = factories.health(execute);
           const sharedHeader = await contentReader.readHeader();
           if (!sharedHeader.epoch) {
             throw new OperationsDashboardServiceError(

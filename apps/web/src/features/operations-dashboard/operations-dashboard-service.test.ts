@@ -4,7 +4,7 @@
  * 验证增长、商业化、内容与系统健康使用单个只读
  * repeatable-read 事务、单次 header 及同一生成时刻。
  */
-import type { SQL } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OperationsContentSnapshotHeader } from "./content-repository";
@@ -16,9 +16,19 @@ import {
 
 /** 生成一个支持 execute 的最小事务替身。 */
 function createDatabase() {
-  const execute = vi.fn(async (_query: SQL) => ({ rows: [] }));
-  const transaction = vi.fn(async (work) => work({ execute }));
-  return { execute, transaction, database: { transaction } };
+  const connection = {
+    marker: "dashboard-transaction",
+    execute: vi.fn(async function (this: { marker: string }, _query: SQL) {
+      expect(this.marker).toBe("dashboard-transaction");
+      return { rows: [] };
+    }),
+  };
+  const transaction = vi.fn(async (work) => work(connection));
+  return {
+    execute: connection.execute,
+    transaction,
+    database: { transaction },
+  };
 }
 
 /** 创建顶层测试不会真正调用的完整 reader 替身。 */
@@ -42,7 +52,13 @@ function createFactories(
       readPayingUserCount: vi.fn(),
       readActivityUserCount: vi.fn(),
     })),
-    content: vi.fn(() => ({ readHeader, readSeries: vi.fn() })),
+    content: vi.fn((execute) => ({
+      async readHeader() {
+        await execute(sql`select 1`);
+        return readHeader();
+      },
+      readSeries: vi.fn(),
+    })),
     health: vi.fn(() => ({
       readTaskHealth: vi.fn(),
       readFulfillmentFailures: vi.fn(),

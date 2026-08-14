@@ -510,7 +510,11 @@ export function createOperationsGrowthRepository(
     ): Promise<T> {
       return database.transaction(
         async (transaction) =>
-          work(createOperationsGrowthSnapshotReader(transaction.execute)),
+          work(
+            createOperationsGrowthSnapshotReader(
+              transaction.execute.bind(transaction)
+            )
+          ),
         { isolationLevel: "repeatable read", accessMode: "read only" }
       );
     },

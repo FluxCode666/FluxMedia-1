@@ -304,7 +304,11 @@ export function createOperationsContentRepository(
     ): Promise<T> {
       return database.transaction(
         async (transaction) =>
-          work(createOperationsContentSnapshotReader(transaction.execute)),
+          work(
+            createOperationsContentSnapshotReader(
+              transaction.execute.bind(transaction)
+            )
+          ),
         { isolationLevel: "repeatable read", accessMode: "read only" }
       );
     },

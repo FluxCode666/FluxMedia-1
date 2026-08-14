@@ -122,10 +122,16 @@ describe("operations growth repository SQL", () => {
   });
 
   it("整个增长读取使用唯一只读 repeatable-read 事务", async () => {
-    const execute = vi.fn().mockResolvedValue({
-      rows: [{ as_of: new Date(), app_date: null, starts_at: null }],
-    });
-    const transaction = vi.fn(async (work) => work({ execute }));
+    const connection = {
+      marker: "growth-transaction",
+      execute: vi.fn(async function (this: { marker: string }) {
+        expect(this.marker).toBe("growth-transaction");
+        return {
+          rows: [{ as_of: new Date(), app_date: null, starts_at: null }],
+        };
+      }),
+    };
+    const transaction = vi.fn(async (work) => work(connection));
     const repository = createOperationsGrowthRepository({ transaction });
 
     await repository.withReadOnlySnapshot((reader) => reader.readHeader());
@@ -135,6 +141,6 @@ describe("operations growth repository SQL", () => {
       isolationLevel: "repeatable read",
       accessMode: "read only",
     });
-    expect(execute).toHaveBeenCalledOnce();
+    expect(connection.execute).toHaveBeenCalledOnce();
   });
 });

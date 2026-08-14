@@ -65,10 +65,16 @@ describe("operations commercial repository SQL", () => {
   });
 
   it("整个商业化读取使用唯一只读 repeatable-read 事务", async () => {
-    const execute = vi.fn().mockResolvedValue({
-      rows: [{ as_of: new Date(), app_date: null, starts_at: null }],
-    });
-    const transaction = vi.fn(async (work) => work({ execute }));
+    const connection = {
+      marker: "commercial-transaction",
+      execute: vi.fn(async function (this: { marker: string }) {
+        expect(this.marker).toBe("commercial-transaction");
+        return {
+          rows: [{ as_of: new Date(), app_date: null, starts_at: null }],
+        };
+      }),
+    };
+    const transaction = vi.fn(async (work) => work(connection));
     const repository = createOperationsCommercialRepository({ transaction });
 
     await repository.withReadOnlySnapshot((reader) => reader.readHeader());
@@ -78,6 +84,6 @@ describe("operations commercial repository SQL", () => {
       isolationLevel: "repeatable read",
       accessMode: "read only",
     });
-    expect(execute).toHaveBeenCalledOnce();
+    expect(connection.execute).toHaveBeenCalledOnce();
   });
 });
