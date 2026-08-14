@@ -6,70 +6,33 @@
  * 媒体链接、支付 provider payload 等核对范围外字段。
  */
 
-import { amountMinorToMajor } from "@repo/shared/credits/top-up";
 import type { OperationsGetDetailInput } from "@repo/shared/operations-dashboard/contracts";
 import {
   type OperationsDetailOutput,
   operationsDetailOutputSchema,
 } from "@repo/shared/operations-dashboard/output-contracts";
-import { z } from "zod";
+
+import { formatPaymentAmount } from "@/features/payment/admin/admin-payment-format";
 
 /** Sheet 只需要明细查询中的封闭 selection。 */
 export type OperationsDetailSelection = OperationsGetDetailInput["selection"];
 
-const growthRowSchema = z
-  .object({
-    userId: z.string().min(1),
-    name: z.string(),
-    email: z.string().email(),
-    role: z.string().min(1),
-    banned: z.boolean(),
-    businessTime: z.string().datetime({ offset: true }),
-    retained: z.boolean().nullable(),
-  })
-  .strict();
-
-const commercialRowSchema = z
-  .object({
-    paymentOrderId: z.string().min(1),
-    providerTradeNo: z.string().nullable(),
-    userId: z.string().min(1),
-    currency: z.string().regex(/^[A-Z]{3}$/),
-    amountMinor: z.number().int().nonnegative().safe(),
-    orderStatus: z.string().min(1),
-    createdAt: z.string().datetime({ offset: true }),
-    fulfilledAt: z.string().datetime({ offset: true }).nullable(),
-    businessTime: z.string().datetime({ offset: true }),
-    eventType: z.string().nullable(),
-  })
-  .strict();
-
-const contentRowSchema = z
-  .object({
-    taskId: z.string().min(1),
-    userId: z.string().min(1),
-    model: z.string().min(1),
-    mediaType: z.enum(["image", "video"]),
-    businessTime: z.string().datetime({ offset: true }),
-    status: z.literal("completed"),
-    quantity: z.number().int().positive().safe(),
-    videoSeconds: z.number().int().nonnegative().safe(),
-    netCredits: z.number().finite(),
-  })
-  .strict();
-
-export type OperationsGrowthDetailRow = z.infer<typeof growthRowSchema>;
-export type OperationsCommercialDetailRow = z.infer<typeof commercialRowSchema>;
-export type OperationsContentDetailRow = z.infer<typeof contentRowSchema>;
-export type OperationsDetailSheetRow =
-  | OperationsGrowthDetailRow
-  | OperationsCommercialDetailRow
-  | OperationsContentDetailRow;
+export type OperationsDetailSheetRow = OperationsDetailOutput["rows"][number];
+export type OperationsGrowthDetailRow = Extract<
+  OperationsDetailSheetRow,
+  { retained: boolean | null }
+>;
+export type OperationsCommercialDetailRow = Extract<
+  OperationsDetailSheetRow,
+  { paymentOrderId: string }
+>;
+export type OperationsContentDetailRow = Extract<
+  OperationsDetailSheetRow,
+  { taskId: string }
+>;
 
 /** 经 selection 校验后的单页数据，供 Sheet 累加而不保留 unknown 行。 */
-export type OperationsDetailPage = Omit<OperationsDetailOutput, "rows"> & {
-  rows: OperationsDetailSheetRow[];
-};
+export type OperationsDetailPage = OperationsDetailOutput;
 
 export type OperationsDetailColumn = {
   key: string;
@@ -164,22 +127,6 @@ function isSameSelection(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-/** 按 selection 选择严格行 schema，拒绝任何额外或跨模块字段。 */
-function parseRowsForSelection(
-  selection: OperationsDetailSelection,
-  rows: Record<string, unknown>[]
-): OperationsDetailSheetRow[] {
-  const schema =
-    selection.module === "growth"
-      ? growthRowSchema
-      : selection.module === "commercialization"
-        ? commercialRowSchema
-        : contentRowSchema;
-  const parsed = z.array(schema).safeParse(rows);
-  if (!parsed.success) throw new Error("运营明细记录无效");
-  return parsed.data;
-}
-
 /**
  * 校验 UOL 明细页及其 selection 绑定。
  *
@@ -197,14 +144,15 @@ export function parseOperationsDetailPage(
   if (!isSameSelection(result.data.selection, expectedSelection)) {
     throw new Error("运营明细选择不一致");
   }
-  return {
-    ...result.data,
-    rows: parseRowsForSelection(result.data.selection, result.data.rows),
-  };
+  return result.data;
 }
 
 /** 将 ISO 业务时间格式化到服务端回显的应用时区。 */
-function formatDateTime(value: string, locale: string, timeZone: string) {
+function formatDateTime(
+  value: string | Date,
+  locale: string,
+  timeZone: string
+) {
   return new Intl.DateTimeFormat(locale, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -218,24 +166,6 @@ function resolveTimeZone(range: Record<string, unknown>): string {
   return typeof range.timeZone === "string" && range.timeZone.length > 0
     ? range.timeZone
     : "UTC";
-}
-
-/** 本地化最小货币单位；未知币种仍保留原币种和精确主单位。 */
-function formatAmount(
-  amountMinor: number,
-  currency: string,
-  locale: string
-): string {
-  const amount = amountMinorToMajor(amountMinor, currency);
-  try {
-    return new Intl.NumberFormat(locale, {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 3,
-    }).format(amount);
-  } catch {
-    return `${currency} ${amount.toLocaleString(locale)}`;
-  }
 }
 
 /** 使用本地化角色映射；未知角色保留数据库原值，便于管理员核对异常数据。 */
@@ -350,7 +280,7 @@ function buildCommercialTableModel(
         row.paymentOrderId,
         row.providerTradeNo ?? labels.values.emptyValue,
         row.userId,
-        formatAmount(row.amountMinor, row.currency, locale),
+        formatPaymentAmount(row.amountMinor, row.currency, locale),
         labels.orderStatus[row.orderStatus] ?? row.orderStatus,
         ...(isLifecycle
           ? [

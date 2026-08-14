@@ -65,7 +65,6 @@ describe("operations detail sheet state", () => {
     );
 
     expect(state).toMatchObject({
-      query,
       selection: usersSelection,
       rows: [],
       nextCursor: null,

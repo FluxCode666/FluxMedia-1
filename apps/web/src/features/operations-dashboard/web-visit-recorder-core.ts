@@ -4,6 +4,7 @@
  * 使用方：客户端可见性监听器与 Vitest。这里只决定何时发起请求，最终日期仍由服务端
  * APP_TIME_ZONE 和服务器时钟派生，客户端值不能进入事实写入。
  */
+import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
 
 /**
  * 格式化浏览器当前瞬间在应用时区中的自然日。
@@ -13,16 +14,7 @@
  * @returns YYYY-MM-DD 自然日标签；无副作用。
  */
 export function formatClientAppDate(now: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(now);
-  const year = parts.find((part) => part.type === "year")?.value ?? "";
-  const month = parts.find((part) => part.type === "month")?.value ?? "";
-  const day = parts.find((part) => part.type === "day")?.value ?? "";
-  return `${year}-${month}-${day}`;
+  return formatDateInputInTimeZone(now, timeZone);
 }
 
 /**

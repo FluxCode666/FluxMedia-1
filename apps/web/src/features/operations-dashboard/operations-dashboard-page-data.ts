@@ -18,14 +18,13 @@ import {
 
 import { ensureUolInitialized } from "@/server/uol-init";
 
+import {
+  mapOperationsActionError,
+  type OperationsDashboardActionFailure,
+} from "./action-result";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 
-export type OperationsDashboardLoadFailure =
-  | "validation_error"
-  | "not_ready"
-  | "rate_limited"
-  | "timeout"
-  | "unavailable";
+export type OperationsDashboardLoadFailure = OperationsDashboardActionFailure;
 
 export type OperationsDashboardPageData = {
   overview: OperationsDashboardOverview | null;
@@ -77,20 +76,6 @@ const defaultDependencies: OperationsDashboardPageDataDependencies = {
   listExports: listExportsThroughUol,
 };
 
-/** 将内部 operation 异常映射为不泄露 SQL、身份或存储信息的页面状态。 */
-function mapPageLoadError(error: unknown): OperationsDashboardLoadFailure {
-  if (!(error instanceof OperationError)) return "unavailable";
-  switch (error.code) {
-    case "validation_error":
-    case "not_ready":
-    case "rate_limited":
-    case "timeout":
-      return error.code;
-    default:
-      return "unavailable";
-  }
-}
-
 /**
  * 从 UOL 并行读取 overview 与导出记录。
  *
@@ -118,8 +103,8 @@ export async function loadOperationsDashboardPageData(
       overview: null,
       exports: [],
       exportsNextCursor: null,
-      loadError: mapPageLoadError(error),
-      exportsLoadError: mapPageLoadError(error),
+      loadError: mapOperationsActionError(error),
+      exportsLoadError: mapOperationsActionError(error),
     };
   }
 
@@ -144,11 +129,11 @@ export async function loadOperationsDashboardPageData(
         : null,
     loadError:
       overviewResult.status === "rejected"
-        ? mapPageLoadError(overviewResult.reason)
+        ? mapOperationsActionError(overviewResult.reason)
         : null,
     exportsLoadError:
       exportsResult.status === "rejected"
-        ? mapPageLoadError(exportsResult.reason)
+        ? mapOperationsActionError(exportsResult.reason)
         : null,
   };
 }

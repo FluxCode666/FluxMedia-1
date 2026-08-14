@@ -16,6 +16,8 @@ import {
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { extractExecuteRows } from "@/server/database-result";
+
 const providerSchema = z.enum(["alipay_f2f", "creem", "epay"]);
 const orderPurposeSchema = z.enum(["credit_top_up", "credit_package"]);
 const paymentOrderRowSchema = z.object({
@@ -115,10 +117,7 @@ export function createPaymentExpirationRecorder(
         ) do nothing
         returning id
       `);
-      const rows = Array.isArray(result)
-        ? result
-        : ((result as { rows?: unknown[] } | undefined)?.rows ?? []);
-      return rows.length;
+      return extractExecuteRows(result).length;
     });
 }
 
@@ -213,10 +212,7 @@ export function createCreemAmountMismatchRecorder(
         )
         SELECT id FROM updated_order
       `);
-      const rows = Array.isArray(result)
-        ? result
-        : ((result as { rows?: unknown[] } | undefined)?.rows ?? []);
-      return rows.length > 0;
+      return extractExecuteRows(result).length > 0;
     });
 }
 

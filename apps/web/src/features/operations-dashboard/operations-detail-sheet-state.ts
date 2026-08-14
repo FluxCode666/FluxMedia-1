@@ -27,7 +27,6 @@ export type OperationsDetailContext = {
 
 export type OperationsDetailSheetState = {
   contextKey: string | null;
-  query: OperationsDashboardQueryInput | null;
   selection: OperationsDetailSelection | null;
   range: OperationsDetailPage["range"] | null;
   rows: OperationsDetailSheetRow[];
@@ -40,7 +39,6 @@ export type OperationsDetailSheetState = {
 export function createOperationsDetailState(): OperationsDetailSheetState {
   return {
     contextKey: null,
-    query: null,
     selection: null,
     range: null,
     rows: [],
@@ -102,14 +100,12 @@ export function beginOperationsDetailRequest(
     ? {
         ...state,
         contextKey,
-        query,
         selection,
         status: "loading_more",
         error: null,
       }
     : {
         contextKey,
-        query,
         selection,
         range: null,
         rows: [],
