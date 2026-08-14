@@ -1,12 +1,18 @@
 /**
  * Creem webhook 薄适配器。
  *
- * 使用方：Creem 已验签 Checkout 通知。积分包履约只读取本地 payment_order 冻结快照，
- * 运行时积分包配置和客户端 metadata 均不参与金额、币种或积分数量裁决。
+ * 使用方：Creem 已验签 Checkout 通知。新版积分包履约只读取 payment_order 冻结快照；
+ * 升级前没有本地订单 ID 的历史通知按服务端套餐配置兼容履约。
  */
 import { db } from "@repo/database";
 import { paymentOrder, user } from "@repo/database/schema";
 import { withApiLogging } from "@repo/shared/api-logger";
+import { CREDIT_CONFIG_DEFAULTS } from "@repo/shared/credits/config";
+import { grantCredits } from "@repo/shared/credits/core";
+import {
+  getCreditPackageCurrency,
+  getRuntimeCreditPackageById,
+} from "@repo/shared/credits/packages";
 import { getCurrencyMinorUnitExponent } from "@repo/shared/credits/top-up";
 import { logError, logEvent, logger } from "@repo/shared/logger";
 import {
@@ -18,6 +24,7 @@ import {
   evaluateCreemAmountMatch,
   shouldGrantAfterAmountCheck,
 } from "@repo/shared/payment/creem-amount";
+import { getRuntimeSettingNumber } from "@repo/shared/system-settings";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -27,6 +34,7 @@ import {
   confirmPaymentAndCreateFulfillmentWorkItem,
   rejectCreemPaymentAmountMismatch,
 } from "@/features/payment/payment-lifecycle-service";
+import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
 
 const creditPackagePricingSnapshotSchema = z
   .object({
@@ -108,6 +116,18 @@ function shouldGrantWithLogging(
   }
 
   return decision.grant;
+}
+
+/** 按当前运营配置计算历史积分包的到期时间；零天表示永久有效。 */
+async function getLegacyCreditPackExpiresAt(): Promise<Date | null> {
+  const expiryDays = await getRuntimeSettingNumber(
+    "CREDITS_EXPIRY_DAYS",
+    CREDIT_CONFIG_DEFAULTS.creditsExpiryDays,
+    { nonNegative: true }
+  );
+  return expiryDays > 0
+    ? new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000)
+    : null;
 }
 
 /** 将已验签 Creem 事件时间转换为可落库时间，无效值才降级到接收时间。 */
@@ -226,6 +246,104 @@ function logIgnoredCreemEvent(event: CreemWebhookEvent, requestId?: string) {
 // ============================================
 
 /**
+ * 兼容升级前没有本地支付订单 ID 的 Creem 积分包通知。
+ *
+ * @param userId 已验签 metadata 中的购买用户。
+ * @param data 已验签的 Checkout 完成数据。
+ * @param creemOrderId Creem 订单 ID；同时作为积分与首充奖励的稳定幂等身份。
+ * @returns 无返回值；缺少或找不到服务端套餐时记录错误并停止履约。
+ * @sideeffect 按当前服务端套餐发放积分，并调用 Creem 首充奖励 operation。
+ * @failure 发放或首充履约失败时上抛，由外层返回 5xx 触发 Creem 重投。
+ *
+ * WHY：旧 Checkout 没有 payment_order，无法使用冻结快照工作项。这里保留旧
+ * `credit_purchase:${creemOrderId}` 幂等键，并直接依赖 grantCredits 的数据库唯一
+ * 约束收敛并发与重放；首充 operation 同样复用 Creem 订单 ID 保持历史语义。
+ */
+async function handleLegacyCreditPurchase(
+  userId: string,
+  data: CreemCheckoutCompletedData,
+  creemOrderId: string
+) {
+  const packageId = data.metadata?.packageId;
+  if (!packageId) {
+    logger.error(
+      { source: "creem-webhook", userId, creemOrderId },
+      "Missing packageId in legacy credit_purchase metadata"
+    );
+    return;
+  }
+
+  const pkg = await getRuntimeCreditPackageById(packageId, {
+    includeHidden: true,
+  });
+  if (!pkg) {
+    logger.error(
+      { source: "creem-webhook", packageId, userId },
+      "Unknown legacy credit package ID"
+    );
+    return;
+  }
+
+  const quantity = 1;
+  const creditsAmount = pkg.credits * quantity;
+  const unitPrice = pkg.price;
+  const amountMatch = evaluateCreemAmountMatch(
+    {
+      amount: unitPrice * quantity,
+      currency: getCreditPackageCurrency(pkg),
+    },
+    {
+      amount: data.order?.amount ?? Number.NaN,
+      currency: data.order?.currency ?? "",
+    }
+  );
+  if (
+    !shouldGrantWithLogging(amountMatch, {
+      stage: "legacy-credit-purchase",
+      userId,
+      packageId,
+      orderId: creemOrderId,
+    })
+  ) {
+    return;
+  }
+
+  const sourceRef = `credit_purchase:${creemOrderId}`;
+  const result = await grantCredits({
+    userId,
+    amount: creditsAmount,
+    sourceType: "purchase",
+    debitAccount: `PAYMENT:${creemOrderId}`,
+    transactionType: "purchase",
+    expiresAt: await getLegacyCreditPackExpiresAt(),
+    sourceRef,
+    description: `Credit pack purchase: ${creditsAmount} credits (${packageId})`,
+    metadata: {
+      provider: "creem",
+      orderId: creemOrderId,
+      packageId,
+      checkoutId: data.id,
+      paymentType: "one-time",
+      quantity,
+      unitCredits: pkg.credits,
+      unitPrice,
+      paidMoney: unitPrice * quantity,
+    },
+  });
+
+  logger.info(
+    { userId, creditsAmount, packageId, quantity, batchId: result.batchId },
+    "Credits granted for legacy credit pack purchase"
+  );
+  await invokeReferralFirstPayment({
+    orderId: creemOrderId,
+    inviteeUserId: userId,
+    firstPaymentCredits: creditsAmount,
+    provider: "creem",
+  });
+}
+
+/**
  * 处理 Checkout 完成事件
  *
  * 当用户完成一次性积分购买后发放积分。
@@ -273,8 +391,8 @@ async function handleCheckoutCompleted(
  * @param userId webhook metadata 声明的用户，只用于与本地订单归属交叉校验。
  * @param data 已验签且通过运行时结构校验的 Checkout 完成数据。
  * @returns 无返回值；首次或重放确认会触发持久履约 worker。
- * @sideeffect 读取本地订单，创建支付确认和工作项，必要时触发积分履约。
- * @failure 缺订单、归属不匹配或冻结快照内部不一致时 fail closed。
+ * @sideeffect 新订单创建支付确认和工作项；历史订单直接执行兼容履约。
+ * @failure 本地订单归属不匹配、冻结快照不一致或履约失败时 fail closed。
  */
 async function handleCreditPurchase(
   userId: string,
@@ -285,7 +403,8 @@ async function handleCreditPurchase(
   const creemOrderId = data.order?.id ?? data.id;
   const paymentOrderId = data.metadata?.paymentOrderId;
   if (!paymentOrderId) {
-    throw new Error("Creem 积分包通知缺少本地支付订单 ID");
+    await handleLegacyCreditPurchase(userId, data, creemOrderId);
+    return;
   }
 
   const [rawOrder] = await db

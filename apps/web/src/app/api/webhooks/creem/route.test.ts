@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   rejectAmountMismatch: vi.fn(),
   processFulfillment: vi.fn(),
   getRuntimeCreditPackageById: vi.fn(),
+  getCreditPackageCurrency: vi.fn(),
+  getRuntimeSettingNumber: vi.fn(),
+  invokeReferralFirstPayment: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({ headers: mocks.headers }));
@@ -72,11 +75,17 @@ vi.mock("@/features/payment/payment-fulfillment-service", () => ({
   processPaymentFulfillmentOrder: mocks.processFulfillment,
 }));
 vi.mock("@repo/shared/credits/packages", () => ({
-  getCreditPackageCurrency: vi.fn(),
+  getCreditPackageCurrency: mocks.getCreditPackageCurrency,
   getRuntimeCreditPackageById: mocks.getRuntimeCreditPackageById,
 }));
+vi.mock("@repo/shared/credits/core", () => ({
+  grantCredits: mocks.grantCredits,
+}));
 vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingNumber: vi.fn(),
+  getRuntimeSettingNumber: mocks.getRuntimeSettingNumber,
+}));
+vi.mock("@/features/referrals/reward-fulfillment", () => ({
+  invokeReferralFirstPayment: mocks.invokeReferralFirstPayment,
 }));
 
 import { POST } from "./route";
@@ -141,6 +150,17 @@ function creditPurchaseEvent(): CreemWebhookEvent {
   };
 }
 
+/** 构造一条升级前创建、没有本地支付订单 ID 的 Creem 积分包通知。 */
+function legacyCreditPurchaseEvent(): CreemWebhookEvent {
+  const event = creditPurchaseEvent();
+  if (event.eventType === "checkout.completed") {
+    const checkout = event.object as CreemCheckoutCompletedData;
+    delete checkout.metadata?.paymentOrderId;
+    if (checkout.metadata) checkout.metadata.packageId = "package-legacy";
+  }
+  return event;
+}
+
 /** 把 db.select 链配置为返回订单创建时冻结的旧报价。 */
 function mockFrozenPaymentOrder(input: { legacy?: boolean } = {}) {
   const pricingSnapshot: Record<string, unknown> = {
@@ -183,6 +203,9 @@ describe("POST /api/webhooks/creem", () => {
     mocks.rejectAmountMismatch.mockReset();
     mocks.processFulfillment.mockReset();
     mocks.getRuntimeCreditPackageById.mockReset();
+    mocks.getCreditPackageCurrency.mockReset();
+    mocks.getRuntimeSettingNumber.mockReset();
+    mocks.invokeReferralFirstPayment.mockReset();
     mocks.headers.mockResolvedValue({ get: () => "valid-signature" });
     mocks.dbUpdate.mockReturnValue({
       set: () => ({ where: vi.fn().mockResolvedValue(undefined) }),
@@ -302,6 +325,75 @@ describe("POST /api/webhooks/creem", () => {
       })
     );
     expect(mocks.processFulfillment).toHaveBeenCalledWith("order-1");
+  });
+
+  it("已验签的历史积分购买通知重放时沿用旧幂等键和首充履约路径", async () => {
+    mocks.constructRuntimeCreemEvent.mockResolvedValue(
+      legacyCreditPurchaseEvent()
+    );
+    mocks.getRuntimeCreditPackageById.mockResolvedValue({
+      id: "package-legacy",
+      name: "Legacy package",
+      description: "",
+      credits: 250,
+      price: 19.99,
+      currency: "USD",
+      maxQuantity: 1,
+    });
+    mocks.getCreditPackageCurrency.mockReturnValue("USD");
+    mocks.getRuntimeSettingNumber.mockResolvedValue(0);
+    mocks.grantCredits.mockResolvedValue({ batchId: "batch-legacy" });
+    mocks.invokeReferralFirstPayment.mockResolvedValue(undefined);
+
+    const firstResponse = await POST(request("signed-payload"));
+    const replayResponse = await POST(request("signed-payload"));
+
+    expect(firstResponse.status).toBe(200);
+    expect(replayResponse.status).toBe(200);
+    expect(mocks.dbSelect).not.toHaveBeenCalled();
+    expect(mocks.confirmPayment).not.toHaveBeenCalled();
+    expect(mocks.processFulfillment).not.toHaveBeenCalled();
+    expect(mocks.getRuntimeCreditPackageById).toHaveBeenCalledTimes(2);
+    expect(mocks.getRuntimeCreditPackageById).toHaveBeenCalledWith(
+      "package-legacy",
+      { includeHidden: true }
+    );
+    expect(mocks.grantCredits).toHaveBeenCalledTimes(2);
+    expect(mocks.grantCredits).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        userId: "user-1",
+        amount: 250,
+        sourceType: "purchase",
+        transactionType: "purchase",
+        expiresAt: null,
+        sourceRef: "credit_purchase:creem-order-1",
+      })
+    );
+    expect(mocks.grantCredits).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        sourceRef: "credit_purchase:creem-order-1",
+      })
+    );
+    expect(mocks.invokeReferralFirstPayment).toHaveBeenCalledTimes(2);
+    expect(mocks.getRuntimeSettingNumber).toHaveBeenCalledWith(
+      "CREDITS_EXPIRY_DAYS",
+      expect.any(Number),
+      { nonNegative: true }
+    );
+    expect(mocks.invokeReferralFirstPayment).toHaveBeenNthCalledWith(1, {
+      orderId: "creem-order-1",
+      inviteeUserId: "user-1",
+      firstPaymentCredits: 250,
+      provider: "creem",
+    });
+    expect(mocks.invokeReferralFirstPayment).toHaveBeenNthCalledWith(2, {
+      orderId: "creem-order-1",
+      inviteeUserId: "user-1",
+      firstPaymentCredits: 250,
+      provider: "creem",
+    });
   });
 
   it("旧订单缺少 creditsExpiresAt 时仍可按冻结金额和积分履约", async () => {
