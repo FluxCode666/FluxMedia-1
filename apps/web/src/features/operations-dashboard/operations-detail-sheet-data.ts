@@ -12,7 +12,7 @@ import {
   operationsDetailOutputSchema,
 } from "@repo/shared/operations-dashboard/output-contracts";
 
-import { formatPaymentAmount } from "@/features/payment/admin/admin-payment-format";
+import { formatPaymentAmount } from "@/features/payment/payment-display-format";
 
 /** Sheet 只需要明细查询中的封闭 selection。 */
 export type OperationsDetailSelection = OperationsGetDetailInput["selection"];

@@ -5,8 +5,9 @@
  * 快照，不改变单位、比较口径或特殊状态。
  */
 
-import { amountMinorToMajor } from "@repo/shared/credits/top-up";
 import type { CountComparison } from "@repo/shared/operations-dashboard/comparison";
+
+import { formatPaymentAmount } from "@/features/payment/payment-display-format";
 
 export type OperationsDisplayStatus =
   | "value"
@@ -37,10 +38,7 @@ export function formatOperationsMoney(
   currency: string,
   locale: string
 ): string {
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency,
-  }).format(amountMinorToMajor(amountMinor, currency));
+  return formatPaymentAmount(amountMinor, currency, locale);
 }
 
 /** 把 ISO/Date 快照时间格式化到服务端声明的应用时区。 */
