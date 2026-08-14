@@ -10,7 +10,7 @@
 
 ### 前置条件
 
-1. `0092_operations_dashboard.sql` 已在目标数据库执行。
+1. `0093_operations_dashboard.sql` 已在目标数据库执行。
 2. 新版 Web 已部署，旧实例已经退出，不再存在缺少运营事实双写的进程。
 3. 产品与运维共同确认正式上线的应用自然日和 `APP_TIME_ZONE`。
 4. 将该自然日零点转换为 UTC 瞬间，并由第二位操作者复核。
@@ -103,6 +103,17 @@ LIMIT 5;
 计数、金额和两位小数积分必须完全相等；比率只允许 UI 格式化产生舍入差异。任何差异
 都阻止开放导航。不得使用 `payment_order.updated_at` 回填支付阶段，也不得把上线前空白
 显示成真实零值。
+
+发布前还应在名称包含 `test` 的专用数据库执行 PostgreSQL 边界测试：
+
+```bash
+OPERATIONS_DASHBOARD_TEST_DATABASE_URL=<专用测试库连接串> \
+pnpm --filter @repo/integration-tests test:operations-boundaries
+```
+
+该命令在随机隔离 schema 中执行生产导出快照和新增用户明细 SQL，必须同时证明六位微秒
+高水位原样保留，以及同一毫秒内多条记录跨 keyset 页面不重复、不遗漏。测试结束后会
+删除隔离 schema，不读取或清理专用库中的其它夹具。
 
 ## 发布与回滚
 

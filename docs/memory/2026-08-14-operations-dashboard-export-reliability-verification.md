@@ -44,6 +44,15 @@
 Date 解析会受 Node 进程时区影响，而产品 Drizzle 连接统一采用 UTC 语义；边界验证不能
 混用两套解析方式。
 
+## 冻结水位与分页完整性
+
+- 导出创建时的高水位由 PostgreSQL `to_char(..., 'US')` 直接生成六位微秒字符串，真实
+  数据库测试确认 `.123403` 不会被 JavaScript `Date` 收敛成 `.123000`。
+- 明细 SQL 将业务时间和 cursor 时间都截断到毫秒，并使用稳定 ID 完整打破平局；三条
+  同毫秒、不同微秒记录以两页读取时全部且仅返回一次。
+- 专用测试命令为 `pnpm --filter @repo/integration-tests test:operations-boundaries`，只在
+  显式 `OPERATIONS_DASHBOARD_TEST_DATABASE_URL` 下运行，不进入 DB-free `turbo test`。
+
 ## 硬崩溃后的孤儿对象清理
 
 - local 与 S3 provider 均支持有界对象前缀分页；S3 同时支持枚举并中止未完成 multipart
@@ -67,6 +76,8 @@ Date 解析会受 Node 进程时区影响，而产品 Drizzle 连接统一采用
   测试用户邮箱，数据库审计依次记录 `granted`、`started`。expired 下载路由返回 404。
 - 下载对象的 SHA-256、行数、字节数来自实际写入内容，并与
   `operations_export_task` 中的完成事实一致。
+- 合并 `main` 后再次完成 28/28 浏览器回归，桌面与 390px 两份视觉快照均未更新且通过，
+  node-postgres 未再输出同一 client 并发查询的弃用警告。
 
 ## 未覆盖边界
 

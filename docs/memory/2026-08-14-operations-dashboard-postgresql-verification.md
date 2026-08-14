@@ -47,6 +47,17 @@
 - 已到期 `completed` 任务转为 `expired`；对象尚未删除的 `expired` 任务可再次进入清理
   批次；未到期任务不受影响，存储定位字段不会因状态过期而被清空。
 
+### 导出微秒高水位与同毫秒分页
+
+- `test:operations-boundaries` 在专用 PostgreSQL 数据库的随机隔离 schema 中执行生产
+  `readOperationsExportSnapshot` SQL；时间 `2000-01-02 12:34:56.123403` 被原样冻结为
+  `2000-01-02T12:34:56.123403Z`，没有经过 JavaScript `Date` 丢失后三位微秒。
+- 三条记录分别使用 `.123403`、`.123402`、`.123401`，但明细排序统一截断到同一毫秒，
+  再以稳定 ID 打破平局。页大小为 2 时第一页返回 `z、y`，第二页返回 `x`，无重复或
+  漏行。
+- 聚焦 DB-free 回归 33/33 通过；真实 PostgreSQL 边界集成测试 2/2 通过。隔离 schema
+  在测试结束后删除，不修改既有 epoch 或浏览器夹具。
+
 ## 查询计划证据
 
 本地业务样本很小，所有计划均为缓存命中且 `shared read = 0`。以下结果证明 SQL 与索引
@@ -83,7 +94,9 @@ Playwright 使用专用数据库 `fluxmedia_operations_e2e_test`、专用数据�
 完整浏览器套件 28/28 通过，覆盖默认近 30 日、本周、本月、本年、自定义日期和日/周/月
 粒度，增长与内容下钻，视频数量/秒数切换，真实 Recharts hover、方向键焦点浏览，四级
 权限以及桌面和 390px 响应式布局。axe WCAG A/AA、图表等价表、dialog 名称和
-reduced-motion 检查均通过；桌面与 390px 首屏视觉基线在不更新快照的复跑中 6/6 通过。
+reduced-motion 检查均通过；桌面与 390px 两份首屏视觉基线在不更新快照的复跑中 2/2
+通过。合并 `main` 后再次完整执行 28/28，通过期间未出现 node-postgres
+`client.query()` 并发弃用警告。
 
 测试结束后固定用户、account、session、导出任务均为 0；端口 3107 无监听进程，隔离
 storage 目录不存在。测试进程创建的三个 Redis 元数据键已按精确键名删除，专用 DB 15
