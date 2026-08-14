@@ -137,6 +137,17 @@ import "./payment";
 import "./referrals";
 
 export {
+  createOperationsExport,
+  expireOperationsExports,
+  getOperationsDetail,
+  getOperationsOverview,
+  listOperationsExports,
+  openOperationsLocalExportDownload,
+  prepareOperationsExportDownload,
+  processOperationsExports,
+  retryOperationsExport,
+} from "./operations-dashboard";
+export {
   initializeOperationsEpoch,
   recordWebVisit,
 } from "./operations-dashboard-facts";
@@ -149,14 +160,3 @@ export {
   listMyReferralRelationships,
   referralDashboardOutputSchema,
 } from "./referrals";
-
-export {
-  createOperationsExport,
-  expireOperationsExports,
-  getOperationsDetail,
-  getOperationsOverview,
-  listOperationsExports,
-  prepareOperationsExportDownload,
-  processOperationsExports,
-  retryOperationsExport,
-} from "./operations-dashboard";

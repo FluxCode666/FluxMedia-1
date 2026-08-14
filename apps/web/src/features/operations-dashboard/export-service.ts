@@ -13,6 +13,7 @@ import {
   operationsPrepareExportDownloadInputSchema,
   operationsRetryExportInputSchema,
 } from "@repo/shared/operations-dashboard/contracts";
+import type { OperationsOpenLocalExportDownloadOutput } from "@repo/shared/operations-dashboard/output-contracts";
 import { z } from "zod";
 import {
   getOperationsExportStorage,
@@ -402,4 +403,100 @@ export async function getOperationsExportDownloadTarget(
       "运营导出不存在、未完成或已过期"
     );
   return task;
+}
+
+/** 本地下载 operation 所需的最小可替换依赖。 */
+export type OperationsLocalExportDownloadDependencies = {
+  repository: OperationsExportTaskRepository;
+  now(): Date;
+  getStorage?(): Promise<OperationsExportStorage>;
+};
+
+/** 把任务标识收敛为安全的 Content-Disposition 文件名片段。 */
+function normalizeDownloadFilenamePart(value: string): string {
+  const normalized = value.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 255);
+  return normalized || "export";
+}
+
+/**
+ * 打开当前管理员自己的本地 CSV 字节流并记录开始审计。
+ *
+ * @param request 已由 UOL 鉴权的管理员、任务标识。
+ * @param dependencies 可替换的任务仓储、时间和存储 provider。
+ * @returns 只供同进程 HTTP 适配器消费的文件元数据和异步字节流。
+ * @sideEffects 读取对象存储并写入下载审计。
+ * @failure 远端 provider 返回 conflict；对象读取或审计失败返回 storage_unavailable。
+ */
+export async function openOperationsLocalExportDownload(
+  request: { taskId: string; createdBy: string },
+  dependencies: OperationsLocalExportDownloadDependencies = {
+    repository: databaseOperationsExportTaskRepository,
+    now: () => new Date(),
+  }
+): Promise<OperationsOpenLocalExportDownloadOutput> {
+  const task = await getOperationsExportDownloadTarget(
+    {
+      taskId: request.taskId,
+      createdBy: request.createdBy,
+      now: dependencies.now(),
+    },
+    dependencies.repository
+  );
+  try {
+    const storage = await (dependencies.getStorage?.() ??
+      getOperationsExportStorage());
+    if (storage.remote) {
+      throw new OperationsExportServiceError(
+        "conflict",
+        "远端运营导出必须使用短期签名 URL"
+      );
+    }
+    const stream = await storage.getObjectStream(
+      task.objectKey,
+      task.objectBucket
+    );
+    await dependencies.repository.recordDownload({
+      taskId: task.id,
+      createdBy: request.createdBy,
+      mode: "stream",
+      result: "started",
+      now: dependencies.now(),
+    });
+    return {
+      taskId: task.id,
+      filename: `operations-${task.exportType}-${normalizeDownloadFilenamePart(task.id)}.csv`,
+      contentType: "text/csv; charset=utf-8",
+      stream,
+    };
+  } catch (error) {
+    if (
+      error instanceof OperationsExportServiceError &&
+      error.code === "conflict"
+    ) {
+      throw error;
+    }
+    try {
+      await dependencies.repository.recordDownload({
+        taskId: task.id,
+        createdBy: request.createdBy,
+        mode: "stream",
+        result: "storage_unavailable",
+        now: dependencies.now(),
+      });
+    } catch (auditError) {
+      logError(auditError, {
+        source: "operations-export-download-audit",
+        taskId: task.id,
+        result: "storage_unavailable",
+      });
+    }
+    logError(error, {
+      source: "operations-export-local-download",
+      taskId: task.id,
+    });
+    throw new OperationsExportServiceError(
+      "storage_unavailable",
+      "运营导出存储暂不可用"
+    );
+  }
 }

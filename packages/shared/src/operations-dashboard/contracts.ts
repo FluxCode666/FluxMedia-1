@@ -260,6 +260,10 @@ export const operationsPrepareExportDownloadInputSchema = z
   .object({ taskId: z.string().trim().min(1).max(255) })
   .strict();
 
+/** 本地受控下载路由的进程内 operation 与准备下载共用任务标识输入。 */
+export const operationsOpenLocalExportDownloadInputSchema =
+  operationsPrepareExportDownloadInputSchema;
+
 export const operationsPrepareExportDownloadOutputSchema = z
   .object({
     taskId: z.string().trim().min(1).max(255),

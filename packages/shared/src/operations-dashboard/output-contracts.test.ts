@@ -6,6 +6,7 @@
  */
 import {
   operationsDetailOutputSchema,
+  operationsOpenLocalExportDownloadOutputSchema,
   operationsOverviewOutputSchema,
 } from "@repo/shared/operations-dashboard/output-contracts";
 import { describe, expect, it } from "vitest";
@@ -277,6 +278,28 @@ describe("operations dashboard output contracts", () => {
       operationsDetailOutputSchema.safeParse({
         ...growthPage,
         selection: { module: "content", detail: "image_outputs" },
+      }).success
+    ).toBe(false);
+  });
+
+  it("本地下载输出只接受安全文件名和异步字节流", () => {
+    const stream = (async function* () {
+      yield new Uint8Array([1]);
+    })();
+    expect(
+      operationsOpenLocalExportDownloadOutputSchema.safeParse({
+        taskId: "task-1",
+        filename: "operations-user_growth-task-1.csv",
+        contentType: "text/csv; charset=utf-8",
+        stream,
+      }).success
+    ).toBe(true);
+    expect(
+      operationsOpenLocalExportDownloadOutputSchema.safeParse({
+        taskId: "task-1",
+        filename: "../secret.csv",
+        contentType: "text/csv; charset=utf-8",
+        stream: {},
       }).success
     ).toBe(false);
   });

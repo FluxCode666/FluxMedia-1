@@ -2,7 +2,8 @@
  * 运营导出应用服务 DB-free 测试。
  *
  * 使用方：U6。验证创建者幂等委托、失败父任务重试、列表 cursor 跨管理员拒绝和
- * 七天下载边界；真实 PostgreSQL 状态迁移由仓储 SQL 测试覆盖。
+ * 七天下载边界、本地流打开与存储失败审计；真实 PostgreSQL 状态迁移由仓储 SQL
+ * 测试覆盖。
  */
 import type { OperationsExportTask } from "@repo/database/schema";
 import { describe, expect, it, vi } from "vitest";
@@ -12,9 +13,11 @@ import {
   getOperationsExportDownloadTarget,
   listOperationsExports,
   OperationsExportServiceError,
+  openOperationsLocalExportDownload,
   prepareOperationsExportDownload,
   retryOperationsExport,
 } from "./export-service";
+import type { OperationsExportStorage } from "./export-storage";
 import type { OperationsExportTaskRepository } from "./export-task-repository";
 
 const now = new Date("2026-08-14T00:00:00.000Z");
@@ -80,6 +83,23 @@ function repository(): OperationsExportTaskRepository {
     expireDue: vi.fn(),
     markDeleted: vi.fn(),
     markCleanupFailed: vi.fn(),
+  };
+}
+
+/** 创建本地或远端导出存储替身。 */
+function storage(remote: boolean): OperationsExportStorage {
+  return {
+    bucket: "exports",
+    remote,
+    putObjectStream: vi.fn(),
+    getObjectStream: vi.fn().mockResolvedValue(
+      (async function* () {
+        yield Buffer.from("a,b\r\n");
+      })()
+    ),
+    deleteObject: vi.fn(),
+    listObjects: vi.fn(),
+    getSignedUrl: vi.fn(),
   };
 }
 
@@ -273,5 +293,113 @@ describe("operations export service", () => {
     ).rejects.toMatchObject({ code: "not_found" });
     expect(getStorage).not.toHaveBeenCalled();
     expect(repo.recordDownload).not.toHaveBeenCalled();
+  });
+
+  it("本地下载重新校验归属并返回安全文件名和字节流", async () => {
+    const repo = repository();
+    vi.mocked(repo.findDownloadable).mockResolvedValue({
+      id: "task/unsafe",
+      createdBy: "admin-1",
+      status: "completed",
+      objectBucket: "exports",
+      objectKey: "task-1.csv",
+      expiresAt: new Date("2026-08-21T00:00:00.000Z"),
+      exportType: "user_growth",
+    });
+    const localStorage = storage(false);
+
+    const result = await openOperationsLocalExportDownload(
+      { taskId: "task/unsafe", createdBy: "admin-1" },
+      {
+        repository: repo,
+        now: () => now,
+        getStorage: async () => localStorage,
+      }
+    );
+
+    expect(repo.findDownloadable).toHaveBeenCalledWith(
+      "task/unsafe",
+      "admin-1",
+      now
+    );
+    expect(result).toMatchObject({
+      taskId: "task/unsafe",
+      filename: "operations-user_growth-task-unsafe.csv",
+      contentType: "text/csv; charset=utf-8",
+    });
+    await expect(
+      (async () => {
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of result.stream) chunks.push(chunk);
+        return Buffer.concat(chunks).toString("utf8");
+      })()
+    ).resolves.toBe("a,b\r\n");
+    expect(repo.recordDownload).toHaveBeenCalledWith({
+      taskId: "task/unsafe",
+      createdBy: "admin-1",
+      mode: "stream",
+      result: "started",
+      now,
+    });
+  });
+
+  it("远端 provider 要求走签名 URL 且不误记存储失败", async () => {
+    const repo = repository();
+    vi.mocked(repo.findDownloadable).mockResolvedValue({
+      id: "task-1",
+      createdBy: "admin-1",
+      status: "completed",
+      objectBucket: "exports",
+      objectKey: "task-1.csv",
+      expiresAt: new Date("2026-08-21T00:00:00.000Z"),
+      exportType: "user_growth",
+    });
+
+    await expect(
+      openOperationsLocalExportDownload(
+        { taskId: "task-1", createdBy: "admin-1" },
+        {
+          repository: repo,
+          now: () => now,
+          getStorage: async () => storage(true),
+        }
+      )
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(repo.recordDownload).not.toHaveBeenCalled();
+  });
+
+  it("本地对象读取失败时记录稳定的存储不可用审计", async () => {
+    const repo = repository();
+    vi.mocked(repo.findDownloadable).mockResolvedValue({
+      id: "task-1",
+      createdBy: "admin-1",
+      status: "completed",
+      objectBucket: "exports",
+      objectKey: "task-1.csv",
+      expiresAt: new Date("2026-08-21T00:00:00.000Z"),
+      exportType: "user_growth",
+    });
+    const localStorage = storage(false);
+    vi.mocked(localStorage.getObjectStream).mockRejectedValue(
+      new Error("storage details")
+    );
+
+    await expect(
+      openOperationsLocalExportDownload(
+        { taskId: "task-1", createdBy: "admin-1" },
+        {
+          repository: repo,
+          now: () => now,
+          getStorage: async () => localStorage,
+        }
+      )
+    ).rejects.toMatchObject({ code: "storage_unavailable" });
+    expect(repo.recordDownload).toHaveBeenCalledWith({
+      taskId: "task-1",
+      createdBy: "admin-1",
+      mode: "stream",
+      result: "storage_unavailable",
+      now,
+    });
   });
 });

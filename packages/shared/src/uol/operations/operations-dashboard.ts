@@ -13,6 +13,7 @@ import {
   operationsGetOverviewInputSchema,
   operationsListExportsInputSchema,
   operationsListExportsOutputSchema,
+  operationsOpenLocalExportDownloadInputSchema,
   operationsPrepareExportDownloadInputSchema,
   operationsPrepareExportDownloadOutputSchema,
   operationsProcessExportsInputSchema,
@@ -22,6 +23,7 @@ import {
 } from "../../operations-dashboard/contracts";
 import {
   operationsDetailOutputSchema,
+  operationsOpenLocalExportDownloadOutputSchema,
   operationsOverviewOutputSchema,
 } from "../../operations-dashboard/output-contracts";
 import { defineOperation } from "../registry";
@@ -154,6 +156,27 @@ export const prepareOperationsExportDownload = defineOperation({
   },
 });
 
+/** 打开本地 provider 的受控 CSV 字节流；仅允许站内同进程下载路由调用。 */
+export const openOperationsLocalExportDownload = defineOperation({
+  name: "operations.openLocalExportDownload",
+  domain: "operations",
+  title: "打开本地运营导出下载",
+  description:
+    "重新校验任务归属和保留期，并打开本地 provider 的受控 CSV 字节流。",
+  input: operationsOpenLocalExportDownloadInputSchema,
+  output: operationsOpenLocalExportDownloadOutputSchema,
+  access: adminAccess,
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["storage", "audit"],
+  processLocalState: true,
+  execute: async () => {
+    throw new Error("Not yet wired: operations.openLocalExportDownload");
+  },
+});
+
 /** 内部导出 worker 批处理 operation，仅接受固定 cron job Principal。 */
 export const processOperationsExports = defineOperation({
   name: "operations.processExports",
@@ -198,5 +221,6 @@ export {
   operationsDetailOutputSchema,
   operationsGetDetailInputSchema,
   operationsGetOverviewInputSchema,
+  operationsOpenLocalExportDownloadOutputSchema,
   operationsOverviewOutputSchema,
 };

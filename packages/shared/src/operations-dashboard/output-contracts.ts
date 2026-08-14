@@ -581,3 +581,35 @@ export const operationsDetailOutputSchema = z
 export type OperationsDetailOutput = z.infer<
   typeof operationsDetailOutputSchema
 >;
+
+type AsyncByteIterableCandidate = {
+  [Symbol.asyncIterator]?: unknown;
+};
+
+/** 验证进程内下载结果携带异步字节迭代器。 */
+function isAsyncByteIterable(
+  value: unknown
+): value is AsyncIterable<Uint8Array> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as AsyncByteIterableCandidate)[Symbol.asyncIterator] ===
+      "function"
+  );
+}
+
+/** 本地 CSV 下载只在 Next.js 同进程内传递，禁止序列化到 MCP 或外部传输。 */
+export const operationsOpenLocalExportDownloadOutputSchema = z
+  .object({
+    taskId: z.string().trim().min(1).max(255),
+    filename: z
+      .string()
+      .regex(/^operations-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+\.csv$/),
+    contentType: z.literal("text/csv; charset=utf-8"),
+    stream: z.custom<AsyncIterable<Uint8Array>>(isAsyncByteIterable),
+  })
+  .strict();
+
+export type OperationsOpenLocalExportDownloadOutput = z.infer<
+  typeof operationsOpenLocalExportDownloadOutputSchema
+>;

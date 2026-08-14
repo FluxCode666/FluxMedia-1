@@ -16,6 +16,7 @@ import {
 } from "@repo/shared/operations-dashboard/contracts";
 import {
   operationsDetailOutputSchema,
+  operationsOpenLocalExportDownloadOutputSchema,
   operationsOverviewOutputSchema,
 } from "@repo/shared/operations-dashboard/output-contracts";
 import { checkRateLimit } from "@repo/shared/rate-limit";
@@ -36,6 +37,7 @@ import {
   createOperationsExport,
   listOperationsExports,
   OperationsExportServiceError,
+  openOperationsLocalExportDownload,
   prepareOperationsExportDownload,
   retryOperationsExport,
 } from "@/features/operations-dashboard/export-service";
@@ -76,6 +78,22 @@ async function requireOperationsUser(
     );
   }
   return principal;
+}
+
+/** 读取已由 operation input schema 校验的任务标识；失败表示 binding 不变量损坏。 */
+function requireOperationsTaskId(input: unknown): string {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "taskId" in input &&
+    typeof input.taskId === "string"
+  ) {
+    return input.taskId;
+  }
+  throw new OperationError(
+    "internal_error",
+    "Validated operations export task ID required"
+  );
 }
 
 /** 只把运营领域公开的稳定错误映射成 UOL 错误，不泄露 SQL 或任务行。 */
@@ -382,6 +400,30 @@ bindExecute(
                   `/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`,
                   origin
                 ).toString(),
+            })
+          ),
+        (result) => ({ exportTaskId: result.taskId })
+      );
+    } catch (error) {
+      throwOperationsDashboardError(error);
+    }
+  }
+);
+
+/** 打开本地 provider 字节流；授权、归属和下载审计均由 UOL 执行链统一处理。 */
+bindExecute(
+  "operations.openLocalExportDownload",
+  async (input: unknown, principal: Principal, context: OperationContext) => {
+    const admin = await requireOperationsUser(principal);
+    try {
+      return await runObservedOperationsCall(
+        "operations.openLocalExportDownload",
+        context,
+        async () =>
+          operationsOpenLocalExportDownloadOutputSchema.parse(
+            await openOperationsLocalExportDownload({
+              createdBy: admin.userId,
+              taskId: requireOperationsTaskId(input),
             })
           ),
         (result) => ({ exportTaskId: result.taskId })

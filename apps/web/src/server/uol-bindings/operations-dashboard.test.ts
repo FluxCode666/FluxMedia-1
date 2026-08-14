@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     getDetail: vi.fn(),
     getOverview: vi.fn(),
     createExport: vi.fn(),
+    openLocalDownload: vi.fn(),
     loggerInfo: vi.fn(),
     loggerWarn: vi.fn(),
   };
@@ -77,6 +78,7 @@ vi.mock("@/features/operations-dashboard/health-adapter", () => ({
 vi.mock("@/features/operations-dashboard/export-service", () => ({
   createOperationsExport: mocks.createExport,
   listOperationsExports: vi.fn(),
+  openOperationsLocalExportDownload: mocks.openLocalDownload,
   retryOperationsExport: vi.fn(),
   prepareOperationsExportDownload: vi.fn(),
   OperationsExportServiceError: class OperationsExportServiceError extends Error {},
@@ -250,6 +252,7 @@ describe("operations.getOverview binding", () => {
       "operations.listExports",
       "operations.retryExport",
       "operations.prepareExportDownload",
+      "operations.openLocalExportDownload",
       "operations.processExports",
       "operations.expireExports",
     ]) {
@@ -290,6 +293,30 @@ describe("operations.getOverview binding", () => {
         query: { granularity: "day", range: { kind: "default" } },
         clientRequestId: "request-1",
       },
+    });
+  });
+
+  it("本地下载绑定当前管理员和已校验任务标识", async () => {
+    const stream = (async function* () {
+      yield Buffer.from("a,b\r\n");
+    })();
+    mocks.openLocalDownload.mockResolvedValue({
+      taskId: "task-1",
+      filename: "operations-user_growth-task-1.csv",
+      contentType: "text/csv; charset=utf-8",
+      stream,
+    });
+
+    await expect(
+      invokeOperation(
+        "operations.openLocalExportDownload",
+        { taskId: "task-1" },
+        { type: "user", userId: "admin-1", role: "admin" }
+      )
+    ).resolves.toMatchObject({ taskId: "task-1", stream });
+    expect(mocks.openLocalDownload).toHaveBeenCalledWith({
+      createdBy: "admin-1",
+      taskId: "task-1",
     });
   });
 

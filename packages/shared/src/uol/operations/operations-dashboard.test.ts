@@ -12,6 +12,7 @@ import {
   getOperationsDetail,
   getOperationsOverview,
   listOperationsExports,
+  openOperationsLocalExportDownload,
   prepareOperationsExportDownload,
   processOperationsExports,
   retryOperationsExport,
@@ -23,6 +24,7 @@ const adminNames = [
   createOperationsExport,
   listOperationsExports,
   retryOperationsExport,
+  openOperationsLocalExportDownload,
   prepareOperationsExportDownload,
 ];
 
@@ -60,6 +62,17 @@ describe("operations dashboard operations", () => {
         sideEffects: ["queue", "audit"],
       });
     }
+  });
+
+  it("本地下载只在站内进程开放并声明存储与审计副作用", () => {
+    expect(openOperationsLocalExportDownload).toMatchObject({
+      readOnly: false,
+      destructive: false,
+      idempotency: { kind: "natural" },
+      sideEffects: ["storage", "audit"],
+      processLocalState: true,
+      agentExposure: "human-only",
+    });
   });
 
   it("worker operation 只能通过固定 cron job 声明鉴权", () => {
