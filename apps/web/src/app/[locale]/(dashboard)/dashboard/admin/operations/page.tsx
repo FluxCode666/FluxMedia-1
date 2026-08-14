@@ -47,10 +47,12 @@ export default async function OperationsDashboardPage({
     getLocale(),
     searchParams,
   ]);
-  if (!session?.user) redirect({ href: "/sign-in", locale });
+  if (!session?.user) return redirect({ href: "/sign-in", locale });
 
   const role = await getUserRoleById(session.user.id);
-  if (!canAccessAdminArea(role)) redirect({ href: "/dashboard", locale });
+  if (!canAccessAdminArea(role)) {
+    return redirect({ href: "/dashboard", locale });
+  }
 
   const parsedQuery = parseOperationsDashboardSearchParams(params);
   const pageData = await loadOperationsDashboardPageData({
