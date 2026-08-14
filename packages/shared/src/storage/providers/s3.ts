@@ -10,6 +10,8 @@ import {
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  ListMultipartUploadsCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -41,6 +43,56 @@ let cachedS3Client:
   | undefined;
 
 const S3_MULTIPART_PART_BYTES = 5 * 1024 * 1024;
+
+type MultipartCursor = {
+  keyMarker: string;
+  uploadIdMarker: string;
+};
+
+/** 把 multipart 双 marker 编码为调用方不可解释的 cursor。 */
+function encodeMultipartCursor(cursor: MultipartCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+/**
+ * 校验并解析 multipart cursor。
+ *
+ * @throws cursor 被篡改或不是本 provider 生成时显式拒绝，避免扩大扫描范围。
+ */
+function decodeMultipartCursor(
+  cursor: string | null | undefined
+): MultipartCursor | undefined {
+  if (!cursor) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("Invalid multipart listing cursor");
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("keyMarker" in value) ||
+    !("uploadIdMarker" in value) ||
+    typeof value.keyMarker !== "string" ||
+    typeof value.uploadIdMarker !== "string"
+  ) {
+    throw new Error("Invalid multipart listing cursor");
+  }
+  return {
+    keyMarker: value.keyMarker,
+    uploadIdMarker: value.uploadIdMarker,
+  };
+}
+
+/** 判断 abort 已被其它清理者完成，保持并发清理幂等。 */
+function isMissingMultipartUpload(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "NoSuchUpload" ||
+      ("Code" in error && error.Code === "NoSuchUpload"))
+  );
+}
 
 /**
  * 校验并收窄 S3 存储配置
@@ -231,6 +283,77 @@ export function createS3StorageProvider(
       await client.send(command);
     },
 
+    async listObjects(prefix, bucket, options) {
+      const client = getS3Client(config);
+      const response = await client.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ContinuationToken: options.cursor ?? undefined,
+          MaxKeys: Math.max(1, Math.min(options.limit, 1_000)),
+        })
+      );
+      const objects = (response.Contents ?? []).flatMap((object) =>
+        object.Key && object.LastModified
+          ? [{ key: object.Key, lastModified: object.LastModified }]
+          : []
+      );
+      return {
+        objects,
+        nextCursor: response.NextContinuationToken ?? null,
+      };
+    },
+
+    async listMultipartUploads(prefix, bucket, options) {
+      const client = getS3Client(config);
+      const cursor = decodeMultipartCursor(options.cursor);
+      const response = await client.send(
+        new ListMultipartUploadsCommand({
+          Bucket: bucket,
+          Prefix: prefix,
+          KeyMarker: cursor?.keyMarker,
+          UploadIdMarker: cursor?.uploadIdMarker,
+          MaxUploads: Math.max(1, Math.min(options.limit, 1_000)),
+        })
+      );
+      const uploads = (response.Uploads ?? []).flatMap((upload) =>
+        upload.Key && upload.UploadId && upload.Initiated
+          ? [
+              {
+                key: upload.Key,
+                initiatedAt: upload.Initiated,
+                cleanupToken: upload.UploadId,
+              },
+            ]
+          : []
+      );
+      const nextCursor =
+        response.IsTruncated &&
+        response.NextKeyMarker &&
+        response.NextUploadIdMarker
+          ? encodeMultipartCursor({
+              keyMarker: response.NextKeyMarker,
+              uploadIdMarker: response.NextUploadIdMarker,
+            })
+          : null;
+      return { uploads, nextCursor };
+    },
+
+    async abortMultipartUpload(key, bucket, cleanupToken) {
+      const client = getS3Client(config);
+      try {
+        await client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: cleanupToken,
+          })
+        );
+      } catch (error) {
+        if (!isMissingMultipartUpload(error)) throw error;
+      }
+    },
+
     /**
      * 获取文件内容
      *
@@ -413,6 +536,25 @@ export const s3Provider: StorageProvider = {
   async deleteObject(key, bucket) {
     const provider = await getDynamicS3Provider();
     return provider.deleteObject(key, bucket);
+  },
+  async listObjects(prefix, bucket, options) {
+    const provider = await getDynamicS3Provider();
+    if (!provider.listObjects) throw new Error("S3 存储不支持对象分页枚举");
+    return provider.listObjects(prefix, bucket, options);
+  },
+  async listMultipartUploads(prefix, bucket, options) {
+    const provider = await getDynamicS3Provider();
+    if (!provider.listMultipartUploads) {
+      throw new Error("S3 存储不支持 multipart 分页枚举");
+    }
+    return provider.listMultipartUploads(prefix, bucket, options);
+  },
+  async abortMultipartUpload(key, bucket, cleanupToken) {
+    const provider = await getDynamicS3Provider();
+    if (!provider.abortMultipartUpload) {
+      throw new Error("S3 存储不支持 multipart 清理");
+    }
+    return provider.abortMultipartUpload(key, bucket, cleanupToken);
   },
   async getObject(key, bucket, options) {
     const provider = await getDynamicS3Provider();

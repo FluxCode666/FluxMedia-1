@@ -74,6 +74,8 @@ function repository(): OperationsExportTaskRepository {
     recordOrphan: vi.fn(),
     listOrphans: vi.fn(),
     markOrphanDeleted: vi.fn(),
+    findReferencedObjectKeys: vi.fn(),
+    findActiveExportLeases: vi.fn(),
     expireDue: vi.fn(),
     markDeleted: vi.fn(),
     markCleanupFailed: vi.fn(),

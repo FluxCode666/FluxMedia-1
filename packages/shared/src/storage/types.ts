@@ -8,6 +8,31 @@
 // 存储提供者接口
 // ============================================
 
+/** 前缀扫描返回的单个对象元数据。 */
+export type StorageObjectEntry = {
+  key: string;
+  lastModified: Date;
+};
+
+/** 有界对象页；cursor 由 provider 解释，调用方不得解析。 */
+export type StorageObjectPage = {
+  objects: StorageObjectEntry[];
+  nextCursor: string | null;
+};
+
+/** 未完成 multipart 的传输无关清理句柄。 */
+export type StorageMultipartUploadEntry = {
+  key: string;
+  initiatedAt: Date;
+  cleanupToken: string;
+};
+
+/** 有界 multipart 页；cleanupToken 与 cursor 都由 provider 解释。 */
+export type StorageMultipartUploadPage = {
+  uploads: StorageMultipartUploadEntry[];
+  nextCursor: string | null;
+};
+
 /**
  * 存储提供者接口
  *
@@ -51,6 +76,49 @@ export interface StorageProvider {
    * @param bucket - 存储桶名称
    */
   deleteObject(key: string, bucket: string): Promise<void>;
+
+  /**
+   * 按受限前缀分页枚举对象，供后台清理不可达文件。
+   *
+   * @param prefix 只允许扫描的对象前缀。
+   * @param bucket 存储桶名称。
+   * @param options opaque cursor 与单页上限。
+   * @returns 当前页对象键和最后修改时间，不缓存完整前缀。
+   */
+  listObjects?(
+    prefix: string,
+    bucket: string,
+    options: { cursor?: string | null; limit: number }
+  ): Promise<StorageObjectPage>;
+
+  /**
+   * 分页枚举未完成的 multipart 上传，由业务层排除仍活跃的租约。
+   *
+   * local provider 不需要实现；S3 provider 必须只处理指定前缀。
+   *
+   * @param prefix 只允许清理的对象前缀。
+   * @param bucket 存储桶名称。
+   * @param options opaque cursor 与单页上限。
+   * @returns 本页上传清理句柄及下一页 cursor。
+   */
+  listMultipartUploads?(
+    prefix: string,
+    bucket: string,
+    options: { cursor?: string | null; limit: number }
+  ): Promise<StorageMultipartUploadPage>;
+
+  /**
+   * 终止一个已由调用方确认不属于活跃租约的 multipart 上传。
+   *
+   * @param key 对象键。
+   * @param bucket 存储桶名称。
+   * @param cleanupToken provider 列表返回的 opaque 清理句柄。
+   */
+  abortMultipartUpload?(
+    key: string,
+    bucket: string,
+    cleanupToken: string
+  ): Promise<void>;
 
   /**
    * 获取文件内容

@@ -17,7 +17,18 @@ import type {
   OperationsExportType,
 } from "@repo/shared/operations-dashboard/contracts";
 import { resolveOperationsDashboardRange } from "@repo/shared/operations-dashboard/range";
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
@@ -160,6 +171,14 @@ export interface OperationsExportTaskRepository {
     objectKey: string;
     now: Date;
   }): Promise<void>;
+  findReferencedObjectKeys(input: {
+    objectBucket: string;
+    objectKeys: string[];
+  }): Promise<Set<string>>;
+  findActiveExportLeases(input: {
+    taskIds: string[];
+    now: Date;
+  }): Promise<Array<{ taskId: string; leaseToken: string }>>;
   expireDue(input: {
     now: Date;
     limit: number;
@@ -762,6 +781,45 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
           },
           now: input.now,
         })
+      );
+    },
+    async findReferencedObjectKeys(input) {
+      if (input.objectKeys.length === 0) return new Set();
+      const { db } = await import("@repo/database");
+      const rows = await db
+        .select({ objectKey: operationsExportTask.objectKey })
+        .from(operationsExportTask)
+        .where(
+          and(
+            eq(operationsExportTask.objectBucket, input.objectBucket),
+            inArray(operationsExportTask.objectKey, input.objectKeys)
+          )
+        );
+      return new Set(
+        rows.flatMap((row) => (row.objectKey ? [row.objectKey] : []))
+      );
+    },
+    async findActiveExportLeases(input) {
+      if (input.taskIds.length === 0) return [];
+      const { db } = await import("@repo/database");
+      const rows = await db
+        .select({
+          taskId: operationsExportTask.id,
+          leaseToken: operationsExportTask.leaseToken,
+        })
+        .from(operationsExportTask)
+        .where(
+          and(
+            inArray(operationsExportTask.id, input.taskIds),
+            eq(operationsExportTask.status, "running"),
+            gt(operationsExportTask.leaseExpiresAt, input.now),
+            isNotNull(operationsExportTask.leaseToken)
+          )
+        );
+      return rows.flatMap((row) =>
+        row.leaseToken
+          ? [{ taskId: row.taskId, leaseToken: row.leaseToken }]
+          : []
       );
     },
     async expireDue(input) {

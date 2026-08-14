@@ -6,7 +6,11 @@
  */
 import { createHash } from "node:crypto";
 
-import type { StorageProvider } from "@repo/shared/storage";
+import type {
+  StorageMultipartUploadPage,
+  StorageObjectPage,
+  StorageProvider,
+} from "@repo/shared/storage";
 
 /** 导出对象固定使用通用存储桶下的独立前缀。 */
 export const OPERATIONS_EXPORT_OBJECT_PREFIX = "operations-exports";
@@ -30,6 +34,21 @@ export type OperationsExportStorage = {
     options?: { signal?: AbortSignal }
   ): Promise<AsyncIterable<Uint8Array>>;
   deleteObject(key: string, bucket: string): Promise<void>;
+  listObjects(
+    prefix: string,
+    bucket: string,
+    options: { cursor?: string | null; limit: number }
+  ): Promise<StorageObjectPage>;
+  listMultipartUploads?(
+    prefix: string,
+    bucket: string,
+    options: { cursor?: string | null; limit: number }
+  ): Promise<StorageMultipartUploadPage>;
+  abortMultipartUpload?(
+    key: string,
+    bucket: string,
+    cleanupToken: string
+  ): Promise<void>;
   getSignedUrl(key: string, bucket: string, expiresIn: number): Promise<string>;
 };
 
@@ -137,13 +156,32 @@ export function buildOperationsExportObjectKey(input: {
   return `${OPERATIONS_EXPORT_OBJECT_PREFIX}/${input.taskId}/${input.leaseToken}.csv`;
 }
 
+/** 从专用对象键恢复 task 与 lease，供 multipart 清理排除活跃 worker。 */
+export function parseOperationsExportObjectKey(
+  key: string
+): { taskId: string; leaseToken: string } | null {
+  const prefix = `${OPERATIONS_EXPORT_OBJECT_PREFIX}/`;
+  if (!key.startsWith(prefix)) return null;
+  const parts = key.slice(prefix.length).split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const csvMarker = parts[1].indexOf(".csv");
+  if (csvMarker <= 0) return null;
+  const suffix = parts[1].slice(csvMarker + 4);
+  if (suffix && !/^\.[a-zA-Z0-9-]+\.tmp$/.test(suffix)) return null;
+  return { taskId: parts[0], leaseToken: parts[1].slice(0, csvMarker) };
+}
+
 /** 把运行时存储快照收窄为导出所需的强制流能力。 */
 function requireExportStorage(
   provider: StorageProvider,
   bucket: string,
   remote: boolean
 ): OperationsExportStorage {
-  if (!provider.putObjectStream || !provider.getObjectStream) {
+  if (
+    !provider.putObjectStream ||
+    !provider.getObjectStream ||
+    !provider.listObjects
+  ) {
     throw new Error("当前存储提供者不支持运营导出所需的流式读写");
   }
   return {
@@ -152,6 +190,13 @@ function requireExportStorage(
     putObjectStream: provider.putObjectStream.bind(provider),
     getObjectStream: provider.getObjectStream.bind(provider),
     deleteObject: provider.deleteObject.bind(provider),
+    listObjects: provider.listObjects.bind(provider),
+    ...(provider.listMultipartUploads && provider.abortMultipartUpload
+      ? {
+          listMultipartUploads: provider.listMultipartUploads.bind(provider),
+          abortMultipartUpload: provider.abortMultipartUpload.bind(provider),
+        }
+      : {}),
     getSignedUrl: provider.getSignedUrl.bind(provider),
   };
 }

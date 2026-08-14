@@ -108,6 +108,96 @@ async function safePath(
   return resolveSafePath(path, baseDir, bucket, key);
 }
 
+/** 判断未知异常是否为文件不存在，供并发清理保持幂等。 */
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+/**
+ * 递归遍历单个前缀目录，并按目录内名称排序稳定地产出文件。
+ *
+ * 每层只加载当前目录项，不构造完整对象数组；符号链接一律跳过，避免清理扫描
+ * 穿过存储根目录。对象在 stat 前被并发删除时按幂等缺失处理。
+ */
+async function* walkLocalObjectFiles(
+  directory: string,
+  relativeDirectory: string
+): AsyncGenerator<{ relativePath: string; lastModified: Date }> {
+  const fs = await getFs();
+  let entries: import("node:fs").Dirent<string>[];
+  try {
+    entries = await fs.readdir(directory, {
+      encoding: "utf8",
+      withFileTypes: true,
+    });
+  } catch (error) {
+    if (isMissingFileError(error)) return;
+    throw error;
+  }
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  const path = await getPath();
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    const relativePath = relativeDirectory
+      ? path.join(relativeDirectory, entry.name)
+      : entry.name;
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkLocalObjectFiles(absolutePath, relativePath);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    try {
+      const stats = await fs.stat(absolutePath);
+      yield { relativePath, lastModified: stats.mtime };
+    } catch (error) {
+      if (!isMissingFileError(error)) throw error;
+    }
+  }
+}
+
+/** 统一对象前缀分隔符并拒绝会扩大扫描范围的空前缀。 */
+function normalizeListPrefix(prefix: string): string {
+  const normalized = prefix.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (!normalized) throw new Error("Object listing prefix is required");
+  return normalized;
+}
+
+/**
+ * 解析对象扫描根目录并拒绝把前缀目录替换为符号链接。
+ *
+ * @returns 安全目录；目录尚不存在时返回 null，供清理任务按空页处理。
+ */
+async function safeListRoot(
+  configuredBaseDir: string,
+  bucket: string,
+  prefix: string
+): Promise<string | null> {
+  const fs = await getFs();
+  const path = await getPath();
+  const baseDir = await resolveBaseDir(configuredBaseDir);
+  const root = resolveSafePath(path, baseDir, bucket, prefix);
+  const relativeSegments = path
+    .relative(baseDir, root)
+    .split(path.sep)
+    .filter(Boolean);
+  let current = baseDir;
+  for (const segment of relativeSegments) {
+    current = path.join(current, segment);
+    try {
+      const stats = await fs.lstat(current);
+      if (stats.isSymbolicLink()) {
+        throw new Error("Invalid path: symbolic link listing not allowed");
+      }
+      if (!stats.isDirectory()) return null;
+    } catch (error) {
+      if (isMissingFileError(error)) return null;
+      throw error;
+    }
+  }
+  return root;
+}
+
 /** 构造标准 AbortError，供 provider 在取消边界立即停止外部 I/O。 */
 function createStorageAbortError(): DOMException {
   return new DOMException("存储操作已取消", "AbortError");
@@ -171,6 +261,33 @@ export function createLocalStorageProvider(
           throw error;
         }
       }
+    },
+
+    async listObjects(prefix, bucket, options) {
+      const normalizedPrefix = normalizeListPrefix(prefix);
+      const root = await safeListRoot(
+        configuredBaseDir,
+        bucket,
+        normalizedPrefix
+      );
+      if (!root) return { objects: [], nextCursor: null };
+      const pageLimit = Math.max(1, Math.min(options.limit, 1_000));
+      const cursor = options.cursor ?? null;
+      const objects = [];
+      const path = await getPath();
+      for await (const entry of walkLocalObjectFiles(root, "")) {
+        const key = path
+          .join(normalizedPrefix, entry.relativePath)
+          .replaceAll(path.sep, "/");
+        if (cursor && key <= cursor) continue;
+        objects.push({ key, lastModified: entry.lastModified });
+        if (objects.length >= pageLimit) break;
+      }
+      return {
+        objects,
+        nextCursor:
+          objects.length === pageLimit ? (objects.at(-1)?.key ?? null) : null,
+      };
     },
 
     async getObject(
@@ -271,6 +388,11 @@ export const localProvider: StorageProvider = {
   async deleteObject(key, bucket) {
     const provider = await getDynamicLocalProvider();
     return provider.deleteObject(key, bucket);
+  },
+  async listObjects(prefix, bucket, options) {
+    const provider = await getDynamicLocalProvider();
+    if (!provider.listObjects) throw new Error("本地存储不支持对象分页枚举");
+    return provider.listObjects(prefix, bucket, options);
   },
   async getObject(key, bucket, options) {
     const provider = await getDynamicLocalProvider();

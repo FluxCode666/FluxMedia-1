@@ -194,4 +194,89 @@ describe("localProvider streaming", () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("按前缀分页枚举完成对象与陈旧临时文件", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tempDir = await fs.mkdtemp(`${os.tmpdir()}/flux-storage-list-`);
+    try {
+      const provider = createLocalStorageProvider(tempDir);
+      const exportDir = path.join(
+        tempDir,
+        "private",
+        "operations-exports",
+        "task-1"
+      );
+      await fs.mkdir(exportDir, { recursive: true });
+      const completedPath = path.join(exportDir, "lease-1.csv");
+      const tempPath = path.join(exportDir, "lease-2.csv.random.tmp");
+      await fs.writeFile(completedPath, "completed");
+      await fs.writeFile(tempPath, "partial");
+      const staleAt = new Date("2026-02-01T00:00:00.000Z");
+      await fs.utimes(completedPath, staleAt, staleAt);
+      await fs.utimes(tempPath, staleAt, staleAt);
+
+      if (!provider.listObjects) throw new Error("local listing missing");
+      const first = await provider.listObjects(
+        "operations-exports",
+        "private",
+        { limit: 1 }
+      );
+      const second = await provider.listObjects(
+        "operations-exports",
+        "private",
+        { cursor: first.nextCursor, limit: 1 }
+      );
+
+      expect([...first.objects, ...second.objects]).toEqual([
+        {
+          key: "operations-exports/task-1/lease-1.csv",
+          lastModified: staleAt,
+        },
+        {
+          key: "operations-exports/task-1/lease-2.csv.random.tmp",
+          lastModified: staleAt,
+        },
+      ]);
+      await provider.deleteObject(
+        "operations-exports/task-1/lease-2.csv.random.tmp",
+        "private"
+      );
+      await expect(fs.access(tempPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("拒绝沿 bucket 符号链接扫描存储根目录之外", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tempDir = await fs.mkdtemp(`${os.tmpdir()}/flux-storage-root-`);
+    const externalDir = await fs.mkdtemp(
+      `${os.tmpdir()}/flux-storage-external-`
+    );
+    try {
+      const externalExportDir = path.join(
+        externalDir,
+        "operations-exports",
+        "task-1"
+      );
+      await fs.mkdir(externalExportDir, { recursive: true });
+      await fs.writeFile(path.join(externalExportDir, "lease-1.csv"), "data");
+      await fs.symlink(externalDir, path.join(tempDir, "private"), "dir");
+      const provider = createLocalStorageProvider(tempDir);
+      if (!provider.listObjects) throw new Error("local listing missing");
+
+      await expect(
+        provider.listObjects("operations-exports", "private", { limit: 10 })
+      ).rejects.toThrow("symbolic link");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+      await fs.rm(externalDir, { recursive: true, force: true });
+    }
+  });
 });

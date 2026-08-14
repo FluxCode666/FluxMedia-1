@@ -35,4 +35,21 @@ describe("operations export repository SQL contract", () => {
     expect(source).toContain("referenced_task.object_key");
     expect(source).toContain("referenced_task.object_deleted_at is null");
   });
+
+  it("存储前缀清理保留任意任务引用，并能排除仍有效的运行租约", () => {
+    const referencesStart = source.indexOf("async findreferencedobjectkeys");
+    const referencesEnd = source.indexOf(
+      "async findactiveexportleases",
+      referencesStart
+    );
+    const referencesMethod = source.slice(referencesStart, referencesEnd);
+
+    expect(referencesMethod).toContain("operationsexporttask.objectbucket");
+    expect(referencesMethod).toContain("operationsexporttask.objectkey");
+    expect(referencesMethod).not.toContain("objectdeletedat");
+    expect(source).toContain('eq(operationsexporttask.status, "running")');
+    expect(source).toContain(
+      "gt(operationsexporttask.leaseexpiresat, input.now)"
+    );
+  });
 });

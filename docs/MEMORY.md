@@ -140,7 +140,9 @@
 生产初始化、导出恢复、数据核对与回滚步骤见
 [operations-dashboard-runbook.md](memory/operations-dashboard-runbook.md)。本地 PostgreSQL
 不变量与查询计划验证见
-[2026-08-14-operations-dashboard-postgresql-verification.md](memory/2026-08-14-operations-dashboard-postgresql-verification.md)。
+[2026-08-14-operations-dashboard-postgresql-verification.md](memory/2026-08-14-operations-dashboard-postgresql-verification.md)，
+大 CSV、租约恢复、七天边界与孤儿对象清理验证见
+[2026-08-14-operations-dashboard-export-reliability-verification.md](memory/2026-08-14-operations-dashboard-export-reliability-verification.md)。
 
 ## 部署与迁移
 

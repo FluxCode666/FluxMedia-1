@@ -283,8 +283,22 @@ function createCleanupDependencies(): OperationsExportCleanupDependencies {
       markCleanupFailed: vi.fn().mockResolvedValue(undefined),
       listOrphans: vi.fn().mockResolvedValue([]),
       markOrphanDeleted: vi.fn().mockResolvedValue(undefined),
+      findReferencedObjectKeys: vi.fn().mockResolvedValue(new Set()),
+      findActiveExportLeases: vi.fn().mockResolvedValue([]),
     },
-    storage: { deleteObject: vi.fn().mockResolvedValue(undefined) },
+    storage: {
+      bucket: "exports",
+      deleteObject: vi.fn().mockResolvedValue(undefined),
+      listObjects: vi.fn().mockResolvedValue({
+        objects: [],
+        nextCursor: null,
+      }),
+      listMultipartUploads: vi.fn().mockResolvedValue({
+        uploads: [],
+        nextCursor: null,
+      }),
+      abortMultipartUpload: vi.fn().mockResolvedValue(undefined),
+    },
     now: () => new Date("2026-02-08T00:00:01.000Z"),
   };
 }
@@ -331,6 +345,131 @@ describe("expireOperationsExportBatch", () => {
     );
     expect(dependencies.repository.markOrphanDeleted).toHaveBeenCalledWith(
       expect.objectContaining({ auditId: "audit-1", taskId: "task-stale" })
+    );
+  });
+
+  it("存储扫描保留任务引用对象与年轻对象，只删除陈旧未引用对象", async () => {
+    const dependencies = createCleanupDependencies();
+    vi.mocked(dependencies.storage.listObjects).mockResolvedValue({
+      objects: [
+        {
+          key: "operations-exports/task-completed/lease.csv",
+          lastModified: new Date("2026-02-01T00:00:00.000Z"),
+        },
+        {
+          key: "operations-exports/task-expired/lease.csv",
+          lastModified: new Date("2026-02-01T00:00:00.000Z"),
+        },
+        {
+          key: "operations-exports/task-active/lease-active.csv.random.tmp",
+          lastModified: new Date("2026-02-01T00:00:00.000Z"),
+        },
+        {
+          key: "operations-exports/task-young/lease.csv.random.tmp",
+          lastModified: new Date("2026-02-07T23:59:00.000Z"),
+        },
+        {
+          key: "operations-exports/task-orphan/lease.csv",
+          lastModified: new Date("2026-02-01T00:00:00.000Z"),
+        },
+      ],
+      nextCursor: "next-page",
+    });
+    vi.mocked(
+      dependencies.repository.findReferencedObjectKeys
+    ).mockResolvedValue(
+      new Set([
+        "operations-exports/task-completed/lease.csv",
+        "operations-exports/task-expired/lease.csv",
+      ])
+    );
+    vi.mocked(dependencies.repository.findActiveExportLeases).mockResolvedValue(
+      [{ taskId: "task-active", leaseToken: "lease-active" }]
+    );
+
+    await expireOperationsExportBatch({ limit: 10 }, dependencies);
+
+    expect(
+      dependencies.repository.findReferencedObjectKeys
+    ).toHaveBeenCalledWith({
+      objectBucket: "exports",
+      objectKeys: expect.arrayContaining([
+        "operations-exports/task-completed/lease.csv",
+        "operations-exports/task-expired/lease.csv",
+        "operations-exports/task-orphan/lease.csv",
+      ]),
+    });
+    expect(dependencies.storage.deleteObject).toHaveBeenCalledTimes(1);
+    expect(dependencies.storage.deleteObject).toHaveBeenCalledWith(
+      "operations-exports/task-orphan/lease.csv",
+      "exports"
+    );
+  });
+
+  it("存储孤儿删除失败可重试，且不阻止到期任务保持 expired", async () => {
+    const dependencies = createCleanupDependencies();
+    vi.mocked(dependencies.repository.expireDue).mockResolvedValue([
+      { id: "task-expired", objectBucket: "exports", objectKey: "expired.csv" },
+    ]);
+    vi.mocked(dependencies.storage.listObjects).mockResolvedValue({
+      objects: [
+        {
+          key: "operations-exports/task-orphan/lease.csv",
+          lastModified: new Date("2026-02-01T00:00:00.000Z"),
+        },
+      ],
+      nextCursor: null,
+    });
+    vi.mocked(dependencies.storage.deleteObject)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValue(undefined);
+
+    await expireOperationsExportBatch({ limit: 10 }, dependencies);
+    await expireOperationsExportBatch({ limit: 10 }, dependencies);
+
+    expect(dependencies.repository.markDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: "task-expired" })
+    );
+    expect(dependencies.storage.deleteObject).toHaveBeenCalledWith(
+      "operations-exports/task-orphan/lease.csv",
+      "exports"
+    );
+  });
+
+  it("陈旧 multipart 只终止失效 lease，仍活跃的长上传保持不变", async () => {
+    const dependencies = createCleanupDependencies();
+    const listMultipartUploads = dependencies.storage.listMultipartUploads;
+    const abortMultipartUpload = dependencies.storage.abortMultipartUpload;
+    if (!listMultipartUploads || !abortMultipartUpload) {
+      throw new Error("multipart cleanup test capabilities missing");
+    }
+    vi.mocked(listMultipartUploads).mockResolvedValue({
+      uploads: [
+        {
+          key: "operations-exports/task-active/lease-active.csv",
+          initiatedAt: new Date("2026-02-01T00:00:00.000Z"),
+          cleanupToken: "upload-active",
+        },
+        {
+          key: "operations-exports/task-stale/lease-stale.csv",
+          initiatedAt: new Date("2026-02-01T00:00:00.000Z"),
+          cleanupToken: "upload-stale",
+        },
+      ],
+      nextCursor: null,
+    });
+    vi.mocked(dependencies.repository.findActiveExportLeases).mockResolvedValue(
+      [{ taskId: "task-active", leaseToken: "lease-active" }]
+    );
+
+    await expireOperationsExportBatch({ limit: 10 }, dependencies);
+
+    expect(abortMultipartUpload).toHaveBeenCalledTimes(1);
+    expect(abortMultipartUpload).toHaveBeenCalledWith(
+      "operations-exports/task-stale/lease-stale.csv",
+      "exports",
+      "upload-stale"
     );
   });
 });

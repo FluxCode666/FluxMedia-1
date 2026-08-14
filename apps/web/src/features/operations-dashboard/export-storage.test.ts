@@ -9,7 +9,10 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { streamOperationsCsv } from "./csv-encoder";
-import { createMeasuredExportStream } from "./export-storage";
+import {
+  createMeasuredExportStream,
+  parseOperationsExportObjectKey,
+} from "./export-storage";
 
 /** 构造会在每次 pull 后记录进度的异步字节流。 */
 async function* chunks(progress: number[]): AsyncGenerator<Uint8Array> {
@@ -76,5 +79,26 @@ describe("createMeasuredExportStream", () => {
       // 消费拆分后的完整流以完成统计。
     }
     await expect(measured.result).resolves.toMatchObject({ rowCount: 2 });
+  });
+});
+
+describe("parseOperationsExportObjectKey", () => {
+  it("只解析专用 task/lease CSV 键", () => {
+    expect(
+      parseOperationsExportObjectKey("operations-exports/task-1/lease-1.csv")
+    ).toEqual({ taskId: "task-1", leaseToken: "lease-1" });
+    expect(
+      parseOperationsExportObjectKey(
+        "operations-exports/task-1/lease-1.csv.random.tmp"
+      )
+    ).toEqual({ taskId: "task-1", leaseToken: "lease-1" });
+    expect(
+      parseOperationsExportObjectKey(
+        "operations-exports/task-1/lease-1.csv.partial"
+      )
+    ).toBeNull();
+    expect(
+      parseOperationsExportObjectKey("other/task-1/lease-1.csv")
+    ).toBeNull();
   });
 });
