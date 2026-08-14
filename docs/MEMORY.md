@@ -138,7 +138,9 @@
   物理删除。失败记录、重试关系和下载许可均保留审计。
 
 生产初始化、导出恢复、数据核对与回滚步骤见
-[operations-dashboard-runbook.md](memory/operations-dashboard-runbook.md)。
+[operations-dashboard-runbook.md](memory/operations-dashboard-runbook.md)。本地 PostgreSQL
+不变量与查询计划验证见
+[2026-08-14-operations-dashboard-postgresql-verification.md](memory/2026-08-14-operations-dashboard-postgresql-verification.md)。
 
 ## 部署与迁移
 
