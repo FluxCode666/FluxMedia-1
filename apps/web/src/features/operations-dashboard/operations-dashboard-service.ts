@@ -120,6 +120,36 @@ function rangeFingerprint(value: unknown): string {
 }
 
 /**
+ * 为单个事务连接构造失败封闭的串行 execute。
+ *
+ * WHY：node-postgres 不保证同一 client 可并发 query，而各模块内部会使用
+ * Promise.all。队列只串行数据库 I/O，不改变模块计算并发；首个查询失败后，后续
+ * 已排队查询复用同一失败并停止访问已中止的事务。
+ */
+function createSerialTransactionExecute(execute: ExecuteSql): ExecuteSql {
+  let tail: Promise<void> = Promise.resolve();
+  let hasFailed = false;
+  let failure: unknown;
+  return (query) => {
+    const result = tail.then(async () => {
+      if (hasFailed) throw failure;
+      try {
+        return await execute(query);
+      } catch (error) {
+        hasFailed = true;
+        failure = error;
+        throw error;
+      }
+    });
+    tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  };
+}
+
+/**
  * 创建可注入依赖的运营总览服务。
  *
  * @param dependencies 数据库、reader 工厂和模块 builder。
@@ -139,7 +169,9 @@ export function createOperationsDashboardService(dependencies: {
         async (transaction) => {
           // Drizzle execute 依赖事务实例上的 dialect；裸传方法会在真实 PostgreSQL
           // 丢失 this，所有 reader 必须共享同一个显式绑定的执行函数。
-          const execute = transaction.execute.bind(transaction);
+          const execute = createSerialTransactionExecute(
+            transaction.execute.bind(transaction)
+          );
           const growthReader = factories.growth(execute);
           const commercialReader = factories.commercial(execute);
           const contentReader = factories.content(execute);

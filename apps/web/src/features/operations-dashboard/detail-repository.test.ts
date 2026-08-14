@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOperationsActivityDetailSql,
   buildOperationsCohortDetailSql,
+  buildOperationsCohortExportDetailSql,
   buildOperationsCommercialDetailSql,
   buildOperationsContentDetailSql,
   buildOperationsNewUserDetailSql,
@@ -40,7 +41,7 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain('"user"."created_at" <');
     expect(compiled.sql).toContain('"user"."id" <');
     expect(compiled.sql).toContain(
-      'order by "user"."created_at" desc, "user"."id" desc'
+      'order by date_trunc(\'milliseconds\', "user"."created_at") desc'
     );
     expect(compiled.sql).not.toContain("role =");
     expect(compiled.sql).not.toContain("banned =");
@@ -122,7 +123,7 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain("in ('credit_top_up', 'credit_package')");
     expect(compiled.sql).toContain("business_time >=");
     expect(compiled.sql).toContain("business_time <");
-    expect(compiled.sql).toContain("business_time <=");
+    expect(compiled.sql).toContain("date_trunc('milliseconds'");
     expect(compiled.sql).toContain("stable_id <");
     if (kind === "orders") {
       expect(compiled.sql).toContain('"payment_order"."created_at"');
@@ -156,7 +157,7 @@ describe("operations growth detail repository SQL", () => {
       'left join "credit_usage_operation" as credit_lookup'
     );
     expect(compiled.sql).toContain(
-      "credit_lookup.operation_created_at = scoped_outputs.business_time"
+      "credit_lookup.operation_created_at = paged_outputs.business_time"
     );
     expect(compiled.sql).toContain("mismatch_lookup.operation_created_at <>");
     expect(compiled.sql).toContain('left join "generation"');
@@ -168,17 +169,17 @@ describe("operations growth detail repository SQL", () => {
 
   it("冻结导出按不可变积分贡献和各事实高水位重算，不读取可变净用量", () => {
     const highWatermarks = {
-      users: { createdAt: new Date("2026-08-07T00:00:00.000Z"), id: "user-z" },
+      users: { createdAt: "2026-08-07T00:00:00.000001Z", id: "user-z" },
       webVisits: null,
       outputs: {
-        createdAt: new Date("2026-08-07T00:00:00.000Z"),
+        createdAt: "2026-08-07T00:00:00.000002Z",
         outputKind: "video",
         sourceTaskId: "task-z",
       },
       paymentOrders: null,
       paymentLifecycle: null,
       creditContributions: {
-        projectedAt: new Date("2026-08-07T00:00:00.000Z"),
+        projectedAt: "2026-08-07T00:00:00.000003Z",
         transactionId: "tx-z",
       },
     };
@@ -200,6 +201,26 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).not.toContain(
       "coalesce(credit_lookup.net_consumed, 0)"
     );
+    expect(compiled.sql).toContain("paged_outputs");
+    expect(compiled.sql).toContain("join paged_outputs");
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000003Z");
+  });
+
+  it("Cohort 导出按留存日覆盖完整注册范围并使用毫秒稳定排序", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCohortExportDetailSql({
+        ...base,
+        kind: "cohort_export",
+        retentionDay: 7,
+        timeZone: "Asia/Shanghai",
+      })
+    );
+
+    expect(compiled.sql).toContain("cohort_users.cohort_date +");
+    expect(compiled.sql).toContain("date_trunc('milliseconds'");
+    expect(compiled.sql).toContain("at time zone");
+    expect(compiled.sql).not.toContain("generate_series");
   });
 
   it("以最后一个已返回行签发下一页原始 keyset", () => {

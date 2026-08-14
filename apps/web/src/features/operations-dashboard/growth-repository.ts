@@ -16,6 +16,7 @@ import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
+import { toOperationsDatabaseTimestamp } from "./database-timestamp";
 import type { OperationsDetailHighWatermarks } from "./detail-repository";
 
 /** 增长模块可核对的三类周期活跃事实。 */
@@ -189,7 +190,9 @@ export function buildOperationsActivitySourceSql(
           ${userWebVisit.createdAt},
           ${userWebVisit.userId},
           ${userWebVisit.appDate}
-        ) <= (${watermark.createdAt}, ${watermark.userId}, ${watermark.appDate})`
+        ) <= (${toOperationsDatabaseTimestamp(watermark.createdAt)}, ${
+          watermark.userId
+        }, ${watermark.appDate})`
       : highWatermarks
         ? sql`and false`
         : sql``;
@@ -211,7 +214,7 @@ export function buildOperationsActivitySourceSql(
           ${userOutputUsageEvent.outputKind}::text,
           ${userOutputUsageEvent.sourceTaskId}
         ) <= (
-          ${watermark.createdAt},
+          ${toOperationsDatabaseTimestamp(watermark.createdAt)},
           ${watermark.outputKind},
           ${watermark.sourceTaskId}
         )`
@@ -231,7 +234,9 @@ export function buildOperationsActivitySourceSql(
   const watermark = highWatermarks?.paymentOrders;
   const bound = watermark
     ? sql`and (${paymentOrder.createdAt}, ${paymentOrder.id})
-        <= (${watermark.createdAt}, ${watermark.id})`
+        <= (${toOperationsDatabaseTimestamp(watermark.createdAt)}, ${
+          watermark.id
+        })`
     : highWatermarks
       ? sql`and false`
       : sql``;

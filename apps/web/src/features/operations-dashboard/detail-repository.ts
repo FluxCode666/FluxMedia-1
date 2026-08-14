@@ -20,6 +20,7 @@ import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
 
+import { toOperationsDatabaseTimestamp } from "./database-timestamp";
 import {
   buildOperationsActivitySourceSql,
   createOperationsGrowthSnapshotReader,
@@ -53,12 +54,16 @@ type OperationsGrowthDetailBaseQuery = {
  * 插入事实上界，避免任务排队期间新增的回填事实漂入已冻结文件。
  */
 export type OperationsDetailHighWatermarks = {
-  users: { createdAt: Date; id: string } | null;
-  webVisits: { createdAt: Date; userId: string; appDate: string } | null;
-  outputs: { createdAt: Date; outputKind: string; sourceTaskId: string } | null;
-  paymentOrders: { createdAt: Date; id: string } | null;
-  paymentLifecycle: { recordedAt: Date; id: string } | null;
-  creditContributions: { projectedAt: Date; transactionId: string } | null;
+  users: { createdAt: string; id: string } | null;
+  webVisits: { createdAt: string; userId: string; appDate: string } | null;
+  outputs: {
+    createdAt: string;
+    outputKind: string;
+    sourceTaskId: string;
+  } | null;
+  paymentOrders: { createdAt: string; id: string } | null;
+  paymentLifecycle: { recordedAt: string; id: string } | null;
+  creditContributions: { projectedAt: string; transactionId: string } | null;
 };
 
 /** 新增账户明细查询，范围必须已在服务层截断至 epoch。 */
@@ -79,11 +84,20 @@ export type OperationsCohortDetailQuery = OperationsGrowthDetailBaseQuery & {
   targetEnd: Date;
 };
 
+/** 导出专用 Cohort 查询；每个留存日一次性覆盖完整注册日期范围。 */
+export type OperationsCohortExportDetailQuery =
+  OperationsGrowthDetailBaseQuery & {
+    kind: "cohort_export";
+    retentionDay: 1 | 7 | 30;
+    timeZone: string;
+  };
+
 /** 增长明细的封闭查询类型。 */
 export type OperationsGrowthDetailQuery =
   | OperationsNewUserDetailQuery
   | OperationsActivityDetailQuery
-  | OperationsCohortDetailQuery;
+  | OperationsCohortDetailQuery
+  | OperationsCohortExportDetailQuery;
 
 /** 充值订单明细按订单创建业务时间筛选，每个平台订单只返回一行。 */
 export type OperationsOrderDetailQuery = OperationsGrowthDetailBaseQuery & {
@@ -292,6 +306,12 @@ function assertValidDetailQuery(input: OperationsDetailQuery): void {
   ) {
     throw new RangeError("Cohort 目标日范围无效");
   }
+  if (
+    input.kind === "cohort_export" &&
+    (![1, 7, 30].includes(input.retentionDay) || !input.timeZone.trim())
+  ) {
+    throw new RangeError("Cohort 导出参数无效");
+  }
 }
 
 /** 构造原始业务时间和主键上的降序 keyset 谓词。 */
@@ -308,6 +328,21 @@ function buildDetailKeysetPredicate(
       and ${stableId} < ${cursor.stableId}
     )
   )`;
+}
+
+/**
+ * 将数据库微秒时间收敛到 API 游标可表达的毫秒排序键。
+ *
+ * WHY：JavaScript Date 无法保存 PostgreSQL 微秒。排序和 keyset 同时按毫秒截断后，
+ * 同一毫秒内由 stable ID 完整打破平局，不会在下一页跳过剩余记录。
+ */
+function buildMillisecondDetailSortTime(value: SQL): SQL {
+  return sql`date_trunc('milliseconds', ${value})`;
+}
+
+/** 返回可包含 Date 所代表整毫秒的排除式上界。 */
+function nextMillisecond(value: Date): Date {
+  return new Date(value.getTime() + 1);
 }
 
 /** 构造充值订单或不可变支付生命周期事件的商业化明细 SQL。 */
@@ -332,19 +367,26 @@ export function buildOperationsCommercialDetailSql(
     input.kind === "payment_lifecycle"
       ? input.highWatermarks?.paymentLifecycle
         ? sql`and (${paymentLifecycleEvent.recordedAt}, ${paymentLifecycleEvent.id})
-            <= (${input.highWatermarks.paymentLifecycle.recordedAt}, ${input.highWatermarks.paymentLifecycle.id})`
+            <= (${toOperationsDatabaseTimestamp(
+              input.highWatermarks.paymentLifecycle.recordedAt
+            )}, ${input.highWatermarks.paymentLifecycle.id})`
         : input.highWatermarks
           ? sql`and false`
           : sql``
       : input.highWatermarks?.paymentOrders
         ? sql`and (${paymentOrder.createdAt}, ${paymentOrder.id})
-            <= (${input.highWatermarks.paymentOrders.createdAt}, ${input.highWatermarks.paymentOrders.id})`
+            <= (${toOperationsDatabaseTimestamp(
+              input.highWatermarks.paymentOrders.createdAt
+            )}, ${input.highWatermarks.paymentOrders.id})`
         : input.highWatermarks
           ? sql`and false`
           : sql``;
+  const sortTime = buildMillisecondDetailSortTime(
+    sql`scoped_commercial.business_time`
+  );
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
-    sql`scoped_commercial.business_time`,
+    sortTime,
     sql`scoped_commercial.stable_id`
   );
   return sql`
@@ -390,9 +432,9 @@ export function buildOperationsCommercialDetailSql(
     where scoped_commercial.business_time >= ${input.start}
       and scoped_commercial.business_time < ${input.end}
       and scoped_commercial.business_time >= ${input.epochStart}
-      and scoped_commercial.business_time <= ${input.asOf}
+      and scoped_commercial.business_time < ${nextMillisecond(input.asOf)}
       and ${keyset}
-    order by scoped_commercial.business_time desc,
+    order by ${sortTime} desc,
       scoped_commercial.stable_id desc
     limit ${input.limit}
   `;
@@ -414,11 +456,6 @@ export function buildOperationsContentDetailSql(
       : input.detail === "video_outputs"
         ? sql`scoped_outputs.media_type = 'video'`
         : sql`true`;
-  const keyset = buildDetailKeysetPredicate(
-    input.cursor,
-    sql`scoped_outputs.business_time`,
-    sql`scoped_outputs.stable_id`
-  );
   const outputWatermark = input.highWatermarks?.outputs;
   const outputBound = outputWatermark
     ? sql`and (
@@ -426,7 +463,7 @@ export function buildOperationsContentDetailSql(
         ${userOutputUsageEvent.outputKind}::text,
         ${userOutputUsageEvent.sourceTaskId}
       ) <= (
-        ${outputWatermark.createdAt},
+        ${toOperationsDatabaseTimestamp(outputWatermark.createdAt)},
         ${outputWatermark.outputKind},
         ${outputWatermark.sourceTaskId}
       )`
@@ -439,12 +476,15 @@ export function buildOperationsContentDetailSql(
         ${creditUsageProjectionEntry.projectedAt},
         ${creditUsageProjectionEntry.transactionId}
       ) <= (
-        ${contributionWatermark.projectedAt},
+        ${toOperationsDatabaseTimestamp(contributionWatermark.projectedAt)},
         ${contributionWatermark.transactionId}
       )`
     : input.highWatermarks
       ? sql`where false`
       : sql``;
+  const sortTime = buildMillisecondDetailSortTime(
+    sql`scoped_outputs.business_time`
+  );
   return sql`
     with scoped_outputs as (
       select
@@ -472,8 +512,21 @@ export function buildOperationsContentDetailSql(
       where ${userOutputUsageEvent.operationCreatedAt} >= ${input.start}
         and ${userOutputUsageEvent.operationCreatedAt} < ${input.end}
         and ${userOutputUsageEvent.operationCreatedAt} >= ${input.epochStart}
-        and ${userOutputUsageEvent.operationCreatedAt} <= ${input.asOf}
+        and ${userOutputUsageEvent.operationCreatedAt} < ${nextMillisecond(
+          input.asOf
+        )}
         ${outputBound}
+    ), paged_outputs as (
+      select *
+      from scoped_outputs
+      where ${mediaPredicate}
+        and ${buildDetailKeysetPredicate(
+          input.cursor,
+          sortTime,
+          sql`scoped_outputs.stable_id`
+        )}
+      order by ${sortTime} desc, scoped_outputs.stable_id desc
+      limit ${input.limit}
     ), frozen_credit_usage as (
       select
         ${creditUsageProjectionEntry.userId} as user_id,
@@ -486,6 +539,13 @@ export function buildOperationsContentDetailSql(
           else -${creditUsageProjectionEntry.amount}
         end) as net_consumed
       from ${creditUsageProjectionEntry}
+      join paged_outputs
+        on paged_outputs.user_id = ${creditUsageProjectionEntry.userId}
+        and paged_outputs.operation_type =
+          ${creditUsageProjectionEntry.operationType}
+        and paged_outputs.task_id = ${creditUsageProjectionEntry.operationId}
+        and paged_outputs.business_time =
+          ${creditUsageProjectionEntry.operationCreatedAt}
       ${contributionBound}
       group by
         ${creditUsageProjectionEntry.userId},
@@ -494,21 +554,21 @@ export function buildOperationsContentDetailSql(
         ${creditUsageProjectionEntry.operationCreatedAt}
     )
     select
-      scoped_outputs.stable_id,
-      scoped_outputs.task_id,
-      scoped_outputs.user_id,
+      paged_outputs.stable_id,
+      paged_outputs.task_id,
+      paged_outputs.user_id,
       coalesce(
         nullif(btrim(case
-          when scoped_outputs.media_type = 'image' then ${generation.model}
+          when paged_outputs.media_type = 'image' then ${generation.model}
           else ${videoGeneration.model}
         end), ''),
         'unknown'
       ) as model,
-      scoped_outputs.media_type,
-      scoped_outputs.business_time,
+      paged_outputs.media_type,
+      paged_outputs.business_time,
       'completed'::text as status,
-      scoped_outputs.quantity,
-      scoped_outputs.video_seconds,
+      paged_outputs.quantity,
+      paged_outputs.video_seconds,
       coalesce(
         ${input.highWatermarks ? sql`frozen_credit_lookup.net_consumed` : sql`credit_lookup.net_consumed`},
         0
@@ -517,35 +577,33 @@ export function buildOperationsContentDetailSql(
         and exists (
           select 1
           from ${creditUsageOperation} as mismatch_lookup
-          where mismatch_lookup.user_id = scoped_outputs.user_id
-            and mismatch_lookup.operation_type = scoped_outputs.operation_type
-            and mismatch_lookup.operation_id = scoped_outputs.task_id
+          where mismatch_lookup.user_id = paged_outputs.user_id
+            and mismatch_lookup.operation_type = paged_outputs.operation_type
+            and mismatch_lookup.operation_id = paged_outputs.task_id
             and mismatch_lookup.operation_created_at <>
-              scoped_outputs.business_time
+              paged_outputs.business_time
         ) as operation_created_at_mismatch
-    from scoped_outputs
+    from paged_outputs
     left join ${creditUsageOperation} as credit_lookup
-      on credit_lookup.user_id = scoped_outputs.user_id
-      and credit_lookup.operation_type = scoped_outputs.operation_type
-      and credit_lookup.operation_id = scoped_outputs.task_id
-      and credit_lookup.operation_created_at = scoped_outputs.business_time
+      on credit_lookup.user_id = paged_outputs.user_id
+      and credit_lookup.operation_type = paged_outputs.operation_type
+      and credit_lookup.operation_id = paged_outputs.task_id
+      and credit_lookup.operation_created_at = paged_outputs.business_time
     left join frozen_credit_usage as frozen_credit_lookup
-      on frozen_credit_lookup.user_id = scoped_outputs.user_id
-      and frozen_credit_lookup.operation_type = scoped_outputs.operation_type
-      and frozen_credit_lookup.operation_id = scoped_outputs.task_id
-      and frozen_credit_lookup.operation_created_at = scoped_outputs.business_time
+      on frozen_credit_lookup.user_id = paged_outputs.user_id
+      and frozen_credit_lookup.operation_type = paged_outputs.operation_type
+      and frozen_credit_lookup.operation_id = paged_outputs.task_id
+      and frozen_credit_lookup.operation_created_at = paged_outputs.business_time
     left join ${generation}
-      on scoped_outputs.media_type = 'image'
-      and ${generation.id} = scoped_outputs.task_id
-      and ${generation.userId} = scoped_outputs.user_id
+      on paged_outputs.media_type = 'image'
+      and ${generation.id} = paged_outputs.task_id
+      and ${generation.userId} = paged_outputs.user_id
     left join ${videoGeneration}
-      on scoped_outputs.media_type = 'video'
-      and ${videoGeneration.id} = scoped_outputs.task_id
-      and ${videoGeneration.userId} = scoped_outputs.user_id
-    where ${mediaPredicate}
-      and ${keyset}
-    order by scoped_outputs.business_time desc, scoped_outputs.stable_id desc
-    limit ${input.limit}
+      on paged_outputs.media_type = 'video'
+      and ${videoGeneration.id} = paged_outputs.task_id
+      and ${videoGeneration.userId} = paged_outputs.user_id
+    order by date_trunc('milliseconds', paged_outputs.business_time) desc,
+      paged_outputs.stable_id desc
   `;
 }
 
@@ -554,15 +612,18 @@ export function buildOperationsNewUserDetailSql(
   input: OperationsNewUserDetailQuery
 ): SQL {
   assertValidDetailQuery(input);
+  const sortTime = buildMillisecondDetailSortTime(sql`${user.createdAt}`);
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
-    sql`${user.createdAt}`,
+    sortTime,
     sql`${user.id}`
   );
   const sourceWatermark = input.highWatermarks?.users;
   const sourceBound = sourceWatermark
     ? sql`and (${user.createdAt}, ${user.id})
-        <= (${sourceWatermark.createdAt}, ${sourceWatermark.id})`
+        <= (${toOperationsDatabaseTimestamp(sourceWatermark.createdAt)}, ${
+          sourceWatermark.id
+        })`
     : input.highWatermarks
       ? sql`and false`
       : sql``;
@@ -579,10 +640,13 @@ export function buildOperationsNewUserDetailSql(
     where ${user.createdAt} >= ${sql.param(input.start, user.createdAt)}
       and ${user.createdAt} < ${sql.param(input.end, user.createdAt)}
       and ${user.createdAt} >= ${sql.param(input.epochStart, user.createdAt)}
-      and ${user.createdAt} <= ${sql.param(input.asOf, user.createdAt)}
+      and ${user.createdAt} < ${sql.param(
+        nextMillisecond(input.asOf),
+        user.createdAt
+      )}
       ${sourceBound}
       and ${keyset}
-    order by ${user.createdAt} desc, ${user.id} desc
+    order by ${sortTime} desc, ${user.id} desc
     limit ${input.limit}
   `;
 }
@@ -603,9 +667,12 @@ export function buildOperationsActivityDetailSql(
     sql`${input.end}`,
     input.highWatermarks
   );
+  const sortTime = buildMillisecondDetailSortTime(
+    sql`activity_users.business_time`
+  );
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
-    sql`activity_users.business_time`,
+    sortTime,
     sql`activity_users.user_id`
   );
   return sql`
@@ -628,9 +695,9 @@ export function buildOperationsActivityDetailSql(
       null::boolean as retained
     from activity_users
     join ${user} on ${user.id} = activity_users.user_id
-    where activity_users.business_time <= ${input.asOf}
+    where activity_users.business_time < ${nextMillisecond(input.asOf)}
       and ${keyset}
-    order by activity_users.business_time desc, activity_users.user_id desc
+    order by ${sortTime} desc, activity_users.user_id desc
     limit ${input.limit}
   `;
 }
@@ -644,15 +711,18 @@ export function buildOperationsCohortDetailSql(
   input: OperationsCohortDetailQuery
 ): SQL {
   assertValidDetailQuery(input);
+  const sortTime = buildMillisecondDetailSortTime(sql`${user.createdAt}`);
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
-    sql`${user.createdAt}`,
+    sortTime,
     sql`${user.id}`
   );
   const sourceWatermark = input.highWatermarks?.users;
   const sourceBound = sourceWatermark
     ? sql`and (${user.createdAt}, ${user.id})
-        <= (${sourceWatermark.createdAt}, ${sourceWatermark.id})`
+        <= (${toOperationsDatabaseTimestamp(sourceWatermark.createdAt)}, ${
+          sourceWatermark.id
+        })`
     : input.highWatermarks
       ? sql`and false`
       : sql``;
@@ -663,7 +733,7 @@ export function buildOperationsCohortDetailSql(
         ${userOutputUsageEvent.outputKind}::text,
         ${userOutputUsageEvent.sourceTaskId}
       ) <= (
-        ${outputWatermark.createdAt},
+        ${toOperationsDatabaseTimestamp(outputWatermark.createdAt)},
         ${outputWatermark.outputKind},
         ${outputWatermark.sourceTaskId}
       )`
@@ -696,10 +766,107 @@ export function buildOperationsCohortDetailSql(
     where ${user.createdAt} >= ${sql.param(input.start, user.createdAt)}
       and ${user.createdAt} < ${sql.param(input.end, user.createdAt)}
       and ${user.createdAt} >= ${sql.param(input.epochStart, user.createdAt)}
-      and ${user.createdAt} <= ${sql.param(input.asOf, user.createdAt)}
+      and ${user.createdAt} < ${sql.param(
+        nextMillisecond(input.asOf),
+        user.createdAt
+      )}
       ${sourceBound}
       and ${keyset}
-    order by ${user.createdAt} desc, ${user.id} desc
+    order by ${sortTime} desc, ${user.id} desc
+    limit ${input.limit}
+  `;
+}
+
+/**
+ * 构造覆盖完整注册范围的单个留存日导出 SQL。
+ *
+ * WHY：产品允许不限跨度导出。每个 D1/D7/D30 各执行一次范围查询，可把原先按注册
+ * 日扇出的数千次查询收敛为三条 keyset 流，同时保持每位用户的精确目标自然日语义。
+ */
+export function buildOperationsCohortExportDetailSql(
+  input: OperationsCohortExportDetailQuery
+): SQL {
+  assertValidDetailQuery(input);
+  const sourceWatermark = input.highWatermarks?.users;
+  const sourceBound = sourceWatermark
+    ? sql`and (${user.createdAt}, ${user.id})
+        <= (${toOperationsDatabaseTimestamp(sourceWatermark.createdAt)}, ${
+          sourceWatermark.id
+        })`
+    : input.highWatermarks
+      ? sql`and false`
+      : sql``;
+  const outputWatermark = input.highWatermarks?.outputs;
+  const outputBound = outputWatermark
+    ? sql`and (
+        ${userOutputUsageEvent.createdAt},
+        ${userOutputUsageEvent.outputKind}::text,
+        ${userOutputUsageEvent.sourceTaskId}
+      ) <= (
+        ${toOperationsDatabaseTimestamp(outputWatermark.createdAt)},
+        ${outputWatermark.outputKind},
+        ${outputWatermark.sourceTaskId}
+      )`
+    : input.highWatermarks
+      ? sql`and false`
+      : sql``;
+  const businessTime = sql`cohort_users.business_time`;
+  const sortTime = buildMillisecondDetailSortTime(businessTime);
+  const targetDate = sql`cohort_users.cohort_date + ${input.retentionDay}`;
+  const targetStart = sql`(
+    (${targetDate})::timestamp at time zone ${input.timeZone}
+  ) at time zone 'UTC'`;
+  const keyset = buildDetailKeysetPredicate(
+    input.cursor,
+    sortTime,
+    sql`cohort_users.user_id`
+  );
+  return sql`
+    with cohort_users as (
+      select
+        ${user.id} as user_id,
+        ${user.name} as name,
+        ${user.email} as email,
+        ${user.role}::text as role,
+        ${user.banned} as banned,
+        ${user.createdAt} as business_time,
+        (
+          (${user.createdAt} at time zone 'UTC') at time zone ${input.timeZone}
+        )::date as cohort_date
+      from ${user}
+      where ${user.createdAt} >= ${sql.param(input.start, user.createdAt)}
+        and ${user.createdAt} < ${sql.param(input.end, user.createdAt)}
+        and ${user.createdAt} >= ${sql.param(input.epochStart, user.createdAt)}
+        and ${user.createdAt} < ${sql.param(
+          nextMillisecond(input.asOf),
+          user.createdAt
+        )}
+        ${sourceBound}
+    )
+    select
+      cohort_users.user_id,
+      cohort_users.name,
+      cohort_users.email,
+      cohort_users.role,
+      cohort_users.banned,
+      cohort_users.business_time,
+      exists (
+        select 1
+        from ${userOutputUsageEvent}
+        where ${userOutputUsageEvent.userId} = cohort_users.user_id
+          and (
+            (${userOutputUsageEvent.operationCreatedAt} at time zone 'UTC')
+              at time zone ${input.timeZone}
+          )::date = ${targetDate}
+          and ${userOutputUsageEvent.operationCreatedAt} < ${nextMillisecond(
+            input.asOf
+          )}
+          ${outputBound}
+      ) as retained
+    from cohort_users
+    where ${targetStart} < ${nextMillisecond(input.asOf)}
+      and ${keyset}
+    order by ${sortTime} desc, cohort_users.user_id desc
     limit ${input.limit}
   `;
 }
@@ -712,6 +879,9 @@ export function buildOperationsGrowthDetailSql(
   if (input.kind === "activity") {
     return buildOperationsActivityDetailSql(input);
   }
+  if (input.kind === "cohort_export") {
+    return buildOperationsCohortExportDetailSql(input);
+  }
   return buildOperationsCohortDetailSql(input);
 }
 
@@ -720,7 +890,8 @@ export function buildOperationsDetailSql(input: OperationsDetailQuery): SQL {
   if (
     input.kind === "users" ||
     input.kind === "activity" ||
-    input.kind === "cohort"
+    input.kind === "cohort" ||
+    input.kind === "cohort_export"
   ) {
     return buildOperationsGrowthDetailSql(input);
   }

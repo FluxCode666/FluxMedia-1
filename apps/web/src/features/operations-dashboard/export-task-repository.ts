@@ -244,39 +244,12 @@ const highWatermarksSchema = z
   })
   .strict();
 
-/** 将冻结 JSON 转回明细 SQL 接受的 Date 高水位。 */
+/** 校验冻结 JSON，并保留数据库生成的六位微秒时间字符串。 */
 export function parseOperationsExportHighWatermarks(
   value: unknown
 ): OperationsDetailHighWatermarks {
   const parsed = highWatermarksSchema.parse(value);
-  return {
-    users: parsed.users && {
-      createdAt: new Date(parsed.users.createdAt),
-      id: parsed.users.id,
-    },
-    webVisits: parsed.webVisits && {
-      createdAt: new Date(parsed.webVisits.createdAt),
-      userId: parsed.webVisits.userId,
-      appDate: parsed.webVisits.appDate,
-    },
-    outputs: parsed.outputs && {
-      createdAt: new Date(parsed.outputs.createdAt),
-      outputKind: parsed.outputs.outputKind,
-      sourceTaskId: parsed.outputs.sourceTaskId,
-    },
-    paymentOrders: parsed.paymentOrders && {
-      createdAt: new Date(parsed.paymentOrders.createdAt),
-      id: parsed.paymentOrders.id,
-    },
-    paymentLifecycle: parsed.paymentLifecycle && {
-      recordedAt: new Date(parsed.paymentLifecycle.recordedAt),
-      id: parsed.paymentLifecycle.id,
-    },
-    creditContributions: parsed.creditContributions && {
-      projectedAt: new Date(parsed.creditContributions.projectedAt),
-      transactionId: parsed.creditContributions.transactionId,
-    },
-  };
+  return parsed;
 }
 
 /** 对未知 Drizzle 返回安全读取布尔条件更新结果。 */
@@ -336,12 +309,12 @@ async function readSnapshot(
       (select app_date from operations_analytics_epoch where id = 1) as epoch_app_date,
       (select starts_at from operations_analytics_epoch where id = 1) as epoch_starts_at,
       json_build_object(
-        'users', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'id', id) from "user" order by created_at desc, id desc limit 1),
-        'webVisits', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'userId', user_id, 'appDate', app_date) from user_web_visit order by created_at desc, user_id desc, app_date desc limit 1),
-        'outputs', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'outputKind', output_kind, 'sourceTaskId', source_task_id) from user_output_usage_event order by created_at desc, output_kind desc, source_task_id desc limit 1),
-        'paymentOrders', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'id', id) from payment_order order by created_at desc, id desc limit 1),
-        'paymentLifecycle', (select json_build_object('recordedAt', to_char(recorded_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'id', id) from payment_lifecycle_event order by recorded_at desc, id desc limit 1),
-        'creditContributions', (select json_build_object('projectedAt', to_char(projected_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'transactionId', transaction_id) from credit_usage_projection_entry order by projected_at desc, transaction_id desc limit 1)
+        'users', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'id', id) from "user" order by created_at desc, id desc limit 1),
+        'webVisits', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'userId', user_id, 'appDate', app_date) from user_web_visit order by created_at desc, user_id desc, app_date desc limit 1),
+        'outputs', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'outputKind', output_kind, 'sourceTaskId', source_task_id) from user_output_usage_event order by created_at desc, output_kind desc, source_task_id desc limit 1),
+        'paymentOrders', (select json_build_object('createdAt', to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'id', id) from payment_order order by created_at desc, id desc limit 1),
+        'paymentLifecycle', (select json_build_object('recordedAt', to_char(recorded_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'id', id) from payment_lifecycle_event order by recorded_at desc, id desc limit 1),
+        'creditContributions', (select json_build_object('projectedAt', to_char(projected_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'transactionId', transaction_id) from credit_usage_projection_entry order by projected_at desc, transaction_id desc limit 1)
       ) as high_watermarks
   `)
       )[0]

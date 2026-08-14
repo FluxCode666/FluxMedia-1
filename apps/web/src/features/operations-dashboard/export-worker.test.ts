@@ -21,6 +21,7 @@ vi.mock("@repo/shared/logger", () => ({
 }));
 
 import {
+  buildOperationsExportQuerySpecs,
   expireOperationsExportBatch,
   formatOperationsExportAmount,
   formatOperationsExportDateTime,
@@ -86,6 +87,48 @@ function createDependencies(): OperationsExportWorkerDependencies {
 describe("processOperationsExportBatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("多年增长导出固定为四类基础查询和三个留存查询", () => {
+    const specs = buildOperationsExportQuerySpecs({
+      ...task,
+      exportType: "user_growth",
+      query: {
+        granularity: "day",
+        range: {
+          kind: "custom",
+          from: "2020-01-01",
+          to: "2026-02-01",
+        },
+      },
+      highWatermarks: {
+        users: null,
+        webVisits: null,
+        outputs: null,
+        paymentOrders: null,
+        paymentLifecycle: null,
+        creditContributions: null,
+      },
+    });
+
+    expect(specs).toHaveLength(7);
+    expect(specs.filter((spec) => spec.kind === "cohort_export")).toEqual([
+      {
+        kind: "cohort_export",
+        label: "retention_d1",
+        retentionDay: 1,
+      },
+      {
+        kind: "cohort_export",
+        label: "retention_d7",
+        retentionDay: 7,
+      },
+      {
+        kind: "cohort_export",
+        label: "retention_d30",
+        retentionDay: 30,
+      },
+    ]);
   });
 
   it("空导出仍完成并记录零业务行", async () => {

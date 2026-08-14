@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   getOperationsExportStorage,
   OPERATIONS_EXPORT_DOWNLOAD_TTL_SECONDS,
+  type OperationsExportStorage,
 } from "./export-storage";
 import {
   type DownloadableOperationsExportTask,
@@ -53,6 +54,7 @@ export type OperationsExportServiceDependencies = {
   now(): Date;
   createId(): string;
   tokenSecret?: string;
+  getStorage?(): Promise<OperationsExportStorage>;
 };
 
 const defaultDependencies: OperationsExportServiceDependencies = {
@@ -324,12 +326,18 @@ export async function prepareOperationsExportDownload(
       "not_found",
       "运营导出不存在、未完成或已过期"
     );
-  try {
-    const storage = await getOperationsExportStorage();
-    const remainingSeconds = Math.max(
-      1,
-      Math.floor((task.expiresAt.getTime() - now.getTime()) / 1000)
+  const remainingSeconds = Math.floor(
+    (task.expiresAt.getTime() - now.getTime()) / 1000
+  );
+  if (remainingSeconds < 1) {
+    throw new OperationsExportServiceError(
+      "not_found",
+      "运营导出不存在、未完成或已过期"
     );
+  }
+  try {
+    const storage = await (dependencies.getStorage?.() ??
+      getOperationsExportStorage());
     const expiresIn = Math.min(
       OPERATIONS_EXPORT_DOWNLOAD_TTL_SECONDS,
       remainingSeconds

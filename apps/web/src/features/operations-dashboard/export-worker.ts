@@ -1,9 +1,8 @@
 /**
- * 运营 CSV 导出 worker 与七天清理执行器。
+ * 运营 CSV 导出 worker。
  *
- * 使用方：operations.processExports / expireExports 内部 UOL binding。worker 从仓储领取
- * 带 fencing token 的冻结任务，按 keyset 读取同源事实、流式上传并条件完成；过期先在
- * 数据库拒绝下载，再独立幂等删除对象。
+ * 使用方：operations.processExports 内部 UOL binding。worker 从仓储领取带 fencing
+ * token 的冻结任务，按 keyset 读取同源事实、流式上传并条件完成。
  */
 import { randomUUID } from "node:crypto";
 
@@ -13,7 +12,6 @@ import {
 } from "@repo/shared/credits/top-up";
 import { logError, logger } from "@repo/shared/logger";
 import type { OperationsExportType } from "@repo/shared/operations-dashboard/contracts";
-import { addOperationsCalendarDays } from "@repo/shared/operations-dashboard/range";
 import {
   normalizeTimeZone,
   parseDateInputInTimeZone,
@@ -33,12 +31,10 @@ import {
   createMeasuredExportStream,
   getOperationsExportStorage,
   type OperationsExportStorage,
-  parseOperationsExportObjectKey,
 } from "./export-storage";
 import {
   type ClaimedOperationsExportTask,
   databaseOperationsExportTaskRepository,
-  OPERATIONS_EXPORT_LEASE_MS,
   OPERATIONS_EXPORT_RETENTION_MS,
   type OperationsExportTaskRepository,
   parseOperationsExportHighWatermarks,
@@ -46,12 +42,6 @@ import {
 
 const EXPORT_PAGE_SIZE = 1_000;
 const EXPORT_LEASE_RENEW_INTERVAL_MS = 30_000;
-const EXPORT_ORPHAN_SCAN_PREFIX = "operations-exports/";
-const EXPORT_ORPHAN_SAFETY_MS = OPERATIONS_EXPORT_LEASE_MS;
-
-/** 进程内 opaque cursor；重启后从前缀起点重扫，删除与引用检查均保持幂等。 */
-let storageObjectScanCursor: string | null = null;
-let multipartUploadScanCursor: string | null = null;
 
 /** worker 可注入端口；测试替换数据库、存储、时钟和 UUID。 */
 export type OperationsExportWorkerDependencies = {
@@ -69,29 +59,6 @@ export type OperationsExportWorkerDependencies = {
   now(): Date;
   createToken(): string;
   leaseRenewIntervalMs?: number;
-};
-
-/** 七天清理可替换端口。 */
-export type OperationsExportCleanupDependencies = {
-  repository: Pick<
-    OperationsExportTaskRepository,
-    | "expireDue"
-    | "markDeleted"
-    | "markCleanupFailed"
-    | "listOrphans"
-    | "markOrphanDeleted"
-    | "findReferencedObjectKeys"
-    | "findActiveExportLeases"
-  >;
-  storage: Pick<
-    OperationsExportStorage,
-    | "bucket"
-    | "deleteObject"
-    | "listObjects"
-    | "listMultipartUploads"
-    | "abortMultipartUpload"
-  >;
-  now(): Date;
 };
 
 /** 独立于数据库行产出续租，避免慢查询或慢上传期间租约静默过期。 */
@@ -179,7 +146,6 @@ type ExportQuerySpec = {
   kind: OperationsDetailQuery["kind"];
   label: string;
   activityKind?: "login" | "creation" | "payment";
-  cohortDate?: string;
   retentionDay?: 1 | 7 | 30;
 };
 
@@ -381,7 +347,6 @@ function buildQueries(input: {
   cursor: OperationsDetailCursor | null;
   highWatermarks: OperationsDetailHighWatermarks;
   kind: OperationsDetailQuery["kind"];
-  cohortDate?: string;
   retentionDay?: 1 | 7 | 30;
 }): OperationsDetailQuery {
   const range = resolveFrozenRange(input.task);
@@ -408,39 +373,19 @@ function buildQueries(input: {
     return { ...base, kind: "content", detail: "credit_usage" };
   if (input.kind === "activity")
     return { ...base, kind: "activity", activityKind: "login" };
-  if (input.kind === "cohort" && input.cohortDate && input.retentionDay) {
-    const cohortStart = parseDateInputInTimeZone(input.cohortDate, {
-      timeZone: input.task.timeZone,
-    });
-    const cohortEnd = parseDateInputInTimeZone(
-      addOperationsCalendarDays(input.cohortDate, 1),
-      { timeZone: input.task.timeZone }
-    );
-    const targetStart = parseDateInputInTimeZone(
-      addOperationsCalendarDays(input.cohortDate, input.retentionDay),
-      { timeZone: input.task.timeZone }
-    );
-    const targetEnd = parseDateInputInTimeZone(
-      addOperationsCalendarDays(input.cohortDate, input.retentionDay + 1),
-      { timeZone: input.task.timeZone }
-    );
-    if (!cohortStart || !cohortEnd || !targetStart || !targetEnd)
-      throw new Error("导出 Cohort 日期无效");
+  if (input.kind === "cohort_export" && input.retentionDay) {
     return {
       ...base,
-      kind: "cohort",
-      start: cohortStart,
-      end: cohortEnd,
-      targetStart,
-      targetEnd:
-        targetEnd > input.task.snapshotAt ? input.task.snapshotAt : targetEnd,
+      kind: "cohort_export",
+      retentionDay: input.retentionDay,
+      timeZone: input.task.timeZone,
     };
   }
   throw new Error("导出 Cohort 参数不完整");
 }
 
 /** 构造模块 CSV 的封闭记录类型，含每个已成熟 Cohort 单元。 */
-function buildExportQuerySpecs(
+export function buildOperationsExportQuerySpecs(
   task: ClaimedOperationsExportTask
 ): ExportQuerySpec[] {
   if (task.exportType === "commercialization")
@@ -457,26 +402,12 @@ function buildExportQuerySpecs(
     { kind: "activity", label: "payment_activity", activityKind: "payment" },
   ];
   if (task.query.range.kind !== "custom") return specs;
-  let cohortDate =
-    task.query.range.from < task.epochAppDate
-      ? task.epochAppDate
-      : task.query.range.from;
-  while (cohortDate <= task.query.range.to) {
-    for (const retentionDay of [1, 7, 30] as const) {
-      const targetStart = parseDateInputInTimeZone(
-        addOperationsCalendarDays(cohortDate, retentionDay),
-        { timeZone: task.timeZone }
-      );
-      if (targetStart && targetStart <= task.snapshotAt) {
-        specs.push({
-          kind: "cohort",
-          label: `retention_d${retentionDay}`,
-          cohortDate,
-          retentionDay,
-        });
-      }
-    }
-    cohortDate = addOperationsCalendarDays(cohortDate, 1);
+  for (const retentionDay of [1, 7, 30] as const) {
+    specs.push({
+      kind: "cohort_export",
+      label: `retention_d${retentionDay}`,
+      retentionDay,
+    });
   }
   return specs;
 }
@@ -504,7 +435,7 @@ async function* streamRowsFromReader(
   const highWatermarks = parseOperationsExportHighWatermarks(
     task.highWatermarks
   );
-  const specs = buildExportQuerySpecs(task);
+  const specs = buildOperationsExportQuerySpecs(task);
   const formatDateTime = createOperationsExportDateTimeFormatter(task.timeZone);
   for (const spec of specs) {
     let cursor: OperationsDetailCursor | null = null;
@@ -514,7 +445,6 @@ async function* streamRowsFromReader(
         cursor,
         highWatermarks,
         kind: spec.kind,
-        cohortDate: spec.cohortDate,
         retentionDay: spec.retentionDay,
       });
       if (query.kind === "activity") {
@@ -785,248 +715,8 @@ export async function processDatabaseOperationsExports(
   );
 }
 
-/** 为 task/lease 组合构造仅在进程内使用的集合键。 */
-function exportLeaseKey(input: { taskId: string; leaseToken: string }): string {
-  return `${input.taskId}:${input.leaseToken}`;
-}
-
-/** 批量查询对象键对应的仍有效租约，避免清理长时间运行的上传。 */
-async function findActiveObjectLeaseKeys(
-  objectKeys: string[],
-  dependencies: OperationsExportCleanupDependencies
-): Promise<Set<string>> {
-  const parsedObjects = objectKeys.flatMap((key) => {
-    const parsed = parseOperationsExportObjectKey(key);
-    return parsed ? [parsed] : [];
-  });
-  const activeLeases = await dependencies.repository.findActiveExportLeases({
-    taskIds: [...new Set(parsedObjects.map((object) => object.taskId))],
-    now: dependencies.now(),
-  });
-  return new Set(activeLeases.map(exportLeaseKey));
-}
-
-/**
- * 清理一页硬崩溃遗留对象。
- *
- * 只处理早于一个完整租约窗口的对象，并在每页删除前一次性查询数据库引用集合；
- * completed、expired 或其它状态任务只要仍引用对象就永久保留。删除失败时不推进
- * cursor，使下一批优先重试同一页，其余已删除对象按幂等缺失处理。
- */
-async function cleanupUnreferencedStoragePage(
-  input: { limit: number; olderThan: Date },
-  dependencies: OperationsExportCleanupDependencies
-): Promise<number> {
-  const currentCursor = storageObjectScanCursor;
-  try {
-    const page = await dependencies.storage.listObjects(
-      EXPORT_ORPHAN_SCAN_PREFIX,
-      dependencies.storage.bucket,
-      { cursor: currentCursor, limit: input.limit }
-    );
-    const staleObjects = page.objects.filter(
-      (object) => object.lastModified < input.olderThan
-    );
-    const referenced = await dependencies.repository.findReferencedObjectKeys({
-      objectBucket: dependencies.storage.bucket,
-      objectKeys: staleObjects.map((object) => object.key),
-    });
-    const activeLeaseKeys = await findActiveObjectLeaseKeys(
-      staleObjects.map((object) => object.key),
-      dependencies
-    );
-    let deleted = 0;
-    let failed = false;
-    for (const object of staleObjects) {
-      if (referenced.has(object.key)) continue;
-      const parsed = parseOperationsExportObjectKey(object.key);
-      if (parsed && activeLeaseKeys.has(exportLeaseKey(parsed))) continue;
-      try {
-        await dependencies.storage.deleteObject(
-          object.key,
-          dependencies.storage.bucket
-        );
-        deleted += 1;
-      } catch {
-        failed = true;
-      }
-    }
-    if (!failed) storageObjectScanCursor = page.nextCursor;
-    return deleted;
-  } catch {
-    logger.warn(
-      {
-        operation: "operations.expireExports",
-        leaseStatus: "orphan_scan_failed",
-        errorCode: "orphan_scan_failed",
-      },
-      "Operations export orphan scan failed"
-    );
-    return 0;
-  }
-}
-
-/**
- * 清理一页陈旧 S3 multipart 上传；local provider 没有该能力时为空操作。
- *
- * worker 批量排除仍有效的 task/lease，provider 负责分页和 NoSuchUpload 幂等；
- * 失败不推进 cursor，下次 cron 从相同页继续，且不回滚数据库过期边界。
- */
-async function cleanupStaleMultipartUploadPage(
-  input: { limit: number; olderThan: Date },
-  dependencies: OperationsExportCleanupDependencies
-): Promise<number> {
-  if (
-    !dependencies.storage.listMultipartUploads ||
-    !dependencies.storage.abortMultipartUpload
-  ) {
-    return 0;
-  }
-  try {
-    const page = await dependencies.storage.listMultipartUploads(
-      EXPORT_ORPHAN_SCAN_PREFIX,
-      dependencies.storage.bucket,
-      {
-        cursor: multipartUploadScanCursor,
-        limit: input.limit,
-      }
-    );
-    const staleUploads = page.uploads.filter(
-      (upload) => upload.initiatedAt < input.olderThan
-    );
-    const activeLeaseKeys = await findActiveObjectLeaseKeys(
-      staleUploads.map((upload) => upload.key),
-      dependencies
-    );
-    let aborted = 0;
-    let failed = false;
-    for (const upload of staleUploads) {
-      const parsed = parseOperationsExportObjectKey(upload.key);
-      if (parsed && activeLeaseKeys.has(exportLeaseKey(parsed))) {
-        continue;
-      }
-      try {
-        await dependencies.storage.abortMultipartUpload(
-          upload.key,
-          dependencies.storage.bucket,
-          upload.cleanupToken
-        );
-        aborted += 1;
-      } catch {
-        failed = true;
-      }
-    }
-    if (!failed) multipartUploadScanCursor = page.nextCursor;
-    return aborted;
-  } catch {
-    logger.warn(
-      {
-        operation: "operations.expireExports",
-        leaseStatus: "multipart_cleanup_failed",
-        errorCode: "multipart_cleanup_failed",
-      },
-      "Operations export multipart cleanup failed"
-    );
-    return 0;
-  }
-}
-
-/** 先批量转 expired，再逐对象幂等删除；删除失败不恢复下载权限。 */
-export async function expireOperationsExportBatch(
-  input: { limit: number },
-  dependencies: OperationsExportCleanupDependencies
-): Promise<{ processed: number }> {
-  const now = dependencies.now();
-  const tasks = await dependencies.repository.expireDue({
-    now,
-    limit: input.limit,
-  });
-  for (const task of tasks) {
-    const startedAt = Date.now();
-    try {
-      await dependencies.storage.deleteObject(
-        task.objectKey,
-        task.objectBucket
-      );
-      await dependencies.repository.markDeleted({
-        taskId: task.id,
-        objectKey: task.objectKey,
-        now: dependencies.now(),
-      });
-      logger.info(
-        {
-          operation: "operations.expireExports",
-          exportTaskId: task.id,
-          leaseStatus: "object_deleted",
-          durationMs: Math.max(0, Date.now() - startedAt),
-        },
-        "Operations export object deleted"
-      );
-    } catch {
-      await dependencies.repository.markCleanupFailed({
-        taskId: task.id,
-        objectKey: task.objectKey,
-        errorCode: "object_delete_failed",
-        now: dependencies.now(),
-      });
-      logger.warn(
-        {
-          operation: "operations.expireExports",
-          exportTaskId: task.id,
-          leaseStatus: "cleanup_failed",
-          errorCode: "object_delete_failed",
-          durationMs: Math.max(0, Date.now() - startedAt),
-        },
-        "Operations export object cleanup failed"
-      );
-    }
-  }
-  const remaining = Math.max(0, input.limit - tasks.length);
-  const orphans =
-    remaining > 0
-      ? await dependencies.repository.listOrphans({ limit: remaining })
-      : [];
-  for (const orphan of orphans) {
-    try {
-      await dependencies.storage.deleteObject(
-        orphan.objectKey,
-        orphan.objectBucket
-      );
-      await dependencies.repository.markOrphanDeleted({
-        auditId: orphan.auditId,
-        taskId: orphan.taskId,
-        objectKey: orphan.objectKey,
-        now: dependencies.now(),
-      });
-    } catch {
-      // 孤儿审计记录保持未完成，后续清理批次会再次尝试。
-    }
-  }
-  const olderThan = new Date(now.getTime() - EXPORT_ORPHAN_SAFETY_MS);
-  const deletedOrphans = await cleanupUnreferencedStoragePage(
-    { limit: input.limit, olderThan },
-    dependencies
-  );
-  const abortedUploads = await cleanupStaleMultipartUploadPage(
-    { limit: input.limit, olderThan },
-    dependencies
-  );
-  return {
-    processed: tasks.length + orphans.length + deletedOrphans + abortedUploads,
-  };
-}
-
-/** 生产清理任务读取单一存储快照并执行数据库过期边界。 */
-export async function expireDatabaseOperationsExports(
-  limit: number
-): Promise<{ processed: number }> {
-  const storage = await getOperationsExportStorage();
-  return expireOperationsExportBatch(
-    { limit },
-    {
-      repository: databaseOperationsExportTaskRepository,
-      storage,
-      now: () => new Date(),
-    }
-  );
-}
+export {
+  expireDatabaseOperationsExports,
+  expireOperationsExportBatch,
+  type OperationsExportCleanupDependencies,
+} from "./export-cleanup";

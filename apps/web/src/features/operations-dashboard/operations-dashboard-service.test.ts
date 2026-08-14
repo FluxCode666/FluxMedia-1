@@ -173,4 +173,91 @@ describe("operations dashboard service", () => {
       service.getOverview({}, "Asia/Shanghai")
     ).rejects.toMatchObject({ code: "invalid_data" });
   });
+
+  it("模块并发组装时同一事务 execute 始终串行", async () => {
+    let activeQueries = 0;
+    let maximumActiveQueries = 0;
+    const connection = {
+      async execute(_query: SQL) {
+        activeQueries += 1;
+        maximumActiveQueries = Math.max(maximumActiveQueries, activeQueries);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        activeQueries -= 1;
+        return { rows: [] };
+      },
+    };
+    const database = {
+      transaction: vi.fn(async (work) => work(connection)),
+    };
+    const sharedHeader = {
+      asOf: new Date("2026-08-10T12:00:00.000Z"),
+      epoch: {
+        appDate: "2026-08-01",
+        startsAt: new Date("2026-07-31T16:00:00.000Z"),
+      },
+      outputUsage: { version: 1, status: "ready" },
+      creditUsage: { version: 1, status: "ready" },
+    } as const;
+    const range = {
+      dataStart: new Date("2026-08-01T00:00:00.000Z"),
+      end: new Date("2026-08-11T00:00:00.000Z"),
+      previous: {
+        dataStart: new Date("2026-07-22T00:00:00.000Z"),
+        end: new Date("2026-08-01T00:00:00.000Z"),
+        availability: "available",
+      },
+      availability: "available",
+    } as const;
+    const factories = {
+      growth: (execute: (query: SQL) => Promise<unknown>) => ({
+        readCumulativeUserCount: () => execute(sql`select 1`),
+      }),
+      commercial: (execute: (query: SQL) => Promise<unknown>) => ({
+        readRevenue: () => execute(sql`select 2`),
+      }),
+      content: (execute: (query: SQL) => Promise<unknown>) => ({
+        readHeader: async () => {
+          await execute(sql`select 0`);
+          return sharedHeader;
+        },
+        readSeries: () => execute(sql`select 3`),
+      }),
+      health: () => ({}),
+    } as unknown as OperationsDashboardReaderFactories;
+    const builders = {
+      growth: async (
+        _input: unknown,
+        _timeZone: string,
+        reader: ReturnType<OperationsDashboardReaderFactories["growth"]>
+      ) => {
+        await reader.readCumulativeUserCount(range.end);
+        return { generatedAt: "same", range };
+      },
+      commercial: async (
+        _input: unknown,
+        _timeZone: string,
+        reader: ReturnType<OperationsDashboardReaderFactories["commercial"]>
+      ) => {
+        await reader.readRevenue({ start: range.dataStart, end: range.end });
+        return { generatedAt: "same", range };
+      },
+      content: async (
+        _input: unknown,
+        _timeZone: string,
+        reader: ReturnType<OperationsDashboardReaderFactories["content"]>
+      ) => {
+        await reader.readSeries([]);
+        return { generatedAt: "same", range };
+      },
+      health: vi.fn().mockResolvedValue({}),
+    } as unknown as OperationsDashboardBuilders;
+
+    await createOperationsDashboardService({
+      database,
+      factories,
+      builders,
+    }).getOverview({}, "Asia/Shanghai");
+
+    expect(maximumActiveQueries).toBe(1);
+  });
 });

@@ -12,6 +12,7 @@ import {
   getOperationsExportDownloadTarget,
   listOperationsExports,
   OperationsExportServiceError,
+  prepareOperationsExportDownload,
   retryOperationsExport,
 } from "./export-service";
 import type { OperationsExportTaskRepository } from "./export-task-repository";
@@ -238,5 +239,39 @@ describe("operations export service", () => {
         repo
       )
     ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("远程签名有效期不足一秒时拒绝，不签发越过保留边界的 URL", async () => {
+    const repo = repository();
+    const expiresAt = new Date("2026-08-21T00:00:00.000Z");
+    vi.mocked(repo.findDownloadable).mockResolvedValue({
+      id: "task-1",
+      createdBy: "admin-1",
+      status: "completed",
+      objectBucket: "exports",
+      objectKey: "task-1.csv",
+      expiresAt,
+      exportType: "user_growth",
+    });
+    const getStorage = vi.fn();
+
+    await expect(
+      prepareOperationsExportDownload(
+        {
+          createdBy: "admin-1",
+          input: { taskId: "task-1" },
+          localDownloadUrl: (taskId) => `/downloads/${taskId}`,
+        },
+        {
+          repository: repo,
+          now: () => new Date(expiresAt.getTime() - 1),
+          createId: () => "unused",
+          tokenSecret: "secret",
+          getStorage,
+        }
+      )
+    ).rejects.toMatchObject({ code: "not_found" });
+    expect(getStorage).not.toHaveBeenCalled();
+    expect(repo.recordDownload).not.toHaveBeenCalled();
   });
 });
