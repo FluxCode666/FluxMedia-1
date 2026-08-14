@@ -29,6 +29,7 @@ import "@/server/uol-bindings/operations-dashboard-facts";
 import "@/server/uol-bindings/operations-dashboard";
 import "@/server/uol-bindings/payment-admin";
 import "@/server/uol-bindings/payment-fulfillment";
+import "@/server/uol-bindings/payment-webhooks";
 import "@/server/uol-bindings/payment-user";
 import "@/server/uol-bindings/referrals";
 import "@/server/uol-bindings/video-generation";

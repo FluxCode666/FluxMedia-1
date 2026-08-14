@@ -1055,3 +1055,39 @@ export const fulfillAlipayTopUp = defineOperation({
     throw new Error("credits.fulfillAlipayTopUp must be bound at app level");
   },
 });
+
+// ---------------------------------------------------------------------------
+// 27. credits.fulfillEpayTopUp - 履约验签后的易支付通知
+// ---------------------------------------------------------------------------
+export const fulfillEpayTopUp = defineOperation({
+  name: "credits.fulfillEpayTopUp",
+  domain: "credits",
+  title: "Fulfill Epay Credit Top-up",
+  description:
+    "履约已通过易支付签名校验的成功通知。统一接口只接收规范化业务字段，不接收" +
+    "原始签名参数；执行层继续校验本地订单、冻结快照、金额和渠道交易号。",
+  input: z
+    .object({
+      type: z.string().trim().min(1).max(64),
+      tradeNo: z.string().trim().min(1).max(255),
+      outTradeNo: z.string().trim().min(1).max(255),
+      name: z.string().max(255),
+      money: z.string().trim().min(1).max(64),
+      tradeStatus: z.literal("TRADE_SUCCESS"),
+      param: z.string().max(8192).optional(),
+    })
+    .strict(),
+  output: z
+    .object({
+      metadataType: z.enum(["credit_purchase", "subscription"]),
+    })
+    .strict(),
+  access: { kind: "webhook", provider: "epay" },
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["billing"],
+  execute: async () => {
+    throw new Error("credits.fulfillEpayTopUp must be bound at app level");
+  },
+});
