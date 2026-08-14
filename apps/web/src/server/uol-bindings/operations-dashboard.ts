@@ -6,7 +6,6 @@
  * Principal 进入同一 UOL 网关，避免调度入口绕过权限和审计。
  */
 
-import { isAdminRole } from "@repo/shared/auth/roles";
 import { logger } from "@repo/shared/logger";
 import {
   operationsCreateExportOutputSchema,
@@ -51,12 +50,20 @@ import {
   OperationsDashboardServiceError,
 } from "@/features/operations-dashboard/operations-dashboard-service";
 
-/** 将管理员身份与限流检查复用到全部人工运营 operation。 */
-async function assertOperationsAdmin(
+/**
+ * 收窄已由 invokeOperation 授权的人工 Principal，并执行运营页面限流。
+ *
+ * WHY：角色策略只由 operation access 声明维护；若授权后仍收到非用户 Principal，
+ * 这是网关或 binding 不变量损坏，而不是第二套可对外报告的权限判断。
+ */
+async function requireOperationsUser(
   principal: Principal
 ): Promise<Extract<Principal, { type: "user" }>> {
-  if (principal.type !== "user" || !isAdminRole(principal.role)) {
-    throw new OperationError("forbidden", "Administrator access required");
+  if (principal.type !== "user") {
+    throw new OperationError(
+      "internal_error",
+      "Authorized operations user principal required"
+    );
   }
   const rateLimit = await checkRateLimit(
     `operations-dashboard:${principal.userId}`,
@@ -216,7 +223,7 @@ async function runObservedOperationsCall<TResult>(
 bindExecute(
   "operations.getOverview",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    await assertOperationsAdmin(principal);
+    await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.getOverview",
@@ -251,7 +258,7 @@ bindExecute(
 bindExecute(
   "operations.getDetail",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const adminPrincipal = await assertOperationsAdmin(principal);
+    const adminPrincipal = await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.getDetail",
@@ -281,7 +288,7 @@ bindExecute(
 bindExecute(
   "operations.createExport",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await assertOperationsAdmin(principal);
+    const admin = await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.createExport",
@@ -310,7 +317,7 @@ bindExecute(
 bindExecute(
   "operations.listExports",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await assertOperationsAdmin(principal);
+    const admin = await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.listExports",
@@ -331,7 +338,7 @@ bindExecute(
 bindExecute(
   "operations.retryExport",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await assertOperationsAdmin(principal);
+    const admin = await requireOperationsUser(principal);
     try {
       return await runObservedOperationsCall(
         "operations.retryExport",
@@ -356,7 +363,7 @@ bindExecute(
 bindExecute(
   "operations.prepareExportDownload",
   async (input: unknown, principal: Principal, context: OperationContext) => {
-    const admin = await assertOperationsAdmin(principal);
+    const admin = await requireOperationsUser(principal);
     try {
       const origin =
         process.env.NEXT_PUBLIC_APP_URL ??
@@ -388,12 +395,7 @@ bindExecute(
 /** 处理任务只接受 UOL 已鉴权的精确 operations-export cron Principal。 */
 bindExecute(
   "operations.processExports",
-  async (input: unknown, principal: Principal, context: OperationContext) => {
-    if (principal.type !== "cron" || principal.job !== "operations-export")
-      throw new OperationError(
-        "forbidden",
-        "Operations export job access required"
-      );
+  async (input: unknown, _principal: Principal, context: OperationContext) => {
     const limit =
       typeof input === "object" && input !== null && "limit" in input
         ? Number(input.limit)
@@ -413,15 +415,7 @@ bindExecute(
 /** 保留任务使用独立 cron Principal，避免处理开关隐式开启清理。 */
 bindExecute(
   "operations.expireExports",
-  async (input: unknown, principal: Principal, context: OperationContext) => {
-    if (
-      principal.type !== "cron" ||
-      principal.job !== "operations-export-retention"
-    )
-      throw new OperationError(
-        "forbidden",
-        "Operations export retention job access required"
-      );
+  async (input: unknown, _principal: Principal, context: OperationContext) => {
     const limit =
       typeof input === "object" && input !== null && "limit" in input
         ? Number(input.limit)

@@ -292,4 +292,21 @@ describe("operations.getOverview binding", () => {
       },
     });
   });
+
+  it("由 invokeOperation 单点拒绝错误的 worker cron Principal", async () => {
+    await expect(
+      invokeOperation(
+        "operations.processExports",
+        { limit: 1 },
+        { type: "cron", job: "operations-export-retention" }
+      )
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      invokeOperation(
+        "operations.expireExports",
+        { limit: 1 },
+        { type: "cron", job: "operations-export" }
+      )
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
 });
