@@ -291,7 +291,7 @@ function getCreateRejectionCode(error: unknown): string | null {
 }
 
 /** 在同一事务中捕获数据库时钟、epoch 与全部事实 append 高水位。 */
-async function readSnapshot(
+export async function readOperationsExportSnapshot(
   execute: (query: ReturnType<typeof sql>) => Promise<unknown>
 ): Promise<OperationsExportSnapshot> {
   const row = z
@@ -389,7 +389,7 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
                 input.minCreateIntervalMs
             )
               throw new Error("operations_export_rate_limited");
-            const snapshot = await readSnapshot(
+            const snapshot = await readOperationsExportSnapshot(
               transaction.execute.bind(transaction)
             );
             if (!snapshot.epoch) throw new Error("operations_export_not_ready");
