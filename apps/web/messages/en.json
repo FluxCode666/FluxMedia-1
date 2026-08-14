@@ -893,6 +893,9 @@
       "advanced": "Advanced"
     },
     "sidebar": {
+      "openMenu": "Open navigation menu",
+      "expandSidebar": "Expand sidebar",
+      "collapseSidebar": "Collapse sidebar",
       "settings": "Settings",
       "logout": "Logout"
     }

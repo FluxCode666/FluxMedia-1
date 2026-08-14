@@ -29,6 +29,7 @@ import { OperationsChartSeriesTable } from "./operations-chart-series-table";
 import {
   buildOperationsChartPoints,
   buildOperationsVisualPoints,
+  formatOperationsTooltipLabel,
   OPERATIONS_CHART_GRID,
   OPERATIONS_CHART_INK,
   OPERATIONS_CHART_MID_GRAY,
@@ -116,9 +117,7 @@ export function OperationsImageChart({
             content={
               <ChartTooltipContent
                 hideIndicator
-                labelFormatter={(_, payload) =>
-                  String(payload[0]?.payload?.label ?? "")
-                }
+                labelFormatter={formatOperationsTooltipLabel}
               />
             }
             cursor={{ fill: "#CFCEC7" }}

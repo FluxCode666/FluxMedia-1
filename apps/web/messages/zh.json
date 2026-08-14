@@ -893,6 +893,9 @@
       "advanced": "高级"
     },
     "sidebar": {
+      "openMenu": "打开导航菜单",
+      "expandSidebar": "展开侧边栏",
+      "collapseSidebar": "折叠侧边栏",
       "settings": "设置",
       "logout": "退出登录"
     }

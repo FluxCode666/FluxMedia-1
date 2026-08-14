@@ -7,8 +7,8 @@
 "use client";
 
 import * as React from "react";
-import * as RechartsPrimitive from "recharts";
 import type { TooltipValueType } from "recharts";
+import * as RechartsPrimitive from "recharts";
 
 import { cn } from "../utils";
 
@@ -195,7 +195,7 @@ function ChartTooltipContent({
             const key = `${nameKey ?? item.name ?? item.dataKey ?? "value"}`;
             const itemConfig = getPayloadConfigFromPayload(config, item, key);
             const indicatorColor = color ?? item.payload?.fill ?? item.color;
-            const stableKey = `${key}-${String(item.value)}`;
+            const stableKey = `${key}-${String(item.value)}-${itemIndex}`;
             return (
               <div
                 className={cn(

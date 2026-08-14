@@ -21,6 +21,7 @@ import { and, eq, gt, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { recordExpiredPaymentLifecycleEvents } from "@/features/payment/payment-lifecycle-service";
 import { invokeReferralFirstPayment } from "@/features/referrals/reward-fulfillment";
+import { extractExecuteRows } from "@/server/database-result";
 
 const PAYMENT_FULFILLMENT_LEASE_MS = 5 * 60_000;
 const PAYMENT_FULFILLMENT_MAX_BACKOFF_MS = 30 * 60_000;
@@ -284,13 +285,6 @@ function parseClaimedWorkItem(row: unknown): ClaimedPaymentFulfillmentWorkItem {
   };
 }
 
-/** 从 Drizzle execute 的不同驱动返回形态读取行数组。 */
-function readExecuteRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  const rows = (result as { rows?: unknown[] } | undefined)?.rows;
-  return Array.isArray(rows) ? rows : [];
-}
-
 /** 读取并核对积分批次；sourceRef 查询只允许 purchase 来源。 */
 async function findCreditsBatch(
   sourceRef: string
@@ -397,7 +391,7 @@ export async function claimNextPaymentFulfillmentWorkItem(
       RETURNING work.*
     `)
   );
-  const row = readExecuteRows(result)[0];
+  const row = extractExecuteRows(result)[0];
   return row ? parseClaimedWorkItem(row) : null;
 }
 

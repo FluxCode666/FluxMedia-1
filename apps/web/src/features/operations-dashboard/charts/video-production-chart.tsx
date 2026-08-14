@@ -8,13 +8,13 @@
 "use client";
 
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
+import { Button } from "@repo/ui/components/button";
 import {
   type ChartConfig,
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
 } from "@repo/ui/components/chart";
-import { Tabs, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
 import { useState } from "react";
 import {
   Bar,
@@ -31,6 +31,7 @@ import { OperationsChartSeriesTable } from "./operations-chart-series-table";
 import {
   buildOperationsChartPoints,
   buildOperationsVisualPoints,
+  formatOperationsTooltipLabel,
   OPERATIONS_CHART_GRID,
   OPERATIONS_CHART_INK,
 } from "./operations-chart-utils";
@@ -104,12 +105,27 @@ export function OperationsVideoChart({
         />
       }
       action={
-        <Tabs onValueChange={changeMode} value={mode}>
-          <TabsList aria-label={labels.modeLabel}>
-            <TabsTrigger value="count">{labels.count}</TabsTrigger>
-            <TabsTrigger value="seconds">{labels.seconds}</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <fieldset className="inline-flex items-center gap-1 rounded-lg p-1">
+          <legend className="sr-only">{labels.modeLabel}</legend>
+          <Button
+            aria-pressed={mode === "count"}
+            onClick={() => changeMode("count")}
+            size="sm"
+            type="button"
+            variant={mode === "count" ? "secondary" : "ghost"}
+          >
+            {labels.count}
+          </Button>
+          <Button
+            aria-pressed={mode === "seconds"}
+            onClick={() => changeMode("seconds")}
+            size="sm"
+            type="button"
+            variant={mode === "seconds" ? "secondary" : "ghost"}
+          >
+            {labels.seconds}
+          </Button>
+        </fieldset>
       }
       description={labels.description}
       source={labels.source}
@@ -141,9 +157,7 @@ export function OperationsVideoChart({
             content={
               <ChartTooltipContent
                 indicator="line"
-                labelFormatter={(_, payload) =>
-                  String(payload[0]?.payload?.label ?? "")
-                }
+                labelFormatter={formatOperationsTooltipLabel}
               />
             }
             cursor={{ stroke: "#8F8E88", strokeDasharray: "2 3" }}

@@ -18,12 +18,11 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
 import { useRouter } from "@/i18n/routing";
-
+import type { OperationsDashboardActionFailure } from "./action-result";
 import {
   getOperationsOverviewAction,
   type OperationsDashboardOverviewActionResult,
 } from "./actions";
-import type { OperationsDashboardActionFailure } from "./action-result";
 import {
   OperationsCohortChart,
   OperationsGrowthTrendChart,
@@ -79,6 +78,23 @@ const RETENTION_KEYS: readonly RetentionKey[] = [
   "d7Retention",
   "d30Retention",
 ];
+
+/**
+ * 同步已成功应用的筛选 URL，同时保留当前 locale 路径且不重复触发服务端页面查询。
+ *
+ * @param query 已由 UOL 返回完整成功快照的筛选条件。
+ * @sideEffects 使用 History API 原地替换当前浏览器 URL，不新增历史记录。
+ */
+function replaceAppliedQueryUrl(query: OperationsDashboardQueryInput): void {
+  const canonicalHref = buildOperationsDashboardHref(query);
+  const queryIndex = canonicalHref.indexOf("?");
+  const search = queryIndex >= 0 ? canonicalHref.slice(queryIndex) : "";
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${search}`
+  );
+}
 
 /** 将 Action 安全结果收敛为页面状态机支持的稳定失败码。 */
 function resolveOverviewActionResult(
@@ -152,6 +168,7 @@ export function OperationsDashboardPanel({
   );
   const [detailSelection, setDetailSelection] =
     useState<OperationsDetailSelection | null>(null);
+  const detailTriggerRef = useRef<HTMLElement | null>(null);
   const requestGate = useRef(createOperationsDashboardRequestGate());
 
   useEffect(() => {
@@ -179,7 +196,7 @@ export function OperationsDashboardPanel({
       setView((current) =>
         applyOperationsDashboardSnapshot(current, result.snapshot, query)
       );
-      router.replace(buildOperationsDashboardHref(query), { scroll: false });
+      replaceAppliedQueryUrl(query);
       setLiveMessage(t("state.updated"));
       return;
     }
@@ -194,9 +211,24 @@ export function OperationsDashboardPanel({
     void requestSnapshot(view.query);
   }
 
-  /** 打开记录级明细；关闭时清空选择，避免旧选择在下次打开时闪现。 */
+  /** 记录实际触发元素并打开对应明细，供受控 Sheet 关闭后恢复焦点。 */
+  function openDetail(selection: OperationsDetailSelection): void {
+    detailTriggerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setDetailSelection(selection);
+  }
+
+  /** 关闭记录级明细、清空旧选择，并在 Sheet 卸载后恢复触发按钮焦点。 */
   function changeDetailOpen(open: boolean): void {
-    if (!open) setDetailSelection(null);
+    if (open) return;
+    const trigger = detailTriggerRef.current;
+    detailTriggerRef.current = null;
+    setDetailSelection(null);
+    requestAnimationFrame(() => {
+      if (trigger?.isConnected) trigger.focus();
+    });
   }
 
   const isLoading = view.requestStatus === "loading";
@@ -360,7 +392,7 @@ export function OperationsDashboardPanel({
                 action={
                   selection ? (
                     <Button
-                      onClick={() => setDetailSelection(selection)}
+                      onClick={() => openDetail(selection)}
                       size="sm"
                       type="button"
                       variant="ghost"
@@ -428,8 +460,6 @@ export function OperationsDashboardPanel({
             tableOpen: t("charts.tableOpen"),
             tableCaption: t("charts.growth.tableCaption"),
             date: t("charts.date"),
-            status: t("charts.status"),
-            valueStatus: t("status.value"),
             preEpoch: t("status.pre_epoch"),
             navigation: t("charts.navigation"),
             series: {
@@ -466,7 +496,7 @@ export function OperationsDashboardPanel({
         />
         <OperationsDashboardCohort
           cohorts={snapshot.growth.cohorts}
-          onOpenDetail={setDetailSelection}
+          onOpenDetail={openDetail}
         />
       </section>
 
@@ -503,7 +533,7 @@ export function OperationsDashboardPanel({
             locale={locale}
           />
         }
-        onOpenDetail={setDetailSelection}
+        onOpenDetail={openDetail}
         snapshot={snapshot.commercial}
       />
 
@@ -581,7 +611,7 @@ export function OperationsDashboardPanel({
         <div className="flex flex-wrap gap-2">
           <Button
             onClick={() =>
-              setDetailSelection({
+              openDetail({
                 module: "content",
                 detail: "image_outputs",
               })
@@ -593,7 +623,7 @@ export function OperationsDashboardPanel({
           </Button>
           <Button
             onClick={() =>
-              setDetailSelection({
+              openDetail({
                 module: "content",
                 detail: "video_outputs",
               })
@@ -605,7 +635,7 @@ export function OperationsDashboardPanel({
           </Button>
           <Button
             onClick={() =>
-              setDetailSelection({
+              openDetail({
                 module: "content",
                 detail: "credit_usage",
               })

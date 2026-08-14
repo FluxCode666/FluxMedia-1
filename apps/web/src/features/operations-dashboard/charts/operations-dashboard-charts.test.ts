@@ -184,7 +184,7 @@ describe("operations dashboard charts", () => {
     expect(secondsTab).not.toBeUndefined();
     act(() =>
       secondsTab?.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, button: 0 })
+        new MouseEvent("click", { bubbles: true, button: 0 })
       )
     );
 

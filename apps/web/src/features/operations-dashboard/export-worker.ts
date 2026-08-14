@@ -15,7 +15,6 @@ import { logError, logger } from "@repo/shared/logger";
 import type { OperationsExportType } from "@repo/shared/operations-dashboard/contracts";
 import { addOperationsCalendarDays } from "@repo/shared/operations-dashboard/range";
 import {
-  getTimeZoneOffsetMinutes,
   normalizeTimeZone,
   parseDateInputInTimeZone,
 } from "@repo/shared/time-zone";
@@ -170,9 +169,11 @@ type CsvDefinition = {
   headers: readonly string[];
   mapRow(
     row: OperationsDetailRow,
-    timeZone: string
+    formatDateTime: OperationsExportDateTimeFormatter
   ): readonly OperationsCsvCell[];
 };
+
+type OperationsExportDateTimeFormatter = (date: Date) => string;
 
 type ExportQuerySpec = {
   kind: OperationsDetailQuery["kind"];
@@ -208,13 +209,18 @@ export function formatOperationsExportAmount(
   );
 }
 
-/** 把具体 UTC 瞬间导出为带应用时区偏移的 ISO 8601。 */
-export function formatOperationsExportDateTime(
-  date: Date,
+/**
+ * 为单个导出任务创建可复用的 ISO 8601 格式化器。
+ *
+ * @param timeZone 任务冻结的应用时区。
+ * @returns 复用同一个 Intl formatter 的纯日期转换函数。
+ * @failure 非法时区按 normalizeTimeZone 的既有规则回退，不吞掉非法 Date 错误。
+ */
+function createOperationsExportDateTimeFormatter(
   timeZone: string
-): string {
+): OperationsExportDateTimeFormatter {
   const normalized = normalizeTimeZone(timeZone);
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: normalized,
     year: "numeric",
     month: "2-digit",
@@ -224,14 +230,39 @@ export function formatOperationsExportDateTime(
     second: "2-digit",
     fractionalSecondDigits: 3,
     hourCycle: "h23",
-  }).formatToParts(date);
-  const read = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  const offsetMinutes = getTimeZoneOffsetMinutes(date, normalized);
-  const sign = offsetMinutes >= 0 ? "+" : "-";
-  const absolute = Math.abs(offsetMinutes);
-  const offset = `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
-  return `${read("year")}-${read("month")}-${read("day")}T${read("hour")}:${read("minute")}:${read("second")}.${read("fractionalSecond")}${offset}`;
+  });
+  return (date) => {
+    const values: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
+    for (const part of formatter.formatToParts(date)) {
+      values[part.type] = part.value;
+    }
+    const read = (type: Intl.DateTimeFormatPartTypes) => values[type] ?? "";
+    const dateWithoutMilliseconds = new Date(
+      date.getTime() - date.getMilliseconds()
+    );
+    const localTimeAsUtc = Date.UTC(
+      Number(read("year")),
+      Number(read("month")) - 1,
+      Number(read("day")),
+      Number(read("hour")),
+      Number(read("minute")),
+      Number(read("second"))
+    );
+    const offsetMinutes =
+      (localTimeAsUtc - dateWithoutMilliseconds.getTime()) / 60_000;
+    const sign = offsetMinutes >= 0 ? "+" : "-";
+    const absolute = Math.abs(offsetMinutes);
+    const offset = `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+    return `${read("year")}-${read("month")}-${read("day")}T${read("hour")}:${read("minute")}:${read("second")}.${read("fractionalSecond")}${offset}`;
+  };
+}
+
+/** 把具体 UTC 瞬间导出为带应用时区偏移的 ISO 8601。 */
+export function formatOperationsExportDateTime(
+  date: Date,
+  timeZone: string
+): string {
+  return createOperationsExportDateTimeFormatter(timeZone)(date);
 }
 
 /** 三类 CSV 的稳定中文表头、数据源顺序和安全字段映射。 */
@@ -247,7 +278,7 @@ const CSV_DEFINITIONS: Record<OperationsExportType, CsvDefinition> = {
       "封禁",
       "留存",
     ],
-    mapRow(row, timeZone) {
+    mapRow(row, formatDateTime) {
       if (!("userId" in row) || "taskId" in row || "paymentOrderId" in row)
         throw new Error("运营增长导出收到不匹配的行");
       return [
@@ -255,7 +286,7 @@ const CSV_DEFINITIONS: Record<OperationsExportType, CsvDefinition> = {
         row.userId,
         row.name,
         row.email,
-        formatOperationsExportDateTime(row.businessTime, timeZone),
+        formatDateTime(row.businessTime),
         row.role,
         row.banned,
         row.retained,
@@ -275,7 +306,7 @@ const CSV_DEFINITIONS: Record<OperationsExportType, CsvDefinition> = {
       "履约时间",
       "生命周期事件",
     ],
-    mapRow(row, timeZone) {
+    mapRow(row, formatDateTime) {
       if (!("paymentOrderId" in row))
         throw new Error("商业化导出收到不匹配的行");
       return [
@@ -286,10 +317,8 @@ const CSV_DEFINITIONS: Record<OperationsExportType, CsvDefinition> = {
         row.currency,
         formatOperationsExportAmount(row.amountMinor, row.currency),
         row.orderStatus,
-        formatOperationsExportDateTime(row.createdAt, timeZone),
-        row.fulfilledAt
-          ? formatOperationsExportDateTime(row.fulfilledAt, timeZone)
-          : null,
+        formatDateTime(row.createdAt),
+        row.fulfilledAt ? formatDateTime(row.fulfilledAt) : null,
         row.eventType,
       ];
     },
@@ -306,14 +335,14 @@ const CSV_DEFINITIONS: Record<OperationsExportType, CsvDefinition> = {
       "视频秒数",
       "积分净用量",
     ],
-    mapRow(row, timeZone) {
+    mapRow(row, formatDateTime) {
       if (!("taskId" in row)) throw new Error("内容生产导出收到不匹配的行");
       return [
         row.taskId,
         row.userId,
         row.model,
         row.mediaType,
-        formatOperationsExportDateTime(row.businessTime, timeZone),
+        formatDateTime(row.businessTime),
         row.status,
         row.quantity,
         row.videoSeconds,
@@ -476,6 +505,7 @@ async function* streamRowsFromReader(
     task.highWatermarks
   );
   const specs = buildExportQuerySpecs(task);
+  const formatDateTime = createOperationsExportDateTimeFormatter(task.timeZone);
   for (const spec of specs) {
     let cursor: OperationsDetailCursor | null = null;
     while (true) {
@@ -493,7 +523,7 @@ async function* streamRowsFromReader(
       const rows = await reader.readRows(query);
       const page = rows.slice(0, EXPORT_PAGE_SIZE);
       for (const row of page) {
-        const cells = definition.mapRow(row, task.timeZone);
+        const cells = definition.mapRow(row, formatDateTime);
         yield task.exportType === "user_growth"
           ? [spec.label, ...cells.slice(1)]
           : cells;

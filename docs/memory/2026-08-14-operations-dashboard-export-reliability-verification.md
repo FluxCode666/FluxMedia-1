@@ -60,6 +60,13 @@ Date 解析会受 Node 进程时区影响，而产品 Drizzle 连接统一采用
 - Web 导出、CSV、scheduler 与下载链路：8 个测试文件，46 个用例通过。
 - `@repo/shared` 与 `@repo/web` TypeScript typecheck 通过。
 - 相关文件 Biome check 通过。
+- 隔离 Playwright 完整套件 28/28 通过，其中真实导出链路覆盖三类创建入口、
+  completed/failed/expired 状态、failed 重试、expired 重新生成、完成通知只出现一次，
+  以及签名 cursor 从首屏 20 条加载至 24 条。
+- completed 下载返回真实 UTF-8 BOM CSV 和建议文件名；浏览器读取文件并核对表头与
+  测试用户邮箱，数据库审计依次记录 `granted`、`started`。expired 下载路由返回 404。
+- 下载对象的 SHA-256、行数、字节数来自实际写入内容，并与
+  `operations_export_task` 中的完成事实一致。
 
 ## 未覆盖边界
 
@@ -67,10 +74,10 @@ Date 解析会受 Node 进程时区影响，而产品 Drizzle 连接统一采用
   multipart 网络中断、凭据失效、服务端分页和限流。
 - 本地数据量用于验证流式内存形状和恢复语义，不足以关闭生产跨多年查询 p95、buffers
   与对象存储吞吐门禁。
-- 浏览器端导出创建、通知、下载和过期状态的完整 Playwright 流程仍需在隔离测试数据库
-  中验证。
 
 ## 清理结果
 
 演练结束后，临时用户、导出任务、内容事实和审计记录计数均为 0，临时存储目录不存在，
-临时验收脚本已从工作树删除。
+临时验收脚本已从工作树删除。浏览器验收结束后固定用户、account、session 和导出任务
+均为 0，端口 3107 已释放，隔离 storage 目录不存在；应用启动产生的三个 Redis 元数据
+键按精确键名删除后，专用逻辑库 15 的 `DBSIZE` 为 0。

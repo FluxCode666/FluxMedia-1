@@ -31,6 +31,7 @@ import {
   buildOperationsChartPoints,
   buildOperationsVisualPoints,
   formatOperationsChartPointValue,
+  formatOperationsTooltipLabel,
   OPERATIONS_CHART_GRID,
   OPERATIONS_CHART_INK,
 } from "./operations-chart-utils";
@@ -44,8 +45,6 @@ export type OperationsGrowthTrendChartLabels = {
   tableOpen: string;
   tableCaption: string;
   date: string;
-  status: string;
-  valueStatus: string;
   preEpoch: string;
   navigation: string;
   series: Record<GrowthSeriesKey, string>;
@@ -58,7 +57,6 @@ export type OperationsGrowthTrendChartProps = {
 };
 
 type GrowthTableRow = {
-  index: number;
   key: string;
   label: string;
   values: Record<GrowthSeriesKey, number | null>;
@@ -92,7 +90,7 @@ function buildGrowthTableRows(
       values[key] = bucket?.status === "value" ? bucket.value : null;
       statuses[key] = bucket?.status === "value" ? "value" : "pre_epoch";
     }
-    return { index, key: point.key, label: point.label, values, statuses };
+    return { key: point.key, label: point.label, values, statuses };
   });
 }
 
@@ -157,9 +155,7 @@ function GrowthMiniChart({
             content={
               <ChartTooltipContent
                 indicator="line"
-                labelFormatter={(_, payload) =>
-                  String(payload[0]?.payload?.label ?? "")
-                }
+                labelFormatter={formatOperationsTooltipLabel}
               />
             }
             cursor={{ stroke: "#8F8E88", strokeDasharray: "2 3" }}

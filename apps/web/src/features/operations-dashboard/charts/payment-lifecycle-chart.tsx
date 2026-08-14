@@ -31,6 +31,7 @@ import { formatOperationsNumber } from "../operations-dashboard-format";
 import { OperationsChartCard } from "./operations-chart-card";
 import { OperationsChartDataTable } from "./operations-chart-data-table";
 import {
+  formatOperationsTooltipLabel,
   OPERATIONS_CHART_GRID,
   OPERATIONS_CHART_INK,
 } from "./operations-chart-utils";
@@ -251,9 +252,7 @@ export function OperationsPaymentLifecycleChart({
                     </div>
                   );
                 }}
-                labelFormatter={(_, payload) =>
-                  String(payload[0]?.payload?.label ?? "")
-                }
+                labelFormatter={formatOperationsTooltipLabel}
               />
             }
             cursor={{ fill: OPERATIONS_CHART_GRID }}

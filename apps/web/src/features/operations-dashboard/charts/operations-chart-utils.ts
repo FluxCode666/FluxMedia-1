@@ -79,19 +79,13 @@ export function buildOperationsVisualPoints(
   );
 }
 
-/**
- * 计算非负趋势的安全上界。
- *
- * @param points 图表点，可包含上线前空值。
- * @returns 至少为 1 的轴上界，避免全零序列产生退化坐标系。
- */
-export function getOperationsPositiveMaximum(
-  points: readonly OperationsChartPoint[]
-): number {
-  return Math.max(
-    1,
-    ...points.map((point) => (point.value === null ? 0 : point.value))
-  );
+/** 从 Recharts payload 读取服务端生成的完整日期标签。 */
+export function formatOperationsTooltipLabel(
+  _value: unknown,
+  payload: readonly { payload?: unknown }[]
+): string {
+  const point = payload[0]?.payload as { label?: unknown } | null | undefined;
+  return String(point?.label ?? "");
 }
 
 /**

@@ -6,6 +6,11 @@
     },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "vitest.config.ts"],
+  "include": [
+    "e2e/**/*.ts",
+    "src/**/*.ts",
+    "playwright.config.ts",
+    "vitest.config.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

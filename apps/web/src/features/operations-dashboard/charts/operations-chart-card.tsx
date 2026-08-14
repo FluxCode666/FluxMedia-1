@@ -53,7 +53,7 @@ export function OperationsChartCard({
       </CardHeader>
       <CardContent className="grid gap-4">
         {children}
-        <p className="text-[0.65rem] font-semibold tracking-[0.16em] text-[#8F8E88] uppercase">
+        <p className="text-[0.65rem] font-semibold tracking-[0.16em] text-[#6B6A65] uppercase">
           {source}
         </p>
         {accessibility}

@@ -31,6 +31,7 @@ import { OperationsChartSeriesTable } from "./operations-chart-series-table";
 import {
   buildOperationsChartPoints,
   buildOperationsVisualPoints,
+  formatOperationsTooltipLabel,
   OPERATIONS_CHART_DARK_GRAY,
   OPERATIONS_CHART_GRID,
   OPERATIONS_CHART_INK,
@@ -147,9 +148,7 @@ export function OperationsNetCreditsChart({
             content={
               <ChartTooltipContent
                 hideIndicator
-                labelFormatter={(_, payload) =>
-                  String(payload[0]?.payload?.label ?? "")
-                }
+                labelFormatter={formatOperationsTooltipLabel}
               />
             }
             cursor={{ fill: OPERATIONS_CHART_GRID }}

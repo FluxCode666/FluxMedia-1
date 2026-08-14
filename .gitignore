@@ -82,5 +82,8 @@ deploy/state/
 # 水墨引擎审阅样张(本地生成,不入库)
 apps/web/scripts/preview/
 .playwright-cli/
+packages/integration-tests/e2e/.auth/
+packages/integration-tests/playwright-report/
+packages/integration-tests/test-results/
 
 apps/web/storage/
