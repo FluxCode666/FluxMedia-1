@@ -4,6 +4,8 @@
  * 使用方：指标卡、图表、Cohort、商业化、健康和导出记录。函数只格式化已校验
  * 快照，不改变单位、比较口径或特殊状态。
  */
+
+import { amountMinorToMajor } from "@repo/shared/credits/top-up";
 import type { CountComparison } from "@repo/shared/operations-dashboard/comparison";
 
 export type OperationsDisplayStatus =
@@ -29,7 +31,7 @@ export function formatOperationsRate(value: number, locale: string): string {
   }).format(value);
 }
 
-/** 格式化币种最小单位；当前支付契约统一按两位小数币种展示。 */
+/** 按币种小数位把最小单位金额转换为主单位并本地化展示。 */
 export function formatOperationsMoney(
   amountMinor: number,
   currency: string,
@@ -38,7 +40,7 @@ export function formatOperationsMoney(
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
-  }).format(amountMinor / 100);
+  }).format(amountMinorToMajor(amountMinor, currency));
 }
 
 /** 把 ISO/Date 快照时间格式化到服务端声明的应用时区。 */
