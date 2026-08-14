@@ -6,6 +6,62 @@
 创作留存和支付生命周期事实，因此生产统计起点必须在迁移完成后由运维显式初始化，
 不能由迁移时间、当前时间或历史数据自动推断。
 
+## 生产预建用户时间索引
+
+`0093_operations_dashboard.sql` 依赖 `user_created_at_id_idx` 服务新增用户日期范围与
+keyset 排序。已有生产数据的 `user` 表必须在运行 `0093` 前并发预建该索引；迁移中的
+普通 `CREATE INDEX IF NOT EXISTS` 只负责新建或重置库，不能替代生产在线 DDL。
+
+在专用 `psql` 会话中保持 autocommit，禁止使用 `BEGIN`、`COMMIT`、事务包装脚本或
+Drizzle 迁移器执行以下命令。`CREATE INDEX CONCURRENTLY` 和
+`DROP INDEX CONCURRENTLY` 均不能在事务块中运行。
+
+先检查同名索引是否存在、定义是否正确，以及 PostgreSQL 是否已将其标记为 ready 和
+valid：
+
+```sql
+SELECT
+  indexrelid::regclass AS index_name,
+  indisready,
+  indisvalid,
+  pg_get_indexdef(indexrelid) AS definition
+FROM pg_index
+WHERE indexrelid = to_regclass('public.user_created_at_id_idx');
+```
+
+- 无返回行：可以开始预建。
+- `indisready = true` 且 `indisvalid = true`：确认定义为
+  `public."user" (created_at, id)` 后跳过预建。
+- 任一标志为 `false`：上次并发建索引失败或被取消，`IF NOT EXISTS` 不会修复；必须先
+  清理 invalid 索引，再重新预建。
+- 同名 valid 索引定义不一致：停止发布并人工核对，禁止直接删除生产索引。
+
+预建使用独立会话级 timeout。短 `lock_timeout` 避免与其它 DDL 或长事务无限等待，
+有界 `statement_timeout` 避免发布会话永久悬挂；若生产表规模已知无法在 60 分钟内完成，
+须由 DBA 根据实测窗口提高上限并记录审批，不能改为无界执行。
+
+```sql
+SET lock_timeout = '5s';
+SET statement_timeout = '60min';
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "user_created_at_id_idx"
+  ON public."user" ("created_at", "id");
+
+RESET lock_timeout;
+RESET statement_timeout;
+```
+
+命令成功、超时或连接中断后都必须重新执行 catalog 检查。只有 `indisready` 和
+`indisvalid` 同时为 `true` 且定义正确时，才允许继续执行 `0093`。若留下 invalid
+索引，在同样保持 autocommit 的会话中执行：
+
+```sql
+DROP INDEX CONCURRENTLY IF EXISTS public."user_created_at_id_idx";
+```
+
+清理后重新设置 timeout 并执行并发预建。不要在索引仍为 invalid 时直接运行迁移，
+因为迁移中的 `IF NOT EXISTS` 会跳过同名对象，查询仍无法获得有效访问路径。
+
 ## 初始化运营统计起点
 
 ### 前置条件
@@ -117,8 +173,9 @@ pnpm --filter @repo/integration-tests test:operations-boundaries
 
 ## 发布与回滚
 
-发布顺序固定为：迁移结构、部署事实双写与 UOL、预演并初始化 epoch、开启导出 worker、
-完成三类小范围导出和浏览器冒烟、完成零差异对账、最后开放导航。
+发布顺序固定为：并发预建用户时间索引、迁移结构、部署事实双写与 UOL、预演并初始化
+epoch、开启导出 worker、完成三类小范围导出和浏览器冒烟、完成零差异对账、最后开放
+导航。
 
 应用回滚可以隐藏运营页面并关闭两个导出任务，但不能删除事实表、支付生命周期事件或
 已经初始化的 epoch。若出现支付事件缺口，先关闭商业化漏斗入口并修复写入路径，禁止用

@@ -3,6 +3,11 @@
 -- WHY：行为统计从显式生产 epoch 开始，不根据迁移时间猜测；网页访问事实使用
 -- 数据库唯一约束抵抗同日重放与并发竞争。
 
+-- 生产已有用户数据时，必须先按运行手册在迁移事务外并发预建同名索引：
+-- CREATE INDEX CONCURRENTLY IF NOT EXISTS "user_created_at_id_idx"
+--   ON public."user" ("created_at", "id");
+-- WHY：drizzle-kit migrate 在事务内执行，CONCURRENTLY 在事务块中非法；生产预建后
+-- 下列普通 CREATE INDEX 为 no-op，新建或重置库的 user 表为空，普通建索引锁定瞬时。
 CREATE INDEX IF NOT EXISTS "user_created_at_id_idx"
   ON "user" ("created_at", "id");
 --> statement-breakpoint
