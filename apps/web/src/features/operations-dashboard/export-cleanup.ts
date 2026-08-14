@@ -112,6 +112,16 @@ async function cleanupUnreferencedStoragePage(
         deleted += 1;
       } catch {
         failed = true;
+        logger.warn(
+          {
+            operation: "operations.expireExports",
+            cleanupKind: "unreferenced_object",
+            leaseStatus: "item_cleanup_failed",
+            errorCode: "orphan_object_delete_failed",
+            objectKey: object.key,
+          },
+          "Operations export orphan object cleanup failed"
+        );
       }
     }
     if (!failed) storageObjectScanCursor = page.nextCursor;
@@ -177,6 +187,16 @@ async function cleanupStaleMultipartUploadPage(
         aborted += 1;
       } catch {
         failed = true;
+        logger.warn(
+          {
+            operation: "operations.expireExports",
+            cleanupKind: "multipart_upload",
+            leaseStatus: "item_cleanup_failed",
+            errorCode: "multipart_abort_failed",
+            objectKey: upload.key,
+          },
+          "Operations export multipart item cleanup failed"
+        );
       }
     }
     if (!failed) multipartUploadScanCursor = page.nextCursor;
@@ -262,7 +282,16 @@ export async function expireOperationsExportBatch(
         now: dependencies.now(),
       });
     } catch {
-      // 孤儿审计记录保持未完成，后续清理批次会再次尝试。
+      logger.warn(
+        {
+          operation: "operations.expireExports",
+          cleanupKind: "recorded_orphan",
+          leaseStatus: "item_cleanup_failed",
+          errorCode: "recorded_orphan_cleanup_failed",
+          objectKey: orphan.objectKey,
+        },
+        "Operations export recorded orphan cleanup failed"
+      );
     }
   }
   const olderThan = new Date(now.getTime() - EXPORT_ORPHAN_SAFETY_MS);

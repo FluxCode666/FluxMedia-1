@@ -498,6 +498,10 @@ function createCleanupDependencies(): OperationsExportCleanupDependencies {
 }
 
 describe("expireOperationsExportBatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("过期对象删除失败后保留记录，并在下一批重试成功", async () => {
     const dependencies = createCleanupDependencies();
     vi.mocked(dependencies.repository.expireDue).mockResolvedValue([
@@ -629,6 +633,21 @@ describe("expireOperationsExportBatch", () => {
       "operations-exports/task-orphan/lease.csv",
       "exports"
     );
+    expect(loggerMocks.warn).toHaveBeenCalledWith(
+      {
+        operation: "operations.expireExports",
+        cleanupKind: "unreferenced_object",
+        leaseStatus: "item_cleanup_failed",
+        errorCode: "orphan_object_delete_failed",
+        objectKey: "operations-exports/task-orphan/lease.csv",
+      },
+      "Operations export orphan object cleanup failed"
+    );
+    const firstCursor = vi.mocked(dependencies.storage.listObjects).mock
+      .calls[0]?.[2]?.cursor;
+    const secondCursor = vi.mocked(dependencies.storage.listObjects).mock
+      .calls[1]?.[2]?.cursor;
+    expect(secondCursor).toBe(firstCursor);
   });
 
   it("陈旧 multipart 只终止失效 lease，仍活跃的长上传保持不变", async () => {
@@ -665,5 +684,47 @@ describe("expireOperationsExportBatch", () => {
       "exports",
       "upload-stale"
     );
+  });
+
+  it("multipart 单项终止失败会告警并从同一游标重试", async () => {
+    const dependencies = createCleanupDependencies();
+    const listMultipartUploads = dependencies.storage.listMultipartUploads;
+    const abortMultipartUpload = dependencies.storage.abortMultipartUpload;
+    if (!listMultipartUploads || !abortMultipartUpload) {
+      throw new Error("multipart cleanup test capabilities missing");
+    }
+    vi.mocked(listMultipartUploads).mockResolvedValue({
+      uploads: [
+        {
+          key: "operations-exports/task-stale/lease-stale.csv",
+          initiatedAt: new Date("2026-02-01T00:00:00.000Z"),
+          cleanupToken: "upload-stale",
+        },
+      ],
+      nextCursor: "multipart-next-page",
+    });
+    vi.mocked(abortMultipartUpload)
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await expireOperationsExportBatch({ limit: 10 }, dependencies);
+    await expireOperationsExportBatch({ limit: 10 }, dependencies);
+
+    expect(abortMultipartUpload).toHaveBeenCalledTimes(2);
+    expect(loggerMocks.warn).toHaveBeenCalledWith(
+      {
+        operation: "operations.expireExports",
+        cleanupKind: "multipart_upload",
+        leaseStatus: "item_cleanup_failed",
+        errorCode: "multipart_abort_failed",
+        objectKey: "operations-exports/task-stale/lease-stale.csv",
+      },
+      "Operations export multipart item cleanup failed"
+    );
+    const firstCursor =
+      vi.mocked(listMultipartUploads).mock.calls[0]?.[2]?.cursor;
+    const secondCursor =
+      vi.mocked(listMultipartUploads).mock.calls[1]?.[2]?.cursor;
+    expect(secondCursor).toBe(firstCursor);
   });
 });

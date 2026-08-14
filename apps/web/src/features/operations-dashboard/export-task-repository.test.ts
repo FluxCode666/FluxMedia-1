@@ -6,6 +6,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { parseClaimedOperationsExportTaskRow } from "./export-task-repository";
 
 describe("operations export repository SQL contract", () => {
   const source = readFileSync(
@@ -51,5 +52,65 @@ describe("operations export repository SQL contract", () => {
     expect(source).toContain(
       "gt(operationsexporttask.leaseexpiresat, input.now)"
     );
+  });
+
+  it("认领结果通过统一运行时解析器读取，禁止 query 类型断言回退", () => {
+    const claimStart = source.indexOf("async claimnext");
+    const claimEnd = source.indexOf("async renewlease", claimStart);
+    const claimMethod = source.slice(claimStart, claimEnd);
+
+    expect(claimMethod).toContain("parseclaimedoperationsexporttaskrow");
+    expect(claimMethod).not.toContain("query as operationsdashboardqueryinput");
+  });
+});
+
+describe("parseClaimedOperationsExportTaskRow", () => {
+  const validRow = {
+    id: "task-1",
+    created_by: "admin-1",
+    export_type: "user_growth",
+    query: {
+      granularity: "day",
+      range: { kind: "custom", from: "2026-01-01", to: "2026-01-31" },
+    },
+    time_zone: "UTC",
+    epoch_app_date: "2026-01-01",
+    epoch_starts_at: "2026-01-01T00:00:00.000Z",
+    schema_version: 1,
+    snapshot_at: "2026-02-01T00:00:00.000Z",
+    high_watermarks: {
+      users: null,
+      webVisits: null,
+      outputs: null,
+      paymentOrders: null,
+      paymentLifecycle: null,
+      creditContributions: null,
+    },
+    lease_owner: "worker-1",
+    lease_token: "lease-1",
+    attempt_count: 1,
+  };
+
+  it("解析合法认领行并规范化日期", () => {
+    expect(parseClaimedOperationsExportTaskRow(validRow)).toEqual(
+      expect.objectContaining({
+        id: "task-1",
+        query: validRow.query,
+        epochStartsAt: new Date("2026-01-01T00:00:00.000Z"),
+        snapshotAt: new Date("2026-02-01T00:00:00.000Z"),
+      })
+    );
+  });
+
+  it("拒绝数据库中的非法 query JSON", () => {
+    expect(() =>
+      parseClaimedOperationsExportTaskRow({
+        ...validRow,
+        query: {
+          granularity: "day",
+          range: { kind: "all_time" },
+        },
+      })
+    ).toThrow();
   });
 });
