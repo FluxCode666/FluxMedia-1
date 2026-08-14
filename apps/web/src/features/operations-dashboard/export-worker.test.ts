@@ -4,7 +4,21 @@
  * 使用方：U6 worker。以可注入仓储和存储验证 fencing、上传失败、完成 CAS 失败与
  * 孤儿清理，不依赖 PostgreSQL 或真实对象存储。
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const loggerMocks = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  logError: vi.fn(),
+}));
+
+vi.mock("@repo/shared/logger", () => ({
+  logger: {
+    info: loggerMocks.info,
+    warn: loggerMocks.warn,
+  },
+  logError: loggerMocks.logError,
+}));
 
 import {
   expireOperationsExportBatch,
@@ -70,6 +84,10 @@ function createDependencies(): OperationsExportWorkerDependencies {
 }
 
 describe("processOperationsExportBatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("空导出仍完成并记录零业务行", async () => {
     const dependencies = createDependencies();
     dependencies.createRows = () =>
@@ -102,6 +120,18 @@ describe("processOperationsExportBatch", () => {
         rowCount: 1,
         expiresAt: new Date("2026-02-08T00:00:01.000Z"),
       })
+    );
+    expect(loggerMocks.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "operations.processExports",
+        exportTaskId: "task-1",
+        attempt: 1,
+        leaseStatus: "completed",
+        rowCount: 1,
+        byteCount: expect.any(Number),
+        durationMs: expect.any(Number),
+      }),
+      "Operations export task completed"
     );
   });
 
@@ -154,6 +184,17 @@ describe("processOperationsExportBatch", () => {
       expect.objectContaining({ taskId: "task-1", leaseToken: "lease-1" })
     );
     expect(dependencies.repository.complete).not.toHaveBeenCalled();
+    expect(loggerMocks.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "operations.processExports",
+        exportTaskId: "task-1",
+        attempt: 1,
+        leaseStatus: "failed",
+        errorCode: "export_failed",
+        durationMs: expect.any(Number),
+      }),
+      "Operations export task failed"
+    );
   });
 
   it("上传响应不确定且对象删除失败时登记孤儿候选", async () => {

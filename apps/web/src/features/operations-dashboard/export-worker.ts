@@ -11,7 +11,7 @@ import {
   amountMinorToMajor,
   getCurrencyMinorUnitExponent,
 } from "@repo/shared/credits/top-up";
-import { logError } from "@repo/shared/logger";
+import { logError, logger } from "@repo/shared/logger";
 import type { OperationsExportType } from "@repo/shared/operations-dashboard/contracts";
 import { addOperationsCalendarDays } from "@repo/shared/operations-dashboard/range";
 import {
@@ -505,6 +505,7 @@ async function processClaimedTask(
   task: ClaimedOperationsExportTask,
   dependencies: OperationsExportWorkerDependencies
 ): Promise<void> {
+  const startedAt = Date.now();
   const objectKey = buildOperationsExportObjectKey({
     taskId: task.id,
     leaseToken: task.leaseToken,
@@ -517,6 +518,18 @@ async function processClaimedTask(
       now: dependencies.now(),
     }))
   ) {
+    logger.warn(
+      {
+        operation: "operations.processExports",
+        exportTaskId: task.id,
+        exportType: task.exportType,
+        granularity: task.query.granularity,
+        attempt: task.attemptCount,
+        leaseStatus: "lost_before_start",
+        durationMs: Math.max(0, Date.now() - startedAt),
+      },
+      "Operations export task lease lost before processing"
+    );
     return;
   }
   const lease = startLeaseRenewal(task, dependencies);
@@ -573,9 +586,38 @@ async function processClaimedTask(
         errorCode: "completion_result_unknown",
         now: dependencies.now(),
       });
+      logger.warn(
+        {
+          operation: "operations.processExports",
+          exportTaskId: task.id,
+          exportType: task.exportType,
+          granularity: task.query.granularity,
+          attempt: task.attemptCount,
+          leaseStatus: "completion_unknown",
+          errorCode: "completion_result_unknown",
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+        "Operations export task completion result is unknown"
+      );
       return;
     }
-    if (completed) return;
+    if (completed) {
+      logger.info(
+        {
+          operation: "operations.processExports",
+          exportTaskId: task.id,
+          exportType: task.exportType,
+          granularity: task.query.granularity,
+          attempt: task.attemptCount,
+          leaseStatus: "completed",
+          rowCount: stats.rowCount,
+          byteCount: stats.byteCount,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+        "Operations export task completed"
+      );
+      return;
+    }
     try {
       await dependencies.storage.deleteObject(
         objectKey,
@@ -591,7 +633,20 @@ async function processClaimedTask(
         now: dependencies.now(),
       });
     }
+    logger.warn(
+      {
+        operation: "operations.processExports",
+        exportTaskId: task.id,
+        exportType: task.exportType,
+        granularity: task.query.granularity,
+        attempt: task.attemptCount,
+        leaseStatus: "superseded",
+        durationMs: Math.max(0, Date.now() - startedAt),
+      },
+      "Operations export task completion was superseded"
+    );
   } catch (error) {
+    const errorCode = exportErrorCode(error);
     if (objectWriteStarted) {
       try {
         await dependencies.storage.deleteObject(
@@ -612,9 +667,22 @@ async function processClaimedTask(
     await dependencies.repository.fail({
       taskId: task.id,
       leaseToken: task.leaseToken,
-      errorCode: exportErrorCode(error),
+      errorCode,
       now: dependencies.now(),
     });
+    logger.warn(
+      {
+        operation: "operations.processExports",
+        exportTaskId: task.id,
+        exportType: task.exportType,
+        granularity: task.query.granularity,
+        attempt: task.attemptCount,
+        leaseStatus: "failed",
+        errorCode,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      },
+      "Operations export task failed"
+    );
   } finally {
     try {
       await lease.stop();
@@ -637,6 +705,17 @@ export async function processOperationsExportBatch(
       now: dependencies.now(),
     });
     if (!task) break;
+    logger.info(
+      {
+        operation: "operations.processExports",
+        exportTaskId: task.id,
+        exportType: task.exportType,
+        granularity: task.query.granularity,
+        attempt: task.attemptCount,
+        leaseStatus: "claimed",
+      },
+      "Operations export task claimed"
+    );
     await processClaimedTask(task, dependencies);
     processed += 1;
   }
@@ -670,6 +749,7 @@ export async function expireOperationsExportBatch(
     limit: input.limit,
   });
   for (const task of tasks) {
+    const startedAt = Date.now();
     try {
       await dependencies.storage.deleteObject(
         task.objectKey,
@@ -680,6 +760,15 @@ export async function expireOperationsExportBatch(
         objectKey: task.objectKey,
         now: dependencies.now(),
       });
+      logger.info(
+        {
+          operation: "operations.expireExports",
+          exportTaskId: task.id,
+          leaseStatus: "object_deleted",
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+        "Operations export object deleted"
+      );
     } catch {
       await dependencies.repository.markCleanupFailed({
         taskId: task.id,
@@ -687,6 +776,16 @@ export async function expireOperationsExportBatch(
         errorCode: "object_delete_failed",
         now: dependencies.now(),
       });
+      logger.warn(
+        {
+          operation: "operations.expireExports",
+          exportTaskId: task.id,
+          leaseStatus: "cleanup_failed",
+          errorCode: "object_delete_failed",
+          durationMs: Math.max(0, Date.now() - startedAt),
+        },
+        "Operations export object cleanup failed"
+      );
     }
   }
   const remaining = Math.max(0, input.limit - tasks.length);

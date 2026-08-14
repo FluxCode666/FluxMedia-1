@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => {
     getDetail: vi.fn(),
     getOverview: vi.fn(),
     createExport: vi.fn(),
+    loggerInfo: vi.fn(),
+    loggerWarn: vi.fn(),
   };
 });
 
@@ -25,6 +27,12 @@ vi.mock("@repo/shared/rate-limit", () => ({
 }));
 vi.mock("@repo/shared/time-zone/server", () => ({
   getAppTimeZone: mocks.getAppTimeZone,
+}));
+vi.mock("@repo/shared/logger", () => ({
+  logger: {
+    info: mocks.loggerInfo,
+    warn: mocks.loggerWarn,
+  },
 }));
 vi.mock("@/features/operations-dashboard/operations-dashboard-service", () => ({
   databaseOperationsDashboardService: { getOverview: mocks.getOverview },
@@ -172,6 +180,38 @@ describe("operations.getOverview binding", () => {
         { type: "user", userId: "admin-1", role: "admin" }
       )
     ).rejects.toMatchObject({ code: "internal_error" });
+  });
+
+  it("记录 overview 请求标识、范围、粒度、桶数和耗时", async () => {
+    mocks.getOverview.mockResolvedValue({
+      ...SNAPSHOT,
+      range: {
+        dayCount: 30,
+        granularity: "day",
+        buckets: [{ key: "2026-08-14" }],
+      },
+    });
+
+    await invokeOperation(
+      "operations.getOverview",
+      {},
+      { type: "user", userId: "admin-1", role: "admin" },
+      { requestId: "operations-overview-request-1" }
+    );
+
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "operations.getOverview",
+        requestId: "operations-overview-request-1",
+        module: "all",
+        rangeDays: 30,
+        granularity: "day",
+        bucketCount: 1,
+        durationMs: expect.any(Number),
+        status: "succeeded",
+      }),
+      "Operations dashboard operation completed"
+    );
   });
 
   it("增长明细绑定管理员、部署时区和已规范化输入", async () => {

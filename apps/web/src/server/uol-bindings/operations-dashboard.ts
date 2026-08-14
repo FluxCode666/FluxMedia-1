@@ -7,6 +7,7 @@
  */
 
 import { isAdminRole } from "@repo/shared/auth/roles";
+import { logger } from "@repo/shared/logger";
 import {
   operationsCreateExportOutputSchema,
   operationsDetailOutputSchema,
@@ -18,7 +19,12 @@ import {
 } from "@repo/shared/operations-dashboard/contracts";
 import { checkRateLimit } from "@repo/shared/rate-limit";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
-import { bindExecute, OperationError, type Principal } from "@repo/shared/uol";
+import {
+  bindExecute,
+  type OperationContext,
+  OperationError,
+  type Principal,
+} from "@repo/shared/uol";
 import { OperationsCommercialServiceError } from "@/features/operations-dashboard/commercial-service";
 import { OperationsContentServiceError } from "@/features/operations-dashboard/content-service";
 import {
@@ -108,16 +114,131 @@ function throwOperationsDashboardError(error: unknown): never {
   throw error;
 }
 
+/** 运营 operation 成功日志允许附加的非敏感度量。 */
+type OperationsTelemetry = {
+  module?: string;
+  rangeDays?: number;
+  granularity?: string;
+  bucketCount?: number;
+  rowCount?: number;
+  exportTaskId?: string;
+};
+
+/** 从未知范围 DTO 中读取有限非负整数，避免把完整响应写入日志。 */
+function readTelemetryNumber(value: unknown, key: string): number | undefined {
+  if (typeof value !== "object" || value === null || !(key in value)) {
+    return undefined;
+  }
+  const candidate = Reflect.get(value, key);
+  return typeof candidate === "number" &&
+    Number.isFinite(candidate) &&
+    candidate >= 0
+    ? candidate
+    : undefined;
+}
+
+/** 从未知范围 DTO 中读取粒度，拒绝把任意客户端文本带入日志。 */
+function readTelemetryGranularity(value: unknown): string | undefined {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("granularity" in value)
+  ) {
+    return undefined;
+  }
+  const candidate = value.granularity;
+  return candidate === "day" || candidate === "week" || candidate === "month"
+    ? candidate
+    : undefined;
+}
+
+/** 将错误收敛为稳定短码；绝不记录 SQL、对象键或领域错误消息。 */
+function readTelemetryErrorCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[a-z0-9_:-]{1,100}$/i.test(error.code)
+  ) {
+    return error.code;
+  }
+  return "unknown";
+}
+
+/**
+ * 记录单次运营 operation 的成功或失败耗时。
+ *
+ * @param operation UOL operation 名称。
+ * @param context UOL 权威 requestId。
+ * @param execute 领域调用与输出校验。
+ * @param summarize 成功后从结果提取非敏感计数，不得返回业务行或邮箱。
+ * @returns execute 的原始结果。
+ * @sideeffect 写一条 Pino info 或 warn 日志。
+ */
+async function runObservedOperationsCall<TResult>(
+  operation: string,
+  context: OperationContext,
+  execute: () => Promise<TResult>,
+  summarize: (result: TResult) => OperationsTelemetry = () => ({})
+): Promise<TResult> {
+  const startedAt = Date.now();
+  try {
+    const result = await execute();
+    logger.info(
+      {
+        operation,
+        requestId: context.requestId,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        status: "succeeded",
+        ...summarize(result),
+      },
+      "Operations dashboard operation completed"
+    );
+    return result;
+  } catch (error) {
+    logger.warn(
+      {
+        operation,
+        requestId: context.requestId,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        status: "failed",
+        errorCode: readTelemetryErrorCode(error),
+      },
+      "Operations dashboard operation failed"
+    );
+    throw error;
+  }
+}
+
 bindExecute(
   "operations.getOverview",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     await assertOperationsAdmin(principal);
     try {
-      const snapshot = await databaseOperationsDashboardService.getOverview(
-        input,
-        getAppTimeZone()
+      return await runObservedOperationsCall(
+        "operations.getOverview",
+        context,
+        async () => {
+          const snapshot = await databaseOperationsDashboardService.getOverview(
+            input,
+            getAppTimeZone()
+          );
+          return operationsOverviewOutputSchema.parse(snapshot);
+        },
+        (snapshot) => ({
+          module: "all",
+          rangeDays: readTelemetryNumber(snapshot.range, "dayCount"),
+          granularity: readTelemetryGranularity(snapshot.range),
+          bucketCount:
+            typeof snapshot.range === "object" &&
+            snapshot.range !== null &&
+            "buckets" in snapshot.range &&
+            Array.isArray(snapshot.range.buckets)
+              ? snapshot.range.buckets.length
+              : undefined,
+        })
       );
-      return operationsOverviewOutputSchema.parse(snapshot);
     } catch (error) {
       throwOperationsDashboardError(error);
     }
@@ -127,14 +248,25 @@ bindExecute(
 /** 绑定管理员运营明细；完整邮箱仅在 human-only operation 内返回。 */
 bindExecute(
   "operations.getDetail",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     const adminPrincipal = await assertOperationsAdmin(principal);
     try {
-      return operationsDetailOutputSchema.parse(
-        await loadOperationsDetail({
-          actorUserId: adminPrincipal.userId,
-          timeZone: getAppTimeZone(),
-          input,
+      return await runObservedOperationsCall(
+        "operations.getDetail",
+        context,
+        async () =>
+          operationsDetailOutputSchema.parse(
+            await loadOperationsDetail({
+              actorUserId: adminPrincipal.userId,
+              timeZone: getAppTimeZone(),
+              input,
+            })
+          ),
+        (result) => ({
+          module: result.selection.module,
+          rangeDays: readTelemetryNumber(result.range, "dayCount"),
+          granularity: readTelemetryGranularity(result.range),
+          rowCount: result.rows.length,
         })
       );
     } catch (error) {
@@ -146,14 +278,24 @@ bindExecute(
 /** 创建冻结任务；创建者、筛选和快照审计由同一数据库事务写入。 */
 bindExecute(
   "operations.createExport",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     const admin = await assertOperationsAdmin(principal);
     try {
-      return operationsCreateExportOutputSchema.parse(
-        await createOperationsExport({
-          createdBy: admin.userId,
-          timeZone: getAppTimeZone(),
-          input,
+      return await runObservedOperationsCall(
+        "operations.createExport",
+        context,
+        async () =>
+          operationsCreateExportOutputSchema.parse(
+            await createOperationsExport({
+              createdBy: admin.userId,
+              timeZone: getAppTimeZone(),
+              input,
+            })
+          ),
+        (result) => ({
+          module: result.task.exportType,
+          granularity: result.task.query.granularity,
+          exportTaskId: result.task.id,
         })
       );
     } catch (error) {
@@ -165,11 +307,17 @@ bindExecute(
 /** 列出当前管理员自己的导出记录。 */
 bindExecute(
   "operations.listExports",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     const admin = await assertOperationsAdmin(principal);
     try {
-      return operationsListExportsOutputSchema.parse(
-        await listOperationsExports({ createdBy: admin.userId, input })
+      return await runObservedOperationsCall(
+        "operations.listExports",
+        context,
+        async () =>
+          operationsListExportsOutputSchema.parse(
+            await listOperationsExports({ createdBy: admin.userId, input })
+          ),
+        (result) => ({ rowCount: result.tasks.length })
       );
     } catch (error) {
       throwOperationsDashboardError(error);
@@ -180,11 +328,21 @@ bindExecute(
 /** 重试失败任务并保留父记录。 */
 bindExecute(
   "operations.retryExport",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     const admin = await assertOperationsAdmin(principal);
     try {
-      return operationsRetryExportOutputSchema.parse(
-        await retryOperationsExport({ createdBy: admin.userId, input })
+      return await runObservedOperationsCall(
+        "operations.retryExport",
+        context,
+        async () =>
+          operationsRetryExportOutputSchema.parse(
+            await retryOperationsExport({ createdBy: admin.userId, input })
+          ),
+        (result) => ({
+          module: result.task.exportType,
+          granularity: result.task.query.granularity,
+          exportTaskId: result.task.id,
+        })
       );
     } catch (error) {
       throwOperationsDashboardError(error);
@@ -195,23 +353,29 @@ bindExecute(
 /** 为远端签名或本地受控路由准备短期下载许可。 */
 bindExecute(
   "operations.prepareExportDownload",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     const admin = await assertOperationsAdmin(principal);
     try {
       const origin =
         process.env.NEXT_PUBLIC_APP_URL ??
         process.env.BETTER_AUTH_URL ??
         "http://localhost:3000";
-      return operationsPrepareExportDownloadOutputSchema.parse(
-        await prepareOperationsExportDownload({
-          createdBy: admin.userId,
-          input,
-          localDownloadUrl: (taskId) =>
-            new URL(
-              `/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`,
-              origin
-            ).toString(),
-        })
+      return await runObservedOperationsCall(
+        "operations.prepareExportDownload",
+        context,
+        async () =>
+          operationsPrepareExportDownloadOutputSchema.parse(
+            await prepareOperationsExportDownload({
+              createdBy: admin.userId,
+              input,
+              localDownloadUrl: (taskId) =>
+                new URL(
+                  `/api/admin/operations/exports/${encodeURIComponent(taskId)}/download`,
+                  origin
+                ).toString(),
+            })
+          ),
+        (result) => ({ exportTaskId: result.taskId })
       );
     } catch (error) {
       throwOperationsDashboardError(error);
@@ -222,7 +386,7 @@ bindExecute(
 /** 处理任务只接受 UOL 已鉴权的精确 operations-export cron Principal。 */
 bindExecute(
   "operations.processExports",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     if (principal.type !== "cron" || principal.job !== "operations-export")
       throw new OperationError(
         "forbidden",
@@ -232,8 +396,14 @@ bindExecute(
       typeof input === "object" && input !== null && "limit" in input
         ? Number(input.limit)
         : 10;
-    return operationsProcessExportsOutputSchema.parse(
-      await processDatabaseOperationsExports(limit)
+    return runObservedOperationsCall(
+      "operations.processExports",
+      context,
+      async () =>
+        operationsProcessExportsOutputSchema.parse(
+          await processDatabaseOperationsExports(limit)
+        ),
+      (result) => ({ rowCount: result.processed })
     );
   }
 );
@@ -241,7 +411,7 @@ bindExecute(
 /** 保留任务使用独立 cron Principal，避免处理开关隐式开启清理。 */
 bindExecute(
   "operations.expireExports",
-  async (input: unknown, principal: Principal) => {
+  async (input: unknown, principal: Principal, context: OperationContext) => {
     if (
       principal.type !== "cron" ||
       principal.job !== "operations-export-retention"
@@ -254,8 +424,14 @@ bindExecute(
       typeof input === "object" && input !== null && "limit" in input
         ? Number(input.limit)
         : 10;
-    return operationsProcessExportsOutputSchema.parse(
-      await expireDatabaseOperationsExports(limit)
+    return runObservedOperationsCall(
+      "operations.expireExports",
+      context,
+      async () =>
+        operationsProcessExportsOutputSchema.parse(
+          await expireDatabaseOperationsExports(limit)
+        ),
+      (result) => ({ rowCount: result.processed })
     );
   }
 );
