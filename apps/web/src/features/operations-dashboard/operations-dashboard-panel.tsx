@@ -656,6 +656,7 @@ export function OperationsDashboardPanel({
         initialNextCursor={initialExportsNextCursor}
         initialTasks={initialExports}
         query={view.query}
+        timeZone={snapshot.timeZone}
       />
 
       <OperationsDetailSheet {...detailSheetProps} />

@@ -50,6 +50,7 @@ type OperationsDashboardExportsProps = {
   initialNextCursor: string | null;
   initialLoadFailed?: boolean;
   query: OperationsDashboardQueryInput;
+  timeZone: string;
 };
 
 type ExportAction =
@@ -105,6 +106,7 @@ export function OperationsDashboardExports({
   initialNextCursor,
   initialLoadFailed = false,
   query,
+  timeZone,
 }: OperationsDashboardExportsProps) {
   const t = useTranslations("OperationsDashboard");
   const locale = useLocale();
@@ -324,7 +326,7 @@ export function OperationsDashboardExports({
                         {formatOperationsDateTime(
                           task.createdAt,
                           locale,
-                          "UTC"
+                          timeZone
                         )}
                         {task.rowCount !== null
                           ? ` · ${t("exports.rows", { count: task.rowCount })}`
