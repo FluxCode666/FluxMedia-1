@@ -850,6 +850,12 @@ export function buildOperationsCohortExportDetailSql(
   const targetStart = sql`(
     (${targetDate})::timestamp at time zone ${input.timeZone}
   ) at time zone 'UTC'`;
+  const targetEnd = sql`(
+    (
+      (cohort_users.cohort_date + ${input.retentionDay} + 1)::timestamp
+        at time zone ${input.timeZone}
+    ) at time zone 'UTC'
+  )`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -888,10 +894,8 @@ export function buildOperationsCohortExportDetailSql(
         select 1
         from ${userOutputUsageEvent}
         where ${userOutputUsageEvent.userId} = cohort_users.user_id
-          and (
-            (${userOutputUsageEvent.operationCreatedAt} at time zone 'UTC')
-              at time zone ${input.timeZone}
-          )::date = ${targetDate}
+          and ${userOutputUsageEvent.operationCreatedAt} >= ${targetStart}
+          and ${userOutputUsageEvent.operationCreatedAt} < ${targetEnd}
           and ${userOutputUsageEvent.operationCreatedAt} < ${nextMillisecond(
             input.asOf
           )}

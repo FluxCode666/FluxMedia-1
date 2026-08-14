@@ -11,6 +11,7 @@ import type {
   OperationsCommercialSnapshotReader,
 } from "./commercial-repository";
 import {
+  buildOperationsCommercialSnapshot,
   loadOperationsCommercialSnapshot,
   type OperationsCommercialServiceError,
 } from "./commercial-service";
@@ -187,6 +188,37 @@ describe("operations commercial service", () => {
       status: "not_comparable",
       reason: "zero_current_denominator",
     });
+  });
+
+  it("顶层快照复用增长模块的两期活跃计数而不重复查询", async () => {
+    const reader = createReader();
+
+    const snapshot = await buildOperationsCommercialSnapshot(
+      {
+        range: { kind: "custom", from: "2026-08-08", to: "2026-08-10" },
+        granularity: "day",
+      },
+      "Asia/Shanghai",
+      reader,
+      await reader.readHeader(),
+      {
+        current: { payment: 3, creation: 6, login: 12 },
+        previous: { payment: 2, creation: 4, login: 8 },
+      }
+    );
+
+    expect(snapshot.conversion.fromCreation.current).toEqual({
+      paidUsers: 3,
+      activeUsers: 6,
+      rate: 0.5,
+    });
+    expect(snapshot.conversion.fromLogin.previous).toEqual({
+      paidUsers: 2,
+      activeUsers: 8,
+      rate: 0.25,
+    });
+    expect(reader.readPayingUserCount).not.toHaveBeenCalled();
+    expect(reader.readActivityUserCount).not.toHaveBeenCalled();
   });
 
   it("范围完全位于 epoch 前时不执行商业化事实查询", async () => {

@@ -119,6 +119,14 @@ describe("operations growth repository SQL", () => {
       compiled.params.filter((value) => value === range.end.toISOString())
     ).toHaveLength(1);
     expect(compiled.params).toContain("Asia/Shanghai");
+    expect(compiled.sql).toContain("min(cohort_date) + 1");
+    expect(compiled.sql).toContain("max(cohort_date) + 31");
+    expect(compiled.sql).toMatch(
+      /"user_output_usage_event"\."operation_created_at" >= greatest\(/
+    );
+    expect(compiled.sql).toMatch(
+      /"user_output_usage_event"\."operation_created_at" < least\(/
+    );
   });
 
   it("整个增长读取使用唯一只读 repeatable-read 事务", async () => {

@@ -375,6 +375,17 @@ export function buildOperationsCohortSql(
       where ${user.createdAt} >= ${sql.param(input.start, user.createdAt)}
         and ${user.createdAt} < ${sql.param(input.end, user.createdAt)}
         and ${user.createdAt} >= ${sql.param(input.epochStart, user.createdAt)}
+    ), cohort_bounds as (
+      select
+        (
+          ((min(cohort_date) + 1)::timestamp at time zone ${input.timeZone})
+            at time zone 'UTC'
+        ) as first_activity_at,
+        (
+          ((max(cohort_date) + 31)::timestamp at time zone ${input.timeZone})
+            at time zone 'UTC'
+        ) as last_activity_exclusive
+      from cohort_users
     ), creation_days as (
       select distinct
         ${userOutputUsageEvent.userId} as user_id,
@@ -385,14 +396,15 @@ export function buildOperationsCohortSql(
       from ${userOutputUsageEvent}
       join cohort_users
         on cohort_users.user_id = ${userOutputUsageEvent.userId}
-      where ${userOutputUsageEvent.operationCreatedAt} >= ${sql.param(
-        input.epochStart,
-        userOutputUsageEvent.operationCreatedAt
-      )}
-        and ${userOutputUsageEvent.operationCreatedAt} < ${sql.param(
-          input.asOf,
-          userOutputUsageEvent.operationCreatedAt
-        )}
+      cross join cohort_bounds
+      where ${userOutputUsageEvent.operationCreatedAt} >= greatest(
+        ${sql.param(input.epochStart, userOutputUsageEvent.operationCreatedAt)},
+        cohort_bounds.first_activity_at
+      )
+        and ${userOutputUsageEvent.operationCreatedAt} < least(
+          ${sql.param(input.asOf, userOutputUsageEvent.operationCreatedAt)},
+          cohort_bounds.last_activity_exclusive
+        )
     )
     select
       to_char(cohort_users.cohort_date, 'YYYY-MM-DD') as cohort_date,

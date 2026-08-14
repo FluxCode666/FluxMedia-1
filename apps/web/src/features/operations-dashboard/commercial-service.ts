@@ -118,6 +118,12 @@ export type OperationsCommercialSnapshot = {
   };
 };
 
+/** 顶层 overview 可从增长模块复用的两期去重活跃计数。 */
+export type OperationsCommercialSharedActivityCounts = {
+  current: { payment: number; creation: number; login: number };
+  previous: { payment: number; creation: number; login: number };
+};
+
 const databaseCountSchema = z.number().int().safe().nonnegative();
 const currencyCodeSchema = z
   .string()
@@ -267,6 +273,73 @@ async function readWhenAvailable<T>(
   return range.start < range.end ? read(range) : fallback;
 }
 
+/**
+ * 读取商业化转化所需的两期活跃计数。
+ *
+ * @param reader 当前一致快照的商业化读端口。
+ * @param currentRange 当期 epoch 截断范围。
+ * @param previousRange 上一等长周期的 epoch 截断范围。
+ * @returns 付费、创作和登录活跃的两期原始计数。
+ * @sideEffects 最多执行六次只读聚合；顶层已提供共享计数时不会调用。
+ */
+async function readCommercialActivityCounts(
+  reader: OperationsCommercialSnapshotReader,
+  currentRange: OperationsGrowthRangeQuery,
+  previousRange: OperationsGrowthRangeQuery
+): Promise<OperationsCommercialSharedActivityCounts> {
+  const [
+    currentPayment,
+    previousPayment,
+    currentCreation,
+    previousCreation,
+    currentLogin,
+    previousLogin,
+  ] = await Promise.all([
+    readWhenAvailable(
+      currentRange,
+      (value) => reader.readPayingUserCount(value),
+      0
+    ),
+    readWhenAvailable(
+      previousRange,
+      (value) => reader.readPayingUserCount(value),
+      0
+    ),
+    readWhenAvailable(
+      currentRange,
+      (value) => reader.readActivityUserCount("creation", value),
+      0
+    ),
+    readWhenAvailable(
+      previousRange,
+      (value) => reader.readActivityUserCount("creation", value),
+      0
+    ),
+    readWhenAvailable(
+      currentRange,
+      (value) => reader.readActivityUserCount("login", value),
+      0
+    ),
+    readWhenAvailable(
+      previousRange,
+      (value) => reader.readActivityUserCount("login", value),
+      0
+    ),
+  ]);
+  return {
+    current: {
+      payment: currentPayment,
+      creation: currentCreation,
+      login: currentLogin,
+    },
+    previous: {
+      payment: previousPayment,
+      creation: previousCreation,
+      login: previousLogin,
+    },
+  };
+}
+
 /** 将解析后的范围转换为仓储边界；不可用范围用空半开区间表达。 */
 function toRangeQuery(input: {
   dataStart: Date | null;
@@ -281,6 +354,7 @@ function toRangeQuery(input: {
  * @param input 不可信公共查询输入。
  * @param timeZone 服务端应用时区。
  * @param reader 已绑定到同一只读数据库事务的商业化 reader。
+ * @param sharedActivityCounts 顶层增长快照已读取的同口径活跃计数。
  * @returns 漏斗、收入、付费转化及比较结果。
  * @sideEffects 只读 reader，不提交事务或写入订单。
  */
@@ -288,7 +362,8 @@ export async function buildOperationsCommercialSnapshot(
   input: OperationsDashboardQueryInput | unknown,
   timeZone: string,
   reader: OperationsCommercialSnapshotReader,
-  sharedHeader?: OperationsGrowthSnapshotHeader
+  sharedHeader?: OperationsGrowthSnapshotHeader,
+  sharedActivityCounts?: OperationsCommercialSharedActivityCounts
 ): Promise<OperationsCommercialSnapshot> {
   const header = sharedHeader ?? (await reader.readHeader());
   if (!header.epoch) {
@@ -329,12 +404,7 @@ export async function buildOperationsCommercialSnapshot(
     previousLifecycleRaw,
     currentRevenueRaw,
     previousRevenueRaw,
-    currentPaidUsersRaw,
-    previousPaidUsersRaw,
-    currentCreationUsersRaw,
-    previousCreationUsersRaw,
-    currentLoginUsersRaw,
-    previousLoginUsersRaw,
+    activityCountsRaw,
   ] = await Promise.all([
     readWhenAvailable(
       currentRange,
@@ -348,61 +418,36 @@ export async function buildOperationsCommercialSnapshot(
     ),
     readWhenAvailable(currentRange, (value) => reader.readRevenue(value), []),
     readWhenAvailable(previousRange, (value) => reader.readRevenue(value), []),
-    readWhenAvailable(
-      currentRange,
-      (value) => reader.readPayingUserCount(value),
-      0
-    ),
-    readWhenAvailable(
-      previousRange,
-      (value) => reader.readPayingUserCount(value),
-      0
-    ),
-    readWhenAvailable(
-      currentRange,
-      (value) => reader.readActivityUserCount("creation", value),
-      0
-    ),
-    readWhenAvailable(
-      previousRange,
-      (value) => reader.readActivityUserCount("creation", value),
-      0
-    ),
-    readWhenAvailable(
-      currentRange,
-      (value) => reader.readActivityUserCount("login", value),
-      0
-    ),
-    readWhenAvailable(
-      previousRange,
-      (value) => reader.readActivityUserCount("login", value),
-      0
-    ),
+    sharedActivityCounts ??
+      readCommercialActivityCounts(reader, currentRange, previousRange),
   ]);
 
   const currentLifecycle = validateLifecycleCounts(currentLifecycleRaw);
   const previousLifecycle = validateLifecycleCounts(previousLifecycleRaw);
   const currentRevenue = normalizeRevenue(currentRevenueRaw);
   const previousRevenue = normalizeRevenue(previousRevenueRaw);
-  const currentPaidUsers = requireCount(currentPaidUsersRaw, "当期付费用户数");
+  const currentPaidUsers = requireCount(
+    activityCountsRaw.current.payment,
+    "当期付费用户数"
+  );
   const previousPaidUsers = requireCount(
-    previousPaidUsersRaw,
+    activityCountsRaw.previous.payment,
     "上期付费用户数"
   );
   const currentCreationUsers = requireCount(
-    currentCreationUsersRaw,
+    activityCountsRaw.current.creation,
     "当期创作活跃用户数"
   );
   const previousCreationUsers = requireCount(
-    previousCreationUsersRaw,
+    activityCountsRaw.previous.creation,
     "上期创作活跃用户数"
   );
   const currentLoginUsers = requireCount(
-    currentLoginUsersRaw,
+    activityCountsRaw.current.login,
     "当期登录活跃用户数"
   );
   const previousLoginUsers = requireCount(
-    previousLoginUsersRaw,
+    activityCountsRaw.previous.login,
     "上期登录活跃用户数"
   );
   const currentAvailable = range.dataStart !== null;

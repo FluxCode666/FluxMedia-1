@@ -68,6 +68,15 @@ function createFactories(
   };
 }
 
+/** 顶层服务复用所需的最小增长活跃指标夹具。 */
+function createSharedActivityMetrics() {
+  return {
+    paymentActiveUsers: { current: 3, previous: 2 },
+    creationActiveUsers: { current: 6, previous: 4 },
+    loginActiveUsers: { current: 12, previous: 8 },
+  };
+}
+
 describe("operations dashboard service", () => {
   it("所有模块共享一次 header 和唯一只读事务", async () => {
     const { database, transaction } = createDatabase();
@@ -92,8 +101,13 @@ describe("operations dashboard service", () => {
       },
       availability: "available",
     } as const;
+    const growth = {
+      generatedAt: "same",
+      range,
+      metrics: createSharedActivityMetrics(),
+    };
     const builders = {
-      growth: vi.fn().mockResolvedValue({ generatedAt: "same", range }),
+      growth: vi.fn().mockResolvedValue(growth),
       commercial: vi.fn().mockResolvedValue({ generatedAt: "same", range }),
       content: vi.fn().mockResolvedValue({ generatedAt: "same", range }),
       health: vi
@@ -124,7 +138,11 @@ describe("operations dashboard service", () => {
       {},
       "Asia/Shanghai",
       expect.anything(),
-      sharedHeader
+      sharedHeader,
+      {
+        current: { payment: 3, creation: 6, login: 12 },
+        previous: { payment: 2, creation: 4, login: 8 },
+      }
     );
     expect(builders.content).toHaveBeenCalledWith(
       {},
@@ -156,6 +174,7 @@ describe("operations dashboard service", () => {
         growth: vi.fn().mockResolvedValue({
           generatedAt: "same",
           range: { from: "2026-08-01", to: "2026-08-10" },
+          metrics: createSharedActivityMetrics(),
         }),
         commercial: vi.fn().mockResolvedValue({
           generatedAt: "same",
@@ -231,7 +250,11 @@ describe("operations dashboard service", () => {
         reader: ReturnType<OperationsDashboardReaderFactories["growth"]>
       ) => {
         await reader.readCumulativeUserCount(range.end);
-        return { generatedAt: "same", range };
+        return {
+          generatedAt: "same",
+          range,
+          metrics: createSharedActivityMetrics(),
+        };
       },
       commercial: async (
         _input: unknown,

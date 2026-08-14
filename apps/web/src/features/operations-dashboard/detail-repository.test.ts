@@ -270,6 +270,15 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain("date_trunc('milliseconds'");
     expect(compiled.sql).toContain("at time zone");
     expect(compiled.sql).not.toContain("generate_series");
+    expect(compiled.sql).toMatch(
+      /"user_output_usage_event"\."operation_created_at" >= \(/
+    );
+    expect(compiled.sql).toMatch(
+      /"user_output_usage_event"\."operation_created_at" < \(/
+    );
+    expect(compiled.sql).not.toMatch(
+      /"user_output_usage_event"\."operation_created_at"[\s\S]*\)::date =/
+    );
   });
 
   it("以最后一个已返回行签发下一页原始 keyset", () => {

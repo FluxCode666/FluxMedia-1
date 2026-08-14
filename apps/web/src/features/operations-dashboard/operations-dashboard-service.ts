@@ -14,6 +14,7 @@ import {
 } from "./commercial-repository";
 import {
   buildOperationsCommercialSnapshot,
+  type OperationsCommercialSharedActivityCounts,
   type OperationsCommercialSnapshot,
 } from "./commercial-service";
 import {
@@ -120,6 +121,24 @@ function rangeFingerprint(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** 从已校验增长快照提取商业化转化可直接复用的两期活跃计数。 */
+function createSharedCommercialActivityCounts(
+  growth: OperationsGrowthSnapshot
+): OperationsCommercialSharedActivityCounts {
+  return {
+    current: {
+      payment: growth.metrics.paymentActiveUsers.current,
+      creation: growth.metrics.creationActiveUsers.current,
+      login: growth.metrics.loginActiveUsers.current,
+    },
+    previous: {
+      payment: growth.metrics.paymentActiveUsers.previous,
+      creation: growth.metrics.creationActiveUsers.previous,
+      login: growth.metrics.loginActiveUsers.previous,
+    },
+  };
+}
+
 /**
  * 为单个事务连接构造失败封闭的串行 execute。
  *
@@ -184,13 +203,19 @@ export function createOperationsDashboardService(dependencies: {
               "运营统计起点尚未初始化"
             );
           }
-          const [growth, commercial, content] = await Promise.all([
-            builders.growth(input, timeZone, growthReader, sharedHeader),
+          const growth = await builders.growth(
+            input,
+            timeZone,
+            growthReader,
+            sharedHeader
+          );
+          const [commercial, content] = await Promise.all([
             builders.commercial(
               input,
               timeZone,
               commercialReader,
-              sharedHeader
+              sharedHeader,
+              createSharedCommercialActivityCounts(growth)
             ),
             builders.content(input, timeZone, contentReader, sharedHeader),
           ]);
