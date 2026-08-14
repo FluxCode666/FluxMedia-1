@@ -109,6 +109,10 @@ export const operationsDetailSelectionSchema = z.union([
   contentDetailSelectionSchema,
 ]);
 
+export type OperationsDetailSelection = z.infer<
+  typeof operationsDetailSelectionSchema
+>;
+
 /** 三类可异步导出的领域数据；系统健康按产品约束不提供 CSV。 */
 export const operationsExportTypeSchema = z.enum([
   "user_growth",
@@ -178,50 +182,10 @@ export const operationsGetDetailInputSchema =
  * WHY：Server Action 在 Node 进程内可能保留 Date，跨传输序列化后则为字符串；
  * 两种形态都属于同一只读快照，不在 schema 层改变业务时间。
  */
-const operationsDateTimeSchema = z.union([
+export const operationsDateTimeSchema = z.union([
   z.date(),
   z.string().datetime({ offset: true }),
 ]);
-
-/** 顶层 overview DTO 的公共外壳；四个模块内部字段由领域服务负责严格校验。 */
-export const operationsOverviewOutputSchema = z
-  .object({
-    generatedAt: operationsDateTimeSchema,
-    timeZone: z.string().min(1).max(100),
-    epoch: z
-      .object({
-        appDate: operationsAppDateSchema,
-        startsAt: operationsDateTimeSchema,
-      })
-      .strict(),
-    schemaVersion: z.literal(1),
-    range: z.record(z.string(), z.unknown()),
-    growth: z.record(z.string(), z.unknown()),
-    commercial: z.record(z.string(), z.unknown()),
-    content: z.record(z.string(), z.unknown()),
-    systemHealth: z.record(z.string(), z.unknown()),
-  })
-  .strict();
-
-export type OperationsOverviewOutput = z.infer<
-  typeof operationsOverviewOutputSchema
->;
-
-/** 明细返回行保持字段集合由模块 selection 决定，但禁止非对象或 null 行。 */
-export const operationsDetailRowSchema = z.record(z.string(), z.unknown());
-
-export const operationsDetailOutputSchema = z
-  .object({
-    selection: operationsDetailSelectionSchema,
-    range: z.record(z.string(), z.unknown()),
-    rows: z.array(operationsDetailRowSchema).max(501),
-    nextCursor: operationsCursorSchema.nullable(),
-  })
-  .strict();
-
-export type OperationsDetailOutput = z.infer<
-  typeof operationsDetailOutputSchema
->;
 
 export type OperationsGetDetailInput = z.infer<
   typeof operationsGetDetailInputSchema

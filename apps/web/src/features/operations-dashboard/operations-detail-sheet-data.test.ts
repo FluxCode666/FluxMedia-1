@@ -4,6 +4,7 @@
  * 使用方：Vitest。锁定增长、Cohort、商业化和内容明细的列、格式化与敏感字段拒绝，
  * 使客户端表格只消费服务端约定的安全记录。
  */
+import { resolveOperationsDashboardRange } from "@repo/shared/operations-dashboard/range";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,11 +13,17 @@ import {
   parseOperationsDetailPage,
 } from "./operations-detail-sheet-data";
 
-const range = {
-  from: "2026-08-01",
-  to: "2026-08-07",
-  timeZone: "Asia/Shanghai",
-};
+const range = resolveOperationsDashboardRange(
+  {
+    granularity: "day",
+    range: { kind: "custom", from: "2026-08-01", to: "2026-08-07" },
+  },
+  {
+    timeZone: "Asia/Shanghai",
+    asOf: new Date("2026-08-14T12:00:00.000Z"),
+    epochDate: "2026-08-01",
+  }
+);
 
 /** 固定中文文案，确保纯数据测试不依赖 next-intl 运行时。 */
 const labels: OperationsDetailTableLabels = {
@@ -401,7 +408,7 @@ describe("operations detail sheet data", () => {
         },
         { module: "content", detail: "image_outputs" }
       )
-    ).toThrow("运营明细记录无效");
+    ).toThrow("运营明细响应无效");
   });
 
   it("英文展示模型不会混入中文角色、订单状态或支付事件文案", () => {

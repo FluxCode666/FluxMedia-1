@@ -6,6 +6,7 @@
  */
 import type { OperationsDashboardQueryInput } from "@repo/shared/operations-dashboard/contracts";
 import { describe, expect, it } from "vitest";
+import { createOperationsDetailFixture } from "./operations-dashboard-test-fixtures";
 import type { OperationsDetailPage } from "./operations-detail-sheet-data";
 import {
   applyOperationsDetailFailure,
@@ -30,6 +31,7 @@ const customQuery: OperationsDashboardQueryInput = {
   granularity: "week",
   range: { kind: "custom", from: "2026-01-01", to: "2026-08-14" },
 };
+const detailRange = createOperationsDetailFixture().range;
 
 function createPage(
   userId: string,
@@ -37,7 +39,7 @@ function createPage(
 ): OperationsDetailPage {
   return {
     selection: usersSelection,
-    range: { timeZone: "Asia/Shanghai" },
+    range: detailRange,
     rows: [
       {
         userId,

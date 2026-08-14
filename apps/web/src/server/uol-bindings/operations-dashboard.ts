@@ -10,13 +10,15 @@ import { isAdminRole } from "@repo/shared/auth/roles";
 import { logger } from "@repo/shared/logger";
 import {
   operationsCreateExportOutputSchema,
-  operationsDetailOutputSchema,
   operationsListExportsOutputSchema,
-  operationsOverviewOutputSchema,
   operationsPrepareExportDownloadOutputSchema,
   operationsProcessExportsOutputSchema,
   operationsRetryExportOutputSchema,
 } from "@repo/shared/operations-dashboard/contracts";
+import {
+  operationsDetailOutputSchema,
+  operationsOverviewOutputSchema,
+} from "@repo/shared/operations-dashboard/output-contracts";
 import { checkRateLimit } from "@repo/shared/rate-limit";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import {

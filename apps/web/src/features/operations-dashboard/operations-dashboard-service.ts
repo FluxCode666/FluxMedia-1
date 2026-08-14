@@ -5,6 +5,7 @@
  * repeatable-read 事务，并将同一 execute 与 header 传给增长、商业化、
  * 内容和系统健康模块，避免跨快照拼装。
  */
+import type { OperationsOverviewOutput } from "@repo/shared/operations-dashboard/output-contracts";
 import type { SQL } from "drizzle-orm";
 
 import {
@@ -224,7 +225,7 @@ export function createOperationsDashboardService(dependencies: {
             commercial,
             content,
             systemHealth,
-          };
+          } satisfies OperationsOverviewOutput;
         },
         { isolationLevel: "repeatable read", accessMode: "read only" }
       );

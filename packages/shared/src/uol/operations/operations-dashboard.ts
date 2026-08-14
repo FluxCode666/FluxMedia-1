@@ -7,14 +7,12 @@
 import {
   operationsCreateExportInputSchema,
   operationsCreateExportOutputSchema,
-  operationsDetailOutputSchema,
   operationsExpireExportsInputSchema,
   operationsExpireExportsOutputSchema,
   operationsGetDetailInputSchema,
   operationsGetOverviewInputSchema,
   operationsListExportsInputSchema,
   operationsListExportsOutputSchema,
-  operationsOverviewOutputSchema,
   operationsPrepareExportDownloadInputSchema,
   operationsPrepareExportDownloadOutputSchema,
   operationsProcessExportsInputSchema,
@@ -22,6 +20,10 @@ import {
   operationsRetryExportInputSchema,
   operationsRetryExportOutputSchema,
 } from "../../operations-dashboard/contracts";
+import {
+  operationsDetailOutputSchema,
+  operationsOverviewOutputSchema,
+} from "../../operations-dashboard/output-contracts";
 import { defineOperation } from "../registry";
 import type { AccessRequirement } from "../types";
 

@@ -35,6 +35,7 @@
     "./analytics/series": "./src/analytics/series.ts",
     "./analytics/output-count": "./src/analytics/output-count.ts",
     "./operations-dashboard/contracts": "./src/operations-dashboard/contracts.ts",
+    "./operations-dashboard/output-contracts": "./src/operations-dashboard/output-contracts.ts",
     "./operations-dashboard/range": "./src/operations-dashboard/range.ts",
     "./operations-dashboard/comparison": "./src/operations-dashboard/comparison.ts",
     "./operations-dashboard/series": "./src/operations-dashboard/series.ts",

@@ -7,11 +7,11 @@
  */
 
 import { amountMinorToMajor } from "@repo/shared/credits/top-up";
+import type { OperationsGetDetailInput } from "@repo/shared/operations-dashboard/contracts";
 import {
   type OperationsDetailOutput,
-  type OperationsGetDetailInput,
   operationsDetailOutputSchema,
-} from "@repo/shared/operations-dashboard/contracts";
+} from "@repo/shared/operations-dashboard/output-contracts";
 import { z } from "zod";
 
 /** Sheet 只需要明细查询中的封闭 selection。 */

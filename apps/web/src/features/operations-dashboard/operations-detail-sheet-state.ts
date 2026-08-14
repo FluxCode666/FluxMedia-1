@@ -29,7 +29,7 @@ export type OperationsDetailSheetState = {
   contextKey: string | null;
   query: OperationsDashboardQueryInput | null;
   selection: OperationsDetailSelection | null;
-  range: Record<string, unknown> | null;
+  range: OperationsDetailPage["range"] | null;
   rows: OperationsDetailSheetRow[];
   nextCursor: string | null;
   status: "idle" | "loading" | "loading_more" | "ready" | "error";

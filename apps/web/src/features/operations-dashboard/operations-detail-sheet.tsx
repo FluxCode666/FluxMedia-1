@@ -62,7 +62,7 @@ function resolveActionFailure(result: {
 /** 为累计页构造展示模型，range 和 selection 固定来自第一页。 */
 function createAccumulatedPage(
   selection: OperationsDetailSelection,
-  range: Record<string, unknown>,
+  range: OperationsDetailPage["range"],
   rows: OperationsDetailPage["rows"],
   nextCursor: string | null
 ): OperationsDetailPage {

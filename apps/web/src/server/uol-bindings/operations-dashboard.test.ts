@@ -87,29 +87,14 @@ vi.mock("@/features/operations-dashboard/export-worker", () => ({
 }));
 
 import { OperationsDashboardServiceError } from "@/features/operations-dashboard/operations-dashboard-service";
+import {
+  createOperationsDetailFixture,
+  createOperationsOverviewFixture,
+} from "@/features/operations-dashboard/operations-dashboard-test-fixtures";
 import "./operations-dashboard";
 
-const SNAPSHOT = {
-  generatedAt: "2026-08-14T00:00:00.000Z",
-  timeZone: "Asia/Shanghai",
-  epoch: {
-    appDate: "2026-08-01",
-    startsAt: "2026-07-31T16:00:00.000Z",
-  },
-  schemaVersion: 1,
-  range: {},
-  growth: {},
-  commercial: {},
-  content: {},
-  systemHealth: {},
-};
-
-const DETAIL = {
-  selection: { module: "growth", detail: "users" },
-  range: {},
-  rows: [],
-  nextCursor: null,
-};
+const SNAPSHOT = createOperationsOverviewFixture();
+const DETAIL = createOperationsDetailFixture();
 
 describe("operations.getOverview binding", () => {
   beforeEach(() => {
@@ -186,9 +171,15 @@ describe("operations.getOverview binding", () => {
     mocks.getOverview.mockResolvedValue({
       ...SNAPSHOT,
       range: {
+        ...SNAPSHOT.range,
         dayCount: 30,
         granularity: "day",
-        buckets: [{ key: "2026-08-14" }],
+        buckets: [
+          {
+            ...SNAPSHOT.range.buckets[0],
+            key: "day:2026-08-14",
+          },
+        ],
       },
     });
 

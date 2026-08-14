@@ -7,11 +7,9 @@
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import type {
-  OperationsDetailOutput,
-  OperationsGetDetailInput,
-} from "@repo/shared/operations-dashboard/contracts";
+import type { OperationsGetDetailInput } from "@repo/shared/operations-dashboard/contracts";
 import { operationsGetDetailInputSchema } from "@repo/shared/operations-dashboard/contracts";
+import type { OperationsDetailOutput } from "@repo/shared/operations-dashboard/output-contracts";
 import {
   addOperationsCalendarDays,
   resolveOperationsDashboardRange,
@@ -31,6 +29,8 @@ import {
   type OperationsGrowthDetailRow,
   paginateOperationsDetailRows,
 } from "./detail-repository";
+
+type OperationsDetailOutputRow = OperationsDetailOutput["rows"][number];
 
 const DETAIL_CURSOR_VERSION = 1;
 const DETAIL_CURSOR_DOMAIN = "fluxmedia:operations-detail:cursor:v1";
@@ -361,7 +361,7 @@ function buildDetailQuery(input: {
 /** 把数据库 Date 转成可跨 UOL 传输的明细行。 */
 function adaptGrowthDetailRow(
   row: OperationsGrowthDetailRow
-): Record<string, unknown> {
+): OperationsDetailOutputRow {
   return {
     userId: row.userId,
     name: row.name,
@@ -376,7 +376,7 @@ function adaptGrowthDetailRow(
 /** 把商业化日期转换为传输安全字段，不暴露 provider payload。 */
 function adaptCommercialDetailRow(
   row: OperationsCommercialDetailRow
-): Record<string, unknown> {
+): OperationsDetailOutputRow {
   return {
     paymentOrderId: row.paymentOrderId,
     providerTradeNo: row.providerTradeNo,
@@ -394,7 +394,7 @@ function adaptCommercialDetailRow(
 /** 把成功产物转换为不含提示词、媒体链接的传输安全字段。 */
 function adaptContentDetailRow(
   row: OperationsContentDetailRow
-): Record<string, unknown> {
+): OperationsDetailOutputRow {
   return {
     taskId: row.taskId,
     userId: row.userId,
@@ -409,7 +409,7 @@ function adaptContentDetailRow(
 }
 
 /** 根据封闭行类型选择安全传输适配器。 */
-function adaptDetailRow(row: OperationsDetailRow): Record<string, unknown> {
+function adaptDetailRow(row: OperationsDetailRow): OperationsDetailOutputRow {
   if ("taskId" in row) return adaptContentDetailRow(row);
   if ("paymentOrderId" in row) return adaptCommercialDetailRow(row);
   return adaptGrowthDetailRow(row);

@@ -8,7 +8,6 @@
  */
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import {
-  type OperationsDetailOutput,
   operationsCreateExportInputSchema,
   operationsGetDetailInputSchema,
   operationsGetOverviewInputSchema,
@@ -16,6 +15,7 @@ import {
   operationsPrepareExportDownloadInputSchema,
   operationsRetryExportInputSchema,
 } from "@repo/shared/operations-dashboard/contracts";
+import type { OperationsDetailOutput } from "@repo/shared/operations-dashboard/output-contracts";
 import { adminAction, protectedAction } from "@repo/shared/safe-action";
 import { invokeOperation } from "@repo/shared/uol";
 
