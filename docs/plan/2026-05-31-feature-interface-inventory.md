@@ -31,8 +31,9 @@
 | `settings.updateModelConfigurationEntry` | 仅真实 `super_admin` 用户 | `clientRequestId` 按用户必填幂等；破坏性；声明 `storage`、`cache`、`audit` 副作用 | `POST /api/admin/model-configuration` multipart 薄适配器；价格、展示配置、封面引用、回执与审计在底层单事务收敛 |
 | `modelMarketplace.listPublicModels` | 仅站内 `system` | 只读、自然幂等、无副作用 | `/models` 与首页 Server Component 进程内调用；不提供匿名 API，也不投影到 Admin/User MCP |
 
-三个 operation 均为 `human-only`。展示开关只控制 `/models` 与首页公开模型区，不参与
-`/v1/models`、创作目录、套餐能力、后端调度或实际计费。详细运行与存储边界见
+三个 operation 均为 `human-only`。运行启用开关统一过滤 `/v1/models`、视频能力列表、
+站内创作目录和公开模型区，并在图片/视频生成入口拒绝新调用；展示开关只控制已启用模型
+的 `/models` 与首页公开模型区，不参与套餐能力或价格计算。详细运行与存储边界见
 [model-marketplace-operations.md](../model-marketplace-operations.md)。
 
 ## 支撑域
