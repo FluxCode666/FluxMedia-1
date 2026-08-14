@@ -13,6 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OperationsImageChart } from "./image-production-chart";
+import { OperationsChartKeyboardPoints } from "./operations-chart-keyboard-points";
 import {
   OperationsVideoChart,
   type OperationsVideoChartLabels,
@@ -97,6 +98,79 @@ afterEach(() => {
 });
 
 describe("operations dashboard charts", () => {
+  it("完整序列支持方向键、首尾键与 reduced-motion 降级", () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => {
+      root?.render(
+        createElement(OperationsChartKeyboardPoints, {
+          locale: "zh-CN",
+          navigationLabel: "使用方向键浏览完整序列",
+          points: [
+            {
+              index: 0,
+              key: "2026-08-01",
+              label: "2026年8月1日",
+              shortLabel: "08-01",
+              status: "value",
+              value: 2,
+            },
+            {
+              index: 1,
+              key: "2026-08-02",
+              label: "2026年8月2日",
+              shortLabel: "08-02",
+              status: "value",
+              value: 4,
+            },
+            {
+              index: 2,
+              key: "2026-08-03",
+              label: "2026年8月3日",
+              shortLabel: "08-03",
+              status: "value",
+              value: 6,
+            },
+          ],
+          preEpochLabel: "上线前",
+          seriesLabel: "生图数量",
+        })
+      );
+    });
+
+    const buttons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button")
+    );
+    expect(buttons).toHaveLength(3);
+    expect(buttons[0]?.tabIndex).toBe(0);
+    expect(buttons[1]?.tabIndex).toBe(-1);
+    expect(buttons[0]?.className).toContain("motion-reduce:transition-none");
+
+    act(() => buttons[0]?.focus());
+    act(() =>
+      buttons[0]?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" })
+      )
+    );
+    expect(document.activeElement).toBe(buttons[1]);
+    expect(container.textContent).toContain("2026年8月2日 · 生图数量 · 4");
+
+    act(() =>
+      buttons[1]?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "End" })
+      )
+    );
+    expect(document.activeElement).toBe(buttons[2]);
+
+    act(() =>
+      buttons[2]?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Home" })
+      )
+    );
+    expect(document.activeElement).toBe(buttons[0]);
+  });
+
   it("视频数量与秒数在同一快照内切换并同步完整表格", () => {
     mountVideoChart();
 

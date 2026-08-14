@@ -7,7 +7,12 @@
 "use client";
 
 import { cn } from "@repo/ui/utils";
-import { useId, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import type { OperationsChartPoint } from "./operations-chart-utils";
 import { formatOperationsChartPointValue } from "./operations-chart-utils";
@@ -37,11 +42,50 @@ export function OperationsChartKeyboardPoints({
   unitLabel,
 }: OperationsChartKeyboardPointsProps) {
   const navigationId = useId();
-  const [activeIndex, setActiveIndex] = useState(0);
+  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const activeIndex =
+    points.length === 0 ? 0 : Math.min(selectedIndex, points.length - 1);
   const activePoint = points[activeIndex];
   const activeValue = activePoint
     ? formatOperationsChartPointValue(activePoint, locale, preEpochLabel)
     : preEpochLabel;
+
+  /** 聚焦指定真实点，并同步 roving tab stop 与 aria-live 读数。 */
+  function focusPoint(index: number): void {
+    const button = buttonRefs.current[index];
+    if (!button) return;
+    setSelectedIndex(index);
+    button.focus();
+  }
+
+  /** 将方向键、Home 与 End 映射到完整时间序列中的相邻或边界点。 */
+  function handleKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number
+  ): void {
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        nextIndex = (index + 1) % points.length;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        nextIndex = (index - 1 + points.length) % points.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = points.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    focusPoint(nextIndex);
+  }
 
   return (
     <div className="grid gap-2">
@@ -66,13 +110,18 @@ export function OperationsChartKeyboardPoints({
                 }`}
                 className={cn(
                   "h-5 min-w-2 rounded-full bg-[#B0AFA9] outline-none",
-                  "transition-[height,background-color]",
+                  "transition-[height,background-color] motion-reduce:transition-none",
                   "hover:h-7 hover:bg-[#55554F]",
                   "focus-visible:h-7 focus-visible:bg-[#1C1C1A]",
                   point.status === "pre_epoch" && "bg-[#D8D6CE]"
                 )}
-                onClick={() => setActiveIndex(index)}
-                onFocus={() => setActiveIndex(index)}
+                onClick={() => setSelectedIndex(index)}
+                onFocus={() => setSelectedIndex(index)}
+                onKeyDown={(event) => handleKeyDown(event, index)}
+                ref={(button) => {
+                  buttonRefs.current[index] = button;
+                }}
+                tabIndex={index === activeIndex ? 0 : -1}
                 type="button"
               />
             </li>
