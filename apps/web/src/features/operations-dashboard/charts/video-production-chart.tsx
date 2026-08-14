@@ -60,6 +60,7 @@ export type OperationsVideoChartProps = {
   countSeries: readonly OperationsNumericSeriesBucket[];
   secondsSeries: readonly OperationsNumericSeriesBucket[];
   labels: OperationsVideoChartLabels;
+  onSelectPoint?: (bucket: OperationsNumericSeriesBucket) => void;
 };
 
 /**
@@ -73,6 +74,7 @@ export function OperationsVideoChart({
   countSeries,
   labels,
   locale,
+  onSelectPoint,
   secondsSeries,
 }: OperationsVideoChartProps) {
   const [mode, setMode] = useState<OperationsVideoChartMode>("count");
@@ -191,6 +193,7 @@ export function OperationsVideoChart({
       <OperationsChartKeyboardPoints
         locale={locale}
         navigationLabel={labels.navigation}
+        onSelectPoint={onSelectPoint}
         points={fullPoints}
         preEpochLabel={labels.preEpoch}
         seriesLabel={seriesLabel}

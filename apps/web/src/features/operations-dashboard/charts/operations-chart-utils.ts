@@ -25,6 +25,7 @@ export const OPERATIONS_CHART_MAX_POINTS = 90;
 export type OperationsChartPoint = {
   index: number;
   key: string;
+  bucket: OperationsNumericSeriesBucket;
   label: string;
   shortLabel: string;
   status: OperationsNumericSeriesBucket["status"];
@@ -45,6 +46,7 @@ export function buildOperationsChartPoints(
   return series.map((point, index) => ({
     index,
     key: point.key,
+    bucket: point,
     label: formatOperationsDate(point.from, locale),
     shortLabel: formatOperationsDateTick(point.from),
     status: point.status,
@@ -71,6 +73,7 @@ export function buildOperationsVisualPoints(
     ({ index, point }) => ({
       index,
       key: point.key,
+      bucket: point,
       label: formatOperationsDate(point.from, locale),
       shortLabel: formatOperationsDateTick(point.from),
       status: point.status,

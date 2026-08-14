@@ -65,12 +65,14 @@ type OperationsDetailSelectionCopy = {
  */
 export type OperationsDetailTableLabels = {
   selection: {
+    cumulativeUsers: OperationsDetailSelectionCopy;
     users: OperationsDetailSelectionCopy;
     loginActivity: OperationsDetailSelectionCopy;
     creationActivity: OperationsDetailSelectionCopy;
     paymentActivity: OperationsDetailSelectionCopy;
     retentionCohorts: OperationsDetailSelectionCopy;
     orders: OperationsDetailSelectionCopy;
+    fulfilledOrders: OperationsDetailSelectionCopy;
     paymentLifecycle: OperationsDetailSelectionCopy;
     imageOutputs: OperationsDetailSelectionCopy;
     videoOutputs: OperationsDetailSelectionCopy;
@@ -183,6 +185,15 @@ function getSelectionCopy(
 ): OperationsDetailSelectionCopy {
   if (selection.module === "growth") {
     switch (selection.detail) {
+      case "cumulative_users":
+        return labels.cumulativeUsers;
+      case "activity_bucket":
+        return {
+          new_users: labels.users,
+          login: labels.loginActivity,
+          creation: labels.creationActivity,
+          payment: labels.paymentActivity,
+        }[selection.activityKind];
       case "users":
         return labels.users;
       case "login_activity":
@@ -196,11 +207,19 @@ function getSelectionCopy(
     }
   }
   if (selection.module === "commercialization") {
-    return selection.detail === "orders"
-      ? labels.orders
-      : labels.paymentLifecycle;
+    if (selection.detail === "orders") return labels.orders;
+    if (selection.detail === "fulfilled_orders") {
+      return labels.fulfilledOrders;
+    }
+    return labels.paymentLifecycle;
   }
   switch (selection.detail) {
+    case "content_bucket":
+      return {
+        image: labels.imageOutputs,
+        video: labels.videoOutputs,
+        credits: labels.creditUsage,
+      }[selection.contentKind];
     case "image_outputs":
       return labels.imageOutputs;
     case "video_outputs":
@@ -259,7 +278,8 @@ function buildCommercialTableModel(
 ): Pick<OperationsDetailTableModel, "columns" | "rows"> {
   const isLifecycle =
     page.selection.module === "commercialization" &&
-    page.selection.detail === "payment_lifecycle";
+    (page.selection.detail === "payment_lifecycle" ||
+      page.selection.detail === "payment_stage");
   return {
     columns: [
       { key: "order", label: labels.columns.order },

@@ -28,7 +28,12 @@ const growthDetailDatabaseRowSchema = z.object({
 });
 
 const commercialDetailDatabaseRowSchema = z.object({
-  kind: z.enum(["orders", "payment_lifecycle"]),
+  kind: z.enum([
+    "orders",
+    "fulfilled_orders",
+    "payment_lifecycle",
+    "payment_stage",
+  ]),
   stable_id: z.string().min(1),
   payment_order_id: z.string().min(1),
   provider_trade_no: z.string().nullable(),

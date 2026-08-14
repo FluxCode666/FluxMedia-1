@@ -54,6 +54,7 @@ export type OperationsImageChartProps = {
   locale: string;
   series: readonly OperationsNumericSeriesBucket[];
   labels: OperationsImageChartLabels;
+  onSelectPoint?: (bucket: OperationsNumericSeriesBucket) => void;
 };
 
 /**
@@ -65,6 +66,7 @@ export type OperationsImageChartProps = {
 export function OperationsImageChart({
   labels,
   locale,
+  onSelectPoint,
   series,
 }: OperationsImageChartProps) {
   const fullPoints = buildOperationsChartPoints(series, locale);
@@ -145,6 +147,7 @@ export function OperationsImageChart({
       <OperationsChartKeyboardPoints
         locale={locale}
         navigationLabel={labels.navigation}
+        onSelectPoint={onSelectPoint}
         points={fullPoints}
         preEpochLabel={labels.preEpoch}
         seriesLabel={labels.series}

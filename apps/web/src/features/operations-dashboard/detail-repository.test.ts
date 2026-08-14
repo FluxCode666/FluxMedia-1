@@ -1,8 +1,8 @@
 /**
- * 运营增长明细 SQL 同源谓词与 keyset 测试。
+ * 运营增长、商业化与内容明细 SQL 同源谓词及 keyset 测试。
  *
- * 不连接数据库；通过编译 SQL 证明新增、活跃与 Cohort 均可逐行反算，
- * 且分页始终比较原始 business_time 和用户主键。
+ * 不连接数据库；通过编译 SQL 证明累计、增长桶、支付阶段、履约收入、内容和
+ * Cohort 均可逐行反算，且分页始终比较原始 business_time 和稳定主键。
  */
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import {
   buildOperationsCohortExportDetailSql,
   buildOperationsCommercialDetailSql,
   buildOperationsContentDetailSql,
+  buildOperationsCumulativeUserDetailSql,
   buildOperationsNewUserDetailSql,
   createOperationsGrowthDetailRepository,
   paginateOperationsGrowthDetailRows,
@@ -43,6 +44,21 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain(
       'order by date_trunc(\'milliseconds\', "user"."created_at") desc'
     );
+    expect(compiled.sql).not.toContain("role =");
+    expect(compiled.sql).not.toContain("banned =");
+  });
+
+  it("累计用户明细只使用截止上界并保留 epoch 前账户", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCumulativeUserDetailSql({
+        ...base,
+        kind: "cumulative_users",
+      })
+    );
+
+    expect(compiled.sql).toContain('from "user"');
+    expect(compiled.sql).toContain('"user"."created_at" <');
+    expect(compiled.sql).not.toContain('"user"."created_at" >=');
     expect(compiled.sql).not.toContain("role =");
     expect(compiled.sql).not.toContain("banned =");
   });
@@ -137,6 +153,39 @@ describe("operations growth detail repository SQL", () => {
       );
     }
     expect(compiled.sql).not.toContain("credits_transaction");
+  });
+
+  it("履约订单明细以 fulfilled_at 为业务时间并按币种过滤", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind: "fulfilled_orders",
+        currency: "CNY",
+      })
+    );
+
+    expect(compiled.sql).toContain('"payment_order"."status" = \'fulfilled\'');
+    expect(compiled.sql).toContain('"payment_order"."fulfilled_at"');
+    expect(compiled.sql).toContain("upper(");
+    expect(compiled.params).toContain("CNY");
+  });
+
+  it("支付阶段明细复用阶段布尔条件并保证每个订单只返回一行", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind: "payment_stage",
+        stage: "paid_not_fulfilled_orders",
+        currency: "CNY",
+      })
+    );
+
+    expect(compiled.sql).toContain("bool_or(");
+    expect(compiled.sql).toContain("order_flags.has_payment");
+    expect(compiled.sql).toContain("not order_flags.has_fulfillment");
+    expect(compiled.sql).toContain("not order_flags.has_failure");
+    expect(compiled.params).toContain("CNY");
+    expect(compiled.sql).toContain("group by");
   });
 
   it.each([

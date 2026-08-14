@@ -278,6 +278,10 @@
         "unavailable": "Details are temporarily unavailable. Try again later."
       },
       "selection": {
+        "cumulative_users": {
+          "title": "Cumulative user details",
+          "description": "All accounts created before the selected cutoff, including the pre-launch base."
+        },
         "users": {
           "title": "New user details",
           "description": "Accounts registered during the range, ordered by registration business time."
@@ -303,6 +307,10 @@
         "orders": {
           "title": "Order details",
           "description": "Credit-purchase orders by creation business time. Offline refunds are excluded."
+        },
+        "fulfilled_orders": {
+          "title": "Fulfilled order details",
+          "description": "Successful credit purchases by fulfillment business time, with the revenue currency filter preserved. Offline refunds are excluded."
         },
         "payment_lifecycle": {
           "title": "Payment lifecycle details",

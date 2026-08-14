@@ -7,6 +7,7 @@
  */
 "use client";
 
+import { Button } from "@repo/ui/components/button";
 import {
   type ChartConfig,
   ChartContainer,
@@ -37,6 +38,7 @@ import {
 } from "./operations-chart-utils";
 
 type PaymentLifecycleKey = keyof OperationsCommercialSnapshot["lifecycle"];
+export type OperationsPaymentLifecycleStage = PaymentLifecycleKey;
 
 export type OperationsPaymentLifecycleChartLabels = {
   title: string;
@@ -58,6 +60,7 @@ export type OperationsPaymentLifecycleChartProps = {
   locale: string;
   lifecycle: OperationsCommercialSnapshot["lifecycle"];
   labels: OperationsPaymentLifecycleChartLabels;
+  onSelectStage?: (stage: OperationsPaymentLifecycleStage) => void;
 };
 
 type PaymentLifecycleRow = {
@@ -144,6 +147,7 @@ export function OperationsPaymentLifecycleChart({
   labels,
   lifecycle,
   locale,
+  onSelectStage,
 }: OperationsPaymentLifecycleChartProps) {
   const rows: PaymentLifecycleRow[] = PAYMENT_STAGE_KEYS.map((key) => ({
     key,
@@ -278,6 +282,21 @@ export function OperationsPaymentLifecycleChart({
           </Bar>
         </BarChart>
       </ChartContainer>
+      <fieldset className="flex flex-wrap gap-2">
+        <legend className="sr-only">{labels.stage}</legend>
+        {rows.map((row) => (
+          <Button
+            disabled={row.status === "pre_epoch"}
+            key={row.key}
+            onClick={() => onSelectStage?.(row.key)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {row.label}
+          </Button>
+        ))}
+      </fieldset>
     </OperationsChartCard>
   );
 }

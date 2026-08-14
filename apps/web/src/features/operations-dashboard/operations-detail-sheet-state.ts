@@ -63,17 +63,8 @@ export function createOperationsDetailContext(
     query.range.kind === "custom"
       ? [query.range.kind, query.range.from, query.range.to]
       : [query.range.kind];
-  const selectionParts =
-    selection.module === "growth" && selection.detail === "retention_cohorts"
-      ? [
-          selection.module,
-          selection.detail,
-          selection.cohortDate,
-          selection.retentionDay,
-        ]
-      : [selection.module, selection.detail];
   return {
-    key: JSON.stringify([query.granularity, ...rangeParts, ...selectionParts]),
+    key: JSON.stringify([query.granularity, ...rangeParts, selection]),
     query,
     selection,
   };

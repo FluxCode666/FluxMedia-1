@@ -196,6 +196,30 @@ describe("operations detail sheet state", () => {
     ).toBe(false);
   });
 
+  it("不同活动种类或日期桶生成不同请求上下文", () => {
+    const creation = createOperationsDetailContext(query, {
+      module: "growth",
+      detail: "activity_bucket",
+      activityKind: "creation",
+      bucket: { from: "2026-08-01", to: "2026-08-01" },
+    });
+    const login = createOperationsDetailContext(query, {
+      module: "growth",
+      detail: "activity_bucket",
+      activityKind: "login",
+      bucket: { from: "2026-08-01", to: "2026-08-01" },
+    });
+    const nextDay = createOperationsDetailContext(query, {
+      module: "growth",
+      detail: "activity_bucket",
+      activityKind: "creation",
+      bucket: { from: "2026-08-02", to: "2026-08-02" },
+    });
+
+    expect(creation.key).not.toBe(login.key);
+    expect(creation.key).not.toBe(nextDay.key);
+  });
+
   it("关闭会使进行中请求失效且同一 selection 重开只承认新请求", () => {
     const gate = createOperationsDetailRequestGate();
     const closingRequest = gate.begin();

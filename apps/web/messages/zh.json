@@ -278,6 +278,10 @@
         "unavailable": "明细暂不可用，请稍后重试。"
       },
       "selection": {
+        "cumulative_users": {
+          "title": "累计用户明细",
+          "description": "列出当前筛选截止日之前创建的全部账户，包含上线前存量。"
+        },
         "users": {
           "title": "新增用户明细",
           "description": "按注册业务时间列出范围内新增账户。"
@@ -303,6 +307,10 @@
         "orders": {
           "title": "订单明细",
           "description": "按订单创建业务时间核对充值订单，不含线下退款。"
+        },
+        "fulfilled_orders": {
+          "title": "已履约订单明细",
+          "description": "按履约业务时间核对成功充值，可保留收入币种过滤，不含线下退款。"
         },
         "payment_lifecycle": {
           "title": "支付生命周期明细",

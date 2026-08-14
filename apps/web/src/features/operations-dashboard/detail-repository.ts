@@ -24,6 +24,7 @@ import type {
   OperationsCohortExportDetailQuery,
   OperationsCommercialDetailQuery,
   OperationsContentDetailQuery,
+  OperationsCumulativeUserDetailQuery,
   OperationsDetailCursor,
   OperationsDetailExecuteSql,
   OperationsDetailQuery,
@@ -36,6 +37,7 @@ import type {
   OperationsGrowthDetailTransactionDatabase,
   OperationsNewUserDetailQuery,
 } from "./detail-contracts";
+
 export type {
   OperationsActivityDetailQuery,
   OperationsCohortDetailQuery,
@@ -44,11 +46,13 @@ export type {
   OperationsCommercialDetailRow,
   OperationsContentDetailQuery,
   OperationsContentDetailRow,
+  OperationsCumulativeUserDetailQuery,
   OperationsDetailCursor,
   OperationsDetailHighWatermarks,
   OperationsDetailQuery,
   OperationsDetailRepository,
   OperationsDetailRow,
+  OperationsFulfilledOrderDetailQuery,
   OperationsGrowthDetailCursor,
   OperationsGrowthDetailPage,
   OperationsGrowthDetailQuery,
@@ -59,7 +63,9 @@ export type {
   OperationsNewUserDetailQuery,
   OperationsOrderDetailQuery,
   OperationsPaymentLifecycleDetailQuery,
+  OperationsPaymentStageDetailQuery,
 } from "./detail-contracts";
+
 import {
   parseOperationsCommercialDetailRows,
   parseOperationsContentDetailRows,
@@ -81,7 +87,7 @@ function assertValidDetailQuery(input: OperationsDetailQuery): void {
   if (
     !validDates ||
     input.start >= input.end ||
-    input.start < input.epochStart ||
+    (input.kind !== "cumulative_users" && input.start < input.epochStart) ||
     input.end > input.asOf ||
     !Number.isSafeInteger(input.limit) ||
     input.limit < 1 ||
@@ -145,11 +151,179 @@ function nextMillisecond(value: Date): Date {
   return new Date(value.getTime() + 1);
 }
 
+/** 返回支付阶段与商业化汇总完全一致的订单集合谓词。 */
+function buildPaymentStagePredicate(
+  stage: Extract<
+    OperationsCommercialDetailQuery,
+    { kind: "payment_stage" }
+  >["stage"]
+): SQL {
+  switch (stage) {
+    case "created_orders":
+      return sql`order_flags.has_created`;
+    case "pending_orders":
+      return sql`order_flags.has_created
+        and not order_flags.has_payment
+        and not order_flags.has_fulfillment
+        and not order_flags.has_failure`;
+    case "payment_confirmed_orders":
+      return sql`order_flags.has_payment`;
+    case "paid_not_fulfilled_orders":
+      return sql`order_flags.has_payment
+        and not order_flags.has_fulfillment
+        and not order_flags.has_failure`;
+    case "fulfilled_orders":
+      return sql`order_flags.has_fulfillment`;
+    case "failed_orders":
+      return sql`order_flags.has_failure`;
+  }
+}
+
+/** 返回每个支付阶段用于排序和核对的同源事件业务时间。 */
+function buildPaymentStageBusinessTime(
+  stage: Extract<
+    OperationsCommercialDetailQuery,
+    { kind: "payment_stage" }
+  >["stage"]
+): SQL {
+  switch (stage) {
+    case "created_orders":
+    case "pending_orders":
+      return sql`order_flags.created_time`;
+    case "payment_confirmed_orders":
+    case "paid_not_fulfilled_orders":
+      return sql`order_flags.payment_time`;
+    case "fulfilled_orders":
+      return sql`order_flags.fulfillment_time`;
+    case "failed_orders":
+      return sql`order_flags.failure_time`;
+  }
+}
+
+/** 构造支付阶段订单明细，每个订单只返回一行。 */
+function buildOperationsPaymentStageDetailSql(
+  input: Extract<OperationsCommercialDetailQuery, { kind: "payment_stage" }>
+): SQL {
+  const lifecycleWatermark = input.highWatermarks?.paymentLifecycle;
+  const sourceBound = lifecycleWatermark
+    ? sql`and (
+        ${paymentLifecycleEvent.recordedAt},
+        ${paymentLifecycleEvent.id}
+      ) <= (
+        ${toOperationsDatabaseTimestamp(lifecycleWatermark.recordedAt)},
+        ${lifecycleWatermark.id}
+      )`
+    : input.highWatermarks
+      ? sql`and false`
+      : sql``;
+  const businessTime = buildPaymentStageBusinessTime(input.stage);
+  const stagePredicate = buildPaymentStagePredicate(input.stage);
+  const sortTime = buildMillisecondDetailSortTime(
+    sql`stage_orders.business_time`
+  );
+  const keyset = buildDetailKeysetPredicate(
+    input.cursor,
+    sortTime,
+    sql`stage_orders.stable_id`
+  );
+  return sql`
+    with scoped_events as (
+      select
+        ${paymentLifecycleEvent.paymentOrderId} as payment_order_id,
+        ${paymentLifecycleEvent.eventType}::text as event_type,
+        ${paymentLifecycleEvent.occurredAt} as occurred_at
+      from ${paymentLifecycleEvent}
+      join ${paymentOrder}
+        on ${paymentOrder.id} = ${paymentLifecycleEvent.paymentOrderId}
+      where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+        and ${paymentLifecycleEvent.eventType} in (
+          'order_created',
+          'checkout_ready',
+          'payment_confirmed',
+          'fulfillment_succeeded',
+          'checkout_failed',
+          'fulfillment_attempt_failed',
+          'fulfillment_failed_terminal',
+          'expired'
+        )
+        and ${paymentLifecycleEvent.occurredAt} >= ${input.start}
+        and ${paymentLifecycleEvent.occurredAt} < ${input.end}
+        and ${paymentLifecycleEvent.occurredAt} >= ${input.epochStart}
+        and ${paymentLifecycleEvent.occurredAt} < ${nextMillisecond(input.asOf)}
+        ${sourceBound}
+    ), order_flags as (
+      select
+        scoped_events.payment_order_id,
+        bool_or(scoped_events.event_type = 'order_created') as has_created,
+        bool_or(scoped_events.event_type = 'payment_confirmed') as has_payment,
+        bool_or(
+          scoped_events.event_type = 'fulfillment_succeeded'
+        ) as has_fulfillment,
+        bool_or(
+          scoped_events.event_type in (
+            'checkout_failed',
+            'fulfillment_failed_terminal',
+            'expired'
+          )
+        ) as has_failure,
+        min(scoped_events.occurred_at) filter (
+          where scoped_events.event_type = 'order_created'
+        ) as created_time,
+        min(scoped_events.occurred_at) filter (
+          where scoped_events.event_type = 'payment_confirmed'
+        ) as payment_time,
+        min(scoped_events.occurred_at) filter (
+          where scoped_events.event_type = 'fulfillment_succeeded'
+        ) as fulfillment_time,
+        min(scoped_events.occurred_at) filter (
+          where scoped_events.event_type in (
+            'checkout_failed',
+            'fulfillment_failed_terminal',
+            'expired'
+          )
+        ) as failure_time
+      from scoped_events
+      group by scoped_events.payment_order_id
+    ), stage_orders as (
+      select
+        ${input.kind}::text as kind,
+        ${paymentOrder.id} as stable_id,
+        ${paymentOrder.id} as payment_order_id,
+        ${paymentOrder.providerTradeNo} as provider_trade_no,
+        ${paymentOrder.userId} as user_id,
+        upper(${paymentOrder.currency}) as currency,
+        ${paymentOrder.amountMinor} as amount_minor,
+        ${paymentOrder.status} as order_status,
+        ${paymentOrder.createdAt} as created_at,
+        ${paymentOrder.fulfilledAt} as fulfilled_at,
+        ${businessTime} as business_time,
+        ${input.stage}::text as event_type
+      from order_flags
+      join ${paymentOrder} on ${paymentOrder.id} = order_flags.payment_order_id
+      where ${stagePredicate}
+        ${
+          input.currency
+            ? sql`and upper(${paymentOrder.currency}) = ${input.currency}`
+            : sql``
+        }
+    )
+    select *
+    from stage_orders
+    where stage_orders.business_time is not null
+      and ${keyset}
+    order by ${sortTime} desc, stage_orders.stable_id desc
+    limit ${input.limit}
+  `;
+}
+
 /** 构造充值订单或不可变支付生命周期事件的商业化明细 SQL。 */
 export function buildOperationsCommercialDetailSql(
   input: OperationsCommercialDetailQuery
 ): SQL {
   assertValidDetailQuery(input);
+  if (input.kind === "payment_stage") {
+    return buildOperationsPaymentStageDetailSql(input);
+  }
   const eventJoin =
     input.kind === "payment_lifecycle"
       ? sql`join ${paymentLifecycleEvent}
@@ -158,7 +332,9 @@ export function buildOperationsCommercialDetailSql(
   const businessTime =
     input.kind === "payment_lifecycle"
       ? sql`${paymentLifecycleEvent.occurredAt}`
-      : sql`${paymentOrder.createdAt}`;
+      : input.kind === "fulfilled_orders"
+        ? sql`${paymentOrder.fulfilledAt}`
+        : sql`${paymentOrder.createdAt}`;
   const stableId =
     input.kind === "payment_lifecycle"
       ? sql`${paymentLifecycleEvent.id}`
@@ -181,6 +357,16 @@ export function buildOperationsCommercialDetailSql(
         : input.highWatermarks
           ? sql`and false`
           : sql``;
+  const fulfilledPredicate =
+    input.kind === "fulfilled_orders"
+      ? sql`and ${paymentOrder.status} = 'fulfilled'
+          and ${paymentOrder.fulfilledAt} is not null
+          ${
+            input.currency
+              ? sql`and upper(${paymentOrder.currency}) = ${input.currency}`
+              : sql``
+          }`
+      : sql``;
   const sortTime = buildMillisecondDetailSortTime(
     sql`scoped_commercial.business_time`
   );
@@ -212,6 +398,7 @@ export function buildOperationsCommercialDetailSql(
       ${eventJoin}
       where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
         ${sourceBound}
+        ${fulfilledPredicate}
         ${
           input.kind === "payment_lifecycle"
             ? sql`and ${paymentLifecycleEvent.eventType} in (
@@ -404,6 +591,53 @@ export function buildOperationsContentDetailSql(
       and ${videoGeneration.userId} = paged_outputs.user_id
     order by date_trunc('milliseconds', paged_outputs.business_time) desc,
       paged_outputs.stable_id desc
+  `;
+}
+
+/**
+ * 构造截止指定边界的累计账户明细。
+ *
+ * WHY：累计用户必须包含上线前基数、管理员和封禁账户，所以查询只使用截止上界、
+ * asOf 与可选导出高水位，不应用 epoch 或角色下界。
+ */
+export function buildOperationsCumulativeUserDetailSql(
+  input: OperationsCumulativeUserDetailQuery
+): SQL {
+  assertValidDetailQuery(input);
+  const sortTime = buildMillisecondDetailSortTime(sql`${user.createdAt}`);
+  const keyset = buildDetailKeysetPredicate(
+    input.cursor,
+    sortTime,
+    sql`${user.id}`
+  );
+  const sourceWatermark = input.highWatermarks?.users;
+  const sourceBound = sourceWatermark
+    ? sql`and (${user.createdAt}, ${user.id})
+        <= (${toOperationsDatabaseTimestamp(sourceWatermark.createdAt)}, ${
+          sourceWatermark.id
+        })`
+    : input.highWatermarks
+      ? sql`and false`
+      : sql``;
+  return sql`
+    select
+      ${user.id} as user_id,
+      ${user.name} as name,
+      ${user.email} as email,
+      ${user.role}::text as role,
+      ${user.banned} as banned,
+      ${user.createdAt} as business_time,
+      null::boolean as retained
+    from ${user}
+    where ${user.createdAt} < ${sql.param(input.end, user.createdAt)}
+      and ${user.createdAt} < ${sql.param(
+        nextMillisecond(input.asOf),
+        user.createdAt
+      )}
+      ${sourceBound}
+      and ${keyset}
+    order by ${sortTime} desc, ${user.id} desc
+    limit ${input.limit}
   `;
 }
 
@@ -675,6 +909,9 @@ export function buildOperationsCohortExportDetailSql(
 export function buildOperationsGrowthDetailSql(
   input: OperationsGrowthDetailQuery
 ): SQL {
+  if (input.kind === "cumulative_users") {
+    return buildOperationsCumulativeUserDetailSql(input);
+  }
   if (input.kind === "users") return buildOperationsNewUserDetailSql(input);
   if (input.kind === "activity") {
     return buildOperationsActivityDetailSql(input);
@@ -765,6 +1002,7 @@ function createOperationsDetailExecution(
   input: OperationsDetailQuery
 ): OperationsDetailExecution {
   switch (input.kind) {
+    case "cumulative_users":
     case "users":
     case "activity":
     case "cohort":
@@ -774,7 +1012,9 @@ function createOperationsDetailExecution(
         parseResult: parseOperationsGrowthDetailRows,
       };
     case "orders":
+    case "fulfilled_orders":
     case "payment_lifecycle":
+    case "payment_stage":
       return {
         query: buildOperationsCommercialDetailSql(input),
         parseResult: parseOperationsCommercialDetailRows,

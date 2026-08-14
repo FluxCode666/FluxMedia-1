@@ -43,6 +43,18 @@ function formatRetentionCell(
   return labels.noData;
 }
 
+/**
+ * 判断留存单元格是否拥有可核对的成熟事实。
+ *
+ * @param retention 只需携带稳定特殊状态的留存单元格。
+ * @returns 已成熟真实值或无样本状态为 true；上线前和未成熟为 false。
+ */
+export function canOpenOperationsCohortDetail(retention: {
+  status: OperationsGrowthCohort["d1"]["status"];
+}): boolean {
+  return retention.status !== "pre_epoch" && retention.status !== "immature";
+}
+
 /** 渲染可逐 Cohort 下钻的固定高度留存核对表。 */
 export function OperationsDashboardCohort({
   cohorts,
@@ -115,7 +127,7 @@ export function OperationsDashboardCohort({
                             retention.status !== "value" &&
                               "text-muted-foreground"
                           )}
-                          disabled={retention.status === "pre_epoch"}
+                          disabled={!canOpenOperationsCohortDetail(retention)}
                           onClick={() =>
                             onOpenDetail({
                               module: "growth",

@@ -10,7 +10,9 @@
 import type {
   OperationsDashboardQueryInput,
   OperationsExportTask,
+  OperationsPaymentLifecycleStage,
 } from "@repo/shared/operations-dashboard/contracts";
+import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import { Button } from "@repo/ui/components/button";
 import { cn } from "@repo/ui/utils";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
@@ -78,6 +80,34 @@ const RETENTION_KEYS: readonly RetentionKey[] = [
   "d7Retention",
   "d30Retention",
 ];
+
+/** 只复制服务端真实桶的应用日期边界，不把展示标签或降采样索引写入 selection。 */
+function createDetailBucket(bucket: OperationsNumericSeriesBucket): {
+  from: string;
+  to: string;
+} {
+  return { from: bucket.from, to: bucket.to };
+}
+
+/** 将商业化图表字段名转换为共享契约使用的稳定阶段值。 */
+function resolvePaymentDetailStage(
+  stage: keyof OperationsDashboardOverview["commercial"]["lifecycle"]
+): OperationsPaymentLifecycleStage {
+  switch (stage) {
+    case "createdOrders":
+      return "created_orders";
+    case "pendingOrders":
+      return "pending_orders";
+    case "paymentConfirmedOrders":
+      return "payment_confirmed_orders";
+    case "paidNotFulfilledOrders":
+      return "paid_not_fulfilled_orders";
+    case "fulfilledOrders":
+      return "fulfilled_orders";
+    case "failedOrders":
+      return "failed_orders";
+  }
+}
 
 /**
  * 同步已成功应用的筛选 URL，同时保留当前 locale 路径且不重复触发服务端页面查询。
@@ -301,7 +331,11 @@ export function OperationsDashboardPanel({
   const countMetricCards = [
     {
       key: "cumulativeUsers" as const,
-      selection: null,
+      selection: {
+        module: "growth",
+        detail: "cumulative_users",
+        cutoffDate: snapshot.range.to,
+      } as const,
     },
     {
       key: "newUsers" as const,
@@ -479,6 +513,14 @@ export function OperationsDashboardPanel({
             },
           }}
           locale={locale}
+          onSelectPoint={({ activityKind, bucket }) =>
+            openDetail({
+              module: "growth",
+              detail: "activity_bucket",
+              activityKind,
+              bucket: createDetailBucket(bucket),
+            })
+          }
           series={snapshot.growth.series}
         />
 
@@ -538,6 +580,13 @@ export function OperationsDashboardPanel({
             }}
             lifecycle={snapshot.commercial.lifecycle}
             locale={locale}
+            onSelectStage={(stage) =>
+              openDetail({
+                module: "commercialization",
+                detail: "payment_stage",
+                stage: resolvePaymentDetailStage(stage),
+              })
+            }
           />
         }
         onOpenDetail={openDetail}
@@ -573,6 +622,14 @@ export function OperationsDashboardPanel({
               preEpoch: t("status.pre_epoch"),
             }}
             locale={locale}
+            onSelectPoint={(bucket) =>
+              openDetail({
+                module: "content",
+                detail: "content_bucket",
+                contentKind: "image",
+                bucket: createDetailBucket(bucket),
+              })
+            }
             series={snapshot.content.series.imageCount}
           />
           <OperationsVideoChart
@@ -594,6 +651,14 @@ export function OperationsDashboardPanel({
               preEpoch: t("status.pre_epoch"),
             }}
             locale={locale}
+            onSelectPoint={(bucket) =>
+              openDetail({
+                module: "content",
+                detail: "content_bucket",
+                contentKind: "video",
+                bucket: createDetailBucket(bucket),
+              })
+            }
             secondsSeries={snapshot.content.series.videoSeconds}
           />
         </div>
@@ -613,6 +678,14 @@ export function OperationsDashboardPanel({
             preEpoch: t("status.pre_epoch"),
           }}
           locale={locale}
+          onSelectPoint={(bucket) =>
+            openDetail({
+              module: "content",
+              detail: "content_bucket",
+              contentKind: "credits",
+              bucket: createDetailBucket(bucket),
+            })
+          }
           series={snapshot.content.series.netCredits}
         />
         <div className="flex flex-wrap gap-2">

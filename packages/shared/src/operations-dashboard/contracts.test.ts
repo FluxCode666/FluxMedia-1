@@ -79,6 +79,40 @@ describe("operations dashboard contracts", () => {
   });
 
   it("明细、导出和特殊状态只接受已定义组合", () => {
+    for (const selection of [
+      {
+        module: "growth",
+        detail: "cumulative_users",
+        cutoffDate: "2026-08-07",
+      },
+      {
+        module: "growth",
+        detail: "activity_bucket",
+        activityKind: "creation",
+        bucket: { from: "2026-08-03", to: "2026-08-03" },
+      },
+      {
+        module: "commercialization",
+        detail: "fulfilled_orders",
+        currency: "CNY",
+      },
+      {
+        module: "commercialization",
+        detail: "payment_stage",
+        stage: "paid_not_fulfilled_orders",
+        currency: "CNY",
+      },
+      {
+        module: "content",
+        detail: "content_bucket",
+        contentKind: "credits",
+        bucket: { from: "2026-08-01", to: "2026-08-07" },
+      },
+    ]) {
+      expect(operationsDetailSelectionSchema.safeParse(selection).success).toBe(
+        true
+      );
+    }
     expect(
       operationsDetailSelectionSchema.safeParse({
         module: "growth",
@@ -93,6 +127,43 @@ describe("operations dashboard contracts", () => {
         detail: "retention_cohorts",
       }).success
     ).toBe(false);
+    for (const selection of [
+      {
+        module: "growth",
+        detail: "cumulative_users",
+      },
+      {
+        module: "growth",
+        detail: "activity_bucket",
+        activityKind: "unknown",
+        bucket: { from: "2026-08-03", to: "2026-08-03" },
+      },
+      {
+        module: "growth",
+        detail: "activity_bucket",
+        activityKind: "login",
+        bucket: { from: "2026-08-04", to: "2026-08-03" },
+      },
+      {
+        module: "commercialization",
+        detail: "fulfilled_orders",
+        currency: "cny",
+      },
+      {
+        module: "commercialization",
+        detail: "payment_stage",
+      },
+      {
+        module: "content",
+        detail: "content_bucket",
+        contentKind: "prompt",
+        bucket: { from: "2026-08-01", to: "2026-08-07" },
+      },
+    ]) {
+      expect(operationsDetailSelectionSchema.safeParse(selection).success).toBe(
+        false
+      );
+    }
     expect(
       operationsDetailSelectionSchema.safeParse({
         module: "growth",

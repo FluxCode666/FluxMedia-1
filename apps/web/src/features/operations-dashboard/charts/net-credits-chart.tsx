@@ -57,6 +57,7 @@ export type OperationsNetCreditsChartProps = {
   locale: string;
   series: readonly OperationsNumericSeriesBucket[];
   labels: OperationsNetCreditsChartLabels;
+  onSelectPoint?: (bucket: OperationsNumericSeriesBucket) => void;
 };
 
 /**
@@ -81,6 +82,7 @@ function getSymmetricDomain(
 export function OperationsNetCreditsChart({
   labels,
   locale,
+  onSelectPoint,
   series,
 }: OperationsNetCreditsChartProps) {
   const fullPoints = buildOperationsChartPoints(series, locale);
@@ -174,6 +176,7 @@ export function OperationsNetCreditsChart({
       <OperationsChartKeyboardPoints
         locale={locale}
         navigationLabel={labels.navigation}
+        onSelectPoint={onSelectPoint}
         points={fullPoints}
         preEpochLabel={labels.preEpoch}
         seriesLabel={labels.series}

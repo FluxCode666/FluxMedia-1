@@ -250,11 +250,69 @@ function requireAppDateStart(value: string, timeZone: string): Date {
   return result;
 }
 
+/**
+ * 将 selection 携带的闭区间桶转换为 UTC 半开范围，并限制在当前页面范围与 epoch。
+ *
+ * @param bucket 图表真实点携带的完整应用日期桶。
+ * @param context 当前规范范围、应用时区与不可变 epoch。
+ * @returns 与汇总 bucket 相同的 UTC 半开边界。
+ * @throws validation_error 当桶越界、位于 epoch 前或日期不可解析。
+ */
+function resolveDetailBucket(
+  bucket: { from: string; to: string },
+  context: {
+    rangeFrom: string;
+    rangeTo: string;
+    rangeStart: Date;
+    rangeEnd: Date;
+    epochStart: Date;
+    timeZone: string;
+  }
+): { start: Date; end: Date } {
+  if (bucket.from < context.rangeFrom || bucket.to > context.rangeTo) {
+    throw new OperationsDetailServiceError(
+      "validation_error",
+      "运营明细桶不属于当前筛选范围"
+    );
+  }
+  const bucketStart = requireAppDateStart(bucket.from, context.timeZone);
+  const logicalBucketEnd = requireAppDateStart(
+    addOperationsCalendarDays(bucket.to, 1),
+    context.timeZone
+  );
+  const bucketEnd =
+    bucket.to === context.rangeTo && logicalBucketEnd > context.rangeEnd
+      ? context.rangeEnd
+      : logicalBucketEnd;
+  if (
+    bucketStart < context.rangeStart ||
+    bucketEnd > context.rangeEnd ||
+    bucketStart >= bucketEnd
+  ) {
+    throw new OperationsDetailServiceError(
+      "validation_error",
+      "运营明细桶不属于当前筛选范围"
+    );
+  }
+  const start =
+    bucketStart < context.epochStart ? context.epochStart : bucketStart;
+  if (start >= bucketEnd) {
+    throw new OperationsDetailServiceError(
+      "validation_error",
+      "上线前运营明细不可下钻"
+    );
+  }
+  return { start, end: bucketEnd };
+}
+
 /** 将增长明细选择映射为同源仓储查询，Cohort 只接受已成熟单元格。 */
 function buildGrowthDetailQuery(input: {
   parsed: OperationsGetDetailInput;
   start: Date;
   end: Date;
+  rangeFrom: string;
+  rangeTo: string;
+  rangeStart: Date;
   epochStart: Date;
   asOf: Date;
   timeZone: string;
@@ -276,6 +334,37 @@ function buildGrowthDetailQuery(input: {
     );
   }
   switch (selection.detail) {
+    case "cumulative_users":
+      if (selection.cutoffDate !== input.rangeTo) {
+        throw new OperationsDetailServiceError(
+          "validation_error",
+          "累计用户截止日必须等于当前筛选范围结束日"
+        );
+      }
+      return {
+        ...base,
+        kind: "cumulative_users",
+        start: input.rangeStart,
+      };
+    case "activity_bucket": {
+      const bucket = resolveDetailBucket(selection.bucket, {
+        rangeFrom: input.rangeFrom,
+        rangeTo: input.rangeTo,
+        rangeStart: input.rangeStart,
+        rangeEnd: input.end,
+        epochStart: input.epochStart,
+        timeZone: input.timeZone,
+      });
+      if (selection.activityKind === "new_users") {
+        return { ...base, ...bucket, kind: "users" };
+      }
+      return {
+        ...base,
+        ...bucket,
+        kind: "activity",
+        activityKind: selection.activityKind,
+      };
+    }
     case "users":
       return { ...base, kind: "users" };
     case "login_activity":
@@ -332,6 +421,9 @@ function buildDetailQuery(input: {
   parsed: OperationsGetDetailInput;
   start: Date;
   end: Date;
+  rangeFrom: string;
+  rangeTo: string;
+  rangeStart: Date;
   epochStart: Date;
   asOf: Date;
   timeZone: string;
@@ -349,7 +441,39 @@ function buildDetailQuery(input: {
     limit: input.parsed.limit + 1,
   };
   if (input.parsed.selection.module === "commercialization") {
+    if (input.parsed.selection.detail === "fulfilled_orders") {
+      return {
+        ...base,
+        kind: "fulfilled_orders",
+        currency: input.parsed.selection.currency ?? null,
+      };
+    }
+    if (input.parsed.selection.detail === "payment_stage") {
+      return {
+        ...base,
+        kind: "payment_stage",
+        stage: input.parsed.selection.stage,
+        currency: input.parsed.selection.currency ?? null,
+      };
+    }
     return { ...base, kind: input.parsed.selection.detail };
+  }
+  if (input.parsed.selection.detail === "content_bucket") {
+    const bucket = resolveDetailBucket(input.parsed.selection.bucket, {
+      rangeFrom: input.rangeFrom,
+      rangeTo: input.rangeTo,
+      rangeStart: input.rangeStart,
+      rangeEnd: input.end,
+      epochStart: input.epochStart,
+      timeZone: input.timeZone,
+    });
+    const detail =
+      input.parsed.selection.contentKind === "image"
+        ? "image_outputs"
+        : input.parsed.selection.contentKind === "video"
+          ? "video_outputs"
+          : "credit_usage";
+    return { ...base, ...bucket, kind: "content", detail };
   }
   return {
     ...base,
@@ -492,36 +616,34 @@ export async function loadOperationsDetail(
       }
       throw error;
     }
-    const rows = range.dataStart
-      ? await reader.readRows(
-          buildDetailQuery({
+    const canReadCumulative =
+      parsed.selection.module === "growth" &&
+      parsed.selection.detail === "cumulative_users";
+    const detailQuery =
+      range.dataStart || canReadCumulative
+        ? buildDetailQuery({
             parsed,
-            start: range.dataStart,
+            start: range.dataStart ?? range.start,
             end: range.end,
+            rangeFrom: range.from,
+            rangeTo: range.to,
+            rangeStart: range.start,
             epochStart: header.epoch.startsAt,
             asOf,
             timeZone: request.timeZone,
             cursor,
           })
-        )
-      : [];
-    const queryStart =
-      parsed.selection.detail === "retention_cohorts"
-        ? requireAppDateStart(parsed.selection.cohortDate, request.timeZone)
-        : range.dataStart;
-    const queryEnd =
-      parsed.selection.detail === "retention_cohorts"
-        ? requireAppDateStart(
-            addOperationsCalendarDays(parsed.selection.cohortDate, 1),
-            request.timeZone
-          )
-        : range.end;
+        : null;
+    const rows = detailQuery ? await reader.readRows(detailQuery) : [];
     for (const row of rows) {
+      const beforeLowerBound =
+        detailQuery?.kind !== "cumulative_users" &&
+        row.businessTime < (detailQuery?.start ?? range.end);
       if (
         Number.isNaN(row.businessTime.getTime()) ||
         row.businessTime > asOf ||
-        row.businessTime < (queryStart ?? queryEnd) ||
-        row.businessTime >= queryEnd
+        beforeLowerBound ||
+        row.businessTime >= (detailQuery?.end ?? range.end)
       ) {
         throw new OperationsDetailServiceError(
           "invalid_data",

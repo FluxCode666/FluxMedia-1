@@ -54,6 +54,10 @@ export type OperationsGrowthTrendChartProps = {
   locale: string;
   series: OperationsGrowthSnapshot["series"];
   labels: OperationsGrowthTrendChartLabels;
+  onSelectPoint?: (input: {
+    activityKind: "new_users" | "login" | "creation" | "payment";
+    bucket: OperationsNumericSeriesBucket;
+  }) => void;
 };
 
 type GrowthTableRow = {
@@ -69,6 +73,16 @@ const GROWTH_SERIES_KEYS: readonly GrowthSeriesKey[] = [
   "creationActiveUsers",
   "paymentActiveUsers",
 ];
+
+const GROWTH_ACTIVITY_KIND_BY_SERIES: Record<
+  GrowthSeriesKey,
+  "new_users" | "login" | "creation" | "payment"
+> = {
+  newUsers: "new_users",
+  loginActiveUsers: "login",
+  creationActiveUsers: "creation",
+  paymentActiveUsers: "payment",
+};
 
 /**
  * 将四条同桶增长趋势合并为完整表格行。
@@ -95,11 +109,13 @@ function buildGrowthTableRows(
 }
 
 type GrowthMiniChartProps = {
+  activityKind: "new_users" | "login" | "creation" | "payment";
   locale: string;
   label: string;
   navigationLabel: string;
   preEpochLabel: string;
   series: readonly OperationsNumericSeriesBucket[];
+  onSelectPoint?: OperationsGrowthTrendChartProps["onSelectPoint"];
 };
 
 /**
@@ -109,9 +125,11 @@ type GrowthMiniChartProps = {
  * @returns 发丝折线、日历地板、tooltip 与完整键盘点导航。
  */
 function GrowthMiniChart({
+  activityKind,
   label,
   locale,
   navigationLabel,
+  onSelectPoint,
   preEpochLabel,
   series,
 }: GrowthMiniChartProps) {
@@ -120,6 +138,11 @@ function GrowthMiniChart({
   const config = {
     value: { label, color: OPERATIONS_CHART_INK },
   } satisfies ChartConfig;
+
+  /** 将小图真实桶与当前活动种类一起交给页面下钻。 */
+  function selectPoint(bucket: OperationsNumericSeriesBucket): void {
+    onSelectPoint?.({ activityKind, bucket });
+  }
   return (
     <section aria-label={label} className="grid min-w-0 gap-2">
       <h3 className="text-xs font-bold tracking-[0.08em] text-[#55554F] uppercase">
@@ -180,6 +203,7 @@ function GrowthMiniChart({
       <OperationsChartKeyboardPoints
         locale={locale}
         navigationLabel={navigationLabel}
+        onSelectPoint={selectPoint}
         points={fullPoints}
         preEpochLabel={preEpochLabel}
         seriesLabel={label}
@@ -197,6 +221,7 @@ function GrowthMiniChart({
 export function OperationsGrowthTrendChart({
   labels,
   locale,
+  onSelectPoint,
   series,
 }: OperationsGrowthTrendChartProps) {
   const rows = buildGrowthTableRows(series, locale);
@@ -238,10 +263,12 @@ export function OperationsGrowthTrendChart({
       <div className="grid gap-6 md:grid-cols-2">
         {GROWTH_SERIES_KEYS.map((key) => (
           <GrowthMiniChart
+            activityKind={GROWTH_ACTIVITY_KIND_BY_SERIES[key]}
             key={key}
             label={labels.series[key]}
             locale={locale}
             navigationLabel={labels.navigation}
+            onSelectPoint={onSelectPoint}
             preEpochLabel={labels.preEpoch}
             series={series[key]}
           />

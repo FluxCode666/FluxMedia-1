@@ -67,6 +67,40 @@ export const operationsModuleSchema = z.enum([
   "system_health",
 ]);
 
+/** 图表下钻使用的完整应用日期桶；首尾日期均为闭区间。 */
+export const operationsDetailBucketSchema = z
+  .object({
+    from: operationsAppDateSchema,
+    to: operationsAppDateSchema,
+  })
+  .strict()
+  .superRefine((bucket, context) => {
+    if (bucket.from > bucket.to) {
+      context.addIssue({
+        code: "custom",
+        message: "明细桶结束日期不能早于开始日期",
+        path: ["to"],
+      });
+    }
+  });
+
+/** 支付阶段图可逐订单核对的封闭阶段集合。 */
+export const operationsPaymentLifecycleStageSchema = z.enum([
+  "created_orders",
+  "pending_orders",
+  "payment_confirmed_orders",
+  "paid_not_fulfilled_orders",
+  "fulfilled_orders",
+  "failed_orders",
+]);
+
+export type OperationsPaymentLifecycleStage = z.infer<
+  typeof operationsPaymentLifecycleStageSchema
+>;
+
+/** 订单明细可选的标准大写三字母币种过滤。 */
+const operationsDetailCurrencySchema = z.string().regex(/^[A-Z]{3}$/);
+
 const growthNonCohortDetailSelectionSchema = z
   .object({
     module: z.literal("growth"),
@@ -86,22 +120,71 @@ const growthCohortDetailSelectionSchema = z
     retentionDay: z.union([z.literal(1), z.literal(7), z.literal(30)]),
   })
   .strict();
+const growthCumulativeUsersDetailSelectionSchema = z
+  .object({
+    module: z.literal("growth"),
+    detail: z.literal("cumulative_users"),
+    cutoffDate: operationsAppDateSchema,
+  })
+  .strict();
+const growthActivityBucketDetailSelectionSchema = z
+  .object({
+    module: z.literal("growth"),
+    detail: z.literal("activity_bucket"),
+    activityKind: z.enum(["new_users", "login", "creation", "payment"]),
+    bucket: operationsDetailBucketSchema,
+  })
+  .strict();
 const growthDetailSelectionSchema = z.union([
   growthNonCohortDetailSelectionSchema,
   growthCohortDetailSelectionSchema,
+  growthCumulativeUsersDetailSelectionSchema,
+  growthActivityBucketDetailSelectionSchema,
 ]);
-const commercializationDetailSelectionSchema = z
+const commercializationRangeDetailSelectionSchema = z
   .object({
     module: z.literal("commercialization"),
     detail: z.enum(["orders", "payment_lifecycle"]),
   })
   .strict();
-const contentDetailSelectionSchema = z
+const commercializationFulfilledDetailSelectionSchema = z
+  .object({
+    module: z.literal("commercialization"),
+    detail: z.literal("fulfilled_orders"),
+    currency: operationsDetailCurrencySchema.optional(),
+  })
+  .strict();
+const commercializationStageDetailSelectionSchema = z
+  .object({
+    module: z.literal("commercialization"),
+    detail: z.literal("payment_stage"),
+    stage: operationsPaymentLifecycleStageSchema,
+    currency: operationsDetailCurrencySchema.optional(),
+  })
+  .strict();
+const commercializationDetailSelectionSchema = z.union([
+  commercializationRangeDetailSelectionSchema,
+  commercializationFulfilledDetailSelectionSchema,
+  commercializationStageDetailSelectionSchema,
+]);
+const contentRangeDetailSelectionSchema = z
   .object({
     module: z.literal("content"),
     detail: z.enum(["image_outputs", "video_outputs", "credit_usage"]),
   })
   .strict();
+const contentBucketDetailSelectionSchema = z
+  .object({
+    module: z.literal("content"),
+    detail: z.literal("content_bucket"),
+    contentKind: z.enum(["image", "video", "credits"]),
+    bucket: operationsDetailBucketSchema,
+  })
+  .strict();
+const contentDetailSelectionSchema = z.union([
+  contentRangeDetailSelectionSchema,
+  contentBucketDetailSelectionSchema,
+]);
 /** 模块与明细种类的合法组合；拒绝把订单明细伪装成内容明细等跨域请求。 */
 export const operationsDetailSelectionSchema = z.union([
   growthDetailSelectionSchema,

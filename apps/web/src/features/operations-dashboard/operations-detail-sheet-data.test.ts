@@ -28,6 +28,10 @@ const range = resolveOperationsDashboardRange(
 /** 固定中文文案，确保纯数据测试不依赖 next-intl 运行时。 */
 const labels: OperationsDetailTableLabels = {
   selection: {
+    cumulativeUsers: {
+      title: "累计用户明细",
+      description: "累计用户核对记录。",
+    },
     users: { title: "新增用户明细", description: "新增用户核对记录。" },
     loginActivity: {
       title: "登录活跃明细",
@@ -46,6 +50,10 @@ const labels: OperationsDetailTableLabels = {
       description: "Cohort 留存核对记录。",
     },
     orders: { title: "订单明细", description: "订单核对记录。" },
+    fulfilledOrders: {
+      title: "已履约订单明细",
+      description: "已履约订单核对记录。",
+    },
     paymentLifecycle: {
       title: "支付生命周期明细",
       description: "支付事件核对记录。",
@@ -124,6 +132,10 @@ const labels: OperationsDetailTableLabels = {
 /** 固定英文文案，确认英文页面不会回退到数据模块内的中文常量。 */
 const enLabels: OperationsDetailTableLabels = {
   selection: {
+    cumulativeUsers: {
+      title: "Cumulative user details",
+      description: "Cumulative user copy",
+    },
     users: { title: "New user details", description: "New user copy" },
     loginActivity: {
       title: "Login-active user details",
@@ -142,6 +154,10 @@ const enLabels: OperationsDetailTableLabels = {
       description: "Retention copy",
     },
     orders: { title: "Order details", description: "Order copy" },
+    fulfilledOrders: {
+      title: "Fulfilled order details",
+      description: "Fulfilled order copy",
+    },
     paymentLifecycle: {
       title: "Payment lifecycle details",
       description: "Lifecycle copy",

@@ -4,6 +4,7 @@
  * 使用方：明细 SQL 仓储、服务、CSV worker 和增长仓储高水位。该模块只声明类型，
  * 让业务契约与数据库 SQL、Zod 解析实现保持独立。
  */
+import type { OperationsPaymentLifecycleStage } from "@repo/shared/operations-dashboard/contracts";
 import type { SQL } from "drizzle-orm";
 
 import type {
@@ -49,6 +50,12 @@ export type OperationsNewUserDetailQuery = OperationsGrowthDetailBaseQuery & {
   kind: "users";
 };
 
+/** 累计账户明细只应用截止上界，刻意保留 epoch 前存量账户。 */
+export type OperationsCumulativeUserDetailQuery =
+  OperationsGrowthDetailBaseQuery & {
+    kind: "cumulative_users";
+  };
+
 /** 周期活跃明细每用户只返回一行，因而行数可直接反算去重汇总。 */
 export type OperationsActivityDetailQuery = OperationsGrowthDetailBaseQuery & {
   kind: "activity";
@@ -72,6 +79,7 @@ export type OperationsCohortExportDetailQuery =
 
 /** 增长明细的封闭查询类型。 */
 export type OperationsGrowthDetailQuery =
+  | OperationsCumulativeUserDetailQuery
   | OperationsNewUserDetailQuery
   | OperationsActivityDetailQuery
   | OperationsCohortDetailQuery
@@ -82,16 +90,33 @@ export type OperationsOrderDetailQuery = OperationsGrowthDetailBaseQuery & {
   kind: "orders";
 };
 
+/** 已履约充值订单以 fulfilled_at 作为业务时间，并可限定单一币种。 */
+export type OperationsFulfilledOrderDetailQuery =
+  OperationsGrowthDetailBaseQuery & {
+    kind: "fulfilled_orders";
+    currency: string | null;
+  };
+
 /** 支付生命周期明细按不可变事件业务时间筛选，每个事件返回一行。 */
 export type OperationsPaymentLifecycleDetailQuery =
   OperationsGrowthDetailBaseQuery & {
     kind: "payment_lifecycle";
   };
 
+/** 支付阶段明细复用汇总阶段定义，每个平台订单只返回一行。 */
+export type OperationsPaymentStageDetailQuery =
+  OperationsGrowthDetailBaseQuery & {
+    kind: "payment_stage";
+    stage: OperationsPaymentLifecycleStage;
+    currency: string | null;
+  };
+
 /** 商业化明细的封闭查询类型。 */
 export type OperationsCommercialDetailQuery =
   | OperationsOrderDetailQuery
-  | OperationsPaymentLifecycleDetailQuery;
+  | OperationsFulfilledOrderDetailQuery
+  | OperationsPaymentLifecycleDetailQuery
+  | OperationsPaymentStageDetailQuery;
 
 /** 内容明细由成功产物事实驱动，detail 只改变媒体范围。 */
 export type OperationsContentDetailQuery = OperationsGrowthDetailBaseQuery & {
@@ -119,7 +144,7 @@ export type OperationsGrowthDetailRow = {
 
 /** 可同时服务页面核对和 CSV 的安全商业化明细行。 */
 export type OperationsCommercialDetailRow = {
-  kind: "orders" | "payment_lifecycle";
+  kind: "orders" | "fulfilled_orders" | "payment_lifecycle" | "payment_stage";
   stableId: string;
   paymentOrderId: string;
   providerTradeNo: string | null;

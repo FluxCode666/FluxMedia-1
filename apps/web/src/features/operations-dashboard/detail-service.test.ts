@@ -1,8 +1,8 @@
 /**
  * 运营总览管理员明细服务的 DB-free 测试。
  *
- * 使用方：Vitest。锁定五类增长明细、epoch 截断、Cohort 目标日、签名 cursor
- * 的主体/筛选绑定，以及商业化和内容尚未接入时的稳定失败。
+ * 使用方：Vitest。锁定累计/增长桶、epoch 截断、Cohort 目标日、签名 cursor、
+ * fulfilled_at 收入、支付阶段和内容桶的精确筛选边界。
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -110,6 +110,94 @@ describe("operations detail service", () => {
       selection: { module: "growth", detail },
       rows: [],
       nextCursor: null,
+    });
+  });
+
+  it("累计用户明细读取到所选范围截止日且不受 epoch 下界限制", async () => {
+    const { readRows, repository } = createRepository([
+      makeRow("legacy-user", "2025-12-01T00:00:00.000Z"),
+    ]);
+
+    const result = await loadOperationsDetail(
+      {
+        actorUserId: "admin-1",
+        timeZone: "Asia/Shanghai",
+        input: {
+          ...createInput("users"),
+          selection: {
+            module: "growth",
+            detail: "cumulative_users",
+            cutoffDate: "2026-08-07",
+          },
+        },
+      },
+      { repository, tokenSecret: TOKEN_SECRET }
+    );
+
+    expect(readRows.mock.calls[0]?.[0]).toMatchObject({
+      kind: "cumulative_users",
+      end: new Date("2026-08-07T16:00:00.000Z"),
+    });
+    expect(result.rows[0]).toMatchObject({ userId: "legacy-user" });
+  });
+
+  it("增长趋势点只查询所选真实 bucket 与活动种类", async () => {
+    const { readRows, repository } = createRepository([]);
+
+    await loadOperationsDetail(
+      {
+        actorUserId: "admin-1",
+        timeZone: "Asia/Shanghai",
+        input: {
+          ...createInput("users"),
+          selection: {
+            module: "growth",
+            detail: "activity_bucket",
+            activityKind: "creation",
+            bucket: { from: "2026-08-03", to: "2026-08-03" },
+          },
+        },
+      },
+      { repository, tokenSecret: TOKEN_SECRET }
+    );
+
+    expect(readRows.mock.calls[0]?.[0]).toMatchObject({
+      kind: "activity",
+      activityKind: "creation",
+      start: new Date("2026-08-02T16:00:00.000Z"),
+      end: new Date("2026-08-03T16:00:00.000Z"),
+    });
+  });
+
+  it("包含今天的末桶以上述查询 asOf 截断而不是未来日末", async () => {
+    const { readRows, repository } = createRepository([]);
+
+    await loadOperationsDetail(
+      {
+        actorUserId: "admin-1",
+        timeZone: "Asia/Shanghai",
+        input: {
+          granularity: "day",
+          range: {
+            kind: "custom",
+            from: "2026-08-01",
+            to: "2026-08-14",
+          },
+          selection: {
+            module: "growth",
+            detail: "activity_bucket",
+            activityKind: "login",
+            bucket: { from: "2026-08-14", to: "2026-08-14" },
+          },
+          limit: 100,
+        },
+      },
+      { repository, tokenSecret: TOKEN_SECRET }
+    );
+
+    expect(readRows.mock.calls[0]?.[0]).toMatchObject({
+      start: new Date("2026-08-13T16:00:00.000Z"),
+      end: AS_OF,
     });
   });
 
@@ -448,6 +536,77 @@ describe("operations detail service", () => {
     expect(result.rows[0]).not.toHaveProperty("providerPayload");
   });
 
+  it("收入与付费转化下钻只读取 fulfilled_at 范围内的已履约订单", async () => {
+    const fulfilledAt = new Date("2026-08-03T00:00:00.000Z");
+    const row: OperationsCommercialDetailRow = {
+      kind: "fulfilled_orders",
+      stableId: "order-fulfilled",
+      paymentOrderId: "order-fulfilled",
+      providerTradeNo: "trade-fulfilled",
+      userId: "user-1",
+      currency: "CNY",
+      amountMinor: 1_200,
+      orderStatus: "fulfilled",
+      createdAt: new Date("2026-07-01T00:00:00.000Z"),
+      fulfilledAt,
+      businessTime: fulfilledAt,
+      eventType: null,
+    };
+    const { readRows, repository } = createRepository([row]);
+
+    const result = await loadOperationsDetail(
+      {
+        actorUserId: "admin-1",
+        timeZone: "Asia/Shanghai",
+        input: {
+          ...createInput("users"),
+          selection: {
+            module: "commercialization",
+            detail: "fulfilled_orders",
+            currency: "CNY",
+          },
+        },
+      },
+      { repository, tokenSecret: TOKEN_SECRET }
+    );
+
+    expect(readRows.mock.calls[0]?.[0]).toMatchObject({
+      kind: "fulfilled_orders",
+      currency: "CNY",
+    });
+    expect(result.rows[0]).toMatchObject({
+      orderStatus: "fulfilled",
+      businessTime: fulfilledAt.toISOString(),
+      createdAt: "2026-07-01T00:00:00.000Z",
+    });
+  });
+
+  it("支付阶段下钻把阶段过滤传到同源商业化查询", async () => {
+    const { readRows, repository } = createRepository([]);
+
+    await loadOperationsDetail(
+      {
+        actorUserId: "admin-1",
+        timeZone: "Asia/Shanghai",
+        input: {
+          ...createInput("users"),
+          selection: {
+            module: "commercialization",
+            detail: "payment_stage",
+            stage: "failed_orders",
+          },
+        },
+      },
+      { repository, tokenSecret: TOKEN_SECRET }
+    );
+
+    expect(readRows.mock.calls[0]?.[0]).toMatchObject({
+      kind: "payment_stage",
+      stage: "failed_orders",
+      currency: null,
+    });
+  });
+
   it.each([
     "image_outputs",
     "video_outputs",
@@ -498,6 +657,34 @@ describe("operations detail service", () => {
     });
     expect(result.rows[0]).not.toHaveProperty("prompt");
     expect(result.rows[0]).not.toHaveProperty("mediaUrl");
+  });
+
+  it("内容图表点只读取所选 bucket 与内容类型", async () => {
+    const { readRows, repository } = createRepository([]);
+
+    await loadOperationsDetail(
+      {
+        actorUserId: "admin-1",
+        timeZone: "Asia/Shanghai",
+        input: {
+          ...createInput("users"),
+          selection: {
+            module: "content",
+            detail: "content_bucket",
+            contentKind: "video",
+            bucket: { from: "2026-08-03", to: "2026-08-04" },
+          },
+        },
+      },
+      { repository, tokenSecret: TOKEN_SECRET }
+    );
+
+    expect(readRows.mock.calls[0]?.[0]).toMatchObject({
+      kind: "content",
+      detail: "video_outputs",
+      start: new Date("2026-08-02T16:00:00.000Z"),
+      end: new Date("2026-08-04T16:00:00.000Z"),
+    });
   });
 
   it("免费成功任务净积分为零，部分退款使用净值，时间漂移拒绝整页", async () => {

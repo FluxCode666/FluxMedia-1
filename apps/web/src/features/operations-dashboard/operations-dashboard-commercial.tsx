@@ -2,7 +2,7 @@
  * 运营总览商业化摘要。
  *
  * 使用方：OperationsDashboardPanel。组件展示按币种分开的已履约充值收入、两种付费
- * 转化以及订单核对入口；订单阶段图由 lieflat-charts 子组件作为 children 注入。
+ * 转化以及按 fulfilled_at/币种核对的订单入口；阶段图由 lieflat-charts 子组件注入。
  */
 "use client";
 
@@ -52,8 +52,13 @@ export function OperationsDashboardCommercial({
   const locale = useLocale();
   const t = useTranslations("OperationsDashboard");
   const unavailable = t("status.not_comparable");
-  const openOrders = () =>
-    onOpenDetail({ module: "commercialization", detail: "orders" });
+  /** 打开以 fulfilled_at 为业务时间的已履约订单，可选绑定收入币种。 */
+  const openFulfilledOrders = (currency?: string): void =>
+    onOpenDetail({
+      module: "commercialization",
+      detail: "fulfilled_orders",
+      ...(currency ? { currency } : {}),
+    });
   const renderConversion = (
     key: "fromCreation" | "fromLogin",
     descriptionKey: "fromCreation" | "fromLogin"
@@ -63,7 +68,12 @@ export function OperationsDashboardCommercial({
     return (
       <OperationsMetricCard
         action={
-          <Button onClick={openOrders} size="sm" type="button" variant="ghost">
+          <Button
+            onClick={() => openFulfilledOrders()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             {t("actions.reconcileOrders")}
           </Button>
         }
@@ -154,6 +164,15 @@ export function OperationsDashboardCommercial({
                             ? `${comparison.changePercent > 0 ? "+" : ""}${comparison.changePercent.toLocaleString(locale, { maximumFractionDigits: 1 })}%`
                             : unavailable}
                         </p>
+                        <Button
+                          className="mt-2"
+                          onClick={() => openFulfilledOrders(amount.currency)}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          {t("actions.reconcileOrders")}
+                        </Button>
                       </dd>
                     </div>
                   );
@@ -163,7 +182,7 @@ export function OperationsDashboardCommercial({
             <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs text-muted-foreground">
               <span>{t("commercial.revenue.disclaimer")}</span>
               <Button
-                onClick={openOrders}
+                onClick={() => openFulfilledOrders()}
                 size="sm"
                 type="button"
                 variant="ghost"

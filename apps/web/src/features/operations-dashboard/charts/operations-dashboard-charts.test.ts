@@ -58,6 +58,16 @@ function createSeries(
   });
 }
 
+/** 读取测试序列中的确定桶，缺失时立即失败而不使用非空断言。 */
+function requireSeriesBucket(
+  series: readonly OperationsNumericSeriesBucket[],
+  index: number
+): OperationsNumericSeriesBucket {
+  const bucket = series[index];
+  if (!bucket) throw new Error("测试序列桶缺失");
+  return bucket;
+}
+
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
@@ -99,6 +109,7 @@ afterEach(() => {
 
 describe("operations dashboard charts", () => {
   it("完整序列支持方向键、首尾键与 reduced-motion 降级", () => {
+    const keyboardSeries = createSeries([2, 4, 6]);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -111,6 +122,7 @@ describe("operations dashboard charts", () => {
             {
               index: 0,
               key: "2026-08-01",
+              bucket: requireSeriesBucket(keyboardSeries, 0),
               label: "2026年8月1日",
               shortLabel: "08-01",
               status: "value",
@@ -119,6 +131,7 @@ describe("operations dashboard charts", () => {
             {
               index: 1,
               key: "2026-08-02",
+              bucket: requireSeriesBucket(keyboardSeries, 1),
               label: "2026年8月2日",
               shortLabel: "08-02",
               status: "value",
@@ -127,6 +140,7 @@ describe("operations dashboard charts", () => {
             {
               index: 2,
               key: "2026-08-03",
+              bucket: requireSeriesBucket(keyboardSeries, 2),
               label: "2026年8月3日",
               shortLabel: "08-03",
               status: "value",
@@ -169,6 +183,61 @@ describe("operations dashboard charts", () => {
       )
     );
     expect(document.activeElement).toBe(buttons[0]);
+  });
+
+  it("真实点回调只传递服务端完整 bucket，上线前点不可下钻", () => {
+    const onSelectPoint = vi.fn();
+    const series = createSeries([2, 4]);
+    const firstBucket = requireSeriesBucket(series, 0);
+    const secondBucket = requireSeriesBucket(series, 1);
+    const preEpochBucket: OperationsNumericSeriesBucket = {
+      ...secondBucket,
+      status: "pre_epoch",
+    };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => {
+      root?.render(
+        createElement(OperationsChartKeyboardPoints, {
+          locale: "zh-CN",
+          navigationLabel: "使用方向键浏览完整序列",
+          onSelectPoint,
+          points: [
+            {
+              index: 0,
+              key: firstBucket.key,
+              label: "2026年8月1日",
+              shortLabel: "08-01",
+              status: "value",
+              value: 2,
+              bucket: firstBucket,
+            },
+            {
+              index: 1,
+              key: preEpochBucket.key,
+              label: "2026年8月2日",
+              shortLabel: "08-02",
+              status: "pre_epoch",
+              value: null,
+              bucket: preEpochBucket,
+            },
+          ],
+          preEpochLabel: "上线前",
+          seriesLabel: "生图数量",
+        })
+      );
+    });
+
+    const buttons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button")
+    );
+    act(() => buttons[0]?.click());
+    expect(onSelectPoint).toHaveBeenCalledOnce();
+    expect(onSelectPoint).toHaveBeenCalledWith(firstBucket);
+
+    act(() => buttons[1]?.click());
+    expect(onSelectPoint).toHaveBeenCalledOnce();
   });
 
   it("视频数量与秒数在同一快照内切换并同步完整表格", () => {

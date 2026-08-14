@@ -2,10 +2,11 @@
  * 运营趋势完整数据点的键盘与触摸导航。
  *
  * 使用方：所有时间序列图。可见图形允许视觉降采样，但此控件逐桶保留完整
- * 真实数据；聚焦或触摸按钮会更新相邻的状态说明，确保非鼠标用户可读。
+ * 真实数据；聚焦或触摸按钮会更新相邻状态说明，真实值点击还可把完整桶交给下钻。
  */
 "use client";
 
+import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import { cn } from "@repo/ui/utils";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -24,6 +25,7 @@ export type OperationsChartKeyboardPointsProps = {
   navigationLabel: string;
   preEpochLabel: string;
   unitLabel?: string;
+  onSelectPoint?: (bucket: OperationsNumericSeriesBucket) => void;
 };
 
 /**
@@ -36,6 +38,7 @@ export type OperationsChartKeyboardPointsProps = {
 export function OperationsChartKeyboardPoints({
   locale,
   navigationLabel,
+  onSelectPoint,
   points,
   preEpochLabel,
   seriesLabel,
@@ -57,6 +60,13 @@ export function OperationsChartKeyboardPoints({
     if (!button) return;
     setSelectedIndex(index);
     button.focus();
+  }
+
+  /** 更新当前读数，并只把有真实统计值的完整服务端桶交给下钻调用方。 */
+  function selectPoint(index: number): void {
+    setSelectedIndex(index);
+    const point = points[index];
+    if (point?.status === "value") onSelectPoint?.(point.bucket);
   }
 
   /** 将方向键、Home 与 End 映射到完整时间序列中的相邻或边界点。 */
@@ -115,7 +125,7 @@ export function OperationsChartKeyboardPoints({
                   "focus-visible:h-7 focus-visible:bg-[#1C1C1A]",
                   point.status === "pre_epoch" && "bg-[#D8D6CE]"
                 )}
-                onClick={() => setSelectedIndex(index)}
+                onClick={() => selectPoint(index)}
                 onFocus={() => setSelectedIndex(index)}
                 onKeyDown={(event) => handleKeyDown(event, index)}
                 ref={(button) => {

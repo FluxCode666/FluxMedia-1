@@ -175,6 +175,10 @@ export function OperationsDetailSheet({
   const labels = useMemo<OperationsDetailTableLabels>(
     () => ({
       selection: {
+        cumulativeUsers: {
+          title: t("detail.selection.cumulative_users.title"),
+          description: t("detail.selection.cumulative_users.description"),
+        },
         users: {
           title: t("detail.selection.users.title"),
           description: t("detail.selection.users.description"),
@@ -211,6 +215,10 @@ export function OperationsDetailSheet({
         orders: {
           title: t("detail.selection.orders.title"),
           description: t("detail.selection.orders.description"),
+        },
+        fulfilledOrders: {
+          title: t("detail.selection.fulfilled_orders.title"),
+          description: t("detail.selection.fulfilled_orders.description"),
         },
         paymentLifecycle: {
           title: t("detail.selection.payment_lifecycle.title"),
