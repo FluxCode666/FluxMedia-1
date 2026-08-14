@@ -17,6 +17,7 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
 
 import {
   DEFAULT_SIGNED_URL_EXPIRES,
@@ -43,6 +44,8 @@ let cachedS3Client:
   | undefined;
 
 const S3_MULTIPART_PART_BYTES = 5 * 1024 * 1024;
+const S3_CONNECTION_TIMEOUT_MS = 10_000;
+const S3_SOCKET_TIMEOUT_MS = 120_000;
 
 type MultipartCursor = {
   keyMarker: string;
@@ -164,6 +167,12 @@ function getS3Client(runtimeConfig: StorageRuntimeConfig): S3Client {
         },
         // Cloudflare R2 与 MinIO 需要路径风格寻址。
         forcePathStyle: true,
+        // WHY：上游不可达或长时间无数据时必须有界退出，同时保留大文件
+        // 流式传输的合理窗口；调用方 AbortSignal 仍通过每次 send 独立透传。
+        requestHandler: new NodeHttpHandler({
+          connectionTimeout: S3_CONNECTION_TIMEOUT_MS,
+          socketTimeout: S3_SOCKET_TIMEOUT_MS,
+        }),
       }),
     };
   }
