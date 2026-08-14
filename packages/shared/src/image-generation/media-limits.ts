@@ -7,8 +7,11 @@
 
 const BYTES_PER_MB = 1024 * 1024;
 
-/** 单项和单次媒体输入的安全硬上限；运行时系统策略可进一步收紧。 */
-export const MAX_MEDIA_INPUT_BYTES = 200 * BYTES_PER_MB;
+/** 单个媒体输入的安全硬上限；运行时系统策略可进一步收紧。 */
+export const MAX_MEDIA_INPUT_FILE_BYTES = 200 * BYTES_PER_MB;
+
+/** 单次请求全部媒体输入的安全硬上限；运行时系统策略可进一步收紧。 */
+export const MAX_MEDIA_INPUT_BYTES = 512 * BYTES_PER_MB;
 
 /** 单次媒体引用数量硬上限；运行时编辑参考图策略可进一步收紧。 */
 export const MAX_MEDIA_INPUT_COUNT = 256;

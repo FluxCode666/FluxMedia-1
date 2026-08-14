@@ -10,6 +10,10 @@ import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
 } from "@repo/shared/image-generation/media-contract";
+import {
+  isModelMarketplaceModelEnabled,
+  parseModelMarketplaceConfig,
+} from "@repo/shared/model-marketplace";
 import type { Principal } from "@repo/shared/uol";
 import { isExternalApiKeyPrincipal, OperationError } from "@repo/shared/uol";
 import {
@@ -27,6 +31,7 @@ export interface VideoCapabilityConfiguredModelsInput {
 /** 能力发现可替换依赖；测试注入桩，生产读取系统设置与可信分组配置。 */
 export interface VideoCapabilityBindingDependencies {
   loadCapabilityOverrides(): Promise<unknown>;
+  loadMarketplaceConfig?(): Promise<unknown>;
   listConfiguredModelIds(
     input: VideoCapabilityConfiguredModelsInput
   ): Promise<string[]>;
@@ -72,20 +77,32 @@ export async function executeVideoListCapabilitiesBinding(
   }
 
   try {
-    const [overrides, configuredModelIds] = await Promise.all([
-      dependencies.loadCapabilityOverrides(),
-      dependencies.listConfiguredModelIds({
-        userId: principal.userId,
-        ...(apiKeyId ? { apiKeyId } : {}),
-        ...(input.backendGroupId
-          ? { requestedGroupId: input.backendGroupId }
-          : {}),
-      }),
-    ]);
+    const [overrides, marketplaceConfigValue, configuredModelIds] =
+      await Promise.all([
+        dependencies.loadCapabilityOverrides(),
+        dependencies.loadMarketplaceConfig?.() ?? Promise.resolve(null),
+        dependencies.listConfiguredModelIds({
+          userId: principal.userId,
+          ...(apiKeyId ? { apiKeyId } : {}),
+          ...(input.backendGroupId
+            ? { requestedGroupId: input.backendGroupId }
+            : {}),
+        }),
+      ]);
+    const marketplaceConfig = parseModelMarketplaceConfig(
+      marketplaceConfigValue
+    );
     const reachable = resolveConfiguredRealVideoModelIds(configuredModelIds);
     return {
-      items: resolveEffectiveVideoModelCapabilities(overrides).map(
-        (capability) => ({
+      items: resolveEffectiveVideoModelCapabilities(overrides)
+        .filter((capability) =>
+          isModelMarketplaceModelEnabled(
+            marketplaceConfig,
+            "video",
+            capability.modelId
+          )
+        )
+        .map((capability) => ({
           model: capability.modelId,
           displayName: capability.displayName,
           durations: [...capability.durations],
@@ -102,8 +119,7 @@ export async function executeVideoListCapabilitiesBinding(
           },
           audio: { ...capability.audio },
           configuredReachable: reachable.has(capability.modelId),
-        })
-      ),
+        })),
       limits: {
         maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
         maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,

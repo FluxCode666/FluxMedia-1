@@ -20,24 +20,31 @@
 
 - `IMAGE_MODEL_CREDIT_PRICES` 保存图像四档价格；
 - `VIDEO_MODEL_CREDITS_PER_SECOND` 保存视频模型族每秒价格；
-- `MODEL_MARKETPLACE_CONFIG` 是版本 2 的专用 JSON 真相，独立保存展示开关、简介、
-  封面引用、revision 和幂等回执；
+- `MODEL_MARKETPLACE_CONFIG` 是版本 2 的专用 JSON 真相，独立保存运行启用开关、展示
+  开关、简介、封面引用、revision 和幂等回执；
 - `SYSTEM_ASSETS_BUCKET_NAME` 保存头像、模型封面和网站品牌共用的公开资产 bucket，
   默认 `system`；`GENERATIONS_BUCKET_NAME` 保存生成图片与视频共用的私有 bucket。
 
 设置初始化会识别历史 `IMAGE_MODEL_CREDIT_PRICES.byModel.default`：先用旧四档价格补齐
 已经存在的稀疏真实模型价格，再删除该键；运行时不会继续使用它。合法的模型广场 v1
 JSON 会在读取时转换为 v2，并在下一次单模型保存时写回当前结构，无需数据库表迁移。
+既有 v2 条目缺少 `enabled` 时按启用处理；管理员下一次保存该条目时会写入显式
+布尔值。
 `.env.example` 中的同名 bucket 变量是首次部署种子，运行时以数据库系统设置为真相。
 通用系统设置写入口不能修改
 `MODEL_MARKETPLACE_CONFIG`，必须经过单条目 Operation 的并发、幂等与审计边界。
 幂等回执随成功保存原子落库，最长保留 24 小时且最多保留 256 条；回执过期后的旧请求
 仍会被 revision 拒绝，不会重复执行存储或审计副作用。
 
-公开目录只包含“运行时可达、已显式定价且 `visible` 为 `true`”的图像模型，以及运行时
-可达且开启展示的视频模型族。新发现但未定价的图像模型会在管理端显示“未配置价格”，
-保存完整四档价格前不能调用计费，也不会公开。展示开关只控制 `/models` 与首页公开
-模型区，不影响 `/v1/models`、创作目录、套餐能力、调度或权限。
+公开目录只包含“已启用、运行时可达、已显式定价且 `visible` 为 `true`”的图像模型，
+以及已启用、运行时可达且开启展示的视频模型族。新发现但未定价的图像模型会在管理端
+显示“未配置价格”，保存完整四档价格前不能调用计费，也不会公开。
+
+运行启用开关是模型对外可用性的总闸门。显式停用后，模型会从 `/v1/models`、
+`video.listCapabilities`、站内图片/视频创作目录、`/models` 和首页同时移除；图片单一
+管线和 `video.generate` UOL binding 也会在新任务扣费或上游调用前返回稳定的
+`validation_error`。`visible` 只控制已启用模型的 `/models` 与首页展示，不影响套餐
+能力、成员配置或价格计算；停用不会取消已创建的视频任务或改写其能力快照。
 
 ## 封面处理与存储
 

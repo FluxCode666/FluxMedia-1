@@ -5,5 +5,6 @@
  * 文件布局。
  */
 export * from "./catalog";
+export * from "./availability";
 export * from "./contracts";
 export * from "./pagination-contract";

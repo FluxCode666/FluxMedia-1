@@ -62,7 +62,7 @@ const VIDEO_MODEL: ModelMarketplacePublicItem = {
   configuredReachable: true,
   infrastructureLimits: {
     maxMediaInputCount: 256,
-    maxMediaInputBytes: 209_715_200,
+    maxMediaInputBytes: 536_870_912,
   },
 };
 

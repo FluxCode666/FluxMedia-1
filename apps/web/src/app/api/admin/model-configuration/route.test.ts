@@ -81,6 +81,7 @@ function explicitImageFields(): Record<string, string> {
     configKey: "gpt-image-2",
     expectedRevision: "2",
     clientRequestId: CLIENT_REQUEST_ID,
+    enabled: "true",
     visible: "true",
     homepageVisible: "true",
     homepagePriority: "3",
@@ -327,6 +328,7 @@ describe("POST /api/admin/model-configuration", () => {
     expect(explicitResponse.status).toBe(200);
     expect(invokedInput()).toMatchObject({
       category: "image",
+      enabled: true,
       homepageVisible: true,
       homepagePriority: 3,
       pricing: {
@@ -403,6 +405,7 @@ describe("POST /api/admin/model-configuration", () => {
           configKey: "veo31",
           expectedRevision: "5",
           clientRequestId: CLIENT_REQUEST_ID,
+          enabled: "true",
           visible: "false",
           homepageVisible: "false",
           homepagePriority: "8",
@@ -456,6 +459,7 @@ describe("POST /api/admin/model-configuration", () => {
             configKey: "veo31",
             expectedRevision: "5",
             clientRequestId: CLIENT_REQUEST_ID,
+            enabled: "true",
             visible: "true",
             homepageVisible: "false",
             homepagePriority: "5",
@@ -476,6 +480,7 @@ describe("POST /api/admin/model-configuration", () => {
       configKey: "seedance2",
       expectedRevision: "5",
       clientRequestId: CLIENT_REQUEST_ID,
+      enabled: "true",
       visible: "true",
       homepageVisible: "false",
       homepagePriority: "5",

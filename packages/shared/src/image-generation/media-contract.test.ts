@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_FILE_BYTES,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
   parseMediaInputReferencesWithPolicy,
@@ -68,7 +69,7 @@ describe("media input reference contract", () => {
     ).toBe(false);
   });
 
-  it("rejects inconsistent base64 length and oversized totals", () => {
+  it("拒绝不一致的 base64 字节声明", () => {
     expect(
       mediaInputReferenceSchema.safeParse({
         source: "data",
@@ -77,14 +78,44 @@ describe("media input reference contract", () => {
         byteLength: 100,
       }).success
     ).toBe(false);
+  });
 
-    const oversized = Array.from({ length: 2 }, (_, index) => ({
+  it("单文件保持 200 MiB，单次请求允许到 512 MiB", () => {
+    const storageReference = (index: number, byteLength: number) => ({
       source: "storage" as const,
       mimeType: "image/png" as const,
       storageKey: `users/u1/${index}.png`,
-      byteLength: MAX_MEDIA_INPUT_BYTES / 2 + 1,
-    }));
-    expect(mediaInputReferencesSchema.safeParse(oversized).success).toBe(false);
+      byteLength,
+    });
+    const remainingAtTotalLimit =
+      MAX_MEDIA_INPUT_BYTES - MAX_MEDIA_INPUT_FILE_BYTES * 2;
+    const atTotalLimit = [
+      storageReference(1, MAX_MEDIA_INPUT_FILE_BYTES),
+      storageReference(2, MAX_MEDIA_INPUT_FILE_BYTES),
+      storageReference(3, remainingAtTotalLimit),
+    ];
+
+    expect(MAX_MEDIA_INPUT_FILE_BYTES).toBe(200 * 1024 * 1024);
+    expect(MAX_MEDIA_INPUT_BYTES).toBe(512 * 1024 * 1024);
+    expect(
+      mediaInputReferenceSchema.safeParse(
+        storageReference(0, MAX_MEDIA_INPUT_FILE_BYTES)
+      ).success
+    ).toBe(true);
+    expect(
+      mediaInputReferenceSchema.safeParse(
+        storageReference(0, MAX_MEDIA_INPUT_FILE_BYTES + 1)
+      ).success
+    ).toBe(false);
+    expect(mediaInputReferencesSchema.safeParse(atTotalLimit).success).toBe(
+      true
+    );
+    expect(
+      mediaInputReferencesSchema.safeParse([
+        ...atTotalLimit.slice(0, -1),
+        storageReference(3, remainingAtTotalLimit + 1),
+      ]).success
+    ).toBe(false);
   });
 
   it("校验大体积 base64 时不会耗尽正则调用栈", () => {
@@ -160,6 +191,8 @@ describe("media input reference contract", () => {
 
   it("使用运行时策略统一拒绝单文件、总量和编辑参考图超限", () => {
     const policy = {
+      maxFileSizeMb: 5,
+      maxUploadSizeMb: 8,
       maxFileSizeBytes: 5 * 1024 * 1024,
       maxUploadSizeBytes: 8 * 1024 * 1024,
       maxEditReferenceImages: 2,

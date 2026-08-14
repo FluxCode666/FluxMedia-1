@@ -12,7 +12,8 @@ import { type FileHandle, open } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
 
 const MAX_MEDIA_INPUT_COUNT = 256;
-const MAX_MEDIA_INPUT_BYTES = 200 * 1024 * 1024;
+const MAX_MEDIA_INPUT_FILE_BYTES = 200 * 1024 * 1024;
+const MAX_MEDIA_INPUT_BYTES = 512 * 1024 * 1024;
 const MAX_STORAGE_KEY_LENGTH = 1_024;
 const MAX_BUCKET_LENGTH = 128;
 const MAX_REMOTE_URL_LENGTH = 4_096;
@@ -231,7 +232,7 @@ function parseByteLength(value: unknown): number {
     typeof value === "number" &&
     Number.isSafeInteger(value) &&
     value > 0 &&
-    value <= MAX_MEDIA_INPUT_BYTES
+    value <= MAX_MEDIA_INPUT_FILE_BYTES
   ) {
     return value;
   }

@@ -66,13 +66,15 @@
 
 ## 模型配置与公开目录
 
-- 管理端“模型配置”以单条目保存价格、展示开关、简介和封面；公开目录由
+- 管理端“模型配置”以单条目保存价格、运行启用开关、展示开关、简介和封面；公开目录由
   `modelMarketplace.listPublicModels` 提供，接口与运维边界见
   [model-marketplace-operations.md](model-marketplace-operations.md)。
 - 模型广场中的图像模型必须同时运行时可达、已显式配置完整四档价格且 `visible` 为
   `true`；未定价图像在管理端标记为“未配置价格”，不能计费或公开。
-- 展示开关只影响 `/models` 与首页，不影响 `/v1/models`、创作目录、套餐能力、调度或
-  实际计费。
+- `enabled` 缺失时按 `true` 兼容旧配置；显式停用后，模型不得进入 `/v1/models`、
+  `video.listCapabilities`、图片/视频创作目录、`/models` 或首页，也不得创建新的图片或
+  视频生成。`visible` 仍只控制已启用模型的 `/models` 与首页展示，不参与套餐能力、
+  成员配置或价格计算。
 - 自定义封面、网站品牌和头像可共用一个私有系统公开资产 bucket，并分别使用
   `image|video/`、`logo/`、`avatars/` key 命名空间；`generations` 必须独立。
   匿名模型封面读取只接受严格内容寻址的静态 WebP，不能扩大 generations 的访问权限。

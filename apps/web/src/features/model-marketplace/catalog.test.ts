@@ -111,6 +111,7 @@ describe("buildModelMarketplaceCatalog", () => {
     const marketplaceConfig = createDefaultModelMarketplaceConfig();
     marketplaceConfig.imageByModel["gpt-image-2"] = {
       revision: 1,
+      enabled: false,
       visible: false,
       description: "已关闭",
       cover: null,
@@ -145,6 +146,32 @@ describe("buildModelMarketplaceCatalog", () => {
         .filter((item) => item.category === "image")
         .map((item) => item.configKey)
     ).toEqual(["runtime-default-visible"]);
+  });
+
+  it("停用模型不会进入公开模型广场", () => {
+    const imagePricing = createDefaultGlobalImageCreditOverrides();
+    imagePricing.byModel["gpt-image-2"] = { ...EXPLICIT_IMAGE_PRICING };
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    marketplaceConfig.imageByModel["gpt-image-2"] = {
+      revision: 1,
+      enabled: false,
+      visible: false,
+      description: "",
+      cover: null,
+    };
+
+    expect(
+      buildModelMarketplaceCatalog(
+        createInput({
+          imagePricing,
+          marketplaceConfig,
+          runtimeCatalog: {
+            image: [{ id: "firefly-gpt-image-2" }],
+            video: [],
+          },
+        })
+      ).some((item) => item.configKey === "gpt-image-2")
+    ).toBe(false);
   });
 
   it("真实视频模型能力来自完整全局描述符并标记当前可达", () => {
@@ -307,7 +334,7 @@ describe("buildModelMarketplaceCatalog", () => {
       configuredReachable: true,
       infrastructureLimits: {
         maxMediaInputCount: 256,
-        maxMediaInputBytes: 209_715_200,
+        maxMediaInputBytes: 536_870_912,
       },
     });
     expect(

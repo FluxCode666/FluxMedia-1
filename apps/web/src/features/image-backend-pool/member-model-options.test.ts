@@ -28,6 +28,7 @@ import {
 const commonEntry = {
   revision: 0,
   marketplaceApplicable: true as const,
+  enabled: true,
   visible: true,
   homepageVisible: true,
   homepagePriority: 5,

@@ -9,6 +9,7 @@
 
 import {
   MAX_MEDIA_INPUT_BYTES,
+  MAX_MEDIA_INPUT_FILE_BYTES,
   type MediaInputReference,
 } from "@repo/shared/image-generation/media-contract";
 import { getStorageRuntimeSnapshot } from "@repo/shared/storage/providers";
@@ -28,23 +29,35 @@ export interface LoadedMediaInput {
 }
 
 /**
- * 累加实际读取字节并执行共享 200 MB 上限。
+ * 累加实际读取字节并执行单文件 200 MB、请求合计 512 MB 硬上限。
  *
  * @param currentBytes 当前请求已经实际读取的字节。
  * @param nextBytes 下一项实际 Buffer 字节。
  * @returns 未超限时的新总量。
  * @sideEffects 无。
- * @throws SafeImageFetchError 总量超过共享基础设施上限时失败。
+ * @throws SafeImageFetchError 单文件或总量超过共享基础设施上限时失败。
  */
 export function addActualMediaInputBytes(
   currentBytes: number,
   nextBytes: number
 ): number {
+  if (nextBytes > MAX_MEDIA_INPUT_FILE_BYTES) {
+    throw new SafeImageFetchError(
+      "Media input exceeds the per-file byte limit."
+    );
+  }
   const totalBytes = currentBytes + nextBytes;
   if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
     throw new SafeImageFetchError("Media input exceeds the byte limit.");
   }
   return totalBytes;
+}
+
+/** 校验实际读取字节与请求声明一致，阻止低报大小绕过运行时策略。 */
+function assertExpectedByteLength(expected: number, actual: number): void {
+  if (actual !== expected) {
+    throw new SafeImageFetchError("Media byte length does not match request.");
+  }
 }
 
 /** 校验实际 MIME，防止宣称为图片的 HTML 或其他载荷进入上游。 */
@@ -76,8 +89,10 @@ export async function loadMediaInputs(input: {
   const addLoaded = (
     data: Buffer,
     type: string,
+    expectedByteLength: number,
     storage?: Pick<LoadedMediaInput, "storageKey" | "storageBucket">
   ): void => {
+    assertExpectedByteLength(expectedByteLength, data.byteLength);
     totalBytes = addActualMediaInputBytes(totalBytes, data.byteLength);
     loaded.push({ data, type, ...storage });
   };
@@ -85,12 +100,7 @@ export async function loadMediaInputs(input: {
   for (const reference of input.references) {
     if (reference.source === "data") {
       const data = Buffer.from(reference.base64, "base64");
-      if (data.byteLength !== reference.byteLength) {
-        throw new SafeImageFetchError(
-          "Media byte length does not match request."
-        );
-      }
-      addLoaded(data, reference.mimeType);
+      addLoaded(data, reference.mimeType, reference.byteLength);
       continue;
     }
 
@@ -108,7 +118,7 @@ export async function loadMediaInputs(input: {
         bucket,
         input.signal ? { signal: input.signal } : undefined
       );
-      addLoaded(data, reference.mimeType, {
+      addLoaded(data, reference.mimeType, reference.byteLength, {
         storageKey: reference.storageKey,
         storageBucket: bucket,
       });
@@ -130,12 +140,12 @@ export async function loadMediaInputs(input: {
     const remainingBytes = MAX_MEDIA_INPUT_BYTES - totalBytes;
     const data = await readResponseBytesWithLimit(
       response,
-      remainingBytes,
+      Math.min(MAX_MEDIA_INPUT_FILE_BYTES, remainingBytes),
       () => {
         throw new SafeImageFetchError("Media input exceeds the byte limit.");
       }
     );
-    addLoaded(data, reference.mimeType);
+    addLoaded(data, reference.mimeType, reference.byteLength);
   }
 
   return loaded;

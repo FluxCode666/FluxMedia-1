@@ -3,6 +3,8 @@
  *
  * 职责：锁定真实模型大小写无关去重，确保旧视频身份不再成为公开 API。
  */
+
+import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { describe, expect, it } from "vitest";
 
 import { filterExternalMemberModelIds, mergeExternalModelIds } from "./models";
@@ -68,5 +70,28 @@ describe("filterExternalMemberModelIds", () => {
         customVideoModelIds: new Set(["vendor-video-x"]),
       })
     ).toEqual(["vendor-video-x", "vendor-image-x"]);
+  });
+
+  it("不发布模型配置中显式停用的图片和视频 ID", () => {
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    const disabledEntry = {
+      revision: 1,
+      enabled: false,
+      visible: false,
+      homepageVisible: false,
+      description: "",
+      cover: null,
+    };
+    marketplaceConfig.imageByModel["gpt-image-2"] = disabledEntry;
+    marketplaceConfig.videoByFamily.seedance2 = disabledEntry;
+
+    expect(
+      filterExternalMemberModelIds({
+        memberType: "api",
+        adobeMode: null,
+        supportedModelIds: ["gpt-image-2", "seedance2", "nano-banana"],
+        marketplaceConfig,
+      })
+    ).toEqual(["nano-banana"]);
   });
 });

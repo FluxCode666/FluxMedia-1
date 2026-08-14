@@ -71,6 +71,7 @@ describe("目录展示与价格规则", () => {
 
     expect(first).toEqual({
       revision: 0,
+      enabled: true,
       visible: true,
       homepageVisible: true,
       homepagePriority: 5,

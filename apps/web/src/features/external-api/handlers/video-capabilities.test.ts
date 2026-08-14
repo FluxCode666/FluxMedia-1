@@ -59,7 +59,7 @@ describe("getExternalVideoCapabilities", () => {
       ],
       limits: {
         maxMediaInputCount: 256,
-        maxMediaInputBytes: 209_715_200,
+        maxMediaInputBytes: 536_870_912,
       },
     });
   });
@@ -97,7 +97,7 @@ describe("getExternalVideoCapabilities", () => {
     });
     expect(payload.limits).toEqual({
       maxMediaInputCount: 256,
-      maxMediaInputBytes: 209_715_200,
+      maxMediaInputBytes: 536_870_912,
     });
     expect(JSON.stringify(payload)).not.toMatch(
       /member|credential|cookie|token|health|cooldown|concurrency|capacity/i

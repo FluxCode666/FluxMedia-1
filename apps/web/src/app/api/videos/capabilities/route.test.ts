@@ -54,7 +54,7 @@ describe("GET /api/videos/capabilities", () => {
       items: [],
       limits: {
         maxMediaInputCount: 256,
-        maxMediaInputBytes: 209_715_200,
+        maxMediaInputBytes: 536_870_912,
       },
     });
   });

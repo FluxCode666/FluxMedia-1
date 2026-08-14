@@ -18,6 +18,7 @@ export type ModelConfigurationCoverDraft =
   | { action: "replace"; file: File };
 
 type MarketplaceDraftFields = {
+  enabled: boolean;
   visible: boolean;
   homepageVisible: boolean;
   homepagePriority: string;
@@ -119,6 +120,7 @@ export function createModelConfigurationDraft(
     clientRequestId: createRequestId(),
   };
   const marketplace = {
+    enabled: entry.enabled,
     visible: entry.visible,
     homepageVisible: entry.homepageVisible,
     homepagePriority: String(entry.homepagePriority),
@@ -310,6 +312,7 @@ function appendMarketplaceFields(
   ) {
     throw new ModelConfigurationDraftError("模型简介不能超过 200 个字符");
   }
+  formData.append("enabled", String(draft.enabled));
   formData.append("visible", String(draft.visible));
   formData.append("homepageVisible", String(draft.homepageVisible));
   formData.append(

@@ -192,7 +192,7 @@ export async function stageVideoInputManifest(input: {
   const uploadSignal = AbortSignal.timeout(VIDEO_INPUT_UPLOAD_TIMEOUT_MS);
 
   // WHY：先完成全部实际读取、MIME、字节和总量复验，再写第一个对象，避免第 257
-  // 张或实际 200 MB 超限请求制造部分对象和额外清理压力。
+  // 张或实际 512 MB 超限请求制造部分对象和额外清理压力。
   const loaded = await loadMediaInputs({
     userId: input.userId,
     references: namedInputs.map((entry) => entry.reference),

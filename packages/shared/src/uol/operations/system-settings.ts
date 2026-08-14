@@ -25,6 +25,7 @@ import { paginationConfigSchema } from "../../pagination/config";
 import { getPaginationConfig } from "../../pagination/server";
 import { bootstrapSystemSettingsEnv } from "../../system-settings/bootstrap";
 import { syncSystemSettingsToEnvFiles } from "../../system-settings/env-file";
+import { SystemSettingValidationError } from "../../system-settings/errors";
 import {
   getAdminSystemSettingsSnapshot,
   getRuntimeSettingJson,
@@ -40,8 +41,30 @@ import {
   siteLogoUploadInputSchema,
   siteLogoUploadOutputSchema,
 } from "../../system-settings/site-branding";
+import { OperationError } from "../errors";
 import { getPrincipalUserId } from "../principal";
 import { defineOperation } from "../registry";
+
+/**
+ * 把设置服务的已知校验失败转换为 UOL 稳定错误，基础设施错误保持原样上抛。
+ *
+ * @param error - setSystemSettings 抛出的未知错误。
+ * @throws OperationError 已知设置校验失败；其他错误原样抛出供网关分类。
+ */
+function throwSystemSettingsUpdateOperationError(error: unknown): never {
+  if (error instanceof SystemSettingValidationError) {
+    throw new OperationError(
+      "validation_error",
+      "System setting validation failed",
+      {
+        fieldLabel: error.fieldLabel,
+        kind: error.kind,
+        reason: error.reason,
+      }
+    );
+  }
+  throw error;
+}
 
 /** 管理设置快照中的可选下拉项。 */
 const settingOptionSchema = z
@@ -277,7 +300,7 @@ export const settingsUpdate = defineOperation({
         ...(clear !== undefined ? { clear } : {}),
       })),
       userId
-    );
+    ).catch((error: unknown) => throwSystemSettingsUpdateOperationError(error));
 
     // 启用"按最大张数"清理时立即后台执行一次，与 server action 行为一致（共用谓词）。
     // WHY: fire-and-forget + catch 记日志，不阻塞 operation 返回；批量上限与幂等

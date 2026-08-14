@@ -26,6 +26,7 @@ import { getStorageProvider } from "@repo/shared/storage/providers";
 import { buildSignedStorageImageUrl } from "@repo/shared/storage/signed-url";
 import {
   getRuntimeSettingBoolean,
+  getRuntimeSettingJson,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
 import {
@@ -65,6 +66,7 @@ import {
 import { restoreImage } from "./image-restoration";
 import { maskedOutpaintImage } from "./masked-outpaint";
 import { loadMediaInputs } from "./media-input-loader";
+import { assertImageModelEnabled } from "./model-availability";
 import {
   createGenerationModerationContext,
   type GenerationModerationContext,
@@ -1150,6 +1152,9 @@ async function runImageGenerationForUserInternal(
     input.mode === "edit" &&
     Boolean(input.mask || input.mediaInputReferences?.mask);
   const imageModel = resolveRequestedImageModel(input.model);
+  await assertImageModelEnabled(imageModel, () =>
+    getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG")
+  );
   const recordModel = imageModel;
   const moderationContext = await createGenerationModerationContext(
     input.userId

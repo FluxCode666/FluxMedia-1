@@ -36,7 +36,7 @@ const veoReferenceCapabilities = {
   ],
   limits: {
     maxMediaInputCount: 256,
-    maxMediaInputBytes: 209_715_200,
+    maxMediaInputBytes: 536_870_912,
   },
 } as const;
 
@@ -146,7 +146,7 @@ describe("VideoCreatePanel capabilities", () => {
       "参考图（可选，模型上限 3 张；单次最多 3 张）"
     );
     expect(container?.textContent).toContain(
-      "基础设施限制：所有媒体输入合计最多256 张、200 MB"
+      "基础设施限制：所有媒体输入合计最多256 张、512 MB"
     );
     expect(container?.textContent).not.toContain("首尾帧（可选");
     expect(

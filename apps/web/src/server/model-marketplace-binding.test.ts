@@ -50,6 +50,7 @@ const UPDATE_INPUT = {
   category: "image",
   configKey: "gpt-image-2",
   expectedRevision: 0,
+  enabled: true,
   visible: true,
   homepageVisible: true,
   homepagePriority: 5,
@@ -105,6 +106,7 @@ function createManagementSnapshot(
         revision: 0,
         minimumCredits: 1.27,
         marketplaceApplicable: true,
+        enabled: true,
         visible: true,
         homepageVisible: true,
         homepagePriority: 5,
@@ -180,7 +182,7 @@ function createPublicVideoItem(
     configuredReachable,
     infrastructureLimits: {
       maxMediaInputCount: 256,
-      maxMediaInputBytes: 209_715_200,
+      maxMediaInputBytes: 536_870_912,
     },
   };
 }

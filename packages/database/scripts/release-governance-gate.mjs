@@ -85,7 +85,8 @@ const REMOVED_PLAN_FEATURES = [
 ];
 const REMOVED_PLAN_LIMITS = ["maxChatImages", "maxChatContextChars"];
 const VIDEO_INPUT_MAX_COUNT = 256;
-const VIDEO_INPUT_MAX_BYTES = 200 * 1024 * 1024;
+const MEDIA_INPUT_MAX_FILE_BYTES = 200 * 1024 * 1024;
+const MEDIA_INPUT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
 const VIDEO_GATE_PAGE_SIZE = 200;
 const IMAGE_TASK_GATE_PAGE_SIZE = 200;
 const EPAY_FULFILLMENT_LEASE_MINUTES = 5;
@@ -1227,7 +1228,7 @@ function validateVideoInputReference(reference, row, seenStorageKeys) {
     typeof reference.storageBucket !== "string" ||
     !Number.isSafeInteger(reference.byteLength) ||
     reference.byteLength <= 0 ||
-    reference.byteLength > VIDEO_INPUT_MAX_BYTES
+    reference.byteLength > MEDIA_INPUT_MAX_FILE_BYTES
   ) {
     return null;
   }
@@ -1314,7 +1315,7 @@ function validateVideoInputManifest(manifest, row, realModel) {
     );
     if (byteLength === null) return false;
     totalBytes += byteLength;
-    if (totalBytes > VIDEO_INPUT_MAX_BYTES) return false;
+    if (totalBytes > MEDIA_INPUT_MAX_UPLOAD_BYTES) return false;
   }
   return true;
 }
@@ -2329,7 +2330,7 @@ function isPersistedImageStorageReference(value) {
     typeof value.storageKey !== "string" ||
     !Number.isInteger(value.byteLength) ||
     value.byteLength < 1 ||
-    value.byteLength > 200 * 1024 * 1024
+    value.byteLength > MEDIA_INPUT_MAX_FILE_BYTES
   ) {
     return false;
   }
@@ -2474,7 +2475,7 @@ function isPersistedImageGenerationInputValid(
     (total, reference) => total + reference.byteLength,
     0
   );
-  if (imageBytes > 200 * 1024 * 1024) return false;
+  if (imageBytes > MEDIA_INPUT_MAX_UPLOAD_BYTES) return false;
   return (
     expectedOperation === "edit" || isPersistedImageStorageReference(value.mask)
   );

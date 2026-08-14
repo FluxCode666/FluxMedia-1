@@ -667,7 +667,7 @@ const zhContent = {
   ],
   "limits": {
     "maxMediaInputCount": 256,
-    "maxMediaInputBytes": 209715200
+    "maxMediaInputBytes": 536870912
   }
 }`,
       parameters: [

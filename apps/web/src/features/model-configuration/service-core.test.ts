@@ -76,6 +76,7 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
       revision: 0,
       minimumCredits: 2,
       marketplaceApplicable: true as const,
+      enabled: true,
       visible: true,
       homepageVisible: true,
       homepagePriority: 5,
@@ -97,6 +98,7 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
         revision: 0,
         minimumCredits: 30,
         marketplaceApplicable: true as const,
+        enabled: true,
         visible: true,
         homepageVisible: false,
         homepagePriority: 5,
@@ -301,6 +303,7 @@ function imageInput(
     expectedRevision: number;
     isCustom: boolean;
     supportedResolutions: string[];
+    enabled: boolean;
     visible: boolean;
     description: string;
     coverChange:
@@ -315,6 +318,7 @@ function imageInput(
     category: "image" as const,
     configKey: "gpt-image-2",
     expectedRevision: 0,
+    enabled: true,
     visible: true,
     homepageVisible: true,
     homepagePriority: 5,
@@ -338,7 +342,7 @@ describe("模型配置保存内核", () => {
 
     const result = await harness.service.updateEntry({
       actorUserId: ACTOR_USER_ID,
-      input: imageInput(),
+      input: imageInput({ enabled: false }),
     });
 
     expect(result).toEqual({
@@ -349,6 +353,7 @@ describe("模型配置保存内核", () => {
     const state = harness.repository.read();
     expect(state.config.imageByModel["gpt-image-2"]).toMatchObject({
       revision: 1,
+      enabled: false,
       visible: true,
       homepageVisible: true,
       homepagePriority: 5,
@@ -377,6 +382,7 @@ describe("模型配置保存内核", () => {
         category: "video",
         configKey: "veo31",
         expectedRevision: 0,
+        enabled: true,
         visible: false,
         homepageVisible: false,
         homepagePriority: 5,
@@ -423,6 +429,7 @@ describe("模型配置保存内核", () => {
         category: "video",
         configKey,
         expectedRevision: 0,
+        enabled: true,
         visible: true,
         homepageVisible: false,
         homepagePriority: 5,
@@ -455,6 +462,7 @@ describe("模型配置保存内核", () => {
       clientRequestId: REQUEST_ID,
       category: "video" as const,
       expectedRevision: 0,
+      enabled: true,
       visible: true,
       homepageVisible: false,
       homepagePriority: 5,
@@ -503,6 +511,7 @@ describe("模型配置保存内核", () => {
           category: "video",
           configKey: "seedance2",
           expectedRevision: 0,
+          enabled: true,
           visible: true,
           homepageVisible: false,
           homepagePriority: 5,
@@ -531,6 +540,7 @@ describe("模型配置保存内核", () => {
       category: "video" as const,
       configKey: "veo31",
       expectedRevision: 0,
+      enabled: true,
       visible: true,
       homepageVisible: false,
       homepagePriority: 5,
@@ -635,6 +645,7 @@ describe("模型配置保存内核", () => {
         configKey: "vendor-video-x",
         expectedRevision: 0,
         isCustom: true,
+        enabled: true,
         visible: false,
         homepageVisible: false,
         homepagePriority: 5,

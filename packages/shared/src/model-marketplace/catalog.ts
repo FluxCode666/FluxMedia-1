@@ -94,13 +94,18 @@ export function getMinimumImageCredits(
 export function resolveModelMarketplaceEntry(
   entry: ModelMarketplaceEntry | undefined,
   category: ModelMarketplaceConfigurationCategory
-): Omit<ModelMarketplaceEntry, "homepageVisible" | "homepagePriority"> & {
+): Omit<
+  ModelMarketplaceEntry,
+  "enabled" | "homepageVisible" | "homepagePriority"
+> & {
+  enabled: boolean;
   homepageVisible: boolean;
   homepagePriority: number;
 } {
   if (!entry) {
     return {
       revision: 0,
+      enabled: true,
       visible: true,
       homepageVisible: category === "image",
       homepagePriority: DEFAULT_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
@@ -110,6 +115,7 @@ export function resolveModelMarketplaceEntry(
   }
   return {
     ...entry,
+    enabled: entry.enabled ?? true,
     homepageVisible:
       entry.visible && (entry.homepageVisible ?? category === "image"),
     homepagePriority:

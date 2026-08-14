@@ -4,7 +4,13 @@
  * 职责：强制所有大媒体处理发生在双层容量预检之后；事务内准入仍由任务创建函数
  * 终检。使用方是 video.generate UOL binding；依赖可注入以证明限流时没有存储 I/O。
  */
-import type { VideoInputReferenceManifest } from "@repo/shared/image-generation/media-contract";
+import {
+  assertMediaInputReferencesWithinPolicy,
+  listVideoInputManifestReferences,
+  MAX_MEDIA_INPUT_COUNT,
+  type MediaInputPolicy,
+  type VideoInputReferenceManifest,
+} from "@repo/shared/image-generation/media-contract";
 
 import type { StagedVideoInputManifest } from "./video-input-storage";
 import {
@@ -50,9 +56,18 @@ export interface VideoTaskPreparationDependencies {
 export async function prepareVideoTaskInputReferences(
   input: VideoTaskAdmissionInput & {
     manifest: VideoInputReferenceManifest;
+    mediaLimits: MediaInputPolicy;
   },
   dependencies?: VideoTaskPreparationDependencies
 ): Promise<VideoTaskPreparationResult> {
+  const references = listVideoInputManifestReferences(input.manifest);
+  if (references.length > 0) {
+    assertMediaInputReferencesWithinPolicy(
+      references,
+      input.mediaLimits,
+      MAX_MEDIA_INPUT_COUNT
+    );
+  }
   const preflight = await (
     dependencies?.preflight ?? preflightVideoTaskCreation
   )(input);

@@ -4,6 +4,8 @@
  * 职责：覆盖显式模型能力、分组可达性、媒体分类、终态过滤、稳定去重与
  * 快速集成模型判断；旧 conversation 分类不得重新出现。
  */
+
+import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -193,6 +195,45 @@ describe("buildPlatformModelCatalog", () => {
         })
       )
     ).toEqual({ image: [], video: [{ id: "vendor-video-x" }] });
+  });
+
+  it("显式停用的图片、内置视频与自定义视频均不返回", () => {
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    const disabledEntry = {
+      revision: 1,
+      enabled: false,
+      visible: false,
+      homepageVisible: false,
+      description: "",
+      cover: null,
+    };
+    marketplaceConfig.imageByModel["gpt-image-2"] = disabledEntry;
+    marketplaceConfig.videoByFamily.seedance2 = disabledEntry;
+    marketplaceConfig.videoByFamily["vendor-video-x"] = disabledEntry;
+
+    expect(
+      buildPlatformModelCatalog(
+        source({
+          marketplaceConfig,
+          customModels: [{ modelId: "vendor-video-x", category: "video" }],
+          members: [
+            {
+              groupIds: ["default-group"],
+              type: "api",
+              adobeMode: null,
+              supportedModelIds: [
+                "gpt-image-2",
+                "seedance2",
+                "vendor-video-x",
+                "nano-banana",
+              ],
+              isEnabled: true,
+              status: "active",
+            },
+          ],
+        })
+      )
+    ).toEqual({ image: [{ id: "nano-banana" }], video: [] });
   });
 });
 

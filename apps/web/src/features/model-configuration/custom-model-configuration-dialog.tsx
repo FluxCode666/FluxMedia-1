@@ -176,6 +176,7 @@ export function CustomModelConfigurationDialog({
     formData.append("expectedRevision", "0");
     formData.append("clientRequestId", crypto.randomUUID());
     formData.append("isCustom", "true");
+    formData.append("enabled", "true");
     formData.append("visible", "false");
     formData.append("homepageVisible", "false");
     formData.append("homepagePriority", "5");

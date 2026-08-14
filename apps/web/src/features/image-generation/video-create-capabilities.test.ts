@@ -15,7 +15,7 @@ import {
 
 const limits = {
   maxMediaInputCount: 256,
-  maxMediaInputBytes: 209_715_200,
+  maxMediaInputBytes: 536_870_912,
 } as const;
 
 describe("parseReachableVideoCreateModels", () => {
@@ -60,7 +60,7 @@ describe("parseReachableVideoCreateModels", () => {
         maxFrameImages: 2,
         maxReferenceImages: 300,
         maxMediaInputCount: 256,
-        maxMediaInputBytes: 209_715_200,
+        maxMediaInputBytes: 536_870_912,
         supportsAudio: true,
       }),
     ]);

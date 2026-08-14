@@ -19,6 +19,7 @@ import {
   formatModelConfigurationMinimumCredits,
   getModelConfigurationCategoryLabel,
   getModelConfigurationCoverSource,
+  getModelConfigurationEnabledLabel,
   getModelConfigurationHomepageLabel,
   getModelConfigurationVisibilityLabel,
   resolveModelConfigurationCoverAfterError,
@@ -136,6 +137,22 @@ function VisibilityBadge({ entry }: { entry: ModelConfigurationEntry }) {
 }
 
 /**
+ * 渲染模型是否允许进入目录与生成调用。
+ *
+ * @param entry - 当前管理条目。
+ * @returns 启用状态 Badge；停用使用 destructive 强调影响范围。
+ * @sideEffects 无。
+ * @failure 共享 DTO 已校验 enabled，不抛错。
+ */
+function EnabledBadge({ entry }: { entry: ModelConfigurationEntry }) {
+  return (
+    <Badge variant={entry.enabled ? "secondary" : "destructive"}>
+      {getModelConfigurationEnabledLabel(entry)}
+    </Badge>
+  );
+}
+
+/**
  * 渲染官网首页展示状态及其数值优先级。
  *
  * @param entry - 当前管理条目。
@@ -177,7 +194,7 @@ export function ModelConfigurationTable({
       className="overflow-x-auto border-t"
       tabIndex={-1}
     >
-      <table className="w-full min-w-[880px] table-fixed text-sm">
+      <table className="w-full min-w-[980px] table-fixed text-sm">
         <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
           <tr>
             <th scope="col" className="w-32 px-4 py-3 font-medium">
@@ -188,6 +205,9 @@ export function ModelConfigurationTable({
             </th>
             <th scope="col" className="w-28 px-4 py-3 font-medium">
               类型
+            </th>
+            <th scope="col" className="w-24 px-4 py-3 font-medium">
+              状态
             </th>
             <th scope="col" className="w-28 px-4 py-3 font-medium">
               模型广场
@@ -224,6 +244,9 @@ export function ModelConfigurationTable({
                     {entry.supportedResolutions.join("、")}
                   </span>
                 ) : null}
+              </td>
+              <td className="px-4 py-3">
+                <EnabledBadge entry={entry} />
               </td>
               <td className="px-4 py-3">
                 <VisibilityBadge entry={entry} />

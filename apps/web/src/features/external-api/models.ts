@@ -8,7 +8,11 @@ import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
 } from "@repo/shared/image-backend/supported-models";
-import { parseModelMarketplaceConfig } from "@repo/shared/model-marketplace";
+import {
+  isModelMarketplaceModelEnabled,
+  type ModelMarketplaceConfig,
+  parseModelMarketplaceConfig,
+} from "@repo/shared/model-marketplace";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { and, asc, eq } from "drizzle-orm";
 
@@ -72,6 +76,7 @@ export function filterExternalMemberModelIds(input: {
   adobeMode: "gateway" | "direct" | null;
   supportedModelIds: readonly string[];
   customVideoModelIds?: ReadonlySet<string>;
+  marketplaceConfig?: ModelMarketplaceConfig;
 }): string[] {
   return input.supportedModelIds.filter((modelId) => {
     const isCustomVideo = input.customVideoModelIds?.has(
@@ -79,18 +84,42 @@ export function filterExternalMemberModelIds(input: {
     );
     const videoModelId = normalizeVideoModelId(modelId);
     if (isCustomVideo) {
-      return input.memberType === "api";
-    }
-    if (videoModelId) {
-      return canRuntimeBackendLeaseServeRequest(
-        { requestKind: "video" },
-        {
-          memberType: input.memberType,
-          adobeMode: input.adobeMode,
-        }
+      return (
+        input.memberType === "api" &&
+        (!input.marketplaceConfig ||
+          isModelMarketplaceModelEnabled(
+            input.marketplaceConfig,
+            "video",
+            modelId
+          ))
       );
     }
-    return !isLegacyVideoModelId(modelId);
+    if (videoModelId) {
+      return (
+        (!input.marketplaceConfig ||
+          isModelMarketplaceModelEnabled(
+            input.marketplaceConfig,
+            "video",
+            videoModelId
+          )) &&
+        canRuntimeBackendLeaseServeRequest(
+          { requestKind: "video" },
+          {
+            memberType: input.memberType,
+            adobeMode: input.adobeMode,
+          }
+        )
+      );
+    }
+    return (
+      !isLegacyVideoModelId(modelId) &&
+      (!input.marketplaceConfig ||
+        isModelMarketplaceModelEnabled(
+          input.marketplaceConfig,
+          "image",
+          modelId
+        ))
+    );
   });
 }
 
@@ -152,9 +181,10 @@ export async function getExternalModelsForApiKey(
   ]);
   if (!groupId) return { object: "list", data: [] };
 
+  const marketplaceConfig = parseModelMarketplaceConfig(marketplaceConfigValue);
   const customVideoModelIds = new Set(
-    parseModelMarketplaceConfig(marketplaceConfigValue)
-      .customModels.filter((model) => model.category === "video")
+    marketplaceConfig.customModels
+      .filter((model) => model.category === "video")
       .map((model) => model.modelId.toLowerCase())
   );
   const modelIds = mergeExternalModelIds(
@@ -171,6 +201,7 @@ export async function getExternalModelsForApiKey(
           adobeMode: member.type === "adobe" ? member.config.mode : null,
           supportedModelIds: member.supportedModelIds,
           customVideoModelIds,
+          marketplaceConfig,
         });
       })
   );

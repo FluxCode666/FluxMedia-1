@@ -3,6 +3,8 @@
  *
  * 职责：验证运行时事实注入、失败透传和 strict DTO 白名单，不连接数据库。
  */
+
+import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -58,6 +60,45 @@ describe("loadPlatformModelCatalog", () => {
         },
       })
     ).rejects.toBe(failure);
+  });
+
+  it("从运行时平台目录移除显式停用的模型", async () => {
+    const { loadPlatformModelCatalog } = await loadService();
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    marketplaceConfig.imageByModel["vendor-image"] = {
+      revision: 1,
+      enabled: false,
+      visible: false,
+      homepageVisible: false,
+      description: "",
+      cover: null,
+    };
+
+    await expect(
+      loadPlatformModelCatalog({
+        loadMarketplaceConfig: async () => marketplaceConfig,
+        repository: {
+          listGroups: async () => [
+            {
+              id: "default-group",
+              isEnabled: true,
+              isDefault: true,
+              isUserSelectable: false,
+            },
+          ],
+          listMembers: async () => [
+            {
+              groupIds: ["default-group"],
+              type: "api",
+              adobeMode: null,
+              supportedModelIds: ["vendor-image"],
+              isEnabled: true,
+              status: "active",
+            },
+          ],
+        },
+      })
+    ).resolves.toEqual({ image: [], video: [] });
   });
 });
 

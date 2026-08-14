@@ -206,7 +206,7 @@ export function buildModelMarketplaceCatalog(
   const items: ModelMarketplacePublicItem[] = [];
 
   for (const entry of snapshot.entries) {
-    if (!entry.visible) continue;
+    if (!entry.enabled || !entry.visible) continue;
 
     if (entry.category === "image") {
       // WHY：展示开关不能把未定价模型公开；价格缺失必须先由管理员显式配置。

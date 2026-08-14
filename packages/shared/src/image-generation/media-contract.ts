@@ -12,12 +12,14 @@ import type { MediaLimitPolicy } from "./media-limit-policy";
 import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
+  MAX_MEDIA_INPUT_FILE_BYTES,
   MEDIA_INPUT_MIME_TYPES,
 } from "./media-limits";
 
 export {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
+  MAX_MEDIA_INPUT_FILE_BYTES,
   MEDIA_INPUT_MIME_TYPES,
 } from "./media-limits";
 
@@ -26,8 +28,8 @@ const mediaByteLengthSchema = z
   .number()
   .int()
   .positive()
-  .max(MAX_MEDIA_INPUT_BYTES);
-const MAX_BASE64_LENGTH = Math.ceil(MAX_MEDIA_INPUT_BYTES / 3) * 4;
+  .max(MAX_MEDIA_INPUT_FILE_BYTES);
+const MAX_BASE64_LENGTH = Math.ceil(MAX_MEDIA_INPUT_FILE_BYTES / 3) * 4;
 
 /**
  * 以线性扫描校验标准 base64，避免对数 MB 输入执行重复分组正则而耗尽 V8 调用栈。
@@ -162,6 +164,42 @@ export const mediaInputReferencesSchema = z
 /** 单个 JSON-safe 媒体输入引用类型。 */
 export type MediaInputReference = z.infer<typeof mediaInputReferenceSchema>;
 
+/** 运行时媒体策略中与单次输入校验相关的稳定字段。 */
+export type MediaInputPolicy = Pick<
+  MediaLimitPolicy,
+  | "maxFileSizeMb"
+  | "maxUploadSizeMb"
+  | "maxFileSizeBytes"
+  | "maxUploadSizeBytes"
+  | "maxEditReferenceImages"
+>;
+
+/** 媒体引用违反服务端当前生效的文件、总量或数量策略。 */
+export class MediaInputPolicyValidationError extends Error {
+  readonly maxFileSizeMb: number;
+  readonly maxUploadSizeMb: number;
+  readonly maxInputCount: number;
+
+  /**
+   * 创建不携带客户端引用、URL 或声明字节值的安全策略错误。
+   *
+   * @param policy - 服务端当前生效的媒体大小策略。
+   * @param maxInputCount - 当前操作允许的最大媒体输入数量。
+   * @param cause - 原始 Zod 校验错误，仅保留在服务端异常链。
+   */
+  constructor(policy: MediaInputPolicy, maxInputCount: number, cause: unknown) {
+    super(
+      `媒体输入超过当前限制：单文件最多 ${policy.maxFileSizeMb} MB，` +
+        `单次合计最多 ${policy.maxUploadSizeMb} MB，最多 ${maxInputCount} 项`,
+      { cause }
+    );
+    this.name = "MediaInputPolicyValidationError";
+    this.maxFileSizeMb = policy.maxFileSizeMb;
+    this.maxUploadSizeMb = policy.maxUploadSizeMb;
+    this.maxInputCount = maxInputCount;
+  }
+}
+
 /**
  * 以同一份运行时策略校验媒体引用声明。
  *
@@ -173,10 +211,7 @@ export type MediaInputReference = z.infer<typeof mediaInputReferenceSchema>;
  */
 export function parseMediaInputReferencesWithPolicy(
   references: unknown,
-  policy: Pick<
-    MediaLimitPolicy,
-    "maxFileSizeBytes" | "maxUploadSizeBytes" | "maxEditReferenceImages"
-  >,
+  policy: MediaInputPolicy,
   maxCount = policy.maxEditReferenceImages
 ): MediaInputReference[] {
   return mediaInputReferencesSchema
@@ -207,6 +242,67 @@ export function parseMediaInputReferencesWithPolicy(
       }
     })
     .parse(references);
+}
+
+/**
+ * 应用当前运行时策略，并把 Zod 细节收敛为不含输入内容的领域错误。
+ *
+ * @param references - 已通过传输硬上限或仍待解析的媒体引用。
+ * @param policy - 服务端当前生效策略。
+ * @param maxCount - 当前操作允许的最大输入数量。
+ * @returns 校验后的媒体引用。
+ * @throws MediaInputPolicyValidationError 文件、总量或数量超过当前策略时失败。
+ */
+export function assertMediaInputReferencesWithinPolicy(
+  references: unknown,
+  policy: MediaInputPolicy,
+  maxCount = policy.maxEditReferenceImages
+): MediaInputReference[] {
+  try {
+    return parseMediaInputReferencesWithPolicy(references, policy, maxCount);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new MediaInputPolicyValidationError(policy, maxCount, error);
+    }
+    throw error;
+  }
+}
+
+/** 图片生成联合输入中与媒体策略有关的最小形态。 */
+export type PolicyControlledImageInput =
+  | { operation: "generate" }
+  | { operation: "edit"; images: MediaInputReference[] }
+  | {
+      operation: "mask";
+      images: MediaInputReference[];
+      mask: MediaInputReference;
+    };
+
+/**
+ * 对图片编辑/蒙版输入应用同一份动态单文件、总量和参考图数量策略。
+ *
+ * @param input - 已通过 image.generate 硬上限联合 schema 的输入。
+ * @param policy - 服务端当前生效策略。
+ * @returns 无返回；纯文生图无需媒体校验。
+ * @throws MediaInputPolicyValidationError 任一动态限制不满足时失败。
+ */
+export function assertImageMediaInputWithinPolicy(
+  input: PolicyControlledImageInput,
+  policy: MediaInputPolicy
+): void {
+  if (input.operation === "generate") return;
+  assertMediaInputReferencesWithinPolicy(
+    input.images,
+    policy,
+    policy.maxEditReferenceImages
+  );
+  if (input.operation === "mask") {
+    assertMediaInputReferencesWithinPolicy(
+      [...input.images, input.mask],
+      policy,
+      Math.min(MAX_MEDIA_INPUT_COUNT, policy.maxEditReferenceImages + 1)
+    );
+  }
 }
 
 /** 平台持久视频输入对象必须显式保存当前 bucket，不能依赖运行时默认值漂移。 */

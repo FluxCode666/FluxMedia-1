@@ -45,6 +45,7 @@ const KNOWN_FORM_FIELDS = new Set([
   "configKey",
   "expectedRevision",
   "clientRequestId",
+  "enabled",
   "visible",
   "homepageVisible",
   "homepagePriority",
@@ -67,6 +68,7 @@ const COMMON_SCALAR_FIELDS = [
 ] as const;
 const MARKETPLACE_SCALAR_FIELDS = [
   ...COMMON_SCALAR_FIELDS,
+  "enabled",
   "visible",
   "homepageVisible",
   "homepagePriority",
@@ -405,6 +407,7 @@ async function parseImageInput(
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
     ...(isCustom !== undefined ? { isCustom: parseBoolean(isCustom) } : {}),
+    enabled: parseBoolean(requireScalar(data.scalars, "enabled")),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
     homepageVisible: parseBoolean(
       requireScalar(data.scalars, "homepageVisible")
@@ -454,6 +457,7 @@ async function parseVideoInput(
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
     ...(isCustom !== undefined ? { isCustom: parseBoolean(isCustom) } : {}),
+    enabled: parseBoolean(requireScalar(data.scalars, "enabled")),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
     homepageVisible: parseBoolean(
       requireScalar(data.scalars, "homepageVisible")

@@ -145,10 +145,18 @@ describe("setSystemSettings", () => {
     resetBootstrappedProcessSettingsForTests();
   });
 
-  it("rejects unknown setting key throwing 未知配置项", async () => {
-    await expect(
-      setSystemSettings([{ key: "APP_TIME_ZONE", value: "UTC" }], "admin")
-    ).rejects.toThrow("未知配置项: APP_TIME_ZONE");
+  it("拒绝未知配置键且不在提示中回显未受信任键名", async () => {
+    const error = await setSystemSettings(
+      [{ key: "APP_TIME_ZONE", value: "UTC" }],
+      "admin"
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: "SystemSettingValidationError",
+      fieldLabel: "系统设置",
+      reason: "包含未知或已下线的字段，请刷新页面后重试",
+    });
+    expect(String(error)).not.toContain("APP_TIME_ZONE");
   });
 
   it("clear entry deletes stored setting", async () => {
@@ -258,7 +266,7 @@ describe("setSystemSettings", () => {
         [{ key: "SYSTEM_ASSETS_BUCKET_NAME", value: "_avatars" }],
         "admin"
       )
-    ).rejects.toThrow("系统通用资产 Bucket 不能使用系统保留名称");
+    ).rejects.toThrow("系统通用资产 Bucket：不能使用系统保留名称");
     expect(store.has("SYSTEM_ASSETS_BUCKET_NAME")).toBe(false);
   });
 
@@ -309,6 +317,20 @@ describe("setSystemSettings", () => {
     expect(store.get("CONTENT_MODERATION_PROVIDER_TIMEOUT_MS")?.value).toBe(1);
   });
 
+  it("用可识别的设置校验错误保留字段与安全原因", async () => {
+    await expect(
+      setSystemSettings(
+        [{ key: "MEDIA_MAX_UPLOAD_SIZE_MB", value: 513 }],
+        "admin"
+      )
+    ).rejects.toMatchObject({
+      name: "SystemSettingValidationError",
+      fieldLabel: "单次上传总量 MB",
+      reason: "不能大于 512",
+      message: "单次上传总量 MB：不能大于 512",
+    });
+  });
+
   it("number key without declared range keeps coercion unchanged (S-M8)", async () => {
     // 未声明 min/max 的数值键行为不变：任意有限数原样写入。
     await setSystemSettings(
@@ -324,7 +346,7 @@ describe("setSystemSettings", () => {
     const cases = [
       ["IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY", 10_000],
       ["MEDIA_MAX_FILE_SIZE_MB", 200],
-      ["MEDIA_MAX_UPLOAD_SIZE_MB", 200],
+      ["MEDIA_MAX_UPLOAD_SIZE_MB", 512],
       ["IMAGE_EDIT_MAX_REFERENCE_IMAGES", 256],
     ] as const;
 

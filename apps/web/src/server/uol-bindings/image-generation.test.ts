@@ -82,6 +82,11 @@ function dependencies(): {
   const getLimits = vi.fn(async () => ({
     limit: 20,
     effectiveSource: "system_default" as const,
+    maxFileSizeMb: 5,
+    maxUploadSizeMb: 75,
+    maxEditReferenceImages: 16,
+    maxFileSizeBytes: 5 * 1024 * 1024,
+    maxUploadSizeBytes: 75 * 1024 * 1024,
   }));
   const acquireAdmission = vi.fn(
     async (): Promise<RedisImageGenerationAdmissionAcquisition> => ({
@@ -118,6 +123,50 @@ const dataReference = {
 };
 
 describe("executeImageGenerateBinding", () => {
+  it("在准入和媒体转存前应用系统媒体大小策略", async () => {
+    const deps = dependencies();
+    deps.getLimits.mockResolvedValueOnce({
+      limit: 20,
+      effectiveSource: "system_default",
+      maxFileSizeMb: 4,
+      maxUploadSizeMb: 75,
+      maxEditReferenceImages: 16,
+      maxFileSizeBytes: 4 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
+    });
+
+    await expect(
+      executeImageGenerateBinding(
+        {
+          operation: "edit",
+          prompt: "改成夜景",
+          model: "gpt-image-2",
+          generationId: "generation-media-limit",
+          images: [
+            {
+              source: "storage",
+              mimeType: "image/png",
+              storageKey: "user-1/image-inputs/oversized.png",
+              storageBucket: "uploads",
+              byteLength: 5 * 1024 * 1024,
+            },
+          ],
+        },
+        userPrincipal,
+        operationContext(),
+        deps.value
+      )
+    ).rejects.toMatchObject({
+      code: "validation_error",
+      details: {
+        maxFileSizeMb: 4,
+        maxUploadSizeMb: 75,
+      },
+    });
+    expect(deps.acquireAdmission).not.toHaveBeenCalled();
+    expect(deps.stage).not.toHaveBeenCalled();
+  });
+
   it("在加载编辑媒体前取得准入槽，用户超限时立即返回 429", async () => {
     const deps = dependencies();
     deps.acquireAdmission.mockResolvedValueOnce({
