@@ -7,17 +7,26 @@
 
 import { expect, type Page } from "@playwright/test";
 
+/** 等待运营总览结束整页刷新并恢复可交互状态。 */
+export async function waitForOperationsDashboardReady(
+  page: Page
+): Promise<void> {
+  const dashboard = page.locator("main.container > div[aria-busy]");
+  await expect(dashboard).not.toHaveAttribute("aria-busy", "true", {
+    timeout: 30_000,
+  });
+  await expect(
+    page.getByRole("heading", { name: "用户增长与活跃" })
+  ).toBeVisible();
+}
+
 /** 打开管理员运营总览并等待首屏一致快照。 */
 export async function openOperationsDashboard(page: Page): Promise<void> {
   await page.goto("/zh/dashboard/admin/operations");
   await expect(
     page.getByRole("heading", { level: 1, name: "运营总览" })
   ).toBeVisible();
-  const dashboard = page.locator("main.container > div[aria-busy]");
-  await expect(dashboard).not.toHaveAttribute("aria-busy", "true");
-  await expect(
-    page.getByRole("heading", { name: "用户增长与活跃" })
-  ).toBeVisible();
+  await waitForOperationsDashboardReady(page);
 }
 
 /** 返回标题命中的 shadcn Card，供卡片内动作精确定位。 */

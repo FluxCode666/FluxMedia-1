@@ -31,6 +31,12 @@ type FixtureExportObject = {
   byteCount: number;
 };
 
+type FixtureAppDay = {
+  appDate: string;
+  startsAt: Date;
+  currentAt: Date;
+};
+
 /** 构造带 UTF-8 BOM、稳定表头和一条真实用户事实的增长导出 CSV。 */
 function buildCompletedExportCsv(epoch: { appDate: string }): Buffer {
   return Buffer.from(
@@ -133,6 +139,30 @@ async function removeFixtureUsers(client: PoolClient): Promise<void> {
   ]);
 }
 
+/**
+ * 确认专用浏览器测试库未混入开发账号或其它测试用户。
+ *
+ * @param client 专用测试库事务连接。
+ * @failure 存在任一非固定夹具用户时停止准备，避免全局统计被静默污染。
+ */
+async function requireNoUnexpectedUsers(client: PoolClient): Promise<void> {
+  const result = await client.query<{ count: string }>(
+    `
+      select count(*)::text as count
+      from "user"
+      where not (id = any($1::text[]))
+    `,
+    [FIXTURE_USER_IDS]
+  );
+  const count = Number(result.rows[0]?.count ?? Number.NaN);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error("运营 E2E 无法核对专用数据库用户数量");
+  }
+  if (count > 0) {
+    throw new Error(`运营 E2E 专用数据库包含 ${count} 个非夹具用户`);
+  }
+}
+
 /** 把运营内容依赖的两个既有分析读模型推进为可读 v1 状态。 */
 async function ensureAnalyticsReadModelsReady(
   client: PoolClient
@@ -156,30 +186,67 @@ async function ensureAnalyticsReadModelsReady(
   }
 }
 
-/** 返回相对 epoch 的稳定测试时间。 */
-function offsetEpoch(startsAt: Date, offsetMilliseconds: number): Date {
+/** 返回相对给定瞬间的稳定测试时间。 */
+function offsetInstant(startsAt: Date, offsetMilliseconds: number): Date {
   return new Date(startsAt.getTime() + offsetMilliseconds);
+}
+
+/**
+ * 将 UTC 瞬间编码为项目约定的 PostgreSQL 无时区时间字符串。
+ *
+ * WHY：node-postgres 会按进程本地时区序列化 Date；显式 UTC 墙上时间可避免
+ * Asia/Shanghai 测试进程把 `timestamp without time zone` 写晚八小时。
+ */
+function toDatabaseUtcTimestamp(value: Date): string {
+  if (Number.isNaN(value.getTime())) {
+    throw new RangeError("运营 E2E 数据库时间无效");
+  }
+  return value.toISOString().replace("T", " ").replace("Z", "");
+}
+
+/**
+ * 将当天已流逝时间分成九段，确保全部夹具事实都早于冻结的数据库当前时刻。
+ *
+ * @param appDay 当前应用日及数据库事务开始时刻。
+ * @returns 单段毫秒数；当天开始不足九毫秒时拒绝创建不可信时间线。
+ */
+function getFixtureTimelineStep(appDay: FixtureAppDay): number {
+  const elapsedMilliseconds =
+    appDay.currentAt.getTime() - appDay.startsAt.getTime();
+  const stepMilliseconds = Math.floor(elapsedMilliseconds / 9);
+  if (stepMilliseconds < 1) {
+    throw new Error("运营 E2E 当前应用日尚不足以创建稳定事实时间线");
+  }
+  return stepMilliseconds;
 }
 
 /** 创建四种角色的真实 credential 账号。 */
 async function createFixtureUsers(
   client: PoolClient,
   password: string,
-  epoch: { appDate: string; startsAt: Date }
+  appDay: FixtureAppDay
 ): Promise<void> {
   const passwordHash = await hashPassword(password);
+  const timelineStep = getFixtureTimelineStep(appDay);
   for (const fixture of Object.values(OPERATIONS_E2E_USERS)) {
     const createdAt =
       fixture.id === OPERATIONS_E2E_USERS.user.id
-        ? offsetEpoch(epoch.startsAt, 60 * 60_000)
-        : offsetEpoch(epoch.startsAt, -10 * 86_400_000);
+        ? offsetInstant(appDay.startsAt, timelineStep)
+        : offsetInstant(appDay.startsAt, -10 * 86_400_000);
+    const databaseCreatedAt = toDatabaseUtcTimestamp(createdAt);
     await client.query(
       `
         insert into "user" (
           id, name, email, email_verified, role, banned, created_at, updated_at
         ) values ($1, $2, $3, true, $4, false, $5, $5)
       `,
-      [fixture.id, fixture.name, fixture.email, fixture.role, createdAt]
+      [
+        fixture.id,
+        fixture.name,
+        fixture.email,
+        fixture.role,
+        databaseCreatedAt,
+      ]
     );
     await client.query(
       `
@@ -191,10 +258,37 @@ async function createFixtureUsers(
         `operations-e2e-account-${fixture.role}`,
         fixture.id,
         passwordHash,
-        createdAt,
+        databaseCreatedAt,
       ]
     );
   }
+}
+
+/**
+ * 读取夹具创建时的当前应用自然日。
+ *
+ * @param client 专用测试库事务连接。
+ * @returns Asia/Shanghai 当前自然日及其对应 UTC 起点。
+ * @failure 数据库未返回有效行时终止夹具准备。
+ */
+async function readCurrentFixtureAppDay(
+  client: PoolClient
+): Promise<FixtureAppDay> {
+  const result = await client.query<FixtureAppDay>(`
+    select
+      to_char(
+        (now() at time zone 'Asia/Shanghai')::date,
+        'YYYY-MM-DD'
+      ) as "appDate",
+      (
+        ((now() at time zone 'Asia/Shanghai')::date)::timestamp
+        at time zone 'Asia/Shanghai'
+      ) as "startsAt",
+      now() as "currentAt"
+  `);
+  const appDay = result.rows[0];
+  if (!appDay) throw new Error("运营 E2E 当前应用自然日不可读");
+  return appDay;
 }
 
 /**
@@ -350,14 +444,32 @@ async function createFixtureExports(
  */
 async function createFixtureOperationsFacts(
   client: PoolClient,
-  epoch: { appDate: string; startsAt: Date }
+  appDay: FixtureAppDay
 ): Promise<void> {
   const userId = OPERATIONS_E2E_USERS.user.id;
-  const visitAt = offsetEpoch(epoch.startsAt, 90 * 60_000);
-  const imageAt = offsetEpoch(epoch.startsAt, 2 * 60 * 60_000);
-  const videoAt = offsetEpoch(epoch.startsAt, 3 * 60 * 60_000);
-  const orderCreatedAt = offsetEpoch(epoch.startsAt, 4 * 60 * 60_000);
-  const orderFulfilledAt = offsetEpoch(epoch.startsAt, 5 * 60 * 60_000);
+  const timelineStep = getFixtureTimelineStep(appDay);
+  const visitAt = offsetInstant(appDay.startsAt, 2 * timelineStep);
+  const imageAt = offsetInstant(appDay.startsAt, 3 * timelineStep);
+  const imageCompletedAt = offsetInstant(
+    imageAt,
+    Math.floor(timelineStep / 2)
+  );
+  const videoAt = offsetInstant(appDay.startsAt, 4 * timelineStep);
+  const videoCompletedAt = offsetInstant(
+    videoAt,
+    Math.floor(timelineStep / 2)
+  );
+  const orderCreatedAt = offsetInstant(appDay.startsAt, 5 * timelineStep);
+  const orderConfirmedAt = offsetInstant(appDay.startsAt, 6 * timelineStep);
+  const orderFulfilledAt = offsetInstant(appDay.startsAt, 7 * timelineStep);
+  const databaseVisitAt = toDatabaseUtcTimestamp(visitAt);
+  const databaseImageAt = toDatabaseUtcTimestamp(imageAt);
+  const databaseImageCompletedAt = toDatabaseUtcTimestamp(imageCompletedAt);
+  const databaseVideoAt = toDatabaseUtcTimestamp(videoAt);
+  const databaseVideoCompletedAt = toDatabaseUtcTimestamp(videoCompletedAt);
+  const databaseOrderCreatedAt = toDatabaseUtcTimestamp(orderCreatedAt);
+  const databaseOrderConfirmedAt = toDatabaseUtcTimestamp(orderConfirmedAt);
+  const databaseOrderFulfilledAt = toDatabaseUtcTimestamp(orderFulfilledAt);
 
   await client.query(
     `
@@ -365,7 +477,7 @@ async function createFixtureOperationsFacts(
         user_id, app_date, first_visited_at, created_at
       ) values ($1, $2, $3, $3)
     `,
-    [userId, epoch.appDate, visitAt]
+    [userId, appDay.appDate, databaseVisitAt]
   );
   await client.query(
     `
@@ -377,7 +489,7 @@ async function createFixtureOperationsFacts(
         'operations-e2e-image-model', 'completed', 12.34, $2, $3
       )
     `,
-    [userId, imageAt, offsetEpoch(imageAt, 30_000)]
+    [userId, databaseImageAt, databaseImageCompletedAt]
   );
   await client.query(
     `
@@ -392,7 +504,7 @@ async function createFixtureOperationsFacts(
         12, '16:9', '720p', 'completed', 'completed', 4.56, $2, $3, $3
       )
     `,
-    [userId, videoAt, offsetEpoch(videoAt, 60_000)]
+    [userId, databaseVideoAt, databaseVideoCompletedAt]
   );
   await client.query(
     `
@@ -403,7 +515,7 @@ async function createFixtureOperationsFacts(
         ('image', 'operations-e2e-image-task', $1, $2, 3, 0, $2),
         ('video', 'operations-e2e-video-task', $1, $3, 0, 12, $3)
     `,
-    [userId, imageAt, videoAt]
+    [userId, databaseImageAt, databaseVideoAt]
   );
   await client.query(
     `
@@ -416,7 +528,7 @@ async function createFixtureOperationsFacts(
         ($1, 'video_generation', 'operations-e2e-video-task', $3,
           4.56, 0, 4.56, $3, $3)
     `,
-    [userId, imageAt, videoAt]
+    [userId, databaseImageAt, databaseVideoAt]
   );
   await client.query(
     `
@@ -430,7 +542,7 @@ async function createFixtureOperationsFacts(
         200.00, '{}'::json, 'operations-e2e-provider-trade', $3, $2, $3
       )
     `,
-    [userId, orderCreatedAt, orderFulfilledAt]
+    [userId, databaseOrderCreatedAt, databaseOrderFulfilledAt]
   );
   await client.query(
     `
@@ -448,7 +560,11 @@ async function createFixtureOperationsFacts(
           'fulfillment_succeeded', 'operations-e2e-payment-fulfilled', $3, $3,
           'server_generated', 'fixture')
     `,
-    [orderCreatedAt, offsetEpoch(orderCreatedAt, 30 * 60_000), orderFulfilledAt]
+    [
+      databaseOrderCreatedAt,
+      databaseOrderConfirmedAt,
+      databaseOrderFulfilledAt,
+    ]
   );
 }
 
@@ -491,11 +607,13 @@ export async function seedOperationsE2EFixture(
   try {
     await client.query("begin");
     await requireFixtureSchema(client);
+    await requireNoUnexpectedUsers(client);
     await removeFixtureUsers(client);
     const epoch = await ensureFixtureEpoch(client);
-    await createFixtureUsers(client, environment.password, epoch);
+    const appDay = await readCurrentFixtureAppDay(client);
+    await createFixtureUsers(client, environment.password, appDay);
     await ensureAnalyticsReadModelsReady(client);
-    await createFixtureOperationsFacts(client, epoch);
+    await createFixtureOperationsFacts(client, appDay);
     await configureFixtureStorage(client, environment);
     await createFixtureExports(client, epoch, environment);
     await client.query("commit");

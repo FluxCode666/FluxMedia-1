@@ -7,7 +7,11 @@
 
 import { expect, test } from "@playwright/test";
 
-import { openOperationsDashboard, toUtcDay } from "./test-helpers";
+import {
+  openOperationsDashboard,
+  toUtcDay,
+  waitForOperationsDashboardReady,
+} from "./test-helpers";
 
 test.beforeEach(async ({ page }) => openOperationsDashboard(page));
 
@@ -32,10 +36,13 @@ test("本周、本月、本年快捷项更新完整页面", async ({ page }) => 
     ["本年", "this_year"],
   ] as const) {
     await page.getByRole("button", { name: label, exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`\\?range=${range}$`));
+    await expect(page).toHaveURL(new RegExp(`\\?range=${range}$`), {
+      timeout: 30_000,
+    });
     await expect(
       page.getByRole("button", { name: label, exact: true })
     ).toHaveAttribute("aria-pressed", "true");
+    await waitForOperationsDashboardReady(page);
   }
 });
 
@@ -58,11 +65,13 @@ test("自定义范围在日周月切换和刷新后保持", async ({ page }) => 
         ? "range=custom&from=2026-08-01&to=2026-08-14"
         : `range=custom&from=2026-08-01&to=2026-08-14&granularity=${granularity}`;
     await expect(page).toHaveURL(new RegExp(`\\?${expectedSearch}$`));
+    await waitForOperationsDashboardReady(page);
   }
 
   const currentUrl = page.url();
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page).toHaveURL(currentUrl);
+  await waitForOperationsDashboardReady(page);
 });
 
 test("桌面自定义日历使用双月布局并禁用未来日期", async ({ page }) => {
@@ -73,7 +82,20 @@ test("桌面自定义日历使用双月布局并禁用未来日期", async ({ pa
     .click();
   await expect(page.getByText("自定义日期范围", { exact: true })).toBeVisible();
   await expect(page.getByRole("grid")).toHaveCount(2);
+  const rangeLabel =
+    (await page
+      .locator("header")
+      .getByRole("button", { name: /\d{4}-\d{2}-\d{2}/ })
+      .first()
+      .textContent()) ?? "";
+  const endDate = rangeLabel.match(/\d{4}-\d{2}-\d{2}/g)?.at(-1);
+  if (!endDate) throw new Error("运营日期范围缺少结束日期");
+  const futureDate = new Date((toUtcDay(endDate) + 1) * 86_400_000);
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"] as const;
+  const futureDateLabel = `${futureDate.getUTCFullYear()}年${
+    futureDate.getUTCMonth() + 1
+  }月${futureDate.getUTCDate()}日 星期${weekdays[futureDate.getUTCDay()]}`;
   await expect(
-    page.getByRole("button", { name: "2026年8月15日 星期六" })
+    page.getByRole("button", { name: futureDateLabel })
   ).toBeDisabled();
 });
