@@ -11,8 +11,10 @@ import {
   applyOperationsDetailFailure,
   applyOperationsDetailPage,
   beginOperationsDetailRequest,
+  createOperationsDetailContext,
   createOperationsDetailRequestGate,
   createOperationsDetailState,
+  isOperationsDetailStateVisible,
 } from "./operations-detail-sheet-state";
 
 const query: OperationsDashboardQueryInput = {
@@ -20,6 +22,14 @@ const query: OperationsDashboardQueryInput = {
   range: { kind: "default" },
 };
 const usersSelection = { module: "growth", detail: "users" } as const;
+const activitySelection = {
+  module: "growth",
+  detail: "login_activity",
+} as const;
+const customQuery: OperationsDashboardQueryInput = {
+  granularity: "week",
+  range: { kind: "custom", from: "2026-01-01", to: "2026-08-14" },
+};
 
 function createPage(
   userId: string,
@@ -138,5 +148,61 @@ describe("operations detail sheet state", () => {
 
     expect(gate.isLatest(usersRequest)).toBe(false);
     expect(gate.isLatest(activityRequest)).toBe(true);
+  });
+
+  it("仅在打开且 state 与当前查询和 selection 一致时暴露旧页", () => {
+    const ready = applyOperationsDetailPage(
+      beginOperationsDetailRequest(
+        createOperationsDetailState(),
+        query,
+        usersSelection,
+        false
+      ),
+      createPage("user-1", null),
+      false
+    );
+
+    expect(
+      isOperationsDetailStateVisible(
+        ready,
+        true,
+        createOperationsDetailContext(
+          { granularity: "day", range: { kind: "default" } },
+          { module: "growth", detail: "users" }
+        )
+      )
+    ).toBe(true);
+    expect(
+      isOperationsDetailStateVisible(
+        ready,
+        true,
+        createOperationsDetailContext(customQuery, usersSelection)
+      )
+    ).toBe(false);
+    expect(
+      isOperationsDetailStateVisible(
+        ready,
+        true,
+        createOperationsDetailContext(query, activitySelection)
+      )
+    ).toBe(false);
+    expect(
+      isOperationsDetailStateVisible(
+        ready,
+        false,
+        createOperationsDetailContext(query, usersSelection)
+      )
+    ).toBe(false);
+  });
+
+  it("关闭会使进行中请求失效且同一 selection 重开只承认新请求", () => {
+    const gate = createOperationsDetailRequestGate();
+    const closingRequest = gate.begin();
+
+    gate.invalidate();
+    const reopenedRequest = gate.begin();
+
+    expect(gate.isLatest(closingRequest)).toBe(false);
+    expect(gate.isLatest(reopenedRequest)).toBe(true);
   });
 });

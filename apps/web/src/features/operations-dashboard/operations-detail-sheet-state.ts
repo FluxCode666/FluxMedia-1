@@ -19,7 +19,14 @@ export type OperationsDetailFailure =
   | "timeout"
   | "unavailable";
 
+export type OperationsDetailContext = {
+  key: string;
+  query: OperationsDashboardQueryInput;
+  selection: OperationsDetailSelection;
+};
+
 export type OperationsDetailSheetState = {
+  contextKey: string | null;
   query: OperationsDashboardQueryInput | null;
   selection: OperationsDetailSelection | null;
   range: Record<string, unknown> | null;
@@ -32,6 +39,7 @@ export type OperationsDetailSheetState = {
 /** 创建未选择明细的初始状态。 */
 export function createOperationsDetailState(): OperationsDetailSheetState {
   return {
+    contextKey: null,
     query: null,
     selection: null,
     range: null,
@@ -42,6 +50,46 @@ export function createOperationsDetailState(): OperationsDetailSheetState {
   };
 }
 
+/**
+ * 从封闭查询与 selection 派生值稳定的请求上下文。
+ *
+ * @param query 当前已应用的运营查询。
+ * @param selection 当前明细入口。
+ * @returns 包含结构化输入与稳定比较键的上下文。
+ */
+export function createOperationsDetailContext(
+  query: OperationsDashboardQueryInput,
+  selection: OperationsDetailSelection
+): OperationsDetailContext {
+  const rangeParts =
+    query.range.kind === "custom"
+      ? [query.range.kind, query.range.from, query.range.to]
+      : [query.range.kind];
+  const selectionParts =
+    selection.module === "growth" && selection.detail === "retention_cohorts"
+      ? [
+          selection.module,
+          selection.detail,
+          selection.cohortDate,
+          selection.retentionDay,
+        ]
+      : [selection.module, selection.detail];
+  return {
+    key: JSON.stringify([query.granularity, ...rangeParts, ...selectionParts]),
+    query,
+    selection,
+  };
+}
+
+/** 仅允许打开的 Sheet 展示与当前请求上下文完全一致的状态。 */
+export function isOperationsDetailStateVisible(
+  state: OperationsDetailSheetState,
+  open: boolean,
+  context: OperationsDetailContext
+): boolean {
+  return open && state.contextKey === context.key;
+}
+
 /** 标记一次首屏或 cursor 请求，继续加载时保留现有页。 */
 export function beginOperationsDetailRequest(
   state: OperationsDetailSheetState,
@@ -49,15 +97,18 @@ export function beginOperationsDetailRequest(
   selection: OperationsDetailSelection,
   append: boolean
 ): OperationsDetailSheetState {
+  const contextKey = createOperationsDetailContext(query, selection).key;
   return append
     ? {
         ...state,
+        contextKey,
         query,
         selection,
         status: "loading_more",
         error: null,
       }
     : {
+        contextKey,
         query,
         selection,
         range: null,
@@ -100,6 +151,7 @@ export function applyOperationsDetailFailure(
 /** 生成单调请求号，使快速切换 selection 时只有最新响应可以提交。 */
 export function createOperationsDetailRequestGate(): {
   begin: () => number;
+  invalidate: () => void;
   isLatest: (requestId: number) => boolean;
 } {
   let latestRequestId = 0;
@@ -107,6 +159,10 @@ export function createOperationsDetailRequestGate(): {
     begin() {
       latestRequestId += 1;
       return latestRequestId;
+    },
+    /** 递增请求号，使关闭前所有仍在等待的响应永久失效。 */
+    invalidate() {
+      latestRequestId += 1;
     },
     isLatest(requestId) {
       return requestId === latestRequestId;

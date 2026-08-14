@@ -33,8 +33,10 @@ import {
   applyOperationsDetailFailure,
   applyOperationsDetailPage,
   beginOperationsDetailRequest,
+  createOperationsDetailContext,
   createOperationsDetailRequestGate,
   createOperationsDetailState,
+  isOperationsDetailStateVisible,
   type OperationsDetailFailure,
 } from "./operations-detail-sheet-state";
 
@@ -85,27 +87,44 @@ export function OperationsDetailSheet({
   const [state, setState] = useState(createOperationsDetailState);
   const stateRef = useRef(state);
   const requestGate = useRef(createOperationsDetailRequestGate());
+  const context = useMemo(
+    () => (selection ? createOperationsDetailContext(query, selection) : null),
+    [query, selection]
+  );
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
+  /** 立即隐藏已加载页并让关闭前的所有异步响应失效。 */
+  const clearVisibleState = useCallback((): void => {
+    requestGate.current.invalidate();
+    const clearedState = createOperationsDetailState();
+    stateRef.current = clearedState;
+    setState(clearedState);
+  }, []);
+
   /** 读取第一页或签名 cursor 页，响应提交前再次校验当前 selection。 */
   const loadPage = useCallback(
     async (append: boolean): Promise<void> => {
-      if (!selection) return;
+      if (!context) return;
       const requestId = requestGate.current.begin();
       const cursor = append ? stateRef.current.nextCursor : null;
       setState((current) =>
-        beginOperationsDetailRequest(current, query, selection, append)
+        beginOperationsDetailRequest(
+          current,
+          context.query,
+          context.selection,
+          append
+        )
       );
       let result:
         | { data?: unknown; serverError?: unknown; validationErrors?: unknown }
         | undefined;
       try {
         result = await getOperationsDetailAction({
-          ...query,
-          selection,
+          ...context.query,
+          selection: context.selection,
           limit: PAGE_SIZE,
           ...(cursor ? { cursor } : {}),
         });
@@ -124,7 +143,7 @@ export function OperationsDetailSheet({
         return;
       }
       try {
-        const page = parseOperationsDetailPage(result.data, selection);
+        const page = parseOperationsDetailPage(result.data, context.selection);
         setState((current) => applyOperationsDetailPage(current, page, append));
       } catch {
         setState((current) =>
@@ -132,13 +151,26 @@ export function OperationsDetailSheet({
         );
       }
     },
-    [query, selection]
+    [context]
   );
 
   useEffect(() => {
-    if (!open || !selection) return;
+    if (!open || !context) {
+      clearVisibleState();
+      return;
+    }
     void loadPage(false);
-  }, [loadPage, open, selection]);
+    return () => requestGate.current.invalidate();
+  }, [clearVisibleState, context, loadPage, open]);
+
+  /** 受控关闭发生时同步清空可见状态，再通知父组件移除 selection。 */
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean): void => {
+      if (!nextOpen) clearVisibleState();
+      onOpenChange(nextOpen);
+    },
+    [clearVisibleState, onOpenChange]
+  );
 
   const labels = useMemo<OperationsDetailTableLabels>(
     () => ({
@@ -267,8 +299,11 @@ export function OperationsDetailSheet({
     [selection, t]
   );
 
+  const stateIsVisible = context
+    ? isOperationsDetailStateVisible(state, open, context)
+    : false;
   const tableModel = useMemo(() => {
-    if (!state.selection || !state.range) return null;
+    if (!stateIsVisible || !state.selection || !state.range) return null;
     return buildOperationsDetailTableModel(
       createAccumulatedPage(
         state.selection,
@@ -282,6 +317,7 @@ export function OperationsDetailSheet({
   }, [
     labels,
     locale,
+    stateIsVisible,
     state.nextCursor,
     state.range,
     state.rows,
@@ -290,12 +326,23 @@ export function OperationsDetailSheet({
 
   const title = tableModel?.title ?? t("detail.defaultTitle");
   const description = tableModel?.description ?? t("detail.defaultDescription");
-  const isInitialLoading = state.status === "loading";
-  const isLoadingMore = state.status === "loading_more";
-  const errorMessage = state.error ? t(`detail.failure.${state.error}`) : null;
+  const hasActiveContext = open && context !== null;
+  const visibleStatus = stateIsVisible
+    ? state.status
+    : hasActiveContext
+      ? "loading"
+      : "idle";
+  const visibleRows = stateIsVisible ? state.rows : [];
+  const visibleNextCursor = stateIsVisible ? state.nextCursor : null;
+  const visibleError = stateIsVisible ? state.error : null;
+  const isInitialLoading = visibleStatus === "loading";
+  const isLoadingMore = visibleStatus === "loading_more";
+  const errorMessage = visibleError
+    ? t(`detail.failure.${visibleError}`)
+    : null;
 
   return (
-    <Sheet onOpenChange={onOpenChange} open={open}>
+    <Sheet onOpenChange={handleOpenChange} open={open}>
       <SheetContent
         aria-busy={isInitialLoading || isLoadingMore}
         className="flex h-dvh w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:w-[min(66.666vw,72rem)] sm:max-w-none"
@@ -316,12 +363,12 @@ export function OperationsDetailSheet({
             : isLoadingMore
               ? t("detail.loadingMore")
               : (errorMessage ??
-                (state.rows.length > 0
-                  ? t("detail.loaded", { count: state.rows.length })
+                (visibleRows.length > 0
+                  ? t("detail.loaded", { count: visibleRows.length })
                   : t("detail.empty")))}
         </div>
 
-        {errorMessage && state.rows.length > 0 ? (
+        {errorMessage && visibleRows.length > 0 ? (
           <div className="flex shrink-0 items-start gap-3 border-b bg-destructive/5 px-5 py-3 text-sm text-destructive sm:px-6">
             <TriangleAlert aria-hidden="true" className="mt-0.5 size-4" />
             <p className="flex-1">
@@ -339,7 +386,7 @@ export function OperationsDetailSheet({
               />
               {t("detail.loadingShort")}
             </div>
-          ) : state.status === "error" ? (
+          ) : visibleStatus === "error" ? (
             <div className="mx-auto flex min-h-64 max-w-md flex-col items-center justify-center px-6 text-center">
               <TriangleAlert
                 aria-hidden="true"
@@ -414,14 +461,14 @@ export function OperationsDetailSheet({
           ) : null}
         </div>
 
-        {tableModel && (state.nextCursor || errorMessage) ? (
+        {tableModel && (visibleNextCursor || errorMessage) ? (
           <footer className="flex shrink-0 items-center justify-between gap-3 border-t px-5 py-4 sm:px-6">
             <p className="text-xs text-muted-foreground">
               {t("detail.loadedShort", {
-                count: state.rows.length.toLocaleString(locale),
+                count: visibleRows.length.toLocaleString(locale),
               })}
             </p>
-            {state.nextCursor ? (
+            {visibleNextCursor ? (
               <Button
                 className="min-h-11"
                 disabled={isLoadingMore}
