@@ -136,7 +136,7 @@ import "./payment";
 // 推广码、归因与首充奖励看板
 import "./referrals";
 
-export { fulfillEpayTopUp } from "./credits";
+export { fulfillCreemTopUp, fulfillEpayTopUp } from "./credits";
 export {
   createOperationsExport,
   expireOperationsExports,

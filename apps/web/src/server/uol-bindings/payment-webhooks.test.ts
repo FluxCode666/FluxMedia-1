@@ -12,11 +12,15 @@ const mocks = vi.hoisted(() => {
     "postgres://test:test@127.0.0.1:5432/gpt2image_test";
   return {
     fulfillSuccessfulEpayPayment: vi.fn(),
+    fulfillSuccessfulCreemPayment: vi.fn(),
   };
 });
 
 vi.mock("@/features/payment/epay-fulfillment", () => ({
   fulfillSuccessfulEpayPayment: mocks.fulfillSuccessfulEpayPayment,
+}));
+vi.mock("@/features/payment/creem-fulfillment", () => ({
+  fulfillSuccessfulCreemPayment: mocks.fulfillSuccessfulCreemPayment,
 }));
 
 import "./payment-webhooks";
@@ -31,6 +35,23 @@ const input = {
   param: "signed-metadata",
 };
 
+const creemInput = {
+  checkoutId: "checkout-1",
+  requestId: "request-1",
+  customerId: "customer-1",
+  userId: "user-1",
+  paymentOrderId: "payment-order-1",
+  packageId: "package-1",
+  order: {
+    id: "creem-order-1",
+    amount: 1999,
+    currency: "USD",
+    productId: "product-1",
+  },
+  product: { id: "product-1", billingType: "onetime" },
+  createdAt: Date.parse("2026-08-13T03:30:00.000Z"),
+};
+
 describe("payment webhook bindings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -41,6 +62,27 @@ describe("payment webhook bindings", () => {
         outTradeNo: "order-1",
       },
     });
+    mocks.fulfillSuccessfulCreemPayment.mockResolvedValue(undefined);
+  });
+
+  it("Creem operation 只把规范化通知交给履约服务", async () => {
+    await expect(
+      invokeOperation("credits.fulfillCreemTopUp", creemInput, {
+        type: "webhook",
+        provider: "creem",
+      })
+    ).resolves.toEqual({ processed: true });
+
+    expect(mocks.fulfillSuccessfulCreemPayment).toHaveBeenCalledWith(
+      creemInput
+    );
+
+    await expect(
+      invokeOperation("credits.fulfillCreemTopUp", creemInput, {
+        type: "webhook",
+        provider: "epay",
+      })
+    ).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("Epay operation 重建可信 verify result 并调用现有履约服务", async () => {

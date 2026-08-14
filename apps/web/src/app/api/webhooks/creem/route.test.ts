@@ -1,8 +1,7 @@
 /**
- * Creem Webhook 订阅退役与冻结支付快照回归测试。
+ * Creem webhook 薄适配路由测试。
  *
- * 历史订阅事件必须在签名验证后稳定返回 2xx，且不查询或更新数据库、不发放积分。
- * 非法签名仍应在 ignored 分支之前被拒绝，防止伪造请求伪装成已退役事件。
+ * 使用方：Vitest；验证验签和事件过滤留在传输层，积分购买只以最小字段经 UOL 履约。
  */
 import type {
   CreemCheckoutCompletedData,
@@ -10,24 +9,18 @@ import type {
 } from "@repo/shared/payment/creem";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  constructRuntimeCreemEvent: vi.fn(),
-  headers: vi.fn(),
-  loggerInfo: vi.fn(),
-  logError: vi.fn(),
-  logEvent: vi.fn(),
-  grantCredits: vi.fn(),
-  dbUpdate: vi.fn(),
-  dbSelect: vi.fn(),
-  dbInsert: vi.fn(),
-  confirmPayment: vi.fn(),
-  rejectAmountMismatch: vi.fn(),
-  processFulfillment: vi.fn(),
-  getRuntimeCreditPackageById: vi.fn(),
-  getCreditPackageCurrency: vi.fn(),
-  getRuntimeSettingNumber: vi.fn(),
-  invokeReferralFirstPayment: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  process.env.DATABASE_URL ||=
+    "postgres://test:test@127.0.0.1:5432/gpt2image_test";
+  return {
+    constructRuntimeCreemEvent: vi.fn(),
+    headers: vi.fn(),
+    invokeOperation: vi.fn(),
+    ensureUolInitialized: vi.fn(),
+    loggerInfo: vi.fn(),
+    logError: vi.fn(),
+  };
+});
 
 vi.mock("next/headers", () => ({ headers: mocks.headers }));
 vi.mock("@repo/shared/api-logger", () => ({
@@ -42,89 +35,29 @@ vi.mock("@repo/shared/payment/creem", async () => {
     constructRuntimeCreemEvent: mocks.constructRuntimeCreemEvent,
   };
 });
+vi.mock("@repo/shared/uol", () => ({
+  invokeOperation: mocks.invokeOperation,
+}));
 vi.mock("@repo/shared/logger", () => ({
-  logger: { info: mocks.loggerInfo, error: vi.fn(), warn: vi.fn() },
+  logger: { info: mocks.loggerInfo },
   logError: mocks.logError,
-  logEvent: mocks.logEvent,
 }));
-vi.mock("@repo/database", () => ({
-  db: {
-    update: mocks.dbUpdate,
-    select: mocks.dbSelect,
-    insert: mocks.dbInsert,
-  },
-}));
-vi.mock("@repo/database/schema", () => ({
-  paymentOrder: {
-    id: "payment_order.id",
-    userId: "payment_order.user_id",
-    provider: "payment_order.provider",
-    purpose: "payment_order.purpose",
-    currency: "payment_order.currency",
-    amountMinor: "payment_order.amount_minor",
-    creditsAmount: "payment_order.credits_amount",
-    pricingSnapshot: "payment_order.pricing_snapshot",
-  },
-  user: {},
-}));
-vi.mock("@/features/payment/payment-lifecycle-service", () => ({
-  confirmPaymentAndCreateFulfillmentWorkItem: mocks.confirmPayment,
-  rejectCreemPaymentAmountMismatch: mocks.rejectAmountMismatch,
-}));
-vi.mock("@/features/payment/payment-fulfillment-service", () => ({
-  processPaymentFulfillmentOrder: mocks.processFulfillment,
-}));
-vi.mock("@repo/shared/credits/packages", () => ({
-  getCreditPackageCurrency: mocks.getCreditPackageCurrency,
-  getRuntimeCreditPackageById: mocks.getRuntimeCreditPackageById,
-}));
-vi.mock("@repo/shared/credits/core", () => ({
-  grantCredits: mocks.grantCredits,
-}));
-vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingNumber: mocks.getRuntimeSettingNumber,
-}));
-vi.mock("@/features/referrals/reward-fulfillment", () => ({
-  invokeReferralFirstPayment: mocks.invokeReferralFirstPayment,
+vi.mock("@/server/uol-init", () => ({
+  ensureUolInitialized: mocks.ensureUolInitialized,
 }));
 
 import { POST } from "./route";
 
-function subscriptionEvent(
-  eventType: CreemWebhookEvent["eventType"]
-): CreemWebhookEvent {
-  return {
-    id: `evt-${eventType}`,
-    eventType,
-    created_at: Date.now(),
-    object: {
-      id: "sub-1",
-      status: "active",
-      product: "prod-1",
-      customer: "cus-1",
-      current_period_start_date: "2026-01-01T00:00:00.000Z",
-      current_period_end_date: "2026-02-01T00:00:00.000Z",
-      cancel_at_period_end: false,
-    },
-  };
-}
-
-function request(body = "{}") {
-  return new Request("https://media.example.test/api/webhooks/creem", {
-    method: "POST",
-    body,
-  });
-}
-
-/** 构造一条带本地订单 ID 的 Creem 积分包成功通知。 */
+/** 构造一条已验签的 Creem 积分购买事件。 */
 function creditPurchaseEvent(): CreemWebhookEvent {
   return {
     id: "evt-credit",
     eventType: "checkout.completed",
-    created_at: Date.now(),
+    created_at: Date.parse("2026-08-13T03:30:00.000Z"),
     object: {
       id: "checkout-1",
       object: "checkout",
+      request_id: "request-1",
       customer: {
         id: "customer-1",
         email: "user@example.test",
@@ -145,306 +78,130 @@ function creditPurchaseEvent(): CreemWebhookEvent {
         status: "paid",
         type: "onetime",
       },
+      product: {
+        id: "product-1",
+        name: "Credits",
+        price: 1999,
+        currency: "USD",
+        billing_type: "onetime",
+        billing_period: "once",
+      },
       status: "completed",
     } satisfies CreemCheckoutCompletedData,
   };
 }
 
-/** 构造一条升级前创建、没有本地支付订单 ID 的 Creem 积分包通知。 */
-function legacyCreditPurchaseEvent(): CreemWebhookEvent {
-  const event = creditPurchaseEvent();
-  if (event.eventType === "checkout.completed") {
-    const checkout = event.object as CreemCheckoutCompletedData;
-    delete checkout.metadata?.paymentOrderId;
-    if (checkout.metadata) checkout.metadata.packageId = "package-legacy";
-  }
-  return event;
+/** 构造已验签的退役订阅事件。 */
+function subscriptionEvent(): CreemWebhookEvent {
+  return {
+    id: "evt-subscription",
+    eventType: "subscription.active",
+    created_at: Date.now(),
+    object: {
+      id: "sub-1",
+      status: "active",
+      product: "product-1",
+      customer: "customer-1",
+      current_period_start_date: "2026-08-01T00:00:00.000Z",
+      current_period_end_date: "2026-09-01T00:00:00.000Z",
+      cancel_at_period_end: false,
+    },
+  };
 }
 
-/** 把 db.select 链配置为返回订单创建时冻结的旧报价。 */
-function mockFrozenPaymentOrder(input: { legacy?: boolean } = {}) {
-  const pricingSnapshot: Record<string, unknown> = {
-    packageId: "package-original",
-    quantity: 1,
-    currency: "USD",
-    amountMinor: 1999,
-    creditsAmount: 250,
-  };
-  if (!input.legacy) pricingSnapshot.creditsExpiresAt = null;
-  const limit = vi.fn().mockResolvedValue([
-    {
-      id: "order-1",
-      userId: "user-1",
-      provider: "creem",
-      purpose: "credit_package",
-      currency: "USD",
-      amountMinor: 1999,
-      creditsAmount: 250,
-      pricingSnapshot,
-    },
-  ]);
-  const where = vi.fn().mockReturnValue({ limit });
-  const from = vi.fn().mockReturnValue({ where });
-  mocks.dbSelect.mockReturnValue({ from });
+/** 创建 Creem webhook POST 请求。 */
+function request(body = "signed-payload"): Request {
+  return new Request("https://media.example.test/api/webhooks/creem", {
+    method: "POST",
+    body,
+  });
 }
 
 describe("POST /api/webhooks/creem", () => {
   beforeEach(() => {
-    mocks.constructRuntimeCreemEvent.mockReset();
-    mocks.headers.mockReset();
-    mocks.loggerInfo.mockReset();
-    mocks.logError.mockReset();
-    mocks.logEvent.mockReset();
-    mocks.grantCredits.mockReset();
-    mocks.dbUpdate.mockReset();
-    mocks.dbSelect.mockReset();
-    mocks.dbInsert.mockReset();
-    mocks.confirmPayment.mockReset();
-    mocks.rejectAmountMismatch.mockReset();
-    mocks.processFulfillment.mockReset();
-    mocks.getRuntimeCreditPackageById.mockReset();
-    mocks.getCreditPackageCurrency.mockReset();
-    mocks.getRuntimeSettingNumber.mockReset();
-    mocks.invokeReferralFirstPayment.mockReset();
+    vi.clearAllMocks();
     mocks.headers.mockResolvedValue({ get: () => "valid-signature" });
-    mocks.dbUpdate.mockReturnValue({
-      set: () => ({ where: vi.fn().mockResolvedValue(undefined) }),
-    });
+    mocks.constructRuntimeCreemEvent.mockResolvedValue(creditPurchaseEvent());
+    mocks.invokeOperation.mockResolvedValue({ processed: true });
   });
 
-  it.each([
-    "subscription.active",
-    "subscription.renewed",
-    "subscription.paid",
-    "subscription.canceled",
-    "subscription.past_due",
-    "subscription.paused",
-    "subscription.expired",
-  ])("已验签的 %s 事件返回 2xx 且无任何履约副作用", async (eventType) => {
-    mocks.constructRuntimeCreemEvent.mockResolvedValue(
-      subscriptionEvent(eventType as CreemWebhookEvent["eventType"])
-    );
-
-    const response = await POST(request("signed-payload"));
+  it("积分购买只把最小规范化字段交给 Creem webhook operation", async () => {
+    const response = await POST(request());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ received: true });
-    expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(mocks.dbSelect).not.toHaveBeenCalled();
-    expect(mocks.dbInsert).not.toHaveBeenCalled();
-    expect(mocks.grantCredits).not.toHaveBeenCalled();
-    expect(mocks.logEvent).not.toHaveBeenCalled();
-    expect(mocks.loggerInfo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "creem",
-        eventType,
-        eventId: `evt-${eventType}`,
-      }),
-      "Ignored retired subscription webhook"
+    expect(mocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "credits.fulfillCreemTopUp",
+      {
+        checkoutId: "checkout-1",
+        requestId: "request-1",
+        customerId: "customer-1",
+        userId: "user-1",
+        paymentOrderId: "order-1",
+        packageId: "package-current",
+        order: {
+          id: "creem-order-1",
+          amount: 1999,
+          currency: "USD",
+          productId: "product-1",
+        },
+        product: { id: "product-1", billingType: "onetime" },
+        createdAt: Date.parse("2026-08-13T03:30:00.000Z"),
+      },
+      { type: "webhook", provider: "creem" }
     );
-    const loggedPayload = mocks.loggerInfo.mock.calls[0]?.[0] as Record<
+    const operationInput = mocks.invokeOperation.mock.calls[0]?.[1] as Record<
       string,
       unknown
     >;
-    expect(loggedPayload).not.toHaveProperty("payload");
-    expect(loggedPayload).not.toHaveProperty("signature");
+    expect(operationInput).not.toHaveProperty("email");
+    expect(operationInput).not.toHaveProperty("signature");
   });
 
-  it("合法但非积分充值的 checkout.completed 事件同样被忽略", async () => {
-    mocks.constructRuntimeCreemEvent.mockResolvedValue({
-      id: "evt-checkout",
-      eventType: "checkout.completed",
-      created_at: Date.now(),
-      object: {
-        id: "checkout-1",
-        object: "checkout",
-        customer: { id: "cus-1", email: "user@example.test" },
-        metadata: { type: "subscription" },
-        status: "completed",
-      },
-    } satisfies CreemWebhookEvent);
+  it("订阅和非积分 Checkout 返回 2xx 且不初始化 UOL", async () => {
+    mocks.constructRuntimeCreemEvent.mockResolvedValueOnce(subscriptionEvent());
+    expect((await POST(request())).status).toBe(200);
 
-    const response = await POST(request("signed-payload"));
+    const event = creditPurchaseEvent();
+    if (event.eventType === "checkout.completed") {
+      (event.object as CreemCheckoutCompletedData).metadata = {
+        type: "subscription",
+      };
+    }
+    mocks.constructRuntimeCreemEvent.mockResolvedValueOnce(event);
+    expect((await POST(request())).status).toBe(200);
 
-    expect(response.status).toBe(200);
-    expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(mocks.grantCredits).not.toHaveBeenCalled();
+    expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "creem" }),
+      "Ignored retired subscription webhook"
+    );
   });
 
-  it("非法签名返回 400 且不进入 ignored 分支", async () => {
-    mocks.headers.mockResolvedValue({ get: () => "invalid-signature" });
-    mocks.constructRuntimeCreemEvent.mockRejectedValue(
+  it("缺少或非法签名返回 400 且不调用 UOL", async () => {
+    mocks.headers.mockResolvedValueOnce({ get: () => null });
+    expect((await POST(request())).status).toBe(400);
+
+    mocks.constructRuntimeCreemEvent.mockRejectedValueOnce(
       new Error("Invalid webhook signature")
     );
+    expect((await POST(request())).status).toBe(400);
 
-    const response = await POST(request("forged-payload"));
-
-    expect(response.status).toBe(400);
-    expect(mocks.loggerInfo).not.toHaveBeenCalled();
-    expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(mocks.grantCredits).not.toHaveBeenCalled();
+    expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
-  it("管理员修改积分包后旧支付仍按订单冻结快照履约", async () => {
-    const event = creditPurchaseEvent();
-    event.created_at = Date.parse("2026-08-13T03:30:00.000Z");
-    mocks.constructRuntimeCreemEvent.mockResolvedValue(event);
-    mockFrozenPaymentOrder();
-    mocks.getRuntimeCreditPackageById.mockResolvedValue({
-      id: "package-original",
-      credits: 999,
-      price: 99.99,
-      currency: "EUR",
+  it("UOL 履约失败返回 500 触发 Creem 重投", async () => {
+    mocks.invokeOperation.mockRejectedValueOnce(new Error("fulfill failed"));
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(Error), {
+      source: "creem-webhook",
+      stage: "handler",
     });
-    mocks.confirmPayment.mockResolvedValue("created");
-    mocks.processFulfillment.mockResolvedValue({ status: "succeeded" });
-
-    const response = await POST(request("signed-payload"));
-
-    expect(response.status).toBe(200);
-    expect(mocks.getRuntimeCreditPackageById).not.toHaveBeenCalled();
-    expect(mocks.confirmPayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderId: "order-1",
-        userId: "user-1",
-        provider: "creem",
-        providerTradeNo: "creem-order-1",
-        eventSourceRef: "creem:creem-order-1",
-        occurredAt: new Date("2026-08-13T03:30:00.000Z"),
-        timestampSource: "provider",
-        fulfillment: expect.objectContaining({
-          creditsAmount: 250,
-          creditSourceRef: "creem:order-1",
-          metadata: expect.objectContaining({
-            packageId: "package-original",
-            reportedPackageId: "package-current",
-            amountMinor: 1999,
-            currency: "USD",
-          }),
-        }),
-      })
-    );
-    expect(mocks.processFulfillment).toHaveBeenCalledWith("order-1");
-  });
-
-  it("已验签的历史积分购买通知重放时沿用旧幂等键和首充履约路径", async () => {
-    mocks.constructRuntimeCreemEvent.mockResolvedValue(
-      legacyCreditPurchaseEvent()
-    );
-    mocks.getRuntimeCreditPackageById.mockResolvedValue({
-      id: "package-legacy",
-      name: "Legacy package",
-      description: "",
-      credits: 250,
-      price: 19.99,
-      currency: "USD",
-      maxQuantity: 1,
-    });
-    mocks.getCreditPackageCurrency.mockReturnValue("USD");
-    mocks.getRuntimeSettingNumber.mockResolvedValue(0);
-    mocks.grantCredits.mockResolvedValue({ batchId: "batch-legacy" });
-    mocks.invokeReferralFirstPayment.mockResolvedValue(undefined);
-
-    const firstResponse = await POST(request("signed-payload"));
-    const replayResponse = await POST(request("signed-payload"));
-
-    expect(firstResponse.status).toBe(200);
-    expect(replayResponse.status).toBe(200);
-    expect(mocks.dbSelect).not.toHaveBeenCalled();
-    expect(mocks.confirmPayment).not.toHaveBeenCalled();
-    expect(mocks.processFulfillment).not.toHaveBeenCalled();
-    expect(mocks.getRuntimeCreditPackageById).toHaveBeenCalledTimes(2);
-    expect(mocks.getRuntimeCreditPackageById).toHaveBeenCalledWith(
-      "package-legacy",
-      { includeHidden: true }
-    );
-    expect(mocks.grantCredits).toHaveBeenCalledTimes(2);
-    expect(mocks.grantCredits).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        userId: "user-1",
-        amount: 250,
-        sourceType: "purchase",
-        transactionType: "purchase",
-        expiresAt: null,
-        sourceRef: "credit_purchase:creem-order-1",
-      })
-    );
-    expect(mocks.grantCredits).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        sourceRef: "credit_purchase:creem-order-1",
-      })
-    );
-    expect(mocks.invokeReferralFirstPayment).toHaveBeenCalledTimes(2);
-    expect(mocks.getRuntimeSettingNumber).toHaveBeenCalledWith(
-      "CREDITS_EXPIRY_DAYS",
-      expect.any(Number),
-      { nonNegative: true }
-    );
-    expect(mocks.invokeReferralFirstPayment).toHaveBeenNthCalledWith(1, {
-      orderId: "creem-order-1",
-      inviteeUserId: "user-1",
-      firstPaymentCredits: 250,
-      provider: "creem",
-    });
-    expect(mocks.invokeReferralFirstPayment).toHaveBeenNthCalledWith(2, {
-      orderId: "creem-order-1",
-      inviteeUserId: "user-1",
-      firstPaymentCredits: 250,
-      provider: "creem",
-    });
-  });
-
-  it("旧订单缺少 creditsExpiresAt 时仍可按冻结金额和积分履约", async () => {
-    const event = creditPurchaseEvent();
-    event.created_at = Date.parse("2026-08-13T03:30:00.000Z");
-    mocks.constructRuntimeCreemEvent.mockResolvedValue(event);
-    mockFrozenPaymentOrder({ legacy: true });
-    mocks.confirmPayment.mockResolvedValue("created");
-
-    const response = await POST(request("signed-payload"));
-
-    expect(response.status).toBe(200);
-    expect(mocks.confirmPayment).toHaveBeenCalledWith(
-      expect.objectContaining({
-        occurredAt: new Date("2026-08-13T03:30:00.000Z"),
-        timestampSource: "provider",
-      })
-    );
-  });
-
-  it("金额硬拒时原子终结订单且不创建履约工作项", async () => {
-    const previous = process.env.CREEM_WEBHOOK_ENFORCE_AMOUNT;
-    process.env.CREEM_WEBHOOK_ENFORCE_AMOUNT = "true";
-    try {
-      const event = creditPurchaseEvent();
-      if (event.eventType === "checkout.completed") {
-        const checkout = event.object as CreemCheckoutCompletedData;
-        if (checkout.order) checkout.order.amount = 1;
-      }
-      mocks.constructRuntimeCreemEvent.mockResolvedValue(event);
-      mockFrozenPaymentOrder();
-      mocks.rejectAmountMismatch.mockResolvedValue(true);
-
-      const response = await POST(request("signed-payload"));
-
-      expect(response.status).toBe(200);
-      expect(mocks.rejectAmountMismatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orderId: "order-1",
-          userId: "user-1",
-          providerTradeNo: "creem-order-1",
-        })
-      );
-      expect(mocks.confirmPayment).not.toHaveBeenCalled();
-      expect(mocks.processFulfillment).not.toHaveBeenCalled();
-    } finally {
-      if (previous === undefined) {
-        delete process.env.CREEM_WEBHOOK_ENFORCE_AMOUNT;
-      } else {
-        process.env.CREEM_WEBHOOK_ENFORCE_AMOUNT = previous;
-      }
-    }
   });
 });

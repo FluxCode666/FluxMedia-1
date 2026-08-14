@@ -44,4 +44,36 @@ describe("credits payment webhook operations", () => {
       }).success
     ).toBe(false);
   });
+
+  it("Creem 履约只接受最小化的已验签积分购买通知", async () => {
+    const { fulfillCreemTopUp } = await loadCreditOperations();
+    const input = {
+      checkoutId: "checkout-1",
+      requestId: "request-1",
+      customerId: "customer-1",
+      userId: "user-1",
+      paymentOrderId: "payment-order-1",
+      packageId: "package-1",
+      order: {
+        id: "creem-order-1",
+        amount: 1999,
+        currency: "USD",
+        productId: "product-1",
+      },
+      product: { id: "product-1", billingType: "onetime" },
+      createdAt: Date.parse("2026-08-13T03:30:00.000Z"),
+    };
+
+    expect(fulfillCreemTopUp.access).toEqual({
+      kind: "webhook",
+      provider: "creem",
+    });
+    expect(fulfillCreemTopUp.input.safeParse(input).success).toBe(true);
+    expect(
+      fulfillCreemTopUp.input.safeParse({
+        ...input,
+        raw: { signature: "secret" },
+      }).success
+    ).toBe(false);
+  });
 });

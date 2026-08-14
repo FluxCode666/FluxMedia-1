@@ -1091,3 +1091,51 @@ export const fulfillEpayTopUp = defineOperation({
     throw new Error("credits.fulfillEpayTopUp must be bound at app level");
   },
 });
+
+// ---------------------------------------------------------------------------
+// 28. credits.fulfillCreemTopUp - 履约验签后的 Creem Checkout 通知
+// ---------------------------------------------------------------------------
+export const fulfillCreemTopUp = defineOperation({
+  name: "credits.fulfillCreemTopUp",
+  domain: "credits",
+  title: "Fulfill Creem Credit Top-up",
+  description:
+    "履约已通过 Creem HMAC 验签的积分购买 Checkout。统一接口只接收订单校验所需" +
+    "的最小字段；执行层处理历史通知、冻结快照、金额门闩和持久履约工作项。",
+  input: z
+    .object({
+      checkoutId: z.string().trim().min(1).max(255),
+      requestId: z.string().trim().min(1).max(255).optional(),
+      customerId: z.string().trim().min(1).max(255),
+      userId: z.string().trim().min(1).max(255).optional(),
+      paymentOrderId: z.string().trim().min(1).max(255).optional(),
+      packageId: z.string().trim().min(1).max(255).optional(),
+      order: z
+        .object({
+          id: z.string().trim().min(1).max(255),
+          amount: z.number().finite().nonnegative(),
+          currency: z.string().trim().min(1).max(16),
+          productId: z.string().trim().min(1).max(255).optional(),
+        })
+        .strict()
+        .optional(),
+      product: z
+        .object({
+          id: z.string().trim().min(1).max(255),
+          billingType: z.string().trim().min(1).max(64).optional(),
+        })
+        .strict()
+        .optional(),
+      createdAt: z.number().finite(),
+    })
+    .strict(),
+  output: z.object({ processed: z.literal(true) }).strict(),
+  access: { kind: "webhook", provider: "creem" },
+  readOnly: false,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: ["billing"],
+  execute: async () => {
+    throw new Error("credits.fulfillCreemTopUp must be bound at app level");
+  },
+});

@@ -6,10 +6,15 @@
  */
 import type { EpayVerifyResult } from "@repo/shared/payment/epay";
 import { bindOperationExecute } from "@repo/shared/uol";
-import { fulfillEpayTopUp } from "@repo/shared/uol/operations";
+import {
+  fulfillCreemTopUp,
+  fulfillEpayTopUp,
+} from "@repo/shared/uol/operations";
 
+import { fulfillSuccessfulCreemPayment } from "@/features/payment/creem-fulfillment";
 import { fulfillSuccessfulEpayPayment } from "@/features/payment/epay-fulfillment";
 
+/** 将规范化 Epay operation 输入适配为现有已验签履约服务参数。 */
 bindOperationExecute(fulfillEpayTopUp, async (input) => {
   const verifyInfo: EpayVerifyResult = {
     ...input,
@@ -18,4 +23,10 @@ bindOperationExecute(fulfillEpayTopUp, async (input) => {
   };
   const result = await fulfillSuccessfulEpayPayment(verifyInfo, "epay-webhook");
   return { metadataType: result.metadata.type };
+});
+
+/** 将最小 Creem Checkout 通知交给领域履约服务。 */
+bindOperationExecute(fulfillCreemTopUp, async (input) => {
+  await fulfillSuccessfulCreemPayment(input);
+  return { processed: true };
 });
