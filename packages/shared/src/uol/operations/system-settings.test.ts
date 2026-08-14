@@ -6,7 +6,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SystemSettingValidationError } from "../../system-settings/errors";
 import { assertAccess } from "../access";
+import { invokeOperation } from "../invoke";
 
 const mocks = vi.hoisted(() => ({
   destroyGenerationPhotosByMaxCount: vi.fn(),
@@ -323,6 +325,61 @@ describe("通用系统设置 UOL", () => {
         "NEXT_PUBLIC_APP_NAME",
         "IMAGE_BACKEND_SCHEDULING_STRATEGY",
       ],
+    });
+  });
+
+  it("把设置值语义校验失败映射为可展示的 validation_error", async () => {
+    mocks.setSystemSettings.mockRejectedValue(
+      new SystemSettingValidationError("单次上传总量 MB", "不能大于 512")
+    );
+
+    await expect(
+      settingsUpdate.execute(
+        {
+          updates: [
+            {
+              key: "MEDIA_MAX_UPLOAD_SIZE_MB",
+              value: 513,
+            },
+          ],
+        },
+        superAdmin,
+        operationContext
+      )
+    ).rejects.toMatchObject({
+      name: "OperationError",
+      code: "validation_error",
+      message: "System setting validation failed",
+      details: {
+        fieldLabel: "单次上传总量 MB",
+        kind: "system_setting_validation",
+        reason: "不能大于 512",
+      },
+    });
+  });
+
+  it("不把数据库等未知错误伪装成可展示的参数错误", async () => {
+    mocks.setSystemSettings.mockRejectedValue(
+      new Error("sensitive database failure")
+    );
+
+    await expect(
+      invokeOperation(
+        "settings.update",
+        {
+          updates: [
+            {
+              key: "VIDEO_SUBMISSION_HTTP_TIMEOUT_SECONDS",
+              value: 30,
+            },
+          ],
+        },
+        superAdmin
+      )
+    ).rejects.toMatchObject({
+      code: "internal_error",
+      details: undefined,
+      message: "An unexpected error occurred",
     });
   });
 

@@ -6,6 +6,10 @@
  * 使用方：根 uol-bindings 聚合器；Worker 处理 binding 在同模块后续接入。
  */
 import { createHash, randomUUID } from "node:crypto";
+import {
+  assertImageMediaInputWithinPolicy,
+  type MediaInputPolicy,
+} from "@repo/shared/image-generation/media-contract";
 import { logError } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
@@ -45,6 +49,8 @@ import type {
 } from "@/features/image-generation/types";
 import { enqueueImageTask } from "@/server/media-task-queues";
 
+import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
+
 /*
  * 类型与恢复函数来自同一 Redis 租约模块；Worker 只重建已持久 token，
  * 不根据数据库快照自行制造新的准入槽。
@@ -81,10 +87,12 @@ export interface ImageGenerationReconciliationRecord {
 export interface ImageAsyncTaskBindingDependencies {
   repository: ImageAsyncTaskRepository;
   validateCallback(value: string): Promise<string>;
-  getMediaLimitsForUser(userId: string): Promise<{
-    limit: number;
-    effectiveSource: "system_default" | "user_override";
-  }>;
+  getMediaLimitsForUser(userId: string): Promise<
+    {
+      limit: number;
+      effectiveSource: "system_default" | "user_override";
+    } & MediaInputPolicy
+  >;
   resolveGroupSnapshot(input: {
     userId: string;
     apiKeyId: string;
@@ -491,6 +499,18 @@ export async function executeImageEnqueueAsyncBinding(
   const mediaLimits = await dependencies.getMediaLimitsForUser(
     principal.userId
   );
+  if (!existing) {
+    try {
+      assertImageMediaInputWithinPolicy(
+        normalizedInput.generationInput,
+        mediaLimits
+      );
+    } catch (error) {
+      const operationError = getMediaInputPolicyOperationError(error);
+      if (operationError) throw operationError;
+      throw error;
+    }
+  }
   const admissionToken =
     existing?.admissionLeaseToken ??
     createImageAsyncAdmissionToken(principal.userId, input.taskId);

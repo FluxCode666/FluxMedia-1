@@ -20,7 +20,7 @@ export const MEDIA_LIMIT_DEFAULTS = {
 export const MEDIA_LIMIT_HARD_MAX = {
   userConcurrency: 10_000,
   fileSizeMb: 200,
-  uploadSizeMb: 200,
+  uploadSizeMb: 512,
   editReferenceImages: 256,
 } as const;
 

@@ -27,6 +27,7 @@ import { invokeOperation, OperationError, type Principal } from "../../uol";
 import "../../uol/operations/moderation";
 import "../../uol/operations/system-settings";
 import type { ImageCreditOverrides } from "../../image-backend/group-image-pricing";
+import { getSystemSettingsUpdateUserMessage } from "../action-error";
 import type { getAdminSystemSettingsSnapshot } from "../index";
 import {
   importSystemSettingsFromEnv,
@@ -70,6 +71,18 @@ function throwModerationPolicyActionError(error: unknown): never {
     default:
       throw new ActionUserError("审核策略操作失败，请稍后重试");
   }
+}
+
+/**
+ * 把设置更新 UOL 错误转换为 next-safe-action 可直接展示的安全中文提示。
+ *
+ * @param error - invokeOperation 抛出的未知错误。
+ * @throws ActionUserError 仅对权限与可信设置校验失败返回用户提示；其他错误原样上抛。
+ */
+function throwSystemSettingsUpdateActionError(error: unknown): never {
+  const message = getSystemSettingsUpdateUserMessage(error);
+  if (!message) throw error;
+  throw new ActionUserError(message);
 }
 
 const settingUpdateSchema = z.object({
@@ -180,20 +193,24 @@ export const updateSystemSettingsAction = superAdminAction
     })
   )
   .action(async ({ parsedInput, ctx }) => {
-    const result = await invokeOperation<{
-      success: boolean;
-      changedKeys: string[];
-    }>(
-      "settings.update",
-      { updates: parsedInput.settings },
-      createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
-    );
+    try {
+      const result = await invokeOperation<{
+        success: boolean;
+        changedKeys: string[];
+      }>(
+        "settings.update",
+        { updates: parsedInput.settings },
+        createSystemSettingsPrincipal({ userId: ctx.userId, role: ctx.role })
+      );
 
-    return {
-      success: result.success,
-      changedKeys: result.changedKeys,
-      message: "系统设置已保存",
-    };
+      return {
+        success: result.success,
+        changedKeys: result.changedKeys,
+        message: "系统设置已保存",
+      };
+    } catch (error) {
+      throwSystemSettingsUpdateActionError(error);
+    }
   });
 
 /** 保存或恢复网站 Logo；地址契约、权限与缓存副作用统一由 UOL 持有。 */

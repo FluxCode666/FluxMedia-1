@@ -180,6 +180,11 @@ function createDependencies(task = createTask()) {
     getMediaLimitsForUser: vi.fn(async () => ({
       limit: 20,
       effectiveSource: "system_default" as const,
+      maxFileSizeMb: 5,
+      maxUploadSizeMb: 75,
+      maxEditReferenceImages: 16,
+      maxFileSizeBytes: 5 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
     })),
     resolveGroupSnapshot: vi.fn(async () => {
       calls.push("group");
@@ -247,6 +252,48 @@ const input = {
 };
 
 describe("image async task UOL bindings", () => {
+  it("新建异步任务前应用系统媒体大小策略", async () => {
+    const { dependencies, repository } = createDependencies();
+    vi.mocked(dependencies.getMediaLimitsForUser).mockResolvedValueOnce({
+      limit: 20,
+      effectiveSource: "system_default",
+      maxFileSizeMb: 4,
+      maxUploadSizeMb: 75,
+      maxEditReferenceImages: 16,
+      maxFileSizeBytes: 4 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
+    });
+    const oversizedInput = {
+      ...input,
+      generationInput: {
+        operation: "edit" as const,
+        prompt: "test image",
+        model: "gpt-image-2",
+        generationId: "generation-media-limit",
+        images: [
+          {
+            source: "storage" as const,
+            mimeType: "image/png" as const,
+            storageKey: "user-1/image-inputs/input.png",
+            storageBucket: "uploads",
+            byteLength: 5 * 1024 * 1024,
+          },
+        ],
+      },
+    };
+
+    await expect(
+      executeImageEnqueueAsyncBinding(
+        oversizedInput,
+        principal,
+        createContext(),
+        dependencies
+      )
+    ).rejects.toMatchObject({ code: "validation_error" });
+    expect(dependencies.acquireAdmission).not.toHaveBeenCalled();
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
   it("取得用户准入并持久化分组快照后才按快照优先级投递", async () => {
     const { calls, dependencies, repository } = createDependencies();
     const context = createContext();

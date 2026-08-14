@@ -174,6 +174,23 @@ describe("media limit UOL", () => {
     ).toBe(false);
   });
 
+  it("输出契约允许上传总量 512 MiB 并拒绝 513 MiB", () => {
+    expect(
+      mediaLimitsGetEffective.output.safeParse({
+        ...policy,
+        maxUploadSizeMb: 512,
+        maxUploadSizeBytes: 512 * 1024 * 1024,
+      }).success
+    ).toBe(true);
+    expect(
+      mediaLimitsGetEffective.output.safeParse({
+        ...policy,
+        maxUploadSizeMb: 513,
+        maxUploadSizeBytes: 513 * 1024 * 1024,
+      }).success
+    ).toBe(false);
+  });
+
   it("并发超限错误默认映射 429 且只包含安全 details", () => {
     const error = createConcurrencyLimitExceededError({
       limit: 20,

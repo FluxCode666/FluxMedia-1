@@ -645,6 +645,13 @@
       "when": 1786636800000,
       "tag": "0091_video_submission_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1786723200000,
+      "tag": "0092_media_upload_limit_512mb",
+      "breakpoints": true
     }
   ]
 }

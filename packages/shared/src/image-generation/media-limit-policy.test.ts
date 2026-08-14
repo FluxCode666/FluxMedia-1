@@ -36,7 +36,7 @@ describe("media limit policy", () => {
     ).toMatchObject({
       defaultUserConcurrency: 10_000,
       maxFileSizeMb: 200,
-      maxUploadSizeMb: 200,
+      maxUploadSizeMb: 512,
       maxEditReferenceImages: 256,
     });
   });
@@ -62,7 +62,7 @@ describe("media limit policy", () => {
       resolveMediaLimitPolicy({
         defaultUserConcurrency: "20.5",
         maxFileSizeMb: 12,
-        maxUploadSizeMb: 201,
+        maxUploadSizeMb: 513,
         maxEditReferenceImages: 32,
       })
     ).toMatchObject({

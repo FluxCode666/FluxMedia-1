@@ -151,7 +151,7 @@ const PUBLIC_VIDEO_MODEL = {
   configuredReachable: true,
   infrastructureLimits: {
     maxMediaInputCount: 256 as const,
-    maxMediaInputBytes: 209_715_200 as const,
+    maxMediaInputBytes: 536_870_912 as const,
   },
 };
 

@@ -380,7 +380,7 @@ export function ModelConfigurationDialog({
                     />
                     <p className="text-xs text-muted-foreground">
                       必须是正安全整数，不设业务硬上限；单次请求仍受 256 张和
-                      200 MB 基础设施限制。
+                      512 MB 基础设施限制。
                     </p>
                   </div>
                 ) : null}

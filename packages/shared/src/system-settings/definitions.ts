@@ -741,7 +741,7 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     category: "models",
     valueType: "number",
     min: 1,
-    max: 200,
+    max: 512,
     integer: true,
     defaultValue: 75,
   },

@@ -24,8 +24,12 @@ import { defineOperation } from "../registry";
 const mediaLimitOutputSchema = z
   .object({
     defaultUserConcurrency: z.number().int().min(1).max(10_000),
-    maxFileSizeMb: z.number().int().min(1).max(200),
-    maxUploadSizeMb: z.number().int().min(1).max(200),
+    maxFileSizeMb: z.number().int().min(1).max(MEDIA_LIMIT_HARD_MAX.fileSizeMb),
+    maxUploadSizeMb: z
+      .number()
+      .int()
+      .min(1)
+      .max(MEDIA_LIMIT_HARD_MAX.uploadSizeMb),
     maxEditReferenceImages: z.number().int().min(1).max(256),
     maxFileSizeBytes: z.number().int().positive(),
     maxUploadSizeBytes: z.number().int().positive(),

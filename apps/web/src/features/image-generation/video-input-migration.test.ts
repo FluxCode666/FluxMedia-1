@@ -24,6 +24,9 @@ import {
 } from "./video-input-migration";
 
 const CURRENT_BUCKET = "private-video-assets";
+const MEBIBYTE = 1024 * 1024;
+const MAX_FILE_BYTES = 200 * MEBIBYTE;
+const MAX_UPLOAD_BYTES = 512 * MEBIBYTE;
 
 /** 构造带合法 PNG 魔数且内容可区分的测试字节。 */
 function pngBytes(suffix: string): Buffer {
@@ -136,6 +139,90 @@ function createTask(reference: unknown): VideoInputMigrationTask {
 }
 
 describe("migrateVideoInputTask", () => {
+  it("历史输入保持单文件 200 MiB 并拒绝 512 MiB 总量再多一字节", async () => {
+    const harness = createHarness();
+
+    await expect(
+      migrateVideoInputTask(
+        createTask({
+          source: "remote",
+          mimeType: "image/png",
+          url: "https://images.example.test/oversized.png",
+          byteLength: MAX_FILE_BYTES + 1,
+        }),
+        harness.dependencies
+      )
+    ).rejects.toThrow("旧输入格式校验失败");
+
+    await expect(
+      migrateVideoInputTask(
+        {
+          id: "video-1",
+          userId: "user-1",
+          inputImageRefs: [
+            {
+              source: "remote",
+              mimeType: "image/png",
+              url: "https://images.example.test/1.png",
+              byteLength: MAX_FILE_BYTES,
+            },
+            {
+              source: "remote",
+              mimeType: "image/png",
+              url: "https://images.example.test/2.png",
+              byteLength: MAX_FILE_BYTES,
+            },
+            {
+              source: "remote",
+              mimeType: "image/png",
+              url: "https://images.example.test/3.png",
+              byteLength: MAX_UPLOAD_BYTES - MAX_FILE_BYTES * 2 + 1,
+            },
+          ],
+        },
+        harness.dependencies
+      )
+    ).rejects.toThrow("旧输入格式校验失败");
+    expect(harness.remoteReads).toEqual([]);
+  });
+
+  it("历史输入允许合计恰好 512 MiB 后才进入真实读取", async () => {
+    const harness = createHarness();
+    harness.dependencies.readRemote = async () => {
+      throw new Error("reached I/O");
+    };
+
+    await expect(
+      migrateVideoInputTask(
+        {
+          id: "video-1",
+          userId: "user-1",
+          inputImageRefs: [
+            {
+              source: "remote",
+              mimeType: "image/png",
+              url: "https://images.example.test/1.png",
+              byteLength: MAX_FILE_BYTES,
+            },
+            {
+              source: "remote",
+              mimeType: "image/png",
+              url: "https://images.example.test/2.png",
+              byteLength: MAX_FILE_BYTES,
+            },
+            {
+              source: "remote",
+              mimeType: "image/png",
+              url: "https://images.example.test/3.png",
+              byteLength: MAX_UPLOAD_BYTES - MAX_FILE_BYTES * 2,
+            },
+          ],
+        },
+        harness.dependencies
+      )
+    ).rejects.toThrow("第 1 个输入读取失败");
+  });
+
   it("已归一任务自有对象只验证且不改写数据库", async () => {
     const harness = createHarness();
     const storageKey =

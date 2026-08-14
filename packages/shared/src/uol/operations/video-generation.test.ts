@@ -335,7 +335,7 @@ describe("video generation operations", () => {
         ],
         limits: {
           maxMediaInputCount: 256,
-          maxMediaInputBytes: 209715200,
+          maxMediaInputBytes: 536870912,
         },
       }).success
     ).toBe(true);
@@ -360,7 +360,7 @@ describe("video generation operations", () => {
         ],
         limits: {
           maxMediaInputCount: 256,
-          maxMediaInputBytes: 209715200,
+          maxMediaInputBytes: 536870912,
         },
       }).success
     ).toBe(false);

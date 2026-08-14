@@ -71,6 +71,7 @@ import { enqueueVideoTask } from "@/server/media-task-queues";
 
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
 import { assertVideoModelEnabled } from "./video-model-availability";
+import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 
 /**
  * 数据库提交后最佳努力投递视频任务。
@@ -375,11 +376,16 @@ bindExecute(
       ReturnType<typeof prepareVideoTaskInputReferences>
     >;
     try {
+      const { mediaLimitService } = await import(
+        "@repo/shared/image-generation/media-limit-service"
+      );
+      const mediaLimits = await mediaLimitService.getForUser(principal.userId);
       preparation = await prepareVideoTaskInputReferences({
         taskId,
         userId: principal.userId,
         principalScope,
         manifest: inputManifest,
+        mediaLimits,
       });
       if (preparation.admission === "existing") {
         const raced = await getVideoGenerationById(taskId);
@@ -405,6 +411,8 @@ bindExecute(
       if (error instanceof VideoTaskStagingInProgressError) {
         throw new OperationError("not_ready", error.message);
       }
+      const mediaPolicyError = getMediaInputPolicyOperationError(error);
+      if (mediaPolicyError) throw mediaPolicyError;
       logError(error, {
         source: "video-input-preparation",
         taskId,

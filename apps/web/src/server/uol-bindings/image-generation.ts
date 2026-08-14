@@ -7,6 +7,10 @@
  */
 
 import type { GalleryListOutput } from "@repo/shared/image-generation/gallery-contract";
+import {
+  assertImageMediaInputWithinPolicy,
+  type MediaInputPolicy,
+} from "@repo/shared/image-generation/media-contract";
 import { logWarn } from "@repo/shared/logger";
 import type { OperationContext, Principal } from "@repo/shared/uol";
 import {
@@ -38,6 +42,8 @@ import type {
 } from "@/features/image-generation/types";
 import { extractExecuteRows } from "@/server/database-result";
 
+import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
+
 type ImageGenerateInput = ImageGenerateOperationInput;
 type ImageGenerateOutput = ImageGenerateOperationOutput;
 
@@ -49,10 +55,12 @@ const projectionDriftRowSchema = z.object({
 export interface ImageGenerationBindingDependencies {
   stageImageInputReferences: typeof stageImageInputReferences;
   runImageGenerationForUser: typeof runImageGenerationForUser;
-  getMediaLimitsForUser: (userId: string) => Promise<{
-    limit: number;
-    effectiveSource: "system_default" | "user_override";
-  }>;
+  getMediaLimitsForUser: (userId: string) => Promise<
+    {
+      limit: number;
+      effectiveSource: "system_default" | "user_override";
+    } & MediaInputPolicy
+  >;
   acquireImageGenerationAdmission: (input: {
     userId: string;
     userConcurrency: number;
@@ -198,6 +206,13 @@ export async function executeImageGenerateBinding(
     ? principal.apiKeyId
     : undefined;
   const mediaLimits = await dependencies.getMediaLimitsForUser(userId);
+  try {
+    assertImageMediaInputWithinPolicy(input, mediaLimits);
+  } catch (error) {
+    const operationError = getMediaInputPolicyOperationError(error);
+    if (operationError) throw operationError;
+    throw error;
+  }
   const admission = await dependencies.acquireImageGenerationAdmission({
     userId,
     userConcurrency: mediaLimits.limit,

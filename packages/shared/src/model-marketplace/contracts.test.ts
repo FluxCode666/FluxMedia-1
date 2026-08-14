@@ -457,7 +457,7 @@ describe("管理与公开 DTO", () => {
       configuredReachable: true,
       infrastructureLimits: {
         maxMediaInputCount: 256,
-        maxMediaInputBytes: 209_715_200,
+        maxMediaInputBytes: 536_870_912,
       },
     });
 

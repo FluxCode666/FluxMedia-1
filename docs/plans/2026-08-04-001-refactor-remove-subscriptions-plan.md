@@ -294,7 +294,7 @@ Phase B 在维护窗口先执行外部只读预检，再由 0082 在同一 DDL �
 
 ### Assumptions and Deferred Implementation Notes
 
-- 系统设置默认值采用当前安全运营口径：用户并发 `20`、单文件 `5 MB`、单次上传总量 `75 MB`、编辑参考图 `16`；硬上限分别为 `10000`、`200 MB`、`200 MB`、`256`。实现时必须通过定义文件的范围校验收敛非法输入。
+- 系统设置默认值采用当前安全运营口径：用户并发 `20`、单文件 `5 MB`、单次上传总量 `75 MB`、编辑参考图 `16`；硬上限分别为 `10000`、`200 MB`、`512 MB`、`256`。实现时必须通过定义文件的范围校验收敛非法输入。
 - 新增系统设置键使用 `IMAGE_GENERATION_DEFAULT_USER_CONCURRENCY`、`MEDIA_MAX_FILE_SIZE_MB`、`MEDIA_MAX_UPLOAD_SIZE_MB` 和 `IMAGE_EDIT_MAX_REFERENCE_IMAGES`。如果现有配置命名约定要求不同，只允许等价重命名并同步所有消费者和文档。
 - 用户覆盖字段建议命名为 `user.imageGenerationConcurrencyOverride`，数据库列为 `image_generation_concurrency_override`，允许 `NULL` 并校验 `1..10000`。
 - admission/claim 租约 TTL、续期间隔和恢复扫描的最终数值应沿用现有图片 claim/Redis TTL 的安全窗口，并在实现时通过时钟注入测试边界；同步与异步都必须续期，不得用永久 Redis 计数器替代有界租约。Lua acquire/renew 必须返回 Redis 服务端 expiry，renew 只能延长仍存在且 token 匹配的成员。

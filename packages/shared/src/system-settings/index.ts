@@ -1,3 +1,10 @@
+/**
+ * 系统设置运行时服务。
+ *
+ * 职责：统一读取、校验、持久化系统设置，并管理环境变量回退与两级缓存失效。
+ * 使用方：UOL 系统设置 operations、启动引导和各业务运行时配置读取器。
+ * 关键依赖：Drizzle 数据库、设置定义、Redis 可降级缓存及各专用业务 schema。
+ */
 import { db } from "@repo/database";
 import { systemSetting } from "@repo/database/schema";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -38,6 +45,7 @@ import {
   type SettingKey,
   SYSTEM_SETTING_DEFINITIONS,
 } from "./definitions";
+import { SystemSettingValidationError } from "./errors";
 import {
   resolveSiteLogoUrl,
   type SiteBranding,
@@ -348,6 +356,14 @@ export function getProcessSettingNumber(key: SettingKey, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/**
+ * 按设置定义把外部值收窄为可持久化值。
+ *
+ * @param definition - 已注册的设置定义。
+ * @param value - 来自管理页、环境变量或初始化流程的未知值。
+ * @returns 规范化后的 JSON 可持久化值；空字符串表示删除数据库覆盖。
+ * @throws SystemSettingValidationError 值违反类型、范围或专用业务 schema 时抛出。
+ */
 function coerceValue(definition: SettingDefinition, value: unknown) {
   if (definition.valueType === "boolean") {
     if (typeof value === "boolean") return value;
@@ -365,20 +381,29 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
     }
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
-      throw new Error(`${definition.label} 必须是有效数字`);
+      throw new SystemSettingValidationError(
+        definition.label,
+        "必须是有效数字"
+      );
     }
     if (definition.integer && !Number.isSafeInteger(numeric)) {
-      throw new Error(`${definition.label} 必须是整数`);
+      throw new SystemSettingValidationError(definition.label, "必须是整数");
     }
     // WHY: 经济/安全语义键（积分、价格、审核超时等）在 definitions.ts 声明了业务
     // 上下界；S-C1 已把写入收紧为 superAdminAction，此处补 per-key 范围闭区间钳制，
     // 拒绝负积分/负价格/0 超时/异常巨大值等会破坏经济或安全语义的脏值落库。
     // 未声明 min/max 的键行为不变。
     if (definition.min !== undefined && numeric < definition.min) {
-      throw new Error(`${definition.label} 不能小于 ${definition.min}`);
+      throw new SystemSettingValidationError(
+        definition.label,
+        `不能小于 ${definition.min}`
+      );
     }
     if (definition.max !== undefined && numeric > definition.max) {
-      throw new Error(`${definition.label} 不能大于 ${definition.max}`);
+      throw new SystemSettingValidationError(
+        definition.label,
+        `不能大于 ${definition.max}`
+      );
     }
     return numeric;
   }
@@ -392,21 +417,28 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
       try {
         parsedValue = JSON.parse(trimmed) as unknown;
       } catch {
-        throw new Error(`${definition.label} 必须是有效 JSON`);
+        throw new SystemSettingValidationError(
+          definition.label,
+          "必须是有效 JSON"
+        );
       }
     }
     if (definition.key === "DASHBOARD_SUPPORT_CONFIG") {
       const parsed = dashboardSupportConfigSchema.safeParse(parsedValue);
       if (!parsed.success) {
-        throw new Error(`${definition.label} 的字段或链接格式无效`);
+        throw new SystemSettingValidationError(
+          definition.label,
+          "字段或链接格式无效"
+        );
       }
       return parsed.data;
     }
     if (definition.key === "PAGINATION_PAGE_SIZE_OPTIONS") {
       const parsed = paginationPageSizeOptionsSchema.safeParse(parsedValue);
       if (!parsed.success) {
-        throw new Error(
-          `${definition.label} 必须是包含 20 的不重复整数数组，且每项位于 1 至 100`
+        throw new SystemSettingValidationError(
+          definition.label,
+          "必须是包含 20 的不重复整数数组，且每项位于 1 至 100"
         );
       }
       return parsed.data;
@@ -414,8 +446,9 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
     if (definition.key === REFERRAL_REWARD_CONFIG_SETTING_KEY) {
       const parsed = referralRewardConfigSchema.safeParse(parsedValue);
       if (!parsed.success) {
-        throw new Error(
-          `${definition.label} 必须包含 enabled、inviter 和 invitee 的有效奖励配置`
+        throw new SystemSettingValidationError(
+          definition.label,
+          "必须包含 enabled、inviter 和 invitee 的有效奖励配置"
         );
       }
       return parsed.data;
@@ -430,13 +463,17 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
       definition.key === GENERATIONS_BUCKET_SETTING_KEY)
   ) {
     // 逻辑别名由读取 Route 解释，不能成为真实存储目标；否则本地存储可形成自重定向。
-    throw new Error(`${definition.label} 不能使用系统保留名称`);
+    throw new SystemSettingValidationError(
+      definition.label,
+      "不能使用系统保留名称"
+    );
   }
   if (definition.key === "SITE_LOGO_URL" && text) {
     const parsed = siteLogoUrlSchema.safeParse(text);
     if (!parsed.success) {
-      throw new Error(
-        `${definition.label}仅支持站内根路径或不含账号凭据的 HTTPS 地址`
+      throw new SystemSettingValidationError(
+        definition.label,
+        "仅支持站内根路径或不含账号凭据的 HTTPS 地址"
       );
     }
     return parsed.data;
@@ -444,7 +481,7 @@ function coerceValue(definition: SettingDefinition, value: unknown) {
   if (definition.valueType === "select") {
     const allowed = definition.options?.map((option) => option.value) ?? [];
     if (text && !allowed.includes(text)) {
-      throw new Error(`${definition.label} 的取值无效`);
+      throw new SystemSettingValidationError(definition.label, "取值无效");
     }
   }
   return text;
@@ -958,6 +995,16 @@ export async function importMissingSystemSettingsFromEnv(updatedBy?: string) {
   );
 }
 
+/**
+ * 批量保存系统设置并在成功提交后失效两级缓存。
+ *
+ * @param entries - 管理员提交的设置键、未知值与可选清空指令。
+ * @param updatedBy - 已复查且仍存在的管理员用户 ID。
+ * @returns 本次实际写入、删除或确认清空的设置键。
+ * @sideEffects 在单个数据库事务中写入设置，并在提交后失效本地与 Redis 缓存。
+ * @throws SystemSettingValidationError 任一设置键或值不合法时回滚整批更新。
+ * @failure 数据库事务或缓存基础设施错误保持原样上抛，不能伪装成参数错误。
+ */
 export async function setSystemSettings(
   entries: Array<{
     key: string;
@@ -972,16 +1019,25 @@ export async function setSystemSettings(
   await db.transaction(async (tx) => {
     for (const entry of entries) {
       if (!isSettingKey(entry.key)) {
-        throw new Error(`未知配置项: ${entry.key}`);
+        throw new SystemSettingValidationError(
+          "系统设置",
+          "包含未知或已下线的字段，请刷新页面后重试"
+        );
       }
 
       const definition = SETTING_DEFINITION_BY_KEY.get(entry.key);
       if (!definition) {
-        throw new Error(`未知配置项: ${entry.key}`);
+        throw new SystemSettingValidationError(
+          "系统设置",
+          "包含未知或已下线的字段，请刷新页面后重试"
+        );
       }
 
       if (definition.managedByDedicatedOperation) {
-        throw new Error(`${definition.label}只能通过专用配置入口修改`);
+        throw new SystemSettingValidationError(
+          definition.label,
+          "只能通过专用配置入口修改"
+        );
       }
 
       if (entry.clear) {
