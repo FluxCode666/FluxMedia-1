@@ -5,6 +5,7 @@
  * 孤儿清理，不依赖 PostgreSQL 或真实对象存储。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createOperationsGrowthDetailRepository } from "./detail-repository";
 
 const loggerMocks = vi.hoisted(() => ({
   info: vi.fn(),
@@ -129,6 +130,156 @@ describe("processOperationsExportBatch", () => {
         retentionDay: 30,
       },
     ]);
+  });
+
+  it("完整用户增长导出通过真实 reader 解析所有查询类型", async () => {
+    const dependencies = createDependencies();
+    const userGrowthTask = {
+      ...task,
+      exportType: "user_growth" as const,
+      query: {
+        granularity: "day" as const,
+        range: {
+          kind: "custom" as const,
+          from: "2026-01-01",
+          to: "2026-01-31",
+        },
+      },
+      highWatermarks: {
+        users: null,
+        webVisits: null,
+        outputs: null,
+        paymentOrders: null,
+        paymentLifecycle: null,
+        creditContributions: null,
+      },
+    };
+    vi.mocked(dependencies.repository.claimNext).mockResolvedValue(
+      userGrowthTask
+    );
+    dependencies.createRows = undefined;
+    const execute = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          user_id: "user-1",
+          name: "User One",
+          email: "user-1@example.com",
+          role: "user",
+          banned: false,
+          business_time: "2026-01-15T00:00:00.000Z",
+          retained: true,
+        },
+      ],
+    });
+    dependencies.detailRepository = createOperationsGrowthDetailRepository({
+      transaction: async (work, config) => {
+        expect(config).toEqual({
+          isolationLevel: "repeatable read",
+          accessMode: "read only",
+        });
+        return work({ execute });
+      },
+    });
+    const uploadedChunks: Buffer[] = [];
+    vi.mocked(dependencies.storage.putObjectStream).mockImplementation(
+      async (_key, _bucket, data) => {
+        for await (const chunk of data) uploadedChunks.push(Buffer.from(chunk));
+      }
+    );
+
+    await processOperationsExportBatch(
+      { limit: 1, workerId: "worker-1" },
+      dependencies
+    );
+
+    expect(execute).toHaveBeenCalledTimes(7);
+    const csv = Buffer.concat(uploadedChunks).toString("utf8");
+    for (const label of [
+      "users",
+      "login_activity",
+      "creation_activity",
+      "payment_activity",
+      "retention_d1",
+      "retention_d7",
+      "retention_d30",
+    ]) {
+      expect(csv).toContain(label);
+    }
+    expect(dependencies.repository.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ rowCount: 7 })
+    );
+  });
+
+  it("数据库快照提交后才上传临时 CSV 对象", async () => {
+    const dependencies = createDependencies();
+    dependencies.createRows = undefined;
+    vi.mocked(dependencies.repository.claimNext).mockResolvedValue({
+      ...task,
+      query: {
+        granularity: "day",
+        range: {
+          kind: "custom",
+          from: "2026-01-01",
+          to: "2026-01-31",
+        },
+      },
+      highWatermarks: {
+        users: null,
+        webVisits: null,
+        outputs: null,
+        paymentOrders: null,
+        paymentLifecycle: null,
+        creditContributions: null,
+      },
+    });
+    let snapshotOpen = false;
+    dependencies.detailRepository = {
+      async withReadOnlySnapshot(work) {
+        snapshotOpen = true;
+        try {
+          return await work({
+            readHeader: vi.fn(),
+            readRows: vi.fn().mockResolvedValue([
+              {
+                kind: "content",
+                stableId: "image:task-1",
+                taskId: "task-1",
+                userId: "user-1",
+                model: "model-1",
+                mediaType: "image",
+                businessTime: new Date("2026-02-01T00:00:00.000Z"),
+                status: "completed",
+                quantity: 1,
+                videoSeconds: 0,
+                netCredits: 1,
+                operationCreatedAtMismatch: false,
+              },
+            ]),
+          });
+        } finally {
+          snapshotOpen = false;
+        }
+      },
+    };
+    vi.mocked(dependencies.storage.putObjectStream).mockImplementation(
+      async (_key, _bucket, data) => {
+        expect(snapshotOpen).toBe(false);
+        for await (const _chunk of data) {
+          // 完整消费临时文件，验证上传发生在事务结束后。
+        }
+      }
+    );
+
+    await processOperationsExportBatch(
+      { limit: 1, workerId: "worker-1" },
+      dependencies
+    );
+
+    expect(loggerMocks.logError).not.toHaveBeenCalled();
+    expect(dependencies.repository.fail).not.toHaveBeenCalled();
+    expect(dependencies.repository.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ rowCount: 1 })
+    );
   });
 
   it("空导出仍完成并记录零业务行", async () => {

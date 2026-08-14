@@ -1043,6 +1043,7 @@ export const fulfillAlipayTopUp = defineOperation({
     totalAmount: z.string().regex(/^\d+(?:\.\d{1,2})?$/),
     appId: z.string().min(1),
     sellerId: z.string().min(1),
+    gmtPayment: z.string().optional(),
   }),
   output: z.object({ orderId: z.string(), status: z.string() }),
   access: { kind: "webhook", provider: "alipay" },

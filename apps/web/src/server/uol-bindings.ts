@@ -419,6 +419,7 @@ bindExecute(
       totalAmount: string;
       appId: string;
       sellerId: string;
+      gmtPayment?: string;
     },
     _principal: Principal,
     _ctx: OperationContext

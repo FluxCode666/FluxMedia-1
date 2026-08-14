@@ -17,16 +17,16 @@ import { z } from "zod";
 
 import { extractExecuteRows } from "@/server/database-result";
 import { toOperationsDatabaseTimestamp } from "./database-timestamp";
-import type { OperationsDetailHighWatermarks } from "./detail-repository";
+import type { OperationsDetailHighWatermarks } from "./detail-contracts";
+import type {
+  OperationsGrowthActivityKind,
+  OperationsGrowthSnapshotHeader,
+} from "./growth-contracts";
 
-/** 增长模块可核对的三类周期活跃事实。 */
-export type OperationsGrowthActivityKind = "login" | "creation" | "payment";
-
-/** 同一数据库快照捕获的查询时刻与不可变 epoch。 */
-export type OperationsGrowthSnapshotHeader = {
-  asOf: Date;
-  epoch: { appDate: string; startsAt: Date } | null;
-};
+export type {
+  OperationsGrowthActivityKind,
+  OperationsGrowthSnapshotHeader,
+} from "./growth-contracts";
 
 /** 范围聚合共用的 UTC 半开边界。 */
 export type OperationsGrowthRangeQuery = {

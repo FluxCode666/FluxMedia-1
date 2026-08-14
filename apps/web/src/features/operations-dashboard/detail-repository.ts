@@ -16,259 +16,59 @@ import {
   videoGeneration,
 } from "@repo/database/schema";
 import { type SQL, sql } from "drizzle-orm";
-import { z } from "zod";
-
-import { extractExecuteRows } from "@/server/database-result";
 
 import { toOperationsDatabaseTimestamp } from "./database-timestamp";
+import type {
+  OperationsActivityDetailQuery,
+  OperationsCohortDetailQuery,
+  OperationsCohortExportDetailQuery,
+  OperationsCommercialDetailQuery,
+  OperationsContentDetailQuery,
+  OperationsDetailCursor,
+  OperationsDetailExecuteSql,
+  OperationsDetailQuery,
+  OperationsDetailRow,
+  OperationsGrowthDetailPage,
+  OperationsGrowthDetailQuery,
+  OperationsGrowthDetailRepository,
+  OperationsGrowthDetailRow,
+  OperationsGrowthDetailSnapshotReader,
+  OperationsGrowthDetailTransactionDatabase,
+  OperationsNewUserDetailQuery,
+} from "./detail-contracts";
+export type {
+  OperationsActivityDetailQuery,
+  OperationsCohortDetailQuery,
+  OperationsCohortExportDetailQuery,
+  OperationsCommercialDetailQuery,
+  OperationsCommercialDetailRow,
+  OperationsContentDetailQuery,
+  OperationsContentDetailRow,
+  OperationsDetailCursor,
+  OperationsDetailHighWatermarks,
+  OperationsDetailQuery,
+  OperationsDetailRepository,
+  OperationsDetailRow,
+  OperationsGrowthDetailCursor,
+  OperationsGrowthDetailPage,
+  OperationsGrowthDetailQuery,
+  OperationsGrowthDetailRepository,
+  OperationsGrowthDetailRow,
+  OperationsGrowthDetailSnapshotReader,
+  OperationsGrowthDetailTransactionDatabase,
+  OperationsNewUserDetailQuery,
+  OperationsOrderDetailQuery,
+  OperationsPaymentLifecycleDetailQuery,
+} from "./detail-contracts";
+import {
+  parseOperationsCommercialDetailRows,
+  parseOperationsContentDetailRows,
+  parseOperationsGrowthDetailRows,
+} from "./detail-row-parsers";
 import {
   buildOperationsActivitySourceSql,
   createOperationsGrowthSnapshotReader,
-  type OperationsGrowthActivityKind,
-  type OperationsGrowthSnapshotHeader,
 } from "./growth-repository";
-
-/** 明细排序键；同一业务时间以用户 ID 稳定打破平局。 */
-export type OperationsDetailCursor = {
-  businessTime: Date;
-  stableId: string;
-};
-
-/** 兼容增长调用方的明细游标别名。 */
-export type OperationsGrowthDetailCursor = OperationsDetailCursor;
-
-type OperationsGrowthDetailBaseQuery = {
-  start: Date;
-  end: Date;
-  epochStart: Date;
-  asOf: Date;
-  cursor: OperationsDetailCursor | null;
-  limit: number;
-  highWatermarks?: OperationsDetailHighWatermarks;
-};
-
-/**
- * 创建导出任务时冻结的各事实源稳定上界。
- *
- * 页面明细不传该对象，直接使用当前只读快照；异步导出必须同时应用业务时间范围和
- * 插入事实上界，避免任务排队期间新增的回填事实漂入已冻结文件。
- */
-export type OperationsDetailHighWatermarks = {
-  users: { createdAt: string; id: string } | null;
-  webVisits: { createdAt: string; userId: string; appDate: string } | null;
-  outputs: {
-    createdAt: string;
-    outputKind: string;
-    sourceTaskId: string;
-  } | null;
-  paymentOrders: { createdAt: string; id: string } | null;
-  paymentLifecycle: { recordedAt: string; id: string } | null;
-  creditContributions: { projectedAt: string; transactionId: string } | null;
-};
-
-/** 新增账户明细查询，范围必须已在服务层截断至 epoch。 */
-export type OperationsNewUserDetailQuery = OperationsGrowthDetailBaseQuery & {
-  kind: "users";
-};
-
-/** 周期活跃明细每用户只返回一行，因而行数可直接反算去重汇总。 */
-export type OperationsActivityDetailQuery = OperationsGrowthDetailBaseQuery & {
-  kind: "activity";
-  activityKind: OperationsGrowthActivityKind;
-};
-
-/** 单个注册日与精确目标日的 Cohort 明细查询。 */
-export type OperationsCohortDetailQuery = OperationsGrowthDetailBaseQuery & {
-  kind: "cohort";
-  targetStart: Date;
-  targetEnd: Date;
-};
-
-/** 导出专用 Cohort 查询；每个留存日一次性覆盖完整注册日期范围。 */
-export type OperationsCohortExportDetailQuery =
-  OperationsGrowthDetailBaseQuery & {
-    kind: "cohort_export";
-    retentionDay: 1 | 7 | 30;
-    timeZone: string;
-  };
-
-/** 增长明细的封闭查询类型。 */
-export type OperationsGrowthDetailQuery =
-  | OperationsNewUserDetailQuery
-  | OperationsActivityDetailQuery
-  | OperationsCohortDetailQuery
-  | OperationsCohortExportDetailQuery;
-
-/** 充值订单明细按订单创建业务时间筛选，每个平台订单只返回一行。 */
-export type OperationsOrderDetailQuery = OperationsGrowthDetailBaseQuery & {
-  kind: "orders";
-};
-
-/** 支付生命周期明细按不可变事件业务时间筛选，每个事件返回一行。 */
-export type OperationsPaymentLifecycleDetailQuery =
-  OperationsGrowthDetailBaseQuery & {
-    kind: "payment_lifecycle";
-  };
-
-/** 商业化明细的封闭查询类型。 */
-export type OperationsCommercialDetailQuery =
-  | OperationsOrderDetailQuery
-  | OperationsPaymentLifecycleDetailQuery;
-
-/** 内容明细由成功产物事实驱动，detail 只改变媒体范围。 */
-export type OperationsContentDetailQuery = OperationsGrowthDetailBaseQuery & {
-  kind: "content";
-  detail: "image_outputs" | "video_outputs" | "credit_usage";
-};
-
-/** 运营明细所有模块共享的封闭查询类型。 */
-export type OperationsDetailQuery =
-  | OperationsGrowthDetailQuery
-  | OperationsCommercialDetailQuery
-  | OperationsContentDetailQuery;
-
-/** 可用汇总反算的最小用户明细行。 */
-export type OperationsGrowthDetailRow = {
-  kind?: "growth";
-  userId: string;
-  name: string;
-  email: string;
-  role: string;
-  banned: boolean;
-  businessTime: Date;
-  retained: boolean | null;
-};
-
-/** 可同时服务页面核对和 CSV 的安全商业化明细行。 */
-export type OperationsCommercialDetailRow = {
-  kind: "orders" | "payment_lifecycle";
-  stableId: string;
-  paymentOrderId: string;
-  providerTradeNo: string | null;
-  userId: string;
-  currency: string;
-  amountMinor: number;
-  orderStatus: string;
-  createdAt: Date;
-  fulfilledAt: Date | null;
-  businessTime: Date;
-  eventType: string | null;
-};
-
-/** 成功产物及其精确净积分关联组成的安全内容明细行。 */
-export type OperationsContentDetailRow = {
-  kind: "content";
-  stableId: string;
-  taskId: string;
-  userId: string;
-  model: string;
-  mediaType: "image" | "video";
-  businessTime: Date;
-  status: "completed";
-  quantity: number;
-  videoSeconds: number;
-  netCredits: number;
-  operationCreatedAtMismatch: boolean;
-};
-
-/** 运营明细数据库行的封闭联合类型。 */
-export type OperationsDetailRow =
-  | OperationsGrowthDetailRow
-  | OperationsCommercialDetailRow
-  | OperationsContentDetailRow;
-
-/** 带 keyset 继续信息的增长明细页。 */
-export type OperationsGrowthDetailPage = {
-  rows: OperationsGrowthDetailRow[];
-  nextCursor: OperationsGrowthDetailCursor | null;
-};
-
-/** 单个只读快照中的增长明细读取端口。 */
-export interface OperationsGrowthDetailSnapshotReader {
-  readHeader(): Promise<OperationsGrowthSnapshotHeader>;
-  readRows(input: OperationsDetailQuery): Promise<OperationsDetailRow[]>;
-}
-
-/** 增长明细仓储端口；limit 应包含服务层用于判断下一页的额外一行。 */
-export interface OperationsGrowthDetailRepository {
-  withReadOnlySnapshot<T>(
-    work: (reader: OperationsGrowthDetailSnapshotReader) => Promise<T>
-  ): Promise<T>;
-}
-
-/** 统一明细仓储别名，供商业化、内容页面与 CSV worker 使用。 */
-export type OperationsDetailRepository = OperationsGrowthDetailRepository;
-
-type ExecuteSql = (query: SQL) => Promise<unknown>;
-
-/** 生产与集成测试共用的最小只读事务数据库端口。 */
-export interface OperationsGrowthDetailTransactionDatabase {
-  transaction<T>(
-    work: (transaction: { execute: ExecuteSql }) => Promise<T>,
-    config: {
-      isolationLevel: "repeatable read";
-      accessMode: "read only";
-    }
-  ): Promise<T>;
-}
-
-const detailDatabaseRowSchema = z.object({
-  user_id: z.string().min(1),
-  name: z.string(),
-  email: z.string().email(),
-  role: z.string().min(1),
-  banned: z.boolean(),
-  business_time: z
-    .union([z.date(), z.string().min(1)])
-    .transform((value) => (value instanceof Date ? value : new Date(value)))
-    .refine((value) => !Number.isNaN(value.getTime()), "明细业务时间无效"),
-  retained: z.boolean().nullable(),
-});
-
-const commercialDetailDatabaseRowSchema = z.object({
-  kind: z.enum(["orders", "payment_lifecycle"]),
-  stable_id: z.string().min(1),
-  payment_order_id: z.string().min(1),
-  provider_trade_no: z.string().nullable(),
-  user_id: z.string().min(1),
-  currency: z
-    .string()
-    .trim()
-    .regex(/^[A-Z]{3}$/),
-  amount_minor: z.coerce.number().int().safe().nonnegative(),
-  order_status: z.string().min(1),
-  created_at: z
-    .union([z.date(), z.string().min(1)])
-    .transform((value) => (value instanceof Date ? value : new Date(value)))
-    .refine((value) => !Number.isNaN(value.getTime()), "订单创建时间无效"),
-  fulfilled_at: z
-    .union([z.date(), z.string().min(1)])
-    .transform((value) => (value instanceof Date ? value : new Date(value)))
-    .refine((value) => !Number.isNaN(value.getTime()), "订单履约时间无效")
-    .nullable(),
-  business_time: z
-    .union([z.date(), z.string().min(1)])
-    .transform((value) => (value instanceof Date ? value : new Date(value)))
-    .refine((value) => !Number.isNaN(value.getTime()), "商业化业务时间无效"),
-  event_type: z.string().nullable(),
-});
-
-const contentDetailDatabaseRowSchema = z.object({
-  stable_id: z.string().min(1),
-  task_id: z.string().min(1),
-  user_id: z.string().min(1),
-  model: z.string().min(1),
-  media_type: z.enum(["image", "video"]),
-  business_time: z
-    .union([z.date(), z.string().min(1)])
-    .transform((value) => (value instanceof Date ? value : new Date(value)))
-    .refine((value) => !Number.isNaN(value.getTime()), "内容业务时间无效"),
-  status: z.literal("completed"),
-  quantity: z.coerce.number().int().safe().positive(),
-  video_seconds: z.coerce.number().int().safe().nonnegative(),
-  net_credits: z.coerce.number().finite().nonnegative(),
-  operation_created_at_mismatch: z.boolean(),
-});
 
 /** 对内部明细查询进行资源与边界防御，避免导出 worker 误用无界读取。 */
 function assertValidDetailQuery(input: OperationsDetailQuery): void {
@@ -887,18 +687,7 @@ export function buildOperationsGrowthDetailSql(
 
 /** 根据模块选择与汇总同源的运营明细 SQL。 */
 export function buildOperationsDetailSql(input: OperationsDetailQuery): SQL {
-  if (
-    input.kind === "users" ||
-    input.kind === "activity" ||
-    input.kind === "cohort" ||
-    input.kind === "cohort_export"
-  ) {
-    return buildOperationsGrowthDetailSql(input);
-  }
-  if (input.kind === "orders" || input.kind === "payment_lifecycle") {
-    return buildOperationsCommercialDetailSql(input);
-  }
-  return buildOperationsContentDetailSql(input);
+  return createOperationsDetailExecution(input).query;
 }
 
 /**
@@ -961,87 +750,57 @@ export function paginateOperationsDetailRows(
   };
 }
 
-/** 将不可信数据库行严格收窄为增长明细 DTO。 */
-function parseDetailRows(result: unknown): OperationsGrowthDetailRow[] {
-  return z
-    .array(detailDatabaseRowSchema)
-    .parse(extractExecuteRows(result))
-    .map((row) => ({
-      kind: "growth" as const,
-      userId: row.user_id,
-      name: row.name,
-      email: row.email,
-      role: row.role,
-      banned: row.banned,
-      businessTime: row.business_time,
-      retained: row.retained,
-    }));
-}
+type OperationsDetailExecution = {
+  query: SQL;
+  parseResult(result: unknown): OperationsDetailRow[];
+};
 
-/** 将不可信数据库行严格收窄为商业化安全 DTO。 */
-function parseCommercialDetailRows(
-  result: unknown
-): OperationsCommercialDetailRow[] {
-  return z
-    .array(commercialDetailDatabaseRowSchema)
-    .parse(extractExecuteRows(result))
-    .map((row) => ({
-      kind: row.kind,
-      stableId: row.stable_id,
-      paymentOrderId: row.payment_order_id,
-      providerTradeNo: row.provider_trade_no,
-      userId: row.user_id,
-      currency: row.currency,
-      amountMinor: row.amount_minor,
-      orderStatus: row.order_status,
-      createdAt: row.created_at,
-      fulfilledAt: row.fulfilled_at,
-      businessTime: row.business_time,
-      eventType: row.event_type,
-    }));
-}
-
-/** 将不可信数据库行严格收窄为内容生产安全 DTO。 */
-function parseContentDetailRows(result: unknown): OperationsContentDetailRow[] {
-  return z
-    .array(contentDetailDatabaseRowSchema)
-    .parse(extractExecuteRows(result))
-    .map((row) => ({
-      kind: "content",
-      stableId: row.stable_id,
-      taskId: row.task_id,
-      userId: row.user_id,
-      model: row.model,
-      mediaType: row.media_type,
-      businessTime: row.business_time,
-      status: row.status,
-      quantity: row.quantity,
-      videoSeconds: row.video_seconds,
-      netCredits: row.net_credits,
-      operationCreatedAtMismatch: row.operation_created_at_mismatch,
-    }));
+/**
+ * 在一次穷尽分派中绑定查询与对应结果 parser。
+ *
+ * WHY：新增 query kind 时，SQL 与 parser 必须同时更新；never 分支让漏同步在
+ * TypeScript 编译阶段失败，而不是在真实导出中才触发 Zod 错误。
+ */
+function createOperationsDetailExecution(
+  input: OperationsDetailQuery
+): OperationsDetailExecution {
+  switch (input.kind) {
+    case "users":
+    case "activity":
+    case "cohort":
+    case "cohort_export":
+      return {
+        query: buildOperationsGrowthDetailSql(input),
+        parseResult: parseOperationsGrowthDetailRows,
+      };
+    case "orders":
+    case "payment_lifecycle":
+      return {
+        query: buildOperationsCommercialDetailSql(input),
+        parseResult: parseOperationsCommercialDetailRows,
+      };
+    case "content":
+      return {
+        query: buildOperationsContentDetailSql(input),
+        parseResult: parseOperationsContentDetailRows,
+      };
+    default: {
+      const exhaustiveInput: never = input;
+      return exhaustiveInput;
+    }
+  }
 }
 
 /** 将唯一事务 execute 绑定为明细与快照头的组合 reader。 */
 function createOperationsGrowthDetailSnapshotReader(
-  execute: ExecuteSql
+  execute: OperationsDetailExecuteSql
 ): OperationsGrowthDetailSnapshotReader {
   const growthReader = createOperationsGrowthSnapshotReader(execute);
   return {
     readHeader: growthReader.readHeader,
     async readRows(input) {
-      const result = await execute(buildOperationsDetailSql(input));
-      if (
-        input.kind === "users" ||
-        input.kind === "activity" ||
-        input.kind === "cohort"
-      ) {
-        return parseDetailRows(result);
-      }
-      if (input.kind === "orders" || input.kind === "payment_lifecycle") {
-        return parseCommercialDetailRows(result);
-      }
-      return parseContentDetailRows(result);
+      const execution = createOperationsDetailExecution(input);
+      return execution.parseResult(await execute(execution.query));
     },
   };
 }

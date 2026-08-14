@@ -25,6 +25,7 @@ import {
   isRuntimeAlipayF2FConfigured,
   isSuccessfulAlipayTradeStatus,
   parseAlipayCnyAmountMinor,
+  resolveAlipayPaymentEventTime,
 } from "@repo/shared/payment/alipay-f2f";
 import {
   getRuntimeSettingJson,
@@ -50,6 +51,7 @@ type AlipayNotification = {
   totalAmount: string;
   appId: string;
   sellerId: string;
+  gmtPayment?: string;
 };
 
 type PaymentOrderSnapshot = {
@@ -540,14 +542,18 @@ export async function fulfillAlipayCreditTopUp(
   }
 
   const snapshot = getPricingSnapshot(order.pricingSnapshot);
+  const eventTime = resolveAlipayPaymentEventTime(
+    notification.gmtPayment,
+    new Date()
+  );
   const confirmation = await confirmPaymentAndCreateFulfillmentWorkItem({
     orderId: order.id,
     userId: order.userId,
     provider: "alipay_f2f",
     providerTradeNo: notification.tradeNo,
     eventSourceRef: `alipay:${notification.tradeNo}`,
-    occurredAt: new Date(),
-    timestampSource: "server_received",
+    occurredAt: eventTime.occurredAt,
+    timestampSource: eventTime.timestampSource,
     fulfillment: {
       creditsAmount: snapshot.creditsAmount,
       creditSourceRef: `alipay:${order.id}`,

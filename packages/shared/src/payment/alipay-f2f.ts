@@ -82,6 +82,98 @@ export function parseAlipayCnyAmountMinor(value: string): number | null {
   return Number.isSafeInteger(amountMinor) ? amountMinor : null;
 }
 
+/**
+ * 解析支付宝通知的 `gmt_payment`，其无时区格式固定表示中国标准时间 UTC+8。
+ *
+ * @param value 已验签通知中的原始付款时间。
+ * @returns 对应 UTC 瞬间；格式非法或日期不存在时返回 null。
+ */
+export function parseAlipayPaymentTime(value: string | undefined): Date | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(
+    value.trim()
+  );
+  if (!match) return null;
+  const [
+    ,
+    yearValue,
+    monthValue,
+    dayValue,
+    hourValue,
+    minuteValue,
+    secondValue,
+  ] = match;
+  if (
+    !yearValue ||
+    !monthValue ||
+    !dayValue ||
+    !hourValue ||
+    !minuteValue ||
+    !secondValue
+  ) {
+    return null;
+  }
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+  const hour = Number(hourValue);
+  const minute = Number(minuteValue);
+  const second = Number(secondValue);
+  if (
+    year < 2000 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return null;
+  }
+  const chinaOffsetMilliseconds = 8 * 60 * 60 * 1000;
+  const timestamp =
+    Date.UTC(year, month - 1, day, hour, minute, second) -
+    chinaOffsetMilliseconds;
+  const paymentTime = new Date(timestamp);
+  const localRoundTrip = new Date(timestamp + chinaOffsetMilliseconds);
+  if (
+    localRoundTrip.getUTCFullYear() !== year ||
+    localRoundTrip.getUTCMonth() !== month - 1 ||
+    localRoundTrip.getUTCDate() !== day ||
+    localRoundTrip.getUTCHours() !== hour ||
+    localRoundTrip.getUTCMinutes() !== minute ||
+    localRoundTrip.getUTCSeconds() !== second
+  ) {
+    return null;
+  }
+  return paymentTime;
+}
+
+/**
+ * 选择支付确认事实的权威业务时间。
+ *
+ * @param providerTime 已验签的支付宝付款时间。
+ * @param serverReceivedAt 当前服务器接收时间。
+ * @returns provider 时间有效时标记 provider，否则显式降级为 server_received。
+ * @throws serverReceivedAt 非法时拒绝生成错误事实。
+ */
+export function resolveAlipayPaymentEventTime(
+  providerTime: string | undefined,
+  serverReceivedAt: Date
+): {
+  occurredAt: Date;
+  timestampSource: "provider" | "server_received";
+} {
+  if (Number.isNaN(serverReceivedAt.getTime())) {
+    throw new Error("支付宝通知接收时间无效");
+  }
+  const occurredAt = parseAlipayPaymentTime(providerTime);
+  return occurredAt
+    ? { occurredAt, timestampSource: "provider" }
+    : { occurredAt: serverReceivedAt, timestampSource: "server_received" };
+}
+
 function resolvePrivateKeyType(privateKey: string): "PKCS1" | "PKCS8" {
   return privateKey.includes("BEGIN PRIVATE KEY") ? "PKCS8" : "PKCS1";
 }

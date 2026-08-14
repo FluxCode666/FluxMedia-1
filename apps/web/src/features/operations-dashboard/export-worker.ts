@@ -5,6 +5,12 @@
  * token 的冻结任务，按 keyset 读取同源事实、流式上传并条件完成。
  */
 import { randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import {
   amountMinorToMajor,
@@ -31,6 +37,7 @@ import {
   createMeasuredExportStream,
   getOperationsExportStorage,
   type OperationsExportStorage,
+  type OperationsExportStreamResult,
 } from "./export-storage";
 import {
   type ClaimedOperationsExportTask,
@@ -53,6 +60,7 @@ export type OperationsExportWorkerDependencies = {
     OperationsExportStorage,
     "bucket" | "putObjectStream" | "deleteObject"
   >;
+  detailRepository?: OperationsDetailRepository;
   createRows?(
     task: ClaimedOperationsExportTask
   ): AsyncIterable<readonly OperationsCsvCell[]>;
@@ -147,6 +155,12 @@ type ExportQuerySpec = {
   label: string;
   activityKind?: "login" | "creation" | "payment";
   retentionDay?: 1 | 7 | 30;
+};
+
+type StagedOperationsExport = {
+  directory: string;
+  filePath: string;
+  stats: OperationsExportStreamResult;
 };
 
 /** 登记孤儿候选；审计不可用时记录错误，但不能改变 fencing 后的对象决策。 */
@@ -469,6 +483,54 @@ async function* streamRowsFromReader(
   }
 }
 
+/**
+ * 在只读快照事务内把 CSV 写入受控临时文件。
+ *
+ * @param rows 同一数据库快照产生的业务行。
+ * @param headers 当前导出类型的稳定表头。
+ * @param signal worker 租约丢失时中止本地写入。
+ * @returns 事务提交后可独立上传的临时文件和完整性统计。
+ * @failure 编码或文件写入失败时删除临时目录并向上抛出。
+ */
+async function stageOperationsExport(
+  rows: AsyncIterable<readonly OperationsCsvCell[]>,
+  headers: readonly string[],
+  signal: AbortSignal
+): Promise<StagedOperationsExport> {
+  const directory = await mkdtemp(join(tmpdir(), "fluxmedia-operations-"));
+  const filePath = join(directory, "export.csv");
+  const measured = createMeasuredExportStream(
+    streamOperationsCsv({ headers, rows: withLeaseSignal(rows, signal) }),
+    { headerRows: 1 }
+  );
+  try {
+    await pipeline(
+      Readable.from(measured.stream),
+      createWriteStream(filePath, { flags: "wx" }),
+      { signal }
+    );
+    return { directory, filePath, stats: await measured.result };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** 删除已消费的临时导出文件；失败只记录，不改写已确定的任务结果。 */
+async function cleanupStagedOperationsExport(
+  staged: StagedOperationsExport,
+  taskId: string
+): Promise<void> {
+  try {
+    await rm(staged.directory, { recursive: true, force: true });
+  } catch (error) {
+    logError(error, {
+      source: "operations-export-stage-cleanup",
+      exportTaskId: taskId,
+    });
+  }
+}
+
 /** 分类错误为不包含 SQL、文件内容或凭据的稳定短码。 */
 function exportErrorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "unknown";
@@ -532,11 +594,35 @@ async function processClaimedTask(
       );
       return measured.result;
     };
-    const stats = dependencies.createRows
-      ? await upload(dependencies.createRows(task))
-      : await databaseOperationsGrowthDetailRepository.withReadOnlySnapshot(
-          async (reader) => upload(streamRowsFromReader(task, reader))
+    const detailRepository =
+      dependencies.detailRepository ?? databaseOperationsGrowthDetailRepository;
+    let stats: OperationsExportStreamResult;
+    if (dependencies.createRows) {
+      stats = await upload(dependencies.createRows(task));
+    } else {
+      const staged = await detailRepository.withReadOnlySnapshot(
+        async (reader) =>
+          stageOperationsExport(
+            streamRowsFromReader(task, reader),
+            definition.headers,
+            lease.signal
+          )
+      );
+      try {
+        lease.throwIfLost();
+        objectWriteStarted = true;
+        await dependencies.storage.putObjectStream(
+          objectKey,
+          dependencies.storage.bucket,
+          createReadStream(staged.filePath),
+          "text/csv; charset=utf-8",
+          { signal: lease.signal }
         );
+        stats = staged.stats;
+      } finally {
+        await cleanupStagedOperationsExport(staged, task.id);
+      }
+    }
     lease.throwIfLost();
     const completedAt = dependencies.now();
     let completed: boolean;
