@@ -26,6 +26,7 @@ export type OperationsDashboardViewState = {
 export function createOperationsDashboardRequestGate(): {
   begin: () => number;
   isLatest: (requestId: number) => boolean;
+  invalidate: () => void;
 } {
   let latestRequestId = 0;
   return {
@@ -35,6 +36,9 @@ export function createOperationsDashboardRequestGate(): {
     },
     isLatest(requestId) {
       return requestId === latestRequestId;
+    },
+    invalidate() {
+      latestRequestId += 1;
     },
   };
 }

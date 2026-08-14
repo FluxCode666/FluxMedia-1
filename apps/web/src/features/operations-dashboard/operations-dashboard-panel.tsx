@@ -176,6 +176,13 @@ export function OperationsDashboardPanel({
     router.replace(invalidDeepLinkHref, { scroll: false });
   }, [invalidDeepLinkHref, router]);
 
+  useEffect(
+    () => () => {
+      requestGate.current.invalidate();
+    },
+    []
+  );
+
   /** 请求一份完整一致快照，只有最新成功请求可以同时替换查询和页面数据。 */
   async function requestSnapshot(
     query: OperationsDashboardQueryInput

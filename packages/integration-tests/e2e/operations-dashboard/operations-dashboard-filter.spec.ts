@@ -13,6 +13,8 @@ import {
   waitForOperationsDashboardReady,
 } from "./test-helpers";
 
+test.describe.configure({ timeout: 120_000 });
+
 test.beforeEach(async ({ page }) => openOperationsDashboard(page));
 
 test("默认范围包含今天在内的近 30 个自然日", async ({ page }) => {
@@ -47,9 +49,21 @@ test("本周、本月、本年快捷项更新完整页面", async ({ page }) => 
 });
 
 test("自定义范围在日周月切换和刷新后保持", async ({ page }) => {
-  await page.goto(
-    "/zh/dashboard/admin/operations?range=custom&from=2026-08-01&to=2026-08-14&granularity=day"
+  await page
+    .locator("header")
+    .getByRole("button", { name: /\d{4}-\d{2}-\d{2}/ })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "2026年8月1日 星期六" }).click();
+  await expect(
+    page.getByRole("button", { name: "应用", exact: true })
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "2026年8月14日 星期五" }).click();
+  await page.getByRole("button", { name: "应用", exact: true }).click();
+  await expect(page).toHaveURL(
+    /\?range=custom&from=2026-08-01&to=2026-08-14$/
   );
+  await waitForOperationsDashboardReady(page);
   await expect(
     page.getByRole("button", { name: "2026-08-01 – 2026-08-14" })
   ).toBeVisible();

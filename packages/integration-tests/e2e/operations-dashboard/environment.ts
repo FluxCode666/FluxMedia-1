@@ -138,6 +138,7 @@ export function buildOperationsWebEnvironment(
   environment: OperationsE2EEnvironment
 ): Record<string, string> {
   return {
+    TZ: "UTC",
     DATABASE_URL: environment.databaseUrl,
     BETTER_AUTH_SECRET: environment.betterAuthSecret,
     BETTER_AUTH_URL: environment.baseUrl,

@@ -82,10 +82,21 @@ afterEach(() => {
 });
 
 describe("DashboardWebVisitRecorder", () => {
+  it("首屏未记录时挂载即可见页面会立即补试", () => {
+    mountRecorder(null);
+
+    expect(actionHarness.execute).toHaveBeenCalledOnce();
+  });
+
+  it("首屏已记录当前应用日时挂载不会重复请求", () => {
+    mountRecorder("2026-08-14");
+
+    expect(actionHarness.execute).not.toHaveBeenCalled();
+  });
+
   it("跨应用日只发起一个请求，并在失败后释放门禁", () => {
     mountRecorder("2026-08-13");
 
-    showDocument();
     showDocument();
     expect(actionHarness.execute).toHaveBeenCalledOnce();
 
@@ -96,7 +107,6 @@ describe("DashboardWebVisitRecorder", () => {
 
   it("成功后记录服务端日期，卸载后移除监听", () => {
     mountRecorder("2026-08-13");
-    showDocument();
     act(() =>
       actionHarness.callbacks?.onSuccess({
         data: { status: "recorded", appDate: "2026-08-14" },

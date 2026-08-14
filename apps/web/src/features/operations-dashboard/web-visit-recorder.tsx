@@ -64,6 +64,7 @@ export function DashboardWebVisitRecorder({
     }
 
     document.addEventListener("visibilitychange", recordIfNewAppDate);
+    recordIfNewAppDate();
     return () => {
       document.removeEventListener("visibilitychange", recordIfNewAppDate);
     };

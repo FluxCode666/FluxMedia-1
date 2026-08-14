@@ -47,6 +47,9 @@ describe("operations dashboard state", () => {
 
     expect(gate.isLatest(first)).toBe(false);
     expect(gate.isLatest(second)).toBe(true);
+
+    gate.invalidate();
+    expect(gate.isLatest(second)).toBe(false);
   });
 
   it("刷新失败时保留旧快照和查询", () => {

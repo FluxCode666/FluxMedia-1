@@ -9,7 +9,6 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canAccessAdminArea } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { getLocale, getTranslations } from "next-intl/server";
 import { loadOperationsDashboardPageData } from "@/features/operations-dashboard/operations-dashboard-page-data";
 import { OperationsDashboardPanel } from "@/features/operations-dashboard/operations-dashboard-panel";
@@ -17,6 +16,7 @@ import {
   type OperationsDashboardSearchParams,
   parseOperationsDashboardSearchParams,
 } from "@/features/operations-dashboard/operations-dashboard-query";
+import { redirect } from "@/i18n/routing";
 
 export const dynamic = "force-dynamic";
 
@@ -47,10 +47,10 @@ export default async function OperationsDashboardPage({
     getLocale(),
     searchParams,
   ]);
-  if (!session?.user) redirect(`/${locale}/sign-in`);
+  if (!session?.user) redirect({ href: "/sign-in", locale });
 
   const role = await getUserRoleById(session.user.id);
-  if (!canAccessAdminArea(role)) redirect(`/${locale}/dashboard`);
+  if (!canAccessAdminArea(role)) redirect({ href: "/dashboard", locale });
 
   const parsedQuery = parseOperationsDashboardSearchParams(params);
   const pageData = await loadOperationsDashboardPageData({
