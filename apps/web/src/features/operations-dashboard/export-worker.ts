@@ -506,7 +506,7 @@ async function stageOperationsExport(
   try {
     await pipeline(
       Readable.from(measured.stream),
-      createWriteStream(filePath, { flags: "wx" }),
+      createWriteStream(filePath, { flags: "wx", mode: 0o600 }),
       { signal }
     );
     return { directory, filePath, stats: await measured.result };
