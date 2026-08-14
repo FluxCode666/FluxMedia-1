@@ -13,29 +13,49 @@ import type { NextRequest } from "next/server";
 
 import { ensureUolInitialized } from "@/server/uol-init";
 
+/** 以稳定的错误 DTO 编码下载路由拒绝或降级响应。 */
+function errorResponse(error: string, code: string, status: number): Response {
+  return Response.json({ error, code }, { status });
+}
+
 /** 将 AsyncIterable 转换为 Web ReadableStream，并在客户端断开时取消底层读取。 */
 function toReadableStream(
   source: AsyncIterable<Uint8Array>,
   signal: AbortSignal
 ): ReadableStream<Uint8Array> {
   const iterator = source[Symbol.asyncIterator]();
+  let iteratorClosed = false;
+
+  /** 只归还一次底层迭代器，避免 cancel 与在途 pull 竞态重复清理。 */
+  async function closeIterator(): Promise<void> {
+    if (iteratorClosed) return;
+    iteratorClosed = true;
+    await iterator.return?.();
+  }
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (signal.aborted) {
-        await iterator.return?.();
+        await closeIterator();
         controller.close();
         return;
       }
       try {
         const next = await iterator.next();
-        if (next.done) controller.close();
-        else controller.enqueue(next.value);
+        if (next.done) {
+          iteratorClosed = true;
+          controller.close();
+        } else controller.enqueue(next.value);
       } catch (error) {
-        controller.error(error);
+        try {
+          await closeIterator();
+        } finally {
+          controller.error(error);
+        }
       }
     },
     async cancel() {
-      await iterator.return?.();
+      await closeIterator();
     },
   });
 }
@@ -47,7 +67,8 @@ export async function GET(
 ): Promise<Response> {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user)
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    return errorResponse("Unauthorized", "unauthenticated", 401);
+  if (session.user.banned) return errorResponse("Forbidden", "forbidden", 403);
   const { taskId } = await context.params;
   try {
     await ensureUolInitialized();
@@ -74,15 +95,12 @@ export async function GET(
     });
   } catch (error) {
     if (error instanceof OperationError) {
-      return Response.json(
-        { error: error.message, code: error.code },
-        { status: error.httpStatus }
-      );
+      return errorResponse(error.message, error.code, error.httpStatus);
     }
     logError(error, {
       source: "operations-export-local-download",
       taskId,
     });
-    return Response.json({ error: "Export unavailable" }, { status: 503 });
+    return errorResponse("Export unavailable", "unavailable", 503);
   }
 }

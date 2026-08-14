@@ -70,7 +70,30 @@ describe("operations export download", () => {
   it("匿名请求不初始化或调用 UOL", async () => {
     mocks.getSession.mockResolvedValueOnce(null);
 
-    expect((await call()).status).toBe(401);
+    const response = await call();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Unauthorized",
+      code: "unauthenticated",
+    });
+    expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
+  it("封禁管理员返回 403 且不初始化或调用 UOL", async () => {
+    mocks.getSession.mockResolvedValueOnce({
+      user: { id: "admin-1", banned: true },
+    });
+
+    const response = await call();
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Forbidden",
+      code: "forbidden",
+    });
+    expect(mocks.getRole).not.toHaveBeenCalled();
     expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
@@ -145,24 +168,26 @@ describe("operations export download", () => {
 
   it("底层异步迭代器异常会传播给响应读取方", async () => {
     const streamError = new Error("stream interrupted");
+    const iterator = {
+      next: vi.fn().mockRejectedValue(streamError),
+      return: vi.fn().mockResolvedValue({
+        done: true,
+        value: undefined,
+      }),
+    };
     mocks.invokeOperation.mockResolvedValueOnce({
       taskId: "task-1",
       filename: "operations-user_growth-task-1.csv",
       contentType: "text/csv; charset=utf-8",
       stream: {
-        [Symbol.asyncIterator]: () => ({
-          next: vi.fn().mockRejectedValue(streamError),
-          return: vi.fn().mockResolvedValue({
-            done: true,
-            value: undefined,
-          }),
-        }),
+        [Symbol.asyncIterator]: () => iterator,
       },
     });
     const response = await call();
     const reader = response.body?.getReader();
 
     await expect(reader?.read()).rejects.toThrow("stream interrupted");
+    expect(iterator.return).toHaveBeenCalledTimes(1);
   });
 
   it("请求在读取前已取消时关闭底层异步迭代器", async () => {
@@ -194,6 +219,10 @@ describe("operations export download", () => {
     const response = await call();
 
     expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "Export unavailable",
+      code: "unavailable",
+    });
     expect(mocks.logError).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({
