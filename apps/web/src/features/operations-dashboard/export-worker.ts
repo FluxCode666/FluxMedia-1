@@ -376,11 +376,17 @@ function buildQueries(input: {
     limit: EXPORT_PAGE_SIZE + 1,
     highWatermarks: input.highWatermarks,
   };
+  if (input.kind === "cumulative_users") {
+    return { ...base, kind: "cumulative_users", start: range.start };
+  }
   if (base.start >= base.end) {
     throw new Error("导出任务日期范围位于统计起点之前");
   }
   if (input.kind === "users") return { ...base, kind: "users" };
   if (input.kind === "orders") return { ...base, kind: "orders" };
+  if (input.kind === "fulfilled_orders") {
+    return { ...base, kind: "fulfilled_orders", currency: null };
+  }
   if (input.kind === "payment_lifecycle")
     return { ...base, kind: "payment_lifecycle" };
   if (input.kind === "content")
@@ -405,11 +411,13 @@ export function buildOperationsExportQuerySpecs(
   if (task.exportType === "commercialization")
     return [
       { kind: "orders", label: "orders" },
+      { kind: "fulfilled_orders", label: "fulfilled_orders" },
       { kind: "payment_lifecycle", label: "payment_lifecycle" },
     ];
   if (task.exportType === "content_production")
     return [{ kind: "content", label: "content" }];
   const specs: ExportQuerySpec[] = [
+    { kind: "cumulative_users", label: "cumulative_users" },
     { kind: "users", label: "users" },
     { kind: "activity", label: "login_activity", activityKind: "login" },
     { kind: "activity", label: "creation_activity", activityKind: "creation" },
@@ -429,8 +437,9 @@ export function buildOperationsExportQuerySpecs(
 /**
  * 从同一只读快照按 `business_time + stable_id` 分页生成完整业务行。
  *
- * 用户增长模块导出新增用户及登录、创作、付费三类活跃，并为每个已成熟 Cohort
- * 目标日输出用户行。记录类型区分重复用户，使全部增长指标都可离线反算。
+ * 用户增长模块导出累计/新增用户及登录、创作、付费三类活跃，并为每个已成熟
+ * Cohort 目标日输出用户行。商业化另导出按履约时间筛选的收入订单；记录类型
+ * 区分重复业务实体，使全部范围型指标都可离线反算。
  */
 async function* streamRowsFromReader(
   task: ClaimedOperationsExportTask,
@@ -439,12 +448,9 @@ async function* streamRowsFromReader(
   >[0]
 ): AsyncGenerator<readonly OperationsCsvCell[]> {
   const range = resolveFrozenRange(task);
-  if (
-    (range.start < task.epochStartsAt ? task.epochStartsAt : range.start) >=
-    range.end
-  ) {
-    return;
-  }
+  const hasEpochFacts =
+    (range.start < task.epochStartsAt ? task.epochStartsAt : range.start) <
+    range.end;
   const definition = CSV_DEFINITIONS[task.exportType];
   const highWatermarks = parseOperationsExportHighWatermarks(
     task.highWatermarks
@@ -452,6 +458,7 @@ async function* streamRowsFromReader(
   const specs = buildOperationsExportQuerySpecs(task);
   const formatDateTime = createOperationsExportDateTimeFormatter(task.timeZone);
   for (const spec of specs) {
+    if (!hasEpochFacts && spec.kind !== "cumulative_users") continue;
     let cursor: OperationsDetailCursor | null = null;
     while (true) {
       let query = buildQueries({

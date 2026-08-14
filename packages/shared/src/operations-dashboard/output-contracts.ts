@@ -547,7 +547,8 @@ function rowMatchesSelection(
   }
   if (selection.module === "commercialization") {
     if (!("paymentOrderId" in row)) return false;
-    return selection.detail === "orders"
+    return selection.detail === "orders" ||
+      selection.detail === "fulfilled_orders"
       ? row.eventType === null
       : row.eventType !== null;
   }

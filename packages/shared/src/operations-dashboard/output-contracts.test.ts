@@ -282,6 +282,33 @@ describe("operations dashboard output contracts", () => {
     ).toBe(false);
   });
 
+  it("允许已履约订单以无生命周期事件的订单行通过输出契约", () => {
+    expect(
+      operationsDetailOutputSchema.safeParse({
+        selection: {
+          module: "commercialization",
+          detail: "fulfilled_orders",
+        },
+        range,
+        rows: [
+          {
+            paymentOrderId: "order-1",
+            providerTradeNo: "trade-1",
+            userId: "user-1",
+            currency: "CNY",
+            amountMinor: 100,
+            orderStatus: "fulfilled",
+            createdAt: generatedAt,
+            fulfilledAt: generatedAt,
+            businessTime: generatedAt,
+            eventType: null,
+          },
+        ],
+        nextCursor: null,
+      }).success
+    ).toBe(true);
+  });
+
   it("本地下载输出只接受安全文件名和异步字节流", () => {
     const stream = (async function* () {
       yield new Uint8Array([1]);

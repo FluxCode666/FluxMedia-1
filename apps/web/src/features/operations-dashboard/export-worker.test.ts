@@ -90,7 +90,7 @@ describe("processOperationsExportBatch", () => {
     vi.clearAllMocks();
   });
 
-  it("多年增长导出固定为四类基础查询和三个留存查询", () => {
+  it("多年增长导出固定为五类基础查询和三个留存查询", () => {
     const specs = buildOperationsExportQuerySpecs({
       ...task,
       exportType: "user_growth",
@@ -112,7 +112,11 @@ describe("processOperationsExportBatch", () => {
       },
     });
 
-    expect(specs).toHaveLength(7);
+    expect(specs).toHaveLength(8);
+    expect(specs[0]).toEqual({
+      kind: "cumulative_users",
+      label: "cumulative_users",
+    });
     expect(specs.filter((spec) => spec.kind === "cohort_export")).toEqual([
       {
         kind: "cohort_export",
@@ -192,9 +196,10 @@ describe("processOperationsExportBatch", () => {
       dependencies
     );
 
-    expect(execute).toHaveBeenCalledTimes(7);
+    expect(execute).toHaveBeenCalledTimes(8);
     const csv = Buffer.concat(uploadedChunks).toString("utf8");
     for (const label of [
+      "cumulative_users",
       "users",
       "login_activity",
       "creation_activity",
@@ -206,8 +211,29 @@ describe("processOperationsExportBatch", () => {
       expect(csv).toContain(label);
     }
     expect(dependencies.repository.complete).toHaveBeenCalledWith(
-      expect.objectContaining({ rowCount: 7 })
+      expect.objectContaining({ rowCount: 8 })
     );
+  });
+
+  it("商业化导出同时保留创建订单、履约收入订单和生命周期事件", () => {
+    expect(
+      buildOperationsExportQuerySpecs({
+        ...task,
+        exportType: "commercialization",
+        highWatermarks: {
+          users: null,
+          webVisits: null,
+          outputs: null,
+          paymentOrders: null,
+          paymentLifecycle: null,
+          creditContributions: null,
+        },
+      })
+    ).toEqual([
+      { kind: "orders", label: "orders" },
+      { kind: "fulfilled_orders", label: "fulfilled_orders" },
+      { kind: "payment_lifecycle", label: "payment_lifecycle" },
+    ]);
   });
 
   it("数据库快照提交后才上传临时 CSV 对象", async () => {
