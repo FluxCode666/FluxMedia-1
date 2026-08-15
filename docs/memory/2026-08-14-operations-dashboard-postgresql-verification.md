@@ -2,7 +2,8 @@
 
 # 运营总览 PostgreSQL 验证记录
 
-验证日期为 2026-08-14，目标数据库为本地 `fluxmedia_operations_test`，数据库会话时区
+验证日期为 2026-08-14 至 2026-08-15，目标数据库为本地
+`fluxmedia_operations_test`，数据库会话时区
 为 UTC。验证过程只输出数据库版本、约束名、索引名、行数和执行计划，不输出连接串、
 密钥或业务敏感数据。临时夹具统一使用 `codex-ops-verify-20260814-*` 标识，并在测试后
 精确清理。
@@ -48,25 +49,33 @@
 - 已到期 `completed` 任务转为 `expired`；对象尚未删除的 `expired` 任务可再次进入清理
   批次；未到期任务不受影响，存储定位字段不会因状态过期而被清空。
 
-### 导出微秒高水位与同毫秒分页
+### 导出微秒高水位与无损明细分页
 
 - `test:operations-boundaries` 在专用 PostgreSQL 数据库的随机隔离 schema 中执行生产
   `readOperationsExportSnapshot` SQL；时间 `2000-01-02 12:34:56.123403` 被原样冻结为
   `2000-01-02T12:34:56.123403Z`，没有经过 JavaScript `Date` 丢失后三位微秒。
-- 三条记录分别使用 `.123403`、`.123402`、`.123401`，但明细排序统一截断到同一毫秒，
-  再以稳定 ID 打破平局。页大小为 2 时第一页返回 `z、y`，第二页返回 `x`，无重复或
-  漏行。
-- 聚焦 DB-free 回归 33/33 通过；真实 PostgreSQL 边界集成测试 2/2 通过。隔离 schema
+- 三条记录分别使用 `.123401`、`.123403`、`.123402`，明细按原始微秒排序，页大小为
+  2 时第一页返回 `.123403`、`.123402`，第二页返回 `.123401`，证明顺序不再退化为
+  同毫秒稳定 ID 排序。
+- 3005 条用户记录使用连续微秒时间跨四个 keyset 页读取，最终集合恰好 3005 条，无
+  重复或漏行；签名 cursor v2 保留六位微秒并拒绝旧版本。
+- 聚焦 DB-free 回归 64/64 通过；真实 PostgreSQL 边界集成测试 9/9 通过。隔离 schema
   在测试结束后删除，不修改既有 epoch 或浏览器夹具。
 
 ## 查询计划证据
 
 本地业务样本很小，所有计划均为缓存命中且 `shared read = 0`。以下结果证明 SQL 与索引
-访问路径可执行，但不能外推生产 p95。
+访问路径可执行，但不能外推生产 p95。深 cursor 用例关闭 Seq Scan 与 Bitmap Scan，
+用于排除小样本成本偏置并验证目标复合索引能够承接完整 tuple `Index Cond`。
 
 | 查询 | 已观察访问路径 | 本地耗时 |
 | --- | --- | ---: |
 | 用户增长日期范围 | 小表默认顺序扫描；强制计划使用 `user_created_at_id_idx` 的 Index Only Scan，无 Sort | 0.014ms |
+| 新增用户深 cursor | `user_created_at_id_idx`，复合 tuple 进入 `Index Cond`，无 Sort | 本地毫秒级 |
+| 充值订单深 cursor | `payment_order_admin_recharge_created_id_idx`，复合 tuple 进入 `Index Cond`，无 Sort | 本地毫秒级 |
+| 履约订单深 cursor | `payment_order_operations_fulfilled_cursor_idx`，复合 tuple 进入 `Index Cond`，无 Incremental Sort | 本地毫秒级 |
+| 支付事件深 cursor | `payment_lifecycle_event_occurred_id_idx`，复合 tuple 进入 `Index Cond`，无 Sort | 本地毫秒级 |
+| 成功产物深 cursor | `user_output_usage_event_operation_cursor_idx`，原始时间、类型和任务 ID tuple 进入 `Index Cond`，无 Sort | 本地毫秒级 |
 | 网页访问去重 | `user_web_visit_first_visited_user_idx`；为 `COUNT(DISTINCT user_id)` 执行语义所需排序 | 0.020ms |
 | 支付生命周期聚合 | `payment_lifecycle_event_type_occurred_order_idx` 与 `payment_order_admin_recharge_created_id_idx`；按订单 flags 聚合排序 | 0.278ms |
 | 导出认领 | 小表默认 Seq Scan；强制计划为状态条件 BitmapOr 后排序，再 LockRows/Limit | 0.099ms 至 0.107ms |
@@ -108,6 +117,6 @@ storage 目录不存在。测试进程创建的三个 Redis 元数据键已按�
 验证前后用户、网页访问、支付订单、支付事件和导出任务行数完全恢复；审计计数未改变，
 数据库中不存在 `codex-ops-verify-*` 临时用户或关联事实。
 
-本地已通过约束、并发唯一性、支付事务回滚、租约 fencing、`SKIP LOCKED` 和过期状态
-不变量。跨多年聚合性能以及导出候选排序成本保留为生产规模发布门禁，不能依据本地毫秒
-级小样本结果关闭。
+本地已通过约束、并发唯一性、支付事务回滚、租约 fencing、`SKIP LOCKED`、过期状态和
+直接事实深 cursor 访问路径不变量。跨多年聚合性能以及导出候选排序成本保留为生产规模
+发布门禁，不能依据本地合成样本结果关闭。

@@ -26,6 +26,7 @@ import type {
   OperationsContentSeriesRow,
   OperationsContentSnapshotReader,
 } from "./content-repository";
+import { toOperationsCursorTimestamp } from "./database-timestamp";
 import type {
   OperationsCommercialDetailRow,
   OperationsContentDetailRow,
@@ -815,6 +816,7 @@ function toGrowthRow(
     role: user.role,
     banned: user.banned,
     businessTime,
+    businessTimeKey: toOperationsCursorTimestamp(businessTime),
     retained,
   };
 }
@@ -839,6 +841,7 @@ function toCommercialRow(input: {
     createdAt: input.order.createdAt,
     fulfilledAt: input.order.fulfilledAt,
     businessTime: input.businessTime,
+    businessTimeKey: toOperationsCursorTimestamp(input.businessTime),
     eventType: input.eventType,
   };
 }
@@ -853,6 +856,7 @@ function toContentRow(output: OutputFact): OperationsContentDetailRow {
     model: output.model,
     mediaType: output.mediaType,
     businessTime: output.businessTime,
+    businessTimeKey: toOperationsCursorTimestamp(output.businessTime),
     status: "completed",
     quantity: output.quantity,
     videoSeconds: output.videoSeconds,
@@ -876,15 +880,17 @@ function paginateRows(
   return rows
     .filter((row) => {
       if (!cursor) return true;
-      const timeDelta =
-        row.businessTime.getTime() - cursor.businessTime.getTime();
+      const timeDelta = row.businessTimeKey.localeCompare(
+        cursor.businessTimeKey
+      );
       return (
         timeDelta < 0 || (timeDelta === 0 && getStableId(row) < cursor.stableId)
       );
     })
     .sort((left, right) => {
-      const timeDelta =
-        right.businessTime.getTime() - left.businessTime.getTime();
+      const timeDelta = right.businessTimeKey.localeCompare(
+        left.businessTimeKey
+      );
       return timeDelta || getStableId(right).localeCompare(getStableId(left));
     })
     .slice(0, limit);

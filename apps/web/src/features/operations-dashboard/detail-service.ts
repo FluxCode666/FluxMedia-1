@@ -32,8 +32,8 @@ import {
 
 type OperationsDetailOutputRow = OperationsDetailOutput["rows"][number];
 
-const DETAIL_CURSOR_VERSION = 1;
-const DETAIL_CURSOR_DOMAIN = "fluxmedia:operations-detail:cursor:v1";
+const DETAIL_CURSOR_VERSION = 2;
+const DETAIL_CURSOR_DOMAIN = "fluxmedia:operations-detail:cursor:v2";
 const DETAIL_FILTER_DOMAIN = "fluxmedia:operations-detail:filters:v1";
 const MAX_CURSOR_LENGTH = 4096;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -133,7 +133,7 @@ function encodeOperationsDetailCursor(
     filter: fingerprintDetailFilters(input.filters, resolvedSecret),
     asOf: input.asOf.toISOString(),
     sortKey: {
-      businessTime: input.sortKey.businessTime.toISOString(),
+      businessTime: input.sortKey.businessTimeKey,
       stableId: input.sortKey.stableId,
     },
   });
@@ -227,7 +227,11 @@ function decodeOperationsDetailCursor(
     }
     return {
       asOf,
-      sortKey: { businessTime, stableId: payload.sortKey.stableId },
+      sortKey: {
+        businessTime,
+        businessTimeKey: payload.sortKey.businessTime,
+        stableId: payload.sortKey.stableId,
+      },
     };
   } catch (error) {
     if (error instanceof OperationsDetailServiceError) throw error;

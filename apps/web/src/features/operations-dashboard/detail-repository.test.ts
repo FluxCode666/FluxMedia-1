@@ -7,6 +7,7 @@
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
+import { toOperationsCursorTimestamp } from "./database-timestamp";
 import {
   buildOperationsActivityDetailSql,
   buildOperationsCohortDetailSql,
@@ -27,6 +28,7 @@ const base = {
   asOf: new Date("2026-08-08T00:00:00.000Z"),
   cursor: {
     businessTime: new Date("2026-08-05T12:00:00.000Z"),
+    businessTimeKey: "2026-08-05T12:00:00.000000Z",
     stableId: "user-5",
   },
   limit: 101,
@@ -39,11 +41,11 @@ describe("operations growth detail repository SQL", () => {
     );
 
     expect(compiled.sql).toContain('from "user"');
-    expect(compiled.sql).toContain('"user"."created_at" <');
-    expect(compiled.sql).toContain('"user"."id" <');
+    expect(compiled.sql).toContain('("user"."created_at", "user"."id") <');
     expect(compiled.sql).toContain(
-      'order by date_trunc(\'milliseconds\', "user"."created_at") desc'
+      'order by "user"."created_at" desc, "user"."id" desc'
     );
+    expect(compiled.sql).not.toContain("date_trunc('milliseconds'");
     expect(compiled.sql).not.toContain("role =");
     expect(compiled.sql).not.toContain("banned =");
   });
@@ -76,7 +78,9 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain("group by scoped_activity.user_id");
     expect(compiled.sql).toContain("min(scoped_activity.business_time)");
     expect(compiled.sql).toContain("activity_users.business_time <");
-    expect(compiled.sql).toContain("activity_users.user_id <");
+    expect(compiled.sql).toContain(
+      "(activity_users.business_time, activity_users.user_id) <"
+    );
   });
 
   it("付费活跃明细只使用已履约充值订单", () => {
@@ -139,8 +143,10 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain("in ('credit_top_up', 'credit_package')");
     expect(compiled.sql).toContain("business_time >=");
     expect(compiled.sql).toContain("business_time <");
-    expect(compiled.sql).toContain("date_trunc('milliseconds'");
-    expect(compiled.sql).toContain("stable_id <");
+    expect(compiled.sql).toContain(
+      "(scoped_commercial.business_time, scoped_commercial.stable_id) <"
+    );
+    expect(compiled.sql).not.toContain("date_trunc('milliseconds'");
     if (kind === "orders") {
       expect(compiled.sql).toContain('"payment_order"."created_at"');
       expect(compiled.sql).not.toContain(
@@ -198,6 +204,10 @@ describe("operations growth detail repository SQL", () => {
         ...base,
         kind: "content",
         detail,
+        cursor: {
+          ...base.cursor,
+          stableId: `${detail === "video_outputs" ? "video" : "image"}:task-5`,
+        },
       })
     );
 
@@ -211,6 +221,16 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.sql).toContain("mismatch_lookup.operation_created_at <>");
     expect(compiled.sql).toContain('left join "generation"');
     expect(compiled.sql).toContain('left join "video_generation"');
+    expect(compiled.sql).toMatch(
+      /scoped_outputs\.business_time,\s+scoped_outputs\.sort_output_kind,\s+scoped_outputs\.task_id/u
+    );
+    expect(compiled.sql).toContain("::output_usage_kind");
+    expect(compiled.sql).toContain(
+      "order by scoped_outputs.business_time desc"
+    );
+    expect(compiled.sql).not.toContain(
+      "order by scoped_outputs.business_time desc, scoped_outputs.stable_id"
+    );
     expect(compiled.sql).not.toContain("prompt");
     expect(compiled.sql).not.toContain("storage_key");
     expect(compiled.sql).not.toContain("video_url");
@@ -238,6 +258,7 @@ describe("operations growth detail repository SQL", () => {
         kind: "content",
         detail: "credit_usage",
         highWatermarks,
+        cursor: { ...base.cursor, stableId: "image:task-5" },
       })
     );
 
@@ -256,7 +277,7 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.params).toContain("2026-08-07T00:00:00.000003Z");
   });
 
-  it("Cohort 导出按留存日覆盖完整注册范围并使用毫秒稳定排序", () => {
+  it("Cohort 导出按留存日覆盖完整注册范围并使用无损时间排序", () => {
     const compiled = dialect.sqlToQuery(
       buildOperationsCohortExportDetailSql({
         ...base,
@@ -267,7 +288,10 @@ describe("operations growth detail repository SQL", () => {
     );
 
     expect(compiled.sql).toContain("cohort_users.cohort_date +");
-    expect(compiled.sql).toContain("date_trunc('milliseconds'");
+    expect(compiled.sql).not.toContain("date_trunc('milliseconds'");
+    expect(compiled.sql).toContain(
+      "order by cohort_users.business_time desc, cohort_users.user_id desc"
+    );
     expect(compiled.sql).toContain("at time zone");
     expect(compiled.sql).not.toContain("generate_series");
     expect(compiled.sql).toMatch(
@@ -290,6 +314,7 @@ describe("operations growth detail repository SQL", () => {
       role: "user",
       banned: false,
       businessTime: new Date(businessTime),
+      businessTimeKey: toOperationsCursorTimestamp(new Date(businessTime)),
       retained: null,
     });
     const page = paginateOperationsGrowthDetailRows(
@@ -304,6 +329,7 @@ describe("operations growth detail repository SQL", () => {
     expect(page.rows.map((row) => row.userId)).toEqual(["user-3", "user-2"]);
     expect(page.nextCursor).toEqual({
       businessTime: new Date("2026-08-02T00:00:00.000Z"),
+      businessTimeKey: "2026-08-02T00:00:00.000000Z",
       stableId: "user-2",
     });
   });

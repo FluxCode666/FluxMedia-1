@@ -659,6 +659,13 @@
       "when": 1786809600000,
       "tag": "0093_operations_dashboard",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1786813200000,
+      "tag": "0094_operations_detail_cursor_indexes",
+      "breakpoints": true
     }
   ]
 }

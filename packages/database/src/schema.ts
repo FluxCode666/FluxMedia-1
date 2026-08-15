@@ -699,6 +699,11 @@ export const paymentOrder = pgTable(
       .where(
         sql`${table.status} = 'fulfilled' and ${table.purpose} in ('credit_top_up', 'credit_package') and ${table.fulfilledAt} is not null`
       ),
+    index("payment_order_operations_fulfilled_cursor_idx")
+      .on(table.fulfilledAt.desc(), table.id.desc())
+      .where(
+        sql`${table.status} = 'fulfilled' and ${table.purpose} in ('credit_top_up', 'credit_package') and ${table.fulfilledAt} is not null`
+      ),
     index("payment_order_admin_recharge_created_id_idx")
       .on(table.createdAt.desc(), table.id.desc(), table.status, table.userId)
       .where(sql`${table.purpose} in ('credit_top_up', 'credit_package')`),
@@ -742,6 +747,10 @@ export const paymentLifecycleEvent = pgTable(
       table.eventType,
       table.occurredAt,
       table.paymentOrderId
+    ),
+    index("payment_lifecycle_event_occurred_id_idx").on(
+      table.occurredAt.desc(),
+      table.id.desc()
     ),
     check(
       "payment_lifecycle_event_type_check",
@@ -2811,6 +2820,11 @@ export const userOutputUsageEvent = pgTable(
     index("user_output_usage_event_created_kind_idx").on(
       table.operationCreatedAt,
       table.outputKind
+    ),
+    index("user_output_usage_event_operation_cursor_idx").on(
+      table.operationCreatedAt.desc(),
+      table.outputKind.desc(),
+      table.sourceTaskId.desc()
     ),
     check(
       "user_output_usage_event_metric_check",

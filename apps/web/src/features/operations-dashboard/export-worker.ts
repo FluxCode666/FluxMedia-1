@@ -486,6 +486,7 @@ async function* streamRowsFromReader(
       if (!last) break;
       cursor = {
         businessTime: last.businessTime,
+        businessTimeKey: last.businessTimeKey,
         stableId: "stableId" in last ? last.stableId : last.userId,
       };
     }

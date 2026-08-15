@@ -15,6 +15,7 @@ import type {
 /** 明细排序键；同一业务时间以稳定 ID 打破平局。 */
 export type OperationsDetailCursor = {
   businessTime: Date;
+  businessTimeKey: string;
   stableId: string;
 };
 
@@ -139,6 +140,7 @@ export type OperationsGrowthDetailRow = {
   role: string;
   banned: boolean;
   businessTime: Date;
+  businessTimeKey: string;
   retained: boolean | null;
 };
 
@@ -155,6 +157,7 @@ export type OperationsCommercialDetailRow = {
   createdAt: Date;
   fulfilledAt: Date | null;
   businessTime: Date;
+  businessTimeKey: string;
   eventType: string | null;
 };
 
@@ -167,6 +170,7 @@ export type OperationsContentDetailRow = {
   model: string;
   mediaType: "image" | "video";
   businessTime: Date;
+  businessTimeKey: string;
   status: "completed";
   quantity: number;
   videoSeconds: number;

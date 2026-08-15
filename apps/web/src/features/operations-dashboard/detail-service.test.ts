@@ -4,8 +4,10 @@
  * 使用方：Vitest。锁定累计/增长桶、epoch 截断、Cohort 目标日、签名 cursor、
  * fulfilled_at 收入、支付阶段和内容桶的精确筛选边界。
  */
-import { describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 
+import { describe, expect, it, vi } from "vitest";
+import { toOperationsCursorTimestamp } from "./database-timestamp";
 import type {
   OperationsCommercialDetailRow,
   OperationsContentDetailRow,
@@ -34,6 +36,7 @@ function makeRow(
     role: "user",
     banned: false,
     businessTime: new Date(businessTime),
+    businessTimeKey: toOperationsCursorTimestamp(new Date(businessTime)),
     retained,
   };
 }
@@ -248,9 +251,11 @@ describe("operations detail service", () => {
   });
 
   it("下一页固定上一页 asOf，并拒绝跨管理员或跨筛选复用 cursor", async () => {
+    const exactCursorRow = makeRow("user-2", "2026-08-02T00:00:00.000Z");
+    exactCursorRow.businessTimeKey = "2026-08-02T00:00:00.000456Z";
     const firstRepository = createRepository([
       makeRow("user-3", "2026-08-03T00:00:00.000Z"),
-      makeRow("user-2", "2026-08-02T00:00:00.000Z"),
+      exactCursorRow,
       makeRow("user-1", "2026-08-01T00:00:00.000Z"),
     ]).repository;
     const first = await loadOperationsDetail(
@@ -262,6 +267,14 @@ describe("operations detail service", () => {
       { repository: firstRepository, tokenSecret: TOKEN_SECRET }
     );
     expect(first.nextCursor).not.toBeNull();
+    const encodedPayload = first.nextCursor?.split(".")[0];
+    const cursorPayload = JSON.parse(
+      Buffer.from(encodedPayload ?? "", "base64url").toString("utf8")
+    ) as unknown;
+    expect(cursorPayload).toMatchObject({
+      v: 2,
+      sortKey: { businessTime: "2026-08-02T00:00:00.000456Z" },
+    });
 
     const second = createRepository([]);
     await loadOperationsDetail(
@@ -276,9 +289,35 @@ describe("operations detail service", () => {
       asOf: AS_OF,
       cursor: {
         businessTime: new Date("2026-08-02T00:00:00.000Z"),
+        businessTimeKey: "2026-08-02T00:00:00.000456Z",
         stableId: "user-2",
       },
     });
+
+    const legacyPayload = Buffer.from(
+      JSON.stringify({
+        ...(cursorPayload as Record<string, unknown>),
+        v: 1,
+      })
+    ).toString("base64url");
+    const legacySignature = createHmac("sha256", TOKEN_SECRET)
+      .update("fluxmedia:operations-detail:cursor:v2")
+      .update("\0")
+      .update(legacyPayload)
+      .digest("base64url");
+    await expect(
+      loadOperationsDetail(
+        {
+          actorUserId: "admin-1",
+          timeZone: "Asia/Shanghai",
+          input: {
+            ...createInput("users"),
+            cursor: `${legacyPayload}.${legacySignature}`,
+          },
+        },
+        { repository: second.repository, tokenSecret: TOKEN_SECRET }
+      )
+    ).rejects.toMatchObject({ code: "validation_error" });
 
     await expect(
       loadOperationsDetail(
@@ -357,6 +396,7 @@ describe("operations detail service", () => {
       createdAt: new Date("2026-08-01T00:00:00.000Z"),
       fulfilledAt: null,
       businessTime: new Date(businessTime),
+      businessTimeKey: toOperationsCursorTimestamp(new Date(businessTime)),
       eventType: "order_created",
     });
     const first = await loadOperationsDetail(
@@ -401,6 +441,7 @@ describe("operations detail service", () => {
     expect(next.readRows.mock.calls[0]?.[0]).toMatchObject({
       cursor: {
         businessTime: new Date("2026-08-02T00:00:00.000Z"),
+        businessTimeKey: "2026-08-02T00:00:00.000000Z",
         stableId: "event-2",
       },
     });
@@ -502,6 +543,7 @@ describe("operations detail service", () => {
       createdAt: new Date("2026-08-01T00:00:00.000Z"),
       fulfilledAt: businessTime,
       businessTime,
+      businessTimeKey: toOperationsCursorTimestamp(businessTime),
       eventType:
         detail === "payment_lifecycle" ? "fulfillment_succeeded" : null,
     };
@@ -550,6 +592,7 @@ describe("operations detail service", () => {
       createdAt: new Date("2026-07-01T00:00:00.000Z"),
       fulfilledAt,
       businessTime: fulfilledAt,
+      businessTimeKey: toOperationsCursorTimestamp(fulfilledAt),
       eventType: null,
     };
     const { readRows, repository } = createRepository([row]);
@@ -620,6 +663,7 @@ describe("operations detail service", () => {
       model: "gpt-image-2",
       mediaType: "image",
       businessTime: new Date("2026-08-03T00:00:00.000Z"),
+      businessTimeKey: "2026-08-03T00:00:00.000000Z",
       status: "completed",
       quantity: 4,
       videoSeconds: 0,
@@ -696,6 +740,7 @@ describe("operations detail service", () => {
       model: "gpt-image-2",
       mediaType: "image",
       businessTime: new Date("2026-08-03T00:00:00.000Z"),
+      businessTimeKey: "2026-08-03T00:00:00.000000Z",
       status: "completed",
       quantity: 2,
       videoSeconds: 0,

@@ -17,7 +17,10 @@ import {
 } from "@repo/database/schema";
 import { type SQL, sql } from "drizzle-orm";
 
-import { toOperationsDatabaseTimestamp } from "./database-timestamp";
+import {
+  toOperationsDatabaseTimestamp,
+  toOperationsDatabaseTimestampText,
+} from "./database-timestamp";
 import type {
   OperationsActivityDetailQuery,
   OperationsCohortDetailQuery,
@@ -98,6 +101,7 @@ function assertValidDetailQuery(input: OperationsDetailQuery): void {
   if (
     input.cursor &&
     (Number.isNaN(input.cursor.businessTime.getTime()) ||
+      Number.isNaN(new Date(input.cursor.businessTimeKey).getTime()) ||
       input.cursor.stableId.length === 0 ||
       input.cursor.stableId.length > 512)
   ) {
@@ -127,23 +131,44 @@ function buildDetailKeysetPredicate(
   stableId: SQL
 ): SQL {
   if (!cursor) return sql`true`;
-  return sql`(
-    ${businessTime} < ${cursor.businessTime}
-    or (
-      ${businessTime} = ${cursor.businessTime}
-      and ${stableId} < ${cursor.stableId}
-    )
-  )`;
+  const cursorTime = toOperationsDatabaseTimestamp(cursor.businessTimeKey);
+  return sql`(${businessTime}, ${stableId}) < (${cursorTime}, ${cursor.stableId})`;
 }
 
-/**
- * 将数据库微秒时间收敛到 API 游标可表达的毫秒排序键。
- *
- * WHY：JavaScript Date 无法保存 PostgreSQL 微秒。排序和 keyset 同时按毫秒截断后，
- * 同一毫秒内由 stable ID 完整打破平局，不会在下一页跳过剩余记录。
- */
-function buildMillisecondDetailSortTime(value: SQL): SQL {
-  return sql`date_trunc('milliseconds', ${value})`;
+/** 将内容稳定 ID 解析为索引可直接使用的产物类型与任务 ID。 */
+function parseContentDetailStableId(stableId: string): {
+  outputKind: "image" | "video";
+  taskId: string;
+} {
+  const separatorIndex = stableId.indexOf(":");
+  const outputKind = stableId.slice(0, separatorIndex);
+  const taskId = stableId.slice(separatorIndex + 1);
+  if (
+    separatorIndex < 1 ||
+    (outputKind !== "image" && outputKind !== "video") ||
+    taskId.length === 0
+  ) {
+    throw new RangeError("运营内容明细游标无效");
+  }
+  return { outputKind, taskId };
+}
+
+/** 构造成功产物原始三列索引上的降序 keyset 谓词。 */
+function buildContentDetailKeysetPredicate(
+  cursor: OperationsDetailCursor | null
+): SQL {
+  if (!cursor) return sql`true`;
+  const cursorTime = toOperationsDatabaseTimestamp(cursor.businessTimeKey);
+  const stableKey = parseContentDetailStableId(cursor.stableId);
+  return sql`(
+    scoped_outputs.business_time,
+    scoped_outputs.sort_output_kind,
+    scoped_outputs.task_id
+  ) < (
+    ${cursorTime},
+    ${stableKey.outputKind}::output_usage_kind,
+    ${stableKey.taskId}
+  )`;
 }
 
 /** 返回可包含 Date 所代表整毫秒的排除式上界。 */
@@ -218,9 +243,7 @@ function buildOperationsPaymentStageDetailSql(
       : sql``;
   const businessTime = buildPaymentStageBusinessTime(input.stage);
   const stagePredicate = buildPaymentStagePredicate(input.stage);
-  const sortTime = buildMillisecondDetailSortTime(
-    sql`stage_orders.business_time`
-  );
+  const sortTime = sql`stage_orders.business_time`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -307,7 +330,11 @@ function buildOperationsPaymentStageDetailSql(
             : sql``
         }
     )
-    select *
+    select
+      stage_orders.*,
+      ${toOperationsDatabaseTimestampText(
+        sql`stage_orders.business_time`
+      )} as business_time_key
     from stage_orders
     where stage_orders.business_time is not null
       and ${keyset}
@@ -367,9 +394,7 @@ export function buildOperationsCommercialDetailSql(
               : sql``
           }`
       : sql``;
-  const sortTime = buildMillisecondDetailSortTime(
-    sql`scoped_commercial.business_time`
-  );
+  const sortTime = sql`scoped_commercial.business_time`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -414,7 +439,11 @@ export function buildOperationsCommercialDetailSql(
             : sql``
         }
     )
-    select *
+    select
+      scoped_commercial.*,
+      ${toOperationsDatabaseTimestampText(
+        sql`scoped_commercial.business_time`
+      )} as business_time_key
     from scoped_commercial
     where scoped_commercial.business_time >= ${input.start}
       and scoped_commercial.business_time < ${input.end}
@@ -469,9 +498,7 @@ export function buildOperationsContentDetailSql(
     : input.highWatermarks
       ? sql`where false`
       : sql``;
-  const sortTime = buildMillisecondDetailSortTime(
-    sql`scoped_outputs.business_time`
-  );
+  const sortTime = sql`scoped_outputs.business_time`;
   return sql`
     with scoped_outputs as (
       select
@@ -483,6 +510,7 @@ export function buildOperationsContentDetailSql(
         ${userOutputUsageEvent.sourceTaskId} as task_id,
         ${userOutputUsageEvent.userId} as user_id,
         ${userOutputUsageEvent.outputKind}::text as media_type,
+        ${userOutputUsageEvent.outputKind} as sort_output_kind,
         ${userOutputUsageEvent.operationCreatedAt} as business_time,
         case
           when ${userOutputUsageEvent.outputKind} = 'image'
@@ -507,12 +535,10 @@ export function buildOperationsContentDetailSql(
       select *
       from scoped_outputs
       where ${mediaPredicate}
-        and ${buildDetailKeysetPredicate(
-          input.cursor,
-          sortTime,
-          sql`scoped_outputs.stable_id`
-        )}
-      order by ${sortTime} desc, scoped_outputs.stable_id desc
+        and ${buildContentDetailKeysetPredicate(input.cursor)}
+      order by ${sortTime} desc,
+        scoped_outputs.sort_output_kind desc,
+        scoped_outputs.task_id desc
       limit ${input.limit}
     ), frozen_credit_usage as (
       select
@@ -553,6 +579,9 @@ export function buildOperationsContentDetailSql(
       ) as model,
       paged_outputs.media_type,
       paged_outputs.business_time,
+      ${toOperationsDatabaseTimestampText(
+        sql`paged_outputs.business_time`
+      )} as business_time_key,
       'completed'::text as status,
       paged_outputs.quantity,
       paged_outputs.video_seconds,
@@ -589,8 +618,9 @@ export function buildOperationsContentDetailSql(
       on paged_outputs.media_type = 'video'
       and ${videoGeneration.id} = paged_outputs.task_id
       and ${videoGeneration.userId} = paged_outputs.user_id
-    order by date_trunc('milliseconds', paged_outputs.business_time) desc,
-      paged_outputs.stable_id desc
+    order by paged_outputs.business_time desc,
+      paged_outputs.sort_output_kind desc,
+      paged_outputs.task_id desc
   `;
 }
 
@@ -604,7 +634,7 @@ export function buildOperationsCumulativeUserDetailSql(
   input: OperationsCumulativeUserDetailQuery
 ): SQL {
   assertValidDetailQuery(input);
-  const sortTime = buildMillisecondDetailSortTime(sql`${user.createdAt}`);
+  const sortTime = sql`${user.createdAt}`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -627,6 +657,9 @@ export function buildOperationsCumulativeUserDetailSql(
       ${user.role}::text as role,
       ${user.banned} as banned,
       ${user.createdAt} as business_time,
+      ${toOperationsDatabaseTimestampText(
+        sql`${user.createdAt}`
+      )} as business_time_key,
       null::boolean as retained
     from ${user}
     where ${user.createdAt} < ${sql.param(input.end, user.createdAt)}
@@ -646,7 +679,7 @@ export function buildOperationsNewUserDetailSql(
   input: OperationsNewUserDetailQuery
 ): SQL {
   assertValidDetailQuery(input);
-  const sortTime = buildMillisecondDetailSortTime(sql`${user.createdAt}`);
+  const sortTime = sql`${user.createdAt}`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -669,6 +702,9 @@ export function buildOperationsNewUserDetailSql(
       ${user.role}::text as role,
       ${user.banned} as banned,
       ${user.createdAt} as business_time,
+      ${toOperationsDatabaseTimestampText(
+        sql`${user.createdAt}`
+      )} as business_time_key,
       null::boolean as retained
     from ${user}
     where ${user.createdAt} >= ${sql.param(input.start, user.createdAt)}
@@ -701,9 +737,7 @@ export function buildOperationsActivityDetailSql(
     sql`${input.end}`,
     input.highWatermarks
   );
-  const sortTime = buildMillisecondDetailSortTime(
-    sql`activity_users.business_time`
-  );
+  const sortTime = sql`activity_users.business_time`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -726,6 +760,9 @@ export function buildOperationsActivityDetailSql(
       ${user.role}::text as role,
       ${user.banned} as banned,
       activity_users.business_time,
+      ${toOperationsDatabaseTimestampText(
+        sql`activity_users.business_time`
+      )} as business_time_key,
       null::boolean as retained
     from activity_users
     join ${user} on ${user.id} = activity_users.user_id
@@ -745,7 +782,7 @@ export function buildOperationsCohortDetailSql(
   input: OperationsCohortDetailQuery
 ): SQL {
   assertValidDetailQuery(input);
-  const sortTime = buildMillisecondDetailSortTime(sql`${user.createdAt}`);
+  const sortTime = sql`${user.createdAt}`;
   const keyset = buildDetailKeysetPredicate(
     input.cursor,
     sortTime,
@@ -782,6 +819,9 @@ export function buildOperationsCohortDetailSql(
       ${user.role}::text as role,
       ${user.banned} as banned,
       ${user.createdAt} as business_time,
+      ${toOperationsDatabaseTimestampText(
+        sql`${user.createdAt}`
+      )} as business_time_key,
       exists (
         select 1
         from ${userOutputUsageEvent}
@@ -845,7 +885,7 @@ export function buildOperationsCohortExportDetailSql(
       ? sql`and false`
       : sql``;
   const businessTime = sql`cohort_users.business_time`;
-  const sortTime = buildMillisecondDetailSortTime(businessTime);
+  const sortTime = businessTime;
   const targetDate = sql`cohort_users.cohort_date + ${input.retentionDay}`;
   const targetStart = sql`(
     (${targetDate})::timestamp at time zone ${input.timeZone}
@@ -890,6 +930,9 @@ export function buildOperationsCohortExportDetailSql(
       cohort_users.role,
       cohort_users.banned,
       cohort_users.business_time,
+      ${toOperationsDatabaseTimestampText(
+        sql`cohort_users.business_time`
+      )} as business_time_key,
       exists (
         select 1
         from ${userOutputUsageEvent}
@@ -958,6 +1001,7 @@ export function paginateOperationsGrowthDetailRows(
       rows.length > pageSize && lastRow
         ? {
             businessTime: lastRow.businessTime,
+            businessTimeKey: lastRow.businessTimeKey,
             stableId: lastRow.userId,
           }
         : null,
@@ -985,6 +1029,7 @@ export function paginateOperationsDetailRows(
       rows.length > pageSize && lastRow
         ? {
             businessTime: lastRow.businessTime,
+            businessTimeKey: lastRow.businessTimeKey,
             stableId: "stableId" in lastRow ? lastRow.stableId : lastRow.userId,
           }
         : null,

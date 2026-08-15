@@ -6,11 +6,11 @@
 创作留存和支付生命周期事实，因此生产统计起点必须在迁移完成后由运维显式初始化，
 不能由迁移时间、当前时间或历史数据自动推断。
 
-## 生产预建用户时间索引
+## 生产预建运营明细索引
 
-`0093_operations_dashboard.sql` 依赖 `user_created_at_id_idx` 服务新增用户日期范围与
-keyset 排序。已有生产数据的 `user` 表必须在运行 `0093` 前并发预建该索引；迁移中的
-普通 `CREATE INDEX IF NOT EXISTS` 只负责新建或重置库，不能替代生产在线 DDL。
+`0093_operations_dashboard.sql` 与 `0094_operations_detail_cursor_indexes.sql` 依赖四个
+复合索引服务无损微秒 keyset。已有生产数据时，必须在运行对应迁移前并发预建；迁移中
+的普通 `CREATE INDEX IF NOT EXISTS` 只负责新建或重置库，不能替代生产在线 DDL。
 
 在专用 `psql` 会话中保持 autocommit，禁止使用 `BEGIN`、`COMMIT`、事务包装脚本或
 Drizzle 迁移器执行以下命令。`CREATE INDEX CONCURRENTLY` 和
@@ -26,12 +26,17 @@ SELECT
   indisvalid,
   pg_get_indexdef(indexrelid) AS definition
 FROM pg_index
-WHERE indexrelid = to_regclass('public.user_created_at_id_idx');
+WHERE indexrelid = ANY (ARRAY[
+  to_regclass('public.user_created_at_id_idx'),
+  to_regclass('public.payment_order_operations_fulfilled_cursor_idx'),
+  to_regclass('public.payment_lifecycle_event_occurred_id_idx'),
+  to_regclass('public.user_output_usage_event_operation_cursor_idx')
+]);
 ```
 
 - 无返回行：可以开始预建。
-- `indisready = true` 且 `indisvalid = true`：确认定义为
-  `public."user" (created_at, id)` 后跳过预建。
+- `indisready = true` 且 `indisvalid = true`：确认定义与下方命令逐列、排序方向和部分
+  谓词一致后跳过对应预建。
 - 任一标志为 `false`：上次并发建索引失败或被取消，`IF NOT EXISTS` 不会修复；必须先
   清理 invalid 索引，再重新预建。
 - 同名 valid 索引定义不一致：停止发布并人工核对，禁止直接删除生产索引。
@@ -47,16 +52,42 @@ SET statement_timeout = '60min';
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "user_created_at_id_idx"
   ON public."user" ("created_at", "id");
 
+CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  "payment_order_operations_fulfilled_cursor_idx"
+  ON public."payment_order" ("fulfilled_at" DESC, "id" DESC)
+  WHERE "status" = 'fulfilled'
+    AND "purpose" IN ('credit_top_up', 'credit_package')
+    AND "fulfilled_at" IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  "payment_lifecycle_event_occurred_id_idx"
+  ON public."payment_lifecycle_event" ("occurred_at" DESC, "id" DESC);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  "user_output_usage_event_operation_cursor_idx"
+  ON public."user_output_usage_event" (
+    "operation_created_at" DESC,
+    "output_kind" DESC,
+    "source_task_id" DESC
+  );
+
 RESET lock_timeout;
 RESET statement_timeout;
 ```
 
 命令成功、超时或连接中断后都必须重新执行 catalog 检查。只有 `indisready` 和
-`indisvalid` 同时为 `true` 且定义正确时，才允许继续执行 `0093`。若留下 invalid
+`indisvalid` 同时为 `true` 且定义正确时，才允许继续执行 `0093`/`0094`。若留下 invalid
 索引，在同样保持 autocommit 的会话中执行：
 
 ```sql
+-- 只执行 catalog 检查确认 invalid 的对应语句，不删除 valid 索引。
 DROP INDEX CONCURRENTLY IF EXISTS public."user_created_at_id_idx";
+DROP INDEX CONCURRENTLY IF EXISTS
+  public."payment_order_operations_fulfilled_cursor_idx";
+DROP INDEX CONCURRENTLY IF EXISTS
+  public."payment_lifecycle_event_occurred_id_idx";
+DROP INDEX CONCURRENTLY IF EXISTS
+  public."user_output_usage_event_operation_cursor_idx";
 ```
 
 清理后重新设置 timeout 并执行并发预建。不要在索引仍为 invalid 时直接运行迁移，
@@ -66,7 +97,8 @@ DROP INDEX CONCURRENTLY IF EXISTS public."user_created_at_id_idx";
 
 ### 前置条件
 
-1. `0093_operations_dashboard.sql` 已在目标数据库执行。
+1. `0093_operations_dashboard.sql` 与 `0094_operations_detail_cursor_indexes.sql` 已在
+   目标数据库执行。
 2. 新版 Web 已部署，旧实例已经退出，不再存在缺少运营事实双写的进程。
 3. 产品与运维共同确认正式上线的应用自然日和 `APP_TIME_ZONE`。
 4. 将该自然日零点转换为 UTC 瞬间，并由第二位操作者复核。
@@ -167,13 +199,14 @@ OPERATIONS_DASHBOARD_TEST_DATABASE_URL=<专用测试库连接串> \
 pnpm --filter @repo/integration-tests test:operations-boundaries
 ```
 
-该命令在随机隔离 schema 中执行生产导出快照和新增用户明细 SQL，必须同时证明六位微秒
-高水位原样保留，以及同一毫秒内多条记录跨 keyset 页面不重复、不遗漏。测试结束后会
-删除隔离 schema，不读取或清理专用库中的其它夹具。
+该命令在随机隔离 schema 中执行生产迁移、导出快照和直接事实明细 SQL，必须同时证明
+六位微秒高水位原样保留、3005 行跨多页不重复不遗漏，并确认用户、订单、履约订单、
+支付生命周期和成功产物的深 cursor 进入复合 `Index Cond` 且不产生 `Sort`。测试结束后
+会删除隔离 schema，不读取或清理专用库中的其它夹具。
 
 ## 发布与回滚
 
-发布顺序固定为：并发预建用户时间索引、迁移结构、部署事实双写与 UOL、预演并初始化
+发布顺序固定为：并发预建运营复合索引、迁移结构、部署事实双写与 UOL、预演并初始化
 epoch、开启导出 worker、完成三类小范围导出和浏览器冒烟、完成零差异对账、最后开放
 导航。
 

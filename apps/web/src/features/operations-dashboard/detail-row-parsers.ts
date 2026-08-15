@@ -14,6 +14,11 @@ import type {
   OperationsGrowthDetailRow,
 } from "./detail-contracts";
 
+const exactDatabaseTimestampSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u)
+  .refine((value) => !Number.isNaN(new Date(value).getTime()), "游标时间无效");
+
 const growthDetailDatabaseRowSchema = z.object({
   user_id: z.string().min(1),
   name: z.string(),
@@ -24,6 +29,7 @@ const growthDetailDatabaseRowSchema = z.object({
     .union([z.date(), z.string().min(1)])
     .transform((value) => (value instanceof Date ? value : new Date(value)))
     .refine((value) => !Number.isNaN(value.getTime()), "明细业务时间无效"),
+  business_time_key: exactDatabaseTimestampSchema,
   retained: z.boolean().nullable(),
 });
 
@@ -57,6 +63,7 @@ const commercialDetailDatabaseRowSchema = z.object({
     .union([z.date(), z.string().min(1)])
     .transform((value) => (value instanceof Date ? value : new Date(value)))
     .refine((value) => !Number.isNaN(value.getTime()), "商业化业务时间无效"),
+  business_time_key: exactDatabaseTimestampSchema,
   event_type: z.string().nullable(),
 });
 
@@ -70,6 +77,7 @@ const contentDetailDatabaseRowSchema = z.object({
     .union([z.date(), z.string().min(1)])
     .transform((value) => (value instanceof Date ? value : new Date(value)))
     .refine((value) => !Number.isNaN(value.getTime()), "内容业务时间无效"),
+  business_time_key: exactDatabaseTimestampSchema,
   status: z.literal("completed"),
   quantity: z.coerce.number().int().safe().positive(),
   video_seconds: z.coerce.number().int().safe().nonnegative(),
@@ -92,6 +100,7 @@ export function parseOperationsGrowthDetailRows(
       role: row.role,
       banned: row.banned,
       businessTime: row.business_time,
+      businessTimeKey: row.business_time_key,
       retained: row.retained,
     }));
 }
@@ -115,6 +124,7 @@ export function parseOperationsCommercialDetailRows(
       createdAt: row.created_at,
       fulfilledAt: row.fulfilled_at,
       businessTime: row.business_time,
+      businessTimeKey: row.business_time_key,
       eventType: row.event_type,
     }));
 }
@@ -134,6 +144,7 @@ export function parseOperationsContentDetailRows(
       model: row.model,
       mediaType: row.media_type,
       businessTime: row.business_time,
+      businessTimeKey: row.business_time_key,
       status: row.status,
       quantity: row.quantity,
       videoSeconds: row.video_seconds,
