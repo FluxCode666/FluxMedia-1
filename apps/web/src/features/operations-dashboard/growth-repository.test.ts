@@ -4,11 +4,13 @@
  * 不连接数据库；通过 PostgreSQL dialect 编译查询，证明累计用户无身份过滤、
  * 三类活跃同源、趋势逐桶去重以及 Cohort 行为不被注册范围结束日截断。
  */
+import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   buildOperationsActivitySeriesSql,
+  buildOperationsActivitySourceSql,
   buildOperationsActivityUserCountSql,
   buildOperationsCohortSql,
   buildOperationsCumulativeUserCountSql,
@@ -76,6 +78,39 @@ describe("operations growth repository SQL", () => {
     expect(payment.sql).toContain('from "payment_order"');
     expect(payment.sql).toContain("= 'fulfilled'");
     expect(payment.sql).toContain("in ('credit_top_up', 'credit_package')");
+  });
+
+  it("冻结导出的付费活跃只使用高水位内履约成功事实", () => {
+    const compiled = compile(
+      buildOperationsActivitySourceSql(
+        "payment",
+        sql`${range.start}`,
+        sql`${range.end}`,
+        {
+          users: null,
+          webVisits: null,
+          outputs: null,
+          paymentOrders: {
+            createdAt: "2026-08-07T00:00:00.000001Z",
+            id: "order-z",
+          },
+          paymentLifecycle: {
+            recordedAt: "2026-08-07T00:00:00.000002Z",
+            id: "event-z",
+          },
+          creditContributions: null,
+        }
+      )
+    );
+
+    expect(compiled.sql).toContain('from "payment_lifecycle_event"');
+    expect(compiled.sql).toContain("= 'fulfillment_succeeded'");
+    expect(compiled.sql).toMatch(
+      /"payment_lifecycle_event"\."recorded_at",\s+"payment_lifecycle_event"\."id"\s+\) <=/u
+    );
+    expect(compiled.sql).not.toContain('"payment_order"."status"');
+    expect(compiled.sql).not.toContain('"payment_order"."fulfilled_at"');
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
   });
 
   it("趋势使用参数化桶并在每个桶内独立去重", () => {

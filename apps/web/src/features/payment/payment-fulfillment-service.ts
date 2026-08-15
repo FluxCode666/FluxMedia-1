@@ -233,7 +233,9 @@ export async function processClaimedPaymentFulfillment(
       workItemId: workItem.id,
       leaseToken: workItem.leaseToken,
       creditsBatchId: batch.id,
-      occurredAt,
+      // WHY：完成事件必须记录实际完成时刻，不能复用本轮尝试开始时间；否则
+      // 长耗时发放会把运营履约时间和收入业务时间整体前移。
+      occurredAt: dependencies.now(),
     });
     if (!completed) {
       return { status: "superseded", workItemId: workItem.id };

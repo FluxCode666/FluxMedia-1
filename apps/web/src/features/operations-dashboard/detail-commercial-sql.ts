@@ -200,6 +200,234 @@ function buildOperationsPaymentStageDetailSql(
   `;
 }
 
+/** 冻结商业化导出支持的订单与生命周期明细查询。 */
+type FrozenCommercialDetailQuery = Extract<
+  OperationsCommercialDetailQuery,
+  { kind: "orders" | "fulfilled_orders" | "payment_lifecycle" }
+> & {
+  highWatermarks: NonNullable<
+    OperationsCommercialDetailQuery["highWatermarks"]
+  >;
+};
+
+/**
+ * 从冻结高水位内的生命周期事实构造商业化明细。
+ *
+ * @param input 带完整事实高水位的订单、已履约订单或生命周期查询。
+ * @returns 不读取可变订单状态和 fulfilled_at 的参数化 SQL。
+ * @sideEffects 无；订单状态按冻结事实的最后记录阶段推导。
+ */
+function buildFrozenCommercialDetailSql(
+  input: FrozenCommercialDetailQuery
+): SQL {
+  const orderWatermark = input.highWatermarks.paymentOrders;
+  const orderBound = orderWatermark
+    ? sql`and (${paymentOrder.createdAt}, ${paymentOrder.id})
+        <= (${toOperationsDatabaseTimestamp(orderWatermark.createdAt)}, ${
+          orderWatermark.id
+        })`
+    : sql`and false`;
+  const lifecycleWatermark = input.highWatermarks.paymentLifecycle;
+  const lifecycleBound = lifecycleWatermark
+    ? sql`and (
+        ${paymentLifecycleEvent.recordedAt},
+        ${paymentLifecycleEvent.id}
+      ) <= (
+        ${toOperationsDatabaseTimestamp(lifecycleWatermark.recordedAt)},
+        ${lifecycleWatermark.id}
+      )`
+    : sql`and false`;
+  const currencyBound =
+    input.kind === "fulfilled_orders" && input.currency
+      ? sql`and upper(${paymentOrder.currency}) = ${input.currency}`
+      : sql``;
+  const targetOrders =
+    input.kind === "orders"
+      ? sql`
+          select ${paymentOrder.id} as payment_order_id
+          from ${paymentOrder}
+          where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+            ${orderBound}
+            and ${paymentOrder.createdAt} >= ${input.start}
+            and ${paymentOrder.createdAt} < ${input.end}
+            and ${paymentOrder.createdAt} >= ${input.epochStart}
+            and ${paymentOrder.createdAt} < ${nextMillisecond(input.asOf)}
+        `
+      : input.kind === "fulfilled_orders"
+        ? sql`
+            select ${paymentLifecycleEvent.paymentOrderId} as payment_order_id
+            from ${paymentLifecycleEvent}
+            join ${paymentOrder}
+              on ${paymentOrder.id} = ${paymentLifecycleEvent.paymentOrderId}
+            where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+              and ${paymentLifecycleEvent.eventType} = 'fulfillment_succeeded'
+              ${lifecycleBound}
+            group by ${paymentLifecycleEvent.paymentOrderId}
+            having min(${paymentLifecycleEvent.occurredAt}) >= ${input.start}
+              and min(${paymentLifecycleEvent.occurredAt}) < ${input.end}
+              and min(${paymentLifecycleEvent.occurredAt}) >= ${input.epochStart}
+              and min(${paymentLifecycleEvent.occurredAt}) < ${nextMillisecond(
+                input.asOf
+              )}
+          `
+        : sql`
+            select distinct
+              ${paymentLifecycleEvent.paymentOrderId} as payment_order_id
+            from ${paymentLifecycleEvent}
+            join ${paymentOrder}
+              on ${paymentOrder.id} = ${paymentLifecycleEvent.paymentOrderId}
+            where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+              and ${paymentLifecycleEvent.eventType} in (
+                'order_created',
+                'checkout_ready',
+                'payment_confirmed',
+                'fulfillment_succeeded',
+                'checkout_failed',
+                'fulfillment_attempt_failed',
+                'fulfillment_failed_terminal',
+                'expired'
+              )
+              ${lifecycleBound}
+              and ${paymentLifecycleEvent.occurredAt} >= ${input.start}
+              and ${paymentLifecycleEvent.occurredAt} < ${input.end}
+              and ${paymentLifecycleEvent.occurredAt} >= ${input.epochStart}
+              and ${paymentLifecycleEvent.occurredAt} < ${nextMillisecond(
+                input.asOf
+              )}
+          `;
+  const source =
+    input.kind === "payment_lifecycle"
+      ? sql`frozen_events
+          join ${paymentOrder}
+            on ${paymentOrder.id} = frozen_events.payment_order_id
+          left join frozen_order_facts
+            on frozen_order_facts.payment_order_id = ${paymentOrder.id}`
+      : sql`target_orders
+          join ${paymentOrder}
+            on ${paymentOrder.id} = target_orders.payment_order_id
+          left join frozen_order_facts
+            on frozen_order_facts.payment_order_id = ${paymentOrder.id}`;
+  const stableId =
+    input.kind === "payment_lifecycle"
+      ? sql`frozen_events.id`
+      : sql`${paymentOrder.id}`;
+  const businessTime =
+    input.kind === "payment_lifecycle"
+      ? sql`frozen_events.occurred_at`
+      : input.kind === "fulfilled_orders"
+        ? sql`frozen_order_facts.fulfillment_time`
+        : sql`${paymentOrder.createdAt}`;
+  const eventType =
+    input.kind === "payment_lifecycle"
+      ? sql`frozen_events.event_type`
+      : sql`null::text`;
+  const sortTime = sql`scoped_commercial.business_time`;
+  const keyset = buildDetailKeysetPredicate(
+    input.cursor,
+    sortTime,
+    sql`scoped_commercial.stable_id`
+  );
+  return sql`
+    with target_orders as (
+      ${targetOrders}
+    ), frozen_events as (
+      select
+        ${paymentLifecycleEvent.id} as id,
+        ${paymentLifecycleEvent.paymentOrderId} as payment_order_id,
+        ${paymentLifecycleEvent.eventType}::text as event_type,
+        ${paymentLifecycleEvent.occurredAt} as occurred_at,
+        ${paymentLifecycleEvent.recordedAt} as recorded_at
+      from ${paymentLifecycleEvent}
+      join target_orders
+        on target_orders.payment_order_id = ${paymentLifecycleEvent.paymentOrderId}
+      where ${paymentLifecycleEvent.eventType} in (
+        'order_created',
+        'checkout_ready',
+        'payment_confirmed',
+        'fulfillment_succeeded',
+        'checkout_failed',
+        'fulfillment_attempt_failed',
+        'fulfillment_failed_terminal',
+        'expired'
+      )
+        ${lifecycleBound}
+    ), frozen_order_facts as (
+      select
+        frozen_events.payment_order_id,
+        (array_agg(
+          frozen_events.event_type
+          order by
+            frozen_events.recorded_at desc,
+            case frozen_events.event_type
+              when 'fulfillment_succeeded' then 8
+              when 'fulfillment_failed_terminal' then 7
+              when 'expired' then 6
+              when 'checkout_failed' then 5
+              when 'fulfillment_attempt_failed' then 4
+              when 'payment_confirmed' then 3
+              when 'checkout_ready' then 2
+              else 1
+            end desc,
+            frozen_events.id desc
+        ))[1] as latest_event_type,
+        bool_or(frozen_events.event_type in (
+          'payment_confirmed',
+          'fulfillment_attempt_failed',
+          'fulfillment_failed_terminal',
+          'fulfillment_succeeded'
+        )) as has_provider_reference,
+        min(frozen_events.occurred_at) filter (
+          where frozen_events.event_type = 'fulfillment_succeeded'
+        ) as fulfillment_time
+      from frozen_events
+      group by frozen_events.payment_order_id
+    ), scoped_commercial as (
+      select
+        ${input.kind}::text as kind,
+        ${stableId} as stable_id,
+        ${paymentOrder.id} as payment_order_id,
+        case
+          when frozen_order_facts.has_provider_reference
+            then ${paymentOrder.providerTradeNo}
+          else null
+        end as provider_trade_no,
+        ${paymentOrder.userId} as user_id,
+        upper(${paymentOrder.currency}) as currency,
+        ${paymentOrder.amountMinor} as amount_minor,
+        case frozen_order_facts.latest_event_type
+          when 'fulfillment_succeeded' then 'fulfilled'
+          when 'fulfillment_failed_terminal' then 'failed'
+          when 'expired' then 'expired'
+          when 'checkout_failed' then 'failed'
+          when 'fulfillment_attempt_failed' then 'fulfilling'
+          when 'payment_confirmed' then 'fulfilling'
+          when 'checkout_ready' then 'pending'
+          else 'creating'
+        end as order_status,
+        ${paymentOrder.createdAt} as created_at,
+        frozen_order_facts.fulfillment_time as fulfilled_at,
+        ${businessTime} as business_time,
+        ${eventType} as event_type
+      from ${source}
+      where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+        ${currencyBound}
+    )
+    select
+      scoped_commercial.*,
+      ${toOperationsDatabaseTimestampText(
+        sql`scoped_commercial.business_time`
+      )} as business_time_key
+    from scoped_commercial
+    where scoped_commercial.business_time >= ${input.start}
+      and scoped_commercial.business_time < ${input.end}
+      and scoped_commercial.business_time >= ${input.epochStart}
+      and scoped_commercial.business_time < ${nextMillisecond(input.asOf)}
+      and ${keyset}
+    order by ${sortTime} desc, scoped_commercial.stable_id desc
+    limit ${input.limit}
+  `;
+}
+
 /**
  * 构造充值订单或不可变支付生命周期事件的商业化明细 SQL。
  *
@@ -213,6 +441,12 @@ export function buildOperationsCommercialDetailSql(
   assertValidDetailQuery(input);
   if (input.kind === "payment_stage") {
     return buildOperationsPaymentStageDetailSql(input);
+  }
+  if (input.highWatermarks) {
+    return buildFrozenCommercialDetailSql({
+      ...input,
+      highWatermarks: input.highWatermarks,
+    });
   }
   const eventJoin =
     input.kind === "payment_lifecycle"
@@ -229,24 +463,6 @@ export function buildOperationsCommercialDetailSql(
     input.kind === "payment_lifecycle"
       ? sql`${paymentLifecycleEvent.id}`
       : sql`${paymentOrder.id}`;
-  const sourceBound =
-    input.kind === "payment_lifecycle"
-      ? input.highWatermarks?.paymentLifecycle
-        ? sql`and (${paymentLifecycleEvent.recordedAt}, ${paymentLifecycleEvent.id})
-            <= (${toOperationsDatabaseTimestamp(
-              input.highWatermarks.paymentLifecycle.recordedAt
-            )}, ${input.highWatermarks.paymentLifecycle.id})`
-        : input.highWatermarks
-          ? sql`and false`
-          : sql``
-      : input.highWatermarks?.paymentOrders
-        ? sql`and (${paymentOrder.createdAt}, ${paymentOrder.id})
-            <= (${toOperationsDatabaseTimestamp(
-              input.highWatermarks.paymentOrders.createdAt
-            )}, ${input.highWatermarks.paymentOrders.id})`
-        : input.highWatermarks
-          ? sql`and false`
-          : sql``;
   const fulfilledPredicate =
     input.kind === "fulfilled_orders"
       ? sql`and ${paymentOrder.status} = 'fulfilled'
@@ -285,7 +501,6 @@ export function buildOperationsCommercialDetailSql(
       from ${paymentOrder}
       ${eventJoin}
       where ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
-        ${sourceBound}
         ${fulfilledPredicate}
         ${
           input.kind === "payment_lifecycle"

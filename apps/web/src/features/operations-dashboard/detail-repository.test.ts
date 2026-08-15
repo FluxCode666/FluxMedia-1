@@ -176,6 +176,88 @@ describe("operations growth detail repository SQL", () => {
     expect(compiled.params).toContain("CNY");
   });
 
+  it("冻结履约订单按生命周期高水位推导并按订单折叠", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind: "fulfilled_orders",
+        currency: "CNY",
+        highWatermarks: {
+          users: null,
+          webVisits: null,
+          outputs: null,
+          paymentOrders: {
+            createdAt: "2026-08-07T00:00:00.000001Z",
+            id: "order-z",
+          },
+          paymentLifecycle: {
+            recordedAt: "2026-08-07T00:00:00.000002Z",
+            id: "event-z",
+          },
+          creditContributions: null,
+        },
+      })
+    );
+
+    expect(compiled.sql).toContain("target_orders as");
+    expect(compiled.sql).toContain("frozen_events as");
+    expect(compiled.sql).toContain("frozen_order_facts as");
+    expect(compiled.sql).toContain("'fulfillment_succeeded'");
+    expect(compiled.sql).toContain("group by frozen_events.payment_order_id");
+    expect(compiled.sql).toMatch(
+      /"payment_lifecycle_event"\."recorded_at",\s+"payment_lifecycle_event"\."id"\s+\) <=/u
+    );
+    expect(compiled.sql).toContain(
+      "frozen_order_facts.fulfillment_time as fulfilled_at"
+    );
+    expect(compiled.sql).not.toContain(
+      '"payment_order"."status" = \'fulfilled\''
+    );
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
+  });
+
+  it.each([
+    "orders",
+    "payment_lifecycle",
+  ] as const)("冻结 %s 明细从生命周期事实推导可变订单字段", (kind) => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind,
+        highWatermarks: {
+          users: null,
+          webVisits: null,
+          outputs: null,
+          paymentOrders: {
+            createdAt: "2026-08-07T00:00:00.000001Z",
+            id: "order-z",
+          },
+          paymentLifecycle: {
+            recordedAt: "2026-08-07T00:00:00.000002Z",
+            id: "event-z",
+          },
+          creditContributions: null,
+        },
+      })
+    );
+
+    expect(compiled.sql).toContain("frozen_order_facts.latest_event_type");
+    expect(compiled.sql).toContain("frozen_order_facts.has_provider_reference");
+    expect(compiled.sql).toContain(
+      "frozen_order_facts.fulfillment_time as fulfilled_at"
+    );
+    expect(compiled.sql).not.toContain(
+      '"payment_order"."status" as order_status'
+    );
+    expect(compiled.sql).not.toContain(
+      '"payment_order"."fulfilled_at" as fulfilled_at'
+    );
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
+    if (kind === "orders") {
+      expect(compiled.params).toContain("2026-08-07T00:00:00.000001Z");
+    }
+  });
+
   it("支付阶段明细复用阶段布尔条件并保证每个订单只返回一行", () => {
     const compiled = dialect.sqlToQuery(
       buildOperationsCommercialDetailSql({

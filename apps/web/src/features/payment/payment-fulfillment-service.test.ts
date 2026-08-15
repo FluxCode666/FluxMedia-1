@@ -100,6 +100,32 @@ describe("processClaimedPaymentFulfillment", () => {
     );
   });
 
+  it("完成事件使用实际完成时刻而不是尝试开始时刻", async () => {
+    const timestamps = [
+      new Date("2026-08-13T04:00:00.000Z"),
+      new Date("2026-08-13T04:00:01.000Z"),
+      new Date("2026-08-13T04:00:02.000Z"),
+      new Date("2026-08-13T04:00:03.000Z"),
+    ];
+    const now = vi.fn(() => {
+      const value = timestamps.shift();
+      if (!value) throw new Error("测试时钟调用次数超出预期");
+      return value;
+    });
+    const dependencies = createDependencies({ now });
+
+    await expect(
+      processClaimedPaymentFulfillment(createClaimedWorkItem(), dependencies)
+    ).resolves.toEqual({ status: "succeeded", workItemId: "work-1" });
+
+    expect(dependencies.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        occurredAt: new Date("2026-08-13T04:00:03.000Z"),
+      })
+    );
+    expect(now).toHaveBeenCalledTimes(4);
+  });
+
   it("积分已发放但完成事务崩溃后，恢复只补订单状态而不再次发放", async () => {
     const grantCredits = vi.fn().mockResolvedValue({ batchId: "batch-1" });
     const firstAttempt = createDependencies({

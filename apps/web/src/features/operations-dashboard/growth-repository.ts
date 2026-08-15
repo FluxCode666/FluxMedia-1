@@ -6,6 +6,7 @@
  */
 import {
   operationsAnalyticsEpoch,
+  paymentLifecycleEvent,
   paymentOrder,
   user,
   userOutputUsageEvent,
@@ -228,18 +229,34 @@ export function buildOperationsActivitySourceSql(
       from ${userOutputUsageEvent}
       where ${userOutputUsageEvent.operationCreatedAt} >= ${start}
         and ${userOutputUsageEvent.operationCreatedAt} < ${end}
+      ${bound}
+    `;
+  }
+  if (highWatermarks) {
+    const watermark = highWatermarks.paymentLifecycle;
+    const bound = watermark
+      ? sql`and (
+          ${paymentLifecycleEvent.recordedAt},
+          ${paymentLifecycleEvent.id}
+        ) <= (
+          ${toOperationsDatabaseTimestamp(watermark.recordedAt)},
+          ${watermark.id}
+        )`
+      : sql`and false`;
+    return sql`
+      select
+        ${paymentOrder.userId} as user_id,
+        ${paymentLifecycleEvent.occurredAt} as business_time
+      from ${paymentLifecycleEvent}
+      join ${paymentOrder}
+        on ${paymentOrder.id} = ${paymentLifecycleEvent.paymentOrderId}
+      where ${paymentLifecycleEvent.eventType} = 'fulfillment_succeeded'
+        and ${paymentOrder.purpose} in ('credit_top_up', 'credit_package')
+        and ${paymentLifecycleEvent.occurredAt} >= ${start}
+        and ${paymentLifecycleEvent.occurredAt} < ${end}
         ${bound}
     `;
   }
-  const watermark = highWatermarks?.paymentOrders;
-  const bound = watermark
-    ? sql`and (${paymentOrder.createdAt}, ${paymentOrder.id})
-        <= (${toOperationsDatabaseTimestamp(watermark.createdAt)}, ${
-          watermark.id
-        })`
-    : highWatermarks
-      ? sql`and false`
-      : sql``;
   return sql`
     select
       ${paymentOrder.userId} as user_id,
@@ -250,7 +267,6 @@ export function buildOperationsActivitySourceSql(
       and ${paymentOrder.fulfilledAt} is not null
       and ${paymentOrder.fulfilledAt} >= ${start}
       and ${paymentOrder.fulfilledAt} < ${end}
-      ${bound}
   `;
 }
 

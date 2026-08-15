@@ -21,4 +21,7 @@ export {
   parseClaimedOperationsExportTaskRow,
   parseOperationsExportHighWatermarks,
 } from "./export-task-parsers";
-export { readOperationsExportSnapshot } from "./export-task-snapshot";
+export {
+  buildOperationsExportSnapshotSql,
+  readOperationsExportSnapshot,
+} from "./export-task-snapshot";

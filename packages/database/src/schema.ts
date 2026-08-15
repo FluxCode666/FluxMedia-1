@@ -153,6 +153,11 @@ export const userWebVisit = pgTable(
       table.firstVisitedAt,
       table.userId
     ),
+    index("user_web_visit_created_cursor_idx").on(
+      table.createdAt.desc(),
+      table.userId.desc(),
+      table.appDate.desc()
+    ),
     check(
       "user_web_visit_app_date_check",
       sql`${table.appDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
@@ -752,6 +757,10 @@ export const paymentLifecycleEvent = pgTable(
       table.occurredAt.desc(),
       table.id.desc()
     ),
+    index("payment_lifecycle_event_recorded_id_idx").on(
+      table.recordedAt.desc(),
+      table.id.desc()
+    ),
     check(
       "payment_lifecycle_event_type_check",
       sql`${table.eventType} IN ('order_created', 'checkout_ready', 'payment_confirmed', 'fulfillment_succeeded', 'checkout_failed', 'fulfillment_attempt_failed', 'fulfillment_failed_terminal', 'expired')`
@@ -1186,6 +1195,10 @@ export const creditUsageProjectionEntry = pgTable(
       table.userId,
       table.operationType,
       table.operationId
+    ),
+    index("credit_usage_projection_entry_projected_cursor_idx").on(
+      table.projectedAt.desc(),
+      table.transactionId.desc()
     ),
     check(
       "credit_usage_projection_entry_identity_nonempty_check",
@@ -2823,6 +2836,11 @@ export const userOutputUsageEvent = pgTable(
     ),
     index("user_output_usage_event_operation_cursor_idx").on(
       table.operationCreatedAt.desc(),
+      table.outputKind.desc(),
+      table.sourceTaskId.desc()
+    ),
+    index("user_output_usage_event_created_cursor_idx").on(
+      table.createdAt.desc(),
       table.outputKind.desc(),
       table.sourceTaskId.desc()
     ),

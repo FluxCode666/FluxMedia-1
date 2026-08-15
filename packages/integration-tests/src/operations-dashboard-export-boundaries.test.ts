@@ -13,6 +13,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  buildOperationsActivityDetailSql,
   buildOperationsCommercialDetailSql,
   buildOperationsContentDetailSql,
   buildOperationsNewUserDetailSql,
@@ -21,7 +22,10 @@ import {
   type OperationsGrowthDetailRow,
   paginateOperationsGrowthDetailRows,
 } from "../../../apps/web/src/features/operations-dashboard/detail-repository";
-import { readOperationsExportSnapshot } from "../../../apps/web/src/features/operations-dashboard/export-task-repository";
+import {
+  buildOperationsExportSnapshotSql,
+  readOperationsExportSnapshot,
+} from "../../../apps/web/src/features/operations-dashboard/export-task-repository";
 import { requireDedicatedTestDatabaseUrl } from "./test-database-url";
 
 const userIds = [
@@ -166,6 +170,8 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
     create index payment_order_admin_recharge_created_id_idx
       on payment_order (created_at desc, id desc, status, user_id)
       where purpose in ('credit_top_up', 'credit_package');
+    create index payment_order_admin_created_id_idx
+      on payment_order (created_at desc, id desc);
     create table credit_usage_projection_entry (
       transaction_id text primary key,
       projected_at timestamp not null,
@@ -290,17 +296,58 @@ describe("operations dashboard PostgreSQL boundaries", () => {
       [
         fixtureSchemaName,
         [
+          "credit_usage_projection_entry_projected_cursor_idx",
           "payment_lifecycle_event_occurred_id_idx",
+          "payment_lifecycle_event_recorded_id_idx",
           "payment_order_operations_fulfilled_cursor_idx",
+          "user_output_usage_event_created_cursor_idx",
           "user_output_usage_event_operation_cursor_idx",
+          "user_web_visit_created_cursor_idx",
         ],
       ]
     );
     expect(indexes.rows.map((row) => row.index_name)).toEqual([
+      "credit_usage_projection_entry_projected_cursor_idx",
       "payment_lifecycle_event_occurred_id_idx",
+      "payment_lifecycle_event_recorded_id_idx",
       "payment_order_operations_fulfilled_cursor_idx",
+      "user_output_usage_event_created_cursor_idx",
       "user_output_usage_event_operation_cursor_idx",
+      "user_web_visit_created_cursor_idx",
     ]);
+  });
+
+  it("导出高水位查询复用各事实追加时间索引", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const client = await pool.connect();
+    try {
+      await client.query("begin read only");
+      await client.query(
+        `set local search_path to ${quoteFixtureSchema(fixtureSchemaName)}, public`
+      );
+      await client.query("set local enable_seqscan = off");
+      const plan = await explainDetailQuery(
+        client,
+        buildOperationsExportSnapshotSql()
+      );
+
+      expect(plan.indexNames).toEqual(
+        expect.arrayContaining([
+          "user_created_at_id_idx",
+          "user_web_visit_created_cursor_idx",
+          "user_output_usage_event_created_cursor_idx",
+          "payment_order_admin_created_id_idx",
+          "payment_lifecycle_event_recorded_id_idx",
+          "credit_usage_projection_entry_projected_cursor_idx",
+        ])
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
   });
 
   it("网页访问复合主键在真实并发下只保留一行", async () => {
@@ -552,6 +599,176 @@ describe("operations dashboard PostgreSQL boundaries", () => {
       throw error;
     } finally {
       client.release();
+    }
+  });
+
+  it("旧订单在任务冻结后履约不会穿透已履约与付费活跃 CSV", async () => {
+    if (!pool) throw new Error("集成测试数据库尚未初始化");
+    const schema = quoteFixtureSchema(fixtureSchemaName);
+    await pool.query(
+      `insert into ${schema}.payment_order (
+        id, user_id, purpose, status, currency, amount_minor, created_at
+      ) values ($1, $2, 'credit_top_up', 'pending', 'CNY', 8800, $3::timestamp)`,
+      ["frozen-order-late-fulfillment", userIds[0], "2006-08-01 12:00:00"]
+    );
+    await pool.query(
+      `insert into ${schema}.payment_lifecycle_event (
+        id, payment_order_id, event_type, source_ref, occurred_at,
+        recorded_at, timestamp_source, provider
+      ) values ($1, $2, 'order_created', $3, $4::timestamp,
+        $4::timestamp, 'server_generated', 'creem')`,
+      [
+        "frozen-event-created",
+        "frozen-order-late-fulfillment",
+        "frozen-source-created",
+        "2006-08-01 12:00:00",
+      ]
+    );
+
+    const snapshotClient = await pool.connect();
+    let snapshot: Awaited<ReturnType<typeof readOperationsExportSnapshot>>;
+    try {
+      await snapshotClient.query(
+        "begin isolation level repeatable read read only"
+      );
+      await snapshotClient.query(`set local search_path to ${schema}, public`);
+      snapshot = await readOperationsExportSnapshot((query) =>
+        executeSql(snapshotClient, query)
+      );
+      await snapshotClient.query("commit");
+    } catch (error) {
+      await snapshotClient.query("rollback");
+      throw error;
+    } finally {
+      snapshotClient.release();
+    }
+
+    await pool.query(
+      `update ${schema}.payment_order
+      set status = 'fulfilled', fulfilled_at = $2::timestamp,
+        provider_trade_no = 'late-provider-trade'
+      where id = $1`,
+      ["frozen-order-late-fulfillment", "2006-08-02 12:00:00"]
+    );
+    await pool.query(
+      `insert into ${schema}.payment_lifecycle_event (
+        id, payment_order_id, event_type, source_ref, occurred_at,
+        recorded_at, timestamp_source, provider
+      ) values ($1, $2, 'fulfillment_succeeded', $3, $4::timestamp,
+        '2100-01-01 00:00:00'::timestamp, 'server_generated', 'creem')`,
+      [
+        "frozen-event-fulfilled",
+        "frozen-order-late-fulfillment",
+        "frozen-source-fulfilled",
+        "2006-08-02 12:00:00",
+      ]
+    );
+
+    const queryClient = await pool.connect();
+    try {
+      await queryClient.query(`set search_path to ${schema}, public`);
+      const baseQuery = {
+        start: new Date("2006-08-01T00:00:00.000Z"),
+        end: new Date("2006-08-03T00:00:00.000Z"),
+        epochStart: new Date("2000-01-01T00:00:00.000Z"),
+        asOf: snapshot.snapshotAt,
+        cursor: null,
+        limit: 10,
+      };
+      const frozenFulfilled = new PgDialect().sqlToQuery(
+        buildOperationsCommercialDetailSql({
+          ...baseQuery,
+          kind: "fulfilled_orders",
+          currency: null,
+          highWatermarks: snapshot.highWatermarks,
+        })
+      );
+      const liveFulfilled = new PgDialect().sqlToQuery(
+        buildOperationsCommercialDetailSql({
+          ...baseQuery,
+          kind: "fulfilled_orders",
+          currency: null,
+        })
+      );
+      const frozenPaymentActivity = new PgDialect().sqlToQuery(
+        buildOperationsActivityDetailSql({
+          ...baseQuery,
+          kind: "activity",
+          activityKind: "payment",
+          highWatermarks: snapshot.highWatermarks,
+        })
+      );
+      const frozenOrders = new PgDialect().sqlToQuery(
+        buildOperationsCommercialDetailSql({
+          ...baseQuery,
+          kind: "orders",
+          highWatermarks: snapshot.highWatermarks,
+        })
+      );
+      const liveOrders = new PgDialect().sqlToQuery(
+        buildOperationsCommercialDetailSql({
+          ...baseQuery,
+          kind: "orders",
+        })
+      );
+      const frozenLifecycle = new PgDialect().sqlToQuery(
+        buildOperationsCommercialDetailSql({
+          ...baseQuery,
+          kind: "payment_lifecycle",
+          highWatermarks: snapshot.highWatermarks,
+        })
+      );
+
+      const frozenRows = await queryClient.query<Record<string, unknown>>(
+        frozenFulfilled.sql,
+        frozenFulfilled.params
+      );
+      const liveRows = await queryClient.query<Record<string, unknown>>(
+        liveFulfilled.sql,
+        liveFulfilled.params
+      );
+      const frozenActivityRows = await queryClient.query<
+        Record<string, unknown>
+      >(frozenPaymentActivity.sql, frozenPaymentActivity.params);
+      const frozenOrderRows = await queryClient.query<Record<string, unknown>>(
+        frozenOrders.sql,
+        frozenOrders.params
+      );
+      const liveOrderRows = await queryClient.query<Record<string, unknown>>(
+        liveOrders.sql,
+        liveOrders.params
+      );
+      const frozenLifecycleRows = await queryClient.query<
+        Record<string, unknown>
+      >(frozenLifecycle.sql, frozenLifecycle.params);
+
+      expect(frozenRows.rows).toHaveLength(0);
+      expect(frozenActivityRows.rows).toHaveLength(0);
+      expect(frozenOrderRows.rows).toHaveLength(1);
+      expect(frozenOrderRows.rows[0]).toMatchObject({
+        order_status: "creating",
+        fulfilled_at: null,
+        provider_trade_no: null,
+      });
+      expect(liveOrderRows.rows).toHaveLength(1);
+      expect(liveOrderRows.rows[0]).toMatchObject({
+        order_status: "fulfilled",
+        provider_trade_no: "late-provider-trade",
+      });
+      expect(liveOrderRows.rows[0]?.fulfilled_at).not.toBeNull();
+      expect(frozenLifecycleRows.rows).toHaveLength(1);
+      expect(frozenLifecycleRows.rows[0]).toMatchObject({
+        event_type: "order_created",
+        order_status: "creating",
+        fulfilled_at: null,
+        provider_trade_no: null,
+      });
+      expect(liveRows.rows).toHaveLength(1);
+      expect(liveRows.rows[0]?.payment_order_id).toBe(
+        "frozen-order-late-fulfillment"
+      );
+    } finally {
+      queryClient.release();
     }
   });
 
