@@ -9,10 +9,15 @@ import { describe, expect, it } from "vitest";
 import { parseClaimedOperationsExportTaskRow } from "./export-task-repository";
 
 describe("operations export repository SQL contract", () => {
-  const source = readFileSync(
-    new URL("./export-task-repository.ts", import.meta.url),
-    "utf8"
-  ).toLowerCase();
+  const source = [
+    "./export-task-create-repository.ts",
+    "./export-task-read-repository.ts",
+    "./export-task-lease-repository.ts",
+    "./export-task-cleanup-repository.ts",
+  ]
+    .map((path) => readFileSync(new URL(path, import.meta.url), "utf8"))
+    .join("\n")
+    .toLowerCase();
 
   it("使用 skip locked、lease token 条件终态和陈旧租约恢复", () => {
     expect(source).toContain("for update skip locked");
