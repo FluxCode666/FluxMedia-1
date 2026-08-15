@@ -51,6 +51,10 @@ pnpm --filter @repo/web build
 (cd services/media-upstream-proxy && go test ./...)
 ```
 
+本地开发账号密码：
+test@test.com
+123456
+
 ## 容器与生产部署
 
 根目录 `docker-compose.yml` 提供包含 PostgreSQL、Redis、迁移、Web 与 Adobe
