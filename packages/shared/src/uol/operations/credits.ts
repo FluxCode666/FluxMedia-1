@@ -22,6 +22,11 @@ import {
   processExpiredBatches,
   unfreezeCreditsAccount,
 } from "../../credits/core";
+import { createRuntimeCreditPackagePurchaseCheckout } from "../../credits/purchase-checkout-runtime";
+import {
+  CREDIT_PACKAGE_PURCHASE_MAX_QUANTITY,
+  CreditPackagePurchaseCheckoutError,
+} from "../../credits/purchase-checkout-service";
 import {
   usageEventDetailSchema,
   usageEventListOutputSchema,
@@ -34,6 +39,7 @@ import {
 } from "../../credits/wallet-contract";
 import { refundGenerationCredits } from "../../generation-maintenance";
 import { getRuntimeSettingNumber } from "../../system-settings";
+import { OperationError } from "../errors";
 import { getPrincipalUserId } from "../principal";
 import { defineOperation } from "../registry";
 
@@ -858,37 +864,90 @@ export const refund = defineOperation({
 // ---------------------------------------------------------------------------
 // 21. credits.createPurchaseCheckout - 创建积分购买结账会话
 // ---------------------------------------------------------------------------
+/** 积分包购买的共享输入 schema，供 UOL 与 Server Action 使用同一约束。 */
+export const createPurchaseCheckoutInputSchema = z
+  .object({
+    packageId: z.string().min(1).describe("积分包 ID"),
+    clientRequestId: z.string().uuid().describe("客户端生成的幂等请求 ID"),
+    locale: z.enum(["en", "zh"]).describe("支付结果页语言"),
+    quantity: z
+      .number()
+      .int()
+      .min(1)
+      .max(CREDIT_PACKAGE_PURCHASE_MAX_QUANTITY)
+      .optional()
+      .describe("购买数量，省略时为 1"),
+  })
+  .strict();
+
 export const createPurchaseCheckout = defineOperation({
   name: "credits.createPurchaseCheckout",
   domain: "credits",
   title: "Create Credits Purchase Checkout",
   description:
     "创建积分购买结账会话（Epay 落单 / Creem 外呼）。不直接发放积分，" +
-    "积分在支付 webhook 确认后发放。每次调用创建新 checkout（非幂等）。" +
-    "按用户身份和当前积分包配置校验购买资格。",
-  input: z.object({
-    packageId: z.string().describe("积分包 ID"),
-    paymentProvider: z
-      .enum(["creem", "epay"])
-      .optional()
-      .describe("支付渠道（可选，默认按配置）"),
-    successUrl: z.string().url().optional().describe("支付成功回跳 URL"),
-    cancelUrl: z.string().url().optional().describe("支付取消回跳 URL"),
-  }),
-  output: z.object({
-    checkoutUrl: z.string().describe("支付页面 URL"),
-    orderId: z.string().describe("订单 ID"),
-  }),
+    "积分在支付 webhook 确认后发放。clientRequestId 在每个用户范围内幂等，" +
+    "重试只能命中同一份积分包报价。支付渠道和回跳地址均由服务端配置。",
+  input: createPurchaseCheckoutInputSchema,
+  output: z.union([
+    z
+      .object({
+        url: z.string().min(1).describe("支付页面或本地结果页 URL"),
+        orderId: z.string().min(1).describe("本地支付订单 ID"),
+      })
+      .strict(),
+    z
+      .object({
+        url: z.string().min(1).describe("易支付表单提交 URL"),
+        orderId: z.string().min(1).describe("本地支付订单 ID"),
+        params: z.record(z.string(), z.string()).describe("易支付 POST 参数"),
+        method: z.literal("POST"),
+      })
+      .strict(),
+  ]),
   access: { kind: "protected" },
+  agentExposure: "human-only",
   readOnly: false,
   destructive: false,
-  idempotency: { kind: "none" },
+  idempotency: {
+    kind: "required",
+    keyField: "clientRequestId",
+    scope: "per-user",
+  },
   sideEffects: ["billing", "external-call"],
-  // Bound at app level - see apps/web/src/server/uol-bindings.ts
-  execute: async () => {
-    throw new Error(
-      "credits.createPurchaseCheckout must be bound at app level"
-    );
+  execute: async (input, principal) => {
+    const userId = getPrincipalUserId(principal);
+    if (!userId) {
+      throw new OperationError(
+        "unauthenticated",
+        "User identity is required to create a purchase checkout"
+      );
+    }
+    try {
+      return await createRuntimeCreditPackagePurchaseCheckout({
+        userId,
+        packageId: input.packageId,
+        clientRequestId: input.clientRequestId,
+        locale: input.locale,
+        ...(input.quantity !== undefined ? { quantity: input.quantity } : {}),
+      });
+    } catch (error) {
+      if (error instanceof CreditPackagePurchaseCheckoutError) {
+        const code =
+          error.code === "idempotency_conflict"
+            ? "idempotency_conflict"
+            : error.code === "payment_disabled" ||
+                error.code === "provider_not_configured" ||
+                error.code === "unsupported_provider"
+              ? "not_ready"
+              : "validation_error";
+        throw new OperationError(code, error.message, {
+          userSafe: true,
+          reason: error.code,
+        });
+      }
+      throw error;
+    }
   },
 });
 

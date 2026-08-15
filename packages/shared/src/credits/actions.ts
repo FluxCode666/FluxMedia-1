@@ -10,16 +10,16 @@ import { db } from "@repo/database";
 import { creditsTransaction, externalApiKey } from "@repo/database/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { getBaseUrl } from "../config/payment";
+import { normalizeUserRole } from "../auth/roles";
 import { logEvent } from "../logger/index";
-import { assertRuntimeCreemCheckoutConfigured, creem } from "../payment/creem";
-import {
-  createRuntimeEpayPurchase,
-  getRuntimePaymentProvider,
-  saveEpayOrder,
-} from "../payment/epay";
+import { getRuntimePaymentProvider } from "../payment/epay";
 import { ActionUserError, protectedAction } from "../safe-action";
 import { getRuntimeSettingNumber } from "../system-settings";
+import { invokeOperation, OperationError } from "../uol";
+import {
+  createPurchaseCheckout,
+  createPurchaseCheckoutInputSchema,
+} from "../uol/operations/credits";
 
 import { CREDIT_CONFIG_DEFAULTS, isCreditPackageVisible } from "./config";
 import {
@@ -35,25 +35,14 @@ import {
   InsufficientCreditsError,
 } from "./core";
 import {
-  getCreditPackageCreemProductId,
   getCreditPackageCurrency,
   getCreditPackagePrice,
-  getRuntimeCreditPackageById,
   getRuntimeCreditPackages,
 } from "./packages";
-import {
-  createCreditPackagePaymentOrder,
-  failCreditPackageCheckout,
-  getCreditPackageCheckoutUrl,
-  saveCreditPackageCheckout,
-  saveCreditPackageProviderReference,
-} from "./purchase-orders";
-import { getCurrencyMinorUnitExponent } from "./top-up";
+import type { CreditPackagePurchaseCheckoutOutput } from "./purchase-checkout-service";
 
 const withProtectedCreditsAction = (name: string) =>
   protectedAction.metadata({ action: `credits.${name}` });
-
-const CREDIT_PACKAGE_MAX_QUANTITY = 999;
 
 async function getRuntimeRegistrationBonusCredits() {
   return getRuntimeSettingNumber(
@@ -357,231 +346,42 @@ export const checkCreditsAvailable = withProtectedCreditsAction(
 // ============================================
 
 /**
- * 创建积分购买 Checkout Session
+ * 把 UOL 明确标记为可安全展示的积分包购买错误转换为 Action 用户错误。
  *
- * 创建 Creem Checkout Session 用于购买积分包
- * metadata 中包含 type: 'credit_purchase' 和 credits 数量
- * Webhook 会根据这些信息发放积分
+ * @param error - invokeOperation 抛出的未知错误。
+ * @throws ActionUserError 领域服务确认安全的中文提示。
+ * @throws unknown 权限、内部错误或第三方异常保持原样，交给安全 Action 隐藏细节。
+ */
+function throwPurchaseCheckoutActionError(error: unknown): never {
+  if (error instanceof OperationError && error.details?.userSafe === true) {
+    throw new ActionUserError(error.message);
+  }
+  throw error;
+}
+
+/**
+ * 创建积分购买 Checkout Session。
+ *
+ * 仅把受保护会话转换为 UOL Principal 并调用统一 operation；报价冻结、订单幂等、
+ * 第三方外呼和失败回写全部由非 Action 领域服务负责。
  */
 export const createCreditsPurchaseCheckout = withProtectedCreditsAction(
   "createCreditsPurchaseCheckout"
 )
-  .schema(
-    z.object({
-      packageId: z.string().min(1),
-      clientRequestId: z.string().uuid(),
-      locale: z.enum(["en", "zh"]),
-      quantity: z
-        .number()
-        .int()
-        .min(1)
-        .max(CREDIT_PACKAGE_MAX_QUANTITY)
-        .optional(),
-    })
-  )
+  .schema(createPurchaseCheckoutInputSchema)
   .action(async ({ parsedInput, ctx }) => {
-    const { packageId, clientRequestId, locale } = parsedInput;
-    const { userId } = ctx;
-    const requestedQuantity = parsedInput.quantity ?? 1;
-
-    // 查找积分包配置
-    const pkg = await getRuntimeCreditPackageById(packageId, {
-      includeHidden: true,
-    });
-    if (!pkg) {
-      throw new Error("无效的积分包");
-    }
-    if (!isCreditPackageVisible(pkg)) {
-      throw new Error("无效的积分包");
-    }
-    if (!pkg.allowQuantity && requestedQuantity !== 1) {
-      throw new Error("该积分包不支持数量购买");
-    }
-
-    const quantity = pkg.allowQuantity ? requestedQuantity : 1;
-    if (pkg.maxQuantity && quantity > pkg.maxQuantity) {
-      throw new Error(`购买数量不能超过 ${pkg.maxQuantity}`);
-    }
-    const unitPrice = getCreditPackagePrice(pkg);
-    const currency = getCreditPackageCurrency(pkg);
-    const creditsAmount = pkg.credits * quantity;
-    const totalPrice = unitPrice * quantity;
-    const amountMinor = Math.round(
-      totalPrice * 10 ** getCurrencyMinorUnitExponent(currency)
-    );
-    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
-      throw new Error("积分包金额无效");
-    }
-
-    const baseUrl = getBaseUrl();
-
-    const paymentProvider = await getRuntimePaymentProvider();
-    if (paymentProvider === "none") {
-      throw new ActionUserError("支付功能当前未启用");
-    }
-    if (paymentProvider === "alipay_f2f") {
-      throw new ActionUserError(
-        "支付宝当面付仅支持按金额充值，请在购买积分页使用支付宝扫码充值"
-      );
-    }
-    const useEpay = paymentProvider === "epay";
-    if (!useEpay) {
-      try {
-        await assertRuntimeCreemCheckoutConfigured();
-      } catch {
-        throw new ActionUserError(
-          "Creem 支付通道未完整配置，请联系管理员填写 API Key 和 Webhook Secret"
-        );
-      }
-    }
-    if (!useEpay && quantity > 1) {
-      throw new Error("当前支付通道暂不支持数量购买，请分次购买");
-    }
-    if (useEpay && currency !== "CNY") {
-      throw new Error("易支付当前仅支持人民币积分包，请选择其他支付方式");
-    }
-
-    logEvent("payment.checkout.started", {
-      userId,
-      packageId: pkg.id,
-      credits: creditsAmount,
-      quantity,
-      provider: paymentProvider,
-      checkoutType: "credits",
-    });
-
-    const checkoutExpiry = new Date(Date.now() + 30 * 60 * 1000);
-    const creditsExpiryDays = await getRuntimeSettingNumber(
-      "CREDITS_EXPIRY_DAYS",
-      CREDIT_CONFIG_DEFAULTS.creditsExpiryDays,
-      { nonNegative: true }
-    );
-    const creditsExpiresAt =
-      creditsExpiryDays > 0
-        ? new Date(
-            Date.now() + creditsExpiryDays * 24 * 60 * 60 * 1000
-          ).toISOString()
-        : null;
-    const paymentOrder = await createCreditPackagePaymentOrder({
-      userId,
-      clientRequestId,
-      provider: useEpay ? "epay" : "creem",
-      currency,
-      amount: totalPrice,
-      amountMinor,
-      creditsAmount,
-      pricingSnapshot: {
-        packageId: pkg.id,
-        quantity,
-        currency,
-        amountMinor,
-        creditsAmount,
-        creditsExpiresAt,
-      },
-      expiresAt: checkoutExpiry,
-    });
-    const resultUrl = `${baseUrl}/${locale}/dashboard/credits/payment/${paymentOrder.id}`;
-
-    if (paymentOrder.status === "fulfilled") {
-      return { url: resultUrl, orderId: paymentOrder.id };
-    }
-
-    if (useEpay) {
-      const existingOutTradeNo = paymentOrder.providerPayload?.outTradeNo;
-      const outTradeNo =
-        typeof existingOutTradeNo === "string" && existingOutTradeNo
-          ? existingOutTradeNo
-          : `CR${Date.now()}${crypto.randomUUID().slice(0, 8)}`;
-      const metadata = {
-        type: "credit_purchase" as const,
-        userId,
-        outTradeNo,
-        paymentOrderId: paymentOrder.id,
-        locale,
-        packageId: pkg.id,
-        quantity,
-        currency,
-      };
-      await saveEpayOrder(metadata, totalPrice);
-      await saveCreditPackageProviderReference({
-        orderId: paymentOrder.id,
-        provider: "epay",
-        providerPayload: { outTradeNo },
-      });
-      try {
-        const checkout = await createRuntimeEpayPurchase({
-          outTradeNo,
-          name:
-            quantity > 1
-              ? `FluxMedia Credits ${pkg.credits} x ${quantity}`
-              : `FluxMedia Credits ${pkg.credits}`,
-          money: totalPrice,
-        });
-        await saveCreditPackageCheckout({
-          orderId: paymentOrder.id,
-          provider: "epay",
-          providerPayload: { outTradeNo },
-          expiresAt: checkoutExpiry,
-        });
-
-        return {
-          url: checkout.url,
-          params: checkout.params,
-          method: "POST" as const,
-          orderId: paymentOrder.id,
-        };
-      } catch (error) {
-        await failCreditPackageCheckout({
-          orderId: paymentOrder.id,
-          provider: "epay",
-        });
-        throw error;
-      }
-    }
-
-    const existingCheckoutUrl = getCreditPackageCheckoutUrl(
-      paymentOrder.providerPayload
-    );
-    if (existingCheckoutUrl) {
-      return { url: existingCheckoutUrl, orderId: paymentOrder.id };
-    }
-
-    // 创建 Creem Checkout Session（一次性支付）
-    // 注意：Creem 需要预先在后台创建产品，这里使用 packageId 作为 product_id
-    // 实际使用时需要在 Creem 后台创建对应的积分产品
     try {
-      const checkout = await creem.createCheckout({
-        product_id: getCreditPackageCreemProductId(pkg),
-        success_url: resultUrl,
-        request_id: `credit_purchase_${paymentOrder.id}`,
-        metadata: {
-          userId,
-          type: "credit_purchase", // 关键: Webhook 用此判断类型
-          paymentOrderId: paymentOrder.id,
-          credits: String(creditsAmount),
-          packageId: pkg.id,
-          quantity: String(quantity),
-          unitPrice: String(unitPrice),
-          currency,
-        },
-      });
-
-      await saveCreditPackageCheckout({
-        orderId: paymentOrder.id,
-        provider: "creem",
-        providerPayload: {
-          checkoutId: checkout.id,
-          checkoutUrl: checkout.checkout_url,
-        },
-        expiresAt: checkoutExpiry,
-      });
-      return { url: checkout.checkout_url, orderId: paymentOrder.id };
+      return await invokeOperation<CreditPackagePurchaseCheckoutOutput>(
+        createPurchaseCheckout.name,
+        parsedInput,
+        {
+          type: "user",
+          userId: ctx.userId,
+          role: normalizeUserRole(ctx.user.role),
+        }
+      );
     } catch (error) {
-      await failCreditPackageCheckout({
-        orderId: paymentOrder.id,
-        provider: "creem",
-      });
-      throw error;
+      throwPurchaseCheckoutActionError(error);
     }
   });
 
