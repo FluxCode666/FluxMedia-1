@@ -1,9 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": ["TURBO_CACHE_MAX_GIB"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**", "dist/**"],
       "env": ["NEXT_PUBLIC_ASSET_PREFIX"],
       "passThroughEnv": [
         "NEXT_TELEMETRY_DISABLED",
