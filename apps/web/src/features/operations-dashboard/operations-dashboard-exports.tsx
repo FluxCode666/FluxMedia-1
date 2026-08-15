@@ -58,6 +58,11 @@ type ExportAction =
   | { kind: "retry" | "download"; taskId: string }
   | { kind: "refresh" | "more" };
 
+type RequestGate = {
+  latestRequestId: number;
+  mounted: boolean;
+};
+
 const EXPORT_TYPES: OperationsExportType[] = [
   "user_growth",
   "commercialization",
@@ -116,6 +121,18 @@ export function OperationsDashboardExports({
   const [loadFailed, setLoadFailed] = useState(initialLoadFailed);
   const notificationKey = `operations-export-completed:${currentUserId}`;
   const initializedWatermark = useRef(false);
+  const requestGate = useRef<RequestGate>({
+    latestRequestId: 0,
+    mounted: false,
+  });
+
+  useEffect(() => {
+    requestGate.current.mounted = true;
+    return () => {
+      requestGate.current.mounted = false;
+      requestGate.current.latestRequestId += 1;
+    };
+  }, []);
 
   useEffect(() => {
     if (initializedWatermark.current) return;
@@ -136,12 +153,28 @@ export function OperationsDashboardExports({
     }
   }
 
+  /** 开始新请求并让所有更早请求失效，返回本次请求的单调递增标识。 */
+  function beginRequest(action: ExportAction): number {
+    const requestId = requestGate.current.latestRequestId + 1;
+    requestGate.current.latestRequestId = requestId;
+    setActiveAction(action);
+    return requestId;
+  }
+
+  /** 仅允许仍挂载组件的最新请求写状态或触发浏览器副作用。 */
+  function isLatestRequest(requestId: number): boolean {
+    return (
+      requestGate.current.mounted &&
+      requestGate.current.latestRequestId === requestId
+    );
+  }
+
   /** 创建指定模块的完整 CSV，任务创建成功后立即进入记录列表。 */
   async function createExport(
     exportType: OperationsExportType,
     exportQuery: OperationsDashboardQueryInput
   ): Promise<void> {
-    setActiveAction({ kind: "create", exportType });
+    const requestId = beginRequest({ kind: "create", exportType });
     try {
       const result = await createOperationsExportAction({
         exportType,
@@ -150,38 +183,42 @@ export function OperationsDashboardExports({
       });
       const parsed = operationsCreateExportOutputSchema.safeParse(result?.data);
       if (!parsed.success) throw new Error("invalid export response");
+      if (!isLatestRequest(requestId)) return;
       setTasks((current) => mergeTasks(current, [parsed.data.task]));
       toast.success(t("exports.notifications.created"));
     } catch {
+      if (!isLatestRequest(requestId)) return;
       toast.error(t("exports.notifications.createFailed"));
     } finally {
-      setActiveAction(null);
+      if (isLatestRequest(requestId)) setActiveAction(null);
     }
   }
 
   /** 手动刷新第一页；成功时更新状态并检查完成通知。 */
   async function refreshTasks(): Promise<void> {
-    setActiveAction({ kind: "refresh" });
+    const requestId = beginRequest({ kind: "refresh" });
     try {
       const result = await listOperationsExportsAction({ limit: 20 });
       const parsed = operationsListExportsOutputSchema.safeParse(result?.data);
       if (!parsed.success) throw new Error("invalid export list");
+      if (!isLatestRequest(requestId)) return;
       setTasks(parsed.data.tasks);
       setNextCursor(parsed.data.nextCursor);
       setLoadFailed(false);
       notifyNewCompletions(parsed.data.tasks);
     } catch {
+      if (!isLatestRequest(requestId)) return;
       setLoadFailed(true);
       toast.error(t("exports.notifications.refreshFailed"));
     } finally {
-      setActiveAction(null);
+      if (isLatestRequest(requestId)) setActiveAction(null);
     }
   }
 
   /** 使用签名 cursor 继续读取更早记录，不替换已经展示的任务。 */
   async function loadMore(): Promise<void> {
     if (!nextCursor) return;
-    setActiveAction({ kind: "more" });
+    const requestId = beginRequest({ kind: "more" });
     try {
       const result = await listOperationsExportsAction({
         cursor: nextCursor,
@@ -189,18 +226,20 @@ export function OperationsDashboardExports({
       });
       const parsed = operationsListExportsOutputSchema.safeParse(result?.data);
       if (!parsed.success) throw new Error("invalid export list");
+      if (!isLatestRequest(requestId)) return;
       setTasks((current) => mergeTasks(current, parsed.data.tasks));
       setNextCursor(parsed.data.nextCursor);
     } catch {
+      if (!isLatestRequest(requestId)) return;
       toast.error(t("exports.notifications.moreFailed"));
     } finally {
-      setActiveAction(null);
+      if (isLatestRequest(requestId)) setActiveAction(null);
     }
   }
 
   /** 失败任务以原查询创建关联重试任务，原记录保持不变。 */
   async function retryExport(taskId: string): Promise<void> {
-    setActiveAction({ kind: "retry", taskId });
+    const requestId = beginRequest({ kind: "retry", taskId });
     try {
       const result = await retryOperationsExportAction({
         taskId,
@@ -208,18 +247,20 @@ export function OperationsDashboardExports({
       });
       const parsed = operationsRetryExportOutputSchema.safeParse(result?.data);
       if (!parsed.success) throw new Error("invalid export retry response");
+      if (!isLatestRequest(requestId)) return;
       setTasks((current) => mergeTasks(current, [parsed.data.task]));
       toast.success(t("exports.notifications.retryCreated"));
     } catch {
+      if (!isLatestRequest(requestId)) return;
       toast.error(t("exports.notifications.retryFailed"));
     } finally {
-      setActiveAction(null);
+      if (isLatestRequest(requestId)) setActiveAction(null);
     }
   }
 
   /** 准备短期许可后使用浏览器下载；页面不持久化签名 URL。 */
   async function downloadExport(taskId: string): Promise<void> {
-    setActiveAction({ kind: "download", taskId });
+    const requestId = beginRequest({ kind: "download", taskId });
     try {
       const result = await prepareOperationsExportDownloadAction({ taskId });
       const parsed = operationsPrepareExportDownloadOutputSchema.safeParse(
@@ -228,11 +269,13 @@ export function OperationsDashboardExports({
       if (!parsed.success || !parsed.data.downloadUrl) {
         throw new Error("invalid export download response");
       }
+      if (!isLatestRequest(requestId)) return;
       window.location.assign(parsed.data.downloadUrl);
     } catch {
+      if (!isLatestRequest(requestId)) return;
       toast.error(t("exports.notifications.downloadFailed"));
     } finally {
-      setActiveAction(null);
+      if (isLatestRequest(requestId)) setActiveAction(null);
     }
   }
 

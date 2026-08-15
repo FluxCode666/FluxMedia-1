@@ -48,6 +48,9 @@ export default async function OperationsDashboardPage({
     searchParams,
   ]);
   if (!session?.user) return redirect({ href: "/sign-in", locale });
+  if (session.user.banned) {
+    return redirect({ href: "/dashboard", locale });
+  }
 
   const role = await getUserRoleById(session.user.id);
   if (!canAccessAdminArea(role)) {
