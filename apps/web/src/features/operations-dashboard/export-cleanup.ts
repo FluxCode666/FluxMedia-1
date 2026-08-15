@@ -33,6 +33,7 @@ export type OperationsExportCleanupDependencies = {
     | "markCleanupFailed"
     | "listOrphans"
     | "markOrphanDeleted"
+    | "markOrphanCleanupFailed"
     | "findReferencedObjectKeys"
     | "findActiveExportLeases"
   >;
@@ -282,6 +283,13 @@ export async function expireOperationsExportBatch(
         now: dependencies.now(),
       });
     } catch {
+      await dependencies.repository.markOrphanCleanupFailed({
+        auditId: orphan.auditId,
+        taskId: orphan.taskId,
+        objectKey: orphan.objectKey,
+        errorCode: "recorded_orphan_cleanup_failed",
+        now: dependencies.now(),
+      });
       logger.warn(
         {
           operation: "operations.expireExports",

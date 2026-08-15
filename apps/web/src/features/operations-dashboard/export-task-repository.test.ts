@@ -35,6 +35,10 @@ describe("operations export repository SQL contract", () => {
     expect(source).toContain("operations.exportorphandeleted");
     expect(source).toContain("referenced_task.object_key");
     expect(source).toContain("referenced_task.object_deleted_at is null");
+    expect(source).toContain("operations.exportorphancleanupfailed");
+    expect(source).toContain("latest_failure.created_at nulls first");
+    expect(source).toContain("cleanup_error_code is not null");
+    expect(source).toContain("else updated_at");
   });
 
   it("存储前缀清理保留任意任务引用，并能排除仍有效的运行租约", () => {

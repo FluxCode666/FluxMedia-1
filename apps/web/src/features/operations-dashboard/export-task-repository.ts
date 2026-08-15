@@ -172,6 +172,13 @@ export interface OperationsExportTaskRepository {
     objectKey: string;
     now: Date;
   }): Promise<void>;
+  markOrphanCleanupFailed(input: {
+    auditId: string;
+    taskId: string;
+    objectKey: string;
+    errorCode: string;
+    now: Date;
+  }): Promise<void>;
   findReferencedObjectKeys(input: {
     objectBucket: string;
     objectKeys: string[];
@@ -815,6 +822,14 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
         orphan.metadata->>'objectBucket' as object_bucket,
         orphan.metadata->>'objectKey' as object_key
       from admin_audit_log as orphan
+      left join lateral (
+        select failed.created_at
+        from admin_audit_log as failed
+        where failed.action = 'operations.exportOrphanCleanupFailed'
+          and failed.metadata->>'orphanAuditId' = orphan.id
+        order by failed.created_at desc, failed.id desc
+        limit 1
+      ) as latest_failure on true
       where orphan.action = 'operations.exportOrphan'
         and not exists (
           select 1
@@ -829,7 +844,9 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
           where cleaned.action = 'operations.exportOrphanDeleted'
             and cleaned.metadata->>'orphanAuditId' = orphan.id
         )
-      order by orphan.created_at, orphan.id
+      order by latest_failure.created_at nulls first,
+        orphan.created_at,
+        orphan.id
       limit ${input.limit}
     `);
       return z
@@ -865,6 +882,29 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
           metadata: {
             orphanAuditId: input.auditId,
             objectKey: input.objectKey,
+          },
+          now: input.now,
+        })
+      );
+    },
+    /**
+     * 记录孤儿对象清理失败水位，让永久坏项在后续批次中轮转到队尾。
+     *
+     * @param input 原孤儿审计、对象键、稳定错误码和失败时间。
+     * @returns 无。
+     * @sideEffects 追加不含对象内容的管理员审计行；数据库失败会上抛。
+     */
+    async markOrphanCleanupFailed(input) {
+      const { db } = await import("@repo/database");
+      await db.insert(adminAuditLog).values(
+        auditValues({
+          adminUserId: null,
+          action: "operations.exportOrphanCleanupFailed",
+          taskId: input.taskId,
+          metadata: {
+            orphanAuditId: input.auditId,
+            objectKey: input.objectKey,
+            errorCode: input.errorCode,
           },
           now: input.now,
         })
@@ -934,7 +974,13 @@ export const databaseOperationsExportTaskRepository: OperationsExportTaskReposit
         select id from operations_export_task
         where (status = 'completed' and expires_at <= ${input.now})
           or (status = 'expired' and object_deleted_at is null)
-        order by expires_at, id for update skip locked limit ${input.limit}
+        order by (cleanup_error_code is not null),
+          case
+            when cleanup_error_code is null then expires_at
+            else updated_at
+          end,
+          id
+        for update skip locked limit ${input.limit}
       )
       update operations_export_task as task set status = 'expired', updated_at = ${input.now}
       from due where task.id = due.id

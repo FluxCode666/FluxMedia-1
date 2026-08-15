@@ -105,6 +105,17 @@ describe("DashboardWebVisitRecorder", () => {
     expect(actionHarness.execute).toHaveBeenCalledTimes(2);
   });
 
+  it("统计不可用时释放请求门禁且不推进已记录日期", () => {
+    mountRecorder("2026-08-13");
+
+    act(() =>
+      actionHarness.callbacks?.onSuccess({ data: { status: "unavailable" } })
+    );
+    showDocument();
+
+    expect(actionHarness.execute).toHaveBeenCalledTimes(2);
+  });
+
   it("成功后记录服务端日期，卸载后移除监听", () => {
     mountRecorder("2026-08-13");
     act(() =>

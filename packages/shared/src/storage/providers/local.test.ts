@@ -195,6 +195,50 @@ describe("localProvider streaming", () => {
     }
   });
 
+  it("取消流式写入时保留调用前已经存在的目标对象", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tempDir = await fs.mkdtemp(`${os.tmpdir()}/flux-storage-existing-`);
+    try {
+      const provider = createLocalStorageProvider(tempDir);
+      const controller = new AbortController();
+      const objectPath = path.join(
+        tempDir,
+        "private",
+        "exports",
+        "test.csv"
+      );
+      await fs.mkdir(path.dirname(objectPath), { recursive: true });
+      await fs.writeFile(objectPath, "既有对象");
+      controller.abort();
+      if (!provider.putObjectStream) {
+        throw new Error("local provider streaming missing");
+      }
+
+      /** 提供不会在已取消请求中被消费的测试字节流。 */
+      async function* bytes() {
+        yield Buffer.from("不应覆盖");
+      }
+
+      await expect(
+        provider.putObjectStream(
+          "exports/test.csv",
+          "private",
+          bytes(),
+          "text/csv",
+          { signal: controller.signal }
+        )
+      ).rejects.toMatchObject({ name: "AbortError" });
+      await expect(fs.readFile(objectPath, "utf8")).resolves.toBe("既有对象");
+      await expect(fs.readdir(path.dirname(objectPath))).resolves.toEqual([
+        "test.csv",
+      ]);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("按前缀分页枚举完成对象与陈旧临时文件", async () => {
     const fs = await import("node:fs/promises");
     const os = await import("node:os");

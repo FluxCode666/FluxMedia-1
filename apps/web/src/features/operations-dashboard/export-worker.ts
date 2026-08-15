@@ -49,6 +49,8 @@ import {
 
 const EXPORT_PAGE_SIZE = 1_000;
 const EXPORT_LEASE_RENEW_INTERVAL_MS = 30_000;
+/** 单个冻结导出允许实际执行的最大次数；下一次重领只负责收敛为 failed。 */
+export const OPERATIONS_EXPORT_MAX_ATTEMPTS = 8;
 
 /** worker 可注入端口；测试替换数据库、存储、时钟和 UUID。 */
 export type OperationsExportWorkerDependencies = {
@@ -786,6 +788,28 @@ export async function processOperationsExportBatch(
       },
       "Operations export task claimed"
     );
+    if (task.attemptCount > OPERATIONS_EXPORT_MAX_ATTEMPTS) {
+      const failed = await dependencies.repository.fail({
+        taskId: task.id,
+        leaseToken: task.leaseToken,
+        errorCode: "max_attempts_exceeded",
+        now: dependencies.now(),
+      });
+      logger.warn(
+        {
+          operation: "operations.processExports",
+          exportTaskId: task.id,
+          exportType: task.exportType,
+          granularity: task.query.granularity,
+          attempt: task.attemptCount,
+          leaseStatus: failed ? "failed" : "superseded",
+          errorCode: "max_attempts_exceeded",
+        },
+        "Operations export task exceeded its attempt limit"
+      );
+      processed += 1;
+      continue;
+    }
     await processClaimedTask(task, dependencies);
     processed += 1;
   }

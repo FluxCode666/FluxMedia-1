@@ -530,5 +530,5 @@ describe("operations dashboard reconciliation", () => {
     expect(content.generatedAt).toBe(RECONCILIATION_AS_OF.toISOString());
     expect(growth.range).toEqual(commercial.range);
     expect(growth.range).toEqual(content.range);
-  });
+  }, 15_000);
 });

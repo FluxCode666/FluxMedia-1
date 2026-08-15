@@ -26,6 +26,7 @@ import {
   expireOperationsExportBatch,
   formatOperationsExportAmount,
   formatOperationsExportDateTime,
+  OPERATIONS_EXPORT_MAX_ATTEMPTS,
   type OperationsExportCleanupDependencies,
   type OperationsExportWorkerDependencies,
   processOperationsExportBatch,
@@ -88,6 +89,46 @@ function createDependencies(): OperationsExportWorkerDependencies {
 describe("processOperationsExportBatch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("崩溃重领超过上限后直接失败且不再生成对象", async () => {
+    const dependencies = createDependencies();
+    vi.mocked(dependencies.repository.claimNext).mockResolvedValue({
+      ...task,
+      highWatermarks: {
+        users: null,
+        webVisits: null,
+        outputs: null,
+        paymentOrders: null,
+        paymentLifecycle: null,
+        creditContributions: null,
+      },
+      attemptCount: OPERATIONS_EXPORT_MAX_ATTEMPTS + 1,
+    });
+
+    await expect(
+      processOperationsExportBatch(
+        { limit: 1, workerId: "worker-1" },
+        dependencies
+      )
+    ).resolves.toEqual({ processed: 1 });
+
+    expect(dependencies.repository.fail).toHaveBeenCalledWith({
+      taskId: task.id,
+      leaseToken: task.leaseToken,
+      errorCode: "max_attempts_exceeded",
+      now: new Date("2026-02-01T00:00:01.000Z"),
+    });
+    expect(dependencies.storage.putObjectStream).not.toHaveBeenCalled();
+    expect(dependencies.repository.complete).not.toHaveBeenCalled();
+    expect(loggerMocks.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: OPERATIONS_EXPORT_MAX_ATTEMPTS + 1,
+        leaseStatus: "failed",
+        errorCode: "max_attempts_exceeded",
+      }),
+      "Operations export task exceeded its attempt limit"
+    );
   });
 
   it("多年增长导出固定为五类基础查询和三个留存查询", () => {
@@ -503,6 +544,7 @@ function createCleanupDependencies(): OperationsExportCleanupDependencies {
       markCleanupFailed: vi.fn().mockResolvedValue(undefined),
       listOrphans: vi.fn().mockResolvedValue([]),
       markOrphanDeleted: vi.fn().mockResolvedValue(undefined),
+      markOrphanCleanupFailed: vi.fn().mockResolvedValue(undefined),
       findReferencedObjectKeys: vi.fn().mockResolvedValue(new Set()),
       findActiveExportLeases: vi.fn().mockResolvedValue([]),
     },
@@ -570,6 +612,35 @@ describe("expireOperationsExportBatch", () => {
     expect(dependencies.repository.markOrphanDeleted).toHaveBeenCalledWith(
       expect.objectContaining({ auditId: "audit-1", taskId: "task-stale" })
     );
+  });
+
+  it("记录孤儿删除失败水位以便持久轮转坏项", async () => {
+    const dependencies = createCleanupDependencies();
+    vi.mocked(dependencies.repository.listOrphans).mockResolvedValue([
+      {
+        auditId: "audit-failed",
+        taskId: "task-failed",
+        objectBucket: "exports",
+        objectKey: "failed.csv",
+      },
+    ]);
+    vi.mocked(dependencies.storage.deleteObject).mockRejectedValue(
+      new Error("storage unavailable")
+    );
+
+    await expect(
+      expireOperationsExportBatch({ limit: 1 }, dependencies)
+    ).resolves.toEqual({ processed: 1 });
+    expect(
+      dependencies.repository.markOrphanCleanupFailed
+    ).toHaveBeenCalledWith({
+      auditId: "audit-failed",
+      taskId: "task-failed",
+      objectKey: "failed.csv",
+      errorCode: "recorded_orphan_cleanup_failed",
+      now: new Date("2026-02-08T00:00:01.000Z"),
+    });
+    expect(dependencies.repository.markOrphanDeleted).not.toHaveBeenCalled();
   });
 
   it("存储扫描保留任务引用对象与年轻对象，只删除陈旧未引用对象", async () => {

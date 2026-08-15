@@ -347,7 +347,6 @@ export function createLocalStorageProvider(
       const tempPath = `${filePath}.${randomUUID()}.tmp`;
       await fs.mkdir(dir, { recursive: true });
       const handle = await fs.open(tempPath, "wx");
-      let linked = false;
       try {
         for await (const chunk of data) {
           if (options?.signal?.aborted) throw createStorageAbortError();
@@ -358,13 +357,9 @@ export function createLocalStorageProvider(
         await handle.close();
         // WHY：link 在目标已存在时失败，避免重复 worker 覆盖不可变导出对象。
         await fs.link(tempPath, filePath);
-        linked = true;
       } finally {
         await handle.close().catch(() => undefined);
         await fs.unlink(tempPath).catch(() => undefined);
-        if (!linked && options?.signal?.aborted) {
-          await fs.unlink(filePath).catch(() => undefined);
-        }
       }
     },
   };

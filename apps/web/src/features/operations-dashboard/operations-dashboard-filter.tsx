@@ -38,7 +38,13 @@ type OperationsDashboardFilterProps = {
   onApply: (query: OperationsDashboardQueryInput) => void;
 };
 
-/** 将 Gregorian 字符串转换为仅供日历显示的本地 Date。 */
+/**
+ * 将 Gregorian 字符串转换为仅供日历显示的本地 Date。
+ *
+ * @param value 候选 YYYY-MM-DD 字符串。
+ * @returns 合法 Gregorian 日期的本地 Date；格式或日期非法时返回 undefined。
+ * @sideEffects 无。
+ */
 function parseCalendarDate(value: string): Date | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   const [year, month, day] = value.split("-").map(Number);
@@ -50,12 +56,23 @@ function parseCalendarDate(value: string): Date | undefined {
     : undefined;
 }
 
-/** 把日历 Date 转为 URL/UOL 使用的 YYYY-MM-DD。 */
+/**
+ * 把日历 Date 转为 URL/UOL 使用的 YYYY-MM-DD。
+ *
+ * @param value 可选的本地日历日期。
+ * @returns 格式化日期；缺失时返回空字符串。
+ * @sideEffects 无。
+ */
 function formatCalendarDate(value: Date | undefined): string {
   return value ? format(value, "yyyy-MM-dd") : "";
 }
 
-/** 窄屏单月、桌面双月，避免手机日历溢出。 */
+/**
+ * 监听桌面断点，供日历选择单月或双月布局。
+ *
+ * @returns 当前视口是否至少为 768px。
+ * @sideEffects 注册 matchMedia 监听，并在卸载时移除。
+ */
 function useDesktopCalendar(): boolean {
   const [isDesktop, setIsDesktop] = useState(false);
   useEffect(() => {
@@ -68,7 +85,14 @@ function useDesktopCalendar(): boolean {
   return isDesktop;
 }
 
-/** 判断自定义范围草稿是否可以提交。 */
+/**
+ * 判断自定义范围草稿是否可以提交。
+ *
+ * @param draft 用户尚未应用的闭区间日期。
+ * @param today 服务器回显的应用时区今天。
+ * @returns 日期完整、正向、不含未来且通过共享 schema 时为 true。
+ * @sideEffects 无。
+ */
 function isValidDraft(draft: DateRangeDraft, today: string): boolean {
   return (
     Boolean(draft.from && draft.to) &&
@@ -81,7 +105,13 @@ function isValidDraft(draft: DateRangeDraft, today: string): boolean {
   );
 }
 
-/** 渲染不自动查询的范围草稿，以及立即应用的快捷范围和粒度按钮。 */
+/**
+ * 渲染不自动查询的范围草稿，以及立即应用的快捷范围和粒度按钮。
+ *
+ * @param props 已应用查询、规范化范围、禁用状态和应用回调。
+ * @returns 运营总览筛选器。
+ * @sideEffects 维护弹层和草稿状态；应用筛选时调用 onApply。
+ */
 export function OperationsDashboardFilter({
   query,
   appliedRange,
@@ -109,17 +139,34 @@ export function OperationsDashboardFilter({
     [draft.from, draft.to]
   );
 
-  /** 应用一个快捷范围，同时保留当前粒度。 */
+  /**
+   * 应用一个快捷范围，同时保留当前粒度。
+   *
+   * @param range 本周、本月、本年或默认范围。
+   * @returns 无。
+   * @sideEffects 调用父组件 onApply。
+   */
   function applyRange(range: OperationsDateRangeInput): void {
     onApply({ granularity: query.granularity, range });
   }
 
-  /** 应用粒度，同时保留当前日期范围语义。 */
+  /**
+   * 应用粒度，同时保留当前日期范围语义。
+   *
+   * @param granularity 日、周或月粒度。
+   * @returns 无。
+   * @sideEffects 调用父组件 onApply。
+   */
   function applyGranularity(granularity: OperationsGranularity): void {
     onApply({ granularity, range: query.range });
   }
 
-  /** 提交完整自定义范围；非法草稿保留在弹层中供修正。 */
+  /**
+   * 提交完整自定义范围；非法草稿保留在弹层中供修正。
+   *
+   * @returns 无。
+   * @sideEffects 合法时关闭弹层并调用父组件 onApply。
+   */
   function applyCustomRange(): void {
     if (!isValidDraft(draft, appliedRange.today)) return;
     setIsOpen(false);
