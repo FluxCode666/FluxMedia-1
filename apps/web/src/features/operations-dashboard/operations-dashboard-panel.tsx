@@ -11,7 +11,6 @@ import type {
   OperationsDashboardQueryInput,
   OperationsDetailSelection,
   OperationsExportTask,
-  OperationsPaymentLifecycleStage,
 } from "@repo/shared/operations-dashboard/contracts";
 import type { OperationsNumericSeriesBucket } from "@repo/shared/operations-dashboard/series";
 import { Button } from "@repo/ui/components/button";
@@ -35,6 +34,7 @@ import {
   OperationsVideoChart,
 } from "./charts";
 import type { OperationsGrowthRetentionMetric } from "./growth-service";
+import { createLatestRequestGate } from "./latest-request-gate";
 import { OperationsDashboardCohort } from "./operations-dashboard-cohort";
 import { OperationsDashboardCommercial } from "./operations-dashboard-commercial";
 import { OperationsDashboardExports } from "./operations-dashboard-exports";
@@ -57,7 +57,6 @@ import {
   applyOperationsDashboardFailure,
   applyOperationsDashboardSnapshot,
   beginOperationsDashboardRequest,
-  createOperationsDashboardRequestGate,
   type OperationsDashboardViewState,
 } from "./operations-dashboard-state";
 import {
@@ -91,26 +90,6 @@ function createDetailBucket(bucket: OperationsNumericSeriesBucket): {
   to: string;
 } {
   return { from: bucket.from, to: bucket.to };
-}
-
-/** 将商业化图表字段名转换为共享契约使用的稳定阶段值。 */
-function resolvePaymentDetailStage(
-  stage: keyof OperationsDashboardOverview["commercial"]["lifecycle"]
-): OperationsPaymentLifecycleStage {
-  switch (stage) {
-    case "createdOrders":
-      return "created_orders";
-    case "pendingOrders":
-      return "pending_orders";
-    case "paymentConfirmedOrders":
-      return "payment_confirmed_orders";
-    case "paidNotFulfilledOrders":
-      return "paid_not_fulfilled_orders";
-    case "fulfilledOrders":
-      return "fulfilled_orders";
-    case "failedOrders":
-      return "failed_orders";
-  }
 }
 
 /**
@@ -232,7 +211,7 @@ export function OperationsDashboardPanel({
     useState<OperationsDetailSelection | null>(initialDetailSelection);
   const detailTriggerRef = useRef<HTMLElement | null>(null);
   const detailOpenedFromPageRef = useRef(false);
-  const requestGate = useRef(createOperationsDashboardRequestGate());
+  const requestGate = useRef(createLatestRequestGate());
 
   useEffect(() => {
     if (!invalidDeepLinkHref) return;
@@ -645,7 +624,7 @@ export function OperationsDashboardPanel({
               openDetail({
                 module: "commercialization",
                 detail: "payment_stage",
-                stage: resolvePaymentDetailStage(stage),
+                stage,
               })
             }
           />

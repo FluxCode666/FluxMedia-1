@@ -22,27 +22,6 @@ export type OperationsDashboardViewState = {
   failureStatus: OperationsDashboardActionFailure | null;
 };
 
-/** 创建单调递增请求门，延迟返回的旧请求不会覆盖新筛选结果。 */
-export function createOperationsDashboardRequestGate(): {
-  begin: () => number;
-  isLatest: (requestId: number) => boolean;
-  invalidate: () => void;
-} {
-  let latestRequestId = 0;
-  return {
-    begin() {
-      latestRequestId += 1;
-      return latestRequestId;
-    },
-    isLatest(requestId) {
-      return requestId === latestRequestId;
-    },
-    invalidate() {
-      latestRequestId += 1;
-    },
-  };
-}
-
 /** 开始刷新并保留最近有效快照和已应用查询。 */
 export function beginOperationsDashboardRequest(
   state: OperationsDashboardViewState

@@ -6,6 +6,7 @@
  */
 import type { OperationsDashboardQueryInput } from "@repo/shared/operations-dashboard/contracts";
 import { describe, expect, it } from "vitest";
+import { createLatestRequestGate } from "./latest-request-gate";
 import { createOperationsDetailFixture } from "./operations-dashboard-test-fixtures";
 import type { OperationsDetailPage } from "./operations-detail-sheet-data";
 import {
@@ -13,7 +14,6 @@ import {
   applyOperationsDetailPage,
   beginOperationsDetailRequest,
   createOperationsDetailContext,
-  createOperationsDetailRequestGate,
   createOperationsDetailState,
   isOperationsDetailStateVisible,
 } from "./operations-detail-sheet-state";
@@ -143,7 +143,7 @@ describe("operations detail sheet state", () => {
   });
 
   it("快速切换请求只允许最新 selection 提交", () => {
-    const gate = createOperationsDetailRequestGate();
+    const gate = createLatestRequestGate();
     const usersRequest = gate.begin();
     const activityRequest = gate.begin();
 
@@ -221,7 +221,7 @@ describe("operations detail sheet state", () => {
   });
 
   it("关闭会使进行中请求失效且同一 selection 重开只承认新请求", () => {
-    const gate = createOperationsDetailRequestGate();
+    const gate = createLatestRequestGate();
     const closingRequest = gate.begin();
 
     gate.invalidate();

@@ -22,6 +22,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getOperationsDetailAction } from "./actions";
+import { createLatestRequestGate } from "./latest-request-gate";
 import {
   buildOperationsDetailTableModel,
   type OperationsDetailPage,
@@ -34,7 +35,6 @@ import {
   applyOperationsDetailPage,
   beginOperationsDetailRequest,
   createOperationsDetailContext,
-  createOperationsDetailRequestGate,
   createOperationsDetailState,
   isOperationsDetailStateVisible,
   type OperationsDetailFailure,
@@ -86,7 +86,7 @@ export function OperationsDetailSheet({
   const t = useTranslations("OperationsDashboard");
   const [state, setState] = useState(createOperationsDetailState);
   const stateRef = useRef(state);
-  const requestGate = useRef(createOperationsDetailRequestGate());
+  const requestGate = useRef(createLatestRequestGate());
   const context = useMemo(
     () => (selection ? createOperationsDetailContext(query, selection) : null),
     [query, selection]

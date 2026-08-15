@@ -5,13 +5,12 @@
  */
 import type { OperationsDashboardQueryInput } from "@repo/shared/operations-dashboard/contracts";
 import { describe, expect, it } from "vitest";
-
+import { createLatestRequestGate } from "./latest-request-gate";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 import {
   applyOperationsDashboardFailure,
   applyOperationsDashboardSnapshot,
   beginOperationsDashboardRequest,
-  createOperationsDashboardRequestGate,
   type OperationsDashboardViewState,
 } from "./operations-dashboard-state";
 
@@ -41,7 +40,7 @@ function createState(
 
 describe("operations dashboard state", () => {
   it("只承认最后开始的请求", () => {
-    const gate = createOperationsDashboardRequestGate();
+    const gate = createLatestRequestGate();
     const first = gate.begin();
     const second = gate.begin();
 

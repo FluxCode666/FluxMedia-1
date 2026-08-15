@@ -10,9 +10,9 @@ import type { FullConfig } from "@playwright/test";
 import { requireOperationsE2EEnvironment } from "./environment";
 import {
   cleanupOperationsE2EFixture,
-  cleanupOperationsE2EStorage,
   seedOperationsE2EFixture,
 } from "./fixture";
+import { cleanupOperationsE2EStorage } from "./fixture-exports";
 
 /** 建立隔离夹具，并返回 Playwright 调用的清理函数。 */
 export default async function globalSetup(

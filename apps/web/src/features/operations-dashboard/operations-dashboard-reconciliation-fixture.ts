@@ -13,7 +13,10 @@ import {
   addOperationsCalendarDays,
   type OperationsRangeBucket,
 } from "@repo/shared/operations-dashboard/range";
-import { parseDateInputInTimeZone } from "@repo/shared/time-zone";
+import {
+  formatDateInputInTimeZone,
+  parseDateInputInTimeZone,
+} from "@repo/shared/time-zone";
 
 import type {
   OperationsCommercialLifecycleCounts,
@@ -456,17 +459,14 @@ function isInRange(date: Date, range: OperationsGrowthRangeQuery): boolean {
   return date >= range.start && date < range.end;
 }
 
-/** 把 UTC 时间转换成固定应用时区自然日。 */
+/**
+ * 把 UTC 时间转换成固定应用时区自然日。
+ *
+ * @param date 对账事实的绝对时间。
+ * @returns `Asia/Shanghai` 下的 `YYYY-MM-DD`。
+ */
 function toAppDate(date: Date): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: RECONCILIATION_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-  return `${value("year")}-${value("month")}-${value("day")}`;
+  return formatDateInputInTimeZone(date, RECONCILIATION_TIME_ZONE);
 }
 
 /** 把应用自然日解析为夹具时区零点，非法测试数据直接失败。 */

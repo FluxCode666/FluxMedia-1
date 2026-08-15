@@ -134,25 +134,3 @@ export function applyOperationsDetailFailure(
     error,
   };
 }
-
-/** 生成单调请求号，使快速切换 selection 时只有最新响应可以提交。 */
-export function createOperationsDetailRequestGate(): {
-  begin: () => number;
-  invalidate: () => void;
-  isLatest: (requestId: number) => boolean;
-} {
-  let latestRequestId = 0;
-  return {
-    begin() {
-      latestRequestId += 1;
-      return latestRequestId;
-    },
-    /** 递增请求号，使关闭前所有仍在等待的响应永久失效。 */
-    invalidate() {
-      latestRequestId += 1;
-    },
-    isLatest(requestId) {
-      return requestId === latestRequestId;
-    },
-  };
-}

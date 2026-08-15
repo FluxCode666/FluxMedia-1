@@ -7,6 +7,7 @@
  */
 "use client";
 
+import type { OperationsPaymentLifecycleStage } from "@repo/shared/operations-dashboard/contracts";
 import { Button } from "@repo/ui/components/button";
 import {
   type ChartConfig,
@@ -38,7 +39,18 @@ import {
 } from "./operations-chart-utils";
 
 type PaymentLifecycleKey = keyof OperationsCommercialSnapshot["lifecycle"];
-export type OperationsPaymentLifecycleStage = PaymentLifecycleKey;
+
+const PAYMENT_STAGE_SELECTIONS: Record<
+  PaymentLifecycleKey,
+  OperationsPaymentLifecycleStage
+> = {
+  createdOrders: "created_orders",
+  failedOrders: "failed_orders",
+  fulfilledOrders: "fulfilled_orders",
+  paidNotFulfilledOrders: "paid_not_fulfilled_orders",
+  paymentConfirmedOrders: "payment_confirmed_orders",
+  pendingOrders: "pending_orders",
+};
 
 export type OperationsPaymentLifecycleChartLabels = {
   title: string;
@@ -288,7 +300,7 @@ export function OperationsPaymentLifecycleChart({
           <Button
             disabled={row.status === "pre_epoch"}
             key={row.key}
-            onClick={() => onSelectStage?.(row.key)}
+            onClick={() => onSelectStage?.(PAYMENT_STAGE_SELECTIONS[row.key])}
             size="sm"
             type="button"
             variant="outline"

@@ -74,13 +74,6 @@ const DETAIL_PARAMETER_KEYS: readonly DetailParameterKey[] = [
   "contentKind",
 ];
 
-/** 将 Next.js searchParams 的单值读取为字符串，重复参数保留为非法输入。 */
-function normalizeSearchParams(
-  params: OperationsDashboardSearchParams
-): Record<string, string | string[] | undefined> {
-  return Object.fromEntries(Object.entries(params));
-}
-
 /** 创建已通过共享 schema 规范化的默认查询。 */
 function createDefaultQuery(): OperationsDashboardQueryInput {
   return operationsDashboardQueryInputSchema.parse({});
@@ -229,7 +222,7 @@ export function parseOperationsDashboardSearchParams(
   params: OperationsDashboardSearchParams
 ): ParsedOperationsDashboardQuery {
   const fallback = createDefaultQuery();
-  const parsedQuery = querySchema.safeParse(normalizeSearchParams(params));
+  const parsedQuery = querySchema.safeParse(params);
   if (!parsedQuery.success) {
     return createInvalidDeepLinkResult(fallback);
   }
