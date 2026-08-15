@@ -187,13 +187,40 @@ describe("operations series", () => {
 
     expect(first).toEqual(second);
     expect(first).toHaveLength(6);
-    expect(first.map(({ index }) => index)).toEqual(
-      expect.arrayContaining([0, 2, 6, 9])
-    );
+    expect(first.map(({ index }) => index)).toEqual([0, 1, 2, 4, 6, 9]);
     expect(first.map(({ index }) => index)).toEqual(
       [...first.map(({ index }) => index)].sort((left, right) => left - right)
     );
     expect(series).toEqual(original);
+  });
+
+  it("降采样在上线前点和极值并列时保持稳定索引规则", () => {
+    const buckets = resolveOperationsDashboardRange(
+      {
+        range: {
+          kind: "custom",
+          from: "2026-07-31",
+          to: "2026-08-11",
+        },
+      },
+      {
+        asOf: new Date("2026-08-20T12:00:00.000Z"),
+        epochDate: "2026-08-02",
+        timeZone: "UTC",
+      }
+    ).buckets;
+    const values = [5, -5, 5, -5, 0, 0, 10, -10, 1, 1];
+    const series = fillOperationsCreditSeries(
+      buckets,
+      values.map((value, index) => ({
+        bucketKey: buckets[index + 2]?.key ?? "",
+        value,
+      }))
+    );
+
+    expect(
+      downsampleOperationsSeries(series, 7).map(({ index }) => index)
+    ).toEqual([0, 2, 4, 6, 8, 9, 11]);
   });
 
   it("短序列原样返回并拒绝不足以保留极值的点数上限", () => {

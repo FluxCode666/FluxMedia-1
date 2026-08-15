@@ -7,8 +7,6 @@
 
 import type { CountComparison } from "@repo/shared/operations-dashboard/comparison";
 
-import { formatPaymentAmount } from "@/features/payment/payment-display-format";
-
 export type OperationsDisplayStatus =
   | "value"
   | "pre_epoch"
@@ -30,15 +28,6 @@ export function formatOperationsRate(value: number, locale: string): string {
     style: "percent",
     maximumFractionDigits: 1,
   }).format(value);
-}
-
-/** 按币种小数位把最小单位金额转换为主单位并本地化展示。 */
-export function formatOperationsMoney(
-  amountMinor: number,
-  currency: string,
-  locale: string
-): string {
-  return formatPaymentAmount(amountMinor, currency, locale);
 }
 
 /** 把 ISO/Date 快照时间格式化到服务端声明的应用时区。 */

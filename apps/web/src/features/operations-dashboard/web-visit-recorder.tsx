@@ -6,14 +6,12 @@
  * 使用方：dashboard 公共布局。首次服务端渲染已记录访问，本组件仅在页面重新可见且
  * 应用自然日变化后补一次请求；页面内导航不会重复写入或增加客户端身份字段。
  */
+import { formatDateInputInTimeZone } from "@repo/shared/time-zone";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect, useRef } from "react";
 
 import { recordDashboardWebVisitAction } from "./actions";
-import {
-  formatClientAppDate,
-  shouldRecordVisibleVisit,
-} from "./web-visit-recorder-core";
+import { shouldRecordVisibleVisit } from "./web-visit-recorder-core";
 
 /**
  * 监听可见性并在跨应用自然日后重新记录访问。
@@ -53,7 +51,7 @@ export function DashboardWebVisitRecorder({
       ) {
         return;
       }
-      const currentAppDate = formatClientAppDate(new Date(), appTimeZone);
+      const currentAppDate = formatDateInputInTimeZone(new Date(), appTimeZone);
       if (
         !shouldRecordVisibleVisit(currentAppDate, lastRecordedDateRef.current)
       ) {

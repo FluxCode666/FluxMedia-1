@@ -54,83 +54,65 @@ export function downsampleOperationsSeries(
   }
 
   const selected = new Set<number>([0, series.length - 1]);
-  const available = series
-    .map((point, index) => ({ point, index }))
-    .filter(({ point }) => point.status === "value");
   const bucketCount = Math.max(1, maxPoints - 2);
-  const minPoint = available.reduce<{ index: number; value: number } | null>(
-    (best, candidate) => {
-      if (candidate.point.status !== "value") return best;
-      const value = candidate.point.value;
-      if (
-        !best ||
-        value < best.value ||
-        (value === best.value && candidate.index < best.index)
-      ) {
-        return { index: candidate.index, value };
-      }
-      return best;
-    },
-    null
-  );
-  const maxPoint = available.reduce<{ index: number; value: number } | null>(
-    (best, candidate) => {
-      if (candidate.point.status !== "value") return best;
-      const value = candidate.point.value;
-      if (
-        !best ||
-        value > best.value ||
-        (value === best.value && candidate.index < best.index)
-      ) {
-        return { index: candidate.index, value };
-      }
-      return best;
-    },
-    null
-  );
+  let minPoint: { index: number; value: number } | null = null;
+  let maxPoint: { index: number; value: number } | null = null;
+  for (let index = 0; index < series.length; index += 1) {
+    const point = series[index];
+    if (point?.status !== "value") continue;
+    if (
+      !minPoint ||
+      point.value < minPoint.value ||
+      (point.value === minPoint.value && index < minPoint.index)
+    ) {
+      minPoint = { index, value: point.value };
+    }
+    if (
+      !maxPoint ||
+      point.value > maxPoint.value ||
+      (point.value === maxPoint.value && index < maxPoint.index)
+    ) {
+      maxPoint = { index, value: point.value };
+    }
+  }
   if (minPoint) selected.add(minPoint.index);
   if (maxPoint) selected.add(maxPoint.index);
   const span = series.length / bucketCount;
   for (let bucket = 0; bucket < bucketCount; bucket += 1) {
     const start = Math.floor(bucket * span);
     const end = Math.min(series.length, Math.floor((bucket + 1) * span));
-    const candidates = available.filter(
-      ({ index }) => index >= start && index < Math.max(start + 1, end)
-    );
-    const winner = candidates.reduce<{ index: number; value: number } | null>(
-      (best, candidate) => {
-        if (candidate.point.status !== "value") return best;
-        const value = Math.abs(candidate.point.value);
-        if (
-          !best ||
-          value > best.value ||
-          (value === best.value && candidate.index < best.index)
-        ) {
-          return { index: candidate.index, value };
-        }
-        return best;
-      },
-      null
-    );
+    let winner: { index: number; value: number } | null = null;
+    for (let index = start; index < Math.max(start + 1, end); index += 1) {
+      const point = series[index];
+      if (point?.status !== "value") continue;
+      const value = Math.abs(point.value);
+      if (
+        !winner ||
+        value > winner.value ||
+        (value === winner.value && index < winner.index)
+      ) {
+        winner = { index, value };
+      }
+    }
     if (winner) selected.add(winner.index);
   }
 
   while (selected.size < maxPoints) {
-    const candidate = series
-      .map((_, index) => index)
-      .filter((index) => !selected.has(index))
-      .map((index) => ({
-        index,
-        distance: Math.min(
-          ...[...selected].map((selectedIndex) =>
-            Math.abs(index - selectedIndex)
-          )
-        ),
-      }))
-      .sort(
-        (left, right) =>
-          right.distance - left.distance || left.index - right.index
-      )[0];
+    let candidate: { index: number; distance: number } | null = null;
+    for (let index = 0; index < series.length; index += 1) {
+      if (selected.has(index)) continue;
+      let distance = Number.POSITIVE_INFINITY;
+      for (const selectedIndex of selected) {
+        distance = Math.min(distance, Math.abs(index - selectedIndex));
+      }
+      if (
+        !candidate ||
+        distance > candidate.distance ||
+        (distance === candidate.distance && index < candidate.index)
+      ) {
+        candidate = { index, distance };
+      }
+    }
     if (!candidate) break;
     selected.add(candidate.index);
   }

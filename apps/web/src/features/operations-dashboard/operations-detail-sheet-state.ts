@@ -6,18 +6,14 @@
  */
 import type { OperationsDashboardQueryInput } from "@repo/shared/operations-dashboard/contracts";
 
+import type { OperationsDashboardActionFailure } from "./action-result";
 import type {
   OperationsDetailPage,
   OperationsDetailSelection,
   OperationsDetailSheetRow,
 } from "./operations-detail-sheet-data";
 
-export type OperationsDetailFailure =
-  | "validation_error"
-  | "not_ready"
-  | "rate_limited"
-  | "timeout"
-  | "unavailable";
+export type OperationsDetailFailure = OperationsDashboardActionFailure;
 
 export type OperationsDetailContext = {
   key: string;

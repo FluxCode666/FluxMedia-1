@@ -17,9 +17,9 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 
+import { formatPaymentAmount } from "@/features/payment/payment-display-format";
 import type { OperationsCommercialSnapshot } from "./commercial-service";
 import {
-  formatOperationsMoney,
   formatOperationsRate,
   formatPercentagePointChange,
 } from "./operations-dashboard-format";
@@ -100,6 +100,15 @@ export function OperationsDashboardCommercial({
       />
     );
   };
+  const revenueComparisons = new Map<
+    string,
+    OperationsCommercialSnapshot["revenue"]["comparison"][number]
+  >();
+  for (const comparison of snapshot.revenue.comparison) {
+    if (!revenueComparisons.has(comparison.currency)) {
+      revenueComparisons.set(comparison.currency, comparison);
+    }
+  }
 
   return (
     <section
@@ -140,9 +149,7 @@ export function OperationsDashboardCommercial({
             ) : (
               <dl className="space-y-3">
                 {snapshot.revenue.current.map((amount) => {
-                  const comparison = snapshot.revenue.comparison.find(
-                    (item) => item.currency === amount.currency
-                  );
+                  const comparison = revenueComparisons.get(amount.currency);
                   return (
                     <div
                       className="flex items-baseline justify-between gap-4 border-b pb-3 last:border-0 last:pb-0"
@@ -153,7 +160,7 @@ export function OperationsDashboardCommercial({
                       </dt>
                       <dd className="text-right">
                         <p className="font-mono text-xl font-extrabold tabular-nums">
-                          {formatOperationsMoney(
+                          {formatPaymentAmount(
                             amount.amountMinor,
                             amount.currency,
                             locale
