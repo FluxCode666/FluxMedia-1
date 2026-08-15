@@ -1,22 +1,21 @@
 /**
  * 运营总览 epoch 与网页访问服务的 DB-free 测试。
  *
- * 使用方：Vitest；以固定时钟和内存仓储锁定自然日边界、幂等返回及 epoch 冲突语义。
+ * 使用方：Vitest；以固定时钟和内存仓储锁定自然日边界、锁内派生与幂等跳过语义。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OperationsFactsRepository } from "./operations-facts-repository";
 import {
-  initializeOperationsAnalyticsEpoch,
-  OperationsFactsServiceError,
+  ensureCurrentOperationsAnalyticsEpoch,
   recordOperationsWebVisit,
 } from "./operations-facts-service";
 
 const recordWebVisit = vi.fn<OperationsFactsRepository["recordWebVisit"]>();
-const initializeEpoch = vi.fn<OperationsFactsRepository["initializeEpoch"]>();
+const ensureEpoch = vi.fn<OperationsFactsRepository["ensureEpoch"]>();
 const repository: OperationsFactsRepository = {
   recordWebVisit,
-  initializeEpoch,
+  ensureEpoch,
 };
 
 describe("operations facts service", () => {
@@ -68,89 +67,85 @@ describe("operations facts service", () => {
     ).rejects.toMatchObject({ code: "validation_error" });
   });
 
-  it("epoch 首次初始化、同值重放和不同值冲突保持稳定", async () => {
-    const startsAt = new Date("2026-08-12T16:00:00.000Z");
-    const baseInput = {
-      appDate: "2026-08-13",
-      startsAt: startsAt.toISOString(),
-      initializedBy: "deployment-runbook",
-      requestId: "epoch-request-1",
-    };
-    initializeEpoch
-      .mockResolvedValueOnce({
-        epoch: {
-          appDate: baseInput.appDate,
-          startsAt,
-          initializedBy: baseInput.initializedBy,
-          initializationRequestId: baseInput.requestId,
-        },
-        inserted: true,
+  it("自动初始化在仓储锁内使用应用时区当前日，已有 epoch 不再读取时钟", async () => {
+    const currentStart = new Date("2026-08-16T16:00:00.000Z");
+    const existingStart = new Date("2026-08-15T16:00:00.000Z");
+    ensureEpoch
+      .mockImplementationOnce(async (createInput) => {
+        const input = createInput();
+        expect(input).toEqual({
+          appDate: "2026-08-17",
+          startsAt: currentStart,
+          initializedBy: "release-v0.25.1",
+          initializationRequestId: "operations-epoch-2026-08-17",
+          auditId: "audit-current",
+          createdAt: new Date("2026-08-16T16:30:00.000Z"),
+        });
+        return {
+          epoch: {
+            appDate: input.appDate,
+            startsAt: input.startsAt,
+            initializedBy: input.initializedBy,
+            initializationRequestId: input.initializationRequestId,
+          },
+          inserted: true,
+        };
       })
-      .mockResolvedValueOnce({
+      .mockImplementationOnce(async (_createInput) => ({
         epoch: {
-          appDate: baseInput.appDate,
-          startsAt,
-          initializedBy: baseInput.initializedBy,
-          initializationRequestId: baseInput.requestId,
+          appDate: "2026-08-16",
+          startsAt: existingStart,
+          initializedBy: "release-v0.25.1",
+          initializationRequestId: "operations-epoch-2026-08-16",
         },
         inserted: false,
-      })
-      .mockResolvedValueOnce({
-        epoch: {
-          appDate: "2026-08-12",
-          startsAt: new Date("2026-08-11T16:00:00.000Z"),
-          initializedBy: "earlier-runbook",
-          initializationRequestId: "earlier-request",
-        },
-        inserted: false,
-      });
+      }));
+    const now = vi.fn(() => new Date("2026-08-16T16:30:00.000Z"));
     const dependencies = {
       repository,
-      now: () => new Date("2026-08-13T01:00:00.000Z"),
-      createAuditId: () => "audit-1",
+      now,
+      createAuditId: () => "audit-current",
     };
 
     await expect(
-      initializeOperationsAnalyticsEpoch(
-        baseInput,
+      ensureCurrentOperationsAnalyticsEpoch(
+        { initializedBy: "release-v0.25.1" },
         "Asia/Shanghai",
         dependencies
       )
-    ).resolves.toMatchObject({ initialized: true });
+    ).resolves.toEqual({
+      appDate: "2026-08-17",
+      startsAt: "2026-08-16T16:00:00.000Z",
+      initialized: true,
+    });
+    expect(now).toHaveBeenCalledOnce();
+
     await expect(
-      initializeOperationsAnalyticsEpoch(
-        baseInput,
+      ensureCurrentOperationsAnalyticsEpoch(
+        { initializedBy: "release-v0.25.2" },
         "Asia/Shanghai",
         dependencies
       )
-    ).resolves.toMatchObject({ initialized: false });
-    await expect(
-      initializeOperationsAnalyticsEpoch(
-        baseInput,
-        "Asia/Shanghai",
-        dependencies
-      )
-    ).rejects.toEqual(
-      new OperationsFactsServiceError(
-        "conflict",
-        "运营统计起点已经初始化为另一组固定值"
-      )
-    );
+    ).resolves.toEqual({
+      appDate: "2026-08-16",
+      startsAt: "2026-08-15T16:00:00.000Z",
+      initialized: false,
+    });
+    expect(now).toHaveBeenCalledOnce();
   });
 
-  it("epoch UTC 瞬间必须精确等于应用自然日零点", async () => {
+  it("自动初始化在锁内拒绝非法服务器时钟", async () => {
+    ensureEpoch.mockImplementationOnce(async (createInput) => {
+      createInput();
+      throw new Error("候选生成器应在非法时钟时抛错");
+    });
+
     await expect(
-      initializeOperationsAnalyticsEpoch(
-        {
-          appDate: "2026-08-13",
-          startsAt: "2026-08-13T00:00:00.000Z",
-          initializedBy: "deployment-runbook",
-          requestId: "epoch-request-1",
-        },
+      ensureCurrentOperationsAnalyticsEpoch(
+        { initializedBy: "release-v0.25.1" },
         "Asia/Shanghai",
-        { repository }
+        { repository, now: () => new Date(Number.NaN) }
       )
     ).rejects.toMatchObject({ code: "validation_error" });
-    expect(initializeEpoch).not.toHaveBeenCalled();
   });
 });

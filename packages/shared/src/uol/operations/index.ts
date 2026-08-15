@@ -149,7 +149,7 @@ export {
   retryOperationsExport,
 } from "./operations-dashboard";
 export {
-  initializeOperationsEpoch,
+  ensureCurrentOperationsEpoch,
   recordWebVisit,
 } from "./operations-dashboard-facts";
 export { recoverPaymentFulfillments } from "./payment-fulfillment";

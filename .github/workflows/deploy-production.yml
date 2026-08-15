@@ -103,6 +103,9 @@ jobs:
       - name: Test deployment release recovery policy
         run: bash deploy/release-recovery-policy.test.sh
 
+      - name: Test operations epoch deployment gate
+        run: bash deploy/operations-epoch-deployment-contract.test.sh
+
       - name: Generate Fumadocs source
         run: pnpm --filter @repo/web exec fumadocs-mdx
 
@@ -504,6 +507,17 @@ jobs:
               --batch-size=500 --skip-ready </dev/null
           }
 
+          # 首次部署运营总览时，以生产 APP_TIME_ZONE 的当前自然日初始化不可变 epoch；
+          # 后续发布读取已有值并成功跳过，绝不按新的部署日期改写历史事实。
+          run_operations_epoch_gate() {
+            docker compose --profile maintenance run --rm --no-deps \
+              --interactive=false \
+              -e "OPERATIONS_EPOCH_INITIALIZED_BY=release-${image_tag}" \
+              migrate \
+              pnpm --dir apps/web operations:epoch:ensure-current \
+              </dev/null
+          }
+
           # 仅在迁移开始前恢复旧镜像元数据；是否重启由退出状态机决定。
           restore_previous_metadata() {
             if [ -n "${previous_image}" ]; then
@@ -663,6 +677,12 @@ jobs:
           echo "启动 Adobe 代理和 web 服务。"
           if ! docker compose up -d --remove-orphans media-upstream-proxy web; then
             echo "新 Adobe 代理或 Web 启动失败，保持维护状态。" >&2
+            exit 1
+          fi
+
+          echo "确保运营总览生产统计起点已初始化。"
+          if ! run_operations_epoch_gate; then
+            echo "运营总览生产统计起点初始化失败，停止新 Web 并保持维护状态。" >&2
             exit 1
           fi
 

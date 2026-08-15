@@ -10,7 +10,7 @@
     "analytics:backfill": "node ../../scripts/with-root-env.mjs ./scripts/backfill-dashboard-analytics.mjs",
     "analytics:reconcile": "node ../../scripts/with-root-env.mjs ./scripts/backfill-dashboard-analytics.mjs --reconcile-only",
     "analytics:finalize-credit-contract": "node ../../scripts/with-root-env.mjs ./scripts/finalize-credit-usage-contract.mjs",
-    "operations:epoch:init": "node ../../scripts/with-root-env.mjs ./node_modules/tsx/dist/cli.mjs ./scripts/initialize-operations-epoch.ts",
+    "operations:epoch:ensure-current": "node ../../scripts/with-root-env.mjs ./node_modules/tsx/dist/cli.mjs ./scripts/ensure-current-operations-epoch.ts",
     "assert:api-upstream-worker-standalone": "node ./scripts/assert-api-upstream-worker-standalone.mjs",
     "preflight:api-upstream-adapter-migration": "node ../../scripts/with-root-env.mjs ./scripts/preflight-api-upstream-adapter-migration.mjs",
     "smoke:api-upstream-worker": "node ./scripts/smoke-api-upstream-worker.mjs",

@@ -40,7 +40,7 @@ export interface OperationsFactsRepository {
     appDate: string;
     visitedAt: Date;
   }): Promise<boolean>;
-  initializeEpoch(input: InsertOperationsEpochInput): Promise<{
+  ensureEpoch(createInput: () => InsertOperationsEpochInput): Promise<{
     epoch: StoredOperationsEpoch;
     inserted: boolean;
   }>;
@@ -86,12 +86,13 @@ export const databaseOperationsFactsRepository: OperationsFactsRepository = {
   },
 
   /**
-   * 串行化并幂等初始化生产 epoch。
+   * 串行化并自动初始化生产 epoch。
    *
-   * @returns 首次写入或已经存在的固定 epoch；同事务写管理员审计。
-   * @failure SQL 失败整笔回滚；不同值冲突由领域服务比较后拒绝。
+   * @param createInput 只在拿到事务锁且确认 epoch 缺失后调用的候选生成器。
+   * @returns 首次写入或已经存在的固定 epoch；首次写入同事务记录管理员审计。
+   * @failure 候选派生或 SQL 失败时整笔回滚，不留下 epoch 或孤立审计。
    */
-  async initializeEpoch(input) {
+  async ensureEpoch(createInput) {
     const { db } = await import("@repo/database");
     return db.transaction(async (transaction) => {
       await transaction.execute(
@@ -111,6 +112,8 @@ export const databaseOperationsFactsRepository: OperationsFactsRepository = {
       );
       if (existing) return { epoch: existing, inserted: false };
 
+      // WHY：时钟必须在锁内且确认空表后读取，避免锁等待跨午夜写入前一自然日。
+      const input = createInput();
       const inserted = parseEpochRow(
         await transaction.execute(sql`
           insert into operations_analytics_epoch (
@@ -142,8 +145,8 @@ export const databaseOperationsFactsRepository: OperationsFactsRepository = {
         id: input.auditId,
         adminUserId: null,
         targetUserId: null,
-        action: "operations.initializeEpoch",
-        reason: "初始化运营总览生产统计起点",
+        action: "operations.ensureCurrentEpoch",
+        reason: "自动初始化运营总览生产统计起点",
         before: null,
         after: {
           appDate: input.appDate,

@@ -83,6 +83,9 @@ describe("deployment time-zone contract", () => {
   });
 
   it("uses Asia/Shanghai only as the default display time zone", () => {
+    expect(readComposeService("migrate")).toContain(
+      `      APP_TIME_ZONE: \${APP_TIME_ZONE:-Asia/Shanghai}`
+    );
     expect(readComposeService("web")).toContain(
       `      APP_TIME_ZONE: \${APP_TIME_ZONE:-Asia/Shanghai}`
     );

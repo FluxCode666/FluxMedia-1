@@ -23,6 +23,7 @@ FROM deps AS migrator
 WORKDIR /app
 COPY --from=pruner /app/out/full/ .
 COPY tsconfig.base.json ./tsconfig.base.json
+COPY scripts/with-root-env.mjs ./scripts/with-root-env.mjs
 ENV NODE_ENV=production
 CMD ["pnpm", "--dir", "packages/database", "db:migrate"]
 

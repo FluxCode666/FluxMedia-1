@@ -13,6 +13,7 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL 必填}
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Shanghai}
       LOCAL_STORAGE_PATH: /app/storage
       NODE_ENV: production
       TZ: UTC

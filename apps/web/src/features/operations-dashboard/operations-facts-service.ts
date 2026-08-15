@@ -2,12 +2,12 @@
  * 运营总览 epoch 与网页访问领域服务。
  *
  * 使用方：operations 基础事实 UOL binding。服务只接收已验证身份和应用时区，执行
- * 日历一致性检查、同值幂等重放判断和稳定错误分类，不信任数据库返回或调用方时间。
+ * 日历一致性检查、锁内当前日派生和稳定错误分类，不信任数据库返回或调用方时间。
  */
 import { randomUUID } from "node:crypto";
 import type {
-  InitializeOperationsEpochInput,
-  InitializeOperationsEpochOutput,
+  EnsureCurrentOperationsEpochInput,
+  OperationsEpochOutput,
   RecordWebVisitOutput,
 } from "@repo/shared/operations-dashboard/facts-contracts";
 import {
@@ -21,7 +21,7 @@ import {
 } from "./operations-facts-repository";
 
 /** 运营事实服务可稳定映射到 UOL 的错误分类。 */
-export type OperationsFactsServiceErrorCode = "validation_error" | "conflict";
+export type OperationsFactsServiceErrorCode = "validation_error";
 
 /** 不携带 SQL 或数据库行的运营事实领域错误。 */
 export class OperationsFactsServiceError extends Error {
@@ -47,11 +47,6 @@ const defaultDependencies: OperationsFactsServiceDependencies = {
   now: () => new Date(),
   createAuditId: randomUUID,
 };
-
-/** 比较两个 Date 是否代表同一个有效 UTC 瞬间。 */
-function isSameInstant(left: Date, right: Date): boolean {
-  return left.getTime() === right.getTime();
-}
 
 /**
  * 记录当前 session 用户的有效网页访问。
@@ -83,45 +78,45 @@ export async function recordOperationsWebVisit(
 }
 
 /**
- * 初始化不可漂移的生产运营 epoch。
+ * 为生产发布确保不可变运营 epoch 已存在。
  *
- * @param input 受控命令提供的应用日期、UTC 起点、操作者和幂等 requestId。
- * @param timeZone 部署应用时区。
- * @returns 首次初始化为 initialized=true，同值重放为 false。
- * @sideEffects 首次调用在同一事务写 epoch 和管理员审计。
- * @failure 日期边界不匹配返回 validation_error；已存在不同值返回 conflict。
+ * @param input 发布版本或部署身份，不接受调用方日期。
+ * @param timeZone 部署应用时区；首次初始化的自然日和 UTC 零点均由服务端派生。
+ * @returns 空表首次初始化为 true；已有任意不可变 epoch 时原样返回 false。
+ * @sideEffects 首次调用在同一事务写 epoch 和管理员审计，后续部署只读已有值。
+ * @failure 服务器时钟或应用时区无法形成有效自然日零点时返回 validation_error。
  */
-export async function initializeOperationsAnalyticsEpoch(
-  input: InitializeOperationsEpochInput,
+export async function ensureCurrentOperationsAnalyticsEpoch(
+  input: EnsureCurrentOperationsEpochInput,
   timeZone: string,
   dependencies: Partial<OperationsFactsServiceDependencies> = {}
-): Promise<InitializeOperationsEpochOutput> {
+): Promise<OperationsEpochOutput> {
   const resolved = { ...defaultDependencies, ...dependencies };
-  const startsAt = new Date(input.startsAt);
-  const expectedStart = parseDateInputInTimeZone(input.appDate, { timeZone });
-  if (!expectedStart || !isSameInstant(startsAt, expectedStart)) {
-    throw new OperationsFactsServiceError(
-      "validation_error",
-      "运营统计起点必须等于应用时区所选自然日零点"
-    );
-  }
-  const result = await resolved.repository.initializeEpoch({
-    appDate: input.appDate,
-    startsAt,
-    initializedBy: input.initializedBy,
-    initializationRequestId: input.requestId,
-    auditId: resolved.createAuditId(),
-    createdAt: resolved.now(),
+  const result = await resolved.repository.ensureEpoch(() => {
+    const createdAt = resolved.now();
+    if (Number.isNaN(createdAt.getTime())) {
+      throw new OperationsFactsServiceError(
+        "validation_error",
+        "运营统计初始化时间无效"
+      );
+    }
+    const appDate = formatDateInputInTimeZone(createdAt, timeZone);
+    const startsAt = parseDateInputInTimeZone(appDate, { timeZone });
+    if (!startsAt) {
+      throw new OperationsFactsServiceError(
+        "validation_error",
+        "无法解析运营统计当前自然日零点"
+      );
+    }
+    return {
+      appDate,
+      startsAt,
+      initializedBy: input.initializedBy,
+      initializationRequestId: `operations-epoch-${appDate}`,
+      auditId: resolved.createAuditId(),
+      createdAt,
+    };
   });
-  if (
-    result.epoch.appDate !== input.appDate ||
-    !isSameInstant(result.epoch.startsAt, startsAt)
-  ) {
-    throw new OperationsFactsServiceError(
-      "conflict",
-      "运营统计起点已经初始化为另一组固定值"
-    );
-  }
   return {
     appDate: result.epoch.appDate,
     startsAt: result.epoch.startsAt.toISOString(),

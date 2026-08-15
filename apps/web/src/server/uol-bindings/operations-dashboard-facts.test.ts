@@ -5,7 +5,7 @@
  */
 import "@repo/shared/uol/operations";
 import { invokeOperation } from "@repo/shared/uol";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   process.env.DATABASE_URL ??=
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => {
   return {
     getAppTimeZone: vi.fn(),
     recordOperationsWebVisit: vi.fn(),
-    initializeOperationsAnalyticsEpoch: vi.fn(),
+    ensureCurrentOperationsAnalyticsEpoch: vi.fn(),
   };
 });
 
@@ -24,7 +24,7 @@ vi.mock("@/features/operations-dashboard/operations-facts-service", () => ({
   OperationsFactsServiceError: class OperationsFactsServiceError extends Error {
     /** 构造供 binding 映射的测试领域错误。 */
     constructor(
-      readonly code: "validation_error" | "conflict",
+      readonly code: "validation_error",
       message: string
     ) {
       super(message);
@@ -32,20 +32,30 @@ vi.mock("@/features/operations-dashboard/operations-facts-service", () => ({
     }
   },
   recordOperationsWebVisit: mocks.recordOperationsWebVisit,
-  initializeOperationsAnalyticsEpoch: mocks.initializeOperationsAnalyticsEpoch,
+  ensureCurrentOperationsAnalyticsEpoch:
+    mocks.ensureCurrentOperationsAnalyticsEpoch,
 }));
 
-import { OperationsFactsServiceError } from "@/features/operations-dashboard/operations-facts-service";
 import "./operations-dashboard-facts";
 
 describe("operations dashboard fact bindings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("APP_TIME_ZONE", "Asia/Shanghai");
     mocks.getAppTimeZone.mockReturnValue("Asia/Shanghai");
     mocks.recordOperationsWebVisit.mockResolvedValue({
       appDate: "2026-08-13",
       recorded: true,
     });
+    mocks.ensureCurrentOperationsAnalyticsEpoch.mockResolvedValue({
+      appDate: "2026-08-16",
+      startsAt: "2026-08-15T16:00:00.000Z",
+      initialized: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("访问 operation 只使用真实 session user 身份和部署应用时区", async () => {
@@ -85,39 +95,39 @@ describe("operations dashboard fact bindings", () => {
     expect(mocks.recordOperationsWebVisit).not.toHaveBeenCalled();
   });
 
-  it("epoch 只允许 system 并映射日期边界与冲突错误", async () => {
-    const input = {
-      appDate: "2026-08-13",
-      startsAt: "2026-08-12T16:00:00.000Z",
-      initializedBy: "deployment-runbook",
-      requestId: "epoch-request-1",
-    };
-    mocks.initializeOperationsAnalyticsEpoch.mockRejectedValueOnce(
-      new OperationsFactsServiceError("validation_error", "日期边界无效")
-    );
+  it("自动 epoch 门禁只接收发布身份并使用部署应用时区", async () => {
     await expect(
-      invokeOperation("operations.initializeEpoch", input, {
-        type: "system",
-        reason: "deployment",
-      })
-    ).rejects.toMatchObject({ code: "validation_error" });
-
-    mocks.initializeOperationsAnalyticsEpoch.mockRejectedValueOnce(
-      new OperationsFactsServiceError("conflict", "已经初始化")
+      invokeOperation(
+        "operations.ensureCurrentEpoch",
+        { initializedBy: "release-v0.25.1" },
+        { type: "system", reason: "deployment" }
+      )
+    ).resolves.toMatchObject({ initialized: true });
+    expect(mocks.ensureCurrentOperationsAnalyticsEpoch).toHaveBeenCalledWith(
+      { initializedBy: "release-v0.25.1" },
+      "Asia/Shanghai"
     );
-    await expect(
-      invokeOperation("operations.initializeEpoch", input, {
-        type: "system",
-        reason: "deployment",
-      })
-    ).rejects.toMatchObject({ code: "conflict" });
 
     await expect(
-      invokeOperation("operations.initializeEpoch", input, {
-        type: "user",
-        userId: "admin-1",
-        role: "super_admin",
-      })
+      invokeOperation(
+        "operations.ensureCurrentEpoch",
+        { initializedBy: "release-v0.25.1" },
+        { type: "user", userId: "admin-1", role: "super_admin" }
+      )
     ).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("自动 epoch 门禁对缺失或非法 APP_TIME_ZONE 失败关闭", async () => {
+    for (const timeZone of ["", "Invalid/Zone"]) {
+      vi.stubEnv("APP_TIME_ZONE", timeZone);
+      await expect(
+        invokeOperation(
+          "operations.ensureCurrentEpoch",
+          { initializedBy: "release-v0.25.1" },
+          { type: "system", reason: "deployment" }
+        )
+      ).rejects.toMatchObject({ code: "validation_error" });
+    }
+    expect(mocks.ensureCurrentOperationsAnalyticsEpoch).not.toHaveBeenCalled();
   });
 });

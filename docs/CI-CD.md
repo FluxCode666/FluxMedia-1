@@ -52,7 +52,10 @@ cmp -s CLAUDE.md AGENTS.md
 3. 创建并校验数据库备份。
 4. 运行 `maintenance` profile 的迁移容器。
 5. 使用新 Web 镜像回填并零差异对账尚未 ready 的控制台统计读模型。
-6. 验证新 schema，启动上游代理和 Web，再执行健康检查。
+6. 验证新 schema，启动上游代理和 Web。
+7. 通过 system-only `operations.ensureCurrentEpoch` 确保运营 epoch：仅空表按生产
+   `APP_TIME_ZONE` 当前自然日初始化，已有值不随发布漂移。
+8. epoch 门禁成功后执行健康检查并宣告发布完成。
 
 迁移开始后不得自动启动依赖旧 schema 的镜像。失败时由值班人员选择前向修复，
 或先恢复迁移前备份再恢复旧镜像。代理健康检查需要正确的

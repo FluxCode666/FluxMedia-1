@@ -1,13 +1,13 @@
 /**
  * 运营总览基础事实契约的 DB-free 测试。
  *
- * 使用方：Vitest；锁定 Gregorian 日期、严格空输入和 epoch 初始化字段边界，避免调用方
- * 伪造访问身份、时间或页面信息。
+ * 使用方：Vitest；锁定 Gregorian 日期、严格空输入和自动 epoch 输入边界，避免调用方
+ * 伪造访问身份、时间、日期或页面信息。
  */
 import { describe, expect, it } from "vitest";
 
 import {
-  initializeOperationsEpochInputSchema,
+  ensureCurrentOperationsEpochInputSchema,
   operationsAppDateSchema,
   recordWebVisitInputSchema,
 } from "./facts-contracts";
@@ -32,26 +32,16 @@ describe("operations dashboard fact contracts", () => {
     }
   });
 
-  it("epoch 初始化要求完整、strict 且带时区偏移的输入", () => {
-    const valid = {
-      appDate: "2026-08-13",
-      startsAt: "2026-08-12T16:00:00.000Z",
-      initializedBy: "deployment-runbook",
-      requestId: "operations-epoch-2026-08-13",
-    };
-    expect(initializeOperationsEpochInputSchema.safeParse(valid).success).toBe(
-      true
-    );
+  it("自动初始化只接受发布身份，不接受调用方日期", () => {
     expect(
-      initializeOperationsEpochInputSchema.safeParse({
-        ...valid,
-        startsAt: "2026-08-13T00:00:00",
+      ensureCurrentOperationsEpochInputSchema.safeParse({
+        initializedBy: "release-v0.25.1",
       }).success
-    ).toBe(false);
+    ).toBe(true);
     expect(
-      initializeOperationsEpochInputSchema.safeParse({
-        ...valid,
-        userId: "admin-1",
+      ensureCurrentOperationsEpochInputSchema.safeParse({
+        initializedBy: "release-v0.25.1",
+        appDate: "2026-08-16",
       }).success
     ).toBe(false);
   });

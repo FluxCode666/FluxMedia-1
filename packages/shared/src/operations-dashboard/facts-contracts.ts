@@ -1,7 +1,7 @@
 /**
  * 运营总览基础事实 operation 契约。
  *
- * 使用方：UOL operation 定义、Web late binding 与显式生产初始化命令。契约只描述
+ * 使用方：UOL operation 定义、Web late binding 与自动生产初始化命令。契约只描述
  * epoch 和有效网页访问的最小输入输出，不暴露数据库字段、用户筛选或支付数据。
  */
 import { z } from "zod";
@@ -30,18 +30,15 @@ export const recordWebVisitOutputSchema = z
   })
   .strict();
 
-/** 生产 epoch 初始化输入；同一 requestId 只允许绑定一组固定值。 */
-export const initializeOperationsEpochInputSchema = z
+/** 自动生产门禁只接受发布身份；日期与 UTC 起点必须由服务端时钟派生。 */
+export const ensureCurrentOperationsEpochInputSchema = z
   .object({
-    appDate: operationsAppDateSchema,
-    startsAt: z.string().datetime({ offset: true }),
     initializedBy: z.string().trim().min(1).max(255),
-    requestId: z.string().trim().min(1).max(255),
   })
   .strict();
 
-/** 生产 epoch 初始化或幂等重放结果。 */
-export const initializeOperationsEpochOutputSchema = z
+/** 生产 epoch 自动初始化或幂等跳过结果。 */
+export const operationsEpochOutputSchema = z
   .object({
     appDate: operationsAppDateSchema,
     startsAt: z.string().datetime({ offset: true }),
@@ -51,9 +48,7 @@ export const initializeOperationsEpochOutputSchema = z
 
 export type RecordWebVisitInput = z.infer<typeof recordWebVisitInputSchema>;
 export type RecordWebVisitOutput = z.infer<typeof recordWebVisitOutputSchema>;
-export type InitializeOperationsEpochInput = z.infer<
-  typeof initializeOperationsEpochInputSchema
->;
-export type InitializeOperationsEpochOutput = z.infer<
-  typeof initializeOperationsEpochOutputSchema
+export type OperationsEpochOutput = z.infer<typeof operationsEpochOutputSchema>;
+export type EnsureCurrentOperationsEpochInput = z.infer<
+  typeof ensureCurrentOperationsEpochInputSchema
 >;

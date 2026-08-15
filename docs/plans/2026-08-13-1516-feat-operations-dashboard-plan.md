@@ -247,9 +247,9 @@ U1 和 U2 建立事实与统一语义；U3 形成增长与活跃读路径，U4 �
 ### KTD-1: 独立 operations UOL 与契约
 
 - 新增 `operations.*` operations，不扩展 `analytics.getAdminDataDashboard`。后者支持 `userId` 且受最多 30 天限制，与 R2、R3 的全站不限跨度口径冲突。
-- 新增独立 `operations` OperationDomain。最小操作集合为：`operations.recordWebVisit`、`operations.getOverview`、`operations.getDetail`、`operations.createExport`、`operations.listExports`、`operations.retryExport`、`operations.prepareExportDownload`，以及仅内部身份可调用的 `operations.initializeEpoch`、`operations.processExports`、`operations.expireExports`。
+- 新增独立 `operations` OperationDomain。最小操作集合为：`operations.recordWebVisit`、`operations.getOverview`、`operations.getDetail`、`operations.createExport`、`operations.listExports`、`operations.retryExport`、`operations.prepareExportDownload`，以及仅内部身份可调用的 `operations.ensureCurrentEpoch`、`operations.processExports`、`operations.expireExports`。
 - `getOverview` 返回一个查询时刻的一致快照；模块失败使用带模块名的明确错误，不以部分旧数据伪装成功。`getDetail` 接受模块和受限明细种类联合类型，使用 keyset cursor。
-- 为避免事实采集反向依赖读服务，`operations.recordWebVisit` 与 `operations.initializeEpoch` 的 operation 定义、binding 和最小测试随 U1 落地；U5 只补齐其余读取、导出和 worker operation。
+- 为避免事实采集反向依赖读服务，`operations.recordWebVisit` 与 `operations.ensureCurrentEpoch` 的 operation 定义、binding 和最小测试随 U1 落地；U5 只补齐其余读取、导出和 worker operation。
 
 ### KTD-2: 时间与比较周期
 

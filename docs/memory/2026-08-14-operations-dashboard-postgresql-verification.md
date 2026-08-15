@@ -14,13 +14,13 @@
 
 - `operations_analytics_epoch` 恰好一行，应用日期为 `2026-08-14`，UTC 起点为
   `2026-08-13T16:00:00.000Z`，与 `Asia/Shanghai` 自然日零点一致。
-- 存在且仅存在一条匹配 `operations.initializeEpoch` 的审计记录，其应用日期和
+- 存在且仅存在一条匹配当时实现的 `operations.initializeEpoch` 审计记录，其应用日期和
   request ID 与 epoch 一致。
 - 第二行被 `operations_analytics_epoch_singleton_check` 以 SQLSTATE `23514` 拒绝。
 - 更新和删除被不可变 trigger 以 SQLSTATE `P0001` 拒绝，失败操作后唯一行未改变。
 
-以上 epoch 仅用于本地验收，不代表生产统计起点。生产环境仍须按运行手册重新预演、
-复核和初始化。
+以上 epoch 仅用于本地验收，不代表生产统计起点。当前生产环境按运行手册由自动门禁
+读取服务器当前日期并初始化，不再接受人工日期输入。
 
 ### 网页访问并发去重
 

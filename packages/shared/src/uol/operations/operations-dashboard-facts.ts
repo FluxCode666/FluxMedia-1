@@ -1,12 +1,12 @@
 /**
  * 运营总览基础事实 UOL 操作。
  *
- * 使用方：已鉴权 dashboard shell 记录有效访问，生产初始化命令写入单一 epoch。
+ * 使用方：已鉴权 dashboard shell 记录有效访问，自动生产门禁写入单一 epoch。
  * 数据库实现由 apps/web late binding 注入，确保权限、输入校验与审计边界先于传输层。
  */
 import {
-  initializeOperationsEpochInputSchema,
-  initializeOperationsEpochOutputSchema,
+  ensureCurrentOperationsEpochInputSchema,
+  operationsEpochOutputSchema,
   recordWebVisitInputSchema,
   recordWebVisitOutputSchema,
 } from "../../operations-dashboard/facts-contracts";
@@ -39,33 +39,29 @@ export const recordWebVisit = defineOperation({
   },
 });
 
-/** 幂等初始化运营统计 epoch；仅允许进程内 system Principal 调用。 */
-export const initializeOperationsEpoch = defineOperation({
-  name: "operations.initializeEpoch",
+/** 缺失时以部署应用时区当前自然日初始化 epoch，已有值时原样返回。 */
+export const ensureCurrentOperationsEpoch = defineOperation({
+  name: "operations.ensureCurrentEpoch",
   domain: "operations",
-  title: "Initialize Operations Analytics Epoch",
+  title: "Ensure Current Operations Analytics Epoch",
   description:
-    "以显式应用日期和 UTC 起点初始化不可漂移的运营统计 epoch；不同值重试会冲突。",
-  input: initializeOperationsEpochInputSchema,
-  output: initializeOperationsEpochOutputSchema,
+    "生产发布门禁：仅在 epoch 缺失时以服务端应用时区当前自然日初始化；已有不可变值时跳过。",
+  input: ensureCurrentOperationsEpochInputSchema,
+  output: operationsEpochOutputSchema,
   access: { kind: "system" },
   agentExposure: "human-only",
   readOnly: false,
   destructive: false,
-  idempotency: {
-    kind: "required",
-    keyField: "requestId",
-    scope: "global",
-  },
+  idempotency: { kind: "natural" },
   sideEffects: ["audit"],
   hasMaintenanceWrite: true,
   /**
-   * 表示尚未注入的 epoch 初始化执行体。
+   * 表示尚未注入的自动 epoch 门禁执行体。
    *
-   * @returns stub 不返回结果；Web binding 替换后返回首次初始化或同值重放。
+   * @returns Web binding 注入后返回首次初始化或已有固定 epoch。
    * @failure 未绑定时由 UOL 网关返回 not_implemented。
    */
   async execute() {
-    throw new Error("Not yet wired: operations.initializeEpoch");
+    throw new Error("Not yet wired: operations.ensureCurrentEpoch");
   },
 });
