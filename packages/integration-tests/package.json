@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:operations-e2e": "playwright test --config playwright.config.ts",
+    "test:operations-e2e:headed": "playwright test --config playwright.config.ts --headed",
+    "test:operations-e2e:update-snapshots": "playwright test --config playwright.config.ts --update-snapshots",
+    "test:operations-boundaries": "vitest run --config vitest.config.ts src/operations-dashboard-export-boundaries.test.ts",
     "test:data-dashboard-snapshot": "vitest run --config vitest.config.ts src/data-dashboard-snapshot.test.ts",
     "test:generation-time-migration": "vitest run --config vitest.config.ts src/generation-time-migration.test.ts",
     "test:image-backend-pool": "vitest run --config vitest.config.ts src/image-backend-pool-scheduler.test.ts",
@@ -23,8 +27,11 @@
     "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
     "@types/node": "20.19.43",
     "@types/pg": "^8.20.0",
+    "better-auth": "^1.6.20",
     "typescript": "^5",
     "vitest": "4.1.9"
   },

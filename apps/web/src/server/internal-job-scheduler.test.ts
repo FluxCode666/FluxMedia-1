@@ -14,6 +14,9 @@ const runtime = vi.hoisted(() => ({
   adobeCredentialHealth: vi.fn(async () => undefined),
   adobeCredentialNotifications: vi.fn(async () => undefined),
   adobeCredentialRetention: vi.fn(async () => undefined),
+  paymentFulfillment: vi.fn(async () => undefined),
+  operationsExportProcess: vi.fn(async (_batchSize: number) => undefined),
+  operationsExportExpire: vi.fn(async (_batchSize: number) => undefined),
 }));
 
 const database = vi.hoisted(() => {
@@ -87,6 +90,9 @@ vi.mock("./scheduled-jobs", () => ({
   runAdobeCredentialHealthJob: runtime.adobeCredentialHealth,
   runAdobeCredentialNotificationDrainJob: runtime.adobeCredentialNotifications,
   runAdobeCredentialHealthCleanupJob: runtime.adobeCredentialRetention,
+  runPaymentFulfillmentRecoveryJob: runtime.paymentFulfillment,
+  runOperationsExportProcessingJob: runtime.operationsExportProcess,
+  runOperationsExportExpirationJob: runtime.operationsExportExpire,
 }));
 
 type SchedulerModule = typeof import("./internal-job-scheduler");
@@ -117,6 +123,9 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.adobeCredentialHealth.mockClear();
     runtime.adobeCredentialNotifications.mockClear();
     runtime.adobeCredentialRetention.mockClear();
+    runtime.paymentFulfillment.mockClear();
+    runtime.operationsExportProcess.mockClear();
+    runtime.operationsExportExpire.mockClear();
     database.transaction.mockClear();
     vi.useFakeTimers();
     vi.stubEnv("NODE_ENV", "production");
@@ -138,7 +147,7 @@ describe("internal job scheduler runtime configuration", () => {
     const current = await importFreshScheduler();
     await current.startInternalJobScheduler();
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(65_000);
     expect(runtime.imageMaintenance).not.toHaveBeenCalled();
 
     runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", true);
@@ -146,6 +155,7 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(1);
     expect(runtime.videoRecovery).toHaveBeenCalled();
+    expect(runtime.paymentFulfillment).toHaveBeenCalled();
 
     runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", false);
     await vi.advanceTimersByTimeAsync(5_000);
@@ -167,7 +177,7 @@ describe("internal job scheduler runtime configuration", () => {
 
     runtime.settings.set("INTERNAL_JOB_IMAGES_MAINTENANCE_INTERVAL_MINUTES", 1);
     await vi.advanceTimersByTimeAsync(5_000);
-    await vi.advanceTimersByTimeAsync(55_000);
+    await vi.advanceTimersByTimeAsync(60_000);
 
     expect(runtime.imageMaintenance).toHaveBeenCalledTimes(2);
   });
@@ -183,5 +193,75 @@ describe("internal job scheduler runtime configuration", () => {
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(runtime.videoRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("运营导出处理与清理默认关闭，并独立读取各自批次", async () => {
+    runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", true);
+    const current = await importFreshScheduler();
+    await current.startInternalJobScheduler();
+
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(runtime.operationsExportProcess).not.toHaveBeenCalled();
+    expect(runtime.operationsExportExpire).not.toHaveBeenCalled();
+
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED",
+      true
+    );
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+      7
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(runtime.operationsExportProcess).toHaveBeenCalledWith(7);
+    expect(runtime.operationsExportExpire).not.toHaveBeenCalled();
+
+    runtime.settings.set("INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED", true);
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE",
+      23
+    );
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(runtime.operationsExportExpire).toHaveBeenCalledWith(23);
+  });
+
+  it("运营导出开关、间隔和批次变更不会互相覆盖", async () => {
+    runtime.settings.set("INTERNAL_JOB_SCHEDULER_ENABLED", true);
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED",
+      true
+    );
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES",
+      10
+    );
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+      9
+    );
+    const current = await importFreshScheduler();
+    await current.startInternalJobScheduler();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(runtime.operationsExportProcess).toHaveBeenLastCalledWith(9);
+
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES",
+      1
+    );
+    runtime.settings.set(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+      11
+    );
+    runtime.settings.set("INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED", true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(65_000);
+
+    expect(runtime.operationsExportProcess).toHaveBeenLastCalledWith(11);
+    expect(runtime.operationsExportExpire).toHaveBeenLastCalledWith(100);
   });
 });

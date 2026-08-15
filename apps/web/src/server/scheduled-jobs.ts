@@ -1,8 +1,8 @@
 /**
  * Web 定时维护任务编排。
  *
- * 职责：执行图片清理、积分过期、媒体队列补投、图片租约恢复与 Adobe 凭据健康任务；
- * 业务副作用通过各领域仓储、队列或 UOL operation 完成。
+ * 职责：执行图片清理、积分过期、媒体队列补投、图片租约恢复、运营 CSV 导出与
+ * Adobe 凭据健康任务；业务副作用通过各领域仓储、队列或 UOL operation 完成。
  */
 import { processExpiredBatches } from "@repo/shared/credits/core";
 import {
@@ -54,6 +54,79 @@ async function invokeAdobeHealthJob<T>(
   ]);
   await ensureUolInitialized();
   return invokeOperation<T>(operation, input, { type: "cron", job });
+}
+
+/**
+ * 运营导出任务通过 UOL 内部 cron Principal 调用，保证处理与保留任务只能使用各自
+ * 声明的 job 身份进入统一权限和审计网关。
+ *
+ * @param operation - 处理队列或过期清理 operation。
+ * @param batchSize - 本轮最大任务数，最终仍由 UOL Zod 契约校验为 1 至 100。
+ * @param job - 与 operation access 声明一致的固定 cron job 名。
+ * @returns operation 返回的本轮处理统计。
+ * @throws UOL 未绑定、输入非法或领域 worker 失败时保持上抛，由调度器记录失败状态。
+ */
+async function invokeOperationsExportJob<T>(
+  operation: "operations.processExports" | "operations.expireExports",
+  batchSize: number,
+  job: "operations-export" | "operations-export-retention"
+): Promise<T> {
+  const [{ invokeOperation }, { ensureUolInitialized }] = await Promise.all([
+    import("@repo/shared/uol"),
+    import("@/server/uol-init"),
+  ]);
+  await ensureUolInitialized();
+  return invokeOperation<T>(
+    operation,
+    { limit: batchSize },
+    { type: "cron", job }
+  );
+}
+
+/**
+ * 支付履约恢复通过 system/job UOL operation 执行，scheduler 不直接调用财务 service。
+ *
+ * @returns 本轮领取与收敛统计。
+ */
+export async function runPaymentFulfillmentRecoveryJob() {
+  const [{ invokeOperation }, { ensureUolInitialized }] = await Promise.all([
+    import("@repo/shared/uol"),
+    import("@/server/uol-init"),
+  ]);
+  await ensureUolInitialized();
+  return invokeOperation(
+    "payment.recoverFulfillments",
+    {},
+    { type: "cron", job: "payment-fulfillment" }
+  );
+}
+
+/**
+ * 处理一批排队中或租约已陈旧的运营 CSV 导出任务。
+ *
+ * @param batchSize - 本轮最大认领任务数。
+ * @returns worker 的有界处理统计。
+ */
+export async function runOperationsExportProcessingJob(batchSize: number) {
+  return invokeOperationsExportJob(
+    "operations.processExports",
+    batchSize,
+    "operations-export"
+  );
+}
+
+/**
+ * 过期并清理一批已超过文件保留期的运营 CSV 导出任务。
+ *
+ * @param batchSize - 本轮最大清理任务数。
+ * @returns retention worker 的有界处理统计。
+ */
+export async function runOperationsExportExpirationJob(batchSize: number) {
+  return invokeOperationsExportJob(
+    "operations.expireExports",
+    batchSize,
+    "operations-export-retention"
+  );
 }
 
 /**

@@ -37,6 +37,7 @@ function getPageTitleKey(pathname: string): string {
     "/dashboard/admin/settings": "systemSettings",
     "/dashboard/admin/status": "globalStatus",
     "/dashboard/admin/analytics": "adminAnalytics",
+    "/dashboard/admin/operations": "operations",
     "/dashboard/settings/profile": "profile",
     "/dashboard/settings/security": "security",
     "/dashboard/settings/notifications": "notifications",
@@ -72,6 +73,7 @@ export function DashboardMainWrapper({
   const { isCollapsed, toggleSidebar, toggleMobile } = useSidebar();
   const pathname = usePathname();
   const t = useTranslations("Dashboard.pages");
+  const sidebarT = useTranslations("Dashboard.sidebar");
   const pageTitleKey = getPageTitleKey(pathname);
   const pageTitle = t(pageTitleKey);
   const normalizedPath = pathname.replace(/^\/[a-z]{2}\//, "/");
@@ -94,6 +96,7 @@ export function DashboardMainWrapper({
         <header className="sticky top-2.5 z-30 flex h-12 shrink-0 items-center gap-3 rounded-t-lg border-b border-border/60 bg-background/80 px-4 backdrop-blur before:absolute before:-inset-x-px before:-top-2.5 before:h-[9px] before:bg-muted">
           {/* 移动端汉堡按钮 */}
           <button
+            aria-label={sidebarT("openMenu")}
             type="button"
             onClick={toggleMobile}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-150 cursor-pointer md:hidden"
@@ -103,6 +106,11 @@ export function DashboardMainWrapper({
 
           {/* 桌面端侧边栏折叠按钮 */}
           <button
+            aria-label={
+              isCollapsed
+                ? sidebarT("expandSidebar")
+                : sidebarT("collapseSidebar")
+            }
             type="button"
             onClick={toggleSidebar}
             className="hidden h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors duration-150 cursor-pointer md:flex"

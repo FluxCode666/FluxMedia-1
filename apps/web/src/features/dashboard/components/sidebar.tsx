@@ -125,6 +125,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   const user = session?.user;
   const isAdmin = isAdminRole(user?.role);
   const isObserverAdmin = isObserverAdminRole(user?.role);
+  const normalizedPathname = pathname.replace(/^\/[a-z]{2}\//, "/");
+  const isRejectedAdminRoute =
+    normalizedPathname.startsWith("/dashboard/admin/") &&
+    !isAdmin &&
+    !isObserverAdmin;
 
   // Popover 开关状态
   const [open, setOpen] = useState(false);
@@ -148,11 +153,18 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   );
 
   useEffect(() => {
-    if (user) {
+    // 子级 admin 守卫即将重定向普通用户；此时启动 Server Action 会与 RSC
+    // 重定向竞争并触发无意义的 Router 更新，因此只在可停留页面读取侧栏数据。
+    if (user && !isRejectedAdminRoute) {
       fetchUnreadTickets();
       fetchUnreadAnnouncements();
     }
-  }, [user, pathname, fetchUnreadTickets, fetchUnreadAnnouncements]);
+  }, [
+    user,
+    isRejectedAdminRoute,
+    fetchUnreadTickets,
+    fetchUnreadAnnouncements,
+  ]);
 
   /**
    * 导航项标题映射到翻译键
@@ -175,6 +187,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "System Settings": t("nav.systemSettings"),
       "Global Status": t("nav.globalStatus"),
       "Admin Data Dashboard": t("nav.adminAnalytics"),
+      "Operations Dashboard": t("nav.operations"),
       "Announcement Management": t("nav.announcementManagement"),
       "Account Pool": t("nav.imageBackendPool"),
       Support: t("nav.support"),
@@ -237,6 +250,11 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
             title: "Admin Data Dashboard",
             href: "/dashboard/admin/analytics",
             icon: ChartNoAxesCombined,
+          },
+          {
+            title: "Operations Dashboard",
+            href: "/dashboard/admin/operations",
+            icon: Activity,
           },
           {
             title: "User Management",
@@ -604,7 +622,9 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
                             {user.name}
                           </p>
                           <span className="shrink-0">
-                            <CreditBalanceBadge key={user.id} />
+                            {isRejectedAdminRoute ? null : (
+                              <CreditBalanceBadge key={user.id} />
+                            )}
                           </span>
                         </div>
                         <p className="truncate text-xs text-muted-foreground">

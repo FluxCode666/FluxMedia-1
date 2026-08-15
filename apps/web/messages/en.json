@@ -4,6 +4,390 @@
     "loading": "Opening page",
     "opening": "Opening {page}"
   },
+  "OperationsDashboard": {
+    "metadata": {
+      "title": "Operations Dashboard | FluxMedia",
+      "description": "Review user growth, commercialization, content production, and system health by date range."
+    },
+    "title": "Operations Dashboard",
+    "description": "Review platform operations across user growth, commercialization, content production, and system health.",
+    "snapshotMeta": "Application time zone: {timeZone} · Snapshot generated {generatedAt}",
+    "actions": {
+      "refresh": "Refresh",
+      "retry": "Retry",
+      "apply": "Apply",
+      "reconcile": "Review details",
+      "reconcileOrders": "Review orders"
+    },
+    "filter": {
+      "custom": "Custom date range",
+      "customHint": "Select complete start and end calendar dates, then apply. Future dates are not allowed.",
+      "invalidRange": "Select a complete and valid date range",
+      "granularityLabel": "Trend granularity",
+      "preset": {
+        "this_week": "This week",
+        "this_month": "This month",
+        "this_year": "This year"
+      },
+      "granularity": {
+        "day": "Day",
+        "week": "Week",
+        "month": "Month"
+      }
+    },
+    "state": {
+      "invalidDeepLink": "The requested filters were invalid. The default range is shown instead.",
+      "loading": "Refreshing the operations dashboard",
+      "updated": "The operations dashboard has been updated",
+      "loadingTitle": "Loading the operations dashboard",
+      "loadingDescription": "Reading a complete operations snapshot for one date range.",
+      "errorTitle": "Operations dashboard unavailable",
+      "failure": {
+        "validation_error": "The current filters are invalid. Adjust them and try again.",
+        "not_ready": "Operations statistics are still being prepared. Try again later.",
+        "rate_limited": "Refreshes are too frequent. Try again later.",
+        "timeout": "The operations query timed out. The latest successful snapshot remains visible.",
+        "unavailable": "The operations dashboard could not be loaded. Try again later."
+      }
+    },
+    "status": {
+      "value": "Available",
+      "pre_epoch": "Before tracking began",
+      "not_comparable": "Not comparable",
+      "immature": "Not mature yet",
+      "current": "Current",
+      "no_data": "No data"
+    },
+    "growth": {
+      "title": "User growth and activity",
+      "description": "Cumulative and new users, login, creation and payment activity, plus registration cohort retention.",
+      "metrics": {
+        "cumulativeUsers": {
+          "title": "Cumulative users",
+          "description": "All accounts registered by the range end date, including every role and account status."
+        },
+        "newUsers": {
+          "title": "New users",
+          "description": "Accounts registered during the selected date range."
+        },
+        "loginActiveUsers": {
+          "title": "Login-active users",
+          "description": "Distinct users who actually visited the platform during the selected date range."
+        },
+        "creationActiveUsers": {
+          "title": "Creation-active users",
+          "description": "Distinct users with at least one successful image or video generation during the selected range."
+        },
+        "paymentActiveUsers": {
+          "title": "Paying users",
+          "description": "Distinct users with at least one fulfilled credit purchase during the selected range."
+        },
+        "d1Retention": {
+          "title": "D1 creation retention",
+          "description": "Share of users registered in the range who created successfully on calendar day 1 after registration."
+        },
+        "d7Retention": {
+          "title": "D7 creation retention",
+          "description": "Share of users registered in the range who created successfully on calendar day 7 after registration."
+        },
+        "d30Retention": {
+          "title": "D30 creation retention",
+          "description": "Share of users registered in the range who created successfully on calendar day 30 after registration."
+        }
+      },
+      "cohort": {
+        "title": "Registration cohort review",
+        "description": "Review successful creation on D1, D7, and D30 by registration date. Select a rate to inspect users.",
+        "date": "Registration date",
+        "size": "Registered users"
+      }
+    },
+    "commercial": {
+      "title": "Commercialization",
+      "description": "Review the credit-purchase lifecycle, fulfilled revenue, and paid conversion. Offline refunds are excluded.",
+      "conversion": {
+        "fromCreation": {
+          "title": "Creator-to-paid conversion",
+          "description": "Fulfilled credit purchasers as a share of creation-active users in the same period."
+        },
+        "fromLogin": {
+          "title": "Login-to-paid conversion",
+          "description": "Fulfilled credit purchasers as a share of login-active users in the same period."
+        }
+      },
+      "revenue": {
+        "title": "Fulfilled purchase revenue",
+        "description": "Credit purchases grouped separately by fulfillment time and currency for the selected range.",
+        "empty": "There is no fulfilled purchase revenue in the selected range.",
+        "disclaimer": "Offline refunds are excluded and currencies are not converted."
+      }
+    },
+    "content": {
+      "title": "Content production",
+      "description": "Successful outputs only: image count, video count, video seconds, and actual net credits.",
+      "reconcileImages": "Review image details",
+      "reconcileVideos": "Review video details",
+      "reconcileCredits": "Review credit details"
+    },
+    "charts": {
+      "source": "Source: operations fact read models",
+      "tableOpen": "View data table",
+      "date": "Date",
+      "status": "Status",
+      "value": "Value",
+      "navigation": "Use the left and right arrow keys to browse chart data points",
+      "current": "Current period",
+      "previous": "Previous period",
+      "growth": {
+        "title": "Growth and activity trends",
+        "description": "Separate views for new, login-active, creation-active, and paying users prevent scale from hiding changes.",
+        "tableCaption": "Growth and activity trend data"
+      },
+      "cohort": {
+        "title": "Cohort retention distribution",
+        "description": "D1, D7, and D30 creation retention by registration date. Dot size represents retention rate.",
+        "tableCaption": "Cohort retention distribution data",
+        "retainedCount": "Retained users",
+        "rate": "Retention rate"
+      },
+      "payment": {
+        "title": "Credit-purchase lifecycle",
+        "description": "Compare order counts by lifecycle stage with the previous period. Failures are payment lifecycle outcomes, not generation refunds.",
+        "unit": "orders",
+        "tableCaption": "Credit-purchase lifecycle data",
+        "stage": "Order stage",
+        "stages": {
+          "createdOrders": "Created orders",
+          "pendingOrders": "Pending orders",
+          "paymentConfirmedOrders": "Payment confirmed",
+          "paidNotFulfilledOrders": "Paid, not fulfilled",
+          "fulfilledOrders": "Fulfilled orders",
+          "failedOrders": "Failed orders"
+        }
+      },
+      "image": {
+        "title": "Images generated",
+        "description": "Successful image outputs grouped by business date.",
+        "series": "Images",
+        "tableCaption": "Image generation trend data"
+      },
+      "video": {
+        "title": "Video",
+        "description": "Switch between video count and video seconds. Both include successful video outputs only.",
+        "modeLabel": "Video trend measure",
+        "count": "Video count",
+        "seconds": "Video seconds",
+        "tableCaption": "Video trend data"
+      },
+      "credits": {
+        "title": "Successful net credit usage",
+        "description": "Actual charges less business refunds, linked consistently to successful outputs.",
+        "series": "Net credits",
+        "tableCaption": "Successful net credit usage trend data"
+      }
+    },
+    "health": {
+      "title": "System health",
+      "description": "Range-based metrics appear beside current queue and backend member state. This section is read-only.",
+      "links": {
+        "status": "System status",
+        "analytics": "Admin data dashboard",
+        "orders": "Credit-purchase orders"
+      },
+      "successRate": {
+        "title": "Generation task success rate",
+        "description": "Successful terminal tasks as a share of successful and failed terminal generation tasks."
+      },
+      "duration": {
+        "title": "Generation processing time",
+        "description": "Average seconds / P95 seconds from processing start to successful completion."
+      },
+      "fulfillmentFailures": {
+        "title": "Payment fulfillment failures",
+        "description": "Recoverable fulfillment-attempt failures plus terminal fulfillment failures in the selected range."
+      },
+      "queue": {
+        "title": "Current queue backlog",
+        "description": "Tasks currently waiting across all media backends."
+      },
+      "backend": {
+        "title": "Current backend health",
+        "description": "Healthy members / total configured members.",
+        "breakdown": "Degraded {degraded} · Unhealthy {unhealthy}"
+      }
+    },
+    "exports": {
+      "title": "Asynchronous data exports",
+      "description": "Create CSV files for the current filters. Completed tasks have short-lived downloads; system health is not exported.",
+      "loadFailed": "Export history could not be loaded. The operations snapshot is unaffected.",
+      "empty": "No operations data exports have been created.",
+      "rows": "{count} rows",
+      "types": {
+        "user_growth": "Export user growth",
+        "commercialization": "Export commercialization",
+        "content_production": "Export content production"
+      },
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "expired": "Expired"
+      },
+      "actions": {
+        "refresh": "Refresh export history",
+        "download": "Download",
+        "retry": "Retry",
+        "regenerate": "Generate again",
+        "more": "Load more"
+      },
+      "notifications": {
+        "completed": "An operations data export is complete",
+        "created": "Export task created",
+        "createFailed": "Failed to create export task",
+        "refreshFailed": "Failed to refresh export history",
+        "moreFailed": "Failed to load more export history",
+        "retryCreated": "Export retry task created",
+        "retryFailed": "Failed to retry export",
+        "downloadFailed": "Failed to prepare export download"
+      }
+    },
+    "detail": {
+      "defaultTitle": "Operations details",
+      "defaultDescription": "Read source-aligned review records for the current date range.",
+      "loading": "Loading operations details",
+      "loadingMore": "Loading more operations details",
+      "loadingShort": "Loading details",
+      "loaded": "Loaded {count} operations detail records",
+      "loadedShort": "Loaded {count}",
+      "empty": "No operations details",
+      "emptyRange": "There are no reviewable detail records for the current filters.",
+      "retainedRows": "{error} Previously loaded records remain visible.",
+      "caption": "{title}, {count} records loaded",
+      "actions": {
+        "retry": "Retry",
+        "loading": "Loading",
+        "more": "Load more",
+        "retryMore": "Retry loading more"
+      },
+      "failure": {
+        "validation_error": "The detail filters are invalid. Close this panel and select them again.",
+        "not_ready": "The operations tracking start has not been initialized, so details are unavailable.",
+        "rate_limited": "Detail requests are too frequent. Try again later.",
+        "timeout": "The detail request timed out. Try again.",
+        "unavailable": "Details are temporarily unavailable. Try again later."
+      },
+      "selection": {
+        "cumulative_users": {
+          "title": "Cumulative user details",
+          "description": "All accounts created before the selected cutoff, including the pre-launch base."
+        },
+        "users": {
+          "title": "New user details",
+          "description": "Accounts registered during the range, ordered by registration business time."
+        },
+        "login_activity": {
+          "title": "Login-active user details",
+          "description": "Each user who actually visited the platform during the range appears once."
+        },
+        "creation_activity": {
+          "title": "Creation-active user details",
+          "description": "Each user with a successful image or video generation during the range appears once."
+        },
+        "payment_activity": {
+          "title": "Paying user details",
+          "description": "Each user with a fulfilled credit purchase during the range appears once."
+        },
+        "retention_cohorts": {
+          "title": "{date} cohort D{day} details",
+          "description": "Review whether users registered on this date created successfully on calendar day {day}.",
+          "fallbackTitle": "Cohort retention details",
+          "fallbackDescription": "Review whether registered users created successfully on the target calendar date."
+        },
+        "orders": {
+          "title": "Order details",
+          "description": "Credit-purchase orders by creation business time. Offline refunds are excluded."
+        },
+        "fulfilled_orders": {
+          "title": "Fulfilled order details",
+          "description": "Successful credit purchases by fulfillment business time, with the revenue currency filter preserved. Offline refunds are excluded."
+        },
+        "payment_lifecycle": {
+          "title": "Payment lifecycle details",
+          "description": "Review order creation, payment, and fulfillment using immutable payment events."
+        },
+        "image_outputs": {
+          "title": "Image output details",
+          "description": "Successful image outputs only. Prompts and media URLs are excluded."
+        },
+        "video_outputs": {
+          "title": "Video output details",
+          "description": "Successful video outputs and video seconds only."
+        },
+        "credit_usage": {
+          "title": "Successful net credit usage details",
+          "description": "Review actual net credits consistently linked to successful outputs."
+        }
+      },
+      "columns": {
+        "user": "User",
+        "email": "Full email",
+        "role": "Role",
+        "accountStatus": "Account status",
+        "businessTime": "Business time",
+        "retention": "D{day} retained",
+        "retentionFallback": "Retention",
+        "order": "Platform order",
+        "tradeNumber": "Provider trade number",
+        "userId": "User ID",
+        "amount": "Amount",
+        "orderStatus": "Order status",
+        "paymentEvent": "Payment event",
+        "createdAt": "Created at",
+        "fulfilledAt": "Fulfilled at",
+        "taskId": "Task ID",
+        "model": "Model",
+        "media": "Media",
+        "quantity": "Quantity",
+        "videoSeconds": "Video seconds",
+        "netCredits": "Net credits"
+      },
+      "values": {
+        "unnamedUser": "Unnamed user",
+        "banned": "Banned",
+        "normal": "Normal",
+        "retained": "Retained",
+        "notRetained": "Not retained",
+        "image": "Image",
+        "video": "Video",
+        "seconds": "{value} seconds",
+        "emptyValue": "—"
+      },
+      "roles": {
+        "user": "User",
+        "observer_admin": "Observer administrator",
+        "admin": "Administrator",
+        "super_admin": "Super administrator"
+      },
+      "orderStatus": {
+        "pending": "Pending payment",
+        "paid": "Paid",
+        "fulfilled": "Fulfilled",
+        "failed": "Failed",
+        "expired": "Expired"
+      },
+      "paymentEvent": {
+        "order_created": "Order created",
+        "checkout_ready": "Checkout ready",
+        "payment_confirmed": "Payment confirmed",
+        "fulfillment_succeeded": "Fulfillment succeeded",
+        "checkout_failed": "Checkout failed",
+        "fulfillment_attempt_failed": "Fulfillment attempt failed",
+        "fulfillment_failed_terminal": "Fulfillment failed terminally",
+        "expired": "Expired"
+      }
+    }
+  },
   "Homepage": {
     "hero": {
       "eyebrow": "CREATE WITH LANGUAGE",
@@ -475,6 +859,7 @@
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
       "adminAnalytics": "Data Dashboard",
+      "operations": "Operations Dashboard",
       "imageBackendPool": "Account Pool",
       "support": "Support",
       "newTicket": "New Ticket"
@@ -503,6 +888,7 @@
       "systemSettings": "System Settings",
       "globalStatus": "Global Status",
       "adminAnalytics": "Data Dashboard",
+      "operations": "Operations Dashboard",
       "imageBackendPool": "Account Pool",
       "creditsBuy": "Buy Credits",
       "profile": "Profile",
@@ -515,6 +901,9 @@
       "advanced": "Advanced"
     },
     "sidebar": {
+      "openMenu": "Open navigation menu",
+      "expandSidebar": "Expand sidebar",
+      "collapseSidebar": "Collapse sidebar",
       "settings": "Settings",
       "logout": "Logout"
     }

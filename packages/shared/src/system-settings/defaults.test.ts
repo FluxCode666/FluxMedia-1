@@ -139,6 +139,30 @@ describe("system setting default initialization", () => {
     );
   });
 
+  it("运营导出任务定义默认关闭且限制批次与间隔", () => {
+    expect(
+      SETTING_DEFINITION_BY_KEY.get(
+        "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED"
+      )
+    ).toMatchObject({ valueType: "boolean", defaultValue: false });
+    expect(
+      SETTING_DEFINITION_BY_KEY.get(
+        "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED"
+      )
+    ).toMatchObject({ valueType: "boolean", defaultValue: false });
+    for (const key of [
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE",
+      "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE",
+    ] as const) {
+      expect(SETTING_DEFINITION_BY_KEY.get(key)).toMatchObject({
+        valueType: "number",
+        min: 1,
+        max: 100,
+        integer: true,
+      });
+    }
+  });
+
   it("persists missing non-secret defaults for a fresh database", async () => {
     const initializedKeys = await initializeMissingSystemSettingsDefaults({
       updatedBy: "admin-1",
@@ -187,6 +211,12 @@ describe("system setting default initialization", () => {
     expect(initializedKeys).toContain("IMAGE_INPUT_MODERATION_CREDITS");
     expect(initializedKeys).toContain("CONTENT_MODERATION_BLOCK_RISK_LEVEL");
     expect(initializedKeys).toContain("RATE_LIMIT_AI_REQUESTS_PER_MINUTE");
+    expect(initializedKeys).toContain(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED"
+    );
+    expect(initializedKeys).toContain(
+      "INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED"
+    );
     expect(initializedKeys).not.toContain("BETTER_AUTH_SECRET");
     expect(initializedKeys).not.toContain("CREEM_API_KEY");
     expect(initializedKeys).not.toContain(
@@ -249,6 +279,25 @@ describe("system setting default initialization", () => {
     expect(store.get("RATE_LIMIT_PAYMENT_REQUESTS_PER_MINUTE")?.value).toBe(10);
     expect(store.get("RATE_LIMIT_UPLOAD_REQUESTS_PER_MINUTE")?.value).toBe(30);
     expect(store.get("RATE_LIMIT_STRICT_REQUESTS_PER_MINUTE")?.value).toBe(3);
+    expect(
+      store.get("INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_ENABLED")?.value
+    ).toBe(false);
+    expect(
+      store.get("INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_INTERVAL_MINUTES")
+        ?.value
+    ).toBe(1);
+    expect(
+      store.get("INTERNAL_JOB_OPERATIONS_EXPORT_PROCESS_BATCH_SIZE")?.value
+    ).toBe(10);
+    expect(
+      store.get("INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_ENABLED")?.value
+    ).toBe(false);
+    expect(
+      store.get("INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_INTERVAL_MINUTES")?.value
+    ).toBe(60);
+    expect(
+      store.get("INTERNAL_JOB_OPERATIONS_EXPORT_EXPIRE_BATCH_SIZE")?.value
+    ).toBe(100);
     expect(store.get("BETTER_AUTH_SECRET")).toBeUndefined();
     expect(store.get("CREEM_API_KEY")).toBeUndefined();
     expect(

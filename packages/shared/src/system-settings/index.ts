@@ -52,6 +52,82 @@ import {
   siteLogoUrlSchema,
 } from "./site-branding";
 
+/**
+ * 运营导出与存储配置共用的事务锁名称。
+ *
+ * 运营导出任务会把对象写入当前 provider；配置切换如果与任务创建或 worker
+ * 认领并发，会让旧对象无法再被下载或清理。因此两条写路径必须先取得同一把
+ * PostgreSQL advisory transaction lock，再判断是否允许切换。
+ */
+const OPERATIONS_EXPORT_STORAGE_LOCK = "operations-export:storage-config";
+
+const STORAGE_RUNTIME_SETTING_KEYS = new Set<SettingKey>([
+  "STORAGE_ACCESS_KEY_ID",
+  "STORAGE_SECRET_ACCESS_KEY",
+  "STORAGE_ENDPOINT",
+  "STORAGE_REGION",
+  "STORAGE_BUCKET_NAME",
+  "LOCAL_STORAGE_PATH",
+]);
+
+/** 识别当前事务查询是否返回了至少一条运营导出任务。 */
+function hasRows(result: unknown): boolean {
+  if (Array.isArray(result)) return result.length > 0;
+  if (result && typeof result === "object" && "rows" in result) {
+    const rows = (result as { rows: unknown }).rows;
+    return Array.isArray(rows) && rows.length > 0;
+  }
+  return false;
+}
+
+/**
+ * 在存储配置变更前冻结对象存储边界。
+ *
+ * @param transaction 当前 system-setting 写事务。
+ * @param changes 本次拟写入的设置项。
+ * @throws 存在排队、运行中、未过期或尚未清理的导出任务时拒绝切换。
+ * @sideEffects 获取事务级 advisory lock；不修改数据。
+ */
+async function assertOperationsExportStorageConfigurationCanChange(
+  transaction: { execute(query: unknown): Promise<unknown> },
+  changes: Array<{ key: string }>
+): Promise<void> {
+  const changesStorage = changes.some((entry) =>
+    STORAGE_RUNTIME_SETTING_KEYS.has(entry.key as SettingKey)
+  );
+  if (!changesStorage) return;
+
+  await transaction.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${OPERATIONS_EXPORT_STORAGE_LOCK}))`
+  );
+  const existing = await transaction.execute(sql`
+    select 1
+    where exists (
+      select 1
+      from operations_export_task
+      where status in ('queued', 'running', 'completed')
+         or (status = 'expired' and object_deleted_at is null)
+    )
+    or exists (
+      select 1
+      from admin_audit_log orphan
+      where orphan.action = 'operations.exportOrphan'
+        and not exists (
+          select 1
+          from admin_audit_log cleaned
+          where cleaned.action = 'operations.exportOrphanDeleted'
+            and cleaned.metadata->>'orphanAuditId' = orphan.id
+        )
+    )
+    limit 1
+  `);
+  if (hasRows(existing)) {
+    throw new Error(
+      "存储配置暂不可切换：存在未完成或尚未清理的运营导出任务"
+    );
+  }
+}
+
 export { invalidateSystemSettingsCache } from "./cache";
 export {
   SETTING_CATEGORIES,
@@ -1017,6 +1093,7 @@ export async function setSystemSettings(
   const changedKeys: SettingKey[] = [];
 
   await db.transaction(async (tx) => {
+    await assertOperationsExportStorageConfigurationCanChange(tx, entries);
     for (const entry of entries) {
       if (!isSettingKey(entry.key)) {
         throw new SystemSettingValidationError(

@@ -7,7 +7,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@repo/database", () => ({ db: {} }));
-vi.mock("@repo/database/schema", () => ({ paymentOrder: {} }));
+vi.mock("@repo/database/schema", () => ({
+  paymentLifecycleEvent: {},
+  paymentOrder: {},
+}));
 
 import { getCreditPaymentDisplayStatus } from "./purchase-orders";
 

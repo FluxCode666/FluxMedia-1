@@ -125,11 +125,34 @@ export {
 import "./analytics";
 // 公开内容索引域
 import "./content";
+// 管理端运营总览事实采集与初始化
+import "./operations-dashboard-facts";
+// 运营总览、明细、异步导出与后台维护 operation
+import "./operations-dashboard";
+// 支付履约恢复任务
+import "./payment-fulfillment";
 // 管理端支付概览与充值订单
 import "./payment";
 // 推广码、归因与首充奖励看板
 import "./referrals";
 
+export { fulfillCreemTopUp, fulfillEpayTopUp } from "./credits";
+export {
+  createOperationsExport,
+  expireOperationsExports,
+  getOperationsDetail,
+  getOperationsOverview,
+  listOperationsExports,
+  openOperationsLocalExportDownload,
+  prepareOperationsExportDownload,
+  processOperationsExports,
+  retryOperationsExport,
+} from "./operations-dashboard";
+export {
+  initializeOperationsEpoch,
+  recordWebVisit,
+} from "./operations-dashboard-facts";
+export { recoverPaymentFulfillments } from "./payment-fulfillment";
 export {
   fulfillAlipayReferralFirstPayment,
   fulfillCreemReferralFirstPayment,

@@ -47,6 +47,7 @@ rollout-*.jsonl
 **/.fluxMedia/
 # Claude Code 子 Agent 隔离 worktree（临时，自动管理；偶有 node_modules 残留）
 .claude/worktrees/
+.worktrees/
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -81,5 +82,8 @@ deploy/state/
 # 水墨引擎审阅样张(本地生成,不入库)
 apps/web/scripts/preview/
 .playwright-cli/
+packages/integration-tests/e2e/.auth/
+packages/integration-tests/playwright-report/
+packages/integration-tests/test-results/
 
 apps/web/storage/

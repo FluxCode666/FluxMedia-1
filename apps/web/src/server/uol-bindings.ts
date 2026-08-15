@@ -25,7 +25,11 @@ import "@/server/uol-bindings/image-backend-pool";
 import "@/server/uol-bindings/image-async-task";
 import "@/server/uol-bindings/image-deletion";
 import "@/server/uol-bindings/image-generation";
+import "@/server/uol-bindings/operations-dashboard-facts";
+import "@/server/uol-bindings/operations-dashboard";
 import "@/server/uol-bindings/payment-admin";
+import "@/server/uol-bindings/payment-fulfillment";
+import "@/server/uol-bindings/payment-webhooks";
 import "@/server/uol-bindings/payment-user";
 import "@/server/uol-bindings/referrals";
 import "@/server/uol-bindings/video-generation";
@@ -416,6 +420,7 @@ bindExecute(
       totalAmount: string;
       appId: string;
       sellerId: string;
+      gmtPayment?: string;
     },
     _principal: Principal,
     _ctx: OperationContext

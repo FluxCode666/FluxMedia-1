@@ -37,4 +37,13 @@ describe("控制台生成入口多语言契约", () => {
     expect(zhMessages.AdminDataDashboard.charts.images).toBe("生图数量");
     expect(zhMessages.AdminDataDashboard.charts.videos).toBe("视频");
   });
+
+  it("为管理端运营总览提供独立导航与页面标题", () => {
+    expect(enMessages.Dashboard.nav.operations).toBe("Operations Dashboard");
+    expect(zhMessages.Dashboard.nav.operations).toBe("运营总览");
+    expect(enMessages.Dashboard.pages.operations).toBe(
+      "Operations Dashboard"
+    );
+    expect(zhMessages.Dashboard.pages.operations).toBe("运营总览");
+  });
 });

@@ -1,23 +1,26 @@
 /**
- * Creem Webhook 订阅退役回归测试。
+ * Creem webhook 薄适配路由测试。
  *
- * 历史订阅事件必须在签名验证后稳定返回 2xx，且不查询或更新数据库、不发放积分。
- * 非法签名仍应在 ignored 分支之前被拒绝，防止伪造请求伪装成已退役事件。
+ * 使用方：Vitest；验证验签和事件过滤留在传输层，积分购买只以最小字段经 UOL 履约。
  */
-import type { CreemWebhookEvent } from "@repo/shared/payment/creem";
+import type {
+  CreemCheckoutCompletedData,
+  CreemWebhookEvent,
+} from "@repo/shared/payment/creem";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  constructRuntimeCreemEvent: vi.fn(),
-  headers: vi.fn(),
-  loggerInfo: vi.fn(),
-  logError: vi.fn(),
-  logEvent: vi.fn(),
-  grantCredits: vi.fn(),
-  dbUpdate: vi.fn(),
-  dbSelect: vi.fn(),
-  dbInsert: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  process.env.DATABASE_URL ||=
+    "postgres://test:test@127.0.0.1:5432/gpt2image_test";
+  return {
+    constructRuntimeCreemEvent: vi.fn(),
+    headers: vi.fn(),
+    invokeOperation: vi.fn(),
+    ensureUolInitialized: vi.fn(),
+    loggerInfo: vi.fn(),
+    logError: vi.fn(),
+  };
+});
 
 vi.mock("next/headers", () => ({ headers: mocks.headers }));
 vi.mock("@repo/shared/api-logger", () => ({
@@ -32,64 +35,82 @@ vi.mock("@repo/shared/payment/creem", async () => {
     constructRuntimeCreemEvent: mocks.constructRuntimeCreemEvent,
   };
 });
+vi.mock("@repo/shared/uol", () => ({
+  invokeOperation: mocks.invokeOperation,
+}));
 vi.mock("@repo/shared/logger", () => ({
-  logger: { info: mocks.loggerInfo, error: vi.fn(), warn: vi.fn() },
+  logger: { info: mocks.loggerInfo },
   logError: mocks.logError,
-  logEvent: mocks.logEvent,
 }));
-vi.mock("@repo/database", () => ({
-  db: {
-    update: mocks.dbUpdate,
-    select: mocks.dbSelect,
-    insert: mocks.dbInsert,
-  },
-}));
-vi.mock("@repo/database/schema", () => ({
-  creditsBatch: {},
-  user: {},
-}));
-vi.mock("@repo/shared/credits/core", () => ({
-  grantCredits: mocks.grantCredits,
-}));
-vi.mock("@/features/referrals/reward-fulfillment", () => ({
-  invokeReferralFirstPayment: vi.fn(),
-}));
-vi.mock("@repo/shared/credits/purchase-orders", () => ({
-  claimCreditPackagePaymentOrderForFulfillment: vi.fn(),
-  failCreditPackagePaymentOrder: vi.fn(),
-  fulfillCreditPackagePaymentOrder: vi.fn(),
-  releaseCreditPackagePaymentOrderFulfillment: vi.fn(),
-}));
-vi.mock("@repo/shared/credits/packages", () => ({
-  getCreditPackageCurrency: vi.fn(),
-  getRuntimeCreditPackageById: vi.fn(),
-}));
-vi.mock("@repo/shared/system-settings", () => ({
-  getRuntimeSettingNumber: vi.fn(),
+vi.mock("@/server/uol-init", () => ({
+  ensureUolInitialized: mocks.ensureUolInitialized,
 }));
 
 import { POST } from "./route";
 
-function subscriptionEvent(
-  eventType: CreemWebhookEvent["eventType"]
-): CreemWebhookEvent {
+/** 构造一条已验签的 Creem 积分购买事件。 */
+function creditPurchaseEvent(): CreemWebhookEvent {
   return {
-    id: `evt-${eventType}`,
-    eventType,
+    id: "evt-credit",
+    eventType: "checkout.completed",
+    created_at: Date.parse("2026-08-13T03:30:00.000Z"),
+    object: {
+      id: "checkout-1",
+      object: "checkout",
+      request_id: "request-1",
+      customer: {
+        id: "customer-1",
+        email: "user@example.test",
+      },
+      metadata: {
+        type: "credit_purchase",
+        userId: "user-1",
+        paymentOrderId: "order-1",
+        packageId: "package-current",
+      },
+      order: {
+        object: "order",
+        id: "creem-order-1",
+        customer: "customer-1",
+        product: "product-1",
+        amount: 1999,
+        currency: "USD",
+        status: "paid",
+        type: "onetime",
+      },
+      product: {
+        id: "product-1",
+        name: "Credits",
+        price: 1999,
+        currency: "USD",
+        billing_type: "onetime",
+        billing_period: "once",
+      },
+      status: "completed",
+    } satisfies CreemCheckoutCompletedData,
+  };
+}
+
+/** 构造已验签的退役订阅事件。 */
+function subscriptionEvent(): CreemWebhookEvent {
+  return {
+    id: "evt-subscription",
+    eventType: "subscription.active",
     created_at: Date.now(),
     object: {
       id: "sub-1",
       status: "active",
-      product: "prod-1",
-      customer: "cus-1",
-      current_period_start_date: "2026-01-01T00:00:00.000Z",
-      current_period_end_date: "2026-02-01T00:00:00.000Z",
+      product: "product-1",
+      customer: "customer-1",
+      current_period_start_date: "2026-08-01T00:00:00.000Z",
+      current_period_end_date: "2026-09-01T00:00:00.000Z",
       cancel_at_period_end: false,
     },
   };
 }
 
-function request(body = "{}") {
+/** 创建 Creem webhook POST 请求。 */
+function request(body = "signed-payload"): Request {
   return new Request("https://media.example.test/api/webhooks/creem", {
     method: "POST",
     body,
@@ -98,88 +119,89 @@ function request(body = "{}") {
 
 describe("POST /api/webhooks/creem", () => {
   beforeEach(() => {
-    mocks.constructRuntimeCreemEvent.mockReset();
-    mocks.headers.mockReset();
-    mocks.loggerInfo.mockReset();
-    mocks.logError.mockReset();
-    mocks.logEvent.mockReset();
-    mocks.grantCredits.mockReset();
-    mocks.dbUpdate.mockReset();
-    mocks.dbSelect.mockReset();
-    mocks.dbInsert.mockReset();
+    vi.clearAllMocks();
     mocks.headers.mockResolvedValue({ get: () => "valid-signature" });
+    mocks.constructRuntimeCreemEvent.mockResolvedValue(creditPurchaseEvent());
+    mocks.invokeOperation.mockResolvedValue({ processed: true });
   });
 
-  it.each([
-    "subscription.active",
-    "subscription.renewed",
-    "subscription.paid",
-    "subscription.canceled",
-    "subscription.past_due",
-    "subscription.paused",
-    "subscription.expired",
-  ])("已验签的 %s 事件返回 2xx 且无任何履约副作用", async (eventType) => {
-    mocks.constructRuntimeCreemEvent.mockResolvedValue(
-      subscriptionEvent(eventType as CreemWebhookEvent["eventType"])
-    );
-
-    const response = await POST(request("signed-payload"));
+  it("积分购买只把最小规范化字段交给 Creem webhook operation", async () => {
+    const response = await POST(request());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ received: true });
-    expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(mocks.dbSelect).not.toHaveBeenCalled();
-    expect(mocks.dbInsert).not.toHaveBeenCalled();
-    expect(mocks.grantCredits).not.toHaveBeenCalled();
-    expect(mocks.logEvent).not.toHaveBeenCalled();
-    expect(mocks.loggerInfo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "creem",
-        eventType,
-        eventId: `evt-${eventType}`,
-      }),
-      "Ignored retired subscription webhook"
+    expect(mocks.ensureUolInitialized).toHaveBeenCalledTimes(1);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "credits.fulfillCreemTopUp",
+      {
+        checkoutId: "checkout-1",
+        requestId: "request-1",
+        customerId: "customer-1",
+        userId: "user-1",
+        paymentOrderId: "order-1",
+        packageId: "package-current",
+        order: {
+          id: "creem-order-1",
+          amount: 1999,
+          currency: "USD",
+          productId: "product-1",
+        },
+        product: { id: "product-1", billingType: "onetime" },
+        createdAt: Date.parse("2026-08-13T03:30:00.000Z"),
+      },
+      { type: "webhook", provider: "creem" }
     );
-    const loggedPayload = mocks.loggerInfo.mock.calls[0]?.[0] as Record<
+    const operationInput = mocks.invokeOperation.mock.calls[0]?.[1] as Record<
       string,
       unknown
     >;
-    expect(loggedPayload).not.toHaveProperty("payload");
-    expect(loggedPayload).not.toHaveProperty("signature");
+    expect(operationInput).not.toHaveProperty("email");
+    expect(operationInput).not.toHaveProperty("signature");
   });
 
-  it("合法但非积分充值的 checkout.completed 事件同样被忽略", async () => {
-    mocks.constructRuntimeCreemEvent.mockResolvedValue({
-      id: "evt-checkout",
-      eventType: "checkout.completed",
-      created_at: Date.now(),
-      object: {
-        id: "checkout-1",
-        object: "checkout",
-        customer: { id: "cus-1", email: "user@example.test" },
-        metadata: { type: "subscription" },
-        status: "completed",
-      },
-    } satisfies CreemWebhookEvent);
+  it("订阅和非积分 Checkout 返回 2xx 且不初始化 UOL", async () => {
+    mocks.constructRuntimeCreemEvent.mockResolvedValueOnce(subscriptionEvent());
+    expect((await POST(request())).status).toBe(200);
 
-    const response = await POST(request("signed-payload"));
+    const event = creditPurchaseEvent();
+    if (event.eventType === "checkout.completed") {
+      (event.object as CreemCheckoutCompletedData).metadata = {
+        type: "subscription",
+      };
+    }
+    mocks.constructRuntimeCreemEvent.mockResolvedValueOnce(event);
+    expect((await POST(request())).status).toBe(200);
 
-    expect(response.status).toBe(200);
-    expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(mocks.grantCredits).not.toHaveBeenCalled();
+    expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "creem" }),
+      "Ignored retired subscription webhook"
+    );
   });
 
-  it("非法签名返回 400 且不进入 ignored 分支", async () => {
-    mocks.headers.mockResolvedValue({ get: () => "invalid-signature" });
-    mocks.constructRuntimeCreemEvent.mockRejectedValue(
+  it("缺少或非法签名返回 400 且不调用 UOL", async () => {
+    mocks.headers.mockResolvedValueOnce({ get: () => null });
+    expect((await POST(request())).status).toBe(400);
+
+    mocks.constructRuntimeCreemEvent.mockRejectedValueOnce(
       new Error("Invalid webhook signature")
     );
+    expect((await POST(request())).status).toBe(400);
 
-    const response = await POST(request("forged-payload"));
+    expect(mocks.ensureUolInitialized).not.toHaveBeenCalled();
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
 
-    expect(response.status).toBe(400);
-    expect(mocks.loggerInfo).not.toHaveBeenCalled();
-    expect(mocks.dbUpdate).not.toHaveBeenCalled();
-    expect(mocks.grantCredits).not.toHaveBeenCalled();
+  it("UOL 履约失败返回 500 触发 Creem 重投", async () => {
+    mocks.invokeOperation.mockRejectedValueOnce(new Error("fulfill failed"));
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(Error), {
+      source: "creem-webhook",
+      stage: "handler",
+    });
   });
 });

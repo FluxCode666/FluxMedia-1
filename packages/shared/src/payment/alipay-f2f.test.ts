@@ -23,6 +23,8 @@ import {
   getRuntimeAlipayF2FConfig,
   isSuccessfulAlipayTradeStatus,
   parseAlipayCnyAmountMinor,
+  parseAlipayPaymentTime,
+  resolveAlipayPaymentEventTime,
 } from "./alipay-f2f";
 
 function mockRuntimeAlipaySettings(overrides?: Record<string, string>) {
@@ -61,6 +63,33 @@ describe("支付宝当面付纯逻辑", () => {
     expect(parseAlipayCnyAmountMinor("1.20")).toBe(120);
     expect(parseAlipayCnyAmountMinor("1.200")).toBeNull();
     expect(parseAlipayCnyAmountMinor("-1")).toBeNull();
+  });
+
+  it("使用支付宝付款时间而不是跨日延迟通知的接收时间", () => {
+    expect(
+      resolveAlipayPaymentEventTime(
+        "2026-08-13 23:59:30",
+        new Date("2026-08-14T04:00:00.000Z")
+      )
+    ).toEqual({
+      occurredAt: new Date("2026-08-13T15:59:30.000Z"),
+      timestampSource: "provider",
+    });
+  });
+
+  it("付款时间缺失或非法时降级为服务器接收时间", () => {
+    const receivedAt = new Date("2026-08-14T04:00:00.000Z");
+    expect(resolveAlipayPaymentEventTime(undefined, receivedAt)).toEqual({
+      occurredAt: receivedAt,
+      timestampSource: "server_received",
+    });
+    expect(
+      resolveAlipayPaymentEventTime("2026-02-30 12:00:00", receivedAt)
+    ).toEqual({
+      occurredAt: receivedAt,
+      timestampSource: "server_received",
+    });
+    expect(parseAlipayPaymentTime("2026-08-14T12:00:00Z")).toBeNull();
   });
 
   it("允许直连当面付省略卖家 PID，并自动补全通知路由", async () => {

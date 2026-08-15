@@ -83,6 +83,7 @@ export const user = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
+    index("user_created_at_id_idx").on(table.createdAt, table.id),
     check(
       "user_moderation_block_risk_level_override_check",
       sql`${table.moderationBlockRiskLevelOverride} IS NULL OR ${table.moderationBlockRiskLevelOverride} IN ('low', 'medium', 'high')`
@@ -93,6 +94,195 @@ export const user = pgTable(
     ),
   ]
 );
+
+// ============================================
+// 运营总览事实与导出任务
+// ============================================
+
+/**
+ * 运营统计 epoch。
+ *
+ * 使用方：运营总览查询、明细和导出统一截断上线前行为。仅允许固定单行 ID，迁移不
+ * 自动填值；正式部署由受控 operation 幂等初始化，防止应用重启或迁移时间漂移口径。
+ */
+export const operationsAnalyticsEpoch = pgTable(
+  "operations_analytics_epoch",
+  {
+    id: integer("id").primaryKey(),
+    appDate: text("app_date").notNull(),
+    startsAt: timestamp("starts_at").notNull(),
+    initializedBy: text("initialized_by"),
+    initializationRequestId: text("initialization_request_id").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("operations_analytics_epoch_request_unique").on(
+      table.initializationRequestId
+    ),
+    check("operations_analytics_epoch_singleton_check", sql`${table.id} = 1`),
+    check(
+      "operations_analytics_epoch_app_date_check",
+      sql`${table.appDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
+    ),
+  ]
+);
+
+/**
+ * 用户网页有效访问日事实。
+ *
+ * 使用方：登录活跃用户与 Cohort 核对。每用户、每应用自然日最多一行；只记录
+ * userId 和日期，不持久化 session token、IP、UA 或页面路径，账户删除时级联清除。
+ */
+export const userWebVisit = pgTable(
+  "user_web_visit",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    appDate: text("app_date").notNull(),
+    firstVisitedAt: timestamp("first_visited_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({
+      name: "user_web_visit_user_app_date_pk",
+      columns: [table.userId, table.appDate],
+    }),
+    index("user_web_visit_app_date_user_idx").on(table.appDate, table.userId),
+    index("user_web_visit_first_visited_user_idx").on(
+      table.firstVisitedAt,
+      table.userId
+    ),
+    index("user_web_visit_created_cursor_idx").on(
+      table.createdAt.desc(),
+      table.userId.desc(),
+      table.appDate.desc()
+    ),
+    check(
+      "user_web_visit_app_date_check",
+      sql`${table.appDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
+    ),
+  ]
+);
+
+/**
+ * 运营 CSV 异步导出任务。
+ *
+ * 使用方：operations UOL、内部 worker、受控下载路由和 7 天清理任务。筛选、时区、
+ * epoch 与事实高水位在创建时冻结；租约字段作为 fencing token，阻止陈旧 worker
+ * 覆盖新 attempt。对象 key 仅在完成 CAS 成功后成为可下载事实。
+ */
+export const operationsExportTask = pgTable(
+  "operations_export_task",
+  {
+    id: text("id").primaryKey(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    clientRequestId: text("client_request_id").notNull(),
+    exportType: text("export_type").notNull(),
+    status: text("status").notNull().default("queued"),
+    query: json("query").$type<Record<string, unknown>>().notNull(),
+    timeZone: text("time_zone").notNull(),
+    epochAppDate: text("epoch_app_date").notNull(),
+    epochStartsAt: timestamp("epoch_starts_at").notNull(),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    snapshotAt: timestamp("snapshot_at").notNull(),
+    highWatermarks: json("high_watermarks")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    retryOfTaskId: text("retry_of_task_id"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    leaseOwner: text("lease_owner"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    objectBucket: text("object_bucket"),
+    objectKey: text("object_key"),
+    checksumSha256: text("checksum_sha256"),
+    rowCount: bigint("row_count", { mode: "number" }),
+    byteCount: bigint("byte_count", { mode: "number" }),
+    errorCode: text("error_code"),
+    completedAt: timestamp("completed_at"),
+    expiresAt: timestamp("expires_at"),
+    objectDeletedAt: timestamp("object_deleted_at"),
+    cleanupErrorCode: text("cleanup_error_code"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("operations_export_task_creator_request_unique").on(
+      table.createdBy,
+      table.clientRequestId
+    ),
+    index("operations_export_task_creator_created_idx").on(
+      table.createdBy,
+      table.createdAt.desc(),
+      table.id.desc()
+    ),
+    index("operations_export_task_claim_idx").on(
+      table.status,
+      table.leaseExpiresAt,
+      table.createdAt,
+      table.id
+    ),
+    index("operations_export_task_expire_idx").on(
+      table.status,
+      table.expiresAt,
+      table.id
+    ),
+    foreignKey({
+      name: "operations_export_task_retry_fk",
+      columns: [table.retryOfTaskId],
+      foreignColumns: [table.id],
+    }).onDelete("set null"),
+    check(
+      "operations_export_task_type_check",
+      sql`${table.exportType} IN ('user_growth', 'commercialization', 'content_production')`
+    ),
+    check(
+      "operations_export_task_status_check",
+      sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'expired')`
+    ),
+    check(
+      "operations_export_task_epoch_app_date_check",
+      sql`${table.epochAppDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`
+    ),
+    check(
+      "operations_export_task_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "operations_export_task_lease_shape_check",
+      sql`(
+        ${table.status} = 'running'
+        AND ${table.leaseOwner} IS NOT NULL
+        AND ${table.leaseToken} IS NOT NULL
+        AND ${table.leaseExpiresAt} IS NOT NULL
+      ) OR (
+        ${table.status} <> 'running'
+        AND ${table.leaseOwner} IS NULL
+        AND ${table.leaseToken} IS NULL
+        AND ${table.leaseExpiresAt} IS NULL
+      )`
+    ),
+    check(
+      "operations_export_task_object_shape_check",
+      sql`(
+        ${table.status} IN ('completed', 'expired')
+        AND ${table.objectBucket} IS NOT NULL
+        AND ${table.objectKey} IS NOT NULL
+        AND ${table.checksumSha256} IS NOT NULL
+        AND ${table.rowCount} IS NOT NULL
+        AND ${table.byteCount} IS NOT NULL
+        AND ${table.completedAt} IS NOT NULL
+        AND ${table.expiresAt} IS NOT NULL
+      ) OR ${table.status} IN ('queued', 'running', 'failed')`
+    ),
+  ]
+);
+
+export type OperationsExportTask = typeof operationsExportTask.$inferSelect;
+export type NewOperationsExportTask = typeof operationsExportTask.$inferInsert;
 
 // ============================================
 // 管理员操作审计日志 (Admin Audit Log)
@@ -392,6 +582,14 @@ export const subscription = pgTable("subscription", {
 export type User = typeof user.$inferSelect;
 export type NewUser = typeof user.$inferInsert;
 
+export type OperationsAnalyticsEpoch =
+  typeof operationsAnalyticsEpoch.$inferSelect;
+export type NewOperationsAnalyticsEpoch =
+  typeof operationsAnalyticsEpoch.$inferInsert;
+
+export type UserWebVisit = typeof userWebVisit.$inferSelect;
+export type NewUserWebVisit = typeof userWebVisit.$inferInsert;
+
 export type AdminAuditLog = typeof adminAuditLog.$inferSelect;
 export type NewAdminAuditLog = typeof adminAuditLog.$inferInsert;
 
@@ -506,6 +704,11 @@ export const paymentOrder = pgTable(
       .where(
         sql`${table.status} = 'fulfilled' and ${table.purpose} in ('credit_top_up', 'credit_package') and ${table.fulfilledAt} is not null`
       ),
+    index("payment_order_operations_fulfilled_cursor_idx")
+      .on(table.fulfilledAt.desc(), table.id.desc())
+      .where(
+        sql`${table.status} = 'fulfilled' and ${table.purpose} in ('credit_top_up', 'credit_package') and ${table.fulfilledAt} is not null`
+      ),
     index("payment_order_admin_recharge_created_id_idx")
       .on(table.createdAt.desc(), table.id.desc(), table.status, table.userId)
       .where(sql`${table.purpose} in ('credit_top_up', 'credit_package')`),
@@ -514,6 +717,138 @@ export const paymentOrder = pgTable(
 
 export type PaymentOrder = typeof paymentOrder.$inferSelect;
 export type NewPaymentOrder = typeof paymentOrder.$inferInsert;
+
+// ============================================
+// 支付生命周期事实与可恢复履约工作项
+// ============================================
+
+/**
+ * 支付生命周期不可变事实。
+ *
+ * 使用方：运营总览支付漏斗与履约失败健康指标。每个标准事件保留业务发生时间、
+ * 数据库记录时间及时间来源；账户删除沿 payment_order 既有级联策略清除。
+ */
+export const paymentLifecycleEvent = pgTable(
+  "payment_lifecycle_event",
+  {
+    id: text("id").primaryKey(),
+    paymentOrderId: text("payment_order_id")
+      .notNull()
+      .references(() => paymentOrder.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    occurredAt: timestamp("occurred_at").notNull(),
+    recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+    timestampSource: text("timestamp_source").notNull(),
+    provider: text("provider").notNull(),
+  },
+  (table) => [
+    uniqueIndex("payment_lifecycle_event_order_type_source_unique").on(
+      table.paymentOrderId,
+      table.eventType,
+      table.sourceRef
+    ),
+    index("payment_lifecycle_event_type_occurred_order_idx").on(
+      table.eventType,
+      table.occurredAt,
+      table.paymentOrderId
+    ),
+    index("payment_lifecycle_event_occurred_id_idx").on(
+      table.occurredAt.desc(),
+      table.id.desc()
+    ),
+    index("payment_lifecycle_event_recorded_id_idx").on(
+      table.recordedAt.desc(),
+      table.id.desc()
+    ),
+    check(
+      "payment_lifecycle_event_type_check",
+      sql`${table.eventType} IN ('order_created', 'checkout_ready', 'payment_confirmed', 'fulfillment_succeeded', 'checkout_failed', 'fulfillment_attempt_failed', 'fulfillment_failed_terminal', 'expired')`
+    ),
+    check(
+      "payment_lifecycle_event_timestamp_source_check",
+      sql`${table.timestampSource} IN ('provider', 'server_received', 'server_generated')`
+    ),
+  ]
+);
+
+/**
+ * 支付积分持久履约工作项。
+ *
+ * 使用方：已验签通知和内部 scheduler。创建时冻结全部积分发放参数，恢复时不再读取
+ * 可变化的积分包或充值配置；leaseToken 是完成、重试和终态失败的 fencing token。
+ */
+export const paymentFulfillmentWorkItem = pgTable(
+  "payment_fulfillment_work_item",
+  {
+    id: text("id").primaryKey(),
+    paymentOrderId: text("payment_order_id")
+      .notNull()
+      .unique()
+      .references(() => paymentOrder.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    providerTradeNo: text("provider_trade_no").notNull(),
+    creditSourceRef: text("credit_source_ref").notNull().unique(),
+    creditsAmount: numeric("credits_amount", {
+      precision: 18,
+      scale: 2,
+      mode: "number",
+    }).notNull(),
+    creditsExpiresAt: timestamp("credits_expires_at"),
+    debitAccount: text("debit_account").notNull(),
+    description: text("description").notNull(),
+    metadata: json("metadata").$type<Record<string, unknown>>().notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    lastErrorCode: text("last_error_code"),
+    creditsBatchId: text("credits_batch_id"),
+    completedAt: timestamp("completed_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("payment_fulfillment_work_item_due_idx").on(
+      table.status,
+      table.nextAttemptAt,
+      table.createdAt,
+      table.id
+    ),
+    index("payment_fulfillment_work_item_lease_idx").on(
+      table.status,
+      table.leaseExpiresAt
+    ),
+    check(
+      "payment_fulfillment_work_item_provider_check",
+      sql`${table.provider} IN ('alipay_f2f', 'creem', 'epay')`
+    ),
+    check(
+      "payment_fulfillment_work_item_status_check",
+      sql`${table.status} IN ('pending', 'processing', 'retry', 'succeeded', 'failed')`
+    ),
+    check(
+      "payment_fulfillment_work_item_attempt_count_check",
+      sql`${table.attemptCount} >= 0`
+    ),
+    check(
+      "payment_fulfillment_work_item_lease_shape_check",
+      sql`(${table.status} = 'processing' AND ${table.leaseToken} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL) OR (${table.status} <> 'processing' AND ${table.leaseToken} IS NULL AND ${table.leaseExpiresAt} IS NULL)`
+    ),
+  ]
+);
+
+export type PaymentLifecycleEvent = typeof paymentLifecycleEvent.$inferSelect;
+export type NewPaymentLifecycleEvent =
+  typeof paymentLifecycleEvent.$inferInsert;
+export type PaymentFulfillmentWorkItem =
+  typeof paymentFulfillmentWorkItem.$inferSelect;
+export type NewPaymentFulfillmentWorkItem =
+  typeof paymentFulfillmentWorkItem.$inferInsert;
 
 // ============================================
 // 积分系统枚举
@@ -860,6 +1195,10 @@ export const creditUsageProjectionEntry = pgTable(
       table.userId,
       table.operationType,
       table.operationId
+    ),
+    index("credit_usage_projection_entry_projected_cursor_idx").on(
+      table.projectedAt.desc(),
+      table.transactionId.desc()
     ),
     check(
       "credit_usage_projection_entry_identity_nonempty_check",
@@ -2494,6 +2833,16 @@ export const userOutputUsageEvent = pgTable(
     index("user_output_usage_event_created_kind_idx").on(
       table.operationCreatedAt,
       table.outputKind
+    ),
+    index("user_output_usage_event_operation_cursor_idx").on(
+      table.operationCreatedAt.desc(),
+      table.outputKind.desc(),
+      table.sourceTaskId.desc()
+    ),
+    index("user_output_usage_event_created_cursor_idx").on(
+      table.createdAt.desc(),
+      table.outputKind.desc(),
+      table.sourceTaskId.desc()
     ),
     check(
       "user_output_usage_event_metric_check",

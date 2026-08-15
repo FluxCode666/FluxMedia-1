@@ -128,6 +128,24 @@
 
 详见 [image-generation-concurrency.md](image-generation-concurrency.md)。
 
+## 运营总览
+
+- 管理员运营总览使用独立 `operations.*` UOL，不扩展支持用户筛选和最多 30 天范围的
+  既有生成看板契约。
+- 新增、网页活跃、创作留存和支付生命周期只从正式生产 epoch 之后累积；epoch 只能由
+  显式命令通过 `operations.initializeEpoch` 幂等初始化，迁移不得自动写入或推断。
+- 页面汇总、趋势、明细和三类 CSV 必须共享同一日期范围、应用时区、epoch 和事实谓词；
+  数量、金额与积分发布前必须完成零差异对账。
+- 运营 CSV 处理与清理任务默认关闭；文件到期后先标记 `expired` 并拒绝下载，再独立重试
+  物理删除。失败记录、重试关系和下载许可均保留审计。
+
+生产初始化、导出恢复、数据核对与回滚步骤见
+[operations-dashboard-runbook.md](memory/operations-dashboard-runbook.md)。本地 PostgreSQL
+不变量与查询计划验证见
+[2026-08-14-operations-dashboard-postgresql-verification.md](memory/2026-08-14-operations-dashboard-postgresql-verification.md)，
+大 CSV、租约恢复、七天边界与孤儿对象清理验证见
+[2026-08-14-operations-dashboard-export-reliability-verification.md](memory/2026-08-14-operations-dashboard-export-reliability-verification.md)。
+
 ## 部署与迁移
 
 - Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。

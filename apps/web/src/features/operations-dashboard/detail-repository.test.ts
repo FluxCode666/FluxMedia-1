@@ -1,0 +1,460 @@
+/**
+ * 运营增长、商业化与内容明细 SQL 同源谓词及 keyset 测试。
+ *
+ * 不连接数据库；通过编译 SQL 证明累计、增长桶、支付阶段、履约收入、内容和
+ * Cohort 均可逐行反算，且分页始终比较原始 business_time 和稳定主键。
+ */
+import { PgDialect } from "drizzle-orm/pg-core";
+import { describe, expect, it } from "vitest";
+
+import { toOperationsCursorTimestamp } from "./database-timestamp";
+import {
+  buildOperationsActivityDetailSql,
+  buildOperationsCohortDetailSql,
+  buildOperationsCohortExportDetailSql,
+  buildOperationsCommercialDetailSql,
+  buildOperationsContentDetailSql,
+  buildOperationsCumulativeUserDetailSql,
+  buildOperationsNewUserDetailSql,
+  createOperationsGrowthDetailRepository,
+  paginateOperationsGrowthDetailRows,
+} from "./detail-repository";
+
+const dialect = new PgDialect();
+const base = {
+  start: new Date("2026-08-01T00:00:00.000Z"),
+  end: new Date("2026-08-08T00:00:00.000Z"),
+  epochStart: new Date("2026-08-01T00:00:00.000Z"),
+  asOf: new Date("2026-08-08T00:00:00.000Z"),
+  cursor: {
+    businessTime: new Date("2026-08-05T12:00:00.000Z"),
+    businessTimeKey: "2026-08-05T12:00:00.000000Z",
+    stableId: "user-5",
+  },
+  limit: 101,
+};
+
+describe("operations growth detail repository SQL", () => {
+  it("新增用户明细无角色过滤并使用双列 keyset", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsNewUserDetailSql({ ...base, kind: "users" })
+    );
+
+    expect(compiled.sql).toContain('from "user"');
+    expect(compiled.sql).toContain('("user"."created_at", "user"."id") <');
+    expect(compiled.sql).toContain(
+      'order by "user"."created_at" desc, "user"."id" desc'
+    );
+    expect(compiled.sql).not.toContain("date_trunc('milliseconds'");
+    expect(compiled.sql).not.toContain("role =");
+    expect(compiled.sql).not.toContain("banned =");
+  });
+
+  it("累计用户明细只使用截止上界并保留 epoch 前账户", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCumulativeUserDetailSql({
+        ...base,
+        kind: "cumulative_users",
+      })
+    );
+
+    expect(compiled.sql).toContain('from "user"');
+    expect(compiled.sql).toContain('"user"."created_at" <');
+    expect(compiled.sql).not.toContain('"user"."created_at" >=');
+    expect(compiled.sql).not.toContain("role =");
+    expect(compiled.sql).not.toContain("banned =");
+  });
+
+  it("创作活跃明细复用成功产物事实并每用户仅一行", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsActivityDetailSql({
+        ...base,
+        kind: "activity",
+        activityKind: "creation",
+      })
+    );
+
+    expect(compiled.sql).toContain('from "user_output_usage_event"');
+    expect(compiled.sql).toContain("group by scoped_activity.user_id");
+    expect(compiled.sql).toContain("min(scoped_activity.business_time)");
+    expect(compiled.sql).toContain("activity_users.business_time <");
+    expect(compiled.sql).toContain(
+      "(activity_users.business_time, activity_users.user_id) <"
+    );
+  });
+
+  it("付费活跃明细只使用已履约充值订单", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsActivityDetailSql({
+        ...base,
+        kind: "activity",
+        activityKind: "payment",
+      })
+    );
+
+    expect(compiled.sql).toContain('from "payment_order"');
+    expect(compiled.sql).toContain("= 'fulfilled'");
+    expect(compiled.sql).toContain("in ('credit_top_up', 'credit_package')");
+  });
+
+  it("Cohort 明细每注册用户一行且目标日创作投影为 retained", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCohortDetailSql({
+        ...base,
+        kind: "cohort",
+        targetStart: new Date("2026-08-02T00:00:00.000Z"),
+        targetEnd: new Date("2026-08-03T00:00:00.000Z"),
+      })
+    );
+
+    expect(compiled.sql).toContain("exists (");
+    expect(compiled.sql).toContain('from "user_output_usage_event"');
+    expect(compiled.sql).toContain("as retained");
+    expect(compiled.sql).not.toContain("join user_output_usage_event");
+  });
+
+  it("拒绝无界、未成熟或过大的明细读取", () => {
+    expect(() =>
+      buildOperationsNewUserDetailSql({
+        ...base,
+        kind: "users",
+        limit: 10_002,
+      })
+    ).toThrow("运营增长明细查询无效");
+    expect(() =>
+      buildOperationsCohortDetailSql({
+        ...base,
+        kind: "cohort",
+        targetStart: new Date("2026-08-09T00:00:00.000Z"),
+        targetEnd: new Date("2026-08-10T00:00:00.000Z"),
+      })
+    ).toThrow("Cohort 目标日范围无效");
+  });
+
+  it.each([
+    "orders",
+    "payment_lifecycle",
+  ] as const)("商业化 %s 明细受范围、epoch、asOf 和双列 keyset 约束", (kind) => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({ ...base, kind })
+    );
+
+    expect(compiled.sql).toContain('from "payment_order"');
+    expect(compiled.sql).toContain("in ('credit_top_up', 'credit_package')");
+    expect(compiled.sql).toContain("business_time >=");
+    expect(compiled.sql).toContain("business_time <");
+    expect(compiled.sql).toContain(
+      "(scoped_commercial.business_time, scoped_commercial.stable_id) <"
+    );
+    expect(compiled.sql).not.toContain("date_trunc('milliseconds'");
+    if (kind === "orders") {
+      expect(compiled.sql).toContain('"payment_order"."created_at"');
+      expect(compiled.sql).not.toContain(
+        '"payment_order"."status" = \'fulfilled\''
+      );
+    } else {
+      expect(compiled.sql).toContain('"payment_lifecycle_event"."occurred_at"');
+      expect(compiled.sql).toContain(
+        '"payment_lifecycle_event"."event_type" in ('
+      );
+    }
+    expect(compiled.sql).not.toContain("credits_transaction");
+  });
+
+  it("履约订单明细以 fulfilled_at 为业务时间并按币种过滤", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind: "fulfilled_orders",
+        currency: "CNY",
+      })
+    );
+
+    expect(compiled.sql).toContain('"payment_order"."status" = \'fulfilled\'');
+    expect(compiled.sql).toContain('"payment_order"."fulfilled_at"');
+    expect(compiled.sql).toContain("upper(");
+    expect(compiled.params).toContain("CNY");
+  });
+
+  it("冻结履约订单按生命周期高水位推导并按订单折叠", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind: "fulfilled_orders",
+        currency: "CNY",
+        highWatermarks: {
+          users: null,
+          webVisits: null,
+          outputs: null,
+          paymentOrders: {
+            createdAt: "2026-08-07T00:00:00.000001Z",
+            id: "order-z",
+          },
+          paymentLifecycle: {
+            recordedAt: "2026-08-07T00:00:00.000002Z",
+            id: "event-z",
+          },
+          creditContributions: null,
+        },
+      })
+    );
+
+    expect(compiled.sql).toContain("target_orders as");
+    expect(compiled.sql).toContain("frozen_events as");
+    expect(compiled.sql).toContain("frozen_order_facts as");
+    expect(compiled.sql).toContain("'fulfillment_succeeded'");
+    expect(compiled.sql).toContain("group by frozen_events.payment_order_id");
+    expect(compiled.sql).toMatch(
+      /"payment_lifecycle_event"\."recorded_at",\s+"payment_lifecycle_event"\."id"\s+\) <=/u
+    );
+    expect(compiled.sql).toContain(
+      "frozen_order_facts.fulfillment_time as fulfilled_at"
+    );
+    expect(compiled.sql).not.toContain(
+      '"payment_order"."status" = \'fulfilled\''
+    );
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
+  });
+
+  it.each([
+    "orders",
+    "payment_lifecycle",
+  ] as const)("冻结 %s 明细从生命周期事实推导可变订单字段", (kind) => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind,
+        highWatermarks: {
+          users: null,
+          webVisits: null,
+          outputs: null,
+          paymentOrders: {
+            createdAt: "2026-08-07T00:00:00.000001Z",
+            id: "order-z",
+          },
+          paymentLifecycle: {
+            recordedAt: "2026-08-07T00:00:00.000002Z",
+            id: "event-z",
+          },
+          creditContributions: null,
+        },
+      })
+    );
+
+    expect(compiled.sql).toContain("frozen_order_facts.latest_event_type");
+    expect(compiled.sql).toContain("frozen_order_facts.has_provider_reference");
+    expect(compiled.sql).toContain(
+      "frozen_order_facts.fulfillment_time as fulfilled_at"
+    );
+    expect(compiled.sql).not.toContain(
+      '"payment_order"."status" as order_status'
+    );
+    expect(compiled.sql).not.toContain(
+      '"payment_order"."fulfilled_at" as fulfilled_at'
+    );
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
+    if (kind === "orders") {
+      expect(compiled.params).toContain("2026-08-07T00:00:00.000001Z");
+    }
+  });
+
+  it("支付阶段明细复用阶段布尔条件并保证每个订单只返回一行", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCommercialDetailSql({
+        ...base,
+        kind: "payment_stage",
+        stage: "paid_not_fulfilled_orders",
+        currency: "CNY",
+      })
+    );
+
+    expect(compiled.sql).toContain("bool_or(");
+    expect(compiled.sql).toContain("order_flags.has_payment");
+    expect(compiled.sql).toContain("not order_flags.has_fulfillment");
+    expect(compiled.sql).toContain("not order_flags.has_failure");
+    expect(compiled.params).toContain("CNY");
+    expect(compiled.sql).toContain("group by");
+  });
+
+  it.each([
+    "image_outputs",
+    "video_outputs",
+    "credit_usage",
+  ] as const)("内容 %s 明细由成功产物驱动并使用稳定积分关联", (detail) => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsContentDetailSql({
+        ...base,
+        kind: "content",
+        detail,
+        cursor: {
+          ...base.cursor,
+          stableId: `${detail === "video_outputs" ? "video" : "image"}:task-5`,
+        },
+      })
+    );
+
+    expect(compiled.sql).toContain('from "user_output_usage_event"');
+    expect(compiled.sql).toContain(
+      'left join "credit_usage_operation" as credit_lookup'
+    );
+    expect(compiled.sql).toContain(
+      "credit_lookup.operation_created_at = paged_outputs.business_time"
+    );
+    expect(compiled.sql).toContain("mismatch_lookup.operation_created_at <>");
+    expect(compiled.sql).toContain('left join "generation"');
+    expect(compiled.sql).toContain('left join "video_generation"');
+    expect(compiled.sql).toMatch(
+      /scoped_outputs\.business_time,\s+scoped_outputs\.sort_output_kind,\s+scoped_outputs\.task_id/u
+    );
+    expect(compiled.sql).toContain("::output_usage_kind");
+    expect(compiled.sql).toContain(
+      "order by scoped_outputs.business_time desc"
+    );
+    expect(compiled.sql).not.toContain(
+      "order by scoped_outputs.business_time desc, scoped_outputs.stable_id"
+    );
+    expect(compiled.sql).not.toContain("prompt");
+    expect(compiled.sql).not.toContain("storage_key");
+    expect(compiled.sql).not.toContain("video_url");
+  });
+
+  it("冻结导出按不可变积分贡献和各事实高水位重算，不读取可变净用量", () => {
+    const highWatermarks = {
+      users: { createdAt: "2026-08-07T00:00:00.000001Z", id: "user-z" },
+      webVisits: null,
+      outputs: {
+        createdAt: "2026-08-07T00:00:00.000002Z",
+        outputKind: "video",
+        sourceTaskId: "task-z",
+      },
+      paymentOrders: null,
+      paymentLifecycle: null,
+      creditContributions: {
+        projectedAt: "2026-08-07T00:00:00.000003Z",
+        transactionId: "tx-z",
+      },
+    };
+    const compiled = dialect.sqlToQuery(
+      buildOperationsContentDetailSql({
+        ...base,
+        kind: "content",
+        detail: "credit_usage",
+        highWatermarks,
+        cursor: { ...base.cursor, stableId: "image:task-5" },
+      })
+    );
+
+    expect(compiled.sql).toContain('from "credit_usage_projection_entry"');
+    expect(compiled.sql).toContain("frozen_credit_lookup.net_consumed");
+    expect(compiled.sql).toContain(
+      '"credit_usage_projection_entry"."projected_at"'
+    );
+    expect(compiled.sql).toContain('"user_output_usage_event"."created_at"');
+    expect(compiled.sql).not.toContain(
+      "coalesce(credit_lookup.net_consumed, 0)"
+    );
+    expect(compiled.sql).toContain("paged_outputs");
+    expect(compiled.sql).toContain("join paged_outputs");
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000002Z");
+    expect(compiled.params).toContain("2026-08-07T00:00:00.000003Z");
+  });
+
+  it("Cohort 导出按留存日覆盖完整注册范围并使用无损时间排序", () => {
+    const compiled = dialect.sqlToQuery(
+      buildOperationsCohortExportDetailSql({
+        ...base,
+        kind: "cohort_export",
+        retentionDay: 7,
+        timeZone: "Asia/Shanghai",
+      })
+    );
+
+    expect(compiled.sql).toContain("cohort_users.cohort_date +");
+    expect(compiled.sql).not.toContain("date_trunc('milliseconds'");
+    expect(compiled.sql).toContain(
+      "order by cohort_users.business_time desc, cohort_users.user_id desc"
+    );
+    expect(compiled.sql).toContain("at time zone");
+    expect(compiled.sql).not.toContain("generate_series");
+    expect(compiled.sql).toMatch(
+      /"user_output_usage_event"\."operation_created_at" >= \(/
+    );
+    expect(compiled.sql).toMatch(
+      /"user_output_usage_event"\."operation_created_at" < \(/
+    );
+    expect(compiled.sql).not.toMatch(
+      /"user_output_usage_event"\."operation_created_at"[\s\S]*\)::date =/
+    );
+  });
+
+  it("以最后一个已返回行签发下一页原始 keyset", () => {
+    const makeRow = (userId: string, businessTime: string) => ({
+      kind: "growth" as const,
+      userId,
+      name: userId,
+      email: `${userId}@example.com`,
+      role: "user",
+      banned: false,
+      businessTime: new Date(businessTime),
+      businessTimeKey: toOperationsCursorTimestamp(new Date(businessTime)),
+      retained: null,
+    });
+    const page = paginateOperationsGrowthDetailRows(
+      [
+        makeRow("user-3", "2026-08-03T00:00:00.000Z"),
+        makeRow("user-2", "2026-08-02T00:00:00.000Z"),
+        makeRow("user-1", "2026-08-01T00:00:00.000Z"),
+      ],
+      2
+    );
+
+    expect(page.rows.map((row) => row.userId)).toEqual(["user-3", "user-2"]);
+    expect(page.nextCursor).toEqual({
+      businessTime: new Date("2026-08-02T00:00:00.000Z"),
+      businessTimeKey: "2026-08-02T00:00:00.000000Z",
+      stableId: "user-2",
+    });
+  });
+
+  it("明细头与行读取共享单一只读 repeatable-read 事务", async () => {
+    const connection = {
+      marker: "detail-transaction",
+      async execute(this: { marker: string }) {
+        expect(this.marker).toBe("detail-transaction");
+        return {
+          rows: [
+            {
+              as_of: "2026-08-08T00:00:00.000Z",
+              app_date: "2026-08-01",
+              starts_at: "2026-08-01T00:00:00.000Z",
+            },
+          ],
+        };
+      },
+    };
+    const transaction = async <T>(
+      work: (transaction: { execute: typeof connection.execute }) => Promise<T>,
+      config: {
+        isolationLevel: "repeatable read";
+        accessMode: "read only";
+      }
+    ): Promise<T> => {
+      expect(config).toEqual({
+        isolationLevel: "repeatable read",
+        accessMode: "read only",
+      });
+      return work(connection);
+    };
+    const repository = createOperationsGrowthDetailRepository({ transaction });
+
+    await expect(
+      repository.withReadOnlySnapshot((reader) => reader.readHeader())
+    ).resolves.toEqual({
+      asOf: new Date("2026-08-08T00:00:00.000Z"),
+      epoch: {
+        appDate: "2026-08-01",
+        startsAt: new Date("2026-08-01T00:00:00.000Z"),
+      },
+    });
+  });
+});

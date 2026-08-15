@@ -67,6 +67,7 @@ async function handleAlipayWebhook(req: Request) {
         totalAmount: params.total_amount,
         appId: params.app_id,
         sellerId: params.seller_id,
+        gmtPayment: params.gmt_payment,
       },
       { type: "webhook", provider: "alipay" }
     );

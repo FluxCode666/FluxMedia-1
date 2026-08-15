@@ -348,6 +348,16 @@ function normalizeDraftValue(setting: SettingSnapshotItem): DraftValue {
   return setting.value || "";
 }
 
+/**
+ * 判断配置是否属于运营 CSV 导出后台任务，供设置页集中展示安全提示。
+ *
+ * @param key - 系统设置键。
+ * @returns 属于导出处理或过期清理配置时为 true。
+ */
+function isOperationsExportJobSetting(key: SettingKey) {
+  return key.startsWith("INTERNAL_JOB_OPERATIONS_EXPORT_");
+}
+
 function toSubmitValue(setting: SettingSnapshotItem, value: DraftValue) {
   if (setting.valueType === "boolean") return Boolean(value);
   if (setting.valueType === "number") return Number(value);
@@ -1168,6 +1178,15 @@ export function SystemSettingsPanel({
                   onSaved={() => loadSettings()}
                 />
               )}
+
+              {category.id === "general" &&
+                categorySettings.some((setting) =>
+                  isOperationsExportJobSetting(setting.key)
+                ) && (
+                  <div className="rounded-lg border px-4 py-3 text-sm text-muted-foreground lg:col-span-2">
+                    运营导出处理与过期清理是两个独立任务，默认均关闭；启用处理前请先确认对象存储支持流式写入，启用清理后已完成文件将在七天保留期结束后不可下载。
+                  </div>
+                )}
 
               {category.id === "mail" ? notificationModule : null}
 
