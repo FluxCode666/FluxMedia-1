@@ -29,6 +29,7 @@ test("增长与内容明细使用可关闭并恢复焦点的 Sheet", async ({ pa
   const growthCard = getCardByTitle(page, "新增用户");
   const growthTrigger = growthCard.getByRole("button", { name: "核对明细" });
   await growthTrigger.click();
+  await expect(page).toHaveURL(/detail=users/);
   const growthDialog = page.getByRole("dialog");
   await expect(
     growthDialog.getByRole("heading", { name: "新增用户明细" })
@@ -38,10 +39,18 @@ test("增长与内容明细使用可关闭并恢复焦点的 Sheet", async ({ pa
   ).toBeVisible();
   await growthDialog.getByRole("button", { name: "Close" }).click();
   await expect(growthDialog).toBeHidden();
+  await expect(page).not.toHaveURL(/detail=/);
   await expect(growthTrigger).toBeFocused();
+
+  await page.goForward();
+  await expect(page).toHaveURL(/detail=users/);
+  await expect(growthDialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(growthDialog).toBeHidden();
 
   const contentTrigger = page.getByRole("button", { name: "核对生图明细" });
   await contentTrigger.click();
+  await expect(page).toHaveURL(/detail=image_outputs/);
   const contentDialog = page.getByRole("dialog");
   await expect(
     contentDialog.getByRole("heading", { name: "生图明细" })
@@ -54,7 +63,24 @@ test("增长与内容明细使用可关闭并恢复焦点的 Sheet", async ({ pa
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(contentDialog).toBeHidden();
+  await expect(page).not.toHaveURL(/detail=/);
   await expect(contentTrigger).toBeFocused();
+});
+
+test("分享明细深链可在首屏直接恢复同一 Sheet", async ({ page }) => {
+  await page.goto("/zh/dashboard/admin/operations?detail=users");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "运营总览" })
+  ).toBeVisible();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("heading", { name: "新增用户明细" })
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("cell", { name: "operations-e2e-user@example.test" })
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/detail=/);
 });
 
 test("三类导出入口创建任务并保留当前筛选", async ({ page }) => {

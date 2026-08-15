@@ -143,6 +143,9 @@ export function buildOperationsWebEnvironment(
     BETTER_AUTH_SECRET: environment.betterAuthSecret,
     BETTER_AUTH_URL: environment.baseUrl,
     NEXT_PUBLIC_APP_URL: environment.baseUrl,
+    // WHY：显式清空开发环境的启动超管，防止其污染只允许固定夹具用户的隔离库。
+    FLUXMEDIA_SUPER_ADMIN_EMAIL: "",
+    FLUXMEDIA_SUPER_ADMIN_PASSWORD: "",
     APP_TIME_ZONE: "Asia/Shanghai",
     REDIS_HOST: environment.redis.host,
     REDIS_PORT: String(environment.redis.port),

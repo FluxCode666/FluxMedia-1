@@ -69,6 +69,7 @@ export default async function OperationsDashboardPage({
         initialExportsLoadFailed={pageData.exportsLoadError !== null}
         initialExportsNextCursor={pageData.exportsNextCursor}
         initialFailureStatus={pageData.loadError}
+        initialDetailSelection={parsedQuery.detailSelection}
         initialQuery={parsedQuery.input}
         initialSnapshot={pageData.overview}
         invalidDeepLinkHref={

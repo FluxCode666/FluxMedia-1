@@ -9,6 +9,7 @@
 
 import type {
   OperationsDashboardQueryInput,
+  OperationsDetailSelection,
   OperationsExportTask,
   OperationsPaymentLifecycleStage,
 } from "@repo/shared/operations-dashboard/contracts";
@@ -47,7 +48,10 @@ import {
 } from "./operations-dashboard-format";
 import { OperationsDashboardHealth } from "./operations-dashboard-health";
 import { OperationsMetricCard } from "./operations-dashboard-metric-card";
-import { buildOperationsDashboardHref } from "./operations-dashboard-query";
+import {
+  buildOperationsDashboardHref,
+  parseOperationsDashboardSearchParams,
+} from "./operations-dashboard-query";
 import type { OperationsDashboardOverview } from "./operations-dashboard-service";
 import {
   applyOperationsDashboardFailure,
@@ -60,13 +64,13 @@ import {
   OperationsDetailSheet,
   type OperationsDetailSheetProps,
 } from "./operations-detail-sheet";
-import type { OperationsDetailSelection } from "./operations-detail-sheet-data";
 
 type OperationsDashboardPanelProps = {
   currentUserId: string;
   initialSnapshot: OperationsDashboardOverview | null;
   initialQuery: OperationsDashboardQueryInput;
   initialFailureStatus?: OperationsDashboardActionFailure | null;
+  initialDetailSelection?: OperationsDetailSelection | null;
   initialExports: OperationsExportTask[];
   initialExportsNextCursor: string | null;
   initialExportsLoadFailed?: boolean;
@@ -115,14 +119,41 @@ function resolvePaymentDetailStage(
  * @param query 已由 UOL 返回完整成功快照的筛选条件。
  * @sideEffects 使用 History API 原地替换当前浏览器 URL，不新增历史记录。
  */
-function replaceAppliedQueryUrl(query: OperationsDashboardQueryInput): void {
-  const canonicalHref = buildOperationsDashboardHref(query);
+function replaceAppliedQueryUrl(
+  query: OperationsDashboardQueryInput,
+  detailSelection: OperationsDetailSelection | null = null
+): void {
+  const canonicalHref = buildOperationsDashboardHref(query, detailSelection);
   const queryIndex = canonicalHref.indexOf("?");
   const search = queryIndex >= 0 ? canonicalHref.slice(queryIndex) : "";
   window.history.replaceState(
     window.history.state,
     "",
     `${window.location.pathname}${search}`
+  );
+}
+
+/** 为页面内打开的明细增加一条历史记录，使后退关闭、前进恢复同一 Sheet。 */
+function pushDetailUrl(
+  query: OperationsDashboardQueryInput,
+  detailSelection: OperationsDetailSelection
+): void {
+  const canonicalHref = buildOperationsDashboardHref(query, detailSelection);
+  const queryIndex = canonicalHref.indexOf("?");
+  const search = queryIndex >= 0 ? canonicalHref.slice(queryIndex) : "";
+  window.history.pushState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${search}`
+  );
+}
+
+/** 从浏览器当前位置读取运营白名单参数，供历史前进/后退恢复明细状态。 */
+function readCurrentDashboardDeepLink(): ReturnType<
+  typeof parseOperationsDashboardSearchParams
+> {
+  return parseOperationsDashboardSearchParams(
+    Object.fromEntries(new URLSearchParams(window.location.search))
   );
 }
 
@@ -178,6 +209,7 @@ export function OperationsDashboardPanel({
   initialExportsLoadFailed = false,
   initialExportsNextCursor,
   initialFailureStatus = null,
+  initialDetailSelection = null,
   initialQuery,
   initialSnapshot,
   invalidDeepLinkHref = null,
@@ -197,8 +229,9 @@ export function OperationsDashboardPanel({
     invalidDeepLinkHref ? t("state.invalidDeepLink") : ""
   );
   const [detailSelection, setDetailSelection] =
-    useState<OperationsDetailSelection | null>(null);
+    useState<OperationsDetailSelection | null>(initialDetailSelection);
   const detailTriggerRef = useRef<HTMLElement | null>(null);
+  const detailOpenedFromPageRef = useRef(false);
   const requestGate = useRef(createOperationsDashboardRequestGate());
 
   useEffect(() => {
@@ -212,6 +245,24 @@ export function OperationsDashboardPanel({
     },
     []
   );
+
+  useEffect(() => {
+    /** 浏览器历史只恢复与当前已应用筛选一致的合法明细，拒绝旧筛选污染快照。 */
+    function handlePopState(): void {
+      const parsed = readCurrentDashboardDeepLink();
+      if (
+        parsed.invalidDeepLink ||
+        JSON.stringify(parsed.input) !== JSON.stringify(view.query)
+      ) {
+        return;
+      }
+      detailOpenedFromPageRef.current = false;
+      setDetailSelection(parsed.detailSelection);
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [view.query]);
 
   /** 请求一份完整一致快照，只有最新成功请求可以同时替换查询和页面数据。 */
   async function requestSnapshot(
@@ -233,6 +284,8 @@ export function OperationsDashboardPanel({
       setView((current) =>
         applyOperationsDashboardSnapshot(current, result.snapshot, query)
       );
+      detailOpenedFromPageRef.current = false;
+      setDetailSelection(null);
       replaceAppliedQueryUrl(query);
       setLiveMessage(t("state.updated"));
       return;
@@ -254,7 +307,9 @@ export function OperationsDashboardPanel({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    detailOpenedFromPageRef.current = true;
     setDetailSelection(selection);
+    pushDetailUrl(view.query, selection);
   }
 
   /** 关闭记录级明细、清空旧选择，并在 Sheet 卸载后恢复触发按钮焦点。 */
@@ -263,6 +318,12 @@ export function OperationsDashboardPanel({
     const trigger = detailTriggerRef.current;
     detailTriggerRef.current = null;
     setDetailSelection(null);
+    if (detailOpenedFromPageRef.current) {
+      detailOpenedFromPageRef.current = false;
+      window.history.back();
+    } else {
+      replaceAppliedQueryUrl(view.query);
+    }
     requestAnimationFrame(() => {
       if (trigger?.isConnected) trigger.focus();
     });

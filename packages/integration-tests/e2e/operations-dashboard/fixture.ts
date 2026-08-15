@@ -240,13 +240,7 @@ async function createFixtureUsers(
           id, name, email, email_verified, role, banned, created_at, updated_at
         ) values ($1, $2, $3, true, $4, false, $5, $5)
       `,
-      [
-        fixture.id,
-        fixture.name,
-        fixture.email,
-        fixture.role,
-        databaseCreatedAt,
-      ]
+      [fixture.id, fixture.name, fixture.email, fixture.role, databaseCreatedAt]
     );
     await client.query(
       `
@@ -312,7 +306,12 @@ async function ensureFixtureEpoch(
       select
         1,
         to_char((now() at time zone 'Asia/Shanghai')::date, 'YYYY-MM-DD'),
-        ((now() at time zone 'Asia/Shanghai')::date)::timestamp,
+        (
+          (
+            ((now() at time zone 'Asia/Shanghai')::date)::timestamp
+            at time zone 'Asia/Shanghai'
+          ) at time zone 'UTC'
+        ),
         $1,
         'operations-e2e-epoch-v1',
         now()
@@ -327,6 +326,21 @@ async function ensureFixtureEpoch(
   `);
   const epoch = result.rows[0];
   if (!epoch) throw new Error("运营 E2E epoch 初始化后仍不可读");
+  const expectedStartsAt = await client.query<{ startsAt: Date }>(
+    `
+      select (
+        ($1::date)::timestamp at time zone 'Asia/Shanghai'
+      ) as "startsAt"
+    `,
+    [epoch.appDate]
+  );
+  if (
+    expectedStartsAt.rows[0]?.startsAt.getTime() !== epoch.startsAt.getTime()
+  ) {
+    throw new Error(
+      "运营 E2E 专用数据库的不可变 epoch 时区边界错误，请重建该测试数据库"
+    );
+  }
   return epoch;
 }
 
@@ -450,15 +464,9 @@ async function createFixtureOperationsFacts(
   const timelineStep = getFixtureTimelineStep(appDay);
   const visitAt = offsetInstant(appDay.startsAt, 2 * timelineStep);
   const imageAt = offsetInstant(appDay.startsAt, 3 * timelineStep);
-  const imageCompletedAt = offsetInstant(
-    imageAt,
-    Math.floor(timelineStep / 2)
-  );
+  const imageCompletedAt = offsetInstant(imageAt, Math.floor(timelineStep / 2));
   const videoAt = offsetInstant(appDay.startsAt, 4 * timelineStep);
-  const videoCompletedAt = offsetInstant(
-    videoAt,
-    Math.floor(timelineStep / 2)
-  );
+  const videoCompletedAt = offsetInstant(videoAt, Math.floor(timelineStep / 2));
   const orderCreatedAt = offsetInstant(appDay.startsAt, 5 * timelineStep);
   const orderConfirmedAt = offsetInstant(appDay.startsAt, 6 * timelineStep);
   const orderFulfilledAt = offsetInstant(appDay.startsAt, 7 * timelineStep);
@@ -560,11 +568,7 @@ async function createFixtureOperationsFacts(
           'fulfillment_succeeded', 'operations-e2e-payment-fulfilled', $3, $3,
           'server_generated', 'fixture')
     `,
-    [
-      databaseOrderCreatedAt,
-      databaseOrderConfirmedAt,
-      databaseOrderFulfilledAt,
-    ]
+    [databaseOrderCreatedAt, databaseOrderConfirmedAt, databaseOrderFulfilledAt]
   );
 }
 

@@ -172,6 +172,7 @@ export function OperationsDashboardFilter({
                   to: formatCalendarDate(range?.to),
                 })
               }
+              resetOnSelect
               selected={
                 draftCalendarRange.from ? draftCalendarRange : undefined
               }

@@ -75,7 +75,12 @@ export function OperationsDashboardCohort({
         <CardDescription>{t("growth.cohort.description")}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="max-h-[28rem] overflow-auto rounded-xl border">
+        <section
+          aria-label={t("growth.cohort.title")}
+          className="max-h-[28rem] overflow-auto rounded-xl border"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: 固定高度滚动表须允许 Safari 键盘用户聚焦后滚动。
+          tabIndex={0}
+        >
           <table className="w-full min-w-[42rem] border-collapse text-sm">
             <caption className="sr-only">
               {t("growth.cohort.description")}
@@ -149,7 +154,7 @@ export function OperationsDashboardCohort({
               ))}
             </tbody>
           </table>
-        </div>
+        </section>
       </CardContent>
     </Card>
   );

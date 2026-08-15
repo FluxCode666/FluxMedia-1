@@ -15,6 +15,9 @@ import {
   requireOperationsE2EEnvironment,
 } from "./e2e/operations-dashboard/environment";
 
+// WHY：夹具进程同样会读写 timestamp without time zone，必须与部署进程固定为 UTC。
+process.env.TZ = "UTC";
+
 const environment = requireOperationsE2EEnvironment();
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 const inheritedEnvironment = Object.fromEntries(
