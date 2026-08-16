@@ -53,6 +53,7 @@ import {
   getRuntimeSettingNumber,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
+import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
@@ -62,6 +63,7 @@ import {
   ApiVideoRecoveryConfigInvalidError,
   createRuntimeBackendSession,
   loadApiVideoRecoveryConfig,
+  resolveAuthoritativeRuntimeVideoQuote,
 } from "@/features/image-backend-pool/runtime-service";
 import { BackendSchedulerError } from "@/features/image-backend-pool/scheduler-error";
 import {
@@ -79,6 +81,13 @@ import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import { createVideoCreditOperation } from "./credit-operation-context";
 import { loadMediaInputs } from "./media-input-loader";
 import { defaultVideoApiKeyQuotaRepository } from "./video-api-key-quota";
+import {
+  assertAuthoritativeVideoCapabilitySnapshot,
+  assertVideoBillingMetadataPreserved,
+  assertVideoSnapshotAmount,
+  createVideoBillingLedgerMetadata,
+  resolvePersistedVideoTaskBilling,
+} from "./video-billing-lifecycle";
 import { createVideoCallbackDeliveryValues } from "./video-callback-delivery";
 import { reconcileVideoCreditConsumption } from "./video-credit-consumption";
 import {
@@ -285,6 +294,12 @@ async function compareAndSetVideoStage(input: {
   expectedStages: VideoStage[];
   values: Partial<typeof videoGeneration.$inferInsert>;
 }): Promise<VideoGenerationRow | null> {
+  if (input.values.metadata !== undefined) {
+    assertVideoBillingMetadataPreserved(
+      input.row.metadata,
+      input.values.metadata
+    );
+  }
   const claimCondition = input.row.claimToken
     ? eq(videoGeneration.claimToken, input.row.claimToken)
     : isNull(videoGeneration.claimToken);
@@ -842,11 +857,11 @@ async function scheduleVideoSubmissionRetry(input: {
  * `adobe-video` 是已上线账本、退款和历史回填共同依赖的稳定命名空间；API 视频
  * 接入后仍须沿用，避免同一任务以新前缀产生第二笔消费或无法命中原退款记录。
  */
-async function hasVideoCreditConsumption(
+async function getVideoCreditConsumptionAmount(
   row: VideoGenerationRow
-): Promise<boolean> {
+): Promise<number | null> {
   const [transaction] = await db
-    .select({ id: creditsTransaction.id })
+    .select({ amount: creditsTransaction.amount })
     .from(creditsTransaction)
     .where(
       and(
@@ -856,7 +871,14 @@ async function hasVideoCreditConsumption(
       )
     )
     .limit(1);
-  return Boolean(transaction);
+  return transaction?.amount ?? null;
+}
+
+/** 兼容遗留恢复分类器，只暴露稳定 sourceRef 是否已经产生消费账本。 */
+async function hasVideoCreditConsumption(
+  row: VideoGenerationRow
+): Promise<boolean> {
+  return (await getVideoCreditConsumptionAmount(row)) !== null;
 }
 
 /** 判断对象存储错误是否明确证明历史输入对象已经不存在。 */
@@ -1096,9 +1118,12 @@ async function consumeVideoCredits(input: {
   amount: number;
   metadata: Record<string, unknown>;
 }) {
+  const { billing } = resolvePersistedVideoTaskBilling(input.row.metadata);
+  assertVideoSnapshotAmount(billing, input.amount, "扣费");
   // 与历史消费查询和退款共用同一幂等命名空间，不能按当前上游协议改名。
   const sourceRef = `adobe-video:${input.row.id}`;
   return reconcileVideoCreditConsumption({
+    expectedAmount: input.amount,
     consume: () =>
       consumeCredits({
         userId: input.row.userId,
@@ -1110,9 +1135,15 @@ async function consumeVideoCredits(input: {
           input.row.id,
           input.row.createdAt
         ),
-        metadata: input.metadata,
+        metadata: {
+          ...input.metadata,
+          ...(billing.kind === "snapshot"
+            ? createVideoBillingLedgerMetadata(billing.snapshot)
+            : {}),
+        },
       }),
-    hasLedgerConsumption: () => hasVideoCreditConsumption(input.row),
+    getLedgerConsumptionAmount: () =>
+      getVideoCreditConsumptionAmount(input.row),
     isDefinitiveRejection: (error) =>
       error instanceof InsufficientCreditsError ||
       error instanceof AccountFrozenError,
@@ -1121,6 +1152,8 @@ async function consumeVideoCredits(input: {
 
 /** 幂等退款并标记终态；进程在两步之间退出时 worker 可安全重放。 */
 async function refundClaimedVideo(row: VideoGenerationRow): Promise<void> {
+  const { billing } = resolvePersistedVideoTaskBilling(row.metadata);
+  assertVideoSnapshotAmount(billing, row.creditsConsumed, "退款");
   // 必须命中原消费的历史命名空间，确保 API 与 Adobe 任务都只退款一次。
   const sourceRef = `adobe-video:${row.id}`;
   await refundGenerationCredits({
@@ -1719,6 +1752,31 @@ export async function runVideoGenerationForUser(
       });
       return;
     }
+    // WHY：早期缓存校验只用于快速反馈。真正的计费、能力与分组必须在用户
+    // advisory lock 后由同一 SQL statement 读取，才能避免并发改价形成混合快照。
+    const authoritativeQuote = await resolveAuthoritativeRuntimeVideoQuote(
+      {
+        userId: input.userId,
+        ...(input.apiKeyId ? { apiKeyId: input.apiKeyId } : {}),
+        ...(input.backendGroupId
+          ? { requestedGroupId: input.backendGroupId }
+          : {}),
+        modelId: contract.model,
+        resolution: contract.resolution,
+        durationSeconds: contract.duration,
+      },
+      { execute: (query) => transaction.execute(query) }
+    );
+    assertAuthoritativeVideoCapabilitySnapshot({
+      modelId: contract.model,
+      capabilitySnapshot: input.capabilitySnapshot,
+      marketplaceConfig: authoritativeQuote.marketplaceConfig,
+      videoCapabilityOverrides: authoritativeQuote.videoCapabilityOverrides,
+    });
+    const billingSnapshot = createVideoBillingSnapshot({
+      quote: authoritativeQuote.quote,
+      billingGroupId: authoritativeQuote.group.id,
+    });
     await consumeVideoTaskStagingReservation(transaction, {
       taskId: videoId,
       userId: input.userId,
@@ -1760,14 +1818,13 @@ export async function runVideoGenerationForUser(
         ...(input.requestFingerprint
           ? { requestFingerprint: input.requestFingerprint }
           : {}),
-        ...(input.backendGroupId
-          ? { backendGroupId: input.backendGroupId }
-          : {}),
+        backendGroupId: billingSnapshot.billingGroupId,
         ...(input.negativePrompt
           ? { negativePrompt: input.negativePrompt }
           : {}),
         generateAudio: contract.effectiveAudio,
         videoCapabilitySnapshot: input.capabilitySnapshot,
+        videoBillingSnapshot: billingSnapshot,
       },
       ...(hasInputManifest ? { inputManifest: persistedInputManifest } : {}),
       createdAt,
@@ -1801,7 +1858,9 @@ async function submitClaimedCreatedVideo(
   initialRow: VideoGenerationRow
 ): Promise<VideoGenerationResult> {
   let contract: VideoExecutionContract;
+  let taskBilling: ReturnType<typeof resolvePersistedVideoTaskBilling>;
   try {
+    taskBilling = resolvePersistedVideoTaskBilling(initialRow.metadata);
     contract = resolveVideoExecutionContract({
       model: initialRow.model,
       durationSeconds: initialRow.durationSeconds,
@@ -1861,14 +1920,19 @@ async function submitClaimedCreatedVideo(
     apiAdapterVersionId: row.apiAdapterVersionId,
     attemptedMemberIds: attemptedMemberIdsForRecovery,
   });
+  const trustedGroupSelection =
+    "pinnedGroupId" in taskBilling
+      ? { pinnedGroupId: taskBilling.pinnedGroupId }
+      : backendGroupId
+        ? { requestedGroupId: backendGroupId }
+        : {};
 
-  const globalPricing = await getRuntimeGlobalVideoPricing();
   let backendSession: Awaited<ReturnType<typeof createRuntimeBackendSession>>;
   try {
     backendSession = await createRuntimeBackendSession({
       userId: row.userId,
       ...(row.apiKeyId ? { apiKeyId: row.apiKeyId } : {}),
-      ...(backendGroupId ? { requestedGroupId: backendGroupId } : {}),
+      ...trustedGroupSelection,
       modelId: contract.model,
       requestKind: "video",
       requiresContentSafety: true,
@@ -1957,17 +2021,30 @@ async function submitClaimedCreatedVideo(
     };
   }
 
-  const billedCost = isSubmissionRetry
-    ? row.creditsConsumed
-    : getVideoCreditCost({
-        durationSeconds: contract.duration,
-        creditsPerSecond: resolveEffectiveVideoCreditsPerSecond({
-          family: contract.billingFamily,
-          resolution: contract.resolution,
-          global: globalPricing,
-          group: backendSession.group.videoCreditOverrides,
-        }),
-      });
+  let billedCost: number;
+  if (taskBilling.billing.kind === "snapshot") {
+    billedCost = taskBilling.billing.snapshot.quotedCredits;
+    if (isSubmissionRetry) {
+      assertVideoSnapshotAmount(
+        taskBilling.billing,
+        row.creditsConsumed,
+        "重试"
+      );
+    }
+  } else if (isSubmissionRetry) {
+    billedCost = row.creditsConsumed;
+  } else {
+    const globalPricing = await getRuntimeGlobalVideoPricing();
+    billedCost = getVideoCreditCost({
+      durationSeconds: contract.duration,
+      creditsPerSecond: resolveEffectiveVideoCreditsPerSecond({
+        family: contract.billingFamily,
+        resolution: contract.resolution,
+        global: globalPricing,
+        group: backendSession.group.videoCreditOverrides,
+      }),
+    });
+  }
   const initialLease = backendSession.current;
   if (!initialLease) throw new Error("视频后端租约在扣费前丢失");
   const liveClaimToken = row.claimToken ?? randomUUID();
@@ -2321,7 +2398,7 @@ async function submitClaimedCreatedVideo(
           const switchedSession = await createRuntimeBackendSession({
             userId: row.userId,
             ...(row.apiKeyId ? { apiKeyId: row.apiKeyId } : {}),
-            ...(backendGroupId ? { requestedGroupId: backendGroupId } : {}),
+            ...trustedGroupSelection,
             modelId: contract.model,
             requestKind: "video",
             requiresContentSafety: true,

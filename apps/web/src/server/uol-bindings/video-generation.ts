@@ -36,6 +36,7 @@ import {
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
+import { resolveVideoTaskBilling } from "@repo/shared/video-generation/video-billing-snapshot";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
@@ -68,10 +69,9 @@ import {
 } from "@/features/image-generation/video-task-identity";
 import { prepareVideoTaskInputReferences } from "@/features/image-generation/video-task-preparation";
 import { enqueueVideoTask } from "@/server/media-task-queues";
-
+import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
 import { assertVideoModelEnabled } from "./video-model-availability";
-import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
 
 /**
  * 数据库提交后最佳努力投递视频任务。
@@ -469,15 +469,22 @@ bindExecute(
       let responseRow = persisted;
       if (responseRow?.stage === "created") {
         try {
+          const persistedBilling = resolveVideoTaskBilling(
+            responseRow.metadata
+          );
           const availability = await import(
             "@/features/image-backend-pool/runtime-service"
           ).then((runtime) =>
             runtime.inspectRuntimeVideoBackendAvailability({
               userId: principal.userId,
               ...(apiKeyId ? { apiKeyId } : {}),
-              ...(canonicalInput.backendGroupId
-                ? { requestedGroupId: canonicalInput.backendGroupId }
-                : {}),
+              ...(persistedBilling.kind === "snapshot"
+                ? {
+                    pinnedGroupId: persistedBilling.snapshot.billingGroupId,
+                  }
+                : canonicalInput.backendGroupId
+                  ? { requestedGroupId: canonicalInput.backendGroupId }
+                  : {}),
               modelId: canonicalInput.model,
               requiresContentSafety: true,
               // 自定义模型只能由 API 成员执行；内置模型必须同时统计 API 与
