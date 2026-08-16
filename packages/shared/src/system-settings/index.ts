@@ -9,18 +9,10 @@ import { db } from "@repo/database";
 import { systemSetting } from "@repo/database/schema";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
-  createDefaultVideoModelBillingModes,
-  createDefaultVideoModelCreditsPerItem,
-  DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-  getVideoPricingResolutionKey,
   globalVideoModelCreditsPerSecondSchema,
   parseVideoModelCreditsPerSecond,
   type VideoBillingModelPricingDescriptor,
-  type VideoModelBillingModes,
-  type VideoModelCreditPrices,
-  videoModelBillingModesSchema,
-  videoModelCreditPricesSchema,
 } from "../adobe/video-pricing";
 import {
   createDefaultGlobalImageCreditOverrides,
@@ -61,6 +53,15 @@ import {
   type SiteBranding,
   siteLogoUrlSchema,
 } from "./site-branding";
+import {
+  normalizeVideoModelBillingSettings,
+  type VideoModelBillingSettings,
+} from "./video-billing-settings";
+
+export {
+  normalizeVideoModelBillingSettings,
+  type VideoModelBillingSettings,
+} from "./video-billing-settings";
 
 /**
  * 运营导出与存储配置共用的事务锁名称。
@@ -132,9 +133,7 @@ async function assertOperationsExportStorageConfigurationCanChange(
     limit 1
   `);
   if (hasRows(existing)) {
-    throw new Error(
-      "存储配置暂不可切换：存在未完成或尚未清理的运营导出任务"
-    );
+    throw new Error("存储配置暂不可切换：存在未完成或尚未清理的运营导出任务");
   }
 }
 
@@ -695,66 +694,6 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
   return values.map((value) => value.key);
 }
 
-/** 新视频计费设置的聚合结果；三项必须作为同一个配置事实消费。 */
-export type VideoModelBillingSettings = {
-  readonly billingModes: VideoModelBillingModes;
-  readonly creditsPerSecond: VideoModelCreditPrices;
-  readonly creditsPerItem: VideoModelCreditPrices;
-};
-
-/**
- * 按模型广场中的既有自定义视频模型补齐三套计费设置。
- *
- * @param input - 三项未知设置值与已校验的自定义视频模型描述。
- * @returns 保留全部合法历史键，并补齐内置和自定义模型缺失项的新对象。
- * @sideEffects 无。
- * @throws ZodError - 任一已存在的新设置含非法模式或非正价格时 fail closed。
- */
-export function normalizeVideoModelBillingSettings(input: {
-  billingModes: unknown;
-  creditsPerSecond: unknown;
-  creditsPerItem: unknown;
-  customModels?: readonly VideoBillingModelPricingDescriptor[];
-}): VideoModelBillingSettings {
-  const customModels = input.customModels ?? [];
-  const parsedModes =
-    input.billingModes === undefined
-      ? {}
-      : videoModelBillingModesSchema.parse(input.billingModes);
-  const parsedPerSecond =
-    input.creditsPerSecond === undefined
-      ? {}
-      : videoModelCreditPricesSchema.parse(input.creditsPerSecond);
-  const parsedPerItem =
-    input.creditsPerItem === undefined
-      ? {}
-      : videoModelCreditPricesSchema.parse(input.creditsPerItem);
-  const billingModes = {
-    ...createDefaultVideoModelBillingModes(customModels),
-    ...parsedModes,
-  };
-  const creditsPerSecond: VideoModelCreditPrices = {
-    ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-    ...parsedPerSecond,
-  };
-  for (const model of customModels) {
-    const modelPrice =
-      parsedPerSecond[model.modelId] ?? DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
-    for (const resolution of model.supportedResolutions) {
-      const key = getVideoPricingResolutionKey(model.modelId, resolution);
-      creditsPerSecond[key] ??= modelPrice;
-    }
-  }
-  return {
-    billingModes,
-    creditsPerSecond,
-    creditsPerItem: {
-      ...createDefaultVideoModelCreditsPerItem(customModels),
-      ...parsedPerItem,
-    },
-  };
-}
-
 /**
  * 从模型广场未知值提取可信自定义视频模型最小计费描述。
  *
@@ -771,7 +710,7 @@ function parseCustomVideoBillingModels(
     .map((model) => ({
       modelId: model.modelId,
       supportedResolutions: model.supportedResolutions,
-  }));
+    }));
 }
 
 /** 权威视频计费读取同时保留原始设置，供启动补齐和运行时投影复用。 */

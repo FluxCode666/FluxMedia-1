@@ -5,6 +5,14 @@
  * 错误 owner/停用 Key、固定分组漂移和外部覆盖尝试的 fail-closed 行为。
  * 使用方：apps/web DB-free Vitest 门禁；数据库查询本身由参数化 SQL 实现。
  */
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  getVideoPricingResolutionKey,
+} from "@repo/shared/adobe";
+import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
+import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
@@ -21,6 +29,7 @@ import {
   inspectRuntimeVideoBackendAvailability,
   loadApiVideoRecoveryConfig,
   RuntimeBackendConfigurationInvalidError,
+  resolveAuthoritativeRuntimeVideoQuote,
 } from "./runtime-service";
 import { projectConfiguredVideoModelIds } from "./runtime-video-reachability";
 
@@ -235,6 +244,7 @@ describe("inspectRuntimeVideoBackendAvailability", () => {
     contentSafetyEnabled: true,
     imageCreditOverrides: { version: 1 as const, byModel: {} },
     videoCreditOverrides: {},
+    videoCreditsPerItemOverrides: {},
   };
 
   it.each([
@@ -317,6 +327,85 @@ describe("inspectRuntimeVideoBackendAvailability", () => {
     expect(compiled.sql).toContain("image_backend_member_adobe_config");
     expect(compiled.sql).toContain("adobe.mode = 'direct'");
     expect(compiled.params).not.toContain("api");
+  });
+});
+
+describe("resolveAuthoritativeRuntimeVideoQuote", () => {
+  it("在同一 statement snapshot 内固定 API Key 分组和双模式报价", async () => {
+    const executedQueries: SQL[] = [];
+    const quote = await resolveAuthoritativeRuntimeVideoQuote(
+      {
+        userId: "user-1",
+        apiKeyId: "key-1",
+        modelId: "veo31",
+        resolution: "1080p",
+        durationSeconds: 4,
+      },
+      {
+        execute: async (query) => {
+          executedQueries.push(query);
+          return {
+            rows: [
+              {
+                settings: {
+                  MODEL_MARKETPLACE_CONFIG:
+                    createDefaultModelMarketplaceConfig(),
+                  VIDEO_MODEL_CAPABILITY_OVERRIDES:
+                    createDefaultVideoModelCapabilityOverrides(),
+                  VIDEO_MODEL_BILLING_MODES: {
+                    ...DEFAULT_VIDEO_MODEL_BILLING_MODES,
+                    veo31: "per_item",
+                  },
+                  VIDEO_MODEL_CREDITS_PER_SECOND: {
+                    ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+                  },
+                  VIDEO_MODEL_CREDITS_PER_ITEM: {
+                    ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+                  },
+                },
+                api_key_found: true,
+                api_key_group_id: "group-bound",
+                groups: [
+                  {
+                    id: "group-bound",
+                    name: "Bound",
+                    isEnabled: true,
+                    isDefault: false,
+                    isUserSelectable: false,
+                    contentSafetyEnabled: true,
+                    priority: 1,
+                    metadata: {
+                      videoCreditsPerItemOverrides: {
+                        [getVideoPricingResolutionKey("veo31", "1080p")]: 5,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          };
+        },
+      }
+    );
+
+    expect(executedQueries).toHaveLength(1);
+    const compiled = new PgDialect().sqlToQuery(executedQueries[0] as SQL);
+    expect(compiled.params).toEqual(
+      expect.arrayContaining([
+        "MODEL_MARKETPLACE_CONFIG",
+        "VIDEO_MODEL_CREDITS_PER_ITEM",
+      ])
+    );
+    expect(compiled.sql).toContain("external_api_key");
+    expect(compiled.sql).toContain("image_backend_group");
+    expect(quote.group.id).toBe("group-bound");
+    expect(quote.quote).toMatchObject({
+      mode: "per_item",
+      unit: "item",
+      unitPrice: 5,
+      quotedCredits: 5,
+      priceSource: "group_resolution",
+    });
   });
 });
 

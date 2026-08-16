@@ -8,16 +8,31 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  resolveVideoBillingQuote,
+  type VideoBillingQuote,
+} from "@repo/shared/adobe";
+import {
   apiModelMappingsSchema,
   apiUpstreamAdapterDraftSchema,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
   getGroupImageCreditOverrides,
   getGroupVideoCreditOverrides,
+  getGroupVideoCreditsPerItemOverrides,
   type ImageCreditOverrides,
 } from "@repo/shared/image-backend/group-image-pricing";
 import type { BackendSchedulingStrategy } from "@repo/shared/image-backend/scheduling-policy";
 import { logWarn } from "@repo/shared/logger";
+import {
+  isModelMarketplaceModelEnabled,
+  type ModelMarketplaceConfig,
+  parseModelMarketplaceConfig,
+} from "@repo/shared/model-marketplace";
+import { normalizeVideoModelBillingSettings } from "@repo/shared/system-settings/video-billing-settings";
+import {
+  parseVideoModelCapabilityOverrides,
+  type VideoModelCapabilityOverrides,
+} from "@repo/shared/video-generation";
 import { type SQL, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -56,6 +71,15 @@ const groupRowSchema = z.object({
 const apiKeyGroupBindingRowSchema = z.object({
   generation_group_id: z.string().trim().min(1).nullable(),
 });
+
+const authoritativeVideoQuoteRowSchema = z
+  .object({
+    settings: z.record(z.string(), z.unknown()),
+    api_key_found: z.boolean(),
+    api_key_group_id: z.string().trim().min(1).nullable(),
+    groups: z.array(groupRowSchema),
+  })
+  .strict();
 
 const configuredModelIdsRowSchema = z.object({
   member_type: z.enum(["api", "adobe"]),
@@ -138,6 +162,32 @@ export interface RuntimeBackendGroupSnapshot {
   contentSafetyEnabled: boolean | null;
   imageCreditOverrides: ImageCreditOverrides;
   videoCreditOverrides: Record<string, number>;
+  videoCreditsPerItemOverrides: Record<string, number>;
+}
+
+/** 创建视频任务时权威报价读取所需的既有事务 SQL 端口。 */
+export interface RuntimeVideoQuoteTransactionDatabase {
+  execute(query: SQL): Promise<unknown>;
+}
+
+/** 首次视频准入在同一 MVCC statement snapshot 中固定的计费与治理事实。 */
+export interface AuthoritativeRuntimeVideoQuote {
+  pinnedGroupId: string;
+  group: RuntimeBackendGroupSnapshot;
+  quote: VideoBillingQuote;
+  marketplaceConfig: ModelMarketplaceConfig;
+  videoCapabilityOverrides: VideoModelCapabilityOverrides;
+}
+
+/** 生成视频账单快照所需的外部请求与可信身份事实。 */
+export interface ResolveAuthoritativeRuntimeVideoQuoteInput {
+  userId: string;
+  apiKeyId?: string;
+  requestedGroupId?: string;
+  pinnedGroupId?: string;
+  modelId: string;
+  resolution: string;
+  durationSeconds: number;
 }
 
 /** 已获租成员的运行时协议快照。 */
@@ -253,6 +303,30 @@ async function resolveTrustedRuntimeGroupTarget(
 }
 
 /**
+ * 将经选择器验证的分组行投影为后续调度和计费共用的不可变快照。
+ *
+ * @param group - 已确认启用、绑定关系合法且可供当前 Principal 使用的分组。
+ * @returns 不含成员、凭据或动态容量的治理与两套稀疏价格覆盖。
+ * @sideEffects 无。
+ * @failure metadata 单字段损坏时对应覆盖为空，避免用按秒值污染按条计费。
+ */
+function createRuntimeBackendGroupSnapshot(
+  group: z.output<typeof groupRowSchema>
+): RuntimeBackendGroupSnapshot {
+  return {
+    id: group.id,
+    name: group.name,
+    priority: group.priority,
+    contentSafetyEnabled: group.contentSafetyEnabled,
+    imageCreditOverrides: getGroupImageCreditOverrides(group.metadata),
+    videoCreditOverrides: getGroupVideoCreditOverrides(group.metadata),
+    videoCreditsPerItemOverrides: getGroupVideoCreditsPerItemOverrides(
+      group.metadata
+    ),
+  };
+}
+
+/**
  * 解析可信分组并固定后续队列与执行使用的治理快照。
  *
  * @param input 用户、API Key 绑定或站内显式分组事实。
@@ -289,13 +363,144 @@ export async function resolveTrustedGroupSnapshot(
     isUserRequested,
   });
 
+  return createRuntimeBackendGroupSnapshot(group);
+}
+
+/**
+ * 在视频任务创建事务内读取完整报价依赖并固定可信分组。
+ *
+ * @param input - 已通过调用方鉴权边界交付的用户、可选 API Key、模型、分辨率与时长。
+ * @param database - 当前创建事务的 execute 端口；本函数绝不自行开启事务或读取缓存。
+ * @returns 同一 PostgreSQL statement snapshot 中的 pinned 分组、严格报价和能力/配置上下文。
+ * @sideEffects 仅执行一次参数化只读 SQL statement。
+ * @failure API Key 绑定、分组、模式、价格、能力或分辨率任一非法时 fail closed。
+ */
+export async function resolveAuthoritativeRuntimeVideoQuote(
+  input: ResolveAuthoritativeRuntimeVideoQuoteInput,
+  database: RuntimeVideoQuoteTransactionDatabase
+): Promise<AuthoritativeRuntimeVideoQuote> {
+  const modelId = normalizeRuntimeRequestedModelId({
+    requestKind: "video",
+    modelId: input.modelId,
+  });
+  if (!modelId) {
+    throw new BackendSchedulerError(
+      "no_eligible_member",
+      "视频模型 ID 必须是全局目录中的真实模型 ID"
+    );
+  }
+  const rows = z.array(authoritativeVideoQuoteRowSchema).parse(
+    extractExecuteRows(
+      await database.execute(sql`
+        with selected_settings as (
+          select key, value
+          from system_setting
+          where key in (
+            ${"MODEL_MARKETPLACE_CONFIG"},
+            ${"VIDEO_MODEL_CAPABILITY_OVERRIDES"},
+            ${"VIDEO_MODEL_BILLING_MODES"},
+            ${"VIDEO_MODEL_CREDITS_PER_SECOND"},
+            ${"VIDEO_MODEL_CREDITS_PER_ITEM"}
+          )
+        ), api_key_binding as (
+          select generation_group_id
+          from external_api_key
+          where id = ${input.apiKeyId ?? null}
+            and user_id = ${input.userId}
+            and is_active = true
+          limit 1
+        ), enabled_groups as (
+          select
+            id,
+            name,
+            is_enabled as "isEnabled",
+            is_default as "isDefault",
+            is_user_selectable as "isUserSelectable",
+            content_safety_enabled as "contentSafetyEnabled",
+            priority,
+            metadata
+          from image_backend_group
+          where is_enabled = true
+          order by created_at asc, id asc
+        )
+        select
+          coalesce(
+            (select jsonb_object_agg(key, value) from selected_settings),
+            '{}'::jsonb
+          ) as settings,
+          exists(select 1 from api_key_binding) as api_key_found,
+          (select generation_group_id from api_key_binding limit 1)
+            as api_key_group_id,
+          coalesce(
+            (select jsonb_agg(to_jsonb(enabled_groups)) from enabled_groups),
+            '[]'::jsonb
+          ) as groups
+      `)
+    )
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("权威视频报价查询未返回快照");
+  }
+
+  const target = selectTrustedRuntimeGroupTarget(
+    input,
+    input.apiKeyId
+      ? row.api_key_found
+        ? { groupId: row.api_key_group_id }
+        : undefined
+      : undefined
+  );
+  const selectedGroup = selectRuntimeBackendGroupCandidate(row.groups, target);
+  const group = createRuntimeBackendGroupSnapshot(selectedGroup);
+  const marketplaceConfig = parseModelMarketplaceConfig(
+    row.settings.MODEL_MARKETPLACE_CONFIG
+  );
+  if (!isModelMarketplaceModelEnabled(marketplaceConfig, "video", modelId)) {
+    throw new Error("视频模型已停用或不在当前模型配置中");
+  }
+  const videoCapabilityOverrides = parseVideoModelCapabilityOverrides(
+    row.settings.VIDEO_MODEL_CAPABILITY_OVERRIDES
+  );
+  const customModel = marketplaceConfig.customModels.find(
+    (candidate) =>
+      candidate.category === "video" && candidate.modelId === modelId
+  );
+  const billing = normalizeVideoModelBillingSettings({
+    billingModes: row.settings.VIDEO_MODEL_BILLING_MODES,
+    creditsPerSecond: row.settings.VIDEO_MODEL_CREDITS_PER_SECOND,
+    creditsPerItem: row.settings.VIDEO_MODEL_CREDITS_PER_ITEM,
+    customModels: marketplaceConfig.customModels
+      .filter((candidate) => candidate.category === "video")
+      .map((candidate) => ({
+        modelId: candidate.modelId,
+        supportedResolutions: candidate.supportedResolutions,
+      })),
+  });
+  const mode = billing.billingModes[modelId];
+  if (!mode) {
+    throw new Error("视频模型缺少统一计费模式");
+  }
+  const quote = resolveVideoBillingQuote({
+    modelId,
+    ...(customModel
+      ? { supportedResolutions: customModel.supportedResolutions }
+      : {}),
+    resolution: input.resolution,
+    durationSeconds: input.durationSeconds,
+    mode,
+    globalCreditsPerSecond: billing.creditsPerSecond,
+    globalCreditsPerItem: billing.creditsPerItem,
+    groupCreditsPerSecond: group.videoCreditOverrides,
+    groupCreditsPerItem: group.videoCreditsPerItemOverrides,
+  });
+
   return {
-    id: group.id,
-    name: group.name,
-    priority: group.priority,
-    contentSafetyEnabled: group.contentSafetyEnabled,
-    imageCreditOverrides: getGroupImageCreditOverrides(group.metadata),
-    videoCreditOverrides: getGroupVideoCreditOverrides(group.metadata),
+    pinnedGroupId: group.id,
+    group,
+    quote,
+    marketplaceConfig,
+    videoCapabilityOverrides,
   };
 }
 
