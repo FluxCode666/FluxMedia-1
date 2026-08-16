@@ -5,10 +5,11 @@
  * worker 崩溃重放、并发退款和用户账本失败补偿都不会重复增减 API Key 配额。
  * 使用方：视频持久 worker；真实 PostgreSQL 测试复用同一参数化 SQL 实现。
  */
+
+import { resolveVideoTaskBilling } from "@repo/shared/video-generation/video-billing-snapshot";
 import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
-
 import {
   ExternalApiKeyQuotaExceededError,
   getExternalApiKeyQuotaRemaining,
@@ -25,6 +26,7 @@ const videoQuotaRowSchema = z.object({
   userId: identifierSchema,
   apiKeyId: identifierSchema.nullable(),
   reserved: numericValueSchema,
+  metadata: z.unknown(),
 });
 const externalApiKeyQuotaRowSchema = z.object({
   creditLimit: numericValueSchema.nullable(),
@@ -59,7 +61,8 @@ async function lockVideoQuotaRow(
     select
       user_id as "userId",
       api_key_id as "apiKeyId",
-      api_key_credits_reserved as "reserved"
+      api_key_credits_reserved as "reserved",
+      metadata
     from video_generation
     where id = ${videoId}
     for update
@@ -69,6 +72,30 @@ async function lockVideoQuotaRow(
   return videoQuotaRowSchema.parse(row);
 }
 
+/**
+ * 从任务快照确定本次 API Key 预留的唯一合法金额。
+ *
+ * v2 的报价是创建时签名固化的财务事实，不能由 worker 的当前价格或调用参数覆盖；
+ * v1 在升级前没有账单快照，保留传入的历史按秒金额以确保在途任务可恢复。
+ */
+function resolveReservationAmount(input: {
+  metadata: unknown;
+  requestedAmount: number;
+}): { amount: number; isSnapshot: boolean } {
+  const billing = resolveVideoTaskBilling(input.metadata);
+  if (billing.kind === "snapshot") {
+    const quotedAmount = billing.snapshot.quotedCredits;
+    if (input.requestedAmount !== quotedAmount) {
+      throw new Error("视频任务的 API Key 配额预留金额与固定报价不一致");
+    }
+    return { amount: quotedAmount, isSnapshot: true };
+  }
+  return {
+    amount: roundQuotaCredits(input.requestedAmount),
+    isSnapshot: false,
+  };
+}
+
 /** 创建 PostgreSQL 视频 API Key 配额仓储。 */
 export function createPostgresVideoApiKeyQuotaRepository(
   database: VideoApiKeyQuotaDatabase
@@ -76,14 +103,20 @@ export function createPostgresVideoApiKeyQuotaRepository(
   return {
     async reserve(rawInput) {
       const videoId = identifierSchema.parse(rawInput.videoId);
-      const amount = roundQuotaCredits(rawInput.amount);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        throw new Error("视频 API Key 配额预留金额无效");
-      }
 
       return database.transaction(async (transaction) => {
         const task = await lockVideoQuotaRow(transaction, videoId);
-        const current = roundQuotaCredits(task.reserved);
+        const reservation = resolveReservationAmount({
+          metadata: task.metadata,
+          requestedAmount: rawInput.amount,
+        });
+        const { amount } = reservation;
+        if (!Number.isFinite(amount) || amount <= 0) {
+          throw new Error("视频 API Key 配额预留金额无效");
+        }
+        const current = reservation.isSnapshot
+          ? task.reserved
+          : roundQuotaCredits(task.reserved);
         if (!task.apiKeyId) {
           if (current !== 0) {
             throw new Error("站内视频任务存在异常 API Key 配额预留");
