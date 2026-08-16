@@ -5,6 +5,8 @@
  * 并独立标记配置可达性，同时严格处理定价模型 ID、内置简介、品牌与第一方封面。
  */
 import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoPricingResolutionKey,
 } from "@repo/shared/adobe";
@@ -43,6 +45,8 @@ function createInput(
     runtimeCatalog: { image: [], video: [] },
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
+    videoBillingModes: { ...DEFAULT_VIDEO_MODEL_BILLING_MODES },
+    videoCreditsPerItem: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM },
     marketplaceConfig: createDefaultModelMarketplaceConfig(),
     videoCapabilityOverrides: createDefaultVideoModelCapabilityOverrides(),
     buildCoverUrl: (category) => `/model-marketplace/default-${category}.webp`,

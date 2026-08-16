@@ -48,7 +48,9 @@ export type ModelConfigurationDraft =
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
+      billingMode: "per_second" | "per_item";
       creditsPerSecondByResolution: Record<string, string>;
+      creditsPerItemByResolution: Record<string, string>;
       maxReferenceImages?: string;
     } & MarketplaceDraftFields);
 
@@ -141,10 +143,17 @@ export function createModelConfigurationDraft(
     ...common,
     ...marketplace,
     category: "video",
+    billingMode: entry.billingMode,
     creditsPerSecondByResolution: Object.fromEntries(
       entry.supportedResolutions.map((resolution) => [
         resolution,
         formatPricingValue(entry.creditsPerSecondByResolution[resolution] ?? 0),
+      ])
+    ),
+    creditsPerItemByResolution: Object.fromEntries(
+      entry.supportedResolutions.map((resolution) => [
+        resolution,
+        formatPricingValue(entry.creditsPerItemByResolution[resolution] ?? 0),
       ])
     ),
     ...(entry.maxReferenceImages !== undefined
@@ -361,6 +370,19 @@ export function buildModelConfigurationFormData(
     formData.append(
       "creditsPerSecondByResolution",
       JSON.stringify(creditsPerSecondByResolution)
+    );
+    const creditsPerItemByResolution = Object.fromEntries(
+      Object.entries(draft.creditsPerItemByResolution).map(
+        ([resolution, value]) => [
+          resolution,
+          parseModelConfigurationPrice(value),
+        ]
+      )
+    );
+    formData.append("billingMode", draft.billingMode);
+    formData.append(
+      "creditsPerItemByResolution",
+      JSON.stringify(creditsPerItemByResolution)
     );
     if (draft.maxReferenceImages !== undefined) {
       formData.append(

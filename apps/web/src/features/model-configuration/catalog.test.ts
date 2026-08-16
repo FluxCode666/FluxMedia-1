@@ -6,6 +6,8 @@
  */
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoPricingResolutionKey,
 } from "@repo/shared/adobe";
@@ -45,6 +47,8 @@ function createInput(
   return {
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
+    videoBillingModes: { ...DEFAULT_VIDEO_MODEL_BILLING_MODES },
+    videoCreditsPerItem: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM },
     marketplaceConfig: createDefaultModelMarketplaceConfig(),
     videoCapabilityOverrides: createDefaultVideoModelCapabilityOverrides(),
     runtimeCatalog: {
@@ -61,6 +65,32 @@ function createInput(
 }
 
 describe("buildModelConfigurationSnapshot", () => {
+  it("投影模型级模式和两套完整分辨率价格矩阵", () => {
+    const snapshot = buildModelConfigurationSnapshot(
+      createInput({
+        videoBillingModes: {
+          ...DEFAULT_VIDEO_MODEL_BILLING_MODES,
+          veo31: "per_item",
+        },
+        videoCreditsPerItem: {
+          ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+          [getVideoPricingResolutionKey("veo31", "720p")]: 3,
+          [getVideoPricingResolutionKey("veo31", "1080p")]: 5,
+        },
+      })
+    );
+
+    expect(
+      snapshot.entries.find(
+        (entry) => entry.category === "video" && entry.configKey === "veo31"
+      )
+    ).toMatchObject({
+      billingMode: "per_item",
+      creditsPerSecondByResolution: { "720p": 45, "1080p": 45 },
+      creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
+    });
+  });
+
   it("稳定合并内置、持久化与运行时目录并按类别去重排序", () => {
     const imagePricing = createDefaultGlobalImageCreditOverrides();
     imagePricing.byModel["z-persisted"] = { ...EXTRA_IMAGE_PRICING };

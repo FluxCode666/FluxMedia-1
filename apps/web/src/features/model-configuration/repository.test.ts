@@ -4,7 +4,11 @@
  * 使用可注入事务端口和 Drizzle PostgreSQL 方言锁定缺行初始化、固定锁顺序、未知 JSON
  * 边界、原子写入与同事务审计；测试不连接数据库，也不允许敏感附加字段进入审计 SQL。
  */
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
@@ -17,7 +21,9 @@ import {
   MODEL_MARKETPLACE_CONFIG_SETTING_KEY,
   type ModelConfigurationDatabase,
   type ModelConfigurationDatabaseTransaction,
+  VIDEO_MODEL_BILLING_MODES_SETTING_KEY,
   VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
+  VIDEO_MODEL_ITEM_PRICING_SETTING_KEY,
   VIDEO_MODEL_PRICING_SETTING_KEY,
 } from "./repository";
 import type { ModelConfigurationAuditEvent } from "./service-core";
@@ -193,15 +199,21 @@ describe("createDatabaseModelConfigurationRepository", () => {
     }
   });
 
-  it("按配置、视频价格、能力覆盖的固定顺序锁定并读取三项事实", async () => {
+  it("按配置、双模式价格和能力覆盖的固定顺序锁定并读取全部事实", async () => {
     const configValue = createDefaultModelMarketplaceConfig();
     const videoValue = { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+    const billingModes = { ...DEFAULT_VIDEO_MODEL_BILLING_MODES };
+    const itemPricing = { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM };
     const capabilityValue = createDefaultVideoModelCapabilityOverrides();
     const { database, queries, transaction } = createDatabase([
       { rowCount: 0 },
       [{ value: configValue }],
       { rowCount: 0 },
       { rows: [{ value: videoValue }] },
+      { rowCount: 0 },
+      { rows: [{ value: billingModes }] },
+      { rowCount: 0 },
+      { rows: [{ value: itemPricing }] },
       { rowCount: 0 },
       { rows: [{ value: capabilityValue }] },
     ]);
@@ -211,15 +223,27 @@ describe("createDatabaseModelConfigurationRepository", () => {
       async (repositoryTransaction) => {
         const config = await repositoryTransaction.lockMarketplaceConfig();
         const videoPricing = await repositoryTransaction.lockVideoPricing();
+        const lockedBillingModes =
+          await repositoryTransaction.lockVideoBillingModes();
+        const lockedItemPricing =
+          await repositoryTransaction.lockVideoItemPricing();
         const videoCapabilities =
           await repositoryTransaction.lockVideoCapabilities();
-        return { config, videoPricing, videoCapabilities };
+        return {
+          config,
+          videoPricing,
+          billingModes: lockedBillingModes,
+          itemPricing: lockedItemPricing,
+          videoCapabilities,
+        };
       }
     );
 
     expect(result).toEqual({
       config: configValue,
       videoPricing: videoValue,
+      billingModes,
+      itemPricing,
       videoCapabilities: capabilityValue,
     });
     expect(transaction).toHaveBeenCalledTimes(1);
@@ -228,10 +252,14 @@ describe("createDatabaseModelConfigurationRepository", () => {
       MODEL_MARKETPLACE_CONFIG_SETTING_KEY,
       VIDEO_MODEL_PRICING_SETTING_KEY,
       VIDEO_MODEL_PRICING_SETTING_KEY,
+      VIDEO_MODEL_BILLING_MODES_SETTING_KEY,
+      VIDEO_MODEL_BILLING_MODES_SETTING_KEY,
+      VIDEO_MODEL_ITEM_PRICING_SETTING_KEY,
+      VIDEO_MODEL_ITEM_PRICING_SETTING_KEY,
       VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
       VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY,
     ]);
-    expect(queries[5]?.sql).toContain("for update");
+    expect(queries[7]?.sql).toContain("for update");
   });
 
   it("在模型广场配置加锁前拒绝锁价格，且不会执行任何 SQL", async () => {

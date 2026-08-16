@@ -6,6 +6,8 @@
  */
 
 import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoPricingResolutionKey,
   getVideoPricingResolutions,
@@ -53,6 +55,8 @@ interface MemoryState {
   config: ModelMarketplaceConfig;
   imagePricing: GlobalImageCreditOverrides;
   videoPricing: Record<string, number>;
+  videoBillingModes: Record<string, "per_second" | "per_item">;
+  videoItemPricing: Record<string, number>;
   videoCapabilities: VideoModelCapabilityOverrides;
   auditEvents: AuditEvent[];
 }
@@ -105,9 +109,13 @@ function createCatalogSnapshot(): ModelConfigurationSnapshot {
         description: "",
         coverUrl: null,
         usesDefaultCover: true,
+        billingMode: "per_second" as const,
         creditsPerSecond: 30,
         creditsPerSecondByResolution: Object.fromEntries(
           supportedResolutions.map((resolution) => [resolution, 30])
+        ),
+        creditsPerItemByResolution: Object.fromEntries(
+          supportedResolutions.map((resolution) => [resolution, 3])
         ),
         supportedResolutions,
         ...(configKey.startsWith("seedance2")
@@ -134,6 +142,8 @@ function createMemoryRepository(initial?: Partial<MemoryState>) {
     config: createDefaultModelMarketplaceConfig(),
     imagePricing: createDefaultGlobalImageCreditOverrides(),
     videoPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
+    videoBillingModes: { ...DEFAULT_VIDEO_MODEL_BILLING_MODES },
+    videoItemPricing: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM },
     videoCapabilities: createDefaultVideoModelCapabilityOverrides(),
     auditEvents: [],
     ...structuredClone(initial ?? {}),
@@ -174,6 +184,14 @@ function createMemoryRepository(initial?: Partial<MemoryState>) {
             lockOrder.push("video");
             return structuredClone(draft.videoPricing);
           },
+          async lockVideoBillingModes() {
+            lockOrder.push("video-modes");
+            return structuredClone(draft.videoBillingModes);
+          },
+          async lockVideoItemPricing() {
+            lockOrder.push("video-items");
+            return structuredClone(draft.videoItemPricing);
+          },
           async lockVideoCapabilities() {
             lockOrder.push("capabilities");
             return structuredClone(draft.videoCapabilities);
@@ -186,6 +204,12 @@ function createMemoryRepository(initial?: Partial<MemoryState>) {
           },
           async saveVideoPricing(pricing) {
             draft.videoPricing = structuredClone(pricing);
+          },
+          async saveVideoBillingModes(modes) {
+            draft.videoBillingModes = structuredClone(modes);
+          },
+          async saveVideoItemPricing(pricing) {
+            draft.videoItemPricing = structuredClone(pricing);
           },
           async saveVideoCapabilities(capabilities) {
             if (failNextCapabilitySave) {
@@ -372,7 +396,7 @@ describe("模型配置保存内核", () => {
     expect(harness.invalidate).toHaveBeenCalledOnce();
   });
 
-  it("按分辨率更新目标视频族，并用最高单价维护旧版兜底键", async () => {
+  it("原子更新视频模式和双价格矩阵，并维护旧版按秒兜底键", async () => {
     const harness = createHarness();
 
     await harness.service.updateEntry({
@@ -388,7 +412,9 @@ describe("模型配置保存内核", () => {
         homepagePriority: 5,
         description: "视频模型",
         coverChange: { action: "keep" },
+        billingMode: "per_item",
         creditsPerSecondByResolution: { "1080p": 88, "720p": 36 },
+        creditsPerItemByResolution: { "1080p": 5, "720p": 3 },
       },
     });
     const state = harness.repository.read();
@@ -402,6 +428,11 @@ describe("模型配置保存内核", () => {
     expect(state.videoPricing.sora2).toBe(
       DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND.sora2
     );
+    expect(state.videoBillingModes.veo31).toBe("per_item");
+    expect(state.videoItemPricing).toMatchObject({
+      [getVideoPricingResolutionKey("veo31", "720p")]: 3,
+      [getVideoPricingResolutionKey("veo31", "1080p")]: 5,
+    });
     expect(state.config.videoByFamily.veo31).toMatchObject({
       revision: 1,
       visible: false,
@@ -410,6 +441,57 @@ describe("模型配置保存内核", () => {
     });
     expect(state.imagePricing.byModel).not.toHaveProperty("default");
     expect(state.config.imageByModel).not.toHaveProperty("default");
+    expect(harness.repository.lockOrder.slice(0, 5)).toEqual([
+      "config",
+      "video",
+      "video-modes",
+      "video-items",
+      "capabilities",
+    ]);
+    expect(state.auditEvents[0]).toMatchObject({
+      billingMode: "per_item",
+      pricingDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(harness.hash).toHaveBeenCalledWith(
+      JSON.stringify({
+        billingMode: "per_item",
+        creditsPerSecondByResolution: { "1080p": 88, "720p": 36 },
+        creditsPerItemByResolution: { "1080p": 5, "720p": 3 },
+      })
+    );
+  });
+
+  it("同一请求标识复用不同视频模式或价格时拒绝且不重复审计", async () => {
+    const harness = createHarness();
+    const input = {
+      clientRequestId: REQUEST_ID,
+      category: "video" as const,
+      configKey: "veo31",
+      expectedRevision: 0,
+      enabled: true,
+      visible: false,
+      homepageVisible: false,
+      homepagePriority: 5,
+      description: "视频模型",
+      coverChange: { action: "keep" as const },
+      billingMode: "per_second" as const,
+      creditsPerSecondByResolution: { "720p": 36, "1080p": 88 },
+      creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
+    };
+
+    await harness.service.updateEntry({ actorUserId: ACTOR_USER_ID, input });
+    await expect(
+      harness.service.updateEntry({
+        actorUserId: ACTOR_USER_ID,
+        input: {
+          ...input,
+          billingMode: "per_item",
+          creditsPerItemByResolution: { "720p": 4, "1080p": 5 },
+        },
+      })
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
+
+    expect(harness.repository.read().auditEvents).toHaveLength(1);
   });
 
   it.each([
@@ -435,7 +517,11 @@ describe("模型配置保存内核", () => {
         homepagePriority: 5,
         description: "Seedance 视频模型",
         coverChange: { action: "keep" },
+        billingMode: "per_second",
         creditsPerSecondByResolution,
+        creditsPerItemByResolution: Object.fromEntries(
+          supportedResolutions.map((resolution) => [resolution, 3])
+        ),
         maxReferenceImages: 20,
       },
     });
@@ -449,9 +535,11 @@ describe("模型配置保存内核", () => {
     });
     expect(state.videoPricing[configKey]).toBe(42);
     expect(state.auditEvents).toHaveLength(1);
-    expect(harness.repository.lockOrder.slice(0, 3)).toEqual([
+    expect(harness.repository.lockOrder.slice(0, 5)).toEqual([
       "config",
       "video",
+      "video-modes",
+      "video-items",
       "capabilities",
     ]);
   });
@@ -476,10 +564,17 @@ describe("模型配置保存内核", () => {
         input: {
           ...common,
           configKey: "seedance2",
+          billingMode: "per_second",
           creditsPerSecondByResolution: Object.fromEntries(
             getVideoPricingResolutions("seedance2").map((resolution) => [
               resolution,
               42,
+            ])
+          ),
+          creditsPerItemByResolution: Object.fromEntries(
+            getVideoPricingResolutions("seedance2").map((resolution) => [
+              resolution,
+              3,
             ])
           ),
         },
@@ -491,7 +586,9 @@ describe("模型配置保存内核", () => {
         input: {
           ...common,
           configKey: "veo31",
+          billingMode: "per_second",
           creditsPerSecondByResolution: { "720p": 36, "1080p": 88 },
+          creditsPerItemByResolution: { "720p": 3, "1080p": 3 },
           maxReferenceImages: 20,
         },
       })
@@ -517,10 +614,16 @@ describe("模型配置保存内核", () => {
           homepagePriority: 5,
           description: "Seedance 视频模型",
           coverChange: { action: "keep" },
+          billingMode: "per_item",
           creditsPerSecondByResolution: {
             "480p": 42,
             "720p": 42,
             "1080p": 42,
+          },
+          creditsPerItemByResolution: {
+            "480p": 3,
+            "720p": 3,
+            "1080p": 3,
           },
           maxReferenceImages: 20,
         },
@@ -555,7 +658,17 @@ describe("模型配置保存内核", () => {
       await expect(
         harness.service.updateEntry({
           actorUserId: ACTOR_USER_ID,
-          input: { ...commonInput, creditsPerSecondByResolution },
+          input: {
+            ...commonInput,
+            billingMode: "per_second",
+            creditsPerSecondByResolution,
+            creditsPerItemByResolution: Object.fromEntries(
+              Object.keys(creditsPerSecondByResolution).map((resolution) => [
+                resolution,
+                3,
+              ])
+            ),
+          },
         })
       ).rejects.toMatchObject({
         code: "not_configurable",
@@ -651,7 +764,9 @@ describe("模型配置保存内核", () => {
         homepagePriority: 5,
         description: "",
         coverChange: { action: "keep" },
+        billingMode: "per_item",
         creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+        creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
       },
     });
 
@@ -665,6 +780,11 @@ describe("模型配置保存内核", () => {
       "vendor-video-x": 45,
       "vendor-video-x@720p": 30,
       "vendor-video-x@1080p": 45,
+    });
+    expect(state.videoBillingModes["vendor-video-x"]).toBe("per_item");
+    expect(state.videoItemPricing).toMatchObject({
+      "vendor-video-x@720p": 3,
+      "vendor-video-x@1080p": 5,
     });
   });
 

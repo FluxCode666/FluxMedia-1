@@ -66,8 +66,10 @@ const entries: ModelConfigurationEntry[] = [
     displayName: "Veo 3.1",
     iconKey: "google",
     minimumCredits: 45,
+    billingMode: "per_second",
     creditsPerSecond: 45,
     creditsPerSecondByResolution: { "720p": 45, "1080p": 45 },
+    creditsPerItemByResolution: { "720p": 3, "1080p": 3 },
     supportedResolutions: ["720p", "1080p"],
   },
 ];
@@ -168,11 +170,17 @@ describe("buildBackendMemberModelOptions", () => {
       displayName: "Seedance 2.0",
       iconKey: "generic",
       minimumCredits: 30,
+      billingMode: "per_second",
       creditsPerSecond: 30,
       creditsPerSecondByResolution: {
         "480p": 30,
         "720p": 30,
         "1080p": 30,
+      },
+      creditsPerItemByResolution: {
+        "480p": 3,
+        "720p": 3,
+        "1080p": 3,
       },
       supportedResolutions: ["480p", "720p", "1080p"],
     };
@@ -216,8 +224,10 @@ describe("buildBackendMemberModelOptions", () => {
       displayName: "Vendor Video X",
       iconKey: "generic",
       minimumCredits: 30,
+      billingMode: "per_second",
       creditsPerSecond: 30,
       creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+      creditsPerItemByResolution: { "720p": 3, "1080p": 3 },
       supportedResolutions: ["720p", "1080p"],
     };
 
@@ -257,8 +267,10 @@ describe("buildBackendMemberModelOptions", () => {
         displayName: configKey,
         iconKey: "generic",
         minimumCredits: 30,
+        billingMode: "per_second",
         creditsPerSecond: 30,
         creditsPerSecondByResolution: { "720p": 30 },
+        creditsPerItemByResolution: { "720p": 3 },
         supportedResolutions: ["720p"],
       }));
     const options = buildBackendMemberModelOptions({

@@ -67,6 +67,8 @@ type ModelConfigurationBucketSettingKey =
 type ModelConfigurationJsonSettingKey =
   | "IMAGE_MODEL_CREDIT_PRICES"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
+  | "VIDEO_MODEL_BILLING_MODES"
+  | "VIDEO_MODEL_CREDITS_PER_ITEM"
   | "MODEL_MARKETPLACE_CONFIG"
   | "VIDEO_MODEL_CAPABILITY_OVERRIDES";
 
@@ -289,6 +291,10 @@ function createReadDependencies(
       dependencies.loadSettingJson("IMAGE_MODEL_CREDIT_PRICES"),
     loadVideoPricing: () =>
       dependencies.loadSettingJson("VIDEO_MODEL_CREDITS_PER_SECOND"),
+    loadVideoBillingModes: () =>
+      dependencies.loadSettingJson("VIDEO_MODEL_BILLING_MODES"),
+    loadVideoCreditsPerItem: () =>
+      dependencies.loadSettingJson("VIDEO_MODEL_CREDITS_PER_ITEM"),
     loadMarketplaceConfig: async () =>
       parseMarketplaceConfigForAssetBucket(
         await dependencies.loadSettingJson("MODEL_MARKETPLACE_CONFIG"),

@@ -4,7 +4,11 @@
  * 使用方是 UOL 读取绑定；测试验证严格事实源与可降级运行时目录的故障边界，以及编辑
  * 权限必须从完整 Principal 精确计算，全部依赖均以内存函数注入。
  */
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import type { Principal } from "@repo/shared/uol";
@@ -33,6 +37,12 @@ function createDependencies(
     loadVideoPricing: async () => ({
       ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
     }),
+    loadVideoBillingModes: async () => ({
+      ...DEFAULT_VIDEO_MODEL_BILLING_MODES,
+    }),
+    loadVideoCreditsPerItem: async () => ({
+      ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+    }),
     loadMarketplaceConfig: async () => createDefaultModelMarketplaceConfig(),
     loadVideoCapabilityOverrides: async () =>
       createDefaultVideoModelCapabilityOverrides(),
@@ -59,6 +69,12 @@ describe("readModelConfiguration", () => {
     const loadVideoPricing = vi
       .fn()
       .mockResolvedValue({ ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND });
+    const loadVideoBillingModes = vi
+      .fn()
+      .mockResolvedValue({ ...DEFAULT_VIDEO_MODEL_BILLING_MODES });
+    const loadVideoCreditsPerItem = vi
+      .fn()
+      .mockResolvedValue({ ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM });
     const loadMarketplaceConfig = vi
       .fn()
       .mockResolvedValue(createDefaultModelMarketplaceConfig());
@@ -75,6 +91,8 @@ describe("readModelConfiguration", () => {
       createDependencies({
         loadImagePricing,
         loadVideoPricing,
+        loadVideoBillingModes,
+        loadVideoCreditsPerItem,
         loadMarketplaceConfig,
         loadVideoCapabilityOverrides,
         loadRuntimeCatalog,
@@ -83,6 +101,8 @@ describe("readModelConfiguration", () => {
 
     expect(loadImagePricing).toHaveBeenCalledTimes(1);
     expect(loadVideoPricing).toHaveBeenCalledTimes(1);
+    expect(loadVideoBillingModes).toHaveBeenCalledTimes(1);
+    expect(loadVideoCreditsPerItem).toHaveBeenCalledTimes(1);
     expect(loadMarketplaceConfig).toHaveBeenCalledTimes(1);
     expect(loadVideoCapabilityOverrides).toHaveBeenCalledTimes(1);
     expect(loadRuntimeCatalog).toHaveBeenCalledTimes(1);

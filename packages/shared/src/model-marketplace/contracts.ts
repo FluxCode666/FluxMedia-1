@@ -5,7 +5,7 @@
  * 结构校验与类型收窄，不读取数据库、不构造存储 URL，也不执行价格或封面写入。
  */
 import { z } from "zod";
-
+import { videoModelCreditPricesSchema } from "../adobe";
 import {
   MAX_VIDEO_CREDITS_PER_SECOND,
   videoCreditsPerSecondByResolutionSchema,
@@ -19,7 +19,10 @@ import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
 } from "../image-generation/media-limits";
-import { videoFrameInputCapabilitySchema } from "../video-generation";
+import {
+  videoBillingModeSchema,
+  videoFrameInputCapabilitySchema,
+} from "../video-generation";
 
 export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
@@ -412,22 +415,35 @@ function addVideoResolutionPricingIssues(
   value: {
     supportedResolutions: string[];
     creditsPerSecondByResolution: Record<string, number>;
+    creditsPerItemByResolution?: Record<string, number> | undefined;
   },
   context: z.RefinementCtx
 ): void {
   const supported = [...new Set(value.supportedResolutions)].sort();
   const priced = Object.keys(value.creditsPerSecondByResolution).sort();
   if (
-    supported.length === priced.length &&
-    supported.every((resolution, index) => resolution === priced[index])
+    supported.length !== priced.length ||
+    !supported.every((resolution, index) => resolution === priced[index])
   ) {
-    return;
+    context.addIssue({
+      code: "custom",
+      path: ["creditsPerSecondByResolution"],
+      message: "视频分辨率价格必须完整覆盖支持的分辨率",
+    });
   }
-  context.addIssue({
-    code: "custom",
-    path: ["creditsPerSecondByResolution"],
-    message: "视频分辨率价格必须完整覆盖支持的分辨率",
-  });
+  if (value.creditsPerItemByResolution !== undefined) {
+    const itemKeys = Object.keys(value.creditsPerItemByResolution).sort();
+    if (
+      supported.length !== itemKeys.length ||
+      !supported.every((resolution, index) => resolution === itemKeys[index])
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["creditsPerItemByResolution"],
+        message: "视频按条价格必须完整覆盖支持的分辨率",
+      });
+    }
+  }
 }
 
 /**
@@ -475,12 +491,14 @@ const videoConfigurationEntrySchema = z
     ...managementMarketplaceShape,
     category: z.literal("video"),
     minimumCredits: z.number().finite().positive(),
+    billingMode: videoBillingModeSchema,
     creditsPerSecond: z
       .number()
       .finite()
       .positive()
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
+    creditsPerItemByResolution: videoModelCreditPricesSchema,
     supportedResolutions: z
       .array(z.string().trim().min(1).max(32))
       .min(1)
@@ -664,11 +682,25 @@ const updateVideoConfigurationInputSchema = z
   .object({
     ...updateMarketplaceShape,
     category: z.literal("video"),
+    billingMode: videoBillingModeSchema,
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
+    creditsPerItemByResolution: videoModelCreditPricesSchema,
     maxReferenceImages: positiveSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
+    const supported = Object.keys(input.creditsPerSecondByResolution).sort();
+    const item = Object.keys(input.creditsPerItemByResolution).sort();
+    if (
+      supported.length !== item.length ||
+      !supported.every((key, index) => key === item[index])
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["creditsPerItemByResolution"],
+        message: "视频按条价格必须完整覆盖按秒价格的分辨率",
+      });
+    }
     if (input.homepageVisible && !input.visible) {
       context.addIssue({
         code: "custom",

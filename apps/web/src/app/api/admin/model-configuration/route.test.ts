@@ -415,6 +415,11 @@ describe("POST /api/admin/model-configuration", () => {
             "720p": 30,
             "1080p": 45,
           }),
+          billingMode: "per_item",
+          creditsPerItemByResolution: JSON.stringify({
+            "720p": 3,
+            "1080p": 5,
+          }),
         })
       )
     );
@@ -426,6 +431,8 @@ describe("POST /api/admin/model-configuration", () => {
       homepageVisible: false,
       homepagePriority: 8,
       creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+      billingMode: "per_item",
+      creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
       coverChange: { action: "remove" },
     });
 
@@ -465,7 +472,9 @@ describe("POST /api/admin/model-configuration", () => {
             homepagePriority: "5",
             description: "视频模型",
             coverChange: "keep",
+            billingMode: "per_second",
             creditsPerSecondByResolution,
+            creditsPerItemByResolution: JSON.stringify({ "720p": 3 }),
           })
         )
       );
@@ -486,7 +495,9 @@ describe("POST /api/admin/model-configuration", () => {
       homepagePriority: "5",
       description: "Seedance 视频模型",
       coverChange: "keep",
+      billingMode: "per_second",
       creditsPerSecondByResolution: JSON.stringify({ "1080p": 45 }),
+      creditsPerItemByResolution: JSON.stringify({ "1080p": 3 }),
     };
     const response = await POST(
       createMultipartRequest(

@@ -23,6 +23,13 @@ import {
 } from "@repo/ui/components/dialog";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@repo/ui/components/select";
 import { Switch } from "@repo/ui/components/switch";
 import { Textarea } from "@repo/ui/components/textarea";
 import { Copy, Loader2, RefreshCw } from "lucide-react";
@@ -283,7 +290,7 @@ export function ModelConfigurationDialog({
               <h3 className="text-sm font-medium">计费价格</h3>
               <p className="text-xs text-muted-foreground">
                 {entry.category === "video"
-                  ? "视频按输出分辨率对应的每秒积分乘以实际生成时长计费。"
+                  ? "保存时同时维护按秒和按条矩阵；切换模式不会清空另一套价格。"
                   : "图像按最终输出像素命中对应档位计费。"}
               </p>
               {entry.supportedResolutions?.length ? (
@@ -325,6 +332,32 @@ export function ModelConfigurationDialog({
             ) : null}
             {fields.showVideoPricing && draft.category === "video" ? (
               <div className="space-y-4">
+                <div className="max-w-xs space-y-1.5">
+                  <Label htmlFor={`${entry.configKey}-billing-mode`}>
+                    生效计费模式
+                  </Label>
+                  <Select
+                    value={draft.billingMode}
+                    disabled={disabled}
+                    onValueChange={(billingMode) =>
+                      updateDraft((current) =>
+                        current.category === "video" &&
+                        (billingMode === "per_second" ||
+                          billingMode === "per_item")
+                          ? { ...current, billingMode }
+                          : current
+                      )
+                    }
+                  >
+                    <SelectTrigger id={`${entry.configKey}-billing-mode`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="per_second">按秒计费</SelectItem>
+                      <SelectItem value="per_item">按条计费</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   {entry.category === "video"
                     ? entry.supportedResolutions.map((resolution) => (
@@ -343,6 +376,34 @@ export function ModelConfigurationDialog({
                                     ...current,
                                     creditsPerSecondByResolution: {
                                       ...current.creditsPerSecondByResolution,
+                                      [resolution]: value,
+                                    },
+                                  }
+                                : current
+                            )
+                          }
+                        />
+                      ))
+                    : null}
+                </div>
+                <div className="grid gap-3 border-t pt-4 sm:grid-cols-3">
+                  {entry.category === "video"
+                    ? entry.supportedResolutions.map((resolution) => (
+                        <PricingInput
+                          key={resolution}
+                          id={`${entry.configKey}-${resolution}-credits-per-item`}
+                          label={`${resolution} 每条积分`}
+                          value={
+                            draft.creditsPerItemByResolution[resolution] ?? ""
+                          }
+                          disabled={disabled}
+                          onChange={(value) =>
+                            updateDraft((current) =>
+                              current.category === "video"
+                                ? {
+                                    ...current,
+                                    creditsPerItemByResolution: {
+                                      ...current.creditsPerItemByResolution,
                                       [resolution]: value,
                                     },
                                   }

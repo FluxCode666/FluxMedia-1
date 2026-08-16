@@ -38,6 +38,8 @@ const DEFAULT_GENERATIONS_BUCKET = "generations";
 type ModelMarketplaceJsonSettingKey =
   | "IMAGE_MODEL_CREDIT_PRICES"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
+  | "VIDEO_MODEL_BILLING_MODES"
+  | "VIDEO_MODEL_CREDITS_PER_ITEM"
   | "VIDEO_MODEL_CAPABILITY_OVERRIDES"
   | "MODEL_MARKETPLACE_CONFIG";
 
@@ -179,6 +181,8 @@ export function createProductionModelMarketplaceService(
         runtimeCatalog,
         imagePricing,
         videoPricing,
+        videoBillingModes,
+        videoCreditsPerItem,
         videoCapabilityOverrides,
         marketplaceConfigRaw,
         assetBucketRaw,
@@ -187,6 +191,8 @@ export function createProductionModelMarketplaceService(
         dependencies.loadRuntimeCatalog(),
         dependencies.loadSettingJson("IMAGE_MODEL_CREDIT_PRICES"),
         dependencies.loadSettingJson("VIDEO_MODEL_CREDITS_PER_SECOND"),
+        dependencies.loadSettingJson("VIDEO_MODEL_BILLING_MODES"),
+        dependencies.loadSettingJson("VIDEO_MODEL_CREDITS_PER_ITEM"),
         dependencies.loadSettingJson("VIDEO_MODEL_CAPABILITY_OVERRIDES"),
         dependencies.loadSettingJson("MODEL_MARKETPLACE_CONFIG"),
         dependencies.loadSettingString("SYSTEM_ASSETS_BUCKET_NAME"),
@@ -204,6 +210,8 @@ export function createProductionModelMarketplaceService(
         runtimeCatalog,
         imagePricing,
         videoPricing,
+        videoBillingModes,
+        videoCreditsPerItem,
         videoCapabilityOverrides,
         marketplaceConfig,
         buildCoverUrl: (category, _configKey, cover) =>

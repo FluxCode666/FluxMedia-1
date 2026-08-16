@@ -48,6 +48,8 @@ export type ModelMarketplaceCatalogInput = {
   runtimeCatalog: unknown;
   imagePricing: unknown;
   videoPricing: unknown;
+  videoBillingModes: unknown;
+  videoCreditsPerItem: unknown;
   marketplaceConfig: unknown;
   videoCapabilityOverrides: unknown;
   buildCoverUrl: (
@@ -192,6 +194,8 @@ export function buildModelMarketplaceCatalog(
   const snapshot = buildModelConfigurationSnapshot({
     imagePricing: input.imagePricing,
     videoPricing: input.videoPricing,
+    videoBillingModes: input.videoBillingModes,
+    videoCreditsPerItem: input.videoCreditsPerItem,
     marketplaceConfig,
     videoCapabilityOverrides: input.videoCapabilityOverrides,
     runtimeCatalog: { status: "ready", catalog: runtimeCatalog },

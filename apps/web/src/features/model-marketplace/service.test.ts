@@ -1,10 +1,14 @@
 /**
  * 公开模型广场生产服务测试。
  *
- * 使用方是 UOL late binding；测试验证七项事实并行读取、资产 bucket 隔离、封面引用
+ * 使用方是 UOL late binding；测试验证九项事实并行读取、资产 bucket 隔离、封面引用
  * 校验与第一方 URL 编码，以及依赖失败和不可达目录语义，不连接数据库或对象存储。
  */
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import {
   createDefaultModelMarketplaceConfig,
@@ -52,6 +56,12 @@ function createDependencies(
       if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
         return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
       }
+      if (key === "VIDEO_MODEL_BILLING_MODES") {
+        return { ...DEFAULT_VIDEO_MODEL_BILLING_MODES };
+      }
+      if (key === "VIDEO_MODEL_CREDITS_PER_ITEM") {
+        return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM };
+      }
       if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
         return createDefaultVideoModelCapabilityOverrides();
       }
@@ -98,7 +108,7 @@ function createDeferred<T>(): {
 }
 
 describe("公开模型广场生产服务", () => {
-  it("同一轮并行启动运行时、四项 JSON 与两个 bucket 读取", async () => {
+  it("同一轮并行启动运行时、六项 JSON 与两个 bucket 读取", async () => {
     const { createProductionModelMarketplaceService } = await import(
       "./service"
     );
@@ -125,6 +135,12 @@ describe("公开模型广场生产服务", () => {
         if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
           return read(key, { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND });
         }
+        if (key === "VIDEO_MODEL_BILLING_MODES") {
+          return read(key, { ...DEFAULT_VIDEO_MODEL_BILLING_MODES });
+        }
+        if (key === "VIDEO_MODEL_CREDITS_PER_ITEM") {
+          return read(key, { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM });
+        }
         if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
           return read(key, createDefaultVideoModelCapabilityOverrides());
         }
@@ -138,8 +154,8 @@ describe("公开模型广场生产服务", () => {
     });
 
     const outputPromise = service.listPublicModels();
-    expect(started).toHaveLength(7);
-    expect(new Set(started).size).toBe(7);
+    expect(started).toHaveLength(9);
+    expect(new Set(started).size).toBe(9);
     for (const deferred of deferredByKey.values()) deferred.resolve();
 
     const output = await outputPromise;

@@ -6,10 +6,15 @@
  */
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  getVideoPricingResolutionKey,
   getVideoPricingResolutions,
   globalVideoModelCreditsPerSecondSchema,
   isVideoPricingResolutionKey,
   resolveVideoCreditsPerSecondByResolution,
+  videoModelBillingModesSchema,
+  videoModelCreditPricesSchema,
 } from "@repo/shared/adobe";
 import { ADOBE_IMAGE_MODEL_IDS } from "@repo/shared/adobe/enabled-models";
 import { globalImageCreditOverridesSchema } from "@repo/shared/image-backend/group-image-pricing";
@@ -56,6 +61,8 @@ export type ModelConfigurationCoverUrl = {
 export type ModelConfigurationCatalogInput = {
   imagePricing: unknown;
   videoPricing: unknown;
+  videoBillingModes: unknown;
+  videoCreditsPerItem: unknown;
   marketplaceConfig: unknown;
   videoCapabilityOverrides: unknown;
   runtimeCatalog: RuntimeModelCatalogResult;
@@ -297,6 +304,12 @@ export function buildModelConfigurationSnapshot(
   const videoPricing = globalVideoModelCreditsPerSecondSchema.parse(
     input.videoPricing
   );
+  const videoBillingModes = videoModelBillingModesSchema.parse(
+    input.videoBillingModes
+  );
+  const videoCreditsPerItem = videoModelCreditPricesSchema.parse(
+    input.videoCreditsPerItem
+  );
   const marketplaceConfig = parseModelMarketplaceConfig(
     input.marketplaceConfig
   );
@@ -377,6 +390,21 @@ export function buildModelConfigurationSnapshot(
         ),
       ])
     );
+    const billingMode =
+      videoBillingModes[configKey] ??
+      DEFAULT_VIDEO_MODEL_BILLING_MODES[configKey] ??
+      "per_second";
+    const creditsPerItemByResolution = Object.fromEntries(
+      supportedResolutions.map((resolution) => {
+        const key = getVideoPricingResolutionKey(configKey, resolution);
+        const itemPrice =
+          videoCreditsPerItem[key] ??
+          videoCreditsPerItem[configKey] ??
+          DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM[key] ??
+          3;
+        return [resolution, itemPrice];
+      })
+    );
     const minimumCredits = Math.min(
       ...Object.values(creditsPerSecondByResolution)
     );
@@ -394,6 +422,8 @@ export function buildModelConfigurationSnapshot(
       category: "video",
       creditsPerSecond: minimumCredits,
       creditsPerSecondByResolution,
+      billingMode,
+      creditsPerItemByResolution,
       supportedResolutions,
       minimumCredits,
       ...(capability?.input.referenceImages.configurable

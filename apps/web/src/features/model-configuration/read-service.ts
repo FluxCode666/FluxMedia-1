@@ -23,6 +23,8 @@ import {
 export type ModelConfigurationReadDependencies = {
   loadImagePricing: () => Promise<unknown>;
   loadVideoPricing: () => Promise<unknown>;
+  loadVideoBillingModes: () => Promise<unknown>;
+  loadVideoCreditsPerItem: () => Promise<unknown>;
   loadMarketplaceConfig: () => Promise<unknown>;
   loadVideoCapabilityOverrides: () => Promise<unknown>;
   loadRuntimeCatalog: () => Promise<RuntimeModelCatalog>;
@@ -64,12 +66,16 @@ export async function readModelConfiguration(
   const [
     imagePricing,
     videoPricing,
+    videoBillingModes,
+    videoCreditsPerItem,
     marketplaceConfig,
     videoCapabilityOverrides,
     runtimeCatalog,
   ] = await Promise.all([
     Promise.resolve().then(dependencies.loadImagePricing),
     Promise.resolve().then(dependencies.loadVideoPricing),
+    Promise.resolve().then(dependencies.loadVideoBillingModes),
+    Promise.resolve().then(dependencies.loadVideoCreditsPerItem),
     Promise.resolve().then(dependencies.loadMarketplaceConfig),
     Promise.resolve().then(dependencies.loadVideoCapabilityOverrides),
     loadRuntimeCatalogResult(dependencies.loadRuntimeCatalog),
@@ -78,6 +84,8 @@ export async function readModelConfiguration(
   return buildModelConfigurationSnapshot({
     imagePricing,
     videoPricing,
+    videoBillingModes,
+    videoCreditsPerItem,
     marketplaceConfig,
     videoCapabilityOverrides,
     runtimeCatalog,

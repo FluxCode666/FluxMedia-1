@@ -121,7 +121,11 @@ export function CustomModelConfigurationDialog({
     base2kCredits: "5.07",
     base4kCredits: "10",
   });
-  const [videoPrice, setVideoPrice] = useState("30");
+  const [videoBillingMode, setVideoBillingMode] = useState<
+    "per_second" | "per_item"
+  >("per_second");
+  const [videoPricePerSecond, setVideoPricePerSecond] = useState("30");
+  const [videoPricePerItem, setVideoPricePerItem] = useState("3");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -135,7 +139,9 @@ export function CustomModelConfigurationDialog({
       base2kCredits: "5.07",
       base4kCredits: "10",
     });
-    setVideoPrice("30");
+    setVideoBillingMode("per_second");
+    setVideoPricePerSecond("30");
+    setVideoPricePerItem("3");
   }, [open]);
 
   /** 切换媒体类别并提供该类别常用的初始分辨率。 */
@@ -193,12 +199,22 @@ export function CustomModelConfigurationDialog({
           formData.append(field, String(parseModelConfigurationPrice(value)));
         }
       } else {
-        const price = parseModelConfigurationPrice(videoPrice);
+        const perSecond = parseModelConfigurationPrice(videoPricePerSecond);
+        const perItem = parseModelConfigurationPrice(videoPricePerItem);
+        formData.append("billingMode", videoBillingMode);
         formData.append(
           "creditsPerSecondByResolution",
           JSON.stringify(
             Object.fromEntries(
-              supportedResolutions.map((resolution) => [resolution, price])
+              supportedResolutions.map((resolution) => [resolution, perSecond])
+            )
+          )
+        );
+        formData.append(
+          "creditsPerItemByResolution",
+          JSON.stringify(
+            Object.fromEntries(
+              supportedResolutions.map((resolution) => [resolution, perItem])
             )
           )
         );
@@ -325,20 +341,61 @@ export function CustomModelConfigurationDialog({
               ))}
             </div>
           ) : (
-            <div className="max-w-xs space-y-2">
-              <Label htmlFor="custom-video-price">初始每秒积分</Label>
-              <Input
-                id="custom-video-price"
-                type="number"
-                min="0.0001"
-                step="0.0001"
-                value={videoPrice}
-                disabled={isSaving}
-                required
-                onChange={(event) => setVideoPrice(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                创建后可在模型详情中分别调整每个分辨率的价格。
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="custom-video-billing-mode">生效计费模式</Label>
+                <Select
+                  value={videoBillingMode}
+                  disabled={isSaving}
+                  onValueChange={(value) =>
+                    setVideoBillingMode(
+                      value === "per_item" ? "per_item" : "per_second"
+                    )
+                  }
+                >
+                  <SelectTrigger id="custom-video-billing-mode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="per_second">按秒计费</SelectItem>
+                    <SelectItem value="per_item">按条计费</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="custom-video-price-per-second">
+                  初始每秒积分
+                </Label>
+                <Input
+                  id="custom-video-price-per-second"
+                  type="number"
+                  min="0.0001"
+                  step="0.0001"
+                  value={videoPricePerSecond}
+                  disabled={isSaving}
+                  required
+                  onChange={(event) =>
+                    setVideoPricePerSecond(event.target.value)
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="custom-video-price-per-item">
+                  初始每条积分
+                </Label>
+                <Input
+                  id="custom-video-price-per-item"
+                  type="number"
+                  min="0.0001"
+                  step="0.0001"
+                  value={videoPricePerItem}
+                  disabled={isSaving}
+                  required
+                  onChange={(event) => setVideoPricePerItem(event.target.value)}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground sm:col-span-3">
+                两套价格都会保存；切换生效模式不会删除另一套价格。
               </p>
             </div>
           )}

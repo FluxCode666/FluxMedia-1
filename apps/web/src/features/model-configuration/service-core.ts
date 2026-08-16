@@ -9,6 +9,8 @@
 import {
   getVideoPricingResolutionKey,
   globalVideoModelCreditsPerSecondSchema,
+  videoModelBillingModesSchema,
+  videoModelCreditPricesSchema,
 } from "@repo/shared/adobe";
 import {
   type GlobalImageCreditOverrides,
@@ -76,7 +78,11 @@ export interface ModelConfigurationTransaction {
   lockImagePricing(): Promise<unknown>;
   /** 初始化并锁定完整视频价格行。 */
   lockVideoPricing(): Promise<unknown>;
-  /** 初始化并锁定视频能力覆盖行；必须晚于视频价格行。 */
+  /** 初始化并锁定模型级计费模式。 */
+  lockVideoBillingModes(): Promise<unknown>;
+  /** 初始化并锁定按条价格。 */
+  lockVideoItemPricing(): Promise<unknown>;
+  /** 初始化并锁定视频能力覆盖行；必须晚于模式和两套价格行。 */
   lockVideoCapabilities(): Promise<unknown>;
   /** 保存已通过严格 schema 的展示配置及幂等回执。 */
   saveMarketplaceConfig(
@@ -90,6 +96,16 @@ export interface ModelConfigurationTransaction {
   ): Promise<void>;
   /** 保存已通过全局财务 schema 的完整视频价格矩阵。 */
   saveVideoPricing(
+    pricing: Record<string, number>,
+    actorUserId: string
+  ): Promise<void>;
+  /** 保存模型级计费模式；与两套价格在同一事务内提交。 */
+  saveVideoBillingModes(
+    modes: Record<string, "per_second" | "per_item">,
+    actorUserId: string
+  ): Promise<void>;
+  /** 保存完整按条价格矩阵。 */
+  saveVideoItemPricing(
     pricing: Record<string, number>,
     actorUserId: string
   ): Promise<void>;
@@ -174,6 +190,8 @@ export interface ModelConfigurationAuditEvent {
   previousRevision: number;
   resultingRevision: number;
   coverAction: "keep" | "remove" | "replace";
+  billingMode?: "per_second" | "per_item";
+  pricingDigest?: string;
   occurredAt: string;
 }
 
@@ -356,6 +374,40 @@ function getCoverAction(
 }
 
 /**
+ * 按分辨率键稳定排序价格矩阵，供幂等哈希与审计摘要共享同一规范形式。
+ *
+ * @param pricing - 已通过共享 schema 的分辨率价格。
+ * @returns 新建的稳定键序对象，不修改调用方输入。
+ */
+function sortVideoPricing(
+  pricing: Readonly<Record<string, number>>
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(pricing).sort(([left], [right]) => left.localeCompare(right))
+  );
+}
+
+/**
+ * 构造只含模型计费模式和双价格矩阵的规范审计载荷。
+ *
+ * @param input - 已收窄为视频分支的保存输入。
+ * @returns 不含展示字段、请求标识、token 或凭据的确定性 JSON。
+ */
+function serializeVideoPricingAuditPayload(
+  input: Extract<UpdateModelConfigurationEntryInput, { category: "video" }>
+): string {
+  return JSON.stringify({
+    billingMode: input.billingMode,
+    creditsPerSecondByResolution: sortVideoPricing(
+      input.creditsPerSecondByResolution
+    ),
+    creditsPerItemByResolution: sortVideoPricing(
+      input.creditsPerItemByResolution
+    ),
+  });
+}
+
+/**
  * 构造不含 clientRequestId 和原始图片字节的稳定载荷 JSON。
  *
  * @param input - 规范保存输入，字段按固定顺序投影。
@@ -384,10 +436,12 @@ function serializeRequestPayload(
   if (input.category === "video") {
     return JSON.stringify({
       ...common,
-      creditsPerSecondByResolution: Object.fromEntries(
-        Object.entries(input.creditsPerSecondByResolution).sort(
-          ([left], [right]) => left.localeCompare(right)
-        )
+      creditsPerSecondByResolution: sortVideoPricing(
+        input.creditsPerSecondByResolution
+      ),
+      billingMode: input.billingMode,
+      creditsPerItemByResolution: sortVideoPricing(
+        input.creditsPerItemByResolution
       ),
       ...(input.maxReferenceImages !== undefined
         ? { maxReferenceImages: input.maxReferenceImages }
@@ -647,6 +701,21 @@ export function createModelConfigurationService(
             "视频分辨率价格与当前模型目录不一致"
           );
         }
+        const submittedItemResolutions = Object.keys(
+          input.creditsPerItemByResolution
+        ).sort();
+        if (
+          expectedResolutions.length !== submittedItemResolutions.length ||
+          expectedResolutions.some(
+            (resolution, index) =>
+              resolution !== submittedItemResolutions[index]
+          )
+        ) {
+          throw new ModelConfigurationServiceError(
+            "not_configurable",
+            "视频按条价格与当前模型目录不一致"
+          );
+        }
         const capabilityIsConfigurable =
           catalogEntry.maxReferenceImages !== undefined;
         if (
@@ -679,6 +748,17 @@ export function createModelConfigurationService(
         ).toLowerCase(),
         "哈希端口"
       );
+      const pricingDigest =
+        input.category === "video"
+          ? assertSha256(
+              (
+                await dependencies.hash.sha256(
+                  serializeVideoPricingAuditPayload(input)
+                )
+              ).toLowerCase(),
+              "计费摘要哈希端口"
+            )
+          : null;
       const now = getNow();
       let newObjectWritten = false;
       let transactionResult: TransactionSaveResult;
@@ -700,6 +780,18 @@ export function createModelConfigurationService(
               input.category === "video"
                 ? globalVideoModelCreditsPerSecondSchema.parse(
                     await transaction.lockVideoPricing()
+                  )
+                : null;
+            const videoBillingModes =
+              input.category === "video"
+                ? videoModelBillingModesSchema.parse(
+                    await transaction.lockVideoBillingModes()
+                  )
+                : null;
+            const videoItemPricing =
+              input.category === "video"
+                ? videoModelCreditPricesSchema.parse(
+                    await transaction.lockVideoItemPricing()
                   )
                 : null;
             const videoCapabilities =
@@ -822,6 +914,12 @@ export function createModelConfigurationService(
                   "视频价格事务未初始化"
                 );
               }
+              if (!videoBillingModes || !videoItemPricing) {
+                throw new ModelConfigurationServiceError(
+                  "invalid_dependency_result",
+                  "视频双模式价格事务未初始化"
+                );
+              }
               if (!videoCapabilities) {
                 throw new ModelConfigurationServiceError(
                   "invalid_dependency_result",
@@ -850,8 +948,37 @@ export function createModelConfigurationService(
                     )
                   ),
                 });
+              const nextVideoItemPricing = videoModelCreditPricesSchema.parse({
+                ...Object.fromEntries(
+                  Object.entries(videoItemPricing).filter(
+                    ([key]) =>
+                      key !== input.configKey &&
+                      !key.startsWith(`${input.configKey}@`)
+                  )
+                ),
+                ...Object.fromEntries(
+                  Object.entries(input.creditsPerItemByResolution).map(
+                    ([resolution, price]) => [
+                      getVideoPricingResolutionKey(input.configKey, resolution),
+                      price,
+                    ]
+                  )
+                ),
+              });
+              const nextVideoBillingModes = videoModelBillingModesSchema.parse({
+                ...videoBillingModes,
+                [input.configKey]: input.billingMode,
+              });
               nextConfig.videoByFamily[input.configKey] = nextEntry;
               await transaction.saveVideoPricing(nextVideoPricing, actorUserId);
+              await transaction.saveVideoBillingModes(
+                nextVideoBillingModes,
+                actorUserId
+              );
+              await transaction.saveVideoItemPricing(
+                nextVideoItemPricing,
+                actorUserId
+              );
               if (input.maxReferenceImages !== undefined) {
                 const nextVideoCapabilities =
                   videoModelCapabilityOverridesSchema.parse({
@@ -896,6 +1023,12 @@ export function createModelConfigurationService(
               previousRevision: currentRevision,
               resultingRevision,
               coverAction: getCoverAction(input),
+              ...(input.category === "video" && pricingDigest
+                ? {
+                    billingMode: input.billingMode,
+                    pricingDigest,
+                  }
+                : {}),
               occurredAt: now.toISOString(),
             });
             return {

@@ -691,7 +691,9 @@ describe("updateModelConfigurationEntryInputSchema", () => {
     expect(
       updateModelConfigurationEntryInputSchema.safeParse({
         ...videoCommon,
+        billingMode: "per_second",
         creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+        creditsPerItemByResolution: { "720p": 3, "1080p": 3 },
       }).success
     ).toBe(true);
     for (const creditsPerSecondByResolution of [
@@ -702,7 +704,57 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       expect(
         updateModelConfigurationEntryInputSchema.safeParse({
           ...videoCommon,
+          billingMode: "per_second",
           creditsPerSecondByResolution,
+          creditsPerItemByResolution: Object.fromEntries(
+            Object.keys(creditsPerSecondByResolution).map((resolution) => [
+              resolution,
+              3,
+            ])
+          ),
+        }).success
+      ).toBe(false);
+    }
+  });
+
+  it("双模式视频保存必须同时提交完整的两套分辨率矩阵", () => {
+    const videoCommon = {
+      clientRequestId: common.clientRequestId,
+      configKey: "veo31",
+      expectedRevision: 2,
+      enabled: true,
+      visible: true,
+      homepageVisible: true,
+      homepagePriority: 5,
+      description: "视频模型",
+      coverChange: { action: "keep" as const },
+      category: "video" as const,
+      creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+    };
+
+    expect(
+      updateModelConfigurationEntryInputSchema.safeParse({
+        ...videoCommon,
+        billingMode: "per_item",
+        creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
+      }).success
+    ).toBe(true);
+    for (const invalid of [
+      { billingMode: "per_item" },
+      { creditsPerItemByResolution: { "720p": 3, "1080p": 5 } },
+      {
+        billingMode: "per_item",
+        creditsPerItemByResolution: { "720p": 3 },
+      },
+      {
+        billingMode: "per_second",
+        creditsPerItemByResolution: { "720p": 0, "1080p": 5 },
+      },
+    ]) {
+      expect(
+        updateModelConfigurationEntryInputSchema.safeParse({
+          ...videoCommon,
+          ...invalid,
         }).success
       ).toBe(false);
     }
@@ -720,7 +772,9 @@ describe("updateModelConfigurationEntryInputSchema", () => {
       description: "Seedance 视频模型",
       coverChange: { action: "keep" as const },
       category: "video" as const,
+      billingMode: "per_second" as const,
       creditsPerSecondByResolution: { "1080p": 45 },
+      creditsPerItemByResolution: { "1080p": 3 },
       maxReferenceImages: 20,
     };
 

@@ -4,7 +4,11 @@
  * 使用方是 UOL late binding；测试验证 bucket 安全边界、封面 URL、底层存储错误分类和
  * 全部生产端口装配，不连接数据库、Redis、Sharp 或真实对象存储。
  */
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "@repo/shared/adobe";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import {
   createDefaultModelMarketplaceConfig,
@@ -120,6 +124,12 @@ async function createServiceHarness(
       }
       if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
         return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+      }
+      if (key === "VIDEO_MODEL_BILLING_MODES") {
+        return { ...DEFAULT_VIDEO_MODEL_BILLING_MODES };
+      }
+      if (key === "VIDEO_MODEL_CREDITS_PER_ITEM") {
+        return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM };
       }
       if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
         return createDefaultVideoModelCapabilityOverrides();
@@ -369,6 +379,12 @@ describe("生产模型配置服务", () => {
           }
           if (key === "VIDEO_MODEL_CREDITS_PER_SECOND") {
             return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND };
+          }
+          if (key === "VIDEO_MODEL_BILLING_MODES") {
+            return { ...DEFAULT_VIDEO_MODEL_BILLING_MODES };
+          }
+          if (key === "VIDEO_MODEL_CREDITS_PER_ITEM") {
+            return { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM };
           }
           if (key === "VIDEO_MODEL_CAPABILITY_OVERRIDES") {
             return createDefaultVideoModelCapabilityOverrides();

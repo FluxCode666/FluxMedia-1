@@ -79,8 +79,10 @@ const VIDEO_ENTRY: Extract<ModelConfigurationEntry, { category: "video" }> = {
   coverUrl: "/model-marketplace/default-video.webp",
   usesDefaultCover: true,
   minimumCredits: 45,
+  billingMode: "per_item",
   creditsPerSecond: 45,
   creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+  creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
   supportedResolutions: ["720p", "1080p"],
   maxReferenceImages: 20,
 };
@@ -121,7 +123,9 @@ describe("模型配置草稿", () => {
     expect(video).toMatchObject({
       category: "video",
       clientRequestId: "video-id",
+      billingMode: "per_item",
       creditsPerSecondByResolution: { "720p": "30", "1080p": "45" },
+      creditsPerItemByResolution: { "720p": "3", "1080p": "5" },
       maxReferenceImages: "20",
       enabled: false,
       visible: false,
@@ -212,6 +216,10 @@ describe("模型配置草稿", () => {
     expect(videoValues.coverChange).toBe("replace");
     expect(videoValues.creditsPerSecondByResolution).toBe(
       JSON.stringify({ "1080p": 45, "720p": 30 })
+    );
+    expect(videoValues.billingMode).toBe("per_item");
+    expect(videoValues.creditsPerItemByResolution).toBe(
+      JSON.stringify({ "720p": 3, "1080p": 5 })
     );
     expect(videoValues.maxReferenceImages).toBe("20");
   });

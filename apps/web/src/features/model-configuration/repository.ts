@@ -5,7 +5,11 @@
  * 并用不可伪造的 auditContext 在同一 Drizzle 事务中写 admin_audit_log。本模块只返回
  * unknown 数据库 JSON，严格业务解析仍由 DB-free service-core 负责。
  */
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "@repo/shared/adobe";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "@repo/shared/adobe";
 import {
   createDefaultGlobalImageCreditOverrides,
   type GlobalImageCreditOverrides,
@@ -33,6 +37,10 @@ import type {
 export const MODEL_MARKETPLACE_CONFIG_SETTING_KEY = "MODEL_MARKETPLACE_CONFIG";
 export const IMAGE_MODEL_PRICING_SETTING_KEY = "IMAGE_MODEL_CREDIT_PRICES";
 export const VIDEO_MODEL_PRICING_SETTING_KEY = "VIDEO_MODEL_CREDITS_PER_SECOND";
+export const VIDEO_MODEL_BILLING_MODES_SETTING_KEY =
+  "VIDEO_MODEL_BILLING_MODES";
+export const VIDEO_MODEL_ITEM_PRICING_SETTING_KEY =
+  "VIDEO_MODEL_CREDITS_PER_ITEM";
 export const VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY =
   "VIDEO_MODEL_CAPABILITY_OVERRIDES";
 
@@ -40,6 +48,8 @@ type ModelConfigurationSettingKey =
   | typeof MODEL_MARKETPLACE_CONFIG_SETTING_KEY
   | typeof IMAGE_MODEL_PRICING_SETTING_KEY
   | typeof VIDEO_MODEL_PRICING_SETTING_KEY
+  | typeof VIDEO_MODEL_BILLING_MODES_SETTING_KEY
+  | typeof VIDEO_MODEL_ITEM_PRICING_SETTING_KEY
   | typeof VIDEO_MODEL_CAPABILITY_OVERRIDES_SETTING_KEY;
 
 const lockedSettingRowSchema = z.object({ value: z.unknown() });
@@ -64,6 +74,11 @@ const auditEventSchema = z.object({
   previousRevision: safeRevisionSchema,
   resultingRevision: safeRevisionSchema,
   coverAction: z.enum(["keep", "remove", "replace"]),
+  billingMode: z.enum(["per_second", "per_item"]).optional(),
+  pricingDigest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   occurredAt: z.string().datetime({ offset: true }),
 });
 
@@ -243,6 +258,8 @@ function createTransactionPort(
     | typeof VIDEO_MODEL_PRICING_SETTING_KEY
     | null = null;
   let videoCapabilitiesLocked = false;
+  let videoBillingModesLocked = false;
+  let videoItemPricingLocked = false;
   const auditContext: DatabaseAuditContext = Object.freeze({
     [DATABASE_AUDIT_CONTEXT_BRAND]: true as const,
     transaction: databaseTransaction,
@@ -308,9 +325,33 @@ function createTransactionPort(
         DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND
       );
     },
-    async lockVideoCapabilities() {
+    async lockVideoBillingModes() {
       if (lockedPriceKey !== VIDEO_MODEL_PRICING_SETTING_KEY) {
-        throw new Error("必须先锁定视频价格，再锁定视频能力覆盖");
+        throw new Error("必须先锁定视频每秒价格，再锁定视频计费模式");
+      }
+      const value = await initializeAndLockSetting(
+        databaseTransaction,
+        VIDEO_MODEL_BILLING_MODES_SETTING_KEY,
+        DEFAULT_VIDEO_MODEL_BILLING_MODES
+      );
+      videoBillingModesLocked = true;
+      return value;
+    },
+    async lockVideoItemPricing() {
+      if (!videoBillingModesLocked) {
+        throw new Error("必须先锁定视频计费模式，再锁定视频按条价格");
+      }
+      const value = await initializeAndLockSetting(
+        databaseTransaction,
+        VIDEO_MODEL_ITEM_PRICING_SETTING_KEY,
+        DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM
+      );
+      videoItemPricingLocked = true;
+      return value;
+    },
+    async lockVideoCapabilities() {
+      if (!videoItemPricingLocked) {
+        throw new Error("必须先锁定视频按条价格，再锁定视频能力覆盖");
       }
       const value = await initializeAndLockSetting(
         databaseTransaction,
@@ -354,6 +395,28 @@ function createTransactionPort(
       await saveLockedSetting(
         databaseTransaction,
         VIDEO_MODEL_PRICING_SETTING_KEY,
+        pricing,
+        actorUserId
+      );
+    },
+    async saveVideoBillingModes(modes, actorUserId) {
+      if (!videoBillingModesLocked) {
+        throw new Error("必须先锁定视频计费模式再保存");
+      }
+      await saveLockedSetting(
+        databaseTransaction,
+        VIDEO_MODEL_BILLING_MODES_SETTING_KEY,
+        modes,
+        actorUserId
+      );
+    },
+    async saveVideoItemPricing(pricing, actorUserId) {
+      if (!videoItemPricingLocked) {
+        throw new Error("必须先锁定视频按条价格再保存");
+      }
+      await saveLockedSetting(
+        databaseTransaction,
+        VIDEO_MODEL_ITEM_PRICING_SETTING_KEY,
         pricing,
         actorUserId
       );
@@ -422,6 +485,10 @@ export function createDatabaseModelConfigurationRepository(
             category: parsed.category,
             configKey: parsed.configKey,
             coverAction: parsed.coverAction,
+            ...(parsed.billingMode ? { billingMode: parsed.billingMode } : {}),
+            ...(parsed.pricingDigest
+              ? { pricingDigest: parsed.pricingDigest }
+              : {}),
           })}::json,
           ${new Date(parsed.occurredAt)}
         )

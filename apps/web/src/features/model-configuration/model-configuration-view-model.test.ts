@@ -58,8 +58,10 @@ const ENTRIES: ModelConfigurationEntry[] = [
     coverUrl: "/custom/video.webp",
     usesDefaultCover: false,
     minimumCredits: 45,
+    billingMode: "per_second",
     creditsPerSecond: 45,
     creditsPerSecondByResolution: { "720p": 30, "1080p": 45 },
+    creditsPerItemByResolution: { "720p": 3, "1080p": 3 },
     supportedResolutions: ["720p", "1080p"],
   },
   {

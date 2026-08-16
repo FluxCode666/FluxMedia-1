@@ -5,7 +5,10 @@
  * 传输输入交给 UOL；不直接访问数据库、存储服务或模型配置领域服务。
  */
 
-import { videoCreditsPerSecondByResolutionSchema } from "@repo/shared/adobe";
+import {
+  videoCreditsPerSecondByResolutionSchema,
+  videoModelCreditPricesSchema,
+} from "@repo/shared/adobe";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isSuperAdminRole } from "@repo/shared/auth/roles";
@@ -53,6 +56,8 @@ const KNOWN_FORM_FIELDS = new Set([
   "coverChange",
   "cover",
   "creditsPerSecondByResolution",
+  "creditsPerItemByResolution",
+  "billingMode",
   "maxReferenceImages",
   "isCustom",
   "supportedResolutions",
@@ -326,6 +331,23 @@ function parseVideoPricing(value: string): Record<string, number> {
 }
 
 /**
+ * 解析视频按条分辨率价格 JSON。
+ *
+ * @param value - multipart 中唯一的 JSON 标量。
+ * @returns 通过共享正数价格 schema 的分辨率映射。
+ * @throws ModelConfigurationFormError - JSON 语法非法时失败；数值边界由 Zod 拒绝。
+ */
+function parseVideoItemPricing(value: string): Record<string, number> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ModelConfigurationFormError("视频按条价格格式无效");
+  }
+  return videoModelCreditPricesSchema.parse(parsed);
+}
+
+/**
  * 解析自定义图像模型支持的分辨率 JSON。
  *
  * @param value - multipart 中唯一的 JSON 数组标量。
@@ -444,10 +466,16 @@ async function parseVideoInput(
     new Set([
       ...MARKETPLACE_SCALAR_FIELDS,
       "creditsPerSecondByResolution",
+      "creditsPerItemByResolution",
+      "billingMode",
       "maxReferenceImages",
     ])
   );
   const maxReferenceImages = data.scalars.get("maxReferenceImages");
+  const billingMode = data.scalars.get("billingMode");
+  const creditsPerItemByResolution = data.scalars.get(
+    "creditsPerItemByResolution"
+  );
   const isCustom = data.scalars.get("isCustom");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "video",
@@ -473,6 +501,14 @@ async function parseVideoInput(
     creditsPerSecondByResolution: parseVideoPricing(
       requireScalar(data.scalars, "creditsPerSecondByResolution")
     ),
+    ...(billingMode !== undefined ? { billingMode } : {}),
+    ...(creditsPerItemByResolution !== undefined
+      ? {
+          creditsPerItemByResolution: parseVideoItemPricing(
+            creditsPerItemByResolution
+          ),
+        }
+      : {}),
     ...(maxReferenceImages !== undefined
       ? { maxReferenceImages: parsePositiveSafeInteger(maxReferenceImages) }
       : {}),
