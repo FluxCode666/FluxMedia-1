@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "../adobe/video-pricing";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "../adobe/video-pricing";
 import {
   CREDIT_PACKAGE_MATRIX_SETTING_KEY,
   getRuntimeCreditPackages,
@@ -13,7 +17,9 @@ import { createDefaultVideoModelCapabilityOverrides } from "../video-generation"
 import { SETTING_DEFINITION_BY_KEY } from "./definitions";
 import {
   clearSystemSettingsCache,
+  getAuthoritativeVideoModelBillingSettings,
   getRuntimeSettingNumber,
+  getRuntimeVideoModelBillingSettings,
   initializeMissingSystemSettingsDefaults,
 } from "./index";
 
@@ -163,6 +169,20 @@ describe("system setting default initialization", () => {
     }
   });
 
+  it("视频模式和按条价格只能由专用模型配置 operation 管理", () => {
+    for (const key of [
+      "VIDEO_MODEL_BILLING_MODES",
+      "VIDEO_MODEL_CREDITS_PER_ITEM",
+      "VIDEO_MODEL_CREDITS_PER_SECOND",
+    ] as const) {
+      expect(SETTING_DEFINITION_BY_KEY.get(key)).toMatchObject({
+        category: "credits",
+        valueType: "json",
+        managedByDedicatedOperation: true,
+      });
+    }
+  });
+
   it("persists missing non-secret defaults for a fresh database", async () => {
     const initializedKeys = await initializeMissingSystemSettingsDefaults({
       updatedBy: "admin-1",
@@ -254,6 +274,12 @@ describe("system setting default initialization", () => {
     );
     expect(store.get("VIDEO_MODEL_CREDITS_PER_SECOND")?.value).toEqual(
       DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND
+    );
+    expect(store.get("VIDEO_MODEL_BILLING_MODES")?.value).toEqual(
+      DEFAULT_VIDEO_MODEL_BILLING_MODES
+    );
+    expect(store.get("VIDEO_MODEL_CREDITS_PER_ITEM")?.value).toEqual(
+      DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM
     );
     expect(store.get("MODEL_MARKETPLACE_CONFIG")?.value).toEqual(
       createDefaultModelMarketplaceConfig()
@@ -418,6 +444,99 @@ describe("system setting default initialization", () => {
       sora2: 48,
     });
     expect(store.has("VIDEO_MODEL_MULTIPLIERS")).toBe(false);
+  });
+
+  it("为既有自定义视频模型补齐按秒模式和每个分辨率的按条默认价", async () => {
+    const marketplace = createDefaultModelMarketplaceConfig();
+    marketplace.customModels.push({
+      modelId: "vendor-video-x",
+      category: "video",
+      supportedResolutions: ["720p", "1080p"],
+    });
+    store.set("MODEL_MARKETPLACE_CONFIG", {
+      key: "MODEL_MARKETPLACE_CONFIG",
+      value: marketplace,
+    });
+    store.set("VIDEO_MODEL_CREDITS_PER_SECOND", {
+      key: "VIDEO_MODEL_CREDITS_PER_SECOND",
+      value: { "vendor-video-x": 12 },
+    });
+
+    await initializeMissingSystemSettingsDefaults();
+
+    expect(store.get("VIDEO_MODEL_BILLING_MODES")?.value).toMatchObject({
+      "vendor-video-x": "per_second",
+    });
+    expect(store.get("VIDEO_MODEL_CREDITS_PER_ITEM")?.value).toMatchObject({
+      "vendor-video-x@720p": 3,
+      "vendor-video-x@1080p": 3,
+    });
+    expect(store.get("VIDEO_MODEL_CREDITS_PER_SECOND")?.value).toMatchObject({
+      "vendor-video-x": 12,
+      "vendor-video-x@720p": 12,
+      "vendor-video-x@1080p": 12,
+    });
+  });
+
+  it("权威读取绕过缓存并聚合已提交的三套视频计费设置", async () => {
+    store.set("VIDEO_MODEL_BILLING_MODES", {
+      key: "VIDEO_MODEL_BILLING_MODES",
+      value: { ...DEFAULT_VIDEO_MODEL_BILLING_MODES, seedance2: "per_item" },
+    });
+    store.set("VIDEO_MODEL_CREDITS_PER_ITEM", {
+      key: "VIDEO_MODEL_CREDITS_PER_ITEM",
+      value: {
+        ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+        "seedance2@1080p": 5,
+      },
+    });
+    store.set("VIDEO_MODEL_CREDITS_PER_SECOND", {
+      key: "VIDEO_MODEL_CREDITS_PER_SECOND",
+      value: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+    });
+
+    await expect(getAuthoritativeVideoModelBillingSettings()).resolves.toEqual({
+      billingModes: {
+        ...DEFAULT_VIDEO_MODEL_BILLING_MODES,
+        seedance2: "per_item",
+      },
+      creditsPerItem: {
+        ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+        "seedance2@1080p": 5,
+      },
+      creditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+    });
+  });
+
+  it("缓存读取与权威读取使用同一聚合结果", async () => {
+    store.set("VIDEO_MODEL_BILLING_MODES", {
+      key: "VIDEO_MODEL_BILLING_MODES",
+      value: { ...DEFAULT_VIDEO_MODEL_BILLING_MODES, seedance2: "per_item" },
+    });
+    store.set("VIDEO_MODEL_CREDITS_PER_ITEM", {
+      key: "VIDEO_MODEL_CREDITS_PER_ITEM",
+      value: {
+        ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+        "seedance2@1080p": 5,
+      },
+    });
+    store.set("VIDEO_MODEL_CREDITS_PER_SECOND", {
+      key: "VIDEO_MODEL_CREDITS_PER_SECOND",
+      value: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+    });
+
+    await expect(getRuntimeVideoModelBillingSettings()).resolves.toEqual(
+      await getAuthoritativeVideoModelBillingSettings()
+    );
+  });
+
+  it("非法新计费模式由权威读取拒绝而不是静默回退按秒", async () => {
+    store.set("VIDEO_MODEL_BILLING_MODES", {
+      key: "VIDEO_MODEL_BILLING_MODES",
+      value: { seedance2: "hourly" },
+    });
+
+    await expect(getAuthoritativeVideoModelBillingSettings()).rejects.toThrow();
   });
 
   it("补齐历史稀疏图像价格为全局必填矩阵", async () => {

@@ -9,8 +9,9 @@
  */
 import { z } from "zod";
 import {
-  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   globalVideoModelCreditsPerSecondSchema,
+  videoModelBillingModesSchema,
+  videoModelCreditPricesSchema,
 } from "../../adobe/video-pricing";
 import {
   destroyGenerationPhotosByMaxCount,
@@ -29,6 +30,7 @@ import { SystemSettingValidationError } from "../../system-settings/errors";
 import {
   getAdminSystemSettingsSnapshot,
   getRuntimeSettingJson,
+  getRuntimeVideoModelBillingSettings,
   getSiteBranding,
   getSystemSettingValue,
   importSystemSettingsFromEnv,
@@ -330,6 +332,8 @@ export const settingsUpdate = defineOperation({
 const globalModelPricingOutputSchema = z
   .object({
     image: globalImageCreditOverridesSchema,
+    videoBillingModes: videoModelBillingModesSchema,
+    videoCreditsPerItem: videoModelCreditPricesSchema,
     videoCreditsPerSecond: globalVideoModelCreditsPerSecondSchema,
   })
   .strict();
@@ -345,7 +349,7 @@ export const settingsGetModelPricing = defineOperation({
   domain: "system-settings",
   title: "读取全局模型计费配置",
   description:
-    "读取图像模型四档固定价格与视频模型分辨率每秒价格，供管理员查看继承价格。",
+    "读取图像模型四档价格及视频模型计费模式、按秒与按条分辨率价格，供管理员查看继承价格。",
   input: z.object({}),
   output: globalModelPricingOutputSchema,
   access: { kind: "admin" },
@@ -355,19 +359,20 @@ export const settingsGetModelPricing = defineOperation({
   idempotency: { kind: "natural" },
   sideEffects: [],
   execute: async () => {
-    const [imageRaw, videoRaw] = await Promise.all([
+    const [imageRaw, video] = await Promise.all([
       getRuntimeSettingJson("IMAGE_MODEL_CREDIT_PRICES"),
-      getRuntimeSettingJson("VIDEO_MODEL_CREDITS_PER_SECOND"),
+      getRuntimeVideoModelBillingSettings(),
     ]);
     const image = globalImageCreditOverridesSchema.safeParse(imageRaw);
-    const video = globalVideoModelCreditsPerSecondSchema.safeParse(videoRaw);
     return {
       image: image.success
         ? image.data
         : createDefaultGlobalImageCreditOverrides(),
-      videoCreditsPerSecond: video.success
-        ? video.data
-        : { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND },
+      videoBillingModes: video.billingModes,
+      videoCreditsPerItem: video.creditsPerItem,
+      videoCreditsPerSecond: globalVideoModelCreditsPerSecondSchema.parse(
+        video.creditsPerSecond
+      ),
     };
   },
 });

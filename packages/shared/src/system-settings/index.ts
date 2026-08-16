@@ -9,9 +9,17 @@ import { db } from "@repo/database";
 import { systemSetting } from "@repo/database/schema";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
+  createDefaultVideoModelBillingModes,
+  createDefaultVideoModelCreditsPerItem,
+  DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   globalVideoModelCreditsPerSecondSchema,
   parseVideoModelCreditsPerSecond,
+  type VideoBillingModelPricingDescriptor,
+  type VideoModelBillingModes,
+  type VideoModelCreditPrices,
+  videoModelBillingModesSchema,
+  videoModelCreditPricesSchema,
 } from "../adobe/video-pricing";
 import {
   createDefaultGlobalImageCreditOverrides,
@@ -20,6 +28,7 @@ import {
   imageCreditPricingSchema,
   parseImageCreditOverrides,
 } from "../image-backend/group-image-pricing";
+import { parseModelMarketplaceConfig } from "../model-marketplace";
 import { paginationPageSizeOptionsSchema } from "../pagination/config";
 import {
   REFERRAL_REWARD_CONFIG_SETTING_KEY,
@@ -644,6 +653,7 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
   await migrateLegacyModerationSettings(now, options?.updatedBy);
   await migrateLegacyVideoModelPricing(now, options?.updatedBy);
   await migrateLegacyGlobalModelPricing(now, options?.updatedBy);
+  await initializeVideoModelBillingSettings(now, options?.updatedBy);
 
   const rows = await db
     .select({
@@ -682,6 +692,231 @@ export async function initializeMissingSystemSettingsDefaults(options?: {
 
   await invalidateSystemSettingsCache();
   return values.map((value) => value.key);
+}
+
+/** 新视频计费设置的聚合结果；三项必须作为同一个配置事实消费。 */
+export type VideoModelBillingSettings = {
+  readonly billingModes: VideoModelBillingModes;
+  readonly creditsPerSecond: VideoModelCreditPrices;
+  readonly creditsPerItem: VideoModelCreditPrices;
+};
+
+/**
+ * 按模型广场中的既有自定义视频模型补齐三套计费设置。
+ *
+ * @param input - 三项未知设置值与已校验的自定义视频模型描述。
+ * @returns 保留全部合法历史键，并补齐内置和自定义模型缺失项的新对象。
+ * @sideEffects 无。
+ * @throws ZodError - 任一已存在的新设置含非法模式或非正价格时 fail closed。
+ */
+export function normalizeVideoModelBillingSettings(input: {
+  billingModes: unknown;
+  creditsPerSecond: unknown;
+  creditsPerItem: unknown;
+  customModels?: readonly VideoBillingModelPricingDescriptor[];
+}): VideoModelBillingSettings {
+  const customModels = input.customModels ?? [];
+  const parsedModes =
+    input.billingModes === undefined
+      ? {}
+      : videoModelBillingModesSchema.parse(input.billingModes);
+  const parsedPerSecond =
+    input.creditsPerSecond === undefined
+      ? {}
+      : videoModelCreditPricesSchema.parse(input.creditsPerSecond);
+  const parsedPerItem =
+    input.creditsPerItem === undefined
+      ? {}
+      : videoModelCreditPricesSchema.parse(input.creditsPerItem);
+  const billingModes = {
+    ...createDefaultVideoModelBillingModes(customModels),
+    ...parsedModes,
+  };
+  const creditsPerSecond: VideoModelCreditPrices = {
+    ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+    ...parsedPerSecond,
+  };
+  for (const model of customModels) {
+    const modelPrice =
+      parsedPerSecond[model.modelId] ?? DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
+    for (const resolution of model.supportedResolutions) {
+      const key = `${model.modelId}@${resolution.toLowerCase()}`;
+      creditsPerSecond[key] ??= modelPrice;
+    }
+  }
+  return {
+    billingModes,
+    creditsPerSecond,
+    creditsPerItem: {
+      ...createDefaultVideoModelCreditsPerItem(customModels),
+      ...parsedPerItem,
+    },
+  };
+}
+
+/**
+ * 从模型广场未知值提取可信自定义视频模型最小计费描述。
+ *
+ * @param marketplaceValue - 数据库或缓存中的模型广场 JSON。
+ * @returns 只含自定义视频模型 ID 和支持分辨率的新数组。
+ * @sideEffects 无。
+ * @throws 模型广场配置非法时 fail closed。
+ */
+function parseCustomVideoBillingModels(
+  marketplaceValue: unknown
+): VideoBillingModelPricingDescriptor[] {
+  return parseModelMarketplaceConfig(marketplaceValue)
+    .customModels.filter((model) => model.category === "video")
+    .map((model) => ({
+      modelId: model.modelId,
+      supportedResolutions: model.supportedResolutions,
+    }));
+}
+
+/**
+ * 经两级缓存聚合读取视频模型三套计费设置。
+ *
+ * @returns 已补齐内置与既有自定义模型的模式、按秒矩阵和按条矩阵。
+ * @sideEffects 可能读取或回填 Redis/L1 系统设置缓存。
+ * @throws 模型广场或任一新计费设置非法时 fail closed。
+ */
+export async function getRuntimeVideoModelBillingSettings(): Promise<VideoModelBillingSettings> {
+  const [marketplace, billingModes, creditsPerSecond, creditsPerItem] =
+    await Promise.all([
+      getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
+      getRuntimeSettingJson("VIDEO_MODEL_BILLING_MODES"),
+      getRuntimeSettingJson("VIDEO_MODEL_CREDITS_PER_SECOND"),
+      getRuntimeSettingJson("VIDEO_MODEL_CREDITS_PER_ITEM"),
+    ]);
+  return normalizeVideoModelBillingSettings({
+    billingModes,
+    creditsPerSecond,
+    creditsPerItem,
+    customModels: parseCustomVideoBillingModels(marketplace),
+  });
+}
+
+/**
+ * 绕过 L1/Redis 从已提交数据库值聚合读取视频模型计费设置。
+ *
+ * @returns 与运行时聚合读取相同的严格三项配置。
+ * @sideEffects 执行一次 PostgreSQL 查询，不修改数据库或缓存。
+ * @throws 数据库读取失败或任一持久化配置非法时 fail closed。
+ */
+export async function getAuthoritativeVideoModelBillingSettings(): Promise<VideoModelBillingSettings> {
+  const keys = [
+    "MODEL_MARKETPLACE_CONFIG",
+    "VIDEO_MODEL_BILLING_MODES",
+    "VIDEO_MODEL_CREDITS_PER_ITEM",
+    "VIDEO_MODEL_CREDITS_PER_SECOND",
+  ];
+  const rows = await db
+    .select({ key: systemSetting.key, value: systemSetting.value })
+    .from(systemSetting)
+    .where(inArray(systemSetting.key, keys));
+  const values = new Map(rows.map((row) => [row.key, row.value] as const));
+  const marketplace = values.get("MODEL_MARKETPLACE_CONFIG");
+  return normalizeVideoModelBillingSettings({
+    billingModes: values.get("VIDEO_MODEL_BILLING_MODES"),
+    creditsPerSecond: values.get("VIDEO_MODEL_CREDITS_PER_SECOND"),
+    creditsPerItem: values.get("VIDEO_MODEL_CREDITS_PER_ITEM"),
+    customModels: parseCustomVideoBillingModels(marketplace),
+  });
+}
+
+/**
+ * 比较只含字符串键和标量值的计费设置，忽略 JSON 对象插入顺序。
+ *
+ * @param left - 数据库中的未知 JSON 值。
+ * @param right - 已规范化的模式或价格映射。
+ * @returns 键集合和每个标量值均相同时为 true。
+ * @sideEffects 无。
+ * @failure 不抛错；非普通对象直接视为不相等。
+ */
+function equalFlatSettings(
+  left: unknown,
+  right: Readonly<Record<string, string | number>>
+): boolean {
+  if (!left || typeof left !== "object" || Array.isArray(left)) return false;
+  const entries = Object.entries(left);
+  const expectedEntries = Object.entries(right);
+  return (
+    entries.length === expectedEntries.length &&
+    expectedEntries.every(([key, value]) =>
+      Object.is((left as Record<string, unknown>)[key], value)
+    )
+  );
+}
+
+/**
+ * 初始化或扩充视频模型三套计费设置。
+ *
+ * @param now - 本次启动初始化统一更新时间。
+ * @param updatedBy - 可选管理员 ID。
+ * @returns 无返回值；没有缺失项时不写数据库。
+ * @sideEffects 最多执行一个数据库事务并在提交后失效一次设置缓存。
+ * @throws 数据库、模型广场或新计费设置非法时保持上抛。
+ */
+async function initializeVideoModelBillingSettings(
+  now: Date,
+  updatedBy?: string
+): Promise<void> {
+  const keys = [
+    "MODEL_MARKETPLACE_CONFIG",
+    "VIDEO_MODEL_BILLING_MODES",
+    "VIDEO_MODEL_CREDITS_PER_ITEM",
+    "VIDEO_MODEL_CREDITS_PER_SECOND",
+  ];
+  const rows = await db
+    .select({ key: systemSetting.key, value: systemSetting.value })
+    .from(systemSetting)
+    .where(inArray(systemSetting.key, keys));
+  const stored = new Map(rows.map((row) => [row.key, row.value] as const));
+  const normalized = normalizeVideoModelBillingSettings({
+    billingModes: stored.get("VIDEO_MODEL_BILLING_MODES"),
+    creditsPerSecond: stored.get("VIDEO_MODEL_CREDITS_PER_SECOND"),
+    creditsPerItem: stored.get("VIDEO_MODEL_CREDITS_PER_ITEM"),
+    customModels: parseCustomVideoBillingModels(
+      stored.get("MODEL_MARKETPLACE_CONFIG")
+    ),
+  });
+  const values = [
+    {
+      key: "VIDEO_MODEL_BILLING_MODES",
+      value: normalized.billingModes,
+    },
+    {
+      key: "VIDEO_MODEL_CREDITS_PER_ITEM",
+      value: normalized.creditsPerItem,
+    },
+    {
+      key: "VIDEO_MODEL_CREDITS_PER_SECOND",
+      value: normalized.creditsPerSecond,
+    },
+  ].filter((entry) => !equalFlatSettings(stored.get(entry.key), entry.value));
+  if (values.length === 0) return;
+
+  await db.transaction(async (transaction) => {
+    for (const entry of values) {
+      await transaction
+        .insert(systemSetting)
+        .values({
+          ...entry,
+          isSecret: false,
+          ...(updatedBy ? { updatedBy } : {}),
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: systemSetting.key,
+          set: {
+            value: entry.value,
+            ...(updatedBy ? { updatedBy } : {}),
+            updatedAt: now,
+          },
+        });
+    }
+  });
+  await invalidateSystemSettingsCache();
 }
 
 /**

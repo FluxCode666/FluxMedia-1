@@ -15,6 +15,7 @@ import {
 } from "../video-generation/contracts";
 
 export const DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND = 30;
+export const DEFAULT_VIDEO_BASE_CREDITS_PER_ITEM = 3;
 export const MAX_VIDEO_CREDITS_PER_UNIT = 100_000;
 /** 旧调用方继续使用的每秒单价上限别名。 */
 export const MAX_VIDEO_CREDITS_PER_SECOND = MAX_VIDEO_CREDITS_PER_UNIT;
@@ -154,6 +155,80 @@ export function createDefaultVideoModelCreditsPerSecond(): VideoModelCreditsPerS
 /** 全局模型价格的开发默认值；所有内置模型族及分辨率均有明确每秒价格。 */
 export const DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND =
   createDefaultVideoModelCreditsPerSecond();
+
+/** 可由全局计费设置覆盖的视频模型与支持分辨率最小描述。 */
+export type VideoBillingModelPricingDescriptor = {
+  readonly modelId: string;
+  readonly supportedResolutions: readonly string[];
+};
+
+/**
+ * 把静态内置能力与调用方提供的自定义模型收窄到同一计费描述。
+ *
+ * @param additionalModels - 已由模型广场严格校验的自定义视频模型。
+ * @returns 内置模型在前、自定义模型在后的新描述数组。
+ * @sideEffects 无。
+ * @failure 不抛错；调用方负责保证自定义模型身份不与内置目录冲突。
+ */
+function listVideoBillingModelPricingDescriptors(
+  additionalModels: readonly VideoBillingModelPricingDescriptor[]
+): VideoBillingModelPricingDescriptor[] {
+  return [
+    ...VIDEO_MODEL_CAPABILITIES.map((model) => ({
+      modelId: model.modelId,
+      supportedResolutions: model.resolutions,
+    })),
+    ...additionalModels,
+  ];
+}
+
+/**
+ * 从能力目录构造默认模型级按秒模式。
+ *
+ * @param additionalModels - 可选的既有自定义视频模型。
+ * @returns 每个公开模型 ID 均为 `per_second` 的新对象。
+ * @sideEffects 无。
+ * @failure 不抛错；重复模型 ID 采用调用方最后提供的相同默认值。
+ */
+export function createDefaultVideoModelBillingModes(
+  additionalModels: readonly VideoBillingModelPricingDescriptor[] = []
+): Record<string, VideoBillingMode> {
+  return Object.fromEntries(
+    listVideoBillingModelPricingDescriptors(additionalModels).map((model) => [
+      model.modelId,
+      "per_second" as const,
+    ])
+  );
+}
+
+/**
+ * 从能力目录构造每个模型分辨率 3 积分的默认按条矩阵。
+ *
+ * @param additionalModels - 可选的既有自定义视频模型。
+ * @returns 仅含 `modelId@resolution` 精确键的新价格对象。
+ * @sideEffects 无。
+ * @failure 不抛错；输入描述应在进入本函数前完成严格校验。
+ */
+export function createDefaultVideoModelCreditsPerItem(
+  additionalModels: readonly VideoBillingModelPricingDescriptor[] = []
+): VideoModelCreditPrices {
+  return Object.fromEntries(
+    listVideoBillingModelPricingDescriptors(additionalModels).flatMap((model) =>
+      model.supportedResolutions.map((resolution) => [
+        getVideoPricingResolutionKey(model.modelId, resolution),
+        DEFAULT_VIDEO_BASE_CREDITS_PER_ITEM,
+      ])
+    )
+  );
+}
+
+/** 所有内置视频模型默认按秒计费。 */
+export const DEFAULT_VIDEO_MODEL_BILLING_MODES =
+  createDefaultVideoModelBillingModes();
+
+/** 所有内置视频模型分辨率默认按条 3 积分。 */
+export const DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM =
+  createDefaultVideoModelCreditsPerItem();
 
 /** 双模式共享的价格 map；全局完整性由严格报价解析器结合能力目录校验。 */
 export const videoModelCreditPricesSchema = z.record(

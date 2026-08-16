@@ -1,4 +1,8 @@
-import { DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND } from "../adobe/video-pricing";
+import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+} from "../adobe/video-pricing";
 import { createDefaultGlobalImageCreditOverrides } from "../image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "../model-marketplace";
 import { DEFAULT_PAGE_SIZE_OPTIONS } from "../pagination/config";
@@ -145,6 +149,8 @@ export type SettingKey =
   | "IMAGE_BLOCK_REPAIR_ENABLED"
   | "IMAGE_MASK_OUTPAINT_ENABLED"
   | "VIDEO_BASE_CREDITS_PER_SECOND"
+  | "VIDEO_MODEL_BILLING_MODES"
+  | "VIDEO_MODEL_CREDITS_PER_ITEM"
   | "VIDEO_MODEL_CREDITS_PER_SECOND"
   | "VIDEO_MODEL_CAPABILITY_OVERRIDES"
   | "VIDEO_SUBMISSION_RETRY_DELAY_SECONDS"
@@ -1199,6 +1205,26 @@ export const SYSTEM_SETTING_DEFINITIONS = [
     // WHY: 视频计费基价须为正；上限拦截误填的异常巨大值，避免单次扣费失控。
     min: 0.01,
     max: 100_000,
+    managedByDedicatedOperation: true,
+  },
+  {
+    key: "VIDEO_MODEL_BILLING_MODES",
+    label: "视频模型计费模式",
+    description:
+      "按真实视频模型 ID 选择按秒或按条计费。模式只能在独立的“模型配置”入口修改，分组和供应商账号不能覆盖。",
+    category: "credits",
+    valueType: "json",
+    defaultValue: { ...DEFAULT_VIDEO_MODEL_BILLING_MODES },
+    managedByDedicatedOperation: true,
+  },
+  {
+    key: "VIDEO_MODEL_CREDITS_PER_ITEM",
+    label: "视频模型分辨率每条积分",
+    description:
+      "按真实视频模型 ID 与输出分辨率维护完整的每条积分矩阵，默认 3 积分/条。请在独立的“模型配置”入口修改。",
+    category: "credits",
+    valueType: "json",
+    defaultValue: { ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM },
     managedByDedicatedOperation: true,
   },
   {

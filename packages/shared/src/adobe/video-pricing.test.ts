@@ -10,6 +10,8 @@ import {
   ADOBE_VIDEO_PRICING_FAMILIES,
   convertLegacyVideoCreditsPerSecondToModelPricing,
   DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoCreditCost,
   getVideoPricingResolutionKey,
@@ -106,6 +108,21 @@ describe("resolveVideoCreditsPerSecond", () => {
         getVideoPricingResolutionKey("seedance2", "1080p")
       ]
     ).toBe(30);
+  });
+
+  it("全部内置模型默认按秒且每个分辨率按条默认 3 积分", () => {
+    for (const capability of VIDEO_MODEL_CAPABILITIES) {
+      expect(DEFAULT_VIDEO_MODEL_BILLING_MODES[capability.modelId]).toBe(
+        "per_second"
+      );
+      for (const resolution of capability.resolutions) {
+        expect(
+          DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM[
+            getVideoPricingResolutionKey(capability.modelId, resolution)
+          ]
+        ).toBe(3);
+      }
+    }
   });
 
   it("读取模型族配置的每秒积分", () => {
