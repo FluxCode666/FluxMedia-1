@@ -1,11 +1,18 @@
 /**
- * 图像模型固定价格与分组覆盖契约测试。
+ * 图像模型固定价格与分组媒体价格覆盖契约测试。
  */
 import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  resolveVideoBillingQuote,
+} from "../adobe/video-pricing";
 
 import {
   createDefaultGlobalImageCreditOverrides,
   getGroupImageCreditOverrides,
+  getGroupVideoCreditOverrides,
+  getGroupVideoCreditsPerItemOverrides,
   getImageModelCreditPricing,
   globalImageCreditOverridesSchema,
   imageCreditOverridesSchema,
@@ -198,6 +205,70 @@ describe("group image pricing", () => {
     ).toEqual({
       version: 1,
       byModel: { "gpt-image-2": { base1kCredits: 3 } },
+    });
+  });
+
+  it("独立读取双视频价格并复用统一解析器的分辨率优先级", () => {
+    const metadata = {
+      videoCreditOverrides: {
+        veo31: 35,
+        "veo31@1080p": 45,
+      },
+      videoCreditsPerItemOverrides: {
+        veo31: 4,
+        "veo31@1080p": 5,
+      },
+    };
+
+    expect(
+      resolveVideoBillingQuote({
+        modelId: "veo31",
+        resolution: "1080p",
+        durationSeconds: 8,
+        mode: "per_item",
+        globalCreditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+        globalCreditsPerItem: DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+        groupCreditsPerSecond: getGroupVideoCreditOverrides(metadata),
+        groupCreditsPerItem: getGroupVideoCreditsPerItemOverrides(metadata),
+      })
+    ).toMatchObject({
+      mode: "per_item",
+      unitPrice: 5,
+      priceSource: "group_resolution",
+    });
+
+    expect(
+      resolveVideoBillingQuote({
+        modelId: "veo31",
+        resolution: "720p",
+        durationSeconds: 4,
+        mode: "per_item",
+        globalCreditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+        globalCreditsPerItem: DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+        groupCreditsPerSecond: getGroupVideoCreditOverrides(metadata),
+        groupCreditsPerItem: getGroupVideoCreditsPerItemOverrides(metadata),
+      })
+    ).toMatchObject({
+      mode: "per_item",
+      unitPrice: 4,
+      priceSource: "group_model",
+    });
+
+    expect(
+      resolveVideoBillingQuote({
+        modelId: "sora2",
+        resolution: "720p",
+        durationSeconds: 8,
+        mode: "per_item",
+        globalCreditsPerSecond: DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+        globalCreditsPerItem: DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+        groupCreditsPerSecond: getGroupVideoCreditOverrides(metadata),
+        groupCreditsPerItem: getGroupVideoCreditsPerItemOverrides(metadata),
+      })
+    ).toMatchObject({
+      mode: "per_item",
+      unitPrice: 3,
+      priceSource: "global_resolution",
     });
   });
 });

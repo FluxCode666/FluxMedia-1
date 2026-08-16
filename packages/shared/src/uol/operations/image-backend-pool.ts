@@ -321,6 +321,7 @@ export const saveGroup = defineOperation({
   input: backendGroupInputSchema,
   output: z.object({ id: z.string() }).strict(),
   access: poolWriteAccess,
+  agentExposure: "human-only",
   readOnly: false,
   destructive: false,
   idempotency: { kind: "none" },

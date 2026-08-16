@@ -37,6 +37,7 @@ const validGroup = {
   contentSafety: "inherit" as const,
   imageCreditOverrides: { version: 1 as const, byModel: {} },
   videoCreditOverrides: {},
+  videoCreditsPerItemOverrides: {},
   childGroupIds: [],
   priority: 50,
 };
@@ -84,8 +85,10 @@ describe("image backend pool pricing operations", () => {
           byModel: { "custom-image-v3": { base2kCredits: 6 } },
         },
         videoCreditOverrides: { sora2: 42 },
+        videoCreditsPerItemOverrides: { "sora2@1080p": 5 },
       }).success
     ).toBe(true);
+    expect(saveGroup.agentExposure).toBe("human-only");
   });
 
   it("pool.saveGroup 拒绝非法价格并允许空覆盖继承全局", () => {
@@ -103,6 +106,18 @@ describe("image backend pool pricing operations", () => {
       saveGroup.input.safeParse({
         ...validGroup,
         videoCreditOverrides: { sora2: 0 },
+      }).success
+    ).toBe(false);
+    expect(
+      saveGroup.input.safeParse({
+        ...validGroup,
+        videoCreditsPerItemOverrides: { "sora2@1080p": 0 },
+      }).success
+    ).toBe(false);
+    expect(
+      saveGroup.input.safeParse({
+        ...validGroup,
+        videoBillingModes: { sora2: "per_item" },
       }).success
     ).toBe(false);
   });
@@ -186,6 +201,35 @@ describe("image backend pool pricing operations", () => {
         billingMultiplier: 2,
       }).success
     ).toBe(false);
+  });
+
+  it("供应商账号输入不接受模型计费模式或金额", () => {
+    const member = {
+      type: "api" as const,
+      name: "API",
+      groupIds: ["group-a"],
+      supportedModelIds: ["sora-2"],
+      contentSafetyEnabled: true,
+      isEnabled: true,
+      alwaysActive: false,
+      failureCooldownEnabled: false,
+      priority: 0,
+      concurrency: 1,
+      config: {
+        baseUrl: "https://example.com",
+        modelMappings: [],
+      },
+    };
+
+    for (const pricingField of [
+      { videoCreditOverrides: { "sora-2@1080p": 30 } },
+      { videoCreditsPerItemOverrides: { "sora-2@1080p": 3 } },
+      { videoBillingModes: { "sora-2": "per_item" } },
+    ]) {
+      expect(
+        saveMember.input.safeParse({ ...member, ...pricingField }).success
+      ).toBe(false);
+    }
   });
 
   it("统一成员保存和删除不再接受旧类型分流字段", () => {
@@ -363,6 +407,17 @@ describe("image backend pool pricing operations", () => {
       getAdminPool.output.safeParse({
         groups: [],
         members: [{ ...member, credentialHealthStatus: "healthy" }],
+      }).success
+    ).toBe(false);
+    expect(
+      getAdminPool.output.safeParse({
+        groups: [],
+        members: [
+          {
+            ...member,
+            videoCreditsPerItemOverrides: { "sora2@720p": 3 },
+          },
+        ],
       }).success
     ).toBe(false);
     for (const forbiddenField of [

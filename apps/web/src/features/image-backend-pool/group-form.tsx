@@ -6,7 +6,6 @@
  * 职责：编辑分组公共属性、队列优先级、层级关系以及图像/视频计费覆盖，并通过单一
  * saveGroup Action 持久化。组件只维护表单草稿，最终校验由共享契约和 UOL 完成。
  */
-import { ADOBE_VIDEO_PRICING_FAMILIES } from "@repo/shared/adobe";
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import { DEFAULT_IMAGE_CREDIT_PRICING } from "@repo/shared/image-backend/group-image-pricing";
 import { Button } from "@repo/ui/components/button";
@@ -44,10 +43,11 @@ import {
   updateImageCreditPricingDraft,
 } from "./image-credit-pricing-editor";
 import {
+  createVideoCreditPricingDraft,
   updateVideoCreditPricingDraft,
   type VideoCreditPricingDraft,
   VideoCreditPricingEditor,
-  videoCreditOverridesToDraft,
+  type VideoCreditPricingModel,
   videoCreditPricingDraftToOverrides,
 } from "./video-credit-pricing-editor";
 
@@ -58,6 +58,7 @@ export function BackendGroupFormDialog({
   group,
   groups,
   imageModelIds,
+  videoPricingModels,
   onSaved,
 }: {
   open: boolean;
@@ -65,6 +66,7 @@ export function BackendGroupFormDialog({
   group: BackendGroupSummary | null;
   groups: BackendGroupSummary[];
   imageModelIds: string[];
+  videoPricingModels: readonly VideoCreditPricingModel[];
   onSaved: () => void;
 }) {
   const [name, setName] = useState("");
@@ -78,7 +80,10 @@ export function BackendGroupFormDialog({
   >("inherit");
   const [childGroupIds, setChildGroupIds] = useState<string[]>([]);
   const [imagePricing, setImagePricing] = useState<ImageCreditPricingDraft>({});
-  const [videoPricing, setVideoPricing] = useState<VideoCreditPricingDraft>({});
+  const [videoPricing, setVideoPricing] = useState<VideoCreditPricingDraft>({
+    perSecond: {},
+    perItem: {},
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -96,12 +101,13 @@ export function BackendGroupFormDialog({
       )
     );
     setVideoPricing(
-      videoCreditOverridesToDraft(
-        ADOBE_VIDEO_PRICING_FAMILIES,
-        group?.videoCreditOverrides ?? {}
+      createVideoCreditPricingDraft(
+        videoPricingModels,
+        group?.videoCreditOverrides ?? {},
+        group?.videoCreditsPerItemOverrides ?? {}
       )
     );
-  }, [group, groups.length, open]);
+  }, [group, groups.length, open, videoPricingModels]);
 
   const displayedImageModels = useMemo(
     () =>
@@ -135,6 +141,7 @@ export function BackendGroupFormDialog({
   /** 将表单草稿提交给严格的统一分组 Action。 */
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    const videoOverrides = videoCreditPricingDraftToOverrides(videoPricing);
     saveGroup({
       ...(group ? { id: group.id } : {}),
       name,
@@ -144,7 +151,8 @@ export function BackendGroupFormDialog({
       isUserSelectable,
       contentSafety,
       imageCreditOverrides: imageCreditPricingDraftToOverrides(imagePricing),
-      videoCreditOverrides: videoCreditPricingDraftToOverrides(videoPricing),
+      videoCreditOverrides: videoOverrides.perSecond,
+      videoCreditsPerItemOverrides: videoOverrides.perItem,
       childGroupIds,
       priority: Number(priority),
     });
@@ -307,17 +315,21 @@ export function BackendGroupFormDialog({
 
           <details className="rounded-md border p-4">
             <summary className="cursor-pointer font-medium">
-              视频模型每秒积分覆盖
+              视频模型按秒与按条积分覆盖
             </summary>
             <div className="mt-4">
               <VideoCreditPricingEditor
-                families={ADOBE_VIDEO_PRICING_FAMILIES}
+                models={videoPricingModels}
                 draft={videoPricing}
-                inheritanceLabel="继承全局价格"
-                resolveInheritedPrice={() => 30}
-                onChange={(family, value) =>
+                onChange={(mode, modelId, resolution, value) =>
                   setVideoPricing((current) =>
-                    updateVideoCreditPricingDraft(current, family, value)
+                    updateVideoCreditPricingDraft(
+                      current,
+                      mode,
+                      modelId,
+                      resolution,
+                      value
+                    )
                   )
                 }
               />

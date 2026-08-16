@@ -4,8 +4,9 @@
  * 统一媒体后端号池管理面板。
  *
  * 职责：在“供应商账号 / 分组”独立页签加载和筛选 `api | adobe` 统一成员与分组，
- * 打开对应编辑表单、就地修改成员启用状态、执行运行状态重置和安全删除，并展示
- * Adobe direct 成员的一对一凭据状态。旧三池分页不再进入此组件。
+ * 打开对应编辑表单、把模型配置快照中的视频双价格传给分组编辑器、就地修改成员
+ * 启用状态、执行运行状态重置和安全删除，并展示 Adobe direct 成员的一对一凭据状态。
+ * 旧三池分页不再进入此组件。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
@@ -85,6 +86,7 @@ import {
   normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
+import type { VideoCreditPricingModel } from "./video-credit-pricing-editor";
 
 /** 显示号池关键容量事实的统计卡。 */
 function PoolStatCard({
@@ -178,6 +180,9 @@ export function ImageBackendPoolAdminPanel({
   const [modelOptions, setModelOptions] = useState<BackendMemberModelOption[]>(
     []
   );
+  const [videoPricingModels, setVideoPricingModels] = useState<
+    VideoCreditPricingModel[]
+  >([]);
   const [modelOptionStatus, setModelOptionStatus] =
     useState<BackendMemberModelOptionStatus>("loading");
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
@@ -269,16 +274,36 @@ export function ImageBackendPoolAdminPanel({
       onSuccess: ({ data }) => {
         if (!data) {
           setModelOptions([]);
+          setVideoPricingModels([]);
           setModelOptionStatus("unavailable");
           return;
         }
         setModelOptions(buildBackendMemberModelOptions(data));
+        setVideoPricingModels(
+          data.entries.flatMap((entry) =>
+            entry.category === "video"
+              ? [
+                  {
+                    modelId: entry.configKey,
+                    displayName: entry.displayName,
+                    billingMode: entry.billingMode,
+                    supportedResolutions: entry.supportedResolutions,
+                    globalCreditsPerSecondByResolution:
+                      entry.creditsPerSecondByResolution,
+                    globalCreditsPerItemByResolution:
+                      entry.creditsPerItemByResolution,
+                  },
+                ]
+              : []
+          )
+        );
         setModelOptionStatus(
           data.runtimeCatalogStatus === "ready" ? "ready" : "degraded"
         );
       },
       onError: ({ error }) => {
         setModelOptions([]);
+        setVideoPricingModels([]);
         setModelOptionStatus("unavailable");
         toast.error(error.serverError || "加载模型配置失败");
       },
@@ -829,6 +854,7 @@ export function ImageBackendPoolAdminPanel({
         group={editingGroup}
         groups={groups}
         imageModelIds={imageModelIds}
+        videoPricingModels={videoPricingModels}
         onSaved={reloadPoolSnapshots}
       />
       <BackendMemberFormDialog

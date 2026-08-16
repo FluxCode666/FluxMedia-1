@@ -1,13 +1,13 @@
 /**
- * 图像模型固定价格与分组覆盖的共享契约。
+ * 图像模型固定价格与分组媒体价格覆盖的共享契约。
  *
- * 使用方：系统设置、后端池分组管理、统一生图管线与管理后台。模块仅负责校验、
- * 规范化和继承合并，不读取数据库，也不执行扣费。
+ * 使用方：系统设置、后端池分组管理、统一媒体管线与管理后台。模块负责图像价格的
+ * 规范化和继承，并安全读取分组视频双价格，不读取数据库，也不执行扣费。
  */
 import { z } from "zod";
 
 import { ADOBE_IMAGE_MODEL_IDS } from "../adobe/enabled-models";
-import { parseVideoModelCreditsPerSecond } from "../adobe/video-pricing";
+import { videoModelCreditPricesSchema } from "../adobe/video-pricing";
 
 export const IMAGE_CREDIT_PRICE_FIELDS = [
   "base1024Credits",
@@ -225,7 +225,36 @@ export function getGroupImageCreditOverrides(
 export function getGroupVideoCreditOverrides(
   metadata: Record<string, unknown> | null | undefined
 ): Record<string, number> {
-  return parseVideoModelCreditsPerSecond(metadata?.videoCreditOverrides);
+  return parseGroupVideoCreditOverrides(metadata?.videoCreditOverrides);
+}
+
+/**
+ * 从后端组 metadata 读取视频模型或分辨率的每条价格覆盖。
+ *
+ * @param metadata - 数据库存储的分组 metadata。
+ * @returns 合法的按条稀疏覆盖；缺失或非法时返回空配置并继承全局按条价格。
+ * @sideEffects 无。
+ * @failure 不抛错；脏值不会错误回退到按秒价格。
+ */
+export function getGroupVideoCreditsPerItemOverrides(
+  metadata: Record<string, unknown> | null | undefined
+): Record<string, number> {
+  return parseGroupVideoCreditOverrides(metadata?.videoCreditsPerItemOverrides);
+}
+
+/**
+ * 收窄分组的一套视频稀疏价格表。
+ *
+ * @param value - metadata 中的未知价格 JSON。
+ * @returns 仅包含合法正有限单价的映射；整张表非法时返回空映射。
+ * @sideEffects 无。
+ * @failure 不抛错。
+ */
+function parseGroupVideoCreditOverrides(
+  value: unknown
+): Record<string, number> {
+  const parsed = videoModelCreditPricesSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
 }
 
 /**

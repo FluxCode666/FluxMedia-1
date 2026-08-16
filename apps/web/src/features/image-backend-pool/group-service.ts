@@ -248,6 +248,7 @@ function mapBackendGroupRow(row: {
     contentSafety: fromBackendGroupContentSafety(row.contentSafetyEnabled),
     imageCreditOverrides: metadata.imageCreditOverrides,
     videoCreditOverrides: metadata.videoCreditOverrides,
+    videoCreditsPerItemOverrides: metadata.videoCreditsPerItemOverrides,
     childGroupIds: metadata.childGroupIds,
     priority: row.priority,
   };

@@ -43,6 +43,7 @@ function groupInput(overrides: Record<string, unknown> = {}) {
     contentSafety: "inherit",
     imageCreditOverrides: { version: 1, byModel: {} },
     videoCreditOverrides: {},
+    videoCreditsPerItemOverrides: {},
     childGroupIds: [],
     priority: 50,
     ...overrides,
@@ -71,6 +72,7 @@ describe("backend group service", () => {
         id: "group-new",
         isCreate: true,
         childGroupIds: [],
+        videoCreditsPerItemOverrides: {},
       }),
       NOW
     );
@@ -83,6 +85,29 @@ describe("backend group service", () => {
       service.saveGroup(groupInput({ childGroupIds: ["group-a", "group-a"] }))
     ).rejects.toBeTruthy();
     expect(repository.saveGroup).not.toHaveBeenCalled();
+  });
+
+  it("把按秒与按条稀疏覆盖原样交给原子仓储", async () => {
+    const service = createBackendGroupService({
+      repository,
+      createId: () => "group-pricing",
+      now: () => NOW,
+    });
+
+    await service.saveGroup(
+      groupInput({
+        videoCreditOverrides: { "sora2@720p": 35 },
+        videoCreditsPerItemOverrides: { "sora2@720p": 4 },
+      })
+    );
+
+    expect(repository.saveGroup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        videoCreditOverrides: { "sora2@720p": 35 },
+        videoCreditsPerItemOverrides: { "sora2@720p": 4 },
+      }),
+      NOW
+    );
   });
 
   it("检测直接自引用、未知子组和跨层循环", () => {

@@ -71,6 +71,7 @@ function mountAdobeMemberForm(): void {
             contentSafety: "inherit",
             imageCreditOverrides: { version: 1, byModel: {} },
             videoCreditOverrides: {},
+            videoCreditsPerItemOverrides: {},
             childGroupIds: [],
             priority: 0,
           },

@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 
-import { videoModelCreditsPerSecondMapSchema } from "../adobe/video-pricing";
+import { videoModelCreditPricesSchema } from "../adobe/video-pricing";
 import { imageCreditOverridesSchema } from "./group-image-pricing";
 
 /** 分组级内容安全覆盖；inherit 表示沿用成员设置。 */
@@ -28,7 +28,8 @@ export const backendGroupInputSchema = z
     isUserSelectable: z.boolean(),
     contentSafety: backendGroupContentSafetySchema,
     imageCreditOverrides: imageCreditOverridesSchema,
-    videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
+    videoCreditOverrides: videoModelCreditPricesSchema,
+    videoCreditsPerItemOverrides: videoModelCreditPricesSchema,
     childGroupIds: z.array(z.string().trim().min(1).max(128)).max(100),
     priority: z.number().int().min(0).max(10_000),
   })
@@ -51,7 +52,8 @@ export type BackendGroupInput = z.infer<typeof backendGroupInputSchema>;
 export const backendGroupMetadataSchema = z
   .object({
     imageCreditOverrides: imageCreditOverridesSchema,
-    videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
+    videoCreditOverrides: videoModelCreditPricesSchema,
+    videoCreditsPerItemOverrides: videoModelCreditPricesSchema,
     childGroupIds: z.array(z.string().trim().min(1).max(128)).max(100),
   })
   .strict();
@@ -70,7 +72,8 @@ export const backendGroupSummarySchema = z
     isUserSelectable: z.boolean(),
     contentSafety: backendGroupContentSafetySchema,
     imageCreditOverrides: imageCreditOverridesSchema,
-    videoCreditOverrides: videoModelCreditsPerSecondMapSchema,
+    videoCreditOverrides: videoModelCreditPricesSchema,
+    videoCreditsPerItemOverrides: videoModelCreditPricesSchema,
     childGroupIds: z.array(z.string()),
     priority: z.number().int().min(0).max(10_000),
   })
@@ -115,19 +118,33 @@ export function parseBackendGroupMetadata(
     value && typeof value === "object"
       ? (value as Record<string, unknown>)
       : {};
-  const parsed = backendGroupMetadataSchema.safeParse({
-    imageCreditOverrides: source.imageCreditOverrides ?? {
-      version: 1,
-      byModel: {},
-    },
-    videoCreditOverrides: source.videoCreditOverrides ?? {},
-    childGroupIds: source.childGroupIds ?? [],
-  });
-  if (parsed.success) return parsed.data;
+  const imageCreditOverrides = imageCreditOverridesSchema.safeParse(
+    source.imageCreditOverrides ?? { version: 1, byModel: {} }
+  );
+  const videoCreditOverrides = videoModelCreditPricesSchema.safeParse(
+    source.videoCreditOverrides ?? {}
+  );
+  const videoCreditsPerItemOverrides = videoModelCreditPricesSchema.safeParse(
+    source.videoCreditsPerItemOverrides ?? {}
+  );
+  const childGroupIds = z
+    .array(z.string().trim().min(1).max(128))
+    .max(100)
+    .safeParse(source.childGroupIds ?? []);
+
+  // WHY：metadata 是跨版本 JSON；各字段独立降级可避免一个损坏价格表清空仍合法的
+  // 图像价格、另一套视频价格或分组拓扑。
   return {
-    imageCreditOverrides: { version: 1, byModel: {} },
-    videoCreditOverrides: {},
-    childGroupIds: [],
+    imageCreditOverrides: imageCreditOverrides.success
+      ? imageCreditOverrides.data
+      : { version: 1, byModel: {} },
+    videoCreditOverrides: videoCreditOverrides.success
+      ? videoCreditOverrides.data
+      : {},
+    videoCreditsPerItemOverrides: videoCreditsPerItemOverrides.success
+      ? videoCreditsPerItemOverrides.data
+      : {},
+    childGroupIds: childGroupIds.success ? childGroupIds.data : [],
   };
 }
 
@@ -138,6 +155,7 @@ export function createBackendGroupMetadata(
   return {
     imageCreditOverrides: input.imageCreditOverrides,
     videoCreditOverrides: input.videoCreditOverrides,
+    videoCreditsPerItemOverrides: input.videoCreditsPerItemOverrides,
     childGroupIds: input.childGroupIds,
   };
 }

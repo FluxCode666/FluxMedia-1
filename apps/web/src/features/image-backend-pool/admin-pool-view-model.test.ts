@@ -114,6 +114,7 @@ describe("admin pool view model", () => {
           contentSafety: "inherit" as const,
           imageCreditOverrides: { version: 1 as const, byModel: {} },
           videoCreditOverrides: {},
+          videoCreditsPerItemOverrides: {},
           childGroupIds: [],
           priority: 0,
         })),

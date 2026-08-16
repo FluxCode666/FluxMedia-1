@@ -35,6 +35,7 @@ function createGroup(
     contentSafety: "inherit",
     imageCreditOverrides: { version: 1, byModel: {} },
     videoCreditOverrides: {},
+    videoCreditsPerItemOverrides: {},
     childGroupIds: [],
     priority: 10,
     ...overrides,
