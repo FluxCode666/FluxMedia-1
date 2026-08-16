@@ -18,6 +18,7 @@ import {
   assertVideoBillingMetadataPreserved,
   assertVideoSnapshotAmount,
   createVideoBillingLedgerMetadata,
+  projectVideoTaskPublicBilling,
   resolvePersistedVideoTaskBilling,
 } from "./video-billing-lifecycle";
 import { createVideoCapabilitySnapshot } from "./video-execution-contract";
@@ -93,6 +94,32 @@ describe("video billing lifecycle", () => {
         videoBillingQuotedCredits: 3,
       })
     );
+    expect(projectVideoTaskPublicBilling(createSnapshotMetadata(), 0)).toEqual({
+      kind: "snapshot",
+      mode: "per_item",
+      unit: "item",
+      unitPrice: 3,
+      durationSeconds: 5,
+      quotedCredits: 3,
+      actualCredits: 0,
+    });
+  });
+
+  it("legacy 公共账单不伪造未知单价与报价", () => {
+    expect(
+      projectVideoTaskPublicBilling(
+        { videoCapabilitySnapshot: { version: 1 } },
+        12
+      )
+    ).toEqual({
+      kind: "legacy",
+      mode: "per_second",
+      unit: "second",
+      unitPrice: null,
+      creditsPerSecond: null,
+      quotedCredits: null,
+      actualCredits: 12,
+    });
   });
 
   it("非财务 metadata 可更新但账单快照不能删除或替换", () => {

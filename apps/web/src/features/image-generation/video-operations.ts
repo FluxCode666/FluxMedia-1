@@ -18,11 +18,8 @@ import {
   videoGenerationCallbackDelivery,
 } from "@repo/database/schema";
 import {
-  ADOBE_VIDEO_PRICING_FAMILIES,
   createDefaultVideoModelCreditsPerSecond,
   getVideoCreditCost,
-  getVideoPricingResolutionKey,
-  getVideoPricingResolutions,
   globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
 } from "@repo/shared/adobe";
@@ -53,7 +50,17 @@ import {
   getRuntimeSettingNumber,
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
+import {
+  projectVideoCurrentQuote,
+  type VideoCurrentQuote,
+} from "@repo/shared/video-generation";
 import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";
+import {
+  assertVideoQuoteToken,
+  createVideoQuoteDigest,
+  encodeVideoQuoteToken,
+  VideoQuoteTokenError,
+} from "@repo/shared/video-generation/video-quote-token";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { completeVideoGenerationWithUsage } from "@/features/dashboard/output-usage-read-model";
@@ -177,6 +184,7 @@ export type VideoGenerationInput = {
   negativePrompt?: string | null;
   effectiveAudio: boolean;
   capabilitySnapshot: VideoCapabilitySnapshot;
+  quoteToken?: string;
   inputManifest?: VideoInputManifest;
   stagedInputObjects?: VideoInputCleanupObject[];
 };
@@ -219,10 +227,14 @@ export class VideoSubmissionReconciliationError extends Error {
   }
 }
 
-/** 创作页视频价格预估所需的定价输入。 */
-export type VideoPricingInfo = {
-  creditsPerSecond: Record<string, number>;
-};
+/** 首次创建携带的报价 token 已过期或不属于当前 Principal/模型分辨率。 */
+export class VideoQuoteConflictError extends Error {
+  /** 创建不含内部组、revision 或原 token 的稳定冲突。 */
+  constructor(readonly currentQuote: VideoCurrentQuote) {
+    super("视频报价已更新，请确认最新价格后重试");
+    this.name = "VideoQuoteConflictError";
+  }
+}
 
 type VideoGenerationRow = NonNullable<
   Awaited<ReturnType<typeof getVideoGenerationById>>
@@ -236,42 +248,6 @@ async function getRuntimeGlobalVideoPricing(): Promise<Record<string, number>> {
   return parsed.success
     ? parsed.data
     : createDefaultVideoModelCreditsPerSecond();
-}
-
-/** 读取视频价格，保证展示和实扣共用同一解析口径。 */
-export async function getVideoPricingForUser(input: {
-  userId: string;
-  apiKeyId?: string | null;
-  group?: Record<string, number> | null;
-}): Promise<VideoPricingInfo> {
-  void input.userId;
-  void input.apiKeyId;
-  const global = await getRuntimeGlobalVideoPricing();
-  const entries = ADOBE_VIDEO_PRICING_FAMILIES.flatMap((family) => [
-    [
-      family,
-      resolveEffectiveVideoCreditsPerSecond({
-        family,
-        global,
-        group: input.group,
-      }),
-    ] as const,
-    ...getVideoPricingResolutions(family).map(
-      (resolution) =>
-        [
-          getVideoPricingResolutionKey(family, resolution),
-          resolveEffectiveVideoCreditsPerSecond({
-            family,
-            resolution,
-            global,
-            group: input.group,
-          }),
-        ] as const
-    ),
-  ]);
-  return {
-    creditsPerSecond: Object.fromEntries(entries),
-  };
 }
 
 /** 按 ID 读取持久视频任务；调用方必须另行校验 Principal 归属。 */
@@ -1773,6 +1749,32 @@ export async function runVideoGenerationForUser(
       marketplaceConfig: authoritativeQuote.marketplaceConfig,
       videoCapabilityOverrides: authoritativeQuote.videoCapabilityOverrides,
     });
+    const quoteDigest = createVideoQuoteDigest({
+      modelId: authoritativeQuote.quote.modelId,
+      resolution: authoritativeQuote.quote.resolution,
+      mode: authoritativeQuote.quote.mode,
+      unitPrice: authoritativeQuote.quote.unitPrice,
+      billingGroupId: authoritativeQuote.pinnedGroupId,
+      modelConfigurationRevision:
+        input.capabilitySnapshot.modelConfigurationRevision,
+    });
+    if (input.quoteToken) {
+      try {
+        assertVideoQuoteToken(input.quoteToken, {
+          principalScope: input.principalScope,
+          quoteDigest,
+        });
+      } catch (error) {
+        if (!(error instanceof VideoQuoteTokenError)) throw error;
+        const quoteToken = encodeVideoQuoteToken({
+          principalScope: input.principalScope,
+          quoteDigest,
+        });
+        throw new VideoQuoteConflictError(
+          projectVideoCurrentQuote(authoritativeQuote.quote, quoteToken)
+        );
+      }
+    }
     const billingSnapshot = createVideoBillingSnapshot({
       quote: authoritativeQuote.quote,
       billingGroupId: authoritativeQuote.group.id,

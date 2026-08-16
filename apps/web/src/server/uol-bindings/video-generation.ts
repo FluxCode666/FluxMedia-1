@@ -39,6 +39,7 @@ import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { resolveVideoTaskBilling } from "@repo/shared/video-generation/video-billing-snapshot";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
+import { projectVideoTaskPublicBilling } from "@/features/image-generation/video-billing-lifecycle";
 import { doesVideoCallbackDeliveryMatch } from "@/features/image-generation/video-callback-delivery";
 import { createVideoCapabilitySnapshot } from "@/features/image-generation/video-execution-contract";
 import {
@@ -52,6 +53,7 @@ import {
   getVideoGenerationById,
   reconcileUncertainVideoSubmission,
   runVideoGenerationForUser,
+  VideoQuoteConflictError,
   VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
 import { toLegacyVideoPublicStatus } from "@/features/image-generation/video-public-status";
@@ -70,6 +72,7 @@ import {
 import { prepareVideoTaskInputReferences } from "@/features/image-generation/video-task-preparation";
 import { enqueueVideoTask } from "@/server/media-task-queues";
 import { getMediaInputPolicyOperationError } from "./media-input-policy-error";
+import { loadVideoCurrentQuotes } from "./video-current-quotes";
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
 import { assertVideoModelEnabled } from "./video-model-availability";
 
@@ -198,6 +201,7 @@ function createVideoGenerateResult(
 ): {
   taskId: string;
   status: ReturnType<typeof toLegacyVideoPublicStatus>;
+  billing: ReturnType<typeof projectVideoTaskPublicBilling>;
   error?: string;
 } {
   const status = toLegacyVideoPublicStatus(
@@ -208,6 +212,7 @@ function createVideoGenerateResult(
   return {
     taskId: row.id,
     status,
+    billing: projectVideoTaskPublicBilling(row.metadata, row.creditsConsumed),
     ...(status === "failed" && row.error ? { error: row.error } : {}),
   };
 }
@@ -225,6 +230,7 @@ bindOperationExecute(videoListCapabilities, (input, principal) =>
         await import("@/features/image-backend-pool/runtime-service")
       ).listConfiguredRuntimeModelIds(selection);
     },
+    loadCurrentQuotes: loadVideoCurrentQuotes,
     reportFailure(error) {
       logError(error, { source: "video-capability-discovery" });
     },
@@ -426,7 +432,7 @@ bindExecute(
     const stagedInput = preparation.stagedInput;
 
     try {
-      const result = await runVideoGenerationForUser(
+      await runVideoGenerationForUser(
         {
           userId: principal.userId,
           ...(apiKeyId ? { apiKeyId } : {}),
@@ -449,6 +455,7 @@ bindExecute(
             : {}),
           effectiveAudio: canonicalInput.generateAudio,
           capabilitySnapshot,
+          ...(input.quoteToken ? { quoteToken: input.quoteToken } : {}),
           ...(canonicalInput.backendGroupId
             ? { backendGroupId: canonicalInput.backendGroupId }
             : {}),
@@ -513,14 +520,13 @@ bindExecute(
         await assertVideoCallbackFingerprint(taskId, callbackUrl);
         await enqueueVideoTaskBestEffort(responseRow);
       }
-      return responseRow
-        ? createVideoGenerateResult(responseRow)
-        : {
-            taskId,
-            status:
-              "error" in result ? ("failed" as const) : ("queued" as const),
-            ...("error" in result ? { error: result.error } : {}),
-          };
+      if (!responseRow) {
+        throw new OperationError(
+          "not_ready",
+          "视频任务未能持久化，请使用同一 clientRequestId 重试"
+        );
+      }
+      return createVideoGenerateResult(responseRow);
     } catch (error) {
       // WHY：并发重放可能同时看到“未创建”，数据库主键会使其中一个 insert
       // 失败。只有已存在且指纹一致时才把它视为幂等命中。
@@ -551,6 +557,12 @@ bindExecute(
           throw new OperationError("rate_limited", error.message, {
             limitKind: error.limitKind,
             maxActiveTasks: error.maxActiveTasks,
+          });
+        }
+        if (error instanceof VideoQuoteConflictError) {
+          throw new OperationError("conflict", error.message, {
+            reason: "stale_video_quote",
+            currentQuote: error.currentQuote,
           });
         }
         throw error;
@@ -657,6 +669,7 @@ bindExecute(
       resolution: row.resolution,
       generateAudio: readVideoMetadataBoolean(row.metadata, "generateAudio"),
       input: buildVideoInputSummary(parsedManifest.data),
+      billing: projectVideoTaskPublicBilling(row.metadata, row.creditsConsumed),
       ...(videoUrl ? { videoUrl } : {}),
       ...(row.error ? { error: row.error } : {}),
       createdAt: row.createdAt.toISOString(),

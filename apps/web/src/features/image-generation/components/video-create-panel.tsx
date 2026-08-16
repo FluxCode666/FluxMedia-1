@@ -8,11 +8,14 @@
  * 使用方：图像创作页的视频独立 tab。
  */
 
-import {
-  getVideoCreditCost,
-  resolveVideoCreditsPerSecondByResolution,
-} from "@repo/shared/adobe";
+import { getVideoBillingCreditCost } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
+import {
+  type VideoCurrentQuote,
+  type VideoTaskPublicBilling,
+  videoCurrentQuoteSchema,
+  videoTaskBillingSchema,
+} from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -34,7 +37,6 @@ import {
   type VideoCreateInputMode,
   type VideoCreateModel,
 } from "../video-create-capabilities";
-import type { VideoPricingInfo } from "../video-operations";
 
 /** 经静态视频目录验证后，可安全用于面板一次性初始化的模型选项。 */
 export type VideoCreateInitialSelection = {
@@ -51,6 +53,12 @@ type VideoTaskResponse = {
   status: "queued" | "in_progress" | "completed" | "failed";
   videoUrl?: string;
   error?: string;
+  billing: VideoTaskPublicBilling;
+};
+
+type VideoQuoteConflictResponse = {
+  message: string;
+  currentQuote: VideoCurrentQuote;
 };
 
 export const VIDEO_STATUS_INITIAL_POLL_MS = 3_000;
@@ -96,11 +104,55 @@ export function parseVideoTaskResponse(value: unknown): VideoTaskResponse {
   return {
     taskId: record.taskId,
     status: record.status as VideoTaskResponse["status"],
+    billing: videoTaskBillingSchema.parse(record.billing),
     ...(typeof record.videoUrl === "string"
       ? { videoUrl: record.videoUrl }
       : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
+}
+
+/**
+ * 收窄站内创建路由返回的陈旧报价冲突。
+ *
+ * @param value - 不可信错误 JSON。
+ * @returns 合法冲突中的安全消息与最新报价；其他错误返回 null。
+ * @sideEffects 无。
+ */
+export function parseVideoQuoteConflictResponse(
+  value: unknown
+): VideoQuoteConflictResponse | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (
+    record.code !== "conflict" ||
+    record.reason !== "stale_video_quote" ||
+    typeof record.error !== "string"
+  ) {
+    return null;
+  }
+  const currentQuote = videoCurrentQuoteSchema.safeParse(record.currentQuote);
+  return currentQuote.success
+    ? { message: record.error, currentQuote: currentQuote.data }
+    : null;
+}
+
+/** 只替换同一模型分辨率的报价行，保留表单与其他动态能力。 */
+export function replaceVideoCreateModelQuote(
+  models: readonly VideoCreateModel[],
+  modelId: string,
+  currentQuote: VideoCurrentQuote
+): readonly VideoCreateModel[] {
+  return models.map((model) =>
+    model.model !== modelId
+      ? model
+      : {
+          ...model,
+          billing: model.billing.map((quote) =>
+            quote.resolution === currentQuote.resolution ? currentQuote : quote
+          ),
+        }
+  );
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -134,11 +186,9 @@ type VideoHistoryItem = {
 export function VideoCreatePanel({
   initialSelection = null,
   recent = [],
-  pricing,
 }: {
   initialSelection?: VideoCreateInitialSelection | null;
   recent?: VideoHistoryItem[];
-  pricing: VideoPricingInfo;
 }) {
   const [models, setModels] =
     useState<readonly VideoCreateModel[]>(VIDEO_CREATE_MODELS);
@@ -288,20 +338,18 @@ export function VideoCreatePanel({
     }
   };
 
-  // 预估积分：与扣费侧同口径——模型族分辨率每秒价格 × 时长。
-  // 纯函数复用，确保展示价 = 实扣价。必须在任何 early return
-  // 之前无条件调用（React hooks 规则），故对 selectedModel 用可选链兜底。
-  const creditsPerSecond = resolveVideoCreditsPerSecondByResolution(
-    selectedModel?.model,
-    resolution,
-    pricing.creditsPerSecond
+  // 当前报价与 token 必须来自同一个分辨率行；创建时服务端会在权威事务内重算并校验。
+  const currentQuote = selectedModel?.billing.find(
+    (quote) => quote.resolution === resolution
   );
   const estimatedCredits = useMemo(() => {
-    return getVideoCreditCost({
+    if (!currentQuote) return 0;
+    return getVideoBillingCreditCost({
+      mode: currentQuote.mode,
+      unitPrice: currentQuote.unitPrice,
       durationSeconds: duration,
-      creditsPerSecond,
     });
-  }, [creditsPerSecond, duration]);
+  }, [currentQuote, duration]);
 
   // 各视频模型（族 × 分辨率 × 时长）的积分消耗对照表与上方预估、扣费侧同口径，
   // 用户选模型前即可比价。
@@ -312,27 +360,24 @@ export function VideoCreatePanel({
         return {
           model: item.model,
           label: item.label,
-          resolutionRows: item.resolutions.map((outputResolution) => {
-            const creditsPerSecond = resolveVideoCreditsPerSecondByResolution(
-              item.model,
-              outputResolution,
-              pricing.creditsPerSecond
-            );
+          resolutionRows: item.billing.map((quote) => {
             return {
-              outputResolution,
-              creditsPerSecond,
+              outputResolution: quote.resolution,
+              mode: quote.mode,
+              unitPrice: quote.unitPrice,
               durations: item.durations.map((seconds) => ({
                 seconds,
-                credits: getVideoCreditCost({
+                credits: getVideoBillingCreditCost({
+                  mode: quote.mode,
+                  unitPrice: quote.unitPrice,
                   durationSeconds: seconds,
-                  creditsPerSecond,
                 }),
               })),
             };
           }),
         };
       }),
-    [models, pricing]
+    [models]
   );
 
   if (!selectedModel) {
@@ -391,7 +436,8 @@ export function VideoCreatePanel({
     if (
       !prompt.trim() ||
       status === "running" ||
-      capabilitiesStatus !== "ready"
+      capabilitiesStatus !== "ready" ||
+      !currentQuote
     )
       return;
     setStatus("running");
@@ -408,6 +454,7 @@ export function VideoCreatePanel({
           duration,
           aspectRatio,
           resolution,
+          quoteToken: currentQuote.quoteToken,
           ...(selectedModel.supportsAudio ? { generateAudio } : {}),
           ...(maxInputImages > 0 && inputImages.length > 0
             ? inputMode === "references"
@@ -420,8 +467,28 @@ export function VideoCreatePanel({
         }),
       });
       if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(text || `请求失败 HTTP ${response.status}`);
+        const payload: unknown = await response.json().catch(() => null);
+        const conflict = parseVideoQuoteConflictResponse(payload);
+        if (conflict && conflict.currentQuote.resolution === resolution) {
+          setModels((current) =>
+            replaceVideoCreateModelQuote(
+              current,
+              selectedModel.model,
+              conflict.currentQuote
+            )
+          );
+          const unit = conflict.currentQuote.mode === "per_item" ? "条" : "秒";
+          throw new Error(
+            `${conflict.message}。最新价格为 ${formatCredits(conflict.currentQuote.unitPrice)} 积分/${unit}，请确认后重新点击生成`
+          );
+        }
+        const message =
+          payload &&
+          typeof payload === "object" &&
+          typeof (payload as Record<string, unknown>).error === "string"
+            ? String((payload as Record<string, unknown>).error)
+            : `请求失败 HTTP ${response.status}`;
+        throw new Error(message);
       }
       let task = parseVideoTaskResponse(await response.json());
       let pollDelayMs = VIDEO_STATUS_INITIAL_POLL_MS;
@@ -680,13 +747,16 @@ export function VideoCreatePanel({
             </span>
           </span>
           <span>
-            {duration}s × {creditsPerSecond}/秒 · {selectedModel.model}
+            {currentQuote?.mode === "per_item"
+              ? `${currentQuote.unitPrice} 积分/条`
+              : `${duration}s × ${currentQuote?.unitPrice ?? 0} 积分/秒`}
+            {` · ${selectedModel.model}`}
           </span>
         </div>
         <Button
           type="button"
           onClick={generate}
-          disabled={controlsDisabled || !prompt.trim()}
+          disabled={controlsDisabled || !prompt.trim() || !currentQuote}
           className="min-w-30"
         >
           {busy ? (
@@ -721,7 +791,7 @@ export function VideoCreatePanel({
                     <div className="space-y-1">
                       {item.resolutionRows.map((row) => (
                         <p key={row.outputResolution}>
-                          {`${row.outputResolution}（${row.creditsPerSecond} 积分/秒）：`}
+                          {`${row.outputResolution}（${row.unitPrice} 积分/${row.mode === "per_item" ? "条" : "秒"}）：`}
                           {row.durations
                             .map(
                               (durationRow) =>
@@ -737,9 +807,9 @@ export function VideoCreatePanel({
             </tbody>
           </table>
           <p className="mt-1">
-            计费口径：模型族对应分辨率的每秒积分 ×
-            时长；未配置分组覆盖时继承全局模型价格，
-            与实际扣费一致；比例不影响积分。
+            计费口径：按秒模型以分辨率单价 ×
+            时长结算，按条模型每次任务只收一次；
+            分组未覆盖时继承全局价格，与任务创建时锁定的报价一致。
           </p>
         </div>
       </details>

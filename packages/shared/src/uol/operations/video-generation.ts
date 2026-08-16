@@ -18,6 +18,7 @@ import {
   validateVideoModelParameters,
   videoAspectRatioSchema,
   videoListCapabilitiesOutputSchema,
+  videoTaskBillingSchema,
 } from "../../video-generation";
 import { defineOperation } from "../registry";
 
@@ -53,6 +54,8 @@ export const videoGenerateInputSchema = z
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,
     resolution: videoRequestedResolutionSchema,
+    /** 价格发现流程回传；旧客户端可省略，且不得进入业务幂等指纹。 */
+    quoteToken: z.string().trim().min(1).max(2_048).optional(),
     backendGroupId: z.string().trim().min(1).max(128).optional(),
     firstFrame: mediaInputReferenceSchema.optional(),
     lastFrame: mediaInputReferenceSchema.optional(),
@@ -148,7 +151,7 @@ export type VideoPublicStatus = z.infer<typeof videoPublicStatusSchema>;
 /** UOL 动态能力解析后的规范视频请求。 */
 export type CanonicalVideoGenerateInput = Omit<
   VideoGenerateInput,
-  "generateAudio"
+  "generateAudio" | "quoteToken"
 > & {
   generateAudio: boolean;
 };
@@ -205,9 +208,10 @@ export type CanonicalVideoGenerateInputResult =
 export function normalizeVideoGenerateInputForReplay(
   input: VideoGenerateInput
 ): CanonicalVideoGenerateInput {
+  const { quoteToken: _quoteToken, ...request } = input;
   const resolved = resolveVideoModelCapability(input.model);
   return {
-    ...input,
+    ...request,
     generateAudio:
       input.generateAudio ??
       (resolved.ok ? resolved.capability.audio.defaultEnabled : false),
@@ -227,6 +231,7 @@ export function resolveCanonicalVideoGenerateInput(
   input: VideoGenerateInput,
   capabilityOverrides: unknown
 ): CanonicalVideoGenerateInputResult {
+  const { quoteToken: _quoteToken, ...request } = input;
   const capability = resolveEffectiveVideoModelCapability(
     input.model,
     capabilityOverrides
@@ -248,7 +253,7 @@ export function resolveCanonicalVideoGenerateInput(
     ok: true,
     capability,
     input: {
-      ...input,
+      ...request,
       generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
     },
   };
@@ -270,6 +275,7 @@ export function resolveCustomVideoGenerateInput(
   input: VideoGenerateInput,
   supportedResolutions: readonly string[]
 ): CanonicalVideoGenerateInputResult {
+  const { quoteToken: _quoteToken, ...request } = input;
   if (!supportedResolutions.includes(input.resolution)) {
     return {
       ok: false,
@@ -307,7 +313,7 @@ export function resolveCustomVideoGenerateInput(
   }
   return {
     ok: true,
-    input: { ...input, generateAudio: false },
+    input: { ...request, generateAudio: false },
     capability: {
       modelId: input.model,
       displayName: input.model,
@@ -414,11 +420,14 @@ export const videoGenerate = defineOperation({
   description:
     "以 Principal 所有者作用域内的 clientRequestId 幂等创建视频任务，并进入统一媒体后端调度。",
   input: videoGenerateInputSchema,
-  output: z.object({
-    taskId: z.string(),
-    status: videoPublicStatusSchema,
-    error: z.string().max(1_000).optional(),
-  }),
+  output: z
+    .object({
+      taskId: z.string(),
+      status: videoPublicStatusSchema,
+      billing: videoTaskBillingSchema,
+      error: z.string().max(1_000).optional(),
+    })
+    .strict(),
   access: { kind: "protected" },
   readOnly: false,
   destructive: false,
@@ -469,6 +478,7 @@ export const videoGetStatus = defineOperation({
     resolution: videoRequestedResolutionSchema,
     generateAudio: z.boolean(),
     input: videoInputSummarySchema,
+    billing: videoTaskBillingSchema,
     progress: z.number().min(0).max(100).optional(),
     videoUrl: z.string().url().optional(),
     error: z.string().optional(),

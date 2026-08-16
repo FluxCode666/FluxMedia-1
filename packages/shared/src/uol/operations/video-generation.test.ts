@@ -331,6 +331,16 @@ describe("video generation operations", () => {
             },
             audio: { supported: true, defaultEnabled: false },
             configuredReachable: true,
+            billing: [
+              {
+                kind: "current_quote",
+                resolution: "480p",
+                mode: "per_item",
+                unit: "item",
+                unitPrice: 3,
+                quoteToken: "opaque-quote-token",
+              },
+            ],
           },
         ],
         limits: {
@@ -355,6 +365,17 @@ describe("video generation operations", () => {
             },
             audio: { supported: true, defaultEnabled: false },
             configuredReachable: true,
+            billing: [
+              {
+                kind: "current_quote",
+                resolution: "480p",
+                mode: "per_second",
+                unit: "second",
+                unitPrice: 2,
+                creditsPerSecond: 2,
+                quoteToken: "opaque-quote-token",
+              },
+            ],
             backendMemberId: "member-secret",
           },
         ],
@@ -376,6 +397,15 @@ describe("video generation operations", () => {
       resolution: "480p",
       generateAudio: false,
       input: { mode: "references", count: 10 },
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 15,
+        quotedCredits: 3,
+        actualCredits: 3,
+      },
       error: "提交结果待核对",
       createdAt: "2026-07-26T00:00:00.000Z",
     } as const;
@@ -384,12 +414,14 @@ describe("video generation operations", () => {
       videoGenerate.output.safeParse({
         taskId: output.taskId,
         status: "queued",
+        billing: output.billing,
       }).success
     ).toBe(true);
     expect(
       videoGenerate.output.safeParse({
         taskId: output.taskId,
         status: "failed",
+        billing: { ...output.billing, actualCredits: 0 },
         error: "当前没有可用生成服务",
       }).success
     ).toBe(true);
@@ -403,8 +435,11 @@ describe("video generation operations", () => {
         videoGetStatus.output.safeParse({ ...output, status }).success
       ).toBe(false);
       expect(
-        videoGenerate.output.safeParse({ taskId: output.taskId, status })
-          .success
+        videoGenerate.output.safeParse({
+          taskId: output.taskId,
+          status,
+          billing: output.billing,
+        }).success
       ).toBe(false);
     }
   });

@@ -28,7 +28,10 @@ import {
   type ModelMarketplaceConfig,
   parseModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
-import { normalizeVideoModelBillingSettings } from "@repo/shared/system-settings/video-billing-settings";
+import {
+  normalizeVideoModelBillingSettings,
+  type VideoModelBillingSettings,
+} from "@repo/shared/system-settings/video-billing-settings";
 import {
   parseVideoModelCapabilityOverrides,
   type VideoModelCapabilityOverrides,
@@ -178,6 +181,21 @@ export interface AuthoritativeRuntimeVideoQuote {
   marketplaceConfig: ModelMarketplaceConfig;
   videoCapabilityOverrides: VideoModelCapabilityOverrides;
 }
+
+/** 一次权威读取可供能力列表解析多个模型与分辨率的计费上下文。 */
+export interface AuthoritativeRuntimeVideoPricingContext {
+  pinnedGroupId: string;
+  group: RuntimeBackendGroupSnapshot;
+  marketplaceConfig: ModelMarketplaceConfig;
+  videoCapabilityOverrides: VideoModelCapabilityOverrides;
+  billing: VideoModelBillingSettings;
+}
+
+/** 读取权威视频计费上下文所需的可信 Principal 分组事实。 */
+export type ResolveAuthoritativeRuntimeVideoPricingContextInput = Pick<
+  ResolveAuthoritativeRuntimeVideoQuoteInput,
+  "userId" | "apiKeyId" | "requestedGroupId" | "pinnedGroupId"
+>;
 
 /** 生成视频账单快照所需的外部请求与可信身份事实。 */
 export interface ResolveAuthoritativeRuntimeVideoQuoteInput {
@@ -367,28 +385,18 @@ export async function resolveTrustedGroupSnapshot(
 }
 
 /**
- * 在视频任务创建事务内读取完整报价依赖并固定可信分组。
+ * 在一个数据库 statement 中读取完整视频计费依赖并固定可信分组。
  *
- * @param input - 已通过调用方鉴权边界交付的用户、可选 API Key、模型、分辨率与时长。
- * @param database - 当前创建事务的 execute 端口；本函数绝不自行开启事务或读取缓存。
- * @returns 同一 PostgreSQL statement snapshot 中的 pinned 分组、严格报价和能力/配置上下文。
+ * @param input - 已通过调用方鉴权边界交付的用户、可选 API Key 与分组选择。
+ * @param database - 调用方的 execute 端口；任务创建传入当前事务，能力查询传入 db。
+ * @returns 同一 PostgreSQL statement snapshot 中的 pinned 分组、双价格和能力配置上下文。
  * @sideEffects 仅执行一次参数化只读 SQL statement。
- * @failure API Key 绑定、分组、模式、价格、能力或分辨率任一非法时 fail closed。
+ * @failure API Key 绑定、分组、模式、价格或能力任一非法时 fail closed。
  */
-export async function resolveAuthoritativeRuntimeVideoQuote(
-  input: ResolveAuthoritativeRuntimeVideoQuoteInput,
+export async function resolveAuthoritativeRuntimeVideoPricingContext(
+  input: ResolveAuthoritativeRuntimeVideoPricingContextInput,
   database: RuntimeVideoQuoteTransactionDatabase
-): Promise<AuthoritativeRuntimeVideoQuote> {
-  const modelId = normalizeRuntimeRequestedModelId({
-    requestKind: "video",
-    modelId: input.modelId,
-  });
-  if (!modelId) {
-    throw new BackendSchedulerError(
-      "no_eligible_member",
-      "视频模型 ID 必须是全局目录中的真实模型 ID"
-    );
-  }
+): Promise<AuthoritativeRuntimeVideoPricingContext> {
   const rows = z.array(authoritativeVideoQuoteRowSchema).parse(
     extractExecuteRows(
       await database.execute(sql`
@@ -456,15 +464,8 @@ export async function resolveAuthoritativeRuntimeVideoQuote(
   const marketplaceConfig = parseModelMarketplaceConfig(
     row.settings.MODEL_MARKETPLACE_CONFIG
   );
-  if (!isModelMarketplaceModelEnabled(marketplaceConfig, "video", modelId)) {
-    throw new Error("视频模型已停用或不在当前模型配置中");
-  }
   const videoCapabilityOverrides = parseVideoModelCapabilityOverrides(
     row.settings.VIDEO_MODEL_CAPABILITY_OVERRIDES
-  );
-  const customModel = marketplaceConfig.customModels.find(
-    (candidate) =>
-      candidate.category === "video" && candidate.modelId === modelId
   );
   const billing = normalizeVideoModelBillingSettings({
     billingModes: row.settings.VIDEO_MODEL_BILLING_MODES,
@@ -477,11 +478,56 @@ export async function resolveAuthoritativeRuntimeVideoQuote(
         supportedResolutions: candidate.supportedResolutions,
       })),
   });
-  const mode = billing.billingModes[modelId];
+
+  return {
+    pinnedGroupId: group.id,
+    group,
+    marketplaceConfig,
+    videoCapabilityOverrides,
+    billing,
+  };
+}
+
+/**
+ * 从同一权威上下文解析一个模型分辨率的严格报价。
+ *
+ * @param context - 已固定 Principal 分组、marketplace 与三项计费设置的上下文。
+ * @param input - 目标真实模型、分辨率和用于计算总价的时长。
+ * @returns 与任务快照核心同形的严格报价。
+ * @sideEffects 无。
+ * @throws 模型停用、模式缺失、分辨率或双矩阵非法时 fail closed。
+ */
+export function resolveRuntimeVideoQuoteFromContext(
+  context: AuthoritativeRuntimeVideoPricingContext,
+  input: Pick<
+    ResolveAuthoritativeRuntimeVideoQuoteInput,
+    "modelId" | "resolution" | "durationSeconds"
+  >
+): VideoBillingQuote {
+  const modelId = normalizeRuntimeRequestedModelId({
+    requestKind: "video",
+    modelId: input.modelId,
+  });
+  if (!modelId) {
+    throw new BackendSchedulerError(
+      "no_eligible_member",
+      "视频模型 ID 必须是全局目录中的真实模型 ID"
+    );
+  }
+  if (
+    !isModelMarketplaceModelEnabled(context.marketplaceConfig, "video", modelId)
+  ) {
+    throw new Error("视频模型已停用或不在当前模型配置中");
+  }
+  const customModel = context.marketplaceConfig.customModels.find(
+    (candidate) =>
+      candidate.category === "video" && candidate.modelId === modelId
+  );
+  const mode = context.billing.billingModes[modelId];
   if (!mode) {
     throw new Error("视频模型缺少统一计费模式");
   }
-  const quote = resolveVideoBillingQuote({
+  return resolveVideoBillingQuote({
     modelId,
     ...(customModel
       ? { supportedResolutions: customModel.supportedResolutions }
@@ -489,18 +535,36 @@ export async function resolveAuthoritativeRuntimeVideoQuote(
     resolution: input.resolution,
     durationSeconds: input.durationSeconds,
     mode,
-    globalCreditsPerSecond: billing.creditsPerSecond,
-    globalCreditsPerItem: billing.creditsPerItem,
-    groupCreditsPerSecond: group.videoCreditOverrides,
-    groupCreditsPerItem: group.videoCreditsPerItemOverrides,
+    globalCreditsPerSecond: context.billing.creditsPerSecond,
+    globalCreditsPerItem: context.billing.creditsPerItem,
+    groupCreditsPerSecond: context.group.videoCreditOverrides,
+    groupCreditsPerItem: context.group.videoCreditsPerItemOverrides,
   });
+}
 
+/**
+ * 在视频任务创建事务内一次读取并解析目标报价。
+ *
+ * @param input - Principal 分组事实与目标模型、分辨率、时长。
+ * @param database - 当前创建事务 execute 端口。
+ * @returns pinned 分组、严格报价以及创建能力快照复核所需上下文。
+ * @sideEffects 执行一次参数化只读 SQL statement。
+ * @throws 任一绑定、配置或报价事实非法时 fail closed。
+ */
+export async function resolveAuthoritativeRuntimeVideoQuote(
+  input: ResolveAuthoritativeRuntimeVideoQuoteInput,
+  database: RuntimeVideoQuoteTransactionDatabase
+): Promise<AuthoritativeRuntimeVideoQuote> {
+  const context = await resolveAuthoritativeRuntimeVideoPricingContext(
+    input,
+    database
+  );
   return {
-    pinnedGroupId: group.id,
-    group,
-    quote,
-    marketplaceConfig,
-    videoCapabilityOverrides,
+    pinnedGroupId: context.pinnedGroupId,
+    group: context.group,
+    quote: resolveRuntimeVideoQuoteFromContext(context, input),
+    marketplaceConfig: context.marketplaceConfig,
+    videoCapabilityOverrides: context.videoCapabilityOverrides,
   };
 }
 

@@ -11,6 +11,7 @@ import {
 } from "@repo/shared/image-generation/media-limits";
 import {
   VIDEO_MODEL_CAPABILITIES,
+  type VideoCurrentQuote,
   type VideoModelCapabilityDescriptor,
   videoListCapabilitiesOutputSchema,
 } from "@repo/shared/video-generation";
@@ -29,6 +30,7 @@ export type VideoCreateModel = {
   maxReferenceImages: number;
   maxMediaInputCount: number;
   maxMediaInputBytes: number;
+  billing: readonly VideoCurrentQuote[];
 };
 
 /** 视频面板允许的两种具名输入模式。 */
@@ -74,6 +76,7 @@ function fromStaticCapability(
     maxReferenceImages: capability.input.referenceImages.maxCount,
     maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
     maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,
+    billing: [],
   };
 }
 
@@ -101,6 +104,7 @@ function fromPublicCapability(
     maxReferenceImages: capability.input.referenceImages.maxCount,
     maxMediaInputCount: limits.maxMediaInputCount,
     maxMediaInputBytes: limits.maxMediaInputBytes,
+    billing: capability.billing,
   };
 }
 

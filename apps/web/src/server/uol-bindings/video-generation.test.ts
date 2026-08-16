@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   executeVideoListCapabilitiesBinding,
   type VideoCapabilityBindingDependencies,
+  type VideoCapabilityPricingDescriptor,
 } from "./video-generation-capabilities";
 
 const userPrincipal = {
@@ -35,19 +36,40 @@ function dependencies(input?: {
   value: VideoCapabilityBindingDependencies;
   loadOverrides: ReturnType<typeof vi.fn>;
   listConfiguredModelIds: ReturnType<typeof vi.fn>;
+  loadCurrentQuotes: ReturnType<typeof vi.fn>;
 } {
   const loadOverrides = vi.fn(async () => input?.overrides);
   const listConfiguredModelIds = vi.fn(
     async () => input?.configuredModelIds ?? ["seedance2"]
   );
+  const loadCurrentQuotes: VideoCapabilityBindingDependencies["loadCurrentQuotes"] =
+    vi.fn(
+      async (_selection, models: readonly VideoCapabilityPricingDescriptor[]) =>
+        Object.fromEntries(
+          models.map((model) => [
+            model.modelId,
+            model.supportedResolutions.map((resolution) => ({
+              kind: "current_quote" as const,
+              resolution,
+              mode: "per_second" as const,
+              unit: "second" as const,
+              unitPrice: 2,
+              creditsPerSecond: 2,
+              quoteToken: `quote-${model.modelId}-${resolution}`,
+            })),
+          ])
+        )
+    );
   return {
     value: {
       loadCapabilityOverrides: loadOverrides,
       listConfiguredModelIds,
+      loadCurrentQuotes,
       reportFailure: vi.fn(),
     },
     loadOverrides,
     listConfiguredModelIds,
+    loadCurrentQuotes,
   };
 }
 
@@ -122,6 +144,14 @@ describe("executeVideoListCapabilitiesBinding", () => {
       userId: "user-1",
       apiKeyId: "key-1",
     });
+    expect(deps.loadCurrentQuotes).toHaveBeenCalledWith(
+      {
+        userId: "user-1",
+        apiKeyId: "key-1",
+        principalScope: "external:user-1:key-1",
+      },
+      expect.any(Array)
+    );
   });
 
   it("站内用户显式分组只改变 configuredReachable", async () => {
@@ -204,6 +234,51 @@ describe("executeVideoListCapabilitiesBinding", () => {
     expect(output.items.some((item) => item.model === "sora2")).toBe(true);
   });
 
+  it("管理员注册的自定义视频模型按声明分辨率发现报价", async () => {
+    const deps = dependencies({ configuredModelIds: ["vendor-video-x"] });
+    deps.value.loadMarketplaceConfig = async () => ({
+      version: 2,
+      imageByModel: {},
+      videoByFamily: {
+        "vendor-video-x": {
+          revision: 2,
+          enabled: true,
+          visible: true,
+          homepageVisible: false,
+          description: "",
+          cover: null,
+        },
+      },
+      customModels: [
+        {
+          modelId: "vendor-video-x",
+          category: "video",
+          supportedResolutions: ["studio-hd"],
+        },
+      ],
+      writeReceipts: {},
+    });
+
+    const output = await executeVideoListCapabilitiesBinding(
+      {},
+      userPrincipal,
+      deps.value
+    );
+    expect(
+      output.items.find((item) => item.model === "vendor-video-x")
+    ).toMatchObject({
+      resolutions: ["studio-hd"],
+      configuredReachable: true,
+      billing: [
+        {
+          kind: "current_quote",
+          resolution: "studio-hd",
+          quoteToken: "quote-vendor-video-x-studio-hd",
+        },
+      ],
+    });
+  });
+
   it("输出采用严格公共投影，不泄露成员、凭据、健康或容量", async () => {
     const deps = dependencies({ configuredModelIds: ["seedance2"] });
     const output = await executeVideoListCapabilitiesBinding(
@@ -222,9 +297,10 @@ describe("executeVideoListCapabilitiesBinding", () => {
       "input",
       "audio",
       "configuredReachable",
+      "billing",
     ]);
     expect(JSON.stringify(output)).not.toMatch(
-      /member|credential|cookie|token|health|cooldown|concurrency|capacity/i
+      /member|credential|cookie|health|cooldown|concurrency|capacity/i
     );
   });
 

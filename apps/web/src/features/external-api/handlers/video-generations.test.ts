@@ -11,10 +11,17 @@ const mocks = vi.hoisted(() => {
   class OperationError extends Error {
     readonly code: string;
     readonly httpStatus: number;
+    readonly details?: Record<string, unknown>;
 
-    constructor(code: string, message: string, httpStatus = 400) {
+    constructor(
+      code: string,
+      message: string,
+      details?: Record<string, unknown>,
+      httpStatus = 400
+    ) {
       super(message);
       this.code = code;
+      this.details = details;
       this.httpStatus = httpStatus;
     }
   }
@@ -46,6 +53,23 @@ vi.mock("@/features/external-api/deprecated-governance-fields", () => ({
 vi.mock("@/features/external-api/images", () => ({
   openAIImageError: (message: string, status = 400, code?: string) =>
     Response.json({ error: { message, code: code ?? null } }, { status }),
+  toOpenAIErrorPayload: (
+    message: string,
+    options: {
+      type: string;
+      code: string;
+      status: number;
+      details?: Record<string, unknown>;
+    }
+  ) => ({
+    error: {
+      message,
+      type: options.type,
+      code: options.code,
+      status: options.status,
+      ...(options.details ? { details: options.details } : {}),
+    },
+  }),
 }));
 vi.mock("@/server/uol-init", () => ({
   ensureUolInitialized: mocks.ensureInitialized,
@@ -76,7 +100,76 @@ describe("postExternalVideoGenerations", () => {
     mocks.invokeOperation.mockResolvedValue({
       taskId: "video-1",
       status: "in_progress",
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 4,
+        quotedCredits: 3,
+        actualCredits: 0,
+      },
     });
+  });
+
+  it.each([
+    {
+      name: "按秒快照",
+      billing: {
+        kind: "snapshot",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: 2,
+        creditsPerSecond: 2,
+        durationSeconds: 4,
+        quotedCredits: 8,
+        actualCredits: 0,
+      },
+    },
+    {
+      name: "按条快照",
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 4,
+        quotedCredits: 3,
+        actualCredits: 0,
+      },
+    },
+    {
+      name: "legacy 账单",
+      billing: {
+        kind: "legacy",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: null,
+        creditsPerSecond: null,
+        quotedCredits: null,
+        actualCredits: 6,
+      },
+    },
+  ])("创建响应透传 $name", async ({ billing }) => {
+    mocks.invokeOperation.mockResolvedValueOnce({
+      taskId: "video-billing",
+      status: "in_progress",
+      billing,
+    });
+
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-billing",
+        prompt: "test",
+        model: "veo31",
+        duration: 4,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({ billing });
   });
 
   it("缺少 clientRequestId 时拒绝请求", async () => {
@@ -98,6 +191,15 @@ describe("postExternalVideoGenerations", () => {
     mocks.invokeOperation.mockResolvedValueOnce({
       taskId: "video-no-account",
       status: "failed",
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 5,
+        quotedCredits: 3,
+        actualCredits: 0,
+      },
       error: "当前没有可用生成服务",
     });
     const response = await postExternalVideoGenerations(
@@ -131,6 +233,7 @@ describe("postExternalVideoGenerations", () => {
         duration: 4,
         aspectRatio: "16:9",
         resolution: "1080p",
+        quoteToken: "quote-veo31-1080p",
         firstFrame,
         callbackUrl: "https://callback.example.com/video",
       }) as never
@@ -146,6 +249,7 @@ describe("postExternalVideoGenerations", () => {
         duration: 4,
         aspectRatio: "16:9",
         resolution: "1080p",
+        quoteToken: "quote-veo31-1080p",
         firstFrame: expect.objectContaining({
           source: "data",
           byteLength: 5,
@@ -191,6 +295,7 @@ describe("postExternalVideoGenerations", () => {
         duration_seconds: 10,
         aspect_ratio: "9:16",
         resolution: "720p",
+        quote_token: "quote-seedance-fast-720p",
         negative_prompt: "rain",
         generate_audio: false,
         first_frame: firstFrame,
@@ -207,6 +312,7 @@ describe("postExternalVideoGenerations", () => {
         duration: 10,
         aspectRatio: "9:16",
         resolution: "720p",
+        quoteToken: "quote-seedance-fast-720p",
         negativePrompt: "rain",
         generateAudio: false,
         firstFrame: expect.objectContaining({ byteLength: 5 }),
@@ -257,6 +363,8 @@ describe("postExternalVideoGenerations", () => {
         aspectRatio: "16:9",
         aspect_ratio: "16:9",
         resolution: "1080p",
+        quoteToken: "quote-seedance-1080p",
+        quote_token: "quote-seedance-1080p",
         generateAudio: true,
         generate_audio: true,
         referenceImages: [referenceImage],
@@ -271,6 +379,7 @@ describe("postExternalVideoGenerations", () => {
         clientRequestId: "client-matched",
         duration: 10,
         aspectRatio: "16:9",
+        quoteToken: "quote-seedance-1080p",
         generateAudio: true,
         referenceImages: [expect.objectContaining({ byteLength: 9 })],
       }),
@@ -285,6 +394,7 @@ describe("postExternalVideoGenerations", () => {
     ["seconds", { duration: 10, seconds: "11" }],
     ["aspectRatio", { aspectRatio: "16:9", aspect_ratio: "9:16" }],
     ["generateAudio", { generateAudio: true, generate_audio: false }],
+    ["quoteToken", { quoteToken: "quote-a", quote_token: "quote-b" }],
     [
       "referenceImages",
       {
@@ -307,6 +417,54 @@ describe("postExternalVideoGenerations", () => {
 
     expect(response.status).toBe(400);
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
+  it("陈旧报价以 OpenAI details 返回最新报价", async () => {
+    mocks.invokeOperation.mockRejectedValueOnce(
+      new mocks.OperationError(
+        "conflict",
+        "视频报价已更新，请确认最新价格后重试",
+        {
+          reason: "stale_video_quote",
+          currentQuote: {
+            kind: "current_quote",
+            resolution: "1080p",
+            mode: "per_item",
+            unit: "item",
+            unitPrice: 4,
+            quoteToken: "fresh-token",
+          },
+        },
+        409
+      )
+    );
+
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-stale",
+        prompt: "test",
+        model: "veo31",
+        duration: 4,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        quoteToken: "stale-token",
+      }) as never
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "conflict",
+        details: {
+          reason: "stale_video_quote",
+          currentQuote: {
+            kind: "current_quote",
+            unitPrice: 4,
+            quoteToken: "fresh-token",
+          },
+        },
+      },
+    });
   });
 
   it.each([

@@ -11,6 +11,7 @@ import {
 import {
   resolveEffectiveVideoModelCapability,
   type VideoModelCapabilityOverrides,
+  type VideoTaskPublicBilling,
 } from "@repo/shared/video-generation";
 import {
   resolveVideoTaskBilling,
@@ -156,6 +157,49 @@ export function createVideoBillingLedgerMetadata(
     videoBillingUnitPrice: snapshot.unitPrice,
     videoBillingQuotedCredits: snapshot.quotedCredits,
   };
+}
+
+/**
+ * 将内部任务快照投影为 UOL、v1、MCP、回调和历史共用的公共账单联合。
+ *
+ * @param metadata - 任务数据库行中的完整 metadata。
+ * @param actualCredits - 当前实际结算；退款后为 0，不会改写原 quotedCredits。
+ * @returns 不含内部组、价格来源、revision 或摘要的 snapshot/legacy 判别联合。
+ * @sideEffects 无。
+ * @throws Error - metadata 版本或 v2 账单快照非法时 fail closed。
+ */
+export function projectVideoTaskPublicBilling(
+  metadata: unknown,
+  actualCredits: number
+): VideoTaskPublicBilling {
+  const billing = resolveVideoTaskBilling(metadata);
+  if (billing.kind === "legacy") {
+    return {
+      kind: "legacy",
+      mode: "per_second",
+      unit: "second",
+      unitPrice: null,
+      creditsPerSecond: null,
+      quotedCredits: null,
+      actualCredits,
+    };
+  }
+  const snapshot = billing.snapshot;
+  const common = {
+    kind: "snapshot" as const,
+    unitPrice: snapshot.unitPrice,
+    durationSeconds: snapshot.durationSeconds,
+    quotedCredits: snapshot.quotedCredits,
+    actualCredits,
+  };
+  return snapshot.mode === "per_second"
+    ? {
+        ...common,
+        mode: "per_second",
+        unit: "second",
+        creditsPerSecond: snapshot.unitPrice,
+      }
+    : { ...common, mode: "per_item", unit: "item" };
 }
 
 /**

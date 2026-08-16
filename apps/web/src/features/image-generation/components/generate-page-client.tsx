@@ -30,7 +30,6 @@ import {
   parseReferenceHandoffIntent,
   removeReferenceHandoffParams,
 } from "@/features/image-generation/reference-handoff";
-import type { VideoPricingInfo } from "@/features/image-generation/video-operations";
 
 import { ImageCreatePanel } from "./image-create-panel";
 import { VideoCreatePanel } from "./video-create-panel";
@@ -58,7 +57,6 @@ interface GeneratePageClientProps {
     imageModerationCredits: number;
     textModerationCredits: number;
   };
-  videoPricing: VideoPricingInfo;
 }
 
 /**
@@ -78,7 +76,6 @@ export function GeneratePageClient({
   moderationEnabled,
   imageModelPricing,
   imageModerationPricing,
-  videoPricing,
 }: GeneratePageClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -200,7 +197,6 @@ export function GeneratePageClient({
         <TabsContent value="video" className="mt-0">
           <VideoCreatePanel
             initialSelection={initialPreselection.videoSelection}
-            pricing={videoPricing}
             recent={recentGenerations}
           />
         </TabsContent>

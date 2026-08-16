@@ -10,12 +10,20 @@ import { withApiLogging } from "@repo/shared/api-logger";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { MAX_MEDIA_INPUT_COUNT } from "@repo/shared/image-generation/media-contract";
-import { invokeOperation, type Principal } from "@repo/shared/uol";
+import {
+  invokeOperation,
+  OperationError,
+  type Principal,
+} from "@repo/shared/uol";
 import {
   videoRequestedModelIdSchema,
   videoRequestedResolutionSchema,
 } from "@repo/shared/uol/operations/video-generation";
-import { videoAspectRatioSchema } from "@repo/shared/video-generation";
+import {
+  type VideoTaskPublicBilling,
+  videoAspectRatioSchema,
+  videoCurrentQuoteSchema,
+} from "@repo/shared/video-generation";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
@@ -40,6 +48,7 @@ const generateVideoSchema = z
     duration: z.number().int().positive(),
     aspectRatio: videoAspectRatioSchema,
     resolution: videoRequestedResolutionSchema,
+    quoteToken: z.string().trim().min(1).max(2_048).optional(),
     negativePrompt: z.string().max(8000).optional(),
     generateAudio: z.boolean().optional(),
     firstFrame: videoInputImageDataUrlSchema.optional(),
@@ -54,6 +63,32 @@ const generateVideoSchema = z
 
 function errorResponse(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
+}
+
+/** 将 UOL 错误收窄为站内可处理响应；只有陈旧报价公开新的 current_quote。 */
+function operationErrorResponse(error: OperationError) {
+  const currentQuote = videoCurrentQuoteSchema.safeParse(
+    error.details?.currentQuote
+  );
+  if (
+    error.code === "conflict" &&
+    error.details?.reason === "stale_video_quote" &&
+    currentQuote.success
+  ) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: error.code,
+        reason: "stale_video_quote",
+        currentQuote: currentQuote.data,
+      },
+      { status: error.httpStatus }
+    );
+  }
+  return NextResponse.json(
+    { error: error.message, code: error.code },
+    { status: error.httpStatus }
+  );
 }
 
 export const POST = withApiLogging(async (request: NextRequest) => {
@@ -93,45 +128,54 @@ export const POST = withApiLogging(async (request: NextRequest) => {
   };
   await ensureUolInitialized();
 
-  const result = await invokeOperation<{
-    taskId: string;
-    status: "queued" | "in_progress" | "completed" | "failed";
-    error?: string;
-  }>(
-    "video.generate",
-    {
-      clientRequestId: parsed.data.clientRequestId,
-      prompt: parsed.data.prompt,
-      model: parsed.data.model,
-      duration: parsed.data.duration,
-      aspectRatio: parsed.data.aspectRatio,
-      resolution: parsed.data.resolution,
-      ...(parsed.data.negativePrompt
-        ? { negativePrompt: parsed.data.negativePrompt }
-        : {}),
-      ...(parsed.data.generateAudio !== undefined
-        ? { generateAudio: parsed.data.generateAudio }
-        : {}),
-      ...(firstFrame ? { firstFrame } : {}),
-      ...(lastFrame ? { lastFrame } : {}),
-      ...(referenceImages?.length ? { referenceImages } : {}),
-    },
-    principal,
-    {
-      externalRequestId: request.headers.get("x-request-id") ?? undefined,
-    }
-  );
-  return NextResponse.json(
-    {
-      ...result,
-      model: parsed.data.model,
-      duration: parsed.data.duration,
-      aspectRatio: parsed.data.aspectRatio,
-      resolution: parsed.data.resolution,
-    },
-    {
-      status: 202,
-      headers: { "Cache-Control": "no-store" },
-    }
-  );
+  try {
+    const result = await invokeOperation<{
+      taskId: string;
+      status: "queued" | "in_progress" | "completed" | "failed";
+      billing: VideoTaskPublicBilling;
+      error?: string;
+    }>(
+      "video.generate",
+      {
+        clientRequestId: parsed.data.clientRequestId,
+        prompt: parsed.data.prompt,
+        model: parsed.data.model,
+        duration: parsed.data.duration,
+        aspectRatio: parsed.data.aspectRatio,
+        resolution: parsed.data.resolution,
+        ...(parsed.data.quoteToken
+          ? { quoteToken: parsed.data.quoteToken }
+          : {}),
+        ...(parsed.data.negativePrompt
+          ? { negativePrompt: parsed.data.negativePrompt }
+          : {}),
+        ...(parsed.data.generateAudio !== undefined
+          ? { generateAudio: parsed.data.generateAudio }
+          : {}),
+        ...(firstFrame ? { firstFrame } : {}),
+        ...(lastFrame ? { lastFrame } : {}),
+        ...(referenceImages?.length ? { referenceImages } : {}),
+      },
+      principal,
+      {
+        externalRequestId: request.headers.get("x-request-id") ?? undefined,
+      }
+    );
+    return NextResponse.json(
+      {
+        ...result,
+        model: parsed.data.model,
+        duration: parsed.data.duration,
+        aspectRatio: parsed.data.aspectRatio,
+        resolution: parsed.data.resolution,
+      },
+      {
+        status: 202,
+        headers: { "Cache-Control": "no-store" },
+      }
+    );
+  } catch (error) {
+    if (error instanceof OperationError) return operationErrorResponse(error);
+    throw error;
+  }
 });

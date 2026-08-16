@@ -29,6 +29,14 @@ export type VideoModelId = (typeof VIDEO_MODEL_IDS)[number];
 /** 精确真实模型 ID schema；不会 trim、改大小写、去前缀或解析历史别名。 */
 export const videoModelIdSchema = z.enum(VIDEO_MODEL_IDS);
 
+/** 内置与管理员注册自定义模型共用的公开精确 ID schema。 */
+export const videoPublicModelIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[a-z0-9][a-z0-9._:-]*$/);
+
 /**
  * 将配置或调度读取出的模型身份规范为真实视频模型 ID。
  *
@@ -80,6 +88,14 @@ export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];
 
 /** 严格小写分辨率 schema；不接受供应商内部尺寸或大小写别名。 */
 export const videoResolutionSchema = z.enum(VIDEO_RESOLUTIONS);
+
+/** 内置与自定义视频模型共用的公开分辨率标签 schema。 */
+export const videoPublicResolutionSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 
 /** 全局模型可选择的视频计费模式；分组与供应商账号不能覆盖该值。 */
 export const VIDEO_BILLING_MODES = ["per_second", "per_item"] as const;

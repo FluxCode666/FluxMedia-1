@@ -12,13 +12,20 @@ import {
   videoRequestedModelIdSchema,
   videoRequestedResolutionSchema,
 } from "@repo/shared/uol/operations/video-generation";
-import { videoAspectRatioSchema } from "@repo/shared/video-generation";
+import {
+  type VideoTaskPublicBilling,
+  videoAspectRatioSchema,
+  videoCurrentQuoteSchema,
+} from "@repo/shared/video-generation";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { createDeprecatedGovernanceFieldResponse } from "@/features/external-api/deprecated-governance-fields";
-import { openAIImageError } from "@/features/external-api/images";
+import {
+  openAIImageError,
+  toOpenAIErrorPayload,
+} from "@/features/external-api/images";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
@@ -89,6 +96,8 @@ const externalVideoSchema = z
     aspectRatio: videoAspectRatioSchema.optional(),
     aspect_ratio: videoAspectRatioSchema.optional(),
     resolution: videoRequestedResolutionSchema,
+    quoteToken: z.string().trim().min(1).max(2_048).optional(),
+    quote_token: z.string().trim().min(1).max(2_048).optional(),
     negativePrompt: z.string().max(8_000).optional(),
     negative_prompt: z.string().max(8_000).optional(),
     generateAudio: z.boolean().optional(),
@@ -167,6 +176,13 @@ const externalVideoSchema = z
     );
     addVideoAliasConflict(
       context,
+      "quoteToken",
+      "quote_token",
+      value.quoteToken,
+      value.quote_token
+    );
+    addVideoAliasConflict(
+      context,
       "negativePrompt",
       "negative_prompt",
       value.negativePrompt,
@@ -211,6 +227,27 @@ const externalVideoSchema = z
 
 /** 将 UOL 错误转换为稳定 OpenAI 风格错误。 */
 function operationErrorResponse(error: OperationError) {
+  const currentQuote = videoCurrentQuoteSchema.safeParse(
+    error.details?.currentQuote
+  );
+  if (
+    error.code === "conflict" &&
+    error.details?.reason === "stale_video_quote" &&
+    currentQuote.success
+  ) {
+    return Response.json(
+      toOpenAIErrorPayload(error.message, {
+        type: "invalid_request_error",
+        code: error.code,
+        status: error.httpStatus,
+        details: {
+          reason: "stale_video_quote",
+          currentQuote: currentQuote.data,
+        },
+      }),
+      { status: error.httpStatus }
+    );
+  }
   return openAIImageError(error.message, error.httpStatus, error.code);
 }
 
@@ -245,6 +282,7 @@ export const postExternalVideoGenerations = withApiLogging(
       return openAIImageError("clientRequestId is required");
     const negativePrompt =
       parsed.data.negativePrompt ?? parsed.data.negative_prompt;
+    const quoteToken = parsed.data.quoteToken ?? parsed.data.quote_token;
     const generateAudio =
       parsed.data.generateAudio ?? parsed.data.generate_audio;
     const duration =
@@ -283,6 +321,7 @@ export const postExternalVideoGenerations = withApiLogging(
       const result = await invokeOperation<{
         taskId: string;
         status: "queued" | "in_progress" | "completed" | "failed";
+        billing: VideoTaskPublicBilling;
         error?: string;
       }>(
         "video.generate",
@@ -293,6 +332,7 @@ export const postExternalVideoGenerations = withApiLogging(
           duration,
           aspectRatio,
           resolution: parsed.data.resolution,
+          ...(quoteToken ? { quoteToken } : {}),
           ...(negativePrompt ? { negativePrompt } : {}),
           ...(generateAudio !== undefined ? { generateAudio } : {}),
           ...(firstFrame ? { firstFrame } : {}),
@@ -320,6 +360,7 @@ export const postExternalVideoGenerations = withApiLogging(
           task_id: result.taskId,
           generation_id: result.taskId,
           status: result.status,
+          billing: result.billing,
           ...(result.error ? { error: { message: result.error } } : {}),
           model: parsed.data.model,
           duration,

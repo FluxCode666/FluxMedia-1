@@ -47,7 +47,7 @@ describe("getExternalVideoCapabilities", () => {
           displayName: "Seedance 2.0",
           durations: [10],
           aspectRatios: ["16:9"],
-          resolutions: ["1080p"],
+          resolutions: ["720p", "1080p"],
           input: {
             frames: "first-and-optional-last",
             referenceImages: { maxCount: 20, configurable: true },
@@ -55,6 +55,24 @@ describe("getExternalVideoCapabilities", () => {
           },
           audio: { supported: true, defaultEnabled: false },
           configuredReachable: true,
+          billing: [
+            {
+              kind: "current_quote",
+              resolution: "720p",
+              mode: "per_item",
+              unit: "item",
+              unitPrice: 2,
+              quoteToken: "quote-per-item-720p",
+            },
+            {
+              kind: "current_quote",
+              resolution: "1080p",
+              mode: "per_item",
+              unit: "item",
+              unitPrice: 3,
+              quoteToken: "quote-per-item",
+            },
+          ],
         },
       ],
       limits: {
@@ -94,13 +112,31 @@ describe("getExternalVideoCapabilities", () => {
       model: "seedance2",
       input: { referenceImages: { maxCount: 20 } },
       configuredReachable: true,
+      billing: [
+        {
+          kind: "current_quote",
+          resolution: "720p",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 2,
+          quoteToken: "quote-per-item-720p",
+        },
+        {
+          kind: "current_quote",
+          resolution: "1080p",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 3,
+          quoteToken: "quote-per-item",
+        },
+      ],
     });
     expect(payload.limits).toEqual({
       maxMediaInputCount: 256,
       maxMediaInputBytes: 536_870_912,
     });
     expect(JSON.stringify(payload)).not.toMatch(
-      /member|credential|cookie|token|health|cooldown|concurrency|capacity/i
+      /member|credential|cookie|health|cooldown|concurrency|capacity|billingGroupId|priceSource|digest|revision/i
     );
   });
 });

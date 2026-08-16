@@ -13,18 +13,19 @@ import {
 import {
   videoAspectRatioSchema,
   videoFrameInputCapabilitySchema,
-  videoModelIdSchema,
-  videoResolutionSchema,
+  videoPublicModelIdSchema,
+  videoPublicResolutionSchema,
 } from "./contracts";
+import { videoCurrentQuoteSchema } from "./public-billing";
 
 /** 单个真实视频模型的公开有效能力与配置可达性。 */
 export const videoCapabilityItemSchema = z
   .object({
-    model: videoModelIdSchema,
+    model: videoPublicModelIdSchema,
     displayName: z.string().trim().min(1).max(160),
     durations: z.array(z.number().int().positive()).min(1),
     aspectRatios: z.array(videoAspectRatioSchema).min(1),
-    resolutions: z.array(videoResolutionSchema).min(1),
+    resolutions: z.array(videoPublicResolutionSchema).min(1),
     input: z
       .object({
         frames: videoFrameInputCapabilitySchema,
@@ -44,6 +45,7 @@ export const videoCapabilityItemSchema = z
       })
       .strict(),
     configuredReachable: z.boolean(),
+    billing: z.array(videoCurrentQuoteSchema).min(1),
   })
   .strict();
 

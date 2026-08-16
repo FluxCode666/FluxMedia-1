@@ -21,6 +21,7 @@ import { z } from "zod";
 import { extractExecuteRows } from "../../server/database-result";
 import { toVideoGenerationTaskResponse } from "../external-api/async-image-tasks";
 import { fetchPublicCallback } from "../external-api/safe-image-fetch";
+import { projectVideoTaskPublicBilling } from "./video-billing-lifecycle";
 import { getVideoCallbackRetryAt } from "./video-callback-policy";
 import { buildVideoCallbackInput } from "./video-input-lifecycle";
 
@@ -182,6 +183,41 @@ async function buildVideoCallbackUrl(
   return videoUrl;
 }
 
+/**
+ * 将视频终态组装为不含内部计费快照与存储身份的公共 callback 负载。
+ *
+ * @param input.video - 已从任务行读取的终态字段、输入清单和完整 metadata。
+ * @param input.videoUrl - 已转换为外部可访问地址的产物 URL；失败任务为 null。
+ * @returns 与 v1 状态一致，并包含输入摘要和 snapshot/legacy 账单的负载。
+ * @sideEffects 无。
+ * @throws Error - 输入清单或 v2 账单快照非法时 fail closed。
+ */
+export function buildVideoCallbackPayload(input: {
+  video: VideoCallbackTaskRow;
+  videoUrl: string | null;
+}) {
+  const parsedManifest = videoInputManifestSchema.safeParse(
+    input.video.inputManifest ?? {}
+  );
+  if (!parsedManifest.success) {
+    throw new Error("视频 callback 输入清单无效");
+  }
+  return {
+    ...toVideoGenerationTaskResponse(
+      {
+        ...input.video,
+        generateAudio: input.video.metadata?.generateAudio === true,
+      },
+      input.videoUrl
+    ),
+    input: buildVideoCallbackInput(parsedManifest.data),
+    billing: projectVideoTaskPublicBilling(
+      input.video.metadata,
+      input.video.creditsConsumed
+    ),
+  };
+}
+
 /** 向已在提交期校验过的地址投递一次，并在发送时再次执行 DNS/重定向复检。 */
 async function deliverClaimedVideoCallback(input: {
   delivery: VideoCallbackDeliveryRow;
@@ -196,22 +232,7 @@ async function deliverClaimedVideoCallback(input: {
           input.video.storageBucket
         )
       : null;
-  const parsedManifest = videoInputManifestSchema.safeParse(
-    input.video.inputManifest ?? {}
-  );
-  if (!parsedManifest.success) {
-    throw new Error("视频 callback 输入清单无效");
-  }
-  const payload = {
-    ...toVideoGenerationTaskResponse(
-      {
-        ...input.video,
-        generateAudio: input.video.metadata?.generateAudio === true,
-      },
-      videoUrl
-    ),
-    input: buildVideoCallbackInput(parsedManifest.data),
-  };
+  const payload = buildVideoCallbackPayload({ video: input.video, videoUrl });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CALLBACK_TIMEOUT_MS);
   try {

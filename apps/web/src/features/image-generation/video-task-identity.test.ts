@@ -118,6 +118,35 @@ describe("createVideoTaskId", () => {
     );
   });
 
+  it("报价 token 不进入业务请求指纹", () => {
+    const base = {
+      clientRequestId: "request-1",
+      prompt: "first",
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+    };
+    const first = resolveCanonicalVideoGenerateInput(
+      videoGenerateInputSchema.parse({ ...base, quoteToken: "quote-first" }),
+      undefined
+    );
+    const refreshed = resolveCanonicalVideoGenerateInput(
+      videoGenerateInputSchema.parse({
+        ...base,
+        quoteToken: "quote-refreshed",
+      }),
+      undefined
+    );
+    if (!first.ok || !refreshed.ok) {
+      throw new Error("视频报价 token 指纹测试输入无效");
+    }
+    expect(first.input).not.toHaveProperty("quoteToken");
+    expect(createVideoRequestFingerprint(first.input)).toBe(
+      createVideoRequestFingerprint(refreshed.input)
+    );
+  });
+
   it("参数、具名位置和参考图顺序都是规范请求语义", () => {
     const first = {
       source: "storage" as const,

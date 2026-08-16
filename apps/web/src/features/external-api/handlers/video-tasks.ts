@@ -7,6 +7,7 @@
 
 import { withApiLogging } from "@repo/shared/api-logger";
 import { invokeOperation, OperationError } from "@repo/shared/uol";
+import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import type { NextRequest } from "next/server";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { openAIImageError } from "@/features/external-api/images";
@@ -43,6 +44,7 @@ export const getExternalVideoTask = withApiLogging(
           mode: "none" | "first-frame" | "first-last-frames" | "references";
           count: number;
         };
+        billing: VideoTaskPublicBilling;
         videoUrl?: string;
         error?: string;
         createdAt: string;
@@ -57,8 +59,7 @@ export const getExternalVideoTask = withApiLogging(
           apiKeyId: auth.apiKeyId,
         },
         {
-          externalRequestId:
-            request.headers.get("x-request-id") ?? undefined,
+          externalRequestId: request.headers.get("x-request-id") ?? undefined,
         }
       );
       return Response.json(
@@ -77,6 +78,7 @@ export const getExternalVideoTask = withApiLogging(
           generateAudio: result.generateAudio,
           generate_audio: result.generateAudio,
           input: result.input,
+          billing: result.billing,
           ...(result.videoUrl
             ? { video_url: result.videoUrl, data: [{ url: result.videoUrl }] }
             : {}),

@@ -62,6 +62,16 @@ describe("getExternalVideoTask", () => {
       resolution: "1080p",
       generateAudio: false,
       input: { mode: "references", count: 2 },
+      billing: {
+        kind: "snapshot",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: 2,
+        creditsPerSecond: 2,
+        durationSeconds: 10,
+        quotedCredits: 20,
+        actualCredits: 20,
+      },
       videoUrl: "https://example.com/video.mp4",
       createdAt: "2026-07-26T00:00:00.000Z",
       completedAt: "2026-07-26T00:01:00.000Z",
@@ -100,9 +110,71 @@ describe("getExternalVideoTask", () => {
       generateAudio: false,
       generate_audio: false,
       input: { mode: "references", count: 2 },
+      billing: {
+        kind: "snapshot",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: 2,
+        creditsPerSecond: 2,
+        durationSeconds: 10,
+        quotedCredits: 20,
+        actualCredits: 20,
+      },
     });
     expect(JSON.stringify(payload)).not.toMatch(
       /storageKey|storageBucket|referenceImages|firstFrame|lastFrame/
+    );
+  });
+
+  it.each([
+    {
+      name: "按条快照",
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 10,
+        quotedCredits: 3,
+        actualCredits: 3,
+      },
+    },
+    {
+      name: "legacy 账单",
+      billing: {
+        kind: "legacy",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: null,
+        creditsPerSecond: null,
+        quotedCredits: null,
+        actualCredits: 12,
+      },
+    },
+  ])("查询响应透传 $name", async ({ billing }) => {
+    mocks.invokeOperation.mockResolvedValueOnce({
+      taskId: "video-billing",
+      status: "completed",
+      model: "seedance2",
+      duration: 10,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+      generateAudio: false,
+      input: { mode: "none", count: 0 },
+      billing,
+      createdAt: "2026-07-26T00:00:00.000Z",
+      completedAt: "2026-07-26T00:01:00.000Z",
+    });
+
+    const response = await getExternalVideoTask(
+      new Request("https://example.com/v1/videos/video-billing") as never,
+      { params: Promise.resolve({ taskId: "video-billing" }) }
+    );
+    const payload = await response.json();
+
+    expect(payload.billing).toEqual(billing);
+    expect(JSON.stringify(payload)).not.toMatch(
+      /billingGroupId|digest|revision/
     );
   });
 

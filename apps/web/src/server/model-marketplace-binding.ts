@@ -30,7 +30,7 @@ import {
   type ModelConfigurationServiceErrorCode,
 } from "@/features/model-configuration/service-core";
 import { productionModelMarketplaceService } from "@/features/model-marketplace/service";
-
+import { loadVideoCurrentQuotes } from "./uol-bindings/video-current-quotes";
 import { executeVideoListCapabilitiesBinding } from "./uol-bindings/video-generation-capabilities";
 
 /** 登录用户 Principal；公开模型目录只为该身份计算可信分组可达性。 */
@@ -92,6 +92,7 @@ const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
           await import("@/features/image-backend-pool/runtime-service")
         ).listConfiguredRuntimeModelIds(selection);
       },
+      loadCurrentQuotes: loadVideoCurrentQuotes,
       reportFailure(error) {
         logError(error, { source: "model-marketplace-video-reachability" });
       },

@@ -10,8 +10,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { parseReachableVideoCreateModels } from "../video-create-capabilities";
 import {
+  parseVideoQuoteConflictResponse,
   parseVideoTaskResponse,
+  replaceVideoCreateModelQuote,
   resolveNextVideoPollDelay,
   VIDEO_STATUS_INITIAL_POLL_MS,
   VideoCreatePanel,
@@ -32,6 +35,24 @@ const veoReferenceCapabilities = {
       },
       audio: { supported: false, defaultEnabled: false },
       configuredReachable: true,
+      billing: [
+        {
+          kind: "current_quote",
+          resolution: "1080p",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 3,
+          quoteToken: "quote-veo31-ref-1080p",
+        },
+        {
+          kind: "current_quote",
+          resolution: "720p",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 3,
+          quoteToken: "quote-veo31-ref-720p",
+        },
+      ],
     },
   ],
   limits: {
@@ -57,13 +78,6 @@ function mountVideoCreatePanel(): void {
           aspectRatio: "16:9",
           resolution: "1080p",
         },
-        pricing: {
-          creditsPerSecond: {
-            "veo31-ref": 45,
-            "veo31-ref@1080p": 45,
-            "veo31-ref@720p": 30,
-          },
-        },
       })
     );
   });
@@ -82,13 +96,85 @@ afterEach(() => {
 });
 
 describe("VideoCreatePanel capabilities", () => {
+  it("陈旧报价冲突只接受严格 current_quote 并替换所选分辨率", () => {
+    const parsed = parseVideoQuoteConflictResponse({
+      error: "视频报价已更新，请确认最新价格后重试",
+      code: "conflict",
+      reason: "stale_video_quote",
+      currentQuote: {
+        kind: "current_quote",
+        resolution: "1080p",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: 4,
+        creditsPerSecond: 4,
+        quoteToken: "fresh-token",
+      },
+    });
+
+    expect(parsed?.currentQuote.quoteToken).toBe("fresh-token");
+    const updated = replaceVideoCreateModelQuote(
+      parseReachableVideoCreateModels(veoReferenceCapabilities),
+      "veo31-ref",
+      parsed?.currentQuote ?? veoReferenceCapabilities.items[0].billing[0]
+    );
+    expect(updated[0]?.billing).toEqual([
+      parsed?.currentQuote,
+      veoReferenceCapabilities.items[0].billing[1],
+    ]);
+    expect(
+      parseVideoQuoteConflictResponse({
+        error: "invalid",
+        code: "conflict",
+        reason: "stale_video_quote",
+        currentQuote: {
+          ...parsed?.currentQuote,
+          billingGroupId: "internal-group",
+        },
+      })
+    ).toBeNull();
+  });
+
   it("只接受视频四态并继续轮询 queued/in_progress", () => {
+    const billing = {
+      kind: "snapshot" as const,
+      mode: "per_item" as const,
+      unit: "item" as const,
+      unitPrice: 3,
+      durationSeconds: 4,
+      quotedCredits: 3,
+      actualCredits: 0,
+    };
     expect(
-      parseVideoTaskResponse({ taskId: "video-1", status: "queued" })
-    ).toEqual({ taskId: "video-1", status: "queued" });
+      parseVideoTaskResponse({ taskId: "video-1", status: "queued", billing })
+    ).toEqual({ taskId: "video-1", status: "queued", billing });
     expect(
-      parseVideoTaskResponse({ taskId: "video-1", status: "in_progress" })
-    ).toEqual({ taskId: "video-1", status: "in_progress" });
+      parseVideoTaskResponse({
+        taskId: "video-1",
+        status: "in_progress",
+        billing,
+      })
+    ).toEqual({ taskId: "video-1", status: "in_progress", billing });
+    const legacyBilling = {
+      kind: "legacy" as const,
+      mode: "per_second" as const,
+      unit: "second" as const,
+      unitPrice: null,
+      creditsPerSecond: null,
+      quotedCredits: null,
+      actualCredits: 12,
+    };
+    expect(
+      parseVideoTaskResponse({
+        taskId: "legacy-video-1",
+        status: "completed",
+        billing: legacyBilling,
+      })
+    ).toEqual({
+      taskId: "legacy-video-1",
+      status: "completed",
+      billing: legacyBilling,
+    });
     for (const status of [
       "pending",
       "submitting",
@@ -96,7 +182,7 @@ describe("VideoCreatePanel capabilities", () => {
       "needs_attention",
     ]) {
       expect(() =>
-        parseVideoTaskResponse({ taskId: "video-1", status })
+        parseVideoTaskResponse({ taskId: "video-1", status, billing })
       ).toThrow("视频任务响应格式无效");
     }
   });

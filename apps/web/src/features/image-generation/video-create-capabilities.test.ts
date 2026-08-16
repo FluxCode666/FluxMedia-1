@@ -35,6 +35,17 @@ describe("parseReachableVideoCreateModels", () => {
           },
           audio: { supported: false, defaultEnabled: false },
           configuredReachable: false,
+          billing: [
+            {
+              kind: "current_quote",
+              resolution: "720p",
+              mode: "per_second",
+              unit: "second",
+              unitPrice: 2,
+              creditsPerSecond: 2,
+              quoteToken: "quote-sora2-720p",
+            },
+          ],
         },
         {
           model: "seedance2",
@@ -49,6 +60,16 @@ describe("parseReachableVideoCreateModels", () => {
           },
           audio: { supported: true, defaultEnabled: false },
           configuredReachable: true,
+          billing: [
+            {
+              kind: "current_quote",
+              resolution: "1080p",
+              mode: "per_item",
+              unit: "item",
+              unitPrice: 3,
+              quoteToken: "quote-seedance2-1080p",
+            },
+          ],
         },
       ],
       limits,
@@ -92,6 +113,7 @@ describe("parseReachableVideoCreateModels", () => {
             },
             audio: { supported: true, defaultEnabled: false },
             configuredReachable: true,
+            billing: [],
           },
         ],
         limits,

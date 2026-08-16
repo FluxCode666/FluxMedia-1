@@ -23,7 +23,6 @@ import {
   getRuntimeImageModerationCreditPricing,
 } from "@/features/image-generation/pricing-settings";
 import { getUserRecentGenerations } from "@/features/image-generation/queries";
-import { getVideoPricingForUser } from "@/features/image-generation/video-operations";
 
 /**
  * 渲染独立的图片与视频生成页面。
@@ -56,10 +55,6 @@ export default async function GeneratePage() {
     getRuntimeImageModelCreditPricing(),
     getRuntimeImageModerationCreditPricing(),
   ]);
-  const videoPricing = await getVideoPricingForUser({
-    userId: user.id,
-    group: activeBackendGroup?.videoCreditOverrides ?? null,
-  });
   const recents = recentGenerations.map((generation) => ({
     id: generation.id,
     prompt: generation.prompt,
@@ -84,7 +79,6 @@ export default async function GeneratePage() {
       moderationEnabled={moderationEnabled}
       imageModelPricing={imageModelPricing}
       imageModerationPricing={imageModerationPricing}
-      videoPricing={videoPricing}
     />
   );
 }

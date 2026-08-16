@@ -8,6 +8,20 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const uolMocks = vi.hoisted(() => {
+  class MockOperationError extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+      readonly details?: Record<string, unknown>,
+      readonly httpStatus = 409
+    ) {
+      super(message);
+    }
+  }
+  return { MockOperationError };
+});
+
 vi.mock("@repo/shared/api-logger", () => ({
   withApiLogging: <T>(handler: T) => handler,
 }));
@@ -23,6 +37,7 @@ vi.mock("@repo/shared/auth/role-server", () => ({
 }));
 vi.mock("@repo/shared/uol", () => ({
   invokeOperation: vi.fn(),
+  OperationError: uolMocks.MockOperationError,
 }));
 vi.mock("@/features/image-generation/request-security", () => ({
   hasTrustedImageGenerationOrigin: vi.fn(() => true),
@@ -49,6 +64,15 @@ beforeEach(() => {
   invokeOperationMock.mockResolvedValue({
     taskId: "video-1",
     status: "in_progress",
+    billing: {
+      kind: "snapshot",
+      mode: "per_item",
+      unit: "item",
+      unitPrice: 3,
+      durationSeconds: 10,
+      quotedCredits: 3,
+      actualCredits: 0,
+    },
   });
 });
 
@@ -71,6 +95,7 @@ describe("POST /api/videos/generate", () => {
           duration: 10,
           aspectRatio: "16:9",
           resolution: "1080p",
+          quoteToken: "quote-seedance2-1080p",
           firstFrame,
           lastFrame,
         }),
@@ -81,6 +106,15 @@ describe("POST /api/videos/generate", () => {
     await expect(response.json()).resolves.toEqual({
       taskId: "video-1",
       status: "in_progress",
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 10,
+        quotedCredits: 3,
+        actualCredits: 0,
+      },
       model: "seedance2",
       duration: 10,
       aspectRatio: "16:9",
@@ -96,6 +130,7 @@ describe("POST /api/videos/generate", () => {
         duration: 10,
         aspectRatio: "16:9",
         resolution: "1080p",
+        quoteToken: "quote-seedance2-1080p",
         firstFrame: expect.objectContaining({
           source: "data",
           byteLength: 5,
@@ -108,6 +143,57 @@ describe("POST /api/videos/generate", () => {
       expect.objectContaining({ type: "user", userId: "user-1" }),
       expect.any(Object)
     );
+  });
+
+  it("陈旧报价返回最新报价且不自动重提", async () => {
+    invokeOperationMock.mockRejectedValueOnce(
+      new uolMocks.MockOperationError(
+        "conflict",
+        "视频报价已更新，请确认最新价格后重试",
+        {
+          reason: "stale_video_quote",
+          currentQuote: {
+            kind: "current_quote",
+            resolution: "1080p",
+            mode: "per_item",
+            unit: "item",
+            unitPrice: 4,
+            quoteToken: "fresh-token",
+          },
+        }
+      )
+    );
+    const response = await POST(
+      new NextRequest("https://app.example.com/api/videos/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "request-stale-quote",
+          prompt: "海边日落",
+          model: "seedance2",
+          duration: 10,
+          aspectRatio: "16:9",
+          resolution: "1080p",
+          quoteToken: "stale-token",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "视频报价已更新，请确认最新价格后重试",
+      code: "conflict",
+      reason: "stale_video_quote",
+      currentQuote: {
+        kind: "current_quote",
+        resolution: "1080p",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 4,
+        quoteToken: "fresh-token",
+      },
+    });
+    expect(invokeOperationMock).toHaveBeenCalledTimes(1);
   });
 
   it("将显式关闭声音的 false 原样传给 UOL", async () => {

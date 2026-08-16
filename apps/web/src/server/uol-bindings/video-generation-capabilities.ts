@@ -18,7 +18,8 @@ import type { Principal } from "@repo/shared/uol";
 import { isExternalApiKeyPrincipal, OperationError } from "@repo/shared/uol";
 import {
   resolveEffectiveVideoModelCapabilities,
-  VIDEO_MODEL_IDS,
+  VIDEO_ASPECT_RATIOS,
+  type VideoCurrentQuote,
 } from "@repo/shared/video-generation";
 
 /** 配置可达性查询所需的 Principal 分组事实。 */
@@ -28,6 +29,12 @@ export interface VideoCapabilityConfiguredModelsInput {
   requestedGroupId?: string;
 }
 
+/** 当前报价加载器只接收公开模型和支持分辨率，不接触能力外字段。 */
+export interface VideoCapabilityPricingDescriptor {
+  modelId: string;
+  supportedResolutions: readonly string[];
+}
+
 /** 能力发现可替换依赖；测试注入桩，生产读取系统设置与可信分组配置。 */
 export interface VideoCapabilityBindingDependencies {
   loadCapabilityOverrides(): Promise<unknown>;
@@ -35,16 +42,20 @@ export interface VideoCapabilityBindingDependencies {
   listConfiguredModelIds(
     input: VideoCapabilityConfiguredModelsInput
   ): Promise<string[]>;
+  loadCurrentQuotes(
+    input: VideoCapabilityConfiguredModelsInput & { principalScope: string },
+    models: readonly VideoCapabilityPricingDescriptor[]
+  ): Promise<Readonly<Record<string, readonly VideoCurrentQuote[]>>>;
   reportFailure(error: unknown): void;
 }
 
 /** 只保留全局目录中的精确真实模型 ID；旧复合变体不扩大为整族可达。 */
 function resolveConfiguredRealVideoModelIds(
-  configuredModelIds: readonly string[]
+  configuredModelIds: readonly string[],
+  allowedModelIds: ReadonlySet<string>
 ): Set<string> {
-  const knownModelIds = new Set<string>(VIDEO_MODEL_IDS);
   return new Set(
-    configuredModelIds.filter((modelId) => knownModelIds.has(modelId))
+    configuredModelIds.filter((modelId) => allowedModelIds.has(modelId))
   );
 }
 
@@ -77,49 +88,93 @@ export async function executeVideoListCapabilitiesBinding(
   }
 
   try {
+    const selection = {
+      userId: principal.userId,
+      ...(apiKeyId ? { apiKeyId } : {}),
+      ...(input.backendGroupId
+        ? { requestedGroupId: input.backendGroupId }
+        : {}),
+    };
     const [overrides, marketplaceConfigValue, configuredModelIds] =
       await Promise.all([
         dependencies.loadCapabilityOverrides(),
         dependencies.loadMarketplaceConfig?.() ?? Promise.resolve(null),
-        dependencies.listConfiguredModelIds({
-          userId: principal.userId,
-          ...(apiKeyId ? { apiKeyId } : {}),
-          ...(input.backendGroupId
-            ? { requestedGroupId: input.backendGroupId }
-            : {}),
-        }),
+        dependencies.listConfiguredModelIds(selection),
       ]);
     const marketplaceConfig = parseModelMarketplaceConfig(
       marketplaceConfigValue
     );
-    const reachable = resolveConfiguredRealVideoModelIds(configuredModelIds);
-    return {
-      items: resolveEffectiveVideoModelCapabilities(overrides)
-        .filter((capability) =>
-          isModelMarketplaceModelEnabled(
-            marketplaceConfig,
-            "video",
-            capability.modelId
-          )
+    const capabilities = [
+      ...resolveEffectiveVideoModelCapabilities(overrides),
+      ...marketplaceConfig.customModels
+        .filter(
+          (model) =>
+            model.category === "video" &&
+            isModelMarketplaceModelEnabled(
+              marketplaceConfig,
+              "video",
+              model.modelId
+            )
         )
-        .map((capability) => ({
-          model: capability.modelId,
-          displayName: capability.displayName,
-          durations: [...capability.durations],
-          aspectRatios: [...capability.aspectRatios],
-          resolutions: [...capability.resolutions],
+        .map((model) => ({
+          modelId: model.modelId,
+          displayName: model.modelId,
+          billingFamily: model.modelId,
+          durations: [5, 10],
+          aspectRatios: [...VIDEO_ASPECT_RATIOS],
+          resolutions: [...model.supportedResolutions],
           input: {
-            frames: capability.input.frames,
-            referenceImages: {
-              maxCount: capability.input.referenceImages.maxCount,
-              configurable: capability.input.referenceImages.configurable,
-            },
-            framesAndReferencesMutuallyExclusive:
-              capability.input.framesAndReferencesMutuallyExclusive,
+            frames: "none" as const,
+            referenceImages: { maxCount: 0, configurable: false },
+            framesAndReferencesMutuallyExclusive: true,
           },
-          audio: { ...capability.audio },
-          configuredReachable: reachable.has(capability.modelId),
+          audio: { supported: false, defaultEnabled: false },
         })),
+    ].filter((capability) =>
+      isModelMarketplaceModelEnabled(
+        marketplaceConfig,
+        "video",
+        capability.modelId
+      )
+    );
+    const allowedModelIds = new Set(capabilities.map((item) => item.modelId));
+    const reachable = resolveConfiguredRealVideoModelIds(
+      configuredModelIds,
+      allowedModelIds
+    );
+    const quotes = await dependencies.loadCurrentQuotes(
+      {
+        ...selection,
+        principalScope:
+          principal.type === "user"
+            ? `user:${principal.userId}`
+            : `${principal.credentialKind}:${principal.userId}:${principal.apiKeyId}`,
+      },
+      capabilities.map((capability) => ({
+        modelId: capability.modelId,
+        supportedResolutions: capability.resolutions,
+      }))
+    );
+    return {
+      items: capabilities.map((capability) => ({
+        model: capability.modelId,
+        displayName: capability.displayName,
+        durations: [...capability.durations],
+        aspectRatios: [...capability.aspectRatios],
+        resolutions: [...capability.resolutions],
+        input: {
+          frames: capability.input.frames,
+          referenceImages: {
+            maxCount: capability.input.referenceImages.maxCount,
+            configurable: capability.input.referenceImages.configurable,
+          },
+          framesAndReferencesMutuallyExclusive:
+            capability.input.framesAndReferencesMutuallyExclusive,
+        },
+        audio: { ...capability.audio },
+        configuredReachable: reachable.has(capability.modelId),
+        billing: [...(quotes[capability.modelId] ?? [])],
+      })),
       limits: {
         maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
         maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,

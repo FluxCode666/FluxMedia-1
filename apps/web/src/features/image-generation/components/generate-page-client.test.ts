@@ -20,7 +20,6 @@ type CapturedImageCreatePanelProps = {
 
 type CapturedVideoCreatePanelProps = {
   initialSelection?: unknown;
-  pricing?: unknown;
   recent?: unknown;
 };
 
@@ -53,7 +52,7 @@ vi.mock("./image-create-panel", () => ({
 
 vi.mock("./video-create-panel", () => ({
   /**
-   * 捕获生成页交给视频面板的预选、定价和近期图片。
+   * 捕获生成页交给视频面板的预选和近期图片。
    *
    * @param props 视频面板公开 props。
    * @returns 不渲染 DOM，仅返回 null。
@@ -140,13 +139,6 @@ function mountGeneratePageClient(
             imageModerationCredits: 0,
             textModerationCredits: 0,
           },
-          videoPricing: {
-            creditsPerSecond: {
-              "veo31-ref": 45,
-              "veo31-ref@1080p": 45,
-              "veo31-ref@720p": 30,
-            },
-          },
         })
       )
     );
@@ -216,7 +208,7 @@ describe("GeneratePageClient reference handoff", () => {
 });
 
 describe("GeneratePageClient media tabs", () => {
-  it("按真实视频模型预选打开视频面板并复用定价与近期图片", () => {
+  it("按真实视频模型预选打开视频面板并复用近期图片", () => {
     window.history.replaceState(
       {},
       "",
@@ -242,13 +234,6 @@ describe("GeneratePageClient media tabs", () => {
         duration: 4,
         aspectRatio: "16:9",
         resolution: "1080p",
-      },
-      pricing: {
-        creditsPerSecond: {
-          "veo31-ref": 45,
-          "veo31-ref@1080p": 45,
-          "veo31-ref@720p": 30,
-        },
       },
       recent,
     });

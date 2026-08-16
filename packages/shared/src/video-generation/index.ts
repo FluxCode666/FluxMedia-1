@@ -7,4 +7,5 @@
 export * from "./capability-catalog";
 export * from "./capability-overrides";
 export * from "./contracts";
+export * from "./public-billing";
 export * from "./public-capabilities";
