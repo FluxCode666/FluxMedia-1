@@ -14,14 +14,28 @@ import {
   videoAspectRatioSchema,
   videoResolutionSchema,
 } from "@repo/shared/video-generation";
+import {
+  LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION as SHARED_LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION,
+  VIDEO_BILLING_CAPABILITY_SNAPSHOT_VERSION,
+} from "@repo/shared/video-generation/video-billing-snapshot";
 import { z } from "zod";
 
-/** 视频能力任务快照的持久格式版本。 */
-export const VIDEO_CAPABILITY_SNAPSHOT_VERSION = 1 as const;
+/** 升级前允许没有账单快照的历史能力版本。 */
+export const LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION =
+  SHARED_LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION;
+
+/** 新任务能力快照版本；该版本必须与账单快照在同一次 insert 中创建。 */
+export const VIDEO_CAPABILITY_SNAPSHOT_VERSION =
+  VIDEO_BILLING_CAPABILITY_SNAPSHOT_VERSION;
+
+/** worker 可读取的全部能力快照版本。 */
+export type VideoCapabilitySnapshotVersion =
+  | typeof LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION
+  | typeof VIDEO_CAPABILITY_SNAPSHOT_VERSION;
 
 /** 创建时固定的动态能力事实。 */
 export type VideoCapabilitySnapshot = {
-  version: typeof VIDEO_CAPABILITY_SNAPSHOT_VERSION;
+  version: VideoCapabilitySnapshotVersion;
   modelConfigurationRevision: number;
   maxReferenceImages: number;
   customModel?: {
@@ -29,6 +43,23 @@ export type VideoCapabilitySnapshot = {
     supportedResolutions: string[];
   };
 };
+
+/**
+ * 判断未知 JSON 版本是否属于当前可恢复范围。
+ *
+ * @param value - 能力快照中的未知版本值。
+ * @returns v1 历史版本或 v2 当前版本时完成类型收窄。
+ * @sideEffects 无。
+ * @failure 不抛错。
+ */
+function isVideoCapabilitySnapshotVersion(
+  value: unknown
+): value is VideoCapabilitySnapshotVersion {
+  return (
+    value === LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION ||
+    value === VIDEO_CAPABILITY_SNAPSHOT_VERSION
+  );
+}
 
 /** worker 可直接消费的规范任务事实。 */
 export type VideoExecutionContract = {
@@ -67,7 +98,7 @@ function requireNonNegativeSafeInteger(value: unknown, field: string): number {
  * @param input - 已解析设置版本与当前模型有效参考图上限。
  * @returns 可直接写入任务 metadata 的新快照对象。
  * @sideEffects 无。
- * @throws Error - 版本或上限不是安全整数时 fail closed。
+ * @throws Error - revision、上限或自定义模型能力非法时 fail closed。
  */
 export function createVideoCapabilitySnapshot(input: {
   modelConfigurationRevision: number;
@@ -111,7 +142,7 @@ export function createVideoCapabilitySnapshot(input: {
  * @param metadata - 数据库 JSON metadata。
  * @returns 已验证且与输入隔离的能力快照。
  * @sideEffects 无。
- * @throws Error - 缺失、版本漂移、额外字段或数值损坏时 fail closed。
+ * @throws Error - 缺失、未知版本、额外字段或数值损坏时 fail closed。
  */
 function parseVideoCapabilitySnapshot(
   metadata: Record<string, unknown> | null
@@ -121,8 +152,9 @@ function parseVideoCapabilitySnapshot(
     throw new Error("视频任务缺少能力快照");
   }
   const record = value as Record<string, unknown>;
+  const version = record.version;
   if (
-    record.version !== VIDEO_CAPABILITY_SNAPSHOT_VERSION ||
+    !isVideoCapabilitySnapshotVersion(version) ||
     Object.keys(record).some(
       (key) =>
         key !== "version" &&
@@ -133,30 +165,35 @@ function parseVideoCapabilitySnapshot(
   ) {
     throw new Error("视频任务的能力快照版本无效");
   }
-  return createVideoCapabilitySnapshot({
-    modelConfigurationRevision: requireNonNegativeSafeInteger(
-      record.modelConfigurationRevision,
-      "模型配置 revision"
-    ),
-    maxReferenceImages: requireNonNegativeSafeInteger(
-      record.maxReferenceImages,
-      "参考图上限"
-    ),
-    ...(record.customModel !== undefined
-      ? {
-          customModel: z
-            .object({
-              modelId: z.string().trim().min(1).max(120),
-              supportedResolutions: z
-                .array(z.string().trim().min(1).max(32))
-                .min(1)
-                .max(20),
-            })
-            .strict()
-            .parse(record.customModel),
-        }
-      : {}),
-  });
+  return {
+    ...createVideoCapabilitySnapshot({
+      modelConfigurationRevision: requireNonNegativeSafeInteger(
+        record.modelConfigurationRevision,
+        "模型配置 revision"
+      ),
+      maxReferenceImages: requireNonNegativeSafeInteger(
+        record.maxReferenceImages,
+        "参考图上限"
+      ),
+      ...(record.customModel !== undefined
+        ? {
+            customModel: z
+              .object({
+                modelId: z.string().trim().min(1).max(120),
+                supportedResolutions: z
+                  .array(z.string().trim().min(1).max(32))
+                  .min(1)
+                  .max(20),
+              })
+              .strict()
+              .parse(record.customModel),
+          }
+        : {}),
+    }),
+    // WHY：解析历史任务时保留原始 v1 身份，账单层才能明确进入 legacy 按秒分支；
+    // 只有新创建函数使用 v2，不能在恢复边界把旧任务伪装成新任务。
+    version,
+  };
 }
 
 /**

@@ -228,7 +228,7 @@ describe("video execution contract", () => {
         maxReferenceImages: 20,
       })
     ).toEqual({
-      version: 1,
+      version: 2,
       modelConfigurationRevision: 1,
       maxReferenceImages: 20,
     });
