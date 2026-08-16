@@ -133,6 +133,7 @@ const PUBLIC_VIDEO_MODEL = {
   minimumCredits: 3,
   homepageVisible: true,
   homepagePriority: 2,
+  billingMode: "per_second" as const,
   priceUnit: "per_second" as const,
   creditsPerSecond: 3,
   creditsPerSecondByResolution: {
@@ -628,9 +629,7 @@ describe("HomepageContent 服务端完成态", () => {
     expect(html).toContain("查看全部模型");
     expect(html).toContain("快速集成");
     expect(html).toContain("/v1/images/generations");
-    expect(html).toContain(
-      "&quot;model&quot;: &quot;image-4-ultra&quot;,"
-    );
+    expect(html).toContain("&quot;model&quot;: &quot;image-4-ultra&quot;,");
     expect(html).toContain("%2Fcinema%2Fwall%2Fw01.webp");
     expect(html).toContain("96.00%");
     expect(html).toContain("为什么有时看不到可靠性百分比？");

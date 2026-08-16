@@ -35,6 +35,9 @@ describe("system docs video contract", () => {
     expect(endpoint.description).toContain("HTTP 202");
     expect(endpoint.description).toMatch(/OpenAI|风格/u);
     expect(endpoint.responseExample).toContain('"object": "video.task"');
+    expect(endpoint.responseExample).toContain('"kind": "snapshot"');
+    expect(JSON.stringify(endpoint)).toContain("quote_token / quoteToken");
+    expect(JSON.stringify(endpoint)).toContain("currentQuote");
     const idMatch = endpoint.responseExample.match(/"id": "([^"]+)"/);
     if (!idMatch?.[1]) throw new Error(`${locale} 创建响应缺少任务 ID`);
     expect(idMatch[1]).toMatch(/^video_[0-9a-f]{40}$/u);
@@ -62,6 +65,7 @@ describe("system docs video contract", () => {
       locale === "zh"
         ? "duration / duration_seconds、aspectRatio / aspect_ratio、resolution"
         : "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
+      "billing",
       "generateAudio / generate_audio",
     ]);
     expect(JSON.stringify(endpoint)).toMatch(
@@ -91,6 +95,7 @@ describe("system docs video contract", () => {
 
     expect(endpoint.title).toBe("Get video task");
     expect(endpoint.responseExample).toContain('"object": "video.task"');
+    expect(endpoint.responseExample).toContain('"kind": "snapshot"');
     expect(endpoint.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(endpoint.responseExample).toContain('"input": {');
     expect(endpoint.responseExample).toContain('"created_at":');
@@ -110,6 +115,7 @@ describe("system docs video contract", () => {
         : "model, duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
       "generateAudio / generate_audio",
       "input.mode / input.count",
+      "billing",
       "data[].url / video_url",
       "created_at / completed_at",
     ]);

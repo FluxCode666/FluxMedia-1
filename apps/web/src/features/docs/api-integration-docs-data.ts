@@ -527,6 +527,7 @@ const zhContent = {
     "resolution": "1080p",
     "prompt": "A hero walking through a neon city",
     "negative_prompt": "low resolution, blur, watermark",
+    "quote_token": "opaque-current-quote-token",
     "generate_audio": true,
     "reference_images": ["data:image/png;base64,..."]
   }'`,
@@ -542,6 +543,16 @@ const zhContent = {
   "aspectRatio": "16:9",
   "aspect_ratio": "16:9",
   "resolution": "1080p",
+  "billing": {
+    "kind": "snapshot",
+    "mode": "per_second",
+    "unit": "second",
+    "unitPrice": 3,
+    "creditsPerSecond": 3,
+    "durationSeconds": 8,
+    "quotedCredits": 24,
+    "actualCredits": 0
+  },
   "generateAudio": true,
   "generate_audio": true
 }`,
@@ -577,6 +588,13 @@ const zhContent = {
           name: "resolution",
           requirement: "必填",
           description: "独立小写输出分辨率，必须属于所选模型能力。",
+        },
+        {
+          name: "quote_token / quoteToken",
+          requirement: "可选",
+          defaultValue: "省略时由服务端按当前报价创建",
+          description:
+            "来自 GET /v1/videos/capabilities 对应模型和分辨率 billing 行的短期不透明报价令牌；报价已变化时返回 409 与最新 currentQuote，确认后以新令牌重试。",
         },
         {
           name: "negative_prompt / negativePrompt",
@@ -625,10 +643,16 @@ const zhContent = {
           name: "duration / duration_seconds、aspectRatio / aspect_ratio、resolution",
           description: "本次任务使用的独立视频参数。",
         },
+        {
+          name: "billing",
+          description:
+            "创建时锁定的账单快照。mode=per_second 时单价乘时长；mode=per_item 时每条只收 unitPrice，且没有 creditsPerSecond。",
+        },
       ],
       notes: [
         "接口始终以 HTTP 202 返回持久任务，不同步等待视频完成；请使用 GET /v1/videos/{id} 轮询。",
         "模型、时长、比例和分辨率分别校验，不会从模型 ID 解析参数。",
+        "billing 是不可变创建报价；已存在 client_request_id 的幂等重试始终返回原任务账单，不重新按当前配置计价。",
       ],
     },
     {
@@ -662,6 +686,17 @@ const zhContent = {
         "supported": true,
         "defaultEnabled": false
       },
+      "billing": [
+        {
+          "kind": "current_quote",
+          "resolution": "1080p",
+          "mode": "per_second",
+          "unit": "second",
+          "unitPrice": 3,
+          "creditsPerSecond": 3,
+          "quoteToken": "opaque-current-quote-token"
+        }
+      ],
       "configuredReachable": true
     }
   ],
@@ -705,6 +740,11 @@ const zhContent = {
           description: "声音生成支持情况与未传 generate_audio 时的默认值。",
         },
         {
+          name: "items[].billing[]",
+          description:
+            "每个输出分辨率的当前有效报价和 quoteToken。per_second 含 creditsPerSecond；per_item 只按 unitPrice/条计费。",
+        },
+        {
           name: "items[].configuredReachable",
           description:
             "当前可信账号池分组是否配置了可执行该模型的账号；不代表实时容量。",
@@ -717,6 +757,7 @@ const zhContent = {
       ],
       notes: [
         "提交视频前应从本接口选择 model、duration、aspect_ratio 和 resolution，不要自行拼接复合模型 ID。",
+        "报价 token 与当前 API Key、模型和分辨率绑定；可省略以维持兼容。若携带的 token 过期，创建接口以 409 conflict 返回最新 currentQuote。",
         "configuredReachable 只表示配置可达性，不包含账号、凭据、健康、并发或实时剩余容量。",
         "响应使用 Cache-Control: no-store；管理员调整 Seedance 参考图上限后应重新查询。",
       ],
@@ -803,6 +844,15 @@ const zhContent = {
   "generateAudio": true,
   "generate_audio": true,
   "input": { "mode": "references", "count": 1 },
+  "billing": {
+    "kind": "snapshot",
+    "mode": "per_item",
+    "unit": "item",
+    "unitPrice": 3,
+    "durationSeconds": 8,
+    "quotedCredits": 3,
+    "actualCredits": 3
+  },
   "created_at": "2026-05-28T00:00:00.000Z",
   "completed_at": "2026-05-28T00:01:40.000Z",
   "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
@@ -840,6 +890,11 @@ const zhContent = {
           description: "输入模式与输入数量，不包含用户输入图内容。",
         },
         {
+          name: "billing",
+          description:
+            "不可变报价与实际消费。旧任务标记为 legacy，单价和原报价为未知，不会伪造为当前价格。",
+        },
+        {
           name: "data[].url / video_url",
           description: "任务完成后返回的同一视频 URL。",
         },
@@ -851,6 +906,7 @@ const zhContent = {
       notes: [
         "只能查询当前 API 密钥所属用户创建的任务。",
         "任务持久保存并可跨进程重启或多实例查询；响应带 Cache-Control: no-store。",
+        "snapshot 的 actualCredits 会随扣费或退款结果变化；退款后保留原 quotedCredits，actualCredits 为 0。",
         "任务失败时 error.message 会给出原因。",
       ],
     },
@@ -1242,6 +1298,13 @@ const enContent = {
             "Separate lowercase output resolution supported by the selected model.",
         },
         {
+          name: "quote_token / quoteToken",
+          requirement: "Optional",
+          defaultValue: "Omit to create with the current server quote",
+          description:
+            "Short-lived opaque quote token from the matching model and resolution billing row of GET /v1/videos/capabilities. A changed quote returns 409 with the latest currentQuote; confirm it and retry with the new token.",
+        },
+        {
           name: "negative_prompt / negativePrompt",
           requirement: "Optional",
           defaultValue: "None",
@@ -1294,10 +1357,16 @@ const enContent = {
           name: "duration / duration_seconds, aspectRatio / aspect_ratio, resolution",
           description: "Separate video parameters used by this task.",
         },
+        {
+          name: "billing",
+          description:
+            "Snapshot locked at creation. mode=per_second multiplies the unit price by duration; mode=per_item charges unitPrice once and has no creditsPerSecond.",
+        },
       ],
       notes: [
         "The endpoint always returns a persistent task with HTTP 202 and never waits synchronously for the video; poll GET /v1/videos/{id}.",
         "Model, duration, ratio, and resolution are validated independently and are never parsed from the model ID.",
+        "billing is an immutable creation quote. An idempotent retry with an existing client_request_id always returns the original task billing instead of repricing from current configuration.",
       ],
     },
     {
@@ -1344,6 +1413,11 @@ const enContent = {
             "Audio generation support and the default used when generate_audio is omitted.",
         },
         {
+          name: "items[].billing[]",
+          description:
+            "Current effective quote and quoteToken for each output resolution. per_second includes creditsPerSecond; per_item is charged only by unitPrice per item.",
+        },
+        {
           name: "items[].configuredReachable",
           description:
             "Whether the trusted account-pool group is configured with an account capable of running this model; this is not real-time capacity.",
@@ -1356,6 +1430,7 @@ const enContent = {
       ],
       notes: [
         "Before creating a video, select model, duration, aspect_ratio, and resolution from this endpoint. Do not construct composite model IDs.",
+        "A quote token is bound to the current API key, model, and resolution and may be omitted for compatibility. When a supplied token is stale, creation returns 409 conflict with the latest currentQuote.",
         "configuredReachable reports configuration reachability only. It exposes no accounts, credentials, health, concurrency, or live remaining capacity.",
         "Responses use Cache-Control: no-store. Query again after an admin changes a Seedance reference-image limit.",
       ],
@@ -1439,6 +1514,11 @@ const enContent = {
             "Input mode and count without the user-supplied image contents.",
         },
         {
+          name: "billing",
+          description:
+            "Immutable quote and actual consumption. Legacy tasks are marked legacy with unknown unit price and quote; no current price is fabricated.",
+        },
+        {
           name: "data[].url / video_url",
           description: "The same video URL returned after completion.",
         },
@@ -1451,6 +1531,7 @@ const enContent = {
       notes: [
         "Only tasks created by the user who owns the current API key can be queried.",
         "Tasks are persisted and remain queryable across process restarts or multiple instances; responses use Cache-Control: no-store.",
+        "snapshot actualCredits follows consumption or refund results; a refund preserves quotedCredits and sets actualCredits to 0.",
         "A failed task includes the reason in error.message.",
       ],
     },

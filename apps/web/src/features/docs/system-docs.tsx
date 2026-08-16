@@ -1642,7 +1642,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "一只柯基在海边奔跑，电影级运镜，黄昏光线",
-    "negative_prompt": "低分辨率, 模糊, 水印"
+    "negative_prompt": "低分辨率, 模糊, 水印",
+    "quote_token": "<从 /v1/videos/capabilities 取得>"
   }'
 
 # 2. 首尾帧生成；首尾帧与参考图对所有模型互斥
@@ -1689,7 +1690,17 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "duration_seconds": 8,
   "aspectRatio": "16:9",
   "aspect_ratio": "16:9",
-  "resolution": "1080p"
+  "resolution": "1080p",
+  "billing": {
+    "kind": "snapshot",
+    "mode": "per_second",
+    "unit": "second",
+    "unitPrice": 3,
+    "creditsPerSecond": 3,
+    "durationSeconds": 8,
+    "quotedCredits": 24,
+    "actualCredits": 0
+  }
 }`,
           fields: [
             {
@@ -1725,6 +1736,12 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               requirement: "必填",
               description:
                 "小写分辨率，例如 480p、720p、1080p；必须属于所选模型能力。",
+            },
+            {
+              name: "quote_token / quoteToken",
+              requirement: "可选",
+              description:
+                "对应模型和分辨率当前报价的短期不透明令牌，来自 GET /v1/videos/capabilities 的 billing 行。令牌陈旧时返回 409 和 latest currentQuote；可省略以兼容旧调用方。",
             },
             {
               name: "negative_prompt / negativePrompt",
@@ -1786,6 +1803,11 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               description: "本次持久任务保存的独立生成参数。",
             },
             {
+              name: "billing",
+              description:
+                "创建时锁定的账单快照。per_second 为单价乘时长；per_item 每条只收一次单价且不返回 creditsPerSecond。",
+            },
+            {
               name: "generateAudio / generate_audio",
               description: "创建请求显式提供声音开关时返回这两个等价值。",
             },
@@ -1794,7 +1816,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos 是同一 handler 的别名。旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；下线前仍复用同一处理逻辑，具体下线版本另行发布。",
             "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
             "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
-            "计费 = 当前真实模型与输出分辨率对应的每秒积分 × 独立 duration（秒），最终结果按积分精度向上取整。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
+            "计费模式由全局模型配置决定：per_second 以分辨率单价乘 duration 结算，per_item 每条只收一次分辨率单价。创建后 billing 快照固定，后续配置变更不影响该任务。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
             "需要 externalApi.images.generate 系统能力开关；同时校验 API Key、绑定分组和账户积分。",
           ],
         },
@@ -1822,6 +1844,15 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "generateAudio": false,
   "generate_audio": false,
   "input": {"mode": "none", "count": 0},
+  "billing": {
+    "kind": "snapshot",
+    "mode": "per_item",
+    "unit": "item",
+    "unitPrice": 3,
+    "durationSeconds": 8,
+    "quotedCredits": 3,
+    "actualCredits": 3
+  },
   "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
   "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
   "created_at": "2026-05-28T00:00:00.000Z",
@@ -1886,6 +1917,11 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               name: "input.mode / input.count",
               description:
                 "输入摘要；mode 为 none、first-frame、first-last-frames 或 references，count 为输入图数量，不返回实际输入图。",
+            },
+            {
+              name: "billing",
+              description:
+                "不可变报价与实际消费。legacy 表示旧任务，创建单价和原报价未知，不会按当前配置伪造。退款后保留 quotedCredits，actualCredits 为 0。",
             },
             {
               name: "data[].url / video_url",
@@ -3940,7 +3976,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
     "aspect_ratio": "16:9",
     "resolution": "1080p",
     "prompt": "A corgi running on the beach, cinematic camera, golden hour",
-    "negative_prompt": "low resolution, blurry, watermark"
+    "negative_prompt": "low resolution, blurry, watermark",
+    "quote_token": "<from /v1/videos/capabilities>"
   }'
 
 # 2. First/last-frame generation. Frames and reference images are mutually exclusive for every model.
@@ -3987,7 +4024,17 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "duration_seconds": 8,
   "aspectRatio": "16:9",
   "aspect_ratio": "16:9",
-  "resolution": "1080p"
+  "resolution": "1080p",
+  "billing": {
+    "kind": "snapshot",
+    "mode": "per_second",
+    "unit": "second",
+    "unitPrice": 3,
+    "creditsPerSecond": 3,
+    "durationSeconds": 8,
+    "quotedCredits": 24,
+    "actualCredits": 0
+  }
 }`,
           fields: [
             {
@@ -4024,6 +4071,12 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               requirement: "Required",
               description:
                 "Lowercase resolution such as 480p, 720p, or 1080p; must be supported by the selected model.",
+            },
+            {
+              name: "quote_token / quoteToken",
+              requirement: "Optional",
+              description:
+                "Short-lived opaque token for the current quote of the selected model and resolution, from the billing row of GET /v1/videos/capabilities. A stale token returns 409 with the latest currentQuote; omitting it remains compatible with existing callers.",
             },
             {
               name: "negative_prompt / negativePrompt",
@@ -4088,6 +4141,11 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
                 "Independent generation parameters saved on the task.",
             },
             {
+              name: "billing",
+              description:
+                "Snapshot locked at creation. per_second multiplies unit price by duration; per_item charges one unit price and does not return creditsPerSecond.",
+            },
+            {
               name: "generateAudio / generate_audio",
               description:
                 "Returned as equivalent aliases when the create request explicitly includes the audio switch.",
@@ -4097,7 +4155,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos is an equivalent alias. The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal; migrate to POST /v1/videos or /api/v1/videos. They continue to use the same handler until removal, and the removal release will be announced separately.",
             "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
             "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
-            "Billing = credits per second for the selected real model and resolution × the separate duration value, rounded up to the supported credit precision. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
+            "The global model configuration determines billing mode: per_second charges the resolution unit price × duration, while per_item charges the resolution unit price once. The billing snapshot is fixed at creation, so later configuration changes do not affect the task. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",
             "Requires the externalApi.images.generate system capability switch, plus a valid API key, bound group, and sufficient account credits.",
           ],
         },
@@ -4125,6 +4183,15 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
   "generateAudio": false,
   "generate_audio": false,
   "input": {"mode": "none", "count": 0},
+  "billing": {
+    "kind": "snapshot",
+    "mode": "per_item",
+    "unit": "item",
+    "unitPrice": 3,
+    "durationSeconds": 8,
+    "quotedCredits": 3,
+    "actualCredits": 3
+  },
   "video_url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/...",
   "data": [{"url": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."}],
   "created_at": "2026-05-28T00:00:00.000Z",
@@ -4191,6 +4258,11 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               name: "input.mode / input.count",
               description:
                 "Input summary. mode is none, first-frame, first-last-frames, or references; count is the number of input images. Actual input images are not returned.",
+            },
+            {
+              name: "billing",
+              description:
+                "Immutable quote and actual consumption. legacy identifies an old task whose creation unit price and quote are unknown, so no current price is fabricated. A refund preserves quotedCredits and sets actualCredits to 0.",
             },
             {
               name: "data[].url / video_url",

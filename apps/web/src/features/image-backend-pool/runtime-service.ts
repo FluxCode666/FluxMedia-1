@@ -459,7 +459,12 @@ export async function resolveAuthoritativeRuntimeVideoPricingContext(
         : undefined
       : undefined
   );
-  const selectedGroup = selectRuntimeBackendGroupCandidate(row.groups, target);
+  const selectedGroup = selectRuntimeBackendGroupCandidate(row.groups, {
+    ...(target.targetGroupId !== undefined && {
+      targetGroupId: target.targetGroupId,
+    }),
+    isUserRequested: target.isUserRequested,
+  });
   const group = createRuntimeBackendGroupSnapshot(selectedGroup);
   const marketplaceConfig = parseModelMarketplaceConfig(
     row.settings.MODEL_MARKETPLACE_CONFIG

@@ -34,4 +34,11 @@ describe("ModelMarketplace i18n contract", () => {
       expect(String(leaf.value).trim().length, leaf.path).toBeGreaterThan(0);
     }
   });
+
+  it("视频按秒与按条单位都有明确的双语文案", () => {
+    expect(zhMessages.ModelMarketplace.price.perSecond).toBe("每秒");
+    expect(zhMessages.ModelMarketplace.price.perItem).toBe("每条");
+    expect(enMessages.ModelMarketplace.price.perSecond).toBe("per second");
+    expect(enMessages.ModelMarketplace.price.perItem).toBe("per item");
+  });
 });

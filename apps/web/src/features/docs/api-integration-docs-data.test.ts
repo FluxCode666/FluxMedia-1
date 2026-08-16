@@ -179,6 +179,7 @@ describe("API integration docs data", () => {
         "seconds / duration / duration_seconds",
         "aspectRatio / aspect_ratio",
         "resolution",
+        "quote_token / quoteToken",
         locale === "zh"
           ? "firstFrame / first_frame、lastFrame / last_frame"
           : "firstFrame / first_frame, lastFrame / last_frame",
@@ -203,6 +204,9 @@ describe("API integration docs data", () => {
       expect(create?.deprecationNotice).toContain("Migrate to POST /v1/videos");
     }
     expect(create?.responseExample).toContain('"status": "queued"');
+    expect(create?.responseExample).toContain('"kind": "snapshot"');
+    expect(createText).toContain("quote_token");
+    expect(createText).toContain("currentQuote");
     expect(createText).not.toContain("kling3-omni-8s-16x9-1080p");
     expect(createText).not.toContain("firefly-<family>");
     expect(createText).not.toContain("input_image_role");
@@ -213,12 +217,15 @@ describe("API integration docs data", () => {
       '"frames": "first-and-optional-last"'
     );
     expect(capabilities?.responseExample).toContain('"maxCount": 10');
+    expect(capabilities?.responseExample).toContain('"kind": "current_quote"');
+    expect(capabilitiesText).toContain("quoteToken");
     expect(capabilitiesText).toContain("configuredReachable");
     expect(capabilitiesText).toContain("maxMediaInputBytes");
     expect(capabilitiesResponse).not.toMatch(
       /apiKey|api_key|cookie|credential|inflight/iu
     );
     expect(task?.responseExample).toContain('"object": "video.task"');
+    expect(task?.responseExample).toContain('"kind": "snapshot"');
     expect(task?.responseExample).toMatch(/"id": "video_[0-9a-f]{40}"/u);
     expect(taskText).toContain("in_progress");
     expect(taskText).not.toContain("needs_attention");

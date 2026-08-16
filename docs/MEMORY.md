@@ -94,6 +94,11 @@
   下线，具体下线版本另行发布。请求兼容 `seconds`、`duration`、
   `duration_seconds`，响应仍只返回后两个时长字段。视频所有入口只公开 `queued`、
   `in_progress`、`completed`、`failed`。
+- 视频计费模式由全局真实模型 ID 固定为 `per_second` 或 `per_item`；分组只能覆盖两套
+  模型加分辨率价格，供应商账号不参与定价。新任务在 metadata 锁定分组、模式、单位、
+  单价和总价，创建、worker、重试、配额、退款、历史、v1 与回调只读取该快照；无快照的
+  旧任务显式按秒 legacy，绝不使用当前价格伪造其单价。价格发现、报价 token 和公共 DTO
+  见 [video-billing-mode.md](memory/video-billing-mode.md)。
 - API 供应商创建没有有效响应时不进入人工核对：每个账号按任务快照执行首次请求加配置的
   额外重试，耗尽后排除该账号并自动切号；最终失败后停止外呼并幂等退款。Adobe Direct
   继续使用既有受信 `pollUrl` 恢复，不套用 API 提交重试。
