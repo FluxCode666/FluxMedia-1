@@ -1,7 +1,14 @@
+/**
+ * 视频双模式计费纯函数测试。
+ *
+ * 覆盖旧按秒兼容、严格双矩阵解析、分组覆盖优先级和两种计费单位的舍入规则；测试
+ * 不依赖数据库，确保配置、预估与任务创建可以共享同一个报价事实。
+ */
 import { describe, expect, it } from "vitest";
 import { VIDEO_MODEL_CAPABILITIES } from "../video-generation";
 import {
   ADOBE_VIDEO_PRICING_FAMILIES,
+  convertLegacyVideoCreditsPerSecondToModelPricing,
   DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoCreditCost,
@@ -9,9 +16,34 @@ import {
   getVideoPricingResolutions,
   globalVideoModelCreditsPerSecondSchema,
   resolveEffectiveVideoCreditsPerSecond,
+  resolveVideoBillingQuote,
   resolveVideoCreditsPerSecond,
   resolveVideoCreditsPerSecondByResolution,
+  videoModelBillingModesSchema,
 } from "./video-pricing";
+
+/** 为 Seedance 2 构造两套完整全局矩阵，单个测试只覆盖关心的差异。 */
+function createStrictPricingInput(
+  overrides: Partial<Parameters<typeof resolveVideoBillingQuote>[0]> = {}
+): Parameters<typeof resolveVideoBillingQuote>[0] {
+  return {
+    modelId: "seedance2",
+    resolution: "1080p",
+    durationSeconds: 5,
+    mode: "per_second",
+    globalCreditsPerSecond: {
+      "seedance2@480p": 1.111,
+      "seedance2@720p": 1.222,
+      "seedance2@1080p": 1.333,
+    },
+    globalCreditsPerItem: {
+      "seedance2@480p": 2,
+      "seedance2@720p": 3,
+      "seedance2@1080p": 4,
+    },
+    ...overrides,
+  };
+}
 
 describe("resolveVideoCreditsPerSecond", () => {
   it("从真实描述符的 billing family 与分辨率构造价格目录", () => {
@@ -214,5 +246,155 @@ describe("getVideoCreditCost", () => {
       getVideoCreditCost({ durationSeconds: 8, creditsPerSecond: 100_001 })
     ).toBe(240);
     expect(getVideoCreditCost({ durationSeconds: 0 })).toBe(0);
+  });
+});
+
+describe("resolveVideoBillingQuote", () => {
+  it("模式映射只接受模型级公开 ID，不能按分辨率混用模式", () => {
+    expect(
+      videoModelBillingModesSchema.parse({ seedance2: "per_item" })
+    ).toEqual({ seedance2: "per_item" });
+    expect(
+      videoModelBillingModesSchema.safeParse({
+        "seedance2@1080p": "per_item",
+      }).success
+    ).toBe(false);
+  });
+
+  it("按秒费用随时长变化并保持向上两位，按条费用不随时长变化", () => {
+    const perSecondFive = resolveVideoBillingQuote(createStrictPricingInput());
+    const perSecondEight = resolveVideoBillingQuote(
+      createStrictPricingInput({ durationSeconds: 8 })
+    );
+    const perItemFive = resolveVideoBillingQuote(
+      createStrictPricingInput({ mode: "per_item" })
+    );
+    const perItemEight = resolveVideoBillingQuote(
+      createStrictPricingInput({ mode: "per_item", durationSeconds: 8 })
+    );
+
+    expect(perSecondFive).toMatchObject({
+      mode: "per_second",
+      unit: "second",
+      unitPrice: 1.333,
+      quotedCredits: 6.67,
+    });
+    expect(perSecondEight.quotedCredits).toBe(10.67);
+    expect(perItemFive).toMatchObject({
+      mode: "per_item",
+      unit: "item",
+      unitPrice: 4,
+      quotedCredits: 4,
+    });
+    expect(perItemEight.quotedCredits).toBe(4);
+  });
+
+  it("按分组精确分辨率、分组模型级兼容、全局精确价的顺序解析", () => {
+    expect(
+      resolveVideoBillingQuote(
+        createStrictPricingInput({
+          groupCreditsPerSecond: {
+            seedance2: 8,
+            "seedance2@1080p": 9,
+          },
+        })
+      )
+    ).toMatchObject({ priceSource: "group_resolution", unitPrice: 9 });
+    expect(
+      resolveVideoBillingQuote(
+        createStrictPricingInput({
+          groupCreditsPerSecond: { seedance2: 8 },
+        })
+      )
+    ).toMatchObject({ priceSource: "group_model", unitPrice: 8 });
+    expect(resolveVideoBillingQuote(createStrictPricingInput())).toMatchObject({
+      priceSource: "global_resolution",
+      unitPrice: 1.333,
+    });
+  });
+
+  it("按条缺少分组覆盖时只继承全局按条价格", () => {
+    const quote = resolveVideoBillingQuote(
+      createStrictPricingInput({
+        mode: "per_item",
+        groupCreditsPerSecond: { "seedance2@1080p": 99 },
+        groupCreditsPerItem: {},
+      })
+    );
+
+    expect(quote).toMatchObject({
+      mode: "per_item",
+      priceSource: "global_resolution",
+      unitPrice: 4,
+      quotedCredits: 4,
+    });
+  });
+
+  it("旧 family 与 family@resolution 每秒键只经兼容边界转换", () => {
+    const familyOnly = convertLegacyVideoCreditsPerSecondToModelPricing({
+      seedance2: 7,
+    });
+    const resolutionOverride = convertLegacyVideoCreditsPerSecondToModelPricing(
+      {
+        seedance2: 7,
+        "seedance2@1080p": 11,
+      }
+    );
+
+    expect(familyOnly).toEqual({
+      "seedance2@1080p": 7,
+      "seedance2@720p": 7,
+      "seedance2@480p": 7,
+    });
+    expect(resolutionOverride["seedance2@1080p"]).toBe(11);
+    expect(resolutionOverride).not.toHaveProperty("seedance2");
+  });
+
+  it.each([
+    {
+      name: "非法模式",
+      overrides: { mode: "hourly" },
+    },
+    {
+      name: "非正全局价格",
+      overrides: {
+        globalCreditsPerItem: {
+          "seedance2@480p": 2,
+          "seedance2@720p": 3,
+          "seedance2@1080p": 0,
+        },
+      },
+    },
+    {
+      name: "非正分组价格",
+      overrides: { groupCreditsPerSecond: { seedance2: -1 } },
+    },
+    {
+      name: "缺少全局分辨率价格",
+      overrides: {
+        globalCreditsPerSecond: {
+          "seedance2@480p": 1,
+          "seedance2@1080p": 2,
+        },
+      },
+    },
+    {
+      name: "只提供全局模型级兜底",
+      overrides: {
+        globalCreditsPerSecond: { seedance2: 2 },
+      },
+    },
+    {
+      name: "未知模型",
+      overrides: { modelId: "unknown-model" },
+    },
+  ])("严格拒绝$name", ({ overrides }) => {
+    expect(() =>
+      resolveVideoBillingQuote(
+        createStrictPricingInput(
+          overrides as Partial<Parameters<typeof resolveVideoBillingQuote>[0]>
+        )
+      )
+    ).toThrow();
   });
 });

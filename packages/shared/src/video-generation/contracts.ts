@@ -81,6 +81,24 @@ export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];
 /** 严格小写分辨率 schema；不接受供应商内部尺寸或大小写别名。 */
 export const videoResolutionSchema = z.enum(VIDEO_RESOLUTIONS);
 
+/** 全局模型可选择的视频计费模式；分组与供应商账号不能覆盖该值。 */
+export const VIDEO_BILLING_MODES = ["per_second", "per_item"] as const;
+
+/** 视频计费模式。 */
+export type VideoBillingMode = (typeof VIDEO_BILLING_MODES)[number];
+
+/** 严格视频计费模式 schema；未知持久化值必须 fail closed。 */
+export const videoBillingModeSchema = z.enum(VIDEO_BILLING_MODES);
+
+/** 账单与公开报价使用的实际计量单位。 */
+export const VIDEO_BILLING_UNITS = ["second", "item"] as const;
+
+/** 视频计量单位。 */
+export type VideoBillingUnit = (typeof VIDEO_BILLING_UNITS)[number];
+
+/** 严格视频计量单位 schema。 */
+export const videoBillingUnitSchema = z.enum(VIDEO_BILLING_UNITS);
+
 /** 首尾帧输入能力；尾帧能力只通过 first-and-optional-last 暴露。 */
 export const videoFrameInputCapabilitySchema = z.enum([
   "none",

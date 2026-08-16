@@ -68,6 +68,7 @@
     "./image-generation/media-contract": "./src/image-generation/media-contract.ts",
     "./image-generation/model-contract": "./src/image-generation/model-contract.ts",
     "./video-generation": "./src/video-generation/index.ts",
+    "./video-generation/video-billing-snapshot": "./src/video-generation/video-billing-snapshot.ts",
     "./image-backend/api-upstream-adaptation": "./src/image-backend/api-upstream-adaptation.ts",
     "./image-backend/api-upstream-script-contract": "./src/image-backend/api-upstream-script-contract.ts",
     "./image-backend/group-image-pricing": "./src/image-backend/group-image-pricing.ts",

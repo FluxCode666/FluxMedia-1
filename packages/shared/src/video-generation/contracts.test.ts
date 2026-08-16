@@ -8,9 +8,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   VIDEO_ASPECT_RATIOS,
+  VIDEO_BILLING_MODES,
+  VIDEO_BILLING_UNITS,
   VIDEO_MODEL_IDS,
   VIDEO_RESOLUTIONS,
   videoAspectRatioSchema,
+  videoBillingModeSchema,
+  videoBillingUnitSchema,
   videoModelIdSchema,
   videoResolutionSchema,
 } from "./contracts";
@@ -65,5 +69,14 @@ describe("video generation contracts", () => {
     expect(videoAspectRatioSchema.safeParse("16x9").success).toBe(false);
     expect(videoResolutionSchema.safeParse("1080P").success).toBe(false);
     expect(videoResolutionSchema.safeParse("4K").success).toBe(false);
+  });
+
+  it("计费模式与计量单位是封闭且可判别的字面量", () => {
+    expect(VIDEO_BILLING_MODES).toEqual(["per_second", "per_item"]);
+    expect(VIDEO_BILLING_UNITS).toEqual(["second", "item"]);
+    expect(videoBillingModeSchema.parse("per_second")).toBe("per_second");
+    expect(videoBillingModeSchema.parse("per_item")).toBe("per_item");
+    expect(videoBillingModeSchema.safeParse("hourly").success).toBe(false);
+    expect(videoBillingUnitSchema.safeParse("credits").success).toBe(false);
   });
 });
