@@ -445,6 +445,74 @@ describe("buildModelMarketplaceCatalog", () => {
     });
   });
 
+  it("已登记自定义视频模型使用保守能力、按条报价并精确标记可达性", () => {
+    const marketplaceConfig = createDefaultModelMarketplaceConfig();
+    marketplaceConfig.customModels = [
+      {
+        modelId: "vendor-video-x",
+        category: "video",
+        supportedResolutions: ["720p", "1080p"],
+      },
+    ];
+    marketplaceConfig.videoByFamily["vendor-video-x"] = {
+      revision: 1,
+      enabled: true,
+      visible: true,
+      description: "自定义视频模型",
+      cover: null,
+    };
+    const items = buildModelMarketplaceCatalog(
+      createInput({
+        marketplaceConfig,
+        videoPricing: {
+          ...DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+          "vendor-video-x": 20,
+          "vendor-video-x@720p": 10,
+          "vendor-video-x@1080p": 20,
+          "unregistered-video": 10,
+        },
+        videoBillingModes: {
+          ...DEFAULT_VIDEO_MODEL_BILLING_MODES,
+          "vendor-video-x": "per_item",
+        },
+        videoCreditsPerItem: {
+          ...DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+          "vendor-video-x@720p": 8,
+          "vendor-video-x@1080p": 16,
+        },
+        runtimeCatalog: {
+          image: [],
+          video: [{ id: "vendor-video-x" }, { id: "unregistered-video" }],
+        },
+      })
+    );
+
+    expect(
+      items.find((item) => item.modelId === "vendor-video-x")
+    ).toMatchObject({
+      category: "video",
+      configKey: "vendor-video-x",
+      displayName: "Vendor Video X",
+      priceUnit: "per_item",
+      billingMode: "per_item",
+      creditsPerItem: 8,
+      creditsPerItemByResolution: { "720p": 8, "1080p": 16 },
+      supportedDurations: [5, 10],
+      supportedAspectRatios: ["16:9", "9:16", "1:1", "21:9", "3:4", "4:3"],
+      supportedResolutions: ["720p", "1080p"],
+      input: {
+        frames: "none",
+        referenceImages: { maxCount: 0, configurable: false },
+        framesAndReferencesMutuallyExclusive: true,
+      },
+      audio: { supported: false, defaultEnabled: false },
+      configuredReachable: true,
+    });
+    expect(items.some((item) => item.modelId === "unregistered-video")).toBe(
+      false
+    );
+  });
+
   it("未知运行时视频不影响全局目录且所有模型均标记不可达", () => {
     const items = buildModelMarketplaceCatalog(
       createInput({

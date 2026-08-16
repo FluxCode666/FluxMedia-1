@@ -99,6 +99,16 @@ function VideoPricingDetails({
   model: Extract<ModelMarketplacePublicItem, { category: "video" }>;
 }) {
   const t = useTranslations("ModelMarketplace");
+  const pricesByResolution =
+    model.priceUnit === "per_item"
+      ? model.creditsPerItemByResolution
+      : model.creditsPerSecondByResolution;
+  const fallbackPrice =
+    model.priceUnit === "per_item"
+      ? model.creditsPerItem
+      : model.creditsPerSecond;
+  const unitLabel =
+    model.priceUnit === "per_item" ? t("price.perItem") : t("price.perSecond");
   const groups = [
     {
       label: t("detail.supportedDurations"),
@@ -127,13 +137,10 @@ function VideoPricingDetails({
                 {resolution}
               </p>
               <p className="mt-2 font-mono text-xl font-semibold tabular-nums">
-                {formatCredits(
-                  model.creditsPerSecondByResolution[resolution] ??
-                    model.creditsPerSecond
-                )}
+                {formatCredits(pricesByResolution[resolution] ?? fallbackPrice)}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {t("price.credits")} · {t("price.perSecond")}
+                {t("price.credits")} · {unitLabel}
               </p>
             </div>
           ))}
@@ -375,7 +382,9 @@ export function ModelDetailDialog({
                 <p className="mt-1 text-xs text-muted-foreground">
                   {model.category === "image"
                     ? t("price.perImage")
-                    : t("price.perSecond")}
+                    : model.priceUnit === "per_item"
+                      ? t("price.perItem")
+                      : t("price.perSecond")}
                 </p>
               </div>
               {model.category === "image" ? (

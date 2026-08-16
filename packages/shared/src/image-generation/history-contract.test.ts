@@ -13,6 +13,16 @@ import {
   historyListOutputSchema,
 } from "./history-contract";
 
+const legacyVideoBilling = {
+  kind: "legacy" as const,
+  mode: "per_second" as const,
+  unit: "second" as const,
+  unitPrice: null,
+  creditsPerSecond: null,
+  quotedCredits: null,
+  actualCredits: 0,
+};
+
 describe("history contract", () => {
   it("normalizes optional filters without accepting caller identity", () => {
     expect(historyListInputSchema.parse({})).toEqual({
@@ -111,6 +121,15 @@ describe("history contract", () => {
           aspectRatio: "16x9",
           generateAudio: true,
           input: { mode: "first-last-frames", count: 2 },
+          billing: {
+            kind: "snapshot",
+            mode: "per_item",
+            unit: "item",
+            unitPrice: 3,
+            durationSeconds: 8,
+            quotedCredits: 3,
+            actualCredits: 10,
+          },
           videoUrl: "/api/storage/generations/user/output.mp4",
         },
       ],
@@ -185,6 +204,7 @@ describe("history contract", () => {
             aspectRatio: "16:9",
             generateAudio: false,
             input: { mode: "none", count: 0 },
+            billing: legacyVideoBilling,
             videoUrl: null,
           },
         ],
@@ -318,6 +338,16 @@ describe("history contract", () => {
       prompt: "prompt",
       resolution: "1080p",
       status: "failed" as const,
+      billing: {
+        kind: "snapshot" as const,
+        mode: "per_second" as const,
+        unit: "second" as const,
+        unitPrice: 2,
+        creditsPerSecond: 2,
+        durationSeconds: 8,
+        quotedCredits: 16,
+        actualCredits: 10,
+      },
       submissionAttempts: [
         {
           attemptNumber: 1,

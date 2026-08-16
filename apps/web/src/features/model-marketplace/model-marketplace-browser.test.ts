@@ -47,6 +47,7 @@ const VIDEO_MODEL: ModelMarketplacePublicItem = {
   minimumCredits: 3,
   homepageVisible: true,
   homepagePriority: 2,
+  billingMode: "per_second",
   priceUnit: "per_second",
   creditsPerSecond: 3,
   creditsPerSecondByResolution: { "720p": 3, "1080p": 5 },

@@ -10,11 +10,17 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  historyVideoDialog: vi.fn((_props: unknown) => null),
+}));
+
 vi.mock("next-intl", () => ({ useLocale: () => "zh" }));
 vi.mock("./history-filters", () => ({
   HistoryFilters: () => createElement("div", { "data-testid": "filters" }),
 }));
-vi.mock("./history-video-dialog", () => ({ HistoryVideoDialog: () => null }));
+vi.mock("./history-video-dialog", () => ({
+  HistoryVideoDialog: mocks.historyVideoDialog,
+}));
 vi.mock("@/i18n/routing", () => ({
   Link: ({ children }: { children: ReactNode }) =>
     createElement("a", null, children),
@@ -52,6 +58,15 @@ function createProps(showUserColumns: boolean): HistoryClientProps {
     records: [
       {
         aspectRatio: "16x9",
+        billing: {
+          kind: "snapshot",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 20,
+          durationSeconds: 8,
+          quotedCredits: 20,
+          actualCredits: 20,
+        },
         backendAccount: {
           id: "backend-video-1",
           name: "视频供应商主账号",
@@ -103,6 +118,7 @@ function renderHistory(showUserColumns: boolean): void {
 
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  mocks.historyVideoDialog.mockClear();
 });
 
 afterEach(() => {
@@ -155,5 +171,35 @@ describe("HistoryClient supplier account identity", () => {
           )
         : false
     ).toBe(true);
+  });
+
+  it.each([
+    ["个人", false],
+    ["管理员", true],
+  ])("%s历史将公共 billing 完整传给视频详情弹窗", async (_, showUserColumns) => {
+    renderHistory(showUserColumns);
+    const recordButton = document.querySelector("li button");
+    if (!(recordButton instanceof HTMLButtonElement)) {
+      throw new Error("测试视频历史按钮不存在");
+    }
+
+    await act(async () => recordButton.click());
+
+    const dialogProps = mocks.historyVideoDialog.mock.calls.at(-1)?.[0] as
+      | {
+          record?: {
+            billing?: unknown;
+          };
+        }
+      | undefined;
+    expect(dialogProps?.record?.billing).toEqual({
+      kind: "snapshot",
+      mode: "per_item",
+      unit: "item",
+      unitPrice: 20,
+      durationSeconds: 8,
+      quotedCredits: 20,
+      actualCredits: 20,
+    });
   });
 });

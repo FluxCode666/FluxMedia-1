@@ -8,12 +8,14 @@
 import "server-only";
 
 import { logError } from "@repo/shared/logger";
-import type {
-  ModelConfigurationListInput,
-  ModelConfigurationListOutput,
-  ModelConfigurationSnapshot,
-  UpdateModelConfigurationEntryInput,
-  UpdateModelConfigurationEntryOutput,
+import {
+  type ModelConfigurationListInput,
+  type ModelConfigurationListOutput,
+  type ModelConfigurationSnapshot,
+  type ModelMarketplacePublicItem,
+  modelMarketplacePublicItemSchema,
+  type UpdateModelConfigurationEntryInput,
+  type UpdateModelConfigurationEntryOutput,
 } from "@repo/shared/model-marketplace";
 import { getRuntimeSettingJson } from "@repo/shared/system-settings";
 import {
@@ -23,6 +25,7 @@ import {
   type Principal,
 } from "@repo/shared/uol";
 import type { ModelMarketplacePublicCatalogOutput } from "@repo/shared/uol/operations";
+import type { VideoCurrentQuote } from "@repo/shared/video-generation";
 import { ModelMarketplaceCoverImageError } from "@/features/model-configuration/cover-image";
 import { productionModelConfigurationService } from "@/features/model-configuration/service";
 import {
@@ -41,6 +44,7 @@ type PublicVideoReachability = {
   items: ReadonlyArray<{
     model: string;
     configuredReachable: boolean;
+    billing: readonly VideoCurrentQuote[];
   }>;
 };
 
@@ -165,22 +169,84 @@ function shouldReportModelConfigurationUpdateError(error: unknown): boolean {
  * @sideEffects 无；不修改输入，也不投影能力输出中的其他字段。
  * @failure 能力目录缺少某个视频模型时按不可达处理，避免回退到全局并集。
  */
+function applyCurrentVideoPricing(
+  item: Extract<ModelMarketplacePublicItem, { category: "video" }>,
+  capability: PublicVideoReachability["items"][number]
+): Extract<ModelMarketplacePublicItem, { category: "video" }> {
+  const quoteByResolution = new Map(
+    capability.billing.map((quote) => [quote.resolution, quote])
+  );
+  const quotes = item.supportedResolutions.map((resolution) => {
+    const quote = quoteByResolution.get(resolution);
+    if (!quote) throw new Error("模型广场视频报价未完整覆盖支持分辨率");
+    return quote;
+  });
+  const mode = quotes[0]?.mode;
+  if (!mode || quotes.some((quote) => quote.mode !== mode)) {
+    throw new Error("模型广场同一视频模型返回了不一致计费模式");
+  }
+  const prices = Object.fromEntries(
+    quotes.map((quote) => [quote.resolution, quote.unitPrice])
+  );
+  const minimumCredits = Math.min(...Object.values(prices));
+  const common =
+    item.priceUnit === "per_second"
+      ? (({
+          billingMode: _billingMode,
+          creditsPerSecond: _creditsPerSecond,
+          creditsPerSecondByResolution: _creditsPerSecondByResolution,
+          minimumCredits: _minimumCredits,
+          priceUnit: _priceUnit,
+          ...safe
+        }) => safe)(item)
+      : (({
+          billingMode: _billingMode,
+          creditsPerItem: _creditsPerItem,
+          creditsPerItemByResolution: _creditsPerItemByResolution,
+          minimumCredits: _minimumCredits,
+          priceUnit: _priceUnit,
+          ...safe
+        }) => safe)(item);
+  return modelMarketplacePublicItemSchema.parse(
+    mode === "per_item"
+      ? {
+          ...common,
+          category: "video",
+          billingMode: "per_item",
+          priceUnit: "per_item",
+          minimumCredits,
+          creditsPerItem: minimumCredits,
+          creditsPerItemByResolution: prices,
+        }
+      : {
+          ...common,
+          category: "video",
+          billingMode: "per_second",
+          priceUnit: "per_second",
+          minimumCredits,
+          creditsPerSecond: minimumCredits,
+          creditsPerSecondByResolution: prices,
+        }
+  ) as Extract<ModelMarketplacePublicItem, { category: "video" }>;
+}
+
 function applyUserVideoReachability(
   catalog: ModelMarketplacePublicCatalogOutput,
   reachability: PublicVideoReachability
 ): ModelMarketplacePublicCatalogOutput {
-  const reachableByModel = new Map(
-    reachability.items.map((item) => [item.model, item.configuredReachable])
+  const capabilityByModel = new Map(
+    reachability.items.map((item) => [item.model, item])
   );
   return {
-    items: catalog.items.map((item) =>
-      item.category === "video"
-        ? {
-            ...item,
-            configuredReachable: reachableByModel.get(item.modelId) ?? false,
-          }
-        : item
-    ),
+    items: catalog.items.map((item) => {
+      if (item.category !== "video") return item;
+      const capability = capabilityByModel.get(item.modelId);
+      if (!capability) return { ...item, configuredReachable: false };
+      return applyCurrentVideoPricing(
+        { ...item, configuredReachable: capability.configuredReachable },
+        capability
+      );
+    }),
   };
 }
 

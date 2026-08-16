@@ -10,6 +10,7 @@
 import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
 import { formatCredits } from "@repo/shared/credits/format";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
+import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import { Badge } from "@repo/ui/components/badge";
 import { Dialog, DialogContent, DialogTitle } from "@repo/ui/components/dialog";
 import { Separator } from "@repo/ui/components/separator";
@@ -23,6 +24,7 @@ import { formatHistoryError } from "./history-error-copy";
 
 export type HistoryVideoDialogRecord = {
   aspectRatio: string;
+  billing: VideoTaskPublicBilling;
   completedAt: string | null;
   createdAt: string;
   creditsConsumed: number;
@@ -142,6 +144,19 @@ function formatInputSummary(
   return input.count > 0
     ? `${mode} · ${input.count} ${copy("images", "张")}`
     : mode;
+}
+
+/** 将快照或 legacy 账单格式化为用户可核对的模式与单位。 */
+function formatBillingMode(
+  billing: VideoTaskPublicBilling,
+  copy: (en: string, zh: string) => string
+): string {
+  if (billing.kind === "legacy") {
+    return copy("Per second (legacy task)", "按秒（旧任务）");
+  }
+  return billing.mode === "per_item"
+    ? copy("Per item", "按条")
+    : copy("Per second", "按秒");
 }
 
 /**
@@ -323,10 +338,45 @@ export function HistoryVideoDialog({
                 </div>
                 <div>
                   <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
-                    {copy("Credits", "积分")}
+                    {copy("Billing mode", "计费模式")}
                   </dt>
                   <dd className="mt-0.5 text-xs text-foreground">
-                    {formatCredits(record.creditsConsumed)}
+                    {formatBillingMode(record.billing, copy)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Unit price", "计费单价")}
+                  </dt>
+                  <dd className="mt-0.5 text-xs text-foreground">
+                    {record.billing.kind === "snapshot"
+                      ? `${formatCredits(record.billing.unitPrice)} ${copy(
+                          record.billing.mode === "per_item"
+                            ? "credits/item"
+                            : "credits/second",
+                          record.billing.mode === "per_item"
+                            ? "积分/条"
+                            : "积分/秒"
+                        )}`
+                      : copy("Unknown", "未知")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Quoted credits", "原报价积分")}
+                  </dt>
+                  <dd className="mt-0.5 text-xs text-foreground">
+                    {record.billing.kind === "snapshot"
+                      ? formatCredits(record.billing.quotedCredits)
+                      : copy("Unknown", "未知")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+                    {copy("Actual credits", "实际积分")}
+                  </dt>
+                  <dd className="mt-0.5 text-xs text-foreground">
+                    {formatCredits(record.billing.actualCredits)}
                   </dd>
                 </div>
                 <div>

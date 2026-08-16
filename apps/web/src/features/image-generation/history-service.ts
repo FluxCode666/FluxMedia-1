@@ -24,6 +24,7 @@ import {
   historyRecordSchema,
 } from "@repo/shared/image-generation/history-contract";
 import { parseDateInputInTimeZone } from "@repo/shared/time-zone";
+import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import { z } from "zod";
 
 const HISTORY_CURSOR_VERSION = 1;
@@ -108,6 +109,7 @@ export interface VideoHistoryRow extends HistoryRowCommon {
   aspectRatio: string;
   generateAudio: boolean;
   input: HistoryVideoInputSummary;
+  billing: VideoTaskPublicBilling;
   videoUrl: string | null;
 }
 

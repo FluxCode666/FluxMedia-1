@@ -5,6 +5,7 @@
  * 参数化、双向 keyset 使用原始主键列，视频详情不从 model 反推独立参数。
  */
 
+import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -65,7 +66,22 @@ describe("history repository SQL", () => {
           error: null,
           created_at: "2026-07-22T12:00:00.000Z",
           completed_at: "2026-07-22T12:01:00.000Z",
-          metadata: null,
+          metadata: {
+            videoCapabilitySnapshot: { version: 2 },
+            videoBillingSnapshot: createVideoBillingSnapshot({
+              quote: {
+                modelId: "seedance2",
+                resolution: "1080p",
+                mode: "per_item",
+                unit: "item",
+                unitPrice: 20,
+                durationSeconds: 8,
+                quotedCredits: 20,
+                priceSource: "global_resolution",
+              },
+              billingGroupId: "internal-group",
+            }),
+          },
           revised_prompt: null,
           size: null,
           storage_key: "user-1/videos/video-1.mp4",
@@ -102,6 +118,15 @@ describe("history repository SQL", () => {
         resolution: "1080p",
         generateAudio: true,
         input: { mode: "references", count: 1 },
+        billing: {
+          kind: "snapshot",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 20,
+          durationSeconds: 8,
+          quotedCredits: 20,
+          actualCredits: 20,
+        },
         videoUrl: expect.stringMatching(
           /^\/api\/storage\/runtime-generations\/user-1\/videos\/video-1\.mp4\?sig=/
         ),
@@ -150,7 +175,7 @@ describe("history repository SQL", () => {
     expect(compiled.sql).toContain("jsonb_build_object");
     expect(compiled.sql).toContain("'settledResolution'");
     expect(compiled.sql).toContain("'inputImages'");
-    expect(compiled.sql).toContain("null::jsonb as metadata");
+    expect(compiled.sql).toContain("'videoBillingSnapshot'");
     expect(compiled.sql).toContain("v.input_manifest");
     expect(compiled.sql).toContain("v.storage_bucket::text as storage_bucket");
     expect(compiled.sql).toContain("generateAudio");

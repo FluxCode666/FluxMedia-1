@@ -164,6 +164,7 @@ function createPublicVideoItem(
     minimumCredits: 3,
     homepageVisible: true,
     homepagePriority: 2,
+    billingMode: "per_second",
     priceUnit: "per_second",
     creditsPerSecond: 3,
     creditsPerSecondByResolution: {
@@ -416,6 +417,26 @@ describe("模型配置与模型广场 UOL binding", () => {
         {
           model: "seedance2",
           configuredReachable: true,
+          billing: [
+            {
+              kind: "current_quote",
+              resolution: "720p",
+              mode: "per_second",
+              unit: "second",
+              unitPrice: 7,
+              creditsPerSecond: 7,
+              quoteToken: "quote-seedance-720p",
+            },
+            {
+              kind: "current_quote",
+              resolution: "1080p",
+              mode: "per_second",
+              unit: "second",
+              unitPrice: 9,
+              creditsPerSecond: 9,
+              quoteToken: "quote-seedance-1080p",
+            },
+          ],
           member: "member-1",
           credential: "secret",
           health: "healthy",
@@ -435,7 +456,13 @@ describe("模型配置与模型广场 UOL binding", () => {
 
     expect(output.items).toEqual([
       image,
-      { ...seedance, configuredReachable: true },
+      {
+        ...seedance,
+        configuredReachable: true,
+        minimumCredits: 7,
+        creditsPerSecond: 7,
+        creditsPerSecondByResolution: { "720p": 7, "1080p": 9 },
+      },
       { ...veo, configuredReachable: false },
     ]);
     expect(dependencies.listVideoCapabilities).toHaveBeenCalledWith(USER);

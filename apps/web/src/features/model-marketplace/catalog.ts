@@ -11,6 +11,7 @@ import {
 } from "@repo/shared/image-generation/media-contract";
 import {
   type ModelMarketplaceCoverRef,
+  type ModelMarketplaceCustomModel,
   type ModelMarketplacePublicItem,
   modelMarketplacePublicItemSchema,
   normalizeModelMarketplaceImageConfigKey,
@@ -23,6 +24,7 @@ import {
 import {
   resolveEffectiveVideoModelCapabilities,
   resolveVideoModelCapability,
+  VIDEO_ASPECT_RATIOS,
   type VideoModelCapabilityDescriptor,
 } from "@repo/shared/video-generation";
 import { z } from "zod";
@@ -66,6 +68,47 @@ type VideoRuntimeCandidate = {
   aspectRatio: string;
   outputResolution: string;
 };
+
+/** 内置与管理员注册视频模型在公开目录中共用的能力字段。 */
+type MarketplaceVideoCapability = Omit<
+  VideoModelCapabilityDescriptor,
+  "modelId" | "billingFamily" | "aspectRatios" | "resolutions"
+> & {
+  readonly modelId: string;
+  readonly billingFamily: string;
+  readonly aspectRatios: readonly string[];
+  readonly resolutions: readonly string[];
+};
+
+/**
+ * 为管理员注册的自定义视频模型构建保守公开能力。
+ *
+ * @param customModels - 已经严格解析的自定义模型定义。
+ * @returns 只包含视频模型的能力描述符；未知供应商不假设参考图或音频能力。
+ * @sideEffects 无。
+ * @failure 不抛错；输入在调用前已由共享配置契约校验。
+ */
+function buildCustomVideoCapabilities(
+  customModels: readonly ModelMarketplaceCustomModel[]
+): MarketplaceVideoCapability[] {
+  return customModels
+    .filter((model) => model.category === "video")
+    .map((model) => ({
+      modelId: model.modelId,
+      displayName: model.modelId,
+      billingFamily: model.modelId,
+      // WHY：自定义供应商尚未声明精细时长能力时，只公开生成接口同样使用的安全默认范围。
+      durations: [5, 10],
+      aspectRatios: [...VIDEO_ASPECT_RATIOS],
+      resolutions: [...model.supportedResolutions],
+      input: {
+        frames: "none" as const,
+        referenceImages: { maxCount: 0, configurable: false },
+        framesAndReferencesMutuallyExclusive: true,
+      },
+      audio: { supported: false, defaultEnabled: false },
+    }));
+}
 
 /**
  * 比较同一图像配置键的真实运行时 ID，优先规范小写形式并以字典序兜底。
@@ -120,27 +163,34 @@ function buildRuntimeImageModelIdMap(
  * 按真实视频模型聚合全局能力事实。
  *
  * @param runtimeCatalog - 已严格解析的运行时图像与视频目录。
+ * @param capabilitiesByModel - 内置与已注册自定义视频模型的公开能力映射。
  * @returns 真实模型 ID 到时长、比例与分辨率候选项的映射。
  * @sideEffects 无。
- * @failure 不抛错；复合身份、前缀和未知 ID 不会伪造成公开模型。
+ * @failure 不抛错；复合身份、前缀和未注册 ID 不会伪造成公开模型。
  */
 function buildRuntimeVideoCandidates(
-  runtimeCatalog: RuntimeCatalog
+  runtimeCatalog: RuntimeCatalog,
+  capabilitiesByModel: ReadonlyMap<string, MarketplaceVideoCapability>
 ): ReadonlyMap<string, VideoRuntimeCandidate[]> {
   const candidatesByFamily = new Map<string, VideoRuntimeCandidate[]>();
   for (const model of runtimeCatalog.video) {
     const family = resolveModelMarketplaceVideoFamily(model.id);
     const resolved = resolveVideoModelCapability(model.id);
-    if (!family || !resolved.ok) continue;
-    const candidates = candidatesByFamily.get(family) ?? [];
-    for (const duration of resolved.capability.durations) {
-      for (const aspectRatio of resolved.capability.aspectRatios) {
-        for (const outputResolution of resolved.capability.resolutions) {
+    const configKey = family ?? model.id;
+    const capability = resolved.ok
+      ? resolved.capability
+      : capabilitiesByModel.get(model.id);
+    // WHY：运行时目录不可信；未知 ID 即使携带价格也不能被提升为公开模型。
+    if (!capability || (!family && capability.modelId !== model.id)) continue;
+    const candidates = candidatesByFamily.get(configKey) ?? [];
+    for (const duration of capability.durations) {
+      for (const aspectRatio of capability.aspectRatios) {
+        for (const outputResolution of capability.resolutions) {
           candidates.push({ duration, aspectRatio, outputResolution });
         }
       }
     }
-    candidatesByFamily.set(family, candidates);
+    candidatesByFamily.set(configKey, candidates);
   }
   return candidatesByFamily;
 }
@@ -181,15 +231,22 @@ export function buildModelMarketplaceCatalog(
   const marketplaceConfig = parseModelMarketplaceConfig(
     input.marketplaceConfig
   );
-  const runtimeImageModelIds = buildRuntimeImageModelIdMap(runtimeCatalog);
-  const runtimeVideoCandidates = buildRuntimeVideoCandidates(runtimeCatalog);
+  const customVideoCapabilities = buildCustomVideoCapabilities(
+    marketplaceConfig.customModels
+  );
   const effectiveVideoCapabilities = new Map<
     string,
-    VideoModelCapabilityDescriptor
+    MarketplaceVideoCapability
   >(
-    resolveEffectiveVideoModelCapabilities(input.videoCapabilityOverrides).map(
-      (capability) => [capability.modelId, capability]
-    )
+    [
+      ...resolveEffectiveVideoModelCapabilities(input.videoCapabilityOverrides),
+      ...customVideoCapabilities,
+    ].map((capability) => [capability.modelId, capability])
+  );
+  const runtimeImageModelIds = buildRuntimeImageModelIdMap(runtimeCatalog);
+  const runtimeVideoCandidates = buildRuntimeVideoCandidates(
+    runtimeCatalog,
+    effectiveVideoCapabilities
   );
   const snapshot = buildModelConfigurationSnapshot({
     imagePricing: input.imagePricing,
@@ -249,57 +306,73 @@ export function buildModelMarketplaceCatalog(
       const supportedResolutions = sortUniqueVideoResolutions([
         ...capability.resolutions,
       ]);
-      const creditsPerSecondByResolution = Object.fromEntries(
+      const effectivePricesByResolution = Object.fromEntries(
         supportedResolutions.map((resolution) => [
           resolution,
-          entry.creditsPerSecondByResolution[resolution] ??
-            entry.creditsPerSecond,
+          entry.billingMode === "per_item"
+            ? entry.creditsPerItemByResolution[resolution]
+            : (entry.creditsPerSecondByResolution[resolution] ??
+              entry.creditsPerSecond),
         ])
-      );
+      ) as Record<string, number>;
       const minimumCredits = Math.min(
-        ...Object.values(creditsPerSecondByResolution)
+        ...Object.values(effectivePricesByResolution)
       );
+      const videoCommon = {
+        category: "video" as const,
+        configKey: entry.configKey,
+        // WHY：组合路由 ID 只服务于请求解析；模型广场展示定价配置中的单一模型 ID。
+        modelId: entry.configKey,
+        displayName: entry.displayName,
+        iconKey: entry.iconKey,
+        description: getPublicDescription(
+          entry.configKey,
+          Object.hasOwn(marketplaceConfig.videoByFamily, entry.configKey),
+          persistedEntry?.description
+        ),
+        coverUrl: entry.coverUrl,
+        minimumCredits,
+        homepageVisible: entry.homepageVisible,
+        homepagePriority: entry.homepagePriority,
+        supportedDurations: sortUniqueDurations([...capability.durations]),
+        supportedAspectRatios: sortUniqueAspectRatios([
+          ...capability.aspectRatios,
+        ]),
+        supportedResolutions,
+        input: {
+          frames: capability.input.frames,
+          referenceImages: {
+            maxCount: capability.input.referenceImages.maxCount,
+            configurable: capability.input.referenceImages.configurable,
+          },
+          framesAndReferencesMutuallyExclusive:
+            capability.input.framesAndReferencesMutuallyExclusive,
+        },
+        audio: { ...capability.audio },
+        configuredReachable: Boolean(candidates?.length),
+        infrastructureLimits: {
+          maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
+          maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,
+        },
+      };
       items.push(
-        modelMarketplacePublicItemSchema.parse({
-          category: "video",
-          configKey: entry.configKey,
-          // WHY：组合路由 ID 只服务于请求解析；模型广场展示定价配置中的单一模型 ID。
-          modelId: entry.configKey,
-          displayName: entry.displayName,
-          iconKey: entry.iconKey,
-          description: getPublicDescription(
-            entry.configKey,
-            Object.hasOwn(marketplaceConfig.videoByFamily, entry.configKey),
-            persistedEntry?.description
-          ),
-          coverUrl: entry.coverUrl,
-          minimumCredits,
-          homepageVisible: entry.homepageVisible,
-          homepagePriority: entry.homepagePriority,
-          priceUnit: "per_second",
-          creditsPerSecond: minimumCredits,
-          creditsPerSecondByResolution,
-          supportedDurations: sortUniqueDurations([...capability.durations]),
-          supportedAspectRatios: sortUniqueAspectRatios([
-            ...capability.aspectRatios,
-          ]),
-          supportedResolutions,
-          input: {
-            frames: capability.input.frames,
-            referenceImages: {
-              maxCount: capability.input.referenceImages.maxCount,
-              configurable: capability.input.referenceImages.configurable,
-            },
-            framesAndReferencesMutuallyExclusive:
-              capability.input.framesAndReferencesMutuallyExclusive,
-          },
-          audio: { ...capability.audio },
-          configuredReachable: Boolean(candidates?.length),
-          infrastructureLimits: {
-            maxMediaInputCount: MAX_MEDIA_INPUT_COUNT,
-            maxMediaInputBytes: MAX_MEDIA_INPUT_BYTES,
-          },
-        })
+        modelMarketplacePublicItemSchema.parse(
+          entry.billingMode === "per_item"
+            ? {
+                ...videoCommon,
+                billingMode: "per_item",
+                priceUnit: "per_item",
+                creditsPerItem: minimumCredits,
+                creditsPerItemByResolution: effectivePricesByResolution,
+              }
+            : {
+                ...videoCommon,
+                billingMode: "per_second",
+                priceUnit: "per_second",
+                creditsPerSecond: minimumCredits,
+                creditsPerSecondByResolution: effectivePricesByResolution,
+              }
+        )
       );
     }
   }

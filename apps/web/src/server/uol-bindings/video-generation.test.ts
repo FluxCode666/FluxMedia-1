@@ -36,7 +36,7 @@ function dependencies(input?: {
   value: VideoCapabilityBindingDependencies;
   loadOverrides: ReturnType<typeof vi.fn>;
   listConfiguredModelIds: ReturnType<typeof vi.fn>;
-  loadCurrentQuotes: ReturnType<typeof vi.fn>;
+  loadCurrentQuotes: VideoCapabilityBindingDependencies["loadCurrentQuotes"];
 } {
   const loadOverrides = vi.fn(async () => input?.overrides);
   const listConfiguredModelIds = vi.fn(

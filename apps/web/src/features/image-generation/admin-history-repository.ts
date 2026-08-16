@@ -32,6 +32,7 @@ import {
   extractGenerationReferenceImages,
   extractPromptRepairNotice,
 } from "./generation-metadata";
+import { projectVideoTaskPublicBilling } from "./video-billing-lifecycle";
 import { buildVideoInputSummary } from "./video-input-lifecycle";
 import {
   buildVideoPublicStatusPredicate,
@@ -236,6 +237,15 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
       'inputImages', (g.metadata::jsonb)->'inputImages'
     )
   end`;
+  const videoHistoryMetadata = sql`case
+    when v.metadata is null then null
+    else jsonb_build_object(
+      'videoCapabilitySnapshot',
+      (v.metadata::jsonb)->'videoCapabilitySnapshot',
+      'videoBillingSnapshot',
+      (v.metadata::jsonb)->'videoBillingSnapshot'
+    )
+  end`;
   return sql`
     with image_rows as (
       select
@@ -297,7 +307,7 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
         v.error::text as error,
         v.created_at,
         v.completed_at,
-        null::jsonb as metadata,
+        ${videoHistoryMetadata} as metadata,
         null::text as revised_prompt,
         null::text as size,
         v.storage_key::text as storage_key,
@@ -593,6 +603,10 @@ function createAdminHistorySnapshotReader(
           aspectRatio: row.aspect_ratio,
           generateAudio: row.generate_audio,
           input: buildVideoInputSummary(inputManifest.data),
+          billing: projectVideoTaskPublicBilling(
+            row.metadata,
+            row.credits_consumed
+          ),
           submissionAttempts: submissionAttempts.data.map((attempt) => ({
             ...attempt,
             failedAt: attempt.failedAt.toISOString(),

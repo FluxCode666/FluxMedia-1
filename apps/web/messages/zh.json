@@ -530,7 +530,8 @@
       "startingAt": "最低价格",
       "credits": "积分",
       "perImage": "每张",
-      "perSecond": "每秒"
+      "perSecond": "每秒",
+      "perItem": "每条"
     },
     "card": {
       "noDescription": "该模型暂未配置公开简介。",

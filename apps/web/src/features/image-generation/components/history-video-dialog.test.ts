@@ -29,6 +29,16 @@ let root: Root | null = null;
 function createRecord(id: string): HistoryVideoDialogRecord {
   return {
     aspectRatio: "16x9",
+    billing: {
+      kind: "snapshot",
+      mode: "per_second",
+      unit: "second",
+      unitPrice: 2.5,
+      creditsPerSecond: 2.5,
+      durationSeconds: 8,
+      quotedCredits: 20,
+      actualCredits: 20,
+    },
     completedAt: "2026-07-22T12:01:00.000Z",
     createdAt: "2026-07-22T12:00:00.000Z",
     creditsConsumed: 20,
@@ -151,6 +161,53 @@ describe("HistoryVideoDialog", () => {
     expect(document.body.textContent).toContain("测试供应商");
     expect(document.body.textContent).toContain("submission_timeout");
     expect(document.body.textContent).toContain("生成服务请求超时，请稍后重试");
+  });
+
+  it("退款后同时展示按条原报价和实际消费零", async () => {
+    getVideoInputsAction.mockResolvedValue({
+      data: { taskId: "video-refunded", summary: { mode: "none", count: 0 } },
+    });
+    renderDialog({
+      ...createRecord("video-refunded"),
+      creditsConsumed: 0,
+      billing: {
+        kind: "snapshot",
+        mode: "per_item",
+        unit: "item",
+        unitPrice: 3,
+        durationSeconds: 8,
+        quotedCredits: 3,
+        actualCredits: 0,
+      },
+    });
+    await act(async () => undefined);
+
+    expect(document.body.textContent).toContain("按条");
+    expect(document.body.textContent).toContain("3 积分/条");
+    expect(document.body.textContent).toContain("原报价积分");
+    expect(document.body.textContent).toContain("实际积分");
+  });
+
+  it("legacy 历史明确显示未知创建单价", async () => {
+    getVideoInputsAction.mockResolvedValue({
+      data: { taskId: "video-legacy", summary: { mode: "none", count: 0 } },
+    });
+    renderDialog({
+      ...createRecord("video-legacy"),
+      billing: {
+        kind: "legacy",
+        mode: "per_second",
+        unit: "second",
+        unitPrice: null,
+        creditsPerSecond: null,
+        quotedCredits: null,
+        actualCredits: 20,
+      },
+    });
+    await act(async () => undefined);
+
+    expect(document.body.textContent).toContain("按秒（旧任务）");
+    expect(document.body.textContent).toContain("未知");
   });
 
   it("does not reuse a previous task signed URL after switching records", async () => {

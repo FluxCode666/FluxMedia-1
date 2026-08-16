@@ -141,7 +141,11 @@ export function ModelMarketplaceCard({
   const categoryLabel =
     model.category === "image" ? t("categories.image") : t("categories.video");
   const priceUnit =
-    model.category === "image" ? t("price.perImage") : t("price.perSecond");
+    model.category === "image"
+      ? t("price.perImage")
+      : model.priceUnit === "per_item"
+        ? t("price.perItem")
+        : t("price.perSecond");
 
   return (
     <article className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg">

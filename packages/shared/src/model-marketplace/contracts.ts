@@ -549,10 +549,75 @@ const publicImageItemSchema = z
     pricing: modelMarketplaceImagePricingSchema,
   })
   .strict();
-const publicVideoItemSchema = z
+const publicVideoCommonShape = {
+  ...publicCommonShape,
+  category: z.literal("video"),
+  supportedDurations: z.array(z.number().int().positive()).max(100),
+  supportedAspectRatios: z.array(z.string().trim().min(1).max(32)).max(100),
+  supportedResolutions: z.array(z.string().trim().min(1).max(32)).max(100),
+  input: z
+    .object({
+      frames: videoFrameInputCapabilitySchema,
+      referenceImages: z
+        .object({
+          maxCount: z.number().int().nonnegative(),
+          configurable: z.boolean(),
+        })
+        .strict(),
+      framesAndReferencesMutuallyExclusive: z.boolean(),
+    })
+    .strict(),
+  audio: z
+    .object({
+      supported: z.boolean(),
+      defaultEnabled: z.boolean(),
+    })
+    .strict(),
+  configuredReachable: z.boolean(),
+  infrastructureLimits: z
+    .object({
+      maxMediaInputCount: z.literal(MAX_MEDIA_INPUT_COUNT),
+      maxMediaInputBytes: z.literal(MAX_MEDIA_INPUT_BYTES),
+    })
+    .strict(),
+};
+
+/** 校验公开视频当前模式的价格矩阵完整覆盖全部支持分辨率。 */
+function addPublicVideoResolutionPricingIssues(
+  value: {
+    supportedResolutions: string[];
+    priceUnit: "per_second" | "per_item";
+    creditsPerSecondByResolution?: Record<string, number>;
+    creditsPerItemByResolution?: Record<string, number>;
+  },
+  context: z.RefinementCtx
+): void {
+  const prices =
+    value.priceUnit === "per_second"
+      ? value.creditsPerSecondByResolution
+      : value.creditsPerItemByResolution;
+  const supported = [...new Set(value.supportedResolutions)].sort();
+  const priced = Object.keys(prices ?? {}).sort();
+  if (
+    supported.length !== priced.length ||
+    !supported.every((resolution, index) => resolution === priced[index])
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: [
+        value.priceUnit === "per_second"
+          ? "creditsPerSecondByResolution"
+          : "creditsPerItemByResolution",
+      ],
+      message: "视频当前模式价格必须完整覆盖支持的分辨率",
+    });
+  }
+}
+
+const publicPerSecondVideoItemSchema = z
   .object({
-    ...publicCommonShape,
-    category: z.literal("video"),
+    ...publicVideoCommonShape,
+    billingMode: z.literal("per_second"),
     priceUnit: z.literal("per_second"),
     creditsPerSecond: z
       .number()
@@ -560,44 +625,37 @@ const publicVideoItemSchema = z
       .positive()
       .max(MAX_VIDEO_CREDITS_PER_SECOND),
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
-    supportedDurations: z.array(z.number().int().positive()).max(100),
-    supportedAspectRatios: z.array(z.string().trim().min(1).max(32)).max(100),
-    supportedResolutions: z.array(z.string().trim().min(1).max(32)).max(100),
-    input: z
-      .object({
-        frames: videoFrameInputCapabilitySchema,
-        referenceImages: z
-          .object({
-            maxCount: z.number().int().nonnegative(),
-            configurable: z.boolean(),
-          })
-          .strict(),
-        framesAndReferencesMutuallyExclusive: z.boolean(),
-      })
-      .strict(),
-    audio: z
-      .object({
-        supported: z.boolean(),
-        defaultEnabled: z.boolean(),
-      })
-      .strict(),
-    configuredReachable: z.boolean(),
-    infrastructureLimits: z
-      .object({
-        maxMediaInputCount: z.literal(MAX_MEDIA_INPUT_COUNT),
-        maxMediaInputBytes: z.literal(MAX_MEDIA_INPUT_BYTES),
-      })
-      .strict(),
   })
   .strict()
-  .superRefine(addVideoResolutionPricingIssues)
+  .superRefine(addPublicVideoResolutionPricingIssues)
   .superRefine(addPublicVideoIdentityIssues);
 
+const publicPerItemVideoItemSchema = z
+  .object({
+    ...publicVideoCommonShape,
+    billingMode: z.literal("per_item"),
+    priceUnit: z.literal("per_item"),
+    creditsPerItem: z
+      .number()
+      .finite()
+      .positive()
+      .max(MAX_VIDEO_CREDITS_PER_SECOND),
+    creditsPerItemByResolution: videoModelCreditPricesSchema,
+  })
+  .strict()
+  .superRefine(addPublicVideoResolutionPricingIssues)
+  .superRefine(addPublicVideoIdentityIssues);
+
+const publicVideoItemSchema = z.discriminatedUnion("priceUnit", [
+  publicPerSecondVideoItemSchema,
+  publicPerItemVideoItemSchema,
+]);
+
 /** 公开模型广场的图像或视频判别联合 DTO。 */
-export const modelMarketplacePublicItemSchema = z.discriminatedUnion(
-  "category",
-  [publicImageItemSchema, publicVideoItemSchema]
-);
+export const modelMarketplacePublicItemSchema = z.union([
+  publicImageItemSchema,
+  publicVideoItemSchema,
+]);
 
 /** 封面保存动作；replace 只接受 multipart 适配器交付的原始字节。 */
 export const modelMarketplaceCoverChangeSchema = z.discriminatedUnion(

@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import { apiUpstreamRequestSnapshotSchema } from "../image-backend/api-upstream-script-contract";
+import { videoTaskBillingSchema } from "../video-generation/public-billing";
 import { MAX_MEDIA_INPUT_COUNT } from "./media-contract";
 
 /** 历史记录产物类型。 */
@@ -241,6 +242,7 @@ export const videoHistoryRecordSchema = historyRecordCommonSchema
     aspectRatio: z.string().min(1).max(100),
     generateAudio: z.boolean(),
     input: historyVideoInputSummarySchema,
+    billing: videoTaskBillingSchema,
     videoUrl: z.string().nullable(),
   })
   .strict();

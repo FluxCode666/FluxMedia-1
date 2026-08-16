@@ -530,7 +530,8 @@
       "startingAt": "Starting at",
       "credits": "credits",
       "perImage": "per image",
-      "perSecond": "per second"
+      "perSecond": "per second",
+      "perItem": "per item"
     },
     "card": {
       "noDescription": "No public description has been configured for this model.",

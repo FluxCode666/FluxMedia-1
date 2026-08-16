@@ -5,6 +5,7 @@
  * 邮箱使用参数化、视频独立参数来自任务列，并保留稳定 keyset 排序。
  */
 
+import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -71,7 +72,22 @@ describe("admin history repository SQL", () => {
           error: null,
           created_at: "2026-07-22T12:00:00.000Z",
           completed_at: "2026-07-22T12:01:00.000Z",
-          metadata: null,
+          metadata: {
+            videoCapabilitySnapshot: { version: 2 },
+            videoBillingSnapshot: createVideoBillingSnapshot({
+              quote: {
+                modelId: "seedance2",
+                resolution: "1080p",
+                mode: "per_item",
+                unit: "item",
+                unitPrice: 20,
+                durationSeconds: 8,
+                quotedCredits: 20,
+                priceSource: "global_resolution",
+              },
+              billingGroupId: "internal-group",
+            }),
+          },
           revised_prompt: null,
           size: null,
           storage_key: "user-1/videos/video-1.mp4",
@@ -118,6 +134,15 @@ describe("admin history repository SQL", () => {
         duration: 8,
         generateAudio: false,
         input: { mode: "first-frame", count: 1 },
+        billing: {
+          kind: "snapshot",
+          mode: "per_item",
+          unit: "item",
+          unitPrice: 20,
+          durationSeconds: 8,
+          quotedCredits: 20,
+          actualCredits: 20,
+        },
         submissionAttempts: [
           {
             attemptNumber: 1,

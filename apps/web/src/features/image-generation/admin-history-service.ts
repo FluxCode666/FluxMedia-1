@@ -28,6 +28,7 @@ import {
   type HistoryReferenceImage,
   type HistoryVideoInputSummary,
 } from "@repo/shared/image-generation/history-contract";
+import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import { z } from "zod";
 
 import {
@@ -124,6 +125,7 @@ export interface AdminVideoHistoryRow extends AdminHistoryRowCommon {
   aspectRatio: string;
   generateAudio: boolean;
   input: HistoryVideoInputSummary;
+  billing: VideoTaskPublicBilling;
   submissionAttempts: AdminHistoryVideoSubmissionAttempt[];
   videoUrl: string | null;
 }

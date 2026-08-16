@@ -134,6 +134,16 @@ describe("admin history service", () => {
               aspectRatio: "16x9",
               generateAudio: false,
               input: { mode: "references", count: 3 },
+              billing: {
+                kind: "snapshot",
+                mode: "per_second",
+                unit: "second",
+                unitPrice: 2.5,
+                creditsPerSecond: 2.5,
+                durationSeconds: 8,
+                quotedCredits: 20,
+                actualCredits: 20,
+              },
               submissionAttempts: [
                 {
                   attemptNumber: 1,

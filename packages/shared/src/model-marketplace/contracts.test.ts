@@ -439,6 +439,7 @@ describe("管理与公开 DTO", () => {
       minimumCredits: 3,
       homepageVisible: true,
       homepagePriority: 2,
+      billingMode: "per_second",
       priceUnit: "per_second",
       creditsPerSecond: 3,
       creditsPerSecondByResolution: {
