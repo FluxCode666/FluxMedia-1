@@ -13,6 +13,7 @@ import {
   createDefaultVideoModelCreditsPerItem,
   DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
+  getVideoPricingResolutionKey,
   globalVideoModelCreditsPerSecondSchema,
   parseVideoModelCreditsPerSecond,
   type VideoBillingModelPricingDescriptor,
@@ -740,7 +741,7 @@ export function normalizeVideoModelBillingSettings(input: {
     const modelPrice =
       parsedPerSecond[model.modelId] ?? DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
     for (const resolution of model.supportedResolutions) {
-      const key = `${model.modelId}@${resolution.toLowerCase()}`;
+      const key = getVideoPricingResolutionKey(model.modelId, resolution);
       creditsPerSecond[key] ??= modelPrice;
     }
   }
@@ -770,7 +771,45 @@ function parseCustomVideoBillingModels(
     .map((model) => ({
       modelId: model.modelId,
       supportedResolutions: model.supportedResolutions,
-    }));
+  }));
+}
+
+/** 权威视频计费读取同时保留原始设置，供启动补齐和运行时投影复用。 */
+type AuthoritativeVideoBillingRead = {
+  readonly stored: ReadonlyMap<string, unknown>;
+  readonly normalized: VideoModelBillingSettings;
+};
+
+/**
+ * 直接从数据库读取并规范化视频三套计费设置。
+ *
+ * @returns 原始设置映射与同一读取时点的规范计费聚合。
+ * @sideEffects 执行一次 PostgreSQL 查询，不读缓存、不写数据库。
+ * @throws 数据库、模型广场或任一计费设置非法时 fail closed。
+ */
+async function readAuthoritativeVideoBillingSettings(): Promise<AuthoritativeVideoBillingRead> {
+  const keys = [
+    "MODEL_MARKETPLACE_CONFIG",
+    "VIDEO_MODEL_BILLING_MODES",
+    "VIDEO_MODEL_CREDITS_PER_ITEM",
+    "VIDEO_MODEL_CREDITS_PER_SECOND",
+  ];
+  const rows = await db
+    .select({ key: systemSetting.key, value: systemSetting.value })
+    .from(systemSetting)
+    .where(inArray(systemSetting.key, keys));
+  const stored = new Map(rows.map((row) => [row.key, row.value] as const));
+  return {
+    stored,
+    normalized: normalizeVideoModelBillingSettings({
+      billingModes: stored.get("VIDEO_MODEL_BILLING_MODES"),
+      creditsPerSecond: stored.get("VIDEO_MODEL_CREDITS_PER_SECOND"),
+      creditsPerItem: stored.get("VIDEO_MODEL_CREDITS_PER_ITEM"),
+      customModels: parseCustomVideoBillingModels(
+        stored.get("MODEL_MARKETPLACE_CONFIG")
+      ),
+    }),
+  };
 }
 
 /**
@@ -804,24 +843,7 @@ export async function getRuntimeVideoModelBillingSettings(): Promise<VideoModelB
  * @throws 数据库读取失败或任一持久化配置非法时 fail closed。
  */
 export async function getAuthoritativeVideoModelBillingSettings(): Promise<VideoModelBillingSettings> {
-  const keys = [
-    "MODEL_MARKETPLACE_CONFIG",
-    "VIDEO_MODEL_BILLING_MODES",
-    "VIDEO_MODEL_CREDITS_PER_ITEM",
-    "VIDEO_MODEL_CREDITS_PER_SECOND",
-  ];
-  const rows = await db
-    .select({ key: systemSetting.key, value: systemSetting.value })
-    .from(systemSetting)
-    .where(inArray(systemSetting.key, keys));
-  const values = new Map(rows.map((row) => [row.key, row.value] as const));
-  const marketplace = values.get("MODEL_MARKETPLACE_CONFIG");
-  return normalizeVideoModelBillingSettings({
-    billingModes: values.get("VIDEO_MODEL_BILLING_MODES"),
-    creditsPerSecond: values.get("VIDEO_MODEL_CREDITS_PER_SECOND"),
-    creditsPerItem: values.get("VIDEO_MODEL_CREDITS_PER_ITEM"),
-    customModels: parseCustomVideoBillingModels(marketplace),
-  });
+  return (await readAuthoritativeVideoBillingSettings()).normalized;
 }
 
 /**
@@ -861,25 +883,7 @@ async function initializeVideoModelBillingSettings(
   now: Date,
   updatedBy?: string
 ): Promise<void> {
-  const keys = [
-    "MODEL_MARKETPLACE_CONFIG",
-    "VIDEO_MODEL_BILLING_MODES",
-    "VIDEO_MODEL_CREDITS_PER_ITEM",
-    "VIDEO_MODEL_CREDITS_PER_SECOND",
-  ];
-  const rows = await db
-    .select({ key: systemSetting.key, value: systemSetting.value })
-    .from(systemSetting)
-    .where(inArray(systemSetting.key, keys));
-  const stored = new Map(rows.map((row) => [row.key, row.value] as const));
-  const normalized = normalizeVideoModelBillingSettings({
-    billingModes: stored.get("VIDEO_MODEL_BILLING_MODES"),
-    creditsPerSecond: stored.get("VIDEO_MODEL_CREDITS_PER_SECOND"),
-    creditsPerItem: stored.get("VIDEO_MODEL_CREDITS_PER_ITEM"),
-    customModels: parseCustomVideoBillingModels(
-      stored.get("MODEL_MARKETPLACE_CONFIG")
-    ),
-  });
+  const { stored, normalized } = await readAuthoritativeVideoBillingSettings();
   const values = [
     {
       key: "VIDEO_MODEL_BILLING_MODES",
