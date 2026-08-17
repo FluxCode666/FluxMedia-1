@@ -22,6 +22,8 @@ describe("控制台生成入口多语言契约", () => {
       "Supplier Management"
     );
     expect(zhMessages.Dashboard.nav.supplierManagement).toBe("供应商管理");
+    expect(enMessages.Dashboard.nav.groupManagement).toBe("Group Management");
+    expect(zhMessages.Dashboard.nav.groupManagement).toBe("分组管理");
     expect(enMessages.Dashboard.pages.modelConfiguration).toBe(
       "Model Configuration"
     );
@@ -30,6 +32,8 @@ describe("控制台生成入口多语言契约", () => {
       "Supplier Management"
     );
     expect(zhMessages.Dashboard.pages.supplierManagement).toBe("供应商管理");
+    expect(enMessages.Dashboard.pages.groupManagement).toBe("Group Management");
+    expect(zhMessages.Dashboard.pages.groupManagement).toBe("分组管理");
     expect("imageBackendPool" in enMessages.Dashboard.nav).toBe(false);
     expect("imageBackendPool" in zhMessages.Dashboard.nav).toBe(false);
   });
@@ -47,11 +51,17 @@ describe("控制台生成入口多语言契约", () => {
 
     expect(observerHrefs).toContain("/dashboard/admin/model-configuration");
     expect(observerHrefs).toContain("/dashboard/admin/suppliers");
+    expect(observerHrefs).toContain("/dashboard/admin/supplier-groups");
     expect(observerHrefs).toContain("/dashboard/admin/status");
     expect(observerHrefs).toContain("/dashboard/admin/history");
     expect(observerHrefs).not.toContain("/dashboard/admin/settings");
     expect(adminHrefs).toContain("/dashboard/admin/model-configuration");
     expect(adminHrefs).toContain("/dashboard/admin/suppliers");
+    expect(adminHrefs).toContain("/dashboard/admin/supplier-groups");
+    expect(adminHrefs.indexOf("/dashboard/admin/suppliers")).toBeLessThan(
+      adminHrefs.indexOf("/dashboard/admin/supplier-groups")
+    );
+    expect(superAdminHrefs).toContain("/dashboard/admin/supplier-groups");
     expect(adminHrefs).not.toContain("/dashboard/admin/settings");
     expect(superAdminHrefs).toContain("/dashboard/admin/settings");
   });

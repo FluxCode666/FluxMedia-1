@@ -22,6 +22,7 @@ describe("sidebar navigation", () => {
         "/dashboard/admin/history",
         "/dashboard/admin/model-configuration",
         "/dashboard/admin/suppliers",
+        "/dashboard/admin/supplier-groups",
       ],
     ],
     [
@@ -36,6 +37,7 @@ describe("sidebar navigation", () => {
         "/dashboard/admin/announcements",
         "/dashboard/admin/model-configuration",
         "/dashboard/admin/suppliers",
+        "/dashboard/admin/supplier-groups",
       ],
     ],
     [
@@ -50,6 +52,7 @@ describe("sidebar navigation", () => {
         "/dashboard/admin/announcements",
         "/dashboard/admin/model-configuration",
         "/dashboard/admin/suppliers",
+        "/dashboard/admin/supplier-groups",
         "/dashboard/admin/settings",
       ],
     ],
@@ -84,5 +87,22 @@ describe("sidebar navigation", () => {
     expect(
       findMostSpecificActiveHref("/en/dashboard/admin/payments", items)
     ).toBe("/dashboard/admin/payments");
+  });
+
+  it("激活本地化的分组管理深层路径", () => {
+    const items = [
+      { title: "Supplier Management", href: "/dashboard/admin/suppliers" },
+      {
+        title: "Group Management",
+        href: "/dashboard/admin/supplier-groups",
+      },
+    ];
+
+    expect(
+      findMostSpecificActiveHref(
+        "/zh/dashboard/admin/supplier-groups/group-primary/members",
+        items
+      )
+    ).toBe("/dashboard/admin/supplier-groups");
   });
 });
