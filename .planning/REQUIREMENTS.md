@@ -11,8 +11,8 @@
 - [x] **NAV-02**: 有后端池查看权限的后台角色可从独立菜单进入供应商管理页面
 - [x] **NAV-03**: 系统设置页面不再挂载模型配置和后端池页签，只保留系统设置与推广奖励
 - [x] **NAV-04**: 当前模型配置或供应商管理路由在展开、折叠和移动侧栏中均能正确激活
-- [ ] **NAV-05**: 有后端池查看权限的后台角色可从独立菜单进入分组管理页面，供应商管理页面只承载供应商账号管理
-- [ ] **NAV-06**: 旧供应商页面的 `poolTab=groups` 查询参数不再作为分组功能入口，分组功能只通过独立分组管理路由提供
+- [x] **NAV-05**: 有后端池查看权限的后台角色可从独立菜单进入分组管理页面，供应商管理页面只承载供应商账号管理
+- [x] **NAV-06**: 旧供应商页面的 `poolTab=groups` 查询参数不再作为分组功能入口，分组功能只通过独立分组管理路由提供
 
 ### Authorization
 
@@ -28,14 +28,14 @@
 - [x] **PRES-01**: 账号池的菜单和页面主标题改为“供应商管理”，英文显示为“Supplier Management”
 - [x] **PRES-02**: 中英文导航消息均提供模型配置与供应商管理的独立文案
 - [x] **PRES-03**: 内部 `image-backend-pool` operation、数据库和调度领域名称保持不变
-- [ ] **PRES-04**: 分组菜单和页面主标题在中文显示“分组管理”，英文显示“Group Management”，且供应商管理不再展示分组页签
+- [x] **PRES-04**: 分组菜单和页面主标题在中文显示“分组管理”，英文显示“Group Management”，且供应商管理不再展示分组页签
 
 ### Verification
 
 - [x] **VER-01**: 导航多语言契约测试锁定两个独立菜单文案
 - [x] **VER-02**: 路由权限测试覆盖 observer_admin、admin、super_admin 和无权限用户的关键边界
 - [x] **VER-03**: 聚焦测试、Web typecheck 与 Web lint 全部通过
-- [ ] **VER-04**: 聚焦测试锁定分组页面角色边界、账号与分组面板职责拆分、旧查询参数失效、双语菜单以及分组或账号 mutation 同时刷新两个相互影响的页面
+- [x] **VER-04**: 聚焦测试锁定分组页面角色边界、账号与分组面板职责拆分、旧查询参数失效、双语菜单以及分组或账号 mutation 同时刷新两个相互影响的页面
 
 ## v2 Requirements
 
@@ -68,12 +68,12 @@
 | VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
 | VER-03 | Phase 1 | Complete |
-| NAV-05 | Phase 1 | Planned |
-| NAV-06 | Phase 1 | Planned |
+| NAV-05 | Phase 1 | Complete |
+| NAV-06 | Phase 1 | Complete |
 | AUTH-05 | Phase 1 | Complete |
 | AUTH-06 | Phase 1 | Complete |
-| PRES-04 | Phase 1 | Planned |
-| VER-04 | Phase 1 | Planned |
+| PRES-04 | Phase 1 | Complete |
+| VER-04 | Phase 1 | Complete |
 
 **Coverage:**
 

@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 01
 current_phase_name: admin-config-navigation
 status: executing
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-08-17T17:05:53.780Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-08-17T17:24:10.578Z"
 last_activity: 2026-08-18
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-17)
 ## Current Position
 
 Phase: 01 (admin-config-navigation) — EXECUTING
-Plan: 2 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-08-18 — Phase 01 execution started
 
-Progress: [████████░░] 75%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Progress: [████████░░] 75%
 | Phase 01 P01 | 5m 29s | 3 tasks | 14 files |
 | Phase 01 P02 | 7m | 2 tasks | 8 files |
 | Phase 01 P03 | 6m | 2 tasks | 10 files |
+| Phase 01-admin-config-navigation P04 | 9m | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Progress: [████████░░] 75%
 - [Phase ?]: 侧栏所有状态共享 locale 规范化和最长路径 active 判定；菜单可见性不替代服务端授权。
 - [Phase ?]: 分组管理作为独立受守卫页面，继续调用既有 image-backend-pool Action/UOL。
 - [Phase ?]: 后端池 mutation 共用双路由重新验证 helper，内部领域命名不变。
+- [Phase ?]: 供应商管理忽略旧 poolTab=groups 查询而不重定向，分组工作流只经独立路由进入。
+- [Phase ?]: 分组菜单只负责发现性，页面守卫和既有 Action/UOL 保持最终授权边界。
 
 ### Pending Todos
 
@@ -87,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T17:05:53.775Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-08-17T17:23:31.950Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
