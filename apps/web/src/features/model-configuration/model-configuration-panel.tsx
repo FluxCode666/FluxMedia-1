@@ -78,8 +78,12 @@ function parseCategoryFilter(value: string): ModelConfigurationCategoryFilter {
  */
 export function ModelConfigurationPanel({
   paginationConfig,
+  title = "模型配置",
+  readOnlyNotice = "当前角色仅可查看，写操作已禁用。",
 }: {
   paginationConfig: PaginationConfig;
+  title?: string;
+  readOnlyNotice?: string;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -233,7 +237,7 @@ export function ModelConfigurationPanel({
       <CardHeader className="gap-2">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1">
-            <CardTitle>模型配置</CardTitle>
+            <CardTitle>{title}</CardTitle>
             <CardDescription>
               新增自定义模型
               ID、媒体类型和支持分辨率，并按模型维护全局价格、展示信息与 3:2
@@ -264,6 +268,11 @@ export function ModelConfigurationPanel({
           </div>
         </div>
       </CardHeader>
+      {pageResult && !pageResult.canEdit ? (
+        <div className="mx-4 mb-4 rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          {readOnlyNotice}
+        </div>
+      ) : null}
       <CardContent className="p-0">
         <form
           className="flex flex-col gap-3 px-4 pb-4 sm:flex-row sm:items-center"
