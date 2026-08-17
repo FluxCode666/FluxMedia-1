@@ -20,8 +20,8 @@
 - [x] **AUTH-02**: admin 和 super_admin 可访问两个独立页面，供应商管理写能力继续由现有 Action/UOL 控制
 - [x] **AUTH-03**: 只有 super_admin 能进入保留高敏设置的系统设置页面
 - [x] **AUTH-04**: 未登录和无后台权限的用户在读取页面数据前被服务端重定向
-- [ ] **AUTH-05**: observer_admin 可只读访问分组管理，admin 和 super_admin 继续仅通过既有 Action/UOL 执行分组创建、编辑、删除和计费覆盖写入
-- [ ] **AUTH-06**: 未登录和无后台权限的用户在分组管理页面读取分页、时区或装配面板前被服务端重定向
+- [x] **AUTH-05**: observer_admin 可只读访问分组管理，admin 和 super_admin 继续仅通过既有 Action/UOL 执行分组创建、编辑、删除和计费覆盖写入
+- [x] **AUTH-06**: 未登录和无后台权限的用户在分组管理页面读取分页、时区或装配面板前被服务端重定向
 
 ### Presentation
 
@@ -70,8 +70,8 @@
 | VER-03 | Phase 1 | Complete |
 | NAV-05 | Phase 1 | Planned |
 | NAV-06 | Phase 1 | Planned |
-| AUTH-05 | Phase 1 | Planned |
-| AUTH-06 | Phase 1 | Planned |
+| AUTH-05 | Phase 1 | Complete |
+| AUTH-06 | Phase 1 | Complete |
 | PRES-04 | Phase 1 | Planned |
 | VER-04 | Phase 1 | Planned |
 
