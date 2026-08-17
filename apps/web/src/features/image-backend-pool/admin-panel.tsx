@@ -3,16 +3,13 @@
 /**
  * 统一媒体后端号池管理面板。
  *
- * 职责：在“供应商账号 / 分组”独立页签加载和筛选 `api | adobe` 统一成员与分组，
- * 打开对应编辑表单、把模型配置快照中的视频双价格传给分组编辑器、就地修改成员
- * 启用状态、执行运行状态重置和安全删除，并展示 Adobe direct 成员的一对一凭据状态。
- * 旧三池分页不再进入此组件。
+ * 职责：加载和筛选 `api | adobe` 统一供应商账号，为成员表单保留分组和模型辅助快照，
+ * 并就地修改成员启用状态、执行运行状态重置和安全删除，以及展示 Adobe direct 成员的
+ * 一对一凭据状态。分组管理由独立页面负责，旧三池分页不再进入此组件。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
-import { isLegacyVideoModelId } from "@repo/shared/image-backend/supported-models";
 import type { PaginationConfig } from "@repo/shared/pagination/config";
 import { buildPaginationHref } from "@repo/shared/pagination/url-adapter";
-import { normalizeVideoModelId } from "@repo/shared/video-generation";
 import { Button } from "@repo/ui/components/button";
 import {
   Card,
@@ -23,14 +20,7 @@ import {
   CardTitle,
 } from "@repo/ui/components/card";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@repo/ui/components/tabs";
-import {
   Activity,
-  Boxes,
   Database,
   Loader2,
   Plus,
@@ -48,37 +38,27 @@ import { UrlPageSizeSelect } from "@/features/pagination/url-page-size-select";
 import { usePathname, useRouter } from "@/i18n/routing";
 import {
   type BackendPoolAdminMemberSummary,
-  deleteImageBackendGroupAction,
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
-  listAdminImageBackendGroupsAction,
   listAdminImageBackendMembersAction,
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
 } from "./actions";
-import { BackendGroupList } from "./admin-group-list";
 import { BackendMemberCard, isAdobeDirectMember } from "./admin-member-card";
 import {
-  BackendGroupFilterBar,
   BackendMemberFilterBar,
   type BackendMemberFilterModelOption,
 } from "./admin-pool-filter-bars";
 import {
-  ADMIN_POOL_GROUP_NAME_PARAM,
-  ADMIN_POOL_GROUP_PAGINATION_NAMES,
   ADMIN_POOL_MEMBER_FILTER_PARAMS,
   ADMIN_POOL_MEMBER_PAGINATION_NAMES,
-  ADMIN_POOL_TAB_PARAM,
-  parseAdminPoolGroupListInput,
   parseAdminPoolMemberListInput,
 } from "./admin-pool-pagination";
 import {
   type BackendMemberFilters,
-  hasBackendGroupFilter,
   hasBackendMemberFilters,
   hasInvalidBackendMemberDateRange,
 } from "./admin-pool-view-model";
-import { BackendGroupFormDialog } from "./group-form";
 import { BackendMemberFormDialog } from "./member-form";
 import {
   type BackendMemberModelOption,
@@ -86,7 +66,6 @@ import {
   normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
-import type { VideoCreditPricingModel } from "./video-credit-pricing-editor";
 
 /** 显示号池关键容量事实的统计卡。 */
 function PoolStatCard({
@@ -116,7 +95,7 @@ function PoolStatCard({
   );
 }
 
-/** 展示账号或分组快照首次加载时的稳定骨架。 */
+/** 展示供应商账号分页首次加载时的稳定骨架。 */
 function PoolListLoadingState({ label }: { label: string }) {
   return (
     <div
@@ -161,10 +140,7 @@ export function ImageBackendPoolAdminPanel({
       ),
     [currentSearchParams, paginationConfig, timeZone]
   );
-  const groupListInput = useMemo(
-    () => parseAdminPoolGroupListInput(currentSearchParams, paginationConfig),
-    [currentSearchParams, paginationConfig]
-  );
+  // 分组快照仅供成员表单选择归属，不承载分组管理界面或查询状态。
   const [groups, setGroups] = useState<BackendGroupSummary[]>([]);
   const [members, setMembers] = useState<BackendPoolAdminMemberSummary[]>([]);
   const [memberPage, setMemberPage] = useState<{
@@ -174,26 +150,12 @@ export function ImageBackendPoolAdminPanel({
     totalCount: number;
     totalPages: number;
   } | null>(null);
-  const [groupPage, setGroupPage] = useState<{
-    records: BackendGroupSummary[];
-    page: number;
-    pageSize: number;
-    totalCount: number;
-    totalPages: number;
-  } | null>(null);
   const [modelOptions, setModelOptions] = useState<BackendMemberModelOption[]>(
     []
   );
-  const [videoPricingModels, setVideoPricingModels] = useState<
-    VideoCreditPricingModel[]
-  >([]);
   const [modelOptionStatus, setModelOptionStatus] =
     useState<BackendMemberModelOptionStatus>("loading");
-  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<BackendGroupSummary | null>(
-    null
-  );
   const [editingMember, setEditingMember] =
     useState<BackendPoolAdminMemberSummary | null>(null);
   const [resettingMemberId, setResettingMemberId] = useState<string | null>(
@@ -212,12 +174,6 @@ export function ImageBackendPoolAdminPanel({
     createdFrom: memberListInput.createdFrom,
     createdTo: memberListInput.createdTo,
   };
-  const groupNameFilter = groupListInput.name;
-  const activePoolTab =
-    currentSearchParams.get(ADMIN_POOL_TAB_PARAM) === "groups"
-      ? "groups"
-      : "members";
-
   const { execute: loadPool, isPending: isLoading } = useAction(
     getAdminImageBackendPoolAction,
     {
@@ -251,77 +207,25 @@ export function ImageBackendPoolAdminPanel({
         toast.error(error.serverError || "加载供应商账号失败"),
     }
   );
-  const { execute: loadGroupPage, isPending: isLoadingGroupPage } = useAction(
-    listAdminImageBackendGroupsAction,
-    {
-      onSuccess: ({ data }) => {
-        if (!data) return;
-        setGroupPage(data);
-        if (data.page !== groupListInput.page) {
-          router.replace(
-            buildPaginationHref(
-              pathname,
-              new URLSearchParams(searchParams.toString()),
-              ADMIN_POOL_GROUP_PAGINATION_NAMES,
-              { page: data.page },
-              "page"
-            )
-          );
-        }
-      },
-      onError: ({ error }) =>
-        toast.error(error.serverError || "加载供应商分组失败"),
-    }
-  );
   const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
     useAction(getModelConfigurationAction, {
       onSuccess: ({ data }) => {
         if (!data) {
           setModelOptions([]);
-          setVideoPricingModels([]);
           setModelOptionStatus("unavailable");
           return;
         }
         setModelOptions(buildBackendMemberModelOptions(data));
-        setVideoPricingModels(
-          data.entries.flatMap((entry) =>
-            entry.category === "video"
-              ? [
-                  {
-                    modelId: entry.configKey,
-                    displayName: entry.displayName,
-                    billingMode: entry.billingMode,
-                    supportedResolutions: entry.supportedResolutions,
-                    globalCreditsPerSecondByResolution:
-                      entry.creditsPerSecondByResolution,
-                    globalCreditsPerItemByResolution:
-                      entry.creditsPerItemByResolution,
-                  },
-                ]
-              : []
-          )
-        );
         setModelOptionStatus(
           data.runtimeCatalogStatus === "ready" ? "ready" : "degraded"
         );
       },
       onError: ({ error }) => {
         setModelOptions([]);
-        setVideoPricingModels([]);
         setModelOptionStatus("unavailable");
         toast.error(error.serverError || "加载模型配置失败");
       },
     });
-  const { execute: deleteGroup, isPending: isDeletingGroup } = useAction(
-    deleteImageBackendGroupAction,
-    {
-      onSuccess: () => {
-        toast.success("分组已删除");
-        reloadPoolSnapshots();
-      },
-      onError: ({ error }) => toast.error(error.serverError || "删除分组失败"),
-    }
-  );
   const { execute: deleteMember, isPending: isDeletingMember } = useAction(
     deleteImageBackendMemberAction,
     {
@@ -383,11 +287,10 @@ export function ImageBackendPoolAdminPanel({
     }
   );
 
-  /** 写操作成功后刷新完整辅助快照和两个分页明细。 */
+  /** 写操作成功后刷新成员分页和成员表单依赖的辅助快照。 */
   function reloadPoolSnapshots(): void {
     loadPool();
     loadMemberPage(memberListInput);
-    loadGroupPage(groupListInput);
   }
 
   useEffect(() => {
@@ -399,23 +302,10 @@ export function ImageBackendPoolAdminPanel({
     loadMemberPage(memberListInput);
   }, [loadMemberPage, memberListInput]);
 
-  useEffect(() => {
-    loadGroupPage(groupListInput);
-  }, [groupListInput, loadGroupPage]);
-
   const groupNameById = useMemo(
     () => new Map(groups.map((group) => [group.id, group.name])),
     [groups]
   );
-  const memberCountByGroup = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const member of members) {
-      for (const groupId of member.groupIds) {
-        counts.set(groupId, (counts.get(groupId) ?? 0) + 1);
-      }
-    }
-    return counts;
-  }, [members]);
   const memberModelFilterOptions = useMemo<
     BackendMemberFilterModelOption[]
   >(() => {
@@ -432,24 +322,8 @@ export function ImageBackendPoolAdminPanel({
       });
   }, [members, modelOptions]);
   const filteredMembers = memberPage?.records ?? [];
-  const filteredGroups = groupPage?.records ?? [];
   const invalidMemberDateRange =
     hasInvalidBackendMemberDateRange(memberFilters);
-  const imageModelIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          members.flatMap((member) =>
-            member.supportedModelIds.filter(
-              (modelId) =>
-                !normalizeVideoModelId(modelId) &&
-                !isLegacyVideoModelId(modelId)
-            )
-          )
-        )
-      ).sort(),
-    [members]
-  );
   const activeMemberCount = members.filter(
     (member) => member.isEnabled && member.status !== "error"
   ).length;
@@ -471,19 +345,6 @@ export function ImageBackendPoolAdminPanel({
       ),
     })
   );
-  const groupPageSizeOptions = paginationConfig.pageSizeOptions.map(
-    (pageSize) => ({
-      size: pageSize,
-      href: buildPaginationHref(
-        pathname,
-        currentSearchParams,
-        ADMIN_POOL_GROUP_PAGINATION_NAMES,
-        { pageSize },
-        "criteria"
-      ),
-    })
-  );
-
   /** 用 URL 提交成员筛选并清理旧页码。 */
   function updateMemberFilters(next: BackendMemberFilters): void {
     router.push(
@@ -506,29 +367,6 @@ export function ImageBackendPoolAdminPanel({
         "criteria"
       )
     );
-  }
-
-  /** 用 URL 提交分组名称筛选并清理旧页码。 */
-  function updateGroupNameFilter(name: string): void {
-    router.push(
-      buildPaginationHref(
-        pathname,
-        currentSearchParams,
-        ADMIN_POOL_GROUP_PAGINATION_NAMES,
-        {
-          criteria: {
-            [ADMIN_POOL_GROUP_NAME_PARAM]: name.trim() || null,
-          },
-        },
-        "criteria"
-      )
-    );
-  }
-
-  /** 打开新增分组表单。 */
-  function openNewGroup(): void {
-    setEditingGroup(null);
-    setGroupDialogOpen(true);
   }
 
   /** 打开新增成员表单，并在缺少分组时阻止创建无归属成员。 */
@@ -617,13 +455,7 @@ export function ImageBackendPoolAdminPanel({
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <PoolStatCard
-          title="分组"
-          value={groups.length}
-          description="统一访问与计费边界"
-          icon={Boxes}
-        />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <PoolStatCard
           title="可用账号"
           value={activeMemberCount}
@@ -644,223 +476,101 @@ export function ImageBackendPoolAdminPanel({
         />
       </div>
 
-      <Tabs
-        className="w-full"
-        onValueChange={(value) => {
-          const next = new URLSearchParams(searchParams.toString());
-          if (value === "groups") next.set(ADMIN_POOL_TAB_PARAM, "groups");
-          else next.delete(ADMIN_POOL_TAB_PARAM);
-          next.sort();
-          const query = next.toString();
-          router.push(query ? `${pathname}?${query}` : pathname);
-        }}
-        value={activePoolTab}
-      >
-        <TabsList
-          aria-label="供应商管理内容"
-          className="h-auto flex-wrap justify-start bg-transparent p-0"
-        >
-          <TabsTrigger
-            className="gap-2 rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:shadow-none"
-            value="members"
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold">供应商账号</h3>
+            <p className="text-sm text-muted-foreground">
+              所有类型进入同一候选集合，再按全局策略排序和原子获租。
+            </p>
+          </div>
+          {!readOnly ? (
+            <Button onClick={openNewMember} type="button">
+              <Plus />
+              新增供应商账号
+            </Button>
+          ) : null}
+        </div>
+        <BackendMemberFilterBar
+          filters={memberFilters}
+          invalidDateRange={invalidMemberDateRange}
+          modelOptions={memberModelFilterOptions}
+          onChange={updateMemberFilters}
+          resultCount={memberPage?.totalCount ?? 0}
+          timeZone={timeZone}
+          totalCount={members.length}
+        />
+        {isLoadingMemberPage && !memberPage ? (
+          <PoolListLoadingState label="正在加载供应商账号" />
+        ) : (
+          <div
+            className="grid gap-3 xl:grid-cols-2"
+            id="backend-member-list"
+            tabIndex={-1}
           >
-            供应商账号
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {memberPage?.totalCount ?? members.length}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger
-            className="gap-2 rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:shadow-none"
-            value="groups"
-          >
-            分组
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {groupPage?.totalCount ?? groups.length}
-            </span>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent className="mt-4" value="members">
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold">供应商账号</h3>
-                <p className="text-sm text-muted-foreground">
-                  所有类型进入同一候选集合，再按全局策略排序和原子获租。
-                </p>
-              </div>
-              {!readOnly ? (
-                <Button onClick={openNewMember} type="button">
-                  <Plus />
-                  新增供应商账号
-                </Button>
-              ) : null}
-            </div>
-            <BackendMemberFilterBar
-              filters={memberFilters}
-              invalidDateRange={invalidMemberDateRange}
-              modelOptions={memberModelFilterOptions}
-              onChange={updateMemberFilters}
-              resultCount={memberPage?.totalCount ?? 0}
-              timeZone={timeZone}
-              totalCount={members.length}
-            />
-            {isLoadingMemberPage && !memberPage ? (
-              <PoolListLoadingState label="正在加载供应商账号" />
-            ) : (
-              <div
-                className="grid gap-3 xl:grid-cols-2"
-                id="backend-member-list"
-                tabIndex={-1}
-              >
-                {filteredMembers.map((member) => (
-                  <BackendMemberCard
-                    groupNameById={groupNameById}
-                    key={member.id}
-                    member={member}
-                    mutationState={{
-                      isDeleting: isDeletingMember,
-                      isResetting: isResettingMember,
-                      isUpdating: isUpdatingMember,
-                      resettingMemberId,
-                      updatingMemberId,
-                    }}
-                    onDelete={() => deleteMember({ id: member.id })}
-                    onEdit={() => {
-                      setEditingMember(member);
-                      setMemberDialogOpen(true);
-                    }}
-                    onEnabledChange={(isEnabled) =>
-                      handleMemberEnabledChange(member, isEnabled)
-                    }
-                    onReset={() => {
-                      setResettingMemberId(member.id);
-                      resetMemberStatus({ id: member.id });
-                    }}
-                    readOnly={readOnly}
-                    timeZone={timeZone}
-                  />
-                ))}
-                {filteredMembers.length === 0 ? (
-                  <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground xl:col-span-2">
-                    {hasBackendMemberFilters(memberFilters)
-                      ? "没有符合当前筛选条件的供应商账号。"
-                      : "当前账号池没有供应商账号。"}
-                  </div>
-                ) : null}
-              </div>
-            )}
-            {memberPage ? (
-              <div className="space-y-3 border-t pt-4">
-                <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                  <span>共 {memberPage.totalCount} 条</span>
-                  <UrlPageSizeSelect
-                    itemSuffix=" 条/页"
-                    label="每页条数"
-                    options={memberPageSizeOptions}
-                    value={memberPage.pageSize}
-                  />
-                </div>
-                <UrlPaginationControls
-                  ariaLabel="供应商账号分页"
-                  currentPageLabelTemplate="第 {page} 页，当前页"
-                  focusTargetId="backend-member-list"
-                  names={ADMIN_POOL_MEMBER_PAGINATION_NAMES}
-                  nextLabel="下一页"
-                  page={memberPage.page}
-                  pageLabelTemplate="前往第 {page} 页"
-                  pageSelectLabel="选择页码"
-                  previousLabel="上一页"
-                  totalPages={memberPage.totalPages}
-                />
+            {filteredMembers.map((member) => (
+              <BackendMemberCard
+                groupNameById={groupNameById}
+                key={member.id}
+                member={member}
+                mutationState={{
+                  isDeleting: isDeletingMember,
+                  isResetting: isResettingMember,
+                  isUpdating: isUpdatingMember,
+                  resettingMemberId,
+                  updatingMemberId,
+                }}
+                onDelete={() => deleteMember({ id: member.id })}
+                onEdit={() => {
+                  setEditingMember(member);
+                  setMemberDialogOpen(true);
+                }}
+                onEnabledChange={(isEnabled) =>
+                  handleMemberEnabledChange(member, isEnabled)
+                }
+                onReset={() => {
+                  setResettingMemberId(member.id);
+                  resetMemberStatus({ id: member.id });
+                }}
+                readOnly={readOnly}
+                timeZone={timeZone}
+              />
+            ))}
+            {filteredMembers.length === 0 ? (
+              <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground xl:col-span-2">
+                {hasBackendMemberFilters(memberFilters)
+                  ? "没有符合当前筛选条件的供应商账号。"
+                  : "当前账号池没有供应商账号。"}
               </div>
             ) : null}
-          </section>
-        </TabsContent>
-
-        <TabsContent className="mt-4" value="groups">
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold">分组</h3>
-                <p className="text-sm text-muted-foreground">
-                  调度始终限制在请求指定分组内，默认分组最多一个。
-                </p>
-              </div>
-              {!readOnly ? (
-                <Button onClick={openNewGroup} type="button">
-                  <Plus />
-                  新增分组
-                </Button>
-              ) : null}
+          </div>
+        )}
+        {memberPage ? (
+          <div className="space-y-3 border-t pt-4">
+            <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>共 {memberPage.totalCount} 条</span>
+              <UrlPageSizeSelect
+                itemSuffix=" 条/页"
+                label="每页条数"
+                options={memberPageSizeOptions}
+                value={memberPage.pageSize}
+              />
             </div>
-            <BackendGroupFilterBar
-              name={groupNameFilter}
-              onChange={updateGroupNameFilter}
-              resultCount={groupPage?.totalCount ?? 0}
-              totalCount={groups.length}
+            <UrlPaginationControls
+              ariaLabel="供应商账号分页"
+              currentPageLabelTemplate="第 {page} 页，当前页"
+              focusTargetId="backend-member-list"
+              names={ADMIN_POOL_MEMBER_PAGINATION_NAMES}
+              nextLabel="下一页"
+              page={memberPage.page}
+              pageLabelTemplate="前往第 {page} 页"
+              pageSelectLabel="选择页码"
+              previousLabel="上一页"
+              totalPages={memberPage.totalPages}
             />
-            {isLoadingGroupPage && !groupPage ? (
-              <PoolListLoadingState label="正在加载供应商分组" />
-            ) : (
-              <div
-                className="overflow-hidden rounded-lg border bg-background"
-                id="backend-group-list"
-                tabIndex={-1}
-              >
-                <BackendGroupList
-                  allGroups={groups}
-                  groups={filteredGroups}
-                  hasNameFilter={hasBackendGroupFilter(groupNameFilter)}
-                  isDeleting={isDeletingGroup}
-                  memberCountByGroup={memberCountByGroup}
-                  onDelete={(id) => deleteGroup({ id })}
-                  onEdit={(group) => {
-                    setEditingGroup(group);
-                    setGroupDialogOpen(true);
-                  }}
-                  readOnly={readOnly}
-                />
-              </div>
-            )}
-            {groupPage ? (
-              <div className="space-y-3 border-t pt-4">
-                <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                  <span>共 {groupPage.totalCount} 条</span>
-                  <UrlPageSizeSelect
-                    itemSuffix=" 条/页"
-                    label="每页条数"
-                    options={groupPageSizeOptions}
-                    value={groupPage.pageSize}
-                  />
-                </div>
-                <UrlPaginationControls
-                  ariaLabel="账号池分组分页"
-                  currentPageLabelTemplate="第 {page} 页，当前页"
-                  focusTargetId="backend-group-list"
-                  names={ADMIN_POOL_GROUP_PAGINATION_NAMES}
-                  nextLabel="下一页"
-                  page={groupPage.page}
-                  pageLabelTemplate="前往第 {page} 页"
-                  pageSelectLabel="选择页码"
-                  previousLabel="上一页"
-                  totalPages={groupPage.totalPages}
-                />
-              </div>
-            ) : null}
-          </section>
-        </TabsContent>
-      </Tabs>
-
-      <BackendGroupFormDialog
-        open={groupDialogOpen}
-        onOpenChange={setGroupDialogOpen}
-        group={editingGroup}
-        groups={groups}
-        imageModelIds={imageModelIds}
-        videoPricingModels={videoPricingModels}
-        onSaved={reloadPoolSnapshots}
-      />
+          </div>
+        ) : null}
+      </section>
       <BackendMemberFormDialog
         open={memberDialogOpen}
         onOpenChange={setMemberDialogOpen}
