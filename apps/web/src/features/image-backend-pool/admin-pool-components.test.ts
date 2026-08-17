@@ -15,10 +15,11 @@ const panelMocks = vi.hoisted(() => ({
   execute: vi.fn(),
   push: vi.fn(),
   replace: vi.fn(),
+  searchParams: new URLSearchParams(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => panelMocks.searchParams,
 }));
 vi.mock("next-safe-action/hooks", () => ({
   useAction: () => ({ execute: panelMocks.execute, isPending: false }),
@@ -108,6 +109,7 @@ function changeInput(input: HTMLInputElement, value: string): void {
 
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  panelMocks.searchParams = new URLSearchParams();
 });
 
 afterEach(() => {
@@ -119,6 +121,28 @@ afterEach(() => {
 });
 
 describe("admin pool components", () => {
+  it.each([
+    ["默认供应商管理 URL", ""],
+    ["旧分组查询 URL", "poolTab=groups"],
+  ])("%s 只展示供应商账号管理", (_label, query) => {
+    panelMocks.searchParams = new URLSearchParams(query);
+    mount(
+      createElement(ImageBackendPoolAdminPanel, {
+        paginationConfig: {
+          defaultPageSize: 20,
+          pageSizeOptions: [10, 20, 50],
+        },
+        timeZone: "Asia/Shanghai",
+      })
+    );
+
+    expect(container?.textContent).toContain("供应商账号");
+    expect(container?.textContent).toContain("新增供应商账号");
+    expect(container?.querySelector('[role="tablist"]')).toBeNull();
+    expect(container?.textContent).not.toContain("新增分组");
+    expect(container?.querySelector("#backend-group-list")).toBeNull();
+  });
+
   it("以供应商管理标题展示可写入口，并在只读模式隐藏新增控件", () => {
     mount(
       createElement(ImageBackendPoolAdminPanel, {
