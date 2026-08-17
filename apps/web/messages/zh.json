@@ -863,6 +863,7 @@
       "operations": "运营总览",
       "modelConfiguration": "模型配置",
       "supplierManagement": "供应商管理",
+      "groupManagement": "分组管理",
       "support": "支持",
       "newTicket": "新建工单"
     },

@@ -863,6 +863,7 @@
       "operations": "Operations Dashboard",
       "modelConfiguration": "Model Configuration",
       "supplierManagement": "Supplier Management",
+      "groupManagement": "Group Management",
       "support": "Support",
       "newTicket": "New Ticket"
     },

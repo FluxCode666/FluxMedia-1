@@ -8,6 +8,7 @@ import type { AppUserRole } from "@repo/shared/auth/roles";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Boxes,
   ChartNoAxesCombined,
   CreditCard,
   History,
@@ -57,6 +58,11 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
         title: "Supplier Management",
         href: "/dashboard/admin/suppliers",
         icon: Server,
+      },
+      {
+        title: "Group Management",
+        href: "/dashboard/admin/supplier-groups",
+        icon: Boxes,
       },
     ];
   }
@@ -120,6 +126,11 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
       title: "Supplier Management",
       href: "/dashboard/admin/suppliers",
       icon: Server,
+    },
+    {
+      title: "Group Management",
+      href: "/dashboard/admin/supplier-groups",
+      icon: Boxes,
     },
   ];
 
