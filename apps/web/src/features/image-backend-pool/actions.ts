@@ -184,9 +184,9 @@ async function invokePoolOperation<N extends PoolOperationName>(
   }
 }
 
-/** mutation 成功后刷新管理后台的服务端快照。 */
+/** mutation 成功后刷新供应商管理入口的服务端快照。 */
 function revalidateBackendPoolPage(): void {
-  revalidatePath("/dashboard/admin/settings");
+  revalidatePath("/dashboard/admin/suppliers");
 }
 
 /**

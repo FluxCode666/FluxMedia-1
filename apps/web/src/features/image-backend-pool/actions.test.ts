@@ -298,7 +298,7 @@ describe("image backend pool actions", () => {
       { type: "user", userId: "admin-1", role: "admin" }
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/dashboard/admin/settings"
+      "/dashboard/admin/suppliers"
     );
   });
 
@@ -346,7 +346,7 @@ describe("image backend pool actions", () => {
       { type: "user", userId: "admin-1", role: "admin" }
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/dashboard/admin/settings"
+      "/dashboard/admin/suppliers"
     );
   });
 
@@ -379,7 +379,7 @@ describe("image backend pool actions", () => {
       }
     );
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/dashboard/admin/settings"
+      "/dashboard/admin/suppliers"
     );
   });
 });

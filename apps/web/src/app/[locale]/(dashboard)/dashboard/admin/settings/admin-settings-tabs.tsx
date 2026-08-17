@@ -1,11 +1,10 @@
 "use client";
 
-import type { PaginationConfig } from "@repo/shared/pagination/config";
 /**
  * 管理员设置页的按权限惰性页签编排器。
  *
- * 使用方是管理员设置页面；超管可查看系统设置和模型配置，其他后台角色仅进入自身获准的
- * 后端池入口。各业务面板自行通过服务端权限再次校验，本组件不作为授权边界。
+ * 使用方是管理员设置页面；这里只装配高敏系统设置和推广奖励两个页签，页面入口已经由
+ * 服务端限制为 super_admin。各业务面板自行通过服务端权限再次校验，本组件不作为授权边界。
  */
 import {
   ReferralRewardSettingsPanel,
@@ -19,58 +18,41 @@ import {
 } from "@repo/ui/components/tabs";
 import { useState } from "react";
 
-import { ImageBackendPoolAdminPanel } from "@/features/image-backend-pool";
-import { ModelConfigurationPanel } from "@/features/model-configuration";
 import { AdobeCredentialNotificationSettingsCard } from "@/features/system-settings/adobe-credential-notification-settings-card";
 
 type AdminSettingsTabsProps = {
   timeZone: string;
-  paginationConfig: PaginationConfig;
-  // 是否允许管理系统设置（含 BETTER_AUTH_SECRET 等密钥）。仅超管为 true；普通 admin
-  // 和 observer_admin 可查看模型配置，但不应看到/进入系统设置 tab（见审计 S-C1）。
+  // 是否允许管理系统设置（含 BETTER_AUTH_SECRET 等密钥）。仅超管为 true。
   canManageSystemSettings: boolean;
-  canViewModelConfiguration: boolean;
-  imageBackendPoolReadOnly: boolean;
 };
 
-type AdminSettingsTab =
-  | "system"
-  | "referrals"
-  | "model-configuration"
-  | "image-backends";
+type AdminSettingsTab = "system" | "referrals";
 
 /**
  * 按页面服务端交付的超管能力渲染并惰性挂载管理页签。
  *
- * @param props - 时区、系统设置能力、模型配置查看能力和后端池只读状态。
+ * @param props - 时区和系统设置能力。
  * @returns 受控 Tabs，已访问页签保持挂载以避免表单切换丢失。
  * @sideEffects 用户切换时更新本地 active/mounted 集合；不执行服务端写入。
- * @failure 未授权页签值一律回落到后端池，真实权限仍由各 Action/UOL 校验。
+ * @failure 非法页签值一律回落到系统设置，真实权限仍由各 Action/UOL 校验。
  */
 export function AdminSettingsTabs({
   timeZone,
-  paginationConfig,
   canManageSystemSettings,
-  canViewModelConfiguration,
-  imageBackendPoolReadOnly,
 }: AdminSettingsTabsProps) {
-  const defaultTab: AdminSettingsTab = canManageSystemSettings
-    ? "system"
-    : "image-backends";
+  const defaultTab: AdminSettingsTab = "system";
   const [activeTab, setActiveTab] = useState<AdminSettingsTab>(defaultTab);
   const [mountedTabs, setMountedTabs] = useState<Set<AdminSettingsTab>>(
     () => new Set([defaultTab])
   );
 
   const handleTabChange = (value: string) => {
-    // 非超管禁止进入系统设置、推广奖励和模型配置，强制回落到后端池。
+    // 页面入口已经限制为超管；仍对客户端伪造的 tab 值做收敛，避免非法状态进入面板。
     const requestedTab = value as AdminSettingsTab;
     const nextTab: AdminSettingsTab =
-      (value === "system" && canManageSystemSettings) ||
-      (value === "referrals" && canManageSystemSettings) ||
-      (value === "model-configuration" && canViewModelConfiguration)
+      canManageSystemSettings && (value === "system" || value === "referrals")
         ? requestedTab
-        : "image-backends";
+        : "system";
     setActiveTab(nextTab);
     setMountedTabs((current) => {
       if (current.has(nextTab)) return current;
@@ -99,20 +81,6 @@ export function AdminSettingsTabs({
             推广奖励
           </TabsTrigger>
         ) : null}
-        {canViewModelConfiguration ? (
-          <TabsTrigger
-            value="model-configuration"
-            className="rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:text-foreground data-[state=active]:shadow-none"
-          >
-            模型配置
-          </TabsTrigger>
-        ) : null}
-        <TabsTrigger
-          value="image-backends"
-          className="rounded-md border border-transparent px-3 py-2 data-[state=active]:border-foreground/20 data-[state=active]:bg-foreground/5 data-[state=active]:text-foreground data-[state=active]:shadow-none"
-        >
-          账号池
-        </TabsTrigger>
       </TabsList>
       {canManageSystemSettings ? (
         <TabsContent value="system" className="mt-6">
@@ -133,22 +101,6 @@ export function AdminSettingsTabs({
           ) : null}
         </TabsContent>
       ) : null}
-      {canViewModelConfiguration ? (
-        <TabsContent value="model-configuration" className="mt-6">
-          {mountedTabs.has("model-configuration") ? (
-            <ModelConfigurationPanel paginationConfig={paginationConfig} />
-          ) : null}
-        </TabsContent>
-      ) : null}
-      <TabsContent value="image-backends" className="mt-6">
-        {mountedTabs.has("image-backends") ? (
-          <ImageBackendPoolAdminPanel
-            paginationConfig={paginationConfig}
-            readOnly={imageBackendPoolReadOnly}
-            timeZone={timeZone}
-          />
-        ) : null}
-      </TabsContent>
     </Tabs>
   );
 }
