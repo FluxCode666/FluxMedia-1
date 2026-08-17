@@ -136,10 +136,14 @@ export function ImageBackendPoolAdminPanel({
   timeZone,
   paginationConfig,
   readOnly = false,
+  title = "供应商管理",
+  readOnlyNotice = "当前角色仅可查看，写操作已禁用。",
 }: {
   timeZone: string;
   paginationConfig: PaginationConfig;
   readOnly?: boolean;
+  title?: string;
+  readOnlyNotice?: string;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -222,7 +226,7 @@ export function ImageBackendPoolAdminPanel({
         setMembers(data?.members ?? []);
       },
       onError: ({ error }) =>
-        toast.error(error.serverError || "加载账号池失败"),
+        toast.error(error.serverError || "加载供应商管理失败"),
     }
   );
   const { execute: loadMemberPage, isPending: isLoadingMemberPage } = useAction(
@@ -266,7 +270,7 @@ export function ImageBackendPoolAdminPanel({
         }
       },
       onError: ({ error }) =>
-        toast.error(error.serverError || "加载账号池分组失败"),
+        toast.error(error.serverError || "加载供应商分组失败"),
     }
   );
   const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
@@ -582,7 +586,7 @@ export function ImageBackendPoolAdminPanel({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold">账号池</h2>
+          <h2 className="text-xl font-semibold">{title}</h2>
           <p className="max-w-3xl text-sm text-muted-foreground">
             API 与 Adobe 成员共享分组、模型能力、优先级、并发、健康和调度指标。
             模型 ID 只做能力匹配，不再按前缀分流。
@@ -609,7 +613,7 @@ export function ImageBackendPoolAdminPanel({
 
       {readOnly && (
         <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          当前为只读视图。只有管理员可以修改分组和成员。
+          {readOnlyNotice}
         </div>
       )}
 
@@ -653,7 +657,7 @@ export function ImageBackendPoolAdminPanel({
         value={activePoolTab}
       >
         <TabsList
-          aria-label="账号池管理内容"
+          aria-label="供应商管理内容"
           className="h-auto flex-wrap justify-start bg-transparent p-0"
         >
           <TabsTrigger
@@ -797,7 +801,7 @@ export function ImageBackendPoolAdminPanel({
               totalCount={groups.length}
             />
             {isLoadingGroupPage && !groupPage ? (
-              <PoolListLoadingState label="正在加载账号池分组" />
+              <PoolListLoadingState label="正在加载供应商分组" />
             ) : (
               <div
                 className="overflow-hidden rounded-lg border bg-background"

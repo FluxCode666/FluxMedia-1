@@ -11,8 +11,54 @@ import { act, createElement, type ReactNode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const panelMocks = vi.hoisted(() => ({
+  execute: vi.fn(),
+  push: vi.fn(),
+  replace: vi.fn(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+}));
+vi.mock("next-safe-action/hooks", () => ({
+  useAction: () => ({ execute: panelMocks.execute, isPending: false }),
+}));
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("@/i18n/routing", () => ({
+  usePathname: () => "/dashboard/admin/suppliers",
+  useRouter: () => ({
+    push: panelMocks.push,
+    replace: panelMocks.replace,
+  }),
+}));
+vi.mock("@/features/model-configuration/actions", () => ({
+  getModelConfigurationAction: vi.fn(),
+}));
+vi.mock("@/features/pagination/pagination-controls", () => ({
+  UrlPaginationControls: () => null,
+}));
+vi.mock("@/features/pagination/url-page-size-select", () => ({
+  UrlPageSizeSelect: () => null,
+}));
+vi.mock("./actions", () => ({
+  deleteImageBackendGroupAction: vi.fn(),
+  deleteImageBackendMemberAction: vi.fn(),
+  getAdminImageBackendPoolAction: vi.fn(),
+  listAdminImageBackendGroupsAction: vi.fn(),
+  listAdminImageBackendMembersAction: vi.fn(),
+  resetImageBackendMemberStatusAction: vi.fn(),
+  setImageBackendMemberEnabledAction: vi.fn(),
+}));
+vi.mock("./group-form", () => ({
+  BackendGroupFormDialog: () => null,
+}));
+vi.mock("./member-form", () => ({
+  BackendMemberFormDialog: () => null,
+}));
+
 import { BackendGroupList } from "./admin-group-list";
 import { BackendMemberFilterBar } from "./admin-pool-filter-bars";
+import { ImageBackendPoolAdminPanel } from "./admin-panel";
 import {
   type BackendMemberFilters,
   EMPTY_BACKEND_MEMBER_FILTERS,
@@ -73,6 +119,46 @@ afterEach(() => {
 });
 
 describe("admin pool components", () => {
+  it("以供应商管理标题展示可写入口，并在只读模式隐藏新增控件", () => {
+    mount(
+      createElement(ImageBackendPoolAdminPanel, {
+        paginationConfig: {
+          defaultPageSize: 20,
+          pageSizeOptions: [10, 20, 50],
+        },
+        readOnly: false,
+        timeZone: "Asia/Shanghai",
+        title: "Supplier Management",
+      })
+    );
+
+    expect(container?.querySelector("h2")?.textContent).toBe(
+      "Supplier Management"
+    );
+    expect(container?.textContent).toContain("新增供应商账号");
+
+    act(() => {
+      root?.render(
+        createElement(ImageBackendPoolAdminPanel, {
+          paginationConfig: {
+            defaultPageSize: 20,
+            pageSizeOptions: [10, 20, 50],
+          },
+          readOnly: true,
+          readOnlyNotice: "当前角色仅可查看，写操作已禁用。",
+          timeZone: "Asia/Shanghai",
+          title: "供应商管理",
+        })
+      );
+    });
+
+    expect(container?.querySelector("h2")?.textContent).toBe("供应商管理");
+    expect(container?.textContent).toContain(
+      "当前角色仅可查看，写操作已禁用。"
+    );
+    expect(container?.textContent).not.toContain("新增供应商账号");
+  });
+
   it("使用语义表格展示分组并在只读模式隐藏操作列", () => {
     const group = createGroup();
     mount(
