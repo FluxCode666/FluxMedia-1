@@ -2,22 +2,22 @@
 status: testing
 phase: 01-admin-config-navigation
 source: [01-VERIFICATION.md]
-started: 2026-08-17T16:00:34Z
-updated: 2026-08-17T16:00:34Z
+started: 2026-08-18T01:48:00+08:00
+updated: 2026-08-18T01:48:00+08:00
 ---
 
 ## Current Test
 
 number: 1
-name: 后台三角色的跨状态导航
+name: 后台三角色的供应商与分组导航跨状态浏览器验收
 expected: |
-  分别使用 observer_admin、admin、super_admin 在中文和英文界面打开模型配置与供应商管理；检查桌面展开、桌面折叠和移动 Sheet。当前入口始终显示 active 背景和左侧指示；observer_admin、admin 不显示系统设置，super_admin 额外显示系统设置；移动端点击模型配置或供应商管理后 Sheet 关闭。
+  在已认证 Web 环境中，以 observer_admin、admin、super_admin 分别使用中文和英文界面，检查供应商管理与分组管理的桌面展开、桌面折叠及移动 Sheet。当前入口显示 active 背景和左侧指示；中文显示供应商管理/分组管理，英文显示 Supplier Management/Group Management；移动端点击入口后 Sheet 关闭；observer_admin 看不到系统设置和任何分组写控件。
 awaiting: user response
 
 ## Tests
 
-### 1. 后台三角色的跨状态导航
-expected: 分别使用 observer_admin、admin、super_admin 在中文和英文界面检查桌面展开、桌面折叠和移动 Sheet；当前入口显示 active 背景和左侧指示，角色菜单符合权限，移动端点击模型配置或供应商管理后 Sheet 关闭。
+### 1. 后台三角色的供应商与分组导航跨状态浏览器验收
+expected: 在已认证 Web 环境中，以 observer_admin、admin、super_admin 分别使用中文和英文界面，检查供应商管理与分组管理的桌面展开、桌面折叠及移动 Sheet；当前入口显示 active 背景和左侧指示，中文/英文菜单文案正确，移动端点击入口后 Sheet 关闭，observer_admin 看不到系统设置和分组写控件。
 result: [pending]
 
 ## Summary
