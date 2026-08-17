@@ -21,6 +21,7 @@ import {
   getModelConfigurationCoverSource,
   getModelConfigurationEnabledLabel,
   getModelConfigurationHomepageLabel,
+  getModelConfigurationPriceUnitLabel,
   getModelConfigurationVisibilityLabel,
   resolveModelConfigurationCoverAfterError,
 } from "./model-configuration-view-model";
@@ -261,8 +262,10 @@ export function ModelConfigurationTable({
                   : formatModelConfigurationMinimumCredits(
                       entry.minimumCredits
                     )}
-                {entry.category === "video" ? (
-                  <span className="text-muted-foreground"> / 秒</span>
+                {getModelConfigurationPriceUnitLabel(entry) ? (
+                  <span className="text-muted-foreground">
+                    {getModelConfigurationPriceUnitLabel(entry)}
+                  </span>
                 ) : null}
               </td>
               <td className="px-4 py-3 text-right">

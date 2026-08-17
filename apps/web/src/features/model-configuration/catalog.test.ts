@@ -86,6 +86,8 @@ describe("buildModelConfigurationSnapshot", () => {
       )
     ).toMatchObject({
       billingMode: "per_item",
+      minimumCredits: 3,
+      creditsPerSecond: 45,
       creditsPerSecondByResolution: { "720p": 45, "1080p": 45 },
       creditsPerItemByResolution: { "720p": 3, "1080p": 5 },
     });

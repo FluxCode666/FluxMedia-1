@@ -120,6 +120,21 @@ export function formatModelConfigurationMinimumCredits(
 }
 
 /**
+ * 取得视频模型最低价格对应的计费单位。
+ *
+ * @param entry - 管理快照中的规范条目。
+ * @returns 视频按条或按秒的单位文案；图像不显示单位后缀。
+ * @sideEffects 无。
+ * @failure 共享 DTO 已保证视频条目包含 billingMode，不抛错。
+ */
+export function getModelConfigurationPriceUnitLabel(
+  entry: ModelConfigurationEntry
+): " / 秒" | " / 条" | null {
+  if (entry.category !== "video") return null;
+  return entry.billingMode === "per_item" ? " / 条" : " / 秒";
+}
+
+/**
  * 按 ID/名称搜索并应用媒体筛选，保持服务端目录的稳定顺序。
  *
  * @param entries - 管理快照原始顺序的条目。

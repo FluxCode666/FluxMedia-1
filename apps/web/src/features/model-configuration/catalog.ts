@@ -405,9 +405,16 @@ export function buildModelConfigurationSnapshot(
         return [resolution, itemPrice];
       })
     );
-    const minimumCredits = Math.min(
+    const minimumCreditsPerSecond = Math.min(
       ...Object.values(creditsPerSecondByResolution)
     );
+    const minimumCreditsPerItem = Math.min(
+      ...Object.values(creditsPerItemByResolution)
+    );
+    const minimumCredits =
+      billingMode === "per_item"
+        ? minimumCreditsPerItem
+        : minimumCreditsPerSecond;
     const realModelId = normalizeVideoModelId(configKey);
     const capability = realModelId
       ? effectiveVideoCapabilities.get(realModelId)
@@ -420,7 +427,7 @@ export function buildModelConfigurationSnapshot(
         input.buildCoverUrl
       ),
       category: "video",
-      creditsPerSecond: minimumCredits,
+      creditsPerSecond: minimumCreditsPerSecond,
       creditsPerSecondByResolution,
       billingMode,
       creditsPerItemByResolution,

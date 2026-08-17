@@ -14,6 +14,7 @@ import {
   getModelConfigurationDialogFields,
   getModelConfigurationEnabledLabel,
   getModelConfigurationHomepageLabel,
+  getModelConfigurationPriceUnitLabel,
   getModelConfigurationSaveErrorMessage,
   getModelConfigurationVisibilityLabel,
   resolveModelConfigurationCoverAfterError,
@@ -89,6 +90,17 @@ function getEntry(index: number): ModelConfigurationEntry {
   return entry;
 }
 
+/** 取得视频测试条目并把联合类型收窄为视频配置。 */
+function getVideoEntry(
+  index: number
+): Extract<ModelConfigurationEntry, { category: "video" }> {
+  const entry = getEntry(index);
+  if (entry.category !== "video") {
+    throw new Error(`索引 ${index} 不是视频模型配置测试条目`);
+  }
+  return entry;
+}
+
 describe("模型配置视图模型", () => {
   it("按 ID 或名称搜索且保持服务端稳定顺序", () => {
     expect(
@@ -143,6 +155,15 @@ describe("模型配置视图模型", () => {
       "已展示 · P5",
     ]);
     expect(formatModelConfigurationMinimumCredits(1.2700001)).toBe("1.27 积分");
+    expect(getModelConfigurationPriceUnitLabel(getEntry(1))).toBe(" / 秒");
+    expect(
+      getModelConfigurationPriceUnitLabel({
+        ...getVideoEntry(1),
+        billingMode: "per_item",
+        minimumCredits: 3,
+      })
+    ).toBe(" / 条");
+    expect(getModelConfigurationPriceUnitLabel(getEntry(0))).toBeNull();
   });
 
   it("只读权限隐藏保存和封面动作，未配置图像仍显示完整字段", () => {
