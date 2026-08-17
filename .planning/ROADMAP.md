@@ -25,11 +25,11 @@
   4. 账号池入口和页面对外显示为“供应商管理”及 “Supplier Management”，运营人员仍可管理既有后端池配置，内部 `image-backend-pool` operation、数据库和调度领域名称不变。
   5. 导航多语言契约测试、角色与路由权限测试、聚焦测试、Web typecheck 和 Web lint 均通过。
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans executed
 Plans:
 
 - [x] 01-01-PLAN.md — 独立模型配置与供应商管理页面、权限边界及系统设置页签收敛
-- [ ] 01-02-PLAN.md — 角色化侧栏激活、双语导航文案与契约验证
+- [x] 01-02-PLAN.md — 角色化侧栏激活、双语导航文案与契约验证
 
 **UI hint**: yes
 
@@ -39,7 +39,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 后台配置入口拆分 | 1/2 | In Progress|  |
+| 1. 后台配置入口拆分 | 2/2 | In Progress|  |
 
 ## Coverage
 

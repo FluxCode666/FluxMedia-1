@@ -10,7 +10,7 @@
 - [x] **NAV-01**: 有模型配置查看权限的后台角色可从独立菜单进入模型配置页面
 - [x] **NAV-02**: 有后端池查看权限的后台角色可从独立菜单进入供应商管理页面
 - [x] **NAV-03**: 系统设置页面不再挂载模型配置和后端池页签，只保留系统设置与推广奖励
-- [ ] **NAV-04**: 当前模型配置或供应商管理路由在展开、折叠和移动侧栏中均能正确激活
+- [x] **NAV-04**: 当前模型配置或供应商管理路由在展开、折叠和移动侧栏中均能正确激活
 
 ### Authorization
 
@@ -22,14 +22,14 @@
 ### Presentation
 
 - [x] **PRES-01**: 账号池的菜单和页面主标题改为“供应商管理”，英文显示为“Supplier Management”
-- [ ] **PRES-02**: 中英文导航消息均提供模型配置与供应商管理的独立文案
+- [x] **PRES-02**: 中英文导航消息均提供模型配置与供应商管理的独立文案
 - [x] **PRES-03**: 内部 `image-backend-pool` operation、数据库和调度领域名称保持不变
 
 ### Verification
 
-- [ ] **VER-01**: 导航多语言契约测试锁定两个独立菜单文案
+- [x] **VER-01**: 导航多语言契约测试锁定两个独立菜单文案
 - [x] **VER-02**: 路由权限测试覆盖 observer_admin、admin、super_admin 和无权限用户的关键边界
-- [ ] **VER-03**: 聚焦测试、Web typecheck 与 Web lint 全部通过
+- [x] **VER-03**: 聚焦测试、Web typecheck 与 Web lint 全部通过
 
 ## v2 Requirements
 
@@ -51,17 +51,17 @@
 | NAV-01 | Phase 1 | Complete |
 | NAV-02 | Phase 1 | Complete |
 | NAV-03 | Phase 1 | Complete |
-| NAV-04 | Phase 1 | Pending |
+| NAV-04 | Phase 1 | Complete |
 | AUTH-01 | Phase 1 | Complete |
 | AUTH-02 | Phase 1 | Complete |
 | AUTH-03 | Phase 1 | Complete |
 | AUTH-04 | Phase 1 | Complete |
 | PRES-01 | Phase 1 | Complete |
-| PRES-02 | Phase 1 | Pending |
+| PRES-02 | Phase 1 | Complete |
 | PRES-03 | Phase 1 | Complete |
-| VER-01 | Phase 1 | Pending |
+| VER-01 | Phase 1 | Complete |
 | VER-02 | Phase 1 | Complete |
-| VER-03 | Phase 1 | Pending |
+| VER-03 | Phase 1 | Complete |
 
 **Coverage:**
 
