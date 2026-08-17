@@ -56,6 +56,8 @@ import {
   listAdminImageBackendGroupsAction,
   listAdminImageBackendMembersAction,
   reauthorizeAdobeCredentialAction,
+  saveImageBackendGroupAction,
+  saveImageBackendMemberAction,
   setImageBackendMemberEnabledAction,
   testApiUpstreamAdapterAction,
 } from "./actions";
@@ -67,6 +69,19 @@ type MockAction = (input: {
     role: "observer_admin" | "admin" | "super_admin";
   };
 }) => Promise<unknown>;
+
+/** 验证成功写入同时失效供应商与分组管理页面。 */
+function expectBackendPoolManagementPagesRevalidated(): void {
+  expect(mocks.revalidatePath).toHaveBeenCalledTimes(2);
+  expect(mocks.revalidatePath).toHaveBeenNthCalledWith(
+    1,
+    "/dashboard/admin/suppliers"
+  );
+  expect(mocks.revalidatePath).toHaveBeenNthCalledWith(
+    2,
+    "/dashboard/admin/supplier-groups"
+  );
+}
 
 describe("image backend pool actions", () => {
   beforeEach(() => {
@@ -281,7 +296,7 @@ describe("image backend pool actions", () => {
     );
   });
 
-  it("修改成员启用状态只调用对应 UOL operation 并刷新管理页", async () => {
+  it("修改成员启用状态只调用对应 UOL operation 并刷新两个管理页", async () => {
     const input = { id: "member-a", isEnabled: false };
     const output = { id: "member-a", isEnabled: false };
     mocks.invokeOperation.mockResolvedValue(output);
@@ -297,9 +312,7 @@ describe("image backend pool actions", () => {
       input,
       { type: "user", userId: "admin-1", role: "admin" }
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/dashboard/admin/suppliers"
-    );
+    expectBackendPoolManagementPagesRevalidated();
   });
 
   it("Adobe 健康详情读取只委托 human-only UOL operation", async () => {
@@ -325,7 +338,7 @@ describe("image backend pool actions", () => {
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("Adobe 立即检查成功后刷新管理页", async () => {
+  it("Adobe 立即检查成功后刷新两个管理页", async () => {
     const input = { memberId: "member-adobe" };
     const output = {
       evaluationId: "evaluation-1",
@@ -345,12 +358,10 @@ describe("image backend pool actions", () => {
       input,
       { type: "user", userId: "admin-1", role: "admin" }
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/dashboard/admin/suppliers"
-    );
+    expectBackendPoolManagementPagesRevalidated();
   });
 
-  it("Adobe 同账号重新授权传递浏览器幂等键并刷新管理页", async () => {
+  it("Adobe 同账号重新授权传递浏览器幂等键并刷新两个管理页", async () => {
     const input = {
       memberId: "member-adobe",
       cookie: "aux_sid=new-cookie",
@@ -378,8 +389,52 @@ describe("image backend pool actions", () => {
         role: "super_admin",
       }
     );
-    expect(mocks.revalidatePath).toHaveBeenCalledWith(
-      "/dashboard/admin/suppliers"
+    expectBackendPoolManagementPagesRevalidated();
+  });
+
+  it("分组与成员成功写入均刷新两个相互影响的管理页", async () => {
+    mocks.invokeOperation.mockResolvedValue({ id: "created-id" });
+
+    await expect(
+      (saveImageBackendGroupAction as unknown as MockAction)({
+        parsedInput: { name: "primary" },
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toEqual({ success: true, id: "created-id" });
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.saveGroup",
+      { name: "primary" },
+      { type: "user", userId: "admin-1", role: "admin" }
     );
+    expectBackendPoolManagementPagesRevalidated();
+
+    vi.clearAllMocks();
+    mocks.invokeOperation.mockResolvedValue({ id: "member-id" });
+
+    await expect(
+      (saveImageBackendMemberAction as unknown as MockAction)({
+        parsedInput: { name: "supplier" },
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toEqual({ success: true, id: "member-id" });
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.saveMember",
+      { name: "supplier" },
+      { type: "user", userId: "admin-1", role: "admin" }
+    );
+    expectBackendPoolManagementPagesRevalidated();
+  });
+
+  it("写入失败时不会伪造双路由刷新", async () => {
+    mocks.invokeOperation.mockRejectedValue(new Error("保存失败"));
+
+    await expect(
+      (saveImageBackendGroupAction as unknown as MockAction)({
+        parsedInput: { name: "primary" },
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).rejects.toThrow("保存失败");
+
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 });

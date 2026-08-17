@@ -184,9 +184,15 @@ async function invokePoolOperation<N extends PoolOperationName>(
   }
 }
 
-/** mutation 成功后刷新供应商管理入口的服务端快照。 */
+/**
+ * mutation 成功后刷新供应商与分组管理入口的服务端快照。
+ *
+ * 两个页面共享成员、分组和计费覆盖数据；同时失效可避免一个页面保留另一个页面
+ * 刚修改后的陈旧归属或计数。
+ */
 function revalidateBackendPoolPage(): void {
   revalidatePath("/dashboard/admin/suppliers");
+  revalidatePath("/dashboard/admin/supplier-groups");
 }
 
 /**
