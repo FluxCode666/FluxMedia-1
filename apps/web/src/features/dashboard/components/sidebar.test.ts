@@ -6,7 +6,7 @@
  */
 // @vitest-environment jsdom
 
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, type MouseEvent, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -84,13 +84,16 @@ vi.mock("next/link", () => ({
   }: {
     children?: ReactNode;
     href: string;
-    onClick?: () => void;
+    onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   }) =>
     createElement(
       "a",
       {
         href,
-        onClick,
+        onClick: (event: MouseEvent<HTMLAnchorElement>) => {
+          event.preventDefault();
+          onClick?.(event);
+        },
       },
       children
     ),
@@ -164,9 +167,9 @@ describe("DashboardSidebar", () => {
     );
 
     expect(groupLinks).toHaveLength(2);
-    expect(groupLinks.every((link) => link.textContent?.includes("分组管理"))).toBe(
-      true
-    );
+    expect(
+      groupLinks.every((link) => link.textContent?.includes("分组管理"))
+    ).toBe(true);
     expect(container?.textContent).not.toContain("Group Management");
 
     act(() => groupLinks.at(-1)?.click());
