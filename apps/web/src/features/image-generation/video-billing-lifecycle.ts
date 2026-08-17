@@ -160,19 +160,56 @@ export function createVideoBillingLedgerMetadata(
 }
 
 /**
+ * 判断是否为账单快照上线前的历史 metadata。
+ *
+ * @param metadata - 视频任务持久化的未知 JSON。
+ * @returns null 或未携带任一快照字段时返回 true；带快照但内容损坏时返回 false。
+ * @sideEffects 无。
+ * @failure 不抛错；非对象值按损坏 metadata 处理。
+ */
+function isPreSnapshotVideoMetadata(metadata: unknown): boolean {
+  if (metadata === null || metadata === undefined) return true;
+  if (typeof metadata !== "object" || Array.isArray(metadata)) return false;
+  const record = metadata as Record<string, unknown>;
+  return (
+    !Object.hasOwn(record, "videoCapabilitySnapshot") &&
+    !Object.hasOwn(record, "videoBillingSnapshot")
+  );
+}
+
+/**
+ * 为历史与公开展示解析视频账单，并兼容账单快照上线前的旧任务。
+ *
+ * @param metadata - 视频任务数据库 metadata。
+ * @returns v2 固定账单、v1 legacy 账单，或无快照旧任务的 legacy 账单。
+ * @sideEffects 无。
+ * @failure 带快照但版本、摘要或金额损坏时继续抛错，避免掩盖新数据问题。
+ */
+function resolvePublicVideoTaskBilling(
+  metadata: unknown
+): ReturnType<typeof resolveVideoTaskBilling> {
+  try {
+    return resolveVideoTaskBilling(metadata);
+  } catch (error) {
+    if (!isPreSnapshotVideoMetadata(metadata)) throw error;
+    return { kind: "legacy", mode: "per_second", unit: "second" };
+  }
+}
+
+/**
  * 将内部任务快照投影为 UOL、v1、MCP、回调和历史共用的公共账单联合。
  *
  * @param metadata - 任务数据库行中的完整 metadata。
  * @param actualCredits - 当前实际结算；退款后为 0，不会改写原 quotedCredits。
  * @returns 不含内部组、价格来源、revision 或摘要的 snapshot/legacy 判别联合。
  * @sideEffects 无。
- * @throws Error - metadata 版本或 v2 账单快照非法时 fail closed。
+ * @throws Error - 带快照的 metadata 版本或 v2 账单快照非法时 fail closed。
  */
 export function projectVideoTaskPublicBilling(
   metadata: unknown,
   actualCredits: number
 ): VideoTaskPublicBilling {
-  const billing = resolveVideoTaskBilling(metadata);
+  const billing = resolvePublicVideoTaskBilling(metadata);
   if (billing.kind === "legacy") {
     return {
       kind: "legacy",

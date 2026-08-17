@@ -122,6 +122,36 @@ describe("video billing lifecycle", () => {
     });
   });
 
+  it("账单快照上线前的旧视频 metadata 兼容为 legacy 公共账单", () => {
+    expect(projectVideoTaskPublicBilling(null, 12)).toEqual({
+      kind: "legacy",
+      mode: "per_second",
+      unit: "second",
+      unitPrice: null,
+      creditsPerSecond: null,
+      quotedCredits: null,
+      actualCredits: 12,
+    });
+    expect(projectVideoTaskPublicBilling({ generateAudio: true }, 8)).toEqual({
+      kind: "legacy",
+      mode: "per_second",
+      unit: "second",
+      unitPrice: null,
+      creditsPerSecond: null,
+      quotedCredits: null,
+      actualCredits: 8,
+    });
+  });
+
+  it("带损坏快照的 metadata 仍然拒绝展示", () => {
+    expect(() =>
+      projectVideoTaskPublicBilling(
+        { videoCapabilitySnapshot: { version: 2 } },
+        8
+      )
+    ).toThrow("新视频任务缺少账单快照");
+  });
+
   it("非财务 metadata 可更新但账单快照不能删除或替换", () => {
     const metadata = createSnapshotMetadata();
     expect(() =>
