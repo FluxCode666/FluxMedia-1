@@ -17,7 +17,12 @@ describe("sidebar navigation", () => {
     ["user", []],
     [
       "observer_admin",
-      ["/dashboard/admin/model-configuration", "/dashboard/admin/suppliers"],
+      [
+        "/dashboard/admin/status",
+        "/dashboard/admin/history",
+        "/dashboard/admin/model-configuration",
+        "/dashboard/admin/suppliers",
+      ],
     ],
     [
       "admin",

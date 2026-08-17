@@ -47,6 +47,8 @@ describe("控制台生成入口多语言契约", () => {
 
     expect(observerHrefs).toContain("/dashboard/admin/model-configuration");
     expect(observerHrefs).toContain("/dashboard/admin/suppliers");
+    expect(observerHrefs).toContain("/dashboard/admin/status");
+    expect(observerHrefs).toContain("/dashboard/admin/history");
     expect(observerHrefs).not.toContain("/dashboard/admin/settings");
     expect(adminHrefs).toContain("/dashboard/admin/model-configuration");
     expect(adminHrefs).toContain("/dashboard/admin/suppliers");

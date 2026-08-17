@@ -39,6 +39,16 @@ export function buildAdministrationItems(role: AppUserRole): SidebarNavItem[] {
   if (role === "observer_admin") {
     return [
       {
+        title: "Global Status",
+        href: "/dashboard/admin/status",
+        icon: Activity,
+      },
+      {
+        title: "Global Usage Records",
+        href: "/dashboard/admin/history",
+        icon: History,
+      },
+      {
         title: "Model Configuration",
         href: "/dashboard/admin/model-configuration",
         icon: Settings,
