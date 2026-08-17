@@ -1,8 +1,8 @@
 ---
 phase: 01-admin-config-navigation
-reviewed: 2026-08-17T23:36:00+08:00
+reviewed: 2026-08-18T01:36:00+08:00
 depth: standard
-files_reviewed: 21
+files_reviewed: 26
 files_reviewed_list:
   - apps/web/messages/en.json
   - apps/web/messages/zh.json
@@ -12,9 +12,13 @@ files_reviewed_list:
   - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/settings/admin-settings-tabs.tsx
   - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/settings/page.test.ts
   - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/settings/page.tsx
+  - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/supplier-groups/loading.tsx
+  - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/supplier-groups/page.test.ts
+  - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/supplier-groups/page.tsx
   - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/suppliers/loading.tsx
   - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/suppliers/page.test.ts
   - apps/web/src/app/[locale]/(dashboard)/dashboard/admin/suppliers/page.tsx
+  - apps/web/src/features/dashboard/components/sidebar.test.ts
   - apps/web/src/features/dashboard/components/sidebar.tsx
   - apps/web/src/features/dashboard/navigation-i18n-contract.test.ts
   - apps/web/src/features/dashboard/sidebar-navigation.test.ts
@@ -23,56 +27,52 @@ files_reviewed_list:
   - apps/web/src/features/image-backend-pool/actions.ts
   - apps/web/src/features/image-backend-pool/admin-panel.tsx
   - apps/web/src/features/image-backend-pool/admin-pool-components.test.ts
+  - apps/web/src/features/image-backend-pool/backend-group-admin-panel.test.ts
+  - apps/web/src/features/image-backend-pool/backend-group-admin-panel.tsx
   - apps/web/src/features/model-configuration/model-configuration-panel.tsx
 findings:
-  critical: 0
-  warning: 2
-  info: 1
-  total: 3
+  critical: 1
+  warning: 1
+  info: 0
+  total: 2
 status: issues_found
 ---
 
 # Phase 01: Code Review Report
 
-**Reviewed:** 2026-08-17T23:36:00+08:00  
-**Depth:** standard  
-**Files Reviewed:** 21  
+**Reviewed:** 2026-08-18T01:36:00+08:00
+**Depth:** standard
+**Files Reviewed:** 26
 **Status:** issues_found
 
 ## Summary
 
-聚焦测试 7 个文件、40 个测试均通过；未发现新的关键安全漏洞或服务端授权绕过。但侧栏实现移除了观察管理员仍被角色能力明确授权的既有只读入口，且新页面虽添加了英文消息键，面板主体仍硬编码中文，导致英文 locale 的独立页面文案不一致。
+审查了新增的三条管理路由、角色菜单、Server Action 刷新、分页 URL 状态和中英文消息。聚焦 Vitest 已通过（10 个文件、53 项断言），`@repo/web` typecheck 也通过；但现有测试没有覆盖英文页面主体文案和异步请求乱序，仍存在以下必须处理的问题。
+
+## Narrative Findings (AI reviewer)
+
+## Critical Issues
+
+### CR-01: 新的英文管理路由主体仍然是中文界面
+
+**File:** `/Users/duegin/project/FluxMedia/apps/web/src/features/image-backend-pool/admin-panel.tsx:429`, `/Users/duegin/project/FluxMedia/apps/web/src/features/image-backend-pool/backend-group-admin-panel.tsx:258`, `/Users/duegin/project/FluxMedia/apps/web/src/features/model-configuration/model-configuration-panel.tsx:242`
+
+**Issue:** 三个新独立路由只将页面标题和只读提示接到 `Dashboard.pages` 消息；面板主体仍直接输出中文（说明、按钮、筛选控件、空状态、分页标签、toast 和 aria 文案）。因此访问 `/en/dashboard/admin/suppliers`、`/en/dashboard/admin/supplier-groups` 或 `/en/dashboard/admin/model-configuration` 时，标题为英文但可操作界面为中文，违反本阶段的双语页面契约。当前 `navigation-i18n-contract.test.ts` 只检查消息键和标题，无法发现该回归。
+
+**Fix:** 为三个面板建立完整的消息命名空间并在客户端通过 `useTranslations` 获取所有用户可见字符串（包括 aria、加载、错误和 toast 文案）；或由路由统一传入已本地化的文案对象。补充 en/zh DOM 测试，断言英文路由不包含这些中文操作标签，且关键控件的可访问名称已本地化。
 
 ## Warnings
 
-### WR-01: 观察管理员丢失既有只读管理入口
+### WR-01: 筛选或分页快速切换时旧响应可以回写当前列表和 URL
 
-**File:** `apps/web/src/features/dashboard/sidebar-navigation.ts:38-52`
+**File:** `/Users/duegin/project/FluxMedia/apps/web/src/features/image-backend-pool/admin-panel.tsx:192`, `/Users/duegin/project/FluxMedia/apps/web/src/features/image-backend-pool/backend-group-admin-panel.tsx:114`, `/Users/duegin/project/FluxMedia/apps/web/src/features/model-configuration/model-configuration-panel.tsx:109`
 
-**Issue:** `buildAdministrationItems("observer_admin")` 现在只返回模型配置和供应商管理，原先给观察管理员提供的全局状态、全局使用记录等入口被完全移除。`canViewGlobalUsageRecords` 仍明确把 `observer_admin` 列为查看角色，且这些页面仍存在并可通过 URL 访问，因此这不是权限收紧而是导航发现性回归：观察管理员无法从侧栏到达其仍被授权的只读功能。
+**Issue:** 三个面板在 URL 参数变化时都会发起新的异步列表请求，但成功回调没有取消前序请求，也没有用请求序号或当前参数比对来丢弃旧响应。若先请求 A，再快速筛选到 B，而 A 在 B 之后返回，A 会覆盖 B 的 `memberPage`、`groupPage` 或 `pageResult`；前两个面板还会按 A 的页码执行 `router.replace`。用户会在地址栏保留 B 的筛选条件时看到 A 的结果，或被跳回旧页码。现有组件测试只断言初始 DOM，不模拟乱序完成。
 
-**Fix:** 保留观察管理员原有的只读管理菜单（至少 `/dashboard/admin/status` 与 `/dashboard/admin/history`），并在其基础上加入两个新入口；或同步删除对应角色能力和产品需求，而不是只删除菜单项。为角色菜单测试增加这些既有入口的回归断言。
-
-### WR-02: 英文页面仍渲染大量硬编码中文
-
-**File:** `apps/web/src/features/model-configuration/model-configuration-panel.tsx:240-305`; `apps/web/src/features/image-backend-pool/admin-panel.tsx:585-695`
-
-**Issue:** 新路由通过 `getTranslations` 只翻译页面标题和只读提示，但模型配置、供应商面板的描述、按钮、筛选器、统计和状态文本仍直接写死中文。`en.json`/`zh.json` 新增的 `addModel`、`addSupplier`、`saveConfiguration` 等键也没有被这些组件使用。因此访问 `/en/dashboard/admin/model-configuration` 或 `/en/dashboard/admin/suppliers` 会出现英文页面标题夹杂大段中文，违背本阶段的中英文页面呈现契约。
-
-**Fix:** 将面板所需文案通过 props 或 `useTranslations` 注入，并把新增 CTA/保存/筛选/状态文本全部映射到 `Dashboard.pages`（或专用命名空间）中的双语键；删除未使用的键，或在组件中实际使用它们。补充英文渲染断言，避免只测试标题。
-
-## Info
-
-### IN-01: 新增消息键未使用
-
-**File:** `apps/web/messages/en.json:895-898`; `apps/web/messages/zh.json:895-898`
-
-**Issue:** `addModel`、`addSupplier`、`saveConfiguration` 只出现在消息文件中，代码中没有引用，形成死配置并掩盖实际仍硬编码的界面文案。
-
-**Fix:** 接入面板翻译后保留并覆盖真实调用；若不再需要则删除，并用消息契约测试检查引用的键。
+**Fix:** 在每次发起列表请求时递增 `useRef` 中的 request id，并在完成后仅当 id 仍是最新值时更新状态和调用 `router.replace`；或者使用支持取消的请求机制并在 effect cleanup 中中止旧请求。为三个列表至少添加一个乱序响应测试，验证旧请求完成不会改写新筛选条件对应的状态或 URL。
 
 ---
 
-_Reviewed: 2026-08-17T23:36:00+08:00_  
-_Reviewer: the agent (gsd-code-reviewer)_  
+_Reviewed: 2026-08-18T01:36:00+08:00_
+_Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_
