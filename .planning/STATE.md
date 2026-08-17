@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 01
 current_phase_name: admin-config-navigation
-status: verifying
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-08-17T15:22:02.323Z"
-last_activity: 2026-08-17
+status: executing
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-08-17T17:05:53.780Z"
+last_activity: 2026-08-18
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 1
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 0
+  total_plans: 4
+  completed_plans: 3
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-08-17)
 ## Current Position
 
 Phase: 01 (admin-config-navigation) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
-Last activity: 2026-08-17 — Phase 01 execution started
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-08-18 — Phase 01 execution started
 
-Progress: [██████████] 100%
+Progress: [████████░░] 75%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [██████████] 100%
 |------|----------|-------|-------|
 | Phase 01 P01 | 5m 29s | 3 tasks | 14 files |
 | Phase 01 P02 | 7m | 2 tasks | 8 files |
+| Phase 01 P03 | 6m | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,8 @@ Progress: [██████████] 100%
 - [Phase ?]: 系统设置入口收紧为 super_admin，模型配置与供应商入口不再作为其页签。
 - [Phase ?]: 观察管理员仅显示模型配置与供应商管理，系统设置仅供 super_admin。
 - [Phase ?]: 侧栏所有状态共享 locale 规范化和最长路径 active 判定；菜单可见性不替代服务端授权。
+- [Phase ?]: 分组管理作为独立受守卫页面，继续调用既有 image-backend-pool Action/UOL。
+- [Phase ?]: 后端池 mutation 共用双路由重新验证 helper，内部领域命名不变。
 
 ### Pending Todos
 
@@ -84,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-08-17T15:22:02.319Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-08-17T17:05:53.775Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None

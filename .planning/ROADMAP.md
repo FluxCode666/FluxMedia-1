@@ -26,12 +26,12 @@
   5. 运营人员仍可管理既有后端池配置，内部 `image-backend-pool` operation、数据库和调度领域名称不变；供应商或分组 mutation 后会刷新两个相互影响的独立页面。
   6. 导航多语言契约测试、角色与路由权限测试、面板职责拆分与旧查询参数回归测试、聚焦测试、Web typecheck 和 Web lint 均通过。
 
-**Plans**: 2/4 plans executed
+**Plans**: 3/4 plans executed
 Plans:
 
 - [x] 01-01-PLAN.md — 独立模型配置与供应商管理页面、权限边界及系统设置页签收敛
 - [x] 01-02-PLAN.md — 角色化侧栏激活、双语导航文案与契约验证
-- [ ] 01-03-PLAN.md — 受守卫的分组管理页面、分组面板与双路由刷新契约
+- [x] 01-03-PLAN.md — 受守卫的分组管理页面、分组面板与双路由刷新契约
 - [ ] 01-04-PLAN.md — 供应商账号面板收敛、旧分组入口停用与双语侧栏验证
 
 **UI hint**: yes
@@ -42,7 +42,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 后台配置入口拆分 | 2/4 | In Progress|  |
+| 1. 后台配置入口拆分 | 3/4 | In Progress|  |
 
 ## Coverage
 
