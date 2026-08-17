@@ -22,7 +22,10 @@
   3. 系统设置页面只显示系统设置与推广奖励，只有 `super_admin` 可进入；未登录或无后台权限的请求在读取页面数据前由服务端重定向。
   4. 账号池入口和页面对外显示为“供应商管理”及 “Supplier Management”，运营人员仍可管理既有后端池配置，内部 `image-backend-pool` operation、数据库和调度领域名称不变。
   5. 导航多语言契约测试、角色与路由权限测试、聚焦测试、Web typecheck 和 Web lint 均通过。
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — 独立模型配置与供应商管理页面、权限边界及系统设置页签收敛
+- [ ] 01-02-PLAN.md — 角色化侧栏激活、双语导航文案与契约验证
 **UI hint**: yes
 
 ## Progress
@@ -31,9 +34,8 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 后台配置入口拆分 | 0/TBD | Not started | - |
+| 1. 后台配置入口拆分 | 0/2 | Not started | - |
 
 ## Coverage
 
 All 14 v1 requirements map exactly once to Phase 1. No orphaned or duplicated requirements.
-
