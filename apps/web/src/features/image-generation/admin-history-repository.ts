@@ -239,12 +239,12 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
   end`;
   const videoHistoryMetadata = sql`case
     when v.metadata is null then null
-    else jsonb_build_object(
+    else jsonb_strip_nulls(jsonb_build_object(
       'videoCapabilitySnapshot',
       (v.metadata::jsonb)->'videoCapabilitySnapshot',
       'videoBillingSnapshot',
       (v.metadata::jsonb)->'videoBillingSnapshot'
-    )
+    ))
   end`;
   return sql`
     with image_rows as (

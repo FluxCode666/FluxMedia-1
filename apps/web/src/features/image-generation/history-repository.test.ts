@@ -173,6 +173,7 @@ describe("history repository SQL", () => {
     expect(compiled.params.filter((value) => value === 21)).toHaveLength(3);
     expect(compiled.sql).not.toContain("sql.raw");
     expect(compiled.sql).toContain("jsonb_build_object");
+    expect(compiled.sql).toContain("jsonb_strip_nulls");
     expect(compiled.sql).toContain("'settledResolution'");
     expect(compiled.sql).toContain("'inputImages'");
     expect(compiled.sql).toContain("'videoBillingSnapshot'");

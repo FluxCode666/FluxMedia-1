@@ -163,7 +163,8 @@ export function createVideoBillingLedgerMetadata(
  * 判断是否为账单快照上线前的历史 metadata。
  *
  * @param metadata - 视频任务持久化的未知 JSON。
- * @returns null 或未携带任一快照字段时返回 true；带快照但内容损坏时返回 false。
+ * @returns null、未携带任一快照字段，或旧能力快照未携带账单快照时返回 true；
+ * 带快照但内容损坏时返回 false。
  * @sideEffects 无。
  * @failure 不抛错；非对象值按损坏 metadata 处理。
  */
@@ -171,6 +172,20 @@ function isPreSnapshotVideoMetadata(metadata: unknown): boolean {
   if (metadata === null || metadata === undefined) return true;
   if (typeof metadata !== "object" || Array.isArray(metadata)) return false;
   const record = metadata as Record<string, unknown>;
+  const capabilityValue = record.videoCapabilitySnapshot;
+  const capabilityVersion =
+    capabilityValue &&
+    typeof capabilityValue === "object" &&
+    !Array.isArray(capabilityValue)
+      ? (capabilityValue as Record<string, unknown>).version
+      : undefined;
+  if (
+    capabilityVersion === 1 &&
+    (record.videoBillingSnapshot === undefined ||
+      record.videoBillingSnapshot === null)
+  ) {
+    return true;
+  }
   return (
     !Object.hasOwn(record, "videoCapabilitySnapshot") &&
     !Object.hasOwn(record, "videoBillingSnapshot")

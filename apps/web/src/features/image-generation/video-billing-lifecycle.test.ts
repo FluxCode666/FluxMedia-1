@@ -122,6 +122,26 @@ describe("video billing lifecycle", () => {
     });
   });
 
+  it("兼容历史查询投影留下的空账单快照", () => {
+    expect(
+      projectVideoTaskPublicBilling(
+        {
+          videoCapabilitySnapshot: { version: 1 },
+          videoBillingSnapshot: null,
+        },
+        12
+      )
+    ).toEqual({
+      kind: "legacy",
+      mode: "per_second",
+      unit: "second",
+      unitPrice: null,
+      creditsPerSecond: null,
+      quotedCredits: null,
+      actualCredits: 12,
+    });
+  });
+
   it("账单快照上线前的旧视频 metadata 兼容为 legacy 公共账单", () => {
     expect(projectVideoTaskPublicBilling(null, 12)).toEqual({
       kind: "legacy",
