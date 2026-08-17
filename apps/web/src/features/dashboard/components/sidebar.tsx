@@ -2,7 +2,7 @@
 
 import { getMyUnreadAnnouncementCountAction } from "@repo/shared/announcements/actions";
 import { signOut } from "@repo/shared/auth/client";
-import { isAdminRole, isObserverAdminRole } from "@repo/shared/auth/roles";
+import { normalizeUserRole } from "@repo/shared/auth/roles";
 import { ModeToggle } from "@repo/shared/components";
 import { dashboardConfig } from "@repo/shared/config";
 import { CreditBalanceBadge } from "@repo/shared/credits/components";
@@ -20,22 +20,12 @@ import {
 import { Separator } from "@repo/ui/components/separator";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/components/sheet";
 import { cn } from "@repo/ui/utils";
-import type { LucideIcon } from "lucide-react";
 import {
-  Activity,
-  ChartNoAxesCombined,
   ChevronRight,
   ChevronsUpDown,
-  CreditCard,
-  History,
   Loader2,
   LogOut,
-  Megaphone,
-  ReceiptText,
-  Server,
   Settings,
-  Shield,
-  Users,
 } from "lucide-react";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -48,22 +38,13 @@ import {
 } from "@/features/auth/hooks/use-current-session";
 import { SiteLogo } from "@/features/branding/site-logo";
 import { useSidebar } from "@/features/dashboard/context";
+import {
+  buildAdministrationItems,
+  findMostSpecificActiveHref,
+  normalizeSidebarPath,
+  type SidebarNavGroup,
+} from "@/features/dashboard/sidebar-navigation";
 import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
-
-type SidebarLeafItem = {
-  title: string;
-  href: string;
-  icon?: LucideIcon;
-};
-
-type SidebarNavItem = SidebarLeafItem & {
-  items?: SidebarLeafItem[];
-};
-
-type SidebarNavGroup = {
-  title: string;
-  items: SidebarNavItem[];
-};
 
 /**
  * Dashboard 侧边栏组件
@@ -123,8 +104,9 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   // 获取当前用户会话
   const { data: session } = useCurrentSession(initialSession);
   const user = session?.user;
-  const isAdmin = isAdminRole(user?.role);
-  const isObserverAdmin = isObserverAdminRole(user?.role);
+  const role = normalizeUserRole(user?.role);
+  const isAdmin = role === "admin" || role === "super_admin";
+  const isObserverAdmin = role === "observer_admin";
   const normalizedPathname = pathname.replace(/^\/[a-z]{2}\//, "/");
   const isRejectedAdminRoute =
     normalizedPathname.startsWith("/dashboard/admin/") &&
@@ -189,7 +171,8 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "Admin Data Dashboard": t("nav.adminAnalytics"),
       "Operations Dashboard": t("nav.operations"),
       "Announcement Management": t("nav.announcementManagement"),
-      "Account Pool": t("nav.imageBackendPool"),
+      "Model Configuration": t("nav.modelConfiguration"),
+      "Supplier Management": t("nav.supplierManagement"),
       Support: t("nav.support"),
       "New Ticket": t("nav.newTicket"),
       "User Management": t("nav.userManagement"),
@@ -235,113 +218,20 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
   /**
    * 管理员先看系统管理入口，随后才是与普通用户相同的个人功能。
    *
-   * WHY：管理员在处理系统状态、用户和公告时不必穿过个人菜单；普通用户仍完整保持
-   * dashboardConfig 的原有分组和顺序。观察管理员只显示其已获授权的管理功能。
+   * WHY：菜单只负责发现性；真实页面和 Action 仍在服务端复查角色。普通用户继续完整
+   * 保持 dashboardConfig 的原有分组和顺序，观察管理员只显示已获授权的管理功能。
    */
-  const navigationGroups: SidebarNavGroup[] = (() => {
-    const adminItems = isAdmin
-      ? [
+  const adminItems = buildAdministrationItems(role);
+  const navigationGroups: SidebarNavGroup[] =
+    adminItems.length === 0
+      ? dashboardConfig.sidebarNav
+      : [
+          { title: "Administration", items: adminItems },
           {
-            title: "Global Status",
-            href: "/dashboard/admin/status",
-            icon: Activity,
+            title: "User",
+            items: dashboardConfig.sidebarNav.flatMap((group) => group.items),
           },
-          {
-            title: "Admin Data Dashboard",
-            href: "/dashboard/admin/analytics",
-            icon: ChartNoAxesCombined,
-          },
-          {
-            title: "Operations Dashboard",
-            href: "/dashboard/admin/operations",
-            icon: Activity,
-          },
-          {
-            title: "User Management",
-            href: "/dashboard/admin/users",
-            icon: Users,
-          },
-          {
-            title: "Global Usage Records",
-            href: "/dashboard/admin/history",
-            icon: History,
-          },
-          {
-            title: "Order Management",
-            href: "/dashboard/admin/payments",
-            icon: ReceiptText,
-            items: [
-              {
-                title: "Payment Overview",
-                href: "/dashboard/admin/payments",
-                icon: CreditCard,
-              },
-              {
-                title: "Order Management",
-                href: "/dashboard/admin/payments/orders",
-                icon: ReceiptText,
-              },
-            ],
-          },
-          {
-            title: "Announcement Management",
-            href: "/dashboard/admin/announcements",
-            icon: Megaphone,
-          },
-          {
-            title: "System Settings",
-            href: "/dashboard/admin/settings",
-            icon: Shield,
-          },
-        ]
-      : isObserverAdmin
-        ? [
-            {
-              title: "Global Status",
-              href: "/dashboard/admin/status",
-              icon: Activity,
-            },
-            {
-              title: "Account Pool",
-              href: "/dashboard/admin/settings",
-              icon: Server,
-            },
-            {
-              title: "Global Usage Records",
-              href: "/dashboard/admin/history",
-              icon: History,
-            },
-          ]
-        : [];
-
-    if (adminItems.length === 0) return dashboardConfig.sidebarNav;
-
-    return [
-      { title: "Administration", items: adminItems },
-      {
-        title: "User",
-        items: dashboardConfig.sidebarNav.flatMap((group) => group.items),
-      },
-    ];
-  })();
-
-  /** 在同级候选中选择最长匹配路径，避免父路径与更深子路径同时激活。 */
-  const findMostSpecificActiveHref = (
-    items: readonly SidebarLeafItem[]
-  ): string | null => {
-    const normalizedPath = pathname.replace(/^\/[a-z]{2}\//, "/");
-    return (
-      items
-        .filter(
-          (item) =>
-            normalizedPath === item.href ||
-            (item.href !== "/dashboard" &&
-              normalizedPath.startsWith(`${item.href}/`))
-        )
-        .sort((left, right) => right.href.length - left.href.length)[0]?.href ??
-      null
-    );
-  };
+        ];
 
   /** 切换一级菜单展开状态；当前子路由激活时由渲染逻辑强制保持展开。 */
   const toggleExpandedMenu = (title: string): void => {
@@ -409,9 +299,9 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
               <div className="space-y-0.5">
                 {group.items.map((item) => {
                   // 去掉 locale 前缀后比较路径
-                  const normalizedPath = pathname.replace(/^\/[a-z]{2}\//, "/");
+                  const normalizedPath = normalizeSidebarPath(pathname);
                   const activeChildHref = item.items
-                    ? findMostSpecificActiveHref(item.items)
+                    ? findMostSpecificActiveHref(pathname, item.items)
                     : null;
                   const isActive =
                     Boolean(activeChildHref) ||
