@@ -43,6 +43,46 @@ const validGroup = {
 };
 
 describe("image backend pool pricing operations", () => {
+  it("管理号池输出接受 API 成员的视频协议模式", () => {
+    const result = getAdminPool.output.safeParse({
+      groups: [],
+      members: [
+        {
+          id: "api-member",
+          name: "API",
+          type: "api",
+          groupIds: ["group-a"],
+          supportedModelIds: ["sora-2"],
+          contentSafetyEnabled: true,
+          isEnabled: true,
+          alwaysActive: false,
+          failureCooldownEnabled: true,
+          priority: 0,
+          concurrency: 1,
+          status: "active",
+          healthStatus: "healthy",
+          inflightCount: 0,
+          leaseAcquiredCount: 0,
+          createdAt: "2026-08-20T00:00:00.000Z",
+          lastAcquiredAt: null,
+          lastUsedAt: null,
+          lastError: null,
+          lastErrorAt: null,
+          config: {
+            baseUrl: "https://example.com",
+            hasApiKey: true,
+            useStream: false,
+            videoSubmissionRetryCount: 2,
+            videoProtocolMode: "gemini",
+            modelMappings: [],
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("人工号池列表使用独立严格分页契约且不向 Agent 暴露", () => {
     expect(
       adminPoolMemberListInputSchema.safeParse({
