@@ -20,6 +20,11 @@ import {
   videoListCapabilitiesOutputSchema,
   videoTaskBillingSchema,
 } from "../../video-generation";
+import {
+  geminiModelPathSchema,
+  geminiOperationOutputSchema,
+  geminiPublicOperationNameSchema,
+} from "../../video-generation/gemini-contract";
 import { defineOperation } from "../registry";
 
 export {
@@ -47,6 +52,14 @@ export const videoRequestedResolutionSchema = z
 export const videoGenerateInputSchema = z
   .object({
     clientRequestId: z.string().trim().min(1).max(128),
+    /** Gemini public Operation 的平台生成 opaque ID；普通 FluxMedia 调用省略。 */
+    geminiOperationId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_-]{16,128}$/)
+      .optional(),
+    /** Gemini 公共路径中的模型名；仅由 Gemini handler 设置，用于 Operation 归属校验。 */
+    geminiModel: geminiModelPathSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
     negativePrompt: z.string().max(100_000).optional(),
     generateAudio: z.boolean().optional(),
@@ -76,10 +89,21 @@ export const videoGenerateInputSchema = z
       return;
     }
     const capability = parameters.capability;
-    if (input.generateAudio === true && !capability.audio.supported) {
+    if (
+      input.generateAudio === true &&
+      !capability.audio.supported &&
+      !input.geminiModel
+    ) {
       context.addIssue({
         code: "custom",
         message: "This video model does not support audio generation",
+        path: ["generateAudio"],
+      });
+    }
+    if (input.geminiModel && input.generateAudio === false) {
+      context.addIssue({
+        code: "custom",
+        message: "Gemini Veo always generates audio and cannot disable it",
         path: ["generateAudio"],
       });
     }
@@ -208,13 +232,21 @@ export type CanonicalVideoGenerateInputResult =
 export function normalizeVideoGenerateInputForReplay(
   input: VideoGenerateInput
 ): CanonicalVideoGenerateInput {
-  const { quoteToken: _quoteToken, ...request } = input;
+  const {
+    quoteToken: _quoteToken,
+    geminiOperationId: _geminiOperationId,
+    ...request
+  } = input;
   const resolved = resolveVideoModelCapability(input.model);
   return {
     ...request,
     generateAudio:
       input.generateAudio ??
-      (resolved.ok ? resolved.capability.audio.defaultEnabled : false),
+      (input.geminiModel
+        ? true
+        : resolved.ok
+          ? resolved.capability.audio.defaultEnabled
+          : false),
   };
 }
 
@@ -254,7 +286,9 @@ export function resolveCanonicalVideoGenerateInput(
     capability,
     input: {
       ...request,
-      generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
+      generateAudio:
+        input.generateAudio ??
+        (input.geminiModel ? true : capability.audio.defaultEnabled),
     },
   };
 }
@@ -337,6 +371,23 @@ export const videoGetStatusInputSchema = z
     taskId: z.string().trim().min(1).max(128),
   })
   .strict();
+
+/** Gemini Operation 查询输入；完整 name 必须由公共 handler 先解析并保留。 */
+export const videoGetGeminiOperationInputSchema = z
+  .object({
+    model: geminiModelPathSchema,
+    operationName: geminiPublicOperationNameSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (!input.operationName.startsWith(`models/${input.model}/operations/`)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationName"],
+        message: "Operation model does not match the path model",
+      });
+    }
+  });
 
 /** 能力查询允许站内用户显式选择可信分组；API Key 绑定由 execute 强制收口。 */
 export const videoListCapabilitiesInputSchema = z
@@ -426,6 +477,10 @@ export const videoGenerate = defineOperation({
       status: videoPublicStatusSchema,
       billing: videoTaskBillingSchema,
       error: z.string().max(1_000).optional(),
+      geminiOperationId: z
+        .string()
+        .regex(/^[A-Za-z0-9_-]{16,128}$/)
+        .optional(),
     })
     .strict(),
   access: { kind: "protected" },
@@ -492,6 +547,25 @@ export const videoGetStatus = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: video.getStatus");
+  },
+});
+
+/** 将同一平台视频任务投影为 Gemini Operation，不创建第二套状态机。 */
+export const videoGetGeminiOperation = defineOperation({
+  name: "video.getGeminiOperation",
+  domain: "image-generation",
+  title: "查询 Gemini 视频 Operation",
+  description:
+    "按平台生成的不透明 Operation name 查询同一视频任务，并投影为 Gemini LRO 响应。",
+  input: videoGetGeminiOperationInputSchema,
+  output: geminiOperationOutputSchema,
+  access: { kind: "owner", resource: "Gemini video Operation" },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: video.getGeminiOperation");
   },
 });
 

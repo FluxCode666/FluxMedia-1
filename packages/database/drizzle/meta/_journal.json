@@ -666,6 +666,13 @@
       "when": 1786813200000,
       "tag": "0094_operations_detail_cursor_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1786899600000,
+      "tag": "0095_gemini_video_operation",
+      "breakpoints": true
     }
   ]
 }

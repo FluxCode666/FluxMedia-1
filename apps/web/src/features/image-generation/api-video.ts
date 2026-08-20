@@ -23,8 +23,15 @@ import {
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
 import { parseMediaUpstreamUrl } from "@/features/image-backend-pool/media-upstream-url";
-
 import { ApiAcceptedVideoError } from "./api-video-error";
+import {
+  pollGeminiVideoRequest,
+  submitGeminiVideoRequest,
+} from "./gemini-video";
+import {
+  pollSeedanceVideoRequest,
+  submitSeedanceVideoRequest,
+} from "./seedance-video";
 import type { ApiConfig } from "./types";
 
 const MAX_API_VIDEO_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -51,6 +58,7 @@ export type ApiVideoSubmission =
   | {
       status: "pending";
       upstreamJobId: string;
+      upstreamOperationName?: string;
       pollAfterSeconds?: number;
       raw: Record<string, unknown>;
     }
@@ -195,6 +203,13 @@ function resolveApiVideoUrl(baseUrl: string, value: string): string {
 function getApiUpstreamAdapter(config: ApiConfig) {
   const adapter = config.backend?.apiUpstreamAdapter;
   if (!adapter) throw new Error("API 视频账号缺少固定适配版本");
+  return adapter;
+}
+
+/** custom 模式继续沿用脚本或无脚本内置行为；Gemini/Seedance 已在上方独立分支处理。 */
+function getVideoExecutionAdapter(
+  adapter: ReturnType<typeof getApiUpstreamAdapter>
+): ReturnType<typeof getApiUpstreamAdapter> {
   return adapter;
 }
 
@@ -443,6 +458,129 @@ export async function submitApiVideoRequest(
     params.model,
     adapter.modelMappings
   );
+  if (adapter.videoProtocolMode === "gemini") {
+    if (params.negativePrompt?.trim()) {
+      return {
+        error: "Gemini Veo 原生不支持 negativePrompt",
+        failure: { kind: "unknown", statusCode: 400 },
+      };
+    }
+    const result = await submitGeminiVideoRequest({
+      adapter,
+      apiKey: config.apiKey,
+      upstreamModel,
+      prompt: params.prompt,
+      duration: params.duration,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
+      effectiveAudio: params.effectiveAudio,
+      ...(params.firstFrame ? { firstFrame: params.firstFrame } : {}),
+      ...(params.lastFrame ? { lastFrame: params.lastFrame } : {}),
+      ...(params.referenceImages?.length
+        ? { referenceImages: params.referenceImages }
+        : {}),
+      onRequestSnapshot: params.onRequestSnapshot,
+      onBeforeSend: params.onBeforeSend,
+      signal: params.signal,
+    });
+    if ("error" in result) {
+      return {
+        error: result.error,
+        failure: {
+          kind:
+            result.failure.kind === "response_parse"
+              ? "response_parse"
+              : result.failure.kind === "response_read"
+                ? "response_read"
+                : result.failure.kind === "missing_operation_name"
+                  ? "missing_task_id"
+                  : result.failure.kind === "timeout"
+                    ? "timeout"
+                    : result.failure.kind === "network"
+                      ? "network"
+                      : "unknown",
+          ...(result.failure.statusCode !== undefined
+            ? { statusCode: result.failure.statusCode }
+            : {}),
+        },
+        ...(result.retryAfterSeconds !== undefined
+          ? { retryAfterSeconds: result.retryAfterSeconds }
+          : {}),
+      };
+    }
+    if (result.status === "completed") {
+      return {
+        status: "completed",
+        videoUrl: resolveApiVideoUrl(config.baseUrl, result.videoUrl),
+        raw: result.raw,
+      };
+    }
+    return {
+      status: "pending",
+      upstreamJobId: result.upstreamOperationName,
+      upstreamOperationName: result.upstreamOperationName,
+      pollAfterSeconds: result.pollAfterSeconds,
+      raw: result.raw,
+    };
+  }
+  if (adapter.videoProtocolMode === "seedance") {
+    const result = await submitSeedanceVideoRequest({
+      adapter,
+      apiKey: config.apiKey,
+      upstreamModel,
+      prompt: params.prompt,
+      duration: params.duration,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
+      effectiveAudio: params.effectiveAudio,
+      ...(params.firstFrame ? { firstFrame: params.firstFrame } : {}),
+      ...(params.lastFrame ? { lastFrame: params.lastFrame } : {}),
+      ...(params.referenceImages?.length
+        ? { referenceImages: params.referenceImages }
+        : {}),
+      onRequestSnapshot: params.onRequestSnapshot,
+      onBeforeSend: params.onBeforeSend,
+      signal: params.signal,
+    });
+    if ("error" in result) {
+      return {
+        error: result.error,
+        failure: {
+          kind:
+            result.failure.kind === "response_parse"
+              ? "response_parse"
+              : result.failure.kind === "response_read"
+                ? "response_read"
+                : result.failure.kind === "missing_task_id"
+                  ? "missing_task_id"
+                  : result.failure.kind === "timeout"
+                    ? "timeout"
+                    : result.failure.kind === "network"
+                      ? "network"
+                      : "unknown",
+          ...(result.failure.statusCode !== undefined
+            ? { statusCode: result.failure.statusCode }
+            : {}),
+        },
+        ...(result.retryAfterSeconds !== undefined
+          ? { retryAfterSeconds: result.retryAfterSeconds }
+          : {}),
+      };
+    }
+    if (result.status === "completed") {
+      return {
+        status: "completed",
+        videoUrl: resolveApiVideoUrl(config.baseUrl, result.videoUrl),
+        raw: result.raw,
+      };
+    }
+    return {
+      status: "pending",
+      upstreamJobId: result.upstreamJobId,
+      pollAfterSeconds: result.pollAfterSeconds,
+      raw: result.raw,
+    };
+  }
   let firstFrameValue: string | undefined;
   let lastFrameValue: string | undefined;
   let referenceImageValues: string[] | undefined;
@@ -505,10 +643,11 @@ export async function submitApiVideoRequest(
       ? { reference_images: referenceImageValues.map(toOpaqueInputValue) }
       : {}),
   };
+  const executionAdapter = getVideoExecutionAdapter(adapter);
 
   try {
     const executed = await executeApiUpstreamOperation({
-      adapter,
+      adapter: executionAdapter,
       apiKey: config.apiKey,
       operation: "videos.generate",
       platformModelId: params.model,
@@ -686,13 +825,79 @@ export async function pollApiVideoRequest(
       { cause: error }
     );
   }
+  if (adapter.videoProtocolMode === "gemini") {
+    try {
+      const upstreamModel = resolveApiUpstreamModelId(
+        config.model ?? "unknown-video-model",
+        adapter.modelMappings
+      );
+      const result = await pollGeminiVideoRequest({
+        adapter,
+        apiKey: config.apiKey,
+        upstreamModel,
+        operationName: upstreamJobId,
+        signal: context.signal,
+      });
+      return result.status === "completed"
+        ? {
+            status: "completed",
+            videoUrl: resolveApiVideoUrl(config.baseUrl, result.videoUrl),
+            raw: result.raw,
+          }
+        : {
+            status: "pending",
+            pollAfterSeconds: result.pollAfterSeconds,
+            raw: result.raw,
+          };
+    } catch (error) {
+      if (error instanceof ApiAcceptedVideoError) throw error;
+      throw new ApiAcceptedVideoError(
+        error instanceof Error ? error.message : "Gemini 视频查询失败",
+        true,
+        undefined,
+        true,
+        { cause: error }
+      );
+    }
+  }
+  if (adapter.videoProtocolMode === "seedance") {
+    try {
+      const result = await pollSeedanceVideoRequest({
+        adapter,
+        apiKey: config.apiKey,
+        upstreamJobId,
+        signal: context.signal,
+      });
+      return result.status === "completed"
+        ? {
+            status: "completed",
+            videoUrl: resolveApiVideoUrl(config.baseUrl, result.videoUrl),
+            raw: result.raw,
+          }
+        : {
+            status: "pending",
+            pollAfterSeconds: result.pollAfterSeconds,
+            raw: result.raw,
+          };
+    } catch (error) {
+      if (error instanceof ApiAcceptedVideoError) throw error;
+      throw new ApiAcceptedVideoError(
+        error instanceof Error ? error.message : "Seedance 视频查询失败",
+        true,
+        undefined,
+        true,
+        { cause: error }
+      );
+    }
+  }
   const upstreamModel = resolveApiUpstreamModelId(
     config.model ?? "unknown-video-model",
     adapter.modelMappings
   );
+  const executionAdapter = getVideoExecutionAdapter(adapter);
   try {
     const executed = await executeApiUpstreamOperation({
-      adapter,
+      adapter: executionAdapter,
       apiKey: config.apiKey,
       operation: "videos.query",
       platformModelId: config.model ?? upstreamModel,

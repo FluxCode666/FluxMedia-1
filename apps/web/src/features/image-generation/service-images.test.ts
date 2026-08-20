@@ -61,6 +61,7 @@ return { body: transformSampleRequest(request.body) };
     baseUrl: "https://api.example.test/v1",
     useStream: false,
     videoSubmissionRetryCount: 2,
+    videoProtocolMode: "custom" as const,
     modelMappings: [
       { modelId: "gpt-image-2", upstreamModelId: "vendor-image-id" },
     ],

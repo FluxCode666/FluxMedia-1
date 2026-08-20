@@ -16,7 +16,7 @@ const EXPECTED_PATHS = [
   "/v1/credits",
   "/v1/images/generations",
   "/v1/images/edits",
-  "/v1/videos",
+  "/v1/videos/generations",
   "/v1/videos/capabilities",
   "/v1/images/{task_id}",
   "/v1/videos/{id}",
@@ -191,17 +191,11 @@ describe("API integration docs data", () => {
     expect(createText).toContain("/api/v1/videos/generations");
     expect(createText).toContain("/api/v1/videos");
     if (locale === "zh") {
-      expect(create?.deprecationNotice).toContain("警告：");
-      expect(create?.deprecationNotice).toContain("即将废弃下线");
-      expect(create?.deprecationNotice).toContain(
-        "请尽快迁移至 POST /v1/videos"
-      );
+      expect(create?.deprecationNotice).toContain("/v1/videos 已不再提供视频创建");
     } else {
-      expect(create?.deprecationNotice).toContain("Warning:");
       expect(create?.deprecationNotice).toContain(
-        "scheduled for deprecation and removal"
+        "no longer a video creation endpoint"
       );
-      expect(create?.deprecationNotice).toContain("Migrate to POST /v1/videos");
     }
     expect(create?.responseExample).toContain('"status": "queued"');
     expect(create?.responseExample).toContain('"kind": "snapshot"');

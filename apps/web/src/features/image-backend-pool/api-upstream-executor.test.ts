@@ -23,6 +23,7 @@ function createAdapter(
     baseUrl: "http://upstream.internal:8080/v1",
     useStream: false,
     videoSubmissionRetryCount: 2,
+    videoProtocolMode: "custom",
     modelMappings: [],
     authentication: { mode: "bearer" },
     credentialScope: "http://upstream.internal:8080|bearer",

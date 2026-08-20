@@ -82,6 +82,20 @@ Query 或 Fragment。操作路径必须：
 
 脚本看不到 API Key，也不能覆盖认证 Header。密钥不得放入路径或 Query。
 
+### 内置视频协议模式
+
+管理员在成员表单中显式选择视频协议，模式不会根据模型名称推断：
+
+- `custom`：沿用本手册前述 `videos.generate`/`videos.query` 脚本和无脚本内置路径。
+- `gemini`：使用 Gemini `v1beta/models/{model}:predictLongRunning` 和 Operation 查询，
+  忽略视频六操作路径与脚本。
+- `seedance`：使用火山方舟 `POST /api/v3/contents/generations/tasks` 及固定任务查询，
+  忽略视频六操作路径与脚本。成员 `baseUrl` 可填写根地址，也可填写已经包含 `/api/v3`
+  的地址；模型、内容、比例、时长、分辨率和音频字段由平台适配器生成。
+
+Gemini 和 Seedance 模式仍会经过同一套提交尝试账本、有限同账号重试和耗尽后切换账号；
+一旦上游返回有效任务身份，成员与适配版本固定，后续查询不会换号重提。
+
 ## 模型映射
 
 调度、能力、计费、任务记录和公开 API 始终使用平台真实模型 ID。模型映射只在账号

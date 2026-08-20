@@ -39,6 +39,7 @@ function createAdapter(): ApiUpstreamAdapterDraft {
     baseUrl: "https://video.example.com/v1",
     useStream: false,
     videoSubmissionRetryCount: 2,
+    videoProtocolMode: "custom",
     modelMappings: [{ modelId: "seedance2", upstreamModelId: "seedance-2.0" }],
     authentication: { mode: "bearer" },
     credentialScope: "https://video.example.com|bearer",

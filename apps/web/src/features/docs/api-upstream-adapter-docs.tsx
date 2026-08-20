@@ -66,7 +66,7 @@ const localizedContent = {
   zh: {
     title: "API 账号上游适配",
     description:
-      "在账号池的 API 类型账号中配置模型映射、认证，以及文生图、图生图和生视频各自的生成与查询操作。路径和认证由系统控制，JavaScript 只处理有界请求与响应数据。",
+      "在账号池的 API 类型账号中配置模型映射、认证、视频协议模式，以及文生图、图生图和生视频各自的生成与查询操作。视频模式可选 Gemini、Seedance 或 custom，且不由模型名称推断；路径和认证由系统控制，JavaScript 只处理有界请求与响应数据。",
     operationTitle: "六个固定操作",
     operationHeaders: ["操作", "方法", "空路径默认值", "Body"],
     scriptTitle: "脚本可读取与返回的值",
@@ -82,6 +82,7 @@ const localizedContent = {
     safetyItems: [
       "允许普通函数、箭头函数和同步对象处理；禁止 import、第三方库、Promise、网络、文件、时间、随机数和动态代码。",
       "模型映射来源只使用平台真实模型 ID；时长、比例和分辨率保持独立参数。",
+      "视频协议模式由管理员按成员显式选择：Gemini 与 Seedance 使用内置适配，custom 保留现有脚本或无脚本内置路径；历史缺失模式的成员按 custom 处理。",
       "首尾帧与参考图对所有模型互斥；媒体令牌只能移动一次，不能删除、复制、伪造或截断。Seedance 参考图默认上限 10，管理员可调整且适配器没有硬上限。",
       "查询路径固定由管理员配置，系统不会采用响应中的 poll_url 或 status_url。",
       "图片供应商异步任务只在当前 Node 进程内尽力轮询。进程崩溃后不会恢复远端图片任务；供应商不支持幂等键时，客户端重试可能产生孤儿任务、重复生成和额外供应商费用。",
@@ -125,7 +126,7 @@ const localizedContent = {
   en: {
     title: "API account upstream adapters",
     description:
-      "Configure model mappings, authentication, and separate generation and query operations for text-to-image, image-to-image, and video API accounts. The host controls paths and credentials; JavaScript only transforms bounded request and response data.",
+      "Configure model mappings, authentication, an explicit Gemini/Seedance/custom video protocol mode, and separate generation and query operations for text-to-image, image-to-image, and video API accounts. The host controls paths and credentials; JavaScript only transforms bounded request and response data.",
     operationTitle: "Six fixed operations",
     operationHeaders: ["Operation", "Method", "Empty-path default", "Body"],
     scriptTitle: "Script inputs and outputs",
@@ -141,6 +142,7 @@ const localizedContent = {
     safetyItems: [
       "Regular functions, arrow functions, and synchronous object operations are allowed. Imports, third-party libraries, Promise, network, files, time, randomness, and dynamic code are forbidden.",
       "Model mappings use real platform model IDs; duration, aspect ratio, and resolution remain separate parameters.",
+      "Admins choose the video protocol per member: Gemini and Seedance use built-in adapters, while custom preserves existing scripts or built-in no-script paths. Legacy snapshots without a mode use custom.",
       "First/last frames and reference images are mutually exclusive for every model. Media tokens may only be moved once. Seedance defaults to 10 reference images; admins may change it and the adapter adds no hard cap.",
       "Query paths are fixed by administrators; poll_url and status_url from responses are ignored.",
       "Async image supplier tasks are polled on a best-effort basis inside the current Node process. A process crash does not recover the remote task; without supplier idempotency, client retries may create orphan tasks, duplicate generations, and extra supplier charges.",

@@ -171,6 +171,10 @@ export type VideoGenerationInput = {
   prompt: string;
   videoGenerationId?: string;
   clientRequestId?: string;
+  /** Gemini 公共 Operation 使用的平台随机 opaque ID；普通协议为空。 */
+  geminiOperationId?: string;
+  /** Gemini 公共路径模型；用于 Operation 查询时的模型归属校验。 */
+  geminiModel?: string;
   /** 创建调用的服务端权威 request ID，仅用于安全日志与任务关联。 */
   serverRequestId?: string;
   /** 客户端 X-Request-Id 的已校验关联副本，不能替代服务端 request ID。 */
@@ -1494,10 +1498,11 @@ async function pollAcceptedVideoTask(row: VideoGenerationRow) {
     throw new Error("已接受视频任务缺少恢复身份");
   }
   if (getVideoBackendProtocol(row) === "api") {
+    const upstreamIdentity = row.upstreamOperationName ?? row.upstreamJobId;
     if (
       !row.apiAdapterMemberId ||
       !row.apiAdapterVersionId ||
-      !row.upstreamJobId
+      !upstreamIdentity
     ) {
       throw new ApiAcceptedVideoError(
         "API 视频恢复缺少固定适配版本，任务将保留重试",
@@ -1510,7 +1515,7 @@ async function pollAcceptedVideoTask(row: VideoGenerationRow) {
       row.apiAdapterVersionId,
       row.model
     );
-    return pollApiVideoRequest(config, row.upstreamJobId, {
+    return pollApiVideoRequest(config, upstreamIdentity, {
       trustedOrigin: getApiVideoTrustedOrigin(row),
     });
   }
@@ -1811,6 +1816,10 @@ export async function runVideoGenerationForUser(
         ...(input.clientRequestId
           ? { clientRequestId: input.clientRequestId }
           : {}),
+        ...(input.geminiOperationId
+          ? { geminiOperationId: input.geminiOperationId }
+          : {}),
+        ...(input.geminiModel ? { geminiModel: input.geminiModel } : {}),
         ...(input.serverRequestId
           ? { serverRequestId: input.serverRequestId }
           : {}),
@@ -1828,6 +1837,9 @@ export async function runVideoGenerationForUser(
         videoCapabilitySnapshot: input.capabilitySnapshot,
         videoBillingSnapshot: billingSnapshot,
       },
+      ...(input.geminiOperationId
+        ? { publicOperationId: input.geminiOperationId }
+        : {}),
       ...(hasInputManifest ? { inputManifest: persistedInputManifest } : {}),
       createdAt,
       updatedAt: createdAt,
@@ -2234,7 +2246,17 @@ async function submitClaimedCreatedVideo(
     if (submittedRequestSnapshot) {
       row = attachVideoUpstreamRequestSnapshot(row, submittedRequestSnapshot);
     }
-    const reservedAttempt = await reservedAttemptPromise;
+    let reservedAttempt: Awaited<
+      ReturnType<typeof defaultVideoSubmissionAttemptRepository.reserveNext>
+    >;
+    try {
+      reservedAttempt = await reservedAttemptPromise;
+    } catch (error) {
+      if (!attemptReservationRejected) throw error;
+      // 发送前账本达到账号上限时，适配器已经阻止外呼；把拒绝交给下面的切号
+      // 分支，数据库自身的异常仍然继续上抛。
+      reservedAttempt = null;
+    }
     if (
       lease.memberType === "api" &&
       !("error" in submitted) &&
@@ -2251,6 +2273,7 @@ async function submitClaimedCreatedVideo(
             stage: "downloading",
             pollUrl: null,
             upstreamJobId: null,
+            upstreamOperationName: null,
             videoUrl: submitted.videoUrl,
             storageKey: createVideoStorageKey(row.userId, row.id),
             upstreamAcceptedAt: new Date(),
@@ -2282,6 +2305,10 @@ async function submitClaimedCreatedVideo(
           // 仍沿用其既有动态 pollUrl 契约。
           pollUrl: "pollUrl" in submitted ? submitted.pollUrl : null,
           upstreamJobId: submitted.upstreamJobId,
+          ...("upstreamOperationName" in submitted &&
+          submitted.upstreamOperationName
+            ? { upstreamOperationName: submitted.upstreamOperationName }
+            : { upstreamOperationName: null }),
           upstreamAcceptedAt: new Date(),
           nextPollAt: new Date(Date.now() + pollAfterSeconds * 1_000),
           apiAdapterQueryFailureCount: 0,
@@ -2830,7 +2857,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     if (
       !row.backendMemberId ||
       (getVideoBackendProtocol(row) === "api"
-        ? !row.upstreamJobId
+        ? !(row.upstreamOperationName ?? row.upstreamJobId)
         : !row.pollUrl)
     ) {
       const refunding = await moveVideoToRefunding(

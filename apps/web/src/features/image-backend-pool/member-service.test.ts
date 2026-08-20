@@ -721,6 +721,7 @@ describe("backend member service", () => {
         hasApiKey: true,
         useStream: false,
         videoSubmissionRetryCount: 2,
+        videoProtocolMode: "custom",
         modelMappings: [],
       },
     };

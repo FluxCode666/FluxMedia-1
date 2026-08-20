@@ -2301,6 +2301,10 @@ export const videoGeneration = pgTable(
     // 异步轮询恢复用。
     pollUrl: text("poll_url"),
     upstreamJobId: text("upstream_job_id"),
+    /** Gemini LRO 的完整上游 operation.name；只供固定成员恢复使用。 */
+    upstreamOperationName: text("upstream_operation_name"),
+    /** 平台生成的 Gemini opaque Operation ID；对外 name 的唯一映射。 */
+    publicOperationId: text("public_operation_id"),
     nextPollAt: timestamp("next_poll_at"),
     claimToken: text("claim_token"),
     claimExpiresAt: timestamp("claim_expires_at"),
@@ -2316,6 +2320,9 @@ export const videoGeneration = pgTable(
     index("video_generation_user_idx").on(table.userId, table.createdAt),
     index("video_generation_status_idx").on(table.status, table.createdAt),
     index("video_generation_backend_member_idx").on(table.backendMemberId),
+    uniqueIndex("video_generation_public_operation_id_unique").on(
+      table.publicOperationId
+    ),
     index("video_generation_member_lease_idx").on(table.memberLeaseId),
     index("video_generation_principal_stage_idx").on(
       table.principalScope,

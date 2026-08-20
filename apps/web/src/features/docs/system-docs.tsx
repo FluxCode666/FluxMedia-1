@@ -73,7 +73,7 @@ const sections = {
         },
         {
           label: "外部视频 API",
-          path: "POST /v1/videos",
+          path: "POST /v1/videos/generations",
           kind: "video",
         },
         {
@@ -198,10 +198,10 @@ const sections = {
           "multipart 图片会被转成统一图片输入，再按分组调度。",
         ],
         [
-          "OpenAI-style video",
-          "/v1/videos",
+          "FluxMedia video",
+          "/v1/videos/generations",
           "video",
-          "本站扩展。始终创建持久视频任务并返回 HTTP 202；使用响应中的视频任务 ID 轮询 GET /v1/videos/{id}，也可配置 callback_url 接收终态回调。",
+          "本站扩展。始终创建持久视频任务并返回 HTTP 202；使用响应中的视频任务 ID 轮询 GET /v1/videos/{id}，也可配置 callback_url 接收终态回调。POST /v1/videos 已下线。",
         ],
         [
           "Async image task",
@@ -336,7 +336,7 @@ const sections = {
         "所有页面和外接 API 请求都使用平台后端池，并按平台积分与 API 密钥额度结算。",
         "image 接口的 web_first / webFirst / force_web / forceWeb（chat 对应 mix_web_first）是 Web-first 优先路由，不是硬性只走 Web，且默认开启。开启时（不传或显式 true）按 Web-first 像素区间（IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS，默认 0.66MP-2MP）判定：尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）则走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。该路由只对 mixed 后端分组生效（纯 Web / 纯 Codex-Responses 分组无此概念）；agent 始终走 Codex/Responses，不受此项影响。",
         "Adobe（Firefly）后端与 API 后端使用同一分组调度规则：只有成员 supportedModelIds 显式声明的真实模型 ID 才能参与候选，客户端模型 ID 不做供应商前缀或别名转换。图片使用模型四档固定价加运行时审核费，视频使用模型族对应分辨率的每秒固定价格。",
-        "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；body 中的 async 仅为兼容接受，不改变行为，也不支持通过 URL ?async 切换模式。callback_url 会绑定到该持久任务并在终态投递。",
+        "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos/generations 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；POST /v1/videos 已下线。callback_url 会绑定到该持久任务并在终态投递。",
       ],
       officialRefsTitle: "官方参考",
       officialRefs: [
@@ -1627,12 +1627,12 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
         {
           title: "Create video",
           method: "POST",
-          path: "/v1/videos",
+          path: "/v1/videos/generations",
           contentType: "application/json",
           description:
-            "按 OpenAI 风格创建地址创建持久视频任务。请求始终在任务持久化后返回 HTTP 202 和 object=video.task，不会在当前连接中等待出片；使用返回的视频任务 ID 轮询 GET /v1/videos/{id}，或通过 callback_url 接收终态回调。鉴权与其他 v1 接口一致（API 密钥）。",
+            "按 FluxMedia 视频协议创建持久视频任务。请求始终在任务持久化后返回 HTTP 202 和 object=video.task，不会在当前连接中等待出片；使用返回的视频任务 ID 轮询 GET /v1/videos/{id}，或通过 callback_url 接收终态回调。POST /v1/videos 已下线。",
           example: `# 1. 文生视频；model 只传真实模型 ID，其他参数独立传递
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -1647,7 +1647,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   }'
 
 # 2. 首尾帧生成；首尾帧与参考图对所有模型互斥
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -1663,7 +1663,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   }'
 
 # 3. 兼容 async 字段；无论 true 或 false，接口都返回同一种持久任务
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -1813,7 +1813,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             },
           ],
           notes: [
-            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos 是同一 handler 的别名。旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；下线前仍复用同一处理逻辑，具体下线版本另行发布。",
+            "该接口是本站扩展，不是 OpenAI 官方接口；/api/v1/videos/generations 是同一 handler 的别名。POST /v1/videos 创建地址已下线，仅保留 GET /v1/videos/{id} 查询。",
             "所有请求都在任务持久化后立即返回 HTTP 202；没有同步等待模式，也不支持用 URL ?async 切换模式。",
             "callback_url 绑定到持久任务并在终态投递；同一 clientRequestId 的幂等重试不能更换或追加回调地址。",
             "计费模式由全局模型配置决定：per_second 以分辨率单价乘 duration 结算，per_item 每条只收一次分辨率单价。创建后 billing 快照固定，后续配置变更不影响该任务。模型、时长、比例和分辨率分别校验，不从 model ID 解析参数。",
@@ -2596,7 +2596,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         },
         {
           label: "External video API",
-          path: "POST /v1/videos",
+          path: "POST /v1/videos/generations",
           kind: "video",
         },
         {
@@ -2716,10 +2716,10 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "Multipart images are converted into unified image inputs before backend routing.",
         ],
         [
-          "OpenAI-style video",
-          "/v1/videos",
+          "FluxMedia video",
+          "/v1/videos/generations",
           "video",
-          "FluxMedia extension. Always creates a persistent video task and returns HTTP 202. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery.",
+          "FluxMedia extension. Always creates a persistent video task and returns HTTP 202. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. POST /v1/videos is no longer a creation endpoint.",
         ],
         [
           "Async image task",
@@ -2854,7 +2854,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "All page and external API requests use the platform backend pool and settle through platform credits and API key quotas.",
         "Image endpoint web_first / webFirst / force_web / forceWeb (chat: mix_web_first) is a Web-first preference route, not hard Web-only, and is on by default. When on (omitted or explicit true) it uses the Web-first pixel range (IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS, default 0.66MP-2MP): only sizes inside the range prefer Web (fall back to Codex/Responses on failure), sizes outside (e.g. 4K) use normal scheduling, auto or unparseable sizes may prefer Web; explicit false disables it. It only applies to mixed backend groups (no effect for Web-only / Codex-Responses-only groups); agent always uses Codex/Responses and is unaffected.",
         "Adobe (Firefly) and API backends follow the same group scheduling rule: only exact model IDs explicitly declared in member supportedModelIds are candidates. Client model IDs are not rewritten from vendor prefixes or aliases. Images use fixed model-tier prices plus runtime review fees, while videos use fixed model-family prices per second.",
-        "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. The async body field is accepted only for compatibility and does not change behavior; URL ?async is not a supported video mode switch. callback_url is attached to the persistent video task and delivered at terminal state.",
+        "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos/generations always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. POST /v1/videos is no longer a creation endpoint. callback_url is attached to the persistent video task and delivered at terminal state.",
       ],
       officialRefsTitle: "Official References",
       officialRefs: [
@@ -3961,12 +3961,12 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
         {
           title: "Create video",
           method: "POST",
-          path: "/v1/videos",
+          path: "/v1/videos/generations",
           contentType: "application/json",
           description:
-            "Creates a persistent video task through the OpenAI-style POST /v1/videos route. Every valid request returns HTTP 202 with object=video.task after persistence; it never waits for the video on the current connection. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. Authentication uses the same API key mechanism as other v1 endpoints.",
+            "Creates a persistent FluxMedia video task through POST /v1/videos/generations. Every valid request returns HTTP 202 with object=video.task after persistence; it never waits for the video on the current connection. Poll GET /v1/videos/{id} with the returned task ID, or configure callback_url for terminal delivery. POST /v1/videos is no longer a creation endpoint.",
           example: `# 1. Text-to-video. model is the real model ID; parameters are separate.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -3981,7 +3981,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   }'
 
 # 2. First/last-frame generation. Frames and reference images are mutually exclusive for every model.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -3997,7 +3997,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
   }'
 
 # 3. Compatibility async field. true, false, or omission creates the same persistent task.
-curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -4152,7 +4152,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             },
           ],
           notes: [
-            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos is an equivalent alias. The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal; migrate to POST /v1/videos or /api/v1/videos. They continue to use the same handler until removal, and the removal release will be announced separately.",
+            "This endpoint is a FluxMedia extension, not an official OpenAI endpoint. /api/v1/videos/generations is an equivalent alias. POST /v1/videos is no longer a creation endpoint; GET /v1/videos/{id} remains available for task queries.",
             "Every request returns HTTP 202 after the task is persisted. There is no synchronous wait mode, and URL ?async does not switch behavior.",
             "callback_url is attached to the persistent task and delivered at terminal state. An idempotent retry with the same clientRequestId cannot replace or add a callback URL.",
             "The global model configuration determines billing mode: per_second charges the resolution unit price × duration, while per_item charges the resolution unit price once. The billing snapshot is fixed at creation, so later configuration changes do not affect the task. Model, duration, ratio, and resolution are validated independently and are never parsed from model ID.",

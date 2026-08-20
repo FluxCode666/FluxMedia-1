@@ -66,7 +66,8 @@ export function ApiUpstreamAdapterForm({
           onValueChange={(mode) =>
             onChange({
               ...value,
-              videoProtocolMode: mode as ApiUpstreamAdapterFormDraft["videoProtocolMode"],
+              videoProtocolMode:
+                mode as ApiUpstreamAdapterFormDraft["videoProtocolMode"],
             })
           }
         >
@@ -80,7 +81,8 @@ export function ApiUpstreamAdapterForm({
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          仅决定该成员发送给上游的视频请求格式，不根据模型名称推断供应商；存量成员默认使用 custom。
+          仅决定该成员发送给上游的视频请求格式，不根据模型名称推断供应商；存量成员默认使用
+          custom。
         </p>
       </div>
       <div className="space-y-2">

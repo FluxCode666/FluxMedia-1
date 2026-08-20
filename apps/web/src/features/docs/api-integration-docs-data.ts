@@ -511,12 +511,12 @@ const zhContent = {
       operation: "video",
       title: "创建视频",
       method: "POST",
-      path: "/v1/videos",
+      path: "/v1/videos/generations",
       contentType: "application/json",
-      description: "按 OpenAI 风格地址根据文本提示词或参考图创建持久视频任务。",
+      description: "按 FluxMedia 视频协议根据文本提示词或参考图创建持久视频任务。",
       deprecationNotice:
-        "警告：旧创建地址 POST /v1/videos/generations（以及 /api/v1/videos/generations 等价地址）即将废弃下线，请尽快迁移至 POST /v1/videos（或 /api/v1/videos）；具体下线版本另行发布。",
-      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos \\
+        "POST /v1/videos 已不再提供视频创建，请使用 POST /v1/videos/generations 或 /api/v1/videos/generations。",
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
   -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -1260,7 +1260,7 @@ const enContent = {
       description:
         "Create a persistent video task from a text prompt or reference images using the OpenAI-style route.",
       deprecationNotice:
-        "Warning: The legacy POST /v1/videos/generations route and its /api/v1/videos/generations alias are scheduled for deprecation and removal. Migrate to POST /v1/videos or /api/v1/videos; the removal release will be announced separately.",
+        "POST /v1/videos is no longer a video creation endpoint. Use POST /v1/videos/generations or /api/v1/videos/generations.",
       parameters: [
         {
           name: "client_request_id / clientRequestId",

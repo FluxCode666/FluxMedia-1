@@ -1,45 +1,102 @@
 /**
- * Gemini 视频适配器契约测试。
+ * Gemini 上游视频适配器测试。
  *
- * 覆盖官方请求嵌套、媒体边界、Operation 成功/失败投影和不安全 URI 拒绝；不发起网络
- * 请求，确保协议解析可在 DB-free 环境验证。
+ * 通过替换媒体上游请求验证请求嵌套、成员认证、Operation 接受和终态错误；不访问真实
+ * 网络或数据库。
  */
-import { describe, expect, it } from "vitest";
+
+import type { ApiUpstreamAdapterDraft } from "@repo/shared/image-backend/api-upstream-adaptation";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { fetchMediaUpstream } = vi.hoisted(() => ({
+  fetchMediaUpstream: vi.fn(),
+}));
+
+vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
+  fetchMediaUpstream,
+}));
 
 import {
-  buildGeminiVideoRequest,
-  parseGeminiVideoPollResult,
-  parseGeminiVideoSubmission,
+  pollGeminiVideoRequest,
+  submitGeminiVideoRequest,
 } from "./gemini-video";
 
-const image = {
-  bytesBase64Encoded: "aGVsbG8=",
-  mimeType: "image/png",
+const adapter: ApiUpstreamAdapterDraft = {
+  baseUrl: "https://generativelanguage.googleapis.com",
+  useStream: false,
+  videoSubmissionRetryCount: 2,
+  videoProtocolMode: "gemini",
+  modelMappings: [],
+  authentication: { mode: "bearer" },
+  credentialScope: "https://generativelanguage.googleapis.com|bearer",
+  operations: {
+    "images.generate": { path: "", requestScript: "", responseScript: "" },
+    "images.generate.query": {
+      path: "",
+      requestScript: "",
+      responseScript: "",
+    },
+    "images.edit": { path: "", requestScript: "", responseScript: "" },
+    "images.edit.query": {
+      path: "",
+      requestScript: "",
+      responseScript: "",
+    },
+    "videos.generate": {
+      path: "",
+      requestScript: "",
+      responseScript: "",
+    },
+    "videos.query": { path: "", requestScript: "", responseScript: "" },
+  },
 };
 
-describe("Gemini video adapter", () => {
-  it("builds the official instances and parameters body", () => {
-    const request = buildGeminiVideoRequest({
-      model: "veo-3.1-generate-preview",
+describe("Gemini video upstream adapter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends predictLongRunning with member x-goog-api-key only", async () => {
+    fetchMediaUpstream.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          name: "models/veo-3.1-generate-preview/operations/op-123",
+          done: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    const result = await submitGeminiVideoRequest({
+      adapter,
+      apiKey: "member-secret",
+      upstreamModel: "veo-3.1-generate-preview",
       prompt: "A lighthouse at sunset",
       duration: 8,
       aspectRatio: "16:9",
       resolution: "1080p",
-      firstFrame: image,
-      lastFrame: image,
+      effectiveAudio: true,
     });
-
-    expect(request.path).toBe(
-      "/v1beta/models/veo-3.1-generate-preview:predictLongRunning"
+    expect(result).toMatchObject({
+      status: "pending",
+      upstreamOperationName:
+        "models/veo-3.1-generate-preview/operations/op-123",
+    });
+    const [url, init] = fetchMediaUpstream.mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-generate-preview:predictLongRunning"
     );
-    expect(request.body).toEqual({
-      instances: [
-        {
-          prompt: "A lighthouse at sunset",
-          image,
-          lastFrame: image,
-        },
-      ],
+    expect(init.headers).toMatchObject({
+      "x-goog-api-key": "member-secret",
+      "content-type": "application/json",
+    });
+    expect(
+      (init.headers as Record<string, string>).Authorization
+    ).toBeUndefined();
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      instances: [{ prompt: "A lighthouse at sunset" }],
       parameters: {
         aspectRatio: "16:9",
         resolution: "1080p",
@@ -48,94 +105,57 @@ describe("Gemini video adapter", () => {
     });
   });
 
-  it("uses bounded reference images and rejects unsupported fields", () => {
-    const request = buildGeminiVideoRequest({
-      model: "veo-3.1-generate-preview",
-      prompt: "A moving train",
-      duration: 6,
+  it("rejects explicit audio disable and fails terminal Operation errors", async () => {
+    const rejected = await submitGeminiVideoRequest({
+      adapter,
+      apiKey: "member-secret",
+      upstreamModel: "veo-3.1-generate-preview",
+      prompt: "test",
+      duration: 8,
       aspectRatio: "16:9",
-      resolution: "720p",
-      referenceImages: [image, image, image],
+      resolution: "1080p",
+      effectiveAudio: false,
     });
-    expect(request.body.instances[0].referenceImages).toHaveLength(3);
-    expect(() =>
-      buildGeminiVideoRequest({
-        model: "veo-3.1-generate-preview",
-        prompt: "A moving train",
-        duration: 8,
-        aspectRatio: "16:9",
-        resolution: "720p",
-        firstFrame: image,
-        referenceImages: [image],
+    expect(rejected).toMatchObject({
+      error: expect.stringContaining("关闭音频"),
+    });
+
+    fetchMediaUpstream.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          name: "models/veo-3.1-generate-preview/operations/op-123",
+          done: true,
+          error: { code: 7, message: "permission denied" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    await expect(
+      pollGeminiVideoRequest({
+        adapter,
+        apiKey: "member-secret",
+        operationName: "models/veo-3.1-generate-preview/operations/op-123",
       })
-    ).toThrow("mutually exclusive");
-    expect(() =>
-      buildGeminiVideoRequest({
-        model: "veo-3.1-generate-preview",
-        prompt: "A moving train",
-        duration: 5,
-        aspectRatio: "16:9",
-        resolution: "720p",
-      })
-    ).toThrow("4, 6, or 8");
+    ).rejects.toMatchObject({ retryable: false });
   });
 
-  it("accepts only a complete upstream Operation name", () => {
-    expect(
-      parseGeminiVideoSubmission({
-        name: "models/veo-3.1-generate-preview/operations/op-123",
-      })
-    ).toMatchObject({
-      status: "pending",
-      upstreamOperationName:
-        "models/veo-3.1-generate-preview/operations/op-123",
+  it("reserves the submission attempt before sending", async () => {
+    const onBeforeSend = vi.fn(async () => {
+      throw new Error("attempt limit reached");
     });
-    expect(() =>
-      parseGeminiVideoSubmission({
-        name: "https://example.com/models/veo/operations/op-123",
-      })
-    ).toThrow();
-  });
-
-  it("parses pending, official success and Google Status failure", () => {
-    expect(parseGeminiVideoPollResult({ done: false })).toEqual({
-      status: "pending",
-      raw: { done: false },
+    const result = await submitGeminiVideoRequest({
+      adapter,
+      apiKey: "member-secret",
+      upstreamModel: "veo-3.1-generate-preview",
+      prompt: "test",
+      duration: 8,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+      effectiveAudio: true,
+      onBeforeSend,
     });
-    expect(
-      parseGeminiVideoPollResult({
-        done: true,
-        response: {
-          generateVideoResponse: {
-            generatedSamples: [
-              { video: { uri: "https://storage.example/video.mp4" } },
-            ],
-          },
-        },
-      })
-    ).toMatchObject({
-      status: "completed",
-      videoUrl: "https://storage.example/video.mp4",
-    });
-    expect(
-      parseGeminiVideoPollResult({
-        done: true,
-        error: { code: 7, message: "permission denied" },
-      })
-    ).toMatchObject({
-      status: "failed",
-      error: { code: 7, message: "permission denied" },
-    });
-    expect(() =>
-      parseGeminiVideoPollResult({
-        done: true,
-        response: {
-          generateVideoResponse: {
-            generatedSamples: [{ video: { uri: "http://insecure/video.mp4" } }],
-          },
-        },
-      })
-    ).toThrow("HTTPS");
+    expect(result).toMatchObject({ failure: { kind: "unknown" } });
+    expect(onBeforeSend).toHaveBeenCalledTimes(1);
+    expect(fetchMediaUpstream).not.toHaveBeenCalled();
   });
 });
-
