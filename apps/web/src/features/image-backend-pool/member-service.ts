@@ -71,6 +71,7 @@ export interface RedactedApiMemberConfig {
   hasApiKey: boolean;
   useStream: boolean;
   videoSubmissionRetryCount: number;
+  videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
   modelMappings: ApiModelMapping[];
   authentication?: ApiUpstreamAdapterDraft["authentication"];
   credentialScope?: string;
@@ -275,6 +276,7 @@ function createApiAdapterDraft(
     baseUrl: input.config.baseUrl,
     useStream: input.config.useStream,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
+    videoProtocolMode: input.config.videoProtocolMode,
     modelMappings: input.config.modelMappings,
     authentication: input.config.authentication,
     credentialScope: createApiCredentialScope(
@@ -623,6 +625,7 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         hasApiKey: row.api_has_key,
         useStream: adapter.useStream,
         videoSubmissionRetryCount: adapter.videoSubmissionRetryCount,
+        videoProtocolMode: adapter.videoProtocolMode,
         modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
         authentication: adapter.authentication,
         credentialScope: adapter.credentialScope,

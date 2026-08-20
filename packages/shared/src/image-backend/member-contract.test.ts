@@ -65,6 +65,7 @@ describe("backend member contract", () => {
     if (parsed.type === "api") {
       expect(parsed.config.useStream).toBe(false);
       expect(parsed.config.videoSubmissionRetryCount).toBe(2);
+      expect(parsed.config.videoProtocolMode).toBe("custom");
       expect(parsed.config.authentication).toEqual({ mode: "bearer" });
       expect(parsed.config.operations["videos.query"].path).toBe("");
     }

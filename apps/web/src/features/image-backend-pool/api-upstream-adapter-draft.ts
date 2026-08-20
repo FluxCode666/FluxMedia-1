@@ -10,6 +10,7 @@ import {
   type ApiUpstreamOperations,
   createDefaultApiUpstreamOperations,
   DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
+  apiVideoProtocolModeSchema,
   resolveApiUpstreamOperationPath,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/api-upstream-script-contract";
@@ -18,6 +19,7 @@ import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/a
 export interface ApiUpstreamAdapterFormDraft {
   authentication: ApiUpstreamAdapterDraft["authentication"];
   videoSubmissionRetryCount: number;
+  videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
   operations: ApiUpstreamOperations;
   expectedCurrentVersionId?: string;
 }
@@ -61,6 +63,7 @@ export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFo
   return {
     authentication: { mode: "bearer" },
     videoSubmissionRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
+    videoProtocolMode: apiVideoProtocolModeSchema.parse("custom"),
     operations: createDefaultApiUpstreamOperations(),
   };
 }

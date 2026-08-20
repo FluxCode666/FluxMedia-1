@@ -58,7 +58,22 @@ describe("API upstream adaptation contract", () => {
     expect(DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT).toBe(2);
     expect(apiUpstreamAdapterDraftSchema.parse(baseDraft)).toMatchObject({
       videoSubmissionRetryCount: 2,
+      videoProtocolMode: "custom",
     });
+    for (const videoProtocolMode of ["gemini", "seedance", "custom"] as const) {
+      expect(
+        apiUpstreamAdapterDraftSchema.safeParse({
+          ...baseDraft,
+          videoProtocolMode,
+        }).success
+      ).toBe(true);
+    }
+    expect(
+      apiUpstreamAdapterDraftSchema.safeParse({
+        ...baseDraft,
+        videoProtocolMode: "openai",
+      }).success
+    ).toBe(false);
     for (const videoSubmissionRetryCount of [0, 2, 10]) {
       expect(
         apiUpstreamAdapterDraftSchema.safeParse({

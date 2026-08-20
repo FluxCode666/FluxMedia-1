@@ -59,6 +59,31 @@ export function ApiUpstreamAdapterForm({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
+        <Label>视频上游协议模式</Label>
+        <Select
+          value={value.videoProtocolMode}
+          disabled={disabled}
+          onValueChange={(mode) =>
+            onChange({
+              ...value,
+              videoProtocolMode: mode as ApiUpstreamAdapterFormDraft["videoProtocolMode"],
+            })
+          }
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="gemini">Gemini</SelectItem>
+            <SelectItem value="seedance">Seedance</SelectItem>
+            <SelectItem value="custom">Custom（当前脚本/内置路径）</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          仅决定该成员发送给上游的视频请求格式，不根据模型名称推断供应商；存量成员默认使用 custom。
+        </p>
+      </div>
+      <div className="space-y-2">
         <Label>认证模式</Label>
         <Select
           value={value.authentication.mode}

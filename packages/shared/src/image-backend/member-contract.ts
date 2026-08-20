@@ -12,6 +12,7 @@ import {
   apiModelMappingsSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
+  apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
   videoSubmissionRetryCountSchema,
 } from "./api-upstream-adaptation";
@@ -68,6 +69,8 @@ export const apiBackendMemberConfigSchema = z
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
+    /** 显式选择视频上游请求格式；旧成员缺失时安全沿用 custom。 */
+    videoProtocolMode: apiVideoProtocolModeSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema.default({
       mode: "bearer",
