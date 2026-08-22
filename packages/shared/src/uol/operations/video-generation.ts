@@ -171,11 +171,22 @@ export const videoGenerateInputSchema = z
         path: ["referenceImages"],
       });
     }
-    if ((input.firstFrame || input.lastFrame) && referenceCount > 0) {
+    if (
+      (input.firstFrame || input.lastFrame) &&
+      (referenceCount > 0 ||
+        input.referenceVideos?.length ||
+        input.referenceAudios?.length)
+    ) {
       context.addIssue({
         code: "custom",
-        message: "Frame inputs and reference images are mutually exclusive",
-        path: ["referenceImages"],
+        message: "Frame inputs and reference media are mutually exclusive",
+        path: [
+          referenceCount > 0
+            ? "referenceImages"
+            : input.referenceVideos?.length
+              ? "referenceVideos"
+              : "referenceAudios",
+        ],
       });
     }
     for (const [index, reference] of (input.referenceVideos ?? []).entries()) {
@@ -381,13 +392,14 @@ export function resolveCanonicalVideoGenerateInput(
  * 应用管理员注册的自定义视频分辨率能力。
  *
  * 自定义模型只允许 API 上游执行，因此平台不猜测供应商专属帧、参考图或声音能力；这些
- * 能力默认关闭。时长与比例继续使用公开基础类型并交给账号适配脚本映射。
+ * 能力默认关闭。参考视频与参考音频是协议层明确支持的通用输入，按原字段传给 custom
+ * 脚本；时长与比例继续使用公开基础类型并交给账号适配脚本映射。
  *
  * @param input - 已通过通用视频请求 schema 的输入。
  * @param supportedResolutions - 当前版本化模型定义声明的分辨率。
  * @returns 分辨率与输入模式合法时返回规范输入和可持久化能力。
  * @sideEffects 无。
- * @failure 不抛错；非法分辨率或媒体输入返回稳定 validation 结构。
+ * @failure 不抛错；非法分辨率或不支持的媒体输入返回稳定 validation 结构。
  */
 export function resolveCustomVideoGenerateInput(
   input: VideoGenerateInput,
@@ -425,7 +437,8 @@ export function resolveCustomVideoGenerateInput(
       error: {
         code: "unsupported_custom_input",
         field,
-        message: "Custom video models only support text input",
+        message:
+          "Custom video models do not support frame, reference image, or generated-audio inputs",
       },
     };
   }

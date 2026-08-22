@@ -158,6 +158,30 @@ describe("media input reference contract", () => {
     ).toBe(false);
     expect(
       videoInputManifestSchema.safeParse({
+        firstFrame: storage,
+        referenceVideos: [
+          {
+            ...storage,
+            mimeType: "video/mp4",
+            storageKey: `${storage.storageKey}.mp4`,
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputManifestSchema.safeParse({
+        firstFrame: storage,
+        referenceAudios: [
+          {
+            ...storage,
+            mimeType: "audio/mpeg",
+            storageKey: `${storage.storageKey}.mp3`,
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputManifestSchema.safeParse({
         firstFrame: {
           source: "remote",
           mimeType: "image/png",

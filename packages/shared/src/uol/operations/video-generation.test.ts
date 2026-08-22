@@ -63,16 +63,37 @@ describe("video generation operations", () => {
     ).toBe(true);
   });
 
-  it("自定义视频只接受注册分辨率和纯文本输入", () => {
+  it("自定义视频允许参考视频和参考音频并保留字段结构", () => {
     const parsed = videoGenerateInputSchema.parse({
       ...seedanceRequest,
       model: "vendor-video-x",
       resolution: "1080p",
+      referenceVideos: [
+        {
+          source: "remote",
+          mimeType: "video/mp4",
+          url: "https://media.example.com/reference.mp4",
+          byteLength: 1024,
+        },
+      ],
+      referenceAudios: [
+        {
+          source: "remote",
+          mimeType: "audio/mpeg",
+          url: "https://media.example.com/reference.mp3",
+          byteLength: 1024,
+        },
+      ],
     });
     expect(
       resolveCustomVideoGenerateInput(parsed, ["720p", "1080p"])
     ).toMatchObject({
       ok: true,
+      input: {
+        referenceVideos: parsed.referenceVideos,
+        referenceAudios: parsed.referenceAudios,
+        generateAudio: false,
+      },
       capability: {
         modelId: "vendor-video-x",
         resolutions: ["720p", "1080p"],
@@ -86,6 +107,26 @@ describe("video generation operations", () => {
         "1080p",
       ])
     ).toMatchObject({ ok: false, error: { field: "resolution" } });
+  });
+
+  it("自定义视频仍拒绝首尾帧、参考图和生成音频", () => {
+    const parsed = videoGenerateInputSchema.parse({
+      ...seedanceRequest,
+      model: "vendor-video-x",
+      resolution: "1080p",
+    });
+    for (const input of [
+      { firstFrame: image },
+      { referenceImages: [image] },
+      { generateAudio: true },
+    ]) {
+      expect(
+        resolveCustomVideoGenerateInput({ ...parsed, ...input }, ["1080p"])
+      ).toMatchObject({
+        ok: false,
+        error: { code: "unsupported_custom_input" },
+      });
+    }
   });
 
   it("按真实描述符拒绝非法时长、比例和分辨率组合", () => {
@@ -143,6 +184,32 @@ describe("video generation operations", () => {
         ...veoRequest,
         firstFrame: image,
         referenceImages: [image],
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        firstFrame: image,
+        referenceVideos: [
+          {
+            source: "remote",
+            mimeType: "video/mp4",
+            url: "https://media.example.com/reference.mp4",
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        firstFrame: image,
+        referenceAudios: [
+          {
+            source: "remote",
+            mimeType: "audio/mpeg",
+            url: "https://media.example.com/reference.mp3",
+          },
+        ],
       }).success
     ).toBe(false);
     expect(
@@ -490,7 +557,11 @@ describe("video generation operations", () => {
       },
       createdAt: "2026-07-26T00:00:00.000Z",
     };
-    for (const mode of ["reference-videos", "reference-audio", "mixed"] as const) {
+    for (const mode of [
+      "reference-videos",
+      "reference-audio",
+      "mixed",
+    ] as const) {
       expect(
         videoGetStatus.output.safeParse({
           ...baseOutput,

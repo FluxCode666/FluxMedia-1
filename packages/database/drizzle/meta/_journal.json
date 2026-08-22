@@ -687,6 +687,13 @@
       "when": 1787497800000,
       "tag": "0097_reference_media_manifest",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1787501400000,
+      "tag": "0098_custom_reference_media_manifest",
+      "breakpoints": true
     }
   ]
 }

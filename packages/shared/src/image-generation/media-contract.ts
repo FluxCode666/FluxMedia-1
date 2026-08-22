@@ -337,10 +337,7 @@ export const videoInputReferenceManifestSchema = z
       .min(1)
       .max(3)
       .optional(),
-    referenceAudios: z
-      .array(mediaInputReferenceSchema)
-      .length(1)
-      .optional(),
+    referenceAudios: z.array(mediaInputReferenceSchema).length(1).optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
@@ -361,7 +358,9 @@ export const videoInputReferenceManifestSchema = z
         });
       }
     }
-    for (const [index, reference] of (manifest.referenceImages ?? []).entries()) {
+    for (const [index, reference] of (
+      manifest.referenceImages ?? []
+    ).entries()) {
       if (
         !(IMAGE_REFERENCE_MIME_TYPES as readonly string[]).includes(
           reference.mimeType
@@ -383,16 +382,30 @@ export const videoInputReferenceManifestSchema = z
     }
     if (
       (manifest.firstFrame || manifest.lastFrame) &&
-      manifest.referenceImages?.length
+      (manifest.referenceImages?.length ||
+        manifest.referenceVideos?.length ||
+        manifest.referenceAudios?.length)
     ) {
       context.addIssue({
         code: "custom",
-        path: ["referenceImages"],
-        message: "Frame inputs and reference images are mutually exclusive",
+        path: [
+          manifest.referenceImages?.length
+            ? "referenceImages"
+            : manifest.referenceVideos?.length
+              ? "referenceVideos"
+              : "referenceAudios",
+        ],
+        message: "Frame inputs and reference media are mutually exclusive",
       });
     }
-    for (const [index, reference] of (manifest.referenceVideos ?? []).entries()) {
-      if (!(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+    for (const [index, reference] of (
+      manifest.referenceVideos ?? []
+    ).entries()) {
+      if (
+        !(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
         context.addIssue({
           code: "custom",
           path: ["referenceVideos", index, "mimeType"],
@@ -410,8 +423,14 @@ export const videoInputReferenceManifestSchema = z
         });
       }
     }
-    for (const [index, reference] of (manifest.referenceAudios ?? []).entries()) {
-      if (!(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+    for (const [index, reference] of (
+      manifest.referenceAudios ?? []
+    ).entries()) {
+      if (
+        !(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
         context.addIssue({
           code: "custom",
           path: ["referenceAudios", index, "mimeType"],
@@ -487,7 +506,9 @@ export const videoInputManifestSchema = z
         });
       }
     }
-    for (const [index, reference] of (manifest.referenceImages ?? []).entries()) {
+    for (const [index, reference] of (
+      manifest.referenceImages ?? []
+    ).entries()) {
       if (
         !(IMAGE_REFERENCE_MIME_TYPES as readonly string[]).includes(
           reference.mimeType
@@ -509,16 +530,30 @@ export const videoInputManifestSchema = z
     }
     if (
       (manifest.firstFrame || manifest.lastFrame) &&
-      manifest.referenceImages?.length
+      (manifest.referenceImages?.length ||
+        manifest.referenceVideos?.length ||
+        manifest.referenceAudios?.length)
     ) {
       context.addIssue({
         code: "custom",
-        path: ["referenceImages"],
-        message: "Frame inputs and reference images are mutually exclusive",
+        path: [
+          manifest.referenceImages?.length
+            ? "referenceImages"
+            : manifest.referenceVideos?.length
+              ? "referenceVideos"
+              : "referenceAudios",
+        ],
+        message: "Frame inputs and reference media are mutually exclusive",
       });
     }
-    for (const [index, reference] of (manifest.referenceVideos ?? []).entries()) {
-      if (!(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+    for (const [index, reference] of (
+      manifest.referenceVideos ?? []
+    ).entries()) {
+      if (
+        !(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
         context.addIssue({
           code: "custom",
           path: ["referenceVideos", index, "mimeType"],
@@ -533,8 +568,14 @@ export const videoInputManifestSchema = z
         });
       }
     }
-    for (const [index, reference] of (manifest.referenceAudios ?? []).entries()) {
-      if (!(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+    for (const [index, reference] of (
+      manifest.referenceAudios ?? []
+    ).entries()) {
+      if (
+        !(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
         context.addIssue({
           code: "custom",
           path: ["referenceAudios", index, "mimeType"],
