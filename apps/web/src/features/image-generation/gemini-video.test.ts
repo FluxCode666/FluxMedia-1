@@ -100,7 +100,7 @@ describe("Gemini video upstream adapter", () => {
       parameters: {
         aspectRatio: "16:9",
         resolution: "1080p",
-        durationSeconds: 8,
+        durationSeconds: "8",
       },
     });
   });

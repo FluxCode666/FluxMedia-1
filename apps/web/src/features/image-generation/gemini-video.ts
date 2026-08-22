@@ -56,7 +56,7 @@ export type GeminiVideoRequest = {
     parameters: {
       aspectRatio: string;
       resolution: string;
-      durationSeconds: number;
+      durationSeconds: string;
     };
   };
 };
@@ -262,7 +262,8 @@ export function buildGeminiVideoRequest(
       parameters: {
         aspectRatio: input.aspectRatio.trim(),
         resolution: input.resolution.trim(),
-        durationSeconds: input.duration,
+        // Gemini REST 将 durationSeconds 定义为 int64，JSON wire format 使用字符串。
+        durationSeconds: String(input.duration),
       },
     },
   };
@@ -542,7 +543,11 @@ export async function submitGeminiVideoRequest(input: {
   }
   const body = {
     instances: [instance],
-    parameters: parameters.data,
+    parameters: {
+      ...parameters.data,
+      // Gemini REST 将 durationSeconds 定义为 int64，JSON wire format 使用字符串。
+      durationSeconds: String(parameters.data.durationSeconds),
+    },
   };
   try {
     await input.onRequestSnapshot?.(

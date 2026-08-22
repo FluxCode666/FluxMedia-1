@@ -18,7 +18,7 @@ curl https://your-fluxmedia.example/v1beta/models/veo-3.1-generate-preview:predi
     "parameters": {
       "aspectRatio": "16:9",
       "resolution": "1080p",
-      "durationSeconds": 8
+      "durationSeconds": "8"
     }
   }'
 ```
@@ -45,7 +45,9 @@ curl https://your-fluxmedia.example/v1beta/models/veo-3.1-generate-preview/opera
 
 `instances` 只接受一个实例。当前支持 `prompt`、`image`、`lastFrame`、最多三张
 `referenceImages`，以及 `parameters.aspectRatio`、`resolution`、`durationSeconds`。
-不接受 body 中的 `model`、输入视频、`negativePrompt` 或关闭音频字段；未知字段会在
+其中 `durationSeconds` 遵循 Gemini REST 的 `int64` JSON 表示，使用字符串 `"4"`、
+`"6"` 或 `"8"`。
+不接受 body 中的 `model`、输入视频、`negativePrompt`、`personGeneration`、`seed` 或关闭音频字段；未知字段会在
 扣费和调度前拒绝。首帧/尾帧与参考图互斥。
 
 ## 与现有视频协议的关系

@@ -220,6 +220,32 @@ describe("video generation operations", () => {
     });
   });
 
+  it("Gemini 公共协议允许 Veo 官方的最多三张参考图", () => {
+    const request = videoGenerateInputSchema.safeParse({
+      ...seedanceRequest,
+      model: "veo31",
+      geminiModel: "veo-3.1-generate-preview",
+      duration: 8,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+      referenceImages: [image, image, image],
+    });
+    expect(request.success).toBe(true);
+    if (!request.success) return;
+    expect(
+      resolveCanonicalVideoGenerateInput(request.data, undefined)
+    ).toMatchObject({
+      ok: true,
+      capability: { input: { referenceImages: { maxCount: 3 } } },
+    });
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...request.data,
+        referenceImages: [image, image, image, image],
+      }).success
+    ).toBe(false);
+  });
+
   it("幂等重放身份不受管理员后续降低参考图上限影响", () => {
     const twentyReferences = videoGenerateInputSchema.parse({
       ...seedanceRequest,

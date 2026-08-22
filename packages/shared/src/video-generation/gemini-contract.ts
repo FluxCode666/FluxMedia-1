@@ -87,8 +87,8 @@ export const geminiVideoParametersSchema = z
   .object({
     aspectRatio: z.string().trim().min(1).max(32).optional(),
     resolution: z.string().trim().min(1).max(32).optional(),
-    // Google API 的 JSON 示例使用数字；兼容部分 Gemini 网关将整数
-    // 序列化为字符串的请求，并在 schema 输出中统一为数字。
+    // Gemini REST 的 int64 JSON 表示是字符串；输入仍兼容数字，供平台内部
+    // 的统一视频契约使用，真正发往 Gemini 的请求必须再序列化为字符串。
     durationSeconds: geminiDurationSecondsSchema,
   })
   .strict();

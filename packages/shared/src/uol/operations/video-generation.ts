@@ -49,6 +49,9 @@ export const videoRequestedResolutionSchema = z
   .max(32)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 
+/** Gemini Veo 官方参考图上限；仅用于 Gemini 公共协议的能力覆盖。 */
+const GEMINI_REFERENCE_IMAGE_LIMIT = 3;
+
 export const videoGenerateInputSchema = z
   .object({
     clientRequestId: z.string().trim().min(1).max(128),
@@ -132,7 +135,15 @@ export const videoGenerateInputSchema = z
       });
     }
     const referenceCount = input.referenceImages?.length ?? 0;
-    if (referenceCount > 0 && capability.input.referenceImages.maxCount === 0) {
+    const geminiReferenceMode =
+      Boolean(input.geminiModel) &&
+      referenceCount > 0 &&
+      referenceCount <= GEMINI_REFERENCE_IMAGE_LIMIT;
+    if (
+      referenceCount > 0 &&
+      capability.input.referenceImages.maxCount === 0 &&
+      !geminiReferenceMode
+    ) {
       context.addIssue({
         code: "custom",
         message: "This video model does not support reference images",
@@ -141,7 +152,8 @@ export const videoGenerateInputSchema = z
     }
     if (
       referenceCount > capability.input.referenceImages.maxCount &&
-      !capability.input.referenceImages.configurable
+      !capability.input.referenceImages.configurable &&
+      !geminiReferenceMode
     ) {
       context.addIssue({
         code: "custom",
@@ -269,21 +281,37 @@ export function resolveCanonicalVideoGenerateInput(
     capabilityOverrides
   );
   const referenceCount = input.referenceImages?.length ?? 0;
-  if (referenceCount > capability.input.referenceImages.maxCount) {
+  const geminiReferenceMode =
+    Boolean(input.geminiModel) &&
+    referenceCount > 0 &&
+    capability.input.referenceImages.maxCount === 0;
+  const effectiveCapability = geminiReferenceMode
+    ? {
+        ...capability,
+        input: {
+          ...capability.input,
+          referenceImages: {
+            maxCount: GEMINI_REFERENCE_IMAGE_LIMIT,
+            configurable: false,
+          },
+        },
+      }
+    : capability;
+  if (referenceCount > effectiveCapability.input.referenceImages.maxCount) {
     return {
       ok: false,
       error: {
         code: "too_many_reference_images",
         field: "referenceImages",
-        message: `This video model supports at most ${capability.input.referenceImages.maxCount} reference images`,
-        maximum: capability.input.referenceImages.maxCount,
+        message: `This video model supports at most ${effectiveCapability.input.referenceImages.maxCount} reference images`,
+        maximum: effectiveCapability.input.referenceImages.maxCount,
         received: referenceCount,
       },
     };
   }
   return {
     ok: true,
-    capability,
+    capability: effectiveCapability,
     input: {
       ...request,
       generateAudio:

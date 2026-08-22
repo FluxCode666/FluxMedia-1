@@ -144,7 +144,7 @@ function getGeminiVideoProtocolVariants(
     "parameters": {
       "aspectRatio": "16:9",
       "resolution": "720p",
-      "durationSeconds": 8
+      "durationSeconds": "8"
     }
   }'`,
         responseExample: `{
@@ -199,7 +199,8 @@ function getGeminiVideoProtocolVariants(
             name: "parameters.durationSeconds",
             requirement: "可选",
             defaultValue: "8",
-            description: "视频时长，仅支持 4、6 或 8 秒。",
+            description:
+              '视频时长，按 Gemini REST 的 int64 JSON 形式传字符串 "4"、"6" 或 "8"。',
           },
           {
             name: "Idempotency-Key / x-request-id",
@@ -240,7 +241,7 @@ function getGeminiVideoProtocolVariants(
         responses: [],
         notes: [
           "本卡片仅用于说明协议差异，不对应 FluxMedia 已提供的可调用路由。",
-          "创建请求中的 model、aspectRatio、resolution 和 durationSeconds 仍会由服务端校验。",
+          "创建请求中的 model、aspectRatio、resolution 和 durationSeconds 仍会由服务端校验；durationSeconds 使用字符串形式。",
         ],
       },
       "video-task": {
@@ -326,7 +327,7 @@ function getGeminiVideoProtocolVariants(
     "parameters": {
       "aspectRatio": "16:9",
       "resolution": "720p",
-      "durationSeconds": 8
+      "durationSeconds": "8"
     }
   }'`,
       responseExample: `{
@@ -380,7 +381,8 @@ function getGeminiVideoProtocolVariants(
           name: "parameters.durationSeconds",
           requirement: "Optional",
           defaultValue: "8",
-          description: "Video duration; only 4, 6, or 8 seconds are supported.",
+          description:
+            'Video duration as a Gemini REST int64 JSON string: "4", "6", or "8".',
         },
         {
           name: "Idempotency-Key / x-request-id",
@@ -421,7 +423,7 @@ function getGeminiVideoProtocolVariants(
       responses: [],
       notes: [
         "This tab documents a protocol difference; it is not a callable FluxMedia route.",
-        "The create request still validates model, aspectRatio, resolution, and durationSeconds.",
+        "The create request still validates model, aspectRatio, resolution, and durationSeconds; durationSeconds uses the string form.",
       ],
     },
     "video-task": {
