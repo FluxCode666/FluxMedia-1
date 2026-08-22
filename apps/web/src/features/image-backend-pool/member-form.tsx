@@ -130,6 +130,10 @@ export function BackendMemberFormDialog({
         authentication: member.config.authentication ?? { mode: "bearer" },
         videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
         videoProtocolMode: member.config.videoProtocolMode ?? "custom",
+        videoInputCapabilities: member.config.videoInputCapabilities ?? {
+          referenceVideos: false,
+          referenceAudios: false,
+        },
         operations:
           member.config.operations ??
           createDefaultApiUpstreamAdapterFormDraft().operations,
@@ -284,6 +288,7 @@ export function BackendMemberFormDialog({
           useStream: apiUseStream,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
           videoProtocolMode: apiAdapterDraft.videoProtocolMode,
+          videoInputCapabilities: apiAdapterDraft.videoInputCapabilities,
           modelMappings: modelMappings.filter((mapping) =>
             selectedModelKeys.has(mapping.modelId.toLowerCase())
           ),

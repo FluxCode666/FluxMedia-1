@@ -189,6 +189,30 @@ describe("media input reference contract", () => {
     ).toBe(true);
   });
 
+  it("按具名语义限制图片、视频和音频 MIME", () => {
+    const remoteVideo = {
+      source: "remote" as const,
+      mimeType: "video/mp4" as const,
+      url: "https://cdn.example.com/reference.mp4",
+    };
+    const remoteAudio = {
+      source: "remote" as const,
+      mimeType: "audio/mpeg" as const,
+      url: "https://cdn.example.com/reference.mp3",
+    };
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        firstFrame: remoteVideo,
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [remoteVideo],
+        referenceAudios: [remoteAudio],
+      }).success
+    ).toBe(true);
+  });
+
   it("使用运行时策略统一拒绝单文件、总量和编辑参考图超限", () => {
     const policy = {
       maxFileSizeMb: 5,

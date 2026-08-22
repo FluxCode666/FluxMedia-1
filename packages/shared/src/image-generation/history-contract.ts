@@ -201,7 +201,15 @@ export const historyReferenceImageSchema = z
 /** 视频列表可公开的具名输入摘要；实际 URL 只由 video.getInputs 按需签发。 */
 export const historyVideoInputSummarySchema = z
   .object({
-    mode: z.enum(["none", "first-frame", "first-last-frames", "references"]),
+    mode: z.enum([
+      "none",
+      "first-frame",
+      "first-last-frames",
+      "references",
+      "reference-videos",
+      "reference-audio",
+      "mixed",
+    ]),
     count: z.number().int().min(0).max(MAX_MEDIA_INPUT_COUNT),
   })
   .strict();

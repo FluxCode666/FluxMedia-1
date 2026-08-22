@@ -111,6 +111,12 @@ const acquireLeaseInputSchema = z
     requiredApiAdapterMemberId: identifierSchema.optional(),
     requiredApiAdapterVersionId: identifierSchema.optional(),
     requiresContentSafety: z.boolean().default(false),
+    requiredVideoInputCapabilities: z
+      .object({
+        referenceVideos: z.boolean().default(false),
+        referenceAudios: z.boolean().default(false),
+      })
+      .default({ referenceVideos: false, referenceAudios: false }),
     leaseId: identifierSchema,
     ownerToken: ownerTokenSchema,
     now: z.date(),
@@ -428,6 +434,20 @@ export function createPostgresBackendPoolRepository(
                   and (
                     ${input.requiresContentSafety} = false
                     or m.content_safety_enabled = true
+                  )
+                  and (
+                    ${input.requiredVideoInputCapabilities.referenceVideos} = false
+                    or (
+                      m.type = 'api'
+                      and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceVideos')::boolean, false) = true
+                    )
+                  )
+                  and (
+                    ${input.requiredVideoInputCapabilities.referenceAudios} = false
+                    or (
+                      m.type = 'api'
+                      and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceAudios')::boolean, false) = true
+                    )
                   )
                   and ${buildExcludedMemberPredicate(input.excludedMemberIds)}
                   and (${input.requiredMemberId ?? null}::text is null or m.id = ${

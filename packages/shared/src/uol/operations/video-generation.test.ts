@@ -470,6 +470,36 @@ describe("video generation operations", () => {
     }
   });
 
+  it("状态输出接受参考视频、参考音频及混合输入摘要", () => {
+    const baseOutput = {
+      taskId: "video-1",
+      status: "in_progress" as const,
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      generateAudio: false,
+      billing: {
+        kind: "snapshot" as const,
+        mode: "per_item" as const,
+        unit: "item" as const,
+        unitPrice: 3,
+        durationSeconds: 15,
+        quotedCredits: 3,
+        actualCredits: 3,
+      },
+      createdAt: "2026-07-26T00:00:00.000Z",
+    };
+    for (const mode of ["reference-videos", "reference-audio", "mixed"] as const) {
+      expect(
+        videoGetStatus.output.safeParse({
+          ...baseOutput,
+          input: { mode, count: 1 },
+        }).success
+      ).toBe(true);
+    }
+  });
+
   it("视频 operation 不再声明商业套餐能力门禁", () => {
     const externalPrincipal = {
       type: "apiKey",

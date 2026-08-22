@@ -41,3 +41,41 @@ describe("proxy referral short links", () => {
     expect(intlMiddleware).not.toHaveBeenCalled();
   });
 });
+
+describe("proxy external API namespaces", () => {
+  beforeEach(() => {
+    intlMiddleware.mockReset();
+  });
+
+  it("lets Gemini v1beta creation and operation routes bypass locale rewriting", async () => {
+    const creationResponse = await proxy(
+      new NextRequest(
+        "https://media.example.test/v1beta/models/seedance2.0:predictLongRunning"
+      )
+    );
+    const operationResponse = await proxy(
+      new NextRequest(
+        "https://media.example.test/v1beta/models/seedance2.0/operations/operation-1234567890123456"
+      )
+    );
+
+    expect(creationResponse.headers.get("x-middleware-rewrite")).toBe(
+      "https://media.example.test/v1beta/models/seedance2.0/predictLongRunning"
+    );
+    expect(operationResponse.headers.get("x-middleware-next")).toBe("1");
+    expect(intlMiddleware).not.toHaveBeenCalled();
+  });
+
+  it("rewrites the public Gemini colon route to the internal route", async () => {
+    const response = await proxy(
+      new NextRequest(
+        "https://media.example.test/v1beta/models/seedance2.0:predictLongRunning"
+      )
+    );
+
+    expect(response.headers.get("x-middleware-rewrite")).toBe(
+      "https://media.example.test/v1beta/models/seedance2.0/predictLongRunning"
+    );
+    expect(intlMiddleware).not.toHaveBeenCalled();
+  });
+});

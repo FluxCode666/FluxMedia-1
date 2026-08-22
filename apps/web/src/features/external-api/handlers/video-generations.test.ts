@@ -323,6 +323,77 @@ describe("postExternalVideoGenerations", () => {
     );
   });
 
+  it("把参考视频和音频 URL 转成统一 UOL 媒体引用", async () => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-reference-media",
+        prompt: "保持人物动作和镜头不变",
+        model: "seedance2",
+        duration: 8,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        reference_videos: ["https://media.example.com/reference.mp4"],
+        reference_audios: ["https://media.example.com/reference.mp3"],
+      }) as never
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        referenceVideos: [
+          {
+            source: "remote",
+            mimeType: "video/mp4",
+            url: "https://media.example.com/reference.mp4",
+          },
+        ],
+        referenceAudios: [
+          {
+            source: "remote",
+            mimeType: "audio/mpeg",
+            url: "https://media.example.com/reference.mp3",
+          },
+        ],
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it.each([
+    {
+      field: "reference_videos",
+      value: ["http://media.example.com/reference.mp4"],
+    },
+    {
+      field: "reference_videos",
+      value: ["https://media.example.com/reference.png"],
+    },
+    {
+      field: "reference_audios",
+      value: [
+        "https://media.example.com/reference.wav",
+        "https://media.example.com/second.wav",
+      ],
+    },
+  ])("拒绝无效的 $field 参考媒体", async ({ field, value }) => {
+    const response = await postExternalVideoGenerations(
+      createRequest({
+        clientRequestId: "client-invalid-reference-media",
+        prompt: "test",
+        model: "seedance2",
+        duration: 8,
+        aspectRatio: "16:9",
+        resolution: "1080p",
+        [field]: value,
+      }) as never
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.invokeOperation).not.toHaveBeenCalled();
+  });
+
   it.each([
     5,
     "5",

@@ -37,6 +37,40 @@ export const geminiInlineImageSchema = z
   })
   .strict();
 
+/** Gemini 兼容扩展使用的参考视频 HTTPS 直链。 */
+export const geminiReferenceVideoUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine((rawUrl) => {
+    const url = new URL(rawUrl);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      [".mp4", ".mov"].some((extension) =>
+        url.pathname.toLowerCase().endsWith(extension)
+      )
+    );
+  }, "reference_videos must contain HTTPS mp4 or mov URLs");
+
+/** Gemini 兼容扩展使用的参考音频 HTTPS 直链。 */
+export const geminiReferenceAudioUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine((rawUrl) => {
+    const url = new URL(rawUrl);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      [".mp3", ".wav"].some((extension) =>
+        url.pathname.toLowerCase().endsWith(extension)
+      )
+    );
+  }, "reference_audios must contain HTTPS mp3 or wav URLs");
+
 /** Gemini Veo 的单个实例；输入视频和非官方字段在此层直接拒绝。 */
 export const geminiVideoInstanceSchema = z
   .object({
@@ -53,6 +87,15 @@ export const geminiVideoInstanceSchema = z
           .strict()
       )
       .max(3)
+      .optional(),
+    reference_videos: z
+      .array(geminiReferenceVideoUrlSchema)
+      .min(1)
+      .max(3)
+      .optional(),
+    reference_audios: z
+      .array(geminiReferenceAudioUrlSchema)
+      .length(1)
       .optional(),
   })
   .strict()
@@ -108,6 +151,12 @@ export const geminiPublicOperationNameSchema = z
     /^models\/[A-Za-z0-9][A-Za-z0-9._:-]*\/operations\/[A-Za-z0-9_-]{16,128}$/
   );
 
+/** Gemini 视频结果地址；允许 HTTP/HTTPS，其他协议仍拒绝。 */
+const geminiVideoUriSchema = z.string().url().refine((value) => {
+  const protocol = new URL(value).protocol;
+  return protocol === "http:" || protocol === "https:";
+}, "Gemini video URI must use HTTP or HTTPS");
+
 /** Google Status 的脱敏公共错误投影。 */
 export const geminiOperationErrorSchema = z
   .object({
@@ -132,13 +181,7 @@ export const geminiOperationOutputSchema = z
                   .object({
                     video: z
                       .object({
-                        uri: z
-                          .string()
-                          .url()
-                          .refine(
-                            (value) => new URL(value).protocol === "https:",
-                            "Gemini video URI must use HTTPS"
-                          ),
+                        uri: geminiVideoUriSchema,
                       })
                       .strict(),
                   })

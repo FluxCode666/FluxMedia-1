@@ -138,7 +138,9 @@ function getGeminiVideoProtocolVariants(
             "mimeType": "image/png",
             "data": "<BASE64_FIRST_FRAME_IMAGE>"
           }
-        }
+        },
+        "reference_videos": ["https://media.example/reference.mp4"],
+        "reference_audios": ["https://media.example/reference.mp3"]
       }
     ],
     "parameters": {
@@ -182,6 +184,20 @@ function getGeminiVideoProtocolVariants(
             defaultValue: "无",
             description:
               "最多 3 张带 referenceType 的 inlineData 图片；不能与 image 同时传入。",
+          },
+          {
+            name: "instances[].reference_videos",
+            requirement: "可选",
+            defaultValue: "空数组",
+            description:
+              "HTTPS mp4/mov 参考视频直链，最多 3 个；每个不超过 200 MB，单条 4-10 秒，全部合计不超过 15 秒。",
+          },
+          {
+            name: "instances[].reference_audios",
+            requirement: "可选",
+            defaultValue: "空数组",
+            description:
+              "HTTPS mp3/wav 参考音频直链，最多 1 个；不超过 15 MB 且不超过 15 秒。",
           },
           {
             name: "parameters.aspectRatio",
@@ -321,7 +337,9 @@ function getGeminiVideoProtocolVariants(
             "mimeType": "image/png",
             "data": "<BASE64_FIRST_FRAME_IMAGE>"
           }
-        }
+        },
+        "reference_videos": ["https://media.example/reference.mp4"],
+        "reference_audios": ["https://media.example/reference.mp3"]
       }
     ],
     "parameters": {
@@ -923,7 +941,9 @@ const zhContent = {
     "negative_prompt": "low resolution, blur, watermark",
     "quote_token": "opaque-current-quote-token",
     "generate_audio": true,
-    "reference_images": ["data:image/png;base64,..."]
+    "reference_images": ["data:image/png;base64,..."],
+    "reference_videos": ["https://media.example/reference.mp4"],
+    "reference_audios": ["https://media.example/reference.mp3"]
   }'`,
       responseExample: `{
   "object": "video.task",
@@ -1016,6 +1036,20 @@ const zhContent = {
           defaultValue: "空数组",
           description:
             "有序参考图 base64 data URL 数组；数量上限由模型能力决定，Seedance 默认 10 且管理员可配置。参考图与首尾帧对所有模型互斥。",
+        },
+        {
+          name: "referenceVideos / reference_videos",
+          requirement: "可选",
+          defaultValue: "空数组",
+          description:
+            "HTTPS mp4/mov 参考视频直链，最多 3 个；单文件不超过 200 MB，单条 4-10 秒，合计不超过 15 秒。仅路由到已声明支持参考视频的账号。",
+        },
+        {
+          name: "referenceAudios / reference_audios",
+          requirement: "可选",
+          defaultValue: "空数组",
+          description:
+            "HTTPS mp3/wav 参考音频直链，最多 1 个；不超过 15 MB 且不超过 15 秒。仅路由到已声明支持参考音频的账号。",
         },
         {
           name: "callback_url / callbackUrl",

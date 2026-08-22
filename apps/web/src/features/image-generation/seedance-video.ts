@@ -235,6 +235,8 @@ export async function submitSeedanceVideoRequest(input: {
   firstFrame?: ApiVideoSourceImage;
   lastFrame?: ApiVideoSourceImage;
   referenceImages?: ApiVideoSourceImage[];
+  referenceVideos?: readonly string[];
+  referenceAudios?: readonly string[];
   /** 真正发出上游请求前预留 API 创建尝试次数。 */
   onBeforeSend?: () => Promise<void> | void;
   /** 持久化不含媒体正文和凭据的最终请求快照。 */
@@ -259,6 +261,12 @@ export async function submitSeedanceVideoRequest(input: {
     resolution: input.resolution,
     watermark: false,
     ...(input.effectiveAudio ? { generate_audio: true } : {}),
+    ...(input.referenceVideos?.length
+      ? { reference_videos: input.referenceVideos }
+      : {}),
+    ...(input.referenceAudios?.length
+      ? { reference_audios: input.referenceAudios }
+      : {}),
   };
   try {
     await input.onRequestSnapshot?.(

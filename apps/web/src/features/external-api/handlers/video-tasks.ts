@@ -41,7 +41,14 @@ export const getExternalVideoTask = withApiLogging(
         resolution: string;
         generateAudio: boolean;
         input: {
-          mode: "none" | "first-frame" | "first-last-frames" | "references";
+          mode:
+            | "none"
+            | "first-frame"
+            | "first-last-frames"
+            | "references"
+            | "reference-videos"
+            | "reference-audio"
+            | "mixed";
           count: number;
         };
         billing: VideoTaskPublicBilling;

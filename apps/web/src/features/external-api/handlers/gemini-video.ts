@@ -14,6 +14,10 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { authenticateExternalApiRequest } from "@/features/external-api/auth";
 import { toVideoMediaInputReference } from "@/features/image-generation/video-transport-input";
+import {
+  toReferenceAudioRemoteInput,
+  toReferenceVideoRemoteInput,
+} from "@/features/image-generation/video-reference-input";
 import { ensureUolInitialized } from "@/server/uol-init";
 
 /** Gemini 错误响应的最小稳定投影。 */
@@ -56,6 +60,7 @@ function containsAsciiControlCharacter(value: string): boolean {
 /** 将 Gemini Developer API 模型公开名映射到 FluxMedia 内部模型 ID。 */
 function resolvePlatformVideoModel(model: string): string {
   const aliases: Record<string, string> = {
+    "seedance2.0": "seedance2",
     "veo-3.1-generate-preview": "veo31",
     "veo-3.1-fast-generate-preview": "veo31-fast",
   };
@@ -124,6 +129,12 @@ export async function postGeminiVideoGeneration(
   const referenceImages = instance.referenceImages?.map((item) =>
     toPlatformImage(item.image)
   );
+  const referenceVideos = instance.reference_videos?.map(
+    toReferenceVideoRemoteInput
+  );
+  const referenceAudios = instance.reference_audios?.map(
+    toReferenceAudioRemoteInput
+  );
   try {
     await ensureUolInitialized();
     const result = await invokeOperation<{
@@ -145,6 +156,8 @@ export async function postGeminiVideoGeneration(
         ...(firstFrame ? { firstFrame } : {}),
         ...(lastFrame ? { lastFrame } : {}),
         ...(referenceImages?.length ? { referenceImages } : {}),
+        ...(referenceVideos?.length ? { referenceVideos } : {}),
+        ...(referenceAudios?.length ? { referenceAudios } : {}),
       },
       {
         type: "apiKey",

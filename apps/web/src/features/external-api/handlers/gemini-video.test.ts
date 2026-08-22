@@ -94,6 +94,74 @@ describe("Gemini video handlers", () => {
     );
   });
 
+  it("接受 Gemini 扩展的参考视频和音频 URL", async () => {
+    const response = await postGeminiVideoGeneration(
+      createRequest({
+        instances: [
+          {
+            prompt: "将视频中的人物替换为参考图人物",
+            reference_videos: ["https://media.example.com/reference.mp4"],
+            reference_audios: ["https://media.example.com/reference.mp3"],
+          },
+        ],
+        parameters: {
+          aspectRatio: "16:9",
+          resolution: "1080p",
+          durationSeconds: "8",
+        },
+      }) as never,
+      { params: Promise.resolve({ model: "seedance2.0" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        referenceVideos: [
+          {
+            source: "remote",
+            mimeType: "video/mp4",
+            url: "https://media.example.com/reference.mp4",
+          },
+        ],
+        referenceAudios: [
+          {
+            source: "remote",
+            mimeType: "audio/mpeg",
+            url: "https://media.example.com/reference.mp3",
+          },
+        ],
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it("将 Seedance 2.0 Gemini 公开模型名映射为平台模型 ID", async () => {
+    const response = await postGeminiVideoGeneration(
+      createRequest({
+        instances: [{ prompt: "A cat running on a beach at sunset" }],
+        parameters: {
+          aspectRatio: "16:9",
+          resolution: "1080p",
+          durationSeconds: 8,
+        },
+      }) as never,
+      { params: Promise.resolve({ model: "seedance2.0" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "video.generate",
+      expect.objectContaining({
+        geminiModel: "seedance2.0",
+        model: "seedance2",
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
   it("拒绝 body model 和未知字段，且不触发 UOL", async () => {
     const response = await postGeminiVideoGeneration(
       createRequest({

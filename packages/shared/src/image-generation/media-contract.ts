@@ -10,20 +10,33 @@ import { z } from "zod";
 import { isBlockedIP } from "../security/ip-validation";
 import type { MediaLimitPolicy } from "./media-limit-policy";
 import {
+  AUDIO_REFERENCE_MIME_TYPES,
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
   MAX_MEDIA_INPUT_FILE_BYTES,
+  MAX_REFERENCE_AUDIO_BYTES,
+  MAX_REFERENCE_VIDEO_BYTES,
   MEDIA_INPUT_MIME_TYPES,
+  VIDEO_REFERENCE_MIME_TYPES,
 } from "./media-limits";
 
 export {
+  AUDIO_REFERENCE_MIME_TYPES,
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_COUNT,
   MAX_MEDIA_INPUT_FILE_BYTES,
+  MAX_REFERENCE_AUDIO_BYTES,
+  MAX_REFERENCE_VIDEO_BYTES,
   MEDIA_INPUT_MIME_TYPES,
+  VIDEO_REFERENCE_MIME_TYPES,
 } from "./media-limits";
 
 const mediaMimeTypeSchema = z.enum(MEDIA_INPUT_MIME_TYPES);
+const IMAGE_REFERENCE_MIME_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+] as const;
 const mediaByteLengthSchema = z
   .number()
   .int()
@@ -128,7 +141,8 @@ const remoteMediaInputReferenceSchema = z
         const hostname = url.hostname.replace(/^\[|\]$/g, "");
         return !isBlockedIP(hostname);
       }, "Remote media URL must be a public HTTPS URL"),
-    byteLength: mediaByteLengthSchema,
+    /** 远程 URL 可能没有可靠 Content-Length，读取时按实际字节复验。 */
+    byteLength: mediaByteLengthSchema.optional(),
   })
   .strict();
 
@@ -151,7 +165,7 @@ export const mediaInputReferencesSchema = z
   .max(MAX_MEDIA_INPUT_COUNT)
   .superRefine((references, context) => {
     const totalBytes = references.reduce(
-      (total, reference) => total + reference.byteLength,
+      (total, reference) => total + (reference.byteLength ?? 0),
       0
     );
     if (totalBytes <= MAX_MEDIA_INPUT_BYTES) return;
@@ -223,6 +237,7 @@ export function parseMediaInputReferencesWithPolicy(
         });
       }
       for (const [index, item] of items.entries()) {
+        if (item.byteLength === undefined) continue;
         if (item.byteLength <= policy.maxFileSizeBytes) continue;
         context.addIssue({
           code: "custom",
@@ -231,7 +246,7 @@ export function parseMediaInputReferencesWithPolicy(
         });
       }
       const totalBytes = items.reduce(
-        (total, item) => total + item.byteLength,
+        (total, item) => total + (item.byteLength ?? 0),
         0
       );
       if (totalBytes > policy.maxUploadSizeBytes) {
@@ -317,9 +332,48 @@ export const videoInputReferenceManifestSchema = z
     firstFrame: mediaInputReferenceSchema.optional(),
     lastFrame: mediaInputReferenceSchema.optional(),
     referenceImages: mediaInputReferencesSchema.optional(),
+    referenceVideos: z
+      .array(mediaInputReferenceSchema)
+      .min(1)
+      .max(3)
+      .optional(),
+    referenceAudios: z
+      .array(mediaInputReferenceSchema)
+      .length(1)
+      .optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
+    for (const [field, reference] of [
+      ["firstFrame", manifest.firstFrame],
+      ["lastFrame", manifest.lastFrame],
+    ] as const) {
+      if (
+        reference &&
+        !(IMAGE_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [field, "mimeType"],
+          message: "首尾帧必须是图片",
+        });
+      }
+    }
+    for (const [index, reference] of (manifest.referenceImages ?? []).entries()) {
+      if (
+        !(IMAGE_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceImages", index, "mimeType"],
+          message: "参考图必须是图片",
+        });
+      }
+    }
     if (manifest.lastFrame && !manifest.firstFrame) {
       context.addIssue({
         code: "custom",
@@ -337,6 +391,44 @@ export const videoInputReferenceManifestSchema = z
         message: "Frame inputs and reference images are mutually exclusive",
       });
     }
+    for (const [index, reference] of (manifest.referenceVideos ?? []).entries()) {
+      if (!(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceVideos", index, "mimeType"],
+          message: "参考视频必须是 MP4 或 MOV",
+        });
+      }
+      if (
+        reference.byteLength !== undefined &&
+        reference.byteLength > MAX_REFERENCE_VIDEO_BYTES
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceVideos", index, "byteLength"],
+          message: "单个参考视频不能超过 200 MB",
+        });
+      }
+    }
+    for (const [index, reference] of (manifest.referenceAudios ?? []).entries()) {
+      if (!(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceAudios", index, "mimeType"],
+          message: "参考音频必须是 MP3 或 WAV",
+        });
+      }
+      if (
+        reference.byteLength !== undefined &&
+        reference.byteLength > MAX_REFERENCE_AUDIO_BYTES
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceAudios", index, "byteLength"],
+          message: "参考音频不能超过 15 MB",
+        });
+      }
+    }
     const references = listVideoInputManifestReferences(manifest);
     if (references.length > MAX_MEDIA_INPUT_COUNT) {
       context.addIssue({
@@ -345,7 +437,7 @@ export const videoInputReferenceManifestSchema = z
       });
     }
     const totalBytes = references.reduce(
-      (total, reference) => total + reference.byteLength,
+      (total, reference) => total + (reference.byteLength ?? 0),
       0
     );
     if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
@@ -366,9 +458,48 @@ export const videoInputManifestSchema = z
       .min(1)
       .max(MAX_MEDIA_INPUT_COUNT)
       .optional(),
+    referenceVideos: z
+      .array(persistedVideoInputReferenceSchema)
+      .min(1)
+      .max(3)
+      .optional(),
+    referenceAudios: z
+      .array(persistedVideoInputReferenceSchema)
+      .length(1)
+      .optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
+    for (const [field, reference] of [
+      ["firstFrame", manifest.firstFrame],
+      ["lastFrame", manifest.lastFrame],
+    ] as const) {
+      if (
+        reference &&
+        !(IMAGE_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [field, "mimeType"],
+          message: "首尾帧必须是图片",
+        });
+      }
+    }
+    for (const [index, reference] of (manifest.referenceImages ?? []).entries()) {
+      if (
+        !(IMAGE_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceImages", index, "mimeType"],
+          message: "参考图必须是图片",
+        });
+      }
+    }
     if (manifest.lastFrame && !manifest.firstFrame) {
       context.addIssue({
         code: "custom",
@@ -386,6 +517,38 @@ export const videoInputManifestSchema = z
         message: "Frame inputs and reference images are mutually exclusive",
       });
     }
+    for (const [index, reference] of (manifest.referenceVideos ?? []).entries()) {
+      if (!(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceVideos", index, "mimeType"],
+          message: "参考视频必须是 MP4 或 MOV",
+        });
+      }
+      if (reference.byteLength > MAX_REFERENCE_VIDEO_BYTES) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceVideos", index, "byteLength"],
+          message: "单个参考视频不能超过 200 MB",
+        });
+      }
+    }
+    for (const [index, reference] of (manifest.referenceAudios ?? []).entries()) {
+      if (!(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(reference.mimeType)) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceAudios", index, "mimeType"],
+          message: "参考音频必须是 MP3 或 WAV",
+        });
+      }
+      if (reference.byteLength > MAX_REFERENCE_AUDIO_BYTES) {
+        context.addIssue({
+          code: "custom",
+          path: ["referenceAudios", index, "byteLength"],
+          message: "参考音频不能超过 15 MB",
+        });
+      }
+    }
     const references = listVideoInputManifestReferences(manifest);
     if (references.length > MAX_MEDIA_INPUT_COUNT) {
       context.addIssue({
@@ -394,7 +557,7 @@ export const videoInputManifestSchema = z
       });
     }
     const totalBytes = references.reduce(
-      (total, reference) => total + reference.byteLength,
+      (total, reference) => total + (reference.byteLength ?? 0),
       0
     );
     if (totalBytes > MAX_MEDIA_INPUT_BYTES) {
@@ -420,10 +583,14 @@ export function listVideoInputManifestReferences<
   firstFrame?: T | undefined;
   lastFrame?: T | undefined;
   referenceImages?: T[] | undefined;
+  referenceVideos?: T[] | undefined;
+  referenceAudios?: T[] | undefined;
 }): T[] {
   return [
     ...(manifest.firstFrame ? [manifest.firstFrame] : []),
     ...(manifest.lastFrame ? [manifest.lastFrame] : []),
     ...(manifest.referenceImages ?? []),
+    ...(manifest.referenceVideos ?? []),
+    ...(manifest.referenceAudios ?? []),
   ];
 }

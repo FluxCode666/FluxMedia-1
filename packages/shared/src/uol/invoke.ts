@@ -21,6 +21,7 @@
  * - 未知异常：统一包装为 internal_error，防止内部细节泄露
  */
 import { isPostgresTimeoutError } from "@repo/database/pool";
+import { logError } from "@repo/shared/logger";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { assertAccess } from "./access";
@@ -151,6 +152,22 @@ export async function invokeOperation<TOutput = unknown>(
     const output = await def.execute(input, principal, ctx);
     const outputResult = def.output.safeParse(output);
     if (!outputResult.success) {
+      logError(
+        new Error("Operation output validation failed"),
+        {
+          source: "uol-output-validation",
+          operation: name,
+          issues: outputResult.error.issues.map((issue) => ({
+            path: issue.path.map(String).join("."),
+            code: issue.code,
+            message: issue.message,
+          })),
+          outputKeys:
+            output && typeof output === "object" && !Array.isArray(output)
+              ? Object.keys(output)
+              : [],
+        }
+      );
       // WHY：执行结果可能包含数据库脏值或 binding 漂移。只暴露 operation 名称，
       // 不把输出值或 Zod issues 带入外部错误，避免意外泄露业务数据。
       throw new OperationError(
@@ -195,6 +212,10 @@ export async function invokeOperation<TOutput = unknown>(
     }
 
     // 未知异常：包装为 internal_error 防止内部细节泄露
+    logError(e, {
+      source: "uol-operation-failure",
+      operation: name,
+    });
     throw new OperationError(
       "internal_error",
       "An unexpected error occurred",

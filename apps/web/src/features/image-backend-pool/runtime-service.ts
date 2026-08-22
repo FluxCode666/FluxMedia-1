@@ -102,6 +102,11 @@ const apiVideoRecoveryRowSchema = z.object({
   adapter_configuration: z.unknown(),
 });
 
+const videoInputCapabilityRequirements = z.object({
+  referenceVideos: z.boolean().default(false),
+  referenceAudios: z.boolean().default(false),
+});
+
 /** 固定版本视频恢复只需要参数化 SQL 执行端口，真实 PostgreSQL 测试可注入连接。 */
 export interface ApiVideoRecoveryConfigDatabase {
   execute(query: SQL): Promise<unknown>;
@@ -244,6 +249,10 @@ export interface CreateRuntimeBackendSessionInput {
   /** 同账号重试固定使用首次选择时持久化的 API 适配版本。 */
   requiredApiAdapterMemberId?: string;
   requiredApiAdapterVersionId?: string;
+  requiredVideoInputCapabilities?: {
+    referenceVideos?: boolean;
+    referenceAudios?: boolean;
+  };
 }
 
 /** 配置可达性查询所需的 Principal 分组事实。 */
@@ -629,6 +638,10 @@ export async function inspectRuntimeVideoBackendAvailability(
     requiresContentSafety: boolean;
     /** 自定义模型等 API-only 请求必须在只读预检时沿用同一成员类型约束。 */
     requiredMemberType?: "api" | "adobe";
+    requiredVideoInputCapabilities?: {
+      referenceVideos?: boolean;
+      referenceAudios?: boolean;
+    };
   },
   dependencies?: {
     group?: RuntimeBackendGroupSnapshot;
@@ -683,6 +696,20 @@ export async function inspectRuntimeVideoBackendAvailability(
             and (
               ${requiresContentSafety} = false
               or member.content_safety_enabled = true
+            )
+            and (
+              ${input.requiredVideoInputCapabilities?.referenceVideos ?? false} = false
+              or (
+                member.type = 'api'
+                and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceVideos')::boolean, false) = true
+              )
+            )
+            and (
+              ${input.requiredVideoInputCapabilities?.referenceAudios ?? false} = false
+              or (
+                member.type = 'api'
+                and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceAudios')::boolean, false) = true
+              )
             )
             and (
               (
@@ -1147,6 +1174,9 @@ export async function createRuntimeBackendSession(
       requiresContentSafety:
         normalizedInput.requiresContentSafety &&
         group.contentSafetyEnabled !== false,
+      requiredVideoInputCapabilities: videoInputCapabilityRequirements.parse(
+        normalizedInput.requiredVideoInputCapabilities
+      ),
       leaseId: nanoid(),
       ownerToken: randomUUID(),
       now,
@@ -1198,7 +1228,14 @@ export async function createRuntimeBackendSession(
       return acquireNext();
     }
 
-    if (!canRuntimeBackendLeaseServeRequest(normalizedInput, lease)) {
+    if (
+      !canRuntimeBackendLeaseServeRequest(normalizedInput, {
+        memberType: lease.memberType,
+        adobeMode: lease.adobeMode,
+        videoInputCapabilities:
+          lease.config.backend?.apiUpstreamAdapter?.videoInputCapabilities,
+      })
+    ) {
       await releaseRuntimeLease(lease);
       excludedMemberIds.add(lease.memberId);
       return acquireNext();

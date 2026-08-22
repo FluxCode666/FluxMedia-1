@@ -75,6 +75,11 @@ ENV ISNET_MODEL_PATH=/app/apps/web/models/isnet.onnx
 RUN groupadd --system --gid 1001 nodejs && \
     useradd --system --uid 1001 --gid nodejs nextjs
 
+# 参考媒体在进入上游前需要通过 stdin 做真实时长、尺寸和帧率校验。
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
 # libonnxruntime.so.1 与 ISNet 模型已由 next.config.mjs 的 outputFileTracingIncludes
 # 显式 trace 进 standalone(裸机与 Docker 共用同一机制),无需再从 builder 手工补拷。
 COPY --from=builder /app/apps/web/.next/standalone ./

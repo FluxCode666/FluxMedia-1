@@ -191,7 +191,10 @@ export async function stageImageInputReferences(input: {
   }
   for (const [index, reference] of references.entries()) {
     const media = loaded[index] as LoadedMediaInput;
-    if (media.data.byteLength !== reference.byteLength) {
+    if (
+      reference.byteLength !== undefined &&
+      media.data.byteLength !== reference.byteLength
+    ) {
       throw new Error("图片输入字节数与声明不一致");
     }
     if (detectMediaMimeType(media.data) !== reference.mimeType) {

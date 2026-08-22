@@ -1,9 +1,8 @@
 /**
  * 统一媒体上游请求。
  *
- * 职责：对 API/Adobe gateway 请求执行 DNS pin；允许管理员配置公网、私网与 HTTP
- * 上游，同时为上游派生的跨源地址提供公网限定请求。媒体下载逐跳解析重定向并限制
- * 真实响应字节。
+ * 职责：对 API/Adobe gateway 请求执行 DNS pin；当前运行策略允许所有解析地址，
+ * 包括私网与保留网段。媒体下载仍逐跳解析重定向并限制真实响应字节。
  * 使用方：图片与视频上游适配器及持久化媒体管线。
  */
 import {
@@ -42,11 +41,10 @@ function sanitizeMediaUpstreamFetchError(error: unknown): never {
   throw error;
 }
 
-/** 执行一次 DNS pin 请求，并按调用方信任边界决定是否允许私网地址。 */
+/** 执行一次 DNS pin 请求；当前策略不限制解析出的地址类别。 */
 async function fetchMediaUpstreamWithPolicy(
   rawUrl: string,
-  init: MediaUpstreamFetchInit,
-  allowPrivateAddress: boolean
+  init: MediaUpstreamFetchInit
 ): Promise<Response> {
   const target = parseMediaUpstreamUrl(rawUrl);
   try {
@@ -55,9 +53,9 @@ async function fetchMediaUpstreamWithPolicy(
       // 生图首个响应块通常超过通用 SSRF fetch 的 10 秒默认值；业务总时限仍由
       // 调用方的 AbortSignal 控制，这里只避免连接层过早截断正常媒体任务。
       timeoutMs: init.timeoutMs ?? MEDIA_UPSTREAM_TIMEOUT_MS,
-      ...(allowPrivateAddress
-        ? { allowBlockedAddress: allowAnyMediaUpstreamAddress }
-        : {}),
+      // 当前后端要求所有上游域名均可访问，包括供应商返回的私网/保留网段地址。
+      // DNS pin 仍保留，用于固定实际连接地址；地址分类拦截由显式策略关闭。
+      allowBlockedAddress: allowAnyMediaUpstreamAddress,
     });
   } catch (error) {
     sanitizeMediaUpstreamFetchError(error);
@@ -76,29 +74,28 @@ export async function fetchMediaUpstream(
   rawUrl: string,
   init: MediaUpstreamFetchInit = {}
 ): Promise<Response> {
-  return fetchMediaUpstreamWithPolicy(rawUrl, init, true);
+  return fetchMediaUpstreamWithPolicy(rawUrl, init);
 }
 
 /**
- * 请求一个上游派生的跨源地址，只允许 DNS pin 校验通过的公网目标。
+ * 请求一个上游派生的跨源地址。
  *
  * @param rawUrl - 上游响应提供的 HTTP(S) URL。
  * @param init - 显式请求头、正文、取消信号与响应大小上限。
  * @returns 不自动跟随重定向的 Response。
- * @throws 私网、保留地址、DNS、超时或网络失败时抛出脱敏错误。
+ * @throws DNS、超时或网络失败时抛出脱敏错误。
  */
 export async function fetchPublicMediaUpstream(
   rawUrl: string,
   init: MediaUpstreamFetchInit = {}
 ): Promise<Response> {
-  return fetchMediaUpstreamWithPolicy(rawUrl, init, false);
+  return fetchMediaUpstreamWithPolicy(rawUrl, init);
 }
 
-/** 按信任源逐跳下载：可信同源可走私网，所有跨源跳转只允许公网目标。 */
+/** 逐跳下载媒体；当前策略允许所有重定向目标地址。 */
 async function fetchMediaUpstreamDownloadWithPolicy(
   rawUrl: string,
-  init: MediaUpstreamDownloadInit,
-  trustedOrigin?: string
+  init: MediaUpstreamDownloadInit
 ): Promise<Response> {
   const maxResponseBytes =
     init.maxResponseBytes ?? MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES;
@@ -111,11 +108,7 @@ async function fetchMediaUpstreamDownloadWithPolicy(
   }
   let current = parseMediaUpstreamUrl(rawUrl);
   for (let hop = 0; hop <= MAX_MEDIA_REDIRECTS; hop += 1) {
-    const allowPrivateAddress =
-      trustedOrigin === undefined || current.origin === trustedOrigin;
-    const response = await (allowPrivateAddress
-      ? fetchMediaUpstream
-      : fetchPublicMediaUpstream)(current.toString(), {
+    const response = await fetchMediaUpstream(current.toString(), {
       ...init,
       method: "GET",
       maxResponseBytes,
@@ -144,19 +137,21 @@ export async function fetchMediaUpstreamDownload(
 }
 
 /**
- * 下载 API 上游返回的产物，只把管理员配置的 Base URL 同源视为可访问私网。
+ * 下载 API 上游返回的产物；当前策略允许所有域名和解析地址。
  *
  * @param rawUrl - 上游返回的产物 URL。
  * @param trustedBaseUrl - 管理员配置并已验证的账号 Base URL。
  * @param init - 取消信号、超时与真实响应字节上限。
  * @returns 最终非重定向 Response。
- * @throws 跨源目标解析到私网/保留地址或任一下载边界失败时抛错。
+ * @throws URL 无效、DNS、超时、网络或任一下载边界失败时抛错。
  */
 export async function fetchMediaUpstreamDownloadWithTrustedOrigin(
   rawUrl: string,
   trustedBaseUrl: string,
   init: MediaUpstreamDownloadInit = {}
 ): Promise<Response> {
-  const trustedOrigin = parseMediaUpstreamUrl(trustedBaseUrl).origin;
-  return fetchMediaUpstreamDownloadWithPolicy(rawUrl, init, trustedOrigin);
+  // 仍解析管理员 Base URL，确保持久化的供应商配置是合法 HTTP(S)，但当前运行策略
+  // 不再以它限制成品 URL 的域名或解析地址。
+  parseMediaUpstreamUrl(trustedBaseUrl);
+  return fetchMediaUpstreamDownloadWithPolicy(rawUrl, init);
 }

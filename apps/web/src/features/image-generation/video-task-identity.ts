@@ -104,6 +104,12 @@ export function createVideoRequestFingerprint(
     referenceImages: (input.referenceImages ?? []).map(
       canonicalizeVideoMediaReference
     ),
+    referenceVideos: (input.referenceVideos ?? []).map(
+      canonicalizeVideoMediaReference
+    ),
+    referenceAudios: (input.referenceAudios ?? []).map(
+      canonicalizeVideoMediaReference
+    ),
   };
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }

@@ -36,7 +36,10 @@ import {
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
-import { normalizeVideoModelId } from "@repo/shared/video-generation";
+import {
+  getVideoOutputSize,
+  normalizeVideoModelId,
+} from "@repo/shared/video-generation";
 import { resolveVideoTaskBilling } from "@repo/shared/video-generation/video-billing-snapshot";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
@@ -360,6 +363,17 @@ bindExecute(
       );
     }
     const canonicalInput = canonicalResult.input;
+    const outputSize = getVideoOutputSize(
+      canonicalInput.resolution,
+      canonicalInput.aspectRatio
+    );
+    if (!outputSize) {
+      throw new OperationError(
+        "validation_error",
+        "视频模型缺少当前分辨率的可信输出像素配置",
+        { field: "resolution" }
+      );
+    }
     const capabilitySnapshot = createVideoCapabilitySnapshot({
       modelConfigurationRevision,
       maxReferenceImages:
@@ -382,6 +396,12 @@ bindExecute(
         : {}),
       ...(canonicalInput.referenceImages?.length
         ? { referenceImages: canonicalInput.referenceImages }
+        : {}),
+      ...(canonicalInput.referenceVideos?.length
+        ? { referenceVideos: canonicalInput.referenceVideos }
+        : {}),
+      ...(canonicalInput.referenceAudios?.length
+        ? { referenceAudios: canonicalInput.referenceAudios }
         : {}),
     };
 
@@ -463,6 +483,10 @@ bindExecute(
           duration: canonicalInput.duration,
           aspectRatio: canonicalInput.aspectRatio,
           resolution: canonicalInput.resolution,
+          outputSize: {
+            width: outputSize.width,
+            height: outputSize.height,
+          },
           ...(canonicalInput.negativePrompt
             ? { negativePrompt: canonicalInput.negativePrompt }
             : {}),
@@ -507,6 +531,10 @@ bindExecute(
                   : {}),
               modelId: canonicalInput.model,
               requiresContentSafety: true,
+              requiredVideoInputCapabilities: {
+                referenceVideos: Boolean(canonicalInput.referenceVideos?.length),
+                referenceAudios: Boolean(canonicalInput.referenceAudios?.length),
+              },
               // 自定义模型只能由 API 成员执行；内置模型必须同时统计 API 与
               // Adobe Direct，保持创建预检与权威获租的协议边界一致。
               ...(customModelDefinition

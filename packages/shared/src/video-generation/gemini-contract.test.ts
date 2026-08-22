@@ -1,7 +1,7 @@
 /**
  * Gemini 视频 DB-free 合约测试。
  *
- * 使用方：Vitest；验证公共请求和 Operation 输出的严格字段、时长兼容和 HTTPS 边界。
+ * 使用方：Vitest；验证公共请求和 Operation 输出的严格字段、时长兼容和 URL 协议边界。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -26,6 +26,43 @@ describe("Gemini video contract", () => {
         parameters: { durationSeconds: "8" },
       }).success
     ).toBe(true);
+  });
+
+  it("accepts HTTPS reference video and audio extensions", () => {
+    expect(
+      geminiVideoRequestSchema.safeParse({
+        instances: [
+          {
+            prompt: "Replace the subject while preserving the motion",
+            reference_videos: ["https://media.example/reference.mp4"],
+            reference_audios: ["https://media.example/reference.wav"],
+          },
+        ],
+      }).success
+    ).toBe(true);
+    expect(
+      geminiVideoRequestSchema.safeParse({
+        instances: [
+          {
+            prompt: "test",
+            reference_videos: ["http://media.example/reference.mp4"],
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      geminiVideoRequestSchema.safeParse({
+        instances: [
+          {
+            prompt: "test",
+            reference_audios: [
+              "https://media.example/reference.mp3",
+              "https://media.example/second.mp3",
+            ],
+          },
+        ],
+      }).success
+    ).toBe(false);
   });
 
   it("rejects body model and unsupported fields", () => {
@@ -57,7 +94,7 @@ describe("Gemini video contract", () => {
     ).toBe(false);
   });
 
-  it("requires HTTPS for generated video URIs", () => {
+  it("allows HTTP and HTTPS generated video URIs", () => {
     expect(
       geminiOperationOutputSchema.safeParse({
         name: "models/veo-3.1-generate-preview/operations/opaque-operation-1234",
@@ -66,6 +103,19 @@ describe("Gemini video contract", () => {
           generateVideoResponse: {
             generatedSamples: [
               { video: { uri: "http://storage.example/video.mp4" } },
+            ],
+          },
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      geminiOperationOutputSchema.safeParse({
+        name: "models/veo-3.1-generate-preview/operations/opaque-operation-1234",
+        done: true,
+        response: {
+          generateVideoResponse: {
+            generatedSamples: [
+              { video: { uri: "ftp://storage.example/video.mp4" } },
             ],
           },
         },

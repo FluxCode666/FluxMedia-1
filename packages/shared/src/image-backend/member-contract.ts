@@ -12,6 +12,7 @@ import {
   apiModelMappingsSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
+  apiVideoInputCapabilitiesSchema,
   apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
   videoSubmissionRetryCountSchema,
@@ -71,6 +72,8 @@ export const apiBackendMemberConfigSchema = z
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     /** 显式选择视频上游请求格式；旧成员缺失时安全沿用 custom。 */
     videoProtocolMode: apiVideoProtocolModeSchema,
+    /** 账号可处理的额外视频输入能力；旧成员缺失时全部关闭。 */
+    videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema.default({
       mode: "bearer",

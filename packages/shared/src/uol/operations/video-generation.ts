@@ -7,9 +7,13 @@
 import { z } from "zod";
 import { isLegacyVideoModelId } from "../../image-backend/supported-models";
 import {
+  AUDIO_REFERENCE_MIME_TYPES,
   MAX_MEDIA_INPUT_COUNT,
+  MAX_REFERENCE_AUDIO_BYTES,
+  MAX_REFERENCE_VIDEO_BYTES,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
+  VIDEO_REFERENCE_MIME_TYPES,
 } from "../../image-generation/media-contract";
 import {
   resolveEffectiveVideoModelCapability,
@@ -76,6 +80,12 @@ export const videoGenerateInputSchema = z
     firstFrame: mediaInputReferenceSchema.optional(),
     lastFrame: mediaInputReferenceSchema.optional(),
     referenceImages: mediaInputReferencesSchema.optional(),
+    referenceVideos: z
+      .array(mediaInputReferenceSchema)
+      .min(1)
+      .max(3)
+      .optional(),
+    referenceAudios: z.array(mediaInputReferenceSchema).length(1).optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -167,6 +177,52 @@ export const videoGenerateInputSchema = z
         message: "Frame inputs and reference images are mutually exclusive",
         path: ["referenceImages"],
       });
+    }
+    for (const [index, reference] of (input.referenceVideos ?? []).entries()) {
+      if (
+        !(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "参考视频必须是 MP4 或 MOV",
+          path: ["referenceVideos", index, "mimeType"],
+        });
+      }
+      if (
+        reference.byteLength !== undefined &&
+        reference.byteLength > MAX_REFERENCE_VIDEO_BYTES
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "单个参考视频不能超过 200 MB",
+          path: ["referenceVideos", index, "byteLength"],
+        });
+      }
+    }
+    for (const [index, reference] of (input.referenceAudios ?? []).entries()) {
+      if (
+        !(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "参考音频必须是 MP3 或 WAV",
+          path: ["referenceAudios", index, "mimeType"],
+        });
+      }
+      if (
+        reference.byteLength !== undefined &&
+        reference.byteLength > MAX_REFERENCE_AUDIO_BYTES
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "参考音频不能超过 15 MB",
+          path: ["referenceAudios", index, "byteLength"],
+        });
+      }
     }
   });
 
@@ -427,7 +483,15 @@ export const videoListCapabilitiesInputSchema = z
 /** 视频任务输入摘要；回调与列表只消费模式和数量，不含 URL 或存储身份。 */
 export const videoInputSummarySchema = z
   .object({
-    mode: z.enum(["none", "first-frame", "first-last-frames", "references"]),
+    mode: z.enum([
+      "none",
+      "first-frame",
+      "first-last-frames",
+      "references",
+      "reference-videos",
+      "reference-audio",
+      "mixed",
+    ]),
     count: z.number().int().min(0).max(MAX_MEDIA_INPUT_COUNT),
   })
   .strict();
@@ -454,6 +518,8 @@ export const videoGetInputsOutputSchema = z
     firstFrame: videoInputAssetSchema.optional(),
     lastFrame: videoInputAssetSchema.optional(),
     referenceImages: z.array(videoInputAssetSchema).optional(),
+    referenceVideos: z.array(videoInputAssetSchema).optional(),
+    referenceAudios: z.array(videoInputAssetSchema).optional(),
   })
   .strict();
 

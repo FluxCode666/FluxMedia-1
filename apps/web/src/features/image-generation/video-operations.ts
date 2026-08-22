@@ -53,6 +53,7 @@ import {
 import {
   projectVideoCurrentQuote,
   type VideoCurrentQuote,
+  videoPixelSizeSchema,
 } from "@repo/shared/video-generation";
 import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";
 import {
@@ -86,7 +87,10 @@ import {
 import { ApiAcceptedVideoError } from "./api-video-error";
 import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import { createVideoCreditOperation } from "./credit-operation-context";
-import { loadMediaInputs } from "./media-input-loader";
+import {
+  getMediaInputReferenceMaxBytes,
+  loadMediaInputs,
+} from "./media-input-loader";
 import { defaultVideoApiKeyQuotaRepository } from "./video-api-key-quota";
 import {
   assertAuthoritativeVideoCapabilitySnapshot,
@@ -184,6 +188,7 @@ export type VideoGenerationInput = {
   duration: number;
   aspectRatio: string;
   resolution: string;
+  outputSize: { width: number; height: number };
   backendGroupId?: string;
   negativePrompt?: string | null;
   effectiveAudio: boolean;
@@ -1552,6 +1557,8 @@ type LoadedVideoSourceInputs = {
   firstFrame?: Awaited<ReturnType<typeof loadMediaInputs>>[number];
   lastFrame?: Awaited<ReturnType<typeof loadMediaInputs>>[number];
   referenceImages?: Awaited<ReturnType<typeof loadMediaInputs>>;
+  referenceVideos?: Awaited<ReturnType<typeof loadMediaInputs>>;
+  referenceAudios?: Awaited<ReturnType<typeof loadMediaInputs>>;
 };
 
 /**
@@ -1600,24 +1607,48 @@ async function loadPersistedVideoSourceInputs(
   userId: string,
   manifest: VideoInputManifest | undefined
 ): Promise<LoadedVideoSourceInputs> {
-  if (manifest?.referenceImages?.length) {
-    return {
-      referenceImages: await loadMediaInputs({
-        userId,
-        references: manifest.referenceImages,
-      }),
-    };
-  }
   const references = [manifest?.firstFrame, manifest?.lastFrame].filter(
     (reference): reference is NonNullable<VideoInputManifest["firstFrame"]> =>
       Boolean(reference)
   );
-  if (!references.length) return {};
-  const loaded = await loadMediaInputs({ userId, references });
-  return {
-    ...(loaded[0] ? { firstFrame: loaded[0] } : {}),
-    ...(loaded[1] ? { lastFrame: loaded[1] } : {}),
-  };
+  const referenceImages = manifest?.referenceImages ?? [];
+  const referenceVideos = manifest?.referenceVideos ?? [];
+  const referenceAudios = manifest?.referenceAudios ?? [];
+  const loadedReferences = await loadMediaInputs({
+    userId,
+    references: [
+      ...references,
+      ...referenceImages,
+      ...referenceVideos,
+      ...referenceAudios,
+    ],
+    maxBytesForReference: getMediaInputReferenceMaxBytes,
+  });
+  let index = 0;
+  const result: LoadedVideoSourceInputs = {};
+  if (references[0]) result.firstFrame = loadedReferences[index++];
+  if (references[1]) result.lastFrame = loadedReferences[index++];
+  if (referenceImages.length) {
+    result.referenceImages = loadedReferences.slice(
+      index,
+      index + referenceImages.length
+    );
+    index += referenceImages.length;
+  }
+  if (referenceVideos.length) {
+    result.referenceVideos = loadedReferences.slice(
+      index,
+      index + referenceVideos.length
+    );
+    index += referenceVideos.length;
+  }
+  if (referenceAudios.length) {
+    result.referenceAudios = loadedReferences.slice(
+      index,
+      index + referenceAudios.length
+    );
+  }
+  return result;
 }
 
 /** 确保任务清单与本次待采用 orphan 对象一一对应。 */
@@ -1657,12 +1688,16 @@ export async function runVideoGenerationForUser(
   executionOptions?: VideoGenerationExecutionOptions
 ): Promise<VideoGenerationResult> {
   let contract: VideoExecutionContract;
+  let outputSize: { width: number; height: number };
   try {
+    outputSize = videoPixelSizeSchema.parse(input.outputSize);
     contract = resolveVideoExecutionContract({
       model: input.model,
       durationSeconds: input.duration,
       aspectRatio: input.aspectRatio,
       resolution: input.resolution,
+      outputWidth: outputSize.width,
+      outputHeight: outputSize.height,
       metadata: {
         generateAudio: input.effectiveAudio,
         videoCapabilitySnapshot: input.capabilitySnapshot,
@@ -1807,6 +1842,8 @@ export async function runVideoGenerationForUser(
       durationSeconds: contract.duration,
       aspectRatio: contract.aspectRatio,
       resolution: contract.resolution,
+      outputWidth: outputSize.width,
+      outputHeight: outputSize.height,
       status: "pending",
       stage: "created",
       storageBucket,
@@ -1893,12 +1930,13 @@ async function submitClaimedCreatedVideo(
   }
 
   let sourceInputs: LoadedVideoSourceInputs;
+  let persistedInputManifest: VideoInputManifest | undefined;
   try {
-    const inputManifest = parsePersistedVideoInputManifest(initialRow);
-    assertVideoInputManifestMatchesContract(inputManifest, contract);
+    persistedInputManifest = parsePersistedVideoInputManifest(initialRow);
+    assertVideoInputManifestMatchesContract(persistedInputManifest, contract);
     sourceInputs = await loadPersistedVideoSourceInputs(
       initialRow.userId,
-      inputManifest
+      persistedInputManifest
     );
   } catch (error) {
     const message =
@@ -1953,6 +1991,14 @@ async function submitClaimedCreatedVideo(
       ...(contract.requiredMemberType
         ? { requiredMemberType: contract.requiredMemberType }
         : {}),
+      requiredVideoInputCapabilities: {
+        referenceVideos: Boolean(
+          persistedInputManifest?.referenceVideos?.length
+        ),
+        referenceAudios: Boolean(
+          persistedInputManifest?.referenceAudios?.length
+        ),
+      },
       ...retryAccountSelection,
     });
     await backendSession.acquireNext();
@@ -2432,6 +2478,14 @@ async function submitClaimedCreatedVideo(
             requestKind: "video",
             requiresContentSafety: true,
             requiredMemberType: "api",
+            requiredVideoInputCapabilities: {
+              referenceVideos: Boolean(
+                persistedInputManifest?.referenceVideos?.length
+              ),
+              referenceAudios: Boolean(
+                persistedInputManifest?.referenceAudios?.length
+              ),
+            },
             excludedMemberIds: attemptedMemberIds,
           });
           let nextLease: Awaited<

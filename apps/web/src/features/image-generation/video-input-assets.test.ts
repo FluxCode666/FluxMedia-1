@@ -91,6 +91,46 @@ describe("video input assets", () => {
     expect(serialized).not.toContain("providerAssetId");
   });
 
+  it("返回参考视频和参考音频的短期 URL", async () => {
+    const output = await getVideoInputAssets(
+      {
+        taskId: "video-1",
+        principal: { type: "user", userId: "owner-1", role: "user" },
+        context: createContext(),
+      },
+      createDependencies({
+        ...TASK,
+        inputManifest: {
+          referenceVideos: [
+            {
+              source: "storage",
+              mimeType: "video/mp4",
+              storageKey:
+                "owner-1/video-inputs/video-1/reservation-1/reference-video-0-v.mp4",
+              storageBucket: "uploads",
+              byteLength: 20,
+            },
+          ],
+          referenceAudios: [
+            {
+              source: "storage",
+              mimeType: "audio/mpeg",
+              storageKey:
+                "owner-1/video-inputs/video-1/reservation-1/reference-audio-0-a.mp3",
+              storageBucket: "uploads",
+              byteLength: 20,
+            },
+          ],
+        },
+      })
+    );
+
+    expect(output).toMatchObject({
+      referenceVideos: [{ mimeType: "video/mp4" }],
+      referenceAudios: [{ mimeType: "audio/mpeg" }],
+    });
+  });
+
   it.each([
     "observer_admin",
     "admin",

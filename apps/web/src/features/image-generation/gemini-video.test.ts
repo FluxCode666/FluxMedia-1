@@ -26,6 +26,7 @@ const adapter: ApiUpstreamAdapterDraft = {
   useStream: false,
   videoSubmissionRetryCount: 2,
   videoProtocolMode: "gemini",
+  videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
   modelMappings: [],
   authentication: { mode: "bearer" },
   credentialScope: "https://generativelanguage.googleapis.com|bearer",
@@ -75,6 +76,8 @@ describe("Gemini video upstream adapter", () => {
       aspectRatio: "16:9",
       resolution: "1080p",
       effectiveAudio: true,
+      referenceVideos: ["https://oss.example.test/reference.mp4"],
+      referenceAudios: ["https://oss.example.test/reference.mp3"],
     });
     expect(result).toMatchObject({
       status: "pending",
@@ -96,7 +99,13 @@ describe("Gemini video upstream adapter", () => {
       (init.headers as Record<string, string>).Authorization
     ).toBeUndefined();
     expect(JSON.parse(String(init.body))).toMatchObject({
-      instances: [{ prompt: "A lighthouse at sunset" }],
+      instances: [
+        {
+          prompt: "A lighthouse at sunset",
+          reference_videos: ["https://oss.example.test/reference.mp4"],
+          reference_audios: ["https://oss.example.test/reference.mp3"],
+        },
+      ],
       parameters: {
         aspectRatio: "16:9",
         resolution: "1080p",

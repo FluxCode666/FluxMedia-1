@@ -49,6 +49,19 @@ export const videoSubmissionRetryCountSchema = z
   .max(10)
   .default(DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT);
 
+/** 单个 API 账号声明的额外视频输入能力标签。 */
+export const apiVideoInputCapabilitiesSchema = z
+  .object({
+    referenceVideos: z.boolean().default(false),
+    referenceAudios: z.boolean().default(false),
+  })
+  .strict()
+  .default({ referenceVideos: false, referenceAudios: false });
+
+export type ApiVideoInputCapabilities = z.infer<
+  typeof apiVideoInputCapabilitiesSchema
+>;
+
 /** 单个账号请求处理脚本的最大 UTF-16 字符数。 */
 export const MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS =
   API_UPSTREAM_MAX_SCRIPT_CHARACTERS;
@@ -276,6 +289,7 @@ export const apiUpstreamAdapterDraftSchema = z
     useStream: z.boolean(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     videoProtocolMode: apiVideoProtocolModeSchema,
+    videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema,
     credentialScope: z.string().trim().min(1).max(512),

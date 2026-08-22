@@ -40,6 +40,7 @@ function createAdapter(): ApiUpstreamAdapterDraft {
     useStream: false,
     videoSubmissionRetryCount: 2,
     videoProtocolMode: "custom",
+    videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
     modelMappings: [{ modelId: "seedance2", upstreamModelId: "seedance-2.0" }],
     authentication: { mode: "bearer" },
     credentialScope: "https://video.example.com|bearer",
@@ -117,6 +118,8 @@ describe("API video adapter", () => {
         resolution: "480p",
         effectiveAudio: true,
         firstFrame: createStoredSource("first.png", "image/png"),
+        referenceVideos: [createStoredSource("reference.mp4", "video/mp4")],
+        referenceAudios: [createStoredSource("reference.mp3", "audio/mpeg")],
       })
     ).resolves.toMatchObject({
       status: "pending",
@@ -146,6 +149,12 @@ describe("API video adapter", () => {
     expect(body.first_frame).toBe(
       "https://oss.example.test/media/first.png?sig=test"
     );
+    expect(body.reference_videos).toEqual([
+      "https://oss.example.test/media/reference.mp4?sig=test",
+    ]);
+    expect(body.reference_audios).toEqual([
+      "https://oss.example.test/media/reference.mp3?sig=test",
+    ]);
   });
 
   it("按沧元 Seedance 协议发送参考图、音频和负面提示词", async () => {

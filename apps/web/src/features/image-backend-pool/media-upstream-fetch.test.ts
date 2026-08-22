@@ -1,8 +1,8 @@
 /**
  * 统一媒体上游请求测试。
  *
- * 职责：验证上游请求使用连接层 DNS pin，管理员配置可访问 HTTP/私网目标，而上游
- * 派生的跨源地址只能访问公网。媒体下载逐跳解析重定向并维持响应大小限制。
+ * 职责：验证上游请求使用连接层 DNS pin，当前策略允许所有解析地址。媒体下载逐跳
+ * 解析重定向并维持响应大小限制。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -128,7 +128,7 @@ describe("media upstream fetch", () => {
     ).toBe(true);
   });
 
-  it("上游派生的公网请求不注入私网地址例外", async () => {
+  it("上游派生的跨源请求同样允许保留地址", async () => {
     mocks.fetchWithDnsPin.mockResolvedValue(new Response("ok"));
 
     await fetchPublicMediaUpstream("https://8.8.8.8/status", {
@@ -137,13 +137,13 @@ describe("media upstream fetch", () => {
 
     expect(mocks.fetchWithDnsPin).toHaveBeenCalledWith(
       "https://8.8.8.8/status",
-      expect.not.objectContaining({
+      expect.objectContaining({
         allowBlockedAddress: expect.any(Function),
       })
     );
   });
 
-  it("可信 Base URL 同源可访问私网，跨源重定向恢复公网限制", async () => {
+  it("API 视频跨源重定向也允许访问", async () => {
     mocks.fetchWithDnsPin
       .mockResolvedValueOnce(
         new Response(null, {
@@ -167,7 +167,7 @@ describe("media upstream fetch", () => {
     expect(mocks.fetchWithDnsPin).toHaveBeenNthCalledWith(
       2,
       "http://127.0.0.1/private",
-      expect.not.objectContaining({
+      expect.objectContaining({
         allowBlockedAddress: expect.any(Function),
       })
     );

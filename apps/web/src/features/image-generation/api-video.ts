@@ -38,19 +38,24 @@ const MAX_API_VIDEO_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_API_VIDEO_UPSTREAM_ERROR_DETAIL_CHARACTERS = 512;
 const API_VIDEO_SIGNED_INPUT_URL_TTL_SECONDS = 60 * 60;
 
-/** API 视频适配器消费的一张已验证输入图。 */
-export type ApiVideoSourceImage = {
+/** API 视频适配器消费的一份已验证输入媒体。 */
+export type ApiVideoSourceMedia = {
   data: Buffer;
   type: string;
   storageKey?: string;
   storageBucket?: string;
 };
 
+/** API 视频适配器消费的一张已验证输入图。 */
+export type ApiVideoSourceImage = ApiVideoSourceMedia;
+
 /** API 视频适配器消费的具名输入图集合。 */
 export type ApiVideoSourceInputs = {
   firstFrame?: ApiVideoSourceImage;
   lastFrame?: ApiVideoSourceImage;
   referenceImages?: ApiVideoSourceImage[];
+  referenceVideos?: ApiVideoSourceMedia[];
+  referenceAudios?: ApiVideoSourceMedia[];
 };
 
 /** API 上游生成操作的同步或异步标准结果。 */
@@ -222,7 +227,7 @@ function responseResultToRecord(
 
 /** 为 API 类型视频供应商签发对象存储 HTTPS 读取地址。 */
 async function createSignedApiVideoInputUrl(
-  image: ApiVideoSourceImage,
+  image: ApiVideoSourceMedia,
   storage: {
     bucketName: string;
     provider: {
@@ -465,6 +470,32 @@ export async function submitApiVideoRequest(
         failure: { kind: "unknown", statusCode: 400 },
       };
     }
+    let referenceVideoValues: string[] | undefined;
+    let referenceAudioValues: string[] | undefined;
+    try {
+      const storage =
+        params.referenceVideos?.length || params.referenceAudios?.length
+          ? await import("@repo/shared/storage/providers").then((module) =>
+              module.getStorageRuntimeSnapshot()
+            )
+          : undefined;
+      const resolveInputValue = async (media: ApiVideoSourceMedia) => {
+        if (!storage) throw new Error("API 视频输入缺少对象存储快照");
+        return createSignedApiVideoInputUrl(media, storage);
+      };
+      referenceVideoValues = params.referenceVideos?.length
+        ? await Promise.all(params.referenceVideos.map(resolveInputValue))
+        : undefined;
+      referenceAudioValues = params.referenceAudios?.length
+        ? await Promise.all(params.referenceAudios.map(resolveInputValue))
+        : undefined;
+    } catch {
+      return {
+        error: "API 视频参考媒体 URL 签发失败，请稍后重试",
+        failure: { kind: "unknown" },
+        backendHealthNeutral: true,
+      };
+    }
     const result = await submitGeminiVideoRequest({
       adapter,
       apiKey: config.apiKey,
@@ -478,6 +509,12 @@ export async function submitApiVideoRequest(
       ...(params.lastFrame ? { lastFrame: params.lastFrame } : {}),
       ...(params.referenceImages?.length
         ? { referenceImages: params.referenceImages }
+        : {}),
+      ...(referenceVideoValues?.length
+        ? { referenceVideos: referenceVideoValues }
+        : {}),
+      ...(referenceAudioValues?.length
+        ? { referenceAudios: referenceAudioValues }
         : {}),
       onRequestSnapshot: params.onRequestSnapshot,
       onBeforeSend: params.onBeforeSend,
@@ -524,6 +561,32 @@ export async function submitApiVideoRequest(
     };
   }
   if (adapter.videoProtocolMode === "seedance") {
+    let referenceVideoValues: string[] | undefined;
+    let referenceAudioValues: string[] | undefined;
+    try {
+      const storage =
+        params.referenceVideos?.length || params.referenceAudios?.length
+          ? await import("@repo/shared/storage/providers").then((module) =>
+              module.getStorageRuntimeSnapshot()
+            )
+          : undefined;
+      const resolveInputValue = async (media: ApiVideoSourceMedia) => {
+        if (!storage) throw new Error("API 视频输入缺少对象存储快照");
+        return createSignedApiVideoInputUrl(media, storage);
+      };
+      referenceVideoValues = params.referenceVideos?.length
+        ? await Promise.all(params.referenceVideos.map(resolveInputValue))
+        : undefined;
+      referenceAudioValues = params.referenceAudios?.length
+        ? await Promise.all(params.referenceAudios.map(resolveInputValue))
+        : undefined;
+    } catch {
+      return {
+        error: "API 视频参考媒体 URL 签发失败，请稍后重试",
+        failure: { kind: "unknown" },
+        backendHealthNeutral: true,
+      };
+    }
     const result = await submitSeedanceVideoRequest({
       adapter,
       apiKey: config.apiKey,
@@ -537,6 +600,12 @@ export async function submitApiVideoRequest(
       ...(params.lastFrame ? { lastFrame: params.lastFrame } : {}),
       ...(params.referenceImages?.length
         ? { referenceImages: params.referenceImages }
+        : {}),
+      ...(referenceVideoValues?.length
+        ? { referenceVideos: referenceVideoValues }
+        : {}),
+      ...(referenceAudioValues?.length
+        ? { referenceAudios: referenceAudioValues }
         : {}),
       onRequestSnapshot: params.onRequestSnapshot,
       onBeforeSend: params.onBeforeSend,
@@ -584,9 +653,12 @@ export async function submitApiVideoRequest(
   let firstFrameValue: string | undefined;
   let lastFrameValue: string | undefined;
   let referenceImageValues: string[] | undefined;
+  let referenceVideoValues: string[] | undefined;
+  let referenceAudioValues: string[] | undefined;
   try {
     const hasSourceInputs = Boolean(
       params.firstFrame || params.lastFrame || params.referenceImages?.length
+        || params.referenceVideos?.length || params.referenceAudios?.length
     );
     const storage = hasSourceInputs
       ? await import("@repo/shared/storage/providers").then((module) =>
@@ -607,6 +679,12 @@ export async function submitApiVideoRequest(
       : undefined;
     referenceImageValues = params.referenceImages?.length
       ? await Promise.all(params.referenceImages.map(resolveInputValue))
+      : undefined;
+    referenceVideoValues = params.referenceVideos?.length
+      ? await Promise.all(params.referenceVideos.map(resolveInputValue))
+      : undefined;
+    referenceAudioValues = params.referenceAudios?.length
+      ? await Promise.all(params.referenceAudios.map(resolveInputValue))
       : undefined;
   } catch {
     return {
@@ -641,6 +719,12 @@ export async function submitApiVideoRequest(
       : {}),
     ...(referenceImageValues?.length
       ? { reference_images: referenceImageValues.map(toOpaqueInputValue) }
+      : {}),
+    ...(referenceVideoValues?.length
+      ? { reference_videos: referenceVideoValues.map(toOpaqueInputValue) }
+      : {}),
+    ...(referenceAudioValues?.length
+      ? { reference_audios: referenceAudioValues.map(toOpaqueInputValue) }
       : {}),
   };
   const executionAdapter = getVideoExecutionAdapter(adapter);

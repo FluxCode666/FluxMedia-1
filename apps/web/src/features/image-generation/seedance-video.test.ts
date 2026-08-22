@@ -23,6 +23,7 @@ const adapter: ApiUpstreamAdapterDraft = {
   useStream: false,
   videoSubmissionRetryCount: 2,
   videoProtocolMode: "seedance",
+  videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
   modelMappings: [],
   authentication: { mode: "bearer" },
   credentialScope: "https://ark.example.com|bearer",
@@ -68,6 +69,8 @@ describe("Seedance video upstream adapter", () => {
       aspectRatio: "16:9",
       resolution: "720p",
       effectiveAudio: false,
+      referenceVideos: ["https://oss.example.test/reference.mp4"],
+      referenceAudios: ["https://oss.example.test/reference.mp3"],
     });
 
     expect(result).toMatchObject({
@@ -91,6 +94,8 @@ describe("Seedance video upstream adapter", () => {
       duration: 5,
       resolution: "720p",
       content: [{ type: "text", text: "A paper crane flying over a lake" }],
+      reference_videos: ["https://oss.example.test/reference.mp4"],
+      reference_audios: ["https://oss.example.test/reference.mp3"],
     });
   });
 

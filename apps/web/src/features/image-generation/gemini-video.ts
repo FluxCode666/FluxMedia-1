@@ -498,6 +498,8 @@ export async function submitGeminiVideoRequest(input: {
   firstFrame?: GeminiVideoSourceImage;
   lastFrame?: GeminiVideoSourceImage;
   referenceImages?: GeminiVideoSourceImage[];
+  referenceVideos?: readonly string[];
+  referenceAudios?: readonly string[];
   /** 真正发出上游请求前预留 API 创建尝试次数。 */
   onBeforeSend?: () => Promise<void> | void;
   /** 持久化不含媒体正文和凭据的最终请求快照。 */
@@ -540,6 +542,12 @@ export async function submitGeminiVideoRequest(input: {
       image: encodeImage(image),
       referenceType: "asset",
     }));
+  }
+  if (input.referenceVideos?.length) {
+    instance.reference_videos = input.referenceVideos;
+  }
+  if (input.referenceAudios?.length) {
+    instance.reference_audios = input.referenceAudios;
   }
   const body = {
     instances: [instance],

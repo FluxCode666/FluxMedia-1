@@ -16,7 +16,14 @@ import {
 
 /** 视频列表和 callback 可公开的输入摘要。 */
 export type VideoInputSummary = {
-  mode: "none" | "first-frame" | "first-last-frames" | "references";
+  mode:
+    | "none"
+    | "first-frame"
+    | "first-last-frames"
+    | "references"
+    | "reference-videos"
+    | "reference-audio"
+    | "mixed";
   count: number;
 };
 
@@ -43,15 +50,28 @@ export function buildVideoInputSummary(
   manifest: VideoInputManifest | null | undefined
 ): VideoInputSummary {
   if (!manifest) return { mode: "none", count: 0 };
+  const frameCount = (manifest.firstFrame ? 1 : 0) + (manifest.lastFrame ? 1 : 0);
   const referenceCount = manifest.referenceImages?.length ?? 0;
-  if (referenceCount > 0) {
+  const videoCount = manifest.referenceVideos?.length ?? 0;
+  const audioCount = manifest.referenceAudios?.length ?? 0;
+  const total = frameCount + referenceCount + videoCount + audioCount;
+  if (total === 0) return { mode: "none", count: 0 };
+  if (videoCount > 0 && audioCount === 0 && frameCount === 0 && referenceCount === 0) {
+    return { mode: "reference-videos", count: videoCount };
+  }
+  if (audioCount > 0 && videoCount === 0 && frameCount === 0 && referenceCount === 0) {
+    return { mode: "reference-audio", count: audioCount };
+  }
+  if (referenceCount > 0 && videoCount === 0 && audioCount === 0 && frameCount === 0) {
     return { mode: "references", count: referenceCount };
   }
-  if (manifest.firstFrame && manifest.lastFrame) {
+  if (frameCount === 2 && total === 2) {
     return { mode: "first-last-frames", count: 2 };
   }
-  if (manifest.firstFrame) return { mode: "first-frame", count: 1 };
-  return { mode: "none", count: 0 };
+  if (frameCount === 1 && total === 1) {
+    return { mode: "first-frame", count: 1 };
+  }
+  return { mode: "mixed", count: total };
 }
 
 /**

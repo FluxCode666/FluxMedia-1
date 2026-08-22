@@ -2206,7 +2206,15 @@ export const imageBackendMemberSchedulerMetric = pgTable(
 /** 视频任务自有、storage-only 的单个输入对象。 */
 type PersistedVideoInputAsset = {
   source: "storage";
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  mimeType:
+    | "image/png"
+    | "image/jpeg"
+    | "image/webp"
+    | "video/mp4"
+    | "video/quicktime"
+    | "audio/mpeg"
+    | "audio/wav"
+    | "audio/x-wav";
   storageKey: string;
   storageBucket: string;
   byteLength: number;
@@ -2217,6 +2225,8 @@ type PersistedVideoInputManifest = {
   firstFrame?: PersistedVideoInputAsset;
   lastFrame?: PersistedVideoInputAsset;
   referenceImages?: PersistedVideoInputAsset[];
+  referenceVideos?: PersistedVideoInputAsset[];
+  referenceAudios?: PersistedVideoInputAsset[];
 };
 
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
@@ -2264,6 +2274,9 @@ export const videoGeneration = pgTable(
     durationSeconds: integer("duration_seconds").notNull(),
     aspectRatio: text("aspect_ratio").notNull(),
     resolution: text("resolution").notNull(),
+    // 创建时固定的真实输出像素，恢复任务不能按当前配置重新推导。
+    outputWidth: integer("output_width").notNull(),
+    outputHeight: integer("output_height").notNull(),
     // pending / running / completed / failed。
     status: text("status").notNull().default("pending"),
     // 可恢复执行阶段；status 保留为面向查询方的稳定粗粒度状态。

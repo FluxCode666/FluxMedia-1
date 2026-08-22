@@ -1916,7 +1916,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             {
               name: "input.mode / input.count",
               description:
-                "输入摘要；mode 为 none、first-frame、first-last-frames 或 references，count 为输入图数量，不返回实际输入图。",
+                "输入摘要；mode 为 none、first-frame、first-last-frames、references、reference-videos、reference-audio 或 mixed，count 为输入数量，不返回实际输入图或媒体。",
             },
             {
               name: "billing",
@@ -4257,7 +4257,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
             {
               name: "input.mode / input.count",
               description:
-                "Input summary. mode is none, first-frame, first-last-frames, or references; count is the number of input images. Actual input images are not returned.",
+                "Input summary. mode is none, first-frame, first-last-frames, references, reference-videos, reference-audio, or mixed; count is the number of inputs. Actual input media are not returned.",
             },
             {
               name: "billing",
