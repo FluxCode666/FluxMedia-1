@@ -136,6 +136,33 @@ function EndpointSection({
   return (
     <section className="scroll-mt-32" id={endpoint.id}>
       <Card className="overflow-hidden rounded-lg">
+        {endpoint.operation === "video" && endpoint.protocols?.gemini ? (
+          <div className="border-b border-border px-5 py-3 md:px-6">
+            <div
+              aria-label={content.protocolTabs.ariaLabel}
+              className="inline-flex rounded-md border border-border bg-muted/30 p-1"
+              role="tablist"
+            >
+              {(["fluxmedia", "gemini"] as const).map((value) => (
+                <button
+                  aria-selected={protocol === value}
+                  className={cn(
+                    "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                    protocol === value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  key={value}
+                  onClick={() => setProtocol(value)}
+                  role="tab"
+                  type="button"
+                >
+                  {content.protocolTabs[value]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="border-b border-border bg-muted/20 p-5 md:p-6">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs text-muted-foreground/70">
@@ -174,31 +201,6 @@ function EndpointSection({
           </p>
         </div>
         <CardContent className="space-y-6 p-5 md:p-6">
-          {endpoint.operation === "video" && endpoint.protocols?.gemini ? (
-            <div
-              aria-label={content.protocolTabs.ariaLabel}
-              className="inline-flex rounded-md border border-border bg-muted/30 p-1"
-              role="tablist"
-            >
-              {(["fluxmedia", "gemini"] as const).map((value) => (
-                <button
-                  aria-selected={protocol === value}
-                  className={cn(
-                    "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                    protocol === value
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                  key={value}
-                  onClick={() => setProtocol(value)}
-                  role="tab"
-                  type="button"
-                >
-                  {content.protocolTabs[value]}
-                </button>
-              ))}
-            </div>
-          ) : null}
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="min-w-0">
               <h4 className="text-sm font-medium">
