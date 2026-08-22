@@ -259,6 +259,10 @@ describe("API integration docs data", () => {
     expect(generation?.protocols?.gemini?.requestExample).toContain(
       '"instances"'
     );
+    expect(generation?.protocols?.gemini?.requestExample).toContain('"image"');
+    expect(generation?.protocols?.gemini?.requestExample).toContain(
+      '"inlineData"'
+    );
     expect(generation?.protocols?.gemini?.requestExample).not.toContain(
       '"client_request_id"'
     );

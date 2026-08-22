@@ -131,7 +131,15 @@ function getGeminiVideoProtocolVariants(
   -H "Idempotency-Key: gemini-video-request-001" \\
   -d '{
     "instances": [
-      { "prompt": "A hero walking through a neon city" }
+      {
+        "prompt": "A hero walking through a neon city",
+        "image": {
+          "inlineData": {
+            "mimeType": "image/png",
+            "data": "<BASE64_FIRST_FRAME_IMAGE>"
+          }
+        }
+      }
     ],
     "parameters": {
       "aspectRatio": "16:9",
@@ -162,7 +170,7 @@ function getGeminiVideoProtocolVariants(
             description: "视频提示词，最多 100000 字符。",
           },
           {
-            name: "instances[].image / lastFrame",
+            name: "instances[].image (首帧) / lastFrame",
             requirement: "可选",
             defaultValue: "无",
             description:
@@ -305,7 +313,15 @@ function getGeminiVideoProtocolVariants(
   -H "Idempotency-Key: gemini-video-request-001" \\
   -d '{
     "instances": [
-      { "prompt": "A hero walking through a neon city" }
+      {
+        "prompt": "A hero walking through a neon city",
+        "image": {
+          "inlineData": {
+            "mimeType": "image/png",
+            "data": "<BASE64_FIRST_FRAME_IMAGE>"
+          }
+        }
+      }
     ],
     "parameters": {
       "aspectRatio": "16:9",
@@ -336,7 +352,7 @@ function getGeminiVideoProtocolVariants(
           description: "Video prompt, up to 100,000 characters.",
         },
         {
-          name: "instances[].image / lastFrame",
+          name: "instances[].image (first frame) / lastFrame",
           requirement: "Optional",
           defaultValue: "None",
           description: "Base64 image in inlineData; lastFrame requires image.",
