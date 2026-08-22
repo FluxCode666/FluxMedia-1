@@ -74,7 +74,7 @@ function toPlatformImage(image: {
 /** 认证并创建 Gemini LRO 任务。 */
 export async function postGeminiVideoGeneration(
   request: NextRequest,
-  { params }: { params: Promise<{ model: string }> }
+  { params }: { params: Promise<{ model?: string }> }
 ): Promise<Response> {
   const auth = await authenticateExternalApiRequest(request);
   if (!auth) return geminiErrorResponse("Invalid or missing API key", 401, 16);

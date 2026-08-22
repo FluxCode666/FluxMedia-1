@@ -191,7 +191,9 @@ describe("API integration docs data", () => {
     expect(createText).toContain("/api/v1/videos/generations");
     expect(createText).toContain("/api/v1/videos");
     if (locale === "zh") {
-      expect(create?.deprecationNotice).toContain("/v1/videos 已不再提供视频创建");
+      expect(create?.deprecationNotice).toContain(
+        "/v1/videos 已不再提供视频创建"
+      );
     } else {
       expect(create?.deprecationNotice).toContain(
         "no longer a video creation endpoint"
@@ -226,6 +228,61 @@ describe("API integration docs data", () => {
     expect(taskText).toMatch(/persistent|持久/u);
     expect(taskText).not.toContain("30 minutes");
     expect(taskText).not.toContain("30 分钟");
+  });
+
+  it.each(["zh", "en"])("%s 为每个视频接口提供 Gemini 协议变体", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    const videoEndpoints = content.endpoints.filter(
+      (endpoint) => endpoint.operation === "video"
+    );
+
+    expect(videoEndpoints).toHaveLength(3);
+    for (const endpoint of videoEndpoints) {
+      const gemini = endpoint.protocols?.gemini;
+      expect(gemini, `${locale}:${endpoint.id}`).toBeDefined();
+      expect(gemini?.requestExample).toBeTruthy();
+      expect(gemini?.responseExample).toBeTruthy();
+      expect(gemini?.parameters).toBeDefined();
+      expect(gemini?.responses).toBeDefined();
+      expect(gemini?.notes).toBeDefined();
+    }
+
+    const generation = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-generations"
+    );
+    const task = content.endpoints.find(
+      (endpoint) => endpoint.id === "video-task"
+    );
+    expect(generation?.protocols?.gemini?.path).toBe(
+      "/v1beta/models/{model}:predictLongRunning"
+    );
+    expect(generation?.protocols?.gemini?.requestExample).toContain(
+      '"instances"'
+    );
+    expect(generation?.protocols?.gemini?.requestExample).not.toContain(
+      '"client_request_id"'
+    );
+    expect(task?.protocols?.gemini?.path).toBe(
+      "/v1beta/models/{model}/operations/{operationId}"
+    );
+    expect(task?.protocols?.gemini?.responseExample).toContain(
+      '"generateVideoResponse"'
+    );
+  });
+
+  it("绑定当前域名时同步替换 Gemini 变体示例", () => {
+    const content = getApiIntegrationDocs("zh", "https://tenant.example.test");
+    const videoEndpoints = content.endpoints.filter(
+      (endpoint) => endpoint.operation === "video"
+    );
+
+    for (const endpoint of videoEndpoints) {
+      const gemini = endpoint.protocols?.gemini;
+      if (gemini?.path !== "不适用" && gemini?.path !== "Not applicable") {
+        expect(gemini?.requestExample).toContain("https://tenant.example.test");
+      }
+      expect(gemini?.responseExample).not.toContain("{{FLUXMEDIA_BASE_URL}}");
+    }
   });
 
   it.each(["zh", "en"])("%s 不展示站点扩展字段或示例", (locale) => {

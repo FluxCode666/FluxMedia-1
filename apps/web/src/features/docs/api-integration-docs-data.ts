@@ -30,9 +30,9 @@ export type ApiIntegrationEndpointGroup = {
   endpointIds: readonly string[];
 };
 
-export type ApiIntegrationEndpoint = {
-  id: string;
-  operation: "models" | "credits" | "image_generation" | "image_edit" | "video";
+export type ApiIntegrationProtocol = "fluxmedia" | "gemini";
+
+export type ApiIntegrationEndpointContent = {
   title: string;
   method: "GET" | "POST";
   path: string;
@@ -44,6 +44,14 @@ export type ApiIntegrationEndpoint = {
   parameters: readonly ApiIntegrationParameter[];
   responses: readonly ApiIntegrationResponseField[];
   notes: readonly string[];
+};
+
+export type ApiIntegrationEndpoint = ApiIntegrationEndpointContent & {
+  id: string;
+  operation: "models" | "credits" | "image_generation" | "image_edit" | "video";
+  protocols?: Partial<
+    Record<ApiIntegrationProtocol, ApiIntegrationEndpointContent>
+  >;
 };
 
 export type ApiIntegrationDocsContent = {
@@ -62,6 +70,11 @@ export type ApiIntegrationDocsContent = {
   notesTitle: string;
   requestExampleTitle: string;
   responseExampleTitle: string;
+  protocolTabs: {
+    ariaLabel: string;
+    fluxmedia: string;
+    gemini: string;
+  };
   parameterHeaders: readonly [string, string, string, string];
   responseHeaders: readonly [string, string];
   copyLabels: {
@@ -96,6 +109,363 @@ const API_KEY_AUTHENTICATION = {
   environmentVariable: "FLUXMEDIA_API_KEY",
 } as const;
 
+/** Gemini 视频兼容端点的公开文档变体；不暴露内部任务字段或供应商配置。 */
+function getGeminiVideoProtocolVariants(
+  locale: "zh" | "en"
+): Record<
+  "video-generations" | "video-capabilities" | "video-task",
+  ApiIntegrationEndpointContent
+> {
+  if (locale === "zh") {
+    return {
+      "video-generations": {
+        title: "Gemini 创建视频",
+        method: "POST",
+        path: "/v1beta/models/{model}:predictLongRunning",
+        contentType: "application/json",
+        description:
+          "按 Gemini Veo predictLongRunning 请求格式创建视频，并返回可轮询的 Gemini Operation。模型名称位于 URL，不放在请求体中。",
+        requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1beta/models/veo-3.1-generate-preview:predictLongRunning \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: gemini-video-request-001" \\
+  -d '{
+    "instances": [
+      { "prompt": "A hero walking through a neon city" }
+    ],
+    "parameters": {
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "durationSeconds": 8
+    }
+  }'`,
+        responseExample: `{
+  "name": "models/veo-3.1-generate-preview/operations/operation_0123456789abcdef",
+  "done": false
+}`,
+        parameters: [
+          {
+            name: "model",
+            requirement: "必填路径参数",
+            description:
+              "Gemini 模型名，例如 veo-3.1-generate-preview；必须放在 URL 路径中，不能在 body 中传 model。",
+          },
+          {
+            name: "instances",
+            requirement: "必填",
+            description:
+              "只允许一个实例，实例必须包含 prompt；可选 image、lastFrame 或 referenceImages。",
+          },
+          {
+            name: "instances[].prompt",
+            requirement: "必填",
+            description: "视频提示词，最多 100000 字符。",
+          },
+          {
+            name: "instances[].image / lastFrame",
+            requirement: "可选",
+            defaultValue: "无",
+            description:
+              "使用 inlineData 传入 base64 图片；lastFrame 必须同时提供 image。",
+          },
+          {
+            name: "instances[].referenceImages",
+            requirement: "可选",
+            defaultValue: "无",
+            description:
+              "最多 3 张带 referenceType 的 inlineData 图片；不能与 image 同时传入。",
+          },
+          {
+            name: "parameters.aspectRatio",
+            requirement: "可选",
+            defaultValue: "16:9",
+            description: "视频宽高比。",
+          },
+          {
+            name: "parameters.resolution",
+            requirement: "可选",
+            defaultValue: "720p",
+            description: "视频输出分辨率。",
+          },
+          {
+            name: "parameters.durationSeconds",
+            requirement: "可选",
+            defaultValue: "8",
+            description: "视频时长，仅支持 4、6 或 8 秒。",
+          },
+          {
+            name: "Idempotency-Key / x-request-id",
+            requirement: "可选 header",
+            defaultValue: "服务端生成",
+            description:
+              "幂等请求标识；两个 header 同时提供时必须一致，最长 128 个字符。",
+          },
+        ],
+        responses: [
+          { name: "name", description: "Gemini Operation 名称。" },
+          {
+            name: "done",
+            description: "任务完成或失败时为 true；排队中为 false。",
+          },
+          {
+            name: "error",
+            description: "创建阶段立即失败时返回的 Google Status 风格错误。",
+          },
+        ],
+        notes: [
+          "接口返回 Gemini Long-Running Operation，不会在当前连接中等待视频完成。",
+          "使用 GET /v1beta/models/{model}/operations/{operationId} 查询同一任务。",
+          "Authorization 仍使用 FluxMedia API Key；请求体字段遵循 Gemini 格式。",
+        ],
+      },
+      "video-capabilities": {
+        title: "Gemini 能力发现",
+        method: "GET",
+        path: "不适用",
+        contentType: "无请求体",
+        description:
+          "Gemini 视频协议没有与 FluxMedia /v1/videos/capabilities 等价的独立能力接口；请根据 Gemini 模型文档选择模型和参数。",
+        requestExample:
+          "# Gemini 协议没有对应的能力发现请求\n# 直接使用支持的模型路径调用 predictLongRunning",
+        responseExample: "// Gemini 协议没有对应的能力发现响应",
+        parameters: [],
+        responses: [],
+        notes: [
+          "本卡片仅用于说明协议差异，不对应 FluxMedia 已提供的可调用路由。",
+          "创建请求中的 model、aspectRatio、resolution 和 durationSeconds 仍会由服务端校验。",
+        ],
+      },
+      "video-task": {
+        title: "查询 Gemini Operation",
+        method: "GET",
+        path: "/v1beta/models/{model}/operations/{operationId}",
+        contentType: "无请求体",
+        description: "按 Gemini Operation 名称查询视频生成状态和结果。",
+        requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1beta/models/veo-3.1-generate-preview/operations/operation_0123456789abcdef \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
+        responseExample: `{
+  "name": "models/veo-3.1-generate-preview/operations/operation_0123456789abcdef",
+  "done": true,
+  "response": {
+    "generateVideoResponse": {
+      "generatedSamples": [
+        {
+          "video": {
+            "uri": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."
+          }
+        }
+      ]
+    }
+  }
+}`,
+        parameters: [
+          {
+            name: "model",
+            requirement: "必填路径参数",
+            description: "创建 Operation 时使用的 Gemini 模型名。",
+          },
+          {
+            name: "operationId",
+            requirement: "必填路径参数",
+            description: "创建接口响应 name 中 operations/ 后面的不透明 ID。",
+          },
+        ],
+        responses: [
+          { name: "name", description: "完整 Gemini Operation 名称。" },
+          { name: "done", description: "任务完成或失败时为 true。" },
+          {
+            name: "response.generateVideoResponse.generatedSamples[].video.uri",
+            description: "任务完成后返回的视频 HTTPS URL。",
+          },
+          {
+            name: "error",
+            description: "任务失败时返回的 Google Status 风格错误。",
+          },
+        ],
+        notes: [
+          "任务进行中只返回 name 和 done=false，不返回 response 或 error。",
+          "任务完成时返回 response；任务失败时返回 error，二者不会同时出现。",
+          "Operation 只能由创建它的 API Key 查询，并且可跨服务重启查询。",
+        ],
+      },
+    };
+  }
+
+  return {
+    "video-generations": {
+      title: "Create Gemini video",
+      method: "POST",
+      path: "/v1beta/models/{model}:predictLongRunning",
+      contentType: "application/json",
+      description:
+        "Create a video with the Gemini Veo predictLongRunning request shape and return a pollable Gemini Operation. The model is in the URL, not the request body.",
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1beta/models/veo-3.1-generate-preview:predictLongRunning \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: gemini-video-request-001" \\
+  -d '{
+    "instances": [
+      { "prompt": "A hero walking through a neon city" }
+    ],
+    "parameters": {
+      "aspectRatio": "16:9",
+      "resolution": "720p",
+      "durationSeconds": 8
+    }
+  }'`,
+      responseExample: `{
+  "name": "models/veo-3.1-generate-preview/operations/operation_0123456789abcdef",
+  "done": false
+}`,
+      parameters: [
+        {
+          name: "model",
+          requirement: "Required path parameter",
+          description:
+            "Gemini model name such as veo-3.1-generate-preview. Put it in the URL; body.model is not accepted.",
+        },
+        {
+          name: "instances",
+          requirement: "Required",
+          description:
+            "Exactly one instance containing prompt; image, lastFrame, or referenceImages are optional.",
+        },
+        {
+          name: "instances[].prompt",
+          requirement: "Required",
+          description: "Video prompt, up to 100,000 characters.",
+        },
+        {
+          name: "instances[].image / lastFrame",
+          requirement: "Optional",
+          defaultValue: "None",
+          description: "Base64 image in inlineData; lastFrame requires image.",
+        },
+        {
+          name: "instances[].referenceImages",
+          requirement: "Optional",
+          defaultValue: "None",
+          description:
+            "Up to three inlineData images with referenceType; mutually exclusive with image.",
+        },
+        {
+          name: "parameters.aspectRatio",
+          requirement: "Optional",
+          defaultValue: "16:9",
+          description: "Video aspect ratio.",
+        },
+        {
+          name: "parameters.resolution",
+          requirement: "Optional",
+          defaultValue: "720p",
+          description: "Video output resolution.",
+        },
+        {
+          name: "parameters.durationSeconds",
+          requirement: "Optional",
+          defaultValue: "8",
+          description: "Video duration; only 4, 6, or 8 seconds are supported.",
+        },
+        {
+          name: "Idempotency-Key / x-request-id",
+          requirement: "Optional header",
+          defaultValue: "Generated by the server",
+          description:
+            "Idempotency request identifier. If both headers are sent they must match; maximum 128 characters.",
+        },
+      ],
+      responses: [
+        { name: "name", description: "Gemini Operation name." },
+        {
+          name: "done",
+          description: "False while queued; true on completion or failure.",
+        },
+        {
+          name: "error",
+          description: "Google Status-style error for an immediate failure.",
+        },
+      ],
+      notes: [
+        "The endpoint returns a Gemini Long-Running Operation and does not wait for video completion.",
+        "Poll GET /v1beta/models/{model}/operations/{operationId} for the same task.",
+        "Authorization uses a FluxMedia API Key while the request body follows the Gemini shape.",
+      ],
+    },
+    "video-capabilities": {
+      title: "Gemini capability discovery",
+      method: "GET",
+      path: "Not applicable",
+      contentType: "No request body",
+      description:
+        "Gemini video has no standalone capability endpoint equivalent to FluxMedia /v1/videos/capabilities. Choose the model and parameters from the Gemini model documentation.",
+      requestExample:
+        "# Gemini has no equivalent capability request\n# Call predictLongRunning with a supported model instead",
+      responseExample: "// Gemini has no equivalent capability response",
+      parameters: [],
+      responses: [],
+      notes: [
+        "This tab documents a protocol difference; it is not a callable FluxMedia route.",
+        "The create request still validates model, aspectRatio, resolution, and durationSeconds.",
+      ],
+    },
+    "video-task": {
+      title: "Get Gemini Operation",
+      method: "GET",
+      path: "/v1beta/models/{model}/operations/{operationId}",
+      contentType: "No request body",
+      description:
+        "Get video generation status and results by Gemini Operation name.",
+      requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1beta/models/veo-3.1-generate-preview/operations/operation_0123456789abcdef \\
+  -H "Authorization: Bearer $FLUXMEDIA_API_KEY"`,
+      responseExample: `{
+  "name": "models/veo-3.1-generate-preview/operations/operation_0123456789abcdef",
+  "done": true,
+  "response": {
+    "generateVideoResponse": {
+      "generatedSamples": [
+        {
+          "video": {
+            "uri": "${DOCUMENTATION_BASE_URL_PLACEHOLDER}/api/storage/generations/..."
+          }
+        }
+      ]
+    }
+  }
+}`,
+      parameters: [
+        {
+          name: "model",
+          requirement: "Required path parameter",
+          description: "The Gemini model name used to create the Operation.",
+        },
+        {
+          name: "operationId",
+          requirement: "Required path parameter",
+          description:
+            "The opaque ID after operations/ in the create response name.",
+        },
+      ],
+      responses: [
+        { name: "name", description: "Full Gemini Operation name." },
+        { name: "done", description: "True when the task completes or fails." },
+        {
+          name: "response.generateVideoResponse.generatedSamples[].video.uri",
+          description: "HTTPS video URL returned after completion.",
+        },
+        {
+          name: "error",
+          description: "Google Status-style error when the task fails.",
+        },
+      ],
+      notes: [
+        "While running, only name and done=false are returned; response and error are omitted.",
+        "A completed Operation contains response or error, never both.",
+        "Only the API Key that created the Operation can query it, including after service restarts.",
+      ],
+    },
+  };
+}
+
 const zhContent = {
   eyebrow: "FluxMedia External API",
   title: "API 接入文档",
@@ -113,6 +483,11 @@ const zhContent = {
   notesTitle: "使用说明",
   requestExampleTitle: "请求示例",
   responseExampleTitle: "响应示例",
+  protocolTabs: {
+    ariaLabel: "视频接口规范",
+    fluxmedia: "FluxMedia 接口规范",
+    gemini: "Gemini 接口规范",
+  },
   parameterHeaders: ["参数", "要求", "默认值", "说明"],
   responseHeaders: ["字段", "说明"],
   copyLabels: {
@@ -513,7 +888,8 @@ const zhContent = {
       method: "POST",
       path: "/v1/videos/generations",
       contentType: "application/json",
-      description: "按 FluxMedia 视频协议根据文本提示词或参考图创建持久视频任务。",
+      description:
+        "按 FluxMedia 视频协议根据文本提示词或参考图创建持久视频任务。",
       deprecationNotice:
         "POST /v1/videos 已不再提供视频创建，请使用 POST /v1/videos/generations 或 /api/v1/videos/generations。",
       requestExample: `curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/generations \\
@@ -654,6 +1030,9 @@ const zhContent = {
         "模型、时长、比例和分辨率分别校验，不会从模型 ID 解析参数。",
         "billing 是不可变创建报价；已存在 client_request_id 的幂等重试始终返回原任务账单，不重新按当前配置计价。",
       ],
+      protocols: {
+        gemini: getGeminiVideoProtocolVariants("zh")["video-generations"],
+      },
     },
     {
       id: "video-capabilities",
@@ -761,6 +1140,9 @@ const zhContent = {
         "configuredReachable 只表示配置可达性，不包含账号、凭据、健康、并发或实时剩余容量。",
         "响应使用 Cache-Control: no-store；管理员调整 Seedance 参考图上限后应重新查询。",
       ],
+      protocols: {
+        gemini: getGeminiVideoProtocolVariants("zh")["video-capabilities"],
+      },
     },
     {
       id: "image-task",
@@ -909,6 +1291,9 @@ const zhContent = {
         "snapshot 的 actualCredits 会随扣费或退款结果变化；退款后保留原 quotedCredits，actualCredits 为 0。",
         "任务失败时 error.message 会给出原因。",
       ],
+      protocols: {
+        gemini: getGeminiVideoProtocolVariants("zh")["video-task"],
+      },
     },
   ],
 } satisfies ApiIntegrationDocsContent;
@@ -944,6 +1329,11 @@ const enContent = {
   notesTitle: "Usage notes",
   requestExampleTitle: "Request example",
   responseExampleTitle: "Response example",
+  protocolTabs: {
+    ariaLabel: "Video interface specification",
+    fluxmedia: "FluxMedia specification",
+    gemini: "Gemini specification",
+  },
   parameterHeaders: ["Parameter", "Requirement", "Default", "Description"],
   responseHeaders: ["Field", "Description"],
   copyLabels: {
@@ -1368,6 +1758,9 @@ const enContent = {
         "Model, duration, ratio, and resolution are validated independently and are never parsed from the model ID.",
         "billing is an immutable creation quote. An idempotent retry with an existing client_request_id always returns the original task billing instead of repricing from current configuration.",
       ],
+      protocols: {
+        gemini: getGeminiVideoProtocolVariants("en")["video-generations"],
+      },
     },
     {
       ...getZhEndpointTemplate("video-capabilities"),
@@ -1434,6 +1827,9 @@ const enContent = {
         "configuredReachable reports configuration reachability only. It exposes no accounts, credentials, health, concurrency, or live remaining capacity.",
         "Responses use Cache-Control: no-store. Query again after an admin changes a Seedance reference-image limit.",
       ],
+      protocols: {
+        gemini: getGeminiVideoProtocolVariants("en")["video-capabilities"],
+      },
     },
     {
       ...getZhEndpointTemplate("image-task"),
@@ -1534,6 +1930,9 @@ const enContent = {
         "snapshot actualCredits follows consumption or refund results; a refund preserves quotedCredits and sets actualCredits to 0.",
         "A failed task includes the reason in error.message.",
       ],
+      protocols: {
+        gemini: getGeminiVideoProtocolVariants("en")["video-task"],
+      },
     },
   ],
 } satisfies ApiIntegrationDocsContent;
@@ -1553,17 +1952,43 @@ function bindApiIntegrationBaseUrl(
   return {
     ...content,
     baseUrl,
-    endpoints: content.endpoints.map((endpoint) => ({
-      ...endpoint,
-      requestExample: replaceDocumentationBaseUrl(
-        endpoint.requestExample,
-        baseUrl
-      ),
-      responseExample: replaceDocumentationBaseUrl(
-        endpoint.responseExample,
-        baseUrl
-      ),
-    })),
+    endpoints: content.endpoints.map((endpoint) => {
+      const bindContent = (
+        endpointContent: ApiIntegrationEndpointContent
+      ): ApiIntegrationEndpointContent => ({
+        ...endpointContent,
+        requestExample: replaceDocumentationBaseUrl(
+          endpointContent.requestExample,
+          baseUrl
+        ),
+        responseExample: replaceDocumentationBaseUrl(
+          endpointContent.responseExample,
+          baseUrl
+        ),
+      });
+      const protocols = endpoint.protocols
+        ? (
+            Object.entries(endpoint.protocols) as Array<
+              [
+                ApiIntegrationProtocol,
+                ApiIntegrationEndpointContent | undefined,
+              ]
+            >
+          ).reduce<
+            Partial<
+              Record<ApiIntegrationProtocol, ApiIntegrationEndpointContent>
+            >
+          >((result, [protocol, variant]) => {
+            if (variant) result[protocol] = bindContent(variant);
+            return result;
+          }, {})
+        : undefined;
+      return {
+        ...endpoint,
+        ...bindContent(endpoint),
+        ...(protocols ? { protocols } : {}),
+      };
+    }),
   };
 }
 
