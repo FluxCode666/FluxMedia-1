@@ -33,9 +33,6 @@ const HISTORY_FILTER_DOMAIN = "fluxmedia:generation-history:filters:v1";
 const MAX_CURSOR_LENGTH = 4096;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const HISTORY_KIND_RANK = { image: 1, video: 0 } as const;
-const CONTENT_SAFETY_HISTORY_ERROR =
-  "Prompt did not pass content safety review; modify the prompt and retry";
-const ADMIN_HISTORY_ERROR_MAX_LENGTH = 512;
 
 const historyCursorPayloadSchema = z
   .object({
@@ -362,98 +359,13 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
   const common = {
     ...safeRow,
     model: normalizeHistoricalModelId(row.model) ?? row.model,
-    error: sanitizeHistoryErrorDetails(rawError),
+    error: rawError,
     createdAt: toIsoDateTime(row.createdAt),
     completedAt:
       row.completedAt === null ? null : toIsoDateTime(row.completedAt),
     processingDurationSeconds: calculateHistoryProcessingDurationSeconds(row),
   };
   return historyRecordSchema.parse(common);
-}
-
-/** 将持久化原始失败收窄为简短稳定文案，禁止上游响应、SQL 或内部路径穿过 UOL。 */
-export function sanitizeHistoryError(rawError: string | null): string | null {
-  if (!rawError?.trim()) return null;
-  const normalized = rawError.toLowerCase();
-  if (
-    /moderation|safety|image_unsafe|generated images appear to be unsafe|content policy|审核|内容安全/.test(
-      normalized
-    )
-  ) {
-    return CONTENT_SAFETY_HISTORY_ERROR;
-  }
-  if (/insufficient credits|积分不足/.test(normalized)) {
-    return "Insufficient credits";
-  }
-  if (/timeout|timed out|deadline|超时/.test(normalized)) {
-    return "Generation timed out";
-  }
-  if (/unavailable|overload|rate.?limit|无可用.*后端|限流/.test(normalized)) {
-    return "Generation service is temporarily unavailable";
-  }
-  return "Generation failed";
-}
-
-/**
- * 为历史记录保留有界的诊断摘要，同时移除内部查询、凭据、地址和任务标识。
- *
- * @param rawError 数据库中的失败文本；它可能来自上游响应或本地异常。
- * @returns 可供用户和管理员历史使用的单行摘要；无法安全保留时回退为固定文案。
- * @sideEffects 无。
- * @failure 不抛出；非法或内部错误文本统一降级，避免读历史时扩大泄露面。
- */
-export function sanitizeHistoryErrorDetails(
-  rawError: string | null
-): string | null {
-  if (!rawError?.trim()) return null;
-  const normalized = rawError.trim();
-  if (
-    /^failed query:/iu.test(normalized) ||
-    /\b(?:sqlstate|select\s+.+\s+from|insert\s+into|update\s+.+\s+set|delete\s+from)\b/iu.test(
-      normalized
-    )
-  ) {
-    return "Generation failed";
-  }
-
-  const category = sanitizeHistoryError(normalized) ?? "Generation failed";
-  const withoutControlCharacters = Array.from(normalized, (character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint <= 31 || codePoint === 127 ? " " : character;
-  }).join("");
-  const safe = withoutControlCharacters
-    .replace(/https?:\/\/[^\s"'<>]+/giu, "[URL]")
-    .replace(/bearer\s+[^\s,;，；。]+/giu, "Bearer [REDACTED]")
-    .replace(/basic\s+[^\s,;，；。]+/giu, "Basic [REDACTED]")
-    .replace(/\bsk-[a-z0-9_-]+\b/giu, "[REDACTED]")
-    .replace(
-      /(authorization|api[-_]?key|access[-_]?token|token|secret|password|cookie|set-cookie)\s*[:=]\s*[^\s,;，；。]+/giu,
-      "$1=[REDACTED]"
-    )
-    .replace(
-      /(task[_ -]?id|operation[_ -]?name|request[_ -]?id)\s*[:=]\s*[^\s,;，；。]+/giu,
-      "$1=[REDACTED]"
-    )
-    .replace(/\boperations\/[A-Za-z0-9._~-]+\b/giu, "operations/[REDACTED]")
-    .replace(
-      /(prompt|contents?|request[_ -]?body|input)\s*[:=]\s*[^\n]+/giu,
-      "$1=[REDACTED]"
-    )
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!safe) return category;
-  if (safe.length > ADMIN_HISTORY_ERROR_MAX_LENGTH) {
-    return `${safe.slice(0, ADMIN_HISTORY_ERROR_MAX_LENGTH - 3)}...`;
-  }
-  if (
-    category !== "Generation failed" &&
-    /^generation (?:timed out|service is temporarily unavailable)$/iu.test(
-      category
-    )
-  ) {
-    return category;
-  }
-  return safe;
 }
 
 /**

@@ -22,14 +22,6 @@ describe("formatHistoryError", () => {
     );
   });
 
-  it("可在调用方要求时将错误摘要降级为通用失败", () => {
-    expect(
-      formatHistoryError("Gemini 视频上游返回 HTTP 429", zhCopy, {
-        showDetails: false,
-      })
-    ).toBe("生成失败");
-  });
-
   it("空错误保持为空", () => {
     expect(formatHistoryError(null, zhCopy)).toBeNull();
   });

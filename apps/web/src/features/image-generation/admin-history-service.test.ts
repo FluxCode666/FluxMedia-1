@@ -269,7 +269,7 @@ describe("admin history service", () => {
     expect(result.records[0]?.backendAccount).toBeNull();
   });
 
-  it("returns a safe upstream error summary for global operators", async () => {
+  it("returns the raw upstream error for global operators", async () => {
     const row = imageRow("image-failed", "2026-07-22T12:00:00.000Z");
     row.status = "failed";
     row.rawError =
@@ -291,7 +291,7 @@ describe("admin history service", () => {
     );
 
     expect(result.records[0]?.error).toBe(
-      "Gemini 视频上游返回 HTTP 429: Bearer [REDACTED] api_key=[REDACTED]"
+      "Gemini 视频上游返回 HTTP 429: Bearer secret-token api_key=sk-live-secret"
     );
   });
 

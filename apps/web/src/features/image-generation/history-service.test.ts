@@ -13,8 +13,6 @@ import {
   type HistorySnapshotReader,
   loadHistoryRecords,
   resolveHistoryDateRange,
-  sanitizeHistoryError,
-  sanitizeHistoryErrorDetails,
 } from "./history-service";
 
 const TOKEN_SECRET = "history-service-test-secret";
@@ -318,51 +316,7 @@ describe("history service", () => {
     expect(previousPage.nextCursor).toEqual(expect.any(String));
   });
 
-  it("maps raw provider and internal errors to a small safe allowlist", () => {
-    expect(
-      sanitizeHistoryError("Failed query: select secret from account")
-    ).toBe("Generation failed");
-    expect(sanitizeHistoryError("provider deadline exceeded")).toBe(
-      "Generation timed out"
-    );
-    expect(sanitizeHistoryError("moderation content policy rejected")).toBe(
-      "Prompt did not pass content safety review; modify the prompt and retry"
-    );
-    expect(sanitizeHistoryError("poll failed: 451 image_unsafe")).toBe(
-      "Prompt did not pass content safety review; modify the prompt and retry"
-    );
-  });
-
-  it("keeps a bounded provider summary for history viewers and redacts secrets", () => {
-    expect(
-      sanitizeHistoryErrorDetails(
-        "Gemini 视频上游返回 HTTP 429: Bearer secret-token " +
-          "https://provider.example/v1/videos/generations " +
-          "api_key=sk-live-secret prompt=secret prompt task_id=operations/abc"
-      )
-    ).toBe(
-      "Gemini 视频上游返回 HTTP 429: Bearer [REDACTED] [URL] " +
-        "api_key=[REDACTED] prompt=[REDACTED]"
-    );
-    expect(
-      sanitizeHistoryErrorDetails(
-        "Gemini operation operations/veo-123 failed: HTTP 400"
-      )
-    ).toBe("Gemini operation operations/[REDACTED] failed: HTTP 400");
-  });
-
-  it("falls back for database errors and truncates long summaries", () => {
-    expect(
-      sanitizeHistoryErrorDetails("Failed query: select secret from account")
-    ).toBe("Generation failed");
-    const summary = sanitizeHistoryErrorDetails(
-      `upstream error ${"x".repeat(600)}`
-    );
-    expect(summary).toHaveLength(512);
-    expect(summary?.endsWith("...")).toBe(true);
-  });
-
-  it("returns the safe provider summary in personal history", async () => {
+  it("returns the raw provider error in personal history", async () => {
     const row = imageRow("image-failed", "2026-07-22T12:00:00.000Z");
     row.status = "failed";
     row.rawError =
@@ -385,7 +339,7 @@ describe("history service", () => {
     );
 
     expect(result.records[0]?.error).toBe(
-      "Gemini 视频上游返回 HTTP 429: Bearer [REDACTED] api_key=[REDACTED]"
+      "Gemini 视频上游返回 HTTP 429: Bearer secret-token api_key=sk-live-secret"
     );
   });
 });

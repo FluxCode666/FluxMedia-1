@@ -1,24 +1,22 @@
 /**
- * 历史记录安全错误的本地化映射。
+ * 历史记录错误的本地化映射。
  *
- * 使用方：图片/视频历史列表与详情弹层。服务端先把错误收敛为固定安全文案或脱敏
- * 诊断摘要，本模块再把固定文案转换为当前界面语言。
+ * 使用方：图片/视频历史列表与详情弹层。固定平台文案转换为当前界面语言，其他
+ * 上游错误原样展示，便于用户定位失败原因。
  */
 
 type Copy = (en: string, zh: string) => string;
 
 /**
- * 本地化服务端安全错误。
+ * 本地化历史错误。
  *
- * @param error 历史 UOL 返回的安全错误文案或已脱敏诊断摘要。
+ * @param error 历史 UOL 返回的错误文案或上游响应文本。
  * @param copy 当前语言的二选一文案函数。
- * @param options 是否显示服务端已脱敏的具体错误摘要；关闭时回退到通用文案。
  * @returns 当前语言的错误展示文案；空值保持 `null`。
  */
 export function formatHistoryError(
   error: string | null,
-  copy: Copy,
-  options: { showDetails?: boolean } = {}
+  copy: Copy
 ): string | null {
   if (!error) return null;
   switch (error) {
@@ -42,8 +40,6 @@ export function formatHistoryError(
         "生成服务暂时不可用"
       );
     default:
-      return options.showDetails !== false
-        ? error
-        : copy("Generation failed", "生成失败");
+      return error;
   }
 }

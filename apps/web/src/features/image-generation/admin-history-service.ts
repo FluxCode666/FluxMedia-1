@@ -34,7 +34,6 @@ import { z } from "zod";
 import {
   calculateHistoryProcessingDurationSeconds,
   resolveHistoryDateRange,
-  sanitizeHistoryErrorDetails,
 } from "./history-service";
 
 const ADMIN_HISTORY_CURSOR_VERSION = 1;
@@ -327,13 +326,13 @@ function decodeAdminHistoryCursor(
   }
 }
 
-/** 将全局仓储窄行收敛为可安全跨 UOL 的管理员历史记录。 */
+/** 将全局仓储窄行收敛为管理员历史记录。 */
 function adaptAdminHistoryRow(row: AdminHistoryListRow): AdminHistoryRecord {
   const { rawError, ...safeRow } = row;
   return adminHistoryRecordSchema.parse({
     ...safeRow,
     model: normalizeHistoricalModelId(row.model) ?? row.model,
-    error: sanitizeHistoryErrorDetails(rawError),
+    error: rawError,
     createdAt: toIsoDateTime(row.createdAt),
     completedAt:
       row.completedAt === null ? null : toIsoDateTime(row.completedAt),
