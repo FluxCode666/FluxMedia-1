@@ -28,7 +28,7 @@ describe("Gemini video contract", () => {
     ).toBe(true);
   });
 
-  it("accepts HTTPS reference video and audio extensions", () => {
+  it("accepts HTTP and HTTPS reference video and audio extensions", () => {
     expect(
       geminiVideoRequestSchema.safeParse({
         instances: [
@@ -46,10 +46,11 @@ describe("Gemini video contract", () => {
           {
             prompt: "test",
             reference_videos: ["http://media.example/reference.mp4"],
+            reference_audios: ["http://media.example/reference.mp3"],
           },
         ],
       }).success
-    ).toBe(false);
+    ).toBe(true);
     expect(
       geminiVideoRequestSchema.safeParse({
         instances: [
@@ -59,6 +60,16 @@ describe("Gemini video contract", () => {
               "https://media.example/reference.mp3",
               "https://media.example/second.mp3",
             ],
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      geminiVideoRequestSchema.safeParse({
+        instances: [
+          {
+            prompt: "test",
+            reference_videos: ["ftp://media.example/reference.mp4"],
           },
         ],
       }).success

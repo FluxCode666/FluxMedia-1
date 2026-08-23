@@ -37,7 +37,7 @@ export const geminiInlineImageSchema = z
   })
   .strict();
 
-/** Gemini 兼容扩展使用的参考视频 HTTPS 直链。 */
+/** Gemini 兼容扩展使用的参考视频 HTTP/HTTPS 直链。 */
 export const geminiReferenceVideoUrlSchema = z
   .string()
   .trim()
@@ -45,16 +45,16 @@ export const geminiReferenceVideoUrlSchema = z
   .refine((rawUrl) => {
     const url = new URL(rawUrl);
     return (
-      url.protocol === "https:" &&
+      (url.protocol === "http:" || url.protocol === "https:") &&
       !url.username &&
       !url.password &&
       [".mp4", ".mov"].some((extension) =>
         url.pathname.toLowerCase().endsWith(extension)
       )
     );
-  }, "reference_videos must contain HTTPS mp4 or mov URLs");
+  }, "reference_videos must contain HTTP or HTTPS mp4 or mov URLs");
 
-/** Gemini 兼容扩展使用的参考音频 HTTPS 直链。 */
+/** Gemini 兼容扩展使用的参考音频 HTTP/HTTPS 直链。 */
 export const geminiReferenceAudioUrlSchema = z
   .string()
   .trim()
@@ -62,14 +62,14 @@ export const geminiReferenceAudioUrlSchema = z
   .refine((rawUrl) => {
     const url = new URL(rawUrl);
     return (
-      url.protocol === "https:" &&
+      (url.protocol === "http:" || url.protocol === "https:") &&
       !url.username &&
       !url.password &&
       [".mp3", ".wav"].some((extension) =>
         url.pathname.toLowerCase().endsWith(extension)
       )
     );
-  }, "reference_audios must contain HTTPS mp3 or wav URLs");
+  }, "reference_audios must contain HTTP or HTTPS mp3 or wav URLs");
 
 /** Gemini Veo 的单个实例；输入视频和非官方字段在此层直接拒绝。 */
 export const geminiVideoInstanceSchema = z
@@ -152,10 +152,13 @@ export const geminiPublicOperationNameSchema = z
   );
 
 /** Gemini 视频结果地址；允许 HTTP/HTTPS，其他协议仍拒绝。 */
-const geminiVideoUriSchema = z.string().url().refine((value) => {
-  const protocol = new URL(value).protocol;
-  return protocol === "http:" || protocol === "https:";
-}, "Gemini video URI must use HTTP or HTTPS");
+const geminiVideoUriSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  }, "Gemini video URI must use HTTP or HTTPS");
 
 /** Google Status 的脱敏公共错误投影。 */
 export const geminiOperationErrorSchema = z

@@ -211,6 +211,24 @@ describe("media input reference contract", () => {
         ],
       }).success
     ).toBe(true);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [
+          {
+            source: "remote",
+            mimeType: "video/mp4",
+            url: "http://cdn.example.com/reference.mp4",
+          },
+        ],
+        referenceAudios: [
+          {
+            source: "remote",
+            mimeType: "audio/mpeg",
+            url: "http://cdn.example.com/reference.mp3",
+          },
+        ],
+      }).success
+    ).toBe(true);
   });
 
   it("按具名语义限制图片、视频和音频 MIME", () => {
@@ -235,6 +253,36 @@ describe("media input reference contract", () => {
         referenceAudios: [remoteAudio],
       }).success
     ).toBe(true);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [
+          {
+            ...remoteVideo,
+            url: "ftp://cdn.example.com/reference.mp4",
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceAudios: [
+          {
+            ...remoteAudio,
+            url: "http://user:password@cdn.example.com/reference.mp3",
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [
+          {
+            ...remoteVideo,
+            url: "http://127.0.0.1/reference.mp4",
+          },
+        ],
+      }).success
+    ).toBe(false);
   });
 
   it("使用运行时策略统一拒绝单文件、总量和编辑参考图超限", () => {

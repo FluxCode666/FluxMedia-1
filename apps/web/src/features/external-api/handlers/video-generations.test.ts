@@ -332,8 +332,8 @@ describe("postExternalVideoGenerations", () => {
         duration: 8,
         aspectRatio: "16:9",
         resolution: "1080p",
-        reference_videos: ["https://media.example.com/reference.mp4"],
-        reference_audios: ["https://media.example.com/reference.mp3"],
+        reference_videos: ["http://media.example.com/reference.mp4"],
+        reference_audios: ["http://media.example.com/reference.mp3"],
       }) as never
     );
 
@@ -345,14 +345,14 @@ describe("postExternalVideoGenerations", () => {
           {
             source: "remote",
             mimeType: "video/mp4",
-            url: "https://media.example.com/reference.mp4",
+            url: "http://media.example.com/reference.mp4",
           },
         ],
         referenceAudios: [
           {
             source: "remote",
             mimeType: "audio/mpeg",
-            url: "https://media.example.com/reference.mp3",
+            url: "http://media.example.com/reference.mp3",
           },
         ],
       }),
@@ -364,7 +364,7 @@ describe("postExternalVideoGenerations", () => {
   it.each([
     {
       field: "reference_videos",
-      value: ["http://media.example.com/reference.mp4"],
+      value: ["ftp://media.example.com/reference.mp4"],
     },
     {
       field: "reference_videos",

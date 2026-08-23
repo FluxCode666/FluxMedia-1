@@ -146,6 +146,39 @@ const remoteMediaInputReferenceSchema = z
   })
   .strict();
 
+/** 参考视频与音频使用的远程引用；只放宽协议，仍保留公网和凭据校验。 */
+const remoteVideoReferenceInputReferenceSchema = z
+  .object({
+    source: z.literal("remote"),
+    mimeType: mediaMimeTypeSchema,
+    url: z
+      .string()
+      .trim()
+      .url()
+      .refine((rawUrl) => {
+        const url = new URL(rawUrl);
+        if (
+          (url.protocol !== "http:" && url.protocol !== "https:") ||
+          url.username ||
+          url.password
+        ) {
+          return false;
+        }
+        const hostname = url.hostname.replace(/^\[|\]$/g, "");
+        return !isBlockedIP(hostname);
+      }, "Remote reference media URL must be a public HTTP or HTTPS URL"),
+    /** 远程 URL 可能没有可靠 Content-Length，读取时按实际字节复验。 */
+    byteLength: mediaByteLengthSchema.optional(),
+  })
+  .strict();
+
+/** 参考媒体的统一输入引用；data/storage 规则与通用媒体引用保持一致。 */
+const videoReferenceInputReferenceSchema = z.discriminatedUnion("source", [
+  dataMediaInputReferenceSchema,
+  storageMediaInputReferenceSchema,
+  remoteVideoReferenceInputReferenceSchema,
+]);
+
 /** 单个 JSON-safe 媒体输入引用。 */
 export const mediaInputReferenceSchema = z.discriminatedUnion("source", [
   dataMediaInputReferenceSchema,
@@ -333,11 +366,14 @@ export const videoInputReferenceManifestSchema = z
     lastFrame: mediaInputReferenceSchema.optional(),
     referenceImages: mediaInputReferencesSchema.optional(),
     referenceVideos: z
-      .array(mediaInputReferenceSchema)
+      .array(videoReferenceInputReferenceSchema)
       .min(1)
       .max(3)
       .optional(),
-    referenceAudios: z.array(mediaInputReferenceSchema).length(1).optional(),
+    referenceAudios: z
+      .array(videoReferenceInputReferenceSchema)
+      .length(1)
+      .optional(),
   })
   .strict()
   .superRefine((manifest, context) => {
