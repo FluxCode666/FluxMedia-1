@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertVideoInputManifestWithinPolicy,
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_FILE_BYTES,
   mediaInputReferenceSchema,
@@ -321,6 +322,59 @@ describe("media input reference contract", () => {
     expect(() =>
       parseMediaInputReferencesWithPolicy(
         [reference(1, 1), reference(2, 1), reference(3, 1)],
+        policy
+      )
+    ).toThrow();
+  });
+
+  it("视频参考视频和音频的 HTTP URL 通过运行时策略校验", () => {
+    const policy = {
+      maxFileSizeMb: 5,
+      maxUploadSizeMb: 75,
+      maxFileSizeBytes: 5 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
+      maxEditReferenceImages: 16,
+    };
+    expect(() =>
+      assertVideoInputManifestWithinPolicy(
+        {
+          referenceVideos: [
+            {
+              source: "remote",
+              mimeType: "video/mp4",
+              url: "http://cdn.example.com/reference.mp4",
+            },
+          ],
+          referenceAudios: [
+            {
+              source: "remote",
+              mimeType: "audio/mpeg",
+              url: "http://cdn.example.com/reference.mp3",
+            },
+          ],
+        },
+        policy
+      )
+    ).not.toThrow();
+  });
+
+  it("视频首帧仍拒绝 HTTP URL", () => {
+    const policy = {
+      maxFileSizeMb: 5,
+      maxUploadSizeMb: 75,
+      maxFileSizeBytes: 5 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
+      maxEditReferenceImages: 16,
+    };
+    expect(() =>
+      assertVideoInputManifestWithinPolicy(
+        {
+          firstFrame: {
+            source: "remote",
+            mimeType: "image/png",
+            url: "http://cdn.example.com/first-frame.png",
+          },
+        },
         policy
       )
     ).toThrow();

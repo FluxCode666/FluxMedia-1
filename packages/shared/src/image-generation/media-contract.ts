@@ -319,6 +319,49 @@ export function assertMediaInputReferencesWithinPolicy(
   }
 }
 
+/**
+ * 对视频输入清单应用运行时媒体策略。
+ *
+ * 视频清单已经由 `videoInputReferenceManifestSchema` 按字段完成结构校验，其中参考
+ * 视频和参考音频允许 HTTP。这里不能再把展开后的引用交给普通媒体 schema，否则会把
+ * 合法的 HTTP 参考媒体误判成策略超限；本函数只复用动态数量、单文件和总量规则。
+ *
+ * @param manifest - 已通过视频输入清单 schema 的任务输入。
+ * @param policy - 服务端当前生效的媒体大小策略。
+ * @param maxCount - 当前视频操作允许的引用总数。
+ * @returns 原清单，便于调用方继续使用已校验的类型。
+ * @throws ZodError 清单结构非法时失败；MediaInputPolicyValidationError 动态策略不满足时失败。
+ */
+export function assertVideoInputManifestWithinPolicy(
+  manifest: unknown,
+  policy: MediaInputPolicy,
+  maxCount = MAX_MEDIA_INPUT_COUNT
+): VideoInputReferenceManifest {
+  const parsedManifest = videoInputReferenceManifestSchema.parse(manifest);
+  const references = listVideoInputManifestReferences(parsedManifest);
+  const hasFileLimitViolation = references.some(
+    (reference) =>
+      reference.byteLength !== undefined &&
+      reference.byteLength > policy.maxFileSizeBytes
+  );
+  const totalBytes = references.reduce(
+    (total, reference) => total + (reference.byteLength ?? 0),
+    0
+  );
+  if (
+    references.length > maxCount ||
+    hasFileLimitViolation ||
+    totalBytes > policy.maxUploadSizeBytes
+  ) {
+    throw new MediaInputPolicyValidationError(
+      policy,
+      maxCount,
+      new Error("Video input manifest exceeds the active media policy")
+    );
+  }
+  return parsedManifest;
+}
+
 /** 图片生成联合输入中与媒体策略有关的最小形态。 */
 export type PolicyControlledImageInput =
   | { operation: "generate" }

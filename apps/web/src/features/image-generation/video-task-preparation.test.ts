@@ -137,6 +137,39 @@ describe("video task input preparation", () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it("允许 HTTP 参考视频通过容量预检", async () => {
+    const stage = vi.fn(async () => ({
+      manifest: {},
+      objects: [],
+    }));
+
+    await expect(
+      prepareVideoTaskInputReferences(
+        {
+          ...INPUT,
+          manifest: {
+            referenceVideos: [
+              {
+                source: "remote",
+                mimeType: "video/mp4",
+                url: "http://cdn.example.com/reference.mp4",
+              },
+            ],
+          },
+        },
+        {
+          preflight: async () => ({
+            status: "reserved" as const,
+            reservationToken: "reservation-1",
+          }),
+          stage,
+          release: vi.fn(async () => true),
+        }
+      )
+    ).resolves.toMatchObject({ admission: "admitted" });
+    expect(stage).toHaveBeenCalledTimes(1);
+  });
+
   it("转存失败时按 token 释放 staging reservation", async () => {
     const release = vi.fn(async () => true);
 
