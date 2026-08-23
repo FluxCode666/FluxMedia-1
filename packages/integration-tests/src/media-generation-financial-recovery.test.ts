@@ -160,6 +160,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       user_id text not null,
       api_key_id text,
       api_key_credits_reserved numeric(18, 2) not null default 0,
+      metadata jsonb,
       stage text not null,
       state_version integer not null default 0,
       next_poll_at timestamp,
@@ -615,7 +616,8 @@ describe("media generation financial recovery", () => {
            ('adapter-v2', 'api-member-1', $1, $3::jsonb)`,
         [credentialScope, JSON.stringify(versionV1), JSON.stringify(versionV2)]
       );
-      await owner.query(`
+      await owner.query(
+        `
         insert into video_generation (
           id, user_id, stage, next_poll_at,
           api_adapter_member_id, api_adapter_version_id
