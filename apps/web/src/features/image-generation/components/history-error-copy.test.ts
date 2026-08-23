@@ -16,18 +16,18 @@ describe("formatHistoryError", () => {
     ).toBe("提示词未通过内容安全审核，请修改提示词后重试。");
   });
 
-  it("未知文本降级为通用失败且不透传", () => {
-    expect(formatHistoryError("Failed query: select secret", zhCopy)).toBe(
-      "生成失败"
+  it("展示服务端已经脱敏的上游错误摘要", () => {
+    expect(formatHistoryError("Gemini 视频上游返回 HTTP 429", zhCopy)).toBe(
+      "Gemini 视频上游返回 HTTP 429"
     );
   });
 
-  it("管理员模式展示服务端已经脱敏的错误摘要", () => {
+  it("可在调用方要求时将错误摘要降级为通用失败", () => {
     expect(
       formatHistoryError("Gemini 视频上游返回 HTTP 429", zhCopy, {
-        showAdminDetails: true,
+        showDetails: false,
       })
-    ).toBe("Gemini 视频上游返回 HTTP 429");
+    ).toBe("生成失败");
   });
 
   it("空错误保持为空", () => {

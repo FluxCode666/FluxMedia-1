@@ -362,7 +362,7 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
   const common = {
     ...safeRow,
     model: normalizeHistoricalModelId(row.model) ?? row.model,
-    error: sanitizeHistoryError(rawError),
+    error: sanitizeHistoryErrorDetails(rawError),
     createdAt: toIsoDateTime(row.createdAt),
     completedAt:
       row.completedAt === null ? null : toIsoDateTime(row.completedAt),
@@ -395,14 +395,14 @@ export function sanitizeHistoryError(rawError: string | null): string | null {
 }
 
 /**
- * 为管理员历史保留有界的诊断摘要，同时移除内部查询、凭据、地址和任务标识。
+ * 为历史记录保留有界的诊断摘要，同时移除内部查询、凭据、地址和任务标识。
  *
  * @param rawError 数据库中的失败文本；它可能来自上游响应或本地异常。
- * @returns 仅供管理员历史使用的单行摘要；无法安全保留时回退为固定文案。
+ * @returns 可供用户和管理员历史使用的单行摘要；无法安全保留时回退为固定文案。
  * @sideEffects 无。
  * @failure 不抛出；非法或内部错误文本统一降级，避免读历史时扩大泄露面。
  */
-export function sanitizeAdminHistoryError(
+export function sanitizeHistoryErrorDetails(
   rawError: string | null
 ): string | null {
   if (!rawError?.trim()) return null;

@@ -13,8 +13,8 @@ import {
   type HistorySnapshotReader,
   loadHistoryRecords,
   resolveHistoryDateRange,
-  sanitizeAdminHistoryError,
   sanitizeHistoryError,
+  sanitizeHistoryErrorDetails,
 } from "./history-service";
 
 const TOKEN_SECRET = "history-service-test-secret";
@@ -333,9 +333,9 @@ describe("history service", () => {
     );
   });
 
-  it("keeps a bounded provider summary for administrators and redacts secrets", () => {
+  it("keeps a bounded provider summary for history viewers and redacts secrets", () => {
     expect(
-      sanitizeAdminHistoryError(
+      sanitizeHistoryErrorDetails(
         "Gemini 视频上游返回 HTTP 429: Bearer secret-token " +
           "https://provider.example/v1/videos/generations " +
           "api_key=sk-live-secret prompt=secret prompt task_id=operations/abc"
@@ -345,7 +345,7 @@ describe("history service", () => {
         "api_key=[REDACTED] prompt=[REDACTED]"
     );
     expect(
-      sanitizeAdminHistoryError(
+      sanitizeHistoryErrorDetails(
         "Gemini operation operations/veo-123 failed: HTTP 400"
       )
     ).toBe("Gemini operation operations/[REDACTED] failed: HTTP 400");
@@ -353,12 +353,39 @@ describe("history service", () => {
 
   it("falls back for database errors and truncates long summaries", () => {
     expect(
-      sanitizeAdminHistoryError("Failed query: select secret from account")
+      sanitizeHistoryErrorDetails("Failed query: select secret from account")
     ).toBe("Generation failed");
-    const summary = sanitizeAdminHistoryError(
+    const summary = sanitizeHistoryErrorDetails(
       `upstream error ${"x".repeat(600)}`
     );
     expect(summary).toHaveLength(512);
     expect(summary?.endsWith("...")).toBe(true);
+  });
+
+  it("returns the safe provider summary in personal history", async () => {
+    const row = imageRow("image-failed", "2026-07-22T12:00:00.000Z");
+    row.status = "failed";
+    row.rawError =
+      "Gemini 视频上游返回 HTTP 429: Bearer secret-token api_key=sk-live-secret";
+
+    const result = await loadHistoryRecords(
+      {
+        userId: "user-1",
+        timeZone: "UTC",
+        input: {},
+        now: new Date("2026-07-22T13:00:00.000Z"),
+      },
+      {
+        repository: createRepository({
+          countRecords: vi.fn().mockResolvedValue(1),
+          readRecords: vi.fn().mockResolvedValue([row]),
+        }),
+        tokenSecret: TOKEN_SECRET,
+      }
+    );
+
+    expect(result.records[0]?.error).toBe(
+      "Gemini 视频上游返回 HTTP 429: Bearer [REDACTED] api_key=[REDACTED]"
+    );
   });
 });

@@ -192,9 +192,7 @@ export function HistoryVideoDialog({
     queued: copy("Queued", "排队中"),
     in_progress: copy("In progress", "生成中"),
   }[record.status];
-  const errorMessage = formatHistoryError(record.error, copy, {
-    showAdminDetails: showAdminRequestJson,
-  });
+  const errorMessage = formatHistoryError(record.error, copy);
   const [inputState, setInputState] = useState<
     | { status: "loading" }
     | { status: "ready"; details: VideoInputDetails }
