@@ -172,12 +172,15 @@ const remoteVideoReferenceInputReferenceSchema = z
   })
   .strict();
 
-/** 参考媒体的统一输入引用；data/storage 规则与通用媒体引用保持一致。 */
-const videoReferenceInputReferenceSchema = z.discriminatedUnion("source", [
-  dataMediaInputReferenceSchema,
-  storageMediaInputReferenceSchema,
-  remoteVideoReferenceInputReferenceSchema,
-]);
+/** 参考视频与音频允许 HTTP/HTTPS 远程 URL，其他媒体仍保持 HTTPS 约束。 */
+export const videoReferenceInputReferenceSchema = z.discriminatedUnion(
+  "source",
+  [
+    dataMediaInputReferenceSchema,
+    storageMediaInputReferenceSchema,
+    remoteVideoReferenceInputReferenceSchema,
+  ]
+);
 
 /** 单个 JSON-safe 媒体输入引用。 */
 export const mediaInputReferenceSchema = z.discriminatedUnion("source", [

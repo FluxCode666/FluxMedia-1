@@ -72,7 +72,7 @@ describe("video generation operations", () => {
         {
           source: "remote",
           mimeType: "video/mp4",
-          url: "https://media.example.com/reference.mp4",
+          url: "http://media.example.com/reference.mp4",
           byteLength: 1024,
         },
       ],
@@ -80,7 +80,7 @@ describe("video generation operations", () => {
         {
           source: "remote",
           mimeType: "audio/mpeg",
-          url: "https://media.example.com/reference.mp3",
+          url: "http://media.example.com/reference.mp3",
           byteLength: 1024,
         },
       ],

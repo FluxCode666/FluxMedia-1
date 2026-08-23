@@ -13,6 +13,7 @@ import {
   MAX_REFERENCE_VIDEO_BYTES,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
+  videoReferenceInputReferenceSchema,
   VIDEO_REFERENCE_MIME_TYPES,
 } from "../../image-generation/media-contract";
 import {
@@ -81,11 +82,14 @@ export const videoGenerateInputSchema = z
     lastFrame: mediaInputReferenceSchema.optional(),
     referenceImages: mediaInputReferencesSchema.optional(),
     referenceVideos: z
-      .array(mediaInputReferenceSchema)
+      .array(videoReferenceInputReferenceSchema)
       .min(1)
       .max(3)
       .optional(),
-    referenceAudios: z.array(mediaInputReferenceSchema).length(1).optional(),
+    referenceAudios: z
+      .array(videoReferenceInputReferenceSchema)
+      .length(1)
+      .optional(),
   })
   .strict()
   .superRefine((input, context) => {
