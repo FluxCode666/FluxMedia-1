@@ -74,6 +74,10 @@ describe("image backend pool pricing operations", () => {
             useStream: false,
             videoSubmissionRetryCount: 2,
             videoProtocolMode: "gemini",
+            videoInputCapabilities: {
+              referenceVideos: true,
+              referenceAudios: true,
+            },
             modelMappings: [],
           },
         },

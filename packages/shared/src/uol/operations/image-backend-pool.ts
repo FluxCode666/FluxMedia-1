@@ -10,6 +10,7 @@ import {
   apiModelMappingsSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
+  apiVideoInputCapabilitiesSchema,
   apiVideoProtocolModeSchema,
 } from "../../image-backend/api-upstream-adaptation";
 import {
@@ -41,6 +42,7 @@ const redactedApiConfigSchema = z
     useStream: z.boolean(),
     videoSubmissionRetryCount: z.number().int().min(0).max(10),
     videoProtocolMode: apiVideoProtocolModeSchema,
+    videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema.optional(),
     credentialScope: z.string().optional(),
