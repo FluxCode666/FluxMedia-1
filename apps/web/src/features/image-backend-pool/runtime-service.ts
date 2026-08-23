@@ -1232,8 +1232,12 @@ export async function createRuntimeBackendSession(
       !canRuntimeBackendLeaseServeRequest(normalizedInput, {
         memberType: lease.memberType,
         adobeMode: lease.adobeMode,
-        videoInputCapabilities:
-          lease.config.backend?.apiUpstreamAdapter?.videoInputCapabilities,
+        ...(lease.config.backend?.apiUpstreamAdapter?.videoInputCapabilities
+          ? {
+              videoInputCapabilities:
+                lease.config.backend.apiUpstreamAdapter.videoInputCapabilities,
+            }
+          : {}),
       })
     ) {
       await releaseRuntimeLease(lease);
