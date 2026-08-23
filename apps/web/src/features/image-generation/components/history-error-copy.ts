@@ -1,18 +1,18 @@
 /**
- * 历史记录安全错误的本地化映射。
+ * 历史记录错误的本地化映射。
  *
- * 使用方：图片/视频历史列表与详情弹层。服务端只返回固定安全英文文案，此模块把
- * 它们转换为当前界面语言；未知值仍降级为通用失败，不透传任意文本。
+ * 使用方：图片/视频历史列表与详情弹层。固定平台文案转换为当前界面语言，其他
+ * 上游错误原样展示，便于用户定位失败原因。
  */
 
 type Copy = (en: string, zh: string) => string;
 
 /**
- * 本地化服务端白名单错误。
+ * 本地化历史错误。
  *
- * @param error 历史 UOL 返回的稳定安全错误或空值。
+ * @param error 历史 UOL 返回的错误文案或上游响应文本。
  * @param copy 当前语言的二选一文案函数。
- * @returns 本地化简易错误；空值保持 `null`。
+ * @returns 当前语言的错误展示文案；空值保持 `null`。
  */
 export function formatHistoryError(
   error: string | null,
@@ -40,6 +40,6 @@ export function formatHistoryError(
         "生成服务暂时不可用"
       );
     default:
-      return copy("Generation failed", "生成失败");
+      return error;
   }
 }

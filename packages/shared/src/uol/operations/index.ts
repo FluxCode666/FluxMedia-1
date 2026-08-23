@@ -102,6 +102,7 @@ export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {
   videoGenerate,
   videoGetInputs,
+  videoGetGeminiOperation,
   videoGetStatus,
   videoListCapabilities,
   videoListUncertainSubmissions,

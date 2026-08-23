@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 import {
+  type DnsPinFetchOptions,
   fetchWithDnsPin,
   SsrfBlockedError,
 } from "@repo/shared/security/dns-pin";
@@ -29,6 +30,10 @@ export class SafeImageFetchError extends Error {
     this.name = "SafeImageFetchError";
   }
 }
+
+/** 仅供受控媒体引用使用的连接地址例外判断。 */
+export type SafeFetchBlockedAddressPolicy =
+  DnsPinFetchOptions["allowBlockedAddress"];
 
 const MAX_REDIRECTS = 3;
 
@@ -79,7 +84,10 @@ function isPrivateIpAddress(address: string): boolean {
   return false;
 }
 
-export async function assertPublicImageUrl(url: URL): Promise<void> {
+export async function assertPublicImageUrl(
+  url: URL,
+  options: { allowBlockedAddress?: SafeFetchBlockedAddressPolicy } = {}
+): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new SafeImageFetchError("URL must use http or https.");
   }
@@ -100,7 +108,13 @@ export async function assertPublicImageUrl(url: URL): Promise<void> {
 
   const strippedHostname = hostname.replace(/^\[|\]$/g, "");
   if (isIP(strippedHostname)) {
-    if (isPrivateIpAddress(strippedHostname)) {
+    if (
+      isPrivateIpAddress(strippedHostname) &&
+      !options.allowBlockedAddress?.({
+        hostname: strippedHostname,
+        address: strippedHostname,
+      })
+    ) {
       throw new SafeImageFetchError("Image URL must be publicly reachable.");
     }
     return;
@@ -109,7 +123,14 @@ export async function assertPublicImageUrl(url: URL): Promise<void> {
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (
     addresses.length === 0 ||
-    addresses.some((entry) => isPrivateIpAddress(entry.address))
+    addresses.some(
+      (entry) =>
+        isPrivateIpAddress(entry.address) &&
+        !options.allowBlockedAddress?.({
+          hostname,
+          address: entry.address,
+        })
+    )
   ) {
     throw new SafeImageFetchError("Image URL must be publicly reachable.");
   }
@@ -253,7 +274,11 @@ export async function readResponseBytesWithLimit(
  */
 export async function fetchPublicImage(
   rawUrl: string,
-  init: { headers?: Record<string, string>; signal?: AbortSignal } = {}
+  init: {
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+    allowBlockedAddress?: SafeFetchBlockedAddressPolicy;
+  } = {}
 ): Promise<Response> {
   let currentUrl = rawUrl;
 
@@ -265,7 +290,11 @@ export async function fetchPublicImage(
       throw new SafeImageFetchError("Image URL is invalid.");
     }
 
-    await assertPublicImageUrl(parsed);
+    await assertPublicImageUrl(parsed, {
+      ...(init.allowBlockedAddress
+        ? { allowBlockedAddress: init.allowBlockedAddress }
+        : {}),
+    });
 
     let response: Response | null = null;
     // 同一跳上对临时性失败重试：每次重试都已通过上面的 SSRF 预校验，
@@ -277,6 +306,9 @@ export async function fetchPublicImage(
           method: "GET",
           headers: init.headers,
           signal: init.signal,
+          ...(init.allowBlockedAddress
+            ? { allowBlockedAddress: init.allowBlockedAddress }
+            : {}),
         });
       } catch (err) {
         if (err instanceof SsrfBlockedError) {

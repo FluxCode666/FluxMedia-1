@@ -8,6 +8,7 @@
 import { createHash } from "node:crypto";
 import {
   listVideoInputManifestReferences,
+  MAX_REFERENCE_AUDIO_BYTES,
   type MediaInputReference,
   type VideoInputManifest,
   type VideoInputReferenceManifest,
@@ -16,7 +17,18 @@ import {
 } from "@repo/shared/image-generation/media-contract";
 import { getStorageRuntimeSnapshot } from "@repo/shared/storage/providers";
 
-import { type LoadedMediaInput, loadMediaInputs } from "./media-input-loader";
+import {
+  getMediaInputReferenceMaxBytes,
+  getVideoReferenceMediaAddressPolicy,
+  type LoadedMediaInput,
+  loadMediaInputs,
+} from "./media-input-loader";
+import {
+  assertReferenceVideoTotalDuration,
+  type ReferenceVideoMetadata,
+  validateReferenceAudioMetadata,
+  validateReferenceVideoMetadata,
+} from "./reference-media-metadata";
 import {
   enqueueVideoInputCleanup,
   type VideoInputCleanupObject,
@@ -37,7 +49,12 @@ export interface StagedVideoInputManifest {
 }
 
 type NamedVideoInput = {
-  slot: "first-frame" | "last-frame" | "reference";
+  slot:
+    | "first-frame"
+    | "last-frame"
+    | "reference"
+    | "reference-video"
+    | "reference-audio";
   slotIndex: number;
   reference: MediaInputReference;
 };
@@ -49,10 +66,14 @@ type PersistedVideoInputReference = NonNullable<
 function getMediaExtension(mimeType: MediaInputReference["mimeType"]): string {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/webp") return "webp";
+  if (mimeType === "video/quicktime") return "mov";
+  if (mimeType === "video/mp4") return "mp4";
+  if (mimeType === "audio/mpeg") return "mp3";
+  if (mimeType === "audio/wav" || mimeType === "audio/x-wav") return "wav";
   return "png";
 }
 
-/** 根据图片魔数识别当前视频契约允许的实际 MIME。 */
+/** 根据媒体魔数识别当前视频契约允许的实际 MIME。 */
 function detectMediaMimeType(
   bytes: Buffer
 ): MediaInputReference["mimeType"] | null {
@@ -79,7 +100,34 @@ function detectMediaMimeType(
   ) {
     return "image/webp";
   }
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii").toLowerCase();
+    return brand === "qt  " ? "video/quicktime" : "video/mp4";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+    bytes.subarray(8, 12).toString("ascii") === "WAVE"
+  ) {
+    return "audio/wav";
+  }
+  if (bytes.length >= 3 && bytes.subarray(0, 3).toString("ascii") === "ID3") {
+    return "audio/mpeg";
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] ?? 0) >= 0xe0) {
+    return "audio/mpeg";
+  }
   return null;
+}
+
+/** 允许 MP4 与 QuickTime 容器在参考视频 URL 声明和真实魔数之间互换。 */
+function isCompatibleMediaMimeType(
+  expected: MediaInputReference["mimeType"],
+  actual: MediaInputReference["mimeType"] | null
+): boolean {
+  if (actual === expected) return true;
+  const videoTypes = new Set(["video/mp4", "video/quicktime"]);
+  return videoTypes.has(expected) && actual !== null && videoTypes.has(actual);
 }
 
 /** 临时视频输入对象只能落在当前用户和任务的隔离前缀下。 */
@@ -123,6 +171,16 @@ function listNamedVideoInputs(
       slotIndex,
       reference,
     })),
+    ...(manifest.referenceVideos ?? []).map((reference, slotIndex) => ({
+      slot: "reference-video" as const,
+      slotIndex,
+      reference,
+    })),
+    ...(manifest.referenceAudios ?? []).map((reference, slotIndex) => ({
+      slot: "reference-audio" as const,
+      slotIndex,
+      reference,
+    })),
   ];
 }
 
@@ -142,7 +200,24 @@ function buildPersistedManifest(
     index += 1;
   }
   if (source.referenceImages?.length) {
-    manifest.referenceImages = references.slice(index);
+    manifest.referenceImages = references.slice(
+      index,
+      index + source.referenceImages.length
+    );
+    index += source.referenceImages.length;
+  }
+  if (source.referenceVideos?.length) {
+    manifest.referenceVideos = references.slice(
+      index,
+      index + source.referenceVideos.length
+    );
+    index += source.referenceVideos.length;
+  }
+  if (source.referenceAudios?.length) {
+    manifest.referenceAudios = references.slice(
+      index,
+      index + source.referenceAudios.length
+    );
   }
   return videoInputManifestSchema.parse(manifest);
 }
@@ -197,19 +272,42 @@ export async function stageVideoInputManifest(input: {
     userId: input.userId,
     references: namedInputs.map((entry) => entry.reference),
     signal: uploadSignal,
+    maxBytesForReference: getMediaInputReferenceMaxBytes,
+    allowBlockedAddressForReference: getVideoReferenceMediaAddressPolicy,
   });
   if (loaded.length !== namedInputs.length) {
     throw new Error("视频输入加载结果数量不一致");
   }
+  const referenceVideoMetadata: ReferenceVideoMetadata[] = [];
   for (const [index, entry] of namedInputs.entries()) {
     const media = loaded[index] as LoadedMediaInput;
-    if (media.data.byteLength !== entry.reference.byteLength) {
-      throw new Error("视频输入图片字节数与声明不一致");
+    if (
+      entry.reference.byteLength !== undefined &&
+      media.data.byteLength !== entry.reference.byteLength
+    ) {
+      throw new Error("视频输入媒体字节数与声明不一致");
     }
-    if (detectMediaMimeType(media.data) !== entry.reference.mimeType) {
-      throw new Error("视频输入图片实际 MIME 与声明不一致");
+    if (
+      !isCompatibleMediaMimeType(
+        entry.reference.mimeType,
+        detectMediaMimeType(media.data)
+      )
+    ) {
+      throw new Error("视频输入媒体实际 MIME 与声明不一致");
+    }
+    if (entry.slot === "reference-video") {
+      referenceVideoMetadata.push(
+        await validateReferenceVideoMetadata(media.data)
+      );
+    }
+    if (entry.slot === "reference-audio") {
+      if (media.data.byteLength > MAX_REFERENCE_AUDIO_BYTES) {
+        throw new Error("单个参考音频不能超过 15 MB");
+      }
+      await validateReferenceAudioMetadata(media.data);
     }
   }
+  assertReferenceVideoTotalDuration(referenceVideoMetadata);
 
   const snapshot = await getStorageRuntimeSnapshot();
   const objects: StagedVideoInputObject[] = [];

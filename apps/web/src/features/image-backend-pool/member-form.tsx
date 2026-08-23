@@ -76,7 +76,7 @@ export function BackendMemberFormDialog({
   groups: BackendGroupSummary[];
   modelOptions: readonly BackendMemberModelOption[];
   modelOptionStatus: BackendMemberModelOptionStatus;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
 }) {
   const [type, setType] = useState<BackendMemberType>("api");
   const [name, setName] = useState("");
@@ -129,6 +129,11 @@ export function BackendMemberFormDialog({
       setApiAdapterDraft({
         authentication: member.config.authentication ?? { mode: "bearer" },
         videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
+        videoProtocolMode: member.config.videoProtocolMode ?? "custom",
+        videoInputCapabilities: member.config.videoInputCapabilities ?? {
+          referenceVideos: false,
+          referenceAudios: false,
+        },
         operations:
           member.config.operations ??
           createDefaultApiUpstreamAdapterFormDraft().operations,
@@ -189,10 +194,11 @@ export function BackendMemberFormDialog({
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
     {
-      onSuccess: () => {
+      onSuccess: async () => {
+        // 保存完成后先等待父级重新读取供应商快照，避免关闭弹窗后列表仍显示旧配置。
+        await onSaved();
         toast.success(member ? "成员已更新" : "成员已创建");
         onOpenChange(false);
-        onSaved();
       },
       onError: ({ error }) => toast.error(error.serverError || "保存成员失败"),
     }
@@ -282,6 +288,8 @@ export function BackendMemberFormDialog({
             : {}),
           useStream: apiUseStream,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
+          videoProtocolMode: apiAdapterDraft.videoProtocolMode,
+          videoInputCapabilities: apiAdapterDraft.videoInputCapabilities,
           modelMappings: modelMappings.filter((mapping) =>
             selectedModelKeys.has(mapping.modelId.toLowerCase())
           ),

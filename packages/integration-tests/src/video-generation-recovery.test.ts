@@ -758,8 +758,13 @@ describe("video recovery PostgreSQL concurrency", () => {
           (id, user_id, credit_limit, credits_used)
         values ('key-1', 'user-1', 10, 0);
         insert into video_generation
-          (id, api_key_id, stage)
-        values ('video-quota-1', 'key-1', 'charged')
+          (id, api_key_id, stage, metadata)
+        values (
+          'video-quota-1',
+          'key-1',
+          'charged',
+          '{"videoCapabilitySnapshot":{"version":1}}'::json
+        )
       `);
       const first = await pool.connect();
       const second = await pool.connect();

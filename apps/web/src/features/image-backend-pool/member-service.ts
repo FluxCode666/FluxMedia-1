@@ -71,6 +71,8 @@ export interface RedactedApiMemberConfig {
   hasApiKey: boolean;
   useStream: boolean;
   videoSubmissionRetryCount: number;
+  videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
+  videoInputCapabilities: ApiUpstreamAdapterDraft["videoInputCapabilities"];
   modelMappings: ApiModelMapping[];
   authentication?: ApiUpstreamAdapterDraft["authentication"];
   credentialScope?: string;
@@ -267,7 +269,7 @@ function createApiCredentialScope(
 }
 
 /** 从 API 成员保存输入构造不含密钥的不可变适配版本草稿。 */
-function createApiAdapterDraft(
+export function createApiAdapterDraft(
   input: Extract<BackendMemberInput, { type: "api" }>
 ): ApiUpstreamAdapterDraft {
   const operations = structuredClone(input.config.operations);
@@ -275,6 +277,8 @@ function createApiAdapterDraft(
     baseUrl: input.config.baseUrl,
     useStream: input.config.useStream,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
+    videoProtocolMode: input.config.videoProtocolMode,
+    videoInputCapabilities: input.config.videoInputCapabilities,
     modelMappings: input.config.modelMappings,
     authentication: input.config.authentication,
     credentialScope: createApiCredentialScope(
@@ -623,6 +627,8 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         hasApiKey: row.api_has_key,
         useStream: adapter.useStream,
         videoSubmissionRetryCount: adapter.videoSubmissionRetryCount,
+        videoProtocolMode: adapter.videoProtocolMode,
+        videoInputCapabilities: adapter.videoInputCapabilities,
         modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
         authentication: adapter.authentication,
         credentialScope: adapter.credentialScope,

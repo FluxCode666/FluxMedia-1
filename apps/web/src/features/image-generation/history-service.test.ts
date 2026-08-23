@@ -13,7 +13,6 @@ import {
   type HistorySnapshotReader,
   loadHistoryRecords,
   resolveHistoryDateRange,
-  sanitizeHistoryError,
 } from "./history-service";
 
 const TOKEN_SECRET = "history-service-test-secret";
@@ -317,18 +316,30 @@ describe("history service", () => {
     expect(previousPage.nextCursor).toEqual(expect.any(String));
   });
 
-  it("maps raw provider and internal errors to a small safe allowlist", () => {
-    expect(
-      sanitizeHistoryError("Failed query: select secret from account")
-    ).toBe("Generation failed");
-    expect(sanitizeHistoryError("provider deadline exceeded")).toBe(
-      "Generation timed out"
+  it("returns the raw provider error in personal history", async () => {
+    const row = imageRow("image-failed", "2026-07-22T12:00:00.000Z");
+    row.status = "failed";
+    row.rawError =
+      "Gemini 视频上游返回 HTTP 429: Bearer secret-token api_key=sk-live-secret";
+
+    const result = await loadHistoryRecords(
+      {
+        userId: "user-1",
+        timeZone: "UTC",
+        input: {},
+        now: new Date("2026-07-22T13:00:00.000Z"),
+      },
+      {
+        repository: createRepository({
+          countRecords: vi.fn().mockResolvedValue(1),
+          readRecords: vi.fn().mockResolvedValue([row]),
+        }),
+        tokenSecret: TOKEN_SECRET,
+      }
     );
-    expect(sanitizeHistoryError("moderation content policy rejected")).toBe(
-      "Prompt did not pass content safety review; modify the prompt and retry"
-    );
-    expect(sanitizeHistoryError("poll failed: 451 image_unsafe")).toBe(
-      "Prompt did not pass content safety review; modify the prompt and retry"
+
+    expect(result.records[0]?.error).toBe(
+      "Gemini 视频上游返回 HTTP 429: Bearer secret-token api_key=sk-live-secret"
     );
   });
 });

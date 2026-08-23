@@ -5,7 +5,7 @@
  * 终检。使用方是 video.generate UOL binding；依赖可注入以证明限流时没有存储 I/O。
  */
 import {
-  assertMediaInputReferencesWithinPolicy,
+  assertVideoInputManifestWithinPolicy,
   listVideoInputManifestReferences,
   MAX_MEDIA_INPUT_COUNT,
   type MediaInputPolicy,
@@ -62,8 +62,8 @@ export async function prepareVideoTaskInputReferences(
 ): Promise<VideoTaskPreparationResult> {
   const references = listVideoInputManifestReferences(input.manifest);
   if (references.length > 0) {
-    assertMediaInputReferencesWithinPolicy(
-      references,
+    assertVideoInputManifestWithinPolicy(
+      input.manifest,
       input.mediaLimits,
       MAX_MEDIA_INPUT_COUNT
     );

@@ -19,6 +19,8 @@ import { getApiRateLimitType } from "./rate-limit-routing";
 const intlMiddleware = createIntlMiddleware(routing);
 const VERSIONED_ASSET_PREFIX_PATTERN =
   /^\/(?:gpt2-assets|next-assets)-[^/]+(\/_next\/.*)$/;
+const GEMINI_PREDICT_PATH_PATTERN =
+  /^(\/api)?\/v1beta\/models\/([^/]+):predictLongRunning$/;
 
 /**
  * 判断是否为根级推广短链。
@@ -65,6 +67,15 @@ function setPrivateNoStore(response: NextResponse) {
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Next 的文件系统路由不能稳定匹配 Gemini 标准地址中的冒号动态段；先将公开
+  // 地址内部重写为静态 predictLongRunning 段，客户端看到的 URL 保持不变。
+  const geminiPredictMatch = pathname.match(GEMINI_PREDICT_PATH_PATTERN);
+  if (geminiPredictMatch) {
+    const rewrittenUrl = request.nextUrl.clone();
+    rewrittenUrl.pathname = `${geminiPredictMatch[1] ?? ""}/v1beta/models/${geminiPredictMatch[2]}/predictLongRunning`;
+    return NextResponse.rewrite(rewrittenUrl);
+  }
 
   if (VERSIONED_ASSET_PREFIX_PATTERN.test(pathname)) {
     const rewrittenUrl = request.nextUrl.clone();
@@ -120,7 +131,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (pathname.startsWith("/v1/")) {
+  // Gemini Developer API 使用根级 /v1beta 命名空间；它与 /v1 一样属于外接 API，
+  // 必须绕过 next-intl，否则会被重定向到 /en/v1beta/* 页面路径。
+  if (pathname.startsWith("/v1/") || pathname.startsWith("/v1beta/")) {
     const rateLimitType = getApiRateLimitType(pathname);
     if (rateLimitType) {
       const ip = getClientIp(request);

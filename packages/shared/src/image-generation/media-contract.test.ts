@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertVideoInputManifestWithinPolicy,
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_FILE_BYTES,
   mediaInputReferenceSchema,
@@ -158,6 +159,30 @@ describe("media input reference contract", () => {
     ).toBe(false);
     expect(
       videoInputManifestSchema.safeParse({
+        firstFrame: storage,
+        referenceVideos: [
+          {
+            ...storage,
+            mimeType: "video/mp4",
+            storageKey: `${storage.storageKey}.mp4`,
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputManifestSchema.safeParse({
+        firstFrame: storage,
+        referenceAudios: [
+          {
+            ...storage,
+            mimeType: "audio/mpeg",
+            storageKey: `${storage.storageKey}.mp3`,
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputManifestSchema.safeParse({
         firstFrame: {
           source: "remote",
           mimeType: "image/png",
@@ -187,6 +212,78 @@ describe("media input reference contract", () => {
         ],
       }).success
     ).toBe(true);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [
+          {
+            source: "remote",
+            mimeType: "video/mp4",
+            url: "http://cdn.example.com/reference.mp4",
+          },
+        ],
+        referenceAudios: [
+          {
+            source: "remote",
+            mimeType: "audio/mpeg",
+            url: "http://cdn.example.com/reference.mp3",
+          },
+        ],
+      }).success
+    ).toBe(true);
+  });
+
+  it("按具名语义限制图片、视频和音频 MIME", () => {
+    const remoteVideo = {
+      source: "remote" as const,
+      mimeType: "video/mp4" as const,
+      url: "https://cdn.example.com/reference.mp4",
+    };
+    const remoteAudio = {
+      source: "remote" as const,
+      mimeType: "audio/mpeg" as const,
+      url: "https://cdn.example.com/reference.mp3",
+    };
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        firstFrame: remoteVideo,
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [remoteVideo],
+        referenceAudios: [remoteAudio],
+      }).success
+    ).toBe(true);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [
+          {
+            ...remoteVideo,
+            url: "ftp://cdn.example.com/reference.mp4",
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceAudios: [
+          {
+            ...remoteAudio,
+            url: "http://user:password@cdn.example.com/reference.mp3",
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoInputReferenceManifestSchema.safeParse({
+        referenceVideos: [
+          {
+            ...remoteVideo,
+            url: "http://127.0.0.1/reference.mp4",
+          },
+        ],
+      }).success
+    ).toBe(false);
   });
 
   it("使用运行时策略统一拒绝单文件、总量和编辑参考图超限", () => {
@@ -225,6 +322,59 @@ describe("media input reference contract", () => {
     expect(() =>
       parseMediaInputReferencesWithPolicy(
         [reference(1, 1), reference(2, 1), reference(3, 1)],
+        policy
+      )
+    ).toThrow();
+  });
+
+  it("视频参考视频和音频的 HTTP URL 通过运行时策略校验", () => {
+    const policy = {
+      maxFileSizeMb: 5,
+      maxUploadSizeMb: 75,
+      maxFileSizeBytes: 5 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
+      maxEditReferenceImages: 16,
+    };
+    expect(() =>
+      assertVideoInputManifestWithinPolicy(
+        {
+          referenceVideos: [
+            {
+              source: "remote",
+              mimeType: "video/mp4",
+              url: "http://cdn.example.com/reference.mp4",
+            },
+          ],
+          referenceAudios: [
+            {
+              source: "remote",
+              mimeType: "audio/mpeg",
+              url: "http://cdn.example.com/reference.mp3",
+            },
+          ],
+        },
+        policy
+      )
+    ).not.toThrow();
+  });
+
+  it("视频首帧仍拒绝 HTTP URL", () => {
+    const policy = {
+      maxFileSizeMb: 5,
+      maxUploadSizeMb: 75,
+      maxFileSizeBytes: 5 * 1024 * 1024,
+      maxUploadSizeBytes: 75 * 1024 * 1024,
+      maxEditReferenceImages: 16,
+    };
+    expect(() =>
+      assertVideoInputManifestWithinPolicy(
+        {
+          firstFrame: {
+            source: "remote",
+            mimeType: "image/png",
+            url: "http://cdn.example.com/first-frame.png",
+          },
+        },
         policy
       )
     ).toThrow();

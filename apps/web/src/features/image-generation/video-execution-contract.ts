@@ -5,6 +5,7 @@
  * 校验真实模型、独立参数、有效声音和创建时参考图上限，不查询当前动态配置。
  */
 import {
+  getVideoOutputSize,
   type VideoAspectRatio,
   type VideoBillingFamily,
   type VideoFrameInputCapability,
@@ -209,6 +210,8 @@ export function resolveVideoExecutionContract(input: {
   durationSeconds: unknown;
   aspectRatio: unknown;
   resolution: unknown;
+  outputWidth?: unknown;
+  outputHeight?: unknown;
   metadata: Record<string, unknown> | null;
 }): VideoExecutionContract {
   const snapshot = parseVideoCapabilitySnapshot(input.metadata);
@@ -246,6 +249,16 @@ export function resolveVideoExecutionContract(input: {
   });
   if (!validated.ok) {
     throw new Error(`视频任务参数无效: ${validated.error.field}`);
+  }
+  const outputSize = getVideoOutputSize(input.resolution, input.aspectRatio);
+  if (
+    !outputSize ||
+    (input.outputWidth !== undefined &&
+      input.outputWidth !== outputSize.width) ||
+    (input.outputHeight !== undefined &&
+      input.outputHeight !== outputSize.height)
+  ) {
+    throw new Error("视频任务输出像素与模型能力冲突");
   }
   const effectiveAudio = input.metadata?.generateAudio;
   if (typeof effectiveAudio !== "boolean") {

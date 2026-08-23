@@ -11,12 +11,19 @@
  *
  * 设计决策：
  * - 动态 import 避免启动时的循环依赖风险
- * - 模块级 flag 保证幂等（多次调用无副作用）
+ * - 绑定状态探针保证幂等（多次调用无副作用）
  * - async 允许未来扩展（如异步服务发现）
  */
 
-let initialized = false;
+import { isOperationBound } from "@repo/shared/uol";
+
+const CORE_OPERATION_NAMES = ["image.generate", "video.generate"] as const;
 let initPromise: Promise<void> | null = null;
+
+/** 检查当前 Next 服务模块上下文的核心 operation 是否已绑定。 */
+function areCoreOperationsBound(): boolean {
+  return CORE_OPERATION_NAMES.every((name) => isOperationBound(name));
+}
 
 /**
  * 确保 UOL 操作层已完成初始化（所有 bindExecute 已执行）。
@@ -26,14 +33,21 @@ let initPromise: Promise<void> | null = null;
  * 并发调用安全（共享同一 Promise）。
  */
 export async function ensureUolInitialized(): Promise<void> {
-  if (initialized) return;
+  if (areCoreOperationsBound()) return;
 
   if (!initPromise) {
     initPromise = (async () => {
       await import("./uol-bindings");
-      initialized = true;
+      if (!areCoreOperationsBound()) {
+        throw new Error("UOL core operations were not bound");
+      }
     })();
   }
 
-  await initPromise;
+  try {
+    await initPromise;
+  } catch (error) {
+    initPromise = null;
+    throw error;
+  }
 }

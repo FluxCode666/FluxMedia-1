@@ -172,6 +172,8 @@ export async function getVideoInputAssets(
   firstFrame?: { url: string; mimeType: string };
   lastFrame?: { url: string; mimeType: string };
   referenceImages?: Array<{ url: string; mimeType: string }>;
+  referenceVideos?: Array<{ url: string; mimeType: string }>;
+  referenceAudios?: Array<{ url: string; mimeType: string }>;
 }> {
   const task = await dependencies.findTask(input.taskId);
   if (!task) {
@@ -209,6 +211,20 @@ export async function getVideoInputAssets(
       ? {
           referenceImages: await Promise.all(
             manifest.referenceImages.map(sign)
+          ),
+        }
+      : {}),
+    ...(manifest.referenceVideos?.length
+      ? {
+          referenceVideos: await Promise.all(
+            manifest.referenceVideos.map(sign)
+          ),
+        }
+      : {}),
+    ...(manifest.referenceAudios?.length
+      ? {
+          referenceAudios: await Promise.all(
+            manifest.referenceAudios.map(sign)
           ),
         }
       : {}),

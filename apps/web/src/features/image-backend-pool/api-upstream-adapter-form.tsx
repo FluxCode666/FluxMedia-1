@@ -12,6 +12,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@repo/ui/components/accordion";
+import { Checkbox } from "@repo/ui/components/checkbox";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -58,6 +59,33 @@ export function ApiUpstreamAdapterForm({
 
   return (
     <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>视频上游协议模式</Label>
+        <Select
+          value={value.videoProtocolMode}
+          disabled={disabled}
+          onValueChange={(mode) =>
+            onChange({
+              ...value,
+              videoProtocolMode:
+                mode as ApiUpstreamAdapterFormDraft["videoProtocolMode"],
+            })
+          }
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="gemini">Gemini</SelectItem>
+            <SelectItem value="seedance">Seedance</SelectItem>
+            <SelectItem value="custom">Custom（当前脚本/内置路径）</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          仅决定该成员发送给上游的视频请求格式，不根据模型名称推断供应商；存量成员默认使用
+          custom。
+        </p>
+      </div>
       <div className="space-y-2">
         <Label>认证模式</Label>
         <Select
@@ -132,6 +160,55 @@ export function ApiUpstreamAdapterForm({
         <p className="text-xs text-muted-foreground">
           0 表示只请求一次；默认 2
           表示首次请求后最多再重试两次。任务首次选择该账号时固定配置。
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>视频输入能力标签</Label>
+        <div className="space-y-2 rounded-md border p-3">
+          <label
+            htmlFor="api-reference-video-capability"
+            className="flex items-center gap-2 text-sm"
+          >
+            <Checkbox
+              id="api-reference-video-capability"
+              checked={value.videoInputCapabilities.referenceVideos}
+              disabled={disabled}
+              onCheckedChange={(checked) =>
+                onChange({
+                  ...value,
+                  videoInputCapabilities: {
+                    ...value.videoInputCapabilities,
+                    referenceVideos: checked === true,
+                  },
+                })
+              }
+            />
+            支持参考视频输入
+          </label>
+          <label
+            htmlFor="api-reference-audio-capability"
+            className="flex items-center gap-2 text-sm"
+          >
+            <Checkbox
+              id="api-reference-audio-capability"
+              checked={value.videoInputCapabilities.referenceAudios}
+              disabled={disabled}
+              onCheckedChange={(checked) =>
+                onChange({
+                  ...value,
+                  videoInputCapabilities: {
+                    ...value.videoInputCapabilities,
+                    referenceAudios: checked === true,
+                  },
+                })
+              }
+            />
+            支持参考音频输入
+          </label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          请求携带对应参考素材时，只会调度到已勾选能力的 API 账号。
         </p>
       </div>
 

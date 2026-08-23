@@ -116,6 +116,11 @@ export const dashboardNav: NavGroup[] = [
         icon: Clock,
       },
       {
+        title: "API Keys",
+        href: "/dashboard/external-api",
+        icon: KeyRound,
+      },
+      {
         title: "API Docs",
         href: "/dashboard/api-docs",
         icon: BookOpen,
@@ -124,11 +129,6 @@ export const dashboardNav: NavGroup[] = [
         title: "Models",
         href: "/models",
         icon: Layers,
-      },
-      {
-        title: "API Keys",
-        href: "/dashboard/external-api",
-        icon: KeyRound,
       },
       {
         title: "Wallet",

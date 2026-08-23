@@ -29,13 +29,17 @@ import {
   resolveCanonicalVideoGenerateInput,
   resolveCustomVideoGenerateInput,
   type VideoGenerateInput,
+  videoGetGeminiOperation,
   videoGetInputs,
   videoListCapabilities,
   videoListUncertainSubmissions,
   videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
-import { normalizeVideoModelId } from "@repo/shared/video-generation";
+import {
+  getVideoOutputSize,
+  normalizeVideoModelId,
+} from "@repo/shared/video-generation";
 import { resolveVideoTaskBilling } from "@repo/shared/video-generation/video-billing-snapshot";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
@@ -202,6 +206,7 @@ function createVideoGenerateResult(
   taskId: string;
   status: ReturnType<typeof toLegacyVideoPublicStatus>;
   billing: ReturnType<typeof projectVideoTaskPublicBilling>;
+  geminiOperationId?: string;
   error?: string;
 } {
   const status = toLegacyVideoPublicStatus(
@@ -209,10 +214,15 @@ function createVideoGenerateResult(
     row.stage,
     row.capacityWaitDeadlineAt
   );
+  const geminiOperationId = readVideoMetadataString(
+    row.metadata,
+    "geminiOperationId"
+  );
   return {
     taskId: row.id,
     status,
     billing: projectVideoTaskPublicBilling(row.metadata, row.creditsConsumed),
+    ...(geminiOperationId ? { geminiOperationId } : {}),
     ...(status === "failed" && row.error ? { error: row.error } : {}),
   };
 }
@@ -353,6 +363,17 @@ bindExecute(
       );
     }
     const canonicalInput = canonicalResult.input;
+    const outputSize = getVideoOutputSize(
+      canonicalInput.resolution,
+      canonicalInput.aspectRatio
+    );
+    if (!outputSize) {
+      throw new OperationError(
+        "validation_error",
+        "视频模型缺少当前分辨率的可信输出像素配置",
+        { field: "resolution" }
+      );
+    }
     const capabilitySnapshot = createVideoCapabilitySnapshot({
       modelConfigurationRevision,
       maxReferenceImages:
@@ -375,6 +396,12 @@ bindExecute(
         : {}),
       ...(canonicalInput.referenceImages?.length
         ? { referenceImages: canonicalInput.referenceImages }
+        : {}),
+      ...(canonicalInput.referenceVideos?.length
+        ? { referenceVideos: canonicalInput.referenceVideos }
+        : {}),
+      ...(canonicalInput.referenceAudios?.length
+        ? { referenceAudios: canonicalInput.referenceAudios }
         : {}),
     };
 
@@ -440,6 +467,12 @@ bindExecute(
           stagingReservationToken: preparation.reservationToken,
           videoGenerationId: taskId,
           clientRequestId: canonicalInput.clientRequestId,
+          ...(canonicalInput.geminiOperationId
+            ? { geminiOperationId: canonicalInput.geminiOperationId }
+            : {}),
+          ...(canonicalInput.geminiModel
+            ? { geminiModel: canonicalInput.geminiModel }
+            : {}),
           serverRequestId: ctx.requestId,
           ...(ctx.externalRequestId
             ? { externalRequestId: ctx.externalRequestId }
@@ -450,6 +483,10 @@ bindExecute(
           duration: canonicalInput.duration,
           aspectRatio: canonicalInput.aspectRatio,
           resolution: canonicalInput.resolution,
+          outputSize: {
+            width: outputSize.width,
+            height: outputSize.height,
+          },
           ...(canonicalInput.negativePrompt
             ? { negativePrompt: canonicalInput.negativePrompt }
             : {}),
@@ -494,6 +531,10 @@ bindExecute(
                   : {}),
               modelId: canonicalInput.model,
               requiresContentSafety: true,
+              requiredVideoInputCapabilities: {
+                referenceVideos: Boolean(canonicalInput.referenceVideos?.length),
+                referenceAudios: Boolean(canonicalInput.referenceAudios?.length),
+              },
               // 自定义模型只能由 API 成员执行；内置模型必须同时统计 API 与
               // Adobe Direct，保持创建预检与权威获租的协议边界一致。
               ...(customModelDefinition
@@ -679,3 +720,75 @@ bindExecute(
     };
   }
 );
+
+/** Gemini Operation 查询复用 video_generation 任务真相，并保持同一归属校验。 */
+bindOperationExecute(videoGetGeminiOperation, async (input, principal, ctx) => {
+  const [{ db }, { videoGeneration }, { eq }] = await Promise.all([
+    import("@repo/database"),
+    import("@repo/database/schema"),
+    import("drizzle-orm"),
+  ]);
+  const operationId = input.operationName.slice(
+    `models/${input.model}/operations/`.length
+  );
+  const rows = await db
+    .select()
+    .from(videoGeneration)
+    .where(eq(videoGeneration.publicOperationId, operationId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) throw new OperationError("not_found", "Operation not found");
+  assertVideoTaskPrincipal(row, principal, ctx);
+  const persistedModel = readVideoMetadataString(row.metadata, "geminiModel");
+  if (persistedModel !== input.model) {
+    throw new OperationError("not_found", "Operation not found");
+  }
+  const parsedManifest = videoInputManifestSchema.safeParse(
+    row.inputManifest ?? {}
+  );
+  if (!parsedManifest.success) {
+    throw new OperationError("internal_error", "视频任务输入清单暂时不可用");
+  }
+  const publicUrl =
+    row.storageKey && row.storageBucket
+      ? buildPublicVideoStatusUrl({
+          storageKey: row.storageKey,
+          bucket: row.storageBucket,
+          publicBaseUrl:
+            (await getRuntimeSettingString("NEXT_PUBLIC_APP_URL")) ||
+            (await getRuntimeSettingString("BETTER_AUTH_URL")),
+        })
+      : undefined;
+  const status = toLegacyVideoPublicStatus(
+    row.status,
+    row.stage,
+    row.capacityWaitDeadlineAt
+  );
+  const operationName = `models/${persistedModel}/operations/${operationId}`;
+  if (status === "completed" && !publicUrl) {
+    throw new OperationError("not_ready", "视频结果暂时不可用");
+  }
+  if (status === "failed") {
+    return {
+      name: operationName,
+      done: true,
+      error: {
+        code: 13,
+        message: row.error ?? "视频任务失败",
+        status: "FAILED",
+      },
+    };
+  }
+  if (status !== "completed") {
+    return { name: operationName, done: false };
+  }
+  return {
+    name: operationName,
+    done: true,
+    response: {
+      generateVideoResponse: {
+        generatedSamples: [{ video: { uri: publicUrl ?? "" } }],
+      },
+    },
+  };
+});

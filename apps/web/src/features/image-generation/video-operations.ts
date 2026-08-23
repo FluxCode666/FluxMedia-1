@@ -53,6 +53,7 @@ import {
 import {
   projectVideoCurrentQuote,
   type VideoCurrentQuote,
+  videoPixelSizeSchema,
 } from "@repo/shared/video-generation";
 import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";
 import {
@@ -86,7 +87,10 @@ import {
 import { ApiAcceptedVideoError } from "./api-video-error";
 import { buildBackendAccountSnapshot } from "./backend-account-snapshot";
 import { createVideoCreditOperation } from "./credit-operation-context";
-import { loadMediaInputs } from "./media-input-loader";
+import {
+  getMediaInputReferenceMaxBytes,
+  loadMediaInputs,
+} from "./media-input-loader";
 import { defaultVideoApiKeyQuotaRepository } from "./video-api-key-quota";
 import {
   assertAuthoritativeVideoCapabilitySnapshot,
@@ -171,6 +175,10 @@ export type VideoGenerationInput = {
   prompt: string;
   videoGenerationId?: string;
   clientRequestId?: string;
+  /** Gemini 公共 Operation 使用的平台随机 opaque ID；普通协议为空。 */
+  geminiOperationId?: string;
+  /** Gemini 公共路径模型；用于 Operation 查询时的模型归属校验。 */
+  geminiModel?: string;
   /** 创建调用的服务端权威 request ID，仅用于安全日志与任务关联。 */
   serverRequestId?: string;
   /** 客户端 X-Request-Id 的已校验关联副本，不能替代服务端 request ID。 */
@@ -180,6 +188,7 @@ export type VideoGenerationInput = {
   duration: number;
   aspectRatio: string;
   resolution: string;
+  outputSize: { width: number; height: number };
   backendGroupId?: string;
   negativePrompt?: string | null;
   effectiveAudio: boolean;
@@ -1494,10 +1503,11 @@ async function pollAcceptedVideoTask(row: VideoGenerationRow) {
     throw new Error("已接受视频任务缺少恢复身份");
   }
   if (getVideoBackendProtocol(row) === "api") {
+    const upstreamIdentity = row.upstreamOperationName ?? row.upstreamJobId;
     if (
       !row.apiAdapterMemberId ||
       !row.apiAdapterVersionId ||
-      !row.upstreamJobId
+      !upstreamIdentity
     ) {
       throw new ApiAcceptedVideoError(
         "API 视频恢复缺少固定适配版本，任务将保留重试",
@@ -1510,7 +1520,7 @@ async function pollAcceptedVideoTask(row: VideoGenerationRow) {
       row.apiAdapterVersionId,
       row.model
     );
-    return pollApiVideoRequest(config, row.upstreamJobId, {
+    return pollApiVideoRequest(config, upstreamIdentity, {
       trustedOrigin: getApiVideoTrustedOrigin(row),
     });
   }
@@ -1547,6 +1557,8 @@ type LoadedVideoSourceInputs = {
   firstFrame?: Awaited<ReturnType<typeof loadMediaInputs>>[number];
   lastFrame?: Awaited<ReturnType<typeof loadMediaInputs>>[number];
   referenceImages?: Awaited<ReturnType<typeof loadMediaInputs>>;
+  referenceVideos?: Awaited<ReturnType<typeof loadMediaInputs>>;
+  referenceAudios?: Awaited<ReturnType<typeof loadMediaInputs>>;
 };
 
 /**
@@ -1595,24 +1607,48 @@ async function loadPersistedVideoSourceInputs(
   userId: string,
   manifest: VideoInputManifest | undefined
 ): Promise<LoadedVideoSourceInputs> {
-  if (manifest?.referenceImages?.length) {
-    return {
-      referenceImages: await loadMediaInputs({
-        userId,
-        references: manifest.referenceImages,
-      }),
-    };
-  }
   const references = [manifest?.firstFrame, manifest?.lastFrame].filter(
     (reference): reference is NonNullable<VideoInputManifest["firstFrame"]> =>
       Boolean(reference)
   );
-  if (!references.length) return {};
-  const loaded = await loadMediaInputs({ userId, references });
-  return {
-    ...(loaded[0] ? { firstFrame: loaded[0] } : {}),
-    ...(loaded[1] ? { lastFrame: loaded[1] } : {}),
-  };
+  const referenceImages = manifest?.referenceImages ?? [];
+  const referenceVideos = manifest?.referenceVideos ?? [];
+  const referenceAudios = manifest?.referenceAudios ?? [];
+  const loadedReferences = await loadMediaInputs({
+    userId,
+    references: [
+      ...references,
+      ...referenceImages,
+      ...referenceVideos,
+      ...referenceAudios,
+    ],
+    maxBytesForReference: getMediaInputReferenceMaxBytes,
+  });
+  let index = 0;
+  const result: LoadedVideoSourceInputs = {};
+  if (references[0]) result.firstFrame = loadedReferences[index++];
+  if (references[1]) result.lastFrame = loadedReferences[index++];
+  if (referenceImages.length) {
+    result.referenceImages = loadedReferences.slice(
+      index,
+      index + referenceImages.length
+    );
+    index += referenceImages.length;
+  }
+  if (referenceVideos.length) {
+    result.referenceVideos = loadedReferences.slice(
+      index,
+      index + referenceVideos.length
+    );
+    index += referenceVideos.length;
+  }
+  if (referenceAudios.length) {
+    result.referenceAudios = loadedReferences.slice(
+      index,
+      index + referenceAudios.length
+    );
+  }
+  return result;
 }
 
 /** 确保任务清单与本次待采用 orphan 对象一一对应。 */
@@ -1652,12 +1688,16 @@ export async function runVideoGenerationForUser(
   executionOptions?: VideoGenerationExecutionOptions
 ): Promise<VideoGenerationResult> {
   let contract: VideoExecutionContract;
+  let outputSize: { width: number; height: number };
   try {
+    outputSize = videoPixelSizeSchema.parse(input.outputSize);
     contract = resolveVideoExecutionContract({
       model: input.model,
       durationSeconds: input.duration,
       aspectRatio: input.aspectRatio,
       resolution: input.resolution,
+      outputWidth: outputSize.width,
+      outputHeight: outputSize.height,
       metadata: {
         generateAudio: input.effectiveAudio,
         videoCapabilitySnapshot: input.capabilitySnapshot,
@@ -1802,6 +1842,8 @@ export async function runVideoGenerationForUser(
       durationSeconds: contract.duration,
       aspectRatio: contract.aspectRatio,
       resolution: contract.resolution,
+      outputWidth: outputSize.width,
+      outputHeight: outputSize.height,
       status: "pending",
       stage: "created",
       storageBucket,
@@ -1811,6 +1853,10 @@ export async function runVideoGenerationForUser(
         ...(input.clientRequestId
           ? { clientRequestId: input.clientRequestId }
           : {}),
+        ...(input.geminiOperationId
+          ? { geminiOperationId: input.geminiOperationId }
+          : {}),
+        ...(input.geminiModel ? { geminiModel: input.geminiModel } : {}),
         ...(input.serverRequestId
           ? { serverRequestId: input.serverRequestId }
           : {}),
@@ -1828,6 +1874,9 @@ export async function runVideoGenerationForUser(
         videoCapabilitySnapshot: input.capabilitySnapshot,
         videoBillingSnapshot: billingSnapshot,
       },
+      ...(input.geminiOperationId
+        ? { publicOperationId: input.geminiOperationId }
+        : {}),
       ...(hasInputManifest ? { inputManifest: persistedInputManifest } : {}),
       createdAt,
       updatedAt: createdAt,
@@ -1881,12 +1930,13 @@ async function submitClaimedCreatedVideo(
   }
 
   let sourceInputs: LoadedVideoSourceInputs;
+  let persistedInputManifest: VideoInputManifest | undefined;
   try {
-    const inputManifest = parsePersistedVideoInputManifest(initialRow);
-    assertVideoInputManifestMatchesContract(inputManifest, contract);
+    persistedInputManifest = parsePersistedVideoInputManifest(initialRow);
+    assertVideoInputManifestMatchesContract(persistedInputManifest, contract);
     sourceInputs = await loadPersistedVideoSourceInputs(
       initialRow.userId,
-      inputManifest
+      persistedInputManifest
     );
   } catch (error) {
     const message =
@@ -1941,6 +1991,14 @@ async function submitClaimedCreatedVideo(
       ...(contract.requiredMemberType
         ? { requiredMemberType: contract.requiredMemberType }
         : {}),
+      requiredVideoInputCapabilities: {
+        referenceVideos: Boolean(
+          persistedInputManifest?.referenceVideos?.length
+        ),
+        referenceAudios: Boolean(
+          persistedInputManifest?.referenceAudios?.length
+        ),
+      },
       ...retryAccountSelection,
     });
     await backendSession.acquireNext();
@@ -2234,7 +2292,17 @@ async function submitClaimedCreatedVideo(
     if (submittedRequestSnapshot) {
       row = attachVideoUpstreamRequestSnapshot(row, submittedRequestSnapshot);
     }
-    const reservedAttempt = await reservedAttemptPromise;
+    let reservedAttempt: Awaited<
+      ReturnType<typeof defaultVideoSubmissionAttemptRepository.reserveNext>
+    >;
+    try {
+      reservedAttempt = await reservedAttemptPromise;
+    } catch (error) {
+      if (!attemptReservationRejected) throw error;
+      // 发送前账本达到账号上限时，适配器已经阻止外呼；把拒绝交给下面的切号
+      // 分支，数据库自身的异常仍然继续上抛。
+      reservedAttempt = null;
+    }
     if (
       lease.memberType === "api" &&
       !("error" in submitted) &&
@@ -2251,6 +2319,7 @@ async function submitClaimedCreatedVideo(
             stage: "downloading",
             pollUrl: null,
             upstreamJobId: null,
+            upstreamOperationName: null,
             videoUrl: submitted.videoUrl,
             storageKey: createVideoStorageKey(row.userId, row.id),
             upstreamAcceptedAt: new Date(),
@@ -2282,6 +2351,10 @@ async function submitClaimedCreatedVideo(
           // 仍沿用其既有动态 pollUrl 契约。
           pollUrl: "pollUrl" in submitted ? submitted.pollUrl : null,
           upstreamJobId: submitted.upstreamJobId,
+          ...("upstreamOperationName" in submitted &&
+          submitted.upstreamOperationName
+            ? { upstreamOperationName: submitted.upstreamOperationName }
+            : { upstreamOperationName: null }),
           upstreamAcceptedAt: new Date(),
           nextPollAt: new Date(Date.now() + pollAfterSeconds * 1_000),
           apiAdapterQueryFailureCount: 0,
@@ -2405,6 +2478,14 @@ async function submitClaimedCreatedVideo(
             requestKind: "video",
             requiresContentSafety: true,
             requiredMemberType: "api",
+            requiredVideoInputCapabilities: {
+              referenceVideos: Boolean(
+                persistedInputManifest?.referenceVideos?.length
+              ),
+              referenceAudios: Boolean(
+                persistedInputManifest?.referenceAudios?.length
+              ),
+            },
             excludedMemberIds: attemptedMemberIds,
           });
           let nextLease: Awaited<
@@ -2830,7 +2911,7 @@ async function recoverClaimedVideo(row: VideoGenerationRow): Promise<void> {
     if (
       !row.backendMemberId ||
       (getVideoBackendProtocol(row) === "api"
-        ? !row.upstreamJobId
+        ? !(row.upstreamOperationName ?? row.upstreamJobId)
         : !row.pollUrl)
     ) {
       const refunding = await moveVideoToRefunding(

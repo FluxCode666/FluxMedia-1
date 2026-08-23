@@ -63,16 +63,37 @@ describe("video generation operations", () => {
     ).toBe(true);
   });
 
-  it("自定义视频只接受注册分辨率和纯文本输入", () => {
+  it("自定义视频允许参考视频和参考音频并保留字段结构", () => {
     const parsed = videoGenerateInputSchema.parse({
       ...seedanceRequest,
       model: "vendor-video-x",
       resolution: "1080p",
+      referenceVideos: [
+        {
+          source: "remote",
+          mimeType: "video/mp4",
+          url: "http://media.example.com/reference.mp4",
+          byteLength: 1024,
+        },
+      ],
+      referenceAudios: [
+        {
+          source: "remote",
+          mimeType: "audio/mpeg",
+          url: "http://media.example.com/reference.mp3",
+          byteLength: 1024,
+        },
+      ],
     });
     expect(
       resolveCustomVideoGenerateInput(parsed, ["720p", "1080p"])
     ).toMatchObject({
       ok: true,
+      input: {
+        referenceVideos: parsed.referenceVideos,
+        referenceAudios: parsed.referenceAudios,
+        generateAudio: false,
+      },
       capability: {
         modelId: "vendor-video-x",
         resolutions: ["720p", "1080p"],
@@ -86,6 +107,26 @@ describe("video generation operations", () => {
         "1080p",
       ])
     ).toMatchObject({ ok: false, error: { field: "resolution" } });
+  });
+
+  it("自定义视频仍拒绝首尾帧、参考图和生成音频", () => {
+    const parsed = videoGenerateInputSchema.parse({
+      ...seedanceRequest,
+      model: "vendor-video-x",
+      resolution: "1080p",
+    });
+    for (const input of [
+      { firstFrame: image },
+      { referenceImages: [image] },
+      { generateAudio: true },
+    ]) {
+      expect(
+        resolveCustomVideoGenerateInput({ ...parsed, ...input }, ["1080p"])
+      ).toMatchObject({
+        ok: false,
+        error: { code: "unsupported_custom_input" },
+      });
+    }
   });
 
   it("按真实描述符拒绝非法时长、比例和分辨率组合", () => {
@@ -143,6 +184,32 @@ describe("video generation operations", () => {
         ...veoRequest,
         firstFrame: image,
         referenceImages: [image],
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        firstFrame: image,
+        referenceVideos: [
+          {
+            source: "remote",
+            mimeType: "video/mp4",
+            url: "https://media.example.com/reference.mp4",
+          },
+        ],
+      }).success
+    ).toBe(false);
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...veoRequest,
+        firstFrame: image,
+        referenceAudios: [
+          {
+            source: "remote",
+            mimeType: "audio/mpeg",
+            url: "https://media.example.com/reference.mp3",
+          },
+        ],
       }).success
     ).toBe(false);
     expect(
@@ -218,6 +285,32 @@ describe("video generation operations", () => {
         referenceImages: expect.arrayContaining([image]),
       },
     });
+  });
+
+  it("Gemini 公共协议允许 Veo 官方的最多三张参考图", () => {
+    const request = videoGenerateInputSchema.safeParse({
+      ...seedanceRequest,
+      model: "veo31",
+      geminiModel: "veo-3.1-generate-preview",
+      duration: 8,
+      aspectRatio: "16:9",
+      resolution: "1080p",
+      referenceImages: [image, image, image],
+    });
+    expect(request.success).toBe(true);
+    if (!request.success) return;
+    expect(
+      resolveCanonicalVideoGenerateInput(request.data, undefined)
+    ).toMatchObject({
+      ok: true,
+      capability: { input: { referenceImages: { maxCount: 3 } } },
+    });
+    expect(
+      videoGenerateInputSchema.safeParse({
+        ...request.data,
+        referenceImages: [image, image, image, image],
+      }).success
+    ).toBe(false);
   });
 
   it("幂等重放身份不受管理员后续降低参考图上限影响", () => {
@@ -441,6 +534,40 @@ describe("video generation operations", () => {
           billing: output.billing,
         }).success
       ).toBe(false);
+    }
+  });
+
+  it("状态输出接受参考视频、参考音频及混合输入摘要", () => {
+    const baseOutput = {
+      taskId: "video-1",
+      status: "in_progress" as const,
+      model: "seedance2",
+      duration: 15,
+      aspectRatio: "9:16",
+      resolution: "480p",
+      generateAudio: false,
+      billing: {
+        kind: "snapshot" as const,
+        mode: "per_item" as const,
+        unit: "item" as const,
+        unitPrice: 3,
+        durationSeconds: 15,
+        quotedCredits: 3,
+        actualCredits: 3,
+      },
+      createdAt: "2026-07-26T00:00:00.000Z",
+    };
+    for (const mode of [
+      "reference-videos",
+      "reference-audio",
+      "mixed",
+    ] as const) {
+      expect(
+        videoGetStatus.output.safeParse({
+          ...baseOutput,
+          input: { mode, count: 1 },
+        }).success
+      ).toBe(true);
     }
   });
 

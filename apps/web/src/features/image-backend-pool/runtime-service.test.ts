@@ -234,6 +234,48 @@ describe("canRuntimeBackendLeaseServeRequest", () => {
       })
     ).toBe(false);
   });
+
+  it.each([
+    {
+      name: "参考视频",
+      request: { requestKind: "video" as const, requiresReferenceVideo: true },
+      capabilities: { referenceVideos: true, referenceAudios: false },
+      expected: true,
+    },
+    {
+      name: "参考音频",
+      request: { requestKind: "video" as const, requiresReferenceAudio: true },
+      capabilities: { referenceVideos: false, referenceAudios: true },
+      expected: true,
+    },
+    {
+      name: "视频和音频同时输入",
+      request: {
+        requestKind: "video" as const,
+        requiresReferenceVideo: true,
+        requiresReferenceAudio: true,
+      },
+      capabilities: { referenceVideos: true, referenceAudios: false },
+      expected: false,
+    },
+  ])("按账号能力标签筛选 $name", ({ request, capabilities, expected }) => {
+    expect(
+      canRuntimeBackendLeaseServeRequest(request, {
+        memberType: "api",
+        adobeMode: null,
+        videoInputCapabilities: capabilities,
+      })
+    ).toBe(expected);
+  });
+
+  it("参考媒体请求不会路由到 Adobe 账号", () => {
+    expect(
+      canRuntimeBackendLeaseServeRequest(
+        { requestKind: "video", requiresReferenceVideo: true },
+        { memberType: "adobe", adobeMode: "direct" }
+      )
+    ).toBe(false);
+  });
 });
 
 describe("inspectRuntimeVideoBackendAvailability", () => {

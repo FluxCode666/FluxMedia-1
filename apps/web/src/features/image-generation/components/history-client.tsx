@@ -170,6 +170,9 @@ function formatRecordSpecification(
     "first-frame": copy("first frame", "首帧"),
     "first-last-frames": copy("first/last frames", "首尾帧"),
     references: copy("references", "参考图"),
+    "reference-videos": copy("reference videos", "参考视频"),
+    "reference-audio": copy("reference audio", "参考音频"),
+    mixed: copy("mixed inputs", "混合输入"),
   }[record.input.mode];
   const inputSummary =
     record.input.count > 0 ? `${inputMode} ${record.input.count}` : inputMode;

@@ -5,7 +5,7 @@
  * MIME、字节、bucket 和失败清理不会回退到客户端引用。
  */
 import type { MediaInputReference } from "@repo/shared/image-generation/media-contract";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const storage = vi.hoisted(() => ({
   putObject: vi.fn(),
@@ -17,6 +17,13 @@ const cleanupQueue = vi.hoisted(() => ({
 }));
 const mediaLoader = vi.hoisted(() => ({
   loadMediaInputs: vi.fn(),
+  getMediaInputReferenceMaxBytes: vi.fn(() => undefined),
+  getVideoReferenceMediaAddressPolicy: vi.fn(() => undefined),
+}));
+const mediaMetadata = vi.hoisted(() => ({
+  validateReferenceAudioMetadata: vi.fn(),
+  validateReferenceVideoMetadata: vi.fn(),
+  assertReferenceVideoTotalDuration: vi.fn(),
 }));
 
 vi.mock("@repo/shared/storage/providers", () => ({
@@ -29,7 +36,16 @@ vi.mock("./video-input-cleanup-queue", () => ({
 }));
 
 vi.mock("./media-input-loader", () => ({
+  getMediaInputReferenceMaxBytes: mediaLoader.getMediaInputReferenceMaxBytes,
+  getVideoReferenceMediaAddressPolicy:
+    mediaLoader.getVideoReferenceMediaAddressPolicy,
   loadMediaInputs: mediaLoader.loadMediaInputs,
+}));
+vi.mock("./reference-media-metadata", () => ({
+  validateReferenceAudioMetadata: mediaMetadata.validateReferenceAudioMetadata,
+  validateReferenceVideoMetadata: mediaMetadata.validateReferenceVideoMetadata,
+  assertReferenceVideoTotalDuration:
+    mediaMetadata.assertReferenceVideoTotalDuration,
 }));
 
 import { createLifecycleCleanupObjects } from "./video-input-lifecycle";
@@ -44,6 +60,17 @@ const PNG_BYTES = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.from("video-input"),
 ]);
+const MP4_BYTES = Buffer.concat([
+  Buffer.alloc(4, 0),
+  Buffer.from("ftypisom"),
+  Buffer.alloc(16, 0),
+]);
+const QUICKTIME_BYTES = Buffer.concat([
+  Buffer.alloc(4, 0),
+  Buffer.from("ftypqt  "),
+  Buffer.alloc(16, 0),
+]);
+const MP3_BYTES = Buffer.from("ID3reference-audio");
 
 /** 构造声明与实际测试字节一致的 data 引用。 */
 function createDataReference(): MediaInputReference {
@@ -72,6 +99,18 @@ function setupSuccessfulStorage(): void {
 }
 
 describe("video input storage", () => {
+  beforeEach(() => {
+    mediaMetadata.validateReferenceVideoMetadata.mockResolvedValue({
+      durationSeconds: 5,
+      width: 1280,
+      height: 720,
+      framesPerSecond: 30,
+    });
+    mediaMetadata.validateReferenceAudioMetadata.mockResolvedValue({
+      durationSeconds: 5,
+    });
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -226,6 +265,87 @@ describe("video input storage", () => {
       })
     ).rejects.toThrow("字节数与声明不一致");
     expect(storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it("参考视频和音频会在转存前执行真实元数据校验", async () => {
+    setupSuccessfulStorage();
+    mediaLoader.loadMediaInputs.mockImplementation(
+      async (input: { references: MediaInputReference[] }) =>
+        input.references.map((reference) =>
+          reference.mimeType === "video/mp4"
+            ? { data: MP4_BYTES, type: "video/mp4" }
+            : { data: MP3_BYTES, type: "audio/mpeg" }
+        )
+    );
+    const videoReference: MediaInputReference = {
+      source: "storage",
+      mimeType: "video/mp4",
+      storageKey: "user-1/reference.mp4",
+      storageBucket: "uploads",
+      byteLength: MP4_BYTES.byteLength,
+    };
+    const audioReference: MediaInputReference = {
+      source: "storage",
+      mimeType: "audio/mpeg",
+      storageKey: "user-1/reference.mp3",
+      storageBucket: "uploads",
+      byteLength: MP3_BYTES.byteLength,
+    };
+
+    const result = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: {
+        referenceVideos: [videoReference],
+        referenceAudios: [audioReference],
+      },
+    });
+
+    expect(mediaMetadata.validateReferenceVideoMetadata).toHaveBeenCalledWith(
+      MP4_BYTES
+    );
+    expect(mediaMetadata.validateReferenceAudioMetadata).toHaveBeenCalledWith(
+      MP3_BYTES
+    );
+    expect(
+      mediaMetadata.assertReferenceVideoTotalDuration
+    ).toHaveBeenCalledWith([expect.objectContaining({ durationSeconds: 5 })]);
+    expect(result.manifest.referenceVideos).toHaveLength(1);
+    expect(result.manifest.referenceAudios).toHaveLength(1);
+  });
+
+  it("允许 mp4 声明对应 QuickTime 容器的参考视频", async () => {
+    setupSuccessfulStorage();
+    mediaLoader.loadMediaInputs.mockResolvedValueOnce([
+      { data: QUICKTIME_BYTES, type: "video/mp4" },
+    ]);
+
+    const result = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: {
+        referenceVideos: [
+          {
+            source: "storage",
+            mimeType: "video/mp4",
+            storageKey: "user-1/reference.mp4",
+            storageBucket: "uploads",
+            byteLength: QUICKTIME_BYTES.byteLength,
+          },
+        ],
+      },
+    });
+
+    expect(result.manifest.referenceVideos).toHaveLength(1);
+    expect(storage.putObject).toHaveBeenCalledWith(
+      expect.any(String),
+      "uploads",
+      QUICKTIME_BYTES,
+      "video/mp4",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
   });
 
   it("读取和全部上传共享同一个绝对 deadline", async () => {

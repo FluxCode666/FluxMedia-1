@@ -56,23 +56,29 @@ function dependencies(): {
   acquireAdmission: ReturnType<typeof vi.fn>;
   releaseAdmission: ReturnType<typeof vi.fn>;
 } {
-  const stage = vi.fn(async (input: { references: MediaInputReference[] }) => {
-    const references = input.references.map((reference, index) => ({
-      source: "storage" as const,
-      mimeType: reference.mimeType,
-      storageKey: `user-1/image-inputs/input-${index}.png`,
-      storageBucket: "generations",
-      byteLength: reference.byteLength,
-    }));
-    return {
-      references,
-      objects: references.map((reference) => ({
-        userId: "user-1",
-        storageKey: reference.storageKey,
-        storageBucket: reference.storageBucket,
-      })),
-    };
-  });
+  const stage = vi.fn(
+    async (input: {
+      userId: string;
+      generationId: string;
+      references: MediaInputReference[];
+    }) => {
+      const references = input.references.map((reference, index) => ({
+        source: "storage" as const,
+        mimeType: reference.mimeType,
+        storageKey: `user-1/image-inputs/input-${index}.png`,
+        storageBucket: "generations",
+        byteLength: reference.byteLength ?? 0,
+      }));
+      return {
+        references,
+        objects: references.map((reference) => ({
+          userId: "user-1",
+          storageKey: reference.storageKey,
+          storageBucket: reference.storageBucket,
+        })),
+      };
+    }
+  );
   const run = vi.fn(async () => ({
     generationId: "generation-1",
     imageUrl: "https://cdn.example.com/image.png",

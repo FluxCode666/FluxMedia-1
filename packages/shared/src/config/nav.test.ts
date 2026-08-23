@@ -117,4 +117,17 @@ describe("控制台导航契约", () => {
     expect(apiDocsIndex).toBeGreaterThanOrEqual(0);
     expect(modelsIndex).toBe(apiDocsIndex + 1);
   });
+
+  it("API 密钥入口紧邻并位于 API 文档上方", () => {
+    const dashboardItems = dashboardNav.flatMap((group) => group.items);
+    const apiKeysIndex = dashboardItems.findIndex(
+      (item) => item.href === "/dashboard/external-api"
+    );
+    const apiDocsIndex = dashboardItems.findIndex(
+      (item) => item.href === "/dashboard/api-docs"
+    );
+
+    expect(apiKeysIndex).toBeGreaterThanOrEqual(0);
+    expect(apiDocsIndex).toBe(apiKeysIndex + 1);
+  });
 });

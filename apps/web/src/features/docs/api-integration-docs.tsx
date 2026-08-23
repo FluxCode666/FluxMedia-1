@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * 公开页与控制台镜像共用的 API 接入文档展示层。
  *
@@ -9,13 +11,16 @@ import { Card, CardContent } from "@repo/ui/components/card";
 import { CodeBlock } from "@repo/ui/components/code-block";
 import { cn } from "@repo/ui/utils";
 import { KeyRound, Link2, TriangleAlert } from "lucide-react";
+import { useState } from "react";
 
 import { ApiDocsElevator } from "./api-docs-elevator";
 import {
   type ApiIntegrationDocsContent,
   type ApiIntegrationEndpoint,
+  type ApiIntegrationEndpointContent,
   type ApiIntegrationEndpointGroup,
   type ApiIntegrationParameter,
+  type ApiIntegrationProtocol,
   type ApiIntegrationResponseField,
   getApiIntegrationDocs,
 } from "./api-integration-docs-data";
@@ -124,19 +129,50 @@ function EndpointSection({
   endpoint: ApiIntegrationEndpoint;
   index: number;
 }) {
+  const [protocol, setProtocol] = useState<ApiIntegrationProtocol>("fluxmedia");
+  const selectedContent: ApiIntegrationEndpointContent =
+    endpoint.protocols?.[protocol] ?? endpoint;
+
   return (
     <section className="scroll-mt-32" id={endpoint.id}>
       <Card className="overflow-hidden rounded-lg">
+        {endpoint.operation === "video" && endpoint.protocols?.gemini ? (
+          <div className="border-b border-border px-5 py-3 md:px-6">
+            <div
+              aria-label={content.protocolTabs.ariaLabel}
+              className="inline-flex rounded-md border border-border bg-muted/30 p-1"
+              role="tablist"
+            >
+              {(["fluxmedia", "gemini"] as const).map((value) => (
+                <button
+                  aria-selected={protocol === value}
+                  className={cn(
+                    "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                    protocol === value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  key={value}
+                  onClick={() => setProtocol(value)}
+                  role="tab"
+                  type="button"
+                >
+                  {content.protocolTabs[value]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="border-b border-border bg-muted/20 p-5 md:p-6">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-xs text-muted-foreground/70">
               {String(index + 1).padStart(2, "0")}
             </span>
             <Badge className="rounded-sm font-mono" variant="outline">
-              {endpoint.method}
+              {selectedContent.method}
             </Badge>
             <code className="font-mono text-sm font-medium">
-              {endpoint.path}
+              {selectedContent.path}
             </code>
             <Badge
               className="rounded-sm font-mono text-[10px]"
@@ -146,22 +182,22 @@ function EndpointSection({
             </Badge>
           </div>
           <h3 className="mt-4 font-serif text-xl font-medium tracking-tight">
-            {endpoint.title}
+            {selectedContent.title}
           </h3>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-            {endpoint.description}
+            {selectedContent.description}
           </p>
-          {endpoint.deprecationNotice ? (
+          {selectedContent.deprecationNotice ? (
             <div className="mt-2 flex max-w-3xl items-start gap-2 text-sm leading-relaxed text-destructive">
               <TriangleAlert
                 aria-hidden="true"
                 className="mt-0.5 size-4 shrink-0"
               />
-              <p>{endpoint.deprecationNotice}</p>
+              <p>{selectedContent.deprecationNotice}</p>
             </div>
           ) : null}
           <p className="mt-3 font-mono text-xs text-muted-foreground">
-            {endpoint.contentType}
+            {selectedContent.contentType}
           </p>
         </div>
         <CardContent className="space-y-6 p-5 md:p-6">
@@ -172,7 +208,7 @@ function EndpointSection({
               </h4>
               <CodeBlock
                 className="mt-2"
-                code={endpoint.requestExample}
+                code={selectedContent.requestExample}
                 labels={content.copyLabels}
                 language="bash"
               />
@@ -183,18 +219,24 @@ function EndpointSection({
               </h4>
               <CodeBlock
                 className="mt-2"
-                code={endpoint.responseExample}
+                code={selectedContent.responseExample}
                 labels={content.copyLabels}
                 language="json"
               />
             </div>
           </div>
-          <ParameterTable content={content} parameters={endpoint.parameters} />
-          <ResponseTable content={content} responses={endpoint.responses} />
+          <ParameterTable
+            content={content}
+            parameters={selectedContent.parameters}
+          />
+          <ResponseTable
+            content={content}
+            responses={selectedContent.responses}
+          />
           <div>
             <h4 className="text-sm font-medium">{content.notesTitle}</h4>
             <ul className="mt-2 space-y-2 text-sm leading-relaxed text-muted-foreground">
-              {endpoint.notes.map((note) => (
+              {selectedContent.notes.map((note) => (
                 <li className="flex gap-2" key={note}>
                   <span className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
                   <span>{note}</span>

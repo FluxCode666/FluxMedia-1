@@ -7,9 +7,14 @@
 import { z } from "zod";
 import { isLegacyVideoModelId } from "../../image-backend/supported-models";
 import {
+  AUDIO_REFERENCE_MIME_TYPES,
   MAX_MEDIA_INPUT_COUNT,
+  MAX_REFERENCE_AUDIO_BYTES,
+  MAX_REFERENCE_VIDEO_BYTES,
   mediaInputReferenceSchema,
   mediaInputReferencesSchema,
+  videoReferenceInputReferenceSchema,
+  VIDEO_REFERENCE_MIME_TYPES,
 } from "../../image-generation/media-contract";
 import {
   resolveEffectiveVideoModelCapability,
@@ -20,6 +25,11 @@ import {
   videoListCapabilitiesOutputSchema,
   videoTaskBillingSchema,
 } from "../../video-generation";
+import {
+  geminiModelPathSchema,
+  geminiOperationOutputSchema,
+  geminiPublicOperationNameSchema,
+} from "../../video-generation/gemini-contract";
 import { defineOperation } from "../registry";
 
 export {
@@ -44,9 +54,20 @@ export const videoRequestedResolutionSchema = z
   .max(32)
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 
+/** Gemini Veo 官方参考图上限；仅用于 Gemini 公共协议的能力覆盖。 */
+const GEMINI_REFERENCE_IMAGE_LIMIT = 3;
+
 export const videoGenerateInputSchema = z
   .object({
     clientRequestId: z.string().trim().min(1).max(128),
+    /** Gemini public Operation 的平台生成 opaque ID；普通 FluxMedia 调用省略。 */
+    geminiOperationId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_-]{16,128}$/)
+      .optional(),
+    /** Gemini 公共路径中的模型名；仅由 Gemini handler 设置，用于 Operation 归属校验。 */
+    geminiModel: geminiModelPathSchema.optional(),
     prompt: z.string().trim().min(1).max(100_000),
     negativePrompt: z.string().max(100_000).optional(),
     generateAudio: z.boolean().optional(),
@@ -60,6 +81,15 @@ export const videoGenerateInputSchema = z
     firstFrame: mediaInputReferenceSchema.optional(),
     lastFrame: mediaInputReferenceSchema.optional(),
     referenceImages: mediaInputReferencesSchema.optional(),
+    referenceVideos: z
+      .array(videoReferenceInputReferenceSchema)
+      .min(1)
+      .max(3)
+      .optional(),
+    referenceAudios: z
+      .array(videoReferenceInputReferenceSchema)
+      .length(1)
+      .optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -76,10 +106,21 @@ export const videoGenerateInputSchema = z
       return;
     }
     const capability = parameters.capability;
-    if (input.generateAudio === true && !capability.audio.supported) {
+    if (
+      input.generateAudio === true &&
+      !capability.audio.supported &&
+      !input.geminiModel
+    ) {
       context.addIssue({
         code: "custom",
         message: "This video model does not support audio generation",
+        path: ["generateAudio"],
+      });
+    }
+    if (input.geminiModel && input.generateAudio === false) {
+      context.addIssue({
+        code: "custom",
+        message: "Gemini Veo always generates audio and cannot disable it",
         path: ["generateAudio"],
       });
     }
@@ -108,7 +149,15 @@ export const videoGenerateInputSchema = z
       });
     }
     const referenceCount = input.referenceImages?.length ?? 0;
-    if (referenceCount > 0 && capability.input.referenceImages.maxCount === 0) {
+    const geminiReferenceMode =
+      Boolean(input.geminiModel) &&
+      referenceCount > 0 &&
+      referenceCount <= GEMINI_REFERENCE_IMAGE_LIMIT;
+    if (
+      referenceCount > 0 &&
+      capability.input.referenceImages.maxCount === 0 &&
+      !geminiReferenceMode
+    ) {
       context.addIssue({
         code: "custom",
         message: "This video model does not support reference images",
@@ -117,7 +166,8 @@ export const videoGenerateInputSchema = z
     }
     if (
       referenceCount > capability.input.referenceImages.maxCount &&
-      !capability.input.referenceImages.configurable
+      !capability.input.referenceImages.configurable &&
+      !geminiReferenceMode
     ) {
       context.addIssue({
         code: "custom",
@@ -125,12 +175,69 @@ export const videoGenerateInputSchema = z
         path: ["referenceImages"],
       });
     }
-    if ((input.firstFrame || input.lastFrame) && referenceCount > 0) {
+    if (
+      (input.firstFrame || input.lastFrame) &&
+      (referenceCount > 0 ||
+        input.referenceVideos?.length ||
+        input.referenceAudios?.length)
+    ) {
       context.addIssue({
         code: "custom",
-        message: "Frame inputs and reference images are mutually exclusive",
-        path: ["referenceImages"],
+        message: "Frame inputs and reference media are mutually exclusive",
+        path: [
+          referenceCount > 0
+            ? "referenceImages"
+            : input.referenceVideos?.length
+              ? "referenceVideos"
+              : "referenceAudios",
+        ],
       });
+    }
+    for (const [index, reference] of (input.referenceVideos ?? []).entries()) {
+      if (
+        !(VIDEO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "参考视频必须是 MP4 或 MOV",
+          path: ["referenceVideos", index, "mimeType"],
+        });
+      }
+      if (
+        reference.byteLength !== undefined &&
+        reference.byteLength > MAX_REFERENCE_VIDEO_BYTES
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "单个参考视频不能超过 200 MB",
+          path: ["referenceVideos", index, "byteLength"],
+        });
+      }
+    }
+    for (const [index, reference] of (input.referenceAudios ?? []).entries()) {
+      if (
+        !(AUDIO_REFERENCE_MIME_TYPES as readonly string[]).includes(
+          reference.mimeType
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "参考音频必须是 MP3 或 WAV",
+          path: ["referenceAudios", index, "mimeType"],
+        });
+      }
+      if (
+        reference.byteLength !== undefined &&
+        reference.byteLength > MAX_REFERENCE_AUDIO_BYTES
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "参考音频不能超过 15 MB",
+          path: ["referenceAudios", index, "byteLength"],
+        });
+      }
     }
   });
 
@@ -208,13 +315,21 @@ export type CanonicalVideoGenerateInputResult =
 export function normalizeVideoGenerateInputForReplay(
   input: VideoGenerateInput
 ): CanonicalVideoGenerateInput {
-  const { quoteToken: _quoteToken, ...request } = input;
+  const {
+    quoteToken: _quoteToken,
+    geminiOperationId: _geminiOperationId,
+    ...request
+  } = input;
   const resolved = resolveVideoModelCapability(input.model);
   return {
     ...request,
     generateAudio:
       input.generateAudio ??
-      (resolved.ok ? resolved.capability.audio.defaultEnabled : false),
+      (input.geminiModel
+        ? true
+        : resolved.ok
+          ? resolved.capability.audio.defaultEnabled
+          : false),
   };
 }
 
@@ -237,24 +352,42 @@ export function resolveCanonicalVideoGenerateInput(
     capabilityOverrides
   );
   const referenceCount = input.referenceImages?.length ?? 0;
-  if (referenceCount > capability.input.referenceImages.maxCount) {
+  const geminiReferenceMode =
+    Boolean(input.geminiModel) &&
+    referenceCount > 0 &&
+    capability.input.referenceImages.maxCount === 0;
+  const effectiveCapability = geminiReferenceMode
+    ? {
+        ...capability,
+        input: {
+          ...capability.input,
+          referenceImages: {
+            maxCount: GEMINI_REFERENCE_IMAGE_LIMIT,
+            configurable: false,
+          },
+        },
+      }
+    : capability;
+  if (referenceCount > effectiveCapability.input.referenceImages.maxCount) {
     return {
       ok: false,
       error: {
         code: "too_many_reference_images",
         field: "referenceImages",
-        message: `This video model supports at most ${capability.input.referenceImages.maxCount} reference images`,
-        maximum: capability.input.referenceImages.maxCount,
+        message: `This video model supports at most ${effectiveCapability.input.referenceImages.maxCount} reference images`,
+        maximum: effectiveCapability.input.referenceImages.maxCount,
         received: referenceCount,
       },
     };
   }
   return {
     ok: true,
-    capability,
+    capability: effectiveCapability,
     input: {
       ...request,
-      generateAudio: input.generateAudio ?? capability.audio.defaultEnabled,
+      generateAudio:
+        input.generateAudio ??
+        (input.geminiModel ? true : capability.audio.defaultEnabled),
     },
   };
 }
@@ -263,13 +396,14 @@ export function resolveCanonicalVideoGenerateInput(
  * 应用管理员注册的自定义视频分辨率能力。
  *
  * 自定义模型只允许 API 上游执行，因此平台不猜测供应商专属帧、参考图或声音能力；这些
- * 能力默认关闭。时长与比例继续使用公开基础类型并交给账号适配脚本映射。
+ * 能力默认关闭。参考视频与参考音频是协议层明确支持的通用输入，按原字段传给 custom
+ * 脚本；时长与比例继续使用公开基础类型并交给账号适配脚本映射。
  *
  * @param input - 已通过通用视频请求 schema 的输入。
  * @param supportedResolutions - 当前版本化模型定义声明的分辨率。
  * @returns 分辨率与输入模式合法时返回规范输入和可持久化能力。
  * @sideEffects 无。
- * @failure 不抛错；非法分辨率或媒体输入返回稳定 validation 结构。
+ * @failure 不抛错；非法分辨率或不支持的媒体输入返回稳定 validation 结构。
  */
 export function resolveCustomVideoGenerateInput(
   input: VideoGenerateInput,
@@ -307,7 +441,8 @@ export function resolveCustomVideoGenerateInput(
       error: {
         code: "unsupported_custom_input",
         field,
-        message: "Custom video models only support text input",
+        message:
+          "Custom video models do not support frame, reference image, or generated-audio inputs",
       },
     };
   }
@@ -338,6 +473,23 @@ export const videoGetStatusInputSchema = z
   })
   .strict();
 
+/** Gemini Operation 查询输入；完整 name 必须由公共 handler 先解析并保留。 */
+export const videoGetGeminiOperationInputSchema = z
+  .object({
+    model: geminiModelPathSchema,
+    operationName: geminiPublicOperationNameSchema,
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (!input.operationName.startsWith(`models/${input.model}/operations/`)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationName"],
+        message: "Operation model does not match the path model",
+      });
+    }
+  });
+
 /** 能力查询允许站内用户显式选择可信分组；API Key 绑定由 execute 强制收口。 */
 export const videoListCapabilitiesInputSchema = z
   .object({
@@ -348,7 +500,15 @@ export const videoListCapabilitiesInputSchema = z
 /** 视频任务输入摘要；回调与列表只消费模式和数量，不含 URL 或存储身份。 */
 export const videoInputSummarySchema = z
   .object({
-    mode: z.enum(["none", "first-frame", "first-last-frames", "references"]),
+    mode: z.enum([
+      "none",
+      "first-frame",
+      "first-last-frames",
+      "references",
+      "reference-videos",
+      "reference-audio",
+      "mixed",
+    ]),
     count: z.number().int().min(0).max(MAX_MEDIA_INPUT_COUNT),
   })
   .strict();
@@ -375,6 +535,8 @@ export const videoGetInputsOutputSchema = z
     firstFrame: videoInputAssetSchema.optional(),
     lastFrame: videoInputAssetSchema.optional(),
     referenceImages: z.array(videoInputAssetSchema).optional(),
+    referenceVideos: z.array(videoInputAssetSchema).optional(),
+    referenceAudios: z.array(videoInputAssetSchema).optional(),
   })
   .strict();
 
@@ -426,6 +588,10 @@ export const videoGenerate = defineOperation({
       status: videoPublicStatusSchema,
       billing: videoTaskBillingSchema,
       error: z.string().max(1_000).optional(),
+      geminiOperationId: z
+        .string()
+        .regex(/^[A-Za-z0-9_-]{16,128}$/)
+        .optional(),
     })
     .strict(),
   access: { kind: "protected" },
@@ -492,6 +658,25 @@ export const videoGetStatus = defineOperation({
   sideEffects: [],
   execute: async () => {
     throw new Error("Not yet wired: video.getStatus");
+  },
+});
+
+/** 将同一平台视频任务投影为 Gemini Operation，不创建第二套状态机。 */
+export const videoGetGeminiOperation = defineOperation({
+  name: "video.getGeminiOperation",
+  domain: "image-generation",
+  title: "查询 Gemini 视频 Operation",
+  description:
+    "按平台生成的不透明 Operation name 查询同一视频任务，并投影为 Gemini LRO 响应。",
+  input: videoGetGeminiOperationInputSchema,
+  output: geminiOperationOutputSchema,
+  access: { kind: "owner", resource: "Gemini video Operation" },
+  readOnly: true,
+  destructive: false,
+  idempotency: { kind: "natural" },
+  sideEffects: [],
+  execute: async () => {
+    throw new Error("Not yet wired: video.getGeminiOperation");
   },
 });
 

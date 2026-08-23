@@ -174,39 +174,41 @@ export function ImageBackendPoolAdminPanel({
     createdFrom: memberListInput.createdFrom,
     createdTo: memberListInput.createdTo,
   };
-  const { execute: loadPool, isPending: isLoading } = useAction(
-    getAdminImageBackendPoolAction,
-    {
-      onSuccess: ({ data }) => {
-        setGroups(data?.groups ?? []);
-        setMembers(data?.members ?? []);
-      },
-      onError: ({ error }) =>
-        toast.error(error.serverError || "加载供应商管理失败"),
-    }
-  );
-  const { execute: loadMemberPage, isPending: isLoadingMemberPage } = useAction(
-    listAdminImageBackendMembersAction,
-    {
-      onSuccess: ({ data }) => {
-        if (!data) return;
-        setMemberPage(data);
-        if (data.page !== memberListInput.page) {
-          router.replace(
-            buildPaginationHref(
-              pathname,
-              new URLSearchParams(searchParams.toString()),
-              ADMIN_POOL_MEMBER_PAGINATION_NAMES,
-              { page: data.page },
-              "page"
-            )
-          );
-        }
-      },
-      onError: ({ error }) =>
-        toast.error(error.serverError || "加载供应商账号失败"),
-    }
-  );
+  const {
+    execute: loadPool,
+    executeAsync: loadPoolAsync,
+    isPending: isLoading,
+  } = useAction(getAdminImageBackendPoolAction, {
+    onSuccess: ({ data }) => {
+      setGroups(data?.groups ?? []);
+      setMembers(data?.members ?? []);
+    },
+    onError: ({ error }) =>
+      toast.error(error.serverError || "加载供应商管理失败"),
+  });
+  const {
+    execute: loadMemberPage,
+    executeAsync: loadMemberPageAsync,
+    isPending: isLoadingMemberPage,
+  } = useAction(listAdminImageBackendMembersAction, {
+    onSuccess: ({ data }) => {
+      if (!data) return;
+      setMemberPage(data);
+      if (data.page !== memberListInput.page) {
+        router.replace(
+          buildPaginationHref(
+            pathname,
+            new URLSearchParams(searchParams.toString()),
+            ADMIN_POOL_MEMBER_PAGINATION_NAMES,
+            { page: data.page },
+            "page"
+          )
+        );
+      }
+    },
+    onError: ({ error }) =>
+      toast.error(error.serverError || "加载供应商账号失败"),
+  });
   const { execute: loadModelOptions, isPending: isLoadingModelOptions } =
     useAction(getModelConfigurationAction, {
       onSuccess: ({ data }) => {
@@ -288,9 +290,12 @@ export function ImageBackendPoolAdminPanel({
   );
 
   /** 写操作成功后刷新成员分页和成员表单依赖的辅助快照。 */
-  function reloadPoolSnapshots(): void {
-    loadPool();
-    loadMemberPage(memberListInput);
+  async function reloadPoolSnapshots(): Promise<void> {
+    // 两个快照都必须重新读取：成员卡片来自分页快照，统计和编辑表单依赖来自完整快照。
+    await Promise.allSettled([
+      loadPoolAsync(),
+      loadMemberPageAsync(memberListInput),
+    ]);
   }
 
   useEffect(() => {

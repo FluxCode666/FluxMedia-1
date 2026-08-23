@@ -33,8 +33,6 @@ const HISTORY_FILTER_DOMAIN = "fluxmedia:generation-history:filters:v1";
 const MAX_CURSOR_LENGTH = 4096;
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const HISTORY_KIND_RANK = { image: 1, video: 0 } as const;
-const CONTENT_SAFETY_HISTORY_ERROR =
-  "Prompt did not pass content safety review; modify the prompt and retry";
 
 const historyCursorPayloadSchema = z
   .object({
@@ -361,36 +359,13 @@ function adaptHistoryRow(row: HistoryListRow): HistoryRecord {
   const common = {
     ...safeRow,
     model: normalizeHistoricalModelId(row.model) ?? row.model,
-    error: sanitizeHistoryError(rawError),
+    error: rawError,
     createdAt: toIsoDateTime(row.createdAt),
     completedAt:
       row.completedAt === null ? null : toIsoDateTime(row.completedAt),
     processingDurationSeconds: calculateHistoryProcessingDurationSeconds(row),
   };
   return historyRecordSchema.parse(common);
-}
-
-/** 将持久化原始失败收窄为简短稳定文案，禁止上游响应、SQL 或内部路径穿过 UOL。 */
-export function sanitizeHistoryError(rawError: string | null): string | null {
-  if (!rawError?.trim()) return null;
-  const normalized = rawError.toLowerCase();
-  if (
-    /moderation|safety|image_unsafe|generated images appear to be unsafe|content policy|审核|内容安全/.test(
-      normalized
-    )
-  ) {
-    return CONTENT_SAFETY_HISTORY_ERROR;
-  }
-  if (/insufficient credits|积分不足/.test(normalized)) {
-    return "Insufficient credits";
-  }
-  if (/timeout|timed out|deadline|超时/.test(normalized)) {
-    return "Generation timed out";
-  }
-  if (/unavailable|overload|rate.?limit|无可用.*后端|限流/.test(normalized)) {
-    return "Generation service is temporarily unavailable";
-  }
-  return "Generation failed";
 }
 
 /**

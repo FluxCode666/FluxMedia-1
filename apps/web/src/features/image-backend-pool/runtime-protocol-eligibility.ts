@@ -9,12 +9,18 @@
 export interface RuntimeProtocolRequest {
   requestKind: "image" | "video";
   requiresMask?: boolean;
+  requiresReferenceVideo?: boolean;
+  requiresReferenceAudio?: boolean;
 }
 
 /** 协议资格判定所需的最小账号事实。 */
 export interface RuntimeProtocolMember {
   memberType: "api" | "adobe";
   adobeMode: "gateway" | "direct" | null;
+  videoInputCapabilities?: {
+    referenceVideos: boolean;
+    referenceAudios: boolean;
+  };
 }
 
 /**
@@ -32,6 +38,16 @@ export function canRuntimeBackendLeaseServeRequest(
 ): boolean {
   if (request.requiresMask && member.memberType !== "api") return false;
   if (request.requestKind !== "video") return true;
+  if (request.requiresReferenceVideo) {
+    if (member.memberType !== "api" || !member.videoInputCapabilities?.referenceVideos) {
+      return false;
+    }
+  }
+  if (request.requiresReferenceAudio) {
+    if (member.memberType !== "api" || !member.videoInputCapabilities?.referenceAudios) {
+      return false;
+    }
+  }
   return (
     member.memberType === "api" ||
     (member.memberType === "adobe" && member.adobeMode === "direct")

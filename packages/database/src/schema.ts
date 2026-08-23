@@ -2206,7 +2206,15 @@ export const imageBackendMemberSchedulerMetric = pgTable(
 /** 视频任务自有、storage-only 的单个输入对象。 */
 type PersistedVideoInputAsset = {
   source: "storage";
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  mimeType:
+    | "image/png"
+    | "image/jpeg"
+    | "image/webp"
+    | "video/mp4"
+    | "video/quicktime"
+    | "audio/mpeg"
+    | "audio/wav"
+    | "audio/x-wav";
   storageKey: string;
   storageBucket: string;
   byteLength: number;
@@ -2217,6 +2225,8 @@ type PersistedVideoInputManifest = {
   firstFrame?: PersistedVideoInputAsset;
   lastFrame?: PersistedVideoInputAsset;
   referenceImages?: PersistedVideoInputAsset[];
+  referenceVideos?: PersistedVideoInputAsset[];
+  referenceAudios?: PersistedVideoInputAsset[];
 };
 
 // Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
@@ -2264,6 +2274,9 @@ export const videoGeneration = pgTable(
     durationSeconds: integer("duration_seconds").notNull(),
     aspectRatio: text("aspect_ratio").notNull(),
     resolution: text("resolution").notNull(),
+    // 创建时固定的真实输出像素，恢复任务不能按当前配置重新推导。
+    outputWidth: integer("output_width").notNull(),
+    outputHeight: integer("output_height").notNull(),
     // pending / running / completed / failed。
     status: text("status").notNull().default("pending"),
     // 可恢复执行阶段；status 保留为面向查询方的稳定粗粒度状态。
@@ -2301,6 +2314,10 @@ export const videoGeneration = pgTable(
     // 异步轮询恢复用。
     pollUrl: text("poll_url"),
     upstreamJobId: text("upstream_job_id"),
+    /** Gemini LRO 的完整上游 operation.name；只供固定成员恢复使用。 */
+    upstreamOperationName: text("upstream_operation_name"),
+    /** 平台生成的 Gemini opaque Operation ID；对外 name 的唯一映射。 */
+    publicOperationId: text("public_operation_id"),
     nextPollAt: timestamp("next_poll_at"),
     claimToken: text("claim_token"),
     claimExpiresAt: timestamp("claim_expires_at"),
@@ -2316,6 +2333,9 @@ export const videoGeneration = pgTable(
     index("video_generation_user_idx").on(table.userId, table.createdAt),
     index("video_generation_status_idx").on(table.status, table.createdAt),
     index("video_generation_backend_member_idx").on(table.backendMemberId),
+    uniqueIndex("video_generation_public_operation_id_unique").on(
+      table.publicOperationId
+    ),
     index("video_generation_member_lease_idx").on(table.memberLeaseId),
     index("video_generation_principal_stage_idx").on(
       table.principalScope,

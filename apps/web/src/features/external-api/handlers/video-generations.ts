@@ -34,12 +34,29 @@ import {
   toVideoMediaInputReference,
   videoInputImageDataUrlSchema,
 } from "@/features/image-generation/video-transport-input";
+import {
+  referenceAudioUrlSchema,
+  referenceVideoUrlSchema,
+  toReferenceAudioRemoteInput,
+  toReferenceVideoRemoteInput,
+} from "@/features/image-generation/video-reference-input";
 import { ensureUolInitialized } from "@/server/uol-init";
 
 const optionalReferenceImagesSchema = z
   .array(videoInputImageDataUrlSchema)
   .min(1)
   .max(MAX_MEDIA_INPUT_COUNT)
+  .optional();
+
+const optionalReferenceVideosSchema = z
+  .array(referenceVideoUrlSchema)
+  .min(1)
+  .max(3)
+  .optional();
+
+const optionalReferenceAudiosSchema = z
+  .array(referenceAudioUrlSchema)
+  .length(1)
   .optional();
 
 /** OpenAI 风格时长兼容值：正整数数字，或十进制正整数字符串。 */
@@ -108,6 +125,10 @@ const externalVideoSchema = z
     last_frame: videoInputImageDataUrlSchema.optional(),
     referenceImages: optionalReferenceImagesSchema,
     reference_images: optionalReferenceImagesSchema,
+    referenceVideos: optionalReferenceVideosSchema,
+    reference_videos: optionalReferenceVideosSchema,
+    referenceAudios: optionalReferenceAudiosSchema,
+    reference_audios: optionalReferenceAudiosSchema,
     async: z.boolean().optional(),
     callback_url: z.string().url().max(2_048).optional(),
     callbackUrl: z.string().url().max(2_048).optional(),
@@ -218,6 +239,20 @@ const externalVideoSchema = z
     );
     addVideoAliasConflict(
       context,
+      "referenceVideos",
+      "reference_videos",
+      value.referenceVideos,
+      value.reference_videos
+    );
+    addVideoAliasConflict(
+      context,
+      "referenceAudios",
+      "reference_audios",
+      value.referenceAudios,
+      value.reference_audios
+    );
+    addVideoAliasConflict(
+      context,
       "callbackUrl",
       "callback_url",
       value.callbackUrl,
@@ -304,6 +339,12 @@ export const postExternalVideoGenerations = withApiLogging(
       ? toVideoMediaInputReference(rawLastFrame)
       : undefined;
     const referenceImages = rawReferenceImages?.map(toVideoMediaInputReference);
+    const rawReferenceVideos =
+      parsed.data.referenceVideos ?? parsed.data.reference_videos;
+    const rawReferenceAudios =
+      parsed.data.referenceAudios ?? parsed.data.reference_audios;
+    const referenceVideos = rawReferenceVideos?.map(toReferenceVideoRemoteInput);
+    const referenceAudios = rawReferenceAudios?.map(toReferenceAudioRemoteInput);
     let callbackUrl: string | undefined;
     if (parsed.data.callback_url || parsed.data.callbackUrl) {
       try {
@@ -338,6 +379,8 @@ export const postExternalVideoGenerations = withApiLogging(
           ...(firstFrame ? { firstFrame } : {}),
           ...(lastFrame ? { lastFrame } : {}),
           ...(referenceImages?.length ? { referenceImages } : {}),
+          ...(referenceVideos?.length ? { referenceVideos } : {}),
+          ...(referenceAudios?.length ? { referenceAudios } : {}),
         },
         {
           type: "apiKey",

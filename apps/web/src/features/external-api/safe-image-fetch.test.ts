@@ -59,6 +59,14 @@ describe("assertPublicImageUrl", () => {
       assertPublicImageUrl(new URL("https://1.1.1.1/x.png"))
     ).resolves.toBeUndefined();
   });
+
+  it("allows a blocked address only with an explicit caller policy", async () => {
+    await expect(
+      assertPublicImageUrl(new URL("https://198.18.0.102/x.png"), {
+        allowBlockedAddress: () => true,
+      })
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe("fetchPublicImage", () => {

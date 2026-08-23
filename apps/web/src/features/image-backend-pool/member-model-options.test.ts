@@ -104,6 +104,11 @@ function createMemberInput(
         baseUrl: "https://api.example.com/v1",
         useStream: false,
         videoSubmissionRetryCount: 2,
+        videoProtocolMode: "custom",
+        videoInputCapabilities: {
+          referenceVideos: false,
+          referenceAudios: false,
+        },
         modelMappings: [],
         authentication: { mode: "bearer" },
         operations: createDefaultApiUpstreamOperations(),

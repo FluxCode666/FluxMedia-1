@@ -28,12 +28,13 @@ describe("system docs video contract", () => {
   it.each(["zh", "en"])("%s 精确描述持久视频创建任务", (locale) => {
     const endpoints = getSystemDocsVideoEndpoints(locale);
     const endpoint = endpoints.find(
-      (item) => item.method === "POST" && item.path === "/v1/videos"
+      (item) =>
+        item.method === "POST" && item.path === "/v1/videos/generations"
     );
     if (!endpoint) throw new Error(`${locale} 缺少视频创建文档`);
 
     expect(endpoint.description).toContain("HTTP 202");
-    expect(endpoint.description).toMatch(/OpenAI|风格/u);
+    expect(endpoint.description).toMatch(/OpenAI|风格|FluxMedia/u);
     expect(endpoint.responseExample).toContain('"object": "video.task"');
     expect(endpoint.responseExample).toContain('"kind": "snapshot"');
     expect(JSON.stringify(endpoint)).toContain("quote_token / quoteToken");
@@ -78,11 +79,9 @@ describe("system docs video contract", () => {
     expect(notes).toContain("/v1/videos/generations");
     expect(notes).toContain("/api/v1/videos/generations");
     if (locale === "zh") {
-      expect(notes).toContain("即将废弃下线");
-      expect(notes).toContain("请尽快迁移至 POST /v1/videos");
+      expect(notes).toContain("POST /v1/videos 创建地址已下线");
     } else {
-      expect(notes).toContain("scheduled for deprecation and removal");
-      expect(notes).toContain("migrate to POST /v1/videos");
+      expect(notes).toContain("POST /v1/videos is no longer a creation endpoint");
     }
   });
 

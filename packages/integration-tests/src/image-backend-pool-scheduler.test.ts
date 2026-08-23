@@ -81,7 +81,8 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
     create table image_backend_member_api_adapter_version (
       id text primary key,
       member_id_snapshot text not null,
-      credential_scope text not null
+      credential_scope text not null,
+      configuration json not null
     );
     create table image_backend_member_adobe_config (
       member_id text primary key references image_backend_member(id),
@@ -154,9 +155,9 @@ async function insertMember(
   const credentialScope = `https://${input.id}.example.test|bearer`;
   await client.query(
     `insert into image_backend_member_api_adapter_version (
-       id, member_id_snapshot, credential_scope
-     ) values ($1, $2, $3)`,
-    [adapterVersionId, input.id, credentialScope]
+       id, member_id_snapshot, credential_scope, configuration
+     ) values ($1, $2, $3, $4)`,
+    [adapterVersionId, input.id, credentialScope, JSON.stringify({})]
   );
   await client.query(
     `insert into image_backend_member_api_config (

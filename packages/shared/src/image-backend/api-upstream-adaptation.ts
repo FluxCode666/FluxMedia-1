@@ -22,6 +22,25 @@ export const MAX_API_MODEL_MAPPINGS = 1_000;
 /** API 视频创建默认允许的额外重试次数。 */
 export const DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT = 2;
 
+/**
+ * API 视频成员的上游协议模式。
+ *
+ * 协议属于成员的适配能力，而不是平台模型或供应商名称；因此同一个模型可以由
+ * 不同模式的多个成员承载。legacy adapter snapshot 缺失该字段时由 schema 默认
+ * 为 custom，确保升级不会改变既有无脚本或自定义脚本请求。
+ */
+export const API_VIDEO_PROTOCOL_MODES = [
+  "gemini",
+  "seedance",
+  "custom",
+] as const;
+
+export const apiVideoProtocolModeSchema = z
+  .enum(API_VIDEO_PROTOCOL_MODES)
+  .default("custom");
+
+export type ApiVideoProtocolMode = z.infer<typeof apiVideoProtocolModeSchema>;
+
 /** API 视频创建额外重试次数；实际请求上限始终为该值加一。 */
 export const videoSubmissionRetryCountSchema = z
   .number()
@@ -29,6 +48,19 @@ export const videoSubmissionRetryCountSchema = z
   .min(0)
   .max(10)
   .default(DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT);
+
+/** 单个 API 账号声明的额外视频输入能力标签。 */
+export const apiVideoInputCapabilitiesSchema = z
+  .object({
+    referenceVideos: z.boolean().default(false),
+    referenceAudios: z.boolean().default(false),
+  })
+  .strict()
+  .default({ referenceVideos: false, referenceAudios: false });
+
+export type ApiVideoInputCapabilities = z.infer<
+  typeof apiVideoInputCapabilitiesSchema
+>;
 
 /** 单个账号请求处理脚本的最大 UTF-16 字符数。 */
 export const MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS =
@@ -256,6 +288,8 @@ export const apiUpstreamAdapterDraftSchema = z
       ),
     useStream: z.boolean(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
+    videoProtocolMode: apiVideoProtocolModeSchema,
+    videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema,
     credentialScope: z.string().trim().min(1).max(512),

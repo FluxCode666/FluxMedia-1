@@ -22,7 +22,11 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => panelMocks.searchParams,
 }));
 vi.mock("next-safe-action/hooks", () => ({
-  useAction: () => ({ execute: panelMocks.execute, isPending: false }),
+  useAction: () => ({
+    execute: panelMocks.execute,
+    executeAsync: vi.fn(async () => ({})),
+    isPending: false,
+  }),
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/i18n/routing", () => ({
@@ -58,8 +62,8 @@ vi.mock("./member-form", () => ({
 }));
 
 import { BackendGroupList } from "./admin-group-list";
-import { BackendMemberFilterBar } from "./admin-pool-filter-bars";
 import { ImageBackendPoolAdminPanel } from "./admin-panel";
+import { BackendMemberFilterBar } from "./admin-pool-filter-bars";
 import {
   type BackendMemberFilters,
   EMPTY_BACKEND_MEMBER_FILTERS,

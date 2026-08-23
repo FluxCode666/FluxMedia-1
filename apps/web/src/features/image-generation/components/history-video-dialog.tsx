@@ -33,7 +33,14 @@ export type HistoryVideoDialogRecord = {
   generateAudio: boolean;
   id: string;
   input: {
-    mode: "none" | "first-frame" | "first-last-frames" | "references";
+    mode:
+      | "none"
+      | "first-frame"
+      | "first-last-frames"
+      | "references"
+      | "reference-videos"
+      | "reference-audio"
+      | "mixed";
     count: number;
   };
   kind: "video";
@@ -140,6 +147,9 @@ function formatInputSummary(
     "first-frame": copy("First frame", "首帧"),
     "first-last-frames": copy("First and last frames", "首尾帧"),
     references: copy("Reference images", "参考图"),
+    "reference-videos": copy("Reference videos", "参考视频"),
+    "reference-audio": copy("Reference audio", "参考音频"),
+    mixed: copy("Mixed inputs", "混合输入"),
   }[input.mode];
   return input.count > 0
     ? `${mode} · ${input.count} ${copy("images", "张")}`

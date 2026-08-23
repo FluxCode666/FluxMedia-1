@@ -10,6 +10,7 @@ import {
   type ApiUpstreamOperations,
   createDefaultApiUpstreamOperations,
   DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
+  apiVideoProtocolModeSchema,
   resolveApiUpstreamOperationPath,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/api-upstream-script-contract";
@@ -18,6 +19,8 @@ import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/a
 export interface ApiUpstreamAdapterFormDraft {
   authentication: ApiUpstreamAdapterDraft["authentication"];
   videoSubmissionRetryCount: number;
+  videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
+  videoInputCapabilities: ApiUpstreamAdapterDraft["videoInputCapabilities"];
   operations: ApiUpstreamOperations;
   expectedCurrentVersionId?: string;
 }
@@ -50,7 +53,8 @@ export const API_UPSTREAM_MEDIA_SECTIONS = [
   {
     id: "video",
     title: "生视频",
-    description: "文生视频、参考图或首尾帧生成；参考图与首尾帧互斥。",
+    description:
+      "文生视频、首尾帧、参考图、参考视频或参考音频生成；能力由账号标签决定。",
     generateOperation: "videos.generate",
     queryOperation: "videos.query",
   },
@@ -61,6 +65,11 @@ export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFo
   return {
     authentication: { mode: "bearer" },
     videoSubmissionRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
+    videoProtocolMode: apiVideoProtocolModeSchema.parse("custom"),
+    videoInputCapabilities: {
+      referenceVideos: false,
+      referenceAudios: false,
+    },
     operations: createDefaultApiUpstreamOperations(),
   };
 }
@@ -134,6 +143,8 @@ function createRequestSample(
             "mock://media/reference-1",
             "mock://media/reference-2",
           ],
+          reference_videos: ["https://media.example/reference.mp4"],
+          reference_audios: ["https://media.example/reference.mp3"],
           client_request_id: "sample-video-request",
         },
       };
