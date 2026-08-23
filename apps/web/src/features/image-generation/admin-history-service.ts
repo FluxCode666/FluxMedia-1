@@ -34,7 +34,7 @@ import { z } from "zod";
 import {
   calculateHistoryProcessingDurationSeconds,
   resolveHistoryDateRange,
-  sanitizeHistoryError,
+  sanitizeAdminHistoryError,
 } from "./history-service";
 
 const ADMIN_HISTORY_CURSOR_VERSION = 1;
@@ -333,7 +333,7 @@ function adaptAdminHistoryRow(row: AdminHistoryListRow): AdminHistoryRecord {
   return adminHistoryRecordSchema.parse({
     ...safeRow,
     model: normalizeHistoricalModelId(row.model) ?? row.model,
-    error: sanitizeHistoryError(rawError),
+    error: sanitizeAdminHistoryError(rawError),
     createdAt: toIsoDateTime(row.createdAt),
     completedAt:
       row.completedAt === null ? null : toIsoDateTime(row.completedAt),

@@ -1,4 +1,4 @@
-/** 历史记录安全错误本地化测试，锁定未知文本不会被直接展示。 */
+/** 历史记录错误本地化测试，锁定普通用户降级与管理员摘要展示边界。 */
 
 import { describe, expect, it } from "vitest";
 import { formatHistoryError } from "./history-error-copy";
@@ -20,6 +20,14 @@ describe("formatHistoryError", () => {
     expect(formatHistoryError("Failed query: select secret", zhCopy)).toBe(
       "生成失败"
     );
+  });
+
+  it("管理员模式展示服务端已经脱敏的错误摘要", () => {
+    expect(
+      formatHistoryError("Gemini 视频上游返回 HTTP 429", zhCopy, {
+        showAdminDetails: true,
+      })
+    ).toBe("Gemini 视频上游返回 HTTP 429");
   });
 
   it("空错误保持为空", () => {

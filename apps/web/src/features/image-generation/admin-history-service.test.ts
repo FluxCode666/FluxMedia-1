@@ -269,6 +269,32 @@ describe("admin history service", () => {
     expect(result.records[0]?.backendAccount).toBeNull();
   });
 
+  it("returns a safe upstream error summary for global operators", async () => {
+    const row = imageRow("image-failed", "2026-07-22T12:00:00.000Z");
+    row.status = "failed";
+    row.rawError =
+      "Gemini 视频上游返回 HTTP 429: Bearer secret-token api_key=sk-live-secret";
+
+    const result = await loadAdminHistoryRecords(
+      {
+        actorUserId: "admin-1",
+        timeZone: "UTC",
+        input: {},
+        now: new Date("2026-07-22T13:00:00.000Z"),
+      },
+      {
+        repository: createRepository({
+          readRecords: vi.fn().mockResolvedValue([row]),
+        }),
+        tokenSecret: TOKEN_SECRET,
+      }
+    );
+
+    expect(result.records[0]?.error).toBe(
+      "Gemini 视频上游返回 HTTP 429: Bearer [REDACTED] api_key=[REDACTED]"
+    );
+  });
+
   it("binds global cursors to both the administrator and email filter", async () => {
     const first = await loadAdminHistoryRecords(
       {

@@ -13,6 +13,7 @@ import {
   type HistorySnapshotReader,
   loadHistoryRecords,
   resolveHistoryDateRange,
+  sanitizeAdminHistoryError,
   sanitizeHistoryError,
 } from "./history-service";
 
@@ -330,5 +331,34 @@ describe("history service", () => {
     expect(sanitizeHistoryError("poll failed: 451 image_unsafe")).toBe(
       "Prompt did not pass content safety review; modify the prompt and retry"
     );
+  });
+
+  it("keeps a bounded provider summary for administrators and redacts secrets", () => {
+    expect(
+      sanitizeAdminHistoryError(
+        "Gemini 视频上游返回 HTTP 429: Bearer secret-token " +
+          "https://provider.example/v1/videos/generations " +
+          "api_key=sk-live-secret prompt=secret prompt task_id=operations/abc"
+      )
+    ).toBe(
+      "Gemini 视频上游返回 HTTP 429: Bearer [REDACTED] [URL] " +
+        "api_key=[REDACTED] prompt=[REDACTED]"
+    );
+    expect(
+      sanitizeAdminHistoryError(
+        "Gemini operation operations/veo-123 failed: HTTP 400"
+      )
+    ).toBe("Gemini operation operations/[REDACTED] failed: HTTP 400");
+  });
+
+  it("falls back for database errors and truncates long summaries", () => {
+    expect(
+      sanitizeAdminHistoryError("Failed query: select secret from account")
+    ).toBe("Generation failed");
+    const summary = sanitizeAdminHistoryError(
+      `upstream error ${"x".repeat(600)}`
+    );
+    expect(summary).toHaveLength(512);
+    expect(summary?.endsWith("...")).toBe(true);
   });
 });

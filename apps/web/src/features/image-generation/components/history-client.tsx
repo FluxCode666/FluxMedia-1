@@ -346,7 +346,9 @@ export function HistoryClient({
               <ul className="divide-y divide-border">
                 {items.map((item) => {
                   const summary = creditSummary(item, copy);
-                  const errorMessage = formatHistoryError(item.error, copy);
+                  const errorMessage = formatHistoryError(item.error, copy, {
+                    showAdminDetails: showUserColumns,
+                  });
                   return (
                     <li key={`${item.kind}-${item.id}`}>
                       <button
