@@ -19,6 +19,7 @@ import { getStorageRuntimeSnapshot } from "@repo/shared/storage/providers";
 
 import {
   getMediaInputReferenceMaxBytes,
+  getVideoReferenceMediaAddressPolicy,
   type LoadedMediaInput,
   loadMediaInputs,
 } from "./media-input-loader";
@@ -117,6 +118,16 @@ function detectMediaMimeType(
     return "audio/mpeg";
   }
   return null;
+}
+
+/** 允许 MP4 与 QuickTime 容器在参考视频 URL 声明和真实魔数之间互换。 */
+function isCompatibleMediaMimeType(
+  expected: MediaInputReference["mimeType"],
+  actual: MediaInputReference["mimeType"] | null
+): boolean {
+  if (actual === expected) return true;
+  const videoTypes = new Set(["video/mp4", "video/quicktime"]);
+  return videoTypes.has(expected) && actual !== null && videoTypes.has(actual);
 }
 
 /** 临时视频输入对象只能落在当前用户和任务的隔离前缀下。 */
@@ -262,6 +273,7 @@ export async function stageVideoInputManifest(input: {
     references: namedInputs.map((entry) => entry.reference),
     signal: uploadSignal,
     maxBytesForReference: getMediaInputReferenceMaxBytes,
+    allowBlockedAddressForReference: getVideoReferenceMediaAddressPolicy,
   });
   if (loaded.length !== namedInputs.length) {
     throw new Error("视频输入加载结果数量不一致");
@@ -275,7 +287,12 @@ export async function stageVideoInputManifest(input: {
     ) {
       throw new Error("视频输入媒体字节数与声明不一致");
     }
-    if (detectMediaMimeType(media.data) !== entry.reference.mimeType) {
+    if (
+      !isCompatibleMediaMimeType(
+        entry.reference.mimeType,
+        detectMediaMimeType(media.data)
+      )
+    ) {
       throw new Error("视频输入媒体实际 MIME 与声明不一致");
     }
     if (entry.slot === "reference-video") {

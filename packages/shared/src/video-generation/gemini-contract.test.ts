@@ -28,6 +28,19 @@ describe("Gemini video contract", () => {
     ).toBe(true);
   });
 
+  it("accepts a large inline image without recursive regex stack overflow", () => {
+    const data = Buffer.alloc(9 * 1024 * 1024, 0xab).toString("base64");
+    const parsed = geminiVideoRequestSchema.safeParse({
+      instances: [
+        {
+          prompt: "Use the reference image",
+          image: { inlineData: { mimeType: "image/png", data } },
+        },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
   it("accepts HTTP and HTTPS reference video and audio extensions", () => {
     expect(
       geminiVideoRequestSchema.safeParse({

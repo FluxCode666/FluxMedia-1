@@ -18,6 +18,7 @@ const cleanupQueue = vi.hoisted(() => ({
 const mediaLoader = vi.hoisted(() => ({
   loadMediaInputs: vi.fn(),
   getMediaInputReferenceMaxBytes: vi.fn(() => undefined),
+  getVideoReferenceMediaAddressPolicy: vi.fn(() => undefined),
 }));
 const mediaMetadata = vi.hoisted(() => ({
   validateReferenceAudioMetadata: vi.fn(),
@@ -36,6 +37,8 @@ vi.mock("./video-input-cleanup-queue", () => ({
 
 vi.mock("./media-input-loader", () => ({
   getMediaInputReferenceMaxBytes: mediaLoader.getMediaInputReferenceMaxBytes,
+  getVideoReferenceMediaAddressPolicy:
+    mediaLoader.getVideoReferenceMediaAddressPolicy,
   loadMediaInputs: mediaLoader.loadMediaInputs,
 }));
 vi.mock("./reference-media-metadata", () => ({
@@ -60,6 +63,11 @@ const PNG_BYTES = Buffer.concat([
 const MP4_BYTES = Buffer.concat([
   Buffer.alloc(4, 0),
   Buffer.from("ftypisom"),
+  Buffer.alloc(16, 0),
+]);
+const QUICKTIME_BYTES = Buffer.concat([
+  Buffer.alloc(4, 0),
+  Buffer.from("ftypqt  "),
   Buffer.alloc(16, 0),
 ]);
 const MP3_BYTES = Buffer.from("ID3reference-audio");
@@ -305,6 +313,39 @@ describe("video input storage", () => {
     ).toHaveBeenCalledWith([expect.objectContaining({ durationSeconds: 5 })]);
     expect(result.manifest.referenceVideos).toHaveLength(1);
     expect(result.manifest.referenceAudios).toHaveLength(1);
+  });
+
+  it("允许 mp4 声明对应 QuickTime 容器的参考视频", async () => {
+    setupSuccessfulStorage();
+    mediaLoader.loadMediaInputs.mockResolvedValueOnce([
+      { data: QUICKTIME_BYTES, type: "video/mp4" },
+    ]);
+
+    const result = await stageVideoInputManifest({
+      userId: "user-1",
+      videoId: "video-1",
+      attemptId: "reservation-1",
+      manifest: {
+        referenceVideos: [
+          {
+            source: "storage",
+            mimeType: "video/mp4",
+            storageKey: "user-1/reference.mp4",
+            storageBucket: "uploads",
+            byteLength: QUICKTIME_BYTES.byteLength,
+          },
+        ],
+      },
+    });
+
+    expect(result.manifest.referenceVideos).toHaveLength(1);
+    expect(storage.putObject).toHaveBeenCalledWith(
+      expect.any(String),
+      "uploads",
+      QUICKTIME_BYTES,
+      "video/mp4",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
   });
 
   it("读取和全部上传共享同一个绝对 deadline", async () => {

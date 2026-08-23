@@ -19,16 +19,25 @@ import {
 function createAdapter(
   overrides: Partial<ApiUpstreamAdapterDraft> = {}
 ): ApiUpstreamAdapterDraft {
-  return {
+  const base: ApiUpstreamAdapterDraft = {
     baseUrl: "http://upstream.internal:8080/v1",
     useStream: false,
     videoSubmissionRetryCount: 2,
     videoProtocolMode: "custom",
+    videoInputCapabilities: {
+      referenceVideos: false,
+      referenceAudios: false,
+    },
     modelMappings: [],
     authentication: { mode: "bearer" },
     credentialScope: "http://upstream.internal:8080|bearer",
     operations: createDefaultApiUpstreamOperations(),
+  };
+  return {
+    ...base,
     ...overrides,
+    videoInputCapabilities:
+      overrides.videoInputCapabilities ?? base.videoInputCapabilities,
   };
 }
 

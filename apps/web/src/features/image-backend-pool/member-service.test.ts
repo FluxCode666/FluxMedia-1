@@ -7,12 +7,17 @@
  */
 
 import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
+import {
+  type BackendMemberInput,
+  backendMemberInputSchema,
+} from "@repo/shared/image-backend/member-contract";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import {
   type BackendMemberAdminSummary,
   type BackendMemberRepository,
   BackendMemberServiceError,
+  createApiAdapterDraft,
   createBackendMemberService,
 } from "./member-service";
 
@@ -180,6 +185,34 @@ describe("backend member service", () => {
       }),
       NOW
     );
+  });
+
+  it("保留 API 成员的视频参考媒体能力标签", () => {
+    const input = backendMemberInputSchema.parse(
+      apiInput({
+        supportedModelIds: ["seedance2"],
+        config: {
+          baseUrl: "https://video.example.com/v1",
+          apiKey: "secret-api-key",
+          useStream: false,
+          videoProtocolMode: "custom",
+          videoInputCapabilities: {
+            referenceVideos: true,
+            referenceAudios: true,
+          },
+          modelMappings: [],
+          authentication: { mode: "bearer" },
+          operations: createDefaultApiUpstreamOperations(),
+        },
+      })
+    ) as Extract<BackendMemberInput, { type: "api" }>;
+
+    expect(createApiAdapterDraft(input)).toMatchObject({
+      videoInputCapabilities: {
+        referenceVideos: true,
+        referenceAudios: true,
+      },
+    });
   });
 
   it("请求处理脚本校验失败时拒绝保存 API 账号", async () => {
@@ -722,6 +755,10 @@ describe("backend member service", () => {
         useStream: false,
         videoSubmissionRetryCount: 2,
         videoProtocolMode: "custom",
+        videoInputCapabilities: {
+          referenceVideos: false,
+          referenceAudios: false,
+        },
         modelMappings: [],
       },
     };

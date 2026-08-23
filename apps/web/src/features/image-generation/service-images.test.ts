@@ -62,6 +62,10 @@ return { body: transformSampleRequest(request.body) };
     useStream: false,
     videoSubmissionRetryCount: 2,
     videoProtocolMode: "custom" as const,
+    videoInputCapabilities: {
+      referenceVideos: false,
+      referenceAudios: false,
+    },
     modelMappings: [
       { modelId: "gpt-image-2", upstreamModelId: "vendor-image-id" },
     ],

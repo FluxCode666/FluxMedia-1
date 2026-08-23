@@ -52,7 +52,7 @@ const MAX_BASE64_LENGTH = Math.ceil(MAX_MEDIA_INPUT_FILE_BYTES / 3) * 4;
  * @sideEffects 无。
  * @failure 不抛错；非法输入返回 false，超限输入在字符扫描前快速拒绝。
  */
-function isStandardBase64(value: string): boolean {
+export function isStandardBase64(value: string): boolean {
   if (
     value.length < 4 ||
     value.length > MAX_BASE64_LENGTH ||

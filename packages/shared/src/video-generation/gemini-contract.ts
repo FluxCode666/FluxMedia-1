@@ -5,6 +5,7 @@
  * 数据库、不读取凭据，也不包含供应商调度逻辑。只接受本期已冻结的官方 REST 字段。
  */
 import { z } from "zod";
+import { isStandardBase64 } from "../image-generation/media-contract";
 
 /** Gemini 路径模型 ID；真正的平台模型映射由调用方按配置解析。 */
 export const geminiModelPathSchema = z
@@ -28,10 +29,7 @@ export const geminiInlineImageSchema = z
           .string()
           .min(1)
           .max(16_777_216)
-          .regex(
-            /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u,
-            "inlineData.data must be valid base64"
-          ),
+          .refine(isStandardBase64, "inlineData.data must be valid base64"),
       })
       .strict(),
   })

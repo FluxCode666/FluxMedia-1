@@ -269,7 +269,7 @@ function createApiCredentialScope(
 }
 
 /** 从 API 成员保存输入构造不含密钥的不可变适配版本草稿。 */
-function createApiAdapterDraft(
+export function createApiAdapterDraft(
   input: Extract<BackendMemberInput, { type: "api" }>
 ): ApiUpstreamAdapterDraft {
   const operations = structuredClone(input.config.operations);
@@ -278,6 +278,7 @@ function createApiAdapterDraft(
     useStream: input.config.useStream,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
     videoProtocolMode: input.config.videoProtocolMode,
+    videoInputCapabilities: input.config.videoInputCapabilities,
     modelMappings: input.config.modelMappings,
     authentication: input.config.authentication,
     credentialScope: createApiCredentialScope(

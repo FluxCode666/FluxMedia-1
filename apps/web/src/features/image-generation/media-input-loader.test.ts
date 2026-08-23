@@ -9,7 +9,7 @@ import {
   MAX_MEDIA_INPUT_BYTES,
   MAX_MEDIA_INPUT_FILE_BYTES,
 } from "@repo/shared/image-generation/media-contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const storageMock = vi.hoisted(() => ({
   getObject: vi.fn(),
@@ -25,12 +25,37 @@ vi.mock("@repo/shared/storage/providers", () => ({
 
 import {
   addActualMediaInputBytes,
+  getVideoReferenceMediaAddressPolicy,
   loadMediaInputs,
 } from "./media-input-loader";
 
 describe("loadMediaInputs", () => {
   beforeEach(() => {
     storageMock.getObject.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("仅为配置的精确视频参考主机返回保留地址例外", () => {
+    const reference = {
+      source: "remote" as const,
+      mimeType: "video/mp4" as const,
+      url: "https://oss.flux-code.cc/media/test.mp4",
+    };
+    vi.stubEnv(
+      "VIDEO_REFERENCE_MEDIA_ALLOW_RESERVED_ADDRESSES",
+      "oss.flux-code.cc"
+    );
+
+    const policy = getVideoReferenceMediaAddressPolicy(reference);
+    expect(
+      policy?.({ hostname: "oss.flux-code.cc", address: "198.18.0.102" })
+    ).toBe(true);
+    expect(
+      policy?.({ hostname: "other.example.com", address: "198.18.0.102" })
+    ).toBe(false);
   });
 
   it("解码 data 引用并复核真实字节数", async () => {

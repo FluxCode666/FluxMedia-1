@@ -13,6 +13,7 @@ import {
   MAX_REFERENCE_AUDIO_BYTES,
   type MediaInputReference,
 } from "@repo/shared/image-generation/media-contract";
+import type { DnsPinFetchOptions } from "@repo/shared/security/dns-pin";
 import { getStorageRuntimeSnapshot } from "@repo/shared/storage/providers";
 
 import {
@@ -27,6 +28,38 @@ export interface LoadedMediaInput {
   type: string;
   storageKey?: string;
   storageBucket?: string;
+}
+
+/**
+ * 解析视频参考媒体的保留地址例外策略。
+ *
+ * 例外只对 `VIDEO_REFERENCE_MEDIA_ALLOW_RESERVED_ADDRESSES` 中列出的精确主机名
+ * 生效，且只由视频参考视频/音频调用。默认不放行任何保留地址，避免把普通图片、回调
+ * 或任意远程媒体输入变成 SSRF 入口。
+ *
+ * @param reference - 待读取的媒体引用。
+ * @returns 连接层地址判断函数；未配置或非视频/音频远程引用时返回 undefined。
+ */
+export function getVideoReferenceMediaAddressPolicy(
+  reference: MediaInputReference
+): DnsPinFetchOptions["allowBlockedAddress"] | undefined {
+  if (
+    reference.source !== "remote" ||
+    (!reference.mimeType.startsWith("video/") &&
+      !reference.mimeType.startsWith("audio/"))
+  ) {
+    return undefined;
+  }
+  const allowedHosts = new Set(
+    (process.env.VIDEO_REFERENCE_MEDIA_ALLOW_RESERVED_ADDRESSES ?? "")
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const hostname = new URL(reference.url).hostname.toLowerCase();
+  if (!allowedHosts.has(hostname)) return undefined;
+  return ({ hostname: resolvedHostname }) =>
+    resolvedHostname.toLowerCase() === hostname;
 }
 
 /**
@@ -103,6 +136,11 @@ export async function loadMediaInputs(input: {
     reference: MediaInputReference,
     index: number
   ) => number | undefined;
+  /** 仅对指定引用返回受控的 DNS 保留地址例外。 */
+  allowBlockedAddressForReference?: (
+    reference: MediaInputReference,
+    index: number
+  ) => DnsPinFetchOptions["allowBlockedAddress"] | undefined;
 }): Promise<LoadedMediaInput[]> {
   const loaded: LoadedMediaInput[] = [];
   let totalBytes = 0;
@@ -165,8 +203,13 @@ export async function loadMediaInputs(input: {
       continue;
     }
 
+    const allowBlockedAddress = input.allowBlockedAddressForReference?.(
+      reference,
+      referenceIndex
+    );
     const response = await fetchPublicImage(reference.url, {
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(allowBlockedAddress ? { allowBlockedAddress } : {}),
     });
     if (!response.ok) {
       throw new SafeImageFetchError(
