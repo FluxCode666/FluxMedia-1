@@ -47,9 +47,13 @@ type RecentImage = {
   id: string;
   imageUrl: string | null;
   prompt: string;
+  /** pending/processing 任务仍无图片地址，需在最近列表展示占位状态。 */
+  status?: string;
 };
 
-const RECENT_IMAGE_LIMIT = 6;
+const RECENT_IMAGE_LIMIT = 12;
+const IMAGE_STATUS_POLL_INTERVAL_MS = 1500;
+const IMAGE_STATUS_POLL_ATTEMPTS = 240;
 
 type ImageCreatePanelProps = {
   balance: number;
@@ -83,7 +87,7 @@ type ReferenceImageSource = {
 type InitialReferenceLoad = {
   controller: AbortController;
   id: string;
-  promise: Promise<File>;
+  promise: Promise<File[]>;
   settled: boolean;
 };
 
@@ -113,6 +117,23 @@ function mergeRecentImages(
   }
 
   return merged;
+}
+
+/** 将服务端任务状态收窄为最近列表允许的状态。 */
+function normalizeRecentStatus(
+  status: string | undefined,
+  imageUrl: string | null
+): RecentImage["status"] {
+  if (
+    status === "queued" ||
+    status === "pending" ||
+    status === "processing" ||
+    status === "failed" ||
+    status === "completed"
+  ) {
+    return status;
+  }
+  return imageUrl ? "completed" : "pending";
 }
 
 /** 将字节数格式化为面向用户的 MB 限制。 */
@@ -373,7 +394,6 @@ export function ImageCreatePanel({
   const [background, setBackground] = useState("auto");
   const [sourceImages, setSourceImages] = useState<File[]>([]);
   const [mask, setMask] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultUrls, setResultUrls] = useState<string[]>([]);
   const [createdRecentImages, setCreatedRecentImages] = useState<RecentImage[]>(
@@ -384,6 +404,7 @@ export function ImageCreatePanel({
   );
   const initialReferenceLoadRef = useRef<InitialReferenceLoad | null>(null);
   const consumedInitialReferenceIdRef = useRef<string | null>(null);
+  const latestGenerationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!availableModels.some((item) => item.id === model)) {
@@ -396,7 +417,16 @@ export function ImageCreatePanel({
     group.models.some((item) => item.capabilities.mask)
   );
   const visibleRecentImages = useMemo(
-    () => mergeRecentImages(createdRecentImages, recent),
+    () =>
+      mergeRecentImages(
+        createdRecentImages,
+        recent.map((item) => {
+          const status = normalizeRecentStatus(item.status, item.imageUrl);
+          return item.status || status !== "completed"
+            ? { ...item, status }
+            : item;
+        })
+      ).slice(0, RECENT_IMAGE_LIMIT),
     [createdRecentImages, recent]
   );
   const estimatedCredits = getImageCreditCost(size, {
@@ -469,21 +499,31 @@ export function ImageCreatePanel({
   useEffect(() => {
     if (!initialReference) return;
 
+    const references = initialReference.references ?? [initialReference];
+    if (references.length > maxEditImages) {
+      setError(`参考图最多可添加 ${maxEditImages} 张`);
+      consumeInitialReference(initialReference.id);
+      return;
+    }
     let load = initialReferenceLoadRef.current;
     if (!load || load.id !== initialReference.id) {
       const controller = new AbortController();
       load = {
         controller,
         id: initialReference.id,
-        promise: loadReferenceImageFile(
-          {
-            imageUrl: initialReference.imageUrl,
-            retryHint: "请返回图库后重试",
-            sourceName: initialReference.sourceName,
-          },
-          maxFileSizeBytes,
-          maxUploadBytes,
-          controller
+        promise: Promise.all(
+          references.map((reference) =>
+            loadReferenceImageFile(
+              {
+                imageUrl: reference.imageUrl,
+                retryHint: "请返回图库后重试",
+                sourceName: reference.sourceName,
+              },
+              maxFileSizeBytes,
+              maxUploadBytes,
+              controller
+            )
+          )
         ),
         settled: false,
       };
@@ -495,7 +535,7 @@ export function ImageCreatePanel({
     setReferenceLoadingId(initialReference.sourceId);
     setError(null);
     void load.promise
-      .then((file) => {
+      .then((files) => {
         if (
           !active ||
           load.settled ||
@@ -504,7 +544,8 @@ export function ImageCreatePanel({
           return;
         }
         load.settled = true;
-        setSourceImages([file]);
+        validateTotalUploadSize(files, null, maxUploadBytes);
+        setSourceImages(files);
         setMask(null);
         setMode("edit");
         if (!selectModelForMode("edit")) {
@@ -539,6 +580,7 @@ export function ImageCreatePanel({
     maxFileSizeBytes,
     maxUploadBytes,
     selectModelForMode,
+    maxEditImages,
   ]);
 
   /** 追加来源图片并在客户端校验，失败时保留已经选择的参考图。 */
@@ -574,7 +616,7 @@ export function ImageCreatePanel({
 
   /** 删除单张参考图；移除主参考图时同时清理与其像素坐标绑定的蒙版。 */
   const removeSourceImage = (index: number) => {
-    if (busy || index < 0 || index >= sourceImages.length) return;
+    if (index < 0 || index >= sourceImages.length) return;
     const nextFiles = sourceImages.filter(
       (_file, candidateIndex) => candidateIndex !== index
     );
@@ -641,7 +683,7 @@ export function ImageCreatePanel({
    * @returns 成功加入统一表单返回 true；下载、类型或大小非法返回 false 并显示错误。
    */
   const selectRecentReference = async (image: RecentImage) => {
-    if (busy || referenceLoadingId || !image.imageUrl) return false;
+    if (referenceLoadingId || !image.imageUrl) return false;
     if (sourceImages.length >= maxEditImages) {
       setError(`参考图最多可添加 ${maxEditImages} 张`);
       return false;
@@ -678,9 +720,184 @@ export function ImageCreatePanel({
     }
   };
 
-  /** 提交文生图或编辑请求；成功后同步更新结果区与当前会话的最近图片。 */
+  /** 将已完成或失败的后台任务合并回最近列表，并只更新最新任务的结果区。 */
+  const settleRecentTask = useCallback(
+    (
+      generationId: string,
+      status: "completed" | "failed",
+      imageUrl: string | null,
+      taskPrompt: string,
+      urls: readonly string[] = []
+    ) => {
+      setCreatedRecentImages((current) =>
+        current.flatMap((item) => {
+          if (item.id !== generationId) return [item];
+          if (status === "completed") {
+            // 完成态省略 status 字段，兼容旧版服务端快照和组件调用方。
+            return [{ id: item.id, imageUrl, prompt: taskPrompt }];
+          }
+          return [{ ...item, imageUrl: null, status: "failed" }];
+        })
+      );
+      if (generationId !== latestGenerationIdRef.current) return;
+      if (status === "completed") setResultUrls([...urls]);
+    },
+    []
+  );
+
+  /** 将乐观占位任务切换为服务端确认的 generation ID，保持后续轮询可关联。 */
+  const rekeyRecentTask = useCallback(
+    (localGenerationId: string, generationId: string) => {
+      if (localGenerationId === generationId) return;
+      setCreatedRecentImages((current) =>
+        current.map((item) =>
+          item.id === localGenerationId ? { ...item, id: generationId } : item
+        )
+      );
+      if (latestGenerationIdRef.current === localGenerationId) {
+        latestGenerationIdRef.current = generationId;
+      }
+    },
+    []
+  );
+
+  /** 轮询异步图片任务直至完成，兼容服务端仍返回同步结果的旧接口。 */
+  const pollImageTask = useCallback(
+    async (
+      generationId: string,
+      taskPrompt: string,
+      localGenerationId: string
+    ): Promise<void> => {
+      for (
+        let attempt = 0;
+        attempt < IMAGE_STATUS_POLL_ATTEMPTS;
+        attempt += 1
+      ) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, IMAGE_STATUS_POLL_INTERVAL_MS);
+        });
+        const statusResponse = await fetch(
+          `/api/images/status/${encodeURIComponent(generationId)}`,
+          { headers: { Accept: "application/json" } }
+        );
+        const statusPayload = await readGenerationResponse(statusResponse);
+        const status = statusPayload.status;
+        if (
+          status === "queued" ||
+          status === "pending" ||
+          status === "processing"
+        ) {
+          continue;
+        }
+        const urls = collectImageUrls(statusPayload);
+        if (status === "completed" && urls.length > 0) {
+          settleRecentTask(
+            localGenerationId,
+            "completed",
+            urls[0] ?? null,
+            taskPrompt,
+            urls
+          );
+          onCreditsConsumed(getConsumedCredits(statusPayload));
+          return;
+        }
+        settleRecentTask(localGenerationId, "failed", null, taskPrompt);
+        if (localGenerationId === latestGenerationIdRef.current) {
+          setError(statusPayload.error ?? "图片生成失败");
+        }
+        return;
+      }
+      throw new Error("图片生成超时，请稍后在历史记录查看");
+    },
+    [onCreditsConsumed, settleRecentTask]
+  );
+
+  /** 后台执行一次生图请求；提交方不等待网络，因此表单可以立即开始下一任务。 */
+  const runImageTask = useCallback(
+    async (
+      requestFields: {
+        generationId: string;
+        prompt: string;
+        size: string;
+        model: string;
+        backendGroupId: string;
+        quality: string;
+        background: string;
+      },
+      taskMode: ImageCreateMode,
+      taskSourceImages: readonly File[],
+      taskMask: File | null
+    ): Promise<void> => {
+      try {
+        let response: Response;
+        if (taskMode === "generate") {
+          response = await fetch("/api/images/generate", {
+            method: "POST",
+            headers: {
+              ...IMAGE_CREATE_REQUEST_HEADERS,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(buildImageGenerateRequestBody(requestFields)),
+          });
+        } else {
+          const body = buildImageEditRequestBody({
+            ...requestFields,
+            images: taskSourceImages,
+            mask: taskMask,
+          });
+          response = await fetch("/api/images/edit", {
+            method: "POST",
+            headers: IMAGE_CREATE_REQUEST_HEADERS,
+            body,
+          });
+        }
+
+        const payload = await readGenerationResponse(response);
+        const payloadError = getResponseError(payload);
+        if (payloadError) throw new Error(payloadError);
+        const payloadGenerationId =
+          payload.generationId ?? requestFields.generationId;
+        const urls = collectImageUrls(payload);
+        if (
+          (payload.status === "pending" || payload.status === "processing") &&
+          urls.length === 0
+        ) {
+          rekeyRecentTask(requestFields.generationId, payloadGenerationId);
+          await pollImageTask(
+            payloadGenerationId,
+            requestFields.prompt,
+            payloadGenerationId
+          );
+          return;
+        }
+        if (urls.length === 0) throw new Error("图片任务未返回可展示产物");
+        rekeyRecentTask(requestFields.generationId, payloadGenerationId);
+        settleRecentTask(
+          payloadGenerationId,
+          "completed",
+          urls[0] ?? null,
+          requestFields.prompt,
+          urls
+        );
+        onCreditsConsumed(getConsumedCredits(payload));
+      } catch (caught) {
+        settleRecentTask(
+          requestFields.generationId,
+          "failed",
+          null,
+          requestFields.prompt
+        );
+        if (requestFields.generationId === latestGenerationIdRef.current) {
+          setError(caught instanceof Error ? caught.message : "图片生成失败");
+        }
+      }
+    },
+    [onCreditsConsumed, pollImageTask, rekeyRecentTask, settleRecentTask]
+  );
+
+  /** 提交文生图或编辑请求；只等待请求调度，不阻塞页面后续输入和提交。 */
   const submit = async () => {
-    if (busy || referenceLoadingId) return;
+    if (referenceLoadingId) return;
     if (!prompt.trim()) {
       setError("请输入图片描述");
       return;
@@ -698,74 +915,41 @@ export function ImageCreatePanel({
       return;
     }
 
-    setBusy(true);
     setError(null);
     setResultUrls([]);
-    try {
-      let response: Response;
-      const requestFields = {
-        generationId: crypto.randomUUID(),
-        prompt: prompt.trim(),
-        size,
-        model,
-        backendGroupId: selectedGroup.id,
-        quality,
-        background,
-      };
-      if (mode === "generate") {
-        response = await fetch("/api/images/generate", {
-          method: "POST",
-          headers: {
-            ...IMAGE_CREATE_REQUEST_HEADERS,
-            "Content-Type": "application/json",
+    const requestFields = {
+      generationId: crypto.randomUUID(),
+      prompt: prompt.trim(),
+      size,
+      model,
+      backendGroupId: selectedGroup.id,
+      quality,
+      background,
+    };
+    latestGenerationIdRef.current = requestFields.generationId;
+    setCreatedRecentImages((current) =>
+      mergeRecentImages(
+        [
+          {
+            id: requestFields.generationId,
+            imageUrl: null,
+            prompt: requestFields.prompt,
+            status: "pending",
           },
-          body: JSON.stringify(buildImageGenerateRequestBody(requestFields)),
-        });
-      } else {
-        const body = buildImageEditRequestBody({
-          ...requestFields,
-          images: sourceImages,
-          mask,
-        });
-        response = await fetch("/api/images/edit", {
-          method: "POST",
-          headers: IMAGE_CREATE_REQUEST_HEADERS,
-          body,
-        });
-      }
-
-      const payload = await readGenerationResponse(response);
-      const payloadError = getResponseError(payload);
-      if (payloadError) throw new Error(payloadError);
-      const urls = collectImageUrls(payload);
-      const recentImageUrl = urls[0];
-      if (!recentImageUrl) throw new Error("图片任务未返回可展示产物");
-      setResultUrls(urls);
-      setCreatedRecentImages((current) =>
-        mergeRecentImages(
-          [
-            {
-              id: payload.generationId?.trim() || requestFields.generationId,
-              imageUrl: recentImageUrl,
-              prompt: requestFields.prompt,
-            },
-          ],
-          current
-        ).slice(0, RECENT_IMAGE_LIMIT)
-      );
-      onCreditsConsumed(getConsumedCredits(payload));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "图片生成失败");
-    } finally {
-      setBusy(false);
-    }
+        ],
+        current
+      ).slice(0, RECENT_IMAGE_LIMIT)
+    );
+    // 展示层以 void 调用此 Promise，因此页面不等待网络；返回 Promise 便于测试和
+    // 调用方在需要时观察任务完成。
+    return runImageTask(requestFields, mode, sourceImages, mask);
   };
 
   return (
     <SimpleImageCreatePanel
       balance={balance}
       background={background}
-      busy={busy}
+      busy={false}
       catalog={catalog}
       error={error}
       estimatedCredits={estimatedCredits}

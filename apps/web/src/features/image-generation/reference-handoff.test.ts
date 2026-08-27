@@ -31,6 +31,32 @@ describe("parseReferenceHandoffIntent", () => {
     });
   });
 
+  it("解析多张图库参考图并保持 URL 顺序", () => {
+    const params = new URLSearchParams();
+    params.set("mode", "image");
+    params.append("refs", "/api/storage/generations/user/one.png?sig=1");
+    params.append("refs", "/api/storage/generations/user/two.png?sig=2");
+    params.append("sourceIds", "generation-1");
+    params.append("sourceIds", "generation-2");
+    params.append("sourceNames", "one.png");
+    params.append("sourceNames", "two.png");
+    params.set("intent", "handoff-multi");
+    params.set("sendRef", "handoff-multi");
+
+    expect(parseReferenceHandoffIntent(params)?.references).toEqual([
+      {
+        imageUrl: "/api/storage/generations/user/one.png?sig=1",
+        sourceId: "generation-1",
+        sourceName: "one.png",
+      },
+      {
+        imageUrl: "/api/storage/generations/user/two.png?sig=2",
+        sourceId: "generation-2",
+        sourceName: "two.png",
+      },
+    ]);
+  });
+
   it.each([
     "mode=image&ref=https%3A%2F%2Fevil.example%2Fimage.png&sourceId=1&sourceName=a.png&intent=x&sendRef=x",
     "mode=chat&ref=%2Fapi%2Fstorage%2Fgenerations%2Fa.png&sourceId=1&sourceName=a.png&intent=x&sendRef=x",

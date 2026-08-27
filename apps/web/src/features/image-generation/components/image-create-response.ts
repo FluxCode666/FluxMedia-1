@@ -43,6 +43,10 @@ const generationResultSchema = z
   .object({
     error: z.string().optional(),
     generationId: z.string().optional(),
+    taskId: z.string().optional(),
+    status: z
+      .enum(["queued", "pending", "processing", "completed", "failed"])
+      .optional(),
     imageUrl: imageUrlSchema.optional(),
     imageOutputs: z.array(imageOutputSchema).optional(),
     creditsConsumed: z.number().nonnegative().optional(),

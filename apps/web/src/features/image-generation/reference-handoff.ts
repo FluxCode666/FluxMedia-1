@@ -10,11 +10,16 @@ import { z } from "zod";
 const REFERENCE_HANDOFF_PARAM_KEYS = [
   "mode",
   "ref",
+  "refs",
   "sourceId",
+  "sourceIds",
   "sourceName",
+  "sourceNames",
   "intent",
   "sendRef",
 ] as const;
+
+const MAX_REFERENCE_HANDOFF_IMAGES = 50;
 
 const referenceHandoffSchema = z
   .object({
@@ -50,6 +55,15 @@ export interface ReferenceHandoffIntent {
   readonly imageUrl: string;
   readonly sourceId: string;
   readonly sourceName: string;
+  /** 多图交接时携带的完整参考图列表；旧版单图交接不设置该字段。 */
+  readonly references?: readonly ReferenceHandoffReference[];
+}
+
+/** 已通过查询参数校验的单张图库参考图。 */
+export interface ReferenceHandoffReference {
+  readonly imageUrl: string;
+  readonly sourceId: string;
+  readonly sourceName: string;
 }
 
 /** URLSearchParams 与 Next.js ReadonlyURLSearchParams 共用的最小只读接口。 */
@@ -69,26 +83,73 @@ export interface ReferenceHandoffSearchParams {
 export function parseReferenceHandoffIntent(
   searchParams: ReferenceHandoffSearchParams
 ): ReferenceHandoffIntent | null {
+  const modeValues = searchParams.getAll("mode");
+  const intentValues = searchParams.getAll("intent");
+  const sendRefValues = searchParams.getAll("sendRef");
   if (
-    REFERENCE_HANDOFF_PARAM_KEYS.some(
-      (key) => searchParams.getAll(key).length !== 1
-    )
+    modeValues.length !== 1 ||
+    intentValues.length !== 1 ||
+    sendRefValues.length !== 1 ||
+    intentValues[0] !== sendRefValues[0]
   ) {
     return null;
   }
+  const intent = intentValues[0] ?? "";
 
-  const parsed = referenceHandoffSchema.safeParse(
-    Object.fromEntries(
-      REFERENCE_HANDOFF_PARAM_KEYS.map((key) => [key, searchParams.get(key)])
-    )
-  );
-  if (!parsed.success) return null;
+  // 新版多选使用 refs/sourceIds/sourceNames；旧版单选继续使用
+  // ref/sourceId/sourceName。两套参数同时出现时拒绝，避免交接语义歧义。
+  const legacyRefs = searchParams.getAll("ref");
+  const multiRefs = searchParams.getAll("refs");
+  const legacyIds = searchParams.getAll("sourceId");
+  const multiIds = searchParams.getAll("sourceIds");
+  const legacyNames = searchParams.getAll("sourceName");
+  const multiNames = searchParams.getAll("sourceNames");
+  const usingMulti =
+    multiRefs.length > 0 || multiIds.length > 0 || multiNames.length > 0;
+  const usingLegacy =
+    legacyRefs.length > 0 || legacyIds.length > 0 || legacyNames.length > 0;
+  if (usingMulti && usingLegacy) return null;
 
+  const refs = usingMulti ? multiRefs : legacyRefs;
+  const sourceIds = usingMulti ? multiIds : legacyIds;
+  const sourceNames = usingMulti ? multiNames : legacyNames;
+  if (
+    refs.length < 1 ||
+    refs.length > MAX_REFERENCE_HANDOFF_IMAGES ||
+    refs.length !== sourceIds.length ||
+    refs.length !== sourceNames.length
+  ) {
+    return null;
+  }
+  // Legacy 交接严格保持单图，防止旧客户端误把重复 ref 当作多图。
+  if (!usingMulti && refs.length !== 1) return null;
+
+  const references: ReferenceHandoffReference[] = [];
+  for (let index = 0; index < refs.length; index += 1) {
+    const parsed = referenceHandoffSchema.safeParse({
+      mode: modeValues[0],
+      ref: refs[index],
+      sourceId: sourceIds[index],
+      sourceName: sourceNames[index],
+      intent,
+      sendRef: intent,
+    });
+    if (!parsed.success) return null;
+    references.push({
+      imageUrl: parsed.data.ref,
+      sourceId: parsed.data.sourceId,
+      sourceName: parsed.data.sourceName,
+    });
+  }
+
+  const first = references[0];
+  if (!first) return null;
   return {
-    id: parsed.data.intent,
-    imageUrl: parsed.data.ref,
-    sourceId: parsed.data.sourceId,
-    sourceName: parsed.data.sourceName,
+    id: intent,
+    imageUrl: first.imageUrl,
+    sourceId: first.sourceId,
+    sourceName: first.sourceName,
+    ...(usingMulti ? { references } : {}),
   };
 }
 
@@ -105,6 +166,11 @@ export function hasReferenceHandoffParams(
 ): boolean {
   return (
     searchParams.getAll("ref").length > 0 ||
+    searchParams.getAll("refs").length > 0 ||
+    searchParams.getAll("sourceId").length > 0 ||
+    searchParams.getAll("sourceIds").length > 0 ||
+    searchParams.getAll("sourceName").length > 0 ||
+    searchParams.getAll("sourceNames").length > 0 ||
     searchParams.getAll("sendRef").length > 0
   );
 }

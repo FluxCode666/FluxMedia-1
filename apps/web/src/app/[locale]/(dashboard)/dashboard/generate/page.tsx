@@ -38,7 +38,7 @@ export default async function GeneratePage() {
 
   const [creditsData, recentGenerations] = await Promise.all([
     getCreditsBalance(user.id),
-    getUserRecentGenerations(user.id, 6),
+    getUserRecentGenerations(user.id, 12),
   ]);
   const [
     mediaLimits,
@@ -59,10 +59,13 @@ export default async function GeneratePage() {
     id: generation.id,
     prompt: generation.prompt,
     status: generation.status,
-    imageUrl: buildSignedStorageImageUrl(
-      generation.storageKey,
-      generation.storageBucket
-    ),
+    imageUrl:
+      generation.storageKey && generation.storageBucket
+        ? buildSignedStorageImageUrl(
+            generation.storageKey,
+            generation.storageBucket
+          )
+        : null,
   }));
 
   return (
