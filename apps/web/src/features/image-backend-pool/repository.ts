@@ -457,14 +457,22 @@ export function createPostgresBackendPoolRepository(
                     ${input.requiredVideoInputCapabilities.referenceVideos} = false
                     or (
                       m.type = 'api'
-                      and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceVideos')::boolean, false) = true
+                      and coalesce(
+                        (api_version.configuration->'videoInputCapabilitiesByModel'->lower(trim(${input.requestedModel}))->>'referenceVideos')::boolean,
+                        (api_version.configuration->'videoInputCapabilities'->>'referenceVideos')::boolean,
+                        false
+                      ) = true
                     )
                   )
                   and (
                     ${input.requiredVideoInputCapabilities.referenceAudios} = false
                     or (
                       m.type = 'api'
-                      and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceAudios')::boolean, false) = true
+                      and coalesce(
+                        (api_version.configuration->'videoInputCapabilitiesByModel'->lower(trim(${input.requestedModel}))->>'referenceAudios')::boolean,
+                        (api_version.configuration->'videoInputCapabilities'->>'referenceAudios')::boolean,
+                        false
+                      ) = true
                     )
                   )
                   and ${buildExcludedMemberPredicate(input.excludedMemberIds)}

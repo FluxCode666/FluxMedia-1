@@ -187,7 +187,7 @@ describe("backend member service", () => {
     );
   });
 
-  it("保留 API 成员的视频参考媒体能力标签", () => {
+  it("保留 API 成员按模型声明的视频参考媒体能力", () => {
     const input = backendMemberInputSchema.parse(
       apiInput({
         supportedModelIds: ["seedance2"],
@@ -197,8 +197,14 @@ describe("backend member service", () => {
           useStream: false,
           videoProtocolMode: "custom",
           videoInputCapabilities: {
-            referenceVideos: true,
-            referenceAudios: true,
+            referenceVideos: false,
+            referenceAudios: false,
+          },
+          videoInputCapabilitiesByModel: {
+            seedance2: {
+              referenceVideos: true,
+              referenceAudios: true,
+            },
           },
           modelMappings: [],
           authentication: { mode: "bearer" },
@@ -209,8 +215,14 @@ describe("backend member service", () => {
 
     expect(createApiAdapterDraft(input)).toMatchObject({
       videoInputCapabilities: {
-        referenceVideos: true,
-        referenceAudios: true,
+        referenceVideos: false,
+        referenceAudios: false,
+      },
+      videoInputCapabilitiesByModel: {
+        seedance2: {
+          referenceVideos: true,
+          referenceAudios: true,
+        },
       },
     });
   });
@@ -759,6 +771,7 @@ describe("backend member service", () => {
           referenceVideos: false,
           referenceAudios: false,
         },
+        videoInputCapabilitiesByModel: {},
         modelMappings: [],
       },
     };

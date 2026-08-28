@@ -35,6 +35,7 @@ function createAdapter(): ApiUpstreamAdapterDraft {
       referenceVideos: false,
       referenceAudios: false,
     },
+    videoInputCapabilitiesByModel: {},
     modelMappings: [],
     authentication: { mode: "bearer" },
     credentialScope: "http://upstream.internal:8080|bearer",

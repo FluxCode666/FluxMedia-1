@@ -185,6 +185,41 @@ describe("backend member contract", () => {
     expect(invalid.success).toBe(false);
   });
 
+  it("只允许为账号已支持的平台模型配置参考媒体输入能力", () => {
+    const valid = backendMemberInputSchema.safeParse({
+      ...commonMember,
+      supportedModelIds: ["seedance2"],
+      type: "api",
+      config: {
+        baseUrl: "https://video.example.com/v1",
+        modelMappings: [],
+        videoInputCapabilitiesByModel: {
+          Seedance2: { referenceVideos: true, referenceAudios: false },
+        },
+      },
+    });
+    expect(valid.success).toBe(true);
+    if (valid.success && valid.data.type === "api") {
+      expect(valid.data.config.videoInputCapabilitiesByModel).toEqual({
+        seedance2: { referenceVideos: true, referenceAudios: false },
+      });
+    }
+
+    expect(
+      backendMemberInputSchema.safeParse({
+        ...commonMember,
+        type: "api",
+        config: {
+          baseUrl: "https://video.example.com/v1",
+          modelMappings: [],
+          videoInputCapabilitiesByModel: {
+            seedance2: { referenceVideos: true, referenceAudios: false },
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+
   it("严格拒绝已移除的简易参数映射字段", () => {
     expect(
       backendMemberInputSchema.safeParse({

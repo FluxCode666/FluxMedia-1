@@ -46,6 +46,7 @@ function createConfig(): ApiConfig {
     videoSubmissionRetryCount: 2,
     videoProtocolMode: "custom",
     videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
+    videoInputCapabilitiesByModel: {},
     modelMappings: [],
     authentication: { mode: "bearer" },
     credentialScope: "https://video.example.com|bearer",

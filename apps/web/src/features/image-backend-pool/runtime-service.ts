@@ -14,6 +14,7 @@ import {
 import {
   apiModelMappingsSchema,
   apiUpstreamAdapterDraftSchema,
+  resolveApiVideoInputCapabilities,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
   getGroupImageCreditOverrides,
@@ -710,14 +711,22 @@ export async function inspectRuntimeVideoBackendAvailability(
               ${input.requiredVideoInputCapabilities?.referenceVideos ?? false} = false
               or (
                 member.type = 'api'
-                and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceVideos')::boolean, false) = true
+                and coalesce(
+                  (api_version.configuration->'videoInputCapabilitiesByModel'->lower(trim(${input.modelId}))->>'referenceVideos')::boolean,
+                  (api_version.configuration->'videoInputCapabilities'->>'referenceVideos')::boolean,
+                  false
+                ) = true
               )
             )
             and (
               ${input.requiredVideoInputCapabilities?.referenceAudios ?? false} = false
               or (
                 member.type = 'api'
-                and coalesce((api_version.configuration->'videoInputCapabilities'->>'referenceAudios')::boolean, false) = true
+                and coalesce(
+                  (api_version.configuration->'videoInputCapabilitiesByModel'->lower(trim(${input.modelId}))->>'referenceAudios')::boolean,
+                  (api_version.configuration->'videoInputCapabilities'->>'referenceAudios')::boolean,
+                  false
+                ) = true
               )
             )
             and (
@@ -1244,10 +1253,14 @@ export async function createRuntimeBackendSession(
       !canRuntimeBackendLeaseServeRequest(normalizedInput, {
         memberType: lease.memberType,
         adobeMode: lease.adobeMode,
-        ...(lease.config.backend?.apiUpstreamAdapter?.videoInputCapabilities
+        ...(lease.config.backend?.apiUpstreamAdapter
           ? {
-              videoInputCapabilities:
-                lease.config.backend.apiUpstreamAdapter.videoInputCapabilities,
+              videoInputCapabilities: resolveApiVideoInputCapabilities(
+                lease.config.backend.apiUpstreamAdapter
+                  .videoInputCapabilitiesByModel,
+                normalizedInput.modelId,
+                lease.config.backend.apiUpstreamAdapter.videoInputCapabilities
+              ),
             }
           : {}),
       })

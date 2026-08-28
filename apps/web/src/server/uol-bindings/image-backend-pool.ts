@@ -282,6 +282,22 @@ async function assertBackendMemberModelsComeFromConfiguration(
         .join("、")}`
     );
   }
+  if (input.type === "api") {
+    const invalidInputCapabilityModels = Object.keys(
+      input.config.videoInputCapabilitiesByModel
+    ).filter(
+      (modelId) =>
+        optionByModelId.get(modelId.toLowerCase())?.category !== "video"
+    );
+    if (invalidInputCapabilityModels.length > 0) {
+      throw new OperationError(
+        "validation_error",
+        `参考视频和音频能力只能配置到视频模型：${invalidInputCapabilityModels
+          .slice(0, 3)
+          .join("、")}`
+      );
+    }
+  }
   if (unavailableModelIds.length === 0) return;
 
   const displayedIds = unavailableModelIds.slice(0, 3).join("、");

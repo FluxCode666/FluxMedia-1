@@ -12,6 +12,7 @@ import {
   apiModelMappingsSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
+  apiVideoInputCapabilitiesByModelSchema,
   apiVideoInputCapabilitiesSchema,
   apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
@@ -40,7 +41,9 @@ export const backendModelResolutionCapabilitiesSchema = z
   )
   .superRefine((value, context) => {
     for (const [modelId, resolutions] of Object.entries(value)) {
-      const normalized = resolutions.map((resolution) => resolution.toLowerCase());
+      const normalized = resolutions.map((resolution) =>
+        resolution.toLowerCase()
+      );
       if (new Set(normalized).size !== normalized.length) {
         context.addIssue({
           code: "custom",
@@ -113,8 +116,10 @@ export const apiBackendMemberConfigSchema = z
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     /** 显式选择视频上游请求格式；旧成员缺失时安全沿用 custom。 */
     videoProtocolMode: apiVideoProtocolModeSchema,
-    /** 账号可处理的额外视频输入能力；旧成员缺失时全部关闭。 */
+    /** 旧适配版本的账号级能力；新保存始终保持关闭。 */
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
+    /** 按平台模型 ID 声明的参考视频和参考音频输入能力。 */
+    videoInputCapabilitiesByModel: apiVideoInputCapabilitiesByModelSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema.default({
       mode: "bearer",
@@ -174,7 +179,8 @@ const commonBackendMemberFields = {
     .refine((value) => value.length > 0, {
       message: "At least one supported model ID is required",
     }),
-  supportedResolutionsByModel: backendModelResolutionCapabilitiesSchema.optional(),
+  supportedResolutionsByModel:
+    backendModelResolutionCapabilitiesSchema.optional(),
   contentSafetyEnabled: z.boolean(),
   isEnabled: z.boolean(),
   alwaysActive: z.boolean(),
@@ -231,6 +237,16 @@ export const backendMemberInputSchema = z
           code: "custom",
           path: ["config", "modelMappings", index, "modelId"],
           message: "Model mapping source must be a supported model ID",
+        });
+      }
+      for (const modelId of Object.keys(
+        member.config.videoInputCapabilitiesByModel
+      )) {
+        if (supportedModelIds.has(modelId.toLowerCase())) continue;
+        context.addIssue({
+          code: "custom",
+          path: ["config", "videoInputCapabilitiesByModel", modelId],
+          message: "Video input capability model must be supported",
         });
       }
     }

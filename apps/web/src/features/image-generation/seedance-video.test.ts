@@ -24,6 +24,7 @@ const adapter: ApiUpstreamAdapterDraft = {
   videoSubmissionRetryCount: 2,
   videoProtocolMode: "seedance",
   videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
+  videoInputCapabilitiesByModel: {},
   modelMappings: [],
   authentication: { mode: "bearer" },
   credentialScope: "https://ark.example.com|bearer",

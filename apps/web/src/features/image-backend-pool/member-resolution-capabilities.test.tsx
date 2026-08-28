@@ -1,5 +1,5 @@
 /**
- * 供应商账号按模型分辨率能力的 DB-free 测试。
+ * 供应商账号按模型输入与分辨率能力的 DB-free 测试。
  *
  * 职责：锁定继承与账号覆盖之间的可逆转换、模型隔离和至少一个分辨率约束。
  */
@@ -11,11 +11,32 @@ import {
   MemberResolutionCapabilitiesEditor,
   setMemberResolutionCapabilityMode,
   setMemberResolutionSelected,
+  setMemberVideoInputCapability,
 } from "./member-resolution-capabilities";
 
 const globalResolutions = ["480p", "720p", "1080p", "4k"];
 
 describe("member resolution capability state", () => {
+  it("按模型独立更新参考媒体输入能力并在全部关闭时清理键", () => {
+    const withVideo = setMemberVideoInputCapability(
+      {},
+      "Seedance2",
+      "referenceVideos",
+      true
+    );
+    expect(withVideo).toEqual({
+      seedance2: { referenceVideos: true, referenceAudios: false },
+    });
+    expect(
+      setMemberVideoInputCapability(
+        withVideo,
+        "seedance2",
+        "referenceVideos",
+        false
+      )
+    ).toEqual({});
+  });
+
   it("从继承切到自定义时复制当前全局能力", () => {
     expect(
       setMemberResolutionCapabilityMode(
@@ -93,6 +114,8 @@ describe("MemberResolutionCapabilitiesEditor", () => {
         ],
         value: {},
         onChange: vi.fn(),
+        videoInputCapabilitiesByModel: {},
+        onVideoInputCapabilitiesChange: vi.fn(),
       })
     );
 
@@ -101,6 +124,8 @@ describe("MemberResolutionCapabilitiesEditor", () => {
     expect(markup).toContain("只读继承");
     expect(markup).toContain("4k");
     expect(markup).toContain('aria-label="seedance2 支持 4k"');
+    expect(markup).toContain("支持参考视频输入");
+    expect(markup).toContain("支持参考音频输入");
     expect(markup).toContain("disabled");
   });
 });

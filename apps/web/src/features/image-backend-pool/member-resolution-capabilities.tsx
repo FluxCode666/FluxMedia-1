@@ -1,7 +1,8 @@
 "use client";
 
+import type { ApiVideoInputCapabilitiesByModel } from "@repo/shared/image-backend/api-upstream-adaptation";
 /**
- * 供应商账号按模型配置分辨率能力。
+ * 供应商账号按模型配置输入与分辨率能力。
  *
  * 每个模型可以继承模型配置页的全局能力，或保存一份账号级子集。缺失模型键表示
  * 继承；切回继承会删除账号级覆盖，避免把当前全局值固化为账号配置。
@@ -21,6 +22,38 @@ export type MemberResolutionCapabilityMode = "inherit" | "custom";
 interface ResolutionSelectionResult {
   capabilities: MemberResolutionCapabilities;
   rejected: boolean;
+}
+
+/**
+ * 更新一个模型的参考媒体能力；两项均关闭时移除稀疏配置。
+ *
+ * @param capabilities 当前账号按模型保存的输入能力。
+ * @param modelId 当前平台视频模型 ID。
+ * @param capability 要更新的参考视频或参考音频能力。
+ * @param enabled 是否允许该输入。
+ * @returns 保留其他模型且模型键规范为小写的新对象。
+ * @sideEffects 无；从不原地修改输入。
+ */
+export function setMemberVideoInputCapability(
+  capabilities: Readonly<ApiVideoInputCapabilitiesByModel>,
+  modelId: string,
+  capability: "referenceVideos" | "referenceAudios",
+  enabled: boolean
+): ApiVideoInputCapabilitiesByModel {
+  const key = modelId.trim().toLowerCase();
+  const remaining = Object.fromEntries(
+    Object.entries(capabilities).filter(
+      ([candidate]) => candidate.trim().toLowerCase() !== key
+    )
+  );
+  const next = {
+    referenceVideos: capabilities[key]?.referenceVideos ?? false,
+    referenceAudios: capabilities[key]?.referenceAudios ?? false,
+    [capability]: enabled,
+  };
+  return next.referenceVideos || next.referenceAudios
+    ? { ...remaining, [key]: next }
+    : remaining;
 }
 
 /** 把只读能力快照复制为 React 表单可写状态。 */
@@ -131,21 +164,27 @@ export function MemberResolutionCapabilitiesEditor({
   value,
   disabled = false,
   onChange,
+  videoInputCapabilitiesByModel = {},
+  onVideoInputCapabilitiesChange,
 }: {
   modelIds: readonly string[];
   modelOptions: readonly BackendMemberModelOption[];
   value: Readonly<Record<string, readonly string[]>>;
   disabled?: boolean;
   onChange: (value: MemberResolutionCapabilities) => void;
+  videoInputCapabilitiesByModel?: Readonly<ApiVideoInputCapabilitiesByModel>;
+  onVideoInputCapabilitiesChange?: (
+    value: ApiVideoInputCapabilitiesByModel
+  ) => void;
 }) {
   const idPrefix = useId();
 
   return (
     <div className="space-y-3 rounded-md border p-3">
       <div>
-        <Label>账号分辨率能力</Label>
+        <Label>模型级能力配置</Label>
         <p className="mt-1 text-xs text-muted-foreground">
-          默认跟随模型配置页；需要限制某个供应商账号时，切换为自定义并勾选该账号实际支持的分辨率。
+          视频和音频输入能力按视频模型独立声明；分辨率默认跟随模型配置页，也可按账号覆盖。
         </p>
       </div>
 
@@ -185,6 +224,70 @@ export function MemberResolutionCapabilitiesEditor({
                   </code>
                 ) : null}
               </div>
+
+              {option?.category === "video" &&
+              onVideoInputCapabilitiesChange ? (
+                <div className="space-y-2 rounded-md border bg-background p-3">
+                  <div>
+                    <span className="text-xs font-medium">参考媒体输入</span>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      只影响当前模型，请按该供应商账号的实际协议能力选择。
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-x-5 gap-y-2">
+                    <Label
+                      className="flex items-center gap-2 text-xs font-normal"
+                      htmlFor={`${modelControlId}-reference-video`}
+                    >
+                      <Checkbox
+                        checked={
+                          videoInputCapabilitiesByModel[
+                            modelId.trim().toLowerCase()
+                          ]?.referenceVideos ?? false
+                        }
+                        disabled={disabled}
+                        id={`${modelControlId}-reference-video`}
+                        onCheckedChange={(checked) =>
+                          onVideoInputCapabilitiesChange(
+                            setMemberVideoInputCapability(
+                              videoInputCapabilitiesByModel,
+                              modelId,
+                              "referenceVideos",
+                              checked === true
+                            )
+                          )
+                        }
+                      />
+                      支持参考视频输入
+                    </Label>
+                    <Label
+                      className="flex items-center gap-2 text-xs font-normal"
+                      htmlFor={`${modelControlId}-reference-audio`}
+                    >
+                      <Checkbox
+                        checked={
+                          videoInputCapabilitiesByModel[
+                            modelId.trim().toLowerCase()
+                          ]?.referenceAudios ?? false
+                        }
+                        disabled={disabled}
+                        id={`${modelControlId}-reference-audio`}
+                        onCheckedChange={(checked) =>
+                          onVideoInputCapabilitiesChange(
+                            setMemberVideoInputCapability(
+                              videoInputCapabilitiesByModel,
+                              modelId,
+                              "referenceAudios",
+                              checked === true
+                            )
+                          )
+                        }
+                      />
+                      支持参考音频输入
+                    </Label>
+                  </div>
+                </div>
+              ) : null}
 
               {globalResolutions.length > 0 ? (
                 <>

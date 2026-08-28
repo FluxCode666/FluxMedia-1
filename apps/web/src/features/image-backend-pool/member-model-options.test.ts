@@ -109,6 +109,7 @@ function createMemberInput(
           referenceVideos: false,
           referenceAudios: false,
         },
+        videoInputCapabilitiesByModel: {},
         modelMappings: [],
         authentication: { mode: "bearer" },
         operations: createDefaultApiUpstreamOperations(),

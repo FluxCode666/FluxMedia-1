@@ -47,6 +47,7 @@ import {
 } from "./api-upstream-adapter-draft";
 import { ApiUpstreamAdapterForm } from "./api-upstream-adapter-form";
 import { BackendBooleanSetting } from "./boolean-setting";
+import { MemberDetailSection } from "./member-detail-section";
 import {
   type AdobeMemberMode,
   acceptsVideoBackendMemberModels,
@@ -143,6 +144,31 @@ export function BackendMemberFormDialog({
     setPriority(String(member?.priority ?? 50));
     setConcurrency(String(member?.concurrency ?? 10));
     if (member?.type === "api") {
+      const legacyVideoInputCapabilities = member.config
+        .videoInputCapabilities ?? {
+        referenceVideos: false,
+        referenceAudios: false,
+      };
+      const savedVideoInputCapabilitiesByModel =
+        member.config.videoInputCapabilitiesByModel ?? {};
+      const videoInputCapabilitiesByModel = Object.fromEntries(
+        member.supportedModelIds.flatMap((modelId) => {
+          const normalizedModelId = modelId.trim().toLowerCase();
+          const option = modelOptions.find(
+            (candidate) =>
+              candidate.id.trim().toLowerCase() === normalizedModelId
+          );
+          if (option?.category !== "video" && !normalizeVideoModelId(modelId)) {
+            return [];
+          }
+          const capabilities =
+            savedVideoInputCapabilitiesByModel[normalizedModelId] ??
+            legacyVideoInputCapabilities;
+          return capabilities.referenceVideos || capabilities.referenceAudios
+            ? [[normalizedModelId, capabilities]]
+            : [];
+        })
+      );
       setApiBaseUrl(member.config.baseUrl);
       setApiUseStream(member.config.useStream);
       setModelMappings(member.config.modelMappings);
@@ -150,10 +176,8 @@ export function BackendMemberFormDialog({
         authentication: member.config.authentication ?? { mode: "bearer" },
         videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
         videoProtocolMode: member.config.videoProtocolMode ?? "custom",
-        videoInputCapabilities: member.config.videoInputCapabilities ?? {
-          referenceVideos: false,
-          referenceAudios: false,
-        },
+        videoInputCapabilities: legacyVideoInputCapabilities,
+        videoInputCapabilitiesByModel,
         operations:
           member.config.operations ??
           createDefaultApiUpstreamAdapterFormDraft().operations,
@@ -275,6 +299,9 @@ export function BackendMemberFormDialog({
   /** 选择新模型时保留已有账号级分辨率覆盖，移除孤儿覆盖。 */
   function handleSelectedModelIdsChange(nextModelIds: string[]): void {
     setSelectedModelIds(nextModelIds);
+    const nextModelKeys = new Set(
+      nextModelIds.map((modelId) => modelId.trim().toLowerCase())
+    );
     setSupportedResolutionsByModel((current) =>
       Object.fromEntries(
         nextModelIds.flatMap((modelId) => {
@@ -284,6 +311,14 @@ export function BackendMemberFormDialog({
         })
       )
     );
+    setApiAdapterDraft((current) => ({
+      ...current,
+      videoInputCapabilitiesByModel: Object.fromEntries(
+        Object.entries(current.videoInputCapabilitiesByModel).filter(
+          ([modelId]) => nextModelKeys.has(modelId.trim().toLowerCase())
+        )
+      ),
+    }));
   }
 
   /** 校验客户端草稿并提交严格的类型专属成员输入。 */
@@ -342,7 +377,18 @@ export function BackendMemberFormDialog({
           useStream: apiUseStream,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
           videoProtocolMode: apiAdapterDraft.videoProtocolMode,
-          videoInputCapabilities: apiAdapterDraft.videoInputCapabilities,
+          // 旧账号级标签保持关闭；参考媒体能力只按平台模型 ID 声明。
+          videoInputCapabilities: {
+            referenceVideos: false,
+            referenceAudios: false,
+          },
+          videoInputCapabilitiesByModel: Object.fromEntries(
+            Object.entries(
+              apiAdapterDraft.videoInputCapabilitiesByModel
+            ).filter(([modelId]) =>
+              selectedModelKeys.has(modelId.toLowerCase())
+            )
+          ),
           modelMappings: modelMappings.filter((mapping) =>
             selectedModelKeys.has(mapping.modelId.toLowerCase())
           ),
@@ -386,7 +432,7 @@ export function BackendMemberFormDialog({
   const formContent = (
     <form className="space-y-6" onSubmit={handleSubmit}>
       <fieldset className="contents" disabled={readOnly}>
-        {inline ? (
+        {inline && detailsOnly ? null : inline ? (
           <header className="space-y-1">
             <h2 className="text-lg font-medium leading-none tracking-tight">
               {detailsOnly ? "账号适配详情" : member ? "编辑成员" : "新增成员"}
@@ -540,14 +586,10 @@ export function BackendMemberFormDialog({
         ) : null}
 
         {detailsOnly ? (
-          <section className="space-y-4 rounded-md border p-4">
-            <div>
-              <h3 className="font-medium">模型能力</h3>
-              <p className="text-xs text-muted-foreground">
-                先声明账号支持的平台模型，再为每个模型配置上游
-                ID、视频输入和分辨率能力。
-              </p>
-            </div>
+          <MemberDetailSection
+            title="模型能力"
+            description="先声明账号支持的平台模型，再按模型配置供应商 ID、参考媒体输入和分辨率能力。"
+          >
             <div className="space-y-2">
               <Label htmlFor="member-models">支持的模型</Label>
               <BackendMemberModelSelect
@@ -601,67 +643,25 @@ export function BackendMemberFormDialog({
                 )}
               </div>
             ) : null}
-            {type === "api" ? (
-              <div className="space-y-2">
-                <Label>视频输入能力标签</Label>
-                <div className="space-y-2 rounded-md border p-3">
-                  <label
-                    htmlFor="api-reference-video-capability"
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    <Checkbox
-                      id="api-reference-video-capability"
-                      checked={
-                        apiAdapterDraft.videoInputCapabilities.referenceVideos
-                      }
-                      disabled={isPending}
-                      onCheckedChange={(checked) =>
-                        setApiAdapterDraft({
-                          ...apiAdapterDraft,
-                          videoInputCapabilities: {
-                            ...apiAdapterDraft.videoInputCapabilities,
-                            referenceVideos: checked === true,
-                          },
-                        })
-                      }
-                    />
-                    支持参考视频输入
-                  </label>
-                  <label
-                    htmlFor="api-reference-audio-capability"
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    <Checkbox
-                      id="api-reference-audio-capability"
-                      checked={
-                        apiAdapterDraft.videoInputCapabilities.referenceAudios
-                      }
-                      disabled={isPending}
-                      onCheckedChange={(checked) =>
-                        setApiAdapterDraft({
-                          ...apiAdapterDraft,
-                          videoInputCapabilities: {
-                            ...apiAdapterDraft.videoInputCapabilities,
-                            referenceAudios: checked === true,
-                          },
-                        })
-                      }
-                    />
-                    支持参考音频输入
-                  </label>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  请求携带对应参考素材时，只会调度到已勾选能力的 API 账号。
-                </p>
-              </div>
-            ) : null}
             {selectedModelIds.length > 0 ? (
               <MemberResolutionCapabilitiesEditor
                 disabled={isPending}
                 modelIds={selectedModelIds}
                 modelOptions={selectableModelOptions}
                 onChange={setSupportedResolutionsByModel}
+                onVideoInputCapabilitiesChange={
+                  type === "api"
+                    ? (videoInputCapabilitiesByModel) =>
+                        setApiAdapterDraft({
+                          ...apiAdapterDraft,
+                          videoInputCapabilitiesByModel,
+                        })
+                    : undefined
+                }
                 value={supportedResolutionsByModel}
+                videoInputCapabilitiesByModel={
+                  apiAdapterDraft.videoInputCapabilitiesByModel
+                }
               />
             ) : null}
             <p className="text-xs text-muted-foreground">
@@ -671,217 +671,255 @@ export function BackendMemberFormDialog({
                   ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
                   : "API 账号可选择图片和视频的真实模型 ID。"}
             </p>
-          </section>
+          </MemberDetailSection>
         ) : null}
 
         {type === "api" ? (
-          <div className="space-y-4 rounded-md border p-4">
-            <div>
+          <section
+            className={
+              detailsOnly
+                ? "overflow-hidden rounded-lg border bg-card"
+                : "space-y-4 rounded-md border p-4"
+            }
+          >
+            <header
+              className={detailsOnly ? "border-b bg-muted/20 px-5 py-4" : ""}
+            >
               <h3 className="font-medium">
                 {detailsOnly ? "请求响应处理" : "API 配置"}
               </h3>
-              <p className="text-xs text-muted-foreground">
+              <p
+                className={
+                  detailsOnly
+                    ? "mt-1 max-w-3xl text-sm text-muted-foreground"
+                    : "text-xs text-muted-foreground"
+                }
+              >
                 图片使用 Images 兼容协议，视频使用 Videos 兼容协议；不含
                 Responses 或 Chat。
               </p>
+            </header>
+            <div className={detailsOnly ? "space-y-5 p-5" : "contents"}>
+              {!detailsOnly ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-base-url">Base URL</Label>
+                    <Input
+                      id="api-base-url"
+                      type="url"
+                      value={apiBaseUrl}
+                      onChange={(event) => setApiBaseUrl(event.target.value)}
+                      placeholder="https://api.example.com/v1"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-key">API Key</Label>
+                    <Input
+                      id="api-key"
+                      type="password"
+                      autoComplete="new-password"
+                      value={apiKey}
+                      onChange={(event) => setApiKey(event.target.value)}
+                      placeholder={
+                        apiAdapterDraft.authentication.mode === "none"
+                          ? "无认证模式无需填写"
+                          : member
+                            ? "留空保留现有凭据"
+                            : "必填"
+                      }
+                      required={
+                        !member &&
+                        apiAdapterDraft.authentication.mode !== "none"
+                      }
+                      disabled={apiAdapterDraft.authentication.mode === "none"}
+                    />
+                  </div>
+                </>
+              ) : null}
+              {showAdvancedConfiguration ? (
+                <>
+                  <BackendBooleanSetting
+                    id="api-use-stream-details"
+                    label="Images 流式响应"
+                    description="向兼容的 Images 上游发送 stream 与 partial_images 参数。"
+                    checked={apiUseStream}
+                    onCheckedChange={setApiUseStream}
+                  />
+                  <ApiUpstreamAdapterForm
+                    value={apiAdapterDraft}
+                    onChange={setApiAdapterDraft}
+                    disabled={isPending}
+                  />
+                </>
+              ) : (
+                <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                  账号创建后，可在账号详情中配置模型映射、视频协议和脚本处理模块。
+                </p>
+              )}
             </div>
-            {!detailsOnly ? (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="api-base-url">Base URL</Label>
-                  <Input
-                    id="api-base-url"
-                    type="url"
-                    value={apiBaseUrl}
-                    onChange={(event) => setApiBaseUrl(event.target.value)}
-                    placeholder="https://api.example.com/v1"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="api-key">API Key</Label>
-                  <Input
-                    id="api-key"
-                    type="password"
-                    autoComplete="new-password"
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={
-                      apiAdapterDraft.authentication.mode === "none"
-                        ? "无认证模式无需填写"
-                        : member
-                          ? "留空保留现有凭据"
-                          : "必填"
-                    }
-                    required={
-                      !member && apiAdapterDraft.authentication.mode !== "none"
-                    }
-                    disabled={apiAdapterDraft.authentication.mode === "none"}
-                  />
-                </div>
-              </>
-            ) : null}
-            {showAdvancedConfiguration ? (
-              <>
-                <BackendBooleanSetting
-                  id="api-use-stream-details"
-                  label="Images 流式响应"
-                  description="向兼容的 Images 上游发送 stream 与 partial_images 参数。"
-                  checked={apiUseStream}
-                  onCheckedChange={setApiUseStream}
-                />
-                <ApiUpstreamAdapterForm
-                  value={apiAdapterDraft}
-                  onChange={setApiAdapterDraft}
-                  disabled={isPending}
-                  showVideoInputCapabilities={false}
-                />
-              </>
-            ) : (
-              <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                账号创建后，可在账号详情中配置模型映射、视频协议和脚本处理模块。
-              </p>
-            )}
-          </div>
+          </section>
         ) : (
-          <div className="space-y-4 rounded-md border p-4">
-            <div>
+          <section
+            className={
+              detailsOnly
+                ? "overflow-hidden rounded-lg border bg-card"
+                : "space-y-4 rounded-md border p-4"
+            }
+          >
+            <header
+              className={detailsOnly ? "border-b bg-muted/20 px-5 py-4" : ""}
+            >
               <h3 className="font-medium">
                 {detailsOnly ? "账号默认参数" : "Adobe 配置"}
               </h3>
-              <p className="text-xs text-muted-foreground">
+              <p
+                className={
+                  detailsOnly
+                    ? "mt-1 max-w-3xl text-sm text-muted-foreground"
+                    : "text-xs text-muted-foreground"
+                }
+              >
                 Gateway 使用外部兼容接口；Direct 成员自身就是一个 Adobe
                 账号，不再包含内部子号池。
               </p>
-            </div>
-            {!detailsOnly ? (
-              <div className="space-y-2">
-                <Label>模式</Label>
-                <Select
-                  value={adobeMode}
-                  onValueChange={(value) =>
-                    handleAdobeModeChange(value as typeof adobeMode)
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gateway">Gateway</SelectItem>
-                    <SelectItem value="direct">Direct</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            {!detailsOnly && adobeMode === "gateway" && (
-              <>
+            </header>
+            <div className={detailsOnly ? "space-y-5 p-5" : "contents"}>
+              {!detailsOnly ? (
                 <div className="space-y-2">
-                  <Label htmlFor="adobe-base-url">Gateway Base URL</Label>
-                  <Input
-                    id="adobe-base-url"
-                    type="url"
-                    value={adobeBaseUrl}
-                    onChange={(event) => setAdobeBaseUrl(event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="adobe-api-key">Gateway API Key</Label>
-                  <Input
-                    id="adobe-api-key"
-                    type="password"
-                    autoComplete="new-password"
-                    value={adobeApiKey}
-                    onChange={(event) => setAdobeApiKey(event.target.value)}
-                    placeholder={member ? "留空保留现有凭据" : "必填"}
-                    required={!member}
-                  />
-                </div>
-              </>
-            )}
-            {!detailsOnly && adobeMode === "direct" && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="adobe-cookie">Adobe Cookie</Label>
-                  <Textarea
-                    id="adobe-cookie"
-                    rows={5}
-                    autoComplete="off"
-                    value={adobeCookie}
-                    onChange={(event) => setAdobeCookie(event.target.value)}
-                    placeholder={
-                      member?.type === "adobe" &&
-                      member.config.mode === "direct"
-                        ? "留空保留现有 Cookie"
-                        : "粘贴已登录 Adobe 账号的完整 Cookie"
-                    }
-                    required={
-                      !member ||
-                      (member.type === "adobe" &&
-                        member.config.mode !== "direct")
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    保存时会立即验证账号并换取短期 Token；明文不会返回浏览器。
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="adobe-scope">IMS Scope</Label>
-                  <Input
-                    id="adobe-scope"
-                    value={adobeScope}
-                    onChange={(event) => setAdobeScope(event.target.value)}
-                    placeholder="留空使用默认 Scope"
-                  />
-                </div>
-              </>
-            )}
-            {showAdvancedConfiguration ? (
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label htmlFor="adobe-ratio">默认比例</Label>
-                  <Input
-                    id="adobe-ratio"
-                    value={defaultRatio}
-                    onChange={(event) => setDefaultRatio(event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="adobe-resolution">默认分辨率</Label>
-                  <Input
-                    id="adobe-resolution"
-                    value={defaultResolution}
-                    onChange={(event) =>
-                      setDefaultResolution(event.target.value)
-                    }
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>GPT 图像质量</Label>
+                  <Label>模式</Label>
                   <Select
-                    value={gptImageQuality}
+                    value={adobeMode}
                     onValueChange={(value) =>
-                      setGptImageQuality(value as typeof gptImageQuality)
+                      handleAdobeModeChange(value as typeof adobeMode)
                     }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="gateway">Gateway</SelectItem>
+                      <SelectItem value="direct">Direct</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+              {!detailsOnly && adobeMode === "gateway" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-base-url">Gateway Base URL</Label>
+                    <Input
+                      id="adobe-base-url"
+                      type="url"
+                      value={adobeBaseUrl}
+                      onChange={(event) => setAdobeBaseUrl(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-api-key">Gateway API Key</Label>
+                    <Input
+                      id="adobe-api-key"
+                      type="password"
+                      autoComplete="new-password"
+                      value={adobeApiKey}
+                      onChange={(event) => setAdobeApiKey(event.target.value)}
+                      placeholder={member ? "留空保留现有凭据" : "必填"}
+                      required={!member}
+                    />
+                  </div>
+                </>
+              )}
+              {!detailsOnly && adobeMode === "direct" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-cookie">Adobe Cookie</Label>
+                    <Textarea
+                      id="adobe-cookie"
+                      rows={5}
+                      autoComplete="off"
+                      value={adobeCookie}
+                      onChange={(event) => setAdobeCookie(event.target.value)}
+                      placeholder={
+                        member?.type === "adobe" &&
+                        member.config.mode === "direct"
+                          ? "留空保留现有 Cookie"
+                          : "粘贴已登录 Adobe 账号的完整 Cookie"
+                      }
+                      required={
+                        !member ||
+                        (member.type === "adobe" &&
+                          member.config.mode !== "direct")
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      保存时会立即验证账号并换取短期 Token；明文不会返回浏览器。
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-scope">IMS Scope</Label>
+                    <Input
+                      id="adobe-scope"
+                      value={adobeScope}
+                      onChange={(event) => setAdobeScope(event.target.value)}
+                      placeholder="留空使用默认 Scope"
+                    />
+                  </div>
+                </>
+              )}
+              {showAdvancedConfiguration ? (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-ratio">默认比例</Label>
+                    <Input
+                      id="adobe-ratio"
+                      value={defaultRatio}
+                      onChange={(event) => setDefaultRatio(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="adobe-resolution">默认分辨率</Label>
+                    <Input
+                      id="adobe-resolution"
+                      value={defaultResolution}
+                      onChange={(event) =>
+                        setDefaultResolution(event.target.value)
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>GPT 图像质量</Label>
+                    <Select
+                      value={gptImageQuality}
+                      onValueChange={(value) =>
+                        setGptImageQuality(value as typeof gptImageQuality)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </section>
         )}
 
-        <DialogFooter>
+        <DialogFooter
+          className={
+            detailsOnly
+              ? "sticky bottom-4 z-10 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur"
+              : undefined
+          }
+        >
           <Button
             type="button"
             variant="outline"
