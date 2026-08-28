@@ -7,7 +7,6 @@ import { OperationError } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
-import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeOutputCompression,
   normalizeOutputFormat,
@@ -19,8 +18,7 @@ import {
   resolveImageRequestSize,
   validateImageSize,
 } from "@/features/image-generation/resolution";
-import { createImageStreamResponse } from "@/features/image-generation/streaming";
-import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
+import { invokeImageEnqueueAsyncOperation } from "@/features/image-generation/uol-client";
 
 const IMAGE_GENERATION_ERROR_FALLBACK =
   "Image generation failed. Please retry shortly.";
@@ -70,11 +68,6 @@ function errorResponse(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-function wantsStreamResponse(request: NextRequest, stream?: boolean) {
-  if (stream) return true;
-  return request.headers.get("accept")?.includes("text/event-stream") ?? false;
-}
-
 function generationErrorResponse(error: unknown) {
   if (error instanceof OperationError) {
     return NextResponse.json(
@@ -93,23 +86,6 @@ function generationErrorResponse(error: unknown) {
       IMAGE_GENERATION_ERROR_FALLBACK
     )
   );
-}
-
-/** 将管线正常返回的失败结果收敛为可安全回传的接口结果。 */
-function sanitizeGenerationResult(
-  result: ImageGenerationOperationResult,
-  source: string
-) {
-  if (!result.error) return result;
-
-  return {
-    ...result,
-    error: toClientErrorMessage(
-      result.error,
-      { source, generationId: result.generationId },
-      IMAGE_GENERATION_ERROR_FALLBACK
-    ),
-  };
 }
 
 export const POST = withApiLogging(async (request: NextRequest) => {
@@ -171,70 +147,18 @@ export const POST = withApiLogging(async (request: NextRequest) => {
     role,
   };
   const requestId = request.headers.get("x-request-id") ?? undefined;
-  const runGeneration = (
-    generationId: string,
-    callbacks?: Parameters<typeof invokeImageGenerationOperation>[2]
-  ) =>
-    invokeImageGenerationOperation(
-      { ...input, generationId },
+  try {
+    const generationId = requestedGenerationId ?? randomUUID();
+    const task = await invokeImageEnqueueAsyncOperation(
+      {
+        taskId: `task_${randomUUID().replace(/-/g, "")}`,
+        generationInput: { ...input, generationId },
+        responseFormat: "url",
+      },
       principal,
-      callbacks,
       requestId
     );
-
-  try {
-    const useStreamResponse = wantsStreamResponse(request, parsed.data.stream);
-
-    if (useStreamResponse) {
-      return createImageStreamResponse(
-        async (emit) => {
-          const result = await runGeneration(
-            requestedGenerationId ?? randomUUID(),
-            {
-              onPartialImage: async (image) => {
-                await emit({
-                  type: "partial_image",
-                  index: 0,
-                  partial_image_index: image.partialImageIndex,
-                  b64_json: image.imageBase64,
-                  url: image.imageUrl,
-                });
-              },
-            }
-          );
-          const safeResult = sanitizeGenerationResult(
-            result,
-            "image-generate-stream-result"
-          );
-          if (safeResult.error) {
-            await emit({
-              type: "error",
-              error: safeResult.error,
-              generationId: safeResult.generationId,
-              creditsConsumed: safeResult.creditsConsumed,
-            });
-          } else {
-            await emit({ type: "completed", ...safeResult });
-          }
-
-          return null;
-        },
-        {
-          formatError: (error) =>
-            toClientErrorMessage(
-              error,
-              { source: "image-generate-stream" },
-              IMAGE_GENERATION_ERROR_FALLBACK
-            ),
-        }
-      );
-    }
-
-    const result = sanitizeGenerationResult(
-      await runGeneration(requestedGenerationId ?? randomUUID()),
-      "image-generate-response"
-    );
-    return NextResponse.json(result);
+    return NextResponse.json(task, { status: 202 });
   } catch (error) {
     return generationErrorResponse(error);
   }

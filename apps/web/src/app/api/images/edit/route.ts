@@ -7,7 +7,6 @@ import { imageModelIdSchema } from "@repo/shared/image-generation/model-contract
 import { OperationError } from "@repo/shared/uol";
 import { type NextRequest, NextResponse } from "next/server";
 import { toClientErrorMessage } from "@/features/image-generation/error-sanitize";
-import type { ImageGenerationOperationResult } from "@/features/image-generation/operations";
 import {
   normalizeImageBackground,
   normalizeOutputCompression,
@@ -17,11 +16,9 @@ import {
 } from "@/features/image-generation/output-format";
 import { hasTrustedImageGenerationOrigin } from "@/features/image-generation/request-security";
 import {
-  deleteTemporaryImages,
   filesToMediaInputReferences,
   formatMegabytes,
   getTotalUploadSize,
-  uploadTemporaryImageUrls,
   validateImageFile,
   validateMaskMatchesSourceImage,
 } from "@/features/image-generation/request-utils";
@@ -32,7 +29,6 @@ import {
   resolveImageRequestSize,
   validateImageSize,
 } from "@/features/image-generation/resolution";
-import { createImageStreamResponse } from "@/features/image-generation/streaming";
 import type {
   ImageBackground,
   ImageModeration,
@@ -40,7 +36,7 @@ import type {
   ImageQuality,
   ThinkingLevel,
 } from "@/features/image-generation/types";
-import { invokeImageGenerationOperation } from "@/features/image-generation/uol-client";
+import { invokeImageEnqueueAsyncOperation } from "@/features/image-generation/uol-client";
 
 const VALID_QUALITIES = new Set<ImageQuality>([
   "auto",
@@ -77,11 +73,6 @@ function getOptionalBoolean(formData: FormData, ...keys: string[]) {
   return undefined;
 }
 
-function wantsStreamResponse(request: NextRequest, formData: FormData) {
-  if (formData.get("stream") === "true") return true;
-  return request.headers.get("accept")?.includes("text/event-stream") ?? false;
-}
-
 function getImageFiles(formData: FormData) {
   const images: File[] = [];
 
@@ -95,23 +86,6 @@ function getImageFiles(formData: FormData) {
   }
 
   return images;
-}
-
-/** 将管线正常返回的失败结果收敛为可安全回传的接口结果。 */
-function sanitizeGenerationResult(
-  result: ImageGenerationOperationResult,
-  source: string
-) {
-  if (!result.error) return result;
-
-  return {
-    ...result,
-    error: toClientErrorMessage(
-      result.error,
-      { source, generationId: result.generationId },
-      IMAGE_EDIT_ERROR_FALLBACK
-    ),
-  };
 }
 
 export const POST = withApiLogging(async (request: NextRequest) => {
@@ -293,44 +267,31 @@ export const POST = withApiLogging(async (request: NextRequest) => {
       await validateMaskMatchesSourceImage(firstSourceFile, maskFile);
     }
 
-    const batchId = randomUUID();
-    const sourceImageUrls = await uploadTemporaryImageUrls(
-      session.user.id,
-      batchId,
-      sourceFiles,
-      { scope: "requests" }
-    );
-    const maskImageUrls =
-      maskFile instanceof File
-        ? await uploadTemporaryImageUrls(
-            session.user.id,
-            `${batchId}-mask`,
-            [maskFile],
-            {
-              scope: "requests",
-            }
-          )
-        : undefined;
-    const useStreamResponse = wantsStreamResponse(request, formData);
-    const images = await filesToMediaInputReferences(
-      sourceFiles,
-      sourceImageUrls
-    );
+    const generationId = requestedGenerationId || randomUUID();
+    const { cleanupStagedImageInputs, stageImageInputReferences } =
+      await import("@/features/image-generation/image-input-storage");
+    const sourceReferences = await filesToMediaInputReferences(sourceFiles);
     const mask =
       maskFile instanceof File
-        ? (await filesToMediaInputReferences([maskFile], maskImageUrls))[0]
+        ? (await filesToMediaInputReferences([maskFile]))[0]
         : undefined;
+    const references = [...sourceReferences, ...(mask ? [mask] : [])];
+    const staged = await stageImageInputReferences({
+      userId: session.user.id,
+      generationId,
+      references,
+    });
+    const images = staged.references.slice(0, sourceReferences.length);
+    const stagedMask = mask
+      ? staged.references[sourceReferences.length]
+      : undefined;
     const principal = {
       type: "user" as const,
       userId: session.user.id,
       role,
     };
     const requestId = request.headers.get("x-request-id") ?? undefined;
-
-    const runEdit = async (
-      generationId: string,
-      onPartialImage?: Parameters<typeof invokeImageGenerationOperation>[2]
-    ) => {
+    try {
       const common = {
         generationId,
         backendGroupId,
@@ -351,75 +312,21 @@ export const POST = withApiLogging(async (request: NextRequest) => {
         repairPrompt,
         images,
       };
-      return invokeImageGenerationOperation(
-        mask
-          ? { operation: "mask", ...common, mask }
-          : { operation: "edit", ...common },
+      const task = await invokeImageEnqueueAsyncOperation(
+        {
+          taskId: `task_${randomUUID().replace(/-/g, "")}`,
+          generationInput: stagedMask
+            ? { operation: "mask", ...common, mask: stagedMask }
+            : { operation: "edit", ...common },
+          responseFormat: "url",
+        },
         principal,
-        onPartialImage,
         requestId
       );
-    };
-
-    try {
-      if (useStreamResponse) {
-        return createImageStreamResponse(
-          async (emit) => {
-            try {
-              const result = await runEdit(
-                requestedGenerationId || randomUUID(),
-                {
-                  onPartialImage: async (image) => {
-                    await emit({
-                      type: "partial_image",
-                      index: 0,
-                      partial_image_index: image.partialImageIndex,
-                      b64_json: image.imageBase64,
-                      url: image.imageUrl,
-                    });
-                  },
-                }
-              );
-              const safeResult = sanitizeGenerationResult(
-                result,
-                "image-edit-stream-result"
-              );
-              if (safeResult.error) {
-                await emit({
-                  type: "error",
-                  error: safeResult.error,
-                  generationId: safeResult.generationId,
-                  creditsConsumed: safeResult.creditsConsumed,
-                });
-              } else {
-                await emit({ type: "completed", ...safeResult });
-              }
-
-              return null;
-            } finally {
-              await deleteTemporaryImages(maskImageUrls);
-            }
-          },
-          {
-            formatError: (error) =>
-              toClientErrorMessage(
-                error,
-                { source: "image-edit-stream" },
-                IMAGE_EDIT_ERROR_FALLBACK
-              ),
-          }
-        );
-      }
-
-      const result = sanitizeGenerationResult(
-        await runEdit(requestedGenerationId || randomUUID()),
-        "image-edit-response"
-      );
-      return NextResponse.json(result);
-    } finally {
-      if (!useStreamResponse) {
-        await deleteTemporaryImages(maskImageUrls);
-      }
+      return NextResponse.json(task, { status: 202 });
+    } catch (error) {
+      await cleanupStagedImageInputs(staged.objects).catch(() => undefined);
+      throw error;
     }
   } catch (error) {
     if (error instanceof OperationError) {
