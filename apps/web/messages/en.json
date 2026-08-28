@@ -552,7 +552,7 @@
       "copyModelId": "Copy model ID: {modelId}",
       "copySuccess": "Model ID copied",
       "copyFailure": "Copy failed. Please copy the model ID manually.",
-      "viewDetails": "View details",
+      "openDetails": "Open model details: {modelName}",
       "useModel": "Use this model"
     },
     "detail": {
@@ -562,6 +562,10 @@
       "supportedDurations": "Durations",
       "supportedAspectRatios": "Aspect ratios",
       "supportedResolutions": "Resolutions",
+      "viewCover": "View full cover: {modelName}",
+      "viewCoverLabel": "Click to view the full cover",
+      "coverPreviewTitle": "Cover preview",
+      "coverPreviewDescription": "Viewing the full cover for {modelName}.",
       "autoSizeSupported": "Supports passing auto size",
       "autoSizeUnsupported": "Does not support passing auto size; choose an explicit size in the creation workspace.",
       "capabilities": {

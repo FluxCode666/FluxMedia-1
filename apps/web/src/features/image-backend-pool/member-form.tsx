@@ -5,7 +5,8 @@ import type { ApiModelMapping } from "@repo/shared/image-backend/api-upstream-ad
  * 统一媒体后端成员编辑表单。
  *
  * 职责：以 `api | adobe` 单一入口编辑公共调度字段、显式模型能力和类型专属
- * 配置。成员类型在编辑时不可原地切换，secret 留空由服务端保留既有值。
+ * 配置。新增流程只收集账号接入所需的基础信息，适配细节由账号详情页配置。
+ * 成员类型在编辑时不可原地切换，secret 留空由服务端保留既有值。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import type { BackendMemberType } from "@repo/shared/image-backend/member-contract";
@@ -61,6 +62,9 @@ import {
 import { MemberResolutionCapabilitiesEditor } from "./member-resolution-capabilities";
 import type { BackendMemberAdminSummary } from "./member-service";
 
+/** 新建账号在详情配置前使用的安全图像能力占位 ID。 */
+const DEFAULT_NEW_MEMBER_MODEL_ID = "gpt-image-2";
+
 /** 渲染 API 或 Adobe 统一成员的新增/编辑弹窗。 */
 export function BackendMemberFormDialog({
   open,
@@ -70,6 +74,9 @@ export function BackendMemberFormDialog({
   modelOptions,
   modelOptionStatus,
   onSaved,
+  inline = false,
+  detailsOnly = false,
+  readOnly = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -78,6 +85,12 @@ export function BackendMemberFormDialog({
   modelOptions: readonly BackendMemberModelOption[];
   modelOptionStatus: BackendMemberModelOptionStatus;
   onSaved: () => void | Promise<void>;
+  /** 在账号详情页内联渲染，不创建 Dialog。 */
+  inline?: boolean;
+  /** 详情页只展示适配细节，公共账号字段沿用已有成员值。 */
+  detailsOnly?: boolean;
+  /** 观察员角色只读时禁用表单控件和保存按钮。 */
+  readOnly?: boolean;
 }) {
   const [type, setType] = useState<BackendMemberType>("api");
   const [name, setName] = useState("");
@@ -118,7 +131,10 @@ export function BackendMemberFormDialog({
     setType(nextType);
     setName(member?.name ?? "");
     setGroupIds(member?.groupIds ?? (groups[0] ? [groups[0].id] : []));
-    setSelectedModelIds(member?.supportedModelIds ?? []);
+    const defaultModelId =
+      modelOptions.find((option) => option.category === "image")?.id ??
+      DEFAULT_NEW_MEMBER_MODEL_ID;
+    setSelectedModelIds(member?.supportedModelIds ?? [defaultModelId]);
     setSupportedResolutionsByModel(member?.supportedResolutionsByModel ?? {});
     setContentSafetyEnabled(member?.contentSafetyEnabled ?? true);
     setIsEnabled(member?.isEnabled ?? true);
@@ -172,7 +188,7 @@ export function BackendMemberFormDialog({
     setAdobeApiKey("");
     setAdobeCookie("");
     setAdobeScope("");
-  }, [groups, member, open]);
+  }, [groups, member, modelOptions, open]);
 
   const acceptsVideo = acceptsVideoBackendMemberModels(type, adobeMode);
   const selectableModelOptions = useMemo(() => {
@@ -195,6 +211,8 @@ export function BackendMemberFormDialog({
     return [...configuredOptions, ...existingOptions];
   }, [acceptsVideo, modelOptions, selectedModelIds, type]);
 
+  const showAdvancedConfiguration = Boolean(member) || detailsOnly;
+
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
     {
@@ -202,7 +220,7 @@ export function BackendMemberFormDialog({
         // 保存完成后先等待父级重新读取供应商快照，避免关闭弹窗后列表仍显示旧配置。
         await onSaved();
         toast.success(member ? "成员已更新" : "成员已创建");
-        onOpenChange(false);
+        if (!inline) onOpenChange(false);
       },
       onError: ({ error }) => toast.error(error.serverError || "保存成员失败"),
     }
@@ -253,10 +271,33 @@ export function BackendMemberFormDialog({
     }
   }
 
+  /** 选择新模型时保留已有账号级分辨率覆盖，移除孤儿覆盖。 */
+  function handleSelectedModelIdsChange(nextModelIds: string[]): void {
+    setSelectedModelIds(nextModelIds);
+    setSupportedResolutionsByModel((current) =>
+      Object.fromEntries(
+        nextModelIds.flatMap((modelId) => {
+          const key = modelId.toLowerCase();
+          const existing = current[key];
+          return existing?.length ? [[key, existing]] : [];
+        })
+      )
+    );
+  }
+
   /** 校验客户端草稿并提交严格的类型专属成员输入。 */
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    const supportedModelIds = normalizeSupportedModelIds(selectedModelIds);
+    const defaultModelId =
+      modelOptions.find((option) => option.category === "image")?.id ??
+      DEFAULT_NEW_MEMBER_MODEL_ID;
+    const supportedModelIds = normalizeSupportedModelIds(
+      selectedModelIds.length > 0
+        ? selectedModelIds
+        : defaultModelId
+          ? [defaultModelId]
+          : []
+    );
     if (groupIds.length === 0) {
       toast.error("至少选择一个分组");
       return;
@@ -341,257 +382,279 @@ export function BackendMemberFormDialog({
     });
   }
 
-  /** 选择新模型时保持全局分辨率默认值，移除模型时清理孤儿覆盖。 */
-  function handleSelectedModelIdsChange(nextModelIds: string[]): void {
-    setSelectedModelIds(nextModelIds);
-    setSupportedResolutionsByModel((current) =>
-      Object.fromEntries(
-        nextModelIds.flatMap((modelId) => {
-          const key = modelId.toLowerCase();
-          const existing = current[key];
-          if (existing?.length) return [[key, existing]];
-          return [];
-        })
-      )
-    );
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
-        <form className="space-y-6" onSubmit={handleSubmit}>
+  const formContent = (
+    <form className="space-y-6" onSubmit={handleSubmit}>
+      <fieldset className="contents" disabled={readOnly}>
+        {inline ? (
+          <header className="space-y-1">
+            <h2 className="text-lg font-medium leading-none tracking-tight">
+              {detailsOnly ? "账号适配详情" : member ? "编辑成员" : "新增成员"}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              {detailsOnly
+                ? "配置该账号的模型能力、上游映射、视频协议、脚本和分辨率能力。"
+                : member
+                  ? "模型 ID 是唯一能力声明；调度不会根据名称前缀预先选择账号类型。"
+                  : "先保存账号基础信息，适配细节可在账号详情页继续配置。"}
+            </p>
+          </header>
+        ) : (
           <DialogHeader>
-            <DialogTitle>{member ? "编辑成员" : "新增成员"}</DialogTitle>
+            <DialogTitle>
+              {detailsOnly ? "账号适配详情" : member ? "编辑成员" : "新增成员"}
+            </DialogTitle>
             <DialogDescription>
-              模型 ID 是唯一能力声明；调度不会根据名称前缀预先选择账号类型。
+              {detailsOnly
+                ? "配置该账号的模型能力、上游映射、视频协议、脚本和分辨率能力。"
+                : member
+                  ? "模型 ID 是唯一能力声明；调度不会根据名称前缀预先选择账号类型。"
+                  : "先保存账号基础信息，适配细节可在账号详情页继续配置。"}
             </DialogDescription>
           </DialogHeader>
+        )}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>账号类型</Label>
-              <Select
-                value={type}
-                disabled={Boolean(member)}
-                onValueChange={(value) =>
-                  handleMemberTypeChange(value as BackendMemberType)
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="api">API</SelectItem>
-                  <SelectItem value="adobe">Adobe</SelectItem>
-                </SelectContent>
-              </Select>
-              {member && (
-                <p className="text-xs text-muted-foreground">
-                  已有成员不能原地切换类型；需要时请删除后重建。
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="member-name">名称</Label>
-              <Input
-                id="member-name"
-                autoComplete="off"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div>
-              <Label>所属分组</Label>
-              <p className="text-xs text-muted-foreground">
-                同一成员可加入多个分组，调度不会跨出请求指定的分组。
-              </p>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {groups.map((group) => (
-                <label
-                  key={group.id}
-                  htmlFor={`member-group-${group.id}`}
-                  className="flex items-center gap-2 rounded-md border p-3 text-sm"
+        {!detailsOnly ? (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>账号类型</Label>
+                <Select
+                  value={type}
+                  disabled={Boolean(member)}
+                  onValueChange={(value) =>
+                    handleMemberTypeChange(value as BackendMemberType)
+                  }
                 >
-                  <Checkbox
-                    id={`member-group-${group.id}`}
-                    checked={groupIds.includes(group.id)}
-                    onCheckedChange={(checked) =>
-                      toggleGroup(group.id, checked === true)
-                    }
-                  />
-                  <span className="truncate">{group.name}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="member-priority">优先级</Label>
-              <Input
-                id="member-priority"
-                type="number"
-                min="0"
-                max="10000"
-                value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="member-concurrency">并发上限</Label>
-              <Input
-                id="member-concurrency"
-                type="number"
-                min="1"
-                max="10000"
-                value={concurrency}
-                onChange={(event) => setConcurrency(event.target.value)}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <BackendBooleanSetting
-              id="member-enabled"
-              label="启用成员"
-              description="停用后不再获得新租约。"
-              checked={isEnabled}
-              onCheckedChange={setIsEnabled}
-            />
-            <BackendBooleanSetting
-              id="member-safety"
-              label="成员内容安全"
-              description="分组选择继承时使用此值。"
-              checked={contentSafetyEnabled}
-              onCheckedChange={setContentSafetyEnabled}
-            />
-            <BackendBooleanSetting
-              id="member-always-active"
-              label="始终活跃"
-              description="仅显式运维场景使用，不因普通失败自动排除。"
-              checked={alwaysActive}
-              onCheckedChange={setAlwaysActive}
-            />
-            <BackendBooleanSetting
-              id="member-cooldown"
-              label="失败冷却"
-              description="可切换失败后暂时退出候选。"
-              checked={failureCooldownEnabled}
-              onCheckedChange={setFailureCooldownEnabled}
-            />
-          </div>
-
-          {type === "api" ? (
-            <div className="space-y-4 rounded-md border p-4">
-              <div>
-                <h3 className="font-medium">API 配置</h3>
-                <p className="text-xs text-muted-foreground">
-                  图片使用 Images 兼容协议，视频使用 Videos 兼容协议；不含
-                  Responses 或 Chat。
-                </p>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="api">API</SelectItem>
+                    <SelectItem value="adobe">Adobe</SelectItem>
+                  </SelectContent>
+                </Select>
+                {member && (
+                  <p className="text-xs text-muted-foreground">
+                    已有成员不能原地切换类型；需要时请删除后重建。
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="api-base-url">Base URL</Label>
+                <Label htmlFor="member-name">名称</Label>
                 <Input
-                  id="api-base-url"
-                  type="url"
-                  value={apiBaseUrl}
-                  onChange={(event) => setApiBaseUrl(event.target.value)}
-                  placeholder="https://api.example.com/v1"
+                  id="member-name"
+                  autoComplete="off"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <Label>所属分组</Label>
+                <p className="text-xs text-muted-foreground">
+                  同一成员可加入多个分组，调度不会跨出请求指定的分组。
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {groups.map((group) => (
+                  <label
+                    key={group.id}
+                    htmlFor={`member-group-${group.id}`}
+                    className="flex items-center gap-2 rounded-md border p-3 text-sm"
+                  >
+                    <Checkbox
+                      id={`member-group-${group.id}`}
+                      checked={groupIds.includes(group.id)}
+                      onCheckedChange={(checked) =>
+                        toggleGroup(group.id, checked === true)
+                      }
+                    />
+                    <span className="truncate">{group.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="member-priority">优先级</Label>
+                <Input
+                  id="member-priority"
+                  type="number"
+                  min="0"
+                  max="10000"
+                  value={priority}
+                  onChange={(event) => setPriority(event.target.value)}
                   required
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="api-key">API Key</Label>
+                <Label htmlFor="member-concurrency">并发上限</Label>
                 <Input
-                  id="api-key"
-                  type="password"
-                  autoComplete="new-password"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                  placeholder={
-                    apiAdapterDraft.authentication.mode === "none"
-                      ? "无认证模式无需填写"
-                      : member
-                        ? "留空保留现有凭据"
-                        : "必填"
-                  }
-                  required={
-                    !member && apiAdapterDraft.authentication.mode !== "none"
-                  }
-                  disabled={apiAdapterDraft.authentication.mode === "none"}
+                  id="member-concurrency"
+                  type="number"
+                  min="1"
+                  max="10000"
+                  value={concurrency}
+                  onChange={(event) => setConcurrency(event.target.value)}
+                  required
                 />
               </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
               <BackendBooleanSetting
-                id="api-use-stream"
-                label="Images 流式响应"
-                description="向兼容的 Images 上游发送 stream 与 partial_images 参数。"
-                checked={apiUseStream}
-                onCheckedChange={setApiUseStream}
+                id="member-enabled"
+                label="启用成员"
+                description="停用后不再获得新租约。"
+                checked={isEnabled}
+                onCheckedChange={setIsEnabled}
               />
-              <div className="space-y-2">
-                <Label>上游模型 ID 映射</Label>
-                <p className="text-xs text-muted-foreground">
-                  平台仍使用左侧真实模型 ID
-                  进行调度、计费与任务记录；仅实际请求当前账号时替换为右侧供应商
-                  ID。留空表示同名透传。
-                </p>
-                {selectedModelIds.length === 0 ? (
-                  <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                    请先在下方选择账号支持的模型。
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedModelIds.map((modelId) => (
-                      <div
-                        key={modelId}
-                        className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-                      >
-                        <code className="truncate rounded-md bg-muted px-3 py-2 text-xs">
-                          {modelId}
-                        </code>
-                        <Input
-                          aria-label={`${modelId} 的上游模型 ID`}
-                          value={
-                            modelMappings.find(
-                              (mapping) =>
-                                mapping.modelId.toLowerCase() ===
-                                modelId.toLowerCase()
-                            )?.upstreamModelId ?? ""
-                          }
-                          onChange={(event) =>
-                            updateUpstreamModelId(modelId, event.target.value)
-                          }
-                          placeholder={`默认：${modelId}`}
-                          maxLength={240}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <ApiUpstreamAdapterForm
-                value={apiAdapterDraft}
-                onChange={setApiAdapterDraft}
-                disabled={isPending}
+              <BackendBooleanSetting
+                id="member-safety"
+                label="成员内容安全"
+                description="分组选择继承时使用此值。"
+                checked={contentSafetyEnabled}
+                onCheckedChange={setContentSafetyEnabled}
+              />
+              <BackendBooleanSetting
+                id="member-always-active"
+                label="始终活跃"
+                description="仅显式运维场景使用，不因普通失败自动排除。"
+                checked={alwaysActive}
+                onCheckedChange={setAlwaysActive}
+              />
+              <BackendBooleanSetting
+                id="member-cooldown"
+                label="失败冷却"
+                description="可切换失败后暂时退出候选。"
+                checked={failureCooldownEnabled}
+                onCheckedChange={setFailureCooldownEnabled}
               />
             </div>
-          ) : (
-            <div className="space-y-4 rounded-md border p-4">
-              <div>
-                <h3 className="font-medium">Adobe 配置</h3>
-                <p className="text-xs text-muted-foreground">
-                  Gateway 使用外部兼容接口；Direct 成员自身就是一个 Adobe
-                  账号，不再包含内部子号池。
-                </p>
+          </>
+        ) : null}
+
+        {type === "api" ? (
+          <div className="space-y-4 rounded-md border p-4">
+            <div>
+              <h3 className="font-medium">API 配置</h3>
+              <p className="text-xs text-muted-foreground">
+                图片使用 Images 兼容协议，视频使用 Videos 兼容协议；不含
+                Responses 或 Chat。
+              </p>
+            </div>
+            {!detailsOnly ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="api-base-url">Base URL</Label>
+                  <Input
+                    id="api-base-url"
+                    type="url"
+                    value={apiBaseUrl}
+                    onChange={(event) => setApiBaseUrl(event.target.value)}
+                    placeholder="https://api.example.com/v1"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="api-key">API Key</Label>
+                  <Input
+                    id="api-key"
+                    type="password"
+                    autoComplete="new-password"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={
+                      apiAdapterDraft.authentication.mode === "none"
+                        ? "无认证模式无需填写"
+                        : member
+                          ? "留空保留现有凭据"
+                          : "必填"
+                    }
+                    required={
+                      !member && apiAdapterDraft.authentication.mode !== "none"
+                    }
+                    disabled={apiAdapterDraft.authentication.mode === "none"}
+                  />
+                </div>
+                <BackendBooleanSetting
+                  id="api-use-stream"
+                  label="Images 流式响应"
+                  description="向兼容的 Images 上游发送 stream 与 partial_images 参数。"
+                  checked={apiUseStream}
+                  onCheckedChange={setApiUseStream}
+                />
+              </>
+            ) : null}
+            {showAdvancedConfiguration ? (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>上游模型 ID 映射</Label>
+                  <p className="text-xs text-muted-foreground">
+                    平台仍使用左侧真实模型 ID
+                    进行调度、计费与任务记录；仅实际请求当前账号时替换为右侧供应商
+                    ID。留空表示同名透传。
+                  </p>
+                  {selectedModelIds.length === 0 ? (
+                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                      请先在下方选择账号支持的模型。
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedModelIds.map((modelId) => (
+                        <div
+                          key={modelId}
+                          className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                        >
+                          <code className="truncate rounded-md bg-muted px-3 py-2 text-xs">
+                            {modelId}
+                          </code>
+                          <Input
+                            aria-label={`${modelId} 的上游模型 ID`}
+                            value={
+                              modelMappings.find(
+                                (mapping) =>
+                                  mapping.modelId.toLowerCase() ===
+                                  modelId.toLowerCase()
+                              )?.upstreamModelId ?? ""
+                            }
+                            onChange={(event) =>
+                              updateUpstreamModelId(modelId, event.target.value)
+                            }
+                            placeholder={`默认：${modelId}`}
+                            maxLength={240}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <ApiUpstreamAdapterForm
+                  value={apiAdapterDraft}
+                  onChange={setApiAdapterDraft}
+                  disabled={isPending}
+                />
               </div>
+            ) : (
+              <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                账号创建后，可在账号详情中配置模型映射、视频协议和脚本处理模块。
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4 rounded-md border p-4">
+            <div>
+              <h3 className="font-medium">Adobe 配置</h3>
+              <p className="text-xs text-muted-foreground">
+                Gateway 使用外部兼容接口；Direct 成员自身就是一个 Adobe
+                账号，不再包含内部子号池。
+              </p>
+            </div>
+            {!detailsOnly ? (
               <div className="space-y-2">
                 <Label>模式</Label>
                 <Select
@@ -609,69 +672,71 @@ export function BackendMemberFormDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {adobeMode === "gateway" && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-base-url">Gateway Base URL</Label>
-                    <Input
-                      id="adobe-base-url"
-                      type="url"
-                      value={adobeBaseUrl}
-                      onChange={(event) => setAdobeBaseUrl(event.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-api-key">Gateway API Key</Label>
-                    <Input
-                      id="adobe-api-key"
-                      type="password"
-                      autoComplete="new-password"
-                      value={adobeApiKey}
-                      onChange={(event) => setAdobeApiKey(event.target.value)}
-                      placeholder={member ? "留空保留现有凭据" : "必填"}
-                      required={!member}
-                    />
-                  </div>
-                </>
-              )}
-              {adobeMode === "direct" && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-cookie">Adobe Cookie</Label>
-                    <Textarea
-                      id="adobe-cookie"
-                      rows={5}
-                      autoComplete="off"
-                      value={adobeCookie}
-                      onChange={(event) => setAdobeCookie(event.target.value)}
-                      placeholder={
-                        member?.type === "adobe" &&
-                        member.config.mode === "direct"
-                          ? "留空保留现有 Cookie"
-                          : "粘贴已登录 Adobe 账号的完整 Cookie"
-                      }
-                      required={
-                        !member ||
-                        (member.type === "adobe" &&
-                          member.config.mode !== "direct")
-                      }
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      保存时会立即验证账号并换取短期 Token；明文不会返回浏览器。
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-scope">IMS Scope</Label>
-                    <Input
-                      id="adobe-scope"
-                      value={adobeScope}
-                      onChange={(event) => setAdobeScope(event.target.value)}
-                      placeholder="留空使用默认 Scope"
-                    />
-                  </div>
-                </>
-              )}
+            ) : null}
+            {!detailsOnly && adobeMode === "gateway" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="adobe-base-url">Gateway Base URL</Label>
+                  <Input
+                    id="adobe-base-url"
+                    type="url"
+                    value={adobeBaseUrl}
+                    onChange={(event) => setAdobeBaseUrl(event.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="adobe-api-key">Gateway API Key</Label>
+                  <Input
+                    id="adobe-api-key"
+                    type="password"
+                    autoComplete="new-password"
+                    value={adobeApiKey}
+                    onChange={(event) => setAdobeApiKey(event.target.value)}
+                    placeholder={member ? "留空保留现有凭据" : "必填"}
+                    required={!member}
+                  />
+                </div>
+              </>
+            )}
+            {!detailsOnly && adobeMode === "direct" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="adobe-cookie">Adobe Cookie</Label>
+                  <Textarea
+                    id="adobe-cookie"
+                    rows={5}
+                    autoComplete="off"
+                    value={adobeCookie}
+                    onChange={(event) => setAdobeCookie(event.target.value)}
+                    placeholder={
+                      member?.type === "adobe" &&
+                      member.config.mode === "direct"
+                        ? "留空保留现有 Cookie"
+                        : "粘贴已登录 Adobe 账号的完整 Cookie"
+                    }
+                    required={
+                      !member ||
+                      (member.type === "adobe" &&
+                        member.config.mode !== "direct")
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    保存时会立即验证账号并换取短期 Token；明文不会返回浏览器。
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="adobe-scope">IMS Scope</Label>
+                  <Input
+                    id="adobe-scope"
+                    value={adobeScope}
+                    onChange={(event) => setAdobeScope(event.target.value)}
+                    placeholder="留空使用默认 Scope"
+                  />
+                </div>
+              </>
+            )}
+            {showAdvancedConfiguration ? (
               <div className="grid gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="adobe-ratio">默认比例</Label>
@@ -712,9 +777,11 @@ export function BackendMemberFormDialog({
                   </Select>
                 </div>
               </div>
-            </div>
-          )}
+            ) : null}
+          </div>
+        )}
 
+        {showAdvancedConfiguration ? (
           <div className="space-y-2">
             <Label htmlFor="member-models">支持的模型</Label>
             <BackendMemberModelSelect
@@ -741,21 +808,33 @@ export function BackendMemberFormDialog({
                   : "API 账号可选择图片和视频的真实模型 ID。"}
             </p>
           </div>
+        ) : null}
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              取消
-            </Button>
-            <Button type="submit" disabled={isPending || groups.length === 0}>
-              {isPending && <Loader2 className="size-4 animate-spin" />}
-              保存成员
-            </Button>
-          </DialogFooter>
-        </form>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
+            取消
+          </Button>
+          <Button type="submit" disabled={isPending || groups.length === 0}>
+            {isPending && <Loader2 className="size-4 animate-spin" />}
+            保存成员
+          </Button>
+        </DialogFooter>
+      </fieldset>
+    </form>
+  );
+
+  if (inline) {
+    return <div className="space-y-6">{formContent}</div>;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
+        {formContent}
       </DialogContent>
     </Dialog>
   );

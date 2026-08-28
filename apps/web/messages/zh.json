@@ -552,7 +552,7 @@
       "copyModelId": "复制模型 ID：{modelId}",
       "copySuccess": "模型 ID 已复制",
       "copyFailure": "复制失败，请手动复制模型 ID",
-      "viewDetails": "查看详情",
+      "openDetails": "打开模型详情：{modelName}",
       "useModel": "立即使用此模型"
     },
     "detail": {
@@ -562,6 +562,10 @@
       "supportedDurations": "支持时长",
       "supportedAspectRatios": "支持比例",
       "supportedResolutions": "支持分辨率",
+      "viewCover": "查看完整封面：{modelName}",
+      "viewCoverLabel": "点击查看完整封面",
+      "coverPreviewTitle": "封面预览",
+      "coverPreviewDescription": "正在查看模型“{modelName}”的完整封面。",
       "autoSizeSupported": "支持传递 auto 尺寸",
       "autoSizeUnsupported": "不支持传递 auto 尺寸，请在站内生图时选择明确尺寸。",
       "capabilities": {

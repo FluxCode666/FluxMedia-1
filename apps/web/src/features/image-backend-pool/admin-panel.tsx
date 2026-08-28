@@ -47,7 +47,7 @@ import {
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
 } from "./actions";
-import { BackendMemberCard, isAdobeDirectMember } from "./admin-member-card";
+import { BackendMemberTable, isAdobeDirectMember } from "./admin-member-table";
 import {
   BackendMemberFilterBar,
   type BackendMemberFilterModelOption,
@@ -108,11 +108,13 @@ function PoolListLoadingState({ label }: { label: string }) {
     <div
       aria-busy="true"
       aria-label={label}
-      className="grid gap-3 md:grid-cols-2"
+      className="space-y-px overflow-hidden rounded-md border bg-muted/30"
       role="status"
     >
-      <div className="h-40 animate-pulse rounded-lg border bg-muted/30" />
-      <div className="h-40 animate-pulse rounded-lg border bg-muted/30" />
+      <div className="h-11 animate-pulse bg-muted/50" />
+      <div className="h-16 animate-pulse bg-background" />
+      <div className="h-16 animate-pulse bg-background" />
+      <div className="h-16 animate-pulse bg-background" />
     </div>
   );
 }
@@ -487,17 +489,6 @@ export function ImageBackendPoolAdminPanel({
       toast.error("请先创建至少一个账号池分组");
       return;
     }
-    if (
-      modelOptionStatus === "loading" ||
-      modelOptionStatus === "unavailable"
-    ) {
-      toast.error("模型配置尚未就绪，请刷新后重试");
-      return;
-    }
-    if (modelOptions.length === 0) {
-      toast.error("模型配置中暂无可供成员选择的模型");
-      return;
-    }
     setEditingMember(null);
     setMemberDialogOpen(true);
   }
@@ -603,7 +594,8 @@ export function ImageBackendPoolAdminPanel({
           <div>
             <h3 className="text-base font-semibold">供应商账号</h3>
             <p className="text-sm text-muted-foreground">
-              所有类型进入同一候选集合，再按全局策略排序和原子获租。
+              所有类型进入同一候选集合，再按全局策略排序和原子获租。新增账号先填写基础接入信息，
+              模型能力与上游适配细节可从账号详情进入配置。
             </p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
@@ -691,16 +683,11 @@ export function ImageBackendPoolAdminPanel({
         {isLoadingMemberPage && !memberPage ? (
           <PoolListLoadingState label="正在加载供应商账号" />
         ) : (
-          <div
-            className="grid gap-3 xl:grid-cols-2"
-            id="backend-member-list"
-            tabIndex={-1}
-          >
-            {filteredMembers.map((member) => (
-              <BackendMemberCard
+          <div id="backend-member-list" tabIndex={-1}>
+            {filteredMembers.length > 0 ? (
+              <BackendMemberTable
                 groupNameById={groupNameById}
-                key={member.id}
-                member={member}
+                members={filteredMembers}
                 mutationState={{
                   isDeleting: isDeletingMember,
                   isResetting: isResettingMember,
@@ -708,12 +695,12 @@ export function ImageBackendPoolAdminPanel({
                   resettingMemberId,
                   updatingMemberId,
                 }}
-                onDelete={() => deleteMember({ id: member.id })}
-                onEdit={() => {
+                onDelete={(member) => deleteMember({ id: member.id })}
+                onEdit={(member) => {
                   setEditingMember(member);
                   setMemberDialogOpen(true);
                 }}
-                onSelectedChange={(selected) => {
+                onSelectedChange={(member, selected) => {
                   setSelectedMemberIds((current) => {
                     const next = new Set(current);
                     if (selected) next.add(member.id);
@@ -721,25 +708,22 @@ export function ImageBackendPoolAdminPanel({
                     return next;
                   });
                 }}
-                onEnabledChange={(isEnabled) =>
-                  handleMemberEnabledChange(member, isEnabled)
-                }
-                onReset={() => {
+                onEnabledChange={handleMemberEnabledChange}
+                onReset={(member) => {
                   setResettingMemberId(member.id);
                   resetMemberStatus({ id: member.id });
                 }}
                 readOnly={readOnly}
-                selected={selectedMemberIds.has(member.id)}
+                selectedMemberIds={selectedMemberIds}
                 timeZone={timeZone}
               />
-            ))}
-            {filteredMembers.length === 0 ? (
-              <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground xl:col-span-2">
+            ) : (
+              <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
                 {hasBackendMemberFilters(memberFilters)
                   ? "没有符合当前筛选条件的供应商账号。"
                   : "当前账号池没有供应商账号。"}
               </div>
-            ) : null}
+            )}
           </div>
         )}
         {memberPage ? (
