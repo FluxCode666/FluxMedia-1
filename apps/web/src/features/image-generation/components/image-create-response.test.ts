@@ -112,4 +112,22 @@ describe("image create response", () => {
       status: "running",
     });
   });
+
+  it("接受异步任务排队响应中的 null 错误字段", async () => {
+    const response = new Response(
+      JSON.stringify({
+        taskId: "task_queued",
+        generationId: "generation-queued",
+        status: "queued",
+        error: null,
+      }),
+      { status: 202, headers: { "Content-Type": "application/json" } }
+    );
+
+    await expect(readGenerationResponse(response)).resolves.toMatchObject({
+      taskId: "task_queued",
+      status: "queued",
+      error: null,
+    });
+  });
 });
