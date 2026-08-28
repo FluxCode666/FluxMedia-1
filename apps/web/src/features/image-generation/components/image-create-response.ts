@@ -45,7 +45,14 @@ const generationResultSchema = z
     generationId: z.string().optional(),
     taskId: z.string().optional(),
     status: z
-      .enum(["queued", "pending", "processing", "completed", "failed"])
+      .enum([
+        "queued",
+        "running",
+        "pending",
+        "processing",
+        "completed",
+        "failed",
+      ])
       .optional(),
     imageUrl: imageUrlSchema.optional(),
     imageOutputs: z.array(imageOutputSchema).optional(),

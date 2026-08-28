@@ -96,4 +96,20 @@ describe("image create response", () => {
       generationId: "generation-3",
     });
   });
+
+  it("接受异步任务已被 Worker 领取时的 running 状态", async () => {
+    const response = new Response(
+      JSON.stringify({
+        taskId: "task_running",
+        generationId: "generation-running",
+        status: "running",
+      }),
+      { status: 202, headers: { "Content-Type": "application/json" } }
+    );
+
+    await expect(readGenerationResponse(response)).resolves.toMatchObject({
+      taskId: "task_running",
+      status: "running",
+    });
+  });
 });
