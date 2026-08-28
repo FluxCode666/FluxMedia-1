@@ -49,6 +49,7 @@ vi.mock("./actions", () => ({
   deleteImageBackendGroupAction: vi.fn(),
   deleteImageBackendMemberAction: vi.fn(),
   getAdminImageBackendPoolAction: vi.fn(),
+  importImageBackendMembersAction: vi.fn(),
   listAdminImageBackendGroupsAction: vi.fn(),
   listAdminImageBackendMembersAction: vi.fn(),
   resetImageBackendMemberStatusAction: vi.fn(),

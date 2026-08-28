@@ -30,6 +30,8 @@ export interface GenerateImageParams {
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
+  /** 模型配置关闭时阻止 Adobe 适配器注入账号默认质量。 */
+  supportsQuality?: boolean;
   moderation?: ImageModeration;
   outputFormat?: ImageOutputFormat;
   outputCompression?: number;
@@ -130,6 +132,8 @@ export interface EditImageParams {
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
+  /** 模型配置关闭时阻止 Adobe 适配器注入账号默认质量。 */
+  supportsQuality?: boolean;
   moderation?: ImageModeration;
   outputFormat?: ImageOutputFormat;
   outputCompression?: number;

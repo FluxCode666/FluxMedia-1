@@ -78,6 +78,13 @@
       "when": 1779696060000,
       "tag": "0010_promote_legacy_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779696070000,
+      "tag": "0011_backend_member_resolution_capabilities",
+      "breakpoints": true
     }
   ]
 }

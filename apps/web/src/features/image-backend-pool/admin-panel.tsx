@@ -22,6 +22,8 @@ import {
 import {
   Activity,
   Database,
+  Download,
+  FileUp,
   Loader2,
   Plus,
   RefreshCw,
@@ -29,7 +31,7 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useAction } from "next-safe-action/hooks";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { getModelConfigurationAction } from "@/features/model-configuration/actions";
@@ -40,6 +42,7 @@ import {
   type BackendPoolAdminMemberSummary,
   deleteImageBackendMemberAction,
   getAdminImageBackendPoolAction,
+  importImageBackendMembersAction,
   listAdminImageBackendMembersAction,
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
@@ -66,6 +69,10 @@ import {
   normalizeBackendMemberModelIdsForDisplay,
 } from "./member-model-options";
 import type { BackendMemberModelOptionStatus } from "./member-model-select";
+import {
+  parseBackendMemberExportText,
+  serializeBackendMemberExport,
+} from "./member-transfer";
 
 /** 显示号池关键容量事实的统计卡。 */
 function PoolStatCard({
@@ -158,6 +165,10 @@ export function ImageBackendPoolAdminPanel({
   const [memberDialogOpen, setMemberDialogOpen] = useState(false);
   const [editingMember, setEditingMember] =
     useState<BackendPoolAdminMemberSummary | null>(null);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const importFileInputRef = useRef<HTMLInputElement>(null);
   const [resettingMemberId, setResettingMemberId] = useState<string | null>(
     null
   );
@@ -288,6 +299,28 @@ export function ImageBackendPoolAdminPanel({
       },
     }
   );
+  const { execute: importMembers, isPending: isImportingMembers } = useAction(
+    importImageBackendMembersAction,
+    {
+      onSuccess: async ({ data }) => {
+        if (!data) return;
+        const importedCount = data.imported.length;
+        const failedCount = data.failed.length;
+        if (importedCount > 0) {
+          toast.success(`已导入 ${importedCount} 个供应商账号`);
+          await reloadPoolSnapshots();
+        }
+        if (failedCount > 0) {
+          const firstFailure = data.failed[0];
+          toast.error(
+            `有 ${failedCount} 个账号导入失败：${firstFailure?.name ?? "未知账号"}（${firstFailure?.message ?? "配置无效"}）`
+          );
+        }
+      },
+      onError: ({ error }) =>
+        toast.error(error.serverError || "导入供应商账号失败"),
+    }
+  );
 
   /** 写操作成功后刷新成员分页和成员表单依赖的辅助快照。 */
   async function reloadPoolSnapshots(): Promise<void> {
@@ -327,6 +360,13 @@ export function ImageBackendPoolAdminPanel({
       });
   }, [members, modelOptions]);
   const filteredMembers = memberPage?.records ?? [];
+  const selectedMembers = useMemo(
+    () => members.filter((member) => selectedMemberIds.has(member.id)),
+    [members, selectedMemberIds]
+  );
+  const allCurrentPageMembersSelected =
+    filteredMembers.length > 0 &&
+    filteredMembers.every((member) => selectedMemberIds.has(member.id));
   const invalidMemberDateRange =
     hasInvalidBackendMemberDateRange(memberFilters);
   const activeMemberCount = members.filter(
@@ -372,6 +412,73 @@ export function ImageBackendPoolAdminPanel({
         "criteria"
       )
     );
+  }
+
+  /** 在当前筛选页批量加入导出选择；选择会跨页保留。 */
+  function selectCurrentPageMembers(): void {
+    setSelectedMemberIds((current) => {
+      const next = new Set(current);
+      for (const member of filteredMembers) next.add(member.id);
+      return next;
+    });
+  }
+
+  /** 清除所有已选择的供应商账号。 */
+  function clearSelectedMembers(): void {
+    setSelectedMemberIds(new Set());
+  }
+
+  /** 下载当前选择的脱敏账号配置 JSON。 */
+  function exportSelectedMembers(): void {
+    if (selectedMembers.length === 0) {
+      toast.error("请先选择要导出的供应商账号");
+      return;
+    }
+    const blob = new Blob([serializeBackendMemberExport(selectedMembers)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `fluxmedia-suppliers-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`已导出 ${selectedMembers.length} 个供应商账号（不含凭据）`);
+  }
+
+  /** 读取并提交供应商配置 JSON；单条结果由服务端逐项反馈。 */
+  async function handleImportFile(
+    event: ChangeEvent<HTMLInputElement>
+  ): Promise<void> {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("导入文件不能超过 5 MB");
+      return;
+    }
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      toast.error("无法读取导入文件");
+      return;
+    }
+    const parsed = parseBackendMemberExportText(text);
+    if (!parsed.success) {
+      toast.error(parsed.message);
+      return;
+    }
+    if (
+      !window.confirm(
+        `即将导入 ${parsed.document.members.length} 个供应商账号。已有相同 ID 的账号会被更新，确认继续？`
+      )
+    ) {
+      return;
+    }
+    importMembers(parsed.document);
   }
 
   /** 打开新增成员表单，并在缺少分组时阻止创建无归属成员。 */
@@ -424,6 +531,16 @@ export function ImageBackendPoolAdminPanel({
     );
     setMemberEnabled({ id: member.id, isEnabled });
   }
+
+  useEffect(() => {
+    setSelectedMemberIds((current) => {
+      const knownIds = new Set(members.map((member) => member.id));
+      const next = new Set(
+        [...current].filter((memberId) => knownIds.has(memberId))
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [members]);
 
   return (
     <div className="space-y-6">
@@ -489,13 +606,79 @@ export function ImageBackendPoolAdminPanel({
               所有类型进入同一候选集合，再按全局策略排序和原子获租。
             </p>
           </div>
-          {!readOnly ? (
-            <Button onClick={openNewMember} type="button">
-              <Plus />
-              新增供应商账号
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              disabled={
+                filteredMembers.length === 0 || allCurrentPageMembersSelected
+              }
+              onClick={selectCurrentPageMembers}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              全选当前页
             </Button>
-          ) : null}
+            <Button
+              disabled={selectedMemberIds.size === 0}
+              onClick={clearSelectedMembers}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              清除选择
+            </Button>
+            <Button
+              disabled={selectedMembers.length === 0}
+              onClick={exportSelectedMembers}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <Download />
+              导出已选（{selectedMembers.length}）
+            </Button>
+            {!readOnly ? (
+              <>
+                <input
+                  accept="application/json,.json"
+                  className="sr-only"
+                  onChange={handleImportFile}
+                  ref={importFileInputRef}
+                  type="file"
+                />
+                <Button
+                  disabled={isImportingMembers}
+                  onClick={() => importFileInputRef.current?.click()}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {isImportingMembers ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <FileUp />
+                  )}
+                  导入配置
+                </Button>
+                <Button onClick={openNewMember} size="sm" type="button">
+                  <Plus />
+                  新增供应商账号
+                </Button>
+              </>
+            ) : null}
+          </div>
         </div>
+        <p className="text-xs text-muted-foreground">
+          导入支持本页导出的 JSON；导出文件不含 API Key 或
+          Cookie。更新已有账号可保留 id；创建新账号请删除 id（API 账号同时删除
+          expectedCurrentVersionId）并补入凭据。
+        </p>
+        {selectedMemberIds.size > 0 ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            已选择 {selectedMemberIds.size}{" "}
+            个账号；选择可以跨页保留，导出文件不包含 API Key 或 Cookie。
+          </p>
+        ) : null}
         <BackendMemberFilterBar
           filters={memberFilters}
           invalidDateRange={invalidMemberDateRange}
@@ -530,6 +713,14 @@ export function ImageBackendPoolAdminPanel({
                   setEditingMember(member);
                   setMemberDialogOpen(true);
                 }}
+                onSelectedChange={(selected) => {
+                  setSelectedMemberIds((current) => {
+                    const next = new Set(current);
+                    if (selected) next.add(member.id);
+                    else next.delete(member.id);
+                    return next;
+                  });
+                }}
                 onEnabledChange={(isEnabled) =>
                   handleMemberEnabledChange(member, isEnabled)
                 }
@@ -538,6 +729,7 @@ export function ImageBackendPoolAdminPanel({
                   resetMemberStatus({ id: member.id });
                 }}
                 readOnly={readOnly}
+                selected={selectedMemberIds.has(member.id)}
                 timeZone={timeZone}
               />
             ))}

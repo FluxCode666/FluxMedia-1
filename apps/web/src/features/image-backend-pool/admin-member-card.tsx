@@ -16,6 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@repo/ui/components/card";
+import { Checkbox } from "@repo/ui/components/checkbox";
 import { Switch } from "@repo/ui/components/switch";
 import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
@@ -174,7 +175,9 @@ export function BackendMemberCard({
   groupNameById,
   timeZone,
   readOnly,
+  selected,
   mutationState,
+  onSelectedChange,
   onEnabledChange,
   onReset,
   onEdit,
@@ -184,7 +187,9 @@ export function BackendMemberCard({
   groupNameById: ReadonlyMap<string, string>;
   timeZone: string;
   readOnly: boolean;
+  selected: boolean;
   mutationState: BackendMemberCardMutationState;
+  onSelectedChange: (selected: boolean) => void;
   onEnabledChange: (isEnabled: boolean) => void;
   onReset: () => void;
   onEdit: () => void;
@@ -199,6 +204,11 @@ export function BackendMemberCard({
     <Card className="min-w-0 gap-4 py-4">
       <CardHeader className="px-4">
         <CardTitle className="flex flex-wrap items-center gap-2">
+          <Checkbox
+            aria-label={`选择账号“${member.name}”导出`}
+            checked={selected}
+            onCheckedChange={(checked) => onSelectedChange(checked === true)}
+          />
           <span>{member.name}</span>
           <Badge variant="outline">{getMemberTypeLabel(member)}</Badge>
           <Badge variant={getMemberStatusVariant(member)}>

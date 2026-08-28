@@ -1592,6 +1592,10 @@ export const imageBackendMember = pgTable(
     type: text("type").notNull(),
     name: text("name").notNull(),
     supportedModelIds: json("supported_model_ids").$type<string[]>().notNull(),
+    supportedResolutionsByModel: json("supported_resolutions_by_model")
+      .$type<Record<string, string[]>>()
+      .notNull()
+      .default({}),
     contentSafetyEnabled: boolean("content_safety_enabled")
       .notNull()
       .default(true),

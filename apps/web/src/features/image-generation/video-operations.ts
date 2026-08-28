@@ -1986,6 +1986,7 @@ async function submitClaimedCreatedVideo(
       ...(row.apiKeyId ? { apiKeyId: row.apiKeyId } : {}),
       ...trustedGroupSelection,
       modelId: contract.model,
+      resolution: contract.resolution,
       requestKind: "video",
       requiresContentSafety: true,
       ...(contract.requiredMemberType
@@ -2280,6 +2281,7 @@ async function submitClaimedCreatedVideo(
             duration: contract.duration,
             aspectRatio: contract.aspectRatio,
             resolution: contract.resolution,
+            supportedResolutions: contract.supportedResolutions,
             effectiveAudio: contract.effectiveAudio,
             maxReferenceImages: contract.maxReferenceImages,
             requestProfile: row.adobeRequestProfile,
@@ -2475,6 +2477,7 @@ async function submitClaimedCreatedVideo(
             ...(row.apiKeyId ? { apiKeyId: row.apiKeyId } : {}),
             ...trustedGroupSelection,
             modelId: contract.model,
+            resolution: contract.resolution,
             requestKind: "video",
             requiresContentSafety: true,
             requiredMemberType: "api",

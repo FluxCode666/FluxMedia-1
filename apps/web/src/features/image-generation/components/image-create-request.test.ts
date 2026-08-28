@@ -59,4 +59,17 @@ describe("image create request", () => {
       mask,
     });
   });
+
+  it("质量能力关闭时不把 quality 写入 JSON 或 multipart", () => {
+    const { quality: _quality, ...withoutQuality } = common;
+    expect(buildImageGenerateRequestBody(withoutQuality)).not.toHaveProperty(
+      "quality"
+    );
+    const body = buildImageEditRequestBody({
+      ...withoutQuality,
+      images: [new File(["image"], "image.png", { type: "image/png" })],
+      mask: null,
+    });
+    expect(Object.fromEntries(body.entries())).not.toHaveProperty("quality");
+  });
 });

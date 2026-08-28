@@ -57,6 +57,14 @@ const VIDEO_OUTPUT_SIZE_CATALOG: Readonly<
     "9:16": { width: 1080, height: 1920 },
     "21:9": { width: 2520, height: 1080 },
   },
+  "2k": {
+    "1:1": { width: 1440, height: 1440 },
+    "4:3": { width: 1920, height: 1440 },
+    "3:4": { width: 1440, height: 1920 },
+    "16:9": { width: 2560, height: 1440 },
+    "9:16": { width: 1440, height: 2560 },
+    "21:9": { width: 3360, height: 1440 },
+  },
   "4k": {
     "1:1": { width: 2160, height: 2160 },
     "4:3": { width: 2880, height: 2160 },
@@ -64,6 +72,14 @@ const VIDEO_OUTPUT_SIZE_CATALOG: Readonly<
     "16:9": { width: 3840, height: 2160 },
     "9:16": { width: 2160, height: 3840 },
     "21:9": { width: 5040, height: 2160 },
+  },
+  "8k": {
+    "1:1": { width: 4320, height: 4320 },
+    "4:3": { width: 5760, height: 4320 },
+    "3:4": { width: 4320, height: 5760 },
+    "16:9": { width: 7680, height: 4320 },
+    "9:16": { width: 4320, height: 7680 },
+    "21:9": { width: 10080, height: 4320 },
   },
 };
 

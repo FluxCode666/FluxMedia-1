@@ -17,7 +17,10 @@ import {
   type ApiUpstreamAdapterOperationId,
 } from "@repo/shared/image-backend/api-upstream-script-contract";
 import type { BackendMemberInput } from "@repo/shared/image-backend/member-contract";
-import { backendMemberInputSchema } from "@repo/shared/image-backend/member-contract";
+import {
+  backendMemberInputSchema,
+  backendModelResolutionCapabilitiesSchema,
+} from "@repo/shared/image-backend/member-contract";
 import { eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -128,6 +131,7 @@ interface BackendMemberAdminSummaryBase {
   name: string;
   groupIds: string[];
   supportedModelIds: string[];
+  supportedResolutionsByModel?: Record<string, string[]>;
   contentSafetyEnabled: boolean;
   isEnabled: boolean;
   alwaysActive: boolean;
@@ -529,6 +533,10 @@ const memberListRowSchema = z.object({
   type: z.enum(["api", "adobe"]),
   group_ids: z.array(z.string()),
   supported_model_ids: z.array(z.string()).min(1),
+  supported_resolutions_by_model: z
+    .record(z.string(), z.array(z.string()))
+    .optional()
+    .default({}),
   content_safety_enabled: z.boolean(),
   is_enabled: z.boolean(),
   always_active: z.boolean(),
@@ -587,6 +595,9 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
     type: row.type,
     groupIds: row.group_ids,
     supportedModelIds: row.supported_model_ids,
+    supportedResolutionsByModel: backendModelResolutionCapabilitiesSchema.parse(
+      row.supported_resolutions_by_model
+    ),
     contentSafetyEnabled: row.content_safety_enabled,
     isEnabled: row.is_enabled,
     alwaysActive: row.always_active,
@@ -1013,6 +1024,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       const commonValues = {
         name: input.name,
         supportedModelIds: input.supportedModelIds,
+        supportedResolutionsByModel: input.supportedResolutionsByModel ?? {},
         contentSafetyEnabled: input.contentSafetyEnabled,
         isEnabled: input.isEnabled,
         alwaysActive: input.alwaysActive,
@@ -1253,6 +1265,7 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             '[]'::json
           ) as group_ids,
           member.supported_model_ids,
+          member.supported_resolutions_by_model,
           member.content_safety_enabled,
           member.is_enabled,
           member.always_active,

@@ -11,7 +11,7 @@ export type ImageCreateRequestFields = {
   size: string;
   model: string;
   backendGroupId: string;
-  quality: string;
+  quality?: string;
   background: string;
 };
 
@@ -32,8 +32,10 @@ export const IMAGE_CREATE_REQUEST_HEADERS = {
  * @returns PNG、自动审核、关闭后处理的单项 SSE 请求体。
  */
 export function buildImageGenerateRequestBody(input: ImageCreateRequestFields) {
+  const { quality, ...rest } = input;
   return {
-    ...input,
+    ...rest,
+    ...(quality !== undefined ? { quality } : {}),
     stream: true,
     moderation: "auto" as const,
     output_format: "png" as const,
@@ -57,7 +59,7 @@ export function buildImageEditRequestBody(
   body.set("size", input.size);
   body.set("model", input.model);
   body.set("backendGroupId", input.backendGroupId);
-  body.set("quality", input.quality);
+  if (input.quality !== undefined) body.set("quality", input.quality);
   body.set("background", input.background);
   body.set("moderation", "auto");
   body.set("output_format", "png");

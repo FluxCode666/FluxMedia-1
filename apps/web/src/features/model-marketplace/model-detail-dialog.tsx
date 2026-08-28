@@ -64,24 +64,34 @@ function ImagePricingGrid({
     [t("detail.imageTiers.base1k"), model.pricing.base1kCredits],
     [t("detail.imageTiers.base2k"), model.pricing.base2kCredits],
     [t("detail.imageTiers.base4k"), model.pricing.base4kCredits],
+    ...(model.pricing.base8kCredits !== undefined
+      ? [[t("detail.imageTiers.base8k"), model.pricing.base8kCredits] as const]
+      : []),
   ] as const;
 
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {rows.map(([label, credits]) => (
-        <div
-          className="rounded-xl border border-border/70 bg-muted/25 p-4"
-          key={label}
-        >
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <p className="mt-2 font-mono text-xl font-semibold tabular-nums">
-            {formatCredits(credits)}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("price.credits")}
-          </p>
-        </div>
-      ))}
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+        {rows.map(([label, credits]) => (
+          <div
+            className="rounded-xl border border-border/70 bg-muted/25 p-4"
+            key={label}
+          >
+            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            <p className="mt-2 font-mono text-xl font-semibold tabular-nums">
+              {formatCredits(credits)}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t("price.credits")}
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+        {model.supportsAutoSize === true
+          ? t("detail.autoSizeSupported")
+          : t("detail.autoSizeUnsupported")}
+      </p>
     </div>
   );
 }

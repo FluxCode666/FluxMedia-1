@@ -15,6 +15,11 @@ import { Button } from "./button";
 
 type CopyState = "idle" | "copied" | "failed";
 
+// Keep large payloads as one text node. Rendering one React element per line can
+// make a modal appear empty while the browser is still mounting thousands of
+// spans (request snapshots are intentionally bounded, but can still be large).
+const MAX_RENDERED_LINE_ELEMENTS = 2000;
+
 type CodeBlockLabels = {
   copy: string;
   copied: string;
@@ -79,7 +84,10 @@ export function CodeBlock({
   const copyRequestIdRef = useRef(0);
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resolvedLabels = { ...DEFAULT_LABELS, ...labels };
-  const lines = getCodeLines(code);
+  const lineCount =
+    code.length === 0 ? 1 : 1 + (code.match(/\n/g)?.length ?? 0);
+  const renderLineElements = lineCount <= MAX_RENDERED_LINE_ELEMENTS;
+  const lines = renderLineElements ? getCodeLines(code) : null;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -188,19 +196,25 @@ export function CodeBlock({
       </div>
       <pre className="max-h-144 overflow-auto p-0 font-mono text-xs leading-6 text-foreground">
         <code className="block min-w-max py-3">
-          {lines.map((line) => (
-            <span
-              className={cn(
-                "block min-h-6 whitespace-pre px-4",
-                showLineNumbers &&
-                  "grid grid-cols-[2rem_1fr] gap-4 before:select-none before:text-right before:text-muted-foreground/60 before:content-[attr(data-line-number)]"
-              )}
-              data-line-number={showLineNumbers ? line.lineNumber : undefined}
-              key={line.key}
-            >
-              {line.line || "\u00a0"}
-            </span>
-          ))}
+          {renderLineElements ? (
+            lines?.map((line) => (
+              <span
+                className={cn(
+                  "block min-h-6 whitespace-pre px-4",
+                  showLineNumbers &&
+                    "grid grid-cols-[2rem_1fr] gap-4 before:select-none before:text-right before:text-muted-foreground/60 before:content-[attr(data-line-number)]"
+                )}
+                data-line-number={
+                  showLineNumbers ? line.lineNumber : undefined
+                }
+                key={line.key}
+              >
+                {line.line || "\u00a0"}
+              </span>
+            ))
+          ) : (
+            <span className="block whitespace-pre px-4">{code}</span>
+          )}
         </code>
       </pre>
       <span aria-live="polite" className="sr-only">

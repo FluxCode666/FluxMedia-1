@@ -80,6 +80,14 @@ import { loadVideoCurrentQuotes } from "./video-current-quotes";
 import { executeVideoListCapabilitiesBinding } from "./video-generation-capabilities";
 import { assertVideoModelEnabled } from "./video-model-availability";
 
+/** 读取模型配置页为视频模型声明的全局分辨率；缺失时由静态能力目录兜底。 */
+function parseModelMarketplaceEntryResolutionOverride(
+  config: ReturnType<typeof parseModelMarketplaceConfig>,
+  modelId: string
+): readonly string[] | undefined {
+  return config.videoByFamily[modelId.trim().toLowerCase()]?.supportedResolutions;
+}
+
 /**
  * 数据库提交后最佳努力投递视频任务。
  *
@@ -339,7 +347,14 @@ bindExecute(
             { ...input, model: customModel.modelId },
             customModel.supportedResolutions
           )
-        : resolveCanonicalVideoGenerateInput(input, capabilityOverrides);
+        : resolveCanonicalVideoGenerateInput(
+            input,
+            capabilityOverrides,
+            parseModelMarketplaceEntryResolutionOverride(
+              marketplaceConfig,
+              input.model
+            )
+          );
       modelConfigurationRevision = resolveModelMarketplaceEntry(
         marketplaceConfig.videoByFamily[modelId],
         "video"
@@ -378,6 +393,7 @@ bindExecute(
       modelConfigurationRevision,
       maxReferenceImages:
         canonicalResult.capability.input.referenceImages.maxCount,
+      supportedResolutions: canonicalResult.capability.resolutions,
       ...(customModelDefinition
         ? {
             customModel: {

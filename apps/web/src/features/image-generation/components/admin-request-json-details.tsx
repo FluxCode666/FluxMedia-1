@@ -7,15 +7,21 @@
  * 避免列表响应和未查看详情携带较大的请求快照。
  */
 
+import { CodeBlock } from "@repo/ui/components/code-block";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@repo/ui/components/collapsible";
-import { CodeBlock } from "@repo/ui/components/code-block";
 import { ChevronRight } from "lucide-react";
 import { useLocale } from "next-intl";
-import { useRef, useState } from "react";
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useRef,
+  useState,
+} from "react";
 
 import { getAdminHistoryRequestSnapshotAction } from "../history-actions";
 
@@ -26,13 +32,68 @@ type RequestSnapshotData = NonNullable<
 type RequestState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; data: RequestSnapshotData }
+  | {
+      status: "ready";
+      data: RequestSnapshotData;
+      formattedJson: string | null;
+      formatError: boolean;
+    }
   | { status: "error" };
 
 type AdminRequestJsonDetailsProps = {
   id: string;
   kind: "image" | "video";
 };
+
+type RequestJsonErrorBoundaryProps = {
+  children: ReactNode;
+};
+
+type RequestJsonErrorBoundaryState = {
+  hasError: boolean;
+};
+
+/** 请求详情中的任意渲染异常都降级为可见错误，避免冒泡卸载整个详情弹层。 */
+class RequestJsonErrorBoundary extends Component<
+  RequestJsonErrorBoundaryProps,
+  RequestJsonErrorBoundaryState
+> {
+  state: RequestJsonErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): RequestJsonErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown, _errorInfo: ErrorInfo): void {
+    console.error("Failed to render admin request JSON", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <p className="text-xs leading-relaxed text-destructive" role="alert">
+          请求 JSON 无法显示，请关闭并重新打开详情后重试。
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/**
+ * 将服务端快照转换为代码块文本；异常旧数据不能冒泡到详情弹层的渲染树。
+ *
+ * @param body 已脱敏的请求正文。
+ * @returns 格式化后的 JSON，或表示无法展示的 null。
+ */
+function formatRequestJson(body: unknown): string | null {
+  try {
+    const formatted = JSON.stringify(body, null, 2);
+    return typeof formatted === "string" ? formatted : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 渲染默认关闭、首次展开懒加载并以两个空格格式化的请求 JSON。
@@ -41,7 +102,7 @@ type AdminRequestJsonDetailsProps = {
  * @returns 可键盘操作的折叠区；旧记录无快照时显示明确说明。
  * @sideEffects 首次展开时调用一次管理员只读 Action。
  */
-export function AdminRequestJsonDetails({
+function AdminRequestJsonDetailsContent({
   id,
   kind,
 }: AdminRequestJsonDetailsProps) {
@@ -67,21 +128,30 @@ export function AdminRequestJsonDetails({
           result.data.id !== id ||
           result.data.kind !== kind
         ) {
+          requestStartedRef.current = false;
           setRequestState({ status: "error" });
           return;
         }
-        setRequestState({ status: "ready", data: result.data });
+        const formattedJson = result.data.snapshot
+          ? formatRequestJson(result.data.snapshot.body)
+          : null;
+        setRequestState({
+          status: "ready",
+          data: result.data,
+          formattedJson,
+          formatError: Boolean(result.data.snapshot && !formattedJson),
+        });
       })
       .catch(() => {
+        requestStartedRef.current = false;
         setRequestState({ status: "error" });
       });
   }
 
   const snapshot =
     requestState.status === "ready" ? requestState.data.snapshot : null;
-  const formattedJson = snapshot
-    ? JSON.stringify(snapshot.body, null, 2)
-    : null;
+  const formattedJson =
+    requestState.status === "ready" ? requestState.formattedJson : null;
 
   return (
     <Collapsible onOpenChange={handleOpenChange} open={open}>
@@ -141,6 +211,17 @@ export function AdminRequestJsonDetails({
                 )}
               </p>
             ) : null}
+            {requestState.status === "ready" && requestState.formatError ? (
+              <p
+                className="text-xs leading-relaxed text-destructive"
+                role="alert"
+              >
+                {copy(
+                  "The saved request body could not be formatted for display.",
+                  "已保存的请求正文无法格式化显示。"
+                )}
+              </p>
+            ) : null}
             {snapshot && formattedJson ? (
               <CodeBlock
                 code={formattedJson}
@@ -158,5 +239,14 @@ export function AdminRequestJsonDetails({
         </CollapsibleContent>
       </div>
     </Collapsible>
+  );
+}
+
+/** 详情折叠区的错误隔离边界；不能让异常破坏父级图片/视频弹层。 */
+export function AdminRequestJsonDetails(props: AdminRequestJsonDetailsProps) {
+  return (
+    <RequestJsonErrorBoundary>
+      <AdminRequestJsonDetailsContent {...props} />
+    </RequestJsonErrorBoundary>
   );
 }

@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@repo/ui/components/select";
+import { Switch } from "@repo/ui/components/switch";
 import { Loader2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
@@ -41,8 +42,8 @@ import { getModelConfigurationSaveErrorMessage } from "./model-configuration-vie
 
 type CustomModelCategory = "image" | "video";
 
-const INITIAL_IMAGE_RESOLUTIONS = "1k, 2k, 4k";
-const INITIAL_VIDEO_RESOLUTIONS = "720p, 1080p";
+const INITIAL_IMAGE_RESOLUTIONS = "1k, 2k, 4k, 8k";
+const INITIAL_VIDEO_RESOLUTIONS = "480p, 720p, 1080p, 2k, 4k, 8k";
 
 /** 从未知错误响应中读取前端允许展示的稳定 code。 */
 async function readStableErrorCode(response: Response): Promise<string | null> {
@@ -120,7 +121,10 @@ export function CustomModelConfigurationDialog({
     base1kCredits: "1.27",
     base2kCredits: "5.07",
     base4kCredits: "10",
+    base8kCredits: "20",
   });
+  const [supportsQuality, setSupportsQuality] = useState(false);
+  const [supportsAutoSize, setSupportsAutoSize] = useState(false);
   const [videoBillingMode, setVideoBillingMode] = useState<
     "per_second" | "per_item"
   >("per_second");
@@ -138,7 +142,10 @@ export function CustomModelConfigurationDialog({
       base1kCredits: "1.27",
       base2kCredits: "5.07",
       base4kCredits: "10",
+      base8kCredits: "20",
     });
+    setSupportsQuality(false);
+    setSupportsAutoSize(false);
     setVideoBillingMode("per_second");
     setVideoPricePerSecond("30");
     setVideoPricePerItem("3");
@@ -195,6 +202,8 @@ export function CustomModelConfigurationDialog({
           "supportedResolutions",
           JSON.stringify(supportedResolutions)
         );
+        formData.append("supportsQuality", String(supportsQuality));
+        formData.append("supportsAutoSize", String(supportsAutoSize));
         for (const [field, value] of Object.entries(imagePrices)) {
           formData.append(field, String(parseModelConfigurationPrice(value)));
         }
@@ -301,7 +310,11 @@ export function CustomModelConfigurationDialog({
               id="custom-model-resolutions"
               value={resolutions}
               disabled={isSaving}
-              placeholder={category === "image" ? "1k, 2k, 4k" : "720p, 1080p"}
+              placeholder={
+                category === "image"
+                  ? "1k, 2k, 4k, 8k"
+                  : "480p, 720p, 1080p, 2k, 4k, 8k"
+              }
               required
               onChange={(event) => setResolutions(event.target.value)}
             />
@@ -314,10 +327,10 @@ export function CustomModelConfigurationDialog({
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {(
                 [
-                  ["base1024Credits", "1024 档"],
                   ["base1kCredits", "1K 档"],
                   ["base2kCredits", "2K 档"],
                   ["base4kCredits", "4K 档"],
+                  ["base8kCredits", "8K 档"],
                 ] as const
               ).map(([field, label]) => (
                 <div className="space-y-2" key={field}>
@@ -399,6 +412,44 @@ export function CustomModelConfigurationDialog({
               </p>
             </div>
           )}
+
+          {category === "image" ? (
+            <div className="space-y-3 rounded-md border px-3 py-2">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label htmlFor="custom-model-supports-quality">
+                    支持质量参数
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    关闭后生图页面不展示质量选项，也不会向供应商传递 quality。
+                  </p>
+                </div>
+                <Switch
+                  id="custom-model-supports-quality"
+                  checked={supportsQuality}
+                  disabled={isSaving}
+                  onCheckedChange={setSupportsQuality}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t pt-3">
+                <div>
+                  <Label htmlFor="custom-model-supports-auto-size">
+                    支持 auto 尺寸
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    关闭后站内生图必须选择明确尺寸，模型广场会标注不支持传
+                    auto。
+                  </p>
+                </div>
+                <Switch
+                  id="custom-model-supports-auto-size"
+                  checked={supportsAutoSize}
+                  disabled={isSaving}
+                  onCheckedChange={setSupportsAutoSize}
+                />
+              </div>
+            </div>
+          ) : null}
 
           <DialogFooter>
             <Button

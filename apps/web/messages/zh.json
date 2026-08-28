@@ -544,7 +544,8 @@
         "audioNone": "不支持声音",
         "audioDefaultOn": "声音默认开启",
         "audioOptional": "声音可选"
-      }
+      },
+      "autoSizeUnsupported": "不支持传 auto 尺寸"
     },
     "actions": {
       "copy": "复制模型 ID",
@@ -561,6 +562,8 @@
       "supportedDurations": "支持时长",
       "supportedAspectRatios": "支持比例",
       "supportedResolutions": "支持分辨率",
+      "autoSizeSupported": "支持传递 auto 尺寸",
+      "autoSizeUnsupported": "不支持传递 auto 尺寸，请在站内生图时选择明确尺寸。",
       "capabilities": {
         "title": "视频能力",
         "description": "区分模型全局支持能力与当前配置路径是否可达。",
@@ -583,7 +586,8 @@
         "base1024": "1024 档",
         "base1k": "1K 档",
         "base2k": "2K 档",
-        "base4k": "4K 档"
+        "base4k": "4K 档",
+        "base8k": "8K 档"
       }
     },
     "filteredEmpty": {

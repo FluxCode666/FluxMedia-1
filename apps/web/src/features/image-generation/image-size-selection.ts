@@ -175,3 +175,24 @@ export function inferImageSizeSelectionState(
     customHeight: dimensions.height,
   };
 }
+
+/**
+ * 根据模型能力解析尺寸弹窗的初始选择状态。
+ *
+ * 不支持自动尺寸的模型必须直接显示可编辑的按比例选项。站内生图会把遗留的
+ * `auto` 转换为默认 `1024x1024`，而该尺寸属于自定义宽高；因此不能只在
+ * 当前状态为 `auto` 时切换标签。
+ *
+ * @param size 当前请求使用的 `auto` 或 `WIDTHxHEIGHT`。
+ * @param supportsAutoSize 当前模型是否允许传递 `auto`。
+ * @returns 与模型能力一致、可直接用于尺寸弹窗的安全状态快照。
+ */
+export function resolveImageSizeSelectionState(
+  size: string,
+  supportsAutoSize: boolean
+): ImageSizeSelectionState {
+  const state = inferImageSizeSelectionState(size);
+  return !supportsAutoSize && state.mode !== "ratio"
+    ? { ...state, mode: "ratio" }
+    : state;
+}

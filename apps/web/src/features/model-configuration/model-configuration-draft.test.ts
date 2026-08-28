@@ -42,6 +42,8 @@ const IMAGE_ENTRY: Extract<
     base2kCredits: 5.07,
     base4kCredits: 10,
   },
+  supportsQuality: true,
+  supportsAutoSize: true,
 };
 
 const UNCONFIGURED_IMAGE_ENTRY: Extract<
@@ -118,6 +120,7 @@ describe("模型配置草稿", () => {
         base1kCredits: "",
         base2kCredits: "",
         base4kCredits: "",
+        base8kCredits: "",
       },
     });
     expect(video).toMatchObject({
@@ -193,6 +196,8 @@ describe("模型配置草稿", () => {
       homepagePriority: "3",
       description: "精细图像生成",
       coverChange: "keep",
+      supportsQuality: "true",
+      supportsAutoSize: "true",
       base1024Credits: "1.27",
       base1kCredits: "1.27",
       base2kCredits: "5.07",
@@ -220,6 +225,9 @@ describe("模型配置草稿", () => {
     expect(videoValues.billingMode).toBe("per_item");
     expect(videoValues.creditsPerItemByResolution).toBe(
       JSON.stringify({ "720p": 3, "1080p": 5 })
+    );
+    expect(videoValues.supportedResolutions).toBe(
+      JSON.stringify(["720p", "1080p"])
     );
     expect(videoValues.maxReferenceImages).toBe("20");
   });

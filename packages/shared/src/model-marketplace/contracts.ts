@@ -20,6 +20,7 @@ import {
   MAX_MEDIA_INPUT_COUNT,
 } from "../image-generation/media-limits";
 import {
+  VIDEO_RESOLUTIONS,
   videoBillingModeSchema,
   videoFrameInputCapabilitySchema,
 } from "../video-generation";
@@ -98,8 +99,17 @@ export const modelMarketplaceCoverObjectKeySchema = z
   );
 
 /** 图像模型四档完整价格；复用现有财务字段及单价上限。 */
-export const modelMarketplaceImagePricingSchema =
-  imageCreditPricingSchema.required();
+export const modelMarketplaceImagePricingSchema = imageCreditPricingSchema
+  .pick({
+    base1024Credits: true,
+    base1kCredits: true,
+    base2kCredits: true,
+    base4kCredits: true,
+  })
+  .required()
+  .extend({
+    base8kCredits: z.number().finite().positive().max(100_000).optional(),
+  });
 
 /** 模型广场支持的真实模型类别。 */
 export const modelMarketplaceConfigurationCategorySchema = z.enum([
@@ -135,6 +145,10 @@ export const modelMarketplaceCustomModelSchema = z
     modelId: modelMarketplaceCustomModelIdSchema,
     category: modelMarketplaceConfigurationCategorySchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema,
+    /** 图像模型是否接受质量参数；缺失表示不支持。 */
+    supportsQuality: z.boolean().optional(),
+    /** 图像模型是否接受 `auto` 尺寸；缺失表示不支持。 */
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 
@@ -193,6 +207,11 @@ export const modelMarketplaceEntrySchema = z
     homepagePriority: modelMarketplaceHomepagePrioritySchema.optional(),
     description: descriptionSchema,
     cover: modelMarketplaceCoverRefSchema.nullable(),
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    /** 仅图像模型使用；仅为 true 时前端和执行管线才传 quality。 */
+    supportsQuality: z.boolean().optional(),
+    /** 仅图像模型使用；仅为 true 时才允许传 `auto` 尺寸。 */
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -476,6 +495,8 @@ const explicitImageConfigurationEntrySchema = z
     minimumCredits: z.number().finite().positive(),
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const unconfiguredImageConfigurationEntrySchema = z
@@ -484,6 +505,8 @@ const unconfiguredImageConfigurationEntrySchema = z
     category: z.literal("image"),
     pricingSource: z.literal("unconfigured"),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const videoConfigurationEntrySchema = z
@@ -500,7 +523,7 @@ const videoConfigurationEntrySchema = z
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
     creditsPerItemByResolution: videoModelCreditPricesSchema,
     supportedResolutions: z
-      .array(z.string().trim().min(1).max(32))
+      .array(modelMarketplaceSupportedResolutionSchema)
       .min(1)
       .max(20),
     maxReferenceImages: positiveSafeIntegerSchema.optional(),
@@ -547,6 +570,9 @@ const publicImageItemSchema = z
     category: z.literal("image"),
     priceUnit: z.literal("per_image"),
     pricing: modelMarketplaceImagePricingSchema,
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const publicVideoCommonShape = {
@@ -701,6 +727,8 @@ const updateImageConfigurationInputSchema = z
     category: z.literal("image"),
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((input, context) => {
@@ -728,11 +756,14 @@ const updateImageConfigurationInputSchema = z
           message: "自定义图像模型必须声明支持的分辨率",
         });
       }
-    } else if (input.supportedResolutions !== undefined) {
+    } else if (
+      input.supportedResolutions?.includes("8k") &&
+      input.pricing.base8kCredits === undefined
+    ) {
       context.addIssue({
         code: "custom",
-        path: ["supportedResolutions"],
-        message: "现有模型不能通过创建输入修改分辨率",
+        path: ["pricing", "base8kCredits"],
+        message: "启用 8K 图片分辨率时必须配置 8K 价格",
       });
     }
   });
@@ -743,10 +774,25 @@ const updateVideoConfigurationInputSchema = z
     billingMode: videoBillingModeSchema,
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
     creditsPerItemByResolution: videoModelCreditPricesSchema,
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     maxReferenceImages: positiveSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {
+    if (
+      input.supportedResolutions &&
+      input.isCustom !== true &&
+      input.supportedResolutions.some(
+        (resolution) =>
+          !(VIDEO_RESOLUTIONS as readonly string[]).includes(resolution)
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["supportedResolutions"],
+        message: "内置视频模型只能使用预设分辨率",
+      });
+    }
     const supported = Object.keys(input.creditsPerSecondByResolution).sort();
     const item = Object.keys(input.creditsPerItemByResolution).sort();
     if (

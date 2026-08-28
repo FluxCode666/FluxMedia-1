@@ -130,13 +130,22 @@ export async function executeVideoListCapabilitiesBinding(
           },
           audio: { supported: false, defaultEnabled: false },
         })),
-    ].filter((capability) =>
-      isModelMarketplaceModelEnabled(
-        marketplaceConfig,
-        "video",
-        capability.modelId
+    ]
+      .filter((capability) =>
+        isModelMarketplaceModelEnabled(
+          marketplaceConfig,
+          "video",
+          capability.modelId
+        )
       )
-    );
+      .map((capability) => {
+        const configuredResolutions =
+          marketplaceConfig.videoByFamily[capability.modelId]
+            ?.supportedResolutions;
+        return configuredResolutions
+          ? { ...capability, resolutions: [...configuredResolutions] }
+          : capability;
+      });
     const allowedModelIds = new Set(capabilities.map((item) => item.modelId));
     const reachable = resolveConfiguredRealVideoModelIds(
       configuredModelIds,

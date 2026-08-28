@@ -81,7 +81,14 @@ export type VideoAspectRatio = (typeof VIDEO_ASPECT_RATIOS)[number];
 export const videoAspectRatioSchema = z.enum(VIDEO_ASPECT_RATIOS);
 
 /** 所有内置视频描述符可使用的小写分辨率字面量。 */
-export const VIDEO_RESOLUTIONS = ["480p", "720p", "1080p", "4k"] as const;
+export const VIDEO_RESOLUTIONS = [
+  "480p",
+  "720p",
+  "1080p",
+  "2k",
+  "4k",
+  "8k",
+] as const;
 
 /** 视频请求公开分辨率。 */
 export type VideoResolution = (typeof VIDEO_RESOLUTIONS)[number];

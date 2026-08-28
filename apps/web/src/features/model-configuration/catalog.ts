@@ -98,6 +98,16 @@ const VIDEO_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   "seedance2-fast": "Seedance 2.0 Fast",
 };
 
+const IMAGE_MODEL_SUPPORTED_RESOLUTIONS = ["1k", "2k", "4k", "8k"] as const;
+export const VIDEO_MODEL_RESOLUTION_PRESETS = [
+  "480p",
+  "720p",
+  "1080p",
+  "2k",
+  "4k",
+  "8k",
+] as const;
+
 /**
  * 规范化额外视频价格键，确保大小写不同的持久化键不会生成重复条目。
  *
@@ -349,18 +359,44 @@ export function buildModelConfigurationSnapshot(
         pricingSource: "explicit",
         pricing,
         minimumCredits: getMinimumImageCredits(pricing),
-        ...(customModel
-          ? { supportedResolutions: [...customModel.supportedResolutions] }
-          : {}),
+        supportedResolutions: marketplaceConfig.imageByModel[configKey]
+          ?.supportedResolutions
+          ? [...marketplaceConfig.imageByModel[configKey].supportedResolutions]
+          : customModel
+            ? [...customModel.supportedResolutions]
+            : [...IMAGE_MODEL_SUPPORTED_RESOLUTIONS],
+        ...(marketplaceConfig.imageByModel[configKey]?.supportsQuality === true
+          ? { supportsQuality: true }
+          : customModel?.supportsQuality === true
+            ? { supportsQuality: true }
+            : {}),
+        ...(marketplaceConfig.imageByModel[configKey]?.supportsAutoSize === true
+          ? { supportsAutoSize: true }
+          : customModel?.supportsAutoSize === true
+            ? { supportsAutoSize: true }
+            : {}),
       });
     } else {
       entries.push({
         ...common,
         category: "image",
         pricingSource: "unconfigured",
-        ...(customModel
-          ? { supportedResolutions: [...customModel.supportedResolutions] }
-          : {}),
+        supportedResolutions: marketplaceConfig.imageByModel[configKey]
+          ?.supportedResolutions
+          ? [...marketplaceConfig.imageByModel[configKey].supportedResolutions]
+          : customModel
+            ? [...customModel.supportedResolutions]
+            : [...IMAGE_MODEL_SUPPORTED_RESOLUTIONS],
+        ...(marketplaceConfig.imageByModel[configKey]?.supportsQuality === true
+          ? { supportsQuality: true }
+          : customModel?.supportsQuality === true
+            ? { supportsQuality: true }
+            : {}),
+        ...(marketplaceConfig.imageByModel[configKey]?.supportsAutoSize === true
+          ? { supportsAutoSize: true }
+          : customModel?.supportsAutoSize === true
+            ? { supportsAutoSize: true }
+            : {}),
       });
     }
   }
@@ -374,11 +410,15 @@ export function buildModelConfigurationSnapshot(
     const creditsPerSecond = videoPricing[configKey];
     if (creditsPerSecond === undefined) continue;
     const customModel = customModelsById.get(configKey.toLowerCase());
-    const supportedResolutions = customModel
-      ? [...customModel.supportedResolutions]
-      : getVideoPricingResolutions(configKey).length > 0
-        ? getVideoPricingResolutions(configKey)
-        : ["default"];
+    const configuredResolutions =
+      marketplaceConfig.videoByFamily[configKey]?.supportedResolutions;
+    const supportedResolutions = configuredResolutions
+      ? [...configuredResolutions]
+      : customModel
+        ? [...customModel.supportedResolutions]
+        : getVideoPricingResolutions(configKey).length > 0
+          ? getVideoPricingResolutions(configKey)
+          : ["default"];
     const creditsPerSecondByResolution = Object.fromEntries(
       supportedResolutions.map((resolution) => [
         resolution,

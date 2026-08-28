@@ -35,6 +35,10 @@ const lockedMemberRowSchema = z
     type: z.enum(["api", "adobe"]),
     name: z.string().min(1).max(120),
     supported_model_ids: z.array(z.string().trim().min(1)).min(1),
+    supported_resolutions_by_model: z
+      .record(z.string(), z.array(z.string()))
+      .optional()
+      .default({}),
     content_safety_enabled: z.boolean(),
     is_enabled: z.boolean(),
     priority: z.coerce.number().int().min(0),
@@ -105,6 +109,7 @@ const acquireLeaseInputSchema = z
   .object({
     groupId: identifierSchema,
     requestedModel: z.string().trim().min(1).max(240),
+    requestedResolution: z.string().trim().min(1).max(32).optional(),
     excludedMemberIds: z.array(identifierSchema).max(1_000).default([]),
     requiredMemberId: identifierSchema.optional(),
     requiredMemberType: z.enum(["api", "adobe"]).optional(),
@@ -207,6 +212,7 @@ const releaseLeaseInputSchema = z
 interface BackendAcquireCandidate extends BackendSchedulingCandidate {
   groupIds: readonly string[];
   supportedModelIds: readonly string[];
+  supportedResolutionsByModel: Readonly<Record<string, readonly string[]>>;
   isEnabled: boolean;
   contentSafetyEnabled: boolean;
   cooldownUntil: Date | null;
@@ -380,6 +386,7 @@ export function createPostgresBackendPoolRepository(
                   m.type,
                   m.name,
                   m.supported_model_ids,
+                  m.supported_resolutions_by_model,
                   m.content_safety_enabled,
                   m.is_enabled,
                   m.priority,
@@ -430,6 +437,17 @@ export function createPostgresBackendPoolRepository(
                       as supported_model(model_id)
                     where lower(trim(supported_model.model_id)) =
                       lower(${input.requestedModel})
+                  )
+                  and (
+                    ${input.requestedResolution ?? null}::text is null
+                    or (m.supported_resolutions_by_model -> lower(trim(${input.requestedModel}))) is null
+                    or exists (
+                      select 1
+                      from json_array_elements_text(
+                        m.supported_resolutions_by_model -> lower(trim(${input.requestedModel}))
+                      ) as supported_resolution(resolution)
+                      where lower(trim(supported_resolution.resolution)) = lower(trim(${input.requestedResolution ?? ""}))
+                    )
                   )
                   and (
                     ${input.requiresContentSafety} = false
@@ -523,6 +541,7 @@ export function createPostgresBackendPoolRepository(
             name: row.name,
             groupIds: [input.groupId],
             supportedModelIds: row.supported_model_ids,
+            supportedResolutionsByModel: row.supported_resolutions_by_model,
             contentSafetyEnabled: row.content_safety_enabled,
             isEnabled: row.is_enabled,
             cooldownUntil: row.cooldown_until,

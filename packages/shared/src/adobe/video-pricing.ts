@@ -428,7 +428,8 @@ function resolveBillingModel(
     }
     return {
       modelId: capability.modelId,
-      supportedResolutions: [...capability.resolutions],
+      supportedResolutions:
+        supportedVideoResolutionsSchema.parse(supportedResolutions ?? capability.resolutions),
     };
   }
 

@@ -17,6 +17,7 @@ import type { ReferenceHandoffIntent } from "@/features/image-generation/referen
 import {
   AUTO_IMAGE_SIZE,
   DEFAULT_IMAGE_MODEL,
+  DEFAULT_IMAGE_SIZE,
   getImageCreditCost,
 } from "@/features/image-generation/resolution";
 
@@ -392,6 +393,21 @@ export function ImageCreatePanel({
   }, [availableModels, model]);
 
   const normalizedModel = model === "default" ? DEFAULT_IMAGE_MODEL : model;
+  const selectedModel = selectedGroup?.models.find(
+    (item) => item.id.toLowerCase() === normalizedModel.toLowerCase()
+  );
+  const supportsQuality = selectedModel?.supportsQuality === true;
+  const supportsAutoSize = selectedModel?.supportsAutoSize === true;
+  useEffect(() => {
+    if (selectedModel && !supportsQuality && quality !== "auto") {
+      setQuality("auto");
+    }
+  }, [quality, selectedModel, supportsQuality]);
+  useEffect(() => {
+    if (selectedModel && !supportsAutoSize && size === AUTO_IMAGE_SIZE) {
+      setSize(DEFAULT_IMAGE_SIZE);
+    }
+  }, [selectedModel, size, supportsAutoSize]);
   const maskAvailable = catalog.groups.some((group) =>
     group.models.some((item) => item.capabilities.mask)
   );
@@ -709,7 +725,7 @@ export function ImageCreatePanel({
         size,
         model,
         backendGroupId: selectedGroup.id,
-        quality,
+        ...(supportsQuality ? { quality } : {}),
         background,
       };
       if (mode === "generate") {
@@ -777,6 +793,8 @@ export function ImageCreatePanel({
       maxUploadBytes={maxUploadBytes}
       mode={mode}
       model={model}
+      supportsQuality={supportsQuality}
+      supportsAutoSize={supportsAutoSize}
       onBackgroundChange={setBackground}
       onMaskChange={changeMask}
       onModelSelectionChange={selectModelGroup}

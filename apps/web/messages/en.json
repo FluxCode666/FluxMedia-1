@@ -544,7 +544,8 @@
         "audioNone": "No audio",
         "audioDefaultOn": "Audio on by default",
         "audioOptional": "Optional audio"
-      }
+      },
+      "autoSizeUnsupported": "Does not support passing auto size"
     },
     "actions": {
       "copy": "Copy model ID",
@@ -561,6 +562,8 @@
       "supportedDurations": "Durations",
       "supportedAspectRatios": "Aspect ratios",
       "supportedResolutions": "Resolutions",
+      "autoSizeSupported": "Supports passing auto size",
+      "autoSizeUnsupported": "Does not support passing auto size; choose an explicit size in the creation workspace.",
       "capabilities": {
         "title": "Video capabilities",
         "description": "Global model support and availability for your current configured backend path.",
@@ -583,7 +586,8 @@
         "base1024": "1024 tier",
         "base1k": "1K tier",
         "base2k": "2K tier",
-        "base4k": "4K tier"
+        "base4k": "4K tier",
+        "base8k": "8K tier"
       }
     },
     "filteredEmpty": {

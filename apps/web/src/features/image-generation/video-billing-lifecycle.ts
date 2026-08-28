@@ -41,6 +41,11 @@ function equalVideoCapabilitySnapshots(
     left.version === right.version &&
     left.modelConfigurationRevision === right.modelConfigurationRevision &&
     left.maxReferenceImages === right.maxReferenceImages &&
+    (left.supportedResolutions?.length ?? 0) ===
+      (right.supportedResolutions?.length ?? 0) &&
+    (left.supportedResolutions?.every(
+      (resolution, index) => resolution === right.supportedResolutions?.[index]
+    ) ?? true) &&
     left.customModel?.modelId === right.customModel?.modelId &&
     (left.customModel?.supportedResolutions.length ?? 0) ===
       (right.customModel?.supportedResolutions.length ?? 0) &&
@@ -74,14 +79,24 @@ export function assertAuthoritativeVideoCapabilitySnapshot(input: {
     input.marketplaceConfig.videoByFamily[input.modelId],
     "video"
   ).revision;
+  const effectiveCapability = customModel
+    ? undefined
+    : resolveEffectiveVideoModelCapability(
+        input.modelId,
+        input.videoCapabilityOverrides
+      );
+  const configuredResolutions = input.capabilitySnapshot.supportedResolutions
+    ? input.marketplaceConfig.videoByFamily[input.modelId]
+        ?.supportedResolutions ?? effectiveCapability?.resolutions
+    : undefined;
   const expected = createVideoCapabilitySnapshot({
     modelConfigurationRevision: revision,
     maxReferenceImages: customModel
       ? 0
-      : resolveEffectiveVideoModelCapability(
-          input.modelId,
-          input.videoCapabilityOverrides
-        ).input.referenceImages.maxCount,
+      : effectiveCapability?.input.referenceImages.maxCount ?? 0,
+    ...(configuredResolutions
+      ? { supportedResolutions: configuredResolutions }
+      : {}),
     ...(customModel
       ? {
           customModel: {

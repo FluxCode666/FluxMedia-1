@@ -18,7 +18,7 @@ import {
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { Info } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   getImageSizeForRatio,
@@ -27,8 +27,8 @@ import {
   type ImageAspectRatio,
   type ImageSizeBase,
   type ImageSizeMode,
-  inferImageSizeSelectionState,
   parseImageAspectRatioInput,
+  resolveImageSizeSelectionState,
 } from "@/features/image-generation/image-size-selection";
 import {
   AUTO_IMAGE_SIZE,
@@ -43,6 +43,7 @@ type ImageSizePickerProps = {
   disabled: boolean;
   onChange: (size: string) => void;
   size: string;
+  supportsAutoSize?: boolean;
 };
 
 /** 按当前尺寸方向绘制与旧版按钮一致的简洁画幅图标。 */
@@ -79,8 +80,12 @@ export function ImageSizePicker({
   disabled,
   onChange,
   size,
+  supportsAutoSize = false,
 }: ImageSizePickerProps) {
-  const initial = useMemo(() => inferImageSizeSelectionState(size), [size]);
+  const initial = useMemo(
+    () => resolveImageSizeSelectionState(size, supportsAutoSize),
+    [size, supportsAutoSize]
+  );
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ImageSizeMode>(initial.mode);
   const [base, setBase] = useState<ImageSizeBase>(initial.base);
@@ -90,9 +95,9 @@ export function ImageSizePicker({
   const [customWidth, setCustomWidth] = useState(initial.customWidth);
   const [customHeight, setCustomHeight] = useState(initial.customHeight);
 
-  useEffect(() => {
-    if (!open) return;
-    const next = inferImageSizeSelectionState(size);
+  /** 用当前尺寸和模型能力重置弹窗草稿，确保首次显示的标签也正确。 */
+  const resetDraft = useCallback((): void => {
+    const next = resolveImageSizeSelectionState(size, supportsAutoSize);
     setMode(next.mode);
     setBase(next.base);
     setRatio(next.ratio);
@@ -100,7 +105,12 @@ export function ImageSizePicker({
     setCustomRatioOpen(false);
     setCustomWidth(next.customWidth);
     setCustomHeight(next.customHeight);
-  }, [open, size]);
+  }, [size, supportsAutoSize]);
+
+  useEffect(() => {
+    if (!open) return;
+    resetDraft();
+  }, [open, resetDraft]);
 
   const selectedRatio = IMAGE_ASPECT_RATIOS.find(
     (item) => item.value === ratio
@@ -136,6 +146,7 @@ export function ImageSizePicker({
   const canConfirm =
     previewCheck.valid &&
     ratioInputValid &&
+    (mode !== "auto" || supportsAutoSize) &&
     (mode !== "custom" || customDimensionsValid);
 
   /** 确认经过规整和校验的尺寸，未知草稿不会离开弹窗。 */
@@ -152,7 +163,10 @@ export function ImageSizePicker({
         type="button"
         variant="outline"
         className="w-full justify-start bg-background"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          resetDraft();
+          setOpen(true);
+        }}
         disabled={disabled}
         aria-label={`设置画面比例，当前为${formatImageSize(size)}`}
       >
@@ -182,9 +196,13 @@ export function ImageSizePicker({
                 <button
                   key={item.value}
                   type="button"
-                  onClick={() => setMode(item.value)}
+                  disabled={item.value === "auto" && !supportsAutoSize}
+                  onClick={() => {
+                    if (item.value === "auto" && !supportsAutoSize) return;
+                    setMode(item.value);
+                  }}
                   aria-pressed={mode === item.value}
-                  className={`h-9 rounded-lg text-sm font-medium transition ${
+                  className={`h-9 rounded-lg text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
                     mode === item.value
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"

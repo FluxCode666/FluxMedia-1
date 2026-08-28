@@ -21,6 +21,7 @@ import {
   type BackendMemberInput,
   backendMemberInputSchema,
 } from "@repo/shared/image-backend/member-contract";
+import { logError } from "@repo/shared/logger";
 import {
   ActionUserError,
   adminAction,
@@ -45,6 +46,7 @@ import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
 import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 import type { BackendMemberAdminSummary } from "./member-service";
+import { backendMemberExportDocumentSchema } from "./member-transfer";
 
 /** 页面成员摘要；凭据健康来自独立 human-only 批量 operation。 */
 export type BackendPoolAdminMemberSummary = BackendMemberAdminSummary & {
@@ -344,6 +346,78 @@ export const saveImageBackendMemberAction = adminAction
     );
     revalidateBackendPoolPage();
     return { success: true, id: result.id };
+  });
+
+/**
+ * 逐条导入供应商账号配置。
+ *
+ * 导出文件默认不含凭据；更新原账号时服务端会保留已有凭据，新账号则必须在导入
+ * JSON 中补入对应的 API Key 或 Cookie。每条独立报告结果，避免一个坏账号吞掉整批
+ * 导入结果；所有条目仍通过 pool.saveMember 的服务端权限、模型和数据库不变量校验。
+ */
+export const importImageBackendMembersAction = adminAction
+  .metadata({ action: "imageBackendPool.importMembers" })
+  .schema(backendMemberExportDocumentSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const principal = {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    } as const satisfies Principal;
+    const imported: Array<{ index: number; id: string; name: string }> = [];
+    const failed: Array<{
+      index: number;
+      name: string;
+      message: string;
+    }> = [];
+
+    for (const [index, rawMember] of parsedInput.members.entries()) {
+      const memberResult = backendMemberInputSchema.safeParse(rawMember);
+      const rawName =
+        typeof rawMember === "object" &&
+        rawMember !== null &&
+        "name" in rawMember &&
+        typeof rawMember.name === "string"
+          ? rawMember.name
+          : `第 ${index + 1} 个账号`;
+      if (!memberResult.success) {
+        failed.push({
+          index,
+          name: rawName,
+          message: memberResult.error.issues[0]?.message ?? "账号配置无效",
+        });
+        continue;
+      }
+
+      try {
+        const result = await invokePoolOperation(
+          "pool.saveMember",
+          memberResult.data,
+          principal
+        );
+        imported.push({ index, id: result.id, name: memberResult.data.name });
+      } catch (error) {
+        if (!(error instanceof ActionUserError)) {
+          logError(error, {
+            source: "image-backend-pool-import",
+            memberIndex: index,
+          });
+        }
+        failed.push({
+          index,
+          name: memberResult.data.name,
+          message:
+            error instanceof ActionUserError
+              ? error.message
+              : "账号保存失败，请检查配置后重试",
+        });
+      }
+    }
+
+    if (imported.length > 0) {
+      revalidateBackendPoolPage();
+    }
+    return { imported, failed };
   });
 
 /** 清除统一成员的暂态运行失败状态，不改凭据、指标或租约。 */
