@@ -92,6 +92,36 @@ describe("modelMarketplaceConfigSchema", () => {
     expect(parsed.writeReceipts).toEqual({});
   });
 
+  it("兼容已持久化的图像模型媒体能力字段", () => {
+    const modelIds = ["nano-banana-pro", "nano-banana", "nano-banana2"];
+    const imageByModel = Object.fromEntries(
+      modelIds.map((modelId) => [
+        modelId,
+        {
+          revision: 1,
+          visible: true,
+          description: "",
+          cover: null,
+          supportedResolutions: ["1k", "2k", "4k"],
+          supportsQuality: true,
+        },
+      ])
+    );
+
+    const parsed = parseModelMarketplaceConfig({
+      version: MODEL_MARKETPLACE_CONFIG_VERSION,
+      imageByModel,
+      videoByFamily: {},
+    });
+
+    for (const modelId of modelIds) {
+      expect(parsed.imageByModel[modelId]).toMatchObject({
+        supportedResolutions: ["1k", "2k", "4k"],
+        supportsQuality: true,
+      });
+    }
+  });
+
   it("读取旧版 v1 时丢弃 default revision 与 fallback 写回执", () => {
     const imageReceiptKey = "c".repeat(64);
     const fallbackReceiptKey = "d".repeat(64);
