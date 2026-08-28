@@ -211,7 +211,8 @@ export function BackendMemberFormDialog({
     return [...configuredOptions, ...existingOptions];
   }, [acceptsVideo, modelOptions, selectedModelIds, type]);
 
-  const showAdvancedConfiguration = Boolean(member) || detailsOnly;
+  // 详情页才编辑高级适配配置；新增和列表编辑共用同一套基础表单。
+  const showAdvancedConfiguration = detailsOnly;
 
   const { execute: saveMember, isPending } = useAction(
     saveImageBackendMemberAction,
@@ -538,10 +539,147 @@ export function BackendMemberFormDialog({
           </>
         ) : null}
 
+        {detailsOnly ? (
+          <section className="space-y-4 rounded-md border p-4">
+            <div>
+              <h3 className="font-medium">模型能力</h3>
+              <p className="text-xs text-muted-foreground">
+                先声明账号支持的平台模型，再为每个模型配置上游
+                ID、视频输入和分辨率能力。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="member-models">支持的模型</Label>
+              <BackendMemberModelSelect
+                options={selectableModelOptions}
+                value={selectedModelIds}
+                onChange={handleSelectedModelIdsChange}
+                status={modelOptionStatus}
+                disabled={isPending}
+              />
+            </div>
+            {type === "api" ? (
+              <div className="space-y-2">
+                <Label>上游模型 ID 映射</Label>
+                <p className="text-xs text-muted-foreground">
+                  平台模型 ID
+                  用于调度、计费和任务记录；仅实际请求当前账号时替换为供应商
+                  ID。留空表示同名透传。
+                </p>
+                {selectedModelIds.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                    请先选择账号支持的模型。
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedModelIds.map((modelId) => (
+                      <div
+                        key={modelId}
+                        className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+                      >
+                        <code className="truncate rounded-md bg-muted px-3 py-2 text-xs">
+                          {modelId}
+                        </code>
+                        <Input
+                          aria-label={`${modelId} 的上游模型 ID`}
+                          value={
+                            modelMappings.find(
+                              (mapping) =>
+                                mapping.modelId.toLowerCase() ===
+                                modelId.toLowerCase()
+                            )?.upstreamModelId ?? ""
+                          }
+                          onChange={(event) =>
+                            updateUpstreamModelId(modelId, event.target.value)
+                          }
+                          placeholder={`默认：${modelId}`}
+                          maxLength={240}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+            {type === "api" ? (
+              <div className="space-y-2">
+                <Label>视频输入能力标签</Label>
+                <div className="space-y-2 rounded-md border p-3">
+                  <label
+                    htmlFor="api-reference-video-capability"
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <Checkbox
+                      id="api-reference-video-capability"
+                      checked={
+                        apiAdapterDraft.videoInputCapabilities.referenceVideos
+                      }
+                      disabled={isPending}
+                      onCheckedChange={(checked) =>
+                        setApiAdapterDraft({
+                          ...apiAdapterDraft,
+                          videoInputCapabilities: {
+                            ...apiAdapterDraft.videoInputCapabilities,
+                            referenceVideos: checked === true,
+                          },
+                        })
+                      }
+                    />
+                    支持参考视频输入
+                  </label>
+                  <label
+                    htmlFor="api-reference-audio-capability"
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <Checkbox
+                      id="api-reference-audio-capability"
+                      checked={
+                        apiAdapterDraft.videoInputCapabilities.referenceAudios
+                      }
+                      disabled={isPending}
+                      onCheckedChange={(checked) =>
+                        setApiAdapterDraft({
+                          ...apiAdapterDraft,
+                          videoInputCapabilities: {
+                            ...apiAdapterDraft.videoInputCapabilities,
+                            referenceAudios: checked === true,
+                          },
+                        })
+                      }
+                    />
+                    支持参考音频输入
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  请求携带对应参考素材时，只会调度到已勾选能力的 API 账号。
+                </p>
+              </div>
+            ) : null}
+            {selectedModelIds.length > 0 ? (
+              <MemberResolutionCapabilitiesEditor
+                disabled={isPending}
+                modelIds={selectedModelIds}
+                modelOptions={selectableModelOptions}
+                onChange={setSupportedResolutionsByModel}
+                value={supportedResolutionsByModel}
+              />
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              {acceptsVideo
+                ? "API 与 Adobe Direct 账号可选择图片和视频的真实模型 ID。"
+                : type === "adobe"
+                  ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
+                  : "API 账号可选择图片和视频的真实模型 ID。"}
+            </p>
+          </section>
+        ) : null}
+
         {type === "api" ? (
           <div className="space-y-4 rounded-md border p-4">
             <div>
-              <h3 className="font-medium">API 配置</h3>
+              <h3 className="font-medium">
+                {detailsOnly ? "请求响应处理" : "API 配置"}
+              </h3>
               <p className="text-xs text-muted-foreground">
                 图片使用 Images 兼容协议，视频使用 Videos 兼容协议；不含
                 Responses 或 Chat。
@@ -581,64 +719,24 @@ export function BackendMemberFormDialog({
                     disabled={apiAdapterDraft.authentication.mode === "none"}
                   />
                 </div>
+              </>
+            ) : null}
+            {showAdvancedConfiguration ? (
+              <>
                 <BackendBooleanSetting
-                  id="api-use-stream"
+                  id="api-use-stream-details"
                   label="Images 流式响应"
                   description="向兼容的 Images 上游发送 stream 与 partial_images 参数。"
                   checked={apiUseStream}
                   onCheckedChange={setApiUseStream}
                 />
-              </>
-            ) : null}
-            {showAdvancedConfiguration ? (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>上游模型 ID 映射</Label>
-                  <p className="text-xs text-muted-foreground">
-                    平台仍使用左侧真实模型 ID
-                    进行调度、计费与任务记录；仅实际请求当前账号时替换为右侧供应商
-                    ID。留空表示同名透传。
-                  </p>
-                  {selectedModelIds.length === 0 ? (
-                    <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                      请先在下方选择账号支持的模型。
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {selectedModelIds.map((modelId) => (
-                        <div
-                          key={modelId}
-                          className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
-                        >
-                          <code className="truncate rounded-md bg-muted px-3 py-2 text-xs">
-                            {modelId}
-                          </code>
-                          <Input
-                            aria-label={`${modelId} 的上游模型 ID`}
-                            value={
-                              modelMappings.find(
-                                (mapping) =>
-                                  mapping.modelId.toLowerCase() ===
-                                  modelId.toLowerCase()
-                              )?.upstreamModelId ?? ""
-                            }
-                            onChange={(event) =>
-                              updateUpstreamModelId(modelId, event.target.value)
-                            }
-                            placeholder={`默认：${modelId}`}
-                            maxLength={240}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
                 <ApiUpstreamAdapterForm
                   value={apiAdapterDraft}
                   onChange={setApiAdapterDraft}
                   disabled={isPending}
+                  showVideoInputCapabilities={false}
                 />
-              </div>
+              </>
             ) : (
               <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
                 账号创建后，可在账号详情中配置模型映射、视频协议和脚本处理模块。
@@ -648,7 +746,9 @@ export function BackendMemberFormDialog({
         ) : (
           <div className="space-y-4 rounded-md border p-4">
             <div>
-              <h3 className="font-medium">Adobe 配置</h3>
+              <h3 className="font-medium">
+                {detailsOnly ? "账号默认参数" : "Adobe 配置"}
+              </h3>
               <p className="text-xs text-muted-foreground">
                 Gateway 使用外部兼容接口；Direct 成员自身就是一个 Adobe
                 账号，不再包含内部子号池。
@@ -780,35 +880,6 @@ export function BackendMemberFormDialog({
             ) : null}
           </div>
         )}
-
-        {showAdvancedConfiguration ? (
-          <div className="space-y-2">
-            <Label htmlFor="member-models">支持的模型</Label>
-            <BackendMemberModelSelect
-              options={selectableModelOptions}
-              value={selectedModelIds}
-              onChange={handleSelectedModelIdsChange}
-              status={modelOptionStatus}
-              disabled={isPending}
-            />
-            {selectedModelIds.length > 0 ? (
-              <MemberResolutionCapabilitiesEditor
-                disabled={isPending}
-                modelIds={selectedModelIds}
-                modelOptions={selectableModelOptions}
-                onChange={setSupportedResolutionsByModel}
-                value={supportedResolutionsByModel}
-              />
-            ) : null}
-            <p className="text-xs text-muted-foreground">
-              {acceptsVideo
-                ? "API 与 Adobe Direct 账号可选择图片和视频的真实模型 ID；未选择的模型不会进入候选集。"
-                : type === "adobe"
-                  ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
-                  : "API 账号可选择图片和视频的真实模型 ID。"}
-            </p>
-          </div>
-        ) : null}
 
         <DialogFooter>
           <Button
