@@ -135,6 +135,10 @@ export const modelMarketplaceCustomModelSchema = z
     modelId: modelMarketplaceCustomModelIdSchema,
     category: modelMarketplaceConfigurationCategorySchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema,
+    /** 图像模型是否接受质量参数；缺失表示不支持。 */
+    supportsQuality: z.boolean().optional(),
+    /** 图像模型是否接受 `auto` 尺寸；缺失表示不支持。 */
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 
@@ -193,6 +197,11 @@ export const modelMarketplaceEntrySchema = z
     homepagePriority: modelMarketplaceHomepagePrioritySchema.optional(),
     description: descriptionSchema,
     cover: modelMarketplaceCoverRefSchema.nullable(),
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    /** 仅图像模型使用；仅为 true 时前端和执行管线才传 quality。 */
+    supportsQuality: z.boolean().optional(),
+    /** 仅图像模型使用；仅为 true 时才允许传 `auto` 尺寸。 */
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -476,6 +485,8 @@ const explicitImageConfigurationEntrySchema = z
     minimumCredits: z.number().finite().positive(),
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const unconfiguredImageConfigurationEntrySchema = z
@@ -484,6 +495,8 @@ const unconfiguredImageConfigurationEntrySchema = z
     category: z.literal("image"),
     pricingSource: z.literal("unconfigured"),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const videoConfigurationEntrySchema = z
@@ -547,6 +560,9 @@ const publicImageItemSchema = z
     category: z.literal("image"),
     priceUnit: z.literal("per_image"),
     pricing: modelMarketplaceImagePricingSchema,
+    supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const publicVideoCommonShape = {
@@ -701,6 +717,8 @@ const updateImageConfigurationInputSchema = z
     category: z.literal("image"),
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    supportsQuality: z.boolean().optional(),
+    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((input, context) => {
