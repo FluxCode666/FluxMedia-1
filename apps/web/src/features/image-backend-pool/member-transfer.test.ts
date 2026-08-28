@@ -41,6 +41,7 @@ function apiMember(): BackendMemberAdminSummary {
         referenceVideos: false,
         referenceAudios: false,
       },
+      videoInputCapabilitiesByModel: {},
       modelMappings: [{ modelId: "seedance2", upstreamModelId: "seedance2" }],
       authentication: { mode: "bearer" },
       credentialScope: "provider",

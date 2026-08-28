@@ -12,7 +12,6 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@repo/ui/components/accordion";
-import { Checkbox } from "@repo/ui/components/checkbox";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -41,13 +40,10 @@ export function ApiUpstreamAdapterForm({
   value,
   disabled = false,
   onChange,
-  showVideoInputCapabilities = true,
 }: {
   value: ApiUpstreamAdapterFormDraft;
   disabled?: boolean;
   onChange: (value: ApiUpstreamAdapterFormDraft) => void;
-  /** 是否在请求响应配置中显示视频输入能力；详情页会将其归入模型能力。 */
-  showVideoInputCapabilities?: boolean;
 }) {
   /** 更新一个操作且保留其余五个不可变草稿。 */
   function updateOperation(
@@ -165,57 +161,6 @@ export function ApiUpstreamAdapterForm({
           表示首次请求后最多再重试两次。任务首次选择该账号时固定配置。
         </p>
       </div>
-
-      {showVideoInputCapabilities ? (
-        <div className="space-y-2">
-          <Label>视频输入能力标签</Label>
-          <div className="space-y-2 rounded-md border p-3">
-            <label
-              htmlFor="api-reference-video-capability"
-              className="flex items-center gap-2 text-sm"
-            >
-              <Checkbox
-                id="api-reference-video-capability"
-                checked={value.videoInputCapabilities.referenceVideos}
-                disabled={disabled}
-                onCheckedChange={(checked) =>
-                  onChange({
-                    ...value,
-                    videoInputCapabilities: {
-                      ...value.videoInputCapabilities,
-                      referenceVideos: checked === true,
-                    },
-                  })
-                }
-              />
-              支持参考视频输入
-            </label>
-            <label
-              htmlFor="api-reference-audio-capability"
-              className="flex items-center gap-2 text-sm"
-            >
-              <Checkbox
-                id="api-reference-audio-capability"
-                checked={value.videoInputCapabilities.referenceAudios}
-                disabled={disabled}
-                onCheckedChange={(checked) =>
-                  onChange({
-                    ...value,
-                    videoInputCapabilities: {
-                      ...value.videoInputCapabilities,
-                      referenceAudios: checked === true,
-                    },
-                  })
-                }
-              />
-              支持参考音频输入
-            </label>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            请求携带对应参考素材时，只会调度到已勾选能力的 API 账号。
-          </p>
-        </div>
-      ) : null}
 
       <Accordion type="multiple" className="rounded-md border px-4">
         {API_UPSTREAM_MEDIA_SECTIONS.map((section) => {

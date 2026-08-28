@@ -9,8 +9,22 @@
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Checkbox } from "@repo/ui/components/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@repo/ui/components/dropdown-menu";
 import { Switch } from "@repo/ui/components/switch";
-import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import {
+  Ellipsis,
+  Eye,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 
 import { Link } from "@/i18n/routing";
 import type { BackendPoolAdminMemberSummary } from "./actions";
@@ -78,7 +92,7 @@ function getCredentialLabel(member: BackendMemberAdminSummary): string {
  * 渲染供应商账号数据列表及受控写操作。
  *
  * @param props 成员摘要、分组名称、时区、权限、共享写状态和动作回调。
- * @returns 带详情入口的响应式语义表格；只读模式隐藏开关和操作列。
+ * @returns 带详情入口的响应式语义表格；只读模式隐藏写操作并保留详情入口。
  * @sideEffects 删除与重置先弹浏览器确认，其余操作回传父组件动作编排器。
  */
 export function BackendMemberTable({
@@ -114,7 +128,7 @@ export function BackendMemberTable({
 }) {
   return (
     <div className="overflow-x-auto rounded-md border">
-      <table className="w-full min-w-[980px] text-sm">
+      <table className="w-full min-w-[1080px] text-sm">
         <caption className="sr-only">供应商账号列表</caption>
         <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
           <tr>
@@ -131,7 +145,10 @@ export function BackendMemberTable({
               支持模型
             </th>
             <th className="px-4 py-3 font-medium" scope="col">
-              优先级 / 并发
+              优先级
+            </th>
+            <th className="px-4 py-3 font-medium" scope="col">
+              并发（占用 / 上限）
             </th>
             <th className="px-4 py-3 font-medium" scope="col">
               使用情况
@@ -139,11 +156,9 @@ export function BackendMemberTable({
             <th className="px-4 py-3 font-medium" scope="col">
               创建时间
             </th>
-            {!readOnly ? (
-              <th className="px-4 py-3 text-right font-medium" scope="col">
-                操作
-              </th>
-            ) : null}
+            <th className="px-4 py-3 text-right font-medium" scope="col">
+              操作
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -186,12 +201,6 @@ export function BackendMemberTable({
                     <span className="text-xs text-muted-foreground">
                       {getCredentialLabel(member)}
                     </span>
-                    <Link
-                      className="w-fit text-xs text-primary underline-offset-4 hover:underline"
-                      href={`/dashboard/admin/suppliers/${encodeURIComponent(member.id)}`}
-                    >
-                      查看账号详情
-                    </Link>
                   </div>
                 </td>
                 <td className="max-w-48 whitespace-normal px-4 py-3 text-muted-foreground">
@@ -219,41 +228,33 @@ export function BackendMemberTable({
                   {models}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 tabular-nums">
-                  {member.priority} / {member.concurrency}
+                  {member.priority}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                  {member.inflightCount} / {member.concurrency}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                  {member.inflightCount} 在途 · {member.leaseAcquiredCount}{" "}
-                  次租约
+                  累计租约 {member.leaseAcquiredCount} 次
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
                   {formatAdminTime(member.createdAt, timeZone)}
                 </td>
-                {!readOnly ? (
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        aria-busy={isResettingThisMember}
-                        disabled={isWritePending}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `确认重置账号“${member.name}”的运行状态？\n\n这会清除健康降级、失败连击、冷却和最近错误，不会修改凭据、累计指标或运行中租约。`
-                            )
-                          ) {
-                            onReset(member);
-                          }
-                        }}
-                        size="sm"
-                        type="button"
-                        variant="outline"
+                <td className="px-4 py-3">
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      aria-label={`查看账号“${member.name}”详情`}
+                      asChild
+                      size="icon"
+                      title="查看账号详情"
+                      variant="ghost"
+                    >
+                      <Link
+                        href={`/dashboard/admin/suppliers/${encodeURIComponent(member.id)}`}
                       >
-                        {isResettingThisMember ? (
-                          <Loader2 className="animate-spin" />
-                        ) : (
-                          <RotateCcw />
-                        )}
-                        重置
-                      </Button>
+                        <Eye />
+                      </Link>
+                    </Button>
+                    {!readOnly ? (
                       <Button
                         aria-label={`编辑账号“${member.name}”`}
                         disabled={isWritePending}
@@ -265,26 +266,62 @@ export function BackendMemberTable({
                       >
                         <Pencil />
                       </Button>
-                      <Button
-                        aria-label={`删除账号“${member.name}”`}
-                        disabled={isWritePending}
-                        onClick={() => {
-                          if (
-                            window.confirm(`确认删除成员“${member.name}”？`)
-                          ) {
-                            onDelete(member);
-                          }
-                        }}
-                        size="icon"
-                        title="删除账号"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <Trash2 />
-                      </Button>
-                    </div>
-                  </td>
-                ) : null}
+                    ) : null}
+                    {!readOnly ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            aria-busy={isResettingThisMember}
+                            aria-label={`更多账号“${member.name}”操作`}
+                            disabled={isWritePending}
+                            size="icon"
+                            title="更多操作"
+                            type="button"
+                            variant="ghost"
+                          >
+                            {isResettingThisMember ? (
+                              <Loader2 className="animate-spin" />
+                            ) : (
+                              <Ellipsis />
+                            )}
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            disabled={isWritePending}
+                            onSelect={() => {
+                              if (
+                                window.confirm(
+                                  `确认重置账号“${member.name}”的运行状态？\n\n这会清除健康降级、失败连击、冷却和最近错误，不会修改凭据、累计指标或运行中租约。`
+                                )
+                              ) {
+                                onReset(member);
+                              }
+                            }}
+                          >
+                            <RotateCcw />
+                            重置运行状态
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={isWritePending}
+                            onSelect={() => {
+                              if (
+                                window.confirm(`确认删除成员“${member.name}”？`)
+                              ) {
+                                onDelete(member);
+                              }
+                            }}
+                            variant="destructive"
+                          >
+                            <Trash2 />
+                            删除账号
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </div>
+                </td>
               </tr>
             );
           })}

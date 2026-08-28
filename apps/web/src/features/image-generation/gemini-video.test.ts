@@ -27,6 +27,7 @@ const adapter: ApiUpstreamAdapterDraft = {
   videoSubmissionRetryCount: 2,
   videoProtocolMode: "gemini",
   videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
+  videoInputCapabilitiesByModel: {},
   modelMappings: [],
   authentication: { mode: "bearer" },
   credentialScope: "https://generativelanguage.googleapis.com|bearer",

@@ -28,6 +28,7 @@ function createAdapter(
       referenceVideos: false,
       referenceAudios: false,
     },
+    videoInputCapabilitiesByModel: {},
     modelMappings: [],
     authentication: { mode: "bearer" },
     credentialScope: "http://upstream.internal:8080|bearer",
@@ -38,6 +39,9 @@ function createAdapter(
     ...overrides,
     videoInputCapabilities:
       overrides.videoInputCapabilities ?? base.videoInputCapabilities,
+    videoInputCapabilitiesByModel:
+      overrides.videoInputCapabilitiesByModel ??
+      base.videoInputCapabilitiesByModel,
   };
 }
 

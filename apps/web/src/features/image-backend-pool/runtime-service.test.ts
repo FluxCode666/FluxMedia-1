@@ -258,7 +258,7 @@ describe("canRuntimeBackendLeaseServeRequest", () => {
       capabilities: { referenceVideos: true, referenceAudios: false },
       expected: false,
     },
-  ])("按账号能力标签筛选 $name", ({ request, capabilities, expected }) => {
+  ])("按当前模型能力标签筛选 $name", ({ request, capabilities, expected }) => {
     expect(
       canRuntimeBackendLeaseServeRequest(request, {
         memberType: "api",
@@ -299,7 +299,10 @@ describe("inspectRuntimeVideoBackendAvailability", () => {
       expect(compiled.sql).toContain("with eligible as");
       expect(compiled.sql).toContain("image_backend_member_lease");
       expect(compiled.sql).toContain("member.type =");
+      expect(compiled.sql).toContain("videoInputCapabilitiesByModel");
+      expect(compiled.sql).toContain("videoInputCapabilities");
       expect(compiled.params).toContain("api");
+      expect(compiled.params).toContain("seedance2");
       expect(compiled.sql).not.toContain("insert into");
       expect(compiled.sql).not.toContain("update image_backend_member");
       return { rows: [row] };

@@ -8,9 +8,9 @@ import {
   API_UPSTREAM_BUILT_IN_PATHS,
   type ApiUpstreamAdapterDraft,
   type ApiUpstreamOperations,
+  apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
   DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
-  apiVideoProtocolModeSchema,
   resolveApiUpstreamOperationPath,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/api-upstream-script-contract";
@@ -20,7 +20,9 @@ export interface ApiUpstreamAdapterFormDraft {
   authentication: ApiUpstreamAdapterDraft["authentication"];
   videoSubmissionRetryCount: number;
   videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
+  /** 兼容旧适配版本；管理表单不再编辑账号级输入能力。 */
   videoInputCapabilities: ApiUpstreamAdapterDraft["videoInputCapabilities"];
+  videoInputCapabilitiesByModel: ApiUpstreamAdapterDraft["videoInputCapabilitiesByModel"];
   operations: ApiUpstreamOperations;
   expectedCurrentVersionId?: string;
 }
@@ -70,6 +72,7 @@ export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFo
       referenceVideos: false,
       referenceAudios: false,
     },
+    videoInputCapabilitiesByModel: {},
     operations: createDefaultApiUpstreamOperations(),
   };
 }

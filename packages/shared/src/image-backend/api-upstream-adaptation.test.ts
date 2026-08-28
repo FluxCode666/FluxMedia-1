@@ -11,13 +11,55 @@ import {
   apiRequestTransformScriptSchema,
   apiUpstreamAdapterDraftSchema,
   apiUpstreamAuthenticationSchema,
+  apiVideoInputCapabilitiesByModelSchema,
   DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
   MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS,
   resolveApiUpstreamModelId,
   resolveApiUpstreamOperationPath,
+  resolveApiVideoInputCapabilities,
 } from "./api-upstream-adaptation";
 
 describe("API upstream adaptation contract", () => {
+  it("按模型规范视频输入能力并兼容旧账号级能力回退", () => {
+    const capabilitiesByModel = apiVideoInputCapabilitiesByModelSchema.parse({
+      " Seedance2 ": {
+        referenceVideos: false,
+        referenceAudios: true,
+      },
+    });
+    const legacyCapabilities = {
+      referenceVideos: true,
+      referenceAudios: true,
+    };
+
+    expect(capabilitiesByModel).toEqual({
+      seedance2: { referenceVideos: false, referenceAudios: true },
+    });
+    expect(
+      resolveApiVideoInputCapabilities(
+        capabilitiesByModel,
+        "SEEDANCE2",
+        legacyCapabilities
+      )
+    ).toEqual({ referenceVideos: false, referenceAudios: true });
+    expect(
+      resolveApiVideoInputCapabilities(
+        capabilitiesByModel,
+        "legacy-video",
+        legacyCapabilities
+      )
+    ).toEqual(legacyCapabilities);
+  });
+
+  it("拒绝大小写不同但模型相同的视频输入能力键", () => {
+    expect(
+      apiVideoInputCapabilitiesByModelSchema.safeParse({
+        seedance2: { referenceVideos: true, referenceAudios: false },
+        SEEDANCE2: { referenceVideos: false, referenceAudios: true },
+      }).success
+    ).toBe(false);
+  });
+
   it("视频创建额外重试次数默认 2 且只接受 0 到 10 的整数", () => {
     const baseDraft = {
       baseUrl: "http://api.internal:8080/v1",

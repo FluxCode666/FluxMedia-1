@@ -49,7 +49,7 @@ export const videoSubmissionRetryCountSchema = z
   .max(10)
   .default(DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT);
 
-/** 单个 API 账号声明的额外视频输入能力标签。 */
+/** 单个模型声明的额外视频输入能力标签。 */
 export const apiVideoInputCapabilitiesSchema = z
   .object({
     referenceVideos: z.boolean().default(false),
@@ -61,6 +61,60 @@ export const apiVideoInputCapabilitiesSchema = z
 export type ApiVideoInputCapabilities = z.infer<
   typeof apiVideoInputCapabilitiesSchema
 >;
+
+/** API 账号按平台模型 ID 声明的视频输入能力；缺失模型键表示均不支持。 */
+export const apiVideoInputCapabilitiesByModelSchema = z
+  .record(z.string().trim().min(1).max(240), apiVideoInputCapabilitiesSchema)
+  .superRefine((value, context) => {
+    const normalizedModelIds = new Set<string>();
+    for (const modelId of Object.keys(value)) {
+      const normalizedModelId = modelId.trim().toLowerCase();
+      if (normalizedModelIds.has(normalizedModelId)) {
+        context.addIssue({
+          code: "custom",
+          path: [modelId],
+          message: "视频输入能力的模型 ID 不能重复",
+        });
+        continue;
+      }
+      normalizedModelIds.add(normalizedModelId);
+    }
+  })
+  .transform((value) =>
+    Object.fromEntries(
+      Object.entries(value).map(([modelId, capabilities]) => [
+        modelId.trim().toLowerCase(),
+        capabilities,
+      ])
+    )
+  )
+  .default({});
+
+export type ApiVideoInputCapabilitiesByModel = z.infer<
+  typeof apiVideoInputCapabilitiesByModelSchema
+>;
+
+/**
+ * 解析指定平台模型的账号级视频输入能力。
+ *
+ * @param capabilitiesByModel 新版本按模型保存的能力。
+ * @param modelId 当前调度使用的平台模型 ID。
+ * @param legacyCapabilities 旧适配版本的账号级能力回退。
+ * @returns 模型显式配置优先，否则返回旧版本回退；两者都缺失时全部关闭。
+ * @sideEffects 无；显式 false 也会覆盖旧版本 true。
+ */
+export function resolveApiVideoInputCapabilities(
+  capabilitiesByModel: ApiVideoInputCapabilitiesByModel,
+  modelId: string,
+  legacyCapabilities: ApiVideoInputCapabilities = {
+    referenceVideos: false,
+    referenceAudios: false,
+  }
+): ApiVideoInputCapabilities {
+  return (
+    capabilitiesByModel[modelId.trim().toLowerCase()] ?? legacyCapabilities
+  );
+}
 
 /** 单个账号请求处理脚本的最大 UTF-16 字符数。 */
 export const MAX_API_REQUEST_TRANSFORM_SCRIPT_CHARACTERS =
@@ -289,7 +343,9 @@ export const apiUpstreamAdapterDraftSchema = z
     useStream: z.boolean(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     videoProtocolMode: apiVideoProtocolModeSchema,
+    /** 兼容旧适配版本；新配置只写入按模型能力。 */
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
+    videoInputCapabilitiesByModel: apiVideoInputCapabilitiesByModelSchema,
     modelMappings: apiModelMappingsSchema,
     authentication: apiUpstreamAuthenticationSchema,
     credentialScope: z.string().trim().min(1).max(512),

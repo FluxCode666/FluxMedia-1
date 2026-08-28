@@ -75,7 +75,9 @@ export interface RedactedApiMemberConfig {
   useStream: boolean;
   videoSubmissionRetryCount: number;
   videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
+  /** 旧适配版本的账号级能力，仅用于兼容读取。 */
   videoInputCapabilities: ApiUpstreamAdapterDraft["videoInputCapabilities"];
+  videoInputCapabilitiesByModel: ApiUpstreamAdapterDraft["videoInputCapabilitiesByModel"];
   modelMappings: ApiModelMapping[];
   authentication?: ApiUpstreamAdapterDraft["authentication"];
   credentialScope?: string;
@@ -283,6 +285,7 @@ export function createApiAdapterDraft(
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
     videoProtocolMode: input.config.videoProtocolMode,
     videoInputCapabilities: input.config.videoInputCapabilities,
+    videoInputCapabilitiesByModel: input.config.videoInputCapabilitiesByModel,
     modelMappings: input.config.modelMappings,
     authentication: input.config.authentication,
     credentialScope: createApiCredentialScope(
@@ -640,6 +643,7 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         videoSubmissionRetryCount: adapter.videoSubmissionRetryCount,
         videoProtocolMode: adapter.videoProtocolMode,
         videoInputCapabilities: adapter.videoInputCapabilities,
+        videoInputCapabilitiesByModel: adapter.videoInputCapabilitiesByModel,
         modelMappings: apiModelMappingsSchema.parse(adapter.modelMappings),
         authentication: adapter.authentication,
         credentialScope: adapter.credentialScope,

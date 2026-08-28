@@ -66,6 +66,7 @@ return { body: transformSampleRequest(request.body) };
       referenceVideos: false,
       referenceAudios: false,
     },
+    videoInputCapabilitiesByModel: {},
     modelMappings: [
       { modelId: "gpt-image-2", upstreamModelId: "vendor-image-id" },
     ],

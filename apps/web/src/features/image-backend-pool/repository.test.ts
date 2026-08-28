@@ -158,6 +158,30 @@ describe("backend pool PostgreSQL repository", () => {
     expect(candidateQuery?.params).toContain("api");
   });
 
+  it("参考媒体请求按当前平台模型读取供应商输入能力", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "least_load" }] },
+      { rowCount: 0 },
+      { rows: [] },
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(
+      acquireInput({
+        requestedModel: "seedance2",
+        requiredVideoInputCapabilities: {
+          referenceVideos: true,
+          referenceAudios: false,
+        },
+      })
+    );
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery?.sql).toContain("videoInputCapabilitiesByModel");
+    expect(candidateQuery?.sql).toContain("videoInputCapabilities");
+    expect(candidateQuery?.params).toContain("seedance2");
+  });
+
   it("按模型分辨率过滤供应商账号：4k 请求排除未声明 4k 的账号", async () => {
     const { database, queries } = createDatabase([
       { rows: [{ value: "priority" }] },
