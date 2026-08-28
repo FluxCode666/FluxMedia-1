@@ -12,6 +12,7 @@ import {
   pickExplicitAdobeImageFamily,
 } from "@repo/shared/adobe";
 import {
+  API_UPSTREAM_BUILT_IN_PATHS,
   type ApiUpstreamAdapterDraft,
   resolveApiUpstreamModelId,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
@@ -77,6 +78,25 @@ const VALID_MODERATION = new Set<ImageModeration>(["auto", "low"]);
 const MAX_MEDIA_API_RESPONSE_BYTES = 128 * 1024 * 1024;
 const API_IMAGE_POLL_BUDGET_MS = 20 * 60 * 1_000;
 const MAX_API_IMAGE_QUERY_FAILURES = 3;
+
+/** 图片供应商异步查询没有通用内置路径，必须由 API 账号管理员显式配置。 */
+const API_IMAGE_QUERY_PATH_MISSING_MESSAGES = {
+  "images.generate.query": "API 图片账号未配置文生图查询路径",
+  "images.edit.query": "API 图片账号未配置图生图查询路径",
+} as const;
+
+function getApiImageQueryConfigurationError(
+  operation: "images.generate.query" | "images.edit.query",
+  configuredPath: string
+): string {
+  if (
+    !configuredPath.trim() &&
+    API_UPSTREAM_BUILT_IN_PATHS[operation] === null
+  ) {
+    return API_IMAGE_QUERY_PATH_MISSING_MESSAGES[operation];
+  }
+  return "API 图片账号查询路径配置无效，请联系管理员";
+}
 
 type ImageOutput = {
   b64_json?: string;
@@ -1267,7 +1287,10 @@ async function pollScriptedApiImageTask(input: {
     });
   } catch {
     return {
-      error: "供应商请求处理失败，请联系管理员",
+      error: getApiImageQueryConfigurationError(
+        input.operation,
+        input.adapter.operations[input.operation].path
+      ),
       backendSwitchAllowed: false,
     };
   }

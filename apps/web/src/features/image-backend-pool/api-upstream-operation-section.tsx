@@ -71,6 +71,15 @@ export function ApiUpstreamOperationSection({
           路径只能相对 Base URL；GET 查询必须包含一个
           <code>{"{task_id}"}</code>。
         </p>
+        {!operation.includes("query") &&
+          operation.startsWith("images.") &&
+          !queryPathAvailable && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              此图片生成操作未配置查询路径。若供应商返回异步任务（pending/
+              processing），任务将以配置错误结束；请在“查询进度”中填写包含
+              <code>{"{task_id}"}</code> 的 GET 路径。
+            </p>
+          )}
       </div>
       <Tabs defaultValue="request">
         <TabsList>

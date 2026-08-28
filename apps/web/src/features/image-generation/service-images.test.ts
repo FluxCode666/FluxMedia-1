@@ -404,6 +404,59 @@ return request;
     });
   });
 
+  it("自定义图片模型按映射模型提交并轮询最终产物", async () => {
+    prepareTestEnvironment();
+    const { generateImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const backend = config.backend;
+    const adapter = backend?.apiUpstreamAdapter;
+    if (!backend || !adapter) throw new Error("missing adapter");
+    const modelMappings = [
+      { modelId: "seedream-5.0-pro", upstreamModelId: "seedream-v5" },
+    ];
+    // 运行时在 backend.modelMappings 上解析模型；适配器快照里的映射则用于
+    // 验证和构造固定租约。这里同时更新两处，模拟真实租约快照结构。
+    adapter.modelMappings = modelMappings;
+    backend.modelMappings = modelMappings;
+    adapter.operations["images.generate"].responseScript = `
+      return {
+        status: "processing",
+        taskId: response.body.task_id,
+        pollAfterSeconds: 1
+      };
+    `;
+    adapter.operations["images.generate.query"] = {
+      path: "/jobs/{task_id}",
+      requestScript: "",
+      responseScript: `
+        return {
+          status: "completed",
+          outputs: [{ kind: "image", url: response.body.result_url }]
+        };
+      `,
+    };
+    mocks.fetchMediaUpstream
+      .mockResolvedValueOnce(Response.json({ task_id: "seedream-task" }))
+      .mockResolvedValueOnce(
+        Response.json({ result_url: "https://cdn.example.test/seedream.png" })
+      );
+
+    const result = await generateImage(config, {
+      prompt: "a product photo",
+      model: "seedream-5.0-pro",
+    });
+
+    expect(result.imageUrl).toBe("https://cdn.example.test/seedream.png");
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(2);
+    const submitBody = JSON.parse(
+      String(mocks.fetchMediaUpstream.mock.calls[0]?.[1]?.body)
+    ) as Record<string, unknown>;
+    expect(submitBody.model).toBe("seedream-v5");
+    expect(mocks.fetchMediaUpstream.mock.calls[1]?.[0]).toBe(
+      "https://api.example.test/v1/jobs/seedream-task"
+    );
+  });
+
   it("图片生成接受异步任务但查询路径未配置时立即失败关闭", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");
@@ -426,7 +479,7 @@ return request;
     });
 
     expect(result).toMatchObject({
-      error: "供应商请求处理失败，请联系管理员",
+      error: "API 图片账号未配置文生图查询路径",
       backendSwitchAllowed: false,
     });
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);

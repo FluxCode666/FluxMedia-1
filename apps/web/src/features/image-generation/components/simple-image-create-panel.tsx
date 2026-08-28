@@ -9,6 +9,7 @@
 
 import { formatCredits } from "@repo/shared/credits/format";
 import { Button } from "@repo/ui/components/button";
+import { Dialog, DialogContent, DialogTitle } from "@repo/ui/components/dialog";
 import { Label } from "@repo/ui/components/label";
 import {
   Select,
@@ -24,6 +25,7 @@ import { cn } from "@repo/ui/utils";
 import {
   Brush,
   Coins,
+  Eye,
   ImageIcon,
   ImagePlus,
   Loader2,
@@ -147,6 +149,11 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const sourcePreviewUrls = useSourcePreviews(props.sourceImages);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
   const [isDraggingReference, setIsDraggingReference] = useState(false);
+  const [imagePreview, setImagePreview] = useState<
+    | { kind: "reference"; index: number }
+    | { kind: "recent"; image: RecentImage }
+    | null
+  >(null);
   const selections = useMemo(
     () =>
       props.catalog.groups.flatMap((group) =>
@@ -197,7 +204,36 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
     if (props.sourceImages.length === 0 || !props.maskAvailable) {
       setMaskEditorOpen(false);
     }
-  }, [props.maskAvailable, props.sourceImages.length]);
+    if (
+      imagePreview?.kind === "reference" &&
+      imagePreview.index >= props.sourceImages.length
+    ) {
+      setImagePreview(null);
+    }
+  }, [imagePreview, props.maskAvailable, props.sourceImages.length]);
+
+  const referencePreviewUrl =
+    imagePreview?.kind === "reference"
+      ? sourcePreviewUrls[imagePreview.index]
+      : undefined;
+  const activeImagePreview =
+    imagePreview?.kind === "reference"
+      ? referencePreviewUrl
+        ? {
+            src: referencePreviewUrl,
+            alt: `图${imagePreview.index + 1}`,
+            title: `预览图${imagePreview.index + 1}`,
+            recent: false,
+          }
+        : null
+      : imagePreview?.image.imageUrl
+        ? {
+            src: getRecentImageDisplayUrl(imagePreview.image.imageUrl),
+            alt: imagePreview.image.prompt,
+            title: "查看图片",
+            recent: true,
+          }
+        : null;
 
   /** 只接受当前授权目录生成的下拉值，未知值不会改变父组件状态。 */
   function changeModelSelection(value: string): void {
@@ -339,40 +375,49 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 </>
               ) : (
                 <div className="w-full space-y-2.5">
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                     {props.sourceImages.map((file, index) => {
                       const previewUrl = sourcePreviewUrls[index];
+                      const referenceLabel = `图${index + 1}`;
                       return (
                         <div
-                          className="group relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted shadow-sm"
+                          className="group relative aspect-square min-h-28 overflow-hidden rounded-xl border border-border bg-muted shadow-sm transition-shadow hover:shadow-md"
                           key={`${file.name}-${file.size}-${file.type}-${file.lastModified}`}
                           title={file.name}
                         >
-                          {previewUrl ? (
-                            <Image
-                              alt={
-                                index === 0 ? "主参考图" : `参考图 ${index + 1}`
-                              }
-                              className="object-cover"
-                              fill
-                              sizes="64px"
-                              src={previewUrl}
-                              unoptimized
-                            />
-                          ) : null}
-                          <span className="absolute inset-x-0 bottom-0 truncate bg-background/88 px-1.5 py-0.5 text-center text-[10px] font-medium text-foreground backdrop-blur-sm">
-                            {index === 0 ? "主图" : index + 1}
-                          </span>
+                          <button
+                            type="button"
+                            className="absolute inset-0 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                            onClick={() =>
+                              setImagePreview({ kind: "reference", index })
+                            }
+                            aria-label={`放大预览${referenceLabel}`}
+                          >
+                            {previewUrl ? (
+                              <Image
+                                alt={`${referenceLabel}${index === 0 ? "（主参考图）" : ""}`}
+                                className="object-cover transition duration-200 group-hover:scale-[1.03]"
+                                fill
+                                sizes="(max-width: 640px) 45vw, (max-width: 1024px) 30vw, 220px"
+                                src={previewUrl}
+                                unoptimized
+                              />
+                            ) : null}
+                            <span className="absolute inset-x-0 bottom-0 truncate bg-background/88 px-2 py-1.5 text-left text-xs font-semibold text-foreground backdrop-blur-sm">
+                              {referenceLabel}
+                              {index === 0 ? " · 主参考图" : ""}
+                            </span>
+                          </button>
                           <Button
-                            aria-label={`移除参考图 ${index + 1}：${file.name}`}
-                            className="absolute top-1 right-1 size-5 rounded-full border bg-background/92 p-0 opacity-100 shadow-sm sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                            aria-label={`移除${referenceLabel}：${file.name}`}
+                            className="absolute top-2 right-2 size-7 rounded-full border bg-background/92 p-0 opacity-100 shadow-sm sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                             disabled={referenceInteractionLocked}
                             onClick={() => props.onRemoveSourceImage(index)}
-                            size="icon-xs"
+                            size="icon-sm"
                             type="button"
                             variant="ghost"
                           >
-                            <X className="size-3" />
+                            <X className="size-3.5" />
                           </Button>
                         </div>
                       );
@@ -380,13 +425,13 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     {!referenceLimitReached ? (
                       <button
                         aria-label={`继续添加参考图，最多 ${props.maxEditImages} 张`}
-                        className="flex size-16 shrink-0 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-muted/15 text-[10px] text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex aspect-square min-h-28 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/15 px-3 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={referenceInteractionLocked}
                         onClick={() => sourceInputRef.current?.click()}
                         type="button"
                       >
-                        <ImagePlus className="size-4" />
-                        继续添加
+                        <ImagePlus className="size-5" />
+                        <span>继续添加</span>
                       </button>
                     ) : null}
                   </div>
@@ -504,11 +549,6 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
               />
             ) : null}
           </div>
-
-          <ImageGenerationResultGallery
-            busy={props.busy}
-            resultUrls={props.resultUrls}
-          />
 
           <div className="border-t border-border bg-muted/20 p-4 sm:p-5">
             <div className="mb-3">
@@ -699,6 +739,42 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
         </section>
       </form>
 
+      <ImageGenerationResultGallery
+        busy={props.busy}
+        resultUrls={props.resultUrls}
+      />
+
+      <Dialog
+        open={imagePreview !== null}
+        onOpenChange={(open) => {
+          if (!open) setImagePreview(null);
+        }}
+      >
+        <DialogContent
+          aria-describedby={undefined}
+          className="w-[calc(100vw-1.5rem)] max-w-5xl border-border bg-background/95 p-3 sm:p-5"
+        >
+          <DialogTitle className="sr-only">
+            {activeImagePreview?.title ?? "预览图片"}
+          </DialogTitle>
+          {activeImagePreview ? (
+            <div className="relative flex min-h-[50vh] items-center justify-center overflow-hidden rounded-lg bg-muted/40">
+              <Image
+                src={activeImagePreview.src}
+                alt={activeImagePreview.alt}
+                data-recent-image-preview={
+                  activeImagePreview.recent ? "true" : undefined
+                }
+                width={1600}
+                height={1600}
+                unoptimized
+                className="max-h-[78vh] w-auto max-w-full object-contain"
+              />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <section aria-labelledby="simple-recent-images-title">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2
@@ -731,35 +807,12 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                 item.status === "processing";
               const isFailed = item.status === "failed";
               return (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  className="group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => void selectRecentReference(item)}
-                  disabled={
-                    props.busy ||
-                    props.referenceLoadingId !== null ||
-                    referenceLimitReached ||
-                    isPending ||
-                    isFailed ||
-                    !item.imageUrl
-                  }
-                  aria-label={
-                    isPending
-                      ? `图片正在生成：${item.prompt}`
-                      : isFailed
-                        ? `图片生成失败：${item.prompt}`
-                        : `将最近图片添加为参考图：${item.prompt}`
-                  }
-                  title={
-                    referenceLimitReached
-                      ? `最多添加 ${props.maxEditImages} 张参考图`
-                      : isPending
-                        ? "图片正在生成，完成后可作为参考图"
-                        : isFailed
-                          ? "图片生成失败"
-                          : "添加为参考图"
-                  }
+                  className={cn(
+                    "group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60",
+                    (isPending || isFailed) && "opacity-70"
+                  )}
                 >
                   {item.imageUrl ? (
                     <Image
@@ -781,9 +834,48 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                     </div>
                   )}
                   {item.imageUrl ? (
-                    <span className="absolute inset-x-0 bottom-0 bg-background/90 px-2 py-1 text-center text-[11px] font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                      作为参考图
-                    </span>
+                    <div className="absolute inset-0 flex flex-col items-stretch justify-center gap-2 bg-background/65 px-3 opacity-100 backdrop-blur-[2px] transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="secondary"
+                        className="w-full bg-background/95 px-2 shadow-sm"
+                        aria-label={`查看图片：${item.prompt}`}
+                        onClick={() =>
+                          setImagePreview({ kind: "recent", image: item })
+                        }
+                      >
+                        <Eye className="size-3.5" />
+                        查看图片
+                      </Button>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="secondary"
+                        className="w-full bg-background/95 px-2 shadow-sm"
+                        aria-label={`作为参考图：${item.prompt}`}
+                        disabled={
+                          props.busy ||
+                          props.referenceLoadingId !== null ||
+                          referenceLimitReached ||
+                          isPending ||
+                          isFailed
+                        }
+                        title={
+                          referenceLimitReached
+                            ? `最多添加 ${props.maxEditImages} 张参考图`
+                            : isPending
+                              ? "图片正在生成，完成后可作为参考图"
+                              : isFailed
+                                ? "图片生成失败"
+                                : "添加为参考图"
+                        }
+                        onClick={() => void selectRecentReference(item)}
+                      >
+                        <ImagePlus className="size-3.5" />
+                        作为参考图
+                      </Button>
+                    </div>
                   ) : null}
                   {props.referenceLoadingId === item.id ? (
                     <div
@@ -794,7 +886,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                       <span className="sr-only">正在添加参考图</span>
                     </div>
                   ) : null}
-                </button>
+                </div>
               );
             })}
           </div>

@@ -69,6 +69,8 @@ const catalog: ImageGenerationModelCatalog = {
   ],
 };
 
+const IMAGE_STATUS_POLL_INTERVAL_MS = 1500;
+
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
@@ -275,6 +277,48 @@ describe("ImageCreatePanel", () => {
         prompt: "旧图片",
       },
     ]);
+  });
+
+  it("接受站内异步任务 queued 响应并轮询最终产物", async () => {
+    vi.useFakeTimers();
+    const generationId = "generation-queued";
+    const imageUrl = "/api/storage/generations/user/queued.png?sig=abc";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            taskId: "task_queued",
+            generationId,
+            status: "queued",
+          },
+          { status: 202 }
+        )
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          generationId,
+          status: "completed",
+          imageUrl,
+          creditsConsumed: 2,
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    mountImageCreatePanel(vi.fn(), {}, null);
+
+    act(() => testHarness.panelProps?.onPromptChange?.("排队图片"));
+    let submitPromise: Promise<void> | undefined;
+    act(() => {
+      submitPromise = testHarness.panelProps?.onSubmit?.();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IMAGE_STATUS_POLL_INTERVAL_MS);
+      await submitPromise;
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(testHarness.panelProps?.error).toBeNull();
+    expect(testHarness.panelProps?.resultUrls).toEqual([imageUrl]);
   });
 
   it("首屏默认使用 auto 尺寸", () => {

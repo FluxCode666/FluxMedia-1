@@ -880,8 +880,13 @@ export function ImageCreatePanel({
           payload.generationId ?? requestFields.generationId;
         activeGenerationId = payloadGenerationId;
         const urls = collectImageUrls(payload);
+        // 站内接口先持久化并入队，202 响应通常没有产物；收到 queued/running
+        // 时必须转入同一条状态轮询链路，不能误报“未返回可展示产物”。
         if (
-          (payload.status === "pending" || payload.status === "processing") &&
+          (payload.status === "queued" ||
+            payload.status === "running" ||
+            payload.status === "pending" ||
+            payload.status === "processing") &&
           urls.length === 0
         ) {
           rekeyRecentTask(requestFields.generationId, payloadGenerationId);

@@ -14,7 +14,7 @@ type ImageGenerationResultGalleryProps = {
 };
 
 /**
- * 在文字输入区域下方呈现本次生成状态与图片。
+ * 在提交按钮所在表单之后呈现本次生成状态与图片。
  *
  * @param props 当前生成状态和经过父组件校验的站内结果 URL。
  * @returns 生成中状态、响应式结果网格或无内容。

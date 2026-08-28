@@ -57,7 +57,20 @@ function createFileDragEvent(type: string, files: FileList): Event {
 /** 挂载最小可用生图表单并返回参考图拖拽区域。 */
 function mountPanel(input: {
   busy?: boolean;
+  onRecentReferenceSelect?: (image: {
+    id: string;
+    imageUrl: string | null;
+    prompt: string;
+    status?: string;
+  }) => Promise<boolean>;
   onSourceImagesChange: (files: FileList | null) => void;
+  recent?: readonly {
+    id: string;
+    imageUrl: string | null;
+    prompt: string;
+    status?: string;
+  }[];
+  sourceImages?: readonly File[];
 }): HTMLElement {
   container = document.createElement("div");
   document.body.append(container);
@@ -84,7 +97,8 @@ function mountPanel(input: {
         onModelSelectionChange: vi.fn(),
         onPromptChange: vi.fn(),
         onQualityChange: vi.fn(),
-        onRecentReferenceSelect: vi.fn().mockResolvedValue(true),
+        onRecentReferenceSelect:
+          input.onRecentReferenceSelect ?? vi.fn().mockResolvedValue(true),
         onRemoveReference: vi.fn(),
         onRemoveSourceImage: vi.fn(),
         onSizeChange: vi.fn(),
@@ -92,11 +106,11 @@ function mountPanel(input: {
         onSubmit: vi.fn().mockResolvedValue(undefined),
         prompt: "生成一张测试图片",
         quality: "auto",
-        recent: [],
+        recent: input.recent ?? [],
         referenceLoadingId: null,
         resultUrls: [],
         size: "auto",
-        sourceImages: [],
+        sourceImages: input.sourceImages ?? [],
       })
     );
   });
@@ -109,6 +123,7 @@ function mountPanel(input: {
 
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -116,6 +131,8 @@ afterEach(() => {
   container?.remove();
   root = null;
   container = null;
+  Reflect.deleteProperty(URL, "createObjectURL");
+  Reflect.deleteProperty(URL, "revokeObjectURL");
 });
 
 describe("SimpleImageCreatePanel reference drag and drop", () => {
@@ -150,5 +167,80 @@ describe("SimpleImageCreatePanel reference drag and drop", () => {
 
     act(() => dropZone.dispatchEvent(createFileDragEvent("drop", files)));
     expect(onSourceImagesChange).not.toHaveBeenCalled();
+  });
+
+  it("以图1、图2标记较大的参考图卡片，并支持点击放大预览", () => {
+    const createObjectURL = vi.fn((file: File) => `blob:${file.name}`);
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    const files = [
+      new File([new Uint8Array([1])], "one.png", { type: "image/png" }),
+      new File([new Uint8Array([2])], "two.png", { type: "image/png" }),
+    ];
+    const onSourceImagesChange = vi.fn();
+    const dropZone = mountPanel({ onSourceImagesChange, sourceImages: files });
+
+    expect(dropZone.textContent).toContain("图1");
+    expect(dropZone.textContent).toContain("图2");
+    const previewButton = dropZone.querySelector<HTMLButtonElement>(
+      '[aria-label="放大预览图1"]'
+    );
+    expect(previewButton).not.toBeNull();
+
+    act(() => previewButton?.click());
+    expect(document.body.textContent).toContain("预览图1");
+    expect(document.querySelector('img[alt="图1"]')).not.toBeNull();
+  });
+
+  it("最近图片悬停操作提供查看图片和作为参考图", async () => {
+    const onRecentReferenceSelect = vi.fn().mockResolvedValue(true);
+    const recent = [
+      {
+        id: "recent-1",
+        imageUrl: "/api/storage/generations/user/recent.png",
+        prompt: "一只橘猫",
+      },
+    ];
+    mountPanel({
+      onRecentReferenceSelect,
+      onSourceImagesChange: vi.fn(),
+      recent,
+    });
+
+    const viewButton = container?.querySelector<HTMLButtonElement>(
+      '[aria-label="查看图片：一只橘猫"]'
+    );
+    const referenceButton = container?.querySelector<HTMLButtonElement>(
+      '[aria-label="作为参考图：一只橘猫"]'
+    );
+    expect(viewButton).not.toBeNull();
+    expect(referenceButton).not.toBeNull();
+    expect(container?.textContent).toContain("查看图片");
+    expect(container?.textContent).toContain("作为参考图");
+    expect(viewButton?.parentElement?.className).toContain("flex-col");
+    expect(viewButton?.className).toContain("w-full");
+    expect(referenceButton?.className).toContain("w-full");
+
+    act(() => viewButton?.click());
+    expect(document.body.textContent).toContain("查看图片");
+    const previewImage = document.querySelector<HTMLImageElement>(
+      'img[data-recent-image-preview="true"]'
+    );
+    expect(previewImage).not.toBeNull();
+    expect(previewImage?.className).toContain("w-auto");
+    expect(previewImage?.className).toContain("max-h-[78vh]");
+    expect(previewImage?.className).toContain("max-w-full");
+
+    await act(async () => {
+      referenceButton?.click();
+    });
+    expect(onRecentReferenceSelect).toHaveBeenCalledWith(recent[0]);
   });
 });
