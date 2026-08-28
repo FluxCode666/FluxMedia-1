@@ -10,7 +10,7 @@ import {
   type Principal,
 } from "@repo/shared/uol";
 import { describe, expect, it, vi } from "vitest";
-
+import { SITE_IMAGE_ASYNC_API_KEY_ID } from "@/features/image-generation/image-async-task-contract";
 import {
   createImageAsyncTaskInputDigest,
   type ImageAsyncTaskRecord,
@@ -39,6 +39,11 @@ const principal = {
   credentialKind: "external",
   userId: "user-1",
   apiKeyId: "key-1",
+} satisfies Principal;
+const sitePrincipal = {
+  type: "user",
+  userId: "user-1",
+  role: "user",
 } satisfies Principal;
 
 /** 创建一个具备完整策略和准入快照的图片异步任务。 */
@@ -334,6 +339,34 @@ describe("image async task UOL bindings", () => {
     );
   });
 
+  it("站内会话使用内部身份标记入队且不依赖外部 API Key", async () => {
+    const { dependencies, repository } = createDependencies(
+      createTask({ apiKeyId: SITE_IMAGE_ASYNC_API_KEY_ID })
+    );
+
+    await expect(
+      executeImageEnqueueAsyncBinding(
+        input,
+        sitePrincipal,
+        createContext(),
+        dependencies
+      )
+    ).resolves.toMatchObject({ status: "queued" });
+
+    expect(repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        apiKeyId: SITE_IMAGE_ASYNC_API_KEY_ID,
+      })
+    );
+    expect(dependencies.resolveGroupSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        apiKeyId: SITE_IMAGE_ASYNC_API_KEY_ID,
+      })
+    );
+  });
+
   it("MQ 投递失败时保留 due 且不释放已被任务采用的准入槽", async () => {
     const { dependencies, repository } = createDependencies();
     const failure = new Error("redis unavailable");
@@ -478,6 +511,44 @@ describe("image async task UOL bindings", () => {
       "release-ack",
       "callback",
     ]);
+  });
+
+  it("Worker 处理站内任务时跳过外部 API Key 复核", async () => {
+    const running = createRunningTask({
+      apiKeyId: SITE_IMAGE_ASYNC_API_KEY_ID,
+    });
+    const completed = createTerminalTask("completed", {
+      apiKeyId: SITE_IMAGE_ASYNC_API_KEY_ID,
+    });
+    const { dependencies, repository } = createDependencies(running);
+    repository.claimById.mockResolvedValue(running);
+    repository.complete.mockResolvedValue(completed);
+    repository.markAdmissionReleased.mockResolvedValue(
+      createTerminalTask("completed", {
+        apiKeyId: SITE_IMAGE_ASYNC_API_KEY_ID,
+        admissionLeaseReleasedAt: NOW,
+        terminalReleaseDueAt: null,
+      })
+    );
+    vi.mocked(dependencies.findGeneration)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        userId: "user-1",
+        status: "completed",
+        error: null,
+        inputDigest: INPUT_DIGEST,
+      });
+
+    await expect(
+      executeImageProcessAsyncTaskBinding(
+        { taskId: "task_123" },
+        { type: "system", reason: "media-task-worker" },
+        createContext(),
+        dependencies
+      )
+    ).resolves.toMatchObject({ status: "completed" });
+    expect(dependencies.isApiKeyActive).not.toHaveBeenCalled();
+    expect(dependencies.runGeneration).toHaveBeenCalledTimes(1);
   });
 
   it("全站执行槽满时保留 admission 并按持久优先级延迟新投递", async () => {

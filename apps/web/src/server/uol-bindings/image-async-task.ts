@@ -31,6 +31,10 @@ import { z } from "zod";
 
 import { validateCallbackUrl } from "@/features/external-api/async-image-tasks";
 import {
+  isSiteImageAsyncTaskApiKeyId,
+  SITE_IMAGE_ASYNC_API_KEY_ID,
+} from "@/features/image-generation/image-async-task-contract";
+import {
   createImageAsyncTaskInputDigest,
   defaultImageAsyncTaskRepository,
   type ImageAsyncTaskRecord,
@@ -152,7 +156,16 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
     const { resolveTrustedGroupSnapshot } = await import(
       "@/features/image-backend-pool/runtime-service"
     );
-    const snapshot = await resolveTrustedGroupSnapshot(input);
+    const snapshot = await resolveTrustedGroupSnapshot(
+      input.apiKeyId === SITE_IMAGE_ASYNC_API_KEY_ID
+        ? {
+            userId: input.userId,
+            ...(input.requestedGroupId
+              ? { requestedGroupId: input.requestedGroupId }
+              : {}),
+          }
+        : input
+    );
     return { id: snapshot.id, priority: snapshot.priority };
   },
   async acquireAdmission(input) {
@@ -268,7 +281,9 @@ const defaultDependencies: ImageAsyncTaskBindingDependencies = {
     const input = task.generationInput;
     const common = {
       userId: task.userId,
-      apiKeyId: task.apiKeyId,
+      ...(isSiteImageAsyncTaskApiKeyId(task.apiKeyId)
+        ? {}
+        : { apiKeyId: task.apiKeyId }),
       prompt: input.prompt,
       apiPrompt: input.apiPrompt,
       promptOptimization: input.promptOptimization,
@@ -379,12 +394,22 @@ export function toImageAsyncTaskOutput(
   };
 }
 
-/** 确保异步任务只在创建它的外部 API Key 域内可见。 */
+/** 确保异步任务只在创建它的站内会话或外部 API Key 域内可见。 */
 function assertImageAsyncTaskPrincipal(
   task: ImageAsyncTaskRecord,
   principal: Principal,
   context: OperationContext
-): asserts principal is Extract<Principal, { type: "apiKey" }> {
+): void {
+  if (principal.type === "user") {
+    if (
+      task.userId !== principal.userId ||
+      !isSiteImageAsyncTaskApiKeyId(task.apiKeyId)
+    ) {
+      throw new OperationError("not_found", "Image async task not found");
+    }
+    context.assertOwnership("image async task", task.userId);
+    return;
+  }
   if (!isExternalApiKeyPrincipal(principal)) {
     throw new OperationError(
       "unauthenticated",
@@ -464,7 +489,7 @@ async function releaseUnadoptedAdmission(
  * 幂等创建图片异步任务并最佳努力投递 MQ。
  *
  * @param input 已通过 UOL 校验且仅含 JSON-safe 媒体引用的批次。
- * @param principal 外部 API Key Principal；身份字段不得来自 input。
+ * @param principal 站内会话或外部 API Key Principal；身份字段不得来自 input。
  * @param context UOL 归属断言上下文。
  * @param dependencies 生产服务或 DB-free 测试桩。
  * @returns PostgreSQL 持久任务视图；Redis 暂时失败时仍返回 queued。
@@ -475,12 +500,17 @@ export async function executeImageEnqueueAsyncBinding(
   context: OperationContext,
   dependencies: ImageAsyncTaskBindingDependencies = defaultDependencies
 ): Promise<ImageAsyncTaskOutput> {
-  if (!isExternalApiKeyPrincipal(principal)) {
+  const isSiteSession = principal.type === "user";
+  if (!isSiteSession && !isExternalApiKeyPrincipal(principal)) {
     throw new OperationError(
       "unauthenticated",
-      "External API key authentication required"
+      "User session or external API key authentication required"
     );
   }
+  const userId = principal.userId;
+  const apiKeyId = isSiteSession
+    ? SITE_IMAGE_ASYNC_API_KEY_ID
+    : principal.apiKeyId;
   const normalizedInput = {
     ...input,
     ...(input.callbackUrl
@@ -496,9 +526,7 @@ export async function executeImageEnqueueAsyncBinding(
     }
   }
 
-  const mediaLimits = await dependencies.getMediaLimitsForUser(
-    principal.userId
-  );
+  const mediaLimits = await dependencies.getMediaLimitsForUser(userId);
   if (!existing) {
     try {
       assertImageMediaInputWithinPolicy(
@@ -513,7 +541,7 @@ export async function executeImageEnqueueAsyncBinding(
   }
   const admissionToken =
     existing?.admissionLeaseToken ??
-    createImageAsyncAdmissionToken(principal.userId, input.taskId);
+    createImageAsyncAdmissionToken(userId, input.taskId);
   if (!admissionToken) {
     throw new OperationError(
       "internal_error",
@@ -521,7 +549,7 @@ export async function executeImageEnqueueAsyncBinding(
     );
   }
   const admission = await dependencies.acquireAdmission({
-    userId: principal.userId,
+    userId,
     userConcurrency: existing?.effectiveUserConcurrency ?? mediaLimits.limit,
     token: admissionToken,
   });
@@ -579,16 +607,16 @@ export async function executeImageEnqueueAsyncBinding(
   let leaseAdopted = false;
   try {
     const groupSnapshot = await dependencies.resolveGroupSnapshot({
-      userId: principal.userId,
-      apiKeyId: principal.apiKeyId,
+      userId,
+      apiKeyId,
       ...(input.generationInput.backendGroupId
         ? { requestedGroupId: input.generationInput.backendGroupId }
         : {}),
     });
     const result = await dependencies.repository.create({
       task: normalizedInput,
-      userId: principal.userId,
-      apiKeyId: principal.apiKeyId,
+      userId,
+      apiKeyId,
       legacyPlan: LEGACY_IMAGE_ASYNC_TASK_PLAN,
       effectiveUserConcurrency: mediaLimits.limit,
       groupIdSnapshot: groupSnapshot.id,
@@ -1039,6 +1067,7 @@ export async function executeImageProcessAsyncTaskBinding(
     // WHY：API Key 复核只约束新的生成副作用。generation 已存在时必须先按持久真相
     // 对账，否则 Key 在外呼或扣费后被停用会把已完成任务错误投影为失败。
     if (
+      !isSiteImageAsyncTaskApiKeyId(claimed.apiKeyId) &&
       !(await dependencies.isApiKeyActive({
         userId: claimed.userId,
         apiKeyId: claimed.apiKeyId,

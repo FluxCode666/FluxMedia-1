@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getUserRoleById: vi.fn(),
   getMediaLimitDefaults: vi.fn(),
-  invokeImageGenerationOperation: vi.fn(),
+  invokeImageEnqueueAsyncOperation: vi.fn(),
+  filesToMediaInputReferences: vi.fn(),
+  stageImageInputReferences: vi.fn(),
+  cleanupStagedImageInputs: vi.fn(),
 }));
 
 vi.mock("@repo/shared/api-logger", () => ({
@@ -28,16 +31,19 @@ vi.mock("@repo/shared/image-generation/media-limit-service", () => ({
   getMediaLimitDefaults: mocks.getMediaLimitDefaults,
 }));
 vi.mock("@/features/image-generation/uol-client", () => ({
-  invokeImageGenerationOperation: mocks.invokeImageGenerationOperation,
+  invokeImageEnqueueAsyncOperation: mocks.invokeImageEnqueueAsyncOperation,
 }));
 vi.mock("@/features/image-generation/request-utils", () => ({
-  deleteTemporaryImages: vi.fn(),
-  filesToMediaInputReferences: vi.fn(),
+  filesToMediaInputReferences: mocks.filesToMediaInputReferences,
   formatMegabytes: vi.fn(),
   getTotalUploadSize: vi.fn(),
   uploadTemporaryImageUrls: vi.fn(),
   validateImageFile: vi.fn(),
   validateMaskMatchesSourceImage: vi.fn(),
+}));
+vi.mock("@/features/image-generation/image-input-storage", () => ({
+  stageImageInputReferences: mocks.stageImageInputReferences,
+  cleanupStagedImageInputs: mocks.cleanupStagedImageInputs,
 }));
 
 import { POST } from "./route";
@@ -64,7 +70,10 @@ describe("POST /api/images/edit", () => {
     mocks.getSession.mockReset();
     mocks.getUserRoleById.mockReset();
     mocks.getMediaLimitDefaults.mockReset();
-    mocks.invokeImageGenerationOperation.mockReset();
+    mocks.invokeImageEnqueueAsyncOperation.mockReset();
+    mocks.filesToMediaInputReferences.mockReset();
+    mocks.stageImageInputReferences.mockReset();
+    mocks.cleanupStagedImageInputs.mockReset();
     mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
     mocks.getUserRoleById.mockResolvedValue("user");
     mocks.getMediaLimitDefaults.mockResolvedValue({
@@ -88,7 +97,7 @@ describe("POST /api/images/edit", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "Forbidden" });
     expect(mocks.getMediaLimitDefaults).not.toHaveBeenCalled();
-    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+    expect(mocks.invokeImageEnqueueAsyncOperation).not.toHaveBeenCalled();
   });
 
   it("同源请求缺少 model 时返回 400", async () => {
@@ -99,7 +108,7 @@ describe("POST /api/images/edit", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "model is required" });
-    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+    expect(mocks.invokeImageEnqueueAsyncOperation).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -114,6 +123,71 @@ describe("POST /api/images/edit", () => {
     const response = await POST(createFormRequest(formData));
 
     expect(response.status).toBe(400);
-    expect(mocks.invokeImageGenerationOperation).not.toHaveBeenCalled();
+    expect(mocks.invokeImageEnqueueAsyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("将上传图片转成持久引用后返回已入队任务", async () => {
+    const sourceFile = new File(["png"], "source.png", {
+      type: "image/png",
+    });
+    const sourceReference = {
+      source: "data" as const,
+      mimeType: "image/png" as const,
+      base64: "cG5n",
+      byteLength: 3,
+    };
+    const storedReference = {
+      source: "storage" as const,
+      mimeType: "image/png" as const,
+      storageKey: "user-1/image-inputs/source.png",
+      storageBucket: "generations",
+      byteLength: 3,
+    };
+    mocks.filesToMediaInputReferences.mockResolvedValueOnce([sourceReference]);
+    mocks.stageImageInputReferences.mockResolvedValueOnce({
+      references: [storedReference],
+      objects: [],
+    });
+    mocks.invokeImageEnqueueAsyncOperation.mockResolvedValueOnce({
+      taskId: "task_edit",
+      model: "gpt-image-2",
+      operation: "edit",
+      status: "queued",
+      generationId: "generation-edit",
+      responseFormat: "url",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      error: null,
+    });
+
+    const formData = new FormData();
+    formData.set("prompt", "edit prompt");
+    formData.set("model", "gpt-image-2");
+    formData.append("image[]", sourceFile);
+    const response = await POST(createFormRequest(formData));
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      taskId: "task_edit",
+      status: "queued",
+      generationId: "generation-edit",
+    });
+    expect(mocks.stageImageInputReferences).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        references: [sourceReference],
+      })
+    );
+    expect(mocks.invokeImageEnqueueAsyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generationInput: expect.objectContaining({
+          operation: "edit",
+          images: [storedReference],
+        }),
+      }),
+      { type: "user", userId: "user-1", role: "user" },
+      undefined
+    );
   });
 });
