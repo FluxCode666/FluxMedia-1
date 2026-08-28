@@ -41,7 +41,7 @@ const imageOutputSchema = z
 
 const generationResultSchema = z
   .object({
-    error: z.string().optional(),
+    error: z.string().nullable().optional(),
     generationId: z.string().optional(),
     taskId: z.string().optional(),
     status: z
