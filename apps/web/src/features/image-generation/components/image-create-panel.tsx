@@ -780,10 +780,14 @@ export function ImageCreatePanel({
           `/api/images/status/${encodeURIComponent(generationId)}`,
           { headers: { Accept: "application/json" } }
         );
+        // Worker 可能刚领取任务但尚未写入 generation 行；此时 404 是短暂竞态，
+        // 不能把已入队的任务误判为失败。
+        if (statusResponse.status === 404) continue;
         const statusPayload = await readGenerationResponse(statusResponse);
         const status = statusPayload.status;
         if (
           status === "queued" ||
+          status === "running" ||
           status === "pending" ||
           status === "processing"
         ) {
