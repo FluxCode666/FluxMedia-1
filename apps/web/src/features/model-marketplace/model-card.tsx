@@ -2,7 +2,7 @@
  * 公开模型广场的模型卡片与媒体资产组件。
  *
  * 使用方是模型广场网格和详情弹窗；卡片严格消费公开 DTO，只展示 3:2 封面、类别、
- * 品牌图标、可复制模型 ID、最低价格、视频输入摘要与详情入口，不读取管理配置或用户权限。
+ * 品牌图标、可复制模型 ID、最低价格和视频输入摘要，不读取管理配置或用户权限。
  */
 "use client";
 
@@ -16,7 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@repo/ui/components/tooltip";
-import { ArrowRight, Copy } from "lucide-react";
+import { Copy } from "lucide-react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
@@ -127,8 +127,8 @@ export function ModelMarketplaceCover({
  * 渲染单个公开模型卡片。
  *
  * @param props - 公开 DTO 与复制、打开详情回调。
- * @returns 当前营销主题下可键盘操作的模型摘要卡片。
- * @sideEffects 点击复制或详情时调用父组件回调；图片错误仅触发本地封面兜底。
+ * @returns 当前营销主题下可点击、可键盘操作的模型摘要卡片。
+ * @sideEffects 点击卡片空白处打开详情，点击复制调用父组件回调；图片错误仅触发本地封面兜底。
  * @failure 复制失败由父组件统一反馈，卡片本身保持可用。
  */
 export function ModelMarketplaceCard({
@@ -148,101 +148,109 @@ export function ModelMarketplaceCard({
         : t("price.perSecond");
 
   return (
-    <article className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg">
-      <div className="relative aspect-[3/2] overflow-hidden bg-muted">
-        <ModelMarketplaceCover
-          model={model}
-          sizes="(min-width: 1280px) 24vw, (min-width: 768px) 36vw, 92vw"
-          className="transition-transform duration-500 group-hover:scale-[1.025]"
-          eager={eagerCover}
-        />
-      </div>
+    <article className="group relative flex min-w-0 cursor-pointer flex-col overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-lg focus-within:border-foreground/40">
+      <button
+        aria-label={t("actions.openDetails", { modelName: model.displayName })}
+        className="absolute inset-0 z-0 size-full cursor-pointer appearance-none rounded-xl border-0 bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset hover:bg-transparent"
+        onClick={() => onViewDetails(model)}
+        type="button"
+      />
 
-      <div className="flex flex-1 flex-col p-5">
-        <Badge variant="secondary" className="w-fit rounded-full px-2.5">
-          {categoryLabel}
-        </Badge>
-
-        <div className="mt-4 flex min-w-0 items-center gap-2">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background">
-            <Image
-              unoptimized
-              alt=""
-              aria-hidden="true"
-              height={22}
-              src={getModelMarketplaceIconPath(model.iconKey)}
-              width={22}
-            />
-          </span>
-          <TooltipProvider delayDuration={250}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <p className="min-w-0 truncate font-mono text-sm font-medium text-foreground">
-                  {model.modelId}
-                </p>
-              </TooltipTrigger>
-              <TooltipContent>{model.modelId}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  aria-label={t("actions.copyModelId", {
-                    modelId: model.modelId,
-                  })}
-                  className="size-8 shrink-0 text-muted-foreground"
-                  onClick={() => onCopy(model.modelId)}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Copy className="size-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{t("actions.copy")}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+      <div className="relative z-10 pointer-events-none">
+        <div className="relative aspect-[3/2] overflow-hidden bg-muted">
+          <ModelMarketplaceCover
+            model={model}
+            sizes="(min-width: 1280px) 24vw, (min-width: 768px) 36vw, 92vw"
+            className="transition-transform duration-500 group-hover:scale-[1.025]"
+            eager={eagerCover}
+          />
         </div>
 
-        <h2 className="mt-4 font-serif text-xl font-medium leading-tight">
-          {model.displayName}
-        </h2>
-        <p className="mt-2 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
-          {model.description || t("card.noDescription")}
-        </p>
-        {model.category === "image" && model.supportsAutoSize !== true ? (
-          <div className="mt-4">
-            <Badge className="max-w-full font-normal" variant="outline">
-              <span className="truncate">{t("card.autoSizeUnsupported")}</span>
-            </Badge>
-          </div>
-        ) : null}
-        {model.category === "video" ? (
-          <VideoCapabilitySummary model={model} />
-        ) : null}
+        <div className="flex flex-1 flex-col p-5">
+          <Badge variant="secondary" className="w-fit rounded-full px-2.5">
+            {categoryLabel}
+          </Badge>
 
-        <div className="mt-5 border-t border-border/70 pt-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-            {t("price.startingAt")}
+          <div className="mt-4 flex min-w-0 items-center gap-2">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background">
+              <Image
+                unoptimized
+                alt=""
+                aria-hidden="true"
+                height={22}
+                src={getModelMarketplaceIconPath(model.iconKey)}
+                width={22}
+              />
+            </span>
+            <TooltipProvider delayDuration={250}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    aria-label={t("actions.openDetails", {
+                      modelName: model.displayName,
+                    })}
+                    className="pointer-events-auto min-w-0 flex-1 truncate bg-transparent p-0 text-left font-mono text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => onViewDetails(model)}
+                    type="button"
+                  >
+                    {model.modelId}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{model.modelId}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    aria-label={t("actions.copyModelId", {
+                      modelId: model.modelId,
+                    })}
+                    className="pointer-events-auto size-8 shrink-0 text-muted-foreground"
+                    onClick={() => onCopy(model.modelId)}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <Copy className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("actions.copy")}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+
+          <h2 className="mt-4 font-serif text-xl font-medium leading-tight">
+            {model.displayName}
+          </h2>
+          <p className="mt-2 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
+            {model.description || t("card.noDescription")}
           </p>
-          <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="font-mono text-2xl font-semibold tabular-nums">
-              {formatCredits(model.minimumCredits)}
-            </span>
-            <span className="text-sm text-muted-foreground">
-              {t("price.credits")} · {priceUnit}
-            </span>
+          {model.category === "image" && model.supportsAutoSize !== true ? (
+            <div className="mt-4">
+              <Badge className="max-w-full font-normal" variant="outline">
+                <span className="truncate">
+                  {t("card.autoSizeUnsupported")}
+                </span>
+              </Badge>
+            </div>
+          ) : null}
+          {model.category === "video" ? (
+            <VideoCapabilitySummary model={model} />
+          ) : null}
+
+          <div className="mt-5 border-t border-border/70 pt-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+              {t("price.startingAt")}
+            </p>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="font-mono text-2xl font-semibold tabular-nums">
+                {formatCredits(model.minimumCredits)}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {t("price.credits")} · {priceUnit}
+              </span>
+            </div>
           </div>
         </div>
-
-        <Button
-          type="button"
-          className="mt-5 w-full justify-between"
-          onClick={() => onViewDetails(model)}
-          variant="outline"
-        >
-          {t("actions.viewDetails")}
-          <ArrowRight className="size-4" />
-        </Button>
       </div>
     </article>
   );

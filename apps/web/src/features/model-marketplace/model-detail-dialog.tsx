@@ -27,7 +27,7 @@ import {
 import { ArrowUpRight, Copy } from "lucide-react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 import { Link } from "@/i18n/routing";
 
@@ -302,15 +302,22 @@ export function ModelDetailDialog({
 }: ModelDetailDialogProps) {
   const t = useTranslations("ModelMarketplace");
   const titleRef = useRef<HTMLHeadingElement | null>(null);
+  const [coverPreviewOpen, setCoverPreviewOpen] = useState(false);
   if (!model) return null;
 
   const categoryLabel =
     model.category === "image" ? t("categories.image") : t("categories.video");
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setCoverPreviewOpen(false);
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent
-        className="bottom-0 left-0 top-auto max-h-[92svh] max-w-none translate-x-0 translate-y-0 grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-t-2xl p-0 [&>button]:bg-background/90 [&>button]:opacity-100 sm:left-1/2 sm:top-1/2 sm:w-[min(880px,calc(100vw-2rem))] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-xl"
+        className="bottom-0 left-0 top-auto max-h-[92svh] max-w-none translate-x-0 translate-y-0 grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-t-2xl p-0 [&>button]:bg-background/90 [&>button]:opacity-100 sm:left-1/2 sm:top-1/2 sm:w-[min(1080px,calc(100vw-2rem))] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-xl"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           titleRef.current?.focus();
@@ -318,12 +325,22 @@ export function ModelDetailDialog({
       >
         <div className="min-h-0 overflow-y-auto">
           <div className="grid border-b border-border/70 sm:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-            <div className="relative aspect-[3/2] overflow-hidden bg-muted sm:aspect-auto sm:min-h-72 sm:rounded-tl-xl">
+            <button
+              aria-label={t("detail.viewCover", {
+                modelName: model.displayName,
+              })}
+              className="group relative block aspect-[3/2] w-full cursor-zoom-in overflow-hidden bg-muted text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:aspect-auto sm:min-h-80 sm:rounded-tl-xl"
+              onClick={() => setCoverPreviewOpen(true)}
+              type="button"
+            >
               <ModelMarketplaceCover
                 model={model}
                 sizes="(min-width: 640px) 400px, 100vw"
               />
-            </div>
+              <span className="pointer-events-none absolute inset-x-3 bottom-3 rounded-md bg-background/85 px-3 py-2 text-center text-xs font-medium text-foreground opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                {t("detail.viewCoverLabel")}
+              </span>
+            </button>
 
             <div className="flex min-w-0 items-center p-5 sm:p-8">
               <DialogHeader className="w-full min-w-0 pr-8 text-left">
@@ -418,6 +435,28 @@ export function ModelDetailDialog({
           </Button>
         </div>
       </DialogContent>
+      <Dialog open={coverPreviewOpen} onOpenChange={setCoverPreviewOpen}>
+        <DialogContent
+          aria-describedby="model-cover-preview-description"
+          className="h-[min(90svh,900px)] w-[min(96vw,1280px)] max-w-none border-border/70 bg-black/95 p-2 sm:rounded-xl"
+        >
+          <DialogHeader className="sr-only">
+            <DialogTitle>{t("detail.coverPreviewTitle")}</DialogTitle>
+            <DialogDescription id="model-cover-preview-description">
+              {t("detail.coverPreviewDescription", {
+                modelName: model.displayName,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black">
+            <ModelMarketplaceCover
+              model={model}
+              sizes="96vw"
+              className="object-contain"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }
