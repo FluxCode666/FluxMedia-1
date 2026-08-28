@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
@@ -48,6 +49,7 @@ type RecentImage = {
   id: string;
   imageUrl: string | null;
   prompt: string;
+  status?: string;
 };
 
 type SimpleImageCreatePanelProps = {
@@ -179,10 +181,15 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const recentImages = useMemo(
     () =>
       props.recent
-        .filter((item): item is RecentImage & { imageUrl: string } =>
-          Boolean(item.imageUrl)
+        .filter(
+          (item) =>
+            Boolean(item.imageUrl) ||
+            item.status === "queued" ||
+            item.status === "pending" ||
+            item.status === "processing" ||
+            item.status === "failed"
         )
-        .slice(0, 6),
+        .slice(0, 12),
     [props.recent]
   );
 
@@ -700,9 +707,15 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
           >
             最近图片
           </h2>
-          <span className="text-xs text-muted-foreground">
-            点击图片即可添加为参考图
-          </span>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>更多参考图输入，可前往图库选择图片作为输入</span>
+            <Link
+              className="font-medium text-primary underline-offset-4 hover:underline"
+              href="../gallery"
+            >
+              前往图库
+            </Link>
+          </div>
         </div>
         {recentImages.length === 0 ? (
           <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
@@ -711,46 +724,79 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
-            {recentImages.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                className="group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void selectRecentReference(item)}
-                disabled={
-                  props.busy ||
-                  props.referenceLoadingId !== null ||
-                  referenceLimitReached
-                }
-                aria-label={`将最近图片添加为参考图：${item.prompt}`}
-                title={
-                  referenceLimitReached
-                    ? `最多添加 ${props.maxEditImages} 张参考图`
-                    : "添加为参考图"
-                }
-              >
-                <Image
-                  src={getRecentImageDisplayUrl(item.imageUrl)}
-                  alt={item.prompt}
-                  fill
-                  sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, 160px"
-                  unoptimized
-                  className="object-contain transition duration-200 group-hover:scale-[1.02]"
-                />
-                <span className="absolute inset-x-0 bottom-0 bg-background/90 px-2 py-1 text-center text-[11px] font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                  作为参考图
-                </span>
-                {props.referenceLoadingId === item.id ? (
-                  <div
-                    className="absolute inset-0 flex items-center justify-center bg-background/70"
-                    role="status"
-                  >
-                    <Loader2 className="size-5 animate-spin" />
-                    <span className="sr-only">正在添加参考图</span>
-                  </div>
-                ) : null}
-              </button>
-            ))}
+            {recentImages.map((item) => {
+              const isPending =
+                item.status === "queued" ||
+                item.status === "pending" ||
+                item.status === "processing";
+              const isFailed = item.status === "failed";
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="group relative aspect-square overflow-hidden rounded-lg border bg-muted text-left outline-none transition hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void selectRecentReference(item)}
+                  disabled={
+                    props.busy ||
+                    props.referenceLoadingId !== null ||
+                    referenceLimitReached ||
+                    isPending ||
+                    isFailed ||
+                    !item.imageUrl
+                  }
+                  aria-label={
+                    isPending
+                      ? `图片正在生成：${item.prompt}`
+                      : isFailed
+                        ? `图片生成失败：${item.prompt}`
+                        : `将最近图片添加为参考图：${item.prompt}`
+                  }
+                  title={
+                    referenceLimitReached
+                      ? `最多添加 ${props.maxEditImages} 张参考图`
+                      : isPending
+                        ? "图片正在生成，完成后可作为参考图"
+                        : isFailed
+                          ? "图片生成失败"
+                          : "添加为参考图"
+                  }
+                >
+                  {item.imageUrl ? (
+                    <Image
+                      src={getRecentImageDisplayUrl(item.imageUrl)}
+                      alt={item.prompt}
+                      fill
+                      sizes="(max-width: 640px) 33vw, (max-width: 768px) 25vw, 160px"
+                      unoptimized
+                      className="object-contain transition duration-200 group-hover:scale-[1.02]"
+                    />
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 bg-muted/60 px-2 text-center text-xs text-muted-foreground">
+                      {isPending ? (
+                        <Loader2 className="size-5 animate-spin" />
+                      ) : (
+                        <X className="size-5" />
+                      )}
+                      <span>{isPending ? "生图中" : "生成失败"}</span>
+                    </div>
+                  )}
+                  {item.imageUrl ? (
+                    <span className="absolute inset-x-0 bottom-0 bg-background/90 px-2 py-1 text-center text-[11px] font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                      作为参考图
+                    </span>
+                  ) : null}
+                  {props.referenceLoadingId === item.id ? (
+                    <div
+                      className="absolute inset-0 flex items-center justify-center bg-background/70"
+                      role="status"
+                    >
+                      <Loader2 className="size-5 animate-spin" />
+                      <span className="sr-only">正在添加参考图</span>
+                    </div>
+                  ) : null}
+                </button>
+              );
+            })}
           </div>
         )}
       </section>

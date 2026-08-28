@@ -3,17 +3,22 @@ import "server-only";
 import { db } from "@repo/database";
 import { generation } from "@repo/database/schema";
 import { expireStalePendingGenerations } from "@repo/shared/generation-maintenance";
-import { and, count, desc, eq, gte, isNotNull, sum } from "drizzle-orm";
+import { and, count, desc, eq, gte, isNotNull, or, sum } from "drizzle-orm";
 
-export async function getUserRecentGenerations(userId: string, limit = 5) {
+export async function getUserRecentGenerations(userId: string, limit = 12) {
   return db
     .select()
     .from(generation)
     .where(
       and(
         eq(generation.userId, userId),
-        eq(generation.status, "completed"),
-        isNotNull(generation.storageKey)
+        or(
+          and(
+            eq(generation.status, "completed"),
+            isNotNull(generation.storageKey)
+          ),
+          eq(generation.status, "pending")
+        )
       )
     )
     .orderBy(desc(generation.createdAt))

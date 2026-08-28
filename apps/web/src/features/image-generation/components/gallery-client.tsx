@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useLocale } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -50,6 +51,7 @@ import {
   readGalleryRecoverySnapshot,
   saveGalleryRecoverySnapshot,
 } from "@/features/image-generation/gallery-recovery";
+import { requestNavigationFeedback } from "@/features/navigation/navigation-feedback-event";
 import { generateDownloadFilename } from "@/lib/download-filename";
 
 const GALLERY_BATCH_SIZE = 20;
@@ -69,6 +71,7 @@ export interface GalleryClientProps {
   activeTab: GalleryTab;
   principalFingerprint: string;
   timeZone: string;
+  maxReferenceImages: number;
 }
 
 /** 从 safe-action 结果中提取严格图库批次，失败保留服务端安全文案。 */
@@ -114,8 +117,10 @@ export function GalleryClient({
   activeTab,
   principalFingerprint,
   timeZone,
+  maxReferenceImages,
 }: GalleryClientProps) {
   const locale = useLocale();
+  const router = useRouter();
   const copy = useCallback(
     (en: string, zh: string) => (locale === "zh" ? zh : en),
     [locale]
@@ -385,6 +390,42 @@ export function GalleryClient({
       );
     }
   }, [copy, items, selectedIds]);
+
+  /** 将当前选中的图库图片交接到生图页，数量超限时保持按钮禁用。 */
+  const handleSendReferences = useCallback(() => {
+    const selectedItems = items.filter(
+      (
+        item
+      ): item is Extract<GalleryItem, { outputRole: "final" | "upload" }> =>
+        selectedIds.has(item.id) &&
+        item.outputRole !== "video" &&
+        Boolean(item.imageUrl)
+    );
+    if (
+      selectedItems.length === 0 ||
+      selectedItems.length > maxReferenceImages
+    ) {
+      return;
+    }
+    const intent =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const params = new URLSearchParams({
+      mode: "image",
+      intent,
+      sendRef: intent,
+    });
+    for (const item of selectedItems) {
+      if (!item.imageUrl) continue;
+      params.append("refs", item.imageUrl);
+      params.append("sourceIds", item.id);
+      params.append("sourceNames", item.prompt.slice(0, 256) || item.id);
+    }
+    const href = `/${locale}/dashboard/generate?${params.toString()}`;
+    requestNavigationFeedback(href);
+    router.push(href);
+  }, [items, locale, maxReferenceImages, router, selectedIds]);
 
   /** 二次确认后按父任务去重删除；上传图卡片不能把合成 ID 传给服务端。 */
   const handleBatchDelete = useCallback(async () => {
@@ -660,6 +701,14 @@ export function GalleryClient({
                 `已选择 ${selectedIds.size} 项`
               )}
             </span>
+            {selectedIds.size > maxReferenceImages ? (
+              <span className="text-xs text-destructive">
+                {copy(
+                  `Select no more than ${maxReferenceImages} images for references`,
+                  `作为参考图最多选择 ${maxReferenceImages} 张`
+                )}
+              </span>
+            ) : null}
             <div className="h-4 w-px bg-border" />
             <Button variant="outline" size="sm" onClick={handleSelectAll}>
               {selectedIds.size === items.length
@@ -669,6 +718,23 @@ export function GalleryClient({
             <Button variant="outline" size="sm" onClick={handleBatchDownload}>
               <Download className="mr-1.5 h-3.5 w-3.5" />
               {copy("Download", "下载")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={selectedIds.size > maxReferenceImages}
+              onClick={handleSendReferences}
+              title={
+                selectedIds.size > maxReferenceImages
+                  ? copy(
+                      `Select no more than ${maxReferenceImages} images`,
+                      `最多选择 ${maxReferenceImages} 张图片`
+                    )
+                  : copy("Use as image references", "作为图生图参考图")
+              }
+            >
+              <ImagePlus className="mr-1.5 h-3.5 w-3.5" />
+              {copy("Use as references", "作为图生图参考图")}
             </Button>
             <Button
               variant={confirmBatchDelete ? "destructive" : "outline"}

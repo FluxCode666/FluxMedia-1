@@ -11,6 +11,7 @@ import type {
   GalleryListOutput,
   GalleryTab,
 } from "@repo/shared/image-generation/gallery-contract";
+import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { invokeOperation } from "@repo/shared/uol";
 import { redirect } from "next/navigation";
@@ -39,9 +40,10 @@ export default async function GalleryPage({ searchParams }: GalleryPageProps) {
   const copy = (en: string, zh: string) => (locale === "zh" ? zh : en);
   const activeTab = parseGalleryTab(params.tab);
   await ensureUolInitialized();
-  const [role, timeZone] = await Promise.all([
+  const [role, timeZone, mediaLimits] = await Promise.all([
     getUserRoleById(user.id),
     getUserTimeZone(user.id),
+    getMediaLimitDefaults(),
   ]);
   const initialBatch = await invokeOperation<GalleryListOutput>(
     "image.listMyGallery",
@@ -65,6 +67,7 @@ export default async function GalleryPage({ searchParams }: GalleryPageProps) {
         activeTab={activeTab}
         principalFingerprint={user.id}
         timeZone={timeZone}
+        maxReferenceImages={mediaLimits.maxEditReferenceImages}
       />
     </div>
   );
