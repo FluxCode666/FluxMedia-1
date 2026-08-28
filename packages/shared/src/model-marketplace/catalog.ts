@@ -81,7 +81,10 @@ function getResolutionNumber(resolution: string): number {
 export function getMinimumImageCredits(
   pricing: ModelMarketplaceImagePricing
 ): number {
-  return Math.min(...IMAGE_CREDIT_PRICE_FIELDS.map((field) => pricing[field]));
+  return Math.min(
+    ...IMAGE_CREDIT_PRICE_FIELDS.map((field) => pricing[field]),
+    ...(pricing.base8kCredits !== undefined ? [pricing.base8kCredits] : [])
+  );
 }
 
 /**

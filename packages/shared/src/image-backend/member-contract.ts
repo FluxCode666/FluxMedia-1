@@ -22,6 +22,47 @@ import {
   supportedModelIdsSchema,
 } from "./supported-models";
 
+/** 供应商账号按模型声明的输出分辨率覆盖；缺失模型键表示继承全局模型能力。 */
+export const backendModelResolutionCapabilitiesSchema = z
+  .record(
+    z.string().trim().min(1).max(240),
+    z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(32)
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/)
+      )
+      .min(1)
+      .max(20)
+  )
+  .superRefine((value, context) => {
+    for (const [modelId, resolutions] of Object.entries(value)) {
+      const normalized = resolutions.map((resolution) => resolution.toLowerCase());
+      if (new Set(normalized).size !== normalized.length) {
+        context.addIssue({
+          code: "custom",
+          path: [modelId],
+          message: "模型分辨率不能重复",
+        });
+      }
+    }
+  })
+  .transform((value) =>
+    Object.fromEntries(
+      Object.entries(value).map(([modelId, resolutions]) => [
+        modelId.trim().toLowerCase(),
+        resolutions.map((resolution) => resolution.trim().toLowerCase()),
+      ])
+    )
+  );
+
+export type BackendModelResolutionCapabilities = z.infer<
+  typeof backendModelResolutionCapabilitiesSchema
+>;
+
 /**
  * 规范成员提交的模型 ID，同时保留图像模型的精确身份。
  *
@@ -133,6 +174,7 @@ const commonBackendMemberFields = {
     .refine((value) => value.length > 0, {
       message: "At least one supported model ID is required",
     }),
+  supportedResolutionsByModel: backendModelResolutionCapabilitiesSchema.optional(),
   contentSafetyEnabled: z.boolean(),
   isEnabled: z.boolean(),
   alwaysActive: z.boolean(),

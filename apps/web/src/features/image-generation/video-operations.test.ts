@@ -198,6 +198,7 @@ describe("video execution contract", () => {
       frameCapability: "first-and-optional-last",
       maxReferenceImages: 20,
       modelConfigurationRevision: 1,
+      supportedResolutions: ["1080p", "720p", "480p"],
     });
   });
 

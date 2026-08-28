@@ -239,11 +239,49 @@ async function assertBackendMemberModelsComeFromConfiguration(
         (member) => member.id === input.id
       )?.supportedModelIds ?? [])
     : [];
+  const modelOptions = buildBackendMemberModelOptions(modelConfiguration);
   const unavailableModelIds = findUnavailableBackendMemberModelIds(
     input,
-    buildBackendMemberModelOptions(modelConfiguration),
+    modelOptions,
     existingModelIds
   );
+  const optionByModelId = new Map(
+    modelOptions.map((option) => [option.id.toLowerCase(), option])
+  );
+  const selectedModelSet = new Set(
+    input.supportedModelIds.map((modelId) => modelId.toLowerCase())
+  );
+  const orphanResolutionModels = Object.keys(
+    input.supportedResolutionsByModel ?? {}
+  ).filter((modelId) => !selectedModelSet.has(modelId.toLowerCase()));
+  if (orphanResolutionModels.length > 0) {
+    throw new OperationError(
+      "validation_error",
+      `分辨率能力不能配置未选择的模型：${orphanResolutionModels
+        .slice(0, 3)
+        .join("、")}`
+    );
+  }
+  const invalidResolutionModels = Object.entries(
+    input.supportedResolutionsByModel ?? {}
+  ).filter(([modelId, resolutions]) => {
+    const supported = optionByModelId.get(
+      modelId.toLowerCase()
+    )?.supportedResolutions;
+    return (
+      !supported ||
+      resolutions.some((resolution) => !supported.includes(resolution))
+    );
+  });
+  if (invalidResolutionModels.length > 0) {
+    throw new OperationError(
+      "validation_error",
+      `以下模型包含全局配置未声明的分辨率：${invalidResolutionModels
+        .slice(0, 3)
+        .map(([modelId]) => modelId)
+        .join("、")}`
+    );
+  }
   if (unavailableModelIds.length === 0) return;
 
   const displayedIds = unavailableModelIds.slice(0, 3).join("、");

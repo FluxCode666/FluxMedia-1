@@ -107,4 +107,74 @@ describe("AdminRequestJsonDetails", () => {
     });
     expect(getSnapshot).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the details visible when a legacy body cannot be serialized", async () => {
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    getSnapshot.mockResolvedValue({
+      data: {
+        id: "video-1",
+        kind: "video",
+        snapshot: {
+          operation: "videos.generate",
+          contentType: "application/json",
+          body: circular,
+        },
+      },
+    });
+
+    await act(async () => {
+      root?.render(
+        createElement(AdminRequestJsonDetails, {
+          id: "video-1",
+          kind: "video",
+        })
+      );
+    });
+
+    const trigger = container?.querySelector<HTMLButtonElement>("button");
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain("实际请求 JSON");
+    expect(container?.textContent).toContain(
+      "已保存的请求正文无法格式化显示。"
+    );
+    expect(container?.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it("does not mount one DOM node per line for a large request body", async () => {
+    getSnapshot.mockResolvedValue({
+      data: {
+        id: "video-1",
+        kind: "video",
+        snapshot: {
+          operation: "videos.generate",
+          contentType: "application/json",
+          body: { items: Array.from({ length: 2_100 }, (_, index) => index) },
+        },
+      },
+    });
+
+    await act(async () => {
+      root?.render(
+        createElement(AdminRequestJsonDetails, {
+          id: "video-1",
+          kind: "video",
+        })
+      );
+    });
+
+    const trigger = container?.querySelector<HTMLButtonElement>("button");
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+
+    const code = container?.querySelector("pre code");
+    expect(code?.querySelectorAll(":scope > span")).toHaveLength(1);
+    expect(code?.textContent).toContain('"items"');
+  });
 });

@@ -22,6 +22,10 @@ export interface ImageGenerationModelCapabilities {
 export interface ImageGenerationCatalogModel {
   id: string;
   capabilities: ImageGenerationModelCapabilities;
+  /** 仅当模型配置显式开启质量参数时为 true；缺失表示不支持。 */
+  supportsQuality?: boolean;
+  /** 仅当模型配置显式开启 `auto` 尺寸时为 true；缺失表示不支持。 */
+  supportsAutoSize?: boolean;
 }
 
 /** 一个可达分组的图片目录。 */
@@ -55,6 +59,10 @@ export interface ImageGenerationCatalogSource {
   }>;
   members: ImageGenerationCatalogMember[];
   videoModelIds?: readonly string[];
+  /** 仅传递显式开启质量参数的模型；缺失模型默认不支持。 */
+  supportsQualityByModel?: Readonly<Record<string, boolean>>;
+  /** 仅传递显式开启 `auto` 尺寸的模型；缺失模型默认不支持。 */
+  supportsAutoSizeByModel?: Readonly<Record<string, boolean>>;
 }
 
 /** 成员类型只表达适配器能力；Adobe 图片适配器不传递 mask。 */
@@ -89,6 +97,16 @@ function mergeCapabilities(
 export function buildImageGenerationModelCatalog(
   source: ImageGenerationCatalogSource
 ): ImageGenerationModelCatalog {
+  const supportsQualityByModel = new Map(
+    Object.entries(source.supportsQualityByModel ?? {}).map(
+      ([modelId, supported]) => [modelId.toLowerCase(), supported]
+    )
+  );
+  const supportsAutoSizeByModel = new Map(
+    Object.entries(source.supportsAutoSizeByModel ?? {}).map(
+      ([modelId, supported]) => [modelId.toLowerCase(), supported]
+    )
+  );
   const videoModelIds = new Set(
     (source.videoModelIds ?? []).map((modelId) => modelId.trim().toLowerCase())
   );
@@ -122,9 +140,13 @@ export function buildImageGenerationModelCatalog(
               capabilities
             );
           } else {
+            const supportsQuality = supportsQualityByModel.get(normalizedId);
+            const supportsAutoSize = supportsAutoSizeByModel.get(normalizedId);
             models.set(normalizedId, {
               id: modelId,
               capabilities: { ...capabilities },
+              ...(supportsQuality === true ? { supportsQuality: true } : {}),
+              ...(supportsAutoSize === true ? { supportsAutoSize: true } : {}),
             });
           }
         }

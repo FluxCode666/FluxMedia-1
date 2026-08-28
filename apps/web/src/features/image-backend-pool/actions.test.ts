@@ -53,6 +53,7 @@ import {
   getAdminImageBackendPoolAction,
   getAdobeCredentialHealthAction,
   getApiUpstreamRuntimeDiagnosticsAction,
+  importImageBackendMembersAction,
   listAdminImageBackendGroupsAction,
   listAdminImageBackendMembersAction,
   reauthorizeAdobeCredentialAction,
@@ -436,5 +437,57 @@ describe("image backend pool actions", () => {
     ).rejects.toThrow("保存失败");
 
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("批量导入逐条校验并只为成功条目刷新管理页", async () => {
+    mocks.invokeOperation.mockResolvedValue({ id: "member-imported" });
+    const member = {
+      id: "member-imported",
+      name: "纳米 AI",
+      type: "adobe",
+      groupIds: ["group-primary"],
+      supportedModelIds: ["gpt-image-2"],
+      supportedResolutionsByModel: { "gpt-image-2": ["1k", "2k"] },
+      contentSafetyEnabled: true,
+      isEnabled: true,
+      alwaysActive: false,
+      failureCooldownEnabled: true,
+      priority: 50,
+      concurrency: 10,
+      config: {
+        mode: "gateway",
+        baseUrl: "https://provider.example.com/v1",
+        defaultRatio: "1x1",
+        defaultResolution: "2k",
+        gptImageQuality: "high",
+      },
+    };
+
+    await expect(
+      (importImageBackendMembersAction as unknown as MockAction)({
+        parsedInput: {
+          format: "fluxmedia-backend-members",
+          version: 1,
+          exportedAt: "2026-08-24T00:00:00.000Z",
+          members: [member, { name: "坏账号" }],
+        },
+        ctx: { userId: "admin-1", role: "admin" },
+      })
+    ).resolves.toEqual({
+      imported: [{ index: 0, id: "member-imported", name: "纳米 AI" }],
+      failed: [
+        {
+          index: 1,
+          name: "坏账号",
+          message: expect.any(String),
+        },
+      ],
+    });
+    expect(mocks.invokeOperation).toHaveBeenCalledWith(
+      "pool.saveMember",
+      member,
+      { type: "user", userId: "admin-1", role: "admin" }
+    );
+    expectBackendPoolManagementPagesRevalidated();
   });
 });

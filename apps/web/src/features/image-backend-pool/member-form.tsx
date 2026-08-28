@@ -59,6 +59,7 @@ import {
   type BackendMemberModelOptionStatus,
   BackendMemberModelSelect,
 } from "./member-model-select";
+import { MemberResolutionCapabilitiesEditor } from "./member-resolution-capabilities";
 import type { BackendMemberAdminSummary } from "./member-service";
 
 /** 新建账号在详情配置前使用的安全图像能力占位 ID。 */
@@ -95,6 +96,8 @@ export function BackendMemberFormDialog({
   const [name, setName] = useState("");
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+  const [supportedResolutionsByModel, setSupportedResolutionsByModel] =
+    useState<Record<string, string[]>>({});
   const [contentSafetyEnabled, setContentSafetyEnabled] = useState(true);
   const [isEnabled, setIsEnabled] = useState(true);
   const [alwaysActive, setAlwaysActive] = useState(false);
@@ -132,6 +135,7 @@ export function BackendMemberFormDialog({
       modelOptions.find((option) => option.category === "image")?.id ??
       DEFAULT_NEW_MEMBER_MODEL_ID;
     setSelectedModelIds(member?.supportedModelIds ?? [defaultModelId]);
+    setSupportedResolutionsByModel(member?.supportedResolutionsByModel ?? {});
     setContentSafetyEnabled(member?.contentSafetyEnabled ?? true);
     setIsEnabled(member?.isEnabled ?? true);
     setAlwaysActive(member?.alwaysActive ?? false);
@@ -267,6 +271,20 @@ export function BackendMemberFormDialog({
     }
   }
 
+  /** 选择新模型时保留已有账号级分辨率覆盖，移除孤儿覆盖。 */
+  function handleSelectedModelIdsChange(nextModelIds: string[]): void {
+    setSelectedModelIds(nextModelIds);
+    setSupportedResolutionsByModel((current) =>
+      Object.fromEntries(
+        nextModelIds.flatMap((modelId) => {
+          const key = modelId.toLowerCase();
+          const existing = current[key];
+          return existing?.length ? [[key, existing]] : [];
+        })
+      )
+    );
+  }
+
   /** 校验客户端草稿并提交严格的类型专属成员输入。 */
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -294,6 +312,13 @@ export function BackendMemberFormDialog({
       name,
       groupIds,
       supportedModelIds,
+      supportedResolutionsByModel: Object.fromEntries(
+        supportedModelIds.flatMap((modelId) => {
+          const resolutions =
+            supportedResolutionsByModel[modelId.toLowerCase()];
+          return resolutions?.length ? [[modelId, resolutions]] : [];
+        })
+      ),
       contentSafetyEnabled,
       isEnabled,
       alwaysActive,
@@ -762,10 +787,19 @@ export function BackendMemberFormDialog({
             <BackendMemberModelSelect
               options={selectableModelOptions}
               value={selectedModelIds}
-              onChange={setSelectedModelIds}
+              onChange={handleSelectedModelIdsChange}
               status={modelOptionStatus}
               disabled={isPending}
             />
+            {selectedModelIds.length > 0 ? (
+              <MemberResolutionCapabilitiesEditor
+                disabled={isPending}
+                modelIds={selectedModelIds}
+                modelOptions={selectableModelOptions}
+                onChange={setSupportedResolutionsByModel}
+                value={supportedResolutionsByModel}
+              />
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {acceptsVideo
                 ? "API 与 Adobe Direct 账号可选择图片和视频的真实模型 ID；未选择的模型不会进入候选集。"

@@ -25,6 +25,9 @@ export interface BackendMemberModelOption {
   supportedResolutions?: readonly string[];
 }
 
+/** 图像模型统一的账号能力预设；请求尺寸会映射到这些标准档位。 */
+export const IMAGE_MODEL_RESOLUTION_PRESETS = ["1k", "2k", "4k", "8k"] as const;
+
 /** 新建 Adobe 账号默认使用具备原生 Firefly 视频执行链的 Direct 模式。 */
 export const DEFAULT_ADOBE_MEMBER_MODE = "direct" as const;
 
@@ -125,9 +128,9 @@ export function buildBackendMemberModelOptions(
         label: entry.displayName,
         category: "image",
         source: "model_configuration",
-        ...(entry.supportedResolutions
-          ? { supportedResolutions: [...entry.supportedResolutions] }
-          : {}),
+        supportedResolutions: [
+          ...(entry.supportedResolutions ?? IMAGE_MODEL_RESOLUTION_PRESETS),
+        ],
       });
       continue;
     }

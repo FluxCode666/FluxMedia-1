@@ -6,12 +6,12 @@
  */
 import {
   getVideoOutputSize,
+  resolveVideoModelCapability,
   type VideoAspectRatio,
   type VideoBillingFamily,
   type VideoFrameInputCapability,
   type VideoModelId,
   type VideoResolution,
-  validateVideoModelParameters,
   videoAspectRatioSchema,
   videoResolutionSchema,
 } from "@repo/shared/video-generation";
@@ -39,6 +39,8 @@ export type VideoCapabilitySnapshot = {
   version: VideoCapabilitySnapshotVersion;
   modelConfigurationRevision: number;
   maxReferenceImages: number;
+  /** 创建时模型配置页声明的全局分辨率；历史任务缺失时使用静态目录。 */
+  supportedResolutions?: string[];
   customModel?: {
     modelId: string;
     supportedResolutions: string[];
@@ -68,6 +70,8 @@ export type VideoExecutionContract = {
   duration: number;
   aspectRatio: VideoAspectRatio;
   resolution: VideoResolution | string;
+  /** 创建时模型配置页声明的分辨率；供应商适配器必须沿用该快照。 */
+  supportedResolutions: readonly string[];
   billingFamily: VideoBillingFamily | string;
   effectiveAudio: boolean;
   frameCapability: VideoFrameInputCapability;
@@ -104,6 +108,7 @@ function requireNonNegativeSafeInteger(value: unknown, field: string): number {
 export function createVideoCapabilitySnapshot(input: {
   modelConfigurationRevision: number;
   maxReferenceImages: number;
+  supportedResolutions?: readonly string[];
   customModel?: {
     modelId: string;
     supportedResolutions: readonly string[];
@@ -129,10 +134,18 @@ export function createVideoCapabilitySnapshot(input: {
         .strict()
         .parse(input.customModel)
     : undefined;
+  const supportedResolutions = input.supportedResolutions
+    ? z
+        .array(z.string().trim().min(1).max(32))
+        .min(1)
+        .max(20)
+        .parse(input.supportedResolutions)
+    : undefined;
   return {
     version: VIDEO_CAPABILITY_SNAPSHOT_VERSION,
     modelConfigurationRevision,
     maxReferenceImages,
+    ...(supportedResolutions ? { supportedResolutions } : {}),
     ...(customModel ? { customModel } : {}),
   };
 }
@@ -161,6 +174,7 @@ function parseVideoCapabilitySnapshot(
         key !== "version" &&
         key !== "modelConfigurationRevision" &&
         key !== "maxReferenceImages" &&
+        key !== "supportedResolutions" &&
         key !== "customModel"
     )
   ) {
@@ -176,6 +190,15 @@ function parseVideoCapabilitySnapshot(
         record.maxReferenceImages,
         "参考图上限"
       ),
+      ...(record.supportedResolutions !== undefined
+        ? {
+            supportedResolutions: z
+              .array(z.string().trim().min(1).max(32))
+              .min(1)
+              .max(20)
+              .parse(record.supportedResolutions),
+          }
+        : {}),
       ...(record.customModel !== undefined
         ? {
             customModel: z
@@ -233,6 +256,7 @@ export function resolveVideoExecutionContract(input: {
       duration,
       aspectRatio,
       resolution,
+      supportedResolutions: snapshot.customModel.supportedResolutions,
       billingFamily: model,
       effectiveAudio: false,
       frameCapability: "none",
@@ -241,14 +265,26 @@ export function resolveVideoExecutionContract(input: {
       requiredMemberType: "api",
     };
   }
-  const validated = validateVideoModelParameters({
-    model: input.model,
-    duration: input.durationSeconds,
-    aspectRatio: input.aspectRatio,
-    resolution: input.resolution,
-  });
-  if (!validated.ok) {
-    throw new Error(`视频任务参数无效: ${validated.error.field}`);
+  const resolvedModel = resolveVideoModelCapability(input.model);
+  if (!resolvedModel.ok) throw new Error("视频任务参数无效: model");
+  const capability = snapshot.supportedResolutions
+    ? {
+        ...resolvedModel.capability,
+        resolutions: snapshot.supportedResolutions,
+      }
+    : resolvedModel.capability;
+  if (!capability.durations.includes(input.durationSeconds as number)) {
+    throw new Error("视频任务参数无效: duration");
+  }
+  if (!capability.aspectRatios.includes(input.aspectRatio as never)) {
+    throw new Error("视频任务参数无效: aspectRatio");
+  }
+  if (
+    !capability.resolutions.some(
+      (resolution) => resolution === input.resolution
+    )
+  ) {
+    throw new Error("视频任务参数无效: resolution");
   }
   const outputSize = getVideoOutputSize(input.resolution, input.aspectRatio);
   if (
@@ -264,10 +300,10 @@ export function resolveVideoExecutionContract(input: {
   if (typeof effectiveAudio !== "boolean") {
     throw new Error("视频任务缺少有效声音快照");
   }
-  if (effectiveAudio && !validated.capability.audio.supported) {
+  if (effectiveAudio && !capability.audio.supported) {
     throw new Error("视频任务声音快照与模型能力冲突");
   }
-  const referenceCapability = validated.capability.input.referenceImages;
+  const referenceCapability = capability.input.referenceImages;
   if (
     (!referenceCapability.configurable &&
       snapshot.maxReferenceImages !== referenceCapability.maxCount) ||
@@ -277,13 +313,14 @@ export function resolveVideoExecutionContract(input: {
   }
 
   return {
-    model: validated.capability.modelId,
+    model: capability.modelId,
     duration: input.durationSeconds as number,
     aspectRatio: videoAspectRatioSchema.parse(input.aspectRatio),
     resolution: videoResolutionSchema.parse(input.resolution),
-    billingFamily: validated.capability.billingFamily,
+    supportedResolutions: capability.resolutions,
+    billingFamily: capability.billingFamily,
     effectiveAudio,
-    frameCapability: validated.capability.input.frames,
+    frameCapability: capability.input.frames,
     maxReferenceImages: snapshot.maxReferenceImages,
     modelConfigurationRevision: snapshot.modelConfigurationRevision,
   };

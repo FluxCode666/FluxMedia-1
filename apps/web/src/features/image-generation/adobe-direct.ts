@@ -42,21 +42,21 @@ import {
   resolveFireflyImageModel,
   resolveFireflyVideoProviderModel,
 } from "@repo/shared/adobe/firefly-direct";
-import { logError, logWarn } from "@repo/shared/logger";
 import type { ApiUpstreamRequestSnapshot } from "@repo/shared/image-backend/api-upstream-script-contract";
+import { logError, logWarn } from "@repo/shared/logger";
 import {
+  resolveVideoModelCapability,
   type VideoModelCapabilityDescriptor,
-  validateVideoModelParameters,
   videoAspectRatioSchema,
   videoResolutionSchema,
 } from "@repo/shared/video-generation";
 import { and, eq, sql } from "drizzle-orm";
+import { createApiUpstreamRequestSnapshot } from "@/features/image-backend-pool/api-upstream-request-snapshot";
 import {
   fetchMediaUpstreamDownload,
   MAX_IMAGE_UPSTREAM_DOWNLOAD_BYTES,
   MAX_VIDEO_UPSTREAM_DOWNLOAD_BYTES,
 } from "@/features/image-backend-pool/media-upstream-fetch";
-import { createApiUpstreamRequestSnapshot } from "@/features/image-backend-pool/api-upstream-request-snapshot";
 import { runAdobeBeforeAcceptanceWithAuthRetry } from "./adobe-auth-retry";
 import { synchronizeAdobeCredentialHealthAfterRuntimeStatus } from "./adobe-credential-passive-health";
 import {
@@ -653,6 +653,7 @@ export async function runAdobeDirectImageRequest(
     model?: string | null;
     size?: string | null;
     quality?: string | null;
+    supportsQuality?: boolean;
     images?: Array<{ data: Buffer; type?: string | null }>;
     onRequestSnapshot?: (
       snapshot: ApiUpstreamRequestSnapshot
@@ -731,13 +732,16 @@ export async function runAdobeDirectImageRequest(
         outputResolution: modelConf.outputResolution,
         upstreamModelId: modelConf.upstreamModelId,
         upstreamModelVersion: modelConf.upstreamModelVersion,
-        // gpt-image 质量改用户操控：用户显式选的 low/medium/high 优先;auto/未选则回退
-        // 后端默认或 high。builder 把 low/medium/high → detailLevel 1/3/5,对 nano-banana
-        // 忽略,故无条件透传安全。
-        qualityLevel:
-          params.quality && params.quality !== "auto"
-            ? params.quality
-            : (config.backend?.adobeGptImageQuality ?? "high"),
+        // 只有模型配置显式开启质量参数时才传给 Adobe；未开启时完全省略该字段。
+        // auto/未选时沿用账号级质量默认值，builder 负责映射到 Adobe detailLevel。
+        ...(params.supportsQuality === true
+          ? {
+              qualityLevel:
+                params.quality && params.quality !== "auto"
+                  ? params.quality
+                  : (config.backend?.adobeGptImageQuality ?? "high"),
+            }
+          : {}),
         ...(sourceImageIds ? { sourceImageIds } : {}),
         ...(params.onRequestSnapshot
           ? {
@@ -817,6 +821,7 @@ async function createAdobeVideoStageClient(
     duration: number;
     aspectRatio: string;
     resolution: string;
+    supportedResolutions?: readonly string[];
   },
   requestProfile: AdobeCredentialProfile
 ): Promise<
@@ -844,21 +849,46 @@ async function createAdobeVideoStageClient(
   ) {
     return { ok: false, error: "此 Adobe 后端未开放所请求的模型" };
   }
-  const validated = validateVideoModelParameters({
-    model: request.model,
-    duration: request.duration,
-    aspectRatio: request.aspectRatio,
-    resolution: request.resolution,
-  });
-  if (!validated.ok) {
+  const resolved = resolveVideoModelCapability(request.model);
+  if (!resolved.ok) {
     return {
       ok: false,
-      error: `Adobe 直连视频参数无效: ${validated.error.field}`,
+      error: "Adobe 直连视频参数无效: model",
     };
   }
-  const provider = resolveFireflyVideoProviderModel(
-    validated.capability.modelId
-  );
+  const configuredResolutions = request.supportedResolutions
+    ? request.supportedResolutions.map((resolution) =>
+        videoResolutionSchema.safeParse(resolution)
+      )
+    : null;
+  if (
+    configuredResolutions?.some((parsed) => !parsed.success) ||
+    configuredResolutions?.length === 0
+  ) {
+    return { ok: false, error: "Adobe 直连视频参数无效: resolution" };
+  }
+  const effectiveResolutions = configuredResolutions
+    ? configuredResolutions.map((parsed) =>
+        parsed.success ? parsed.data : "480p"
+      )
+    : resolved.capability.resolutions;
+  const capability: VideoModelCapabilityDescriptor = {
+    ...resolved.capability,
+    resolutions: effectiveResolutions,
+  };
+  if (
+    !capability.durations.includes(request.duration) ||
+    !capability.aspectRatios.includes(request.aspectRatio as never) ||
+    !capability.resolutions.includes(request.resolution as never)
+  ) {
+    const field = !capability.durations.includes(request.duration)
+      ? "duration"
+      : !capability.aspectRatios.includes(request.aspectRatio as never)
+        ? "aspectRatio"
+        : "resolution";
+    return { ok: false, error: `Adobe 直连视频参数无效: ${field}` };
+  }
+  const provider = resolveFireflyVideoProviderModel(capability.modelId);
   if (!provider) {
     return {
       ok: false,
@@ -878,7 +908,7 @@ async function createAdobeVideoStageClient(
     ok: true,
     memberId,
     provider,
-    capability: validated.capability,
+    capability,
     aspectRatio,
     resolution,
     size,
@@ -908,6 +938,7 @@ export async function submitAdobeDirectVideoRequest(
     duration: number;
     aspectRatio: string;
     resolution: string;
+    supportedResolutions?: readonly string[];
     effectiveAudio: boolean;
     maxReferenceImages: number;
     negativePrompt?: string | null;
@@ -926,6 +957,7 @@ export async function submitAdobeDirectVideoRequest(
       duration: params.duration,
       aspectRatio: params.aspectRatio,
       resolution: params.resolution,
+      supportedResolutions: params.supportedResolutions,
     },
     params.requestProfile
   );
@@ -1156,6 +1188,7 @@ export async function runAdobeDirectVideoRequest(
     duration: number;
     aspectRatio: string;
     resolution: string;
+    supportedResolutions?: readonly string[];
     effectiveAudio: boolean;
     maxReferenceImages: number;
     negativePrompt?: string | null;
@@ -1178,6 +1211,7 @@ export async function runAdobeDirectVideoRequest(
       duration: params.duration,
       aspectRatio: params.aspectRatio,
       resolution: params.resolution,
+      supportedResolutions: params.supportedResolutions,
     },
     provider.webApp
   );

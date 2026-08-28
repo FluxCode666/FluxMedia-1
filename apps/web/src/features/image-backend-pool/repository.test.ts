@@ -158,6 +158,29 @@ describe("backend pool PostgreSQL repository", () => {
     expect(candidateQuery?.params).toContain("api");
   });
 
+  it("按模型分辨率过滤供应商账号：4k 请求排除未声明 4k 的账号", async () => {
+    const { database, queries } = createDatabase([
+      { rows: [{ value: "priority" }] },
+      { rowCount: 0 },
+      [],
+    ]);
+    const repository = createPostgresBackendPoolRepository(database);
+
+    await repository.acquireLease(
+      acquireInput({
+        requestedModel: "seedance2",
+        requestedResolution: "4k",
+      })
+    );
+
+    const candidateQuery = queries[2];
+    expect(candidateQuery?.sql).toContain("supported_resolutions_by_model");
+    expect(candidateQuery?.sql).toContain("json_array_elements_text");
+    expect(candidateQuery?.params).toEqual(
+      expect.arrayContaining(["seedance2", "4k"])
+    );
+  });
+
   it("同账号重试把固定 API 适配版本编入权威获租 SQL", async () => {
     const { database, queries } = createDatabase([
       { rows: [{ value: "least_load" }] },

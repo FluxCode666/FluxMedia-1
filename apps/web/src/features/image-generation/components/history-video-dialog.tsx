@@ -271,7 +271,7 @@ export function HistoryVideoDialog({
             )}
           </div>
 
-          <div className="min-h-0 overflow-y-auto p-6">
+          <div className="min-h-0 min-w-0 overflow-y-auto p-6">
             <div className="space-y-5">
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">

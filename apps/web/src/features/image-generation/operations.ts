@@ -569,6 +569,21 @@ function resolveRequestedImageModel(model: string): string {
   return model.trim();
 }
 
+/** 将图片实际输出尺寸映射为账号能力使用的标准分辨率档位。 */
+function resolveRequestedImageResolution(
+  size: string | null | undefined
+): "1k" | "2k" | "4k" | "8k" | undefined {
+  const normalized = size?.trim().toLowerCase();
+  if (!normalized || normalized === "auto") return undefined;
+  const dimensions = parseImageSize(normalized);
+  if (!dimensions) return undefined;
+  const longestEdge = Math.max(dimensions.width, dimensions.height);
+  if (longestEdge >= 7680) return "8k";
+  if (longestEdge >= 3840) return "4k";
+  if (longestEdge >= 2048) return "2k";
+  return "1k";
+}
+
 /**
  * 在主生成所属分组内为一次附加编辑独立获租并执行无粘性失败切换。
  *
@@ -588,6 +603,7 @@ async function runAuxiliaryImageEdit(input: {
     apiKeyId: input.apiKeyId,
     pinnedGroupId: input.pinnedGroupId,
     modelId: input.modelId,
+    resolution: resolveRequestedImageResolution(input.params.size),
     requestKind: "image",
     requiresContentSafety: input.requiresContentSafety,
     requiresMask: Boolean(input.params.mask),
@@ -999,7 +1015,7 @@ function getCurrentImageApiAdapterSnapshot(session: RuntimeBackendSession): {
   apiAdapterVersionId: string | null;
 } {
   const lease = session.current;
-  if (!lease || lease.memberType !== "api") {
+  if (lease?.memberType !== "api") {
     return { apiAdapterMemberId: null, apiAdapterVersionId: null };
   }
   const { apiAdapterMemberId, apiAdapterVersionId } = lease.acquisition.lease;
@@ -1152,9 +1168,14 @@ async function runImageGenerationForUserInternal(
     input.mode === "edit" &&
     Boolean(input.mask || input.mediaInputReferences?.mask);
   const imageModel = resolveRequestedImageModel(input.model);
-  await assertImageModelEnabled(imageModel, () =>
-    getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG")
+  const modelCapabilities = await assertImageModelEnabled(
+    imageModel,
+    () => getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
+    resolveRequestedImageResolution(size),
+    size.trim().toLowerCase() === "auto"
   );
+  const supportsQuality = modelCapabilities.supportsQuality;
+  const effectiveQuality = supportsQuality ? input.quality : undefined;
   const recordModel = imageModel;
   const moderationContext = await createGenerationModerationContext(
     input.userId
@@ -1278,6 +1299,9 @@ async function runImageGenerationForUserInternal(
                 apiKeyId: executionInput.apiKeyId,
                 requestedGroupId: executionInput.backendGroupId,
                 modelId: imageModel,
+                resolution: resolveRequestedImageResolution(
+                  executionInput.size
+                ),
                 requestKind: "image",
                 requiresContentSafety: moderationRequired,
                 requiresMask,
@@ -1316,7 +1340,7 @@ async function runImageGenerationForUserInternal(
             imageModerationCount: moderationImageCount,
             basePricing: imageBasePricing,
             moderationPricing: imageModerationPricing,
-            quality: input.quality as ImageQualityLevel | undefined,
+            quality: effectiveQuality as ImageQualityLevel | undefined,
             thinking: input.thinking as ImageThinkingLevel | undefined,
           });
           const creditsPerImage = creditCost.totalCredits;
@@ -1370,6 +1394,8 @@ async function runImageGenerationForUserInternal(
             billingPolicy,
             imageModel,
             recordModel,
+            effectiveQuality,
+            supportsQuality,
             moderationEnabled,
             markStagedImageInputsAdopted,
           });
@@ -1426,6 +1452,8 @@ async function runQueuedImageGenerationForUser({
   billingPolicy,
   imageModel,
   recordModel,
+  effectiveQuality,
+  supportsQuality,
   moderationEnabled,
   markStagedImageInputsAdopted,
 }: {
@@ -1453,6 +1481,8 @@ async function runQueuedImageGenerationForUser({
   billingPolicy: GenerationBillingPolicy;
   imageModel: string;
   recordModel: string;
+  effectiveQuality?: RunImageGenerationInput["quality"];
+  supportsQuality: boolean;
   moderationEnabled: boolean;
   markStagedImageInputsAdopted: () => void;
 }): Promise<ImageGenerationOperationResult> {
@@ -1520,7 +1550,7 @@ async function runQueuedImageGenerationForUser({
             ...inputImagesMetadata,
             imageCount: input.images.length,
             hasMask: Boolean(input.mask),
-            quality: input.quality || "auto",
+            quality: effectiveQuality || "auto",
             outputFormat: input.outputFormat || null,
             outputCompression: input.outputCompression ?? null,
             background: input.background || null,
@@ -1536,7 +1566,7 @@ async function runQueuedImageGenerationForUser({
             ...backendMetadata,
             ...modelMetadata,
             ...promptOptimizationMetadata,
-            quality: input.quality || "auto",
+            quality: effectiveQuality || "auto",
             moderation: input.moderation || "auto",
             outputFormat: input.outputFormat || null,
             outputCompression: input.outputCompression ?? null,
@@ -1790,7 +1820,8 @@ async function runQueuedImageGenerationForUser({
             size: input.size,
             model: imageModel,
             thinking: input.thinking,
-            quality: input.quality,
+            quality: effectiveQuality,
+            supportsQuality,
             moderation: input.moderation,
             outputFormat: input.outputFormat,
             outputCompression: input.outputCompression,
@@ -1808,7 +1839,8 @@ async function runQueuedImageGenerationForUser({
             size,
             model: imageModel,
             thinking: input.thinking,
-            quality: input.quality,
+            quality: effectiveQuality,
+            supportsQuality,
             moderation: input.moderation,
             outputFormat: input.outputFormat,
             outputCompression: input.outputCompression,
@@ -2152,7 +2184,7 @@ async function runQueuedImageGenerationForUser({
               imageModerationCount: 0,
               basePricing: imageBasePricing,
               moderationPricing: imageModerationPricing,
-              quality: input.quality as ImageQualityLevel | undefined,
+              quality: effectiveQuality as ImageQualityLevel | undefined,
               thinking: input.thinking as ImageThinkingLevel | undefined,
             }).totalCredits;
             await chargeAdditionalCredits(
@@ -2234,7 +2266,7 @@ async function runQueuedImageGenerationForUser({
       imageModerationCount: moderationEnabled ? inputImages.length : 0,
       basePricing: imageBasePricing,
       moderationPricing: imageModerationPricing,
-      quality: input.quality as ImageQualityLevel | undefined,
+      quality: effectiveQuality as ImageQualityLevel | undefined,
       thinking: input.thinking as ImageThinkingLevel | undefined,
     })
   );
@@ -2244,7 +2276,7 @@ async function runQueuedImageGenerationForUser({
       imageModerationCount: moderationEnabled ? inputImages.length : 0,
       basePricing: imageBasePricing,
       moderationPricing: imageModerationPricing,
-      quality: input.quality as ImageQualityLevel | undefined,
+      quality: effectiveQuality as ImageQualityLevel | undefined,
       thinking: input.thinking as ImageThinkingLevel | undefined,
     })
   );
@@ -2255,7 +2287,7 @@ async function runQueuedImageGenerationForUser({
       imageModerationCount: moderationEnabled ? inputImages.length : 0,
       basePricing: imageBasePricing,
       moderationPricing: imageModerationPricing,
-      quality: input.quality as ImageQualityLevel | undefined,
+      quality: effectiveQuality as ImageQualityLevel | undefined,
       thinking: input.thinking as ImageThinkingLevel | undefined,
     });
   const actualImageCredits = perOutputCreditCosts.reduce(

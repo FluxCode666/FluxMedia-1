@@ -8,6 +8,7 @@
  */
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
+import { Checkbox } from "@repo/ui/components/checkbox";
 import { Switch } from "@repo/ui/components/switch";
 import { Loader2, Pencil, RotateCcw, Trash2 } from "lucide-react";
 
@@ -86,6 +87,8 @@ export function BackendMemberTable({
   timeZone,
   readOnly,
   mutationState,
+  selectedMemberIds,
+  onSelectedChange,
   onEnabledChange,
   onReset,
   onEdit,
@@ -96,6 +99,11 @@ export function BackendMemberTable({
   timeZone: string;
   readOnly: boolean;
   mutationState: BackendMemberTableMutationState;
+  selectedMemberIds: ReadonlySet<string>;
+  onSelectedChange: (
+    member: BackendPoolAdminMemberSummary,
+    selected: boolean
+  ) => void;
   onEnabledChange: (
     member: BackendPoolAdminMemberSummary,
     isEnabled: boolean
@@ -163,6 +171,13 @@ export function BackendMemberTable({
                 <td className="px-4 py-3">
                   <div className="flex min-w-48 flex-col gap-1">
                     <div className="flex items-center gap-2">
+                      <Checkbox
+                        aria-label={`选择账号“${member.name}”导出`}
+                        checked={selectedMemberIds.has(member.id)}
+                        onCheckedChange={(checked) =>
+                          onSelectedChange(member, checked === true)
+                        }
+                      />
                       <span className="font-medium">{member.name}</span>
                       <Badge variant="outline">
                         {getMemberTypeLabel(member)}

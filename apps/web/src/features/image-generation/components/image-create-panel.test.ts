@@ -62,6 +62,7 @@ const catalog: ImageGenerationModelCatalog = {
         {
           id: "gpt-image-2",
           capabilities: { generate: true, edit: true, mask: false },
+          supportsAutoSize: true,
         },
       ],
     },
@@ -227,11 +228,7 @@ describe("ImageCreatePanel", () => {
         },
       ],
     };
-    mountImageCreatePanel(
-      () => {},
-      { catalog: multiModelCatalog },
-      null
-    );
+    mountImageCreatePanel(() => {}, { catalog: multiModelCatalog }, null);
     expect(testHarness.panelProps?.model).toBe("gpt-image-2");
   });
 

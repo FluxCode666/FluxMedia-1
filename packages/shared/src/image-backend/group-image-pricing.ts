@@ -18,9 +18,13 @@ export const IMAGE_CREDIT_PRICE_FIELDS = [
 
 export type ImageCreditPriceField = (typeof IMAGE_CREDIT_PRICE_FIELDS)[number];
 export type ImageCreditPricing = Partial<
-  Record<ImageCreditPriceField, number | undefined>
+  Record<ImageCreditPriceField, number | undefined> & {
+    base8kCredits?: number | undefined;
+  }
 >;
-export type ResolvedImageCreditPricing = Record<ImageCreditPriceField, number>;
+export type ResolvedImageCreditPricing = Record<ImageCreditPriceField, number> & {
+  base8kCredits?: number | undefined;
+};
 export type ImageModelCreditPricingMap = Record<string, ImageCreditPricing>;
 
 export const DEFAULT_IMAGE_CREDIT_PRICING: ResolvedImageCreditPricing = {
@@ -66,6 +70,7 @@ export const imageCreditPricingSchema = z
     base1kCredits: imageCreditValueSchema.optional(),
     base2kCredits: imageCreditValueSchema.optional(),
     base4kCredits: imageCreditValueSchema.optional(),
+    base8kCredits: imageCreditValueSchema.optional(),
   })
   .strict();
 
@@ -336,11 +341,16 @@ export function resolveImageCreditPricing(input: {
     input.model,
     input.group?.byModel ?? {}
   );
-  return {
+  const resolved = {
     base1024Credits:
       groupPricing.base1024Credits ?? globalPricing.base1024Credits,
     base1kCredits: groupPricing.base1kCredits ?? globalPricing.base1kCredits,
     base2kCredits: groupPricing.base2kCredits ?? globalPricing.base2kCredits,
     base4kCredits: groupPricing.base4kCredits ?? globalPricing.base4kCredits,
   };
+  const base8kCredits =
+    groupPricing.base8kCredits ?? globalPricing.base8kCredits;
+  return base8kCredits === undefined
+    ? resolved
+    : { ...resolved, base8kCredits };
 }

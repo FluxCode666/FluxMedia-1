@@ -293,6 +293,11 @@ export function buildModelMarketplaceCatalog(
           homepagePriority: entry.homepagePriority,
           priceUnit: "per_image",
           pricing: entry.pricing,
+          supportedResolutions: entry.supportedResolutions,
+          ...(entry.supportsQuality === true ? { supportsQuality: true } : {}),
+          ...(entry.supportsAutoSize === true
+            ? { supportsAutoSize: true }
+            : {}),
         })
       );
       continue;
@@ -304,7 +309,7 @@ export function buildModelMarketplaceCatalog(
       if (!capability) continue;
       const persistedEntry = marketplaceConfig.videoByFamily[entry.configKey];
       const supportedResolutions = sortUniqueVideoResolutions([
-        ...capability.resolutions,
+        ...(entry.supportedResolutions ?? capability.resolutions),
       ]);
       const effectivePricesByResolution = Object.fromEntries(
         supportedResolutions.map((resolution) => [

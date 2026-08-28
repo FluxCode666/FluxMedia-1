@@ -436,6 +436,9 @@ function serializeRequestPayload(
   if (input.category === "video") {
     return JSON.stringify({
       ...common,
+      ...(input.supportedResolutions
+        ? { supportedResolutions: [...input.supportedResolutions].sort() }
+        : {}),
       creditsPerSecondByResolution: sortVideoPricing(
         input.creditsPerSecondByResolution
       ),
@@ -454,6 +457,8 @@ function serializeRequestPayload(
       ? { supportedResolutions: input.supportedResolutions }
       : {}),
     pricing: input.pricing,
+    ...(input.supportsQuality === true ? { supportsQuality: true } : {}),
+    ...(input.supportsAutoSize === true ? { supportsAutoSize: true } : {}),
   });
 }
 
@@ -685,7 +690,7 @@ export function createModelConfigurationService(
       }
       if (input.category === "video" && catalogEntry?.category === "video") {
         const expectedResolutions = [
-          ...catalogEntry.supportedResolutions,
+          ...(input.supportedResolutions ?? catalogEntry.supportedResolutions),
         ].sort();
         const submittedResolutions = Object.keys(
           input.creditsPerSecondByResolution
@@ -837,7 +842,15 @@ export function createModelConfigurationService(
                 supportedResolutions:
                   input.category === "image"
                     ? input.supportedResolutions
-                    : Object.keys(input.creditsPerSecondByResolution),
+                    : (input.supportedResolutions ??
+                      Object.keys(input.creditsPerSecondByResolution)),
+                ...(input.category === "image" && input.supportsQuality === true
+                  ? { supportsQuality: true }
+                  : {}),
+                ...(input.category === "image" &&
+                input.supportsAutoSize === true
+                  ? { supportsAutoSize: true }
+                  : {}),
               });
               const hasCustomModel = config.customModels.some(
                 (model) =>
@@ -888,7 +901,38 @@ export function createModelConfigurationService(
               homepagePriority: input.homepagePriority,
               description: input.description,
               cover: nextCover,
+              ...(input.category === "video" && input.supportedResolutions
+                ? { supportedResolutions: input.supportedResolutions }
+                : {}),
+              ...(input.category === "image" && input.supportedResolutions
+                ? { supportedResolutions: input.supportedResolutions }
+                : {}),
+              ...(input.category === "image" && input.supportsQuality === true
+                ? { supportsQuality: true }
+                : {}),
+              ...(input.category === "image" && input.supportsAutoSize === true
+                ? { supportsAutoSize: true }
+                : {}),
             };
+            if (input.category === "image") {
+              nextConfig.customModels = nextConfig.customModels.map((model) => {
+                if (model.modelId !== input.configKey) return model;
+                const {
+                  supportsQuality: _supportsQuality,
+                  supportsAutoSize: _supportsAutoSize,
+                  ...rest
+                } = model;
+                return {
+                  ...rest,
+                  ...(input.supportsQuality === true
+                    ? { supportsQuality: true }
+                    : {}),
+                  ...(input.supportsAutoSize === true
+                    ? { supportsAutoSize: true }
+                    : {}),
+                };
+              });
+            }
             if (input.category === "image") {
               if (!imagePricing) {
                 throw new ModelConfigurationServiceError(

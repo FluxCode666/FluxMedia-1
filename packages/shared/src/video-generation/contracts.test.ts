@@ -63,7 +63,14 @@ describe("video generation contracts", () => {
       "9:16",
       "21:9",
     ]);
-    expect(VIDEO_RESOLUTIONS).toEqual(["480p", "720p", "1080p", "4k"]);
+    expect(VIDEO_RESOLUTIONS).toEqual([
+      "480p",
+      "720p",
+      "1080p",
+      "2k",
+      "4k",
+      "8k",
+    ]);
     expect(videoAspectRatioSchema.parse("16:9")).toBe("16:9");
     expect(videoResolutionSchema.parse("1080p")).toBe("1080p");
     expect(videoAspectRatioSchema.safeParse("16x9").success).toBe(false);

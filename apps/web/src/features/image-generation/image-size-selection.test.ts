@@ -10,6 +10,7 @@ import {
   getImageSizeForRatio,
   inferImageSizeSelectionState,
   parseImageAspectRatioInput,
+  resolveImageSizeSelectionState,
 } from "./image-size-selection";
 
 describe("parseImageAspectRatioInput", () => {
@@ -59,5 +60,28 @@ describe("inferImageSizeSelectionState", () => {
       customWidth: 1024,
       customHeight: 1024,
     });
+  });
+});
+
+describe("resolveImageSizeSelectionState", () => {
+  it("不支持 auto 时将遗留的自动尺寸默认切到按比例", () => {
+    expect(resolveImageSizeSelectionState("auto", false)).toMatchObject({
+      mode: "ratio",
+      base: "1k",
+      ratio: "1:1",
+    });
+  });
+
+  it("不支持 auto 时把自动回退后的默认宽高也切到按比例", () => {
+    // WHY: 站内生图会把 auto 重置为 1024x1024；该尺寸本身会被推断为 custom。
+    expect(resolveImageSizeSelectionState("1024x1024", false)).toMatchObject({
+      mode: "ratio",
+      base: "1k",
+      ratio: "1:1",
+    });
+  });
+
+  it("支持 auto 时保留自动尺寸标签", () => {
+    expect(resolveImageSizeSelectionState("auto", true).mode).toBe("auto");
   });
 });

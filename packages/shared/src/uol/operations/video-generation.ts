@@ -344,7 +344,8 @@ export function normalizeVideoGenerateInputForReplay(
  */
 export function resolveCanonicalVideoGenerateInput(
   input: VideoGenerateInput,
-  capabilityOverrides: unknown
+  capabilityOverrides: unknown,
+  configuredResolutions?: readonly string[]
 ): CanonicalVideoGenerateInputResult {
   const { quoteToken: _quoteToken, ...request } = input;
   const capability = resolveEffectiveVideoModelCapability(
@@ -356,9 +357,12 @@ export function resolveCanonicalVideoGenerateInput(
     Boolean(input.geminiModel) &&
     referenceCount > 0 &&
     capability.input.referenceImages.maxCount === 0;
+  const resolutionCapability = configuredResolutions
+    ? { ...capability, resolutions: [...configuredResolutions] }
+    : capability;
   const effectiveCapability = geminiReferenceMode
     ? {
-        ...capability,
+        ...resolutionCapability,
         input: {
           ...capability.input,
           referenceImages: {
@@ -367,7 +371,19 @@ export function resolveCanonicalVideoGenerateInput(
           },
         },
       }
-    : capability;
+    : resolutionCapability;
+  if (!effectiveCapability.resolutions.some((resolution) => resolution === input.resolution)) {
+    return {
+      ok: false,
+      error: {
+        code: "unsupported_resolution",
+        field: "resolution",
+        message: `This video model does not support resolution ${input.resolution}`,
+        received: input.resolution,
+        allowed: [...effectiveCapability.resolutions],
+      },
+    };
+  }
   if (referenceCount > effectiveCapability.input.referenceImages.maxCount) {
     return {
       ok: false,

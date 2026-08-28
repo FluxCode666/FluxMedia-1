@@ -31,6 +31,7 @@ export const MAX_IMAGE_PIXELS = 3840 * 2160;
 export const IMAGE_1024_BASE_PIXELS = 1024 * 1024;
 export const IMAGE_2K_BASE_EDGE = 2048;
 export const IMAGE_4K_BASE_EDGE = 3840;
+export const IMAGE_8K_BASE_EDGE = 7680;
 export const DEFAULT_IMAGE_1024_BASE_CREDIT_COST =
   DEFAULT_IMAGE_CREDIT_PRICING.base1024Credits;
 export const DEFAULT_IMAGE_1K_BASE_CREDIT_COST =
@@ -249,6 +250,9 @@ export function getImageBaseCreditPricing(
       pricing?.base4kCredits,
       DEFAULT_IMAGE_4K_BASE_CREDIT_COST
     ),
+    ...(pricing?.base8kCredits !== undefined
+      ? { base8kCredits: normalizeBaseCreditPrice(pricing.base8kCredits, DEFAULT_IMAGE_4K_BASE_CREDIT_COST) }
+      : {}),
   };
 }
 
@@ -288,7 +292,7 @@ export function getImageBaseCredits(
     dimensions?.width ?? Number.NaN,
     dimensions?.height ?? Number.NaN
   );
-  const { base1024Credits, base1kCredits, base2kCredits, base4kCredits } =
+  const { base1024Credits, base1kCredits, base2kCredits, base4kCredits, base8kCredits } =
     getImageBaseCreditPricing(pricing);
 
   // WHY: 分辨率等级由最长边定义，才能让 2048x1152 和 2048x2048 等同属 2K
@@ -296,6 +300,7 @@ export function getImageBaseCredits(
   if (!Number.isFinite(longestEdge) || longestEdge <= 0) {
     return base4kCredits;
   }
+  if (longestEdge >= IMAGE_8K_BASE_EDGE) return base8kCredits ?? base4kCredits;
   if (longestEdge >= IMAGE_4K_BASE_EDGE) return base4kCredits;
   if (longestEdge >= IMAGE_2K_BASE_EDGE) return base2kCredits;
   if (longestEdge >= IMAGE_1K_BASE_EDGE) return base1kCredits;

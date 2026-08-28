@@ -32,6 +32,7 @@ export type ModelConfigurationImagePricingDraft = {
   base1kCredits: string;
   base2kCredits: string;
   base4kCredits: string;
+  base8kCredits: string;
 };
 
 /** 管理端编辑弹窗可持有的判别联合草稿。 */
@@ -42,6 +43,9 @@ export type ModelConfigurationDraft =
       expectedRevision: number;
       clientRequestId: string;
       pricing: ModelConfigurationImagePricingDraft;
+      supportedResolutions: string[];
+      supportsQuality: boolean;
+      supportsAutoSize: boolean;
     } & MarketplaceDraftFields)
   | ({
       category: "video";
@@ -49,6 +53,7 @@ export type ModelConfigurationDraft =
       expectedRevision: number;
       clientRequestId: string;
       billingMode: "per_second" | "per_item";
+      supportedResolutions: string[];
       creditsPerSecondByResolution: Record<string, string>;
       creditsPerItemByResolution: Record<string, string>;
       maxReferenceImages?: string;
@@ -100,6 +105,10 @@ function createImagePricingDraft(
     base1kCredits: pricing ? formatPricingValue(pricing.base1kCredits) : "",
     base2kCredits: pricing ? formatPricingValue(pricing.base2kCredits) : "",
     base4kCredits: pricing ? formatPricingValue(pricing.base4kCredits) : "",
+    base8kCredits:
+      pricing?.base8kCredits !== undefined
+        ? formatPricingValue(pricing.base8kCredits)
+        : "",
   };
 }
 
@@ -137,6 +146,11 @@ export function createModelConfigurationDraft(
       pricing: createImagePricingDraft(
         entry.pricingSource === "explicit" ? entry.pricing : null
       ),
+      supportedResolutions: [...(entry.supportedResolutions ?? [])],
+      // 质量参数默认关闭；只有模型配置显式开启时才展示并传递。
+      supportsQuality: entry.supportsQuality === true,
+      // auto 尺寸默认关闭；只有模型配置显式开启时才允许传递。
+      supportsAutoSize: entry.supportsAutoSize === true,
     };
   }
   return {
@@ -144,6 +158,7 @@ export function createModelConfigurationDraft(
     ...marketplace,
     category: "video",
     billingMode: entry.billingMode,
+    supportedResolutions: [...entry.supportedResolutions],
     creditsPerSecondByResolution: Object.fromEntries(
       entry.supportedResolutions.map((resolution) => [
         resolution,
@@ -288,7 +303,11 @@ function appendImagePricing(
 ): void {
   formData.append(
     "base1024Credits",
-    String(parseModelConfigurationPrice(pricing.base1024Credits))
+    String(
+      parseModelConfigurationPrice(
+        pricing.base1024Credits.trim() || pricing.base1kCredits
+      )
+    )
   );
   formData.append(
     "base1kCredits",
@@ -302,6 +321,12 @@ function appendImagePricing(
     "base4kCredits",
     String(parseModelConfigurationPrice(pricing.base4kCredits))
   );
+  if (pricing.base8kCredits.trim()) {
+    formData.append(
+      "base8kCredits",
+      String(parseModelConfigurationPrice(pricing.base8kCredits))
+    );
+  }
 }
 
 /**
@@ -361,6 +386,9 @@ export function buildModelConfigurationFormData(
   if (draft.category === "video") {
     const creditsPerSecondByResolution = Object.fromEntries(
       Object.entries(draft.creditsPerSecondByResolution)
+        .filter(([resolution]) =>
+          draft.supportedResolutions.includes(resolution)
+        )
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([resolution, value]) => [
           resolution,
@@ -372,17 +400,23 @@ export function buildModelConfigurationFormData(
       JSON.stringify(creditsPerSecondByResolution)
     );
     const creditsPerItemByResolution = Object.fromEntries(
-      Object.entries(draft.creditsPerItemByResolution).map(
-        ([resolution, value]) => [
+      Object.entries(draft.creditsPerItemByResolution)
+        .filter(([resolution]) =>
+          draft.supportedResolutions.includes(resolution)
+        )
+        .map(([resolution, value]) => [
           resolution,
           parseModelConfigurationPrice(value),
-        ]
-      )
+        ])
     );
     formData.append("billingMode", draft.billingMode);
     formData.append(
       "creditsPerItemByResolution",
       JSON.stringify(creditsPerItemByResolution)
+    );
+    formData.append(
+      "supportedResolutions",
+      JSON.stringify(draft.supportedResolutions)
     );
     if (draft.maxReferenceImages !== undefined) {
       formData.append(
@@ -394,6 +428,14 @@ export function buildModelConfigurationFormData(
     }
     return formData;
   }
+  if (draft.supportedResolutions.length > 0) {
+    formData.append(
+      "supportedResolutions",
+      JSON.stringify(draft.supportedResolutions)
+    );
+  }
+  formData.append("supportsQuality", String(draft.supportsQuality));
+  formData.append("supportsAutoSize", String(draft.supportsAutoSize));
   appendImagePricing(formData, draft.pricing);
   return formData;
 }

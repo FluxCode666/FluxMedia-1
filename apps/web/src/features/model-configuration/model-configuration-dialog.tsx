@@ -13,6 +13,7 @@ import {
 } from "@repo/shared/model-marketplace";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
+import { Checkbox } from "@repo/ui/components/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +39,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ModelBrandIcon } from "@/features/model-marketplace/model-brand-icon";
-
+import { VIDEO_MODEL_RESOLUTION_PRESETS } from "./catalog";
 import {
   buildModelConfigurationFormData,
   createModelConfigurationDraft,
@@ -55,11 +56,12 @@ import {
 import { ModelCoverField } from "./model-cover-field";
 
 const IMAGE_PRICE_FIELDS = [
-  ["base1024Credits", "1024 档"],
   ["base1kCredits", "1K 档"],
   ["base2kCredits", "2K 档"],
   ["base4kCredits", "4K 档"],
+  ["base8kCredits", "8K 档"],
 ] as const;
+const IMAGE_RESOLUTION_PRESETS = ["1k", "2k", "4k", "8k"] as const;
 
 export type ModelConfigurationDialogProps = {
   entry: ModelConfigurationEntry;
@@ -309,29 +311,183 @@ export function ModelConfigurationDialog({
               </p>
             ) : null}
             {fields.showImagePricing && draft.category === "image" ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {IMAGE_PRICE_FIELDS.map(([field, label]) => (
-                  <PricingInput
-                    key={field}
-                    id={`${entry.category}-${entry.configKey}-${field}`}
-                    label={label}
-                    value={draft.pricing[field]}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>模型支持的图片分辨率</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {IMAGE_RESOLUTION_PRESETS.map((resolution) => (
+                      <label
+                        key={resolution}
+                        htmlFor={`${entry.configKey}-image-resolution-${resolution}`}
+                        className="flex items-center gap-1.5 text-sm"
+                      >
+                        <Checkbox
+                          id={`${entry.configKey}-image-resolution-${resolution}`}
+                          checked={(draft.supportedResolutions.length > 0
+                            ? draft.supportedResolutions
+                            : IMAGE_RESOLUTION_PRESETS
+                          ).includes(resolution)}
+                          disabled={disabled}
+                          onCheckedChange={(checked) =>
+                            updateDraft((current) =>
+                              current.category !== "image"
+                                ? current
+                                : {
+                                    ...current,
+                                    supportedResolutions: checked
+                                      ? [
+                                          ...new Set([
+                                            ...(current.supportedResolutions
+                                              .length > 0
+                                              ? current.supportedResolutions
+                                              : IMAGE_RESOLUTION_PRESETS),
+                                            resolution,
+                                          ]),
+                                        ]
+                                      : (current.supportedResolutions.length > 0
+                                          ? current.supportedResolutions
+                                          : IMAGE_RESOLUTION_PRESETS
+                                        ).filter((item) => item !== resolution),
+                                  }
+                            )
+                          }
+                        />
+                        {resolution}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor={`${entry.configKey}-supports-quality`}>
+                      支持质量参数
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      关闭后生图页面不展示质量选项，也不会向供应商传递 quality。
+                    </p>
+                  </div>
+                  <Switch
+                    id={`${entry.configKey}-supports-quality`}
+                    checked={draft.supportsQuality}
                     disabled={disabled}
-                    onChange={(value) =>
-                      updateDraft((current) => {
-                        if (current.category !== "image") return current;
-                        return {
-                          ...current,
-                          pricing: { ...current.pricing, [field]: value },
-                        };
-                      })
+                    onCheckedChange={(supportsQuality) =>
+                      updateDraft((current) =>
+                        current.category === "image"
+                          ? { ...current, supportsQuality }
+                          : current
+                      )
                     }
                   />
-                ))}
+                </div>
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor={`${entry.configKey}-supports-auto-size`}>
+                      支持 auto 尺寸
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      关闭后站内生图必须选择明确尺寸，模型广场会标注不支持传
+                      auto。
+                    </p>
+                  </div>
+                  <Switch
+                    id={`${entry.configKey}-supports-auto-size`}
+                    checked={draft.supportsAutoSize}
+                    disabled={disabled}
+                    onCheckedChange={(supportsAutoSize) =>
+                      updateDraft((current) =>
+                        current.category === "image"
+                          ? { ...current, supportsAutoSize }
+                          : current
+                      )
+                    }
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {IMAGE_PRICE_FIELDS.map(([field, label]) => (
+                    <PricingInput
+                      key={field}
+                      id={`${entry.category}-${entry.configKey}-${field}`}
+                      label={label}
+                      value={draft.pricing[field]}
+                      disabled={disabled}
+                      onChange={(value) =>
+                        updateDraft((current) => {
+                          if (current.category !== "image") return current;
+                          return {
+                            ...current,
+                            pricing: { ...current.pricing, [field]: value },
+                          };
+                        })
+                      }
+                    />
+                  ))}
+                </div>
               </div>
             ) : null}
             {fields.showVideoPricing && draft.category === "video" ? (
               <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>模型支持的视频分辨率</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {VIDEO_MODEL_RESOLUTION_PRESETS.map((resolution) => (
+                      <label
+                        key={resolution}
+                        htmlFor={`${entry.configKey}-video-resolution-${resolution}`}
+                        className="flex items-center gap-1.5 text-sm"
+                      >
+                        <Checkbox
+                          id={`${entry.configKey}-video-resolution-${resolution}`}
+                          checked={draft.supportedResolutions.includes(
+                            resolution
+                          )}
+                          disabled={disabled}
+                          onCheckedChange={(checked) =>
+                            updateDraft((current) => {
+                              if (current.category !== "video") return current;
+                              const nextResolutions = checked
+                                ? [
+                                    ...new Set([
+                                      ...current.supportedResolutions,
+                                      resolution,
+                                    ]),
+                                  ]
+                                : current.supportedResolutions.filter(
+                                    (item) => item !== resolution
+                                  );
+                              if (nextResolutions.length === 0) {
+                                toast.error("至少保留一个支持的视频分辨率");
+                                return current;
+                              }
+                              return {
+                                ...current,
+                                supportedResolutions: nextResolutions,
+                                creditsPerSecondByResolution: {
+                                  ...current.creditsPerSecondByResolution,
+                                  ...(checked &&
+                                  current.creditsPerSecondByResolution[
+                                    resolution
+                                  ] === undefined
+                                    ? { [resolution]: "" }
+                                    : {}),
+                                },
+                                creditsPerItemByResolution: {
+                                  ...current.creditsPerItemByResolution,
+                                  ...(checked &&
+                                  current.creditsPerItemByResolution[
+                                    resolution
+                                  ] === undefined
+                                    ? { [resolution]: "" }
+                                    : {}),
+                                },
+                              };
+                            })
+                          }
+                        />
+                        {resolution}
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <div className="max-w-xs space-y-1.5">
                   <Label htmlFor={`${entry.configKey}-billing-mode`}>
                     生效计费模式
@@ -359,60 +515,54 @@ export function ModelConfigurationDialog({
                   </Select>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  {entry.category === "video"
-                    ? entry.supportedResolutions.map((resolution) => (
-                        <PricingInput
-                          key={resolution}
-                          id={`${entry.configKey}-${resolution}-credits-per-second`}
-                          label={`${resolution} 每秒积分`}
-                          value={
-                            draft.creditsPerSecondByResolution[resolution] ?? ""
-                          }
-                          disabled={disabled}
-                          onChange={(value) =>
-                            updateDraft((current) =>
-                              current.category === "video"
-                                ? {
-                                    ...current,
-                                    creditsPerSecondByResolution: {
-                                      ...current.creditsPerSecondByResolution,
-                                      [resolution]: value,
-                                    },
-                                  }
-                                : current
-                            )
-                          }
-                        />
-                      ))
-                    : null}
+                  {draft.supportedResolutions.map((resolution) => (
+                    <PricingInput
+                      key={resolution}
+                      id={`${entry.configKey}-${resolution}-credits-per-second`}
+                      label={`${resolution} 每秒积分`}
+                      value={
+                        draft.creditsPerSecondByResolution[resolution] ?? ""
+                      }
+                      disabled={disabled}
+                      onChange={(value) =>
+                        updateDraft((current) =>
+                          current.category === "video"
+                            ? {
+                                ...current,
+                                creditsPerSecondByResolution: {
+                                  ...current.creditsPerSecondByResolution,
+                                  [resolution]: value,
+                                },
+                              }
+                            : current
+                        )
+                      }
+                    />
+                  ))}
                 </div>
                 <div className="grid gap-3 border-t pt-4 sm:grid-cols-3">
-                  {entry.category === "video"
-                    ? entry.supportedResolutions.map((resolution) => (
-                        <PricingInput
-                          key={resolution}
-                          id={`${entry.configKey}-${resolution}-credits-per-item`}
-                          label={`${resolution} 每条积分`}
-                          value={
-                            draft.creditsPerItemByResolution[resolution] ?? ""
-                          }
-                          disabled={disabled}
-                          onChange={(value) =>
-                            updateDraft((current) =>
-                              current.category === "video"
-                                ? {
-                                    ...current,
-                                    creditsPerItemByResolution: {
-                                      ...current.creditsPerItemByResolution,
-                                      [resolution]: value,
-                                    },
-                                  }
-                                : current
-                            )
-                          }
-                        />
-                      ))
-                    : null}
+                  {draft.supportedResolutions.map((resolution) => (
+                    <PricingInput
+                      key={resolution}
+                      id={`${entry.configKey}-${resolution}-credits-per-item`}
+                      label={`${resolution} 每条积分`}
+                      value={draft.creditsPerItemByResolution[resolution] ?? ""}
+                      disabled={disabled}
+                      onChange={(value) =>
+                        updateDraft((current) =>
+                          current.category === "video"
+                            ? {
+                                ...current,
+                                creditsPerItemByResolution: {
+                                  ...current.creditsPerItemByResolution,
+                                  [resolution]: value,
+                                },
+                              }
+                            : current
+                        )
+                      }
+                    />
+                  ))}
                 </div>
                 {draft.maxReferenceImages !== undefined ? (
                   <div className="max-w-xs space-y-1.5">

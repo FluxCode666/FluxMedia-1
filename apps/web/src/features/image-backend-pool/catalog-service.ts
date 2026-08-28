@@ -89,6 +89,26 @@ export async function getImageGenerationModelCatalog(): Promise<ImageGenerationM
     videoModelIds: marketplaceConfig.customModels
       .filter((model) => model.category === "video")
       .map((model) => model.modelId),
+    supportsQualityByModel: Object.fromEntries(
+      [
+        ...Object.entries(marketplaceConfig.imageByModel),
+        ...marketplaceConfig.customModels
+          .filter((model) => model.category === "image")
+          .map((model) => [model.modelId, model] as const),
+      ]
+        .filter(([, model]) => model.supportsQuality === true)
+        .map(([modelId]) => [modelId, true])
+    ),
+    supportsAutoSizeByModel: Object.fromEntries(
+      [
+        ...Object.entries(marketplaceConfig.imageByModel),
+        ...marketplaceConfig.customModels
+          .filter((model) => model.category === "image")
+          .map((model) => [model.modelId, model] as const),
+      ]
+        .filter(([, model]) => model.supportsAutoSize === true)
+        .map(([modelId]) => [modelId, true])
+    ),
     members: members
       .filter(
         (member) =>

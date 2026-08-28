@@ -22,7 +22,10 @@ import {
   backendGroupOptionSchema,
   backendGroupSummarySchema,
 } from "../../image-backend/group-contract";
-import { backendMemberInputSchema } from "../../image-backend/member-contract";
+import {
+  backendMemberInputSchema,
+  backendModelResolutionCapabilitiesSchema,
+} from "../../image-backend/member-contract";
 import { createOffsetPaginationOutputSchema } from "../../pagination/contracts";
 import { isValidTimeZone } from "../../time-zone";
 import { defineOperation } from "../registry";
@@ -133,6 +136,9 @@ const backendMemberSummarySchema = z
     type: z.enum(["api", "adobe"]),
     groupIds: z.array(z.string()),
     supportedModelIds: z.array(z.string()).min(1),
+    supportedResolutionsByModel: backendModelResolutionCapabilitiesSchema
+      .optional()
+      .default({}),
     contentSafetyEnabled: z.boolean(),
     isEnabled: z.boolean(),
     alwaysActive: z.boolean(),

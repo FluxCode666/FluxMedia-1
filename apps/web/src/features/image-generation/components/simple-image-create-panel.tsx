@@ -65,6 +65,8 @@ type SimpleImageCreatePanelProps = {
   maxUploadBytes: number;
   mode: ImageCreateMode;
   model: string;
+  supportsQuality?: boolean;
+  supportsAutoSize?: boolean;
   onBackgroundChange: (value: string) => void;
   onMaskChange: (file: File | null) => void | Promise<void>;
   onModelSelectionChange: (groupId: string, modelId: string) => void;
@@ -578,43 +580,51 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
                   size={props.size}
                   onChange={props.onSizeChange}
                   disabled={props.busy}
+                  supportsAutoSize={props.supportsAutoSize === true}
                 />
+                {props.supportsAutoSize !== true ? (
+                  <p className="text-xs leading-4 text-muted-foreground">
+                    当前模型不支持传递 auto 尺寸，请选择明确尺寸。
+                  </p>
+                ) : null}
               </div>
 
-              <div className="space-y-1.5">
-                <Label
-                  htmlFor="simple-image-quality"
-                  className="text-xs font-medium text-muted-foreground"
-                >
-                  质量
-                </Label>
-                <Select
-                  value={props.quality}
-                  onValueChange={props.onQualityChange}
-                  disabled={props.busy}
-                >
-                  <SelectTrigger
-                    id="simple-image-quality"
-                    className="w-full bg-background"
+              {props.supportsQuality === true ? (
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="simple-image-quality"
+                    className="text-xs font-medium text-muted-foreground"
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(
-                      [
-                        ["auto", "自动"],
-                        ["low", "低"],
-                        ["medium", "中"],
-                        ["high", "高"],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                    质量
+                  </Label>
+                  <Select
+                    value={props.quality}
+                    onValueChange={props.onQualityChange}
+                    disabled={props.busy}
+                  >
+                    <SelectTrigger
+                      id="simple-image-quality"
+                      className="w-full bg-background"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(
+                        [
+                          ["auto", "自动"],
+                          ["low", "低"],
+                          ["medium", "中"],
+                          ["high", "高"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
 
               <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
                 <Label

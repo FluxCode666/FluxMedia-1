@@ -31,8 +31,8 @@ import {
 import { logApiUpstreamImageTaskOrphanRisk } from "@/features/image-backend-pool/api-upstream-observability";
 import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-upstream-opaque-values";
 import { resolveApiUpstreamRequestUrl } from "@/features/image-backend-pool/api-upstream-path";
-import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
 import { createApiUpstreamRequestSnapshot } from "@/features/image-backend-pool/api-upstream-request-snapshot";
+import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
 import {
   fetchMediaUpstream,
   fetchMediaUpstreamDownload,
@@ -1510,6 +1510,7 @@ async function runAdobeImageRequest(
     model?: string | null;
     size?: string | null;
     quality?: string | null;
+    supportsQuality?: boolean;
     images?: Array<{ data: Buffer; type?: string | null }>;
     signal?: AbortSignal;
   },
@@ -1601,6 +1602,7 @@ export async function generateImage(
             model,
             size: params.size,
             quality: params.quality,
+            supportsQuality: params.supportsQuality,
             signal: params.signal,
           },
           callbacks
@@ -1781,6 +1783,7 @@ export async function editImage(
             model,
             size: params.size,
             quality: params.quality,
+            supportsQuality: params.supportsQuality,
             images: params.images,
             signal: params.signal,
           },

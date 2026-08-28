@@ -237,6 +237,8 @@ export interface CreateRuntimeBackendSessionInput {
   requestedGroupId?: string;
   pinnedGroupId?: string;
   modelId: string;
+  /** 用户请求的输出分辨率；用于跳过账号级不支持的模型能力。 */
+  resolution?: string;
   requestKind: "image" | "video";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
@@ -543,6 +545,13 @@ export function resolveRuntimeVideoQuoteFromContext(
   }
   return resolveVideoBillingQuote({
     modelId,
+    ...(context.marketplaceConfig.videoByFamily[modelId]?.supportedResolutions
+      ? {
+          supportedResolutions:
+            context.marketplaceConfig.videoByFamily[modelId]
+              ?.supportedResolutions,
+        }
+      : {}),
     ...(customModel
       ? { supportedResolutions: customModel.supportedResolutions }
       : {}),
@@ -1152,6 +1161,9 @@ export async function createRuntimeBackendSession(
     const acquisitionResult = await defaultBackendPoolRepository.acquireLease({
       groupId: group.id,
       requestedModel: modelId,
+      ...(normalizedInput.resolution
+        ? { requestedResolution: normalizedInput.resolution }
+        : {}),
       excludedMemberIds: Array.from(excludedMemberIds),
       ...(normalizedInput.requiredMemberId
         ? { requiredMemberId: normalizedInput.requiredMemberId }
@@ -1175,7 +1187,7 @@ export async function createRuntimeBackendSession(
         normalizedInput.requiresContentSafety &&
         group.contentSafetyEnabled !== false,
       requiredVideoInputCapabilities: videoInputCapabilityRequirements.parse(
-        normalizedInput.requiredVideoInputCapabilities
+        normalizedInput.requiredVideoInputCapabilities ?? {}
       ),
       leaseId: nanoid(),
       ownerToken: randomUUID(),

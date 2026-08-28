@@ -41,6 +41,7 @@ const IMAGE_PRICE_FIELDS = [
   "base1kCredits",
   "base2kCredits",
   "base4kCredits",
+  "base8kCredits",
 ] as const;
 
 const KNOWN_FORM_FIELDS = new Set([
@@ -61,6 +62,8 @@ const KNOWN_FORM_FIELDS = new Set([
   "maxReferenceImages",
   "isCustom",
   "supportedResolutions",
+  "supportsQuality",
+  "supportsAutoSize",
   ...IMAGE_PRICE_FIELDS,
 ]);
 
@@ -309,6 +312,9 @@ function parseImagePricing(
     base1kCredits: parseFiniteNumber(requireScalar(scalars, "base1kCredits")),
     base2kCredits: parseFiniteNumber(requireScalar(scalars, "base2kCredits")),
     base4kCredits: parseFiniteNumber(requireScalar(scalars, "base4kCredits")),
+    ...(scalars.has("base8kCredits") && scalars.get("base8kCredits")?.trim()
+      ? { base8kCredits: parseFiniteNumber(scalars.get("base8kCredits") ?? "") }
+      : {}),
   };
 }
 
@@ -417,10 +423,14 @@ async function parseImageInput(
       ...MARKETPLACE_SCALAR_FIELDS,
       ...IMAGE_PRICE_FIELDS,
       "supportedResolutions",
+      "supportsQuality",
+      "supportsAutoSize",
     ])
   );
   const isCustom = data.scalars.get("isCustom");
   const supportedResolutions = data.scalars.get("supportedResolutions");
+  const supportsQuality = data.scalars.get("supportsQuality");
+  const supportsAutoSize = data.scalars.get("supportsAutoSize");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
@@ -448,6 +458,12 @@ async function parseImageInput(
           supportedResolutions: parseSupportedResolutions(supportedResolutions),
         }
       : {}),
+    ...(supportsQuality !== undefined
+      ? { supportsQuality: parseBoolean(supportsQuality) }
+      : {}),
+    ...(supportsAutoSize !== undefined
+      ? { supportsAutoSize: parseBoolean(supportsAutoSize) }
+      : {}),
   });
 }
 
@@ -469,6 +485,7 @@ async function parseVideoInput(
       "creditsPerItemByResolution",
       "billingMode",
       "maxReferenceImages",
+      "supportedResolutions",
     ])
   );
   const maxReferenceImages = data.scalars.get("maxReferenceImages");
@@ -477,6 +494,7 @@ async function parseVideoInput(
     "creditsPerItemByResolution"
   );
   const isCustom = data.scalars.get("isCustom");
+  const supportedResolutions = data.scalars.get("supportedResolutions");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "video",
     configKey: requireScalar(data.scalars, "configKey"),
@@ -507,6 +525,11 @@ async function parseVideoInput(
           creditsPerItemByResolution: parseVideoItemPricing(
             creditsPerItemByResolution
           ),
+        }
+      : {}),
+    ...(supportedResolutions !== undefined
+      ? {
+          supportedResolutions: parseSupportedResolutions(supportedResolutions),
         }
       : {}),
     ...(maxReferenceImages !== undefined
