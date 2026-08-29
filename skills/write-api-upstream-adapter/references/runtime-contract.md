@@ -40,6 +40,8 @@ type OperationConfig = {
 
 type AdapterConfig = {
   baseUrl: string;
+  /** 图生图参考图是否先转存到平台对象存储，再以公网 URL JSON 发送。 */
+  convertReferenceImagesToPublicUrl?: boolean;
   authentication:
     | { mode: "bearer" }
     | { mode: "raw_authorization" }
@@ -52,6 +54,11 @@ type AdapterConfig = {
   operations: Record<OperationId, OperationConfig>;
 };
 ```
+
+当 `convertReferenceImagesToPublicUrl` 为 `true` 时，宿主会在 `images.edit` 外呼前将
+参考图逐张转存到平台对象存储，生成绝对公网 HTTP(S) URL，并以 JSON `image_urls` 数组
+发送；多参考图顺序保持不变，最多 10 张，转存或 URL 生成失败时不发送上游请求。字段
+关闭或在旧适配快照中缺失时，继续使用原有 multipart 图生图请求。
 
 `supportedModelIds` 和映射来源只使用平台真实模型 ID。映射来源按大小写不敏感语义
 唯一，必须属于账号支持模型；目标允许重复。未配置的模型同名透传。

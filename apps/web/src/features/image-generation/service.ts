@@ -22,6 +22,7 @@ import {
   type ApiUpstreamResponseResult,
 } from "@repo/shared/image-backend/api-upstream-script-contract";
 import { logError } from "@repo/shared/logger";
+import { nanoid } from "nanoid";
 import {
   ApiUpstreamExecutionError,
   type ApiUpstreamExecutionResult,
@@ -45,7 +46,11 @@ import {
   normalizeOutputCompression,
   normalizeOutputFormat,
 } from "./output-format";
-import { ensureInputImageRehosted } from "./rehost-input-images";
+import {
+  ensureInputImageRehosted,
+  isInputImagePlatformHosted,
+  resolveInputImagePublicUrl,
+} from "./rehost-input-images";
 import {
   getImageBackendApiModel,
   getImageModel,
@@ -1467,9 +1472,10 @@ async function parseApiImageExecutionResult(input: {
  * 把待发送给上游的输入图和 mask 逐张确保转存到我方对象存储，避免把第三方
  * 外链交给上游（上游下载外链会被图床限流返回 "failed download file 429"）。
  *
- * 幂等：直接原地改写 params 内的 image 对象/字符串，已转存（带 storageKey 或
- * 第一方 url）的项会被 ensureInputImageRehosted 短路；重试时不会重复下载/上传。
- * 任何单张失败不影响其他图，也不中断主流程（失败语义见 ensureInputImageRehosted）。
+ * 仅在供应商开启 convertReferenceImagesToPublicUrl 时执行；关闭或旧配置会直接
+ * 使用原有 multipart 字节请求。幂等：已转存（带 storageKey 或第一方 url）的项
+ * 会被 ensureInputImageRehosted 短路；重试时不会重复下载/上传。
+ * 任何单张失败不影响其他图，也不中断主流程（公网 URL 模式随后会 fail-closed）。
  *
  * @param config 已选定的后端配置（用于判定 pool-api 与取 userId）。
  * @param params 含 images / mask 的请求参数（原地改写）。
@@ -1480,6 +1486,7 @@ async function rehostApiBackendInputImages(
   params: {
     images?: ImageInputFile[];
     mask?: ImageInputFile;
+    generationId?: string;
   },
   signal?: AbortSignal
 ): Promise<void> {
@@ -1487,8 +1494,14 @@ async function rehostApiBackendInputImages(
   if (backend?.type !== "pool-api") return;
   const userId = backend.userId?.trim();
   if (!userId) return;
+  if (backend.apiUpstreamAdapter?.convertReferenceImagesToPublicUrl !== true) {
+    return;
+  }
 
-  const generationId = backend.id || "rehost";
+  // 优先使用主 generation ID；直接调用 editImage（如内部修复）没有该 ID 时
+  // 生成一次性随机作用域，不能使用成员 ID 作为并发请求的共享键。
+  const generationId =
+    params.generationId?.trim() || backend.id || `rehost-${nanoid(16)}`;
 
   if (params.images?.length) {
     for (let index = 0; index < params.images.length; index++) {
@@ -1772,6 +1785,61 @@ function resolveEditPromptReferences(
   });
 }
 
+const MAX_PUBLIC_URL_REFERENCE_IMAGES = 10;
+
+/** 构造需要公网参考图地址的 JSON 图生图正文。 */
+async function createPublicUrlEditRequestBody(input: {
+  adapter: ApiUpstreamAdapterDraft;
+  model: string;
+  prompt: string;
+  images: ImageInputFile[];
+  mask?: ImageInputFile;
+  size?: string;
+}): Promise<{ body: Record<string, unknown> } | { error: string }> {
+  if (input.images.length === 0) {
+    return { error: "图生图至少需要一张参考图。" };
+  }
+  if (input.images.length > MAX_PUBLIC_URL_REFERENCE_IMAGES) {
+    return {
+      error: `公网 URL 图生图最多支持 ${MAX_PUBLIC_URL_REFERENCE_IMAGES} 张参考图。`,
+    };
+  }
+  if (input.mask) {
+    return {
+      error: "当前供应商的公网 URL 图生图模式不支持蒙版，已阻止请求发送。",
+    };
+  }
+
+  const uploadRequired =
+    input.adapter.convertReferenceImagesToPublicUrl === true;
+  const urls: string[] = [];
+  for (const image of input.images) {
+    if (uploadRequired && !(await isInputImagePlatformHosted(image))) {
+      return {
+        error: "参考图未能转存到平台对象存储，无法生成公网 URL；请求未发送。",
+      };
+    }
+    const url = await resolveInputImagePublicUrl(image);
+    if (!url) {
+      return {
+        error: "参考图缺少供应商可访问的绝对 HTTP(S) URL；请求未发送。",
+      };
+    }
+    urls.push(url);
+  }
+
+  const size = resolveImageRequestSize(input.size);
+  return {
+    body: {
+      model: input.model,
+      prompt: appendImagesUpstreamNonce(input.prompt),
+      n: 1,
+      ...(size !== "auto" ? { size } : {}),
+      image_urls: urls,
+    },
+  };
+}
+
 export async function editImage(
   config: ApiConfig,
   params: EditImageParams,
@@ -1783,10 +1851,34 @@ export async function editImage(
     return { error: "当前生图后端不支持蒙版编辑，已阻止请求发送。" };
   }
 
+  const apiAdapter =
+    config.backend?.type === "pool-api"
+      ? config.backend.apiUpstreamAdapter
+      : undefined;
+  const convertReferenceImagesToPublicUrl =
+    apiAdapter?.convertReferenceImagesToPublicUrl === true;
+  if (
+    convertReferenceImagesToPublicUrl &&
+    params.images.length > MAX_PUBLIC_URL_REFERENCE_IMAGES
+  ) {
+    return {
+      error: `公网 URL 图生图最多支持 ${MAX_PUBLIC_URL_REFERENCE_IMAGES} 张参考图。`,
+    };
+  }
+  if (convertReferenceImagesToPublicUrl && params.mask) {
+    return {
+      error: "当前供应商的公网 URL 图生图模式不支持蒙版，已阻止请求发送。",
+    };
+  }
+
   // pool-api 后端分发前确保输入图/ mask 已 re-host，避免把外链交给上游。
   await rehostApiBackendInputImages(
     config,
-    { images: params.images, mask: params.mask },
+    {
+      images: params.images,
+      mask: params.mask,
+      generationId: params.generationId,
+    },
     params.signal
   );
 
@@ -1818,6 +1910,55 @@ export async function editImage(
   try {
     const prompt = effectiveEditPrompt;
     const upstreamModel = getApiBackendUpstreamModel(config, model);
+
+    if (convertReferenceImagesToPublicUrl && apiAdapter) {
+      const publicUrlRequest = await createPublicUrlEditRequestBody({
+        adapter: apiAdapter,
+        model: upstreamModel,
+        prompt,
+        images: params.images,
+        mask: params.mask,
+        size: params.size,
+      });
+      if ("error" in publicUrlRequest) return publicUrlRequest;
+
+      let executed: ApiUpstreamExecutionResult;
+      try {
+        executed = await executeApiUpstreamOperation({
+          adapter: apiAdapter,
+          apiKey: config.apiKey,
+          operation: "images.edit",
+          platformModelId: model,
+          upstreamModelId: upstreamModel,
+          contentType: "application/json",
+          body: publicUrlRequest.body,
+          signal: params.signal,
+          maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
+          onRequestSnapshot: callbacks?.onApiUpstreamRequestSnapshot,
+          observability: {
+            memberId: config.backend?.id,
+            groupId: config.backend?.groupId,
+          },
+        });
+      } catch (error) {
+        return convertApiImageExecutionError(error, false);
+      }
+      return requireImageOutput(
+        applyPromptOptimizationResultVisibility(
+          await parseApiImageExecutionResult({
+            config,
+            adapter: apiAdapter,
+            operation: "images.edit",
+            platformModelId: model,
+            upstreamModelId: upstreamModel,
+            executed,
+            callbacks,
+            signal: params.signal,
+          })
+        )
+      );
+    }
+
     const formData = new FormData();
     appendImageParams(formData, config, {
       prompt,
@@ -1848,7 +1989,7 @@ export async function editImage(
     }
 
     if (config.backend?.type === "pool-api") {
-      const adapter = getApiUpstreamAdapter(config);
+      const adapter = apiAdapter ?? getApiUpstreamAdapter(config);
       const request = createApiBackendFormDataRequest(formData);
       let executed: ApiUpstreamExecutionResult;
       try {

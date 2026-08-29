@@ -134,6 +134,50 @@ describe("API upstream adaptation contract", () => {
     }
   });
 
+  it("旧适配快照缺少参考图 URL 开关时保持兼容", () => {
+    const parsed = apiUpstreamAdapterDraftSchema.parse({
+      baseUrl: "https://api.example.test/v1",
+      useStream: false,
+      videoSubmissionRetryCount: 0,
+      videoProtocolMode: "custom",
+      videoInputCapabilities: {
+        referenceVideos: false,
+        referenceAudios: false,
+      },
+      videoInputCapabilitiesByModel: {},
+      modelMappings: [],
+      authentication: { mode: "none" },
+      credentialScope: "https://api.example.test|none",
+      operations: {
+        "images.generate": { path: "", requestScript: "", responseScript: "" },
+        "images.generate.query": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "images.edit": { path: "", requestScript: "", responseScript: "" },
+        "images.edit.query": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "videos.generate": {
+          path: "",
+          requestScript: "",
+          responseScript: "",
+        },
+        "videos.query": { path: "", requestScript: "", responseScript: "" },
+      },
+    });
+    expect(parsed.convertReferenceImagesToPublicUrl).toBeUndefined();
+    expect(
+      apiUpstreamAdapterDraftSchema.safeParse({
+        ...parsed,
+        convertReferenceImagesToPublicUrl: true,
+      }).success
+    ).toBe(true);
+  });
+
   it("按平台模型大小写不敏感匹配并保留上游 ID 格式", () => {
     expect(
       resolveApiUpstreamModelId("Seedance2", [

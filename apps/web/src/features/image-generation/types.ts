@@ -123,6 +123,8 @@ export type ThinkingLevel =
 export interface EditImageParams {
   prompt: string;
   model: string;
+  /** 主生成 ID，仅用于输入图转存对象的幂等键命名，不会发送给供应商。 */
+  generationId?: string;
   apiPrompt?: string;
   promptOptimization?: boolean;
   signal?: AbortSignal;

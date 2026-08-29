@@ -56,6 +56,7 @@ function parseCredentialFilter(value: string): BackendMemberCredentialFilter {
 export function BackendMemberFilterBar({
   filters,
   modelOptions,
+  resolutionOptions = [],
   resultCount,
   totalCount,
   timeZone,
@@ -64,6 +65,7 @@ export function BackendMemberFilterBar({
 }: {
   filters: BackendMemberFilters;
   modelOptions: readonly BackendMemberFilterModelOption[];
+  resolutionOptions?: readonly BackendMemberFilterModelOption[];
   resultCount: number;
   totalCount: number;
   timeZone: string;
@@ -88,7 +90,7 @@ export function BackendMemberFilterBar({
       className="rounded-lg border bg-background p-4"
       onSubmit={handleSubmit}
     >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.2fr)_minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(240px,1fr)]">
+      <div className="grid gap-3 md:grid-cols-2 xl:items-end xl:grid-cols-[repeat(auto-fit,minmax(190px,1fr))]">
         <label
           className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground"
           htmlFor="backend-member-name-filter"
@@ -157,6 +159,28 @@ export function BackendMemberFilterBar({
             <SelectContent>
               <SelectItem value="all">全部模型</SelectItem>
               {modelOptions.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground">
+          <span id="backend-member-resolution-filter-label">分辨率</span>
+          <Select
+            onValueChange={(resolution) => onChange({ ...filters, resolution })}
+            value={filters.resolution}
+          >
+            <SelectTrigger
+              aria-labelledby="backend-member-resolution-filter-label"
+              className="w-full text-foreground"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部分辨率</SelectItem>
+              {resolutionOptions.map((option) => (
                 <SelectItem key={option.id} value={option.id}>
                   {option.label}
                 </SelectItem>

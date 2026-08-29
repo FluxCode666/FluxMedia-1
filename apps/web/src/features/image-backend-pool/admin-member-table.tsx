@@ -156,7 +156,10 @@ export function BackendMemberTable({
             <th className="px-4 py-3 font-medium" scope="col">
               创建时间
             </th>
-            <th className="px-4 py-3 text-right font-medium" scope="col">
+            <th
+              className="sticky right-0 z-20 w-[148px] bg-muted/95 px-4 py-3 text-right font-medium shadow-[-6px_0_8px_-8px_rgba(0,0,0,0.35)]"
+              scope="col"
+            >
               操作
             </th>
           </tr>
@@ -239,7 +242,7 @@ export function BackendMemberTable({
                 <td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
                   {formatAdminTime(member.createdAt, timeZone)}
                 </td>
-                <td className="px-4 py-3">
+                <td className="sticky right-0 z-10 w-[148px] bg-background px-4 py-3 shadow-[-6px_0_8px_-8px_rgba(0,0,0,0.25)]">
                   <div className="flex justify-end gap-1">
                     <Button
                       aria-label={`查看账号“${member.name}”详情`}

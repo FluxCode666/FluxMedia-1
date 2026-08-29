@@ -44,6 +44,8 @@ const redactedApiConfigSchema = z
     baseUrl: z.string().url(),
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
+    /** 图生图参考图是否先转存并转换为绝对公网 URL。 */
+    convertReferenceImagesToPublicUrl: z.boolean().optional(),
     videoSubmissionRetryCount: z.number().int().min(0).max(10),
     videoProtocolMode: apiVideoProtocolModeSchema,
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
@@ -182,6 +184,7 @@ export const adminPoolMemberListInputSchema = z
     name: z.string().trim().max(120).default(""),
     credentialStatus: backendMemberCredentialFilterSchema.default("all"),
     modelId: z.string().trim().max(240).default("all"),
+    resolution: z.string().trim().max(32).default("all"),
     createdFrom: z.iso.date().or(z.literal("")).default(""),
     createdTo: z.iso.date().or(z.literal("")).default(""),
     timeZone: z

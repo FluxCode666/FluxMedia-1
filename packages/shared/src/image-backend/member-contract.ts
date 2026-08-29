@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { normalizeVideoModelId } from "../video-generation/contracts";
 import {
+  apiConvertReferenceImagesToPublicUrlSchema,
   apiModelMappingsSchema,
   apiUpstreamAuthenticationSchema,
   apiUpstreamOperationsSchema,
@@ -113,6 +114,9 @@ export const apiBackendMemberConfigSchema = z
     baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
+    /** 图生图参考图是否先转存并转换为绝对公网 URL；缺失时按关闭解析。 */
+    convertReferenceImagesToPublicUrl:
+      apiConvertReferenceImagesToPublicUrlSchema.optional(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     /** 显式选择视频上游请求格式；旧成员缺失时安全沿用 custom。 */
     videoProtocolMode: apiVideoProtocolModeSchema,

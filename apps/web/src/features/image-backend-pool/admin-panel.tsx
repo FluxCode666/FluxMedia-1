@@ -184,6 +184,7 @@ export function ImageBackendPoolAdminPanel({
     name: memberListInput.name,
     credentialStatus: memberListInput.credentialStatus,
     modelId: memberListInput.modelId,
+    resolution: memberListInput.resolution,
     createdFrom: memberListInput.createdFrom,
     createdTo: memberListInput.createdTo,
   };
@@ -361,6 +362,32 @@ export function ImageBackendPoolAdminPanel({
         return { id, label: label && label !== id ? `${label} · ${id}` : id };
       });
   }, [members, modelOptions]);
+  const memberResolutionFilterOptions = useMemo<
+    BackendMemberFilterModelOption[]
+  >(() => {
+    const resolutions = new Set<string>();
+    for (const option of modelOptions) {
+      for (const resolution of option.supportedResolutions ?? []) {
+        const normalized = resolution.trim();
+        if (normalized) resolutions.add(normalized);
+      }
+    }
+    for (const member of members) {
+      for (const resolutionList of Object.values(
+        member.supportedResolutionsByModel ?? {}
+      )) {
+        for (const resolution of resolutionList) {
+          const normalized = resolution.trim();
+          if (normalized) resolutions.add(normalized);
+        }
+      }
+    }
+    return Array.from(resolutions)
+      .sort((left, right) =>
+        left.localeCompare(right, undefined, { numeric: true })
+      )
+      .map((resolution) => ({ id: resolution, label: resolution }));
+  }, [members, modelOptions]);
   const filteredMembers = memberPage?.records ?? [];
   const selectedMembers = useMemo(
     () => members.filter((member) => selectedMemberIds.has(member.id)),
@@ -406,6 +433,8 @@ export function ImageBackendPoolAdminPanel({
               next.credentialStatus === "all" ? null : next.credentialStatus,
             [ADMIN_POOL_MEMBER_FILTER_PARAMS.modelId]:
               next.modelId === "all" ? null : next.modelId,
+            [ADMIN_POOL_MEMBER_FILTER_PARAMS.resolution]:
+              next.resolution === "all" ? null : next.resolution,
             [ADMIN_POOL_MEMBER_FILTER_PARAMS.createdFrom]:
               next.createdFrom || null,
             [ADMIN_POOL_MEMBER_FILTER_PARAMS.createdTo]: next.createdTo || null,
@@ -675,6 +704,7 @@ export function ImageBackendPoolAdminPanel({
           filters={memberFilters}
           invalidDateRange={invalidMemberDateRange}
           modelOptions={memberModelFilterOptions}
+          resolutionOptions={memberResolutionFilterOptions}
           onChange={updateMemberFilters}
           resultCount={memberPage?.totalCount ?? 0}
           timeZone={timeZone}

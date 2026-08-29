@@ -101,8 +101,8 @@ export function BackendMemberFormDialog({
     useState<Record<string, string[]>>({});
   const [contentSafetyEnabled, setContentSafetyEnabled] = useState(true);
   const [isEnabled, setIsEnabled] = useState(true);
-  const [alwaysActive, setAlwaysActive] = useState(false);
-  const [failureCooldownEnabled, setFailureCooldownEnabled] = useState(true);
+  const [alwaysActive, setAlwaysActive] = useState(true);
+  const [failureCooldownEnabled, setFailureCooldownEnabled] = useState(false);
   const [priority, setPriority] = useState("50");
   const [concurrency, setConcurrency] = useState("10");
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -139,8 +139,8 @@ export function BackendMemberFormDialog({
     setSupportedResolutionsByModel(member?.supportedResolutionsByModel ?? {});
     setContentSafetyEnabled(member?.contentSafetyEnabled ?? true);
     setIsEnabled(member?.isEnabled ?? true);
-    setAlwaysActive(member?.alwaysActive ?? false);
-    setFailureCooldownEnabled(member?.failureCooldownEnabled ?? true);
+    setAlwaysActive(member?.alwaysActive ?? true);
+    setFailureCooldownEnabled(member?.failureCooldownEnabled ?? false);
     setPriority(String(member?.priority ?? 50));
     setConcurrency(String(member?.concurrency ?? 10));
     if (member?.type === "api") {
@@ -173,6 +173,8 @@ export function BackendMemberFormDialog({
       setApiUseStream(member.config.useStream);
       setModelMappings(member.config.modelMappings);
       setApiAdapterDraft({
+        convertReferenceImagesToPublicUrl:
+          member.config.convertReferenceImagesToPublicUrl ?? false,
         authentication: member.config.authentication ?? { mode: "bearer" },
         videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
         videoProtocolMode: member.config.videoProtocolMode ?? "custom",
@@ -375,6 +377,8 @@ export function BackendMemberFormDialog({
             ? { apiKey: apiKey.trim() }
             : {}),
           useStream: apiUseStream,
+          convertReferenceImagesToPublicUrl:
+            apiAdapterDraft.convertReferenceImagesToPublicUrl,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
           videoProtocolMode: apiAdapterDraft.videoProtocolMode,
           // 旧账号级标签保持关闭；参考媒体能力只按平台模型 ID 声明。
@@ -754,7 +758,8 @@ export function BackendMemberFormDialog({
                 </>
               ) : (
                 <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                  账号创建后，可在账号详情中配置模型映射、视频协议和脚本处理模块。
+                  账号创建后，可在账号详情中配置模型映射、参考图 URL
+                  转换、视频协议和脚本处理模块。
                 </p>
               )}
             </div>

@@ -65,6 +65,17 @@ function extractSectionJavaScriptBlocks(
   return scripts;
 }
 
+/** 从指定文字后的首个 JS 代码块提取文档中的供应商脚本，避免测试副本漂移。 */
+function extractJavaScriptBlockAfter(markdown: string, marker: string): string {
+  const markerIndex = markdown.indexOf(marker);
+  if (markerIndex < 0) throw new Error(`Skill marker not found: ${marker}`);
+  const match = markdown.slice(markerIndex).match(/```js\s+([\s\S]*?)```/u);
+  if (!match?.[1]?.trim()) {
+    throw new Error(`Skill marker has no JavaScript: ${marker}`);
+  }
+  return match[1].trim();
+}
+
 /** 读取一个 Skill 参考文件，供金样直接执行文档中的源码。 */
 async function readReference(referencePath: (typeof REFERENCE_PATHS)[number]) {
   return await readFile(resolve(SKILL_DIRECTORY, referencePath), "utf8");
@@ -383,6 +394,133 @@ describe("write-api-upstream-adapter skill", () => {
         })
       ).rejects.toMatchObject({ code: "validation_error" });
     }
+  });
+
+  it("无网络执行 Seedream 公网 URL 多图和异步响应脚本", async () => {
+    const reference = await readReference("references/image-to-image.md");
+    const requestScript = extractJavaScriptBlockAfter(
+      reference,
+      "Seedream 5 的 `images.generate` 与 `images.edit`"
+    );
+    const submitScript = extractJavaScriptBlockAfter(
+      reference,
+      "创建响应脚本（`images.generate` 与 `images.edit`）"
+    );
+    const queryScript = extractJavaScriptBlockAfter(
+      reference,
+      "查询响应脚本（`images.generate.query` 与 `images.edit.query`）"
+    );
+
+    await expect(
+      executeApiUpstreamAdapterTestBinding({
+        operation: "images.edit",
+        stage: "request",
+        script: requestScript,
+        sample: {
+          query: {},
+          body: {
+            model: "doubao-seedream-5-0-260128",
+            prompt: "edit",
+            n: 1,
+            image_urls: [
+              "https://app.example.test/ref-1.png",
+              "https://app.example.test/ref-2.png",
+            ],
+            size: "auto",
+            response_format: "b64_json",
+            stream: true,
+            partial_images: 2,
+          },
+        },
+      })
+    ).resolves.toEqual({
+      preview: {
+        body: {
+          model: "doubao-seedream-5-0-260128",
+          prompt: "edit",
+          n: 1,
+          image_urls: [
+            "https://app.example.test/ref-1.png",
+            "https://app.example.test/ref-2.png",
+          ],
+        },
+      },
+    });
+
+    await expect(
+      executeApiUpstreamAdapterTestBinding({
+        operation: "images.generate",
+        stage: "request",
+        script: requestScript,
+        sample: {
+          query: {},
+          body: {
+            model: "seedream-5.0-pro",
+            prompt: "text only",
+            n: 1,
+            size: "auto",
+            response_format: "b64_json",
+            stream: false,
+            partial_images: 2,
+            quality: "high",
+            moderation: "auto",
+            output_format: "png",
+            output_compression: 80,
+            background: "opaque",
+          },
+        },
+      })
+    ).resolves.toEqual({
+      preview: {
+        body: {
+          model: "seedream-5.0-pro",
+          prompt: "text only",
+          n: 1,
+        },
+      },
+    });
+
+    await expect(
+      executeApiUpstreamAdapterTestBinding({
+        operation: "images.edit",
+        stage: "response",
+        script: submitScript,
+        sample: {
+          statusCode: 202,
+          headers: { "content-type": "application/json" },
+          body: { id: "generation-1", status: "in_progress" },
+        },
+      })
+    ).resolves.toEqual({
+      preview: {
+        status: "pending",
+        taskId: "generation-1",
+        pollAfterSeconds: 5,
+      },
+    });
+
+    await expect(
+      executeApiUpstreamAdapterTestBinding({
+        operation: "images.edit.query",
+        stage: "response",
+        script: queryScript,
+        sample: {
+          statusCode: 200,
+          headers: { "content-type": "application/json" },
+          body: {
+            status: "succeeded",
+            data: [{ url: "https://cdn.example.test/result.png" }],
+          },
+        },
+      })
+    ).resolves.toEqual({
+      preview: {
+        status: "completed",
+        outputs: [
+          { kind: "image", url: "https://cdn.example.test/result.png" },
+        ],
+      },
+    });
   });
 
   it("执行 Seedance 视频参数、11 张参考图、首尾帧和异步任务金样", async () => {

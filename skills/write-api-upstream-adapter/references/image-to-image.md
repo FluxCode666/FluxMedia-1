@@ -29,6 +29,51 @@
 multipart 文本值进入脚本时都是字符串，包括 `n`、`width`、`height`、布尔值和压缩值。
 不要在上游未要求时擅自转为 number 或 boolean。
 
+如果账号打开 `convertReferenceImagesToPublicUrl`，宿主会先把参考图转存到对象存储，
+再以 JSON `image_urls` 数组发送绝对公网 HTTP(S) URL。该模式最多支持 10 张图，
+不会携带 multipart 文件或蒙版；转存、签名或公网基址失败时请求会在外呼前失败关闭。
+关闭或旧配置仍使用下面的 multipart 契约。
+
+Seedream 5 的 `images.generate` 与 `images.edit` 共用创建接口时，可将下面的请求脚本
+同时配置到两个操作。宿主在图生图开启转换开关后会完成多图转存和 `image_urls` 构造；
+文生图则不带参考图字段。脚本会清理平台专用字段，并校验存在的公网参考图地址：
+
+```js
+const body = { ...request.body };
+if (Object.hasOwn(body, "image_urls")) {
+  if (
+    !Array.isArray(body.image_urls) ||
+    body.image_urls.length < 1 ||
+    body.image_urls.length > 10
+  ) {
+    throw new Error("image_urls must contain 1-10 URLs");
+  }
+  for (const url of body.image_urls) {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+      throw new Error("image_urls must be absolute HTTP(S) URLs");
+    }
+  }
+}
+if (Object.hasOwn(body, "image_url")) {
+  if (
+    typeof body.image_url !== "string" ||
+    !/^https?:\/\//i.test(body.image_url)
+  ) {
+    throw new Error("image_url must be an absolute HTTP(S) URL");
+  }
+}
+delete body.response_format;
+delete body.stream;
+delete body.partial_images;
+delete body.quality;
+delete body.moderation;
+delete body.output_format;
+delete body.output_compression;
+delete body.background;
+if (body.size === "auto") delete body.size;
+return { body };
+```
+
 媒体字段：
 
 | 字段 | 形状 | 说明 |
@@ -200,6 +245,67 @@ return {
 异步图生图同样只在当前 Web 进程内轮询。进程重启不会恢复远端任务；调用方在结果未知
 时重试可能产生孤儿任务、重复编辑和额外费用。当前平台图片请求没有统一供应商幂等
 键，交付时必须记录该边界并建议监控 `api_upstream_image_task_orphan_risk`。
+
+Seedream 5 的异步响应（创建 `202 + id + in_progress`，查询 `in_progress`、
+`succeeded + data[].url` 或 `failed`）可直接使用以下两个响应脚本：
+
+创建响应脚本（`images.generate` 与 `images.edit`）：
+
+```js
+const body = response.body;
+if (response.statusCode < 200 || response.statusCode >= 300) {
+  return {
+    status: "failed",
+    error: {
+      category: response.statusCode === 429 ? "rate_limit" : "upstream",
+      code: "seedream_submit_http_error",
+    },
+    retryable: response.statusCode === 429,
+  };
+}
+if (!body || typeof body.id !== "string" || !body.id) {
+  throw new Error("missing generation id");
+}
+return {
+  status: "pending",
+  taskId: body.id,
+  pollAfterSeconds: 5,
+};
+```
+
+查询响应脚本（`images.generate.query` 与 `images.edit.query`）：
+
+```js
+const body = response.body;
+if (response.statusCode < 200 || response.statusCode >= 300) {
+  return {
+    status: "failed",
+    error: {
+      category: response.statusCode === 429 ? "rate_limit" : "upstream",
+      code: "seedream_query_http_error",
+    },
+  };
+}
+if (body.status === "failed") {
+  return {
+    status: "failed",
+    error: { category: "upstream", code: "seedream_generation_failed" },
+  };
+}
+if (body.status === "succeeded") {
+  const data = Array.isArray(body.data) ? body.data : [];
+  if (data.length === 0) throw new Error("succeeded response has no data");
+  return {
+    status: "completed",
+    outputs: data.map((item) => ({ kind: "image", url: item.url })),
+  };
+}
+return {
+  status: "processing",
+  progress: typeof body.progress === "number" ? body.progress : undefined,
+  pollAfterSeconds: 5,
+};
+```
 
 ## 无网络夹具
 
