@@ -99,9 +99,9 @@ pnpm --filter @repo/web build
 
 | 服务 | 镜像 |
 |---|---|
-| Web | `ghcr.io/fluxcode666/fluxmedia-web:<version>` |
-| 数据库迁移 | `ghcr.io/fluxcode666/fluxmedia-migrate:<version>` |
-| Adobe direct 代理 | `ghcr.io/fluxcode666/fluxmedia-media-upstream-proxy:<version>` |
+| Web | `ghcr.io/fluxcode666/fluxmedia-1-web:<version>` |
+| 数据库迁移 | `ghcr.io/fluxcode666/fluxmedia-1-migrate:<version>` |
+| Adobe direct 代理 | `ghcr.io/fluxcode666/fluxmedia-1-media-upstream-proxy:<version>` |
 
 每个镜像同时推送 `<version>` 和 `latest` 两个 tag，平台为 `linux/amd64`。构建端使用
 GitHub 自动提供的 `GITHUB_TOKEN` 推送；目标服务器拉取私有镜像时使用 `GHCR_PAT`。

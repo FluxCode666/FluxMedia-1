@@ -7,7 +7,7 @@ services:
   migrate:
     profiles:
       - maintenance
-    image: ${FLUXMEDIA_MIGRATE_IMAGE:-ghcr.io/fluxcode666/fluxmedia-migrate}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    image: ${FLUXMEDIA_MIGRATE_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-migrate}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
     restart: "no"
     env_file:
       - .env
@@ -23,7 +23,7 @@ services:
       - ./state:/app/deploy-state
 
   web:
-    image: ${FLUXMEDIA_IMAGE:-ghcr.io/fluxcode666/fluxmedia-web}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    image: ${FLUXMEDIA_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-web}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
     restart: unless-stopped
     init: true
     networks:
@@ -90,7 +90,7 @@ services:
         max-file: "5"
 
   media-upstream-proxy:
-    image: ${FLUXMEDIA_PROXY_IMAGE:-ghcr.io/fluxcode666/fluxmedia-media-upstream-proxy}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
+    image: ${FLUXMEDIA_PROXY_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-media-upstream-proxy}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
     restart: unless-stopped
     init: true
     networks:

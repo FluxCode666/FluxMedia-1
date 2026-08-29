@@ -32,9 +32,9 @@ pnpm --filter @repo/web build
 `.github/workflows/deploy-production.yml` 是 `media.flux-code.cc` 的生产发布入口。
 它先运行 Web 质量门、数据库迁移测试、代理 Go 测试与 Compose 校验，再构建：
 
-- `fluxmedia-web`
-- `fluxmedia-migrate`
-- `fluxmedia-media-upstream-proxy`
+- `fluxmedia-1-web`
+- `fluxmedia-1-migrate`
+- `fluxmedia-1-media-upstream-proxy`
 
 该工作流是唯一镜像发布链路；版本 tag 不再触发另一套旧镜像或 draft Release。
 发布时从 `main` 或与输入版本一致的 tag 手动触发，版本必须符合

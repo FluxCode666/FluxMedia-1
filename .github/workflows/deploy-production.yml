@@ -29,7 +29,9 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: fluxmedia-web
+  # The repository was recreated as FluxMedia-1; use repository-specific package
+  # names so GITHUB_TOKEN can create and manage packages linked to this repo.
+  IMAGE_NAME: fluxmedia-1-web
   PUBLIC_APP_URL: https://media.flux-code.cc
 
 jobs:
@@ -214,8 +216,8 @@ jobs:
           set -euo pipefail
           owner_lower="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           echo "web_image=${REGISTRY}/${owner_lower}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
-          echo "migrate_image=${REGISTRY}/${owner_lower}/fluxmedia-migrate" >> "${GITHUB_OUTPUT}"
-          echo "proxy_image=${REGISTRY}/${owner_lower}/fluxmedia-media-upstream-proxy" >> "${GITHUB_OUTPUT}"
+          echo "migrate_image=${REGISTRY}/${owner_lower}/fluxmedia-1-migrate" >> "${GITHUB_OUTPUT}"
+          echo "proxy_image=${REGISTRY}/${owner_lower}/fluxmedia-1-media-upstream-proxy" >> "${GITHUB_OUTPUT}"
           echo "tag=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Docker Buildx
