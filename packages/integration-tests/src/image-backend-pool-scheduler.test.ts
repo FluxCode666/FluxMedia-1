@@ -60,6 +60,7 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       type text not null,
       name text not null,
       supported_model_ids json not null,
+      supported_resolutions_by_model json not null default '{}'::json,
       content_safety_enabled boolean not null,
       is_enabled boolean not null,
       priority integer not null,
