@@ -11,6 +11,7 @@
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { resolveImageCreditPricing } from "@repo/shared/image-backend/group-image-pricing";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import type { ReferenceHandoffIntent } from "@/features/image-generation/reference-handoff";
@@ -55,6 +56,9 @@ type RecentImage = {
 const RECENT_IMAGE_LIMIT = 12;
 const IMAGE_STATUS_POLL_INTERVAL_MS = 1500;
 const IMAGE_STATUS_POLL_ATTEMPTS = 240;
+const IMAGE_SUBMISSION_FEEDBACK_MS = 1000;
+
+type ImageSubmissionState = "idle" | "submitting" | "submitted";
 
 type ImageCreatePanelProps = {
   balance: number;
@@ -406,6 +410,66 @@ export function ImageCreatePanel({
   const initialReferenceLoadRef = useRef<InitialReferenceLoad | null>(null);
   const consumedInitialReferenceIdRef = useRef<string | null>(null);
   const latestGenerationIdRef = useRef<string | null>(null);
+  const [submissionState, setSubmissionState] =
+    useState<ImageSubmissionState>("idle");
+  const submissionStateRef = useRef<ImageSubmissionState>("idle");
+  const activeSubmissionGenerationIdRef = useRef<string | null>(null);
+  const submissionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+
+  /** 同步更新提交阶段并清理上一次完成态的自动复位计时器。 */
+  const setCurrentSubmissionState = useCallback(
+    (nextState: ImageSubmissionState): void => {
+      submissionStateRef.current = nextState;
+      setSubmissionState(nextState);
+    },
+    []
+  );
+
+  /** POST/入队成功后短暂展示完成态，并在一秒后恢复可提交按钮。 */
+  const markSubmissionAccepted = useCallback(
+    (generationId: string): void => {
+      if (
+        submissionStateRef.current !== "submitting" ||
+        activeSubmissionGenerationIdRef.current !== generationId
+      ) {
+        return;
+      }
+      if (submissionResetTimerRef.current !== null) {
+        clearTimeout(submissionResetTimerRef.current);
+      }
+      setCurrentSubmissionState("submitted");
+      toast.success("提交生图任务完成");
+      submissionResetTimerRef.current = setTimeout(() => {
+        submissionResetTimerRef.current = null;
+        setCurrentSubmissionState("idle");
+      }, IMAGE_SUBMISSION_FEEDBACK_MS);
+    },
+    [setCurrentSubmissionState]
+  );
+
+  /** POST/入队失败时立即恢复按钮，具体错误仍由既有表单错误区域展示。 */
+  const markSubmissionFailed = useCallback(
+    (generationId: string): void => {
+      if (
+        submissionStateRef.current === "submitting" &&
+        activeSubmissionGenerationIdRef.current === generationId
+      ) {
+        setCurrentSubmissionState("idle");
+      }
+    },
+    [setCurrentSubmissionState]
+  );
+
+  useEffect(
+    () => () => {
+      if (submissionResetTimerRef.current !== null) {
+        clearTimeout(submissionResetTimerRef.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!availableModels.some((item) => item.id === model)) {
@@ -832,7 +896,7 @@ export function ImageCreatePanel({
     [onCreditsConsumed, settleRecentTask]
   );
 
-  /** 后台执行一次生图请求；提交方不等待网络，因此表单可以立即开始下一任务。 */
+  /** 后台执行一次生图请求；提交反馈只覆盖入队阶段，轮询不会阻塞页面。 */
   const runImageTask = useCallback(
     async (
       requestFields: {
@@ -876,6 +940,9 @@ export function ImageCreatePanel({
         const payload = await readGenerationResponse(response);
         const payloadError = getResponseError(payload);
         if (payloadError) throw new Error(payloadError);
+        // 服务端已确认任务被接受（无论后续是异步排队还是同步返回产物），
+        // 立刻结束按钮的提交转圈；后台轮询继续由原有任务链路负责。
+        markSubmissionAccepted(requestFields.generationId);
         const payloadGenerationId =
           payload.generationId ?? requestFields.generationId;
         activeGenerationId = payloadGenerationId;
@@ -908,6 +975,9 @@ export function ImageCreatePanel({
         );
         onCreditsConsumed(getConsumedCredits(payload));
       } catch (caught) {
+        // 只有 POST/入队尚未被服务端确认时才撤销提交态；确认后的轮询失败
+        // 仍保留“提交完成”反馈，并把生成错误交给既有错误区域展示。
+        markSubmissionFailed(requestFields.generationId);
         settleRecentTask(
           activeGenerationId,
           "failed",
@@ -919,11 +989,19 @@ export function ImageCreatePanel({
         }
       }
     },
-    [onCreditsConsumed, pollImageTask, rekeyRecentTask, settleRecentTask]
+    [
+      markSubmissionAccepted,
+      markSubmissionFailed,
+      onCreditsConsumed,
+      pollImageTask,
+      rekeyRecentTask,
+      settleRecentTask,
+    ]
   );
 
   /** 提交文生图或编辑请求；只等待请求调度，不阻塞页面后续输入和提交。 */
   const submit = async () => {
+    if (submissionStateRef.current !== "idle") return;
     if (referenceLoadingId) return;
     if (!prompt.trim()) {
       setError("请输入图片描述");
@@ -954,6 +1032,8 @@ export function ImageCreatePanel({
       background,
     };
     latestGenerationIdRef.current = requestFields.generationId;
+    activeSubmissionGenerationIdRef.current = requestFields.generationId;
+    setCurrentSubmissionState("submitting");
     setCreatedRecentImages((current) =>
       mergeRecentImages(
         [
@@ -968,7 +1048,7 @@ export function ImageCreatePanel({
       ).slice(0, RECENT_IMAGE_LIMIT)
     );
     // 展示层以 void 调用此 Promise，因此页面不等待网络；返回 Promise 便于测试和
-    // 调用方在需要时观察任务完成。
+    // 调用方在需要时观察任务完成。提交态只持续到 POST/入队响应被确认。
     return runImageTask(requestFields, mode, sourceImages, mask);
   };
 
@@ -1006,6 +1086,7 @@ export function ImageCreatePanel({
       recent={visibleRecentImages}
       referenceLoadingId={referenceLoadingId}
       resultUrls={resultUrls}
+      submissionState={submissionState}
       size={size}
       sourceImages={sourceImages}
     />

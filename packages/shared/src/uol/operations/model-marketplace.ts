@@ -7,6 +7,8 @@
 import { z } from "zod";
 
 import {
+  deleteModelConfigurationEntryInputSchema,
+  deleteModelConfigurationEntryOutputSchema,
   modelConfigurationListInputSchema,
   modelConfigurationListOutputSchema,
   modelConfigurationSnapshotSchema,
@@ -101,6 +103,29 @@ export const settingsUpdateModelConfigurationEntry = defineOperation({
   sideEffects: ["storage", "cache", "audit"],
   async execute(_input, _principal, _ctx) {
     throw new Error("Not yet wired: settings.updateModelConfigurationEntry");
+  },
+});
+
+/** 删除自定义模型及其价格、展示和封面引用；内置模型由服务端拒绝。 */
+export const settingsDeleteModelConfigurationEntry = defineOperation({
+  name: "settings.deleteModelConfigurationEntry",
+  domain: "system-settings",
+  title: "删除自定义模型",
+  description: "原子删除自定义模型及其关联展示、价格配置。",
+  input: deleteModelConfigurationEntryInputSchema,
+  output: deleteModelConfigurationEntryOutputSchema,
+  access: { kind: "roles", roles: ["super_admin"] },
+  agentExposure: "human-only",
+  readOnly: false,
+  destructive: true,
+  idempotency: {
+    kind: "required",
+    keyField: "clientRequestId",
+    scope: "per-user",
+  },
+  sideEffects: ["storage", "cache", "audit"],
+  async execute(_input, _principal, _ctx) {
+    throw new Error("Not yet wired: settings.deleteModelConfigurationEntry");
   },
 });
 

@@ -18,6 +18,10 @@ import {
   normalizeImagePricingModelId,
 } from "@repo/shared/image-backend/group-image-pricing";
 import {
+  type DeleteModelConfigurationEntryInput,
+  type DeleteModelConfigurationEntryOutput,
+  deleteModelConfigurationEntryInputSchema,
+  deleteModelConfigurationEntryOutputSchema,
   type ModelConfigurationSnapshot,
   type ModelMarketplaceConfig,
   type ModelMarketplaceConfigurationCategory,
@@ -47,6 +51,7 @@ const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 /** 保存内核可稳定映射到 UOL 的领域错误码。 */
 export type ModelConfigurationServiceErrorCode =
   | "not_configurable"
+  | "not_deletable"
   | "revision_conflict"
   | "idempotency_conflict"
   | "revision_exhausted"
@@ -185,7 +190,7 @@ export interface ModelConfigurationCoverImageProcessor {
 export interface ModelConfigurationAuditEvent {
   id: string;
   actorUserId: string;
-  action: "model_configuration.update";
+  action: "model_configuration.update" | "model_configuration.delete";
   category: ModelMarketplaceConfigurationCategory;
   configKey: string;
   previousRevision: number;
@@ -259,7 +264,7 @@ export interface ModelConfigurationServiceDependencies {
   assetBucket: string;
 }
 
-/** 保存服务的单一公开写入口。 */
+/** 模型配置保存与删除服务的公开写入口。 */
 export interface ModelConfigurationService {
   /**
    * 保存一个真实模型的价格与展示配置。
@@ -273,6 +278,10 @@ export interface ModelConfigurationService {
     actorUserId: string;
     input: unknown;
   }): Promise<UpdateModelConfigurationEntryOutput>;
+  deleteEntry?(command: {
+    actorUserId: string;
+    input: unknown;
+  }): Promise<DeleteModelConfigurationEntryOutput>;
 }
 
 interface PreparedCoverReplacement {
@@ -429,6 +438,7 @@ function serializeRequestPayload(
     homepageVisible: input.homepageVisible,
     homepagePriority: input.homepagePriority,
     description: input.description,
+    ...(input.iconKey ? { iconKey: input.iconKey } : {}),
     coverChange:
       input.coverChange.action === "replace"
         ? { action: "replace", contentHash: replacementContentHash }
@@ -463,6 +473,16 @@ function serializeRequestPayload(
     pricing: input.pricing,
     ...(input.supportsQuality === true ? { supportsQuality: true } : {}),
     ...(input.supportsAutoSize === true ? { supportsAutoSize: true } : {}),
+  });
+}
+
+function serializeDeleteRequestPayload(
+  input: DeleteModelConfigurationEntryInput
+): string {
+  return JSON.stringify({
+    category: input.category,
+    configKey: input.configKey,
+    expectedRevision: input.expectedRevision,
   });
 }
 
@@ -578,7 +598,7 @@ export function createModelConfigurationService(
    */
   async function cleanupCoverIfUnreferenced(
     reference: ModelMarketplaceCoverRef,
-    input: UpdateModelConfigurationEntryInput,
+    input: Pick<UpdateModelConfigurationEntryInput, "category" | "configKey">,
     reason: "transaction_failed" | "replaced" | "removed"
   ): Promise<void> {
     try {
@@ -921,6 +941,11 @@ export function createModelConfigurationService(
                   : (replacement?.reference ?? null);
             const nextEntry = {
               revision: resultingRevision,
+              ...(input.iconKey
+                ? { iconKey: input.iconKey }
+                : currentEntry.iconKey
+                  ? { iconKey: currentEntry.iconKey }
+                  : {}),
               enabled: input.enabled,
               visible: input.visible,
               homepageVisible: input.homepageVisible,
@@ -1150,6 +1175,240 @@ export function createModelConfigurationService(
         );
       }
       return transactionResult.output;
+    },
+    async deleteEntry(command) {
+      const actorUserId = command.actorUserId.trim();
+      if (!actorUserId || actorUserId.length > 255) {
+        throw new ModelConfigurationServiceError(
+          "invalid_dependency_result",
+          "管理员用户标识无效"
+        );
+      }
+      const rawInput = deleteModelConfigurationEntryInputSchema.parse(
+        command.input
+      );
+      const normalizedConfigKey =
+        rawInput.category === "image"
+          ? normalizeImagePricingModelId(rawInput.configKey)
+          : rawInput.configKey.trim().toLowerCase();
+      if (!normalizedConfigKey) {
+        throw new ModelConfigurationServiceError(
+          "not_deletable",
+          "模型配置键无效"
+        );
+      }
+      const input: DeleteModelConfigurationEntryInput = {
+        ...rawInput,
+        configKey: normalizedConfigKey,
+      };
+      const receiptKey = assertSha256(
+        (
+          await dependencies.hash.sha256(
+            JSON.stringify([actorUserId, input.clientRequestId])
+          )
+        ).toLowerCase(),
+        "哈希端口"
+      );
+      const requestHash = assertSha256(
+        (
+          await dependencies.hash.sha256(serializeDeleteRequestPayload(input))
+        ).toLowerCase(),
+        "哈希端口"
+      );
+      const now = getNow();
+      let oldCover: ModelMarketplaceCoverRef | null = null;
+      const result: DeleteModelConfigurationEntryOutput =
+        await dependencies.repository.transaction(async (transaction) => {
+          const config = parseModelMarketplaceConfig(
+            await transaction.lockMarketplaceConfig()
+          );
+          assertCoverBuckets(config, assetBucket);
+          const imagePricing =
+            input.category === "image"
+              ? globalImageCreditOverridesSchema.parse(
+                  await transaction.lockImagePricing()
+                )
+              : null;
+          const videoPricing =
+            input.category === "video"
+              ? globalVideoModelCreditsPerSecondSchema.parse(
+                  await transaction.lockVideoPricing()
+                )
+              : null;
+          const videoBillingModes =
+            input.category === "video"
+              ? videoModelBillingModesSchema.parse(
+                  await transaction.lockVideoBillingModes()
+                )
+              : null;
+          const videoItemPricing =
+            input.category === "video"
+              ? videoModelCreditPricesSchema.parse(
+                  await transaction.lockVideoItemPricing()
+                )
+              : null;
+          const videoCapabilities =
+            input.category === "video"
+              ? parseVideoModelCapabilityOverrides(
+                  await transaction.lockVideoCapabilities()
+                )
+              : null;
+          const existingReceipt = config.writeReceipts[receiptKey];
+          if (existingReceipt) {
+            if (existingReceipt.requestHash !== requestHash) {
+              throw new ModelConfigurationServiceError(
+                "idempotency_conflict",
+                "该请求标识已用于另一份模型配置"
+              );
+            }
+            return deleteModelConfigurationEntryOutputSchema.parse({
+              category: existingReceipt.category,
+              configKey: existingReceipt.configKey,
+            });
+          }
+          const customIndex = config.customModels.findIndex(
+            (model) =>
+              model.category === input.category &&
+              model.modelId.trim().toLowerCase() === input.configKey
+          );
+          if (customIndex < 0) {
+            throw new ModelConfigurationServiceError(
+              "not_deletable",
+              "只有自定义模型可以删除"
+            );
+          }
+          const currentEntry =
+            input.category === "image"
+              ? resolveModelMarketplaceEntry(
+                  config.imageByModel[input.configKey],
+                  "image"
+                )
+              : resolveModelMarketplaceEntry(
+                  config.videoByFamily[input.configKey],
+                  "video"
+                );
+          if (currentEntry.revision !== input.expectedRevision) {
+            throw new ModelConfigurationServiceError(
+              "revision_conflict",
+              "模型配置已被其他管理员更新"
+            );
+          }
+          oldCover = currentEntry.cover;
+          const nextConfig = structuredClone(config);
+          nextConfig.customModels.splice(customIndex, 1);
+          if (input.category === "image") {
+            delete nextConfig.imageByModel[input.configKey];
+            if (!imagePricing) {
+              throw new ModelConfigurationServiceError(
+                "invalid_dependency_result",
+                "图像价格事务未初始化"
+              );
+            }
+            const { [input.configKey]: _removed, ...remainingPricing } =
+              imagePricing.byModel;
+            await transaction.saveImagePricing(
+              globalImageCreditOverridesSchema.parse({
+                ...imagePricing,
+                byModel: remainingPricing,
+              }),
+              actorUserId
+            );
+          } else {
+            delete nextConfig.videoByFamily[input.configKey];
+            if (
+              !videoPricing ||
+              !videoBillingModes ||
+              !videoItemPricing ||
+              !videoCapabilities
+            ) {
+              throw new ModelConfigurationServiceError(
+                "invalid_dependency_result",
+                "视频配置事务未初始化"
+              );
+            }
+            const removeModelKeys = (source: Record<string, number>) =>
+              Object.fromEntries(
+                Object.entries(source).filter(
+                  ([key]) =>
+                    key !== input.configKey &&
+                    !key.startsWith(`${input.configKey}@`)
+                )
+              );
+            await transaction.saveVideoPricing(
+              globalVideoModelCreditsPerSecondSchema.parse(
+                removeModelKeys(videoPricing)
+              ),
+              actorUserId
+            );
+            await transaction.saveVideoItemPricing(
+              videoModelCreditPricesSchema.parse(
+                removeModelKeys(videoItemPricing)
+              ),
+              actorUserId
+            );
+            const nextModes = { ...videoBillingModes };
+            delete nextModes[input.configKey];
+            await transaction.saveVideoBillingModes(nextModes, actorUserId);
+            const nextCapabilities = {
+              ...videoCapabilities,
+              byModel: Object.fromEntries(
+                Object.entries(videoCapabilities.byModel).filter(
+                  ([key]) => key !== input.configKey
+                )
+              ),
+            };
+            await transaction.saveVideoCapabilities(
+              videoModelCapabilityOverridesSchema.parse(nextCapabilities),
+              actorUserId
+            );
+          }
+          const receipt: ModelMarketplaceWriteReceipt = {
+            requestHash,
+            category: input.category,
+            configKey: input.configKey,
+            resultingRevision: incrementRevision(currentEntry.revision),
+            completedAt: now.toISOString(),
+          };
+          nextConfig.writeReceipts = pruneModelMarketplaceWriteReceipts(
+            { ...nextConfig.writeReceipts, [receiptKey]: receipt },
+            now
+          );
+          await transaction.saveMarketplaceConfig(
+            modelMarketplaceConfigSchema.parse(nextConfig),
+            actorUserId
+          );
+          await dependencies.audit.record(transaction.auditContext, {
+            id: dependencies.ids.create(),
+            actorUserId,
+            action: "model_configuration.delete",
+            category: input.category,
+            configKey: input.configKey,
+            previousRevision: currentEntry.revision,
+            resultingRevision: receipt.resultingRevision,
+            coverAction: "remove",
+            occurredAt: now.toISOString(),
+          });
+          return deleteModelConfigurationEntryOutputSchema.parse({
+            category: input.category,
+            configKey: input.configKey,
+          });
+        });
+      try {
+        await dependencies.cache.invalidate();
+      } catch {
+        dependencies.logger.warn({
+          event: "model_configuration_cache_invalidation_failed",
+          category: input.category,
+          configKey: input.configKey,
+        });
+      }
+      if (oldCover)
+        await cleanupCoverIfUnreferenced(
+          oldCover,
+          { category: input.category, configKey: input.configKey },
+          "removed"
+        );
+      return result;
     },
   };
 }

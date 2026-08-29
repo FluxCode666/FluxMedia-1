@@ -88,6 +88,7 @@ export {
   type ModelMarketplacePublicCatalogOutput,
   modelMarketplaceListPublicModels,
   modelMarketplacePublicCatalogOutputSchema,
+  settingsDeleteModelConfigurationEntry,
   settingsGetModelConfiguration,
   settingsListModelConfigurations,
   settingsUpdateModelConfigurationEntry,
@@ -101,8 +102,8 @@ export {
 export { settingsSetMarketingSlaVisibility } from "./system-settings-marketing";
 export {
   videoGenerate,
-  videoGetInputs,
   videoGetGeminiOperation,
+  videoGetInputs,
   videoGetStatus,
   videoListCapabilities,
   videoListUncertainSubmissions,

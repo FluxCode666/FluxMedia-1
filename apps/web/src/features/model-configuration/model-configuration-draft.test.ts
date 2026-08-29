@@ -193,6 +193,7 @@ describe("模型配置草稿", () => {
       enabled: "true",
       visible: "true",
       homepageVisible: "true",
+      iconKey: "openai",
       homepagePriority: "3",
       description: "精细图像生成",
       coverChange: "keep",

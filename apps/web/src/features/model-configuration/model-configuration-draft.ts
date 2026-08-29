@@ -9,6 +9,7 @@ import {
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
   MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   type ModelConfigurationEntry,
+  type ModelMarketplaceIconKey,
 } from "@repo/shared/model-marketplace";
 
 /** 编辑草稿使用的封面动作。replace 必须同时携带本地 File。 */
@@ -18,6 +19,7 @@ export type ModelConfigurationCoverDraft =
   | { action: "replace"; file: File };
 
 type MarketplaceDraftFields = {
+  iconKey: ModelMarketplaceIconKey;
   enabled: boolean;
   visible: boolean;
   homepageVisible: boolean;
@@ -131,6 +133,7 @@ export function createModelConfigurationDraft(
     clientRequestId: createRequestId(),
   };
   const marketplace = {
+    iconKey: entry.iconKey ?? "generic",
     enabled: entry.enabled,
     visible: entry.visible,
     homepageVisible: entry.homepageVisible,
@@ -347,6 +350,7 @@ function appendMarketplaceFields(
     throw new ModelConfigurationDraftError("模型简介不能超过 200 个字符");
   }
   formData.append("enabled", String(draft.enabled));
+  formData.append("iconKey", draft.iconKey);
   formData.append("visible", String(draft.visible));
   formData.append("homepageVisible", String(draft.homepageVisible));
   formData.append(

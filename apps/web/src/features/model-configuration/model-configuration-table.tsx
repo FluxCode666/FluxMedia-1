@@ -4,12 +4,22 @@
  * 模型配置管理列表。
  *
  * 使用方是 ModelConfigurationPanel；桌面使用紧凑语义表格，窄屏保持列语义并允许横向滚动。
- * 本组件只展示共享 DTO、复制完整 ID 并通知父层打开 Dialog，不读取或保存配置。
+ * 本组件只展示共享 DTO、复制完整 ID、通知父层打开 Dialog，并处理自定义模型删除。
  */
 import type { ModelConfigurationEntry } from "@repo/shared/model-marketplace";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@repo/ui/components/alert-dialog";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
-import { Copy, ImageIcon } from "lucide-react";
+import { Copy, ImageIcon, Loader2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -30,7 +40,25 @@ export type ModelConfigurationTableProps = {
   entries: readonly ModelConfigurationEntry[];
   canEdit: boolean;
   onSelect: (entry: ModelConfigurationEntry) => void;
+  onDeleted: () => Promise<void>;
 };
+
+async function readStableErrorCode(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.json();
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "code" in body &&
+      typeof body.code === "string"
+    ) {
+      return body.code;
+    }
+  } catch {
+    // 非 JSON 响应按通用删除失败处理。
+  }
+  return null;
+}
 
 /**
  * 渲染固定 3:2 缩略图，并在自定义图失败时只回退一次本地默认图。
@@ -96,7 +124,7 @@ function ModelIdentity({ entry }: { entry: ModelConfigurationEntry }) {
   return (
     <div className="min-w-0">
       <div className="flex min-w-0 items-center gap-1.5">
-        <ModelBrandIcon iconKey={entry.iconKey} size={18} />
+        <ModelBrandIcon iconKey={entry.iconKey ?? "generic"} size={18} />
         <code
           className="truncate text-xs font-medium text-foreground"
           title={entry.configKey}
@@ -173,14 +201,57 @@ function HomepageBadge({ entry }: { entry: ModelConfigurationEntry }) {
  *
  * @param props - 已筛选条目、服务端编辑权限和行选择回调。
  * @returns 空态或带表头且窄屏可横向滚动的列表。
- * @sideEffects 行操作调用 onSelect；复制操作由身份子组件处理。
+ * @sideEffects 行操作调用 onSelect；删除操作通过管理 API 提交并刷新列表；复制操作由身份子组件处理。
  * @failure 空数组稳定展示无结果，不伪造模型。
  */
 export function ModelConfigurationTable({
   entries,
   canEdit,
   onSelect,
+  onDeleted,
 }: ModelConfigurationTableProps) {
+  const [deleteTarget, setDeleteTarget] =
+    useState<ModelConfigurationEntry | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = async (): Promise<void> => {
+    if (!deleteTarget || !canEdit || !deleteTarget.isCustom || isDeleting) {
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      const response = await fetch("/api/admin/model-configuration", {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: deleteTarget.category,
+          configKey: deleteTarget.configKey,
+          expectedRevision: deleteTarget.revision,
+          clientRequestId: crypto.randomUUID(),
+        }),
+      });
+      if (!response.ok) {
+        const code = await readStableErrorCode(response);
+        toast.error(
+          code === "conflict"
+            ? "模型配置已更新，请刷新列表后再删除"
+            : code === "validation_error"
+              ? "只有自定义模型可以删除"
+              : "删除模型失败，请稍后重试"
+        );
+        return;
+      }
+      toast.success("模型已删除");
+      setDeleteTarget(null);
+      await onDeleted();
+    } catch {
+      toast.error("网络异常，删除请求未完成");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (entries.length === 0) {
     return (
       <div className="flex min-h-40 items-center justify-center border-t text-sm text-muted-foreground">
@@ -219,7 +290,7 @@ export function ModelConfigurationTable({
             <th scope="col" className="w-32 px-4 py-3 font-medium">
               最低价格
             </th>
-            <th scope="col" className="w-24 px-4 py-3 text-right font-medium">
+            <th scope="col" className="w-44 px-4 py-3 text-right font-medium">
               操作
             </th>
           </tr>
@@ -269,19 +340,65 @@ export function ModelConfigurationTable({
                 ) : null}
               </td>
               <td className="px-4 py-3 text-right">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onSelect(entry)}
-                >
-                  {canEdit ? "编辑" : "查看"}
-                </Button>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onSelect(entry)}
+                  >
+                    {canEdit ? "编辑" : "查看"}
+                  </Button>
+                  {canEdit && entry.isCustom ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      aria-label={`删除模型 ${entry.displayName}`}
+                      title="删除模型"
+                      onClick={() => setDeleteTarget(entry)}
+                      disabled={isDeleting}
+                    >
+                      <Trash2 />
+                      删除
+                    </Button>
+                  ) : null}
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除模型？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除“{deleteTarget?.displayName}
+              ”及其价格、展示配置和封面，此操作不可恢复。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDelete();
+              }}
+            >
+              {isDeleting ? <Loader2 className="animate-spin" /> : null}
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

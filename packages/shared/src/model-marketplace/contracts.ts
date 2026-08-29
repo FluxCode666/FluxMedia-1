@@ -258,6 +258,8 @@ export const modelMarketplaceCoverRefSchema = z
 export const modelMarketplaceEntrySchema = z
   .object({
     revision: safeRevisionSchema,
+    /** 可由管理员覆盖的品牌/厂商标识；旧配置缺失时由目录按模型 ID 推断。 */
+    iconKey: modelMarketplaceIconKeySchema.optional(),
     enabled: z.boolean().optional(),
     visible: z.boolean(),
     homepageVisible: z.boolean().optional(),
@@ -463,8 +465,10 @@ const firstPartyCoverUrlSchema = z
 const managementCommonShape = {
   configKey: configKeySchema,
   displayName: z.string().trim().min(1).max(160),
-  iconKey: modelMarketplaceIconKeySchema,
+  iconKey: modelMarketplaceIconKeySchema.optional(),
   revision: safeRevisionSchema,
+  /** 自定义模型允许删除；内置模型由服务端固定为 false。 */
+  isCustom: z.boolean().optional(),
 };
 const managementMarketplaceShape = {
   ...managementCommonShape,
@@ -776,6 +780,7 @@ const updateMarketplaceShape = {
   homepagePriority: modelMarketplaceHomepagePrioritySchema,
   description: descriptionSchema,
   coverChange: modelMarketplaceCoverChangeSchema,
+  iconKey: modelMarketplaceIconKeySchema.optional(),
 };
 
 const updateImageConfigurationInputSchema = z
@@ -915,6 +920,24 @@ export const updateModelConfigurationEntryOutputSchema = z
   })
   .strict();
 
+/** 仅允许删除自定义模型的请求；服务端仍会按目录和配置再次确认归属。 */
+export const deleteModelConfigurationEntryInputSchema = z
+  .object({
+    clientRequestId: z.string().uuid(),
+    category: modelMarketplaceConfigurationCategorySchema,
+    configKey: realModelConfigKeySchema,
+    expectedRevision: safeRevisionSchema,
+  })
+  .strict();
+
+/** 删除模型后的最小结果；客户端应重新读取分页快照。 */
+export const deleteModelConfigurationEntryOutputSchema = z
+  .object({
+    category: modelMarketplaceConfigurationCategorySchema,
+    configKey: realModelConfigKeySchema,
+  })
+  .strict();
+
 export type ModelMarketplaceConfigurationCategory = z.infer<
   typeof modelMarketplaceConfigurationCategorySchema
 >;
@@ -961,4 +984,10 @@ export type UpdateModelConfigurationEntryInput = z.infer<
 >;
 export type UpdateModelConfigurationEntryOutput = z.infer<
   typeof updateModelConfigurationEntryOutputSchema
+>;
+export type DeleteModelConfigurationEntryInput = z.infer<
+  typeof deleteModelConfigurationEntryInputSchema
+>;
+export type DeleteModelConfigurationEntryOutput = z.infer<
+  typeof deleteModelConfigurationEntryOutputSchema
 >;

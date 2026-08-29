@@ -202,7 +202,8 @@ function buildMarketplaceFields(
   return {
     configKey,
     displayName: getDisplayName(category, configKey),
-    iconKey: getIconKey(configKey),
+    iconKey: resolvedEntry.iconKey ?? getIconKey(configKey),
+    isCustom: false,
     revision: resolvedEntry.revision,
     marketplaceApplicable: true as const,
     enabled: resolvedEntry.enabled,
@@ -355,6 +356,7 @@ export function buildModelConfigurationSnapshot(
       const pricing = modelMarketplaceImagePricingSchema.parse(explicitPricing);
       entries.push({
         ...common,
+        isCustom: customModel !== undefined,
         category: "image",
         pricingSource: "explicit",
         pricing,
@@ -379,6 +381,7 @@ export function buildModelConfigurationSnapshot(
     } else {
       entries.push({
         ...common,
+        isCustom: customModel !== undefined,
         category: "image",
         pricingSource: "unconfigured",
         supportedResolutions: marketplaceConfig.imageByModel[configKey]
@@ -467,6 +470,7 @@ export function buildModelConfigurationSnapshot(
         input.buildCoverUrl
       ),
       category: "video",
+      isCustom: customModel !== undefined,
       creditsPerSecond: minimumCreditsPerSecond,
       creditsPerSecondByResolution,
       billingMode,

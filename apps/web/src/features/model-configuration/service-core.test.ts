@@ -1156,4 +1156,45 @@ describe("模型配置保存内核", () => {
     ).rejects.toBeInstanceOf(ModelConfigurationServiceError);
     expect(unknownHarness.process).not.toHaveBeenCalled();
   });
+
+  it("删除自定义图像模型时原子清理定义、价格并记录审计", async () => {
+    const config = createDefaultModelMarketplaceConfig();
+    config.customModels.push({
+      modelId: "custom-image",
+      category: "image",
+      supportedResolutions: ["1k"],
+    });
+    config.imageByModel["custom-image"] = {
+      revision: 2,
+      iconKey: "generic",
+      enabled: true,
+      visible: false,
+      homepageVisible: false,
+      homepagePriority: 5,
+      description: "",
+      cover: null,
+    };
+    const imagePricing = createDefaultGlobalImageCreditOverrides();
+    imagePricing.byModel["custom-image"] = { ...IMAGE_PRICING };
+    const harness = createHarness({ config, imagePricing });
+
+    await harness.service.deleteEntry?.({
+      actorUserId: ACTOR_USER_ID,
+      input: {
+        category: "image",
+        configKey: "custom-image",
+        expectedRevision: 2,
+        clientRequestId: "22222222-2222-4222-8222-222222222222",
+      },
+    });
+
+    const state = harness.repository.read();
+    expect(state.config.customModels).toEqual([]);
+    expect(state.config.imageByModel["custom-image"]).toBeUndefined();
+    expect(state.imagePricing.byModel["custom-image"]).toBeUndefined();
+    expect(state.auditEvents[0]).toMatchObject({
+      action: "model_configuration.delete",
+      configKey: "custom-image",
+    });
+  });
 });

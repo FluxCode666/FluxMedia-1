@@ -64,7 +64,7 @@ const safeRevisionSchema = z
 const auditEventSchema = z.object({
   id: z.string().trim().min(1).max(255),
   actorUserId: actorUserIdSchema,
-  action: z.literal("model_configuration.update"),
+  action: z.enum(["model_configuration.update", "model_configuration.delete"]),
   category: z.enum(["image", "video"]),
   configKey: z
     .string()

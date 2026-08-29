@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 
 type CapturedSimplePanelProps = {
+  busy?: boolean;
   error?: string | null;
   mode?: string;
   model?: string;
@@ -29,10 +30,16 @@ type CapturedSimplePanelProps = {
   resultUrls?: readonly string[];
   size?: string;
   sourceImages?: readonly File[];
+  submissionState?: "idle" | "submitting" | "submitted";
 };
 
 const testHarness = vi.hoisted(() => ({
   panelProps: null as CapturedSimplePanelProps | null,
+  toastSuccess: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { success: testHarness.toastSuccess },
 }));
 
 vi.mock("./simple-image-create-panel", () => ({
@@ -196,6 +203,7 @@ async function flushReferenceLoad(): Promise<void> {
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   testHarness.panelProps = null;
+  testHarness.toastSuccess.mockClear();
 });
 
 afterEach(() => {
@@ -277,6 +285,52 @@ describe("ImageCreatePanel", () => {
         prompt: "旧图片",
       },
     ]);
+  });
+
+  it("任务提交时转圈，服务端确认后展示一秒完成态并提示 toast", async () => {
+    vi.useFakeTimers();
+    let resolveSubmission: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveSubmission = resolve;
+          })
+      )
+    );
+    mountImageCreatePanel(vi.fn(), {}, null);
+    act(() => testHarness.panelProps?.onPromptChange?.("提交状态测试"));
+
+    let submitPromise: Promise<void> | undefined;
+    act(() => {
+      submitPromise = testHarness.panelProps?.onSubmit?.();
+    });
+    expect(testHarness.panelProps?.submissionState).toBe("submitting");
+    expect(testHarness.toastSuccess).not.toHaveBeenCalled();
+
+    resolveSubmission?.(
+      Response.json({
+        generationId: "generation-submitted",
+        imageUrl: "/api/storage/generations/user/submitted.png?sig=abc",
+      })
+    );
+    await act(async () => {
+      await submitPromise;
+    });
+
+    expect(testHarness.panelProps?.submissionState).toBe("submitted");
+    expect(testHarness.toastSuccess).toHaveBeenCalledWith("提交生图任务完成");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(999);
+    });
+    expect(testHarness.panelProps?.submissionState).toBe("submitted");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(testHarness.panelProps?.submissionState).toBe("idle");
   });
 
   it("接受站内异步任务 queued 响应并轮询最终产物", async () => {

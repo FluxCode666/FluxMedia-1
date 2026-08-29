@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { logger } from "@repo/shared/logger";
 import {
+  type DeleteModelConfigurationEntryOutput,
   type ModelConfigurationListInput,
   type ModelConfigurationListOutput,
   type ModelConfigurationSnapshot,
@@ -113,6 +114,10 @@ export type ProductionModelConfigurationService = {
     actorUserId: string;
     input: unknown;
   }): Promise<UpdateModelConfigurationEntryOutput>;
+  deleteEntry(command: {
+    actorUserId: string;
+    input: unknown;
+  }): Promise<DeleteModelConfigurationEntryOutput>;
 };
 
 const defaultDependencies: ProductionModelConfigurationDependencies = {
@@ -378,6 +383,40 @@ export function createProductionModelConfigurationService(
         assetBucket: bucketConfig.assetBucket,
       });
       return coreService.updateEntry(command);
+    },
+    async deleteEntry(command) {
+      const bucketConfig = await loadBucketConfig(
+        dependencies.loadSettingString
+      );
+      const provider = await dependencies.loadStorageProvider();
+      const repositoryBundle = dependencies.createRepository();
+      const readDependencies = createReadDependencies(
+        dependencies,
+        bucketConfig
+      );
+      const coreService = dependencies.createCoreService({
+        repository: repositoryBundle.repository,
+        audit: repositoryBundle.audit,
+        storage: createModelConfigurationStoragePort(provider),
+        catalogLoader: {
+          load: () =>
+            readModelConfiguration(
+              { type: "system", reason: "model-configuration-delete-catalog" },
+              readDependencies
+            ),
+        },
+        coverImageProcessor: { process: dependencies.processCoverImage },
+        cache: { invalidate: dependencies.invalidateCache },
+        logger: { warn: dependencies.warn },
+        clock: { now: dependencies.now },
+        hash: { sha256: dependencies.sha256 },
+        ids: { create: dependencies.createId },
+        assetBucket: bucketConfig.assetBucket,
+      });
+      if (!coreService.deleteEntry) {
+        throw new Error("模型配置删除服务未初始化");
+      }
+      return coreService.deleteEntry(command);
     },
   };
 }

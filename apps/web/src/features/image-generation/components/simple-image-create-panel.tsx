@@ -24,6 +24,7 @@ import { Textarea } from "@repo/ui/components/textarea";
 import { cn } from "@repo/ui/utils";
 import {
   Brush,
+  CheckCircle2,
   Coins,
   Eye,
   ImageIcon,
@@ -54,10 +55,13 @@ type RecentImage = {
   status?: string;
 };
 
+type ImageSubmissionState = "idle" | "submitting" | "submitted";
+
 type SimpleImageCreatePanelProps = {
   balance: number;
   background: string;
   busy: boolean;
+  submissionState?: ImageSubmissionState;
   catalog: ImageGenerationModelCatalog;
   error: string | null;
   estimatedCredits: number;
@@ -170,13 +174,22 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
   const selectionValue = createModelSelectionValue(props.groupId, props.model);
   const modeLabel = getModeLabel(props.mode);
   const submitLabel = getSubmitLabel(props.mode);
+  // `busy` remains a backwards-compatible fallback for callers that do not
+  // provide the finer-grained submission state.
+  const submissionState: ImageSubmissionState = props.busy
+    ? "submitting"
+    : (props.submissionState ?? "idle");
+  const isSubmitting = submissionState === "submitting";
+  const isSubmitted = submissionState === "submitted";
+  const isBusy = props.busy || isSubmitting;
   const submitDisabled =
-    props.busy ||
+    isBusy ||
+    isSubmitted ||
     Boolean(props.referenceLoadingId) ||
     !props.prompt.trim() ||
     !props.hasAvailableModel;
   const referenceInteractionLocked =
-    props.busy || Boolean(props.referenceLoadingId);
+    isBusy || Boolean(props.referenceLoadingId);
   const referenceLimitReached =
     props.sourceImages.length >= props.maxEditImages;
   const referenceUploadDisabled =
@@ -726,14 +739,31 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
             <Button
               type="submit"
               disabled={submitDisabled}
-              className="min-w-30"
-            >
-              {props.busy ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <Wand2 className="mr-2 size-4" />
+              aria-busy={isSubmitting}
+              className={cn(
+                "min-w-40 transition-[color,background-color,border-color,box-shadow,transform] duration-300",
+                isSubmitted &&
+                  "border border-success/40 bg-success/10 text-success hover:bg-success/20 disabled:opacity-100"
               )}
-              {props.busy ? "生成中" : submitLabel}
+            >
+              <span
+                key={submissionState}
+                aria-live="polite"
+                className="inline-flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+                ) : isSubmitted ? (
+                  <CheckCircle2 className="size-4" />
+                ) : (
+                  <Wand2 className="size-4" />
+                )}
+                {isSubmitting
+                  ? "提交中"
+                  : isSubmitted
+                    ? "提交生图任务完成"
+                    : submitLabel}
+              </span>
             </Button>
           </div>
         </section>

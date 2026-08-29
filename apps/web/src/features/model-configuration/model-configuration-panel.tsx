@@ -346,6 +346,7 @@ export function ModelConfigurationPanel({
               entries={pageResult?.records ?? []}
               canEdit={pageResult?.canEdit ?? false}
               onSelect={handleSelect}
+              onDeleted={handleSaved}
             />
             {pageResult ? (
               <div className="space-y-3 border-t px-4 py-4">

@@ -10,7 +10,18 @@ import {
   MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH,
   MAX_MODEL_MARKETPLACE_HOMEPAGE_PRIORITY,
   type ModelConfigurationEntry,
+  modelMarketplaceIconKeySchema,
 } from "@repo/shared/model-marketplace";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@repo/ui/components/alert-dialog";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Checkbox } from "@repo/ui/components/checkbox";
@@ -62,6 +73,15 @@ const IMAGE_PRICE_FIELDS = [
   ["base8kCredits", "8K 档"],
 ] as const;
 const IMAGE_RESOLUTION_PRESETS = ["1k", "2k", "4k", "8k"] as const;
+const MODEL_PROVIDER_OPTIONS = [
+  ["openai", "OpenAI"],
+  ["google", "Google"],
+  ["bytedance", "字节跳动 / ByteDance"],
+  ["kling", "快手 / Kling"],
+  ["runway", "Runway"],
+  ["xai", "xAI"],
+  ["generic", "其他厂商"],
+] as const;
 
 export type ModelConfigurationDialogProps = {
   entry: ModelConfigurationEntry;
@@ -148,6 +168,8 @@ export function ModelConfigurationDialog({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [hasConflict, setHasConflict] = useState(false);
   const wasOpenRef = useRef(false);
   const fields = getModelConfigurationDialogFields(entry, canEdit);
@@ -246,6 +268,46 @@ export function ModelConfigurationDialog({
 
   const disabled = !canEdit || isSaving || isReloading;
 
+  const handleDelete = async (): Promise<void> => {
+    if (!canEdit || !entry.isCustom || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      const response = await fetch("/api/admin/model-configuration", {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: entry.category,
+          configKey: entry.configKey,
+          expectedRevision: entry.revision,
+          clientRequestId: crypto.randomUUID(),
+        }),
+      });
+      if (!response.ok) {
+        const code = await readStableErrorCode(response);
+        if (code === "conflict") {
+          setHasConflict(true);
+          toast.error("模型配置已更新，请重新加载后再删除");
+        } else {
+          toast.error(
+            code === "validation_error"
+              ? "只有自定义模型可以删除"
+              : "删除模型失败，请稍后重试"
+          );
+        }
+        return;
+      }
+      toast.success("模型已删除");
+      await onSaved();
+      onOpenChange(false);
+    } catch {
+      toast.error("网络异常，删除请求未完成");
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmOpen(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
@@ -253,7 +315,10 @@ export function ModelConfigurationDialog({
           <DialogHeader>
             <div className="flex items-start gap-3 pr-8">
               <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/40">
-                <ModelBrandIcon iconKey={entry.iconKey} size={22} />
+                <ModelBrandIcon
+                  iconKey={entry.iconKey ?? "generic"}
+                  size={22}
+                />
               </div>
               <div className="min-w-0 space-y-1 text-left">
                 <DialogTitle>{entry.displayName}</DialogTitle>
@@ -602,6 +667,41 @@ export function ModelConfigurationDialog({
           {fields.showMarketplaceFields && entry.marketplaceApplicable ? (
             <section className="grid gap-5 rounded-lg border p-4 md:grid-cols-[minmax(0,1fr)_280px]">
               <div className="space-y-5">
+                <div className="max-w-sm space-y-1.5">
+                  <Label htmlFor={`${entry.configKey}-icon-key`}>
+                    模型厂商 / 展示图标
+                  </Label>
+                  <Select
+                    value={draft.iconKey}
+                    disabled={disabled}
+                    onValueChange={(iconKey) => {
+                      const parsed =
+                        modelMarketplaceIconKeySchema.safeParse(iconKey);
+                      if (!parsed.success) return;
+                      updateDraft((current) => ({
+                        ...current,
+                        iconKey: parsed.data,
+                      }));
+                    }}
+                  >
+                    <SelectTrigger id={`${entry.configKey}-icon-key`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MODEL_PROVIDER_OPTIONS.map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          <span className="flex items-center gap-2">
+                            <ModelBrandIcon iconKey={value} size={16} />
+                            {label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    该选项同时控制模型广场中的厂商筛选和模型图标。
+                  </p>
+                </div>
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
                   <div>
                     <Label htmlFor={`${entry.configKey}-enabled`}>
@@ -759,6 +859,17 @@ export function ModelConfigurationDialog({
                 重新加载最新版本
               </Button>
             ) : null}
+            {canEdit && entry.isCustom ? (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={disabled || isDeleting}
+                onClick={() => setDeleteConfirmOpen(true)}
+              >
+                {isDeleting ? <Loader2 className="animate-spin" /> : null}
+                删除模型
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -775,6 +886,31 @@ export function ModelConfigurationDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认删除模型？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除“{entry.displayName}
+              ”及其价格、展示配置和封面。此操作不可恢复，请确认模型不再被使用。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDelete();
+              }}
+            >
+              {isDeleting ? <Loader2 className="animate-spin" /> : null}
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

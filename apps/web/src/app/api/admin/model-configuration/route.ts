@@ -14,10 +14,14 @@ import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isSuperAdminRole } from "@repo/shared/auth/roles";
 import { logError } from "@repo/shared/logger";
 import {
+  type DeleteModelConfigurationEntryInput,
+  type DeleteModelConfigurationEntryOutput,
+  deleteModelConfigurationEntryInputSchema,
   MAX_MODEL_MARKETPLACE_COVER_BYTES,
   type ModelMarketplaceCoverChange,
   type ModelMarketplaceImagePricing,
   modelMarketplaceCustomModelSchema,
+  modelMarketplaceIconKeySchema,
   modelMarketplaceVideoOutputSizesByResolutionSchema,
   type UpdateModelConfigurationEntryInput,
   type UpdateModelConfigurationEntryOutput,
@@ -55,6 +59,7 @@ const KNOWN_FORM_FIELDS = new Set([
   "homepageVisible",
   "homepagePriority",
   "description",
+  "iconKey",
   "coverChange",
   "cover",
   "creditsPerSecondByResolution",
@@ -83,6 +88,7 @@ const MARKETPLACE_SCALAR_FIELDS = [
   "homepageVisible",
   "homepagePriority",
   "description",
+  "iconKey",
   "coverChange",
 ] as const;
 
@@ -467,6 +473,13 @@ async function parseImageInput(
       requireScalar(data.scalars, "homepagePriority")
     ),
     description: requireScalar(data.scalars, "description"),
+    ...(data.scalars.has("iconKey")
+      ? {
+          iconKey: modelMarketplaceIconKeySchema.parse(
+            data.scalars.get("iconKey")
+          ),
+        }
+      : {}),
     coverChange: await parseCoverChange(
       requireScalar(data.scalars, "coverChange"),
       data.covers
@@ -533,6 +546,13 @@ async function parseVideoInput(
       requireScalar(data.scalars, "homepagePriority")
     ),
     description: requireScalar(data.scalars, "description"),
+    ...(data.scalars.has("iconKey")
+      ? {
+          iconKey: modelMarketplaceIconKeySchema.parse(
+            data.scalars.get("iconKey")
+          ),
+        }
+      : {}),
     coverChange: await parseCoverChange(
       requireScalar(data.scalars, "coverChange"),
       data.covers
@@ -650,6 +670,66 @@ export async function POST(request: Request): Promise<Response> {
     }
   } catch (error) {
     logError(error, { source: "api.admin.model-configuration.preflight" });
+    return errorResponse("Internal server error", "internal_error", 500);
+  }
+}
+
+/** 删除自定义模型；请求体为严格 JSON，权限与 revision 由服务端再次校验。 */
+export async function DELETE(request: Request): Promise<Response> {
+  try {
+    if (!hasTrustedModelConfigurationOrigin(request)) {
+      return errorResponse("Forbidden", "forbidden", 403);
+    }
+    try {
+      parseBoundedContentLength(request.headers.get("content-length"));
+    } catch (error) {
+      if (error instanceof BoundedMultipartError) {
+        return boundedMultipartErrorResponse(error);
+      }
+      throw error;
+    }
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user?.id) {
+      return errorResponse("Unauthorized", "unauthenticated", 401);
+    }
+    const role = await getUserRoleById(session.user.id);
+    if (!isSuperAdminRole(role)) {
+      return errorResponse("Forbidden", "forbidden", 403);
+    }
+    let input: DeleteModelConfigurationEntryInput;
+    try {
+      input = deleteModelConfigurationEntryInputSchema.parse(
+        await request.json()
+      );
+    } catch {
+      return errorResponse("Invalid request", "validation_error", 400);
+    }
+    const principal: Principal = {
+      type: "user",
+      userId: session.user.id,
+      role,
+    };
+    try {
+      await ensureUolInitialized();
+      const output = await invokeOperation<DeleteModelConfigurationEntryOutput>(
+        "settings.deleteModelConfigurationEntry",
+        input,
+        principal
+      );
+      return Response.json(output, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    } catch (error) {
+      if (error instanceof OperationError) {
+        return modelConfigurationOperationErrorResponse(error);
+      }
+      logError(error, { source: "api.admin.model-configuration.delete" });
+      return errorResponse("Internal server error", "internal_error", 500);
+    }
+  } catch (error) {
+    logError(error, {
+      source: "api.admin.model-configuration.delete.preflight",
+    });
     return errorResponse("Internal server error", "internal_error", 500);
   }
 }

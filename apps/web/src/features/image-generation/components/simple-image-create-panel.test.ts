@@ -70,6 +70,7 @@ function mountPanel(input: {
     prompt: string;
     status?: string;
   }[];
+  submissionState?: "idle" | "submitting" | "submitted";
   sourceImages?: readonly File[];
 }): HTMLElement {
   container = document.createElement("div");
@@ -81,6 +82,7 @@ function mountPanel(input: {
         balance: 100,
         background: "auto",
         busy: input.busy ?? false,
+        submissionState: input.submissionState,
         catalog,
         error: null,
         estimatedCredits: 1,
@@ -136,6 +138,42 @@ afterEach(() => {
 });
 
 describe("SimpleImageCreatePanel reference drag and drop", () => {
+  it("renders animated submission feedback states on the generate button", () => {
+    mountPanel({
+      onSourceImagesChange: vi.fn(),
+      submissionState: "submitting",
+    });
+
+    const submittingButton = container?.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    );
+    expect(submittingButton?.disabled).toBe(true);
+    expect(submittingButton?.getAttribute("aria-busy")).toBe("true");
+    expect(submittingButton?.textContent).toContain("提交中");
+    expect(
+      submittingButton?.querySelector("svg")?.getAttribute("class")
+    ).toContain("animate-spin");
+
+    act(() => root?.unmount());
+    container?.remove();
+    container = null;
+    root = null;
+
+    const submittedPanel = mountPanel({
+      onSourceImagesChange: vi.fn(),
+      submissionState: "submitted",
+    });
+    const submittedButton = submittedPanel.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    );
+    expect(submittedButton?.disabled).toBe(true);
+    expect(submittedButton?.textContent).toContain("提交生图任务完成");
+    expect(submittedButton?.className).toContain("bg-success/10");
+    expect(
+      submittedButton?.querySelector("svg")?.getAttribute("class")
+    ).not.toContain("animate-spin");
+  });
+
   it("显示拖入反馈并把投放文件交给既有来源图回调", () => {
     const onSourceImagesChange = vi.fn();
     const dropZone = mountPanel({ onSourceImagesChange });

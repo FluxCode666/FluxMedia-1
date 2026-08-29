@@ -1,7 +1,7 @@
 /**
  * 模型配置与模型广场 operation 的 Web late binding。
  *
- * 使用方是统一 `uol-bindings` 启动入口。本模块把 shared 中仅声明契约的三个 operation
+ * 使用方是统一 `uol-bindings` 启动入口。本模块把 shared 中仅声明契约的四个 operation
  * 绑定到生产管理服务和公开目录服务，并在 UOL 边界完成真实用户检查、领域错误映射与
  * 公开依赖 not_ready 收窄，不读取数据库或对象存储本身。
  */
@@ -9,6 +9,8 @@ import "server-only";
 
 import { logError } from "@repo/shared/logger";
 import {
+  type DeleteModelConfigurationEntryInput,
+  type DeleteModelConfigurationEntryOutput,
   type ModelConfigurationListInput,
   type ModelConfigurationListOutput,
   type ModelConfigurationSnapshot,
@@ -61,6 +63,10 @@ export type ModelMarketplaceOperationBindingDependencies = {
     actorUserId: string;
     input: UpdateModelConfigurationEntryInput;
   }) => Promise<UpdateModelConfigurationEntryOutput>;
+  deleteModelConfigurationEntry?: (command: {
+    actorUserId: string;
+    input: DeleteModelConfigurationEntryInput;
+  }) => Promise<DeleteModelConfigurationEntryOutput>;
   listPublicModels: () => Promise<ModelMarketplacePublicCatalogOutput>;
   listVideoCapabilities: (
     principal: UserPrincipal
@@ -82,6 +88,8 @@ const defaultDependencies: ModelMarketplaceOperationBindingDependencies = {
     productionModelConfigurationService.readPage(principal, input),
   updateModelConfigurationEntry: (command) =>
     productionModelConfigurationService.updateEntry(command),
+  deleteModelConfigurationEntry: (command) =>
+    productionModelConfigurationService.deleteEntry(command),
   listPublicModels: () => productionModelMarketplaceService.listPublicModels(),
   listVideoCapabilities: (principal) =>
     executeVideoListCapabilitiesBinding({}, principal, {
@@ -134,6 +142,7 @@ function throwModelConfigurationOperationError(error: unknown): never {
     case "idempotency_conflict":
       throw new OperationError("idempotency_conflict", error.message);
     case "not_configurable":
+    case "not_deletable":
       throw new OperationError("validation_error", error.message, {
         reason: code,
       });
@@ -302,6 +311,53 @@ export function bindModelMarketplaceOperations(
       principal: Principal,
       _ctx: OperationContext
     ) => services.readModelConfiguration(principal)
+  );
+
+  bindExecute(
+    "settings.deleteModelConfigurationEntry",
+    async (
+      input: DeleteModelConfigurationEntryInput,
+      principal: Principal,
+      ctx: OperationContext
+    ) => {
+      if (principal.type !== "user") {
+        throw new OperationError(
+          "forbidden",
+          "仅超级管理员用户可以删除模型配置"
+        );
+      }
+      try {
+        if (!services.deleteModelConfigurationEntry) {
+          throw new Error("模型配置删除服务未初始化");
+        }
+        return await services.deleteModelConfigurationEntry({
+          actorUserId: principal.userId,
+          input,
+        });
+      } catch (error) {
+        if (error instanceof ModelConfigurationServiceError) {
+          if (error.code === "revision_conflict") {
+            throw new OperationError("conflict", error.message, {
+              reason: error.code,
+            });
+          }
+          if (error.code === "not_deletable") {
+            throw new OperationError("validation_error", error.message, {
+              reason: error.code,
+            });
+          }
+          if (error.code === "idempotency_conflict") {
+            throw new OperationError("idempotency_conflict", error.message);
+          }
+        }
+        services.reportUpdateError(error, {
+          requestId: ctx.requestId,
+          category: input.category,
+          configKey: input.configKey,
+        });
+        throw new OperationError("internal_error", "模型配置服务暂时不可用");
+      }
+    }
   );
 
   bindExecute(

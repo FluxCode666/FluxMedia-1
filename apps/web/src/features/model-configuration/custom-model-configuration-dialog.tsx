@@ -241,6 +241,7 @@ export function CustomModelConfigurationDialog({
     formData.append("homepageVisible", "false");
     formData.append("homepagePriority", "5");
     formData.append("description", "");
+    formData.append("iconKey", "generic");
     formData.append("coverChange", "keep");
 
     try {
