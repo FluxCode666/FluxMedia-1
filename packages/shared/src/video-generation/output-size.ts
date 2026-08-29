@@ -27,6 +27,16 @@ export type VideoOutputSize = z.infer<typeof videoPixelSizeSchema> & {
   readonly aspectRatio: VideoAspectRatio;
 };
 
+/** 自定义视频分辨率标签的按比例输出像素映射。 */
+export type CustomVideoOutputSizesByResolution = Readonly<
+  Record<
+    string,
+    Readonly<
+      Partial<Record<VideoAspectRatio, { width: number; height: number }>>
+    >
+  >
+>;
+
 const VIDEO_OUTPUT_SIZE_CATALOG: Readonly<
   Record<
     VideoResolution,
@@ -105,5 +115,58 @@ export function getVideoOutputSize(
     height: pixels.height,
     resolution: parsedResolution.data,
     aspectRatio: parsedAspectRatio.data,
+  };
+}
+
+/**
+ * 解析内置或自定义视频的精确输出像素。
+ *
+ * 自定义模型优先使用平台标准目录；只有标准目录无法识别时才读取管理员声明的
+ * `outputSizesByResolution[resolution][aspectRatio]`。缺失或损坏映射返回 null，调用方
+ * 必须拒绝创建任务，不能把供应商专属标签猜测成错误尺寸。
+ */
+export function getCustomVideoOutputSize(
+  resolution: unknown,
+  aspectRatio: unknown,
+  customSizes?: unknown
+): { width: number; height: number; size: string } | null {
+  const standard = getVideoOutputSize(resolution, aspectRatio);
+  if (standard) return standard;
+  if (typeof resolution !== "string" || typeof aspectRatio !== "string") {
+    return null;
+  }
+  if (
+    !customSizes ||
+    typeof customSizes !== "object" ||
+    Array.isArray(customSizes)
+  ) {
+    return null;
+  }
+  const byResolution = (customSizes as Record<string, unknown>)[resolution];
+  if (
+    !byResolution ||
+    typeof byResolution !== "object" ||
+    Array.isArray(byResolution)
+  ) {
+    return null;
+  }
+  const pixels = (byResolution as Record<string, unknown>)[aspectRatio];
+  if (!pixels || typeof pixels !== "object" || Array.isArray(pixels)) {
+    return null;
+  }
+  const width = (pixels as Record<string, unknown>).width;
+  const height = (pixels as Record<string, unknown>).height;
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    (width as number) <= 0 ||
+    (height as number) <= 0
+  ) {
+    return null;
+  }
+  return {
+    width: width as number,
+    height: height as number,
+    size: `${width}x${height}`,
   };
 }

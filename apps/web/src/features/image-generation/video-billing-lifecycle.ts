@@ -45,7 +45,8 @@ function equalVideoCapabilitySnapshots(
       (right.supportedResolutions?.length ?? 0) &&
     (left.supportedResolutions?.every(
       (resolution, index) => resolution === right.supportedResolutions?.[index]
-    ) ?? true) &&
+    ) ??
+      true) &&
     left.customModel?.modelId === right.customModel?.modelId &&
     (left.customModel?.supportedResolutions.length ?? 0) ===
       (right.customModel?.supportedResolutions.length ?? 0) &&
@@ -53,7 +54,9 @@ function equalVideoCapabilitySnapshots(
       (resolution, index) =>
         resolution === right.customModel?.supportedResolutions[index]
     ) ??
-      true)
+      true) &&
+    JSON.stringify(left.customModel?.outputSizesByResolution ?? null) ===
+      JSON.stringify(right.customModel?.outputSizesByResolution ?? null)
   );
 }
 
@@ -86,14 +89,14 @@ export function assertAuthoritativeVideoCapabilitySnapshot(input: {
         input.videoCapabilityOverrides
       );
   const configuredResolutions = input.capabilitySnapshot.supportedResolutions
-    ? input.marketplaceConfig.videoByFamily[input.modelId]
-        ?.supportedResolutions ?? effectiveCapability?.resolutions
+    ? (input.marketplaceConfig.videoByFamily[input.modelId]
+        ?.supportedResolutions ?? effectiveCapability?.resolutions)
     : undefined;
   const expected = createVideoCapabilitySnapshot({
     modelConfigurationRevision: revision,
     maxReferenceImages: customModel
       ? 0
-      : effectiveCapability?.input.referenceImages.maxCount ?? 0,
+      : (effectiveCapability?.input.referenceImages.maxCount ?? 0),
     ...(configuredResolutions
       ? { supportedResolutions: configuredResolutions }
       : {}),
@@ -102,6 +105,11 @@ export function assertAuthoritativeVideoCapabilitySnapshot(input: {
           customModel: {
             modelId: customModel.modelId,
             supportedResolutions: customModel.supportedResolutions,
+            ...(customModel.outputSizesByResolution
+              ? {
+                  outputSizesByResolution: customModel.outputSizesByResolution,
+                }
+              : {}),
           },
         }
       : {}),

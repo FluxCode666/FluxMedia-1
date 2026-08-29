@@ -2390,7 +2390,23 @@ export const videoGeneration = pgTable(
     }),
     check(
       "video_generation_real_model_check",
-      sql`${table.model} IN ('sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref', 'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45', 'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast')`
+      // 内置模型使用固定目录；管理员注册的 custom 模型使用安全 ID 格式，
+      // 并排除保留前缀/旧复合 ID。模型是否已注册及其能力由 UOL 配置层校验。
+      sql`${table.model} IN ('sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref', 'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45', 'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast') OR (
+        char_length(${table.model}) BETWEEN 1 AND 120
+        AND ${table.model} ~ '^[a-z0-9][a-z0-9._:-]*$'
+        AND ${table.model} NOT LIKE 'firefly-%'
+        AND ${table.model} NOT IN ('auto', 'unknown')
+        AND ${table.model} NOT LIKE 'sora2-%'
+        AND ${table.model} NOT LIKE 'veo31-%'
+        AND ${table.model} NOT LIKE 'veo31-fast-%'
+        AND ${table.model} NOT LIKE 'veo31-ref-%'
+        AND ${table.model} NOT LIKE 'kling-o3-%'
+        AND ${table.model} NOT LIKE 'kling3-%'
+        AND ${table.model} NOT LIKE 'runway-gen45-%'
+        AND ${table.model} NOT LIKE 'ray314-%'
+        AND ${table.model} NOT LIKE 'seedance2-%'
+      )`
     ),
     check(
       "video_generation_input_manifest_check",

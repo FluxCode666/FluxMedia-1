@@ -18,6 +18,7 @@ import {
   type ModelMarketplaceCoverChange,
   type ModelMarketplaceImagePricing,
   modelMarketplaceCustomModelSchema,
+  modelMarketplaceVideoOutputSizesByResolutionSchema,
   type UpdateModelConfigurationEntryInput,
   type UpdateModelConfigurationEntryOutput,
   updateModelConfigurationEntryInputSchema,
@@ -62,6 +63,7 @@ const KNOWN_FORM_FIELDS = new Set([
   "maxReferenceImages",
   "isCustom",
   "supportedResolutions",
+  "outputSizesByResolution",
   "supportsQuality",
   "supportsAutoSize",
   ...IMAGE_PRICE_FIELDS,
@@ -374,6 +376,23 @@ function parseSupportedResolutions(value: string): string[] {
   }).supportedResolutions;
 }
 
+/** 解析自定义视频供应商标签的输出像素映射 JSON。 */
+function parseVideoOutputSizesByResolution(
+  value: string
+): Record<string, Record<string, { width: number; height: number }>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ModelConfigurationFormError("视频输出像素映射格式无效");
+  }
+  try {
+    return modelMarketplaceVideoOutputSizesByResolutionSchema.parse(parsed);
+  } catch {
+    throw new ModelConfigurationFormError("视频输出像素映射格式无效");
+  }
+}
+
 /**
  * 校验封面动作并在 replace 时读取实际文件字节。
  *
@@ -486,6 +505,7 @@ async function parseVideoInput(
       "billingMode",
       "maxReferenceImages",
       "supportedResolutions",
+      "outputSizesByResolution",
     ])
   );
   const maxReferenceImages = data.scalars.get("maxReferenceImages");
@@ -495,6 +515,7 @@ async function parseVideoInput(
   );
   const isCustom = data.scalars.get("isCustom");
   const supportedResolutions = data.scalars.get("supportedResolutions");
+  const outputSizesByResolution = data.scalars.get("outputSizesByResolution");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "video",
     configKey: requireScalar(data.scalars, "configKey"),
@@ -530,6 +551,13 @@ async function parseVideoInput(
     ...(supportedResolutions !== undefined
       ? {
           supportedResolutions: parseSupportedResolutions(supportedResolutions),
+        }
+      : {}),
+    ...(outputSizesByResolution !== undefined
+      ? {
+          outputSizesByResolution: parseVideoOutputSizesByResolution(
+            outputSizesByResolution
+          ),
         }
       : {}),
     ...(maxReferenceImages !== undefined

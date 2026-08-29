@@ -5,6 +5,7 @@
  * 校验真实模型、独立参数、有效声音和创建时参考图上限，不查询当前动态配置。
  */
 import {
+  getCustomVideoOutputSize,
   getVideoOutputSize,
   resolveVideoModelCapability,
   type VideoAspectRatio,
@@ -20,6 +21,28 @@ import {
   VIDEO_BILLING_CAPABILITY_SNAPSHOT_VERSION,
 } from "@repo/shared/video-generation/video-billing-snapshot";
 import { z } from "zod";
+
+const videoOutputPixelSizeSnapshotSchema = z
+  .object({
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+  })
+  .strict();
+const videoOutputSizesByAspectRatioSnapshotSchema = z
+  .object({
+    "1:1": videoOutputPixelSizeSnapshotSchema.optional(),
+    "4:3": videoOutputPixelSizeSnapshotSchema.optional(),
+    "3:4": videoOutputPixelSizeSnapshotSchema.optional(),
+    "16:9": videoOutputPixelSizeSnapshotSchema.optional(),
+    "9:16": videoOutputPixelSizeSnapshotSchema.optional(),
+    "21:9": videoOutputPixelSizeSnapshotSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0);
+const videoOutputSizesByResolutionSnapshotSchema = z.record(
+  z.string().trim().min(1).max(32),
+  videoOutputSizesByAspectRatioSnapshotSchema
+);
 
 /** 升级前允许没有账单快照的历史能力版本。 */
 export const LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION =
@@ -44,6 +67,10 @@ export type VideoCapabilitySnapshot = {
   customModel?: {
     modelId: string;
     supportedResolutions: string[];
+    outputSizesByResolution?: Record<
+      string,
+      Partial<Record<VideoAspectRatio, { width: number; height: number }>>
+    >;
   };
 };
 
@@ -112,6 +139,10 @@ export function createVideoCapabilitySnapshot(input: {
   customModel?: {
     modelId: string;
     supportedResolutions: readonly string[];
+    outputSizesByResolution?: Record<
+      string,
+      Partial<Record<VideoAspectRatio, { width: number; height: number }>>
+    >;
   };
 }): VideoCapabilitySnapshot {
   const modelConfigurationRevision = requireNonNegativeSafeInteger(
@@ -130,6 +161,8 @@ export function createVideoCapabilitySnapshot(input: {
             .array(z.string().trim().min(1).max(32))
             .min(1)
             .max(20),
+          outputSizesByResolution:
+            videoOutputSizesByResolutionSnapshotSchema.optional(),
         })
         .strict()
         .parse(input.customModel)
@@ -208,6 +241,8 @@ function parseVideoCapabilitySnapshot(
                   .array(z.string().trim().min(1).max(32))
                   .min(1)
                   .max(20),
+                outputSizesByResolution:
+                  videoOutputSizesByResolutionSnapshotSchema.optional(),
               })
               .strict()
               .parse(record.customModel),
@@ -243,13 +278,23 @@ export function resolveVideoExecutionContract(input: {
     const duration = z.number().int().positive().parse(input.durationSeconds);
     const aspectRatio = videoAspectRatioSchema.parse(input.aspectRatio);
     const resolution = z.string().trim().min(1).max(32).parse(input.resolution);
+    const outputSize = getCustomVideoOutputSize(
+      resolution,
+      aspectRatio,
+      snapshot.customModel.outputSizesByResolution
+    );
     if (
       model !== snapshot.customModel.modelId ||
       !snapshot.customModel.supportedResolutions.includes(resolution) ||
       snapshot.maxReferenceImages !== 0 ||
-      input.metadata?.generateAudio !== false
+      input.metadata?.generateAudio !== false ||
+      !outputSize ||
+      (input.outputWidth !== undefined &&
+        input.outputWidth !== outputSize.width) ||
+      (input.outputHeight !== undefined &&
+        input.outputHeight !== outputSize.height)
     ) {
-      throw new Error("视频任务的自定义模型能力快照无效");
+      throw new Error("视频任务的自定义模型能力快照或输出像素无效");
     }
     return {
       model,

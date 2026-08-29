@@ -224,10 +224,10 @@ async function seedBrokenLegacyPollingTask(
     `insert into video_generation (
        id, user_id, principal_scope, backend_member_id, model, family,
        adobe_request_profile, adobe_auth_profile, prompt, duration_seconds,
-       aspect_ratio, resolution, status, stage
+       aspect_ratio, resolution, output_width, output_height, status, stage
      ) values (
        $1, $2, $3, $4, 'sora2-4s-16x9', 'sora2', 'express', 'express',
-       'prompt', 4, '16:9', '720p', 'running', 'polling'
+       'prompt', 4, '16:9', '720p', 1280, 720, 'running', 'polling'
      )`,
     [input.taskId, input.userId, `user:${input.userId}`, input.memberId]
   );
@@ -673,6 +673,21 @@ async function restoreReleaseGateFixtures(client: Pool): Promise<void> {
           'sora2', 'sora2-pro', 'veo31', 'veo31-fast', 'veo31-ref',
           'kling-o3', 'kling3', 'kling3-omni', 'runway-gen45',
           'ray314', 'ray314-hdr', 'seedance2', 'seedance2-fast'
+        )
+        or (
+          char_length(model) between 1 and 120
+          and model ~ '^[a-z0-9][a-z0-9._:-]*$'
+          and model not like 'firefly-%'
+          and model not in ('auto', 'unknown')
+          and model not like 'sora2-%'
+          and model not like 'veo31-%'
+          and model not like 'veo31-fast-%'
+          and model not like 'veo31-ref-%'
+          and model not like 'kling-o3-%'
+          and model not like 'kling3-%'
+          and model not like 'runway-gen45-%'
+          and model not like 'ray314-%'
+          and model not like 'seedance2-%'
         )
       );
     alter table video_input_cleanup

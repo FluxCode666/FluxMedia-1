@@ -139,18 +139,75 @@ const modelMarketplaceSupportedResolutionsSchema = z
     }
   });
 
+/** 自定义视频模型的精确输出像素；用于无法从标准 480p/720p 等标签推导的供应商标签。 */
+const modelMarketplaceVideoOutputPixelSizeSchema = z
+  .object({
+    width: positiveSafeIntegerSchema,
+    height: positiveSafeIntegerSchema,
+  })
+  .strict();
+
+/** 一个自定义分辨率可声明一个或多个公开宽高比的输出像素。 */
+const modelMarketplaceVideoOutputSizesByAspectRatioSchema = z
+  .object({
+    "1:1": modelMarketplaceVideoOutputPixelSizeSchema.optional(),
+    "4:3": modelMarketplaceVideoOutputPixelSizeSchema.optional(),
+    "3:4": modelMarketplaceVideoOutputPixelSizeSchema.optional(),
+    "16:9": modelMarketplaceVideoOutputPixelSizeSchema.optional(),
+    "9:16": modelMarketplaceVideoOutputPixelSizeSchema.optional(),
+    "21:9": modelMarketplaceVideoOutputPixelSizeSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "自定义视频分辨率至少需要一个输出像素映射",
+  });
+
+/**
+ * 自定义视频输出像素映射，键为分辨率标签，值按 aspect ratio 指定精确尺寸。
+ * 标准分辨率可省略映射并沿用平台目录；非标准标签由运行时 fail closed，避免猜测尺寸。
+ */
+export const modelMarketplaceVideoOutputSizesByResolutionSchema = z.record(
+  modelMarketplaceSupportedResolutionSchema,
+  modelMarketplaceVideoOutputSizesByAspectRatioSchema
+);
+
 /** 管理员创建的自定义模型定义，不包含价格与展示字段。 */
 export const modelMarketplaceCustomModelSchema = z
   .object({
     modelId: modelMarketplaceCustomModelIdSchema,
     category: modelMarketplaceConfigurationCategorySchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema,
+    /** 视频供应商专属分辨率的输出像素，键为分辨率、子键为公开宽高比。 */
+    outputSizesByResolution:
+      modelMarketplaceVideoOutputSizesByResolutionSchema.optional(),
     /** 图像模型是否接受质量参数；缺失表示不支持。 */
     supportsQuality: z.boolean().optional(),
     /** 图像模型是否接受 `auto` 尺寸；缺失表示不支持。 */
     supportsAutoSize: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((model, context) => {
+    if (model.category !== "video") {
+      if (model.outputSizesByResolution !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["outputSizesByResolution"],
+          message: "输出像素映射只适用于自定义视频模型",
+        });
+      }
+      return;
+    }
+    if (!model.outputSizesByResolution) return;
+    const supported = new Set(model.supportedResolutions);
+    for (const resolution of Object.keys(model.outputSizesByResolution)) {
+      if (supported.has(resolution)) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["outputSizesByResolution", resolution],
+        message: "输出像素映射必须对应支持的分辨率",
+      });
+    }
+  });
 
 /** 自定义模型定义集合；模型 ID 在图像与视频类别之间也必须全局唯一。 */
 export const modelMarketplaceCustomModelsSchema = z
@@ -775,6 +832,8 @@ const updateVideoConfigurationInputSchema = z
     creditsPerSecondByResolution: videoCreditsPerSecondByResolutionSchema,
     creditsPerItemByResolution: videoModelCreditPricesSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
+    outputSizesByResolution:
+      modelMarketplaceVideoOutputSizesByResolutionSchema.optional(),
     maxReferenceImages: positiveSafeIntegerSchema.optional(),
   })
   .strict()
@@ -820,6 +879,16 @@ const updateVideoConfigurationInputSchema = z
         code: "custom",
         path: ["configKey"],
         message: "自定义模型 ID 无效",
+      });
+    }
+    if (
+      input.isCustom !== true &&
+      input.outputSizesByResolution !== undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["outputSizesByResolution"],
+        message: "输出像素映射只适用于自定义视频模型",
       });
     }
     if (input.isCustom === true && input.maxReferenceImages !== undefined) {

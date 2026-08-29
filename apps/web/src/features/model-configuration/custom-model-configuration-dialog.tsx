@@ -9,6 +9,7 @@
 import {
   MAX_MODEL_MARKETPLACE_CONFIG_KEY_LENGTH,
   modelMarketplaceCustomModelSchema,
+  modelMarketplaceVideoOutputSizesByResolutionSchema,
 } from "@repo/shared/model-marketplace";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -29,6 +30,7 @@ import {
   SelectValue,
 } from "@repo/ui/components/select";
 import { Switch } from "@repo/ui/components/switch";
+import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
@@ -94,6 +96,38 @@ function parseSupportedResolutions(
   return parsed.data.supportedResolutions;
 }
 
+/** 解析自定义视频专属分辨率的输出像素 JSON。 */
+function parseVideoOutputSizes(
+  value: string,
+  modelId: string,
+  supportedResolutions: readonly string[]
+):
+  | Record<string, Record<string, { width: number; height: number }>>
+  | undefined {
+  if (!value.trim()) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ModelConfigurationDraftError("输出像素映射必须是有效 JSON");
+  }
+  try {
+    const outputSizesByResolution =
+      modelMarketplaceVideoOutputSizesByResolutionSchema.parse(parsed);
+    modelMarketplaceCustomModelSchema.parse({
+      modelId,
+      category: "video",
+      supportedResolutions,
+      outputSizesByResolution,
+    });
+    return outputSizesByResolution;
+  } catch {
+    throw new ModelConfigurationDraftError(
+      "输出像素映射格式无效，键须为分辨率，值须按 1:1/4:3/3:4/16:9/9:16/21:9 提供 width/height"
+    );
+  }
+}
+
 /**
  * 渲染自定义模型创建表单。
  *
@@ -116,6 +150,7 @@ export function CustomModelConfigurationDialog({
   const [category, setCategory] = useState<CustomModelCategory>("image");
   const [modelId, setModelId] = useState("");
   const [resolutions, setResolutions] = useState(INITIAL_IMAGE_RESOLUTIONS);
+  const [videoOutputSizes, setVideoOutputSizes] = useState("");
   const [imagePrices, setImagePrices] = useState({
     base1024Credits: "1.27",
     base1kCredits: "1.27",
@@ -137,6 +172,7 @@ export function CustomModelConfigurationDialog({
     setCategory("image");
     setModelId("");
     setResolutions(INITIAL_IMAGE_RESOLUTIONS);
+    setVideoOutputSizes("");
     setImagePrices({
       base1024Credits: "1.27",
       base1kCredits: "1.27",
@@ -161,6 +197,7 @@ export function CustomModelConfigurationDialog({
         ? INITIAL_IMAGE_RESOLUTIONS
         : INITIAL_VIDEO_RESOLUTIONS
     );
+    setVideoOutputSizes("");
   }
 
   /** 构造严格 multipart 并创建新的自定义模型定义与初始价格。 */
@@ -168,12 +205,22 @@ export function CustomModelConfigurationDialog({
     event.preventDefault();
     const normalizedModelId = modelId.trim();
     let supportedResolutions: string[];
+    let outputSizesByResolution:
+      | Record<string, Record<string, { width: number; height: number }>>
+      | undefined;
     try {
       supportedResolutions = parseSupportedResolutions(
         resolutions,
         normalizedModelId,
         category
       );
+      if (category === "video") {
+        outputSizesByResolution = parseVideoOutputSizes(
+          videoOutputSizes,
+          normalizedModelId,
+          supportedResolutions
+        );
+      }
     } catch (error) {
       toast.error(
         error instanceof ModelConfigurationDraftError
@@ -227,6 +274,12 @@ export function CustomModelConfigurationDialog({
             )
           )
         );
+        if (outputSizesByResolution) {
+          formData.append(
+            "outputSizesByResolution",
+            JSON.stringify(outputSizesByResolution)
+          );
+        }
       }
     } catch (error) {
       toast.error(
@@ -410,6 +463,24 @@ export function CustomModelConfigurationDialog({
               <p className="text-xs text-muted-foreground sm:col-span-3">
                 两套价格都会保存；切换生效模式不会删除另一套价格。
               </p>
+              <div className="space-y-2 sm:col-span-3">
+                <Label htmlFor="custom-video-output-sizes">
+                  专属分辨率输出像素（可选 JSON）
+                </Label>
+                <Textarea
+                  id="custom-video-output-sizes"
+                  value={videoOutputSizes}
+                  disabled={isSaving}
+                  placeholder={
+                    '{"studio-hd":{"16:9":{"width":1920,"height":1080}}}'
+                  }
+                  onChange={(event) => setVideoOutputSizes(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  标准 480p/720p/1080p/2k/4k/8k
+                  会自动推导；其它标签必须为每种宽高比提供像素映射。
+                </p>
+              </div>
             </div>
           )}
 

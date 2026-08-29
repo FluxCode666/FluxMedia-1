@@ -37,6 +37,7 @@ import {
 } from "@repo/shared/model-marketplace";
 import {
   parseVideoModelCapabilityOverrides,
+  VIDEO_RESOLUTIONS,
   type VideoModelCapabilityOverrides,
   videoModelCapabilityOverridesSchema,
 } from "@repo/shared/video-generation";
@@ -439,6 +440,9 @@ function serializeRequestPayload(
       ...(input.supportedResolutions
         ? { supportedResolutions: [...input.supportedResolutions].sort() }
         : {}),
+      ...(input.outputSizesByResolution
+        ? { outputSizesByResolution: input.outputSizesByResolution }
+        : {}),
       creditsPerSecondByResolution: sortVideoPricing(
         input.creditsPerSecondByResolution
       ),
@@ -687,6 +691,23 @@ export function createModelConfigurationService(
             supportedResolutions: input.supportedResolutions,
           });
         }
+        if (input.category === "video") {
+          const supportedResolutions =
+            input.supportedResolutions ??
+            Object.keys(input.creditsPerSecondByResolution);
+          const outputSizes = input.outputSizesByResolution;
+          const standardResolutions = new Set(VIDEO_RESOLUTIONS);
+          for (const resolution of supportedResolutions) {
+            if (standardResolutions.has(resolution as never)) continue;
+            const mapped = outputSizes?.[resolution];
+            if (!mapped || Object.keys(mapped).length !== 6) {
+              throw new ModelConfigurationServiceError(
+                "not_configurable",
+                `自定义视频分辨率 ${resolution} 必须为六种宽高比提供输出像素映射`
+              );
+            }
+          }
+        }
       }
       if (input.category === "video" && catalogEntry?.category === "video") {
         const expectedResolutions = [
@@ -844,6 +865,11 @@ export function createModelConfigurationService(
                     ? input.supportedResolutions
                     : (input.supportedResolutions ??
                       Object.keys(input.creditsPerSecondByResolution)),
+                ...(input.category === "video" && input.outputSizesByResolution
+                  ? {
+                      outputSizesByResolution: input.outputSizesByResolution,
+                    }
+                  : {}),
                 ...(input.category === "image" && input.supportsQuality === true
                   ? { supportsQuality: true }
                   : {}),

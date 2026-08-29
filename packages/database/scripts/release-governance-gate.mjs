@@ -159,6 +159,10 @@ const REAL_VIDEO_MODEL_IDS = [
   "seedance2",
   "seedance2-fast",
 ];
+// 与 0100_video_output_dimensions_and_custom_models.sql 保持一致。模型广场负责证明
+// custom ID 已注册，发布门禁只验证数据库侧格式/保留字/旧复合 ID 边界。
+const EXPECTED_VIDEO_REAL_MODEL_CONSTRAINT =
+  "CHECK ((model = ANY (ARRAY['sora2'::text, 'sora2-pro'::text, 'veo31'::text, 'veo31-fast'::text, 'veo31-ref'::text, 'kling-o3'::text, 'kling3'::text, 'kling3-omni'::text, 'runway-gen45'::text, 'ray314'::text, 'ray314-hdr'::text, 'seedance2'::text, 'seedance2-fast'::text])) OR char_length(model) >= 1 AND char_length(model) <= 120 AND model ~ '^[a-z0-9][a-z0-9._:-]*$'::text AND model !~~ 'firefly-%'::text AND (model <> ALL (ARRAY['auto'::text, 'unknown'::text])) AND model !~~ 'sora2-%'::text AND model !~~ 'veo31-%'::text AND model !~~ 'veo31-fast-%'::text AND model !~~ 'veo31-ref-%'::text AND model !~~ 'kling-o3-%'::text AND model !~~ 'kling3-%'::text AND model !~~ 'runway-gen45-%'::text AND model !~~ 'ray314-%'::text AND model !~~ 'seedance2-%'::text)";
 const FROZEN_VIDEO_FAMILIES = [
   {
     model: "sora2",
@@ -1627,6 +1631,10 @@ async function assertVideoContractPostMigrationState(pool) {
           where column_name = 'input_manifest'
             and is_nullable = 'YES'
         )::text as manifest_column_count,
+        count(*) filter (
+          where column_name in ('output_width', 'output_height')
+            and is_nullable = 'NO'
+        )::text as output_dimension_column_count,
         (
           select count(*)::text
           from information_schema.columns
@@ -1649,6 +1657,10 @@ async function assertVideoContractPostMigrationState(pool) {
       schema.manifest_column_count,
       "post-migration video manifest column"
     );
+    const outputDimensionColumnCount = parseCount(
+      schema.output_dimension_column_count,
+      "post-migration video output dimension columns"
+    );
     const cleanupReasonColumnCount = parseCount(
       schema.cleanup_reason_column_count,
       "post-migration video cleanup reason column"
@@ -1659,9 +1671,14 @@ async function assertVideoContractPostMigrationState(pool) {
       "video_contract_cleanup_reason_column_count",
       cleanupReasonColumnCount
     );
+    printEvidence(
+      "video_contract_output_dimension_column_count",
+      outputDimensionColumnCount
+    );
     if (
       legacyColumnCount !== 0 ||
       manifestColumnCount !== 1 ||
+      outputDimensionColumnCount !== 2 ||
       cleanupReasonColumnCount !== 1
     ) {
       throw new Error("post-migration video request schema invariants failed");
@@ -1687,8 +1704,8 @@ async function assertVideoContractPostMigrationState(pool) {
                      'video_input_cleanup_reason_check'
                  and pg_get_constraintdef(constraint_record.oid, true) =
                    'CHECK (reason = ANY (ARRAY[''orphan''::text, ''lifecycle_delete''::text]))')
-               or (relation.relname = 'video_generation'
-                 and (
+                   or (relation.relname = 'video_generation'
+                     and (
                    (constraint_record.conname =
                      'video_generation_input_manifest_check'
                      and pg_get_constraintdef(constraint_record.oid, true) =
@@ -1696,7 +1713,7 @@ async function assertVideoContractPostMigrationState(pool) {
                    or (constraint_record.conname =
                      'video_generation_real_model_check'
                      and pg_get_constraintdef(constraint_record.oid, true) =
-                       'CHECK (model = ANY (ARRAY[''sora2''::text, ''sora2-pro''::text, ''veo31''::text, ''veo31-fast''::text, ''veo31-ref''::text, ''kling-o3''::text, ''kling3''::text, ''kling3-omni''::text, ''runway-gen45''::text, ''ray314''::text, ''ray314-hdr''::text, ''seedance2''::text, ''seedance2-fast''::text]))')))
+                       $2)))
              )
          ) as constraint_count,
          (
@@ -1745,7 +1762,24 @@ async function assertVideoContractPostMigrationState(pool) {
          (
            select count(*)::text
            from video_generation
-           where model <> all($1::text[])
+           where not (
+             model = any($1::text[])
+             or (
+               char_length(model) between 1 and 120
+               and model ~ '^[a-z0-9][a-z0-9._:-]*$'
+               and model not like 'firefly-%'
+               and model not in ('auto', 'unknown')
+               and model not like 'sora2-%'
+               and model not like 'veo31-%'
+               and model not like 'veo31-fast-%'
+               and model not like 'veo31-ref-%'
+               and model not like 'kling-o3-%'
+               and model not like 'kling3-%'
+               and model not like 'runway-gen45-%'
+               and model not like 'ray314-%'
+               and model not like 'seedance2-%'
+             )
+           )
          ) as invalid_task_model_count,
          (
            select count(*)::text
@@ -1762,7 +1796,7 @@ async function assertVideoContractPostMigrationState(pool) {
                input_manifest, user_id, id, model
              )
          ) as invalid_input_manifest_count`,
-      [REAL_VIDEO_MODEL_IDS]
+      [REAL_VIDEO_MODEL_IDS, EXPECTED_VIDEO_REAL_MODEL_CONSTRAINT]
     );
     const row = result.rows[0] ?? {};
     const constraintCount = parseCount(

@@ -37,6 +37,7 @@ import {
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
 import {
+  getCustomVideoOutputSize,
   getVideoOutputSize,
   normalizeVideoModelId,
 } from "@repo/shared/video-generation";
@@ -382,7 +383,14 @@ bindExecute(
       canonicalInput.resolution,
       canonicalInput.aspectRatio
     );
-    if (!outputSize) {
+    const resolvedOutputSize =
+      outputSize ??
+      getCustomVideoOutputSize(
+        canonicalInput.resolution,
+        canonicalInput.aspectRatio,
+        customModelDefinition?.outputSizesByResolution
+      );
+    if (!resolvedOutputSize) {
       throw new OperationError(
         "validation_error",
         "视频模型缺少当前分辨率的可信输出像素配置",
@@ -399,6 +407,12 @@ bindExecute(
             customModel: {
               modelId: customModelDefinition.modelId,
               supportedResolutions: customModelDefinition.supportedResolutions,
+              ...(customModelDefinition.outputSizesByResolution
+                ? {
+                    outputSizesByResolution:
+                      customModelDefinition.outputSizesByResolution,
+                  }
+                : {}),
             },
           }
         : {}),
@@ -500,8 +514,8 @@ bindExecute(
           aspectRatio: canonicalInput.aspectRatio,
           resolution: canonicalInput.resolution,
           outputSize: {
-            width: outputSize.width,
-            height: outputSize.height,
+            width: resolvedOutputSize.width,
+            height: resolvedOutputSize.height,
           },
           ...(canonicalInput.negativePrompt
             ? { negativePrompt: canonicalInput.negativePrompt }
