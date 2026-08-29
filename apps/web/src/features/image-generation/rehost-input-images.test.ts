@@ -37,7 +37,10 @@ vi.mock("../external-api/safe-image-fetch", () => ({
 
 // request-utils 依赖 getImagePublicBaseUrl，它读取 runtimeSettingMock。
 
-import { ensureInputImageRehosted } from "./rehost-input-images";
+import {
+  ensureInputImageRehosted,
+  resolveInputImagePublicUrl,
+} from "./rehost-input-images";
 
 function makeImage(overrides: Partial<ImageInputFile>): ImageInputFile {
   return {
@@ -64,6 +67,27 @@ beforeEach(() => {
 });
 
 describe("ensureInputImageRehosted", () => {
+  it("将对象存储引用转换为绝对签名 URL", async () => {
+    const result = await resolveInputImagePublicUrl(
+      makeImage({
+        storageKey: "user-1/abc.png",
+        storageBucket: "generations",
+      })
+    );
+    expect(result).toMatch(
+      /^https:\/\/app\.example\.test\/api\/storage\/generations\/user-1\/abc\.png\?sig=[a-f0-9]+&exp=\d+$/
+    );
+  });
+
+  it("将相对站内 URL 转换为绝对 URL", async () => {
+    const result = await resolveInputImagePublicUrl(
+      makeImage({ url: "/api/storage/generations/user-1/abc.png" })
+    );
+    expect(result).toMatch(
+      /^https:\/\/app\.example\.test\/api\/storage\/generations\/user-1\/abc\.png\?sig=[a-f0-9]+&exp=\d+$/
+    );
+  });
+
   it("returns the image unchanged when it already has a storageKey", async () => {
     const image = makeImage({
       storageKey: "user-1/abc.png",

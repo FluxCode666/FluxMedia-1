@@ -73,6 +73,8 @@ export interface RedactedApiMemberConfig {
   baseUrl: string;
   hasApiKey: boolean;
   useStream: boolean;
+  /** 图生图参考图是否先转存并转换为绝对公网 URL。 */
+  convertReferenceImagesToPublicUrl?: boolean;
   videoSubmissionRetryCount: number;
   videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
   /** 旧适配版本的账号级能力，仅用于兼容读取。 */
@@ -282,6 +284,8 @@ export function createApiAdapterDraft(
   return apiUpstreamAdapterDraftSchema.parse({
     baseUrl: input.config.baseUrl,
     useStream: input.config.useStream,
+    convertReferenceImagesToPublicUrl:
+      input.config.convertReferenceImagesToPublicUrl ?? false,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
     videoProtocolMode: input.config.videoProtocolMode,
     videoInputCapabilities: input.config.videoInputCapabilities,
@@ -640,6 +644,8 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         baseUrl: adapter.baseUrl,
         hasApiKey: row.api_has_key,
         useStream: adapter.useStream,
+        convertReferenceImagesToPublicUrl:
+          adapter.convertReferenceImagesToPublicUrl ?? false,
         videoSubmissionRetryCount: adapter.videoSubmissionRetryCount,
         videoProtocolMode: adapter.videoProtocolMode,
         videoInputCapabilities: adapter.videoInputCapabilities,

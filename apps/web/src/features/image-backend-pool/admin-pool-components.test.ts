@@ -240,6 +240,10 @@ describe("admin pool components", () => {
       return createElement(BackendMemberFilterBar, {
         filters,
         modelOptions: [{ id: "gpt-image-2", label: "GPT Image 2" }],
+        resolutionOptions: [
+          { id: "1k", label: "1k" },
+          { id: "2k", label: "2k" },
+        ],
         resultCount: 1,
         totalCount: 2,
         timeZone: "Asia/Shanghai",
@@ -262,6 +266,12 @@ describe("admin pool components", () => {
     expect(container?.textContent).toContain("凭据状态（Adobe Direct）");
     expect(container?.textContent).toContain("全部凭据状态");
     expect(container?.textContent).toContain("支持的模型");
+    expect(container?.textContent).toContain("分辨率");
+    expect(container?.textContent).toContain("全部分辨率");
+    expect(
+      container?.querySelector("form[aria-label='筛选供应商账号'] > div")
+        ?.className
+    ).toContain("xl:grid-cols-[repeat(auto-fit,minmax(190px,1fr))]");
 
     act(() => dateRangeButton?.click());
     expect(document.body.textContent).toContain("选择创建日期范围");

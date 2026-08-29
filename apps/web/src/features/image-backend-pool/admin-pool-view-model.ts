@@ -21,6 +21,7 @@ export interface BackendMemberFilters {
   name: string;
   credentialStatus: BackendMemberCredentialFilter;
   modelId: string;
+  resolution: string;
   createdFrom: string;
   createdTo: string;
 }
@@ -29,6 +30,7 @@ export interface BackendMemberFilters {
 export interface BackendPoolFilterableMember {
   name: string;
   supportedModelIds: string[];
+  supportedResolutionsByModel?: Readonly<Record<string, readonly string[]>>;
   createdAt: string;
   credentialHealthStatus: AdobeCredentialHealthStatus | null;
 }
@@ -38,6 +40,7 @@ export const EMPTY_BACKEND_MEMBER_FILTERS: BackendMemberFilters = {
   name: "",
   credentialStatus: "all",
   modelId: "all",
+  resolution: "all",
   createdFrom: "",
   createdTo: "",
 };
@@ -126,6 +129,7 @@ export function hasBackendMemberFilters(
     Boolean(filters.name.trim()) ||
     filters.credentialStatus !== "all" ||
     filters.modelId !== "all" ||
+    filters.resolution !== "all" ||
     Boolean(filters.createdFrom) ||
     Boolean(filters.createdTo)
   );
@@ -161,6 +165,7 @@ export function filterBackendMembers<
   if (hasInvalidBackendMemberDateRange(filters)) return [];
   const name = normalizeFilterValue(filters.name);
   const modelId = normalizeFilterValue(filters.modelId);
+  const resolution = normalizeFilterValue(filters.resolution);
   const hasDateFilter = Boolean(filters.createdFrom || filters.createdTo);
   const dateFormatter = hasDateFilter
     ? createCalendarDateFormatter(timeZone)
@@ -185,6 +190,27 @@ export function filterBackendMembers<
       )
     ) {
       return false;
+    }
+    if (filters.resolution !== "all") {
+      const resolutionLists = Object.entries(
+        member.supportedResolutionsByModel ?? {}
+      )
+        .filter(
+          ([supportedModelId]) =>
+            filters.modelId === "all" ||
+            normalizeFilterValue(supportedModelId) === modelId
+        )
+        .map(([, resolutions]) => resolutions);
+      if (
+        !resolutionLists.some((resolutions) =>
+          resolutions.some(
+            (supportedResolution) =>
+              normalizeFilterValue(supportedResolution) === resolution
+          )
+        )
+      ) {
+        return false;
+      }
     }
     if (!dateFormatter) return true;
     const createdDate = formatCalendarDateKey(member.createdAt, dateFormatter);

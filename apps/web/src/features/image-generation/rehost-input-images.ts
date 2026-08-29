@@ -19,6 +19,7 @@
 import { logWarn } from "@repo/shared/logger";
 import { getStorageProvider } from "@repo/shared/storage/providers";
 import {
+  buildPublicImageUrl,
   buildSignedStorageImageUrl,
   parseStorageImageUrl,
 } from "@repo/shared/storage/signed-url";
@@ -80,6 +81,75 @@ export type RehostContext = {
   /** 透传给下载的 abort 信号。 */
   signal?: AbortSignal;
 };
+
+/**
+ * 将输入图上的引用解析为供应商可访问的绝对 HTTP(S) URL。
+ *
+ * 优先使用 storageKey/storageBucket 重新签名，避免旧的相对 URL 或已过期签名被
+ * 直接转发；普通相对站内 URL 也会使用运行时公开基址补成绝对地址。
+ */
+export async function resolveInputImagePublicUrl(
+  image: ImageInputFile,
+  expiresInSeconds = 3600
+): Promise<string | null> {
+  const rawUrl = image.url?.trim();
+  if (rawUrl?.startsWith("//") || rawUrl?.toLowerCase().startsWith("data:")) {
+    return null;
+  }
+  let publicBaseUrl: string;
+  try {
+    publicBaseUrl = await getImagePublicBaseUrl();
+  } catch (error) {
+    logWarn("无法读取图片公网基址，拒绝向供应商发送参考图 URL", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+  if (image.storageKey?.trim() && image.storageBucket?.trim()) {
+    let signed: string | null = null;
+    try {
+      signed = buildSignedStorageImageUrl(
+        image.storageKey,
+        image.storageBucket,
+        expiresInSeconds
+      );
+    } catch (error) {
+      logWarn("无法为参考图生成签名 URL，拒绝向供应商发送", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+    const absolute = signed
+      ? buildPublicImageUrl(signed, publicBaseUrl, expiresInSeconds)
+      : undefined;
+    if (absolute && /^https?:\/\//iu.test(absolute)) return absolute;
+  }
+
+  // 协议相对地址、data URL 和本地路径都不是供应商可验证的绝对 HTTP(S) 引用；
+  // 只有带公开基址的站内相对路径才允许继续由 buildPublicImageUrl 解析。
+  const resolved = buildPublicImageUrl(rawUrl, publicBaseUrl, expiresInSeconds);
+  if (resolved && /^https?:\/\//iu.test(resolved)) return resolved;
+  return null;
+}
+
+/** 判断输入图是否已经属于平台对象存储，供“必须先转存”模式 fail-closed。 */
+export async function isInputImagePlatformHosted(
+  image: ImageInputFile
+): Promise<boolean> {
+  if (image.storageKey?.trim() && image.storageBucket?.trim()) return true;
+  let publicBaseUrl: string;
+  try {
+    publicBaseUrl = await getImagePublicBaseUrl();
+  } catch (error) {
+    logWarn("无法读取图片公网基址，无法确认参考图是否已转存", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+  return Boolean(
+    image.url?.trim() && parseStorageImageUrl(image.url.trim(), publicBaseUrl)
+  );
+}
 
 /**
  * 确保单张输入图已 re-host 到我方存储（幂等、不抛出）。

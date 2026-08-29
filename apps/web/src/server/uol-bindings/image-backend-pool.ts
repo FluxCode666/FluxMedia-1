@@ -437,11 +437,19 @@ bindExecute("pool.getAdminPool", async () => {
 /** 按人工页面筛选分页成员，并在计数前合入当前凭据健康状态。 */
 bindExecute(
   "pool.listAdminMembers",
-  async (input: AdminPoolMemberListInput) => {
-    const [members, healthStatuses] = await Promise.all([
-      defaultDependencies.memberService.listMembers(),
-      listAdobeCredentialHealthStatuses(),
-    ]);
+  async (input: AdminPoolMemberListInput, principal) => {
+    const [members, healthStatuses, modelConfigurationResult] =
+      await Promise.all([
+        defaultDependencies.memberService.listMembers(),
+        listAdobeCredentialHealthStatuses(),
+        defaultDependencies
+          .readModelConfiguration(principal)
+          .then((configuration) => ({
+            status: "ready" as const,
+            configuration,
+          }))
+          .catch(() => ({ status: "unavailable" as const })),
+      ]);
     const statusByMemberId = new Map(
       healthStatuses.map((item) => [item.memberId, item.status])
     );
@@ -449,18 +457,54 @@ bindExecute(
       ...member,
       credentialHealthStatus: statusByMemberId.get(member.id) ?? null,
     }));
-    const filtered = filterBackendMembers(
-      pageMembers,
-      {
-        name: input.name,
-        credentialStatus: input.credentialStatus,
-        modelId: input.modelId,
-        createdFrom: input.createdFrom,
-        createdTo: input.createdTo,
-      },
-      input.timeZone
+    const modelResolutionsById =
+      modelConfigurationResult.status === "ready"
+        ? new Map(
+            modelConfigurationResult.configuration.entries.map((entry) => [
+              entry.configKey.trim().toLowerCase(),
+              entry.supportedResolutions ?? [],
+            ])
+          )
+        : null;
+    const filterableMembers = pageMembers.map((member) => {
+      if (!modelResolutionsById) return member;
+      const memberOverrides = member.supportedResolutionsByModel ?? {};
+      const effectiveResolutionsByModel = Object.fromEntries(
+        member.supportedModelIds.map((modelId) => {
+          const modelKey = modelId.trim().toLowerCase();
+          const override = Object.entries(memberOverrides).find(
+            ([candidate]) => candidate.trim().toLowerCase() === modelKey
+          )?.[1];
+          return [
+            modelKey,
+            override ?? modelResolutionsById.get(modelKey) ?? [],
+          ];
+        })
+      );
+      return {
+        ...member,
+        supportedResolutionsByModel: effectiveResolutionsByModel,
+      };
+    });
+    const filteredIds = new Set(
+      filterBackendMembers(
+        filterableMembers,
+        {
+          name: input.name,
+          credentialStatus: input.credentialStatus,
+          modelId: input.modelId,
+          resolution: input.resolution,
+          createdFrom: input.createdFrom,
+          createdTo: input.createdTo,
+        },
+        input.timeZone
+      ).map((member) => member.id)
     );
-    return paginateAdminPoolRecords(filtered, input.page, input.pageSize);
+    return paginateAdminPoolRecords(
+      pageMembers.filter((member) => filteredIds.has(member.id)),
+      input.page,
+      input.pageSize
+    );
   }
 );
 

@@ -28,10 +28,10 @@ describe("admin pool pagination", () => {
     });
   });
 
-  it("恢复成员分页、凭据、模型和日期筛选", () => {
+  it("恢复成员分页、凭据、模型、分辨率和日期筛选", () => {
     const input = parseAdminPoolMemberListInput(
       new URLSearchParams(
-        "memberPage=3&memberPageSize=50&memberName=Adobe&memberCredential=unhealthy&memberModel=gpt-image-2&memberCreatedFrom=2026-08-01&memberCreatedTo=2026-08-13"
+        "memberPage=3&memberPageSize=50&memberName=Adobe&memberCredential=unhealthy&memberModel=gpt-image-2&memberResolution=2k&memberCreatedFrom=2026-08-01&memberCreatedTo=2026-08-13"
       ),
       paginationConfig,
       "Asia/Shanghai"
@@ -42,6 +42,7 @@ describe("admin pool pagination", () => {
       name: "Adobe",
       credentialStatus: "unhealthy",
       modelId: "gpt-image-2",
+      resolution: "2k",
       createdFrom: "2026-08-01",
       createdTo: "2026-08-13",
       timeZone: "Asia/Shanghai",

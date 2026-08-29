@@ -210,6 +210,60 @@ describe("admin pool view model", () => {
     ).toEqual(["first"]);
   });
 
+  it("按账号声明的分辨率筛选并忽略大小写与空白", () => {
+    const members = [
+      createMember({
+        id: "custom-2k",
+        supportedResolutionsByModel: { "gpt-image-2": ["1k", "2K"] },
+      }),
+      createMember({
+        id: "custom-720p",
+        supportedResolutionsByModel: { veo31: ["720p"] },
+      }),
+      createMember({ id: "inherit-global" }),
+    ];
+
+    expect(
+      filterBackendMembers(
+        members,
+        createFilters({ resolution: " 2k " }),
+        "UTC"
+      ).map((member) => member.id)
+    ).toEqual(["custom-2k"]);
+    expect(
+      filterBackendMembers(
+        members,
+        createFilters({ resolution: "720P" }),
+        "UTC"
+      ).map((member) => member.id)
+    ).toEqual(["custom-720p"]);
+  });
+
+  it("组合模型与分辨率时只匹配同一模型的能力", () => {
+    const member = createMember({
+      supportedModelIds: ["gpt-image-2", "veo31"],
+      supportedResolutionsByModel: {
+        "gpt-image-2": ["1k"],
+        veo31: ["1080p"],
+      },
+    });
+
+    expect(
+      filterBackendMembers(
+        [member],
+        createFilters({ modelId: "gpt-image-2", resolution: "1080p" }),
+        "UTC"
+      )
+    ).toEqual([]);
+    expect(
+      filterBackendMembers(
+        [member],
+        createFilters({ modelId: "veo31", resolution: "1080p" }),
+        "UTC"
+      )
+    ).toEqual([member]);
+  });
+
   it("按部署时区自然日包含创建时间范围的两端", () => {
     const beforeMidnightUtc = createMember({
       id: "shanghai-august",

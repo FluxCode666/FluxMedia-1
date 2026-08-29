@@ -14,6 +14,13 @@ const mocks = vi.hoisted(() => ({
   logApiUpstreamImageTaskOrphanRisk: vi.fn(),
 }));
 
+const referenceUrlMocks = vi.hoisted(() => ({
+  isInputImagePlatformHosted: vi.fn(async () => true),
+  resolveInputImagePublicUrl: vi.fn(
+    async (image: { url?: string }) => image.url ?? null
+  ),
+}));
+
 vi.mock("@/features/image-backend-pool/media-upstream-fetch", () => ({
   fetchMediaUpstream: mocks.fetchMediaUpstream,
   fetchMediaUpstreamDownload: mocks.fetchMediaUpstreamDownload,
@@ -34,6 +41,15 @@ vi.mock(
   }
 );
 
+vi.mock("./rehost-input-images", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./rehost-input-images")>();
+  return {
+    ...actual,
+    isInputImagePlatformHosted: referenceUrlMocks.isInputImagePlatformHosted,
+    resolveInputImagePublicUrl: referenceUrlMocks.resolveInputImagePublicUrl,
+  };
+});
+
 /** 构造一段符合 Images API 约定的 SSE 事件。 */
 function sseBlock(event: string, data: Record<string, unknown>) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -42,6 +58,7 @@ function sseBlock(event: string, data: Record<string, unknown>) {
 /** 为动态导入 service.ts 准备 DB-free 测试所需的惰性环境占位。 */
 function prepareTestEnvironment() {
   process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:5432/test";
+  process.env.BETTER_AUTH_SECRET ||= "test-secret";
 }
 
 /** 构造启用模型映射和隔离请求脚本的 API 池账号。 */
@@ -95,6 +112,12 @@ function successfulImageResponse() {
 describe("Images API service", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    referenceUrlMocks.isInputImagePlatformHosted.mockImplementation(
+      async () => true
+    );
+    referenceUrlMocks.resolveInputImagePublicUrl.mockImplementation(
+      async (image: { url?: string }) => image.url ?? null
+    );
   });
 
   it("解析 content-type 错误的 Images SSE 响应", async () => {
@@ -756,6 +779,132 @@ return request;
 
     expect(result.error).toBeUndefined();
     expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("开启参考图 URL 转换时以 JSON image_urls 保留多图顺序", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.convertReferenceImagesToPublicUrl = true;
+    mocks.fetchMediaUpstream.mockImplementation(
+      async (_url: string, init?: RequestInit) => {
+        expect(init?.headers).toEqual(
+          expect.objectContaining({ "Content-Type": "application/json" })
+        );
+        expect(init?.body).toBeTypeOf("string");
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        expect(body.image_urls).toEqual([
+          "https://cdn.example.test/ref-1.png",
+          "https://cdn.example.test/ref-2.png",
+        ]);
+        expect(body.model).toBe("vendor-image-id");
+        expect(body.n).toBe(1);
+        expect(body.size).toBeUndefined();
+        return successfulImageResponse();
+      }
+    );
+
+    const result = await editImage(config, {
+      prompt: "combine references",
+      model: "gpt-image-2",
+      images: [
+        {
+          name: "ref-1.png",
+          type: "image/png",
+          data: Buffer.from("one"),
+          storageKey: "user-1/ref-1.png",
+          storageBucket: "generations",
+          url: "https://cdn.example.test/ref-1.png",
+        },
+        {
+          name: "ref-2.png",
+          type: "image/png",
+          data: Buffer.from("two"),
+          storageKey: "user-1/ref-2.png",
+          storageBucket: "generations",
+          url: "https://cdn.example.test/ref-2.png",
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(mocks.fetchMediaUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("公网 URL 模式超过 10 张参考图时 fail-closed", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.convertReferenceImagesToPublicUrl = true;
+    const result = await editImage(config, {
+      prompt: "too many",
+      model: "gpt-image-2",
+      images: Array.from({ length: 11 }, (_, index) => ({
+        name: `ref-${index}.png`,
+        type: "image/png",
+        data: Buffer.from("x"),
+      })),
+    });
+    expect(result.error).toContain("最多支持 10 张");
+    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
+  });
+
+  it("公网 URL 模式无法确认平台转存时不发送请求", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.convertReferenceImagesToPublicUrl = true;
+    referenceUrlMocks.isInputImagePlatformHosted.mockResolvedValue(false);
+    const result = await editImage(config, {
+      prompt: "missing hosted image",
+      model: "gpt-image-2",
+      images: [
+        {
+          name: "ref.png",
+          type: "image/png",
+          data: Buffer.from("x"),
+          url: "https://cdn.example.test/ref.png",
+        },
+      ],
+    });
+    expect(result.error).toContain("未能转存");
+    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
+  });
+
+  it("公网 URL 模式携带蒙版时不发送请求", async () => {
+    prepareTestEnvironment();
+    const { editImage } = await import("./service");
+    const config = createPoolApiConfig("");
+    const adapter = config.backend?.apiUpstreamAdapter;
+    if (!adapter) throw new Error("missing adapter");
+    adapter.convertReferenceImagesToPublicUrl = true;
+    const result = await editImage(config, {
+      prompt: "mask",
+      model: "gpt-image-2",
+      images: [
+        {
+          name: "ref.png",
+          type: "image/png",
+          data: Buffer.from("x"),
+          storageKey: "user-1/ref.png",
+          storageBucket: "generations",
+          url: "https://cdn.example.test/ref.png",
+        },
+      ],
+      mask: {
+        name: "mask.png",
+        type: "image/png",
+        data: Buffer.from("mask"),
+      },
+    });
+    expect(result.error).toContain("不支持蒙版");
+    expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 
   it("图生图未传尺寸时向上游发送 auto", async () => {

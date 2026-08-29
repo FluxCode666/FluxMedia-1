@@ -157,6 +157,13 @@ export const apiModelMappingsSchema = z
 /** 同步 JavaScript 请求处理脚本；空白内容规范为空字符串。 */
 export const apiRequestTransformScriptSchema = apiUpstreamScriptSourceSchema;
 
+/** 是否把图生图参考图转存后以公网 URL JSON 发送；缺失时保持旧 multipart 行为。 */
+export const apiConvertReferenceImagesToPublicUrlSchema = z.boolean();
+
+export type ApiConvertReferenceImagesToPublicUrl = z.infer<
+  typeof apiConvertReferenceImagesToPublicUrlSchema
+>;
+
 /** API 账号支持的四种宿主认证模式。 */
 export const API_UPSTREAM_AUTH_MODES = [
   "bearer",
@@ -341,6 +348,9 @@ export const apiUpstreamAdapterDraftSchema = z
         }
       ),
     useStream: z.boolean(),
+    /** 旧适配版本缺失此字段时必须继续使用 multipart。 */
+    convertReferenceImagesToPublicUrl:
+      apiConvertReferenceImagesToPublicUrlSchema.optional(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     videoProtocolMode: apiVideoProtocolModeSchema,
     /** 兼容旧适配版本；新配置只写入按模型能力。 */

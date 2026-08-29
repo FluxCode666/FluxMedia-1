@@ -1814,6 +1814,7 @@ async function runQueuedImageGenerationForUser({
             prompt: currentPrompt,
             apiPrompt: currentApiPrompt,
             promptOptimization,
+            generationId,
             signal: commonSignal,
             images: input.images,
             mask: input.mask,
@@ -2164,6 +2165,7 @@ async function runQueuedImageGenerationForUser({
               requiresContentSafety: moderationEnabled,
               params: {
                 ...params,
+                generationId,
                 signal: createImageGenerationAbortSignal(
                   input,
                   Math.max(

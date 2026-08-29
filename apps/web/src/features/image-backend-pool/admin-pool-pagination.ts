@@ -25,6 +25,7 @@ export const ADMIN_POOL_MEMBER_FILTER_PARAMS = {
   name: "memberName",
   credentialStatus: "memberCredential",
   modelId: "memberModel",
+  resolution: "memberResolution",
   createdFrom: "memberCreatedFrom",
   createdTo: "memberCreatedTo",
 } as const;
@@ -110,6 +111,11 @@ export function parseAdminPoolMemberListInput(
     ADMIN_POOL_MEMBER_FILTER_PARAMS.modelId,
     240
   );
+  const rawResolution = parseTextFilter(
+    searchParams,
+    ADMIN_POOL_MEMBER_FILTER_PARAMS.resolution,
+    32
+  );
 
   return {
     page: state.page,
@@ -121,6 +127,7 @@ export function parseAdminPoolMemberListInput(
     ),
     credentialStatus,
     modelId: rawModelId || "all",
+    resolution: rawResolution || "all",
     createdFrom: parseCalendarDate(
       searchParams,
       ADMIN_POOL_MEMBER_FILTER_PARAMS.createdFrom

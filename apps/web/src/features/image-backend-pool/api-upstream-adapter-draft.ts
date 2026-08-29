@@ -17,6 +17,8 @@ import type { ApiUpstreamAdapterOperationId } from "@repo/shared/image-backend/a
 
 /** 管理表单中与账号密钥分离的 API 适配草稿。 */
 export interface ApiUpstreamAdapterFormDraft {
+  /** 图生图参考图是否先转存并转换为绝对公网 URL。 */
+  convertReferenceImagesToPublicUrl: boolean;
   authentication: ApiUpstreamAdapterDraft["authentication"];
   videoSubmissionRetryCount: number;
   videoProtocolMode: ApiUpstreamAdapterDraft["videoProtocolMode"];
@@ -48,7 +50,7 @@ export const API_UPSTREAM_MEDIA_SECTIONS = [
   {
     id: "image-edit",
     title: "图生图",
-    description: "单图、多图或蒙版编辑；媒体以宿主令牌进入脚本。",
+    description: "单图、多图或蒙版编辑；可选择 multipart 或公网 URL JSON。",
     generateOperation: "images.edit",
     queryOperation: "images.edit.query",
   },
@@ -65,6 +67,7 @@ export const API_UPSTREAM_MEDIA_SECTIONS = [
 /** 创建新 API 成员的空脚本草稿。 */
 export function createDefaultApiUpstreamAdapterFormDraft(): ApiUpstreamAdapterFormDraft {
   return {
+    convertReferenceImagesToPublicUrl: false,
     authentication: { mode: "bearer" },
     videoSubmissionRetryCount: DEFAULT_VIDEO_SUBMISSION_RETRY_COUNT,
     videoProtocolMode: apiVideoProtocolModeSchema.parse("custom"),

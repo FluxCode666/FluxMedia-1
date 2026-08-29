@@ -12,6 +12,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@repo/ui/components/accordion";
+import { Checkbox } from "@repo/ui/components/checkbox";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import {
@@ -114,6 +115,31 @@ export function ApiUpstreamAdapterForm({
         </Select>
         <p className="text-xs text-muted-foreground">
           六个操作共享认证模式；脚本不可读取或覆盖认证值。
+        </p>
+      </div>
+      <div className="space-y-2 rounded-md border p-3">
+        <label
+          htmlFor="api-convert-reference-images-to-public-url"
+          className="flex items-center gap-2 text-sm"
+        >
+          <Checkbox
+            id="api-convert-reference-images-to-public-url"
+            checked={value.convertReferenceImagesToPublicUrl}
+            disabled={disabled}
+            onCheckedChange={(checked) =>
+              onChange({
+                ...value,
+                convertReferenceImagesToPublicUrl: checked === true,
+              })
+            }
+          />
+          <span>图生图参考图先转为公网 URL</span>
+        </label>
+        <p className="text-xs text-muted-foreground">
+          开启后宿主会先将所有参考图转存到对象存储，再以 JSON 的
+          <code className="mx-1">image_urls</code>
+          数组发送；关闭时沿用 multipart。适用于要求公网图片地址的供应商（如
+          Seedream），最多支持 10 张，转换失败不会发送请求。
         </p>
       </div>
       {value.authentication.mode === "custom_header" && (
