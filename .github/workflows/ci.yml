@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # CI 流水线（持续集成）
 #
-# 目的：在代码合入前对「协作者 / PR 贡献者」的提交做强制门禁，落实 CLAUDE.md/AGENTS.md
-#       第 0 章的协作准则 —— 文档镜像一致、代码风格、类型安全、测试、可构建、容器可打包。
+# 目的：在代码合入前对「协作者 / PR 贡献者」的提交做强制门禁，覆盖代码风格、类型安全、
+#       测试、可构建和容器可打包。
 #
 # 触发：
 #   - pull_request → main：贡献者门禁的主战场（每个 check 都会显示在 PR 上）。
@@ -32,29 +32,7 @@ permissions:
 
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
-  # 1) 文档镜像一致性：CLAUDE.md 必须与 AGENTS.md 逐字相同。
-  #    这是 CLAUDE.md/AGENTS.md 自身定下的「镜像文件」约束的自动化执法点。
-  #    极轻量：无需安装依赖，秒级失败。
-  # ───────────────────────────────────────────────────────────────────────────
-  docs-mirror:
-    name: Docs mirror (CLAUDE == AGENTS)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5（钉 SHA 防 tag 重指向；dependabot 维护）
-      - name: Assert CLAUDE.md and AGENTS.md are identical
-        run: |
-          # diff -q 仅在内容不同时返回非零；--strip-trailing-cr 容忍 CRLF/LF 差异，
-          # 避免因 Windows 贡献者的换行符导致误报。
-          if ! diff -q --strip-trailing-cr CLAUDE.md AGENTS.md > /dev/null; then
-            echo "::error::CLAUDE.md 与 AGENTS.md 内容必须完全一致（镜像文件）。请同步两者后再提交。"
-            echo "----- 差异如下 -----"
-            diff --strip-trailing-cr CLAUDE.md AGENTS.md || true
-            exit 1
-          fi
-          echo "OK：CLAUDE.md 与 AGENTS.md 一致。"
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # 2) 代码风格 / Lint（仅 PR、仅改动文件）：Biome 对本次 PR 触及的文件执行 lint。
+  # 1) 代码风格 / Lint（仅 PR、仅改动文件）：Biome 对本次 PR 触及的文件执行 lint。
   #
   #    设计取舍（均经验证，见 docs/CI-CD.md）：
   #    - 用 `biome lint`（仅 lint）而非 `biome ci`（lint + 格式 + import 排序）：
@@ -92,7 +70,7 @@ jobs:
             .
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 3) 类型检查（鲁棒性）：全仓 strict tsc --noEmit。
+  # 2) 类型检查（鲁棒性）：全仓 strict tsc --noEmit。
   # ───────────────────────────────────────────────────────────────────────────
   typecheck:
     name: Typecheck
@@ -108,7 +86,7 @@ jobs:
       - run: pnpm turbo typecheck
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 4) 单元测试（鲁棒性）：全仓 vitest（DB-free）。覆盖积分/扣费/幂等/API 等核心逻辑。
+  # 3) 单元测试（鲁棒性）：全仓 vitest（DB-free）。覆盖积分/扣费/幂等/API 等核心逻辑。
   # ───────────────────────────────────────────────────────────────────────────
   test:
     name: Unit tests
@@ -165,7 +143,7 @@ jobs:
           pnpm --filter @repo/integration-tests test:media-task-mq
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 5) 构建（鲁棒性）：next build（standalone）。Next 在 build 时会做整体类型与编译校验，
+  # 4) 构建（鲁棒性）：next build（standalone）。Next 在 build 时会做整体类型与编译校验，
   #    能抓到仅在生产构建下暴露的问题。环境变量为占位值，与 Dockerfile.web 的 build-args 一致。
   #    注意：此处不设 NODE_ENV=production，否则 pnpm 可能跳过 devDependencies 导致构建失败。
   # ───────────────────────────────────────────────────────────────────────────
@@ -180,7 +158,7 @@ jobs:
       SYSTEM_ASSETS_BUCKET_NAME: system
       GENERATIONS_BUCKET_NAME: generations
       # 仅供构建期模块加载使用的占位值（@repo/database 在 import 时会校验 DATABASE_URL）。
-      # 绝非运行时机密 —— 真实机密只存在于部署环境（见 CLAUDE.md §0.5）。
+      # 绝非运行时机密 —— 真实机密只存在于部署环境（见 .github/CICD.md）。
       DATABASE_URL: postgresql://gpt2image:gpt2image@localhost:5432/gpt2image
       BETTER_AUTH_SECRET: build-time-placeholder-secret-not-for-runtime
       BETTER_AUTH_URL: http://localhost:3000
@@ -194,7 +172,7 @@ jobs:
           pnpm --filter @repo/web smoke:api-upstream-worker
 
   # ───────────────────────────────────────────────────────────────────────────
-  # 6) 容器构建校验（仅 PR）：用 Dockerfile.web 实打实构建 web 镜像但**不推送**，
+  # 5) 容器构建校验（仅 PR）：用 Dockerfile.web 实打实构建 web 镜像但**不推送**，
   #    验证多阶段 Dockerfile（turbo prune → install → build → standalone 打包）未损坏。
   #    gha 缓存让重复构建保持快速。门禁在前 4 个 job 通过后才跑，避免无谓消耗。
   # ───────────────────────────────────────────────────────────────────────────

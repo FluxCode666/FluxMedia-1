@@ -88,9 +88,6 @@ jobs:
         working-directory: services/media-upstream-proxy
         run: go test ./...
 
-      - name: Assert documentation mirror
-        run: diff -q --strip-trailing-cr CLAUDE.md AGENTS.md
-
       - name: Test deployment environment parser
         run: bash deploy/read-env-value.test.sh
 

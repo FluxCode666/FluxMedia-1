@@ -50,7 +50,6 @@ main 或匹配版本 tag
 
 | Job | 运行条件 | 检查内容 |
 |---|---|---|
-| `docs-mirror` | PR、手动 | `CLAUDE.md` 与 `AGENTS.md` 逐字一致 |
 | `lint` | 仅 PR | 对相对 PR base 变更的文件运行 Biome lint |
 | `typecheck` | PR、手动 | 生成 Fumadocs source 后运行 `pnpm turbo typecheck` |
 | `test` | PR、手动 | 运行全仓 `pnpm turbo test` |
@@ -69,7 +68,6 @@ pnpm turbo lint
 pnpm turbo test
 pnpm --filter @repo/web build
 (cd services/media-upstream-proxy && go test ./...)
-cmp -s CLAUDE.md AGENTS.md
 ```
 
 ## 4. 生产发布工作流
@@ -92,7 +90,7 @@ cmp -s CLAUDE.md AGENTS.md
 
 1. 启动临时 PostgreSQL 16 和 Redis 7.4。
 2. 验证版本与分支/tag 关系。
-3. 运行 Go 代理测试、文档镜像检查、部署脚本测试和数据库发布门禁。
+3. 运行 Go 代理测试、部署脚本测试和数据库发布门禁。
 4. 运行 Fumadocs source 生成、lint、typecheck、全仓测试和集成测试。
 5. 构建 Web standalone，执行 API upstream worker 检查与 smoke test。
 6. 使用 Docker Buildx 构建并推送 Web、migrate 和 Adobe direct 代理镜像。

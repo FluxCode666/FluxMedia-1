@@ -10,12 +10,11 @@
 
 `.github/workflows/ci.yml` 在 pull request 与手动触发时运行；推送到 `main` 不会重复触发：
 
-1. `docs-mirror`：验证 `CLAUDE.md` 与 `AGENTS.md` 逐字一致。
-2. `lint`：仅在 pull request 对相对基线变更的文件运行 Biome lint。
-3. `typecheck`：生成 Fumadocs source 后运行全仓 strict typecheck。
-4. `test`：运行全仓 Vitest 单元测试。
-5. `build`：使用非机密占位环境变量构建 Web。
-6. `docker-build`：pull request 前述门禁通过后验证 Web runner 镜像可构建。
+1. `lint`：仅在 pull request 对相对基线变更的文件运行 Biome lint。
+2. `typecheck`：生成 Fumadocs source 后运行全仓 strict typecheck。
+3. `test`：运行全仓 Vitest 单元测试。
+4. `build`：使用非机密占位环境变量构建 Web。
+5. `docker-build`：pull request 前述门禁通过后验证 Web runner 镜像可构建。
 
 本地交付前执行与 CI 等价的核心门禁：
 
@@ -26,7 +25,6 @@ pnpm turbo test
 pnpm --filter @repo/web build
 (cd deploy/nginx && sh ./url-privacy-canary.test.sh)
 (cd services/media-upstream-proxy && go test ./...)
-cmp -s CLAUDE.md AGENTS.md
 ```
 
 ## 镜像发布与生产部署
