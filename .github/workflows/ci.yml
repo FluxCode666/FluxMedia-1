@@ -6,7 +6,6 @@
 #
 # 触发：
 #   - pull_request → main：贡献者门禁的主战场（每个 check 都会显示在 PR 上）。
-#   - push        → main：合入后回归，保证主干始终绿色。
 #   - 手动 (workflow_dispatch)：需要时人工重跑。
 #
 # 设计原则：
@@ -20,8 +19,6 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # 同一分支/PR 的新提交会取消仍在跑的旧流水线，节省额度、加快反馈。
@@ -29,7 +26,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 最小权限：CI 只读仓库内容；不授予写权限（发布交给 docker-release.yml）。
+# 最小权限：CI 只读仓库内容；不授予写权限（发布交给 deploy-production.yml）。
 permissions:
   contents: read
 
@@ -64,8 +61,7 @@ jobs:
   #      本仓库历史代码从未做过全仓 biome 格式化（全仓 `biome ci` 有 300+ 格式报错），
   #      团队既有约定 `turbo lint` 即 `biome lint`。强制格式会误伤大量历史文件。
   #    - 仅在 `pull_request` 触发：贡献者门禁的精确位置是 PR，diff = PR 相对目标分支的净改动（小而准）。
-  #      push（尤其合并提交）的改动集巨大，会把所触碰文件里的历史 lint 债一并暴露，造成无关失败。
-  #      类型/测试/构建仍在 push+PR 双跑以保证主干常绿。
+  #      类型/测试/构建在 PR 上运行，合并后不再因 push 到 main 重复执行。
   lint:
     name: Lint & format (changed files)
     runs-on: ubuntu-latest

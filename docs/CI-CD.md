@@ -3,9 +3,12 @@
 本文记录 FluxMedia 当前持续集成、镜像发布与生产部署契约。流水线文件是最终权威；
 修改流水线时必须同步本文。
 
+详细的 GitHub Actions 配置、Environment 凭据、服务器初始化和发布排障手册见
+[.github/CICD.md](../.github/CICD.md)。
+
 ## 持续集成
 
-`.github/workflows/ci.yml` 在 pull request、`main` push 与手动触发时运行：
+`.github/workflows/ci.yml` 在 pull request 与手动触发时运行；推送到 `main` 不会重复触发：
 
 1. `docs-mirror`：验证 `CLAUDE.md` 与 `AGENTS.md` 逐字一致。
 2. `lint`：仅在 pull request 对相对基线变更的文件运行 Biome lint。
