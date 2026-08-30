@@ -14,7 +14,7 @@ export const BUILTIN_IMAGE_MODEL_IDS = [
   "gpt-image-1.5",
   "nano-banana-pro",
   "nano-banana",
-  "nano-banana2",
+  "nano-banana-2",
 ] as const;
 
 export const IMAGE_CREDIT_PRICE_FIELDS = [

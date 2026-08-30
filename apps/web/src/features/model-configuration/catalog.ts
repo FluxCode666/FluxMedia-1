@@ -79,7 +79,7 @@ const IMAGE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   "gpt-image-1.5": "GPT Image 1.5",
   "nano-banana-pro": "Nano Banana Pro",
   "nano-banana": "Nano Banana",
-  "nano-banana2": "Nano Banana 2",
+  "nano-banana-2": "Nano Banana 2",
 };
 
 const VIDEO_DISPLAY_NAMES: Readonly<Record<string, string>> = {

@@ -715,6 +715,13 @@
       "when": 1788060000000,
       "tag": "0101_remove_adobe_supplier_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1788094800000,
+      "tag": "0102_rename_nano_banana2_model",
+      "breakpoints": true
     }
   ]
 }

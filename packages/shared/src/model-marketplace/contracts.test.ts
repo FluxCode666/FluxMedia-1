@@ -93,7 +93,7 @@ describe("modelMarketplaceConfigSchema", () => {
   });
 
   it("兼容已持久化的图像模型媒体能力字段", () => {
-    const modelIds = ["nano-banana-pro", "nano-banana", "nano-banana2"];
+    const modelIds = ["nano-banana-pro", "nano-banana", "nano-banana-2"];
     const imageByModel = Object.fromEntries(
       modelIds.map((modelId) => [
         modelId,
