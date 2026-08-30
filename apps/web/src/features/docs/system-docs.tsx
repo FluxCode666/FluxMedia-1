@@ -27,6 +27,16 @@ import {
   DOCUMENTATION_BASE_URL_PLACEHOLDER,
   replaceDocumentationBaseUrl,
 } from "./documentation-base-url";
+import {
+  IMAGE_SIZE_DOC_ENUM_EN,
+  IMAGE_SIZE_DOC_ENUM_ZH,
+  IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
+  IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
+  IMAGE_SIZE_DOC_TABLE_NOTE_EN,
+  IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
+  IMAGE_SIZE_DOC_TABLE_ROWS,
+} from "./image-size-docs";
+import { ImageSizeTable } from "./image-size-table";
 
 const sections = {
   zh: {
@@ -718,20 +728,13 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
             {
               name: "size",
               requirement: "可选",
-              description:
-                "目标尺寸，非法尺寸返回参数错误；作为本轮 Chat 生图运行参数。",
+              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。非法尺寸返回参数错误；作为本轮 Chat 生图运行参数。详见下方“图片尺寸表”。`,
             },
             {
               name: "quality",
               requirement: "可选",
               description:
-                "auto、low、medium、high；作为本轮 Chat 生图运行参数。",
-            },
-            {
-              name: "moderation",
-              requirement: "可选",
-              description:
-                "auto 或 low；作为向上游图像接口传递的本轮 Chat 生图参数，不会修改平台集中管理的内容审核级别。",
+                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。作为本轮 Chat 生图运行参数。",
             },
             {
               name: "stream",
@@ -874,7 +877,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
     "prompt": "A cute baby sea otter",
     "size": "1024x1024",
     "quality": "medium",
-    "moderation": "auto",
     "background": "auto"
   }'
 
@@ -886,8 +888,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
     "model": "gpt-image-1.5",
     "prompt": "一张赛博朋克城市夜景，雨后霓虹反光",
     "size": "1024x1024",
-    "quality": "high",
-    "moderation": "low",
     "response_format": "url",
     "output_format": "webp",
     "output_compression": 85,
@@ -1033,19 +1033,13 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
             {
               name: "size",
               requirement: "可选",
-              description:
-                "目标尺寸。省略等同于 auto；支持本站分辨率校验规则，非法尺寸会返回参数错误。",
+              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。非法尺寸会返回参数错误。详见下方“图片尺寸表”。`,
             },
             {
               name: "quality",
               requirement: "可选",
-              description: "auto、low、medium、high。",
-            },
-            {
-              name: "moderation",
-              requirement: "可选",
               description:
-                "auto 或 low；作为向上游图像接口传递的生成参数，不会修改平台集中管理的内容审核级别。",
+                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。",
             },
             {
               name: "response_format",
@@ -1216,7 +1210,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -F prompt="把参考图改成电影海报风格" \\
   -F size="1024x1024" \\
   -F quality="high" \\
-  -F moderation="auto" \\
   -F response_format="url" \\
   -F output_format="jpeg" \\
   -F output_compression="90" \\
@@ -1255,7 +1248,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "mask_image_url": "https://example.com/mask-alt.png",
     "size": "1024x1024",
     "quality": "auto",
-    "moderation": "low",
     "response_format": "url",
     "output_format": "webp",
     "output_compression": 80,
@@ -1355,18 +1347,13 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             {
               name: "size",
               requirement: "可选",
-              description: "目标尺寸；省略等同于 auto。",
+              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。详见下方“图片尺寸表”。`,
             },
             {
               name: "quality",
               requirement: "可选",
-              description: "auto、low、medium、high。",
-            },
-            {
-              name: "moderation",
-              requirement: "可选",
               description:
-                "auto 或 low；作为向上游图像接口传递的编辑参数，不会修改平台集中管理的内容审核级别。",
+                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。",
             },
             {
               name: "response_format",
@@ -2081,20 +2068,13 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
             {
               name: "size",
               requirement: "可选",
-              description:
-                "目标尺寸，非法尺寸返回参数错误；作为 Agent 内 image_generation 工具运行参数。",
+              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。非法尺寸返回参数错误；作为 Agent 内 image_generation 工具运行参数。详见下方“图片尺寸表”。`,
             },
             {
               name: "quality",
               requirement: "可选",
               description:
-                "auto、low、medium、high；作为 Agent 内 image_generation 工具运行参数。",
-            },
-            {
-              name: "moderation",
-              requirement: "可选",
-              description:
-                "auto 或 low；作为 Agent 内 image_generation 工具的上游生成参数，不会修改平台集中管理的内容审核级别。",
+                "auto、low、medium、high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。作为 Agent 内 image_generation 工具运行参数。",
             },
             {
               name: "output_format",
@@ -2200,8 +2180,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "model": "gpt-5.4",
     "input": "生成一张 1:1 的未来感产品渲染图",
     "size": "1024x1024",
-    "quality": "high",
-    "moderation": "auto"
+    "quality": "high"
   }'
 
 # 2. 显式 image_generation tool，并指定图片模型
@@ -2236,8 +2215,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
     "size": "1024x1024",
     "output_format": "webp",
-    "output_compression": 85,
-    "moderation": "low"
+    "output_compression": 85
   }'
 
 # 4. 续接上一轮，并使用流式返回
@@ -2334,21 +2312,14 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
               name: "size",
               requirement: "可选",
               custom: true,
-              description:
-                "本站便捷字段：未在 image_generation tool 内指定尺寸时，作为本次生图 size 使用。",
+              description: `本站便捷字段：未在 image_generation tool 内指定尺寸时，作为本次生图 size 使用。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；也可传符合站内约束的自定义 WIDTHxHEIGHT。详见下方“图片尺寸表”。`,
             },
             {
               name: "quality",
               requirement: "可选",
               custom: true,
-              description: "本站便捷字段：作为本次生图 quality 运行参数使用。",
-            },
-            {
-              name: "moderation",
-              requirement: "可选",
-              custom: true,
               description:
-                "本站便捷字段：作为本次生图的上游 moderation 参数使用，不会修改平台集中管理的内容审核级别。",
+                "本站便捷字段：作为本次生图 quality 运行参数使用。quality 仅 gpt-image-2 可用，其他图片模型不要传此参数。",
             },
             {
               name: "output_format",
@@ -2448,7 +2419,8 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       valid: [
         "GPT 模型传给 Responses 顶层 model。",
         "图片模型传给 image_generation 工具 model。",
-        "size、quality、moderation、参考图、mask 会组装进 Responses 工具请求。",
+        "size、quality、参考图、mask 会组装进 Responses 工具请求。",
+        "quality 仅在图片模型为 gpt-image-2 时使用；其他图片模型不会传入 quality。",
         "页面 Chat 模式只提供普通多模态对话/生图语义；页面 Agent 模式默认提供 image_generation、web_search、continue_generation，不强制 tool_choice，并会线性多轮续跑，让模型像 Codex 一样按需联网、读取已上传文本文件上下文、生成草图和迭代改版。",
         "Chat/Agent 上传的本地文本/代码文件会作为请求上下文读取；不会开放服务器文件系统路径读取。",
         "支持外部 /v1/responses；也可承接 /v1/images/generations 和 /v1/images/edits 的内部转换。",
@@ -2513,6 +2485,14 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "超分与高清修复可叠加：先修复（原分辨率，省算力）再超分（放大到目标）。生成式修复启用时自带超分到目标、替代自动超分。都不裁剪、不改宽高比；任一步失败自动回退原图，不阻断出图。",
         ],
       ],
+    },
+    imageSizeTable: {
+      title: "图片尺寸表",
+      description:
+        "下表按站内生图尺寸选择器的分辨率基准和宽高比，列出 size 参数对应的标准枚举值。",
+      headers: IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
+      rows: IMAGE_SIZE_DOC_TABLE_ROWS,
+      note: IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
     },
     roadmap: {
       title: "后续规划",
@@ -3074,20 +3054,13 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
             {
               name: "size",
               requirement: "Optional",
-              description:
-                "Target size; invalid values are rejected. Used as a runtime Chat image parameter.",
+              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. Invalid values are rejected. Used as a runtime Chat image parameter. See the “Image Size Table” below.`,
             },
             {
               name: "quality",
               requirement: "Optional",
               description:
-                "auto, low, medium, or high. Used as a runtime Chat image parameter.",
-            },
-            {
-              name: "moderation",
-              requirement: "Optional",
-              description:
-                "auto or low. Passed upstream as a runtime Chat image parameter; it does not change FluxMedia's centrally managed content-moderation level.",
+                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models. Used as a runtime Chat image parameter.",
             },
             {
               name: "stream",
@@ -3216,7 +3189,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
     "prompt": "A cute baby sea otter",
     "size": "1024x1024",
     "quality": "medium",
-    "moderation": "auto",
     "background": "auto"
   }'
 
@@ -3228,8 +3200,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
     "model": "gpt-image-1.5",
     "prompt": "A cyberpunk city at night after rain, neon reflections",
     "size": "1024x1024",
-    "quality": "high",
-    "moderation": "low",
     "response_format": "url",
     "output_format": "webp",
     "output_compression": 85,
@@ -3375,19 +3345,13 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
             {
               name: "size",
               requirement: "Optional",
-              description:
-                "Target size. Omission is equivalent to auto. FluxMedia validates the size and rejects invalid values.",
+              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. FluxMedia validates the size and rejects invalid values. See the “Image Size Table” below.`,
             },
             {
               name: "quality",
               requirement: "Optional",
-              description: "auto, low, medium, or high.",
-            },
-            {
-              name: "moderation",
-              requirement: "Optional",
               description:
-                "auto or low. Passed upstream as an image-generation parameter; it does not change FluxMedia's centrally managed content-moderation level.",
+                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models.",
             },
             {
               name: "response_format",
@@ -3539,7 +3503,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -F prompt="Turn the reference image into a cinematic poster" \\
   -F size="1024x1024" \\
   -F quality="high" \\
-  -F moderation="auto" \\
   -F response_format="url" \\
   -F output_format="jpeg" \\
   -F output_compression="90" \\
@@ -3578,7 +3541,6 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "mask_image_url": "https://example.com/mask-alt.png",
     "size": "1024x1024",
     "quality": "auto",
-    "moderation": "low",
     "response_format": "url",
     "output_format": "webp",
     "output_compression": 80,
@@ -3679,18 +3641,13 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
             {
               name: "size",
               requirement: "Optional",
-              description: "Target size; omission is equivalent to auto.",
+              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
             },
             {
               name: "quality",
               requirement: "Optional",
-              description: "auto, low, medium, or high.",
-            },
-            {
-              name: "moderation",
-              requirement: "Optional",
               description:
-                "auto or low. Passed upstream as an image-edit parameter; it does not change FluxMedia's centrally managed content-moderation level.",
+                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models.",
             },
             {
               name: "response_format",
@@ -4395,20 +4352,13 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
             {
               name: "size",
               requirement: "Optional",
-              description:
-                "Target size; invalid values are rejected. Used as a runtime image_generation parameter inside Agent.",
+              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. Invalid values are rejected. Used as a runtime image_generation parameter inside Agent. See the “Image Size Table” below.`,
             },
             {
               name: "quality",
               requirement: "Optional",
               description:
-                "auto, low, medium, or high. Used as a runtime image_generation parameter inside Agent.",
-            },
-            {
-              name: "moderation",
-              requirement: "Optional",
-              description:
-                "auto or low. Passed upstream as an image_generation parameter inside Agent; it does not change FluxMedia's centrally managed content-moderation level.",
+                "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models. Used as a runtime image_generation parameter inside Agent.",
             },
             {
               name: "output_format",
@@ -4516,8 +4466,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "model": "gpt-5.4",
     "input": "Generate a 1:1 futuristic product render",
     "size": "1024x1024",
-    "quality": "high",
-    "moderation": "auto"
+    "quality": "high"
   }'
 
 # 2. Explicit image_generation tool with image model.
@@ -4552,8 +4501,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
     "size": "1024x1024",
     "output_format": "webp",
-    "output_compression": 85,
-    "moderation": "low"
+    "output_compression": 85
   }'
 
 # 4. Continue a previous response and stream the result.
@@ -4650,22 +4598,14 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
               name: "size",
               requirement: "Optional",
               custom: true,
-              description:
-                "Convenience field used as the run-time image size when the image_generation tool does not provide one.",
+              description: `Convenience field used as the run-time image size when the image_generation tool does not provide one. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
             },
             {
               name: "quality",
               requirement: "Optional",
               custom: true,
               description:
-                "Convenience field used as the run-time image quality.",
-            },
-            {
-              name: "moderation",
-              requirement: "Optional",
-              custom: true,
-              description:
-                "Convenience field passed upstream as the runtime image moderation setting. It does not change FluxMedia's centrally managed content-moderation level.",
+                "Convenience field used as the run-time image quality. quality is supported only by gpt-image-2; do not send it for other image models.",
             },
             {
               name: "output_format",
@@ -4769,7 +4709,8 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       valid: [
         "GPT model is sent as the top-level Responses model.",
         "Image model is sent as the image_generation tool model.",
-        "size, quality, moderation, reference images, and mask are assembled into the Responses tool request.",
+        "size, quality, reference images, and mask are assembled into the Responses tool request.",
+        "quality is used only when the image model is gpt-image-2; it is omitted for other image models.",
         "Page Chat mode uses normal multimodal chat/image semantics. Page Agent mode provides image_generation, web_search, and continue_generation by default without forcing tool_choice, and can continue across linear automatic rounds so the model can search, read uploaded text-file context, generate drafts, and refine like Codex.",
         "Uploaded local text/code files in Chat/Agent are read as request context. Server filesystem paths written in prompts are not read.",
         "Supports external /v1/responses and can also handle converted /v1/images/generations and /v1/images/edits requests.",
@@ -4837,6 +4778,14 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           "Super-resolution and HD repair can stack: restore first (native resolution, cheaper), then upscale to target. Generative repair, when enabled, upscales to target itself and replaces auto super-resolution. Nothing crops or changes aspect ratio; on any failure it falls back to the original and never blocks generation.",
         ],
       ],
+    },
+    imageSizeTable: {
+      title: "Image Size Table",
+      description:
+        "The table maps the site image-size selector's resolution bases and aspect ratios to the standard size enum values.",
+      headers: IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
+      rows: IMAGE_SIZE_DOC_TABLE_ROWS,
+      note: IMAGE_SIZE_DOC_TABLE_NOTE_EN,
     },
     roadmap: {
       title: "Roadmap",
@@ -5360,7 +5309,7 @@ function FieldName({
             : "text-muted-foreground"
         }`}
       >
-        {/* 参数名常把多个等价别名用 " / " 串联（如 "size / quality / moderation"）。
+        {/* 参数名常把多个等价别名用 " / " 串联（如 "size / quality / output_format"）。
             内联渲染时 " / " 易被误读为"或"，故按 " / "（前后带空格）拆分，每个名字单独成行。
             仅含空格的 " / " 触发拆分；路径/枚举里无空格的斜杠（如 "/v1/images/generations"、
             "low/medium/high"）保持单行不受影响。 */}
@@ -5651,6 +5600,7 @@ export function SystemDocsContent({
     { id: "moderation-repair", label: content.moderationRepair.title },
     { id: "agent", label: content.agent.title },
     { id: "external-api", label: content.externalDocs.title },
+    { id: "image-size-table", label: content.imageSizeTable.title },
     { id: "route-tables", label: content.routeTables.title },
     { id: "backends", label: content.flow.backendTitle },
     {
@@ -5738,6 +5688,10 @@ export function SystemDocsContent({
         <ExternalApiDocs baseUrl={baseUrl} docs={content.externalDocs} />
       </div>
 
+      <div className="scroll-mt-32" id="image-size-table">
+        <ImageSizeTable table={content.imageSizeTable} />
+      </div>
+
       <Card className="scroll-mt-32 rounded-lg" id="route-tables">
         <CardHeader>
           <CardTitle className="font-serif text-lg tracking-tight">
@@ -5759,24 +5713,22 @@ export function SystemDocsContent({
       </Card>
 
       <div className="scroll-mt-32 grid gap-4 lg:grid-cols-3" id="backends">
-        {[content.web, content.codex, content.api].map(
-          (section) => (
-            <Card className="rounded-lg" key={section.title}>
-              <CardHeader>
-                <CardTitle className="font-serif text-lg tracking-tight">
-                  {section.title}
-                </CardTitle>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {section.description}
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <ListBlock items={section.valid} type="valid" />
-                <ListBlock items={section.invalid} type="invalid" />
-              </CardContent>
-            </Card>
-          )
-        )}
+        {[content.web, content.codex, content.api].map((section) => (
+          <Card className="rounded-lg" key={section.title}>
+            <CardHeader>
+              <CardTitle className="font-serif text-lg tracking-tight">
+                {section.title}
+              </CardTitle>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {section.description}
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ListBlock items={section.valid} type="valid" />
+              <ListBlock items={section.invalid} type="invalid" />
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <div className="scroll-mt-32" id="api-upstream-adapter">

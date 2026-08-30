@@ -230,6 +230,52 @@ describe("API integration docs data", () => {
     expect(taskText).not.toContain("30 分钟");
   });
 
+  it.each(["zh", "en"])("%s 公开图片质量限制和尺寸枚举表", (locale) => {
+    const content = getApiIntegrationDocs(locale);
+    const generation = content.endpoints.find(
+      (endpoint) => endpoint.id === "image-generations"
+    );
+    const edit = content.endpoints.find(
+      (endpoint) => endpoint.id === "image-edits"
+    );
+    const qualityDescriptions = [generation, edit].map(
+      (endpoint) =>
+        endpoint?.parameters.find((parameter) => parameter.name === "quality")
+          ?.description ?? ""
+    );
+    const sizeDescriptions = [generation, edit].map(
+      (endpoint) =>
+        endpoint?.parameters.find((parameter) => parameter.name === "size")
+          ?.description ?? ""
+    );
+
+    for (const description of qualityDescriptions) {
+      expect(description).toMatch(/gpt-image-2/iu);
+    }
+    for (const description of sizeDescriptions) {
+      expect(description).toContain("1024x1024");
+      expect(description).toContain("3840x2160");
+      expect(description).toMatch(/图片尺寸表|Image Size Table/u);
+    }
+
+    expect(content.imageSizeTable.title).toMatch(
+      locale === "zh" ? /图片尺寸表/u : /Image Size Table/u
+    );
+    expect(content.imageSizeTable.rows).toHaveLength(3);
+    expect(content.imageSizeTable.rows[0]).toEqual([
+      "1K",
+      "1248x1248",
+      "1248x832",
+      "832x1248",
+      "1248x704",
+      "704x1248",
+      "1248x944",
+      "944x1248",
+      "1248x528",
+    ]);
+    expect(content.imageSizeTable.rows[2]).toContain("3840x1648");
+  });
+
   it.each(["zh", "en"])("%s 为每个视频接口提供 Gemini 协议变体", (locale) => {
     const content = getApiIntegrationDocs(locale);
     const videoEndpoints = content.endpoints.filter(
@@ -357,7 +403,6 @@ describe("API integration docs data", () => {
     const commonDefaults = {
       size: "1024x1024",
       quality: "auto",
-      moderation: "auto",
       response_format: "b64_json",
       output_format: "未指定（上游决定）",
       output_compression: "未指定（上游决定）",

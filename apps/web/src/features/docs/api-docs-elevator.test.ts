@@ -61,6 +61,7 @@ function mountElevator(): HTMLDivElement {
         description: "展开模块后，点击具体接口定位。",
         endpoints: ENDPOINTS,
         groups: GROUPS,
+        standaloneSections: [{ id: "image-size-table", title: "图片尺寸表" }],
       })
     );
   });
@@ -112,5 +113,14 @@ describe("ApiDocsElevator", () => {
 
     expect(imageButton.getAttribute("aria-expanded")).toBe("true");
     expect(endpointList?.classList.contains("hidden")).toBe(false);
+  });
+
+  it("展示独立正文章节入口", () => {
+    const mounted = mountElevator();
+    const link = Array.from(
+      mounted.querySelectorAll<HTMLAnchorElement>("a")
+    ).find((item) => item.textContent?.includes("图片尺寸表"));
+
+    expect(link?.getAttribute("href")).toBe("#image-size-table");
   });
 });

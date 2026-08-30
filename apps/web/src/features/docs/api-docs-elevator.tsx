@@ -24,6 +24,10 @@ type ElevatorGroup = Pick<
   ApiIntegrationEndpointGroup,
   "endpointIds" | "id" | "title"
 >;
+type ElevatorStandaloneSection = {
+  id: string;
+  title: string;
+};
 
 const MOBILE_ACTIVATION_LINE = 144;
 // 章节使用 scroll-mt-32（128px）；激活线需略低于锚点落位，否则点击电梯后会
@@ -37,6 +41,7 @@ const DESKTOP_ACTIVATION_LINE = 144;
  * @param description - 目录头部的浏览说明。
  * @param endpoints - 当前公开且按页面顺序排列的端点。
  * @param groups - 按正文顺序排列的端点模块。
+ * @param standaloneSections - 不属于端点模块的独立正文章节。
  * @returns 响应式 aside；没有端点时不渲染。
  * @sideEffects 监听 window scroll、resize 与 hashchange，并读取章节矩形。
  */
@@ -45,19 +50,23 @@ export function ApiDocsElevator({
   description,
   endpoints,
   groups,
+  standaloneSections = [],
 }: {
   ariaLabel: string;
   description: string;
   endpoints: readonly ElevatorEndpoint[];
   groups: readonly ElevatorGroup[];
+  standaloneSections?: readonly ElevatorStandaloneSection[];
 }) {
-  const firstSectionId = groups[0]?.id ?? endpoints[0]?.id ?? "";
+  const firstSectionId =
+    groups[0]?.id ?? standaloneSections[0]?.id ?? endpoints[0]?.id ?? "";
   const [activeId, setActiveId] = useState(firstSectionId);
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<
     ReadonlySet<string>
   >(() => new Set());
   const sectionIdsKey = groups
     .flatMap((group) => [group.id, ...group.endpointIds])
+    .concat(standaloneSections.map((section) => section.id))
     .join("\n");
 
   useEffect(() => {
@@ -230,6 +239,27 @@ export function ApiDocsElevator({
                   })}
                 </div>
               </div>
+            );
+          })}
+          {standaloneSections.map((section) => {
+            const isActive = activeId === section.id;
+            return (
+              <a
+                aria-current={isActive ? "location" : undefined}
+                className={cn(
+                  "group flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left transition-[color,background-color,border-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:w-full",
+                  isActive
+                    ? "border-border bg-muted font-medium text-foreground shadow-xs"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                )}
+                href={`#${section.id}`}
+                key={section.id}
+                onClick={() => setActiveId(section.id)}
+              >
+                <span className="min-w-0 whitespace-nowrap text-xs">
+                  {section.title}
+                </span>
+              </a>
             );
           })}
         </div>

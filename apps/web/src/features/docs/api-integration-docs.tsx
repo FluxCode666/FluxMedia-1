@@ -24,6 +24,7 @@ import {
   type ApiIntegrationResponseField,
   getApiIntegrationDocs,
 } from "./api-integration-docs-data";
+import { ImageSizeTable } from "./image-size-table";
 
 /** 渲染响应式请求参数表；窄屏退化为逐字段卡片。 */
 function ParameterTable({
@@ -317,6 +318,9 @@ export function ApiIntegrationDocs({
           description={content.directoryDescription}
           endpoints={content.endpoints}
           groups={content.groups}
+          standaloneSections={[
+            { id: "image-size-table", title: content.imageSizeTable.title },
+          ]}
         />
         <div className="mt-10 min-w-0 lg:mt-0">
           <h2 className="font-serif text-2xl font-medium tracking-tight md:text-3xl">
@@ -360,6 +364,9 @@ export function ApiIntegrationDocs({
               );
             })}
           </div>
+          <section className="scroll-mt-32 mt-14" id="image-size-table">
+            <ImageSizeTable table={content.imageSizeTable} />
+          </section>
         </div>
       </div>
     </div>

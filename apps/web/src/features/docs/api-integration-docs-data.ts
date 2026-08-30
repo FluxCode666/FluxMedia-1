@@ -10,6 +10,15 @@ import {
   DOCUMENTATION_BASE_URL_PLACEHOLDER,
   replaceDocumentationBaseUrl,
 } from "./documentation-base-url";
+import {
+  IMAGE_SIZE_DOC_ENUM_EN,
+  IMAGE_SIZE_DOC_ENUM_ZH,
+  IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
+  IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
+  IMAGE_SIZE_DOC_TABLE_NOTE_EN,
+  IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
+  IMAGE_SIZE_DOC_TABLE_ROWS,
+} from "./image-size-docs";
 
 export type ApiIntegrationParameter = {
   name: string;
@@ -84,6 +93,13 @@ export type ApiIntegrationDocsContent = {
   };
   groups: readonly ApiIntegrationEndpointGroup[];
   endpoints: readonly ApiIntegrationEndpoint[];
+  imageSizeTable: {
+    title: string;
+    description: string;
+    headers: readonly string[];
+    rows: readonly (readonly string[])[];
+    note: string;
+  };
 };
 
 /** 首页快速集成只需要的最小公开 API 文档契约。 */
@@ -551,6 +567,14 @@ const zhContent = {
       endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.videos,
     },
   ],
+  imageSizeTable: {
+    title: "图片尺寸表",
+    description:
+      "下表按站内生图尺寸选择器的分辨率基准和宽高比，列出 size 参数对应的标准枚举值。",
+    headers: IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
+    rows: IMAGE_SIZE_DOC_TABLE_ROWS,
+    note: IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
+  },
   endpoints: [
     {
       id: "models",
@@ -718,19 +742,14 @@ const zhContent = {
           name: "size",
           requirement: "可选",
           defaultValue: "1024x1024",
-          description: "目标图片尺寸，例如 1024x1024。",
+          description: `目标图片尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}。省略默认 1024x1024；也可传符合站内约束的自定义 WIDTHxHEIGHT。详见本文“图片尺寸表”。`,
         },
         {
           name: "quality",
           requirement: "可选",
           defaultValue: "auto",
-          description: "auto、low、medium 或 high。",
-        },
-        {
-          name: "moderation",
-          requirement: "可选",
-          defaultValue: "auto",
-          description: "auto 或 low，作为上游图像生成参数传递。",
+          description:
+            "auto、low、medium 或 high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。",
         },
         {
           name: "response_format",
@@ -846,19 +865,14 @@ const zhContent = {
           name: "size",
           requirement: "可选",
           defaultValue: "1024x1024",
-          description: "目标图片尺寸，例如 1024x1024。",
+          description: `目标图片尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}。省略默认 1024x1024；也可传符合站内约束的自定义 WIDTHxHEIGHT。详见本文“图片尺寸表”。`,
         },
         {
           name: "quality",
           requirement: "可选",
           defaultValue: "auto",
-          description: "auto、low、medium 或 high。",
-        },
-        {
-          name: "moderation",
-          requirement: "可选",
-          defaultValue: "auto",
-          description: "auto 或 low，作为上游图像编辑参数传递。",
+          description:
+            "auto、low、medium 或 high；当前仅 gpt-image-2 可用，其他图片模型不要传此参数。",
         },
         {
           name: "response_format",
@@ -1416,6 +1430,14 @@ const enContent = {
       endpointIds: API_INTEGRATION_GROUP_ENDPOINT_IDS.videos,
     },
   ],
+  imageSizeTable: {
+    title: "Image Size Table",
+    description:
+      "The table maps the site image-size selector's resolution bases and aspect ratios to the standard size enum values.",
+    headers: IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
+    rows: IMAGE_SIZE_DOC_TABLE_ROWS,
+    note: IMAGE_SIZE_DOC_TABLE_NOTE_EN,
+  },
   endpoints: [
     {
       ...getZhEndpointTemplate("models"),
@@ -1513,19 +1535,14 @@ const enContent = {
           name: "size",
           requirement: "Optional",
           defaultValue: "1024x1024",
-          description: "Target image size, for example 1024x1024.",
+          description: `Target image size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}. Omission defaults to 1024x1024; custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
         },
         {
           name: "quality",
           requirement: "Optional",
           defaultValue: "auto",
-          description: "auto, low, medium, or high.",
-        },
-        {
-          name: "moderation",
-          requirement: "Optional",
-          defaultValue: "auto",
-          description: "auto or low, forwarded as an upstream image parameter.",
+          description:
+            "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models.",
         },
         {
           name: "response_format",
@@ -1623,19 +1640,14 @@ const enContent = {
           name: "size",
           requirement: "Optional",
           defaultValue: "1024x1024",
-          description: "Target image size, for example 1024x1024.",
+          description: `Target image size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}. Omission defaults to 1024x1024; custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
         },
         {
           name: "quality",
           requirement: "Optional",
           defaultValue: "auto",
-          description: "auto, low, medium, or high.",
-        },
-        {
-          name: "moderation",
-          requirement: "Optional",
-          defaultValue: "auto",
-          description: "auto or low, forwarded as an upstream edit parameter.",
+          description:
+            "auto, low, medium, or high; currently supported only by gpt-image-2. Do not send it for other image models.",
         },
         {
           name: "response_format",
