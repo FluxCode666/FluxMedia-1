@@ -11,7 +11,7 @@ const BUILTIN_MODEL_MARKETPLACE_DESCRIPTIONS: Readonly<Record<string, string>> =
     "gpt-image-1.5": "兼顾图像质量、编辑能力与稳定指令遵循。",
     "nano-banana-pro": "适合高质量图像创作、编辑与多元素一致性处理。",
     "nano-banana": "适合快速图像生成、编辑与日常创意探索。",
-    "nano-banana2": "适合快速生成并保持稳定的视觉与提示词一致性。",
+    "nano-banana-2": "适合快速生成并保持稳定的视觉与提示词一致性。",
     sora2: "适合生成具有连贯运动和电影感构图的视频。",
     "sora2-pro": "适合对画面质量、运动细节与叙事一致性要求更高的视频。",
     veo31: "适合高质量视频生成与多种时长、比例和分辨率组合。",
