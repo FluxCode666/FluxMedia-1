@@ -19,6 +19,7 @@ import {
   Component,
   type ErrorInfo,
   type ReactNode,
+  useEffect,
   useRef,
   useState,
 } from "react";
@@ -44,6 +45,10 @@ type AdminRequestJsonDetailsProps = {
   id: string;
   kind: "image" | "video";
 };
+
+// The server keeps snapshots bounded, but retain a second client-side guard so a
+// legacy or unexpectedly large response cannot allocate an unbounded code block.
+const MAX_REQUEST_JSON_DISPLAY_CHARACTERS = 256 * 1024;
 
 type RequestJsonErrorBoundaryProps = {
   children: ReactNode;
@@ -88,8 +93,29 @@ class RequestJsonErrorBoundary extends Component<
  */
 function formatRequestJson(body: unknown): string | null {
   try {
-    const formatted = JSON.stringify(body, null, 2);
-    return typeof formatted === "string" ? formatted : null;
+    // A few legacy snapshots contain the already-encoded JSON wire body as a
+    // string. Parse only object/array-looking strings so ordinary text fields
+    // remain strings while the request itself is displayed as a JSON tree.
+    let displayValue = body;
+    if (typeof body === "string") {
+      const trimmed = body.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          displayValue = JSON.parse(trimmed) as unknown;
+        } catch {
+          // Keep the original string; JSON.stringify below still renders it
+          // safely instead of allowing a legacy parse error to escape.
+        }
+      }
+    }
+    const formatted = JSON.stringify(displayValue, null, 2);
+    if (
+      typeof formatted !== "string" ||
+      formatted.length > MAX_REQUEST_JSON_DISPLAY_CHARACTERS
+    ) {
+      return null;
+    }
+    return formatted;
   } catch {
     return null;
   }
@@ -114,6 +140,14 @@ function AdminRequestJsonDetailsContent({
     status: "idle",
   });
   const requestStartedRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   /** 首次展开时读取当前记录快照，重复开合复用已完成状态。 */
   function handleOpenChange(nextOpen: boolean): void {
@@ -123,6 +157,7 @@ function AdminRequestJsonDetailsContent({
     setRequestState({ status: "loading" });
     void getAdminHistoryRequestSnapshotAction({ id, kind })
       .then((result) => {
+        if (!mountedRef.current) return;
         if (
           !result.data ||
           result.data.id !== id ||
@@ -143,6 +178,7 @@ function AdminRequestJsonDetailsContent({
         });
       })
       .catch(() => {
+        if (!mountedRef.current) return;
         requestStartedRef.current = false;
         setRequestState({ status: "error" });
       });

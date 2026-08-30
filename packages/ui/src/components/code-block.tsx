@@ -18,7 +18,7 @@ type CopyState = "idle" | "copied" | "failed";
 // Keep large payloads as one text node. Rendering one React element per line can
 // make a modal appear empty while the browser is still mounting thousands of
 // spans (request snapshots are intentionally bounded, but can still be large).
-const MAX_RENDERED_LINE_ELEMENTS = 2000;
+const MAX_RENDERED_LINE_ELEMENTS = 500;
 
 type CodeBlockLabels = {
   copy: string;
@@ -169,7 +169,7 @@ export function CodeBlock({
   return (
     <figure
       className={cn(
-        "overflow-hidden rounded-lg border border-border bg-muted/50 shadow-whisper",
+        "min-w-0 max-w-full overflow-hidden rounded-lg border border-border bg-muted/50 shadow-whisper",
         className
       )}
       {...props}
@@ -194,8 +194,8 @@ export function CodeBlock({
           <span className="hidden sm:inline">{copyLabel}</span>
         </Button>
       </div>
-      <pre className="max-h-144 overflow-auto p-0 font-mono text-xs leading-6 text-foreground">
-        <code className="block min-w-max py-3">
+      <pre className="max-h-144 min-w-0 max-w-full overflow-auto p-0 font-mono text-xs leading-6 text-foreground">
+        <code className="block min-w-0 max-w-full py-3">
           {renderLineElements ? (
             lines?.map((line) => (
               <span
@@ -204,9 +204,7 @@ export function CodeBlock({
                   showLineNumbers &&
                     "grid grid-cols-[2rem_1fr] gap-4 before:select-none before:text-right before:text-muted-foreground/60 before:content-[attr(data-line-number)]"
                 )}
-                data-line-number={
-                  showLineNumbers ? line.lineNumber : undefined
-                }
+                data-line-number={showLineNumbers ? line.lineNumber : undefined}
                 key={line.key}
               >
                 {line.line || "\u00a0"}

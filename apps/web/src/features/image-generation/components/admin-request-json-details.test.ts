@@ -145,6 +145,41 @@ describe("AdminRequestJsonDetails", () => {
     expect(container?.querySelector('[role="alert"]')).not.toBeNull();
   });
 
+  it("unwraps a legacy JSON-encoded body before formatting it", async () => {
+    getSnapshot.mockResolvedValue({
+      data: {
+        id: "video-1",
+        kind: "video",
+        snapshot: {
+          operation: "videos.generate",
+          contentType: "application/json",
+          body: '{"prompt":"hello","duration":4}',
+        },
+      },
+    });
+
+    await act(async () => {
+      root?.render(
+        createElement(AdminRequestJsonDetails, {
+          id: "video-1",
+          kind: "video",
+        })
+      );
+    });
+
+    const trigger = container?.querySelector<HTMLButtonElement>("button");
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+
+    expect(
+      Array.from(container?.querySelectorAll("pre code > span") ?? []).map(
+        (line) => line.textContent
+      )
+    ).toEqual(["{", '  "prompt": "hello",', '  "duration": 4', "}"]);
+  });
+
   it("does not mount one DOM node per line for a large request body", async () => {
     getSnapshot.mockResolvedValue({
       data: {
@@ -176,5 +211,39 @@ describe("AdminRequestJsonDetails", () => {
     const code = container?.querySelector("pre code");
     expect(code?.querySelectorAll(":scope > span")).toHaveLength(1);
     expect(code?.textContent).toContain('"items"');
+  });
+
+  it("rejects an unexpectedly large legacy body before mounting it", async () => {
+    getSnapshot.mockResolvedValue({
+      data: {
+        id: "video-1",
+        kind: "video",
+        snapshot: {
+          operation: "videos.generate",
+          contentType: "application/json",
+          body: { prompt: "x".repeat(300_000) },
+        },
+      },
+    });
+
+    await act(async () => {
+      root?.render(
+        createElement(AdminRequestJsonDetails, {
+          id: "video-1",
+          kind: "video",
+        })
+      );
+    });
+
+    const trigger = container?.querySelector<HTMLButtonElement>("button");
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+
+    expect(container?.textContent).toContain(
+      "已保存的请求正文无法格式化显示。"
+    );
+    expect(container?.querySelector("pre")).toBeNull();
   });
 });

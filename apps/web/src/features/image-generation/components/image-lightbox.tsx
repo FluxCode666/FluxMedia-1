@@ -1,7 +1,7 @@
 "use client";
 
-import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
@@ -230,6 +230,11 @@ export function ImageLightbox({
       ? copy("Upload", "上传")
       : copy("Output", "成品");
   const [detailsWidth, setDetailsWidth] = useState(44);
+  // Keep an invalid layout measurement from turning the inline flex basis into
+  // `calc(NaN% - 6px)`, which makes the image pane fall back to its intrinsic size.
+  const safeDetailsWidth = Number.isFinite(detailsWidth)
+    ? Math.min(58, Math.max(30, detailsWidth))
+    : 44;
   const dragState = useRef<{
     startX: number;
     startWidth: number;
@@ -303,11 +308,13 @@ export function ImageLightbox({
   const handleResizeStart = (event: PointerEvent<HTMLButtonElement>) => {
     const container = containerRef.current;
     if (!container) return;
+    const containerWidth = container.getBoundingClientRect().width;
+    if (!Number.isFinite(containerWidth) || containerWidth <= 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragState.current = {
       startX: event.clientX,
-      startWidth: detailsWidth,
-      containerWidth: container.getBoundingClientRect().width,
+      startWidth: safeDetailsWidth,
+      containerWidth,
     };
   };
 
@@ -316,6 +323,7 @@ export function ImageLightbox({
     if (!state) return;
     const deltaPercent =
       ((state.startX - event.clientX) / state.containerWidth) * 100;
+    if (!Number.isFinite(deltaPercent)) return;
     const nextWidth = Math.min(
       58,
       Math.max(30, state.startWidth + deltaPercent)
@@ -349,12 +357,12 @@ export function ImageLightbox({
         </DialogTitle>
         <div
           ref={containerRef}
-          className="grid grid-cols-1 md:flex md:max-h-[92vh] md:min-h-[560px]"
+          className="grid min-w-0 max-w-full grid-cols-1 md:flex md:max-h-[92vh] md:min-h-[560px]"
         >
           <div
-            className="relative aspect-square w-full shrink overflow-hidden bg-muted md:aspect-auto"
+            className="relative aspect-square w-full min-w-0 shrink overflow-hidden bg-muted md:aspect-auto"
             style={{
-              flexBasis: `calc(${100 - detailsWidth}% - 6px)`,
+              flexBasis: `calc(${100 - safeDetailsWidth}% - 6px)`,
             }}
           >
             {previewImageUrl ? (
@@ -390,7 +398,7 @@ export function ImageLightbox({
 
           <div
             className="flex min-h-0 w-full min-w-0 flex-col md:shrink-0"
-            style={{ flexBasis: `calc(${detailsWidth}% - 6px)` }}
+            style={{ flexBasis: `calc(${safeDetailsWidth}% - 6px)` }}
           >
             <div className="min-h-0 flex-1 overflow-y-auto p-6">
               <div className="space-y-5">

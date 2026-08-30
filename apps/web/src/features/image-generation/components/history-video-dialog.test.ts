@@ -10,11 +10,16 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getVideoInputsAction } = vi.hoisted(() => ({
-  getVideoInputsAction: vi.fn(),
-}));
+const { getAdminHistoryRequestSnapshotAction, getVideoInputsAction } =
+  vi.hoisted(() => ({
+    getVideoInputsAction: vi.fn(),
+    getAdminHistoryRequestSnapshotAction: vi.fn(),
+  }));
 
-vi.mock("../history-actions", () => ({ getVideoInputsAction }));
+vi.mock("../history-actions", () => ({
+  getAdminHistoryRequestSnapshotAction,
+  getVideoInputsAction,
+}));
 vi.mock("next-intl", () => ({ useLocale: () => "zh" }));
 
 import {
@@ -108,6 +113,7 @@ function renderAdminDialog(record: HistoryVideoDialogRecord): void {
 beforeEach(() => {
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
   getVideoInputsAction.mockReset();
+  getAdminHistoryRequestSnapshotAction.mockReset();
 });
 
 afterEach(() => {
@@ -144,6 +150,57 @@ describe("HistoryVideoDialog", () => {
         'img[src="https://app.example.com/signed/video-1-first"]'
       )
     ).not.toBeNull();
+  });
+
+  it("keeps the JSON code block inside the fixed dialog width", async () => {
+    getVideoInputsAction.mockResolvedValue({
+      data: { taskId: "video-json", summary: { mode: "none", count: 0 } },
+    });
+    getAdminHistoryRequestSnapshotAction.mockResolvedValue({
+      data: {
+        id: "video-json",
+        kind: "video",
+        snapshot: {
+          operation: "videos.generate",
+          contentType: "application/json",
+          body: { prompt: "x".repeat(12_000) },
+        },
+      },
+    });
+
+    renderDialog(createRecord("video-json"));
+    await act(async () => undefined);
+
+    // The admin-only section is mounted explicitly here to exercise the same
+    // long-line layout used by the global history page.
+    act(() => {
+      root?.render(
+        createElement(HistoryVideoDialog, {
+          onClose: vi.fn(),
+          open: true,
+          record: createRecord("video-json"),
+          showAdminRequestJson: true,
+          timeZone: "UTC",
+        })
+      );
+    });
+    await act(async () => undefined);
+
+    const dialog = document.querySelector('[role="dialog"]');
+    const layout = Array.from(dialog?.children ?? []).find((child) =>
+      child.className.includes("grid")
+    );
+    expect(layout?.className).toContain("min-w-0");
+
+    const trigger = Array.from(dialog?.querySelectorAll("button") ?? []).find(
+      (button) => button.textContent?.includes("实际请求 JSON")
+    );
+    expect(trigger).not.toBeUndefined();
+    await act(async () => {
+      trigger?.click();
+      await Promise.resolve();
+    });
+    expect(dialog?.querySelector("pre")).not.toBeNull();
   });
 
   it("only reveals submission failure details in global usage records", async () => {

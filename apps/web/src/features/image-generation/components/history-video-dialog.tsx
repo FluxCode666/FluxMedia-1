@@ -7,8 +7,8 @@
  * 操作错误地出现在视频详情中。
  */
 
-import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
 import { Badge } from "@repo/ui/components/badge";
@@ -242,8 +242,8 @@ export function HistoryVideoDialog({
         <DialogTitle className="sr-only">
           {copy("Video details", "视频详情")}
         </DialogTitle>
-        <div className="grid min-h-0 lg:max-h-[88vh] lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
-          <div className="flex min-h-72 items-center justify-center bg-black lg:min-h-[560px]">
+        <div className="grid min-h-0 min-w-0 max-w-full lg:max-h-[88vh] lg:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
+          <div className="flex min-h-72 min-w-0 items-center justify-center bg-black lg:min-h-[560px]">
             {record.videoUrl && record.status === "completed" ? (
               <video
                 className="max-h-[88vh] w-full object-contain"
