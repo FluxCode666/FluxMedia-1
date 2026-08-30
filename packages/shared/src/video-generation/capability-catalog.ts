@@ -2,7 +2,7 @@
  * 真实视频模型静态能力目录。
  *
  * 使用方：动态能力覆盖、UOL 参数校验、账号池模型选择、模型广场与视频计费。目录只描述
- * 平台公开参数和输入能力；Adobe 上游 model、version、engine 与像素尺寸属于供应商适配层。
+ * 平台公开参数和输入能力；上游 model、version、engine 与像素尺寸属于供应商适配层。
  */
 import {
   VIDEO_MODEL_IDS,

@@ -10,7 +10,7 @@ import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoPricingResolutionKey,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import type { SQL } from "drizzle-orm";
@@ -150,22 +150,15 @@ describe("selectRuntimeBackendGroupCandidate", () => {
 });
 
 describe("projectConfiguredVideoModelIds", () => {
-  it("API 与 Adobe direct 成员的真实 ID 计入视频配置可达性", () => {
+  it("API 成员的真实 ID 计入视频配置可达性", () => {
     expect(
       projectConfiguredVideoModelIds([
         {
           memberType: "api",
-          adobeMode: null,
           supportedModelIds: ["seedance2"],
         },
         {
-          memberType: "adobe",
-          adobeMode: "gateway",
-          supportedModelIds: ["seedance2-fast"],
-        },
-        {
-          memberType: "adobe",
-          adobeMode: "direct",
+          memberType: "api",
           supportedModelIds: [
             "SEEDANCE2",
             "seedance2",
@@ -180,8 +173,7 @@ describe("projectConfiguredVideoModelIds", () => {
 
   it("配置可达性不读取健康、冷却、容量或实时租约状态", () => {
     const coolingAndFullMember = {
-      memberType: "adobe" as const,
-      adobeMode: "direct" as const,
+      memberType: "api" as const,
       supportedModelIds: ["seedance2"],
       status: "limited",
       healthStatus: "unhealthy",
@@ -197,26 +189,13 @@ describe("projectConfiguredVideoModelIds", () => {
 });
 
 describe("canRuntimeBackendLeaseServeRequest", () => {
-  it("API 与 Adobe Direct 可执行视频，Adobe Gateway 不可执行", () => {
+  it("API 账号可执行视频", () => {
     const videoRequest = { requestKind: "video" as const };
     expect(
       canRuntimeBackendLeaseServeRequest(videoRequest, {
         memberType: "api",
-        adobeMode: null,
       })
     ).toBe(true);
-    expect(
-      canRuntimeBackendLeaseServeRequest(videoRequest, {
-        memberType: "adobe",
-        adobeMode: "direct",
-      })
-    ).toBe(true);
-    expect(
-      canRuntimeBackendLeaseServeRequest(videoRequest, {
-        memberType: "adobe",
-        adobeMode: "gateway",
-      })
-    ).toBe(false);
   });
 
   it("蒙版编辑仍只允许 API 账号", () => {
@@ -224,15 +203,8 @@ describe("canRuntimeBackendLeaseServeRequest", () => {
     expect(
       canRuntimeBackendLeaseServeRequest(maskRequest, {
         memberType: "api",
-        adobeMode: null,
       })
     ).toBe(true);
-    expect(
-      canRuntimeBackendLeaseServeRequest(maskRequest, {
-        memberType: "adobe",
-        adobeMode: "direct",
-      })
-    ).toBe(false);
   });
 
   it.each([
@@ -262,20 +234,11 @@ describe("canRuntimeBackendLeaseServeRequest", () => {
     expect(
       canRuntimeBackendLeaseServeRequest(request, {
         memberType: "api",
-        adobeMode: null,
         videoInputCapabilities: capabilities,
       })
     ).toBe(expected);
   });
 
-  it("参考媒体请求不会路由到 Adobe 账号", () => {
-    expect(
-      canRuntimeBackendLeaseServeRequest(
-        { requestKind: "video", requiresReferenceVideo: true },
-        { memberType: "adobe", adobeMode: "direct" }
-      )
-    ).toBe(false);
-  });
 });
 
 describe("inspectRuntimeVideoBackendAvailability", () => {
@@ -343,36 +306,6 @@ describe("inspectRuntimeVideoBackendAvailability", () => {
     ).rejects.toBe(databaseError);
   });
 
-  it("普通视频模型允许 Adobe Direct 参与只读资格预检", async () => {
-    const executedQueries: SQL[] = [];
-    const result = await inspectRuntimeVideoBackendAvailability(
-      {
-        userId: "user-1",
-        modelId: "seedance2",
-        requiresContentSafety: true,
-      },
-      {
-        group,
-        database: {
-          execute: async (query) => {
-            executedQueries.push(query);
-            return {
-              rows: [{ eligible_count: 1, available_count: 1 }],
-            };
-          },
-        },
-      }
-    );
-
-    const executedQuery = executedQueries[0];
-    expect(executedQuery).toBeDefined();
-    if (!executedQuery) throw new Error("只读资格预检未执行数据库查询");
-    const compiled = new PgDialect().sqlToQuery(executedQuery);
-    expect(result).toBe("available");
-    expect(compiled.sql).toContain("image_backend_member_adobe_config");
-    expect(compiled.sql).toContain("adobe.mode = 'direct'");
-    expect(compiled.params).not.toContain("api");
-  });
 });
 
 describe("resolveAuthoritativeRuntimeVideoQuote", () => {

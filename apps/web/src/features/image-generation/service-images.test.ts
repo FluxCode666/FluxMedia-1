@@ -280,46 +280,6 @@ describe("Images API service", () => {
     });
   });
 
-  it("Adobe gateway 文生图在外呼前暴露实际请求 JSON", async () => {
-    prepareTestEnvironment();
-    const { generateImage } = await import("./service");
-    const onApiUpstreamRequestSnapshot = vi.fn();
-    mocks.fetchMediaUpstream.mockResolvedValue(
-      Response.json({
-        choices: [
-          {
-            message: {
-              content: "![generated](https://cdn.example.test/image.png)",
-            },
-          },
-        ],
-      })
-    );
-    mocks.fetchMediaUpstreamDownload.mockResolvedValue(
-      new Response(Buffer.from("image-result"), { status: 200 })
-    );
-
-    const result = await generateImage(
-      {
-        baseUrl: "https://adobe.example.test/v1",
-        apiKey: "test-key",
-        backend: { type: "pool-adobe", adobeMode: "gateway" },
-      },
-      { prompt: "make an icon", model: "gpt-image-2", size: "1024x1024" },
-      { onApiUpstreamRequestSnapshot }
-    );
-
-    expect(result.error).toBeUndefined();
-    expect(onApiUpstreamRequestSnapshot).toHaveBeenCalledWith({
-      operation: "images.generate",
-      contentType: "application/json",
-      body: expect.objectContaining({
-        model: expect.any(String),
-        messages: expect.any(Array),
-      }),
-    });
-  });
-
   it("生成图片时映射上游模型并执行 JSON 请求脚本", async () => {
     prepareTestEnvironment();
     const { generateImage } = await import("./service");

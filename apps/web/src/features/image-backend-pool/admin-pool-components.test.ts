@@ -263,7 +263,7 @@ describe("admin pool components", () => {
     expect(searchInput).not.toBeNull();
     expect(container?.querySelector('input[type="date"]')).toBeNull();
     expect(dateRangeButton?.textContent).toContain("全部创建日期");
-    expect(container?.textContent).toContain("凭据状态（Adobe Direct）");
+    expect(container?.textContent).toContain("凭据状态");
     expect(container?.textContent).toContain("全部凭据状态");
     expect(container?.textContent).toContain("支持的模型");
     expect(container?.textContent).toContain("分辨率");

@@ -11,9 +11,6 @@ const runtime = vi.hoisted(() => ({
   imageMaintenance: vi.fn(async () => undefined),
   creditsExpire: vi.fn(async () => undefined),
   videoRecovery: vi.fn(async () => undefined),
-  adobeCredentialHealth: vi.fn(async () => undefined),
-  adobeCredentialNotifications: vi.fn(async () => undefined),
-  adobeCredentialRetention: vi.fn(async () => undefined),
   paymentFulfillment: vi.fn(async () => undefined),
   operationsExportProcess: vi.fn(async (_batchSize: number) => undefined),
   operationsExportExpire: vi.fn(async (_batchSize: number) => undefined),
@@ -87,9 +84,6 @@ vi.mock("./scheduled-jobs", () => ({
   runImageMaintenanceJob: runtime.imageMaintenance,
   runCreditsExpireJob: runtime.creditsExpire,
   runVideoRecoveryJob: runtime.videoRecovery,
-  runAdobeCredentialHealthJob: runtime.adobeCredentialHealth,
-  runAdobeCredentialNotificationDrainJob: runtime.adobeCredentialNotifications,
-  runAdobeCredentialHealthCleanupJob: runtime.adobeCredentialRetention,
   runPaymentFulfillmentRecoveryJob: runtime.paymentFulfillment,
   runOperationsExportProcessingJob: runtime.operationsExportProcess,
   runOperationsExportExpirationJob: runtime.operationsExportExpire,
@@ -120,9 +114,6 @@ describe("internal job scheduler runtime configuration", () => {
     runtime.imageMaintenance.mockClear();
     runtime.creditsExpire.mockClear();
     runtime.videoRecovery.mockClear();
-    runtime.adobeCredentialHealth.mockClear();
-    runtime.adobeCredentialNotifications.mockClear();
-    runtime.adobeCredentialRetention.mockClear();
     runtime.paymentFulfillment.mockClear();
     runtime.operationsExportProcess.mockClear();
     runtime.operationsExportExpire.mockClear();

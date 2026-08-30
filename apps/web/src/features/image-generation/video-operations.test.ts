@@ -1,10 +1,9 @@
 /**
  * 视频恢复状态机纯策略单测。
  *
- * 使用方：Vitest；验证稳定存储键与 accepted 后错误分类，不连接数据库、Adobe 或存储。
+ * 使用方：Vitest；验证稳定存储键与 accepted 后错误分类，不连接数据库或存储。
  */
 
-import { AdobeAcceptedVideoError } from "@repo/shared/adobe/firefly-direct";
 import { describe, expect, it } from "vitest";
 import { ApiAcceptedVideoError } from "./api-video-error";
 import {
@@ -18,19 +17,12 @@ import {
 import {
   createVideoStorageKey,
   isAcceptedVideoError,
-  requireAcceptedVideoCredential,
   resolveApiAdapterQueryFailure,
   resolveVideoBackendExhaustionError,
   shouldRetryAcceptedVideoError,
-  usesBoundedVideoRefundRetryPolicy,
 } from "./video-recovery-policy";
 
 describe("video recovery policies", () => {
-  it("仅 API 退款使用三次有界恢复策略", () => {
-    expect(usesBoundedVideoRefundRetryPolicy("api")).toBe(true);
-    expect(usesBoundedVideoRefundRetryPolicy("adobe_direct")).toBe(false);
-  });
-
   it("API 查询适配连续失败恰好三次后终止重试", () => {
     expect(resolveApiAdapterQueryFailure(0)).toEqual({
       nextFailureCount: 1,
@@ -87,41 +79,12 @@ describe("video recovery policies", () => {
         new ApiAcceptedVideoError("API network", true)
       )
     ).toBe(true);
-    expect(
-      shouldRetryAcceptedVideoError(
-        new AdobeAcceptedVideoError("network", { errorType: "network" })
-      )
-    ).toBe(true);
-    expect(
-      shouldRetryAcceptedVideoError(
-        new AdobeAcceptedVideoError("temporary", { statusCode: 503 })
-      )
-    ).toBe(true);
-    expect(
-      shouldRetryAcceptedVideoError(
-        new AdobeAcceptedVideoError("expired token", { statusCode: 401 })
-      )
-    ).toBe(true);
-  });
-
-  it("已接受任务只接受原成员刷新出的有效凭据", () => {
-    expect(requireAcceptedVideoCredential({ value: "fresh-token" })).toBe(
-      "fresh-token"
-    );
-    expect(() => requireAcceptedVideoCredential(null)).toThrow(
-      "原成员凭据刷新失败"
-    );
   });
 
   it("已接受任务的明确 4xx 和普通错误不进入轮询重试", () => {
     const apiRejected = new ApiAcceptedVideoError("API rejected", false, 400);
     expect(isAcceptedVideoError(apiRejected)).toBe(true);
     expect(shouldRetryAcceptedVideoError(apiRejected)).toBe(false);
-    expect(
-      shouldRetryAcceptedVideoError(
-        new AdobeAcceptedVideoError("rejected", { statusCode: 400 })
-      )
-    ).toBe(false);
     expect(shouldRetryAcceptedVideoError(new Error("unclassified"))).toBe(
       false
     );
@@ -130,7 +93,7 @@ describe("video recovery policies", () => {
 
   it("切换耗尽时保留安全的鉴权根因并隐藏未知上游正文", () => {
     expect(resolveVideoBackendExhaustionError("Token invalid or expired")).toBe(
-      "Adobe 视频凭据无效或已过期，且当前分组没有其他可切换的媒体后端"
+      "当前分组没有可用于该模型的媒体后端"
     );
     expect(
       resolveVideoBackendExhaustionError(

@@ -985,7 +985,7 @@ const zhContent = {
           name: "model",
           requirement: "必填",
           description:
-            "真实视频模型 ID，例如 seedance2、seedance2-fast 或 veo31。不得拼接时长、比例或分辨率；旧 firefly-* 与复合 ID 会被拒绝。",
+            "真实视频模型 ID，例如 seedance2、seedance2-fast 或 veo31。不得拼接时长、比例或分辨率；复合 ID 会被拒绝。",
         },
         {
           name: "seconds / duration / duration_seconds",
@@ -1719,7 +1719,7 @@ const enContent = {
           name: "model",
           requirement: "Required",
           description:
-            "Real video model ID such as seedance2, seedance2-fast, or veo31. Duration, ratio, and resolution must not be encoded in the ID; legacy firefly-* and composite IDs are rejected.",
+            "Real video model ID such as seedance2, seedance2-fast, or veo31. Duration, ratio, and resolution must not be encoded in the ID; composite IDs are rejected.",
         },
         {
           name: "seconds / duration / duration_seconds",

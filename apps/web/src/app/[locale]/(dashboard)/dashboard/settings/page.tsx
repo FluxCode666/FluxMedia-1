@@ -33,6 +33,9 @@ export default async function SettingsPage() {
   const [[profile], defaultTimeZone] = await Promise.all([
     db
       .select({
+        name: user.name,
+        email: user.email,
+        image: user.image,
         timeZone: user.timeZone,
       })
       .from(user)
@@ -45,9 +48,9 @@ export default async function SettingsPage() {
     <SettingsProfileView
       user={{
         id: session.user.id,
-        name: session.user.name || "",
-        email: session.user.email || "",
-        image: session.user.image,
+        name: (profile?.name ?? session.user.name) || "",
+        email: (profile?.email ?? session.user.email) || "",
+        image: profile?.image ?? session.user.image,
         timeZone: profile?.timeZone?.trim() || null,
         defaultTimeZone,
       }}

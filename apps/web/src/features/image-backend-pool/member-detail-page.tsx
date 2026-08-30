@@ -18,7 +18,6 @@ import { toast } from "sonner";
 import { getModelConfigurationAction } from "@/features/model-configuration/actions";
 import { Link, useRouter } from "@/i18n/routing";
 import { getAdminImageBackendPoolAction } from "./actions";
-import { AdobeCredentialHealthView } from "./adobe-credential-health-view";
 import { BackendMemberFormDialog } from "./member-form";
 import {
   type BackendMemberModelOption,
@@ -31,12 +30,11 @@ import type { BackendMemberAdminSummary } from "./member-service";
  * 返回详情页使用的账号类型名称。
  *
  * @param member 已脱敏的供应商账号摘要。
- * @returns API、Adobe Direct 或 Adobe Gateway。
+ * @returns API。
  * @sideEffects 无；不读取凭据正文。
  */
 function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
-  if (member.type === "api") return "API";
-  return member.config.mode === "direct" ? "Adobe Direct" : "Adobe Gateway";
+  return member.type === "api" ? "API" : "未知";
 }
 
 /**
@@ -49,11 +47,9 @@ function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
  */
 export function BackendMemberDetailPage({
   memberId,
-  timeZone,
   readOnly = false,
 }: {
   memberId: string;
-  timeZone: string;
   readOnly?: boolean;
 }) {
   const router = useRouter();
@@ -200,13 +196,6 @@ export function BackendMemberDetailPage({
         open
         readOnly={readOnly}
       />
-      {member.type === "adobe" && member.config.mode === "direct" ? (
-        <AdobeCredentialHealthView
-          memberId={member.id}
-          readOnly={readOnly}
-          timeZone={timeZone}
-        />
-      ) : null}
     </div>
   );
 }

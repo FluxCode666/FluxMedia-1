@@ -11,7 +11,7 @@ import {
   globalVideoModelCreditsPerSecondSchema,
   videoModelBillingModesSchema,
   videoModelCreditPricesSchema,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import {
   type GlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,

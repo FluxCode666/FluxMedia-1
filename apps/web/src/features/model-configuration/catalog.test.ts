@@ -5,13 +5,13 @@
  * 数据校验始终生成共享契约允许的稳定快照，且不连接数据库或运行时服务。
  */
 import {
-  ADOBE_VIDEO_PRICING_FAMILIES,
+  VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_MODEL_BILLING_MODES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoPricingResolutionKey,
-} from "@repo/shared/adobe";
-import { ADOBE_IMAGE_MODEL_IDS } from "@repo/shared/adobe/enabled-models";
+} from "@repo/shared/video-generation";
+import { BUILTIN_IMAGE_MODEL_IDS } from "@repo/shared/image-backend/group-image-pricing";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import {
   createDefaultModelMarketplaceConfig,
@@ -126,10 +126,10 @@ describe("buildModelConfigurationSnapshot", () => {
     const identities = snapshot.entries.map(
       (entry) => `${entry.category}:${entry.configKey}`
     );
-    const builtInImages = ADOBE_IMAGE_MODEL_IDS.map(
+    const builtInImages = BUILTIN_IMAGE_MODEL_IDS.map(
       (modelId) => `image:${modelId}`
     );
-    const builtInVideos = ADOBE_VIDEO_PRICING_FAMILIES.map(
+    const builtInVideos = VIDEO_PRICING_FAMILIES.map(
       (family) => `video:${family}`
     );
 

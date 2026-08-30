@@ -12,7 +12,7 @@ import {
   globalVideoModelCreditsPerSecondSchema,
   videoModelBillingModesSchema,
   videoModelCreditPricesSchema,
-} from "../../adobe/video-pricing";
+} from "../../video-generation/video-pricing";
 import {
   destroyGenerationPhotosByMaxCount,
   shouldRunMaxCountCleanupOnSettingsChange,

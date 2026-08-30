@@ -32,7 +32,7 @@ const strategyRowSchema = z.object({ value: z.unknown() });
 const lockedMemberRowSchema = z
   .object({
     id: identifierSchema,
-    type: z.enum(["api", "adobe"]),
+    type: z.literal("api"),
     name: z.string().min(1).max(120),
     supported_model_ids: z.array(z.string().trim().min(1)).min(1),
     supported_resolutions_by_model: z
@@ -65,12 +65,6 @@ const lockedMemberRowSchema = z
       context.addIssue({
         code: "custom",
         message: "API member must have a current adapter version",
-      });
-    }
-    if (row.type === "adobe" && hasMember) {
-      context.addIssue({
-        code: "custom",
-        message: "Adobe member must not have an API adapter version",
       });
     }
   });
@@ -112,7 +106,7 @@ const acquireLeaseInputSchema = z
     requestedResolution: z.string().trim().min(1).max(32).optional(),
     excludedMemberIds: z.array(identifierSchema).max(1_000).default([]),
     requiredMemberId: identifierSchema.optional(),
-    requiredMemberType: z.enum(["api", "adobe"]).optional(),
+    requiredMemberType: z.literal("api").optional(),
     requiredApiAdapterMemberId: identifierSchema.optional(),
     requiredApiAdapterVersionId: identifierSchema.optional(),
     requiresContentSafety: z.boolean().default(false),
@@ -221,7 +215,7 @@ interface BackendAcquireCandidate extends BackendSchedulingCandidate {
 
 /** 统一成员在获租事务中的完整候选快照。 */
 export interface LockedBackendMemberCandidate extends BackendAcquireCandidate {
-  type: "api" | "adobe";
+  type: "api";
   name: string;
   status: string;
   healthStatus: "healthy" | "degraded" | "unhealthy";
@@ -411,8 +405,6 @@ export function createPostgresBackendPoolRepository(
                   )
                   and api_version.member_id_snapshot = m.id
                   and api_version.credential_scope = api_config.credential_scope
-                left join image_backend_member_adobe_config as adobe_config
-                  on adobe_config.member_id = m.id
                 where membership.group_id = ${input.groupId}
                   and m.is_enabled = true
                   and (m.cooldown_until is null or m.cooldown_until <= ${input.now})
@@ -422,15 +414,6 @@ export function createPostgresBackendPoolRepository(
                     ),
                     sql`, `
                   )})
-                  and not (
-                    m.type = 'adobe'
-                    and exists (
-                      select 1
-                      from adobe_credential_health as credential_health
-                      where credential_health.member_id = m.id
-                        and credential_health.status = 'isolated'
-                    )
-                  )
                   and exists (
                     select 1
                     from json_array_elements_text(m.supported_model_ids)
@@ -485,28 +468,9 @@ export function createPostgresBackendPoolRepository(
                   and (${input.requiredApiAdapterMemberId ?? null}::text is null or m.id = ${
                     input.requiredApiAdapterMemberId ?? null
                   })
-                  and (
-                    (
-                      m.type = 'api'
-                      and api_config.api_key is not null
-                      and api_version.id is not null
-                    )
-                    or (
-                      m.type = 'adobe'
-                      and (
-                        (
-                          adobe_config.mode = 'direct'
-                          and adobe_config.cookie is not null
-                          and adobe_config.access_token is not null
-                        )
-                        or (
-                          adobe_config.mode = 'gateway'
-                          and adobe_config.base_url is not null
-                          and adobe_config.api_key is not null
-                        )
-                      )
-                    )
-                  )
+                  and m.type = 'api'
+                  and api_config.api_key is not null
+                  and api_version.id is not null
                 order by m.id asc
                 for update of m
               `)

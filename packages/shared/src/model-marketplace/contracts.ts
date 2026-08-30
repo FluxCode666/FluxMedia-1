@@ -5,11 +5,11 @@
  * 结构校验与类型收窄，不读取数据库、不构造存储 URL，也不执行价格或封面写入。
  */
 import { z } from "zod";
-import { videoModelCreditPricesSchema } from "../adobe";
+import { videoModelCreditPricesSchema } from "../video-generation/video-pricing";
 import {
   MAX_VIDEO_CREDITS_PER_SECOND,
   videoCreditsPerSecondByResolutionSchema,
-} from "../adobe/video-pricing";
+} from "../video-generation/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
 import {
   isLegacyVideoModelId,

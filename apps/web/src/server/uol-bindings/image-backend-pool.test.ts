@@ -18,12 +18,12 @@ import {
 } from "./image-backend-pool";
 
 describe("image backend pool UOL bindings", () => {
-  it("通用号池 DTO 移除 Adobe refresh 和余额诊断错误", () => {
+  it("通用号池 DTO 仅返回 API 配置且不含敏感错误字段", () => {
     const [member] = buildAdminPoolMembers([
       {
-        id: "adobe-direct",
-        name: "Adobe Direct",
-        type: "adobe",
+        id: "api-member",
+        name: "API member",
+        type: "api",
         groupIds: [],
         supportedModelIds: ["gpt-image-2"],
         contentSafetyEnabled: true,
@@ -42,33 +42,34 @@ describe("image backend pool UOL bindings", () => {
         lastError: null,
         lastErrorAt: null,
         config: {
-          mode: "direct",
-          hasCookie: true,
-          displayName: null,
-          email: null,
-          credentialStatus: "active",
-          lastRefreshAt: null,
-          lastRefreshError: "cookie=secret",
-          consecutiveFailures: 0,
-          fireflyCredentialStatus: "active",
-          fireflyLastRefreshAt: null,
-          fireflyLastRefreshError: "Bearer secret",
-          fireflyConsecutiveFailures: 0,
-          creditsTotal: null,
-          creditsUsed: null,
-          creditsAvailable: null,
-          creditsUpdatedAt: null,
-          creditsError: "upstream raw response",
-          defaultRatio: "1x1",
-          defaultResolution: "2k",
-          gptImageQuality: "high",
+          baseUrl: "https://api.example.com/v1",
+          hasApiKey: true,
+          useStream: true,
+          videoSubmissionRetryCount: 2,
+          videoProtocolMode: "custom",
+          videoInputCapabilities: {
+            referenceVideos: false,
+            referenceAudios: false,
+          },
+          videoInputCapabilitiesByModel: {},
+          modelMappings: [],
         },
       },
     ]);
 
-    expect(member?.config).not.toHaveProperty("lastRefreshError");
-    expect(member?.config).not.toHaveProperty("fireflyLastRefreshError");
-    expect(member?.config).not.toHaveProperty("creditsError");
+    expect(member?.config).toEqual({
+      baseUrl: "https://api.example.com/v1",
+      hasApiKey: true,
+      useStream: true,
+      videoSubmissionRetryCount: 2,
+      videoProtocolMode: "custom",
+      videoInputCapabilities: {
+        referenceVideos: false,
+        referenceAudios: false,
+      },
+      videoInputCapabilitiesByModel: {},
+      modelMappings: [],
+    });
   });
 
   it("请求测试预览部分信封并保持模拟媒体令牌恰好一次", async () => {

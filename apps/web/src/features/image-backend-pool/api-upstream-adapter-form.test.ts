@@ -25,7 +25,6 @@ import {
   getDefaultApiUpstreamScriptSample,
 } from "./api-upstream-adapter-draft";
 import { ApiUpstreamAdapterForm } from "./api-upstream-adapter-form";
-import { BackendMemberFormDialog } from "./member-form";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
@@ -47,77 +46,6 @@ function mountAdapterForm(): void {
   document.body.append(container);
   root = createRoot(container);
   act(() => root?.render(createElement(TestHarness)));
-}
-
-/** 挂载 Adobe Gateway 编辑弹窗，验证 API 适配区不会跨类型泄漏。 */
-function mountAdobeMemberForm(): void {
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  act(() =>
-    root?.render(
-      createElement(BackendMemberFormDialog, {
-        open: true,
-        onOpenChange: vi.fn(),
-        onSaved: vi.fn(),
-        groups: [
-          {
-            id: "group-a",
-            name: "默认组",
-            description: null,
-            isEnabled: true,
-            isDefault: true,
-            isUserSelectable: true,
-            contentSafety: "inherit",
-            imageCreditOverrides: { version: 1, byModel: {} },
-            videoCreditOverrides: {},
-            videoCreditsPerItemOverrides: {},
-            childGroupIds: [],
-            priority: 0,
-          },
-        ],
-        member: {
-          id: "adobe-1",
-          name: "Adobe Gateway",
-          type: "adobe",
-          groupIds: ["group-a"],
-          supportedModelIds: ["gpt-image-2"],
-          contentSafetyEnabled: true,
-          isEnabled: true,
-          alwaysActive: false,
-          failureCooldownEnabled: true,
-          priority: 10,
-          concurrency: 2,
-          status: "active",
-          healthStatus: "healthy",
-          inflightCount: 0,
-          leaseAcquiredCount: 0,
-          createdAt: "2026-07-26T00:00:00.000Z",
-          lastAcquiredAt: null,
-          lastUsedAt: null,
-          lastError: null,
-          lastErrorAt: null,
-          config: {
-            mode: "gateway",
-            baseUrl: "https://adobe.example.com",
-            hasApiKey: true,
-            defaultRatio: "1x1",
-            defaultResolution: "2k",
-            gptImageQuality: "high",
-          },
-        },
-        modelOptions: [
-          {
-            id: "gpt-image-2",
-            label: "GPT Image 2",
-            category: "image",
-            source: "model_configuration",
-          },
-        ],
-        modelOptionStatus: "ready",
-      })
-    )
-  );
 }
 
 /** 返回正文完全匹配的按钮，避免把内层请求/响应 Tabs 混入操作 Tabs。 */
@@ -242,11 +170,4 @@ describe("ApiUpstreamAdapterForm", () => {
     );
   });
 
-  it("非 API 成员不渲染六操作适配配置", () => {
-    mountAdobeMemberForm();
-
-    expect(document.body.textContent).toContain("Adobe 配置");
-    expect(document.body.textContent).not.toContain("认证模式");
-    expect(document.body.textContent).not.toContain("无网络测试样例");
-  });
 });

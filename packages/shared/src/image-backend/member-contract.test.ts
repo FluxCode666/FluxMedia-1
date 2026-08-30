@@ -1,7 +1,7 @@
 /**
  * 统一媒体后端成员契约测试。
  *
- * 职责：验证 API、Adobe gateway 与 Adobe direct 使用同一严格成员输入，且
+ * 职责：验证 API 成员严格输入，且
  * 空模型能力、类型字段混用和不可执行的视频声明会在保存前失败。
  */
 import { describe, expect, it } from "vitest";
@@ -21,7 +21,7 @@ const commonMember = {
 };
 
 describe("backend member contract", () => {
-  it("成员保存保留图像模型精确 ID，不移除 firefly- 前缀", () => {
+  it("成员保存保留图像模型精确 ID", () => {
     const parsed = backendMemberInputSchema.parse({
       ...commonMember,
       supportedModelIds: ["firefly-gpt-image-2"],
@@ -245,74 +245,6 @@ describe("backend member contract", () => {
         },
       }).success
     ).toBe(true);
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
-        type: "adobe",
-        config: {
-          mode: "gateway",
-          baseUrl: "http://127.0.0.1:8080/v1",
-          defaultRatio: "1:1",
-          defaultResolution: "2k",
-          gptImageQuality: "high",
-        },
-      }).success
-    ).toBe(true);
-  });
-
-  it.each([
-    "gateway",
-    "direct",
-  ] as const)("accepts strict Adobe %s configuration", (mode) => {
-    const config =
-      mode === "gateway"
-        ? {
-            mode,
-            baseUrl: "https://firefly.example.com/v1",
-            apiKey: "secret",
-            defaultRatio: "1:1",
-            defaultResolution: "2k",
-            gptImageQuality: "high" as const,
-          }
-        : {
-            mode,
-            cookie: "cookie-secret",
-            defaultRatio: "1:1",
-            defaultResolution: "2k",
-            gptImageQuality: "high" as const,
-          };
-
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
-        type: "adobe",
-        config,
-      }).success
-    ).toBe(true);
-  });
-
-  it("requires one direct credential on creation and allows an omitted secret on edit", () => {
-    const directConfig = {
-      mode: "direct" as const,
-      defaultRatio: "1:1",
-      defaultResolution: "2k",
-      gptImageQuality: "high" as const,
-    };
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
-        type: "adobe",
-        config: directConfig,
-      }).success
-    ).toBe(false);
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
-        id: "direct-existing",
-        type: "adobe",
-        config: directConfig,
-      }).success
-    ).toBe(true);
   });
 
   it("rejects empty capabilities and mixed type-specific fields", () => {
@@ -331,21 +263,6 @@ describe("backend member contract", () => {
     expect(
       backendMemberInputSchema.safeParse({
         ...commonMember,
-        supportedModelIds: [],
-        type: "adobe",
-        config: {
-          mode: "direct",
-          cookie: "cookie-secret",
-          defaultRatio: "1:1",
-          defaultResolution: "2k",
-          gptImageQuality: "high",
-        },
-      }).success
-    ).toBe(false);
-
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
         type: "api",
         config: {
           baseUrl: "https://images.example.com/v1",
@@ -355,54 +272,14 @@ describe("backend member contract", () => {
       }).success
     ).toBe(false);
 
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...commonMember,
-        type: "adobe",
-        config: {
-          mode: "direct",
-          cookie: "cookie-secret",
-          modelMappings: [],
-          defaultRatio: "1:1",
-          defaultResolution: "2k",
-          gptImageQuality: "high",
-        },
-      }).success
-    ).toBe(false);
   });
 
-  it("只允许 API 与 Adobe direct 成员声明真实视频模型 ID", () => {
+  it("API 成员可声明真实视频模型 ID", () => {
     const videoMember = {
       ...commonMember,
       supportedModelIds: ["seedance2"],
     };
 
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...videoMember,
-        type: "adobe",
-        config: {
-          mode: "direct",
-          cookie: "cookie-secret",
-          defaultRatio: "16:9",
-          defaultResolution: "720p",
-          gptImageQuality: "high",
-        },
-      }).success
-    ).toBe(true);
-    expect(
-      backendMemberInputSchema.safeParse({
-        ...videoMember,
-        type: "adobe",
-        config: {
-          mode: "gateway",
-          baseUrl: "https://firefly.example.com/v1",
-          defaultRatio: "16:9",
-          defaultResolution: "720p",
-          gptImageQuality: "high",
-        },
-      }).success
-    ).toBe(false);
     expect(
       backendMemberInputSchema.safeParse({
         ...videoMember,
@@ -425,14 +302,13 @@ describe("backend member contract", () => {
     expect(
       backendMemberInputSchema.safeParse({
         ...commonMember,
-        id: "direct-existing",
+        id: "member-existing",
         supportedModelIds: [modelId],
-        type: "adobe",
+        type: "api",
         config: {
-          mode: "direct",
-          defaultRatio: "16:9",
-          defaultResolution: "720p",
-          gptImageQuality: "high",
+          baseUrl: "https://images.example.com/v1",
+          modelMappings: [],
+          expectedCurrentVersionId: "adapter-current",
         },
       }).success
     ).toBe(false);

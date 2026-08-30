@@ -85,14 +85,6 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       credential_scope text not null,
       configuration json not null
     );
-    create table image_backend_member_adobe_config (
-      member_id text primary key references image_backend_member(id),
-      mode text not null,
-      base_url text,
-      api_key text,
-      cookie text,
-      access_token text
-    );
     create table image_backend_member_group (
       id text primary key,
       member_id text not null references image_backend_member(id),
@@ -108,10 +100,6 @@ async function createFixtureSchema(client: PoolClient): Promise<string> {
       expires_at timestamp not null,
       created_at timestamp not null default now(),
       updated_at timestamp not null default now()
-    );
-    create table adobe_credential_health (
-      member_id text primary key references image_backend_member(id),
-      status text not null
     );
     insert into image_backend_group (id) values ('group-a')
   `);

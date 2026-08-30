@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   globalVideoModelCreditsPerSecondSchema,
-} from "../../adobe/video-pricing";
+} from "../../video-generation/video-pricing";
 import {
   createDefaultGlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,
@@ -97,8 +97,8 @@ describe("image backend pool pricing operations", () => {
       adminPoolMemberListInputSchema.safeParse({
         page: 2,
         pageSize: 50,
-        name: "adobe",
-        credentialStatus: "unhealthy",
+        name: "api",
+        credentialStatus: "not_applicable",
         modelId: "gpt-image-2",
         createdFrom: "2026-08-01",
         createdTo: "2026-08-13",
@@ -402,11 +402,11 @@ describe("image backend pool pricing operations", () => {
     ).toBe(false);
   });
 
-  it("Adobe direct 通用管理快照不返回刷新和余额诊断错误", () => {
+  it("API 通用管理快照不返回额外凭据诊断字段", () => {
     const member = {
-      id: "adobe-direct",
-      name: "Adobe Direct",
-      type: "adobe",
+      id: "api-member",
+      name: "API",
+      type: "api",
       groupIds: ["group-a"],
       supportedModelIds: ["gpt-image-2"],
       contentSafetyEnabled: true,
@@ -422,26 +422,20 @@ describe("image backend pool pricing operations", () => {
       createdAt: "2026-07-27T00:00:00.000Z",
       lastAcquiredAt: "2026-07-27T01:00:00.000Z",
       lastUsedAt: "2026-07-27T01:01:00.000Z",
-      lastError: "Adobe upstream unavailable",
+      lastError: "API upstream unavailable",
       lastErrorAt: "2026-07-27T01:02:00.000Z",
       config: {
-        mode: "direct",
-        hasCookie: true,
-        displayName: "Adobe User",
-        email: "user@example.com",
-        credentialStatus: "active",
-        lastRefreshAt: "2026-07-27T00:00:00.000Z",
-        consecutiveFailures: 0,
-        fireflyCredentialStatus: null,
-        fireflyLastRefreshAt: null,
-        fireflyConsecutiveFailures: 0,
-        creditsTotal: 4_000,
-        creditsUsed: 1_500,
-        creditsAvailable: 2_500,
-        creditsUpdatedAt: "2026-07-27T00:00:01.000Z",
-        defaultRatio: "1x1",
-        defaultResolution: "2k",
-        gptImageQuality: "high",
+        baseUrl: "https://api.example.com/v1",
+        hasApiKey: true,
+        useStream: false,
+        videoSubmissionRetryCount: 2,
+        videoProtocolMode: "custom",
+        videoInputCapabilities: {
+          referenceVideos: false,
+          referenceAudios: false,
+        },
+        videoInputCapabilitiesByModel: {},
+        modelMappings: [],
       },
     } as const;
     expect(
@@ -464,11 +458,7 @@ describe("image backend pool pricing operations", () => {
         ],
       }).success
     ).toBe(false);
-    for (const forbiddenField of [
-      "lastRefreshError",
-      "fireflyLastRefreshError",
-      "creditsError",
-    ]) {
+    for (const forbiddenField of ["apiKey", "headers", "rawError"]) {
       expect(
         getAdminPool.output.safeParse({
           groups: [],
@@ -492,7 +482,7 @@ describe("image backend pool pricing operations", () => {
             ...member,
             config: {
               ...member.config,
-              fireflyAccessToken: "secret-must-not-cross-uol",
+              apiKey: "secret-must-not-cross-uol",
             },
           },
         ],

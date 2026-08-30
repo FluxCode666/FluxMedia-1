@@ -7,8 +7,7 @@ React、TypeScript、Drizzle ORM 与 PostgreSQL，支持站内创作和 OpenAI �
 
 - 图片生成、图片编辑与蒙版编辑统一进入 `runImageGenerationForUser`。
 - 视频生成使用持久状态机、数据库认领租约与幂等请求键完成跨进程恢复。
-- 单一媒体号池管理 `api` 与 `adobe` 两类成员；Adobe 成员内部支持
-  `gateway` 与 `direct` 模式。
+- 单一媒体号池仅管理 API 供应商成员；每个成员通过 API 上游配置声明能力。
 - 成员通过显式模型 ID 声明能力，不根据模型名称或前缀决定成员类型。
 - 全局调度策略可动态选择 `priority`、`least_acquired` 或 `least_load`。
 - 统一接口层负责权限、能力、审计与幂等，HTTP 路由只做薄适配。
@@ -20,7 +19,6 @@ apps/web/                       Next.js 主应用、管理后台与媒体路由
 packages/database/              Drizzle schema、迁移与数据库连接
 packages/shared/                UOL、积分、存储、审核等共享业务逻辑
 packages/ui/                    共享 UI 组件
-services/media-upstream-proxy/  Adobe direct 专用上游代理
 deploy/                         生产 Compose、Nginx 与部署脚本
 ```
 
@@ -48,7 +46,6 @@ pnpm turbo typecheck
 pnpm turbo lint
 pnpm turbo test
 pnpm --filter @repo/web build
-(cd services/media-upstream-proxy && go test ./...)
 ```
 
 本地开发账号密码：
@@ -57,8 +54,7 @@ test@test.com
 
 ## 容器与生产部署
 
-根目录 `docker-compose.yml` 提供包含 PostgreSQL、Redis、迁移、Web 与 Adobe
-上游代理的自托管组合。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
+根目录 `docker-compose.yml` 提供包含 PostgreSQL、Redis、迁移与 Web 的自托管组合。生产环境使用 `deploy/docker-compose.yml`，数据库和 Redis
 由外部基础设施提供，迁移只在维护 profile 中运行。
 
 ```bash

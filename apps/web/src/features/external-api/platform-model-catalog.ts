@@ -38,8 +38,7 @@ export interface PlatformModelCatalogGroup {
 /** 统一成员中与媒体目录有关的非敏感字段。 */
 export interface PlatformModelCatalogMember {
   groupIds: readonly string[];
-  type: "api" | "adobe";
-  adobeMode: "gateway" | "direct" | null;
+  type: "api";
   supportedModelIds: readonly string[];
   isEnabled: boolean;
   status: string;
@@ -138,7 +137,6 @@ export function buildPlatformModelCatalog(
                 { requestKind: "video" },
                 {
                   memberType: member.type,
-                  adobeMode: member.adobeMode,
                 }
               );
         if (canExecuteVideo) {

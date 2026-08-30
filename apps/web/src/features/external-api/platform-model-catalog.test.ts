@@ -30,8 +30,7 @@ function source(
     members: [
       {
         groupIds: ["default-group"],
-        type: "adobe",
-        adobeMode: "direct",
+        type: "api",
         supportedModelIds: [
           "gpt-image-2",
           "seedance2",
@@ -75,7 +74,6 @@ describe("buildPlatformModelCatalog", () => {
           {
             groupIds: ["default-group"],
             type: "api",
-            adobeMode: null,
             supportedModelIds: ["Zeta-Image", "alpha-image"],
             isEnabled: true,
             status: "limited",
@@ -83,7 +81,6 @@ describe("buildPlatformModelCatalog", () => {
           {
             groupIds: ["selectable-group"],
             type: "api",
-            adobeMode: null,
             supportedModelIds: ["zeta-image", "beta-image"],
             isEnabled: true,
             status: "active",
@@ -91,7 +88,6 @@ describe("buildPlatformModelCatalog", () => {
           {
             groupIds: ["hidden-group"],
             type: "api",
-            adobeMode: null,
             supportedModelIds: ["hidden-image"],
             isEnabled: true,
             status: "active",
@@ -99,7 +95,6 @@ describe("buildPlatformModelCatalog", () => {
           {
             groupIds: ["default-group"],
             type: "api",
-            adobeMode: null,
             supportedModelIds: ["terminal-image"],
             isEnabled: true,
             status: "error",
@@ -147,7 +142,6 @@ describe("buildPlatformModelCatalog", () => {
             {
               groupIds: ["default-group"],
               type: "api",
-              adobeMode: null,
               supportedModelIds: ["seedance2"],
               isEnabled: true,
               status: "active",
@@ -156,25 +150,6 @@ describe("buildPlatformModelCatalog", () => {
         })
       )
     ).toEqual({ image: [], video: [{ id: "seedance2" }] });
-  });
-
-  it("Adobe gateway 成员不能把真实视频 ID 发布到任一目录", () => {
-    expect(
-      buildPlatformModelCatalog(
-        source({
-          members: [
-            {
-              groupIds: ["default-group"],
-              type: "adobe",
-              adobeMode: "gateway",
-              supportedModelIds: ["seedance2"],
-              isEnabled: true,
-              status: "active",
-            },
-          ],
-        })
-      )
-    ).toEqual({ image: [], video: [] });
   });
 
   it("按自定义注册类型把 API 成员模型发布为视频而不是图像", () => {
@@ -186,7 +161,6 @@ describe("buildPlatformModelCatalog", () => {
             {
               groupIds: ["default-group"],
               type: "api",
-              adobeMode: null,
               supportedModelIds: ["vendor-video-x"],
               isEnabled: true,
               status: "active",
@@ -220,7 +194,6 @@ describe("buildPlatformModelCatalog", () => {
             {
               groupIds: ["default-group"],
               type: "api",
-              adobeMode: null,
               supportedModelIds: [
                 "gpt-image-2",
                 "seedance2",

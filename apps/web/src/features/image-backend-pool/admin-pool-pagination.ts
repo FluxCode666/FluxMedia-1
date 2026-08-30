@@ -33,12 +33,6 @@ export const ADMIN_POOL_GROUP_NAME_PARAM = "groupName";
 
 const CREDENTIAL_FILTERS = new Set<BackendMemberCredentialFilter>([
   "all",
-  "pending",
-  "healthy",
-  "degraded",
-  "isolated",
-  "overdue",
-  "unhealthy",
   "not_applicable",
 ]);
 

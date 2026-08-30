@@ -1,4 +1,4 @@
-# FluxMedia 生产 Compose：运行 Next.js 主服务与 Adobe direct 专用代理。
+# FluxMedia 生产 Compose：运行 Next.js 主服务。
 # PostgreSQL、Redis 与其他可选上游均为外部依赖。
 name: fluxmedia
 
@@ -48,10 +48,6 @@ services:
       REDIS_TLS: ${REDIS_TLS:-false}
       # pg 按进程 TZ 解析无时区 timestamp；展示时区只能通过 APP_TIME_ZONE 配置。
       TZ: UTC
-      ADOBE_DIRECT_PROXY_URL: ${ADOBE_DIRECT_PROXY_URL:-http://media-upstream-proxy:3021}
-      ADOBE_DIRECT_PROXY_SECRET: ${ADOBE_DIRECT_PROXY_SECRET:?ADOBE_DIRECT_PROXY_SECRET 必填}
-      ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS: ${ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS:-300}
-      ADOBE_DIRECT_PROXY_MAX_BODY_MB: ${ADOBE_DIRECT_PROXY_MAX_BODY_MB:-64}
       API_UPSTREAM_SCRIPT_WORKER_COUNT: ${API_UPSTREAM_SCRIPT_WORKER_COUNT:-1}
       API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB: ${API_UPSTREAM_SCRIPT_MEMORY_LIMIT_MB:-32}
       API_UPSTREAM_SCRIPT_STACK_LIMIT_KB: ${API_UPSTREAM_SCRIPT_STACK_LIMIT_KB:-512}
@@ -61,9 +57,6 @@ services:
       - "${BIND_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     volumes:
       - app-storage:/app/storage
-    depends_on:
-      media-upstream-proxy:
-        condition: service_healthy
     healthcheck:
       test:
         [
@@ -87,35 +80,6 @@ services:
       driver: json-file
       options:
         max-size: "100m"
-        max-file: "5"
-
-  media-upstream-proxy:
-    image: ${FLUXMEDIA_PROXY_IMAGE:-ghcr.io/fluxcode666/fluxmedia-1-media-upstream-proxy}:${FLUXMEDIA_TAG:?FLUXMEDIA_TAG 必填}
-    restart: unless-stopped
-    init: true
-    networks:
-      - flux-code
-    environment:
-      ADOBE_DIRECT_PROXY_SECRET: ${ADOBE_DIRECT_PROXY_SECRET:?ADOBE_DIRECT_PROXY_SECRET 必填}
-      ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS: ${ADOBE_DIRECT_PROXY_TIMEOUT_SECONDS:-300}
-      ADOBE_DIRECT_PROXY_MAX_BODY_MB: ${ADOBE_DIRECT_PROXY_MAX_BODY_MB:-64}
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget -qO- --header='X-Proxy-Secret: '$${ADOBE_DIRECT_PROXY_SECRET} http://127.0.0.1:3021/healthz >/dev/null || exit 1",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    security_opt:
-      - no-new-privileges:true
-    stop_grace_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
         max-file: "5"
 
 volumes:

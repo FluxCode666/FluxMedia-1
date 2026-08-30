@@ -309,12 +309,12 @@ async function createFixtureOperationsFacts(
     `
       insert into video_generation (
         id, user_id, principal_scope, usage_log_visible, model,
-        adobe_request_profile, adobe_auth_profile, prompt, duration_seconds,
-        aspect_ratio, resolution, status, stage, credits_consumed,
+        prompt, duration_seconds, aspect_ratio, resolution, status, stage,
+        credits_consumed,
         created_at, updated_at, completed_at
       ) values (
         'operations-e2e-video-task', $1, 'user:operations-e2e-user', true,
-        'sora2', 'express', 'express', 'fixture prompt',
+        'sora2', 'fixture prompt',
         12, '16:9', '720p', 'completed', 'completed', 4.56, $2, $3, $3
       )
     `,

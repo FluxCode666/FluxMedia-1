@@ -2,18 +2,14 @@
  * 账号池管理列表的纯筛选视图模型。
  *
  * 使用方：账号池管理面板及其 DB-free 单测。本模块只消费已脱敏的分组、成员快照，
- * 统一名称模糊匹配、凭据健康、模型精确匹配和部署时区自然日范围，不访问浏览器
+ * 统一名称模糊匹配、API 凭据适用性、模型精确匹配和部署时区自然日范围，不访问浏览器
  * 或数据库，也不改变服务端返回顺序。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 
-import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
-
-/** 管理列表可选的 Adobe Direct 凭据健康状态。 */
+/** 管理列表可选的凭据适用性状态。 */
 export type BackendMemberCredentialFilter =
   | "all"
-  | AdobeCredentialHealthStatus
-  | "unhealthy"
   | "not_applicable";
 
 /** 供应商账号列表的全部筛选条件。 */
@@ -28,11 +24,12 @@ export interface BackendMemberFilters {
 
 /** 筛选器所需的最小成员投影，避免纯逻辑依赖 Server Action DTO。 */
 export interface BackendPoolFilterableMember {
+  id: string;
   name: string;
   supportedModelIds: string[];
   supportedResolutionsByModel?: Readonly<Record<string, readonly string[]>>;
   createdAt: string;
-  credentialHealthStatus: AdobeCredentialHealthStatus | null;
+  credentialHealthStatus: null;
 }
 
 /** 供应商账号筛选器的稳定空值。 */
@@ -51,24 +48,19 @@ function normalizeFilterValue(value: string): string {
 }
 
 /**
- * 判断成员的真实凭据健康状态是否符合筛选条件。
+ * 判断成员的凭据适用性状态是否符合筛选条件。
  *
- * @param status Adobe Direct 当前状态；其他成员为 null。
- * @param filter 用户选择的精确状态或聚合状态。
- * @returns unhealthy 聚合待复检、隔离和失约；不适用只匹配 null。
+ * @param status 当前状态；API 成员为 null。
+ * @param filter 用户选择的状态。
+ * @returns 只匹配全部或不适用。
  * @sideEffects 无。
  */
 function matchesCredentialHealthFilter(
-  status: AdobeCredentialHealthStatus | null,
+  status: null,
   filter: BackendMemberCredentialFilter
 ): boolean {
   if (filter === "all") return true;
-  if (filter === "unhealthy") {
-    return (
-      status === "degraded" || status === "isolated" || status === "overdue"
-    );
-  }
-  return (status ?? "not_applicable") === filter;
+  return filter === "not_applicable" && status === null;
 }
 
 /**

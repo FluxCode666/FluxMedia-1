@@ -2,8 +2,6 @@
   "pages": [
     "index",
     "---官方参考---",
-    "system",
-    "---其他参考---",
-    "adobe-firefly-routing"
+    "system"
   ]
 }

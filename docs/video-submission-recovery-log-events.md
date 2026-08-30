@@ -17,8 +17,6 @@ API 供应商创建请求没有返回有效上游任务 ID 或同步产物时，
 3. 所有候选账号耗尽、没有合格账号或容量等待超时后，任务进入退款阶段并停止上游外呼。
 4. 退款在后台幂等执行；退款失败按固定间隔重试，耗尽后只打印一次高优先级错误日志。
 
-Adobe Direct 的既有轮询恢复不使用本契约的 API 提交事件。
-
 ## 稳定字段
 
 | 字段 | 类型 | 含义 |
@@ -96,7 +94,7 @@ Adobe Direct 的既有轮询恢复不使用本契约的 API 提交事件。
 - **触发：** 升级前显式 API `submit_uncertain` 任务缺少供应商账号、固定适配版本、模型能力、输入/输出存储或消费账本等不可变恢复事实，系统禁止重新提交并进入幂等退款。
 - **必要字段：** `videoTaskId`、历史安全 `supplierName`（缺失时为明确哨兵）、`model`、`protocol`、迁移专用 `requestId`、`failureCode`、`failureReason`、`operationsReason`。
 - **告警：** 立即高优先级通知管理员；同一任务仅成功 CAS 到 `refunding` 的 Worker 打印一次，退款恢复不得重复打印。
-- **移除条件：** 这是带 `@deprecated` 的升级兼容标识；下个版本只有在显式 API 遗留查询数量为零后才可移除。Adobe Direct 与协议字段缺失的任务不产生本事件。
+- **移除条件：** 这是带 `@deprecated` 的升级兼容标识；下个版本只有在显式 API 遗留查询数量为零后才可移除。
 
 ### `video_refund_attempt_failed`
 

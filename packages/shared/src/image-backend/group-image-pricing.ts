@@ -6,8 +6,16 @@
  */
 import { z } from "zod";
 
-import { ADOBE_IMAGE_MODEL_IDS } from "../adobe/enabled-models";
-import { videoModelCreditPricesSchema } from "../adobe/video-pricing";
+import { videoModelCreditPricesSchema } from "../video-generation/video-pricing";
+
+/** 平台内置图像模型 ID；供应商账号通过 API 显式声明这些或其他受信任模型。 */
+export const BUILTIN_IMAGE_MODEL_IDS = [
+  "gpt-image-2",
+  "gpt-image-1.5",
+  "nano-banana-pro",
+  "nano-banana",
+  "nano-banana2",
+] as const;
 
 export const IMAGE_CREDIT_PRICE_FIELDS = [
   "base1024Credits",
@@ -37,7 +45,7 @@ export const DEFAULT_IMAGE_CREDIT_PRICING: ResolvedImageCreditPricing = {
 /** 仅用于读取历史 JSON；该保留键不会进入规范结果或运行时价格匹配。 */
 const LEGACY_DEFAULT_IMAGE_PRICING_MODEL = "default";
 
-const REQUIRED_GLOBAL_IMAGE_PRICING_MODELS = [...ADOBE_IMAGE_MODEL_IDS];
+const REQUIRED_GLOBAL_IMAGE_PRICING_MODELS = [...BUILTIN_IMAGE_MODEL_IDS];
 
 /** 缺少完整显式全局模型价格时抛出的稳定 fail-closed 错误。 */
 export class MissingGlobalImagePricingError extends Error {

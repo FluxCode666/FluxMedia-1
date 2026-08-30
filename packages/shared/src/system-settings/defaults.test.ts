@@ -4,7 +4,7 @@ import {
   DEFAULT_VIDEO_MODEL_BILLING_MODES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-} from "../adobe/video-pricing";
+} from "../video-generation/video-pricing";
 import {
   CREDIT_PACKAGE_MATRIX_SETTING_KEY,
   getRuntimeCreditPackages,
@@ -128,21 +128,6 @@ describe("system setting default initialization", () => {
     dbMock.insertBuilder.onConflictDoNothing.mockClear();
     dbMock.insertBuilder.onConflictDoUpdate.mockClear();
     dbMock.deleteBuilder.where.mockClear();
-  });
-
-  it("Adobe 凭据通知目标只能由专用 operation 管理", () => {
-    for (const key of [
-      "ADOBE_CREDENTIAL_ALERT_EMAIL_RECIPIENTS",
-      "ADOBE_CREDENTIAL_ALERT_WEBHOOK_URL",
-    ] as const) {
-      expect(SETTING_DEFINITION_BY_KEY.get(key)).toMatchObject({
-        category: "mail",
-        managedByDedicatedOperation: true,
-      });
-    }
-    expect([...SETTING_DEFINITION_BY_KEY.keys()]).not.toContain(
-      "ADOBE_CREDENTIAL_WEBHOOK_HMAC_SECRET"
-    );
   });
 
   it("运营导出任务定义默认关闭且限制批次与间隔", () => {

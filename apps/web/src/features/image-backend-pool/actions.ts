@@ -44,13 +44,12 @@ import {
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
-import type { AdobeCredentialHealthStatus } from "./adobe-credential-health-status";
 import type { BackendMemberAdminSummary } from "./member-service";
 import { backendMemberExportDocumentSchema } from "./member-transfer";
 
-/** 页面成员摘要；凭据健康来自独立 human-only 批量 operation。 */
+/** 页面成员摘要；API 账号不提供独立供应商凭据健康状态。 */
 export type BackendPoolAdminMemberSummary = BackendMemberAdminSummary & {
-  credentialHealthStatus: AdobeCredentialHealthStatus | null;
+  credentialHealthStatus: null;
 };
 
 /** 统一号池页面快照；不含任何明文凭据或凭据诊断。 */
@@ -71,40 +70,6 @@ interface BackendPoolBaseAdminSnapshot {
   members: BackendMemberAdminSummary[];
 }
 
-/** 页面批量凭据健康 operation 的最小输出。 */
-interface AdobeCredentialHealthStatusListOutput {
-  statuses: Array<{
-    memberId: string;
-    status: AdobeCredentialHealthStatus;
-  }>;
-}
-
-/** 管理员专用 Adobe 凭据健康摘要；诊断只含严格 allowlist 字段。 */
-export interface AdobeCredentialHealthSummary {
-  memberId: string;
-  status: "pending" | "healthy" | "degraded" | "isolated" | "overdue";
-  consecutiveFailures: number;
-  failureProfiles: Array<"express" | "firefly">;
-  lastCheckedAt: string | null;
-  lastSuccessAt: string | null;
-  nextCheckAt: string | null;
-  evaluationDeadlineAt: string | null;
-  isolatedAt: string | null;
-  diagnostic: {
-    statusCode?: number;
-    adobeErrorCode?: string;
-    message?: string;
-    requestId?: string;
-  } | null;
-}
-
-/** 管理员检查与重新授权共享的安全结果。 */
-export interface AdobeCredentialEvaluationResult {
-  evaluationId: string;
-  disposition: "accepted" | "stale" | "discarded";
-  health: AdobeCredentialHealthSummary;
-}
-
 /** pool operation 与浏览器动作所需输出的类型映射。 */
 type PoolOperationOutputs = {
   "pool.getGroupOptions": {
@@ -113,16 +78,12 @@ type PoolOperationOutputs = {
   "pool.getAdminPool": BackendPoolBaseAdminSnapshot;
   "pool.listAdminMembers": AdminPoolMemberListOutput;
   "pool.listAdminGroups": AdminPoolGroupListOutput;
-  "pool.listAdobeCredentialHealthStatuses": AdobeCredentialHealthStatusListOutput;
   "pool.saveGroup": { id: string };
   "pool.deleteGroup": { success: boolean };
   "pool.saveMember": { id: string };
   "pool.resetMemberStatus": { success: boolean };
   "pool.setMemberEnabled": { id: string; isEnabled: boolean };
   "pool.deleteMember": { success: boolean };
-  "pool.checkAdobeCredentialHealth": AdobeCredentialEvaluationResult;
-  "pool.getAdobeCredentialHealth": AdobeCredentialHealthSummary;
-  "pool.reauthorizeAdobeCredential": AdobeCredentialEvaluationResult;
   "pool.testApiUpstreamAdapter": { preview: unknown };
   "pool.getApiUpstreamRuntimeDiagnostics": {
     lifecycle: "starting" | "ready" | "unavailable" | "draining" | "closed";
@@ -143,17 +104,6 @@ const idSchema = z.object({ id: z.string().trim().min(1).max(128) }).strict();
 
 const setMemberEnabledSchema = idSchema
   .extend({ isEnabled: z.boolean() })
-  .strict();
-
-const adobeCredentialMemberSchema = z
-  .object({ memberId: z.string().trim().min(1).max(128) })
-  .strict();
-
-const adobeCredentialReauthorizationSchema = adobeCredentialMemberSchema
-  .extend({
-    cookie: z.string().trim().min(1).max(64_000),
-    clientRequestId: z.string().trim().min(1).max(128),
-  })
   .strict();
 
 const apiUpstreamAdapterTestInputSchema = z
@@ -197,28 +147,12 @@ function revalidateBackendPoolPage(): void {
   revalidatePath("/dashboard/admin/supplier-groups");
 }
 
-/**
- * 将通用账号池快照与 human-only 凭据健康状态合并为页面视图。
- *
- * @param pool 不含凭据健康的通用账号池快照。
- * @param health 仅含成员 ID 与当前状态的批量健康输出。
- * @returns 每个成员恰好带一个可筛选状态；非 Adobe Direct 为 null。
- * @sideEffects 无。
- * @failure 不抛错；缺失的状态项按不适用处理。
- */
 function buildBackendPoolAdminSnapshot(
-  pool: BackendPoolBaseAdminSnapshot,
-  health: AdobeCredentialHealthStatusListOutput
+  pool: BackendPoolBaseAdminSnapshot
 ): BackendPoolAdminSnapshot {
-  const statusByMemberId = new Map(
-    health.statuses.map((item) => [item.memberId, item.status])
-  );
   return {
     groups: pool.groups,
-    members: pool.members.map((member) => ({
-      ...member,
-      credentialHealthStatus: statusByMemberId.get(member.id) ?? null,
-    })),
+    members: pool.members.map((member) => ({ ...member, credentialHealthStatus: null })),
   };
 }
 
@@ -226,36 +160,10 @@ function buildBackendPoolAdminSnapshot(
 function restoreMemberDiscriminant(
   member: AdminPoolMemberListOutput["records"][number]
 ): BackendPoolAdminMemberSummary {
-  if (member.type === "api" && !("mode" in member.config)) {
-    // WHY：UOL schema 分别校验 type 与 config；此处经互斥字段检查恢复二者的判别关联。
-    const config = member.config as Extract<
-      BackendMemberAdminSummary,
-      { type: "api" }
-    >["config"];
-    return { ...member, type: "api", config };
-  }
-  if (member.type !== "adobe" || !("mode" in member.config)) {
-    throw new Error("账号池成员类型与配置不匹配");
-  }
-  if (member.config.mode === "gateway") {
-    const config = member.config as Extract<
-      BackendMemberAdminSummary,
-      { type: "adobe" }
-    >["config"];
-    return { ...member, type: "adobe", config };
-  }
-  const config = member.config as Extract<
-    BackendMemberAdminSummary,
-    { type: "adobe" }
-  >["config"];
-  return {
-    ...member,
-    type: "adobe",
-    config,
-  };
+  return { ...member, type: "api", config: member.config };
 }
 
-/** 读取通用号池快照，并并行合入不向 Agent 暴露的凭据健康状态。 */
+/** 读取通用号池快照，并补齐 API 账号统一的空凭据健康状态字段。 */
 export const getAdminImageBackendPoolAction = imageBackendPoolViewerAction
   .metadata({ action: "imageBackendPool.list" })
   .action(async ({ ctx }): Promise<BackendPoolAdminSnapshot> => {
@@ -264,15 +172,8 @@ export const getAdminImageBackendPoolAction = imageBackendPoolViewerAction
       userId: ctx.userId,
       role: ctx.role,
     } as const satisfies Principal;
-    const [pool, health] = await Promise.all([
-      invokePoolOperation("pool.getAdminPool", {}, principal),
-      invokePoolOperation(
-        "pool.listAdobeCredentialHealthStatuses",
-        {},
-        principal
-      ),
-    ]);
-    return buildBackendPoolAdminSnapshot(pool, health);
+    const pool = await invokePoolOperation("pool.getAdminPool", {}, principal);
+    return buildBackendPoolAdminSnapshot(pool);
   });
 
 /** 按 URL 条件分页读取人工账号池成员明细。 */
@@ -334,7 +235,7 @@ export const deleteImageBackendGroupAction = adminAction
     return { success: true };
   });
 
-/** 以 `api | adobe` 单一入口保存媒体后端成员。 */
+/** 保存 API 媒体后端成员。 */
 export const saveImageBackendMemberAction = adminAction
   .metadata({ action: "imageBackendPool.saveMember" })
   .schema(backendMemberInputSchema)
@@ -464,46 +365,6 @@ export const deleteImageBackendMemberAction = adminAction
     });
     revalidateBackendPoolPage();
     return { success: true };
-  });
-
-/** 管理员读取 Adobe direct 成员的安全健康摘要。 */
-export const getAdobeCredentialHealthAction = adminAction
-  .metadata({ action: "imageBackendPool.getAdobeCredentialHealth" })
-  .schema(adobeCredentialMemberSchema)
-  .action(async ({ parsedInput, ctx }) =>
-    invokePoolOperation("pool.getAdobeCredentialHealth", parsedInput, {
-      type: "user",
-      userId: ctx.userId,
-      role: ctx.role,
-    })
-  );
-
-/** 管理员立即执行一次双 Profile 凭据检查。 */
-export const checkAdobeCredentialHealthAction = adminAction
-  .metadata({ action: "imageBackendPool.checkAdobeCredentialHealth" })
-  .schema(adobeCredentialMemberSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.checkAdobeCredentialHealth",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return result;
-  });
-
-/** 管理员为同一 Adobe 账号提交新 Cookie 并恢复隔离状态。 */
-export const reauthorizeAdobeCredentialAction = adminAction
-  .metadata({ action: "imageBackendPool.reauthorizeAdobeCredential" })
-  .schema(adobeCredentialReauthorizationSchema)
-  .action(async ({ parsedInput, ctx }) => {
-    const result = await invokePoolOperation(
-      "pool.reauthorizeAdobeCredential",
-      parsedInput,
-      { type: "user", userId: ctx.userId, role: ctx.role }
-    );
-    revalidateBackendPoolPage();
-    return result;
   });
 
 /** 使用生产 Worker 和合成样例执行无网络 API 上游脚本测试。 */

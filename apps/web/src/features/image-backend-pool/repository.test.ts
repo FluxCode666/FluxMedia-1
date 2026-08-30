@@ -257,10 +257,6 @@ describe("backend pool PostgreSQL repository", () => {
     );
     expect(candidateQuery?.sql).toContain("api_config.api_key is not null");
     expect(candidateQuery?.sql).toContain("api_version.id is not null");
-    expect(candidateQuery?.sql).toContain("adobe_config.cookie is not null");
-    expect(candidateQuery?.sql).toContain(
-      "adobe_config.access_token is not null"
-    );
   });
 
   it("acquires the least-loaded eligible member in one transaction", async () => {
@@ -323,8 +319,6 @@ describe("backend pool PostgreSQL repository", () => {
     expect(queries[2]?.sql.toLowerCase()).not.toContain(" like ");
     expect(queries[2]?.sql).toContain("m.cooldown_until");
     expect(queries[2]?.sql).toContain("m.status not in");
-    expect(queries[2]?.sql).toContain("from adobe_credential_health");
-    expect(queries[2]?.sql).toContain("credential_health.status =");
     expect(queries[2]?.params).toEqual(
       expect.arrayContaining([
         "group-a",

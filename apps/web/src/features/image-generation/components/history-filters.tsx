@@ -7,7 +7,7 @@
  * router 更新白名单 URL，并同时清除当前签名 cursor。
  */
 
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { Button } from "@repo/ui/components/button";
 import {
   Popover,
@@ -240,7 +240,7 @@ export function HistoryFilters({
               >
                 <span className="truncate">
                   {model
-                    ? formatAdobeModelIdForDisplay(model)
+                    ? formatModelIdForDisplay(model)
                     : copy("All models", "全部模型")}
                 </span>
                 <ChevronsUpDown className="text-muted-foreground" />
@@ -304,7 +304,7 @@ export function HistoryFilters({
                     type="button"
                   >
                     <span className="min-w-0 break-all font-mono text-xs">
-                      {formatAdobeModelIdForDisplay(option)}
+                      {formatModelIdForDisplay(option)}
                     </span>
                     <Check
                       className={cn(

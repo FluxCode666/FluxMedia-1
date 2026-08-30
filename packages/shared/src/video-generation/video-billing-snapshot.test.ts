@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { resolveVideoBillingQuote } from "../adobe/video-pricing";
+import { resolveVideoBillingQuote } from "./video-pricing";
 import {
   createVideoBillingSnapshot,
   LEGACY_VIDEO_CAPABILITY_SNAPSHOT_VERSION,

@@ -7,7 +7,7 @@
  * 追加。客户端统一处理请求锁、慢响应隔离、ID 去重、键盘入口和 sessionStorage 重放。
  */
 
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import type {
   GalleryItem,
   GalleryListOutput,
@@ -624,7 +624,7 @@ export function GalleryClient({
                       {item.prompt}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      {formatAdobeModelIdForDisplay(item.model)}
+                      {formatModelIdForDisplay(item.model)}
                     </p>
                   </div>
                 </div>

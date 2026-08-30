@@ -28,9 +28,3 @@ services:
         NEXT_PUBLIC_ASSET_PREFIX: ${NEXT_PUBLIC_ASSET_PREFIX:-}
         NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
         NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
-
-  media-upstream-proxy:
-    image: gpt2image-pro-media-upstream-proxy:local
-    build:
-      context: .
-      dockerfile: Dockerfile.media-upstream-proxy

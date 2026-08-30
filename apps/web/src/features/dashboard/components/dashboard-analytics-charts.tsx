@@ -6,7 +6,7 @@
  * 本文件是首页唯一直接依赖 Recharts 的模块，由懒加载包装器拆包；右侧文本列表提供
  * 完整模型、任务数和比例，确保颜色不是理解分布的唯一方式。
  */
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import type { ModelUsageDistribution } from "@repo/shared/analytics/contracts";
 import {
   Card,
@@ -71,7 +71,7 @@ export function ModelUsageDistributionChart({
     name:
       item.model === "unknown"
         ? copy("Unknown model", "未知模型")
-        : formatAdobeModelIdForDisplay(item.model),
+        : formatModelIdForDisplay(item.model),
     value: item.taskCount,
     color: CHART_COLORS[index % CHART_COLORS.length],
   }));

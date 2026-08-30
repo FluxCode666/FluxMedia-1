@@ -17,11 +17,9 @@
   资产断言和 Node 22 Worker smoke；当前 Docker Hub 匿名鉴权端点 IPv6 连接超时，基础镜像
   `node:22-slim` 尚未拉取，需网络恢复后重试或由 PR CI 的同一门禁完成。
 - 在维护窗口执行 `0060_unified_media_backend_pool.sql` 的目标库只读预检，确认旧 Web
-  账号、有效租约/粘性绑定和不可恢复的视频任务为空；API、Adobe、子池、关系和历史
-  指标必须由迁移保留并转换。另须确认没有 Responses 型 API、非法模型元素或 API/
-  Adobe 成员 ID 冲突；Images `use_stream` 配置应保留。
-- 为生产环境生成独立高熵 `ADOBE_DIRECT_PROXY_SECRET`，同时配置 Web 与
-  `media-upstream-proxy`，不得复用其他服务密钥。
+  账号、有效租约/粘性绑定和不可恢复的视频任务为空；API、子池、关系和历史指标必须
+  由迁移保留并转换。另须确认没有 Responses 型 API、非法模型元素或成员 ID 冲突；
+  Images `use_stream` 配置应保留。
 - 在生产维护窗口排空旧 Web/worker 并冻结账号配置写入，完成备份/PITR 证据、视频输入资产
   收编、0074 与 0077 preflight、迁移及 postcheck；迁移开始后如需回退，必须成对恢复旧镜像
   与数据库，不能只回退应用。

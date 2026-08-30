@@ -5,7 +5,6 @@
  * 持久化与运行时模型，并输出共享 DTO。它不读取数据库、运行时服务或对象存储。
  */
 import {
-  ADOBE_VIDEO_PRICING_FAMILIES,
   DEFAULT_VIDEO_MODEL_BILLING_MODES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   getVideoPricingResolutionKey,
@@ -15,9 +14,10 @@ import {
   resolveVideoCreditsPerSecondByResolution,
   videoModelBillingModesSchema,
   videoModelCreditPricesSchema,
-} from "@repo/shared/adobe";
-import { ADOBE_IMAGE_MODEL_IDS } from "@repo/shared/adobe/enabled-models";
+  VIDEO_PRICING_FAMILIES,
+} from "@repo/shared/video-generation";
 import { globalImageCreditOverridesSchema } from "@repo/shared/image-backend/group-image-pricing";
+import { BUILTIN_IMAGE_MODEL_IDS } from "@repo/shared/image-backend/group-image-pricing";
 import {
   getMinimumImageCredits,
   type ModelConfigurationEntry,
@@ -233,7 +233,7 @@ function collectImageConfigKeys(
   runtimeCatalog: RuntimeModelCatalogResult,
   customModels: readonly ModelMarketplaceCustomModel[]
 ): string[] {
-  const builtInKeys = ADOBE_IMAGE_MODEL_IDS.flatMap((modelId) => {
+  const builtInKeys = BUILTIN_IMAGE_MODEL_IDS.flatMap((modelId) => {
     const configKey = normalizeModelMarketplaceImageConfigKey(modelId);
     return configKey ? [configKey] : [];
   });
@@ -273,7 +273,7 @@ function collectVideoConfigKeys(
   runtimeCatalog: RuntimeModelCatalogResult,
   customModels: readonly ModelMarketplaceCustomModel[]
 ): string[] {
-  const builtInKeys = [...ADOBE_VIDEO_PRICING_FAMILIES];
+  const builtInKeys = [...VIDEO_PRICING_FAMILIES];
   const builtInSet = new Set<string>(builtInKeys);
   const additionalKeys = new Set<string>();
 

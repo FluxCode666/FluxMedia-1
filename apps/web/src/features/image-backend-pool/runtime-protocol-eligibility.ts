@@ -15,8 +15,7 @@ export interface RuntimeProtocolRequest {
 
 /** 协议资格判定所需的最小账号事实。 */
 export interface RuntimeProtocolMember {
-  memberType: "api" | "adobe";
-  adobeMode: "gateway" | "direct" | null;
+  memberType: "api";
   videoInputCapabilities?: {
     referenceVideos: boolean;
     referenceAudios: boolean;
@@ -27,8 +26,8 @@ export interface RuntimeProtocolMember {
  * 判断已获租账号的协议是否能执行当前媒体请求。
  *
  * @param request - 图片/视频类型与可选蒙版要求。
- * @param member - 账号类型和 Adobe 模式。
- * @returns API 可执行图片、蒙版与视频；Adobe Direct 可执行图片和视频；Gateway 仅图片。
+ * @param member - API 账号事实。
+ * @returns API 可执行图片、蒙版与视频。
  * @sideEffects 无。
  * @failure 不抛错；模型能力已经由获租 SQL 独立筛选。
  */
@@ -36,7 +35,7 @@ export function canRuntimeBackendLeaseServeRequest(
   request: RuntimeProtocolRequest,
   member: RuntimeProtocolMember
 ): boolean {
-  if (request.requiresMask && member.memberType !== "api") return false;
+  if (member.memberType !== "api") return false;
   if (request.requestKind !== "video") return true;
   if (request.requiresReferenceVideo) {
     if (member.memberType !== "api" || !member.videoInputCapabilities?.referenceVideos) {
@@ -48,8 +47,5 @@ export function canRuntimeBackendLeaseServeRequest(
       return false;
     }
   }
-  return (
-    member.memberType === "api" ||
-    (member.memberType === "adobe" && member.adobeMode === "direct")
-  );
+  return true;
 }

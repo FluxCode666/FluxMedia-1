@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import {
   resolveVideoBillingQuote,
   type VideoBillingQuote,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import {
   apiModelMappingsSchema,
   apiUpstreamAdapterDraftSchema,
@@ -86,8 +86,7 @@ const authoritativeVideoQuoteRowSchema = z
   .strict();
 
 const configuredModelIdsRowSchema = z.object({
-  member_type: z.enum(["api", "adobe"]),
-  adobe_mode: z.enum(["gateway", "direct"]).nullable(),
+  member_type: z.literal("api"),
   supported_model_ids: z.array(z.string().trim().min(1)),
 });
 
@@ -147,7 +146,7 @@ export function classifyRuntimeBackendLeaseLoadFailure(
 
 const runtimeConfigRowSchema = z.object({
   member_id: z.string().trim().min(1),
-  member_type: z.enum(["api", "adobe"]),
+  member_type: z.literal("api"),
   supported_model_ids: z.array(z.string().trim().min(1)).min(1),
   member_content_safety_enabled: z.boolean(),
   api_key: z.string().nullable(),
@@ -155,12 +154,6 @@ const runtimeConfigRowSchema = z.object({
   api_adapter_member_id: z.string().nullable(),
   api_adapter_version_id: z.string().nullable(),
   api_adapter_configuration: z.unknown().nullable(),
-  adobe_mode: z.enum(["gateway", "direct"]).nullable(),
-  adobe_base_url: z.string().nullable(),
-  adobe_api_key: z.string().nullable(),
-  adobe_default_ratio: z.string().nullable(),
-  adobe_default_resolution: z.string().nullable(),
-  adobe_gpt_image_quality: z.enum(["low", "medium", "high"]).nullable(),
 });
 
 /** 准入时固定的统一分组运行时快照。 */
@@ -219,8 +212,7 @@ export interface RuntimeBackendLease {
   acquisition: AcquiredBackendMemberLease;
   config: ApiConfig;
   memberId: string;
-  memberType: "api" | "adobe";
-  adobeMode: "gateway" | "direct" | null;
+  memberType: "api";
 }
 
 /** 调度指标允许记录的稳定结果。 */
@@ -247,8 +239,8 @@ export interface CreateRuntimeBackendSessionInput {
   excludedMemberIds?: readonly string[];
   /** 同账号创建重试时只允许重新获取该账号。 */
   requiredMemberId?: string;
-  /** 协议恢复必须固定成员类型，避免 API 重试漂移到 Adobe Direct。 */
-  requiredMemberType?: "api" | "adobe";
+  /** 协议恢复必须固定 API 成员类型。 */
+  requiredMemberType?: "api";
   /** 同账号重试固定使用首次选择时持久化的 API 适配版本。 */
   requiredApiAdapterMemberId?: string;
   requiredApiAdapterVersionId?: string;
@@ -612,13 +604,10 @@ export async function listConfiguredRuntimeModelIds(
       await db.execute(sql`
         select
           member.type as member_type,
-          adobe.mode as adobe_mode,
           member.supported_model_ids
         from image_backend_member as member
         inner join image_backend_member_group as membership
           on membership.member_id = member.id
-        left join image_backend_member_adobe_config as adobe
-          on adobe.member_id = member.id
         where membership.group_id = ${group.id}
           and member.is_enabled = true
         order by member.id asc
@@ -628,7 +617,6 @@ export async function listConfiguredRuntimeModelIds(
   return projectConfiguredVideoModelIds(
     rows.map((row) => ({
       memberType: row.member_type,
-      adobeMode: row.adobe_mode,
       supportedModelIds: row.supported_model_ids,
     }))
   );
@@ -647,7 +635,7 @@ export async function inspectRuntimeVideoBackendAvailability(
     modelId: string;
     requiresContentSafety: boolean;
     /** 自定义模型等 API-only 请求必须在只读预检时沿用同一成员类型约束。 */
-    requiredMemberType?: "api" | "adobe";
+    requiredMemberType?: "api";
     requiredVideoInputCapabilities?: {
       referenceVideos?: boolean;
       referenceAudios?: boolean;
@@ -678,8 +666,6 @@ export async function inspectRuntimeVideoBackendAvailability(
             on api_version.id = api.current_adapter_version_id
             and api_version.member_id_snapshot = member.id
             and api_version.credential_scope = api.credential_scope
-          left join image_backend_member_adobe_config as adobe
-            on adobe.member_id = member.id
           where membership.group_id = ${group.id}
             and member.is_enabled = true
             and (${input.requiredMemberType ?? null}::text is null or member.type = ${
@@ -687,15 +673,6 @@ export async function inspectRuntimeVideoBackendAvailability(
             })
             and (member.cooldown_until is null or member.cooldown_until <= now())
             and member.status <> 'error'
-            and not (
-              member.type = 'adobe'
-              and exists (
-                select 1
-                from adobe_credential_health as credential_health
-                where credential_health.member_id = member.id
-                  and credential_health.status = 'isolated'
-              )
-            )
             and exists (
               select 1
               from json_array_elements_text(member.supported_model_ids)
@@ -729,19 +706,9 @@ export async function inspectRuntimeVideoBackendAvailability(
                 ) = true
               )
             )
-            and (
-              (
-                member.type = 'api'
-                and api.api_key is not null
-                and api_version.id is not null
-              )
-              or (
-                member.type = 'adobe'
-                and adobe.mode = 'direct'
-                and adobe.cookie is not null
-                and adobe.access_token is not null
-              )
-            )
+            and member.type = 'api'
+            and api.api_key is not null
+            and api_version.id is not null
         ), inflight as (
           select lease.member_id, count(*)::integer as count
           from image_backend_member_lease as lease
@@ -852,13 +819,7 @@ async function loadRuntimeBackendLease(
           api.credential_scope as api_credential_scope,
           lease.api_adapter_member_id,
           lease.api_adapter_version_id,
-          api_version.configuration as api_adapter_configuration,
-          adobe.mode as adobe_mode,
-          adobe.base_url as adobe_base_url,
-          adobe.api_key as adobe_api_key,
-          adobe.default_ratio as adobe_default_ratio,
-          adobe.default_resolution as adobe_default_resolution,
-          adobe.gpt_image_quality as adobe_gpt_image_quality
+          api_version.configuration as api_adapter_configuration
         from image_backend_member as member
         left join image_backend_member_lease as lease
           on lease.id = ${acquisition.lease.id}
@@ -869,8 +830,6 @@ async function loadRuntimeBackendLease(
           on api_version.member_id_snapshot = lease.api_adapter_member_id
           and api_version.id = lease.api_adapter_version_id
           and api_version.credential_scope = api.credential_scope
-        left join image_backend_member_adobe_config as adobe
-          on adobe.member_id = member.id
         where member.id = ${acquisition.member.id}
         limit 1
       `);
@@ -935,7 +894,6 @@ async function loadRuntimeBackendLease(
       acquisition,
       memberId: row.member_id,
       memberType: "api",
-      adobeMode: null,
       config: {
         baseUrl: adapter.baseUrl.replace(/\/+$/, ""),
         apiKey: row.api_key,
@@ -951,57 +909,9 @@ async function loadRuntimeBackendLease(
       },
     };
   }
-
-  if (
-    !row.adobe_mode ||
-    !row.adobe_default_ratio ||
-    !row.adobe_default_resolution ||
-    !row.adobe_gpt_image_quality
-  ) {
-    throw new RuntimeBackendConfigurationInvalidError(
-      "Adobe 成员缺少运行时类型配置"
-    );
-  }
-  if (row.adobe_mode === "gateway") {
-    if (!row.adobe_base_url || !row.adobe_api_key) {
-      throw new RuntimeBackendConfigurationInvalidError(
-        "Adobe gateway 成员缺少地址或凭据"
-      );
-    }
-    try {
-      parseMediaUpstreamUrl(row.adobe_base_url);
-    } catch {
-      throw new RuntimeBackendConfigurationInvalidError(
-        "Adobe gateway 成员地址无效"
-      );
-    }
-  }
-
-  return {
-    acquisition,
-    memberId: row.member_id,
-    memberType: "adobe",
-    adobeMode: row.adobe_mode,
-    config: {
-      baseUrl:
-        row.adobe_mode === "gateway"
-          ? (row.adobe_base_url ?? "").replace(/\/+$/, "")
-          : "https://firefly.adobe.com",
-      apiKey: row.adobe_mode === "gateway" ? (row.adobe_api_key ?? "") : "",
-      model: input.modelId,
-      contentSafetyEnabled,
-      backend: {
-        ...commonBackend,
-        type: "pool-adobe",
-        adobeMode: row.adobe_mode,
-        adobeEnabledModels: row.supported_model_ids,
-        adobeSupportsVideo: row.adobe_mode === "direct",
-        adobeDefaultRatio: row.adobe_default_ratio,
-        adobeDefaultResolution: row.adobe_default_resolution,
-        adobeGptImageQuality: row.adobe_gpt_image_quality,
-      },
-    },
-  };
+  throw new RuntimeBackendConfigurationInvalidError(
+    "不支持的媒体后端成员类型"
+  );
 }
 
 /** 以 best-effort 方式记录不含业务载荷的调度指标。 */
@@ -1252,7 +1162,6 @@ export async function createRuntimeBackendSession(
     if (
       !canRuntimeBackendLeaseServeRequest(normalizedInput, {
         memberType: lease.memberType,
-        adobeMode: lease.adobeMode,
         ...(lease.config.backend?.apiUpstreamAdapter
           ? {
               videoInputCapabilities: resolveApiVideoInputCapabilities(

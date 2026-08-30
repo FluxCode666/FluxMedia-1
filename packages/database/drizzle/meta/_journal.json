@@ -708,6 +708,13 @@
       "when": 1787973600000,
       "tag": "0100_video_output_dimensions_and_custom_models",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1788060000000,
+      "tag": "0101_remove_adobe_supplier_accounts",
+      "breakpoints": true
     }
   ]
 }

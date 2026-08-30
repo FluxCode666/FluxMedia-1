@@ -18,8 +18,6 @@ import {
   videoGetStatus,
   videoGetStatusInputSchema,
   videoListCapabilities,
-  videoListUncertainSubmissions,
-  videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "./video-generation";
 
@@ -394,15 +392,7 @@ describe("video generation operations", () => {
     expect(getOperation("video.requestAccountInputCleanup")).toBe(
       videoRequestAccountInputCleanup
     );
-    expect(getOperation("video.reconcileSubmission")).toBe(
-      videoReconcileSubmission
-    );
-    expect(getOperation("video.listUncertainSubmissions")).toBe(
-      videoListUncertainSubmissions
-    );
     expect(videoGetInputs.agentExposure).toBe("human-only");
-    expect(videoReconcileSubmission.agentExposure).toBe("human-only");
-    expect(videoListUncertainSubmissions.agentExposure).toBe("human-only");
     expect(videoRequestAccountInputCleanup.agentExposure).toBe("human-only");
     expect(videoRequestAccountInputCleanup.destructive).toBe(true);
   });

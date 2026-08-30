@@ -1,41 +1,21 @@
 /**
  * 本地开发进程编排器。
  *
- * 使用方：根目录 `pnpm dev`。脚本同时启动 Turbo Web 开发服务与 Adobe
- * media-upstream-proxy，并确保退出时清理两个进程组。代理密钥缺失时只在
- * 当前进程内生成临时密钥，不写入文件，也不改变生产环境配置。
+ * 使用方：根目录 `pnpm dev`。脚本启动 Turbo Web 开发服务，并确保退出时
+ * 清理子进程组。
  */
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
-const proxyDirectory = resolve(projectRoot, "services/media-upstream-proxy");
 const turboEntry = resolve(projectRoot, "node_modules/turbo/bin/turbo");
 const supportsProcessGroups = process.platform !== "win32";
 const children = new Map();
 let shuttingDown = false;
 let requestedExitCode = 0;
 let forceKillTimer;
-
-/**
- * 构造两个本地进程共享的运行环境。
- *
- * @returns 继承当前环境并补齐本地代理地址和密钥的新对象。
- * @sideEffects 缺少密钥时使用安全随机数生成一次性密钥，但不写入磁盘。
- */
-function createDevelopmentEnvironment() {
-  const environment = { ...process.env };
-  if (!environment.ADOBE_DIRECT_PROXY_URL?.trim()) {
-    environment.ADOBE_DIRECT_PROXY_URL = "http://127.0.0.1:3021";
-  }
-  if (!environment.ADOBE_DIRECT_PROXY_SECRET?.trim()) {
-    environment.ADOBE_DIRECT_PROXY_SECRET = randomBytes(32).toString("hex");
-  }
-  return environment;
-}
 
 /**
  * 向子进程及其派生进程发送退出信号。
@@ -139,23 +119,15 @@ function startChild(name, command, args, cwd, environment) {
  * 启动完整的本地开发链路并注册终端信号处理。
  *
  * @returns 无返回值；进程持续运行直到子进程退出或收到终端信号。
- * @sideEffects 启动 Go 代理和 Turbo，并接管 SIGINT、SIGTERM 的清理流程。
+ * @sideEffects 启动 Turbo，并接管 SIGINT、SIGTERM 的清理流程。
  */
 function runDevelopmentServices() {
-  const environment = createDevelopmentEnvironment();
-  startChild(
-    "media-upstream-proxy",
-    "go",
-    ["run", "."],
-    proxyDirectory,
-    environment
-  );
   startChild(
     "Turbo Web 开发服务",
     process.execPath,
     [turboEntry, "dev", "--env-mode=loose"],
     projectRoot,
-    environment
+    process.env
   );
 
   process.once("SIGINT", () => shutdown("SIGINT", 130));

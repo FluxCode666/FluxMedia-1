@@ -13,7 +13,7 @@
  *   滑动露出的空位填黑。硬拼不叠加两版 → 不重影（线性羽化会把两版轻微错位内容糊成重影）。
  *
  * 为什么能无缝且尺寸稳：① 1K tile —— API 后端通常能稳定遵循该尺寸；
- *   ② mask —— Adobe 后端不发 mask，故每块都按 image_edit + requiresMask 重新选择
+ *   ② mask —— 每块都按 image_edit + requiresMask 重新选择
  *   支持标准 Images edits 协议的 API 成员。
  *
  * 设计（职责分离，便于单测）：切块几何与每块保留区是纯函数（planOutpaintTiles / tileKeepInset），

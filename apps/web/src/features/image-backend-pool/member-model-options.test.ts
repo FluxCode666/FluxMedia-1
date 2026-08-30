@@ -1,9 +1,9 @@
 /**
  * 统一号池成员模型选项的 DB-free 测试。
  *
- * 职责：锁定模型配置到真实模型 ID 的映射、成员类型边界与历史能力保留语义。
+ * 职责：锁定模型配置到真实模型 ID 的映射与历史能力保留语义。
  */
-import { ADOBE_VIDEO_PRICING_FAMILIES } from "@repo/shared/adobe";
+import { VIDEO_PRICING_FAMILIES } from "@repo/shared/video-generation";
 import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
   type BackendMemberInput,
@@ -19,7 +19,6 @@ import { describe, expect, it } from "vitest";
 import {
   acceptsVideoBackendMemberModels,
   buildBackendMemberModelOptions,
-  DEFAULT_ADOBE_MEMBER_MODE,
   findUnavailableBackendMemberModelIds,
   normalizeBackendMemberModelIdsForDisplay,
   removeVideoBackendMemberModelIds,
@@ -38,13 +37,8 @@ const commonEntry = {
 };
 
 describe("账号形态视频能力", () => {
-  it("API 与 Adobe Direct 开放视频模型，Adobe Gateway 不开放", () => {
-    expect(DEFAULT_ADOBE_MEMBER_MODE).toBe("direct");
-    expect(
-      acceptsVideoBackendMemberModels("adobe", DEFAULT_ADOBE_MEMBER_MODE)
-    ).toBe(true);
-    expect(acceptsVideoBackendMemberModels("adobe", "gateway")).toBe(false);
-    expect(acceptsVideoBackendMemberModels("api", "direct")).toBe(true);
+  it("API 账号开放视频模型", () => {
+    expect(acceptsVideoBackendMemberModels("api")).toBe(true);
   });
 });
 
@@ -81,10 +75,7 @@ const snapshot: ModelConfigurationSnapshot = {
 };
 
 /** 构造只改变模型能力与成员形态的合法公共测试输入。 */
-function createMemberInput(
-  supportedModelIds: string[],
-  direct: boolean
-): BackendMemberInput {
+function createMemberInput(supportedModelIds: string[]): BackendMemberInput {
   const common = {
     name: "member",
     groupIds: ["group-1"],
@@ -96,35 +87,19 @@ function createMemberInput(
     priority: 50,
     concurrency: 10,
   };
-  if (!direct) {
-    return {
-      ...common,
-      type: "api",
-      config: {
-        baseUrl: "https://api.example.com/v1",
-        useStream: false,
-        videoSubmissionRetryCount: 2,
-        videoProtocolMode: "custom",
-        videoInputCapabilities: {
-          referenceVideos: false,
-          referenceAudios: false,
-        },
-        videoInputCapabilitiesByModel: {},
-        modelMappings: [],
-        authentication: { mode: "bearer" },
-        operations: createDefaultApiUpstreamOperations(),
-      },
-    };
-  }
   return {
     ...common,
-    type: "adobe",
+    type: "api",
     config: {
-      mode: "direct",
-      cookie: "cookie=value",
-      defaultRatio: "1x1",
-      defaultResolution: "2k",
-      gptImageQuality: "high",
+      baseUrl: "https://api.example.com/v1",
+      useStream: false,
+      videoSubmissionRetryCount: 2,
+      videoProtocolMode: "custom",
+      videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
+      videoInputCapabilitiesByModel: {},
+      modelMappings: [],
+      authentication: { mode: "bearer" },
+      operations: createDefaultApiUpstreamOperations(),
     },
   };
 }
@@ -207,7 +182,7 @@ describe("buildBackendMemberModelOptions", () => {
     ]);
     expect(
       findUnavailableBackendMemberModelIds(
-        createMemberInput(["seedance2"], true),
+        createMemberInput(["seedance2"]),
         options
       )
     ).toEqual([]);
@@ -253,21 +228,15 @@ describe("buildBackendMemberModelOptions", () => {
     ]);
     expect(
       findUnavailableBackendMemberModelIds(
-        createMemberInput(["vendor-video-x"], false),
+        createMemberInput(["vendor-video-x"]),
         options
       )
     ).toEqual([]);
-    expect(
-      findUnavailableBackendMemberModelIds(
-        createMemberInput(["vendor-video-x"], true),
-        options
-      )
-    ).toEqual(["vendor-video-x"]);
   });
 
-  it("当前全部视频模型各生成一个选项并可由 Adobe direct 成员一次全选保存", () => {
+  it("当前全部视频模型各生成一个选项并可由 API 成员一次全选保存", () => {
     const videoEntries: ModelConfigurationEntry[] =
-      ADOBE_VIDEO_PRICING_FAMILIES.map((configKey) => ({
+      VIDEO_PRICING_FAMILIES.map((configKey) => ({
         ...commonEntry,
         category: "video",
         configKey,
@@ -290,10 +259,7 @@ describe("buildBackendMemberModelOptions", () => {
     ).toHaveLength(videoEntries.length);
     expect(
       backendMemberInputSchema.safeParse(
-        createMemberInput(
-          options.map((option) => option.id),
-          true
-        )
+        createMemberInput(options.map((option) => option.id))
       ).success
     ).toBe(true);
   });
@@ -306,29 +272,23 @@ describe("findUnavailableBackendMemberModelIds", () => {
   it("API 成员可以保存模型配置中的图片与真实视频 ID", () => {
     expect(
       findUnavailableBackendMemberModelIds(
-        createMemberInput(
-          ["gpt-image-2", videoModelId, "unknown-model"],
-          false
-        ),
+        createMemberInput(["gpt-image-2", videoModelId, "unknown-model"]),
         options
       )
     ).toEqual(["unknown-model"]);
   });
 
-  it("Adobe direct 成员可保存模型配置展开的视频完整 ID", () => {
+  it("API 成员可保存模型配置展开的视频完整 ID", () => {
     expect(
       findUnavailableBackendMemberModelIds(
-        createMemberInput(["gpt-image-2", videoModelId], true),
+        createMemberInput(["gpt-image-2", videoModelId]),
         options
       )
     ).toEqual([]);
   });
 
   it("编辑时只允许原样保留该成员已有的历史 ID", () => {
-    const input = createMemberInput(
-      ["legacy-image-model", "new-unknown"],
-      false
-    );
+    const input = createMemberInput(["legacy-image-model", "new-unknown"]);
 
     expect(
       findUnavailableBackendMemberModelIds(input, options, [
@@ -346,7 +306,7 @@ describe("findUnavailableBackendMemberModelIds", () => {
   ])("编辑成员不能用 existing-member 放行旧视频身份 %s", (modelId) => {
     expect(
       findUnavailableBackendMemberModelIds(
-        createMemberInput([modelId], true),
+        createMemberInput([modelId]),
         options,
         [modelId]
       )
@@ -369,7 +329,7 @@ describe("normalizeBackendMemberModelIdsForDisplay", () => {
 });
 
 describe("removeVideoBackendMemberModelIds", () => {
-  it("切离 Adobe Direct 时只清理真实与旧复合视频 ID", () => {
+  it("清理真实与旧复合视频 ID", () => {
     expect(
       removeVideoBackendMemberModelIds([
         "gpt-image-2",

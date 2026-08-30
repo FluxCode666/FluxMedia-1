@@ -213,7 +213,7 @@ export function createPostgresMediaTaskRecoveryRepository(
                 and coalesce(submit_started_at, updated_at) <= ${submissionRecoveryCutoff}
               )
               or (
-                -- @deprecated：只补投升级前显式 API 人工态；Adobe 与协议缺失行永久排除。
+                -- @deprecated：只补投升级前显式 API 人工态；协议缺失行永久排除。
                 -- 下个版本仅在遗留查询为零后删除本分支。
                 stage = 'submit_uncertain'
                 and metadata->>'videoBackendProtocol' = ${"api"}

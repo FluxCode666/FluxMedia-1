@@ -66,14 +66,13 @@ function toOpenAIModel(id: string): OpenAIModel {
 /**
  * 按成员执行形态筛出可发布模型 ID。
  *
- * @param input - 成员类型、Adobe 模式与显式模型能力。
- * @returns 保持成员配置顺序的图片模型和 API/Adobe direct 真实视频模型；旧视频身份被忽略。
+ * @param input - 成员类型与显式模型能力。
+ * @returns 保持成员配置顺序的图片模型和 API 视频模型；旧视频身份被忽略。
  * @sideEffects 无。
  * @failure 不抛错；未知非视频 ID 保持既有图像模型语义。
  */
 export function filterExternalMemberModelIds(input: {
-  memberType: "api" | "adobe";
-  adobeMode: "gateway" | "direct" | null;
+  memberType: "api";
   supportedModelIds: readonly string[];
   customVideoModelIds?: ReadonlySet<string>;
   marketplaceConfig?: ModelMarketplaceConfig;
@@ -106,7 +105,6 @@ export function filterExternalMemberModelIds(input: {
           { requestKind: "video" },
           {
             memberType: input.memberType,
-            adobeMode: input.adobeMode,
           }
         )
       );
@@ -198,7 +196,6 @@ export async function getExternalModelsForApiKey(
       .map((member) => {
         return filterExternalMemberModelIds({
           memberType: member.type,
-          adobeMode: member.type === "adobe" ? member.config.mode : null,
           supportedModelIds: member.supportedModelIds,
           customVideoModelIds,
           marketplaceConfig,

@@ -17,7 +17,6 @@
 
 // 副作用导入：触发所有操作注册到 registry
 import "@repo/shared/uol/operations";
-import "@/server/uol-bindings/adobe-credential-health";
 import "@/server/uol-bindings/admin-status";
 import "@/server/uol-bindings/analytics";
 import "@/server/uol-bindings/content";
@@ -33,7 +32,6 @@ import "@/server/uol-bindings/payment-webhooks";
 import "@/server/uol-bindings/payment-user";
 import "@/server/uol-bindings/referrals";
 import "@/server/uol-bindings/video-generation";
-import "@/server/notification-settings-binding";
 import "@/server/site-branding-binding";
 
 import { canViewGlobalUsageRecords } from "@repo/shared/auth/roles";

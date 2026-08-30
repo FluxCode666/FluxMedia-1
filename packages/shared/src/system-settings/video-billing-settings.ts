@@ -15,7 +15,7 @@ import {
   type VideoModelCreditPrices,
   videoModelBillingModesSchema,
   videoModelCreditPricesSchema,
-} from "../adobe/video-pricing";
+} from "../video-generation/video-pricing";
 
 /** 三项视频计费设置的聚合结果；调用方必须把它们作为同一个配置事实消费。 */
 export type VideoModelBillingSettings = {

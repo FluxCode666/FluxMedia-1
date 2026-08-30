@@ -3,9 +3,9 @@
 /**
  * 统一媒体后端号池管理面板。
  *
- * 职责：加载和筛选 `api | adobe` 统一供应商账号，为成员表单保留分组和模型辅助快照，
- * 并就地修改成员启用状态、执行运行状态重置和安全删除，以及展示 Adobe direct 成员的
- * 一对一凭据状态。分组管理由独立页面负责，旧三池分页不再进入此组件。
+ * 职责：加载和筛选 API 供应商账号，为成员表单保留分组和模型辅助快照，
+ * 并就地修改成员启用状态、执行运行状态重置和安全删除。分组管理由独立页面负责，
+ * 旧三池分页不再进入此组件。
  */
 import type { BackendGroupSummary } from "@repo/shared/image-backend/group-contract";
 import type { PaginationConfig } from "@repo/shared/pagination/config";
@@ -47,7 +47,7 @@ import {
   resetImageBackendMemberStatusAction,
   setImageBackendMemberEnabledAction,
 } from "./actions";
-import { BackendMemberTable, isAdobeDirectMember } from "./admin-member-table";
+import { BackendMemberTable } from "./admin-member-table";
 import {
   BackendMemberFilterBar,
   type BackendMemberFilterModelOption,
@@ -405,7 +405,6 @@ export function ImageBackendPoolAdminPanel({
     (total, member) => total + member.inflightCount,
     0
   );
-  const adobeDirectCount = members.filter(isAdobeDirectMember).length;
 
   const memberPageSizeOptions = paginationConfig.pageSizeOptions.map(
     (pageSize) => ({
@@ -568,7 +567,7 @@ export function ImageBackendPoolAdminPanel({
         <div className="space-y-1">
           <h2 className="text-xl font-semibold">{title}</h2>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            API 与 Adobe 成员共享分组、模型能力、优先级、并发、健康和调度指标。
+            API 成员共享分组、模型能力、优先级、并发、健康和调度指标。
             模型 ID 只做能力匹配，不再按前缀分流。
           </p>
         </div>
@@ -611,9 +610,9 @@ export function ImageBackendPoolAdminPanel({
           icon={Activity}
         />
         <PoolStatCard
-          title="Adobe Direct"
-          value={adobeDirectCount}
-          description="一名成员对应一个 Adobe 账号"
+          title="供应商账号"
+          value={members.length}
+          description="当前配置的 API 账号"
           icon={Users}
         />
       </div>
@@ -623,7 +622,7 @@ export function ImageBackendPoolAdminPanel({
           <div>
             <h3 className="text-base font-semibold">供应商账号</h3>
             <p className="text-sm text-muted-foreground">
-              所有类型进入同一候选集合，再按全局策略排序和原子获租。新增账号先填写基础接入信息，
+              所有 API 账号进入同一候选集合，再按全局策略排序和原子获租。新增账号先填写基础接入信息，
               模型能力与上游适配细节可从账号详情进入配置。
             </p>
           </div>

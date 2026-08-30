@@ -1,7 +1,7 @@
 /**
  * 创作页图片模型目录的 DB-free 构建器。
  *
- * 职责：将已授权分组与统一 `api | adobe` 成员的显式模型声明合并成
+ * 职责：将已授权分组与 API 成员的显式模型声明合并成
  * 可序列化目录。模型 ID 只是能力键；构建器不用前缀缩小成员类型。
  */
 import type { ImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
@@ -45,7 +45,7 @@ export interface ImageGenerationModelCatalog {
 /** 目录所需的统一成员最小投影。 */
 export interface ImageGenerationCatalogMember {
   groupId: string;
-  type: "api" | "adobe";
+  type: "api";
   supportedModelIds: readonly string[];
 }
 
@@ -65,14 +65,12 @@ export interface ImageGenerationCatalogSource {
   supportsAutoSizeByModel?: Readonly<Record<string, boolean>>;
 }
 
-/** 成员类型只表达适配器能力；Adobe 图片适配器不传递 mask。 */
-function getMemberCapabilities(
-  memberType: ImageGenerationCatalogMember["type"]
-): ImageGenerationModelCapabilities {
+/** API 成员支持完整图片编辑能力。 */
+function getMemberCapabilities(): ImageGenerationModelCapabilities {
   return {
     generate: true,
     edit: true,
-    mask: memberType === "api",
+    mask: true,
   };
 }
 
@@ -121,7 +119,7 @@ export function buildImageGenerationModelCatalog(
     groups: source.groups.map((group) => {
       const models = new Map<string, ImageGenerationCatalogModel>();
       for (const member of membersByGroupId.get(group.id) ?? []) {
-        const capabilities = getMemberCapabilities(member.type);
+        const capabilities = getMemberCapabilities();
         for (const rawModelId of member.supportedModelIds) {
           const modelId = normalizeSupportedModelId(rawModelId);
           if (

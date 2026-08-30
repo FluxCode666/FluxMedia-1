@@ -54,15 +54,7 @@ function formatAdminTime(value: string | null, timeZone: string): string {
 
 /** 返回成员的人类可读类型。 */
 function getMemberTypeLabel(member: BackendMemberAdminSummary): string {
-  if (member.type === "api") return "API";
-  return member.config.mode === "direct" ? "Adobe Direct" : "Adobe Gateway";
-}
-
-/** 判断统一成员是否为 Adobe direct 顶层账号。 */
-export function isAdobeDirectMember(
-  member: BackendMemberAdminSummary
-): boolean {
-  return member.type === "adobe" && member.config.mode === "direct";
+  return member.type === "api" ? "API" : "未知";
 }
 
 /** 根据成员运行状态选择稳定的 Badge 样式。 */
@@ -81,9 +73,6 @@ function getCredentialLabel(member: BackendMemberAdminSummary): string {
   }
   if (member.type === "api") {
     return member.config.hasApiKey ? "已配置" : "缺失";
-  }
-  if (member.config.mode === "direct") {
-    return member.config.hasCookie ? "已配置" : "缺失";
   }
   return member.config.hasApiKey ? "已配置" : "缺失";
 }
