@@ -73,7 +73,7 @@ export type ApiVideoSubmission =
       raw: Record<string, unknown>;
     };
 
-/** API 视频提交阶段错误；字段语义与持久状态机的 Adobe 适配器一致。 */
+/** API 视频提交阶段错误；字段语义与持久状态机一致。 */
 export type ApiVideoStageError = {
   error: string;
   failure: {

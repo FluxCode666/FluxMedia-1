@@ -16,10 +16,6 @@ import {
   user,
   videoGeneration,
 } from "@repo/database/schema";
-import {
-  ADOBE_VIDEO_PRICING_FAMILIES,
-  formatAdobeModelIdForDisplay,
-} from "@repo/shared/adobe";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewImageBackendPool } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
@@ -32,6 +28,7 @@ import {
 } from "@repo/shared/time-zone";
 import { getAppTimeZone } from "@repo/shared/time-zone/server";
 import { invokeOperation } from "@repo/shared/uol";
+import { VIDEO_MODEL_CAPABILITIES } from "@repo/shared/video-generation";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import {
@@ -96,7 +93,7 @@ type GenerationMetricRow = {
 };
 
 const RESOLUTION_DURATION_BUCKETS = ["4k", "2k", "1k", "custom"] as const;
-const BACKEND_DURATION_BUCKETS = ["api", "adobe"] as const;
+const BACKEND_DURATION_BUCKETS = ["api"] as const;
 
 type ResolutionDurationBucket = (typeof RESOLUTION_DURATION_BUCKETS)[number];
 type BackendDurationBucket = (typeof BACKEND_DURATION_BUCKETS)[number];
@@ -175,10 +172,12 @@ type SchedulerMetricRow = {
   latencyMsTotal: number;
 };
 
-// 视频生成(Adobe Firefly)是独立管线,记录落在 video_generation 表(非 generation),
+// 视频生成是独立管线,记录落在 video_generation 表(非 generation),
 // 监控其他区块全部读 generation,因此视频在原有面板里完全不可见。此处单独聚合并展示。
 // 真实模型顺序复用唯一计价目录，避免新增模型后管理状态页遗漏。
-const VIDEO_MODELS = ADOBE_VIDEO_PRICING_FAMILIES;
+const VIDEO_MODELS = [
+  ...new Set(VIDEO_MODEL_CAPABILITIES.map((capability) => capability.billingFamily)),
+];
 
 type VideoModelStats = {
   model: string;
@@ -509,7 +508,6 @@ function emptyDurationBucketStats(): DurationBucketStats {
 function emptyDurationBreakdown(): DurationBreakdown {
   const makeRow = () => ({
     api: emptyDurationBucketStats(),
-    adobe: emptyDurationBucketStats(),
   });
   return {
     "4k": makeRow(),
@@ -535,8 +533,8 @@ async function loadGenerationWindowStats(
   // 完成耗时(秒):clamp 非负 + round,对齐 JS 侧 Math.max(0, Math.round(...))。
   const durationExpr = sql`round(greatest(0, extract(epoch from (${generation.completedAt} - ${generation.createdAt}))))`;
   const completedDurationFilter = sql`filter (where ${generation.status} = 'completed' and ${generation.completedAt} is not null)`;
-  // 历史图片耗时只读取当前生成记录的适配器类型，不再解释旧账号或接口模式字段。
-  const backendBucketExpr = sql`(case ${metaJson} #>> '{backend,type}' when 'pool-api' then 'api' when 'pool-adobe' then 'adobe' else null end)`;
+  // 历史图片耗时只读取 API 适配器类型，不解释已移除的供应商账号。
+  const backendBucketExpr = sql`(case ${metaJson} #>> '{backend,type}' when 'pool-api' then 'api' else null end)`;
   // 请求尺寸:requestedSize -> actualSize -> size 列,统一 lower(trim())。
   const sizeValueExpr = sql`lower(btrim(coalesce(nullif(${metaJson} #>> '{outputImage,requestedSize}', ''), nullif(${metaJson} #>> '{outputImage,actualSize}', ''), ${generation.size})))`;
   // 空 / auto -> custom；否则匹配预设集，剩余尺寸归 custom。
@@ -1090,8 +1088,7 @@ function resolutionDurationLabel(
   return bucket.toUpperCase();
 }
 
-function backendDurationLabel(bucket: BackendDurationBucket) {
-  if (bucket === "adobe") return "Adobe";
+function backendDurationLabel() {
   return "API";
 }
 
@@ -1135,13 +1132,13 @@ function DurationBreakdownTable({
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium">
-          {copy(locale, "Duration by size and backend", "按分辨率和后端耗时")}
+          {copy(locale, "Duration by size and API backend", "按分辨率和 API 后端耗时")}
         </span>
         <span className="text-xs text-muted-foreground">
           {copy(
             locale,
-            "Completed records grouped by the unified API or Adobe adapter.",
-            "仅统计完成记录，并按统一 API 或 Adobe 适配器分组。"
+            "Completed records grouped by the API adapter.",
+            "仅统计完成记录，并按 API 适配器分组。"
           )}
         </span>
       </div>
@@ -1154,7 +1151,7 @@ function DurationBreakdownTable({
               </th>
               {BACKEND_DURATION_BUCKETS.map((backend) => (
                 <th key={backend} className="px-3 py-2 font-medium">
-                  {backendDurationLabel(backend)}
+                  {backendDurationLabel()}
                 </th>
               ))}
             </tr>
@@ -1500,9 +1497,7 @@ function HistoricalErrorsCard({
                       </td>
                       <td className="px-3 py-3">
                         <div className="font-medium">
-                          {item.model
-                            ? formatAdobeModelIdForDisplay(item.model)
-                            : "-"}
+                          {item.model || "-"}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {item.size || "-"} ·{" "}
@@ -1911,9 +1906,6 @@ async function loadStatusData() {
       api: summarizeBackendRows(
         memberRows.filter((member) => member.type === "api")
       ),
-      adobe: summarizeBackendRows(
-        memberRows.filter((member) => member.type === "adobe")
-      ),
     },
     scheduler24h: summarizeSchedulerMetrics(schedulerRows24h),
     scheduler7d: summarizeSchedulerMetrics(schedulerRows7d),
@@ -1959,9 +1951,9 @@ export default async function GlobalStatusPage({
   ]);
   const generationTotals = data.generationTotals;
   const creditBalance = data.credits.balance;
-  const backendTotal = data.backend.api.total + data.backend.adobe.total;
-  const backendCooling = data.backend.api.cooling + data.backend.adobe.cooling;
-  const backendErrors = data.backend.api.error + data.backend.adobe.error;
+  const backendTotal = data.backend.api.total;
+  const backendCooling = data.backend.api.cooling;
+  const backendErrors = data.backend.api.error;
 
   return (
     <div className="container mx-auto space-y-8 px-4 py-6 md:px-6">
@@ -2309,8 +2301,8 @@ export default async function GlobalStatusPage({
             <CardDescription>
               {copy(
                 locale,
-                "Unified API and Adobe members with shared health semantics.",
-                "统一 API 与 Adobe 成员的共享健康状态。"
+                "API members with shared health semantics.",
+                "API 成员的统一健康状态。"
               )}
             </CardDescription>
           </CardHeader>
@@ -2319,11 +2311,6 @@ export default async function GlobalStatusPage({
               <BackendHealthBlock
                 title={copy(locale, "API members", "API 成员")}
                 stats={data.backend.api}
-                locale={locale}
-              />
-              <BackendHealthBlock
-                title={copy(locale, "Adobe members", "Adobe 成员")}
-                stats={data.backend.adobe}
                 locale={locale}
               />
             </div>
@@ -2422,8 +2409,8 @@ function VideoGenerationCard({
           <Video className="h-4 w-4 text-muted-foreground" />
           {copy(
             locale,
-            "Video Generation (Adobe Firefly)",
-            "视频生成 (Adobe Firefly)"
+            "Video Generation",
+            "视频生成"
           )}
         </CardTitle>
         <CardDescription>

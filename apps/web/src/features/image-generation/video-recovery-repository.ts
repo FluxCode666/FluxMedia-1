@@ -89,7 +89,7 @@ export interface VideoRecoveryRepository {
   ): Promise<ClaimedVideoRecoveryJob | null>;
   /**
    * @deprecated 仅认领升级前显式标记为 API 的 `submit_uncertain` 行。
-   * 下个版本只有在遗留查询为零后才可连同迁移状态分支一起移除；Adobe 和协议缺失行
+   * 下个版本只有在遗留查询为零后才可连同迁移状态分支一起移除；协议缺失行
    * 永远不得进入此入口。
    */
   claimLegacyApiUncertainById(
@@ -194,7 +194,7 @@ export function createPostgresVideoRecoveryRepository(
    * 原子认领一条升级前 API 人工兼容态。
    *
    * @deprecated 仅处理显式 `videoBackendProtocol=api` 的遗留数据；下个版本在遗留
-   * 查询为零后删除。独立 SQL 避免普通恢复入口误接纳 Adobe `submit_uncertain`。
+   * 查询为零后删除。独立 SQL 避免普通恢复入口误接纳协议不明的 `submit_uncertain`。
    */
   async function claimLegacyApiUncertainTask(
     input: z.output<typeof legacyClaimByIdInputSchema>

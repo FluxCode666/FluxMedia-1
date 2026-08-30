@@ -21,7 +21,7 @@ export const MAX_VIDEO_CREDITS_PER_UNIT = 100_000;
 export const MAX_VIDEO_CREDITS_PER_SECOND = MAX_VIDEO_CREDITS_PER_UNIT;
 
 /** 平台内置视频计费 family；从真实描述符派生，不维护第二份公开模型清单。 */
-export const ADOBE_VIDEO_PRICING_FAMILIES = [
+export const VIDEO_PRICING_FAMILIES = [
   ...new Set(
     VIDEO_MODEL_CAPABILITIES.map((capability) => capability.billingFamily)
   ),
@@ -140,7 +140,7 @@ export function getVideoPricingResolutions(family: string): string[] {
  */
 export function createDefaultVideoModelCreditsPerSecond(): VideoModelCreditsPerSecondMap {
   const result: VideoModelCreditsPerSecondMap = {};
-  for (const family of ADOBE_VIDEO_PRICING_FAMILIES) {
+  for (const family of VIDEO_PRICING_FAMILIES) {
     const price =
       DEFAULT_VIDEO_FAMILY_CREDITS_PER_SECOND[family] ??
       DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
@@ -267,7 +267,7 @@ function normalizeGlobalVideoPricing(
   value: VideoModelCreditsPerSecondMap
 ): VideoModelCreditsPerSecondMap {
   const normalized = { ...value };
-  for (const family of ADOBE_VIDEO_PRICING_FAMILIES) {
+  for (const family of VIDEO_PRICING_FAMILIES) {
     const resolutions = getVideoPricingResolutions(family);
     const configuredResolutionPrices = resolutions.flatMap((resolution) => {
       const price =
@@ -294,7 +294,7 @@ export const globalVideoModelCreditsPerSecondSchema =
   videoModelCreditsPerSecondMapSchema
     .transform(normalizeGlobalVideoPricing)
     .superRefine((value, ctx) => {
-      for (const family of ADOBE_VIDEO_PRICING_FAMILIES) {
+      for (const family of VIDEO_PRICING_FAMILIES) {
         if (typeof value[family] !== "number") {
           ctx.addIssue({
             code: "custom",
@@ -390,7 +390,143 @@ export type VideoBillingQuote =
   | (VideoBillingQuoteBase & {
       readonly mode: "per_item";
       readonly unit: "item";
-    });
+  });
+
+/** 按分组精确覆盖、分组模型兼容覆盖、全局精确价格的顺序解析单价。 */
+function resolveStrictVideoUnitPrice(
+  modelId: string,
+  resolution: string,
+  globalPrices: VideoModelCreditPrices,
+  groupPrices: VideoModelCreditPrices
+): { priceSource: VideoBillingPriceSource; unitPrice: number } {
+  const resolutionKey = getVideoPricingResolutionKey(modelId, resolution);
+  const groupResolutionPrice = groupPrices[resolutionKey];
+  if (typeof groupResolutionPrice === "number") {
+    return { priceSource: "group_resolution", unitPrice: groupResolutionPrice };
+  }
+  const groupModelPrice = groupPrices[modelId];
+  if (typeof groupModelPrice === "number") {
+    return { priceSource: "group_model", unitPrice: groupModelPrice };
+  }
+  const globalResolutionPrice = globalPrices[resolutionKey];
+  if (typeof globalResolutionPrice !== "number") {
+    throw new Error(`视频模型缺少全局精确价格: ${resolutionKey}`);
+  }
+  return { priceSource: "global_resolution", unitPrice: globalResolutionPrice };
+}
+
+/** 用同一严格规则解析配置、预估、任务创建和结算共享的视频报价。 */
+export function resolveVideoBillingQuote(
+  input: ResolveVideoBillingQuoteInput
+): VideoBillingQuote {
+  const billingModel = resolveBillingModel(input.modelId, input.supportedResolutions);
+  const mode = videoBillingModeSchema.parse(input.mode);
+  const resolution = publicVideoResolutionLabelSchema.parse(input.resolution);
+  const durationSeconds = z.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(input.durationSeconds);
+  if (!billingModel.supportedResolutions.includes(resolution)) {
+    throw new Error(`视频模型 ${billingModel.modelId} 不支持分辨率 ${resolution}`);
+  }
+
+  const globalCreditsPerSecond = videoModelCreditPricesSchema.parse(input.globalCreditsPerSecond);
+  const globalCreditsPerItem = videoModelCreditPricesSchema.parse(input.globalCreditsPerItem);
+  const groupCreditsPerSecond = videoModelCreditPricesSchema.parse(input.groupCreditsPerSecond ?? {});
+  const groupCreditsPerItem = videoModelCreditPricesSchema.parse(input.groupCreditsPerItem ?? {});
+  assertCompleteGlobalVideoPricing(billingModel.modelId, billingModel.supportedResolutions, globalCreditsPerSecond, "per_second");
+  assertCompleteGlobalVideoPricing(billingModel.modelId, billingModel.supportedResolutions, globalCreditsPerItem, "per_item");
+
+  const selected = mode === "per_second"
+    ? resolveStrictVideoUnitPrice(billingModel.modelId, resolution, globalCreditsPerSecond, groupCreditsPerSecond)
+    : resolveStrictVideoUnitPrice(billingModel.modelId, resolution, globalCreditsPerItem, groupCreditsPerItem);
+  const quotedCredits = getVideoBillingCreditCost({ mode, unitPrice: selected.unitPrice, durationSeconds });
+  const common = {
+    modelId: billingModel.modelId,
+    resolution,
+    unitPrice: selected.unitPrice,
+    durationSeconds,
+    quotedCredits,
+    priceSource: selected.priceSource,
+  };
+  return mode === "per_second"
+    ? { ...common, mode, unit: "second", creditsPerSecond: selected.unitPrice }
+    : { ...common, mode, unit: "item" };
+}
+
+/** 把旧 family / family@resolution 每秒键转换为公开模型精确键。 */
+export function convertLegacyVideoCreditsPerSecondToModelPricing(
+  value: VideoModelCreditsPerSecondMap
+): VideoModelCreditPrices {
+  const legacy = videoModelCreditsPerSecondMapSchema.parse(value);
+  const converted: VideoModelCreditPrices = {};
+  for (const capability of VIDEO_MODEL_CAPABILITIES) {
+    for (const resolution of capability.resolutions) {
+      const legacyResolutionKey = getVideoPricingResolutionKey(capability.billingFamily, resolution);
+      const unitPrice = legacy[legacyResolutionKey] ?? legacy[capability.billingFamily];
+      if (typeof unitPrice === "number") {
+        converted[getVideoPricingResolutionKey(capability.modelId, resolution)] = unitPrice;
+      }
+    }
+  }
+  return converted;
+}
+
+/** 解析视频模型族旧版兜底的每秒积分价格。 */
+export function resolveVideoCreditsPerSecond(
+  family: string | null | undefined,
+  prices: Record<string, number> | null | undefined,
+  fallback: number = DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND
+): number {
+  const safeFallback = isValidCreditsPerSecond(fallback)
+    ? fallback
+    : DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
+  if (!family || !prices) return safeFallback;
+  const value = prices[family];
+  return typeof value === "number" && isValidCreditsPerSecond(value)
+    ? value
+    : safeFallback;
+}
+
+/** 解析指定模型族和分辨率的每秒积分价格。 */
+export function resolveVideoCreditsPerSecondByResolution(
+  family: string | null | undefined,
+  resolution: string | null | undefined,
+  prices: VideoModelCreditsPerSecondMap | null | undefined,
+  fallback: number = DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND
+): number {
+  if (family && resolution && prices) {
+    const value = prices[getVideoPricingResolutionKey(family, resolution)];
+    if (typeof value === "number" && isValidCreditsPerSecond(value)) return value;
+  }
+  return resolveVideoCreditsPerSecond(family, prices, fallback);
+}
+
+/** 按分组覆盖优先、全局模型价兜底解析每秒积分。 */
+export function resolveEffectiveVideoCreditsPerSecond(input: {
+  family: string | null | undefined;
+  resolution?: string | null;
+  global: VideoModelCreditsPerSecondMap;
+  group?: VideoModelCreditsPerSecondMap | null;
+}): number {
+  if (input.group && input.family && input.resolution) {
+    const resolutionPrice = input.group[getVideoPricingResolutionKey(input.family, input.resolution)];
+    if (typeof resolutionPrice === "number" && isValidCreditsPerSecond(resolutionPrice)) return resolutionPrice;
+  }
+  const groupFamilyPrice = input.family ? input.group?.[input.family] : undefined;
+  if (typeof groupFamilyPrice === "number" && isValidCreditsPerSecond(groupFamilyPrice)) return groupFamilyPrice;
+  return resolveVideoCreditsPerSecondByResolution(input.family, input.resolution, input.global, DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND);
+}
+
+/** 计算一次视频生成的每秒积分成本（兼容旧调用方）。 */
+export function getVideoCreditCost(params: {
+  durationSeconds: number;
+  creditsPerSecond?: number | null;
+}): number {
+  const creditsPerSecond = typeof params.creditsPerSecond === "number" && isValidCreditsPerSecond(params.creditsPerSecond)
+    ? params.creditsPerSecond
+    : DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
+  const duration = Math.max(0, params.durationSeconds || 0);
+  if (duration === 0) return 0;
+  return getVideoBillingCreditCost({ mode: "per_second", unitPrice: creditsPerSecond, durationSeconds: duration });
+}
 
 /** 严格双模式报价输入；自定义模型必须携带可信目录中的支持分辨率。 */
 export type ResolveVideoBillingQuoteInput = {
@@ -497,281 +633,4 @@ export function getVideoBillingCreditCost(input: {
     throw new Error("视频报价总积分超出安全数值范围");
   }
   return quotedCredits;
-}
-
-/**
- * 按分组精确覆盖、分组模型兼容覆盖、全局精确价格的顺序解析单价。
- *
- * @param modelId - 规范公开模型 ID。
- * @param resolution - 已验证为模型支持的分辨率。
- * @param globalPrices - 当前模式的完整全局价格矩阵。
- * @param groupPrices - 当前模式的稀疏分组覆盖。
- * @returns 严格正数单价及其来源。
- * @sideEffects 无。
- * @throws Error - 完整性校验后仍找不到全局精确价时 fail closed。
- */
-function resolveStrictVideoUnitPrice(
-  modelId: string,
-  resolution: string,
-  globalPrices: VideoModelCreditPrices,
-  groupPrices: VideoModelCreditPrices
-): { priceSource: VideoBillingPriceSource; unitPrice: number } {
-  const resolutionKey = getVideoPricingResolutionKey(modelId, resolution);
-  const groupResolutionPrice = groupPrices[resolutionKey];
-  if (typeof groupResolutionPrice === "number") {
-    return {
-      priceSource: "group_resolution",
-      unitPrice: groupResolutionPrice,
-    };
-  }
-  const groupModelPrice = groupPrices[modelId];
-  if (typeof groupModelPrice === "number") {
-    return { priceSource: "group_model", unitPrice: groupModelPrice };
-  }
-  const globalResolutionPrice = globalPrices[resolutionKey];
-  if (typeof globalResolutionPrice !== "number") {
-    throw new Error(`视频模型缺少全局精确价格: ${resolutionKey}`);
-  }
-  return {
-    priceSource: "global_resolution",
-    unitPrice: globalResolutionPrice,
-  };
-}
-
-/**
- * 用同一严格规则解析配置、预估、任务创建和结算共享的视频报价。
- *
- * @param input - 公开模型、分辨率、模式、双全局矩阵及双分组稀疏覆盖。
- * @returns 包含模式、单位、有效单价、来源和总额的判别联合。
- * @sideEffects 无；不读取数据库、环境变量或缓存。
- * @throws Error - 未知模型、非法模式/价格/时长、能力外分辨率或不完整矩阵时 fail closed。
- */
-export function resolveVideoBillingQuote(
-  input: ResolveVideoBillingQuoteInput
-): VideoBillingQuote {
-  const billingModel = resolveBillingModel(
-    input.modelId,
-    input.supportedResolutions
-  );
-  const mode = videoBillingModeSchema.parse(input.mode);
-  const resolution = publicVideoResolutionLabelSchema.parse(input.resolution);
-  const durationSeconds = z
-    .number()
-    .int()
-    .positive()
-    .max(Number.MAX_SAFE_INTEGER)
-    .parse(input.durationSeconds);
-  if (!billingModel.supportedResolutions.includes(resolution)) {
-    throw new Error(
-      `视频模型 ${billingModel.modelId} 不支持分辨率 ${resolution}`
-    );
-  }
-
-  // WHY：两套矩阵都属于同一个可运营配置事实；即使当前只使用其中一种，也不能让
-  // 另一套损坏值潜伏到模式切换时才造成不完整或跨模式金额回退。
-  const globalCreditsPerSecond = videoModelCreditPricesSchema.parse(
-    input.globalCreditsPerSecond
-  );
-  const globalCreditsPerItem = videoModelCreditPricesSchema.parse(
-    input.globalCreditsPerItem
-  );
-  const groupCreditsPerSecond = videoModelCreditPricesSchema.parse(
-    input.groupCreditsPerSecond ?? {}
-  );
-  const groupCreditsPerItem = videoModelCreditPricesSchema.parse(
-    input.groupCreditsPerItem ?? {}
-  );
-  assertCompleteGlobalVideoPricing(
-    billingModel.modelId,
-    billingModel.supportedResolutions,
-    globalCreditsPerSecond,
-    "per_second"
-  );
-  assertCompleteGlobalVideoPricing(
-    billingModel.modelId,
-    billingModel.supportedResolutions,
-    globalCreditsPerItem,
-    "per_item"
-  );
-
-  const selected =
-    mode === "per_second"
-      ? resolveStrictVideoUnitPrice(
-          billingModel.modelId,
-          resolution,
-          globalCreditsPerSecond,
-          groupCreditsPerSecond
-        )
-      : resolveStrictVideoUnitPrice(
-          billingModel.modelId,
-          resolution,
-          globalCreditsPerItem,
-          groupCreditsPerItem
-        );
-  const quotedCredits = getVideoBillingCreditCost({
-    mode,
-    unitPrice: selected.unitPrice,
-    durationSeconds,
-  });
-  const common = {
-    modelId: billingModel.modelId,
-    resolution,
-    unitPrice: selected.unitPrice,
-    durationSeconds,
-    quotedCredits,
-    priceSource: selected.priceSource,
-  };
-  if (mode === "per_second") {
-    return {
-      ...common,
-      mode,
-      unit: "second",
-      creditsPerSecond: selected.unitPrice,
-    };
-  }
-  return { ...common, mode, unit: "item" };
-}
-
-/**
- * 把旧 family / family@resolution 每秒键转换为新核心使用的公开模型精确键。
- *
- * @param value - 旧 `VIDEO_MODEL_CREDITS_PER_SECOND` 扁平映射。
- * @returns 仅含 `modelId@resolution` 的新对象；精确旧键优先于 family 键。
- * @sideEffects 无。
- * @throws Error - 任一输入单价非法时拒绝整个转换，不静默修复财务配置。
- */
-export function convertLegacyVideoCreditsPerSecondToModelPricing(
-  value: VideoModelCreditsPerSecondMap
-): VideoModelCreditPrices {
-  const legacy = videoModelCreditsPerSecondMapSchema.parse(value);
-  const converted: VideoModelCreditPrices = {};
-  for (const capability of VIDEO_MODEL_CAPABILITIES) {
-    for (const resolution of capability.resolutions) {
-      const legacyResolutionKey = getVideoPricingResolutionKey(
-        capability.billingFamily,
-        resolution
-      );
-      const unitPrice =
-        legacy[legacyResolutionKey] ?? legacy[capability.billingFamily];
-      if (typeof unitPrice === "number") {
-        converted[
-          getVideoPricingResolutionKey(capability.modelId, resolution)
-        ] = unitPrice;
-      }
-    }
-  }
-  return converted;
-}
-
-/**
- * 解析视频模型族旧版兜底的每秒积分价格。
- *
- * @param family - 视频模型族。
- * @param prices - `VIDEO_MODEL_CREDITS_PER_SECOND` 的扁平每秒积分 map。
- * @param fallback - 未配置模型族时使用的统一每秒基价。
- * @returns 正数配置值，或有效的回退基价。
- */
-export function resolveVideoCreditsPerSecond(
-  family: string | null | undefined,
-  prices: Record<string, number> | null | undefined,
-  fallback: number = DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND
-): number {
-  const safeFallback = isValidCreditsPerSecond(fallback)
-    ? fallback
-    : DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
-  if (!family || !prices) return safeFallback;
-  const value = prices[family];
-  return typeof value === "number" && isValidCreditsPerSecond(value)
-    ? value
-    : safeFallback;
-}
-
-/**
- * 解析指定模型族和分辨率的每秒积分价格。
- *
- * @param family - 视频模型族。
- * @param resolution - 当前输出分辨率。
- * @param prices - family 及 family@resolution 的价格映射。
- * @param fallback - 两类键均缺失或非法时使用的安全基价。
- * @returns 分辨率价格优先，其次模型族旧价格，最后安全基价。
- * @sideEffects 无。
- * @failure 不抛错；非法价格不会参与计费。
- */
-export function resolveVideoCreditsPerSecondByResolution(
-  family: string | null | undefined,
-  resolution: string | null | undefined,
-  prices: VideoModelCreditsPerSecondMap | null | undefined,
-  fallback: number = DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND
-): number {
-  if (family && resolution && prices) {
-    const value = prices[getVideoPricingResolutionKey(family, resolution)];
-    if (typeof value === "number" && isValidCreditsPerSecond(value)) {
-      return value;
-    }
-  }
-  return resolveVideoCreditsPerSecond(family, prices, fallback);
-}
-
-/**
- * 按分组覆盖优先、全局模型价兜底解析每秒积分。
- *
- * 分组覆盖缺失时使用全局值。最后一个参数只服务于历史脏数据的安全恢复，正常配置不会
- * 触发，因此业务配置层没有第三层可编辑价格。
- */
-export function resolveEffectiveVideoCreditsPerSecond(input: {
-  family: string | null | undefined;
-  resolution?: string | null;
-  global: VideoModelCreditsPerSecondMap;
-  group?: VideoModelCreditsPerSecondMap | null;
-}): number {
-  if (input.group && input.family && input.resolution) {
-    const resolutionPrice =
-      input.group[getVideoPricingResolutionKey(input.family, input.resolution)];
-    if (
-      typeof resolutionPrice === "number" &&
-      isValidCreditsPerSecond(resolutionPrice)
-    ) {
-      return resolutionPrice;
-    }
-  }
-  const groupFamilyPrice = input.family
-    ? input.group?.[input.family]
-    : undefined;
-  if (
-    typeof groupFamilyPrice === "number" &&
-    isValidCreditsPerSecond(groupFamilyPrice)
-  ) {
-    return groupFamilyPrice;
-  }
-  return resolveVideoCreditsPerSecondByResolution(
-    input.family,
-    input.resolution,
-    input.global,
-    DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND
-  );
-}
-
-/**
- * 计算一次视频生成的积分成本。
- *
- * @param durationSeconds - 视频时长（秒）。
- * @param creditsPerSecond - 已按模型族解析的每秒积分价格。
- * @returns 向上取到两位小数的总积分。
- */
-export function getVideoCreditCost(params: {
-  durationSeconds: number;
-  creditsPerSecond?: number | null;
-}): number {
-  const creditsPerSecond =
-    typeof params.creditsPerSecond === "number" &&
-    isValidCreditsPerSecond(params.creditsPerSecond)
-      ? params.creditsPerSecond
-      : DEFAULT_VIDEO_BASE_CREDITS_PER_SECOND;
-  const duration = Math.max(0, params.durationSeconds || 0);
-  if (duration === 0) return 0;
-  return getVideoBillingCreditCost({
-    mode: "per_second",
-    unitPrice: creditsPerSecond,
-    durationSeconds: duration,
-  });
 }

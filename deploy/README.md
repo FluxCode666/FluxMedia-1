@@ -1,13 +1,11 @@
 # FluxMedia 生产部署
 
-本目录提供 `media.flux-code.cc` 的生产部署配置。Docker Compose 默认启动 `web` 与
-`media-upstream-proxy`；Redis、PostgreSQL 与数据库迁移均为外部依赖或显式维护 profile，
+本目录提供 `media.flux-code.cc` 的生产部署配置。Docker Compose 默认启动 `web`；Redis、PostgreSQL 与数据库迁移均为外部依赖或显式维护 profile，
 不会常驻运行。宿主机 Nginx 负责 TLS 终止并反向代理到 `127.0.0.1:3001`。
 
 ## 文件
 
-- `docker-compose.yml`：`web`、Adobe direct 专用上游代理，以及默认关闭的
-  `maintenance` 数据库迁移服务；超管与外部 Redis 连接信息由服务器 `.env` 注入。
+- `docker-compose.yml`：`web` 与默认关闭的 `maintenance` 数据库迁移服务；超管与外部 Redis 连接信息由服务器 `.env` 注入。
 - `read-env-value.sh`：生产 Workflow 使用的 fail-closed dotenv 单键读取器。
 - `read-env-value.test.sh`：读取器的引号、拒绝路径与不执行配置内容回归测试。
 - `.env.example`：不含真实机密的服务器环境变量模板。
@@ -33,7 +31,7 @@ sudo editor /root/flux-media/.env
 ```
 
 至少填写 `DATABASE_URL`、`BETTER_AUTH_SECRET`、`REDIS_HOST`、`REDIS_PORT`、
-`REDIS_PASSWORD`、`ADOBE_DIRECT_PROXY_SECRET`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和
+`REDIS_PASSWORD`、`FLUXMEDIA_SUPER_ADMIN_EMAIL` 和
 `FLUXMEDIA_SUPER_ADMIN_PASSWORD`；`REDIS_USERNAME` 可选。数据库必须已创建；外部 Redis
 必须可从 Web 容器访问。Redis 连接参数通过独立变量传递，密码不需要 URL 编码；系统设置
 缓存默认使用逻辑库 4。迁移由部署流水线在切换 `web` 前执行。本 Compose 不启动 PostgreSQL
@@ -199,9 +197,9 @@ Nginx，例如通过 Certbot deploy hook 执行 `systemctl reload nginx`。
 可选 Repository Variable `DEPLOY_PATH` 指定部署目录，默认 `/root/flux-media`。服务器
 上的真实 `.env` 由运维持久维护；流水线只同步 `docker-compose.yml`、
 `create-database-backup.sh` 和 `read-env-value.sh`，并更新 `.env` 中的 `FLUXMEDIA_IMAGE`、
-`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_PROXY_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web
+`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_TAG`。部署命令停止旧 Web
 并排空数据库连接后，通过 `maintenance` profile 执行只读门禁、备份、迁移和后置校验，
-再启动 Adobe 上游代理与新 `web`。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
+再启动新 `web`。外部 Redis 的地址、鉴权和网络连通性由服务器 `.env`
 与基础设施负责，流水线不会创建或修改 Redis 服务。
 
 生产部署从 Actions 手动触发，可选择 `main`，也可选择与输入版本完全一致的 Git tag；

@@ -8,7 +8,7 @@
 import {
   videoCreditsPerSecondByResolutionSchema,
   videoModelCreditPricesSchema,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isSuperAdminRole } from "@repo/shared/auth/roles";

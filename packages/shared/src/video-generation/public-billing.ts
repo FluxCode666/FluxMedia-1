@@ -9,7 +9,7 @@ import { z } from "zod";
 import {
   type VideoBillingQuote,
   videoCreditUnitPriceSchema,
-} from "../adobe/video-pricing";
+} from "./video-pricing";
 import { videoPublicResolutionSchema } from "./contracts";
 
 const actualCreditsSchema = z.number().finite().nonnegative();

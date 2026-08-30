@@ -2,7 +2,7 @@
  * UOL 操作注册 - 统一媒体后端号池。
  *
  * 职责：只暴露分组、统一成员和 API 媒体参数模板三类能力。
- * Web/Codex 账号、Sub2API、注册机、旧 API/Adobe 双模型和定时同步均不属于现行契约。
+ * Web/Codex 账号、Sub2API、注册机、旧双模型和定时同步均不属于现行契约。
  * 真实实现由 apps/web 的 UOL binding 注入。
  */
 import { z } from "zod";
@@ -66,78 +66,11 @@ const redactedApiConfigSchema = z
   })
   .strict();
 
-const redactedAdobeConfigSchema = z.discriminatedUnion("mode", [
-  z
-    .object({
-      mode: z.literal("gateway"),
-      baseUrl: z.string().url(),
-      hasApiKey: z.boolean(),
-      defaultRatio: z.string(),
-      defaultResolution: z.string(),
-      gptImageQuality: z.enum(["low", "medium", "high"]),
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal("direct"),
-      hasCookie: z.boolean(),
-      displayName: z.string().nullable(),
-      email: z.string().nullable(),
-      credentialStatus: z.enum(["active", "error", "exhausted", "invalid"]),
-      lastRefreshAt: z.string().nullable(),
-      consecutiveFailures: z.number().int().nonnegative(),
-      fireflyCredentialStatus: z
-        .enum(["active", "error", "exhausted", "invalid"])
-        .nullable(),
-      fireflyLastRefreshAt: z.string().nullable(),
-      fireflyConsecutiveFailures: z.number().int().nonnegative(),
-      creditsTotal: z.number().int().nullable(),
-      creditsUsed: z.number().int().nullable(),
-      creditsAvailable: z.number().int().nullable(),
-      creditsUpdatedAt: z.string().nullable(),
-      defaultRatio: z.string(),
-      defaultResolution: z.string(),
-      gptImageQuality: z.enum(["low", "medium", "high"]),
-    })
-    .strict(),
-]);
-
-/** 人工列表可继续展示既有折叠诊断；通用 Agent 快照仍使用上方无诊断 schema。 */
-const adminRedactedAdobeConfigSchema = z.union([
-  redactedAdobeConfigSchema,
-  z
-    .object({
-      mode: z.literal("direct"),
-      hasCookie: z.boolean(),
-      displayName: z.string().nullable(),
-      email: z.string().nullable(),
-      credentialStatus: z.enum(["active", "error", "exhausted", "invalid"]),
-      lastRefreshAt: z.string().nullable(),
-      lastRefreshError: z.string().nullable(),
-      consecutiveFailures: z.number().int().nonnegative(),
-      fireflyCredentialStatus: z
-        .enum(["active", "error", "exhausted", "invalid"])
-        .nullable(),
-      fireflyLastRefreshAt: z.string().nullable(),
-      fireflyLastRefreshError: z.string().nullable(),
-      fireflyConsecutiveFailures: z.number().int().nonnegative(),
-      creditsTotal: z.number().int().nullable(),
-      creditsUsed: z.number().int().nullable(),
-      creditsAvailable: z.number().int().nullable(),
-      creditsUpdatedAt: z.string().nullable(),
-      creditsError: z.string().nullable(),
-      defaultRatio: z.string(),
-      defaultResolution: z.string(),
-      gptImageQuality: z.enum(["low", "medium", "high"]),
-    })
-    .strict(),
-]);
-
 const backendMemberSummarySchema = z
   .object({
     id: z.string(),
     name: z.string(),
-    type: z.enum(["api", "adobe"]),
+    type: z.literal("api"),
     groupIds: z.array(z.string()),
     supportedModelIds: z.array(z.string()).min(1),
     supportedResolutionsByModel: backendModelResolutionCapabilitiesSchema
@@ -158,19 +91,13 @@ const backendMemberSummarySchema = z
     lastUsedAt: z.string().nullable(),
     lastError: z.string().nullable(),
     lastErrorAt: z.string().nullable(),
-    config: z.union([redactedApiConfigSchema, redactedAdobeConfigSchema]),
+    config: redactedApiConfigSchema,
   })
   .strict();
 
-/** 管理列表允许的 Adobe Direct 凭据健康筛选。 */
+/** 管理列表凭据状态筛选。 */
 export const backendMemberCredentialFilterSchema = z.enum([
   "all",
-  "pending",
-  "healthy",
-  "degraded",
-  "isolated",
-  "overdue",
-  "unhealthy",
   "not_applicable",
 ]);
 
@@ -207,24 +134,13 @@ export const adminPoolGroupListInputSchema = z
   })
   .strict();
 
-const credentialHealthStatusSchema = z.enum([
-  "pending",
-  "healthy",
-  "degraded",
-  "isolated",
-  "overdue",
-]);
-
-/** 管理成员列表输出；凭据健康只增加可筛选状态，不返回诊断。 */
+/** 管理成员列表输出；API 账号不返回供应商凭据健康诊断。 */
 export const adminPoolMemberListOutputSchema =
   createOffsetPaginationOutputSchema(
     backendMemberSummarySchema
       .extend({
-        config: z.union([
-          redactedApiConfigSchema,
-          adminRedactedAdobeConfigSchema,
-        ]),
-        credentialHealthStatus: credentialHealthStatusSchema.nullable(),
+        config: redactedApiConfigSchema,
+        credentialHealthStatus: z.null(),
       })
       .strict()
   );
@@ -294,7 +210,7 @@ export const listAdminMembers = defineOperation({
   name: "pool.listAdminMembers",
   domain: "image-backend-pool",
   title: "分页读取账号池成员",
-  description: "按管理筛选条件读取脱敏成员、凭据健康状态和精确总数。",
+  description: "按管理筛选条件读取脱敏 API 成员和精确总数。",
   input: adminPoolMemberListInputSchema,
   output: adminPoolMemberListOutputSchema,
   access: { kind: "imageBackendPoolViewer" },
@@ -364,7 +280,7 @@ export const deleteGroup = defineOperation({
   },
 });
 
-/** 以 `api | adobe` 单一入口新建或更新媒体后端成员。 */
+/** 以 API 单一入口新建或更新媒体后端成员。 */
 export const saveMember = defineOperation({
   name: "pool.saveMember",
   domain: "image-backend-pool",

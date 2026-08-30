@@ -31,7 +31,7 @@ describe("admin pool pagination", () => {
   it("恢复成员分页、凭据、模型、分辨率和日期筛选", () => {
     const input = parseAdminPoolMemberListInput(
       new URLSearchParams(
-        "memberPage=3&memberPageSize=50&memberName=Adobe&memberCredential=unhealthy&memberModel=gpt-image-2&memberResolution=2k&memberCreatedFrom=2026-08-01&memberCreatedTo=2026-08-13"
+        "memberPage=3&memberPageSize=50&memberName=API&memberCredential=not_applicable&memberModel=gpt-image-2&memberResolution=2k&memberCreatedFrom=2026-08-01&memberCreatedTo=2026-08-13"
       ),
       paginationConfig,
       "Asia/Shanghai"
@@ -39,8 +39,8 @@ describe("admin pool pagination", () => {
     expect(input).toEqual({
       page: 3,
       pageSize: 50,
-      name: "Adobe",
-      credentialStatus: "unhealthy",
+      name: "API",
+      credentialStatus: "not_applicable",
       modelId: "gpt-image-2",
       resolution: "2k",
       createdFrom: "2026-08-01",

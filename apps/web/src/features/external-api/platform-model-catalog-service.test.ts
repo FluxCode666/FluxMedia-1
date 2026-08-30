@@ -34,7 +34,6 @@ describe("loadPlatformModelCatalog", () => {
             {
               groupIds: ["default-group"],
               type: "api",
-              adobeMode: null,
               supportedModelIds: ["vendor-image"],
               isEnabled: true,
               status: "limited",
@@ -90,7 +89,6 @@ describe("loadPlatformModelCatalog", () => {
             {
               groupIds: ["default-group"],
               type: "api",
-              adobeMode: null,
               supportedModelIds: ["vendor-image"],
               isEnabled: true,
               status: "active",

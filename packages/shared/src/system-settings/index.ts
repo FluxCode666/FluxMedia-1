@@ -13,7 +13,7 @@ import {
   globalVideoModelCreditsPerSecondSchema,
   parseVideoModelCreditsPerSecond,
   type VideoBillingModelPricingDescriptor,
-} from "../adobe/video-pricing";
+} from "../video-generation/video-pricing";
 import {
   createDefaultGlobalImageCreditOverrides,
   DEFAULT_IMAGE_CREDIT_PRICING,

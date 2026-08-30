@@ -5,7 +5,7 @@
  * 同一版本边界，避免新任务缺少账单时错误降级到动态按秒计费。
  */
 
-import { resolveVideoBillingQuote } from "@repo/shared/adobe";
+import { resolveVideoBillingQuote } from "@repo/shared/video-generation";
 import {
   createVideoBillingSnapshot,
   resolveVideoTaskBilling,

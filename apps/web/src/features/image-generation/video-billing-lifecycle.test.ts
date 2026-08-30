@@ -7,7 +7,7 @@ import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   resolveVideoBillingQuote,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import { createDefaultVideoModelCapabilityOverrides } from "@repo/shared/video-generation";
 import { createVideoBillingSnapshot } from "@repo/shared/video-generation/video-billing-snapshot";

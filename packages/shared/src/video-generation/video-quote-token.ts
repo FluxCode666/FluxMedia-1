@@ -7,7 +7,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
-import { videoCreditUnitPriceSchema } from "../adobe/video-pricing";
+import { videoCreditUnitPriceSchema } from "./video-pricing";
 import { videoBillingModeSchema } from "./contracts";
 
 const VIDEO_QUOTE_TOKEN_VERSION = 1 as const;

@@ -1,7 +1,7 @@
 /**
  * 统一成员图片目录的纯逻辑测试。
  *
- * 覆盖跨 `api | adobe` 能力合并、模型前缀无类型分流和视频能力排除。
+ * 覆盖 API 成员能力合并、模型前缀无类型分流和视频能力排除。
  */
 import { describe, expect, it } from "vitest";
 
@@ -14,19 +14,14 @@ const group = {
 };
 
 describe("buildImageGenerationModelCatalog", () => {
-  it("合并同组 API 与 Adobe 的相同模型能力", () => {
+  it("合并同组 API 成员的相同模型能力", () => {
     const result = buildImageGenerationModelCatalog({
       groups: [group],
       members: [
         {
           groupId: group.id,
-          type: "adobe",
-          supportedModelIds: ["gpt-image-2"],
-        },
-        {
-          groupId: group.id,
           type: "api",
-          supportedModelIds: ["GPT-IMAGE-2"],
+          supportedModelIds: ["gpt-image-2"],
         },
       ],
     });
@@ -65,7 +60,7 @@ describe("buildImageGenerationModelCatalog", () => {
       members: [
         {
           groupId: group.id,
-          type: "adobe",
+          type: "api",
           supportedModelIds: [
             "veo31",
             "firefly-veo31-6s-16x9-1080p",

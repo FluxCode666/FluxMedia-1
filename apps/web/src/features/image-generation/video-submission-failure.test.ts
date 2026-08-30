@@ -162,18 +162,6 @@ describe("video submission failure", () => {
         hasLedgerConsumption: true,
       })
     ).toBe("refund_invalid_snapshot");
-    expect(
-      classifyLegacyUncertainVideoSnapshot({
-        protocol: "adobe_direct",
-        hasSupplierSnapshot: true,
-        hasBackendMember: true,
-        hasAdapterIdentity: false,
-        hasModelCapabilitySnapshot: true,
-        hasValidInputManifest: true,
-        hasStorageBucket: true,
-        hasLedgerConsumption: true,
-      })
-    ).toBe("not_applicable");
   });
 
   it("历史输出桶只校验持久身份，不要求等于当前系统桶", () => {

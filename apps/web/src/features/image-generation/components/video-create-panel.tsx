@@ -8,7 +8,7 @@
  * 使用方：图像创作页的视频独立 tab。
  */
 
-import { getVideoBillingCreditCost } from "@repo/shared/adobe";
+import { getVideoBillingCreditCost } from "@repo/shared/video-generation";
 import { formatCredits } from "@repo/shared/credits/format";
 import {
   type VideoCurrentQuote,

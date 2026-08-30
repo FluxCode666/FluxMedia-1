@@ -11,7 +11,7 @@ import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   getVideoPricingResolutionKey,
   getVideoPricingResolutions,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import {
   createDefaultGlobalImageCreditOverrides,
   type GlobalImageCreditOverrides,

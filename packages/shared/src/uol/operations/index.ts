@@ -22,8 +22,6 @@ import "./credits";
 import "./user-auth";
 // 图像后端池域
 import "./image-backend-pool";
-// Adobe direct 凭据健康（仅内部任务和真实管理员）
-import "./adobe-credential-health";
 // 系统设置域
 import "./system-settings";
 // 首页营销设置（人工管理员专用）
@@ -40,17 +38,6 @@ import "./external-api";
 import "./model-marketplace";
 
 export { listAdminStatusErrors } from "./admin-status";
-export {
-  adobeCredentialHealthCheck,
-  adobeCredentialHealthCleanup,
-  adobeCredentialHealthDetails,
-  adobeCredentialHealthScan,
-  adobeCredentialHealthStatusList,
-  adobeCredentialNotificationDrain,
-  adobeCredentialReauthorize,
-  getAdobeCredentialNotificationSettings,
-  setAdobeCredentialNotificationSettings,
-} from "./adobe-credential-health";
 export type {
   ExternalApiKeyListItem,
   ExternalApiKeySummary,
@@ -106,8 +93,6 @@ export {
   videoGetInputs,
   videoGetStatus,
   videoListCapabilities,
-  videoListUncertainSubmissions,
-  videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "./video-generation";
 

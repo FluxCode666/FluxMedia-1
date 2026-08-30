@@ -104,7 +104,7 @@ export type VideoExecutionContract = {
   frameCapability: VideoFrameInputCapability;
   maxReferenceImages: number;
   modelConfigurationRevision: number;
-  /** 自定义视频模型只能由 API 成员执行；内置模型保留 API/Adobe Direct 共存。 */
+  /** 视频模型由 API 成员执行。 */
   requiredMemberType?: "api";
 };
 

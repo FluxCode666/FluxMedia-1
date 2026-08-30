@@ -37,8 +37,8 @@ Redis 是并发正确性的必需依赖。Node.js 启动阶段必须连接并收
 
 ## 号池成员并发
 
-API 与 Adobe 成员的 `concurrency` 继续由 `image_backend_member_lease` PostgreSQL 租约
-执行。候选锁定、有效租约聚合、调度策略、容量检查、租约插入和累计获租计数位于同一
+API 成员的 `concurrency` 继续由 `image_backend_member_lease` PostgreSQL 租约执行。
+候选锁定、有效租约聚合、调度策略、容量检查、租约插入和累计获租计数位于同一
 数据库事务，供 `priority`、`least_acquired` 与 `least_load` 共享。
 
 这一层不能迁入上述 Redis 用户槽位，也不能同时写 Redis 作为第二事实来源。它需要支持

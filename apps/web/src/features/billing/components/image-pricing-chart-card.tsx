@@ -7,7 +7,7 @@
 
 "use client";
 
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
 import {
   getImageModelCreditPricing,
@@ -318,7 +318,7 @@ export function ImagePricingChartCard({
   moderationPricing,
 }: ImagePricingChartCardProps) {
   const data = buildChartData(referenceModel.pricing);
-  const referenceModelName = formatAdobeModelIdForDisplay(referenceModel.id);
+  const referenceModelName = formatModelIdForDisplay(referenceModel.id);
   const chartXTicks = [
     1024,
     IMAGE_1K_BASE_EDGE,
@@ -532,7 +532,7 @@ export function ImagePricingChartCard({
                   {modelPricingRows.map((row) => (
                     <tr className="border-b last:border-b-0" key={row.model}>
                       <td className="px-2 py-2 font-mono text-foreground">
-                        {formatAdobeModelIdForDisplay(row.model)}
+                        {formatModelIdForDisplay(row.model)}
                       </td>
                       {PRICE_TIERS.map((tier) => {
                         const override = row.groupOverrides[tier.field];

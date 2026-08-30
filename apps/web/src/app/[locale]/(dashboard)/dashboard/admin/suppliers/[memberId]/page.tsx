@@ -8,7 +8,6 @@
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { canViewImageBackendPool } from "@repo/shared/auth/roles";
 import { getServerSession } from "@repo/shared/auth/server";
-import { getUserTimeZone } from "@repo/shared/time-zone/server";
 import { redirect } from "next/navigation";
 import { getLocale } from "next-intl/server";
 
@@ -40,13 +39,11 @@ export default async function DashboardAdminSupplierDetailPage({
   }
 
   const { memberId } = await params;
-  const timeZone = await getUserTimeZone(session.user.id);
   return (
     <main className="container mx-auto space-y-6 px-4 py-6 md:px-6">
       <BackendMemberDetailPage
         memberId={memberId}
         readOnly={role === "observer_admin"}
-        timeZone={timeZone}
       />
     </main>
   );

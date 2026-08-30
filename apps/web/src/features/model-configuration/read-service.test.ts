@@ -8,7 +8,7 @@ import {
   DEFAULT_VIDEO_MODEL_BILLING_MODES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-} from "@repo/shared/adobe";
+} from "@repo/shared/video-generation";
 import { createDefaultGlobalImageCreditOverrides } from "@repo/shared/image-backend/group-image-pricing";
 import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketplace";
 import type { Principal } from "@repo/shared/uol";

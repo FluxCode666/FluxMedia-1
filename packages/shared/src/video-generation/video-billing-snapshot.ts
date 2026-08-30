@@ -12,7 +12,7 @@ import {
   getVideoBillingCreditCost,
   type VideoBillingQuote,
   videoCreditUnitPriceSchema,
-} from "../adobe/video-pricing";
+} from "./video-pricing";
 
 /** 当前账单快照持久格式版本。 */
 export const VIDEO_BILLING_SNAPSHOT_VERSION = 1 as const;

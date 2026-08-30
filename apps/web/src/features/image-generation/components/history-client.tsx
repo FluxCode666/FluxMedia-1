@@ -7,7 +7,7 @@
  * 数据读取与用户归属校验由服务端 UOL 查询完成。
  */
 
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
 import { calculateTotalPages } from "@repo/shared/pagination/state";
 import { buildStorageThumbnailUrl } from "@repo/shared/storage/image-url";
@@ -448,7 +448,7 @@ export function HistoryClient({
                             </span>
                             <span>·</span>
                             <span className="break-all font-mono">
-                              {formatAdobeModelIdForDisplay(item.model)}
+                              {formatModelIdForDisplay(item.model)}
                             </span>
                             <span>·</span>
                             <span>{formatRecordSpecification(item, copy)}</span>
@@ -496,9 +496,9 @@ export function HistoryClient({
                         </div>
                         <div
                           className="hidden min-w-0 truncate font-mono text-xs text-foreground lg:block"
-                          title={formatAdobeModelIdForDisplay(item.model)}
+                          title={formatModelIdForDisplay(item.model)}
                         >
-                          {formatAdobeModelIdForDisplay(item.model)}
+                          {formatModelIdForDisplay(item.model)}
                         </div>
                         <div className="hidden font-mono text-xs text-foreground lg:block">
                           {formatRecordSpecification(item, copy)}

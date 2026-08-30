@@ -28,7 +28,7 @@ describe("mergeExternalModelIds", () => {
 });
 
 describe("filterExternalMemberModelIds", () => {
-  it("/v1/models 发布 API 与 Adobe direct 成员声明的真实视频 ID", () => {
+  it("/v1/models 发布 API 成员声明的真实视频 ID", () => {
     const supportedModelIds = [
       "gpt-image-2",
       "seedance2",
@@ -37,35 +37,16 @@ describe("filterExternalMemberModelIds", () => {
     ];
     expect(
       filterExternalMemberModelIds({
-        memberType: "adobe",
-        adobeMode: "direct",
-        supportedModelIds,
-      })
-    ).toEqual(["gpt-image-2", "seedance2"]);
-    expect(
-      filterExternalMemberModelIds({
         memberType: "api",
-        adobeMode: null,
         supportedModelIds,
       })
     ).toEqual(["gpt-image-2", "seedance2"]);
-  });
-
-  it("/v1/models 不发布 Adobe gateway 成员声明的真实视频 ID", () => {
-    expect(
-      filterExternalMemberModelIds({
-        memberType: "adobe",
-        adobeMode: "gateway",
-        supportedModelIds: ["gpt-image-2", "seedance2"],
-      })
-    ).toEqual(["gpt-image-2"]);
   });
 
   it("API 成员只把注册的自定义视频模型发布到视频目录", () => {
     expect(
       filterExternalMemberModelIds({
         memberType: "api",
-        adobeMode: null,
         supportedModelIds: ["vendor-video-x", "vendor-image-x"],
         customVideoModelIds: new Set(["vendor-video-x"]),
       })
@@ -88,7 +69,6 @@ describe("filterExternalMemberModelIds", () => {
     expect(
       filterExternalMemberModelIds({
         memberType: "api",
-        adobeMode: null,
         supportedModelIds: ["gpt-image-2", "seedance2", "nano-banana"],
         marketplaceConfig,
       })

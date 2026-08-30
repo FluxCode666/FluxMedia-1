@@ -1,7 +1,7 @@
 /**
  * 统一媒体号池的站内图片目录服务。
  *
- * 职责：按分组访问开关筛选可达分组，将统一 `api | adobe` 成员显式
+ * 职责：按分组访问开关筛选可达分组，将 API 成员显式
  * 声明的模型能力投影为创作页目录。目录只用于展示，提交时调度器仍会重新授权和获租。
  */
 import { toBackendGroupContentSafety } from "@repo/shared/image-backend/group-contract";

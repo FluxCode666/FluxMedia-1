@@ -1,16 +1,9 @@
 /**
  * 单张图片上游适配与后端池重试服务。
  *
- * 使用方：`operations.ts` 的统一图片管线、后端测活与 Adobe 视频配置解析。
- * 本文件保留 Images API、Adobe gateway/direct、输入图转存和通用图片 SSE 解析。
+ * 使用方：`operations.ts` 的统一图片管线、后端测活与输入图转存。
+ * 本文件处理平台和 API 账号的 Images 兼容协议、输入图转存和通用图片 SSE 解析。
  */
-import {
-  buildAdobeImageRequestBody,
-  canAdobeBackendServeModel,
-  isAdobeImageFamilyModelId,
-  parseAdobeMediaResult,
-  pickExplicitAdobeImageFamily,
-} from "@repo/shared/adobe";
 import {
   API_UPSTREAM_BUILT_IN_PATHS,
   type ApiUpstreamAdapterDraft,
@@ -35,11 +28,7 @@ import { createApiUpstreamOpaqueToken } from "@/features/image-backend-pool/api-
 import { resolveApiUpstreamRequestUrl } from "@/features/image-backend-pool/api-upstream-path";
 import { createApiUpstreamRequestSnapshot } from "@/features/image-backend-pool/api-upstream-request-snapshot";
 import { parseApiUpstreamRetryAfterSeconds } from "@/features/image-backend-pool/api-upstream-response";
-import {
-  fetchMediaUpstream,
-  fetchMediaUpstreamDownload,
-} from "@/features/image-backend-pool/media-upstream-fetch";
-import { runAdobeDirectImageRequest } from "./adobe-direct";
+import { fetchMediaUpstream } from "@/features/image-backend-pool/media-upstream-fetch";
 import { appendImagesUpstreamNonce } from "./images-upstream-nonce";
 import {
   normalizeImageBackground,
@@ -133,12 +122,6 @@ function getModel(config: ApiConfig, model: string) {
   }
   const requestedModel = normalizeImageModel(model);
   if (requestedModel && !isImageModel(requestedModel)) {
-    if (
-      config.backend?.type === "pool-adobe" &&
-      isAdobeImageFamilyModelId(requestedModel)
-    ) {
-      return requestedModel;
-    }
     throw new Error(
       "Unsupported model for image generation. Use a gpt-image-* model."
     );
@@ -568,7 +551,7 @@ function truncateResponseBody(value: string) {
 function getHttpErrorMessage(
   response: Response,
   rawBody: string,
-  apiName: "Images API" | "Adobe Firefly API"
+  apiName: "Images API"
 ) {
   const fallback = `Upstream ${apiName} returned HTTP ${response.status}`;
   const trimmedBody = truncateResponseBody(rawBody);
@@ -678,10 +661,6 @@ function toBlobPart(buffer: Buffer): BlobPart {
   const arrayBuffer = new ArrayBuffer(buffer.byteLength);
   new Uint8Array(arrayBuffer).set(buffer);
   return arrayBuffer;
-}
-
-function stripTrailingSlash(value: string) {
-  return value.replace(/\/+$/, "");
 }
 
 function applyPromptOptimizationResultVisibility(
@@ -1528,124 +1507,12 @@ async function rehostApiBackendInputImages(
   }
 }
 
-/**
- * 通过 Adobe gateway/direct 执行一次图片生成或编辑并采集最终提交正文。
- *
- * @param config 已获租 Adobe 成员的固定配置与凭据。
- * @param params 规范化图片参数、操作类型和可选输入图。
- * @param callbacks 统一管线提供的局部回调；正文完成后、外呼前触发快照回调。
- * @returns 可交回统一图片管线的内联产物或安全错误。
- * @sideEffects direct 可能上传输入图；两种模式都会调用 Adobe 并下载最终产物。
- * @failure 不支持模型或上游失败时返回错误；请求正文尚未完成时不会伪造快照。
- */
-async function runAdobeImageRequest(
-  config: ApiConfig,
-  params: {
-    operation: "images.generate" | "images.edit";
-    prompt: string;
-    model?: string | null;
-    size?: string | null;
-    quality?: string | null;
-    supportsQuality?: boolean;
-    images?: Array<{ data: Buffer; type?: string | null }>;
-    signal?: AbortSignal;
-  },
-  callbacks?: ImageGenerationCallbacks
-): Promise<GenerateImageResult> {
-  if (
-    !canAdobeBackendServeModel({
-      enabledModels: config.backend?.adobeEnabledModels,
-      supportsVideo: config.backend?.adobeSupportsVideo ?? false,
-      requestedModel: params.model,
-    })
-  ) {
-    return { error: "此 Adobe 后端未开放所请求的模型" };
-  }
-  // direct 模式：用本仓库移植的逆向逻辑直连 Adobe Firefly（经 Go TLS 旁路），不走网关。
-  if (config.backend?.adobeMode === "direct") {
-    return runAdobeDirectImageRequest(config, {
-      ...params,
-      ...(callbacks?.onApiUpstreamRequestSnapshot
-        ? {
-            onRequestSnapshot: callbacks.onApiUpstreamRequestSnapshot,
-          }
-        : {}),
-    });
-  }
-  // 网关模式：family 优先取请求 model 的族（支持 firefly-* 与裸 Nano Banana）；普通或未知
-  // 模型（如普通 gpt-image 经 force_firefly 强制路由到 adobe）落 gpt-image-2。
-  const family = pickExplicitAdobeImageFamily(params.model) ?? "gpt-image-2";
-  const body = buildAdobeImageRequestBody({
-    family,
-    prompt: params.prompt,
-    size: params.size,
-    ...(params.images && params.images.length > 0
-      ? { images: params.images }
-      : {}),
-  });
-  await callbacks?.onApiUpstreamRequestSnapshot?.(
-    createApiUpstreamRequestSnapshot({
-      operation: params.operation,
-      contentType: "application/json",
-      body,
-    })
-  );
-  const response = await fetchMediaUpstream(
-    `${stripTrailingSlash(config.baseUrl)}/v1/chat/completions`,
-    {
-      method: "POST",
-      signal: params.signal,
-      headers: getHeaders(config, { "Content-Type": "application/json" }),
-      body: JSON.stringify(body),
-      maxResponseBytes: MAX_MEDIA_API_RESPONSE_BYTES,
-    }
-  );
-  if (!response.ok) {
-    const rawBody = await response.text().catch(() => "");
-    return {
-      error: getHttpErrorMessage(response, rawBody, "Adobe Firefly API"),
-    };
-  }
-  const json = (await response.json().catch(() => null)) as unknown;
-  const parsed = parseAdobeMediaResult(json, config.baseUrl);
-  if ("error" in parsed) return { error: parsed.error };
-  const mediaResponse = await fetchMediaUpstreamDownload(parsed.url, {
-    signal: params.signal,
-  });
-  if (!mediaResponse.ok) {
-    return {
-      error: `Adobe Firefly 媒体下载失败 HTTP ${mediaResponse.status}`,
-    };
-  }
-  const buffer = Buffer.from(await mediaResponse.arrayBuffer());
-  return { imageBase64: buffer.toString("base64") };
-}
-
 export async function generateImage(
   config: ApiConfig,
   params: GenerateImageParams,
   callbacks?: ImageGenerationCallbacks
 ): Promise<GenerateImageResult> {
   const model = getModel(config, params.model);
-  if (config.backend?.type === "pool-adobe") {
-    return requireImageOutput(
-      applyPromptOptimizationResultVisibility(
-        await runAdobeImageRequest(
-          config,
-          {
-            operation: "images.generate",
-            prompt: getEffectivePrompt(params),
-            model,
-            size: params.size,
-            quality: params.quality,
-            supportsQuality: params.supportsQuality,
-            signal: params.signal,
-          },
-          callbacks
-        )
-      )
-    );
-  }
   try {
     const prompt = getEffectivePrompt(params);
     const size = resolveImageRequestSize(params.size);
@@ -1845,12 +1712,6 @@ export async function editImage(
   params: EditImageParams,
   callbacks?: ImageGenerationCallbacks
 ): Promise<GenerateImageResult> {
-  // Adobe 适配器不会把 mask 传给上游。这里必须 fail-closed，避免局部编辑
-  // 被静默降级为整图编辑；正常路径会在 operations 中先重选 image_edit 候选。
-  if (params.mask && config.backend?.type === "pool-adobe") {
-    return { error: "当前生图后端不支持蒙版编辑，已阻止请求发送。" };
-  }
-
   const apiAdapter =
     config.backend?.type === "pool-api"
       ? config.backend.apiUpstreamAdapter
@@ -1870,7 +1731,6 @@ export async function editImage(
       error: "当前供应商的公网 URL 图生图模式不支持蒙版，已阻止请求发送。",
     };
   }
-
   // pool-api 后端分发前确保输入图/ mask 已 re-host，避免把外链交给上游。
   await rehostApiBackendInputImages(
     config,
@@ -1887,26 +1747,6 @@ export async function editImage(
     getEffectivePrompt(params),
     params.images
   );
-  if (config.backend?.type === "pool-adobe") {
-    return requireImageOutput(
-      applyPromptOptimizationResultVisibility(
-        await runAdobeImageRequest(
-          config,
-          {
-            operation: "images.edit",
-            prompt: effectiveEditPrompt,
-            model,
-            size: params.size,
-            quality: params.quality,
-            supportsQuality: params.supportsQuality,
-            images: params.images,
-            signal: params.signal,
-          },
-          callbacks
-        )
-      )
-    );
-  }
   try {
     const prompt = effectiveEditPrompt;
     const upstreamModel = getApiBackendUpstreamModel(config, model);

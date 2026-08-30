@@ -2,7 +2,7 @@
  * Web 定时维护任务编排。
  *
  * 职责：执行图片清理、积分过期、媒体队列补投、图片租约恢复、运营 CSV 导出与
- * Adobe 凭据健康任务；业务副作用通过各领域仓储、队列或 UOL operation 完成。
+ * 定时任务；业务副作用通过各领域仓储、队列或 UOL operation 完成。
  */
 import { processExpiredBatches } from "@repo/shared/credits/core";
 import {
@@ -35,26 +35,6 @@ import {
   buildCreditsExpireResponse,
   summarizeExpiredPendingGenerations,
 } from "@/server/scheduled-jobs-response";
-
-/**
- * Adobe 健康任务通过 UOL 内部 cron Principal 调用，确保调度入口与管理员手动检查
- * 共享同一 operation、审计和权限网关；此处不直接触碰 Adobe 凭据服务。
- */
-async function invokeAdobeHealthJob<T>(
-  operation:
-    | "pool.scanAdobeCredentialHealth"
-    | "pool.drainAdobeCredentialNotifications"
-    | "pool.cleanupAdobeCredentialHealthHistory",
-  input: { batchSize: number },
-  job: string
-): Promise<T> {
-  const [{ invokeOperation }, { ensureUolInitialized }] = await Promise.all([
-    import("@repo/shared/uol"),
-    import("@/server/uol-init"),
-  ]);
-  await ensureUolInitialized();
-  return invokeOperation<T>(operation, input, { type: "cron", job });
-}
 
 /**
  * 运营导出任务通过 UOL 内部 cron Principal 调用，保证处理与保留任务只能使用各自
@@ -137,7 +117,6 @@ const IMAGE_MAINTENANCE_BATCH_LIMIT = 500;
 const MEDIA_TASK_RECOVERY_BATCH_LIMIT = 1_000;
 const MEDIA_TASK_RECOVERY_CONCURRENCY = 25;
 const IMAGE_ADMISSION_RECOVERY_BACKOFF_MS = 60_000;
-const ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT = 25;
 
 /** 媒体队列与图片租约补偿任务的可替换依赖。 */
 export interface MediaTaskRecoveryJobDependencies {
@@ -505,31 +484,4 @@ export async function runVideoRecoveryJob() {
     inputCleanup,
     timestamp: new Date().toISOString(),
   };
-}
-
-/** 扫描一批到期 Adobe direct 成员并写入健康评估结果。 */
-export async function runAdobeCredentialHealthJob() {
-  return invokeAdobeHealthJob(
-    "pool.scanAdobeCredentialHealth",
-    { batchSize: ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT },
-    "adobe-credential-health"
-  );
-}
-
-/** 补偿投递 Adobe 健康事件的邮件和 Webhook outbox。 */
-export async function runAdobeCredentialNotificationDrainJob() {
-  return invokeAdobeHealthJob(
-    "pool.drainAdobeCredentialNotifications",
-    { batchSize: ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT },
-    "adobe-credential-notification-delivery"
-  );
-}
-
-/** 清理超过保留期且已终态的 Adobe 健康历史。 */
-export async function runAdobeCredentialHealthCleanupJob() {
-  return invokeAdobeHealthJob(
-    "pool.cleanupAdobeCredentialHealthHistory",
-    { batchSize: ADOBE_CREDENTIAL_HEALTH_BATCH_LIMIT },
-    "adobe-credential-health-retention"
-  );
 }

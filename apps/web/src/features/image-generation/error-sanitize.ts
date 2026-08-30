@@ -58,7 +58,7 @@ export function isSensitiveUpstreamError(error: unknown): boolean {
   const message = getErrorMessage(error);
   if (!message) return false;
 
-  return /(?:\bupstream\b|\bimages\s+api\b|\badobe(?:\s+firefly)?\b|\bopenai\b|\b(?:api[_ -]?key|access[_ -]?token|authorization|bearer|cookie|set-cookie)\b|https?:\/\/|\b(?:econn(?:reset|refused)|enotfound|fetch failed|socket hang up|certificate|tls handshake)\b)/i.test(
+  return /(?:\bupstream\b|\bimages\s+api\b|\bopenai\b|\b(?:api[_ -]?key|access[_ -]?token|authorization|bearer|cookie|set-cookie)\b|https?:\/\/|\b(?:econn(?:reset|refused)|enotfound|fetch failed|socket hang up|certificate|tls handshake)\b)/i.test(
     message
   );
 }

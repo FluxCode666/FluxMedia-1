@@ -24,7 +24,7 @@ main 或匹配版本 tag
        │
        └─ 手动 Deploy Production
              ├─ Quality gate
-             ├─ GHCR：web + migrate + media-upstream-proxy
+             ├─ GHCR：web + migrate
              └─ production Environment 审批（如已配置）→ SSH 部署
 ```
 
@@ -38,7 +38,7 @@ main 或匹配版本 tag
 | `.github/workflows/ci.yml` | PR 与手动 CI 门禁；push 到 `main` 不触发 |
 | `.github/workflows/deploy-production.yml` | 生产质量门、镜像发布和 SSH 部署 |
 | `.github/actions/setup/action.yml` | 统一 Node.js 22、pnpm 10 与冻结依赖安装 |
-| `deploy/docker-compose.yml` | 生产 `web`、`media-upstream-proxy` 与维护迁移服务 |
+| `deploy/docker-compose.yml` | 生产 `web` 与维护迁移服务 |
 | `deploy/.env.example` | 生产服务器 `.env` 模板，不包含真实机密 |
 | `deploy/README.md` | 服务器初始化、Redis、备份、Nginx 和迁移操作手册 |
 | `docs/CI-CD.md` | CI/CD 设计摘要和维护窗口契约 |
@@ -67,7 +67,6 @@ pnpm turbo typecheck
 pnpm turbo lint
 pnpm turbo test
 pnpm --filter @repo/web build
-(cd services/media-upstream-proxy && go test ./...)
 ```
 
 ## 4. 生产发布工作流
@@ -90,10 +89,10 @@ pnpm --filter @repo/web build
 
 1. 启动临时 PostgreSQL 16 和 Redis 7.4。
 2. 验证版本与分支/tag 关系。
-3. 运行 Go 代理测试、部署脚本测试和数据库发布门禁。
+3. 运行部署脚本测试和数据库发布门禁。
 4. 运行 Fumadocs source 生成、lint、typecheck、全仓测试和集成测试。
 5. 构建 Web standalone，执行 API upstream worker 检查与 smoke test。
-6. 使用 Docker Buildx 构建并推送 Web、migrate 和 Adobe direct 代理镜像。
+6. 使用 Docker Buildx 构建并推送 Web 与 migrate 镜像。
 
 ### 4.3 GHCR 镜像
 
@@ -101,7 +100,6 @@ pnpm --filter @repo/web build
 |---|---|
 | Web | `ghcr.io/fluxcode666/fluxmedia-1-web:<version>` |
 | 数据库迁移 | `ghcr.io/fluxcode666/fluxmedia-1-migrate:<version>` |
-| Adobe direct 代理 | `ghcr.io/fluxcode666/fluxmedia-1-media-upstream-proxy:<version>` |
 
 每个镜像同时推送 `<version>` 和 `latest` 两个 tag，平台为 `linux/amd64`。构建端使用
 GitHub 自动提供的 `GITHUB_TOKEN` 推送；目标服务器拉取私有镜像时使用 `GHCR_PAT`。
@@ -137,7 +135,7 @@ Required reviewers，并将 Deployment branches 限制为 `main` 及实际允许
 Environment Variable。域名变化时必须同时检查工作流构建参数、服务器 `.env` 和 Nginx
 配置。
 
-不要把生产 `DATABASE_URL`、`BETTER_AUTH_SECRET`、Redis 密码、Adobe 代理 secret、
+不要把生产 `DATABASE_URL`、`BETTER_AUTH_SECRET`、Redis 密码、
 S3 访问密钥或 age 私钥放入 GitHub Environment。这些值由目标服务器或其基础设施持有。
 
 ## 6. 首次初始化生产服务器
@@ -170,7 +168,6 @@ sudo editor /root/flux-media/.env
 | `BETTER_AUTH_SECRET` | 认证会话密钥；使用高熵随机值 |
 | `REDIS_HOST` / `REDIS_PORT` | 外部 Redis 地址和端口 |
 | `REDIS_PASSWORD` | Redis 认证密码 |
-| `ADOBE_DIRECT_PROXY_SECRET` | Web 与 `media-upstream-proxy` 必须一致的代理密钥 |
 | `FLUXMEDIA_SUPER_ADMIN_EMAIL` | 首次自用模式超管邮箱 |
 | `FLUXMEDIA_SUPER_ADMIN_PASSWORD` | 首次自用模式超管密码 |
 
@@ -183,10 +180,10 @@ sudo editor /root/flux-media/.env
 生产部署 job 使用 `production` Environment，并通过 SSH 执行：
 
 1. 校验服务器存在 `.env`、Compose、环境读取器、备份脚本和恢复策略脚本。
-2. 读取旧镜像元数据，验证 Compose 配置并拉取本次三个镜像。
+2. 读取旧镜像元数据，验证 Compose 配置并拉取本次镜像。
 3. 停止旧 Web，等待数据库连接排空，执行 drain、早期预检和 API upstream 预检。
 4. 创建迁移前数据库备份，收编旧视频输入资产，执行数据库迁移和 postcheck。
-5. 回填并零差异对账运营统计读模型，启动 Adobe 代理与新 Web。
+5. 回填并零差异对账运营统计读模型，启动新 Web。
 6. 确保运营统计 epoch，等待 Web 健康检查并输出脱敏部署摘要。
 
 迁移容器必须使用非交互 stdin。自动部署通过 SSH stdin 传入远程脚本，迁移命令继承
@@ -227,11 +224,11 @@ Environment secret 缺失时检查 `production` Environment。生产 job 要求 
 ```bash
 cd /root/flux-media
 docker compose ps
-docker compose logs --tail=200 web media-upstream-proxy
+docker compose logs --tail=200 web
 docker compose config --quiet
 ```
 
-重点检查数据库、外部 Redis、两端 Adobe proxy secret、端口、Nginx upstream 和证书。
+重点检查数据库、外部 Redis、端口、Nginx upstream 和证书。
 不要把 `.env` 或完整容器环境输出到工单、Actions 日志或聊天记录。
 
 工作流文件是最终执行事实；修改触发条件、job、镜像名、Environment 配置、部署路径或

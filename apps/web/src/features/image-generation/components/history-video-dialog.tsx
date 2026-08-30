@@ -7,7 +7,7 @@
  * 操作错误地出现在视频详情中。
  */
 
-import { formatAdobeModelIdForDisplay } from "@repo/shared/adobe";
+import { formatModelIdForDisplay } from "@repo/shared/image-backend/model-display";
 import { formatCredits } from "@repo/shared/credits/format";
 import { formatDateInTimeZone } from "@repo/shared/time-zone";
 import type { VideoTaskPublicBilling } from "@repo/shared/video-generation";
@@ -301,7 +301,7 @@ export function HistoryVideoDialog({
                     {copy("Model", "模型")}
                   </dt>
                   <dd className="mt-0.5 break-all font-mono text-xs text-foreground">
-                    {formatAdobeModelIdForDisplay(record.model)}
+                    {formatModelIdForDisplay(record.model)}
                   </dd>
                 </div>
                 <div>

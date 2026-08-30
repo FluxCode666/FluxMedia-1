@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 
-import { videoModelCreditPricesSchema } from "../adobe/video-pricing";
+import { videoModelCreditPricesSchema } from "../video-generation/video-pricing";
 import { imageCreditOverridesSchema } from "./group-image-pricing";
 
 /** 分组级内容安全覆盖；inherit 表示沿用成员设置。 */

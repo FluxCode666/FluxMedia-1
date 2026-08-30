@@ -172,11 +172,16 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
     setActiveTab(normalizeTab(requestedTab));
   }, [searchParams, normalizeTab, router]);
 
-  const { execute: executeUpdateProfile, isPending } = useAction(
+  const {
+    execute: executeUpdateProfile,
+    executeAsync: executeUpdateProfileAsync,
+    isPending,
+  } = useAction(
     updateProfileAction,
     {
-      onSuccess: ({ data }) => {
-        if (data?.message) {
+      onSuccess: ({ data, input }) => {
+        // 头像上传有自己的成功提示；这里只提示资料表单保存，避免重复提示。
+        if (data?.message && input.image === undefined) {
           toast.success(data.message);
         }
       },
@@ -289,7 +294,15 @@ export function SettingsProfileView({ user }: SettingsProfileViewProps) {
         throw new Error(t("errors.fileUploadFailed"));
       }
 
-      executeUpdateProfile({ image: uploadUrlResult.data.key });
+      const profileUpdateResult = await executeUpdateProfileAsync({
+        image: uploadUrlResult.data.key,
+      });
+      // executeAsync 会把服务端校验/业务错误作为结果返回，并由 onError 统一提示。
+      // 未成功写入数据库时不能把上传成功误报为头像保存成功。
+      if (!profileUpdateResult?.data) {
+        setAvatarPreview(null);
+        return;
+      }
       toast.success(t("success.avatarUpdated"));
     } catch (error) {
       console.error("Avatar upload error:", error);

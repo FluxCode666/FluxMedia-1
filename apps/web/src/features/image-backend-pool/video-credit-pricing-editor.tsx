@@ -6,7 +6,7 @@
  * 使用方：分组表单。模型、支持分辨率、全局模式和两套继承价都来自模型配置 UOL
  * 快照；组件只编辑按秒与按条金额，绝不提供或提交分组计费模式。
  */
-import { getVideoPricingResolutionKey } from "@repo/shared/adobe";
+import { getVideoPricingResolutionKey } from "@repo/shared/video-generation";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 

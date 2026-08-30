@@ -68,31 +68,7 @@ function toPortableMember(
     };
   }
 
-  if (member.config.mode === "gateway") {
-    const { hasApiKey: _hasApiKey, ...config } = member.config;
-    return { ...common, config };
-  }
-
-  const {
-    hasCookie: _hasCookie,
-    displayName: _displayName,
-    email: _email,
-    credentialStatus: _credentialStatus,
-    lastRefreshAt: _lastRefreshAt,
-    lastRefreshError: _lastRefreshError,
-    consecutiveFailures: _consecutiveFailures,
-    fireflyCredentialStatus: _fireflyCredentialStatus,
-    fireflyLastRefreshAt: _fireflyLastRefreshAt,
-    fireflyLastRefreshError: _fireflyLastRefreshError,
-    fireflyConsecutiveFailures: _fireflyConsecutiveFailures,
-    creditsTotal: _creditsTotal,
-    creditsUsed: _creditsUsed,
-    creditsAvailable: _creditsAvailable,
-    creditsUpdatedAt: _creditsUpdatedAt,
-    creditsError: _creditsError,
-    ...config
-  } = member.config;
-  return { ...common, config };
+  throw new Error("Unsupported backend member type");
 }
 
 /** 将选中的脱敏供应商账号序列化为 JSON 下载内容。 */

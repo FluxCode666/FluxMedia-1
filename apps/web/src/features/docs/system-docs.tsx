@@ -141,11 +141,6 @@ const sections = {
             "chat / agent / responses 走 Responses 语义（image_generation 工具循环、多轮）。普通图像生成与图生图改走该账号的 /images/generations、/images/edits 直连端点（同一 OAuth 凭据，JSON 体、size 走顶层；图生图的输入图/mask 以 base64 data URL 放在 images[].image_url / mask.image_url），以确定性遵循 size 等尺寸参数；Codex 托管的 image_generation 工具不尊重 size，故纯生成/编辑不再用它（codex images 端点要 JSON,不接受 multipart）。即便上游返回尺寸偏小，最终图也会经自动超分校准补足到目标分辨率（见下「分辨率超分与高清修复」），故 Web/Codex 出图同样支持接近 4K 的目标尺寸。",
         },
         {
-          title: "Adobe（Firefly）账号池",
-          description:
-            "作为统一分组成员按 priority 参与调度。成员必须在 supportedModelIds 中显式声明请求使用的真实模型 ID；客户端不能通过供应商前缀或别名选择成员，调度器也不解析模型前缀。命中后才由 Adobe 适配器转换供应商协议。",
-        },
-        {
           title: "外接 API 后端",
           description:
             "管理员配置的 OpenAI 兼容 Base URL/API Key；按当前请求类型调用 images 或 responses 端点。",
@@ -335,7 +330,6 @@ const sections = {
         "API 密钥可设置独立积分限额；GET /v1/credits 可查询密钥限额、已用额度和账户余额。",
         "所有页面和外接 API 请求都使用平台后端池，并按平台积分与 API 密钥额度结算。",
         "image 接口的 web_first / webFirst / force_web / forceWeb（chat 对应 mix_web_first）是 Web-first 优先路由，不是硬性只走 Web，且默认开启。开启时（不传或显式 true）按 Web-first 像素区间（IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS，默认 0.66MP-2MP）判定：尺寸落在区间内才优先 Web、失败回退 Codex/Responses，超出区间（如 4K）则走正常调度；auto 或无法解析的尺寸视为可优先 Web。显式传 false 则不优先 Web。该路由只对 mixed 后端分组生效（纯 Web / 纯 Codex-Responses 分组无此概念）；agent 始终走 Codex/Responses，不受此项影响。",
-        "Adobe（Firefly）后端与 API 后端使用同一分组调度规则：只有成员 supportedModelIds 显式声明的真实模型 ID 才能参与候选，客户端模型 ID 不做供应商前缀或别名转换。图片使用模型四档固定价加运行时审核费，视频使用模型族对应分辨率的每秒固定价格。",
         "图片异步任务（async）：body async:true 或 URL ?async=true（等价、不能与 stream 同用）会立即返回 task_... 任务，需用 GET /v1/images/{task_id} 轮询；task_... 为进程内内存对象，30 分钟后过期，服务重启或多实例切换即无法再查询。若需持久查询，改用响应里的 generation_id（gen_...）作为 GET /v1/images/{id} 的路径参数——它从数据库取回，跨重启/多实例都可查（同步请求也可用此方式按 generation_id 复查）。图片 callback_url 是可选的完成回调 webhook。视频接口采用独立持久任务协议：POST /v1/videos/generations 始终返回 HTTP 202 和视频任务 ID，再用 GET /v1/videos/{id} 轮询；POST /v1/videos 已下线。callback_url 会绑定到该持久任务并在终态投递。",
       ],
       officialRefsTitle: "官方参考",
@@ -355,14 +349,6 @@ const sections = {
         {
           label: "Models API",
           href: "https://developers.openai.com/api/reference/resources/models/methods/list",
-        },
-        {
-          label: "Adobe 路由与兜底调度",
-          href: "/docs/adobe-firefly-routing",
-        },
-        {
-          label: "Adobe 兼容转换",
-          href: "/docs/adobe-firefly-compat",
         },
       ],
       fieldHeaders: ["字段", "要求", "说明"],
@@ -407,7 +393,7 @@ const sections = {
             {
               name: "data[].id",
               description:
-                "模型 ID。包含默认图片模型、Adobe Firefly 图像族 id、真实视频模型 ID、可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
+                "模型 ID。包含默认图片模型、真实视频模型 ID、可用的 Chat/Responses 模型，以及已启用 API 供应商配置的模型 ID。",
             },
             {
               name: "data[].object / created / owned_by",
@@ -1042,7 +1028,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
               name: "model",
               requirement: "必填",
               description:
-                "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应。服务端只在该密钥绑定的可信分组中精确匹配成员显式暴露的 ID，不转换 firefly-* 前缀、default 或其他目录外别名。Responses 对话模型请使用 /v1/responses。",
+                "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应。服务端只在该密钥绑定的可信分组中精确匹配成员显式暴露的 ID，不转换 default 或其他目录外别名。Responses 对话模型请使用 /v1/responses。",
             },
             {
               name: "size",
@@ -1364,7 +1350,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
               name: "model",
               requirement: "必填",
               description:
-                "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应；目录外 ID、firefly-* 前缀和其他别名不会被转换。取值范围与调度规则同 /v1/images/generations。",
+                "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应；目录外 ID 和其他别名不会被转换。取值范围与调度规则同 /v1/images/generations。",
             },
             {
               name: "size",
@@ -1712,7 +1698,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               name: "model",
               requirement: "必填",
               description:
-                "真实视频模型 ID，例如 seedance2、seedance2-fast、veo31。不得在模型 ID 中拼接时长、比例或分辨率；旧 firefly-* 与复合 ID 会被拒绝。可用模型见 /v1/models。",
+                "真实视频模型 ID，例如 seedance2、seedance2-fast、veo31。不得在模型 ID 中拼接时长、比例或分辨率；复合 ID 会被拒绝。可用模型见 /v1/models。",
             },
             {
               name: "clientRequestId / client_request_id",
@@ -2474,20 +2460,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "账号限流、额度不足、凭据失效时，调度器会冷却/标错并尝试轮换。",
       ],
     },
-    adobe: {
-      title: "Adobe（Firefly）账号",
-      description:
-        "直连 Adobe Firefly 的自管账号/token 池，作为特殊成员按 priority 挂入分组兜底。",
-      valid: [
-        "**分辨率只接受 1k / 2k / 4k 三档，不是任意像素分辨率；传入的 size 会被映射到最近的比例（1x1/16x9/9x16/4x3/3x4）与最近的档位（长边 ≤1024→1k、≤2048→2k、否则 4k）。**",
-        "只有当前分组 Adobe 成员 supportedModelIds 显式暴露的真实模型 ID 才能调度到该成员；客户端前缀和别名不参与路由。",
-        "自管账号/token 池，作为特殊成员按 priority 挂入分组兜底。",
-      ],
-      invalid: [
-        "不支持的参数会被静默忽略，不报错。",
-        "无法严格按任意像素尺寸输出；只能落到 1k/2k/4k 三档之一。",
-      ],
-    },
     api: {
       title: "外接 API 后端",
       description:
@@ -2647,11 +2619,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
           title: "Codex/Responses Pool",
           description:
             "chat / agent / responses use Responses semantics (image_generation tool loop, multi-round). Plain image generation and image edits instead route to that account's direct /images/generations and /images/edits endpoints (same OAuth credential, JSON body, size at the top level; image-to-image input/mask passed as base64 data URLs in images[].image_url / mask.image_url) to deterministically honor size — the Codex-hosted image_generation tool ignores size, so plain generation/edit no longer uses it (the codex images endpoints take JSON, not multipart). Even when the upstream returns a smaller image, the final image is auto-upscaled to the target resolution (see 'Super-Resolution And HD Repair' below), so Web/Codex output likewise supports near-4K target sizes.",
-        },
-        {
-          title: "Adobe (Firefly) Pool",
-          description:
-            "Participates as a normal group member ordered by priority. The member must explicitly expose the exact requested model ID in supportedModelIds. Client prefixes and aliases do not select a member; only the selected member's adapter translates the upstream protocol.",
         },
         {
           title: "External API Backend",
@@ -2853,7 +2820,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "API keys can have independent credit limits. GET /v1/credits returns key quota, used credits, and account balance.",
         "All page and external API requests use the platform backend pool and settle through platform credits and API key quotas.",
         "Image endpoint web_first / webFirst / force_web / forceWeb (chat: mix_web_first) is a Web-first preference route, not hard Web-only, and is on by default. When on (omitted or explicit true) it uses the Web-first pixel range (IMAGE_FORCE_WEB_MIN_PIXELS / IMAGE_FORCE_WEB_MAX_PIXELS, default 0.66MP-2MP): only sizes inside the range prefer Web (fall back to Codex/Responses on failure), sizes outside (e.g. 4K) use normal scheduling, auto or unparseable sizes may prefer Web; explicit false disables it. It only applies to mixed backend groups (no effect for Web-only / Codex-Responses-only groups); agent always uses Codex/Responses and is unaffected.",
-        "Adobe (Firefly) and API backends follow the same group scheduling rule: only exact model IDs explicitly declared in member supportedModelIds are candidates. Client model IDs are not rewritten from vendor prefixes or aliases. Images use fixed model-tier prices plus runtime review fees, while videos use fixed model-family prices per second.",
         "Image async tasks: body async:true or URL ?async=true (equivalent, and cannot be combined with stream) returns a task_... object immediately; poll GET /v1/images/{task_id}. These process-local tasks expire after 30 minutes. Use the generation_id from an image response for persistent image lookups, and callback_url for image completion delivery. Video uses a separate persistent-task contract: POST /v1/videos/generations always returns HTTP 202 and a video task ID, then GET /v1/videos/{id} polls it. POST /v1/videos is no longer a creation endpoint. callback_url is attached to the persistent video task and delivered at terminal state.",
       ],
       officialRefsTitle: "Official References",
@@ -2873,14 +2839,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         {
           label: "Models API",
           href: "https://developers.openai.com/api/reference/resources/models/methods/list",
-        },
-        {
-          label: "Adobe routing and fallback scheduling",
-          href: "/docs/adobe-firefly-routing",
-        },
-        {
-          label: "Adobe compatibility conversion",
-          href: "/docs/adobe-firefly-compat",
         },
       ],
       fieldHeaders: ["Field", "Requirement", "Notes"],
@@ -2925,7 +2883,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
             {
               name: "data[].id",
               description:
-                "Model ID. Includes the default image model, Adobe Firefly image-family IDs, real video model IDs, available Chat/Responses models, and model IDs configured on enabled API providers.",
+                "Model ID. Includes the default image model, real video model IDs, available Chat/Responses models, and model IDs configured on enabled API providers.",
             },
             {
               name: "data[].object / created / owned_by",
@@ -3412,7 +3370,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
               name: "model",
               requirement: "Required",
               description:
-                "Exact image model ID returned by GET /v1/models for the current API key. The server matches only IDs explicitly exposed by members in the key's trusted group; it does not rewrite firefly-* prefixes, default, or other out-of-catalog aliases. Use /v1/responses for Responses chat models.",
+                "Exact image model ID returned by GET /v1/models for the current API key. The server matches only IDs explicitly exposed by members in the key's trusted group; it does not rewrite default or other out-of-catalog aliases. Use /v1/responses for Responses chat models.",
             },
             {
               name: "size",
@@ -3716,7 +3674,7 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
               name: "model",
               requirement: "Required",
               description:
-                "Exact image model ID returned by GET /v1/models for the current API key. Out-of-catalog IDs, firefly-* prefixes, and other aliases are not rewritten. The same rule applies to /v1/images/generations.",
+                "Exact image model ID returned by GET /v1/models for the current API key. Out-of-catalog IDs and other aliases are not rewritten. The same rule applies to /v1/images/generations.",
             },
             {
               name: "size",
@@ -4046,7 +4004,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/videos/video_0123456789abcdef01234
               name: "model",
               requirement: "Required",
               description:
-                "Real video model ID, such as seedance2, seedance2-fast, or veo31. Do not encode duration, ratio, or resolution in the ID; legacy firefly-* and composite IDs are rejected. See /v1/models for available models.",
+                "Real video model ID, such as seedance2, seedance2-fast, or veo31. Do not encode duration, ratio, or resolution in the ID; composite IDs are rejected. See /v1/models for available models.",
             },
             {
               name: "clientRequestId / client_request_id",
@@ -4823,20 +4781,6 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "On rate limits, quota errors, or invalid credentials, the scheduler cools down/marks the account and tries another one.",
       ],
     },
-    adobe: {
-      title: "Adobe (Firefly) Account",
-      description:
-        "A self-managed account/token pool that connects directly to Adobe Firefly, attached to a group as a special priority member for fallback.",
-      valid: [
-        "**Resolution only accepts the 1k / 2k / 4k tiers, not arbitrary pixel resolutions; the incoming size is auto-mapped to the nearest ratio (1x1/16x9/9x16/4x3/3x4) and nearest tier (long edge <=1024 -> 1k, <=2048 -> 2k, otherwise 4k).**",
-        "Only exact model IDs exposed in the current group's Adobe member supportedModelIds can reach that member; client prefixes and aliases do not participate in routing.",
-        "Self-managed account/token pool, attached to a group as a special priority member for fallback.",
-      ],
-      invalid: [
-        "Unsupported parameters are silently ignored rather than rejected.",
-        "Cannot output arbitrary pixel sizes; output always lands on one of the 1k/2k/4k tiers.",
-      ],
-    },
     api: {
       title: "External API Backends",
       description:
@@ -5318,11 +5262,7 @@ function ExternalApiDocs({
             <h3 className="mt-4 text-sm font-medium">{docs.commonTitle}</h3>
             <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
               {docs.common.map((item) => {
-                // Adobe（Firefly）后端与异步任务（async）两条规则加粗并取消灰字,
-                // 使其在通用规则里更醒目。前缀严格匹配,避免误命中无关条目:
-                // "Adobe"(zh/en 共用)、"异步任务（async）"(zh)、"Async tasks (async)"(en)。
                 const emphasize =
-                  item.startsWith("Adobe") ||
                   item.startsWith("异步任务（async）") ||
                   item.startsWith("Async tasks (async)");
                 return (
@@ -5819,7 +5759,7 @@ export function SystemDocsContent({
       </Card>
 
       <div className="scroll-mt-32 grid gap-4 lg:grid-cols-3" id="backends">
-        {[content.web, content.codex, content.adobe, content.api].map(
+        {[content.web, content.codex, content.api].map(
           (section) => (
             <Card className="rounded-lg" key={section.title}>
               <CardHeader>

@@ -13,14 +13,13 @@
 
 ## 统一媒体号池
 
-- 顶层成员类型只有 `api | adobe`；Adobe 内部模式只有 `gateway | direct`。
+- 顶层成员类型只有 `api`；供应商协议和凭据统一由 API 适配配置承载。
 - `supportedModelIds` 是候选能力的唯一权威，模型名称不承担调度语义。
 - 成员模型选项来自管理端模型配置快照；图片与视频都只保存真实模型 ID，不得把时长、
   比例或分辨率编码进模型 ID。`pool.saveMember` 服务端再次校验目录来源；公开展示开关
   不得过滤调度能力。
-- API 成员支持 Images 与 Videos 兼容协议，Adobe Direct 支持图片与视频，Adobe
-  Gateway 仅支持图片；`useStream` 属于保留的图片上游能力，Responses/
-  Mixed-to-Responses 配置不得迁入统一号池。
+- API 成员支持 Images 与 Videos 兼容协议；`useStream` 属于保留的图片上游能力，
+  Responses/Mixed-to-Responses 配置不得迁入统一号池。
 - API 成员的 `supportedModelIds`、调度、计费、任务和响应始终使用平台真实模型 ID；
   账号级稀疏模型映射只在出站最后一跳替换供应商模型 ID。旧 `copy|move` 参数映射与
   模板已删除，请求体差异统一由隔离 JavaScript 脚本处理。
@@ -99,12 +98,10 @@
   旧任务显式按秒 legacy，绝不使用当前价格伪造其单价。价格发现、报价 token 和公共 DTO
   见 [video-billing-mode.md](memory/video-billing-mode.md)。
 - API 供应商创建没有有效响应时不进入人工核对：每个账号按任务快照执行首次请求加配置的
-  额外重试，耗尽后排除该账号并自动切号；最终失败后停止外呼并幂等退款。Adobe Direct
-  继续使用既有受信 `pollUrl` 恢复，不套用 API 提交重试。
+  额外重试，耗尽后排除该账号并自动切号；最终失败后停止外呼并幂等退款。
 - 升级前显式 API `submit_uncertain` 只由废弃兼容 Worker 认领：完整快照先补记历史首次
   失败尝试再进入自动重试，不完整快照不得重提，只进入幂等退款并输出一次
-  `video_legacy_submission_snapshot_invalid`。Adobe 与协议缺失行永远排除；下版本仅在遗留
-  查询为零后移除兼容分支。
+  `video_legacy_submission_snapshot_invalid`；协议缺失行永远排除，遗留查询清零后移除兼容分支。
 - 功能分支新增数据库迁移前必须先对齐主线 journal 的最新编号和时间戳；Drizzle 只按
   数据库最新迁移时间判断待执行项，已登记迁移不得改写。视频重试最终使用主线 0090
   之后的幂等 `0091_video_submission_retry.sql`，兼容未迁移和执行过旧分支迁移的环境。
@@ -157,10 +154,7 @@
 - Drizzle 迁移手写幂等 SQL，并手动登记 `packages/database/drizzle/meta/_journal.json`。
 - Web 与迁移进程保持 `TZ=UTC`；业务展示和 Pino 的 `localTime` 使用合法 IANA
   `APP_TIME_ZONE`。详细契约见 [time-zone-policy.md](memory/time-zone-policy.md)。
-- 统一号池迁移 `0060` 只允许在维护窗口执行；API/Adobe 旧成员、分组、Adobe 子池、
-  历史指标和终态视频引用必须原子迁移，只有旧 Web 数据、有效租约/粘性绑定、无法
-  恢复的运行中视频状态、不兼容协议或非法配置才阻断。API/Adobe 关系 ID 在合并时
-  增加类型前缀，顶层成员仍保留原 ID。
-- Adobe direct 只通过 `services/media-upstream-proxy` 访问代码内允许的 Adobe HTTPS
-  主机；代理与 Web 共享必填 secret。
+- 统一号池迁移 `0060` 只允许在维护窗口执行；旧 Web 数据、有效租约/粘性绑定、无法
+  恢复的运行中视频状态、不兼容协议或非法配置才阻断。后续迁移会清理遗留非 API 成员
+  及其专属配置，同时保留 API 成员和可审计的历史指标。
 - 生产部署顺序和恢复边界见 [CI-CD.md](CI-CD.md)。

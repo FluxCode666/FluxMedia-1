@@ -1583,7 +1583,7 @@ export const imageBackendGroup = pgTable(
  * 统一媒体后端成员。
  *
  * 调度器只读取本表的公共能力、健康与容量事实；协议和凭据分别保存在一对一配置表。
- * 本表是媒体后端成员的唯一顶层真相，API 与 Adobe 不再拥有并行成员表。
+ * 本表是媒体后端成员的唯一顶层真相；供应商账号统一使用 API 协议。
  */
 export const imageBackendMember = pgTable(
   "image_backend_member",
@@ -1638,7 +1638,7 @@ export const imageBackendMember = pgTable(
   (table) => [
     check(
       "image_backend_member_type_check",
-      sql`${table.type} IN ('api', 'adobe')`
+      sql`${table.type} = 'api'`
     ),
     check(
       "image_backend_member_supported_models_check",
@@ -1756,326 +1756,6 @@ export const imageBackendMemberApiConfig = pgTable(
   ]
 );
 
-/** Adobe 成员的一对一 gateway/direct 协议、凭据与运行状态配置。 */
-export const imageBackendMemberAdobeConfig = pgTable(
-  "image_backend_member_adobe_config",
-  {
-    memberId: text("member_id")
-      .primaryKey()
-      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
-    mode: text("mode").notNull(),
-    baseUrl: text("base_url"),
-    apiKey: text("api_key"),
-    // Direct 模式下一个顶层成员恰好对应一个 Adobe 账号，不再有内部账号池。
-    cookie: text("cookie"),
-    scope: text("scope"),
-    accessToken: text("access_token"),
-    accountUserId: text("account_user_id"),
-    displayName: text("display_name"),
-    email: text("email"),
-    credentialStatus: text("credential_status"),
-    tokenExpiresAt: timestamp("token_expires_at"),
-    tokenFails: integer("token_fails").notNull().default(0),
-    lastRefreshAt: timestamp("last_refresh_at"),
-    lastRefreshError: text("last_refresh_error"),
-    nextRefreshAt: timestamp("next_refresh_at"),
-    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
-    // Firefly 网页 Profile 的独立短期 Token 与刷新状态；Express 字段保持兼容。
-    fireflyAccessToken: text("firefly_access_token"),
-    fireflyTokenExpiresAt: timestamp("firefly_token_expires_at"),
-    fireflyCredentialStatus: text("firefly_credential_status"),
-    fireflyTokenFails: integer("firefly_token_fails").notNull().default(0),
-    fireflyLastRefreshAt: timestamp("firefly_last_refresh_at"),
-    fireflyLastRefreshError: text("firefly_last_refresh_error"),
-    fireflyNextRefreshAt: timestamp("firefly_next_refresh_at"),
-    fireflyConsecutiveFailures: integer("firefly_consecutive_failures")
-      .notNull()
-      .default(0),
-    creditsTotal: integer("credits_total"),
-    creditsUsed: integer("credits_used"),
-    creditsAvailable: integer("credits_available"),
-    creditsUpdatedAt: timestamp("credits_updated_at"),
-    creditsError: text("credits_error"),
-    defaultRatio: text("default_ratio").notNull().default("1x1"),
-    defaultResolution: text("default_resolution").notNull().default("2k"),
-    gptImageQuality: text("gpt_image_quality").notNull().default("high"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    check(
-      "image_backend_member_adobe_config_mode_check",
-      sql`${table.mode} IN ('gateway', 'direct')`
-    ),
-    check(
-      "image_backend_member_adobe_config_shape_check",
-      sql`(${table.mode} = 'gateway' AND ${table.baseUrl} IS NOT NULL) OR (${table.mode} = 'direct' AND ${table.baseUrl} IS NULL AND ${table.apiKey} IS NULL)`
-    ),
-    check(
-      "image_backend_member_adobe_config_credential_shape_check",
-      sql`(${table.mode} = 'gateway' AND ${table.cookie} IS NULL AND ${table.scope} IS NULL AND ${table.accessToken} IS NULL AND ${table.accountUserId} IS NULL AND ${table.displayName} IS NULL AND ${table.email} IS NULL AND ${table.credentialStatus} IS NULL AND ${table.tokenExpiresAt} IS NULL AND ${table.tokenFails} = 0 AND ${table.lastRefreshAt} IS NULL AND ${table.lastRefreshError} IS NULL AND ${table.nextRefreshAt} IS NULL AND ${table.consecutiveFailures} = 0 AND ${table.fireflyAccessToken} IS NULL AND ${table.fireflyTokenExpiresAt} IS NULL AND ${table.fireflyCredentialStatus} IS NULL AND ${table.fireflyTokenFails} = 0 AND ${table.fireflyLastRefreshAt} IS NULL AND ${table.fireflyLastRefreshError} IS NULL AND ${table.fireflyNextRefreshAt} IS NULL AND ${table.fireflyConsecutiveFailures} = 0 AND ${table.creditsTotal} IS NULL AND ${table.creditsUsed} IS NULL AND ${table.creditsAvailable} IS NULL AND ${table.creditsUpdatedAt} IS NULL AND ${table.creditsError} IS NULL) OR (${table.mode} = 'direct' AND ${table.cookie} IS NOT NULL AND char_length(btrim(${table.cookie})) BETWEEN 1 AND 64000 AND (${table.scope} IS NULL OR char_length(btrim(${table.scope})) BETWEEN 1 AND 4096) AND ${table.accessToken} IS NOT NULL AND char_length(btrim(${table.accessToken})) >= 1 AND ${table.credentialStatus} IS NOT NULL AND (${table.fireflyAccessToken} IS NULL OR char_length(btrim(${table.fireflyAccessToken})) >= 1) AND (${table.fireflyAccessToken} IS NULL OR ${table.fireflyCredentialStatus} IS NOT NULL) AND (${table.fireflyCredentialStatus} IS NULL OR ${table.fireflyAccessToken} IS NOT NULL OR ${table.fireflyCredentialStatus} = 'error'))`
-    ),
-    check(
-      "image_backend_member_adobe_config_credential_status_check",
-      sql`${table.credentialStatus} IS NULL OR ${table.credentialStatus} IN ('active', 'error', 'exhausted', 'invalid')`
-    ),
-    check(
-      "image_backend_member_adobe_config_firefly_credential_status_check",
-      sql`${table.fireflyCredentialStatus} IS NULL OR ${table.fireflyCredentialStatus} IN ('active', 'error', 'exhausted', 'invalid')`
-    ),
-    check(
-      "image_backend_member_adobe_config_failure_counts_check",
-      sql`${table.tokenFails} >= 0 AND ${table.consecutiveFailures} >= 0 AND ${table.fireflyTokenFails} >= 0 AND ${table.fireflyConsecutiveFailures} >= 0`
-    ),
-    check(
-      "image_backend_member_adobe_config_quality_check",
-      sql`${table.gptImageQuality} IN ('low', 'medium', 'high')`
-    ),
-  ]
-);
-
-/**
- * Adobe direct 成员的当前凭据健康摘要。
- *
- * 当前摘要与成员一对一并随成员删除；网络调用必须在事务外完成，提交时以
- * claimToken、credentialRevision 和 memberEnableRevision 做 CAS，避免旧结果
- * 覆盖重新授权或停用再启用后的新状态。
- */
-export const adobeCredentialHealth = pgTable(
-  "adobe_credential_health",
-  {
-    memberId: text("member_id")
-      .primaryKey()
-      .references(() => imageBackendMember.id, { onDelete: "cascade" }),
-    status: text("status").notNull().default("pending"),
-    credentialRevision: integer("credential_revision").notNull().default(1),
-    memberEnableRevision: integer("member_enable_revision")
-      .notNull()
-      .default(1),
-    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
-    failureProfiles: json("failure_profiles")
-      .$type<string[]>()
-      .notNull()
-      .default(sql`'[]'::json`),
-    claimToken: text("claim_token"),
-    claimExpiresAt: timestamp("claim_expires_at"),
-    nextCheckAt: timestamp("next_check_at").notNull().defaultNow(),
-    evaluationDeadlineAt: timestamp("evaluation_deadline_at"),
-    lastCheckAt: timestamp("last_check_at"),
-    lastSuccessAt: timestamp("last_success_at"),
-    firstFailureAt: timestamp("first_failure_at"),
-    lastFailureAt: timestamp("last_failure_at"),
-    isolatedAt: timestamp("isolated_at"),
-    diagnostic: json("diagnostic").$type<Record<string, unknown> | null>(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    check(
-      "adobe_credential_health_status_check",
-      sql`${table.status} IN ('pending', 'healthy', 'degraded', 'isolated', 'overdue')`
-    ),
-    check(
-      "adobe_credential_health_revisions_check",
-      sql`${table.credentialRevision} >= 1 AND ${table.memberEnableRevision} >= 1`
-    ),
-    check(
-      "adobe_credential_health_failure_count_check",
-      sql`${table.consecutiveFailures} >= 0`
-    ),
-    check(
-      "adobe_credential_health_claim_pair_check",
-      sql`(${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL) OR (${table.claimToken} IS NOT NULL AND ${table.claimExpiresAt} IS NOT NULL)`
-    ),
-    check(
-      "adobe_credential_health_isolation_check",
-      sql`(${table.status} = 'isolated' AND ${table.isolatedAt} IS NOT NULL) OR (${table.status} <> 'isolated')`
-    ),
-    index("adobe_credential_health_due_idx").on(
-      table.status,
-      table.nextCheckAt,
-      table.claimExpiresAt
-    ),
-    index("adobe_credential_health_isolated_idx").on(table.isolatedAt),
-  ]
-);
-
-/**
- * Adobe 凭据评估的非敏感历史。
- *
- * memberIdSnapshot 不引用成员表，成员删除后仍保留 90 天追踪证据；claimToken
- * 全局唯一，使同一 claimant 的重放只能落下一条 accepted/stale/discarded 记录。
- */
-export const adobeCredentialEvaluation = pgTable(
-  "adobe_credential_evaluation",
-  {
-    id: text("id").primaryKey(),
-    claimToken: text("claim_token").notNull(),
-    memberIdSnapshot: text("member_id_snapshot").notNull(),
-    memberNameSnapshot: text("member_name_snapshot").notNull(),
-    credentialRevision: integer("credential_revision").notNull(),
-    memberEnableRevision: integer("member_enable_revision").notNull(),
-    source: text("source").notNull(),
-    disposition: text("disposition").notNull(),
-    outcome: text("outcome").notNull(),
-    failureProfiles: json("failure_profiles")
-      .$type<string[]>()
-      .notNull()
-      .default(sql`'[]'::json`),
-    diagnostic: json("diagnostic").$type<Record<string, unknown> | null>(),
-    startedAt: timestamp("started_at").notNull(),
-    completedAt: timestamp("completed_at").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-  },
-  (table) => [
-    unique("adobe_credential_evaluation_claim_unique").on(table.claimToken),
-    check(
-      "adobe_credential_evaluation_revisions_check",
-      sql`${table.credentialRevision} >= 1 AND ${table.memberEnableRevision} >= 1`
-    ),
-    check(
-      "adobe_credential_evaluation_source_check",
-      sql`${table.source} IN ('scheduled', 'passive', 'manual', 'reauthorization')`
-    ),
-    check(
-      "adobe_credential_evaluation_disposition_check",
-      sql`${table.disposition} IN ('accepted', 'stale', 'discarded')`
-    ),
-    check(
-      "adobe_credential_evaluation_outcome_check",
-      sql`${table.outcome} IN ('success', 'member_failure', 'platform_failure')`
-    ),
-    index("adobe_credential_evaluation_member_created_idx").on(
-      table.memberIdSnapshot,
-      table.createdAt
-    ),
-    index("adobe_credential_evaluation_retention_idx").on(table.completedAt),
-  ]
-);
-
-/**
- * Adobe 凭据故障事件。
- *
- * 开放事件按成员偏唯一，隔离重试只更新同一事件；恢复关闭原事件并在该事件
- * 上创建恢复投递，成员删除后非敏感快照仍可保留。
- */
-export const adobeCredentialIncident = pgTable(
-  "adobe_credential_incident",
-  {
-    id: text("id").primaryKey(),
-    memberIdSnapshot: text("member_id_snapshot").notNull(),
-    memberNameSnapshot: text("member_name_snapshot").notNull(),
-    status: text("status").notNull().default("open"),
-    consecutiveFailures: integer("consecutive_failures").notNull(),
-    failureProfiles: json("failure_profiles")
-      .$type<string[]>()
-      .notNull()
-      .default(sql`'[]'::json`),
-    diagnostic: json("diagnostic").$type<Record<string, unknown> | null>(),
-    openedAt: timestamp("opened_at").notNull().defaultNow(),
-    lastFailureAt: timestamp("last_failure_at").notNull(),
-    closedAt: timestamp("closed_at"),
-    closeReason: text("close_reason"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("adobe_credential_incident_open_member_unique")
-      .on(table.memberIdSnapshot)
-      .where(sql`${table.status} = 'open'`),
-    check(
-      "adobe_credential_incident_status_check",
-      sql`${table.status} IN ('open', 'closed')`
-    ),
-    check(
-      "adobe_credential_incident_failure_count_check",
-      sql`${table.consecutiveFailures} >= 1`
-    ),
-    check(
-      "adobe_credential_incident_close_shape_check",
-      sql`(${table.status} = 'open' AND ${table.closedAt} IS NULL AND ${table.closeReason} IS NULL) OR (${table.status} = 'closed' AND ${table.closedAt} IS NOT NULL AND ${table.closeReason} IS NOT NULL)`
-    ),
-    index("adobe_credential_incident_retention_idx").on(
-      table.status,
-      table.closedAt
-    ),
-  ]
-);
-
-/**
- * Adobe 凭据通知的持久 outbox 投递。
- *
- * targetEnvelope、payload 与 configRevision 在事件创建时固化；HMAC 密钥本身
- * 从不入库，只允许保存不可逆指纹。唯一约束保证同一事件类型和渠道只有一条
- * 逻辑投递，worker 通过 claim 字段实现至少一次有限重试。
- */
-export const adobeCredentialNotificationDelivery = pgTable(
-  "adobe_credential_notification_delivery",
-  {
-    id: text("id").primaryKey(),
-    incidentId: text("incident_id").notNull(),
-    eventType: text("event_type").notNull(),
-    channel: text("channel").notNull(),
-    status: text("status").notNull().default("pending"),
-    targetEnvelope: json("target_envelope")
-      .$type<Record<string, unknown>>()
-      .notNull(),
-    payload: json("payload").$type<Record<string, unknown>>().notNull(),
-    payloadHash: text("payload_hash").notNull(),
-    configRevision: text("config_revision").notNull(),
-    secretFingerprint: text("secret_fingerprint"),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
-    claimToken: text("claim_token"),
-    claimExpiresAt: timestamp("claim_expires_at"),
-    lastErrorCode: text("last_error_code"),
-    providerRequestId: text("provider_request_id"),
-    deliveredAt: timestamp("delivered_at"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => [
-    foreignKey({
-      name: "adobe_credential_delivery_incident_fk",
-      columns: [table.incidentId],
-      foreignColumns: [adobeCredentialIncident.id],
-    }).onDelete("restrict"),
-    unique("adobe_credential_delivery_event_channel_unique").on(
-      table.incidentId,
-      table.eventType,
-      table.channel
-    ),
-    check(
-      "adobe_credential_delivery_event_type_check",
-      sql`${table.eventType} IN ('failure', 'recovery')`
-    ),
-    check(
-      "adobe_credential_delivery_channel_check",
-      sql`${table.channel} IN ('email', 'webhook')`
-    ),
-    check(
-      "adobe_credential_delivery_status_check",
-      sql`${table.status} IN ('pending', 'delivering', 'retry', 'delivered', 'dead', 'configuration_superseded', 'cancelled')`
-    ),
-    check(
-      "adobe_credential_delivery_attempt_count_check",
-      sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 8`
-    ),
-    check(
-      "adobe_credential_delivery_claim_pair_check",
-      sql`(${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL) OR (${table.claimToken} IS NOT NULL AND ${table.claimExpiresAt} IS NOT NULL)`
-    ),
-    index("adobe_credential_delivery_recovery_idx").on(
-      table.status,
-      table.nextAttemptAt,
-      table.claimExpiresAt
-    ),
-    index("adobe_credential_delivery_retention_idx").on(
-      table.status,
-      table.deliveredAt
-    ),
-  ]
-);
 
 /** 统一成员与既有媒体后端分组的多对多关系。 */
 export const imageBackendMemberGroup = pgTable(
@@ -2182,7 +1862,7 @@ export const imageBackendMemberSchedulerMetric = pgTable(
     ),
     check(
       "image_backend_member_scheduler_metric_member_type_check",
-      sql`${table.memberType} IS NULL OR ${table.memberType} IN ('api', 'adobe')`
+      sql`${table.memberType} IS NULL OR ${table.memberType} = 'api'`
     ),
     check(
       "image_backend_member_scheduler_metric_counts_check",
@@ -2233,7 +1913,7 @@ type PersistedVideoInputManifest = {
   referenceAudios?: PersistedVideoInputAsset[];
 };
 
-// Adobe Firefly 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
+// 视频生成（异步）：与图像 generation 解耦——视频是新产物类型，有自己的
 // 状态机、轮询恢复、按模型族每秒固定积分×时长计费。提交后置 running 并保存 pollUrl，
 // 定时/请求侧轮询到完成再 re-host 到对象存储。financially 真相仍在 credits_transaction，
 // 本表仅记录产物与状态。
@@ -2255,11 +1935,11 @@ export const videoGeneration = pgTable(
       () => imageBackendMember.id,
       { onDelete: "set null" }
     ),
-    // Adobe direct 成员与成员租约是 accepted 后恢复同一上游任务的持久身份。
+    // 成员租约是 accepted 后恢复同一上游任务的持久身份。
     // 逻辑恢复身份的生命周期长于物理租约行；过期行删除后仍需用同一 ID 容量感知重建。
     memberLeaseId: text("member_lease_id"),
     memberLeaseOwnerToken: text("member_lease_owner_token"),
-    // API 任务固定提交时的成员/版本快照；Adobe 任务保持成对为空。
+    // API 任务固定提交时的成员/版本快照。
     apiAdapterMemberId: text("api_adapter_member_id"),
     apiAdapterVersionId: text("api_adapter_version_id"),
     apiAdapterQueryFailureCount: integer("api_adapter_query_failure_count")
@@ -2267,13 +1947,6 @@ export const videoGeneration = pgTable(
       .default(0),
     // 平台真实视频模型 ID；时长、比例与分辨率只存在于各自独立列。
     model: text("model").notNull(),
-    // 请求头 Profile 与 IMS Token Profile 相互独立；视频 Bearer Token 固定复用 Express。
-    adobeRequestProfile: text("adobe_request_profile")
-      .$type<"express" | "firefly">()
-      .notNull(),
-    adobeAuthProfile: text("adobe_auth_profile")
-      .$type<"express" | "firefly">()
-      .notNull(),
     prompt: text("prompt").notNull(),
     durationSeconds: integer("duration_seconds").notNull(),
     aspectRatio: text("aspect_ratio").notNull(),
@@ -2285,7 +1958,7 @@ export const videoGeneration = pgTable(
     status: text("status").notNull().default("pending"),
     // 可恢复执行阶段；status 保留为面向查询方的稳定粗粒度状态。
     stage: text("stage").notNull().default("created"),
-    // API 自动恢复的最终失败分类和容量等待截止；Adobe direct 保持为空。
+    // API 自动恢复的最终失败分类和容量等待截止。
     failureCode: text("failure_code"),
     capacityWaitDeadlineAt: timestamp("capacity_wait_deadline_at"),
     refundAttemptCount: integer("refund_attempt_count").notNull().default(0),
@@ -2367,10 +2040,6 @@ export const videoGeneration = pgTable(
     check(
       "video_generation_stage_check",
       sql`${table.stage} IN ('created', 'charged', 'submitting', 'submit_uncertain', 'retrying', 'polling', 'downloading', 'refunding', 'completed', 'failed')`
-    ),
-    check(
-      "video_generation_adobe_profile_check",
-      sql`${table.adobeRequestProfile} IN ('express', 'firefly') AND ${table.adobeAuthProfile} IN ('express', 'firefly')`
     ),
     check(
       "video_generation_recovery_counts_check",
@@ -2970,25 +2639,6 @@ export type ImageBackendMemberApiAdapterVersion =
   typeof imageBackendMemberApiAdapterVersion.$inferSelect;
 export type NewImageBackendMemberApiAdapterVersion =
   typeof imageBackendMemberApiAdapterVersion.$inferInsert;
-export type ImageBackendMemberAdobeConfig =
-  typeof imageBackendMemberAdobeConfig.$inferSelect;
-export type NewImageBackendMemberAdobeConfig =
-  typeof imageBackendMemberAdobeConfig.$inferInsert;
-export type AdobeCredentialHealth = typeof adobeCredentialHealth.$inferSelect;
-export type NewAdobeCredentialHealth =
-  typeof adobeCredentialHealth.$inferInsert;
-export type AdobeCredentialEvaluation =
-  typeof adobeCredentialEvaluation.$inferSelect;
-export type NewAdobeCredentialEvaluation =
-  typeof adobeCredentialEvaluation.$inferInsert;
-export type AdobeCredentialIncident =
-  typeof adobeCredentialIncident.$inferSelect;
-export type NewAdobeCredentialIncident =
-  typeof adobeCredentialIncident.$inferInsert;
-export type AdobeCredentialNotificationDelivery =
-  typeof adobeCredentialNotificationDelivery.$inferSelect;
-export type NewAdobeCredentialNotificationDelivery =
-  typeof adobeCredentialNotificationDelivery.$inferInsert;
 export type ImageBackendMemberGroup =
   typeof imageBackendMemberGroup.$inferSelect;
 export type NewImageBackendMemberGroup =

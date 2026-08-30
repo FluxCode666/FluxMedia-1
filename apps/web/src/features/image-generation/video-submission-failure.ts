@@ -76,7 +76,7 @@ export type VideoSubmissionRetrySchedule = {
 
 /** 遗留人工态任务是否具备可重建的 API 创建事实。 */
 export type LegacyUncertainVideoSnapshotInput = {
-  protocol: "api" | "adobe_direct" | "unknown";
+  protocol: "api" | "unknown";
   hasSupplierSnapshot: boolean;
   hasBackendMember: boolean;
   hasAdapterIdentity: boolean;
@@ -264,7 +264,7 @@ export function resolveVideoSubmissionRetrySchedule(input: {
  * 识别升级前遗留 `submit_uncertain` 任务的安全迁移方向。
  *
  * @deprecated 仅用于 0087 前 API 人工态数据。下个版本在遗留查询为零后连同
- * `submit_uncertain` 兼容输入一起删除；Adobe direct 永远不进入本迁移。
+ * `submit_uncertain` 兼容输入一起删除。
  * @param input 从持久任务、账本和适配版本校验出的完整恢复事实。
  * @returns 自动重试、只退款的无效快照，或不适用。
  * @sideEffects 无；真实 CAS、退款与告警由 U3 状态机执行。

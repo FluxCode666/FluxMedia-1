@@ -563,33 +563,6 @@ export const videoRequestAccountInputCleanupInputSchema = z
   })
   .strict();
 
-/** @deprecated 仅供 Adobe Direct 遗留 submit_uncertain 任务兼容恢复。 */
-export const videoReconcileSubmissionInputSchema = z.discriminatedUnion(
-  "outcome",
-  [
-    z
-      .object({
-        outcome: z.literal("accepted"),
-        taskId: z.string().trim().min(1).max(128),
-        pollUrl: z.string().url().max(2_048),
-        upstreamJobId: z.string().trim().min(1).max(512),
-      })
-      .strict(),
-    z
-      .object({
-        outcome: z.literal("not_accepted"),
-        taskId: z.string().trim().min(1).max(128),
-        reason: z.string().trim().min(1).max(1_000),
-      })
-      .strict(),
-  ]
-);
-
-/** @deprecated 仅列出 Adobe Direct 遗留 submit_uncertain 任务。 */
-export const videoListUncertainSubmissionsInputSchema = z
-  .object({ limit: z.number().int().min(1).max(100).default(50) })
-  .strict();
-
 /** 创建幂等视频任务；clientRequestId 的真实唯一域由 Principal 所有者决定。 */
 export const videoGenerate = defineOperation({
   name: "video.generate",
@@ -742,61 +715,5 @@ export const videoRequestAccountInputCleanup = defineOperation({
   sideEffects: ["storage", "queue", "audit"],
   execute: async () => {
     throw new Error("Not yet wired: video.requestAccountInputCleanup");
-  },
-});
-
-/** @deprecated 仅供 Adobe Direct 遗留任务恢复；API 任务会被拒绝。 */
-export const videoReconcileSubmission = defineOperation({
-  name: "video.reconcileSubmission",
-  domain: "image-generation",
-  title: "核对 Adobe 视频提交结果",
-  description:
-    "管理员人工核对 Adobe Direct 遗留 submit_uncertain 任务；API 任务不允许人工介入。",
-  input: videoReconcileSubmissionInputSchema,
-  output: z.object({
-    taskId: z.string(),
-    status: z.enum(["processing", "completed", "failed"]),
-  }),
-  access: { kind: "roles", roles: ["admin", "super_admin"] },
-  agentExposure: "human-only",
-  readOnly: false,
-  destructive: true,
-  idempotency: { kind: "natural" },
-  sideEffects: ["billing", "queue", "audit"],
-  hasMaintenanceWrite: true,
-  execute: async () => {
-    throw new Error("Not yet wired: video.reconcileSubmission");
-  },
-});
-
-/** @deprecated 仅列出 Adobe Direct 遗留 submit_uncertain 任务。 */
-export const videoListUncertainSubmissions = defineOperation({
-  name: "video.listUncertainSubmissions",
-  domain: "image-generation",
-  title: "列出待核对 Adobe 视频提交",
-  description:
-    "列出 Adobe Direct 遗留 submit_uncertain 视频任务的安全诊断字段。",
-  input: videoListUncertainSubmissionsInputSchema,
-  output: z.object({
-    items: z.array(
-      z.object({
-        taskId: z.string(),
-        model: z.string(),
-        backendMemberId: z.string().nullable(),
-        error: z.string().nullable(),
-        submitStartedAt: z.string().nullable(),
-        createdAt: z.string(),
-        updatedAt: z.string(),
-      })
-    ),
-  }),
-  access: { kind: "roles", roles: ["admin", "super_admin"] },
-  agentExposure: "human-only",
-  readOnly: true,
-  destructive: false,
-  idempotency: { kind: "natural" },
-  sideEffects: [],
-  execute: async () => {
-    throw new Error("Not yet wired: video.listUncertainSubmissions");
   },
 });

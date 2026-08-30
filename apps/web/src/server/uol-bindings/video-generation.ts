@@ -1,7 +1,7 @@
 /**
  * 视频生成 UOL 的强类型 late binding。
  *
- * 职责：绑定真实模型能力发现、幂等任务创建、状态查询与提交不确定人工收敛；
+ * 职责：绑定真实模型能力发现、幂等任务创建和状态查询；
  * 身份、可信分组和回调只从 Principal 与 OperationContext 获取。
  * 使用方：根 uol-bindings 聚合器；能力发现依赖可注入以保持权限测试 DB-free。
  */
@@ -32,8 +32,6 @@ import {
   videoGetGeminiOperation,
   videoGetInputs,
   videoListCapabilities,
-  videoListUncertainSubmissions,
-  videoReconcileSubmission,
   videoRequestAccountInputCleanup,
 } from "@repo/shared/uol/operations/video-generation";
 import {
@@ -56,10 +54,8 @@ import { cleanupUnusedStagedVideoInputs } from "@/features/image-generation/vide
 import {
   applyInitialVideoBackendAvailability,
   getVideoGenerationById,
-  reconcileUncertainVideoSubmission,
   runVideoGenerationForUser,
   VideoQuoteConflictError,
-  VideoSubmissionReconciliationError,
 } from "@/features/image-generation/video-operations";
 import { toLegacyVideoPublicStatus } from "@/features/image-generation/video-public-status";
 import { resolveVideoQueueSchedule } from "@/features/image-generation/video-queue-schedule";
@@ -565,11 +561,8 @@ bindExecute(
                 referenceVideos: Boolean(canonicalInput.referenceVideos?.length),
                 referenceAudios: Boolean(canonicalInput.referenceAudios?.length),
               },
-              // 自定义模型只能由 API 成员执行；内置模型必须同时统计 API 与
-              // Adobe Direct，保持创建预检与权威获租的协议边界一致。
-              ...(customModelDefinition
-                ? { requiredMemberType: "api" as const }
-                : {}),
+              // 所有视频模型均由 API 成员执行。
+              requiredMemberType: "api" as const,
             })
           );
           responseRow =
@@ -645,58 +638,6 @@ bindExecute(
     }
   }
 );
-
-/**
- * @deprecated 仅供 Adobe Direct 遗留 submit_uncertain 任务恢复。
- * API 供应商任务由状态机自动重试、切号和退款，不会出现在本列表。
- */
-bindOperationExecute(videoListUncertainSubmissions, async (input) => {
-  const [{ db }, { videoGeneration }, { and, desc, eq, sql }] =
-    await Promise.all([
-      import("@repo/database"),
-      import("@repo/database/schema"),
-      import("drizzle-orm"),
-    ]);
-  const rows = await db
-    .select({
-      taskId: videoGeneration.id,
-      model: videoGeneration.model,
-      backendMemberId: videoGeneration.backendMemberId,
-      error: videoGeneration.error,
-      submitStartedAt: videoGeneration.submitStartedAt,
-      createdAt: videoGeneration.createdAt,
-      updatedAt: videoGeneration.updatedAt,
-    })
-    .from(videoGeneration)
-    .where(
-      and(
-        eq(videoGeneration.stage, "submit_uncertain"),
-        sql`COALESCE(${videoGeneration.metadata}->>'videoBackendProtocol', 'adobe_direct') = 'adobe_direct'`
-      )
-    )
-    .orderBy(desc(videoGeneration.updatedAt), desc(videoGeneration.id))
-    .limit(input.limit);
-  return {
-    items: rows.map((row) => ({
-      ...row,
-      submitStartedAt: row.submitStartedAt?.toISOString() ?? null,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    })),
-  };
-});
-
-/** @deprecated 仅允许管理员收敛 Adobe Direct 遗留人工态。 */
-bindOperationExecute(videoReconcileSubmission, async (input) => {
-  try {
-    return await reconcileUncertainVideoSubmission(input);
-  } catch (error) {
-    if (error instanceof VideoSubmissionReconciliationError) {
-      throw new OperationError(error.code, error.message);
-    }
-    throw error;
-  }
-});
 
 /** video.getStatus - 只返回当前 Principal 同域的持久视频任务。 */
 bindExecute(

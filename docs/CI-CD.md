@@ -24,7 +24,6 @@ pnpm turbo lint
 pnpm turbo test
 pnpm --filter @repo/web build
 (cd deploy/nginx && sh ./url-privacy-canary.test.sh)
-(cd services/media-upstream-proxy && go test ./...)
 ```
 
 ## 镜像发布与生产部署
@@ -34,15 +33,13 @@ pnpm --filter @repo/web build
 
 - `fluxmedia-1-web`
 - `fluxmedia-1-migrate`
-- `fluxmedia-1-media-upstream-proxy`
 
 该工作流是唯一镜像发布链路；版本 tag 不再触发另一套旧镜像或 draft Release。
 发布时从 `main` 或与输入版本一致的 tag 手动触发，版本必须符合
 `v<MAJOR>.<MINOR>.<PATCH>[-<alpha|beta|rc>.<N>]`。
 
 部署阶段将 `deploy/docker-compose.yml` 与维护脚本同步到目标机，并更新
-`FLUXMEDIA_IMAGE`、`FLUXMEDIA_MIGRATE_IMAGE`、`FLUXMEDIA_PROXY_IMAGE` 和
-`FLUXMEDIA_TAG`。目标机的 `.env` 与业务机密不会由仓库覆盖。
+`FLUXMEDIA_IMAGE`、`FLUXMEDIA_MIGRATE_IMAGE` 和 `FLUXMEDIA_TAG`。目标机的 `.env` 与业务机密不会由仓库覆盖。
 
 ## 维护窗口与恢复边界
 
@@ -53,14 +50,13 @@ pnpm --filter @repo/web build
 3. 创建并校验数据库备份。
 4. 运行 `maintenance` profile 的迁移容器。
 5. 使用新 Web 镜像回填并零差异对账尚未 ready 的控制台统计读模型。
-6. 验证新 schema，启动上游代理和 Web。
+6. 验证新 schema，启动 Web。
 7. 通过 system-only `operations.ensureCurrentEpoch` 确保运营 epoch：仅空表按生产
    `APP_TIME_ZONE` 当前自然日初始化，已有值不随发布漂移。
 8. epoch 门禁成功后执行健康检查并宣告发布完成。
 
 迁移开始后不得自动启动依赖旧 schema 的镜像。失败时由值班人员选择前向修复，
-或先恢复迁移前备份再恢复旧镜像。代理健康检查需要正确的
-`ADOBE_DIRECT_PROXY_SECRET`，Web 只有在代理健康后才能启动。
+或先恢复迁移前备份再恢复旧镜像。
 
 详细目标机准备、备份与 Nginx 配置见 [deploy/README.md](../deploy/README.md)。
 生产访问日志只允许记录不含查询字符串的 `$uri`，不得记录原始 `$request` 或

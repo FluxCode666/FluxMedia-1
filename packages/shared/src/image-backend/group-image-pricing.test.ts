@@ -6,7 +6,7 @@ import {
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
   resolveVideoBillingQuote,
-} from "../adobe/video-pricing";
+} from "../video-generation/video-pricing";
 
 import {
   createDefaultGlobalImageCreditOverrides,

@@ -27,7 +27,6 @@ import {
   filterBackendGroups,
   filterBackendMembers,
 } from "@/features/image-backend-pool/admin-pool-view-model";
-import { listAdobeCredentialHealthStatuses } from "@/features/image-backend-pool/adobe-credential-health-list";
 import {
   assertApiUpstreamOpaqueValuesPreserved,
   createApiUpstreamOpaqueToken,
@@ -97,7 +96,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 构造通用号池成员 DTO，并从 Adobe direct 配置移除上游诊断错误。
+ * 构造通用号池成员 DTO。
  *
  * @param members 成员服务的内部管理摘要。
  * @returns 不含 refresh/余额错误正文的 UOL 输出；专用 human-only 详情另行读取。
@@ -112,11 +111,6 @@ export function buildAdminPoolMembers(
 > {
   return members.map((member) => {
     const config: Record<string, unknown> = { ...member.config };
-    if (member.type === "adobe" && member.config.mode === "direct") {
-      delete config.lastRefreshError;
-      delete config.fireflyLastRefreshError;
-      delete config.creditsError;
-    }
     return { ...member, config };
   });
 }
@@ -434,14 +428,13 @@ bindExecute("pool.getAdminPool", async () => {
   return { groups, members: buildAdminPoolMembers(members) };
 });
 
-/** 按人工页面筛选分页成员，并在计数前合入当前凭据健康状态。 */
+/** 按人工页面筛选分页成员。 */
 bindExecute(
   "pool.listAdminMembers",
   async (input: AdminPoolMemberListInput, principal) => {
-    const [members, healthStatuses, modelConfigurationResult] =
+    const [members, modelConfigurationResult] =
       await Promise.all([
         defaultDependencies.memberService.listMembers(),
-        listAdobeCredentialHealthStatuses(),
         defaultDependencies
           .readModelConfiguration(principal)
           .then((configuration) => ({
@@ -450,12 +443,9 @@ bindExecute(
           }))
           .catch(() => ({ status: "unavailable" as const })),
       ]);
-    const statusByMemberId = new Map(
-      healthStatuses.map((item) => [item.memberId, item.status])
-    );
     const pageMembers = members.map((member) => ({
       ...member,
-      credentialHealthStatus: statusByMemberId.get(member.id) ?? null,
+      credentialHealthStatus: null,
     }));
     const modelResolutionsById =
       modelConfigurationResult.status === "ready"
@@ -536,7 +526,7 @@ bindExecute("pool.deleteGroup", async (input: { id: string }) => {
   }
 });
 
-/** 保存 `api | adobe` 统一成员和类型专属配置。 */
+/** 保存 API 成员及其适配配置。 */
 bindExecute(
   "pool.saveMember",
   async (input: BackendMemberInput, principal: Principal) => {

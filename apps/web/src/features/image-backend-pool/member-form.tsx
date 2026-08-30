@@ -4,7 +4,7 @@ import type { ApiModelMapping } from "@repo/shared/image-backend/api-upstream-ad
 /**
  * 统一媒体后端成员编辑表单。
  *
- * 职责：以 `api | adobe` 单一入口编辑公共调度字段、显式模型能力和类型专属
+ * 职责：以 API 单一入口编辑公共调度字段、显式模型能力和适配配置
  * 配置。新增流程只收集账号接入所需的基础信息，适配细节由账号详情页配置。
  * 成员类型在编辑时不可原地切换，secret 留空由服务端保留既有值。
  */
@@ -27,14 +27,6 @@ import {
 } from "@repo/ui/components/dialog";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@repo/ui/components/select";
-import { Textarea } from "@repo/ui/components/textarea";
 import { Loader2 } from "lucide-react";
 import { useAction } from "next-safe-action/hooks";
 import { useEffect, useMemo, useState } from "react";
@@ -49,12 +41,9 @@ import { ApiUpstreamAdapterForm } from "./api-upstream-adapter-form";
 import { BackendBooleanSetting } from "./boolean-setting";
 import { MemberDetailSection } from "./member-detail-section";
 import {
-  type AdobeMemberMode,
   acceptsVideoBackendMemberModels,
   type BackendMemberModelOption,
   createExistingMemberModelOption,
-  DEFAULT_ADOBE_MEMBER_MODE,
-  removeVideoBackendMemberModelIds,
 } from "./member-model-options";
 import {
   type BackendMemberModelOptionStatus,
@@ -66,7 +55,7 @@ import type { BackendMemberAdminSummary } from "./member-service";
 /** 新建账号在详情配置前使用的安全图像能力占位 ID。 */
 const DEFAULT_NEW_MEMBER_MODEL_ID = "gpt-image-2";
 
-/** 渲染 API 或 Adobe 统一成员的新增/编辑弹窗。 */
+/** 渲染 API 成员的新增/编辑弹窗。 */
 export function BackendMemberFormDialog({
   open,
   onOpenChange,
@@ -113,23 +102,10 @@ export function BackendMemberFormDialog({
     useState<ApiUpstreamAdapterFormDraft>(() =>
       createDefaultApiUpstreamAdapterFormDraft()
     );
-  const [adobeMode, setAdobeMode] = useState<AdobeMemberMode>(
-    DEFAULT_ADOBE_MEMBER_MODE
-  );
-  const [adobeBaseUrl, setAdobeBaseUrl] = useState("");
-  const [adobeApiKey, setAdobeApiKey] = useState("");
-  const [adobeCookie, setAdobeCookie] = useState("");
-  const [adobeScope, setAdobeScope] = useState("");
-  const [defaultRatio, setDefaultRatio] = useState("1x1");
-  const [defaultResolution, setDefaultResolution] = useState("2k");
-  const [gptImageQuality, setGptImageQuality] = useState<
-    "low" | "medium" | "high"
-  >("high");
 
   useEffect(() => {
     if (!open) return;
-    const nextType = member?.type ?? "api";
-    setType(nextType);
+    setType("api");
     setName(member?.name ?? "");
     setGroupIds(member?.groupIds ?? (groups[0] ? [groups[0].id] : []));
     const defaultModelId =
@@ -196,32 +172,14 @@ export function BackendMemberFormDialog({
       setApiAdapterDraft(createDefaultApiUpstreamAdapterFormDraft());
     }
     setApiKey("");
-    if (member?.type === "adobe") {
-      setAdobeMode(member.config.mode);
-      setDefaultRatio(member.config.defaultRatio);
-      setDefaultResolution(member.config.defaultResolution);
-      setGptImageQuality(member.config.gptImageQuality);
-      setAdobeBaseUrl(
-        member.config.mode === "gateway" ? member.config.baseUrl : ""
-      );
-    } else {
-      setAdobeMode(DEFAULT_ADOBE_MEMBER_MODE);
-      setAdobeBaseUrl("");
-      setDefaultRatio("1x1");
-      setDefaultResolution("2k");
-      setGptImageQuality("high");
-    }
-    setAdobeApiKey("");
-    setAdobeCookie("");
-    setAdobeScope("");
   }, [groups, member, modelOptions, open]);
 
-  const acceptsVideo = acceptsVideoBackendMemberModels(type, adobeMode);
+  const acceptsVideo = acceptsVideoBackendMemberModels(type);
   const selectableModelOptions = useMemo(() => {
     const configuredOptions = modelOptions.filter(
       (option) =>
         option.category === "image" ||
-        (acceptsVideo && (type === "api" || normalizeVideoModelId(option.id)))
+        (acceptsVideo && option.category === "video")
     );
     const knownIds = new Set(
       modelOptions.map((option) => option.id.trim().toLowerCase())
@@ -235,7 +193,7 @@ export function BackendMemberFormDialog({
       return [createExistingMemberModelOption(modelId, "image")];
     });
     return [...configuredOptions, ...existingOptions];
-  }, [acceptsVideo, modelOptions, selectedModelIds, type]);
+  }, [acceptsVideo, modelOptions, selectedModelIds]);
 
   // 详情页才编辑高级适配配置；新增和列表编辑共用同一套基础表单。
   const showAdvancedConfiguration = detailsOnly;
@@ -276,26 +234,6 @@ export function BackendMemberFormDialog({
         ? [...remaining, { modelId, upstreamModelId: normalized }]
         : remaining;
     });
-  }
-
-  /** 切换账号类型；API 与 Adobe Direct 保留视频，切到 Gateway 时清理。 */
-  function handleMemberTypeChange(nextType: BackendMemberType): void {
-    setType(nextType);
-    if (nextType === "adobe" && adobeMode === "gateway") {
-      setSelectedModelIds((current) =>
-        removeVideoBackendMemberModelIds(current, modelOptions)
-      );
-    }
-  }
-
-  /** 切换 Adobe 接入模式；Gateway 不具备当前视频执行链，需清理视频能力。 */
-  function handleAdobeModeChange(nextMode: typeof adobeMode): void {
-    setAdobeMode(nextMode);
-    if (nextMode !== "direct") {
-      setSelectedModelIds((current) =>
-        removeVideoBackendMemberModelIds(current, modelOptions)
-      );
-    }
   }
 
   /** 选择新模型时保留已有账号级分辨率覆盖，移除孤儿覆盖。 */
@@ -408,29 +346,6 @@ export function BackendMemberFormDialog({
       });
       return;
     }
-
-    saveMember({
-      ...common,
-      type: "adobe",
-      config:
-        adobeMode === "gateway"
-          ? {
-              mode: "gateway",
-              baseUrl: adobeBaseUrl,
-              ...(adobeApiKey.trim() ? { apiKey: adobeApiKey.trim() } : {}),
-              defaultRatio,
-              defaultResolution,
-              gptImageQuality,
-            }
-          : {
-              mode: "direct",
-              ...(adobeCookie.trim() ? { cookie: adobeCookie.trim() } : {}),
-              ...(adobeScope.trim() ? { scope: adobeScope.trim() } : {}),
-              defaultRatio,
-              defaultResolution,
-              gptImageQuality,
-            },
-    });
   }
 
   const formContent = (
@@ -467,29 +382,6 @@ export function BackendMemberFormDialog({
         {!detailsOnly ? (
           <>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>账号类型</Label>
-                <Select
-                  value={type}
-                  disabled={Boolean(member)}
-                  onValueChange={(value) =>
-                    handleMemberTypeChange(value as BackendMemberType)
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="api">API</SelectItem>
-                    <SelectItem value="adobe">Adobe</SelectItem>
-                  </SelectContent>
-                </Select>
-                {member && (
-                  <p className="text-xs text-muted-foreground">
-                    已有成员不能原地切换类型；需要时请删除后重建。
-                  </p>
-                )}
-              </div>
               <div className="space-y-2">
                 <Label htmlFor="member-name">名称</Label>
                 <Input
@@ -669,11 +561,7 @@ export function BackendMemberFormDialog({
               />
             ) : null}
             <p className="text-xs text-muted-foreground">
-              {acceptsVideo
-                ? "API 与 Adobe Direct 账号可选择图片和视频的真实模型 ID。"
-                : type === "adobe"
-                  ? "Adobe Gateway 当前只支持图片模型；切换为 Direct 后可选择视频模型。"
-                  : "API 账号可选择图片和视频的真实模型 ID。"}
+              API 账号可选择图片和视频的真实模型 ID。
             </p>
           </MemberDetailSection>
         ) : null}
@@ -764,159 +652,7 @@ export function BackendMemberFormDialog({
               )}
             </div>
           </section>
-        ) : (
-          <section
-            className={
-              detailsOnly
-                ? "overflow-hidden rounded-lg border bg-card"
-                : "space-y-4 rounded-md border p-4"
-            }
-          >
-            <header
-              className={detailsOnly ? "border-b bg-muted/20 px-5 py-4" : ""}
-            >
-              <h3 className="font-medium">
-                {detailsOnly ? "账号默认参数" : "Adobe 配置"}
-              </h3>
-              <p
-                className={
-                  detailsOnly
-                    ? "mt-1 max-w-3xl text-sm text-muted-foreground"
-                    : "text-xs text-muted-foreground"
-                }
-              >
-                Gateway 使用外部兼容接口；Direct 成员自身就是一个 Adobe
-                账号，不再包含内部子号池。
-              </p>
-            </header>
-            <div className={detailsOnly ? "space-y-5 p-5" : "contents"}>
-              {!detailsOnly ? (
-                <div className="space-y-2">
-                  <Label>模式</Label>
-                  <Select
-                    value={adobeMode}
-                    onValueChange={(value) =>
-                      handleAdobeModeChange(value as typeof adobeMode)
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="gateway">Gateway</SelectItem>
-                      <SelectItem value="direct">Direct</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : null}
-              {!detailsOnly && adobeMode === "gateway" && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-base-url">Gateway Base URL</Label>
-                    <Input
-                      id="adobe-base-url"
-                      type="url"
-                      value={adobeBaseUrl}
-                      onChange={(event) => setAdobeBaseUrl(event.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-api-key">Gateway API Key</Label>
-                    <Input
-                      id="adobe-api-key"
-                      type="password"
-                      autoComplete="new-password"
-                      value={adobeApiKey}
-                      onChange={(event) => setAdobeApiKey(event.target.value)}
-                      placeholder={member ? "留空保留现有凭据" : "必填"}
-                      required={!member}
-                    />
-                  </div>
-                </>
-              )}
-              {!detailsOnly && adobeMode === "direct" && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-cookie">Adobe Cookie</Label>
-                    <Textarea
-                      id="adobe-cookie"
-                      rows={5}
-                      autoComplete="off"
-                      value={adobeCookie}
-                      onChange={(event) => setAdobeCookie(event.target.value)}
-                      placeholder={
-                        member?.type === "adobe" &&
-                        member.config.mode === "direct"
-                          ? "留空保留现有 Cookie"
-                          : "粘贴已登录 Adobe 账号的完整 Cookie"
-                      }
-                      required={
-                        !member ||
-                        (member.type === "adobe" &&
-                          member.config.mode !== "direct")
-                      }
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      保存时会立即验证账号并换取短期 Token；明文不会返回浏览器。
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-scope">IMS Scope</Label>
-                    <Input
-                      id="adobe-scope"
-                      value={adobeScope}
-                      onChange={(event) => setAdobeScope(event.target.value)}
-                      placeholder="留空使用默认 Scope"
-                    />
-                  </div>
-                </>
-              )}
-              {showAdvancedConfiguration ? (
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-ratio">默认比例</Label>
-                    <Input
-                      id="adobe-ratio"
-                      value={defaultRatio}
-                      onChange={(event) => setDefaultRatio(event.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="adobe-resolution">默认分辨率</Label>
-                    <Input
-                      id="adobe-resolution"
-                      value={defaultResolution}
-                      onChange={(event) =>
-                        setDefaultResolution(event.target.value)
-                      }
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>GPT 图像质量</Label>
-                    <Select
-                      value={gptImageQuality}
-                      onValueChange={(value) =>
-                        setGptImageQuality(value as typeof gptImageQuality)
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="low">Low</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="high">High</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </section>
-        )}
+        ) : null}
 
         <DialogFooter
           className={

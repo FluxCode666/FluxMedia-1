@@ -9,7 +9,7 @@ import {
   DEFAULT_VIDEO_MODEL_BILLING_MODES,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
   DEFAULT_VIDEO_MODEL_CREDITS_PER_SECOND,
-} from "../../adobe/video-pricing";
+} from "../../video-generation/video-pricing";
 import { createDefaultGlobalImageCreditOverrides } from "../../image-backend/group-image-pricing";
 
 const mocks = vi.hoisted(() => ({

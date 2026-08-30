@@ -1,9 +1,8 @@
 /**
  * 统一媒体后端成员输入契约。
  *
- * 职责：为 UOL、管理后台和数据库服务提供唯一的成员保存 schema，以 `api | adobe`
- * 区分顶层成员，并用严格的类型专属配置阻止旧 Web、Responses 与 Adobe 双重身份字段
- * 重新进入系统。调度器只消费公共字段和显式模型能力，不在本模块做模型前缀分流。
+ * 职责：为 UOL、管理后台和数据库服务提供唯一的 API 成员保存 schema。
+ * 调度器只消费公共字段和显式模型能力，不在本模块做模型前缀分流。
  */
 import { z } from "zod";
 
@@ -102,8 +101,8 @@ const mediaUpstreamUrlSchema = z
     { message: "Media upstream URL must use HTTP or HTTPS" }
   );
 
-/** 顶层媒体后端成员类型；不得再增加 Web/Codex 等身份。 */
-export const BACKEND_MEMBER_TYPES = ["api", "adobe"] as const;
+/** 顶层媒体后端成员类型；供应商账号统一使用 API 协议。 */
+export const BACKEND_MEMBER_TYPES = ["api"] as const;
 
 /** 顶层媒体后端成员类型。 */
 export type BackendMemberType = (typeof BACKEND_MEMBER_TYPES)[number];
@@ -143,36 +142,6 @@ export const apiBackendMemberConfigSchema = z
   })
   .strict();
 
-/** Adobe gateway 成员配置；只承接图片协议。 */
-export const adobeGatewayMemberConfigSchema = z
-  .object({
-    mode: z.literal("gateway"),
-    baseUrl: mediaUpstreamUrlSchema,
-    apiKey: z.string().trim().min(1).max(8_192).optional(),
-    defaultRatio: z.string().trim().min(1).max(20),
-    defaultResolution: z.string().trim().min(1).max(20),
-    gptImageQuality: z.enum(["low", "medium", "high"]),
-  })
-  .strict();
-
-/** Adobe direct 成员配置；一个顶层成员恰好持有一个 Adobe Cookie。 */
-export const adobeDirectMemberConfigSchema = z
-  .object({
-    mode: z.literal("direct"),
-    cookie: z.string().trim().min(1).max(64_000).optional(),
-    scope: z.string().trim().min(1).max(4_096).optional(),
-    defaultRatio: z.string().trim().min(1).max(20),
-    defaultResolution: z.string().trim().min(1).max(20),
-    gptImageQuality: z.enum(["low", "medium", "high"]),
-  })
-  .strict();
-
-/** Adobe 类型专属配置。 */
-export const adobeBackendMemberConfigSchema = z.discriminatedUnion("mode", [
-  adobeGatewayMemberConfigSchema,
-  adobeDirectMemberConfigSchema,
-]);
-
 const commonBackendMemberFields = {
   id: z.string().trim().min(1).max(128).optional(),
   name: z.string().trim().min(1).max(120),
@@ -201,90 +170,52 @@ const apiBackendMemberInputSchema = z
   })
   .strict();
 
-const adobeBackendMemberInputSchema = z
-  .object({
-    ...commonBackendMemberFields,
-    type: z.literal("adobe"),
-    config: adobeBackendMemberConfigSchema,
-  })
-  .strict();
-
 /**
  * 统一成员保存 schema。
  *
- * API 与 Adobe direct 可声明真实视频模型；Adobe gateway 暂不具备视频执行闭环。
- * 所有可执行成员都拒绝迁移前复合视频身份，避免参数重新编码进模型 ID。
+ * API 成员可声明真实视频模型；所有可执行成员都拒绝迁移前复合视频身份，避免参数
+ * 重新编码进模型 ID。
  */
 export const backendMemberInputSchema = z
-  .discriminatedUnion("type", [
-    apiBackendMemberInputSchema,
-    adobeBackendMemberInputSchema,
-  ])
+  .discriminatedUnion("type", [apiBackendMemberInputSchema])
   .superRefine((member, context) => {
-    if (member.type === "api") {
-      if (
-        member.id !== undefined &&
-        member.config.expectedCurrentVersionId === undefined
-      ) {
-        context.addIssue({
-          code: "custom",
-          path: ["config", "expectedCurrentVersionId"],
-          message: "Editing an API member requires the current adapter version",
-        });
-      }
-      const supportedModelIds = new Set(
-        member.supportedModelIds.map((modelId) => modelId.toLowerCase())
-      );
-      for (const [index, mapping] of member.config.modelMappings.entries()) {
-        if (supportedModelIds.has(mapping.modelId.toLowerCase())) continue;
-        context.addIssue({
-          code: "custom",
-          path: ["config", "modelMappings", index, "modelId"],
-          message: "Model mapping source must be a supported model ID",
-        });
-      }
-      for (const modelId of Object.keys(
-        member.config.videoInputCapabilitiesByModel
-      )) {
-        if (supportedModelIds.has(modelId.toLowerCase())) continue;
-        context.addIssue({
-          code: "custom",
-          path: ["config", "videoInputCapabilitiesByModel", modelId],
-          message: "Video input capability model must be supported",
-        });
-      }
-    }
     if (
-      member.type === "adobe" &&
-      member.config.mode === "direct" &&
-      member.id === undefined &&
-      member.config.cookie === undefined
+      member.id !== undefined &&
+      member.config.expectedCurrentVersionId === undefined
     ) {
       context.addIssue({
         code: "custom",
-        path: ["config", "cookie"],
-        message: "A new Adobe direct member requires a Cookie",
+        path: ["config", "expectedCurrentVersionId"],
+        message: "Editing an API member requires the current adapter version",
       });
     }
-    if (member.type === "api" || member.config.mode === "direct") {
-      for (const [index, modelId] of member.supportedModelIds.entries()) {
-        if (!isLegacyVideoModelId(modelId)) continue;
-        context.addIssue({
-          code: "custom",
-          path: ["supportedModelIds", index],
-          message: "Video models must use a real model ID",
-        });
-      }
-      return;
+    const supportedModelIds = new Set(
+      member.supportedModelIds.map((modelId) => modelId.toLowerCase())
+    );
+    for (const [index, mapping] of member.config.modelMappings.entries()) {
+      if (supportedModelIds.has(mapping.modelId.toLowerCase())) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["config", "modelMappings", index, "modelId"],
+        message: "Model mapping source must be a supported model ID",
+      });
+    }
+    for (const modelId of Object.keys(
+      member.config.videoInputCapabilitiesByModel
+    )) {
+      if (supportedModelIds.has(modelId.toLowerCase())) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["config", "videoInputCapabilitiesByModel", modelId],
+        message: "Video input capability model must be supported",
+      });
     }
     for (const [index, modelId] of member.supportedModelIds.entries()) {
-      if (!normalizeVideoModelId(modelId) && !isLegacyVideoModelId(modelId)) {
-        continue;
-      }
+      if (!isLegacyVideoModelId(modelId)) continue;
       context.addIssue({
         code: "custom",
         path: ["supportedModelIds", index],
-        message: "Video models require an API or Adobe direct member",
+        message: "Video models must use a real model ID",
       });
     }
   });

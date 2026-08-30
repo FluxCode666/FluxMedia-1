@@ -25,7 +25,7 @@ export type ImageStreamEvent =
         index?: number;
         outputRole?: "final" | "choice";
       }>;
-      // Adobe Firefly 视频产物（视频生成路径专用，图像路径不设）。
+      // 视频生成路径产物（图像路径不设置这些字段）。
       videoGenerationId?: string;
       videoUrl?: string;
       videoDurationSeconds?: number;
@@ -44,7 +44,7 @@ export type ImageStreamEvent =
 /**
  * SSE 响应的可选安全策略。
  *
- * `formatError` 由 Cookie 页面接口传入，用于把未捕获的上游异常收敛为安全文案；
+ * `formatError` 由页面接口传入，用于把未捕获的上游异常收敛为安全文案；
  * 保持可选以免改变其他现有 SSE 调用方的错误语义。
  */
 export type ImageStreamResponseOptions = {

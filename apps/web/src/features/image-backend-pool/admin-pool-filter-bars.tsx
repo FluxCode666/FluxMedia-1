@@ -25,7 +25,6 @@ import {
   hasBackendGroupFilter,
   hasBackendMemberFilters,
 } from "./admin-pool-view-model";
-import { ADOBE_CREDENTIAL_HEALTH_STATUSES } from "./adobe-credential-health-status";
 import { BackendMemberDateRangePicker } from "./backend-member-date-range-picker";
 
 /** 供应商账号模型筛选的一条可读选项。 */
@@ -36,8 +35,6 @@ export interface BackendMemberFilterModelOption {
 
 const CREDENTIAL_FILTERS = [
   "all",
-  ...ADOBE_CREDENTIAL_HEALTH_STATUSES,
-  "unhealthy",
   "not_applicable",
 ] as const satisfies readonly BackendMemberCredentialFilter[];
 
@@ -113,7 +110,7 @@ export function BackendMemberFilterBar({
         </label>
         <div className="grid min-w-0 gap-2 text-xs font-medium text-muted-foreground">
           <span id="backend-member-credential-filter-label">
-            凭据状态（Adobe Direct）
+            凭据状态
           </span>
           <Select
             onValueChange={(value) =>
@@ -132,14 +129,8 @@ export function BackendMemberFilterBar({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部凭据状态</SelectItem>
-              <SelectItem value="pending">待首次检查</SelectItem>
-              <SelectItem value="healthy">健康</SelectItem>
-              <SelectItem value="unhealthy">不健康（全部）</SelectItem>
-              <SelectItem value="degraded">待复检</SelectItem>
-              <SelectItem value="isolated">已隔离</SelectItem>
-              <SelectItem value="overdue">探测失约</SelectItem>
               <SelectItem value="not_applicable">
-                不适用（非 Adobe Direct）
+                不适用（API 账号）
               </SelectItem>
             </SelectContent>
           </Select>

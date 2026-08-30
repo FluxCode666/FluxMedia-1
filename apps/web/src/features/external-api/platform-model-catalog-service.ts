@@ -2,7 +2,7 @@
  * 平台媒体模型目录运行时加载器。
  *
  * 职责：读取统一成员、分组和模型广场配置，再委托 DB-free 构建器；
- * 数据投影不包含 URL、API key、Adobe cookie/token、错误详情或媒体输入。
+ * 数据投影不包含 URL、API key、凭据、错误详情或媒体输入。
  */
 import "server-only";
 
@@ -58,7 +58,6 @@ export const databasePlatformModelCatalogRepository: PlatformModelCatalogReposit
       return members.map((member) => ({
         groupIds: member.groupIds,
         type: member.type,
-        adobeMode: member.type === "adobe" ? member.config.mode : null,
         supportedModelIds: member.supportedModelIds,
         isEnabled: member.isEnabled,
         status: member.status,

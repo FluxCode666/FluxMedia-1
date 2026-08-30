@@ -30,7 +30,7 @@ export interface GenerateImageParams {
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
-  /** 模型配置关闭时阻止 Adobe 适配器注入账号默认质量。 */
+  /** 模型配置关闭时阻止上游适配器注入账号默认质量。 */
   supportsQuality?: boolean;
   moderation?: ImageModeration;
   outputFormat?: ImageOutputFormat;
@@ -134,7 +134,7 @@ export interface EditImageParams {
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
-  /** 模型配置关闭时阻止 Adobe 适配器注入账号默认质量。 */
+  /** 模型配置关闭时阻止上游适配器注入账号默认质量。 */
   supportsQuality?: boolean;
   moderation?: ImageModeration;
   outputFormat?: ImageOutputFormat;
@@ -164,7 +164,7 @@ export interface ApiConfig {
   contentSafetyEnabled?: boolean;
   headers?: Record<string, string>;
   backend?: {
-    type: "platform" | "pool-api" | "pool-adobe";
+    type: "platform" | "pool-api";
     id?: string;
     name?: string;
     groupId?: string | null;
@@ -174,16 +174,6 @@ export interface ApiConfig {
     modelMappings?: ApiModelMapping[];
     // 固定租约或任务版本中的完整六操作适配配置；不包含账号密钥。
     apiUpstreamAdapter?: ApiUpstreamAdapterDraft;
-    // adobe（pool-adobe）专属：暴露的 Firefly 模型家族、默认宽高比/分辨率、是否支持
-    // 视频。供 image-generation 派发 adobe 请求时选择 family 与映射缺省值。
-    // gateway：调外部 adobe2api；direct：用顶层成员的一对一凭据直连 Firefly。
-    adobeMode?: "gateway" | "direct";
-    adobeEnabledModels?: string[] | null;
-    adobeDefaultRatio?: string;
-    adobeDefaultResolution?: string;
-    adobeSupportsVideo?: boolean;
-    // gpt-image 质量(系统级,low/medium/high → detailLevel 1/3/5);缺省走 high。
-    adobeGptImageQuality?: string;
     billingGroupId?: string | null;
     imageCreditOverrides?: ImageCreditOverrides;
     /** 所选计费分组的稀疏视频模型族每秒积分覆盖。 */

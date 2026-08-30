@@ -18,7 +18,6 @@ import {
 } from "@repo/ui/components/tabs";
 import { useState } from "react";
 
-import { AdobeCredentialNotificationSettingsCard } from "@/features/system-settings/adobe-credential-notification-settings-card";
 
 type AdminSettingsTabsProps = {
   timeZone: string;
@@ -85,12 +84,7 @@ export function AdminSettingsTabs({
       {canManageSystemSettings ? (
         <TabsContent value="system" className="mt-6">
           {mountedTabs.has("system") ? (
-            <SystemSettingsPanel
-              timeZone={timeZone}
-              notificationModule={
-                <AdobeCredentialNotificationSettingsCard disabled={false} />
-              }
-            />
+            <SystemSettingsPanel timeZone={timeZone} />
           ) : null}
         </TabsContent>
       ) : null}
