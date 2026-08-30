@@ -66,6 +66,3 @@ docker compose up -d
 [deploy/README.md](deploy/README.md)。统一号池调度契约见
 [docs/image-backend-pool-scheduling.md](docs/image-backend-pool-scheduling.md)。
 
-## 许可证
-
-AGPL-3.0-only。
