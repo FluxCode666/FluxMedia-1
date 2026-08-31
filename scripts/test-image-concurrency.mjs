@@ -542,6 +542,7 @@ async function executeRequest(task, options, endpoint, activeControllers) {
 function printHumanReport(report) {
   console.log("\nFluxMedia 文生图并发测试结果");
   console.log(`请求总数: ${report.summary.total}`);
+  console.log(`测试并发数: ${report.config.effectiveConcurrency}`);
   console.log(
     `总耗时: ${report.summary.durationMs} ms，` +
       `吞吐: ${report.summary.requestsPerSecond.toFixed(2)} req/s`
@@ -582,6 +583,7 @@ async function main() {
   const options = parseOptions(process.argv.slice(2));
   const endpoint = endpointFor(options.baseUrl);
   const totalTasks = options.models.length * options.requestsPerModel;
+  const effectiveConcurrency = Math.min(options.concurrency, totalTasks);
   const promptAssignments = createPromptAssignments(totalTasks, options.prompt);
   // 按轮次交错模型，避免 requests-per-model 较大时某个模型独占前半段时间窗口。
   const tasks = Array.from({ length: options.requestsPerModel }, (_, index) =>
@@ -614,7 +616,7 @@ async function main() {
   log(
     options,
     `开始测试: ${options.models.join(", ")} | ` +
-      `${tasks.length} 请求 | 并发 ${Math.min(options.concurrency, tasks.length)} | ${endpoint}`
+      `${tasks.length} 请求 | 并发 ${effectiveConcurrency} | ${endpoint}`
   );
 
   async function worker(workerId) {
@@ -645,9 +647,8 @@ async function main() {
   }
 
   await Promise.all(
-    Array.from(
-      { length: Math.min(options.concurrency, tasks.length) },
-      (_, index) => worker(index + 1)
+    Array.from({ length: effectiveConcurrency }, (_, index) =>
+      worker(index + 1)
     )
   );
   process.removeListener("SIGINT", onInterrupt);
@@ -661,6 +662,7 @@ async function main() {
     config: {
       models: options.models,
       concurrency: options.concurrency,
+      effectiveConcurrency,
       requestsPerModel: options.requestsPerModel,
       size: options.size,
       responseFormat: options.responseFormat,

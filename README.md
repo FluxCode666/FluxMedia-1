@@ -95,7 +95,7 @@ node scripts/test-image-concurrency.mjs \
 | --- | --- | --- |
 | `--base-url URL` | `FLUXMEDIA_BASE_URL`、`G2I_BASE` 或现有线上地址 | 服务 origin，脚本请求 `/v1/images/generations` |
 | `--models A,B,C` | 三个默认模型 | 逗号分隔的模型 ID |
-| `--concurrency N` | `3` | 最大同时在途请求数，不改变总请求量 |
+| `--concurrency N` | `3` | 配置的最大同时在途请求数；实际并发数为它与总请求量的较小值 |
 | `--requests-per-model N` | `1` | 每个模型的请求数 |
 | `--size WIDTHxHEIGHT` | `1024x1024` | 图片尺寸 |
 | `--prompt TEXT` | 内置提示词池 | 固定提示词；省略时从 100 条池中取用 |
@@ -106,8 +106,9 @@ node scripts/test-image-concurrency.mjs \
 | `--json` | 关闭 | 输出 JSON 汇总，进度写入 stderr |
 | `--help` | - | 显示帮助 |
 
-JSON 结果包括总请求数、成功率、吞吐、min/avg/p50/p95/max 延迟、按模型统计、HTTP
-错误统计和每个请求的 `promptIndex`。脚本默认不重试失败请求，以保持并发和请求量可测量。
+JSON 结果包括总请求数、配置并发数、实际并发数、成功率、吞吐、min/avg/p50/p95/max
+延迟、按模型统计、HTTP 错误统计和每个请求的 `promptIndex`。脚本默认不重试失败请求，
+以保持并发和请求量可测量。
 退出码为 `0`（全部成功）、`2`（有请求失败）、`1`（参数或启动错误）或 `130`（收到中断）。
 
 本地开发账号密码：
