@@ -111,6 +111,7 @@ import {
   getUserDetailAction,
   setExternalApiKeyStatusAction,
   setUserCreditsStatusAction,
+  setUserImageGenerationConcurrencyAction,
   setUserPasswordAction,
   updateUserProfileAction,
   updateUserRoleAction,
@@ -579,6 +580,8 @@ export function AdminUsersManagement({
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileName, setProfileName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
+  const [profileConcurrencyOverride, setProfileConcurrencyOverride] =
+    useState("");
   const [profileReason, setProfileReason] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
@@ -731,6 +734,12 @@ export function AdminUsersManagement({
     setSelectedUser(userRow);
     setProfileName(userRow.name);
     setProfileEmail(userRow.email);
+    setProfileConcurrencyOverride(
+      userRow.imageGenerationConcurrencyOverride === null ||
+      userRow.imageGenerationConcurrencyOverride === undefined
+        ? ""
+        : String(userRow.imageGenerationConcurrencyOverride)
+    );
     setProfileReason("");
     setProfileOpen(true);
   };
@@ -800,6 +809,21 @@ export function AdminUsersManagement({
       toast.error("请填写操作原因");
       return;
     }
+    const normalizedConcurrency = profileConcurrencyOverride.trim();
+    const concurrencyOverride =
+      normalizedConcurrency === "" ? null : Number(normalizedConcurrency);
+    if (
+      concurrencyOverride !== null &&
+      (!Number.isSafeInteger(concurrencyOverride) ||
+        concurrencyOverride < 1 ||
+        concurrencyOverride > 10_000)
+    ) {
+      toast.error("用户生图并发必须是 1 至 10000 的整数，留空表示继承系统默认");
+      return;
+    }
+    const concurrencyChanged =
+      concurrencyOverride !==
+      (selectedUser.imageGenerationConcurrencyOverride ?? null);
     setIsSavingProfile(true);
     try {
       const result = await updateUserProfileAction({
@@ -809,7 +833,25 @@ export function AdminUsersManagement({
         reason: profileReason.trim(),
       });
       if (result?.data) {
-        toast.success(result.data.message);
+        let successMessage = result.data.message;
+        if (concurrencyChanged) {
+          const concurrencyResult =
+            await setUserImageGenerationConcurrencyAction({
+              userId: selectedUser.id,
+              override: concurrencyOverride,
+              reason: profileReason.trim(),
+            });
+          if (concurrencyResult?.serverError) {
+            toast.error(concurrencyResult.serverError);
+            return;
+          }
+          if (!concurrencyResult?.data) {
+            toast.error("并发限制输入校验失败，请检查后重试");
+            return;
+          }
+          successMessage = `${successMessage}；${concurrencyResult.data.message}`;
+        }
+        toast.success(successMessage);
         setProfileOpen(false);
         await reloadCurrent();
       } else if (result?.serverError) {
@@ -1599,7 +1641,7 @@ export function AdminUsersManagement({
                       limits={detail.mediaLimits}
                       canManage={canManageModerationPolicy}
                       readOnlyReason={concurrencyReadOnlyReason}
-                      onUpdated={() => loadDetail(detail.user.id, false)}
+                      onUpdated={reloadCurrent}
                     />
                   </TabsContent>
 
@@ -2296,7 +2338,7 @@ export function AdminUsersManagement({
             <DialogTitle>编辑用户资料</DialogTitle>
             <DialogDescription>
               修改 {selectedUser?.email ?? "用户"}{" "}
-              的用户名或绑定邮箱，会写入审计日志。
+              的用户名、绑定邮箱或生图并发覆盖，会写入审计日志。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -2330,6 +2372,29 @@ export function AdminUsersManagement({
             </div>
             <div className="space-y-2">
               <Label
+                htmlFor="profileConcurrencyOverride"
+                className="text-[11px] uppercase tracking-widest text-muted-foreground"
+              >
+                用户生图并发覆盖
+              </Label>
+              <Input
+                id="profileConcurrencyOverride"
+                type="number"
+                min={1}
+                max={10_000}
+                step={1}
+                value={profileConcurrencyOverride}
+                onChange={(event) =>
+                  setProfileConcurrencyOverride(event.target.value)
+                }
+                placeholder="留空继承系统默认"
+              />
+              <p className="text-xs text-muted-foreground">
+                允许 1 至 10000；清空后保存即可恢复系统默认并发。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label
                 htmlFor="profileReason"
                 className="text-[11px] uppercase tracking-widest text-muted-foreground"
               >
@@ -2339,7 +2404,7 @@ export function AdminUsersManagement({
                 id="profileReason"
                 value={profileReason}
                 onChange={(event) => setProfileReason(event.target.value)}
-                placeholder="请填写资料修改原因"
+                placeholder="请填写资料或并发限制修改原因"
                 maxLength={300}
               />
             </div>
