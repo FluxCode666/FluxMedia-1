@@ -729,6 +729,13 @@
       "when": 1788177600000,
       "tag": "0103_image_size_configs",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1788307200000,
+      "tag": "0104_seed_leonardo_image_size_config",
+      "breakpoints": true
     }
   ]
 }
