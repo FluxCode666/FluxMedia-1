@@ -25,6 +25,37 @@ import {
 
 export const imageSizeConfigIdSchema = z.string().trim().min(1).max(128);
 
+/** 供应商按平台生图模型选择尺寸配置集；模型键大小写不敏感。 */
+export const imageSizeConfigIdsByModelSchema = z
+  .record(z.string().trim().min(1).max(240), imageSizeConfigIdSchema)
+  .superRefine((value, context) => {
+    const seen = new Set<string>();
+    for (const modelId of Object.keys(value)) {
+      const key = modelId.trim().toLowerCase();
+      if (seen.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: [modelId],
+          message: "模型尺寸配置不能重复",
+        });
+      }
+      seen.add(key);
+    }
+  })
+  .transform((value) =>
+    Object.fromEntries(
+      Object.entries(value).map(([modelId, configId]) => [
+        modelId.trim().toLowerCase(),
+        configId.trim(),
+      ])
+    )
+  )
+  .optional();
+
+export type ImageSizeConfigIdsByModel = z.infer<
+  typeof imageSizeConfigIdsByModelSchema
+>;
+
 /** 供应商账号按模型声明的输出分辨率覆盖；缺失模型键表示继承全局模型能力。 */
 export const backendModelResolutionCapabilitiesSchema = z
   .record(
@@ -117,6 +148,8 @@ export const apiBackendMemberConfigSchema = z
     useStream: z.boolean().default(false),
     /** 管理员选择的尺寸配置集；实际映射由服务端读取并写入适配版本快照。 */
     imageSizeConfigId: imageSizeConfigIdSchema.nullable().optional(),
+    /** 按平台生图模型选择尺寸配置集；未声明模型时回退供应商默认配置。 */
+    imageSizeConfigIdsByModel: imageSizeConfigIdsByModelSchema,
     /** 图生图参考图是否先转存并转换为绝对公网 URL；缺失时按关闭解析。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),
@@ -212,6 +245,16 @@ export const backendMemberInputSchema = z
         code: "custom",
         path: ["config", "videoInputCapabilitiesByModel", modelId],
         message: "Video input capability model must be supported",
+      });
+    }
+    for (const modelId of Object.keys(
+      member.config.imageSizeConfigIdsByModel ?? {}
+    )) {
+      if (supportedModelIds.has(modelId.toLowerCase())) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["config", "imageSizeConfigIdsByModel", modelId],
+        message: "模型尺寸配置必须对应供应商支持的模型 ID",
       });
     }
     for (const [index, modelId] of member.supportedModelIds.entries()) {

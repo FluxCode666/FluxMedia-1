@@ -51,7 +51,9 @@ export type VideoSubmissionFailureInput = {
     | "response_read"
     | "response_parse"
     | "missing_task_id"
+    | "script"
     | "unknown";
+  scriptStage?: "request" | "response";
   statusCode?: number;
   acceptedTaskId?: string;
   scriptedCategory?: ScriptedFailureCategory;
@@ -341,6 +343,15 @@ export function classifyVideoSubmissionFailure(
   }
   if (input.kind === "missing_task_id") {
     return decision("retry_same_member", "missing_upstream_task_id");
+  }
+  // 请求脚本在真实外呼前失败，通常是固定适配版本与输入格式不兼容。
+  // 该账号不应再次尝试；状态机将排除它并切换到下一个账号，账号池耗尽时退款。
+  if (input.kind === "script" && input.scriptStage === "request") {
+    return decision("switch_member", "unknown_submission_failure");
+  }
+  // 响应脚本失败发生在真实外呼之后，不能安全地重复创建任务，直接退款终止。
+  if (input.kind === "script" && input.scriptStage === "response") {
+    return decision("terminate_and_refund", "unknown_submission_failure");
   }
   if (
     (input.statusCode !== undefined && input.statusCode >= 500) ||

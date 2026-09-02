@@ -10,14 +10,14 @@ import {
   resolveApiUpstreamModelId,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
-  resolveImageSizeConfigMapping,
-  type ImageSizeConfigSnapshot,
-} from "@repo/shared/image-backend/image-size-config";
-import {
   API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS,
   type ApiUpstreamAdapterOperationId,
   type ApiUpstreamResponseResult,
 } from "@repo/shared/image-backend/api-upstream-script-contract";
+import {
+  type ImageSizeConfigSnapshot,
+  resolveImageSizeConfigMapping,
+} from "@repo/shared/image-backend/image-size-config";
 import { logError } from "@repo/shared/logger";
 import { nanoid } from "nanoid";
 import {
@@ -171,11 +171,21 @@ function getApiUpstreamAdapter(config: ApiConfig): ApiUpstreamAdapterDraft {
 
 /** 根据供应商尺寸配置把平台比例/分辨率转换为上游 size。 */
 export function resolveImageUpstreamSizeParams(input: {
-  adapter?: Pick<ApiUpstreamAdapterDraft, "imageSizeConfig"> | null;
+  adapter?: Pick<
+    ApiUpstreamAdapterDraft,
+    "imageSizeConfig" | "imageSizeConfigsByModel"
+  > | null;
+  platformModelId?: string;
   aspectRatio?: string;
   resolution?: string;
 }): { size?: string; aspectRatio?: string; resolution?: string } {
-  const config = input.adapter?.imageSizeConfig ?? null;
+  const modelKey = input.platformModelId?.trim().toLowerCase();
+  const config =
+    (modelKey
+      ? input.adapter?.imageSizeConfigsByModel?.[modelKey]
+      : undefined) ??
+    input.adapter?.imageSizeConfig ??
+    null;
   if (!config) {
     return {
       ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
@@ -748,6 +758,7 @@ function appendImageParams(
   params: {
     prompt: string;
     model: string;
+    platformModelId?: string;
     aspectRatio?: string;
     resolution?: string;
     quality?: ImageQuality;
@@ -770,6 +781,7 @@ function appendImageParams(
       config.backend?.type === "pool-api"
         ? config.backend.apiUpstreamAdapter
         : null,
+    platformModelId: params.platformModelId,
     aspectRatio: params.aspectRatio,
     resolution: params.resolution,
   });
@@ -1561,6 +1573,7 @@ export async function generateImage(
         config.backend?.type === "pool-api"
           ? config.backend.apiUpstreamAdapter
           : null,
+      platformModelId: model,
       aspectRatio: params.aspectRatio,
       resolution: params.resolution,
     });
@@ -1712,6 +1725,7 @@ const MAX_PUBLIC_URL_REFERENCE_IMAGES = 10;
 async function createPublicUrlEditRequestBody(input: {
   adapter: ApiUpstreamAdapterDraft;
   model: string;
+  platformModelId: string;
   prompt: string;
   images: ImageInputFile[];
   mask?: ImageInputFile;
@@ -1752,6 +1766,7 @@ async function createPublicUrlEditRequestBody(input: {
 
   const resolved = resolveImageUpstreamSizeParams({
     adapter: input.adapter,
+    platformModelId: input.platformModelId,
     aspectRatio: input.aspectRatio,
     resolution: input.resolution,
   });
@@ -1818,6 +1833,7 @@ export async function editImage(
       const publicUrlRequest = await createPublicUrlEditRequestBody({
         adapter: apiAdapter,
         model: upstreamModel,
+        platformModelId: model,
         prompt,
         images: params.images,
         mask: params.mask,
@@ -1867,6 +1883,7 @@ export async function editImage(
     appendImageParams(formData, config, {
       prompt,
       model: upstreamModel,
+      platformModelId: model,
       aspectRatio: params.aspectRatio,
       resolution: params.resolution,
       quality: params.quality,

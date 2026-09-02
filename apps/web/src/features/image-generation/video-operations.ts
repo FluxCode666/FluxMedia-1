@@ -1333,7 +1333,11 @@ async function pollAcceptedVideoTask(row: VideoGenerationRow) {
     throw new Error("已接受视频任务缺少恢复身份");
   }
   const upstreamIdentity = row.upstreamOperationName ?? row.upstreamJobId;
-  if (!row.apiAdapterMemberId || !row.apiAdapterVersionId || !upstreamIdentity) {
+  if (
+    !row.apiAdapterMemberId ||
+    !row.apiAdapterVersionId ||
+    !upstreamIdentity
+  ) {
     throw new ApiAcceptedVideoError(
       "API 视频恢复缺少固定适配版本，任务将保留重试",
       true
@@ -2311,19 +2315,21 @@ async function submitClaimedCreatedVideo(
             await switchedSession.close();
           }
           if (!retryable) throw new Error("视频成员切换发生并发冲突");
-          logVideoSupplierSwitched({
-            row: retryable,
-            ...(getApiVideoSupplierId(nextLease)
-              ? { supplierId: getApiVideoSupplierId(nextLease) }
-              : {}),
-            supplierName: nextLease.acquisition.member.name,
-            requestId: reservedAttempt?.requestId ?? submissionRequestId,
-            memberId: nextLease.memberId,
-            ...(reservedAttempt
-              ? { attemptNumber: reservedAttempt.globalAttemptNumber }
-              : {}),
-            failureCode: decision.failureCode,
-          });
+          if (nextLease.memberId !== lease.memberId) {
+            logVideoSupplierSwitched({
+              row: retryable,
+              ...(getApiVideoSupplierId(nextLease)
+                ? { supplierId: getApiVideoSupplierId(nextLease) }
+                : {}),
+              supplierName: nextLease.acquisition.member.name,
+              requestId: reservedAttempt?.requestId ?? submissionRequestId,
+              memberId: nextLease.memberId,
+              ...(reservedAttempt
+                ? { attemptNumber: reservedAttempt.globalAttemptNumber }
+                : {}),
+              failureCode: decision.failureCode,
+            });
+          }
           return {
             videoGenerationId: row.id,
             status: "processing",

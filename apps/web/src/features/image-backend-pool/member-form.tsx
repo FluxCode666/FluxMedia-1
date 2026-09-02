@@ -104,6 +104,9 @@ export function BackendMemberFormDialog({
     Array<{ id: string; name: string }>
   >([]);
   const [imageSizeConfigId, setImageSizeConfigId] = useState("");
+  const [imageSizeConfigIdsByModel, setImageSizeConfigIdsByModel] = useState<
+    Record<string, string>
+  >({});
   const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
   const [apiAdapterDraft, setApiAdapterDraft] =
     useState<ApiUpstreamAdapterFormDraft>(() =>
@@ -181,6 +184,15 @@ export function BackendMemberFormDialog({
     setApiKey("");
     setImageSizeConfigId(
       member?.type === "api" ? (member.config.imageSizeConfig?.id ?? "") : ""
+    );
+    setImageSizeConfigIdsByModel(
+      member?.type === "api"
+        ? Object.fromEntries(
+            Object.entries(member.config.imageSizeConfigsByModel ?? {}).map(
+              ([modelId, config]) => [modelId.trim().toLowerCase(), config.id]
+            )
+          )
+        : {}
     );
   }, [groups, member, modelOptions, open]);
 
@@ -340,6 +352,12 @@ export function BackendMemberFormDialog({
             : {}),
           useStream: apiUseStream,
           imageSizeConfigId: imageSizeConfigId || null,
+          imageSizeConfigIdsByModel: Object.fromEntries(
+            Object.entries(imageSizeConfigIdsByModel).filter(
+              ([modelId, configId]) =>
+                selectedModelKeys.has(modelId) && Boolean(configId)
+            )
+          ),
           convertReferenceImagesToPublicUrl:
             apiAdapterDraft.convertReferenceImagesToPublicUrl,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
@@ -655,7 +673,9 @@ export function BackendMemberFormDialog({
                 </>
               ) : null}
               <div className="space-y-2">
-                <Label htmlFor="image-size-config">图片尺寸配置</Label>
+                <Label htmlFor="image-size-config">
+                  供应商默认图片尺寸配置
+                </Label>
                 <select
                   id="image-size-config"
                   className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
@@ -669,6 +689,43 @@ export function BackendMemberFormDialog({
                     </option>
                   ))}
                 </select>
+                {selectedModelIds
+                  .filter(
+                    (modelId) =>
+                      !isLegacyVideoModelId(modelId) &&
+                      !normalizeVideoModelId(modelId)
+                  )
+                  .map((modelId) => {
+                    const key = modelId.trim().toLowerCase();
+                    return (
+                      <div key={key} className="space-y-2">
+                        <Label htmlFor={`image-size-config-${key}`}>
+                          {modelId} 图片尺寸配置（可选覆盖）
+                        </Label>
+                        <select
+                          id={`image-size-config-${key}`}
+                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                          value={imageSizeConfigIdsByModel[key] ?? ""}
+                          onChange={(event) =>
+                            setImageSizeConfigIdsByModel((current) => {
+                              const next = { ...current };
+                              if (event.target.value)
+                                next[key] = event.target.value;
+                              else delete next[key];
+                              return next;
+                            })
+                          }
+                        >
+                          <option value="">跟随供应商默认配置</option>
+                          {imageSizeConfigs.map((config) => (
+                            <option key={config.id} value={config.id}>
+                              {config.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
               </div>
               {showAdvancedConfiguration ? (
                 <>

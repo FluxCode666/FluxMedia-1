@@ -35,6 +35,7 @@ interface SqlExecutor {
 /** 构造当前绑定版本查询；锁住版本指针，供同一事务内执行 CAS 切换。 */
 export function buildBoundImageSizeConfigAdaptersQuery(configId: string): SQL {
   return sql`
+    with target as (select ${configId}::text as id)
     select
       api.member_id,
       api.current_adapter_version_id,
@@ -42,10 +43,16 @@ export function buildBoundImageSizeConfigAdaptersQuery(configId: string): SQL {
       version.credential_scope,
       version.configuration
     from image_backend_member_api_config as api
+    cross join target
     inner join image_backend_member_api_adapter_version as version
       on version.member_id_snapshot = api.member_id
       and version.id = api.current_adapter_version_id
-    where version.configuration::jsonb #>> '{imageSizeConfig,id}' = ${configId}
+    where version.configuration::jsonb #>> '{imageSizeConfig,id}' = target.id
+       or exists (
+         select 1
+         from jsonb_each(version.configuration::jsonb -> 'imageSizeConfigsByModel') as model_config(model_id, config)
+         where model_config.config ->> 'id' = target.id
+       )
     order by api.member_id asc
     for update of api
   `;

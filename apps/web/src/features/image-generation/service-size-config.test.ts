@@ -46,4 +46,41 @@ describe("resolveImageUpstreamSizeParams", () => {
       })
     ).toThrow();
   });
+
+  it("prefers model-specific config and falls back to provider config", () => {
+    const adapter = {
+      imageSizeConfig: {
+        id: "provider",
+        name: "provider",
+        mappings: [
+          { resolution: "2k", aspectRatio: "16:9", size: "2000x1125" },
+        ],
+      },
+      imageSizeConfigsByModel: {
+        "nano-banana-pro": {
+          id: "banana",
+          name: "banana",
+          mappings: [
+            { resolution: "2k", aspectRatio: "16:9", size: "2752x1536" },
+          ],
+        },
+      },
+    };
+    expect(
+      resolveImageUpstreamSizeParams({
+        adapter,
+        platformModelId: "NANO-BANANA-PRO",
+        aspectRatio: "16:9",
+        resolution: "2k",
+      })
+    ).toEqual({ size: "2752x1536" });
+    expect(
+      resolveImageUpstreamSizeParams({
+        adapter,
+        platformModelId: "gpt-image-2",
+        aspectRatio: "16:9",
+        resolution: "2k",
+      })
+    ).toEqual({ size: "2000x1125" });
+  });
 });

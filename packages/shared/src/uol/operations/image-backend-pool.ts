@@ -24,14 +24,14 @@ import {
   backendGroupSummarySchema,
 } from "../../image-backend/group-contract";
 import {
-  backendMemberInputSchema,
-  backendModelResolutionCapabilitiesSchema,
-} from "../../image-backend/member-contract";
-import {
   imageSizeConfigInputSchema,
   imageSizeConfigOptionSchema,
   imageSizeConfigSnapshotSchema,
 } from "../../image-backend/image-size-config";
+import {
+  backendMemberInputSchema,
+  backendModelResolutionCapabilitiesSchema,
+} from "../../image-backend/member-contract";
 import { createOffsetPaginationOutputSchema } from "../../pagination/contracts";
 import { isValidTimeZone } from "../../time-zone";
 import { defineOperation } from "../registry";
@@ -50,6 +50,9 @@ const redactedApiConfigSchema = z
     hasApiKey: z.boolean(),
     useStream: z.boolean(),
     imageSizeConfig: imageSizeConfigSnapshotSchema.nullable().optional(),
+    imageSizeConfigsByModel: z
+      .record(z.string(), imageSizeConfigSnapshotSchema)
+      .optional(),
     /** 图生图参考图是否先转存并转换为绝对公网 URL。 */
     convertReferenceImagesToPublicUrl: z.boolean().optional(),
     videoSubmissionRetryCount: z.number().int().min(0).max(10),
@@ -155,10 +158,12 @@ export const adminPoolMemberListOutputSchema =
 export const adminPoolGroupListOutputSchema =
   createOffsetPaginationOutputSchema(backendGroupSummarySchema);
 
-export const imageSizeConfigOutputSchema = imageSizeConfigSnapshotSchema.extend({
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
+export const imageSizeConfigOutputSchema = imageSizeConfigSnapshotSchema.extend(
+  {
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  }
+);
 
 export type AdminPoolMemberListInput = z.output<
   typeof adminPoolMemberListInputSchema
@@ -173,7 +178,9 @@ export type AdminPoolGroupListOutput = z.output<
   typeof adminPoolGroupListOutputSchema
 >;
 
-export type ImageSizeConfigOutput = z.output<typeof imageSizeConfigOutputSchema>;
+export type ImageSizeConfigOutput = z.output<
+  typeof imageSizeConfigOutputSchema
+>;
 
 /** 获取用户或表单可选择的统一后端分组。 */
 export const getGroupOptions = defineOperation({

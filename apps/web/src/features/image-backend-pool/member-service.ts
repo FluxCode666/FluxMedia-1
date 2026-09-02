@@ -74,6 +74,7 @@ export interface RedactedApiMemberConfig {
   credentialScope?: string;
   operations?: ApiUpstreamAdapterDraft["operations"];
   imageSizeConfig?: ApiUpstreamAdapterDraft["imageSizeConfig"];
+  imageSizeConfigsByModel?: ApiUpstreamAdapterDraft["imageSizeConfigsByModel"];
   currentAdapterVersion?: {
     id: string;
     revision: number;
@@ -213,13 +214,15 @@ function createApiCredentialScope(
 /** 从 API 成员保存输入构造不含密钥的不可变适配版本草稿。 */
 export function createApiAdapterDraft(
   input: Extract<BackendMemberInput, { type: "api" }>,
-  imageSizeConfig?: ImageSizeConfigSnapshot | null
+  imageSizeConfig?: ImageSizeConfigSnapshot | null,
+  imageSizeConfigsByModel?: ApiUpstreamAdapterDraft["imageSizeConfigsByModel"]
 ): ApiUpstreamAdapterDraft {
   const operations = structuredClone(input.config.operations);
   return apiUpstreamAdapterDraftSchema.parse({
     baseUrl: input.config.baseUrl,
     useStream: input.config.useStream,
     imageSizeConfig: imageSizeConfig ?? null,
+    imageSizeConfigsByModel: imageSizeConfigsByModel ?? {},
     convertReferenceImagesToPublicUrl:
       input.config.convertReferenceImagesToPublicUrl ?? false,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
@@ -322,6 +325,9 @@ export function createBackendMemberService(
     async saveMember(rawInput) {
       let input = backendMemberInputSchema.parse(rawInput);
       let imageSizeConfigSnapshot: ImageSizeConfigSnapshot | null = null;
+      const imageSizeConfigsByModel: NonNullable<
+        ApiUpstreamAdapterDraft["imageSizeConfigsByModel"]
+      > = {};
       assertUniqueGroupIds(input.groupIds);
       try {
         await validateUpstreamUrl(input.config.baseUrl);
@@ -344,9 +350,30 @@ export function createBackendMemberService(
             "尺寸配置集不存在"
           );
         }
+        const modelConfigIds = input.config.imageSizeConfigIdsByModel ?? {};
+        const modelConfigEntries = await Promise.all(
+          Object.entries(modelConfigIds).map(
+            async ([modelId, configId]) =>
+              [
+                modelId,
+                await (dependencies.loadImageSizeConfig?.(configId) ??
+                  Promise.resolve(null)),
+              ] as const
+          )
+        );
+        for (const [modelId, snapshot] of modelConfigEntries) {
+          if (!snapshot) {
+            throw new BackendMemberServiceError(
+              "validation_error",
+              "尺寸配置集不存在"
+            );
+          }
+          imageSizeConfigsByModel[modelId.trim().toLowerCase()] = snapshot;
+        }
         const adapterDraft = createApiAdapterDraft(
           input,
-          imageSizeConfigSnapshot
+          imageSizeConfigSnapshot,
+          imageSizeConfigsByModel
         );
         for (const operation of API_UPSTREAM_ADAPTER_OPERATION_IDS) {
           for (const stage of ["request", "response"] as const) {
@@ -542,6 +569,7 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         credentialScope: adapter.credentialScope,
         operations: adapter.operations,
         imageSizeConfig: adapter.imageSizeConfig ?? null,
+        imageSizeConfigsByModel: adapter.imageSizeConfigsByModel ?? {},
         currentAdapterVersion: {
           id: row.api_adapter_version_id,
           revision: row.api_adapter_revision,
@@ -663,6 +691,9 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
       } | null = null;
       if (input.type === "api") {
         let authoritativeImageSizeConfig: ImageSizeConfigSnapshot | null = null;
+        const authoritativeImageSizeConfigsByModel: NonNullable<
+          ApiUpstreamAdapterDraft["imageSizeConfigsByModel"]
+        > = {};
         if (input.config.imageSizeConfigId) {
           const [config] = await transaction
             .select({ id: imageSizeConfig.id, name: imageSizeConfig.name })
@@ -685,9 +716,30 @@ export const defaultBackendMemberRepository: BackendMemberRepository = {
             mappings,
           });
         }
+        for (const [modelId, configId] of Object.entries(
+          input.config.imageSizeConfigIdsByModel ?? {}
+        )) {
+          const [config] = await transaction
+            .select({ id: imageSizeConfig.id, name: imageSizeConfig.name })
+            .from(imageSizeConfig)
+            .where(eq(imageSizeConfig.id, configId))
+            .limit(1);
+          if (!config) return { status: "unknown_image_size_config" } as const;
+          const mappings = await transaction
+            .select({
+              resolution: imageSizeConfigMapping.resolution,
+              aspectRatio: imageSizeConfigMapping.aspectRatio,
+              size: imageSizeConfigMapping.size,
+            })
+            .from(imageSizeConfigMapping)
+            .where(eq(imageSizeConfigMapping.configId, config.id));
+          authoritativeImageSizeConfigsByModel[modelId.trim().toLowerCase()] =
+            canonicalizeImageSizeConfigSnapshot({ ...config, mappings });
+        }
         const draft = createApiAdapterDraft(
           input,
-          authoritativeImageSizeConfig
+          authoritativeImageSizeConfig,
+          authoritativeImageSizeConfigsByModel
         );
         if (
           input.config.expectedCurrentVersionId !== undefined &&

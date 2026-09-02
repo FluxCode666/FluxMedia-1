@@ -83,7 +83,9 @@ export type ApiVideoStageError = {
       | "response_read"
       | "response_parse"
       | "missing_task_id"
+      | "script"
       | "unknown";
+    scriptStage?: "request" | "response";
     statusCode?: number;
     scriptedCategory?: Extract<
       ApiUpstreamResponseResult,
@@ -266,14 +268,24 @@ function toApiVideoStageError(
     const kind =
       signal?.aborted || error.cause instanceof DOMException
         ? "timeout"
-        : error.code === "response_read_failed"
-          ? "response_read"
-          : error.code === "transport_failed"
-            ? "network"
-            : "unknown";
+        : error.code === "request_script_failed" ||
+            error.code === "response_script_failed"
+          ? "script"
+          : error.code === "response_read_failed"
+            ? "response_read"
+            : error.code === "transport_failed"
+              ? "network"
+              : "unknown";
     return {
       error: error.message,
-      failure: { kind },
+      failure: {
+        kind,
+        ...(error.code === "request_script_failed"
+          ? { scriptStage: "request" as const }
+          : error.code === "response_script_failed"
+            ? { scriptStage: "response" as const }
+            : {}),
+      },
       ...(error.retryAfterSeconds !== undefined
         ? { retryAfterSeconds: error.retryAfterSeconds }
         : {}),
@@ -657,8 +669,11 @@ export async function submitApiVideoRequest(
   let referenceAudioValues: string[] | undefined;
   try {
     const hasSourceInputs = Boolean(
-      params.firstFrame || params.lastFrame || params.referenceImages?.length
-        || params.referenceVideos?.length || params.referenceAudios?.length
+      params.firstFrame ||
+        params.lastFrame ||
+        params.referenceImages?.length ||
+        params.referenceVideos?.length ||
+        params.referenceAudios?.length
     );
     const storage = hasSourceInputs
       ? await import("@repo/shared/storage/providers").then((module) =>
@@ -740,7 +755,9 @@ export async function submitApiVideoRequest(
       body: standardBody,
       opaqueValues,
       onRequestSnapshot: params.onRequestSnapshot,
-      onBeforeSend: params.onBeforeSend,
+      ...(adapter.operations["videos.generate"].requestScript
+        ? { onBeforeRequestScript: params.onBeforeSend }
+        : { onBeforeSend: params.onBeforeSend }),
       signal: params.signal,
       requestId: params.requestId,
       observability: {

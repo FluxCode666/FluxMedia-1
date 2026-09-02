@@ -102,7 +102,25 @@ export async function refreshBoundImageSizeConfigAdapters(
           currentConfiguration.imageSizeConfig
         )
       : null;
-    if (snapshotsEqual(currentSnapshot, desiredSnapshot)) continue;
+    const currentModelSnapshots =
+      currentConfiguration.imageSizeConfigsByModel ?? {};
+    const nextModelSnapshots = { ...currentModelSnapshots };
+    let modelChanged = false;
+    for (const [modelId, snapshot] of Object.entries(currentModelSnapshots)) {
+      if (!snapshot || snapshot.id !== dependencies.configId) continue;
+      if (desiredSnapshot) nextModelSnapshots[modelId] = desiredSnapshot;
+      else delete nextModelSnapshots[modelId];
+      modelChanged = true;
+    }
+    const providerReferencesConfig =
+      currentSnapshot?.id === dependencies.configId;
+    const nextProviderSnapshot = providerReferencesConfig
+      ? desiredSnapshot
+      : currentSnapshot;
+    const providerChanged =
+      providerReferencesConfig &&
+      !snapshotsEqual(currentSnapshot, desiredSnapshot);
+    if (!modelChanged && !providerChanged) continue;
 
     const nextVersion: RefreshedImageSizeConfigAdapterVersion = {
       id: dependencies.createId(),
@@ -111,7 +129,8 @@ export async function refreshBoundImageSizeConfigAdapters(
       credentialScope: adapter.credentialScope,
       configuration: apiUpstreamAdapterDraftSchema.parse({
         ...currentConfiguration,
-        imageSizeConfig: desiredSnapshot,
+        imageSizeConfig: nextProviderSnapshot,
+        imageSizeConfigsByModel: nextModelSnapshots,
       }),
       createdAt: dependencies.now,
     };

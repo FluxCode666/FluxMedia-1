@@ -300,7 +300,7 @@ describe("API video adapter", () => {
     });
   });
 
-  it("请求脚本失败时不预留提交尝试且不发送供应商请求", async () => {
+  it("请求脚本失败时会先预留尝试但不发送供应商请求", async () => {
     const adapter = createAdapter();
     adapter.operations["videos.generate"].requestScript =
       'throw new Error("hidden prompt");';
@@ -321,9 +321,9 @@ describe("API video adapter", () => {
       error: expect.stringMatching(
         /^供应商请求处理失败，请联系管理员（请求标识：apiu_[a-f0-9]{32}）$/
       ),
-      failure: { kind: "unknown" },
+      failure: { kind: "script", scriptStage: "request" },
     });
-    expect(onBeforeSend).not.toHaveBeenCalled();
+    expect(onBeforeSend).toHaveBeenCalledTimes(1);
     expect(mocks.fetchMediaUpstream).not.toHaveBeenCalled();
   });
 

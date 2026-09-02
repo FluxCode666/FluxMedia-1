@@ -115,6 +115,27 @@ describe("video submission failure", () => {
     }
   });
 
+  it("请求脚本失败切换账号，响应脚本失败直接退款", () => {
+    expect(
+      classifyVideoSubmissionFailure({
+        kind: "script",
+        scriptStage: "request",
+      })
+    ).toMatchObject({
+      action: "switch_member",
+      failureCode: "unknown_submission_failure",
+    });
+    expect(
+      classifyVideoSubmissionFailure({
+        kind: "script",
+        scriptStage: "response",
+      })
+    ).toMatchObject({
+      action: "terminate_and_refund",
+      failureCode: "unknown_submission_failure",
+    });
+  });
+
   it("安全原因移除控制字符和凭据并限制长度", () => {
     const reason = sanitizeVideoSubmissionFailureReason(
       `上游失败\nAuthorization: Bearer secret sk-sensitive ${"x".repeat(2_000)}`
