@@ -41,6 +41,15 @@ export const apiVideoProtocolModeSchema = z
 
 export type ApiVideoProtocolMode = z.infer<typeof apiVideoProtocolModeSchema>;
 
+/** custom 视频适配器发送参考媒体的格式。 */
+export const API_VIDEO_INPUT_FORMATS = ["url", "base64"] as const;
+
+export const apiVideoInputFormatSchema = z
+  .enum(API_VIDEO_INPUT_FORMATS)
+  .default("url");
+
+export type ApiVideoInputFormat = z.infer<typeof apiVideoInputFormatSchema>;
+
 /** API 视频创建额外重试次数；实际请求上限始终为该值加一。 */
 export const videoSubmissionRetryCountSchema = z
   .number()
@@ -367,6 +376,8 @@ export const apiUpstreamAdapterDraftSchema = z
       apiConvertReferenceImagesToPublicUrlSchema.optional(),
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     videoProtocolMode: apiVideoProtocolModeSchema,
+    /** custom 视频请求的参考媒体格式；缺失时保持历史 URL 行为。 */
+    videoInputFormat: apiVideoInputFormatSchema.optional(),
     /** 兼容旧适配版本；新配置只写入按模型能力。 */
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     videoInputCapabilitiesByModel: apiVideoInputCapabilitiesByModelSchema,

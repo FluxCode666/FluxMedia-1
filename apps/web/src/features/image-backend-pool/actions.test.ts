@@ -4,8 +4,9 @@
  * 职责：证明 API 上游脚本测试、进程诊断和成员启用状态修改只从真实管理员上下文构造
  * Principal，唯一委托对应 UOL operation；测试不加载领域服务、Worker 或数据库。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { createDefaultApiUpstreamOperations } from "@repo/shared/image-backend/api-upstream-adaptation";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   ensureUolInitialized: vi.fn(),
@@ -252,7 +253,11 @@ describe("image backend pool actions", () => {
         useStream: false,
         videoSubmissionRetryCount: 2,
         videoProtocolMode: "custom",
-        videoInputCapabilities: { referenceVideos: false, referenceAudios: false },
+        videoInputFormat: "url",
+        videoInputCapabilities: {
+          referenceVideos: false,
+          referenceAudios: false,
+        },
         videoInputCapabilitiesByModel: {},
         modelMappings: [],
         authentication: { mode: "bearer" },

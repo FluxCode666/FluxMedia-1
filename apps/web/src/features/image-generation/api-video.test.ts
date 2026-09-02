@@ -300,6 +300,48 @@ describe("API video adapter", () => {
     });
   });
 
+  it("custom 适配器选择 Base64 时向脚本恢复图片 data URL，且不读取对象存储 URL", async () => {
+    const adapter = createAdapter();
+    adapter.videoInputFormat = "base64";
+    adapter.operations["videos.generate"].requestScript = `
+      return { body: {
+        first_frame: request.body.first_frame,
+        reference_images: request.body.reference_images,
+      } };
+    `;
+    mocks.fetchMediaUpstream.mockResolvedValue(
+      Response.json({ id: "upstream-base64" }, { status: 202 })
+    );
+
+    await expect(
+      submitApiVideoRequest(createConfig(adapter), {
+        clientRequestId: "local-video-base64",
+        prompt: "prompt",
+        model: "seedance2",
+        duration: 5,
+        aspectRatio: "16:9",
+        resolution: "720p",
+        effectiveAudio: false,
+        firstFrame: createStoredSource("first.png", "image/png"),
+        referenceImages: [createStoredSource("reference.jpg", "image/jpeg")],
+      })
+    ).resolves.toMatchObject({
+      status: "pending",
+      upstreamJobId: "upstream-base64",
+    });
+
+    expect(mocks.getStorageRuntimeSnapshot).not.toHaveBeenCalled();
+    const request = mocks.fetchMediaUpstream.mock.calls[0];
+    const body = JSON.parse(String(request?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(body.first_frame).toBe("data:image/png;base64,Zmlyc3QucG5n");
+    expect(body.reference_images).toEqual([
+      "data:image/jpeg;base64,cmVmZXJlbmNlLmpwZw==",
+    ]);
+  });
+
   it("请求脚本失败时会先预留尝试但不发送供应商请求", async () => {
     const adapter = createAdapter();
     adapter.operations["videos.generate"].requestScript =

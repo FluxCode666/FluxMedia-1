@@ -14,6 +14,7 @@ import {
   apiUpstreamOperationsSchema,
   apiVideoInputCapabilitiesByModelSchema,
   apiVideoInputCapabilitiesSchema,
+  apiVideoInputFormatSchema,
   apiVideoProtocolModeSchema,
   createDefaultApiUpstreamOperations,
   videoSubmissionRetryCountSchema,
@@ -156,6 +157,8 @@ export const apiBackendMemberConfigSchema = z
     videoSubmissionRetryCount: videoSubmissionRetryCountSchema,
     /** 显式选择视频上游请求格式；旧成员缺失时安全沿用 custom。 */
     videoProtocolMode: apiVideoProtocolModeSchema,
+    /** custom 视频请求参考图的输入格式；旧成员缺失时安全沿用 URL。 */
+    videoInputFormat: apiVideoInputFormatSchema.optional(),
     /** 旧适配版本的账号级能力；新保存始终保持关闭。 */
     videoInputCapabilities: apiVideoInputCapabilitiesSchema,
     /** 按平台模型 ID 声明的参考视频和参考音频输入能力。 */

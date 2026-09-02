@@ -18,12 +18,6 @@ import {
   videoGenerationCallbackDelivery,
 } from "@repo/database/schema";
 import {
-  createDefaultVideoModelCreditsPerSecond,
-  getVideoCreditCost,
-  globalVideoModelCreditsPerSecondSchema,
-  resolveEffectiveVideoCreditsPerSecond,
-} from "@repo/shared/video-generation";
-import {
   AccountFrozenError,
   consumeCredits,
   InsufficientCreditsError,
@@ -47,7 +41,11 @@ import {
   getRuntimeStorageBucketConfig,
 } from "@repo/shared/system-settings";
 import {
+  createDefaultVideoModelCreditsPerSecond,
+  getVideoCreditCost,
+  globalVideoModelCreditsPerSecondSchema,
   projectVideoCurrentQuote,
+  resolveEffectiveVideoCreditsPerSecond,
   type VideoCurrentQuote,
   videoPixelSizeSchema,
 } from "@repo/shared/video-generation";
@@ -139,6 +137,10 @@ const VIDEO_CLAIM_TTL_MS = VIDEO_LEASE_TTL_MS;
 const VIDEO_IO_HEARTBEAT_MS = 5 * 60_000;
 const VIDEO_REFUND_RETRY_DELAY_MS = 30_000;
 const VIDEO_REFUND_MAX_ATTEMPTS = 3;
+/** 请求/响应脚本失败的任务级硬上限，防止错误适配在账号池中无限循环。 */
+const VIDEO_SUBMISSION_SCRIPT_FAILURE_MAX_ATTEMPTS = 3;
+const VIDEO_SUBMISSION_SCRIPT_FAILURE_METADATA_KEY =
+  "videoSubmissionScriptFailure";
 const LEGACY_API_INVALID_SNAPSHOT_REASON =
   "历史视频任务恢复快照不完整，生成已终止";
 const LEGACY_API_INVALID_SNAPSHOT_OPERATIONS_REASON =
@@ -1231,6 +1233,65 @@ function getVideoMetadataString(
   return normalized;
 }
 
+type VideoSubmissionScriptFailureStage = "request" | "response";
+
+/** 读取任务级脚本失败计数；非法历史 metadata 按零处理。 */
+function getVideoSubmissionScriptFailureCount(
+  metadata: Record<string, unknown> | null
+): number {
+  const value = metadata?.[VIDEO_SUBMISSION_SCRIPT_FAILURE_METADATA_KEY];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const total = (value as { total?: unknown }).total;
+  return typeof total === "number" && Number.isInteger(total) && total >= 0
+    ? Math.min(total, VIDEO_SUBMISSION_SCRIPT_FAILURE_MAX_ATTEMPTS)
+    : 0;
+}
+
+/**
+ * 原子记录一次提交脚本失败，并返回是否达到任务级上限。
+ *
+ * 只保存计数、账号身份和脚本阶段，不保存脚本正文、媒体、URL 或凭据。CAS
+ * 失败时返回 null，由当前 worker 停止，避免并发 worker 越过同一预算。
+ */
+async function recordVideoSubmissionScriptFailure(input: {
+  row: VideoGenerationRow;
+  memberId: string;
+  stage: VideoSubmissionScriptFailureStage;
+}): Promise<{ row: VideoGenerationRow; total: number } | null> {
+  const currentTotal = getVideoSubmissionScriptFailureCount(input.row.metadata);
+  if (currentTotal >= VIDEO_SUBMISSION_SCRIPT_FAILURE_MAX_ATTEMPTS) {
+    return { row: input.row, total: currentTotal };
+  }
+  const nextTotal = currentTotal + 1;
+  const previous =
+    input.row.metadata?.[VIDEO_SUBMISSION_SCRIPT_FAILURE_METADATA_KEY];
+  const previousMembers =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? (previous as { memberIds?: unknown }).memberIds
+      : undefined;
+  const memberIds = Array.isArray(previousMembers)
+    ? previousMembers.filter(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0
+      )
+    : [];
+  if (!memberIds.includes(input.memberId)) memberIds.push(input.memberId);
+  const metadata = {
+    ...(input.row.metadata ?? {}),
+    [VIDEO_SUBMISSION_SCRIPT_FAILURE_METADATA_KEY]: {
+      total: nextTotal,
+      memberIds: memberIds.slice(-32),
+      lastStage: input.stage,
+    },
+  };
+  const updated = await compareAndSetVideoStage({
+    row: input.row,
+    expectedStages: ["submitting"],
+    values: { metadata },
+  });
+  return updated ? { row: updated, total: nextTotal } : null;
+}
+
 /** 将获租时固定的 API 适配版本复制到视频任务。 */
 function createLeaseApiAdapterSnapshot(
   lease: NonNullable<
@@ -2166,6 +2227,24 @@ async function submitClaimedCreatedVideo(
     }
 
     if (lease.memberType === "api" && "failure" in submitted) {
+      const scriptFailure =
+        submitted.failure.kind === "script" && submitted.failure.scriptStage
+          ? await recordVideoSubmissionScriptFailure({
+              row,
+              memberId: lease.memberId,
+              stage: submitted.failure.scriptStage,
+            })
+          : null;
+      if (
+        submitted.failure.kind === "script" &&
+        submitted.failure.scriptStage
+      ) {
+        if (!scriptFailure) {
+          await backendSession.close();
+          throw new Error("视频脚本失败预算更新发生并发冲突");
+        }
+        row = scriptFailure.row;
+      }
       const decision = attemptReservationRejected
         ? {
             action: "switch_member" as const,
@@ -2174,6 +2253,39 @@ async function submitClaimedCreatedVideo(
             operationsReason: "当前 API 视频账号的创建尝试次数已耗尽",
           }
         : classifyVideoSubmissionFailure(submitted.failure);
+      if (reservedAttempt) {
+        await recordVideoSubmissionFailure({
+          row,
+          attemptId: reservedAttempt.id,
+          requestId: reservedAttempt.requestId,
+          ...(getApiVideoSupplierId(lease)
+            ? { supplierId: getApiVideoSupplierId(lease) }
+            : {}),
+          supplierName: reservedAttempt.supplierNameSnapshot,
+          attemptNumber: reservedAttempt.globalAttemptNumber,
+          memberAttemptNumber: reservedAttempt.memberAttemptNumber,
+          configuredRetryCount: reservedAttempt.retryCountSnapshot,
+          maxAttemptsSnapshot: reservedAttempt.maxAttemptsSnapshot,
+          httpTimeoutSeconds: submissionTimeout.seconds,
+          memberId: reservedAttempt.backendMemberId,
+          decision,
+          now: new Date(),
+        });
+      }
+      if (
+        scriptFailure &&
+        scriptFailure.total >= VIDEO_SUBMISSION_SCRIPT_FAILURE_MAX_ATTEMPTS
+      ) {
+        await backendSession.close();
+        const finalReason = decision.userReason ?? "视频生成失败，请稍后重试";
+        const refunding = await moveVideoToRefunding(
+          row,
+          finalReason,
+          decision.failureCode
+        );
+        if (refunding) await refundClaimedVideoOrRetry(refunding);
+        return { error: finalReason, videoGenerationId: row.id };
+      }
       if (!reservedAttempt && submitted.backendHealthNeutral) {
         // 平台脚本容量或输入签名发生在真实外呼前，不写尝试账本，也不消耗
         // 账号次数；保留原账号并用持久排程恢复。
@@ -2196,25 +2308,6 @@ async function submitClaimedCreatedVideo(
           status: "processing",
           creditsConsumed: billedCost,
         };
-      }
-      if (reservedAttempt) {
-        await recordVideoSubmissionFailure({
-          row,
-          attemptId: reservedAttempt.id,
-          requestId: reservedAttempt.requestId,
-          ...(getApiVideoSupplierId(lease)
-            ? { supplierId: getApiVideoSupplierId(lease) }
-            : {}),
-          supplierName: reservedAttempt.supplierNameSnapshot,
-          attemptNumber: reservedAttempt.globalAttemptNumber,
-          memberAttemptNumber: reservedAttempt.memberAttemptNumber,
-          configuredRetryCount: reservedAttempt.retryCountSnapshot,
-          maxAttemptsSnapshot: reservedAttempt.maxAttemptsSnapshot,
-          httpTimeoutSeconds: submissionTimeout.seconds,
-          memberId: reservedAttempt.backendMemberId,
-          decision,
-          now: new Date(),
-        });
       }
       const sameMemberRemaining =
         reservedAttempt !== null &&
