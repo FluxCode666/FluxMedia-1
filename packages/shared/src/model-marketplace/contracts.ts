@@ -45,6 +45,11 @@ const positiveSafeIntegerSchema = z
   .int()
   .positive()
   .max(Number.MAX_SAFE_INTEGER);
+const nonnegativeSafeIntegerSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
 const configKeySchema = z
   .string()
   .trim()
@@ -182,6 +187,8 @@ export const modelMarketplaceCustomModelSchema = z
       modelMarketplaceVideoOutputSizesByResolutionSchema.optional(),
     /** 图像模型是否接受质量参数；缺失表示不支持。 */
     supportsQuality: z.boolean().optional(),
+    /** 图像模型最多接受的参考图数量；0 表示不支持参考图。 */
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((model, context) => {
@@ -194,6 +201,13 @@ export const modelMarketplaceCustomModelSchema = z
         });
       }
       return;
+    }
+    if (model.maxReferenceImages !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["maxReferenceImages"],
+        message: "参考图上限仅适用于图像模型",
+      });
     }
     if (!model.outputSizesByResolution) return;
     const supported = new Set(model.supportedResolutions);
@@ -267,6 +281,8 @@ export const modelMarketplaceEntrySchema = z
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     /** 仅图像模型使用；仅为 true 时前端和执行管线才传 quality。 */
     supportsQuality: z.boolean().optional(),
+    /** 图像模型参考图数量上限；缺失时沿用系统媒体策略。 */
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -600,6 +616,7 @@ const explicitImageConfigurationEntrySchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict();
 const unconfiguredImageConfigurationEntrySchema = z
@@ -609,6 +626,7 @@ const unconfiguredImageConfigurationEntrySchema = z
     pricingSource: z.literal("unconfigured"),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict();
 const videoConfigurationEntrySchema = z
@@ -674,6 +692,7 @@ const publicImageItemSchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict();
 const publicVideoCommonShape = {
@@ -830,6 +849,7 @@ const updateImageConfigurationInputSchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
+    maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
   })
   .strict()
   .superRefine((input, context) => {

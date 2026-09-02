@@ -22,7 +22,24 @@ import { OperationError } from "@repo/shared/uol";
  */
 export type ImageModelRuntimeCapabilities = {
   supportsQuality: boolean;
+  maxReferenceImages?: number;
 };
+
+export function resolveImageReferenceImageLimit(input: {
+  modelId: string;
+  modelMaxReferenceImages?: number;
+  providerMaxReferenceImages?: number;
+  providerModelMaxReferenceImages?: Record<string, number>;
+  fallbackMaxReferenceImages?: number;
+}): number | undefined {
+  const modelKey = input.modelId.trim().toLowerCase();
+  return (
+    input.providerModelMaxReferenceImages?.[modelKey] ??
+    input.providerMaxReferenceImages ??
+    input.modelMaxReferenceImages ??
+    input.fallbackMaxReferenceImages
+  );
+}
 
 export async function assertImageModelEnabled(
   modelId: string,
@@ -60,6 +77,11 @@ export async function assertImageModelEnabled(
       supportsQuality:
         (configuredEntry?.supportsQuality ?? customEntry?.supportsQuality) ===
         true,
+      ...(configuredEntry?.maxReferenceImages !== undefined
+        ? { maxReferenceImages: configuredEntry.maxReferenceImages }
+        : customEntry?.maxReferenceImages !== undefined
+          ? { maxReferenceImages: customEntry.maxReferenceImages }
+          : {}),
     };
   }
   throw new OperationError("validation_error", "图片模型当前未启用", {

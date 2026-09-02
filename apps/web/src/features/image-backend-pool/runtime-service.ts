@@ -232,6 +232,10 @@ export interface CreateRuntimeBackendSessionInput {
   modelId: string;
   /** 用户请求的输出分辨率；用于跳过账号级不支持的模型能力。 */
   resolution?: string;
+  /** 图生图提交的参考图数量；用于排除上限不足的供应商账号。 */
+  requiredImageReferenceImages?: number;
+  /** 全局模型配置或系统媒体策略解析后的参考图上限。 */
+  defaultImageMaxReferenceImages?: number;
   requestKind: "image" | "video";
   requiresContentSafety: boolean;
   requiresMask?: boolean;
@@ -909,9 +913,7 @@ async function loadRuntimeBackendLease(
       },
     };
   }
-  throw new RuntimeBackendConfigurationInvalidError(
-    "不支持的媒体后端成员类型"
-  );
+  throw new RuntimeBackendConfigurationInvalidError("不支持的媒体后端成员类型");
 }
 
 /** 以 best-effort 方式记录不含业务载荷的调度指标。 */
@@ -1082,6 +1084,14 @@ export async function createRuntimeBackendSession(
       requestedModel: modelId,
       ...(normalizedInput.resolution
         ? { requestedResolution: normalizedInput.resolution }
+        : {}),
+      ...(normalizedInput.requiredImageReferenceImages
+        ? {
+            requiredImageReferenceImages:
+              normalizedInput.requiredImageReferenceImages,
+            defaultImageMaxReferenceImages:
+              normalizedInput.defaultImageMaxReferenceImages,
+          }
         : {}),
       excludedMemberIds: Array.from(excludedMemberIds),
       ...(normalizedInput.requiredMemberId

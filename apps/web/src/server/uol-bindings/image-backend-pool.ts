@@ -296,6 +296,20 @@ async function assertBackendMemberModelsComeFromConfiguration(
           .join("、")}`
       );
     }
+    const invalidImageReferenceLimitModels = Object.keys(
+      input.config.imageMaxReferenceImagesByModel ?? {}
+    ).filter(
+      (modelId) =>
+        optionByModelId.get(modelId.toLowerCase())?.category !== "image"
+    );
+    if (invalidImageReferenceLimitModels.length > 0) {
+      throw new OperationError(
+        "validation_error",
+        `参考图数量上限只能配置到生图模型：${invalidImageReferenceLimitModels
+          .slice(0, 3)
+          .join("、")}`
+      );
+    }
   }
   if (unavailableModelIds.length === 0) return;
 

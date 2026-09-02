@@ -107,6 +107,9 @@ export function BackendMemberFormDialog({
   const [imageSizeConfigIdsByModel, setImageSizeConfigIdsByModel] = useState<
     Record<string, string>
   >({});
+  const [imageMaxReferenceImages, setImageMaxReferenceImages] = useState("");
+  const [imageMaxReferenceImagesByModel, setImageMaxReferenceImagesByModel] =
+    useState<Record<string, string>>({});
   const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
   const [apiAdapterDraft, setApiAdapterDraft] =
     useState<ApiUpstreamAdapterFormDraft>(() =>
@@ -176,11 +179,28 @@ export function BackendMemberFormDialog({
             }
           : {}),
       });
+      setImageMaxReferenceImages(
+        member.config.imageMaxReferenceImages !== undefined
+          ? String(member.config.imageMaxReferenceImages)
+          : ""
+      );
+      setImageMaxReferenceImagesByModel(
+        Object.fromEntries(
+          Object.entries(
+            member.config.imageMaxReferenceImagesByModel ?? {}
+          ).map(([modelId, limit]) => [
+            modelId.trim().toLowerCase(),
+            String(limit),
+          ])
+        )
+      );
     } else {
       setApiBaseUrl("");
       setApiUseStream(false);
       setModelMappings([]);
       setApiAdapterDraft(createDefaultApiUpstreamAdapterFormDraft());
+      setImageMaxReferenceImages("");
+      setImageMaxReferenceImagesByModel({});
     }
     setApiKey("");
     setImageSizeConfigId(
@@ -288,6 +308,14 @@ export function BackendMemberFormDialog({
         })
       )
     );
+    setImageMaxReferenceImagesByModel((current) =>
+      Object.fromEntries(
+        nextModelIds.flatMap((modelId) => {
+          const key = modelId.trim().toLowerCase();
+          return current[key] !== undefined ? [[key, current[key]]] : [];
+        })
+      )
+    );
     setApiAdapterDraft((current) => ({
       ...current,
       videoInputCapabilitiesByModel: Object.fromEntries(
@@ -358,6 +386,17 @@ export function BackendMemberFormDialog({
               ([modelId, configId]) =>
                 selectedModelKeys.has(modelId) && Boolean(configId)
             )
+          ),
+          ...(imageMaxReferenceImages.trim()
+            ? { imageMaxReferenceImages: Number(imageMaxReferenceImages) }
+            : {}),
+          imageMaxReferenceImagesByModel: Object.fromEntries(
+            Object.entries(imageMaxReferenceImagesByModel)
+              .filter(
+                ([modelId, value]) =>
+                  selectedModelKeys.has(modelId) && value.trim() !== ""
+              )
+              .map(([modelId, value]) => [modelId, Number(value)])
           ),
           convertReferenceImagesToPublicUrl:
             apiAdapterDraft.convertReferenceImagesToPublicUrl,
@@ -675,6 +714,74 @@ export function BackendMemberFormDialog({
                 }
               />
             ) : null}
+            <div className="space-y-3 border-t pt-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="image-max-reference-images">
+                  供应商默认参考图数量上限
+                </Label>
+                <Input
+                  id="image-max-reference-images"
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  value={imageMaxReferenceImages}
+                  onChange={(event) =>
+                    setImageMaxReferenceImages(event.target.value)
+                  }
+                  placeholder="跟随全局模型配置"
+                />
+                <p className="text-xs text-muted-foreground">
+                  留空时按全局模型配置；填写 0 表示该账号不接受参考图。
+                </p>
+              </div>
+              {selectedModelIds
+                .filter((modelId) =>
+                  selectableModelOptions.some(
+                    (option) =>
+                      option.category === "image" &&
+                      option.id.toLowerCase() === modelId.toLowerCase()
+                  )
+                )
+                .map((modelId) => {
+                  const key = modelId.trim().toLowerCase();
+                  const globalLimit = selectableModelOptions.find(
+                    (option) => option.id.toLowerCase() === key
+                  )?.maxReferenceImages;
+                  return (
+                    <div key={key} className="space-y-1.5">
+                      <Label htmlFor={`image-max-reference-images-${key}`}>
+                        {modelId} 参考图数量覆盖
+                      </Label>
+                      <Input
+                        id={`image-max-reference-images-${key}`}
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="numeric"
+                        value={imageMaxReferenceImagesByModel[key] ?? ""}
+                        onChange={(event) =>
+                          setImageMaxReferenceImagesByModel((current) => ({
+                            ...current,
+                            ...(event.target.value.trim()
+                              ? { [key]: event.target.value }
+                              : (() => {
+                                  const next = { ...current };
+                                  delete next[key];
+                                  return next;
+                                })()),
+                          }))
+                        }
+                        placeholder={
+                          globalLimit !== undefined
+                            ? `跟随全局 ${globalLimit}`
+                            : "跟随供应商 / 全局"
+                        }
+                      />
+                    </div>
+                  );
+                })}
+            </div>
             <p className="text-xs text-muted-foreground">
               API 账号可选择图片和视频的真实模型 ID。
             </p>

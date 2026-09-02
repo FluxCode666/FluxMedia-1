@@ -8,7 +8,10 @@ import { createDefaultModelMarketplaceConfig } from "@repo/shared/model-marketpl
 import type { OperationError } from "@repo/shared/uol";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertImageModelEnabled } from "./model-availability";
+import {
+  assertImageModelEnabled,
+  resolveImageReferenceImageLimit,
+} from "./model-availability";
 
 describe("assertImageModelEnabled", () => {
   it("旧配置缺少条目时默认不接受质量参数", async () => {
@@ -55,5 +58,32 @@ describe("assertImageModelEnabled", () => {
     await expect(
       assertImageModelEnabled("gpt-image-2", async () => config)
     ).resolves.toEqual({ supportsQuality: true });
+  });
+
+  it("按模型账号 > 账号 > 全局模型 > 系统策略解析参考图上限，并保留 0", () => {
+    expect(
+      resolveImageReferenceImageLimit({
+        modelId: "GPT-IMAGE-2",
+        modelMaxReferenceImages: 4,
+        providerMaxReferenceImages: 8,
+        providerModelMaxReferenceImages: { "gpt-image-2": 0 },
+        fallbackMaxReferenceImages: 16,
+      })
+    ).toBe(0);
+    expect(
+      resolveImageReferenceImageLimit({
+        modelId: "gpt-image-2",
+        modelMaxReferenceImages: 4,
+        providerMaxReferenceImages: 8,
+        fallbackMaxReferenceImages: 16,
+      })
+    ).toBe(8);
+    expect(
+      resolveImageReferenceImageLimit({
+        modelId: "gpt-image-2",
+        modelMaxReferenceImages: 4,
+        fallbackMaxReferenceImages: 16,
+      })
+    ).toBe(4);
   });
 });

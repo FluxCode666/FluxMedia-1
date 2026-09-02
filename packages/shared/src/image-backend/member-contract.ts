@@ -25,6 +25,22 @@ import {
 } from "./supported-models";
 
 export const imageSizeConfigIdSchema = z.string().trim().min(1).max(128);
+const imageReferenceImageLimitSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+export const imageReferenceImageLimitsByModelSchema = z
+  .record(z.string().trim().min(1).max(240), imageReferenceImageLimitSchema)
+  .transform((value) =>
+    Object.fromEntries(
+      Object.entries(value).map(([modelId, limit]) => [
+        modelId.trim().toLowerCase(),
+        limit,
+      ])
+    )
+  )
+  .optional();
 
 /** 供应商按平台生图模型选择尺寸配置集；模型键大小写不敏感。 */
 export const imageSizeConfigIdsByModelSchema = z
@@ -151,6 +167,10 @@ export const apiBackendMemberConfigSchema = z
     imageSizeConfigId: imageSizeConfigIdSchema.nullable().optional(),
     /** 按平台生图模型选择尺寸配置集；未声明模型时回退供应商默认配置。 */
     imageSizeConfigIdsByModel: imageSizeConfigIdsByModelSchema,
+    /** 供应商账号级图像参考图数量覆盖；缺失时继承全局模型配置。 */
+    imageMaxReferenceImages: imageReferenceImageLimitSchema.optional(),
+    /** 供应商账号下模型级图像参考图数量覆盖。 */
+    imageMaxReferenceImagesByModel: imageReferenceImageLimitsByModelSchema,
     /** 图生图参考图是否先转存并转换为绝对公网 URL；缺失时按关闭解析。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),
@@ -258,6 +278,16 @@ export const backendMemberInputSchema = z
         code: "custom",
         path: ["config", "imageSizeConfigIdsByModel", modelId],
         message: "模型尺寸配置必须对应供应商支持的模型 ID",
+      });
+    }
+    for (const modelId of Object.keys(
+      member.config.imageMaxReferenceImagesByModel ?? {}
+    )) {
+      if (supportedModelIds.has(modelId.toLowerCase())) continue;
+      context.addIssue({
+        code: "custom",
+        path: ["config", "imageMaxReferenceImagesByModel", modelId],
+        message: "模型参考图上限必须对应供应商支持的模型 ID",
       });
     }
     for (const [index, modelId] of member.supportedModelIds.entries()) {

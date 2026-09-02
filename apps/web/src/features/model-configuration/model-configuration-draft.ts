@@ -47,6 +47,7 @@ export type ModelConfigurationDraft =
       pricing: ModelConfigurationImagePricingDraft;
       supportedResolutions: string[];
       supportsQuality: boolean;
+      maxReferenceImages?: string;
     } & MarketplaceDraftFields)
   | ({
       category: "video";
@@ -151,6 +152,9 @@ export function createModelConfigurationDraft(
       supportedResolutions: [...(entry.supportedResolutions ?? [])],
       // 质量参数默认关闭；只有模型配置显式开启时才展示并传递。
       supportsQuality: entry.supportsQuality === true,
+      ...(entry.maxReferenceImages !== undefined
+        ? { maxReferenceImages: String(entry.maxReferenceImages) }
+        : {}),
     };
   }
   return {
@@ -281,6 +285,21 @@ export function parseModelConfigurationPositiveSafeInteger(
   const normalized = value.trim();
   if (!/^[1-9]\d*$/.test(normalized)) {
     throw new ModelConfigurationDraftError("参考图上限必须是正整数");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ModelConfigurationDraftError("参考图上限超过安全整数范围");
+  }
+  return parsed;
+}
+
+/** 解析允许 0 的参考图上限；0 明确表示模型不接受参考图。 */
+export function parseModelConfigurationNonnegativeSafeInteger(
+  value: string
+): number {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new ModelConfigurationDraftError("参考图上限必须是非负整数");
   }
   const parsed = Number(normalized);
   if (!Number.isSafeInteger(parsed)) {
@@ -436,6 +455,14 @@ export function buildModelConfigurationFormData(
     );
   }
   formData.append("supportsQuality", String(draft.supportsQuality));
+  if (draft.maxReferenceImages !== undefined) {
+    formData.append(
+      "maxReferenceImages",
+      String(
+        parseModelConfigurationNonnegativeSafeInteger(draft.maxReferenceImages)
+      )
+    );
+  }
   appendImagePricing(formData, draft.pricing);
   return formData;
 }

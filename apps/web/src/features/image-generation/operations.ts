@@ -66,7 +66,10 @@ import {
 import { restoreImage } from "./image-restoration";
 import { maskedOutpaintImage } from "./masked-outpaint";
 import { loadMediaInputs } from "./media-input-loader";
-import { assertImageModelEnabled } from "./model-availability";
+import {
+  assertImageModelEnabled,
+  resolveImageReferenceImageLimit,
+} from "./model-availability";
 import {
   createGenerationModerationContext,
   type GenerationModerationContext,
@@ -1224,6 +1227,14 @@ async function runImageGenerationForUserInternal(
   );
   const supportsQuality = modelCapabilities.supportsQuality;
   const effectiveQuality = supportsQuality ? input.quality : undefined;
+  const defaultImageMaxReferenceImages = resolveImageReferenceImageLimit({
+    modelId: imageModel,
+    modelMaxReferenceImages: modelCapabilities.maxReferenceImages,
+    fallbackMaxReferenceImages:
+      "maxEditReferenceImages" in mediaLimits
+        ? mediaLimits.maxEditReferenceImages
+        : 16,
+  });
   const recordModel = imageModel;
   const moderationContext = await createGenerationModerationContext(
     input.userId
@@ -1353,6 +1364,12 @@ async function runImageGenerationForUserInternal(
                 requestKind: "image",
                 requiresContentSafety: moderationRequired,
                 requiresMask,
+                ...(executionInput.mode === "edit" && inputImages.length > 0
+                  ? {
+                      requiredImageReferenceImages: inputImages.length,
+                      defaultImageMaxReferenceImages,
+                    }
+                  : {}),
               },
               trustedGroupSnapshot
             );
@@ -1369,6 +1386,30 @@ async function runImageGenerationForUserInternal(
             };
           }
           await assertImageGenerationExecutionActive(executionInput);
+
+          if (executionInput.mode === "edit") {
+            const referenceLimit = resolveImageReferenceImageLimit({
+              modelId: imageModel,
+              modelMaxReferenceImages: modelCapabilities.maxReferenceImages,
+              providerMaxReferenceImages:
+                initialConfig.backend?.apiUpstreamAdapter
+                  ?.imageMaxReferenceImages,
+              providerModelMaxReferenceImages:
+                initialConfig.backend?.apiUpstreamAdapter
+                  ?.imageMaxReferenceImagesByModel,
+              fallbackMaxReferenceImages: defaultImageMaxReferenceImages,
+            });
+            if (
+              referenceLimit !== undefined &&
+              inputImages.length > referenceLimit
+            ) {
+              return {
+                error: `当前模型最多支持 ${referenceLimit} 张参考图，已提交 ${inputImages.length} 张。`,
+                errorCode: "validation_error",
+                generationId,
+              };
+            }
+          }
 
           const moderationEnabled =
             moderationRequired && initialConfig.contentSafetyEnabled !== false;

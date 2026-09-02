@@ -371,6 +371,28 @@ export const apiUpstreamAdapterDraftSchema = z
         )
       )
       .optional(),
+    /** 账号级图像参考图数量覆盖；缺失时继承全局模型能力。 */
+    imageMaxReferenceImages: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    /** 账号下模型级图像参考图数量覆盖；键统一为小写模型 ID。 */
+    imageMaxReferenceImagesByModel: z
+      .record(
+        z.string().trim().min(1).max(240),
+        z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+      )
+      .transform((value) =>
+        Object.fromEntries(
+          Object.entries(value).map(([modelId, limit]) => [
+            modelId.trim().toLowerCase(),
+            limit,
+          ])
+        )
+      )
+      .optional(),
     /** 旧适配版本缺失此字段时必须继续使用 multipart。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),

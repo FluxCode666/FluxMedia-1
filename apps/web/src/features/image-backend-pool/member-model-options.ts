@@ -23,6 +23,7 @@ export interface BackendMemberModelOption {
   category: "image" | "video";
   source: "model_configuration" | "existing_member";
   supportedResolutions?: readonly string[];
+  maxReferenceImages?: number;
 }
 
 /** 图像模型统一的账号能力预设；请求尺寸会映射到这些标准档位。 */
@@ -123,6 +124,9 @@ export function buildBackendMemberModelOptions(
         supportedResolutions: [
           ...(entry.supportedResolutions ?? IMAGE_MODEL_RESOLUTION_PRESETS),
         ],
+        ...(entry.maxReferenceImages !== undefined
+          ? { maxReferenceImages: entry.maxReferenceImages }
+          : {}),
       });
       continue;
     }

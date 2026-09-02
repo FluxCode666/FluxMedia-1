@@ -104,6 +104,20 @@ const acquireLeaseInputSchema = z
     groupId: identifierSchema,
     requestedModel: z.string().trim().min(1).max(240),
     requestedResolution: z.string().trim().min(1).max(32).optional(),
+    /** 图生图请求数量；成员候选按其实际账号能力预先过滤。 */
+    requiredImageReferenceImages: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    /** 全局模型配置或系统媒体策略解析出的默认上限。 */
+    defaultImageMaxReferenceImages: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
     excludedMemberIds: z.array(identifierSchema).max(1_000).default([]),
     requiredMemberId: identifierSchema.optional(),
     requiredMemberType: z.literal("api").optional(),
@@ -431,6 +445,14 @@ export function createPostgresBackendPoolRepository(
                       ) as supported_resolution(resolution)
                       where lower(trim(supported_resolution.resolution)) = lower(trim(${input.requestedResolution ?? ""}))
                     )
+                  )
+                  and (
+                    ${input.requiredImageReferenceImages ?? null}::bigint is null
+                    or coalesce(
+                      (api_version.configuration->'imageMaxReferenceImagesByModel'->>lower(trim(${input.requestedModel})))::bigint,
+                      (api_version.configuration->>'imageMaxReferenceImages')::bigint,
+                      ${input.defaultImageMaxReferenceImages ?? null}::bigint
+                    ) >= ${input.requiredImageReferenceImages ?? null}::bigint
                   )
                   and (
                     ${input.requiresContentSafety} = false

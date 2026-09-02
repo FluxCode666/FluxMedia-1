@@ -76,6 +76,8 @@ export interface RedactedApiMemberConfig {
   operations?: ApiUpstreamAdapterDraft["operations"];
   imageSizeConfig?: ApiUpstreamAdapterDraft["imageSizeConfig"];
   imageSizeConfigsByModel?: ApiUpstreamAdapterDraft["imageSizeConfigsByModel"];
+  imageMaxReferenceImages?: number;
+  imageMaxReferenceImagesByModel?: Record<string, number>;
   currentAdapterVersion?: {
     id: string;
     revision: number;
@@ -224,6 +226,9 @@ export function createApiAdapterDraft(
     useStream: input.config.useStream,
     imageSizeConfig: imageSizeConfig ?? null,
     imageSizeConfigsByModel: imageSizeConfigsByModel ?? {},
+    imageMaxReferenceImages: input.config.imageMaxReferenceImages,
+    imageMaxReferenceImagesByModel:
+      input.config.imageMaxReferenceImagesByModel ?? {},
     convertReferenceImagesToPublicUrl:
       input.config.convertReferenceImagesToPublicUrl ?? false,
     videoSubmissionRetryCount: input.config.videoSubmissionRetryCount,
@@ -573,6 +578,9 @@ function mapMemberListRow(value: unknown): BackendMemberAdminSummary {
         operations: adapter.operations,
         imageSizeConfig: adapter.imageSizeConfig ?? null,
         imageSizeConfigsByModel: adapter.imageSizeConfigsByModel ?? {},
+        imageMaxReferenceImages: adapter.imageMaxReferenceImages,
+        imageMaxReferenceImagesByModel:
+          adapter.imageMaxReferenceImagesByModel ?? {},
         currentAdapterVersion: {
           id: row.api_adapter_version_id,
           revision: row.api_adapter_revision,

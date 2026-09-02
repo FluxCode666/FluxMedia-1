@@ -373,6 +373,15 @@ export function buildModelConfigurationSnapshot(
           : customModel?.supportsQuality === true
             ? { supportsQuality: true }
             : {}),
+        ...(marketplaceConfig.imageByModel[configKey]?.maxReferenceImages !==
+        undefined
+          ? {
+              maxReferenceImages:
+                marketplaceConfig.imageByModel[configKey].maxReferenceImages,
+            }
+          : customModel?.maxReferenceImages !== undefined
+            ? { maxReferenceImages: customModel.maxReferenceImages }
+            : {}),
       });
     } else {
       entries.push({
@@ -390,6 +399,15 @@ export function buildModelConfigurationSnapshot(
           ? { supportsQuality: true }
           : customModel?.supportsQuality === true
             ? { supportsQuality: true }
+            : {}),
+        ...(marketplaceConfig.imageByModel[configKey]?.maxReferenceImages !==
+        undefined
+          ? {
+              maxReferenceImages:
+                marketplaceConfig.imageByModel[configKey].maxReferenceImages,
+            }
+          : customModel?.maxReferenceImages !== undefined
+            ? { maxReferenceImages: customModel.maxReferenceImages }
             : {}),
       });
     }

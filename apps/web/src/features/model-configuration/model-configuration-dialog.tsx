@@ -444,6 +444,35 @@ export function ModelConfigurationDialog({
                     }
                   />
                 </div>
+                <div className="max-w-xs space-y-1.5">
+                  <Label htmlFor={`${entry.configKey}-max-reference-images`}>
+                    参考图数量上限
+                  </Label>
+                  <Input
+                    id={`${entry.configKey}-max-reference-images`}
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    step={1}
+                    value={draft.maxReferenceImages ?? ""}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      updateDraft((current) =>
+                        current.category === "image"
+                          ? {
+                              ...current,
+                              ...(event.target.value.trim()
+                                ? { maxReferenceImages: event.target.value }
+                                : { maxReferenceImages: undefined }),
+                            }
+                          : current
+                      )
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    留空表示不覆盖系统默认值，填写 0 表示模型不接受参考图。
+                  </p>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {IMAGE_PRICE_FIELDS.map(([field, label]) => (
                     <PricingInput

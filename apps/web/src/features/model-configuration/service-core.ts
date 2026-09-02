@@ -470,6 +470,9 @@ function serializeRequestPayload(
       : {}),
     pricing: input.pricing,
     ...(input.supportsQuality === true ? { supportsQuality: true } : {}),
+    ...(input.maxReferenceImages !== undefined
+      ? { maxReferenceImages: input.maxReferenceImages }
+      : {}),
   });
 }
 
@@ -890,6 +893,10 @@ export function createModelConfigurationService(
                 ...(input.category === "image" && input.supportsQuality === true
                   ? { supportsQuality: true }
                   : {}),
+                ...(input.category === "image" &&
+                input.maxReferenceImages !== undefined
+                  ? { maxReferenceImages: input.maxReferenceImages }
+                  : {}),
               });
               const hasCustomModel = config.customModels.some(
                 (model) =>
@@ -954,15 +961,26 @@ export function createModelConfigurationService(
               ...(input.category === "image" && input.supportsQuality === true
                 ? { supportsQuality: true }
                 : {}),
+              ...(input.category === "image" &&
+              input.maxReferenceImages !== undefined
+                ? { maxReferenceImages: input.maxReferenceImages }
+                : {}),
             };
             if (input.category === "image") {
               nextConfig.customModels = nextConfig.customModels.map((model) => {
                 if (model.modelId !== input.configKey) return model;
-                const { supportsQuality: _supportsQuality, ...rest } = model;
+                const {
+                  supportsQuality: _supportsQuality,
+                  maxReferenceImages: _maxReferenceImages,
+                  ...rest
+                } = model;
                 return {
                   ...rest,
                   ...(input.supportsQuality === true
                     ? { supportsQuality: true }
+                    : {}),
+                  ...(input.maxReferenceImages !== undefined
+                    ? { maxReferenceImages: input.maxReferenceImages }
                     : {}),
                 };
               });

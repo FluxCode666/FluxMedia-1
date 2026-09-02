@@ -54,6 +54,10 @@ const redactedApiConfigSchema = z
     imageSizeConfigsByModel: z
       .record(z.string(), imageSizeConfigSnapshotSchema)
       .optional(),
+    imageMaxReferenceImages: z.number().int().nonnegative().optional(),
+    imageMaxReferenceImagesByModel: z
+      .record(z.string(), z.number().int().nonnegative())
+      .optional(),
     /** 图生图参考图是否先转存并转换为绝对公网 URL。 */
     convertReferenceImagesToPublicUrl: z.boolean().optional(),
     videoSubmissionRetryCount: z.number().int().min(0).max(10),

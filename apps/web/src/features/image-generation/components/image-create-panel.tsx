@@ -372,7 +372,7 @@ export function ImageCreatePanel({
   imageModerationPricing,
   maxFileSizeBytes,
   maxUploadBytes,
-  maxEditImages,
+  maxEditImages: configuredMaxEditImages,
   moderationEnabled,
   onCreditsConsumed,
   recent,
@@ -496,6 +496,10 @@ export function ImageCreatePanel({
   const normalizedModel = model === "default" ? DEFAULT_IMAGE_MODEL : model;
   const selectedModel = selectedGroup?.models.find(
     (item) => item.id.toLowerCase() === normalizedModel.toLowerCase()
+  );
+  const maxEditImages = Math.min(
+    configuredMaxEditImages,
+    selectedModel?.maxReferenceImages ?? configuredMaxEditImages
   );
   const supportsQuality = selectedModel?.supportsQuality === true;
   useEffect(() => {
@@ -1020,6 +1024,10 @@ export function ImageCreatePanel({
     }
     if (mode !== "generate" && sourceImages.length === 0) {
       setError("图生图或蒙版编辑至少需要一张来源图片");
+      return;
+    }
+    if (mode !== "generate" && sourceImages.length > maxEditImages) {
+      setError(`当前模型最多支持 ${maxEditImages} 张参考图`);
       return;
     }
     if (mode === "mask" && !mask) {

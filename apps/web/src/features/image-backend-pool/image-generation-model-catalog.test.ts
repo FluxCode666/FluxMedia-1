@@ -107,4 +107,61 @@ describe("buildImageGenerationModelCatalog", () => {
       supportsQuality: true,
     });
   });
+
+  it("传播模型配置中的参考图数量上限且保留显式 0", () => {
+    const result = buildImageGenerationModelCatalog({
+      groups: [group],
+      members: [
+        {
+          groupId: group.id,
+          type: "api",
+          supportedModelIds: ["gpt-image-2", "nano-banana-pro"],
+        },
+      ],
+      maxReferenceImagesByModel: {
+        "gpt-image-2": 4,
+        "nano-banana-pro": 0,
+      },
+    });
+
+    expect(result.groups[0]?.models).toEqual([
+      {
+        id: "gpt-image-2",
+        capabilities: { generate: true, edit: true, mask: true },
+        maxReferenceImages: 4,
+      },
+      {
+        id: "nano-banana-pro",
+        capabilities: { generate: true, edit: true, mask: true },
+        maxReferenceImages: 0,
+      },
+    ]);
+  });
+
+  it("按账号下模型、账号、全局模型和系统策略顺序汇总可用参考图上限", () => {
+    const result = buildImageGenerationModelCatalog({
+      groups: [group],
+      fallbackMaxReferenceImages: 16,
+      maxReferenceImagesByModel: { "gpt-image-2": 2 },
+      members: [
+        {
+          groupId: group.id,
+          type: "api",
+          supportedModelIds: ["gpt-image-2"],
+          imageMaxReferenceImages: 5,
+          imageMaxReferenceImagesByModel: { "gpt-image-2": 3 },
+        },
+        {
+          groupId: group.id,
+          type: "api",
+          supportedModelIds: ["gpt-image-2"],
+          imageMaxReferenceImages: 6,
+        },
+      ],
+    });
+
+    // 同一分组可调度多个账号，前端展示不会预先拒绝任一可用账号支持的数量；
+    // 提交时仍由服务端按最终获租账号做权威过滤。
+    expect(result.groups[0]?.models[0]?.maxReferenceImages).toBe(6);
+  });
 });

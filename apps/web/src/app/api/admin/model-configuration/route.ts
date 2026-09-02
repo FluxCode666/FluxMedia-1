@@ -275,6 +275,25 @@ function parsePositiveSafeInteger(value: string): number {
 }
 
 /**
+ * 解析允许 0 的图像参考图上限；0 明确表示模型不接受参考图。
+ *
+ * @param value - multipart 中的十进制整数文本。
+ * @returns 0 至 Number.MAX_SAFE_INTEGER 的整数。
+ * @throws ModelConfigurationFormError - 符号、小数、指数或不安全整数时失败。
+ */
+function parseNonnegativeSafeInteger(value: string): number {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    throw new ModelConfigurationFormError("参考图上限必须是非负整数");
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ModelConfigurationFormError("参考图上限超过安全整数范围");
+  }
+  return parsed;
+}
+
+/**
  * 解析官网首页排序优先级。
  *
  * @param value - 只允许非负安全整数的优先级文本。
@@ -448,11 +467,13 @@ async function parseImageInput(
       ...IMAGE_PRICE_FIELDS,
       "supportedResolutions",
       "supportsQuality",
+      "maxReferenceImages",
     ])
   );
   const isCustom = data.scalars.get("isCustom");
   const supportedResolutions = data.scalars.get("supportedResolutions");
   const supportsQuality = data.scalars.get("supportsQuality");
+  const maxReferenceImages = data.scalars.get("maxReferenceImages");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
@@ -489,6 +510,9 @@ async function parseImageInput(
       : {}),
     ...(supportsQuality !== undefined
       ? { supportsQuality: parseBoolean(supportsQuality) }
+      : {}),
+    ...(maxReferenceImages !== undefined
+      ? { maxReferenceImages: parseNonnegativeSafeInteger(maxReferenceImages) }
       : {}),
   });
 }

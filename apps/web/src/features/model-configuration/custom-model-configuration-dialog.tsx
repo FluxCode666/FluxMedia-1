@@ -38,6 +38,7 @@ import { toast } from "sonner";
 
 import {
   ModelConfigurationDraftError,
+  parseModelConfigurationNonnegativeSafeInteger,
   parseModelConfigurationPrice,
 } from "./model-configuration-draft";
 import { getModelConfigurationSaveErrorMessage } from "./model-configuration-view-model";
@@ -159,6 +160,7 @@ export function CustomModelConfigurationDialog({
     base8kCredits: "20",
   });
   const [supportsQuality, setSupportsQuality] = useState(false);
+  const [maxReferenceImages, setMaxReferenceImages] = useState("");
   const [videoBillingMode, setVideoBillingMode] = useState<
     "per_second" | "per_item"
   >("per_second");
@@ -180,6 +182,7 @@ export function CustomModelConfigurationDialog({
       base8kCredits: "20",
     });
     setSupportsQuality(false);
+    setMaxReferenceImages("");
     setVideoBillingMode("per_second");
     setVideoPricePerSecond("30");
     setVideoPricePerItem("3");
@@ -249,6 +252,14 @@ export function CustomModelConfigurationDialog({
           JSON.stringify(supportedResolutions)
         );
         formData.append("supportsQuality", String(supportsQuality));
+        if (maxReferenceImages.trim()) {
+          formData.append(
+            "maxReferenceImages",
+            String(
+              parseModelConfigurationNonnegativeSafeInteger(maxReferenceImages)
+            )
+          );
+        }
         for (const [field, value] of Object.entries(imagePrices)) {
           formData.append(field, String(parseModelConfigurationPrice(value)));
         }
@@ -498,6 +509,23 @@ export function CustomModelConfigurationDialog({
                   checked={supportsQuality}
                   disabled={isSaving}
                   onCheckedChange={setSupportsQuality}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="custom-model-max-reference-images">
+                  参考图数量上限
+                </Label>
+                <Input
+                  id="custom-model-max-reference-images"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={maxReferenceImages}
+                  disabled={isSaving}
+                  onChange={(event) =>
+                    setMaxReferenceImages(event.target.value)
+                  }
+                  placeholder="不覆盖系统默认值"
                 />
               </div>
             </div>

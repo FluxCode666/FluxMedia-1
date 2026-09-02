@@ -24,6 +24,8 @@ export interface ImageGenerationCatalogModel {
   capabilities: ImageGenerationModelCapabilities;
   /** 仅当模型配置显式开启质量参数时为 true；缺失表示不支持。 */
   supportsQuality?: boolean;
+  /** 全局模型配置的参考图数量上限；0 表示不支持参考图。 */
+  maxReferenceImages?: number;
 }
 
 /** 一个可达分组的图片目录。 */
@@ -45,6 +47,10 @@ export interface ImageGenerationCatalogMember {
   groupId: string;
   type: "api";
   supportedModelIds: readonly string[];
+  /** 供应商账号级参考图数量覆盖。 */
+  imageMaxReferenceImages?: number;
+  /** 供应商账号下模型级参考图数量覆盖；键统一为小写模型 ID。 */
+  imageMaxReferenceImagesByModel?: Readonly<Record<string, number>>;
 }
 
 /** 不包含凭据和 URL 的纯目录事实。 */
@@ -59,6 +65,10 @@ export interface ImageGenerationCatalogSource {
   videoModelIds?: readonly string[];
   /** 仅传递显式开启质量参数的模型；缺失模型默认不支持。 */
   supportsQualityByModel?: Readonly<Record<string, boolean>>;
+  /** 全局模型配置的参考图数量上限；键统一为小写模型 ID。 */
+  maxReferenceImagesByModel?: Readonly<Record<string, number>>;
+  /** 系统媒体策略的参考图硬上限。 */
+  fallbackMaxReferenceImages?: number;
 }
 
 /** API 成员支持完整图片编辑能力。 */
@@ -96,6 +106,11 @@ export function buildImageGenerationModelCatalog(
       ([modelId, supported]) => [modelId.toLowerCase(), supported]
     )
   );
+  const maxReferenceImagesByModel = new Map(
+    Object.entries(source.maxReferenceImagesByModel ?? {}).map(
+      ([modelId, limit]) => [modelId.toLowerCase(), limit]
+    )
+  );
   const videoModelIds = new Set(
     (source.videoModelIds ?? []).map((modelId) => modelId.trim().toLowerCase())
   );
@@ -122,18 +137,32 @@ export function buildImageGenerationModelCatalog(
             continue;
           }
           const normalizedId = modelId.toLowerCase();
+          const maxReferenceImages =
+            member.imageMaxReferenceImagesByModel?.[normalizedId] ??
+            member.imageMaxReferenceImages ??
+            maxReferenceImagesByModel.get(normalizedId) ??
+            source.fallbackMaxReferenceImages;
           const current = models.get(normalizedId);
           if (current) {
             current.capabilities = mergeCapabilities(
               current.capabilities,
               capabilities
             );
+            if (maxReferenceImages !== undefined) {
+              current.maxReferenceImages = Math.max(
+                current.maxReferenceImages ?? 0,
+                maxReferenceImages
+              );
+            }
           } else {
             const supportsQuality = supportsQualityByModel.get(normalizedId);
             models.set(normalizedId, {
               id: modelId,
               capabilities: { ...capabilities },
               ...(supportsQuality === true ? { supportsQuality: true } : {}),
+              ...(maxReferenceImages !== undefined
+                ? { maxReferenceImages }
+                : {}),
             });
           }
         }

@@ -352,6 +352,38 @@ describe("POST /api/admin/model-configuration", () => {
     expect(mocks.invokeOperation).not.toHaveBeenCalled();
   });
 
+  it("解析图像模型的非负参考图上限，并保留 0", async () => {
+    const response = await POST(
+      createMultipartRequest(
+        createFormData({
+          ...explicitImageFields(),
+          maxReferenceImages: "0",
+        })
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(invokedInput()).toMatchObject({
+      category: "image",
+      configKey: "gpt-image-2",
+      maxReferenceImages: 0,
+    });
+
+    for (const maxReferenceImages of ["-1", "1.5", "1e3"]) {
+      mocks.invokeOperation.mockClear();
+      const invalidResponse = await POST(
+        createMultipartRequest(
+          createFormData({
+            ...explicitImageFields(),
+            maxReferenceImages,
+          })
+        )
+      );
+      expect(invalidResponse.status).toBe(400);
+      expect(mocks.invokeOperation).not.toHaveBeenCalled();
+    }
+  });
+
   it("解析自定义图像模型 ID、类型与支持分辨率", async () => {
     const response = await POST(
       createMultipartRequest(

@@ -11,6 +11,7 @@ import {
   parseModelMarketplaceConfig,
 } from "@repo/shared/model-marketplace";
 import { getRuntimeSettingJson } from "@repo/shared/system-settings";
+import { getMediaLimitDefaults } from "@repo/shared/image-generation/media-limit-service";
 import { normalizeVideoModelId } from "@repo/shared/video-generation";
 
 import { backendGroupService } from "./group-service";
@@ -60,11 +61,13 @@ export async function getEffectiveDefaultImageBackendGroup() {
  * @returns 仅包含可达分组和非视频模型；成员类型只决定传输能力，不决定候选。
  */
 export async function getImageGenerationModelCatalog(): Promise<ImageGenerationModelCatalog> {
-  const [groups, members, marketplaceConfigValue] = await Promise.all([
-    backendGroupService.listGroups(),
-    backendMemberService.listMembers(),
-    getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
-  ]);
+  const [groups, members, marketplaceConfigValue, mediaLimits] =
+    await Promise.all([
+      backendGroupService.listGroups(),
+      backendMemberService.listMembers(),
+      getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
+      getMediaLimitDefaults(),
+    ]);
   const marketplaceConfig = parseModelMarketplaceConfig(marketplaceConfigValue);
   const defaultGroups = groups.filter(
     (group) => group.isEnabled && group.isDefault
@@ -99,6 +102,20 @@ export async function getImageGenerationModelCatalog(): Promise<ImageGenerationM
         .filter(([, model]) => model.supportsQuality === true)
         .map(([modelId]) => [modelId, true])
     ),
+    maxReferenceImagesByModel: Object.fromEntries(
+      [
+        ...Object.entries(marketplaceConfig.imageByModel),
+        ...marketplaceConfig.customModels
+          .filter((model) => model.category === "image")
+          .map((model) => [model.modelId, model] as const),
+      ]
+        .filter(([, model]) => model.maxReferenceImages !== undefined)
+        .map(([modelId, model]) => [
+          modelId,
+          model.maxReferenceImages as number,
+        ])
+    ),
+    fallbackMaxReferenceImages: mediaLimits.maxEditReferenceImages,
     members: members
       .filter(
         (member) =>
@@ -112,6 +129,9 @@ export async function getImageGenerationModelCatalog(): Promise<ImageGenerationM
           .map((groupId) => ({
             groupId,
             type: member.type,
+            imageMaxReferenceImages: member.config.imageMaxReferenceImages,
+            imageMaxReferenceImagesByModel:
+              member.config.imageMaxReferenceImagesByModel,
             supportedModelIds: member.supportedModelIds.filter(
               (modelId) =>
                 isModelMarketplaceModelEnabled(
