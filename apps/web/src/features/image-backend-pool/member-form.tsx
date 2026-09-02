@@ -164,6 +164,7 @@ export function BackendMemberFormDialog({
         authentication: member.config.authentication ?? { mode: "bearer" },
         videoSubmissionRetryCount: member.config.videoSubmissionRetryCount,
         videoProtocolMode: member.config.videoProtocolMode ?? "custom",
+        videoInputFormat: member.config.videoInputFormat ?? "url",
         videoInputCapabilities: legacyVideoInputCapabilities,
         videoInputCapabilitiesByModel,
         operations:
@@ -362,6 +363,7 @@ export function BackendMemberFormDialog({
             apiAdapterDraft.convertReferenceImagesToPublicUrl,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
           videoProtocolMode: apiAdapterDraft.videoProtocolMode,
+          videoInputFormat: apiAdapterDraft.videoInputFormat,
           // 旧账号级标签保持关闭；参考媒体能力只按平台模型 ID 声明。
           videoInputCapabilities: {
             referenceVideos: false,
@@ -391,8 +393,78 @@ export function BackendMemberFormDialog({
     }
   }
 
+  const imageSizeConfiguration = (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="image-size-config">供应商默认尺寸配置</Label>
+        <select
+          id="image-size-config"
+          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+          value={imageSizeConfigId}
+          onChange={(event) => setImageSizeConfigId(event.target.value)}
+        >
+          <option value="">不使用尺寸配置，原样透传比例和分辨率</option>
+          {imageSizeConfigs.map((config) => (
+            <option key={config.id} value={config.id}>
+              {config.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {selectedModelIds.filter(
+        (modelId) =>
+          !isLegacyVideoModelId(modelId) && !normalizeVideoModelId(modelId)
+      ).length > 0 ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          {selectedModelIds
+            .filter(
+              (modelId) =>
+                !isLegacyVideoModelId(modelId) &&
+                !normalizeVideoModelId(modelId)
+            )
+            .map((modelId) => {
+              const key = modelId.trim().toLowerCase();
+              return (
+                <div key={key} className="space-y-2">
+                  <Label htmlFor={`image-size-config-${key}`}>
+                    {modelId} 尺寸配置
+                  </Label>
+                  <select
+                    id={`image-size-config-${key}`}
+                    className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                    value={imageSizeConfigIdsByModel[key] ?? ""}
+                    onChange={(event) =>
+                      setImageSizeConfigIdsByModel((current) => {
+                        const next = { ...current };
+                        if (event.target.value) next[key] = event.target.value;
+                        else delete next[key];
+                        return next;
+                      })
+                    }
+                  >
+                    <option value="">跟随供应商默认配置</option>
+                    {imageSizeConfigs.map((config) => (
+                      <option key={config.id} value={config.id}>
+                        {config.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    未覆盖时继承供应商默认配置
+                  </p>
+                </div>
+              );
+            })}
+        </div>
+      ) : null}
+    </div>
+  );
+
   const formContent = (
-    <form className="space-y-6" onSubmit={handleSubmit}>
+    <form
+      className={detailsOnly ? "space-y-10 pb-28" : "space-y-6"}
+      onSubmit={handleSubmit}
+    >
       <fieldset className="contents" disabled={readOnly}>
         {inline && detailsOnly ? null : inline ? (
           <header className="space-y-1">
@@ -609,24 +681,37 @@ export function BackendMemberFormDialog({
           </MemberDetailSection>
         ) : null}
 
+        {detailsOnly && type === "api" ? (
+          <MemberDetailSection
+            title="图片尺寸映射"
+            description="按模型维护比例与分辨率的尺寸映射；模型未单独覆盖时继承供应商默认配置，未选择配置则原样透传。"
+          >
+            {imageSizeConfiguration}
+          </MemberDetailSection>
+        ) : null}
+
         {type === "api" ? (
           <section
             className={
               detailsOnly
-                ? "overflow-hidden rounded-lg border bg-card"
+                ? "space-y-5 border-b border-border/70 pb-8"
                 : "space-y-4 rounded-md border p-4"
             }
           >
-            <header
-              className={detailsOnly ? "border-b bg-muted/20 px-5 py-4" : ""}
-            >
-              <h3 className="font-medium">
+            <header className={detailsOnly ? "space-y-1" : ""}>
+              <h3
+                className={
+                  detailsOnly
+                    ? "text-base font-semibold tracking-tight"
+                    : "font-medium"
+                }
+              >
                 {detailsOnly ? "请求响应处理" : "API 配置"}
               </h3>
               <p
                 className={
                   detailsOnly
-                    ? "mt-1 max-w-3xl text-sm text-muted-foreground"
+                    ? "max-w-3xl text-sm leading-6 text-muted-foreground"
                     : "text-xs text-muted-foreground"
                 }
               >
@@ -634,7 +719,7 @@ export function BackendMemberFormDialog({
                 Responses 或 Chat。
               </p>
             </header>
-            <div className={detailsOnly ? "space-y-5 p-5" : "contents"}>
+            <div className={detailsOnly ? "space-y-6" : "contents"}>
               {!detailsOnly ? (
                 <>
                   <div className="space-y-2">
@@ -672,61 +757,7 @@ export function BackendMemberFormDialog({
                   </div>
                 </>
               ) : null}
-              <div className="space-y-2">
-                <Label htmlFor="image-size-config">
-                  供应商默认图片尺寸配置
-                </Label>
-                <select
-                  id="image-size-config"
-                  className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
-                  value={imageSizeConfigId}
-                  onChange={(event) => setImageSizeConfigId(event.target.value)}
-                >
-                  <option value="">不使用尺寸配置，原样透传比例和分辨率</option>
-                  {imageSizeConfigs.map((config) => (
-                    <option key={config.id} value={config.id}>
-                      {config.name}
-                    </option>
-                  ))}
-                </select>
-                {selectedModelIds
-                  .filter(
-                    (modelId) =>
-                      !isLegacyVideoModelId(modelId) &&
-                      !normalizeVideoModelId(modelId)
-                  )
-                  .map((modelId) => {
-                    const key = modelId.trim().toLowerCase();
-                    return (
-                      <div key={key} className="space-y-2">
-                        <Label htmlFor={`image-size-config-${key}`}>
-                          {modelId} 图片尺寸配置（可选覆盖）
-                        </Label>
-                        <select
-                          id={`image-size-config-${key}`}
-                          className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
-                          value={imageSizeConfigIdsByModel[key] ?? ""}
-                          onChange={(event) =>
-                            setImageSizeConfigIdsByModel((current) => {
-                              const next = { ...current };
-                              if (event.target.value)
-                                next[key] = event.target.value;
-                              else delete next[key];
-                              return next;
-                            })
-                          }
-                        >
-                          <option value="">跟随供应商默认配置</option>
-                          {imageSizeConfigs.map((config) => (
-                            <option key={config.id} value={config.id}>
-                              {config.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    );
-                  })}
-              </div>
+              {!detailsOnly ? imageSizeConfiguration : null}
               {showAdvancedConfiguration ? (
                 <>
                   <BackendBooleanSetting
@@ -755,21 +786,34 @@ export function BackendMemberFormDialog({
         <DialogFooter
           className={
             detailsOnly
-              ? "sticky bottom-4 z-10 rounded-lg border bg-background/95 p-3 shadow-sm backdrop-blur"
+              ? "fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-lg backdrop-blur sm:px-6"
               : undefined
           }
         >
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
+          <div
+            className={
+              detailsOnly
+                ? "mx-auto flex w-full max-w-7xl justify-end gap-2"
+                : "contents"
+            }
           >
-            取消
-          </Button>
-          <Button type="submit" disabled={isPending || groups.length === 0}>
-            {isPending && <Loader2 className="size-4 animate-spin" />}
-            保存成员
-          </Button>
+            <Button
+              className={detailsOnly ? "w-full sm:w-auto" : undefined}
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button
+              className={detailsOnly ? "w-full sm:w-auto" : undefined}
+              type="submit"
+              disabled={isPending || groups.length === 0}
+            >
+              {isPending && <Loader2 className="size-4 animate-spin" />}
+              保存成员
+            </Button>
+          </div>
         </DialogFooter>
       </fieldset>
     </form>

@@ -180,15 +180,15 @@ export function MemberResolutionCapabilitiesEditor({
   const idPrefix = useId();
 
   return (
-    <div className="space-y-3 rounded-md border p-3">
+    <div className="space-y-4">
       <div>
-        <Label>模型级能力配置</Label>
+        <Label className="text-sm font-medium">模型级能力配置</Label>
         <p className="mt-1 text-xs text-muted-foreground">
           视频和音频输入能力按视频模型独立声明；分辨率默认跟随模型配置页，也可按账号覆盖。
         </p>
       </div>
 
-      <div className="space-y-3">
+      <div className="divide-y rounded-md border">
         {modelIds.map((modelId, index) => {
           const option = modelOptions.find(
             (candidate) =>
@@ -205,7 +205,7 @@ export function MemberResolutionCapabilitiesEditor({
           return (
             <section
               aria-labelledby={`${modelControlId}-title`}
-              className="space-y-3 rounded-md bg-muted/30 p-3"
+              className="space-y-3 p-4 first:rounded-t-md last:rounded-b-md"
               key={modelId}
             >
               <div className="flex min-w-0 flex-wrap items-center gap-2">
