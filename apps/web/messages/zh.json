@@ -868,6 +868,7 @@
       "operations": "运营总览",
       "modelConfiguration": "模型配置",
       "supplierManagement": "供应商管理",
+      "imageSizeConfigurations": "图片尺寸配置",
       "groupManagement": "分组管理",
       "support": "支持",
       "newTicket": "新建工单"
@@ -899,6 +900,7 @@
       "operations": "运营总览",
       "modelConfiguration": "模型配置",
       "supplierManagement": "供应商管理",
+      "imageSizeConfigurations": "图片尺寸配置",
       "groupManagement": "分组管理",
       "addModel": "新增模型",
       "addSupplier": "新增供应商",

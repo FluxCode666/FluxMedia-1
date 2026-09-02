@@ -868,6 +868,7 @@
       "operations": "Operations Dashboard",
       "modelConfiguration": "Model Configuration",
       "supplierManagement": "Supplier Management",
+      "imageSizeConfigurations": "Image Size Configurations",
       "groupManagement": "Group Management",
       "support": "Support",
       "newTicket": "New Ticket"
@@ -899,6 +900,7 @@
       "operations": "Operations Dashboard",
       "modelConfiguration": "Model Configuration",
       "supplierManagement": "Supplier Management",
+      "imageSizeConfigurations": "Image Size Configurations",
       "groupManagement": "Group Management",
       "addModel": "Add Model",
       "addSupplier": "Add Supplier",

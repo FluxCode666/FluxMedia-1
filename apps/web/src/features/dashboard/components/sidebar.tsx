@@ -173,6 +173,7 @@ export function DashboardSidebar({ initialSession }: DashboardSidebarProps) {
       "Announcement Management": t("nav.announcementManagement"),
       "Model Configuration": t("nav.modelConfiguration"),
       "Supplier Management": t("nav.supplierManagement"),
+      "Image Size Configurations": t("nav.imageSizeConfigurations"),
       "Group Management": t("nav.groupManagement"),
       Support: t("nav.support"),
       "New Ticket": t("nav.newTicket"),
