@@ -94,7 +94,10 @@ function mountPanel(input: {
         maxUploadBytes: 20 * 1024 * 1024,
         mode: "generate",
         model: "gpt-image-2",
+        aspectRatio: "1:1",
+        resolution: "1k",
         onBackgroundChange: vi.fn(),
+        onAspectRatioChange: vi.fn(),
         onMaskChange: vi.fn(),
         onModelSelectionChange: vi.fn(),
         onPromptChange: vi.fn(),
@@ -103,7 +106,7 @@ function mountPanel(input: {
           input.onRecentReferenceSelect ?? vi.fn().mockResolvedValue(true),
         onRemoveReference: vi.fn(),
         onRemoveSourceImage: vi.fn(),
-        onSizeChange: vi.fn(),
+        onResolutionChange: vi.fn(),
         onSourceImagesChange: input.onSourceImagesChange,
         onSubmit: vi.fn().mockResolvedValue(undefined),
         prompt: "生成一张测试图片",
@@ -111,7 +114,6 @@ function mountPanel(input: {
         recent: input.recent ?? [],
         referenceLoadingId: null,
         resultUrls: [],
-        size: "auto",
         sourceImages: input.sourceImages ?? [],
       })
     );

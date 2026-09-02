@@ -722,6 +722,13 @@
       "when": 1788094800000,
       "tag": "0102_rename_nano_banana2_model",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1788177600000,
+      "tag": "0103_image_size_configs",
+      "breakpoints": true
     }
   ]
 }

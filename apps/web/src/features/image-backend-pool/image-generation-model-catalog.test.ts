@@ -107,19 +107,4 @@ describe("buildImageGenerationModelCatalog", () => {
       supportsQuality: true,
     });
   });
-
-  it("仅传播模型配置中显式开启的 auto 尺寸能力", () => {
-    const result = buildImageGenerationModelCatalog({
-      groups: [group],
-      members: [
-        { groupId: group.id, type: "api", supportedModelIds: ["gpt-image-2"] },
-      ],
-      supportsAutoSizeByModel: { "gpt-image-2": true },
-    });
-
-    expect(result.groups[0]?.models[0]).toMatchObject({
-      id: "gpt-image-2",
-      supportsAutoSize: true,
-    });
-  });
 });

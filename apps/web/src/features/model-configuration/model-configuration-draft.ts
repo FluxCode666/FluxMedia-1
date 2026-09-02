@@ -47,7 +47,6 @@ export type ModelConfigurationDraft =
       pricing: ModelConfigurationImagePricingDraft;
       supportedResolutions: string[];
       supportsQuality: boolean;
-      supportsAutoSize: boolean;
     } & MarketplaceDraftFields)
   | ({
       category: "video";
@@ -152,8 +151,6 @@ export function createModelConfigurationDraft(
       supportedResolutions: [...(entry.supportedResolutions ?? [])],
       // 质量参数默认关闭；只有模型配置显式开启时才展示并传递。
       supportsQuality: entry.supportsQuality === true,
-      // auto 尺寸默认关闭；只有模型配置显式开启时才允许传递。
-      supportsAutoSize: entry.supportsAutoSize === true,
     };
   }
   return {
@@ -439,7 +436,6 @@ export function buildModelConfigurationFormData(
     );
   }
   formData.append("supportsQuality", String(draft.supportsQuality));
-  formData.append("supportsAutoSize", String(draft.supportsAutoSize));
   appendImagePricing(formData, draft.pricing);
   return formData;
 }

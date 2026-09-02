@@ -20,24 +20,21 @@ import { ensureUolInitialized } from "@/server/uol-init";
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
-  resolveImageRequestSize,
-  validateImageSize,
 } from "./resolution";
 import { invokeImageGenerationOperation } from "./uol-client";
 
-const generateImageSchema = z.object({
-  prompt: z
-    .string()
-    .min(1)
-    .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
-  size: z
-    .string()
-    .optional()
-    .refine((value) => !value || validateImageSize(value).valid, {
-      message: "Invalid image size",
-    }),
-  model: imageModelIdSchema,
-});
+const generateImageSchema = z
+  .object({
+    prompt: z
+      .string()
+      .min(1)
+      .max(IMAGE_PROMPT_MAX_CHARACTERS, IMAGE_PROMPT_TOO_LONG_MESSAGE),
+    aspectRatio: z.string().trim().min(1).max(64).optional(),
+    aspect_ratio: z.string().trim().min(1).max(64).optional(),
+    resolution: z.string().trim().min(1).max(64).optional(),
+    model: imageModelIdSchema,
+  })
+  .strict();
 
 /** 创建单次图片生成任务并委托统一 image.generate operation。 */
 export const generateImageAction = protectedAction
@@ -49,7 +46,8 @@ export const generateImageAction = protectedAction
         operation: "generate",
         generationId: randomUUID(),
         prompt: parsedInput.prompt,
-        size: resolveImageRequestSize(parsedInput.size),
+        aspectRatio: parsedInput.aspectRatio ?? parsedInput.aspect_ratio,
+        resolution: parsedInput.resolution,
         model: parsedInput.model,
       },
       {

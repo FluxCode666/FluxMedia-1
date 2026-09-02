@@ -51,20 +51,6 @@ const CREDIT_DECIMAL_PLACES = 2;
 const CREDIT_DECIMAL_FACTOR = 10 ** CREDIT_DECIMAL_PLACES;
 const CREDIT_ROUNDING_EPSILON = 1e-9;
 
-/**
- * 解析一次图片请求的有效尺寸值。
- *
- * @param size 用户或内部调用方提供的可选尺寸。
- * @returns 清理首尾空白后的显式尺寸；缺失或空白时返回 `auto`。
- * @sideEffects 无。
- * @failure 不校验尺寸格式；各传输入口仍须使用 `validateImageSize` 拒绝非法输入。
- */
-export function resolveImageRequestSize(
-  size: string | null | undefined
-): string {
-  return size?.trim() || AUTO_IMAGE_SIZE;
-}
-
 export type ImageDimensions = {
   width: number;
   height: number;
@@ -116,17 +102,6 @@ export function getImageBackendApiModel(
     DEFAULT_IMAGE_MODEL
   );
 }
-
-export const IMAGE_RESOLUTION_PRESETS = [
-  { value: AUTO_IMAGE_SIZE, label: "Auto", detail: "Backend decides" },
-  { value: IMAGE_1K_BASE_SIZE, label: "1K Square", detail: "1248 × 1248" },
-  { value: "1536x1024", label: "Landscape", detail: "1536 × 1024" },
-  { value: "1024x1536", label: "Portrait", detail: "1024 × 1536" },
-  { value: "2048x2048", label: "2K Square", detail: "2048 × 2048" },
-  { value: "2048x1152", label: "2K Wide", detail: "2048 × 1152" },
-  { value: "3840x2160", label: "4K Wide", detail: "3840 × 2160" },
-  { value: "2160x3840", label: "4K Tall", detail: "2160 × 3840" },
-] as const;
 
 /**
  * 质量等级仅作为上游请求参数，不参与本站积分计费。

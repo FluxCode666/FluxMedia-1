@@ -87,11 +87,6 @@ function ImagePricingGrid({
           </div>
         ))}
       </div>
-      <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
-        {model.supportsAutoSize === true
-          ? t("detail.autoSizeSupported")
-          : t("detail.autoSizeUnsupported")}
-      </p>
     </div>
   );
 }

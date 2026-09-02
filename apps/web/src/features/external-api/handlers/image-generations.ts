@@ -32,8 +32,6 @@ import {
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
-  resolveImageRequestSize,
-  validateImageSize,
 } from "@/features/image-generation/resolution";
 import type { PartialImageResult } from "@/features/image-generation/types";
 import {
@@ -53,12 +51,9 @@ const externalImageGenerationSchema = z
     thinking: z
       .enum(["minimal", "none", "low", "medium", "high", "xhigh"])
       .optional(),
-    size: z
-      .string()
-      .optional()
-      .refine((value) => !value || validateImageSize(value).valid, {
-        message: "Invalid image size",
-      }),
+    aspectRatio: z.string().trim().min(1).max(64).optional(),
+    aspect_ratio: z.string().trim().min(1).max(64).optional(),
+    resolution: z.string().trim().min(1).max(64).optional(),
     quality: z.enum(["auto", "low", "medium", "high"]).optional(),
     moderation: z.enum(["auto", "low"]).optional(),
     response_format: z.enum(["url", "b64_json"]).optional(),
@@ -205,7 +200,8 @@ export const postExternalImageGenerations = withApiLogging(
       prompt: parsed.data.prompt,
       promptOptimization:
         parsed.data.promptOptimization ?? parsed.data.prompt_optimization,
-      size: resolveImageRequestSize(parsed.data.size),
+      aspectRatio: parsed.data.aspectRatio ?? parsed.data.aspect_ratio,
+      resolution: parsed.data.resolution,
       model: imageModel,
       thinking: parsed.data.thinking,
       quality: parsed.data.quality,
@@ -256,7 +252,6 @@ export const postExternalImageGenerations = withApiLogging(
               route: "/v1/images/generations",
               stream: true,
               model: imageModel,
-              size: input.size,
             },
             {
               generationId: result.generationId,
@@ -325,7 +320,6 @@ export const postExternalImageGenerations = withApiLogging(
             route: "/v1/images/generations",
             stream: false,
             model: imageModel,
-            size: input.size,
           }
         );
       },

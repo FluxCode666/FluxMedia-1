@@ -159,7 +159,6 @@ export function CustomModelConfigurationDialog({
     base8kCredits: "20",
   });
   const [supportsQuality, setSupportsQuality] = useState(false);
-  const [supportsAutoSize, setSupportsAutoSize] = useState(false);
   const [videoBillingMode, setVideoBillingMode] = useState<
     "per_second" | "per_item"
   >("per_second");
@@ -181,7 +180,6 @@ export function CustomModelConfigurationDialog({
       base8kCredits: "20",
     });
     setSupportsQuality(false);
-    setSupportsAutoSize(false);
     setVideoBillingMode("per_second");
     setVideoPricePerSecond("30");
     setVideoPricePerItem("3");
@@ -251,7 +249,6 @@ export function CustomModelConfigurationDialog({
           JSON.stringify(supportedResolutions)
         );
         formData.append("supportsQuality", String(supportsQuality));
-        formData.append("supportsAutoSize", String(supportsAutoSize));
         for (const [field, value] of Object.entries(imagePrices)) {
           formData.append(field, String(parseModelConfigurationPrice(value)));
         }
@@ -501,23 +498,6 @@ export function CustomModelConfigurationDialog({
                   checked={supportsQuality}
                   disabled={isSaving}
                   onCheckedChange={setSupportsQuality}
-                />
-              </div>
-              <div className="flex items-center justify-between gap-4 border-t pt-3">
-                <div>
-                  <Label htmlFor="custom-model-supports-auto-size">
-                    支持 auto 尺寸
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    关闭后站内生图必须选择明确尺寸，模型广场会标注不支持传
-                    auto。
-                  </p>
-                </div>
-                <Switch
-                  id="custom-model-supports-auto-size"
-                  checked={supportsAutoSize}
-                  disabled={isSaving}
-                  onCheckedChange={setSupportsAutoSize}
                 />
               </div>
             </div>

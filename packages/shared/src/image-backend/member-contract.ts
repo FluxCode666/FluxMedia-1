@@ -23,6 +23,8 @@ import {
   supportedModelIdsSchema,
 } from "./supported-models";
 
+export const imageSizeConfigIdSchema = z.string().trim().min(1).max(128);
+
 /** 供应商账号按模型声明的输出分辨率覆盖；缺失模型键表示继承全局模型能力。 */
 export const backendModelResolutionCapabilitiesSchema = z
   .record(
@@ -113,6 +115,8 @@ export const apiBackendMemberConfigSchema = z
     baseUrl: mediaUpstreamUrlSchema,
     apiKey: z.string().trim().min(1).max(8_192).optional(),
     useStream: z.boolean().default(false),
+    /** 管理员选择的尺寸配置集；实际映射由服务端读取并写入适配版本快照。 */
+    imageSizeConfigId: imageSizeConfigIdSchema.nullable().optional(),
     /** 图生图参考图是否先转存并转换为绝对公网 URL；缺失时按关闭解析。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),

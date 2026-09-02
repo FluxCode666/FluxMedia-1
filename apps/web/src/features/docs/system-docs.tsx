@@ -28,8 +28,6 @@ import {
   replaceDocumentationBaseUrl,
 } from "./documentation-base-url";
 import {
-  IMAGE_SIZE_DOC_ENUM_EN,
-  IMAGE_SIZE_DOC_ENUM_ZH,
   IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
   IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
   IMAGE_SIZE_DOC_TABLE_NOTE_EN,
@@ -148,7 +146,7 @@ const sections = {
         {
           title: "Codex/Responses 账号池",
           description:
-            "chat / agent / responses 走 Responses 语义（image_generation 工具循环、多轮）。普通图像生成与图生图改走该账号的 /images/generations、/images/edits 直连端点（同一 OAuth 凭据，JSON 体、size 走顶层；图生图的输入图/mask 以 base64 data URL 放在 images[].image_url / mask.image_url），以确定性遵循 size 等尺寸参数；Codex 托管的 image_generation 工具不尊重 size，故纯生成/编辑不再用它（codex images 端点要 JSON,不接受 multipart）。即便上游返回尺寸偏小，最终图也会经自动超分校准补足到目标分辨率（见下「分辨率超分与高清修复」），故 Web/Codex 出图同样支持接近 4K 的目标尺寸。",
+            "chat / agent / responses 走 Responses 语义（image_generation 工具循环、多轮）。普通图像生成与图生图改走该账号的 /images/generations、/images/edits 直连端点（同一 OAuth 凭据；图生图的输入图/mask 以 base64 data URL 放在 images[].image_url / mask.image_url）。图片请求使用 aspectRatio/aspect_ratio 和 resolution；只有供应商选择尺寸配置后，平台才会在内部映射为上游 size。即便上游返回尺寸偏小，最终图也会经自动超分校准补足到目标分辨率（见下「分辨率超分与高清修复」）。",
         },
         {
           title: "外接 API 后端",
@@ -626,7 +624,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
       { "role": "system", "content": "你是专业视觉海报设计师。" },
       { "role": "user", "content": "生成一张科技企业宣传海报，16:9，蓝白配色" }
     ],
-    "size": "1536x864",
+    "aspectRatio": "16:9",
+    "resolution": "1k",
     "quality": "high",
     "response_format": "url"
   }'
@@ -647,7 +646,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
         ]
       }
     ],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url"
   }'
 
@@ -661,7 +661,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
     "messages": [
       { "role": "user", "content": "生成一张未来城市概念图" }
     ],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "stream": true
   }'`,
           responseExample: `{
@@ -726,9 +727,14 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
                 "GPT 对话模型。Web/Codex/Responses 后端会按各自能力处理；不可用模型会返回错误或由后端调度处理。",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "可选",
-              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。非法尺寸返回参数错误；作为本轮 Chat 生图运行参数。详见下方“图片尺寸表”。`,
+              description: "图片宽高比，例如 1:1、16:9；两种命名任选其一。",
+            },
+            {
+              name: "resolution",
+              requirement: "可选",
+              description: "图片分辨率档位；不指定时由上游决定。",
             },
             {
               name: "quality",
@@ -875,7 +881,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A cute baby sea otter",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "medium",
     "background": "auto"
   }'
@@ -887,7 +894,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-1.5",
     "prompt": "一张赛博朋克城市夜景，雨后霓虹反光",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "webp",
     "output_compression": 85,
@@ -902,7 +910,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "生成一张 16:9 产品海报",
-    "size": "1536x864",
+    "aspectRatio": "16:9",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "jpeg",
     "output_compression": 90,
@@ -918,7 +927,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "一张 1:1 头像海报",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "web_first": true
   }'
@@ -931,7 +941,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "一张透明玻璃材质的未来感咖啡杯",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "stream": true
   }'
@@ -943,7 +954,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-1.5",
     "prompt": "一张透明背景的产品图标",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "png",
     "background": "transparent",
@@ -958,7 +970,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "一张透明背景的产品图标",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "png",
     "background": "transparent",
@@ -1031,9 +1044,14 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
                 "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应。服务端只在该密钥绑定的可信分组中精确匹配成员显式暴露的 ID，不转换 default 或其他目录外别名。Responses 对话模型请使用 /v1/responses。",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "可选",
-              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。非法尺寸会返回参数错误。详见下方“图片尺寸表”。`,
+              description: "图片宽高比，例如 1:1、16:9；两种命名任选其一。",
+            },
+            {
+              name: "resolution",
+              requirement: "可选",
+              description: "图片分辨率档位；不指定时由上游决定。",
             },
             {
               name: "quality",
@@ -1192,7 +1210,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
             "Web 后端无法严格控制输出尺寸和输出格式；本站保存时会按实际图片头识别扩展名和 MIME。",
             "background=transparent 并非所有模型都支持；OpenAI 官方文档当前列出 gpt-image-1.5、gpt-image-1、gpt-image-1-mini 支持透明背景，且通常还要求 png 或 webp 输出。不支持的上游可能直接返回 HTTP 400，而不是自动降级。",
             "async 任务持久化到 PostgreSQL 并由 BullMQ 唤醒；服务重启、多实例切换或短暂投递失败后会由恢复任务继续收敛。",
-            "如果实际生成尺寸与请求尺寸不一致，本站会按检测到的实际尺寸修正记录和计费。",
+            "如果实际生成尺寸与请求的比例/分辨率目标不一致，本站会按检测到的实际尺寸修正记录和计费。",
             "官方 Images API 可能返回 usage；本站当前 usage 通常为 null，但会通过顶层 credits_consumed、错误对象或流式完成事件返回本站结算积分。",
           ],
         },
@@ -1208,7 +1226,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-2" \\
   -F prompt="把参考图改成电影海报风格" \\
-  -F size="1024x1024" \\
+  -F aspectRatio="1:1" \\
+  -F resolution="1k" \\
   -F quality="high" \\
   -F response_format="url" \\
   -F output_format="jpeg" \\
@@ -1221,7 +1240,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-2" \\
   -F prompt="只重绘 mask 区域，保持人物脸部不变" \\
-  -F size="1536x1024" \\
+  -F aspectRatio="3:2" \\
+  -F resolution="1k" \\
   -F quality="medium" \\
   -F response_format="b64_json" \\
   -F promptOptimization="false" \\
@@ -1246,7 +1266,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "image_urls": ["https://example.com/extra.jpg"],
     "mask_url": "https://example.com/mask.png",
     "mask_image_url": "https://example.com/mask-alt.png",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "auto",
     "response_format": "url",
     "output_format": "webp",
@@ -1265,7 +1286,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "model": "gpt-image-2",
     "prompt": "保留人物，改成电影剧照质感",
     "images": ["https://example.com/reference.png"],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "web_first": true
   }'
@@ -1276,7 +1298,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Accept: text/event-stream" \\
   -F model="gpt-image-2" \\
   -F prompt="保留构图，改成水彩插画风格" \\
-  -F size="1024x1024" \\
+  -F aspectRatio="1:1" \\
+  -F resolution="1k" \\
   -F response_format="url" \\
   -F stream="true" \\
   -F 'image=@/path/to/reference.png'
@@ -1286,7 +1309,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-1.5" \\
   -F prompt="去除背景，输出透明 PNG" \\
-  -F size="1024x1024" \\
+  -F aspectRatio="1:1" \\
+  -F resolution="1k" \\
   -F response_format="url" \\
   -F output_format="png" \\
   -F background="transparent" \\
@@ -1345,9 +1369,14 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
                 "图片模型 ID，必须原样取自当前 API 密钥的 GET /v1/models 响应；目录外 ID 和其他别名不会被转换。取值范围与调度规则同 /v1/images/generations。",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "可选",
-              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。详见下方“图片尺寸表”。`,
+              description: "图片宽高比，例如 1:1、16:9；两种命名任选其一。",
+            },
+            {
+              name: "resolution",
+              requirement: "可选",
+              description: "图片分辨率档位；不指定时由上游决定。",
             },
             {
               name: "quality",
@@ -1928,7 +1957,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
     "model": "gpt-5.4",
     "image_model": "gpt-image-2",
     "prompt": "联网查询浙江双元科技公开资料，迭代生成一张企业宣传海报",
-    "size": "1536x1024",
+    "aspectRatio": "3:2",
+    "resolution": "1k",
     "quality": "high",
     "thinking": "medium",
     "agent_max_rounds": 3,
@@ -1945,7 +1975,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
     "image_model": "gpt-image-2",
     "prompt": "参考这张产品图，先分析卖点，再生成一张电商海报",
     "images": ["https://example.com/product.png"],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "agent_max_rounds": 2
   }'
 
@@ -1955,7 +1986,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
   -F model="gpt-5.4" \\
   -F image_model="gpt-image-2" \\
   -F prompt="阅读附件资料并生成一张展会宣传海报" \\
-  -F size="1536x1024" \\
+  -F aspectRatio="3:2" \\
+  -F resolution="1k" \\
   -F response_format="url" \\
   -F agent_max_rounds="3" \\
   -F 'image[]=@/path/to/reference.png' \\
@@ -1970,7 +2002,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
     "model": "gpt-5.4",
     "image_model": "gpt-image-2",
     "prompt": "先搜索资料，再迭代生成一张科技蓝企业海报",
-    "size": "1536x1024",
+    "aspectRatio": "3:2",
+    "resolution": "1k",
     "stream": true,
     "agent_max_rounds": 2,
     "agent_force_max_rounds": true
@@ -2066,9 +2099,16 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
               custom: true,
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "可选",
-              description: `目标尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；省略等同于 auto，也可传符合站内约束的自定义 WIDTHxHEIGHT。非法尺寸返回参数错误；作为 Agent 内 image_generation 工具运行参数。详见下方“图片尺寸表”。`,
+              description:
+                "图片宽高比，例如 1:1、16:9；两种命名任选其一。作为 Agent 内 image_generation 工具运行参数。",
+            },
+            {
+              name: "resolution",
+              requirement: "可选",
+              description:
+                "图片分辨率档位；不指定时由上游决定。作为 Agent 内 image_generation 工具运行参数。",
             },
             {
               name: "quality",
@@ -2179,7 +2219,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
   -d '{
     "model": "gpt-5.4",
     "input": "生成一张 1:1 的未来感产品渲染图",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "high"
   }'
 
@@ -2191,7 +2232,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "model": "gpt-5.4",
     "input": "生成一张横版科技产品 KV",
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "size": "1536x864",
+    "aspectRatio": "16:9",
+    "resolution": "1k",
     "quality": "medium",
     "reasoning": { "effort": "low" },
     "store": true
@@ -2213,7 +2255,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
       }
     ],
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "output_format": "webp",
     "output_compression": 85
   }'
@@ -2227,7 +2270,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "previous_response_id": "resp_previous_id",
     "input": "在上一张图基础上加一个月亮",
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "reasoning": { "effort": "minimal" },
     "stream": true
   }'`,
@@ -2309,10 +2353,18 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
                 "支持 minimal、none、low、medium、high、xhigh；最终是否生效取决于命中的后端。",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "可选",
               custom: true,
-              description: `本站便捷字段：未在 image_generation tool 内指定尺寸时，作为本次生图 size 使用。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}；也可传符合站内约束的自定义 WIDTHxHEIGHT。详见下方“图片尺寸表”。`,
+              description:
+                "本站便捷字段：未在 image_generation tool 内指定比例时，作为本次生图比例使用。",
+            },
+            {
+              name: "resolution",
+              requirement: "可选",
+              custom: true,
+              description:
+                "本站便捷字段：未在 image_generation tool 内指定分辨率时，作为本次生图分辨率使用。",
             },
             {
               name: "quality",
@@ -2402,7 +2454,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       description:
         "走 ChatGPT 网页生图能力，适合复用 Web 账号额度，但不是严格参数化的 Images/Responses API。",
       valid: [
-        "**分辨率不可严格控制；size 只能作为提示/记录参考，不能保证按请求尺寸输出。**",
+        "**分辨率与比例不可严格控制；它们只作为生成目标，不能保证上游按目标像素输出。**",
         "**不能保证 4K 输出；是否出高分辨率取决于 ChatGPT Web 当前能力和账号状态。**",
         "可控制主 GPT 对话模型和 Web 思考强度；图片模型字段不会映射成独立 Web 生图模型。",
         "关闭提示词优化时会发送原始 prompt，并把 Web 思考强度压到 instant，尽量减少平台侧改写。",
@@ -2419,7 +2471,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       valid: [
         "GPT 模型传给 Responses 顶层 model。",
         "图片模型传给 image_generation 工具 model。",
-        "size、quality、参考图、mask 会组装进 Responses 工具请求。",
+        "aspectRatio/aspect_ratio、resolution、quality、参考图和 mask 会组装进 Responses 工具请求。",
         "quality 仅在图片模型为 gpt-image-2 时使用；其他图片模型不会传入 quality。",
         "页面 Chat 模式只提供普通多模态对话/生图语义；页面 Agent 模式默认提供 image_generation、web_search、continue_generation，不强制 tool_choice，并会线性多轮续跑，让模型像 Codex 一样按需联网、读取已上传文本文件上下文、生成草图和迭代改版。",
         "Chat/Agent 上传的本地文本/代码文件会作为请求上下文读取；不会开放服务器文件系统路径读取。",
@@ -2470,7 +2522,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       rows: [
         [
           "超分（自动）",
-          "Web / Codex 等后端常返回小于请求尺寸的图（Codex 尤其不严格遵循 size）。平台会在最终图较长边不足目标尺寸 2/3 时，用 Real-ESRGAN 自动放大到目标尺寸（不裁剪、保宽高比），因此 Web / Codex 也能稳定输出接近 4K 的目标分辨率——即「支持 4K」。由管理端「出图分辨率超分校准」开关控制，单张约 1-2 秒。",
+          "Web / Codex 等后端常返回小于请求分辨率的图。平台会在最终图较长边不足目标分辨率 2/3 时，用 Real-ESRGAN 自动放大（不裁剪、保宽高比），因此 Web / Codex 也能稳定输出接近 4K 的目标分辨率。由管理端「出图分辨率超分校准」开关控制，单张约 1-2 秒。",
         ],
         [
           "高清修复（手动）",
@@ -2489,7 +2541,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
     imageSizeTable: {
       title: "图片尺寸表",
       description:
-        "下表按站内生图尺寸选择器的分辨率基准和宽高比，列出 size 参数对应的标准枚举值。",
+        "下表展示分辨率与宽高比的像素参考值；图片请求不再接受 size 参数。",
       headers: IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
       rows: IMAGE_SIZE_DOC_TABLE_ROWS,
       note: IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
@@ -2598,7 +2650,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         {
           title: "Codex/Responses Pool",
           description:
-            "chat / agent / responses use Responses semantics (image_generation tool loop, multi-round). Plain image generation and image edits instead route to that account's direct /images/generations and /images/edits endpoints (same OAuth credential, JSON body, size at the top level; image-to-image input/mask passed as base64 data URLs in images[].image_url / mask.image_url) to deterministically honor size — the Codex-hosted image_generation tool ignores size, so plain generation/edit no longer uses it (the codex images endpoints take JSON, not multipart). Even when the upstream returns a smaller image, the final image is auto-upscaled to the target resolution (see 'Super-Resolution And HD Repair' below), so Web/Codex output likewise supports near-4K target sizes.",
+            "chat / agent / responses use Responses semantics (image_generation tool loop, multi-round). Plain image generation and edits use the account's direct /images/generations and /images/edits endpoints; edit inputs and masks are sent as base64 data URLs in images[].image_url / mask.image_url. Image requests use aspectRatio/aspect_ratio and resolution. Only providers with a selected size configuration map those values internally to an upstream size.",
         },
         {
           title: "External API Backend",
@@ -2952,7 +3004,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
       { "role": "system", "content": "You are a professional poster designer." },
       { "role": "user", "content": "Create a 16:9 blue and white technology company poster" }
     ],
-    "size": "1536x864",
+    "aspectRatio": "16:9",
+    "resolution": "1k",
     "quality": "high",
     "response_format": "url"
   }'
@@ -2973,7 +3026,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
         ]
       }
     ],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url"
   }'
 
@@ -2987,7 +3041,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/chat/completions \\
     "messages": [
       { "role": "user", "content": "Create a futuristic city concept image" }
     ],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "stream": true
   }'`,
           responseExample: `{
@@ -3052,9 +3107,16 @@ data: {"id":"chatcmpl_...","object":"chat.completion.chunk","choices":[{"index":
                 "GPT chat model. Web/Codex/Responses backends handle support according to their capabilities.",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "Optional",
-              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. Invalid values are rejected. Used as a runtime Chat image parameter. See the “Image Size Table” below.`,
+              description:
+                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used.",
+            },
+            {
+              name: "resolution",
+              requirement: "Optional",
+              description:
+                "Image resolution tier; unset values are chosen by the upstream.",
             },
             {
               name: "quality",
@@ -3187,7 +3249,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A cute baby sea otter",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "medium",
     "background": "auto"
   }'
@@ -3199,7 +3262,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-1.5",
     "prompt": "A cyberpunk city at night after rain, neon reflections",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "webp",
     "output_compression": 85,
@@ -3214,7 +3278,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "Create a 16:9 product campaign poster",
-    "size": "1536x864",
+    "aspectRatio": "16:9",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "jpeg",
     "output_compression": 90,
@@ -3230,7 +3295,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A 1:1 avatar poster",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "web_first": true
   }'
@@ -3243,7 +3309,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A transparent glass futuristic coffee cup",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "stream": true
   }'
@@ -3255,7 +3322,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-1.5",
     "prompt": "A transparent-background product icon",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "png",
     "background": "transparent",
@@ -3270,7 +3338,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/generations \\
   -d '{
     "model": "gpt-image-2",
     "prompt": "A transparent-background product icon",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "output_format": "png",
     "background": "transparent",
@@ -3343,9 +3412,16 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
                 "Exact image model ID returned by GET /v1/models for the current API key. The server matches only IDs explicitly exposed by members in the key's trusted group; it does not rewrite default or other out-of-catalog aliases. Use /v1/responses for Responses chat models.",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "Optional",
-              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. FluxMedia validates the size and rejects invalid values. See the “Image Size Table” below.`,
+              description:
+                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used.",
+            },
+            {
+              name: "resolution",
+              requirement: "Optional",
+              description:
+                "Image resolution tier; unset values are chosen by the upstream.",
             },
             {
               name: "quality",
@@ -3485,7 +3561,7 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/task_... \\
             "Web backends cannot strictly control output dimensions or output format. FluxMedia labels stored files by the detected image header and MIME.",
             "background=transparent is not universally supported. OpenAI's official docs currently list gpt-image-1.5, gpt-image-1, and gpt-image-1-mini as supporting transparent backgrounds, and png or webp output is usually required. Unsupported upstream models may reject the request with HTTP 400 instead of silently falling back.",
             "Async tasks are persisted in PostgreSQL and awakened by BullMQ. Recovery jobs continue unfinished work after restarts, instance switches, or temporary delivery failures.",
-            "If the actual generated dimensions differ from the requested size, FluxMedia records and bills using the detected actual size.",
+            "If the generated dimensions differ from the requested aspect-ratio/resolution target, FluxMedia records and bills using the detected dimensions.",
             "The official Images API may return usage. FluxMedia usually returns usage: null, but FluxMedia-billed credits are returned through top-level credits_consumed, error payloads, or streaming completion events.",
           ],
         },
@@ -3501,7 +3577,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-2" \\
   -F prompt="Turn the reference image into a cinematic poster" \\
-  -F size="1024x1024" \\
+  -F aspectRatio="1:1" \\
+  -F resolution="1k" \\
   -F quality="high" \\
   -F response_format="url" \\
   -F output_format="jpeg" \\
@@ -3514,7 +3591,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-2" \\
   -F prompt="Only redraw the masked area and keep the face unchanged" \\
-  -F size="1536x1024" \\
+  -F aspectRatio="3:2" \\
+  -F resolution="1k" \\
   -F quality="medium" \\
   -F response_format="b64_json" \\
   -F promptOptimization="false" \\
@@ -3539,7 +3617,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "image_urls": ["https://example.com/extra.jpg"],
     "mask_url": "https://example.com/mask.png",
     "mask_image_url": "https://example.com/mask-alt.png",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "auto",
     "response_format": "url",
     "output_format": "webp",
@@ -3558,7 +3637,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
     "model": "gpt-image-2",
     "prompt": "Keep the person and make it look like a cinematic still",
     "images": ["https://example.com/reference.png"],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "url",
     "web_first": true
   }'
@@ -3569,7 +3649,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Accept: text/event-stream" \\
   -F model="gpt-image-2" \\
   -F prompt="Keep the composition and convert it to watercolor illustration" \\
-  -F size="1024x1024" \\
+  -F aspectRatio="1:1" \\
+  -F resolution="1k" \\
   -F response_format="url" \\
   -F stream="true" \\
   -F 'image=@/path/to/reference.png'
@@ -3579,7 +3660,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/images/edits \\
   -H "Authorization: Bearer $GPT2IMAGE_API_KEY" \\
   -F model="gpt-image-1.5" \\
   -F prompt="Remove the background and output a transparent PNG" \\
-  -F size="1024x1024" \\
+  -F aspectRatio="1:1" \\
+  -F resolution="1k" \\
   -F response_format="url" \\
   -F output_format="png" \\
   -F background="transparent" \\
@@ -3639,9 +3721,16 @@ data: {"type":"image_edit.completed","index":0,"generation_id":"...","generation
                 "Exact image model ID returned by GET /v1/models for the current API key. Out-of-catalog IDs and other aliases are not rewritten. The same rule applies to /v1/images/generations.",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "Optional",
-              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
+              description:
+                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used.",
+            },
+            {
+              name: "resolution",
+              requirement: "Optional",
+              description:
+                "Image resolution tier; unset values are chosen by the upstream.",
             },
             {
               name: "quality",
@@ -4211,7 +4300,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
     "model": "gpt-5.4",
     "image_model": "gpt-image-2",
     "prompt": "Search public information about Zhejiang Shuangyuan Technology and iterate an enterprise poster",
-    "size": "1536x1024",
+    "aspectRatio": "3:2",
+    "resolution": "1k",
     "quality": "high",
     "thinking": "medium",
     "agent_max_rounds": 3,
@@ -4228,7 +4318,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
     "image_model": "gpt-image-2",
     "prompt": "Analyze this product photo and create an ecommerce poster",
     "images": ["https://example.com/product.png"],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "agent_max_rounds": 2
   }'
 
@@ -4238,7 +4329,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
   -F model="gpt-5.4" \\
   -F image_model="gpt-image-2" \\
   -F prompt="Read the attachment and create a trade-show poster" \\
-  -F size="1536x1024" \\
+  -F aspectRatio="3:2" \\
+  -F resolution="1k" \\
   -F response_format="url" \\
   -F agent_max_rounds="3" \\
   -F 'image[]=@/path/to/reference.png' \\
@@ -4253,7 +4345,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/agents/images \\
     "model": "gpt-5.4",
     "image_model": "gpt-image-2",
     "prompt": "Search first, then iterate a technology-blue enterprise poster",
-    "size": "1536x1024",
+    "aspectRatio": "3:2",
+    "resolution": "1k",
     "stream": true,
     "agent_max_rounds": 2,
     "agent_force_max_rounds": true
@@ -4350,9 +4443,16 @@ data: {"type":"agent.completed","generation_id":"...","generationId":"...","agen
                 "When true, runs exactly agent_max_rounds. When false, the model may stop through continue_generation.",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "Optional",
-              description: `Target size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; omission is equivalent to auto, and custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. Invalid values are rejected. Used as a runtime image_generation parameter inside Agent. See the “Image Size Table” below.`,
+              description:
+                "Image aspect ratio, for example 1:1 or 16:9. Either name may be used. Used as a runtime image_generation parameter inside Agent.",
+            },
+            {
+              name: "resolution",
+              requirement: "Optional",
+              description:
+                "Image resolution tier; unset values are chosen by the upstream. Used as a runtime image_generation parameter inside Agent.",
             },
             {
               name: "quality",
@@ -4465,7 +4565,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
   -d '{
     "model": "gpt-5.4",
     "input": "Generate a 1:1 futuristic product render",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "high"
   }'
 
@@ -4477,7 +4578,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "model": "gpt-5.4",
     "input": "Generate a landscape technology product key visual",
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "size": "1536x864",
+    "aspectRatio": "16:9",
+    "resolution": "1k",
     "quality": "medium",
     "reasoning": { "effort": "low" },
     "store": true
@@ -4499,7 +4601,8 @@ curl ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
       }
     ],
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "output_format": "webp",
     "output_compression": 85
   }'
@@ -4513,7 +4616,8 @@ curl -N ${DOCUMENTATION_BASE_URL_PLACEHOLDER}/v1/responses \\
     "previous_response_id": "resp_previous_id",
     "input": "Add a moon based on the previous image",
     "tools": [{ "type": "image_generation", "model": "gpt-image-2" }],
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "reasoning": { "effort": "minimal" },
     "stream": true
   }'`,
@@ -4595,10 +4699,18 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
                 "Supports minimal, none, low, medium, high, and xhigh. Actual support depends on the selected backend.",
             },
             {
-              name: "size",
+              name: "aspectRatio / aspect_ratio",
               requirement: "Optional",
               custom: true,
-              description: `Convenience field used as the run-time image size when the image_generation tool does not provide one. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}; custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
+              description:
+                "Convenience field used as the run-time image aspect ratio when the image_generation tool does not provide one.",
+            },
+            {
+              name: "resolution",
+              requirement: "Optional",
+              custom: true,
+              description:
+                "Convenience field used as the run-time image resolution when the image_generation tool does not provide one.",
             },
             {
               name: "quality",
@@ -4691,7 +4803,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       description:
         "Uses ChatGPT Web image generation. It can reuse Web account quota, but it is not a strictly parameterized Images/Responses API.",
       valid: [
-        "**Resolution is not strictly controllable; size is only a hint/record value and output may differ.**",
+        "**Resolution and aspect ratio are generation targets rather than strict output guarantees.**",
         "**4K output is not guaranteed; high-resolution output depends on current ChatGPT Web capability and account state.**",
         "The main GPT conversation model and Web thinking level can be controlled; image model is not mapped to a separate Web image model.",
         "When prompt optimization is off, FluxMedia sends the original prompt and forces Web thinking to instant to reduce platform-side rewriting.",
@@ -4709,7 +4821,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       valid: [
         "GPT model is sent as the top-level Responses model.",
         "Image model is sent as the image_generation tool model.",
-        "size, quality, reference images, and mask are assembled into the Responses tool request.",
+        "aspectRatio/aspect_ratio, resolution, quality, reference images, and mask are assembled into the Responses tool request.",
         "quality is used only when the image model is gpt-image-2; it is omitted for other image models.",
         "Page Chat mode uses normal multimodal chat/image semantics. Page Agent mode provides image_generation, web_search, and continue_generation by default without forcing tool_choice, and can continue across linear automatic rounds so the model can search, read uploaded text-file context, generate drafts, and refine like Codex.",
         "Uploaded local text/code files in Chat/Agent are read as request context. Server filesystem paths written in prompts are not read.",
@@ -4730,7 +4842,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
         "Interface mode only declares which upstream endpoints exist: Images-only participates in image generation/edit only; Responses-only participates in Chat/Agent/Responses unless Images upstream is set to Responses; Mixed API can participate in both sides.",
         "Images upstream independently controls image generation/edit: native Images calls external /images/generations and /images/edits; Responses conversion calls external /responses + the image_generation tool.",
         "Chat Completions upstream independently controls /v1/chat/completions: Responses image mode calls external /responses; native mode calls external /chat/completions.",
-        "Model, size, quality, streaming events, and usage fields depend on the external API implementation.",
+        "Model, aspect-ratio/resolution handling, quality, streaming events, and usage fields depend on the external API implementation.",
       ],
       invalid: [
         "Does not consume FluxMedia Web or Codex account pool quota.",
@@ -4763,7 +4875,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
       rows: [
         [
           "Super-resolution (auto)",
-          "Web / Codex backends often return images smaller than requested (Codex in particular does not strictly honor size). When a final image's longer edge falls below 2/3 of the target, the platform auto-upscales it to the target size with Real-ESRGAN (no crop, aspect preserved) — so Web / Codex reliably deliver near-4K target resolution, i.e. 4K is supported. Controlled by the admin 'resolution super-resolution' switch; ~1-2s per image.",
+          "Web / Codex backends often return images below the requested resolution. When a final image's longer edge falls below 2/3 of the target, the platform auto-upscales it with Real-ESRGAN (no crop, aspect preserved), so Web / Codex can deliver near-4K target resolution. Controlled by the admin 'resolution super-resolution' switch; ~1-2s per image.",
         ],
         [
           "HD repair (manual)",
@@ -4782,7 +4894,7 @@ data: {"type":"response.completed","response":{"id":"resp_...","object":"respons
     imageSizeTable: {
       title: "Image Size Table",
       description:
-        "The table maps the site image-size selector's resolution bases and aspect ratios to the standard size enum values.",
+        "The table lists pixel references for the creation workspace's resolution and aspect-ratio choices; image requests do not accept a size parameter.",
       headers: IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
       rows: IMAGE_SIZE_DOC_TABLE_ROWS,
       note: IMAGE_SIZE_DOC_TABLE_NOTE_EN,
@@ -5309,7 +5421,7 @@ function FieldName({
             : "text-muted-foreground"
         }`}
       >
-        {/* 参数名常把多个等价别名用 " / " 串联（如 "size / quality / output_format"）。
+        {/* 参数名常把多个等价别名用 " / " 串联（如 "aspectRatio / aspect_ratio"）。
             内联渲染时 " / " 易被误读为"或"，故按 " / "（前后带空格）拆分，每个名字单独成行。
             仅含空格的 " / " 触发拆分；路径/枚举里无空格的斜杠（如 "/v1/images/generations"、
             "low/medium/high"）保持单行不受影响。 */}

@@ -14,7 +14,8 @@ import {
 const common = {
   generationId: "generation-1",
   prompt: "一只猫",
-  size: "1024x1024",
+  aspectRatio: "1:1",
+  resolution: "1k",
   model: "gpt-image-2",
   backendGroupId: "group-1",
   quality: "auto",
@@ -24,7 +25,14 @@ const common = {
 describe("image create request", () => {
   it("文生图恢复旧版 SSE 与稳定默认参数", () => {
     expect(buildImageGenerateRequestBody(common)).toEqual({
-      ...common,
+      generationId: common.generationId,
+      prompt: common.prompt,
+      aspectRatio: "1:1",
+      resolution: "1k",
+      model: common.model,
+      backendGroupId: common.backendGroupId,
+      quality: common.quality,
+      background: common.background,
       stream: true,
       moderation: "auto",
       output_format: "png",
@@ -45,7 +53,8 @@ describe("image create request", () => {
     expect(Object.fromEntries(body.entries())).toMatchObject({
       generationId: "generation-1",
       prompt: "一只猫",
-      size: "1024x1024",
+      aspectRatio: "1:1",
+      resolution: "1k",
       model: "gpt-image-2",
       backendGroupId: "group-1",
       quality: "auto",

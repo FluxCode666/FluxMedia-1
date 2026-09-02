@@ -44,7 +44,6 @@ import { DEFAULT_IMAGE_MODEL } from "@/features/image-generation/resolution";
 
 import { ImageGenerationResultGallery } from "./image-generation-result-gallery";
 import { ImageMaskEditor } from "./image-mask-editor";
-import { ImageSizePicker } from "./image-size-picker";
 
 type ImageCreateMode = "generate" | "edit" | "mask";
 
@@ -74,8 +73,10 @@ type SimpleImageCreatePanelProps = {
   mode: ImageCreateMode;
   model: string;
   supportsQuality?: boolean;
-  supportsAutoSize?: boolean;
+  aspectRatio: string;
+  resolution: string;
   onBackgroundChange: (value: string) => void;
+  onAspectRatioChange: (value: string) => void;
   onMaskChange: (file: File | null) => void | Promise<void>;
   onModelSelectionChange: (groupId: string, modelId: string) => void;
   onPromptChange: (value: string) => void;
@@ -83,7 +84,7 @@ type SimpleImageCreatePanelProps = {
   onRecentReferenceSelect: (image: RecentImage) => Promise<boolean>;
   onRemoveReference: () => void;
   onRemoveSourceImage: (index: number) => void;
-  onSizeChange: (value: string) => void;
+  onResolutionChange: (value: string) => void;
   onSourceImagesChange: (files: FileList | null) => void;
   onSubmit: () => Promise<void>;
   prompt: string;
@@ -91,9 +92,26 @@ type SimpleImageCreatePanelProps = {
   recent: readonly RecentImage[];
   referenceLoadingId: string | null;
   resultUrls: readonly string[];
-  size: string;
   sourceImages: readonly File[];
 };
+
+const IMAGE_ASPECT_RATIO_OPTIONS = [
+  ["1:1", "1:1"],
+  ["3:2", "3:2"],
+  ["2:3", "2:3"],
+  ["4:3", "4:3"],
+  ["3:4", "3:4"],
+  ["16:9", "16:9"],
+  ["9:16", "9:16"],
+  ["21:9", "21:9"],
+] as const;
+
+const IMAGE_RESOLUTION_OPTIONS = [
+  ["1k", "1K"],
+  ["2k", "2K"],
+  ["4k", "4K"],
+  ["8k", "8K"],
+] as const;
 
 /** 为同一分组中的模型构造只在当前下拉生命周期内使用的稳定值。 */
 function createModelSelectionValue(groupId: string, modelId: string): string {
@@ -631,22 +649,58 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
 
               <div className="space-y-1.5">
                 <Label
-                  htmlFor="simple-image-size"
+                  htmlFor="simple-image-aspect-ratio"
                   className="text-xs font-medium text-muted-foreground"
                 >
                   画面比例
                 </Label>
-                <ImageSizePicker
-                  size={props.size}
-                  onChange={props.onSizeChange}
+                <Select
+                  value={props.aspectRatio}
+                  onValueChange={props.onAspectRatioChange}
                   disabled={props.busy}
-                  supportsAutoSize={props.supportsAutoSize === true}
-                />
-                {props.supportsAutoSize !== true ? (
-                  <p className="text-xs leading-4 text-muted-foreground">
-                    当前模型不支持传递 auto 尺寸，请选择明确尺寸。
-                  </p>
-                ) : null}
+                >
+                  <SelectTrigger
+                    id="simple-image-aspect-ratio"
+                    className="w-full bg-background"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IMAGE_ASPECT_RATIO_OPTIONS.map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label
+                  htmlFor="simple-image-resolution"
+                  className="text-xs font-medium text-muted-foreground"
+                >
+                  分辨率
+                </Label>
+                <Select
+                  value={props.resolution}
+                  onValueChange={props.onResolutionChange}
+                  disabled={props.busy}
+                >
+                  <SelectTrigger
+                    id="simple-image-resolution"
+                    className="w-full bg-background"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IMAGE_RESOLUTION_OPTIONS.map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {props.supportsQuality === true ? (

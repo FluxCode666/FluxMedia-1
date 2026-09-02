@@ -295,9 +295,6 @@ export function buildModelMarketplaceCatalog(
           pricing: entry.pricing,
           supportedResolutions: entry.supportedResolutions,
           ...(entry.supportsQuality === true ? { supportsQuality: true } : {}),
-          ...(entry.supportsAutoSize === true
-            ? { supportsAutoSize: true }
-            : {}),
         })
       );
       continue;

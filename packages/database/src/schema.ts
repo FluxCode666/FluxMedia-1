@@ -1678,6 +1678,40 @@ export const imageBackendMember = pgTable(
   ]
 );
 
+/** 可复用的供应商图片尺寸配置集及其比例/分辨率映射。 */
+export const imageSizeConfig = pgTable(
+  "image_size_config",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("image_size_config_name_unique").on(table.name)]
+);
+
+export const imageSizeConfigMapping = pgTable(
+  "image_size_config_mapping",
+  {
+    id: text("id").primaryKey(),
+    configId: text("config_id")
+      .notNull()
+      .references(() => imageSizeConfig.id, { onDelete: "cascade" }),
+    resolution: text("resolution").notNull(),
+    aspectRatio: text("aspect_ratio").notNull(),
+    size: text("size").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("image_size_config_mapping_key_unique").on(
+      table.configId,
+      table.resolution,
+      table.aspectRatio
+    ),
+    index("image_size_config_mapping_config_idx").on(table.configId),
+  ]
+);
+
 /**
  * API 账号的不可变上游适配版本。
  *
@@ -2631,6 +2665,10 @@ export type ImageBackendGroup = typeof imageBackendGroup.$inferSelect;
 export type NewImageBackendGroup = typeof imageBackendGroup.$inferInsert;
 export type ImageBackendMember = typeof imageBackendMember.$inferSelect;
 export type NewImageBackendMember = typeof imageBackendMember.$inferInsert;
+export type ImageSizeConfig = typeof imageSizeConfig.$inferSelect;
+export type NewImageSizeConfig = typeof imageSizeConfig.$inferInsert;
+export type ImageSizeConfigMapping = typeof imageSizeConfigMapping.$inferSelect;
+export type NewImageSizeConfigMapping = typeof imageSizeConfigMapping.$inferInsert;
 export type ImageBackendMemberApiConfig =
   typeof imageBackendMemberApiConfig.$inferSelect;
 export type NewImageBackendMemberApiConfig =

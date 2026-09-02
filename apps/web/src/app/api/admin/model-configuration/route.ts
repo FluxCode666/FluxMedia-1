@@ -5,10 +5,6 @@
  * 传输输入交给 UOL；不直接访问数据库、存储服务或模型配置领域服务。
  */
 
-import {
-  videoCreditsPerSecondByResolutionSchema,
-  videoModelCreditPricesSchema,
-} from "@repo/shared/video-generation";
 import { auth } from "@repo/shared/auth";
 import { getUserRoleById } from "@repo/shared/auth/role-server";
 import { isSuperAdminRole } from "@repo/shared/auth/roles";
@@ -32,6 +28,10 @@ import {
   OperationError,
   type Principal,
 } from "@repo/shared/uol";
+import {
+  videoCreditsPerSecondByResolutionSchema,
+  videoModelCreditPricesSchema,
+} from "@repo/shared/video-generation";
 
 import {
   BoundedMultipartError,
@@ -70,7 +70,6 @@ const KNOWN_FORM_FIELDS = new Set([
   "supportedResolutions",
   "outputSizesByResolution",
   "supportsQuality",
-  "supportsAutoSize",
   ...IMAGE_PRICE_FIELDS,
 ]);
 
@@ -449,13 +448,11 @@ async function parseImageInput(
       ...IMAGE_PRICE_FIELDS,
       "supportedResolutions",
       "supportsQuality",
-      "supportsAutoSize",
     ])
   );
   const isCustom = data.scalars.get("isCustom");
   const supportedResolutions = data.scalars.get("supportedResolutions");
   const supportsQuality = data.scalars.get("supportsQuality");
-  const supportsAutoSize = data.scalars.get("supportsAutoSize");
   return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
@@ -492,9 +489,6 @@ async function parseImageInput(
       : {}),
     ...(supportsQuality !== undefined
       ? { supportsQuality: parseBoolean(supportsQuality) }
-      : {}),
-    ...(supportsAutoSize !== undefined
-      ? { supportsAutoSize: parseBoolean(supportsAutoSize) }
       : {}),
   });
 }

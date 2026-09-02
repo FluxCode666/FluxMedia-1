@@ -117,7 +117,8 @@ function createRequestSample(
         body: {
           model: "gpt-image-2",
           prompt: "A lighthouse at sunset",
-          size: "1024x1024",
+          aspectRatio: "1:1",
+          resolution: "1k",
           client_request_id: "sample-image-request",
         },
       };

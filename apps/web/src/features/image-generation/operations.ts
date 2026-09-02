@@ -95,7 +95,6 @@ import {
   normalizeImageSize,
   parseImageSize,
   type ResolvedImageModerationCreditPricing,
-  resolveImageRequestSize,
   roundCreditAmount,
   roundUpCreditAmount,
 } from "./resolution";
@@ -569,19 +568,69 @@ function resolveRequestedImageModel(model: string): string {
   return model.trim();
 }
 
-/** 将图片实际输出尺寸映射为账号能力使用的标准分辨率档位。 */
-function resolveRequestedImageResolution(
-  size: string | null | undefined
+/** 将请求分辨率收窄为账号能力使用的标准分辨率档位。 */
+function resolveInputImageResolution(
+  resolution: string | null | undefined
 ): "1k" | "2k" | "4k" | "8k" | undefined {
-  const normalized = size?.trim().toLowerCase();
-  if (!normalized || normalized === "auto") return undefined;
-  const dimensions = parseImageSize(normalized);
-  if (!dimensions) return undefined;
-  const longestEdge = Math.max(dimensions.width, dimensions.height);
-  if (longestEdge >= 7680) return "8k";
-  if (longestEdge >= 3840) return "4k";
-  if (longestEdge >= 2048) return "2k";
-  return "1k";
+  const normalized = resolution?.trim().toLowerCase();
+  if (
+    normalized === "1k" ||
+    normalized === "2k" ||
+    normalized === "4k" ||
+    normalized === "8k"
+  ) {
+    return normalized;
+  }
+  return undefined;
+}
+
+/** 为计费、修复和历史快照保留内部基准尺寸；该值不会作为请求参数透传。 */
+function resolveInternalImageSize(
+  resolution: string | null | undefined
+): string {
+  switch (resolveInputImageResolution(resolution)) {
+    case "1k":
+      return "1248x1248";
+    case "2k":
+      return "2048x2048";
+    case "4k":
+      return "3840x2160";
+    case "8k":
+      return "3840x2160";
+    default:
+      return DEFAULT_IMAGE_SIZE;
+  }
+}
+
+/** 将内部修复块的像素尺寸转换为新的比例/分辨率请求字段。 */
+function resolveAuxiliaryImageDimensions(
+  width: number,
+  height: number
+): {
+  aspectRatio: string;
+  resolution: "1k" | "2k" | "4k" | "8k";
+} {
+  let left = Math.abs(Math.round(width));
+  let right = Math.abs(Math.round(height));
+  while (right !== 0) {
+    const remainder = left % right;
+    left = right;
+    right = remainder;
+  }
+  const divisor = left || 1;
+  const longestEdge = Math.max(width, height);
+  const resolution =
+    longestEdge >= 7680
+      ? "8k"
+      : longestEdge >= 3840
+        ? "4k"
+        : longestEdge >= 2048
+          ? "2k"
+          : "1k";
+  return {
+    aspectRatio: `${Math.round(width) / divisor}:${Math.round(height) / divisor}`,
+    resolution,
+  };
 }
 
 /**
@@ -603,7 +652,7 @@ async function runAuxiliaryImageEdit(input: {
     apiKeyId: input.apiKeyId,
     pinnedGroupId: input.pinnedGroupId,
     modelId: input.modelId,
-    resolution: resolveRequestedImageResolution(input.params.size),
+    resolution: resolveInputImageResolution(input.params.resolution),
     requestKind: "image",
     requiresContentSafety: input.requiresContentSafety,
     requiresMask: Boolean(input.params.mask),
@@ -810,7 +859,7 @@ async function storeGeneratedImageOutput(params: {
                     { data: tileCanvas, name: "tile.png", type: "image/png" },
                   ],
                   mask: { data: mask, name: "mask.png", type: "image/png" },
-                  size: `${w}x${h}`,
+                  ...resolveAuxiliaryImageDimensions(w, h),
                   model: DEFAULT_IMAGE_MODEL,
                   outputFormat: "png",
                 });
@@ -860,7 +909,7 @@ async function storeGeneratedImageOutput(params: {
               const edited = await params.runAuxiliaryEdit({
                 prompt: repairPrompt,
                 images: [{ data: whole, name: "image.png", type: "image/png" }],
-                size: `${w}x${h}`,
+                ...resolveAuxiliaryImageDimensions(w, h),
                 model: DEFAULT_IMAGE_MODEL,
                 outputFormat: "png",
               });
@@ -1139,7 +1188,7 @@ async function runImageGenerationForUserInternal(
     generationId,
     operationCreatedAt
   );
-  const size = resolveImageRequestSize(input.size);
+  const size = resolveInternalImageSize(input.resolution);
   const { generations: bucket } = await getRuntimeStorageBucketConfig();
   if (
     input.admissionAuthorization &&
@@ -1171,8 +1220,7 @@ async function runImageGenerationForUserInternal(
   const modelCapabilities = await assertImageModelEnabled(
     imageModel,
     () => getRuntimeSettingJson("MODEL_MARKETPLACE_CONFIG"),
-    resolveRequestedImageResolution(size),
-    size.trim().toLowerCase() === "auto"
+    resolveInputImageResolution(input.resolution)
   );
   const supportsQuality = modelCapabilities.supportsQuality;
   const effectiveQuality = supportsQuality ? input.quality : undefined;
@@ -1299,8 +1347,8 @@ async function runImageGenerationForUserInternal(
                 apiKeyId: executionInput.apiKeyId,
                 requestedGroupId: executionInput.backendGroupId,
                 modelId: imageModel,
-                resolution: resolveRequestedImageResolution(
-                  executionInput.size
+                resolution: resolveInputImageResolution(
+                  executionInput.resolution
                 ),
                 requestKind: "image",
                 requiresContentSafety: moderationRequired,
@@ -1818,7 +1866,8 @@ async function runQueuedImageGenerationForUser({
             signal: commonSignal,
             images: input.images,
             mask: input.mask,
-            size: input.size,
+            aspectRatio: input.aspectRatio,
+            resolution: input.resolution,
             model: imageModel,
             thinking: input.thinking,
             quality: effectiveQuality,
@@ -1837,7 +1886,8 @@ async function runQueuedImageGenerationForUser({
             apiPrompt: currentApiPrompt,
             promptOptimization,
             signal: commonSignal,
-            size,
+            aspectRatio: input.aspectRatio,
+            resolution: input.resolution,
             model: imageModel,
             thinking: input.thinking,
             quality: effectiveQuality,

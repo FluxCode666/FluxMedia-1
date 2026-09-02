@@ -73,6 +73,7 @@
     "./image-backend/group-image-pricing": "./src/image-backend/group-image-pricing.ts",
     "./image-backend/group-contract": "./src/image-backend/group-contract.ts",
     "./image-backend/member-contract": "./src/image-backend/member-contract.ts",
+    "./image-backend/image-size-config": "./src/image-backend/image-size-config.ts",
     "./image-backend/scheduling-policy": "./src/image-backend/scheduling-policy.ts",
     "./image-backend/supported-models": "./src/image-backend/supported-models.ts",
     "./storage": "./src/storage/index.ts",

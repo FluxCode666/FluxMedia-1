@@ -24,7 +24,7 @@
 | `images.edit.query` | GET | 无 | 禁止 |
 
 `images.edit` 的文本字段与文生图大体相同，包括 `model`、`prompt`、`n`、
-`response_format` 以及可选尺寸、质量、审核、输出格式、压缩、背景和流式字段。
+`response_format` 以及可选 `aspectRatio`/`aspect_ratio`、`resolution`、质量、审核、输出格式、压缩、背景和流式字段。
 
 multipart 文本值进入脚本时都是字符串，包括 `n`、`width`、`height`、布尔值和压缩值。
 不要在上游未要求时擅自转为 number 或 boolean。
@@ -70,7 +70,6 @@ delete body.moderation;
 delete body.output_format;
 delete body.output_compression;
 delete body.background;
-if (body.size === "auto") delete body.size;
 return { body };
 ```
 

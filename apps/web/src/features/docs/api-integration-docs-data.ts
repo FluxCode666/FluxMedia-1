@@ -11,8 +11,6 @@ import {
   replaceDocumentationBaseUrl,
 } from "./documentation-base-url";
 import {
-  IMAGE_SIZE_DOC_ENUM_EN,
-  IMAGE_SIZE_DOC_ENUM_ZH,
   IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
   IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
   IMAGE_SIZE_DOC_TABLE_NOTE_EN,
@@ -570,7 +568,7 @@ const zhContent = {
   imageSizeTable: {
     title: "图片尺寸表",
     description:
-      "下表按站内生图尺寸选择器的分辨率基准和宽高比，列出 size 参数对应的标准枚举值。",
+      "尺寸配置集按分辨率和宽高比维护到上游尺寸的映射；图片接口不再接受 size 参数。",
     headers: IMAGE_SIZE_DOC_TABLE_HEADERS_ZH,
     rows: IMAGE_SIZE_DOC_TABLE_ROWS,
     note: IMAGE_SIZE_DOC_TABLE_NOTE_ZH,
@@ -712,7 +710,8 @@ const zhContent = {
   -d '{
     "model": "gpt-image-2",
     "prompt": "A quiet reading room in the morning sun",
-    "size": "1024x1024",
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "quality": "medium",
     "response_format": "url",
     "output_format": "png",
@@ -739,10 +738,17 @@ const zhContent = {
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
         },
         {
-          name: "size",
+          name: "aspectRatio / aspect_ratio",
           requirement: "可选",
-          defaultValue: "1024x1024",
-          description: `目标图片尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}。省略默认 1024x1024；也可传符合站内约束的自定义 WIDTHxHEIGHT。详见本文“图片尺寸表”。`,
+          defaultValue: "未指定（上游决定）",
+          description: "图片宽高比，例如 1:1、16:9。两种命名任选其一。",
+        },
+        {
+          name: "resolution",
+          requirement: "可选",
+          defaultValue: "未指定（上游决定）",
+          description:
+            "图片分辨率档位，具体可用值取决于所选模型和供应商尺寸配置。",
         },
         {
           name: "quality",
@@ -822,7 +828,8 @@ const zhContent = {
   -F "model=gpt-image-2" \\
   -F "prompt=Replace the sky with a clear sunset" \\
   -F "image=@./input.png" \\
-  -F "size=1024x1024" \\
+  -F "aspectRatio=1:1" \\
+  -F "resolution=1k" \\
   -F "quality=medium" \\
   -F "response_format=url"`,
       responseExample: `{
@@ -862,10 +869,17 @@ const zhContent = {
           description: "图片模型 ID；可用模型以当前 API 密钥可见范围为准。",
         },
         {
-          name: "size",
+          name: "aspectRatio / aspect_ratio",
           requirement: "可选",
-          defaultValue: "1024x1024",
-          description: `目标图片尺寸。标准枚举值：${IMAGE_SIZE_DOC_ENUM_ZH}。省略默认 1024x1024；也可传符合站内约束的自定义 WIDTHxHEIGHT。详见本文“图片尺寸表”。`,
+          defaultValue: "未指定（上游决定）",
+          description: "图片宽高比，例如 1:1、16:9。两种命名任选其一。",
+        },
+        {
+          name: "resolution",
+          requirement: "可选",
+          defaultValue: "未指定（上游决定）",
+          description:
+            "图片分辨率档位，具体可用值取决于所选模型和供应商尺寸配置。",
         },
         {
           name: "quality",
@@ -1433,7 +1447,7 @@ const enContent = {
   imageSizeTable: {
     title: "Image Size Table",
     description:
-      "The table maps the site image-size selector's resolution bases and aspect ratios to the standard size enum values.",
+      "Size configuration sets map resolution and aspect ratio to an upstream size; image endpoints no longer accept size.",
     headers: IMAGE_SIZE_DOC_TABLE_HEADERS_EN,
     rows: IMAGE_SIZE_DOC_TABLE_ROWS,
     note: IMAGE_SIZE_DOC_TABLE_NOTE_EN,
@@ -1532,10 +1546,17 @@ const enContent = {
           description: "Image model ID available to the current API key.",
         },
         {
-          name: "size",
+          name: "aspectRatio / aspect_ratio",
           requirement: "Optional",
-          defaultValue: "1024x1024",
-          description: `Target image size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}. Omission defaults to 1024x1024; custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
+          defaultValue: "Unset (upstream decides)",
+          description: "Image aspect ratio, for example 1:1 or 16:9.",
+        },
+        {
+          name: "resolution",
+          requirement: "Optional",
+          defaultValue: "Unset (upstream decides)",
+          description:
+            "Image resolution tier; available values depend on the selected model and provider size configuration.",
         },
         {
           name: "quality",
@@ -1637,10 +1658,17 @@ const enContent = {
           description: "Image model ID available to the current API key.",
         },
         {
-          name: "size",
+          name: "aspectRatio / aspect_ratio",
           requirement: "Optional",
-          defaultValue: "1024x1024",
-          description: `Target image size. Standard enum values: ${IMAGE_SIZE_DOC_ENUM_EN}. Omission defaults to 1024x1024; custom WIDTHxHEIGHT values that satisfy the site constraints are also accepted. See the “Image Size Table” below.`,
+          defaultValue: "Unset (upstream decides)",
+          description: "Image aspect ratio, for example 1:1 or 16:9.",
+        },
+        {
+          name: "resolution",
+          requirement: "Optional",
+          defaultValue: "Unset (upstream decides)",
+          description:
+            "Image resolution tier; available values depend on the selected model and provider size configuration.",
         },
         {
           name: "quality",

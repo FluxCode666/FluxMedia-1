@@ -7,12 +7,6 @@
  */
 
 import {
-  getVideoPricingResolutionKey,
-  globalVideoModelCreditsPerSecondSchema,
-  videoModelBillingModesSchema,
-  videoModelCreditPricesSchema,
-} from "@repo/shared/video-generation";
-import {
   type GlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,
   normalizeImagePricingModelId,
@@ -40,10 +34,14 @@ import {
   updateModelConfigurationEntryOutputSchema,
 } from "@repo/shared/model-marketplace";
 import {
+  getVideoPricingResolutionKey,
+  globalVideoModelCreditsPerSecondSchema,
   parseVideoModelCapabilityOverrides,
   VIDEO_RESOLUTIONS,
   type VideoModelCapabilityOverrides,
+  videoModelBillingModesSchema,
   videoModelCapabilityOverridesSchema,
+  videoModelCreditPricesSchema,
 } from "@repo/shared/video-generation";
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
@@ -472,7 +470,6 @@ function serializeRequestPayload(
       : {}),
     pricing: input.pricing,
     ...(input.supportsQuality === true ? { supportsQuality: true } : {}),
-    ...(input.supportsAutoSize === true ? { supportsAutoSize: true } : {}),
   });
 }
 
@@ -893,10 +890,6 @@ export function createModelConfigurationService(
                 ...(input.category === "image" && input.supportsQuality === true
                   ? { supportsQuality: true }
                   : {}),
-                ...(input.category === "image" &&
-                input.supportsAutoSize === true
-                  ? { supportsAutoSize: true }
-                  : {}),
               });
               const hasCustomModel = config.customModels.some(
                 (model) =>
@@ -961,25 +954,15 @@ export function createModelConfigurationService(
               ...(input.category === "image" && input.supportsQuality === true
                 ? { supportsQuality: true }
                 : {}),
-              ...(input.category === "image" && input.supportsAutoSize === true
-                ? { supportsAutoSize: true }
-                : {}),
             };
             if (input.category === "image") {
               nextConfig.customModels = nextConfig.customModels.map((model) => {
                 if (model.modelId !== input.configKey) return model;
-                const {
-                  supportsQuality: _supportsQuality,
-                  supportsAutoSize: _supportsAutoSize,
-                  ...rest
-                } = model;
+                const { supportsQuality: _supportsQuality, ...rest } = model;
                 return {
                   ...rest,
                   ...(input.supportsQuality === true
                     ? { supportsQuality: true }
-                    : {}),
-                  ...(input.supportsAutoSize === true
-                    ? { supportsAutoSize: true }
                     : {}),
                 };
               });

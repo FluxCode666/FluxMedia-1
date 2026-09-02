@@ -29,8 +29,10 @@
 | `model` | string | 已映射的供应商模型 ID |
 | `prompt` | string | 不透明文本，完整保留平台 nonce |
 | `n` | number | 生成数量 |
-| `size` | string | 例如 `1024x1024` |
-| `width`、`height` | number，可选 | 已解析尺寸 |
+| `aspectRatio` | string，可选 | 平台请求的宽高比；未选择供应商尺寸配置时原样传递 |
+| `resolution` | string，可选 | 平台请求的分辨率；未选择供应商尺寸配置时原样传递 |
+| `size` | string，可选 | 仅选择供应商尺寸配置后，由平台按比例和分辨率映射生成 |
+| `width`、`height` | number，可选 | 仅映射出 `size` 后由平台解析得到 |
 | `quality` | string，可选 | 质量枚举 |
 | `moderation` | string，可选 | 审核选项 |
 | `output_format` | string，可选 | 输出格式 |
@@ -220,9 +222,8 @@ return {
     "model": "black-forest-labs/flux-pro",
     "prompt": "synthetic prompt",
     "n": 1,
-    "size": "1024x1024",
-    "width": 1024,
-    "height": 1024,
+    "aspectRatio": "1:1",
+    "resolution": "1k",
     "response_format": "b64_json"
   }
 }

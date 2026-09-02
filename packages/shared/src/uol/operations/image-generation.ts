@@ -39,7 +39,9 @@ const imageGenerateCommonFields = {
   apiPrompt: z.string().trim().min(1).max(8_000).optional(),
   promptOptimization: z.boolean().optional(),
   model: imageModelIdSchema,
-  size: z.string().trim().min(1).max(40).optional(),
+  aspectRatio: z.string().trim().min(1).max(64).optional(),
+  aspect_ratio: z.string().trim().min(1).max(64).optional(),
+  resolution: z.string().trim().min(1).max(64).optional(),
   quality: z.string().trim().min(1).max(40).optional(),
   style: z.string().trim().min(1).max(80).optional(),
   thinking: z
@@ -314,7 +316,6 @@ defineOperation({
   input: z.object({
     prompt: z.string().min(1),
     model: imageModelIdSchema,
-    size: z.string().optional(),
     quality: z.string().optional(),
     style: z.string().optional(),
   }),
@@ -757,7 +758,8 @@ defineOperation({
   }),
   output: z.object({
     model: z.string(),
-    size: z.string(),
+    aspectRatio: z.string(),
+    resolution: z.string(),
     quality: z.string(),
     style: z.string().optional(),
     backendGroupId: z.string().optional(),

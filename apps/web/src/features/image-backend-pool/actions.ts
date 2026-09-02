@@ -38,9 +38,14 @@ import {
   type AdminPoolGroupListOutput,
   type AdminPoolMemberListInput,
   type AdminPoolMemberListOutput,
+  type ImageSizeConfigOutput,
   adminPoolGroupListInputSchema,
   adminPoolMemberListInputSchema,
 } from "@repo/shared/uol/operations/image-backend-pool";
+import {
+  imageSizeConfigInputSchema,
+  type ImageSizeConfigInput,
+} from "@repo/shared/image-backend/image-size-config";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ensureUolInitialized } from "@/server/uol-init";
@@ -75,6 +80,10 @@ type PoolOperationOutputs = {
   "pool.getGroupOptions": {
     options: Array<{ id: string; name: string }>;
   };
+  "pool.listImageSizeConfigs": { configs: ImageSizeConfigOutput[] };
+  "pool.getImageSizeConfigOptions": { options: Array<{ id: string; name: string }> };
+  "pool.saveImageSizeConfig": { id: string };
+  "pool.deleteImageSizeConfig": { success: boolean };
   "pool.getAdminPool": BackendPoolBaseAdminSnapshot;
   "pool.listAdminMembers": AdminPoolMemberListOutput;
   "pool.listAdminGroups": AdminPoolGroupListOutput;
@@ -206,6 +215,45 @@ export const listAdminImageBackendGroupsAction = imageBackendPoolViewerAction
         { type: "user", userId: ctx.userId, role: ctx.role }
       )
   );
+
+/** 读取图片尺寸配置集，供供应商表单和独立管理页使用。 */
+export const listImageSizeConfigsAction = imageBackendPoolViewerAction
+  .metadata({ action: "imageBackendPool.listImageSizeConfigs" })
+  .action(async ({ ctx }) =>
+    invokePoolOperation("pool.listImageSizeConfigs", {}, {
+      type: "user",
+      userId: ctx.userId,
+      role: ctx.role,
+    })
+  );
+
+/** 保存图片尺寸配置集及其映射。 */
+export const saveImageSizeConfigAction = adminAction
+  .metadata({ action: "imageBackendPool.saveImageSizeConfig" })
+  .schema(imageSizeConfigInputSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const result = await invokePoolOperation(
+      "pool.saveImageSizeConfig",
+      parsedInput satisfies ImageSizeConfigInput,
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
+    revalidateBackendPoolPage();
+    return { success: true, id: result.id };
+  });
+
+/** 删除图片尺寸配置集。 */
+export const deleteImageSizeConfigAction = adminAction
+  .metadata({ action: "imageBackendPool.deleteImageSizeConfig" })
+  .schema(idSchema)
+  .action(async ({ parsedInput, ctx }) => {
+    const result = await invokePoolOperation(
+      "pool.deleteImageSizeConfig",
+      parsedInput,
+      { type: "user", userId: ctx.userId, role: ctx.role }
+    );
+    revalidateBackendPoolPage();
+    return result;
+  });
 
 /** 保存统一媒体后端分组。 */
 export const saveImageBackendGroupAction = adminAction

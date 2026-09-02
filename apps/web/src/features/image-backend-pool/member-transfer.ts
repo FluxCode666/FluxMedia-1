@@ -55,12 +55,14 @@ function toPortableMember(
     const {
       hasApiKey: _hasApiKey,
       currentAdapterVersion,
+      imageSizeConfig,
       ...config
     } = member.config;
     return {
       ...common,
       config: {
         ...config,
+        ...(imageSizeConfig?.id ? { imageSizeConfigId: imageSizeConfig.id } : {}),
         ...(currentAdapterVersion
           ? { expectedCurrentVersionId: currentAdapterVersion.id }
           : {}),

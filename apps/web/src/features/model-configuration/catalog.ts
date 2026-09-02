@@ -4,20 +4,11 @@
  * 使用方是读取服务与后续保存服务；本模块严格解析全局价格和展示配置，稳定合并内置、
  * 持久化与运行时模型，并输出共享 DTO。它不读取数据库、运行时服务或对象存储。
  */
+
 import {
-  DEFAULT_VIDEO_MODEL_BILLING_MODES,
-  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
-  getVideoPricingResolutionKey,
-  getVideoPricingResolutions,
-  globalVideoModelCreditsPerSecondSchema,
-  isVideoPricingResolutionKey,
-  resolveVideoCreditsPerSecondByResolution,
-  videoModelBillingModesSchema,
-  videoModelCreditPricesSchema,
-  VIDEO_PRICING_FAMILIES,
-} from "@repo/shared/video-generation";
-import { globalImageCreditOverridesSchema } from "@repo/shared/image-backend/group-image-pricing";
-import { BUILTIN_IMAGE_MODEL_IDS } from "@repo/shared/image-backend/group-image-pricing";
+  BUILTIN_IMAGE_MODEL_IDS,
+  globalImageCreditOverridesSchema,
+} from "@repo/shared/image-backend/group-image-pricing";
 import {
   getMinimumImageCredits,
   type ModelConfigurationEntry,
@@ -34,8 +25,18 @@ import {
   resolveModelMarketplaceVideoFamily,
 } from "@repo/shared/model-marketplace";
 import {
+  DEFAULT_VIDEO_MODEL_BILLING_MODES,
+  DEFAULT_VIDEO_MODEL_CREDITS_PER_ITEM,
+  getVideoPricingResolutionKey,
+  getVideoPricingResolutions,
+  globalVideoModelCreditsPerSecondSchema,
+  isVideoPricingResolutionKey,
   normalizeVideoModelId,
   resolveEffectiveVideoModelCapabilities,
+  resolveVideoCreditsPerSecondByResolution,
+  VIDEO_PRICING_FAMILIES,
+  videoModelBillingModesSchema,
+  videoModelCreditPricesSchema,
 } from "@repo/shared/video-generation";
 
 import { getBuiltinModelMarketplaceDescription } from "../model-marketplace/builtin-descriptions";
@@ -372,11 +373,6 @@ export function buildModelConfigurationSnapshot(
           : customModel?.supportsQuality === true
             ? { supportsQuality: true }
             : {}),
-        ...(marketplaceConfig.imageByModel[configKey]?.supportsAutoSize === true
-          ? { supportsAutoSize: true }
-          : customModel?.supportsAutoSize === true
-            ? { supportsAutoSize: true }
-            : {}),
       });
     } else {
       entries.push({
@@ -394,11 +390,6 @@ export function buildModelConfigurationSnapshot(
           ? { supportsQuality: true }
           : customModel?.supportsQuality === true
             ? { supportsQuality: true }
-            : {}),
-        ...(marketplaceConfig.imageByModel[configKey]?.supportsAutoSize === true
-          ? { supportsAutoSize: true }
-          : customModel?.supportsAutoSize === true
-            ? { supportsAutoSize: true }
             : {}),
       });
     }

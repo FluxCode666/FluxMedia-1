@@ -6,6 +6,7 @@
  * 本模块只处理非密钥配置与模型 ID，不执行脚本，也不接触网络。
  */
 import { z } from "zod";
+import { imageSizeConfigSnapshotSchema } from "./image-size-config";
 
 import {
   API_UPSTREAM_ADAPTER_OPERATION_IDS,
@@ -348,6 +349,8 @@ export const apiUpstreamAdapterDraftSchema = z
         }
       ),
     useStream: z.boolean(),
+    /** 供应商可选的分辨率/比例到 size 映射快照。 */
+    imageSizeConfig: imageSizeConfigSnapshotSchema.nullable().optional(),
     /** 旧适配版本缺失此字段时必须继续使用 multipart。 */
     convertReferenceImagesToPublicUrl:
       apiConvertReferenceImagesToPublicUrlSchema.optional(),

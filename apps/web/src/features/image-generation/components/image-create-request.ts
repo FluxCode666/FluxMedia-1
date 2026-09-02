@@ -8,7 +8,8 @@
 export type ImageCreateRequestFields = {
   generationId: string;
   prompt: string;
-  size: string;
+  aspectRatio?: string;
+  resolution?: string;
   model: string;
   backendGroupId: string;
   quality?: string;
@@ -56,7 +57,8 @@ export function buildImageEditRequestBody(
   const body = new FormData();
   body.set("generationId", input.generationId);
   body.set("prompt", input.prompt);
-  body.set("size", input.size);
+  if (input.aspectRatio) body.set("aspectRatio", input.aspectRatio);
+  if (input.resolution) body.set("resolution", input.resolution);
   body.set("model", input.model);
   body.set("backendGroupId", input.backendGroupId);
   if (input.quality !== undefined) body.set("quality", input.quality);

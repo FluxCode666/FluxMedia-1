@@ -10,6 +10,10 @@ import {
   resolveApiUpstreamModelId,
 } from "@repo/shared/image-backend/api-upstream-adaptation";
 import {
+  resolveImageSizeConfigMapping,
+  type ImageSizeConfigSnapshot,
+} from "@repo/shared/image-backend/image-size-config";
+import {
   API_UPSTREAM_DEFAULT_POLL_AFTER_SECONDS,
   type ApiUpstreamAdapterOperationId,
   type ApiUpstreamResponseResult,
@@ -46,7 +50,6 @@ import {
   isImageModel,
   normalizeImageModel,
   parseImageSize,
-  resolveImageRequestSize,
 } from "./resolution";
 import { normalizeContentSafetyUserMessage } from "./sla-classification";
 import type {
@@ -164,6 +167,33 @@ function getApiUpstreamAdapter(config: ApiConfig): ApiUpstreamAdapterDraft {
   const adapter = config.backend?.apiUpstreamAdapter;
   if (!adapter) throw new Error("API 图片账号缺少固定适配版本");
   return adapter;
+}
+
+/** 根据供应商尺寸配置把平台比例/分辨率转换为上游 size。 */
+export function resolveImageUpstreamSizeParams(input: {
+  adapter?: Pick<ApiUpstreamAdapterDraft, "imageSizeConfig"> | null;
+  aspectRatio?: string;
+  resolution?: string;
+}): { size?: string; aspectRatio?: string; resolution?: string } {
+  const config = input.adapter?.imageSizeConfig ?? null;
+  if (!config) {
+    return {
+      ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+      ...(input.resolution ? { resolution: input.resolution } : {}),
+    };
+  }
+  if (!input.aspectRatio || !input.resolution) {
+    throw new Error("已选择尺寸配置时必须同时提供 aspectRatio 和 resolution");
+  }
+  const mapping = resolveImageSizeConfigMapping(
+    config as ImageSizeConfigSnapshot,
+    input.resolution,
+    input.aspectRatio
+  );
+  if (!mapping) {
+    throw new Error("当前尺寸配置不支持指定的 resolution 与 aspectRatio");
+  }
+  return { size: mapping.size };
 }
 
 /** 向脚本请求对象追加字段并保留 multipart 重复键顺序。 */
@@ -718,7 +748,8 @@ function appendImageParams(
   params: {
     prompt: string;
     model: string;
-    size?: string;
+    aspectRatio?: string;
+    resolution?: string;
     quality?: ImageQuality;
     moderation?: ImageModeration;
     promptOptimization?: boolean;
@@ -734,9 +765,19 @@ function appendImageParams(
   formData.append("n", "1");
   formData.append("response_format", "b64_json");
 
-  const size = resolveImageRequestSize(params.size);
-  formData.append("size", size);
-  const dimensions = parseImageSize(size);
+  const resolved = resolveImageUpstreamSizeParams({
+    adapter:
+      config.backend?.type === "pool-api"
+        ? config.backend.apiUpstreamAdapter
+        : null,
+    aspectRatio: params.aspectRatio,
+    resolution: params.resolution,
+  });
+  if (resolved.size) formData.append("size", resolved.size);
+  if (resolved.aspectRatio)
+    formData.append("aspectRatio", resolved.aspectRatio);
+  if (resolved.resolution) formData.append("resolution", resolved.resolution);
+  const dimensions = parseImageSize(resolved.size ?? "");
   if (dimensions) {
     formData.append("width", String(dimensions.width));
     formData.append("height", String(dimensions.height));
@@ -1515,8 +1556,15 @@ export async function generateImage(
   const model = getModel(config, params.model);
   try {
     const prompt = getEffectivePrompt(params);
-    const size = resolveImageRequestSize(params.size);
-    const dimensions = parseImageSize(size);
+    const resolvedSize = resolveImageUpstreamSizeParams({
+      adapter:
+        config.backend?.type === "pool-api"
+          ? config.backend.apiUpstreamAdapter
+          : null,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
+    });
+    const dimensions = parseImageSize(resolvedSize.size ?? "");
     const background = normalizeImageBackground(params.background);
     const upstreamModel = getApiBackendUpstreamModel(config, model);
     const requestBody = {
@@ -1526,7 +1574,13 @@ export async function generateImage(
       prompt: appendImagesUpstreamNonce(prompt),
       // 上游 OpenAI 兼容协议字段固定为单项，不能重新暴露批量产品语义。
       n: 1,
-      size,
+      ...(resolvedSize.size ? { size: resolvedSize.size } : {}),
+      ...(resolvedSize.aspectRatio
+        ? { aspectRatio: resolvedSize.aspectRatio }
+        : {}),
+      ...(resolvedSize.resolution
+        ? { resolution: resolvedSize.resolution }
+        : {}),
       ...(dimensions
         ? { width: dimensions.width, height: dimensions.height }
         : {}),
@@ -1661,7 +1715,8 @@ async function createPublicUrlEditRequestBody(input: {
   prompt: string;
   images: ImageInputFile[];
   mask?: ImageInputFile;
-  size?: string;
+  aspectRatio?: string;
+  resolution?: string;
 }): Promise<{ body: Record<string, unknown> } | { error: string }> {
   if (input.images.length === 0) {
     return { error: "图生图至少需要一张参考图。" };
@@ -1695,13 +1750,21 @@ async function createPublicUrlEditRequestBody(input: {
     urls.push(url);
   }
 
-  const size = resolveImageRequestSize(input.size);
+  const resolved = resolveImageUpstreamSizeParams({
+    adapter: input.adapter,
+    aspectRatio: input.aspectRatio,
+    resolution: input.resolution,
+  });
   return {
     body: {
       model: input.model,
       prompt: appendImagesUpstreamNonce(input.prompt),
       n: 1,
-      ...(size !== "auto" ? { size } : {}),
+      ...(resolved.size && resolved.size !== "auto"
+        ? { size: resolved.size }
+        : {}),
+      ...(resolved.aspectRatio ? { aspectRatio: resolved.aspectRatio } : {}),
+      ...(resolved.resolution ? { resolution: resolved.resolution } : {}),
       image_urls: urls,
     },
   };
@@ -1758,7 +1821,8 @@ export async function editImage(
         prompt,
         images: params.images,
         mask: params.mask,
-        size: params.size,
+        aspectRatio: params.aspectRatio,
+        resolution: params.resolution,
       });
       if ("error" in publicUrlRequest) return publicUrlRequest;
 
@@ -1803,7 +1867,8 @@ export async function editImage(
     appendImageParams(formData, config, {
       prompt,
       model: upstreamModel,
-      size: params.size,
+      aspectRatio: params.aspectRatio,
+      resolution: params.resolution,
       quality: params.quality,
       moderation: params.moderation,
       outputFormat: params.outputFormat,

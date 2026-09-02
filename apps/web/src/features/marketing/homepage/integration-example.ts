@@ -205,7 +205,8 @@ export function buildHomepageIntegrationExample(
     {
       model: modelId,
       prompt: "A sculptural editorial scene in warm studio light",
-      size: "1024x1024",
+      aspectRatio: "1:1",
+      resolution: "1k",
       response_format: "url",
     },
     null,

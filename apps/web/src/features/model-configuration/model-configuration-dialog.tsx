@@ -444,29 +444,6 @@ export function ModelConfigurationDialog({
                     }
                   />
                 </div>
-                <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-                  <div>
-                    <Label htmlFor={`${entry.configKey}-supports-auto-size`}>
-                      支持 auto 尺寸
-                    </Label>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      关闭后站内生图必须选择明确尺寸，模型广场会标注不支持传
-                      auto。
-                    </p>
-                  </div>
-                  <Switch
-                    id={`${entry.configKey}-supports-auto-size`}
-                    checked={draft.supportsAutoSize}
-                    disabled={disabled}
-                    onCheckedChange={(supportsAutoSize) =>
-                      updateDraft((current) =>
-                        current.category === "image"
-                          ? { ...current, supportsAutoSize }
-                          : current
-                      )
-                    }
-                  />
-                </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {IMAGE_PRICE_FIELDS.map(([field, label]) => (
                     <PricingInput

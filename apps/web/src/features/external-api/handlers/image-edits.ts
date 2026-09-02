@@ -48,8 +48,6 @@ import {
 import {
   IMAGE_PROMPT_MAX_CHARACTERS,
   IMAGE_PROMPT_TOO_LONG_MESSAGE,
-  resolveImageRequestSize,
-  validateImageSize,
 } from "@/features/image-generation/resolution";
 import type {
   ImageModeration,
@@ -83,7 +81,9 @@ const JSON_SCALAR_FIELDS = [
   "prompt",
   "promptOptimization",
   "prompt_optimization",
-  "size",
+  "aspectRatio",
+  "aspect_ratio",
+  "resolution",
   "quality",
   "moderation",
   "output_format",
@@ -528,6 +528,9 @@ export const postExternalImageEdits = withApiLogging(
             "n is not supported; image requests generate exactly one image."
           );
         }
+        if (Object.hasOwn(body, "size")) {
+          return openAIImageError("The size parameter is no longer supported.");
+        }
         formData = formDataFromJson(body);
         imageReferences = getJsonImageReferences(body);
         maskReference = getJsonMaskReference(body);
@@ -563,15 +566,24 @@ export const postExternalImageEdits = withApiLogging(
     if (prompt.length > IMAGE_PROMPT_MAX_CHARACTERS) {
       return openAIImageError(IMAGE_PROMPT_TOO_LONG_MESSAGE);
     }
+    if (formData.has("size")) {
+      return openAIImageError("The size parameter is no longer supported.");
+    }
     const promptOptimization = getOptionalBoolean(
       formData,
       "promptOptimization",
       "prompt_optimization"
     );
-    const size = resolveImageRequestSize(getText(formData, "size"));
-    const sizeCheck = validateImageSize(size);
-    if (!sizeCheck.valid) {
-      return openAIImageError(sizeCheck.message);
+    const aspectRatio =
+      getText(formData, "aspectRatio") ||
+      getText(formData, "aspect_ratio") ||
+      undefined;
+    const resolution = getText(formData, "resolution") || undefined;
+    if (aspectRatio && aspectRatio.length > 64) {
+      return openAIImageError("aspectRatio is too long.");
+    }
+    if (resolution && resolution.length > 64) {
+      return openAIImageError("resolution is too long.");
     }
 
     const qualityValue = getText(formData, "quality") || "auto";
@@ -741,7 +753,8 @@ export const postExternalImageEdits = withApiLogging(
           generationId,
           prompt,
           promptOptimization,
-          size,
+          aspectRatio,
+          resolution,
           model,
           thinking,
           quality,
@@ -782,7 +795,6 @@ export const postExternalImageEdits = withApiLogging(
                 route: "/v1/images/edits",
                 stream: true,
                 model,
-                size,
               },
               {
                 generationId: result.generationId,
@@ -816,7 +828,8 @@ export const postExternalImageEdits = withApiLogging(
               prompt,
               promptOptimization,
               model,
-              size,
+              aspectRatio,
+              resolution,
               quality,
               thinking,
               moderation,
@@ -872,7 +885,6 @@ export const postExternalImageEdits = withApiLogging(
               route: "/v1/images/edits",
               stream: false,
               model,
-              size,
             }
           );
         },

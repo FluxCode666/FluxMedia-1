@@ -122,6 +122,35 @@ describe("modelMarketplaceConfigSchema", () => {
     }
   });
 
+  it("读取当前版本旧配置时丢弃已废弃的 auto 尺寸能力", () => {
+    const parsed = parseModelMarketplaceConfig({
+      version: MODEL_MARKETPLACE_CONFIG_VERSION,
+      imageByModel: {
+        "gpt-image-2": {
+          revision: 1,
+          visible: true,
+          description: "",
+          cover: null,
+          supportsAutoSize: true,
+        },
+      },
+      videoByFamily: {},
+      customModels: [
+        {
+          modelId: "custom-image",
+          category: "image",
+          supportedResolutions: ["1k"],
+          supportsAutoSize: true,
+        },
+      ],
+    });
+
+    expect(parsed.imageByModel["gpt-image-2"]).not.toHaveProperty(
+      "supportsAutoSize"
+    );
+    expect(parsed.customModels[0]).not.toHaveProperty("supportsAutoSize");
+  });
+
   it("读取旧版 v1 时丢弃 default revision 与 fallback 写回执", () => {
     const imageReceiptKey = "c".repeat(64);
     const fallbackReceiptKey = "d".repeat(64);

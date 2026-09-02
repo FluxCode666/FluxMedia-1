@@ -5,11 +5,6 @@
  * 结构校验与类型收窄，不读取数据库、不构造存储 URL，也不执行价格或封面写入。
  */
 import { z } from "zod";
-import { videoModelCreditPricesSchema } from "../video-generation/video-pricing";
-import {
-  MAX_VIDEO_CREDITS_PER_SECOND,
-  videoCreditsPerSecondByResolutionSchema,
-} from "../video-generation/video-pricing";
 import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
 import {
   isLegacyVideoModelId,
@@ -24,6 +19,11 @@ import {
   videoBillingModeSchema,
   videoFrameInputCapabilitySchema,
 } from "../video-generation";
+import {
+  MAX_VIDEO_CREDITS_PER_SECOND,
+  videoCreditsPerSecondByResolutionSchema,
+  videoModelCreditPricesSchema,
+} from "../video-generation/video-pricing";
 
 export const MODEL_MARKETPLACE_CONFIG_VERSION = 2 as const;
 export const MAX_MODEL_MARKETPLACE_DESCRIPTION_LENGTH = 200;
@@ -182,8 +182,6 @@ export const modelMarketplaceCustomModelSchema = z
       modelMarketplaceVideoOutputSizesByResolutionSchema.optional(),
     /** 图像模型是否接受质量参数；缺失表示不支持。 */
     supportsQuality: z.boolean().optional(),
-    /** 图像模型是否接受 `auto` 尺寸；缺失表示不支持。 */
-    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((model, context) => {
@@ -269,8 +267,6 @@ export const modelMarketplaceEntrySchema = z
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     /** 仅图像模型使用；仅为 true 时前端和执行管线才传 quality。 */
     supportsQuality: z.boolean().optional(),
-    /** 仅图像模型使用；仅为 true 时才允许传 `auto` 尺寸。 */
-    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -399,6 +395,49 @@ export function createDefaultModelMarketplaceConfig(): ModelMarketplaceConfig {
   };
 }
 
+/** 读取旧配置时丢弃已废弃的 auto 尺寸能力，不重新暴露到当前契约。 */
+function omitDeprecatedAutoSizeCapability(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { supportsAutoSize: _deprecated, ...rest } = value as Record<
+    string,
+    unknown
+  >;
+  return rest;
+}
+
+/** 仅清理历史持久化位置；其他未知字段仍由当前 strict schema 拒绝。 */
+function migrateDeprecatedAutoSizeCapability(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const config = value as Record<string, unknown>;
+  const migrateEntries = (entries: unknown): unknown => {
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+      return entries;
+    }
+    return Object.fromEntries(
+      Object.entries(entries).map(([key, entry]) => [
+        key,
+        omitDeprecatedAutoSizeCapability(entry),
+      ])
+    );
+  };
+  return {
+    ...config,
+    ...(Object.hasOwn(config, "imageByModel")
+      ? { imageByModel: migrateEntries(config.imageByModel) }
+      : {}),
+    ...(Object.hasOwn(config, "videoByFamily")
+      ? { videoByFamily: migrateEntries(config.videoByFamily) }
+      : {}),
+    ...(Array.isArray(config.customModels)
+      ? {
+          customModels: config.customModels.map(
+            omitDeprecatedAutoSizeCapability
+          ),
+        }
+      : {}),
+  };
+}
+
 /**
  * 收窄系统设置中的模型广场配置。
  *
@@ -417,10 +456,14 @@ export function parseModelMarketplaceConfig(
     !("version" in value) ||
     value.version !== 1
   ) {
-    return modelMarketplaceConfigSchema.parse(value);
+    return modelMarketplaceConfigSchema.parse(
+      migrateDeprecatedAutoSizeCapability(value)
+    );
   }
 
-  const legacy = legacyModelMarketplaceConfigSchema.parse(value);
+  const legacy = legacyModelMarketplaceConfigSchema.parse(
+    migrateDeprecatedAutoSizeCapability(value)
+  );
   const migratedReceipts = Object.fromEntries(
     Object.entries(legacy.writeReceipts).flatMap(([key, receipt]) => {
       if (
@@ -557,7 +600,6 @@ const explicitImageConfigurationEntrySchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const unconfiguredImageConfigurationEntrySchema = z
@@ -567,7 +609,6 @@ const unconfiguredImageConfigurationEntrySchema = z
     pricingSource: z.literal("unconfigured"),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const videoConfigurationEntrySchema = z
@@ -633,7 +674,6 @@ const publicImageItemSchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
   })
   .strict();
 const publicVideoCommonShape = {
@@ -790,7 +830,6 @@ const updateImageConfigurationInputSchema = z
     pricing: modelMarketplaceImagePricingSchema,
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
-    supportsAutoSize: z.boolean().optional(),
   })
   .strict()
   .superRefine((input, context) => {

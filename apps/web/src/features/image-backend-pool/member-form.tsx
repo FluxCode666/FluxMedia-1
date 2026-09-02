@@ -32,7 +32,10 @@ import { useAction } from "next-safe-action/hooks";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { saveImageBackendMemberAction } from "./actions";
+import {
+  listImageSizeConfigsAction,
+  saveImageBackendMemberAction,
+} from "./actions";
 import {
   type ApiUpstreamAdapterFormDraft,
   createDefaultApiUpstreamAdapterFormDraft,
@@ -97,6 +100,10 @@ export function BackendMemberFormDialog({
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiUseStream, setApiUseStream] = useState(false);
+  const [imageSizeConfigs, setImageSizeConfigs] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [imageSizeConfigId, setImageSizeConfigId] = useState("");
   const [modelMappings, setModelMappings] = useState<ApiModelMapping[]>([]);
   const [apiAdapterDraft, setApiAdapterDraft] =
     useState<ApiUpstreamAdapterFormDraft>(() =>
@@ -172,6 +179,9 @@ export function BackendMemberFormDialog({
       setApiAdapterDraft(createDefaultApiUpstreamAdapterFormDraft());
     }
     setApiKey("");
+    setImageSizeConfigId(
+      member?.type === "api" ? (member.config.imageSizeConfig?.id ?? "") : ""
+    );
   }, [groups, member, modelOptions, open]);
 
   const acceptsVideo = acceptsVideoBackendMemberModels(type);
@@ -210,6 +220,20 @@ export function BackendMemberFormDialog({
       onError: ({ error }) => toast.error(error.serverError || "保存成员失败"),
     }
   );
+
+  const { execute: loadImageSizeConfigs } = useAction(
+    listImageSizeConfigsAction,
+    {
+      onSuccess: ({ data }) =>
+        setImageSizeConfigs(
+          data?.configs?.map(({ id, name }) => ({ id, name })) ?? []
+        ),
+    }
+  );
+
+  useEffect(() => {
+    if (open) loadImageSizeConfigs();
+  }, [open, loadImageSizeConfigs]);
 
   /** 切换成员所属分组。 */
   function toggleGroup(groupId: string, checked: boolean): void {
@@ -315,6 +339,7 @@ export function BackendMemberFormDialog({
             ? { apiKey: apiKey.trim() }
             : {}),
           useStream: apiUseStream,
+          imageSizeConfigId: imageSizeConfigId || null,
           convertReferenceImagesToPublicUrl:
             apiAdapterDraft.convertReferenceImagesToPublicUrl,
           videoSubmissionRetryCount: apiAdapterDraft.videoSubmissionRetryCount,
@@ -629,6 +654,22 @@ export function BackendMemberFormDialog({
                   </div>
                 </>
               ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="image-size-config">图片尺寸配置</Label>
+                <select
+                  id="image-size-config"
+                  className="flex h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  value={imageSizeConfigId}
+                  onChange={(event) => setImageSizeConfigId(event.target.value)}
+                >
+                  <option value="">不使用尺寸配置，原样透传比例和分辨率</option>
+                  {imageSizeConfigs.map((config) => (
+                    <option key={config.id} value={config.id}>
+                      {config.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               {showAdvancedConfiguration ? (
                 <>
                   <BackendBooleanSetting

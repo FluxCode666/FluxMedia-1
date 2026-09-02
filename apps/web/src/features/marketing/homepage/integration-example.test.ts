@@ -64,7 +64,8 @@ describe("buildHomepageIntegrationExample", () => {
       "{",
       '  "model": "gpt-image-alpha",',
       '  "prompt": "A sculptural editorial scene in warm studio light",',
-      '  "size": "1024x1024",',
+      '  "aspectRatio": "1:1",',
+      '  "resolution": "1k",',
       '  "response_format": "url"',
       "}",
     ]);
@@ -133,7 +134,7 @@ describe("buildHomepageIntegrationExample", () => {
     expect(result.curl).toContain("'\"'\"'");
     expect(result.curl).not.toContain("\n touch /tmp/pwned");
     expect(result.curl).toContain("$(whoami)");
-    expect(result.curl.split("\n")).toHaveLength(9);
+    expect(result.curl.split("\n")).toHaveLength(10);
   });
 
   it("忽略调用方夹带的真实 API Key，只生成固定环境变量占位符", () => {

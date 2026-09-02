@@ -24,9 +24,8 @@ export interface GenerateImageParams {
   apiPrompt?: string;
   promptOptimization?: boolean;
   signal?: AbortSignal;
-  size?: string;
-  width?: number;
-  height?: number;
+  aspectRatio?: string;
+  resolution?: string;
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
@@ -130,7 +129,8 @@ export interface EditImageParams {
   signal?: AbortSignal;
   images: ImageInputFile[];
   mask?: ImageInputFile;
-  size?: string;
+  aspectRatio?: string;
+  resolution?: string;
   gptModel?: string;
   thinking?: ThinkingLevel;
   quality?: ImageQuality;
