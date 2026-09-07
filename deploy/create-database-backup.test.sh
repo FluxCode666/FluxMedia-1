@@ -184,7 +184,14 @@ fi'
 
 write_container_fake_command "sha256sum" '#!/usr/bin/env bash
 set -euo pipefail
-shasum -a 256 "$@"'
+printf "0000000000000000000000000000000000000000000000000000000000000000  %s\\n" \
+  "${1:-stdin}"'
+
+# 容器客户端用例的 PATH 不包含系统目录，确保不会误用 CI runner 自带的
+# pg_dump/pg_restore；只链接脚本需要的基础命令。
+for utility in bash chmod dirname install mktemp mv rm awk cat; do
+  ln -s "$(command -v "${utility}")" "${container_fake_bin}/${utility}"
+done
 
 write_fake_command "date" '#!/usr/bin/env bash
 set -euo pipefail
@@ -253,10 +260,10 @@ printf '%s\n' \
   'DATABASE_URL=postgresql://flux:secret@db:5432/flux' \
   'DEPLOY_BACKUP_POSTGRES_CONTAINER=fluxcode-postgres' \
   >"${container_env_file}"
-PATH="${container_fake_bin}:/usr/bin:/bin" bash "${backup_script}" \
+PATH="${container_fake_bin}" bash "${backup_script}" \
   preflight "${container_env_file}" "${container_deploy_path}" \
   "${image_tag}" "${git_sha}"
-PATH="${container_fake_bin}:/usr/bin:/bin" bash "${backup_script}" \
+PATH="${container_fake_bin}" bash "${backup_script}" \
   create "${container_env_file}" "${container_deploy_path}" \
   "${image_tag}" "${git_sha}" \
   >"${test_dir}/container.out"
