@@ -13,7 +13,6 @@ import {
   type DeleteModelConfigurationEntryInput,
   type DeleteModelConfigurationEntryOutput,
   deleteModelConfigurationEntryInputSchema,
-  MAX_MODEL_MARKETPLACE_COVER_BYTES,
   type ModelMarketplaceCoverChange,
   type ModelMarketplaceCustomImagePricing,
   type ModelMarketplaceImagePricing,
@@ -451,7 +450,7 @@ function parseVideoOutputSizesByResolution(
  * @param action - keep、remove 或 replace。
  * @param covers - 严格收集到的候选封面文件。
  * @returns 与共享契约一致的封面动作。
- * @throws ModelConfigurationFormError - 文件数量、动作或实际大小非法时失败。
+ * @throws ModelConfigurationFormError - 文件数量或动作非法时失败。
  * @sideEffects replace 时读取唯一 File 的内存字节；不写入存储。
  */
 async function parseCoverChange(
@@ -468,13 +467,10 @@ async function parseCoverChange(
     throw new ModelConfigurationFormError("替换封面时必须上传一个文件");
   }
   const cover = covers[0];
-  if (!cover || cover.size > MAX_MODEL_MARKETPLACE_COVER_BYTES) {
-    throw new ModelConfigurationFormError("封面文件不能超过 5 MiB");
+  if (!cover) {
+    throw new ModelConfigurationFormError("替换封面时必须上传一个文件");
   }
   const bytes = new Uint8Array(await cover.arrayBuffer());
-  if (bytes.byteLength > MAX_MODEL_MARKETPLACE_COVER_BYTES) {
-    throw new ModelConfigurationFormError("封面文件不能超过 5 MiB");
-  }
   return { action: "replace", bytes };
 }
 
