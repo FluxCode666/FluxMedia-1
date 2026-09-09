@@ -312,7 +312,7 @@ export function ModelDetailDialog({
       }}
     >
       <DialogContent
-        className="bottom-0 left-0 top-auto max-h-[96svh] max-w-none translate-x-0 translate-y-0 grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-t-2xl p-0 [&>button]:bg-background/90 [&>button]:opacity-100 sm:left-1/2 sm:top-1/2 sm:w-[min(1080px,calc(100vw-2rem))] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-xl"
+        className="bottom-0 left-0 top-auto max-h-[96svh] max-w-none translate-x-0 translate-y-0 grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-t-2xl p-0 [&>button]:bg-background/90 [&>button]:opacity-100 sm:left-1/2 sm:top-1/2 sm:h-[min(760px,calc(100svh-2rem))] sm:w-[min(1200px,calc(100vw-2rem))] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-xl"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           titleRef.current?.focus();
@@ -324,7 +324,7 @@ export function ModelDetailDialog({
               aria-label={t("detail.viewCover", {
                 modelName: model.displayName,
               })}
-              className="group relative block aspect-[3/2] w-full cursor-zoom-in overflow-hidden bg-muted text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:aspect-auto sm:min-h-80 sm:rounded-tl-xl"
+              className="group relative block aspect-[3/2] w-full cursor-zoom-in overflow-hidden bg-muted text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:aspect-auto sm:min-h-[420px] sm:rounded-tl-xl"
               onClick={() => setCoverPreviewOpen(true)}
               type="button"
             >
