@@ -35,12 +35,12 @@ import {
   X,
 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
 import { getRecentImageDisplayUrl } from "@/features/image-generation/recent-image-display";
 import { DEFAULT_IMAGE_MODEL } from "@/features/image-generation/resolution";
+import { Link } from "@/i18n/routing";
 
 import { ImageGenerationResultGallery } from "./image-generation-result-gallery";
 import { ImageMaskEditor } from "./image-mask-editor";
@@ -871,7 +871,7 @@ export function SimpleImageCreatePanel(props: SimpleImageCreatePanelProps) {
             <span>更多参考图输入，可前往图库选择图片作为输入</span>
             <Link
               className="font-medium text-primary underline-offset-4 hover:underline"
-              href="../gallery"
+              href="/dashboard/gallery"
             >
               前往图库
             </Link>

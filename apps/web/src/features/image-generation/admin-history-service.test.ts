@@ -357,4 +357,42 @@ describe("admin history service", () => {
     ).rejects.toMatchObject({ code: "validation_error" });
     expect(readRecords).not.toHaveBeenCalled();
   });
+
+  it("reads a displayed non-adjacent global page by bounded offset", async () => {
+    const readRecords = vi
+      .fn()
+      .mockResolvedValue([
+        imageRow("image-12", "2026-07-22T12:00:00.000Z"),
+        imageRow("image-11", "2026-07-22T11:00:00.000Z"),
+        imageRow("image-10", "2026-07-22T10:00:00.000Z"),
+      ]);
+
+    const result = await loadAdminHistoryRecords(
+      {
+        actorUserId: "admin-1",
+        timeZone: "UTC",
+        input: { page: 5, pageSize: 2 },
+        now: new Date("2026-07-22T13:00:00.000Z"),
+      },
+      {
+        repository: createRepository({
+          countRecords: vi.fn().mockResolvedValue(20),
+          readRecords,
+        }),
+        tokenSecret: TOKEN_SECRET,
+      }
+    );
+
+    expect(readRecords).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchLimit: 11,
+        cursor: null,
+        offset: 8,
+        pageLimit: 3,
+      })
+    );
+    expect(result).toMatchObject({ page: 5, pageSize: 2, totalCount: 20 });
+    expect(result.previousCursor).toEqual(expect.any(String));
+    expect(result.nextCursor).toEqual(expect.any(String));
+  });
 });

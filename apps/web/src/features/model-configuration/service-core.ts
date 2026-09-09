@@ -7,6 +7,7 @@
  */
 
 import {
+  DEFAULT_IMAGE_CREDIT_PRICING,
   type GlobalImageCreditOverrides,
   globalImageCreditOverridesSchema,
   normalizeImagePricingModelId,
@@ -20,6 +21,7 @@ import {
   type ModelMarketplaceConfig,
   type ModelMarketplaceConfigurationCategory,
   type ModelMarketplaceCoverRef,
+  type ModelMarketplaceImagePricing,
   type ModelMarketplaceWriteReceipt,
   modelConfigurationSnapshotSchema,
   modelMarketplaceConfigSchema,
@@ -350,6 +352,45 @@ function normalizeConfigurationInput(
     );
   }
   return { ...input, configKey: normalized };
+}
+
+/**
+ * 把自定义图像模型的稀疏价格补齐为运行时需要的完整四档价格。
+ *
+ * 未声明支持的档位不会参与模型能力选择，因此使用当前模型或 GPT Image 2 的全局
+ * 价格作为存储兜底；已声明支持的档位已由共享输入契约强制要求显式价格。
+ */
+function resolveImagePricingForPersistence(
+  input: UpdateModelConfigurationEntryInput,
+  globalPricing: GlobalImageCreditOverrides
+): ModelMarketplaceImagePricing {
+  if (input.category !== "image") {
+    throw new ModelConfigurationServiceError(
+      "invalid_dependency_result",
+      "图像价格输入类别无效"
+    );
+  }
+  const complete = modelMarketplaceImagePricingSchema.safeParse(input.pricing);
+  if (complete.success) return complete.data;
+
+  const fallback =
+    globalPricing.byModel[input.configKey] ??
+    globalPricing.byModel["gpt-image-2"] ??
+    DEFAULT_IMAGE_CREDIT_PRICING;
+  const pricing = input.pricing;
+  return modelMarketplaceImagePricingSchema.parse({
+    base1024Credits:
+      pricing.base1024Credits ?? pricing.base1kCredits ?? fallback.base1024Credits,
+    base1kCredits:
+      pricing.base1kCredits ?? pricing.base1024Credits ?? fallback.base1kCredits,
+    base2kCredits:
+      pricing.base2kCredits ?? pricing.base1kCredits ?? fallback.base2kCredits,
+    base4kCredits:
+      pricing.base4kCredits ?? pricing.base2kCredits ?? fallback.base4kCredits,
+    ...(pricing.base8kCredits !== undefined
+      ? { base8kCredits: pricing.base8kCredits }
+      : {}),
+  });
 }
 
 /**
@@ -996,8 +1037,9 @@ export function createModelConfigurationService(
                 ...imagePricing,
                 byModel: {
                   ...imagePricing.byModel,
-                  [input.configKey]: modelMarketplaceImagePricingSchema.parse(
-                    input.pricing
+                  [input.configKey]: resolveImagePricingForPersistence(
+                    input,
+                    imagePricing
                   ),
                 },
               });

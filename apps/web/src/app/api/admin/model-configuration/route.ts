@@ -15,6 +15,7 @@ import {
   deleteModelConfigurationEntryInputSchema,
   MAX_MODEL_MARKETPLACE_COVER_BYTES,
   type ModelMarketplaceCoverChange,
+  type ModelMarketplaceCustomImagePricing,
   type ModelMarketplaceImagePricing,
   modelMarketplaceCustomModelSchema,
   modelMarketplaceIconKeySchema,
@@ -329,19 +330,46 @@ function parseBoolean(value: string): boolean {
  * @throws ModelConfigurationFormError - 字段缺失或数字格式非法时失败。
  */
 function parseImagePricing(
-  scalars: ReadonlyMap<string, string>
-): ModelMarketplaceImagePricing {
-  return {
-    base1024Credits: parseFiniteNumber(
-      requireScalar(scalars, "base1024Credits")
-    ),
-    base1kCredits: parseFiniteNumber(requireScalar(scalars, "base1kCredits")),
-    base2kCredits: parseFiniteNumber(requireScalar(scalars, "base2kCredits")),
-    base4kCredits: parseFiniteNumber(requireScalar(scalars, "base4kCredits")),
-    ...(scalars.has("base8kCredits") && scalars.get("base8kCredits")?.trim()
-      ? { base8kCredits: parseFiniteNumber(scalars.get("base8kCredits") ?? "") }
-      : {}),
-  };
+  scalars: ReadonlyMap<string, string>,
+  options: {
+    isCustom: boolean;
+    supportedResolutions?: readonly string[];
+  }
+): ModelMarketplaceImagePricing | ModelMarketplaceCustomImagePricing {
+  const supported = new Set(
+    (options.supportedResolutions ?? []).map((resolution) =>
+      resolution.trim().toLowerCase()
+    )
+  );
+  const priceFieldByResolution = {
+    "1k": "base1kCredits",
+    "2k": "base2kCredits",
+    "4k": "base4kCredits",
+    "8k": "base8kCredits",
+  } as const;
+  const pricing: Record<string, number> = {};
+  for (const field of IMAGE_PRICE_FIELDS) {
+    const raw = scalars.get(field);
+    const resolution = Object.entries(priceFieldByResolution).find(
+      ([, mappedField]) => mappedField === field
+    )?.[0];
+    const required = options.isCustom
+      ? resolution !== undefined && supported.has(resolution)
+      : field !== "base8Credits";
+    if (raw === undefined || !raw.trim()) {
+      if (required) {
+        throw new ModelConfigurationFormError("表单缺少必填价格字段");
+      }
+      continue;
+    }
+    pricing[field] = parseFiniteNumber(raw);
+  }
+  if (options.isCustom && Object.keys(pricing).length === 0) {
+    throw new ModelConfigurationFormError("自定义图像模型至少需要一个价格档位");
+  }
+  return pricing as
+    | ModelMarketplaceImagePricing
+    | ModelMarketplaceCustomImagePricing;
 }
 
 /**
@@ -474,6 +502,11 @@ async function parseImageInput(
   const supportedResolutions = data.scalars.get("supportedResolutions");
   const supportsQuality = data.scalars.get("supportsQuality");
   const maxReferenceImages = data.scalars.get("maxReferenceImages");
+  const parsedIsCustom = isCustom !== undefined ? parseBoolean(isCustom) : false;
+  const parsedSupportedResolutions =
+    supportedResolutions !== undefined
+      ? parseSupportedResolutions(supportedResolutions)
+      : undefined;
   return updateModelConfigurationEntryInputSchema.parse({
     category: "image" as const,
     configKey: requireScalar(data.scalars, "configKey"),
@@ -481,7 +514,7 @@ async function parseImageInput(
       requireScalar(data.scalars, "expectedRevision")
     ),
     clientRequestId: requireScalar(data.scalars, "clientRequestId"),
-    ...(isCustom !== undefined ? { isCustom: parseBoolean(isCustom) } : {}),
+    ...(isCustom !== undefined ? { isCustom: parsedIsCustom } : {}),
     enabled: parseBoolean(requireScalar(data.scalars, "enabled")),
     visible: parseBoolean(requireScalar(data.scalars, "visible")),
     homepageVisible: parseBoolean(
@@ -502,11 +535,12 @@ async function parseImageInput(
       requireScalar(data.scalars, "coverChange"),
       data.covers
     ),
-    pricing: parseImagePricing(data.scalars),
-    ...(supportedResolutions !== undefined
-      ? {
-          supportedResolutions: parseSupportedResolutions(supportedResolutions),
-        }
+    pricing: parseImagePricing(data.scalars, {
+      isCustom: parsedIsCustom,
+      supportedResolutions: parsedSupportedResolutions,
+    }),
+    ...(parsedSupportedResolutions !== undefined
+      ? { supportedResolutions: parsedSupportedResolutions }
       : {}),
     ...(supportsQuality !== undefined
       ? { supportsQuality: parseBoolean(supportsQuality) }

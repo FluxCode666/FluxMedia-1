@@ -5,7 +5,7 @@
  * 聚合、签发绑定管理员与筛选条件的 keyset cursor，并收敛为稳定安全 DTO。
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
-
+import { calculateTotalPages } from "@repo/shared/pagination/state";
 import {
   ADMIN_PAYMENT_ORDER_DEFAULT_DAYS,
   ADMIN_PAYMENT_OVERVIEW_MAX_DAYS,
@@ -619,15 +619,22 @@ export async function loadAdminPaymentOrders(
     status: parsed.status ?? null,
     userEmail: parsed.userEmail ?? null,
   };
+  let page = parsed.page;
   const { rows, totalCount } =
     await dependencies.repository.withReadOnlyOrderSnapshot(async (reader) => {
       const totalCount = await reader.countOrders(countQuery);
+      if (!decoded) {
+        page = Math.min(
+          parsed.page,
+          calculateTotalPages(totalCount, parsed.pageSize)
+        );
+      }
       const rows = await reader.readOrders({
         ...countQuery,
         cursor: decoded
           ? { ...decoded.sortKey, direction: decoded.direction }
           : null,
-        page: parsed.page,
+        page,
         pageSize: parsed.pageSize,
         limit: parsed.pageSize + 1,
       });
@@ -646,12 +653,13 @@ export async function loadAdminPaymentOrders(
   };
   const previousCursor =
     first &&
-    decoded &&
-    (decoded.direction !== "previous" || hasDirectionalExtra)
+    (decoded
+      ? decoded.direction !== "previous" || hasDirectionalExtra
+      : page > 1)
       ? encodePaymentCursor(
           {
             ...sharedCursorInput,
-            page: parsed.page - 1,
+            page: page - 1,
             pageSize: parsed.pageSize,
             direction: "previous",
             sortKey: { createdAt: first.createdAt, id: first.id },
@@ -664,7 +672,7 @@ export async function loadAdminPaymentOrders(
       ? encodePaymentCursor(
           {
             ...sharedCursorInput,
-            page: parsed.page + 1,
+            page: page + 1,
             pageSize: parsed.pageSize,
             direction: "next",
             sortKey: { createdAt: last.createdAt, id: last.id },
@@ -674,7 +682,7 @@ export async function loadAdminPaymentOrders(
       : null;
   return {
     asOf: asOf.toISOString(),
-    page: parsed.page,
+    page,
     pageSize: parsed.pageSize,
     totalCount,
     records,

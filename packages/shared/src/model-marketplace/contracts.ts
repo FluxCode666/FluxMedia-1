@@ -5,7 +5,10 @@
  * 结构校验与类型收窄，不读取数据库、不构造存储 URL，也不执行价格或封面写入。
  */
 import { z } from "zod";
-import { imageCreditPricingSchema } from "../image-backend/group-image-pricing";
+import {
+  IMAGE_CREDIT_PRICE_FIELDS,
+  imageCreditPricingSchema,
+} from "../image-backend/group-image-pricing";
 import {
   isLegacyVideoModelId,
   normalizeSupportedModelId,
@@ -115,6 +118,19 @@ export const modelMarketplaceImagePricingSchema = imageCreditPricingSchema
   .extend({
     base8kCredits: z.number().finite().positive().max(100_000).optional(),
   });
+
+/**
+ * 自定义图像模型的稀疏价格；只要求管理员为模型实际支持的分辨率填写价格。
+ *
+ * 未支持的标准档位会在保存服务中使用全局兜底值补齐，避免把不可用分辨率的价格
+ * 伪装成自定义模型的能力，同时继续满足运行时完整价格矩阵的内部契约。
+ */
+export const modelMarketplaceCustomImagePricingSchema = imageCreditPricingSchema.refine(
+  (pricing) =>
+    IMAGE_CREDIT_PRICE_FIELDS.some((field) => pricing[field] !== undefined) ||
+    pricing.base8kCredits !== undefined,
+  "自定义图像模型至少需要一个价格档位"
+);
 
 /** 模型广场支持的真实模型类别。 */
 export const modelMarketplaceConfigurationCategorySchema = z.enum([
@@ -846,7 +862,10 @@ const updateImageConfigurationInputSchema = z
   .object({
     ...updateMarketplaceShape,
     category: z.literal("image"),
-    pricing: modelMarketplaceImagePricingSchema,
+    pricing: z.union([
+      modelMarketplaceImagePricingSchema,
+      modelMarketplaceCustomImagePricingSchema,
+    ]),
     supportedResolutions: modelMarketplaceSupportedResolutionsSchema.optional(),
     supportsQuality: z.boolean().optional(),
     maxReferenceImages: nonnegativeSafeIntegerSchema.optional(),
@@ -876,7 +895,36 @@ const updateImageConfigurationInputSchema = z
           path: ["supportedResolutions"],
           message: "自定义图像模型必须声明支持的分辨率",
         });
+      } else {
+        const supported = new Set(
+          input.supportedResolutions.map((resolution) =>
+            resolution.trim().toLowerCase()
+          )
+        );
+        const priceFieldByResolution = {
+          "1k": "base1kCredits",
+          "2k": "base2kCredits",
+          "4k": "base4kCredits",
+          "8k": "base8kCredits",
+        } as const;
+        for (const [resolution, field] of Object.entries(
+          priceFieldByResolution
+        )) {
+          if (!supported.has(resolution)) continue;
+          if (input.pricing[field] !== undefined) continue;
+          context.addIssue({
+            code: "custom",
+            path: ["pricing", field],
+            message: `启用 ${resolution.toUpperCase()} 图片分辨率时必须配置对应价格`,
+          });
+        }
       }
+    } else if (!modelMarketplaceImagePricingSchema.safeParse(input.pricing).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["pricing"],
+        message: "内置图像模型必须配置完整价格",
+      });
     } else if (
       input.supportedResolutions?.includes("8k") &&
       input.pricing.base8kCredits === undefined
@@ -1025,6 +1073,9 @@ export type ModelMarketplaceConfig = z.infer<
 >;
 export type ModelMarketplaceImagePricing = z.infer<
   typeof modelMarketplaceImagePricingSchema
+>;
+export type ModelMarketplaceCustomImagePricing = z.infer<
+  typeof modelMarketplaceCustomImagePricingSchema
 >;
 export type ModelConfigurationEntry = z.infer<
   typeof modelConfigurationEntrySchema

@@ -152,9 +152,6 @@ export const adminPaymentOrderListInputSchema = z
         message: "limit 与 pageSize 必须一致",
       });
     }
-    if (!input.cursor && input.page !== 1) {
-      context.addIssue({ code: "custom", message: "非首屏必须携带分页游标" });
-    }
   })
   .transform(({ limit, pageSize, ...input }) => ({
     ...input,

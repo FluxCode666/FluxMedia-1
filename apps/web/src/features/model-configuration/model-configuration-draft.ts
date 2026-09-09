@@ -41,6 +41,7 @@ export type ModelConfigurationImagePricingDraft = {
 export type ModelConfigurationDraft =
   | ({
       category: "image";
+      isCustom?: boolean;
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
@@ -51,6 +52,7 @@ export type ModelConfigurationDraft =
     } & MarketplaceDraftFields)
   | ({
       category: "video";
+      isCustom?: boolean;
       configKey: string;
       expectedRevision: number;
       clientRequestId: string;
@@ -146,6 +148,7 @@ export function createModelConfigurationDraft(
       ...common,
       ...marketplace,
       category: "image",
+      ...(entry.isCustom ? { isCustom: true } : {}),
       pricing: createImagePricingDraft(
         entry.pricingSource === "explicit" ? entry.pricing : null
       ),
@@ -161,6 +164,7 @@ export function createModelConfigurationDraft(
     ...common,
     ...marketplace,
     category: "video",
+    ...(entry.isCustom ? { isCustom: true } : {}),
     billingMode: entry.billingMode,
     supportedResolutions: [...entry.supportedResolutions],
     creditsPerSecondByResolution: Object.fromEntries(
@@ -318,32 +322,56 @@ export function parseModelConfigurationNonnegativeSafeInteger(
  */
 function appendImagePricing(
   formData: FormData,
-  pricing: ModelConfigurationImagePricingDraft
+  pricing: ModelConfigurationImagePricingDraft,
+  options: {
+    isCustom: boolean;
+    supportedResolutions: readonly string[];
+  }
 ): void {
-  formData.append(
-    "base1024Credits",
-    String(
-      parseModelConfigurationPrice(
-        pricing.base1024Credits.trim() || pricing.base1kCredits
-      )
+  const supported = new Set(
+    options.supportedResolutions.map((resolution) =>
+      resolution.trim().toLowerCase()
     )
   );
-  formData.append(
+  const resolutionByField = {
+    base1kCredits: "1k",
+    base2kCredits: "2k",
+    base4kCredits: "4k",
+    base8kCredits: "8k",
+  } as const;
+  let appended = 0;
+  if (!options.isCustom || pricing.base1024Credits.trim()) {
+    if (!options.isCustom || supported.has("1024")) {
+      formData.append(
+        "base1024Credits",
+        String(
+          parseModelConfigurationPrice(
+            pricing.base1024Credits.trim() || pricing.base1kCredits
+          )
+        )
+      );
+      appended += 1;
+    }
+  }
+  for (const field of [
     "base1kCredits",
-    String(parseModelConfigurationPrice(pricing.base1kCredits))
-  );
-  formData.append(
     "base2kCredits",
-    String(parseModelConfigurationPrice(pricing.base2kCredits))
-  );
-  formData.append(
     "base4kCredits",
-    String(parseModelConfigurationPrice(pricing.base4kCredits))
-  );
-  if (pricing.base8kCredits.trim()) {
+    "base8kCredits",
+  ] as const) {
+    if (options.isCustom && !supported.has(resolutionByField[field])) continue;
+    const value = pricing[field].trim();
+    if (!value) {
+      if (field === "base8kCredits" && !options.isCustom) continue;
+      throw new ModelConfigurationDraftError("请填写已支持分辨率的价格");
+    }
+    formData.append(field, String(parseModelConfigurationPrice(value)));
+    appended += 1;
+  }
+  if (options.isCustom && appended === 0 && pricing.base1024Credits.trim()) {
     formData.append(
-      "base8kCredits",
-      String(parseModelConfigurationPrice(pricing.base8kCredits))
+      "base1024Credits",
+      String(parseModelConfigurationPrice(pricing.base1024Credits))
     );
   }
 }
@@ -403,6 +431,9 @@ export function buildModelConfigurationFormData(
   formData.append("clientRequestId", draft.clientRequestId);
 
   appendMarketplaceFields(formData, draft);
+  if (draft.isCustom === true) {
+    formData.append("isCustom", "true");
+  }
   if (draft.category === "video") {
     const creditsPerSecondByResolution = Object.fromEntries(
       Object.entries(draft.creditsPerSecondByResolution)
@@ -463,6 +494,9 @@ export function buildModelConfigurationFormData(
       )
     );
   }
-  appendImagePricing(formData, draft.pricing);
+  appendImagePricing(formData, draft.pricing, {
+    isCustom: draft.isCustom === true,
+    supportedResolutions: draft.supportedResolutions,
+  });
   return formData;
 }

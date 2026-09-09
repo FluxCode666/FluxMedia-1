@@ -4,8 +4,9 @@
  * 使用方：历史与支付订单列表；锁定 page 和 cursor 必须原子写入并保留筛选、
  * 页大小以及同页其他 namespace。
  */
-import { describe, expect, it } from "vitest";
+
 import { getPaginationWindow } from "@repo/shared/pagination/state";
+import { describe, expect, it } from "vitest";
 import {
   buildPaginationHref,
   createPaginationUrlParamNames,
@@ -24,6 +25,18 @@ describe("cursor pagination controls", () => {
     expect(href).toBe(
       "/dashboard/history?cursor=next%2B%2F%3D&memberPage=4&page=3&pageSize=50&status=failed"
     );
+  });
+
+  it("非相邻页跳转会清除当前 cursor", () => {
+    const href = buildPaginationHref(
+      "/dashboard/history",
+      new URLSearchParams("cursor=old&page=5&pageSize=50&status=failed"),
+      createPaginationUrlParamNames(),
+      { cursor: null, page: 10 },
+      "page"
+    );
+
+    expect(href).toBe("/dashboard/history?page=10&pageSize=50&status=failed");
   });
 
   it("桌面使用数字窗口，移动端由组件保留紧凑当前页提示", () => {

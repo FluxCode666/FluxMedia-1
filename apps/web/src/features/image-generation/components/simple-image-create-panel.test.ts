@@ -6,11 +6,16 @@
  */
 // @vitest-environment jsdom
 
-import { act, createElement } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ImageGenerationModelCatalog } from "@/features/image-backend-pool/image-generation-model-catalog";
+
+vi.mock("@/i18n/routing", () => ({
+  Link: ({ children, href }: { children?: ReactNode; href: string }) =>
+    createElement("a", { href }, children),
+}));
 
 import { SimpleImageCreatePanel } from "./simple-image-create-panel";
 
@@ -140,6 +145,15 @@ afterEach(() => {
 });
 
 describe("SimpleImageCreatePanel reference drag and drop", () => {
+  it("points the gallery shortcut at the dashboard gallery route", () => {
+    mountPanel({ onSourceImagesChange: vi.fn() });
+
+    const galleryLink = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>("a")
+    ).find((link) => link.textContent?.trim() === "前往图库");
+    expect(galleryLink?.getAttribute("href")).toBe("/dashboard/gallery");
+  });
+
   it("renders animated submission feedback states on the generate button", () => {
     mountPanel({
       onSourceImagesChange: vi.fn(),

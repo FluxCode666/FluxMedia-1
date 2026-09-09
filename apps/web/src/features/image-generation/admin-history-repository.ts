@@ -390,7 +390,8 @@ export function buildAdminHistoryListSql(input: AdminHistoryListQuery): SQL {
       select * from video_rows
     ) history_rows
     order by created_at ${orderDirection}, kind_rank ${orderDirection}, id ${orderDirection}
-    limit ${input.branchLimit}
+    limit ${input.pageLimit}
+    offset ${input.offset}
   `;
 }
 
